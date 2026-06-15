@@ -1,6 +1,7 @@
 import math
 from uuid import UUID
 
+from internal.entity.agent_entity import normalize_agent_metadata
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import datetime_to_timestamp
@@ -37,7 +38,14 @@ class AdminAppService:
             raise NotFoundException("应用不存在")
         return self._serialize_app(app)
 
-    def update_app(self, app_id: UUID, *, status: str | None = None, is_public: bool | None = None) -> dict[str, object]:
+    def update_app(
+        self,
+        app_id: UUID,
+        *,
+        status: str | None = None,
+        is_public: bool | None = None,
+        agent_metadata: dict | None = None,
+    ) -> dict[str, object]:
         app = self.session.query(App).filter(App.id == app_id).one_or_none()
         if app is None:
             raise NotFoundException("应用不存在")
@@ -45,6 +53,8 @@ class AdminAppService:
             app.status = status
         if is_public is not None:
             app.is_public = is_public
+        if agent_metadata is not None:
+            app.agent_metadata = normalize_agent_metadata(agent_metadata)
         self.session.commit()
         return self._serialize_app(app)
 
@@ -65,6 +75,7 @@ class AdminAppService:
             "description": app.description,
             "status": app.status,
             "is_public": app.is_public,
+            "agent_metadata": app.normalized_agent_metadata,
             "created_at": datetime_to_timestamp(app.created_at),
             "updated_at": datetime_to_timestamp(app.updated_at),
         }

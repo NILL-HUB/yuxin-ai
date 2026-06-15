@@ -19,6 +19,11 @@ class QueueEvent(str, Enum):
     ERROR = "error"  # 智能体错误事件
     TIMEOUT = "timeout"  # 智能体超时事件
     PING = "ping"  # ping联通事件
+    BILLING_STARTED = "billing_started"
+    BILLING_DELTA = "billing_delta"
+    BILLING_SUMMARY = "billing_summary"
+    BILLING_CANCELLED = "billing_cancelled"
+    BILLING_FINAL = "billing_final"
 
 
 class AgentThought(BaseModel):

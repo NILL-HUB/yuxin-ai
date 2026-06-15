@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from datetime import UTC, datetime
+import json
 import logging
 from dataclasses import dataclass
 from threading import RLock
@@ -228,6 +229,7 @@ class ConversationService(BaseService):
             conversation_id: UUID,
             message_id: UUID,
             agent_thoughts: list[AgentThought],
+            routing_decision: dict[str, Any] | None = None,
     ):
         """存储智能体推理步骤消息"""
         # 1.定义变量存储推理位置及总耗时
@@ -237,6 +239,19 @@ class ConversationService(BaseService):
         # 2.在子线程中重新查询conversation以及message，确保对象会被子线程的会话管理到
         conversation = self.get(Conversation, conversation_id)
         message = self.get(Message, message_id)
+
+        if routing_decision:
+            agent_thoughts = [
+                AgentThought(
+                    id=uuid4(),
+                    task_id=uuid4(),
+                    event=QueueEvent.AGENT_THOUGHT,
+                    thought="Orchestrator routing decision",
+                    observation=json.dumps(routing_decision, ensure_ascii=False),
+                    tool="orchestrator",
+                    tool_input=routing_decision,
+                )
+            ] + agent_thoughts
 
         # 3.循环遍历所有的智能体推理过程执行存储操作
         for agent_thought in agent_thoughts:

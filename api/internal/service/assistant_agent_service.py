@@ -52,6 +52,7 @@ from .app_config_service import AppConfigService
 from .conversation_service import ConversationService
 from .faiss_service import FaissService
 from .language_model_service import LanguageModelService
+from .orchestrator_service import OrchestratorService
 from .public_agent_a2a_service import PublicAgentA2AService
 from .public_agent_registry_service import PublicAgentRegistryService
 
@@ -81,6 +82,7 @@ class AssistantAgentService(BaseService):
     language_model_service: LanguageModelService | None = None
     public_agent_a2a_service: PublicAgentA2AService | None = None
     public_agent_registry_service: PublicAgentRegistryService | None = None
+    orchestrator_service: OrchestratorService | None = None
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
 
@@ -267,6 +269,19 @@ class AssistantAgentService(BaseService):
             image_urls=req.image_urls.data,
             status=MessageStatus.NORMAL.value,
         )
+        routing_decision = None
+        if self.orchestrator_service is not None:
+            try:
+                routing_decision = self.orchestrator_service.decide(
+                    req.query.data,
+                    account_id=account.id,
+                    conversation_id=conversation.id,
+                    message_id=message.id,
+                    image_urls=req.image_urls.data,
+                    enable_deep_thinking=bool(req.enable_deep_thinking.data),
+                ).to_dict()
+            except Exception as exc:
+                logging.warning("辅助 Agent 调度决策失败，继续原流程: %s", exc)
 
         # 5.实例化TokenBufferMemory用于提取短期记忆
         token_buffer_memory = TokenBufferMemory(
@@ -379,6 +394,7 @@ class AssistantAgentService(BaseService):
             conversation_id=conversation.id,
             message_id=message.id,
             agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()],
+            routing_decision=routing_decision,
         )
 
     def generate_introduction(self, account: Account) -> Generator[str, None, None]:

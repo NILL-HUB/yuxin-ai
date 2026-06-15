@@ -1089,6 +1089,92 @@ class TestAssistantAgentService:
         assert merged_message_thought.thought == "AB"
         assert merged_message_thought.answer == "AB"
 
+    def test_chat_should_record_routing_decision_without_changing_stream_events(
+        self, monkeypatch, app
+    ):
+        assistant_agent_id = uuid4()
+        app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
+        conversation = SimpleNamespace(id=uuid4(), summary="")
+        account = SimpleNamespace(id=uuid4(), assistant_agent_conversation=conversation)
+        req = SimpleNamespace(
+            query=SimpleNamespace(data="Python 中 list 和 tuple 有什么区别？"),
+            image_urls=SimpleNamespace(data=[]),
+            conversation_id=SimpleNamespace(data=""),
+            enable_deep_thinking=SimpleNamespace(data=False),
+        )
+        routing_calls = []
+        save_payload = {}
+        service = AssistantAgentService(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
+            conversation_service=SimpleNamespace(
+                save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
+            ),
+            redis_client=SimpleNamespace(),
+            orchestrator_service=SimpleNamespace(
+                decide=lambda query, **kwargs: routing_calls.append((query, kwargs))
+                or SimpleNamespace(
+                    to_dict=lambda: {
+                        "intent": "general_qa",
+                        "complexity": "simple",
+                        "execution_mode": "direct_answer",
+                        "needs_tools": False,
+                        "needs_agent": False,
+                        "needs_multi_agent": False,
+                        "recommended_model_tier": "cheap",
+                        "risk_level": "safe",
+                        "reason": "简单问答",
+                    }
+                )
+            ),
+        )
+        monkeypatch.setattr(service, "create", lambda _model, **_kwargs: SimpleNamespace(id=uuid4()))
+        monkeypatch.setattr(service, "convert_create_app_to_tool", lambda _account_id: "create-app-tool")
+
+        class _FakeLLM:
+            def __init__(self, **_kwargs):
+                pass
+
+            def convert_to_human_message(self, query, image_urls):
+                return {"query": query, "image_urls": image_urls}
+
+        class _FakeTokenBufferMemory:
+            def __init__(self, **_kwargs):
+                pass
+
+            def get_history_prompt_messages(self, message_limit):
+                return []
+
+        event = AgentThought(
+            id=uuid4(),
+            task_id=uuid4(),
+            event=QueueEvent.AGENT_MESSAGE,
+            thought="答案",
+            answer="答案",
+        )
+
+        class _FakeFunctionCallAgent:
+            def __init__(self, **_kwargs):
+                pass
+
+            def stream(self, _state):
+                return iter([event])
+
+        monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+        monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
+        monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
+        monkeypatch.setattr("internal.service.assistant_agent_service.FunctionCallAgent", _FakeFunctionCallAgent)
+
+        with app.app_context():
+            events = list(service.chat(req, account))
+
+        assert len(events) == 1
+        assert events[0].startswith("event: agent_message")
+        assert routing_calls[0][0] == req.query.data
+        assert routing_calls[0][1]["account_id"] == account.id
+        assert save_payload["routing_decision"]["execution_mode"] == "direct_answer"
+        assert save_payload["routing_decision"]["intent"] == "general_qa"
+
     def test_chat_should_use_runtime_language_model_resolution_when_available(
         self, monkeypatch, app
     ):

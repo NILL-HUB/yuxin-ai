@@ -72,6 +72,17 @@ export type AgentBindingRequest = {
   app_id: string
 }
 
+export type AgentMetadata = {
+  primary_pool: string
+  secondary_pools: string[]
+  capabilities: string[]
+  task_types: string[]
+  model_tier: 'cheap' | 'balanced' | 'strong'
+  cost_level: 'low' | 'medium' | 'high'
+  routing_priority: number
+  allowed_tool_categories: string[]
+}
+
 // 获取应用信息响应结构
 export type GetAppResponse = BaseResponse<{
   id: string
@@ -91,7 +102,12 @@ export type GetAppResponse = BaseResponse<{
 export type CreateAppRequest = { name: string; icon: string; description: string }
 
 // 更新应用请求结构
-export type UpdateAppRequest = { name: string; icon: string; description: string }
+export type UpdateAppRequest = {
+  name: string
+  icon: string
+  description: string
+  agent_metadata?: Partial<AgentMetadata>
+}
 
 // 获取应用分页列表数据请求
 export type GetAppsWithPageRequest = BasePaginatorRequest & {

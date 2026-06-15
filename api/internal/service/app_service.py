@@ -405,6 +405,8 @@ class AppService(BaseService):
     def update_app(self, app_id: UUID, account: Account, **kwargs) -> App:
         """根据传递的应用id+账号+信息,更新指定的应用"""
         app = self.get_app(app_id, account)
+        if kwargs.get("agent_metadata") is not None:
+            kwargs["agent_metadata"] = normalize_agent_metadata(kwargs["agent_metadata"])
         self.update(app, **kwargs)
         return app
 

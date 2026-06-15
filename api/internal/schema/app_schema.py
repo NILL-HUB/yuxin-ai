@@ -5,6 +5,7 @@ from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField, IntegerField, BooleanField
 from wtforms.validators import DataRequired, Length, URL, ValidationError, Optional, NumberRange
 
+from internal.entity.agent_entity import normalize_agent_metadata
 from internal.entity.app_entity import AppConfigType, AppStatus
 from internal.lib.helper import datetime_to_timestamp, build_input_parts, build_output_payload
 from internal.model import App, AppConfigVersion, Message
@@ -40,6 +41,7 @@ class UpdateAppReq(FlaskForm):
     description = StringField("description", validators=[
         Length(max=800, message="应用描述的长度不能超过800个字符")
     ])
+    agent_metadata = DictField("agent_metadata", default=None)
 
 
 class GetAppsWithPageReq(PaginatorReq):
@@ -97,6 +99,7 @@ class GetAppResp(Schema):
     status = fields.String(dump_default="")
     is_public = fields.Boolean(dump_default=False)
     category = fields.String(dump_default="general")
+    agent_metadata = fields.Dict(dump_default={})
     draft_updated_at = fields.Integer(dump_default=0)
     updated_at = fields.Integer(dump_default=0)
     created_at = fields.Integer(dump_default=0)
@@ -112,6 +115,7 @@ class GetAppResp(Schema):
             "status": data.status,
             "is_public": data.is_public,
             "category": "general",
+            "agent_metadata": normalize_agent_metadata(getattr(data, "agent_metadata", None)),
             "draft_updated_at": datetime_to_timestamp(data.draft_app_config.updated_at),
             "updated_at": datetime_to_timestamp(data.updated_at),
             "created_at": datetime_to_timestamp(data.created_at),

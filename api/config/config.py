@@ -79,6 +79,11 @@ class Config:
 
         # SQLAlchemy数据库配置
         self.SQLALCHEMY_DATABASE_URI = _get_env("SQLALCHEMY_DATABASE_URI")
+        if os.getenv("POSTGRES_HOST"):
+            self.SQLALCHEMY_DATABASE_URI = (
+                f"postgresql://{_get_env('POSTGRES_USER')}:{_get_env('POSTGRES_PASSWORD')}@"
+                f"{_get_env('POSTGRES_HOST')}:{_get_env('POSTGRES_PORT')}/{_get_env('POSTGRES_DB')}?client_encoding=utf8"
+            )
         self.SQLALCHEMY_ENGINE_OPTIONS = {
             "pool_size": int(_get_env("SQLALCHEMY_POOL_SIZE")),
             "pool_recycle": int(_get_env("SQLALCHEMY_POOL_RECYCLE")),

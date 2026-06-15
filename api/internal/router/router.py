@@ -22,6 +22,7 @@ from internal.handler import (
     AdminRbacHandler,
     AdminRedeemCodeHandler,
     AdminResourceEntryHandler,
+    AdminRoutingLogHandler,
     AdminUserHandler,
     AdminWorkflowHandler,
     AIHandler,
@@ -40,6 +41,9 @@ from internal.handler import (
     PublicWorkflowHandler,
     RedeemCodeHandler,
     McpHandler,
+    MemoryCandidateHandler,
+    ExternalDataSourceHandler,
+    ToolConfirmationHandler,
     MyAppHandler,
     SkillHandler,
     HomeHandler,
@@ -71,6 +75,7 @@ class Router:
     admin_rbac_handler: AdminRbacHandler
     admin_redeem_code_handler: AdminRedeemCodeHandler
     admin_resource_entry_handler: AdminResourceEntryHandler
+    admin_routing_log_handler: AdminRoutingLogHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
     ai_handler: AIHandler
@@ -89,6 +94,9 @@ class Router:
     public_workflow_handler: PublicWorkflowHandler
     redeem_code_handler: RedeemCodeHandler
     mcp_handler: McpHandler
+    memory_candidate_handler: MemoryCandidateHandler
+    external_data_source_handler: ExternalDataSourceHandler
+    tool_confirmation_handler: ToolConfirmationHandler
     my_app_handler: MyAppHandler
     skill_handler: SkillHandler
     home_handler: HomeHandler
@@ -541,6 +549,12 @@ class Router:
             view_func=self.admin_audit_log_handler.list,
         )
         bp.add_url_rule(
+            "/admin/routing-logs",
+            endpoint="admin_routing_log_list",
+            methods=["GET"],
+            view_func=self.admin_routing_log_handler.list,
+        )
+        bp.add_url_rule(
             "/admin/plans",
             endpoint="admin_plan_list",
             methods=["GET"],
@@ -727,6 +741,48 @@ class Router:
         bp.add_url_rule("/redeem-codes/redeem", methods=["POST"], view_func=self.redeem_code_handler.redeem)
         bp.add_url_rule("/membership/summary", view_func=self.redeem_code_handler.summary)
         bp.add_url_rule("/membership/redeem-records", view_func=self.redeem_code_handler.records)
+        bp.add_url_rule(
+            "/memory-candidates/<uuid:candidate_id>/confirm",
+            endpoint="memory_candidate_confirm",
+            methods=["POST"],
+            view_func=self.memory_candidate_handler.confirm,
+        )
+        bp.add_url_rule(
+            "/memory-candidates/<uuid:candidate_id>/ignore",
+            endpoint="memory_candidate_ignore",
+            methods=["POST"],
+            view_func=self.memory_candidate_handler.ignore,
+        )
+        bp.add_url_rule(
+            "/external-data-sources",
+            endpoint="external_data_source_create",
+            methods=["POST"],
+            view_func=self.external_data_source_handler.create,
+        )
+        bp.add_url_rule(
+            "/external-data-sources/<uuid:data_source_id>/sync",
+            endpoint="external_data_source_sync",
+            methods=["POST"],
+            view_func=self.external_data_source_handler.sync,
+        )
+        bp.add_url_rule(
+            "/tool-confirmations",
+            endpoint="tool_confirmation_create",
+            methods=["POST"],
+            view_func=self.tool_confirmation_handler.create,
+        )
+        bp.add_url_rule(
+            "/tool-confirmations/<uuid:confirmation_id>/confirm",
+            endpoint="tool_confirmation_confirm",
+            methods=["POST"],
+            view_func=self.tool_confirmation_handler.confirm,
+        )
+        bp.add_url_rule(
+            "/tool-confirmations/<uuid:confirmation_id>/cancel",
+            endpoint="tool_confirmation_cancel",
+            methods=["POST"],
+            view_func=self.tool_confirmation_handler.cancel,
+        )
         bp.add_url_rule("/my/apps", view_func=self.my_app_handler.list_my_apps)
         bp.add_url_rule("/my/apps/<uuid:app_id>/chat", methods=["POST"], view_func=self.my_app_handler.chat)
 

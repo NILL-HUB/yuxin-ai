@@ -1,6 +1,7 @@
 from flask_wtf import FlaskForm
 from marshmallow import Schema, fields
 from wtforms import BooleanField, IntegerField, StringField
+from internal.schema import DictField
 from wtforms.validators import Length, NumberRange, Optional
 
 
@@ -14,6 +15,7 @@ class GetAdminAppsReq(FlaskForm):
 class UpdateAdminAppReq(FlaskForm):
     status = StringField("status", validators=[Optional(), Length(max=255)])
     is_public = BooleanField("is_public", validators=[Optional()])
+    agent_metadata = DictField("agent_metadata", default=None)
 
 
 class AdminAppResp(Schema):

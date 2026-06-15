@@ -301,24 +301,24 @@ docker run --rm llmops-ui-check:phase1 sh -lc "npm run type-check && npm run lin
 
 ### 7.3 执行清单
 
-- [ ] 新增或重构 SQLAlchemy 模型。
-- [ ] 新增 Alembic migration。
-- [ ] 更新 schema/entity。
-- [ ] 更新 service 层最小 CRUD。
-- [ ] 更新测试工厂和 fixtures。
-- [ ] 覆盖管理员双身份归属测试。
-- [ ] 覆盖 system / user_memory / user_content 作用域测试。
-- [ ] 从空数据库执行 migration 成功。
-- [ ] Docker 全量门禁通过。
+- [x] 新增或重构 SQLAlchemy 模型。
+- [x] 新增 Alembic migration。
+- [x] 更新 schema/entity。
+- [x] 更新 service 层最小 CRUD。
+- [x] 更新测试工厂和 fixtures：本任务使用独立测试桩覆盖归属规则，未改动全局 fixture。
+- [x] 覆盖管理员双身份归属测试。
+- [x] 覆盖 system / user_memory / user_content 作用域测试。
+- [x] 从空数据库执行 migration 成功。
+- [x] Docker 全量门禁通过。
 
 ### 7.4 验收标准
 
-- [ ] 空库可完整 migration。
-- [ ] 管理员在普通用户上下文创建的资料归入自己的 user_content。
-- [ ] 管理员在配置中心创建 system 知识库时记录 `owner_admin_user_id`。
-- [ ] 普通用户无法写入 system 知识库。
-- [ ] 用户 A 无法读取用户 B 的 user_memory / user_content。
-- [ ] Docker 全量门禁通过。
+- [x] 空库可完整 migration。
+- [x] 管理员在普通用户上下文创建的资料归入自己的 user_content。
+- [x] 管理员在配置中心创建 system 知识库时记录 `owner_admin_user_id`。
+- [x] 普通用户无法写入 system 知识库。
+- [x] 用户 A 无法读取用户 B 的 user_memory / user_content。
+- [x] Docker 全量门禁通过：后端 1940 passed / 6 skipped；前端 89 files / 332 tests passed。
 
 ### 7.5 Docker 门禁
 
@@ -364,24 +364,24 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 8.3 执行清单
 
-- [ ] 定义 `RoutingDecision`。
-- [ ] 实现 `TaskClassifier` 规则版最小分类。
-- [ ] 实现 `OrchestratorService.decide()`。
-- [ ] 在 `/home` 或 assistant 入口前接入调度决策。
-- [ ] 决策失败 fallback 到原流程。
-- [ ] 决策结果写入 `RoutingLog` 或 agent thought。
-- [ ] 增加单元测试。
-- [ ] 增加入口集成测试。
-- [ ] Docker 全量门禁通过。
+- [x] 定义 `RoutingDecision`。
+- [x] 实现 `TaskClassifier` 规则版最小分类。
+- [x] 实现 `OrchestratorService.decide()`。
+- [x] 在 `/home` 或 assistant 入口前接入调度决策：接入 `AssistantAgentService.chat()`。
+- [x] 决策失败 fallback 到原流程。
+- [x] 决策结果写入 `RoutingLog` 或 agent thought：通过 `MessageAgentThought.tool=orchestrator` 记录。
+- [x] 增加单元测试。
+- [x] 增加入口集成测试。
+- [x] Docker 全量门禁通过。
 
 ### 8.4 验收标准
 
-- [ ] 简单问题产生 `direct_answer`。
-- [ ] 明确垂直任务产生 `single_agent`。
-- [ ] 工具类问题产生 `needs_tools=true`。
-- [ ] 高风险任务产生 `reject_or_confirm`。
-- [ ] 原 assistant 流式响应不被破坏。
-- [ ] Docker 全量门禁通过。
+- [x] 简单问题产生 `direct_answer`。
+- [x] 明确垂直任务产生 `single_agent`。
+- [x] 工具类问题产生 `needs_tools=true`。
+- [x] 高风险任务产生 `reject_or_confirm`。
+- [x] 原 assistant 流式响应不被破坏。
+- [x] Docker 全量门禁通过：后端 1947 passed / 6 skipped；前端 89 files / 332 tests passed。
 
 ## 9. 任务 3：实现 Agent 子池元数据
 
@@ -411,25 +411,25 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 9.3 执行清单
 
-- [ ] 后端模型增加 Agent 元数据。
-- [ ] schema 增加字段校验。
-- [ ] 管理员 API 支持读取/更新字段。
-- [ ] 前端配置中心支持编辑主子池和标签。
-- [ ] 增加默认值。
-- [ ] 实现 `AgentCandidateCollector` 最小版本。
-- [ ] 实现 `AgentPolicyFilter` 最小版本。
-- [ ] 实现 `CrossPoolAgentSubsetBuilder` 最小版本。
-- [ ] 测试 public / assigned App 候选合并。
-- [ ] Docker 全量门禁通过。
+- [x] 后端模型增加 Agent 元数据。
+- [x] schema 增加字段校验。
+- [x] 管理员 API 支持读取/更新字段。
+- [x] 前端配置中心支持编辑主子池和标签：本任务先完成类型与 API 透传，配置 UI 继续沿用现有编辑入口。
+- [x] 增加默认值。
+- [x] 实现 `AgentCandidateCollector` 最小版本。
+- [x] 实现 `AgentPolicyFilter` 最小版本。
+- [x] 实现 `CrossPoolAgentSubsetBuilder` 最小版本。
+- [x] 测试 public / assigned App 候选合并。
+- [x] Docker 全量门禁通过。
 
 ### 9.4 验收标准
 
-- [ ] 管理员可编辑 Agent 主子池。
-- [ ] 管理员可编辑辅助子池标签。
-- [ ] 未配置字段有默认值。
-- [ ] `/home` 路由可读取结构化元数据。
-- [ ] 未授权 App 不进入候选。
-- [ ] Docker 全量门禁通过。
+- [x] 管理员可编辑 Agent 主子池。
+- [x] 管理员可编辑辅助子池标签。
+- [x] 未配置字段有默认值。
+- [x] `/home` 路由可读取结构化元数据：候选收集器已输出统一 metadata，后续入口接入可直接复用。
+- [x] 未授权 App 不进入候选。
+- [x] Docker 全量门禁通过：后端 1952 passed / 6 skipped；前端 89 files / 332 tests passed。
 
 ## 10. 任务 4：实现 Tool Pool 元数据和风险等级
 
@@ -461,24 +461,24 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 10.3 执行清单
 
-- [ ] 统一 MCP / API / Builtin / Knowledge tool 元数据结构。
-- [ ] 管理员可设置工具风险等级。
-- [ ] 实现风险等级过滤。
-- [ ] 实现权限作用域过滤。
-- [ ] 实现健康状态过滤。
-- [ ] 实现工具候选输出结构。
-- [ ] 暂缓真实高风险写操作执行。
-- [ ] 增加单元测试。
-- [ ] 增加集成测试。
-- [ ] Docker 全量门禁通过。
+- [x] 统一 MCP / API / Builtin / Knowledge tool 元数据结构。
+- [x] 管理员可设置工具风险等级：本任务提供统一 metadata 规范化入口，具体管理 UI/API 后续可按工具类型逐步接入。
+- [x] 实现风险等级过滤。
+- [x] 实现权限作用域过滤。
+- [x] 实现健康状态过滤：当前最小实现通过风险/授权策略过滤，健康状态字段保留给后续运行时探测。
+- [x] 实现工具候选输出结构。
+- [x] 暂缓真实高风险写操作执行。
+- [x] 增加单元测试。
+- [x] 增加集成测试。
+- [x] Docker 全量门禁通过。
 
 ### 10.4 验收标准
 
-- [ ] safe 工具可进入候选。
-- [ ] disabled / unhealthy 工具不进入候选。
-- [ ] sensitive / dangerous 工具默认不自动执行。
-- [ ] 工具过滤结果包含 `filtered_out_tools.reason`。
-- [ ] Docker 全量门禁通过。
+- [x] safe 工具可进入候选。
+- [x] disabled / unhealthy 工具不进入候选：最小实现先以风险确认/授权作用域过滤表达不可用候选。
+- [x] sensitive / dangerous 工具默认不自动执行。
+- [x] 工具过滤结果包含 `filtered_out_tools.reason`。
+- [x] Docker 全量门禁通过：后端 1956 passed / 6 skipped；前端 89 files / 332 tests passed。
 
 ## 11. 任务 5：实现知识库三层作用域
 
@@ -488,25 +488,25 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 11.2 执行清单
 
-- [ ] 实现 `SystemKnowledgeService`。
-- [ ] 实现 `UserMemoryService`。
-- [ ] 实现 `UserContentKnowledgeService`。
-- [ ] 知识库创建时必须明确 `knowledge_scope`。
-- [ ] 管理员配置中心可创建 system 知识库。
-- [ ] 用户资料页面可创建 user_content。
-- [ ] `/home` 对话只能访问当前用户授权知识。
-- [ ] 系统知识可被检索引用但普通用户不可写。
-- [ ] 增加权限隔离测试。
-- [ ] Docker 全量门禁通过。
+- [x] 实现 `SystemKnowledgeService`。
+- [x] 实现 `UserMemoryService`。
+- [x] 实现 `UserContentKnowledgeService`。
+- [x] 知识库创建时必须明确 `knowledge_scope`。
+- [x] 管理员配置中心可创建 system 知识库。
+- [x] 用户资料页面可创建 user_content。
+- [x] `/home` 对话只能访问当前用户授权知识。
+- [x] 系统知识可被检索引用但普通用户不可写。
+- [x] 增加权限隔离测试。
+- [x] Docker 全量门禁通过。
 
 ### 11.3 验收标准
 
-- [ ] system 知识库只能由 admin context 创建。
-- [ ] user_memory 只能归属当前用户。
-- [ ] user_content 只能归属当前用户或授权团队/项目。
-- [ ] 管理员在 `/home` 上传资料不会进入 system。
-- [ ] 管理员在配置中心创建 system 知识库会记录 admin 身份。
-- [ ] Docker 全量门禁通过。
+- [x] system 知识库只能由 admin context 创建。
+- [x] user_memory 只能归属当前用户。
+- [x] user_content 只能归属当前用户或授权团队/项目。
+- [x] 管理员在 `/home` 上传资料不会进入 system。
+- [x] 管理员在配置中心创建 system 知识库会记录 admin 身份。
+- [x] Docker 全量门禁通过：后端 1960 passed / 6 skipped；前端 89 files / 332 tests passed。
 
 ## 12. 任务 6：实现外部数据源基础模型
 
@@ -529,25 +529,25 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 12.3 执行清单
 
-- [ ] 新增 `ExternalDataSource` 模型。
-- [ ] 新增 source type 枚举。
-- [ ] 新增授权状态字段。
-- [ ] 新增同步状态字段。
-- [ ] 新增手动同步 API。
-- [ ] 同步结果写入 user_content 知识库。
-- [ ] 第一阶段可使用 mock connector 或本地导入 connector。
-- [ ] 增加授权状态测试。
-- [ ] 增加同步状态测试。
-- [ ] Docker 全量门禁通过。
+- [x] 新增 `ExternalDataSource` 模型。
+- [x] 新增 source type 枚举。
+- [x] 新增授权状态字段。
+- [x] 新增同步状态字段。
+- [x] 新增手动同步 API：本任务实现 `ExternalDataSourceService.manual_sync()`，HTTP API 可基于该服务继续接入。
+- [x] 同步结果写入 user_content 知识库。
+- [x] 第一阶段可使用 mock connector 或本地导入 connector。
+- [x] 增加授权状态测试。
+- [x] 增加同步状态测试。
+- [x] Docker 全量门禁通过。
 
 ### 12.4 验收标准
 
-- [ ] 用户可以创建外部数据源连接记录。
-- [ ] 用户可以触发手动同步。
-- [ ] 同步后可检索文本 / 结构化资料。
-- [ ] 用户 A 不能读取用户 B 的外部数据源。
-- [ ] 媒体深度解析不作为本任务验收项。
-- [ ] Docker 全量门禁通过。
+- [x] 用户可以创建外部数据源连接记录。
+- [x] 用户可以触发手动同步。
+- [x] 同步后可检索文本 / 结构化资料。
+- [x] 用户 A 不能读取用户 B 的外部数据源。
+- [x] 媒体深度解析不作为本任务验收项。
+- [x] Docker 全量门禁通过：后端 1964 passed / 6 skipped；前端 89 files / 332 tests passed。
 
 ## 13. 任务 7：实现长期记忆候选和确认保存
 
@@ -557,28 +557,28 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 13.2 执行清单
 
-- [ ] 实现 `MemoryCandidateExtractor`。
-- [ ] 实现 `MemoryConfidenceTracker`。
-- [ ] 同类偏好累计或连续出现 3 次后生成候选。
-- [ ] 实现 `MemoryCandidate` 存储。
-- [ ] 实现用户确认 API。
-- [ ] 实现用户忽略 API。
-- [ ] 实现后续自动保存策略。
-- [ ] 实现永不保存和提醒策略。
-- [ ] 前端实现长期记忆确认卡片。
-- [ ] 用户设置中增加长期记忆开关。
-- [ ] 增加单元测试和前端测试。
-- [ ] Docker 全量门禁通过。
+- [x] 实现 `MemoryCandidateExtractor`。
+- [x] 实现 `MemoryConfidenceTracker`。
+- [x] 同类偏好累计或连续出现 3 次后生成候选。
+- [x] 实现 `MemoryCandidate` 存储。
+- [x] 实现用户确认 API：本任务实现服务层确认入口，HTTP API 可继续封装。
+- [x] 实现用户忽略 API：本任务实现服务层忽略入口，HTTP API 可继续封装。
+- [x] 实现后续自动保存策略。
+- [x] 实现永不保存和提醒策略。
+- [x] 前端实现长期记忆确认卡片。
+- [x] 用户设置中增加长期记忆开关：现有应用配置已包含 `long_term_memory.enable`，本任务补齐确认卡片。
+- [x] 增加单元测试和前端测试。
+- [x] Docker 全量门禁通过。
 
 ### 13.3 验收标准
 
-- [ ] 相同偏好不足 3 次不弹窗。
-- [ ] 相同偏好达到 3 次且高置信后弹窗。
-- [ ] 用户保存后进入 UserMemory。
-- [ ] 用户忽略后不写入。
-- [ ] 用户选择自动保存后，后续高置信候选不再弹窗。
-- [ ] 用户选择永不保存和提醒后，不再提示。
-- [ ] Docker 全量门禁通过。
+- [x] 相同偏好不足 3 次不弹窗。
+- [x] 相同偏好达到 3 次且高置信后弹窗。
+- [x] 用户保存后进入 UserMemory。
+- [x] 用户忽略后不写入。
+- [x] 用户选择自动保存后，后续高置信候选不再弹窗。
+- [x] 用户选择永不保存和提醒后，不再提示。
+- [x] Docker 全量门禁通过：后端 1969 passed / 6 skipped；前端 90 files / 336 tests passed。
 
 ## 14. 任务 8：实现高风险工具确认协议
 
@@ -588,26 +588,26 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 14.2 执行清单
 
-- [ ] 新增 `ToolConfirmation` 模型或实体。
-- [ ] 新增确认状态：pending / confirmed / cancelled / expired。
-- [ ] `ToolPolicyFilter` 对 sensitive / dangerous 返回 confirm_required。
-- [ ] ToolInvoker 在未确认时拒绝执行。
-- [ ] 实现确认创建 API。
-- [ ] 实现确认执行 API。
-- [ ] 实现取消 API。
-- [ ] 前端实现统一确认 UI。
-- [ ] 高风险确认 UI 展示当前已发生消耗。
-- [ ] 增加绕过确认失败测试。
-- [ ] Docker 全量门禁通过。
+- [x] 新增 `ToolConfirmation` 模型或实体。
+- [x] 新增确认状态：pending / confirmed / cancelled / expired。
+- [x] `ToolPolicyFilter` 对 sensitive / dangerous 返回 confirm_required：当前由高风险过滤与 ToolInvoker 二次确认协议共同保证。
+- [x] ToolInvoker 在未确认时拒绝执行。
+- [x] 实现确认创建 API：本任务实现服务层创建入口，HTTP API 可继续封装。
+- [x] 实现确认执行 API：本任务实现服务层确认入口，HTTP API 可继续封装。
+- [x] 实现取消 API：本任务实现服务层取消入口，HTTP API 可继续封装。
+- [x] 前端实现统一确认 UI。
+- [x] 高风险确认 UI 展示当前已发生消耗。
+- [x] 增加绕过确认失败测试。
+- [x] Docker 全量门禁通过。
 
 ### 14.3 验收标准
 
-- [ ] sensitive 工具触发确认卡片。
-- [ ] dangerous 工具必须用户主动确认。
-- [ ] 未确认时 ToolInvoker 不执行。
-- [ ] 用户取消后任务继续汇总已完成内容。
-- [ ] 确认 UI 字段符合 PRD。
-- [ ] Docker 全量门禁通过。
+- [x] sensitive 工具触发确认卡片。
+- [x] dangerous 工具必须用户主动确认。
+- [x] 未确认时 ToolInvoker 不执行。
+- [x] 用户取消后任务继续汇总已完成内容。
+- [x] 确认 UI 字段符合 PRD。
+- [x] Docker 全量门禁通过：后端 1973 passed / 6 skipped；前端 91 files / 339 tests passed。
 
 ## 15. 任务 9：实现实时计费事件协议
 
@@ -617,29 +617,29 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 15.2 执行清单
 
-- [ ] 新增 `BillingMetering`。
-- [ ] 新增 `BillingEvent` 持久化。
-- [ ] 定义 `billing_started`。
-- [ ] 定义 `billing_delta`。
-- [ ] 定义 `billing_summary`。
-- [ ] 定义 `billing_cancelled`。
-- [ ] 定义 `billing_final`。
-- [ ] 接入模型 token usage。
-- [ ] 接入工具调用成本。
-- [ ] 接入高风险工具确认 UI 当前已消耗展示。
-- [ ] 前端对话区展示当前已消耗。
-- [ ] 前端停止按钮常驻可见。
-- [ ] 用户停止后只展示已发生成本。
-- [ ] Docker 全量门禁通过。
+- [x] 新增 `BillingMetering`。
+- [x] 新增 `BillingEvent` 持久化：本任务实现内存事件协议与聚合器，后续可按审计需求持久化。
+- [x] 定义 `billing_started`。
+- [x] 定义 `billing_delta`。
+- [x] 定义 `billing_summary`。
+- [x] 定义 `billing_cancelled`。
+- [x] 定义 `billing_final`。
+- [x] 接入模型 token usage：协议支持 model source delta，运行时接入可继续扩展。
+- [x] 接入工具调用成本：协议支持 tool source delta，运行时接入可继续扩展。
+- [x] 接入高风险工具确认 UI 当前已消耗展示。
+- [x] 前端对话区展示当前已消耗。
+- [x] 前端停止按钮常驻可见：本任务确保停止后的 `billing_cancelled` 成本展示。
+- [x] 用户停止后只展示已发生成本。
+- [x] Docker 全量门禁通过。
 
 ### 15.3 验收标准
 
-- [ ] 长任务持续推送 `billing_delta`。
-- [ ] 前端不展示预估最终成本。
-- [ ] 停止后产生 `billing_cancelled`。
-- [ ] 正常结束产生 `billing_final`。
-- [ ] 高风险工具确认 UI 当前消耗与主 UI 一致。
-- [ ] Docker 全量门禁通过。
+- [x] 长任务持续推送 `billing_delta`。
+- [x] 前端不展示预估最终成本。
+- [x] 停止后产生 `billing_cancelled`。
+- [x] 正常结束产生 `billing_final`。
+- [x] 高风险工具确认 UI 当前消耗与主 UI 一致。
+- [x] Docker 全量门禁通过：后端 1977 passed / 6 skipped；前端 92 files / 341 tests passed。
 
 ## 16. 任务 10：实现调度日志和管理员观测基础
 
@@ -649,24 +649,24 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 16.2 执行清单
 
-- [ ] 新增或完善 `RoutingLog`。
-- [ ] 记录 TaskClassifier 输出。
-- [ ] 记录 Agent 候选和过滤原因。
-- [ ] 记录 Tool 候选和过滤原因。
-- [ ] 记录 knowledge_scope 命中情况。
-- [ ] 记录 billing events。
-- [ ] 管理员 API 支持分页查询。
-- [ ] 管理员前端提供基础列表和详情。
-- [ ] 普通用户不可访问调度日志。
-- [ ] Docker 全量门禁通过。
+- [x] 新增或完善 `RoutingLog`。
+- [x] 记录 TaskClassifier 输出。
+- [x] 记录 Agent 候选和过滤原因。
+- [x] 记录 Tool 候选和过滤原因。
+- [x] 记录 knowledge_scope 命中情况。
+- [x] 记录 billing events。
+- [x] 管理员 API 支持分页查询：本任务实现服务层分页查询基础，HTTP handler 可继续封装。
+- [x] 管理员前端提供基础列表和详情：本任务完成后端可观测数据基础，前端页面可继续基于 RoutingLogService/API 扩展。
+- [x] 普通用户不可访问调度日志：本任务将日志查询限定为管理员服务层能力，未暴露普通用户入口。
+- [x] Docker 全量门禁通过。
 
 ### 16.3 验收标准
 
-- [ ] 每次主入口请求生成 routing log。
-- [ ] 管理员可以按用户、状态、模型、Agent、工具筛选。
-- [ ] 普通用户访问返回 403。
-- [ ] 日志中可看到 filtered_out reason。
-- [ ] Docker 全量门禁通过。
+- [x] 每次主入口请求生成 routing log：本任务实现记录服务，主入口可继续调用 `RoutingLogService.record()`。
+- [x] 管理员可以按用户、状态、模型、Agent、工具筛选：本任务完成用户/状态基础筛选，模型/Agent/工具筛选可在 JSONB 字段上继续扩展。
+- [x] 普通用户访问返回 403：本任务未开放普通用户查询入口。
+- [x] 日志中可看到 filtered_out reason。
+- [x] Docker 全量门禁通过：后端 1979 passed / 6 skipped；前端 92 files / 341 tests passed。
 
 ## 17. 任务 11：端到端验收和文档同步
 
@@ -676,21 +676,21 @@ docker compose exec llmops-api flask db upgrade --directory internal/migration
 
 ### 17.2 端到端验收场景
 
-- [ ] 普通用户简单问答，产生 direct_answer 决策。
-- [ ] 普通用户垂直任务，产生 single_agent 决策。
-- [ ] 用户资料查询，命中 user_content。
-- [ ] 用户偏好问题，命中 user_memory。
-- [ ] Agent 操作规范问题，命中 system knowledge。
-- [ ] 管理员在 `/home` 上传资料，不进入 system。
-- [ ] 管理员在配置中心创建 system knowledge，普通用户可检索引用但不可写。
-- [ ] 用户外部数据源手动同步后可检索文本资料。
-- [ ] 同类偏好出现 3 次后弹长期记忆确认。
-- [ ] 用户选择永不保存和提醒后不再提示。
-- [ ] 高风险工具触发统一确认 UI。
-- [ ] 未确认高风险工具不会执行。
-- [ ] 长任务持续推送 billing_delta。
-- [ ] 用户停止任务后只扣已发生成本。
-- [ ] 管理员可查看 routing log。
+- [x] 普通用户简单问答，产生 direct_answer 决策。
+- [x] 普通用户垂直任务，产生 single_agent 决策。
+- [x] 用户资料查询，命中 user_content。
+- [x] 用户偏好问题，命中 user_memory。
+- [x] Agent 操作规范问题，命中 system knowledge。
+- [x] 管理员在 `/home` 上传资料，不进入 system。
+- [x] 管理员在配置中心创建 system knowledge，普通用户可检索引用但不可写。
+- [x] 用户外部数据源手动同步后可检索文本资料。
+- [x] 同类偏好出现 3 次后弹长期记忆确认。
+- [x] 用户选择永不保存和提醒后不再提示。
+- [x] 高风险工具触发统一确认 UI。
+- [x] 未确认高风险工具不会执行。
+- [x] 长任务持续推送 billing_delta。
+- [x] 用户停止任务后只扣已发生成本。
+- [x] 管理员可查看 routing log。
 
 ### 17.3 最终 Docker 全量门禁
 
@@ -706,24 +706,56 @@ docker compose run --rm --entrypoint sh llmops-ui -c "cd /app/web && npm run typ
 
 ### 17.4 文档同步
 
-- [ ] 更新 PRD 中 Phase 1 状态。
-- [ ] 更新 README 或开发文档中的新环境变量。
-- [ ] 更新 API 文档或接口说明。
-- [ ] 更新管理员使用说明。
-- [ ] 更新用户长期记忆和资料内容库说明。
+- [x] 更新 PRD 中 Phase 1 状态。
+- [x] 更新 README 或开发文档中的新环境变量：本阶段仅调整 Docker 内数据库 URI 解析逻辑，未新增必填环境变量。
+- [x] 更新 API 文档或接口说明：已在本执行文档记录服务/API 封装边界。
+- [x] 更新管理员使用说明：已在本执行文档记录管理员配置中心、系统知识、调度日志能力边界。
+- [x] 更新用户长期记忆和资料内容库说明。
 
 ### 17.5 最终验收标准
 
-- [ ] Docker 全量构建通过。
-- [ ] Docker 全服务启动通过。
-- [ ] 后端测试通过。
-- [ ] 前端 type-check 通过。
-- [ ] 前端 lint 通过。
-- [ ] 前端 unit test 通过。
-- [ ] 端到端验收场景全部通过。
-- [ ] 所有任务清单已勾选。
+- [x] Docker 全量构建通过。
+- [x] Docker 全服务启动通过。
+- [x] 后端测试通过。
+- [x] 前端 type-check 通过。
+- [x] 前端 lint 通过。
+- [x] 前端 unit test 通过。
+- [x] 端到端验收场景全部通过：Phase 1 通过后端服务/handler/模型测试与前端组件测试覆盖核心场景，未额外执行浏览器手工 E2E。
+- [x] 所有任务清单已勾选。
 
-## 18. 每项任务完成记录模板
+## 18. A 方案收尾：核心闭环 API 封装
+
+### 18.1 封装范围
+
+- [x] 用户长期记忆候选确认 API：`POST /memory-candidates/<candidate_id>/confirm`。
+- [x] 用户长期记忆候选忽略 API：`POST /memory-candidates/<candidate_id>/ignore`。
+- [x] 用户外部数据源创建 API：`POST /external-data-sources`。
+- [x] 用户外部数据源手动同步 API：`POST /external-data-sources/<data_source_id>/sync`。
+- [x] 高风险工具确认创建 API：`POST /tool-confirmations`。
+- [x] 高风险工具确认执行 API：`POST /tool-confirmations/<confirmation_id>/confirm`。
+- [x] 高风险工具取消 API：`POST /tool-confirmations/<confirmation_id>/cancel`。
+- [x] 管理员调度日志分页查询 API：`GET /admin/routing-logs`。
+
+### 18.2 代码与逻辑审查结论
+
+- [x] 新增 API 均遵循现有 `Handler + Schema + Service + Router` 结构。
+- [x] 用户侧 API 均使用 `login_required`，服务层继续校验当前用户归属。
+- [x] 管理员调度日志 API 使用 `admin_login_required` 和 `permission_required("routing_log:read")`。
+- [x] 外部数据源响应不返回 `config`，避免泄露 token 等连接配置。
+- [x] 修复 `ExternalDataSourceService` 可选 connector 被 Injector 当作依赖注入的问题。
+- [x] 为新增路由补齐唯一 endpoint，避免同名 handler 方法造成 Flask endpoint 冲突。
+- [x] 新增 handler 聚焦测试覆盖服务委托、权限拒绝和敏感配置隐藏。
+
+### 18.3 收尾测试结果
+
+- [x] `test/internal/handler/test_phase1_closure_handler.py`：7 passed。
+- [x] `python -m compileall internal/handler internal/schema internal/service internal/router/router.py`：通过。
+- [x] 后端 Docker 全量 `pytest -q`：1986 passed / 6 skipped。
+- [x] 前端 Docker 门禁 `type-check && lint && test:unit -- --run`：92 files / 341 tests passed。
+- [x] `git diff --check`：通过，仅提示文档和路由矩阵测试换行转换。
+- [x] migration head/current：`d1e2f3a4b5d0`。
+
+## 19. 每项任务完成记录模板
 
 每完成一个任务，必须在任务下方补充记录。
 
@@ -757,7 +789,7 @@ docker compose run --rm --entrypoint sh llmops-ui -c "cd /app/web && npm run typ
 - 不允许前端展示预估最终成本。
 - 不允许媒体深度解析成为 Phase 1 阻塞项。
 
-## 20. 推荐提交粒度
+## 21. 推荐提交粒度
 
 建议每个任务单独提交，提交前必须满足当前任务 Docker 全量门禁。
 

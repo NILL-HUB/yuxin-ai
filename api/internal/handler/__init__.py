@@ -7,12 +7,14 @@ from .auth_handler import AuthHandler
 from .builtin_tool_handler import BuiltinToolHandler
 from .dataset_handler import DatasetHandler
 from .document_handler import DocumentHandler
+from .external_data_source_handler import ExternalDataSourceHandler
 from .home_handler import HomeHandler
 from .notification_handler import NotificationHandler
 from .oauth_handler import OAuthHandler
 from .openapi_handler import OpenAPIHandler
 from .segment_handler import SegmentHandler
 from .tag_handler import TagHandler
+from .tool_confirmation_handler import ToolConfirmationHandler
 from .upload_file_handler import UploadFileHandler
 from .workflow_handler import WorkflowHandler
 from .language_model_handler import LanguageModelHandler
@@ -27,6 +29,7 @@ from .admin_customer_user_handler import AdminCustomerUserHandler
 from .admin_rbac_handler import AdminRbacHandler
 from .admin_redeem_code_handler import AdminRedeemCodeHandler
 from .admin_resource_entry_handler import AdminResourceEntryHandler
+from .admin_routing_log_handler import AdminRoutingLogHandler
 from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
 from .web_app_handler import WebAppHandler
@@ -38,6 +41,7 @@ from .public_app_handler import PublicAppHandler
 from .public_workflow_handler import PublicWorkflowHandler
 from .redeem_code_handler import RedeemCodeHandler
 from .mcp_handler import McpHandler
+from .memory_candidate_handler import MemoryCandidateHandler
 from .my_app_handler import MyAppHandler
 from .skill_handler import SkillHandler
 
@@ -69,6 +73,7 @@ __all__ = [
     "AdminRbacHandler",
     "AdminRedeemCodeHandler",
     "AdminResourceEntryHandler",
+    "AdminRoutingLogHandler",
     "AdminUserHandler",
     "AdminWorkflowHandler",
     "WebAppHandler",
@@ -78,9 +83,12 @@ __all__ = [
     "WechatHandler",
     "PublicAppHandler",
     "PublicWorkflowHandler",
+    "RedeemCodeHandler",
     "McpHandler",
+    "MemoryCandidateHandler",
     "MyAppHandler",
     "SkillHandler",
+    "ExternalDataSourceHandler",
     "HomeHandler",
     "NotificationHandler",
 ]

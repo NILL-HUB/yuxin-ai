@@ -49,6 +49,7 @@ class TestRouterFullMatrix:
             '/admin/apps/<uuid:app_id>': {'GET', 'PATCH'},
             '/admin/apps/<uuid:app_id>/offline': {'POST'},
             '/admin/audit-logs': {'GET'},
+            '/admin/routing-logs': {'GET'},
             '/admin/auth/login': {'POST'},
             '/admin/auth/logout': {'POST'},
             '/admin/auth/me': {'GET'},
@@ -147,6 +148,8 @@ class TestRouterFullMatrix:
             '/datasets/<uuid:dataset_id>/queries': {'GET'},
             '/datasets/<uuid:dataset_id>/regenerate-icon': {'POST'},
             '/datasets/generate-icon-preview': {'POST'},
+            '/external-data-sources': {'POST'},
+            '/external-data-sources/<uuid:data_source_id>/sync': {'POST'},
             '/health': {'GET'},
             '/healthz': {'GET'},
             '/home/intent': {'GET'},
@@ -155,6 +158,8 @@ class TestRouterFullMatrix:
             '/language-models/<string:provider_name>/icon': {'GET'},
             '/membership/redeem-records': {'GET'},
             '/membership/summary': {'GET'},
+            '/memory-candidates/<uuid:candidate_id>/confirm': {'POST'},
+            '/memory-candidates/<uuid:candidate_id>/ignore': {'POST'},
             '/my/apps': {'GET'},
             '/my/apps/<uuid:app_id>/chat': {'POST'},
             '/mcp-providers': {'GET', 'POST'},
@@ -207,6 +212,9 @@ class TestRouterFullMatrix:
             '/tags/<uuid:tag_id>/delete': {'POST'},
             '/tags/dimensions': {'GET'},
             '/tags/hot': {'GET'},
+            '/tool-confirmations': {'POST'},
+            '/tool-confirmations/<uuid:confirmation_id>/cancel': {'POST'},
+            '/tool-confirmations/<uuid:confirmation_id>/confirm': {'POST'},
             '/upload-files/file': {'POST'},
             '/upload-files/image': {'POST'},
             '/web-apps/<string:token>': {'GET'},
@@ -244,4 +252,4 @@ class TestRouterFullMatrix:
         assert by_blueprint["openapi"] == 1
         assert by_blueprint["llmops"] == len(rules) - 1
         # 当前系统的接口总量是一个重要契约，避免漏挂导致线上能力消失。
-        assert len(rules) == 240
+        assert len(rules) == 248

@@ -47,6 +47,7 @@ class AdminAppHandler:
             app_id,
             status=req.status.data,
             is_public=payload.get("is_public") if "is_public" in payload else None,
+            agent_metadata=payload.get("agent_metadata") if "agent_metadata" in payload else None,
         )
         resp = AdminAppResp()
         return success_json(resp.dump(result))

@@ -68,21 +68,21 @@ class TestAdminAppHandler:
         captured = {}
         _mock_current_admin(monkeypatch, ["app:update"])
 
-        def _update(self, app_id_arg, *, status=None, is_public=None):
-            captured.update({"app_id": app_id_arg, "status": status, "is_public": is_public})
-            return {"id": str(app_id_arg), "name": "Demo", "icon": "", "description": "", "status": status, "is_public": is_public, "created_at": 1893456000, "updated_at": 1893456000}
+        def _update(self, app_id_arg, *, status=None, is_public=None, agent_metadata=None):
+            captured.update({"app_id": app_id_arg, "status": status, "is_public": is_public, "agent_metadata": agent_metadata})
+            return {"id": str(app_id_arg), "name": "Demo", "icon": "", "description": "", "status": status, "is_public": is_public, "agent_metadata": agent_metadata or {}, "created_at": 1893456000, "updated_at": 1893456000}
 
         monkeypatch.setattr("internal.service.admin_app_service.AdminAppService.update_app", _update, raising=False)
 
         resp = client.patch(
             f"/admin/apps/{app_id}",
-            json={"status": "published", "is_public": True},
+            json={"status": "published", "is_public": True, "agent_metadata": {"primary_pool": "sales"}},
             headers={"Authorization": "Bearer admin-token"},
         )
 
         assert resp.status_code == 200
         assert resp.json["code"] == HttpCode.SUCCESS
-        assert captured == {"app_id": app_id, "status": "published", "is_public": True}
+        assert captured == {"app_id": app_id, "status": "published", "is_public": True, "agent_metadata": {"primary_pool": "sales"}}
 
     def test_offline_app_should_delegate_to_service(self, client, monkeypatch):
         app_id = uuid4()

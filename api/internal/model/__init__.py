@@ -4,15 +4,18 @@ from .api_tool import ApiTool, ApiToolProvider
 from .app import App, AppAssignment, AppDatasetJoin, AppConfig, AppConfigVersion
 from .conversation import Conversation, Message, MessageAgentThought
 from .dataset import Dataset, Document, Segment, KeywordTable, DatasetQuery, ProcessRule
+from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, MemoryCandidate, ExternalDataSource
 from .end_user import EndUser
 from .upload_file import UploadFile
 from .workflow import Workflow, WorkflowResult
 from .platform import WechatConfig, WechatEndUser, WechatMessage
 from .tag import Tag, AppTag, WorkflowTag
+from .tool_confirmation import ToolConfirmation
 from .mcp import McpProvider
 from .skill import SkillPackage, SkillPackageVersion
 from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, RolePermission, AuditLog
 from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTransaction, RedeemCodeBatch, RedeemCode
+from .routing_log import RoutingLog
 
 __all__ = [
     "App", "AppAssignment", "AppDatasetJoin", "AppConfig", "AppConfigVersion",

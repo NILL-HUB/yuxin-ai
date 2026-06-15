@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from internal.extension.database_extension import db
+from internal.entity.agent_entity import normalize_agent_metadata
 from internal.entity.app_entity import AppConfigType, DEFAULT_APP_CONFIG, AppStatus
 from .conversation import Conversation
 from internal.entity.conversation_entity import InvokeFrom
@@ -51,6 +52,7 @@ class App(db.Model):
     status = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 应用状态
     is_public = Column(Boolean, nullable=False, server_default=text("false"))  # 是否公开到广场
     tags = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用标签列表
+    agent_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     published_at = Column(DateTime, nullable=True)  # 发布到广场的时间
     original_app_id = Column(UUID, nullable=True)  # 原始应用ID(用于Fork追踪)
     updated_at = Column(
@@ -64,6 +66,10 @@ class App(db.Model):
 
     # 关系定义
     account = relationship("Account", foreign_keys=[account_id], lazy="joined")
+
+    @property
+    def normalized_agent_metadata(self) -> dict:
+        return normalize_agent_metadata(self.agent_metadata)
 
     @property
     def app_config(self) -> "AppConfig":
