@@ -1,0 +1,129 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useGetDraftAppConfig, useGetVersions } from '@/hooks/use-app'
+import * as appService from '@/services/app'
+
+vi.mock('@/services/app', async () => {
+  const actual = await vi.importActual<typeof import('@/services/app')>('@/services/app')
+  return {
+    ...actual,
+    getDraftAppConfig: vi.fn(),
+    getVersions: vi.fn(),
+  }
+})
+
+describe('useGetVersions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('loads version list and resets loading on success', async () => {
+    const payload = [
+      {
+        id: 'draft-version-id',
+        app_id: 'app-1',
+        version: 0,
+        config_type: 'draft',
+        config: { model_config: { provider: 'deepseek', model: 'deepseek-chat' } },
+        is_current_published: false,
+        label: '草稿',
+        summary: '当前草稿版本',
+        created_at: 1710000000,
+        updated_at: 1710000100,
+      },
+      {
+        id: 'published-version-id',
+        app_id: 'app-1',
+        version: 3,
+        config_type: 'published',
+        config: { model_config: { provider: 'deepseek', model: 'deepseek-chat' } },
+        is_current_published: true,
+        label: '版本 #003',
+        summary: '当前线上版本',
+        created_at: 1700000000,
+        updated_at: 1700000100,
+      },
+    ]
+    vi.mocked(appService.getVersions).mockResolvedValue({ data: { list: payload } } as never)
+
+    const { loading, versions, loadVersions } = useGetVersions()
+
+    expect(loading.value).toBe(false)
+    await loadVersions('app-1')
+
+    expect(appService.getVersions).toHaveBeenCalledWith('app-1')
+    expect(versions.value).toEqual(payload)
+    expect(loading.value).toBe(false)
+  })
+
+  it('loads draft capabilities with the draft app config', async () => {
+    vi.mocked(appService.getDraftAppConfig).mockResolvedValue({
+      data: {
+        dialog_round: 3,
+        model_config: { provider: 'openai', model: 'gpt-4o-mini', parameters: {} },
+        capabilities: {
+          image_input: { enabled: true },
+        },
+        preset_prompt: 'prompt',
+        long_term_memory: { enable: false },
+        opening_statement: '',
+        opening_questions: [],
+        suggested_after_answer: { enable: false },
+        review_config: { enable: false },
+        datasets: [],
+        retrieval_config: { retrieval_strategy: 'semantic', k: 10, score: 0.5 },
+        tools: [],
+        mcp_bindings: [],
+        mcp_tool_snapshots: [],
+        agent_bindings: [
+          {
+            app_id: 'agent-1',
+            invoke_mode: 'a2a',
+            name: '客服助手',
+            icon: '',
+            description: '示例 Agent',
+            source_scope: 'public',
+            is_public: true,
+            status: 'published',
+            tool_name: 'agent_app_demo',
+          },
+        ],
+        workflows: [],
+        speech_to_text: { enable: false },
+        text_to_speech: { enable: false, voice: 'alex', auto_play: false },
+      },
+    } as never)
+
+    const { draftAppConfigForm, loadDraftAppConfig } = useGetDraftAppConfig()
+
+    await loadDraftAppConfig('app-1')
+
+    expect(appService.getDraftAppConfig).toHaveBeenCalledWith('app-1')
+    expect(draftAppConfigForm.value.capabilities).toEqual({
+      image_input: { enabled: true },
+    })
+    expect(draftAppConfigForm.value.mcp_tool_snapshots).toEqual([])
+    expect(draftAppConfigForm.value.agent_bindings).toEqual([
+      {
+        app_id: 'agent-1',
+        invoke_mode: 'a2a',
+        name: '客服助手',
+        icon: '',
+        description: '示例 Agent',
+        source_scope: 'public',
+        is_public: true,
+        status: 'published',
+        tool_name: 'agent_app_demo',
+      },
+    ])
+  })
+
+  it('resets loading when request fails', async () => {
+    vi.mocked(appService.getVersions).mockRejectedValue(new Error('network error'))
+
+    const { loading, loadVersions } = useGetVersions()
+
+    await expect(loadVersions('app-1')).rejects.toThrow('network error')
+    expect(loading.value).toBe(false)
+  })
+})

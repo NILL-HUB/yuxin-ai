@@ -1,0 +1,597 @@
+from __future__ import annotations
+
+from uuid import UUID, uuid4
+
+import pytest
+
+from internal.entity.app_entity import AppConfigType, AppStatus
+from internal.schema.app_schema import (
+    CreateAppReq,
+    DebugChatReq,
+    FallbackHistoryToDraftReq,
+    GetAppResp,
+    GetAppsWithPageResp,
+    GetDebugConversationMessagesWithPageReq,
+    GetDebugConversationMessagesWithPageResp,
+    GetPublishHistoriesWithPageResp,
+)
+from internal.schema.assistant_agent_schema import (
+    AssistantAgentChat,
+    AssistantAgentGenerateIntroduction,
+    GetAssistantAgentMessagesWithPageReq,
+    GetAssistantAgentMessagesWithPageResp,
+)
+from internal.schema.conversation_schema import (
+    GetConversationMessagesWithPageReq,
+    GetConversationMessagesWithPageResp,
+    UpdateConversationIsPinnedReq,
+    UpdateConversationNameReq,
+)
+from internal.schema.openapi_schema import OpenAPIChatReq
+from internal.schema.web_app_schema import (
+    GetConversationsReq,
+    GetConversationsResp,
+    GetWebAppResp,
+    WebAppChatReq,
+)
+from test.internal.schema.utils import ns, utc_dt
+
+
+MULTIMODAL_ARTIFACT_THOUGHT_ID = UUID("ff1e16f0-2c22-426b-b3c4-fa11435f4a02")
+
+
+def _validate_form(form_request, form_cls, *, data=None, json=None, content_type=None):
+    with form_request(data=data, json=json, content_type=content_type):
+        form = form_cls(meta={"csrf": False})
+        return form.validate(), form
+
+
+def _message_payload():
+    thought = ns(
+        id=uuid4(),
+        position=1,
+        event="tool_call",
+        thought="thinking",
+        observation="obs",
+        tool="search",
+        tool_input='{"q":"x"}',
+        latency=0.33,
+        created_at=utc_dt(2024, 1, 1, 1, 0, 0),
+    )
+    return ns(
+        id=uuid4(),
+        conversation_id=uuid4(),
+        query="hello",
+        image_urls=["https://img.example.com/1.png"],
+        answer="world",
+        total_token_count=10,
+        latency=0.22,
+        agent_thoughts=[thought],
+        suggested_questions=["q1"],
+        created_at=utc_dt(2024, 1, 1, 2, 0, 0),
+    )
+
+
+def _multimodal_message_payload():
+    artifact_thought = ns(
+        id=MULTIMODAL_ARTIFACT_THOUGHT_ID,
+        position=1,
+        event="deep_artifact_created",
+        thought="chart.png",
+        observation="https://cos.example.com/chart.png",
+        tool="artifact",
+        tool_input={
+            "artifact": {
+                "name": "chart.png",
+                "url": "https://cos.example.com/chart.png",
+                "mime_type": "image/png",
+                "extension": "png",
+                "path": "/workspace/artifacts/chart.png",
+            }
+        },
+        latency=0.12,
+        created_at=utc_dt(2024, 1, 1, 1, 5, 0),
+    )
+    return ns(
+        id=uuid4(),
+        conversation_id=uuid4(),
+        query="生成图表",
+        image_urls=[],
+        answer="已生成图表",
+        total_token_count=12,
+        latency=0.4,
+        agent_thoughts=[artifact_thought],
+        suggested_questions=[],
+        created_at=utc_dt(2024, 1, 1, 2, 10, 0),
+    )
+
+
+def test_create_app_req_should_validate_required_fields(form_request):
+    ok, form = _validate_form(
+        form_request,
+        CreateAppReq,
+        data={
+            "name": "助手",
+            "icon": "https://img.example.com/app.png",
+            "description": "desc",
+        },
+    )
+    assert ok, form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        CreateAppReq,
+        data={
+            "name": "",
+            "icon": "bad-url",
+            "description": "desc",
+        },
+    )
+    assert not ok
+    assert "name" in form.errors
+    assert "icon" in form.errors
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_prompt", "expected_model"),
+    [
+        (
+            AppStatus.PUBLISHED.value,
+            "published-prompt",
+            {"provider": "openai", "model": "gpt-4o-mini"},
+        ),
+        (
+            AppStatus.DRAFT.value,
+            "draft-prompt",
+            {"provider": "azure-openai", "model": "gpt-4o"},
+        ),
+    ],
+)
+def test_get_apps_with_page_resp_should_select_config_by_status(status, expected_prompt, expected_model):
+    app = ns(
+        id=uuid4(),
+        name="app",
+        icon="https://img.example.com/app.png",
+        description="desc",
+        status=status,
+        is_public=True,
+        account=ns(name="app-owner", avatar="https://img.example.com/app-owner.png"),
+        app_config=ns(
+            preset_prompt="published-prompt",
+            model_config={"provider": "openai", "model": "gpt-4o-mini", "extra": "ignored"},
+        ),
+        draft_app_config=ns(
+            preset_prompt="draft-prompt",
+            model_config={"provider": "azure-openai", "model": "gpt-4o", "extra": "ignored"},
+            updated_at=utc_dt(2024, 1, 3, 0, 0, 0),
+        ),
+        updated_at=utc_dt(2024, 1, 2, 0, 0, 0),
+        created_at=utc_dt(2024, 1, 1, 0, 0, 0),
+    )
+
+    data = GetAppsWithPageResp().dump(app)
+    assert data["preset_prompt"] == expected_prompt
+    assert data["model_config"] == expected_model
+    assert data["creator_name"] == "app-owner"
+    assert data["creator_avatar"] == "https://img.example.com/app-owner.png"
+
+
+def test_get_app_resp_should_render_empty_debug_conversation_id_when_none():
+    app = ns(
+        id=uuid4(),
+        debug_conversation_id=None,
+        name="app",
+        icon="https://img.example.com/app.png",
+        description="desc",
+        status=AppStatus.DRAFT.value,
+        is_public=False,
+        category="general",
+        draft_app_config=ns(updated_at=utc_dt(2024, 1, 2, 0, 0, 0)),
+        updated_at=utc_dt(2024, 1, 3, 0, 0, 0),
+        created_at=utc_dt(2024, 1, 1, 0, 0, 0),
+    )
+    data = GetAppResp().dump(app)
+    assert data["debug_conversation_id"] == ""
+
+
+def test_get_publish_histories_resp_should_dump_version_payload():
+    version = ns(
+        id=uuid4(),
+        app_id=uuid4(),
+        version=2,
+        config_type=AppConfigType.PUBLISHED.value,
+        model_config={"provider": "deepseek", "model": "deepseek-chat"},
+        dialog_round=3,
+        preset_prompt="prompt",
+        tools=[{"type": "builtin_tool", "provider_id": "google", "tool_id": "google_serper", "params": {}}],
+        workflows=["workflow-1"],
+        datasets=["dataset-1"],
+        retrieval_config={"retrieval_strategy": "semantic", "k": 10, "score": 0.5},
+        long_term_memory={"enable": True},
+        opening_statement="hello",
+        opening_questions=["q1"],
+        speech_to_text={"enable": True},
+        text_to_speech={"enable": True, "voice": "alex", "auto_play": True},
+        suggested_after_answer={"enable": True},
+        review_config={"enable": False},
+        updated_at=utc_dt(2024, 1, 1, 1, 0, 0),
+        created_at=utc_dt(2024, 1, 1, 0, 0, 0),
+        is_current_published=True,
+        display_config={
+            "model_config": {"provider": "deepseek", "model": "deepseek-chat"},
+            "dialog_round": 3,
+            "preset_prompt": "prompt",
+            "tools": [
+                {
+                    "type": "builtin_tool",
+                    "provider": {"id": "google", "label": "Google 搜索"},
+                    "tool": {"id": "google_serper", "name": "google_serper", "label": "Google 检索"},
+                }
+            ],
+            "workflows": [{"id": "workflow-1", "name": "工作流A"}],
+            "datasets": [{"id": "dataset-1", "name": "知识库A"}],
+            "retrieval_config": {"retrieval_strategy": "semantic", "k": 10, "score": 0.5},
+            "long_term_memory": {"enable": True},
+            "opening_statement": "hello",
+            "opening_questions": ["q1"],
+            "speech_to_text": {"enable": True},
+            "text_to_speech": {"enable": True, "voice": "alex", "auto_play": True},
+            "suggested_after_answer": {"enable": True},
+            "review_config": {"enable": False},
+        },
+    )
+    data = GetPublishHistoriesWithPageResp().dump(version)
+    assert data["app_id"] == str(version.app_id)
+    assert data["version"] == 2
+    assert data["config_type"] == AppConfigType.PUBLISHED.value
+    assert data["config"]["model_config"] == {"provider": "deepseek", "model": "deepseek-chat"}
+    assert data["config"]["tools"][0]["provider"]["label"] == "Google 搜索"
+    assert data["config"]["workflows"][0]["name"] == "工作流A"
+    assert data["config"]["datasets"][0]["name"] == "知识库A"
+    assert data["updated_at"] == int(utc_dt(2024, 1, 1, 1, 0, 0).timestamp())
+    assert data["created_at"] == int(utc_dt(2024, 1, 1, 0, 0, 0).timestamp())
+    assert data["is_current_published"] is True
+    assert data["label"] == "版本 #002"
+    assert data["summary"] == "当前线上版本"
+
+
+def test_fallback_history_to_draft_req_should_validate_uuid(form_request):
+    ok, form = _validate_form(
+        form_request,
+        FallbackHistoryToDraftReq,
+        data={"app_config_version_id": str(uuid4())},
+    )
+    assert ok, form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        FallbackHistoryToDraftReq,
+        data={"app_config_version_id": "bad-id"},
+    )
+    assert not ok
+    assert "app_config_version_id" in form.errors
+
+
+def test_debug_chat_req_should_validate_image_urls(form_request):
+    ok, form = _validate_form(
+        form_request,
+        DebugChatReq,
+        data={"query": "hello", "image_urls": ["https://img.example.com/1.png"]},
+    )
+    assert ok, form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        DebugChatReq,
+        data={"query": "hello", "image_urls": ["https://img.example.com/1.png"] * 6},
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        DebugChatReq,
+        data={"query": "hello", "image_urls": ["not-url"]},
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+
+def test_debug_chat_req_validate_image_urls_should_ignore_non_list_input(form_request):
+    with form_request():
+        form = DebugChatReq(meta={"csrf": False})
+        form.image_urls.data = None  # type: ignore[assignment]
+        assert form.validate_image_urls(form.image_urls) == []
+
+
+def test_get_debug_conversation_messages_with_page_req_should_validate_cursor(form_request):
+    ok, form = _validate_form(form_request, GetDebugConversationMessagesWithPageReq, data={"created_at": "0"})
+    assert ok, form.errors
+
+    ok, form = _validate_form(form_request, GetDebugConversationMessagesWithPageReq, data={"created_at": "-1"})
+    assert not ok
+    assert "created_at" in form.errors
+
+
+def test_get_debug_conversation_messages_with_page_resp_should_dump_agent_thoughts():
+    data = GetDebugConversationMessagesWithPageResp().dump(_message_payload())
+    assert data["query"] == "hello"
+    assert data["input_parts"] == [
+        {"type": "text", "text": "hello"},
+        {"type": "image", "url": "https://img.example.com/1.png"},
+    ]
+    assert data["answer_parts"] == [{"type": "text", "text": "world"}]
+    assert data["artifacts"] == []
+    assert len(data["agent_thoughts"]) == 1
+    assert "created_at" in data["agent_thoughts"][0]
+
+
+def test_conversation_schema_should_validate_and_dump(form_request):
+    ok, form = _validate_form(form_request, GetConversationMessagesWithPageReq, data={"created_at": "0"})
+    assert ok, form.errors
+
+    ok, form = _validate_form(form_request, GetConversationMessagesWithPageReq, data={"created_at": "-1"})
+    assert not ok
+    assert "created_at" in form.errors
+
+    payload = GetConversationMessagesWithPageResp().dump(_message_payload())
+    assert payload["answer"] == "world"
+    assert payload["input_parts"] == [
+        {"type": "text", "text": "hello"},
+        {"type": "image", "url": "https://img.example.com/1.png"},
+    ]
+    assert payload["answer_parts"] == [{"type": "text", "text": "world"}]
+    assert payload["artifacts"] == []
+    assert payload["total_token_count"] == 10
+
+    ok, form = _validate_form(form_request, UpdateConversationNameReq, data={"name": "n" * 100})
+    assert ok, form.errors
+    ok, form = _validate_form(form_request, UpdateConversationNameReq, data={"name": "n" * 101})
+    assert not ok
+    assert "name" in form.errors
+
+    ok, form = _validate_form(form_request, UpdateConversationIsPinnedReq, data={"is_pinned": "y"})
+    assert ok, form.errors
+    assert form.is_pinned.data is True
+
+
+def test_conversation_schema_should_promote_artifacts_into_multimodal_output():
+    payload = GetConversationMessagesWithPageResp().dump(_multimodal_message_payload())
+
+    assert payload["answer_parts"] == [
+        {"type": "text", "text": "已生成图表"},
+        {
+            "type": "image",
+            "url": "https://cos.example.com/chart.png",
+            "name": "chart.png",
+            "mime_type": "image/png",
+            "extension": "png",
+            "group_id": str(MULTIMODAL_ARTIFACT_THOUGHT_ID),
+            "group_name": "生成图片",
+        },
+    ]
+    assert payload["artifacts"] == [
+        {
+            "name": "chart.png",
+            "url": "https://cos.example.com/chart.png",
+            "mime_type": "image/png",
+            "extension": "png",
+            "group_id": str(MULTIMODAL_ARTIFACT_THOUGHT_ID),
+            "group_name": "生成图片",
+        }
+    ]
+
+
+def test_web_app_schema_should_validate_and_dump(form_request):
+    app = ns(
+        id=uuid4(),
+        icon="https://img.example.com/app.png",
+        name="app",
+        description="desc",
+        app_config=ns(
+            opening_statement="hi",
+            opening_questions=["q1", "q2"],
+            suggested_after_answer={"enable": True},
+        ),
+    )
+    app_payload = GetWebAppResp().dump(app)
+    assert app_payload["app_config"]["opening_statement"] == "hi"
+
+    ok, form = _validate_form(
+        form_request,
+        WebAppChatReq,
+        data={
+            "conversation_id": str(uuid4()),
+            "query": "hello",
+            "image_urls": ["https://img.example.com/1.png"],
+        },
+    )
+    assert ok, form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        WebAppChatReq,
+        data={"conversation_id": "bad-id", "query": "hello"},
+    )
+    assert not ok
+    assert "conversation_id" in form.errors
+
+    ok, form = _validate_form(form_request, GetConversationsReq, data={"is_pinned": "y"})
+    assert ok, form.errors
+    assert form.is_pinned.data is True
+
+    conversation = ns(
+        id=uuid4(),
+        name="conv",
+        summary="summary",
+        created_at=utc_dt(2024, 1, 1, 0, 0, 0),
+    )
+    conv_payload = GetConversationsResp().dump(conversation)
+    assert conv_payload["name"] == "conv"
+    assert conv_payload["created_at"] == int(utc_dt(2024, 1, 1, 0, 0, 0).timestamp())
+
+
+def test_openapi_chat_req_should_validate_conversation_and_images(form_request):
+    ok, form = _validate_form(
+        form_request,
+        OpenAPIChatReq,
+        data={
+            "app_id": str(uuid4()),
+            "end_user_id": str(uuid4()),
+            "conversation_id": str(uuid4()),
+            "query": "hello",
+            "image_urls": ["https://img.example.com/1.png"],
+            "stream": "y",
+        },
+    )
+    assert ok, form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        OpenAPIChatReq,
+        data={
+            "app_id": str(uuid4()),
+            "conversation_id": "bad-id",
+            "query": "hello",
+        },
+    )
+    assert not ok
+    assert "conversation_id" in form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        OpenAPIChatReq,
+        data={
+            "app_id": str(uuid4()),
+            "conversation_id": str(uuid4()),
+            "query": "hello",
+        },
+    )
+    assert not ok
+    assert "conversation_id" in form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        OpenAPIChatReq,
+        data={
+            "app_id": str(uuid4()),
+            "query": "hello",
+            "image_urls": ["https://img.example.com/1.png"] * 6,
+        },
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        OpenAPIChatReq,
+        data={
+            "app_id": str(uuid4()),
+            "query": "hello",
+            "image_urls": ["bad-url"],
+        },
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+
+def test_openapi_chat_req_validate_image_urls_should_ignore_non_list_input(form_request):
+    with form_request():
+        form = OpenAPIChatReq(meta={"csrf": False})
+        form.image_urls.data = None  # type: ignore[assignment]
+        assert form.validate_image_urls(form.image_urls) == []
+
+
+def test_assistant_agent_schema_should_validate_and_dump(form_request):
+    ok, form = _validate_form(
+        form_request,
+        AssistantAgentChat,
+        data={"query": "hello", "image_urls": ["https://img.example.com/1.png"]},
+    )
+    assert ok, form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        AssistantAgentChat,
+        data={"query": "hello", "image_urls": ["bad-url"]},
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        AssistantAgentChat,
+        data={"query": "hello", "image_urls": ["https://img.example.com/1.png"] * 6},
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+    ok, form = _validate_form(form_request, GetAssistantAgentMessagesWithPageReq, data={"created_at": "0"})
+    assert ok, form.errors
+
+    ok, form = _validate_form(form_request, GetAssistantAgentMessagesWithPageReq, data={"created_at": "-1"})
+    assert not ok
+    assert "created_at" in form.errors
+
+    payload = GetAssistantAgentMessagesWithPageResp().dump(_message_payload())
+    assert payload["answer"] == "world"
+    assert payload["input_parts"] == [
+        {"type": "text", "text": "hello"},
+        {"type": "image", "url": "https://img.example.com/1.png"},
+    ]
+    assert payload["answer_parts"] == [{"type": "text", "text": "world"}]
+    assert payload["artifacts"] == []
+    assert len(payload["agent_thoughts"]) == 1
+
+    ok, form = _validate_form(form_request, AssistantAgentGenerateIntroduction, data={})
+    assert ok, form.errors
+
+
+def test_assistant_agent_chat_validate_image_urls_should_ignore_non_list_input(form_request):
+    with form_request():
+        form = AssistantAgentChat(meta={"csrf": False})
+        form.image_urls.data = None  # type: ignore[assignment]
+        assert form.validate_image_urls(form.image_urls) == []
+
+
+def test_web_app_chat_req_should_validate_image_url_length_and_format(form_request):
+    ok, form = _validate_form(
+        form_request,
+        WebAppChatReq,
+        data={"query": "hello", "enable_deep_thinking": "true"},
+    )
+    assert ok, form.errors
+    assert form.enable_deep_thinking.data is True
+
+    ok, form = _validate_form(
+        form_request,
+        WebAppChatReq,
+        data={"query": "hello", "image_urls": ["https://img.example.com/1.png"] * 6},
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+    ok, form = _validate_form(
+        form_request,
+        WebAppChatReq,
+        data={"query": "hello", "image_urls": ["bad-url"]},
+    )
+    assert not ok
+    assert "image_urls" in form.errors
+
+
+def test_web_app_chat_req_validate_image_urls_should_ignore_non_list_input(form_request):
+    with form_request():
+        form = WebAppChatReq(meta={"csrf": False})
+        form.image_urls.data = None  # type: ignore[assignment]
+        assert form.validate_image_urls(form.image_urls) == []
+
+
+def test_assistant_agent_chat_should_accept_enable_deep_thinking(form_request):
+    ok, form = _validate_form(
+        form_request,
+        AssistantAgentChat,
+        data={"query": "hello", "enable_deep_thinking": "true"},
+    )
+    assert ok, form.errors
+    assert form.enable_deep_thinking.data is True

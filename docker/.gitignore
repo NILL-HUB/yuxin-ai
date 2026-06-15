@@ -1,0 +1,21 @@
+# Docker 数据卷
+volumes/
+
+# Generated frontend build env
+.ui-build.env
+
+# 日志文件
+*.log
+
+# 临时文件
+*.tmp
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml

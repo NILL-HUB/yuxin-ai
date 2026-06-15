@@ -1,0 +1,183 @@
+services:
+  llmops-ui:
+    image: llmops-ui:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ..
+      dockerfile: ui/Dockerfile
+    container_name: llmops-ui
+    restart: always
+    ports:
+      - "127.0.0.1:${UI_PORT:-3000}:3000"
+
+  llmops-api:
+    image: llmops-api:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: llmops-api
+    restart: always
+    volumes:
+      - ./volumes/app/storage:/app/api/storage
+      - ./docker-compose.yaml:/app/docker/docker-compose.yaml:ro
+      - ./nginx/entrypoint.sh:/app/docker/nginx/entrypoint.sh:ro
+      - ../ui/Dockerfile:/app/ui/Dockerfile:ro
+    # 从 api/.env 读取配置
+    env_file:
+      - ../api/.env
+    environment:
+      # Docker 环境特定配置（覆盖 .env 中的对应配置）
+      FLASK_ENV: production
+      FLASK_DEBUG: '0'
+      SERVER_THREAD_AMOUNT: 32
+      GUNICORN_TIMEOUT: 120
+      SQLALCHEMY_ECHO: 'false'
+      MODE: api
+      SKILL_CATALOG_SYNC_ENABLED: 'true'
+      MIGRATION_ENABLED: 'true'
+      POSTGRES_HOST: llmops-db
+      POSTGRES_PORT: 5432
+      # Redis 连接使用 Docker 服务名
+      REDIS_HOST: llmops-redis
+      REDIS_PORT: 6379
+      # Weaviate 连接使用 Docker 服务名
+      WEAVIATE_HTTP_HOST: llmops-weaviate
+      WEAVIATE_HTTP_PORT: 8080
+      WEAVIATE_GRPC_HOST: llmops-weaviate
+      WEAVIATE_GRPC_PORT: 50051
+    ports:
+      - "127.0.0.1:${API_PORT:-5001}:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:5001/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      llmops-db:
+        condition: service_healthy
+      llmops-redis:
+        condition: service_healthy
+      llmops-weaviate:
+        condition: service_started
+
+  llmops-celery:
+    image: llmops-api:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: llmops-celery
+    restart: always
+    volumes:
+      - ./volumes/app/storage:/app/api/storage
+    # 从 api/.env 读取配置
+    env_file:
+      - ../api/.env
+    environment:
+      # Docker 环境特定配置（覆盖 .env 中的对应配置）
+      FLASK_ENV: production
+      FLASK_DEBUG: '0'
+      SQLALCHEMY_ECHO: 'false'
+      MODE: celery
+      MIGRATION_ENABLED: 'false'
+      POSTGRES_HOST: llmops-db
+      POSTGRES_PORT: 5432
+      # Redis 连接使用 Docker 服务名
+      REDIS_HOST: llmops-redis
+      REDIS_PORT: 6379
+      # Weaviate 连接使用 Docker 服务名
+      WEAVIATE_HTTP_HOST: llmops-weaviate
+      WEAVIATE_HTTP_PORT: 8080
+      WEAVIATE_GRPC_HOST: llmops-weaviate
+      WEAVIATE_GRPC_PORT: 50051
+    depends_on:
+      llmops-db:
+        condition: service_healthy
+      llmops-redis:
+        condition: service_healthy
+      llmops-weaviate:
+        condition: service_started
+
+  llmops-redis:
+    image: redis:6-alpine
+    restart: always
+    container_name: llmops-redis
+    env_file:
+      - ../api/.env
+    volumes:
+      - ./volumes/redis/data:/data
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\""]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --raw ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+
+  llmops-db:
+    image: postgres:15-alpine
+    restart: always
+    container_name: llmops-db
+    env_file:
+      - ../api/.env
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./volumes/db/data:/var/lib/postgresql/data/pgdata
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+
+  llmops-weaviate:
+    image: semitechnologies/weaviate:1.28.4
+    container_name: llmops-weaviate
+    restart: always
+    env_file:
+      - ../api/.env
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'false'
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODEL: 'none'
+      CLUSTER_HOSTNAME: 'node1'
+      AUTHENTICATION_APIKEY_ENABLED: 'true'
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:-ftBC9hKkjfdbdi0W3T6kEtMh5BZFpGa1DF8}
+      AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_USER:-admin@localhost}
+      AUTHORIZATION_ADMINLIST_ENABLED: 'true'
+      AUTHORIZATION_ADMINLIST_USERS: ${WEAVIATE_USER:-admin@localhost}
+    volumes:
+      - ./volumes/weaviate:/var/lib/weaviate
+    ports:
+      - "127.0.0.1:${WEAVIATE_HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${WEAVIATE_GRPC_PORT:-50051}:50051"
+
+  llmops-nginx:
+    image: nginx:latest
+    restart: always
+    container_name: llmops-nginx
+    env_file:
+      - ../api/.env
+    environment:
+      API_UPSTREAM_HOST: llmops-api
+      API_UPSTREAM_PORT: 5001
+      UI_UPSTREAM_HOST: llmops-ui
+      UI_UPSTREAM_PORT: 3000
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/proxy.conf:/etc/nginx/proxy.conf
+      - ./nginx/entrypoint.sh:/docker-entrypoint.sh
+      - ./nginx/ssl:/etc/ssl
+    entrypoint: ["/bin/bash", "/docker-entrypoint.sh"]
+    depends_on:
+      llmops-ui:
+        condition: service_started
+      llmops-api:
+        condition: service_healthy
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"

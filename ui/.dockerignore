@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+*.log
+
+# Ignore generated markdown docs, keep README
+**/*.md
+!README.md
+!**/README.md
