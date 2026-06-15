@@ -89,9 +89,12 @@ class KnowledgeBaseService(BaseService):
 
     def get_accessible_base(self, knowledge_base_id, account: Account) -> KnowledgeBase:
         knowledge_base = self.get(KnowledgeBase, knowledge_base_id)
-        if knowledge_base is None:
+        if knowledge_base is None or not getattr(knowledge_base, "enabled", True):
             raise NotFoundException("知识库不存在")
-        if knowledge_base.knowledge_scope in {KnowledgeScope.USER_MEMORY.value, KnowledgeScope.USER_CONTENT.value} and knowledge_base.owner_account_id != account.id:
+        if knowledge_base.knowledge_scope in {
+            KnowledgeScope.USER_MEMORY.value,
+            KnowledgeScope.USER_CONTENT.value,
+        } and knowledge_base.owner_account_id != account.id:
             raise NotFoundException("知识库不存在")
         return knowledge_base
 

@@ -14,10 +14,12 @@ class OrchestratorService:
         task_classifier_service: TaskClassifierService,
         pool_intent_resolver=None,
         subset_builder=None,
+        tool_subset_builder=None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
         self.subset_builder = subset_builder
+        self.tool_subset_builder = tool_subset_builder
 
     def decide(self, query: str, **context) -> RoutingDecision:
         try:
@@ -27,6 +29,7 @@ class OrchestratorService:
             )
             subset = self._build_agent_subset(pool_result)
             decision.agent_subset = subset
+            decision.tool_subset = self._build_tool_subset()
             return decision
         except Exception as exc:
             logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
@@ -47,7 +50,22 @@ class OrchestratorService:
                     "filtered_out_agents": [],
                     "selection_reason": "fallback:classifier_error",
                 },
+                tool_subset=self._empty_tool_subset("fallback:classifier_error"),
             )
+
+    def _build_tool_subset(self) -> dict:
+        if self.tool_subset_builder is None:
+            return self._empty_tool_subset("no_tool_subset_builder")
+        return self.tool_subset_builder.build_ranked_subset([])
+
+    @staticmethod
+    def _empty_tool_subset(selection_reason: str) -> dict:
+        return {
+            "selected_tools": [],
+            "backup_tools": [],
+            "filtered_out_tools": [],
+            "selection_reason": selection_reason,
+        }
 
     def _build_agent_subset(self, pool_result: dict) -> dict:
         matched_pools = pool_result.get("matched_pools", ["general"])

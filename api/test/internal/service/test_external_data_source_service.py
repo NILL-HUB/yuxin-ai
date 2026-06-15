@@ -113,6 +113,48 @@ def test_manual_sync_should_write_documents_and_update_status(monkeypatch):
     assert result == {"sync_status": "success", "document_count": 1}
 
 
+class _FailingExternalConnector:
+    def sync(self, data_source):
+        raise RuntimeError("connector unavailable")
+
+
+def test_manual_sync_should_record_failed_status_and_last_error(monkeypatch):
+    account_id = uuid4()
+    data_source = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        knowledge_base_id=uuid4(),
+        source_type="mock",
+        source_name="Mock",
+        sync_status="idle",
+        authorization_status="authorized",
+        sync_cursor="",
+        last_error="",
+        config={},
+    )
+    service = ExternalDataSourceService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])),
+        connector=_FailingExternalConnector(),
+    )
+    created = []
+    monkeypatch.setattr(
+        service,
+        "create",
+        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+    )
+
+    result = service.manual_sync(data_source.id, SimpleNamespace(id=account_id))
+
+    assert created == []
+    assert data_source.sync_status == "failed"
+    assert data_source.last_error == "connector unavailable"
+    assert result == {
+        "sync_status": "failed",
+        "document_count": 0,
+        "last_error": "connector unavailable",
+    }
+
+
 def test_manual_sync_should_hide_other_user_data_source():
     data_source = SimpleNamespace(id=uuid4(), owner_account_id=uuid4())
     service = ExternalDataSourceService(

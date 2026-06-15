@@ -212,6 +212,7 @@ class TestRouterFullMatrix:
             '/tags/<uuid:tag_id>/delete': {'POST'},
             '/tags/dimensions': {'GET'},
             '/tags/hot': {'GET'},
+            '/tool-inventory': {'GET'},
             '/tool-confirmations': {'POST'},
             '/tool-confirmations/<uuid:confirmation_id>/cancel': {'POST'},
             '/tool-confirmations/<uuid:confirmation_id>/confirm': {'POST'},
@@ -252,4 +253,4 @@ class TestRouterFullMatrix:
         assert by_blueprint["openapi"] == 1
         assert by_blueprint["llmops"] == len(rules) - 1
         # 当前系统的接口总量是一个重要契约，避免漏挂导致线上能力消失。
-        assert len(rules) == 248
+        assert len(rules) == 249

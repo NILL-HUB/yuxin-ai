@@ -151,6 +151,8 @@ class TestHomeService:
 
         assert result["matched_agent_pools"] == ["coding"]
         assert result["recommended_agents"] == []
+        assert result["matched_tool_pools"] == ["general"]
+        assert result["recommended_tools"] == []
 
     def test_get_user_intent_single_user_message_triggers_recognition(
         self,

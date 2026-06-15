@@ -111,6 +111,21 @@ def test_user_should_not_read_other_user_content():
         service.get_accessible_base(base.id, SimpleNamespace(id=other_id))
 
 
+def test_user_should_not_read_disabled_knowledge_base():
+    account_id = uuid4()
+    base = SimpleNamespace(
+        id=uuid4(),
+        knowledge_scope="user_content",
+        owner_account_id=account_id,
+        enabled=False,
+    )
+    service = _new_service()
+    service.get = lambda *_args, **_kwargs: base
+
+    with pytest.raises(NotFoundException):
+        service.get_accessible_base(base.id, SimpleNamespace(id=account_id))
+
+
 def test_user_should_read_own_memory_and_content():
     account_id = uuid4()
     memory_base = SimpleNamespace(id=uuid4(), knowledge_scope="user_memory", owner_account_id=account_id)

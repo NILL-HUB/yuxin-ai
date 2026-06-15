@@ -60,7 +60,16 @@ class ExternalDataSourceService(BaseService):
             raise NotFoundException("外部数据源不存在")
         connector = self.connector or MockExternalConnector()
         data_source.sync_status = ExternalSyncStatus.SYNCING.value
-        documents = connector.sync(data_source)
+        try:
+            documents = connector.sync(data_source)
+        except Exception as exc:
+            data_source.sync_status = ExternalSyncStatus.FAILED.value
+            data_source.last_error = str(exc)
+            return {
+                "sync_status": data_source.sync_status,
+                "document_count": 0,
+                "last_error": data_source.last_error,
+            }
         for document in documents:
             self.create(
                 KnowledgeDocument,
@@ -77,6 +86,7 @@ class ExternalDataSourceService(BaseService):
             if document.get("cursor"):
                 data_source.sync_cursor = document["cursor"]
         data_source.sync_status = ExternalSyncStatus.SUCCESS.value
+        data_source.last_error = ""
         data_source.last_synced_at = datetime.now(UTC).replace(tzinfo=None)
         return {
             "sync_status": data_source.sync_status,

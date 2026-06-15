@@ -188,7 +188,7 @@ const router = createRouter({
             {
               path: 'tools',
               name: 'admin-tools',
-              component: { template: '<h2>工具管理</h2>' },
+              component: () => import('@/views/admin/ToolsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['tool:read'] },
             },
             {

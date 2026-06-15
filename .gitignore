@@ -4,9 +4,10 @@ CLAUDE.md
 DEEP_CLEANUP_REPORT.md
 DOCKER_QUICKSTART.md
 PROJECT_STRUCTURE.md
-docs/
 *.md
 **/*.md
+!docs/
+!docs/**
 !README.md
 !README_ZH.md
 !api/README.md

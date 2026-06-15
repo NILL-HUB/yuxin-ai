@@ -80,6 +80,8 @@ class HomeService(BaseService):
             )
             intent_result["matched_agent_pools"] = pool_result["matched_pools"]
             intent_result["recommended_agents"] = []
+            intent_result["matched_tool_pools"] = ["general"]
+            intent_result["recommended_tools"] = []
 
             # 6. 添加消息版本信息到结果
             intent_result["last_message_timestamp"] = last_message_timestamp

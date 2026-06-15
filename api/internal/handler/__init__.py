@@ -15,6 +15,7 @@ from .openapi_handler import OpenAPIHandler
 from .segment_handler import SegmentHandler
 from .tag_handler import TagHandler
 from .tool_confirmation_handler import ToolConfirmationHandler
+from .tool_inventory_handler import ToolInventoryHandler
 from .upload_file_handler import UploadFileHandler
 from .workflow_handler import WorkflowHandler
 from .language_model_handler import LanguageModelHandler
@@ -55,6 +56,8 @@ __all__ = [
     "DocumentHandler",
     "SegmentHandler",
     "TagHandler",
+    "ToolConfirmationHandler",
+    "ToolInventoryHandler",
     "OAuthHandler",
     "AccountHandler",
     "AuthHandler",

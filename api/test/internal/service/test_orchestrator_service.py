@@ -59,6 +59,28 @@ def test_orchestrator_should_fallback_when_classifier_fails():
     assert decision.risk_level == RiskLevel.UNKNOWN.value
 
 
+def test_orchestrator_should_attach_tool_subset_summary():
+    class _ToolSubsetBuilder:
+        def build_ranked_subset(self, candidates, **kwargs):
+            return {
+                "selected_tools": [{"id": "search", "name": "搜索"}],
+                "backup_tools": [],
+                "filtered_out_tools": [],
+                "selection_reason": "ranked_by_capability_success_health_cost_latency",
+            }
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        pool_intent_resolver=PoolIntentResolver(),
+        tool_subset_builder=_ToolSubsetBuilder(),
+    )
+
+    decision = service.decide("帮我查询资料")
+
+    assert decision.tool_subset["selected_tools"] == [{"id": "search", "name": "搜索"}]
+    assert decision.tool_subset["backup_tools"] == []
+
+
 def test_orchestrator_should_attach_agent_subset_for_matched_pools():
     class _SubsetBuilder:
         def build_subset_from_candidates(self, candidates, **kwargs):
@@ -105,4 +127,5 @@ def test_routing_decision_should_dump_stable_dict():
         "risk_level": "safe",
         "reason": "简单问答",
         "agent_subset": None,
+        "tool_subset": None,
     }

@@ -44,6 +44,7 @@ from internal.handler import (
     MemoryCandidateHandler,
     ExternalDataSourceHandler,
     ToolConfirmationHandler,
+    ToolInventoryHandler,
     MyAppHandler,
     SkillHandler,
     HomeHandler,
@@ -97,6 +98,7 @@ class Router:
     memory_candidate_handler: MemoryCandidateHandler
     external_data_source_handler: ExternalDataSourceHandler
     tool_confirmation_handler: ToolConfirmationHandler
+    tool_inventory_handler: ToolInventoryHandler
     my_app_handler: MyAppHandler
     skill_handler: SkillHandler
     home_handler: HomeHandler
@@ -221,6 +223,10 @@ class Router:
         bp.add_url_rule(
             "/builtin-tools/categories",
             view_func=self.builtin_tool_handler.get_categories,
+        )
+        bp.add_url_rule(
+            "/tool-inventory",
+            view_func=self.tool_inventory_handler.get_tool_inventory,
         )
 
         # 3.1技能包广场模块
