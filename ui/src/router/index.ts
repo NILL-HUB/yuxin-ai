@@ -170,7 +170,7 @@ const router = createRouter({
             {
               path: 'apps',
               name: 'admin-apps',
-              component: { template: '<h2>应用管理</h2>' },
+              component: () => import('@/views/admin/AppsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
             },
             {

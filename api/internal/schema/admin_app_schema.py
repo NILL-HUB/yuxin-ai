@@ -25,6 +25,7 @@ class AdminAppResp(Schema):
     description = fields.String()
     status = fields.String()
     is_public = fields.Boolean()
+    agent_metadata = fields.Dict()
     created_at = fields.Integer()
     updated_at = fields.Integer()
 

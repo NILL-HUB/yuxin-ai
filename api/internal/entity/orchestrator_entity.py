@@ -27,6 +27,7 @@ class RoutingDecision:
     recommended_model_tier: str = "cheap"
     risk_level: str = RiskLevel.SAFE.value
     reason: str = ""
+    agent_subset: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

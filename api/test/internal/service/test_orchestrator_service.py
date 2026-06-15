@@ -1,5 +1,6 @@
 from internal.entity.orchestrator_entity import ExecutionMode, RoutingDecision, RiskLevel
 from internal.service.orchestrator_service import OrchestratorService
+from internal.service.pool_intent_resolver_service import PoolIntentResolver
 from internal.service.task_classifier_service import TaskClassifierService
 
 
@@ -58,6 +59,31 @@ def test_orchestrator_should_fallback_when_classifier_fails():
     assert decision.risk_level == RiskLevel.UNKNOWN.value
 
 
+def test_orchestrator_should_attach_agent_subset_for_matched_pools():
+    class _SubsetBuilder:
+        def build_subset_from_candidates(self, candidates, **kwargs):
+            return {
+                "matched_agent_pools": kwargs["matched_pools"],
+                "selected_agents": [{"agent_id": "coding-agent", "name": "编程 Agent"}],
+                "backup_agents": [],
+                "filtered_out_agents": [],
+                "selection_reason": "matched pools: coding",
+            }
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        pool_intent_resolver=PoolIntentResolver(),
+        subset_builder=_SubsetBuilder(),
+    )
+
+    decision = service.decide("帮我写前端代码")
+
+    assert decision.agent_subset["matched_agent_pools"] == ["coding"]
+    assert decision.agent_subset["selected_agents"] == [
+        {"agent_id": "coding-agent", "name": "编程 Agent"}
+    ]
+
+
 def test_routing_decision_should_dump_stable_dict():
     decision = RoutingDecision(
         intent="general_qa",
@@ -78,4 +104,5 @@ def test_routing_decision_should_dump_stable_dict():
         "recommended_model_tier": "cheap",
         "risk_level": "safe",
         "reason": "简单问答",
+        "agent_subset": None,
     }

@@ -52,7 +52,17 @@ class TestAdminAppHandler:
 
         def _get(self, app_id_arg):
             captured["app_id"] = app_id_arg
-            return {"id": str(app_id_arg), "name": "Demo", "icon": "", "description": "", "status": "draft", "is_public": False, "created_at": 1893456000, "updated_at": 1893456000}
+            return {
+                "id": str(app_id_arg),
+                "name": "Demo",
+                "icon": "",
+                "description": "",
+                "status": "draft",
+                "is_public": False,
+                "agent_metadata": {"primary_pool": "coding"},
+                "created_at": 1893456000,
+                "updated_at": 1893456000,
+            }
 
         monkeypatch.setattr("internal.service.admin_app_service.AdminAppService.get_app", _get, raising=False)
 
@@ -61,6 +71,7 @@ class TestAdminAppHandler:
         assert resp.status_code == 200
         assert resp.json["code"] == HttpCode.SUCCESS
         assert resp.json["data"]["id"] == str(app_id)
+        assert resp.json["data"]["agent_metadata"] == {"primary_pool": "coding"}
         assert captured == {"app_id": app_id}
 
     def test_update_app_should_delegate_to_service(self, client, monkeypatch):

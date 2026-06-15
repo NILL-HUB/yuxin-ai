@@ -125,6 +125,33 @@ class TestHomeService:
         result = service.get_user_intent(user)
         assert result == mock_intent_service.DEFAULT_INTENT
 
+    def test_get_user_intent_should_include_phase2_agent_pool_summary(
+        self,
+        service,
+        mock_intent_service,
+    ):
+        user = SimpleNamespace(id=uuid4())
+        messages = [
+            {
+                "role": "user",
+                "content": "帮我写前端代码",
+                "created_at": "2026-03-17T10:00:00Z",
+            }
+        ]
+        service._get_recent_messages = Mock(return_value=messages)
+        mock_intent_service.get_cached_intent.return_value = None
+        mock_intent_service.recognize.return_value = {
+            "intent": "编程任务",
+            "confidence": 0.9,
+            "suggested_actions": [],
+            "is_default": False,
+        }
+
+        result = service.get_user_intent(user)
+
+        assert result["matched_agent_pools"] == ["coding"]
+        assert result["recommended_agents"] == []
+
     def test_get_user_intent_single_user_message_triggers_recognition(
         self,
         service,

@@ -77,10 +77,20 @@ export type AgentMetadata = {
   secondary_pools: string[]
   capabilities: string[]
   task_types: string[]
+  input_modalities: string[]
+  output_modalities: string[]
+  risk_level: 'safe' | 'medium' | 'high'
   model_tier: 'cheap' | 'balanced' | 'strong'
+  model_id: string
+  key_policy: string
   cost_level: 'low' | 'medium' | 'high'
   routing_priority: number
   allowed_tool_categories: string[]
+  quality_score: number
+  success_rate: number
+  latency_p95: number
+  max_context_tokens: number
+  enabled: boolean
 }
 
 // 获取应用信息响应结构

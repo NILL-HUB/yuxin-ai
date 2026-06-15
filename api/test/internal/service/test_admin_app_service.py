@@ -45,7 +45,7 @@ def _app(**kwargs):
     return App(**defaults)
 
 
-def test_update_app_should_update_agent_metadata_fields():
+def test_update_app_should_normalize_phase2_agent_metadata_fields():
     app = _app()
     session = _SessionStub(app)
     service = AdminAppService(session=session)
@@ -57,10 +57,20 @@ def test_update_app_should_update_agent_metadata_fields():
             "secondary_pools": ["sales", "ops"],
             "capabilities": ["faq"],
             "task_types": ["customer_service"],
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+            "risk_level": "unsafe",
             "model_tier": "balanced",
+            "model_id": "gpt-4.1",
+            "key_policy": "tenant",
             "cost_level": "low",
-            "routing_priority": 50,
+            "routing_priority": -5,
             "allowed_tool_categories": ["knowledge"],
+            "quality_score": 0.88,
+            "success_rate": 2,
+            "latency_p95": "1200",
+            "max_context_tokens": "8192",
+            "enabled": "false",
         },
     )
 
@@ -71,9 +81,19 @@ def test_update_app_should_update_agent_metadata_fields():
         "secondary_pools": ["sales", "ops"],
         "capabilities": ["faq"],
         "task_types": ["customer_service"],
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["text"],
+        "risk_level": "safe",
         "model_tier": "balanced",
+        "model_id": "gpt-4.1",
+        "key_policy": "tenant",
         "cost_level": "low",
-        "routing_priority": 50,
+        "routing_priority": 0,
         "allowed_tool_categories": ["knowledge"],
+        "quality_score": 0.88,
+        "success_rate": 1.0,
+        "latency_p95": 1200,
+        "max_context_tokens": 8192,
+        "enabled": False,
     }
     assert result["agent_metadata"]["primary_pool"] == "customer_support"

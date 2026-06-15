@@ -14,6 +14,7 @@ from pkg.sqlalchemy import SQLAlchemy
 
 from .base_service import BaseService
 from .intent_recognition_service import IntentRecognitionService
+from .pool_intent_resolver_service import PoolIntentResolver
 
 
 @inject
@@ -73,6 +74,12 @@ class HomeService(BaseService):
             # 5. 调用模型进行意图识别
             logging.info(f"Recognizing intent for user {user_id}")
             intent_result = self.intent_recognition_service.recognize(recent_messages)
+
+            pool_result = PoolIntentResolver().resolve(
+                recent_messages[-1].get("content", "")
+            )
+            intent_result["matched_agent_pools"] = pool_result["matched_pools"]
+            intent_result["recommended_agents"] = []
 
             # 6. 添加消息版本信息到结果
             intent_result["last_message_timestamp"] = last_message_timestamp
