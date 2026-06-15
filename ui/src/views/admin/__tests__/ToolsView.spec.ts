@@ -17,6 +17,9 @@ describe('Admin ToolsView', () => {
           source_type: 'mcp',
           visibility: 'public',
           enabled: true,
+          runtime_name: 'mcp__provider_1__search_docs',
+          mounted: true,
+          mount_reason: 'dynamic_mcp_tool',
           metadata: {
             tool_pool: 'mcp',
             risk_level: 'medium',
@@ -26,7 +29,9 @@ describe('Admin ToolsView', () => {
           },
         },
       ],
-      filtered_out_tools: [],
+      filtered_out_tools: [
+        { id: 'tool-2', name: 'Delete', reason: 'forbidden' },
+      ],
     } as never)
 
     const wrapper = mount(ToolsView)
@@ -37,6 +42,9 @@ describe('Admin ToolsView', () => {
     expect(wrapper.text()).toContain('medium')
     expect(wrapper.text()).toContain('public')
     expect(wrapper.text()).toContain('healthy')
+    expect(wrapper.text()).toContain('mcp__provider_1__search_docs')
+    expect(wrapper.text()).toContain('dynamic_mcp_tool')
+    expect(wrapper.text()).toContain('Delete: forbidden')
     await wrapper.find('[data-test="risk-filter"]').setValue('high')
 
     expect(getToolInventory).toHaveBeenLastCalledWith(expect.objectContaining({ tool_pool: '', risk_level: 'high' }))

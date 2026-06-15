@@ -4,6 +4,7 @@ from flask import request
 from flask_login import current_user
 from injector import inject
 
+from internal.service.mcp_runtime_adapter import McpRuntimeAdapter
 from internal.service.tool_inventory_service import (
     ToolCandidateCollector,
     ToolPolicyFilter,
@@ -32,10 +33,25 @@ class ToolInventoryHandler:
         )
         tool_pool = request.args.get("tool_pool") or ""
         risk_level = request.args.get("risk_level") or ""
-        result["candidates"] = self._filter_candidates(
-            result["candidates"], tool_pool=tool_pool, risk_level=risk_level
+        result["candidates"] = self._with_runtime_fields(
+            self._filter_candidates(
+                result["candidates"], tool_pool=tool_pool, risk_level=risk_level
+            )
         )
         return success_json(result)
+
+    @staticmethod
+    def _with_runtime_fields(candidates: list[dict]) -> list[dict]:
+        adapter = McpRuntimeAdapter()
+        result = []
+        for candidate in candidates:
+            item = dict(candidate)
+            descriptor = adapter.to_runtime_tool(item)
+            item["runtime_name"] = descriptor.runtime_name if descriptor else ""
+            item["mounted"] = False
+            item["mount_reason"] = "not_mounted"
+            result.append(item)
+        return result
 
     @staticmethod
     def _filter_candidates(

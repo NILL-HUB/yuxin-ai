@@ -30,6 +30,9 @@ export type ToolInventoryCandidate = {
   inputs?: Array<Record<string, unknown>>
   visibility?: string
   enabled?: boolean
+  runtime_name?: string
+  mounted?: boolean
+  mount_reason?: string
   metadata: ToolInventoryMetadata
 }
 

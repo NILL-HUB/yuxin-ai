@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 
 import { APP_LOCALE_STORAGE_KEY, DEFAULT_LOCALE, getAppLocale, setAppLocale } from '@/i18n'
 import { resolveStoredLocale } from '@/i18n/locale'
+import enUS from '@/i18n/messages/en-US'
+import zhCN from '@/i18n/messages/zh-CN'
 
 describe('i18n locale management', () => {
   beforeEach(() => {
@@ -27,5 +29,12 @@ describe('i18n locale management', () => {
     localStorage.setItem(APP_LOCALE_STORAGE_KEY, 'fr-FR')
 
     expect(resolveStoredLocale()).toBe(DEFAULT_LOCALE)
+  })
+
+  it('keeps configuration center keys in all supported locales', () => {
+    expect(zhCN.layout.sidebar.configCenter).toBe('配置中心')
+    expect(zhCN.space.title).toBe('配置中心')
+    expect(enUS.layout.sidebar.configCenter).toBe('Configuration Center')
+    expect(enUS.space.title).toBe('Configuration Center')
   })
 })

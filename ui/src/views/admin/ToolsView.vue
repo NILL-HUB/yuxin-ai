@@ -63,6 +63,10 @@ watch([toolPool, riskLevel], loadTools)
         <dd>{{ tool.visibility }}</dd>
         <dt>健康状态</dt>
         <dd>{{ tool.metadata.health_status }}</dd>
+        <dt>运行时名称</dt>
+        <dd>{{ tool.runtime_name || '-' }}</dd>
+        <dt>挂载原因</dt>
+        <dd>{{ tool.mount_reason || '-' }}</dd>
       </dl>
     </article>
     <section v-if="filteredOutTools.length" class="filtered-tools">

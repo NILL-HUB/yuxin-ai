@@ -36,7 +36,8 @@ export default {
   layout: {
     sidebar: {
       home: 'Home',
-      personalSpace: 'My Space',
+      configCenter: 'Configuration Center',
+      personalSpace: 'Configuration Center',
       explore: 'Explore',
       appStore: 'Apps Marketplace',
       workflowStore: 'Workflow Marketplace',
@@ -190,7 +191,7 @@ export default {
     },
   },
   space: {
-    title: 'My Space',
+    title: 'Configuration Center',
     createApp: 'Create AI App',
     createTool: 'Create Custom Plugin',
     createWorkflow: 'Create Workflow',

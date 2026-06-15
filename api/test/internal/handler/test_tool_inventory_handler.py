@@ -52,4 +52,7 @@ def test_tool_inventory_handler_should_return_governance_fields(app):
     assert data["candidates"][0]["metadata"]["tool_pool"] == "mcp"
     assert data["candidates"][0]["metadata"]["risk_level"] == "medium"
     assert data["candidates"][0]["metadata"]["health_status"] == "healthy"
+    assert data["candidates"][0]["runtime_name"] == "mcp__provider_1__search"
+    assert data["candidates"][0]["mounted"] is False
+    assert data["candidates"][0]["mount_reason"] == "not_mounted"
     assert data["filtered_out_tools"] == []
