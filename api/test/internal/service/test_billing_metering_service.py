@@ -7,7 +7,7 @@ from internal.service.billing_metering_service import (
 )
 
 
-def test_usage_delta_should_dump_sse_payload():
+def test_usage_delta_should_dump_sse_payload_with_metadata():
     delta = BillingUsageDelta(
         event_type=BillingEventType.DELTA.value,
         task_id=str(uuid4()),
@@ -16,6 +16,7 @@ def test_usage_delta_should_dump_sse_payload():
         delta_credits=3,
         total_credits=8,
         reason="answer_tokens",
+        metadata={"input_tokens": 100, "output_tokens": 200},
     )
 
     assert delta.to_sse() == {
@@ -25,6 +26,7 @@ def test_usage_delta_should_dump_sse_payload():
         "delta_credits": 3,
         "total_credits": 8,
         "reason": "answer_tokens",
+        "metadata": {"input_tokens": 100, "output_tokens": 200},
     }
 
 
@@ -59,7 +61,24 @@ def test_aggregator_should_emit_cancelled_with_current_cost_only():
         "delta_credits": 0,
         "total_credits": 4,
         "reason": "user_stop",
+        "metadata": {},
     }
+
+
+def test_aggregator_should_convert_token_usage_to_credits():
+    task_id = str(uuid4())
+    aggregator = BillingUsageAggregator(task_id=task_id, credits_per_1k_tokens=2)
+
+    event = aggregator.model_tokens(
+        "deepseek-chat",
+        input_tokens=500,
+        output_tokens=1000,
+        reason="model_tokens",
+    )
+
+    assert event.delta_credits == 3
+    assert event.total_credits == 3
+    assert event.metadata == {"input_tokens": 500, "output_tokens": 1000}
 
 
 def test_metering_should_record_events_and_keep_current_total():

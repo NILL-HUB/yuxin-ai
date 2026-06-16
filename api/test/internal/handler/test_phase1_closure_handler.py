@@ -337,7 +337,15 @@ class TestAdminRoutingLogApi:
                         {"name": "delete", "reason": "high_risk_requires_confirmation"}
                     ],
                     "knowledge_hits": [],
-                    "billing_events": [],
+                    "billing_events": [{
+                        "event": "billing_delta",
+                        "source_type": "model",
+                        "source_name": "deepseek-chat",
+                        "delta_credits": 3,
+                        "total_credits": 3,
+                        "reason": "model_tokens",
+                        "metadata": {"input_tokens": 500, "output_tokens": 1000},
+                    }],
                     "status": "success",
                     "created_at": 1893456000,
                 }],
@@ -366,6 +374,10 @@ class TestAdminRoutingLogApi:
             resp.json["data"]["list"][0]["filtered_out_tools"][0]["reason"]
             == "high_risk_requires_confirmation"
         )
+        assert resp.json["data"]["list"][0]["billing_events"][0]["metadata"] == {
+            "input_tokens": 500,
+            "output_tokens": 1000,
+        }
         assert captured == {
             "page": 1,
             "page_size": 20,

@@ -29,6 +29,12 @@ class RoutingDecision:
     reason: str = ""
     agent_subset: dict | None = None
     tool_subset: dict | None = None
+    cost_policy: dict | None = None
+    billing_events: list[dict] = None
+
+    def __post_init__(self):
+        if self.billing_events is None:
+            self.billing_events = []
 
     def to_dict(self) -> dict:
         return asdict(self)

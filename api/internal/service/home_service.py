@@ -13,6 +13,8 @@ from internal.model import Account, Message
 from pkg.sqlalchemy import SQLAlchemy
 
 from .base_service import BaseService
+from .billing_metering_service import BillingUsageAggregator
+from .cost_policy_service import CostPolicyService
 from .intent_recognition_service import IntentRecognitionService
 from .pool_intent_resolver_service import PoolIntentResolver
 
@@ -82,6 +84,17 @@ class HomeService(BaseService):
             intent_result["recommended_agents"] = []
             intent_result["matched_tool_pools"] = ["general"]
             intent_result["recommended_tools"] = []
+            intent_result["cost_policy"] = CostPolicyService().build_policy(
+                task_complexity="simple",
+                budget_level="normal",
+                balance_credits=1,
+                deep_thinking_requested=False,
+            )
+            billing_event = BillingUsageAggregator(
+                task_id=user_id
+            ).started().to_dict()
+            billing_event["event"] = billing_event["event_type"]
+            intent_result["billing_events"] = [billing_event]
 
             # 6. 添加消息版本信息到结果
             intent_result["last_message_timestamp"] = last_message_timestamp

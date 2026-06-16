@@ -3,6 +3,8 @@ import logging
 from injector import inject
 
 from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel, RoutingDecision
+from internal.service.billing_metering_service import BillingUsageAggregator
+from internal.service.cost_policy_service import CostPolicyService
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
 
@@ -30,6 +32,7 @@ class OrchestratorService:
             subset = self._build_agent_subset(pool_result)
             decision.agent_subset = subset
             decision.tool_subset = self._build_tool_subset()
+            self._attach_cost_policy(decision, context)
             return decision
         except Exception as exc:
             logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
@@ -51,7 +54,35 @@ class OrchestratorService:
                     "selection_reason": "fallback:classifier_error",
                 },
                 tool_subset=self._empty_tool_subset("fallback:classifier_error"),
+                cost_policy=self._safe_cost_policy(),
+                billing_events=self._billing_started_events(),
             )
+
+    def _attach_cost_policy(self, decision: RoutingDecision, context: dict) -> None:
+        decision.cost_policy = CostPolicyService().build_policy(
+            task_complexity=decision.complexity,
+            budget_level=context.get("budget_level", "normal"),
+            balance_credits=context.get("balance_credits", 1),
+            deep_thinking_requested=context.get("deep_thinking_requested", False),
+        )
+        decision.billing_events = self._billing_started_events()
+
+    @staticmethod
+    def _safe_cost_policy() -> dict:
+        return CostPolicyService().build_policy(
+            task_complexity="simple",
+            budget_level="normal",
+            balance_credits=1,
+            deep_thinking_requested=False,
+        )
+
+    @staticmethod
+    def _billing_started_events() -> list[dict]:
+        event = BillingUsageAggregator(
+            task_id="orchestrator-routing"
+        ).started().to_dict()
+        event["event"] = event["event_type"]
+        return [event]
 
     def _build_tool_subset(self) -> dict:
         if self.tool_subset_builder is None:

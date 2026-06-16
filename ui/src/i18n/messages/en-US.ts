@@ -33,6 +33,13 @@ export default {
     yes: 'Yes',
     no: 'No',
   },
+  billing: {
+    usage: {
+      occurred: 'Consumed',
+      cancelled: 'Stopped',
+      unit: 'credits',
+    },
+  },
   layout: {
     sidebar: {
       home: 'Home',

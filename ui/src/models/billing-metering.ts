@@ -5,4 +5,5 @@ export type BillingUsageEvent = {
   delta_credits: number
   total_credits: number
   reason: string
+  metadata?: Record<string, unknown>
 }

@@ -153,6 +153,8 @@ class TestHomeService:
         assert result["recommended_agents"] == []
         assert result["matched_tool_pools"] == ["general"]
         assert result["recommended_tools"] == []
+        assert result["cost_policy"]["model_tier"] == "cheap"
+        assert result["billing_events"][0]["event"] == "billing_started"
 
     def test_get_user_intent_single_user_message_triggers_recognition(
         self,

@@ -33,6 +33,13 @@ export default {
     yes: '是',
     no: '否',
   },
+  billing: {
+    usage: {
+      occurred: '已消耗',
+      cancelled: '已停止',
+      unit: 'credits',
+    },
+  },
   layout: {
     sidebar: {
       home: '主页',

@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 
 
@@ -19,6 +19,7 @@ class BillingUsageDelta:
     delta_credits: int
     total_credits: int
     reason: str = ""
+    metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -31,4 +32,5 @@ class BillingUsageDelta:
             "delta_credits": self.delta_credits,
             "total_credits": self.total_credits,
             "reason": self.reason,
+            "metadata": self.metadata,
         }

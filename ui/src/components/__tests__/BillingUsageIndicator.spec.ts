@@ -1,7 +1,26 @@
-import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BillingUsageIndicator from '../BillingUsageIndicator.vue'
 import type { BillingUsageEvent } from '@/models/billing-metering'
+
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string) =>
+      ({
+        'billing.usage.occurred': 'Consumed',
+        'billing.usage.cancelled': 'Stopped',
+        'billing.usage.unit': 'credits',
+      })[key] ?? key,
+  }),
+}))
+
+const readSource = () =>
+  readFileSync(
+    resolve(process.cwd(), 'src/components/BillingUsageIndicator.vue'),
+    'utf8',
+  )
 
 const events: BillingUsageEvent[] = [
   {
@@ -28,9 +47,19 @@ describe('BillingUsageIndicator.vue', () => {
       props: { events },
     })
 
-    expect(wrapper.text()).toContain('已消耗')
+    expect(wrapper.text()).toContain('Consumed')
     expect(wrapper.text()).toContain('3')
     expect(wrapper.text()).not.toContain('预估')
+  })
+
+  it('should use i18n keys instead of hardcoded display text', () => {
+    const source = readSource()
+
+    expect(source).toContain("t('billing.usage.occurred')")
+    expect(source).toContain("t('billing.usage.cancelled')")
+    expect(source).toContain("t('billing.usage.unit')")
+    expect(source).not.toContain('已消耗')
+    expect(source).not.toContain('已停止')
   })
 
   it('should render cancelled status with current cost', () => {
@@ -50,7 +79,7 @@ describe('BillingUsageIndicator.vue', () => {
       },
     })
 
-    expect(wrapper.text()).toContain('已停止')
+    expect(wrapper.text()).toContain('Stopped')
     expect(wrapper.text()).toContain('3')
   })
 })
