@@ -574,6 +574,10 @@ export default {
   },
   home: {
     greetingFallback: 'friend',
+    orchestration: {
+      taskPlan: 'Task plan',
+      synthesis: 'Result synthesis',
+    },
     hero: {
       titlePrefix: 'Your dedicated',
       titleAccent: 'AI-native app',

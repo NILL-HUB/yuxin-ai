@@ -5,6 +5,7 @@ from injector import inject
 from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel, RoutingDecision
 from internal.service.billing_metering_service import BillingUsageAggregator
 from internal.service.cost_policy_service import CostPolicyService
+from internal.service.task_planner_service import TaskPlannerService
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
 
@@ -17,11 +18,13 @@ class OrchestratorService:
         pool_intent_resolver=None,
         subset_builder=None,
         tool_subset_builder=None,
+        task_planner=None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
         self.subset_builder = subset_builder
         self.tool_subset_builder = tool_subset_builder
+        self.task_planner = task_planner or TaskPlannerService()
 
     def decide(self, query: str, **context) -> RoutingDecision:
         try:
@@ -33,6 +36,7 @@ class OrchestratorService:
             decision.agent_subset = subset
             decision.tool_subset = self._build_tool_subset()
             self._attach_cost_policy(decision, context)
+            self._attach_phase6_summaries(query, decision)
             return decision
         except Exception as exc:
             logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
@@ -56,7 +60,33 @@ class OrchestratorService:
                 tool_subset=self._empty_tool_subset("fallback:classifier_error"),
                 cost_policy=self._safe_cost_policy(),
                 billing_events=self._billing_started_events(),
+                task_plan_summary=self._safe_task_plan_summary(),
+                synthesis_summary=self._empty_synthesis_summary(),
             )
+
+    def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
+        task_plan = self.task_planner.plan(query, decision)
+        decision.task_plan_summary = task_plan.to_summary()
+        decision.synthesis_summary = self._empty_synthesis_summary()
+
+    @staticmethod
+    def _safe_task_plan_summary() -> dict:
+        return {
+            "execution_mode": "direct_answer",
+            "reason": "fallback:classifier_error",
+            "task_count": 0,
+            "items": [],
+        }
+
+    @staticmethod
+    def _empty_synthesis_summary() -> dict:
+        return {
+            "final_answer": "",
+            "summary": "execution_not_started",
+            "confidence": 0,
+            "visible_sources": [],
+            "user_warnings": [],
+        }
 
     def _attach_cost_policy(self, decision: RoutingDecision, context: dict) -> None:
         decision.cost_policy = CostPolicyService().build_policy(

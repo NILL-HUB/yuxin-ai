@@ -31,10 +31,15 @@ class RoutingDecision:
     tool_subset: dict | None = None
     cost_policy: dict | None = None
     billing_events: list[dict] = None
+    task_plan_summary: dict | None = None
+    synthesis_summary: dict | None = None
 
     def __post_init__(self):
         if self.billing_events is None:
             self.billing_events = []
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data["task_plan_summary"] = self.task_plan_summary
+        data["synthesis_summary"] = self.synthesis_summary
+        return data

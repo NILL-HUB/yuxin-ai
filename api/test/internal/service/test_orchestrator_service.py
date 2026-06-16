@@ -59,6 +59,8 @@ def test_orchestrator_should_fallback_when_classifier_fails():
     assert decision.risk_level == RiskLevel.UNKNOWN.value
     assert decision.cost_policy["allowed"] is True
     assert decision.billing_events[0]["event"] == "billing_started"
+    assert decision.task_plan_summary["execution_mode"] == "direct_answer"
+    assert decision.synthesis_summary["final_answer"] == ""
 
 
 def test_orchestrator_should_attach_cost_policy_and_billing_started_event():
@@ -70,6 +72,14 @@ def test_orchestrator_should_attach_cost_policy_and_billing_started_event():
     assert decision.cost_policy["reason"] == "simple_task_low_cost"
     assert decision.billing_events[0]["event"] == "billing_started"
     assert decision.billing_events[0]["total_credits"] == 0
+    assert decision.task_plan_summary["task_count"] == 1
+    assert decision.synthesis_summary == {
+        "final_answer": "",
+        "summary": "execution_not_started",
+        "confidence": 0,
+        "visible_sources": [],
+        "user_warnings": [],
+    }
 
 
 def test_orchestrator_should_attach_tool_subset_summary():
@@ -143,4 +153,6 @@ def test_routing_decision_should_dump_stable_dict():
         "tool_subset": None,
         "cost_policy": None,
         "billing_events": [],
+        "task_plan_summary": None,
+        "synthesis_summary": None,
     }

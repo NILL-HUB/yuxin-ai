@@ -95,6 +95,19 @@ class HomeService(BaseService):
             ).started().to_dict()
             billing_event["event"] = billing_event["event_type"]
             intent_result["billing_events"] = [billing_event]
+            intent_result["task_plan_summary"] = {
+                "execution_mode": "direct_answer",
+                "reason": "home_intent_summary",
+                "task_count": 0,
+                "items": [],
+            }
+            intent_result["synthesis_summary"] = {
+                "final_answer": "",
+                "summary": "execution_not_started",
+                "confidence": 0,
+                "visible_sources": [],
+                "user_warnings": [],
+            }
 
             # 6. 添加消息版本信息到结果
             intent_result["last_message_timestamp"] = last_message_timestamp

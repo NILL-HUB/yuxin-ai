@@ -563,6 +563,10 @@ export default {
   },
   home: {
     greetingFallback: '朋友',
+    orchestration: {
+      taskPlan: '任务计划',
+      synthesis: '结果汇总',
+    },
     hero: {
       titlePrefix: '你的专属',
       titleAccent: 'AI 原生应用',

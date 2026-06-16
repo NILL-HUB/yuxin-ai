@@ -155,6 +155,19 @@ class TestHomeService:
         assert result["recommended_tools"] == []
         assert result["cost_policy"]["model_tier"] == "cheap"
         assert result["billing_events"][0]["event"] == "billing_started"
+        assert result["task_plan_summary"] == {
+            "execution_mode": "direct_answer",
+            "reason": "home_intent_summary",
+            "task_count": 0,
+            "items": [],
+        }
+        assert result["synthesis_summary"] == {
+            "final_answer": "",
+            "summary": "execution_not_started",
+            "confidence": 0,
+            "visible_sources": [],
+            "user_warnings": [],
+        }
 
     def test_get_user_intent_single_user_message_triggers_recognition(
         self,
