@@ -16,6 +16,7 @@ from .skill import SkillPackage, SkillPackageVersion
 from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, RolePermission, AuditLog
 from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTransaction, RedeemCodeBatch, RedeemCode
 from .routing_log import RoutingLog
+from .orchestration_feature_flag import OrchestrationFeatureFlagModel
 
 __all__ = [
     "App", "AppAssignment", "AppDatasetJoin", "AppConfig", "AppConfigVersion",
@@ -32,4 +33,5 @@ __all__ = [
     "SkillPackage", "SkillPackageVersion",
     "AdminUser", "AdminSession", "Role", "Permission", "AdminUserRole", "RolePermission", "AuditLog",
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
+    "RoutingLog", "OrchestrationFeatureFlagModel",
 ]

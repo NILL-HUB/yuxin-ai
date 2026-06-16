@@ -41,6 +41,23 @@ export default {
     },
   },
   admin: {
+    orchestrationFlags: {
+      title: '调度发布开关',
+      description: '管理调度平台阶段开关与上线验收状态',
+      flagCount: '开关数量',
+      warningCount: '风险提示',
+      rollback: '回滚动作',
+      code: '编码',
+      name: '名称',
+      descriptionLabel: '说明',
+      riskLevel: '风险等级',
+      fallbackBehavior: '回退策略',
+      enabled: '启用',
+      on: '开启',
+      off: '关闭',
+      loadFailed: '加载调度发布开关失败',
+      updateFailed: '更新调度发布开关失败',
+    },
     routingLogs: {
       title: '调度日志',
       description: '查看 Agent 调度、工具命中、成本与 fallback 情况',

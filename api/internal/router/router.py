@@ -18,6 +18,8 @@ from internal.handler import (
     AdminAuditLogHandler,
     AdminAuthHandler,
     AdminBillingPlanHandler,
+    AdminOrchestrationFlagHandler,
+    AdminOrchestrationReleaseHandler,
     AdminCustomerUserHandler,
     AdminRbacHandler,
     AdminRedeemCodeHandler,
@@ -72,6 +74,8 @@ class Router:
     admin_audit_log_handler: AdminAuditLogHandler
     admin_auth_handler: AdminAuthHandler
     admin_billing_plan_handler: AdminBillingPlanHandler
+    admin_orchestration_flag_handler: AdminOrchestrationFlagHandler
+    admin_orchestration_release_handler: AdminOrchestrationReleaseHandler
     admin_customer_user_handler: AdminCustomerUserHandler
     admin_rbac_handler: AdminRbacHandler
     admin_redeem_code_handler: AdminRedeemCodeHandler
@@ -559,6 +563,24 @@ class Router:
             endpoint="admin_routing_log_list",
             methods=["GET"],
             view_func=self.admin_routing_log_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/orchestration-flags",
+            endpoint="admin_orchestration_flag_list",
+            methods=["GET"],
+            view_func=self.admin_orchestration_flag_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/orchestration-flags/<string:code>",
+            endpoint="admin_orchestration_flag_update",
+            methods=["POST"],
+            view_func=self.admin_orchestration_flag_handler.update,
+        )
+        bp.add_url_rule(
+            "/admin/orchestration-release-check",
+            endpoint="admin_orchestration_release_check",
+            methods=["GET"],
+            view_func=self.admin_orchestration_release_handler.get,
         )
         bp.add_url_rule(
             "/admin/plans",

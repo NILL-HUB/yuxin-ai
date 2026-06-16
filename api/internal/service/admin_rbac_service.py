@@ -43,6 +43,9 @@ class AdminRbacService:
         {"code": "app_assignment:read", "name": "查看应用分配", "resource": "app_assignment", "action": "read", "description": "查看用户已分配应用"},
         {"code": "app_assignment:update", "name": "管理应用分配", "resource": "app_assignment", "action": "update", "description": "分配和撤销用户应用"},
         {"code": "setting:read", "name": "查看设置", "resource": "setting", "action": "read", "description": "查看设置"},
+        {"code": "orchestration_flag:read", "name": "查看调度开关", "resource": "orchestration_flag", "action": "read", "description": "查看调度平台发布开关"},
+        {"code": "orchestration_flag:update", "name": "管理调度开关", "resource": "orchestration_flag", "action": "update", "description": "启停调度平台发布开关"},
+        {"code": "orchestration_release:read", "name": "查看调度上线验收", "resource": "orchestration_release", "action": "read", "description": "查看调度平台上线验收报告"},
     ]
 
     DEFAULT_ROLES = [

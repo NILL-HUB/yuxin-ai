@@ -63,6 +63,53 @@ def test_orchestrator_should_fallback_when_classifier_fails():
     assert decision.synthesis_summary["final_answer"] == ""
 
 
+def test_orchestrator_should_return_safe_decision_when_orchestrator_disabled():
+    class _Flags:
+        def is_enabled(self, code):
+            return code != "ENABLE_ORCHESTRATOR"
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        feature_flag_service=_Flags(),
+    )
+
+    decision = service.decide("帮我写一个复杂项目方案")
+
+    assert decision.intent == "fallback"
+    assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
+    assert decision.agent_subset["selection_reason"] == "feature_flag_disabled"
+    assert decision.tool_subset["selection_reason"] == "feature_flag_disabled"
+
+
+def test_orchestrator_should_disable_agent_and_tool_subsets_by_flag():
+    class _Flags:
+        def is_enabled(self, code):
+            return code not in {
+                "ENABLE_AGENT_METADATA_ROUTING",
+                "ENABLE_TOOL_POOL_RETRIEVAL",
+            }
+
+    class _SubsetBuilder:
+        def build_subset_from_candidates(self, candidates, **kwargs):
+            raise AssertionError("agent subset should be disabled")
+
+    class _ToolSubsetBuilder:
+        def build_ranked_subset(self, candidates, **kwargs):
+            raise AssertionError("tool subset should be disabled")
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        subset_builder=_SubsetBuilder(),
+        tool_subset_builder=_ToolSubsetBuilder(),
+        feature_flag_service=_Flags(),
+    )
+
+    decision = service.decide("帮我查询资料")
+
+    assert decision.agent_subset["selection_reason"] == "feature_flag_disabled"
+    assert decision.tool_subset["selection_reason"] == "feature_flag_disabled"
+
+
 def test_orchestrator_should_attach_cost_policy_and_billing_started_event():
     service = OrchestratorService(task_classifier_service=TaskClassifierService())
 

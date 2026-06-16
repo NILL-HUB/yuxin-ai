@@ -41,6 +41,23 @@ export default {
     },
   },
   admin: {
+    orchestrationFlags: {
+      title: 'Orchestration flags',
+      description: 'Manage orchestration rollout flags and release checks',
+      flagCount: 'Flag count',
+      warningCount: 'Warnings',
+      rollback: 'Rollback action',
+      code: 'Code',
+      name: 'Name',
+      descriptionLabel: 'Description',
+      riskLevel: 'Risk level',
+      fallbackBehavior: 'Fallback behavior',
+      enabled: 'Enabled',
+      on: 'On',
+      off: 'Off',
+      loadFailed: 'Failed to load orchestration flags',
+      updateFailed: 'Failed to update orchestration flag',
+    },
     routingLogs: {
       title: 'Routing logs',
       description: 'Inspect agent routing, tool hits, cost, and fallback status',

@@ -26,6 +26,8 @@ from .admin_app_assignment_handler import AdminAppAssignmentHandler
 from .admin_audit_log_handler import AdminAuditLogHandler
 from .admin_auth_handler import AdminAuthHandler
 from .admin_billing_plan_handler import AdminBillingPlanHandler
+from .admin_orchestration_flag_handler import AdminOrchestrationFlagHandler
+from .admin_orchestration_release_handler import AdminOrchestrationReleaseHandler
 from .admin_customer_user_handler import AdminCustomerUserHandler
 from .admin_rbac_handler import AdminRbacHandler
 from .admin_redeem_code_handler import AdminRedeemCodeHandler
@@ -72,6 +74,8 @@ __all__ = [
     "AdminAuditLogHandler",
     "AdminAuthHandler",
     "AdminBillingPlanHandler",
+    "AdminOrchestrationFlagHandler",
+    "AdminOrchestrationReleaseHandler",
     "AdminCustomerUserHandler",
     "AdminRbacHandler",
     "AdminRedeemCodeHandler",

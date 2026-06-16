@@ -239,6 +239,12 @@ const router = createRouter({
               component: () => import('@/views/admin/RoutingLogsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['routing_log:read'] },
             },
+            {
+              path: 'orchestration-flags',
+              name: 'admin-orchestration-flags',
+              component: () => import('@/views/admin/OrchestrationFlagsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['orchestration_flag:read'] },
+            },
           ],
         },
         {
