@@ -168,6 +168,9 @@ class TestHomeService:
             "visible_sources": [],
             "user_warnings": [],
         }
+        assert "model_selection" not in result
+        assert "key_usage" not in result
+        assert "internal_cost_breakdown" not in result
 
     def test_get_user_intent_single_user_message_triggers_recognition(
         self,

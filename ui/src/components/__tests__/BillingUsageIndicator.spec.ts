@@ -49,7 +49,11 @@ describe('BillingUsageIndicator.vue', () => {
 
     expect(wrapper.text()).toContain('Consumed')
     expect(wrapper.text()).toContain('3')
+    expect(wrapper.text()).toContain('credits')
     expect(wrapper.text()).not.toContain('预估')
+    expect(wrapper.text()).not.toContain('key-1')
+    expect(wrapper.text()).not.toContain('deepseek-chat')
+    expect(wrapper.text()).not.toContain('internal_cost_breakdown')
   })
 
   it('should use i18n keys instead of hardcoded display text', () => {

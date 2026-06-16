@@ -1,12 +1,15 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     PrimaryKeyConstraint,
     String,
+    Text,
     UUID,
     text,
 )
@@ -27,6 +30,8 @@ class RoutingLog(db.Model):
         Index("routing_log_account_id_idx", "account_id"),
         Index("routing_log_message_id_idx", "message_id"),
         Index("routing_log_status_idx", "status"),
+        Index("routing_log_retention_expires_at_idx", "retention_expires_at"),
+        Index("routing_log_latency_ms_idx", "latency_ms"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
@@ -39,6 +44,17 @@ class RoutingLog(db.Model):
     filtered_out_tools = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     knowledge_hits = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     billing_events = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    user_query = Column(Text, nullable=True)
+    task_classification = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    model_selection = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    agent_pool_hits = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    tool_pool_hits = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    key_usage = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    cost_summary = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    latency_ms = Column(Integer, nullable=False, server_default=text("0"))
+    fallback_reason = Column(String(255), nullable=True)
+    redaction_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    retention_expires_at = Column(DateTime, nullable=True)
     status = Column(
         String(64), nullable=False, server_default=text("'success'::character varying")
     )

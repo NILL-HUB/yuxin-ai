@@ -65,11 +65,30 @@ def test_record_should_persist_routing_decision_candidates_filters_and_billing(m
         knowledge_hits=[{"name": "系统知识"}],
         billing_events=[{"event": "billing_delta", "total_credits": 3}],
         status="success",
+        user_query="帮我分析市场",
+        task_classification={"complexity": "complex"},
+        model_selection={"model_id": "deepseek-chat"},
+        agent_pool_hits=[{"pool": "research"}],
+        tool_pool_hits=[{"pool": "web"}],
+        key_usage={"key_id": "key-1"},
+        cost_summary={"total_credits": 3},
+        latency_ms=1200,
+        fallback_reason="",
+        redaction_enabled=True,
     )
 
     assert created[0][0] is RoutingLog
     assert result.routing_decision == {"intent": "tool_task"}
     assert result.filtered_out_tools[0]["reason"] == "high_risk_requires_confirmation"
+    assert result.user_query == "帮我分析市场"
+    assert result.task_classification == {"complexity": "complex"}
+    assert result.model_selection == {"model_id": "deepseek-chat"}
+    assert result.agent_pool_hits == [{"pool": "research"}]
+    assert result.tool_pool_hits == [{"pool": "web"}]
+    assert result.key_usage == {"key_id": "key-1"}
+    assert result.cost_summary == {"total_credits": 3}
+    assert result.latency_ms == 1200
+    assert result.redaction_enabled is True
 
 
 def test_page_should_return_serialized_logs_with_filters():
@@ -84,6 +103,17 @@ def test_page_should_return_serialized_logs_with_filters():
         filtered_out_tools=[],
         knowledge_hits=[],
         billing_events=[],
+        user_query="帮我分析市场",
+        task_classification={"complexity": "complex"},
+        model_selection={"model_id": "deepseek-chat"},
+        agent_pool_hits=[{"pool": "research"}],
+        tool_pool_hits=[{"pool": "web"}],
+        key_usage={"key_id": "key-1"},
+        cost_summary={"total_credits": 3},
+        latency_ms=1200,
+        fallback_reason="quota_exhausted",
+        redaction_enabled=True,
+        retention_expires_at=None,
         status="success",
         created_at=None,
     )
@@ -96,7 +126,25 @@ def test_page_should_return_serialized_logs_with_filters():
         )
     )
 
-    result = service.page(page=1, page_size=20, status="success")
+    result = service.page(
+        page=1,
+        page_size=20,
+        status="success",
+        agent_pool="research",
+        tool_pool="web",
+        model_id="deepseek-chat",
+        key_id="key-1",
+    )
 
     assert result["paginator"]["total_record"] == 1
     assert result["list"][0]["routing_decision"]["intent"] == "general_qa"
+    assert result["list"][0]["user_query"] == "帮我分析市场"
+    assert result["list"][0]["task_classification"] == {"complexity": "complex"}
+    assert result["list"][0]["model_selection"] == {"model_id": "deepseek-chat"}
+    assert result["list"][0]["agent_pool_hits"] == [{"pool": "research"}]
+    assert result["list"][0]["tool_pool_hits"] == [{"pool": "web"}]
+    assert result["list"][0]["key_usage"] == {"key_id": "key-1"}
+    assert result["list"][0]["cost_summary"] == {"total_credits": 3}
+    assert result["list"][0]["latency_ms"] == 1200
+    assert result["list"][0]["fallback_reason"] == "quota_exhausted"
+    assert result["list"][0]["redaction_enabled"] is True

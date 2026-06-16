@@ -233,6 +233,12 @@ const router = createRouter({
               component: { template: '<h2>审计日志</h2>' },
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['audit_log:read'] },
             },
+            {
+              path: 'routing-logs',
+              name: 'admin-routing-logs',
+              component: () => import('@/views/admin/RoutingLogsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['routing_log:read'] },
+            },
           ],
         },
         {

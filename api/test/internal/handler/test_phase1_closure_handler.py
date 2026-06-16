@@ -317,12 +317,35 @@ class TestAdminRoutingLogApi:
         captured = {}
         _mock_current_admin(monkeypatch, ["routing_log:read"])
 
-        def _page(self, *, page=1, page_size=20, account_id=None, status=None):
+        def _page(
+            self,
+            *,
+            page=1,
+            page_size=20,
+            account_id=None,
+            status=None,
+            agent_id=None,
+            agent_pool=None,
+            tool_name=None,
+            tool_pool=None,
+            model_id=None,
+            key_id=None,
+            start_at=None,
+            end_at=None,
+        ):
             captured.update({
                 "page": page,
                 "page_size": page_size,
                 "account_id": account_id,
                 "status": status,
+                "agent_id": agent_id,
+                "agent_pool": agent_pool,
+                "tool_name": tool_name,
+                "tool_pool": tool_pool,
+                "model_id": model_id,
+                "key_id": key_id,
+                "start_at": start_at,
+                "end_at": end_at,
             })
             return {
                 "list": [{
@@ -346,6 +369,17 @@ class TestAdminRoutingLogApi:
                         "reason": "model_tokens",
                         "metadata": {"input_tokens": 500, "output_tokens": 1000},
                     }],
+                    "user_query": "帮我分析市场",
+                    "task_classification": {"complexity": "complex"},
+                    "model_selection": {"model_id": "deepseek-chat"},
+                    "agent_pool_hits": [{"pool": "research"}],
+                    "tool_pool_hits": [{"pool": "web"}],
+                    "key_usage": {"key_id": "key-1"},
+                    "cost_summary": {"total_credits": 3},
+                    "latency_ms": 1200,
+                    "fallback_reason": "",
+                    "redaction_enabled": True,
+                    "retention_expires_at": 1896048000,
                     "status": "success",
                     "created_at": 1893456000,
                 }],
@@ -354,6 +388,15 @@ class TestAdminRoutingLogApi:
                     "total_page": 1,
                     "current_page": 1,
                     "page_size": 20,
+                },
+                "summary": {
+                    "total_count": 1,
+                    "success_count": 1,
+                    "fallback_count": 0,
+                    "total_credits": 3,
+                    "avg_latency_ms": 1200,
+                    "agent_pool_hit_rate": 1,
+                    "tool_pool_hit_rate": 1,
                 },
             }
 
@@ -364,7 +407,11 @@ class TestAdminRoutingLogApi:
         )
 
         resp = client.get(
-            f"/admin/routing-logs?account_id={account_id}&status=success&current_page=1&page_size=20",
+            f"/admin/routing-logs?account_id={account_id}&status=success"
+            "&current_page=1&page_size=20&agent_id=agent-1"
+            "&agent_pool=research&tool_name=search&tool_pool=web"
+            "&model_id=deepseek-chat&key_id=key-1"
+            "&start_at=2026-01-01T00:00:00&end_at=2026-01-02T00:00:00",
             headers={"Authorization": "Bearer admin-token"},
         )
 
@@ -378,11 +425,22 @@ class TestAdminRoutingLogApi:
             "input_tokens": 500,
             "output_tokens": 1000,
         }
+        assert resp.json["data"]["list"][0]["user_query"] == "帮我分析市场"
+        assert resp.json["data"]["list"][0]["cost_summary"] == {"total_credits": 3}
+        assert resp.json["data"]["summary"]["total_credits"] == 3
         assert captured == {
             "page": 1,
             "page_size": 20,
             "account_id": account_id,
             "status": "success",
+            "agent_id": "agent-1",
+            "agent_pool": "research",
+            "tool_name": "search",
+            "tool_pool": "web",
+            "model_id": "deepseek-chat",
+            "key_id": "key-1",
+            "start_at": "2026-01-01T00:00:00",
+            "end_at": "2026-01-02T00:00:00",
         }
 
     def test_list_should_reject_missing_permission(self, client, monkeypatch):
