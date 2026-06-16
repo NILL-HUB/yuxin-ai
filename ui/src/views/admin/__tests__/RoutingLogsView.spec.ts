@@ -4,16 +4,23 @@ import RoutingLogsView from '@/views/admin/RoutingLogsView.vue'
 
 const mocks = vi.hoisted(() => ({
   listAdminRoutingLogs: vi.fn(),
+  createAdminRoutingQualityFeedback: vi.fn(),
   messageError: vi.fn(),
+  messageSuccess: vi.fn(),
 }))
 
 vi.mock('@/services/admin-routing-logs', () => ({
   listAdminRoutingLogs: mocks.listAdminRoutingLogs,
 }))
 
+vi.mock('@/services/admin-routing-quality', () => ({
+  createAdminRoutingQualityFeedback: mocks.createAdminRoutingQualityFeedback,
+}))
+
 vi.mock('@arco-design/web-vue', () => ({
   Message: {
     error: mocks.messageError,
+    success: mocks.messageSuccess,
   },
 }))
 
@@ -45,6 +52,18 @@ vi.mock('vue-i18n', () => ({
         'admin.routingLogs.latency': 'Latency',
         'admin.routingLogs.fallbackReason': 'Fallback reason',
         'admin.routingLogs.loadFailed': 'Failed to load routing logs',
+        'admin.routingLogs.feedback': 'Feedback',
+        'admin.routingLogs.feedbackForm': 'Routing quality feedback',
+        'admin.routingLogs.rating': 'Rating',
+        'admin.routingLogs.accuracy': 'Accuracy',
+        'admin.routingLogs.latencyScore': 'Latency score',
+        'admin.routingLogs.costScore': 'Cost score',
+        'admin.routingLogs.safetyScore': 'Safety score',
+        'admin.routingLogs.completenessScore': 'Completeness score',
+        'admin.routingLogs.comment': 'Feedback comment',
+        'admin.routingLogs.submitFeedback': 'Submit feedback',
+        'admin.routingLogs.feedbackSuccess': 'Feedback submitted',
+        'admin.routingLogs.feedbackFailed': 'Submit failed',
       })[key] ?? key,
   }),
 }))
@@ -56,12 +75,13 @@ const inputStub = {
 }
 
 const buttonStub = {
-  props: ['loading'],
+  props: ['loading', 'size'],
   emits: ['click'],
   template: '<button type="button" @click="$emit(\'click\')"><slot /></button>',
 }
 
 const renderView = async () => {
+  mocks.createAdminRoutingQualityFeedback.mockResolvedValue({ id: 'feedback-1' })
   mocks.listAdminRoutingLogs.mockResolvedValue({
     list: [
       {
@@ -141,5 +161,31 @@ describe('RoutingLogsView', () => {
     expect(wrapper.text()).toContain('research')
     expect(wrapper.text()).toContain('web')
     expect(wrapper.text()).toContain('fallback:task_failed')
+  })
+
+  it('submits routing quality feedback for a log', async () => {
+    const wrapper = await renderView()
+
+    const buttons = wrapper.findAll('button')
+    await buttons[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Routing quality feedback')
+
+    await wrapper.findAll('button').at(-1)?.trigger('click')
+    await flushPromises()
+
+    expect(mocks.createAdminRoutingQualityFeedback).toHaveBeenCalledWith({
+      routing_log_id: 'log-1',
+      rating: 5,
+      dimension_scores: {
+        accuracy: 5,
+        latency: 5,
+        cost: 5,
+        safety: 5,
+        completeness: 5,
+      },
+      comment: '',
+    })
+    expect(mocks.messageSuccess).toHaveBeenCalledWith('Feedback submitted')
   })
 })

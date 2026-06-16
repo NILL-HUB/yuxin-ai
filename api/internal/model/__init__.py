@@ -17,6 +17,10 @@ from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, Rol
 from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTransaction, RedeemCodeBatch, RedeemCode
 from .routing_log import RoutingLog
 from .orchestration_feature_flag import OrchestrationFeatureFlagModel
+from .routing_quality import (
+    RoutingOptimizationSuggestionModel,
+    RoutingQualityFeedbackModel,
+)
 
 __all__ = [
     "App", "AppAssignment", "AppDatasetJoin", "AppConfig", "AppConfigVersion",
@@ -34,4 +38,5 @@ __all__ = [
     "AdminUser", "AdminSession", "Role", "Permission", "AdminUserRole", "RolePermission", "AuditLog",
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
     "RoutingLog", "OrchestrationFeatureFlagModel",
+    "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
 ]

@@ -25,3 +25,17 @@ def test_default_permissions_should_include_orchestration_flags():
         "action": "read",
         "description": "查看调度平台上线验收报告",
     }
+    assert permissions["routing_quality:read"] == {
+        "code": "routing_quality:read",
+        "name": "查看路由质量",
+        "resource": "routing_quality",
+        "action": "read",
+        "description": "查看路由质量指标与调优建议",
+    }
+    assert permissions["routing_quality:feedback"] == {
+        "code": "routing_quality:feedback",
+        "name": "提交路由反馈",
+        "resource": "routing_quality",
+        "action": "feedback",
+        "description": "提交路由质量反馈",
+    }

@@ -107,6 +107,8 @@ class TestAdminRbacService:
             "orchestration_flag:read",
             "orchestration_flag:update",
             "orchestration_release:read",
+            "routing_quality:read",
+            "routing_quality:feedback",
         ]
 
     def test_initialize_defaults_should_create_missing_permissions_roles_and_super_admin_bindings(self, monkeypatch):

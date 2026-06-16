@@ -25,6 +25,7 @@ from internal.handler import (
     AdminRedeemCodeHandler,
     AdminResourceEntryHandler,
     AdminRoutingLogHandler,
+    AdminRoutingQualityHandler,
     AdminUserHandler,
     AdminWorkflowHandler,
     AIHandler,
@@ -81,6 +82,7 @@ class Router:
     admin_redeem_code_handler: AdminRedeemCodeHandler
     admin_resource_entry_handler: AdminResourceEntryHandler
     admin_routing_log_handler: AdminRoutingLogHandler
+    admin_routing_quality_handler: AdminRoutingQualityHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
     ai_handler: AIHandler
@@ -581,6 +583,30 @@ class Router:
             endpoint="admin_orchestration_release_check",
             methods=["GET"],
             view_func=self.admin_orchestration_release_handler.get,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/feedback",
+            endpoint="admin_routing_quality_feedback_create",
+            methods=["POST"],
+            view_func=self.admin_routing_quality_handler.create_feedback,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/feedback",
+            endpoint="admin_routing_quality_feedback_list",
+            methods=["GET"],
+            view_func=self.admin_routing_quality_handler.list_feedback,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/metrics",
+            endpoint="admin_routing_quality_metrics",
+            methods=["GET"],
+            view_func=self.admin_routing_quality_handler.metrics,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/suggestions",
+            endpoint="admin_routing_quality_suggestions",
+            methods=["GET"],
+            view_func=self.admin_routing_quality_handler.suggestions,
         )
         bp.add_url_rule(
             "/admin/plans",

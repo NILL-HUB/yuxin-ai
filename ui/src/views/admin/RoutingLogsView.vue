@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import { listAdminRoutingLogs } from '@/services/admin-routing-logs'
+import { createAdminRoutingQualityFeedback } from '@/services/admin-routing-quality'
 import type {
   AdminRoutingLogListResponse,
   AdminRoutingLogRecord,
@@ -21,6 +22,17 @@ const summary = ref<AdminRoutingLogSummary>({
   avg_latency_ms: 0,
   agent_pool_hit_rate: 0,
   tool_pool_hit_rate: 0,
+})
+
+const feedbackTarget = ref<AdminRoutingLogRecord | null>(null)
+const feedbackForm = ref({
+  rating: 5,
+  accuracy: 5,
+  latency: 5,
+  cost: 5,
+  safety: 5,
+  completeness: 5,
+  comment: '',
 })
 
 const filters = ref({
@@ -49,6 +61,41 @@ const loadRoutingLogs = async () => {
     Message.error(getErrorMessage(error, t('admin.routingLogs.loadFailed')))
   } finally {
     loading.value = false
+  }
+}
+
+const openFeedback = (log: AdminRoutingLogRecord) => {
+  feedbackTarget.value = log
+  feedbackForm.value = {
+    rating: 5,
+    accuracy: 5,
+    latency: 5,
+    cost: 5,
+    safety: 5,
+    completeness: 5,
+    comment: '',
+  }
+}
+
+const submitFeedback = async () => {
+  if (!feedbackTarget.value) return
+  try {
+    await createAdminRoutingQualityFeedback({
+      routing_log_id: feedbackTarget.value.id,
+      rating: feedbackForm.value.rating,
+      dimension_scores: {
+        accuracy: feedbackForm.value.accuracy,
+        latency: feedbackForm.value.latency,
+        cost: feedbackForm.value.cost,
+        safety: feedbackForm.value.safety,
+        completeness: feedbackForm.value.completeness,
+      },
+      comment: feedbackForm.value.comment,
+    })
+    Message.success(t('admin.routingLogs.feedbackSuccess'))
+    feedbackTarget.value = null
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.routingLogs.feedbackFailed')))
   }
 }
 
@@ -119,6 +166,7 @@ onMounted(loadRoutingLogs)
             <th class="p-3">{{ t('admin.routingLogs.latency') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.status') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.fallbackReason') }}</th>
+            <th class="p-3">{{ t('admin.routingLogs.feedback') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -132,9 +180,32 @@ onMounted(loadRoutingLogs)
             <td class="p-3">{{ log.latency_ms }} ms</td>
             <td class="p-3">{{ log.status }}</td>
             <td class="p-3">{{ log.fallback_reason || '-' }}</td>
+            <td class="p-3">
+              <a-button size="mini" @click="openFeedback(log)">
+                {{ t('admin.routingLogs.feedback') }}
+              </a-button>
+            </td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <div v-if="feedbackTarget" class="rounded-lg border bg-white p-4">
+      <h2 class="mb-3 text-lg font-medium">
+        {{ t('admin.routingLogs.feedbackForm') }} · {{ feedbackTarget.id }}
+      </h2>
+      <div class="grid gap-3 md:grid-cols-3">
+        <a-input v-model="feedbackForm.rating" :placeholder="t('admin.routingLogs.rating')" />
+        <a-input v-model="feedbackForm.accuracy" :placeholder="t('admin.routingLogs.accuracy')" />
+        <a-input v-model="feedbackForm.latency" :placeholder="t('admin.routingLogs.latencyScore')" />
+        <a-input v-model="feedbackForm.cost" :placeholder="t('admin.routingLogs.costScore')" />
+        <a-input v-model="feedbackForm.safety" :placeholder="t('admin.routingLogs.safetyScore')" />
+        <a-input v-model="feedbackForm.completeness" :placeholder="t('admin.routingLogs.completenessScore')" />
+      </div>
+      <a-input v-model="feedbackForm.comment" class="mt-3" :placeholder="t('admin.routingLogs.comment')" />
+      <a-button class="mt-3" @click="submitFeedback">
+        {{ t('admin.routingLogs.submitFeedback') }}
+      </a-button>
     </div>
   </section>
 </template>

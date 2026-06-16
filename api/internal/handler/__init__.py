@@ -33,6 +33,7 @@ from .admin_rbac_handler import AdminRbacHandler
 from .admin_redeem_code_handler import AdminRedeemCodeHandler
 from .admin_resource_entry_handler import AdminResourceEntryHandler
 from .admin_routing_log_handler import AdminRoutingLogHandler
+from .admin_routing_quality_handler import AdminRoutingQualityHandler
 from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
 from .web_app_handler import WebAppHandler
@@ -81,6 +82,7 @@ __all__ = [
     "AdminRedeemCodeHandler",
     "AdminResourceEntryHandler",
     "AdminRoutingLogHandler",
+    "AdminRoutingQualityHandler",
     "AdminUserHandler",
     "AdminWorkflowHandler",
     "WebAppHandler",

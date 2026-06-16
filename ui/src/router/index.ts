@@ -245,6 +245,12 @@ const router = createRouter({
               component: () => import('@/views/admin/OrchestrationFlagsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['orchestration_flag:read'] },
             },
+            {
+              path: 'routing-quality',
+              name: 'admin-routing-quality',
+              component: () => import('@/views/admin/RoutingQualityView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['routing_quality:read'] },
+            },
           ],
         },
         {
