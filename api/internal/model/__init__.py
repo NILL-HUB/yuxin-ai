@@ -23,6 +23,8 @@ from .routing_quality import (
 )
 
 __all__ = [
+    "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "MemoryCandidate", "ExternalDataSource",
+    "ToolConfirmation",
     "App", "AppAssignment", "AppDatasetJoin", "AppConfig", "AppConfigVersion",
     "ApiTool", "ApiToolProvider",
     "UploadFile",
@@ -39,4 +41,5 @@ __all__ = [
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
     "RoutingLog", "OrchestrationFeatureFlagModel",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
+    "Dataset", "Document", "Segment", "KeywordTable", "DatasetQuery", "ProcessRule",
 ]

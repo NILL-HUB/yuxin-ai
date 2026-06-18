@@ -9,7 +9,7 @@
 | 日期 | 2026-06-15 |
 | 适用范围 | OpenAgent 主入口 `/home`、Assistant Agent、Agent 池、工具池、MCP、模型路由、任务编排、结果汇总、配置中心、测试体系 |
 | 主要受众 | 产品、研发、测试、架构、运维、后续接手项目的 AI/工程 Agent |
-| 当前状态 | Phase 1-8 已提交，Phase 9 已完成 |
+| 当前状态 | Phase 1-9 已提交，Phase 10 待规划 |
 
 ## 2. 背景与问题定义
 
@@ -2207,6 +2207,193 @@ standard 失败或置信度低 -> strong
 - 管理员可查看日志。
 - 普通用户不可查看日志。
 
+## 16.9 Phase 8：发布开关、回滚闭环与生产化验收
+
+### 目标
+
+让通用 Agent 调度平台具备安全上线、逐步放量、快速回滚和上线前自检能力。
+
+### 已完成内容
+
+- Feature Flag 标准实体与持久化模型。
+- FeatureFlagService。
+- Orchestrator 与 HomeService 接入开关和 fallback。
+- Admin Feature Flag API。
+- RBAC 权限补充。
+- 上线验收报告服务。
+- Admin Release Check API。
+- 前端 Admin Orchestration Flags 页面。
+- 关闭开关后的安全 fallback 和降级边界测试。
+
+### 验收状态
+
+- 后端全量测试通过。
+- 前端 type-check、lint、unit test 通过。
+- migration heads/current 通过。
+- Phase 8 已提交。
+
+## 16.10 Phase 9：路由质量反馈、运营洞察与半自动调优建议
+
+### 目标
+
+基于路由日志、管理员反馈、成本、延迟和 fallback 指标，建立调度系统的质量反馈与半自动调优建议闭环。
+
+### 已完成内容
+
+- Routing Quality Feedback 标准实体。
+- Routing Quality Feedback / Suggestion 持久化模型。
+- RoutingQualityFeedbackService。
+- RoutingQualityMetricsService。
+- RoutingOptimizationSuggestionService。
+- Admin Routing Quality API。
+- RBAC 权限补充。
+- 前端 Admin Routing Quality 页面。
+- Routing Logs 页面 feedback 入口。
+- 用户侧与安全边界回归。
+
+### 验收状态
+
+- 后端全量测试通过。
+- 前端 type-check、lint、unit test 通过。
+- migration heads/current 通过。
+- Phase 9 已提交。
+
+## 16.11 Phase 10：知识库分层、长期记忆与作用域隔离
+
+### 目标
+
+把现有 Dataset / Document / Segment 从资料型知识库升级为完整知识体系，区分系统级知识库、用户长期记忆库、用户资料内容库、租户级知识库和项目级知识库。
+
+### 建议功能范围
+
+新增或重构：
+
+- `KnowledgeScope`。
+- `operation_context`。
+- `visibility_scope`。
+- `owner_account_id`。
+- `owner_admin_user_id`。
+- `target_tenant_id`。
+- `target_project_id`。
+- `UserMemory`。
+- `MemoryCandidateExtractor`。
+- `MemoryConfidenceTracker`。
+- 长期记忆确认卡片。
+- 用户长期记忆管理入口。
+- 系统级知识库管理入口。
+- 知识检索工具子池。
+
+### 验收标准
+
+- 管理员在配置中心创建 system 知识库时记录 admin 身份、operation_context 和 knowledge_scope。
+- 管理员在 `/home` 普通上下文上传或沉淀的资料进入自己的用户个人知识库，而不是系统级知识库。
+- 用户长期记忆候选必须满足三次高置信触发，并经用户确认后保存。
+- 用户可以查看、编辑、删除、启用或禁用长期记忆。
+- 用户个人知识库、系统级知识库、租户级知识库和项目级知识库按作用域隔离。
+- Agent 操作规范类任务优先检索系统级知识库。
+- 用户偏好类任务优先检索用户长期记忆库。
+- 用户资料查询类任务优先检索用户资料内容库。
+- 用户 A 不能检索用户 B 的个人知识库。
+
+## 16.12 Phase 11：高风险工具统一确认与审计闭环
+
+### 目标
+
+让系统可以在授权、作用域、审计和用户确认条件下安全执行用户业务系统中的高风险操作。
+
+### 建议功能范围
+
+- `ToolConfirmation` 实体和持久化模型。
+- confirmation create / confirm / cancel API。
+- 统一高风险工具确认卡片。
+- ToolInvoker 执行前等待确认。
+- 影响范围、目标环境、回滚策略和审计提示。
+- 用户取消后的 ResultSynthesizer 汇总说明。
+- 高风险工具审计日志。
+
+### 验收标准
+
+- sensitive / dangerous 工具不能绕过确认 UI 直接执行。
+- 确认卡片展示风险等级、工具名称、目标系统、目标环境、执行摘要、影响范围、回滚策略、授权状态和审计提示。
+- 默认焦点不能落在执行按钮上。
+- 用户取消后不执行工具，并返回可理解的替代说明。
+- 已进入不可中断外部写操作时，系统记录审计并提示用户可能已生效。
+
+## 16.13 Phase 12：用户侧实时计费、任务终止与已发生成本展示
+
+### 目标
+
+让长任务、多 Agent、deep thinking 和工具调用过程中，用户可以实时看到已发生的积分 / token 消耗，并可以主动停止后续执行。
+
+### 建议功能范围
+
+- `billing_started`。
+- `billing_delta`。
+- `billing_summary`。
+- `billing_cancelled`。
+- `billing_final`。
+- `cancel_request`。
+- ExecutionCoordinator cancel token。
+- SSE 计费事件推送。
+- 用户侧停止按钮。
+- 终止后摘要。
+
+### 验收标准
+
+- 用户侧只展示当前已发生消耗，不展示预估最终成本。
+- 所有增量消耗必须来自后端 billing event，前端不自行估算。
+- 用户停止后，未开始子任务不计费，已完成部分正常计费。
+- 停止后仍返回已完成内容、已发生成本和未执行阶段说明。
+- 高风险工具确认 UI 中展示的当前消耗与主任务计费 UI 一致。
+
+## 16.14 Phase 13：外部数据源连接与同步
+
+### 目标
+
+将用户资料内容库从手动上传扩展为连接用户授权的业务知识源和外部协作系统。
+
+### 建议功能范围
+
+- `ExternalDataSource` 模型。
+- source_type、auth_status、sync_status、scope。
+- 手动同步。
+- 同步历史。
+- 飞书 / Notion / GitHub 等试点连接器。
+- 同步后的 Document / Segment 入库。
+- 外部资料检索工具接入 ToolPool。
+
+### 验收标准
+
+- 用户必须授权后才能连接外部数据源。
+- 同步数据按用户、团队、项目或租户作用域隔离。
+- 手动同步结果可追踪状态和错误原因。
+- 同步后的文本和结构化资料可被动态知识检索工具召回。
+- 外部数据源不会污染系统级知识库。
+
+## 16.15 Phase 14：调优建议采纳与策略变更草稿
+
+### 目标
+
+将 Phase 9 的半自动调优建议从只读建议升级为管理员可复核、可采纳、可生成策略变更草稿的运营闭环。
+
+### 建议功能范围
+
+- suggestion 状态流转：open、accepted、dismissed、applied。
+- 策略变更 preview。
+- 变更前后 diff。
+- 影响范围评估。
+- 人工确认后更新 Agent / Tool / Model routing policy。
+- 策略变更审计。
+- 策略变更回滚。
+
+### 验收标准
+
+- 系统不能自动应用建议，必须管理员确认。
+- 采纳建议前展示变更 diff 和影响范围。
+- 应用后写入审计日志。
+- 应用失败时不产生部分策略变更。
+- 管理员可以 dismiss 不适用建议并记录原因。
+
 ## 17. 跨阶段测试策略
 
 ### 17.1 测试金字塔
@@ -2346,53 +2533,67 @@ standard 失败或置信度低 -> strong
 
 ## 22. 推荐优先级
 
+Phase 1-9 已经完成调度平台的控制面、治理面、发布回滚和质量反馈闭环。后续优先级应从“继续补调度控制面”转向“让系统具备长期上下文、安全执行和用户可控成本”。
+
 推荐实施顺序：
 
 ```text
-P0：Orchestrator 骨架与结构化决策
-P0：Agent 池元数据与 public/assigned 候选统一
-P1：工具池治理和风险分级
-P1：动态工具检索试点
-P1：模型档位和成本策略
-P2：多 Agent 编排
-P2：显式结果汇总器
-P2：运营面板和成本面板
+P0：Phase 10 知识库分层、长期记忆与作用域隔离
+P0：Phase 11 高风险工具统一确认与审计闭环
+P1：Phase 12 用户侧实时计费、任务终止与已发生成本展示
+P1：Phase 13 外部数据源连接与同步
+P2：Phase 14 调优建议采纳与策略变更草稿
+P2：多媒体资料深度解析：OCR、ASR、视频抽帧、视觉理解
+P3：更完整的企业级租户、团队、项目权限矩阵
 ```
 
-不建议最先做：
+不建议近期优先做：
 
-- 全量动态工具池自动调用。
-- 默认多 Agent。
-- 完整企业级用户组权限。
-- 大而全的运营面板。
+- 全自动应用调优建议并直接改生产路由策略。
+- 默认开启所有高风险写操作工具。
+- 在知识库作用域重构前大规模接入外部数据源。
+- 在计费与终止链路完善前大规模推广长任务和多 Agent 重执行。
+- 一次性完成所有图片、视频、音频深度解析能力。
 
 ## 23. 近期可执行任务清单
 
-### 23.1 第一批开发任务
+### 23.1 Phase 10 第一批任务：知识作用域模型
 
-1. 新增 `RoutingDecision` 数据结构。
-2. 新增 `TaskClassifier` 服务。
-3. 新增 `OrchestratorService` 骨架。
-4. 将 `/assistant-agent/chat` 接入 Orchestrator feature flag。
-5. 简单任务仍走旧 Assistant Agent 或 direct answer。
-6. 记录结构化 routing decision。
-7. 补单元测试和集成测试。
+1. 复核现有 Dataset / Document / Segment 与 AppDatasetJoin 依赖。
+2. 定义 `KnowledgeScope`、`OperationContext`、`VisibilityScope` 枚举。
+3. 设计新的知识归属字段：owner_account_id、owner_admin_user_id、target_tenant_id、target_project_id。
+4. 新增或重构 KnowledgeBase / Document / Segment 模型，使知识库从第一天就区分 system、tenant、project、user_memory、user_content。
+5. 建立系统级知识库、用户资料内容库和用户长期记忆库的权限边界测试。
+6. 更新 Admin 与用户侧知识库 API 的作用域参数。
+7. 补 migration、模型测试、权限测试和兼容回归测试。
 
-### 23.2 第二批开发任务
+### 23.2 Phase 10 第二批任务：用户长期记忆
 
-1. 给 App 增加 Agent 元数据字段或扩展配置 JSON。
-2. 配置中心增加 Agent 元数据编辑。
-3. AgentRouter 支持 capabilities/task_types/model_tier。
-4. public App + assigned App 合并候选。
-5. `/home` 与 `/my-ai` 使用一致的可用 Agent 语义。
+1. 新增 `UserMemory` 模型，避免把长期习惯复用 Dataset 承载。
+2. 新增 `MemoryCandidateExtractor`，从对话和反馈中提取候选偏好。
+3. 新增 `MemoryConfidenceTracker`，按“三次高置信触发”策略聚合同类候选。
+4. 新增长期记忆确认 API：保存、编辑后保存、本次忽略、后续自动保存、永不保存和提醒。
+5. 新增用户长期记忆管理页面：查看、新增、编辑、删除、启用 / 禁用、作用范围。
+6. 将用户长期记忆检索器接入 knowledge tool pool。
+7. 补用户 A/B 隔离、管理员上下文归属和用户拒绝保存的回归测试。
 
-### 23.3 第三批开发任务
+### 23.3 Phase 10 第三批任务：系统级知识库与知识检索工具子池
 
-1. MCP Provider 增加工具治理字段。
-2. ToolRetriever 支持 public MCP 检索。
-3. ToolPolicy 过滤高风险工具。
-4. Agent 运行时试点挂载动态工具。
-5. 补 Prompt 注入和越权测试。
+1. 新增系统级知识库管理入口，要求管理员权限。
+2. 管理员创建系统知识时记录 owner_admin_user_id、operation_context 和发布状态。
+3. 新增 system_knowledge_retriever、user_memory_retriever、user_content_retriever。
+4. 将知识检索器纳入 ToolInventory 和 ToolPolicyFilter。
+5. 检索结果保留来源作用域，ResultSynthesizer 冲突时系统规则优先、用户偏好影响表达风格。
+6. 确保用户个人知识不会污染系统级知识库。
+7. 补 Agent 操作规范优先命中系统知识、用户偏好优先命中长期记忆、资料查询优先命中用户资料内容库的集成测试。
+
+### 23.4 Phase 11 预研任务：高风险工具确认
+
+1. 设计 `ToolConfirmation` 实体与 confirmation_id。
+2. 梳理现有 ToolPolicyFilter 输出，确定如何生成风险说明和执行摘要。
+3. 设计统一确认卡片前端字段与交互。
+4. 设计 confirm / cancel API 与 ToolInvoker 等待确认机制。
+5. 补 prompt 注入绕过确认 UI 的安全测试草案。
 
 ## 24. 已确认决策与后续讨论点
 
@@ -2429,20 +2630,35 @@ P2：运营面板和成本面板
 29. 图片、视频、音频等媒体内容的深度解析后置；第一阶段不要求 OCR、ASR、视频抽帧、视觉理解、音视频转写等能力完成入库。
 30. 前端新增页面、按钮、导航、提示语、表单字段、空状态、错误提示和管理后台文案必须遵循现有 i18n 规范：组件中只能引用 `ui/src/i18n/messages/*` 中的语义化 key，不允许直接硬编码中文或英文；修改业务命名时必须同步 zh-CN 与 en-US 字典，并优先保留原 key 做兼容映射，避免旧入口残留或多语言缺 key。
 
-### 24.2 仍需继续讨论的问题
+### 24.2 设计决策与未解决问题
 
-暂无阻塞性待确认问题。后续问题进入 Phase 1 技术实施计划时再按模块拆分确认。
+已确认设计决策：
+
+1. **Dataset 命名策略**：保留 Dataset 现有命名，新增知识归属字段（`knowledge_scope`、`owner_account_id`、`owner_admin_user_id`、`target_tenant_id`、`target_project_id`），不做破坏性重构，保持与现有代码命名一致。
+2. **用户长期记忆生效范围**：全局作用域，匹配当前系统用户级粒度。
+3. **自动保存确认策略**：用户选择“后续自动保存长期记忆”后直接保存，不需要二次确认；仅在首次推荐用户开启自动保存时说明作用范围和影响。
+4. **系统知识库状态管理**：只做简单 CRUD，不需要发布 / 草稿 / 下线状态，简化实现。
+5. **外部数据源试点范围**：第一个阶段优先支持飞书和本地文件夹，后续再扩展 Notion / GitHub 等。
+6. **高风险确认 UI 复用**：确认 UI 做成全局通用组件，支持工具执行、外部消息发送、发布操作等所有高风险操作复用。
+
+没有阻塞性未解决问题，可以开始 Phase 10 实现。
 
 ## 25. 总结
 
 本 PRD 建议将 OpenAgent 的演进方向定义为“通用 Agent 调度平台”。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、AppAssignment、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
 
-推荐路径是：
+当前路径已经完成：
 
 ```text
-先调度骨架，再 Agent 元数据和子池标签，再工具治理和知识库分层，再动态工具检索，再实时计费和成本路由，最后多 Agent 编排和运营面板。
+调度骨架 -> Agent 元数据和子池标签 -> 工具治理 -> 动态工具检索 -> 成本路由 -> 多 Agent 编排 -> 结果汇总 -> 可观测性 -> 发布回滚 -> 质量反馈闭环
 ```
 
-这样可以避免一次性大改带来的风险，也能让每个阶段都有明确测试、验收和回滚机制。
+后续推荐路径调整为：
+
+```text
+知识库分层与长期记忆 -> 高风险工具统一确认 -> 用户侧实时计费和任务终止 -> 外部数据源同步 -> 调优建议采纳 -> 多媒体资料深度解析
+```
+
+这样可以在已有调度平台控制面之上，继续补齐长期上下文、安全执行和用户成本控制能力，让系统从“会调度”进一步演进为“可长期理解用户、可安全执行任务、可持续运营优化”的 Agent 平台。
 
 

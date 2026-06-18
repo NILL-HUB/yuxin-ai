@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from uuid import UUID as uuid_UUID
+import uuid
 
 from injector import inject
 
 from internal.entity.knowledge_entity import KnowledgeCreatedFrom, KnowledgeScope, OperationContext, VisibilityScope
-from internal.exception import ForbiddenException
+from internal.exception import ForbiddenException, NotFoundException
 from internal.model import Account, AdminUser, KnowledgeBase, UserMemory
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -31,6 +33,48 @@ class SystemKnowledgeService(KnowledgeBaseService):
             created_from=KnowledgeCreatedFrom.ADMIN_CONFIG.value,
         )
 
+    def list_system_knowledge(self) -> list[KnowledgeBase]:
+        return (
+            self.db.session.query(KnowledgeBase)
+            .filter(KnowledgeBase.knowledge_scope == KnowledgeScope.SYSTEM.value)
+            .order_by(KnowledgeBase.created_at.desc())
+            .all()
+        )
+
+    def get_system_knowledge(self, knowledge_base_id) -> KnowledgeBase:
+        knowledge_base = (
+            self.db.session.query(KnowledgeBase)
+            .filter_by(id=knowledge_base_id, knowledge_scope=KnowledgeScope.SYSTEM.value)
+            .one_or_none()
+        )
+        if knowledge_base is None:
+            raise NotFoundException("系统知识库不存在")
+        return knowledge_base
+
+    def update_system_knowledge(
+        self,
+        knowledge_base_id,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        enabled: bool | None = None,
+    ) -> KnowledgeBase:
+        knowledge_base = self.get_system_knowledge(knowledge_base_id)
+        update_kwargs: dict = {}
+        if name is not None:
+            update_kwargs["name"] = name
+        if description is not None:
+            update_kwargs["description"] = description
+        if enabled is not None:
+            update_kwargs["enabled"] = enabled
+        if update_kwargs:
+            self.update(knowledge_base, **update_kwargs)
+        return knowledge_base
+
+    def delete_system_knowledge(self, knowledge_base_id) -> None:
+        knowledge_base = self.get_system_knowledge(knowledge_base_id)
+        self.update(knowledge_base, enabled=False)
+
 
 @inject
 @dataclass
@@ -55,6 +99,49 @@ class UserMemoryService(BaseService):
             status="active",
             created_from=created_from,
         )
+
+    def list_memories(self, account: Account) -> list[UserMemory]:
+        return (
+            self.db.session.query(UserMemory)
+            .filter_by(owner_account_id=account.id)
+            .order_by(UserMemory.created_at.desc())
+            .all()
+        )
+
+    def get_memory(self, memory_id: uuid.UUID, account: Account) -> UserMemory | None:
+        return (
+            self.db.session.query(UserMemory)
+            .filter_by(id=memory_id, owner_account_id=account.id)
+            .one_or_none()
+        )
+
+    def update_memory(
+        self,
+        memory_id: uuid.UUID,
+        account: Account,
+        *,
+        content: str | None = None,
+        memory_type: str | None = None,
+        enabled: bool = True,
+    ) -> UserMemory | None:
+        memory = self.get_memory(memory_id, account)
+        if memory is None:
+            return None
+        if content is not None:
+            memory.content = content
+        if memory_type is not None:
+            memory.memory_type = memory_type
+        memory.status = "active" if enabled else "disabled"
+        self.db.session.commit()
+        return memory
+
+    def delete_memory(self, memory_id: uuid.UUID, account: Account) -> bool:
+        memory = self.get_memory(memory_id, account)
+        if memory is None:
+            return False
+        self.db.session.delete(memory)
+        self.db.session.commit()
+        return True
 
 
 @inject

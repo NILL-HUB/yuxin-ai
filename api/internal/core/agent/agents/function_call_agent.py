@@ -102,11 +102,13 @@ class FunctionCallAgent(BaseAgent):
                 observation=long_term_memory,
             ))
 
-        # 2.构建预设消息列表，并将preset_prompt+long_term_memory填充到系统消息中
+        # 2.构建预设消息列表，并将preset_prompt+long_term_memory+user_memory填充到系统消息中
+        user_memory = state.get("user_memory", "") or ""
         preset_messages = [
             SystemMessage(AGENT_SYSTEM_PROMPT_TEMPLATE.format(
                 preset_prompt=self.agent_config.preset_prompt,
                 long_term_memory=long_term_memory,
+                user_memory=user_memory,
             ))
         ]
 

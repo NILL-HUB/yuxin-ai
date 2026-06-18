@@ -403,6 +403,17 @@ onUnmounted(() => {
           {{ $t('layout.sidebar.openApi') }}
         </span>
       </router-link>
+      <router-link
+        to="/memory"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/memory') ? 'bg-gray-100' : ''}`"
+        active-class="bg-gray-100"
+        :title="route.path.startsWith('/memory') ? t('layout.sidebar.memory') : ''"
+      >
+        <icon-bookmark class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.memory') }}
+        </span>
+      </router-link>
     </div>
 
     <!-- 最近对话区域 - 可滚动 -->

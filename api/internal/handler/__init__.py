@@ -34,6 +34,7 @@ from .admin_redeem_code_handler import AdminRedeemCodeHandler
 from .admin_resource_entry_handler import AdminResourceEntryHandler
 from .admin_routing_log_handler import AdminRoutingLogHandler
 from .admin_routing_quality_handler import AdminRoutingQualityHandler
+from .admin_system_knowledge_handler import AdminSystemKnowledgeHandler
 from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
 from .web_app_handler import WebAppHandler
@@ -48,6 +49,7 @@ from .mcp_handler import McpHandler
 from .memory_candidate_handler import MemoryCandidateHandler
 from .my_app_handler import MyAppHandler
 from .skill_handler import SkillHandler
+from .user_memory_handler import UserMemoryHandler
 
 
 __all__ = [
@@ -83,6 +85,7 @@ __all__ = [
     "AdminResourceEntryHandler",
     "AdminRoutingLogHandler",
     "AdminRoutingQualityHandler",
+    "AdminSystemKnowledgeHandler",
     "AdminUserHandler",
     "AdminWorkflowHandler",
     "WebAppHandler",
@@ -96,6 +99,7 @@ __all__ = [
     "McpHandler",
     "MemoryCandidateHandler",
     "MyAppHandler",
+    "UserMemoryHandler",
     "SkillHandler",
     "ExternalDataSourceHandler",
     "HomeHandler",

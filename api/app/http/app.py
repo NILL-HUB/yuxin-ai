@@ -72,6 +72,21 @@ with app.app_context():
         except Exception:
             logging.exception("启动时预热首页助手 MCP 快照失败")
 
+    if os.getenv("MODE", "api") != "celery" and _is_truthy_env("ADMIN_BOOTSTRAP_ENABLED", "1"):
+        try:
+            from internal.service.admin_rbac_service import AdminRbacService
+            from internal.service.admin_user_service import AdminUserService
+
+            rbac_service = AdminRbacService()
+            rbac_result = rbac_service.initialize_defaults()
+            logging.info("启动时初始化 RBAC 默认角色完成: %s", rbac_result)
+
+            admin_service = AdminUserService()
+            admin_result = admin_service.initialize_super_admin_from_env()
+            logging.info("启动时初始化超级管理员完成: %s", admin_result)
+        except Exception:
+            logging.exception("启动时初始化 RBAC/超级管理员失败")
+
 celery = app.extensions['celery']
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from internal.handler import (
     AdminResourceEntryHandler,
     AdminRoutingLogHandler,
     AdminRoutingQualityHandler,
+    AdminSystemKnowledgeHandler,
     AdminUserHandler,
     AdminWorkflowHandler,
     AIHandler,
@@ -52,7 +53,8 @@ from internal.handler import (
     SkillHandler,
     HomeHandler,
     NotificationHandler,
-    TagHandler
+    TagHandler,
+    UserMemoryHandler,
 )
 
 
@@ -83,6 +85,7 @@ class Router:
     admin_resource_entry_handler: AdminResourceEntryHandler
     admin_routing_log_handler: AdminRoutingLogHandler
     admin_routing_quality_handler: AdminRoutingQualityHandler
+    admin_system_knowledge_handler: AdminSystemKnowledgeHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
     ai_handler: AIHandler
@@ -106,6 +109,7 @@ class Router:
     tool_confirmation_handler: ToolConfirmationHandler
     tool_inventory_handler: ToolInventoryHandler
     my_app_handler: MyAppHandler
+    user_memory_handler: UserMemoryHandler
     skill_handler: SkillHandler
     home_handler: HomeHandler
     notification_handler: NotificationHandler
@@ -741,6 +745,36 @@ class Router:
             view_func=self.admin_resource_entry_handler.skills,
         )
         bp.add_url_rule(
+            "/admin/system-knowledge",
+            endpoint="admin_system_knowledge_list",
+            methods=["GET"],
+            view_func=self.admin_system_knowledge_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/system-knowledge",
+            endpoint="admin_system_knowledge_create",
+            methods=["POST"],
+            view_func=self.admin_system_knowledge_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/system-knowledge/<uuid:knowledge_base_id>",
+            endpoint="admin_system_knowledge_get",
+            methods=["GET"],
+            view_func=self.admin_system_knowledge_handler.get,
+        )
+        bp.add_url_rule(
+            "/admin/system-knowledge/<uuid:knowledge_base_id>",
+            endpoint="admin_system_knowledge_update",
+            methods=["POST"],
+            view_func=self.admin_system_knowledge_handler.update,
+        )
+        bp.add_url_rule(
+            "/admin/system-knowledge/<uuid:knowledge_base_id>",
+            endpoint="admin_system_knowledge_delete",
+            methods=["DELETE"],
+            view_func=self.admin_system_knowledge_handler.delete,
+        )
+        bp.add_url_rule(
             "/auth/register/prepare",
             methods=["POST"],
             view_func=self.auth_handler.prepare_register,
@@ -806,6 +840,36 @@ class Router:
             endpoint="memory_candidate_ignore",
             methods=["POST"],
             view_func=self.memory_candidate_handler.ignore,
+        )
+        bp.add_url_rule(
+            "/user/memory",
+            endpoint="user_memory_list",
+            methods=["GET"],
+            view_func=self.user_memory_handler.list,
+        )
+        bp.add_url_rule(
+            "/user/memory",
+            endpoint="user_memory_create",
+            methods=["POST"],
+            view_func=self.user_memory_handler.create,
+        )
+        bp.add_url_rule(
+            "/user/memory/<uuid:memory_id>",
+            endpoint="user_memory_get",
+            methods=["GET"],
+            view_func=self.user_memory_handler.get,
+        )
+        bp.add_url_rule(
+            "/user/memory/<uuid:memory_id>",
+            endpoint="user_memory_update",
+            methods=["POST"],
+            view_func=self.user_memory_handler.update,
+        )
+        bp.add_url_rule(
+            "/user/memory/<uuid:memory_id>",
+            endpoint="user_memory_delete",
+            methods=["DELETE"],
+            view_func=self.user_memory_handler.delete,
         )
         bp.add_url_rule(
             "/external-data-sources",

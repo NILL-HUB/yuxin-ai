@@ -23,6 +23,8 @@ export type UserMemory = {
   status: string
   created_from: string
   metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
 }
 
 export type MemoryCandidate = MemoryCandidatePrompt & {

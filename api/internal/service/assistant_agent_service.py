@@ -294,6 +294,18 @@ class AssistantAgentService(BaseService):
         # 6.构建首页助手运行时工具
         tools = self._build_assistant_runtime_tools(account.id)
 
+        # 6.1 召回用户长期记忆，注入到 Agent prompt 中
+        user_memory_text = ""
+        try:
+            from internal.service.scoped_knowledge_service import UserMemoryService
+            user_memory_service = UserMemoryService(db=self.db)
+            memories = user_memory_service.list_memories(account)
+            active_memories = [m for m in memories if m.status == "active"]
+            if active_memories:
+                user_memory_text = "\n".join(f"- {m.content}" for m in active_memories[:10])
+        except Exception:
+            logging.warning("召回用户长期记忆失败，继续原流程", exc_info=True)
+
         # 7.构建辅助Agent专用智能体。深度思考模式下复用 A2A 语义，普通模式直接使用通用 FunctionCallAgent。
         agent_class = (
             A2ADeepThinkingAgent
@@ -322,6 +334,7 @@ class AssistantAgentService(BaseService):
                 ],
                 "history": history,
                 "long_term_memory": conversation.summary,
+                "user_memory": user_memory_text,
             }
         ):
             # 8.提取thought以及answer

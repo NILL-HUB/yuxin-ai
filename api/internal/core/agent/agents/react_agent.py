@@ -41,11 +41,13 @@ class ReACTAgent(FunctionCallAgent):
             ))
 
         # 3.检测是否支持AGENT_THOUGHT，如果不支持，则使用没有工具描述的prompt
+        user_memory = state.get("user_memory", "") or ""
         if ModelFeature.AGENT_THOUGHT.value not in self.llm.features:
             preset_messages = [
                 SystemMessage(AGENT_SYSTEM_PROMPT_TEMPLATE.format(
                     preset_prompt=self.agent_config.preset_prompt,
                     long_term_memory=long_term_memory,
+                    user_memory=user_memory,
                 ))
             ]
         else:
@@ -54,6 +56,7 @@ class ReACTAgent(FunctionCallAgent):
                 SystemMessage(REACT_AGENT_SYSTEM_PROMPT_TEMPLATE.format(
                     preset_prompt=self.agent_config.preset_prompt,
                     long_term_memory=long_term_memory,
+                    user_memory=user_memory,
                     tool_description=render_text_description_and_args(self.agent_config.tools),
                 ))
             ]

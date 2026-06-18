@@ -34,6 +34,10 @@ AGENT_SYSTEM_PROMPT_TEMPLATE = """你是一个高度定制的智能体应用，�
 <长期记忆>
 {long_term_memory}
 </长期记忆>
+
+<用户长期记忆>
+{user_memory}
+</用户长期记忆>
 """
 
 # 深度思考模式专用系统提示词
@@ -119,6 +123,10 @@ REACT_AGENT_SYSTEM_PROMPT_TEMPLATE = """你是一个高度定制的智能体应�
 {long_term_memory}
 </长期记忆>
 
+<用户长期记忆>
+{user_memory}
+</用户长期记忆>
+
 <工具描述>
 {tool_description}
 </工具描述>"""
@@ -166,6 +174,7 @@ class AgentState(MessagesState):
     history: list[AnyMessage]  # 短期记忆(历史记录)
     long_term_memory: str  # 长期记忆
     pending_skill_prompts: list[dict[str, Any]]  # 已按需加载、等待在本轮注入的 prompt-only skill 正文
+    user_memory: str  # 用户长期记忆召回内容
 
 
 # Agent超过最大迭代次数时提示内容

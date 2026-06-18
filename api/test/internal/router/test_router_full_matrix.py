@@ -213,6 +213,10 @@ class TestRouterFullMatrix:
             '/skills/<uuid:skill_id>/sync': {'POST'},
             '/skills/<uuid:skill_id>/rollback': {'POST'},
             '/skills/categories': {'GET'},
+            '/admin/system-knowledge': {'GET', 'POST'},
+            '/admin/system-knowledge/<uuid:knowledge_base_id>': {'DELETE', 'GET', 'POST'},
+            '/user/memory': {'GET', 'POST'},
+            '/user/memory/<uuid:memory_id>': {'DELETE', 'GET', 'POST'},
             '/tags': {'GET', 'POST'},
             '/tags/<uuid:tag_id>': {'GET', 'POST'},
             '/tags/<uuid:tag_id>/delete': {'POST'},
@@ -259,4 +263,4 @@ class TestRouterFullMatrix:
         assert by_blueprint["openapi"] == 1
         assert by_blueprint["llmops"] == len(rules) - 1
         # 当前系统的接口总量是一个重要契约，避免漏挂导致线上能力消失。
-        assert len(rules) == 256
+        assert len(rules) == 266

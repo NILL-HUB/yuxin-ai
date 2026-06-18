@@ -140,6 +140,11 @@ const router = createRouter({
             },
           ],
         },
+        {
+          path: 'memory',
+          name: 'user-memory-list',
+          component: () => import('@/views/memory/ListView.vue'),
+        },
       ],
     },
     {
