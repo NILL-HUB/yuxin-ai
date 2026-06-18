@@ -215,6 +215,7 @@ const streamLane = async (lane: CompareLane, userQuery: string) => {
     message_id: '',
     task_id: '',
     conversation_id: lane.lane_id,
+    billingEvents: [],
   }
   const requestStartAt = Date.now()
 

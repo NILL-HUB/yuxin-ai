@@ -1,4 +1,5 @@
 import { QueueEvent } from '@/config'
+import type { BillingUsageEvent } from '@/models/billing-metering'
 import {
   buildChatOutputParts,
   extractInlineImageUrls,
@@ -58,6 +59,7 @@ export type StreamState = {
   message_id: string
   task_id: string
   conversation_id: string
+  billingEvents: BillingUsageEvent[]
 }
 
 export type StreamApplyResult = {
@@ -242,6 +244,15 @@ export const applyChatStreamEvent = (
   } else if (event === QueueEvent.timeout) {
     message.answer = '当前Agent执行已超时，无法得到答案，请重试'
     shouldRefreshOutputParts = true
+  } else if (
+    event === QueueEvent.billingStarted ||
+    event === QueueEvent.billingDelta ||
+    event === QueueEvent.billingSummary ||
+    event === QueueEvent.billingCancelled ||
+    event === QueueEvent.billingFinal
+  ) {
+    nextState.billingEvents = [...nextState.billingEvents, data as unknown as BillingUsageEvent]
+    return { state: nextState, didUpdate: true }
   } else {
     nextState.position += 1
     thoughts.push(buildThought(data, nextState.position))

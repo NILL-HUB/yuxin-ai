@@ -205,6 +205,7 @@ const handleSubmit = async () => {
     message_id: '',
     task_id: '',
     conversation_id: chatContextId.value,
+    billingEvents: [],
   }
   const humanImageUrls = [...image_urls.value]
   query.value = ''

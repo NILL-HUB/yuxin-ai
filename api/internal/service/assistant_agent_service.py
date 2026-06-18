@@ -327,75 +327,117 @@ class AssistantAgentService(BaseService):
         )
 
         agent_thoughts = {}
-        for agent_thought in agent.stream(
-            {
-                "messages": [
-                    llm.convert_to_human_message(req.query.data, req.image_urls.data)
-                ],
-                "history": history,
-                "long_term_memory": conversation.summary,
-                "user_memory": user_memory_text,
-            }
-        ):
-            # 8.提取thought以及answer
-            event_id = str(agent_thought.id)
+        from internal.entity.billing_metering_entity import BillingEventType
+        from internal.service.billing_metering_service import BillingUsageAggregator
 
-            # 9.将数据填充到agent_thought，便于存储到数据库服务中
-            if agent_thought.event != QueueEvent.PING.value:
-                # 10.除了agent_message数据为叠加，其他均为覆盖
-                if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
-                    if event_id not in agent_thoughts:
-                        # 11.初始化智能体消息事件
-                        agent_thoughts[event_id] = agent_thought
+        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_started = billing_aggregator.started()
+        yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
+
+        billing_cancelled = False
+        try:
+            for agent_thought in agent.stream(
+                {
+                    "messages": [
+                        llm.convert_to_human_message(req.query.data, req.image_urls.data)
+                    ],
+                    "history": history,
+                    "long_term_memory": conversation.summary,
+                    "user_memory": user_memory_text,
+                }
+            ):
+                # 8.提取thought以及answer
+                event_id = str(agent_thought.id)
+
+                # 9.将数据填充到agent_thought，便于存储到数据库服务中
+                if agent_thought.event != QueueEvent.PING.value:
+                    # 10.除了agent_message数据为叠加，其他均为覆盖
+                    if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
+                        if event_id not in agent_thoughts:
+                            # 11.初始化智能体消息事件
+                            agent_thoughts[event_id] = agent_thought
+                        else:
+                            # 12.叠加智能体消息
+                            agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(
+                                update={
+                                    "thought": agent_thoughts[event_id].thought
+                                    + agent_thought.thought,
+                                    # 消息相关数据
+                                    "message": agent_thought.message,
+                                    "message_token_count": agent_thought.message_token_count,
+                                    "message_unit_price": agent_thought.message_unit_price,
+                                    "message_price_unit": agent_thought.message_price_unit,
+                                    # 答案相关字段
+                                    "answer": agent_thoughts[event_id].answer
+                                    + agent_thought.answer,
+                                    "answer_token_count": agent_thought.answer_token_count,
+                                    "answer_unit_price": agent_thought.answer_unit_price,
+                                    "answer_price_unit": agent_thought.answer_price_unit,
+                                    # Agent推理统计相关
+                                    "total_token_count": agent_thought.total_token_count,
+                                    "total_price": agent_thought.total_price,
+                                    "latency": agent_thought.latency,
+                                }
+                            )
                     else:
-                        # 12.叠加智能体消息
-                        agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(
-                            update={
-                                "thought": agent_thoughts[event_id].thought
-                                + agent_thought.thought,
-                                # 消息相关数据
-                                "message": agent_thought.message,
-                                "message_token_count": agent_thought.message_token_count,
-                                "message_unit_price": agent_thought.message_unit_price,
-                                "message_price_unit": agent_thought.message_price_unit,
-                                # 答案相关字段
-                                "answer": agent_thoughts[event_id].answer
-                                + agent_thought.answer,
-                                "answer_token_count": agent_thought.answer_token_count,
-                                "answer_unit_price": agent_thought.answer_unit_price,
-                                "answer_price_unit": agent_thought.answer_price_unit,
-                                # Agent推理统计相关
-                                "total_token_count": agent_thought.total_token_count,
-                                "total_price": agent_thought.total_price,
-                                "latency": agent_thought.latency,
-                            }
-                        )
-                else:
-                    # 13.处理其他类型事件的消息
-                    agent_thoughts[event_id] = agent_thought
-            usage_summary = summarize_agent_thoughts(agent_thoughts.values())
-            data = {
-                **agent_thought.model_dump(
-                    include={
-                        "event",
-                        "thought",
-                        "observation",
-                        "tool",
-                        "tool_input",
-                        "answer",
-                        "latency",
-                        "total_token_count",
-                    }
-                ),
-                "aggregate_total_token_count": usage_summary.total_token_count,
-                "aggregate_total_price": usage_summary.total_price,
-                "aggregate_latency": usage_summary.latency,
-                "id": event_id,
-                "conversation_id": str(conversation.id),
-                "message_id": str(message.id),
-                "task_id": str(agent_thought.task_id),
-            }
-            yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
+                        # 13.处理其他类型事件的消息
+                        agent_thoughts[event_id] = agent_thought
+
+                # billing_delta: 检测token消耗并推送增量计费事件
+                if agent_thought.total_token_count and agent_thought.total_token_count > 0:
+                    billing_delta = billing_aggregator.model_tokens(
+                        source_name="assistant_agent",
+                        input_tokens=max(agent_thought.message_token_count, 0),
+                        output_tokens=max(agent_thought.answer_token_count, 0),
+                        reason=agent_thought.event.value if hasattr(agent_thought.event, 'value') else str(agent_thought.event),
+                    )
+                    yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"
+
+                if agent_thought.event == QueueEvent.AGENT_ACTION.value:
+                    tool_billing_delta = billing_aggregator.delta(
+                        source_type="tool",
+                        source_name=agent_thought.tool or "unknown_tool",
+                        delta_credits=0,
+                        reason="tool_invocation",
+                    )
+                    yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(tool_billing_delta.to_sse())}\n\n"
+
+                if agent_thought.event == QueueEvent.STOP.value:
+                    billing_cancelled = True
+
+                usage_summary = summarize_agent_thoughts(agent_thoughts.values())
+                data = {
+                    **agent_thought.model_dump(
+                        include={
+                            "event",
+                            "thought",
+                            "observation",
+                            "tool",
+                            "tool_input",
+                            "answer",
+                            "latency",
+                            "total_token_count",
+                        }
+                    ),
+                    "aggregate_total_token_count": usage_summary.total_token_count,
+                    "aggregate_total_price": usage_summary.total_price,
+                    "aggregate_latency": usage_summary.latency,
+                    "id": event_id,
+                    "conversation_id": str(conversation.id),
+                    "message_id": str(message.id),
+                    "task_id": str(agent_thought.task_id),
+                }
+                yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
+        except Exception:
+            billing_cancelled = True
+            raise
+        finally:
+            if billing_cancelled:
+                billing_cancelled_event = billing_aggregator.cancelled()
+                yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled_event.to_sse())}\n\n"
+            else:
+                billing_final = billing_aggregator.final()
+                yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
 
         # 14.将消息以及推理过程添加到数据库
         self.conversation_service.save_agent_thoughts(

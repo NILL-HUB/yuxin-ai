@@ -517,6 +517,7 @@ const handleSubmit = async () => {
     message_id: message_id.value,
     task_id: task_id.value,
     conversation_id: selectedConversationId.value,
+    billingEvents: [],
   }
   const requestStartAt = Date.now()
   isStreamingResponse.value = true

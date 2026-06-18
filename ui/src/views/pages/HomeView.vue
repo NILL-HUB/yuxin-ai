@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AiDynamicBackground from '@/components/AiDynamicBackground.vue'
 import AiMessage from '@/components/AiMessage.vue'
+import BillingUsageIndicator from '@/components/BillingUsageIndicator.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
@@ -63,6 +64,7 @@ import {
   type MessageMetrics,
 } from '@/views/shared/chat-metrics'
 import type { HomeIntentData } from '@/models/home'
+import type { BillingUsageEvent } from '@/models/billing-metering'
 import { calculateScrollDuration, smoothScroll } from '@/utils/scrollAnimation'
 import { OPEN_AGENT_ASSISTANT_APP } from '@/config/openagent'
 
@@ -126,6 +128,7 @@ const currentHumanMessageIndex = ref(-1)
 const hoveredHumanMessageIndex = ref<number | null>(null)
 const HUMAN_NAV_BOTTOM_DISTANCE_THRESHOLD = 500
 const isStreamingResponse = ref(false)
+const billingEvents = ref<BillingUsageEvent[]>([])
 const route = useRoute()
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -1084,6 +1087,7 @@ const handleSubmit = async () => {
   message_id.value = ''
   task_id.value = ''
   shouldAutoScrollToBottom.value = true
+  billingEvents.value = []
   stopAudioStream()
 
   // 5.4 往消息列表中添加基础人类消息
@@ -1119,6 +1123,7 @@ const handleSubmit = async () => {
     message_id: message_id.value,
     task_id: task_id.value,
     conversation_id: selectedConversationId.value,
+    billingEvents: [],
   }
   const requestStartAt = Date.now()
   isStreamingResponse.value = true
@@ -1154,6 +1159,7 @@ const handleSubmit = async () => {
         }
 
         if (streamResult.didUpdate) {
+          billingEvents.value = streamResult.state.billingEvents
           scheduleScrollToBottom()
         }
       },
@@ -1544,6 +1550,12 @@ onUnmounted(() => {
       </div>
       <!-- 对话输入框 -->
       <div class="w-full flex flex-col flex-shrink-0 pb-2 pt-2 gap-3">
+        <div
+          v-if="billingEvents.length > 0"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
+        >
+          <BillingUsageIndicator :events="billingEvents" />
+        </div>
         <div class="w-full max-w-[600px] mx-auto px-2 sm:px-4">
           <chat-composer
             v-model="query"

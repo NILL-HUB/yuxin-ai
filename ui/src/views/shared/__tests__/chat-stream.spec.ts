@@ -25,6 +25,7 @@ const createState = (): StreamState => ({
   message_id: '',
   task_id: '',
   conversation_id: '',
+  billingEvents: [],
 })
 
 describe('chat-stream', () => {

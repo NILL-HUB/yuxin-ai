@@ -142,8 +142,13 @@ class AgentQueueManager:
             QueueEvent.TIMEOUT.value,
             QueueEvent.AGENT_END.value,
         }
+        billing_passthrough_events = {
+            QueueEvent.BILLING_FINAL.value,
+            QueueEvent.BILLING_CANCELLED.value,
+            QueueEvent.BILLING_SUMMARY.value,
+        }
         if self._terminal_events.get(str(task_id)):
-            if event_value not in self._terminal_events.get(str(task_id), set()):
+            if event_value not in self._terminal_events.get(str(task_id), set()) and event_value not in billing_passthrough_events:
                 return
         if event_value in terminal_events:
             task_terminal_events = self._terminal_events.setdefault(str(task_id), set())

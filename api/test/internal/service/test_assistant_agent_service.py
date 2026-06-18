@@ -1072,9 +1072,11 @@ class TestAssistantAgentService:
         ]
         assert agent_capture["state"]["history"] == ["历史消息"]
         assert agent_capture["state"]["long_term_memory"] == "历史摘要"
-        assert len(events) == 4
-        assert events[0].startswith("event: ping")
-        first_payload = json.loads(events[1].split("data:", 1)[1].strip())
+        assert len(events) == 9
+        assert events[0].startswith("event: billing_started")
+        assert events[1].startswith("event: ping")
+        assert events[2].startswith("event: billing_delta")
+        first_payload = json.loads(events[3].split("data:", 1)[1].strip())
         assert first_payload["id"] == str(shared_event_id)
         assert save_payload["account_id"] == account.id
         assert save_payload["app_id"] == assistant_agent_id
@@ -1168,8 +1170,10 @@ class TestAssistantAgentService:
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert len(events) == 1
-        assert events[0].startswith("event: agent_message")
+        assert len(events) == 3
+        assert events[0].startswith("event: billing_started")
+        assert events[1].startswith("event: agent_message")
+        assert events[2].startswith("event: billing_final")
         assert routing_calls[0][0] == req.query.data
         assert routing_calls[0][1]["account_id"] == account.id
         assert save_payload["routing_decision"]["execution_mode"] == "direct_answer"
@@ -1272,7 +1276,9 @@ class TestAssistantAgentService:
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert events == []
+        assert len(events) == 2
+        assert events[0].startswith("event: billing_started")
+        assert events[1].startswith("event: billing_final")
         assert resolution_capture == {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "image_urls": req.image_urls.data,

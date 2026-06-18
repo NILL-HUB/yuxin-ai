@@ -415,6 +415,7 @@ const handleSubmit = async () => {
     task_id: task_id.value,
     conversation_id:
       selectedConversation.value === 'new_conversation' ? '' : selectedConversation.value,
+    billingEvents: [],
   }
   const requestStartAt = Date.now()
   const humanQuery = query.value

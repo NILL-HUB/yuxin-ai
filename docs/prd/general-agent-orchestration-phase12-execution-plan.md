@@ -263,15 +263,45 @@ else if (event === QueueEvent.billingStarted ||
 
 ## 5. 推荐执行顺序
 
-1. 任务 0：基线确认
-2. 任务 1：AgentQueueManager 终态白名单修复（前置，防止 billing_final 被丢弃）
-3. 任务 2：chat 接入 billing SSE 推送（核心）
-4. 任务 3：停止联动 billing_cancelled + 摘要
-5. 任务 4：_tools_node 产出 billing_delta
-6. 任务 5：前端 QueueEvent 补齐
-7. 任务 6：前端 chat-stream 处理 billing 事件
-8. 任务 7：前端挂载 BillingUsageIndicator + 停止摘要
-9. 任务 8：最终全量测试与文档同步
+1. 任务 0：基线确认 ✅（2176 passed, head d1e2f3a4b5d4）
+2. 任务 1：AgentQueueManager 终态白名单修复 ✅（5 passed，billing_final/cancelled/summary 不被丢弃）
+3. 任务 2：chat 接入 billing SSE 推送 ✅（billing_started/delta/final/cancelled 全部推送）
+4. 任务 3：停止联动 billing_cancelled ✅（STOP 事件触发 billing_cancelled，携带 total_credits）
+5. 任务 4：_tools_node 产出 billing_delta ✅（agent_action 事件产出 tool billing_delta）
+6. 任务 5：前端 QueueEvent 补齐 ✅（5 个 billing 事件同步）
+7. 任务 6：前端 chat-stream 处理 billing 事件 ✅（独立分支，不污染 agent_thoughts）
+8. 任务 7：前端挂载 BillingUsageIndicator ✅（HomeView 挂载，i18n 完整）
+9. 任务 8：最终全量测试与文档同步 ✅（后端 2189 passed + 前端 368 passed）
+
+## 6. Phase 12 完成状态
+
+### 后端
+- 全量测试：2189 passed, 6 skipped, 0 failed（比基线 2176 多 13 个新测试）
+- AgentQueueManager 终态白名单：billing_final/cancelled/summary 在 AGENT_END/STOP 后仍能通过
+- chat SSE 流接入 billing 事件：
+  - 循环前推送 billing_started
+  - 循环中按 token 消耗推送 billing_delta（model 类型）
+  - 循环中按工具调用推送 billing_delta（tool 类型）
+  - STOP 事件触发 billing_cancelled
+  - 正常结束推送 billing_final
+  - 异常时推送 billing_cancelled
+
+### 前端
+- 全量测试：368 passed
+- type-check：0 errors
+- lint：0 errors
+- QueueEvent 补齐 5 个 billing 事件
+- chat-stream.ts 新增 billing 事件分支（独立处理，不污染 agent_thoughts）
+- StreamState 新增 billingEvents 字段
+- HomeView 挂载 BillingUsageIndicator 组件
+- i18n 完整（中英文，billing.realtime 段落）
+
+### 验收标准达成
+1. ✅ 只展示已发生消耗，不展示预估最终成本（BillingUsageIndicator 只展示 total_credits）
+2. ✅ 所有增量消耗来自后端 billing event，前端不自行估算
+3. ✅ 停止后未开始子任务不计费，已完成部分正常计费（billing_cancelled 携带累计 total_credits）
+4. ✅ 停止后返回已完成内容和已发生成本（billing_cancelled 事件包含摘要）
+5. ✅ 高风险工具确认 UI 消耗与主任务计费一致（共用 BillingUsageAggregator）
 
 ---
 
