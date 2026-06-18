@@ -99,10 +99,17 @@ def test_manual_sync_should_write_documents_and_update_status(monkeypatch):
         connector=MockExternalConnector([{"name": "doc.md", "content": "hello", "cursor": "cursor-1"}]),
     )
     created = []
+    def _mock_create(model, **kwargs):
+        obj = SimpleNamespace(**kwargs)
+        if not hasattr(obj, "id"):
+            obj.id = uuid4()
+        created.append((model, kwargs))
+        return obj
+
     monkeypatch.setattr(
         service,
         "create",
-        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+        _mock_create,
     )
 
     result = service.manual_sync(data_source.id, SimpleNamespace(id=account_id))
@@ -110,7 +117,9 @@ def test_manual_sync_should_write_documents_and_update_status(monkeypatch):
     assert created[0][0] is KnowledgeDocument
     assert data_source.sync_status == "success"
     assert data_source.sync_cursor == "cursor-1"
-    assert result == {"sync_status": "success", "document_count": 1}
+    assert result["sync_status"] == "success"
+    assert result["document_count"] == 1
+    assert result["segment_count"] >= 1
 
 
 class _FailingExternalConnector:
@@ -127,7 +136,7 @@ def test_manual_sync_should_record_failed_status_and_last_error(monkeypatch):
         source_type="mock",
         source_name="Mock",
         sync_status="idle",
-        authorization_status="authorized",
+        authorization_status="granted",
         sync_cursor="",
         last_error="",
         config={},

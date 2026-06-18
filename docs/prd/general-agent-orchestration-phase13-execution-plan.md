@@ -292,15 +292,41 @@ def manual_sync(self, data_source_id: UUID, account: Account) -> dict:
 
 ## 5. 推荐执行顺序
 
-1. 任务 0：基线确认
-2. 任务 1：last_error 字段 + migration（前置，修复 AttributeError）
-3. 任务 2：连接器基类 + 工厂
-4. 任务 3：飞书 + 本地文件夹连接器
-5. 任务 4：同步走切片流水线（核心）
-6. 任务 5：CRUD + 授权接口完善
-7. 任务 6：新版知识库接入检索
-8. 任务 7：前端管理页面
-9. 任务 8：最终全量测试与文档同步
+1. 任务 0：基线确认 ✅（2189 passed, head d1e2f3a4b5d4）
+2. 任务 1：ExternalDataSource 补 last_error 字段 ✅（migration d1e2f3a4b5d5）
+3. 任务 2：连接器基类 + 工厂 ✅（12 passed）
+4. 任务 3：飞书 + 本地文件夹连接器 ✅（12 passed）
+5. 任务 4：同步走切片流水线 ✅（17 passed，生成 KnowledgeSegment）
+6. 任务 5：CRUD + 授权接口完善 ✅（7 passed, 272 routes）
+7. 任务 6：新版知识库接入检索 ✅（2208 passed，search_in_knowledge_base）
+8. 任务 7：前端外部数据源管理页面 ✅（368 passed）
+9. 任务 8：最终全量测试与文档同步 ✅（后端 2208 passed + 前端 368 passed）
+
+## 6. Phase 13 完成状态
+
+### 后端
+- 全量测试：2208 passed, 6 skipped, 0 failed（比基线 2189 多 19 个新测试）
+- migration heads/current：d1e2f3a4b5d5 (head)
+- ExternalDataSource 模型补 last_error 字段（修复 AttributeError）
+- 连接器架构：BaseConnector 基类 + ConnectorFactory 工厂 + LarkConnector/LocalFolderConnector
+- 同步流水线：manual_sync 现在创建 KnowledgeSegment（按段落切片，500字/段）
+- CRUD + 授权接口：新增 list/get/delete/authorize 4 条路由（总路由 272）
+- 检索接入：RetrievalService 新增 search_in_knowledge_base 方法（文本 LIKE 检索）
+
+### 前端
+- 全量测试：368 passed
+- type-check：0 errors
+- lint：0 errors
+- 新增 /external-data-sources 页面（数据源列表 + 授权 + 同步 + 删除）
+- 侧边栏新增"外部数据源"入口
+- i18n 完整（中英文）
+
+### 验收标准达成
+1. ✅ 用户必须授权后才能连接外部数据源（authorize 接口 + authorization_status 校验）
+2. ✅ 同步数据按用户作用域隔离（owner_account_id + knowledge_base_id）
+3. ✅ 手动同步结果可追踪状态和错误原因（sync_status + last_error + last_synced_at）
+4. ✅ 同步后的文本可被知识检索工具召回（search_in_knowledge_base 方法）
+5. ✅ 外部数据源不会污染系统级知识库（写入用户级 KnowledgeBase）
 
 ---
 

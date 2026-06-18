@@ -102,6 +102,41 @@ class RetrievalService(BaseService):
 
         return lc_documents
 
+    def search_in_knowledge_base(
+            self,
+            knowledge_base_ids: list[UUID],
+            query: str,
+            account_id: UUID,
+            k: int = 4,
+    ) -> list[LCDocument]:
+        """在新版知识库（KnowledgeBase/KnowledgeSegment）中执行文本检索，返回 LangChain 文档列表"""
+        from internal.model import KnowledgeBase, KnowledgeSegment
+
+        segments = (
+            self.db.session.query(KnowledgeSegment)
+            .filter(
+                KnowledgeSegment.knowledge_base_id.in_(knowledge_base_ids),
+                KnowledgeSegment.owner_account_id == account_id,
+                KnowledgeSegment.enabled.is_(True),
+                KnowledgeSegment.content.ilike(f"%{query}%"),
+            )
+            .order_by(KnowledgeSegment.knowledge_base_id, KnowledgeSegment.position)
+            .limit(k)
+            .all()
+        )
+        lc_documents: list[LCDocument] = []
+        for seg in segments:
+            lc_documents.append(LCDocument(
+                page_content=seg.content,
+                metadata={
+                    "knowledge_base_id": str(seg.knowledge_base_id),
+                    "knowledge_document_id": str(seg.knowledge_document_id),
+                    "segment_id": str(seg.id),
+                    "source": "knowledge_base",
+                },
+            ))
+        return lc_documents
+
     def create_langchain_tool_from_search(
             self,
             flask_app: Flask,

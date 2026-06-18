@@ -145,6 +145,11 @@ const router = createRouter({
           name: 'user-memory-list',
           component: () => import('@/views/memory/ListView.vue'),
         },
+        {
+          path: 'external-data-sources',
+          name: 'user-external-data-sources-list',
+          component: () => import('@/views/external-data-sources/ListView.vue'),
+        },
       ],
     },
     {

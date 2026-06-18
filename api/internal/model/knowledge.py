@@ -161,6 +161,7 @@ class ExternalDataSource(db.Model):
     sync_status = Column(String(64), nullable=False, server_default=text("'idle'::character varying"))
     sync_cursor = Column(String(1024), nullable=False, server_default=text("''::character varying"))
     last_synced_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, nullable=False, server_default=text("''::text"))
     config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), server_onupdate=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))

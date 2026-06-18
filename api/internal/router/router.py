@@ -873,9 +873,33 @@ class Router:
         )
         bp.add_url_rule(
             "/external-data-sources",
+            endpoint="external_data_source_list",
+            methods=["GET"],
+            view_func=self.external_data_source_handler.list,
+        )
+        bp.add_url_rule(
+            "/external-data-sources",
             endpoint="external_data_source_create",
             methods=["POST"],
             view_func=self.external_data_source_handler.create,
+        )
+        bp.add_url_rule(
+            "/external-data-sources/<uuid:data_source_id>",
+            endpoint="external_data_source_get",
+            methods=["GET"],
+            view_func=self.external_data_source_handler.get,
+        )
+        bp.add_url_rule(
+            "/external-data-sources/<uuid:data_source_id>",
+            endpoint="external_data_source_delete",
+            methods=["DELETE"],
+            view_func=self.external_data_source_handler.delete,
+        )
+        bp.add_url_rule(
+            "/external-data-sources/<uuid:data_source_id>/authorize",
+            endpoint="external_data_source_authorize",
+            methods=["POST"],
+            view_func=self.external_data_source_handler.authorize,
         )
         bp.add_url_rule(
             "/external-data-sources/<uuid:data_source_id>/sync",
