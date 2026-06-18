@@ -25,6 +25,7 @@ from internal.handler import (
     AdminRedeemCodeHandler,
     AdminResourceEntryHandler,
     AdminRoutingLogHandler,
+    RoutingLogHandler,
     AdminRoutingQualityHandler,
     AdminSystemKnowledgeHandler,
     AdminUserHandler,
@@ -85,6 +86,7 @@ class Router:
     admin_resource_entry_handler: AdminResourceEntryHandler
     admin_routing_log_handler: AdminRoutingLogHandler
     admin_routing_quality_handler: AdminRoutingQualityHandler
+    routing_log_handler: RoutingLogHandler
     admin_system_knowledge_handler: AdminSystemKnowledgeHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
@@ -569,6 +571,18 @@ class Router:
             endpoint="admin_routing_log_list",
             methods=["GET"],
             view_func=self.admin_routing_log_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/routing-logs/retention",
+            endpoint="admin_routing_log_retention_get",
+            methods=["GET"],
+            view_func=self.admin_routing_log_handler.get_retention,
+        )
+        bp.add_url_rule(
+            "/admin/routing-logs/retention",
+            endpoint="admin_routing_log_retention_set",
+            methods=["POST"],
+            view_func=self.admin_routing_log_handler.set_retention,
         )
         bp.add_url_rule(
             "/admin/orchestration-flags",
@@ -1381,6 +1395,14 @@ class Router:
             "/notifications/<string:notification_id>",
             methods=["DELETE"],
             view_func=self.notification_handler.delete_notification,
+        )
+
+        # 23.路由日志用户侧简化视图
+        bp.add_url_rule(
+            "/routing-logs/summary",
+            endpoint="routing_log_summary",
+            methods=["GET"],
+            view_func=self.routing_log_handler.summary,
         )
 
         # 24.在应用上注册蓝图

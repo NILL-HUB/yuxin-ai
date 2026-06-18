@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 
 
 DEFAULT_SENSITIVE_FIELDS = [
@@ -11,6 +12,25 @@ DEFAULT_SENSITIVE_FIELDS = [
     "headers",
     "arguments",
 ]
+
+
+class RoutingEventType(str, Enum):
+    ROUTING_STARTED = "routing_started"
+    TASK_CLASSIFIED = "task_classified"
+    MODEL_SELECTED = "model_selected"
+    AGENT_CANDIDATES_FOUND = "agent_candidates_found"
+    AGENT_SELECTED = "agent_selected"
+    TOOL_CANDIDATES_FOUND = "tool_candidates_found"
+    TOOL_SELECTED = "tool_selected"
+    TOOL_INVOKED = "tool_invoked"
+    AGENT_COMPLETED = "agent_completed"
+    SYNTHESIS_STARTED = "synthesis_started"
+    SYNTHESIS_COMPLETED = "synthesis_completed"
+    FALLBACK_TRIGGERED = "fallback_triggered"
+    ROUTING_FAILED = "routing_failed"
+
+
+ROUTING_EVENT_TYPES = {item.value for item in RoutingEventType}
 
 
 @dataclass

@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from internal.exception import NotFoundException
-from internal.model import ExternalDataSource, KnowledgeDocument
+from internal.model import ExternalDataSource, KnowledgeDocument, KnowledgeSegment
 from internal.service.external_data_source_service import ExternalDataSourceService, MockExternalConnector
 
 
@@ -173,3 +173,62 @@ def test_manual_sync_should_hide_other_user_data_source():
 
     with pytest.raises(NotFoundException):
         service.manual_sync(data_source.id, SimpleNamespace(id=uuid4()))
+
+
+def test_create_connection_should_persist_operation_context_in_config(monkeypatch):
+    account_id = uuid4()
+    service = ExternalDataSourceService(db=_fake_db(_SessionStub()))
+    created = []
+    monkeypatch.setattr(
+        service,
+        "create",
+        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+    )
+
+    service.create_connection(
+        account=SimpleNamespace(id=account_id),
+        knowledge_base=SimpleNamespace(id=uuid4(), owner_account_id=account_id, knowledge_scope="user_content"),
+        source_type="github",
+        source_name="GitHub",
+        config={"path": "docs"},
+    )
+
+    config = created[0][1]["config"]
+    assert config["operation_context"] == "user"
+    assert config["path"] == "docs"
+
+
+def test_manual_sync_should_persist_operation_context_in_document_and_segment_metadata(monkeypatch):
+    account_id = uuid4()
+    data_source = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        knowledge_base_id=uuid4(),
+        source_type="mock",
+        source_name="Mock",
+        sync_status="idle",
+        authorization_status="granted",
+        sync_cursor="",
+        config={},
+    )
+    service = ExternalDataSourceService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])),
+        connector=MockExternalConnector([{"name": "doc.md", "content": "hello"}]),
+    )
+    created = []
+
+    def _mock_create(model, **kwargs):
+        obj = SimpleNamespace(**kwargs)
+        if not hasattr(obj, "id"):
+            obj.id = uuid4()
+        created.append((model, kwargs))
+        return obj
+
+    monkeypatch.setattr(service, "create", _mock_create)
+
+    service.manual_sync(data_source.id, SimpleNamespace(id=account_id))
+
+    doc_kwargs = next(kwargs for model, kwargs in created if model is KnowledgeDocument)
+    assert doc_kwargs["metadata_"]["operation_context"] == "user"
+    seg_kwargs = next(kwargs for model, kwargs in created if model is KnowledgeSegment)
+    assert seg_kwargs["metadata_"]["operation_context"] == "user"

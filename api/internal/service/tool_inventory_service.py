@@ -5,7 +5,7 @@ from injector import inject
 
 from internal.entity.tool_inventory_entity import RiskLevel, ToolSourceType, normalize_tool_metadata
 from internal.extension.database_extension import db
-from internal.model import ApiTool, KnowledgeBase, McpProvider
+from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider
 from .builtin_tool_service import BuiltinToolService
 
 
@@ -20,6 +20,7 @@ class ToolCandidateCollector:
         candidates.extend(self._collect_mcp_tools(account_id))
         candidates.extend(self._collect_builtin_tools())
         candidates.extend(self._collect_knowledge_tools(account_id))
+        candidates.extend(self._collect_external_data_tools(account_id))
         return candidates
 
     def _collect_api_tools(self, account_id: UUID) -> list[dict[str, object]]:
@@ -152,6 +153,51 @@ class ToolCandidateCollector:
                 ],
                 "metadata": metadata,
                 "visibility": "system" if base.knowledge_scope == "system" else "private",
+                "enabled": True,
+            })
+        return result
+
+    def _collect_external_data_tools(self, account_id: UUID) -> list[dict[str, object]]:
+        data_sources = (
+            self.session.query(ExternalDataSource)
+            .filter(
+                ExternalDataSource.owner_account_id == account_id,
+                ExternalDataSource.authorization_status == "granted",
+            )
+            .all()
+        )
+        result = []
+        for ds in data_sources:
+            if ds.knowledge_base_id is None:
+                continue
+            metadata = normalize_tool_metadata({
+                "tool_pool": "external_data",
+                "capabilities": [ds.source_type],
+                "risk_level": RiskLevel.LOW.value,
+                "permission_scope": "user",
+                "knowledge_scope": "user_content",
+                "cost_level": "low",
+                "enabled": True,
+            })
+            if not self._is_available(metadata):
+                continue
+            result.append({
+                "id": f"external_data:{ds.id}",
+                "name": "external_data_retrieval",
+                "description": "检索用户连接的外部数据源内容",
+                "source_type": ToolSourceType.KNOWLEDGE.value,
+                "provider_id": str(ds.id),
+                "provider_name": ds.source_name or ds.source_type,
+                "inputs": [
+                    {
+                        "name": "query",
+                        "type": "str",
+                        "required": True,
+                        "description": "检索问题",
+                    }
+                ],
+                "metadata": metadata,
+                "visibility": "private",
                 "enabled": True,
             })
         return result

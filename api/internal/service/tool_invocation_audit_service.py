@@ -1,12 +1,15 @@
 from dataclasses import dataclass
 from typing import Any
 
+from injector import inject
+
 from internal.service.audit_log_service import AuditLogService
 
 
 SENSITIVE_ARGUMENT_NAMES = {"api_key", "token", "password", "secret", "credential"}
 
 
+@inject
 @dataclass
 class ToolInvocationAuditService:
     def build_payload(
@@ -50,6 +53,36 @@ class ToolInvocationAuditService:
             resource_type="tool",
             resource_id=resource_id or payload.get("tool_id", ""),
             after_data=payload,
+            commit=commit,
+        )
+
+    def record(
+        self,
+        *,
+        account_id: str,
+        tool_name: str,
+        risk_level: str,
+        input_data: dict[str, Any] | None = None,
+        action: str,
+        decision: str,
+        resource_id: str = "",
+        commit: bool = True,
+    ) -> Any:
+        after_data = {
+            "account_id": str(account_id or ""),
+            "tool_name": str(tool_name or ""),
+            "risk_level": str(risk_level or ""),
+            "input": self._input_summary(input_data or {}),
+            "decision": str(decision or ""),
+            "action": str(action or ""),
+        }
+        service = AuditLogService()
+        return service.record_for_tool_invocation(
+            account_id=account_id,
+            action=action,
+            resource_type="tool",
+            resource_id=resource_id or tool_name,
+            after_data=after_data,
             commit=commit,
         )
 

@@ -242,3 +242,154 @@ class TestRoutingPolicyChangeService:
             assert False, "应抛出 ValueError"
         except ValueError as e:
             assert "仅 applied 状态可回滚" in str(e)
+
+    def test_generate_preview_should_build_real_before_config_for_model_routing(self):
+        suggestion = self._make_suggestion(
+            evidence={"avg_rating": 2.5, "avg_cost_credits": 10, "count": 4}
+        )
+        service = self._make_service(suggestion=suggestion)
+
+        preview = service.generate_preview(suggestion.id)
+
+        current_config = preview["before_config"]["current_config"]
+        assert current_config["model"] == "gpt-4"
+        assert current_config["avg_cost_credits"] == 10
+        assert current_config["avg_rating"] == 2.5
+        assert current_config["sample_count"] == 4
+
+    def test_generate_preview_should_build_real_after_config_for_model_routing(self):
+        suggestion = self._make_suggestion(
+            evidence={"avg_rating": 2.5, "avg_cost_credits": 10, "count": 4}
+        )
+        service = self._make_service(suggestion=suggestion)
+
+        preview = service.generate_preview(suggestion.id)
+
+        proposed = preview["after_config"]["proposed_config"]
+        assert proposed["tier"] == "cheap"
+        assert proposed["action"] == "downgrade_tier"
+        assert proposed["expected_cost_credits"] == 5
+
+    def test_generate_preview_should_disable_tool_when_rating_below_threshold(self):
+        suggestion = self._make_suggestion(
+            suggestion_type="review_tool_health",
+            target_type="tool_pool",
+            target_id="web_search",
+            evidence={"avg_rating": 1.5, "count": 5},
+        )
+        service = self._make_service(suggestion=suggestion)
+
+        preview = service.generate_preview(suggestion.id)
+
+        proposed = preview["after_config"]["proposed_config"]
+        assert proposed["action"] == "disable"
+        assert proposed["enabled"] is False
+        assert proposed["risk_level"] == "sensitive"
+
+    def test_generate_preview_should_downgrade_tool_when_rating_marginal(self):
+        suggestion = self._make_suggestion(
+            suggestion_type="review_tool_health",
+            target_type="tool_pool",
+            target_id="web_search",
+            evidence={"avg_rating": 2.5, "count": 5},
+        )
+        service = self._make_service(suggestion=suggestion)
+
+        preview = service.generate_preview(suggestion.id)
+
+        proposed = preview["after_config"]["proposed_config"]
+        assert proposed["action"] == "downgrade_risk_level"
+        assert proposed["enabled"] is True
+
+    def test_apply_draft_should_update_feature_flag_for_model_routing(self):
+        suggestion = self._make_suggestion(status="accepted")
+        service = self._make_service(suggestion=suggestion)
+
+        flag_calls = []
+
+        class _FlagServiceStub:
+            def update_flag(self, *, code, enabled, operator_id):
+                flag_calls.append(
+                    {"code": code, "enabled": enabled, "operator_id": operator_id}
+                )
+
+        service.orchestration_feature_flag_service = _FlagServiceStub()
+
+        preview_data = {
+            "policy_type": "model_routing",
+            "target_id": "gpt-4",
+            "before_config": {},
+            "after_config": {"proposed_config": {"action": "downgrade_tier"}},
+            "diff": {},
+            "impact": {},
+        }
+
+        service.apply_draft(suggestion.id, uuid4(), preview_data)
+
+        assert any(
+            c["code"] == "ENABLE_COST_MODEL_ROUTING" and c["enabled"] is True
+            for c in flag_calls
+        )
+
+    def test_apply_draft_should_update_feature_flag_for_tool_policy(self):
+        suggestion = self._make_suggestion(
+            status="accepted",
+            suggestion_type="review_tool_health",
+            target_type="tool_pool",
+            target_id="web_search",
+        )
+        service = self._make_service(suggestion=suggestion)
+
+        flag_calls = []
+
+        class _FlagServiceStub:
+            def update_flag(self, *, code, enabled, operator_id):
+                flag_calls.append({"code": code, "enabled": enabled})
+
+        service.orchestration_feature_flag_service = _FlagServiceStub()
+
+        preview_data = {
+            "policy_type": "tool_policy",
+            "target_id": "web_search",
+            "after_config": {
+                "proposed_config": {"tool_pool": "web_search", "enabled": False}
+            },
+            "diff": {},
+            "impact": {},
+        }
+
+        service.apply_draft(suggestion.id, uuid4(), preview_data)
+
+        assert any(c["code"] == "ENABLE_TOOL_POOL_RETRIEVAL" for c in flag_calls)
+
+    def test_apply_draft_should_update_feature_flag_for_agent_policy(self):
+        suggestion = self._make_suggestion(
+            status="accepted",
+            suggestion_type="review_tool_health",
+            target_type="agent",
+            target_id="research_agent",
+        )
+        service = self._make_service(suggestion=suggestion)
+
+        flag_calls = []
+
+        class _FlagServiceStub:
+            def update_flag(self, *, code, enabled, operator_id):
+                flag_calls.append({"code": code, "enabled": enabled})
+
+        service.orchestration_feature_flag_service = _FlagServiceStub()
+
+        preview_data = {
+            "policy_type": "agent_policy",
+            "target_id": "research_agent",
+            "after_config": {"proposed_config": {"action": "disable"}},
+            "diff": {},
+            "impact": {},
+        }
+
+        service.apply_draft(suggestion.id, uuid4(), preview_data)
+
+        assert any(
+            c["code"] == "ENABLE_MULTI_AGENT_EXECUTION" and c["enabled"] is False
+            for c in flag_calls
+        )

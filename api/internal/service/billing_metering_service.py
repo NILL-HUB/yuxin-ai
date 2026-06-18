@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 
-from internal.entity.billing_metering_entity import BillingEventType, BillingUsageDelta
+from internal.entity.billing_metering_entity import (
+    BillingEventType,
+    BillingUsageCancelled,
+    BillingUsageDelta,
+)
 
 
 @dataclass
@@ -8,7 +12,7 @@ class BillingUsageAggregator:
     task_id: str
     total_credits: int = 0
     credits_per_1k_tokens: int = 1
-    events: list[BillingUsageDelta] = field(default_factory=list)
+    events: list[BillingUsageDelta | BillingUsageCancelled] = field(default_factory=list)
 
     def started(self) -> BillingUsageDelta:
         return self._record(
@@ -65,14 +69,21 @@ class BillingUsageAggregator:
             "billing_summary",
         )
 
-    def cancelled(self, *, reason: str = "user_stop") -> BillingUsageDelta:
-        return self._record(
-            BillingEventType.CANCELLED.value,
-            "summary",
-            "billing",
-            0,
-            reason,
+    def cancelled(
+        self,
+        *,
+        reason: str = "user_stop",
+        pending_phases: list[str] | None = None,
+    ) -> BillingUsageCancelled:
+        event = BillingUsageCancelled(
+            event_type=BillingEventType.CANCELLED.value,
+            task_id=self.task_id,
+            total_credits=self.total_credits,
+            reason=reason,
+            pending_phases=list(pending_phases or []),
         )
+        self.events.append(event)
+        return event
 
     def final(self) -> BillingUsageDelta:
         return self._record(

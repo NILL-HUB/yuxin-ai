@@ -11,11 +11,18 @@ class TaskPlannerService:
                 reason="reject_or_confirm",
                 items=[],
             )
-        if decision.execution_mode == "deep_thinking":
+        if decision.execution_mode == ExecutionMode.DEEP_THINKING.value:
             return self._deep_thinking_plan(original_query)
-        if decision.execution_mode == ExecutionMode.MULTI_AGENT.value:
+        if decision.execution_mode in (
+            ExecutionMode.MULTI_AGENT.value,
+            ExecutionMode.MULTI_AGENT_PARALLEL.value,
+            ExecutionMode.MULTI_AGENT_SEQUENTIAL.value,
+        ):
             return self._multi_agent_plan(original_query, decision)
-        if decision.execution_mode == ExecutionMode.SINGLE_AGENT.value:
+        if decision.execution_mode in (
+            ExecutionMode.SINGLE_AGENT.value,
+            ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
+        ):
             return self._single_agent_plan(original_query, decision)
         return TaskPlan(
             original_query=original_query,

@@ -130,4 +130,5 @@ class KnowledgeBaseService(BaseService):
             operation_context=operation_context,
             visibility_scope=visibility_scope,
             created_from=created_from,
+            settings={"operation_context": operation_context},
         )

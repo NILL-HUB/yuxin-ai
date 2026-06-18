@@ -31,6 +31,7 @@ from internal.core.agent.entities.agent_entity import AgentConfig
 from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
+from internal.entity.cancel_token_entity import CancelToken
 from internal.core.language_model.entities.model_entity import ModelFeature
 from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
 from internal.core.memory import TokenBufferMemory
@@ -85,6 +86,7 @@ class AssistantAgentService(BaseService):
     orchestrator_service: OrchestratorService | None = None
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
+    _active_cancel_tokens = {}
 
     def _schedule_introduction_prewarm(self, account_id: UUID) -> None:
         """在后台预热首页介绍缓存，降低首页首开 LLM 命中概率。"""
@@ -335,6 +337,9 @@ class AssistantAgentService(BaseService):
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
         billing_cancelled = False
+        last_meaningful_event = ""
+        cancel_token = CancelToken()
+        cancel_task_id = None
         try:
             for agent_thought in agent.stream(
                 {
@@ -348,6 +353,10 @@ class AssistantAgentService(BaseService):
             ):
                 # 8.提取thought以及answer
                 event_id = str(agent_thought.id)
+
+                if cancel_task_id is None and agent_thought.task_id:
+                    cancel_task_id = agent_thought.task_id
+                    self.register_cancel_token(cancel_task_id, cancel_token)
 
                 # 9.将数据填充到agent_thought，便于存储到数据库服务中
                 if agent_thought.event != QueueEvent.PING.value:
@@ -405,6 +414,13 @@ class AssistantAgentService(BaseService):
                 if agent_thought.event == QueueEvent.STOP.value:
                     billing_cancelled = True
 
+                if agent_thought.event not in (QueueEvent.STOP.value, QueueEvent.PING.value):
+                    last_meaningful_event = (
+                        agent_thought.event.value
+                        if hasattr(agent_thought.event, "value")
+                        else str(agent_thought.event)
+                    )
+
                 usage_summary = summarize_agent_thoughts(agent_thoughts.values())
                 data = {
                     **agent_thought.model_dump(
@@ -433,11 +449,20 @@ class AssistantAgentService(BaseService):
             raise
         finally:
             if billing_cancelled:
-                billing_cancelled_event = billing_aggregator.cancelled()
+                if last_meaningful_event == QueueEvent.AGENT_ACTION.value:
+                    pending_phases = ["结果合成"]
+                else:
+                    pending_phases = ["工具调用", "结果合成"]
+                billing_cancelled_event = billing_aggregator.cancelled(
+                    pending_phases=pending_phases
+                )
                 yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled_event.to_sse())}\n\n"
             else:
                 billing_final = billing_aggregator.final()
                 yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+
+            if cancel_task_id is not None:
+                self._active_cancel_tokens.pop(str(cancel_task_id), None)
 
         # 14.将消息以及推理过程添加到数据库
         self.conversation_service.save_agent_thoughts(
@@ -614,6 +639,18 @@ class AssistantAgentService(BaseService):
         AgentQueueManager.set_stop_flag(
             task_id, InvokeFrom.ASSISTANT_AGENT.value, account.id
         )
+        cls._cancel_active_token(task_id)
+
+    @classmethod
+    def register_cancel_token(cls, task_id: UUID, token: CancelToken) -> CancelToken:
+        cls._active_cancel_tokens[str(task_id)] = token
+        return token
+
+    @classmethod
+    def _cancel_active_token(cls, task_id: UUID) -> None:
+        token = cls._active_cancel_tokens.pop(str(task_id), None)
+        if token is not None:
+            token.cancel()
 
     def get_conversation_messages_with_page(
         self, req: GetAssistantAgentMessagesWithPageReq, account: Account

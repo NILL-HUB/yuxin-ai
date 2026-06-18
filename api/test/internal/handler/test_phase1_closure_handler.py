@@ -223,6 +223,7 @@ class TestToolConfirmationApi:
             tool_input,
             spent_credits=0,
             reason="",
+            **kwargs,
         ):
             calls.append((
                 "create",

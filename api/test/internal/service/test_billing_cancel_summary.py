@@ -37,6 +37,27 @@ class TestBillingCancelSummary:
         cancelled = aggregator.cancelled()
         assert cancelled.total_credits >= delta.total_credits
 
+    def test_cancelled_should_carry_pending_phases(self):
+        task_id = str(uuid4())
+        aggregator = BillingUsageAggregator(task_id=task_id)
+
+        aggregator.started()
+        aggregator.model_tokens(
+            source_name="assistant_agent",
+            input_tokens=100,
+            output_tokens=50,
+            reason="agent_message",
+        )
+
+        cancelled = aggregator.cancelled(
+            pending_phases=["工具调用", "结果合成"],
+        )
+
+        assert cancelled.event_type == BillingEventType.CANCELLED.value
+        sse_payload = cancelled.to_sse()
+        assert sse_payload["pending_phases"] == ["工具调用", "结果合成"]
+        assert sse_payload["total_credits"] == cancelled.total_credits
+
     def test_final_should_be_distinct_from_cancelled(self):
         task_id = str(uuid4())
         aggregator = BillingUsageAggregator(task_id=task_id)
@@ -81,3 +102,26 @@ class TestBillingCancelSummary:
             AgentQueueManager.set_stop_flag = original
 
         assert flag_set is True
+
+    def test_stop_chat_should_cancel_registered_token(self):
+        from internal.core.agent.agents.agent_queue_manager import AgentQueueManager
+        from internal.entity.cancel_token_entity import CancelToken
+        from internal.service.assistant_agent_service import AssistantAgentService
+        from types import SimpleNamespace
+
+        task_id = uuid4()
+        account = SimpleNamespace(id=uuid4())
+        token = CancelToken()
+        AssistantAgentService._active_cancel_tokens[str(task_id)] = token
+
+        original = AgentQueueManager.set_stop_flag
+        AgentQueueManager.set_stop_flag = classmethod(
+            lambda cls, *args, **kwargs: None
+        )
+        try:
+            AssistantAgentService.stop_chat(task_id, account)
+        finally:
+            AgentQueueManager.set_stop_flag = original
+            AssistantAgentService._active_cancel_tokens.pop(str(task_id), None)
+
+        assert token.is_cancelled() is True

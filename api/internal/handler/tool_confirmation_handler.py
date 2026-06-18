@@ -55,6 +55,12 @@ class ToolConfirmationHandler:
             tool_input=req.tool_input.data,
             spent_credits=req.spent_credits.data,
             reason=req.reason.data,
+            target_system=req.target_system.data or "",
+            target_environment=req.target_environment.data or "",
+            execution_summary=req.execution_summary.data or "",
+            impact_scope=req.impact_scope.data or "",
+            rollback_strategy=req.rollback_strategy.data or "",
+            audit_hint=req.audit_hint.data or "",
         )
         return success_json(ToolConfirmationResp().dump(confirmation))
 

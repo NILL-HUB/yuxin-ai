@@ -6,6 +6,7 @@ from internal.entity.knowledge_entity import (
     ExternalAuthorizationStatus,
     ExternalSyncStatus,
     KnowledgeScope,
+    OperationContext,
 )
 from internal.exception import NotFoundException
 from internal.model import Account, ExternalDataSource, KnowledgeBase, KnowledgeDocument, KnowledgeSegment
@@ -49,7 +50,7 @@ class ExternalDataSourceService(BaseService):
             source_name=source_name,
             authorization_status=ExternalAuthorizationStatus.PENDING.value,
             sync_status=ExternalSyncStatus.IDLE.value,
-            config=config,
+            config={**config, "operation_context": OperationContext.USER.value},
         )
 
     def authorize_data_source(
@@ -80,6 +81,7 @@ class ExternalDataSourceService(BaseService):
                 "last_error": data_source.last_error,
             }
         segment_count = 0
+        operation_context = OperationContext.USER.value
         for document in documents:
             content = document.get("content", "")
             knowledge_doc = self.create(
@@ -90,7 +92,10 @@ class ExternalDataSourceService(BaseService):
                 content_type="document",
                 source_type=data_source.source_type,
                 source_id=str(data_source.id),
-                metadata_={"external_data_source_id": str(data_source.id)},
+                metadata_={
+                    "external_data_source_id": str(data_source.id),
+                    "operation_context": operation_context,
+                },
                 character_count=len(content),
                 status="completed",
             )
@@ -104,7 +109,7 @@ class ExternalDataSourceService(BaseService):
                     position=idx + 1,
                     content=segment_text,
                     keywords=[],
-                    metadata_={"source": "external_sync"},
+                    metadata_={"source": "external_sync", "operation_context": operation_context},
                     character_count=len(segment_text),
                     status="completed",
                     enabled=True,

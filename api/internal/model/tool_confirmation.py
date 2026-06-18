@@ -31,6 +31,12 @@ class ToolConfirmation(db.Model):
     )
     spent_credits = Column(Integer, nullable=False, server_default=text("0"))
     reason = Column(Text, nullable=False, server_default=text("''::text"))
+    target_system = Column(String(255), nullable=True, server_default=text("''::character varying"))
+    target_environment = Column(String(64), nullable=True, server_default=text("''::character varying"))
+    execution_summary = Column(Text, nullable=True, server_default=text("''::text"))
+    impact_scope = Column(Text, nullable=True, server_default=text("''::text"))
+    rollback_strategy = Column(Text, nullable=True, server_default=text("''::text"))
+    audit_hint = Column(Text, nullable=True, server_default=text("''::text"))
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), server_onupdate=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 

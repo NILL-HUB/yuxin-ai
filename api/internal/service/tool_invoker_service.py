@@ -17,6 +17,8 @@ ToolExecutor = Callable[[dict[str, Any], RuntimeToolDescriptor], Any]
 
 @dataclass
 class ToolInvokerService:
+    event_logger: Any = None
+
     def invoke(
         self,
         *,
@@ -24,60 +26,72 @@ class ToolInvokerService:
         request: RuntimeToolCallRequest,
         executors: dict[str, ToolExecutor],
         confirmed: bool = True,
+        routing_log_id=None,
     ) -> RuntimeToolCallResult:
         started_at = perf_counter()
         tool = RuntimeToolMountService.get_mounted_tool(
             mounted_tools, request.runtime_name
         )
+        result: RuntimeToolCallResult | None = None
         if tool is None:
-            return self._failure(
+            result = self._failure(
                 request=request,
                 tool=None,
                 started_at=started_at,
                 error_code="tool_not_mounted",
                 error_message="工具未挂载",
             )
+            self._emit_tool_invoked(routing_log_id, request, tool, "failure", "tool_not_mounted")
+            return result
 
         missing_arguments = self._missing_required_arguments(tool, request.arguments)
         if missing_arguments:
-            return self._failure(
+            result = self._failure(
                 request=request,
                 tool=tool,
                 started_at=started_at,
                 error_code="invalid_arguments",
                 error_message="缺少必填参数: {}".format(", ".join(missing_arguments)),
             )
+            self._emit_tool_invoked(routing_log_id, request, tool, "failure", "invalid_arguments")
+            return result
 
         security_error = self._security_error(tool, request, confirmed)
         if security_error:
-            return self._failure(
+            result = self._failure(
                 request=request,
                 tool=tool,
                 started_at=started_at,
                 error_code=security_error["error_code"],
                 error_message=security_error["error_message"],
             )
+            self._emit_tool_invoked(routing_log_id, request, tool, "failure", security_error["error_code"])
+            return result
 
         executor = executors.get(tool.runtime_name)
         if executor is None:
-            return self._failure(
+            result = self._failure(
                 request=request,
                 tool=tool,
                 started_at=started_at,
                 error_code="executor_not_found",
                 error_message="工具执行器不存在",
             )
+            self._emit_tool_invoked(routing_log_id, request, tool, "failure", "executor_not_found")
+            return result
 
         try:
             output = executor(request.arguments, tool)
         except Exception as exc:
-            return self._failure(
+            result = self._failure(
                 request=request,
                 tool=tool,
                 started_at=started_at,
                 error_code="tool_execution_failed",
                 error_message=str(exc),
             )
+            self._emit_tool_invoked(routing_log_id, request, tool, "failure", "tool_execution_failed")
+            return result
 
         latency_ms = self._latency_ms(started_at)
         audit_payload = self._audit_payload(
@@ -87,12 +101,33 @@ class ToolInvokerService:
             status="success",
             failure_reason="",
         )
+        audit_hint = build_non_interruptible_write_audit_hint(
+            risk_level=str(tool.metadata.get("risk_level") or ""),
+            tool_input=request.arguments,
+        )
+        if audit_hint:
+            audit_payload = {**audit_payload, "audit_hint": audit_hint}
         self._persist_audit(request, tool, audit_payload)
-        return RuntimeToolCallResult.success_result(
+        result = RuntimeToolCallResult.success_result(
             output=output,
             latency_ms=latency_ms,
             audit_payload=audit_payload,
         )
+        self._emit_tool_invoked(routing_log_id, request, tool, "success", "")
+        return result
+
+    def _emit_tool_invoked(self, routing_log_id, request, tool, status, error_code) -> None:
+        if self.event_logger is None or routing_log_id is None:
+            return
+        try:
+            self.event_logger.log_event("tool_invoked", routing_log_id, {
+                "runtime_name": request.runtime_name,
+                "tool_id": str(tool.tool_id) if tool else "",
+                "status": status,
+                "error_code": error_code,
+            })
+        except Exception:
+            pass
 
     def _failure(
         self,
@@ -194,3 +229,53 @@ class ToolInvokerService:
             status=status,
             failure_reason=failure_reason,
         )
+
+
+NON_INTERRUPTIBLE_WRITE_KEYWORDS = (
+    "write",
+    "delete",
+    "create",
+    "update",
+    "remove",
+    "drop",
+    "insert",
+    "modify",
+)
+
+NON_INTERRUPTIBLE_WRITE_AUDIT_HINT = "操作已生效或可能已生效，请检查目标系统状态"
+
+
+def build_non_interruptible_write_audit_hint(
+    *, risk_level: str, tool_input: dict[str, Any] | None
+) -> str:
+    if is_non_interruptible_write(risk_level=risk_level, tool_input=tool_input):
+        return NON_INTERRUPTIBLE_WRITE_AUDIT_HINT
+    return ""
+
+
+def is_non_interruptible_write(
+    *, risk_level: str, tool_input: dict[str, Any] | None
+) -> bool:
+    if str(risk_level or "").lower() == RiskLevel.HIGH.value:
+        return True
+    text = _flatten_tool_input(tool_input or {})
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in NON_INTERRUPTIBLE_WRITE_KEYWORDS)
+
+
+def _flatten_tool_input(tool_input: Any) -> str:
+    parts: list[str] = []
+    stack: list[Any] = [tool_input]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            stack.extend(value.values())
+        elif isinstance(value, (list, tuple, set)):
+            stack.extend(value)
+        elif value is None:
+            continue
+        else:
+            parts.append(str(value))
+    return " ".join(parts)

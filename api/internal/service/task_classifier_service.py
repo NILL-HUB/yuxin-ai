@@ -50,6 +50,27 @@ class TaskClassifierService:
         "设计",
     )
 
+    DEEP_THINKING_KEYWORDS = (
+        "深度分析",
+        "深度思考",
+        "详细分析",
+        "全面分析",
+        "系统性分析",
+        "研究报告",
+        "调研",
+        "对比分析",
+        "可行性分析",
+    )
+    MULTI_AGENT_KEYWORDS = (
+        "分别",
+        "多个角度",
+        "同时",
+        "并行",
+        "协作",
+        "综合",
+        "多维度",
+    )
+
     def classify(self, query: str) -> RoutingDecision:
         normalized = (query or "").strip()
         lowered = normalized.lower()
@@ -66,22 +87,48 @@ class TaskClassifierService:
                 risk_level=RiskLevel.HIGH.value,
                 reason="用户请求包含高风险操作，需要拒绝或二次确认",
             )
+        if self._contains_any(normalized, self.DEEP_THINKING_KEYWORDS):
+            return RoutingDecision(
+                intent="deep_thinking_task",
+                complexity="complex",
+                execution_mode=ExecutionMode.DEEP_THINKING.value,
+                needs_tools=True,
+                needs_agent=True,
+                needs_deep_thinking=True,
+                recommended_model_tier="strong",
+                risk_level=RiskLevel.SAFE.value,
+                reason="用户请求需要深度思考和多阶段推理",
+            )
         if self._looks_like_vertical_agent_task(normalized):
             return RoutingDecision(
                 intent="vertical_agent_task",
                 complexity="medium",
-                execution_mode=ExecutionMode.SINGLE_AGENT.value,
+                execution_mode=ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
                 needs_tools=True,
                 needs_agent=True,
                 recommended_model_tier="balanced",
                 risk_level=RiskLevel.SAFE.value,
                 reason="用户明确要求使用垂直智能体或问题适合路由到单个专业 Agent",
             )
+        if self._contains_any(normalized, self.MULTI_AGENT_KEYWORDS) and self._contains_any(
+            normalized, self.TOOL_KEYWORDS
+        ):
+            return RoutingDecision(
+                intent="multi_agent_task",
+                complexity="complex",
+                execution_mode=ExecutionMode.MULTI_AGENT_PARALLEL.value,
+                needs_tools=True,
+                needs_agent=True,
+                needs_multi_agent=True,
+                recommended_model_tier="strong",
+                risk_level=RiskLevel.SAFE.value,
+                reason="用户请求需要多个 Agent 并行协作",
+            )
         if self._contains_any(normalized, self.TOOL_KEYWORDS):
             return RoutingDecision(
                 intent="tool_task",
                 complexity="medium",
-                execution_mode=ExecutionMode.SINGLE_AGENT.value,
+                execution_mode=ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
                 needs_tools=True,
                 needs_agent=True,
                 recommended_model_tier="balanced",

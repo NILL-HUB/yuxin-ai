@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from internal.model import MemoryCandidate, UserMemory
 from internal.service.long_term_memory_service import (
+    LongTermMemoryService,
     MemoryCandidateExtractor,
     MemoryConfidenceTracker,
     UserMemoryConfirmationService,
@@ -132,3 +133,65 @@ def test_confirmation_should_ignore_candidate_without_writing_memory(monkeypatch
 
     assert result.status == "ignored"
     assert result.metadata_["never_remind"] is True
+
+
+def test_extract_and_store_should_create_pending_candidate_without_user_memory(monkeypatch):
+    account_id = uuid4()
+    service = LongTermMemoryService(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)])))
+    created = []
+
+    def _create(model, **kwargs):
+        obj = SimpleNamespace(**kwargs)
+        obj.id = uuid4()
+        created.append((model, kwargs))
+        return obj
+
+    monkeypatch.setattr(service, "create", _create)
+
+    result = service.extract_and_store(SimpleNamespace(id=account_id), "请用中文回答")
+
+    assert result is not None
+    assert result["status"] == "pending"
+    assert result["created"] is True
+    assert created[0][0] is MemoryCandidate
+    assert created[0][1]["status"] == "pending"
+    assert all(model is not UserMemory for model, _ in created)
+
+
+def test_extract_and_store_should_return_none_when_no_memory_extracted(monkeypatch):
+    account_id = uuid4()
+    service = LongTermMemoryService(db=_fake_db(_SessionStub()))
+    created = []
+    monkeypatch.setattr(service, "create", lambda *_a, **_k: created.append(("nope",)) or SimpleNamespace())
+
+    result = service.extract_and_store(SimpleNamespace(id=account_id), "今天天气不错")
+
+    assert result is None
+    assert created == []
+
+
+def test_extract_and_store_should_increment_existing_candidate_occurrences(monkeypatch):
+    account_id = uuid4()
+    candidate = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        candidate_key="language_preference:zh",
+        content="用户偏好使用中文回答",
+        confidence=3,
+        occurrences=2,
+        status="pending",
+        metadata_={},
+    )
+    service = LongTermMemoryService(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=candidate)])))
+    monkeypatch.setattr(
+        service,
+        "create",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不应创建新记录")),
+    )
+
+    result = service.extract_and_store(SimpleNamespace(id=account_id), "请用中文回答")
+
+    assert candidate.occurrences == 3
+    assert result["created"] is False
+    assert result["status"] == "pending"
+    assert result["candidate_id"] == candidate.id

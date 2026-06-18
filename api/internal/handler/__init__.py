@@ -18,6 +18,7 @@ from .tool_confirmation_handler import ToolConfirmationHandler
 from .tool_inventory_handler import ToolInventoryHandler
 from .upload_file_handler import UploadFileHandler
 from .workflow_handler import WorkflowHandler
+from .routing_log_handler import RoutingLogHandler
 from .language_model_handler import LanguageModelHandler
 from .assistant_agent_handler import AssistantAgentHandler
 from .analysis_handler import AnalysisHandler
@@ -70,6 +71,7 @@ __all__ = [
     "ApiKeyHandler",
     "OpenAPIHandler",
     "WorkflowHandler",
+    "RoutingLogHandler",
     "LanguageModelHandler",
     "AssistantAgentHandler",
     "AnalysisHandler",

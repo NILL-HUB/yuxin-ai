@@ -91,3 +91,44 @@ class UserMemoryConfirmationService(BaseService):
         if candidate is None or candidate.owner_account_id != account.id:
             raise NotFoundException("记忆候选不存在")
         return candidate
+
+
+@inject
+@dataclass
+class LongTermMemoryService(BaseService):
+    db: SQLAlchemy
+
+    def extract_and_store(self, account: Account, text: str) -> dict[str, object] | None:
+        extracted = MemoryCandidateExtractor().extract(text)
+        if extracted is None:
+            return None
+        candidate = (
+            self.db.session.query(MemoryCandidate)
+            .filter_by(owner_account_id=account.id, candidate_key=extracted["candidate_key"])
+            .one_or_none()
+        )
+        if candidate is not None:
+            candidate.occurrences += 1
+            candidate.confidence = max(candidate.confidence, int(extracted["confidence"]))
+            return {
+                "candidate_id": candidate.id,
+                "candidate_key": candidate.candidate_key,
+                "status": candidate.status,
+                "created": False,
+            }
+        candidate = self.create(
+            MemoryCandidate,
+            owner_account_id=account.id,
+            candidate_key=extracted["candidate_key"],
+            content=extracted["content"],
+            confidence=extracted["confidence"],
+            occurrences=1,
+            status="pending",
+            metadata_={"memory_type": extracted["memory_type"]},
+        )
+        return {
+            "candidate_id": candidate.id,
+            "candidate_key": candidate.candidate_key,
+            "status": candidate.status,
+            "created": True,
+        }

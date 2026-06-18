@@ -20,6 +20,7 @@ class OrchestratorService:
         tool_subset_builder=None,
         task_planner=None,
         feature_flag_service=None,
+        event_logger=None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
@@ -27,27 +28,73 @@ class OrchestratorService:
         self.tool_subset_builder = tool_subset_builder
         self.task_planner = task_planner or TaskPlannerService()
         self.feature_flag_service = feature_flag_service
+        self.event_logger = event_logger
 
     def decide(self, query: str, **context) -> RoutingDecision:
+        routing_log_id = context.get("routing_log_id")
         try:
+            self._emit("routing_started", routing_log_id, {"query": query})
             if not self._flag_enabled("ENABLE_ORCHESTRATOR", default=True):
                 return self._feature_disabled_decision()
             decision = self.task_classifier_service.classify(query)
+            self._emit(
+                "task_classified",
+                routing_log_id,
+                {
+                    "intent": decision.intent,
+                    "complexity": decision.complexity,
+                    "execution_mode": decision.execution_mode,
+                },
+            )
             if not self._flag_enabled("ENABLE_MULTI_AGENT_EXECUTION", default=True):
                 decision.needs_multi_agent = False
-                if decision.execution_mode == ExecutionMode.MULTI_AGENT.value:
+                if decision.execution_mode in (
+                    ExecutionMode.MULTI_AGENT.value,
+                    ExecutionMode.MULTI_AGENT_PARALLEL.value,
+                    ExecutionMode.MULTI_AGENT_SEQUENTIAL.value,
+                ):
                     decision.execution_mode = ExecutionMode.SINGLE_AGENT.value
             pool_result = self.pool_intent_resolver.resolve(
                 query, classifier_result=decision.to_dict()
             )
+            self._emit(
+                "agent_candidates_found",
+                routing_log_id,
+                {"matched_pools": pool_result.get("matched_pools", [])},
+            )
             subset = self._build_agent_subset(pool_result)
             decision.agent_subset = subset
+            self._emit(
+                "agent_selected",
+                routing_log_id,
+                {"selected_agents": subset.get("selected_agents", [])},
+            )
             decision.tool_subset = self._build_tool_subset()
+            self._emit(
+                "tool_candidates_found",
+                routing_log_id,
+                {"selected_tools": decision.tool_subset.get("selected_tools", [])},
+            )
+            self._emit(
+                "tool_selected",
+                routing_log_id,
+                {"selected_tools": decision.tool_subset.get("selected_tools", [])},
+            )
             self._attach_cost_policy(decision, context)
+            self._emit(
+                "model_selected",
+                routing_log_id,
+                {
+                    "recommended_model_tier": decision.recommended_model_tier,
+                    "cost_policy": decision.cost_policy,
+                },
+            )
             self._attach_phase6_summaries(query, decision)
             return decision
         except Exception as exc:
             logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
+            self._emit("routing_failed", routing_log_id, {"error": str(exc)})
+            self._emit("fallback_triggered", routing_log_id, {"reason": "classifier_error"})
             return RoutingDecision(
                 intent="fallback",
                 complexity="unknown",
@@ -101,6 +148,14 @@ class OrchestratorService:
         if self.feature_flag_service is None:
             return default
         return self.feature_flag_service.is_enabled(code)
+
+    def _emit(self, event_type: str, routing_log_id, detail: dict | None = None) -> None:
+        if self.event_logger is None or routing_log_id is None:
+            return
+        try:
+            self.event_logger.log_event(event_type, routing_log_id, detail or {})
+        except Exception:
+            logging.warning("记录路由离散事件失败: %s", event_type, exc_info=True)
 
     def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
         task_plan = self.task_planner.plan(query, decision)

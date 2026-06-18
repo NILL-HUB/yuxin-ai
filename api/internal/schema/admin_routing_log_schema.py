@@ -1,6 +1,6 @@
 from flask_wtf import FlaskForm
 from marshmallow import Schema, fields
-from wtforms import IntegerField, StringField
+from wtforms import Form, IntegerField, StringField
 from wtforms.validators import Length, NumberRange, Optional
 
 
@@ -77,3 +77,18 @@ class RoutingLogPageResp(Schema):
     list = fields.List(fields.Nested(RoutingLogResp))
     paginator = fields.Dict()
     summary = fields.Dict()
+
+
+class SetRoutingLogRetentionReq(Form):
+    retention_days = IntegerField(
+        "retention_days",
+        validators=[NumberRange(min=1, max=3650)],
+    )
+
+
+class RoutingLogRetentionResp(Schema):
+    retention_days = fields.Integer()
+    default_retention_days = fields.Integer()
+    min_retention_days = fields.Integer()
+    max_retention_days = fields.Integer()
+    code = fields.String()

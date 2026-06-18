@@ -179,3 +179,23 @@ def test_core_models_should_expose_phase1_fields():
     assert memory.created_from == "conversation_memory"
     assert candidate.confidence == 3
     assert source.source_type == "notion"
+
+
+def test_create_base_should_persist_operation_context_in_settings(monkeypatch):
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=None)]))
+    created = []
+    monkeypatch.setattr(
+        service,
+        "create",
+        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+    )
+
+    service.create_user_content_base(
+        name="个人库",
+        account=SimpleNamespace(id=uuid4()),
+        operation_context="user",
+    )
+
+    kwargs = created[0][1]
+    assert kwargs["operation_context"] == "user"
+    assert kwargs["settings"]["operation_context"] == "user"

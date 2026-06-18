@@ -34,3 +34,23 @@ class BillingUsageDelta:
             "reason": self.reason,
             "metadata": self.metadata,
         }
+
+
+@dataclass
+class BillingUsageCancelled:
+    event_type: str
+    task_id: str
+    total_credits: int
+    reason: str = "user_stop"
+    pending_phases: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def to_sse(self) -> dict:
+        return {
+            "event": self.event_type,
+            "total_credits": self.total_credits,
+            "reason": self.reason,
+            "pending_phases": self.pending_phases,
+        }

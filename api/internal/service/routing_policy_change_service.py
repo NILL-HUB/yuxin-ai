@@ -7,6 +7,9 @@ from internal.entity.policy_change_entity import PolicyChangeDraft
 from internal.exception import NotFoundException
 from internal.model import PolicyChangeDraftModel, RoutingOptimizationSuggestionModel
 from internal.service.audit_log_service import AuditLogService
+from internal.service.orchestration_feature_flag_service import (
+    OrchestrationFeatureFlagService,
+)
 from pkg.sqlalchemy import SQLAlchemy
 
 
@@ -24,9 +27,11 @@ class RoutingPolicyChangeService:
         self,
         db: SQLAlchemy,
         audit_log_service: AuditLogService,
+        orchestration_feature_flag_service: OrchestrationFeatureFlagService,
     ):
         self.db = db
         self.audit_log_service = audit_log_service
+        self.orchestration_feature_flag_service = orchestration_feature_flag_service
 
     def generate_preview(self, suggestion_id: UUID) -> dict:
         suggestion = self._get_suggestion(suggestion_id)
@@ -77,6 +82,10 @@ class RoutingPolicyChangeService:
             suggestion.applied_by = admin_user_id
             suggestion.applied_at = datetime.now(UTC).replace(tzinfo=None)
             suggestion.policy_change_draft_id = draft.id
+
+            self._apply_policy_changes(
+                draft.policy_type, draft.after_config, admin_user_id
+            )
 
             self._write_audit(
                 admin_user_id=admin_user_id,
@@ -187,21 +196,124 @@ class RoutingPolicyChangeService:
         except Exception:
             pass
 
+    def _apply_policy_changes(
+        self,
+        policy_type: str,
+        after_config: dict,
+        admin_user_id: UUID,
+    ) -> None:
+        try:
+            if policy_type == "model_routing":
+                self._update_feature_flag(
+                    "ENABLE_COST_MODEL_ROUTING", True, admin_user_id
+                )
+            elif policy_type == "tool_policy":
+                self._update_feature_flag(
+                    "ENABLE_TOOL_POOL_RETRIEVAL", True, admin_user_id
+                )
+            elif policy_type == "agent_policy":
+                self._update_feature_flag(
+                    "ENABLE_MULTI_AGENT_EXECUTION", False, admin_user_id
+                )
+        except Exception:
+            pass
+
+    def _update_feature_flag(
+        self,
+        code: str,
+        enabled: bool,
+        admin_user_id: UUID,
+    ) -> None:
+        flag_service = getattr(self, "orchestration_feature_flag_service", None)
+        if flag_service is not None:
+            flag_service.update_flag(
+                code=code, enabled=enabled, operator_id=admin_user_id
+            )
+            return
+        from internal.model import OrchestrationFeatureFlagModel
+
+        flag = (
+            self.db.session.query(OrchestrationFeatureFlagModel)
+            .filter(OrchestrationFeatureFlagModel.code == code)
+            .first()
+        )
+        if flag is None:
+            return
+        flag.enabled = bool(enabled)
+        flag.updated_by = admin_user_id
+
     @staticmethod
     def _build_before_config(suggestion, policy_type: str) -> dict:
+        evidence = suggestion.evidence or {}
+        if policy_type == "model_routing":
+            current_config = {
+                "model": suggestion.target_id,
+                "tier": evidence.get("current_tier", "default"),
+                "avg_cost_credits": evidence.get("avg_cost_credits", 0),
+                "avg_rating": evidence.get("avg_rating", 0),
+                "sample_count": evidence.get("count", 0),
+            }
+        elif policy_type == "tool_policy":
+            current_config = {
+                "tool_pool": suggestion.target_id,
+                "risk_level": evidence.get("current_risk_level", "medium"),
+                "avg_rating": evidence.get("avg_rating", 0),
+                "sample_count": evidence.get("count", 0),
+                "enabled": True,
+            }
+        else:
+            current_config = {
+                "agent": suggestion.target_id,
+                "enabled": True,
+                "fallback_rate": evidence.get("fallback_rate", 0),
+            }
         return {
             "policy_type": policy_type,
             "target_id": suggestion.target_id,
-            "current_config": {},
-            "evidence": suggestion.evidence or {},
+            "current_config": current_config,
+            "evidence": evidence,
         }
 
     @staticmethod
     def _build_after_config(suggestion, policy_type: str) -> dict:
+        evidence = suggestion.evidence or {}
+        if policy_type == "model_routing":
+            avg_cost = int(evidence.get("avg_cost_credits", 0) or 0)
+            proposed_config = {
+                "model": suggestion.target_id,
+                "tier": "cheap",
+                "action": "downgrade_tier",
+                "expected_cost_credits": max(avg_cost // 2, 1),
+                "reason": "降级到低成本档位以降低开销",
+            }
+        elif policy_type == "tool_policy":
+            avg_rating = evidence.get("avg_rating", 0) or 0
+            if avg_rating and avg_rating < 2:
+                action = "disable"
+                enabled = False
+                risk_level = "sensitive"
+            else:
+                action = "downgrade_risk_level"
+                enabled = True
+                risk_level = "high"
+            proposed_config = {
+                "tool_pool": suggestion.target_id,
+                "risk_level": risk_level,
+                "enabled": enabled,
+                "action": action,
+                "reason": "工具健康度不达标，建议禁用或降级",
+            }
+        else:
+            proposed_config = {
+                "agent": suggestion.target_id,
+                "enabled": False,
+                "action": "disable",
+                "reason": "Agent 故障率过高，建议禁用",
+            }
         return {
             "policy_type": policy_type,
             "target_id": suggestion.target_id,
-            "proposed_config": {},
+            "proposed_config": proposed_config,
             "suggestion_type": suggestion.suggestion_type,
         }
 

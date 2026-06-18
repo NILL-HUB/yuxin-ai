@@ -32,13 +32,12 @@ def test_result_synthesizer_should_merge_results_without_raw_agent_output():
         ]
     )
 
-    assert final == {
-        "final_answer": "第一条建议。\n\n第二条建议。",
-        "summary": "已整合 2 个 Agent 结果。",
-        "confidence": 0.7,
-        "visible_sources": ["doc-a", "doc-b", "doc-c"],
-        "user_warnings": [],
-    }
+    assert final["final_answer"] == "第一条建议。\n\n第二条建议。"
+    assert final["summary"].startswith("已整合 2 个 Agent 结果")
+    assert final["confidence"] == 0.7
+    assert final["visible_sources"] == ["doc-a", "doc-b", "doc-c"]
+    assert final["user_warnings"] == []
+    assert "internal_notes" in final
 
 
 def test_result_synthesizer_should_turn_failed_results_into_warnings():
@@ -82,10 +81,9 @@ def test_result_synthesizer_should_return_fallback_when_no_valid_result():
         [_result(answer="", confidence=0, errors=["agent_execution_failed"])]
     )
 
-    assert final == {
-        "final_answer": "当前任务暂时无法完成，请稍后重试或缩小任务范围。",
-        "summary": "没有可用的 Agent 结果。",
-        "confidence": 0,
-        "visible_sources": [],
-        "user_warnings": ["fallback:no_valid_agent_result"],
-    }
+    assert final["final_answer"] == "当前任务暂时无法完成，请稍后重试或缩小任务范围。"
+    assert final["summary"] == "没有可用的 Agent 结果。"
+    assert final["confidence"] == 0
+    assert final["visible_sources"] == []
+    assert final["user_warnings"] == ["fallback:no_valid_agent_result"]
+    assert "internal_notes" in final

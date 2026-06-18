@@ -56,12 +56,27 @@ def test_aggregator_should_emit_cancelled_with_current_cost_only():
 
     assert cancelled.to_sse() == {
         "event": "billing_cancelled",
-        "source_type": "summary",
-        "source_name": "billing",
-        "delta_credits": 0,
         "total_credits": 4,
         "reason": "user_stop",
-        "metadata": {},
+        "pending_phases": [],
+    }
+
+
+def test_aggregator_should_emit_cancelled_with_pending_phases():
+    task_id = str(uuid4())
+    aggregator = BillingUsageAggregator(task_id=task_id)
+    aggregator.delta("model", "deepseek-chat", 4, reason="tokens")
+
+    cancelled = aggregator.cancelled(
+        reason="user_stop",
+        pending_phases=["工具调用", "结果合成"],
+    )
+
+    assert cancelled.to_sse() == {
+        "event": "billing_cancelled",
+        "total_credits": 4,
+        "reason": "user_stop",
+        "pending_phases": ["工具调用", "结果合成"],
     }
 
 

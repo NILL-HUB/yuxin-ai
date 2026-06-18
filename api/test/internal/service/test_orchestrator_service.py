@@ -22,7 +22,7 @@ def test_vertical_agent_request_should_route_to_single_agent():
     decision = TaskClassifierService().classify("请使用护肤智能体回答我油痘肌该怎么护肤")
 
     assert decision.intent == "vertical_agent_task"
-    assert decision.execution_mode == ExecutionMode.SINGLE_AGENT.value
+    assert decision.execution_mode == ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value
     assert decision.needs_agent is True
     assert decision.needs_tools is True
     assert decision.needs_multi_agent is False
@@ -33,7 +33,7 @@ def test_tool_request_should_mark_needs_tools():
 
     assert decision.intent == "tool_task"
     assert decision.needs_tools is True
-    assert decision.execution_mode == ExecutionMode.SINGLE_AGENT.value
+    assert decision.execution_mode == ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value
     assert decision.reason
 
 
@@ -193,6 +193,7 @@ def test_routing_decision_should_dump_stable_dict():
         "needs_tools": False,
         "needs_agent": False,
         "needs_multi_agent": False,
+        "needs_deep_thinking": False,
         "recommended_model_tier": "cheap",
         "risk_level": "safe",
         "reason": "简单问答",

@@ -251,6 +251,68 @@ def test_candidate_collector_should_exclude_disabled_and_unhealthy_tools():
     assert collector.collect(account_id) == []
 
 
+def test_candidate_collector_should_collect_external_data_tools():
+    account_id = uuid4()
+    external_data_source = SimpleNamespace(
+        id=uuid4(),
+        source_type="notion",
+        source_name="我的Notion",
+        knowledge_base_id=uuid4(),
+        owner_account_id=account_id,
+        authorization_status="granted",
+    )
+    builtin_service = SimpleNamespace(get_builtin_tools=lambda: [])
+    collector = ToolCandidateCollector(
+        session=_SessionStub([
+            _QueryStub(all_result=[]),
+            _QueryStub(all_result=[]),
+            _QueryStub(all_result=[]),
+            _QueryStub(all_result=[external_data_source]),
+        ]),
+        builtin_tool_service=builtin_service,
+    )
+
+    result = collector.collect(account_id)
+
+    external_candidates = [
+        c for c in result if c["metadata"]["tool_pool"] == "external_data"
+    ]
+    assert len(external_candidates) == 1
+    candidate = external_candidates[0]
+    assert candidate["name"] == "external_data_retrieval"
+    assert candidate["metadata"]["risk_level"] == RiskLevel.LOW.value
+    assert candidate["metadata"]["tool_pool"] == "external_data"
+    assert candidate["provider_name"] == "我的Notion"
+
+
+def test_candidate_collector_should_skip_external_data_without_knowledge_base():
+    account_id = uuid4()
+    external_data_source = SimpleNamespace(
+        id=uuid4(),
+        source_type="github",
+        source_name="我的GitHub",
+        knowledge_base_id=None,
+        owner_account_id=account_id,
+        authorization_status="granted",
+    )
+    builtin_service = SimpleNamespace(get_builtin_tools=lambda: [])
+    collector = ToolCandidateCollector(
+        session=_SessionStub([
+            _QueryStub(all_result=[]),
+            _QueryStub(all_result=[]),
+            _QueryStub(all_result=[]),
+            _QueryStub(all_result=[external_data_source]),
+        ]),
+        builtin_tool_service=builtin_service,
+    )
+
+    result = collector.collect(account_id)
+
+    assert [
+        c for c in result if c["metadata"]["tool_pool"] == "external_data"
+    ] == []
+
+
 def _candidate(name: str, metadata: dict) -> dict:
     return {"id": name, "name": name, "metadata": normalize_tool_metadata(metadata)}
 

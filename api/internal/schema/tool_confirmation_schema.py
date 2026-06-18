@@ -24,6 +24,24 @@ class CreateToolConfirmationReq(FlaskForm):
     reason = StringField(
         "reason", default="", validators=[Optional(), Length(max=2000)]
     )
+    target_system = StringField(
+        "target_system", default="", validators=[Optional(), Length(max=255)]
+    )
+    target_environment = StringField(
+        "target_environment", default="", validators=[Optional(), Length(max=64)]
+    )
+    execution_summary = StringField(
+        "execution_summary", default="", validators=[Optional(), Length(max=4000)]
+    )
+    impact_scope = StringField(
+        "impact_scope", default="", validators=[Optional(), Length(max=4000)]
+    )
+    rollback_strategy = StringField(
+        "rollback_strategy", default="", validators=[Optional(), Length(max=4000)]
+    )
+    audit_hint = StringField(
+        "audit_hint", default="", validators=[Optional(), Length(max=4000)]
+    )
 
 
 class ListToolConfirmationReq(FlaskForm):
@@ -42,6 +60,12 @@ class ToolConfirmationResp(Schema):
     status = fields.String()
     spent_credits = fields.Integer()
     reason = fields.String()
+    target_system = fields.String()
+    target_environment = fields.String()
+    execution_summary = fields.String()
+    impact_scope = fields.String()
+    rollback_strategy = fields.String()
+    audit_hint = fields.String()
     created_at = fields.DateTime()
     updated_at = fields.DateTime()
 

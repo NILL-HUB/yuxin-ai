@@ -92,6 +92,7 @@ __all__ = [
     "RedeemCodeService",
     "KeywordTableService",
     "KnowledgeBaseService",
+    "KnowledgeRetrievalOrchestrator",
     "OrchestratorService",
     "TaskClassifierService",
     "ToolConfirmationService",

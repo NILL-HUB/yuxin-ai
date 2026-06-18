@@ -1,3 +1,4 @@
+from internal.entity.cancel_token_entity import CancelToken
 from internal.entity.execution_orchestration_entity import (
     TaskPlan,
     TaskPlanItem,
@@ -150,3 +151,59 @@ def test_execution_coordinator_should_return_global_fallback_when_all_fail():
     assert results[0].answer == "当前任务暂时无法完成，请稍后重试或缩小任务范围。"
     assert results[0].warnings == ["fallback:all_agents_failed"]
     assert results[0].errors == ["agent_execution_failed"]
+
+
+def test_cancel_token_should_stop_remaining_iterations():
+    executor = FakeExecutor()
+    cancel_token = CancelToken()
+    coordinator = ExecutionCoordinatorService(
+        executor=executor, cancel_token=cancel_token
+    )
+    plan = _plan("multi_agent_serial", [_item("task-1", order=1), _item("task-2", order=2)])
+
+    cancel_token.cancel()
+    results = coordinator.execute(plan)
+
+    assert executor.calls == []
+    assert results == []
+
+
+def test_cancel_token_should_break_mid_execution_when_cancelled_between_items():
+    class _CancellingExecutor:
+        def __init__(self, cancel_token):
+            self.cancel_token = cancel_token
+            self.calls = []
+
+        def execute(self, item):
+            self.calls.append(item.task_id)
+            if item.task_id == "task-1":
+                self.cancel_token.cancel()
+            return {
+                "agent_id": f"agent-{item.agent_pool}",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    cancel_token = CancelToken()
+    executor = _CancellingExecutor(cancel_token)
+    coordinator = ExecutionCoordinatorService(
+        executor=executor, cancel_token=cancel_token
+    )
+    plan = _plan(
+        "multi_agent_serial", [_item("task-1", order=1), _item("task-2", order=2)]
+    )
+
+    results = coordinator.execute(plan)
+
+    assert executor.calls == ["task-1"]
+    assert [result.task_id for result in results] == ["task-1"]
+
+
+def test_cancel_token_reset_should_allow_reuse():
+    token = CancelToken()
+    assert token.is_cancelled() is False
+    token.cancel()
+    assert token.is_cancelled() is True
+    token.reset()
+    assert token.is_cancelled() is False
