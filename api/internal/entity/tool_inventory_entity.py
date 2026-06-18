@@ -11,8 +11,11 @@ class ToolSourceType(str, Enum):
 
 class RiskLevel(str, Enum):
     SAFE = "safe"
+    LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    SENSITIVE = "sensitive"
+    DANGEROUS = "dangerous"
 
 
 DEFAULT_TOOL_METADATA = {

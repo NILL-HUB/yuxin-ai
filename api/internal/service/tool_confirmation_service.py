@@ -45,6 +45,25 @@ class ToolConfirmationService(BaseService):
         confirmation.status = "cancelled"
         return confirmation
 
+    def list_confirmations(
+        self,
+        account: Account,
+        status: str = "",
+    ) -> list[ToolConfirmation]:
+        query = self.db.session.query(ToolConfirmation).filter_by(
+            owner_account_id=account.id
+        )
+        if status:
+            query = query.filter(ToolConfirmation.status == status)
+        return query.order_by(ToolConfirmation.created_at.desc()).all()
+
+    def get_confirmation(
+        self,
+        confirmation_id,
+        account: Account,
+    ) -> ToolConfirmation:
+        return self._get_owned_confirmation(confirmation_id, account)
+
     def _get_owned_confirmation(self, confirmation_id, account: Account) -> ToolConfirmation:
         confirmation = (
             self.db.session.query(ToolConfirmation)

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from internal.service.audit_log_service import AuditLogService
+
 
 SENSITIVE_ARGUMENT_NAMES = {"api_key", "token", "password", "secret", "credential"}
 
@@ -32,6 +34,24 @@ class ToolInvocationAuditService:
             "status": status,
             "failure_reason": failure_reason,
         }
+
+    def persist(
+        self,
+        *,
+        account_id: str,
+        payload: dict[str, Any],
+        resource_id: str = "",
+        commit: bool = True,
+    ) -> Any:
+        service = AuditLogService()
+        return service.record_for_tool_invocation(
+            account_id=account_id,
+            action="tool_invocation",
+            resource_type="tool",
+            resource_id=resource_id or payload.get("tool_id", ""),
+            after_data=payload,
+            commit=commit,
+        )
 
     @staticmethod
     def _input_summary(arguments: dict[str, Any]) -> dict[str, list[str]]:

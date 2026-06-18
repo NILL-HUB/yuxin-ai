@@ -350,6 +350,50 @@ class FunctionCallAgent(BaseAgent):
                 tool = self._resolve_tool(tool_call["name"], tools_by_name, tools_by_alias)
                 if tool is None:
                     raise LookupError(self._build_tool_not_found_result(tool_call["name"], tools_by_name))
+
+                if tool_policy.is_dangerous_tool(tool_call["name"]):
+                    tool_result = "危险工具禁止自动调用，请联系管理员处理"
+                    self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                        id=id,
+                        task_id=state["task_id"],
+                        event=QueueEvent.AGENT_ACTION.value,
+                        observation=tool_result,
+                        tool=tool_call["name"],
+                        tool_input=tool_call["args"],
+                        latency=(time.perf_counter() - start_at),
+                    ))
+                    messages.append(ToolMessage(
+                        tool_call_id=tool_call["id"],
+                        content=tool_result,
+                        name=tool_call["name"],
+                    ))
+                    continue
+
+                if tool_policy.is_high_risk_tool(tool_call["name"]):
+                    confirmation = self._create_tool_confirmation(
+                        state, tool_call, tool_policy,
+                    )
+                    if confirmation is not None:
+                        tool_result = (
+                            f"高风险工具 {tool_call['name']} 需要用户确认后才能执行。"
+                            f"确认ID: {confirmation.get('id', '')}"
+                        )
+                        self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                            id=id,
+                            task_id=state["task_id"],
+                            event="tool_confirmation_required",
+                            observation=tool_result,
+                            tool=tool_call["name"],
+                            tool_input=tool_call["args"],
+                            latency=(time.perf_counter() - start_at),
+                        ))
+                        messages.append(ToolMessage(
+                            tool_call_id=tool_call["id"],
+                            content=tool_result,
+                            name=tool_call["name"],
+                        ))
+                        continue
+
                 tool_result = tool.invoke(tool_call["args"])
             except LookupError as e:
                 tool_result = str(e)
@@ -407,6 +451,36 @@ class FunctionCallAgent(BaseAgent):
             "messages": messages,
             "pending_skill_prompts": pending_skill_prompts,
         }
+
+    @staticmethod
+    def _create_tool_confirmation(
+        state: AgentState,
+        tool_call: dict[str, Any],
+        tool_policy: ToolPolicy,
+    ) -> dict[str, Any] | None:
+        try:
+            from flask import current_app
+            from internal.model.tool_confirmation import ToolConfirmation
+
+            db = current_app.extensions["migrate"].db
+            tool_name = tool_call.get("name", "")
+            is_sensitive = tool_name in {"send_email", "send_sms"}
+            risk_level = "sensitive" if is_sensitive else "high"
+            account_id = getattr(state, "user_id", None) or getattr(state, "account_id", None)
+            confirmation = ToolConfirmation(
+                owner_account_id=account_id,
+                tool_name=tool_name,
+                risk_level=risk_level,
+                tool_input=tool_call.get("args", {}),
+                status="pending",
+                spent_credits=0,
+                reason=f"Agent 调用高风险工具 {tool_name}，等待用户确认",
+            )
+            db.session.add(confirmation)
+            db.session.commit()
+            return {"id": str(confirmation.id), "status": confirmation.status}
+        except Exception:
+            return None
 
     @staticmethod
     def _build_tool_not_found_result(tool_call_name: str, tools_by_name: dict[str, Any]) -> str:

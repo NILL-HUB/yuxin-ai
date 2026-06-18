@@ -259,15 +259,45 @@ def test_audit_service_should_persist_tool_invocation(monkeypatch):
 
 ## 5. 推荐执行顺序
 
-1. 任务 0：基线确认
-2. 任务 1：RiskLevel 枚举统一（基础，后续任务依赖）
-3. 任务 2：audit_log 表新增 account_id（migration 前置）
-4. 任务 3：ToolInvocationAuditService 落库
-5. 任务 4：tool-confirmations GET 接口（前端依赖）
-6. 任务 5：Agent _tools_node 接入确认流程（核心，最复杂）
-7. 任务 6：前端确认卡片接入对话流
-8. 任务 7：安全测试
-9. 任务 8：最终全量测试与文档同步
+1. 任务 0：基线确认 ✅（2157 passed, head d1e2f3a4b5d3）
+2. 任务 1：RiskLevel 枚举统一 ✅（新增 LOW/SENSITIVE/DANGEROUS，22 passed）
+3. 任务 2：audit_log 表新增 account_id ✅（migration d1e2f3a4b5d4）
+4. 任务 3：ToolInvocationAuditService 落库 ✅（14 passed）
+5. 任务 4：tool-confirmations GET 接口 ✅（5 passed, 268 routes）
+6. 任务 5：Agent _tools_node 接入确认流程 ✅（9 passed，危险工具拒绝+高风险确认）
+7. 任务 6：前端确认卡片接入对话流 ✅（368 passed）
+8. 任务 7：安全测试 ✅（7 passed，prompt 注入绕过+归属隔离+审计脱敏）
+9. 任务 8：最终全量测试与文档同步 ✅（后端 2176 passed + 前端 368 passed）
+
+## 6. Phase 11 完成状态
+
+### 后端
+- 全量测试：2176 passed, 6 skipped, 0 failed（比基线 2157 多 19 个新测试）
+- migration heads/current：d1e2f3a4b5d4 (head)
+- 新增路由：2 条（GET /tool-confirmations + GET /tool-confirmations/<id>）
+- 新增 migration：d1e2f3a4b5d4（audit_log 表新增 account_id 列）
+- RiskLevel 枚举扩展：新增 LOW/SENSITIVE/DANGEROUS
+- ToolPolicy 扩展：新增 high_risk_tool_names 和 dangerous_tool_names
+- Agent _tools_node 接入确认流程：危险工具直接拒绝，高风险工具创建 ToolConfirmation 记录
+- ToolInvokerService._security_error：统一使用 RiskLevel 枚举
+- ToolInvocationAuditService.persist：审计 payload 落库到 audit_log
+- AuditLogService.record_for_tool_invocation：新增 account_id 支持
+- AuditLog 模型：新增 account_id 字段（nullable，兼容管理员审计）
+
+### 前端
+- 全量测试：368 passed
+- type-check：0 errors
+- lint：0 errors
+- ToolConfirmationCard 增强：风险等级徽章（medium/high/sensitive）、目标系统/环境/影响范围/回滚策略/审计提示、默认焦点在取消按钮
+- 新增 API：getToolConfirmations/getToolConfirmation/pollPendingConfirmations
+- i18n 完整（中英文）
+
+### 安全验证
+- 危险工具（drop_table/format_disk/execute_shell）无论是否确认都拒绝执行
+- 高风险工具（send_email/execute_sql 等）未确认时创建 pending 确认记录，不执行
+- prompt 注入无法绕过工具确认检查
+- 确认记录归属隔离：用户 A 不能访问/确认用户 B 的确认记录
+- 审计 payload 脱敏：api_key/token/password/secret/credential 参数名被标记为 redacted
 
 ---
 

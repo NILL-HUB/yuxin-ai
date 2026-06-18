@@ -80,16 +80,18 @@ class ToolInvokerService:
             )
 
         latency_ms = self._latency_ms(started_at)
+        audit_payload = self._audit_payload(
+            request=request,
+            tool=tool,
+            latency_ms=latency_ms,
+            status="success",
+            failure_reason="",
+        )
+        self._persist_audit(request, tool, audit_payload)
         return RuntimeToolCallResult.success_result(
             output=output,
             latency_ms=latency_ms,
-            audit_payload=self._audit_payload(
-                request=request,
-                tool=tool,
-                latency_ms=latency_ms,
-                status="success",
-                failure_reason="",
-            ),
+            audit_payload=audit_payload,
         )
 
     def _failure(
@@ -102,18 +104,36 @@ class ToolInvokerService:
         error_message: str,
     ) -> RuntimeToolCallResult:
         latency_ms = self._latency_ms(started_at)
+        audit_payload = self._audit_payload(
+            request=request,
+            tool=tool,
+            latency_ms=latency_ms,
+            status="failure",
+            failure_reason=error_code,
+        )
+        self._persist_audit(request, tool, audit_payload)
         return RuntimeToolCallResult.failure_result(
             error_code=error_code,
             error_message=error_message,
             latency_ms=latency_ms,
-            audit_payload=self._audit_payload(
-                request=request,
-                tool=tool,
-                latency_ms=latency_ms,
-                status="failure",
-                failure_reason=error_code,
-            ),
+            audit_payload=audit_payload,
         )
+
+    @staticmethod
+    def _persist_audit(
+        request: RuntimeToolCallRequest,
+        tool: RuntimeToolDescriptor | None,
+        audit_payload: dict[str, Any],
+    ) -> None:
+        try:
+            ToolInvocationAuditService().persist(
+                account_id=str(request.account_id or ""),
+                payload=audit_payload,
+                resource_id=str(tool.tool_id) if tool else "",
+                commit=False,
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def _security_error(
@@ -122,9 +142,9 @@ class ToolInvokerService:
         confirmed: bool,
     ) -> dict[str, str] | None:
         risk_level = str(tool.metadata.get("risk_level") or "")
-        if risk_level == "dangerous":
+        if risk_level == RiskLevel.DANGEROUS.value:
             return {"error_code": "forbidden", "error_message": "危险工具禁止自动调用"}
-        if risk_level in {RiskLevel.HIGH.value, "sensitive"} and not confirmed:
+        if risk_level in {RiskLevel.HIGH.value, RiskLevel.SENSITIVE.value} and not confirmed:
             return {
                 "error_code": "confirmation_required",
                 "error_message": "高风险工具需要确认后调用",

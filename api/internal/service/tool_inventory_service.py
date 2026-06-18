@@ -217,7 +217,7 @@ class ToolPolicyFilter:
         if not self._owner_allowed(metadata, account_id):
             return "user_scope_denied"
         if (
-            metadata["risk_level"] == RiskLevel.HIGH.value
+            metadata["risk_level"] in {RiskLevel.HIGH.value, RiskLevel.SENSITIVE.value}
             and metadata["requires_confirmation"]
             and not allow_confirmation
         ):

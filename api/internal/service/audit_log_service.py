@@ -62,12 +62,37 @@ class AuditLogService:
             commit=False,
         )
 
+    def record_for_tool_invocation(
+        self,
+        *,
+        account_id,
+        action: str,
+        resource_type: str,
+        resource_id: str = "",
+        before_data: dict | None = None,
+        after_data: dict | None = None,
+        commit: bool = True,
+    ) -> AuditLog:
+        audit_log = AuditLog(
+            account_id=account_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            before_data=before_data or {},
+            after_data=after_data or {},
+        )
+        self.session.add(audit_log)
+        if commit:
+            self.session.commit()
+        return audit_log
+
     def list_audit_logs(
         self,
         *,
         action: str = "",
         resource_type: str = "",
         admin_user_id: str = "",
+        account_id: str = "",
         start_time: int | None = None,
         end_time: int | None = None,
         current_page: int = 1,
@@ -84,6 +109,8 @@ class AuditLogService:
             query = query.filter(AuditLog.resource_type == resource_type)
         if admin_user_id:
             query = query.filter(AuditLog.admin_user_id == admin_user_id)
+        if account_id:
+            query = query.filter(AuditLog.account_id == account_id)
         if start_time:
             try:
                 query = query.filter(AuditLog.created_at >= datetime.fromtimestamp(int(start_time), tz=timezone.utc).replace(tzinfo=None))
@@ -111,6 +138,7 @@ class AuditLogService:
         return {
             "id": str(audit_log.id),
             "admin_user_id": str(audit_log.admin_user_id) if audit_log.admin_user_id else None,
+            "account_id": str(audit_log.account_id) if audit_log.account_id else None,
             "action": audit_log.action,
             "resource_type": audit_log.resource_type,
             "resource_id": audit_log.resource_id,

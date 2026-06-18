@@ -885,6 +885,18 @@ class Router:
         )
         bp.add_url_rule(
             "/tool-confirmations",
+            endpoint="tool_confirmation_list",
+            methods=["GET"],
+            view_func=self.tool_confirmation_handler.list,
+        )
+        bp.add_url_rule(
+            "/tool-confirmations/<uuid:confirmation_id>",
+            endpoint="tool_confirmation_get",
+            methods=["GET"],
+            view_func=self.tool_confirmation_handler.get,
+        )
+        bp.add_url_rule(
+            "/tool-confirmations",
             endpoint="tool_confirmation_create",
             methods=["POST"],
             view_func=self.tool_confirmation_handler.create,

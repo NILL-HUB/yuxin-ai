@@ -83,7 +83,7 @@ def test_tool_metadata_should_normalize_phase3_boundaries():
         "capabilities": ["search", "search", 123],
     })
 
-    assert metadata["risk_level"] == "medium"
+    assert metadata["risk_level"] == "dangerous"
     assert metadata["permission_scope"] == "user"
     assert metadata["health_status"] == "healthy"
     assert metadata["success_rate"] == 1.0

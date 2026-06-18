@@ -194,6 +194,7 @@ class AuditLog(db.Model):
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_audit_log_id"),
         Index("audit_log_admin_user_id_idx", "admin_user_id"),
+        Index("audit_log_account_id_idx", "account_id"),
         Index("audit_log_action_idx", "action"),
         Index("audit_log_resource_type_idx", "resource_type"),
         Index("audit_log_created_at_idx", "created_at"),
@@ -201,6 +202,7 @@ class AuditLog(db.Model):
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     admin_user_id = Column(UUID, ForeignKey("admin_user.id"), nullable=True)
+    account_id = Column(UUID, ForeignKey("account.id"), nullable=True)
     action = Column(String(255), nullable=False, server_default=text("''::character varying"))
     resource_type = Column(String(255), nullable=False, server_default=text("''::character varying"))
     resource_id = Column(String(255), nullable=False, server_default=text("''::character varying"))
@@ -210,4 +212,5 @@ class AuditLog(db.Model):
     after_data = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
-    admin_user = relationship("AdminUser", lazy="joined")
+    admin_user = relationship("AdminUser", foreign_keys=[admin_user_id], lazy="joined")
+    account = relationship("Account", foreign_keys=[account_id], lazy="joined")

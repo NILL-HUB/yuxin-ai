@@ -13,7 +13,7 @@ class CreateToolConfirmationReq(FlaskForm):
     )
     risk_level = StringField(
         "risk_level",
-        validators=[DataRequired(), AnyOf(["medium", "high"])],
+        validators=[DataRequired(), AnyOf(["medium", "high", "sensitive"])],
     )
     tool_input = DictField("tool_input", default={}, validators=[Optional()])
     spent_credits = IntegerField(
@@ -26,6 +26,14 @@ class CreateToolConfirmationReq(FlaskForm):
     )
 
 
+class ListToolConfirmationReq(FlaskForm):
+    status = StringField(
+        "status",
+        default="",
+        validators=[Optional(), AnyOf(["", "pending", "confirmed", "cancelled"])],
+    )
+
+
 class ToolConfirmationResp(Schema):
     id = fields.String()
     tool_name = fields.String()
@@ -34,3 +42,10 @@ class ToolConfirmationResp(Schema):
     status = fields.String()
     spent_credits = fields.Integer()
     reason = fields.String()
+    created_at = fields.DateTime()
+    updated_at = fields.DateTime()
+
+
+class ToolConfirmationListResp(Schema):
+    items = fields.List(fields.Nested(ToolConfirmationResp))
+    total = fields.Integer()
