@@ -18,6 +18,7 @@ from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTra
 from .routing_log import RoutingLog
 from .orchestration_feature_flag import OrchestrationFeatureFlagModel
 from .routing_quality import (
+    PolicyChangeDraftModel,
     RoutingOptimizationSuggestionModel,
     RoutingQualityFeedbackModel,
 )
@@ -41,5 +42,6 @@ __all__ = [
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
     "RoutingLog", "OrchestrationFeatureFlagModel",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
+    "PolicyChangeDraftModel",
     "Dataset", "Document", "Segment", "KeywordTable", "DatasetQuery", "ProcessRule",
 ]

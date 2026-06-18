@@ -613,6 +613,42 @@ class Router:
             view_func=self.admin_routing_quality_handler.suggestions,
         )
         bp.add_url_rule(
+            "/admin/routing-quality/suggestions/<uuid:suggestion_id>/accept",
+            endpoint="admin_routing_quality_suggestion_accept",
+            methods=["POST"],
+            view_func=self.admin_routing_quality_handler.accept_suggestion,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/suggestions/<uuid:suggestion_id>/dismiss",
+            endpoint="admin_routing_quality_suggestion_dismiss",
+            methods=["POST"],
+            view_func=self.admin_routing_quality_handler.dismiss_suggestion,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/suggestions/<uuid:suggestion_id>/preview",
+            endpoint="admin_routing_quality_suggestion_preview",
+            methods=["GET"],
+            view_func=self.admin_routing_quality_handler.preview_policy_change,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/suggestions/<uuid:suggestion_id>/apply",
+            endpoint="admin_routing_quality_suggestion_apply",
+            methods=["POST"],
+            view_func=self.admin_routing_quality_handler.apply_policy_change,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/policy-changes",
+            endpoint="admin_routing_quality_policy_change_list",
+            methods=["GET"],
+            view_func=self.admin_routing_quality_handler.list_policy_changes,
+        )
+        bp.add_url_rule(
+            "/admin/routing-quality/policy-changes/<uuid:draft_id>/rollback",
+            endpoint="admin_routing_quality_policy_change_rollback",
+            methods=["POST"],
+            view_func=self.admin_routing_quality_handler.rollback_policy_change,
+        )
+        bp.add_url_rule(
             "/admin/plans",
             endpoint="admin_plan_list",
             methods=["GET"],

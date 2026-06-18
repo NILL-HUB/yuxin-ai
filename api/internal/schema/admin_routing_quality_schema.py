@@ -8,6 +8,14 @@ class CreateRoutingQualityFeedbackReq(Form):
     comment = StringField("comment")
 
 
+class DismissSuggestionReq(Form):
+    reason = StringField("reason", default="")
+
+
+class RollbackPolicyChangeReq(Form):
+    reason = StringField("reason", default="")
+
+
 class RoutingQualityFeedbackResp(Schema):
     id = fields.String(allow_none=True)
     routing_log_id = fields.String()
@@ -34,6 +42,7 @@ class RoutingQualityMetricsResp(Schema):
 
 
 class RoutingOptimizationSuggestionResp(Schema):
+    id = fields.String(allow_none=True)
     target_type = fields.String()
     target_id = fields.String()
     suggestion_type = fields.String()
@@ -41,3 +50,44 @@ class RoutingOptimizationSuggestionResp(Schema):
     reason = fields.String()
     evidence = fields.Dict()
     status = fields.String()
+    dismiss_reason = fields.String(allow_none=True)
+    applied_by = fields.String(allow_none=True)
+    applied_at = fields.String(allow_none=True)
+    policy_change_draft_id = fields.String(allow_none=True)
+
+
+class SuggestionActionResp(Schema):
+    suggestion_id = fields.String()
+    status = fields.String()
+
+
+class PolicyChangePreviewResp(Schema):
+    suggestion_id = fields.String()
+    policy_type = fields.String()
+    target_id = fields.String()
+    before_config = fields.Dict()
+    after_config = fields.Dict()
+    diff = fields.Dict()
+    impact = fields.Dict()
+    status = fields.String()
+
+
+class PolicyChangeDraftResp(Schema):
+    id = fields.String(allow_none=True)
+    suggestion_id = fields.String()
+    policy_type = fields.String()
+    target_id = fields.String()
+    before_config = fields.Dict()
+    after_config = fields.Dict()
+    diff = fields.Dict()
+    impact = fields.Dict()
+    status = fields.String()
+    applied_by = fields.String(allow_none=True)
+    applied_at = fields.String(allow_none=True)
+    rolled_back_at = fields.String(allow_none=True)
+    rollback_reason = fields.String(allow_none=True)
+
+
+class PolicyChangeListResp(Schema):
+    items = fields.List(fields.Nested(PolicyChangeDraftResp))
+    total = fields.Integer()

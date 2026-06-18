@@ -261,6 +261,12 @@ const router = createRouter({
               component: () => import('@/views/admin/RoutingQualityView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['routing_quality:read'] },
             },
+            {
+              path: 'routing-quality/suggestions',
+              name: 'admin-routing-quality-suggestions',
+              component: () => import('@/views/admin/routing-quality/SuggestionsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['routing_quality:read'] },
+            },
           ],
         },
         {

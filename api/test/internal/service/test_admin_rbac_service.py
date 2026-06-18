@@ -109,6 +109,10 @@ class TestAdminRbacService:
             "orchestration_release:read",
             "routing_quality:read",
             "routing_quality:feedback",
+            "routing_quality:accept",
+            "routing_quality:dismiss",
+            "routing_quality:apply",
+            "routing_quality:rollback",
             "system_knowledge:read",
             "system_knowledge:write",
         ]

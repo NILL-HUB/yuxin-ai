@@ -55,7 +55,13 @@ class TestRouterFullMatrix:
             '/admin/orchestration-release-check': {'GET'},
             '/admin/routing-quality/feedback': {'GET', 'POST'},
             '/admin/routing-quality/metrics': {'GET'},
+            '/admin/routing-quality/policy-changes': {'GET'},
+            '/admin/routing-quality/policy-changes/<uuid:draft_id>/rollback': {'POST'},
             '/admin/routing-quality/suggestions': {'GET'},
+            '/admin/routing-quality/suggestions/<uuid:suggestion_id>/accept': {'POST'},
+            '/admin/routing-quality/suggestions/<uuid:suggestion_id>/apply': {'POST'},
+            '/admin/routing-quality/suggestions/<uuid:suggestion_id>/dismiss': {'POST'},
+            '/admin/routing-quality/suggestions/<uuid:suggestion_id>/preview': {'GET'},
             '/admin/auth/login': {'POST'},
             '/admin/auth/logout': {'POST'},
             '/admin/auth/me': {'GET'},
@@ -266,4 +272,4 @@ class TestRouterFullMatrix:
         assert by_blueprint["openapi"] == 1
         assert by_blueprint["llmops"] == len(rules) - 1
         # 当前系统的接口总量是一个重要契约，避免漏挂导致线上能力消失。
-        assert len(rules) == 272
+        assert len(rules) == 278

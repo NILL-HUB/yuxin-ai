@@ -67,6 +67,46 @@ class RoutingOptimizationSuggestionModel(db.Model):
     reason = Column(Text, nullable=False, server_default=text("''::text"))
     evidence = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     status = Column(String(64), nullable=False, server_default=text("'open'"))
+    dismiss_reason = Column(Text, nullable=False, server_default=text("''::text"))
+    applied_by = Column(UUID, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+    policy_change_draft_id = Column(UUID, nullable=True)
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(0)"),
+        default=_utcnow_naive,
+    )
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(0)"),
+        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
+        default=_utcnow_naive,
+    )
+
+
+class PolicyChangeDraftModel(db.Model):
+    __tablename__ = "policy_change_draft"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="pk_policy_change_draft_id"),
+        Index("policy_change_draft_suggestion_id_idx", "suggestion_id"),
+        Index("policy_change_draft_status_idx", "status"),
+    )
+
+    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    suggestion_id = Column(UUID, nullable=False)
+    policy_type = Column(String(64), nullable=False)
+    target_id = Column(String(128), nullable=False, server_default=text("''::character varying"))
+    before_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    after_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    diff = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    impact = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    status = Column(String(64), nullable=False, server_default=text("'pending'"))
+    applied_by = Column(UUID, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+    rolled_back_at = Column(DateTime, nullable=True)
+    rollback_reason = Column(Text, nullable=False, server_default=text("''::text"))
     created_at = Column(
         DateTime,
         nullable=False,

@@ -9,7 +9,7 @@ ROUTING_QUALITY_DIMENSIONS = [
     "cost",
     "safety",
 ]
-ROUTING_OPTIMIZATION_SUGGESTION_STATUSES = ["open", "accepted", "dismissed"]
+ROUTING_OPTIMIZATION_SUGGESTION_STATUSES = ["open", "accepted", "dismissed", "applied"]
 
 
 @dataclass

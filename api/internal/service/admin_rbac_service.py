@@ -48,6 +48,10 @@ class AdminRbacService:
         {"code": "orchestration_release:read", "name": "查看调度上线验收", "resource": "orchestration_release", "action": "read", "description": "查看调度平台上线验收报告"},
         {"code": "routing_quality:read", "name": "查看路由质量", "resource": "routing_quality", "action": "read", "description": "查看路由质量指标与调优建议"},
         {"code": "routing_quality:feedback", "name": "提交路由反馈", "resource": "routing_quality", "action": "feedback", "description": "提交路由质量反馈"},
+        {"code": "routing_quality:accept", "name": "采纳调优建议", "resource": "routing_quality", "action": "accept", "description": "采纳半自动调优建议"},
+        {"code": "routing_quality:dismiss", "name": "驳回调优建议", "resource": "routing_quality", "action": "dismiss", "description": "驳回不适用调优建议并记录原因"},
+        {"code": "routing_quality:apply", "name": "应用策略变更", "resource": "routing_quality", "action": "apply", "description": "应用策略变更草稿到路由策略"},
+        {"code": "routing_quality:rollback", "name": "回滚策略变更", "resource": "routing_quality", "action": "rollback", "description": "回滚已应用的策略变更"},
         {"code": "system_knowledge:read", "name": "查看系统知识库", "resource": "system_knowledge", "action": "read", "description": "查看系统级知识库"},
         {"code": "system_knowledge:write", "name": "管理系统知识库", "resource": "system_knowledge", "action": "write", "description": "创建、编辑、删除系统级知识库"},
     ]
