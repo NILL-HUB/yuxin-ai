@@ -940,7 +940,7 @@ class TestAssistantAgentService:
             query=SimpleNamespace(data="帮我创建一个客服Agent"),
             image_urls=SimpleNamespace(data=["https://example.com/demo.png"]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
 
         save_payload = {}
@@ -1102,7 +1102,7 @@ class TestAssistantAgentService:
             query=SimpleNamespace(data="Python 中 list 和 tuple 有什么区别？"),
             image_urls=SimpleNamespace(data=[]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
         routing_calls = []
         save_payload = {}
@@ -1179,6 +1179,126 @@ class TestAssistantAgentService:
         assert save_payload["routing_decision"]["execution_mode"] == "direct_answer"
         assert save_payload["routing_decision"]["intent"] == "general_qa"
 
+    def test_chat_should_yield_deep_thinking_proposal_when_mode_is_deep_thinking(
+        self, monkeypatch, app
+    ):
+        assistant_agent_id = uuid4()
+        app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
+        conversation = SimpleNamespace(id=uuid4(), summary="")
+        account = SimpleNamespace(id=uuid4(), assistant_agent_conversation=conversation)
+        req = SimpleNamespace(
+            query=SimpleNamespace(data="评估迁移到 gRPC 的利弊"),
+            image_urls=SimpleNamespace(data=[]),
+            conversation_id=SimpleNamespace(data=""),
+            confirm_deep_thinking=SimpleNamespace(data=False),
+        )
+        service = AssistantAgentService(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
+            conversation_service=SimpleNamespace(
+                save_agent_thoughts=lambda **kwargs: None
+            ),
+            redis_client=SimpleNamespace(),
+            public_agent_a2a_service=SimpleNamespace(
+                convert_public_agent_route_to_tool=lambda _account_id: "public-agent-route-tool"
+            ),
+            orchestrator_service=SimpleNamespace(
+                decide=lambda query, **kwargs: SimpleNamespace(
+                    to_dict=lambda: {
+                        "intent": "deep_thinking_task",
+                        "execution_mode": "deep_thinking",
+                        "cost_policy": {"allowed": True},
+                        "reason": "需要多步推理",
+                    }
+                )
+            ),
+        )
+        monkeypatch.setattr(service, "create", lambda _model, **_kwargs: SimpleNamespace(id=uuid4()))
+        monkeypatch.setattr(service, "convert_create_app_to_tool", lambda _account_id: "create-app-tool")
+
+        class _FakeLLM:
+            def __init__(self, **_kwargs):
+                pass
+
+            def convert_to_human_message(self, query, image_urls):
+                return {"query": query, "image_urls": image_urls}
+
+        class _FakeTokenBufferMemory:
+            def __init__(self, **_kwargs):
+                pass
+
+            def get_history_prompt_messages(self, message_limit):
+                return []
+
+        monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+        monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
+        monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
+
+        with app.app_context():
+            events = list(service.chat(req, account))
+
+        assert any("deep_thinking_proposal" in e for e in events)
+        assert all("agent_message" not in e for e in events)
+
+    def test_chat_should_stream_insufficient_balance_when_cost_policy_not_allowed(
+        self, monkeypatch, app
+    ):
+        assistant_agent_id = uuid4()
+        app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
+        conversation = SimpleNamespace(id=uuid4(), summary="")
+        account = SimpleNamespace(id=uuid4(), assistant_agent_conversation=conversation)
+        req = SimpleNamespace(
+            query=SimpleNamespace(data="随便问个问题"),
+            image_urls=SimpleNamespace(data=[]),
+            conversation_id=SimpleNamespace(data=""),
+            confirm_deep_thinking=SimpleNamespace(data=False),
+        )
+        service = AssistantAgentService(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
+            conversation_service=SimpleNamespace(
+                save_agent_thoughts=lambda **kwargs: None
+            ),
+            redis_client=SimpleNamespace(),
+            public_agent_a2a_service=SimpleNamespace(
+                convert_public_agent_route_to_tool=lambda _account_id: "public-agent-route-tool"
+            ),
+            orchestrator_service=SimpleNamespace(
+                decide=lambda query, **kwargs: SimpleNamespace(
+                    to_dict=lambda: {
+                        "execution_mode": "direct_answer",
+                        "cost_policy": {"allowed": False},
+                    }
+                )
+            ),
+        )
+        monkeypatch.setattr(service, "create", lambda _model, **_kwargs: SimpleNamespace(id=uuid4()))
+        monkeypatch.setattr(service, "convert_create_app_to_tool", lambda _account_id: "create-app-tool")
+
+        class _FakeLLM:
+            def __init__(self, **_kwargs):
+                pass
+
+            def convert_to_human_message(self, query, image_urls):
+                return {"query": query, "image_urls": image_urls}
+
+        class _FakeTokenBufferMemory:
+            def __init__(self, **_kwargs):
+                pass
+
+            def get_history_prompt_messages(self, message_limit):
+                return []
+
+        monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
+        monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
+        monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
+
+        with app.app_context():
+            events = list(service.chat(req, account))
+
+        assert any("余额不足" in e for e in events)
+        assert all("agent_message" not in e for e in events)
+
     def test_chat_should_use_runtime_language_model_resolution_when_available(
         self, monkeypatch, app
     ):
@@ -1190,7 +1310,7 @@ class TestAssistantAgentService:
             query=SimpleNamespace(data="请分析这张图"),
             image_urls=SimpleNamespace(data=["https://example.com/demo.png"]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
         llm = SimpleNamespace(
             features=["tool_call"],
@@ -1297,7 +1417,7 @@ class TestAssistantAgentService:
             query=SimpleNamespace(data="帮我生成一个可下载的需求文档"),
             image_urls=SimpleNamespace(data=[]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=True),
+            confirm_deep_thinking=SimpleNamespace(data=True),
         )
 
         service = AssistantAgentService(
@@ -1382,7 +1502,7 @@ class TestAssistantAgentService:
             query=SimpleNamespace(data="请使用护肤智能体回答我油痘肌该怎么护肤"),
             image_urls=SimpleNamespace(data=[]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
 
         service = AssistantAgentService(

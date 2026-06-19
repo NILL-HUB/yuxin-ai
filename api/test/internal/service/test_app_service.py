@@ -1763,7 +1763,7 @@ class TestAppService:
             query=SimpleNamespace(data="你好"),
             image_urls=SimpleNamespace(data=[]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
         draft_config = {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
@@ -1878,7 +1878,7 @@ class TestAppService:
             query=SimpleNamespace(data="你好"),
             image_urls=SimpleNamespace(data=[]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
         draft_config = {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
@@ -1991,7 +1991,7 @@ class TestAppService:
             query=SimpleNamespace(data="你好"),
             image_urls=SimpleNamespace(data=[]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
         draft_config = {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
@@ -2080,7 +2080,7 @@ class TestAppService:
             query=SimpleNamespace(data="请分析图片"),
             image_urls=SimpleNamespace(data=["https://a.com/1.png"]),
             conversation_id=SimpleNamespace(data=""),
-            enable_deep_thinking=SimpleNamespace(data=True),
+            confirm_deep_thinking=SimpleNamespace(data=True),
         )
         draft_config = {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},

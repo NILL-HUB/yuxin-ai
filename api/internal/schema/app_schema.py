@@ -213,7 +213,7 @@ class DebugChatReq(FlaskForm):
     query = StringField("query", validators=[
         DataRequired("用户提问query不能为空"),
     ])
-    enable_deep_thinking = BooleanField("enable_deep_thinking", default=False)
+    confirm_deep_thinking = BooleanField("confirm_deep_thinking", default=False)
 
     def validate_conversation_id(self, field: StringField) -> None:
         """校验传递的会话id是否是UUID"""

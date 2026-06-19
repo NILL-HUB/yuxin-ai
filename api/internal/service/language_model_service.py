@@ -474,6 +474,17 @@ class LanguageModelService(BaseService):
             },
         }
 
+    @classmethod
+    def get_cheap_chat_model(cls):
+        """返回用于意图判断等轻量任务的 cheap 档 LLM 实例。"""
+        from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
+        return DeepSeekChat(
+            model="deepseek-chat",
+            temperature=0.1,
+            features=[],
+            metadata={},
+        )
+
     def _load_model_components(self, model_config: dict[str, Any]) -> tuple[Any, Any, Any]:
         """根据模型配置加载 provider、model_entity 与 model_class。"""
         normalized_model_config = deepcopy(model_config or {})

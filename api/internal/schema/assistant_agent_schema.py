@@ -12,7 +12,7 @@ from .schema import ListField
 
 class AssistantAgentChat(FlaskForm):
     """辅助Agent会话请求结构体"""
-    enable_deep_thinking = BooleanField("enable_deep_thinking", default=False)
+    confirm_deep_thinking = BooleanField("confirm_deep_thinking", default=False)
     image_urls = ListField("image_urls", default=[])
     conversation_id = StringField("conversation_id", default="", validators=[Optional()])
     query = StringField("query", validators=[

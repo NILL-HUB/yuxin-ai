@@ -34,7 +34,7 @@ class GetWebAppResp(Schema):
 
 class WebAppChatReq(FlaskForm):
     """WebApp对话请求结构体"""
-    enable_deep_thinking = BooleanField("enable_deep_thinking", default=False)
+    confirm_deep_thinking = BooleanField("confirm_deep_thinking", default=False)
     conversation_id = StringField("conversation_id", default="", validators=[
         Optional(),
         UUID(message="会话id格式必须为uuid")

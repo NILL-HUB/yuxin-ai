@@ -9,6 +9,7 @@ ORCHESTRATION_FEATURE_FLAG_CODES = [
     "ENABLE_MULTI_AGENT_EXECUTION",
     "ENABLE_RESULT_SYNTHESIZER",
     "ENABLE_ROUTING_LOGS",
+    "ENABLE_AUTO_DEEP_THINKING",
 ]
 
 
@@ -89,6 +90,14 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             enabled=False,
             risk_level="medium",
             fallback_behavior="skip_routing_log_payload",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_AUTO_DEEP_THINKING",
+            name="Auto deep thinking",
+            description="Enable LLM intent detection to auto-trigger deep thinking (disable to fall back to keywords + manual switch)",
+            enabled=True,
+            risk_level="medium",
+            fallback_behavior="keyword_matching_manual_switch",
         ),
     ]
 

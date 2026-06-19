@@ -176,7 +176,7 @@ class WebAppService(BaseService):
             account=account,
             draft_app_config=app_config,
             tools=tools,
-            enable_deep_thinking=bool(req.enable_deep_thinking.data),
+            enable_deep_thinking=bool(req.confirm_deep_thinking.data),
             flask_app=runtime_flask_app,
             invoke_from=InvokeFrom.WEB_APP.value,
         )

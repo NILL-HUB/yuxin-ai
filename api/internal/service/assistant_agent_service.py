@@ -203,6 +203,25 @@ class AssistantAgentService(BaseService):
             metadata={},
         )
 
+    def _stream_deep_thinking_proposal(self, routing_decision: dict):
+        """阶段1：判定需要深度思考后，返回提案事件等待用户确认。"""
+        import json
+        payload = {
+            "event": "deep_thinking_proposal",
+            "reason": routing_decision.get("reason", ""),
+            "estimated_steps": 4,
+        }
+        yield f"event: deep_thinking_proposal\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    def _stream_insufficient_balance(self):
+        """余额不足时返回提示事件。"""
+        import json
+        payload = {
+            "event": "error",
+            "message": "账户余额不足，无法执行此任务",
+        }
+        yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
+
     def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用和全局 MCP 绑定。"""
         search_public_agents_tool = (
@@ -280,10 +299,20 @@ class AssistantAgentService(BaseService):
                     conversation_id=conversation.id,
                     message_id=message.id,
                     image_urls=req.image_urls.data,
-                    enable_deep_thinking=bool(req.enable_deep_thinking.data),
+                    enable_deep_thinking=bool(req.confirm_deep_thinking.data),
                 ).to_dict()
             except Exception as exc:
                 logging.warning("辅助 Agent 调度决策失败，继续原流程: %s", exc)
+
+        if routing_decision is not None:
+            logging.info(
+                "辅助 Agent 路由决策 intent=%s execution_mode=%s complexity=%s model_tier=%s risk=%s",
+                routing_decision.get("intent"),
+                routing_decision.get("execution_mode"),
+                routing_decision.get("complexity"),
+                routing_decision.get("recommended_model_tier"),
+                routing_decision.get("risk_level"),
+            )
 
         # 5.实例化TokenBufferMemory用于提取短期记忆
         token_buffer_memory = TokenBufferMemory(
@@ -308,12 +337,24 @@ class AssistantAgentService(BaseService):
         except Exception:
             logging.warning("召回用户长期记忆失败，继续原流程", exc_info=True)
 
-        # 7.构建辅助Agent专用智能体。深度思考模式下复用 A2A 语义，普通模式直接使用通用 FunctionCallAgent。
-        agent_class = (
-            A2ADeepThinkingAgent
-            if bool(req.enable_deep_thinking.data)
-            else FunctionCallAgent
-        )
+        # 7.构建辅助Agent专用智能体。根据路由决策的 execution_mode 选择执行路径：
+        # 二阶段流程：confirm_deep_thinking=True 表示用户已确认，直接执行深度思考；
+        # 否则阶段1判定，若需要深度思考则返回 deep_thinking_proposal 事件等待用户确认。
+        execution_mode = routing_decision.get("execution_mode") if routing_decision else None
+        is_confirm_phase = bool(req.confirm_deep_thinking.data)
+
+        if not is_confirm_phase and routing_decision is not None:
+            if not routing_decision.get("cost_policy", {}).get("allowed", True):
+                yield from self._stream_insufficient_balance()
+                return
+            if execution_mode == "deep_thinking":
+                yield from self._stream_deep_thinking_proposal(routing_decision)
+                return
+
+        should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
+        if execution_mode == "reject_or_confirm":
+            logging.warning("辅助 Agent 路由决策标记高风险任务，建议二次确认: intent=%s", routing_decision.get("intent"))
+        agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent
         agent = agent_class(
             llm=llm,
             agent_config=AgentConfig(
@@ -321,7 +362,7 @@ class AssistantAgentService(BaseService):
                 invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
                 preset_prompt=ASSISTANT_AGENT_MARKDOWN_PRESET_PROMPT,
                 enable_long_term_memory=True,
-                enable_deep_thinking=bool(req.enable_deep_thinking.data),
+                enable_deep_thinking=should_deep_think,
                 runtime_flask_app=current_app._get_current_object(),
                 language_model_service=self.language_model_service,
                 tools=tools,

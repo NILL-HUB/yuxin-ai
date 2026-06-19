@@ -281,7 +281,7 @@ class TestWebAppService:
             conversation_id=SimpleNamespace(data=bad_conversation.id),
             query=SimpleNamespace(data="hello"),
             image_urls=SimpleNamespace(data=[]),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
 
         monkeypatch.setattr(service, "get_web_app", lambda _token: app)
@@ -298,7 +298,7 @@ class TestWebAppService:
             conversation_id=SimpleNamespace(data=""),
             query=SimpleNamespace(data="hello"),
             image_urls=SimpleNamespace(data=["https://a.com/1.png"]),
-            enable_deep_thinking=SimpleNamespace(data=True),
+            confirm_deep_thinking=SimpleNamespace(data=True),
         )
 
         monkeypatch.setattr(service, "get_web_app", lambda _token: app)
@@ -431,7 +431,7 @@ class TestWebAppService:
             conversation_id=SimpleNamespace(data=conversation.id),
             query=SimpleNamespace(data="hello"),
             image_urls=SimpleNamespace(data=[]),
-            enable_deep_thinking=SimpleNamespace(data=False),
+            confirm_deep_thinking=SimpleNamespace(data=False),
         )
 
         monkeypatch.setattr(service, "get_web_app", lambda _token: app)
@@ -532,7 +532,7 @@ class TestWebAppService:
             conversation_id=SimpleNamespace(data=conversation.id),
             query=SimpleNamespace(data="请分析图片"),
             image_urls=SimpleNamespace(data=["https://a.com/1.png"]),
-            enable_deep_thinking=SimpleNamespace(data=True),
+            confirm_deep_thinking=SimpleNamespace(data=True),
         )
 
         monkeypatch.setattr(service, "get_web_app", lambda _token: app)

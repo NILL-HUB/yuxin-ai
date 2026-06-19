@@ -56,6 +56,8 @@ from .long_term_memory_service import (
 )
 from .mcp_service import McpService
 from .my_app_service import MyAppService
+from .model_assignment_policy_service import ModelAssignmentPolicy
+from .request_context_builder_service import RequestContextBuilder
 from .routing_log_service import RoutingLogService
 from .skill_service import SkillService
 from .admin_app_service import AdminAppService
@@ -95,6 +97,8 @@ __all__ = [
     "KnowledgeRetrievalOrchestrator",
     "OrchestratorService",
     "TaskClassifierService",
+    "RequestContextBuilder",
+    "ModelAssignmentPolicy",
     "ToolConfirmationService",
     "ToolInvoker",
     "ToolCandidateCollector",

@@ -14,6 +14,7 @@ class QueueEvent(str, Enum):
     DEEP_STEP = "deep_step"  # 深度思考时间线步骤事件
     DEEP_COMPLETE = "deep_complete"  # 深度思考执行完成事件
     DEEP_ARTIFACT_CREATED = "deep_artifact_created"  # 深度思考产物创建事件
+    DEEP_THINKING_PROPOSAL = "deep_thinking_proposal"  # 深度思考提案事件（二阶段确认）
     AGENT_END = "agent_end"  # 智能体结束事件
     STOP = "stop"  # 智能体停止事件
     ERROR = "error"  # 智能体错误事件

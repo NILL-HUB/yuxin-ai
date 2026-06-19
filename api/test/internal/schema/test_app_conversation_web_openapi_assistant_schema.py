@@ -558,10 +558,10 @@ def test_web_app_chat_req_should_validate_image_url_length_and_format(form_reque
     ok, form = _validate_form(
         form_request,
         WebAppChatReq,
-        data={"query": "hello", "enable_deep_thinking": "true"},
+        data={"query": "hello", "confirm_deep_thinking": "true"},
     )
     assert ok, form.errors
-    assert form.enable_deep_thinking.data is True
+    assert form.confirm_deep_thinking.data is True
 
     ok, form = _validate_form(
         form_request,
@@ -587,11 +587,11 @@ def test_web_app_chat_req_validate_image_urls_should_ignore_non_list_input(form_
         assert form.validate_image_urls(form.image_urls) == []
 
 
-def test_assistant_agent_chat_should_accept_enable_deep_thinking(form_request):
+def test_assistant_agent_chat_should_accept_confirm_deep_thinking(form_request):
     ok, form = _validate_form(
         form_request,
         AssistantAgentChat,
-        data={"query": "hello", "enable_deep_thinking": "true"},
+        data={"query": "hello", "confirm_deep_thinking": "true"},
     )
     assert ok, form.errors
-    assert form.enable_deep_thinking.data is True
+    assert form.confirm_deep_thinking.data is True
