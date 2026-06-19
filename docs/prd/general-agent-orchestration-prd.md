@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档名称 | 通用 Agent 调度平台分阶段演进 PRD |
-| 版本 | v3.1 |
+| 版本 | v3.2 |
 | 日期 | 2026-06-19 |
 | 适用范围 | OpenAgent 主入口 `/home`、Assistant Agent、Agent 池、工具池、MCP、模型路由、任务编排、结果汇总、配置中心、测试体系 |
 | 主要受众 | 产品、研发、测试、架构、运维、后续接手项目的 AI/工程 Agent |
-| 当前状态 | Phase 1-14 已提交，架构审计技术债清理已完成 |
+| 当前状态 | Phase 0-14 已完成并归档；架构审计完成度 38%（16/42 模块生产激活）；Phase 15-22 规划中，目标 100% |
 
 ## 2. 背景与问题定义
 
@@ -1688,6 +1688,32 @@ TaskClassifier -> AgentRouter -> ToolRetriever -> ExecutionCoordinator -> Result
 
 ## 16. 分阶段演进路线
 
+### 16.0 已完成阶段总览（Phase 0-14）
+
+> 以下阶段均已开发完成、测试通过并提交。下表汇总各阶段交付内容与对应 PRD 层级，供后续接手者快速定位。
+
+| Phase | 主题 | 交付内容 | 对应 PRD 层级 | 完成状态 |
+| --- | --- | --- | --- | --- |
+| Phase 0 | 基础黑盒化与配置中心校准 | 配置中心管理员可见/普通用户 403 | L2 入口 | ✅ 完成 |
+| Phase 1 | Orchestrator 骨架与结构化调度决策 | OrchestratorService/TaskClassifier/RoutingDecision | L2 | ✅ 完成 |
+| Phase 2 | Agent 池元数据与路由升级 | AgentSubPoolRegistry/AgentPoolEntity/PoolIntentResolver | L3 | ✅ 完成（元数据层） |
+| Phase 3 | 工具池治理与工具元数据 | ToolSubPoolRegistry/ToolPoolEntity/ToolPolicyFilter | L4 | ✅ 完成（元数据层） |
+| Phase 4 | 动态工具检索与运行时工具挂载 | ToolCandidateCollector/ToolRanker/ToolSubsetBuilder/RuntimeToolMountService | L4 | ✅ 完成（代码就绪，未接入生产） |
+| Phase 5 | 模型档位与成本感知路由 | ModelAssignmentPolicy/CostPolicyService/ModelPoolService/KeyPoolService | L5 | ✅ 完成（代码就绪，部分未接入） |
+| Phase 6 | 多 Agent 编排与结果汇总器 | ExecutionCoordinatorService/ResultSynthesizerService/ResultQualityCheckerService | L6/L7 | ✅ 完成（代码就绪，部分未接入） |
+| Phase 7 | 调度日志、成本面板与运营闭环 | RoutingLogService/RoutingObservabilityService/AdminRoutingLog | L8 | ✅ 完成（日志查询层） |
+| Phase 8 | 发布开关、回滚闭环与生产化验收 | OrchestrationFeatureFlag 9 个开关/灰度回滚 | L2 | ✅ 完成 |
+| Phase 9 | 路由质量反馈、运营洞察与半自动调优 | UserRoutingSummaryService/调优建议 | L8 | ✅ 完成 |
+| Phase 10 | 知识库分层、长期记忆与作用域隔离 | MemoryCandidate/UserMemory 作用域 | L2 | ✅ 完成 |
+| Phase 11 | 高风险工具统一确认与审计闭环 | ToolConfirmation/ToolInvocationAuditService | L4 | ✅ 完成 |
+| Phase 12 | 用户侧实时计费、任务终止与已发生成本展示 | BillingMetering/CancelToken/pending_phases | L5/L6 | ✅ 完成 |
+| Phase 13 | 外部数据源连接与同步 | NotionConnector/GitHubConnector/ExternalDataRetrievalTool | L4 | ✅ 完成 |
+| Phase 14 | 调优建议采纳与策略变更草稿 | OrchestrationFeatureFlag draft/apply/RoutingEventLogger | L8 | ✅ 完成 |
+
+**Phase 0-14 完成度审计结论**：代码层面全部交付，但架构审计发现大量模块"代码就绪但未接入生产调用链"。经 Phase 15-22 的"接线"工作后，这些已有代码将从孤儿状态转为生产激活。
+
+---
+
 ## 16.1 Phase 0：基础黑盒化与配置中心校准
 
 ### 目标
@@ -2503,6 +2529,270 @@ standard 失败或置信度低 -> strong
 - migration 链完整，head 为合并迁移 b1c2d3e4f5a6。
 - 路由总数 281。
 - 技术债清理已提交（commit f6ac702）。
+
+---
+
+### 16.16.1 架构完成度审计基线（v3.2 审计）
+
+> 以下为 Phase 0-14 完成后的架构审计结果，作为 Phase 15-22 的起点。
+
+| 层 | 模块总数 | 生产激活 | 孤儿 | 缺失 | 完成度 |
+| --- | --- | --- | --- | --- | --- |
+| L2 主入口调度 | 7 | 7 | 0 | 0 | 100% |
+| L3 Agent 池 | 7 | 1 | 4 | 2 | 14% |
+| L4 工具池 | 8 | 0 | 7 | 1 | 0% |
+| L5 模型/Key 池 | 5 | 2 | 3 | 0 | 40% |
+| L6 执行编排 | 8 | 4 | 0 | 4 | 50% |
+| L7 结果汇总 | 6 | 2 | 0 | 4 | 33% |
+| L8 可观测 | 1 | 0 | 1 | 0 | 0% |
+| **合计** | **42** | **16** | **15** | **11** | **38%** |
+
+**三大核心差距**：
+
+1. **L3/L4 池治理层断链**（15 个模块仅 1 个激活）：CrossPoolAgentSubsetBuilder / CrossPoolToolSubsetBuilder 代码完备但 `subset_builder=None` 导致始终走兜底空分支。
+2. **"DI 绑定 ≠ 生产激活"最后一公里**：ModelGatewayService（L5）、RoutingObservabilityService（L8）已绑定 DI 但方法从未被调用。
+3. **L6/L7 细分组件缺失**（8 个）：SingleAgentExecutor/MultiAgentExecutor/A2AClient/FallbackManager + AgentResultNormalizer/EvidenceMerger/ConflictResolver/FinalAnswerComposer，功能以内联形式覆盖但未抽成独立类。
+
+---
+
+## 16.17 Phase 15：Agent 池治理接线与子集构建器激活
+
+### 目标
+
+将 L3 Agent 池治理层从 14% 提升至 100%，让 `OrchestratorService.decide()` 真正构建 Agent 候选→过滤→排序→跨池子集，填充 `routing_decision.agent_subset`。
+
+### 功能范围
+
+激活已有孤儿代码：
+
+- `CrossPoolAgentSubsetBuilder`：在 `module.py` 添加 DI provider，注入到 `OrchestratorService.subset_builder`
+- `AgentCandidateCollector` / `AgentPolicyFilter` / `AgentRanker`：随 SubsetBuilder 激活而间接激活
+- `AgentPoolService`：新建聚合服务类，统一管理 Agent 池的注册/查询/健康检查
+- `AgentInventory`：新建 Inventory 类，从 AgentSubPoolRegistry 读取可治理 Agent 清单
+
+### 实施步骤
+
+1. 在 `module.py` 为 `CrossPoolAgentSubsetBuilder` 添加 DI 绑定（singleton）
+2. 修改 `OrchestratorService.__init__` 的 `subset_builder` 参数默认值，让 injector 自动注入
+3. 验证 `decide()` 中 `_build_agent_subset()` 不再返回空列表，而是返回经过 collector→filter→ranker 流水线的 Agent 子集
+4. 创建 `AgentPoolService` 聚合类，封装 AgentSubPoolRegistry + AgentInventory
+5. 创建 `AgentInventory` 类，提供 `list_available_agents(pool_intent)` 接口
+
+### 验收标准
+
+- `injector.get(OrchestratorService).subset_builder` 不为 None
+- `decide()` 返回的 `routing_decision.agent_subset` 包含真实 Agent ID（非空列表）
+- L3 层 7 个模块全部 ✅ 生产激活
+- 后端全量测试无新增回归
+
+## 16.18 Phase 16：工具池治理接线与运行时工具挂载激活
+
+### 目标
+
+将 L4 工具池治理层从 0% 提升至 100%，让 `decide()` 真正构建工具候选→过滤→排序→子集，并在执行时挂载选出的工具到 Agent。
+
+### 功能范围
+
+激活已有孤儿代码：
+
+- `CrossPoolToolSubsetBuilder`（原 ToolSubsetBuilder）：DI 绑定 + 注入到 `OrchestratorService.tool_subset_builder`
+- `ToolCandidateCollector` / `ToolPolicyFilter` / `ToolRanker`：随 SubsetBuilder 激活
+- `ToolSubPoolRegistry`：注册为 DI singleton，提供工具子池查询
+- `ToolInventory`：新建 Inventory 类，从 ToolSubPoolRegistry 读取可治理工具清单
+- `RuntimeToolMountService`：在 `chat()` 执行前将 `tool_subset` 挂载到 Agent 实例
+- `ToolInvoker` / `ToolInvokerService`：激活统一工具调用入口，替代散落的直接调用
+- `DynamicMcpRuntimeService`：随上述激活而激活，提供动态 MCP 工具注册
+
+### 实施步骤
+
+1. 在 `module.py` 为 `CrossPoolToolSubsetBuilder`、`ToolSubPoolRegistry`、`RuntimeToolMountService`、`ToolInvokerService` 添加 DI 绑定
+2. 修改 `OrchestratorService.__init__` 的 `tool_subset_builder` 参数让 injector 注入
+3. 创建 `ToolInventory` 类，提供 `list_available_tools(pool_intent)` 接口
+4. 在 `chat()` 的 Agent 实例化前，调用 `RuntimeToolMountService.mount(agent, tool_subset)` 挂载工具
+5. 将 `DynamicMcpRuntimeService` 接入 `ToolCandidateCollector`，让动态 MCP 工具进入候选池
+
+### 验收标准
+
+- `injector.get(OrchestratorService).tool_subset_builder` 不为 None
+- `decide()` 返回的 `routing_decision.tool_subset` 包含真实工具 ID
+- Agent 执行时实际挂载的工具集与 `tool_subset` 一致
+- L4 层 8 个模块全部 ✅ 生产激活
+
+## 16.19 Phase 17：模型池治理门面接通与 Key 池激活
+
+### 目标
+
+将 L5 模型/Key 池从 40% 提升至 100%，让 `ModelGatewayService` 真正成为统一模型选择入口，`ModelPoolService` / `KeyPoolService` 投入生产。
+
+### 功能范围
+
+- `ModelGatewayService`：让 `OrchestratorService` 通过 Gateway 获取模型，而非直接调 `LanguageModelService`
+- `ModelPoolService`：接入 Gateway，按 `preferred_tier` 选择模型
+- `KeyPoolService`：接入 Gateway，按 `provider` 选择 API Key，支持故障切换
+
+### 实施步骤
+
+1. 修改 `OrchestratorService._attach_model_assignment()`，改为调用 `ModelGatewayService.resolve_model_tier()` 而非直接调 `ModelAssignmentPolicy`
+2. 修改 `chat()` 中模型获取逻辑，改为调用 `ModelGatewayService.get_model(decision, context)`
+3. 在 `ModelGatewayService.get_model()` 中接入 `ModelPoolService.select_model()` 和 `KeyPoolService.select_key()`
+4. 为 `ModelPoolService` / `KeyPoolService` 填充初始数据（从现有 Provider 配置导入）
+5. 验证 Key 故障切换：当某 Key 连续失败时自动切换到同 provider 的备用 Key
+
+### 验收标准
+
+- `OrchestratorService` 不再直接引用 `LanguageModelService`，统一通过 `ModelGatewayService`
+- `ModelPoolService.select_model()` 被 Gateway 调用
+- `KeyPoolService.select_key()` 被 Gateway 调用
+- L5 层 5 个模块全部 ✅ 生产激活
+
+## 16.20 Phase 18：执行编排层细分组件补齐
+
+### 目标
+
+将 L6 执行编排层从 50% 提升至 100%，补齐 4 个缺失的独立执行器组件。
+
+### 功能范围
+
+- `SingleAgentExecutor`：抽取为独立类，封装 FunctionCallAgent 的单 Agent 执行逻辑（当前内联在 chat() 中）
+- `MultiAgentExecutor`：抽取为独立类，封装 ExecutionCoordinatorService 的多 Agent 并行/串行执行
+- `A2AClient`：抽取为独立类，封装 A2A 协议通信（当前分散在 A2ADeepThinkingAgent 中）
+- `FallbackManager`：抽取为独立类，封装全局降级策略（当前内联在 ExecutionCoordinatorService._apply_global_fallback 中）
+
+### 实施步骤
+
+1. 创建 `executors/single_agent_executor.py`，将 chat() 中 FunctionCallAgent 的实例化+stream 逻辑抽取为 `SingleAgentExecutor.stream()`
+2. 创建 `executors/multi_agent_executor.py`，将 `_stream_multi_agent` 逻辑抽取为 `MultiAgentExecutor.stream()`
+3. 创建 `a2a_client.py`，将 A2ADeepThinkingAgent 中的 A2A 协议通信抽取为 `A2AClient.invoke()`
+4. 创建 `fallback_manager.py`，将 `ExecutionCoordinatorService._apply_global_fallback` 抽取为 `FallbackManager.fallback()`
+5. 统一 `ENABLE_MULTI_AGENT_EXECUTION` 开关语义：OrchestratorService 与 AssistantAgentService 使用相同默认值
+
+### 验收标准
+
+- `chat()` 通过执行器类分派，不再直接实例化 Agent 类
+- `A2AClient` 独立可测试，A2ADeepThinkingAgent 委托给它
+- `FallbackManager` 独立可测试，coordinator 委托给它
+- L6 层 8 个模块全部 ✅ 生产激活
+
+## 16.21 Phase 19：结果汇总层细分组件补齐
+
+### 目标
+
+将 L7 结果汇总层从 33% 提升至 100%，补齐 4 个缺失的细分组件类。
+
+### 功能范围
+
+- `AgentResultNormalizer`：抽取为独立类，封装 Agent 结果的标准化（字段对齐、空值填充）
+- `EvidenceMerger`：抽取为独立类，封装多来源证据合并（当前内联在 `ResultSynthesizer._merge_sources`）
+- `ConflictResolver`：抽取为独立类，封装矛盾检测与解决（当前内联在 `ResultSynthesizer._detect_conflicts`）
+- `FinalAnswerComposer`：抽取为独立类，封装最终答案的组装与格式化（当前内联在 `ResultSynthesizer._merge_answers`）
+
+### 实施步骤
+
+1. 创建 `result/agent_result_normalizer.py`，将结果标准化逻辑从 `ResultSynthesizer.synthesize()` 前置步骤抽取
+2. 创建 `result/evidence_merger.py`，将 `_merge_sources` 抽取为 `EvidenceMerger.merge(results)`
+3. 创建 `result/conflict_resolver.py`，将 `_detect_conflicts` 抽取为 `ConflictResolver.resolve(merged)`
+4. 创建 `result/final_answer_composer.py`，将 `_merge_answers` 抽取为 `FinalAnswerComposer.compose(merged, conflicts)`
+5. `ResultSynthesizerService.synthesize()` 改为编排上述 4 个组件
+
+### 验收标准
+
+- `ResultSynthesizerService.synthesize()` 内部调用 4 个独立组件类
+- 每个组件类有独立单元测试
+- L7 层 6 个模块全部 ✅ 生产激活
+
+## 16.22 Phase 20：可观测层全链路激活
+
+### 目标
+
+将 L8 可观测层从 0% 提升至 100%，让 `RoutingObservabilityService.summarize()` 真正被调用，实现全链路决策记录。
+
+### 功能范围
+
+- `RoutingObservabilityService`：在 `OrchestratorService._record_observability()` 中调用 `summarize()` 记录全链路决策摘要
+- 将 `event_logger` 的 9 类事件接入 `RoutingObservabilityService`，实现实时事件聚合
+- 在 `RoutingLogsView` 前端展示 `routing_completed` 事件的全链路摘要
+
+### 实施步骤
+
+1. 修改 `OrchestratorService._record_observability()`，增加对 `self.routing_observability_service.summarize()` 的调用
+2. 让 `RoutingObservabilityService` 订阅 `event_logger` 的事件流，实时聚合
+3. 在 `RoutingLogService` 查询接口中返回 `summarize()` 的聚合结果
+4. 前端 `RoutingLogsView` 增加"全链路摘要"展开面板
+
+### 验收标准
+
+- `OrchestratorService._record_observability()` 调用 `summarize()`
+- 管理后台可查看每次路由决策的全链路事件序列
+- L8 层 1 个模块 ✅ 生产激活
+
+## 16.23 Phase 21：执行路径全量灰度与开关一致性
+
+### 目标
+
+统一所有编排开关的默认值与语义，确保四路径执行分派在生产中可按需开启，无开关冲突。
+
+### 功能范围
+
+- `ENABLE_MULTI_AGENT_EXECUTION`：统一 OrchestratorService（default=True）与 AssistantAgentService（default=False）的语义
+- `ENABLE_DIRECT_ANSWER_EXECUTOR`：从类属性改为 OrchestrationFeatureFlag 注册开关
+- `ENABLE_AUTO_DEEP_THINKING`：确认灰度开关在 chat() 二阶段确认中生效
+- 所有执行路径开关在管理后台可动态切换
+
+### 实施步骤
+
+1. 将 `ENABLE_DIRECT_ANSWER_EXECUTOR` 从 `AssistantAgentService` 类属性迁移到 `OrchestrationFeatureFlag` 表
+2. 统一 `ENABLE_MULTI_AGENT_EXECUTION` 默认值为 `False`（保守灰度），OrchestratorService 内部 `_flag_enabled` 也改为 `default=False`
+3. 在 `chat()` 中通过 `feature_flag_service.is_enabled()` 读取开关，而非类属性
+4. 验证管理后台切换开关后，执行路径立即生效（无需重启）
+
+### 验收标准
+
+- 所有执行路径开关统一在 `OrchestrationFeatureFlag` 表管理
+- 管理后台切换 `ENABLE_MULTI_AGENT_EXECUTION` 后，`chat()` 立即走 multi_agent 路径
+- 无开关语义冲突
+
+## 16.24 Phase 22：全量验收与 100% 完成度达成
+
+### 目标
+
+全量验证八层架构 42 个模块全部生产激活，完成度从 38% 提升至 100%。
+
+### 验收矩阵
+
+| 层 | Phase 15-21 目标 | 验收方法 |
+| --- | --- | --- |
+| L2 主入口调度 | 维持 100% | 现有测试覆盖 |
+| L3 Agent 池 | 14% → 100%（Phase 15） | `decide().agent_subset` 非空 |
+| L4 工具池 | 0% → 100%（Phase 16） | `decide().tool_subset` 非空 + 工具实际挂载 |
+| L5 模型/Key 池 | 40% → 100%（Phase 17） | Gateway 统一入口 + Key 故障切换 |
+| L6 执行编排 | 50% → 100%（Phase 18） | 四执行器独立类 + 开关灰度 |
+| L7 结果汇总 | 33% → 100%（Phase 19） | 四组件独立类 + 独立测试 |
+| L8 可观测 | 0% → 100%（Phase 20） | summarize() 被调用 + 前端展示 |
+| 开关一致性 | — （Phase 21） | 所有开关统一管理 |
+| **合计** | **38% → 100%** | **42/42 模块生产激活** |
+
+### 最终验收标准
+
+- [ ] 后端全量测试通过，无新增回归
+- [ ] 前端全量测试通过，无新增回归
+- [ ] 八层架构 42 个模块全部 ✅ 生产激活（通过自动化审计脚本验证）
+- [ ] PRD 5.4 数据流 20 步全部接通
+- [ ] 管理后台可查看全链路路由决策摘要
+- [ ] 四路径执行分派（direct/single/multi/deep）均可通过开关动态启停
+
+### Phase 15-22 完成度提升路线
+
+```text
+当前:  38% (16/42)
+Phase 15 (L3 池治理接线):     +6 模块 → 52% (22/42)
+Phase 16 (L4 工具池接线):     +8 模块 → 71% (30/42)
+Phase 17 (L5 模型池门面):     +3 模块 → 79% (33/42)
+Phase 18 (L6 执行器补齐):     +4 模块 → 88% (37/42)
+Phase 19 (L7 结果组件补齐):   +4 模块 → 98% (41/42)
+Phase 20 (L8 可观测激活):     +1 模块 → 100% (42/42)
+Phase 21 (开关一致性):        加固阶段，不加模块
+Phase 22 (全量验收):          验收阶段，确认 100%
+```
 
 ## 17. 跨阶段测试策略
 
