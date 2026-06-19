@@ -32,6 +32,8 @@ from internal.service.pool_intent_resolver_service import PoolIntentResolver
 from internal.service.language_model_service import LanguageModelService
 from internal.service.result_synthesizer_service import ResultSynthesizerService
 from internal.service.result_quality_checker_service import ResultQualityCheckerService
+from internal.service.model_gateway_service import ModelGatewayService
+from internal.service.routing_observability_service import RoutingObservabilityService
 
 
 class ExtensionModule(Module):
@@ -73,5 +75,11 @@ class ExtensionModule(Module):
         # 注册结果汇总层依赖（激活 L7 结果合成与质量检查）
         binder.bind(ResultQualityCheckerService, to=ResultQualityCheckerService)
         binder.bind(ResultSynthesizerService, to=ResultSynthesizerService)
+
+        # 注册模型池治理层（激活 L5 ModelGateway 门面）
+        binder.bind(ModelGatewayService, to=ModelGatewayService)
+
+        # 注册可观测层依赖（激活 L8 路由可观测）
+        binder.bind(RoutingObservabilityService, to=RoutingObservabilityService)
 
 injector = Injector([ExtensionModule])

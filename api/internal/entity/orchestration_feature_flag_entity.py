@@ -6,6 +6,7 @@ ORCHESTRATION_FEATURE_FLAG_CODES = [
     "ENABLE_AGENT_METADATA_ROUTING",
     "ENABLE_TOOL_POOL_RETRIEVAL",
     "ENABLE_COST_MODEL_ROUTING",
+    "ENABLE_MODEL_ASSIGNMENT_POLICY",
     "ENABLE_MULTI_AGENT_EXECUTION",
     "ENABLE_RESULT_SYNTHESIZER",
     "ENABLE_ROUTING_LOGS",
@@ -66,6 +67,14 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             enabled=False,
             risk_level="medium",
             fallback_behavior="safe_cheap_policy",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_MODEL_ASSIGNMENT_POLICY",
+            name="Model assignment policy",
+            description="Enable model tier assignment based on routing decision and context",
+            enabled=True,
+            risk_level="low",
+            fallback_behavior="default_tier",
         ),
         OrchestrationFeatureFlag(
             code="ENABLE_MULTI_AGENT_EXECUTION",

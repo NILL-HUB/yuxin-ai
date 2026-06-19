@@ -368,7 +368,7 @@ class ToolRanker:
 
 @inject
 @dataclass
-class ToolSubsetBuilder:
+class CrossPoolToolSubsetBuilder:
     collector: ToolCandidateCollector
     policy_filter: ToolPolicyFilter
 
@@ -432,3 +432,6 @@ class ToolSubsetBuilder:
             "candidates": result,
             "filtered_out_tools": filtered["filtered_out_tools"],
         }
+
+
+ToolSubsetBuilder = CrossPoolToolSubsetBuilder

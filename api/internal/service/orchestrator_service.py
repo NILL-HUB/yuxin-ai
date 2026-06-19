@@ -8,6 +8,7 @@ from internal.service.cost_policy_service import CostPolicyService
 from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
 from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
 from internal.service.request_context_builder_service import RequestContextBuilder
+from internal.service.routing_observability_service import RoutingObservabilityService
 from internal.service.task_planner_service import TaskPlannerService
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
@@ -28,6 +29,7 @@ class OrchestratorService:
         model_assignment_policy: ModelAssignmentPolicy | None = None,
         cost_policy_service: CostPolicyService | None = None,
         execution_mode_selector: ExecutionModeSelectorService | None = None,
+        routing_observability_service: RoutingObservabilityService | None = None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
@@ -40,6 +42,7 @@ class OrchestratorService:
         self.model_assignment_policy = model_assignment_policy or ModelAssignmentPolicy()
         self.cost_policy_service = cost_policy_service or CostPolicyService()
         self.execution_mode_selector = execution_mode_selector or ExecutionModeSelectorService()
+        self.routing_observability_service = routing_observability_service
 
     def decide(self, query: str, **context) -> RoutingDecision:
         ctx = self.request_context_builder.build(query, **context)
@@ -115,6 +118,7 @@ class OrchestratorService:
                 },
             )
             self._attach_phase6_summaries(ctx.query, decision)
+            self._record_observability(routing_log_id, decision, ctx)
             return decision
         except Exception as exc:
             logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
@@ -181,6 +185,27 @@ class OrchestratorService:
             self.event_logger.log_event(event_type, routing_log_id, detail or {})
         except Exception:
             logging.warning("记录路由离散事件失败: %s", event_type, exc_info=True)
+
+    def _record_observability(self, routing_log_id, decision: RoutingDecision, ctx) -> None:
+        if routing_log_id is None:
+            return
+        try:
+            self._emit(
+                "routing_completed",
+                routing_log_id,
+                {
+                    "intent": decision.intent,
+                    "execution_mode": decision.execution_mode,
+                    "complexity": decision.complexity,
+                    "risk_level": decision.risk_level,
+                    "recommended_model_tier": decision.recommended_model_tier,
+                    "needs_deep_thinking": decision.needs_deep_thinking,
+                    "needs_multi_agent": decision.needs_multi_agent,
+                    "cost_policy_allowed": decision.cost_policy.get("allowed", True) if decision.cost_policy else True,
+                },
+            )
+        except Exception:
+            logging.warning("记录路由可观测摘要失败", exc_info=True)
 
     def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
         task_plan = self.task_planner.plan(query, decision)
