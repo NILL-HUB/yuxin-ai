@@ -87,6 +87,7 @@ class AssistantAgentService(BaseService):
     public_agent_registry_service: PublicAgentRegistryService | None = None
     orchestrator_service: OrchestratorService | None = None
     result_synthesizer_service: ResultSynthesizerService | None = None
+    ENABLE_DIRECT_ANSWER_EXECUTOR = True
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -225,6 +226,29 @@ class AssistantAgentService(BaseService):
         }
         yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
 
+    def _stream_direct_answer(self, req, account, conversation, message):
+        """direct_answer 路径：使用 DirectAnswerExecutor 轻量执行，不经 Agent 循环。"""
+        from internal.entity.billing_metering_entity import BillingEventType
+        from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.executors.direct_answer_executor import DirectAnswerExecutor
+
+        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_started = billing_aggregator.started()
+        yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
+
+        executor = DirectAnswerExecutor(language_model_service=self.language_model_service)
+        try:
+            yield from executor.stream(
+                query=req.query.data,
+                conversation_id=str(conversation.id),
+                message_id=str(message.id),
+            )
+            billing_final = billing_aggregator.final()
+            yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+        except Exception:
+            billing_cancelled = billing_aggregator.cancelled(pending_phases=["直接回答"])
+            yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
+
     def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用和全局 MCP 绑定。"""
         search_public_agents_tool = (
@@ -352,6 +376,9 @@ class AssistantAgentService(BaseService):
                 return
             if execution_mode == "deep_thinking":
                 yield from self._stream_deep_thinking_proposal(routing_decision)
+                return
+            if execution_mode == "direct_answer" and self.ENABLE_DIRECT_ANSWER_EXECUTOR:
+                yield from self._stream_direct_answer(req, account, conversation, message)
                 return
 
         should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"

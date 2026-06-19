@@ -1094,6 +1094,7 @@ class TestAssistantAgentService:
     def test_chat_should_record_routing_decision_without_changing_stream_events(
         self, monkeypatch, app
     ):
+        monkeypatch.setattr(AssistantAgentService, "ENABLE_DIRECT_ANSWER_EXECUTOR", False)
         assistant_agent_id = uuid4()
         app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
         conversation = SimpleNamespace(id=uuid4(), summary="")
