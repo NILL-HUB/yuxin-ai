@@ -58,6 +58,8 @@ from .faiss_service import FaissService
 from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
 from .result_synthesizer_service import ResultSynthesizerService
+from .runtime_tool_mount_service import RuntimeToolMountService
+from internal.entity.runtime_tool_entity import RuntimeToolDescriptor
 from internal.entity.execution_orchestration_entity import OrchestratedAgentResult
 from .public_agent_a2a_service import PublicAgentA2AService
 from .public_agent_registry_service import PublicAgentRegistryService
@@ -90,6 +92,7 @@ class AssistantAgentService(BaseService):
     public_agent_registry_service: PublicAgentRegistryService | None = None
     orchestrator_service: OrchestratorService | None = None
     result_synthesizer_service: ResultSynthesizerService | None = None
+    runtime_tool_mount_service: RuntimeToolMountService | None = None
     ENABLE_DIRECT_ANSWER_EXECUTOR = True
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
@@ -341,6 +344,139 @@ class AssistantAgentService(BaseService):
 
         return tools
 
+    def _mount_runtime_tools(
+        self,
+        *,
+        prebound_tools: list[BaseTool],
+        routing_decision: dict | None,
+        account_id: str,
+        message_id: str,
+    ) -> list[BaseTool]:
+        """按 PRD 架构接通工具挂载：读取 tool_subset 决策，与固有工具合并治理。
+
+        架构链路：
+        orchestrator.tool_subset.selected_tools (决策结果)
+          → RuntimeToolMountService.mount_tools (合并/限制/审计)
+          → MCP 工具转为 BaseTool 与固有工具合并
+          → 传给 Agent
+        """
+        if not routing_decision:
+            return prebound_tools
+
+        tool_subset = routing_decision.get("tool_subset") or {}
+        selected_candidates = tool_subset.get("selected_tools") or []
+        if not selected_candidates:
+            return prebound_tools
+
+        selected_descriptors: list[RuntimeToolDescriptor] = []
+        for candidate in selected_candidates:
+            try:
+                if not isinstance(candidate, dict):
+                    continue
+                source_type = str(candidate.get("source_type") or "")
+                runtime_name = "{}__{}".format(
+                    source_type or "tool",
+                    str(candidate.get("name") or "").replace(" ", "_").lower(),
+                )
+                descriptor = RuntimeToolDescriptor.from_candidate(
+                    candidate,
+                    runtime_name=runtime_name,
+                    mount_reason="orchestrator_tool_subset",
+                )
+                selected_descriptors.append(descriptor)
+            except Exception:
+                logger.warning("工具候选转 RuntimeToolDescriptor 失败", exc_info=True)
+
+        prebound_descriptors: list[RuntimeToolDescriptor] = []
+        for tool in prebound_tools:
+            try:
+                prebound_descriptors.append(
+                    RuntimeToolDescriptor(
+                        tool_id=getattr(tool, "name", ""),
+                        runtime_name=getattr(tool, "name", ""),
+                        name=getattr(tool, "name", ""),
+                        description=getattr(tool, "description", "") or "",
+                        source_type="prebound",
+                        provider_id="",
+                        provider_name="",
+                        audit_context={"mount_reason": "prebound_assistant_tool"},
+                    )
+                )
+            except Exception:
+                logger.warning("固有工具转 RuntimeToolDescriptor 失败", exc_info=True)
+
+        mount_service = self.runtime_tool_mount_service or RuntimeToolMountService()
+        try:
+            mount_result = mount_service.mount_tools(
+                selected_tools=selected_descriptors,
+                prebound_tools=prebound_descriptors,
+                account_id=account_id,
+                agent_id=str(current_app.config.get("ASSISTANT_AGENT_ID", "")),
+                request_id=message_id,
+                max_tool_count=20,
+            )
+        except Exception:
+            logger.warning("RuntimeToolMountService 挂载失败，回退固有工具", exc_info=True)
+            return prebound_tools
+
+        mounted_mcp_provider_ids = {
+            d.provider_id
+            for d in mount_result.get("mounted_tools", [])
+            if d.source_type == "mcp" and d.provider_id
+        }
+        if not mounted_mcp_provider_ids:
+            return prebound_tools
+
+        extra_mcp_tools = self._load_mcp_tools_by_provider_ids(
+            account_id, mounted_mcp_provider_ids
+        )
+        if not extra_mcp_tools:
+            return prebound_tools
+
+        merged: list[BaseTool] = list(prebound_tools)
+        existing_names = {getattr(t, "name", "") for t in merged}
+        for tool in extra_mcp_tools:
+            tool_name = getattr(tool, "name", "")
+            if tool_name and tool_name not in existing_names:
+                merged.append(tool)
+                existing_names.add(tool_name)
+        logger.info(
+            "工具挂载完成: 固有%d 动态MCP%d 总计%d hidden=%d",
+            len(prebound_tools),
+            len(extra_mcp_tools),
+            len(merged),
+            len(mount_result.get("hidden_tools", [])),
+        )
+        return merged
+
+    def _load_mcp_tools_by_provider_ids(
+        self, account_id, provider_ids: set[str]
+    ) -> list[BaseTool]:
+        """根据 MCP provider_id 集合加载对应的 LangChain 工具。"""
+        try:
+            from internal.model import McpProvider
+            providers = (
+                self.db.session.query(McpProvider)
+                .filter(McpProvider.id.in_([str(pid) for pid in provider_ids]))
+                .all()
+            )
+            mcp_bindings = []
+            for provider in providers:
+                mcp_bindings.append({
+                    "provider_id": str(provider.id),
+                    "name": provider.name,
+                    "url": getattr(provider, "url", ""),
+                    "transport": getattr(provider, "transport", "http"),
+                    "tool_names": list(provider.tool_names or []),
+                    "enabled": True,
+                })
+            if not mcp_bindings or self.app_config_service is None:
+                return []
+            return self.app_config_service.get_langchain_tools_by_mcp_bindings(mcp_bindings)
+        except Exception:
+            logger.warning("按 provider_id 加载 MCP 工具失败", exc_info=True)
+            return []
+
     def chat(self, req: AssistantAgentChat, account: Account) -> Generator:
         """传递query与账号实现与辅助Agent进行会话"""
         # 1.获取辅助Agent对应的id
@@ -409,7 +545,15 @@ class AssistantAgentService(BaseService):
         history = token_buffer_memory.get_history_prompt_messages(message_limit=3)
 
         # 6.构建首页助手运行时工具
-        tools = self._build_assistant_runtime_tools(account.id)
+        prebound_tools = self._build_assistant_runtime_tools(account.id)
+
+        # 6.0 工具池治理挂载：读取 orchestrator 决策的 tool_subset，与固有工具合并
+        tools = self._mount_runtime_tools(
+            prebound_tools=prebound_tools,
+            routing_decision=routing_decision,
+            account_id=str(account.id),
+            message_id=str(message.id),
+        )
 
         # 6.1 召回用户长期记忆，注入到 Agent prompt 中
         user_memory_text = ""

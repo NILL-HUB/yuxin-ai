@@ -52,6 +52,7 @@ from internal.service.tool_inventory_service import (
     ToolPolicyFilter,
     ToolRanker,
 )
+from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 
 
 class ExtensionModule(Module):
@@ -116,5 +117,6 @@ class ExtensionModule(Module):
         binder.bind(ToolPolicyFilter, to=ToolPolicyFilter)
         binder.bind(ToolRanker, to=ToolRanker)
         binder.bind(CrossPoolToolSubsetBuilder, to=CrossPoolToolSubsetBuilder)
+        binder.bind(RuntimeToolMountService, to=RuntimeToolMountService)
 
 injector = Injector([ExtensionModule])
