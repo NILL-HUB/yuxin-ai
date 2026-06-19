@@ -1,7 +1,12 @@
+import logging
+
 from internal.entity.execution_orchestration_entity import (
     OrchestratedAgentResult,
 )
 from internal.service.result_quality_checker_service import ResultQualityCheckerService
+
+
+logger = logging.getLogger(__name__)
 
 
 _CONFLICT_PAIRS = [
@@ -82,7 +87,7 @@ class ResultSynthesizerService:
         try:
             self.event_logger.log_event(event_type, routing_log_id, detail)
         except Exception:
-            pass
+            logger.warning("记录合成阶段事件失败: %s", event_type, exc_info=True)
 
     @staticmethod
     def _merge_answers(results: list[OrchestratedAgentResult]) -> str:

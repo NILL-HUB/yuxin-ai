@@ -1,6 +1,6 @@
 import json
 import hashlib
-import random
+import secrets
 from typing import Any, Type
 import requests
 from pydantic import BaseModel, Field
@@ -34,8 +34,8 @@ class BaiduTranslateTool(BaseTool):
             from_lang = kwargs.get("from_lang", "auto")
             to_lang = kwargs.get("to_lang", "zh")
 
-            # 生成签名
-            salt = random.randint(32768, 65536)
+            # 生成签名（使用密码学安全的随机数生成 salt）
+            salt = secrets.randbelow(65536 - 32768) + 32768
             sign_str = f"{app_id}{text}{salt}{secret_key}"
             sign = hashlib.md5(sign_str.encode()).hexdigest()
 

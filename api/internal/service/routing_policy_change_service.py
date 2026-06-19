@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import logging
 from uuid import UUID
 
 from injector import inject
@@ -11,6 +12,9 @@ from internal.service.orchestration_feature_flag_service import (
     OrchestrationFeatureFlagService,
 )
 from pkg.sqlalchemy import SQLAlchemy
+
+
+logger = logging.getLogger(__name__)
 
 
 _SUGGESTION_TO_POLICY_TYPE = {
@@ -194,7 +198,7 @@ class RoutingPolicyChangeService:
                 after_data=detail.get("after_config") or detail,
             )
         except Exception:
-            pass
+            logger.warning("记录策略变更审计日志失败", exc_info=True)
 
     def _apply_policy_changes(
         self,
@@ -216,7 +220,7 @@ class RoutingPolicyChangeService:
                     "ENABLE_MULTI_AGENT_EXECUTION", False, admin_user_id
                 )
         except Exception:
-            pass
+            logger.warning("应用策略变更到特性开关失败", exc_info=True)
 
     def _update_feature_flag(
         self,

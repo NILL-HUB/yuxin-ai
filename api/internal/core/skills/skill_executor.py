@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 import textwrap
 import tempfile
@@ -20,6 +21,25 @@ from internal.core.agent.backends.baidu_cfc_sandbox_backend import BaiduCfcSandb
 from internal.exception import FailException
 
 logger = logging.getLogger(__name__)
+
+
+_SAFE_SOURCE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _sanitize_source_key(value: str) -> str:
+    if value and _SAFE_SOURCE_KEY_RE.match(value):
+        return value
+    logger.warning("技能 source_key 包含非法字符，已回退为默认值: %r", value)
+    return "skill"
+
+
+def _is_safe_relative_path(value: str) -> bool:
+    if not value:
+        return False
+    parts = value.replace("\\", "/").split("/")
+    if any(part == ".." for part in parts):
+        return False
+    return True
 
 
 def _normalize_text(value: Any) -> str:
@@ -236,13 +256,16 @@ class SkillSandboxExecutor:
         if not entrypoint:
             raise FailException("技能沙箱执行失败：缺少入口函数")
 
-        source_key = _normalize_payload_text(payload.get("source_key") or "skill")
+        source_key = _sanitize_source_key(
+            _normalize_payload_text(payload.get("source_key") or "skill")
+        )
         workspace_dir = f"/tmp/skill_runtime/{source_key}"
 
         files_to_upload: list[tuple[str, bytes]] = []
         for relative_path, content in bundle.items():
             normalized_path = str(relative_path or "").strip().lstrip("/")
-            if not normalized_path:
+            if not normalized_path or not _is_safe_relative_path(normalized_path):
+                logger.warning("技能 bundle 跳过越界相对路径: %r", relative_path)
                 continue
             files_to_upload.append((f"{workspace_dir}/{normalized_path}", str(content).encode("utf-8")))
 

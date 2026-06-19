@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import logging
 from typing import Callable
 
 from injector import inject
@@ -9,6 +10,9 @@ from internal.service.tool_invocation_audit_service import ToolInvocationAuditSe
 from internal.service.tool_invoker_service import build_non_interruptible_write_audit_hint
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
+
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -87,7 +91,7 @@ class ToolConfirmationService(BaseService):
                 commit=False,
             )
         except Exception:
-            pass
+            logger.warning("记录工具确认审计日志失败", exc_info=True)
 
     def list_confirmations(
         self,

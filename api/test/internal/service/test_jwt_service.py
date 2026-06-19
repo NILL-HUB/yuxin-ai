@@ -45,3 +45,17 @@ class TestJwtService:
             JwtService.parse_token("token")
 
         assert "授权认证失败" in str(exc_info.value)
+
+    def test_generate_token_should_reject_missing_secret(self, monkeypatch):
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+
+        with pytest.raises(UnauthorizedException) as exc_info:
+            JwtService.generate_token({"sub": "u-1"})
+
+        assert "JWT密钥" in str(exc_info.value)
+
+    def test_generate_token_should_reject_short_secret(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "short")
+
+        with pytest.raises(UnauthorizedException):
+            JwtService.generate_token({"sub": "u-1"})

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import logging
 from time import perf_counter
 from typing import Any, Callable
 
@@ -11,6 +12,8 @@ from internal.entity.tool_inventory_entity import RiskLevel
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.tool_invocation_audit_service import ToolInvocationAuditService
 
+
+logger = logging.getLogger(__name__)
 
 ToolExecutor = Callable[[dict[str, Any], RuntimeToolDescriptor], Any]
 
@@ -127,7 +130,7 @@ class ToolInvokerService:
                 "error_code": error_code,
             })
         except Exception:
-            pass
+            logger.warning("记录 tool_invoked 审计事件失败", exc_info=True)
 
     def _failure(
         self,
@@ -168,7 +171,7 @@ class ToolInvokerService:
                 commit=False,
             )
         except Exception:
-            pass
+            logger.warning("持久化工具调用审计记录失败", exc_info=True)
 
     @staticmethod
     def _security_error(

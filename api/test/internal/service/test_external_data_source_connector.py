@@ -94,6 +94,29 @@ class TestLocalFolderConnector:
             documents = connector.sync(data_source)
             assert documents == []
 
+    def test_authorize_should_reject_folder_outside_allowed_roots(self, monkeypatch):
+        outside_root = os.path.dirname(tempfile.gettempdir())
+        if os.path.realpath(outside_root) == os.path.realpath(tempfile.gettempdir()):
+            outside_root = os.path.dirname(os.path.abspath(__file__))
+        monkeypatch.setenv("LOCAL_FOLDER_CONNECTOR_ALLOWED_ROOTS", tempfile.gettempdir())
+        connector = LocalFolderConnector()
+        data_source = SimpleNamespace(config={"folder_path": outside_root})
+        try:
+            connector.authorize(data_source, {"folder_path": outside_root})
+            assert False, "越界目录应被拒绝"
+        except ValueError:
+            pass
+
+    def test_authorize_should_accept_folder_under_custom_allowed_root(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            monkeypatch.setenv("LOCAL_FOLDER_CONNECTOR_ALLOWED_ROOTS", tmpdir)
+            subfolder = os.path.join(tmpdir, "nested")
+            os.makedirs(subfolder)
+            connector = LocalFolderConnector()
+            data_source = SimpleNamespace(config={"folder_path": subfolder})
+            result = connector.authorize(data_source, {"folder_path": subfolder})
+            assert result == ExternalAuthorizationStatus.GRANTED.value
+
 
 class TestLarkConnector:
     def test_authorize_should_grant_with_app_credentials(self):

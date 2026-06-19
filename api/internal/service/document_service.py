@@ -1,6 +1,6 @@
 import logging
-import random
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -11,7 +11,7 @@ from internal.entity.cache_entity import LOCK_DOCUMENT_UPDATE_ENABLED, LOCK_EXPI
 from internal.entity.dataset_entity import ProcessType, DocumentStatus, SegmentStatus
 from internal.entity.upload_file_entity import ALLOWED_DOCUMENT_EXTENSION
 from internal.exception import ForbiddenException, FailException, NotFoundException
-from internal.lib.helper import datetime_to_timestamp
+from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
 from internal.model import Dataset, Document, Segment, UploadFile, ProcessRule, Account
 from internal.schema.document_schema import GetDocumentsWithPageReq
 from internal.task.document_task import build_documents, update_document_enabled, delete_document
@@ -59,7 +59,7 @@ class DocumentService(BaseService):
             raise FailException("暂未解析到合法文件，请重新上传")
 
         # 3.创建批次与处理规则并记录到数据库中
-        batch = time.strftime("%Y%m%d%H%M%S") + str(random.randint(100000, 999999))
+        batch = time.strftime("%Y%m%d%H%M%S") + uuid.uuid4().hex
         process_rule = self.create(
             ProcessRule,
             account_id=account.id,
@@ -244,7 +244,7 @@ class DocumentService(BaseService):
             Document.dataset_id == dataset_id,
         ]
         if req.search_word.data:
-            filters.append(Document.name.ilike(f"%{req.search_word.data}%"))
+            filters.append(Document.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
 
         # 4.执行分页并获取数据
         documents = paginator.paginate(
