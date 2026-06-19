@@ -5,6 +5,9 @@ from injector import inject
 from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel, RoutingDecision
 from internal.service.billing_metering_service import BillingUsageAggregator
 from internal.service.cost_policy_service import CostPolicyService
+from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
+from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
+from internal.service.request_context_builder_service import RequestContextBuilder
 from internal.service.task_planner_service import TaskPlannerService
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
@@ -15,12 +18,16 @@ class OrchestratorService:
     def __init__(
         self,
         task_classifier_service: TaskClassifierService,
-        pool_intent_resolver=None,
+        pool_intent_resolver: PoolIntentResolver | None = None,
         subset_builder=None,
         tool_subset_builder=None,
-        task_planner=None,
+        task_planner: TaskPlannerService | None = None,
         feature_flag_service=None,
         event_logger=None,
+        request_context_builder: RequestContextBuilder | None = None,
+        model_assignment_policy: ModelAssignmentPolicy | None = None,
+        cost_policy_service: CostPolicyService | None = None,
+        execution_mode_selector: ExecutionModeSelectorService | None = None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
@@ -29,14 +36,20 @@ class OrchestratorService:
         self.task_planner = task_planner or TaskPlannerService()
         self.feature_flag_service = feature_flag_service
         self.event_logger = event_logger
+        self.request_context_builder = request_context_builder or RequestContextBuilder()
+        self.model_assignment_policy = model_assignment_policy or ModelAssignmentPolicy()
+        self.cost_policy_service = cost_policy_service or CostPolicyService()
+        self.execution_mode_selector = execution_mode_selector or ExecutionModeSelectorService()
 
     def decide(self, query: str, **context) -> RoutingDecision:
-        routing_log_id = context.get("routing_log_id")
+        ctx = self.request_context_builder.build(query, **context)
+        routing_log_id = ctx.routing_log_id
+        budget_allowed = ctx.budget_allowed and bool(context.get("budget_allowed", True))
         try:
-            self._emit("routing_started", routing_log_id, {"query": query})
+            self._emit("routing_started", routing_log_id, {"query": ctx.query})
             if not self._flag_enabled("ENABLE_ORCHESTRATOR", default=True):
                 return self._feature_disabled_decision()
-            decision = self.task_classifier_service.classify(query)
+            decision = self.task_classifier_service.classify(query, budget_allowed=budget_allowed)
             self._emit(
                 "task_classified",
                 routing_log_id,
@@ -69,6 +82,17 @@ class OrchestratorService:
                 routing_log_id,
                 {"selected_agents": subset.get("selected_agents", [])},
             )
+            decision.execution_mode = self.execution_mode_selector.select(
+                risk_level=decision.risk_level,
+                needs_deep_thinking=decision.needs_deep_thinking,
+                deep_thinking_requested=ctx.deep_thinking_requested,
+                needs_multi_agent=decision.needs_multi_agent,
+                needs_tools=decision.needs_tools,
+                needs_agent=decision.needs_agent,
+                available_pool_count=len(pool_result.get("matched_pools", [])),
+                image_count=len(ctx.image_urls),
+                preliminary_mode=decision.execution_mode,
+            )
             decision.tool_subset = self._build_tool_subset()
             self._emit(
                 "tool_candidates_found",
@@ -80,7 +104,8 @@ class OrchestratorService:
                 routing_log_id,
                 {"selected_tools": decision.tool_subset.get("selected_tools", [])},
             )
-            self._attach_cost_policy(decision, context)
+            self._attach_cost_policy(decision, ctx)
+            self._attach_model_assignment(decision, ctx)
             self._emit(
                 "model_selected",
                 routing_log_id,
@@ -89,7 +114,7 @@ class OrchestratorService:
                     "cost_policy": decision.cost_policy,
                 },
             )
-            self._attach_phase6_summaries(query, decision)
+            self._attach_phase6_summaries(ctx.query, decision)
             return decision
         except Exception as exc:
             logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
@@ -181,22 +206,26 @@ class OrchestratorService:
             "user_warnings": [],
         }
 
-    def _attach_cost_policy(self, decision: RoutingDecision, context: dict) -> None:
+    def _attach_cost_policy(self, decision: RoutingDecision, ctx) -> None:
         if not self._flag_enabled("ENABLE_COST_MODEL_ROUTING", default=True):
             decision.cost_policy = self._safe_cost_policy()
             decision.billing_events = self._billing_started_events()
             return
-        decision.cost_policy = CostPolicyService().build_policy(
+        decision.cost_policy = self.cost_policy_service.build_policy(
             task_complexity=decision.complexity,
-            budget_level=context.get("budget_level", "normal"),
-            balance_credits=context.get("balance_credits", 1),
-            deep_thinking_requested=context.get("deep_thinking_requested", False),
+            budget_level=ctx.budget_level,
+            balance_credits=ctx.balance_credits,
+            deep_thinking_requested=ctx.deep_thinking_requested,
         )
         decision.billing_events = self._billing_started_events()
 
-    @staticmethod
-    def _safe_cost_policy() -> dict:
-        return CostPolicyService().build_policy(
+    def _attach_model_assignment(self, decision: RoutingDecision, ctx) -> None:
+        if not self._flag_enabled("ENABLE_MODEL_ASSIGNMENT_POLICY", default=True):
+            return
+        decision.recommended_model_tier = self.model_assignment_policy.assign(decision, ctx)
+
+    def _safe_cost_policy(self) -> dict:
+        return self.cost_policy_service.build_policy(
             task_complexity="simple",
             budget_level="normal",
             balance_credits=1,

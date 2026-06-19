@@ -12,7 +12,7 @@ from sqlalchemy import asc, func
 from internal.entity.cache_entity import LOCK_EXPIRE_TIME, LOCK_SEGMENT_UPDATE_ENABLED
 from internal.entity.dataset_entity import DocumentStatus, SegmentStatus
 from internal.exception import NotFoundException, FailException, ValidateErrorException
-from internal.lib.helper import generate_text_hash
+from internal.lib.helper import generate_text_hash, escape_like_pattern
 from internal.model import Document, Segment, Account
 from internal.schema.segment_schema import (
     GetSegmentsWithPageReq,
@@ -229,7 +229,7 @@ class SegmentService(BaseService):
         # 3.构建筛选器
         filters = [Segment.document_id == document_id]
         if req.search_word.data:
-            filters.append(Segment.content.ilike(f"%{req.search_word.data}%"))
+            filters.append(Segment.content.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
 
         # 4.执行分页并获取数据
         segments = paginator.paginate(

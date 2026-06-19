@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID
 from pydantic import ValidationError
 from internal.exception import ValidateErrorException, NotFoundException, FailException
+from internal.lib.helper import escape_like_pattern
 from injector import inject
 from dataclasses import dataclass
 from internal.core.tools.api_tools.entities import OpenAPISchema
@@ -95,7 +96,7 @@ class ApiToolService(BaseService):
         # 2.构建筛选器
         filters = [ApiToolProvider.account_id == account.id]
         if req.search_word.data:
-            filters.append(ApiToolProvider.name.ilike(f"%{req.search_word.data}%"))
+            filters.append(ApiToolProvider.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
 
         # 3.执行分页并获取数据
         api_tool_providers = paginator.paginate(

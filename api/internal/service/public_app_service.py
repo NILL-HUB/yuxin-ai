@@ -12,7 +12,7 @@ from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from internal.entity.app_entity import AppStatus
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.entity.tag_entity import sort_tags_by_priority
-from internal.lib.helper import utc_now_naive
+from internal.lib.helper import utc_now_naive, escape_like_pattern
 from internal.task.app_task import sync_public_app_registry
 from internal.service.tag_assignment_service import TagAssignmentService
 from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
@@ -278,8 +278,8 @@ class PublicAppService(BaseService):
         if req.search_word.data:
             filters.append(
                 or_(
-                    App.name.ilike(f"%{req.search_word.data}%"),
-                    App.description.ilike(f"%{req.search_word.data}%")
+                    App.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"),
+                    App.description.ilike(f"%{escape_like_pattern(req.search_word.data)}%")
                 )
             )
 

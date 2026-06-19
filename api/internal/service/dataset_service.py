@@ -7,7 +7,7 @@ from sqlalchemy import desc
 
 from internal.entity.dataset_entity import DEFAULT_DATASET_DESCRIPTION_FORMATTER
 from internal.exception import ValidateErrorException, NotFoundException, FailException
-from internal.lib.helper import datetime_to_timestamp
+from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
 from internal.model import Dataset, Segment, DatasetQuery, AppDatasetJoin, Account
 from internal.schema.dataset_schema import (
     CreateDatasetReq,
@@ -114,7 +114,7 @@ class DatasetService(BaseService):
         # 2.构建筛选器
         filters = [Dataset.account_id == account.id]
         if req.search_word.data:
-            filters.append(Dataset.name.ilike(f"%{req.search_word.data}%"))
+            filters.append(Dataset.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
 
         # 3.执行分页并获取数据
         datasets = paginator.paginate(

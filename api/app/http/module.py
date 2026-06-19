@@ -19,6 +19,8 @@ from internal.core.tools.mcp_tools.providers import McpProviderManager
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.faiss_service import FaissService
 from internal.service.notification_service import NotificationService
+from internal.service.cos_service import CosService
+from internal.core.ports.storage_port import ObjectStoragePort
 
 
 class ExtensionModule(Module):
@@ -42,5 +44,8 @@ class ExtensionModule(Module):
         binder.bind(EmbeddingsService, to=EmbeddingsService, scope=singleton)
         binder.bind(FaissService, to=FaissService, scope=singleton)
         binder.bind(NotificationService, to=NotificationService, scope=singleton)
+
+        # 注册端口绑定（反转 core→service 反向依赖）
+        binder.bind(ObjectStoragePort, to=CosService)
 
 injector = Injector([ExtensionModule])

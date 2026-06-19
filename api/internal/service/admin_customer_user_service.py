@@ -4,6 +4,7 @@ from uuid import UUID
 
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
+from internal.lib.helper import escape_like_pattern
 from internal.model.account import Account, AccountSession
 from internal.service.audit_log_service import AuditLogService
 
@@ -60,7 +61,7 @@ class AdminCustomerUserService:
         query = self.session.query(Account)
         keyword = (keyword or "").strip()
         if keyword:
-            like_value = f"%{keyword}%"
+            like_value = f"%{escape_like_pattern(keyword)}%"
             query = query.filter((Account.email.ilike(like_value)) | (Account.name.ilike(like_value)))
         if status:
             query = query.filter(Account.status == status)

@@ -31,7 +31,7 @@ from internal.core.workflow.nodes import (
 )
 from internal.entity.workflow_entity import WorkflowStatus, DEFAULT_WORKFLOW_CONFIG, WorkflowResultStatus
 from internal.exception import ValidateErrorException, NotFoundException, ForbiddenException, FailException
-from internal.lib.helper import convert_model_to_dict
+from internal.lib.helper import convert_model_to_dict, escape_like_pattern
 from internal.model import Account, Workflow, Dataset, ApiTool, WorkflowResult
 from internal.schema.workflow_schema import CreateWorkflowReq, GetWorkflowsWithPageReq
 from pkg.paginator import Paginator
@@ -125,7 +125,7 @@ class WorkflowService(BaseService):
         # 2.构建筛选器
         filters = [Workflow.account_id == account.id]
         if req.search_word.data:
-            filters.append(Workflow.name.ilike(f"%{req.search_word.data}%"))
+            filters.append(Workflow.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
         if req.status.data:
             filters.append(Workflow.status == req.status.data)
 

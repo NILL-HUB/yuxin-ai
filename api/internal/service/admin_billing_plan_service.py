@@ -5,6 +5,7 @@ from uuid import UUID
 
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
+from internal.lib.helper import escape_like_pattern
 from internal.model.billing import Plan, PlanEntitlement
 from internal.service.audit_log_service import AuditLogService
 
@@ -30,7 +31,7 @@ class AdminBillingPlanService:
         query = self.session.query(Plan)
         keyword = (keyword or "").strip()
         if keyword:
-            like_value = f"%{keyword}%"
+            like_value = f"%{escape_like_pattern(keyword)}%"
             query = query.filter((Plan.code.ilike(like_value)) | (Plan.name.ilike(like_value)))
         if status:
             query = query.filter(Plan.status == status)

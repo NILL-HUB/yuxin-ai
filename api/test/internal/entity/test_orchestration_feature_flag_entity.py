@@ -10,7 +10,7 @@ def test_default_feature_flags_should_include_all_phase8_codes():
     flags = get_default_orchestration_feature_flags()
 
     assert [flag.code for flag in flags] == ORCHESTRATION_FEATURE_FLAG_CODES
-    assert len(flags) == 7
+    assert len(flags) == len(ORCHESTRATION_FEATURE_FLAG_CODES)
 
 
 def test_feature_flag_should_serialize_stable_shape():

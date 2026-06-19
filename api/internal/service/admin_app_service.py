@@ -4,7 +4,7 @@ from uuid import UUID
 from internal.entity.agent_entity import normalize_agent_metadata
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
-from internal.lib.helper import datetime_to_timestamp
+from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
 from internal.model.app import App
 
 
@@ -17,7 +17,7 @@ class AdminAppService:
         page_size = max(min(int(page_size or 20), 50), 1)
         query = self.session.query(App)
         if search:
-            query = query.filter(App.name.ilike(f"%{search}%"))
+            query = query.filter(App.name.ilike(f"%{escape_like_pattern(search)}%"))
         if status and status != "all":
             query = query.filter(App.status == status)
         total = query.count()

@@ -1,5 +1,7 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
+
+from internal.entity.base_entity import SerializableMixin
 
 
 class BillingEventType(str, Enum):
@@ -11,7 +13,7 @@ class BillingEventType(str, Enum):
 
 
 @dataclass
-class BillingUsageDelta:
+class BillingUsageDelta(SerializableMixin):
     event_type: str
     task_id: str
     source_type: str
@@ -20,9 +22,6 @@ class BillingUsageDelta:
     total_credits: int
     reason: str = ""
     metadata: dict = field(default_factory=dict)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
 
     def to_sse(self) -> dict:
         return {
@@ -37,15 +36,12 @@ class BillingUsageDelta:
 
 
 @dataclass
-class BillingUsageCancelled:
+class BillingUsageCancelled(SerializableMixin):
     event_type: str
     task_id: str
     total_credits: int
     reason: str = "user_stop"
     pending_phases: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict:
-        return asdict(self)
 
     def to_sse(self) -> dict:
         return {

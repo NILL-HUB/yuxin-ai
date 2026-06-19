@@ -87,7 +87,8 @@ def test_execution_coordinator_should_run_parallel_tasks():
 
     results = coordinator.execute(plan)
 
-    assert executor.calls == ["task-1", "task-2"]
+    assert set(executor.calls) == {"task-1", "task-2"}
+    assert len(executor.calls) == 2
     assert [result.task_id for result in results] == ["task-1", "task-2"]
 
 
@@ -207,3 +208,72 @@ def test_cancel_token_reset_should_allow_reuse():
     assert token.is_cancelled() is True
     token.reset()
     assert token.is_cancelled() is False
+
+
+def test_parallel_execution_should_run_items_concurrently():
+    import threading
+
+    barrier = threading.Barrier(2, timeout=2)
+    completed = []
+
+    class _BarrierExecutor:
+        def execute(self, item):
+            barrier.wait()
+            completed.append(item.task_id)
+            return {
+                "agent_id": f"agent-{item.agent_pool}",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    coordinator = ExecutionCoordinatorService(executor=_BarrierExecutor())
+    plan = _plan("multi_agent_parallel", [_item("task-1"), _item("task-2")])
+
+    results = coordinator.execute(plan)
+
+    assert set(completed) == {"task-1", "task-2"}
+    assert len(results) == 2
+    assert all(not result.errors for result in results)
+
+
+def test_sequential_execution_should_respect_depends_on_ordering():
+    calls = []
+
+    class _RecordingExecutor:
+        def execute(self, item):
+            calls.append(item.task_id)
+            return {
+                "agent_id": f"agent-{item.agent_pool}",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    coordinator = ExecutionCoordinatorService(executor=_RecordingExecutor())
+    plan = _plan(
+        "multi_agent_sequential",
+        [
+            _item("task-1", order=2),
+            _item("task-2", order=1, depends_on=["task-1"]),
+            _item("task-3", order=0, depends_on=["task-2"]),
+        ],
+    )
+
+    coordinator.execute(plan)
+
+    assert calls == ["task-1", "task-2", "task-3"]
+
+
+def test_parallel_execution_should_sort_results_deterministically():
+    executor = FakeExecutor()
+    coordinator = ExecutionCoordinatorService(executor=executor)
+    plan = _plan(
+        "multi_agent_parallel",
+        [_item("task-3", order=0), _item("task-1", order=0), _item("task-2", order=0)],
+    )
+
+    results = coordinator.execute(plan)
+
+    assert set(executor.calls) == {"task-1", "task-2", "task-3"}
+    assert [result.task_id for result in results] == ["task-1", "task-2", "task-3"]

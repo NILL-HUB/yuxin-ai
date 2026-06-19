@@ -6,6 +6,7 @@ from uuid import UUID
 
 from internal.exception import FailException, NotFoundException, UnauthorizedException
 from internal.extension.database_extension import db
+from internal.lib.helper import escape_like_pattern
 from internal.model.account import Account, AccountSession
 from internal.model.admin import AdminSession, AdminUser, AdminUserRole, Permission, Role, RolePermission
 from internal.service.audit_log_service import AuditLogService
@@ -265,7 +266,7 @@ class AdminUserService:
         page_size = max(min(int(page_size or 20), 50), 1)
         query = self.session.query(AdminUser)
         if search:
-            keyword = f"%{search}%"
+            keyword = f"%{escape_like_pattern(search)}%"
             query = query.filter((AdminUser.username.ilike(keyword)) | (AdminUser.email.ilike(keyword)) | (AdminUser.name.ilike(keyword)))
         if status and status != "all":
             query = query.filter(AdminUser.status == status)

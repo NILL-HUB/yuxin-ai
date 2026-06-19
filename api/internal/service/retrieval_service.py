@@ -9,6 +9,7 @@ from sqlalchemy import update
 from langchain_core.tools import BaseTool, tool
 from internal.entity.dataset_entity import RetrievalStrategy, RetrievalSource
 from internal.exception import NotFoundException
+from internal.lib.helper import escape_like_pattern
 from internal.model import Dataset, DatasetQuery, Segment
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -118,7 +119,7 @@ class RetrievalService(BaseService):
                 KnowledgeSegment.knowledge_base_id.in_(knowledge_base_ids),
                 KnowledgeSegment.owner_account_id == account_id,
                 KnowledgeSegment.enabled.is_(True),
-                KnowledgeSegment.content.ilike(f"%{query}%"),
+                KnowledgeSegment.content.ilike(f"%{escape_like_pattern(query)}%"),
             )
             .order_by(KnowledgeSegment.knowledge_base_id, KnowledgeSegment.position)
             .limit(k)

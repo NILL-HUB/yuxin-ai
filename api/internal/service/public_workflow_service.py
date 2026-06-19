@@ -12,6 +12,7 @@ from internal.entity.workflow_entity import WorkflowStatus
 from internal.entity.tag_entity import sort_tags_by_priority
 from internal.service.tag_assignment_service import TagAssignmentService
 from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
+from internal.lib.helper import escape_like_pattern
 from internal.model import (
     Workflow,
     Account,
@@ -111,8 +112,8 @@ class PublicWorkflowService(BaseService):
         if req.search_word.data:
             filters.append(
                 or_(
-                    Workflow.name.ilike(f"%{req.search_word.data}%"),
-                    Workflow.description.ilike(f"%{req.search_word.data}%")
+                    Workflow.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"),
+                    Workflow.description.ilike(f"%{escape_like_pattern(req.search_word.data)}%")
                 )
             )
 

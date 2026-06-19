@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 from injector import inject
 from dataclasses import dataclass
-from internal.service import CosService
+from internal.core.ports.storage_port import ObjectStoragePort
 from internal.model import UploadFile
 from typing import Union
 from langchain_core.documents import Document as LCDocument
@@ -23,7 +23,7 @@ from langchain_community.document_loaders import (
 @dataclass
 class FileExtractor:
     """文件提取器 用于将远程文件 upload_file记录加载成LangChain对应的文档或字符串"""
-    cos_service: CosService
+    cos_service: ObjectStoragePort
 
     def load(self,
              upload_file: UploadFile,

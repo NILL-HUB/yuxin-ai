@@ -6,6 +6,7 @@ from uuid import UUID
 
 from internal.exception import FailException, NotFoundException
 from internal.extension.database_extension import db
+from internal.lib.helper import escape_like_pattern
 from internal.model.billing import Plan, RedeemCode, RedeemCodeBatch
 from internal.service.audit_log_service import AuditLogService
 
@@ -86,7 +87,7 @@ class AdminRedeemCodeService:
         query = self.session.query(RedeemCodeBatch)
         keyword = (keyword or "").strip()
         if keyword:
-            query = query.filter(RedeemCodeBatch.name.ilike(f"%{keyword}%"))
+            query = query.filter(RedeemCodeBatch.name.ilike(f"%{escape_like_pattern(keyword)}%"))
         total = query.count()
         batches = query.order_by(RedeemCodeBatch.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
         return {
@@ -108,7 +109,7 @@ class AdminRedeemCodeService:
         if batch_id:
             query = query.filter(RedeemCode.batch_id == batch_id)
         if code_keyword:
-            query = query.filter(RedeemCode.code_mask.ilike(f"%{code_keyword}%"))
+            query = query.filter(RedeemCode.code_mask.ilike(f"%{escape_like_pattern(code_keyword)}%"))
         if status == "expired":
             query = query.filter(RedeemCode.status == "unused", RedeemCode.expires_at < now)
         elif status:

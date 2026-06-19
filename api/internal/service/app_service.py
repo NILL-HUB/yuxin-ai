@@ -29,7 +29,7 @@ from internal.entity.app_entity import AppStatus, AppConfigType, DEFAULT_APP_CON
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.entity.dataset_entity import RetrievalSource
 from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
-from internal.lib.helper import remove_fields, get_value_type, generate_random_string
+from internal.lib.helper import remove_fields, get_value_type, generate_random_string, escape_like_pattern
 from internal.model import (
     App,
     Account,
@@ -461,7 +461,7 @@ class AppService(BaseService):
         # 2.构建筛选条件
         filters = [App.account_id == account.id]
         if req.search_word.data:
-            filters.append(App.name.ilike(f"%{req.search_word.data}%"))
+            filters.append(App.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
         if getattr(req, "published_only", None) and req.published_only.data:
             filters.append(App.status == AppStatus.PUBLISHED.value)
 
@@ -1608,7 +1608,7 @@ class AppService(BaseService):
             conversation_id=str(debug_conversation.id),
             message_id=str(message.id),
             agent_thoughts=agent_thoughts,
-            enable_deep_thinking=bool(req.enable_deep_thinking.data),
+            enable_deep_thinking=bool(req.confirm_deep_thinking.data),
             flask_app=runtime_flask_app,
         )
 

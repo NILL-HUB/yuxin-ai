@@ -20,7 +20,7 @@ from internal.entity.mcp_entity import (
     normalize_mcp_transport,
 )
 from internal.exception import ForbiddenException, NotFoundException, ValidateErrorException
-from internal.lib.helper import datetime_to_timestamp, utc_now_naive
+from internal.lib.helper import datetime_to_timestamp, utc_now_naive, escape_like_pattern
 from internal.model import Account, McpProvider
 from internal.schema.mcp_schema import CreateMcpProviderReq, GetMcpProvidersWithPageReq, UpdateMcpProviderReq
 from pkg.paginator import Paginator
@@ -437,7 +437,7 @@ class McpService(BaseService):
         query = self.db.session.query(McpProvider).filter(McpProvider.account_id == account.id)
 
         if req.search_word.data:
-            search_word = f"%{req.search_word.data.strip()}%"
+            search_word = f"%{escape_like_pattern(req.search_word.data.strip())}%"
             query = query.filter(
                 or_(
                     McpProvider.name.ilike(search_word),

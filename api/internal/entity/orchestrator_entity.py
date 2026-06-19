@@ -1,5 +1,7 @@
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+
+from internal.entity.base_entity import SerializableMixin
 
 
 class ExecutionMode(str, Enum):
@@ -28,7 +30,7 @@ class RiskLevel(str, Enum):
 
 
 @dataclass
-class RoutingDecision:
+class RoutingDecision(SerializableMixin):
     intent: str
     complexity: str
     execution_mode: str
@@ -57,8 +59,32 @@ class RoutingDecision:
             self.needs_tools = True
             self.needs_agent = True
 
-    def to_dict(self) -> dict:
-        data = asdict(self)
-        data["task_plan_summary"] = self.task_plan_summary
-        data["synthesis_summary"] = self.synthesis_summary
-        return data
+
+@dataclass
+class RequestContext:
+    query: str
+    account_id: str = ""
+    conversation_id: str = ""
+    message_id: str = ""
+    image_urls: list[str] = field(default_factory=list)
+    enable_deep_thinking: bool = False
+    deep_thinking_requested: bool = False
+    budget_level: str = "normal"
+    balance_credits: float = 1.0
+    budget_allowed: bool = True
+    routing_log_id: str | None = None
+
+    def to_safe_dict(self) -> dict:
+        return {
+            "query": self.query,
+            "account_id": self.account_id,
+            "conversation_id": self.conversation_id,
+            "message_id": self.message_id,
+            "image_url_count": len(self.image_urls),
+            "enable_deep_thinking": self.enable_deep_thinking,
+            "deep_thinking_requested": self.deep_thinking_requested,
+            "budget_level": self.budget_level,
+            "balance_credits": self.balance_credits,
+            "budget_allowed": self.budget_allowed,
+            "routing_log_id": self.routing_log_id,
+        }

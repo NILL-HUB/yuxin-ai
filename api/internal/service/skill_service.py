@@ -16,7 +16,7 @@ from sqlalchemy.exc import ProgrammingError
 from internal.core.skills import LocalSkillPackage, SkillCatalogManager, SkillScfClient, SkillToolFactory
 from internal.entity.app_entity import AppStatus
 from internal.exception import FailException, NotFoundException, ValidateErrorException
-from internal.lib.helper import datetime_to_timestamp, generate_text_hash, utc_now_naive
+from internal.lib.helper import datetime_to_timestamp, generate_text_hash, utc_now_naive, escape_like_pattern
 from internal.model import SkillPackage, SkillPackageVersion
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
@@ -262,7 +262,7 @@ class SkillService(BaseService):
         search_word = _normalize_text(getattr(req.search_word, "data", ""))
         category = _normalize_text(getattr(req.category, "data", ""))
         if search_word:
-            like_word = f"%{search_word}%"
+            like_word = f"%{escape_like_pattern(search_word)}%"
             filters.append(
                 or_(
                     SkillPackage.name.ilike(like_word),

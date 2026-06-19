@@ -17,7 +17,6 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, Field
 from flask import has_app_context
 
 from internal.core.agent.agents.function_call_agent import FunctionCallAgent
@@ -25,6 +24,11 @@ from internal.core.agent.entities.artifact_policy_entity import ArtifactPolicy
 from internal.core.agent.entities.agent_entity import (
     DEEP_THINKING_SYSTEM_PROMPT,
     AgentState,
+)
+from internal.core.agent.entities.deep_thinking_entity import (
+    DeepRouteDecision,
+    StructuredDocumentOutlinePlan,
+    StructuredDocumentSectionPlan,
 )
 from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
@@ -56,32 +60,12 @@ def _read_positive_int_env(env_name: str, default: int, *, minimum: int | None =
     return parsed_value
 
 
-class DeepRouteDecision(BaseModel):
-    """深度思考阶段的运行时能力判断结果。"""
-
-    need_sandbox: bool = False
-    need_file_io: bool = False
-    need_execute: bool = False
-    need_subagent: bool = False
-    need_artifact_output: bool = False
-    reason: str = ""
-    summary: str = ""
-
-
-class StructuredDocumentSectionPlan(BaseModel):
-    """结构化文档章节规划。"""
-
-    title: str = Field(description="章节标题")
-    purpose: str = Field(default="", description="章节写作目的")
-    key_points: list[str] = Field(default_factory=list, description="章节需要覆盖的关键点")
-    target_length_hint: str = Field(default="", description="章节长度提示")
-
-
-class StructuredDocumentOutlinePlan(BaseModel):
-    """结构化文档大纲。"""
-
-    document_title: str = Field(default="", description="文档标题")
-    sections: list[StructuredDocumentSectionPlan] = Field(default_factory=list, description="文档章节列表")
+__all__ = [
+    "DeepRouteDecision",
+    "StructuredDocumentSectionPlan",
+    "StructuredDocumentOutlinePlan",
+    "DeepThinkingAgent",
+]
 
 
 class DeepThinkingAgent(FunctionCallAgent):
