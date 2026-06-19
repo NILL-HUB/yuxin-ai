@@ -1,4 +1,5 @@
-import logging
+﻿import logging
+logger = logging.getLogger(__name__)
 from types import SimpleNamespace
 
 from injector import inject
@@ -127,7 +128,7 @@ class OrchestratorService:
             self._record_observability(routing_log_id, decision, ctx)
             return decision
         except Exception as exc:
-            logging.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
+            logger.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
             self._emit("routing_failed", routing_log_id, {"error": str(exc)})
             self._emit("fallback_triggered", routing_log_id, {"reason": "classifier_error"})
             return RoutingDecision(
@@ -190,7 +191,7 @@ class OrchestratorService:
         try:
             self.event_logger.log_event(event_type, routing_log_id, detail or {})
         except Exception:
-            logging.warning("记录路由离散事件失败: %s", event_type, exc_info=True)
+            logger.warning("记录路由离散事件失败: %s", event_type, exc_info=True)
 
     def _record_observability(self, routing_log_id, decision: RoutingDecision, ctx) -> None:
         if routing_log_id is None:
@@ -211,7 +212,7 @@ class OrchestratorService:
                 },
             )
         except Exception:
-            logging.warning("记录路由事件失败", exc_info=True)
+            logger.warning("记录路由事件失败", exc_info=True)
         if self.routing_observability_service is not None:
             try:
                 agent_subset = decision.agent_subset or {}
@@ -234,7 +235,7 @@ class OrchestratorService:
                     )
                 ])
             except Exception:
-                logging.warning("路由可观测摘要记录失败", exc_info=True)
+                logger.warning("路由可观测摘要记录失败", exc_info=True)
 
     def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
         task_plan = self.task_planner.plan(query, decision)
@@ -281,7 +282,7 @@ class OrchestratorService:
                 decision.recommended_model_tier = self.model_gateway_service.resolve_model_tier(decision, ctx)
                 return
             except Exception:
-                logging.warning("ModelGateway 档位解析失败，回退直接策略", exc_info=True)
+                logger.warning("ModelGateway 档位解析失败，回退直接策略", exc_info=True)
         decision.recommended_model_tier = self.model_assignment_policy.assign(decision, ctx)
 
     def _safe_cost_policy(self) -> dict:
@@ -340,7 +341,7 @@ class OrchestratorService:
                 collected = self.subset_builder.build(account_id)
                 candidates = collected.get("candidates", []) if isinstance(collected, dict) else []
             except Exception:
-                logging.warning("Agent 候选收集失败，使用空候选列表", exc_info=True)
+                logger.warning("Agent 候选收集失败，使用空候选列表", exc_info=True)
         return self.subset_builder.build_subset_from_candidates(
             candidates, matched_pools=matched_pools
         )

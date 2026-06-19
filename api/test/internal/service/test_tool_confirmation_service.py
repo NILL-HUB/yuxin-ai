@@ -5,10 +5,7 @@ from uuid import uuid4
 import pytest
 
 from internal.exception import ForbiddenException, NotFoundException
-from internal.service.tool_confirmation_service import (
-    ToolConfirmationService,
-    ToolInvoker,
-)
+from internal.service.tool_confirmation_service import ToolConfirmationService
 
 
 class _QueryStub:
@@ -76,33 +73,6 @@ def test_confirm_and_cancel_should_only_allow_owner():
 
     with pytest.raises(NotFoundException):
         service.cancel(confirmation.id, SimpleNamespace(id=uuid4()))
-
-
-def test_tool_invoker_should_reject_high_risk_without_confirmed_confirmation():
-    invoker = ToolInvoker()
-
-    with pytest.raises(ForbiddenException):
-        invoker.invoke(
-            tool={"name": "delete_user", "metadata": {"risk_level": "high"}},
-            tool_input={"user_id": "u1"},
-            confirmation=None,
-        )
-
-
-def test_tool_invoker_should_execute_when_confirmation_confirmed():
-    executed = []
-    invoker = ToolInvoker(
-        executor=lambda tool, tool_input: executed.append((tool, tool_input)) or {"ok": True}
-    )
-
-    result = invoker.invoke(
-        tool={"name": "delete_user", "metadata": {"risk_level": "high"}},
-        tool_input={"user_id": "u1"},
-        confirmation=SimpleNamespace(status="confirmed"),
-    )
-
-    assert result == {"ok": True}
-    assert executed[0][0]["name"] == "delete_user"
 
 
 class _AuditRecorder:

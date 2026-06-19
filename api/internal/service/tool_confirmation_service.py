@@ -121,20 +121,3 @@ class ToolConfirmationService(BaseService):
         if confirmation is None or confirmation.owner_account_id != account.id:
             raise NotFoundException("工具确认记录不存在")
         return confirmation
-
-
-class ToolInvoker:
-    def __init__(self, executor: Callable[[dict, dict], dict] | None = None):
-        self.executor = executor or (lambda tool, tool_input: {"ok": True})
-
-    def invoke(
-        self,
-        *,
-        tool: dict,
-        tool_input: dict,
-        confirmation: ToolConfirmation | None = None,
-    ) -> dict:
-        risk_level = tool.get("metadata", {}).get("risk_level", "safe")
-        if risk_level in {"medium", "high"} and getattr(confirmation, "status", None) != "confirmed":
-            raise ForbiddenException("高风险工具执行前需要用户确认")
-        return self.executor(tool, tool_input)

@@ -244,6 +244,10 @@ export const applyChatStreamEvent = (
       : {}
     message.artifacts = mergeChatArtifacts(message.artifacts, [toolInput.artifact || null])
     shouldRefreshOutputParts = true
+  } else if (event === QueueEvent.agentEnd) {
+    return { state: nextState, didUpdate: false }
+  } else if (event === QueueEvent.agentThought) {
+    upsertThought(thoughts, data, nextState, { appendThought: false })
   } else if (event === QueueEvent.deepThinkingProposal) {
     nextState.deepThinkingProposal = {
       reason: String(data.reason ?? ''),
@@ -259,7 +263,6 @@ export const applyChatStreamEvent = (
   } else if (
     event === QueueEvent.billingStarted ||
     event === QueueEvent.billingDelta ||
-    event === QueueEvent.billingSummary ||
     event === QueueEvent.billingCancelled ||
     event === QueueEvent.billingFinal
   ) {

@@ -432,6 +432,3 @@ class CrossPoolToolSubsetBuilder:
             "candidates": result,
             "filtered_out_tools": filtered["filtered_out_tools"],
         }
-
-
-ToolSubsetBuilder = CrossPoolToolSubsetBuilder

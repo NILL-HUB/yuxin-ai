@@ -1,7 +1,10 @@
-import hashlib
+﻿import hashlib
 import json
 import logging
 import re
+
+logger = logging.getLogger(__name__)
+
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock, Thread
@@ -120,7 +123,7 @@ class AssistantAgentService(BaseService):
                     for _ in self.generate_introduction(account):
                         pass
             except Exception:
-                logging.exception("首页助手介绍预热失败: account_id=%s", account_id)
+                logger.exception("首页助手介绍预热失败: account_id=%s", account_id)
             finally:
                 with self._introduction_prewarm_lock:
                     self._introduction_prewarm_pending.discard(pending_key)
@@ -255,7 +258,7 @@ class AssistantAgentService(BaseService):
                             reason="direct_answer_llm_invoke",
                         )
                     except Exception:
-                        logging.warning("direct_answer token 计费解析失败", exc_info=True)
+                        logger.warning("direct_answer token 计费解析失败", exc_info=True)
                 yield chunk
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
@@ -300,7 +303,7 @@ class AssistantAgentService(BaseService):
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
         except Exception as e:
-            logging.warning("多智能体执行失败: %s", e, exc_info=True)
+            logger.warning("多智能体执行失败: %s", e, exc_info=True)
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["多智能体执行"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '多智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
@@ -385,10 +388,10 @@ class AssistantAgentService(BaseService):
                     enable_deep_thinking=bool(req.confirm_deep_thinking.data),
                 ).to_dict()
             except Exception as exc:
-                logging.warning("辅助 Agent 调度决策失败，继续原流程: %s", exc)
+                logger.warning("辅助 Agent 调度决策失败，继续原流程: %s", exc)
 
         if routing_decision is not None:
-            logging.info(
+            logger.info(
                 "辅助 Agent 路由决策 intent=%s execution_mode=%s complexity=%s model_tier=%s risk=%s",
                 routing_decision.get("intent"),
                 routing_decision.get("execution_mode"),
@@ -418,7 +421,7 @@ class AssistantAgentService(BaseService):
             if active_memories:
                 user_memory_text = "\n".join(f"- {m.content}" for m in active_memories[:10])
         except Exception:
-            logging.warning("召回用户长期记忆失败，继续原流程", exc_info=True)
+            logger.warning("召回用户长期记忆失败，继续原流程", exc_info=True)
 
         # 7.构建辅助Agent专用智能体。根据路由决策的 execution_mode 选择执行路径：
         # 二阶段流程：confirm_deep_thinking=True 表示用户已确认，直接执行深度思考；
@@ -443,7 +446,7 @@ class AssistantAgentService(BaseService):
 
         should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
         if execution_mode == "reject_or_confirm":
-            logging.warning("辅助 Agent 路由决策标记高风险任务，建议二次确认: intent=%s", routing_decision.get("intent"))
+            logger.warning("辅助 Agent 路由决策标记高风险任务，建议二次确认: intent=%s", routing_decision.get("intent"))
         agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent
         agent = agent_class(
             llm=llm,
@@ -606,7 +609,7 @@ class AssistantAgentService(BaseService):
                             }, ensure_ascii=False)
                             yield f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{warning_data}\n\n"
                 except Exception:
-                    logging.warning("结果合成失败，跳过", exc_info=True)
+                    logger.warning("结果合成失败，跳过", exc_info=True)
         except Exception:
             billing_cancelled = True
             raise
@@ -645,7 +648,7 @@ class AssistantAgentService(BaseService):
                 routing_decision=routing_decision,
             )
         except Exception:
-            logging.warning("持久化推理过程失败", exc_info=True)
+            logger.warning("持久化推理过程失败", exc_info=True)
 
     def generate_introduction(self, account: Account) -> Generator[str, None, None]:
         """流式生成首页辅助Agent个性化介绍（支持缓存优化）"""
@@ -705,7 +708,7 @@ class AssistantAgentService(BaseService):
 
         # 5.如果缓存命中，直接返回缓存内容（模拟流式输出）
         if cached_data:
-            logging.info(
+            logger.info(
                 f"辅助Agent介绍命中缓存，账号ID: {account.id}, 指纹: {fingerprint}"
             )
             # 模拟流式输出缓存内容，提升用户体验
@@ -729,7 +732,7 @@ class AssistantAgentService(BaseService):
             return
 
         # 6.缓存未命中，调用LLM生成新内容
-        logging.info(
+        logger.info(
             f"辅助Agent介绍缓存未命中，调用LLM生成，账号ID: {account.id}, 指纹: {fingerprint}"
         )
 
@@ -759,7 +762,7 @@ class AssistantAgentService(BaseService):
                 end_on="human",
             )
         except Exception:
-            logging.exception(
+            logger.exception(
                 "辅助Agent介绍提示词trim_messages失败，将退化为原始消息继续生成"
             )
 
@@ -777,7 +780,7 @@ class AssistantAgentService(BaseService):
                 data = {"content": chunk_content}
                 yield f"event: intro_chunk\ndata:{json.dumps(data)}\n\n"
         except Exception:
-            logging.exception("辅助Agent介绍流式生成失败")
+            logger.exception("辅助Agent介绍流式生成失败")
             error_data = {"observation": "个性化介绍生成失败，请稍后重试"}
             yield f"event: error\ndata:{json.dumps(error_data)}\n\n"
             return
@@ -967,7 +970,7 @@ class AssistantAgentService(BaseService):
             if cached_data:
                 return json.loads(cached_data)
         except Exception:
-            logging.exception("获取辅助Agent介绍缓存失败")
+            logger.exception("获取辅助Agent介绍缓存失败")
         return None
 
     def _set_cached_introduction(
@@ -982,7 +985,7 @@ class AssistantAgentService(BaseService):
                 json.dumps(data, ensure_ascii=False),
             )
         except Exception:
-            logging.exception("设置辅助Agent介绍缓存失败")
+            logger.exception("设置辅助Agent介绍缓存失败")
 
     def _clear_introduction_cache(self, account_id: UUID) -> None:
         """清除指定账号的所有介绍缓存"""
@@ -999,7 +1002,7 @@ class AssistantAgentService(BaseService):
                 if cursor == 0:
                     break
         except Exception:
-            logging.exception("清除辅助Agent介绍缓存失败")
+            logger.exception("清除辅助Agent介绍缓存失败")
 
     @classmethod
     def _build_introduction_prompt_messages(

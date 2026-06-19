@@ -24,15 +24,14 @@ export type AdminRoutingLogRecord = {
   task_classification: RoutingLogJsonObject
   routing_decision: RoutingLogJsonObject
   agent_candidates: RoutingLogJsonObject[]
-  selected_agents: RoutingLogJsonObject[]
   filtered_out_agents: RoutingLogJsonObject[]
   tool_candidates: RoutingLogJsonObject[]
-  selected_tools: RoutingLogJsonObject[]
   filtered_out_tools: RoutingLogJsonObject[]
   billing_events: RoutingLogJsonObject[]
   model_selection: RoutingLogJsonObject
   agent_pool_hits: RoutingLogJsonObject[]
   tool_pool_hits: RoutingLogJsonObject[]
+  knowledge_hits: RoutingLogJsonObject[]
   key_usage: RoutingLogJsonObject
   cost_summary: RoutingLogJsonObject
   latency_ms: number

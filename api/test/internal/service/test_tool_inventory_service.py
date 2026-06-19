@@ -12,7 +12,7 @@ from internal.service.tool_inventory_service import (
     ToolCandidateCollector,
     ToolPolicyFilter,
     ToolRanker,
-    ToolSubsetBuilder,
+    CrossPoolToolSubsetBuilder,
 )
 
 
@@ -450,7 +450,7 @@ def test_subset_builder_should_output_selected_backup_and_filtered_tools():
         },
     )
     filtered = {"id": "unsafe", "name": "unsafe", "reason": "tool_unhealthy"}
-    builder = ToolSubsetBuilder(
+    builder = CrossPoolToolSubsetBuilder(
         collector=ToolCandidateCollector(
             session=_SessionStub(),
             builtin_tool_service=SimpleNamespace(get_builtin_tools=lambda: []),
@@ -484,7 +484,7 @@ def test_subset_builder_should_filter_by_pool_and_allowed_agent_pool():
             "metadata": normalize_tool_metadata({"tool_pool": "code", "allowed_agent_pools": ["dev"]}),
         },
     ]
-    builder = ToolSubsetBuilder(
+    builder = CrossPoolToolSubsetBuilder(
         collector=ToolCandidateCollector(session=_SessionStub(), builtin_tool_service=SimpleNamespace(get_builtin_tools=lambda: [])),
         policy_filter=ToolPolicyFilter(),
     )

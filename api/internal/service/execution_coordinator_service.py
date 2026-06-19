@@ -1,4 +1,5 @@
-import logging
+﻿import logging
+logger = logging.getLogger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Protocol
 
@@ -166,7 +167,7 @@ class ExecutionCoordinatorService:
                 },
             )
         except Exception:
-            logging.warning("记录 agent_completed 事件失败", exc_info=True)
+            logger.warning("记录 agent_completed 事件失败", exc_info=True)
 
     def _safe_execute_item(
         self, item: TaskPlanItem, execution_mode: str

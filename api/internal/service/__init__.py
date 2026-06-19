@@ -8,8 +8,8 @@ from .app_service import AppService
 from .base_service import BaseService
 from .billing_metering_service import BillingMetering, BillingUsageAggregator
 from .builtin_tool_service import BuiltinToolService
-from .tool_confirmation_service import ToolConfirmationService, ToolInvoker
-from .tool_inventory_service import ToolCandidateCollector, ToolPolicyFilter, ToolSubsetBuilder
+from .tool_confirmation_service import ToolConfirmationService
+from .tool_inventory_service import ToolCandidateCollector, ToolPolicyFilter, CrossPoolToolSubsetBuilder
 from .conversation_service import ConversationService
 from .cos_service import CosService
 from .credit_service import CreditService
@@ -100,10 +100,9 @@ __all__ = [
     "RequestContextBuilder",
     "ModelAssignmentPolicy",
     "ToolConfirmationService",
-    "ToolInvoker",
     "ToolCandidateCollector",
     "ToolPolicyFilter",
-    "ToolSubsetBuilder",
+    "CrossPoolToolSubsetBuilder",
     "SegmentService",
     "TagService",
     "RetrievalService",
