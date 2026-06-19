@@ -68,7 +68,7 @@ class OrchestratorService:
                     "execution_mode": decision.execution_mode,
                 },
             )
-            if not self._flag_enabled("ENABLE_MULTI_AGENT_EXECUTION", default=True):
+            if not self._flag_enabled("ENABLE_MULTI_AGENT_EXECUTION", default=False):
                 decision.needs_multi_agent = False
                 if decision.execution_mode in (
                     ExecutionMode.MULTI_AGENT.value,
