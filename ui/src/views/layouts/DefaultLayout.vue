@@ -12,6 +12,7 @@ import { useAccountStore } from '@/stores/account'
 import LoginModal from '@/views/auth/components/LoginModal.vue'
 import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
+import { isAdminCredentialLoggedIn, getStoredAdminCredential } from '@/utils/admin-auth'
 import IconOpenAgent from '@/components/icons/IconOpenAgent.vue'
 import { useRoute } from 'vue-router'
 import { getUserAvatarUrl } from '@/utils/helper'
@@ -41,6 +42,7 @@ const { handleLogout: handleLogoutHook } = useLogout()
 const { current_user, loadCurrentUser } = useGetCurrentUser()
 const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
+const isAdminLoggedIn = computed(() => isAdminCredentialLoggedIn(getStoredAdminCredential()))
 const sidebarWidth = computed(() => (sidebarCollapsed.value ? 80 : 240))
 const isSearchActive = computed(() => route.path === '/search')
 
@@ -365,11 +367,25 @@ watch(settingModalVisible, async (visible) => {
               </a-avatar>
               <!-- 个人信息 - 使用 v-show 保持 DOM 结构 -->
               <div v-show="!sidebarCollapsed" class="flex flex-col min-w-0 flex-1">
-                <div class="text-sm text-gray-900 truncate">{{ accountStore.account.name }}</div>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-sm text-gray-900 truncate">{{ accountStore.account.name }}</span>
+                  <span
+                    v-if="isAdminLoggedIn"
+                    class="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 rounded"
+                  >
+                    {{ $t('layout.sidebar.adminConsole') }}
+                  </span>
+                </div>
                 <div class="text-xs text-gray-500 truncate">{{ accountStore.account.email }}</div>
               </div>
             </div>
             <template #content>
+              <a-doption v-if="isAdminLoggedIn" @click="router.push('/admin')">
+                <template #icon>
+                  <icon-dashboard />
+                </template>
+                {{ $t('layout.sidebar.adminConsole') }}
+              </a-doption>
               <a-doption @click="settingModalVisible = true">
                 <template #icon>
                   <icon-settings />

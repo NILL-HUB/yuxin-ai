@@ -176,6 +176,16 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).not.toContain('管理控制台')
   })
 
+  it('shows admin console entry for logged-in admins', async () => {
+    mocks.adminLoggedIn = true
+
+    const wrapper = mountSidebar()
+    await flushPromises()
+
+    expect(wrapper.findAll('a[data-to="/admin"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('管理后台')
+  })
+
   it('renders the skills and mcp store entries only once', async () => {
     const wrapper = mountSidebar()
     await flushPromises()

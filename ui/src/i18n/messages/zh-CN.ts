@@ -128,6 +128,7 @@ export default {
     sidebar: {
       home: '主页',
       configCenter: '配置中心',
+      adminConsole: '管理后台',
       personalSpace: '配置中心',
       explore: '探索',
       appStore: '应用广场',

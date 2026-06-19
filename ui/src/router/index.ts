@@ -229,19 +229,19 @@ const router = createRouter({
               path: 'admin-users',
               name: 'admin-admin-users',
               component: { template: '<h2>管理员管理</h2>' },
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['admin_user:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['admin_user:read'], roles: ['super_admin'] },
             },
             {
               path: 'roles',
               name: 'admin-roles',
               component: { template: '<h2>角色权限</h2>' },
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['role:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['role:read'], roles: ['super_admin'] },
             },
             {
               path: 'audit-logs',
               name: 'admin-audit-logs',
               component: { template: '<h2>审计日志</h2>' },
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['audit_log:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['audit_log:read'], roles: ['super_admin'] },
             },
             {
               path: 'routing-logs',
@@ -282,7 +282,7 @@ const router = createRouter({
         {
           path: 'admin/login',
           name: 'admin-login',
-          redirect: { path: '/auth/login', query: { mode: 'admin' } },
+          component: () => import('@/views/admin/LoginView.vue'),
           meta: { adminGuestOnly: true },
         },
         {
@@ -427,13 +427,17 @@ export const getAdminAuthGuardRedirect = ({
   routeName,
   isAdminLoggedIn,
   adminPermissions = [],
+  adminRoles = [],
   requiredPermissions,
+  requiredRoles,
 }: {
   path: string
   routeName: string
   isAdminLoggedIn: boolean
   adminPermissions?: string[]
+  adminRoles?: string[]
   requiredPermissions?: string[]
+  requiredRoles?: string[]
 }) => {
   if (routeName === 'admin-login') {
     return isAdminLoggedIn ? { path: '/admin' as const } : null
@@ -443,6 +447,12 @@ export const getAdminAuthGuardRedirect = ({
   }
   if (!isAdminLoggedIn) {
     return { path: '/auth/login' as const, query: { mode: 'admin', redirect: path } }
+  }
+  if (requiredRoles && requiredRoles.length > 0) {
+    const hasRole = requiredRoles.some((role) => adminRoles.includes(role))
+    if (!hasRole) {
+      return { path: '/errors/403' as const }
+    }
   }
   if (requiredPermissions && requiredPermissions.length > 0) {
     const hasAll = requiredPermissions.every((permission) => adminPermissions.includes(permission))
@@ -460,7 +470,9 @@ router.beforeEach(async (to) => {
     routeName: String(to.name || ''),
     isAdminLoggedIn: isAdminCredentialLoggedIn(getStoredAdminCredential()),
     adminPermissions: adminStore.admin.permissions,
+    adminRoles: adminStore.admin.roles,
     requiredPermissions: to.meta?.permissions as string[] | undefined,
+    requiredRoles: to.meta?.roles as string[] | undefined,
   })
 
   if (adminRedirect) {

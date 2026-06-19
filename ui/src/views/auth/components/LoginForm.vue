@@ -754,7 +754,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       await adminLogin(loginForm.value.identifier.trim(), loginForm.value.password)
       if (props.redirectAfterLogin) {
         Message.success('管理员登录成功，正在跳转')
-        const redirectPath = typeof route.query.redirect === 'string' ? route.query.redirect : '/home'
+        const redirectPath = typeof route.query.redirect === 'string' ? route.query.redirect : '/admin'
         await router.replace({ path: redirectPath })
         return
       }

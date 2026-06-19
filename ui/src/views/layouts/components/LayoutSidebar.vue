@@ -315,6 +315,17 @@ onUnmounted(() => {
           {{ $t('layout.sidebar.configCenter') }}
         </span>
       </router-link>
+      <router-link
+        v-if="isAdminLoggedIn"
+        to="/admin"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/admin') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/admin') ? t('layout.sidebar.adminConsole') : ''"
+      >
+        <icon-settings class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.adminConsole') }}
+        </span>
+      </router-link>
       <div v-show="!props.collapsed" class="text-gray-500 text-xs px-2 mt-1 mb-1">
         {{ $t('layout.sidebar.explore') }}
       </div>
