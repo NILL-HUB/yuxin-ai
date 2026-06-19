@@ -21,6 +21,15 @@ from internal.service.faiss_service import FaissService
 from internal.service.notification_service import NotificationService
 from internal.service.cos_service import CosService
 from internal.core.ports.storage_port import ObjectStoragePort
+from internal.service.orchestrator_service import OrchestratorService
+from internal.service.task_classifier_service import TaskClassifierService
+from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
+from internal.service.request_context_builder_service import RequestContextBuilder
+from internal.service.cost_policy_service import CostPolicyService
+from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
+from internal.service.task_planner_service import TaskPlannerService
+from internal.service.pool_intent_resolver_service import PoolIntentResolver
+from internal.service.language_model_service import LanguageModelService
 
 
 class ExtensionModule(Module):
@@ -44,8 +53,19 @@ class ExtensionModule(Module):
         binder.bind(EmbeddingsService, to=EmbeddingsService, scope=singleton)
         binder.bind(FaissService, to=FaissService, scope=singleton)
         binder.bind(NotificationService, to=NotificationService, scope=singleton)
+        binder.bind(LanguageModelService, to=LanguageModelService, scope=singleton)
 
         # 注册端口绑定（反转 core→service 反向依赖）
         binder.bind(ObjectStoragePort, to=CosService)
+
+        # 注册编排子系统依赖（激活主调度链）
+        binder.bind(TaskClassifierService, to=TaskClassifierService)
+        binder.bind(ExecutionModeSelectorService, to=ExecutionModeSelectorService)
+        binder.bind(RequestContextBuilder, to=RequestContextBuilder)
+        binder.bind(CostPolicyService, to=CostPolicyService)
+        binder.bind(ModelAssignmentPolicy, to=ModelAssignmentPolicy)
+        binder.bind(TaskPlannerService, to=TaskPlannerService)
+        binder.bind(PoolIntentResolver, to=PoolIntentResolver)
+        binder.bind(OrchestratorService, to=OrchestratorService)
 
 injector = Injector([ExtensionModule])
