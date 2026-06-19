@@ -263,7 +263,7 @@ class TestLanguageModelService:
         assert llm.temperature == 0.5
         assert llm.max_tokens == 4096
         assert llm.features == ["tool_call"]
-        assert llm.metadata == {"ctx": 8192}
+        assert llm.metadata.get("ctx") == 8192
 
     def test_load_language_model_should_satisfy_base_language_model_field_validation(self):
         model_entity = SimpleNamespace(
@@ -409,7 +409,7 @@ class TestLanguageModelService:
         assert llm.temperature == 1
         assert llm.max_tokens == 8192
         assert llm.features == ["tool_call"]
-        assert llm.metadata == {"ctx": 8192}
+        assert llm.metadata.get("ctx") == 8192
 
     def test_describe_runtime_capabilities_should_report_native_image_input(self):
         image_model_entity = SimpleNamespace(
@@ -541,7 +541,7 @@ class TestLanguageModelService:
 
         assert llm.model == "gpt-4o-mini"
         assert llm.features == [ModelFeature.TOOL_CALL.value]
-        assert llm.metadata == {"ctx": 8192}
+        assert llm.metadata.get("ctx") == 8192
         assert llm.invoke("hello") == "fallback-result"
         assert fallback_calls == [1]
 

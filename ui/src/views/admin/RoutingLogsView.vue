@@ -159,6 +159,10 @@ onMounted(loadRoutingLogs)
           <tr>
             <th class="p-3">{{ t('admin.routingLogs.userQuery') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.classification') }}</th>
+            <th class="p-3">执行模式</th>
+            <th class="p-3">意图</th>
+            <th class="p-3">风险等级</th>
+            <th class="p-3">成本策略</th>
             <th class="p-3">{{ t('admin.routingLogs.model') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.agentPool') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.toolPool') }}</th>
@@ -173,6 +177,10 @@ onMounted(loadRoutingLogs)
           <tr v-for="log in logs" :key="log.id" class="border-t">
             <td class="p-3">{{ log.user_query || '-' }}</td>
             <td class="p-3">{{ log.task_classification.complexity || '-' }}</td>
+            <td class="p-3">{{ log.routing_decision?.execution_mode || '-' }}</td>
+            <td class="p-3">{{ log.routing_decision?.intent || '-' }}</td>
+            <td class="p-3">{{ log.routing_decision?.risk_level || '-' }}</td>
+            <td class="p-3">{{ log.routing_decision?.cost_policy?.allowed === false ? '拒绝' : (log.routing_decision?.cost_policy?.allowed === true ? '允许' : '-') }}</td>
             <td class="p-3">{{ log.model_selection.model_id || '-' }}</td>
             <td class="p-3">{{ log.agent_pool_hits[0]?.pool || '-' }}</td>
             <td class="p-3">{{ log.tool_pool_hits[0]?.pool || '-' }}</td>

@@ -88,6 +88,7 @@ class AssistantAgentService(BaseService):
     orchestrator_service: OrchestratorService | None = None
     result_synthesizer_service: ResultSynthesizerService | None = None
     ENABLE_DIRECT_ANSWER_EXECUTOR = True
+    ENABLE_MULTI_AGENT_EXECUTION = False
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -249,6 +250,68 @@ class AssistantAgentService(BaseService):
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["直接回答"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
 
+    def _stream_multi_agent(self, req, account, conversation, message, routing_decision, llm, tools, history):
+        """multi_agent 路径：用 TaskPlanner 生成计划，ExecutionCoordinator 协调多 Agent 执行。"""
+        from internal.entity.billing_metering_entity import BillingEventType
+        from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
+        from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.agent_task_executor import AgentTaskExecutor
+        from internal.service.execution_coordinator_service import ExecutionCoordinatorService
+
+        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_started = billing_aggregator.started()
+        yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
+
+        try:
+            agent_config = AgentConfig(
+                user_id=account.id,
+                invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+                preset_prompt=ASSISTANT_AGENT_MARKDOWN_PRESET_PROMPT,
+                enable_long_term_memory=True,
+                enable_deep_thinking=False,
+                runtime_flask_app=current_app._get_current_object(),
+                language_model_service=self.language_model_service,
+                tools=tools,
+            )
+
+            executor = AgentTaskExecutor(
+                agent_class=FunctionCallAgent,
+                agent_config=agent_config,
+                tools=tools,
+                llm=llm,
+                history=history,
+                query=req.query.data,
+            )
+
+            plan_items = [
+                TaskPlanItem(
+                    task_id=str(message.id),
+                    title=req.query.data,
+                    description=req.query.data,
+                    execution_order=0,
+                )
+            ]
+            plan = TaskPlan(original_query=req.query.data, items=plan_items, execution_mode="parallel")
+
+            coordinator = ExecutionCoordinatorService(executor=executor)
+            results = coordinator.execute(plan)
+
+            final_answer = ""
+            for result in results:
+                if result.answer:
+                    final_answer = result.answer
+                yield f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{json.dumps({'id': str(message.id), 'thought': result.task_id, 'observation': result.answer, 'answer': result.answer, 'conversation_id': str(conversation.id), 'message_id': str(message.id), 'latency': 0, 'total_token_count': 0}, ensure_ascii=False)}\n\n"
+
+            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': final_answer or '多智能体执行完成，但未获得有效回答。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+
+            billing_final = billing_aggregator.final()
+            yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+        except Exception as e:
+            logging.warning("多智能体执行失败: %s", e, exc_info=True)
+            billing_cancelled = billing_aggregator.cancelled(pending_phases=["多智能体执行"])
+            yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
+            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '多智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+
     def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用和全局 MCP 绑定。"""
         search_public_agents_tool = (
@@ -379,6 +442,10 @@ class AssistantAgentService(BaseService):
                 return
             if execution_mode == "direct_answer" and self.ENABLE_DIRECT_ANSWER_EXECUTOR:
                 yield from self._stream_direct_answer(req, account, conversation, message)
+                self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
+                return
+            if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential") and self.ENABLE_MULTI_AGENT_EXECUTION:
+                yield from self._stream_multi_agent(req, account, conversation, message, routing_decision, llm, tools, history)
                 return
 
         should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
@@ -568,17 +635,24 @@ class AssistantAgentService(BaseService):
                 self._active_cancel_tokens.pop(str(cancel_task_id), None)
 
         # 14.将消息以及推理过程添加到数据库
-        self.conversation_service.save_agent_thoughts(
-            account_id=account.id,
-            app_id=assistant_agent_id,
-            app_config={
-                "long_term_memory": {"enable": True},
-            },
-            conversation_id=conversation.id,
-            message_id=message.id,
-            agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()],
-            routing_decision=routing_decision,
-        )
+        self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision)
+
+    def _persist_assistant_thoughts(self, account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision):
+        """持久化消息与推理过程到数据库。"""
+        try:
+            self.conversation_service.save_agent_thoughts(
+                account_id=account.id,
+                app_id=assistant_agent_id,
+                app_config={
+                    "long_term_memory": {"enable": True},
+                },
+                conversation_id=conversation.id,
+                message_id=message.id,
+                agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()] if isinstance(agent_thoughts, dict) else (agent_thoughts or []),
+                routing_decision=routing_decision,
+            )
+        except Exception:
+            logging.warning("持久化推理过程失败", exc_info=True)
 
     def generate_introduction(self, account: Account) -> Generator[str, None, None]:
         """流式生成首页辅助Agent个性化介绍（支持缓存优化）"""
