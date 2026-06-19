@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档名称 | 通用 Agent 调度平台分阶段演进 PRD |
-| 版本 | v3.0 |
-| 日期 | 2026-06-15 |
+| 版本 | v3.1 |
+| 日期 | 2026-06-19 |
 | 适用范围 | OpenAgent 主入口 `/home`、Assistant Agent、Agent 池、工具池、MCP、模型路由、任务编排、结果汇总、配置中心、测试体系 |
 | 主要受众 | 产品、研发、测试、架构、运维、后续接手项目的 AI/工程 Agent |
-| 当前状态 | Phase 1-14 已提交 |
+| 当前状态 | Phase 1-14 已提交，架构审计技术债清理已完成 |
 
 ## 2. 背景与问题定义
 
@@ -2295,6 +2295,23 @@ standard 失败或置信度低 -> strong
 - 用户资料查询类任务优先检索用户资料内容库。
 - 用户 A 不能检索用户 B 的个人知识库。
 
+### 已完成内容
+
+- `KnowledgeScope`、`OperationContext`、`VisibilityScope` 枚举与知识归属字段（`owner_account_id`、`owner_admin_user_id`、`target_tenant_id`、`target_project_id`）。
+- `UserMemory` 模型与 `MemoryCandidate` 候选机制（候选先置 pending，三次高置信触发后再询问用户）。
+- `MemoryConfidenceTracker` 实现“三次高置信触发”聚合策略。
+- 用户长期记忆确认卡片与管理入口（查看、编辑、删除、启用 / 禁用）。
+- 系统级知识库管理入口，记录 admin 身份与 operation_context。
+- 知识检索工具子池接入 ToolInventory。
+- `KnowledgeRetrievalOrchestrator` 实现 scope 优先级检索：vertical_agent_task → system + user_content，preference_query → user_memory，general_qa → user_content + user_memory。
+- 用户 A / B 隔离与作用域回归测试。
+
+### 验收状态
+
+- 后端全量测试通过。
+- migration heads/current 通过。
+- Phase 10 已提交。
+
 ## 16.12 Phase 11：高风险工具统一确认与审计闭环
 
 ### 目标
@@ -2318,6 +2335,23 @@ standard 失败或置信度低 -> strong
 - 默认焦点不能落在执行按钮上。
 - 用户取消后不执行工具，并返回可理解的替代说明。
 - 已进入不可中断外部写操作时，系统记录审计并提示用户可能已生效。
+
+### 已完成内容
+
+- `ToolConfirmation` 实体与持久化模型，confirmation_id 机制。
+- confirmation create / confirm / cancel API 与统一确认卡片前端组件。
+- ToolInvoker 执行前等待确认，默认焦点不落在执行按钮。
+- 确认卡片展示风险等级、工具名称、目标系统、目标环境、执行摘要、影响范围、回滚策略、授权状态和审计提示。
+- `ToolConfirmationService` confirm / cancel 接入 `ToolInvocationAuditService` 记录审计日志。
+- ToolInvoker 识别不可中断写操作（增删改、部署、权限变更等关键词）并自动生成 audit_hint。
+- 用户取消后 ResultSynthesizer 返回可理解的替代说明。
+- prompt 注入绕过确认 UI 的安全测试。
+
+### 验收状态
+
+- 后端全量测试通过。
+- migration（d1e2f3a4b5d7 扩展 ToolConfirmation 审计字段）通过。
+- Phase 11 已提交。
 
 ## 16.13 Phase 12：用户侧实时计费、任务终止与已发生成本展示
 
@@ -2346,6 +2380,20 @@ standard 失败或置信度低 -> strong
 - 停止后仍返回已完成内容、已发生成本和未执行阶段说明。
 - 高风险工具确认 UI 中展示的当前消耗与主任务计费 UI 一致。
 
+### 已完成内容
+
+- `billing_started`、`billing_delta`、`billing_summary`、`billing_cancelled`、`billing_final` 五类 SSE 计费事件。
+- `cancel_request` 事件与用户侧停止按钮。
+- `CancelToken`（基于 threading.Event）协调执行终止，ExecutionCoordinator 每轮迭代检查 is_cancelled。
+- `AssistantAgentService.stop_chat` 调用 `_cancel_active_token` 并向 `billing_cancelled` 传递 pending_phases。
+- `BillingUsageCancelled` 增加 pending_phases 字段，终止后返回已完成内容、已发生成本和未执行阶段说明。
+- 前端 BillingUsageIndicator 持续展示当前已发生消耗，不自估算最终成本。
+
+### 验收状态
+
+- 后端全量测试通过。
+- Phase 12 已提交。
+
 ## 16.14 Phase 13：外部数据源连接与同步
 
 ### 目标
@@ -2370,6 +2418,22 @@ standard 失败或置信度低 -> strong
 - 同步后的文本和结构化资料可被动态知识检索工具召回。
 - 外部数据源不会污染系统级知识库。
 
+### 已完成内容
+
+- `ExternalDataSource` 模型，含 source_type、auth_status、sync_status、scope、last_error 字段。
+- `BaseConnector` 抽象与 `ConnectorFactory` 按 source_type 分发。
+- 真实连接器：`LarkConnector`、`LocalFolderConnector`、`NotionConnector`、`GitHubConnector`（已替换全部 Mock 占位）。
+- 同步管道将外部资料切分为 KnowledgeSegment 入库，按作用域隔离。
+- ExternalDataSource CRUD + authorize API 与前端管理页面。
+- `ExternalDataRetrievalTool` LangChain 工具接入 ToolInventory，可被动态知识检索召回。
+- 同步历史与错误原因可追踪。
+
+### 验收状态
+
+- 后端全量测试通过。
+- migration（d1e2f3a4b5d5 last_error）通过。
+- Phase 13 已提交。
+
 ## 16.15 Phase 14：调优建议采纳与策略变更草稿
 
 ### 目标
@@ -2393,6 +2457,52 @@ standard 失败或置信度低 -> strong
 - 应用后写入审计日志。
 - 应用失败时不产生部分策略变更。
 - 管理员可以 dismiss 不适用建议并记录原因。
+
+### 已完成内容
+
+- `PolicyChangeDraft` 实体与持久化模型，migration d1e2f3a4b5d6。
+- suggestion 状态流转 open / accepted / dismissed / applied，`RoutingOptimizationSuggestionService` 提供 accept / dismiss / apply。
+- `RoutingPolicyChangeService` 提供 generate_preview / apply_draft / rollback_draft。
+- `_build_before_config` / `_build_after_config` 基于证据返回真实变更前后配置（已替换空占位）。
+- `apply_draft` 调用 `_apply_policy_changes` 实际更新 OrchestrationFeatureFlag，应用失败时不产生部分变更。
+- 6 个管理端点与 4 个 RBAC 权限（routing_quality:accept / dismiss / apply / rollback）。
+- 前端 SuggestionsView 与策略变更审计闭环。
+
+### 验收状态
+
+- 后端全量测试通过。
+- migration（d1e2f3a4b5d6 policy_change_draft）通过。
+- Phase 14 已提交。
+
+## 16.16 架构审计与技术债清理（质量加固）
+
+### 目标
+
+对照第 5 章目标架构与第 13/14/15 章设计，审计 Phase 1-14 实现与架构设计的差距，补全功能完成度缺陷，并将全部 Mock 占位替换为真实数据层，避免遗留技术债。
+
+### 审计发现与修复
+
+| 审计项 | 缺陷 | 修复 |
+| --- | --- | --- |
+| 执行模式 | ExecutionMode 仅实现 4 值，缺少 parallel/sequential/deep_thinking/reject_or_confirm | 扩展至 7+1 值，TaskClassifier 增加关键词识别与模式分流 |
+| 结果汇总 | ResultSynthesizer 仅做字符串拼接，无冲突检测 | 增加 9 组矛盾词对冲突检测、答案合并去重、成本摘要、置信度惩罚 |
+| 知识检索 | Phase 10 缺少 scope 优先级检索编排 | 新增 KnowledgeRetrievalOrchestrator，按 task_intent 映射 scope 优先级 |
+| 长期记忆 | extract_and_store 直接写 UserMemory，跳过候选审批 | 改为先创建 MemoryCandidate(pending)，满足三次高置信触发后再询问 |
+| 工具确认 | ToolConfirmation 缺少审计字段，confirm/cancel 未记审计 | 新增 6 个审计字段，confirm/cancel 接入 ToolInvocationAuditService |
+| 计费终止 | stop_chat 仅置 Redis 标志，未协调执行终止，pending_phases 丢失 | 引入 CancelToken，ExecutionCoordinator 每轮检查取消，传递 pending_phases |
+| 外部数据源 | Notion / GitHub 连接器为 Mock 占位 | 实现真实 NotionConnector / GitHubConnector，移除全部 Mock |
+| 外部检索 | 外部资料未接入工具池 | 新增 ExternalDataRetrievalTool 并注册到 ToolInventory |
+| 策略变更 | before/after 配置为空，apply 不改变策略 | 返回真实证据配置，apply_draft 实际更新 OrchestrationFeatureFlag |
+| 可观测事件 | 13 类离散事件未记录 | 新增 RoutingEventLogger，OrchestratorService 在关键节点发射 9 类事件 |
+| 日志保留 | 保留周期不可配置 | 新增 RoutingLogRetentionService 支持保留天数可配置 |
+| 用户摘要 | 缺少用户维度路由摘要视图 | 新增 UserRoutingSummaryService |
+
+### 验收状态
+
+- 后端全量测试 2310 passed, 6 skipped（较 2283 基线新增 27 个测试）。
+- migration 链完整，head 为合并迁移 b1c2d3e4f5a6。
+- 路由总数 281。
+- 技术债清理已提交（commit f6ac702）。
 
 ## 17. 跨阶段测试策略
 
@@ -2533,26 +2643,29 @@ standard 失败或置信度低 -> strong
 
 ## 22. 推荐优先级
 
-Phase 1-9 已经完成调度平台的控制面、治理面、发布回滚和质量反馈闭环。后续优先级应从“继续补调度控制面”转向“让系统具备长期上下文、安全执行和用户可控成本”。
+Phase 1-14 已全部完成调度平台的控制面、治理面、发布回滚、质量反馈闭环、长期上下文、安全执行、用户成本控制和运营调优闭环，并通过架构审计技术债清理补全了全部功能缺陷与 Mock 占位。后续优先级应转向“让系统具备多媒体理解能力和更完整的企业级治理”。
 
 推荐实施顺序：
 
 ```text
-P0：Phase 10 知识库分层、长期记忆与作用域隔离
-P0：Phase 11 高风险工具统一确认与审计闭环
-P1：Phase 12 用户侧实时计费、任务终止与已发生成本展示
-P1：Phase 13 外部数据源连接与同步
-P2：Phase 14 调优建议采纳与策略变更草稿
-P2：多媒体资料深度解析：OCR、ASR、视频抽帧、视觉理解
-P3：更完整的企业级租户、团队、项目权限矩阵
+已完成：Phase 1-9 调度控制面 / 治理面 / 发布回滚 / 质量反馈
+已完成：Phase 10 知识库分层、长期记忆与作用域隔离
+已完成：Phase 11 高风险工具统一确认与审计闭环
+已完成：Phase 12 用户侧实时计费、任务终止与已发生成本展示
+已完成：Phase 13 外部数据源连接与同步
+已完成：Phase 14 调优建议采纳与策略变更草稿
+已完成：16.16 架构审计与技术债清理（质量加固）
+
+P0：多媒体资料深度解析：OCR、ASR、视频抽帧、视觉理解
+P1：更完整的企业级租户、团队、项目权限矩阵
+P2：长期记忆自动评分与半自动 Agent / 工具质量评分
+P3：跨子池 A2A 多 Agent 协作编排增强
 ```
 
 不建议近期优先做：
 
-- 全自动应用调优建议并直接改生产路由策略。
+- 全自动应用调优建议并直接改生产路由策略（当前仍要求管理员确认）。
 - 默认开启所有高风险写操作工具。
-- 在知识库作用域重构前大规模接入外部数据源。
-- 在计费与终止链路完善前大规模推广长任务和多 Agent 重执行。
 - 一次性完成所有图片、视频、音频深度解析能力。
 
 ## 23. 近期可执行任务清单
@@ -2638,7 +2751,7 @@ P3：更完整的企业级租户、团队、项目权限矩阵
 2. **用户长期记忆生效范围**：全局作用域，匹配当前系统用户级粒度。
 3. **自动保存确认策略**：用户选择“后续自动保存长期记忆”后直接保存，不需要二次确认；仅在首次推荐用户开启自动保存时说明作用范围和影响。
 4. **系统知识库状态管理**：只做简单 CRUD，不需要发布 / 草稿 / 下线状态，简化实现。
-5. **外部数据源试点范围**：第一个阶段优先支持飞书和本地文件夹，后续再扩展 Notion / GitHub 等。
+5. **外部数据源试点范围**：第一阶段优先支持飞书和本地文件夹，技术债清理阶段已补全 Notion / GitHub 真实连接器，当前共支持四种真实连接器。
 6. **高风险确认 UI 复用**：确认 UI 做成全局通用组件，支持工具执行、外部消息发送、发布操作等所有高风险操作复用。
 
 没有阻塞性未解决问题，可以开始 Phase 10 实现。
@@ -2650,13 +2763,13 @@ P3：更完整的企业级租户、团队、项目权限矩阵
 当前路径已经完成：
 
 ```text
-调度骨架 -> Agent 元数据和子池标签 -> 工具治理 -> 动态工具检索 -> 成本路由 -> 多 Agent 编排 -> 结果汇总 -> 可观测性 -> 发布回滚 -> 质量反馈闭环
+调度骨架 -> Agent 元数据和子池标签 -> 工具治理 -> 动态工具检索 -> 成本路由 -> 多 Agent 编排 -> 结果汇总 -> 可观测性 -> 发布回滚 -> 质量反馈闭环 -> 知识库分层与长期记忆 -> 高风险工具统一确认 -> 用户侧实时计费与任务终止 -> 外部数据源同步 -> 调优建议采纳与策略变更 -> 架构审计技术债清理
 ```
 
 后续推荐路径调整为：
 
 ```text
-知识库分层与长期记忆 -> 高风险工具统一确认 -> 用户侧实时计费和任务终止 -> 外部数据源同步 -> 调优建议采纳 -> 多媒体资料深度解析
+多媒体资料深度解析 -> 企业级租户 / 团队 / 项目权限矩阵 -> 长期记忆与质量评分自动化 -> 跨子池 A2A 多 Agent 协作增强
 ```
 
 这样可以在已有调度平台控制面之上，继续补齐长期上下文、安全执行和用户成本控制能力，让系统从“会调度”进一步演进为“可长期理解用户、可安全执行任务、可持续运营优化”的 Agent 平台。
