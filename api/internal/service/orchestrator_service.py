@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 
 from injector import inject
 
@@ -7,9 +8,12 @@ from internal.service.billing_metering_service import BillingUsageAggregator
 from internal.service.cost_policy_service import CostPolicyService
 from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
 from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
+from internal.service.model_gateway_service import ModelGatewayService
 from internal.service.request_context_builder_service import RequestContextBuilder
 from internal.service.routing_observability_service import RoutingObservabilityService
 from internal.service.task_planner_service import TaskPlannerService
+from .agent_pool_service import CrossPoolAgentSubsetBuilder
+from .tool_inventory_service import CrossPoolToolSubsetBuilder
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
 
@@ -20,13 +24,14 @@ class OrchestratorService:
         self,
         task_classifier_service: TaskClassifierService,
         pool_intent_resolver: PoolIntentResolver | None = None,
-        subset_builder=None,
-        tool_subset_builder=None,
+        subset_builder: CrossPoolAgentSubsetBuilder | None = None,
+        tool_subset_builder: CrossPoolToolSubsetBuilder | None = None,
         task_planner: TaskPlannerService | None = None,
         feature_flag_service=None,
         event_logger=None,
         request_context_builder: RequestContextBuilder | None = None,
         model_assignment_policy: ModelAssignmentPolicy | None = None,
+        model_gateway_service: ModelGatewayService | None = None,
         cost_policy_service: CostPolicyService | None = None,
         execution_mode_selector: ExecutionModeSelectorService | None = None,
         routing_observability_service: RoutingObservabilityService | None = None,
@@ -40,6 +45,7 @@ class OrchestratorService:
         self.event_logger = event_logger
         self.request_context_builder = request_context_builder or RequestContextBuilder()
         self.model_assignment_policy = model_assignment_policy or ModelAssignmentPolicy()
+        self.model_gateway_service = model_gateway_service
         self.cost_policy_service = cost_policy_service or CostPolicyService()
         self.execution_mode_selector = execution_mode_selector or ExecutionModeSelectorService()
         self.routing_observability_service = routing_observability_service
@@ -78,7 +84,7 @@ class OrchestratorService:
                 routing_log_id,
                 {"matched_pools": pool_result.get("matched_pools", [])},
             )
-            subset = self._build_agent_subset(pool_result)
+            subset = self._build_agent_subset(pool_result, ctx.account_id)
             decision.agent_subset = subset
             self._emit(
                 "agent_selected",
@@ -205,7 +211,21 @@ class OrchestratorService:
                 },
             )
         except Exception:
-            logging.warning("记录路由可观测摘要失败", exc_info=True)
+            logging.warning("记录路由事件失败", exc_info=True)
+        if self.routing_observability_service is not None:
+            try:
+                self.routing_observability_service.summarize([
+                    SimpleNamespace(
+                        status="success",
+                        routing_log_id=str(routing_log_id),
+                        intent=decision.intent,
+                        execution_mode=decision.execution_mode,
+                        complexity=decision.complexity,
+                        risk_level=decision.risk_level,
+                    )
+                ])
+            except Exception:
+                logging.warning("路由可观测摘要记录失败", exc_info=True)
 
     def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
         task_plan = self.task_planner.plan(query, decision)
@@ -247,6 +267,12 @@ class OrchestratorService:
     def _attach_model_assignment(self, decision: RoutingDecision, ctx) -> None:
         if not self._flag_enabled("ENABLE_MODEL_ASSIGNMENT_POLICY", default=True):
             return
+        if self.model_gateway_service is not None:
+            try:
+                decision.recommended_model_tier = self.model_gateway_service.resolve_model_tier(decision, ctx)
+                return
+            except Exception:
+                logging.warning("ModelGateway 档位解析失败，回退直接策略", exc_info=True)
         decision.recommended_model_tier = self.model_assignment_policy.assign(decision, ctx)
 
     def _safe_cost_policy(self) -> dict:
@@ -281,7 +307,7 @@ class OrchestratorService:
             "selection_reason": selection_reason,
         }
 
-    def _build_agent_subset(self, pool_result: dict) -> dict:
+    def _build_agent_subset(self, pool_result: dict, account_id=None) -> dict:
         if not self._flag_enabled("ENABLE_AGENT_METADATA_ROUTING", default=True):
             return {
                 "matched_agent_pools": [],
@@ -299,6 +325,13 @@ class OrchestratorService:
                 "filtered_out_agents": [],
                 "selection_reason": f"matched pools: {','.join(matched_pools)}",
             }
+        candidates = []
+        if account_id is not None:
+            try:
+                collected = self.subset_builder.build(account_id)
+                candidates = collected.get("candidates", []) if isinstance(collected, dict) else []
+            except Exception:
+                logging.warning("Agent 候选收集失败，使用空候选列表", exc_info=True)
         return self.subset_builder.build_subset_from_candidates(
-            [], matched_pools=matched_pools
+            candidates, matched_pools=matched_pools
         )

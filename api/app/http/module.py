@@ -34,6 +34,22 @@ from internal.service.result_synthesizer_service import ResultSynthesizerService
 from internal.service.result_quality_checker_service import ResultQualityCheckerService
 from internal.service.model_gateway_service import ModelGatewayService
 from internal.service.routing_observability_service import RoutingObservabilityService
+from internal.service.agent_pool_service import (
+    CrossPoolAgentSubsetBuilder,
+    AgentCandidateCollector,
+    AgentPolicyFilter,
+    AgentRanker,
+)
+from internal.service.agent_pool_aggregate_service import (
+    AgentPoolService,
+    AgentInventory,
+)
+from internal.service.tool_inventory_service import (
+    CrossPoolToolSubsetBuilder,
+    ToolCandidateCollector,
+    ToolPolicyFilter,
+    ToolRanker,
+)
 
 
 class ExtensionModule(Module):
@@ -81,5 +97,20 @@ class ExtensionModule(Module):
 
         # 注册可观测层依赖（激活 L8 路由可观测）
         binder.bind(RoutingObservabilityService, to=RoutingObservabilityService)
+
+        # 注册 Agent 池治理层依赖（激活 L3 子集构建器）
+        binder.bind(AgentCandidateCollector, to=AgentCandidateCollector)
+        binder.bind(AgentPolicyFilter, to=AgentPolicyFilter)
+        binder.bind(AgentRanker, to=AgentRanker)
+        binder.bind(CrossPoolAgentSubsetBuilder, to=CrossPoolAgentSubsetBuilder)
+
+        binder.bind(AgentInventory, to=AgentInventory)
+        binder.bind(AgentPoolService, to=AgentPoolService)
+
+        # 注册工具池治理层依赖（激活 L4 子集构建器）
+        binder.bind(ToolCandidateCollector, to=ToolCandidateCollector)
+        binder.bind(ToolPolicyFilter, to=ToolPolicyFilter)
+        binder.bind(ToolRanker, to=ToolRanker)
+        binder.bind(CrossPoolToolSubsetBuilder, to=CrossPoolToolSubsetBuilder)
 
 injector = Injector([ExtensionModule])
