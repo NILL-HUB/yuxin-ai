@@ -265,7 +265,7 @@ describe('web-app chat submit failure', () => {
         query: '你好',
         conversation_id: '',
         image_urls: [],
-        enable_deep_thinking: false,
+        confirm_deep_thinking: false,
       }),
       expect.any(Function),
     )
@@ -322,7 +322,7 @@ describe('web-app chat submit failure', () => {
       'token-1',
       expect.objectContaining({
         query: '生成附件',
-        enable_deep_thinking: true,
+        confirm_deep_thinking: true,
       }),
       expect.any(Function),
     )

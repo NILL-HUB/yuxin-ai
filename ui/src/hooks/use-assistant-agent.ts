@@ -24,7 +24,7 @@ export const useAssistantAgentChat = () => {
     image_urls: string[] = [],
     conversation_id: string = '',
     onData: (event_response: Record<string, any>) => void,
-    enable_deep_thinking: boolean = false,
+    confirm_deep_thinking: boolean = false,
   ) => {
     try {
       loading.value = true
@@ -33,7 +33,7 @@ export const useAssistantAgentChat = () => {
         image_urls,
         conversation_id,
         onData,
-        enable_deep_thinking,
+        confirm_deep_thinking,
       )
     } finally {
       loading.value = false

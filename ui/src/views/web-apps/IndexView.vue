@@ -429,7 +429,7 @@ const handleSubmit = async () => {
       selectedConversation.value === 'new_conversation' ? '' : selectedConversation.value,
     query: humanQuery,
     image_urls: humanImageUrls,
-    enable_deep_thinking: enableDeepThinking.value,
+    confirm_deep_thinking: enableDeepThinking.value,
   }
   let chatSucceeded = false
   try {

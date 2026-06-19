@@ -435,4 +435,29 @@ describe('chat-stream', () => {
       'older-render-id',
     ])
   })
+
+  it('stores deep thinking proposal in state without polluting thoughts', () => {
+    const message = createMessage()
+    const state = createState()
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.deepThinkingProposal,
+        data: {
+          reason: '需要多步推理和沙箱执行',
+          estimated_steps: 4,
+        },
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.deepThinkingProposal).toEqual({
+      reason: '需要多步推理和沙箱执行',
+      estimated_steps: 4,
+    })
+    expect(message.agent_thoughts).toHaveLength(0)
+    expect(message.answer).toBe('')
+  })
 })

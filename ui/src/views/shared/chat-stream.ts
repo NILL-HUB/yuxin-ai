@@ -60,6 +60,12 @@ export type StreamState = {
   task_id: string
   conversation_id: string
   billingEvents: BillingUsageEvent[]
+  deepThinkingProposal?: DeepThinkingProposal | null
+}
+
+export type DeepThinkingProposal = {
+  reason: string
+  estimated_steps: number
 }
 
 export type StreamApplyResult = {
@@ -238,6 +244,12 @@ export const applyChatStreamEvent = (
       : {}
     message.artifacts = mergeChatArtifacts(message.artifacts, [toolInput.artifact || null])
     shouldRefreshOutputParts = true
+  } else if (event === QueueEvent.deepThinkingProposal) {
+    nextState.deepThinkingProposal = {
+      reason: String(data.reason ?? ''),
+      estimated_steps: Number(data.estimated_steps ?? 0) || 0,
+    }
+    return { state: nextState, didUpdate: true }
   } else if (event === QueueEvent.error) {
     message.answer = String(data.observation ?? '')
     shouldRefreshOutputParts = true

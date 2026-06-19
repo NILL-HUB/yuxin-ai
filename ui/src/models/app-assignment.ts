@@ -31,5 +31,5 @@ export type MyAppChatRequest = {
   query: string
   image_urls?: string[]
   conversation_id?: string
-  enable_deep_thinking?: boolean
+  confirm_deep_thinking?: boolean
 }
