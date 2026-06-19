@@ -5,6 +5,10 @@ from injector import inject
 from internal.entity.execution_orchestration_entity import (
     OrchestratedAgentResult,
 )
+from internal.service.result.agent_result_normalizer import AgentResultNormalizer
+from internal.service.result.conflict_resolver import ConflictResolver
+from internal.service.result.evidence_merger import EvidenceMerger
+from internal.service.result.final_answer_composer import FinalAnswerComposer
 from internal.service.result_quality_checker_service import ResultQualityCheckerService
 
 
@@ -40,12 +44,79 @@ class ResultSynthesizerService:
         routing_log_id=None,
     ) -> dict:
         self._emit("synthesis_started", routing_log_id, {"result_count": len(results)})
-        valid_results = [
-            result for result in results if result.answer and not result.errors
-        ]
         internal_notes = self._build_internal_notes(
             original_query, task_plan, errors or [], cost_summary or {}, results
         )
+        try:
+            normalizer = AgentResultNormalizer()
+            evidence_merger = EvidenceMerger()
+            conflict_resolver = ConflictResolver()
+            composer = FinalAnswerComposer()
+        except Exception:
+            logger.warning("结果汇总组件实例化失败，回退到原逻辑", exc_info=True)
+            return self._synthesize_legacy(
+                results, internal_notes, original_query, routing_log_id
+            )
+
+        normalized_results = [normalizer.normalize(result) for result in results]
+        valid_results = [
+            result
+            for result in normalized_results
+            if result.answer and not result.errors
+        ]
+        if not valid_results:
+            synthesis = {
+                "final_answer": "当前任务暂时无法完成，请稍后重试或缩小任务范围。",
+                "summary": "没有可用的 Agent 结果。",
+                "confidence": 0,
+                "visible_sources": [],
+                "user_warnings": ["fallback:no_valid_agent_result"],
+                "internal_notes": internal_notes,
+            }
+            self._emit(
+                "synthesis_completed",
+                routing_log_id,
+                {"confidence": 0, "visible_sources_count": 0},
+            )
+            return synthesis
+        quality_warnings = ResultQualityCheckerService().check(valid_results)
+        merged = evidence_merger.merge(valid_results)
+        conflict_result = conflict_resolver.resolve(
+            {"results": valid_results, **merged}
+        )
+        conflicts = conflict_result.get("conflicts", [])
+        composed = composer.compose(merged, conflict_result, valid_results)
+        all_warnings = self._unique(
+            [*self._warnings_from(normalized_results), *quality_warnings, *conflicts]
+        )
+        synthesis = {
+            "final_answer": composed["final_answer"],
+            "summary": self._build_summary(valid_results, original_query),
+            "confidence": composed["confidence"],
+            "visible_sources": merged.get("merged_sources", []),
+            "user_warnings": all_warnings,
+            "internal_notes": internal_notes,
+        }
+        self._emit(
+            "synthesis_completed",
+            routing_log_id,
+            {
+                "confidence": synthesis["confidence"],
+                "visible_sources_count": len(synthesis["visible_sources"]),
+            },
+        )
+        return synthesis
+
+    def _synthesize_legacy(
+        self,
+        results: list[OrchestratedAgentResult],
+        internal_notes: dict,
+        original_query: str,
+        routing_log_id,
+    ) -> dict:
+        valid_results = [
+            result for result in results if result.answer and not result.errors
+        ]
         if not valid_results:
             synthesis = {
                 "final_answer": "当前任务暂时无法完成，请稍后重试或缩小任务范围。",
@@ -69,7 +140,9 @@ class ResultSynthesizerService:
         synthesis = {
             "final_answer": self._merge_answers(valid_results),
             "summary": self._build_summary(valid_results, original_query),
-            "confidence": self._final_confidence(valid_results, quality_warnings, conflicts),
+            "confidence": self._final_confidence(
+                valid_results, quality_warnings, conflicts
+            ),
             "visible_sources": self._merge_sources(valid_results),
             "user_warnings": all_warnings,
             "internal_notes": internal_notes,
