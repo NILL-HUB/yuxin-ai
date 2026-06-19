@@ -30,6 +30,8 @@ from internal.service.model_assignment_policy_service import ModelAssignmentPoli
 from internal.service.task_planner_service import TaskPlannerService
 from internal.service.pool_intent_resolver_service import PoolIntentResolver
 from internal.service.language_model_service import LanguageModelService
+from internal.service.result_synthesizer_service import ResultSynthesizerService
+from internal.service.result_quality_checker_service import ResultQualityCheckerService
 
 
 class ExtensionModule(Module):
@@ -67,5 +69,9 @@ class ExtensionModule(Module):
         binder.bind(TaskPlannerService, to=TaskPlannerService)
         binder.bind(PoolIntentResolver, to=PoolIntentResolver)
         binder.bind(OrchestratorService, to=OrchestratorService)
+
+        # 注册结果汇总层依赖（激活 L7 结果合成与质量检查）
+        binder.bind(ResultQualityCheckerService, to=ResultQualityCheckerService)
+        binder.bind(ResultSynthesizerService, to=ResultSynthesizerService)
 
 injector = Injector([ExtensionModule])

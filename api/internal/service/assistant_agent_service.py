@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock, Thread
 from typing import Any, Generator
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from flask import current_app, has_app_context
 from injector import inject
@@ -54,6 +54,8 @@ from .conversation_service import ConversationService
 from .faiss_service import FaissService
 from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
+from .result_synthesizer_service import ResultSynthesizerService
+from internal.entity.execution_orchestration_entity import OrchestratedAgentResult
 from .public_agent_a2a_service import PublicAgentA2AService
 from .public_agent_registry_service import PublicAgentRegistryService
 
@@ -84,6 +86,7 @@ class AssistantAgentService(BaseService):
     public_agent_a2a_service: PublicAgentA2AService | None = None
     public_agent_registry_service: PublicAgentRegistryService | None = None
     orchestrator_service: OrchestratorService | None = None
+    result_synthesizer_service: ResultSynthesizerService | None = None
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -485,6 +488,38 @@ class AssistantAgentService(BaseService):
                     "task_id": str(agent_thought.task_id),
                 }
                 yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
+
+            if self.result_synthesizer_service is not None:
+                try:
+                    final_answer = ""
+                    for _thought in agent_thoughts.values():
+                        if getattr(_thought, "answer", ""):
+                            final_answer = _thought.answer
+                    if final_answer:
+                        synthesis = self.result_synthesizer_service.synthesize(
+                            results=[OrchestratedAgentResult(
+                                agent_id="assistant_agent",
+                                task_id=str(message.id),
+                                answer=final_answer,
+                                confidence=1.0,
+                            )],
+                            original_query=req.query.data,
+                        )
+                        for warning in synthesis.get("user_warnings", []):
+                            warning_data = json.dumps({
+                                "id": str(uuid4()),
+                                "thought": "质量提示",
+                                "observation": warning,
+                                "answer": "",
+                                "latency": 0,
+                                "total_token_count": 0,
+                                "conversation_id": str(conversation.id),
+                                "message_id": str(message.id),
+                                "task_id": str(message.id),
+                            }, ensure_ascii=False)
+                            yield f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{warning_data}\n\n"
+                except Exception:
+                    logging.warning("结果合成失败，跳过", exc_info=True)
         except Exception:
             billing_cancelled = True
             raise

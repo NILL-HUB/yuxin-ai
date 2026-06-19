@@ -1,5 +1,7 @@
 import logging
 
+from injector import inject
+
 from internal.entity.execution_orchestration_entity import (
     OrchestratedAgentResult,
 )
@@ -22,6 +24,7 @@ _CONFLICT_PAIRS = [
 ]
 
 
+@inject
 class ResultSynthesizerService:
     def __init__(self, event_logger=None):
         self.event_logger = event_logger
