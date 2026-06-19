@@ -23,12 +23,12 @@ class ModelGatewayService:
             return "cheap"
 
     def get_model(self, decision: RoutingDecision = None, context: RequestContext = None):
-        """获取模型实例，优先按档位选择，回退到 cheap 档。"""
+        """获取模型实例，按档位选择模型，回退到 cheap 档。"""
         tier = self.resolve_model_tier(decision, context) if decision else "cheap"
         try:
             if self.language_model_service is not None:
-                return self.language_model_service.get_cheap_chat_model()
-            return LanguageModelService.get_cheap_chat_model()
+                return self.language_model_service.get_chat_model_by_tier(tier)
+            return LanguageModelService.get_chat_model_by_tier(tier)
         except Exception:
             logger.warning("模型实例化失败，回退默认", exc_info=True)
-            return LanguageModelService.get_cheap_chat_model()
+            return LanguageModelService.get_chat_model_by_tier("cheap")

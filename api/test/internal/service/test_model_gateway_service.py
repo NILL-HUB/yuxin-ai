@@ -43,9 +43,9 @@ def test_resolve_model_tier_should_fallback_to_cheap_when_policy_raises():
 
 
 def test_get_model_should_return_model_instance_on_success():
-    fake_model = MagicMock(name="cheap_chat_model")
+    fake_model = MagicMock(name="chat_model")
     language_model_service = MagicMock()
-    language_model_service.get_cheap_chat_model.return_value = fake_model
+    language_model_service.get_chat_model_by_tier.return_value = fake_model
     policy = MagicMock()
     policy.assign.return_value = "balanced"
     gateway = ModelGatewayService(
@@ -56,13 +56,13 @@ def test_get_model_should_return_model_instance_on_success():
     model = gateway.get_model(_build_decision(), _build_context())
 
     assert model is fake_model
-    language_model_service.get_cheap_chat_model.assert_called_once()
+    language_model_service.get_chat_model_by_tier.assert_called_once_with("balanced")
 
 
 def test_get_model_should_work_when_decision_is_none():
-    fake_model = MagicMock(name="cheap_chat_model")
+    fake_model = MagicMock(name="chat_model")
     language_model_service = MagicMock()
-    language_model_service.get_cheap_chat_model.return_value = fake_model
+    language_model_service.get_chat_model_by_tier.return_value = fake_model
     policy = MagicMock()
     gateway = ModelGatewayService(
         language_model_service=language_model_service,
@@ -73,4 +73,4 @@ def test_get_model_should_work_when_decision_is_none():
 
     assert model is fake_model
     policy.assign.assert_not_called()
-    language_model_service.get_cheap_chat_model.assert_called_once()
+    language_model_service.get_chat_model_by_tier.assert_called_once_with("cheap")

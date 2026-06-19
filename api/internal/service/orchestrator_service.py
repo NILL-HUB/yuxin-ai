@@ -214,6 +214,8 @@ class OrchestratorService:
             logging.warning("记录路由事件失败", exc_info=True)
         if self.routing_observability_service is not None:
             try:
+                agent_subset = decision.agent_subset or {}
+                tool_subset = decision.tool_subset or {}
                 self.routing_observability_service.summarize([
                     SimpleNamespace(
                         status="success",
@@ -222,6 +224,13 @@ class OrchestratorService:
                         execution_mode=decision.execution_mode,
                         complexity=decision.complexity,
                         risk_level=decision.risk_level,
+                        fallback_reason="",
+                        latency_ms=0,
+                        cost_summary={"total_credits": 0},
+                        agent_pool_hits=agent_subset.get("selected_agents", []) if isinstance(agent_subset, dict) else [],
+                        tool_pool_hits=tool_subset.get("selected_tools", []) if isinstance(tool_subset, dict) else [],
+                        agent_candidates=agent_subset.get("selected_agents", []) if isinstance(agent_subset, dict) else [],
+                        tool_candidates=tool_subset.get("selected_tools", []) if isinstance(tool_subset, dict) else [],
                     )
                 ])
             except Exception:

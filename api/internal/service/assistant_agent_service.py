@@ -88,7 +88,6 @@ class AssistantAgentService(BaseService):
     orchestrator_service: OrchestratorService | None = None
     result_synthesizer_service: ResultSynthesizerService | None = None
     ENABLE_DIRECT_ANSWER_EXECUTOR = True
-    ENABLE_MULTI_AGENT_EXECUTION = False
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -239,11 +238,25 @@ class AssistantAgentService(BaseService):
 
         executor = DirectAnswerExecutor(language_model_service=self.language_model_service)
         try:
-            yield from executor.stream(
+            for chunk in executor.stream(
                 query=req.query.data,
                 conversation_id=str(conversation.id),
                 message_id=str(message.id),
-            )
+            ):
+                if f"event: {BillingEventType.DELTA.value}" in chunk:
+                    try:
+                        payload_json = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(payload_json)
+                        token_usage = payload.get("token_usage", {})
+                        billing_aggregator.model_tokens(
+                            "direct_answer",
+                            input_tokens=token_usage.get("prompt_tokens", 0),
+                            output_tokens=token_usage.get("completion_tokens", 0),
+                            reason="direct_answer_llm_invoke",
+                        )
+                    except Exception:
+                        logging.warning("direct_answer token 计费解析失败", exc_info=True)
+                yield chunk
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
         except Exception:
@@ -251,12 +264,10 @@ class AssistantAgentService(BaseService):
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
 
     def _stream_multi_agent(self, req, account, conversation, message, routing_decision, llm, tools, history):
-        """multi_agent 路径：用 TaskPlanner 生成计划，ExecutionCoordinator 协调多 Agent 执行。"""
+        """multi_agent 路径：委托 MultiAgentExecutor 协调多 Agent 执行，外层包裹计费事件。"""
         from internal.entity.billing_metering_entity import BillingEventType
-        from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
         from internal.service.billing_metering_service import BillingUsageAggregator
-        from internal.service.agent_task_executor import AgentTaskExecutor
-        from internal.service.execution_coordinator_service import ExecutionCoordinatorService
+        from internal.service.executors.multi_agent_executor import MultiAgentExecutor
 
         billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
         billing_started = billing_aggregator.started()
@@ -274,35 +285,17 @@ class AssistantAgentService(BaseService):
                 tools=tools,
             )
 
-            executor = AgentTaskExecutor(
-                agent_class=FunctionCallAgent,
+            executor = MultiAgentExecutor(
                 agent_config=agent_config,
                 tools=tools,
                 llm=llm,
-                history=history,
-                query=req.query.data,
             )
-
-            plan_items = [
-                TaskPlanItem(
-                    task_id=str(message.id),
-                    title=req.query.data,
-                    description=req.query.data,
-                    execution_order=0,
-                )
-            ]
-            plan = TaskPlan(original_query=req.query.data, items=plan_items, execution_mode="parallel")
-
-            coordinator = ExecutionCoordinatorService(executor=executor)
-            results = coordinator.execute(plan)
-
-            final_answer = ""
-            for result in results:
-                if result.answer:
-                    final_answer = result.answer
-                yield f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{json.dumps({'id': str(message.id), 'thought': result.task_id, 'observation': result.answer, 'answer': result.answer, 'conversation_id': str(conversation.id), 'message_id': str(message.id), 'latency': 0, 'total_token_count': 0}, ensure_ascii=False)}\n\n"
-
-            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': final_answer or '多智能体执行完成，但未获得有效回答。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+            yield from executor.stream(
+                query=req.query.data,
+                history=history,
+                conversation_id=str(conversation.id),
+                message_id=str(message.id),
+            )
 
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
@@ -444,7 +437,7 @@ class AssistantAgentService(BaseService):
                 yield from self._stream_direct_answer(req, account, conversation, message)
                 self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
-            if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential") and self.ENABLE_MULTI_AGENT_EXECUTION:
+            if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential"):
                 yield from self._stream_multi_agent(req, account, conversation, message, routing_decision, llm, tools, history)
                 return
 

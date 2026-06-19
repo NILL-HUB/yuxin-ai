@@ -180,7 +180,7 @@ onMounted(loadRoutingLogs)
             <td class="p-3">{{ log.routing_decision?.execution_mode || '-' }}</td>
             <td class="p-3">{{ log.routing_decision?.intent || '-' }}</td>
             <td class="p-3">{{ log.routing_decision?.risk_level || '-' }}</td>
-            <td class="p-3">{{ log.routing_decision?.cost_policy?.allowed === false ? '拒绝' : (log.routing_decision?.cost_policy?.allowed === true ? '允许' : '-') }}</td>
+            <td class="p-3">{{ log.routing_decision?.cost_policy?.allowed === false ? t('admin.routingLogs.costDenied') : (log.routing_decision?.cost_policy?.allowed === true ? t('admin.routingLogs.costAllowed') : '-') }}</td>
             <td class="p-3">{{ log.model_selection.model_id || '-' }}</td>
             <td class="p-3">{{ log.agent_pool_hits[0]?.pool || '-' }}</td>
             <td class="p-3">{{ log.tool_pool_hits[0]?.pool || '-' }}</td>

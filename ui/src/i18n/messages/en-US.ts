@@ -116,6 +116,12 @@ export default {
       submitFeedback: 'Submit feedback',
       feedbackSuccess: 'Routing quality feedback submitted',
       feedbackFailed: 'Failed to submit routing quality feedback',
+      executionMode: 'Execution mode',
+      intent: 'Intent',
+      riskLevel: 'Risk level',
+      costPolicy: 'Cost policy',
+      costAllowed: 'Allowed',
+      costDenied: 'Denied',
     },
   },
   layout: {

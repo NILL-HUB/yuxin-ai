@@ -116,6 +116,12 @@ export default {
       submitFeedback: '提交反馈',
       feedbackSuccess: '路由质量反馈已提交',
       feedbackFailed: '提交路由质量反馈失败',
+      executionMode: '执行模式',
+      intent: '意图',
+      riskLevel: '风险等级',
+      costPolicy: '成本策略',
+      costAllowed: '允许',
+      costDenied: '拒绝',
     },
   },
   layout: {

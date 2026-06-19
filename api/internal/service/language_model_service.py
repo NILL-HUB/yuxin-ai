@@ -485,6 +485,25 @@ class LanguageModelService(BaseService):
             metadata={},
         )
 
+    @classmethod
+    def get_chat_model_by_tier(cls, tier: str = "cheap"):
+        """根据档位返回对应 LLM 实例。cheap/balanced 走 deepseek-chat，strong 走 deepseek-reasoner。"""
+        from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
+        tier = (tier or "cheap").lower()
+        if tier == "strong":
+            return DeepSeekChat(
+                model="deepseek-reasoner",
+                temperature=0.0,
+                features=[],
+                metadata={},
+            )
+        return DeepSeekChat(
+            model="deepseek-chat",
+            temperature=0.1 if tier == "cheap" else 0.3,
+            features=[],
+            metadata={},
+        )
+
     def _load_model_components(self, model_config: dict[str, Any]) -> tuple[Any, Any, Any]:
         """根据模型配置加载 provider、model_entity 与 model_class。"""
         normalized_model_config = deepcopy(model_config or {})

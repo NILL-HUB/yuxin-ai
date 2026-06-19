@@ -102,14 +102,16 @@ class RoutingLogService(BaseService):
             .limit(page_size)
             .all()
         )
+        serialized_list = [self._serialize(log) for log in logs]
         return {
-            "list": [self._serialize(log) for log in logs],
+            "list": serialized_list,
             "paginator": {
                 "current_page": page,
                 "page_size": page_size,
                 "total_record": total_record,
                 "total_page": (total_record + page_size - 1) // page_size,
             },
+            "summary": self._build_summary(serialized_list, total_record),
         }
 
     def _filtered_query(
@@ -185,4 +187,75 @@ class RoutingLogService(BaseService):
             "retention_expires_at": datetime_to_timestamp(log.retention_expires_at),
             "status": log.status,
             "created_at": datetime_to_timestamp(log.created_at),
+        }
+
+    @staticmethod
+    def _build_summary(items: list[dict], total_record: int) -> dict:
+        success_count = 0
+        fallback_count = 0
+        total_credits = 0.0
+        latency_sum = 0.0
+        latency_n = 0
+        agent_pool_hit = 0
+        tool_pool_hit = 0
+        item_count = len(items)
+        for item in items:
+            try:
+                if item.get("status") == "success":
+                    success_count += 1
+            except Exception:
+                pass
+            try:
+                if item.get("status") == "fallback":
+                    fallback_count += 1
+            except Exception:
+                pass
+            try:
+                cost_summary = item.get("cost_summary") or {}
+                credits = cost_summary.get("credits")
+                if credits is not None:
+                    total_credits += float(credits)
+            except Exception:
+                pass
+            try:
+                latency_ms = item.get("latency_ms")
+                if latency_ms is not None:
+                    latency_sum += float(latency_ms)
+                    latency_n += 1
+            except Exception:
+                pass
+            try:
+                if item.get("agent_pool_hits"):
+                    agent_pool_hit += 1
+            except Exception:
+                pass
+            try:
+                if item.get("tool_pool_hits"):
+                    tool_pool_hit += 1
+            except Exception:
+                pass
+        try:
+            avg_latency_ms = latency_sum / latency_n if latency_n else 0.0
+        except Exception:
+            avg_latency_ms = 0.0
+        try:
+            agent_pool_hit_rate = (
+                agent_pool_hit / item_count if item_count else 0.0
+            )
+        except Exception:
+            agent_pool_hit_rate = 0.0
+        try:
+            tool_pool_hit_rate = (
+                tool_pool_hit / item_count if item_count else 0.0
+            )
+        except Exception:
+            tool_pool_hit_rate = 0.0
+        return {
+            "total_count": total_record,
+            "success_count": success_count,
+            "fallback_count": fallback_count,
+            "total_credits": total_credits,
+            "avg_latency_ms": avg_latency_ms,
+            "agent_pool_hit_rate": agent_pool_hit_rate,
+            "tool_pool_hit_rate": tool_pool_hit_rate,
         }
