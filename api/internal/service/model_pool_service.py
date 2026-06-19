@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from internal.entity.billing_runtime_entity import ModelPoolItem
 
@@ -8,7 +8,7 @@ TIER_ORDER = ["cheap", "standard", "strong"]
 
 @dataclass
 class ModelPoolService:
-    models: list[ModelPoolItem]
+    models: list[ModelPoolItem] = field(default_factory=list)
 
     def select_model(
         self, *, required_capabilities: list[str], preferred_tier: str

@@ -1,11 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from internal.entity.billing_runtime_entity import ModelKeyItem
 
 
 @dataclass
 class KeyPoolService:
-    keys: list[ModelKeyItem]
+    keys: list[ModelKeyItem] = field(default_factory=list)
     failure_threshold: int = 3
 
     def select_key(self, provider: str) -> ModelKeyItem | None:

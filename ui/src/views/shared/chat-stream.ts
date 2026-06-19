@@ -268,6 +268,8 @@ export const applyChatStreamEvent = (
   ) {
     nextState.billingEvents = [...nextState.billingEvents, data as unknown as BillingUsageEvent]
     return { state: nextState, didUpdate: true }
+  } else if (event === 'billing_summary') {
+    return { state: nextState, didUpdate: false }
   } else {
     nextState.position += 1
     thoughts.push(buildThought(data, nextState.position))

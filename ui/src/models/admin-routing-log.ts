@@ -17,12 +17,25 @@ type RoutingLogJsonValue = string | number | boolean | null | undefined
 
 type RoutingLogJsonObject = Record<string, RoutingLogJsonValue>
 
+export interface RoutingDecisionJson {
+  execution_mode?: string
+  intent?: string
+  complexity?: string
+  risk_level?: string
+  recommended_model_tier?: string
+  cost_policy?: {
+    allowed?: boolean
+    reason?: string
+  }
+  [key: string]: RoutingLogJsonValue
+}
+
 export type AdminRoutingLogRecord = {
   id: string
   account_id: string
   user_query?: string
   task_classification: RoutingLogJsonObject
-  routing_decision: RoutingLogJsonObject
+  routing_decision: RoutingDecisionJson
   agent_candidates: RoutingLogJsonObject[]
   filtered_out_agents: RoutingLogJsonObject[]
   tool_candidates: RoutingLogJsonObject[]

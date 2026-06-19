@@ -14,6 +14,7 @@ from internal.service.request_context_builder_service import RequestContextBuild
 from internal.service.routing_observability_service import RoutingObservabilityService
 from internal.service.task_planner_service import TaskPlannerService
 from .agent_pool_service import CrossPoolAgentSubsetBuilder
+from .agent_pool_aggregate_service import AgentPoolService
 from .tool_inventory_service import CrossPoolToolSubsetBuilder
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
@@ -36,6 +37,7 @@ class OrchestratorService:
         cost_policy_service: CostPolicyService | None = None,
         execution_mode_selector: ExecutionModeSelectorService | None = None,
         routing_observability_service: RoutingObservabilityService | None = None,
+        agent_pool_service: AgentPoolService | None = None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
@@ -47,6 +49,7 @@ class OrchestratorService:
         self.request_context_builder = request_context_builder or RequestContextBuilder()
         self.model_assignment_policy = model_assignment_policy or ModelAssignmentPolicy()
         self.model_gateway_service = model_gateway_service
+        self.agent_pool_service = agent_pool_service
         self.cost_policy_service = cost_policy_service or CostPolicyService()
         self.execution_mode_selector = execution_mode_selector or ExecutionModeSelectorService()
         self.routing_observability_service = routing_observability_service
@@ -103,7 +106,7 @@ class OrchestratorService:
                 image_count=len(ctx.image_urls),
                 preliminary_mode=decision.execution_mode,
             )
-            decision.tool_subset = self._build_tool_subset()
+            decision.tool_subset = self._build_tool_subset(ctx.account_id)
             self._emit(
                 "tool_candidates_found",
                 routing_log_id,
@@ -301,12 +304,19 @@ class OrchestratorService:
         event["event"] = event["event_type"]
         return [event]
 
-    def _build_tool_subset(self) -> dict:
+    def _build_tool_subset(self, account_id=None) -> dict:
         if not self._flag_enabled("ENABLE_TOOL_POOL_RETRIEVAL", default=True):
             return self._empty_tool_subset("feature_flag_disabled")
         if self.tool_subset_builder is None:
             return self._empty_tool_subset("no_tool_subset_builder")
-        return self.tool_subset_builder.build_ranked_subset([])
+        candidates = []
+        if account_id is not None:
+            try:
+                collected = self.tool_subset_builder.build(account_id)
+                candidates = collected.get("candidates", []) if isinstance(collected, dict) else []
+            except Exception:
+                logger.warning("工具候选收集失败，使用空候选列表", exc_info=True)
+        return self.tool_subset_builder.build_ranked_subset(candidates)
 
     @staticmethod
     def _empty_tool_subset(selection_reason: str) -> dict:
@@ -341,7 +351,13 @@ class OrchestratorService:
                 collected = self.subset_builder.build(account_id)
                 candidates = collected.get("candidates", []) if isinstance(collected, dict) else []
             except Exception:
-                logger.warning("Agent 候选收集失败，使用空候选列表", exc_info=True)
+                logger.warning("Agent 候选收集失败，尝试 AgentPoolService fallback", exc_info=True)
+                if self.agent_pool_service is not None:
+                    try:
+                        candidates = self.agent_pool_service.list_agents()
+                    except Exception:
+                        logger.warning("AgentPoolService fallback 失败", exc_info=True)
+                        candidates = []
         return self.subset_builder.build_subset_from_candidates(
             candidates, matched_pools=matched_pools
         )

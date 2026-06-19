@@ -163,7 +163,6 @@ export const QueueEvent = {
   ping: 'ping',
   billingStarted: 'billing_started',
   billingDelta: 'billing_delta',
-  billingSummary: 'billing_summary',
   billingCancelled: 'billing_cancelled',
   billingFinal: 'billing_final',
 }

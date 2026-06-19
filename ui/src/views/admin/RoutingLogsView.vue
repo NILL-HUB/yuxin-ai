@@ -56,7 +56,7 @@ const loadRoutingLogs = async () => {
     const result = await listAdminRoutingLogs(filters.value)
     const data = result as AdminRoutingLogListResponse
     logs.value = data.list
-    summary.value = data.summary
+    summary.value = data.summary ?? summary.value
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.routingLogs.loadFailed')))
   } finally {
@@ -159,10 +159,10 @@ onMounted(loadRoutingLogs)
           <tr>
             <th class="p-3">{{ t('admin.routingLogs.userQuery') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.classification') }}</th>
-            <th class="p-3">执行模式</th>
-            <th class="p-3">意图</th>
-            <th class="p-3">风险等级</th>
-            <th class="p-3">成本策略</th>
+            <th class="p-3">{{ t('admin.routingLogs.executionMode') }}</th>
+            <th class="p-3">{{ t('admin.routingLogs.intent') }}</th>
+            <th class="p-3">{{ t('admin.routingLogs.riskLevel') }}</th>
+            <th class="p-3">{{ t('admin.routingLogs.costPolicy') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.model') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.agentPool') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.toolPool') }}</th>
