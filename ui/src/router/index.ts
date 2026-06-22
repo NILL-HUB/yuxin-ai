@@ -133,7 +133,8 @@ const router = createRouter({
         {
           path: 'memory',
           name: 'user-memory-list',
-          component: () => import('@/views/memory/ListView.vue'),
+          component: () => import('@/views/settings/MemoryView.vue'),
+          meta: { requiresAuth: true },
         },
         {
           path: 'external-data-sources',
