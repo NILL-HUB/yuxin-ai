@@ -1,4 +1,4 @@
-﻿import hashlib
+import hashlib
 import json
 import logging
 import re
@@ -560,10 +560,9 @@ class AssistantAgentService(BaseService):
         try:
             from internal.service.scoped_knowledge_service import UserMemoryService
             user_memory_service = UserMemoryService(db=self.db)
-            memories = user_memory_service.list_memories(account)
-            active_memories = [m for m in memories if m.status == "active"]
-            if active_memories:
-                user_memory_text = "\n".join(f"- {m.content}" for m in active_memories[:10])
+            relevant = user_memory_service.recall_relevant_memories(account, req.query.data, top_k=5)
+            if relevant:
+                user_memory_text = "\n".join(f"- {m['content']}" for m in relevant)
         except Exception:
             logger.warning("召回用户长期记忆失败，继续原流程", exc_info=True)
 
@@ -776,6 +775,23 @@ class AssistantAgentService(BaseService):
 
         # 14.将消息以及推理过程添加到数据库
         self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision)
+
+        # 15.对话完成后抽取记忆（不阻断主流程）
+        try:
+            full_response = ""
+            for _thought in agent_thoughts.values():
+                answer = getattr(_thought, "answer", "") or ""
+                if answer:
+                    full_response = answer
+            if full_response:
+                from app.http.module import injector  # noqa: PLC0415
+                from internal.service.long_term_memory_service import LongTermMemoryService  # noqa: PLC0415
+                long_term_memory_service = injector.get(LongTermMemoryService)
+                long_term_memory_service.extract_and_store(
+                    account, req.query.data, full_response, conversation.id
+                )
+        except Exception:
+            logger.warning("对话后记忆抽取失败，不影响主流程", exc_info=True)
 
     def _persist_assistant_thoughts(self, account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision):
         """持久化消息与推理过程到数据库。"""

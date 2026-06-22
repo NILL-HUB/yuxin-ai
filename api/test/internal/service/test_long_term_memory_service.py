@@ -5,7 +5,6 @@ from uuid import uuid4
 from internal.model import MemoryCandidate, UserMemory
 from internal.service.long_term_memory_service import (
     LongTermMemoryService,
-    MemoryCandidateExtractor,
     MemoryConfidenceTracker,
     UserMemoryConfirmationService,
 )
@@ -44,18 +43,18 @@ def _fake_db(session):
     return SimpleNamespace(session=session, auto_commit=lambda: _auto_commit())
 
 
-def test_extractor_should_extract_language_preference_candidate():
-    result = MemoryCandidateExtractor().extract("以后请一直用中文回答我")
-
-    assert result == {
+def _extracted_fact(**overrides):
+    base = {
         "candidate_key": "language_preference:zh",
         "memory_type": "preference",
         "content": "用户偏好使用中文回答",
         "confidence": 3,
     }
+    base.update(overrides)
+    return base
 
 
-def test_tracker_should_not_prompt_until_three_high_confidence_occurrences(monkeypatch):
+def test_tracker_should_not_prompt_until_three_high_confidence_occurrences():
     account_id = uuid4()
     candidate = SimpleNamespace(
         id=uuid4(),
@@ -66,14 +65,15 @@ def test_tracker_should_not_prompt_until_three_high_confidence_occurrences(monke
         occurrences=2,
         status="pending",
         metadata_={},
+        memory_type="preference",
+        source_conversation_id=None,
+        extracted_at=None,
     )
     service = MemoryConfidenceTracker(
         db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=candidate)]))
     )
 
-    result = service.track(
-        SimpleNamespace(id=account_id), MemoryCandidateExtractor().extract("请用中文回答")
-    )
+    result = service.track(SimpleNamespace(id=account_id), _extracted_fact(confidence=3))
 
     assert candidate.occurrences == 3
     assert result["should_prompt"] is True
@@ -86,10 +86,74 @@ def test_tracker_should_create_pending_candidate_for_first_occurrence(monkeypatc
     created = []
     monkeypatch.setattr(service, "create", lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs))
 
-    result = service.track(SimpleNamespace(id=account_id), MemoryCandidateExtractor().extract("请用中文回答"))
+    result = service.track(SimpleNamespace(id=account_id), _extracted_fact())
 
     assert created[0][0] is MemoryCandidate
     assert created[0][1]["occurrences"] == 1
+    assert created[0][1]["memory_type"] == "preference"
+    assert result["should_prompt"] is False
+
+
+def test_tracker_should_record_conversation_id_and_extracted_at_on_create(monkeypatch):
+    account_id = uuid4()
+    conversation_id = uuid4()
+    service = MemoryConfidenceTracker(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)])))
+    created = []
+    monkeypatch.setattr(service, "create", lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs))
+
+    service.track(SimpleNamespace(id=account_id), _extracted_fact(), conversation_id=conversation_id)
+
+    assert created[0][1]["source_conversation_id"] == conversation_id
+    assert created[0][1]["extracted_at"] is not None
+
+
+def test_tracker_should_update_conversation_id_on_existing_candidate():
+    account_id = uuid4()
+    conversation_id = uuid4()
+    candidate = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        candidate_key="language_preference:zh",
+        content="用户偏好使用中文回答",
+        confidence=3,
+        occurrences=2,
+        status="pending",
+        metadata_={},
+        memory_type="preference",
+        source_conversation_id=None,
+        extracted_at=None,
+    )
+    service = MemoryConfidenceTracker(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=candidate)]))
+    )
+
+    service.track(SimpleNamespace(id=account_id), _extracted_fact(), conversation_id=conversation_id)
+
+    assert candidate.source_conversation_id == conversation_id
+    assert candidate.extracted_at is not None
+
+
+def test_tracker_should_not_prompt_for_ignored_candidate():
+    account_id = uuid4()
+    candidate = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        candidate_key="language_preference:zh",
+        content="用户偏好使用中文回答",
+        confidence=3,
+        occurrences=5,
+        status="confirmed",
+        metadata_={},
+        memory_type="preference",
+        source_conversation_id=None,
+        extracted_at=None,
+    )
+    service = MemoryConfidenceTracker(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=candidate)]))
+    )
+
+    result = service.track(SimpleNamespace(id=account_id), _extracted_fact())
+
     assert result["should_prompt"] is False
 
 
@@ -137,7 +201,12 @@ def test_confirmation_should_ignore_candidate_without_writing_memory(monkeypatch
 
 def test_extract_and_store_should_create_pending_candidate_without_user_memory(monkeypatch):
     account_id = uuid4()
-    service = LongTermMemoryService(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)])))
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+    shared_db = _fake_db(session)
+    mock_extractor = SimpleNamespace(
+        extract=lambda q, r: [_extracted_fact(candidate_key="preference:lang:python", content="喜欢Python", confidence=4)]
+    )
+    tracker = MemoryConfidenceTracker(db=shared_db)
     created = []
 
     def _create(model, **kwargs):
@@ -146,52 +215,69 @@ def test_extract_and_store_should_create_pending_candidate_without_user_memory(m
         created.append((model, kwargs))
         return obj
 
-    monkeypatch.setattr(service, "create", _create)
+    monkeypatch.setattr(tracker, "create", _create)
+    service = LongTermMemoryService(
+        db=shared_db,
+        memory_candidate_extractor=mock_extractor,
+        memory_confidence_tracker=tracker,
+    )
 
-    result = service.extract_and_store(SimpleNamespace(id=account_id), "请用中文回答")
+    results = service.extract_and_store(SimpleNamespace(id=account_id), "我用Python", "好的")
 
-    assert result is not None
-    assert result["status"] == "pending"
-    assert result["created"] is True
+    assert len(results) == 1
+    assert results[0]["status"] == "pending"
+    assert results[0]["created"] is True
     assert created[0][0] is MemoryCandidate
-    assert created[0][1]["status"] == "pending"
     assert all(model is not UserMemory for model, _ in created)
 
 
-def test_extract_and_store_should_return_none_when_no_memory_extracted(monkeypatch):
+def test_extract_and_store_should_return_empty_list_when_no_memory_extracted():
     account_id = uuid4()
-    service = LongTermMemoryService(db=_fake_db(_SessionStub()))
-    created = []
-    monkeypatch.setattr(service, "create", lambda *_a, **_k: created.append(("nope",)) or SimpleNamespace())
+    mock_extractor = SimpleNamespace(extract=lambda q, r: [])
+    mock_tracker = SimpleNamespace(
+        track=lambda acc, fact, conv_id=None: {"should_prompt": False, "candidate": None}
+    )
+    service = LongTermMemoryService(
+        db=_fake_db(_SessionStub()),
+        memory_candidate_extractor=mock_extractor,
+        memory_confidence_tracker=mock_tracker,
+    )
 
-    result = service.extract_and_store(SimpleNamespace(id=account_id), "今天天气不错")
+    results = service.extract_and_store(SimpleNamespace(id=account_id), "今天天气不错", "是的")
 
-    assert result is None
-    assert created == []
+    assert results == []
 
 
-def test_extract_and_store_should_increment_existing_candidate_occurrences(monkeypatch):
+def test_extract_and_store_should_increment_existing_candidate_occurrences():
     account_id = uuid4()
     candidate = SimpleNamespace(
         id=uuid4(),
         owner_account_id=account_id,
-        candidate_key="language_preference:zh",
-        content="用户偏好使用中文回答",
+        candidate_key="preference:lang:python",
+        content="喜欢Python",
         confidence=3,
         occurrences=2,
         status="pending",
         metadata_={},
+        memory_type="preference",
+        source_conversation_id=None,
+        extracted_at=None,
     )
-    service = LongTermMemoryService(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=candidate)])))
-    monkeypatch.setattr(
-        service,
-        "create",
-        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("不应创建新记录")),
+    session = _SessionStub([_QueryStub(one_or_none_result=candidate)])
+    shared_db = _fake_db(session)
+    mock_extractor = SimpleNamespace(
+        extract=lambda q, r: [_extracted_fact(candidate_key="preference:lang:python", content="喜欢Python", confidence=4)]
+    )
+    tracker = MemoryConfidenceTracker(db=shared_db)
+    service = LongTermMemoryService(
+        db=shared_db,
+        memory_candidate_extractor=mock_extractor,
+        memory_confidence_tracker=tracker,
     )
 
-    result = service.extract_and_store(SimpleNamespace(id=account_id), "请用中文回答")
+    results = service.extract_and_store(SimpleNamespace(id=account_id), "我用Python", "好的")
 
     assert candidate.occurrences == 3
-    assert result["created"] is False
-    assert result["status"] == "pending"
-    assert result["candidate_id"] == candidate.id
+    assert len(results) == 1
+    assert results[0]["created"] is False
+    assert results[0]["candidate_id"] == candidate.id

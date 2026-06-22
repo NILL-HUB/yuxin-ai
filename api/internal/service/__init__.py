@@ -50,10 +50,12 @@ from .public_agent_registry_service import PublicAgentRegistryService
 from .public_app_service import PublicAppService
 from .public_workflow_service import PublicWorkflowService
 from .long_term_memory_service import (
+    LongTermMemoryService,
     MemoryCandidateExtractor,
     MemoryConfidenceTracker,
     UserMemoryConfirmationService,
 )
+from .memory_vector_service import MemoryVectorService
 from .mcp_service import McpService
 from .my_app_service import MyAppService
 from .model_assignment_policy_service import ModelAssignmentPolicy
@@ -135,6 +137,8 @@ __all__ = [
     "MemoryCandidateExtractor",
     "MemoryConfidenceTracker",
     "UserMemoryConfirmationService",
+    "LongTermMemoryService",
+    "MemoryVectorService",
     "McpService",
     "MyAppService",
     "SkillService",

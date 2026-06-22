@@ -90,7 +90,7 @@ class UserMemoryService(BaseService):
         confidence: int,
         created_from: str = KnowledgeCreatedFrom.CONVERSATION_MEMORY.value,
     ) -> UserMemory:
-        return self.create(
+        memory = self.create(
             UserMemory,
             owner_account_id=account.id,
             memory_type=memory_type,
@@ -99,6 +99,12 @@ class UserMemoryService(BaseService):
             status="active",
             created_from=created_from,
         )
+        try:
+            self._get_memory_vector_service().index_memory(memory)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("记忆写入向量库失败，不影响主流程", exc_info=True)
+        return memory
 
     def list_memories(self, account: Account) -> list[UserMemory]:
         return (
@@ -133,15 +139,56 @@ class UserMemoryService(BaseService):
             memory.memory_type = memory_type
         memory.status = "active" if enabled else "disabled"
         self.db.session.commit()
+        try:
+            self._get_memory_vector_service().index_memory(memory)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("记忆更新向量库失败，不影响主流程", exc_info=True)
         return memory
 
     def delete_memory(self, memory_id: uuid.UUID, account: Account) -> bool:
         memory = self.get_memory(memory_id, account)
         if memory is None:
             return False
+        try:
+            self._get_memory_vector_service().remove_memory(memory)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("记忆删除向量库失败，不影响主流程", exc_info=True)
         self.db.session.delete(memory)
         self.db.session.commit()
         return True
+
+    def recall_relevant_memories(
+        self, account: Account, query: str, top_k: int = 5
+    ) -> list[dict]:
+        results = self._get_memory_vector_service().search_relevant_memories(
+            account, query, top_k=top_k
+        )
+        memory_ids = [r["memory_id"] for r in results if r.get("memory_id")]
+        active_map: dict[str, UserMemory] = {}
+        if memory_ids:
+            rows = (
+                self.db.session.query(UserMemory)
+                .filter(
+                    UserMemory.id.in_([uuid.UUID(mid) for mid in memory_ids]),
+                    UserMemory.owner_account_id == account.id,
+                    UserMemory.status == "active",
+                )
+                .all()
+            )
+            active_map = {str(row.id): row for row in rows}
+        recalled: list[dict] = []
+        for r in results:
+            mid = r.get("memory_id")
+            if mid and mid in active_map:
+                recalled.append(r)
+        return recalled
+
+    def _get_memory_vector_service(self):
+        from flask import current_app
+        from internal.service.memory_vector_service import MemoryVectorService
+        return current_app.injector.get(MemoryVectorService)
 
 
 @inject
