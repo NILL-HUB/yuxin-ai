@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 logger = logging.getLogger(__name__)
 from types import SimpleNamespace
 
@@ -72,7 +72,7 @@ class OrchestratorService:
                     "execution_mode": decision.execution_mode,
                 },
             )
-            if not self._flag_enabled("ENABLE_MULTI_AGENT_EXECUTION", default=False):
+            if not self._flag_enabled("ENABLE_MULTI_AGENT_EXECUTION", default=True):
                 decision.needs_multi_agent = False
                 if decision.execution_mode in (
                     ExecutionMode.MULTI_AGENT.value,

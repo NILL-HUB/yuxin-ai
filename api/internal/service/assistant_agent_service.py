@@ -274,33 +274,28 @@ class AssistantAgentService(BaseService):
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
         from internal.service.executors.multi_agent_executor import MultiAgentExecutor
+        from internal.service.executors.task_decomposer import TaskDecomposer
 
         billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
         try:
-            agent_config = AgentConfig(
-                user_id=account.id,
-                invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
-                preset_prompt=ASSISTANT_AGENT_MARKDOWN_PRESET_PROMPT,
-                enable_long_term_memory=True,
-                enable_deep_thinking=False,
-                runtime_flask_app=current_app._get_current_object(),
-                language_model_service=self.language_model_service,
-                tools=tools,
-            )
-
             executor = MultiAgentExecutor(
-                agent_config=agent_config,
-                tools=tools,
-                llm=llm,
+                db=self.db,
+                task_decomposer=TaskDecomposer(
+                    language_model_service=self.language_model_service
+                ),
             )
-            yield from executor.stream(
+            yield from executor.execute(
                 query=req.query.data,
+                account=account,
+                conversation=conversation,
+                message=message,
+                routing_decision=routing_decision,
+                llm=llm,
+                tools=tools,
                 history=history,
-                conversation_id=str(conversation.id),
-                message_id=str(message.id),
             )
 
             billing_final = billing_aggregator.final()

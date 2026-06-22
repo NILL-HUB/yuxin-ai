@@ -15,6 +15,8 @@ class TaskPlanItem:
     depends_on: list[str] = field(default_factory=list)
     execution_order: int = 0
     risk_level: str = "safe"
+    agent_id: str = ""
+    tools: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskPlanItem":
@@ -27,6 +29,8 @@ class TaskPlanItem:
             depends_on=_unique_text_list(data.get("depends_on")),
             execution_order=_non_negative_int(data.get("execution_order")),
             risk_level=_risk_level(data.get("risk_level")),
+            agent_id=_text(data.get("agent_id")),
+            tools=_unique_text_list(data.get("tools")),
         )
 
     def to_summary(self) -> dict:
@@ -45,6 +49,7 @@ class TaskPlan:
     items: list[TaskPlanItem] = field(default_factory=list)
     execution_mode: str = "direct_answer"
     reason: str = ""
+    aggregation_strategy: str = "concat"
 
     def to_summary(self) -> dict:
         return {

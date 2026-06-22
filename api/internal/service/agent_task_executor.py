@@ -11,7 +11,8 @@ class AgentTaskExecutor:
 
     def execute(self, item) -> dict:
         try:
-            agent = self.agent_class(self.agent_config, self.tools)
+            agent_config = self._resolve_agent_config(item)
+            agent = self.agent_class(llm=self.llm, agent_config=agent_config)
             collected_answer = ""
             for thought in agent.stream({
                 "messages": [self.llm.convert_to_human_message(item.description or self.query, [])],
@@ -43,3 +44,26 @@ class AgentTaskExecutor:
                 "warnings": [],
                 "confidence": 0,
             }
+
+    def _resolve_agent_config(self, item):
+        agent_config = self.agent_config
+        item_tools = getattr(item, "tools", None) or []
+        if not item_tools:
+            return agent_config
+        try:
+            from internal.core.agent.entities.agent_entity import AgentConfig
+
+            if isinstance(agent_config, AgentConfig):
+                base_tools = list(agent_config.tools or [])
+                if not base_tools:
+                    return agent_config
+                requested = {str(name).strip() for name in item_tools if name}
+                filtered = [
+                    tool for tool in base_tools
+                    if getattr(tool, "name", None) in requested
+                ]
+                if filtered and len(filtered) != len(base_tools):
+                    return agent_config.model_copy(update={"tools": filtered})
+        except Exception:
+            return agent_config
+        return agent_config
