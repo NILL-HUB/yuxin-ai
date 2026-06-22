@@ -16,23 +16,94 @@ type MenuItem = {
   label: string
   permission?: string
   permissions?: string[]
+  roles?: string[]
 }
 
-const menuItems = computed(() =>
-  ([
-    { to: '/admin/apps', label: '应用管理', permission: 'app:read' },
-    { to: '/admin/workflows', label: '工作流管理', permission: 'workflow:read' },
-    { to: '/admin/datasets', label: '知识库', permission: 'dataset:read' },
-    { to: '/admin/tools', label: '工具管理', permission: 'tool:read' },
-    { to: '/admin/mcp', label: 'MCP 管理', permission: 'mcp:read' },
-    { to: '/admin/skills', label: 'Skills 管理', permission: 'skill:read' },
-    { to: '/admin/users', label: '用户管理', permission: 'user:read' },
-    { to: '/admin/billing', label: '套餐卡密', permissions: ['plan:read', 'redeem_code:read'] },
-    { to: '/admin/admin-users', label: '管理员', permission: 'admin_user:read' },
-    { to: '/admin/roles', label: '角色权限', permission: 'role:read' },
-    { to: '/admin/audit-logs', label: '审计日志', permission: 'audit_log:read' },
-  ] as MenuItem[]).filter((item) => (item.permissions ? adminStore.hasAllPermissions(item.permissions) : adminStore.hasPermission(item.permission || ''))),
-)
+type MenuGroup = {
+  title: string
+  items: MenuItem[]
+}
+
+const menuGroups = computed(() => ([
+  {
+    title: '概览',
+    items: [
+      { to: '/admin', label: '仪表盘', permission: 'admin:access' },
+    ],
+  },
+  {
+    title: 'RBAC 管理',
+    items: [
+      { to: '/admin/admin-users', label: '管理员', permission: 'admin_user:read' },
+      { to: '/admin/roles', label: '角色权限', permission: 'role:read' },
+      { to: '/admin/users', label: '客户用户', permission: 'user:read' },
+    ],
+  },
+  {
+    title: '资源编排',
+    items: [
+      { to: '/admin/apps', label: '应用编排', permission: 'app:read' },
+      { to: '/admin/workflows', label: '工作流编排', permission: 'workflow:read' },
+      { to: '/admin/datasets', label: '知识库管理', permission: 'dataset:read' },
+      { to: '/admin/tools', label: 'API工具', permission: 'tool:read' },
+      { to: '/admin/mcp', label: 'MCP管理', permission: 'mcp:read' },
+      { to: '/admin/skills', label: 'Skills管理', permission: 'skill:read' },
+    ],
+  },
+  {
+    title: '资源运营',
+    items: [
+      { to: '/admin/store/public-apps', label: '应用商店', permission: 'app:read' },
+      { to: '/admin/store/workflows', label: '工作流商店', permission: 'workflow:read' },
+      { to: '/admin/store/tools', label: '工具商店', permission: 'tool:read' },
+      { to: '/admin/store/skills', label: '技能商店', permission: 'skill:read' },
+      { to: '/admin/store/mcp', label: 'MCP商店', permission: 'mcp:read' },
+    ],
+  },
+  {
+    title: '池治理',
+    items: [
+      { to: '/admin/agent-pool', label: 'Agent池配置', permission: 'agent_pool:read' },
+      { to: '/admin/tool-governance', label: '工具池治理', permission: 'tool_governance:read' },
+      { to: '/admin/models', label: '模型池管理', permission: 'model_pool:read' },
+    ],
+  },
+  {
+    title: '观测中心',
+    items: [
+      { to: '/admin/routing-logs', label: '路由日志', permission: 'routing_log:read' },
+      { to: '/admin/routing-quality', label: '路由质量', permission: 'routing_quality:read' },
+      { to: '/admin/audit-logs', label: '审计日志', permission: 'audit_log:read' },
+    ],
+  },
+  {
+    title: '编排控制',
+    items: [
+      { to: '/admin/orchestration-flags', label: '功能开关', permission: 'orchestration_flag:read' },
+    ],
+  },
+  {
+    title: '计费运营',
+    items: [
+      { to: '/admin/billing', label: '套餐卡密', permissions: ['plan:read', 'redeem_code:read'] },
+    ],
+  },
+  {
+    title: '案例展示',
+    items: [
+      { to: '/admin/showcase', label: '案例审核', permission: 'showcase:read' },
+    ],
+  },
+  {
+    title: 'OpenAPI',
+    items: [
+      { to: '/admin/openapi', label: 'API管理', permission: 'openapi:read' },
+    ],
+  },
+] as MenuGroup[]).map(group => ({
+  ...group,
+  items: group.items.filter((item) => (item.permissions ? adminStore.hasAllPermissions(item.permissions) : adminStore.hasPermission(item.permission || ''))),
+})).filter(group => group.items.length > 0))
 
 const adminDisplayName = computed(() => adminStore.admin.name || adminStore.admin.username || adminStore.admin.email || 'Admin')
 const adminSubTitle = computed(() => adminStore.admin.username || adminStore.admin.email || '超级管理员')
@@ -77,7 +148,10 @@ const handleLogout = async () => {
         <span>OpenAgent Admin</span>
       </router-link>
       <nav class="admin-menu">
-        <router-link v-for="item in menuItems" :key="item.to" :to="item.to">{{ item.label }}</router-link>
+        <div v-for="group in menuGroups" :key="group.title" class="menu-group">
+          <div class="menu-group-title">{{ group.title }}</div>
+          <router-link v-for="item in group.items" :key="item.to" :to="item.to">{{ item.label }}</router-link>
+        </div>
       </nav>
     </aside>
     <main class="admin-main">
@@ -169,6 +243,26 @@ const handleLogout = async () => {
 .admin-menu a:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
+}
+
+.menu-group {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.menu-group:last-child {
+  margin-bottom: 0;
+}
+
+.menu-group-title {
+  padding: 0 14px;
+  margin-bottom: 6px;
+  color: #7a8aa4;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .admin-main {

@@ -85,23 +85,6 @@ const mountSidebar = () => {
         IconSpace: true,
         IconSpaceFull: true,
         IconApps: true,
-        IconAppsFull: true,
-        IconRelation: {
-          template: '<i data-icon="relation"><slot /></i>',
-        },
-        IconTool: true,
-        IconToolFull: true,
-        IconStorage: {
-          template: '<i data-icon="storage"><slot /></i>',
-        },
-        IconStorageFull: {
-          template: '<i data-icon="storage"><slot /></i>',
-        },
-        IconComputer: {
-          template: '<i data-icon="computer"><slot /></i>',
-        },
-        IconOpenApi: true,
-        IconOpenApiFull: true,
         IconMessage: true,
         IconMore: true,
         IconEdit: true,
@@ -146,24 +129,22 @@ describe('LayoutSidebar home navigation', () => {
     expect(mocks.routerPush).toHaveBeenCalledWith('/home')
   })
 
-  it('hides configuration center from customer sidebar', async () => {
+  it('hides resource orchestration from customer sidebar', async () => {
     const wrapper = mountSidebar()
     await flushPromises()
 
-    expect(wrapper.findAll('a[data-to="/space/apps"]')).toHaveLength(0)
-    expect(wrapper.text()).not.toContain('配置中心')
-    expect(wrapper.text()).not.toContain('个人空间')
+    expect(wrapper.findAll('a[data-to="/admin/apps"]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('资源编排')
   })
 
-  it('shows configuration center only for logged-in admins', async () => {
+  it('shows resource orchestration only for logged-in admins', async () => {
     mocks.adminLoggedIn = true
 
     const wrapper = mountSidebar()
     await flushPromises()
 
-    expect(wrapper.findAll('a[data-to="/space/apps"]')).toHaveLength(1)
-    expect(wrapper.text()).toContain('配置中心')
-    expect(wrapper.text()).not.toContain('个人空间')
+    expect(wrapper.findAll('a[data-to="/admin/apps"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('资源编排')
   })
 
   it('does not expose admin console entry in customer sidebar', async () => {
@@ -186,24 +167,32 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).toContain('管理后台')
   })
 
-  it('renders the skills and mcp store entries only once', async () => {
+  it('shows exactly six entries for regular users', async () => {
     const wrapper = mountSidebar()
     await flushPromises()
 
-    expect(wrapper.findAll('a[data-to="/store/skills"]')).toHaveLength(1)
-    expect(wrapper.findAll('a[data-to="/store/mcp"]')).toHaveLength(1)
-  })
+    const homeButton = wrapper.find('[data-testid="sidebar-home-new-conversation"]')
+    expect(homeButton.exists()).toBe(true)
 
-  it('uses different icons for workflow, skills, and mcp stores', async () => {
-    const wrapper = mountSidebar()
-    await flushPromises()
+    const navLinks = wrapper.findAll('a[data-to]')
+    expect(navLinks).toHaveLength(5)
 
-    expect(wrapper.findAll('a[data-to="/store/workflows"] [data-icon="relation"]')).toHaveLength(1)
-    expect(wrapper.findAll('a[data-to="/store/workflows"] [data-icon="storage"]')).toHaveLength(0)
-    expect(wrapper.findAll('a[data-to="/store/skills"] [data-icon="storage"]')).toHaveLength(1)
-    expect(wrapper.findAll('a[data-to="/store/skills"] [data-icon="relation"]')).toHaveLength(0)
-    expect(wrapper.findAll('a[data-to="/store/mcp"] [data-icon="computer"]')).toHaveLength(1)
-    expect(wrapper.findAll('a[data-to="/store/mcp"] [data-icon="storage"]')).toHaveLength(0)
+    const tos = navLinks.map((link) => link.attributes('data-to'))
+    expect(tos).toContain('/search')
+    expect(tos).toContain('/memory')
+    expect(tos).toContain('/my-knowledge')
+    expect(tos).toContain('/external-data-sources')
+    expect(tos).toContain('/showcase')
+
+    expect(wrapper.findAll('a[data-to="/store/public-apps"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/store/workflows"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/store/skills"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/store/tools"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/store/mcp"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/openapi"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/space/apps"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/admin"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/admin/apps"]')).toHaveLength(0)
   })
 
   it('loads more recent conversations when the sidebar list reaches the bottom', async () => {

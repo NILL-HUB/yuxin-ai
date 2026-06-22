@@ -13,13 +13,6 @@ import IconHome from '@/components/icons/IconHome.vue'
 import IconSpaceFull from '@/components/icons/IconSpaceFull.vue'
 import IconSpace from '@/components/icons/IconSpace.vue'
 import IconApps from '@/components/icons/IconApps.vue'
-import IconAppsFull from '@/components/icons/IconAppsFull.vue'
-import IconToolFull from '@/components/icons/IconToolFull.vue'
-import IconTool from '@/components/icons/IconTool.vue'
-import IconStorage from '@/components/icons/IconStorage.vue'
-import IconStorageFull from '@/components/icons/IconStorageFull.vue'
-import IconOpenApi from '@/components/icons/IconOpenApi.vue'
-import IconOpenApiFull from '@/components/icons/IconOpenApiFull.vue'
 
 interface Props {
   collapsed?: boolean
@@ -305,14 +298,14 @@ onUnmounted(() => {
       </button>
       <router-link
         v-if="isAdminLoggedIn"
-        to="/space/apps"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/space') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/space') ? t('layout.sidebar.configCenter') : ''"
+        to="/admin/apps"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/admin/apps') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/admin/apps') ? t('layout.sidebar.resourceOrchestration') : ''"
       >
-        <icon-space-full v-if="route.path.startsWith('/space')" class="flex-shrink-0 w-4 h-4" />
+        <icon-space-full v-if="route.path.startsWith('/admin/apps')" class="flex-shrink-0 w-4 h-4" />
         <icon-space v-else class="flex-shrink-0 w-4 h-4" />
         <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.configCenter') }}
+          {{ $t('layout.sidebar.resourceOrchestration') }}
         </span>
       </router-link>
       <router-link
@@ -326,98 +319,19 @@ onUnmounted(() => {
           {{ $t('layout.sidebar.adminConsole') }}
         </span>
       </router-link>
-      <div v-show="!props.collapsed" class="text-gray-500 text-xs px-2 mt-1 mb-1">
-        {{ $t('layout.sidebar.explore') }}
-      </div>
       <router-link
-        to="/store/public-apps"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store/public-apps') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/store/public-apps') ? t('layout.sidebar.appStore') : ''"
+        to="/search"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path === '/search' ? 'bg-gray-100' : ''}`"
+        :title="route.path === '/search' ? t('layout.sidebar.search') : ''"
       >
-        <icon-apps-full
-          v-if="route.path.startsWith('/store/public-apps')"
-          class="flex-shrink-0 w-4 h-4"
-        />
-        <icon-apps v-else class="flex-shrink-0 w-4 h-4" />
+        <icon-search class="flex-shrink-0 w-4 h-4" />
         <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.appStore') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/store/workflows"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store/workflows') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
-        :title="route.path.startsWith('/store/workflows') ? t('layout.sidebar.workflowStore') : ''"
-      >
-        <icon-relation
-          v-if="route.path.startsWith('/store/workflows')"
-          class="flex-shrink-0 w-4 h-4"
-        />
-        <icon-relation v-else class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.workflowStore') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/store/skills"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store/skills') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
-        :title="route.path.startsWith('/store/skills') ? t('layout.sidebar.skillsStore') : ''"
-      >
-        <icon-storage-full
-          v-if="route.path.startsWith('/store/skills')"
-          class="flex-shrink-0 w-4 h-4"
-        />
-        <icon-storage v-else class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.skillsStore') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/store/tools"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store/tools') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
-        :title="route.path.startsWith('/store/tools') ? t('layout.sidebar.toolStore') : ''"
-      >
-        <icon-tool-full
-          v-if="route.path.startsWith('/store/tools')"
-          class="flex-shrink-0 w-4 h-4"
-        />
-        <icon-tool v-else class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.toolStore') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/store/mcp"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store/mcp') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
-        :title="route.path.startsWith('/store/mcp') ? t('layout.sidebar.mcpStore') : ''"
-      >
-        <icon-computer class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.mcpStore') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/openapi"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/openapi') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
-        :title="route.path.startsWith('/openapi') ? t('layout.sidebar.openApi') : ''"
-      >
-        <icon-open-api-full
-          v-if="route.path.startsWith('/openapi')"
-          class="flex-shrink-0 w-4 h-4"
-        />
-        <icon-open-api v-else class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.openApi') }}
+          {{ $t('layout.sidebar.search') }}
         </span>
       </router-link>
       <router-link
         to="/memory"
         :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/memory') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
         :title="route.path.startsWith('/memory') ? t('layout.sidebar.memory') : ''"
       >
         <icon-bookmark class="flex-shrink-0 w-4 h-4" />
@@ -426,14 +340,33 @@ onUnmounted(() => {
         </span>
       </router-link>
       <router-link
+        to="/my-knowledge"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/my-knowledge') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/my-knowledge') ? t('layout.sidebar.myKnowledge') : ''"
+      >
+        <icon-book class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.myKnowledge') }}
+        </span>
+      </router-link>
+      <router-link
         to="/external-data-sources"
         :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/external-data-sources') ? 'bg-gray-100' : ''}`"
-        active-class="bg-gray-100"
         :title="route.path.startsWith('/external-data-sources') ? t('externalDataSource.title') : ''"
       >
         <icon-cloud class="flex-shrink-0 w-4 h-4" />
         <span v-if="!props.collapsed" class="truncate text-sm">
           {{ $t('externalDataSource.title') }}
+        </span>
+      </router-link>
+      <router-link
+        to="/showcase"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/showcase') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/showcase') ? t('layout.sidebar.showcase') : ''"
+      >
+        <icon-image class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.showcase') }}
         </span>
       </router-link>
     </div>
@@ -445,12 +378,9 @@ onUnmounted(() => {
         v-if="!props.collapsed"
         class="mt-2 pt-2 flex items-center gap-2 px-2 mb-1 flex-shrink-0"
       >
-        <router-link
-          to="/search"
-          :class="`text-sm font-bold cursor-pointer transition-colors ${route.path === '/search' ? 'text-blue-700' : 'text-gray-700 hover:text-blue-700'}`"
-        >
+        <div class="text-sm font-bold text-gray-700">
           {{ $t('layout.sidebar.recentConversations') }}
-        </router-link>
+        </div>
         <div class="flex-1 h-px bg-gray-200"></div>
       </div>
 
