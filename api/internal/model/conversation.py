@@ -37,6 +37,8 @@ class Conversation(db.Model):
     app_id = Column(UUID, nullable=False)  # 关联应用id
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 会话名称
     summary = Column(Text, nullable=False, server_default=text("''::text"))  # 会话摘要/长期记忆
+    distant_summaries = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 远期分段摘要列表
+    last_summarized_message_index = Column(Integer, nullable=False, server_default=text("0"))  # 最后已摘要的消息序号
     is_pinned = Column(Boolean, nullable=False, server_default=text("false"))  # 是否置顶
     is_deleted = Column(Boolean, nullable=False, server_default=text("false"))  # 是否删除
     invoke_from = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 调用来源

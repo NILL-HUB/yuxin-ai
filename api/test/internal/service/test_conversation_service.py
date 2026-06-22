@@ -521,9 +521,12 @@ class TestConversationServiceBasics:
 
     def test_generate_summary_and_update_should_update_conversation_summary(self, monkeypatch):
         service = self._build_service()
-        conversation = SimpleNamespace(id=uuid4(), summary="旧摘要")
+        conversation = SimpleNamespace(
+            id=uuid4(), summary="旧摘要", distant_summaries=[], last_summarized_message_index=0
+        )
         captured = {}
         monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
+        monkeypatch.setattr(service, "_count_conversation_messages", lambda _cid: 5)
         monkeypatch.setattr(
             service,
             "summary",
@@ -547,6 +550,32 @@ class TestConversationServiceBasics:
 
         assert captured == {"query": "Q", "answer": "A", "old_summary": "旧摘要"}
         assert updates == [(conversation, {"summary": "新摘要"})]
+
+    def test_generate_summary_and_update_should_archive_segment_when_exceeding_threshold(self, monkeypatch):
+        service = self._build_service()
+        conversation = SimpleNamespace(
+            id=uuid4(), summary="旧摘要", distant_summaries=[], last_summarized_message_index=0
+        )
+        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
+        monkeypatch.setattr(service, "_count_conversation_messages", lambda _cid: 45)
+        monkeypatch.setattr(service, "summary", lambda _q, _a, _s: "新摘要")
+        updates = []
+        monkeypatch.setattr(
+            service,
+            "update",
+            lambda target, **kwargs: updates.append((target, kwargs)) or target,
+        )
+
+        service._generate_summary_and_update(
+            conversation_id=conversation.id,
+            query="Q",
+            answer="A",
+        )
+
+        assert updates[0][0] is conversation
+        assert updates[0][1]["summary"] == "新摘要"
+        assert updates[0][1]["distant_summaries"] == ["旧摘要"]
+        assert updates[0][1]["last_summarized_message_index"] == 45
 
     def test_generate_conversation_name_and_update_should_update_name(self, monkeypatch):
         service = self._build_service()

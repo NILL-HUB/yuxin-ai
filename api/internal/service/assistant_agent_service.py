@@ -536,13 +536,17 @@ class AssistantAgentService(BaseService):
                 routing_decision.get("risk_level"),
             )
 
-        # 5.实例化TokenBufferMemory用于提取短期记忆
+        # 5.构建三层混合上下文（近期原文层/远期摘要层/关键事实层）
         token_buffer_memory = TokenBufferMemory(
             db=self.db,
             conversation=conversation,
             model_instance=llm,
+            language_model_service=self.language_model_service,
         )
-        history = token_buffer_memory.get_history_prompt_messages(message_limit=3)
+        context = token_buffer_memory.build_context(conversation.id, req.query.data, account)
+        history = context["recent_messages"]
+        distant_summary = context["distant_summary"]
+        relevant_facts = context.get("relevant_facts", [])
 
         # 6.构建首页助手运行时工具
         prebound_tools = self._build_assistant_runtime_tools(account.id)
@@ -555,16 +559,10 @@ class AssistantAgentService(BaseService):
             message_id=str(message.id),
         )
 
-        # 6.1 召回用户长期记忆，注入到 Agent prompt 中
+        # 6.1 关键事实层注入到 Agent prompt（build_context 已完成向量召回，此处格式化合并）
         user_memory_text = ""
-        try:
-            from internal.service.scoped_knowledge_service import UserMemoryService
-            user_memory_service = UserMemoryService(db=self.db)
-            relevant = user_memory_service.recall_relevant_memories(account, req.query.data, top_k=5)
-            if relevant:
-                user_memory_text = "\n".join(f"- {m['content']}" for m in relevant)
-        except Exception:
-            logger.warning("召回用户长期记忆失败，继续原流程", exc_info=True)
+        if relevant_facts:
+            user_memory_text = "\n".join(f"- {fact}" for fact in relevant_facts)
 
         # 7.构建辅助Agent专用智能体。根据路由决策的 execution_mode 选择执行路径：
         # 二阶段流程：confirm_deep_thinking=True 表示用户已确认，直接执行深度思考；
@@ -624,7 +622,7 @@ class AssistantAgentService(BaseService):
                         llm.convert_to_human_message(req.query.data, req.image_urls.data)
                     ],
                     "history": history,
-                    "long_term_memory": conversation.summary,
+                    "long_term_memory": distant_summary,
                     "user_memory": user_memory_text,
                 }
             ):

@@ -12,7 +12,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from internal.core.language_model.providers.deepseek.chat import Chat
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import selectinload
 from internal.entity.conversation_entity import (
     SUMMARIZER_TEMPLATE,
@@ -43,6 +43,8 @@ class ConversationService(BaseService):
     # 会话主题生成结果缓存：仅在最近query变化时才重新调用模型，避免重复消耗token
     _conversation_name_cache_lock: ClassVar[RLock] = RLock()
     _conversation_name_cache: ClassVar[OrderedDict[str, tuple[str, str]]] = OrderedDict()
+    SUMMARY_SINGLE_THRESHOLD: ClassVar[int] = 30
+    SUMMARY_SEGMENT_SIZE: ClassVar[int] = 20
     _conversation_name_cache_limit: ClassVar[int] = 1024
 
     @staticmethod
@@ -359,21 +361,39 @@ class ConversationService(BaseService):
             query: str,
             answer: str,
     ):
-        # 1.根据id获取会话
         conversation = self.get(Conversation, conversation_id)
 
-        # 2.计算会话新摘要信息
         new_summary = self.summary(
             query,
             answer,
             conversation.summary
         )
 
-        # 3.更新会话的摘要信息
-        self.update(
-            conversation,
-            summary=new_summary
-        )
+        message_count = self._count_conversation_messages(conversation_id)
+
+        if message_count <= self.SUMMARY_SINGLE_THRESHOLD:
+            self.update(conversation, summary=new_summary)
+            return
+
+        last_index = conversation.last_summarized_message_index or 0
+        if message_count - last_index >= self.SUMMARY_SEGMENT_SIZE:
+            distant_summaries = list(conversation.distant_summaries or [])
+            if conversation.summary:
+                distant_summaries.append(conversation.summary)
+            self.update(
+                conversation,
+                summary=new_summary,
+                distant_summaries=distant_summaries,
+                last_summarized_message_index=message_count,
+            )
+        else:
+            self.update(conversation, summary=new_summary)
+
+    def _count_conversation_messages(self, conversation_id: UUID) -> int:
+        return self.db.session.query(func.count(Message.id)).filter(
+            Message.conversation_id == conversation_id,
+            Message.is_deleted == False,
+        ).scalar() or 0
 
     def _generate_conversation_name_and_update(
             self,

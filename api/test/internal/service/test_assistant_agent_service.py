@@ -981,12 +981,17 @@ class TestAssistantAgentService:
                 return {"query": query, "image_urls": image_urls}
 
         class _FakeTokenBufferMemory:
-            def __init__(self, db, conversation, model_instance):
-                llm_capture["memory_args"] = (db, conversation, model_instance)
+            def __init__(self, **kwargs):
+                llm_capture["memory_args"] = kwargs
 
-            def get_history_prompt_messages(self, message_limit):
-                llm_capture["message_limit"] = message_limit
-                return ["历史消息"]
+            def build_context(self, conversation_id, current_query, account):
+                llm_capture["build_context_args"] = (conversation_id, current_query, account)
+                return {
+                    "recent_messages": ["历史消息"],
+                    "distant_summary": "历史摘要",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         shared_event_id = uuid4()
         task_id = uuid4()
@@ -1062,7 +1067,7 @@ class TestAssistantAgentService:
         assert create_calls[0][1]["query"] == req.query.data
         assert create_calls[0][1]["image_urls"] == req.image_urls.data
         assert llm_capture["kwargs"]["model"] == "deepseek-chat"
-        assert llm_capture["message_limit"] == 3
+        assert llm_capture["build_context_args"][1] == req.query.data
         assert llm_capture["human_message"] == (req.query.data, req.image_urls.data)
         assert len(agent_capture["agent_config"].tools) == 3
         assert agent_capture["agent_config"].tools == [
@@ -1145,8 +1150,13 @@ class TestAssistantAgentService:
             def __init__(self, **_kwargs):
                 pass
 
-            def get_history_prompt_messages(self, message_limit):
-                return []
+            def build_context(self, conversation_id, current_query, account):
+                return {
+                    "recent_messages": [],
+                    "distant_summary": "",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         event = AgentThought(
             id=uuid4(),
@@ -1228,8 +1238,13 @@ class TestAssistantAgentService:
             def __init__(self, **_kwargs):
                 pass
 
-            def get_history_prompt_messages(self, message_limit):
-                return []
+            def build_context(self, conversation_id, current_query, account):
+                return {
+                    "recent_messages": [],
+                    "distant_summary": "",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
         monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
@@ -1287,8 +1302,13 @@ class TestAssistantAgentService:
             def __init__(self, **_kwargs):
                 pass
 
-            def get_history_prompt_messages(self, message_limit):
-                return []
+            def build_context(self, conversation_id, current_query, account):
+                return {
+                    "recent_messages": [],
+                    "distant_summary": "",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
         monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
@@ -1364,9 +1384,13 @@ class TestAssistantAgentService:
             def __init__(self, **_kwargs):
                 pass
 
-            def get_history_prompt_messages(self, message_limit):
-                assert message_limit == 3
-                return []
+            def build_context(self, conversation_id, current_query, account):
+                return {
+                    "recent_messages": [],
+                    "distant_summary": "",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         class _FakeFunctionCallAgent:
             def __init__(self, llm, agent_config):
@@ -1453,9 +1477,13 @@ class TestAssistantAgentService:
             def __init__(self, **_kwargs):
                 pass
 
-            def get_history_prompt_messages(self, message_limit):
-                assert message_limit == 3
-                return []
+            def build_context(self, conversation_id, current_query, account):
+                return {
+                    "recent_messages": [],
+                    "distant_summary": "",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         agent_capture = {}
 
@@ -1543,9 +1571,13 @@ class TestAssistantAgentService:
             def __init__(self, **_kwargs):
                 pass
 
-            def get_history_prompt_messages(self, message_limit):
-                assert message_limit == 3
-                return []
+            def build_context(self, conversation_id, current_query, account):
+                return {
+                    "recent_messages": [],
+                    "distant_summary": "",
+                    "relevant_facts": [],
+                    "combined_token_count": 0,
+                }
 
         agent_capture = {}
 
