@@ -1,8 +1,11 @@
-import base64
+import logging
 import math
+import os
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
@@ -15,10 +18,38 @@ from internal.model.model_pool_entity import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
+def _load_fernet() -> Fernet:
+    raw_key = os.getenv("MODEL_KEY_ENCRYPTION_KEY", "").strip()
+    if not raw_key:
+        raw_key = Fernet.generate_key().decode("utf-8")
+        logger.warning(
+            "MODEL_KEY_ENCRYPTION_KEY 未配置，已生成临时内存密钥，重启后将无法解密历史 Key，请尽快配置该环境变量"
+        )
+    try:
+        return Fernet(raw_key.encode("utf-8"))
+    except (ValueError, TypeError) as exc:
+        raise ValueError("MODEL_KEY_ENCRYPTION_KEY 不是合法的 Fernet 密钥，请使用 Fernet.generate_key() 生成") from exc
+
+
+_FERNET = _load_fernet()
+
+
 def _encrypt_key_value(value: str) -> str:
     if not value:
         return ""
-    return base64.b64encode(value.encode("utf-8")).decode("utf-8")
+    return _FERNET.encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_key_value(token: str) -> str:
+    if not token:
+        return ""
+    try:
+        return _FERNET.decrypt(token.encode("utf-8")).decode("utf-8")
+    except (InvalidToken, ValueError):
+        return ""
 
 
 def _mask_key_value(value: str) -> str:
@@ -49,6 +80,31 @@ class AdminModelPoolService:
             return Decimal(str(value if value is not None else default))
         except Exception:
             return Decimal(default)
+
+    @staticmethod
+    def _parse_datetime(value) -> datetime | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None) if value.tzinfo else value
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                return datetime.fromtimestamp(int(value), tz=UTC).replace(tzinfo=None)
+            except (OverflowError, OSError, ValueError):
+                return None
+        if isinstance(value, str):
+            text = value.strip()
+            if text.isdigit():
+                try:
+                    return datetime.fromtimestamp(int(text), tz=UTC).replace(tzinfo=None)
+                except (OverflowError, OSError, ValueError):
+                    return None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                return parsed.astimezone(UTC).replace(tzinfo=None) if parsed.tzinfo else parsed
+            except ValueError:
+                return None
+        return None
 
     def list_models(self, *, search: str = "", provider: str = "", tier: str = "", status: str = "", current_page: int = 1, page_size: int = 20) -> dict:
         current_page = max(int(current_page or 1), 1)
@@ -92,6 +148,8 @@ class AdminModelPoolService:
             price_per_1k_tokens=self._decimal(payload.get("price_per_1k_tokens")),
             max_tokens=int(payload.get("max_tokens") or 0),
             status=payload.get("status") or "active",
+            fallback_model_id=payload.get("fallback_model_id") or None,
+            priority=int(payload.get("priority") or 0),
         )
         self.session.add(model)
         self.session.commit()
@@ -115,6 +173,10 @@ class AdminModelPoolService:
             model.max_tokens = int(payload.get("max_tokens") or 0)
         if "status" in payload:
             model.status = payload["status"]
+        if "fallback_model_id" in payload:
+            model.fallback_model_id = payload["fallback_model_id"] or None
+        if "priority" in payload:
+            model.priority = int(payload.get("priority") or 0)
         model.updated_at = self._now()
         self.session.commit()
         return self._serialize_model(model)
@@ -158,6 +220,9 @@ class AdminModelPoolService:
             key_value_encrypted=_encrypt_key_value(payload.get("key_value") or ""),
             tenant_quota=self._decimal(payload.get("tenant_quota"), "0.0000"),
             status=payload.get("status") or "active",
+            model_id=payload.get("model_id") or None,
+            expires_at=self._parse_datetime(payload.get("expires_at")),
+            used_credits=self._decimal(payload.get("used_credits"), "0.0000"),
         )
         self.session.add(key)
         self.session.commit()
@@ -175,6 +240,12 @@ class AdminModelPoolService:
             key.tenant_quota = self._decimal(payload.get("tenant_quota"), "0.0000")
         if "status" in payload:
             key.status = payload["status"]
+        if "model_id" in payload:
+            key.model_id = payload["model_id"] or None
+        if "expires_at" in payload:
+            key.expires_at = self._parse_datetime(payload.get("expires_at"))
+        if "used_credits" in payload:
+            key.used_credits = self._decimal(payload.get("used_credits"), "0.0000")
         key.updated_at = self._now()
         self.session.commit()
         return self._serialize_key(key)
@@ -258,16 +329,14 @@ class AdminModelPoolService:
             "price_per_1k_tokens": f"{Decimal(str(model.price_per_1k_tokens or 0)):.6f}",
             "max_tokens": int(model.max_tokens or 0),
             "status": model.status,
+            "fallback_model_id": model.fallback_model_id or None,
+            "priority": int(model.priority or 0),
             "created_at": self._timestamp(model.created_at),
             "updated_at": self._timestamp(model.updated_at),
         }
 
     def _serialize_key(self, key: ModelKeyConfig) -> dict:
-        raw_value = ""
-        try:
-            raw_value = base64.b64decode(key.key_value_encrypted.encode("utf-8")).decode("utf-8") if key.key_value_encrypted else ""
-        except Exception:
-            raw_value = ""
+        raw_value = _decrypt_key_value(key.key_value_encrypted)
         return {
             "id": str(key.id),
             "provider": key.provider,
@@ -276,6 +345,10 @@ class AdminModelPoolService:
             "tenant_quota": f"{Decimal(str(key.tenant_quota or 0)):.4f}",
             "status": key.status,
             "failure_count": int(key.failure_count or 0),
+            "used_credits": f"{Decimal(str(key.used_credits or 0)):.4f}",
+            "model_id": key.model_id or None,
+            "last_used_at": self._timestamp(key.last_used_at),
+            "expires_at": self._timestamp(key.expires_at),
             "created_at": self._timestamp(key.created_at),
             "updated_at": self._timestamp(key.updated_at),
         }

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -31,7 +32,7 @@ class ModelPoolConfig(db.Model):
         Index("model_pool_config_tier_idx", "tier"),
     )
 
-    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    id = Column(UUID, nullable=False, default=uuid4, server_default=text("uuid_generate_v4()"))
     provider = Column(String(128), nullable=False)
     model_name = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=False, server_default=text("''::character varying"))
@@ -40,6 +41,8 @@ class ModelPoolConfig(db.Model):
     price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
     max_tokens = Column(Integer, nullable=False, server_default=text("0"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
+    fallback_model_id = Column(String(36), nullable=True)
+    priority = Column(Integer, nullable=False, server_default=text("0"))
     updated_at = Column(
         DateTime,
         nullable=False,
@@ -56,15 +59,21 @@ class ModelKeyConfig(db.Model):
         PrimaryKeyConstraint("id", name="pk_model_key_config_id"),
         Index("model_key_config_provider_idx", "provider"),
         Index("model_key_config_status_idx", "status"),
+        Index("model_key_config_model_id_idx", "model_id"),
+        Index("model_key_config_expires_at_idx", "expires_at"),
     )
 
-    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    id = Column(UUID, nullable=False, default=uuid4, server_default=text("uuid_generate_v4()"))
     provider = Column(String(128), nullable=False)
     key_alias = Column(String(255), nullable=False)
     key_value_encrypted = Column(Text, nullable=False, server_default=text("''::text"))
     tenant_quota = Column(Numeric(12, 4), nullable=False, server_default=text("0.0000"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     failure_count = Column(Integer, nullable=False, server_default=text("0"))
+    last_used_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    used_credits = Column(Numeric(12, 4), nullable=False, server_default=text("0.0000"))
+    model_id = Column(String(36), nullable=True)
     updated_at = Column(
         DateTime,
         nullable=False,

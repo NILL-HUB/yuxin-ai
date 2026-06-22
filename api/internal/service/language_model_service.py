@@ -517,10 +517,15 @@ class LanguageModelService(BaseService):
         model_class = provider.get_model_class(model_entity.model_type)
         return provider, model_entity, model_class
 
-    def _instantiate_language_model(self, model_config: dict[str, Any]) -> BaseLanguageModel:
+    def _instantiate_language_model(self, model_config: dict[str, Any], attribute_overrides: dict[str, Any] | None = None) -> BaseLanguageModel:
         """严格按模型配置实例化语言模型。"""
         _, model_entity, model_class = self._load_model_components(model_config)
         normalized_model_config = deepcopy(model_config or {})
+        attributes = deepcopy(getattr(model_entity, "attributes", {}) or {})
+        if attribute_overrides:
+            for name, value in attribute_overrides.items():
+                if value is not None:
+                    attributes[name] = value
         parameters = normalized_model_config.get("parameters", {}) or {}
         allowed_parameter_names = {
             parameter.name for parameter in getattr(model_entity, "parameters", []) or []
@@ -532,7 +537,7 @@ class LanguageModelService(BaseService):
                 if name in allowed_parameter_names
             }
         return model_class(
-            **model_entity.attributes,
+            **attributes,
             **parameters,
             features=model_entity.features,
             metadata=model_entity.metadata,
@@ -726,6 +731,7 @@ class LanguageModelService(BaseService):
         image_urls: list[str] | None = None,
         entrypoint: str,
         allow_image_input: bool = True,
+        tier: str | None = None,
     ) -> RuntimeModelResolution:
         """解析运行时要使用的语言模型，并在必要时执行图片能力兜底。"""
         normalized_model_config = deepcopy(model_config or {}) or self.get_default_model_config()
@@ -740,6 +746,25 @@ class LanguageModelService(BaseService):
             effective_model_config = self.get_default_model_config()
 
         if not image_urls:
+            if tier is not None:
+                pool_resolution = self._try_resolve_pool_llm(tier)
+                if pool_resolution is not None:
+                    pool_llm, pool_model_config = pool_resolution
+                    capabilities = self._build_capabilities(
+                        requested_model_config=normalized_model_config,
+                        effective_model_config=pool_model_config,
+                        entrypoint=entrypoint,
+                        allow_image_input=allow_image_input,
+                        resolution_action="passthrough",
+                        fallback_model_config=fallback_model_config,
+                    )
+                    return RuntimeModelResolution(
+                        llm=self._wrap_runtime_fallback_model(pool_llm, pool_model_config),
+                        requested_model_config=normalized_model_config,
+                        effective_model_config=pool_model_config,
+                        capabilities=capabilities,
+                        resolution_action="pool",
+                    )
             capabilities = self._build_capabilities(
                 requested_model_config=normalized_model_config,
                 effective_model_config=effective_model_config,
@@ -829,6 +854,55 @@ class LanguageModelService(BaseService):
             data=capabilities,
             reason_code=reason_code,
         )
+
+    def _try_resolve_pool_llm(self, tier: str) -> tuple[BaseLanguageModel, dict[str, Any]] | None:
+        """尝试从 admin 模型池解析运行时模型与 Key，失败或无配置时返回 None 以降级到 providers.yaml。"""
+        try:
+            from internal.service.runtime_model_pool_service import RuntimeModelPoolService
+
+            pool_service = RuntimeModelPoolService(db=self.db)
+            primary, _fallback_candidates = pool_service.select_model_with_fallback(tier)
+            if primary is None:
+                return None
+            pool_model_config = {
+                "provider": primary.provider,
+                "model": primary.model_name,
+                "parameters": {},
+            }
+            key = pool_service.select_key(primary.id)
+            attribute_overrides: dict[str, Any] | None = None
+            if key is not None:
+                llm_config = pool_service.build_llm_config(primary, key)
+                api_key = llm_config.get("api_key")
+                if api_key:
+                    attribute_overrides = {"api_key": api_key}
+            pool_llm = self._instantiate_language_model(pool_model_config, attribute_overrides=attribute_overrides)
+            return pool_llm, pool_model_config
+        except Exception as exc:
+            logger.warning("模型池解析失败，降级到 providers.yaml 默认逻辑: tier=%s error=%s", tier, exc)
+            return None
+
+    def invoke_with_model_pool_fallback(self, tier: str, messages: Any, **kwargs) -> Any:
+        """通过模型池 + FallbackLLMWrapper 执行带故障转移的 LLM 调用。"""
+        from internal.service.fallback_llm_wrapper import FallbackLLMWrapper
+        from internal.service.runtime_model_pool_service import RuntimeModelPoolService
+
+        wrapper = FallbackLLMWrapper(
+            runtime_model_pool_service=RuntimeModelPoolService(db=self.db),
+            language_model_service=self,
+        )
+        return wrapper.invoke_with_fallback(tier, messages, **kwargs)
+
+    def stream_with_model_pool_fallback(self, tier: str, messages: Any, **kwargs):
+        """通过模型池 + FallbackLLMWrapper 执行带故障转移的流式 LLM 调用。"""
+        from internal.service.fallback_llm_wrapper import FallbackLLMWrapper
+        from internal.service.runtime_model_pool_service import RuntimeModelPoolService
+
+        wrapper = FallbackLLMWrapper(
+            runtime_model_pool_service=RuntimeModelPoolService(db=self.db),
+            language_model_service=self,
+        )
+        return wrapper.stream_with_fallback(tier, messages, **kwargs)
 
     def _wrap_runtime_fallback_model(
         self,

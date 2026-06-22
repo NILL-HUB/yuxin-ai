@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+import sqlalchemy as sa
+from cryptography.fernet import Fernet
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 # 在导入应用前关闭外部 tracing，避免初始化阶段产生联网副作用。
@@ -99,3 +101,70 @@ def login_account(monkeypatch):
     )
     monkeypatch.setattr("internal.handler.app_handler.current_user", account)
     return account
+
+
+_TEST_FERNET = Fernet(Fernet.generate_key())
+
+_MODEL_POOL_CONFIG_DDL = """
+CREATE TABLE model_pool_config (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    provider VARCHAR(128) NOT NULL,
+    model_name VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255) NOT NULL DEFAULT '',
+    tier VARCHAR(64) NOT NULL DEFAULT 'standard',
+    capabilities TEXT NOT NULL DEFAULT '[]',
+    price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    max_tokens INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(64) NOT NULL DEFAULT 'active',
+    fallback_model_id VARCHAR(36),
+    priority INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL
+)
+"""
+
+_MODEL_KEY_CONFIG_DDL = """
+CREATE TABLE model_key_config (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    provider VARCHAR(128) NOT NULL,
+    key_alias VARCHAR(255) NOT NULL,
+    key_value_encrypted TEXT NOT NULL DEFAULT '',
+    tenant_quota NUMERIC NOT NULL DEFAULT 0,
+    status VARCHAR(64) NOT NULL DEFAULT 'active',
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at DATETIME,
+    expires_at DATETIME,
+    used_credits NUMERIC NOT NULL DEFAULT 0,
+    model_id VARCHAR(36),
+    updated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL
+)
+"""
+
+
+@pytest.fixture
+def model_pool_db(monkeypatch):
+    """真实内存 SQLite 会话 + 模型池表，并在运行期间注入稳定的 Fernet 密钥。"""
+    from internal.service import admin_model_pool_service as svc
+
+    monkeypatch.setattr(svc, "_FERNET", _TEST_FERNET)
+
+    engine = sa.create_engine("sqlite://")
+    with engine.connect() as conn:
+        conn.exec_driver_sql(_MODEL_POOL_CONFIG_DDL)
+        conn.exec_driver_sql(_MODEL_KEY_CONFIG_DDL)
+        conn.commit()
+
+    session_factory = sessionmaker(bind=engine, autoflush=False)
+    session = session_factory()
+    db_shim = SimpleNamespace(session=session, engine=engine)
+    try:
+        yield db_shim
+    finally:
+        session.close()
+        engine.dispose()
+
+
+@pytest.fixture
+def fernet_key():
+    return _TEST_FERNET
