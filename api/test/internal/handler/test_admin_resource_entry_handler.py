@@ -1,4 +1,13 @@
+import pytest
+
 from pkg.response import HttpCode
+
+
+@pytest.fixture
+def db(app):
+    from internal.extension.database_extension import db as _db
+    with app.app_context():
+        yield _db
 
 
 def _mock_current_admin(monkeypatch, permissions):
@@ -31,30 +40,54 @@ class TestAdminResourceEntryHandler:
 
     def test_tool_entry_should_require_tool_read(self, client, monkeypatch):
         _mock_current_admin(monkeypatch, ["tool:read"])
+        captured = {}
+
+        def _list(self, **kwargs):
+            captured.update(kwargs)
+            return {"list": [{"tool_id": "api_tool_1"}], "paginator": {"total_record": 1, "total_page": 1, "current_page": 1, "page_size": 20}}
+
+        monkeypatch.setattr("internal.service.admin_tool_governance_service.AdminToolGovernanceService.list_policies", _list, raising=False)
 
         resp = client.get("/admin/tools", headers={"Authorization": "Bearer admin-token"})
 
         assert resp.status_code == 200
         assert resp.json["code"] == HttpCode.SUCCESS
-        assert resp.json["data"]["list"] == []
+        assert resp.json["data"]["list"][0]["tool_id"] == "api_tool_1"
+        assert captured["source_type"] == "api_tool"
 
     def test_mcp_entry_should_require_mcp_read(self, client, monkeypatch):
         _mock_current_admin(monkeypatch, ["mcp:read"])
+        captured = {}
+
+        def _list(self, **kwargs):
+            captured.update(kwargs)
+            return {"list": [{"tool_id": "mcp_tool_1"}], "paginator": {"total_record": 1, "total_page": 1, "current_page": 1, "page_size": 20}}
+
+        monkeypatch.setattr("internal.service.admin_tool_governance_service.AdminToolGovernanceService.list_policies", _list, raising=False)
 
         resp = client.get("/admin/mcp", headers={"Authorization": "Bearer admin-token"})
 
         assert resp.status_code == 200
         assert resp.json["code"] == HttpCode.SUCCESS
-        assert resp.json["data"]["list"] == []
+        assert resp.json["data"]["list"][0]["tool_id"] == "mcp_tool_1"
+        assert captured["source_type"] == "mcp"
 
     def test_skill_entry_should_require_skill_read(self, client, monkeypatch):
         _mock_current_admin(monkeypatch, ["skill:read"])
+        captured = {}
+
+        def _list(self, **kwargs):
+            captured.update(kwargs)
+            return {"list": [{"tool_id": "skill_tool_1"}], "paginator": {"total_record": 1, "total_page": 1, "current_page": 1, "page_size": 20}}
+
+        monkeypatch.setattr("internal.service.admin_tool_governance_service.AdminToolGovernanceService.list_policies", _list, raising=False)
 
         resp = client.get("/admin/skills", headers={"Authorization": "Bearer admin-token"})
 
         assert resp.status_code == 200
         assert resp.json["code"] == HttpCode.SUCCESS
-        assert resp.json["data"]["list"] == []
+        assert resp.json["data"]["list"][0]["tool_id"] == "skill_tool_1"
+        assert captured["source_type"] == "skill"
 
     def test_resource_entry_should_reject_missing_permission(self, client, monkeypatch):
         _mock_current_admin(monkeypatch, ["admin:access"])

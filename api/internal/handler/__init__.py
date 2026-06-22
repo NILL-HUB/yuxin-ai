@@ -22,6 +22,7 @@ from .routing_log_handler import RoutingLogHandler
 from .language_model_handler import LanguageModelHandler
 from .assistant_agent_handler import AssistantAgentHandler
 from .analysis_handler import AnalysisHandler
+from .admin_agent_pool_handler import AdminAgentPoolHandler
 from .admin_app_handler import AdminAppHandler
 from .admin_app_assignment_handler import AdminAppAssignmentHandler
 from .admin_audit_log_handler import AdminAuditLogHandler
@@ -36,6 +37,7 @@ from .admin_resource_entry_handler import AdminResourceEntryHandler
 from .admin_routing_log_handler import AdminRoutingLogHandler
 from .admin_routing_quality_handler import AdminRoutingQualityHandler
 from .admin_system_knowledge_handler import AdminSystemKnowledgeHandler
+from .admin_tool_governance_handler import AdminToolGovernanceHandler
 from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
 from .admin_model_pool_handler import AdminModelPoolHandler
@@ -78,6 +80,7 @@ __all__ = [
     "AssistantAgentHandler",
     "AnalysisHandler",
     "AdminAppHandler",
+    "AdminAgentPoolHandler",
     "AdminAuditLogHandler",
     "AdminAuthHandler",
     "AdminBillingPlanHandler",
@@ -90,6 +93,7 @@ __all__ = [
     "AdminRoutingLogHandler",
     "AdminRoutingQualityHandler",
     "AdminSystemKnowledgeHandler",
+    "AdminToolGovernanceHandler",
     "AdminUserHandler",
     "AdminWorkflowHandler",
     "AdminModelPoolHandler",

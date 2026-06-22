@@ -13,6 +13,7 @@ from internal.handler import (
     OAuthHandler,
     AccountHandler,
     AuthHandler,
+    AdminAgentPoolHandler,
     AdminAppHandler,
     AdminAppAssignmentHandler,
     AdminAuditLogHandler,
@@ -29,6 +30,7 @@ from internal.handler import (
     RoutingLogHandler,
     AdminRoutingQualityHandler,
     AdminSystemKnowledgeHandler,
+    AdminToolGovernanceHandler,
     AdminUserHandler,
     AdminWorkflowHandler,
     AIHandler,
@@ -75,6 +77,7 @@ class Router:
     oauth_handler: OAuthHandler
     account_handler: AccountHandler
     auth_handler: AuthHandler
+    admin_agent_pool_handler: AdminAgentPoolHandler
     admin_app_handler: AdminAppHandler
     admin_app_assignment_handler: AdminAppAssignmentHandler
     admin_audit_log_handler: AdminAuditLogHandler
@@ -90,6 +93,7 @@ class Router:
     admin_routing_quality_handler: AdminRoutingQualityHandler
     routing_log_handler: RoutingLogHandler
     admin_system_knowledge_handler: AdminSystemKnowledgeHandler
+    admin_tool_governance_handler: AdminToolGovernanceHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
     admin_model_pool_handler: AdminModelPoolHandler
@@ -917,6 +921,108 @@ class Router:
             endpoint="admin_cost_policy_update",
             methods=["PUT"],
             view_func=self.admin_model_pool_handler.update_cost_policy,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance",
+            endpoint="admin_tool_governance_list",
+            methods=["GET"],
+            view_func=self.admin_tool_governance_handler.list_policies,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance",
+            endpoint="admin_tool_governance_create",
+            methods=["POST"],
+            view_func=self.admin_tool_governance_handler.create_policy,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/<uuid:policy_id>",
+            endpoint="admin_tool_governance_get",
+            methods=["GET"],
+            view_func=self.admin_tool_governance_handler.get_policy,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/<uuid:policy_id>",
+            endpoint="admin_tool_governance_update",
+            methods=["PATCH"],
+            view_func=self.admin_tool_governance_handler.update_policy,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/<uuid:policy_id>",
+            endpoint="admin_tool_governance_delete",
+            methods=["DELETE"],
+            view_func=self.admin_tool_governance_handler.delete_policy,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/<uuid:policy_id>/status",
+            endpoint="admin_tool_governance_status",
+            methods=["POST"],
+            view_func=self.admin_tool_governance_handler.set_status,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/batch-risk",
+            endpoint="admin_tool_governance_batch_risk",
+            methods=["POST"],
+            view_func=self.admin_tool_governance_handler.batch_update_risk,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/audit",
+            endpoint="admin_tool_governance_audit",
+            methods=["GET"],
+            view_func=self.admin_tool_governance_handler.list_audit_logs,
+        )
+        bp.add_url_rule(
+            "/admin/tool-governance/stats",
+            endpoint="admin_tool_governance_stats",
+            methods=["GET"],
+            view_func=self.admin_tool_governance_handler.stats,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool",
+            endpoint="admin_agent_pool_list",
+            methods=["GET"],
+            view_func=self.admin_agent_pool_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool",
+            endpoint="admin_agent_pool_create",
+            methods=["POST"],
+            view_func=self.admin_agent_pool_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool/stats",
+            endpoint="admin_agent_pool_stats",
+            methods=["GET"],
+            view_func=self.admin_agent_pool_handler.list_stats,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool/<uuid:config_id>",
+            endpoint="admin_agent_pool_get",
+            methods=["GET"],
+            view_func=self.admin_agent_pool_handler.get,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool/<uuid:config_id>",
+            endpoint="admin_agent_pool_update",
+            methods=["PATCH"],
+            view_func=self.admin_agent_pool_handler.update,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool/<uuid:config_id>",
+            endpoint="admin_agent_pool_delete",
+            methods=["DELETE"],
+            view_func=self.admin_agent_pool_handler.delete,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool/<uuid:config_id>/status",
+            endpoint="admin_agent_pool_status",
+            methods=["POST"],
+            view_func=self.admin_agent_pool_handler.set_status,
+        )
+        bp.add_url_rule(
+            "/admin/agent-pool/<uuid:config_id>/health",
+            endpoint="admin_agent_pool_health",
+            methods=["POST"],
+            view_func=self.admin_agent_pool_handler.check_health,
         )
         bp.add_url_rule(
             "/auth/register/prepare",
