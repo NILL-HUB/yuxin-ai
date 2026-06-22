@@ -242,7 +242,7 @@ const router = createRouter({
             {
               path: 'roles',
               name: 'admin-roles',
-              component: { template: '<h2>角色权限</h2>' },
+              component: () => import('@/views/admin/RolesView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['role:read'], roles: ['super_admin'] },
             },
             {
