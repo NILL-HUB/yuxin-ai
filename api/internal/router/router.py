@@ -20,6 +20,7 @@ from internal.handler import (
     AdminBillingPlanHandler,
     AdminOrchestrationFlagHandler,
     AdminOrchestrationReleaseHandler,
+    AdminModelPoolHandler,
     AdminCustomerUserHandler,
     AdminRbacHandler,
     AdminRedeemCodeHandler,
@@ -45,6 +46,7 @@ from internal.handler import (
     PublicAppHandler,
     PublicWorkflowHandler,
     RedeemCodeHandler,
+    ShowcaseHandler,
     McpHandler,
     MemoryCandidateHandler,
     ExternalDataSourceHandler,
@@ -90,6 +92,7 @@ class Router:
     admin_system_knowledge_handler: AdminSystemKnowledgeHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
+    admin_model_pool_handler: AdminModelPoolHandler
     ai_handler: AIHandler
     api_key_handler: ApiKeyHandler
     openapi_handler: OpenAPIHandler
@@ -116,6 +119,7 @@ class Router:
     home_handler: HomeHandler
     notification_handler: NotificationHandler
     tag_handler: TagHandler
+    showcase_handler: ShowcaseHandler
 
     def register_router(self, app: Flask):
         """注册路由"""
@@ -825,6 +829,96 @@ class Router:
             view_func=self.admin_system_knowledge_handler.delete,
         )
         bp.add_url_rule(
+            "/admin/models",
+            endpoint="admin_model_pool_list",
+            methods=["GET"],
+            view_func=self.admin_model_pool_handler.list_models,
+        )
+        bp.add_url_rule(
+            "/admin/models",
+            endpoint="admin_model_pool_create",
+            methods=["POST"],
+            view_func=self.admin_model_pool_handler.create_model,
+        )
+        bp.add_url_rule(
+            "/admin/models/<uuid:model_id>",
+            endpoint="admin_model_pool_get",
+            methods=["GET"],
+            view_func=self.admin_model_pool_handler.get_model,
+        )
+        bp.add_url_rule(
+            "/admin/models/<uuid:model_id>",
+            endpoint="admin_model_pool_update",
+            methods=["PATCH"],
+            view_func=self.admin_model_pool_handler.update_model,
+        )
+        bp.add_url_rule(
+            "/admin/models/<uuid:model_id>",
+            endpoint="admin_model_pool_delete",
+            methods=["DELETE"],
+            view_func=self.admin_model_pool_handler.delete_model,
+        )
+        bp.add_url_rule(
+            "/admin/models/<uuid:model_id>/status",
+            endpoint="admin_model_pool_status",
+            methods=["POST"],
+            view_func=self.admin_model_pool_handler.set_model_status,
+        )
+        bp.add_url_rule(
+            "/admin/model-keys",
+            endpoint="admin_model_key_list",
+            methods=["GET"],
+            view_func=self.admin_model_pool_handler.list_keys,
+        )
+        bp.add_url_rule(
+            "/admin/model-keys",
+            endpoint="admin_model_key_create",
+            methods=["POST"],
+            view_func=self.admin_model_pool_handler.create_key,
+        )
+        bp.add_url_rule(
+            "/admin/model-keys/<uuid:key_id>",
+            endpoint="admin_model_key_update",
+            methods=["PATCH"],
+            view_func=self.admin_model_pool_handler.update_key,
+        )
+        bp.add_url_rule(
+            "/admin/model-keys/<uuid:key_id>",
+            endpoint="admin_model_key_delete",
+            methods=["DELETE"],
+            view_func=self.admin_model_pool_handler.delete_key,
+        )
+        bp.add_url_rule(
+            "/admin/model-keys/<uuid:key_id>/status",
+            endpoint="admin_model_key_status",
+            methods=["POST"],
+            view_func=self.admin_model_pool_handler.set_key_status,
+        )
+        bp.add_url_rule(
+            "/admin/model-tiers",
+            endpoint="admin_model_tier_list",
+            methods=["GET"],
+            view_func=self.admin_model_pool_handler.list_tier_policies,
+        )
+        bp.add_url_rule(
+            "/admin/model-tiers/<string:tier_code>",
+            endpoint="admin_model_tier_update",
+            methods=["PUT"],
+            view_func=self.admin_model_pool_handler.update_tier_policy,
+        )
+        bp.add_url_rule(
+            "/admin/cost-policies",
+            endpoint="admin_cost_policy_list",
+            methods=["GET"],
+            view_func=self.admin_model_pool_handler.list_cost_policies,
+        )
+        bp.add_url_rule(
+            "/admin/cost-policies/<uuid:policy_id>",
+            endpoint="admin_cost_policy_update",
+            methods=["PUT"],
+            view_func=self.admin_model_pool_handler.update_cost_policy,
+        )
+        bp.add_url_rule(
             "/auth/register/prepare",
             methods=["POST"],
             view_func=self.auth_handler.prepare_register,
@@ -1403,6 +1497,50 @@ class Router:
             endpoint="routing_log_summary",
             methods=["GET"],
             view_func=self.routing_log_handler.summary,
+        )
+
+        # 25.展示案例模块
+        bp.add_url_rule(
+            "/showcase/cases",
+            endpoint="showcase_case_create",
+            methods=["POST"],
+            view_func=self.showcase_handler.create_case,
+        )
+        bp.add_url_rule(
+            "/showcase/cases",
+            endpoint="showcase_case_list",
+            methods=["GET"],
+            view_func=self.showcase_handler.list_cases,
+        )
+        bp.add_url_rule(
+            "/showcase/cases/<uuid:case_id>",
+            endpoint="showcase_case_get",
+            methods=["GET"],
+            view_func=self.showcase_handler.get_case,
+        )
+        bp.add_url_rule(
+            "/admin/showcase/cases",
+            endpoint="admin_showcase_case_list",
+            methods=["GET"],
+            view_func=self.showcase_handler.admin_list_cases,
+        )
+        bp.add_url_rule(
+            "/admin/showcase/cases/<uuid:case_id>/approve",
+            endpoint="admin_showcase_case_approve",
+            methods=["POST"],
+            view_func=self.showcase_handler.approve_case,
+        )
+        bp.add_url_rule(
+            "/admin/showcase/cases/<uuid:case_id>/reject",
+            endpoint="admin_showcase_case_reject",
+            methods=["POST"],
+            view_func=self.showcase_handler.reject_case,
+        )
+        bp.add_url_rule(
+            "/admin/showcase/cases/<uuid:case_id>/offline",
+            endpoint="admin_showcase_case_offline",
+            methods=["POST"],
+            view_func=self.showcase_handler.offline_case,
         )
 
         # 24.在应用上注册蓝图

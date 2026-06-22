@@ -68,6 +68,7 @@ from .admin_rbac_service import AdminRbacService
 from .admin_redeem_code_service import AdminRedeemCodeService
 from .admin_user_service import AdminUserService
 from .admin_workflow_service import AdminWorkflowService
+from .admin_model_pool_service import AdminModelPoolService
 from .audit_log_service import AuditLogService
 
 
@@ -148,5 +149,6 @@ __all__ = [
     "AdminRedeemCodeService",
     "AdminUserService",
     "AdminWorkflowService",
+    "AdminModelPoolService",
     "AuditLogService",
 ]

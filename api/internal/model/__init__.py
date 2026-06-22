@@ -22,6 +22,7 @@ from .routing_quality import (
     RoutingOptimizationSuggestionModel,
     RoutingQualityFeedbackModel,
 )
+from .showcase_entity import ShowcaseCase
 
 __all__ = [
     "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "MemoryCandidate", "ExternalDataSource",
@@ -43,5 +44,6 @@ __all__ = [
     "RoutingLog", "OrchestrationFeatureFlagModel",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
     "PolicyChangeDraftModel",
+    "ShowcaseCase",
     "Dataset", "Document", "Segment", "KeywordTable", "DatasetQuery", "ProcessRule",
 ]

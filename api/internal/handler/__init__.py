@@ -38,6 +38,7 @@ from .admin_routing_quality_handler import AdminRoutingQualityHandler
 from .admin_system_knowledge_handler import AdminSystemKnowledgeHandler
 from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
+from .admin_model_pool_handler import AdminModelPoolHandler
 from .web_app_handler import WebAppHandler
 from .conversation_handler import ConversationHandler
 from .audio_handler import AudioHandler
@@ -50,6 +51,7 @@ from .mcp_handler import McpHandler
 from .memory_candidate_handler import MemoryCandidateHandler
 from .my_app_handler import MyAppHandler
 from .skill_handler import SkillHandler
+from .showcase_handler import ShowcaseHandler
 from .user_memory_handler import UserMemoryHandler
 
 
@@ -90,6 +92,7 @@ __all__ = [
     "AdminSystemKnowledgeHandler",
     "AdminUserHandler",
     "AdminWorkflowHandler",
+    "AdminModelPoolHandler",
     "WebAppHandler",
     "ConversationHandler",
     "AudioHandler",
@@ -106,4 +109,5 @@ __all__ = [
     "ExternalDataSourceHandler",
     "HomeHandler",
     "NotificationHandler",
+    "ShowcaseHandler",
 ]
