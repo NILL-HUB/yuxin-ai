@@ -398,7 +398,7 @@ const router = createRouter({
             {
               path: 'showcase',
               name: 'admin-showcase',
-              component: { template: '<div class="p-8"><h2 class="text-2xl font-bold mb-4">案例展示管理</h2><p class="text-gray-500">Phase E 实现</p></div>' },
+              component: () => import('@/views/admin/ShowcaseView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['showcase:read'] },
             },
             {

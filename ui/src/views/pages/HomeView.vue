@@ -22,6 +22,8 @@ import {
 } from '@/hooks/use-assistant-agent'
 import { useAudioToText, useAudioPlayer } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
+import { createShowcaseCase } from '@/services/showcase'
+import { getErrorMessage } from '@/utils/error'
 import { useAccountStore } from '@/stores/account'
 import { useCredentialStore } from '@/stores/credential'
 import storage from '@/utils/storage'
@@ -1225,6 +1227,86 @@ const handleClearConversation = async () => {
   }
 }
 
+const showcaseModalVisible = ref(false)
+const showcaseSubmitting = ref(false)
+const showcaseForm = ref({
+  conversation_id: '',
+  title: '',
+  query: '',
+  answer: '',
+  tags: '',
+  rating: 5,
+})
+
+const defaultShowcaseTitle = (query?: string) => {
+  const text = String(query || '').trim()
+  if (!text) return ''
+  const characters = Array.from(text)
+  return characters.length > 30 ? characters.slice(0, 30).join('') : text
+}
+
+type ShowcaseSourceMessage = {
+  id?: string
+  conversation_id?: string
+  query?: string
+  answer?: string
+}
+
+const handleThumbsUp = (item: ShowcaseSourceMessage) => {
+  const conversationId =
+    normalizeConversationId(item.conversation_id) || selectedConversationId.value
+  if (!conversationId) {
+    Message.warning('当前会话无效，无法提交案例')
+    return
+  }
+  showcaseForm.value = {
+    conversation_id: conversationId,
+    title: defaultShowcaseTitle(item.query),
+    query: String(item.query || ''),
+    answer: String(item.answer || ''),
+    tags: '',
+    rating: 5,
+  }
+  showcaseModalVisible.value = true
+}
+
+const handleThumbsDown = () => {
+  Message.info('感谢您的反馈')
+}
+
+const handleShowcaseSubmit = async () => {
+  const title = showcaseForm.value.title.trim()
+  if (!title) {
+    Message.warning('请输入案例标题')
+    return
+  }
+  if (!showcaseForm.value.conversation_id) {
+    Message.warning('当前会话无效，无法提交案例')
+    return
+  }
+  showcaseSubmitting.value = true
+  try {
+    const tags = showcaseForm.value.tags
+      .split(/[,，]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+    await createShowcaseCase({
+      conversation_id: showcaseForm.value.conversation_id,
+      title,
+      query: showcaseForm.value.query,
+      answer: showcaseForm.value.answer,
+      tags: tags.length > 0 ? tags : undefined,
+      rating: showcaseForm.value.rating,
+    })
+    Message.success('案例已提交，等待审核后将公开展示')
+    showcaseModalVisible.value = false
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, '提交案例失败'))
+  } finally {
+    showcaseSubmitting.value = false
+  }
+}
+
 // 7.定义问题提交函数
 const handleSubmitQuestion = async (question: string) => {
   if (!isAuthenticated.value) {
@@ -1450,6 +1532,27 @@ onUnmounted(() => {
               :agent_thought_default_visible="false"
               @select-suggested-question="handleSubmitQuestion"
             />
+            <div
+              v-if="item.id && item.answer && !(item.id === message_id && isStreamingResponse)"
+              class="flex items-center gap-1.5 -mt-3 ml-1"
+            >
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-full text-lg text-gray-400 transition-all hover:bg-emerald-50 hover:text-emerald-600 hover:scale-110"
+                title="设为公开案例"
+                @click="handleThumbsUp(item)"
+              >
+                👍
+              </button>
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-full text-lg text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600 hover:scale-110"
+                title="反馈"
+                @click="handleThumbsDown()"
+              >
+                👎
+              </button>
+            </div>
           </div>
           <div ref="bottomAnchorRef" class="w-full h-px"></div>
 
@@ -1672,6 +1775,54 @@ onUnmounted(() => {
       </div>
     </div>
     <login-modal v-model:visible="loginModalVisible" @success="handleLoginSuccess" />
+    <a-modal
+      v-model:visible="showcaseModalVisible"
+      title="设为公开案例"
+      :confirm-loading="showcaseSubmitting"
+      :mask-closable="false"
+      @ok="handleShowcaseSubmit"
+      @cancel="showcaseModalVisible = false"
+    >
+      <p class="text-sm text-gray-500 mb-4">
+        您的对话将被公开展示在案例展示页，帮助其他用户了解平台能力。
+      </p>
+      <a-form layout="vertical">
+        <a-form-item label="案例标题" required>
+          <a-input
+            v-model="showcaseForm.title"
+            placeholder="请输入案例标题"
+            allow-clear
+            :max-length="60"
+          />
+        </a-form-item>
+        <a-form-item label="标签（可选）">
+          <a-input
+            v-model="showcaseForm.tags"
+            placeholder="多个标签用英文逗号分隔"
+            allow-clear
+          />
+        </a-form-item>
+        <a-form-item label="评分">
+          <div class="flex items-center gap-1">
+            <button
+              v-for="star in 5"
+              :key="star"
+              type="button"
+              class="text-2xl leading-none transition-all"
+              :class="
+                star <= showcaseForm.rating
+                  ? 'text-amber-500'
+                  : 'text-gray-300 hover:text-gray-400'
+              "
+              @click="showcaseForm.rating = star"
+            >
+              ★
+            </button>
+            <span class="ml-2 text-sm text-gray-500">{{ showcaseForm.rating }} 星</span>
+          </div>
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 
