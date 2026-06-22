@@ -26,6 +26,15 @@
   background: "#FFFFFF"
   supported_model_types:
     - chat
+  embedding_models:
+    - name: text-embedding-v1
+      dimension: 1536
+    - name: text-embedding-v2
+      dimension: 1536
+    - name: text-embedding-v3
+      dimension: 1024
+    - name: text-embedding-v4
+      dimension: 1024
 - name: wenxin
   label: 文心一言
   description: 百度文心一言提供的模型，例如ERNIE-3.5、ERNIE-4等。
@@ -54,6 +63,11 @@
   background: "#FFFFFF"
   supported_model_types:
     - chat
+  embedding_models:
+    - name: embedding-2
+      dimension: 1024
+    - name: embedding-3
+      dimension: 2048
 - name: grok
   label: xAI Grok
   description: xAI Grok模型，例如grok-4
@@ -69,3 +83,11 @@
   supported_model_types:
     - chat
     - completion
+    - embedding
+  embedding_models:
+    - name: text-embedding-3-small
+      dimension: 1536
+    - name: text-embedding-3-large
+      dimension: 3072
+    - name: text-embedding-ada-002
+      dimension: 1536

@@ -17,6 +17,7 @@ from .jieba_service import JiebaService
 from pydantic import BaseModel, Field
 from .vector_database_service import VectorDatabaseService
 from .knowledge_vector_service import KnowledgeVectorService
+from .rerank_service import RerankService
 from internal.core.agent.entities.agent_entity import DATASET_RETRIEVAL_TOOL_NAME
 from internal.core.agent.entities.tool_policy_entity import KNOWLEDGE_RETRIEVAL_TOOL_NAME
 
@@ -29,6 +30,7 @@ class RetrievalService(BaseService):
     jieba_service: JiebaService
     vector_database_service: VectorDatabaseService
     knowledge_vector_service: KnowledgeVectorService
+    rerank_service: RerankService = None
 
     def search_in_datasets(
             self,
@@ -59,6 +61,7 @@ class RetrievalService(BaseService):
                 "k": k,
                 "score_threshold": score,
             },
+            rerank_service=getattr(self, "rerank_service", None),
         )
         full_text_retriever = FullTextRetriever(
             db=self.db,
@@ -232,6 +235,14 @@ class RetrievalService(BaseService):
             ),
             reverse=True,
         )
+
+        rerank_service = getattr(self, "rerank_service", None)
+        if rerank_service is not None:
+            try:
+                merged = rerank_service.rerank_documents(query, merged, top_n=k)
+            except Exception:
+                pass
+
         return merged
 
     def create_langchain_tool_from_search(

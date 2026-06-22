@@ -30,6 +30,7 @@ from internal.service.model_assignment_policy_service import ModelAssignmentPoli
 from internal.service.task_planner_service import TaskPlannerService
 from internal.service.pool_intent_resolver_service import PoolIntentResolver
 from internal.service.language_model_service import LanguageModelService
+from internal.service.rerank_service import RerankService
 from internal.service.result_synthesizer_service import ResultSynthesizerService
 from internal.service.result_quality_checker_service import ResultQualityCheckerService
 from internal.service.model_gateway_service import ModelGatewayService
@@ -77,6 +78,7 @@ class ExtensionModule(Module):
         binder.bind(FaissService, to=FaissService, scope=singleton)
         binder.bind(NotificationService, to=NotificationService, scope=singleton)
         binder.bind(LanguageModelService, to=LanguageModelService, scope=singleton)
+        binder.bind(RerankService, to=RerankService, scope=singleton)
 
         # 注册端口绑定（反转 core→service 反向依赖）
         binder.bind(ObjectStoragePort, to=CosService)

@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 from uuid import UUID
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document as LCDocument
@@ -13,6 +13,7 @@ class SemanticRetriever(BaseRetriever):
     dataset_ids: list[UUID]
     vector_store: WeaviateVectorStore
     search_kwargs: dict = Field(default_factory=dict)
+    rerank_service: Any = None
 
     def _get_relevant_documents(
             self, query: str, *, run_manager: CallbackManagerForRetrieverRun,
@@ -42,4 +43,12 @@ class SemanticRetriever(BaseRetriever):
         for lc_document, score in zip(lc_documents, scores):
             lc_document.metadata["score"] = score
 
-        return list(lc_documents)
+        documents = list(lc_documents)
+
+        if self.rerank_service is not None:
+            try:
+                documents = self.rerank_service.rerank_documents(query, documents, top_n=k)
+            except Exception:
+                pass
+
+        return documents

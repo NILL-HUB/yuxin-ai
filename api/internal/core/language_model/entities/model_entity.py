@@ -22,6 +22,7 @@ class ModelType(str, Enum):
     """模型类型枚举"""
     CHAT = "chat"  # 聊天模型
     COMPLETION = "completion"  # 文本生成模型
+    EMBEDDING = "embedding"  # 文本嵌入模型
 
 
 class ModelParameterType(str, Enum):

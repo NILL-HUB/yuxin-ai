@@ -52,7 +52,7 @@ class TestEmbeddingsService:
             staticmethod(lambda _embeddings, _store, namespace, key_encoder: cache_embeddings),
         )
 
-        service = EmbeddingsService(redis=SimpleNamespace())
+        service = EmbeddingsService(redis=SimpleNamespace(), language_model_service=SimpleNamespace())
 
         assert service.embeddings is embeddings
         assert service.cache_backed_embeddings is cache_embeddings

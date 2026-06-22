@@ -11,6 +11,7 @@ from weaviate.classes.query import Filter
 
 from internal.model import Account, UserMemory
 from internal.service.embeddings_service import EmbeddingsService
+from internal.service.rerank_service import RerankService
 from pkg.sqlalchemy import SQLAlchemy
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class MemoryVectorService:
     weaviate: FlaskWeaviate
     embeddings_service: EmbeddingsService
     db: SQLAlchemy
+    rerank_service: RerankService = None
 
     COLLECTION_NAME = "UserMemory"
 
@@ -76,6 +78,12 @@ class MemoryVectorService:
                 "memory_id": doc.metadata.get("memory_id"),
                 "memory_type": doc.metadata.get("memory_type"),
             })
+        rerank_service = getattr(self, "rerank_service", None)
+        if rerank_service is not None:
+            try:
+                results = rerank_service.rerank(query, results, top_n=top_k)
+            except Exception:
+                logger.warning("用户记忆检索 rerank 失败，返回原始检索结果", exc_info=True)
         return results
 
     def _delete_node_id(self, node_id: str) -> None:

@@ -16,6 +16,7 @@ class ProviderEntity(BaseModel):
     icon: str = ""  # 提供商的图标
     background: str = ""  # 提供商的图标背景
     supported_model_types: list[ModelType] = Field(default_factory=list)  # 支持的模型类型
+    embedding_models: list[dict[str, Any]] = Field(default_factory=list)  # 支持的嵌入模型及维度配置
 
 
 class Provider(BaseModel):
