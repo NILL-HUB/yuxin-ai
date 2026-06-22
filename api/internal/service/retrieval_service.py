@@ -5,19 +5,20 @@ from flask import Flask
 from injector import inject
 from langchain_classic.retrievers.ensemble import EnsembleRetriever
 from langchain_core.documents import Document as LCDocument
-from sqlalchemy import update
+from sqlalchemy import func, update
 from langchain_core.tools import BaseTool, tool
 from internal.entity.dataset_entity import RetrievalStrategy, RetrievalSource
 from internal.exception import NotFoundException
-from internal.lib.helper import escape_like_pattern
-from internal.model import Dataset, DatasetQuery, Segment
+from internal.lib.helper import combine_documents
+from internal.model import Dataset, DatasetQuery, KnowledgeBase, KnowledgeSegment, Segment
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .jieba_service import JiebaService
 from pydantic import BaseModel, Field
 from .vector_database_service import VectorDatabaseService
+from .knowledge_vector_service import KnowledgeVectorService
 from internal.core.agent.entities.agent_entity import DATASET_RETRIEVAL_TOOL_NAME
-from internal.lib.helper import combine_documents
+from internal.core.agent.entities.tool_policy_entity import KNOWLEDGE_RETRIEVAL_TOOL_NAME
 
 
 @inject
@@ -27,6 +28,7 @@ class RetrievalService(BaseService):
     db: SQLAlchemy
     jieba_service: JiebaService
     vector_database_service: VectorDatabaseService
+    knowledge_vector_service: KnowledgeVectorService
 
     def search_in_datasets(
             self,
@@ -109,34 +111,128 @@ class RetrievalService(BaseService):
             query: str,
             account_id: UUID,
             k: int = 4,
+            retrieval_strategy: str = RetrievalStrategy.HYBRID.value,
     ) -> list[LCDocument]:
-        """在新版知识库（KnowledgeBase/KnowledgeSegment）中执行文本检索，返回 LangChain 文档列表"""
-        from internal.model import KnowledgeBase, KnowledgeSegment
+        """在新版知识库（KnowledgeBase/KnowledgeSegment）中执行 RAG 检索，返回 LangChain 文档列表"""
+        knowledge_bases = self.db.session.query(KnowledgeBase).filter(
+            KnowledgeBase.id.in_(knowledge_base_ids),
+            KnowledgeBase.enabled.is_(True),
+        ).all()
+        if not knowledge_bases:
+            return []
 
-        segments = (
-            self.db.session.query(KnowledgeSegment)
-            .filter(
-                KnowledgeSegment.knowledge_base_id.in_(knowledge_base_ids),
-                KnowledgeSegment.owner_account_id == account_id,
-                KnowledgeSegment.enabled.is_(True),
-                KnowledgeSegment.content.ilike(f"%{escape_like_pattern(query)}%"),
-            )
-            .order_by(KnowledgeSegment.knowledge_base_id, KnowledgeSegment.position)
-            .limit(k)
-            .all()
+        if retrieval_strategy == RetrievalStrategy.SEMANTIC.value:
+            documents = self._semantic_search_knowledge_base(knowledge_bases, query, k)
+        elif retrieval_strategy == RetrievalStrategy.FULL_TEXT.value:
+            documents = self._full_text_search_knowledge_base(knowledge_base_ids, query, k)
+        else:
+            documents = self._hybrid_search_knowledge_base(knowledge_bases, knowledge_base_ids, query, k)
+
+        segment_ids = [
+            document.metadata.get("segment_id")
+            for document in documents
+            if document.metadata.get("segment_id")
+        ]
+        if segment_ids:
+            with self.db.auto_commit():
+                self.db.session.query(KnowledgeSegment).filter(
+                    KnowledgeSegment.id.in_(segment_ids),
+                ).update({
+                    "hit_count": KnowledgeSegment.hit_count + 1,
+                })
+
+        return documents[:k]
+
+    def _semantic_search_knowledge_base(
+            self,
+            knowledge_bases: list[KnowledgeBase],
+            query: str,
+            k: int,
+    ) -> list[LCDocument]:
+        documents: list[LCDocument] = []
+        for knowledge_base in knowledge_bases:
+            hits = self.knowledge_vector_service.search(knowledge_base, query, top_k=k)
+            for hit in hits:
+                documents.append(LCDocument(
+                    page_content=hit.get("content", ""),
+                    metadata={
+                        "knowledge_base_id": hit.get("knowledge_base_id") or str(knowledge_base.id),
+                        "knowledge_document_id": hit.get("document_id"),
+                        "segment_id": hit.get("segment_id"),
+                        "source": "knowledge_base",
+                        "score": hit.get("score", 0),
+                        "retrieval": "semantic",
+                    },
+                ))
+        documents.sort(key=lambda d: d.metadata.get("score", 0), reverse=True)
+        return documents
+
+    def _full_text_search_knowledge_base(
+            self,
+            knowledge_base_ids: list[UUID],
+            query: str,
+            k: int,
+    ) -> list[LCDocument]:
+        keywords = self.jieba_service.extract_keywords(query, 10)
+        if not keywords:
+            return []
+
+        segments = self.db.session.query(KnowledgeSegment).filter(
+            KnowledgeSegment.knowledge_base_id.in_(knowledge_base_ids),
+            KnowledgeSegment.enabled.is_(True),
+            func.jsonb_exists_any(KnowledgeSegment.keywords, keywords),
+        ).all()
+
+        scored: list[tuple[int, KnowledgeSegment]] = []
+        query_keyword_set = set(keywords)
+        for segment in segments:
+            overlap = len(set(segment.keywords or []) & query_keyword_set)
+            if overlap > 0:
+                scored.append((overlap, segment))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+
+        return [LCDocument(
+            page_content=segment.content,
+            metadata={
+                "knowledge_base_id": str(segment.knowledge_base_id),
+                "knowledge_document_id": str(segment.knowledge_document_id),
+                "segment_id": str(segment.id),
+                "source": "knowledge_base",
+                "score": 0,
+                "retrieval": "full_text",
+            },
+        ) for _, segment in scored[:k]]
+
+    def _hybrid_search_knowledge_base(
+            self,
+            knowledge_bases: list[KnowledgeBase],
+            knowledge_base_ids: list[UUID],
+            query: str,
+            k: int,
+    ) -> list[LCDocument]:
+        semantic_docs = self._semantic_search_knowledge_base(knowledge_bases, query, k)
+        full_text_docs = self._full_text_search_knowledge_base(knowledge_base_ids, query, k)
+
+        merged: list[LCDocument] = []
+        seen_segment_ids: set[str] = set()
+        for document in semantic_docs + full_text_docs:
+            segment_id = document.metadata.get("segment_id")
+            if segment_id and segment_id in seen_segment_ids:
+                continue
+            if segment_id:
+                seen_segment_ids.add(segment_id)
+            merged.append(document)
+
+        semantic_scores = {d.metadata.get("segment_id"): d.metadata.get("score", 0) for d in semantic_docs}
+        merged.sort(
+            key=lambda d: (
+                d.metadata.get("segment_id") in semantic_scores,
+                d.metadata.get("score", 0),
+            ),
+            reverse=True,
         )
-        lc_documents: list[LCDocument] = []
-        for seg in segments:
-            lc_documents.append(LCDocument(
-                page_content=seg.content,
-                metadata={
-                    "knowledge_base_id": str(seg.knowledge_base_id),
-                    "knowledge_document_id": str(seg.knowledge_document_id),
-                    "segment_id": str(seg.id),
-                    "source": "knowledge_base",
-                },
-            ))
-        return lc_documents
+        return merged
 
     def create_langchain_tool_from_search(
             self,
@@ -175,6 +271,38 @@ class RetrievalService(BaseService):
             return combine_documents(documents)
 
         return dataset_retrieval
+
+    def create_knowledge_retrieval_tool(
+            self,
+            flask_app: Flask,
+            knowledge_base_ids: list[UUID],
+            account_id: UUID,
+            retrieval_strategy: str = RetrievalStrategy.HYBRID.value,
+            k: int = 4,
+    ) -> BaseTool:
+        """根据传递的参数构建一个新版知识库 LangChain 检索工具"""
+
+        class KnowledgeRetrievalInput(BaseModel):
+            """知识库检索工具接入结构"""
+            query: str = Field(description="知识库搜索query语句,类型为字符串")
+
+        @tool(KNOWLEDGE_RETRIEVAL_TOOL_NAME, args_schema=KnowledgeRetrievalInput)
+        def knowledge_retrieval(query: str) -> str:
+            """如果需要搜索用户知识库中的相关内容,当你觉得用户的提问超过你的知识范围时,可以尝试调用工具,输入为检索query语句,返回数据为检索内容字符串"""
+            with flask_app.app_context():
+                documents = self.search_in_knowledge_base(
+                    knowledge_base_ids=knowledge_base_ids,
+                    query=query,
+                    account_id=account_id,
+                    retrieval_strategy=retrieval_strategy,
+                    k=k,
+                )
+
+            if len(documents) == 0:
+                return "知识库内没有检索到对应内容"
+            return combine_documents(documents)
+
+        return knowledge_retrieval
 
 
 

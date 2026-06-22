@@ -122,6 +122,7 @@ class TestRetrievalService:
             db=db,
             jieba_service=SimpleNamespace(),
             vector_database_service=SimpleNamespace(vector_store="vector-store"),
+            knowledge_vector_service=SimpleNamespace(),
         )
 
     def test_search_in_datasets_should_raise_when_no_available_dataset(self):

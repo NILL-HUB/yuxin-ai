@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 
 from injector import inject
+from werkzeug.datastructures import FileStorage
 
+from internal.entity.dataset_entity import DocumentStatus
 from internal.entity.knowledge_entity import KnowledgeCreatedFrom, KnowledgeScope, OperationContext, VisibilityScope
 from internal.exception import ForbiddenException, NotFoundException, ValidateErrorException
-from internal.model import Account, AdminUser, KnowledgeBase
+from internal.model import Account, AdminUser, KnowledgeBase, KnowledgeDocument
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 
@@ -132,3 +134,47 @@ class KnowledgeBaseService(BaseService):
             created_from=created_from,
             settings={"operation_context": operation_context},
         )
+
+    def upload_document(
+            self,
+            knowledge_base_id,
+            file: FileStorage,
+            account: Account,
+    ) -> KnowledgeDocument:
+        """上传文档到知识库并触发索引构建"""
+        knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+
+        cos_service = self._get_cos_service()
+        upload_file = cos_service.upload_file(file=file, only_image=False, account=account)
+
+        document = self.create(
+            KnowledgeDocument,
+            knowledge_base_id=knowledge_base.id,
+            owner_account_id=account.id,
+            name=upload_file.name,
+            content_type="document",
+            source_type=KnowledgeCreatedFrom.MANUAL_UPLOAD.value,
+            source_id=str(upload_file.id),
+            upload_file_id=upload_file.id,
+            metadata_={
+                "upload_file_id": str(upload_file.id),
+                "operation_context": OperationContext.USER.value,
+            },
+            character_count=0,
+            status=DocumentStatus.WAITING.value,
+        )
+
+        indexing_service = self._get_knowledge_indexing_service()
+        indexing_service.build_document(document.id, account)
+
+        return document
+
+    def _get_cos_service(self):
+        from flask import current_app
+        from .cos_service import CosService
+        return current_app.injector.get(CosService)
+
+    def _get_knowledge_indexing_service(self):
+        from flask import current_app
+        from .knowledge_indexing_service import KnowledgeIndexingService
+        return current_app.injector.get(KnowledgeIndexingService)

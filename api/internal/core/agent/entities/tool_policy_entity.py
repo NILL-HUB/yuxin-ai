@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 
 DATASET_RETRIEVAL_TOOL_NAME = "dataset_retrieval"
+KNOWLEDGE_RETRIEVAL_TOOL_NAME = "search_knowledge_base"
 
 _DEFAULT_HARD_FAIL_TOOL_NAMES = (
     "qwen_image_text_to_image",

@@ -23,6 +23,8 @@ from .jieba_service import JiebaService
 from .jwt_service import JwtService
 from .keyword_table_service import KeywordTableService
 from .knowledge_base_service import KnowledgeBaseService
+from .knowledge_indexing_service import KnowledgeIndexingService
+from .knowledge_vector_service import KnowledgeVectorService
 from .notification_service import NotificationService
 from .orchestrator_service import OrchestratorService
 from .task_classifier_service import TaskClassifierService
@@ -97,6 +99,8 @@ __all__ = [
     "RedeemCodeService",
     "KeywordTableService",
     "KnowledgeBaseService",
+    "KnowledgeIndexingService",
+    "KnowledgeVectorService",
     "KnowledgeRetrievalOrchestrator",
     "OrchestratorService",
     "TaskClassifierService",
