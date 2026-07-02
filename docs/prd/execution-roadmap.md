@@ -148,7 +148,7 @@ P1-2 渐进式启用机制（依赖 P0-4 + P1-1）
 | **P0-2 实现 CompositeToolResolver** | 新增 composite_tool_resolver.py | ⬜ 待开始 | 递归解析组合工具成员工具，复用 agent_binding 环检测思路，max_depth=8；workflow 解析 graph["nodes"]，agent_binding 递归加载目标 AppConfig，公开 App 不展开 |
 | **P0-3 实现 RuntimeToolGovernanceGate** | 新增 runtime_tool_governance_gate.py | ⬜ 待开始 | 治理注入门：BaseTool → RuntimeToolDescriptor → 查询 ToolGovernancePolicy → ToolPolicyFilter 过滤 → 返回过滤后列表 + 审计上下文；组合工具调 CompositeToolResolver 计算有效风险等级 |
 | **P0-4 注入 AppService._build_runtime_tools_for_config** | app_service.py L990-1059 | ⬜ 待开始 | 在 return 前增加可选参数 governance_gate，向后兼容；静态方法通过参数传入治理服务，不破坏现有调用方 |
-| **P0-5 AgentPoolConfig 接入 AgentCandidateCollector** | agent_pool_aggregate_service.py | ⬜ 待开始 | AgentCandidateCollector.collect() 查 App 时 LEFT JOIN AgentPoolConfig，读取 primary_pool/risk_level/model_tier/routing_priority 做过滤；独立于 P0-1~P0-4，可并行 |
+| **P0-5 AgentPoolConfig 接入 AgentCandidateCollector** | agent_pool_service.py | ✅ 已完成 | AgentCandidateCollector.collect() 查 App 时 LEFT JOIN AgentPoolConfig，读取 primary_pool/risk_level/model_tier/routing_priority 做过滤；独立于 P0-1~P0-4，可并行 |
 | **P0-6 统一 tool_id 格式映射** | tool_inventory_service.py | ⬜ 待开始 | 统一 tool_id 格式（builtin:{provider}:{tool} 等 7 种），建立治理表与运行时工具的强映射；tool_id 全部稳定（基于 UUID），见架构文档 10.5.3 |
 
 ### P1：组合工具治理透传与渐进式启用

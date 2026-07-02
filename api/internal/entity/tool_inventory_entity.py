@@ -7,6 +7,9 @@ class ToolSourceType(str, Enum):
     MCP = "mcp"
     BUILTIN = "builtin"
     KNOWLEDGE = "knowledge"
+    WORKFLOW = "workflow"
+    SKILL = "skill"
+    AGENT_BINDING = "agent_binding"
 
 
 class RiskLevel(str, Enum):

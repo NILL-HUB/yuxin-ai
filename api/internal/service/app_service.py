@@ -64,6 +64,7 @@ from .orchestrator_service import OrchestratorService
 from .retrieval_service import RetrievalService
 from .icon_generator_service import IconGeneratorService
 from .skill_service import SkillService
+from .tool_inventory_service import build_tool_id
 from ..core.language_model.entities.model_entity import ModelParameterType, ModelFeature
 from ..core.language_model.providers.deepseek.chat import Chat
 from ..entity.workflow_entity import WorkflowStatus
@@ -844,6 +845,8 @@ class AppService(BaseService):
         draft_app_config: dict[str, Any],
         flask_app: Flask | None = None,
         runtime_context: dict[str, Any] | None = None,
+        governance_gate: Any | None = None,
+        governance_context: dict[str, Any] | None = None,
     ) -> list[Any]:
         """根据应用草稿配置构建运行时工具列表"""
         return self._build_runtime_tools_for_config(
@@ -856,6 +859,8 @@ class AppService(BaseService):
             draft_app_config=draft_app_config,
             flask_app=flask_app,
             runtime_context=runtime_context,
+            governance_gate=governance_gate,
+            governance_context=governance_context,
         )
 
     @staticmethod
@@ -999,6 +1004,8 @@ class AppService(BaseService):
         draft_app_config: dict[str, Any],
         flask_app: Flask | None = None,
         runtime_context: dict[str, Any] | None = None,
+        governance_gate: Any | None = None,
+        governance_context: dict[str, Any] | None = None,
     ) -> list[Any]:
         """根据应用配置构建运行时工具列表，供多入口复用。"""
         tools = app_config_service.get_langchain_tools_by_tools_config(draft_app_config.get("tools", []))
@@ -1056,7 +1063,54 @@ class AppService(BaseService):
                     )
                 )
 
+        # 治理注入门：在 return 前过滤 BaseTool 列表（governance_gate=None 时行为不变）
+        if governance_gate is not None:
+            tool_id_hints = AppService._build_tool_id_hints(draft_app_config)
+            ctx = governance_context or {}
+            observe_only = bool(ctx.get("observe_only", True))
+            tools, _audit = governance_gate.apply(
+                tools,
+                account_id=ctx.get("account_id"),
+                app_id=str(app_id) if app_id else None,
+                agent_pool=ctx.get("agent_pool"),
+                budget_level=ctx.get("budget_level", "medium"),
+                allow_confirmation=ctx.get("allow_confirmation", False),
+                tool_id_hints=tool_id_hints,
+                observe_only=observe_only,
+            )
+
         return tools
+
+    @staticmethod
+    def _build_tool_id_hints(draft_app_config: dict[str, Any]) -> dict[str, str]:
+        """从 draft_app_config 提取 {runtime_name: tool_id} 映射，供治理门精确匹配。
+
+        仅提取 runtime_name 可靠确定的类别：
+        - agent_bindings: runtime_name = f"agent_app_{app_id去横线}"（与 AppConfigService._build_agent_runtime_tool_name 一致）
+
+        其余类别（workflows/skills/mcp_bindings/tools/datasets）因 runtime_name 依赖运行时
+        展开或 DB 查询（如 workflow 的 tool_call_name、skill 的 source_key+tool_name、mcp 的
+        binding_name+raw_tool_name），暂时跳过，治理门会降级到 name 模式匹配或默认策略。
+        每类提取均包裹 try/except，失败时跳过该类不报错。
+        """
+        hints: dict[str, str] = {}
+        if not isinstance(draft_app_config, dict):
+            return hints
+
+        # agent_bindings: runtime_name = f"agent_app_{app_id去横线}"
+        try:
+            for item in draft_app_config.get("agent_bindings", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                bound_app_id = str(item.get("app_id", "") or "").strip()
+                if not bound_app_id:
+                    continue
+                runtime_name = f"agent_app_{bound_app_id.replace('-', '')}"
+                hints[runtime_name] = build_tool_id("agent_binding", bound_app_id)
+        except Exception:
+            pass
+
+        return hints
 
     @staticmethod
     def _build_agent_binding_prompt_appendix(agent_bindings: list[dict[str, Any]] | None) -> str:

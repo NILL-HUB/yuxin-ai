@@ -6,6 +6,14 @@ from internal.entity.tool_inventory_entity import normalize_tool_metadata
 
 
 @dataclass
+class CompositeComponentRef(SerializableMixin):
+    tool_id: str
+    source_type: str
+    ref_path: str
+    is_recursive: bool = False
+
+
+@dataclass
 class RuntimeToolDescriptor(SerializableMixin):
     tool_id: str
     runtime_name: str
@@ -17,6 +25,11 @@ class RuntimeToolDescriptor(SerializableMixin):
     input_schema: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     audit_context: dict[str, Any] = field(default_factory=dict)
+    is_composite: bool = False
+    composite_kind: str = ""
+    composite_components: list = field(default_factory=list)
+    composite_root_id: str = ""
+    runtime_name_stable: bool = True
 
     @classmethod
     def from_candidate(

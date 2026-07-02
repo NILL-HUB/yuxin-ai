@@ -17,6 +17,7 @@ class _QueryStub:
         self._all_result = [] if all_result is None else all_result
         self.filters = []
         self.order_by_args = []
+        self.outerjoin_args = []
 
     def filter(self, *args, **kwargs):
         self.filters.append((args, kwargs))
@@ -24,6 +25,12 @@ class _QueryStub:
 
     def order_by(self, *args):
         self.order_by_args.append(args)
+        return self
+
+    def outerjoin(self, *args, **kwargs):
+        # AgentCandidateCollector.collect() 现在通过 outerjoin LEFT JOIN AgentPoolConfig；
+        # stub 不模拟真实 JOIN，仅维持链式调用并把结果（含 App 对象或 (App, AgentPoolConfig) 元组）原样返回。
+        self.outerjoin_args.append((args, kwargs))
         return self
 
     def all(self):

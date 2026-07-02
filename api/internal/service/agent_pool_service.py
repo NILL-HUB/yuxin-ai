@@ -6,7 +6,18 @@ from injector import inject
 from internal.entity.agent_entity import normalize_agent_metadata
 from internal.entity.app_entity import AppStatus
 from internal.extension.database_extension import db
+from internal.model.agent_pool_entity import AgentPoolConfig
 from internal.model.app import App, AppAssignment
+
+
+# AgentPoolConfig 不存在时的降级默认值，保证无配置记录的 App 也能被收集
+_DEFAULT_POOL_CONFIG = {
+    "primary_pool": "general",
+    "secondary_pools": [],
+    "risk_level": "safe",
+    "model_tier": "standard",
+    "routing_priority": 100,
+}
 
 
 BUILTIN_AGENT_CANDIDATES = [
@@ -53,14 +64,16 @@ class AgentCandidateCollector:
     def collect(self, account_id: UUID) -> list[dict[str, object]]:
         candidates = []
         seen_app_ids = set()
-        public_apps = (
-            self.session.query(App)
+        public_rows = (
+            self.session.query(App, AgentPoolConfig)
+            .outerjoin(AgentPoolConfig, AgentPoolConfig.app_id == App.id)
             .filter(App.is_public == True, App.status == AppStatus.PUBLISHED.value)
             .order_by(App.created_at.desc())
             .all()
         )
-        for app in public_apps:
-            self._append_app_candidate(candidates, seen_app_ids, app, "public")
+        for row in public_rows:
+            app, pool_config = self._unpack_app_row(row)
+            self._append_app_candidate(candidates, seen_app_ids, app, "public", pool_config)
         assignments = (
             self.session.query(AppAssignment)
             .filter(AppAssignment.account_id == account_id, AppAssignment.status == "active")
@@ -69,18 +82,45 @@ class AgentCandidateCollector:
         )
         for assignment in assignments:
             app = getattr(assignment, "app", None)
-            self._append_app_candidate(candidates, seen_app_ids, app, "assigned")
-        own_apps = (
-            self.session.query(App)
+            self._append_app_candidate(candidates, seen_app_ids, app, "assigned", None)
+        own_rows = (
+            self.session.query(App, AgentPoolConfig)
+            .outerjoin(AgentPoolConfig, AgentPoolConfig.app_id == App.id)
             .filter(App.account_id == account_id, App.status == AppStatus.PUBLISHED.value)
             .order_by(App.created_at.desc())
             .all()
         )
-        for app in own_apps:
-            self._append_app_candidate(candidates, seen_app_ids, app, "own")
+        for row in own_rows:
+            app, pool_config = self._unpack_app_row(row)
+            self._append_app_candidate(candidates, seen_app_ids, app, "own", pool_config)
         serialized = [self._serialize_candidate(candidate) for candidate in candidates]
         serialized.extend(self._builtin_candidates())
         return serialized
+
+    @staticmethod
+    def _unpack_app_row(row) -> tuple[App, AgentPoolConfig | None]:
+        """从 query(App, AgentPoolConfig).outerjoin(...).all() 的结果中拆出 App 和 AgentPoolConfig。
+
+        真实查询返回 Row/tuple；测试 stub 可能直接返回 App 对象，此时降级为 (app, None)。
+        """
+        if isinstance(row, tuple):
+            app = row[0]
+            pool_config = row[1] if len(row) > 1 else None
+            return app, pool_config
+        return row, None
+
+    @staticmethod
+    def _normalize_pool_config(config: AgentPoolConfig | None) -> dict[str, object]:
+        """把 AgentPoolConfig ORM 对象归一化为 dict；记录不存在时降级为默认值。"""
+        if config is None:
+            return dict(_DEFAULT_POOL_CONFIG)
+        return {
+            "primary_pool": config.primary_pool,
+            "secondary_pools": config.secondary_pools or [],
+            "risk_level": config.risk_level,
+            "model_tier": config.model_tier,
+            "routing_priority": config.routing_priority,
+        }
 
     def collect_raw(self, account_id: UUID) -> list[dict[str, object]]:
         serialized = self.collect(account_id)
@@ -192,6 +232,7 @@ class AgentCandidateCollector:
         seen_app_ids: set,
         app: App | None,
         source_scope: str,
+        pool_config: AgentPoolConfig | None = None,
     ) -> None:
         if app is None or app.id in seen_app_ids:
             return
@@ -200,18 +241,28 @@ class AgentCandidateCollector:
         metadata = app.normalized_agent_metadata
         if metadata.get("enabled") is False:
             return
-        candidates.append(self._candidate(app, source_scope, metadata))
+        candidates.append(self._candidate(app, source_scope, metadata, pool_config))
         seen_app_ids.add(app.id)
 
     def _candidate(
-        self, app: App, source_scope: str, metadata: dict[str, object]
+        self,
+        app: App,
+        source_scope: str,
+        metadata: dict[str, object],
+        pool_config: AgentPoolConfig | None = None,
     ) -> dict[str, object]:
-        return {"app": app, "source_scope": source_scope, "metadata": metadata}
+        return {
+            "app": app,
+            "source_scope": source_scope,
+            "metadata": metadata,
+            "pool_config": self._normalize_pool_config(pool_config),
+        }
 
     @staticmethod
     def _serialize_candidate(candidate: dict[str, object]) -> dict[str, object]:
         app = candidate["app"]
         source_scope = candidate["source_scope"]
+        pool_config = candidate.get("pool_config") or {}
         return {
             "id": str(app.id),
             "agent_id": str(app.id),
@@ -225,6 +276,11 @@ class AgentCandidateCollector:
             "app_id": str(app.id),
             "visibility": "public" if app.is_public else "private",
             "metadata": candidate["metadata"],
+            "primary_pool": pool_config.get("primary_pool", _DEFAULT_POOL_CONFIG["primary_pool"]),
+            "secondary_pools": pool_config.get("secondary_pools", _DEFAULT_POOL_CONFIG["secondary_pools"]),
+            "risk_level": pool_config.get("risk_level", _DEFAULT_POOL_CONFIG["risk_level"]),
+            "model_tier": pool_config.get("model_tier", _DEFAULT_POOL_CONFIG["model_tier"]),
+            "routing_priority": pool_config.get("routing_priority", _DEFAULT_POOL_CONFIG["routing_priority"]),
         }
 
     @staticmethod

@@ -1128,14 +1128,14 @@ class CompositeToolResolver:
                     is_recursive=False,  # builtin/api_tool 是原子工具
                 ))
             elif node_type == "dataset_retrieval":
-                # DatasetRetrievalNode：引用知识库
-                dataset_id = node.get("dataset_id", "")
-                components.append(CompositeComponentRef(
-                    tool_id=f"knowledge:{dataset_id}",
-                    source_type="knowledge",
-                    ref_path=f"workflow.nodes[{idx}].dataset_retrieval",
-                    is_recursive=False,
-                ))
+                # DatasetRetrievalNode：引用知识库（实际字段为 dataset_ids 复数 list）
+                for dataset_id in node.get("dataset_ids", []) or []:
+                    components.append(CompositeComponentRef(
+                        tool_id=f"knowledge:{dataset_id}",
+                        source_type="knowledge",
+                        ref_path=f"workflow.nodes[{idx}].dataset_retrieval",
+                        is_recursive=False,
+                    ))
             # 其他节点类型（LLM/CODE/HTTP/IF_ELSE 等）不引用工具，跳过
         return components
 

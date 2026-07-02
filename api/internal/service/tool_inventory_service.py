@@ -9,6 +9,38 @@ from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvid
 from .builtin_tool_service import BuiltinToolService
 
 
+def build_tool_id(source_type: str, *parts) -> str:
+    """生成标准 tool_id，格式为 '{source_type}:{parts}'，各 part 用冒号拼接。
+
+    用于建立 ToolGovernancePolicy.tool_id 与运行时工具的强映射。前缀使用
+    tool_id 标准格式（如 'api_tool'、'builtin'、'mcp'、'knowledge'），其中
+    api_tool 前缀与 ToolSourceType.API.value('api') 不同，需用字面量 'api_tool'。
+
+    示例：
+        build_tool_id("api_tool", str(tool.id)) -> "api_tool:{uuid}"
+        build_tool_id("mcp", str(provider.id), tool_name) -> "mcp:{provider_id}:{tool_name}"
+        build_tool_id("builtin", provider, tool_name) -> "builtin:{provider}:{tool_name}"
+        build_tool_id("knowledge", str(base.id)) -> "knowledge:{dataset_id}"
+    """
+    return ":".join([source_type, *[str(part) for part in parts]])
+
+
+def parse_tool_id(tool_id: str) -> tuple[str, str]:
+    """解析 tool_id，返回 (source_type, entity_id)。
+
+    只拆第一个冒号，entity_id 可能本身含冒号（如 mcp 的 'provider_id:tool_name'）。
+
+    示例：
+        parse_tool_id("api_tool:abc") -> ("api_tool", "abc")
+        parse_tool_id("mcp:p1:t1") -> ("mcp", "p1:t1")
+        parse_tool_id("knowledge:dataset-1") -> ("knowledge", "dataset-1")
+    """
+    if not isinstance(tool_id, str) or ":" not in tool_id:
+        return "", tool_id if isinstance(tool_id, str) else ""
+    source_type, _, entity_id = tool_id.partition(":")
+    return source_type, entity_id
+
+
 class ToolCandidateCollector:
     def __init__(self, session=None, builtin_tool_service: BuiltinToolService | None = None):
         self.session = session or db.session
@@ -37,7 +69,7 @@ class ToolCandidateCollector:
             if not self._is_available(metadata):
                 continue
             result.append({
-                "id": str(tool.id),
+                "id": build_tool_id("api_tool", str(tool.id)),
                 "name": tool.name,
                 "description": tool.description,
                 "source_type": ToolSourceType.API.value,
@@ -71,7 +103,7 @@ class ToolCandidateCollector:
                 if not self._is_available(metadata):
                     continue
                 result.append({
-                    "id": f"{provider.id}:{tool_name}",
+                    "id": build_tool_id(ToolSourceType.MCP.value, str(provider.id), tool_name),
                     "name": tool_name,
                     "description": provider.description,
                     "source_type": ToolSourceType.MCP.value,
@@ -101,7 +133,11 @@ class ToolCandidateCollector:
                 if not self._is_available(metadata):
                     continue
                 result.append({
-                    "id": f"{provider.get('name', '')}:{tool.get('name', '')}",
+                    "id": build_tool_id(
+                        ToolSourceType.BUILTIN.value,
+                        provider.get("name", ""),
+                        tool.get("name", ""),
+                    ),
                     "name": tool.get("name", ""),
                     "description": tool.get("description", ""),
                     "source_type": ToolSourceType.BUILTIN.value,
@@ -137,7 +173,7 @@ class ToolCandidateCollector:
             if not self._is_available(metadata):
                 continue
             result.append({
-                "id": str(base.id),
+                "id": build_tool_id(ToolSourceType.KNOWLEDGE.value, str(base.id)),
                 "name": base.name,
                 "description": base.description,
                 "source_type": ToolSourceType.KNOWLEDGE.value,
@@ -182,7 +218,7 @@ class ToolCandidateCollector:
             if not self._is_available(metadata):
                 continue
             result.append({
-                "id": f"external_data:{ds.id}",
+                "id": build_tool_id(ToolSourceType.KNOWLEDGE.value, str(ds.id)),
                 "name": "external_data_retrieval",
                 "description": "检索用户连接的外部数据源内容",
                 "source_type": ToolSourceType.KNOWLEDGE.value,

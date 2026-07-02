@@ -52,6 +52,8 @@ from internal.service.tool_inventory_service import (
     ToolRanker,
 )
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
+from internal.service.composite_tool_resolver import CompositeToolResolver
+from internal.service.runtime_tool_governance_gate import RuntimeToolGovernanceGate
 
 
 class ExtensionModule(Module):
@@ -116,5 +118,9 @@ class ExtensionModule(Module):
         binder.bind(ToolRanker, to=ToolRanker)
         binder.bind(CrossPoolToolSubsetBuilder, to=CrossPoolToolSubsetBuilder)
         binder.bind(RuntimeToolMountService, to=RuntimeToolMountService)
+
+        # 注册工具治理门依赖（激活 P0-4 池治理与运行时打通）
+        binder.bind(CompositeToolResolver, to=CompositeToolResolver)
+        binder.bind(RuntimeToolGovernanceGate, to=RuntimeToolGovernanceGate)
 
 injector = Injector([ExtensionModule])
