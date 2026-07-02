@@ -54,6 +54,7 @@ from internal.service.tool_inventory_service import (
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.composite_tool_resolver import CompositeToolResolver
 from internal.service.runtime_tool_governance_gate import RuntimeToolGovernanceGate
+from internal.service.governance_mode_resolver import GovernanceModeResolver
 
 
 class ExtensionModule(Module):
@@ -122,5 +123,8 @@ class ExtensionModule(Module):
         # 注册工具治理门依赖（激活 P0-4 池治理与运行时打通）
         binder.bind(CompositeToolResolver, to=CompositeToolResolver)
         binder.bind(RuntimeToolGovernanceGate, to=RuntimeToolGovernanceGate)
+
+        # 注册池治理模式解析器（激活 P1-2 渐进式启用开关）
+        binder.bind(GovernanceModeResolver, to=GovernanceModeResolver)
 
 injector = Injector([ExtensionModule])

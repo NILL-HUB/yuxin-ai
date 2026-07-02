@@ -1066,8 +1066,13 @@ class AppService(BaseService):
         # 治理注入门：在 return 前过滤 BaseTool 列表（governance_gate=None 时行为不变）
         if governance_gate is not None:
             tool_id_hints = AppService._build_tool_id_hints(draft_app_config)
-            ctx = governance_context or {}
-            observe_only = bool(ctx.get("observe_only", True))
+            if governance_context is None:
+                # 未显式提供 context 时，按 OrchestrationFeatureFlag 解析当前治理模式
+                ctx = AppService._resolve_default_governance_context(
+                    app_id=str(app_id) if app_id else None
+                )
+            else:
+                ctx = governance_context
             tools, _audit = governance_gate.apply(
                 tools,
                 account_id=ctx.get("account_id"),
@@ -1076,10 +1081,30 @@ class AppService(BaseService):
                 budget_level=ctx.get("budget_level", "medium"),
                 allow_confirmation=ctx.get("allow_confirmation", False),
                 tool_id_hints=tool_id_hints,
-                observe_only=observe_only,
+                observe_only=bool(ctx.get("observe_only", True)),
+                block_sensitive_only=bool(ctx.get("block_sensitive_only", False)),
             )
 
         return tools
+
+    @staticmethod
+    def _resolve_default_governance_context(app_id: str | None = None) -> dict[str, Any]:
+        """governance_gate 启用但未显式提供 governance_context 时，按 OrchestrationFeatureFlag
+        解析当前池治理模式（阶段1/2/3），构建默认 context。
+
+        解析异常或表缺失时降级为 {"observe_only": True}（阶段1，安全默认），
+        保证向后兼容：governance_gate=None 时本方法不会被调用。
+        """
+        try:
+            from internal.extension.database_extension import db as _db
+            from .governance_mode_resolver import GovernanceModeResolver
+
+            return GovernanceModeResolver(db=_db).build_governance_context(
+                app_id=app_id
+            )
+        except Exception:
+            # 任何异常都降级为阶段1（只观测不阻断），避免阻断主链路
+            return {"observe_only": True, "block_sensitive_only": False, "mode": "observe_only"}
 
     @staticmethod
     def _build_tool_id_hints(draft_app_config: dict[str, Any]) -> dict[str, str]:

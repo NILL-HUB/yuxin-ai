@@ -133,33 +133,35 @@ P0-3 RuntimeToolGovernanceGate（依赖 P0-2 的 CompositeToolResolver）
   ↓
 P0-4 注入 AppService._build_runtime_tools_for_config（依赖 P0-3）
   ↓
-P0-5 AgentPoolConfig 接入 AgentCandidateCollector（独立，可并行）
-  ↓
-P1-1 组合工具治理透传（依赖 P0-2 + P0-4）
-  ↓
-P1-2 渐进式启用机制（依赖 P0-4 + P1-1）
+P1-1 组合工具治理透传（依赖 P0-2 + P0-3）
+P1-2 渐进式启用机制（依赖 P0-4，可与 P1-1 并行）
+P1-3 skill 工具包治理（独立，可并行）
+P1-4 WorkflowTool 纳入治理（独立，可并行）
+P1-5 AgentBinding 委派工具纳入治理（依赖 P0-3，可并行）
+P0-5 AgentPoolConfig 接入 AgentCandidateCollector（完全独立，可并行）
+P0-6 统一 tool_id 格式映射（完全独立，可并行）
 ```
 
 ### P0：数据结构与解析器（前置）
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **P0-1 扩展 ToolSourceType + RuntimeToolDescriptor + CompositeComponentRef** | tool_inventory_entity.py, runtime_tool_entity.py | ⬜ 待开始 | ToolSourceType 新增 WORKFLOW/SKILL/AGENT_BINDING；RuntimeToolDescriptor 新增 is_composite/composite_kind/composite_components/composite_root_id/runtime_name_stable；新增 CompositeComponentRef dataclass |
-| **P0-2 实现 CompositeToolResolver** | 新增 composite_tool_resolver.py | ⬜ 待开始 | 递归解析组合工具成员工具，复用 agent_binding 环检测思路，max_depth=8；workflow 解析 graph["nodes"]，agent_binding 递归加载目标 AppConfig，公开 App 不展开 |
-| **P0-3 实现 RuntimeToolGovernanceGate** | 新增 runtime_tool_governance_gate.py | ⬜ 待开始 | 治理注入门：BaseTool → RuntimeToolDescriptor → 查询 ToolGovernancePolicy → ToolPolicyFilter 过滤 → 返回过滤后列表 + 审计上下文；组合工具调 CompositeToolResolver 计算有效风险等级 |
-| **P0-4 注入 AppService._build_runtime_tools_for_config** | app_service.py L990-1059 | ⬜ 待开始 | 在 return 前增加可选参数 governance_gate，向后兼容；静态方法通过参数传入治理服务，不破坏现有调用方 |
-| **P0-5 AgentPoolConfig 接入 AgentCandidateCollector** | agent_pool_service.py | ✅ 已完成 | AgentCandidateCollector.collect() 查 App 时 LEFT JOIN AgentPoolConfig，读取 primary_pool/risk_level/model_tier/routing_priority 做过滤；独立于 P0-1~P0-4，可并行 |
-| **P0-6 统一 tool_id 格式映射** | tool_inventory_service.py | ⬜ 待开始 | 统一 tool_id 格式（builtin:{provider}:{tool} 等 7 种），建立治理表与运行时工具的强映射；tool_id 全部稳定（基于 UUID），见架构文档 10.5.3 |
+| **P0-1 扩展 ToolSourceType + RuntimeToolDescriptor + CompositeComponentRef** | tool_inventory_entity.py, runtime_tool_entity.py | ✅ 已完成 | ToolSourceType 新增 WORKFLOW/SKILL/AGENT_BINDING；RuntimeToolDescriptor 新增 is_composite/composite_kind/composite_components/composite_root_id/runtime_name_stable；新增 CompositeComponentRef dataclass |
+| **P0-2 实现 CompositeToolResolver** | 新增 composite_tool_resolver.py | ✅ 已完成 | 递归解析组合工具成员工具，复用 agent_binding 环检测思路，max_depth=8；workflow 解析 graph["nodes"]，agent_binding 递归加载目标 AppConfig，公开 App 不展开；20 测试通过，覆盖率 83% |
+| **P0-3 实现 RuntimeToolGovernanceGate** | 新增 runtime_tool_governance_gate.py | ✅ 已完成 | 治理注入门：BaseTool → RuntimeToolDescriptor → 查询 ToolGovernancePolicy → ToolPolicyFilter 过滤 → 返回过滤后列表 + 审计上下文；组合工具调 CompositeToolResolver 计算有效风险等级 |
+| **P0-4 注入 AppService._build_runtime_tools_for_config** | app_service.py, module.py | ✅ 已完成 | 在 return 前增加可选参数 governance_gate，向后兼容；DI 注册 CompositeToolResolver + RuntimeToolGovernanceGate；governance_gate=None 时行为不变 |
+| **P0-5 AgentPoolConfig 接入 AgentCandidateCollector** | agent_pool_service.py | ✅ 已完成 | AgentCandidateCollector.collect() 查 App 时 LEFT JOIN AgentPoolConfig，读取 primary_pool/risk_level/model_tier/routing_priority；21 测试通过 |
+| **P0-6 统一 tool_id 格式映射** | tool_inventory_service.py | ✅ 已完成 | 统一 tool_id 格式（builtin:{provider}:{tool} 等 7 种），新增 build_tool_id/parse_tool_id 辅助函数；16 测试通过 |
 
 ### P1：组合工具治理透传与渐进式启用
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **P1-1 组合工具治理透传** | tool_inventory_service.py, admin_tool_governance_service.py | ⬜ 待开始 | 依赖 P0-2 + P0-4。workflow/agent_binding 有效风险等级 = max(成员风险等级)；部分阻断策略（dangerous 整体阻断，sensitive 需确认，disabled 整体阻断）；治理策略双层叠加（组合工具层级 + 成员层级取严） |
-| **P1-2 渐进式启用机制** | OrchestrationFeatureFlag | ⬜ 待开始 | 依赖 P0-4 + P1-1。三阶段：阶段1只观测不阻断 → 阶段2敏感工具阻断 → 阶段3全量启用，通过特性开关控制 |
-| **P1-3 skill 工具包治理** | skill_service.py, tool_inventory_service.py | ⬜ 待开始 | skill 不是组合工具，按工具包治理：skill:{skill_package_id} 整体治理，或 skill:{skill_package_id}:{tool_name} 细粒度治理；SkillToolFactory 构建时查询治理策略 |
-| **P1-4 WorkflowTool 纳入治理** | tool_inventory_service.py, app_config_service.py | ⬜ 待开始 | WorkflowTool 构建时查询治理策略，受 ToolPolicyFilter 约束；workflow:{workflow_id} 作为 tool_id |
-| **P1-5 AgentBinding 委派工具纳入治理** | app_service.py | ⬜ 待开始 | agent_binding:{app_id} 作为 tool_id；私有 App 通过 CompositeToolResolver 透传成员治理；公开 App 仅 app_id 层级治理 |
+| **P1-1 组合工具治理透传** | runtime_tool_governance_gate.py | ✅ 已完成 | 部分阻断策略（dangerous/disabled/unhealthy 整体阻断，sensitive 需确认）；治理策略双层叠加（组合工具层级 + 成员层级取严）；28 测试通过 |
+| **P1-2 渐进式启用机制** | governance_mode_resolver.py, orchestration_feature_flag_entity.py, runtime_tool_governance_gate.py, app_service.py, module.py | ✅ 已完成 | 三阶段开关（ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY/BLOCK_SENSITIVE/BLOCK_ALL）；GovernanceModeResolver 解析当前模式；block_sensitive_only 参数；160 测试通过 |
+| **P1-3 skill 工具包治理** | tool_inventory_service.py | ✅ 已完成 | ToolCandidateCollector 新增 _collect_skill_tools，skill:{skill_package_id} 整体治理；5 测试通过 |
+| **P1-4 WorkflowTool 纳入治理** | tool_inventory_service.py | ✅ 已完成 | ToolCandidateCollector 新增 _collect_workflow_tools，workflow:{workflow_id} 整体治理；6 测试通过 |
+| **P1-5 AgentBinding 委派工具纳入治理** | runtime_tool_governance_gate.py | ✅ 已完成 | agent_binding:{app_id} 治理；私有 App 递归解析成员，公开 App 黑盒不展开；4 测试通过 |
 
 ### P2：管理界面与远期扩展
 

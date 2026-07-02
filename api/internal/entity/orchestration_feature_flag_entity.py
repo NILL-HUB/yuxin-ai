@@ -13,7 +13,22 @@ ORCHESTRATION_FEATURE_FLAG_CODES = [
     "ENABLE_RESULT_SYNTHESIZER",
     "ENABLE_ROUTING_LOGS",
     "ENABLE_AUTO_DEEP_THINKING",
+    # 池治理渐进式启用三阶段开关（P1-2）
+    "ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY",
+    "ENABLE_POOL_GOVERNANCE_BLOCK_SENSITIVE",
+    "ENABLE_POOL_GOVERNANCE_BLOCK_ALL",
 ]
+
+
+# 池治理渐进式启用特性 key 常量（供 GovernanceModeResolver 引用）
+POOL_GOVERNANCE_FLAG_OBSERVE_ONLY = "ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY"
+POOL_GOVERNANCE_FLAG_BLOCK_SENSITIVE = "ENABLE_POOL_GOVERNANCE_BLOCK_SENSITIVE"
+POOL_GOVERNANCE_FLAG_BLOCK_ALL = "ENABLE_POOL_GOVERNANCE_BLOCK_ALL"
+
+# 池治理模式取值
+POOL_GOVERNANCE_MODE_OBSERVE_ONLY = "observe_only"
+POOL_GOVERNANCE_MODE_BLOCK_SENSITIVE = "block_sensitive"
+POOL_GOVERNANCE_MODE_BLOCK_ALL = "block_all"
 
 
 @dataclass
@@ -99,6 +114,30 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             enabled=True,
             risk_level="medium",
             fallback_behavior="keyword_matching_manual_switch",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY",
+            name="Pool governance observe only",
+            description="Stage 1: pool governance gate observes only without blocking (default enabled)",
+            enabled=True,
+            risk_level="low",
+            fallback_behavior="observe_only",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_POOL_GOVERNANCE_BLOCK_SENSITIVE",
+            name="Pool governance block sensitive",
+            description="Stage 2: pool governance gate blocks sensitive/dangerous tools only",
+            enabled=False,
+            risk_level="medium",
+            fallback_behavior="observe_only",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_POOL_GOVERNANCE_BLOCK_ALL",
+            name="Pool governance block all",
+            description="Stage 3: pool governance gate enforces full policy filtering",
+            enabled=False,
+            risk_level="high",
+            fallback_behavior="observe_only",
         ),
     ]
 

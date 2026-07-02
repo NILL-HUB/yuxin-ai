@@ -4,8 +4,9 @@ from uuid import UUID
 from injector import inject
 
 from internal.entity.tool_inventory_entity import RiskLevel, ToolSourceType, normalize_tool_metadata
+from internal.entity.workflow_entity import WorkflowStatus
 from internal.extension.database_extension import db
-from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider
+from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider, SkillPackage, Workflow
 from .builtin_tool_service import BuiltinToolService
 
 
@@ -53,6 +54,8 @@ class ToolCandidateCollector:
         candidates.extend(self._collect_builtin_tools())
         candidates.extend(self._collect_knowledge_tools(account_id))
         candidates.extend(self._collect_external_data_tools(account_id))
+        candidates.extend(self._collect_skill_tools(account_id))
+        candidates.extend(self._collect_workflow_tools(account_id))
         return candidates
 
     def _collect_api_tools(self, account_id: UUID) -> list[dict[str, object]]:
@@ -232,6 +235,84 @@ class ToolCandidateCollector:
                         "description": "检索问题",
                     }
                 ],
+                "metadata": metadata,
+                "visibility": "private",
+                "enabled": True,
+            })
+        return result
+
+    def _collect_skill_tools(self, account_id: UUID) -> list[dict[str, object]]:
+        """收集 skill 工具包作为候选工具。
+
+        治理粒度：skill:{skill_package_id} 整体治理，每个 skill_package 作为一个候选，
+        不展开内部 tool（细粒度 skill:{id}:{tool_name} 留给远期）。
+        SkillPackage 为系统级共享，无 account_id 字段，不做账号过滤。
+        """
+        packages = self.session.query(SkillPackage).filter(
+            SkillPackage.enabled.is_(True),
+        ).all()
+
+        result = []
+        for package in packages:
+            metadata = normalize_tool_metadata({
+                **(getattr(package, "metadata", {}) or {}),
+                "tool_pool": "skill",
+                "capabilities": package.capabilities or [],
+                "risk_level": RiskLevel.LOW.value,
+                "permission_scope": "system",
+                "cost_level": "low",
+                "owner": "system",
+                "enabled": package.enabled,
+            })
+            if not self._is_available(metadata):
+                continue
+            result.append({
+                "id": build_tool_id(ToolSourceType.SKILL.value, str(package.id)),
+                "name": package.name,
+                "description": package.description,
+                "source_type": ToolSourceType.SKILL.value,
+                "provider_id": str(package.id),
+                "provider_name": package.label or package.name,
+                "inputs": [],
+                "metadata": metadata,
+                "visibility": "system",
+                "enabled": True,
+            })
+        return result
+
+    def _collect_workflow_tools(self, account_id: UUID) -> list[dict[str, object]]:
+        """收集 workflow 作为候选工具（组合工具）。
+
+        治理粒度：workflow:{workflow_id} 整体治理
+        workflow 是组合工具，CompositeToolResolver 会递归解析其内部 ToolNode + DatasetRetrievalNode
+        Workflow 为账号级资源，按 account_id 过滤；仅收集 PUBLISHED 状态。
+        """
+        workflows = self.session.query(Workflow).filter(
+            Workflow.status == WorkflowStatus.PUBLISHED.value,
+            Workflow.account_id == account_id,
+        ).all()
+
+        result = []
+        for wf in workflows:
+            metadata = normalize_tool_metadata({
+                "tool_pool": "workflow",
+                "capabilities": [wf.tool_call_name or wf.name],
+                "risk_level": RiskLevel.MEDIUM.value,
+                "permission_scope": "user",
+                "cost_level": "medium",
+                "owner": str(wf.account_id),
+                "enabled": True,
+            })
+            if not self._is_available(metadata):
+                continue
+            result.append({
+                "id": build_tool_id(ToolSourceType.WORKFLOW.value, str(wf.id)),
+                "name": wf.name,
+                "description": wf.description,
+                "source_type": ToolSourceType.WORKFLOW.value,
+                "provider_id": str(wf.id),
+                "provider_name": wf.name,
+                "inputs": [],
                 "metadata": metadata,
                 "visibility": "private",
                 "enabled": True,

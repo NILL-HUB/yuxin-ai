@@ -59,13 +59,14 @@ class _StubResolver:
         return list(self._members.get(tool_id, []))
 
 
-def _policy(*, risk_level="low", enabled=True, require_confirmation=False, allowed_pools=None):
+def _policy(*, risk_level="low", enabled=True, require_confirmation=False, allowed_pools=None, health_status="healthy"):
     """构造 ToolGovernancePolicy 桩。"""
     return SimpleNamespace(
         risk_level=risk_level,
         enabled=enabled,
         require_confirmation=require_confirmation,
         allowed_pools=allowed_pools or [],
+        health_status=health_status,
     )
 
 
@@ -304,3 +305,590 @@ def test_apply_audit_context_structure():
     assert audit["composite_resolved"] == {}
     # 返回的工具列表正确
     assert filtered_tools == [safe_tool]
+
+
+# ------------------------------------------------------------------ #
+#  agent_binding 治理测试 (P1-5)                                      #
+# ------------------------------------------------------------------ #
+
+def _app(*, is_public=False):
+    """构造 App 桩，用于 _is_agent_binding_public_app 的 DB 查询返回。"""
+    return SimpleNamespace(is_public=is_public)
+
+
+def test_agent_binding_tool_identified_as_composite():
+    """agent_binding 工具通过 tool_id_hints 被识别为组合工具并展开成员。"""
+    app_id = "11111111-1111-1111-1111-111111111111"
+    runtime_name = f"agent_app_{app_id.replace('-', '')}"
+    tool = _tool(runtime_name)
+    gate = _build_gate(
+        # 查询顺序：agent_binding 策略(无) → App(私有) → 成员 m1 策略(safe)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_app(is_public=False)),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+        ],
+        members_by_tool_id={
+            f"agent_binding:{app_id}": [_ref("api_tool:m1")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={runtime_name: f"agent_binding:{app_id}"},
+    )
+
+    # 工具被识别为组合工具，resolver 收到 hint 提供的精确 tool_id
+    assert gate.composite_tool_resolver.resolve_calls == [f"agent_binding:{app_id}"]
+    # safe 成员 → 有效风险 safe → 放行
+    assert filtered_tools == [tool]
+    assert audit["accepted"][0]["tool_id"] == f"agent_binding:{app_id}"
+    # 审计记录组合工具展开
+    assert f"agent_binding:{app_id}" in audit["composite_resolved"]
+    composite = audit["composite_resolved"][f"agent_binding:{app_id}"]
+    assert composite["composite_resolved"] is True
+    assert composite["member_count"] == 1
+    assert composite["member_tool_ids"] == ["api_tool:m1"]
+
+
+def test_agent_binding_private_app_effective_risk_is_max_of_members():
+    """私有 App agent_binding：有效风险等级取成员 max，高风险+确认 → 被过滤。"""
+    app_id = "22222222-2222-2222-2222-222222222222"
+    runtime_name = f"agent_app_{app_id.replace('-', '')}"
+    tool = _tool(runtime_name)
+    gate = _build_gate(
+        # 查询顺序：agent_binding 策略(无) → App(私有) → m1(safe) → m2(high+确认)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_app(is_public=False)),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(
+                risk_level="high", require_confirmation=True,
+            )),
+        ],
+        members_by_tool_id={
+            f"agent_binding:{app_id}": [
+                _ref("api_tool:m1"), _ref("api_tool:m2"),
+            ],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={runtime_name: f"agent_binding:{app_id}"},
+        allow_confirmation=False,
+    )
+
+    # 有效风险 = max(safe, high) = high，且 m2 require_confirmation=True → 被过滤
+    assert filtered_tools == []
+    assert len(audit["filtered_out"]) == 1
+    assert audit["filtered_out"][0]["tool_id"] == f"agent_binding:{app_id}"
+    assert audit["filtered_out"][0]["reason"] == "high_risk_requires_confirmation"
+    composite = audit["composite_resolved"][f"agent_binding:{app_id}"]
+    assert composite["composite_resolved"] is True
+    assert composite["member_count"] == 2
+    assert composite["member_tool_ids"] == ["api_tool:m1", "api_tool:m2"]
+
+
+def test_agent_binding_public_app_skips_member_resolution():
+    """公开 App agent_binding：不展开成员，用 app_id 层级策略，审计标记黑盒。"""
+    app_id = "33333333-3333-3333-3333-333333333333"
+    runtime_name = f"agent_app_{app_id.replace('-', '')}"
+    tool = _tool(runtime_name)
+    gate = _build_gate(
+        # 查询顺序：agent_binding 策略(medium, 无确认) → App(公开)
+        session_queries=[
+            _QueryStub(one_result=_policy(risk_level="medium")),
+            _QueryStub(one_result=_app(is_public=True)),
+        ],
+        members_by_tool_id={
+            # 即使预设了成员，公开 App 也不应调用 resolver
+            f"agent_binding:{app_id}": [_ref("api_tool:m1")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={runtime_name: f"agent_binding:{app_id}"},
+        allow_confirmation=False,
+    )
+
+    # 公开 App 不调用 CompositeToolResolver
+    assert gate.composite_tool_resolver.resolve_calls == []
+    # app_id 层级策略 medium + 无确认 → 放行
+    assert filtered_tools == [tool]
+    assert audit["accepted"][0]["tool_id"] == f"agent_binding:{app_id}"
+    # 审计标记公开 App 黑盒
+    composite = audit["composite_resolved"][f"agent_binding:{app_id}"]
+    assert composite["composite_resolved"] is False
+    assert composite["reason"] == "public_app_a2a_blackbox"
+    assert composite["member_count"] == 0
+    assert composite["member_tool_ids"] == []
+
+
+def test_agent_binding_default_governance_metadata():
+    """agent_binding 无策略记录时降级为显式默认治理元数据。"""
+    gate = _build_gate(
+        session_queries=[_QueryStub(one_result=None)],
+    )
+
+    metadata = gate._load_governance_metadata(
+        "agent_binding:default-app-1", "agent_binding"
+    )
+
+    assert metadata["risk_level"] == "medium"
+    assert metadata["permission_scope"] == "user"
+    assert metadata["requires_confirmation"] is False
+    assert metadata["enabled"] is True
+    assert metadata["cost_level"] == "medium"
+    assert metadata["tool_pool"] == "agent_binding"
+
+
+# ------------------------------------------------------------------ #
+#  block_sensitive_only 渐进式启用测试 (P1-2 阶段2)                    #
+# ------------------------------------------------------------------ #
+
+def test_apply_block_sensitive_only_blocks_sensitive_tool():
+    """阶段2：sensitive 风险+确认 工具被阻断。"""
+    tool = _tool("purge")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(
+                risk_level="sensitive", require_confirmation=True,
+            )),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"purge": "api_tool:s1"},
+        allow_confirmation=False,
+        observe_only=False,
+        block_sensitive_only=True,
+    )
+
+    assert filtered_tools == []
+    assert audit["observe_only"] is False
+    assert audit["block_sensitive_only"] is True
+    assert len(audit["filtered_out"]) == 1
+
+
+def test_apply_block_sensitive_only_blocks_dangerous_tool():
+    """阶段2：被 ToolPolicyFilter 过滤的 dangerous 风险工具被阻断。
+
+    注意：ToolPolicyFilter 仅对 {HIGH, SENSITIVE}+确认要求过滤，dangerous 工具
+    需经其他原因（如 enabled=False）被过滤后，block_sensitive_only 才会因
+    risk_level=dangerous ∈ {sensitive, dangerous} 保持阻断。
+    """
+    tool = _tool("nuke")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(
+                risk_level="dangerous", enabled=False, require_confirmation=True,
+            )),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"nuke": "api_tool:d1"},
+        allow_confirmation=False,
+        observe_only=False,
+        block_sensitive_only=True,
+    )
+
+    assert filtered_tools == []
+    assert audit["filtered_out"][0]["reason"] == "tool_disabled"
+
+
+def test_apply_block_sensitive_only_passes_high_risk_tool():
+    """阶段2：high 风险工具即便被 ToolPolicyFilter 过滤也放行（仅 sensitive/dangerous 阻断）。"""
+    tool = _tool("delete")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(
+                risk_level="high", require_confirmation=True,
+            )),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"delete": "api_tool:h1"},
+        allow_confirmation=False,
+        observe_only=False,
+        block_sensitive_only=True,
+    )
+
+    # high 不在 {sensitive, dangerous} → 放行（即便 ToolPolicyFilter 因确认要求过滤它）
+    assert filtered_tools == [tool]
+    # 审计仍记录 ToolPolicyFilter 的过滤决策
+    assert len(audit["filtered_out"]) == 1
+    assert audit["filtered_out"][0]["reason"] == "high_risk_requires_confirmation"
+
+
+def test_apply_block_sensitive_only_passes_safe_and_medium_tools():
+    """阶段2：safe/medium 风险工具放行。"""
+    safe_tool = _tool("search")
+    medium_tool = _tool("update")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(risk_level="medium")),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [safe_tool, medium_tool],
+        tool_id_hints={
+            "search": "api_tool:safe",
+            "update": "api_tool:med",
+        },
+        observe_only=False,
+        block_sensitive_only=True,
+    )
+
+    assert filtered_tools == [safe_tool, medium_tool]
+
+
+def test_apply_observe_only_overrides_block_sensitive_only():
+    """observe_only=True 时 block_sensitive_only 不生效，全部工具保留。"""
+    tool = _tool("purge")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(
+                risk_level="sensitive", require_confirmation=True,
+            )),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"purge": "api_tool:s1"},
+        allow_confirmation=False,
+        observe_only=True,
+        block_sensitive_only=True,
+    )
+
+    # observe_only 优先：不阻断
+    assert filtered_tools == [tool]
+    assert audit["observe_only"] is True
+    assert audit["block_sensitive_only"] is True
+
+
+def test_apply_block_sensitive_only_mixed_safe_and_sensitive():
+    """阶段2：混合工具列表，仅 sensitive/dangerous 被阻断，其余放行。"""
+    safe_tool = _tool("search")
+    sensitive_tool = _tool("purge")
+    high_tool = _tool("delete")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(
+                risk_level="sensitive", require_confirmation=True,
+            )),
+            _QueryStub(one_result=_policy(
+                risk_level="high", require_confirmation=True,
+            )),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [safe_tool, sensitive_tool, high_tool],
+        tool_id_hints={
+            "search": "api_tool:safe",
+            "purge": "api_tool:sens",
+            "delete": "api_tool:high",
+        },
+        allow_confirmation=False,
+        observe_only=False,
+        block_sensitive_only=True,
+    )
+
+    # safe 放行、sensitive 阻断、high 放行
+    assert filtered_tools == [safe_tool, high_tool]
+    assert audit["output_tool_count"] == 2
+    assert audit["input_tool_count"] == 3
+
+
+def test_apply_stage3_block_all_filters_all_risk_levels():
+    """阶段3：observe_only=False + block_sensitive_only=False 全量过滤（向后兼容）。"""
+    safe_tool = _tool("search")
+    high_tool = _tool("delete")
+    gate = _build_gate(
+        session_queries=[
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(
+                risk_level="high", require_confirmation=True,
+            )),
+        ],
+    )
+
+    filtered_tools, audit = gate.apply(
+        [safe_tool, high_tool],
+        tool_id_hints={
+            "search": "api_tool:safe",
+            "delete": "api_tool:high",
+        },
+        allow_confirmation=False,
+        observe_only=False,
+        block_sensitive_only=False,
+    )
+
+    # 阶段3：high+确认 → 被过滤，仅 safe 保留
+    assert filtered_tools == [safe_tool]
+    assert audit["block_sensitive_only"] is False
+
+
+def test_apply_empty_tools_audit_includes_block_sensitive_only_field():
+    """空工具列表时 audit_context 仍包含 block_sensitive_only 字段。"""
+    gate = _build_gate()
+
+    _filtered, audit = gate.apply(
+        [],
+        block_sensitive_only=True,
+    )
+
+    assert audit["block_sensitive_only"] is True
+    assert audit["observe_only"] is False
+
+
+# ------------------------------------------------------------------ #
+#  组合工具部分阻断策略测试 (P1-1 架构文档 10.2.3)                    #
+# ------------------------------------------------------------------ #
+
+def test_composite_dangerous_member_blocks_composite():
+    """部分阻断：成员含 dangerous → 组合工具整体阻断。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(safe) → m2(dangerous)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(risk_level="dangerous")),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1"), _ref("api_tool:m2")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+    )
+
+    # dangerous 成员 → 整体阻断
+    assert filtered_tools == []
+    assert len(audit["filtered_out"]) == 1
+    assert audit["filtered_out"][0]["tool_id"] == "workflow:w1"
+    assert audit["filtered_out"][0]["reason"] == "member_dangerous"
+    # 审计记录部分阻断决策
+    composite = audit["composite_resolved"]["workflow:w1"]
+    assert composite["partial_blocking"]["should_block"] is True
+    assert composite["partial_blocking"]["block_reason"] == "member_dangerous"
+
+
+def test_composite_sensitive_member_requires_confirmation():
+    """部分阻断：成员含 sensitive → 组合工具需用户确认。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(safe) → m2(sensitive)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(risk_level="sensitive")),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1"), _ref("api_tool:m2")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+    )
+
+    # sensitive 成员 → 强制需确认，allow_confirmation=False → 阻断
+    assert filtered_tools == []
+    assert audit["filtered_out"][0]["reason"] == "high_risk_requires_confirmation"
+    composite = audit["composite_resolved"]["workflow:w1"]
+    assert composite["partial_blocking"]["requires_confirmation"] is True
+    assert composite["partial_blocking"]["confirmation_reason"] == "member_sensitive"
+
+
+def test_composite_disabled_member_blocks_composite():
+    """部分阻断：成员含 disabled → 组合工具整体阻断。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(safe) → m2(medium, disabled)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(risk_level="medium", enabled=False)),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1"), _ref("api_tool:m2")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+    )
+
+    # disabled 成员 → 整体阻断（即便组合工具自身 enabled=True）
+    assert filtered_tools == []
+    assert audit["filtered_out"][0]["reason"] == "member_disabled"
+    composite = audit["composite_resolved"]["workflow:w1"]
+    assert composite["partial_blocking"]["block_reason"] == "member_disabled"
+
+
+def test_composite_unhealthy_member_blocks_composite():
+    """部分阻断：成员含 unhealthy → 组合工具整体阻断（保守策略）。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(safe) → m2(medium, unhealthy)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(risk_level="medium", health_status="unhealthy")),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1"), _ref("api_tool:m2")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+    )
+
+    # unhealthy 成员 → 整体阻断
+    assert filtered_tools == []
+    assert audit["filtered_out"][0]["reason"] == "member_unhealthy"
+    composite = audit["composite_resolved"]["workflow:w1"]
+    assert composite["partial_blocking"]["block_reason"] == "member_unhealthy"
+
+
+def test_composite_all_safe_members_passes():
+    """部分阻断：成员全部 safe → 组合工具正常放行。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(safe) → m2(safe)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+            _QueryStub(one_result=_policy(risk_level="safe")),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1"), _ref("api_tool:m2")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+    )
+
+    # 全部 safe → 放行
+    assert filtered_tools == [tool]
+    assert audit["accepted"][0]["tool_id"] == "workflow:w1"
+    assert audit["filtered_out"] == []
+    composite = audit["composite_resolved"]["workflow:w1"]
+    assert composite["partial_blocking"]["should_block"] is False
+    assert composite["partial_blocking"]["requires_confirmation"] is False
+
+
+def test_composite_double_layer_overlay_takes_stricter_risk():
+    """治理策略双层叠加：组合工具层级 medium + 成员层级 high → 有效 high。
+
+    双层叠加（架构文档 10.2.3）：两层策略同时存在时取更严格（max 风险等级）。
+    若叠加未生效（仅用 composite 层级 medium），ToolPolicyFilter 不会过滤 medium；
+    有效风险为 high + 确认 → 被过滤，证明叠加取了 max(medium, high) = high。
+    """
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(medium) → m1(high, 需确认)
+        session_queries=[
+            _QueryStub(one_result=_policy(risk_level="medium")),
+            _QueryStub(one_result=_policy(risk_level="high", require_confirmation=True)),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+    )
+
+    # 双层叠加：max(medium, high) = high + 确认 → 阻断
+    assert filtered_tools == []
+    assert audit["filtered_out"][0]["reason"] == "high_risk_requires_confirmation"
+    # 成员被展开（证明走了双层叠加路径）
+    assert audit["composite_resolved"]["workflow:w1"]["member_count"] == 1
+
+
+def test_observe_only_composite_blocking_does_not_filter():
+    """observe_only=True 时部分阻断策略不阻断（只记录审计）。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(dangerous)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="dangerous")),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+        observe_only=True,
+    )
+
+    # observe_only：dangerous 成员也不阻断，工具保留
+    assert filtered_tools == [tool]
+    assert audit["observe_only"] is True
+    # 审计仍记录部分阻断决策
+    composite = audit["composite_resolved"]["workflow:w1"]
+    assert composite["partial_blocking"]["should_block"] is True
+    assert composite["partial_blocking"]["block_reason"] == "member_dangerous"
+
+
+def test_block_sensitive_only_composite_dangerous_still_blocks():
+    """block_sensitive_only=True 时组合工具部分阻断策略仍生效（dangerous 成员阻断）。"""
+    tool = _tool("wf_w1")
+    gate = _build_gate(
+        # 查询顺序：composite 策略(无) → m1(dangerous)
+        session_queries=[
+            _QueryStub(one_result=None),
+            _QueryStub(one_result=_policy(risk_level="dangerous")),
+        ],
+        members_by_tool_id={
+            "workflow:w1": [_ref("api_tool:m1")],
+        },
+    )
+
+    filtered_tools, audit = gate.apply(
+        [tool],
+        tool_id_hints={"wf_w1": "workflow:w1"},
+        allow_confirmation=False,
+        observe_only=False,
+        block_sensitive_only=True,
+    )
+
+    # block_sensitive_only 时部分阻断策略仍生效：dangerous 成员 → 阻断
+    assert filtered_tools == []
+    assert audit["filtered_out"][0]["reason"] == "member_dangerous"
+    assert audit["block_sensitive_only"] is True
