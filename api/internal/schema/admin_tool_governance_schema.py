@@ -6,7 +6,7 @@ from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Option
 from internal.schema import ListField
 
 RISK_LEVELS = ["low", "medium", "high", "critical"]
-SOURCE_TYPES = ["api_tool", "mcp", "skill", "builtin"]
+SOURCE_TYPES = ["api_tool", "mcp", "skill", "builtin", "knowledge", "workflow", "agent_binding"]
 VISIBILITIES = ["private", "tenant", "public"]
 INVOCATION_STATUSES = ["success", "failed", "blocked", "timeout"]
 

@@ -60,6 +60,7 @@ class AdminAgentPoolConfigResp(Schema):
     health_status = fields.String()
     last_health_check_at = fields.Integer(allow_none=True)
     metadata = fields.Dict()
+    preset_prompt_summary = fields.String(allow_none=True)
     created_at = fields.Integer(allow_none=True)
     updated_at = fields.Integer(allow_none=True)
 

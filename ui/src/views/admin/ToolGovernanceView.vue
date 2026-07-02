@@ -55,7 +55,7 @@ type GovernanceStats = {
 }
 
 const RISK_LEVELS = ['low', 'medium', 'high', 'critical']
-const SOURCE_TYPES = ['api_tool', 'mcp', 'skill', 'builtin']
+const SOURCE_TYPES = ['api_tool', 'mcp', 'skill', 'builtin', 'knowledge', 'workflow', 'agent_binding']
 const VISIBILITIES = ['private', 'tenant', 'public']
 const INVOCATION_STATUSES = ['success', 'failed', 'blocked', 'timeout']
 

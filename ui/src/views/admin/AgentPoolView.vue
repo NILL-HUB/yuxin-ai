@@ -32,6 +32,7 @@ type AgentPoolConfig = {
   health_status: string
   last_health_check_at?: number
   metadata?: Record<string, unknown>
+  preset_prompt_summary?: string
   created_at?: number
   updated_at?: number
 }
@@ -401,6 +402,7 @@ onMounted(loadPoolConfigs)
           <thead class="bg-gray-50 text-gray-500">
             <tr>
               <th class="p-3">{{ t('admin.agentPool.appId') }}</th>
+              <th class="p-3" style="width: 200px">提示词摘要</th>
               <th class="p-3">{{ t('admin.agentPool.primaryPool') }}</th>
               <th class="p-3">{{ t('admin.agentPool.secondaryPools') }}</th>
               <th class="p-3">{{ t('admin.agentPool.riskLevel') }}</th>
@@ -415,10 +417,21 @@ onMounted(loadPoolConfigs)
           </thead>
           <tbody>
             <tr v-if="!configs.length">
-              <td class="p-6 text-center text-gray-400" colspan="11">{{ t('admin.agentPool.empty') }}</td>
+              <td class="p-6 text-center text-gray-400" colspan="12">{{ t('admin.agentPool.empty') }}</td>
             </tr>
             <tr v-for="config in configs" :key="config.id" class="border-t">
               <td class="p-3 font-mono text-xs">{{ config.app_id.substring(0, 8) }}...</td>
+              <td class="p-3">
+                <a-tooltip
+                  v-if="config.preset_prompt_summary"
+                  :content="config.preset_prompt_summary"
+                  position="tl"
+                  mini
+                >
+                  <div class="max-w-[200px] truncate cursor-help">{{ config.preset_prompt_summary }}</div>
+                </a-tooltip>
+                <span v-else class="text-gray-400">—</span>
+              </td>
               <td class="p-3">
                 <a-tag size="small">{{ poolLabel(config.primary_pool) }}</a-tag>
               </td>
