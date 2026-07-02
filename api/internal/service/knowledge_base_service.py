@@ -14,6 +14,13 @@ from .base_service import BaseService
 @inject
 @dataclass
 class KnowledgeBaseService(BaseService):
+    """
+    KnowledgeBase 是中期统一知识抽象。
+
+    短期后台管理主线仍然是 datasets，现有 Dataset 后台入口在收敛设计完成前
+    不应被直接替换为 KnowledgeBase 后台入口。与此同时，Document / Segment
+    仍短期归属 Dataset 管理链路，user_memory 也不并入 Dataset 的深层后台。
+    """
     db: SQLAlchemy
 
     def get_user_content_base(self, knowledge_base_id, account: Account) -> KnowledgeBase:

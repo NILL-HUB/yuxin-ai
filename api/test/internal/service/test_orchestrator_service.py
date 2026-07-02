@@ -1,7 +1,9 @@
 from internal.entity.orchestrator_entity import ExecutionMode, RoutingDecision, RiskLevel
+from internal.service.cost_policy_service import CostPolicyService
 from internal.service.orchestrator_service import OrchestratorService
 from internal.service.pool_intent_resolver_service import PoolIntentResolver
 from internal.service.task_classifier_service import TaskClassifierService
+from internal.service.task_planner_service import TaskPlannerService
 
 
 def test_simple_question_should_route_to_direct_answer():
@@ -111,7 +113,11 @@ def test_orchestrator_should_disable_agent_and_tool_subsets_by_flag():
 
 
 def test_orchestrator_should_attach_cost_policy_and_billing_started_event():
-    service = OrchestratorService(task_classifier_service=TaskClassifierService())
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        cost_policy_service=CostPolicyService(),
+        task_planner=TaskPlannerService(),
+    )
 
     decision = service.decide("帮我解释 Python list")
 
@@ -170,7 +176,7 @@ def test_orchestrator_should_attach_agent_subset_for_matched_pools():
 
     decision = service.decide("帮我写前端代码")
 
-    assert decision.agent_subset["matched_agent_pools"] == ["coding"]
+    assert decision.agent_subset["matched_agent_pools"] == ["general", "coding"]
     assert decision.agent_subset["selected_agents"] == [
         {"agent_id": "coding-agent", "name": "编程 Agent"}
     ]

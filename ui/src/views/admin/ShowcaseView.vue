@@ -19,12 +19,16 @@ const page = ref(1)
 const pageSize = ref(20)
 const statusFilter = ref('')
 
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
 const STATUS_TABS = [
-  { label: '全部', value: '' },
-  { label: '待审核', value: 'pending' },
-  { label: '已通过', value: 'approved' },
-  { label: '已拒绝', value: 'rejected' },
-  { label: '已下架', value: 'offline' },
+  { label: t('admin.showcase.filterAll'), value: '' },
+  { label: t('admin.showcase.filterPending'), value: 'pending' },
+  { label: t('admin.showcase.filterApproved'), value: 'approved' },
+  { label: t('admin.showcase.filterRejected'), value: 'rejected' },
+  { label: t('admin.showcase.filterOffline'), value: 'offline' },
 ]
 
 const STATUS_COLOR: Record<string, string> = {
@@ -34,14 +38,14 @@ const STATUS_COLOR: Record<string, string> = {
   offline: 'gray',
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  pending: '待审核',
-  approved: '已通过',
-  rejected: '已拒绝',
-  offline: '已下架',
+const STATUS_LABEL_MAP: Record<string, string> = {
+  pending: 'admin.showcase.filterPending',
+  approved: 'admin.showcase.approved',
+  rejected: 'admin.showcase.rejected',
+  offline: 'admin.showcase.offline',
 }
 
-const statusLabel = (status: string) => STATUS_LABEL[status] || status
+const statusLabel = (status: string) => t(STATUS_LABEL_MAP[status]) || status
 const statusColor = (status: string) => STATUS_COLOR[status] || 'gray'
 
 const renderStars = (rating: number) => {
@@ -51,7 +55,7 @@ const renderStars = (rating: number) => {
 
 const maskContributor = (name?: string) => {
   const value = String(name || '').trim()
-  if (!value) return '匿名用户'
+  if (!value) return t('admin.showcase.anonymousUser')
   if (value.length <= 1) return `${value}*`
   return `${value.slice(0, 1)}***`
 }
@@ -67,7 +71,7 @@ const loadCases = async () => {
     cases.value = res.data.data || []
     total.value = res.data.total || 0
   } catch (error: unknown) {
-    Message.error(getErrorMessage(error, '加载案例列表失败'))
+    Message.error(getErrorMessage(error, t('admin.showcase.messages.loadFailed')))
   } finally {
     loading.value = false
   }
@@ -105,10 +109,10 @@ const handleApprove = async (item: ShowcaseCase) => {
   actionLoading.value = true
   try {
     await approveShowcaseCase(item.id)
-    Message.success('已通过审核')
+    Message.success(t('admin.showcase.messages.approveSuccess'))
     await loadCases()
   } catch (error: unknown) {
-    Message.error(getErrorMessage(error, '操作失败'))
+    Message.error(getErrorMessage(error, t('admin.showcase.messages.operationFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -119,11 +123,11 @@ const handleRejectConfirm = async () => {
   actionLoading.value = true
   try {
     await rejectShowcaseCase(rejectTarget.value.id, rejectReason.value.trim() || undefined)
-    Message.success('已拒绝该案例')
+    Message.success(t('admin.showcase.messages.rejectSuccess'))
     rejectVisible.value = false
     await loadCases()
   } catch (error: unknown) {
-    Message.error(getErrorMessage(error, '操作失败'))
+    Message.error(getErrorMessage(error, t('admin.showcase.messages.operationFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -133,22 +137,22 @@ const handleOffline = async (item: ShowcaseCase) => {
   actionLoading.value = true
   try {
     await offlineShowcaseCase(item.id)
-    Message.success('已下架该案例')
+    Message.success(t('admin.showcase.messages.offlineSuccess'))
     await loadCases()
   } catch (error: unknown) {
-    Message.error(getErrorMessage(error, '操作失败'))
+    Message.error(getErrorMessage(error, t('admin.showcase.messages.operationFailed')))
   } finally {
     actionLoading.value = false
   }
 }
 
 const columns = computed(() => [
-  { title: '标题', slotName: 'title', minWidth: 200 },
-  { title: '贡献者', slotName: 'contributor', width: 140 },
-  { title: '状态', slotName: 'status', width: 110 },
-  { title: '评分', slotName: 'rating', width: 120 },
-  { title: '创建时间', slotName: 'created_at', width: 180 },
-  { title: '操作', slotName: 'actions', width: 200, fixed: 'right' as const },
+  { title: t('admin.showcase.columns.name'), slotName: 'title', minWidth: 200 },
+  { title: t('admin.showcase.columns.creator'), slotName: 'contributor', width: 140 },
+  { title: t('admin.showcase.columns.status'), slotName: 'status', width: 110 },
+  { title: t('admin.showcase.columns.rating'), slotName: 'rating', width: 120 },
+  { title: t('admin.showcase.columns.createdAt'), slotName: 'created_at', width: 180 },
+  { title: t('admin.showcase.columns.actions'), slotName: 'actions', width: 200, fixed: 'right' as const },
 ])
 
 onMounted(loadCases)
@@ -158,8 +162,8 @@ onMounted(loadCases)
   <section class="flex flex-col gap-4">
     <header class="flex items-center justify-between">
       <div>
-        <h2 class="text-xl font-bold text-gray-900">案例展示管理</h2>
-        <p class="mt-1 text-sm text-gray-500">审核用户提交的公开展示案例，维护案例质量。</p>
+        <h2 class="text-xl font-bold text-gray-900">{{ $t('admin.showcase.title') }}</h2>
+        <p class="mt-1 text-sm text-gray-500">{{ $t('admin.showcase.description') }}</p>
       </div>
     </header>
 
@@ -173,7 +177,7 @@ onMounted(loadCases)
           {{ tab.label }}
         </a-radio>
       </a-radio-group>
-      <a-button :loading="loading" @click="loadCases">刷新</a-button>
+      <a-button :loading="loading" @click="loadCases">{{ $t('common.actions.refresh') }}</a-button>
     </div>
 
     <a-spin :loading="loading" class="block">
@@ -186,10 +190,10 @@ onMounted(loadCases)
           :bordered="{ wrapper: true, cell: true }"
           :scroll="{ x: 960 }"
         >
-          <template #empty>暂无案例数据</template>
+          <template #empty>{{ $t('admin.showcase.empty') }}</template>
           <template #title="{ record }">
             <a-button type="text" size="small" @click="openDetail(record)">
-              <span class="font-medium text-gray-900">{{ record.title || '未命名案例' }}</span>
+              <span class="font-medium text-gray-900">{{ record.title || $t('admin.showcase.unnamed') }}</span>
             </a-button>
           </template>
           <template #contributor="{ record }">
@@ -213,7 +217,7 @@ onMounted(loadCases)
                 :loading="actionLoading"
                 @click="handleApprove(record)"
               >
-                通过
+                {{ t('admin.showcase.approve') }}
               </a-button>
               <a-button
                 v-if="record.status === 'pending'"
@@ -222,7 +226,7 @@ onMounted(loadCases)
                 :loading="actionLoading"
                 @click="openReject(record)"
               >
-                拒绝
+                {{ t('admin.showcase.reject') }}
               </a-button>
               <a-button
                 v-if="record.status === 'approved'"
@@ -231,9 +235,9 @@ onMounted(loadCases)
                 :loading="actionLoading"
                 @click="handleOffline(record)"
               >
-                下架
+                {{ t('admin.showcase.delist') }}
               </a-button>
-              <a-button size="mini" @click="openDetail(record)">详情</a-button>
+              <a-button size="mini" @click="openDetail(record)">{{ t('admin.showcase.detail') }}</a-button>
             </a-space>
           </template>
         </a-table>
@@ -252,7 +256,7 @@ onMounted(loadCases)
 
     <a-modal
       v-model:visible="detailVisible"
-      :title="activeCase?.title || '案例详情'"
+      :title="activeCase?.title || t('admin.showcase.detailTitle')"
       :width="680"
       :footer="false"
       unmount-on-close
@@ -268,11 +272,11 @@ onMounted(loadCases)
         </div>
         <p v-if="activeCase.summary" class="text-sm text-gray-600 mb-4">{{ activeCase.summary }}</p>
         <div class="rounded-md bg-gray-50 px-4 py-3 mb-4">
-          <div class="text-xs text-gray-400 mb-1">用户提问</div>
+          <div class="text-xs text-gray-400 mb-1">{{ t('admin.showcase.userQuestion') }}</div>
           <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">{{ activeCase.query }}</div>
         </div>
         <div class="rounded-md bg-blue-50/40 px-4 py-3">
-          <div class="text-xs text-gray-400 mb-1">AI 回答</div>
+          <div class="text-xs text-gray-400 mb-1">{{ t('admin.showcase.aiAnswer') }}</div>
           <div class="text-sm text-gray-800 whitespace-pre-wrap break-words">{{ activeCase.answer }}</div>
         </div>
       </template>
@@ -280,16 +284,16 @@ onMounted(loadCases)
 
     <a-modal
       v-model:visible="rejectVisible"
-      title="拒绝案例"
+      :title="t('admin.showcase.rejectTitle')"
       :confirm-loading="actionLoading"
       @ok="handleRejectConfirm"
       @cancel="rejectVisible = false"
     >
       <a-form layout="vertical">
-        <a-form-item label="拒绝原因（可选）">
+        <a-form-item :label="t('admin.showcase.rejectReason')">
           <a-textarea
             v-model="rejectReason"
-            placeholder="请输入拒绝原因，将反馈给贡献者"
+            :placeholder="t('admin.showcase.rejectReasonPlaceholder')"
             :auto-size="{ minRows: 3, maxRows: 6 }"
             allow-clear
           />

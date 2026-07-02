@@ -1,0 +1,28 @@
+services:
+  llmops-api:
+    environment:
+      FLASK_ENV: development
+      FLASK_DEBUG: '1'
+      MIGRATION_ENABLED: 'true'
+
+  llmops-ui:
+    image: node:18-alpine
+    working_dir: /app/web
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    volumes:
+      - ../ui:/app/web
+      - ../api/.env:/app/api/.env:ro
+      - ui_node_modules:/app/web/node_modules
+    ports:
+      - "127.0.0.1:5173:5173"
+    environment:
+      - VITE_PROXY_TARGET=http://llmops-api:5001
+    depends_on:
+      llmops-api:
+        condition: service_healthy
+
+  llmops-nginx:
+    profiles: ["disabled"]
+
+volumes:
+  ui_node_modules:

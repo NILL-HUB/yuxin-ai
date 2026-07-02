@@ -25,6 +25,7 @@ class QueueEvent(str, Enum):
     BILLING_SUMMARY = "billing_summary"
     BILLING_CANCELLED = "billing_cancelled"
     BILLING_FINAL = "billing_final"
+    MEMORY_CANDIDATE_PROMPT = "memory_candidate_prompt"
 
 
 class AgentThought(BaseModel):

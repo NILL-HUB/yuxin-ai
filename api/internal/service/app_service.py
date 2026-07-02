@@ -17,6 +17,7 @@ from redis import Redis
 from sqlalchemy import func, desc
 from sqlalchemy.orm import joinedload, selectinload
 from internal.core.agent.agents import FunctionCallAgent, AgentQueueManager, ReACTAgent, DeepThinkingAgent
+from internal.service.executors.single_agent_executor import SingleAgentExecutor
 from internal.core.agent.entities.agent_entity import AgentConfig
 from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
@@ -28,6 +29,7 @@ from internal.entity.ai_entity import OPTIMIZE_PROMPT_TEMPLATE
 from internal.entity.app_entity import AppStatus, AppConfigType, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.entity.dataset_entity import RetrievalSource
+from internal.entity.orchestrator_entity import ExecutionMode
 from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
 from internal.lib.helper import remove_fields, get_value_type, generate_random_string, escape_like_pattern
 from internal.model import (
@@ -52,17 +54,22 @@ from internal.task.app_task import prewarm_mcp_tool_snapshots, sync_public_app_r
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
 from .app_config_service import AppConfigService, call_config_loader
+from .app_icon_service import AppIconService
 from .base_service import BaseService
 from .conversation_service import ConversationService
 from .cos_service import CosService
 from .language_model_service import LanguageModelService
 from .public_agent_registry_service import PublicAgentRegistryService
+from .orchestrator_service import OrchestratorService
 from .retrieval_service import RetrievalService
 from .icon_generator_service import IconGeneratorService
 from .skill_service import SkillService
 from ..core.language_model.entities.model_entity import ModelParameterType, ModelFeature
 from ..core.language_model.providers.deepseek.chat import Chat
 from ..entity.workflow_entity import WorkflowStatus
+
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -80,7 +87,9 @@ class AppService(BaseService):
     language_model_service: LanguageModelService
     builtin_provider_manager: BuiltinProviderManager
     icon_generator_service: IconGeneratorService
+    app_icon_service: AppIconService
     public_agent_registry_service: PublicAgentRegistryService | None = None
+    orchestrator_service: OrchestratorService | None = None
     AUTO_CREATE_DEFAULT_TOOLS = [
         {
             "type": "builtin_tool",
@@ -105,6 +114,7 @@ class AppService(BaseService):
             },
         },
     ]
+    ENABLE_ORCHESTRATOR_FOR_DEBUG = True
 
     @classmethod
     def _enqueue_public_app_registry_sync(cls, app_id: UUID) -> None:
@@ -351,7 +361,7 @@ class AppService(BaseService):
             except Exception as e:
                 logging.error(f"自动生成图标失败: {str(e)}")
                 # 如果生成失败，使用默认图标 - 使用一个彩色的SVG图标
-                icon_url = self._generate_default_icon(req.name.data)
+                icon_url = self.app_icon_service._generate_default_icon(req.name.data)
 
         # 2.开启数据库自动提交上下文
         with self.db.auto_commit():
@@ -1584,6 +1594,48 @@ class AppService(BaseService):
             status=MessageStatus.NORMAL.value,
         )
 
+        # 5.1 治理架构接入：通过 OrchestratorService 进行任务分类、成本路由与 Agent/工具池决策。
+        #     受 ENABLE_ORCHESTRATOR_FOR_DEBUG 特性开关控制，默认关闭以保持兼容；
+        #     未注入 OrchestratorService 或决策异常时回退到既有 _stream_agent_events 流程。
+        #     应用调试路径始终以应用自身配置的 Agent 作为最终执行器（_stream_agent_events），
+        #     多智能体/直接应答执行器由 assistant_agent_service 负责，此处不接管。
+        routing_decision = None
+        if self.orchestrator_service is not None and self.ENABLE_ORCHESTRATOR_FOR_DEBUG:
+            try:
+                routing_decision = self.orchestrator_service.decide(
+                    req.query.data,
+                    account_id=account.id,
+                    conversation_id=debug_conversation.id,
+                    message_id=message.id,
+                    image_urls=req.image_urls.data,
+                    enable_deep_thinking=bool(req.confirm_deep_thinking.data),
+                ).to_dict()
+            except Exception as exc:
+                logger.warning("应用调试调度决策失败，回退到原调试流程: %s", exc)
+                routing_decision = None
+
+        # 仅在拿到有效（非 fallback）路由决策时推送治理事件并执行成本检查
+        if routing_decision is not None and routing_decision.get("intent") != "fallback":
+            logger.info(
+                "应用调试路由决策 intent=%s execution_mode=%s complexity=%s model_tier=%s risk=%s",
+                routing_decision.get("intent"),
+                routing_decision.get("execution_mode"),
+                routing_decision.get("complexity"),
+                routing_decision.get("recommended_model_tier"),
+                routing_decision.get("risk_level"),
+            )
+            yield "event: orchestrator_routing\ndata:" + json.dumps(routing_decision) + "\n\n"
+            # 成本策略检查：余额不足时提前终止调试流，避免无效执行
+            if not routing_decision.get("cost_policy", {}).get("allowed", True):
+                reject_payload = {
+                    "reason": "insufficient_balance",
+                    "cost_policy": routing_decision.get("cost_policy"),
+                    "message_id": str(message.id),
+                    "conversation_id": str(debug_conversation.id),
+                }
+                yield "event: orchestrator_reject\ndata:" + json.dumps(reject_payload) + "\n\n"
+                return
+
         # 6.实例化TokenBufferMemory用于提取短期记忆
         token_buffer_memory = TokenBufferMemory(
             db=self.db,
@@ -1596,21 +1648,66 @@ class AppService(BaseService):
 
         agent_thoughts = {}
         runtime_flask_app = current_app._get_current_object() if has_app_context() else None
-        yield from self._stream_agent_events(
-            app_id=app_id,
-            account=account,
-            draft_app_config=draft_app_config,
-            llm=llm,
-            query=req.query.data,
-            image_urls=req.image_urls.data,
-            history=history,
-            long_term_memory=debug_conversation.summary,
-            conversation_id=str(debug_conversation.id),
-            message_id=str(message.id),
-            agent_thoughts=agent_thoughts,
-            enable_deep_thinking=bool(req.confirm_deep_thinking.data),
-            flask_app=runtime_flask_app,
-        )
+
+        # 6.1 治理架构执行接入：当路由决策有效且特性开关开启时，
+        #     通过 SingleAgentExecutor 经 ExecutionCoordinatorService 统一编排执行，
+        #     共享 multi_agent 等路径的编排与容错能力。
+        #     否则回退到原有的 _stream_agent_events 流程。
+        execution_mode = None
+        if routing_decision is not None and routing_decision.get("intent") != "fallback" and self.ENABLE_ORCHESTRATOR_FOR_DEBUG:
+            execution_mode = routing_decision.get("execution_mode")
+            if execution_mode in ("deep_thinking",):
+                execution_mode = ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value
+
+        if execution_mode and self.ENABLE_ORCHESTRATOR_FOR_DEBUG:
+            enable_deep_thinking = bool(req.confirm_deep_thinking.data)
+            agent_class = DeepThinkingAgent if enable_deep_thinking else (
+                FunctionCallAgent if ModelFeature.TOOL_CALL.value in llm.features else ReACTAgent
+            )
+            tools = self._build_runtime_tools(app_id, account, draft_app_config, flask_app=runtime_flask_app)
+            agent = self._create_runtime_agent(
+                llm,
+                account,
+                draft_app_config,
+                tools,
+                enable_deep_thinking,
+                flask_app=runtime_flask_app,
+                language_model_service=self.language_model_service,
+            )
+            agent_config = agent.agent_config
+            executor = SingleAgentExecutor(
+                agent_class=agent_class,
+                agent_config=agent_config,
+                tools=tools,
+                llm=llm,
+                history=history,
+                query=req.query.data,
+                long_term_memory=debug_conversation.summary,
+                user_memory="",
+            )
+            yield from executor.execute(
+                query=req.query.data,
+                conversation=debug_conversation,
+                message=message,
+                execution_mode=execution_mode,
+                routing_decision=routing_decision,
+            )
+        else:
+            yield from self._stream_agent_events(
+                app_id=app_id,
+                account=account,
+                draft_app_config=draft_app_config,
+                llm=llm,
+                query=req.query.data,
+                image_urls=req.image_urls.data,
+                history=history,
+                long_term_memory=debug_conversation.summary,
+                conversation_id=str(debug_conversation.id),
+                message_id=str(message.id),
+                agent_thoughts=agent_thoughts,
+                enable_deep_thinking=bool(req.confirm_deep_thinking.data),
+                flask_app=runtime_flask_app,
+            )
 
         # 17.将消息以及推理过程添加到数据库
         self.conversation_service.save_agent_thoughts(
@@ -1744,58 +1841,13 @@ class AppService(BaseService):
         }
 
     def regenerate_web_app_token(self, app_id: UUID, account: Account) -> str:
-        """根据传递的应用id+账号重新生成WebApp凭证标识"""
-        # 1.获取应用信息并校验权限
-        app = self.get_app(app_id, account)
-
-        # 2.判断应用是否已发布
-        if app.status != AppStatus.PUBLISHED.value:
-            raise FailException("应用未发布 无法生成WebApp凭证标识")
-
-        # 3.重新生成token并更新数据
-        token = generate_random_string(16)
-        self.update(app, token=token)
-
-        return token
+        return self.app_icon_service.regenerate_web_app_token(app_id, account)
 
     def regenerate_icon(self, app_id: UUID, account: Account) -> str:
-        """根据传递的应用id重新生成应用图标"""
-        # 1.获取应用信息并校验权限
-        app = self.get_app(app_id, account)
-
-        # 2.使用图标生成服务生成新图标
-        try:
-            logging.info(f"重新生成应用图标: app_id={app_id}, name={app.name}")
-            icon_url = self.icon_generator_service.generate_icon(
-                name=app.name,
-                description=app.description or ""
-            )
-            logging.info(f"重新生成图标成功: {icon_url}")
-        except Exception as e:
-            logging.error(f"重新生成图标失败: {str(e)}")
-            # 直接抛出原始异常，保留错误信息
-            raise
-
-        # 3.更新应用图标
-        self.update(app, icon=icon_url)
-
-        return icon_url
+        return self.app_icon_service.regenerate_icon(app_id, account)
 
     def generate_icon_preview(self, name: str, description: str) -> str:
-        """生成图标预览（不保存到应用）"""
-        try:
-            logging.info(f"生成图标预览: name={name}")
-            icon_url = self.icon_generator_service.generate_icon(
-                name=name,
-                description=description or ""
-            )
-            logging.info(f"生成图标预览成功: {icon_url}")
-            return icon_url
-        except Exception as e:
-            logging.error(f"生成图标预览失败: {str(e)}")
-            # 直接抛出原始异常，保留错误信息
-            raise
-
+        return self.app_icon_service.generate_icon_preview(name, description)
 
     def _validate_draft_app_config(
         self,
@@ -2321,48 +2373,3 @@ class AppService(BaseService):
             draft_app_config["agent_bindings"] = validate_agent_bindings
 
         return draft_app_config
-
-    def _generate_default_icon(self, app_name: str) -> str:
-        """
-        生成一个默认的彩色SVG图标
-
-        Args:
-            app_name: 应用名称
-
-        Returns:
-            str: 图标的COS URL或数据URI
-        """
-        import hashlib
-
-        # 使用应用名称生成一个稳定的颜色
-        hash_obj = hashlib.md5(app_name.encode())
-        hash_hex = hash_obj.hexdigest()
-
-        # 从哈希值中提取RGB颜色
-        r = int(hash_hex[0:2], 16)
-        g = int(hash_hex[2:4], 16)
-        b = int(hash_hex[4:6], 16)
-
-        # 确保颜色足够亮
-        brightness = (r * 299 + g * 587 + b * 114) / 1000
-        if brightness < 100:
-            r = min(255, r + 100)
-            g = min(255, g + 100)
-            b = min(255, b + 100)
-
-        # 获取应用名称的首字母
-        first_char = app_name[0].upper() if app_name else "A"
-
-        # 创建SVG图标
-        svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
-  <rect width="200" height="200" fill="rgb({r},{g},{b})" rx="40"/>
-  <text x="100" y="120" font-size="100" font-weight="bold" fill="white" text-anchor="middle" font-family="Arial, sans-serif">{first_char}</text>
-</svg>'''
-
-        # 将SVG转换为数据URI
-        import base64
-        svg_bytes = svg_content.encode('utf-8')
-        svg_base64 = base64.b64encode(svg_bytes).decode('utf-8')
-        data_uri = f"data:image/svg+xml;base64,{svg_base64}"
-
-        return data_uri

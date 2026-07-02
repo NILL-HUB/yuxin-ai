@@ -40,22 +40,31 @@ class OrchestratorService:
         agent_pool_service: AgentPoolService | None = None,
     ):
         self.task_classifier_service = task_classifier_service
-        self.pool_intent_resolver = pool_intent_resolver or PoolIntentResolver()
+        self.pool_intent_resolver = pool_intent_resolver
         self.subset_builder = subset_builder
         self.tool_subset_builder = tool_subset_builder
-        self.task_planner = task_planner or TaskPlannerService()
+        self.task_planner = task_planner
         self.feature_flag_service = feature_flag_service
         self.event_logger = event_logger
-        self.request_context_builder = request_context_builder or RequestContextBuilder()
-        self.model_assignment_policy = model_assignment_policy or ModelAssignmentPolicy()
+        self.request_context_builder = request_context_builder
+        self.model_assignment_policy = model_assignment_policy
         self.model_gateway_service = model_gateway_service
         self.agent_pool_service = agent_pool_service
-        self.cost_policy_service = cost_policy_service or CostPolicyService()
-        self.execution_mode_selector = execution_mode_selector or ExecutionModeSelectorService()
+        self.cost_policy_service = cost_policy_service
+        self.execution_mode_selector = execution_mode_selector
         self.routing_observability_service = routing_observability_service
 
     def decide(self, query: str, **context) -> RoutingDecision:
-        ctx = self.request_context_builder.build(query, **context)
+        ctx = self.request_context_builder.build(query, **context) if self.request_context_builder is not None else SimpleNamespace(
+            query=query,
+            routing_log_id=context.get("routing_log_id"),
+            budget_allowed=bool(context.get("budget_allowed", True)),
+            account_id=context.get("account_id"),
+            budget_level=context.get("budget_level", "normal"),
+            balance_credits=context.get("balance_credits", 1.0),
+            deep_thinking_requested=bool(context.get("enable_deep_thinking")),
+            image_urls=context.get("image_urls", []),
+        )
         routing_log_id = ctx.routing_log_id
         budget_allowed = ctx.budget_allowed and bool(context.get("budget_allowed", True))
         try:
@@ -80,8 +89,10 @@ class OrchestratorService:
                     ExecutionMode.MULTI_AGENT_SEQUENTIAL.value,
                 ):
                     decision.execution_mode = ExecutionMode.SINGLE_AGENT.value
-            pool_result = self.pool_intent_resolver.resolve(
-                query, classifier_result=decision.to_dict()
+            pool_result = (
+                self.pool_intent_resolver.resolve(query, classifier_result=decision.to_dict())
+                if self.pool_intent_resolver is not None
+                else {"matched_pools": ["general"]}
             )
             self._emit(
                 "agent_candidates_found",
@@ -95,17 +106,18 @@ class OrchestratorService:
                 routing_log_id,
                 {"selected_agents": subset.get("selected_agents", [])},
             )
-            decision.execution_mode = self.execution_mode_selector.select(
-                risk_level=decision.risk_level,
-                needs_deep_thinking=decision.needs_deep_thinking,
-                deep_thinking_requested=ctx.deep_thinking_requested,
-                needs_multi_agent=decision.needs_multi_agent,
-                needs_tools=decision.needs_tools,
-                needs_agent=decision.needs_agent,
-                available_pool_count=len(pool_result.get("matched_pools", [])),
-                image_count=len(ctx.image_urls),
-                preliminary_mode=decision.execution_mode,
-            )
+            if self.execution_mode_selector is not None:
+                decision.execution_mode = self.execution_mode_selector.select(
+                    risk_level=decision.risk_level,
+                    needs_deep_thinking=decision.needs_deep_thinking,
+                    deep_thinking_requested=ctx.deep_thinking_requested,
+                    needs_multi_agent=decision.needs_multi_agent,
+                    needs_tools=decision.needs_tools,
+                    needs_agent=decision.needs_agent,
+                    available_pool_count=len(pool_result.get("matched_pools", [])),
+                    image_count=len(ctx.image_urls),
+                    preliminary_mode=decision.execution_mode,
+                )
             decision.tool_subset = self._build_tool_subset(ctx.account_id)
             self._emit(
                 "tool_candidates_found",
@@ -141,7 +153,7 @@ class OrchestratorService:
                 needs_tools=True,
                 needs_agent=True,
                 needs_multi_agent=False,
-                recommended_model_tier="balanced",
+                recommended_model_tier="standard",
                 risk_level=RiskLevel.UNKNOWN.value,
                 reason="调度决策失败，已回退到原 Assistant Agent 流程",
                 agent_subset={
@@ -241,8 +253,11 @@ class OrchestratorService:
                 logger.warning("路由可观测摘要记录失败", exc_info=True)
 
     def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
-        task_plan = self.task_planner.plan(query, decision)
-        decision.task_plan_summary = task_plan.to_summary()
+        if self.task_planner is not None:
+            task_plan = self.task_planner.plan(query, decision)
+            decision.task_plan_summary = task_plan.to_summary()
+        else:
+            decision.task_plan_summary = self._safe_task_plan_summary()
         decision.synthesis_summary = self._empty_synthesis_summary()
 
     @staticmethod
@@ -269,12 +284,15 @@ class OrchestratorService:
             decision.cost_policy = self._safe_cost_policy()
             decision.billing_events = self._billing_started_events()
             return
-        decision.cost_policy = self.cost_policy_service.build_policy(
-            task_complexity=decision.complexity,
-            budget_level=ctx.budget_level,
-            balance_credits=ctx.balance_credits,
-            deep_thinking_requested=ctx.deep_thinking_requested,
-        )
+        if self.cost_policy_service is not None:
+            decision.cost_policy = self.cost_policy_service.build_policy(
+                task_complexity=decision.complexity,
+                budget_level=ctx.budget_level,
+                balance_credits=ctx.balance_credits,
+                deep_thinking_requested=ctx.deep_thinking_requested,
+            )
+        else:
+            decision.cost_policy = self._safe_cost_policy()
         decision.billing_events = self._billing_started_events()
 
     def _attach_model_assignment(self, decision: RoutingDecision, ctx) -> None:
@@ -286,15 +304,25 @@ class OrchestratorService:
                 return
             except Exception:
                 logger.warning("ModelGateway 档位解析失败，回退直接策略", exc_info=True)
-        decision.recommended_model_tier = self.model_assignment_policy.assign(decision, ctx)
+        if self.model_assignment_policy is not None:
+            decision.recommended_model_tier = self.model_assignment_policy.assign(decision, ctx)
 
     def _safe_cost_policy(self) -> dict:
-        return self.cost_policy_service.build_policy(
-            task_complexity="simple",
-            budget_level="normal",
-            balance_credits=1,
-            deep_thinking_requested=False,
-        )
+        if self.cost_policy_service is not None:
+            return self.cost_policy_service.build_policy(
+                task_complexity="simple",
+                budget_level="normal",
+                balance_credits=1,
+                deep_thinking_requested=False,
+            )
+        return {
+            "allowed": True,
+            "model_tier": "cheap",
+            "max_agent_count": 0,
+            "max_tool_count": 0,
+            "deep_thinking": False,
+            "reason": "fallback:no_cost_policy_service",
+        }
 
     @staticmethod
     def _billing_started_events() -> list[dict]:

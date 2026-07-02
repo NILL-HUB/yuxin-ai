@@ -1094,6 +1094,18 @@ class AccountService(BaseService):
         normalized_email, _ = self._ensure_register_account_available(email, username)
         self.email_service.send_register_code(normalized_email)
 
+    def direct_register(self, username: str, password: str) -> dict[str, Any]:
+        """直接注册（无需邮箱验证码）。"""
+        normalized_username = self._validate_username(username)
+        if self.get_account_by_username(normalized_username):
+            raise FailException("用户名已存在，请更换后重试", reason_code=self.ACCOUNT_EXISTS_REASON_CODE)
+        account = self.create_account(
+            username=normalized_username,
+            name=normalized_username,
+        )
+        self.update_password(password, account)
+        return self.begin_login(account)
+
     def register_by_email_code(self, email: str, password: str, code: str, username: str = "") -> dict[str, Any]:
         """校验注册验证码后创建账号并直接登录。"""
         normalized_email, normalized_username = self._ensure_register_account_available(email, username)

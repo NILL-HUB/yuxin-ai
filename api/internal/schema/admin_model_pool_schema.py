@@ -17,7 +17,7 @@ class GetAdminModelsReq(FlaskForm):
     tier = StringField("tier", default="", validators=[Optional(), AnyOf(["", *MODEL_TIERS])])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", *MODEL_STATUSES])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class CreateAdminModelReq(FlaskForm):
@@ -29,6 +29,7 @@ class CreateAdminModelReq(FlaskForm):
     price_per_1k_tokens = StringField("price_per_1k_tokens", default="0.000000", validators=[Optional(), Length(max=32)])
     max_tokens = IntegerField("max_tokens", default=0, validators=[Optional(), NumberRange(min=0, max=10_000_000)])
     status = StringField("status", default="active", validators=[Optional(), AnyOf(MODEL_STATUSES)])
+    base_url = StringField("base_url", default="", validators=[Optional(), Length(max=512)])
 
 
 class UpdateAdminModelReq(FlaskForm):
@@ -40,6 +41,7 @@ class UpdateAdminModelReq(FlaskForm):
     price_per_1k_tokens = StringField("price_per_1k_tokens", validators=[Optional(), Length(max=32)])
     max_tokens = IntegerField("max_tokens", validators=[Optional(), NumberRange(min=0, max=10_000_000)])
     status = StringField("status", validators=[Optional(), AnyOf(MODEL_STATUSES)])
+    base_url = StringField("base_url", default="", validators=[Optional(), Length(max=512)])
 
 
 class SetAdminModelStatusReq(FlaskForm):
@@ -50,7 +52,7 @@ class GetAdminModelKeysReq(FlaskForm):
     provider = StringField("provider", default="", validators=[Optional(), Length(max=128)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", *KEY_STATUSES])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class CreateAdminModelKeyReq(FlaskForm):
@@ -95,6 +97,7 @@ class AdminModelResp(Schema):
     price_per_1k_tokens = fields.String()
     max_tokens = fields.Integer()
     status = fields.String()
+    base_url = fields.String(allow_none=True)
     created_at = fields.Integer(allow_none=True)
     updated_at = fields.Integer(allow_none=True)
 

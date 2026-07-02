@@ -51,7 +51,7 @@ class TestToolConfirmationIntegration:
         from internal.service.tool_invoker_service import ToolInvokerService
 
         tool = SimpleNamespace(metadata={"risk_level": RiskLevel.DANGEROUS.value, "user_scope": "system"})
-        request = SimpleNamespace(account_id=str(uuid4()))
+        request = SimpleNamespace(account_id=str(uuid4()), arguments={})
         result = ToolInvokerService._security_error(tool, request, confirmed=False)
         assert result is not None
         assert result["error_code"] == "forbidden"
@@ -61,7 +61,7 @@ class TestToolConfirmationIntegration:
         from internal.service.tool_invoker_service import ToolInvokerService
 
         tool = SimpleNamespace(metadata={"risk_level": RiskLevel.SENSITIVE.value, "user_scope": "system"})
-        request = SimpleNamespace(account_id=str(uuid4()))
+        request = SimpleNamespace(account_id=str(uuid4()), arguments={})
         result = ToolInvokerService._security_error(tool, request, confirmed=False)
         assert result is not None
         assert result["error_code"] == "confirmation_required"
@@ -74,7 +74,7 @@ class TestToolConfirmationIntegration:
         from internal.service.tool_invoker_service import ToolInvokerService
 
         tool = SimpleNamespace(metadata={"risk_level": RiskLevel.HIGH.value, "user_scope": "system"})
-        request = SimpleNamespace(account_id=str(uuid4()))
+        request = SimpleNamespace(account_id=str(uuid4()), arguments={})
         result = ToolInvokerService._security_error(tool, request, confirmed=False)
         assert result is not None
         assert result["error_code"] == "confirmation_required"
@@ -84,6 +84,6 @@ class TestToolConfirmationIntegration:
         from internal.service.tool_invoker_service import ToolInvokerService
 
         tool = SimpleNamespace(metadata={"risk_level": RiskLevel.SAFE.value, "user_scope": "system"})
-        request = SimpleNamespace(account_id=str(uuid4()))
+        request = SimpleNamespace(account_id=str(uuid4()), arguments={})
         result = ToolInvokerService._security_error(tool, request, confirmed=False)
         assert result is None

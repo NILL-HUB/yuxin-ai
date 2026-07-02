@@ -32,7 +32,6 @@ from internal.core.agent.agents import (
 )
 from internal.core.agent.entities.agent_entity import AgentConfig
 from internal.core.agent.entities.queue_entity import QueueEvent
-from internal.core.agent.usage_utils import summarize_agent_thoughts
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
 from internal.entity.cancel_token_entity import CancelToken
 from internal.core.language_model.entities.model_entity import ModelFeature
@@ -60,7 +59,6 @@ from .orchestrator_service import OrchestratorService
 from .result_synthesizer_service import ResultSynthesizerService
 from .runtime_tool_mount_service import RuntimeToolMountService
 from internal.entity.runtime_tool_entity import RuntimeToolDescriptor
-from internal.entity.execution_orchestration_entity import OrchestratedAgentResult
 from .public_agent_a2a_service import PublicAgentA2AService
 from .public_agent_registry_service import PublicAgentRegistryService
 
@@ -93,7 +91,6 @@ class AssistantAgentService(BaseService):
     orchestrator_service: OrchestratorService | None = None
     result_synthesizer_service: ResultSynthesizerService | None = None
     runtime_tool_mount_service: RuntimeToolMountService | None = None
-    ENABLE_DIRECT_ANSWER_EXECUTOR = True
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -233,41 +230,63 @@ class AssistantAgentService(BaseService):
         yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
 
     def _stream_direct_answer(self, req, account, conversation, message):
-        """direct_answer 路径：使用 DirectAnswerExecutor 轻量执行，不经 Agent 循环。"""
+        """direct_answer 路径：经 ExecutionCoordinatorService 编排 DirectAnswerExecutor。"""
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
         from internal.service.executors.direct_answer_executor import DirectAnswerExecutor
+        from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
+        from internal.entity.orchestrator_entity import ExecutionMode
+        from internal.service.execution_coordinator_service import ExecutionCoordinatorService
 
         billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
-        executor = DirectAnswerExecutor(language_model_service=self.language_model_service)
         try:
-            for chunk in executor.stream(
-                query=req.query.data,
-                conversation_id=str(conversation.id),
-                message_id=str(message.id),
-            ):
-                if f"event: {BillingEventType.DELTA.value}" in chunk:
-                    try:
-                        payload_json = chunk.split("data:", 1)[1].strip()
-                        payload = json.loads(payload_json)
-                        token_usage = payload.get("token_usage", {})
-                        billing_aggregator.model_tokens(
-                            "direct_answer",
-                            input_tokens=token_usage.get("prompt_tokens", 0),
-                            output_tokens=token_usage.get("completion_tokens", 0),
-                            reason="direct_answer_llm_invoke",
-                        )
-                    except Exception:
-                        logger.warning("direct_answer token 计费解析失败", exc_info=True)
-                yield chunk
+            executor = DirectAnswerExecutor(language_model_service=self.language_model_service)
+            plan = TaskPlan(
+                original_query=req.query.data,
+                items=[
+                    TaskPlanItem(
+                        task_id="direct_answer",
+                        title="直接回答",
+                        description=req.query.data,
+                        execution_order=0,
+                    )
+                ],
+                execution_mode=ExecutionMode.DIRECT_ANSWER.value,
+                reason="direct_answer_via_coordinator",
+            )
+            coordinator = ExecutionCoordinatorService(executor=executor)
+            results = coordinator.execute(plan)
+
+            final_answer = ""
+            for result in results:
+                token_usage = (result.metadata or {}).get("token_usage") or {}
+                if token_usage:
+                    billing_delta = billing_aggregator.model_tokens(
+                        "direct_answer",
+                        input_tokens=token_usage.get("prompt_tokens", 0),
+                        output_tokens=token_usage.get("completion_tokens", 0),
+                        reason="direct_answer_llm_invoke",
+                    )
+                    yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"
+                if result.answer:
+                    final_answer = result.answer
+                yield f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{json.dumps({'id': str(message.id), 'thought': result.task_id, 'observation': result.answer, 'answer': result.answer, 'conversation_id': str(conversation.id), 'message_id': str(message.id), 'latency': 0, 'total_token_count': 0}, ensure_ascii=False)}\n\n"
+
+            if final_answer:
+                yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': final_answer, 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+
+            billing_summary = billing_aggregator.summary()
+            yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
         except Exception:
+            logger.warning("direct_answer 经协调器执行失败", exc_info=True)
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["直接回答"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
+            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '直接回答遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
 
     def _stream_multi_agent(self, req, account, conversation, message, routing_decision, llm, tools, history):
         """multi_agent 路径：委托 MultiAgentExecutor 协调多 Agent 执行，外层包裹计费事件。"""
@@ -281,11 +300,15 @@ class AssistantAgentService(BaseService):
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
         try:
+            from internal.service.dag_engine_service import DAGEngine
+            from internal.service.agent_instance_pool import AgentInstancePool
             executor = MultiAgentExecutor(
                 db=self.db,
                 task_decomposer=TaskDecomposer(
                     language_model_service=self.language_model_service
                 ),
+                dag_engine=DAGEngine(db=self.db),
+                agent_instance_pool=AgentInstancePool(),
             )
             yield from executor.execute(
                 query=req.query.data,
@@ -298,6 +321,8 @@ class AssistantAgentService(BaseService):
                 history=history,
             )
 
+            billing_summary = billing_aggregator.summary()
+            yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
         except Exception as e:
@@ -305,6 +330,98 @@ class AssistantAgentService(BaseService):
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["多智能体执行"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '多智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+
+    def _stream_single_agent(
+        self, req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
+        distant_summary="", user_memory_text="",
+    ):
+        """single_agent / deep_thinking 路径：经 ExecutionCoordinatorService 编排单 Agent。"""
+        from internal.entity.billing_metering_entity import BillingEventType
+        from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.executors.single_agent_executor import SingleAgentExecutor
+        from internal.entity.orchestrator_entity import ExecutionMode
+
+        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_started = billing_aggregator.started()
+        yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
+
+        try:
+            agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent
+            agent_config = AgentConfig(
+                user_id=account.id,
+                invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+                preset_prompt=ASSISTANT_AGENT_MARKDOWN_PRESET_PROMPT,
+                enable_long_term_memory=True,
+                enable_deep_thinking=should_deep_think,
+                runtime_flask_app=current_app._get_current_object(),
+                language_model_service=self.language_model_service,
+                tools=tools,
+            )
+            execution_mode = (
+                ExecutionMode.DEEP_THINKING.value
+                if should_deep_think
+                else (routing_decision.get("execution_mode") if routing_decision else ExecutionMode.SINGLE_AGENT.value)
+            )
+            executor = SingleAgentExecutor(
+                agent_class=agent_class,
+                agent_config=agent_config,
+                tools=tools,
+                llm=llm,
+                history=history or [],
+                query=req.query.data,
+                long_term_memory=distant_summary,
+                user_memory=user_memory_text,
+            )
+            collected_answer = ""
+            for chunk in executor.execute(
+                query=req.query.data,
+                conversation=conversation,
+                message=message,
+                execution_mode=execution_mode,
+                routing_decision=routing_decision,
+            ):
+                if chunk.startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}"):
+                    try:
+                        data_part = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(data_part)
+                        collected_answer = payload.get("answer", "")
+                    except Exception:
+                        pass
+                yield chunk
+
+            billing_summary = billing_aggregator.summary()
+            yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
+            billing_final = billing_aggregator.final()
+            yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+
+            yield from self._extract_long_term_memory(account, req.query.data, collected_answer, conversation.id)
+        except Exception as e:
+            logger.warning("单智能体经协调器执行失败: %s", e, exc_info=True)
+            billing_cancelled = billing_aggregator.cancelled(pending_phases=["单智能体执行"])
+            yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
+            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '单智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+
+    def _extract_long_term_memory(self, account, query, ai_response, conversation_id):
+        """执行完成后抽取并存储长期记忆候选，推送需用户确认的候选为 SSE 事件。"""
+        if not ai_response:
+            return
+        try:
+            from internal.service.long_term_memory_service import LongTermMemoryService
+            long_term_memory_service = current_app.injector.get(LongTermMemoryService)
+            results = long_term_memory_service.extract_and_store(
+                account=account,
+                query=query,
+                ai_response=ai_response,
+                conversation_id=conversation_id,
+            )
+            for result in results:
+                if result.get("should_prompt") and result.get("candidate_id"):
+                    yield (
+                        f"event: {QueueEvent.MEMORY_CANDIDATE_PROMPT.value}\n"
+                        f"data:{json.dumps(result, ensure_ascii=False)}\n\n"
+                    )
+        except Exception:
+            logger.warning("长期记忆抽取失败，不影响主流程", exc_info=True)
 
     def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用和全局 MCP 绑定。"""
@@ -490,6 +607,7 @@ class AssistantAgentService(BaseService):
                 self.language_model_service.get_assistant_agent_model_config(),
                 image_urls=req.image_urls.data,
                 entrypoint=LanguageModelService.ENTRYPOINT_ASSISTANT_AGENT,
+                tier="strong",
             )
             llm = model_resolution.llm
         else:
@@ -540,8 +658,9 @@ class AssistantAgentService(BaseService):
         )
         context = token_buffer_memory.build_context(conversation.id, req.query.data, account)
         history = context["recent_messages"]
-        distant_summary = context["distant_summary"]
+        distant_summary = context.get("distant_summary", "")
         relevant_facts = context.get("relevant_facts", [])
+        user_memory_text = "\n".join(f"- {fact}" for fact in relevant_facts) if relevant_facts else ""
 
         # 6.构建首页助手运行时工具
         prebound_tools = self._build_assistant_runtime_tools(account.id)
@@ -553,11 +672,6 @@ class AssistantAgentService(BaseService):
             account_id=str(account.id),
             message_id=str(message.id),
         )
-
-        # 6.1 关键事实层注入到 Agent prompt（build_context 已完成向量召回，此处格式化合并）
-        user_memory_text = ""
-        if relevant_facts:
-            user_memory_text = "\n".join(f"- {fact}" for fact in relevant_facts)
 
         # 7.构建辅助Agent专用智能体。根据路由决策的 execution_mode 选择执行路径：
         # 二阶段流程：confirm_deep_thinking=True 表示用户已确认，直接执行深度思考；
@@ -572,7 +686,7 @@ class AssistantAgentService(BaseService):
             if execution_mode == "deep_thinking":
                 yield from self._stream_deep_thinking_proposal(routing_decision)
                 return
-            if execution_mode == "direct_answer" and self.ENABLE_DIRECT_ANSWER_EXECUTOR:
+            if execution_mode == "direct_answer":
                 yield from self._stream_direct_answer(req, account, conversation, message)
                 self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
@@ -581,210 +695,36 @@ class AssistantAgentService(BaseService):
                 return
 
         should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
+
+        # 统一执行入口：single_agent / single_agent_with_tools / deep_thinking(已确认) /
+        # reject_or_confirm / 路由决策缺失，全部经 ExecutionCoordinatorService 编排。
+        if routing_decision is None:
+            logger.warning("辅助 Agent 路由决策缺失，回退到默认单智能体执行路径")
+            routing_decision = {
+                "intent": "unknown",
+                "execution_mode": "single_agent",
+                "complexity": "unknown",
+                "needs_tools": bool(tools),
+                "needs_agent": True,
+                "needs_multi_agent": False,
+                "recommended_model_tier": "standard",
+                "risk_level": "safe",
+                "reason": "路由决策缺失，回退到默认单智能体执行",
+            }
+            execution_mode = "single_agent"
+
         if execution_mode == "reject_or_confirm":
-            logger.warning("辅助 Agent 路由决策标记高风险任务，建议二次确认: intent=%s", routing_decision.get("intent"))
-        agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent
-        agent = agent_class(
-            llm=llm,
-            agent_config=AgentConfig(
-                user_id=account.id,
-                invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
-                preset_prompt=ASSISTANT_AGENT_MARKDOWN_PRESET_PROMPT,
-                enable_long_term_memory=True,
-                enable_deep_thinking=should_deep_think,
-                runtime_flask_app=current_app._get_current_object(),
-                language_model_service=self.language_model_service,
-                tools=tools,
-            ),
+            logger.warning(
+                "辅助 Agent 路由决策标记高风险任务，建议二次确认: intent=%s",
+                routing_decision.get("intent"),
+            )
+
+        yield from self._stream_single_agent(
+            req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
+            distant_summary=distant_summary, user_memory_text=user_memory_text,
         )
-
-        agent_thoughts = {}
-        from internal.entity.billing_metering_entity import BillingEventType
-        from internal.service.billing_metering_service import BillingUsageAggregator
-
-        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
-        billing_started = billing_aggregator.started()
-        yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
-
-        billing_cancelled = False
-        last_meaningful_event = ""
-        cancel_token = CancelToken()
-        cancel_task_id = None
-        try:
-            for agent_thought in agent.stream(
-                {
-                    "messages": [
-                        llm.convert_to_human_message(req.query.data, req.image_urls.data)
-                    ],
-                    "history": history,
-                    "long_term_memory": distant_summary,
-                    "user_memory": user_memory_text,
-                }
-            ):
-                # 8.提取thought以及answer
-                event_id = str(agent_thought.id)
-
-                if cancel_task_id is None and agent_thought.task_id:
-                    cancel_task_id = agent_thought.task_id
-                    self.register_cancel_token(cancel_task_id, cancel_token)
-
-                # 9.将数据填充到agent_thought，便于存储到数据库服务中
-                if agent_thought.event != QueueEvent.PING.value:
-                    # 10.除了agent_message数据为叠加，其他均为覆盖
-                    if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
-                        if event_id not in agent_thoughts:
-                            # 11.初始化智能体消息事件
-                            agent_thoughts[event_id] = agent_thought
-                        else:
-                            # 12.叠加智能体消息
-                            agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(
-                                update={
-                                    "thought": agent_thoughts[event_id].thought
-                                    + agent_thought.thought,
-                                    # 消息相关数据
-                                    "message": agent_thought.message,
-                                    "message_token_count": agent_thought.message_token_count,
-                                    "message_unit_price": agent_thought.message_unit_price,
-                                    "message_price_unit": agent_thought.message_price_unit,
-                                    # 答案相关字段
-                                    "answer": agent_thoughts[event_id].answer
-                                    + agent_thought.answer,
-                                    "answer_token_count": agent_thought.answer_token_count,
-                                    "answer_unit_price": agent_thought.answer_unit_price,
-                                    "answer_price_unit": agent_thought.answer_price_unit,
-                                    # Agent推理统计相关
-                                    "total_token_count": agent_thought.total_token_count,
-                                    "total_price": agent_thought.total_price,
-                                    "latency": agent_thought.latency,
-                                }
-                            )
-                    else:
-                        # 13.处理其他类型事件的消息
-                        agent_thoughts[event_id] = agent_thought
-
-                # billing_delta: 检测token消耗并推送增量计费事件
-                if agent_thought.total_token_count and agent_thought.total_token_count > 0:
-                    billing_delta = billing_aggregator.model_tokens(
-                        source_name="assistant_agent",
-                        input_tokens=max(agent_thought.message_token_count, 0),
-                        output_tokens=max(agent_thought.answer_token_count, 0),
-                        reason=agent_thought.event.value if hasattr(agent_thought.event, 'value') else str(agent_thought.event),
-                    )
-                    yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"
-
-                if agent_thought.event == QueueEvent.AGENT_ACTION.value:
-                    tool_billing_delta = billing_aggregator.delta(
-                        source_type="tool",
-                        source_name=agent_thought.tool or "unknown_tool",
-                        delta_credits=0,
-                        reason="tool_invocation",
-                    )
-                    yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(tool_billing_delta.to_sse())}\n\n"
-
-                if agent_thought.event == QueueEvent.STOP.value:
-                    billing_cancelled = True
-
-                if agent_thought.event not in (QueueEvent.STOP.value, QueueEvent.PING.value):
-                    last_meaningful_event = (
-                        agent_thought.event.value
-                        if hasattr(agent_thought.event, "value")
-                        else str(agent_thought.event)
-                    )
-
-                usage_summary = summarize_agent_thoughts(agent_thoughts.values())
-                data = {
-                    **agent_thought.model_dump(
-                        include={
-                            "event",
-                            "thought",
-                            "observation",
-                            "tool",
-                            "tool_input",
-                            "answer",
-                            "latency",
-                            "total_token_count",
-                        }
-                    ),
-                    "aggregate_total_token_count": usage_summary.total_token_count,
-                    "aggregate_total_price": usage_summary.total_price,
-                    "aggregate_latency": usage_summary.latency,
-                    "id": event_id,
-                    "conversation_id": str(conversation.id),
-                    "message_id": str(message.id),
-                    "task_id": str(agent_thought.task_id),
-                }
-                yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
-
-            if self.result_synthesizer_service is not None:
-                try:
-                    final_answer = ""
-                    for _thought in agent_thoughts.values():
-                        if getattr(_thought, "answer", ""):
-                            final_answer = _thought.answer
-                    if final_answer:
-                        synthesis = self.result_synthesizer_service.synthesize(
-                            results=[OrchestratedAgentResult(
-                                agent_id="assistant_agent",
-                                task_id=str(message.id),
-                                answer=final_answer,
-                                confidence=1.0,
-                            )],
-                            original_query=req.query.data,
-                        )
-                        for warning in synthesis.get("user_warnings", []):
-                            warning_data = json.dumps({
-                                "id": str(uuid4()),
-                                "thought": "质量提示",
-                                "observation": warning,
-                                "answer": "",
-                                "latency": 0,
-                                "total_token_count": 0,
-                                "conversation_id": str(conversation.id),
-                                "message_id": str(message.id),
-                                "task_id": str(message.id),
-                            }, ensure_ascii=False)
-                            yield f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{warning_data}\n\n"
-                except Exception:
-                    logger.warning("结果合成失败，跳过", exc_info=True)
-        except Exception:
-            billing_cancelled = True
-            raise
-        finally:
-            if billing_cancelled:
-                if last_meaningful_event == QueueEvent.AGENT_ACTION.value:
-                    pending_phases = ["结果合成"]
-                else:
-                    pending_phases = ["工具调用", "结果合成"]
-                billing_cancelled_event = billing_aggregator.cancelled(
-                    pending_phases=pending_phases
-                )
-                yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled_event.to_sse())}\n\n"
-            else:
-                billing_final = billing_aggregator.final()
-                yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
-
-            if cancel_task_id is not None:
-                self._active_cancel_tokens.pop(str(cancel_task_id), None)
-
-        # 14.将消息以及推理过程添加到数据库
-        self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision)
-
-        # 15.对话完成后抽取记忆（不阻断主流程）
-        try:
-            full_response = ""
-            for _thought in agent_thoughts.values():
-                answer = getattr(_thought, "answer", "") or ""
-                if answer:
-                    full_response = answer
-            if full_response:
-                from app.http.module import injector  # noqa: PLC0415
-                from internal.service.long_term_memory_service import LongTermMemoryService  # noqa: PLC0415
-                long_term_memory_service = injector.get(LongTermMemoryService)
-                long_term_memory_service.extract_and_store(
-                    account, req.query.data, full_response, conversation.id
-                )
-        except Exception:
-            logger.warning("对话后记忆抽取失败，不影响主流程", exc_info=True)
+        self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
+        return
 
     def _persist_assistant_thoughts(self, account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision):
         """持久化消息与推理过程到数据库。"""

@@ -34,4 +34,6 @@ class MemoryCandidateResp(Schema):
     confidence = fields.Integer()
     occurrences = fields.Integer()
     status = fields.String()
+    memory_type = fields.String()
+    source_conversation_id = fields.String(allow_none=True)
     metadata = fields.Dict(attribute="metadata_")

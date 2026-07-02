@@ -2,6 +2,7 @@
 import ChatComposer from '@/components/ChatComposer.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
 import ChatMessageTimeline from '@/components/chat/ChatMessageTimeline.vue'
+import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
 import { useAudioToText } from '@/hooks/use-audio'
 import { useChatImageUpload } from '@/hooks/use-chat-image-upload'
 import { useChatQueryInput } from '@/hooks/use-chat-query-input'
@@ -10,6 +11,7 @@ import {
   sendPublicAppA2aMessage,
 } from '@/services/public-app'
 import { uploadImage } from '@/services/upload-file'
+import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import { useAccountStore } from '@/stores/account'
 import { Message } from '@arco-design/web-vue'
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
@@ -18,6 +20,7 @@ import { useRoute } from 'vue-router'
 import {
   applyChatStreamEvent,
   withChatRenderId,
+  type ToolConfirmationPrompt,
   type StreamEventResponse,
   type StreamMessage,
   type StreamState,
@@ -63,6 +66,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const uploadFileLoading = ref(false)
 const isRecording = ref(false)
 const chatContextId = ref('')
+const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
 const accountStore = useAccountStore()
 const activeAccount = computed(() => ({
   name:
@@ -227,6 +231,9 @@ const handleSubmit = async () => {
         streamState.message_id = streamResult.state.message_id
         streamState.task_id = streamResult.state.task_id
         streamState.conversation_id = streamResult.state.conversation_id
+        if (streamResult.state.toolConfirmationPrompt) {
+          toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+        }
         if (streamState.conversation_id) {
           chatContextId.value = streamState.conversation_id
           saveContextId(streamState.conversation_id)
@@ -239,6 +246,24 @@ const handleSubmit = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const handleConfirmTool = async (id: string) => {
+  try {
+    await postToolConfirmationConfirm(id)
+  } catch {
+    // 确认失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
+}
+
+const handleCancelTool = async (id: string) => {
+  try {
+    await postToolConfirmationCancel(id)
+  } catch {
+    // 取消失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
 }
 
 const handleQueryKeydown = (event: KeyboardEvent) => {
@@ -315,6 +340,16 @@ watch(
         </div>
       </div>
       <div class="w-full flex flex-col flex-shrink-0 border-t bg-white">
+        <div
+          v-if="toolConfirmationPrompt"
+          class="w-full max-w-[600px] mx-auto px-6 pb-2 flex justify-center"
+        >
+          <ToolConfirmationCard
+            :prompt="toolConfirmationPrompt"
+            @confirm="handleConfirmTool"
+            @cancel="handleCancelTool"
+          />
+        </div>
         <div class="px-6 pt-4">
           <chat-composer
             v-model="query"

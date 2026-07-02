@@ -115,6 +115,7 @@ class RetrievalService(BaseService):
             account_id: UUID,
             k: int = 4,
             retrieval_strategy: str = RetrievalStrategy.HYBRID.value,
+            knowledge_scope: str | None = None,
     ) -> list[LCDocument]:
         """在新版知识库（KnowledgeBase/KnowledgeSegment）中执行 RAG 检索，返回 LangChain 文档列表"""
         knowledge_bases = self.db.session.query(KnowledgeBase).filter(
@@ -125,11 +126,11 @@ class RetrievalService(BaseService):
             return []
 
         if retrieval_strategy == RetrievalStrategy.SEMANTIC.value:
-            documents = self._semantic_search_knowledge_base(knowledge_bases, query, k)
+            documents = self._semantic_search_knowledge_base(knowledge_bases, query, k, knowledge_scope=knowledge_scope)
         elif retrieval_strategy == RetrievalStrategy.FULL_TEXT.value:
             documents = self._full_text_search_knowledge_base(knowledge_base_ids, query, k)
         else:
-            documents = self._hybrid_search_knowledge_base(knowledge_bases, knowledge_base_ids, query, k)
+            documents = self._hybrid_search_knowledge_base(knowledge_bases, knowledge_base_ids, query, k, knowledge_scope=knowledge_scope)
 
         segment_ids = [
             document.metadata.get("segment_id")
@@ -151,10 +152,11 @@ class RetrievalService(BaseService):
             knowledge_bases: list[KnowledgeBase],
             query: str,
             k: int,
+            knowledge_scope: str | None = None,
     ) -> list[LCDocument]:
         documents: list[LCDocument] = []
         for knowledge_base in knowledge_bases:
-            hits = self.knowledge_vector_service.search(knowledge_base, query, top_k=k)
+            hits = self.knowledge_vector_service.search(knowledge_base, query, top_k=k, knowledge_scope=knowledge_scope)
             for hit in hits:
                 documents.append(LCDocument(
                     page_content=hit.get("content", ""),
@@ -213,8 +215,9 @@ class RetrievalService(BaseService):
             knowledge_base_ids: list[UUID],
             query: str,
             k: int,
+            knowledge_scope: str | None = None,
     ) -> list[LCDocument]:
-        semantic_docs = self._semantic_search_knowledge_base(knowledge_bases, query, k)
+        semantic_docs = self._semantic_search_knowledge_base(knowledge_bases, query, k, knowledge_scope=knowledge_scope)
         full_text_docs = self._full_text_search_knowledge_base(knowledge_base_ids, query, k)
 
         merged: list[LCDocument] = []
@@ -301,12 +304,22 @@ class RetrievalService(BaseService):
         def knowledge_retrieval(query: str) -> str:
             """如果需要搜索用户知识库中的相关内容,当你觉得用户的提问超过你的知识范围时,可以尝试调用工具,输入为检索query语句,返回数据为检索内容字符串"""
             with flask_app.app_context():
+                knowledge_scope = None
+                knowledge_bases = self.db.session.query(KnowledgeBase).filter(
+                    KnowledgeBase.id.in_(knowledge_base_ids),
+                ).all()
+                if knowledge_bases:
+                    scopes = {kb.knowledge_scope for kb in knowledge_bases}
+                    if len(scopes) == 1:
+                        knowledge_scope = scopes.pop()
+
                 documents = self.search_in_knowledge_base(
                     knowledge_base_ids=knowledge_base_ids,
                     query=query,
                     account_id=account_id,
                     retrieval_strategy=retrieval_strategy,
                     k=k,
+                    knowledge_scope=knowledge_scope,
                 )
 
             if len(documents) == 0:

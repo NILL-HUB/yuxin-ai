@@ -77,6 +77,7 @@ def _build_service_with_state(app, draft_config):
         language_model_service=SimpleNamespace(),
         builtin_provider_manager=SimpleNamespace(),
         icon_generator_service=SimpleNamespace(),
+        app_icon_service=SimpleNamespace(),
     )
     # 这些 state machine 只验证发布/取消发布状态机，不需要触发真实后台队列。
     service._enqueue_mcp_tool_snapshot_prewarm = lambda *_args, **_kwargs: None

@@ -51,8 +51,9 @@ class RuntimeModelPoolService:
         model_id_text = str(model.id)
         query = session.query(ModelKeyConfig).filter(
             ModelKeyConfig.status == "active",
+            (ModelKeyConfig.effective_at.is_(None)) | (ModelKeyConfig.effective_at <= now),
             (ModelKeyConfig.expires_at.is_(None)) | (ModelKeyConfig.expires_at > now),
-            ModelKeyConfig.used_credits < ModelKeyConfig.tenant_quota,
+            (ModelKeyConfig.used_credits < ModelKeyConfig.tenant_quota) | (ModelKeyConfig.tenant_quota <= 0),
         )
         query = query.filter(
             ((ModelKeyConfig.model_id.is_(None)) & (ModelKeyConfig.provider == model.provider))
@@ -96,7 +97,7 @@ class RuntimeModelPoolService:
 
     def build_llm_config(self, model: ModelPoolConfig, key: ModelKeyConfig) -> dict[str, Any]:
         api_key = _decrypt_key_value(key.key_value_encrypted)
-        return {
+        config: dict[str, Any] = {
             "provider": model.provider,
             "model": model.model_name,
             "parameters": {},
@@ -104,3 +105,6 @@ class RuntimeModelPoolService:
             "key_id": str(key.id),
             "model_id": str(model.id),
         }
+        if model.base_url:
+            config["base_url"] = model.base_url
+        return config

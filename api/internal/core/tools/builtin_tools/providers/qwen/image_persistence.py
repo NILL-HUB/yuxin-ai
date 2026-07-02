@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from internal.service.cos_service import CosService
+from internal.core.ports.storage_port import ObjectStoragePort
 
 
 def _guess_image_extension(image_url: str, content_type: str = "") -> str:
@@ -31,7 +31,12 @@ def _guess_image_extension(image_url: str, content_type: str = "") -> str:
     return "png"
 
 
-def persist_remote_image(image_url: str, *, source: str) -> str:
+def persist_remote_image(
+    image_url: str,
+    *,
+    source: str,
+    storage_port: ObjectStoragePort | None = None,
+) -> str:
     """下载第三方图片并上传到 COS，返回稳定 URL。"""
     if not image_url:
         raise ValueError("image_url is required")
@@ -44,6 +49,13 @@ def persist_remote_image(image_url: str, *, source: str) -> str:
         content_type=response.headers.get("Content-Type", ""),
     )
     filename = f"{source}_{uuid.uuid4()}.{extension}"
+    if storage_port is not None:
+        return storage_port.upload_bytes_without_record(
+            filename=filename,
+            content=response.content,
+            folder="generated-images",
+        )
+    from internal.service.cos_service import CosService
     return CosService.upload_bytes_without_record(
         filename=filename,
         content=response.content,

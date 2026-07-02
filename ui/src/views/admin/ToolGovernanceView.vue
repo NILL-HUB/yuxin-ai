@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { useI18n } from 'vue-i18n'
 import {
   batchUpdateRisk,
   createToolPolicy,
@@ -58,6 +59,8 @@ const SOURCE_TYPES = ['api_tool', 'mcp', 'skill', 'builtin']
 const VISIBILITIES = ['private', 'tenant', 'public']
 const INVOCATION_STATUSES = ['success', 'failed', 'blocked', 'timeout']
 
+const { t } = useI18n()
+
 const loading = ref(false)
 const actionLoading = ref(false)
 const activeTab = ref('policies')
@@ -92,6 +95,8 @@ const auditFilters = ref({
   start_date: '',
   end_date: '',
 })
+
+const policyPaginator = ref({ total_record: 0, total_page: 0, current_page: 1, page_size: 20 })
 
 const auditPaginator = ref({ total_record: 0, total_page: 0, current_page: 1, page_size: 20 })
 
@@ -138,11 +143,12 @@ const loadPolicies = async () => {
       enabled: filters.value.enabled,
       keyword: filters.value.keyword,
     })
-    const data = result as { list?: ToolPolicy[] }
-    policies.value = data.list || []
+    const data = (result as { data?: { list?: ToolPolicy[]; paginator?: typeof policyPaginator.value } }).data
+    policies.value = data?.list || []
+    policyPaginator.value = data?.paginator || policyPaginator.value
     selectedIds.value = []
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载治理策略失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.loadPoliciesFailed')))
   } finally {
     loading.value = false
   }
@@ -151,9 +157,9 @@ const loadPolicies = async () => {
 const loadStats = async () => {
   try {
     const result = await getToolGovernanceStats()
-    stats.value = result as GovernanceStats
+    stats.value = (result as { data?: GovernanceStats }).data || stats.value
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载治理统计失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.loadStatsFailed')))
   }
 }
 
@@ -168,11 +174,11 @@ const loadAudits = async () => {
       start_date: auditFilters.value.start_date,
       end_date: auditFilters.value.end_date,
     })
-    const data = result as { list?: AuditLog[]; paginator?: typeof auditPaginator.value }
-    audits.value = data.list || []
-    auditPaginator.value = data.paginator || auditPaginator.value
+    const data = (result as { data?: { list?: AuditLog[]; paginator?: typeof auditPaginator.value } }).data
+    audits.value = data?.list || []
+    auditPaginator.value = data?.paginator || auditPaginator.value
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载审计日志失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.loadAuditsFailed')))
   } finally {
     loading.value = false
   }
@@ -218,15 +224,15 @@ const submit = async () => {
     const payload = { ...form.value }
     if (editMode.value) {
       await updateToolPolicy(editingId.value, payload)
-      Message.success('治理策略已更新')
+      Message.success(t('admin.toolGovernance.messages.updateSuccess'))
     } else {
       await createToolPolicy(payload)
-      Message.success('治理策略已创建')
+      Message.success(t('admin.toolGovernance.messages.createSuccess'))
     }
     modalVisible.value = false
     await loadAll()
   } catch (error) {
-    Message.error(getErrorMessage(error, '保存治理策略失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.saveFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -236,10 +242,10 @@ const toggleStatus = async (policy: ToolPolicy, enabled: boolean) => {
   actionLoading.value = true
   try {
     await setToolPolicyStatus(policy.id, enabled)
-    Message.success(enabled ? '已启用' : '已停用')
+    Message.success(enabled ? t('admin.toolGovernance.messages.enabled') : t('admin.toolGovernance.messages.disabled'))
     await loadPolicies()
   } catch (error) {
-    Message.error(getErrorMessage(error, '更新状态失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.toggleStatusFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -249,10 +255,10 @@ const remove = async (policy: ToolPolicy) => {
   actionLoading.value = true
   try {
     await deleteToolPolicy(policy.id)
-    Message.success('策略已删除')
+    Message.success(t('admin.toolGovernance.messages.deleteSuccess'))
     await loadAll()
   } catch (error) {
-    Message.error(getErrorMessage(error, '删除策略失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.deleteFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -260,7 +266,7 @@ const remove = async (policy: ToolPolicy) => {
 
 const openBatchRisk = () => {
   if (!selectedIds.value.length) {
-    Message.warning('请先选择策略')
+    Message.warning(t('admin.toolGovernance.messages.selectFirst'))
     return
   }
   batchRiskLevel.value = 'medium'
@@ -271,22 +277,45 @@ const submitBatchRisk = async () => {
   actionLoading.value = true
   try {
     await batchUpdateRisk(selectedIds.value, batchRiskLevel.value)
-    Message.success('批量调整风险等级成功')
+    Message.success(t('admin.toolGovernance.messages.batchSuccess'))
     batchModalVisible.value = false
     await loadAll()
   } catch (error) {
-    Message.error(getErrorMessage(error, '批量调整失败'))
+    Message.error(getErrorMessage(error, t('admin.toolGovernance.messages.batchFailed')))
   } finally {
     actionLoading.value = false
   }
 }
 
-const onSelectionChange = (rowKeys: string[]) => {
-  selectedIds.value = rowKeys
+const onPolicyPageChange = (page: number) => {
+  filters.value.current_page = page
+  loadPolicies()
+}
+
+const onPolicyPageSizeChange = (size: number) => {
+  filters.value.page_size = size
+  filters.value.current_page = 1
+  loadPolicies()
+}
+
+const handlePolicySearch = () => {
+  filters.value.current_page = 1
+  loadPolicies()
 }
 
 const onAuditPageChange = (page: number) => {
   auditFilters.value.current_page = page
+  loadAudits()
+}
+
+const onAuditPageSizeChange = (size: number) => {
+  auditFilters.value.page_size = size
+  auditFilters.value.current_page = 1
+  loadAudits()
+}
+
+const handleAuditSearch = () => {
+  auditFilters.value.current_page = 1
   loadAudits()
 }
 
@@ -296,28 +325,28 @@ onMounted(loadAll)
 <template>
   <section class="space-y-6 p-6">
     <header>
-      <h1 class="text-2xl font-semibold text-gray-900">工具池治理</h1>
-      <p class="mt-1 text-sm text-gray-500">维护工具治理策略、风险等级与可见性，并审计工具调用记录。</p>
+      <h1 class="text-2xl font-semibold text-gray-900">{{ $t('admin.toolGovernance.title') }}</h1>
+      <p class="mt-1 text-sm text-gray-500">{{ $t('admin.toolGovernance.description') }}</p>
     </header>
 
     <div class="grid gap-4 md:grid-cols-4">
       <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">策略总数</p>
+        <p class="text-sm text-gray-500">{{ $t('admin.toolGovernance.stats.total') }}</p>
         <strong class="text-xl">{{ stats.total }}</strong>
       </article>
       <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">启用率</p>
+        <p class="text-sm text-gray-500">{{ $t('admin.toolGovernance.stats.enabledRate') }}</p>
         <strong class="text-xl">{{ enabledRatePercent }}</strong>
       </article>
       <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">风险分布</p>
+        <p class="text-sm text-gray-500">{{ $t('admin.toolGovernance.stats.riskDistribution') }}</p>
         <div class="mt-1 flex flex-wrap gap-1">
           <a-tag v-for="[risk, count] in riskEntries" :key="risk" :color="riskColor(risk)" size="small">{{ risk }}: {{ count }}</a-tag>
           <span v-if="!riskEntries.length" class="text-gray-400">-</span>
         </div>
       </article>
       <article class="rounded-lg border bg-white p-4">
-        <p class="text-sm text-gray-500">来源分布</p>
+        <p class="text-sm text-gray-500">{{ $t('admin.toolGovernance.stats.sourceDistribution') }}</p>
         <div class="mt-1 flex flex-wrap gap-1">
           <a-tag v-for="[source, count] in sourceEntries" :key="source" size="small">{{ source }}: {{ count }}</a-tag>
           <span v-if="!sourceEntries.length" class="text-gray-400">-</span>
@@ -326,104 +355,117 @@ onMounted(loadAll)
     </div>
 
     <a-tabs v-model:active-key="activeTab" type="rounded" @change="(key: string | number) => key === 'audit' && loadAudits()">
-      <a-tab-pane key="policies" title="治理策略">
+      <a-tab-pane key="policies" :title="$t('admin.toolGovernance.tabs.policy')">
         <div class="mb-3 flex flex-wrap items-end gap-3">
-          <a-input v-model="filters.keyword" placeholder="工具名/ID 关键词" style="width: 200px" allow-clear />
-          <a-select v-model="filters.source_type" placeholder="来源类型" style="width: 140px" allow-clear>
+          <a-input v-model="filters.keyword" :placeholder="$t('admin.toolGovernance.placeholder.keyword')" style="width: 200px" allow-clear />
+          <a-select v-model="filters.source_type" :placeholder="$t('admin.toolGovernance.field.sourceType')" style="width: 140px" allow-clear>
             <a-option v-for="s in SOURCE_TYPES" :key="s" :value="s">{{ s }}</a-option>
           </a-select>
-          <a-select v-model="filters.risk_level" placeholder="风险等级" style="width: 140px" allow-clear>
+          <a-select v-model="filters.risk_level" :placeholder="$t('admin.toolGovernance.field.riskLevel')" style="width: 140px" allow-clear>
             <a-option v-for="r in RISK_LEVELS" :key="r" :value="r">{{ r }}</a-option>
           </a-select>
-          <a-select v-model="filters.visibility" placeholder="可见性" style="width: 140px" allow-clear>
+          <a-select v-model="filters.visibility" :placeholder="$t('admin.toolGovernance.field.visibility')" style="width: 140px" allow-clear>
             <a-option v-for="v in VISIBILITIES" :key="v" :value="v">{{ v }}</a-option>
           </a-select>
-          <a-button :loading="loading" @click="loadPolicies">查询</a-button>
-          <a-button :disabled="!selectedIds.length" @click="openBatchRisk">批量改风险</a-button>
+          <a-button :loading="loading" @click="handlePolicySearch">{{ $t('admin.toolGovernance.search') }}</a-button>
+          <a-button :disabled="!selectedIds.length" @click="openBatchRisk">{{ $t('admin.toolGovernance.batchRisk') }}</a-button>
           <div class="ml-auto">
-            <a-button type="primary" @click="openCreate">新建策略</a-button>
+            <a-button type="primary" @click="openCreate">{{ $t('admin.toolGovernance.createPolicy') }}</a-button>
           </div>
         </div>
         <a-spin :loading="loading" class="block">
           <div class="overflow-hidden rounded-lg border bg-white">
             <a-table
               :data="policies"
-              :row-key="(record: ToolPolicy) => record.id"
-              :row-selection="{ showCheckedAll: true }"
-              :selected-keys="selectedIds"
+              row-key="id"
+              :row-selection="{ type: 'checkbox', showCheckedAll: true, width: 60 }"
+              v-model:selectedKeys="selectedIds"
               :pagination="false"
               :bordered="{ wrapper: true, cell: true }"
-              @selection-change="onSelectionChange"
             >
-              <template #empty>暂无治理策略</template>
-              <a-table-column title="工具名" data-index="tool_name">
-                <template #cell="{ record }">
-                  <span class="font-medium">{{ record.tool_name || '-' }}</span>
-                  <p class="text-xs text-gray-400">{{ record.tool_id }}</p>
-                </template>
-              </a-table-column>
-              <a-table-column title="来源类型" data-index="source_type" :width="110" />
-              <a-table-column title="风险等级" data-index="risk_level" :width="110">
-                <template #cell="{ record }">
-                  <a-tag :color="riskColor(record.risk_level)" size="small">{{ record.risk_level }}</a-tag>
-                </template>
-              </a-table-column>
-              <a-table-column title="可见性" data-index="visibility" :width="100" />
-              <a-table-column title="允许池" data-index="allowed_pools">
-                <template #cell="{ record }">
-                  <a-tag v-for="pool in record.allowed_pools" :key="pool" size="small">{{ pool }}</a-tag>
-                  <span v-if="!record.allowed_pools?.length" class="text-gray-400">-</span>
-                </template>
-              </a-table-column>
-              <a-table-column title="状态" :width="80">
-                <template #cell="{ record }">
-                  <a-switch
-                    :model-value="record.enabled"
-                    :loading="actionLoading"
-                    @change="(v: string | number | boolean) => toggleStatus(record, Boolean(v))"
-                  />
-                </template>
-              </a-table-column>
-              <a-table-column title="操作" :width="160">
-                <template #cell="{ record }">
-                  <a-space>
-                    <a-button size="mini" @click="openEdit(record)">编辑</a-button>
-                    <a-button size="mini" status="danger" @click="remove(record)">删除</a-button>
-                  </a-space>
-                </template>
-              </a-table-column>
+              <template #empty>{{ $t('admin.toolGovernance.empty.policies') }}</template>
+              <template #columns>
+                <a-table-column :title="$t('admin.toolGovernance.field.toolName')" data-index="tool_name">
+                  <template #cell="{ record }">
+                    <span class="font-medium">{{ record.tool_name || '-' }}</span>
+                    <p class="text-xs text-gray-400">{{ record.tool_id }}</p>
+                  </template>
+                </a-table-column>
+                <a-table-column :title="$t('admin.toolGovernance.field.sourceType')" data-index="source_type" :width="110" />
+                <a-table-column :title="$t('admin.toolGovernance.field.riskLevel')" data-index="risk_level" :width="110">
+                  <template #cell="{ record }">
+                    <a-tag :color="riskColor(record.risk_level)" size="small">{{ record.risk_level }}</a-tag>
+                  </template>
+                </a-table-column>
+                <a-table-column :title="$t('admin.toolGovernance.field.visibility')" data-index="visibility" :width="100" />
+                <a-table-column :title="$t('admin.toolGovernance.field.allowedPools')" data-index="allowed_pools">
+                  <template #cell="{ record }">
+                    <a-tag v-for="pool in record.allowed_pools" :key="pool" size="small">{{ pool }}</a-tag>
+                    <span v-if="!record.allowed_pools?.length" class="text-gray-400">-</span>
+                  </template>
+                </a-table-column>
+                <a-table-column :title="$t('admin.toolGovernance.field.status')" :width="80">
+                  <template #cell="{ record }">
+                    <a-switch
+                      :model-value="record.enabled"
+                      :loading="actionLoading"
+                      @change="(v: string | number | boolean) => toggleStatus(record, Boolean(v))"
+                    />
+                  </template>
+                </a-table-column>
+                <a-table-column :title="$t('admin.toolGovernance.field.actions')" :width="160">
+                  <template #cell="{ record }">
+                    <a-space>
+                      <a-button size="mini" @click="openEdit(record)">{{ $t('admin.toolGovernance.actions.edit') }}</a-button>
+                      <a-button size="mini" status="danger" @click="remove(record)">{{ $t('admin.toolGovernance.actions.delete') }}</a-button>
+                    </a-space>
+                  </template>
+                </a-table-column>
+              </template>
             </a-table>
           </div>
         </a-spin>
+        <div class="mt-3 flex justify-end">
+          <a-pagination
+            :total="policyPaginator.total_record"
+            :current="filters.current_page"
+            :page-size="filters.page_size"
+            show-total
+            show-page-size
+            :page-size-options="[10, 20, 50, 100]"
+            @change="onPolicyPageChange"
+            @page-size-change="onPolicyPageSizeChange"
+          />
+        </div>
       </a-tab-pane>
 
-      <a-tab-pane key="audit" title="调用审计">
+      <a-tab-pane key="audit" :title="$t('admin.toolGovernance.tabs.audit')">
         <div class="mb-3 flex flex-wrap items-end gap-3">
-          <a-input v-model="auditFilters.tool_id" placeholder="工具 ID" style="width: 200px" allow-clear />
-          <a-select v-model="auditFilters.status" placeholder="调用状态" style="width: 160px" allow-clear>
+          <a-input v-model="auditFilters.tool_id" :placeholder="$t('admin.toolGovernance.field.toolId')" style="width: 200px" allow-clear />
+          <a-select v-model="auditFilters.status" :placeholder="$t('admin.toolGovernance.field.invocationStatus')" style="width: 160px" allow-clear>
             <a-option v-for="s in INVOCATION_STATUSES" :key="s" :value="s">{{ s }}</a-option>
           </a-select>
-          <a-date-picker v-model="auditFilters.start_date" placeholder="开始日期" style="width: 180px" />
-          <a-date-picker v-model="auditFilters.end_date" placeholder="结束日期" style="width: 180px" />
-          <a-button :loading="loading" @click="loadAudits">查询</a-button>
+          <a-date-picker v-model="auditFilters.start_date" :placeholder="$t('admin.toolGovernance.placeholder.startDate')" style="width: 180px" />
+          <a-date-picker v-model="auditFilters.end_date" :placeholder="$t('admin.toolGovernance.placeholder.endDate')" style="width: 180px" />
+          <a-button :loading="loading" @click="handleAuditSearch">{{ $t('admin.toolGovernance.search') }}</a-button>
         </div>
         <a-spin :loading="loading" class="block">
           <div class="overflow-hidden rounded-lg border bg-white">
             <table class="w-full text-left text-sm">
               <thead class="bg-gray-50 text-gray-500">
                 <tr>
-                  <th class="p-3">工具名</th>
-                  <th class="p-3">工具 ID</th>
-                  <th class="p-3">调用者</th>
-                  <th class="p-3">状态</th>
-                  <th class="p-3">耗时(ms)</th>
-                  <th class="p-3">错误信息</th>
-                  <th class="p-3">时间</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.toolName') }}</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.toolId') }}</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.caller') }}</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.status') }}</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.duration') }}</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.errorMessage') }}</th>
+                  <th class="p-3">{{ $t('admin.toolGovernance.field.time') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="!audits.length">
-                  <td class="p-6 text-center text-gray-400" colspan="7">暂无审计日志</td>
+                  <td class="p-6 text-center text-gray-400" colspan="7">{{ $t('admin.toolGovernance.empty.audits') }}</td>
                 </tr>
                 <tr v-for="log in audits" :key="log.id" class="border-t">
                   <td class="p-3">{{ log.tool_name || '-' }}</td>
@@ -446,7 +488,10 @@ onMounted(loadAll)
             :page-size="auditPaginator.page_size"
             :total="auditPaginator.total_record"
             show-total
+            show-page-size
+            :page-size-options="[10, 20, 50, 100]"
             @change="onAuditPageChange"
+            @page-size-change="onAuditPageSizeChange"
           />
         </div>
       </a-tab-pane>
@@ -454,54 +499,54 @@ onMounted(loadAll)
 
     <a-modal
       v-model:visible="modalVisible"
-      :title="editMode ? '编辑治理策略' : '新建治理策略'"
+      :title="editMode ? $t('admin.toolGovernance.editPolicyTitle') : $t('admin.toolGovernance.createPolicyTitle')"
       :ok-loading="actionLoading"
       :mask-closable="false"
       @ok="submit"
     >
       <a-form :model="form" layout="vertical">
-        <a-form-item label="工具 ID" field="tool_id">
-          <a-input v-model="form.tool_id" placeholder="如 weather_api" :disabled="editMode" />
+        <a-form-item :label="$t('admin.toolGovernance.field.toolId')" field="tool_id">
+          <a-input v-model="form.tool_id" :placeholder="$t('admin.toolGovernance.placeholder.toolId')" :disabled="editMode" />
         </a-form-item>
-        <a-form-item label="工具名" field="tool_name">
-          <a-input v-model="form.tool_name" placeholder="如 天气查询" />
+        <a-form-item :label="$t('admin.toolGovernance.field.toolName')" field="tool_name">
+          <a-input v-model="form.tool_name" :placeholder="$t('admin.toolGovernance.placeholder.toolName')" />
         </a-form-item>
-        <a-form-item label="来源类型" field="source_type">
+        <a-form-item :label="$t('admin.toolGovernance.field.sourceType')" field="source_type">
           <a-select v-model="form.source_type">
             <a-option v-for="s in SOURCE_TYPES" :key="s" :value="s">{{ s }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="风险等级" field="risk_level">
+        <a-form-item :label="$t('admin.toolGovernance.field.riskLevel')" field="risk_level">
           <a-select v-model="form.risk_level">
             <a-option v-for="r in RISK_LEVELS" :key="r" :value="r">{{ r }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="可见性" field="visibility">
+        <a-form-item :label="$t('admin.toolGovernance.field.visibility')" field="visibility">
           <a-select v-model="form.visibility">
             <a-option v-for="v in VISIBILITIES" :key="v" :value="v">{{ v }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="允许池" field="allowed_pools">
+        <a-form-item :label="$t('admin.toolGovernance.field.allowedPools')" field="allowed_pools">
           <a-select v-model="form.allowed_pools" multiple allow-search allow-create>
             <a-option value="tenant">tenant</a-option>
             <a-option value="system">system</a-option>
             <a-option value="global">global</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="描述" field="description">
-          <a-input v-model="form.description" placeholder="可选" />
+        <a-form-item :label="$t('admin.toolGovernance.form.description')" field="description">
+          <a-input v-model="form.description" :placeholder="$t('admin.toolGovernance.placeholder.description')" />
         </a-form-item>
       </a-form>
     </a-modal>
 
     <a-modal
       v-model:visible="batchModalVisible"
-      title="批量调整风险等级"
+      :title="$t('admin.toolGovernance.batchModal.title')"
       :ok-loading="actionLoading"
       :mask-closable="false"
       @ok="submitBatchRisk"
     >
-      <p class="mb-3 text-sm text-gray-500">已选 {{ selectedIds.length }} 条策略，将统一调整为以下风险等级：</p>
+      <p class="mb-3 text-sm text-gray-500">{{ $t('admin.toolGovernance.batchModal.description', { count: selectedIds.length }) }}</p>
       <a-select v-model="batchRiskLevel">
         <a-option v-for="r in RISK_LEVELS" :key="r" :value="r">{{ r }}</a-option>
       </a-select>

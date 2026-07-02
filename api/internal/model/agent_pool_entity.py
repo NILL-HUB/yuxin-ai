@@ -35,7 +35,7 @@ class AgentPoolConfig(db.Model):
     primary_pool = Column(String(64), nullable=False, server_default=text("'tenant'::character varying"))
     secondary_pools = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     risk_level = Column(String(32), nullable=False, server_default=text("'medium'::character varying"))
-    model_tier = Column(String(32), nullable=False, server_default=text("'balanced'::character varying"))
+    model_tier = Column(String(32), nullable=False, server_default=text("'standard'::character varying"))
     model_id = Column(String(128), nullable=True)
     routing_priority = Column(Integer, nullable=False, server_default=text("100"))
     enabled = Column(Boolean, nullable=False, server_default=text("true"))

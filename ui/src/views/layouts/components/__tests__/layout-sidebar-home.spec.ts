@@ -137,14 +137,14 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).not.toContain('资源编排')
   })
 
-  it('shows resource orchestration only for logged-in admins', async () => {
+  it('never shows resource orchestration, even for logged-in admins', async () => {
     mocks.adminLoggedIn = true
 
     const wrapper = mountSidebar()
     await flushPromises()
 
-    expect(wrapper.findAll('a[data-to="/admin/apps"]')).toHaveLength(1)
-    expect(wrapper.text()).toContain('资源编排')
+    expect(wrapper.findAll('a[data-to="/admin/apps"]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('资源编排')
   })
 
   it('does not expose admin console entry in customer sidebar', async () => {
@@ -157,14 +157,16 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).not.toContain('管理控制台')
   })
 
-  it('shows admin console entry for logged-in admins', async () => {
+  it('never exposes admin console entry, even for logged-in admins', async () => {
     mocks.adminLoggedIn = true
 
     const wrapper = mountSidebar()
     await flushPromises()
 
-    expect(wrapper.findAll('a[data-to="/admin"]')).toHaveLength(1)
-    expect(wrapper.text()).toContain('管理后台')
+    expect(wrapper.findAll('a[data-to="/admin"]')).toHaveLength(0)
+    expect(wrapper.findAll('a[data-to="/admin/apps"]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('管理后台')
+    expect(wrapper.text()).not.toContain('资源编排')
   })
 
   it('shows exactly six entries for regular users', async () => {

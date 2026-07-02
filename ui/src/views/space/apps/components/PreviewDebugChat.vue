@@ -2,6 +2,7 @@
 import AiDynamicBackground from '@/components/AiDynamicBackground.vue'
 import AiMessage from '@/components/AiMessage.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
+import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ScrollNavigator from '@/components/ScrollNavigation/ScrollNavigator.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
@@ -16,6 +17,7 @@ import {
 } from '@/hooks/use-app'
 import { useAudioPlayer, useAudioToText } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
+import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import { useAccountStore } from '@/stores/account'
 import { getErrorMessage } from '@/utils/error'
 import { Message } from '@arco-design/web-vue'
@@ -27,6 +29,7 @@ import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller'
 import {
   applyChatStreamEvent,
   withChatRenderId,
+  type ToolConfirmationPrompt,
   type StreamMessage,
   type StreamState,
 } from '@/views/shared/chat-stream'
@@ -122,6 +125,9 @@ const isRouteMessageFocusActive = ref(false)
 const routeMessageFocusRequestId = ref(0)
 const selectedConversationId = ref(String(route.query.conversation_id || '').trim())
 const enableDeepThinking = ref(false)
+const routingDecision = ref<Record<string, unknown> | null>(null)
+const orchestratorReject = ref<{ reason: string; message: string } | null>(null)
+const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
 const accountStore = useAccountStore()
 const {
   loading: deleteDebugConversationLoading, //
@@ -148,6 +154,18 @@ const { triggerFileInput, handleFileChange } = useChatImageUpload({
 })
 const canImageInput = computed(() => {
   return props.capabilities?.image_input?.enabled === true
+})
+
+const routingSummary = computed(() => {
+  const decision = routingDecision.value
+  if (!decision) return null
+  return {
+    intent: String(decision.intent ?? ''),
+    execution_mode: String(decision.execution_mode ?? ''),
+    complexity: String(decision.complexity ?? ''),
+    recommended_model_tier: String(decision.recommended_model_tier ?? ''),
+    risk_level: String(decision.risk_level ?? ''),
+  }
 })
 
 const normalizeConversationId = (value: unknown) => String(value || '').trim()
@@ -487,6 +505,8 @@ const handleSubmit = async () => {
   suggested_questions.value = []
   message_id.value = ''
   task_id.value = ''
+  routingDecision.value = null
+  orchestratorReject.value = null
   shouldAutoScrollToBottom.value = true
   stopAudioStream()
 
@@ -539,6 +559,21 @@ const handleSubmit = async () => {
 
         const streamResult = applyChatStreamEvent(currentMessage, event_response, streamState)
         streamState = streamResult.state
+
+        if (streamResult.state.routingDecision && !routingDecision.value) {
+          routingDecision.value = streamResult.state.routingDecision
+        }
+        if (streamResult.state.orchestratorReject && !orchestratorReject.value) {
+          orchestratorReject.value = streamResult.state.orchestratorReject
+          Message.error(
+            streamResult.state.orchestratorReject.message ||
+              streamResult.state.orchestratorReject.reason,
+          )
+        }
+
+        if (streamResult.state.toolConfirmationPrompt) {
+          toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+        }
 
         if (message_id.value === '' && streamResult.state.message_id) {
           task_id.value = streamResult.state.task_id
@@ -599,6 +634,24 @@ const handleClearConversation = async () => {
   await syncRouteContext('', '')
   await loadConversationMessages(true)
   emitRecentConversationsRefresh()
+}
+
+const handleConfirmTool = async (id: string) => {
+  try {
+    await postToolConfirmationConfirm(id)
+  } catch {
+    // 确认失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
+}
+
+const handleCancelTool = async (id: string) => {
+  try {
+    await postToolConfirmationCancel(id)
+  } catch {
+    // 取消失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
 }
 
 // 7.定义问题提交函数
@@ -714,6 +767,22 @@ onUnmounted(() => {
       class="relative z-10 h-full min-h-0"
     >
       <div class="space-apps-debug-chat__surface h-full min-h-0 flex flex-col overflow-hidden">
+        <!-- 路由决策信息 -->
+        <div
+          v-if="routingSummary"
+          class="flex-shrink-0 px-6 pt-4"
+        >
+          <div class="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-3 text-xs text-gray-700">
+            <div class="mb-1 font-medium text-gray-900">路由决策</div>
+            <div class="flex flex-wrap gap-x-4 gap-y-1">
+              <span><span class="text-gray-500">意图：</span>{{ routingSummary.intent }}</span>
+              <span><span class="text-gray-500">执行模式：</span>{{ routingSummary.execution_mode }}</span>
+              <span><span class="text-gray-500">复杂度：</span>{{ routingSummary.complexity }}</span>
+              <span><span class="text-gray-500">推荐档位：</span>{{ routingSummary.recommended_model_tier }}</span>
+              <span><span class="text-gray-500">风险等级：</span>{{ routingSummary.risk_level }}</span>
+            </div>
+          </div>
+        </div>
         <div
           v-if="getDebugConversationMessagesWithPageLoading && messages.length === 0"
           class="flex-1 min-h-0 px-6 pt-6"
@@ -820,6 +889,16 @@ onUnmounted(() => {
         </div>
         <!-- 对话输入框 -->
         <div class="w-full flex flex-col flex-shrink-0">
+          <div
+            v-if="toolConfirmationPrompt"
+            class="w-full max-w-[600px] mx-auto px-6 pb-2 flex justify-center"
+          >
+            <ToolConfirmationCard
+              :prompt="toolConfirmationPrompt"
+              @confirm="handleConfirmTool"
+              @cancel="handleCancelTool"
+            />
+          </div>
           <!-- 顶部输入框 -->
           <div class="px-6">
             <chat-composer

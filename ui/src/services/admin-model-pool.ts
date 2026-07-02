@@ -31,5 +31,7 @@ export const updateTierPolicy = (tierCode: string, data: Record<string, unknown>
   put(`/admin/model-tiers/${tierCode}`, data)
 
 export const listCostPolicies = () => get('/admin/cost-policies')
+export const createCostPolicy = (data: Record<string, unknown>) =>
+  post('/admin/cost-policies', { body: data })
 export const updateCostPolicy = (id: string, data: Record<string, unknown>) =>
   put(`/admin/cost-policies/${id}`, data)

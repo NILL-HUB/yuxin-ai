@@ -463,6 +463,73 @@ class McpService(BaseService):
             return [], paginator
         return [self._build_private_provider_payload(provider, include_tools=False) for provider in providers], paginator
 
+    def get_admin_mcp_providers_with_page(
+        self,
+        req: GetMcpProvidersWithPageReq,
+    ) -> tuple[list[dict[str, Any]], Paginator]:
+        """获取后台 MCP 列表，聚合目录 Provider 与数据库 Provider。"""
+        paginator = Paginator(db=self.db, req=req)
+        candidates: list[dict[str, Any]] = []
+
+        for catalog_provider in self.mcp_provider_manager.get_providers():
+            candidates.append(self._build_catalog_provider_payload(catalog_provider, include_tools=False))
+
+        if self._has_mcp_provider_table():
+            try:
+                db_rows = (
+                    self.db.session.query(McpProvider)
+                    .order_by(McpProvider.updated_at.desc(), McpProvider.created_at.desc())
+                    .all()
+                )
+            except ProgrammingError as exc:
+                if not self._is_missing_mcp_provider_table_error(exc):
+                    raise
+                db_rows = []
+
+            candidates.extend(
+                self._build_private_provider_payload(provider, include_tools=False)
+                for provider in db_rows
+            )
+
+        search_word = _normalize_text(req.search_word.data).lower()
+        category = normalize_mcp_category(req.category.data) if req.category.data else ""
+
+        filtered: list[dict[str, Any]] = []
+        for item in candidates:
+            if category and item["category"] != category:
+                continue
+            if search_word:
+                search_scope = " ".join([
+                    item.get("name", ""),
+                    item.get("label", ""),
+                    item.get("description", ""),
+                    item.get("source_key", ""),
+                    item.get("source_url", ""),
+                    item.get("creator_name", ""),
+                ]).lower()
+                if search_word not in search_scope:
+                    continue
+            filtered.append(item)
+
+        filtered.sort(
+            key=lambda item: (
+                item.get("updated_at") or 0,
+                item.get("created_at") or 0,
+                item.get("published_at") or 0,
+            ),
+            reverse=True,
+        )
+
+        total = len(filtered)
+        paginator.total_record = total
+        paginator.total_page = math.ceil(total / paginator.page_size) if paginator.page_size else 0
+        paginator.current_page = req.current_page.data
+        paginator.page_size = req.page_size.data
+
+        start = max((req.current_page.data - 1) * req.page_size.data, 0)
+        end = start + req.page_size.data
+        return filtered[start:end], paginator
+
     def get_public_mcp_providers_with_page(
         self,
         req: GetMcpProvidersWithPageReq,

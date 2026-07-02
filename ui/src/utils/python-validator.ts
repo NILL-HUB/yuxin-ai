@@ -1,3 +1,7 @@
+import { i18n } from '@/i18n'
+
+const t = i18n.global.t
+
 /**
  * Python 代码验证工具
  * 提供基础的 Python 语法检查和代码质量分析
@@ -40,7 +44,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
       startColumn: 1,
       endLineNumber: 1,
       endColumn: 1,
-      message: '代码必须包含 main(params) 函数定义',
+      message: t('common.validation.mainFunctionRequired'),
     })
   }
 
@@ -53,7 +57,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
       startColumn: 1,
       endLineNumber: lines.length,
       endColumn: 1,
-      message: 'main 函数应该返回一个字典对象',
+      message: t('common.validation.mainMustReturnDict'),
     })
   }
 
@@ -99,7 +103,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
           startColumn: 1,
           endLineNumber: lineNumber,
           endColumn: spaces + 1,
-          message: 'PEP 8: 缩进应该是 4 个空格',
+          message: t('common.validation.indentShouldBe4Spaces'),
         })
       }
     }
@@ -112,7 +116,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
         startColumn: line.indexOf('\t') + 1,
         endLineNumber: lineNumber,
         endColumn: line.indexOf('\t') + 2,
-        message: 'PEP 8: 不应使用制表符，请使用空格',
+        message: t('common.validation.noTabs'),
       })
     }
 
@@ -129,7 +133,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
           startColumn: 1,
           endLineNumber: lineNumber + 1,
           endColumn: nextLine.length + 1,
-          message: 'IndentationError: 预期缩进块',
+          message: t('common.validation.expectedIndentBlock'),
         })
       }
     }
@@ -148,7 +152,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
             startColumn: i + 1,
             endLineNumber: lineNumber,
             endColumn: i + 2,
-            message: `SyntaxError: 未匹配的 '${char}'`,
+            message: t('common.validation.unmatchedChar', { char }),
           })
         } else {
           const pairs: Record<string, string> = { '(': ')', '[': ']', '{': '}' }
@@ -159,7 +163,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
               startColumn: i + 1,
               endLineNumber: lineNumber,
               endColumn: i + 2,
-              message: `SyntaxError: 括号不匹配，期望 '${pairs[last.char]}' 但得到 '${char}'`,
+              message: t('common.validation.bracketMismatch', { expected: pairs[last.char], actual: char }),
             })
           }
         }
@@ -175,7 +179,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
           startColumn: line.length,
           endLineNumber: lineNumber,
           endColumn: line.length + 1,
-          message: "SyntaxError: 语句末尾缺少 ':'",
+          message: t('common.validation.missingColon'),
         })
       }
     }
@@ -188,7 +192,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
         startColumn: 1,
         endLineNumber: lineNumber,
         endColumn: line.length + 1,
-        message: 'main 函数必须接受 params 参数: def main(params):',
+        message: t('common.validation.mainMustAcceptParams'),
       })
     }
 
@@ -200,7 +204,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
         startColumn: 80,
         endLineNumber: lineNumber,
         endColumn: line.length + 1,
-        message: `PEP 8: 行长度超过 79 字符 (当前 ${line.length} 字符)`,
+        message: t('common.validation.lineTooLong', { length: line.length }),
       })
     }
 
@@ -212,7 +216,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
         startColumn: line.indexOf('imort') + 1,
         endLineNumber: lineNumber,
         endColumn: line.indexOf('imort') + 6,
-        message: "NameError: 可能是拼写错误，是否想输入 'import'?",
+        message: t('common.validation.possibleTypo'),
       })
     }
 
@@ -228,7 +232,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
           startColumn: 1,
           endLineNumber: lineNumber,
           endColumn: line.length + 1,
-          message: `未使用的导入: ${importedName}`,
+          message: t('common.validation.unusedImport', { name: importedName }),
         })
       }
     }
@@ -243,7 +247,7 @@ export function validatePythonSyntax(code: string): ValidationResult {
         startColumn: bracket.col,
         endLineNumber: bracket.line,
         endColumn: bracket.col + 1,
-        message: `SyntaxError: 未闭合的 '${bracket.char}'`,
+        message: t('common.validation.unclosedBracket', { char: bracket.char }),
       })
     })
   }
@@ -274,7 +278,7 @@ export function checkCodeQuality(code: string): ValidationError[] {
         startColumn: 1,
         endLineNumber: lineNumber,
         endColumn: line.length + 1,
-        message: "建议使用 params.get('key', default) 代替 params['key'] 以避免 KeyError",
+        message: t('common.validation.useParamsGet'),
       })
     }
 
@@ -286,7 +290,7 @@ export function checkCodeQuality(code: string): ValidationError[] {
         startColumn: 1,
         endLineNumber: lineNumber,
         endColumn: line.length + 1,
-        message: '建议对输入参数进行类型转换（如 int(), float() 等）',
+        message: t('common.validation.typeConversion'),
       })
     }
 
@@ -300,7 +304,7 @@ export function checkCodeQuality(code: string): ValidationError[] {
           startColumn: 1,
           endLineNumber: lineNumber,
           endColumn: line.length + 1,
-          message: '建议添加异常处理（try-except）以处理类型转换错误',
+          message: t('common.validation.addTryExcept'),
         })
       }
     }

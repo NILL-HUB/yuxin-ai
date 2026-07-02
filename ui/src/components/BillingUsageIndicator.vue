@@ -8,9 +8,12 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const finalEvent = computed(() => props.events.filter((e) => e.event === 'billing_final').pop() ?? null)
+const summaryEvent = computed(() => props.events.filter((e) => e.event === 'billing_summary').pop() ?? null)
 const latestEvent = computed(() => props.events[props.events.length - 1])
-const totalCredits = computed(() => latestEvent.value?.total_credits ?? 0)
 const isCancelled = computed(() => latestEvent.value?.event === 'billing_cancelled')
+const displayEvent = computed(() => finalEvent.value ?? summaryEvent.value ?? latestEvent.value)
+const totalCredits = computed(() => displayEvent.value?.total_credits ?? 0)
 </script>
 
 <template>
@@ -18,6 +21,8 @@ const isCancelled = computed(() => latestEvent.value?.event === 'billing_cancell
     <span v-if="isCancelled" class="text-orange-600">
       {{ t('billing.usage.cancelled') }}
     </span>
+    <span v-else-if="finalEvent">{{ t('billing.realtime.final') }}</span>
+    <span v-else-if="summaryEvent">中间汇总</span>
     <span v-else>{{ t('billing.usage.occurred') }}</span>
     <span class="font-semibold text-gray-900">{{ totalCredits }}</span>
     <span>{{ t('billing.usage.unit') }}</span>

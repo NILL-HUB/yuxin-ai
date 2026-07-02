@@ -19,14 +19,17 @@ from internal.handler import (
     AdminAuditLogHandler,
     AdminAuthHandler,
     AdminBillingPlanHandler,
+    AdminDatasetHandler,
     AdminOrchestrationFlagHandler,
     AdminOrchestrationReleaseHandler,
     AdminModelPoolHandler,
+    AdminCostStatsHandler,
     AdminCustomerUserHandler,
     AdminRbacHandler,
     AdminRedeemCodeHandler,
     AdminResourceEntryHandler,
     AdminRoutingLogHandler,
+    AdminSubPoolHandler,
     RoutingLogHandler,
     AdminRoutingQualityHandler,
     AdminSystemKnowledgeHandler,
@@ -78,11 +81,13 @@ class Router:
     account_handler: AccountHandler
     auth_handler: AuthHandler
     admin_agent_pool_handler: AdminAgentPoolHandler
+    admin_sub_pool_handler: AdminSubPoolHandler
     admin_app_handler: AdminAppHandler
     admin_app_assignment_handler: AdminAppAssignmentHandler
     admin_audit_log_handler: AdminAuditLogHandler
     admin_auth_handler: AdminAuthHandler
     admin_billing_plan_handler: AdminBillingPlanHandler
+    admin_dataset_handler: AdminDatasetHandler
     admin_orchestration_flag_handler: AdminOrchestrationFlagHandler
     admin_orchestration_release_handler: AdminOrchestrationReleaseHandler
     admin_customer_user_handler: AdminCustomerUserHandler
@@ -97,6 +102,7 @@ class Router:
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
     admin_model_pool_handler: AdminModelPoolHandler
+    admin_cost_stats_handler: AdminCostStatsHandler
     ai_handler: AIHandler
     api_key_handler: ApiKeyHandler
     openapi_handler: OpenAPIHandler
@@ -782,7 +788,7 @@ class Router:
             "/admin/datasets",
             endpoint="admin_dataset_entry",
             methods=["GET"],
-            view_func=self.admin_resource_entry_handler.datasets,
+            view_func=self.admin_dataset_handler.list,
         )
         bp.add_url_rule(
             "/admin/tools",
@@ -917,10 +923,34 @@ class Router:
             view_func=self.admin_model_pool_handler.list_cost_policies,
         )
         bp.add_url_rule(
+            "/admin/cost-policies",
+            endpoint="admin_cost_policy_create",
+            methods=["POST"],
+            view_func=self.admin_model_pool_handler.create_cost_policy,
+        )
+        bp.add_url_rule(
             "/admin/cost-policies/<uuid:policy_id>",
             endpoint="admin_cost_policy_update",
             methods=["PUT"],
             view_func=self.admin_model_pool_handler.update_cost_policy,
+        )
+        bp.add_url_rule(
+            "/admin/cost-stats/overview",
+            endpoint="admin_cost_stats_overview",
+            methods=["GET"],
+            view_func=self.admin_cost_stats_handler.overview,
+        )
+        bp.add_url_rule(
+            "/admin/cost-stats/by-dimension",
+            endpoint="admin_cost_stats_by_dimension",
+            methods=["GET"],
+            view_func=self.admin_cost_stats_handler.by_dimension,
+        )
+        bp.add_url_rule(
+            "/admin/cost-stats/timeseries",
+            endpoint="admin_cost_stats_timeseries",
+            methods=["GET"],
+            view_func=self.admin_cost_stats_handler.timeseries,
         )
         bp.add_url_rule(
             "/admin/tool-governance",
@@ -1025,9 +1055,50 @@ class Router:
             view_func=self.admin_agent_pool_handler.check_health,
         )
         bp.add_url_rule(
+            "/admin/sub-pool-definitions",
+            endpoint="admin_sub_pool_list",
+            methods=["GET"],
+            view_func=self.admin_sub_pool_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/sub-pool-definitions",
+            endpoint="admin_sub_pool_create",
+            methods=["POST"],
+            view_func=self.admin_sub_pool_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/sub-pool-definitions/<uuid:def_id>",
+            endpoint="admin_sub_pool_get",
+            methods=["GET"],
+            view_func=self.admin_sub_pool_handler.get,
+        )
+        bp.add_url_rule(
+            "/admin/sub-pool-definitions/<uuid:def_id>",
+            endpoint="admin_sub_pool_update",
+            methods=["PATCH"],
+            view_func=self.admin_sub_pool_handler.update,
+        )
+        bp.add_url_rule(
+            "/admin/sub-pool-definitions/<uuid:def_id>",
+            endpoint="admin_sub_pool_delete",
+            methods=["DELETE"],
+            view_func=self.admin_sub_pool_handler.delete,
+        )
+        bp.add_url_rule(
+            "/admin/sub-pool-definitions/<uuid:def_id>/status",
+            endpoint="admin_sub_pool_status",
+            methods=["POST"],
+            view_func=self.admin_sub_pool_handler.set_status,
+        )
+        bp.add_url_rule(
             "/auth/register/prepare",
             methods=["POST"],
             view_func=self.auth_handler.prepare_register,
+        )
+        bp.add_url_rule(
+            "/auth/register/direct",
+            methods=["POST"],
+            view_func=self.auth_handler.direct_register,
         )
         bp.add_url_rule(
             "/auth/register/verify",
@@ -1079,6 +1150,12 @@ class Router:
         bp.add_url_rule("/redeem-codes/redeem", methods=["POST"], view_func=self.redeem_code_handler.redeem)
         bp.add_url_rule("/membership/summary", view_func=self.redeem_code_handler.summary)
         bp.add_url_rule("/membership/redeem-records", view_func=self.redeem_code_handler.records)
+        bp.add_url_rule(
+            "/memory-candidates",
+            endpoint="memory_candidate_list",
+            methods=["GET"],
+            view_func=self.memory_candidate_handler.list,
+        )
         bp.add_url_rule(
             "/memory-candidates/<uuid:candidate_id>/confirm",
             endpoint="memory_candidate_confirm",

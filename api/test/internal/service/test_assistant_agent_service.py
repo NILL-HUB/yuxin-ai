@@ -10,7 +10,7 @@ from flask import Flask
 from langchain_core.messages import HumanMessage, SystemMessage
 from werkzeug.datastructures import FileStorage
 
-from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
+from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.entity.app_entity import DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
@@ -993,52 +993,16 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
-        shared_event_id = uuid4()
-        task_id = uuid4()
-        stream_events = [
-            AgentThought(id=uuid4(), task_id=task_id, event=QueueEvent.PING),
-            AgentThought(
-                id=shared_event_id,
-                task_id=task_id,
-                event=QueueEvent.AGENT_MESSAGE,
-                thought="A",
-                answer="A",
-                message=[{"role": "assistant", "content": "A"}],
-                message_token_count=1,
-                total_token_count=1,
-                latency=0.1,
-            ),
-            AgentThought(
-                id=shared_event_id,
-                task_id=task_id,
-                event=QueueEvent.AGENT_MESSAGE,
-                thought="B",
-                answer="B",
-                message=[{"role": "assistant", "content": "B"}],
-                message_token_count=2,
-                total_token_count=2,
-                latency=0.2,
-            ),
-            AgentThought(
-                id=uuid4(),
-                task_id=task_id,
-                event=QueueEvent.AGENT_ACTION,
-                tool="create_app",
-                tool_input={"name": "客服Agent"},
-                observation="ok",
-                latency=0.3,
-            ),
-        ]
-        agent_capture = {}
+        executor_capture = {}
 
-        class _FakeFunctionCallAgent:
-            def __init__(self, llm, agent_config):
-                agent_capture["llm"] = llm
-                agent_capture["agent_config"] = agent_config
+        class _FakeSingleAgentExecutor:
+            def __init__(self, **kwargs):
+                executor_capture["kwargs"] = kwargs
 
-            def stream(self, state):
-                agent_capture["state"] = state
-                return iter(stream_events)
+            def execute(self, **_kwargs):
+                return iter([
+                    f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': 'AB', 'id': str(message_id), 'conversation_id': str(conversation.id), 'message_id': str(message_id)})}\n\n",
+                ])
 
         # AgentConfig 的 tools 字段会校验 BaseTool；这里仅验证服务编排逻辑，使用轻量对象替代。
         monkeypatch.setattr(
@@ -1054,8 +1018,8 @@ class TestAssistantAgentService:
             _FakeTokenBufferMemory,
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.FunctionCallAgent",
-            _FakeFunctionCallAgent,
+            "internal.service.executors.single_agent_executor.SingleAgentExecutor",
+            _FakeSingleAgentExecutor,
         )
 
         with app.app_context():
@@ -1068,38 +1032,27 @@ class TestAssistantAgentService:
         assert create_calls[0][1]["image_urls"] == req.image_urls.data
         assert llm_capture["kwargs"]["model"] == "deepseek-chat"
         assert llm_capture["build_context_args"][1] == req.query.data
-        assert llm_capture["human_message"] == (req.query.data, req.image_urls.data)
-        assert len(agent_capture["agent_config"].tools) == 3
-        assert agent_capture["agent_config"].tools == [
+        assert len(executor_capture["kwargs"]["agent_config"].tools) == 3
+        assert executor_capture["kwargs"]["agent_config"].tools == [
             "public-agent-route-tool",
             "faiss-tool",
             "create-app-tool",
         ]
-        assert agent_capture["state"]["history"] == ["历史消息"]
-        assert agent_capture["state"]["long_term_memory"] == "历史摘要"
-        assert len(events) == 9
+        assert executor_capture["kwargs"]["history"] == ["历史消息"]
+        assert len(events) == 4
         assert events[0].startswith("event: billing_started")
-        assert events[1].startswith("event: ping")
-        assert events[2].startswith("event: billing_delta")
-        first_payload = json.loads(events[3].split("data:", 1)[1].strip())
-        assert first_payload["id"] == str(shared_event_id)
+        assert events[1].startswith("event: agent_message")
+        assert events[2].startswith("event: billing_summary")
+        assert events[3].startswith("event: billing_final")
         assert save_payload["account_id"] == account.id
         assert save_payload["app_id"] == assistant_agent_id
         assert save_payload["conversation_id"] == conversation.id
         assert save_payload["message_id"] == message_id
-        assert len(save_payload["agent_thoughts"]) == 2
-        merged_message_thought = [
-            item
-            for item in save_payload["agent_thoughts"]
-            if item.event == QueueEvent.AGENT_MESSAGE
-        ][0]
-        assert merged_message_thought.thought == "AB"
-        assert merged_message_thought.answer == "AB"
+        assert save_payload["routing_decision"]["execution_mode"] == "single_agent"
 
     def test_chat_should_record_routing_decision_without_changing_stream_events(
         self, monkeypatch, app
     ):
-        monkeypatch.setattr(AssistantAgentService, "ENABLE_DIRECT_ANSWER_EXECUTOR", False)
         assistant_agent_id = uuid4()
         app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
         conversation = SimpleNamespace(id=uuid4(), summary="")
@@ -1158,33 +1111,36 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
-        event = AgentThought(
-            id=uuid4(),
-            task_id=uuid4(),
-            event=QueueEvent.AGENT_MESSAGE,
-            thought="答案",
-            answer="答案",
-        )
+        class _FakeResult:
+            def __init__(self, answer):
+                self.answer = answer
+                self.task_id = "direct_answer"
+                self.metadata = {}
 
-        class _FakeFunctionCallAgent:
+        class _FakeCoordinator:
             def __init__(self, **_kwargs):
                 pass
 
-            def stream(self, _state):
-                return iter([event])
+            def execute(self, plan):
+                return [_FakeResult(answer="答案")]
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
         monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
         monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
-        monkeypatch.setattr("internal.service.assistant_agent_service.FunctionCallAgent", _FakeFunctionCallAgent)
+        monkeypatch.setattr(
+            "internal.service.execution_coordinator_service.ExecutionCoordinatorService",
+            _FakeCoordinator,
+        )
 
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert len(events) == 3
+        assert len(events) == 5
         assert events[0].startswith("event: billing_started")
-        assert events[1].startswith("event: agent_message")
-        assert events[2].startswith("event: billing_final")
+        assert events[1].startswith("event: agent_thought")
+        assert events[2].startswith("event: agent_message")
+        assert events[3].startswith("event: billing_summary")
+        assert events[4].startswith("event: billing_final")
         assert routing_calls[0][0] == req.query.data
         assert routing_calls[0][1]["account_id"] == account.id
         assert save_payload["routing_decision"]["execution_mode"] == "direct_answer"
@@ -1392,17 +1348,13 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
-        class _FakeFunctionCallAgent:
-            def __init__(self, llm, agent_config):
-                assert llm is not None
-                assert agent_config.tools == [
-                    "public-agent-route-tool",
-                    "faiss-tool",
-                    "create-app-tool",
-                ]
+        executor_capture = {}
 
-            def stream(self, state):
-                assert state["messages"][0]["image_urls"] == req.image_urls.data
+        class _FakeSingleAgentExecutor:
+            def __init__(self, **kwargs):
+                executor_capture["kwargs"] = kwargs
+
+            def execute(self, **_kwargs):
                 return iter([])
 
         monkeypatch.setattr(
@@ -1414,21 +1366,28 @@ class TestAssistantAgentService:
             _FakeTokenBufferMemory,
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.FunctionCallAgent",
-            _FakeFunctionCallAgent,
+            "internal.service.executors.single_agent_executor.SingleAgentExecutor",
+            _FakeSingleAgentExecutor,
         )
 
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert len(events) == 2
+        assert len(events) == 3
         assert events[0].startswith("event: billing_started")
-        assert events[1].startswith("event: billing_final")
+        assert events[1].startswith("event: billing_summary")
+        assert events[2].startswith("event: billing_final")
         assert resolution_capture == {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "image_urls": req.image_urls.data,
             "entrypoint": "assistant_agent",
         }
+        assert executor_capture["kwargs"]["llm"] is llm
+        assert executor_capture["kwargs"]["agent_config"].tools == [
+            "public-agent-route-tool",
+            "faiss-tool",
+            "create-app-tool",
+        ]
         assert save_payload["agent_thoughts"] == []
 
     def test_chat_should_use_a2a_deep_thinking_agent_when_enabled(
@@ -1485,15 +1444,13 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
-        agent_capture = {}
+        executor_capture = {}
 
-        class _FakeA2ADeepThinkingAgent:
-            def __init__(self, llm, agent_config):
-                agent_capture["llm"] = llm
-                agent_capture["agent_config"] = agent_config
+        class _FakeSingleAgentExecutor:
+            def __init__(self, **kwargs):
+                executor_capture["kwargs"] = kwargs
 
-            def stream(self, state):
-                agent_capture["state"] = state
+            def execute(self, **_kwargs):
                 return iter([])
 
         monkeypatch.setattr(
@@ -1509,16 +1466,16 @@ class TestAssistantAgentService:
             _FakeTokenBufferMemory,
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.A2ADeepThinkingAgent",
-            _FakeA2ADeepThinkingAgent,
+            "internal.service.executors.single_agent_executor.SingleAgentExecutor",
+            _FakeSingleAgentExecutor,
         )
 
         with app.app_context():
             list(service.chat(req, account))
 
-        assert agent_capture["agent_config"].enable_deep_thinking is True
-        assert agent_capture["agent_config"].runtime_flask_app is not None
-        assert agent_capture["agent_config"].invoke_from == InvokeFrom.ASSISTANT_AGENT.value
+        assert executor_capture["kwargs"]["agent_config"].enable_deep_thinking is True
+        assert executor_capture["kwargs"]["agent_config"].runtime_flask_app is not None
+        assert executor_capture["kwargs"]["agent_config"].invoke_from == InvokeFrom.ASSISTANT_AGENT.value
 
     def test_chat_should_prefer_registry_search_tool_when_available(
         self, monkeypatch, app
@@ -1579,15 +1536,13 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
-        agent_capture = {}
+        executor_capture = {}
 
-        class _FakeFunctionCallAgent:
-            def __init__(self, llm, agent_config):
-                agent_capture["llm"] = llm
-                agent_capture["agent_config"] = agent_config
+        class _FakeSingleAgentExecutor:
+            def __init__(self, **kwargs):
+                executor_capture["kwargs"] = kwargs
 
-            def stream(self, state):
-                agent_capture["state"] = state
+            def execute(self, **_kwargs):
                 return iter([])
 
         monkeypatch.setattr(
@@ -1603,14 +1558,14 @@ class TestAssistantAgentService:
             _FakeTokenBufferMemory,
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.FunctionCallAgent",
-            _FakeFunctionCallAgent,
+            "internal.service.executors.single_agent_executor.SingleAgentExecutor",
+            _FakeSingleAgentExecutor,
         )
 
         with app.app_context():
             list(service.chat(req, account))
 
-        assert agent_capture["agent_config"].tools == [
+        assert executor_capture["kwargs"]["agent_config"].tools == [
             "public-agent-route-tool",
             "registry-search-tool",
             "create-app-tool",

@@ -56,7 +56,16 @@ class _DummyDB:
 
 
 def _new_app_service(**kwargs) -> AppService:
-    kwargs.setdefault("icon_generator_service", SimpleNamespace())
+    icon_generator = kwargs.get("icon_generator_service") or SimpleNamespace(
+        generate_icon=lambda name, description: "http://mock-icon-url",
+    )
+    kwargs.setdefault("icon_generator_service", icon_generator)
+    if "app_icon_service" not in kwargs:
+        from internal.service.app_icon_service import AppIconService
+        app_icon = AppIconService.__new__(AppIconService)
+        app_icon.db = kwargs.get("db")
+        app_icon.icon_generator_service = icon_generator
+        kwargs["app_icon_service"] = app_icon
     return AppService(**kwargs)
 
 
@@ -574,7 +583,7 @@ class TestAppService:
     def test_regenerate_web_app_token_should_raise_when_not_published(self, monkeypatch):
         service = _build_service()
         app = SimpleNamespace(status=AppStatus.DRAFT.value)
-        monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
+        monkeypatch.setattr(service.app_icon_service, "get_app", lambda *_args, **_kwargs: app)
 
         with pytest.raises(FailException):
             service.regenerate_web_app_token(uuid4(), SimpleNamespace(id=uuid4()))
@@ -582,12 +591,12 @@ class TestAppService:
     def test_regenerate_web_app_token_should_update_token_when_published(self, monkeypatch):
         service = _build_service()
         app = SimpleNamespace(status=AppStatus.PUBLISHED.value, token="")
-        monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
-        monkeypatch.setattr("internal.service.app_service.generate_random_string", lambda _length: "fixed-token-1234")
+        monkeypatch.setattr(service.app_icon_service, "get_app", lambda *_args, **_kwargs: app)
+        monkeypatch.setattr("internal.service.app_icon_service.generate_random_string", lambda _length: "fixed-token-1234")
 
         updates = []
         monkeypatch.setattr(
-            service,
+            service.app_icon_service,
             "update",
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
@@ -3097,8 +3106,8 @@ class TestAppServiceDraftConfigValidation:
         )
 
         # Mock get_app method
-        service.get_app = Mock(return_value=app)
-        service.update = Mock()
+        service.app_icon_service.get_app = Mock(return_value=app)
+        service.app_icon_service.update = Mock()
 
         account = SimpleNamespace(id=account_id)
         icon_url = service.regenerate_icon(app_id, account)
@@ -3108,7 +3117,7 @@ class TestAppServiceDraftConfigValidation:
             name="测试应用",
             description="应用描述"
         )
-        service.update.assert_called_once_with(app, icon="https://cos.com/new-icon.png")
+        service.app_icon_service.update.assert_called_once_with(app, icon="https://cos.com/new-icon.png")
 
     def test_regenerate_icon_failure(self):
         """测试重新生成图标失败"""
@@ -3142,7 +3151,7 @@ class TestAppServiceDraftConfigValidation:
         )
 
         # Mock get_app method
-        service.get_app = Mock(return_value=app)
+        service.app_icon_service.get_app = Mock(return_value=app)
 
         account = SimpleNamespace(id=account_id)
 

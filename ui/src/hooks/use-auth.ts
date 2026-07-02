@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import {
+  directRegister,
   logout,
   passwordLogin,
   prepareRegister,
@@ -61,6 +62,23 @@ export const usePrepareRegister = () => {
   }
 
   return { loading, handlePrepareRegister }
+}
+
+export const useDirectRegister = () => {
+  const loading = ref(false)
+  const authorization = ref<LoginAuthorizationData>({})
+
+  const handleDirectRegister = async (username: string, password: string) => {
+    try {
+      loading.value = true
+      const resp = await directRegister(username, password)
+      authorization.value = resp.data
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, authorization, handleDirectRegister }
 }
 
 export const useVerifyRegister = () => {

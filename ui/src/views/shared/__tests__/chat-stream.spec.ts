@@ -460,4 +460,89 @@ describe('chat-stream', () => {
     expect(message.agent_thoughts).toHaveLength(0)
     expect(message.answer).toBe('')
   })
+
+  it('billing_summary 事件应加入 billingEvents 数组', () => {
+    const message = createMessage()
+    const state = createState()
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.billingSummary,
+        data: {
+          event: QueueEvent.billingSummary,
+          source_type: 'summary',
+          source_name: 'billing',
+          delta_credits: 5,
+          total_credits: 12,
+          reason: 'mid_summary',
+        } as NonNullable<StreamEventResponse['data']>,
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.billingEvents).toHaveLength(1)
+    expect(result.state.billingEvents[0].event).toBe(QueueEvent.billingSummary)
+    expect(result.state.billingEvents[0].total_credits).toBe(12)
+    expect(message.agent_thoughts).toHaveLength(0)
+  })
+
+  it('orchestrator_routing 事件不应产生空 thought', () => {
+    const message = createMessage()
+    const state = createState()
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.orchestratorRouting,
+        data: {
+          intent: 'chat',
+          execution_mode: 'direct_answer',
+          complexity: 'low',
+          recommended_model_tier: 'cheap',
+          risk_level: 'safe',
+          reason: 'simple query',
+        } as NonNullable<StreamEventResponse['data']>,
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.routingDecision).toEqual({
+      intent: 'chat',
+      execution_mode: 'direct_answer',
+      complexity: 'low',
+      recommended_model_tier: 'cheap',
+      risk_level: 'safe',
+      reason: 'simple query',
+    })
+    expect(message.agent_thoughts).toHaveLength(0)
+    expect(message.answer).toBe('')
+  })
+
+  it('orchestrator_reject 事件应设置拒绝状态', () => {
+    const message = createMessage()
+    const state = createState()
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.orchestratorReject,
+        data: {
+          reason: 'insufficient_balance',
+          message: '余额不足，无法执行该请求',
+        },
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.orchestratorReject).toEqual({
+      reason: 'insufficient_balance',
+      message: '余额不足，无法执行该请求',
+    })
+    expect(message.agent_thoughts).toHaveLength(0)
+    expect(message.answer).toBe('')
+  })
 })

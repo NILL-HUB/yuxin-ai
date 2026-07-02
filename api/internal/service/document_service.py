@@ -245,6 +245,10 @@ class DocumentService(BaseService):
         ]
         if req.search_word.data:
             filters.append(Document.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%"))
+        if req.status.data:
+            filters.append(Document.status == req.status.data)
+        if req.enabled.data is not None:
+            filters.append(Document.enabled == req.enabled.data)
 
         # 4.执行分页并获取数据
         documents = paginator.paginate(

@@ -1,12 +1,11 @@
 from collections import Counter
-from typing import List
+from typing import Any, List
 from uuid import UUID
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document as LCDocument
 from pydantic import Field
 from langchain_core.retrievers import BaseRetriever
 from internal.model import KeywordTable, Segment
-from internal.service import JiebaService
 from pkg.sqlalchemy import SQLAlchemy
 
 
@@ -14,7 +13,7 @@ class FullTextRetriever(BaseRetriever):
     """全文检索器"""
     db: SQLAlchemy
     dataset_ids: list[UUID]
-    jieba_service: JiebaService
+    jieba_service: Any
     search_kwargs: dict = Field(default_factory=dict)
 
     def _get_relevant_documents(

@@ -98,6 +98,14 @@ api/internal/core/vector_store/index.faiss
 api/internal/core/vector_store/index.pkl
 api/internal/core/vector_store/
 
+# Agent / dogfood / screenshot artifacts
+.superpowers/
+api/instance/
+dogfood-output/
+test-screenshots/
+api/pytest_mount.txt
+ui/tmp_built_view.js
+
 # Node.js
 node_modules/
 npm-debug.log*

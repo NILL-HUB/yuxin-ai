@@ -3,8 +3,7 @@ from injector import inject
 from internal.entity.orchestrator_entity import RequestContext, RoutingDecision
 from internal.service.language_model_service import LanguageModelService
 from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
-from internal.service.model_pool_service import ModelPoolService
-from internal.service.key_pool_service import KeyPoolService
+from internal.service.runtime_model_pool_service import RuntimeModelPoolService
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +15,11 @@ class ModelGatewayService:
         self,
         language_model_service: LanguageModelService = None,
         model_assignment_policy: ModelAssignmentPolicy = None,
-        model_pool_service: ModelPoolService = None,
-        key_pool_service: KeyPoolService = None,
+        runtime_model_pool_service: RuntimeModelPoolService = None,
     ):
         self.language_model_service = language_model_service
         self.model_assignment_policy = model_assignment_policy or ModelAssignmentPolicy()
-        self.model_pool_service = model_pool_service
-        self.key_pool_service = key_pool_service
+        self.runtime_model_pool_service = runtime_model_pool_service
 
     def resolve_model_tier(self, decision: RoutingDecision, context: RequestContext = None) -> str:
         try:
@@ -30,16 +27,13 @@ class ModelGatewayService:
         except Exception:
             logger.warning("模型档位策略解析失败，回退 cheap", exc_info=True)
             return "cheap"
-        if self.model_pool_service is not None:
+        if self.runtime_model_pool_service is not None:
             try:
-                selected = self.model_pool_service.select_model(
-                    required_capabilities=getattr(decision, "required_capabilities", []) or [],
-                    preferred_tier=tier,
-                )
-                if selected is not None:
-                    return getattr(selected, "tier", tier)
+                model, _fallbacks = self.runtime_model_pool_service.select_model_with_fallback(tier)
+                if model is not None:
+                    return getattr(model, "tier", tier) or tier
             except Exception:
-                logger.warning("ModelPool 档位校验失败，使用策略档位", exc_info=True)
+                logger.warning("RuntimeModelPool 查询失败，使用策略档位", exc_info=True)
         return tier
 
     def get_model(self, decision: RoutingDecision = None, context: RequestContext = None):
@@ -51,12 +45,3 @@ class ModelGatewayService:
         except Exception:
             logger.warning("模型实例化失败，回退默认", exc_info=True)
             return LanguageModelService.get_chat_model_by_tier("cheap")
-
-    def select_key(self, provider: str):
-        if self.key_pool_service is None:
-            return None
-        try:
-            return self.key_pool_service.select_key(provider)
-        except Exception:
-            logger.warning("Key 池选择失败", exc_info=True)
-            return None

@@ -9,6 +9,7 @@ from internal.entity.runtime_tool_entity import (
     RuntimeToolDescriptor,
 )
 from internal.entity.tool_inventory_entity import RiskLevel
+from internal.security.prompt_injection_detector import PromptInjectionDetector
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.tool_invocation_audit_service import ToolInvocationAuditService
 
@@ -179,6 +180,15 @@ class ToolInvokerService:
         request: RuntimeToolCallRequest,
         confirmed: bool,
     ) -> dict[str, str] | None:
+        injection_text = _flatten_tool_input(request.arguments)
+        if injection_text:
+            injection_result = PromptInjectionDetector.analyze(injection_text)
+            if injection_result["severity"] == "high":
+                return {
+                    "error_code": "prompt_injection_detected",
+                    "error_message": "检测到潜在的安全注入风险，请求已被拦截",
+                }
+
         risk_level = str(tool.metadata.get("risk_level") or "")
         if risk_level == RiskLevel.DANGEROUS.value:
             return {"error_code": "forbidden", "error_message": "危险工具禁止自动调用"}

@@ -3,7 +3,6 @@ import type { RecentConversation } from '@/models/conversation'
 import { useDeleteConversation, useGetRecentConversations } from '@/hooks/use-conversation'
 import { useCredentialStore } from '@/stores/credential'
 import { isCredentialLoggedIn } from '@/utils/auth'
-import { getStoredAdminCredential, isAdminCredentialLoggedIn } from '@/utils/admin-auth'
 import UpdateConversationNameModal from '@/views/layouts/components/UpdateConversationNameModal.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -26,7 +25,6 @@ const router = useRouter()
 const { t } = useI18n()
 const credentialStore = useCredentialStore()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
-const isAdminLoggedIn = computed(() => isAdminCredentialLoggedIn(getStoredAdminCredential()))
 const selectedConversationId = computed(() => String(route.query.conversation_id || '').trim())
 const isHomeRootRoute = computed(() => route.path === '/home' && !selectedConversationId.value)
 const currentAppId = computed(() => {
@@ -296,29 +294,6 @@ onUnmounted(() => {
           $t('layout.sidebar.home')
         }}</span>
       </button>
-      <router-link
-        v-if="isAdminLoggedIn"
-        to="/admin/apps"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/admin/apps') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/admin/apps') ? t('layout.sidebar.resourceOrchestration') : ''"
-      >
-        <icon-space-full v-if="route.path.startsWith('/admin/apps')" class="flex-shrink-0 w-4 h-4" />
-        <icon-space v-else class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.resourceOrchestration') }}
-        </span>
-      </router-link>
-      <router-link
-        v-if="isAdminLoggedIn"
-        to="/admin"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/admin') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/admin') ? t('layout.sidebar.adminConsole') : ''"
-      >
-        <icon-settings class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.adminConsole') }}
-        </span>
-      </router-link>
       <router-link
         to="/search"
         :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path === '/search' ? 'bg-gray-100' : ''}`"

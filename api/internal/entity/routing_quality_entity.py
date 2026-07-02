@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from .base_entity import SerializableMixin
+
 
 ROUTING_QUALITY_FEEDBACK_SOURCES = ["admin", "system", "user_signal"]
 ROUTING_QUALITY_DIMENSIONS = [
@@ -13,7 +15,7 @@ ROUTING_OPTIMIZATION_SUGGESTION_STATUSES = ["open", "accepted", "dismissed", "ap
 
 
 @dataclass
-class RoutingQualityFeedback:
+class RoutingQualityFeedback(SerializableMixin):
     routing_log_id: str
     source: str
     rating: int
@@ -38,19 +40,9 @@ class RoutingQualityFeedback:
                 f"{sorted(unknown_dimensions)}"
             )
 
-    def to_dict(self) -> dict:
-        return {
-            "routing_log_id": self.routing_log_id,
-            "source": self.source,
-            "rating": self.rating,
-            "dimension_scores": self.dimension_scores,
-            "comment": self.comment,
-            "metadata": self.metadata,
-        }
-
 
 @dataclass
-class RoutingOptimizationSuggestion:
+class RoutingOptimizationSuggestion(SerializableMixin):
     target_type: str
     target_id: str
     suggestion_type: str
@@ -66,20 +58,9 @@ class RoutingOptimizationSuggestion:
                 f"{self.status}"
             )
 
-    def to_dict(self) -> dict:
-        return {
-            "target_type": self.target_type,
-            "target_id": self.target_id,
-            "suggestion_type": self.suggestion_type,
-            "severity": self.severity,
-            "reason": self.reason,
-            "evidence": self.evidence,
-            "status": self.status,
-        }
-
 
 @dataclass
-class RoutingQualityScore:
+class RoutingQualityScore(SerializableMixin):
     dimension: str
     score: float
 
@@ -89,9 +70,3 @@ class RoutingQualityScore:
                 "Unsupported routing quality dimension: "
                 f"{self.dimension}"
             )
-
-    def to_dict(self) -> dict:
-        return {
-            "dimension": self.dimension,
-            "score": self.score,
-        }

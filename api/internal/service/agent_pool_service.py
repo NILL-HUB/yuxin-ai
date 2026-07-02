@@ -165,6 +165,13 @@ class AgentCandidateCollector:
                 "match_reason": "backup_pool:general",
                 "semantic_score": 0.2,
             }
+        from internal.entity.agent_pool_entity import AgentSubPoolRegistry
+        if AgentSubPoolRegistry().normalize_pool_name(primary_pool) == "general" and primary_pool != "general":
+            return {
+                "pool": "general",
+                "match_reason": f"fallback_unknown_pool:{primary_pool}",
+                "semantic_score": 0.1,
+            }
         return None
 
     @staticmethod

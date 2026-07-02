@@ -101,7 +101,6 @@ __all__ = [
     "KnowledgeBaseService",
     "KnowledgeIndexingService",
     "KnowledgeVectorService",
-    "KnowledgeRetrievalOrchestrator",
     "OrchestratorService",
     "TaskClassifierService",
     "RequestContextBuilder",

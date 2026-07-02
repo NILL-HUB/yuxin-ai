@@ -1,5 +1,9 @@
 import { QueueEvent } from '@/config'
 import type { BillingUsageEvent } from '@/models/billing-metering'
+import type { MemoryCandidatePrompt } from '@/models/memory'
+import type { ToolConfirmationPrompt } from '@/models/tool-confirmation'
+export type { ToolConfirmationPrompt }
+export type { MemoryCandidatePrompt }
 import {
   buildChatOutputParts,
   extractInlineImageUrls,
@@ -20,6 +24,21 @@ type StreamEventData = {
   total_token_count?: number
   aggregate_latency?: number
   aggregate_total_token_count?: number
+  reason?: string
+  message?: string
+  estimated_steps?: number
+  risk_level?: string
+  spent_credits?: number
+  target_system?: string
+  target_environment?: string
+  impact_scope?: string
+  rollback_strategy?: string
+  audit_hint?: string
+  candidate_id?: string
+  content?: string
+  confidence?: number
+  occurrences?: number
+  status?: string
 }
 
 export type StreamEventResponse = {
@@ -61,6 +80,10 @@ export type StreamState = {
   conversation_id: string
   billingEvents: BillingUsageEvent[]
   deepThinkingProposal?: DeepThinkingProposal | null
+  routingDecision?: Record<string, unknown> | null
+  orchestratorReject?: { reason: string; message: string } | null
+  toolConfirmationPrompt?: ToolConfirmationPrompt | null
+  memoryCandidatePrompt?: MemoryCandidatePrompt | null
 }
 
 export type DeepThinkingProposal = {
@@ -264,12 +287,43 @@ export const applyChatStreamEvent = (
     event === QueueEvent.billingStarted ||
     event === QueueEvent.billingDelta ||
     event === QueueEvent.billingCancelled ||
-    event === QueueEvent.billingFinal
+    event === QueueEvent.billingFinal ||
+    event === QueueEvent.billingSummary
   ) {
     nextState.billingEvents = [...nextState.billingEvents, data as unknown as BillingUsageEvent]
     return { state: nextState, didUpdate: true }
-  } else if (event === 'billing_summary') {
-    return { state: nextState, didUpdate: false }
+  } else if (event === QueueEvent.orchestratorRouting) {
+    nextState.routingDecision = data as Record<string, unknown>
+    return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.orchestratorReject) {
+    nextState.orchestratorReject = {
+      reason: String(data?.reason ?? ''),
+      message: String(data?.message ?? ''),
+    }
+    return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.toolConfirmationRequired) {
+    nextState.toolConfirmationPrompt = {
+      id: String(data.id ?? ''),
+      tool_name: String(data.tool ?? ''),
+      risk_level: (String(data.risk_level ?? 'high') as ToolConfirmationPrompt['risk_level']),
+      spent_credits: Number(data.spent_credits ?? 0),
+      tool_input: normalizeToolInput(data.tool_input),
+      target_system: String(data.target_system ?? ''),
+      target_environment: String(data.target_environment ?? ''),
+      impact_scope: String(data.impact_scope ?? ''),
+      rollback_strategy: String(data.rollback_strategy ?? ''),
+      audit_hint: String(data.audit_hint ?? ''),
+    } as ToolConfirmationPrompt
+    return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.memoryCandidatePrompt) {
+    nextState.memoryCandidatePrompt = {
+      id: String(data.candidate_id ?? ''),
+      content: String(data.content ?? ''),
+      confidence: Number(data.confidence ?? 0) || 0,
+      occurrences: Number(data.occurrences ?? 1) || 1,
+      status: String(data.status ?? 'pending'),
+    } as MemoryCandidatePrompt
+    return { state: nextState, didUpdate: true }
   } else {
     nextState.position += 1
     thoughts.push(buildThought(data, nextState.position))

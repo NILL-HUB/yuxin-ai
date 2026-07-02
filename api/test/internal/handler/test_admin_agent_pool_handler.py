@@ -14,7 +14,7 @@ _CONFIG = {
     "primary_pool": "tenant",
     "secondary_pools": ["system", "global"],
     "risk_level": "medium",
-    "model_tier": "balanced",
+    "model_tier": "standard",
     "model_id": "deepseek-chat",
     "routing_priority": 100,
     "enabled": True,

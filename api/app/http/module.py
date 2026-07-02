@@ -34,8 +34,6 @@ from internal.service.rerank_service import RerankService
 from internal.service.result_synthesizer_service import ResultSynthesizerService
 from internal.service.result_quality_checker_service import ResultQualityCheckerService
 from internal.service.model_gateway_service import ModelGatewayService
-from internal.service.model_pool_service import ModelPoolService
-from internal.service.key_pool_service import KeyPoolService
 from internal.service.routing_observability_service import RoutingObservabilityService
 from internal.service.agent_pool_service import (
     CrossPoolAgentSubsetBuilder,
@@ -99,8 +97,6 @@ class ExtensionModule(Module):
 
         # 注册模型池治理层（激活 L5 ModelGateway 门面）
         binder.bind(ModelGatewayService, to=ModelGatewayService)
-        binder.bind(ModelPoolService, to=ModelPoolService)
-        binder.bind(KeyPoolService, to=KeyPoolService)
 
         # 注册可观测层依赖（激活 L8 路由可观测）
         binder.bind(RoutingObservabilityService, to=RoutingObservabilityService)

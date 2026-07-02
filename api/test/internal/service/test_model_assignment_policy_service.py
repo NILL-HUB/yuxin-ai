@@ -24,7 +24,7 @@ def test_assign_should_force_strong_for_deep_thinking_mode():
 
 
 def test_assign_should_force_strong_for_multi_agent_parallel():
-    decision = _decision(ExecutionMode.MULTI_AGENT_PARALLEL.value, tier="balanced")
+    decision = _decision(ExecutionMode.MULTI_AGENT_PARALLEL.value, tier="standard")
 
     assert ModelAssignmentPolicy().assign(decision) == "strong"
 
@@ -40,7 +40,7 @@ def test_assign_should_force_strong_for_high_risk_reject_or_confirm():
     assert ModelAssignmentPolicy().assign(decision) == "strong"
 
 
-def test_assign_should_use_balanced_for_medium_complexity_tool_task():
+def test_assign_should_use_standard_for_medium_complexity_tool_task():
     decision = _decision(
         ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
         complexity="medium",
@@ -48,7 +48,7 @@ def test_assign_should_use_balanced_for_medium_complexity_tool_task():
         tier="cheap",
     )
 
-    assert ModelAssignmentPolicy().assign(decision) == "balanced"
+    assert ModelAssignmentPolicy().assign(decision) == "standard"
 
 
 def test_assign_should_use_cheap_for_simple_direct_answer():
@@ -64,7 +64,7 @@ def test_assign_should_upgrade_to_strong_when_context_enables_deep_thinking():
     assert ModelAssignmentPolicy().assign(decision, ctx) == "strong"
 
 
-def test_assign_should_upgrade_unknown_risk_to_balanced_at_minimum():
+def test_assign_should_upgrade_unknown_risk_to_standard_at_minimum():
     decision = _decision(
         ExecutionMode.DIRECT_ANSWER.value,
         complexity="simple",
@@ -72,7 +72,7 @@ def test_assign_should_upgrade_unknown_risk_to_balanced_at_minimum():
         tier="cheap",
     )
 
-    assert ModelAssignmentPolicy().assign(decision) == "balanced"
+    assert ModelAssignmentPolicy().assign(decision) == "standard"
 
 
 def test_assign_should_not_downgrade_classifier_strong_tier():

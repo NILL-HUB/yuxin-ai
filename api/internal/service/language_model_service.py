@@ -487,7 +487,7 @@ class LanguageModelService(BaseService):
 
     @classmethod
     def get_chat_model_by_tier(cls, tier: str = "cheap"):
-        """根据档位返回对应 LLM 实例。cheap/balanced 走 deepseek-chat，strong 走 deepseek-reasoner。"""
+        """根据档位返回对应 LLM 实例。cheap/standard 走 deepseek-chat，strong 走 deepseek-reasoner。"""
         from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
         tier = (tier or "cheap").lower()
         if tier == "strong":
@@ -873,9 +873,15 @@ class LanguageModelService(BaseService):
             attribute_overrides: dict[str, Any] | None = None
             if key is not None:
                 llm_config = pool_service.build_llm_config(primary, key)
+                attribute_overrides = {}
                 api_key = llm_config.get("api_key")
                 if api_key:
-                    attribute_overrides = {"api_key": api_key}
+                    attribute_overrides["api_key"] = api_key
+                base_url = llm_config.get("base_url")
+                if base_url:
+                    attribute_overrides["base_url"] = base_url
+                if not attribute_overrides:
+                    attribute_overrides = None
             pool_llm = self._instantiate_language_model(pool_model_config, attribute_overrides=attribute_overrides)
             return pool_llm, pool_model_config
         except Exception as exc:

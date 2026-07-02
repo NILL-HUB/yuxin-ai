@@ -7,6 +7,7 @@ from langchain_core.messages import AnyMessage, AIMessage, HumanMessage, trim_me
 from sqlalchemy import desc, func
 
 from internal.core.language_model.entities.model_entity import BaseLanguageModel
+from internal.core.ports.user_memory_port import UserMemoryServicePort
 from internal.entity.conversation_entity import MessageStatus
 from internal.model import Conversation, Message
 from pkg.sqlalchemy import SQLAlchemy
@@ -123,9 +124,15 @@ class TokenBufferMemory:
         return "\n".join(parts)
 
     def get_relevant_facts(self, account, current_query: str) -> list[str]:
+        user_memory_service: UserMemoryServicePort | None = getattr(self, "_user_memory_service", None)
+        if user_memory_service is None:
+            try:
+                from internal.service.scoped_knowledge_service import UserMemoryService
+                user_memory_service = UserMemoryService(db=self.db)
+            except Exception:
+                logger.warning("无法构造 UserMemoryService，降级返回空列表", exc_info=True)
+                return []
         try:
-            from internal.service.scoped_knowledge_service import UserMemoryService
-            user_memory_service = UserMemoryService(db=self.db)
             relevant = user_memory_service.recall_relevant_memories(
                 account, current_query, top_k=5
             )

@@ -23,7 +23,7 @@ describe('Admin AppsView', () => {
             input_modalities: ['text'],
             output_modalities: ['text'],
             risk_level: 'safe',
-            model_tier: 'balanced',
+            model_tier: 'standard',
             model_id: 'gpt-4.1',
             key_policy: 'default',
             cost_level: 'medium',

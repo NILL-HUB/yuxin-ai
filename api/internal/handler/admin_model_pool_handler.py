@@ -154,6 +154,14 @@ class AdminModelPoolHandler:
 
     @admin_login_required
     @permission_required("model_pool:manage")
+    def create_cost_policy(self):
+        payload = request.get_json(silent=True) or {}
+        result = self.admin_model_pool_service.create_cost_policy(payload)
+        resp = AdminCostPolicyResp()
+        return success_json(resp.dump(result))
+
+    @admin_login_required
+    @permission_required("model_pool:manage")
     def update_cost_policy(self, policy_id: UUID):
         payload = request.get_json(silent=True) or {}
         result = self.admin_model_pool_service.update_cost_policy(policy_id, payload)

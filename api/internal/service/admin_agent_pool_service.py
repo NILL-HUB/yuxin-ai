@@ -28,7 +28,7 @@ class AdminAgentPoolService:
 
     def list_configs(self, *, page: int = 1, per_page: int = 20, pool: str = "", enabled: str = "", keyword: str = "") -> dict:
         page = max(int(page or 1), 1)
-        per_page = max(min(int(per_page or 20), 50), 1)
+        per_page = max(min(int(per_page or 20), 100), 1)
         query = self.session.query(AgentPoolConfig)
         keyword = (keyword or "").strip()
         if keyword:
@@ -71,7 +71,7 @@ class AdminAgentPoolService:
             primary_pool=payload.get("primary_pool") or "tenant",
             secondary_pools=payload.get("secondary_pools") or [],
             risk_level=payload.get("risk_level") or "medium",
-            model_tier=payload.get("model_tier") or "balanced",
+            model_tier=payload.get("model_tier") or "standard",
             model_id=payload.get("model_id") or None,
             routing_priority=int(payload.get("routing_priority") or 100),
             enabled=self._parse_bool(payload.get("enabled"), True),

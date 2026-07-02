@@ -108,7 +108,7 @@ class AdminModelPoolService:
 
     def list_models(self, *, search: str = "", provider: str = "", tier: str = "", status: str = "", current_page: int = 1, page_size: int = 20) -> dict:
         current_page = max(int(current_page or 1), 1)
-        page_size = max(min(int(page_size or 20), 50), 1)
+        page_size = max(min(int(page_size or 20), 100), 1)
         query = self.session.query(ModelPoolConfig)
         search = (search or "").strip()
         if search:
@@ -148,6 +148,7 @@ class AdminModelPoolService:
             price_per_1k_tokens=self._decimal(payload.get("price_per_1k_tokens")),
             max_tokens=int(payload.get("max_tokens") or 0),
             status=payload.get("status") or "active",
+            base_url=payload.get("base_url") or None,
             fallback_model_id=payload.get("fallback_model_id") or None,
             priority=int(payload.get("priority") or 0),
         )
@@ -177,6 +178,8 @@ class AdminModelPoolService:
             model.fallback_model_id = payload["fallback_model_id"] or None
         if "priority" in payload:
             model.priority = int(payload.get("priority") or 0)
+        if "base_url" in payload:
+            model.base_url = payload["base_url"] or None
         model.updated_at = self._now()
         self.session.commit()
         return self._serialize_model(model)
@@ -195,7 +198,7 @@ class AdminModelPoolService:
 
     def list_keys(self, *, provider: str = "", status: str = "", current_page: int = 1, page_size: int = 20) -> dict:
         current_page = max(int(current_page or 1), 1)
-        page_size = max(min(int(page_size or 20), 50), 1)
+        page_size = max(min(int(page_size or 20), 100), 1)
         query = self.session.query(ModelKeyConfig)
         if provider:
             query = query.filter(ModelKeyConfig.provider == provider)
@@ -221,6 +224,7 @@ class AdminModelPoolService:
             tenant_quota=self._decimal(payload.get("tenant_quota"), "0.0000"),
             status=payload.get("status") or "active",
             model_id=payload.get("model_id") or None,
+            effective_at=self._parse_datetime(payload.get("effective_at")),
             expires_at=self._parse_datetime(payload.get("expires_at")),
             used_credits=self._decimal(payload.get("used_credits"), "0.0000"),
         )
@@ -242,6 +246,8 @@ class AdminModelPoolService:
             key.status = payload["status"]
         if "model_id" in payload:
             key.model_id = payload["model_id"] or None
+        if "effective_at" in payload:
+            key.effective_at = self._parse_datetime(payload.get("effective_at"))
         if "expires_at" in payload:
             key.expires_at = self._parse_datetime(payload.get("expires_at"))
         if "used_credits" in payload:
@@ -283,6 +289,18 @@ class AdminModelPoolService:
     def list_cost_policies(self) -> dict:
         policies = self.session.query(CostPolicy).order_by(CostPolicy.created_at.desc()).all()
         return {"list": [self._serialize_cost_policy(policy) for policy in policies]}
+
+    def create_cost_policy(self, payload: dict) -> dict:
+        policy = CostPolicy(
+            policy_name=payload.get("policy_name") or "default",
+            model_tier=payload.get("model_tier") or "standard",
+            max_cost_per_request=self._decimal(payload.get("max_cost_per_request"), "0.000000"),
+            billing_mode=payload.get("billing_mode") or "token",
+            upgrade_threshold=self._decimal(payload.get("upgrade_threshold"), "0.000000"),
+        )
+        self.session.add(policy)
+        self.session.commit()
+        return self._serialize_cost_policy(policy)
 
     def update_cost_policy(self, policy_id: UUID, payload: dict) -> dict:
         policy = self._get_cost_policy_or_raise(policy_id)
@@ -329,6 +347,7 @@ class AdminModelPoolService:
             "price_per_1k_tokens": f"{Decimal(str(model.price_per_1k_tokens or 0)):.6f}",
             "max_tokens": int(model.max_tokens or 0),
             "status": model.status,
+            "base_url": model.base_url or None,
             "fallback_model_id": model.fallback_model_id or None,
             "priority": int(model.priority or 0),
             "created_at": self._timestamp(model.created_at),
@@ -348,6 +367,7 @@ class AdminModelPoolService:
             "used_credits": f"{Decimal(str(key.used_credits or 0)):.4f}",
             "model_id": key.model_id or None,
             "last_used_at": self._timestamp(key.last_used_at),
+            "effective_at": self._timestamp(key.effective_at),
             "expires_at": self._timestamp(key.expires_at),
             "created_at": self._timestamp(key.created_at),
             "updated_at": self._timestamp(key.updated_at),

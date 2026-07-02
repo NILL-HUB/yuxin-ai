@@ -41,6 +41,7 @@ class ModelPoolConfig(db.Model):
     price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
     max_tokens = Column(Integer, nullable=False, server_default=text("0"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
+    base_url = Column(String(512), nullable=True)
     fallback_model_id = Column(String(36), nullable=True)
     priority = Column(Integer, nullable=False, server_default=text("0"))
     updated_at = Column(
@@ -71,6 +72,7 @@ class ModelKeyConfig(db.Model):
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     failure_count = Column(Integer, nullable=False, server_default=text("0"))
     last_used_at = Column(DateTime, nullable=True)
+    effective_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
     used_credits = Column(Numeric(12, 4), nullable=False, server_default=text("0.0000"))
     model_id = Column(String(36), nullable=True)

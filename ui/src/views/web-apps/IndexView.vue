@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AiMessage from '@/components/AiMessage.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
+import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
 import { useGenerateSuggestedQuestions } from '@/hooks/use-ai'
@@ -19,6 +20,7 @@ import {
   useWebAppChat,
 } from '@/hooks/use-web-app'
 import { uploadImage } from '@/services/upload-file'
+import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import { useAccountStore } from '@/stores/account'
 import { Message } from '@arco-design/web-vue'
 import AudioRecorder from 'js-audio-recorder'
@@ -27,6 +29,7 @@ import type { GetWebAppConversationsResponse } from '@/models/web-app'
 import {
   applyChatStreamEvent,
   withChatRenderId,
+  type ToolConfirmationPrompt,
   type StreamMessage,
   type StreamState,
 } from '@/views/shared/chat-stream'
@@ -84,6 +87,7 @@ const audioBlob = ref<Blob | null>(null) // 录音后音频的blob
 let recorder: RecorderLike | null = null // RecordRTC实例
 const message_id = ref('')
 const task_id = ref('')
+const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
 const scroller = ref<ScrollerLike | null>(null)
 const scrollHeight = ref(0)
 const showScrollToBottomButton = ref(false)
@@ -446,6 +450,9 @@ const handleSubmit = async () => {
       }
 
       if (streamResult.didUpdate) {
+        if (streamResult.state.toolConfirmationPrompt) {
+          toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+        }
         scroller.value?.scrollToBottom?.()
       }
     })
@@ -527,6 +534,24 @@ const handleStop = async () => {
 
   // 13.2 调用api接口中断请求
   await handleStopWebAppChat(String(route.params?.token), task_id.value)
+}
+
+const handleConfirmTool = async (id: string) => {
+  try {
+    await postToolConfirmationConfirm(id)
+  } catch {
+    // 确认失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
+}
+
+const handleCancelTool = async (id: string) => {
+  try {
+    await postToolConfirmationCancel(id)
+  } catch {
+    // 取消失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
 }
 
 // 14.定义问题提交函数
@@ -877,6 +902,16 @@ onUnmounted(() => {
       </div>
       <!-- 对话输入框 -->
       <div class="w-full max-w-[600px] mx-auto flex flex-col flex-shrink-0">
+        <div
+          v-if="toolConfirmationPrompt"
+          class="w-full px-4 sm:px-6 pb-2 flex justify-center"
+        >
+          <ToolConfirmationCard
+            :prompt="toolConfirmationPrompt"
+            @confirm="handleConfirmTool"
+            @cancel="handleCancelTool"
+          />
+        </div>
         <!-- 顶部输入框 -->
         <div class="px-4 sm:px-6">
           <chat-composer

@@ -178,12 +178,12 @@ const router = createRouter({
         {
           path: 'admin',
           component: AdminLayout,
-          meta: { adminRequired: true, requiresAuth: true, realm: 'admin' },
+          meta: { adminRequired: true, realm: 'admin' },
           children: [
             {
               path: '',
               name: 'admin-index',
-              component: { template: '<h2 style="padding:60px 0;font-size:28px;letter-spacing:-0.04em">管理控制台</h2>' },
+              component: () => import('@/views/admin/AdminDashboardView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['admin:access'] },
             },
             {
@@ -195,13 +195,13 @@ const router = createRouter({
             {
               path: 'workflows',
               name: 'admin-workflows',
-              component: { template: '<h2>工作流管理</h2>' },
+              component: () => import('@/views/admin/AdminWorkflowsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
             },
             {
               path: 'datasets',
               name: 'admin-datasets',
-              component: { template: '<h2>知识库</h2>' },
+              component: () => import('@/views/admin/AdminDatasetsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
             },
             {
@@ -213,13 +213,13 @@ const router = createRouter({
             {
               path: 'mcp',
               name: 'admin-mcp',
-              component: { template: '<h2>MCP 管理</h2>' },
+              component: () => import('@/views/admin/AdminMcpView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['mcp:read'] },
             },
             {
               path: 'skills',
               name: 'admin-skills',
-              component: { template: '<h2>Skills 管理</h2>' },
+              component: () => import('@/views/admin/AdminSkillsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['skill:read'] },
             },
             {
@@ -235,9 +235,15 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['plan:read', 'redeem_code:read'] },
             },
             {
+              path: 'cost-stats',
+              name: 'admin-cost-stats',
+              component: () => import('@/views/admin/CostDashboardView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['cost_stats:read'] },
+            },
+            {
               path: 'admin-users',
               name: 'admin-admin-users',
-              component: { template: '<h2>管理员管理</h2>' },
+              component: () => import('@/views/admin/AdminUsersView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['admin_user:read'], roles: ['super_admin'] },
             },
             {
@@ -249,7 +255,7 @@ const router = createRouter({
             {
               path: 'audit-logs',
               name: 'admin-audit-logs',
-              component: { template: '<h2>审计日志</h2>' },
+              component: () => import('@/views/admin/AuditLogsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['audit_log:read'], roles: ['super_admin'] },
             },
             {
@@ -321,19 +327,19 @@ const router = createRouter({
             {
               path: 'datasets/:dataset_id/documents',
               name: 'admin-dataset-documents',
-              component: () => import('@/views/space/datasets/documents/ListView.vue'),
+              component: () => import('@/views/admin/AdminDatasetDocumentsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
             },
             {
               path: 'datasets/:dataset_id/documents/create',
               name: 'admin-dataset-document-create',
-              component: () => import('@/views/space/datasets/documents/CreateView.vue'),
+              component: () => import('@/views/admin/AdminDatasetDocumentCreateView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
             },
             {
               path: 'datasets/:dataset_id/documents/:document_id/segments',
               name: 'admin-dataset-segments',
-              component: () => import('@/views/space/datasets/documents/segments/ListView.vue'),
+              component: () => import('@/views/admin/AdminDatasetSegmentsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
             },
             {
@@ -358,36 +364,42 @@ const router = createRouter({
               path: 'store/workflows',
               name: 'admin-store-workflows',
               component: () => import('@/views/store/workflows/ListView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
             },
             {
               path: 'store/tools',
               name: 'admin-store-tools',
               component: () => import('@/views/store/tools/ListView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['tool:read'] },
             },
             {
               path: 'store/skills',
               name: 'admin-store-skills',
               component: () => import('@/views/store/skills/ListView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['skill:read'] },
             },
             {
               path: 'store/mcp',
               name: 'admin-store-mcp',
               component: () => import('@/views/store/mcp/ListView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['mcp:read'] },
             },
             {
               path: 'agent-pool',
               name: 'admin-agent-pool',
-              component: { template: '<div class="p-8"><h2 class="text-2xl font-bold mb-4">Agent池配置</h2><p class="text-gray-500">Phase C 实现</p></div>' },
+              component: () => import('@/views/admin/AgentPoolView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['agent_pool:read'] },
+            },
+            {
+              path: 'sub-pool-definition',
+              name: 'admin-sub-pool-definition',
+              component: () => import('@/views/admin/sub-pool-definition/index.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['agent_pool:read'] },
             },
             {
               path: 'tool-governance',
               name: 'admin-tool-governance',
-              component: { template: '<div class="p-8"><h2 class="text-2xl font-bold mb-4">工具池治理</h2><p class="text-gray-500">Phase C 实现</p></div>' },
+              component: () => import('@/views/admin/ToolGovernanceView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['tool_governance:read'] },
             },
             {
@@ -522,18 +534,25 @@ const ANONYMOUS_PROMPT_ROUTE_NAMES = new Set([
 ])
 
 export const getAuthGuardRedirect = ({
+  path,
   routeName,
   isLoggedIn,
 }: {
+  path: string
   routeName: string
   isLoggedIn: boolean
 }) => {
   if (isLoggedIn) return null
+  if (path.startsWith('/admin')) return null
   if (PUBLIC_ROUTE_NAMES.has(routeName) || ANONYMOUS_PROMPT_ROUTE_NAMES.has(routeName)) {
     return null
   }
 
   return { path: '/home' as const }
+}
+
+export const shouldEvaluateUserAuth = (path: string): boolean => {
+  return !path.startsWith('/admin')
 }
 
 const CUSTOMER_CONFIG_ROUTE_NAMES = new Set([
@@ -599,7 +618,7 @@ export const getAdminAuthGuardRedirect = ({
     return null
   }
   if (!isAdminLoggedIn) {
-    return { path: '/auth/login' as const, query: { mode: 'admin', redirect: path } }
+    return { path: '/admin/login' as const, query: { redirect: path } }
   }
   if (requiredRoles && requiredRoles.length > 0) {
     const hasRole = requiredRoles.some((role) => adminRoles.includes(role))
@@ -618,8 +637,9 @@ export const getAdminAuthGuardRedirect = ({
 
 router.beforeEach(async (to) => {
   const adminStore = useAdminStore()
+  const path = to.fullPath
   const adminRedirect = getAdminAuthGuardRedirect({
-    path: to.fullPath,
+    path,
     routeName: String(to.name || ''),
     isAdminLoggedIn: isAdminCredentialLoggedIn(getStoredAdminCredential()),
     adminPermissions: adminStore.admin.permissions,
@@ -633,7 +653,7 @@ router.beforeEach(async (to) => {
   }
 
   const customerConfigRedirect = getCustomerConfigGuardRedirect({
-    path: to.fullPath,
+    path,
     routeName: String(to.name || ''),
     isAdminLoggedIn: isAdminCredentialLoggedIn(getStoredAdminCredential()),
   })
@@ -643,8 +663,9 @@ router.beforeEach(async (to) => {
   }
 
   const redirect = getAuthGuardRedirect({
+    path,
     routeName: String(to.name || ''),
-    isLoggedIn: auth.isLogin(),
+    isLoggedIn: shouldEvaluateUserAuth(path) ? auth.isLogin() : false,
   })
 
   if (redirect) {

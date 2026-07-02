@@ -1,4 +1,5 @@
 import type { BaseResponse } from '@/models/base'
+import type { ExecutionMode } from '@/models/orchestration'
 
 export type HomeTaskPlanSummaryItem = {
   task_id: string
@@ -9,7 +10,7 @@ export type HomeTaskPlanSummaryItem = {
 }
 
 export type HomeTaskPlanSummary = {
-  execution_mode: string
+  execution_mode: ExecutionMode
   reason: string
   task_count: number
   items: HomeTaskPlanSummaryItem[]

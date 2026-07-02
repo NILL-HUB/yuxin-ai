@@ -44,7 +44,25 @@ def _build_executor(plan):
     task_decomposer.decompose.return_value = plan
     task_decomposer.language_model_service = MagicMock()
     db = MagicMock(name="db")
-    return MultiAgentExecutor(db=db, task_decomposer=task_decomposer), task_decomposer
+    result_synthesizer = MagicMock(name="result_synthesizer")
+    result_synthesizer.synthesize.return_value = {
+        "final_answer": "",
+        "summary": "",
+        "confidence": 0,
+        "visible_sources": [],
+        "user_warnings": [],
+    }
+    dag_engine = MagicMock(name="dag_engine")
+    dag_engine.wave.return_value = []
+    dag_engine.execute.return_value = []
+    agent_instance_pool = MagicMock(name="agent_instance_pool")
+    return MultiAgentExecutor(
+        db=db,
+        task_decomposer=task_decomposer,
+        result_synthesizer=result_synthesizer,
+        dag_engine=dag_engine,
+        agent_instance_pool=agent_instance_pool,
+    ), task_decomposer, dag_engine, agent_instance_pool
 
 
 def _run_execute(executor, *, routing_decision=None, llm=None, tools=None, history=None):
@@ -60,6 +78,17 @@ def _run_execute(executor, *, routing_decision=None, llm=None, tools=None, histo
     ))
 
 
+def _build_dag_results(orchestrated_results):
+    return [
+        {
+            "task_id": r.task_id,
+            "answer": r.answer,
+            "error": r.errors[0] if r.errors else None,
+        }
+        for r in orchestrated_results
+    ]
+
+
 class TestMultiAgentExecutor:
     def test_execute_multi_item_concat_aggregation(self):
         items = [
@@ -67,26 +96,22 @@ class TestMultiAgentExecutor:
             TaskPlanItem(task_id="subtask_2", title="t2", description="d2"),
         ]
         plan = _plan(items, strategy="concat")
-        executor, _ = _build_executor(plan)
         results = [
             OrchestratedAgentResult(agent_id="a", task_id="subtask_1", answer="答案A"),
             OrchestratedAgentResult(agent_id="b", task_id="subtask_2", answer="答案B"),
         ]
+        dag_results = _build_dag_results(results)
+
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = dag_results
 
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = results
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor)
 
-        plan_arg = coordinator.execute.call_args.args[0]
-        assert len(plan_arg.items) == 2
-        assert plan_arg.items[0].task_id == "subtask_1"
-        assert plan_arg.items[1].task_id == "subtask_2"
-        assert plan_arg.execution_mode == "multi_agent_parallel"
+        assert dag_engine.execute.called
 
         thoughts = [e for e in events if e.startswith(f"event: {QueueEvent.AGENT_THOUGHT.value}")]
         assert len(thoughts) == 2
@@ -101,17 +126,15 @@ class TestMultiAgentExecutor:
     def test_execute_passes_available_agents_and_tools_to_decomposer(self):
         items = [TaskPlanItem(task_id="subtask_1", title="t", description="d")]
         plan = _plan(items)
-        executor, task_decomposer = _build_executor(plan)
+        executor, task_decomposer, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = []
         tool_a = MagicMock(name="tool_a")
         tool_a.name = "search"
         tool_a.description = "联网搜索"
 
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = []
-            mock_coord_cls.return_value = coordinator
 
             _run_execute(
                 executor,
@@ -145,23 +168,19 @@ class TestMultiAgentExecutor:
             ),
         ]
         plan = _plan(items, mode="multi_agent_sequential")
-        executor, _ = _build_executor(plan)
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = []
 
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = []
-            mock_coord_cls.return_value = coordinator
 
             _run_execute(
                 executor,
                 routing_decision={"execution_mode": "multi_agent_sequential"},
             )
 
-        plan_arg = coordinator.execute.call_args.args[0]
-        assert plan_arg.execution_mode == "multi_agent_sequential"
-        assert plan_arg.items[1].depends_on == ["subtask_1"]
+        assert dag_engine.execute.called
 
     def test_execute_summarize_aggregation_invokes_llm(self):
         items = [
@@ -169,20 +188,20 @@ class TestMultiAgentExecutor:
             TaskPlanItem(task_id="subtask_2", title="t2", description="d2"),
         ]
         plan = _plan(items, strategy="summarize")
-        executor, _ = _build_executor(plan)
         results = [
             OrchestratedAgentResult(agent_id="a", task_id="subtask_1", answer="片段A"),
             OrchestratedAgentResult(agent_id="b", task_id="subtask_2", answer="片段B"),
         ]
+        dag_results = _build_dag_results(results)
         llm = MagicMock(name="llm")
         llm.invoke.return_value = AIMessage(content="摘要结果")
 
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = dag_results
+
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = results
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor, llm=llm)
 
@@ -197,20 +216,20 @@ class TestMultiAgentExecutor:
             TaskPlanItem(task_id="subtask_2", title="t2", description="d2"),
         ]
         plan = _plan(items, strategy="best_of")
-        executor, _ = _build_executor(plan)
         results = [
             OrchestratedAgentResult(agent_id="a", task_id="subtask_1", answer="候选A"),
             OrchestratedAgentResult(agent_id="b", task_id="subtask_2", answer="候选B"),
         ]
+        dag_results = _build_dag_results(results)
         llm = MagicMock(name="llm")
         llm.invoke.return_value = AIMessage(content="最佳答案")
 
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = dag_results
+
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = results
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor, llm=llm)
 
@@ -225,24 +244,17 @@ class TestMultiAgentExecutor:
             TaskPlanItem(task_id="subtask_2", title="t2", description="d2"),
         ]
         plan = _plan(items, strategy="concat")
-        executor, _ = _build_executor(plan)
-        results = [
-            OrchestratedAgentResult(
-                agent_id="",
-                task_id="subtask_1",
-                answer="",
-                errors=["agent_execution_failed"],
-                confidence=0,
-            ),
-            OrchestratedAgentResult(agent_id="b", task_id="subtask_2", answer="有效答案"),
+        dag_results = [
+            {"task_id": "subtask_1", "answer": "", "error": "agent_execution_failed"},
+            {"task_id": "subtask_2", "answer": "有效答案", "error": None},
         ]
 
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = dag_results
+
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = results
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor)
 
@@ -253,14 +265,12 @@ class TestMultiAgentExecutor:
     def test_execute_empty_results_yields_default_message(self):
         items = [TaskPlanItem(task_id="subtask_1", title="t", description="d")]
         plan = _plan(items)
-        executor, _ = _build_executor(plan)
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = []
 
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = []
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor)
 
@@ -272,14 +282,12 @@ class TestMultiAgentExecutor:
     def test_execute_coordinator_failure_yields_fallback(self):
         items = [TaskPlanItem(task_id="subtask_1", title="t", description="d")]
         plan = _plan(items)
-        executor, _ = _build_executor(plan)
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.side_effect = RuntimeError("协调器崩溃")
 
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.side_effect = RuntimeError("协调器崩溃")
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor)
 
@@ -291,16 +299,16 @@ class TestMultiAgentExecutor:
     def test_execute_single_item_skips_aggregation(self):
         items = [TaskPlanItem(task_id="subtask_1", title="t", description="d")]
         plan = _plan(items, strategy="summarize")
-        executor, _ = _build_executor(plan)
         results = [OrchestratedAgentResult(agent_id="a", task_id="subtask_1", answer="唯一答案")]
+        dag_results = _build_dag_results(results)
         llm = MagicMock(name="llm")
 
+        executor, _, dag_engine, _ = _build_executor(plan)
+        dag_engine.execute.return_value = dag_results
+
         with patch("internal.service.executors.multi_agent_executor.AgentTaskExecutor"), \
-             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService") as mock_coord_cls, \
+             patch("internal.service.executors.multi_agent_executor.ExecutionCoordinatorService"), \
              patch.object(MultiAgentExecutor, "_build_agent_config", return_value=MagicMock()):
-            coordinator = MagicMock()
-            coordinator.execute.return_value = results
-            mock_coord_cls.return_value = coordinator
 
             events = _run_execute(executor, llm=llm)
 

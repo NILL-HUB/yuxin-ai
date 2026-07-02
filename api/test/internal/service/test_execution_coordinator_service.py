@@ -4,6 +4,7 @@ from internal.entity.execution_orchestration_entity import (
     TaskPlanItem,
 )
 from internal.service.execution_coordinator_service import ExecutionCoordinatorService
+from internal.service.cost_policy_service import EscalationPolicyService
 
 
 class FailingExecutor:
@@ -277,3 +278,88 @@ def test_parallel_execution_should_sort_results_deterministically():
 
     assert set(executor.calls) == {"task-1", "task-2", "task-3"}
     assert [result.task_id for result in results] == ["task-1", "task-2", "task-3"]
+
+
+def _metadata_executor(tier="standard", total_tokens=0):
+    class _Executor:
+        def execute(self, item):
+            return {
+                "agent_id": "a",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+                "metadata": {
+                    "tier": tier,
+                    "token_usage": {"total_tokens": total_tokens},
+                },
+            }
+
+    return _Executor()
+
+
+def _tier_item(task_id="task-1", complexity=None, balance=None, budget=None):
+    item = _item(task_id)
+    if complexity is not None:
+        item.complexity = complexity
+    if balance is not None:
+        item.balance_credits = balance
+    if budget is not None:
+        item.budget_level = budget
+    return item
+
+
+def test_escalation_triggers_upgrade():
+    executor = _metadata_executor(tier="standard", total_tokens=0)
+    item = _tier_item(
+        complexity="complex", balance=float("inf"), budget="high"
+    )
+    coordinator = ExecutionCoordinatorService(
+        executor=executor, escalation_policy_service=EscalationPolicyService()
+    )
+    plan = _plan("single_agent", [item])
+
+    results = coordinator.execute(plan)
+
+    assert "escalation:standard->strong" in results[0].warnings
+
+
+def test_escalation_triggers_downgrade():
+    executor = _metadata_executor(tier="strong", total_tokens=0)
+    item = _tier_item(
+        complexity="simple", balance=50.0, budget="high"
+    )
+    coordinator = ExecutionCoordinatorService(
+        executor=executor, escalation_policy_service=EscalationPolicyService()
+    )
+    plan = _plan("single_agent", [item])
+
+    results = coordinator.execute(plan)
+
+    assert "escalation:strong->cheap" in results[0].warnings
+
+
+def test_escalation_no_change():
+    executor = _metadata_executor(tier="standard", total_tokens=0)
+    item = _tier_item(
+        complexity="medium", balance=float("inf"), budget="medium"
+    )
+    coordinator = ExecutionCoordinatorService(
+        executor=executor, escalation_policy_service=EscalationPolicyService()
+    )
+    plan = _plan("single_agent", [item])
+
+    results = coordinator.execute(plan)
+
+    assert not any(w.startswith("escalation:") for w in results[0].warnings)
+
+
+def test_no_escalation_service():
+    executor = FakeExecutor()
+    coordinator = ExecutionCoordinatorService(executor=executor)
+    plan = _plan("single_agent", [_item("task-1")])
+
+    results = coordinator.execute(plan)
+
+    assert len(results) == 1
+    assert results[0].answer == "answer:task-1"
+    assert not any(w.startswith("escalation:") for w in results[0].warnings)

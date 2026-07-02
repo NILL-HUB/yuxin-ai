@@ -1,12 +1,14 @@
 from dataclasses import dataclass, field
 
+from .base_entity import SerializableMixin
+
 
 POLICY_CHANGE_DRAFT_STATUSES = ["pending", "applied", "rolled_back"]
 POLICY_CHANGE_TYPES = ["model_routing", "tool_policy", "agent_policy"]
 
 
 @dataclass
-class PolicyChangeDraft:
+class PolicyChangeDraft(SerializableMixin):
     suggestion_id: str
     policy_type: str
     target_id: str
@@ -27,15 +29,3 @@ class PolicyChangeDraft:
                 "Unsupported policy change type: "
                 f"{self.policy_type}"
             )
-
-    def to_dict(self) -> dict:
-        return {
-            "suggestion_id": self.suggestion_id,
-            "policy_type": self.policy_type,
-            "target_id": self.target_id,
-            "before_config": self.before_config,
-            "after_config": self.after_config,
-            "diff": self.diff,
-            "impact": self.impact,
-            "status": self.status,
-        }

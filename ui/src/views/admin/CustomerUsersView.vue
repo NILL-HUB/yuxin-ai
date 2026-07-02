@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import {
   disableCustomerUser,
@@ -12,6 +13,8 @@ import { type AppAssignment } from '@/models/app-assignment'
 import { getErrorMessage } from '@/utils/error'
 import { type CustomerUser } from '@/models/admin-customer-user'
 
+const { t } = useI18n()
+
 const loading = ref(false)
 const actionLoading = ref(false)
 const users = ref<CustomerUser[]>([])
@@ -21,11 +24,11 @@ const assignments = ref<AppAssignment[]>([])
 const assignmentAppId = ref('')
 const filters = ref({ keyword: '', status: '' as '' | 'active' | 'disabled', current_page: 1, page_size: 20 })
 
-const statusOptions = [
-  { label: '全部状态', value: '' },
-  { label: '正常', value: 'active' },
-  { label: '已禁用', value: 'disabled' },
-]
+const statusOptions = computed(() => [
+  { label: t('admin.customerUsers.allStatus'), value: '' },
+  { label: t('admin.customerUsers.statusActive'), value: 'active' },
+  { label: t('admin.customerUsers.statusDisabled'), value: 'disabled' },
+])
 
 const activeCount = computed(() => users.value.filter((user) => user.status === 'active').length)
 
@@ -41,7 +44,7 @@ const loadUsers = async () => {
     users.value = response.list
     total.value = response.paginator.total_record
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载用户失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.loadFailed')))
   } finally {
     loading.value = false
   }
@@ -55,11 +58,11 @@ const handleSearch = async () => {
 const handleDisable = async (user: CustomerUser) => {
   actionLoading.value = true
   try {
-    await disableCustomerUser(user.id, '后台管理员禁用')
-    Message.success('用户已禁用')
+    await disableCustomerUser(user.id, t('admin.customerUsers.disableReason'))
+    Message.success(t('admin.customerUsers.userDisabled'))
     await loadUsers()
   } catch (error) {
-    Message.error(getErrorMessage(error, '禁用用户失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.disableFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -69,10 +72,10 @@ const handleEnable = async (user: CustomerUser) => {
   actionLoading.value = true
   try {
     await enableCustomerUser(user.id)
-    Message.success('用户已解禁')
+    Message.success(t('admin.customerUsers.userEnabled'))
     await loadUsers()
   } catch (error) {
-    Message.error(getErrorMessage(error, '解禁用户失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.enableFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -82,9 +85,9 @@ const handleRevokeSessions = async (user: CustomerUser) => {
   actionLoading.value = true
   try {
     const response = await revokeCustomerUserSessions(user.id)
-    Message.success(`已踢下线 ${response.revoked_sessions} 个会话`)
+    Message.success(t('admin.customerUsers.sessionsRevoked', { count: response.revoked_sessions }))
   } catch (error) {
-    Message.error(getErrorMessage(error, '踢下线失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.revokeSessionsFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -97,7 +100,7 @@ const openAssignments = async (user: CustomerUser) => {
     const response = await listUserAppAssignments(user.id)
     assignments.value = response.list
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载应用分配失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.loadAssignmentsFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -109,10 +112,10 @@ const handleAssignApp = async () => {
   try {
     await assignAppsToUser(selectedAssignmentUser.value.id, [assignmentAppId.value.trim()])
     assignmentAppId.value = ''
-    Message.success('应用已分配')
+    Message.success(t('admin.customerUsers.appAssigned'))
     await openAssignments(selectedAssignmentUser.value)
   } catch (error) {
-    Message.error(getErrorMessage(error, '分配应用失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.assignFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -123,10 +126,10 @@ const handleRevokeAssignment = async (assignment: AppAssignment) => {
   actionLoading.value = true
   try {
     await revokeUserAppAssignment(selectedAssignmentUser.value.id, assignment.id)
-    Message.success('应用分配已撤销')
+    Message.success(t('admin.customerUsers.assignmentRevoked'))
     await openAssignments(selectedAssignmentUser.value)
   } catch (error) {
-    Message.error(getErrorMessage(error, '撤销应用分配失败'))
+    Message.error(getErrorMessage(error, t('admin.customerUsers.revokeAssignmentFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -140,36 +143,36 @@ onMounted(loadUsers)
     <header class="page-header">
       <div>
         <p class="page-kicker">Customer Governance</p>
-        <h2>用户管理</h2>
-        <p>查看客户账号状态，执行禁用、解禁和踢下线操作。</p>
+        <h2>{{ t('admin.customerUsers.title') }}</h2>
+        <p>{{ t('admin.customerUsers.description') }}</p>
       </div>
       <div class="metric-card">
-        <span>当前页正常用户</span>
+        <span>{{ t('admin.customerUsers.activeUsersLabel') }}</span>
         <strong>{{ activeCount }}</strong>
       </div>
     </header>
 
     <section class="toolbar">
-      <a-input v-model="filters.keyword" placeholder="搜索邮箱或名称" allow-clear />
+      <a-input v-model="filters.keyword" :placeholder="t('admin.customerUsers.searchPlaceholder')" allow-clear />
       <a-select v-model="filters.status" :options="statusOptions" />
-      <a-button type="primary" :loading="loading" @click="handleSearch">查询</a-button>
+      <a-button type="primary" :loading="loading" @click="handleSearch">{{ t('admin.customerUsers.search') }}</a-button>
     </section>
 
     <section class="users-table" :aria-busy="loading">
       <div class="table-header">
-        <span>用户</span>
-        <span>状态</span>
-        <span>最近登录</span>
-        <span>操作</span>
+        <span>{{ t('admin.customerUsers.user') }}</span>
+        <span>{{ t('admin.customerUsers.status') }}</span>
+        <span>{{ t('admin.customerUsers.lastLogin') }}</span>
+        <span>{{ t('admin.customerUsers.actions') }}</span>
       </div>
-      <div v-if="users.length === 0" class="empty-state">暂无用户</div>
+      <div v-if="users.length === 0" class="empty-state">{{ t('admin.customerUsers.empty') }}</div>
       <article v-for="user in users" :key="user.id" class="table-row">
         <div>
           <strong>{{ user.name || user.email }}</strong>
           <p>{{ user.email }}</p>
         </div>
         <div>
-          <span class="status-pill" :class="`status-${user.status}`">{{ user.status === 'active' ? '正常' : '已禁用' }}</span>
+          <span class="status-pill" :class="`status-${user.status}`">{{ user.status === 'active' ? t('admin.customerUsers.pillActive') : t('admin.customerUsers.pillDisabled') }}</span>
           <p v-if="user.disabled_reason" class="muted">{{ user.disabled_reason }}</p>
         </div>
         <div>
@@ -177,33 +180,33 @@ onMounted(loadUsers)
           <p>{{ user.last_login_ip || '-' }}</p>
         </div>
         <div class="actions">
-          <a-button v-if="user.status === 'active'" size="small" status="danger" :loading="actionLoading" @click="handleDisable(user)">禁用</a-button>
-          <a-button v-else size="small" type="primary" :loading="actionLoading" @click="handleEnable(user)">解禁</a-button>
-          <a-button size="small" :loading="actionLoading" @click="handleRevokeSessions(user)">踢下线</a-button>
-          <a-button size="small" type="primary" :loading="actionLoading" @click="openAssignments(user)">分配应用</a-button>
+          <a-button v-if="user.status === 'active'" size="small" status="danger" :loading="actionLoading" @click="handleDisable(user)">{{ t('admin.customerUsers.disable') }}</a-button>
+          <a-button v-else size="small" type="primary" :loading="actionLoading" @click="handleEnable(user)">{{ t('admin.customerUsers.enable') }}</a-button>
+          <a-button size="small" :loading="actionLoading" @click="handleRevokeSessions(user)">{{ t('admin.customerUsers.revokeSessions') }}</a-button>
+          <a-button size="small" type="primary" :loading="actionLoading" @click="openAssignments(user)">{{ t('admin.customerUsers.assignApp') }}</a-button>
         </div>
       </article>
     </section>
 
     <section v-if="selectedAssignmentUser" class="assignment-panel">
       <div>
-        <h3>分配应用：{{ selectedAssignmentUser.name || selectedAssignmentUser.email }}</h3>
-        <p>输入已发布 App ID，将 AI 功能分配给该客户。</p>
+        <h3>{{ t('admin.customerUsers.assignTitle', { name: selectedAssignmentUser.name || selectedAssignmentUser.email }) }}</h3>
+        <p>{{ t('admin.customerUsers.assignDesc') }}</p>
       </div>
       <div class="assignment-form">
-        <a-input v-model="assignmentAppId" placeholder="输入 App ID" />
-        <a-button type="primary" :loading="actionLoading" @click="handleAssignApp">确认分配</a-button>
+        <a-input v-model="assignmentAppId" :placeholder="t('admin.customerUsers.appIdPlaceholder')" />
+        <a-button type="primary" :loading="actionLoading" @click="handleAssignApp">{{ t('admin.customerUsers.confirmAssign') }}</a-button>
       </div>
       <article v-for="assignment in assignments" :key="assignment.id" class="assignment-row">
         <div>
           <strong>{{ assignment.app?.name || assignment.app_id }}</strong>
-          <p>{{ assignment.status === 'active' ? '已分配' : '已撤销' }}</p>
+          <p>{{ assignment.status === 'active' ? t('admin.customerUsers.assigned') : t('admin.customerUsers.revoked') }}</p>
         </div>
-        <a-button v-if="assignment.status === 'active'" size="small" status="danger" :loading="actionLoading" @click="handleRevokeAssignment(assignment)">撤销</a-button>
+        <a-button v-if="assignment.status === 'active'" size="small" status="danger" :loading="actionLoading" @click="handleRevokeAssignment(assignment)">{{ t('admin.customerUsers.revoke') }}</a-button>
       </article>
     </section>
 
-    <footer class="table-footer">共 {{ total }} 个用户</footer>
+    <footer class="table-footer">{{ t('admin.customerUsers.totalUsers', { count: total }) }}</footer>
   </section>
 </template>
 

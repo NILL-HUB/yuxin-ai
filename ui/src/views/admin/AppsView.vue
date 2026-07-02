@@ -17,7 +17,7 @@ const defaultMetadata: AgentMetadata = {
   input_modalities: ['text'],
   output_modalities: ['text'],
   risk_level: 'safe',
-  model_tier: 'balanced',
+  model_tier: 'standard',
   model_id: '',
   key_policy: 'default',
   cost_level: 'medium',

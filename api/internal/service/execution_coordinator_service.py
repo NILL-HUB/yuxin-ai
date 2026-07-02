@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 logger = logging.getLogger(__name__)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Protocol
@@ -39,10 +39,12 @@ class ExecutionCoordinatorService:
         executor: TaskExecutor,
         cancel_token: CancelToken | None = None,
         event_logger=None,
+        escalation_policy_service=None,
     ):
         self.executor = executor
         self.cancel_token = cancel_token or CancelToken()
         self.event_logger = event_logger
+        self.escalation_policy_service = escalation_policy_service
 
     def execute(self, plan: TaskPlan, routing_log_id=None) -> list[OrchestratedAgentResult]:
         results = self._run_plan(plan)
@@ -183,7 +185,31 @@ class ExecutionCoordinatorService:
         result = OrchestratedAgentResult.from_dict(self.executor.execute(item))
         if execution_mode == ExecutionMode.DEEP_THINKING.value:
             result.warnings.append(f"deep_thinking_stage:{item.task_id}")
+        if self.escalation_policy_service is not None:
+            self._check_escalation(result, item)
         return result
+
+    def _check_escalation(
+        self, result: OrchestratedAgentResult, item: TaskPlanItem
+    ) -> None:
+        try:
+            metadata = getattr(result, "metadata", None) or {}
+            token_count = metadata.get("token_usage", {}).get("total_tokens", 0)
+            current_tier = metadata.get("tier", "standard")
+            task_complexity = getattr(item, "complexity", "simple")
+            balance_credits = getattr(item, "balance_credits", float("inf"))
+            budget_level = getattr(item, "budget_level", "medium")
+            final_tier = self.escalation_policy_service.resolve_tier(
+                current_tier=current_tier,
+                token_count=token_count,
+                task_complexity=task_complexity,
+                balance_credits=balance_credits,
+                budget_level=budget_level,
+            )
+            if final_tier != current_tier:
+                result.warnings.append(f"escalation:{current_tier}->{final_tier}")
+        except Exception:
+            logger.warning("EscalationPolicy 检查失败", exc_info=True)
 
     @staticmethod
     def _failure_result(item: TaskPlanItem) -> OrchestratedAgentResult:

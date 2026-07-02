@@ -21,6 +21,13 @@ export const prepareRegister = (username: string, email: string, password: strin
   })
 }
 
+// 直接注册（无需邮箱验证码）
+export const directRegister = (username: string, password: string) => {
+  return post<PrepareRegisterResponse>(`/auth/register/direct`, {
+    body: { username, password },
+  })
+}
+
 // 校验注册验证码并完成注册
 export const verifyRegister = (username: string, email: string, password: string, code: string) => {
   return post<VerifyRegisterResponse>(`/auth/register/verify`, {

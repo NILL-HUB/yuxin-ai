@@ -175,6 +175,24 @@ def test_document_base_forms_should_validate(form_request):
         assert form.validate_enabled(form.enabled) is None
 
 
+def test_get_documents_with_page_req_accepts_status_and_enabled(form_request):
+    """验证文档分页请求 schema 支持 status 与 enabled 筛选参数。"""
+    ok, form = _validate_form(
+        form_request,
+        GetDocumentsWithPageReq,
+        data={
+            "search_word": "员工",
+            "status": "completed",
+            "enabled": "true",
+        },
+    )
+
+    assert ok is True
+    assert form.search_word.data == "员工"
+    assert form.status.data == "completed"
+    assert form.enabled.data is True
+
+
 def test_validate_upload_file_ids_should_cover_type_count_uuid_and_dedup(form_request):
     with form_request():
         form = CreateDocumentsReq(meta={"csrf": False})

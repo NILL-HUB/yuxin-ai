@@ -7,7 +7,7 @@ from internal.schema import DictField, ListField
 
 PRIMARY_POOLS = ["tenant", "system", "global"]
 RISK_LEVELS = ["low", "medium", "high"]
-MODEL_TIERS = ["cheap", "balanced", "strong"]
+MODEL_TIERS = ["cheap", "standard", "strong"]
 HEALTH_STATUSES = ["healthy", "degraded", "offline", "unknown"]
 ENABLED_VALUES = ["true", "false"]
 
@@ -17,7 +17,7 @@ class GetAdminAgentPoolConfigsReq(FlaskForm):
     pool = StringField("pool", default="", validators=[Optional(), AnyOf(["", *PRIMARY_POOLS])])
     enabled = StringField("enabled", default="", validators=[Optional(), AnyOf(["", *ENABLED_VALUES])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class CreateAdminAgentPoolConfigReq(FlaskForm):
@@ -25,7 +25,7 @@ class CreateAdminAgentPoolConfigReq(FlaskForm):
     primary_pool = StringField("primary_pool", default="tenant", validators=[Optional(), AnyOf(PRIMARY_POOLS)])
     secondary_pools = ListField("secondary_pools", default=[])
     risk_level = StringField("risk_level", default="medium", validators=[Optional(), AnyOf(RISK_LEVELS)])
-    model_tier = StringField("model_tier", default="balanced", validators=[Optional(), AnyOf(MODEL_TIERS)])
+    model_tier = StringField("model_tier", default="standard", validators=[Optional(), AnyOf(MODEL_TIERS)])
     model_id = StringField("model_id", default="", validators=[Optional(), Length(max=128)])
     routing_priority = IntegerField("routing_priority", default=100, validators=[Optional(), NumberRange(min=0, max=9999)])
     enabled = StringField("enabled", default="true", validators=[Optional(), AnyOf(ENABLED_VALUES)])

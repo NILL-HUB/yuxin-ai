@@ -63,7 +63,7 @@ def _build_service(bases=None, segments=None, semantic_hits=None, keywords=None)
     service = RetrievalService.__new__(RetrievalService)
     service.db = _Db(_Session(bases, segments))
     service.knowledge_vector_service = SimpleNamespace(
-        search=lambda _kb, _query, top_k=5: semantic_hits or []
+        search=lambda _kb, _query, top_k=5, **_kwargs: semantic_hits or []
     )
     service.jieba_service = SimpleNamespace(
         extract_keywords=lambda _text, _n: keywords or []

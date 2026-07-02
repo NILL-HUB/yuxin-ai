@@ -141,6 +141,7 @@ class MemoryCandidate(db.Model):
     occurrences = Column(Integer, nullable=False, server_default=text("1"))
     status = Column(String(64), nullable=False, server_default=text("'pending'::character varying"))
     memory_type = Column(String(64), nullable=False, server_default=text("'preference'::character varying"))
+    scope = Column(String(64), nullable=False, server_default=text("'global'::character varying"))
     source_conversation_id = Column(UUID, nullable=True)
     extracted_at = Column(DateTime, nullable=True)
     metadata_ = Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"))

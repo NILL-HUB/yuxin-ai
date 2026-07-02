@@ -1,6 +1,6 @@
 import { type BaseResponse } from '@/models/base'
 import { type ToolConfirmation } from '@/models/tool-confirmation'
-import { get } from '@/utils/request'
+import { get, post } from '@/utils/request'
 
 export const getToolConfirmations = (status?: string) => {
   const params = status ? { status } : undefined
@@ -9,6 +9,14 @@ export const getToolConfirmations = (status?: string) => {
 
 export const getToolConfirmation = (id: string) => {
   return get<BaseResponse<ToolConfirmation>>(`/tool-confirmations/${id}`)
+}
+
+export const postToolConfirmationConfirm = (id: string) => {
+  return post<BaseResponse<ToolConfirmation>>(`/tool-confirmations/${id}/confirm`)
+}
+
+export const postToolConfirmationCancel = (id: string) => {
+  return post<BaseResponse<ToolConfirmation>>(`/tool-confirmations/${id}/cancel`)
 }
 
 export const pollPendingConfirmations = (

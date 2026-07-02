@@ -59,15 +59,26 @@ class KnowledgeVectorService:
     def remove_segment(self, segment: KnowledgeSegment) -> None:
         self._delete_node_id(str(segment.id))
 
-    def search(self, knowledge_base: KnowledgeBase, query: str, top_k: int = 5) -> list[dict]:
+    def search(
+        self,
+        knowledge_base: KnowledgeBase,
+        query: str,
+        top_k: int = 5,
+        knowledge_scope: str | None = None,
+    ) -> list[dict]:
+        filter_conditions = [
+            Filter.by_property("knowledge_base_id").equal(str(knowledge_base.id)),
+            Filter.by_property("document_enabled").equal(True),
+            Filter.by_property("segment_enabled").equal(True),
+        ]
+        if knowledge_scope is not None:
+            filter_conditions.append(
+                Filter.by_property("knowledge_scope").equal(knowledge_scope),
+            )
         search_result = self.vector_store.similarity_search_with_relevance_scores(
             query=query,
             k=top_k,
-            filters=Filter.all_of([
-                Filter.by_property("knowledge_base_id").equal(str(knowledge_base.id)),
-                Filter.by_property("document_enabled").equal(True),
-                Filter.by_property("segment_enabled").equal(True),
-            ]),
+            filters=Filter.all_of(filter_conditions),
         )
         results: list[dict] = []
         for doc, score in search_result or []:

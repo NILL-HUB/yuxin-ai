@@ -57,7 +57,52 @@ class TaskDecomposer:
         llm = self.language_model_service.get_cheap_chat_model()
         structured = llm.with_structured_output(TaskPlanModel)
         prompt = self._build_prompt(query, available_agents, available_tools)
-        return structured.invoke(prompt)
+        plan_model = structured.invoke(prompt)
+
+        if not self._validate_dependencies(plan_model):
+            logger.warning("任务依赖关系非法或存在循环依赖，降级为单任务执行")
+            return self._fallback_plan(query)
+
+        return plan_model
+
+    @staticmethod
+    def _validate_dependencies(plan_model: TaskPlanModel) -> bool:
+        items = plan_model.items
+        if not items:
+            return True
+
+        names = {item.name for item in items}
+
+        for item in items:
+            for dep in item.depends_on:
+                if dep not in names:
+                    return False
+
+        visited = [False] * len(items)
+        in_stack = [False] * len(items)
+        name_to_idx = {item.name: idx for idx, item in enumerate(items)}
+
+        def dfs(idx: int) -> bool:
+            visited[idx] = True
+            in_stack[idx] = True
+            for dep in items[idx].depends_on:
+                dep_idx = name_to_idx.get(dep)
+                if dep_idx is None:
+                    continue
+                if in_stack[dep_idx]:
+                    return True
+                if not visited[dep_idx]:
+                    if dfs(dep_idx):
+                        return True
+            in_stack[idx] = False
+            return False
+
+        for i in range(len(items)):
+            if not visited[i]:
+                if dfs(i):
+                    return False
+
+        return True
 
     def _to_task_plan(self, query: str, plan_model: TaskPlanModel) -> TaskPlan:
         if not plan_model.items:

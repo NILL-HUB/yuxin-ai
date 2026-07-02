@@ -50,7 +50,7 @@ class AdminToolGovernanceService:
         keyword: str = "",
     ) -> dict:
         current_page = max(int(current_page or 1), 1)
-        page_size = max(min(int(page_size or 20), 50), 1)
+        page_size = max(min(int(page_size or 20), 100), 1)
         query = self.session.query(ToolGovernancePolicy)
         if source_type:
             query = query.filter(ToolGovernancePolicy.source_type == source_type)
@@ -174,7 +174,7 @@ class AdminToolGovernanceService:
         end_date: str = "",
     ) -> dict:
         current_page = max(int(current_page or 1), 1)
-        page_size = max(min(int(page_size or 20), 50), 1)
+        page_size = max(min(int(page_size or 20), 100), 1)
         query = self.session.query(ToolInvocationAudit)
         if tool_id:
             query = query.filter(ToolInvocationAudit.tool_id == tool_id)

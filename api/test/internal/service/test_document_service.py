@@ -517,6 +517,8 @@ class TestDocumentService:
             current_page=SimpleNamespace(data=1),
             page_size=SimpleNamespace(data=20),
             search_word=SimpleNamespace(data="doc"),
+            status=SimpleNamespace(data=""),
+            enabled=SimpleNamespace(data=None),
         )
 
         records, paginator = service.get_documents_with_page(dataset_id, req, account)
@@ -566,12 +568,69 @@ class TestDocumentService:
             current_page=SimpleNamespace(data=1),
             page_size=SimpleNamespace(data=20),
             search_word=SimpleNamespace(data=""),
+            status=SimpleNamespace(data=""),
+            enabled=SimpleNamespace(data=None),
         )
 
         records, _paginator = service.get_documents_with_page(dataset_id, req, account)
 
         assert records == ["doc-1"]
         assert len(query.filter_calls[0]) == 2
+
+    def test_get_documents_with_page_filters_by_status_and_enabled(self, monkeypatch):
+        """验证分页查询会将状态与启用状态作为真实筛选条件传入查询。"""
+        account = SimpleNamespace(id=uuid4())
+        dataset_id = uuid4()
+
+        class _Query:
+            def __init__(self):
+                self.filter_calls = []
+
+            def filter(self, *args, **_kwargs):
+                self.filter_calls.append(args)
+                return self
+
+            def order_by(self, *_args, **_kwargs):
+                return self
+
+        query = _Query()
+        service = DocumentService(
+            db=SimpleNamespace(session=SimpleNamespace(query=lambda _model: query)),
+            redis_client=_RedisStub(),
+        )
+        monkeypatch.setattr(
+            service,
+            "get",
+            lambda model, _id: SimpleNamespace(id=dataset_id, account_id=account.id) if model is Dataset else None,
+        )
+
+        class _Paginator:
+            def __init__(self, db, req):
+                pass
+
+            def paginate(self, query_obj):
+                assert query_obj is query
+                return ["doc-1"]
+
+        monkeypatch.setattr("internal.service.document_service.Paginator", _Paginator)
+        req = SimpleNamespace(
+            current_page=SimpleNamespace(data=1),
+            page_size=SimpleNamespace(data=20),
+            search_word=SimpleNamespace(data="员工"),
+            status=SimpleNamespace(data=DocumentStatus.COMPLETED.value),
+            enabled=SimpleNamespace(data=True),
+        )
+
+        records, _paginator = service.get_documents_with_page(dataset_id, req, account)
+
+        assert records == ["doc-1"]
+        assert len(query.filter_calls) == 1
+        assert len(query.filter_calls[0]) == 5
+        assert any(
+            getattr(getattr(filter_arg, "right", None), "value", None) == DocumentStatus.COMPLETED.value
+            for filter_arg in query.filter_calls[0]
+        )
+        assert any("enabled" in str(filter_arg) and "true" in str(filter_arg).lower() for filter_arg in query.filter_calls[0])
 
     def test_get_documents_with_page_should_raise_when_dataset_not_found(self, monkeypatch):
         service = DocumentService(

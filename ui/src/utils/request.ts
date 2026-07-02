@@ -14,6 +14,9 @@ import {
   getStoredAdminCredential,
 } from '@/utils/admin-auth'
 import { createRequestError, getErrorMessage, isRequestError } from '@/utils/error'
+import { i18n } from '@/i18n'
+
+const t = i18n.global.t
 
 // 1.超时时间为100s
 const TIME_OUT = 100000
@@ -282,7 +285,7 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
 
     if (!isApiResponse(json)) {
       throw createRequestError({
-        message: '响应数据格式错误',
+        message: t('common.request.responseFormatError'),
         status: response.status,
         response: json,
       })
@@ -310,7 +313,7 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
     if (json.code === httpCode.notFound) {
       await router.push({ name: 'errors-not-found' })
       throw createRequestError({
-        message: json.message || '资源不存在',
+        message: json.message || t('common.request.resourceNotFound'),
         code: json.code,
         status: response.status,
         response: json,
@@ -320,7 +323,7 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
     if (json.code === httpCode.forbidden) {
       await router.push({ name: 'errors-forbidden' })
       throw createRequestError({
-        message: json.message || '无权限访问',
+        message: json.message || t('common.request.unauthorized'),
         code: json.code,
         status: response.status,
         response: json,
@@ -328,7 +331,7 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
     }
 
     throw createRequestError({
-      message: json.message || '请求失败',
+      message: json.message || t('common.request.requestFailed'),
       code: json.code,
       status: response.status,
       response: json,
@@ -340,12 +343,12 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
 
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw createRequestError({
-        message: isTimeoutAbort ? '接口已超时' : '请求已取消',
+        message: isTimeoutAbort ? t('common.request.timeout') : t('common.request.requestCancelled'),
         cause: error,
       })
     }
 
-    throw normalizeUnknownError(error, '请求失败')
+    throw normalizeUnknownError(error, t('common.request.requestFailed'))
   } finally {
     globalThis.clearTimeout(timeoutId)
     externalSignal?.removeEventListener('abort', abortListener)
@@ -364,7 +367,7 @@ const handleStream = <TData>(
     if (!response.ok) {
       reject(
         createRequestError({
-          message: '网络请求失败',
+          message: t('common.request.networkRequestError'),
           status: response.status,
         }),
       )
@@ -375,7 +378,7 @@ const handleStream = <TData>(
     if (!reader) {
       reject(
         createRequestError({
-          message: '流式响应不可读',
+          message: t('common.request.streamNotReadable'),
           status: response.status,
         }),
       )
@@ -404,7 +407,7 @@ const handleStream = <TData>(
               emitEvent()
               resolve()
             } catch (error: unknown) {
-              reject(normalizeUnknownError(error, '解析流式数据失败'))
+              reject(normalizeUnknownError(error, t('common.request.streamParseFailed')))
             }
             return
           }
@@ -429,14 +432,14 @@ const handleStream = <TData>(
               }
             })
           } catch (error: unknown) {
-            reject(normalizeUnknownError(error, '解析流式数据失败'))
+            reject(normalizeUnknownError(error, t('common.request.streamParseFailed')))
             return
           }
 
           read()
         })
         .catch((error: unknown) => {
-          reject(normalizeUnknownError(error, '读取流式数据失败'))
+          reject(normalizeUnknownError(error, t('common.request.streamReadFailed')))
         })
     }
 
@@ -548,7 +551,7 @@ export const upload = <T>(url: string, options: UploadOptions = {}): Promise<T> 
       if (xhr.status !== 200) {
         reject(
           createRequestError({
-            message: '上传失败',
+            message: t('common.request.uploadFailed'),
             status: xhr.status,
             response: xhr.response,
           }),
@@ -565,7 +568,7 @@ export const upload = <T>(url: string, options: UploadOptions = {}): Promise<T> 
         console.error('[Upload] Invalid response format:', response)
         reject(
           createRequestError({
-            message: '上传失败: 响应格式错误',
+            message: t('common.request.uploadFormatError'),
             status: xhr.status,
             response,
           }),
@@ -593,7 +596,7 @@ export const upload = <T>(url: string, options: UploadOptions = {}): Promise<T> 
 
       reject(
         createRequestError({
-          message: response.message || '上传失败',
+          message: response.message || t('common.request.uploadFailed'),
           code: response.code,
           status: xhr.status,
           response,
@@ -605,7 +608,7 @@ export const upload = <T>(url: string, options: UploadOptions = {}): Promise<T> 
       console.error('[Upload] Network error')
       reject(
         createRequestError({
-          message: '网络错误',
+          message: t('common.request.networkError'),
           status: xhr.status,
         }),
       )

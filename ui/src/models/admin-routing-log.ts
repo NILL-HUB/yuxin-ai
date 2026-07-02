@@ -1,3 +1,9 @@
+import type {
+  CostPolicy,
+  ExecutionMode,
+  ModelTier,
+} from '@/models/orchestration'
+
 export type AdminRoutingLogFilters = {
   current_page: number
   page_size: number
@@ -13,20 +19,23 @@ export type AdminRoutingLogFilters = {
   end_at?: string
 }
 
-type RoutingLogJsonValue = string | number | boolean | null | undefined
+type RoutingLogJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | { [key: string]: RoutingLogJsonValue }
 
 type RoutingLogJsonObject = Record<string, RoutingLogJsonValue>
 
 export interface RoutingDecisionJson {
-  execution_mode?: string
+  execution_mode?: ExecutionMode
   intent?: string
   complexity?: string
   risk_level?: string
-  recommended_model_tier?: string
-  cost_policy?: {
-    allowed?: boolean
-    reason?: string
-  }
+  recommended_model_tier?: ModelTier
+  cost_policy?: CostPolicy
   [key: string]: RoutingLogJsonValue
 }
 

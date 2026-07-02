@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import {
   createPlan,
@@ -14,6 +15,8 @@ import {
 } from '@/services/admin-billing'
 import { type GeneratedRedeemCode, type Plan, type RedeemCodeBatch, type RedeemCodeRecord } from '@/models/billing'
 import { getErrorMessage } from '@/utils/error'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const adminStore = useAdminStore()
@@ -43,7 +46,7 @@ const loadBilling = async () => {
     batches.value = batchResult.list
     codes.value = codeResult.list
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载套餐卡密失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.loadFailed')))
   } finally {
     loading.value = false
   }
@@ -57,10 +60,10 @@ const handleCreatePlan = async () => {
       sort_order: 0,
       entitlements: [{ feature_key: 'max_agents', feature_value: '10', value_type: 'number' }],
     })
-    Message.success('套餐已创建')
+    Message.success(t('admin.billing.planCreated'))
     await loadBilling()
   } catch (error) {
-    Message.error(getErrorMessage(error, '创建套餐失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.createPlanFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -70,10 +73,10 @@ const handleTogglePlan = async (plan: Plan) => {
   actionLoading.value = true
   try {
     await setPlanStatus(plan.id, plan.status === 'active' ? 'disabled' : 'active')
-    Message.success(plan.status === 'active' ? '套餐已停用' : '套餐已启用')
+    Message.success(plan.status === 'active' ? t('admin.billing.planDisabled') : t('admin.billing.planEnabled'))
     await loadBilling()
   } catch (error) {
-    Message.error(getErrorMessage(error, '更新套餐状态失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.updatePlanFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -88,7 +91,7 @@ const getGeneratedFileBaseName = () => {
 
 const copyGeneratedCodes = async () => {
   await navigator.clipboard.writeText(getPlainCodesText())
-  Message.success('卡密已复制')
+  Message.success(t('admin.billing.codesCopied'))
 }
 
 const downloadGeneratedCodes = (format: 'txt' | 'csv') => {
@@ -107,10 +110,10 @@ const downloadGeneratedCodes = (format: 'txt' | 'csv') => {
 const formatTimestamp = (timestamp: number | null) => timestamp ? new Date(timestamp * 1000).toISOString().slice(0, 10) : '-'
 
 const formatCodeStatus = (status: string) => ({
-  unused: '未兑换',
-  used: '已兑换',
-  disabled: '已禁用',
-  expired: '已过期',
+  unused: t('admin.billing.statusUnused'),
+  used: t('admin.billing.statusUsed'),
+  disabled: t('admin.billing.statusDisabled'),
+  expired: t('admin.billing.statusExpired'),
 }[status] || status)
 
 const queryCodes = async () => {
@@ -119,7 +122,7 @@ const queryCodes = async () => {
     const result = await listRedeemCodes(codeFilter.value)
     codes.value = result.list
   } catch (error) {
-    Message.error(getErrorMessage(error, '查询卡密失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.queryCodesFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -129,10 +132,10 @@ const handleDisableBatch = async (batchId: string) => {
   actionLoading.value = true
   try {
     await disableRedeemCodeBatch(batchId)
-    Message.success('批次已禁用')
+    Message.success(t('admin.billing.batchDisabled'))
     await loadBilling()
   } catch (error) {
-    Message.error(getErrorMessage(error, '禁用批次失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.disableBatchFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -142,10 +145,10 @@ const handleDisableCode = async (codeId: string) => {
   actionLoading.value = true
   try {
     await disableRedeemCode(codeId)
-    Message.success('卡密已禁用')
+    Message.success(t('admin.billing.codeDisabled'))
     await queryCodes()
   } catch (error) {
-    Message.error(getErrorMessage(error, '禁用卡密失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.disableCodeFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -154,7 +157,7 @@ const handleDisableCode = async (codeId: string) => {
 const handleGenerateCodes = async () => {
   const firstPlan = plans.value[0]
   if (!firstPlan) {
-    Message.error('请先创建套餐')
+    Message.error(t('admin.billing.planRequired'))
     return
   }
   actionLoading.value = true
@@ -162,10 +165,10 @@ const handleGenerateCodes = async () => {
     const result = await generateRedeemCodes({ name: codeForm.value.name, plan_id: firstPlan.id, quantity: codeForm.value.quantity })
     generatedBatchName.value = result.batch.name || codeForm.value.name
     generatedCodes.value = result.codes
-    Message.success('卡密已生成，请立即复制或下载明文')
+    Message.success(t('admin.billing.codesGenerated'))
     await loadBilling()
   } catch (error) {
-    Message.error(getErrorMessage(error, '生成卡密失败'))
+    Message.error(getErrorMessage(error, t('admin.billing.generateFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -179,27 +182,27 @@ onMounted(loadBilling)
     <header class="page-header">
       <div>
         <p class="page-kicker">Billing MVP</p>
-        <h2>套餐卡密</h2>
-        <p>维护套餐权益，批量生成卡密，明文只在生成后展示一次。</p>
+        <h2>{{ t('admin.billing.title') }}</h2>
+        <p>{{ t('admin.billing.description') }}</p>
       </div>
     </header>
 
     <section class="quick-forms">
       <div v-if="canUpdatePlan" class="panel">
-        <h3>快速创建套餐</h3>
+        <h3>{{ t('admin.billing.createPlanTitle') }}</h3>
         <div class="form-grid">
-          <a-input v-model="planForm.code" placeholder="套餐代码" />
-          <a-input v-model="planForm.name" placeholder="套餐名称" />
-          <a-input v-model="planForm.price" placeholder="价格" />
-          <a-button type="primary" :loading="actionLoading" @click="handleCreatePlan">创建套餐</a-button>
+          <a-input v-model="planForm.code" :placeholder="t('admin.billing.planCodePlaceholder')" />
+          <a-input v-model="planForm.name" :placeholder="t('admin.billing.planNamePlaceholder')" />
+          <a-input v-model="planForm.price" :placeholder="t('admin.billing.planPricePlaceholder')" />
+          <a-button type="primary" :loading="actionLoading" @click="handleCreatePlan">{{ t('admin.billing.createPlan') }}</a-button>
         </div>
       </div>
       <div v-if="canUpdateRedeemCode" class="panel">
-        <h3>生成卡密</h3>
+        <h3>{{ t('admin.billing.generateCodesTitle') }}</h3>
         <div class="form-grid">
-          <a-input v-model="codeForm.name" placeholder="卡密批次名称" />
-          <a-input v-model="codeForm.quantity" placeholder="数量" />
-          <a-button type="primary" :loading="actionLoading" @click="handleGenerateCodes">生成卡密</a-button>
+          <a-input v-model="codeForm.name" :placeholder="t('admin.billing.batchNamePlaceholder')" />
+          <a-input v-model="codeForm.quantity" :placeholder="t('admin.billing.quantityPlaceholder')" />
+          <a-button type="primary" :loading="actionLoading" @click="handleGenerateCodes">{{ t('admin.billing.generateCodes') }}</a-button>
         </div>
       </div>
     </section>
@@ -207,13 +210,13 @@ onMounted(loadBilling)
     <section v-if="canUpdateRedeemCode && generatedCodes.length" class="generated-panel">
       <div class="generated-header">
         <div>
-          <h3>本次生成明文</h3>
-          <p>卡密明文只展示一次，请立即复制、下载并妥善保存，系统后续只保留掩码和哈希。</p>
+          <h3>{{ t('admin.billing.generatedTitle') }}</h3>
+          <p>{{ t('admin.billing.generatedDesc') }}</p>
         </div>
         <div class="generated-actions">
-          <a-button size="small" @click="copyGeneratedCodes">复制全部</a-button>
-          <a-button size="small" @click="downloadGeneratedCodes('txt')">下载 TXT</a-button>
-          <a-button size="small" @click="downloadGeneratedCodes('csv')">下载 CSV</a-button>
+          <a-button size="small" @click="copyGeneratedCodes">{{ t('admin.billing.copyAll') }}</a-button>
+          <a-button size="small" @click="downloadGeneratedCodes('txt')">{{ t('admin.billing.downloadTxt') }}</a-button>
+          <a-button size="small" @click="downloadGeneratedCodes('csv')">{{ t('admin.billing.downloadCsv') }}</a-button>
         </div>
       </div>
       <div v-for="code in generatedCodes" :key="code.plain_code" class="code-line">{{ code.plain_code }}</div>
@@ -221,45 +224,45 @@ onMounted(loadBilling)
 
     <section class="columns">
       <div class="panel">
-        <h3>套餐列表</h3>
+        <h3>{{ t('admin.billing.planListTitle') }}</h3>
         <article v-for="plan in plans" :key="plan.id" class="row-card">
           <div>
             <strong>{{ plan.name }}</strong>
-            <p>{{ plan.code }} · {{ plan.duration_days }} 天 · {{ plan.grant_token_credits }} 算力值</p>
+            <p>{{ plan.code }} · {{ plan.duration_days }} {{ t('admin.billing.days') }} · {{ plan.grant_token_credits }} {{ t('admin.billing.credits') }}</p>
           </div>
           <a-button v-if="canUpdatePlan" size="small" :status="plan.status === 'active' ? 'danger' : 'normal'" :loading="actionLoading" @click="handleTogglePlan(plan)">
-            {{ plan.status === 'active' ? '停用' : '启用' }}
+            {{ plan.status === 'active' ? t('admin.billing.disable') : t('admin.billing.enable') }}
           </a-button>
         </article>
       </div>
 
       <div class="panel">
-        <h3>卡密批次</h3>
+        <h3>{{ t('admin.billing.batchTitle') }}</h3>
         <article v-for="batch in batches" :key="batch.id" class="row-card">
         <div>
           <strong>{{ batch.name }}</strong>
-          <p>数量 {{ batch.quantity }} · {{ batch.status === 'disabled' ? '已禁用' : '可用' }}</p>
+          <p>{{ t('admin.billing.quantityPlaceholder') }} {{ batch.quantity }} · {{ batch.status === 'disabled' ? t('admin.billing.batchDisabledLabel') : t('admin.billing.batchAvailable') }}</p>
         </div>
-        <a-button v-if="canUpdateRedeemCode && batch.status !== 'disabled'" size="small" status="danger" :loading="actionLoading" @click="handleDisableBatch(batch.id)">禁用批次</a-button>
+        <a-button v-if="canUpdateRedeemCode && batch.status !== 'disabled'" size="small" status="danger" :loading="actionLoading" @click="handleDisableBatch(batch.id)">{{ t('admin.billing.disableBatch') }}</a-button>
       </article>
       </div>
 
       <div class="panel">
         <div class="panel-title-row">
-          <h3>最近卡密</h3>
+          <h3>{{ t('admin.billing.recentCodesTitle') }}</h3>
           <div class="code-filter-form">
-            <a-input v-model="codeFilter.code_keyword" placeholder="卡密掩码关键词" />
-            <a-input v-model="codeFilter.status" placeholder="状态 unused/used/disabled/expired" />
-            <a-button :loading="actionLoading" @click="queryCodes">查询卡密</a-button>
+            <a-input v-model="codeFilter.code_keyword" :placeholder="t('admin.billing.codeKeywordPlaceholder')" />
+            <a-input v-model="codeFilter.status" :placeholder="t('admin.billing.statusPlaceholder')" />
+            <a-button :loading="actionLoading" @click="queryCodes">{{ t('admin.billing.queryCodes') }}</a-button>
           </div>
         </div>
         <article v-for="code in codes" :key="code.id" class="row-card">
         <div>
           <strong>{{ code.code_mask }}</strong>
           <p>{{ formatCodeStatus(code.status) }}</p>
-          <p>兑换用户：{{ code.redeemed_by || '-' }} · 兑换时间：{{ formatTimestamp(code.redeemed_at) }}</p>
+          <p>{{ t('admin.billing.redeemedBy') }}：{{ code.redeemed_by || '-' }} · {{ t('admin.billing.redeemedAt') }}：{{ formatTimestamp(code.redeemed_at) }}</p>
         </div>
-        <a-button v-if="canUpdateRedeemCode && (code.status === 'unused' || code.status === 'expired')" size="small" status="danger" :loading="actionLoading" @click="handleDisableCode(code.id)">禁用卡密</a-button>
+        <a-button v-if="canUpdateRedeemCode && (code.status === 'unused' || code.status === 'expired')" size="small" status="danger" :loading="actionLoading" @click="handleDisableCode(code.id)">{{ t('admin.billing.disableCode') }}</a-button>
       </article>
       </div>
     </section>

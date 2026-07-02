@@ -20,6 +20,13 @@ class MemoryCandidateHandler:
     user_memory_confirmation_service: UserMemoryConfirmationService
 
     @login_required
+    def list(self):
+        """获取当前用户的待确认记忆候选列表"""
+        candidates = self.user_memory_confirmation_service.list_pending(current_user)
+        resp = MemoryCandidateResp()
+        return success_json(resp.dump(candidates, many=True))
+
+    @login_required
     def confirm(self, candidate_id: UUID):
         req = ConfirmMemoryCandidateReq()
         if not req.validate():

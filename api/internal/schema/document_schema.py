@@ -186,6 +186,13 @@ class GetDocumentsWithPageReq(PaginatorReq):
     search_word = StringField("search_word", default="", validators=[
         Optional()
     ])
+    status = StringField("status", default="", validators=[
+        Optional(),
+        Length(max=50, message="文档状态长度不能超过50"),
+    ])
+    enabled = BooleanField("enabled", default=None, validators=[
+        Optional()
+    ])
 
 
 class GetDocumentsWithPageResp(Schema):

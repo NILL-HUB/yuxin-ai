@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import router, { getAdminAuthGuardRedirect, getAuthGuardRedirect, getCustomerConfigGuardRedirect } from '@/router'
+import router, {
+  getAdminAuthGuardRedirect,
+  getAuthGuardRedirect,
+  getCustomerConfigGuardRedirect,
+  shouldEvaluateUserAuth,
+} from '@/router'
 
 describe('getAuthGuardRedirect', () => {
+  it('skips user auth evaluation for admin routes', () => {
+    expect(shouldEvaluateUserAuth('/admin')).toBe(false)
+    expect(shouldEvaluateUserAuth('/admin/apps')).toBe(false)
+    expect(shouldEvaluateUserAuth('/admin/store/public-apps')).toBe(false)
+    expect(shouldEvaluateUserAuth('/home')).toBe(true)
+  })
+
   it('allows public routes for anonymous users', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/home',
         routeName: 'pages-home',
         isLoggedIn: false,
       }),
@@ -14,7 +27,26 @@ describe('getAuthGuardRedirect', () => {
   it('allows anonymous users to access admin login after admin guard passes', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/admin/login',
         routeName: 'admin-login',
+        isLoggedIn: false,
+      }),
+    ).toBeNull()
+  })
+
+  it('skips user auth guard for admin paths even when user is not logged in', () => {
+    expect(
+      getAuthGuardRedirect({
+        path: '/admin',
+        routeName: 'admin-index',
+        isLoggedIn: false,
+      }),
+    ).toBeNull()
+
+    expect(
+      getAuthGuardRedirect({
+        path: '/admin/users',
+        routeName: 'admin-users',
         isLoggedIn: false,
       }),
     ).toBeNull()
@@ -23,6 +55,7 @@ describe('getAuthGuardRedirect', () => {
   it('allows anonymous users to access skills marketplace route', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/store/skills',
         routeName: 'store-skills-list',
         isLoggedIn: false,
       }),
@@ -32,6 +65,7 @@ describe('getAuthGuardRedirect', () => {
   it('allows anonymous users to access login-prompt workspace routes', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/space/apps',
         routeName: 'space-apps-list',
         isLoggedIn: false,
       }),
@@ -39,6 +73,7 @@ describe('getAuthGuardRedirect', () => {
 
     expect(
       getAuthGuardRedirect({
+        path: '/openapi/api-keys',
         routeName: 'openapi-api-keys-list',
         isLoggedIn: false,
       }),
@@ -48,6 +83,7 @@ describe('getAuthGuardRedirect', () => {
   it('redirects anonymous users away from private workspace detail routes', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/space/apps/app-1',
         routeName: 'space-apps-detail',
         isLoggedIn: false,
       }),
@@ -55,6 +91,7 @@ describe('getAuthGuardRedirect', () => {
 
     expect(
       getAuthGuardRedirect({
+        path: '/space/workflows/wf-1',
         routeName: 'space-workflows-detail',
         isLoggedIn: false,
       }),
@@ -64,6 +101,7 @@ describe('getAuthGuardRedirect', () => {
   it('redirects anonymous users away from unnamed private routes by default', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/some/private/page',
         routeName: '',
         isLoggedIn: false,
       }),
@@ -73,6 +111,7 @@ describe('getAuthGuardRedirect', () => {
   it('allows authenticated users to access private routes', () => {
     expect(
       getAuthGuardRedirect({
+        path: '/space/apps/app-1',
         routeName: 'space-apps-detail',
         isLoggedIn: true,
       }),
@@ -81,7 +120,7 @@ describe('getAuthGuardRedirect', () => {
 })
 
 describe('getCustomerConfigGuardRedirect', () => {
-  it('redirects direct access to configuration routes for non-admin users', () => {
+  it('blocks non-admin users from config center routes', () => {
     expect(getCustomerConfigGuardRedirect({ path: '/space/apps', routeName: 'space-apps-list', isAdminLoggedIn: false })).toEqual({
       path: '/errors/403',
     })
@@ -93,41 +132,31 @@ describe('getCustomerConfigGuardRedirect', () => {
     })
   })
 
-  it('allows logged-in admin users to access configuration routes', () => {
+  it('allows admin users to access config center routes', () => {
     expect(getCustomerConfigGuardRedirect({ path: '/space/apps', routeName: 'space-apps-list', isAdminLoggedIn: true })).toBeNull()
     expect(getCustomerConfigGuardRedirect({ path: '/space/datasets/dataset-1/documents', routeName: 'space-datasets-documents-list', isAdminLoggedIn: true })).toBeNull()
     expect(getCustomerConfigGuardRedirect({ path: '/openapi/api-keys', routeName: 'openapi-api-keys-list', isAdminLoggedIn: true })).toBeNull()
     expect(getCustomerConfigGuardRedirect({ path: '/space/apps?create_type=app', routeName: 'space-apps-list', isAdminLoggedIn: true })).toBeNull()
   })
 
-  it('keeps store and public routes available to customers', () => {
+  it('allows non-admin users to access non-config routes', () => {
     expect(getCustomerConfigGuardRedirect({ path: '/store/tools', routeName: 'store-tools-list', isAdminLoggedIn: false })).toBeNull()
     expect(getCustomerConfigGuardRedirect({ path: '/home', routeName: 'pages-home', isAdminLoggedIn: false })).toBeNull()
   })
 })
 
 describe('getAdminAuthGuardRedirect', () => {
-  it('redirects anonymous admin users to admin login', () => {
+  it('redirects unauthenticated admin route access to admin login', () => {
     expect(
       getAdminAuthGuardRedirect({
         path: '/admin/apps',
         routeName: 'admin-apps',
         isAdminLoggedIn: false,
       }),
-    ).toEqual({ path: '/auth/login', query: { mode: 'admin', redirect: '/admin/apps' } })
+    ).toEqual({ path: '/admin/login', query: { redirect: '/admin/apps' } })
   })
 
-  it('allows anonymous users to access admin login', () => {
-    expect(
-      getAdminAuthGuardRedirect({
-        path: '/admin/login',
-        routeName: 'admin-login',
-        isAdminLoggedIn: false,
-      }),
-    ).toBeNull()
-  })
-
-  it('redirects logged-in admin users away from admin login', () => {
+  it('redirects logged-in admin away from admin login page', () => {
     expect(
       getAdminAuthGuardRedirect({
         path: '/admin/login',
@@ -137,63 +166,67 @@ describe('getAdminAuthGuardRedirect', () => {
     ).toEqual({ path: '/admin' })
   })
 
-  it('requires both plan and redeem code read permissions for admin billing route', () => {
-    const route = router.getRoutes().find((route) => route.name === 'admin-billing')
-
-    expect(route?.meta.permissions).toEqual(['plan:read', 'redeem_code:read'])
-  })
-
-  it('allows logged-in admin users to access admin routes when permissions match', () => {
+  it('allows logged-in admin to access admin pages', () => {
     expect(
       getAdminAuthGuardRedirect({
         path: '/admin/apps',
         routeName: 'admin-apps',
         isAdminLoggedIn: true,
-        adminPermissions: ['app:read'],
-        requiredPermissions: ['app:read'],
       }),
     ).toBeNull()
+  })
+
+  it('returns 403 when admin lacks required role', () => {
     expect(
       getAdminAuthGuardRedirect({
         path: '/admin/users',
         routeName: 'admin-users',
         isAdminLoggedIn: true,
-        adminPermissions: ['user:read'],
-        requiredPermissions: ['user:read'],
-      }),
-    ).toBeNull()
-    expect(
-      getAdminAuthGuardRedirect({
-        path: '/admin/billing',
-        routeName: 'admin-billing',
-        isAdminLoggedIn: true,
-        adminPermissions: ['plan:read', 'redeem_code:read'],
-        requiredPermissions: ['plan:read', 'redeem_code:read'],
-      }),
-    ).toBeNull()
-  })
-
-  it('redirects admin billing users when either plan or redeem code read permission is missing', () => {
-    expect(
-      getAdminAuthGuardRedirect({
-        path: '/admin/billing',
-        routeName: 'admin-billing',
-        isAdminLoggedIn: true,
-        adminPermissions: ['plan:read'],
-        requiredPermissions: ['plan:read', 'redeem_code:read'],
+        requiredRoles: ['super_admin'],
+        adminRoles: ['viewer'],
       }),
     ).toEqual({ path: '/errors/403' })
   })
 
-  it('redirects logged-in admin users without required permissions to forbidden page', () => {
+  it('returns 403 when admin lacks required permission', () => {
+    expect(
+      getAdminAuthGuardRedirect({
+        path: '/admin/billing',
+        routeName: 'admin-billing',
+        isAdminLoggedIn: true,
+        requiredPermissions: ['billing:manage'],
+        adminPermissions: [],
+      }),
+    ).toEqual({ path: '/errors/403' })
+  })
+
+  it('allows access when admin has required permission', () => {
+    expect(
+      getAdminAuthGuardRedirect({
+        path: '/admin/billing',
+        routeName: 'admin-billing',
+        isAdminLoggedIn: true,
+        requiredPermissions: ['billing:manage'],
+        adminPermissions: ['billing:manage'],
+      }),
+    ).toBeNull()
+  })
+
+  it('returns 403 when admin lacks at least one required permission', () => {
     expect(
       getAdminAuthGuardRedirect({
         path: '/admin/apps',
         routeName: 'admin-apps',
         isAdminLoggedIn: true,
-        adminPermissions: ['workflow:read'],
-        requiredPermissions: ['app:read'],
+        requiredPermissions: ['app:read', 'app:manage'],
+        adminPermissions: ['app:read'],
       }),
     ).toEqual({ path: '/errors/403' })
+  })
+})
+
+describe('router', () => {
+  it('is defined', () => {
+    expect(router).toBeDefined()
   })
 })

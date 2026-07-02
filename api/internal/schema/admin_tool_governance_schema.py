@@ -18,7 +18,7 @@ class GetAdminToolGovernancePoliciesReq(FlaskForm):
     enabled = StringField("enabled", default="", validators=[Optional(), AnyOf(["", "true", "false"])])
     keyword = StringField("keyword", default="", validators=[Optional(), Length(max=255)])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class BatchUpdateToolGovernanceRiskReq(FlaskForm):
@@ -32,7 +32,7 @@ class GetAdminToolGovernanceAuditReq(FlaskForm):
     start_date = StringField("start_date", default="", validators=[Optional(), Length(max=32)])
     end_date = StringField("end_date", default="", validators=[Optional(), Length(max=32)])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class AdminToolGovernancePolicyResp(Schema):

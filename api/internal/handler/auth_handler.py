@@ -45,6 +45,18 @@ class AuthHandler:
         self.account_service.prepare_register(req.email.data, req.password.data, username=req.username.data)
         return success_message("验证码已发送到您的邮箱,请查收")
 
+    def direct_register(self):
+        """直接注册（无需邮箱验证码）"""
+        from internal.schema.auth_schema import DirectRegisterReq
+        req = DirectRegisterReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+
+        credential = self.account_service.direct_register(req.username.data, req.password.data)
+
+        resp = PasswordLoginResp()
+        return success_json(resp.dump(credential))
+
     def verify_register(self):
         """校验注册验证码并创建账号"""
         req = VerifyRegisterReq()

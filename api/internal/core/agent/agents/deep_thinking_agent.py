@@ -20,6 +20,25 @@ from langgraph.graph.state import CompiledStateGraph
 from flask import has_app_context
 
 from internal.core.agent.agents.function_call_agent import FunctionCallAgent
+from internal.core.agent.agents.deep_thinking_utils import (
+    build_completion_summary,
+    build_document_fragment_stem,
+    build_local_document_section_body,
+    build_local_plain_text_fallback,
+    build_thinking_context,
+    extract_artifact_paths,
+    extract_last_human_query,
+    extract_llm_text,
+    extract_query,
+    extract_tagged_block_content,
+    normalize_outline_title,
+    read_positive_int_env,
+    render_document_front_matter,
+    render_document_section_block,
+    sanitize_deep_answer,
+    sanitize_document_section_body,
+    score_plain_text_artifact_content,
+)
 from internal.core.agent.entities.artifact_policy_entity import ArtifactPolicy
 from internal.core.agent.entities.agent_entity import (
     DEEP_THINKING_SYSTEM_PROMPT,
@@ -36,28 +55,6 @@ from internal.core.agent.middleware import DeepTimelineMiddleware
 from internal.core.agent.usage_utils import track_language_model_usage
 
 logger = logging.getLogger(__name__)
-
-
-def _read_positive_int_env(env_name: str, default: int, *, minimum: int | None = None) -> int:
-    raw_value = (os.getenv(env_name) or "").strip()
-    if not raw_value:
-        return default
-
-    try:
-        parsed_value = int(raw_value)
-    except ValueError:
-        logger.warning("%s=%r 无法解析为整数，使用默认值 %s", env_name, raw_value, default)
-        return default
-
-    if parsed_value <= 0:
-        logger.warning("%s=%r 必须大于 0，使用默认值 %s", env_name, raw_value, default)
-        return default
-
-    if minimum is not None and parsed_value < minimum:
-        logger.warning("%s=%r 小于最小值 %s，使用最小值 %s", env_name, raw_value, minimum, minimum)
-        return minimum
-
-    return parsed_value
 
 
 __all__ = [
@@ -146,18 +143,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @classmethod
     def _extract_tagged_block_content(cls, text: str, tag_name: str) -> str:
-        if not text or not tag_name:
-            return ""
-
-        pattern = re.compile(
-            rf"(?is)<{re.escape(tag_name)}>\s*(?P<body>.*?)\s*</{re.escape(tag_name)}\s*>",
-            re.IGNORECASE | re.DOTALL,
-        )
-        match = pattern.search(str(text))
-        if not match:
-            return ""
-
-        return textwrap.dedent(str(match.group("body") or "")).strip()
+        return extract_tagged_block_content(text, tag_name)
 
     @classmethod
     def _score_plain_text_artifact_content(cls, text: str) -> tuple[int, int, int, int]:
@@ -414,66 +400,11 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @staticmethod
     def _build_local_plain_text_fallback(query: str) -> str:
-        normalized_query = str(query or "").strip()
-        upper_query = normalized_query.upper()
-        is_markdown = any(token in normalized_query.lower() for token in (".md", "markdown"))
-        title = "# SpaceX IPO Prospectus Draft" if is_markdown else "SPACE EXPLORATION TECHNOLOGIES CORP.\nPROSPECTUS DRAFT"
-        sections = [
-            "PROSPECTUS SUMMARY",
-            "BUSINESS OVERVIEW",
-            "RISK FACTORS",
-            "MANAGEMENT'S DISCUSSION AND ANALYSIS",
-            "USE OF PROCEEDS",
-            "LEGAL MATTERS AND DISCLAIMERS",
-        ]
-        if "招股说明书" not in normalized_query and "prospectus" not in upper_query:
-            sections = [
-                "OVERVIEW",
-                "BACKGROUND",
-                "ANALYSIS",
-                "SUMMARY",
-            ]
-
-        lines = [
-            title,
-            "",
-            "This is a local fallback generated after the provider rejected the model request.",
-            f"Original request: {normalized_query or 'N/A'}",
-            "",
-        ]
-        for section in sections:
-            if is_markdown:
-                lines.extend([
-                    f"## {section}",
-                    "",
-                    "TBD",
-                    "",
-                ])
-            else:
-                lines.extend([
-                    section,
-                    "TBD",
-                    "",
-                ])
-
-        return "\n".join(lines).strip()
+        return build_local_plain_text_fallback(query)
 
     @staticmethod
     def _extract_llm_text(response: Any) -> str:
-        content = getattr(response, "content", response)
-        if isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = str(block.get("text", "") or "").strip()
-                    if text:
-                        parts.append(text)
-                elif isinstance(block, str):
-                    text = block.strip()
-                    if text:
-                        parts.append(text)
-            return "\n".join(parts).strip()
-        return str(content or "").strip()
+        return extract_llm_text(response)
 
     @classmethod
     def _should_use_structured_document_pipeline(cls, query: str, route_decision: DeepRouteDecision) -> bool:
@@ -533,7 +464,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @staticmethod
     def _normalize_outline_title(title: str) -> str:
-        return re.sub(r"[\s\W_]+", "", str(title or ""), flags=re.UNICODE).casefold()
+        return normalize_outline_title(title)
 
     @classmethod
     def _extract_requested_outline_section_titles(cls, query: str) -> list[str]:
@@ -772,11 +703,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @classmethod
     def _build_document_fragment_stem(cls, title: str, index: int) -> str:
-        candidate = ArtifactPolicy.build_generated_artifact_filename(title) or f"section_{index}"
-        stem = os.path.splitext(candidate)[0]
-        stem = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", stem, flags=re.UNICODE)
-        stem = stem.strip("._")
-        return stem or f"section_{index}"
+        return build_document_fragment_stem(title, index)
 
     @classmethod
     def _render_document_front_matter(
@@ -786,12 +713,11 @@ class DeepThinkingAgent(FunctionCallAgent):
         filename: str,
         markdown: bool,
     ) -> str:
-        title = str(outline.document_title or "").strip() or ArtifactPolicy.humanize_filename_stem(filename)
-        if markdown:
-            return f"# {title}\n\n"
-
-        separator = "=" * max(32, min(80, len(title) * 2))
-        return f"{title}\n{separator}\n\n"
+        return render_document_front_matter(
+            outline=outline,
+            filename=filename,
+            markdown=markdown,
+        )
 
     @classmethod
     def _render_document_section_block(
@@ -801,15 +727,11 @@ class DeepThinkingAgent(FunctionCallAgent):
         body: str,
         markdown: bool,
     ) -> str:
-        normalized_body = textwrap.dedent(str(body or "")).strip()
-        if not normalized_body:
-            normalized_body = "待补充内容"
-
-        if markdown:
-            return f"## {section.title}\n\n{normalized_body}\n\n"
-
-        separator = "-" * max(32, min(80, len(section.title) * 2))
-        return f"{section.title}\n{separator}\n\n{normalized_body}\n\n"
+        return render_document_section_block(
+            section=section,
+            body=body,
+            markdown=markdown,
+        )
 
     @classmethod
     def _build_document_section_prompt(
@@ -859,22 +781,14 @@ class DeepThinkingAgent(FunctionCallAgent):
         section_total: int,
         markdown: bool,
     ) -> str:
-        key_points = [point for point in section.key_points[:6] if point]
-        intro = section.purpose or "根据用户要求生成本章节内容。"
-        opening = f"{section.title}围绕文档整体目标展开，重点覆盖{ '、'.join(key_points) if key_points else '关键内容、约束和建议' }。"
-
-        lines = [intro, "", opening]
-        if key_points:
-            lines.append("")
-            lines.extend(f"- {point}" for point in key_points)
-        if markdown:
-            lines.append("")
-            lines.append(f"> 章节 {section_index}/{section_total} 已按本地模板补全。")
-        else:
-            lines.append("")
-            lines.append(f"（章节 {section_index}/{section_total} 已按本地模板补全。）")
-
-        return "\n".join(line for line in lines if line is not None).strip()
+        return build_local_document_section_body(
+            query=query,
+            outline=outline,
+            section=section,
+            section_index=section_index,
+            section_total=section_total,
+            markdown=markdown,
+        )
 
     def _generate_structured_document_outline(
         self,
@@ -1163,35 +1077,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @staticmethod
     def _sanitize_document_section_body(text: str, section_title: str = "") -> str:
-        normalized = textwrap.dedent(str(text or "")).strip()
-        if not normalized:
-            return ""
-
-        cleaned_lines: list[str] = []
-        section_title = str(section_title or "").strip()
-        seen_content = False
-        for raw_line in normalized.splitlines():
-            line = raw_line.strip()
-            if not line:
-                if seen_content:
-                    cleaned_lines.append("")
-                continue
-
-            if not seen_content and (
-                line.startswith("#")
-                or line == section_title
-                or line == section_title.upper()
-                or (section_title and section_title in line and len(line) <= len(section_title) + 6)
-            ):
-                continue
-
-            if line in {"text", "markdown", "md", "txt", "复制代码"}:
-                continue
-
-            seen_content = True
-            cleaned_lines.append(raw_line.rstrip())
-
-        return "\n".join(cleaned_lines).strip()
+        return sanitize_document_section_body(text, section_title)
 
     def _generate_structured_document_artifact(
         self,
@@ -1329,28 +1215,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @staticmethod
     def _extract_last_human_query(messages: list[Any]) -> str:
-        if not isinstance(messages, list):
-            return ""
-
-        for message in reversed(messages):
-            message_type = str(getattr(message, "type", "") or "").strip().lower()
-            if not message_type and isinstance(message, dict):
-                message_type = str(message.get("type", "") or "").strip().lower()
-            if message_type != "human":
-                continue
-
-            content = getattr(message, "content", "")
-            if not content and isinstance(message, dict):
-                content = message.get("content", "")
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        return str(block.get("text", ""))
-            return str(content or "")
-
-        return ""
+        return extract_last_human_query(messages)
 
     def _upload_plain_text_artifact(
         self,
@@ -1795,14 +1660,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @staticmethod
     def _extract_query(message: Any) -> str:
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    return str(block.get("text", ""))
-        return str(content)
+        return extract_query(message)
 
     def _decide_deep_route(self, query: str) -> DeepRouteDecision:
         if self._is_explicit_artifact_request(query):
@@ -1967,11 +1825,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
     @staticmethod
     def _extract_artifact_paths(output: Any) -> list[str]:
-        return [
-            line.strip()
-            for line in str(output or "").splitlines()
-            if line.strip() and not line.startswith("[stderr]") and line.startswith("/")
-        ]
+        return extract_artifact_paths(output)
 
     def _resolve_sandbox_artifact_root(
         self,
@@ -2018,12 +1872,12 @@ class DeepThinkingAgent(FunctionCallAgent):
         sandbox_profile = (os.getenv("SANDBOX_PROFILE") or "").strip().lower()
         sandbox_template_alias = (os.getenv("SANDBOX_TEMPLATE_ALIAS") or "").strip()
         sandbox_fallback_template_alias = (os.getenv("SANDBOX_FALLBACK_TEMPLATE_ALIAS") or "").strip()
-        sandbox_timeout = _read_positive_int_env(
+        sandbox_timeout = read_positive_int_env(
             "SANDBOX_TIMEOUT_SECONDS",
             SandboxPolicy.default_sandbox_timeout_seconds,
             minimum=SandboxPolicy.default_sandbox_timeout_seconds,
         )
-        execute_timeout = _read_positive_int_env(
+        execute_timeout = read_positive_int_env(
             "SANDBOX_EXECUTE_TIMEOUT_SECONDS",
             SandboxPolicy.default_execute_timeout_seconds,
             minimum=SandboxPolicy.default_execute_timeout_seconds,
@@ -2289,16 +2143,12 @@ class DeepThinkingAgent(FunctionCallAgent):
         deep_answer: str,
         artifacts: list[dict[str, Any]],
     ) -> str:
-        summary_parts = [route_decision.summary or "深度思考已完成"]
-        if used_sandbox:
-            summary_parts.append("执行环境：沙箱")
-        elif route_decision.need_sandbox:
-            summary_parts.append("执行环境：已回退为无沙箱模式")
-        if artifacts:
-            summary_parts.append("生成附件：" + "、".join(artifact["name"] for artifact in artifacts[:5]))
-        if deep_answer:
-            summary_parts.append("已生成最终答复")
-        return "；".join(summary_parts)
+        return build_completion_summary(
+            route_decision=route_decision,
+            used_sandbox=used_sandbox,
+            deep_answer=deep_answer,
+            artifacts=artifacts,
+        )
 
     @staticmethod
     def _build_thinking_context(
@@ -2308,97 +2158,15 @@ class DeepThinkingAgent(FunctionCallAgent):
         deep_answer: str,
         artifacts: list[dict[str, Any]],
     ) -> str:
-        artifact_summary = ""
-        if artifacts:
-            artifact_lines = "\n".join(
-                f"- {artifact['name']} ({artifact['url']})"
-                for artifact in artifacts
-            )
-            artifact_summary = f"\n\n<generated_artifacts>\n{artifact_lines}\n</generated_artifacts>"
-
-        final_answer_instruction = (
-            "以上是深度思考阶段的分析结果。请基于此给用户一个简洁、准确的最终回答。"
-            "如果 <generated_artifacts> 存在，只能使用其中的真实下载 URL；"
-            "绝不要向用户暴露沙箱本地路径（包括 sandbox:/mnt/data），也不要伪造“点击下载”链接。"
-            "如果 <generated_artifacts> 不存在，请明确说明当前没有可下载附件。"
+        return build_thinking_context(
+            route_decision=route_decision,
+            used_sandbox=used_sandbox,
+            deep_answer=deep_answer,
+            artifacts=artifacts,
         )
-
-        return (
-            f"<deep_execution_summary>\n"
-            f"- route: {route_decision.summary or route_decision.reason}\n"
-            f"- need_sandbox: {route_decision.need_sandbox}\n"
-            f"- used_sandbox: {used_sandbox}\n"
-            f"- need_execute: {route_decision.need_execute}\n"
-            f"- need_file_io: {route_decision.need_file_io}\n"
-            f"- need_subagent: {route_decision.need_subagent}\n"
-            f"</deep_execution_summary>\n\n"
-            f"<deep_thinking_result>\n{deep_answer}\n</deep_thinking_result>"
-            f"{artifact_summary}\n\n"
-            f"{final_answer_instruction}"
-        )
-
     @classmethod
     def _sanitize_deep_answer(cls, deep_answer: str, *, artifacts: list[dict[str, Any]]) -> str:
-        if not deep_answer:
-            return ""
-
-        if ArtifactPolicy.contains_plain_text_artifact_preamble(deep_answer):
-            deep_answer = ArtifactPolicy.strip_plain_text_artifact_preamble(deep_answer)
-
-        if "<generated_artifacts>" not in str(deep_answer):
-            payload = ArtifactPolicy.extract_write_file_payload(deep_answer)
-            if payload is not None:
-                _, payload_content = payload
-                deep_answer = payload_content
-
-        deep_answer = re.sub(
-            r"(?is)<generated_artifacts>.*?</generated_artifacts>",
-            "",
-            str(deep_answer),
-        )
-        deep_answer = re.sub(
-            r"(?is)<artifact\b[^>]*>.*?</artifact\s*>",
-            "",
-            deep_answer,
-        )
-
-        sanitized_lines: list[str] = []
-        for raw_line in str(deep_answer).splitlines():
-            line = raw_line.strip()
-            if not line:
-                sanitized_lines.append(raw_line)
-                continue
-
-            if (
-                "点击下载" in line
-                or "需在沙箱中查看" in line
-                or line.startswith("文件路径：")
-                or line.startswith("文件路径:")
-                or re.search(r"</?(?:[\w.-]+:)?(?:tool_call|invoke|tool|function|parameter|param|arg)\b", line, flags=re.IGNORECASE)
-                or "<arg_key>" in line
-                or "<arg_value>" in line
-            ):
-                continue
-
-            if any(
-                marker in line
-                for marker in (
-                    "/workspace/artifacts/",
-                    "/home/user/artifacts/",
-                    "/tmp/artifacts/",
-                    "sandbox:/mnt/data/",
-                )
-            ):
-                continue
-
-            sanitized_lines.append(raw_line)
-
-        sanitized = cls._sanitize_sandbox_artifact_text("\n".join(sanitized_lines).strip())
-
-        if artifacts and sanitized:
-            sanitized += "\n\n已生成可下载附件，具体下载链接以后端返回的附件列表为准。"
-
-        return sanitized
+        return sanitize_deep_answer(deep_answer, artifacts=artifacts, sanitize_text=cls._sanitize_sandbox_artifact_text)
 
     @classmethod
     def _preset_operation_condition(

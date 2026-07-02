@@ -47,7 +47,7 @@ def test_get_model_should_return_model_instance_on_success():
     language_model_service = MagicMock()
     language_model_service.get_chat_model_by_tier.return_value = fake_model
     policy = MagicMock()
-    policy.assign.return_value = "balanced"
+    policy.assign.return_value = "standard"
     gateway = ModelGatewayService(
         language_model_service=language_model_service,
         model_assignment_policy=policy,
@@ -56,7 +56,7 @@ def test_get_model_should_return_model_instance_on_success():
     model = gateway.get_model(_build_decision(), _build_context())
 
     assert model is fake_model
-    language_model_service.get_chat_model_by_tier.assert_called_once_with("balanced")
+    language_model_service.get_chat_model_by_tier.assert_called_once_with("standard")
 
 
 def test_get_model_should_work_when_decision_is_none():

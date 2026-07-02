@@ -94,6 +94,7 @@ class MemoryConfidenceTracker(BaseService):
                 occurrences=1,
                 status="pending",
                 memory_type=extracted.get("memory_type", "preference"),
+                scope=extracted.get("scope", "global"),
                 source_conversation_id=conversation_id,
                 extracted_at=now,
             )
@@ -114,6 +115,15 @@ class MemoryConfidenceTracker(BaseService):
 class UserMemoryConfirmationService(BaseService):
     db: SQLAlchemy
 
+    def list_pending(self, account: Account) -> list[MemoryCandidate]:
+        """返回当前用户的待确认记忆候选列表。"""
+        return (
+            self.db.session.query(MemoryCandidate)
+            .filter_by(owner_account_id=account.id, status="pending")
+            .order_by(MemoryCandidate.created_at.desc())
+            .all()
+        )
+
     def confirm(self, candidate_id, account: Account, *, policy: str = "manual_confirm") -> UserMemory:
         candidate = self._get_candidate(candidate_id, account)
         candidate.status = "confirmed"
@@ -126,6 +136,7 @@ class UserMemoryConfirmationService(BaseService):
             confidence=candidate.confidence,
             status="active",
             created_from="conversation_memory",
+            scope=getattr(candidate, "scope", "global"),
             metadata_={"source_candidate_id": str(candidate.id), "policy": policy},
         )
         try:
@@ -181,6 +192,8 @@ class LongTermMemoryService(BaseService):
                 "content": fact["content"],
                 "status": candidate.status if candidate else None,
                 "created": bool(candidate and candidate.occurrences == 1),
+                "occurrences": candidate.occurrences if candidate else 1,
+                "confidence": candidate.confidence if candidate else 0,
                 "should_prompt": track_result["should_prompt"],
             })
         return results

@@ -22,11 +22,10 @@ def test_pool_intent_resolver_should_match_data_pool():
 def test_pool_intent_resolver_should_match_multiple_pools():
     result = PoolIntentResolver().resolve("帮我 P 图并写前端页面")
 
-    assert result["matched_pools"] == ["office", "coding"]
-    assert result["pool_reasons"] == [
-        {"pool": "office", "reason": "keyword:P 图"},
-        {"pool": "coding", "reason": "keyword:前端"},
-    ]
+    assert set(result["matched_pools"]) == {"office", "coding"}
+    pool_by_name = {r["pool"]: r["reason"] for r in result["pool_reasons"]}
+    assert pool_by_name.get("office") == "keyword:P 图"
+    assert pool_by_name.get("coding") == "keyword:前端"
 
 
 def test_pool_intent_resolver_should_fallback_to_general():

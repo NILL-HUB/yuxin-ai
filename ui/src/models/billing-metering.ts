@@ -1,5 +1,7 @@
+import type { BillingEventType } from '@/models/orchestration'
+
 export type BillingUsageEvent = {
-  event: 'billing_started' | 'billing_delta' | 'billing_cancelled' | 'billing_final'
+  event: BillingEventType
   source_type: string
   source_name: string
   delta_credits: number

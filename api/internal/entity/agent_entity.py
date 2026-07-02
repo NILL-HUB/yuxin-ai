@@ -5,7 +5,7 @@ from typing import Any
 
 class AgentModelTier(str, Enum):
     CHEAP = "cheap"
-    BALANCED = "balanced"
+    STANDARD = "standard"
     STRONG = "strong"
 
 
@@ -29,7 +29,7 @@ DEFAULT_AGENT_METADATA = {
     "input_modalities": ["text"],
     "output_modalities": ["text"],
     "risk_level": AgentRiskLevel.SAFE.value,
-    "model_tier": AgentModelTier.BALANCED.value,
+    "model_tier": AgentModelTier.STANDARD.value,
     "model_id": "",
     "key_policy": "default",
     "cost_level": AgentCostLevel.MEDIUM.value,
@@ -66,7 +66,7 @@ def normalize_agent_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     normalized["model_tier"] = _normalize_choice(
         normalized.get("model_tier"),
         {item.value for item in AgentModelTier},
-        AgentModelTier.BALANCED.value,
+        AgentModelTier.STANDARD.value,
     )
     normalized["model_id"] = _normalize_string(normalized.get("model_id"), "")
     normalized["key_policy"] = _normalize_string(normalized.get("key_policy"), "default")

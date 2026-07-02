@@ -76,8 +76,9 @@ export default {
 
     // 2.判断授权凭证上是否存在有效 access_token，并判断 token 是否过期
     if (!isCredentialLoggedIn(credential)) {
-      // 3.账号未登录，直接移除LocalStorage中的数据，涵盖用户数据+授权凭证
-      storage.clear()
+      // 3.账号未登录，定向移除用户端凭证与用户资料，不影响 admin 端凭证
+      clearStoredCredential()
+      storage.remove('account')
       return false
     }
     // 4.满足所有条件，返回true

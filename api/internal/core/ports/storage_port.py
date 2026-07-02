@@ -6,7 +6,7 @@ class ObjectStoragePort(Protocol):
     def upload_file(self, file: Any, only_image: bool = False, account: Any = None) -> Any:
         ...
 
-    def upload_bytes(self, filename: str, content: bytes, mime_type: str = "", folder: str = "") -> Any:
+    def upload_bytes(self, filename: str, content: bytes, **kwargs: Any) -> Any:
         ...
 
     def download_file(self, key: str, target_file_path: str) -> None:
@@ -16,4 +16,7 @@ class ObjectStoragePort(Protocol):
     def upload_bytes_without_record(
         cls, filename: str, content: bytes, mime_type: str = "", folder: str = ""
     ) -> Any:
+        ...
+
+    def get_file_url(self, key: str, download_name: str | None = None) -> str:
         ...

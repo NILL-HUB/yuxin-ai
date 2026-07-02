@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import IconOpenAgent from '@/components/icons/IconOpenAgent.vue'
 import {
+    useDirectRegister,
     usePasswordLogin,
-    usePrepareRegister,
     useResendLoginChallenge,
     useVerifyLoginChallenge,
-    useVerifyRegister,
 } from '@/hooks/use-auth'
 import { useProvider } from '@/hooks/use-oauth'
 import { type LoginAuthorizationData } from '@/models/auth'
@@ -15,10 +14,12 @@ import { useCredentialStore } from '@/stores/credential'
 import { getErrorCode, getErrorMessage, getErrorReasonCode, getErrorResponseData } from '@/utils/error'
 import { type ValidatedError, Message } from '@arco-design/web-vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
+const { t } = useI18n()
+
 type AuthView = 'login' | 'register' | 'registerVerify' | 'challenge' | 'forgot'
-type LoginMode = 'user' | 'admin'
 type LoginChallengeSource = 'password' | 'oauth'
 type SupportedOauthProvider = 'github' | 'google'
 type LoginChallengeState = {
@@ -31,9 +32,7 @@ type LoginChallengeState = {
 
 type RegisterFormState = {
   username: string
-  email: string
   password: string
-  code: string
 }
 
 type PrepareRegisterResult =
@@ -66,12 +65,10 @@ const emits = defineEmits<{
 
 const STORAGE_KEY = 'login_credentials'
 const LOGIN_CHALLENGE_STORAGE_KEY = 'pending_login_challenge'
-const GENERIC_LOGIN_ERROR_MESSAGE = '账号不存在或者密码错误'
-const LEGACY_ACCOUNT_NOT_FOUND_MESSAGE = '账号不存在'
-const ACCOUNT_ALREADY_EXISTS_MESSAGE = '账号已存在，请直接登录'
-const RESET_CODE_SENT_MESSAGE = '如果该邮箱已注册，验证码已发送，请查收'
-const STRONG_PASSWORD_RULE_MESSAGE = '密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位'
-const USERNAME_RULE_MESSAGE = '用户名仅支持大小写字母和数字，长度3~32位'
+// 后端返回的原始消息（用于匹配后端协议，非展示文案，不可国际化）
+const BACKEND_GENERIC_CREDENTIAL_ERROR_MESSAGE = '账号不存在或者密码错误'
+const BACKEND_LEGACY_ACCOUNT_NOT_FOUND_MESSAGE = '账号不存在'
+const BACKEND_PASSWORD_ERROR_MESSAGE = '密码错误'
 const REQUEST_VALIDATE_ERROR_CODE = 'validate_error'
 const REQUEST_FAIL_ERROR_CODE = 'fail'
 const REASON_INVALID_CREDENTIALS = 'INVALID_CREDENTIALS'
@@ -87,8 +84,12 @@ const OAUTH_PROVIDER_LABELS: Record<SupportedOauthProvider, string> = {
   google: 'Google',
 }
 const AUTO_REGISTER_LOGIN_ERROR_MESSAGES = new Set([
-  GENERIC_LOGIN_ERROR_MESSAGE,
-  LEGACY_ACCOUNT_NOT_FOUND_MESSAGE,
+  BACKEND_GENERIC_CREDENTIAL_ERROR_MESSAGE,
+  BACKEND_LEGACY_ACCOUNT_NOT_FOUND_MESSAGE,
+])
+const CREDENTIAL_ERROR_BACKEND_MESSAGES = new Set([
+  BACKEND_GENERIC_CREDENTIAL_ERROR_MESSAGE,
+  BACKEND_PASSWORD_ERROR_MESSAGE,
 ])
 
 const createEmptyChallenge = (): LoginChallengeState => ({
@@ -101,9 +102,7 @@ const createEmptyChallenge = (): LoginChallengeState => ({
 
 const createEmptyRegisterForm = (): RegisterFormState => ({
   username: '',
-  email: '',
   password: '',
-  code: '',
 })
 
 const authView = ref<AuthView>('login')
@@ -132,15 +131,8 @@ const registerTimer = ref<number>()
 const credentialStore = useCredentialStore()
 const route = useRoute()
 const router = useRouter()
-const loginMode = ref<LoginMode>(route.query.mode === 'admin' ? 'admin' : 'user')
-const adminLoginLoading = ref(false)
 const { loading: passwordLoginLoading, authorization, handlePasswordLogin } = usePasswordLogin()
-const { loading: prepareRegisterLoading, handlePrepareRegister } = usePrepareRegister()
-const {
-  loading: verifyRegisterLoading,
-  authorization: registerAuthorization,
-  handleVerifyRegister,
-} = useVerifyRegister()
+const { loading: directRegisterLoading, authorization: registerAuthorization, handleDirectRegister } = useDirectRegister()
 const {
   loading: verifyLoginChallengeLoading,
   authorization: challengeAuthorization,
@@ -150,29 +142,31 @@ const { loading: resendLoginChallengeLoading, handleResendLoginChallenge } =
   useResendLoginChallenge()
 const { loading: providerLoading, redirect_url, handleProvider } = useProvider()
 const countdownText = computed(() => {
-  return countdown.value > 0 ? `${countdown.value}秒后重发` : '发送验证码'
+  return countdown.value > 0
+    ? t('common.actions.resendInSeconds', { count: countdown.value })
+    : t('common.actions.sendCode')
 })
 const challengeCountdownText = computed(() => {
-  return challengeCountdown.value > 0 ? `${challengeCountdown.value}秒后重发` : '重发验证码'
+  return challengeCountdown.value > 0
+    ? t('common.actions.resendInSeconds', { count: challengeCountdown.value })
+    : t('login.resendCode')
 })
 const registerCountdownText = computed(() => {
-  return registerCountdown.value > 0 ? `${registerCountdown.value}秒后重发` : '重发验证码'
+  return registerCountdown.value > 0
+    ? t('common.actions.resendInSeconds', { count: registerCountdown.value })
+    : t('login.resendCode')
 })
 const hasOauthOnlyProviders = computed(() => oauthOnlyProviders.value.length > 0)
-const isAdminLoginMode = computed(() => loginMode.value === 'admin')
-const loginModeDescription = computed(() => isAdminLoginMode.value ? '管理员登录后可访问用户端与后台管理' : '使用用户名或邮箱登录，继续你的 AI 工作台')
+const loginModeDescription = computed(() => t('login.loginSubtitle'))
 const challengeDescription = computed(() => {
+  const email = loginChallenge.value.masked_email || t('login.boundEmail')
   if (loginChallenge.value.risk_reason === 'new_ip') {
-    return `检测到本次登录来自新的 IP 环境。请输入发送到 ${loginChallenge.value.masked_email || '绑定邮箱'} 的验证码，确认是你本人操作。`
+    return t('login.challengeNewIpHint', { email })
   }
-  return `请输入发送到 ${loginChallenge.value.masked_email || '绑定邮箱'} 的验证码，完成本次登录验证。`
+  return t('login.challengeDefaultHint', { email })
 })
-const registerEntryDescription = computed(() => {
-  return `使用邮箱完成注册，我们会向 ${registerForm.value.email || '您的邮箱'} 发送验证码。`
-})
-const registerDescription = computed(() => {
-  return `该邮箱尚未注册。请输入发送到 ${registerForm.value.email || '您的邮箱'} 的验证码，完成注册并登录。`
-})
+const registerEntryDescription = computed(() => t('login.registerEntryHint', { email: t('login.yourEmail') }))
+const registerDescription = computed(() => t('login.registerVerifyHint', { email: t('login.yourEmail') }))
 
 const getUserFriendlyErrorMessage = (error: unknown, fallback: string) => {
   const rawMessage = getErrorMessage(error, fallback).trim()
@@ -192,7 +186,7 @@ const getUserFriendlyErrorMessage = (error: unknown, fallback: string) => {
     normalizedMessage.includes('failed to fetch') ||
     normalizedMessage.includes('timeout')
   ) {
-    return '网络连接异常，请稍后重试'
+    return t('login.networkError')
   }
 
   return rawMessage
@@ -311,14 +305,9 @@ const clearLoginChallenge = () => {
 }
 
 const applyRegisterDraft = (identifier: string, password: string) => {
-  const trimmedIdentifier = identifier.trim()
-  const email = validateEmail(trimmedIdentifier) ? trimmedIdentifier : ''
-  const username = email ? '' : trimmedIdentifier
   registerForm.value = {
-    username,
-    email,
+    username: identifier.trim(),
     password,
-    code: '',
   }
 }
 
@@ -454,8 +443,8 @@ const openRegister = () => {
 }
 
 const backToLogin = () => {
-  if (authView.value === 'register' || authView.value === 'registerVerify') {
-    loginForm.value.identifier = registerForm.value.username || registerForm.value.email
+  if (authView.value === 'register') {
+    loginForm.value.identifier = registerForm.value.username
     loginForm.value.password = registerForm.value.password
   }
   errorMessage.value = ''
@@ -479,19 +468,19 @@ const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email
 const handleSendCode = async () => {
   const email = forgotForm.value.email.trim()
   if (!email) {
-    Message.error('请输入邮箱地址')
+    Message.error(t('login.emailRequired'))
     return
   }
 
   if (!validateEmail(email)) {
-    Message.error('请输入有效的邮箱地址')
+    Message.error(t('login.emailInvalid'))
     return
   }
 
   try {
     sendingCode.value = true
     const resp = await sendResetCode(email)
-    Message.success(resp.message || RESET_CODE_SENT_MESSAGE)
+    Message.success(resp.message || t('login.resetCodeSent'))
     forgotStep.value = 2
 
     clearCountdown()
@@ -503,7 +492,7 @@ const handleSendCode = async () => {
       }
     }, 1000)
   } catch (error: unknown) {
-    Message.error(getUserFriendlyErrorMessage(error, '发送验证码失败，请稍后重试'))
+    Message.error(getUserFriendlyErrorMessage(error, t('login.sendCodeFailed')))
   } finally {
     sendingCode.value = false
   }
@@ -523,24 +512,24 @@ const finalizeLoginSuccess = async (credential: LoginAuthorizationData) => {
   })
 
   if (props.redirectAfterLogin) {
-    Message.success('登录成功，正在跳转')
+    Message.success(t('login.loginSuccessRedirecting'))
     await router.replace({ path: '/home' })
     return
   }
 
-  Message.success('登录成功')
+  Message.success(t('login.loginSuccess'))
   emits('success')
 }
 
 const handleVerifyChallenge = async () => {
   if (!loginChallenge.value.challenge_id) {
-    errorMessage.value = '登录验证已失效，请重新登录'
+    errorMessage.value = t('login.challengeExpired')
     backToLogin()
     return
   }
 
   if (!challengeCode.value.trim()) {
-    Message.error('请输入验证码')
+    Message.error(t('login.codeRequired'))
     return
   }
 
@@ -553,7 +542,7 @@ const handleVerifyChallenge = async () => {
     clearLoginChallenge()
     await finalizeLoginSuccess(loginResult)
   } catch (error: unknown) {
-    errorMessage.value = getUserFriendlyErrorMessage(error, '登录验证失败，请重试')
+    errorMessage.value = getUserFriendlyErrorMessage(error, t('login.challengeFailed'))
   }
 }
 
@@ -564,154 +553,80 @@ const handleResendChallengeCode = async () => {
     await handleResendLoginChallenge(loginChallenge.value.challenge_id)
     startChallengeCountdown()
   } catch (error: unknown) {
-    errorMessage.value = getUserFriendlyErrorMessage(error, '验证码发送失败，请稍后重试')
+    errorMessage.value = getUserFriendlyErrorMessage(error, t('login.sendCodeFailed'))
   }
 }
 
-const prepareRegisterByEmailAndPassword = async (
-  username: string,
-  email: string,
-  password: string,
-): Promise<PrepareRegisterResult> => {
+const handleStartRegister = async () => {
+  const username = registerForm.value.username.trim()
+  const password = registerForm.value.password
+
+  if (username && !USERNAME_REGEX.test(username)) {
+    Message.error(t('login.usernameRule'))
+    return
+  }
+
+  if (!password) {
+    Message.error(t('login.registerPasswordRequired'))
+    return
+  }
+
+  if (!STRONG_PASSWORD_REGEX.test(password)) {
+    Message.error(t('login.strongPasswordRule'))
+    return
+  }
+
+  errorMessage.value = ''
+
   try {
     clearOauthOnlyProviders()
-    const resp = await handlePrepareRegister(username, email, password)
-    applyRegisterVerification(username || email, password)
-    const message = resp.message || '验证码已发送到您的邮箱,请查收'
-    Message.success(message)
-    return { ok: true, message }
+    await handleDirectRegister(username, password)
+    saveCredentials({
+      identifier: username,
+      password,
+    })
+    const loginResult = registerAuthorization.value
+    await finalizeLoginSuccess(loginResult)
   } catch (error: unknown) {
-    const message = getUserFriendlyErrorMessage(error, '验证码发送失败，请稍后重试')
+    const message = getUserFriendlyErrorMessage(error, t('login.registerFailed'))
     const reasonCode = getErrorReasonCode(error)
-    const requestCode = getErrorCode(error)
-    const providers =
-      reasonCode === REASON_OAUTH_ONLY_ACCOUNT ? extractOauthProvidersFromError(error) : []
+    const providers = reasonCode === REASON_OAUTH_ONLY_ACCOUNT ? extractOauthProvidersFromError(error) : []
     if (reasonCode === REASON_OAUTH_ONLY_ACCOUNT) {
       oauthOnlyProviders.value = providers
     } else {
       clearOauthOnlyProviders()
     }
     errorMessage.value = message
-    return { ok: false, message, reasonCode, requestCode, providers }
-  }
-}
-
-const handlePrepareRegisterAction = async (): Promise<PrepareRegisterResult> => {
-  const identifier = loginForm.value.identifier.trim()
-  if (!validateEmail(identifier)) {
-    enterRegisterView(identifier, loginForm.value.password, { preserveError: true })
-    return {
-      ok: false,
-      message: '请补充邮箱地址后完成注册',
-      reasonCode: REQUEST_VALIDATE_ERROR_CODE,
-      requestCode: REQUEST_VALIDATE_ERROR_CODE,
-      providers: [],
-    }
-  }
-  return await prepareRegisterByEmailAndPassword('', identifier, loginForm.value.password)
-}
-
-const handleStartRegister = async () => {
-  const username = registerForm.value.username.trim()
-  const email = registerForm.value.email.trim()
-  const password = registerForm.value.password
-
-  if (username && !USERNAME_REGEX.test(username)) {
-    Message.error(USERNAME_RULE_MESSAGE)
-    return
-  }
-
-  if (!email) {
-    Message.error('请输入邮箱地址')
-    return
-  }
-
-  if (!validateEmail(email)) {
-    Message.error('请输入有效的邮箱地址')
-    return
-  }
-
-  if (!password) {
-    Message.error('请输入注册密码')
-    return
-  }
-
-  if (!STRONG_PASSWORD_REGEX.test(password)) {
-    Message.error(STRONG_PASSWORD_RULE_MESSAGE)
-    return
-  }
-
-  errorMessage.value = ''
-  const result = await prepareRegisterByEmailAndPassword(username, email, password)
-  if (result.ok) return
-
-  if (result.reasonCode === REASON_ACCOUNT_EXISTS) {
-    loginForm.value.identifier = email
-    loginForm.value.password = ''
-    authView.value = 'login'
-    errorMessage.value = ACCOUNT_ALREADY_EXISTS_MESSAGE
   }
 }
 
 const handleResendRegisterCode = async () => {
   if (registerCountdown.value > 0) return
-
-  try {
-    const resp = await handlePrepareRegister(
-      registerForm.value.username.trim(),
-      registerForm.value.email.trim(),
-      registerForm.value.password,
-    )
-    startRegisterCountdown()
-    Message.success(resp.message || '验证码已发送到您的邮箱,请查收')
-  } catch (error: unknown) {
-    Message.error(getUserFriendlyErrorMessage(error, '验证码发送失败，请稍后重试'))
-  }
+  await handleStartRegister()
 }
 
 const handleVerifyRegisterAction = async () => {
-  if (!registerForm.value.code.trim()) {
-    Message.error('请输入验证码')
-    return
-  }
-
-  try {
-    await handleVerifyRegister(
-      registerForm.value.username.trim(),
-      registerForm.value.email.trim(),
-      registerForm.value.password,
-      registerForm.value.code.trim(),
-    )
-    saveCredentials({
-      identifier: registerForm.value.username.trim() || registerForm.value.email.trim(),
-      password: registerForm.value.password,
-    })
-    const loginResult = registerAuthorization.value
-    resetRegisterForm()
-    await finalizeLoginSuccess(loginResult)
-  } catch (error: unknown) {
-    errorMessage.value = getUserFriendlyErrorMessage(error, '注册失败，请稍后重试')
-  }
+  await handleStartRegister()
 }
 
 const handleResetPassword = async () => {
   if (!forgotForm.value.code) {
-    Message.error('请输入验证码')
+    Message.error(t('login.codeRequired'))
     return
   }
 
   if (!forgotForm.value.new_password) {
-    Message.error('请输入新密码')
+    Message.error(t('login.newPasswordRequired'))
     return
   }
 
   if (forgotForm.value.new_password !== forgotForm.value.confirm_password) {
-    Message.error('两次输入的密码不一致')
+    Message.error(t('login.passwordMismatch'))
     return
   }
 
   if (!STRONG_PASSWORD_REGEX.test(forgotForm.value.new_password)) {
-    Message.error(STRONG_PASSWORD_RULE_MESSAGE)
+    Message.error(t('login.strongPasswordRule'))
     return
   }
 
@@ -722,12 +637,12 @@ const handleResetPassword = async () => {
       forgotForm.value.code.trim(),
       forgotForm.value.new_password,
     )
-    Message.success('密码重置成功,请使用新密码登录')
+    Message.success(t('login.resetPasswordSuccess'))
     loginForm.value.identifier = forgotForm.value.email.trim()
     loginForm.value.password = ''
     backToLogin()
   } catch (error: unknown) {
-    Message.error(getUserFriendlyErrorMessage(error, '密码重置失败，请稍后重试'))
+    Message.error(getUserFriendlyErrorMessage(error, t('login.resetPasswordFailed')))
   } finally {
     resetting.value = false
   }
@@ -746,81 +661,49 @@ const googleLogin = async () => {
 const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | undefined }) => {
   if (errors) return
 
+  if (route.query.mode === 'admin') {
+    try {
+      errorMessage.value = ''
+      await adminLogin(loginForm.value.identifier.trim(), loginForm.value.password)
+      Message.success(t('login.loginSuccess'))
+      emits('success')
+    } catch (error: unknown) {
+      errorMessage.value = getUserFriendlyErrorMessage(error, t('login.loginFailed'))
+      loginForm.value.password = ''
+    }
+    return
+  }
+
   try {
     errorMessage.value = ''
     clearOauthOnlyProviders()
-    if (isAdminLoginMode.value) {
-      adminLoginLoading.value = true
-      await adminLogin(loginForm.value.identifier.trim(), loginForm.value.password)
-      if (props.redirectAfterLogin) {
-        Message.success('管理员登录成功，正在跳转')
-        const redirectPath = typeof route.query.redirect === 'string' ? route.query.redirect : '/admin'
-        await router.replace({ path: redirectPath })
-        return
-      }
-      Message.success('管理员登录成功')
-      emits('success')
-      return
-    }
     await handlePasswordLogin(loginForm.value.identifier.trim(), loginForm.value.password)
     const loginResult = authorization.value
 
     if (loginResult.challenge_required) {
       applyLoginChallenge(loginResult, 'password')
-      Message.warning('检测到新的登录环境，请完成邮箱验证码验证')
+      Message.warning(t('login.newLoginEnvironmentWarning'))
       return
     }
 
     saveCredentials()
     await finalizeLoginSuccess(loginResult)
   } catch (error: unknown) {
-    const message = getUserFriendlyErrorMessage(error, isAdminLoginMode.value ? '管理员登录失败，请检查账号和密码后重试' : '登录失败，请检查邮箱和密码后重试')
-    if (isAdminLoginMode.value) {
-      errorMessage.value = message
-      return
-    }
+    const message = getUserFriendlyErrorMessage(error, t('login.loginFailed'))
     const reasonCode = getErrorReasonCode(error)
     const shouldAutoRegister =
       reasonCode === REASON_INVALID_CREDENTIALS ||
       (reasonCode === null && AUTO_REGISTER_LOGIN_ERROR_MESSAGES.has(message))
 
     if (shouldAutoRegister) {
-      const result = await handlePrepareRegisterAction()
-      if (result.ok) {
-        return
-      }
-
-      if (result.reasonCode === REASON_ACCOUNT_EXISTS) {
-        errorMessage.value = GENERIC_LOGIN_ERROR_MESSAGE
-        loginForm.value.password = ''
-        return
-      }
-
-      if (result.reasonCode === REASON_OAUTH_ONLY_ACCOUNT) {
-        errorMessage.value = result.message
-        return
-      }
-
-      if (
-        result.requestCode === REQUEST_VALIDATE_ERROR_CODE ||
-        result.requestCode === REQUEST_FAIL_ERROR_CODE ||
-        result.reasonCode === REASON_RATE_LIMITED ||
-        result.reasonCode === REASON_SEND_PENDING
-      ) {
-        enterRegisterView(loginForm.value.identifier, loginForm.value.password, { preserveError: true })
-        return
-      }
-
-      errorMessage.value = result.message
+      await handleStartRegister()
       return
     }
 
     errorMessage.value = message
-    if (message === '密码错误' || message === GENERIC_LOGIN_ERROR_MESSAGE) {
+    if (reasonCode === REASON_INVALID_CREDENTIALS || CREDENTIAL_ERROR_BACKEND_MESSAGES.has(message)) {
       loginForm.value.password = ''
     }
-  } finally {
-    adminLoginLoading.value = false
   }
 }
 </script>
@@ -850,14 +733,14 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             authView === 'login'
               ? loginModeDescription
               : authView === 'register'
-                ? '设置用户名并使用邮箱验证，完成后即可登录'
-              : authView === 'registerVerify'
-                ? '首次注册需要完成邮箱验证码验证'
-                : authView === 'challenge'
-                  ? '检测到新的登录环境，请完成邮箱验证码验证'
-                  : forgotStep === 1
-                    ? '输入您的邮箱'
-                    : '输入验证码并设置新密码'
+                ? $t('login.registerSubtitle')
+                : authView === 'registerVerify'
+                  ? $t('login.registerVerifySubtitle')
+                  : authView === 'challenge'
+                    ? $t('login.challengeSubtitle')
+                    : forgotStep === 1
+                      ? $t('login.forgotEmailSubtitle')
+                      : $t('login.forgotResetSubtitle')
           }}
         </p>
       </div>
@@ -876,7 +759,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 mb-4"
       >
         <p class="text-sm text-slate-700 mb-3">
-          该邮箱已绑定第三方登录，可直接使用以下方式继续：
+          {{ $t('login.oauthOnlyHint') }}
         </p>
         <div class="grid grid-cols-2 gap-2">
           <a-button
@@ -909,7 +792,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
                 />
               </svg>
             </template>
-            {{ OAUTH_PROVIDER_LABELS.google }} 登录
+            {{ $t('login.oauthLogin', { provider: OAUTH_PROVIDER_LABELS.google }) }}
           </a-button>
 
           <a-button
@@ -929,26 +812,9 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
                 <icon-github :size="12" />
               </span>
             </template>
-            {{ OAUTH_PROVIDER_LABELS.github }} 登录
+            {{ $t('login.oauthLogin', { provider: OAUTH_PROVIDER_LABELS.github }) }}
           </a-button>
         </div>
-      </div>
-
-      <div v-if="authView === 'login'" class="grid grid-cols-2 gap-2 mb-4 rounded-xl bg-slate-100 p-1">
-        <button
-          type="button"
-          :class="['rounded-lg px-3 py-2 text-sm transition', loginMode === 'user' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500']"
-          @click="loginMode = 'user'"
-        >
-          用户登录
-        </button>
-        <button
-          type="button"
-          :class="['rounded-lg px-3 py-2 text-sm transition', loginMode === 'admin' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500']"
-          @click="loginMode = 'admin'"
-        >
-          管理员登录
-        </button>
       </div>
 
       <a-form
@@ -961,11 +827,11 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         <a-form-item
           field="identifier"
           class="login-input !mb-4"
-          :rules="[{ required: true, message: '请输入用户名或邮箱' }]"
+          :rules="[{ required: true, message: $t('login.identifierRequired') }]"
           :validate-trigger="['change', 'blur']"
           hide-label
         >
-          <a-input v-model="loginForm.identifier" size="large" allow-clear placeholder="用户名或邮箱">
+          <a-input v-model="loginForm.identifier" size="large" allow-clear :placeholder="$t('login.identifierPlaceholder')">
             <template #prefix>
               <icon-user class="text-slate-400" />
             </template>
@@ -975,11 +841,11 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         <a-form-item
           field="password"
           class="login-input !mb-2"
-          :rules="[{ required: true, message: '账号密码不能为空' }]"
+          :rules="[{ required: true, message: $t('login.passwordRequired') }]"
           :validate-trigger="['change', 'blur']"
           hide-label
         >
-          <a-input-password v-model="loginForm.password" size="large" placeholder="账号密码">
+          <a-input-password v-model="loginForm.password" size="large" :placeholder="$t('login.passwordPlaceholder')">
             <template #prefix>
               <icon-lock class="text-slate-400" />
             </template>
@@ -987,27 +853,27 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </a-form-item>
 
         <div class="flex items-center justify-between text-sm text-slate-600 mb-4">
-          <a-checkbox v-model="rememberPassword" @change="handleRememberChange">记住密码</a-checkbox>
+          <a-checkbox v-model="rememberPassword" @change="handleRememberChange">{{ $t('login.rememberPassword') }}</a-checkbox>
           <a-link class="!text-slate-500 hover:!text-slate-700" @click="openForgotPassword">
-            忘记密码?
+            {{ $t('login.forgotPassword') }}
           </a-link>
         </div>
 
         <a-button
-          :loading="passwordLoginLoading || prepareRegisterLoading || adminLoginLoading"
+          :loading="passwordLoginLoading || directRegisterLoading"
           size="large"
           type="primary"
           html-type="submit"
           long
           class="login-submit-btn !text-base !font-medium"
         >
-          登录
+          {{ $t('login.signIn') }}
         </a-button>
 
-        <div v-if="!isAdminLoginMode" class="text-center mt-4">
-          <span class="text-sm text-slate-500">没有账号？</span>
+        <div class="text-center mt-4">
+          <span class="text-sm text-slate-500">{{ $t('login.noAccount') }}</span>
           <a-link class="!text-slate-600 hover:!text-slate-800" @click="openRegister">
-            用户名/邮箱注册
+            {{ $t('login.registerEntry') }}
           </a-link>
         </div>
 
@@ -1076,7 +942,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             v-model="registerForm.username"
             size="large"
             allow-clear
-            placeholder="请输入用户名(大小写字母或数字)"
+            :placeholder="$t('login.usernamePlaceholder')"
             @keyup.enter="handleStartRegister"
           >
             <template #prefix>
@@ -1086,24 +952,10 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </a-form-item>
 
         <a-form-item hide-label class="login-input !mb-4">
-          <a-input
-            v-model="registerForm.email"
-            size="large"
-            allow-clear
-            placeholder="请输入注册邮箱"
-            @keyup.enter="handleStartRegister"
-          >
-            <template #prefix>
-              <icon-email class="text-slate-400" />
-            </template>
-          </a-input>
-        </a-form-item>
-
-        <a-form-item hide-label class="login-input !mb-4">
           <a-input-password
             v-model="registerForm.password"
             size="large"
-            placeholder="请设置密码(字母+数字，可含_和.，6-32位)"
+            :placeholder="$t('login.registerPasswordPlaceholder')"
             @keyup.enter="handleStartRegister"
           >
             <template #prefix>
@@ -1113,86 +965,20 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </a-form-item>
 
         <a-button
-          :loading="prepareRegisterLoading"
+          :loading="directRegisterLoading"
           size="large"
           type="primary"
           long
           class="login-submit-btn !text-base !font-medium"
           @click="handleStartRegister"
         >
-          发送注册验证码
+          注册
         </a-button>
 
         <div class="text-center mt-4">
-          <span class="text-sm text-slate-500">已有账号？</span>
+          <span class="text-sm text-slate-500">{{ $t('login.haveAccount') }}</span>
           <a-link class="!text-slate-600 hover:!text-slate-800" @click="backToLogin">
-            返回登录
-          </a-link>
-        </div>
-      </div>
-
-      <div v-else-if="authView === 'registerVerify'">
-        <div class="rounded-xl bg-sky-50 border border-sky-100 px-4 py-3 text-sm text-sky-900 mb-4">
-          {{ registerDescription }}
-        </div>
-
-        <a-form-item v-if="registerForm.username" hide-label class="login-input !mb-3">
-          <a-input v-model="registerForm.username" size="large" readonly>
-            <template #prefix>
-              <icon-user class="text-slate-400" />
-            </template>
-          </a-input>
-        </a-form-item>
-
-        <a-form-item hide-label class="login-input !mb-3">
-          <a-input v-model="registerForm.email" size="large" readonly>
-            <template #prefix>
-              <icon-email class="text-slate-400" />
-            </template>
-          </a-input>
-        </a-form-item>
-
-        <a-form-item hide-label class="login-input !mb-4">
-          <a-input
-            v-model="registerForm.code"
-            size="large"
-            placeholder="请输入6位验证码"
-            maxlength="6"
-            @keyup.enter="handleVerifyRegisterAction"
-          >
-            <template #prefix>
-              <icon-safe class="text-slate-400" />
-            </template>
-            <template #suffix>
-              <a-button
-                type="text"
-                size="mini"
-                class="!text-slate-500"
-                :loading="prepareRegisterLoading"
-                :disabled="registerCountdown > 0"
-                @click="handleResendRegisterCode"
-              >
-                {{ registerCountdownText }}
-              </a-button>
-            </template>
-          </a-input>
-        </a-form-item>
-
-        <a-button
-          :loading="verifyRegisterLoading"
-          size="large"
-          type="primary"
-          long
-          class="login-submit-btn !text-base !font-medium"
-          @click="handleVerifyRegisterAction"
-        >
-          验证并完成注册
-        </a-button>
-
-        <div class="text-center mt-4">
-          <a-link class="!text-slate-500 hover:!text-slate-700" @click="backToLogin">
-            <icon-left />
-            返回登录
+            {{ $t('login.backToLogin') }}
           </a-link>
         </div>
       </div>
@@ -1206,7 +992,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
           <a-input
             v-model="challengeCode"
             size="large"
-            placeholder="请输入6位验证码"
+            :placeholder="$t('login.codePlaceholder')"
             maxlength="6"
             @keyup.enter="handleVerifyChallenge"
           >
@@ -1236,13 +1022,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
           class="login-submit-btn !text-base !font-medium"
           @click="handleVerifyChallenge"
         >
-          完成登录验证
+          {{ $t('login.verifyAndLogin') }}
         </a-button>
 
         <div class="text-center mt-4">
           <a-link class="!text-slate-500 hover:!text-slate-700" @click="backToLogin">
             <icon-left />
-            返回登录
+            {{ $t('login.backToLogin') }}
           </a-link>
         </div>
       </div>
@@ -1254,7 +1040,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               v-model="forgotForm.email"
               size="large"
               allow-clear
-              placeholder="请输入邮箱"
+              :placeholder="$t('login.forgotEmailPlaceholder')"
               @keyup.enter="handleSendCode"
             >
               <template #prefix>
@@ -1270,7 +1056,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             class="login-submit-btn !text-base !font-medium"
             @click="handleSendCode"
           >
-            发送验证码
+            {{ $t('common.actions.sendCode') }}
           </a-button>
         </div>
 
@@ -1279,7 +1065,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             <a-input
               v-model="forgotForm.code"
               size="large"
-              placeholder="请输入6位验证码"
+              :placeholder="$t('login.codePlaceholder')"
               maxlength="6"
               @keyup.enter="handleResetPassword"
             >
@@ -1304,7 +1090,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             <a-input-password
               v-model="forgotForm.new_password"
               size="large"
-              placeholder="新密码(字母+数字，可含_和.，6-32位)"
+              :placeholder="$t('login.newPasswordPlaceholder')"
             >
               <template #prefix>
                 <icon-lock class="text-slate-400" />
@@ -1316,7 +1102,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             <a-input-password
               v-model="forgotForm.confirm_password"
               size="large"
-              placeholder="请再次输入新密码"
+              :placeholder="$t('login.confirmPasswordPlaceholder')"
               @keyup.enter="handleResetPassword"
             >
               <template #prefix>
@@ -1333,14 +1119,14 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             class="login-submit-btn !text-base !font-medium"
             @click="handleResetPassword"
           >
-            重置密码
+            {{ $t('login.resetPassword') }}
           </a-button>
         </div>
 
         <div class="text-center mt-4">
           <a-link class="!text-slate-500 hover:!text-slate-700" @click="handleForgotBack">
             <icon-left />
-            {{ forgotStep === 1 ? '返回登录' : '返回上一步' }}
+            {{ forgotStep === 1 ? $t('login.backToLogin') : $t('login.backToPrevious') }}
           </a-link>
         </div>
       </div>

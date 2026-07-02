@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from .base_entity import SerializableMixin
+
 
 MODEL_TIERS = {"cheap", "standard", "strong"}
 MODEL_HEALTH_STATUSES = {"healthy", "degraded", "unknown"}
@@ -8,7 +10,7 @@ KEY_STATUSES = {"active", "inactive", "circuit_open"}
 
 
 @dataclass
-class ModelPoolItem:
+class ModelPoolItem(SerializableMixin):
     provider: str
     model: str
     tier: str = "standard"
@@ -41,20 +43,6 @@ class ModelPoolItem:
             rate_limit_per_minute=_non_negative_int(data.get("rate_limit_per_minute")),
             enabled=_bool(data.get("enabled"), True),
         )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "provider": self.provider,
-            "model": self.model,
-            "tier": self.tier,
-            "capabilities": self.capabilities,
-            "price_per_1k_input_tokens": self.price_per_1k_input_tokens,
-            "price_per_1k_output_tokens": self.price_per_1k_output_tokens,
-            "context_window": self.context_window,
-            "health_status": self.health_status,
-            "rate_limit_per_minute": self.rate_limit_per_minute,
-            "enabled": self.enabled,
-        }
 
 
 @dataclass

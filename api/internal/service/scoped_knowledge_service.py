@@ -79,6 +79,11 @@ class SystemKnowledgeService(KnowledgeBaseService):
 @inject
 @dataclass
 class UserMemoryService(BaseService):
+    """
+    UserMemory 保持独立记忆域。
+
+    短期仅通过知识抽象层参与统一语义，不并入 Dataset 深层后台管理链路。
+    """
     db: SQLAlchemy
 
     def remember(
@@ -89,6 +94,7 @@ class UserMemoryService(BaseService):
         content: str,
         confidence: int,
         created_from: str = KnowledgeCreatedFrom.CONVERSATION_MEMORY.value,
+        scope: str = "global",
     ) -> UserMemory:
         memory = self.create(
             UserMemory,
@@ -98,6 +104,7 @@ class UserMemoryService(BaseService):
             confidence=confidence,
             status="active",
             created_from=created_from,
+            scope=scope,
         )
         try:
             self._get_memory_vector_service().index_memory(memory)
@@ -160,7 +167,7 @@ class UserMemoryService(BaseService):
         return True
 
     def recall_relevant_memories(
-        self, account: Account, query: str, top_k: int = 5
+        self, account: Account, query: str, top_k: int = 5, scope: str = "global"
     ) -> list[dict]:
         results = self._get_memory_vector_service().search_relevant_memories(
             account, query, top_k=top_k
@@ -174,6 +181,7 @@ class UserMemoryService(BaseService):
                     UserMemory.id.in_([uuid.UUID(mid) for mid in memory_ids]),
                     UserMemory.owner_account_id == account.id,
                     UserMemory.status == "active",
+                    UserMemory.scope == scope,
                 )
                 .all()
             )
@@ -194,6 +202,12 @@ class UserMemoryService(BaseService):
 @inject
 @dataclass
 class UserContentKnowledgeService(KnowledgeBaseService):
+    """
+    用户内容知识服务服务于 KnowledgeBase 抽象层。
+
+    短期不直接替代 datasets 的后台深层管理入口，Document / Segment 仍沿用
+    Dataset 管理主线，避免在收敛设计完成前提前替换后台入口语义。
+    """
     db: SQLAlchemy
 
     def create_home_upload_base(

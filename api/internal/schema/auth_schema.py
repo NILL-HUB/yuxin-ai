@@ -57,6 +57,18 @@ class PrepareRegisterReq(FlaskForm):
     ])
 
 
+class DirectRegisterReq(FlaskForm):
+    """直接注册请求结构（无需邮箱验证码）"""
+    username = StringField('username', validators=[
+        DataRequired("用户名不能为空"),
+        regexp(regex=USERNAME_PATTERN, message="用户名仅支持大小写字母和数字，长度3~32位")
+    ])
+    password = StringField('password', validators=[
+        DataRequired("密码不能为空"),
+        regexp(regex=password_pattern, message=PASSWORD_RULE_MESSAGE)
+    ])
+
+
 class VerifyRegisterReq(FlaskForm):
     """验证码注册请求结构"""
     username = StringField('username', validators=[

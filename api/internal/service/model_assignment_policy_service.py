@@ -5,8 +5,8 @@ from internal.entity.orchestrator_entity import (
     RoutingDecision,
 )
 
-_TIER_RANK = {"cheap": 0, "balanced": 1, "standard": 1, "strong": 2}
-_RANK_TIER = {0: "cheap", 1: "balanced", 2: "strong"}
+_TIER_RANK = {"cheap": 0, "standard": 1, "strong": 2}
+_RANK_TIER = {0: "cheap", 1: "standard", 2: "strong"}
 
 
 class ModelAssignmentPolicy:
@@ -31,7 +31,7 @@ class ModelAssignmentPolicy:
         if execution_mode == ExecutionMode.REJECT_OR_CONFIRM.value:
             return "strong"
         if execution_mode == ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value:
-            return ModelAssignmentPolicy._upgrade(fallback, "balanced")
+            return ModelAssignmentPolicy._upgrade(fallback, "standard")
         return fallback
 
     @staticmethod
@@ -39,7 +39,7 @@ class ModelAssignmentPolicy:
         if complexity == "complex":
             return "strong"
         if complexity == "medium":
-            return ModelAssignmentPolicy._upgrade(fallback, "balanced")
+            return ModelAssignmentPolicy._upgrade(fallback, "standard")
         return fallback
 
     @staticmethod
@@ -47,7 +47,7 @@ class ModelAssignmentPolicy:
         if risk_level == RiskLevel.HIGH.value:
             return "strong"
         if risk_level == RiskLevel.UNKNOWN.value:
-            return ModelAssignmentPolicy._upgrade(fallback, "balanced")
+            return ModelAssignmentPolicy._upgrade(fallback, "standard")
         return fallback
 
     @staticmethod

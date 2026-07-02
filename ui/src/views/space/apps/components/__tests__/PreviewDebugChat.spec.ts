@@ -173,6 +173,11 @@ vi.mock('@/services/upload-file', () => ({
   uploadImage: vi.fn(),
 }))
 
+vi.mock('@/services/tool-confirmation', () => ({
+  postToolConfirmationConfirm: vi.fn().mockResolvedValue({}),
+  postToolConfirmationCancel: vi.fn().mockResolvedValue({}),
+}))
+
 vi.mock('@arco-design/web-vue', () => ({
   Message: {
     error: vi.fn(),

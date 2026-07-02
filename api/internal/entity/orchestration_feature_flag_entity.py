@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from .base_entity import SerializableMixin
+
 
 ORCHESTRATION_FEATURE_FLAG_CODES = [
     "ENABLE_ORCHESTRATOR",
@@ -15,23 +17,13 @@ ORCHESTRATION_FEATURE_FLAG_CODES = [
 
 
 @dataclass
-class OrchestrationFeatureFlag:
+class OrchestrationFeatureFlag(SerializableMixin):
     code: str
     name: str
     description: str
     enabled: bool
     risk_level: str
     fallback_behavior: str
-
-    def to_dict(self) -> dict:
-        return {
-            "code": self.code,
-            "name": self.name,
-            "description": self.description,
-            "enabled": self.enabled,
-            "risk_level": self.risk_level,
-            "fallback_behavior": self.fallback_behavior,
-        }
 
 
 def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:

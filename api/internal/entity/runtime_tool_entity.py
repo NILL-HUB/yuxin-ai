@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from .base_entity import SerializableMixin
 from internal.entity.tool_inventory_entity import normalize_tool_metadata
 
 
 @dataclass
-class RuntimeToolDescriptor:
+class RuntimeToolDescriptor(SerializableMixin):
     tool_id: str
     runtime_name: str
     name: str
@@ -54,20 +55,6 @@ class RuntimeToolDescriptor:
             },
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "tool_id": self.tool_id,
-            "runtime_name": self.runtime_name,
-            "name": self.name,
-            "description": self.description,
-            "source_type": self.source_type,
-            "provider_id": self.provider_id,
-            "provider_name": self.provider_name,
-            "input_schema": self.input_schema,
-            "metadata": self.metadata,
-            "audit_context": self.audit_context,
-        }
-
 
 @dataclass
 class RuntimeToolCallRequest:
@@ -87,7 +74,7 @@ class RuntimeToolCallRequest:
 
 
 @dataclass
-class RuntimeToolCallResult:
+class RuntimeToolCallResult(SerializableMixin):
     success: bool
     output: Any = None
     error_code: str = ""
@@ -122,16 +109,6 @@ class RuntimeToolCallResult:
             latency_ms=max(int(latency_ms), 0),
             audit_payload=dict(audit_payload),
         )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "success": self.success,
-            "output": self.output,
-            "error_code": self.error_code,
-            "error_message": self.error_message,
-            "latency_ms": self.latency_ms,
-            "audit_payload": self.audit_payload,
-        }
 
 
 def _normalize_text(value: Any) -> str:

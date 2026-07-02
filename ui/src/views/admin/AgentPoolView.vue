@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import {
   checkAgentHealth,
@@ -10,7 +11,13 @@ import {
   setAgentPoolStatus,
   updateAgentPoolConfig,
 } from '@/services/admin-agent-pool'
+import { listSubPoolDefinitions } from '@/services/admin-sub-pool'
+import { listModels } from '@/services/admin-model-pool'
 import { getErrorMessage } from '@/utils/error'
+
+const { t } = useI18n()
+
+// ==================== 类型定义 ====================
 
 type AgentPoolConfig = {
   id: string
@@ -24,6 +31,7 @@ type AgentPoolConfig = {
   enabled: boolean
   health_status: string
   last_health_check_at?: number
+  metadata?: Record<string, unknown>
   created_at?: number
   updated_at?: number
 }
@@ -35,14 +43,152 @@ type PoolStatsItem = {
   healthy: number
 }
 
+type SubPoolDefinition = {
+  id: string
+  pool_type: string
+  name: string
+  label: string
+  description: string
+  visible_to_user: boolean
+  default_enabled: boolean
+  default_capabilities: string[]
+  task_keywords: string[]
+  is_system: boolean
+  sort_order: number
+  enabled: boolean
+  created_at?: number
+  updated_at?: number
+}
+
+type ModelRecord = {
+  id: string
+  provider: string
+  model_name: string
+  display_name: string
+  tier: string
+  status: string
+}
+
+// ==================== 常量定义 ====================
+
 const PRIMARY_POOLS = ['tenant', 'system', 'global']
 const RISK_LEVELS = ['low', 'medium', 'high']
-const MODEL_TIERS = ['cheap', 'balanced', 'strong']
+const MODEL_TIERS = ['cheap', 'standard', 'strong']
+const COST_LEVELS = ['low', 'medium', 'high']
+
+const POOL_LABELS: Record<string, string> = {
+  tenant: '租户池',
+  system: '系统池',
+  global: '全局池',
+  general: '通用池',
+  coding: '编程池',
+  office: '办公池',
+  data: '数据池',
+  research: '研究池',
+  customer_service: '客服池',
+  internal_admin: '内部管理池',
+}
+
+const RISK_LABELS: Record<string, string> = {
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
+}
+
+const TIER_LABELS: Record<string, string> = {
+  cheap: '基础版',
+  standard: '标准版',
+  strong: '强力版',
+}
+
+const COST_LABELS: Record<string, string> = {
+  low: '低成本',
+  medium: '中成本',
+  high: '高成本',
+}
+
+const HEALTH_LABELS: Record<string, string> = {
+  healthy: '健康',
+  degraded: '降级',
+  offline: '离线',
+  unknown: '未知',
+}
+
+// ==================== 标签 & 颜色映射 ====================
+
+const poolLabel = (pool: string) => POOL_LABELS[pool] || pool
+const riskLabel = (risk: string) => RISK_LABELS[risk] || risk
+const tierLabel = (tier: string) => TIER_LABELS[tier] || tier
+const costLabel = (cost: string) => COST_LABELS[cost] || cost
+const healthLabel = (status: string) => HEALTH_LABELS[status] || status
+
+const riskColor = (risk: string) =>
+  ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[risk] || 'gray'
+
+const healthColor = (status: string) =>
+  ({ healthy: 'green', degraded: 'orange', offline: 'red', unknown: 'gray' } as Record<string, string>)[status] || 'gray'
+
+const costColor = (cost: string) =>
+  ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[cost] || 'gray'
+
+const tierColor = (tier: string) =>
+  ({ cheap: 'gray', standard: 'blue', strong: 'purple' } as Record<string, string>)[tier] || 'gray'
+
+const formatTimestamp = (timestamp?: number) =>
+  timestamp ? new Date(timestamp * 1000).toLocaleString() : '-'
+
+// 从 metadata 中提取 cost_level
+const getCostLevel = (config: AgentPoolConfig) => {
+  const metadata = config.metadata || {}
+  return (metadata.cost_level as string) || 'medium'
+}
+
+// 从 metadata 中提取 capabilities
+const getCapabilities = (config: AgentPoolConfig) => {
+  const metadata = config.metadata || {}
+  return (metadata.capabilities as string[]) || []
+}
+
+// 从 metadata 中提取 task_types
+const getTaskTypes = (config: AgentPoolConfig) => {
+  const metadata = config.metadata || {}
+  return (metadata.task_types as string[]) || []
+}
+
+// ==================== Agent 池配置状态 ====================
 
 const loading = ref(false)
 const actionLoading = ref(false)
 const configs = ref<AgentPoolConfig[]>([])
 const stats = ref<PoolStatsItem[]>([])
+const models = ref<ModelRecord[]>([])
+const availableSubPools = ref<SubPoolDefinition[]>([])
+
+const filters = ref({
+  current_page: 1,
+  page_size: 20,
+})
+const total = ref(0)
+
+// 模型选项：仅 active 状态
+const modelOptions = computed(() =>
+  models.value
+    .filter((m) => m.status === 'active')
+    .map((m) => ({
+      value: m.model_name,
+      label: `${m.display_name || m.model_name} (${m.provider})`,
+    }))
+)
+
+// 子池选项：仅 agent 类型且启用
+const subPoolOptions = computed(() =>
+  availableSubPools.value
+    .filter((p) => p.pool_type === 'agent' && p.enabled)
+    .map((p) => ({
+      value: p.name,
+      label: p.label || p.name,
+    }))
+)
 
 const modalVisible = ref(false)
 const editMode = ref(false)
@@ -52,35 +198,58 @@ const form = ref({
   primary_pool: 'tenant',
   secondary_pools: [] as string[],
   risk_level: 'medium',
-  model_tier: 'balanced',
+  model_tier: 'standard',
   model_id: '',
   routing_priority: 100,
   enabled: true,
+  cost_level: 'medium',
+  capabilities: [] as string[],
+  task_types: [] as string[],
 })
 
-const riskColor = (risk: string) =>
-  ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[risk] || 'gray'
+// ==================== 统计卡片计算属性 ====================
 
-const healthColor = (status: string) =>
-  ({ healthy: 'green', degraded: 'orange', offline: 'red', unknown: 'gray' } as Record<string, string>)[status] || 'gray'
+const totalConfigs = computed(() => configs.value.length)
+const enabledConfigs = computed(() => configs.value.filter((c) => c.enabled).length)
+const healthyConfigs = computed(() => configs.value.filter((c) => c.health_status === 'healthy').length)
 
-const formatTimestamp = (timestamp?: number) =>
-  timestamp ? new Date(timestamp * 1000).toLocaleString() : '-'
+// ==================== Agent 池配置方法 ====================
 
-const loadAll = async () => {
+const loadPoolConfigs = async () => {
   loading.value = true
   try {
-    const [configResult, statsResult] = await Promise.all([
-      listAgentPoolConfigs({ current_page: 1, page_size: 50 }),
+    const [configResult, statsResult, modelResult, subPoolResult] = await Promise.all([
+      listAgentPoolConfigs({ current_page: filters.value.current_page, page_size: filters.value.page_size }),
       getAgentPoolStats(),
+      listModels({ current_page: 1, page_size: 50 }),
+      listSubPoolDefinitions({ current_page: 1, page_size: 50, pool_type: 'agent' }),
     ])
-    configs.value = (configResult as { list?: AgentPoolConfig[] }).list || []
-    stats.value = (statsResult as { list?: PoolStatsItem[] }).list || []
+    // request 返回完整 {code, message, data} 对象，data 中包含 list 和 paginator
+    const configData = (configResult as { data?: { list?: AgentPoolConfig[]; paginator?: { total_record?: number } } }).data
+    const statsData = (statsResult as { data?: { list?: PoolStatsItem[] } }).data
+    const modelData = (modelResult as { data?: { list?: ModelRecord[] } }).data
+    const subPoolData = (subPoolResult as { data?: { list?: SubPoolDefinition[] } }).data
+    configs.value = configData?.list || []
+    total.value = configData?.paginator?.total_record || 0
+    stats.value = statsData?.list || []
+    models.value = modelData?.list || []
+    availableSubPools.value = subPoolData?.list || []
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载Agent池数据失败'))
+    Message.error(getErrorMessage(error, t('admin.agentPool.loadFailed')))
   } finally {
     loading.value = false
   }
+}
+
+const onPageChange = (page: number) => {
+  filters.value.current_page = page
+  loadPoolConfigs()
+}
+
+const onPageSizeChange = (size: number) => {
+  filters.value.page_size = size
+  filters.value.current_page = 1
+  loadPoolConfigs()
 }
 
 const openCreate = () => {
@@ -91,10 +260,13 @@ const openCreate = () => {
     primary_pool: 'tenant',
     secondary_pools: [],
     risk_level: 'medium',
-    model_tier: 'balanced',
+    model_tier: 'standard',
     model_id: '',
     routing_priority: 100,
     enabled: true,
+    cost_level: 'medium',
+    capabilities: [],
+    task_types: [],
   }
   modalVisible.value = true
 }
@@ -102,6 +274,7 @@ const openCreate = () => {
 const openEdit = (config: AgentPoolConfig) => {
   editMode.value = true
   editingId.value = config.id
+  const metadata = config.metadata || {}
   form.value = {
     app_id: config.app_id,
     primary_pool: config.primary_pool,
@@ -111,6 +284,9 @@ const openEdit = (config: AgentPoolConfig) => {
     model_id: config.model_id || '',
     routing_priority: config.routing_priority,
     enabled: config.enabled,
+    cost_level: (metadata.cost_level as string) || 'medium',
+    capabilities: [...((metadata.capabilities as string[]) || [])],
+    task_types: [...((metadata.task_types as string[]) || [])],
   }
   modalVisible.value = true
 }
@@ -118,18 +294,32 @@ const openEdit = (config: AgentPoolConfig) => {
 const submit = async () => {
   actionLoading.value = true
   try {
-    const payload = { ...form.value }
+    const payload = {
+      app_id: form.value.app_id,
+      primary_pool: form.value.primary_pool,
+      secondary_pools: form.value.secondary_pools,
+      risk_level: form.value.risk_level,
+      model_tier: form.value.model_tier,
+      model_id: form.value.model_id,
+      routing_priority: form.value.routing_priority,
+      enabled: form.value.enabled,
+      metadata: {
+        cost_level: form.value.cost_level,
+        capabilities: form.value.capabilities,
+        task_types: form.value.task_types,
+      },
+    }
     if (editMode.value) {
       await updateAgentPoolConfig(editingId.value, payload)
-      Message.success('Agent池配置已更新')
+      Message.success(t('admin.agentPool.updated'))
     } else {
       await createAgentPoolConfig(payload)
-      Message.success('Agent池配置已创建')
+      Message.success(t('admin.agentPool.created'))
     }
     modalVisible.value = false
-    await loadAll()
+    await loadPoolConfigs()
   } catch (error) {
-    Message.error(getErrorMessage(error, '保存Agent池配置失败'))
+    Message.error(getErrorMessage(error, t('admin.agentPool.saveFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -139,10 +329,10 @@ const toggleStatus = async (config: AgentPoolConfig, enabled: boolean) => {
   actionLoading.value = true
   try {
     await setAgentPoolStatus(config.id, enabled)
-    Message.success(enabled ? '已启用' : '已停用')
-    await loadAll()
+    Message.success(enabled ? t('admin.agentPool.statusEnabled') : t('admin.agentPool.statusDisabled'))
+    await loadPoolConfigs()
   } catch (error) {
-    Message.error(getErrorMessage(error, '更新状态失败'))
+    Message.error(getErrorMessage(error, t('admin.agentPool.updateStatusFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -152,10 +342,10 @@ const runHealthCheck = async (config: AgentPoolConfig) => {
   actionLoading.value = true
   try {
     await checkAgentHealth(config.id)
-    Message.success('健康检查已完成')
-    await loadAll()
+    Message.success(t('admin.agentPool.healthCheckDone'))
+    await loadPoolConfigs()
   } catch (error) {
-    Message.error(getErrorMessage(error, '健康检查失败'))
+    Message.error(getErrorMessage(error, t('admin.agentPool.healthCheckFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -165,45 +355,44 @@ const remove = async (config: AgentPoolConfig) => {
   actionLoading.value = true
   try {
     await deleteAgentPoolConfig(config.id)
-    Message.success('配置已删除')
-    await loadAll()
+    Message.success(t('admin.agentPool.deleted'))
+    await loadPoolConfigs()
   } catch (error) {
-    Message.error(getErrorMessage(error, '删除配置失败'))
+    Message.error(getErrorMessage(error, t('admin.agentPool.deleteFailed')))
   } finally {
     actionLoading.value = false
   }
 }
 
-onMounted(loadAll)
+onMounted(loadPoolConfigs)
 </script>
 
 <template>
   <section class="space-y-6 p-6">
     <header>
-      <h1 class="text-2xl font-semibold text-gray-900">Agent 池配置</h1>
-      <p class="mt-1 text-sm text-gray-500">维护各应用的主备池路由、风险等级与模型档位，并执行健康检查。</p>
+      <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.agentPool.title') }}</h1>
+      <p class="mt-1 text-sm text-gray-500">{{ t('admin.agentPool.description') }}</p>
     </header>
 
+    <!-- 统计卡片 -->
     <div class="grid gap-4 md:grid-cols-3">
-      <article v-if="!stats.length" class="rounded-lg border bg-white p-4 text-sm text-gray-400">
-        暂无池统计数据
+      <article class="rounded-lg border bg-white p-4">
+        <p class="text-sm text-gray-500">{{ t('admin.agentPool.statTotal') }}</p>
+        <strong class="mt-1 block text-2xl">{{ totalConfigs }}</strong>
       </article>
-      <article
-        v-for="item in stats"
-        :key="item.pool"
-        class="rounded-lg border bg-white p-4"
-      >
-        <p class="text-sm text-gray-500">{{ item.pool }} 池</p>
-        <div class="mt-2 flex items-baseline gap-4">
-          <strong class="text-xl">{{ item.total }}</strong>
-          <span class="text-sm text-gray-500">启用 {{ item.enabled }}</span>
-          <span class="text-sm text-green-600">健康 {{ item.healthy }}</span>
-        </div>
+      <article class="rounded-lg border bg-white p-4">
+        <p class="text-sm text-gray-500">{{ t('admin.agentPool.statEnabled') }}</p>
+        <strong class="mt-1 block text-2xl text-blue-600">{{ enabledConfigs }}</strong>
+      </article>
+      <article class="rounded-lg border bg-white p-4">
+        <p class="text-sm text-gray-500">{{ t('admin.agentPool.statHealthy') }}</p>
+        <strong class="mt-1 block text-2xl text-green-600">{{ healthyConfigs }}</strong>
       </article>
     </div>
 
-    <div class="flex justify-end">
-      <a-button type="primary" @click="openCreate">新建配置</a-button>
+    <!-- Agent 池配置列表 -->
+    <div class="mb-3 flex justify-end">
+      <a-button type="primary" @click="openCreate">{{ t('admin.agentPool.createConfig') }}</a-button>
     </div>
 
     <a-spin :loading="loading" class="block">
@@ -211,33 +400,49 @@ onMounted(loadAll)
         <table class="w-full text-left text-sm">
           <thead class="bg-gray-50 text-gray-500">
             <tr>
-              <th class="p-3">应用 ID</th>
-              <th class="p-3">主池</th>
-              <th class="p-3">次级池</th>
-              <th class="p-3">风险等级</th>
-              <th class="p-3">模型档位</th>
-              <th class="p-3">路由优先级</th>
-              <th class="p-3">状态</th>
-              <th class="p-3">健康状态</th>
-              <th class="p-3">最后检查</th>
-              <th class="p-3">操作</th>
+              <th class="p-3">{{ t('admin.agentPool.appId') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.primaryPool') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.secondaryPools') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.riskLevel') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.modelTier') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.costLevel') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.capabilities') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.routingPriority') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.status') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.healthStatus') }}</th>
+              <th class="p-3">{{ t('admin.agentPool.actions') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!configs.length">
-              <td class="p-6 text-center text-gray-400" colspan="10">暂无 Agent 池配置</td>
+              <td class="p-6 text-center text-gray-400" colspan="11">{{ t('admin.agentPool.empty') }}</td>
             </tr>
             <tr v-for="config in configs" :key="config.id" class="border-t">
-              <td class="p-3 font-mono">{{ config.app_id }}</td>
-              <td class="p-3">{{ config.primary_pool }}</td>
+              <td class="p-3 font-mono text-xs">{{ config.app_id.substring(0, 8) }}...</td>
               <td class="p-3">
-                <a-tag v-for="pool in config.secondary_pools" :key="pool" size="small">{{ pool }}</a-tag>
+                <a-tag size="small">{{ poolLabel(config.primary_pool) }}</a-tag>
+              </td>
+              <td class="p-3">
+                <a-tag v-for="pool in config.secondary_pools" :key="pool" size="small" color="arcoblue">
+                  {{ poolLabel(pool) }}
+                </a-tag>
                 <span v-if="!config.secondary_pools?.length" class="text-gray-400">-</span>
               </td>
               <td class="p-3">
-                <a-tag :color="riskColor(config.risk_level)" size="small">{{ config.risk_level }}</a-tag>
+                <a-tag :color="riskColor(config.risk_level)" size="small">{{ riskLabel(config.risk_level) }}</a-tag>
               </td>
-              <td class="p-3">{{ config.model_tier }}</td>
+              <td class="p-3">
+                <a-tag :color="tierColor(config.model_tier)" size="small">{{ tierLabel(config.model_tier) }}</a-tag>
+              </td>
+              <td class="p-3">
+                <a-tag :color="costColor(getCostLevel(config))" size="small">{{ costLabel(getCostLevel(config)) }}</a-tag>
+              </td>
+              <td class="p-3">
+                <div class="flex flex-wrap gap-1">
+                  <a-tag v-for="cap in getCapabilities(config)" :key="cap" size="small" color="cyan">{{ cap }}</a-tag>
+                  <span v-if="!getCapabilities(config).length" class="text-gray-400">-</span>
+                </div>
+              </td>
               <td class="p-3">{{ config.routing_priority }}</td>
               <td class="p-3">
                 <a-switch
@@ -247,14 +452,13 @@ onMounted(loadAll)
                 />
               </td>
               <td class="p-3">
-                <a-tag :color="healthColor(config.health_status)" size="small">{{ config.health_status }}</a-tag>
+                <a-tag :color="healthColor(config.health_status)" size="small">{{ healthLabel(config.health_status) }}</a-tag>
               </td>
-              <td class="p-3">{{ formatTimestamp(config.last_health_check_at) }}</td>
               <td class="p-3">
                 <a-space>
-                  <a-button size="mini" @click="runHealthCheck(config)">健康检查</a-button>
-                  <a-button size="mini" @click="openEdit(config)">编辑</a-button>
-                  <a-button size="mini" status="danger" @click="remove(config)">删除</a-button>
+                  <a-button size="mini" @click="runHealthCheck(config)">{{ t('admin.agentPool.healthCheck') }}</a-button>
+                  <a-button size="mini" @click="openEdit(config)">{{ t('admin.agentPool.edit') }}</a-button>
+                  <a-button size="mini" status="danger" @click="remove(config)">{{ t('admin.agentPool.remove') }}</a-button>
                 </a-space>
               </td>
             </tr>
@@ -263,44 +467,84 @@ onMounted(loadAll)
       </div>
     </a-spin>
 
+    <div class="mt-3 flex justify-end">
+      <a-pagination
+        :total="total"
+        :current="filters.current_page"
+        :page-size="filters.page_size"
+        show-total
+        show-page-size
+        :page-size-options="[10, 20, 50, 100]"
+        @change="onPageChange"
+        @page-size-change="onPageSizeChange"
+      />
+    </div>
+
+    <!-- Agent 池配置 弹窗 -->
     <a-modal
       v-model:visible="modalVisible"
-      :title="editMode ? '编辑 Agent 池配置' : '新建 Agent 池配置'"
+      :title="editMode ? t('admin.agentPool.editTitle') : t('admin.agentPool.createTitle')"
       :ok-loading="actionLoading"
       :mask-closable="false"
       @ok="submit"
     >
       <a-form :model="form" layout="vertical">
-        <a-form-item label="应用 ID" field="app_id">
-          <a-input v-model="form.app_id" placeholder="请输入应用 ID" :disabled="editMode" />
+        <a-form-item :label="t('admin.agentPool.appId')" field="app_id">
+          <a-input v-model="form.app_id" :placeholder="t('admin.agentPool.appIdPlaceholder')" :disabled="editMode" />
         </a-form-item>
-        <a-form-item label="主池" field="primary_pool">
+        <a-form-item :label="t('admin.agentPool.primaryPool')" field="primary_pool">
           <a-select v-model="form.primary_pool">
-            <a-option v-for="pool in PRIMARY_POOLS" :key="pool" :value="pool">{{ pool }}</a-option>
+            <a-option v-for="pool in PRIMARY_POOLS" :key="pool" :value="pool">{{ poolLabel(pool) }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="次级池" field="secondary_pools">
-          <a-select v-model="form.secondary_pools" multiple allow-search allow-create>
-            <a-option v-for="pool in PRIMARY_POOLS" :key="pool" :value="pool">{{ pool }}</a-option>
+        <a-form-item :label="t('admin.agentPool.secondaryPools')" field="secondary_pools">
+          <a-select v-model="form.secondary_pools" multiple allow-search allow-create placeholder="选择领域子池，如编程池、办公池">
+            <a-option v-for="opt in subPoolOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="风险等级" field="risk_level">
+        <a-form-item :label="t('admin.agentPool.riskLevel')" field="risk_level">
           <a-select v-model="form.risk_level">
-            <a-option v-for="risk in RISK_LEVELS" :key="risk" :value="risk">{{ risk }}</a-option>
+            <a-option v-for="risk in RISK_LEVELS" :key="risk" :value="risk">{{ riskLabel(risk) }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="模型档位" field="model_tier">
+        <a-form-item :label="t('admin.agentPool.modelTier')" field="model_tier">
           <a-select v-model="form.model_tier">
-            <a-option v-for="tier in MODEL_TIERS" :key="tier" :value="tier">{{ tier }}</a-option>
+            <a-option v-for="tier in MODEL_TIERS" :key="tier" :value="tier">{{ tierLabel(tier) }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="模型 ID" field="model_id">
-          <a-input v-model="form.model_id" placeholder="如 deepseek-chat" />
+        <a-form-item :label="t('admin.agentPool.costLevel')" field="cost_level">
+          <a-select v-model="form.cost_level">
+            <a-option v-for="cost in COST_LEVELS" :key="cost" :value="cost">{{ costLabel(cost) }}</a-option>
+          </a-select>
         </a-form-item>
-        <a-form-item label="路由优先级" field="routing_priority">
+        <a-form-item :label="t('admin.agentPool.capabilities')" field="capabilities">
+          <a-select v-model="form.capabilities" multiple allow-search allow-create :placeholder="t('admin.agentPool.capabilitiesPlaceholder')">
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.agentPool.taskTypes')" field="task_types">
+          <a-select v-model="form.task_types" multiple allow-search allow-create>
+            <a-option value="qa">问答</a-option>
+            <a-option value="analysis">分析</a-option>
+            <a-option value="workflow">工作流</a-option>
+            <a-option value="tool_use">工具调用</a-option>
+            <a-option value="coding">编程</a-option>
+            <a-option value="research">研究</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.agentPool.modelId')" field="model_id">
+          <a-select
+            v-model="form.model_id"
+            allow-search
+            allow-clear
+            :placeholder="t('admin.agentPool.modelIdPlaceholder')"
+          >
+            <a-option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.agentPool.routingPriority')" field="routing_priority">
           <a-input-number v-model="form.routing_priority" :min="0" :max="9999" />
         </a-form-item>
-        <a-form-item label="启用" field="enabled">
+        <a-form-item :label="t('admin.agentPool.formEnabled')" field="enabled">
           <a-switch v-model="form.enabled" />
         </a-form-item>
       </a-form>

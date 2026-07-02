@@ -1,13 +1,15 @@
 class AgentTaskExecutor:
     """将 Agent 类适配为 ExecutionCoordinator 的 TaskExecutor。"""
 
-    def __init__(self, agent_class, agent_config=None, tools=None, llm=None, history=None, query=""):
+    def __init__(self, agent_class, agent_config=None, tools=None, llm=None, history=None, query="", long_term_memory="", user_memory=""):
         self.agent_class = agent_class
         self.agent_config = agent_config
         self.tools = tools or []
         self.llm = llm
         self.history = history or []
         self.query = query
+        self.long_term_memory = long_term_memory
+        self.user_memory = user_memory
 
     def execute(self, item) -> dict:
         try:
@@ -17,8 +19,8 @@ class AgentTaskExecutor:
             for thought in agent.stream({
                 "messages": [self.llm.convert_to_human_message(item.description or self.query, [])],
                 "history": self.history,
-                "long_term_memory": "",
-                "user_memory": "",
+                "long_term_memory": self.long_term_memory,
+                "user_memory": self.user_memory,
             }):
                 answer = getattr(thought, "answer", "")
                 if answer:

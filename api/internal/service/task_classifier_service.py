@@ -106,7 +106,7 @@ class TaskClassifierService:
     }
     _TIER_BY_COMPLEXITY = {
         "complex": "strong",
-        "medium": "balanced",
+        "medium": "standard",
         "simple": "cheap",
     }
 
@@ -210,7 +210,7 @@ class TaskClassifierService:
                 execution_mode=ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
                 needs_tools=True,
                 needs_agent=True,
-                recommended_model_tier="balanced",
+                recommended_model_tier="standard",
                 risk_level=RiskLevel.SAFE.value,
                 reason="用户明确要求使用垂直智能体或问题适合路由到单个专业 Agent",
             )
@@ -235,7 +235,7 @@ class TaskClassifierService:
                 execution_mode=ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
                 needs_tools=True,
                 needs_agent=True,
-                recommended_model_tier="balanced",
+                recommended_model_tier="standard",
                 risk_level=RiskLevel.SAFE.value,
                 reason="用户请求需要查询、联网、文件或工具类能力",
             )

@@ -80,7 +80,7 @@ export type AgentMetadata = {
   input_modalities: string[]
   output_modalities: string[]
   risk_level: 'safe' | 'medium' | 'high'
-  model_tier: 'cheap' | 'balanced' | 'strong'
+  model_tier: 'cheap' | 'standard' | 'strong'
   model_id: string
   key_policy: string
   cost_level: 'low' | 'medium' | 'high'

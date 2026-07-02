@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { useI18n } from 'vue-i18n'
 import {
   createRole,
   deleteRole,
@@ -11,6 +12,8 @@ import {
   type Role,
 } from '@/services/admin-roles'
 import { getErrorMessage } from '@/utils/error'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -38,7 +41,7 @@ const permissionCodeToId = computed(() => {
 const permissionGroups = computed(() => {
   const groups: Record<string, Permission[]> = {}
   permissions.value.forEach((permission) => {
-    const key = permission.resource || '其他'
+    const key = permission.resource || t('admin.roles.otherPermission')
     if (!groups[key]) groups[key] = []
     groups[key].push(permission)
   })
@@ -51,7 +54,7 @@ const loadRoles = async () => {
     const res = await listRoles()
     roles.value = res.data || []
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载角色失败'))
+    Message.error(getErrorMessage(error, t('admin.roles.loadRolesFailed')))
   } finally {
     loading.value = false
   }
@@ -62,7 +65,7 @@ const loadPermissions = async () => {
     const res = await listPermissions()
     permissions.value = res.data || []
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载权限失败'))
+    Message.error(getErrorMessage(error, t('admin.roles.loadPermissionsFailed')))
   }
 }
 
@@ -89,11 +92,11 @@ const openEdit = (role: Role) => {
 
 const submit = async () => {
   if (!editMode.value && !form.value.code) {
-    Message.warning('请填写角色编码')
+    Message.warning(t('admin.roles.codeRequired'))
     return
   }
   if (!form.value.name) {
-    Message.warning('请填写角色名称')
+    Message.warning(t('admin.roles.nameRequired'))
     return
   }
   actionLoading.value = true
@@ -104,7 +107,7 @@ const submit = async () => {
         description: form.value.description,
         permission_ids: form.value.permission_ids,
       })
-      Message.success('角色已更新')
+      Message.success(t('admin.roles.updated'))
     } else {
       await createRole({
         code: form.value.code,
@@ -112,12 +115,12 @@ const submit = async () => {
         description: form.value.description,
         permission_ids: form.value.permission_ids,
       })
-      Message.success('角色已创建')
+      Message.success(t('admin.roles.created'))
     }
     modalVisible.value = false
     await loadRoles()
   } catch (error) {
-    Message.error(getErrorMessage(error, '保存角色失败'))
+    Message.error(getErrorMessage(error, t('admin.roles.saveFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -127,10 +130,10 @@ const handleDelete = async (role: Role) => {
   actionLoading.value = true
   try {
     await deleteRole(role.id)
-    Message.success('角色已删除')
+    Message.success(t('admin.roles.deleted'))
     await loadRoles()
   } catch (error) {
-    Message.error(getErrorMessage(error, '删除角色失败'))
+    Message.error(getErrorMessage(error, t('admin.roles.deleteFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -146,10 +149,10 @@ onMounted(async () => {
   <section class="space-y-6 p-6">
     <header class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-semibold text-gray-900">角色权限</h1>
-        <p class="mt-1 text-sm text-gray-500">管理后台角色与权限点分配，系统角色不可删除。</p>
+        <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.roles.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500">{{ t('admin.roles.description') }}</p>
       </div>
-      <a-button type="primary" @click="openCreate">新建角色</a-button>
+      <a-button type="primary" @click="openCreate">{{ t('admin.roles.createRole') }}</a-button>
     </header>
 
     <a-spin :loading="loading" class="block">
@@ -157,37 +160,37 @@ onMounted(async () => {
         <table class="w-full text-left text-sm">
           <thead class="bg-gray-50 text-gray-500">
             <tr>
-              <th class="p-3">角色编码</th>
-              <th class="p-3">名称</th>
-              <th class="p-3">描述</th>
-              <th class="p-3">系统角色</th>
-              <th class="p-3">权限数量</th>
-              <th class="p-3">操作</th>
+              <th class="p-3">{{ t('admin.roles.code') }}</th>
+              <th class="p-3">{{ t('admin.roles.name') }}</th>
+              <th class="p-3">{{ t('admin.roles.descriptionLabel') }}</th>
+              <th class="p-3">{{ t('admin.roles.isSystem') }}</th>
+              <th class="p-3">{{ t('admin.roles.permissionCount') }}</th>
+              <th class="p-3">{{ t('admin.roles.actions') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!roles.length">
-              <td class="p-6 text-center text-gray-400" colspan="6">暂无角色数据</td>
+              <td class="p-6 text-center text-gray-400" colspan="6">{{ t('admin.roles.empty') }}</td>
             </tr>
             <tr v-for="role in roles" :key="role.id" class="border-t">
               <td class="p-3 font-mono">{{ role.code }}</td>
               <td class="p-3">{{ role.name || '-' }}</td>
               <td class="p-3 text-gray-500">{{ role.description || '-' }}</td>
               <td class="p-3">
-                <a-tag v-if="role.is_system" size="small" color="arcoblue">系统</a-tag>
-                <a-tag v-else size="small" color="gray">自定义</a-tag>
+                <a-tag v-if="role.is_system" size="small" color="arcoblue">{{ t('admin.roles.systemTag') }}</a-tag>
+                <a-tag v-else size="small" color="gray">{{ t('admin.roles.customTag') }}</a-tag>
               </td>
               <td class="p-3">{{ role.permissions?.length || 0 }}</td>
               <td class="p-3">
                 <a-space>
-                  <a-button size="mini" @click="openEdit(role)">编辑</a-button>
+                  <a-button size="mini" @click="openEdit(role)">{{ t('admin.roles.edit') }}</a-button>
                   <a-button
                     size="mini"
                     status="danger"
                     :disabled="role.is_system"
                     :loading="actionLoading"
                     @click="handleDelete(role)"
-                  >删除</a-button>
+                  >{{ t('admin.roles.remove') }}</a-button>
                 </a-space>
               </td>
             </tr>
@@ -198,27 +201,27 @@ onMounted(async () => {
 
     <a-modal
       v-model:visible="modalVisible"
-      :title="editMode ? '编辑角色' : '新建角色'"
+      :title="editMode ? t('admin.roles.editTitle') : t('admin.roles.createTitle')"
       :ok-loading="actionLoading"
       :mask-closable="false"
       @ok="submit"
     >
       <a-form :model="form" layout="vertical">
-        <a-form-item label="角色编码" field="code">
-          <a-input v-model="form.code" :disabled="editMode" placeholder="小写字母开头，仅含字母数字下划线" />
+        <a-form-item :label="t('admin.roles.code')" field="code">
+          <a-input v-model="form.code" :disabled="editMode" :placeholder="t('admin.roles.codePlaceholder')" />
         </a-form-item>
-        <a-form-item label="角色名称" field="name">
-          <a-input v-model="form.name" placeholder="如 运营管理员" />
+        <a-form-item :label="t('admin.roles.name')" field="name">
+          <a-input v-model="form.name" :placeholder="t('admin.roles.namePlaceholder')" />
         </a-form-item>
-        <a-form-item label="描述" field="description">
-          <a-textarea v-model="form.description" placeholder="角色职责描述" :auto-size="{ minRows: 2, maxRows: 4 }" allow-clear />
+        <a-form-item :label="t('admin.roles.descriptionLabel')" field="description">
+          <a-textarea v-model="form.description" :placeholder="t('admin.roles.descriptionPlaceholder')" :auto-size="{ minRows: 2, maxRows: 4 }" allow-clear />
         </a-form-item>
-        <a-form-item label="权限" field="permission_ids">
+        <a-form-item :label="t('admin.roles.permissions')" field="permission_ids">
           <a-select
             v-model="form.permission_ids"
             multiple
             allow-search
-            placeholder="选择权限点"
+            :placeholder="t('admin.roles.permissionPlaceholder')"
             :virtual-list-props="{ height: 240 }"
           >
             <a-option-group v-for="group in permissionGroups" :key="group.resource" :label="group.resource">

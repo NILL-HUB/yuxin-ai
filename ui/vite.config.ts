@@ -82,10 +82,11 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: '0.0.0.0',
     proxy: {
       // 开发环境代理 API 请求到后端
       '/api': {
-        target: 'http://localhost:5001',
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:5001',
         changeOrigin: true,
         ws: true,
         rewrite: (path) => path.replace(/^\/api/, ''),

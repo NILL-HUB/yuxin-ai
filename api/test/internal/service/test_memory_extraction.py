@@ -135,7 +135,7 @@ def test_extract_and_store_creates_candidates_from_extracted_facts():
         {"memory_type": "profile", "content": "前端工程师", "candidate_key": "profile:job:fe", "confidence": 3},
     ]
     mock_extractor = SimpleNamespace(extract=lambda q, r: facts)
-    candidate = SimpleNamespace(id=uuid4(), status="pending", occurrences=1)
+    candidate = SimpleNamespace(id=uuid4(), status="pending", occurrences=1, confidence=3)
     mock_tracker = SimpleNamespace(
         track=lambda acc, fact, conv_id=None: {"should_prompt": False, "candidate": candidate}
     )
@@ -180,7 +180,7 @@ def test_extract_and_store_propagates_should_prompt_from_tracker():
         {"memory_type": "preference", "content": "喜欢Python", "candidate_key": "preference:lang:python", "confidence": 4},
     ]
     mock_extractor = SimpleNamespace(extract=lambda q, r: facts)
-    candidate = SimpleNamespace(id=uuid4(), status="pending", occurrences=3)
+    candidate = SimpleNamespace(id=uuid4(), status="pending", occurrences=3, confidence=4)
     mock_tracker = SimpleNamespace(
         track=lambda acc, fact, conv_id=None: {"should_prompt": True, "candidate": candidate}
     )

@@ -4,6 +4,8 @@ import AiMessage from '@/components/AiMessage.vue'
 import BillingUsageIndicator from '@/components/BillingUsageIndicator.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
 import DeepThinkingProposalCard from '@/components/DeepThinkingProposalCard.vue'
+import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
+import MemoryConfirmationCard from '@/components/MemoryConfirmationCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
 import { AI_SURFACE_BACKGROUND_GRADIENT, QueueEvent } from '@/config'
@@ -22,6 +24,8 @@ import {
 } from '@/hooks/use-assistant-agent'
 import { useAudioToText, useAudioPlayer } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
+import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import { confirmMemoryCandidate, ignoreMemoryCandidate } from '@/services/memory'
 import { createShowcaseCase } from '@/services/showcase'
 import { getErrorMessage } from '@/utils/error'
 import { useAccountStore } from '@/stores/account'
@@ -57,6 +61,8 @@ import {
   applyChatStreamEvent,
   withChatRenderId,
   type DeepThinkingProposal,
+  type ToolConfirmationPrompt,
+  type MemoryCandidatePrompt,
   type StreamMessage,
   type StreamState,
 } from '@/views/shared/chat-stream'
@@ -134,6 +140,8 @@ const HUMAN_NAV_BOTTOM_DISTANCE_THRESHOLD = 500
 const isStreamingResponse = ref(false)
 const billingEvents = ref<BillingUsageEvent[]>([])
 const deepThinkingProposal = ref<DeepThinkingProposal | null>(null)
+const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
+const memoryCandidatePrompt = ref<MemoryCandidatePrompt | null>(null)
 const lastHumanQuery = ref('')
 const lastHumanImageUrls = ref<string[]>([])
 const route = useRoute()
@@ -1095,6 +1103,8 @@ const handleSubmit = async () => {
   task_id.value = ''
   shouldAutoScrollToBottom.value = true
   billingEvents.value = []
+  toolConfirmationPrompt.value = null
+  memoryCandidatePrompt.value = null
   stopAudioStream()
 
   // 5.4 往消息列表中添加基础人类消息
@@ -1170,6 +1180,12 @@ const handleSubmit = async () => {
         if (streamResult.didUpdate) {
           billingEvents.value = streamResult.state.billingEvents
           deepThinkingProposal.value = streamResult.state.deepThinkingProposal ?? null
+          if (streamResult.state.toolConfirmationPrompt) {
+            toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+          }
+          if (streamResult.state.memoryCandidatePrompt) {
+            memoryCandidatePrompt.value = streamResult.state.memoryCandidatePrompt
+          }
           scheduleScrollToBottom()
         }
       },
@@ -1215,6 +1231,42 @@ const handleConfirmDeepThinking = async () => {
 
 const handleCancelDeepThinking = () => {
   deepThinkingProposal.value = null
+}
+
+const handleConfirmTool = async (id: string) => {
+  try {
+    await postToolConfirmationConfirm(id)
+  } catch {
+    // 确认失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
+}
+
+const handleCancelTool = async (id: string) => {
+  try {
+    await postToolConfirmationCancel(id)
+  } catch {
+    // 取消失败时不阻塞用户体验
+  }
+  toolConfirmationPrompt.value = null
+}
+
+const handleConfirmMemory = async (id: string) => {
+  try {
+    await confirmMemoryCandidate(id, { policy: 'manual_confirm' })
+  } catch {
+    // 确认失败时不阻塞用户体验
+  }
+  memoryCandidatePrompt.value = null
+}
+
+const handleIgnoreMemory = async (id: string) => {
+  try {
+    await ignoreMemoryCandidate(id, { never_remind: false })
+  } catch {
+    // 取消失败时不阻塞用户体验
+  }
+  memoryCandidatePrompt.value = null
 }
 
 const handleClearConversation = async () => {
@@ -1681,6 +1733,27 @@ onUnmounted(() => {
             :proposal="deepThinkingProposal"
             @confirm="handleConfirmDeepThinking"
             @cancel="handleCancelDeepThinking"
+          />
+        </div>
+        <div
+          v-if="toolConfirmationPrompt"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
+        >
+          <ToolConfirmationCard
+            :prompt="toolConfirmationPrompt"
+            @confirm="handleConfirmTool"
+            @cancel="handleCancelTool"
+          />
+        </div>
+        <div
+          v-if="memoryCandidatePrompt"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
+        >
+          <MemoryConfirmationCard
+            :candidate="memoryCandidatePrompt"
+            @confirm="handleConfirmMemory"
+            @ignore="handleIgnoreMemory"
+            @never-remind="(id) => handleIgnoreMemory(id)"
           />
         </div>
         <div

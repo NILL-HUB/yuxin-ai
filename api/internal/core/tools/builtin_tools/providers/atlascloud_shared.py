@@ -8,8 +8,8 @@ from urllib.parse import urlparse
 
 import requests
 
+from internal.core.ports.storage_port import ObjectStoragePort
 from internal.exception import FailException
-from internal.service.cos_service import CosService
 
 
 _DEFAULT_MODEL_API_BASE = "https://api.atlascloud.ai/api/v1/model"
@@ -271,7 +271,14 @@ def _guess_extension(asset_url: str, content_type: str, *, kind: str) -> str:
     return default_extension
 
 
-def _persist_remote_asset(asset_url: str, *, source: str, folder: str, kind: str) -> str:
+def _persist_remote_asset(
+    asset_url: str,
+    *,
+    source: str,
+    folder: str,
+    kind: str,
+    storage_port: ObjectStoragePort | None = None,
+) -> str:
     """下载 Atlas Cloud 生成的远程资源并保存到 COS。"""
     if not asset_url:
         raise FailException("Atlas Cloud 生成失败：未返回资源 URL")
@@ -285,6 +292,13 @@ def _persist_remote_asset(asset_url: str, *, source: str, folder: str, kind: str
         kind=kind,
     )
     filename = f"{source}_{uuid.uuid4().hex}.{extension}"
+    if storage_port is not None:
+        return storage_port.upload_bytes_without_record(
+            filename=filename,
+            content=response.content,
+            folder=folder,
+        )
+    from internal.service.cos_service import CosService
     return CosService.upload_bytes_without_record(
         filename=filename,
         content=response.content,
@@ -292,21 +306,23 @@ def _persist_remote_asset(asset_url: str, *, source: str, folder: str, kind: str
     )
 
 
-def persist_remote_image(image_url: str, *, source: str) -> str:
+def persist_remote_image(image_url: str, *, source: str, storage_port: ObjectStoragePort | None = None) -> str:
     """下载图像并保存到 COS。"""
     return _persist_remote_asset(
         image_url,
         source=source,
         folder="generated-images",
         kind="image",
+        storage_port=storage_port,
     )
 
 
-def persist_remote_video(video_url: str, *, source: str) -> str:
+def persist_remote_video(video_url: str, *, source: str, storage_port: ObjectStoragePort | None = None) -> str:
     """下载视频并保存到 COS。"""
     return _persist_remote_asset(
         video_url,
         source=source,
         folder="generated-videos",
         kind="video",
+        storage_port=storage_port,
     )
