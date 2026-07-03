@@ -13,6 +13,7 @@ import {
   updateToolPolicy,
 } from '@/services/admin-tool-governance'
 import { getErrorMessage } from '@/utils/error'
+import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
 
 type ToolPolicy = {
   id: string
@@ -328,6 +329,9 @@ onMounted(loadAll)
       <h1 class="text-2xl font-semibold text-gray-900">{{ $t('admin.toolGovernance.title') }}</h1>
       <p class="mt-1 text-sm text-gray-500">{{ $t('admin.toolGovernance.description') }}</p>
     </header>
+
+    <!-- 治理模式状态栏 -->
+    <GovernanceModeBanner />
 
     <div class="grid gap-4 md:grid-cols-4">
       <article class="rounded-lg border bg-white p-4">

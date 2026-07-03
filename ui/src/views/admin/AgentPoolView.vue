@@ -14,6 +14,7 @@ import {
 import { listSubPoolDefinitions } from '@/services/admin-sub-pool'
 import { listModels } from '@/services/admin-model-pool'
 import { getErrorMessage } from '@/utils/error'
+import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
 
 const { t } = useI18n()
 
@@ -374,6 +375,9 @@ onMounted(loadPoolConfigs)
       <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.agentPool.title') }}</h1>
       <p class="mt-1 text-sm text-gray-500">{{ t('admin.agentPool.description') }}</p>
     </header>
+
+    <!-- 治理模式状态栏 -->
+    <GovernanceModeBanner />
 
     <!-- 统计卡片 -->
     <div class="grid gap-4 md:grid-cols-3">

@@ -182,8 +182,18 @@ onMounted(loadRoutingLogs)
             <td class="p-3">{{ log.routing_decision?.risk_level || '-' }}</td>
             <td class="p-3">{{ log.routing_decision?.cost_policy?.allowed === false ? t('admin.routingLogs.costDenied') : (log.routing_decision?.cost_policy?.allowed === true ? t('admin.routingLogs.costAllowed') : '-') }}</td>
             <td class="p-3">{{ log.model_selection.model_id || '-' }}</td>
-            <td class="p-3">{{ log.agent_pool_hits[0]?.pool || '-' }}</td>
-            <td class="p-3">{{ log.tool_pool_hits[0]?.pool || '-' }}</td>
+            <td class="p-3">
+              <a-tooltip v-if="log.agent_pool_hits?.[0]?.pool" :content="t('admin.routingLogs.agentPoolNavTip')" position="top" mini>
+                <router-link to="/admin/agent-pool" class="text-blue-600 hover:underline">{{ log.agent_pool_hits[0].pool }}</router-link>
+              </a-tooltip>
+              <span v-else class="text-gray-400">-</span>
+            </td>
+            <td class="p-3">
+              <a-tooltip v-if="log.tool_pool_hits?.[0]?.pool" :content="t('admin.routingLogs.toolPoolNavTip')" position="top" mini>
+                <router-link to="/admin/tool-governance" class="text-blue-600 hover:underline">{{ log.tool_pool_hits[0].pool }}</router-link>
+              </a-tooltip>
+              <span v-else class="text-gray-400">-</span>
+            </td>
             <td class="p-3">{{ log.cost_summary.total_credits || 0 }}</td>
             <td class="p-3">{{ log.latency_ms }} ms</td>
             <td class="p-3">{{ log.status }}</td>
