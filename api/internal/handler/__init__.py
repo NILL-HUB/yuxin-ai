@@ -39,6 +39,7 @@ from .admin_redeem_code_handler import AdminRedeemCodeHandler
 from .admin_resource_entry_handler import AdminResourceEntryHandler
 from .admin_routing_log_handler import AdminRoutingLogHandler
 from .admin_routing_quality_handler import AdminRoutingQualityHandler
+from .admin_skills_handler import AdminSkillsHandler
 from .admin_sub_pool_handler import AdminSubPoolHandler
 from .admin_system_knowledge_handler import AdminSystemKnowledgeHandler
 from .admin_tool_governance_handler import AdminToolGovernanceHandler
@@ -100,6 +101,7 @@ __all__ = [
     "AdminResourceEntryHandler",
     "AdminRoutingLogHandler",
     "AdminRoutingQualityHandler",
+    "AdminSkillsHandler",
     "AdminSubPoolHandler",
     "AdminSystemKnowledgeHandler",
     "AdminToolGovernanceHandler",

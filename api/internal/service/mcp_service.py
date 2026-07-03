@@ -710,6 +710,34 @@ class McpService(BaseService):
         self.update(provider, icon=icon)
         return icon
 
+    def publish_mcp_provider_for_admin(self, provider_id: UUID) -> McpProvider:
+        """管理员发布 MCP 到广场，不校验账号归属。"""
+        self._ensure_mcp_provider_table()
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+        if not _normalize_text(provider.name) or not _normalize_text(provider.description):
+            raise ValidateErrorException("请先补全 MCP 名称和描述")
+        self.update(
+            provider,
+            is_public=True,
+            published_at=utc_now_naive(),
+        )
+        return provider
+
+    def unpublish_mcp_provider_for_admin(self, provider_id: UUID) -> McpProvider:
+        """管理员取消发布 MCP（强制下架），不校验账号归属。"""
+        self._ensure_mcp_provider_table()
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+        self.update(
+            provider,
+            is_public=False,
+            published_at=None,
+        )
+        return provider
+
     def publish_mcp_provider(self, provider_id: UUID, account: Account) -> McpProvider:
         provider = self._resolve_private_provider(provider_id, account)
         if not _normalize_text(provider.name) or not _normalize_text(provider.description):

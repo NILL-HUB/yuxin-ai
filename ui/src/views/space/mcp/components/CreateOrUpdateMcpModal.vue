@@ -7,7 +7,7 @@ import { useUploadImage } from '@/hooks/use-upload-file'
 import { getErrorMessage } from '@/utils/error'
 import { getStoreCategoryDisplayName } from '@/utils/store-display'
 import { getMcpCategories, getMcpProvider, createMcpProvider, updateMcpProvider, generateMcpIconPreview, regenerateMcpIcon } from '@/services/mcp'
-import { getAdminMcp, updateAdminMcp, regenerateAdminMcpIcon } from '@/services/admin-mcp'
+import { getAdminMcp, updateAdminMcp, regenerateAdminMcpIcon, createAdminMcp } from '@/services/admin-mcp'
 import { mcpSchemaAssistantChat } from '@/services/ai'
 import type { McpCategory } from '@/models/mcp'
 
@@ -281,7 +281,11 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       }
       Message.success(t('space.mcp.updateSuccess'))
     } else {
-      await createMcpProvider(payload)
+      if (props.adminMode) {
+        await createAdminMcp(payload)
+      } else {
+        await createMcpProvider(payload)
+      }
       Message.success(t('space.mcp.createSuccess'))
     }
     emits('update:visible', false)

@@ -34,6 +34,7 @@ from internal.handler import (
     AdminSubPoolHandler,
     RoutingLogHandler,
     AdminRoutingQualityHandler,
+    AdminSkillsHandler,
     AdminSystemKnowledgeHandler,
     AdminToolGovernanceHandler,
     AdminUserHandler,
@@ -101,6 +102,7 @@ class Router:
     admin_routing_log_handler: AdminRoutingLogHandler
     admin_routing_quality_handler: AdminRoutingQualityHandler
     routing_log_handler: RoutingLogHandler
+    admin_skills_handler: AdminSkillsHandler
     admin_system_knowledge_handler: AdminSystemKnowledgeHandler
     admin_tool_governance_handler: AdminToolGovernanceHandler
     admin_user_handler: AdminUserHandler
@@ -867,6 +869,42 @@ class Router:
             view_func=self.admin_resource_entry_handler.skills,
         )
         bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>",
+            endpoint="admin_skill_detail",
+            methods=["GET"],
+            view_func=self.admin_skills_handler.get_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>/versions",
+            endpoint="admin_skill_versions",
+            methods=["GET"],
+            view_func=self.admin_skills_handler.get_skill_package_versions,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>/enable",
+            endpoint="admin_skill_enable",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.enable_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>/disable",
+            endpoint="admin_skill_disable",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.disable_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>/sync",
+            endpoint="admin_skill_sync",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.sync_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>/rollback",
+            endpoint="admin_skill_rollback",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.rollback_skill_package,
+        )
+        bp.add_url_rule(
             "/admin/api-tools",
             endpoint="admin_api_tool_list",
             methods=["GET"],
@@ -919,6 +957,18 @@ class Router:
             endpoint="admin_mcp_regenerate_icon",
             methods=["POST"],
             view_func=self.admin_mcp_handler.regenerate_icon,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/<uuid:provider_id>/publish",
+            endpoint="admin_mcp_publish",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.publish,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/<uuid:provider_id>/unpublish",
+            endpoint="admin_mcp_unpublish",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.unpublish,
         )
         bp.add_url_rule(
             "/admin/mcp/<uuid:provider_id>",

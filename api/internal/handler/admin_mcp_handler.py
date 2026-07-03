@@ -57,6 +57,20 @@ class AdminMcpHandler:
         return success_json({"icon": icon})
 
     @admin_login_required
+    @permission_required("mcp:update")
+    def publish(self, provider_id: UUID):
+        """发布 MCP 到广场（管理员视角，不校验账号归属）"""
+        self.mcp_service.publish_mcp_provider_for_admin(provider_id)
+        return success_message("发布MCP成功")
+
+    @admin_login_required
+    @permission_required("mcp:update")
+    def unpublish(self, provider_id: UUID):
+        """取消发布 MCP / 强制下架（管理员视角，不校验账号归属）"""
+        self.mcp_service.unpublish_mcp_provider_for_admin(provider_id)
+        return success_message("取消发布MCP成功")
+
+    @admin_login_required
     @permission_required("mcp:delete")
     def delete(self, provider_id: UUID):
         """删除 MCP（管理员视角，不校验账号归属）"""

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { apiPrefix } from '@/config'
@@ -8,9 +8,19 @@ import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
 import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
 import { useMarkdownRenderer } from '@/hooks/use-markdown-renderer'
 import { getErrorMessage } from '@/utils/error'
+import { formatTimestampShort } from '@/utils/time-formatter'
 import 'github-markdown-css'
 import type { GetSkillsWithPageRequest, SkillPackage } from '@/models/skill'
-import { listAdminSkills } from '@/services/admin-skills'
+import {
+  disableAdminSkill,
+  enableAdminSkill,
+  getAdminSkill,
+  getAdminSkillVersions,
+  listAdminSkills,
+  rollbackAdminSkill,
+  syncAdminSkill,
+  type SkillVersion,
+} from '@/services/admin-skills'
 import { getSkillCategoryDisplayName } from '@/utils/store-display'
 
 type SkillPaginator = {
@@ -21,7 +31,8 @@ type SkillPaginator = {
 }
 
 /**
- * 后台 Skills 管理页，负责展示平台技能目录列表（只读）。
+ * 后台 Skills 管理页。
+ * 展示平台技能目录列表，支持 enable/disable/sync/rollback 管理动作。
  * UI 与 Skills 商店保持一致：响应式卡片网格 + 分类筛选 + 详情抽屉。
  */
 const PAGE_SIZE = 100
@@ -30,6 +41,8 @@ const router = useRouter()
 const { t, locale } = useI18n()
 
 const loading = ref(false)
+const detailLoading = ref(false)
+const actionLoading = ref(false)
 const skills = ref<SkillPackage[]>([])
 const categorySet = ref<Set<string>>(new Set())
 const selectedCategory = ref('all')
@@ -43,6 +56,9 @@ const paginator = ref<SkillPaginator>({
 
 const showDetailVisible = ref(false)
 const activeSkill = ref<SkillPackage | null>(null)
+const showVersionsVisible = ref(false)
+const versions = ref<SkillVersion[]>([])
+const versionsLoading = ref(false)
 const { renderMarkdown } = useMarkdownRenderer()
 
 const avatarPalettes = [
@@ -122,15 +138,27 @@ const handleCategoryChange = async (category: string) => {
 }
 
 /**
- * 跳转到 Skills 商店浏览页（Skill 包的上传与删除暂未在后台开放）。
+ * 跳转到 Skills 商店浏览页。
  */
 const handleBrowseStore = async () => {
   await router.push({ name: 'admin-store-skills' })
 }
 
-const handleCardClick = (skill: SkillPackage) => {
+/**
+ * 点击卡片打开详情抽屉，并调用 admin 详情接口拉取完整 readme 和 tools。
+ */
+const handleCardClick = async (skill: SkillPackage) => {
   activeSkill.value = skill
   showDetailVisible.value = true
+  detailLoading.value = true
+  try {
+    const detail = await getAdminSkill(skill.id)
+    activeSkill.value = { ...skill, ...detail }
+  } catch (_error: unknown) {
+    // 详情拉取失败时保留列表数据
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 const hashString = (value: string) => {
@@ -185,9 +213,107 @@ const getExecutorTypeLabel = (value: string) => {
   return normalized
 }
 
+const getSyncStatusTag = (status?: string) => {
+  const normalized = String(status || '').trim()
+  if (normalized === 'ready' || normalized === 'synced') return { color: 'green', label: t('admin.skillsAdmin.syncReady') }
+  if (normalized === 'pending' || normalized === 'warming') return { color: 'orange', label: t('admin.skillsAdmin.syncPending') }
+  if (normalized === 'failed' || normalized === 'error') return { color: 'red', label: t('admin.skillsAdmin.syncFailed') }
+  return { color: 'gray', label: normalized || '-' }
+}
+
 const detailMarkdown = computed(() =>
   renderMarkdown(activeSkill.value?.readme || activeSkill.value?.description || t('admin.skillsAdmin.noBody')),
 )
+
+/**
+ * 启用/停用技能包
+ */
+const handleToggleEnable = async (skill: SkillPackage) => {
+  actionLoading.value = true
+  try {
+    if (skill.enabled) {
+      await disableAdminSkill(skill.id)
+      Message.success(t('admin.skillsAdmin.disableSuccess'))
+    } else {
+      await enableAdminSkill(skill.id)
+      Message.success(t('admin.skillsAdmin.enableSuccess'))
+    }
+    // 更新列表中的状态
+    skill.enabled = !skill.enabled
+    if (activeSkill.value && activeSkill.value.id === skill.id) {
+      activeSkill.value = { ...activeSkill.value, enabled: skill.enabled }
+    }
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.skillsAdmin.actionFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+/**
+ * 强制同步 SCF
+ */
+const handleSync = async (skill: SkillPackage) => {
+  actionLoading.value = true
+  try {
+    await syncAdminSkill(skill.id)
+    Message.success(t('admin.skillsAdmin.syncSuccess'))
+    await loadSkills()
+    if (activeSkill.value && activeSkill.value.id === skill.id) {
+      const detail = await getAdminSkill(skill.id)
+      activeSkill.value = { ...activeSkill.value, ...detail }
+    }
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.skillsAdmin.actionFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+/**
+ * 打开版本历史抽屉
+ */
+const handleShowVersions = async (skill: SkillPackage) => {
+  showVersionsVisible.value = true
+  versionsLoading.value = true
+  versions.value = []
+  try {
+    versions.value = await getAdminSkillVersions(skill.id)
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.skillsAdmin.loadVersionsFailed')))
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+/**
+ * 回滚到指定版本
+ */
+const handleRollback = (skill: SkillPackage, version: number) => {
+  Modal.warning({
+    title: t('admin.skillsAdmin.rollbackTitle'),
+    content: t('admin.skillsAdmin.rollbackContent', { version }),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await rollbackAdminSkill(skill.id, version)
+        Message.success(t('admin.skillsAdmin.rollbackSuccess'))
+        showVersionsVisible.value = false
+        await loadSkills()
+        if (activeSkill.value && activeSkill.value.id === skill.id) {
+          const detail = await getAdminSkill(skill.id)
+          activeSkill.value = { ...activeSkill.value, ...detail }
+        }
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.skillsAdmin.actionFailed')))
+      }
+    },
+  })
+}
+
+const stopPropagation = (event: Event) => {
+  event.stopPropagation()
+}
 
 onMounted(() => {
   void loadSkills()
@@ -289,6 +415,9 @@ onMounted(() => {
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-1.5 min-w-0">
                   <div class="text-sm font-bold text-gray-900 truncate">{{ skill.label }}</div>
+                  <a-tag size="small" :color="skill.enabled ? 'green' : 'gray'">
+                    {{ skill.enabled ? t('admin.skillsAdmin.enabled') : t('admin.skillsAdmin.disabled') }}
+                  </a-tag>
                 </div>
                 <div class="text-[11px] text-gray-500 line-clamp-1">
                   {{ skill.source_key }}
@@ -308,16 +437,34 @@ onMounted(() => {
               </a-tag>
             </div>
 
-            <div class="flex items-center gap-1.5 mt-2.5">
-              <a-avatar :size="16" class="bg-blue-700">
-                <icon-file :size="10" />
-              </a-avatar>
-              <div class="text-[11px] text-gray-400">
-                <template v-if="skill.tool_count > 0">
-                  {{ t('admin.skillsAdmin.toolCountBadge', { count: skill.tool_count }) }}
-                </template>
-                <template v-else>{{ t('admin.skillsAdmin.promptOnly') }}</template>
-              </div>
+            <div
+              class="flex items-center justify-end gap-1 mt-2.5 pt-2 border-t border-gray-100 flex-wrap"
+              @click="stopPropagation"
+            >
+              <a-button
+                size="mini"
+                :type="skill.enabled ? 'outline' : 'primary'"
+                :loading="actionLoading"
+                @click="handleToggleEnable(skill)"
+              >
+                {{ skill.enabled ? t('admin.skillsAdmin.disableButton') : t('admin.skillsAdmin.enableButton') }}
+              </a-button>
+              <a-button
+                v-if="skill.executor_type === 'scf'"
+                size="mini"
+                type="outline"
+                :loading="actionLoading"
+                @click="handleSync(skill)"
+              >
+                {{ t('admin.skillsAdmin.syncButton') }}
+              </a-button>
+              <a-button
+                size="mini"
+                type="text"
+                @click="handleShowVersions(skill)"
+              >
+                {{ t('admin.skillsAdmin.versionsButton') }}
+              </a-button>
             </div>
           </a-card>
         </a-col>
@@ -367,6 +514,9 @@ onMounted(() => {
           <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <div class="text-sm font-bold text-gray-900">{{ activeSkill.label }}</div>
+              <a-tag size="small" :color="activeSkill.enabled ? 'green' : 'gray'">
+                {{ activeSkill.enabled ? t('admin.skillsAdmin.enabled') : t('admin.skillsAdmin.disabled') }}
+              </a-tag>
               <a-tag size="small" color="gray">{{ getCategoryLabel(activeSkill.category) }}</a-tag>
             </div>
             <div class="text-[11px] text-gray-500 mt-1">
@@ -378,8 +528,30 @@ onMounted(() => {
           </div>
         </div>
 
+        <div class="flex items-center gap-2">
+          <a-button
+            :type="activeSkill.enabled ? 'outline' : 'primary'"
+            :loading="actionLoading"
+            @click="handleToggleEnable(activeSkill)"
+          >
+            {{ activeSkill.enabled ? t('admin.skillsAdmin.disableButton') : t('admin.skillsAdmin.enableButton') }}
+          </a-button>
+          <a-button
+            v-if="activeSkill.executor_type === 'scf'"
+            type="outline"
+            :loading="actionLoading"
+            @click="handleSync(activeSkill)"
+          >
+            {{ t('admin.skillsAdmin.syncButton') }}
+          </a-button>
+          <a-button type="text" @click="handleShowVersions(activeSkill)">
+            {{ t('admin.skillsAdmin.versionsButton') }}
+          </a-button>
+        </div>
+
         <div class="rounded-lg bg-white p-3.5">
-          <div class="markdown-body skill-markdown" v-html="detailMarkdown" />
+          <a-spin v-if="detailLoading" />
+          <div v-else class="markdown-body skill-markdown" v-html="detailMarkdown" />
         </div>
 
         <div class="grid grid-cols-2 gap-3">
@@ -403,6 +575,25 @@ onMounted(() => {
             <div class="text-xs text-gray-500 mb-1">{{ t('admin.skillsAdmin.toolCountLabel') }}</div>
             <div class="text-sm text-gray-800">{{ activeSkill.tool_count }}</div>
           </div>
+          <div class="rounded-lg bg-white p-3">
+            <div class="text-xs text-gray-500 mb-1">{{ t('admin.skillsAdmin.currentVersion') }}</div>
+            <div class="text-sm text-gray-800">{{ activeSkill.current_version }}</div>
+          </div>
+          <div class="rounded-lg bg-white p-3">
+            <div class="text-xs text-gray-500 mb-1">{{ t('admin.skillsAdmin.syncStatus') }}</div>
+            <div class="text-sm text-gray-800">
+              <a-tag size="small" :color="getSyncStatusTag(activeSkill.sync_status).color">
+                {{ getSyncStatusTag(activeSkill.sync_status).label }}
+              </a-tag>
+            </div>
+          </div>
+        </div>
+
+        <div
+          v-if="activeSkill.sync_error"
+          class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+        >
+          {{ activeSkill.sync_error }}
         </div>
 
         <div v-if="activeSkill.tools && activeSkill.tools.length > 0">
@@ -422,6 +613,52 @@ onMounted(() => {
           </div>
         </div>
       </div>
+    </a-drawer>
+
+    <a-drawer
+      :visible="showVersionsVisible"
+      :width="560"
+      :footer="false"
+      :title="t('admin.skillsAdmin.versionsTitle')"
+      :drawer-style="{ background: '#F9FAFB' }"
+      @cancel="showVersionsVisible = false"
+    >
+      <a-spin v-if="versionsLoading" />
+      <div v-else-if="versions.length > 0" class="flex flex-col gap-2">
+        <div
+          v-for="ver in versions"
+          :key="ver.id"
+          class="rounded-lg bg-white p-3 flex items-center justify-between gap-3"
+        >
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-gray-900">v{{ ver.version }}</span>
+              <a-tag v-if="ver.is_current_version" size="small" color="green">
+                {{ t('admin.skillsAdmin.currentVersionTag') }}
+              </a-tag>
+              <a-tag size="small" :color="getSyncStatusTag(ver.sync_status).color">
+                {{ getSyncStatusTag(ver.sync_status).label }}
+              </a-tag>
+            </div>
+            <div class="text-xs text-gray-500 mt-1">
+              {{ formatTimestampShort(ver.created_at) }}
+              <template v-if="ver.tool_count > 0">
+                · {{ t('admin.skillsAdmin.toolCountBadge', { count: ver.tool_count }) }}
+              </template>
+            </div>
+            <div v-if="ver.sync_error" class="text-xs text-red-500 mt-1">{{ ver.sync_error }}</div>
+          </div>
+          <a-button
+            v-if="!ver.is_current_version"
+            size="mini"
+            type="outline"
+            @click="activeSkill && handleRollback(activeSkill, ver.version)"
+          >
+            {{ t('admin.skillsAdmin.rollbackButton') }}
+          </a-button>
+        </div>
+      </div>
+      <a-empty v-else :description="t('admin.skillsAdmin.noVersions')" />
     </a-drawer>
   </section>
 </template>

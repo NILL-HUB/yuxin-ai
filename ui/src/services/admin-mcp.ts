@@ -56,6 +56,20 @@ export const regenerateAdminMcpIcon = (id: string) => {
 }
 
 /**
+ * 发布后台 MCP Provider 到广场（管理员视角，不校验账号归属）。
+ */
+export const publishAdminMcp = (id: string) => {
+  return post<BaseResponse<null>>(`/admin/mcp/${id}/publish`)
+}
+
+/**
+ * 取消发布 / 强制下架后台 MCP Provider（管理员视角，不校验账号归属）。
+ */
+export const unpublishAdminMcp = (id: string) => {
+  return post<BaseResponse<null>>(`/admin/mcp/${id}/unpublish`)
+}
+
+/**
  * 删除后台 MCP Provider。
  */
 export const deleteAdminMcp = async (id: string): Promise<Record<string, never>> => {

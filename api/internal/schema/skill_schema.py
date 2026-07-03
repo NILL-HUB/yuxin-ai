@@ -77,6 +77,10 @@ class SkillPackageResp(Schema):
     executor_type = fields.String(dump_default="scf")
     tool_count = fields.Integer(dump_default=0)
     tools = fields.List(fields.Nested(SkillToolResp), dump_default=[])
+    enabled = fields.Boolean(dump_default=True)
+    current_version = fields.Integer(dump_default=1)
+    sync_status = fields.String(dump_default="pending")
+    sync_error = fields.String(dump_default="")
     created_at = fields.Integer(dump_default=0)
     updated_at = fields.Integer(dump_default=0)
 
@@ -98,6 +102,10 @@ class SkillPackageResp(Schema):
             "executor_type": data.executor_type,
             "tool_count": getattr(data, "tool_count", 0),
             "tools": getattr(data, "tools", []),
+            "enabled": getattr(data, "enabled", True),
+            "current_version": getattr(data, "current_version", 1),
+            "sync_status": getattr(data, "sync_status", "pending"),
+            "sync_error": getattr(data, "sync_error", ""),
             "created_at": datetime_to_timestamp(data.created_at),
             "updated_at": datetime_to_timestamp(data.updated_at),
         }

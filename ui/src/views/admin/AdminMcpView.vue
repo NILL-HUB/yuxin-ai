@@ -2,14 +2,18 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import type {
-  CreateMcpProviderRequest,
   GetMcpProvidersWithPageRequest,
   McpCategory,
   McpProvider,
 } from '@/models/mcp'
-import { createAdminMcp, deleteAdminMcp, listAdminMcpProviders } from '@/services/admin-mcp'
+import {
+  deleteAdminMcp,
+  getAdminMcp,
+  listAdminMcpProviders,
+  publishAdminMcp,
+  unpublishAdminMcp,
+} from '@/services/admin-mcp'
 import { getPublicMcpCategories } from '@/services/mcp'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
@@ -26,19 +30,18 @@ type McpPaginator = {
 }
 
 /**
- * 后台 MCP 管理页，负责展示平台可见的 MCP Provider 列表，并提供创建/删除入口。
+ * 后台 MCP 管理页，负责展示平台可见的 MCP Provider 列表，并提供创建/编辑/删除/上下架入口。
  * UI 风格与商店页（store/mcp/ListView）保持一致：响应式卡片网格 + 分类筛选 + 详情抽屉。
+ * 创建与编辑统一复用 CreateOrUpdateMcpModal（admin-mode），保证字段集合一致。
  */
-const router = useRouter()
 const { t, locale } = useI18n()
 
 const loading = ref(false)
-const saving = ref(false)
+const detailLoading = ref(false)
 const categories = ref<McpCategory[]>([])
 const providers = ref<McpProvider[]>([])
 const selectedCategory = ref('all')
 const showCreateOrUpdateMcpModalVisible = ref(false)
-const showAdminCreateModal = ref(false)
 const updateMcpProviderId = ref('')
 const showDetailVisible = ref(false)
 const activeProvider = ref<McpProvider | null>(null)
@@ -53,13 +56,6 @@ const filters = ref<GetMcpProvidersWithPageRequest>({
   current_page: 1,
   page_size: 50,
   category: '',
-})
-const adminForm = ref<CreateMcpProviderRequest>({
-  name: '',
-  description: '',
-  transport: 'streamable_http',
-  url: '',
-  command: '',
 })
 
 /**
@@ -199,11 +195,25 @@ const handleCategoryChange = async (category: string) => {
 }
 
 /**
- * 点击卡片打开详情抽屉（直接复用列表数据，无需额外请求）。
+ * 点击卡片打开详情抽屉，并调用 admin 详情接口拉取完整 tools 列表。
  */
-const handleCardClick = (provider: McpProvider) => {
+const handleCardClick = async (provider: McpProvider) => {
   activeProvider.value = provider
   showDetailVisible.value = true
+  // 对于 db 类型（UUID），调详情接口拿完整 tools；catalog 类型列表数据已够
+  if (provider.source_type !== 'catalog' && provider.id) {
+    detailLoading.value = true
+    try {
+      const res = await getAdminMcp(provider.id)
+      if (res.data) {
+        activeProvider.value = { ...provider, ...res.data }
+      }
+    } catch (_error: unknown) {
+      // 详情拉取失败时保留列表数据
+    } finally {
+      detailLoading.value = false
+    }
+  }
 }
 
 /**
@@ -214,42 +224,15 @@ const stopPropagation = (event: Event) => {
 }
 
 /**
- * 打开后台创建 MCP 弹窗（直接调 admin 接口）。
+ * 打开创建 MCP 弹窗（复用 CreateOrUpdateMcpModal，admin-mode 下走 admin 接口）。
  */
-const openAdminCreateModal = () => {
-  adminForm.value = {
-    name: '',
-    description: '',
-    transport: 'streamable_http',
-    url: '',
-    command: '',
-  }
-  showAdminCreateModal.value = true
+const openCreateModal = () => {
+  updateMcpProviderId.value = ''
+  showCreateOrUpdateMcpModalVisible.value = true
 }
 
 /**
- * 提交后台创建 MCP。
- */
-const submitAdminCreate = async () => {
-  if (!adminForm.value.name?.trim()) {
-    Message.warning(t('admin.mcpAdmin.nameRequired'))
-    return
-  }
-  saving.value = true
-  try {
-    await createAdminMcp(adminForm.value)
-    Message.success(t('admin.mcpAdmin.createSuccess'))
-    showAdminCreateModal.value = false
-    await loadProviders()
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.mcpAdmin.createFailed')))
-  } finally {
-    saving.value = false
-  }
-}
-
-/**
- * 打开编辑 MCP 弹窗（复用空间端组件，完整编辑能力）。
+ * 打开编辑 MCP 弹窗（复用 CreateOrUpdateMcpModal，完整编辑能力）。
  */
 const openEditModal = (provider: McpProvider) => {
   updateMcpProviderId.value = provider.id
@@ -278,10 +261,37 @@ const handleDelete = (provider: McpProvider) => {
 }
 
 /**
- * 跳转到 MCP 管理页（内嵌空间端 MCP 管理视图，支持发布、删除等完整操作）。
+ * 发布 MCP 到广场（仅 db 类型可操作）。
  */
-const handleManage = async () => {
-  await router.push({ name: 'admin-mcp' })
+const handlePublish = async (provider: McpProvider) => {
+  try {
+    await publishAdminMcp(provider.id)
+    Message.success(t('admin.mcpAdmin.publishSuccess'))
+    await loadProviders()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.mcpAdmin.publishFailed')))
+  }
+}
+
+/**
+ * 取消发布 / 强制下架（仅 db 类型可操作）。
+ */
+const handleUnpublish = async (provider: McpProvider) => {
+  Modal.warning({
+    title: t('admin.mcpAdmin.unpublishTitle'),
+    content: t('admin.mcpAdmin.unpublishContent'),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await unpublishAdminMcp(provider.id)
+        Message.success(t('admin.mcpAdmin.unpublishSuccess'))
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.mcpAdmin.unpublishFailed')))
+      } finally {
+        void loadProviders()
+      }
+    },
+  })
 }
 
 onMounted(async () => {
@@ -298,10 +308,7 @@ onMounted(async () => {
         <p class="mt-1 text-sm text-slate-500">{{ t('admin.mcpAdmin.description') }}</p>
       </div>
       <div class="flex items-center gap-2">
-        <a-button @click="handleManage">
-          {{ t('admin.mcpAdmin.manageEntry') }}
-        </a-button>
-        <a-button type="primary" @click="openAdminCreateModal">
+        <a-button type="primary" @click="openCreateModal">
           {{ t('admin.mcpAdmin.createButton') }}
         </a-button>
       </div>
@@ -433,25 +440,34 @@ onMounted(async () => {
           </div>
 
           <div
-            class="flex items-center justify-end gap-1.5 mt-2.5 pt-2 border-t border-gray-100"
+            class="flex items-center justify-end gap-1.5 mt-2.5 pt-2 border-t border-gray-100 flex-wrap"
             @click="stopPropagation"
           >
-            <a-button
-              v-if="provider.source_type !== 'catalog'"
-              size="mini"
-              type="outline"
-              @click="openEditModal(provider)"
-            >
-              {{ t('admin.mcpAdmin.editButton') }}
-            </a-button>
-            <a-button
-              v-if="provider.source_type !== 'catalog'"
-              size="mini"
-              status="danger"
-              @click="handleDelete(provider)"
-            >
-              {{ t('admin.mcpAdmin.deleteButton') }}
-            </a-button>
+            <template v-if="provider.source_type !== 'catalog'">
+              <a-button
+                v-if="!provider.is_public"
+                size="mini"
+                type="outline"
+                @click="handlePublish(provider)"
+              >
+                {{ t('admin.mcpAdmin.publishButton') }}
+              </a-button>
+              <a-button
+                v-else
+                size="mini"
+                type="outline"
+                status="warning"
+                @click="handleUnpublish(provider)"
+              >
+                {{ t('admin.mcpAdmin.unpublishButton') }}
+              </a-button>
+              <a-button size="mini" type="outline" @click="openEditModal(provider)">
+                {{ t('admin.mcpAdmin.editButton') }}
+              </a-button>
+              <a-button size="mini" status="danger" @click="handleDelete(provider)">
+                {{ t('admin.mcpAdmin.deleteButton') }}
+              </a-button>
+            </template>
             <span v-else class="text-[11px] text-gray-400">
               {{ t('admin.mcpAdmin.catalogReadonly') }}
             </span>
@@ -569,6 +585,7 @@ onMounted(async () => {
             <a-tag size="small">
               {{ t('admin.mcpAdmin.toolsCountLabel', { count: activeToolsCount }) }}
             </a-tag>
+            <a-spin v-if="detailLoading" :size="14" />
           </div>
 
           <div
@@ -624,6 +641,32 @@ onMounted(async () => {
 
           <a-empty v-else :description="t('admin.mcpAdmin.noTools')" />
         </div>
+
+        <div
+          v-if="activeProvider.source_type !== 'catalog'"
+          class="flex items-center gap-2 pt-2 border-t border-gray-100"
+        >
+          <a-button
+            v-if="!activeProvider.is_public"
+            type="primary"
+            @click="handlePublish(activeProvider)"
+          >
+            {{ t('admin.mcpAdmin.publishButton') }}
+          </a-button>
+          <a-button
+            v-else
+            status="warning"
+            @click="handleUnpublish(activeProvider)"
+          >
+            {{ t('admin.mcpAdmin.unpublishButton') }}
+          </a-button>
+          <a-button @click="openEditModal(activeProvider)">
+            {{ t('admin.mcpAdmin.editButton') }}
+          </a-button>
+          <a-button status="danger" @click="handleDelete(activeProvider)">
+            {{ t('admin.mcpAdmin.deleteButton') }}
+          </a-button>
+        </div>
       </div>
     </a-drawer>
 
@@ -633,48 +676,6 @@ onMounted(async () => {
       :admin-mode="true"
       :callback="async () => await loadProviders()"
     />
-
-    <!-- 后台创建 MCP 弹窗（直接调 admin 接口） -->
-    <a-modal
-      v-model:visible="showAdminCreateModal"
-      :title="t('admin.mcpAdmin.createButton')"
-      :ok-loading="saving"
-      :mask-closable="false"
-      @ok="submitAdminCreate"
-    >
-      <a-form :model="adminForm" layout="vertical">
-        <a-form-item :label="t('admin.mcpAdmin.formName')" field="name" required>
-          <a-input v-model="adminForm.name" :placeholder="t('admin.mcpAdmin.namePlaceholder')" />
-        </a-form-item>
-        <a-form-item :label="t('admin.mcpAdmin.formDescription')" field="description">
-          <a-textarea
-            v-model="adminForm.description"
-            :placeholder="t('admin.mcpAdmin.descriptionPlaceholder')"
-            :auto-size="{ minRows: 2, maxRows: 6 }"
-          />
-        </a-form-item>
-        <a-form-item :label="t('admin.mcpAdmin.formTransport')" field="transport">
-          <a-select v-model="adminForm.transport">
-            <a-option value="streamable_http">streamable_http</a-option>
-            <a-option value="stdio">stdio</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item
-          v-if="adminForm.transport === 'streamable_http'"
-          :label="t('admin.mcpAdmin.formUrl')"
-          field="url"
-        >
-          <a-input v-model="adminForm.url" placeholder="https://example.com/mcp" />
-        </a-form-item>
-        <a-form-item
-          v-if="adminForm.transport === 'stdio'"
-          :label="t('admin.mcpAdmin.formCommand')"
-          field="command"
-        >
-          <a-input v-model="adminForm.command" placeholder="npx -y @modelcontextprotocol/server" />
-        </a-form-item>
-      </a-form>
-    </a-modal>
   </section>
 </template>
 
