@@ -1,21 +1,29 @@
 from flask_wtf import FlaskForm
 from marshmallow import Schema, fields
 from wtforms import BooleanField, IntegerField, StringField
-from internal.schema import DictField
 from wtforms.validators import Length, NumberRange, Optional
+from internal.schema import DictField
 
 
 class GetAdminAppsReq(FlaskForm):
     search = StringField("search", default="", validators=[Optional(), Length(max=255)])
     status = StringField("status", default="all", validators=[Optional(), Length(max=255)])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class UpdateAdminAppReq(FlaskForm):
     status = StringField("status", validators=[Optional(), Length(max=255)])
     is_public = BooleanField("is_public", validators=[Optional()])
     agent_metadata = DictField("agent_metadata", default=None)
+
+
+class BatchOfflineAppsReq(FlaskForm):
+    app_ids = DictField("app_ids", default=None)
+
+
+class BatchDeleteAppsReq(FlaskForm):
+    app_ids = DictField("app_ids", default=None)
 
 
 class AdminAppResp(Schema):
@@ -33,3 +41,8 @@ class AdminAppResp(Schema):
 class AdminAppPageResp(Schema):
     list = fields.List(fields.Nested(AdminAppResp))
     paginator = fields.Dict()
+
+
+class BatchOperationResp(Schema):
+    succeeded = fields.List(fields.String())
+    failed = fields.List(fields.Dict())

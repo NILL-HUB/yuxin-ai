@@ -767,6 +767,18 @@ class Router:
             view_func=self.admin_app_handler.offline,
         )
         bp.add_url_rule(
+            "/admin/apps/batch/offline",
+            endpoint="admin_app_batch_offline",
+            methods=["POST"],
+            view_func=self.admin_app_handler.batch_offline,
+        )
+        bp.add_url_rule(
+            "/admin/apps/batch/delete",
+            endpoint="admin_app_batch_delete",
+            methods=["POST"],
+            view_func=self.admin_app_handler.batch_delete,
+        )
+        bp.add_url_rule(
             "/admin/apps",
             endpoint="admin_app_create",
             methods=["POST"],
@@ -855,6 +867,18 @@ class Router:
             endpoint="admin_workflow_version_rollback",
             methods=["POST"],
             view_func=self.admin_workflow_handler.rollback_version,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/batch/publish",
+            endpoint="admin_workflow_batch_publish",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.batch_publish,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/batch/offline",
+            endpoint="admin_workflow_batch_offline",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.batch_offline,
         )
         bp.add_url_rule(
             "/admin/datasets",

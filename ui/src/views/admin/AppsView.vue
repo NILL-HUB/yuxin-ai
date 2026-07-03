@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
   type AdminAppRecord,
+  batchDeleteAdminApps,
+  batchOfflineAdminApps,
   createAdminApp,
   deleteAdminApp,
   listAdminApps,
@@ -20,14 +22,21 @@ const { t } = useI18n()
 const loading = ref(false)
 const saving = ref(false)
 const creating = ref(false)
+const batchLoading = ref(false)
 const apps = ref<AdminAppRecord[]>([])
 const total = ref(0)
 const filters = ref({
   current_page: 1,
   page_size: 20,
   search: '',
+  status: '',
 })
 const keyword = ref('')
+const selectedIds = ref<Set<string>>(new Set())
+const allSelected = computed(
+  () => apps.value.length > 0 && apps.value.every((a) => selectedIds.value.has(a.id)),
+)
+const selectedCount = computed(() => selectedIds.value.size)
 
 const modalVisible = ref(false)
 const createModalVisible = ref(false)
@@ -55,6 +64,7 @@ const loadApps = async () => {
       current_page: filters.value.current_page,
       page_size: filters.value.page_size,
       search: filters.value.search.trim(),
+      status: filters.value.status,
     })
     apps.value = result.list || []
     total.value = result.paginator?.total_record || 0
@@ -75,14 +85,25 @@ const handleSearch = async (value: string) => {
   await loadApps()
 }
 
+/**
+ * 状态筛选变化后刷新列表，并回到第一页。
+ */
+const handleStatusChange = async (value: string) => {
+  filters.value.status = value
+  filters.value.current_page = 1
+  await loadApps()
+}
+
 const onPageChange = (page: number) => {
   filters.value.current_page = page
+  selectedIds.value = new Set()
   void loadApps()
 }
 
 const onPageSizeChange = (size: number) => {
   filters.value.page_size = size
   filters.value.current_page = 1
+  selectedIds.value = new Set()
   void loadApps()
 }
 
@@ -178,6 +199,106 @@ const handleDelete = (app: AdminAppRecord) => {
   })
 }
 
+/**
+ * 切换单个应用选择状态。
+ */
+const toggleSelect = (appId: string) => {
+  const next = new Set(selectedIds.value)
+  if (next.has(appId)) {
+    next.delete(appId)
+  } else {
+    next.add(appId)
+  }
+  selectedIds.value = next
+}
+
+/**
+ * 全选/取消全选当前页应用。
+ */
+const toggleSelectAll = () => {
+  if (allSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(apps.value.map((a) => a.id))
+  }
+}
+
+const clearSelection = () => {
+  selectedIds.value = new Set()
+}
+
+/**
+ * 批量下架选中的应用。
+ */
+const handleBatchOffline = () => {
+  if (selectedCount.value === 0) {
+    Message.info(t('admin.apps.batch.noSelection'))
+    return
+  }
+  Modal.warning({
+    title: t('admin.apps.batch.offlineTitle'),
+    content: t('admin.apps.batch.offlineContent', { count: selectedCount.value }),
+    hideCancel: false,
+    onOk: async () => {
+      batchLoading.value = true
+      try {
+        const result = await batchOfflineAdminApps(Array.from(selectedIds.value))
+        const okCount = result.succeeded.length
+        const failCount = result.failed.length
+        if (failCount === 0) {
+          Message.success(t('admin.apps.batch.offlineSuccess', { count: okCount }))
+        } else {
+          Message.warning(
+            t('admin.apps.batch.partialSuccess', { ok: okCount, fail: failCount }),
+          )
+        }
+        clearSelection()
+        await loadApps()
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.apps.batch.offlineFailed')))
+      } finally {
+        batchLoading.value = false
+      }
+    },
+  })
+}
+
+/**
+ * 批量删除选中的应用。
+ */
+const handleBatchDelete = () => {
+  if (selectedCount.value === 0) {
+    Message.info(t('admin.apps.batch.noSelection'))
+    return
+  }
+  Modal.warning({
+    title: t('admin.apps.batch.deleteTitle'),
+    content: t('admin.apps.batch.deleteContent', { count: selectedCount.value }),
+    hideCancel: false,
+    onOk: async () => {
+      batchLoading.value = true
+      try {
+        const result = await batchDeleteAdminApps(Array.from(selectedIds.value))
+        const okCount = result.succeeded.length
+        const failCount = result.failed.length
+        if (failCount === 0) {
+          Message.success(t('admin.apps.batch.deleteSuccess', { count: okCount }))
+        } else {
+          Message.warning(
+            t('admin.apps.batch.partialSuccess', { ok: okCount, fail: failCount }),
+          )
+        }
+        clearSelection()
+        await loadApps()
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.apps.batch.deleteFailed')))
+      } finally {
+        batchLoading.value = false
+      }
+    },
+  })
+}
+
 const formatTimestamp = (timestamp?: number) => {
   return timestamp ? new Date(timestamp * 1000).toLocaleString() : '-'
 }
@@ -227,24 +348,85 @@ onMounted(() => {
     </header>
 
     <!-- 搜索栏 -->
-    <div class="flex items-center justify-between gap-3">
-      <a-input-search
-        v-model="keyword"
-        :placeholder="t('admin.apps.searchPlaceholder')"
-        allow-clear
-        style="max-width: 360px"
-        @search="handleSearch"
-      />
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <a-input-search
+          v-model="keyword"
+          :placeholder="t('admin.apps.searchPlaceholder')"
+          allow-clear
+          style="max-width: 360px"
+          @search="handleSearch"
+        />
+        <a-select
+          :model-value="filters.status"
+          style="width: 160px"
+          @update:model-value="handleStatusChange"
+        >
+          <a-option value="">{{ t('admin.apps.filters.allStatuses') }}</a-option>
+          <a-option value="draft">{{ t('admin.apps.filters.draft') }}</a-option>
+          <a-option value="published">{{ t('admin.apps.filters.published') }}</a-option>
+          <a-option value="offline">{{ t('admin.apps.filters.offline') }}</a-option>
+        </a-select>
+      </div>
       <span class="text-xs text-gray-400">{{ t('admin.apps.total', { count: total }) }}</span>
+    </div>
+
+    <!-- 批量操作工具条 -->
+    <div
+      v-if="apps.length"
+      class="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white p-3"
+    >
+      <a-checkbox :model-value="allSelected" @change="toggleSelectAll">
+        {{ t('admin.apps.batch.selectAll') }}
+      </a-checkbox>
+      <span class="text-xs text-gray-400">
+        {{ t('admin.apps.batch.selected', { count: selectedCount }) }}
+      </span>
+      <div class="ml-auto flex flex-wrap gap-2">
+        <a-button
+          size="small"
+          status="warning"
+          :loading="batchLoading"
+          :disabled="selectedCount === 0"
+          @click="handleBatchOffline"
+        >
+          {{ t('admin.apps.batch.offline') }}
+        </a-button>
+        <a-button
+          v-if="canDelete"
+          size="small"
+          status="danger"
+          :loading="batchLoading"
+          :disabled="selectedCount === 0"
+          @click="handleBatchDelete"
+        >
+          {{ t('admin.apps.batch.delete') }}
+        </a-button>
+        <a-button
+          v-if="selectedCount > 0"
+          size="small"
+          :disabled="batchLoading"
+          @click="clearSelection"
+        >
+          {{ t('admin.apps.batch.clearSelection') }}
+        </a-button>
+      </div>
     </div>
 
     <a-spin :loading="loading" class="block">
       <section v-if="apps.length" class="grid gap-4 xl:grid-cols-2">
-        <article
+        <div
           v-for="app in apps"
           :key="app.id"
-          class="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-5"
+          class="flex items-start gap-3"
+          :class="{ 'rounded-xl ring-2 ring-blue-400': selectedIds.has(app.id) }"
         >
+          <a-checkbox
+            :model-value="selectedIds.has(app.id)"
+            class="mt-5 shrink-0"
+            @change="toggleSelect(app.id)"
+          />
+          <article class="flex flex-1 flex-col gap-3 rounded-xl border border-gray-200 bg-white p-5">
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-center gap-3">
               <span
@@ -341,7 +523,8 @@ onMounted(() => {
               {{ t('admin.apps.deleteButton') }}
             </a-button>
           </div>
-        </article>
+          </article>
+        </div>
       </section>
 
       <section
@@ -360,7 +543,7 @@ onMounted(() => {
         :page-size="filters.page_size"
         show-total
         show-page-size
-        :page-size-options="[10, 20, 50]"
+        :page-size-options="[10, 20, 50, 100]"
         @change="onPageChange"
         @page-size-change="onPageSizeChange"
       />

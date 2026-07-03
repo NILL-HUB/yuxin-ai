@@ -7,7 +7,15 @@ from injector import inject
 from internal.extension.database_extension import db
 from internal.middleware import admin_login_required, permission_required
 from internal.model import Account
-from internal.schema.admin_app_schema import AdminAppPageResp, AdminAppResp, GetAdminAppsReq, UpdateAdminAppReq
+from internal.schema.admin_app_schema import (
+    AdminAppPageResp,
+    AdminAppResp,
+    BatchDeleteAppsReq,
+    BatchOfflineAppsReq,
+    BatchOperationResp,
+    GetAdminAppsReq,
+    UpdateAdminAppReq,
+)
 from internal.schema.app_schema import CreateAppReq
 from internal.service import AppService
 from internal.service.admin_app_service import AdminAppService
@@ -96,6 +104,34 @@ class AdminAppHandler:
     def offline(self, app_id: UUID):
         self.admin_app_service.offline_app(app_id)
         return success_message("下架应用成功")
+
+    @admin_login_required
+    @permission_required("app:update")
+    def batch_offline(self):
+        """批量下架应用"""
+        req = BatchOfflineAppsReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        app_ids = req.app_ids.data or []
+        if not isinstance(app_ids, list) or len(app_ids) == 0:
+            return validate_error_json({"app_ids": ["应用ID列表不能为空"]})
+        result = self.admin_app_service.batch_offline_apps([UUID(aid) for aid in app_ids])
+        resp = BatchOperationResp()
+        return success_json(resp.dump(result))
+
+    @admin_login_required
+    @permission_required("app:delete")
+    def batch_delete(self):
+        """批量删除应用"""
+        req = BatchDeleteAppsReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        app_ids = req.app_ids.data or []
+        if not isinstance(app_ids, list) or len(app_ids) == 0:
+            return validate_error_json({"app_ids": ["应用ID列表不能为空"]})
+        result = self.admin_app_service.batch_delete_apps([UUID(aid) for aid in app_ids])
+        resp = BatchOperationResp()
+        return success_json(resp.dump(result))
 
     def _get_admin_account(self) -> Account:
         """获取管理员绑定的空间账号，作为资源的归属账号"""

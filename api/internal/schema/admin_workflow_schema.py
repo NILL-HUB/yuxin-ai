@@ -2,6 +2,7 @@ from flask_wtf import FlaskForm
 from marshmallow import Schema, fields
 from wtforms import BooleanField, IntegerField, StringField
 from wtforms.validators import Length, NumberRange, Optional
+from internal.schema import DictField
 
 
 class GetAdminWorkflowsReq(FlaskForm):
@@ -22,6 +23,14 @@ class PublishAdminWorkflowReq(FlaskForm):
 
 class RollbackWorkflowVersionReq(FlaskForm):
     summary = StringField("summary", default="", validators=[Optional(), Length(max=500)])
+
+
+class BatchPublishWorkflowsReq(FlaskForm):
+    workflow_ids = DictField("workflow_ids", default=None)
+
+
+class BatchOfflineWorkflowsReq(FlaskForm):
+    workflow_ids = DictField("workflow_ids", default=None)
 
 
 class AdminWorkflowResp(Schema):
@@ -53,4 +62,9 @@ class WorkflowVersionResp(Schema):
 
 class WorkflowVersionListResp(Schema):
     list = fields.List(fields.Nested(WorkflowVersionResp))
+
+
+class BatchOperationResp(Schema):
+    succeeded = fields.List(fields.String())
+    failed = fields.List(fields.Dict())
 

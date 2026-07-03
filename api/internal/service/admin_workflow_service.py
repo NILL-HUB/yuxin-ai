@@ -1,3 +1,4 @@
+import logging
 import math
 from uuid import UUID
 
@@ -5,6 +6,8 @@ from internal.exception import NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
 from internal.model.workflow import Workflow
+
+logger = logging.getLogger(__name__)
 
 
 class AdminWorkflowService:
@@ -55,6 +58,25 @@ class AdminWorkflowService:
         workflow.status = "offline"
         workflow.is_public = False
         self.session.commit()
+
+    def batch_offline_workflows(self, workflow_ids: list[UUID]) -> dict[str, object]:
+        """批量下架工作流，返回成功/失败统计"""
+        succeeded: list[str] = []
+        failed: list[dict[str, str]] = []
+        for workflow_id in workflow_ids:
+            try:
+                workflow = self.session.query(Workflow).filter(Workflow.id == workflow_id).one_or_none()
+                if workflow is None:
+                    failed.append({"id": str(workflow_id), "reason": "工作流不存在"})
+                    continue
+                workflow.status = "offline"
+                workflow.is_public = False
+                succeeded.append(str(workflow_id))
+            except Exception as e:
+                logger.warning("批量下架工作流失败: workflow_id=%s, error=%s", workflow_id, e)
+                failed.append({"id": str(workflow_id), "reason": str(e)})
+        self.session.commit()
+        return {"succeeded": succeeded, "failed": failed}
 
     @staticmethod
     def _serialize_workflow(workflow: Workflow) -> dict[str, object]:

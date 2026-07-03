@@ -10,6 +10,9 @@ from internal.model import Account
 from internal.schema.admin_workflow_schema import (
     AdminWorkflowPageResp,
     AdminWorkflowResp,
+    BatchOfflineWorkflowsReq,
+    BatchOperationResp,
+    BatchPublishWorkflowsReq,
     GetAdminWorkflowsReq,
     PublishAdminWorkflowReq,
     RollbackWorkflowVersionReq,
@@ -150,6 +153,41 @@ class AdminWorkflowHandler:
             return validate_error_json(req.errors)
         self.workflow_service.rollback_workflow_version_for_admin(workflow_id, version_id)
         return success_message("回滚工作流版本成功")
+
+    @admin_login_required
+    @permission_required("workflow:update")
+    def batch_publish(self):
+        """批量发布工作流"""
+        req = BatchPublishWorkflowsReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        workflow_ids = req.workflow_ids.data or []
+        if not isinstance(workflow_ids, list) or len(workflow_ids) == 0:
+            return validate_error_json({"workflow_ids": ["工作流ID列表不能为空"]})
+        succeeded: list[str] = []
+        failed: list[dict[str, str]] = []
+        for wid in workflow_ids:
+            try:
+                self.workflow_service.publish_workflow_for_admin(UUID(wid))
+                succeeded.append(str(wid))
+            except Exception as e:
+                failed.append({"id": str(wid), "reason": str(e)})
+        resp = BatchOperationResp()
+        return success_json(resp.dump({"succeeded": succeeded, "failed": failed}))
+
+    @admin_login_required
+    @permission_required("workflow:update")
+    def batch_offline(self):
+        """批量下架工作流"""
+        req = BatchOfflineWorkflowsReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        workflow_ids = req.workflow_ids.data or []
+        if not isinstance(workflow_ids, list) or len(workflow_ids) == 0:
+            return validate_error_json({"workflow_ids": ["工作流ID列表不能为空"]})
+        result = self.admin_workflow_service.batch_offline_workflows([UUID(wid) for wid in workflow_ids])
+        resp = BatchOperationResp()
+        return success_json(resp.dump(result))
 
     def _get_admin_account(self) -> Account:
         """获取管理员绑定的空间账号，作为资源的归属账号"""

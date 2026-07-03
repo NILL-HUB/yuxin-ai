@@ -138,3 +138,34 @@ export const rollbackAdminWorkflowVersion = async (
   )
   return response.data
 }
+
+export type BatchOperationResult = {
+  succeeded: string[]
+  failed: { id: string; reason: string }[]
+}
+
+/**
+ * 批量发布工作流。
+ */
+export const batchPublishAdminWorkflows = async (
+  workflowIds: string[],
+): Promise<BatchOperationResult> => {
+  const response = await post<BaseResponse<BatchOperationResult>>(
+    '/admin/workflows/batch/publish',
+    { body: { workflow_ids: workflowIds } },
+  )
+  return response.data
+}
+
+/**
+ * 批量下架工作流。
+ */
+export const batchOfflineAdminWorkflows = async (
+  workflowIds: string[],
+): Promise<BatchOperationResult> => {
+  const response = await post<BaseResponse<BatchOperationResult>>(
+    '/admin/workflows/batch/offline',
+    { body: { workflow_ids: workflowIds } },
+  )
+  return response.data
+}

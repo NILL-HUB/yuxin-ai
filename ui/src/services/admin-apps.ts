@@ -118,6 +118,31 @@ export const deleteAdminApp = async (appId: string): Promise<Record<string, neve
   return response.data
 }
 
+export type BatchOperationResult = {
+  succeeded: string[]
+  failed: { id: string; reason: string }[]
+}
+
+/**
+ * 批量下架应用。
+ */
+export const batchOfflineAdminApps = async (appIds: string[]): Promise<BatchOperationResult> => {
+  const response = await post<BaseResponse<BatchOperationResult>>('/admin/apps/batch/offline', {
+    body: { app_ids: appIds },
+  })
+  return response.data
+}
+
+/**
+ * 批量删除应用。
+ */
+export const batchDeleteAdminApps = async (appIds: string[]): Promise<BatchOperationResult> => {
+  const response = await post<BaseResponse<BatchOperationResult>>('/admin/apps/batch/delete', {
+    body: { app_ids: appIds },
+  })
+  return response.data
+}
+
 /**
  * 获取后台应用草稿配置。
  */

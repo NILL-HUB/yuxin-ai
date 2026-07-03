@@ -6,7 +6,13 @@ import { useRouter } from 'vue-router'
 import AdminWorkflowCard from '@/components/admin/AdminWorkflowCard.vue'
 import AdminWorkflowToolbar from '@/components/admin/AdminWorkflowToolbar.vue'
 import type { AdminWorkflowRecord, GetAdminWorkflowsRequest } from '@/models/admin-workflow'
-import { createAdminWorkflow, deleteAdminWorkflow, listAdminWorkflows } from '@/services/admin-workflows'
+import {
+  batchOfflineAdminWorkflows,
+  batchPublishAdminWorkflows,
+  createAdminWorkflow,
+  deleteAdminWorkflow,
+  listAdminWorkflows,
+} from '@/services/admin-workflows'
 import { getErrorMessage } from '@/utils/error'
 
 type WorkflowPaginator = {
@@ -31,6 +37,7 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const saving = ref(false)
+const batchLoading = ref(false)
 const workflows = ref<AdminWorkflowRecord[]>([])
 const paginator = ref<WorkflowPaginator>({
   total_record: 0,
@@ -46,6 +53,9 @@ const filters = ref<GetAdminWorkflowsRequest>({
 })
 const showCreateModal = ref(false)
 const createForm = ref<CreateWorkflowForm>({ name: '', description: '', icon: '', tool_call_name: '' })
+const selectedIds = ref<Set<string>>(new Set())
+const allSelected = computed(() => workflows.value.length > 0 && workflows.value.every((w) => selectedIds.value.has(w.id)))
+const selectedCount = computed(() => selectedIds.value.size)
 
 const hasActiveFilters = computed(() => Boolean(filters.value.search || filters.value.status))
 const emptyDescription = computed(() => {
@@ -153,6 +163,119 @@ const handleDelete = (workflow: AdminWorkflowRecord) => {
   })
 }
 
+/**
+ * 切换单个工作流选择状态。
+ */
+const toggleSelect = (workflowId: string) => {
+  const next = new Set(selectedIds.value)
+  if (next.has(workflowId)) {
+    next.delete(workflowId)
+  } else {
+    next.add(workflowId)
+  }
+  selectedIds.value = next
+}
+
+/**
+ * 全选/取消全选当前页工作流。
+ */
+const toggleSelectAll = () => {
+  if (allSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(workflows.value.map((w) => w.id))
+  }
+}
+
+const clearSelection = () => {
+  selectedIds.value = new Set()
+}
+
+/**
+ * 批量发布选中的工作流。
+ */
+const handleBatchPublish = () => {
+  if (selectedCount.value === 0) {
+    Message.info(t('admin.workflowsAdmin.batch.noSelection'))
+    return
+  }
+  Modal.warning({
+    title: t('admin.workflowsAdmin.batch.publishTitle'),
+    content: t('admin.workflowsAdmin.batch.publishContent', { count: selectedCount.value }),
+    hideCancel: false,
+    onOk: async () => {
+      batchLoading.value = true
+      try {
+        const result = await batchPublishAdminWorkflows(Array.from(selectedIds.value))
+        const okCount = result.succeeded.length
+        const failCount = result.failed.length
+        if (failCount === 0) {
+          Message.success(t('admin.workflowsAdmin.batch.publishSuccess', { count: okCount }))
+        } else {
+          Message.warning(
+            t('admin.workflowsAdmin.batch.partialSuccess', { ok: okCount, fail: failCount }),
+          )
+        }
+        clearSelection()
+        await loadWorkflows()
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.workflowsAdmin.batch.publishFailed')))
+      } finally {
+        batchLoading.value = false
+      }
+    },
+  })
+}
+
+/**
+ * 批量下架选中的工作流。
+ */
+const handleBatchOffline = () => {
+  if (selectedCount.value === 0) {
+    Message.info(t('admin.workflowsAdmin.batch.noSelection'))
+    return
+  }
+  Modal.warning({
+    title: t('admin.workflowsAdmin.batch.offlineTitle'),
+    content: t('admin.workflowsAdmin.batch.offlineContent', { count: selectedCount.value }),
+    hideCancel: false,
+    onOk: async () => {
+      batchLoading.value = true
+      try {
+        const result = await batchOfflineAdminWorkflows(Array.from(selectedIds.value))
+        const okCount = result.succeeded.length
+        const failCount = result.failed.length
+        if (failCount === 0) {
+          Message.success(t('admin.workflowsAdmin.batch.offlineSuccess', { count: okCount }))
+        } else {
+          Message.warning(
+            t('admin.workflowsAdmin.batch.partialSuccess', { ok: okCount, fail: failCount }),
+          )
+        }
+        clearSelection()
+        await loadWorkflows()
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.workflowsAdmin.batch.offlineFailed')))
+      } finally {
+        batchLoading.value = false
+      }
+    },
+  })
+}
+
+const onPageChange = (page: number) => {
+  filters.value.current_page = page
+  clearSelection()
+  void loadWorkflows()
+}
+
+const onPageSizeChange = (size: number) => {
+  filters.value.page_size = size
+  filters.value.current_page = 1
+  clearSelection()
+  void loadWorkflows()
+}
+
 onMounted(() => {
   void loadWorkflows()
 })
@@ -186,16 +309,70 @@ onMounted(() => {
       @refresh="loadWorkflows"
     />
 
+    <!-- 批量操作工具条 -->
+    <div
+      v-if="workflows.length"
+      class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+    >
+      <a-checkbox :model-value="allSelected" @change="toggleSelectAll">
+        {{ t('admin.workflowsAdmin.batch.selectAll') }}
+      </a-checkbox>
+      <span class="text-xs text-slate-400">
+        {{ t('admin.workflowsAdmin.batch.selected', { count: selectedCount }) }}
+      </span>
+      <div class="ml-auto flex flex-wrap gap-2">
+        <a-button
+          size="small"
+          type="primary"
+          :loading="batchLoading"
+          :disabled="selectedCount === 0"
+          @click="handleBatchPublish"
+        >
+          {{ t('admin.workflowsAdmin.batch.publish') }}
+        </a-button>
+        <a-button
+          size="small"
+          status="warning"
+          :loading="batchLoading"
+          :disabled="selectedCount === 0"
+          @click="handleBatchOffline"
+        >
+          {{ t('admin.workflowsAdmin.batch.offline') }}
+        </a-button>
+        <a-button
+          v-if="selectedCount > 0"
+          size="small"
+          :disabled="batchLoading"
+          @click="clearSelection"
+        >
+          {{ t('admin.workflowsAdmin.batch.clearSelection') }}
+        </a-button>
+      </div>
+    </div>
+
     <section v-if="workflows.length" class="grid gap-4 xl:grid-cols-2">
-      <AdminWorkflowCard
+      <div
         v-for="workflow in workflows"
         :key="workflow.id"
-        :workflow="workflow"
-        :can-update="false"
-        :can-delete="true"
-        @edit="handleEdit"
-        @delete="handleDelete"
-      />
+        class="flex items-start gap-3"
+        :class="{
+          'rounded-xl ring-2 ring-blue-400': selectedIds.has(workflow.id),
+        }"
+      >
+        <a-checkbox
+          :model-value="selectedIds.has(workflow.id)"
+          class="mt-5 shrink-0"
+          @change="toggleSelect(workflow.id)"
+        />
+        <AdminWorkflowCard
+          class="flex-1"
+          :workflow="workflow"
+          :can-update="false"
+          :can-delete="true"
+          @edit="handleEdit"
+          @delete="handleDelete"
+        />
+      </div>
     </section>
 
     <section
@@ -206,9 +383,21 @@ onMounted(() => {
       <p class="mt-2 text-sm text-slate-500">{{ emptyDescription }}</p>
     </section>
 
-    <footer class="text-xs text-slate-400">
-      {{ t('admin.workflowsAdmin.total', { count: paginator.total_record }) }}
-    </footer>
+    <div v-if="workflows.length" class="flex items-center justify-between">
+      <span class="text-xs text-slate-400">
+        {{ t('admin.workflowsAdmin.total', { count: paginator.total_record }) }}
+      </span>
+      <a-pagination
+        :total="paginator.total_record"
+        :current="paginator.current_page"
+        :page-size="paginator.page_size"
+        show-total
+        show-page-size
+        :page-size-options="[10, 20, 50, 100]"
+        @change="onPageChange"
+        @page-size-change="onPageSizeChange"
+      />
+    </div>
 
     <!-- 创建工作流弹窗（仅 name + description） -->
     <a-modal
