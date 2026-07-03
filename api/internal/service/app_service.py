@@ -770,6 +770,33 @@ class AppService(BaseService):
 
         return draft_app_config_record
 
+    # ------------------------------------------------------------------
+    # AppDebug 抽取障碍说明（P3 技术债，详见 docs/prd/execution-roadmap.md）
+    # ------------------------------------------------------------------
+    # 以下 region 标记的方法原计划抽取到 AppDebugService，但因与 AppService
+    # 深度耦合而暂缓抽取，仅以 region 标记便于后续定位与 IDE 折叠。
+    #
+    # 核心障碍：debug_chat（166 行）依赖以下「共享私有方法」，这些方法同时
+    # 被非 debug 路径调用，无法随 debug 一起迁出：
+    #   - _build_runtime_tools / _build_runtime_tools_for_config
+    #       被 _invoke_agent_binding_target（子应用 A2A 调用，非 debug）与
+    #       prompt_compare_chat 共用
+    #   - _create_runtime_agent
+    #       被 _invoke_agent_binding_target 与 prompt_compare_chat 共用
+    #   - _stream_agent_events
+    #       被 prompt_compare_chat 共用
+    #   - _get_debug_long_term_memory_snapshot
+    #       被 prompt_compare_chat 共用
+    #   - _normalize_paginated_ids
+    #       被 get_debug_conversation_messages_with_page 共用
+    #
+    # 若强行抽取：要么 AppDebugService 跨类访问 AppService 私有方法（破坏封
+    # 装），要么把这些共享方法提升为 public（API 面放大、回归风险高），二者
+    # 均劣于现状。部分抽取又会把 debug 逻辑拆到两个文件且引入 AppService→
+    # AppDebugService 的循环依赖。故维持内聚，仅做 region 标记。
+    # ------------------------------------------------------------------
+
+    # region AppDebug: 调试会话管理（长期记忆/删除/会话解析）
     def get_debug_conversation_summary(self, app_id: UUID, account: Account) -> str:
         """根据传递的应用id+账号获取指定应用的调试会话长期记忆"""
         # 1.获取应用信息并校验权限
@@ -837,6 +864,8 @@ class AppService(BaseService):
             self.update(app, debug_conversation_id=conversation.id)
 
         return conversation
+
+    # endregion AppDebug: 调试会话管理
 
     def _build_runtime_tools(
         self,
@@ -1567,6 +1596,7 @@ class AppService(BaseService):
                 end_on="ai",
             )
 
+    # region AppDebug: 调试长期记忆快照（debug_chat 与 prompt_compare_chat 共用）
     def _get_debug_long_term_memory_snapshot(self, app: App, account: Account) -> str:
         """获取当前应用已有调试会话的长期记忆快照，不主动创建新会话"""
         if not app.debug_conversation_id:
@@ -1581,6 +1611,8 @@ class AppService(BaseService):
         ).one_or_none()
 
         return debug_conversation.summary if debug_conversation else ""
+
+    # endregion AppDebug: 调试长期记忆快照
 
     @staticmethod
     def _normalize_paginated_ids(paginated_items: list[Any]) -> list[Any]:
@@ -1678,7 +1710,7 @@ class AppService(BaseService):
             }
             yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
 
-
+    # region AppDebug: 调试对话主流程（依赖共享运行时方法，见上方抽取障碍说明）
     def debug_chat(self, app_id: UUID, req: DebugChatReq, account: Account) -> Generator:
         """根据传递的应用id+提问query向特定的应用发起会话调试"""
         # 1.获取应用信息并校验权限
@@ -1846,6 +1878,8 @@ class AppService(BaseService):
             agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()],
         )
 
+    # endregion AppDebug: 调试对话主流程
+
     def prompt_compare_chat(self, app_id: UUID, req: Any, account: Account) -> Generator[str, None, None]:
         """根据传递的应用id发起无状态提示词对比调试"""
         app = self.get_app(app_id, account)
@@ -1883,6 +1917,7 @@ class AppService(BaseService):
             flask_app=current_app._get_current_object() if has_app_context() else None,
         )
 
+    # region AppDebug: 停止调试会话
     def stop_debug_chat(self, app_id: UUID, task_id: UUID, account: Account) -> None:
         """根据传递的应用id+任务id+账号，停止某个应用的调试会话，中断流式事件"""
         # 1.获取应用信息并校验权限
@@ -1891,11 +1926,14 @@ class AppService(BaseService):
         # 2.调用智能体队列管理器停止特定任务
         AgentQueueManager.set_stop_flag(task_id, InvokeFrom.DEBUGGER.value, account.id)
 
+    # endregion AppDebug: 停止调试会话
+
     def stop_prompt_compare_chat(self, app_id: UUID, task_id: UUID, account: Account) -> None:
         """根据传递的应用id+任务id停止某个提示词对比调试会话"""
         self.get_app(app_id, account)
         AgentQueueManager.set_stop_flag(task_id, InvokeFrom.DEBUGGER.value, account.id)
 
+    # region AppDebug: 调试会话消息分页
     def get_debug_conversation_messages_with_page(
             self,
             app_id: UUID,
@@ -1951,6 +1989,8 @@ class AppService(BaseService):
         )
 
         return messages, paginator
+
+    # endregion AppDebug: 调试会话消息分页
 
     def get_published_config(self, app_id: UUID, account: Account) -> dict[str, Any]:
         """根据传递的应用id+账号 获取应用的发布配置"""

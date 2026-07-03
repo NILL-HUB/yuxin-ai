@@ -217,7 +217,7 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | OrchestratorService DI 改造 | P2 | ✅ 完成 | 6 处 or X() 兜底已移除，None 检查替代 |
 | 反转 core→service 反向依赖 | P2 | ✅ 完成 | UserMemoryServicePort/ObjectStoragePort 已落地 |
 | 拆分 deep_thinking_agent.py（~2410 行） | P3 | ✅ 完成 | 17 个纯函数抽取到 deep_thinking_utils.py |
-| 拆分 app_service.py（~2368 行） | P3 | 🟡 部分完成 | AppIconService 已抽取；AppDebugService 因 debug 方法与 AppService 深度耦合暂缓 |
+| 拆分 app_service.py（~2368 行） | P3 | 🟡 部分完成 | AppIconService 已抽取；AppDebugService 经评估确认深度耦合（debug_chat 依赖 `_build_runtime_tools`/`_create_runtime_agent`/`_stream_agent_events` 等共享私有方法，同时被子应用 A2A 调用 `_invoke_agent_binding_target` 与 `prompt_compare_chat` 共用），强行抽取会破坏封装或引入 AppService↔AppDebugService 循环依赖，已改用 `#region AppDebug` 标记 5 处 debug 方法块（会话管理/长期记忆快照/调试主流程/停止调试/消息分页）便于定位与折叠，维持内聚 |
 | ExecutionModeSelector | P4 | ✅ 已完成 | |
 | 执行链路接通（5 种模式全量） | P4 | ✅ 已完成 | |
 | 废弃空壳 ModelPoolService/KeyPoolService | P5 | ✅ 已完成 | 物理删除 |

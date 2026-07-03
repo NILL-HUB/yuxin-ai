@@ -61,7 +61,10 @@ type ToolNodeForm = {
   type: string
   title: string
   description: string
-  tool: ToolSelection
+  tool_type: string // 7 种 tool_type: api_tool/builtin_tool/mcp/knowledge/skill/workflow/agent_binding
+  provider_id: string // 用于 mcp/knowledge/skill/workflow/agent_binding 等类型
+  tool_id: string // 用于 mcp/knowledge/skill/workflow/agent_binding 等类型
+  tool: ToolSelection // 用于 builtin_tool/api_tool 的选择器数据
   params: ToolParam[]
   inputs: ToolFormInputField[]
   outputs: Array<Record<string, unknown>>
@@ -91,11 +94,24 @@ const { builtin_tool, loadBuiltinTool } = useGetBuiltinTool()
 const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
 const { categories, loadCategories } = useGetCategories()
 const { t } = useI18n()
+// tool_type 下拉选项（P2-3 扩展为 7 种），用 computed 以支持语言切换
+const TOOL_TYPE_OPTIONS = computed(() => [
+  { label: t('workflowEditor.toolNode.typeApiTool'), value: 'api_tool' },
+  { label: t('workflowEditor.toolNode.typeBuiltinTool'), value: 'builtin_tool' },
+  { label: t('workflowEditor.toolNode.typeMcp'), value: 'mcp' },
+  { label: t('workflowEditor.toolNode.typeKnowledge'), value: 'knowledge' },
+  { label: t('workflowEditor.toolNode.typeSkill'), value: 'skill' },
+  { label: t('workflowEditor.toolNode.typeWorkflow'), value: 'workflow' },
+  { label: t('workflowEditor.toolNode.typeAgentBinding'), value: 'agent_binding' },
+])
 const form = ref<ToolNodeForm>({
   id: '',
   type: '',
   title: '',
   description: '',
+  tool_type: '', // 默认空，需要用户选择
+  provider_id: '', // 用于 mcp 等类型
+  tool_id: '', // 用于 mcp/knowledge/skill/workflow/agent_binding
   tool: {
     type: 'api_tool',
     provider: { id: '', name: '', label: '', icon: '', description: '' },
@@ -166,8 +182,12 @@ const inputRefOptions = computed(() => {
 const handleShowToolsModal = async () => {
   // 3.1 显示模态窗
   toolsModalVisible.value = true
+  // 3.2 根据当前 tool_type 同步模态窗激活类型
+  if (form.value.tool_type === 'builtin_tool' || form.value.tool_type === 'api_tool') {
+    toolsActivateType.value = form.value.tool_type
+  }
 
-  // 3.2 调用API接口获取响应
+  // 3.3 调用API接口获取响应
   await loadApiToolProviders(true)
   await loadBuiltinTools()
 }
@@ -178,6 +198,25 @@ const removeBindTool = () => {
   form.value.params = []
   form.value.inputs = []
 }
+
+// 4.1 切换 tool_type 时清空不适用的字段
+const handleChangeToolType = (newToolType: string) => {
+  // 清空所有工具相关字段
+  form.value.tool = { ...defaultToolMeta, type: newToolType }
+  form.value.provider_id = ''
+  form.value.tool_id = ''
+  form.value.params = []
+  form.value.inputs = []
+  // 同步模态窗的激活类型，便于 builtin_tool/api_tool 选择
+  if (newToolType === 'builtin_tool' || newToolType === 'api_tool') {
+    toolsActivateType.value = newToolType
+  }
+}
+
+// 4.2 判断当前 tool_type 是否使用模态窗选择器（builtin_tool/api_tool）
+const isModalSelectorType = computed(() => {
+  return form.value.tool_type === 'builtin_tool' || form.value.tool_type === 'api_tool'
+})
 
 // 5.定义是否关联工具判断函数
 const isToolSelected = (provider: ToolProvider, tool: ToolMeta) => {
@@ -250,6 +289,8 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
   } else {
     // 6.6 新增数据，并调用API接口获取工具详情信息
     form.value.tool = selectTool
+    // 同步顶层 tool_type，确保提交数据一致
+    form.value.tool_type = selectTool.type
 
     // 6.7 根据不同的工具类型调用API接口获取工具的输入
     if (selectTool.type === 'builtin_tool') {
@@ -319,15 +360,23 @@ const onSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | u
     params[param.key] = param.value
   })
 
-  // 7.6 数据校验通过，通过事件触发数据更新
+  // 7.6 根据不同 tool_type 构造提交数据
+  const toolType = form.value.tool_type
+  // builtin_tool/api_tool 使用模态窗选择器数据，其他类型使用顶层 provider_id/tool_id
+  const isModalType = toolType === 'builtin_tool' || toolType === 'api_tool'
+  const providerId = isModalType ? form.value.tool?.provider.id : form.value.provider_id
+  const toolId = isModalType ? form.value.tool?.tool.name : form.value.tool_id
+  const meta = isModalType ? cloneDeep(form.value.tool) : { type: toolType }
+
+  // 7.7 数据校验通过，通过事件触发数据更新
   emits('updateNode', {
     id: props.node.id,
     title: form.value.title,
     description: form.value.description,
-    tool_type: form.value.tool?.type,
-    provider_id: form.value.tool?.provider.id,
-    tool_id: form.value.tool?.tool.name,
-    meta: cloneDeep(form.value.tool),
+    tool_type: toolType,
+    provider_id: providerId,
+    tool_id: toolId,
+    meta: meta,
     params: params, // 将列表转换成字典
     inputs: cloneInputs.map((input: ToolFormInputField) => {
       return {
@@ -363,12 +412,24 @@ watch(
     debounceAutoSave.cancel()
     const cloneInputs = cloneDeep(newNode.data.inputs)
     const cloneParams = cloneDeep(newNode.data.params) as Record<string, unknown>
+    // 恢复 tool_type：优先取顶层 tool_type，兼容旧数据的 meta.type
+    const toolType =
+      (newNode.data.tool_type as string) ||
+      (newNode.data.meta?.type as string) ||
+      'api_tool'
+    const isModalType = toolType === 'builtin_tool' || toolType === 'api_tool'
     form.value = {
       id: newNode.id,
       type: newNode.type,
       title: newNode.data.title,
       description: newNode.data.description,
-      tool: (cloneDeep(newNode.data.meta) as ToolSelection) ?? defaultToolMeta,
+      tool_type: toolType,
+      provider_id: (newNode.data.provider_id as string) || '',
+      tool_id: (newNode.data.tool_id as string) || '',
+      // builtin_tool/api_tool 使用 meta 中的选择器数据，其他类型使用默认空值
+      tool: isModalType
+        ? (cloneDeep(newNode.data.meta) as ToolSelection) ?? defaultToolMeta
+        : { ...defaultToolMeta, type: toolType },
       params: Object.entries(cloneParams).map(([key, value]) => ({
         key: key,
         value: value,
@@ -478,6 +539,18 @@ onMounted(() => {
     <a-divider class="my-2" />
     <!-- 表单信息 -->
     <a-form size="mini" :model="form" :disabled="isReadonly" layout="vertical">
+      <!-- 工具类型选择器（P2-3 扩展为 7 种） -->
+      <a-form-item field="tool_type" :label="t('workflowEditor.toolNode.toolTypeLabel')">
+        <a-select
+          v-model="form.tool_type"
+          :placeholder="t('workflowEditor.toolNode.toolTypePlaceholder')"
+          :options="TOOL_TYPE_OPTIONS"
+          @change="handleChangeToolType"
+        />
+      </a-form-item>
+
+      <!-- builtin_tool/api_tool: 绑定插件（原有模态窗选择方式） -->
+      <template v-if="isModalSelectorType">
       <!-- 绑定插件 -->
       <div class="flex flex-col gap-2">
         <!-- 标题&操作按钮 -->
@@ -538,6 +611,69 @@ onMounted(() => {
         </div>
       </div>
       <a-divider class="my-4" />
+      </template>
+
+      <!-- mcp: provider_id（provider key）+ tool_id（tool name） -->
+      <template v-else-if="form.tool_type === 'mcp'">
+        <a-form-item field="provider_id" :label="t('workflowEditor.toolNode.mcpProviderId')">
+          <a-input
+            v-model="form.provider_id"
+            :placeholder="t('workflowEditor.toolNode.mcpProviderIdPlaceholder')"
+          />
+        </a-form-item>
+        <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.mcpToolId')">
+          <a-input
+            v-model="form.tool_id"
+            :placeholder="t('workflowEditor.toolNode.mcpToolIdPlaceholder')"
+          />
+        </a-form-item>
+        <a-divider class="my-4" />
+      </template>
+
+      <!-- knowledge: tool_id（dataset_id） -->
+      <template v-else-if="form.tool_type === 'knowledge'">
+        <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.knowledgeDatasetId')">
+          <a-input
+            v-model="form.tool_id"
+            :placeholder="t('workflowEditor.toolNode.knowledgeDatasetIdPlaceholder')"
+          />
+        </a-form-item>
+        <a-divider class="my-4" />
+      </template>
+
+      <!-- skill: tool_id（skill_package_id） -->
+      <template v-else-if="form.tool_type === 'skill'">
+        <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.skillId')">
+          <a-input
+            v-model="form.tool_id"
+            :placeholder="t('workflowEditor.toolNode.skillIdPlaceholder')"
+          />
+        </a-form-item>
+        <a-divider class="my-4" />
+      </template>
+
+      <!-- workflow: tool_id（workflow_id） -->
+      <template v-else-if="form.tool_type === 'workflow'">
+        <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.workflowId')">
+          <a-input
+            v-model="form.tool_id"
+            :placeholder="t('workflowEditor.toolNode.workflowIdPlaceholder')"
+          />
+        </a-form-item>
+        <a-divider class="my-4" />
+      </template>
+
+      <!-- agent_binding: tool_id（app_id） -->
+      <template v-else-if="form.tool_type === 'agent_binding'">
+        <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.agentAppId')">
+          <a-input
+            v-model="form.tool_id"
+            :placeholder="t('workflowEditor.toolNode.agentAppIdPlaceholder')"
+          />
+        </a-form-item>
+        <a-divider class="my-4" />
+      </template>
+
       <!-- 输入参数 -->
       <div class="flex flex-col gap-2">
         <!-- 标题&操作按钮 -->
