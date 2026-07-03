@@ -15,6 +15,15 @@ import type { McpCategory, McpProvider } from '@/models/mcp'
 import CreateOrUpdateMcpModal from '@/views/space/mcp/components/CreateOrUpdateMcpModal.vue'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
+withDefaults(
+  defineProps<{
+    hideCreate?: boolean
+  }>(),
+  {
+    hideCreate: false,
+  },
+)
+
 const { t, locale } = useI18n()
 const loading = ref(false)
 const categories = ref<McpCategory[]>([])
@@ -168,6 +177,7 @@ onMounted(async () => {
           </div>
         </div>
         <a-button
+          v-if="!hideCreate"
           data-testid="store-mcp-create-button"
           type="primary"
           class="rounded-lg"
@@ -378,6 +388,7 @@ onMounted(async () => {
     </a-drawer>
 
     <create-or-update-mcp-modal
+      v-if="!hideCreate"
       v-model:visible="showCreateMcpModalVisible"
       :callback="loadProviders"
     />

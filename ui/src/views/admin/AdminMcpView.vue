@@ -146,7 +146,7 @@ const handleDelete = (provider: McpProvider) => {
  * 跳转到 MCP 管理页（内嵌空间端 MCP 管理视图，支持发布、删除等完整操作）。
  */
 const handleManage = async () => {
-  await router.push({ name: 'admin-mcp-list' })
+  await router.push({ name: 'admin-mcp' })
 }
 
 onMounted(() => {

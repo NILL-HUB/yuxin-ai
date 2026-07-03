@@ -5,6 +5,6 @@ import StoreUnsupportedView from './StoreUnsupportedView.vue'
 
 <template>
   <StoreUnsupportedView>
-    <StoreMcpListView />
+    <StoreMcpListView :hide-create="true" />
   </StoreUnsupportedView>
 </template>

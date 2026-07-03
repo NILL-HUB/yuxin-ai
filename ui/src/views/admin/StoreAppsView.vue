@@ -148,6 +148,10 @@ onMounted(() => {
       {{ t('admin.storeOps.opsHint') }}
     </a-alert>
 
+    <a-alert type="info" :show-icon="true">
+      {{ t('admin.storeOps.sourceHint') }}
+    </a-alert>
+
     <div
       class="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:flex-row lg:items-center"
     >

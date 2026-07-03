@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
@@ -17,10 +17,8 @@ import {
   unpublishMcpProvider,
 } from '@/services/mcp'
 import type { McpProvider } from '@/models/mcp'
-import CreateOrUpdateMcpModal from './components/CreateOrUpdateMcpModal.vue'
 
 const route = useRoute()
-const router = useRouter()
 const accountStore = useAccountStore()
 const { t, locale } = useI18n()
 
@@ -29,19 +27,8 @@ const providers = ref<McpProvider[]>([])
 const hasMore = ref(true)
 const page = ref(1)
 const pageSize = ref(20)
-const showCreateOrUpdateMcpModalVisible = ref(false)
-const updateMcpProviderId = ref('')
 
 const searchWord = computed(() => String(route.query?.search_word ?? ''))
-
-const clearCreateTypeQuery = async () => {
-  const nextQuery = { ...route.query }
-  delete nextQuery.create_type
-  await router.replace({
-    path: route.path,
-    query: nextQuery,
-  })
-}
 
 const getCategoryLabel = (value: string) => {
   return getStoreCategoryDisplayName(value, locale.value as 'zh-CN' | 'en-US')
@@ -94,20 +81,6 @@ const handleScroll = (event: Event) => {
   }
 }
 
-const openCreateModal = () => {
-  updateMcpProviderId.value = ''
-  showCreateOrUpdateMcpModalVisible.value = true
-}
-
-const openEditModal = (provider: McpProvider) => {
-  updateMcpProviderId.value = provider.id
-  showCreateOrUpdateMcpModalVisible.value = true
-}
-
-const handleCardClick = (provider: McpProvider) => {
-  openEditModal(provider)
-}
-
 const handleDelete = (provider: McpProvider) => {
   Modal.warning({
     title: t('space.mcp.deleteConfirmTitle'),
@@ -149,16 +122,6 @@ watch(
   },
 )
 
-watch(
-  () => route.query?.create_type,
-  (newValue) => {
-    if (newValue !== 'mcp') return
-    openCreateModal()
-    void clearCreateTypeQuery()
-  },
-  { immediate: true },
-)
-
 onMounted(async () => {
   await loadProviders(true)
 })
@@ -178,7 +141,7 @@ onMounted(async () => {
           :lg="6"
           :xl="6"
         >
-          <a-card hoverable class="cursor-pointer rounded-lg h-full" @click="handleCardClick(provider)">
+          <a-card hoverable class="rounded-lg h-full">
             <div class="flex items-start gap-3 mb-3">
               <a-avatar :size="40" shape="square" :style="{ backgroundColor: provider.background }">
                 <img
@@ -232,7 +195,7 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="flex items-center justify-between gap-2 mt-4" @click.stop>
+            <div class="flex items-center gap-2 mt-4" @click.stop>
               <a-dropdown position="br" @click.stop>
                 <a-button size="small" type="text" class="rounded-lg !text-gray-700">
                   <template #icon>
@@ -240,9 +203,6 @@ onMounted(async () => {
                   </template>
                 </a-button>
                 <template #content>
-                  <a-doption @click="() => openEditModal(provider)">
-                    {{ t('space.mcp.edit') }}
-                  </a-doption>
                   <a-doption @click="() => handleTogglePublish(provider)">
                     {{ provider.is_public ? t('space.mcp.unpublish') : t('space.mcp.publish') }}
                   </a-doption>
@@ -251,15 +211,6 @@ onMounted(async () => {
                   </a-doption>
                 </template>
               </a-dropdown>
-
-              <a-button
-                size="small"
-              type="primary"
-              class="rounded-lg"
-              @click.stop="openEditModal(provider)"
-            >
-                {{ t('space.mcp.edit') }}
-              </a-button>
             </div>
           </a-card>
         </a-col>
@@ -269,12 +220,6 @@ onMounted(async () => {
         </a-col>
       </a-row>
     </div>
-
-    <create-or-update-mcp-modal
-      v-model:visible="showCreateOrUpdateMcpModalVisible"
-      v-model:mcp_provider_id="updateMcpProviderId"
-      :callback="async () => await loadProviders(true)"
-    />
   </a-spin>
 </template>
 

@@ -7,7 +7,6 @@ import { useI18n } from 'vue-i18n'
 import {
   useCreateOrUpdateDataset,
   useDeleteDataset,
-  useGenerateIconPreview,
   useGetDataset,
   useGetDatasetsWithPage,
   useRegenerateIcon,
@@ -24,7 +23,6 @@ const router = useRouter()
 const { t } = useI18n()
 const accountStore = useAccountStore()
 let updateDatasetID = ''
-const showCreateModal = ref(false)
 const { dataset, loadDataset } = useGetDataset()
 const { loading, datasets, paginator, loadDatasets } = useGetDatasetsWithPage()
 const { image_url, handleUploadImage } = useUploadImage()
@@ -38,19 +36,9 @@ const {
 } = useCreateOrUpdateDataset()
 const { handleDelete } = useDeleteDataset()
 const { loading: regenerateIconLoading, handleRegenerateIcon } = useRegenerateIcon()
-const { loading: generateIconPreviewLoading, handleGenerateIconPreview } = useGenerateIconPreview()
 const search_word = computed(() => {
   return String(route.query?.search_word ?? '')
 })
-
-const clearCreateTypeQuery = async () => {
-  const nextQuery = { ...route.query }
-  delete nextQuery.create_type
-  await router.replace({
-    path: route.path,
-    query: nextQuery,
-  })
-}
 
 // 2.定义上传图标处理器
 const handleUploadIcon = async (file: File) => {
@@ -69,22 +57,11 @@ const handleGenerateIcon = async () => {
 
   try {
     // 更新模式：调用 regenerateIcon
-    if (updateDatasetID) {
-      const iconUrl = await handleRegenerateIcon(updateDatasetID)
-      if (iconUrl) {
-        form.value.icon = iconUrl
-        form.value.fileList = [{ uid: '1', name: t('space.datasets.modal.iconPlaceholder'), url: iconUrl }]
-        Message.success(t('space.datasets.generateSuccess'))
-      }
-    }
-    // 创建模式：调用 generateIconPreview
-    else {
-      const iconUrl = await handleGenerateIconPreview(form.value.name, form.value.description)
-      if (iconUrl) {
-        form.value.icon = iconUrl
-        form.value.fileList = [{ uid: '1', name: t('space.datasets.modal.iconPlaceholder'), url: iconUrl }]
-        Message.success(t('space.datasets.generateSuccess'))
-      }
+    const iconUrl = await handleRegenerateIcon(updateDatasetID)
+    if (iconUrl) {
+      form.value.icon = iconUrl
+      form.value.fileList = [{ uid: '1', name: t('space.datasets.modal.iconPlaceholder'), url: iconUrl }]
+      Message.success(t('space.datasets.generateSuccess'))
     }
   } catch (_error: unknown) {
     // 错误已在 hooks 中处理
@@ -119,20 +96,13 @@ const handleUpdate = (dataset_id: string) => {
   })
 }
 
-const openCreateModal = async () => {
-  showCreateModal.value = true
-  await clearCreateTypeQuery()
-}
-
 // 6.定义取消显示模态窗
 const handleCancel = async () => {
-  showCreateModal.value = false
   updateShowUpdateModal(false, async () => {
     // 1.重置整个表单数据
     updateDatasetID = ''
     formRef.value?.resetFields()
   })
-  await clearCreateTypeQuery()
 }
 
 // 7.定义提交模态窗处理器
@@ -152,16 +122,6 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 watch(
   () => route.query?.search_word,
   (newValue) => loadDatasets(true, String(newValue)),
-)
-
-watch(
-  () => route.query?.create_type,
-  (newValue) => {
-    if (newValue === 'dataset') {
-      void openCreateModal()
-    }
-  },
-  { immediate: true },
 )
 
 // 9.页面DOM加载后加载数据
@@ -272,10 +232,10 @@ const handleCardClick = (datasetId: string) => {
         <div class="text-gray-400 my-4">{{ t('space.datasets.loadedAll') }}</div>
       </a-col>
     </a-row>
-    <!-- 新建/修改模态窗 -->
+    <!-- 修改模态窗 -->
     <a-modal
       :width="520"
-      :visible="showCreateModal || showUpdateModal"
+      :visible="showUpdateModal"
       hide-title
       :footer="false"
       modal-class="rounded-xl"
@@ -284,11 +244,7 @@ const handleCardClick = (datasetId: string) => {
       <!-- 顶部标题 -->
       <div class="flex items-center justify-between">
         <div class="text-lg font-bold text-gray-700">
-          {{
-            showCreateModal
-              ? t('space.datasets.modal.createTitle')
-              : t('space.datasets.modal.updateTitle')
-          }}
+          {{ t('space.datasets.modal.updateTitle') }}
         </div>
         <a-button type="text" class="!text-gray-700" size="small" @click="handleCancel">
           <template #icon>
@@ -309,7 +265,7 @@ const handleCardClick = (datasetId: string) => {
               :description="form.description"
               :icon="form.icon"
               :file-list="form.fileList"
-              :loading="regenerateIconLoading || generateIconPreviewLoading"
+              :loading="regenerateIconLoading"
               :placeholder="t('space.datasets.modal.iconPlaceholder')"
               :on-upload="handleUploadIcon"
               :on-generate="handleGenerateIcon"

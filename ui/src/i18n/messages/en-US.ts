@@ -151,6 +151,7 @@ export default {
       appsTitle: 'App store publishing',
       appsDescription: 'Manage the publishing status of apps in the public store',
       opsHint: 'Publish (make public) or unpublish (make private) resources here to control their visibility in the public store.',
+      sourceHint: 'Please go to the "Resource Orchestration" section to create resources. This page only handles publishing management.',
       storeHint: 'Manage workflow store publishing (public/private) from the corresponding store page under "Resource Operations".',
       unsupportedNotice: 'This resource type does not support store publishing. Browse only.',
       publishSuccess: 'Published',

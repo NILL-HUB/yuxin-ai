@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import AdminWorkflowCard from '@/components/admin/AdminWorkflowCard.vue'
 import AdminWorkflowToolbar from '@/components/admin/AdminWorkflowToolbar.vue'
 import type { AdminWorkflowRecord, GetAdminWorkflowsRequest } from '@/models/admin-workflow'
@@ -20,7 +19,6 @@ type WorkflowPaginator = {
 /**
  * 资源运营-工作流商店上下架管理页，负责公共商店中工作流资源的上架/下架操作。
  */
-const router = useRouter()
 const adminStore = useAdminStore()
 const { t } = useI18n()
 
@@ -82,13 +80,6 @@ const handleStatusChange = async (value: string) => {
 }
 
 /**
- * 跳转到后台工作流编辑器。
- */
-const handleEdit = async (workflowId: string) => {
-  await router.push({ name: 'admin-workflow-edit', params: { workflow_id: workflowId } })
-}
-
-/**
  * 切换工作流公开状态（上架/下架），并在成功后刷新当前列表。
  */
 const handleTogglePublic = async (workflow: AdminWorkflowRecord) => {
@@ -147,6 +138,10 @@ onMounted(() => {
       {{ t('admin.storeOps.opsHint') }}
     </a-alert>
 
+    <a-alert type="info" :show-icon="true">
+      {{ t('admin.storeOps.sourceHint') }}
+    </a-alert>
+
     <AdminWorkflowToolbar
       :search="filters.search"
       :status="filters.status"
@@ -162,7 +157,7 @@ onMounted(() => {
         :key="workflow.id"
         :workflow="workflow"
         :can-update="canUpdate"
-        @edit="handleEdit"
+        :can-edit="false"
         @toggle-public="handleTogglePublic"
         @offline="handleOffline"
       />

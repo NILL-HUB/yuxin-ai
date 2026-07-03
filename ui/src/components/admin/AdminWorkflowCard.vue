@@ -6,11 +6,18 @@ import type { AdminWorkflowRecord } from '@/models/admin-workflow'
 /**
  * 后台工作流卡片，展示单条工作流摘要和可执行动作。
  */
-const props = defineProps<{
-  workflow: AdminWorkflowRecord
-  canUpdate: boolean
-  canDelete?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    workflow: AdminWorkflowRecord
+    canUpdate: boolean
+    canDelete?: boolean
+    canEdit?: boolean
+  }>(),
+  {
+    canDelete: undefined,
+    canEdit: true,
+  },
+)
 
 const emit = defineEmits<{
   (event: 'edit', workflowId: string): void
@@ -52,6 +59,7 @@ const visibilityActionLabel = computed(() => {
 
     <div class="mt-4 flex flex-wrap gap-2">
       <a-button
+        v-if="canEdit"
         type="primary"
         :data-testid="`workflow-edit-${workflow.id}`"
         @click="emit('edit', workflow.id)"

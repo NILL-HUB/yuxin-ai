@@ -92,7 +92,7 @@ const formatCount = (value: number) => {
  * 跳转到知识库管理页（内嵌空间端知识库管理视图，支持创建与删除）。
  */
 const handleManage = async () => {
-  await router.push({ name: 'admin-dataset-list' })
+  await router.push({ name: 'admin-datasets' })
 }
 
 onMounted(() => {

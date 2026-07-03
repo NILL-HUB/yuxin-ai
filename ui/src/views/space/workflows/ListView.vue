@@ -4,7 +4,6 @@ import { useDeleteWorkflow, useGetWorkflowsWithPage } from '@/hooks/use-workflow
 import { onMounted, ref, watch } from 'vue'
 import { useAccountStore } from '@/stores/account'
 import { useRoute, useRouter } from 'vue-router'
-import CreateOrUpdateWorkflowModal from '@/views/space/workflows/components/CreateOrUpdateWorkflowModal.vue'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
 import { getUserAvatarUrl } from '@/utils/helper'
 import { useI18n } from 'vue-i18n'
@@ -12,8 +11,6 @@ import { useI18n } from 'vue-i18n'
 // 1.定义页面所需数据
 const route = useRoute()
 const router = useRouter()
-const createOrUpdateWorkflowModalVisible = ref(false)
-const updateWorkflowId = ref('')
 const accountStore = useAccountStore()
 const { t } = useI18n()
 const {
@@ -23,15 +20,6 @@ const {
   loadWorkflows,
 } = useGetWorkflowsWithPage()
 const { handleDeleteWorkflow } = useDeleteWorkflow()
-
-const clearCreateTypeQuery = async () => {
-  const nextQuery = { ...route.query }
-  delete nextQuery.create_type
-  await router.replace({
-    path: route.path,
-    query: nextQuery,
-  })
-}
 
 // 2.定义滚动数据分页处理器
 const handleScroll = (event: Event) => {
@@ -58,23 +46,17 @@ watch(
   async () => await loadWorkflows(String(route.query?.search_word ?? ''), '', true),
 )
 
-watch(
-  () => route.query?.create_type,
-  (newValue) => {
-    if (newValue !== 'workflow') return
-    updateWorkflowId.value = ''
-    createOrUpdateWorkflowModalVisible.value = true
-    void clearCreateTypeQuery()
-  },
-  { immediate: true },
-)
-
 // 3.定义卡片点击处理器
 const handleCardClick = (workflowId: string) => {
   router.push({
     name: 'space-workflows-detail',
     params: { workflow_id: workflowId },
   })
+}
+
+// 编辑入口跳转到 admin 端
+const handleEditWorkflow = (workflowId: string) => {
+  router.push({ name: 'admin-workflow-edit', params: { workflow_id: workflowId } })
 }
 </script>
 
@@ -123,14 +105,7 @@ const handleCardClick = (workflowId: string) => {
                     </template>
                   </a-button>
                   <template #content>
-                    <a-doption
-                      @click="
-                        () => {
-                          updateWorkflowId = workflow.id
-                          createOrUpdateWorkflowModalVisible = true
-                        }
-                      "
-                    >
+                    <a-doption @click="handleEditWorkflow(workflow.id)">
                       {{ t('space.workflows.list.editWorkflow') }}
                     </a-doption>
                     <a-doption
@@ -187,12 +162,6 @@ const handleCardClick = (workflowId: string) => {
         </a-col>
       </a-row>
     </template>
-    <!-- 新建/修改模态窗 -->
-    <create-or-update-workflow-modal
-      v-model:visible="createOrUpdateWorkflowModalVisible"
-      v-model:workflow_id="updateWorkflowId"
-      :callback="async () => await loadWorkflows(String(route.query?.search_word ?? ''), '', true)"
-    />
   </div>
 </template>
 

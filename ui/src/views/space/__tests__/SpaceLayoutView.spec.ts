@@ -26,11 +26,11 @@ describe('SpaceLayoutView', () => {
     expect(source).not.toContain('>配置中心<')
   })
 
-  it('keeps a single i18n-backed MCP nav item and create button', () => {
+  it('keeps a single i18n-backed MCP nav item and drops the create button', () => {
     const source = readSource()
 
     expect(matchCount(source, "{{ $t('space.nav.mcp') }}")).toBe(1)
-    expect(matchCount(source, "{{ $t('space.createMcp') }}")).toBe(1)
+    expect(source).not.toContain('{{ $t(\'space.createMcp\') }}')
     expect(source).not.toContain('>MCP\n          </router-link>')
     expect(source).not.toContain('>\n          创建 MCP\n        </a-button>')
   })

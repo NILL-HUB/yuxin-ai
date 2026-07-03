@@ -151,6 +151,13 @@ const isAdminContext = computed(
   () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
 )
 
+// 创建自定义工具的路由：admin 上下文下指向 admin-tools，否则指向 space-tools-list
+const createToolRoute = computed(() =>
+  isAdminContext.value
+    ? { name: 'admin-tools', query: { create_type: 'tool' } }
+    : { name: 'space-tools-list', query: { create_type: 'tool' } },
+)
+
 // MCP/Skill/Workflow 下拉选项状态
 type DropdownOption = { label: string; value: string }
 const mcpProviderOptions = ref<DropdownOption[]>([])
@@ -974,7 +981,7 @@ onMounted(() => {
           <!-- 标题 -->
           <div class="text-gray-900 font-bold text-lg mb-4">{{ t('workflowEditor.toolNode.modalTitle') }}</div>
           <!-- 添加插件按钮 -->
-          <router-link :to="{ name: 'space-tools-list', query: { create_type: 'tool' } }">
+          <router-link :to="createToolRoute">
             <a-button long type="primary" class="rounded-lg mb-5">{{ t('workflowEditor.toolNode.createCustomTool') }}</a-button>
           </router-link>
           <!-- 工具类别导航 -->

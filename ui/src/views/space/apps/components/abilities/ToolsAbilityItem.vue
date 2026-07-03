@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, type PropType, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { type GetDraftAppConfigResponse } from '@/models/app'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
 import { useGetApiTool, useGetApiToolProvidersWithPage } from '@/hooks/use-tool'
@@ -81,7 +82,14 @@ const defaultToolInfo: ToolInfoState = {
 }
 
 // 1.定义自定义组件所需数据
+const route = useRoute()
 const { t, locale } = useI18n()
+// 创建工具按钮路由名：admin 上下文下跳转到 admin-tools，避免跳回 space
+const createToolRouteName = computed(() =>
+  route.path.startsWith('/admin/') || route.meta.realm === 'admin'
+    ? 'admin-tools'
+    : 'space-tools-list',
+)
 const props = defineProps({
   app_id: { type: String, default: '', required: true },
   tools: {
@@ -646,7 +654,7 @@ onMounted(() => {
           <!-- 标题 -->
           <div class="text-gray-900 font-bold text-lg mb-4">{{ t('appStudio.abilities.tools.addTitle') }}</div>
           <!-- 添加插件按钮 -->
-          <router-link :to="{ name: 'space-tools-list', query: { create_type: 'tool' } }">
+          <router-link :to="{ name: createToolRouteName, query: { create_type: 'tool' } }">
             <a-button long type="primary" class="rounded-lg mb-5">
               {{ t('appStudio.abilities.tools.createCustomPlugin') }}
             </a-button>

@@ -3,7 +3,6 @@ import moment from 'moment/moment'
 import { useCopyApp, useDeleteApp, useGetAppsWithPage } from '@/hooks/use-app'
 import { onMounted, ref, watch } from 'vue'
 import { useAccountStore } from '@/stores/account'
-import CreateOrUpdateAppModal from './components/CreateOrUpdateAppModal.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
@@ -13,21 +12,10 @@ import { getUserAvatarUrl } from '@/utils/helper'
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const createOrUpdateAppModalVisible = ref(false)
-const updateAppId = ref('')
 const accountStore = useAccountStore()
 const { handleCopyApp } = useCopyApp()
 const { loading: getAppsWithPageLoading, apps, paginator, loadApps } = useGetAppsWithPage()
 const { handleDeleteApp } = useDeleteApp()
-
-const clearCreateTypeQuery = async () => {
-  const nextQuery = { ...route.query }
-  delete nextQuery.create_type
-  await router.replace({
-    path: route.path,
-    query: nextQuery,
-  })
-}
 
 // 2.定义滚动数据分页处理器
 const handleScroll = (event: Event) => {
@@ -54,23 +42,17 @@ watch(
   (newValue) => loadApps(true, String(newValue)),
 )
 
-watch(
-  () => route.query?.create_type,
-  (newValue) => {
-    if (newValue !== 'app') return
-    updateAppId.value = ''
-    createOrUpdateAppModalVisible.value = true
-    void clearCreateTypeQuery()
-  },
-  { immediate: true },
-)
-
 // 3.定义卡片点击处理器
 const handleCardClick = (appId: string) => {
   router.push({
     name: 'space-apps-detail',
     params: { app_id: appId },
   })
+}
+
+// 编辑入口跳转到 admin 端
+const handleEditApp = (appId: string) => {
+  router.push({ name: 'admin-app-edit', params: { app_id: appId } })
 }
 </script>
 
@@ -122,14 +104,7 @@ const handleCardClick = (appId: string) => {
                     <router-link :to="{ name: 'space-apps-analysis', params: { app_id: app.id } }">
                       <a-doption>{{ t('appStudio.list.analysis') }}</a-doption>
                     </router-link>
-                    <a-doption
-                      @click="
-                        () => {
-                          updateAppId = app.id
-                          createOrUpdateAppModalVisible = true
-                        }
-                      "
-                    >
+                    <a-doption @click="handleEditApp(app.id)">
                       {{ t('appStudio.list.editApp') }}
                     </a-doption>
                     <a-doption @click="async () => await handleCopyApp(app.id)">{{ t('appStudio.list.duplicate') }}</a-doption>
@@ -192,16 +167,6 @@ const handleCardClick = (appId: string) => {
         </a-col>
       </a-row>
     </template>
-    <!-- 新建/修改模态窗 -->
-    <create-or-update-app-modal
-      v-model:visible="createOrUpdateAppModalVisible"
-      v-model:app_id="updateAppId"
-      :callback="
-        () => {
-          return loadApps(true, String(route.query?.search_word ?? ''))
-        }
-      "
-    />
   </div>
 </template>
 

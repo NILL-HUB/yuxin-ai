@@ -157,6 +157,6 @@ describe('AdminDatasetsView', () => {
     expect(manageButton).toBeTruthy()
     await manageButton!.trigger('click')
 
-    expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'admin-dataset-list' })
+    expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'admin-datasets' })
   })
 })

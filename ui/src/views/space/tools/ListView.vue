@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import {
-  useCreateApiToolProvider,
   useDeleteApiToolProvider,
-  useGenerateIconPreview,
   useGetApiToolProvider,
   useGetApiToolProvidersWithPage,
   useRegenerateIcon,
@@ -45,7 +43,6 @@ type OpenapiToolPreview = {
 // 1.定义额面所需数据
 const route = useRoute()
 const { t } = useI18n()
-const router = useRouter()
 const accountStore = useAccountStore()
 const form = ref<{
   fileList: FileItem[]
@@ -77,31 +74,16 @@ const {
   loading: updateApiToolProviderLoading,
   handleUpdateApiToolProvider, //
 } = useUpdateApiToolProvider()
-const {
-  loading: createApiToolProviderLoading,
-  handleCreateApiToolProvider, //
-} = useCreateApiToolProvider()
 const { handleValidateOpenAPISchema } = useValidateOpenAPISchema()
 const { loading: regenerateIconLoading, handleRegenerateIcon } = useRegenerateIcon()
-const { loading: generateIconPreviewLoading, handleGenerateIconPreview } = useGenerateIconPreview()
 const formRef = ref<InstanceType<typeof Form>>()
 const showIdx = ref<number>(-1)
 const loading = ref<boolean>(false)
-const showCreateModal = ref<boolean>(false)
 const showUpdateModal = ref<boolean>(false)
 const showOpenapiSchemaExampleModal = ref<boolean>(false)
 const openapiAssistantQuestion = ref<string>('')
 const openapiAssistantContent = ref<string>('')
 const openapiAssistantLoading = ref<boolean>(false)
-
-const clearCreateTypeQuery = async () => {
-  const nextQuery = { ...route.query }
-  delete nextQuery.create_type
-  await router.replace({
-    path: route.path,
-    query: nextQuery,
-  })
-}
 
 // 定义上传图标处理器
 const handleUploadIcon = async (file: File) => {
@@ -120,23 +102,12 @@ const handleGenerateIcon = async () => {
 
   try {
     // 更新模式：调用 regenerateIcon
-    if (showUpdateModal.value) {
-      const provider_id = api_tool_providers.value[showIdx.value]['id']
-      const iconUrl = await handleRegenerateIcon(provider_id)
-      if (iconUrl) {
-        form.value.icon = iconUrl
-        form.value.fileList = [{ uid: '1', name: t('space.tools.iconPlaceholder'), url: iconUrl }]
-        Message.success(t('space.tools.iconGenerateSuccess'))
-      }
-    }
-    // 创建模式：调用 generateIconPreview
-    else {
-      const iconUrl = await handleGenerateIconPreview(form.value.name, '')
-      if (iconUrl) {
-        form.value.icon = iconUrl
-        form.value.fileList = [{ uid: '1', name: t('space.tools.iconPlaceholder'), url: iconUrl }]
-        Message.success(t('space.tools.iconGenerateSuccess'))
-      }
+    const provider_id = api_tool_providers.value[showIdx.value]['id']
+    const iconUrl = await handleRegenerateIcon(provider_id)
+    if (iconUrl) {
+      form.value.icon = iconUrl
+      form.value.fileList = [{ uid: '1', name: t('space.tools.iconPlaceholder'), url: iconUrl }]
+      Message.success(t('space.tools.iconGenerateSuccess'))
     }
   } catch (_error: unknown) {
     // 错误已在 hooks 中处理
@@ -356,23 +327,17 @@ const handleSubmit = async ({
   // 1.如果存在错误则直接结束
   if (errors) return
 
-  // 2.根据不同的类型发起不同的请求
-  if (showCreateModal.value) {
-    // 3.调用处理器发起创建请求
-    await handleCreateApiToolProvider(values as CreateApiToolProviderRequest)
-  } else if (showUpdateModal.value) {
-    // 4.调用接口发起更新API工具请求
-    await handleUpdateApiToolProvider(
-      api_tool_providers.value[showIdx.value]['id'],
-      values as CreateApiToolProviderRequest,
-    )
-  }
+  // 2.调用接口发起更新API工具请求
+  await handleUpdateApiToolProvider(
+    api_tool_providers.value[showIdx.value]['id'],
+    values as CreateApiToolProviderRequest,
+  )
 
-  // 5.执行后续操作，涵盖隐藏模态窗、隐藏抽屉
+  // 3.执行后续操作，涵盖隐藏模态窗、隐藏抽屉
   handleCancel()
   showIdx.value = -1
 
-  // 6.重新加载数据
+  // 4.重新加载数据
   await loadApiToolProviders(true, String(route.query?.search_word ?? ''))
 }
 
@@ -383,11 +348,9 @@ const handleCancel = () => {
   openapiAssistantQuestion.value = ''
   openapiAssistantContent.value = ''
   showOpenapiSchemaExampleModal.value = false
-  showCreateModal.value = false
 
   // 2.隐藏表单模态窗
   showUpdateModal.value = false
-  void clearCreateTypeQuery()
 }
 
 // 页面DOM加载完毕初始化数据
@@ -399,17 +362,6 @@ watch(
   (newValue) => {
     loadApiToolProviders(true, String(newValue))
   },
-)
-
-// 监听路由create_type变化
-watch(
-  () => route.query?.create_type,
-  (newValue) => {
-    if (newValue !== 'tool') return
-    showCreateModal.value = true
-    void clearCreateTypeQuery()
-  },
-  { immediate: true },
 )
 </script>
 
@@ -587,10 +539,10 @@ watch(
       </div>
     </a-modal>
 
-    <!-- 新建/修改模态窗 -->
+    <!-- 修改模态窗 -->
     <a-modal
       :width="630"
-      :visible="showCreateModal || showUpdateModal"
+      :visible="showUpdateModal"
       hide-title
       :footer="false"
       modal-class="rounded-xl"
@@ -599,7 +551,7 @@ watch(
       <!-- 顶部标题 -->
       <div class="flex items-center justify-between">
         <div class="text-lg font-bold text-gray-700">
-          {{ showCreateModal ? t('space.tools.createTitle') : t('space.tools.updateTitle') }}
+          {{ t('space.tools.updateTitle') }}
         </div>
         <a-button type="text" class="!text-gray-700" size="small" @click="handleCancel">
           <template #icon>
@@ -620,7 +572,7 @@ watch(
               description=""
               :icon="form.icon"
               :file-list="form.fileList"
-              :loading="regenerateIconLoading || generateIconPreviewLoading"
+              :loading="regenerateIconLoading"
               :placeholder="t('space.tools.iconPlaceholder')"
               :on-upload="handleUploadIcon"
               :on-generate="handleGenerateIcon"
@@ -793,7 +745,7 @@ watch(
             <a-space :size="16">
               <a-button class="rounded-lg" @click="handleCancel">{{ t('space.tools.cancel') }}</a-button>
               <a-button
-                :loading="updateApiToolProviderLoading || createApiToolProviderLoading"
+                :loading="updateApiToolProviderLoading"
                 type="primary"
                 html-type="submit"
                 class="rounded-lg"

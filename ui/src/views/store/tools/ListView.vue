@@ -11,6 +11,15 @@ import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
 import type { CreateApiToolProviderRequest } from '@/models/api-tool'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
+withDefaults(
+  defineProps<{
+    hideCreate?: boolean
+  }>(),
+  {
+    hideCreate: false,
+  },
+)
+
 // 1.定义页面所需数据
 const { categories, loadCategories } = useGetCategories()
 const { loading: getBuiltinToolsLoading, builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
@@ -125,7 +134,7 @@ onMounted(() => {
           <div class="text-lg font-medium text-gray-900">{{ t('store.tools.title') }}</div>
         </div>
         <!-- 创建按钮 -->
-        <router-link :to="{ name: 'space-tools-list', query: { create_type: 'tool' } }">
+        <router-link v-if="!hideCreate" :to="{ name: 'space-tools-list', query: { create_type: 'tool' } }">
           <a-button type="primary" class="rounded-lg">
             {{ t('store.tools.createButton') }}
           </a-button>
@@ -295,6 +304,7 @@ onMounted(() => {
       </a-drawer>
 
       <a-modal
+        v-if="!hideCreate"
         :width="630"
         :visible="showCreateModal"
         hide-title

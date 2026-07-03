@@ -5,7 +5,6 @@ import storage from '@/utils/storage'
 import { isCredentialLoggedIn } from '@/utils/auth'
 import { useRoute, useRouter } from 'vue-router'
 import { useCredentialStore } from '@/stores/credential'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,33 +19,8 @@ const unauthDescription = computed(() => {
   if (route.path.startsWith('/space/datasets')) return t('space.unauth.datasets')
   return t('space.unauth.default')
 })
-const pendingCreateType = ref<string>('')
 const searchWord = ref(String(route.query?.search_word ?? ''))
 const SPACE_APPS_SEARCH_DRAFT_STORAGE_KEY = 'draft:space-apps:search-word'
-
-const openLoginModal = () => {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { redirect: route.fullPath },
-    }),
-  )
-}
-
-const handleCreate = (type: 'app' | 'tool' | 'workflow' | 'dataset' | 'mcp') => {
-  if (isLoggedIn.value) {
-    void router.replace({
-      path: route.path,
-      query: {
-        ...route.query,
-        create_type: type,
-      },
-    })
-    return
-  }
-  pendingCreateType.value = type
-  openLoginModal()
-}
 
 const persistSpaceAppsSearchWord = (value: string) => {
   if (value.trim() === '') {
@@ -87,30 +61,13 @@ watch(searchWord, (value) => {
   if (!route.path.startsWith('/space/apps')) return
   persistSpaceAppsSearchWord(value)
 })
-
-watch(
-  isLoggedIn,
-  async (loggedIn) => {
-    if (!loggedIn || !pendingCreateType.value) return
-    const targetCreateType = pendingCreateType.value
-    pendingCreateType.value = ''
-    void router.replace({
-      path: route.path,
-      query: {
-        ...route.query,
-        create_type: targetCreateType,
-      },
-    })
-  },
-  { immediate: true },
-)
 </script>
 
 <template>
   <!-- 调整边距+隐藏 -->
   <div class="flex h-full min-h-0 flex-col overflow-hidden px-6">
     <div class="shrink-0 bg-gray-50 pt-6">
-      <!-- 顶层标题+创建按钮 -->
+      <!-- 顶层标题 -->
       <div class="flex items-center justify-between mb-6 flex-wrap gap-2">
         <!-- 左侧标题 -->
         <div class="flex items-center gap-2">
@@ -119,47 +76,6 @@ watch(
           </a-avatar>
           <div class="text-lg font-medium text-gray-900">{{ $t('space.title') }}</div>
         </div>
-        <!-- 创建按钮 -->
-        <a-button
-          v-if="route.path.startsWith('/space/apps')"
-          type="primary"
-          class="rounded-lg"
-          @click="handleCreate('app')"
-        >
-          {{ $t('space.createApp') }}
-        </a-button>
-        <a-button
-          v-if="route.path.startsWith('/space/tools')"
-          type="primary"
-          class="rounded-lg"
-          @click="handleCreate('tool')"
-        >
-          {{ $t('space.createTool') }}
-        </a-button>
-        <a-button
-          v-if="route.path.startsWith('/space/workflows')"
-          type="primary"
-          class="rounded-lg"
-          @click="handleCreate('workflow')"
-        >
-          {{ $t('space.createWorkflow') }}
-        </a-button>
-        <a-button
-          v-if="route.path.startsWith('/space/mcp')"
-          type="primary"
-          class="rounded-lg"
-          @click="handleCreate('mcp')"
-        >
-          {{ $t('space.createMcp') }}
-        </a-button>
-        <a-button
-          v-if="route.path.startsWith('/space/datasets')"
-          type="primary"
-          class="rounded-lg"
-          @click="handleCreate('dataset')"
-        >
-          {{ $t('space.createDataset') }}
-        </a-button>
       </div>
       <!-- 导航按钮+搜索框 -->
       <div class="flex items-center justify-between mb-6 flex-wrap gap-2">

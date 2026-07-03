@@ -151,6 +151,7 @@ export default {
       appsTitle: '应用商店上下架',
       appsDescription: '管理公共应用商店中资源的上架与下架',
       opsHint: '在此处对资源进行上架（设为公开）或下架（设为私有）操作，控制其在公共商店的可见性。',
+      sourceHint: '资源创建请前往「资源编排」板块。此页面仅负责上架/下架管理。',
       storeHint: '工作流的商店上下架（公开/私有）请前往「资源运营」中的对应商店页面管理。',
       unsupportedNotice: '该资源类型暂不支持商店上下架，仅提供浏览。',
       publishSuccess: '已上架',
