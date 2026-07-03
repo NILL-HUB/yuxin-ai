@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, Generator, TYPE_CHECKING
 from uuid import UUID, uuid4
-from flask import Flask, current_app, has_app_context
+from flask import Flask, current_app, g, has_app_context
 from injector import inject
 from langchain_core.messages import AIMessage, trim_messages
 from langchain_core.output_parsers import StrOutputParser
@@ -1073,7 +1073,7 @@ class AppService(BaseService):
                 )
             else:
                 ctx = governance_context
-            tools, _audit = governance_gate.apply(
+            tools, audit_context = governance_gate.apply(
                 tools,
                 account_id=ctx.get("account_id"),
                 app_id=str(app_id) if app_id else None,
@@ -1083,6 +1083,14 @@ class AppService(BaseService):
                 tool_id_hints=tool_id_hints,
                 observe_only=bool(ctx.get("observe_only", True)),
                 block_sensitive_only=bool(ctx.get("block_sensitive_only", False)),
+            )
+            # 阶段1渐进式启用：将治理决策持久化到路由日志（观测期覆盖率 ≥ 95%）
+            # 写入失败不阻断主流程（GovernanceAuditLogger 内部 try/except 降级为 warning）
+            AppService._log_governance_audit(
+                audit_context,
+                runtime_context=runtime_context,
+                account_id=str(account.id) if account else None,
+                app_id=str(app_id) if app_id else None,
             )
 
         return tools
@@ -1105,6 +1113,46 @@ class AppService(BaseService):
         except Exception:
             # 任何异常都降级为阶段1（只观测不阻断），避免阻断主链路
             return {"observe_only": True, "block_sensitive_only": False, "mode": "observe_only"}
+
+    @staticmethod
+    def _log_governance_audit(
+        audit_context: dict[str, Any] | None,
+        *,
+        runtime_context: dict[str, Any] | None = None,
+        account_id: str | None = None,
+        app_id: str | None = None,
+    ) -> None:
+        """将治理决策持久化到路由日志（阶段1渐进式启用观测期）。
+
+        best-effort：从 runtime_context 或 flask g 获取 request_id/conversation_id，
+        写入失败不阻断主流程（GovernanceAuditLogger 内部 try/except 降级为 warning）。
+        governance_gate=None 时本方法不会被调用。
+        """
+        if not audit_context:
+            return
+        try:
+            from .governance_audit_logger import GovernanceAuditLogger
+
+            runtime_context = runtime_context or {}
+            request_id = runtime_context.get("request_id")
+            conversation_id = runtime_context.get("conversation_id")
+            # best-effort：runtime_context 没有时尝试 flask g
+            if request_id is None and has_app_context():
+                try:
+                    request_id = getattr(g, "request_id", None)
+                except Exception:
+                    request_id = None
+
+            GovernanceAuditLogger().log_governance_decision(
+                audit_context,
+                request_id=request_id,
+                conversation_id=conversation_id,
+                account_id=account_id,
+                app_id=app_id,
+            )
+        except Exception:
+            # 双重保险：即使 GovernanceAuditLogger 内部异常漏出也不阻断主流程
+            logger.warning("governance_audit_log skipped: logger invocation failed", exc_info=True)
 
     @staticmethod
     def _build_tool_id_hints(draft_app_config: dict[str, Any]) -> dict[str, str]:

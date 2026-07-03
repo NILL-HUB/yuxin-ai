@@ -167,9 +167,9 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **P2-1 Agent 元数据补充 prompt 摘要展示** | AgentPoolView.vue, admin_agent_pool_service.py | ⬜ 待开始 | 池治理页面展示 AppConfig.preset_prompt 摘要（只读，不在此编辑） |
-| **P2-2 工具治理页面扩展来源类型筛选** | ToolGovernanceView.vue, admin_tool_governance_schema.py | ⬜ 待开始 | source_type 筛选项增加 workflow/skill/agent_binding |
-| **P2-3 Workflow ToolNode 扩展（远期）** | tool_entity.py, tool_node.py | ⬜ 待开始 | 扩展 ToolNodeData.tool_type 支持 mcp/skill/workflow/agent_binding，使 workflow 能嵌套所有工具类型；当前底座仅支持 builtin_tool/api_tool |
+| **P2-1 Agent 元数据补充 prompt 摘要展示** | AgentPoolView.vue, admin_agent_pool_service.py | ✅ 已完成 | 池治理页面展示 AppConfig.preset_prompt 摘要（只读，tooltip+truncate，批量预取避免 N+1） |
+| **P2-2 工具治理页面扩展来源类型筛选** | ToolGovernanceView.vue, admin_tool_governance_schema.py, admin_tool_governance_service.py | ✅ 已完成 | SOURCE_TYPES 从 4 项扩展为 7 项（api_tool/mcp/skill/builtin/knowledge/workflow/agent_binding），同步更新 schema 校验和 service stats 初始化 |
+| **P2-3 Workflow ToolNode 扩展（远期）** | tool_entity.py, tool_node.py, composite_tool_resolver.py | ✅ 已完成 | ToolNodeData.tool_type 从 2 种扩展为 7 种（+mcp/knowledge/skill/workflow/agent_binding）；execute 按 tool_type 分发复用底座 service；workflow/agent_binding 嵌套含环检测（max_depth=8，call_stack 传递）；CompositeToolResolver._resolve_workflow 支持解析 7 种节点类型；22+7 测试通过 |
 
 ### 渐进式启用路线图
 

@@ -66,7 +66,12 @@ class CompositeToolResolver:
         depth: int,
         max_depth: int,
     ) -> list[CompositeComponentRef]:
-        """从 Workflow.graph["nodes"] 提取 ToolNodeData + DatasetRetrievalNode。"""
+        """从 Workflow.graph["nodes"] 提取 ToolNodeData + DatasetRetrievalNode。
+
+        ToolNode 支持 7 种 tool_type（builtin_tool/api_tool/mcp/knowledge/skill/workflow/agent_binding）：
+        - 原子工具（builtin/api_tool/mcp/knowledge/skill）is_recursive=False，不展开
+        - 组合工具（workflow/agent_binding）is_recursive=True，递归展开其内部成员
+        """
         workflow = self._query_workflow(workflow_id)
         if workflow is None:
             return []
@@ -82,8 +87,14 @@ class CompositeToolResolver:
             node_type = node.get("node_type") or node.get("type", "")
             if node_type == "tool":
                 ref = self._build_workflow_tool_ref(node, idx)
-                if ref is not None:
-                    components.append(ref)
+                if ref is None:
+                    continue
+                components.append(ref)
+                # workflow / agent_binding 是组合工具，递归展开其内部成员
+                if ref.is_recursive:
+                    components.extend(self._resolve_recursive(
+                        ref.tool_id, visited=visited, depth=depth + 1, max_depth=max_depth,
+                    ))
             elif node_type == "dataset_retrieval":
                 components.extend(self._build_workflow_dataset_refs(node, idx))
             # 其他节点类型（LLM/CODE/HTTP/IF_ELSE 等）不引用工具，跳过
@@ -216,28 +227,85 @@ class CompositeToolResolver:
 
     @staticmethod
     def _build_workflow_tool_ref(node: dict, idx: int) -> CompositeComponentRef | None:
-        """从 ToolNodeData 节点构建 CompositeComponentRef（builtin_tool/api_tool 原子工具）。"""
+        """从 ToolNodeData 节点构建 CompositeComponentRef，支持 7 种 tool_type。
+
+        - builtin_tool / api_tool / mcp / knowledge / skill: 原子工具，is_recursive=False
+        - workflow / agent_binding: 组合工具，is_recursive=True（由 _resolve_workflow 递归展开）
+        """
         tool_type = str(node.get("tool_type", "") or "")
         provider_id = str(node.get("provider_id", "") or "")
         tool_id_value = str(node.get("tool_id", "") or "")
+        ref_path = f"workflow.nodes[{idx}].tool"
+
         if tool_type == "builtin_tool":
             if not provider_id or not tool_id_value:
                 return None
-            member_tool_id = build_tool_id("builtin", provider_id, tool_id_value)
-            source_type = "builtin"
-        elif tool_type == "api_tool":
+            return CompositeComponentRef(
+                tool_id=build_tool_id("builtin", provider_id, tool_id_value),
+                source_type="builtin",
+                ref_path=ref_path,
+                is_recursive=False,
+            )
+        if tool_type == "api_tool":
             if not tool_id_value:
                 return None
-            member_tool_id = build_tool_id("api_tool", tool_id_value)
-            source_type = "api_tool"
-        else:
-            return None
-        return CompositeComponentRef(
-            tool_id=member_tool_id,
-            source_type=source_type,
-            ref_path=f"workflow.nodes[{idx}].tool",
-            is_recursive=False,
-        )
+            return CompositeComponentRef(
+                tool_id=build_tool_id("api_tool", tool_id_value),
+                source_type="api_tool",
+                ref_path=ref_path,
+                is_recursive=False,
+            )
+        if tool_type == "mcp":
+            # mcp 的 tool_id 格式: mcp:{provider_key}:{tool_name}
+            if not provider_id or not tool_id_value:
+                return None
+            return CompositeComponentRef(
+                tool_id=build_tool_id("mcp", provider_id, tool_id_value),
+                source_type="mcp",
+                ref_path=ref_path,
+                is_recursive=False,
+            )
+        if tool_type == "knowledge":
+            # knowledge 的 tool_id 格式: knowledge:{knowledge_base_id}
+            if not tool_id_value:
+                return None
+            return CompositeComponentRef(
+                tool_id=build_tool_id("knowledge", tool_id_value),
+                source_type="knowledge",
+                ref_path=ref_path,
+                is_recursive=False,
+            )
+        if tool_type == "skill":
+            # skill 的 tool_id 格式: skill:{skill_id}
+            if not tool_id_value:
+                return None
+            return CompositeComponentRef(
+                tool_id=build_tool_id("skill", tool_id_value),
+                source_type="skill",
+                ref_path=ref_path,
+                is_recursive=False,
+            )
+        if tool_type == "workflow":
+            # workflow 是组合工具，is_recursive=True，由 _resolve_workflow 递归展开
+            if not tool_id_value:
+                return None
+            return CompositeComponentRef(
+                tool_id=build_tool_id("workflow", tool_id_value),
+                source_type="workflow",
+                ref_path=ref_path,
+                is_recursive=True,
+            )
+        if tool_type == "agent_binding":
+            # agent_binding 是组合工具，is_recursive=True，由 _resolve_workflow 递归展开
+            if not tool_id_value:
+                return None
+            return CompositeComponentRef(
+                tool_id=build_tool_id("agent_binding", tool_id_value),
+                source_type="agent_binding",
+                ref_path=ref_path,
+                is_recursive=True,
+            )
+        return None
 
     @staticmethod
     def _build_workflow_dataset_refs(node: dict, idx: int) -> list[CompositeComponentRef]:

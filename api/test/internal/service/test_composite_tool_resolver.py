@@ -394,3 +394,262 @@ def test_resolve_invalid_agent_binding_uuid_returns_empty():
     result = resolver.resolve("agent_binding:not-a-uuid")
 
     assert result == []
+
+
+# ------------------------------------------------------------------ #
+#  P2-3 扩展：_resolve_workflow 解析新增 tool_type（mcp/skill/workflow/agent_binding）
+# ------------------------------------------------------------------ #
+
+
+def test_resolve_workflow_extracts_mcp_tool_node():
+    """_resolve_workflow 解析 mcp 类型 tool 节点，生成 mcp:{provider}:{tool} 引用，is_recursive=False。"""
+    workflow_id = uuid4()
+    graph = {
+        "nodes": [
+            {
+                "node_type": "tool",
+                "tool_type": "mcp",
+                "provider_id": "github",
+                "tool_id": "create_issue",
+            },
+        ],
+        "edges": [],
+    }
+    session = _SessionStub([_QueryStub(one_result=_make_workflow(workflow_id, graph=graph))])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{workflow_id}")
+
+    assert len(result) == 1
+    assert result[0].tool_id == "mcp:github:create_issue"
+    assert result[0].source_type == "mcp"
+    assert result[0].is_recursive is False
+    assert result[0].ref_path == "workflow.nodes[0].tool"
+
+
+def test_resolve_workflow_extracts_skill_tool_node():
+    """_resolve_workflow 解析 skill 类型 tool 节点，生成 skill:{skill_id} 引用，is_recursive=False。"""
+    workflow_id = uuid4()
+    skill_id = uuid4()
+    graph = {
+        "nodes": [
+            {
+                "node_type": "tool",
+                "tool_type": "skill",
+                "tool_id": str(skill_id),
+            },
+        ],
+        "edges": [],
+    }
+    session = _SessionStub([_QueryStub(one_result=_make_workflow(workflow_id, graph=graph))])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{workflow_id}")
+
+    assert len(result) == 1
+    assert result[0].tool_id == f"skill:{skill_id}"
+    assert result[0].source_type == "skill"
+    assert result[0].is_recursive is False
+    assert result[0].ref_path == "workflow.nodes[0].tool"
+
+
+def test_resolve_workflow_extracts_workflow_tool_node_and_recursively_expands():
+    """_resolve_workflow 解析 workflow 类型 tool 节点：
+    - 生成 workflow:{workflow_id} 引用，is_recursive=True
+    - 递归展开嵌套 workflow 的内部工具
+    """
+    outer_workflow_id = uuid4()
+    inner_workflow_id = uuid4()
+    # 内层 workflow 含一个 builtin 工具
+    inner_graph = {
+        "nodes": [
+            {
+                "node_type": "tool",
+                "tool_type": "builtin_tool",
+                "provider_id": "weather",
+                "tool_id": "get_weather",
+            },
+        ],
+        "edges": [],
+    }
+    # 外层 workflow 引用内层 workflow
+    outer_graph = {
+        "nodes": [
+            {
+                "node_type": "tool",
+                "tool_type": "workflow",
+                "tool_id": str(inner_workflow_id),
+            },
+        ],
+        "edges": [],
+    }
+    # 查询顺序：外层 workflow -> 内层 workflow
+    session = _SessionStub([
+        _QueryStub(one_result=_make_workflow(outer_workflow_id, graph=outer_graph)),
+        _QueryStub(one_result=_make_workflow(inner_workflow_id, graph=inner_graph)),
+    ])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{outer_workflow_id}")
+
+    tool_ids = [ref.tool_id for ref in result]
+    # 外层引用内层 workflow（is_recursive=True）
+    assert f"workflow:{inner_workflow_id}" in tool_ids
+    workflow_ref = next(ref for ref in result if ref.tool_id == f"workflow:{inner_workflow_id}")
+    assert workflow_ref.is_recursive is True
+    assert workflow_ref.source_type == "workflow"
+    assert workflow_ref.ref_path == "workflow.nodes[0].tool"
+    # 递归展开内层 workflow 的 builtin 工具
+    assert "builtin:weather:get_weather" in tool_ids
+
+
+def test_resolve_workflow_extracts_agent_binding_tool_node_and_recursively_expands():
+    """_resolve_workflow 解析 agent_binding 类型 tool 节点：
+    - 生成 agent_binding:{app_id} 引用，is_recursive=True
+    - 递归展开目标 App 的绑定工具
+    """
+    workflow_id = uuid4()
+    target_app_id = uuid4()
+    # 目标 App 的配置：含一个 api_tool
+    target_app_config = _make_config(
+        tools=[{"type": "api_tool", "provider_id": "erp", "tool_id": "search_orders"}],
+    )
+    # workflow 引用目标 App
+    graph = {
+        "nodes": [
+            {
+                "node_type": "tool",
+                "tool_type": "agent_binding",
+                "tool_id": str(target_app_id),
+            },
+        ],
+        "edges": [],
+    }
+    # 查询顺序：workflow -> 目标 App
+    session = _SessionStub([
+        _QueryStub(one_result=_make_workflow(workflow_id, graph=graph)),
+        _QueryStub(one_result=_make_app(target_app_id, is_public=False, app_config=target_app_config)),
+    ])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{workflow_id}")
+
+    tool_ids = [ref.tool_id for ref in result]
+    # workflow 引用 agent_binding（is_recursive=True）
+    assert f"agent_binding:{target_app_id}" in tool_ids
+    agent_binding_ref = next(ref for ref in result if ref.tool_id == f"agent_binding:{target_app_id}")
+    assert agent_binding_ref.is_recursive is True
+    assert agent_binding_ref.source_type == "agent_binding"
+    assert agent_binding_ref.ref_path == "workflow.nodes[0].tool"
+    # 递归展开目标 App 的 api_tool
+    assert "api_tool:search_orders" in tool_ids
+
+
+def test_resolve_workflow_extracts_knowledge_tool_node():
+    """_resolve_workflow 解析 knowledge 类型 tool 节点，生成 knowledge:{kb_id} 引用，is_recursive=False。"""
+    workflow_id = uuid4()
+    kb_id = uuid4()
+    graph = {
+        "nodes": [
+            {
+                "node_type": "tool",
+                "tool_type": "knowledge",
+                "tool_id": str(kb_id),
+            },
+        ],
+        "edges": [],
+    }
+    session = _SessionStub([_QueryStub(one_result=_make_workflow(workflow_id, graph=graph))])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{workflow_id}")
+
+    assert len(result) == 1
+    assert result[0].tool_id == f"knowledge:{kb_id}"
+    assert result[0].source_type == "knowledge"
+    assert result[0].is_recursive is False
+    assert result[0].ref_path == "workflow.nodes[0].tool"
+
+
+def test_resolve_workflow_mixed_tool_types_in_one_workflow():
+    """一个 workflow 含 7 种 tool_type 节点 + dataset_retrieval，全部正确解析。"""
+    workflow_id = uuid4()
+    inner_workflow_id = uuid4()
+    target_app_id = uuid4()
+    dataset_id = uuid4()
+    kb_id = uuid4()
+    skill_id = uuid4()
+    # 嵌套 workflow 和 agent_binding 的内部成员（用于递归展开）
+    inner_graph = {
+        "nodes": [{"node_type": "tool", "tool_type": "builtin_tool", "provider_id": "p", "tool_id": "t"}],
+        "edges": [],
+    }
+    target_app_config = _make_config(
+        tools=[{"type": "api_tool", "provider_id": "erp", "tool_id": "search"}],
+    )
+    graph = {
+        "nodes": [
+            {"node_type": "tool", "tool_type": "builtin_tool", "provider_id": "p1", "tool_id": "t1"},
+            {"node_type": "tool", "tool_type": "api_tool", "tool_id": "t2"},
+            {"node_type": "tool", "tool_type": "mcp", "provider_id": "gh", "tool_id": "issue"},
+            {"node_type": "tool", "tool_type": "knowledge", "tool_id": str(kb_id)},
+            {"node_type": "tool", "tool_type": "skill", "tool_id": str(skill_id)},
+            {"node_type": "tool", "tool_type": "workflow", "tool_id": str(inner_workflow_id)},
+            {"node_type": "tool", "tool_type": "agent_binding", "tool_id": str(target_app_id)},
+            {"node_type": "dataset_retrieval", "dataset_ids": [str(dataset_id)]},
+        ],
+        "edges": [],
+    }
+    # 查询顺序：外层 workflow -> 内层 workflow -> 目标 App
+    session = _SessionStub([
+        _QueryStub(one_result=_make_workflow(workflow_id, graph=graph)),
+        _QueryStub(one_result=_make_workflow(inner_workflow_id, graph=inner_graph)),
+        _QueryStub(one_result=_make_app(target_app_id, is_public=False, app_config=target_app_config)),
+    ])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{workflow_id}")
+
+    tool_ids = {ref.tool_id for ref in result}
+    # 7 种 tool_type + dataset_retrieval 全部解析
+    assert "builtin:p1:t1" in tool_ids
+    assert "api_tool:t2" in tool_ids
+    assert "mcp:gh:issue" in tool_ids
+    assert f"knowledge:{kb_id}" in tool_ids
+    assert f"skill:{skill_id}" in tool_ids
+    assert f"workflow:{inner_workflow_id}" in tool_ids
+    assert f"agent_binding:{target_app_id}" in tool_ids
+    assert f"knowledge:{dataset_id}" in tool_ids
+    # 递归展开的成员
+    assert "builtin:p:t" in tool_ids
+    assert "api_tool:search" in tool_ids
+
+
+def test_resolve_workflow_cycle_between_workflows_does_not_infinite_recurse():
+    """两个 workflow 互相引用，visited 集合应阻断循环。"""
+    workflow_a_id = uuid4()
+    workflow_b_id = uuid4()
+    # A 引用 B，B 引用 A
+    graph_a = {
+        "nodes": [{"node_type": "tool", "tool_type": "workflow", "tool_id": str(workflow_b_id)}],
+        "edges": [],
+    }
+    graph_b = {
+        "nodes": [{"node_type": "tool", "tool_type": "workflow", "tool_id": str(workflow_a_id)}],
+        "edges": [],
+    }
+    # 查询顺序：A -> B，B 对 A 的引用命中 visited 不再查
+    session = _SessionStub([
+        _QueryStub(one_result=_make_workflow(workflow_a_id, graph=graph_a)),
+        _QueryStub(one_result=_make_workflow(workflow_b_id, graph=graph_b)),
+    ])
+    resolver = CompositeToolResolver(session=session)
+
+    result = resolver.resolve(f"workflow:{workflow_a_id}")
+
+    tool_ids = [ref.tool_id for ref in result]
+    # A 引用 B，B 引用 A（被 visited 阻断，不再展开）
+    assert f"workflow:{workflow_b_id}" in tool_ids
+    assert f"workflow:{workflow_a_id}" in tool_ids
+    # 不会无限递归：只产生 2 个引用
+    assert len(result) == 2

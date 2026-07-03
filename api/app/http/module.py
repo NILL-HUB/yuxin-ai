@@ -55,6 +55,7 @@ from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.composite_tool_resolver import CompositeToolResolver
 from internal.service.runtime_tool_governance_gate import RuntimeToolGovernanceGate
 from internal.service.governance_mode_resolver import GovernanceModeResolver
+from internal.service.governance_audit_logger import GovernanceAuditLogger
 
 
 class ExtensionModule(Module):
@@ -126,5 +127,8 @@ class ExtensionModule(Module):
 
         # 注册池治理模式解析器（激活 P1-2 渐进式启用开关）
         binder.bind(GovernanceModeResolver, to=GovernanceModeResolver)
+
+        # 注册治理审计日志器（激活阶段1渐进式启用观测期：路由日志中工具治理决策覆盖率 ≥ 95%）
+        binder.bind(GovernanceAuditLogger, to=GovernanceAuditLogger)
 
 injector = Injector([ExtensionModule])
