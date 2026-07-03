@@ -2,8 +2,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message, Modal, type FileItem, type ValidatedError, Form } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { apiPrefix } from '@/config'
 import { useGenerateIconPreview, useValidateOpenAPISchema } from '@/hooks/use-tool'
 import { useUploadImage } from '@/hooks/use-upload-file'
+import { useGetBuiltinTools, useGetCategories } from '@/hooks/use-builtin-tool'
 import {
   createAdminApiTool,
   deleteAdminApiTool,
@@ -15,6 +17,9 @@ import type { CreateApiToolProviderRequest, UpdateApiToolProviderRequest } from 
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
+import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
+import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
+import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
 type ApiToolProviderListItem = {
   id: string
@@ -45,12 +50,15 @@ type ToolPaginator = {
 }
 
 /**
- * 后台 API 工具管理页，负责 API Tool Provider 的创建、查看、编辑与删除。
+ * 后台 API 工具管理页，负责 API Tool Provider 的创建、查看、编辑与删除，
+ * 同时展示系统内置工具（只读）。
  */
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { image_url, handleUploadImage } = useUploadImage()
 const { handleValidateOpenAPISchema } = useValidateOpenAPISchema()
 const { loading: generateIconPreviewLoading, handleGenerateIconPreview } = useGenerateIconPreview()
+
+const activeTab = ref('api')
 
 const loading = ref(false)
 const saving = ref(false)
@@ -75,33 +83,110 @@ const form = ref<ApiToolProviderFormValues>({
   headers: [],
 })
 
-const tableColumns = computed(() => [
-  { title: t('admin.toolsAdmin.columns.name'), dataIndex: 'name', slotName: 'name', width: 220 },
-  {
-    title: t('admin.toolsAdmin.columns.description'),
-    dataIndex: 'description',
-    ellipsis: true,
-    tooltip: true,
-  },
-  { title: t('admin.toolsAdmin.columns.schemaStatus'), slotName: 'schemaStatus', width: 140 },
-  { title: t('admin.toolsAdmin.columns.toolCount'), slotName: 'toolCount', width: 100 },
-  { title: t('admin.toolsAdmin.columns.createdAt'), slotName: 'createdAt', width: 140 },
-  {
-    title: t('admin.toolsAdmin.columns.actions'),
-    slotName: 'actions',
-    width: 140,
-    fixed: 'right' as const,
-  },
-])
-
 const hasActiveFilters = computed(() => Boolean(search_word.value.trim()))
 const emptyDescription = computed(() => {
   return hasActiveFilters.value ? t('admin.toolsAdmin.emptyFiltered') : t('admin.toolsAdmin.empty')
 })
 
-/**
- * 拉取后台 API Tool Provider 分页列表。
- */
+// ---- 内置工具 ----
+const { loading: builtinLoading, builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
+const { categories, loadCategories } = useGetCategories()
+const builtin_category = ref<string>('all')
+const builtin_search_word = ref<string>('')
+const showBuiltinDrawer = ref(false)
+const activeBuiltinIdx = ref(-1)
+
+const filteredBuiltinTools = computed(() => {
+  return builtin_tools.value.filter((item: any) => {
+    const matchCategory =
+      builtin_category.value === 'all' || item.category === builtin_category.value
+    const matchSearch =
+      builtin_search_word.value === '' ||
+      (item.label || '').toLowerCase().includes(builtin_search_word.value.toLowerCase())
+    return matchCategory && matchSearch
+  })
+})
+
+const getCategoryLabel = (value: string) => {
+  return getStoreCategoryDisplayName(value, locale.value as 'zh-CN' | 'en-US')
+}
+
+const getTypeLabel = (value: string) => {
+  return getStoreTypeDisplayName(value, locale.value as 'zh-CN' | 'en-US')
+}
+
+const openBuiltinDrawer = (idx: number) => {
+  activeBuiltinIdx.value = idx
+  showBuiltinDrawer.value = true
+}
+
+const closeBuiltinDrawer = () => {
+  activeBuiltinIdx.value = -1
+  showBuiltinDrawer.value = false
+}
+
+// ---- 头像渐变兜底 ----
+const avatarPalettes = [
+  ['#334155', '#0f172a'],
+  ['#0369a1', '#1d4ed8'],
+  ['#047857', '#0f766e'],
+  ['#c2410c', '#d97706'],
+  ['#be123c', '#e11d48'],
+  ['#0f766e', '#14b8a6'],
+  ['#7c3aed', '#a855f7'],
+  ['#b45309', '#f59e0b'],
+]
+
+const hashString = (value: string) => {
+  let hash = 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 33 + value.charCodeAt(i)) >>> 0
+  }
+  return hash
+}
+
+const extractAvatarText = (source: string) => {
+  const text = (source || 'T').trim()
+  const latinParts = text.match(/[A-Za-z0-9]+/g)
+  if (latinParts && latinParts.length > 0) {
+    return latinParts
+      .slice(0, 2)
+      .map((item) => item[0]?.toUpperCase())
+      .join('')
+  }
+  const chineseParts = text.match(/[\u4e00-\u9fff]/g)
+  if (chineseParts && chineseParts.length > 0) {
+    return chineseParts.slice(0, 2).join('')
+  }
+  return text.slice(0, 2).toUpperCase()
+}
+
+const getApiToolAvatarText = (provider: ApiToolProviderListItem) => {
+  return extractAvatarText(provider.name || 'T')
+}
+
+const getApiToolAvatarStyle = (provider: ApiToolProviderListItem) => {
+  const palette =
+    avatarPalettes[hashString(`${provider.id}:${provider.name}`) % avatarPalettes.length]
+  return {
+    background: `linear-gradient(135deg, ${palette[0]} 0%, ${palette[1]} 100%)`,
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+  }
+}
+
+const getBuiltinAvatarText = (tool: any) => {
+  return extractAvatarText(tool.label || tool.name || 'B')
+}
+
+const getBuiltinAvatarStyle = (tool: any) => {
+  const palette = avatarPalettes[hashString(`${tool.name}:${tool.label}`) % avatarPalettes.length]
+  return {
+    background: `linear-gradient(135deg, ${palette[0]} 0%, ${palette[1]} 100%)`,
+    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.15)',
+  }
+}
+
+// ---- API 工具加载与分页 ----
 const loadProviders = async () => {
   loading.value = true
   try {
@@ -119,9 +204,6 @@ const loadProviders = async () => {
   }
 }
 
-/**
- * 触发搜索并重置到第一页。
- */
 const handleSearch = async () => {
   paginator.value.current_page = 1
   await loadProviders()
@@ -149,9 +231,6 @@ const openCreateModal = () => {
   showCreateModal.value = true
 }
 
-/**
- * 打开编辑模态窗，先拉取 provider 详情填充表单。
- */
 const openEditModal = async (record: ApiToolProviderListItem) => {
   resetForm()
   editingProviderId.value = record.id
@@ -264,6 +343,8 @@ const handleDelete = (record: ApiToolProviderListItem) => {
 
 onMounted(() => {
   void loadProviders()
+  loadCategories()
+  loadBuiltinTools()
 })
 </script>
 
@@ -279,87 +360,294 @@ onMounted(() => {
       </a>
     </header>
 
-    <section class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4">
-      <a-input
-        v-model="search_word"
-        class="max-w-xl flex-1 min-w-[260px]"
-        :placeholder="t('admin.toolsAdmin.searchPlaceholder')"
-        allow-clear
-        @press-enter="handleSearch"
-      />
-      <a-button type="primary" :loading="loading" @click="handleSearch">
-        {{ t('common.actions.search') }}
-      </a-button>
-      <a-button :loading="loading" @click="loadProviders">
-        {{ t('common.actions.refresh') }}
-      </a-button>
-      <a-button type="primary" status="success" @click="openCreateModal">
-        <template #icon>
-          <icon-plus />
-        </template>
-        {{ t('admin.toolsAdmin.createButton') }}
-      </a-button>
-    </section>
+    <a-tabs v-model:active-key="activeTab" type="rounded" animation>
+      <!-- ============ Tab 1: API 工具 ============ -->
+      <a-tab-pane key="api" :title="t('admin.toolsAdmin.tabApi')">
+        <section class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 mb-4">
+          <a-input
+            v-model="search_word"
+            class="max-w-xl flex-1 min-w-[260px]"
+            :placeholder="t('admin.toolsAdmin.searchPlaceholder')"
+            allow-clear
+            @press-enter="handleSearch"
+          />
+          <a-button type="primary" :loading="loading" @click="handleSearch">
+            {{ t('common.actions.search') }}
+          </a-button>
+          <a-button :loading="loading" @click="loadProviders">
+            {{ t('common.actions.refresh') }}
+          </a-button>
+          <a-button type="primary" status="success" @click="openCreateModal">
+            <template #icon>
+              <icon-plus />
+            </template>
+            {{ t('admin.toolsAdmin.createButton') }}
+          </a-button>
+        </section>
 
-    <section class="rounded-xl border border-slate-200 bg-white">
-      <a-table
-        :columns="tableColumns"
-        :data="providers"
-        :loading="loading"
-        :pagination="{
-          total: paginator.total_record,
-          current: paginator.current_page,
-          pageSize: paginator.page_size,
-          showTotal: true,
-          showPageSize: true,
-        }"
-        row-key="id"
-        :scroll="{ x: 960 }"
-        @page-change="handlePageChange"
-        @page-size-change="handlePageSizeChange"
-      >
-        <template #name="{ record }">
-          <div class="flex items-center gap-2">
-            <a-avatar :size="32" shape="square" :image-url="record.icon" />
-            <span class="font-medium text-slate-900">{{ record.name }}</span>
+        <card-grid-skeleton v-if="loading && providers.length === 0" :count="8" />
+        <section v-else class="rounded-xl">
+          <a-row :gutter="[16, 16]">
+            <a-col
+              v-for="record in providers"
+              :key="record.id"
+              :xs="24"
+              :sm="12"
+              :md="8"
+              :lg="6"
+              :xl="6"
+            >
+              <a-card
+                hoverable
+                class="rounded-lg h-full overflow-hidden"
+                :body-style="{ padding: '12px' }"
+              >
+                <div class="flex items-start gap-2.5 mb-2">
+                  <a-avatar
+                    :size="36"
+                    shape="square"
+                    class="shrink-0 overflow-hidden"
+                    :style="record.icon ? { backgroundColor: '#f3f4f6' } : getApiToolAvatarStyle(record)"
+                  >
+                    <img
+                      v-if="record.icon"
+                      :src="record.icon"
+                      :alt="record.name"
+                      class="w-full h-full object-cover"
+                    />
+                    <span v-else class="text-white font-semibold text-[12px] tracking-wide">
+                      {{ getApiToolAvatarText(record) }}
+                    </span>
+                  </a-avatar>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-bold text-gray-900 truncate">{{ record.name }}</div>
+                    <div class="text-[11px] text-gray-500 line-clamp-1">
+                      {{ t('admin.toolsAdmin.toolCountLabel', { count: (record.tools && record.tools.length) || 0 }) }}
+                    </div>
+                  </div>
+                </div>
+
+                <resource-card-description :text="record.description" />
+
+                <div class="flex items-center justify-between mt-2.5">
+                  <div class="text-[11px] text-gray-400">
+                    {{ formatTimestampShort(record.created_at) }}
+                  </div>
+                  <a-space :size="4">
+                    <a-button type="text" size="mini" @click.stop="openEditModal(record)">
+                      {{ t('admin.toolsAdmin.editButton') }}
+                    </a-button>
+                    <a-button
+                      type="text"
+                      status="danger"
+                      size="mini"
+                      @click.stop="handleDelete(record)"
+                    >
+                      {{ t('admin.toolsAdmin.deleteButton') }}
+                    </a-button>
+                  </a-space>
+                </div>
+              </a-card>
+            </a-col>
+
+            <a-col v-if="!providers.length" :span="24">
+              <a-empty :description="emptyDescription" class="py-16" />
+            </a-col>
+          </a-row>
+        </section>
+
+        <footer class="flex items-center justify-between mt-4">
+          <span class="text-xs text-slate-400">
+            {{ t('admin.toolsAdmin.total', { count: paginator.total_record }) }}
+          </span>
+          <a-pagination
+            :total="paginator.total_record"
+            :current="paginator.current_page"
+            :page-size="paginator.page_size"
+            show-total
+            show-page-size
+            @change="handlePageChange"
+            @page-size-change="handlePageSizeChange"
+          />
+        </footer>
+      </a-tab-pane>
+
+      <!-- ============ Tab 2: 内置工具 ============ -->
+      <a-tab-pane key="builtin" :title="t('admin.toolsAdmin.tabBuiltin')">
+        <section class="flex items-center justify-between mb-4 flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-4">
+          <div class="flex items-center gap-2 flex-wrap">
+            <a-button
+              :type="builtin_category === 'all' ? 'secondary' : 'text'"
+              class="rounded-lg !text-gray-700 px-3"
+              @click="builtin_category = 'all'"
+            >
+              {{ t('store.tools.all') }}
+            </a-button>
+            <a-button
+              v-for="item in categories"
+              :key="item.category"
+              :type="builtin_category === item.category ? 'secondary' : 'text'"
+              class="rounded-lg !text-gray-700 px-3"
+              @click="builtin_category = item.category"
+            >
+              {{ getCategoryLabel(item.category || item.name) }}
+            </a-button>
           </div>
-        </template>
-        <template #schemaStatus="{ record }">
-          <a-tag v-if="record.tools && record.tools.length" color="green" size="small">
-            {{ t('admin.toolsAdmin.schemaParsed') }}
-          </a-tag>
-          <a-tag v-else color="gray" size="small">
-            {{ t('admin.toolsAdmin.schemaEmpty') }}
-          </a-tag>
-        </template>
-        <template #toolCount="{ record }">
-          {{ (record.tools && record.tools.length) || 0 }}
-        </template>
-        <template #createdAt="{ record }">
-          {{ formatTimestampShort(record.created_at) }}
-        </template>
-        <template #actions="{ record }">
-          <a-space :size="8">
-            <a-button type="text" size="small" @click="openEditModal(record)">
-              {{ t('admin.toolsAdmin.editButton') }}
-            </a-button>
-            <a-button type="text" status="danger" size="small" @click="handleDelete(record)">
-              {{ t('admin.toolsAdmin.deleteButton') }}
-            </a-button>
-          </a-space>
-        </template>
-      </a-table>
-      <p
-        v-if="!providers.length && !loading"
-        class="px-6 py-12 text-center text-sm text-slate-500"
-      >
-        {{ emptyDescription }}
-      </p>
-    </section>
+          <a-input-search
+            v-model="builtin_search_word"
+            :placeholder="t('store.tools.searchPlaceholder')"
+            class="w-full sm:w-[240px] bg-white rounded-lg border-gray-300"
+          />
+        </section>
 
-    <footer class="text-xs text-slate-400">
-      {{ t('admin.toolsAdmin.total', { count: paginator.total_record }) }}
-    </footer>
+        <card-grid-skeleton v-if="builtinLoading && builtin_tools.length === 0" :count="8" />
+        <section v-else class="rounded-xl">
+          <a-row :gutter="[16, 16]">
+            <a-col
+              v-for="(builtinTool, idx) in filteredBuiltinTools"
+              :key="builtinTool.name"
+              :xs="24"
+              :sm="12"
+              :md="8"
+              :lg="6"
+              :xl="6"
+            >
+              <a-card
+                hoverable
+                class="cursor-pointer rounded-lg h-full overflow-hidden"
+                :body-style="{ padding: '12px' }"
+                @click="openBuiltinDrawer(idx)"
+              >
+                <div class="flex items-start gap-2.5 mb-2">
+                  <a-avatar
+                    :size="36"
+                    shape="square"
+                    class="shrink-0 overflow-hidden relative"
+                    :style="getBuiltinAvatarStyle(builtinTool)"
+                  >
+                    <span class="text-white font-semibold text-[12px] tracking-wide">{{ getBuiltinAvatarText(builtinTool) }}</span>
+                    <img
+                      :src="`${apiPrefix}/builtin-tools/${builtinTool.name}/icon`"
+                      :alt="builtinTool.name"
+                      class="absolute inset-0 w-full h-full object-contain"
+                      @error="(e: Event) => (e.target as HTMLElement).style.display = 'none'"
+                    />
+                  </a-avatar>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-bold text-gray-900 truncate">{{ builtinTool.label }}</div>
+                    <div class="text-[11px] text-gray-500 line-clamp-1">
+                      {{ t('store.tools.providerSummary', { name: builtinTool.name, count: builtinTool.tools.length }) }}
+                    </div>
+                  </div>
+                </div>
+
+                <resource-card-description :text="builtinTool.description" />
+
+                <div class="flex items-center gap-1.5 flex-wrap mt-2.5">
+                  <a-tag v-if="builtinTool.category" size="small" color="gray">
+                    {{ getCategoryLabel(builtinTool.category) }}
+                  </a-tag>
+                  <a-tag size="small" color="arcoblue">
+                    {{ t('admin.toolsAdmin.toolCountLabel', { count: builtinTool.tools.length }) }}
+                  </a-tag>
+                </div>
+
+                <div class="flex items-center gap-1.5 mt-2.5">
+                  <a-avatar :size="16" class="bg-blue-700">
+                    <icon-user />
+                  </a-avatar>
+                  <div class="text-[11px] text-gray-400">
+                    {{ t('store.tools.publishedAt', { time: formatTimestampShort(builtinTool.created_at) }) }}
+                  </div>
+                </div>
+              </a-card>
+            </a-col>
+
+            <a-col v-if="filteredBuiltinTools.length === 0" :span="24">
+              <a-empty :description="t('store.tools.empty')" class="py-16" />
+            </a-col>
+          </a-row>
+        </section>
+
+        <footer class="text-xs text-slate-400 mt-4">
+          {{ t('admin.toolsAdmin.builtinTotal', { count: builtin_tools.length }) }}
+        </footer>
+
+        <!-- 内置工具详情抽屉 -->
+        <a-drawer
+          :visible="showBuiltinDrawer"
+          :width="380"
+          :footer="false"
+          :title="t('store.tools.detailTitle')"
+          :drawer-style="{ background: '#F9FAFB' }"
+          @cancel="closeBuiltinDrawer"
+        >
+          <div v-if="activeBuiltinIdx !== -1 && filteredBuiltinTools[activeBuiltinIdx]" class="flex flex-col gap-4">
+            <div class="flex items-start gap-3">
+              <a-avatar
+                :size="40"
+                shape="square"
+                class="shrink-0 overflow-hidden relative"
+                :style="getBuiltinAvatarStyle(filteredBuiltinTools[activeBuiltinIdx])"
+              >
+                <span class="text-white font-semibold text-[13px] tracking-wide">{{ getBuiltinAvatarText(filteredBuiltinTools[activeBuiltinIdx]) }}</span>
+                <img
+                  :src="`${apiPrefix}/builtin-tools/${filteredBuiltinTools[activeBuiltinIdx].name}/icon`"
+                  :alt="filteredBuiltinTools[activeBuiltinIdx].name"
+                  class="absolute inset-0 w-full h-full object-contain"
+                  @error="(e: Event) => (e.target as HTMLElement).style.display = 'none'"
+                />
+              </a-avatar>
+              <div class="flex flex-col">
+                <div class="text-base text-gray-900 font-bold">
+                  {{ filteredBuiltinTools[activeBuiltinIdx].label }}
+                </div>
+                <div class="text-xs text-gray-500 line-clamp-1">
+                  {{ t('store.tools.providerSummary', { name: filteredBuiltinTools[activeBuiltinIdx].name, count: filteredBuiltinTools[activeBuiltinIdx].tools.length }) }}
+                </div>
+              </div>
+            </div>
+
+            <div class="leading-[18px] text-gray-500 text-sm">
+              {{ filteredBuiltinTools[activeBuiltinIdx].description }}
+            </div>
+
+            <hr class="my-2" />
+
+            <div class="flex flex-col gap-2">
+              <div class="text-xs text-gray-500">
+                {{ t('store.tools.containsTools', { count: filteredBuiltinTools[activeBuiltinIdx].tools.length }) }}
+              </div>
+
+              <a-card
+                v-for="tool in filteredBuiltinTools[activeBuiltinIdx].tools"
+                :key="tool.name"
+                class="rounded-xl"
+              >
+                <div class="font-bold text-gray-900 mb-2">{{ tool.label }}</div>
+                <div class="text-gray-500 text-xs">{{ tool.description }}</div>
+                <div v-if="tool.inputs && tool.inputs.length > 0">
+                  <div class="flex items-center gap-2 my-3">
+                    <div class="text-xs font-bold text-gray-500">{{ t('store.tools.parameters') }}</div>
+                    <hr class="flex-1" />
+                  </div>
+                  <div class="flex flex-col gap-3">
+                    <div v-for="input in tool.inputs" :key="input.name" class="flex flex-col gap-1">
+                      <div class="flex items-center gap-2 text-xs">
+                        <div class="text-gray-900 font-bold">{{ input.name }}</div>
+                        <div class="text-gray-500">{{ getTypeLabel(input.type) }}</div>
+                        <div v-if="input.required" class="text-red-700">{{ t('store.tools.required') }}</div>
+                      </div>
+                      <div class="text-xs text-gray-500">{{ input.description }}</div>
+                    </div>
+                  </div>
+                </div>
+              </a-card>
+            </div>
+          </div>
+        </a-drawer>
+      </a-tab-pane>
+    </a-tabs>
 
     <!-- 创建/编辑模态窗 -->
     <a-modal

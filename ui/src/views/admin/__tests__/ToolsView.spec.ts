@@ -33,13 +33,30 @@ vi.mock('@/hooks/use-upload-file', () => ({
   useUploadImage: () => ({ image_url: { value: '' }, handleUploadImage: vi.fn() }),
 }))
 
+vi.mock('@/hooks/use-builtin-tool', () => ({
+  useGetBuiltinTools: () => ({
+    loading: { value: false },
+    builtin_tools: { value: [] },
+    loadBuiltinTools: vi.fn(),
+  }),
+  useGetCategories: () => ({
+    loading: { value: false },
+    categories: { value: [] },
+    loadCategories: vi.fn(),
+  }),
+}))
+
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
-    t: (key: string, params?: { count?: number }) =>
+    t: (key: string, params?: { count?: number; name?: string; time?: string }) =>
       (
         {
           'admin.toolsAdmin.title': 'API工具管理',
           'admin.toolsAdmin.description': '管理 API Tool Provider 的创建、编辑与删除',
+          'admin.toolsAdmin.tabApi': 'API 工具',
+          'admin.toolsAdmin.tabBuiltin': '内置工具',
+          'admin.toolsAdmin.toolCountLabel': `${params?.count ?? 0} 个工具`,
+          'admin.toolsAdmin.builtinTotal': `共 ${params?.count ?? 0} 个内置工具`,
           'admin.toolsAdmin.searchPlaceholder': '搜索工具名称',
           'admin.toolsAdmin.empty': '当前没有可展示的 API Tool Provider',
           'admin.toolsAdmin.emptyFiltered': '没有符合筛选条件的 API Tool Provider',
@@ -76,8 +93,18 @@ vi.mock('vue-i18n', () => ({
           'space.tools.columns.key': 'Key',
           'space.tools.columns.value': 'Value',
           'space.tools.columns.action': '操作',
+          'store.tools.all': '全部',
+          'store.tools.searchPlaceholder': '搜索插件',
+          'store.tools.providerSummary': `${params?.name ?? ''} · ${params?.count ?? 0} 个工具`,
+          'store.tools.publishedAt': `发布于 ${params?.time ?? ''}`,
+          'store.tools.empty': '暂无插件',
+          'store.tools.detailTitle': '插件详情',
+          'store.tools.containsTools': `包含 ${params?.count ?? 0} 个工具`,
+          'store.tools.parameters': '参数',
+          'store.tools.required': '必填',
         } satisfies Record<string, string>
       )[key] ?? key,
+    locale: { value: 'zh-CN' },
   }),
 }))
 
@@ -94,15 +121,70 @@ const buttonStub = {
   template: '<button type="button" :disabled="loading" @click="$emit(\'click\')"><slot /></button>',
 }
 
-const tableStub = {
-  props: ['columns', 'data', 'loading', 'pagination', 'rowKey', 'scroll'],
-  template:
-    '<div class="table-stub"><div v-for="row in data" :key="row.id" class="row">{{ row.name }}</div></div>',
-}
-
 const modalStub = {
   props: ['visible', 'width', 'footer', 'hideTitle'],
   template: '<div v-if="visible"><slot /></div>',
+}
+
+const tabsStub = {
+  props: ['activeKey', 'type', 'animation'],
+  template: '<div class="tabs-stub"><slot /></div>',
+}
+
+const tabPaneStub = {
+  props: ['key', 'title'],
+  template: '<div class="tab-pane-stub"><slot /></div>',
+}
+
+const rowStub = {
+  props: ['gutter'],
+  template: '<div class="row-stub"><slot /></div>',
+}
+
+const colStub = {
+  props: ['span', 'xs', 'sm', 'md', 'lg', 'xl'],
+  template: '<div class="col-stub"><slot /></div>',
+}
+
+const cardStub = {
+  props: ['hoverable', 'bodyStyle'],
+  template: '<div class="card-stub"><slot /></div>',
+}
+
+const avatarStub = {
+  props: ['size', 'shape', 'style', 'imageUrl'],
+  template: '<div class="avatar-stub"><slot /></div>',
+}
+
+const tagStub = {
+  props: ['size', 'color'],
+  template: '<span class="tag-stub"><slot /></span>',
+}
+
+const spaceStub = {
+  props: ['size'],
+  template: '<div class="space-stub"><slot /></div>',
+}
+
+const drawerStub = {
+  props: ['visible', 'width', 'footer', 'title', 'drawerStyle'],
+  template: '<div v-if="visible" class="drawer-stub"><slot /></div>',
+}
+
+const emptyStub = {
+  props: ['description'],
+  template: '<div class="empty-stub">{{ description }}</div>',
+}
+
+const paginationStub = {
+  props: ['total', 'current', 'pageSize', 'showTotal', 'showPageSize'],
+  template: '<div class="pagination-stub"></div>',
+}
+
+const inputSearchStub = {
+  props: ['modelValue', 'placeholder'],
+  emits: ['update:modelValue'],
+  template: '<div class="input-search-stub"></div>',
 }
 
 describe('Admin ToolsView', () => {
@@ -134,9 +216,22 @@ describe('Admin ToolsView', () => {
         stubs: {
           'a-input': inputStub,
           'a-button': buttonStub,
-          'a-table': tableStub,
           'a-modal': modalStub,
+          'a-tabs': tabsStub,
+          'a-tab-pane': tabPaneStub,
+          'a-row': rowStub,
+          'a-col': colStub,
+          'a-card': cardStub,
+          'a-avatar': avatarStub,
+          'a-tag': tagStub,
+          'a-space': spaceStub,
+          'a-drawer': drawerStub,
+          'a-empty': emptyStub,
+          'a-pagination': paginationStub,
+          'a-input-search': inputSearchStub,
           IconUploadGenerator: true,
+          ResourceCardDescription: true,
+          CardGridSkeleton: true,
         },
       },
     })

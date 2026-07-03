@@ -30,6 +30,7 @@ vi.mock('@arco-design/web-vue', async () => {
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
+    locale: { value: 'zh-CN' },
     t: (key: string, params?: { count?: number }) =>
       (
         {
@@ -47,6 +48,17 @@ vi.mock('vue-i18n', () => ({
           'admin.skillsAdmin.toolCount': '工具数',
           'admin.skillsAdmin.browseStore': '前往商店浏览',
           'admin.skillsAdmin.manageHint': '在商店页可查看与安装 Skill 包',
+          'admin.skillsAdmin.all': '全部',
+          'admin.skillsAdmin.detailTitle': '技能详情',
+          'admin.skillsAdmin.executor': '执行器',
+          'admin.skillsAdmin.toolCountLabel': '工具数量',
+          'admin.skillsAdmin.toolsTitle': '包含工具',
+          'admin.skillsAdmin.toolCountBadge': `${params?.count ?? 0} 个工具`,
+          'admin.skillsAdmin.promptOnly': '仅提示词',
+          'admin.skillsAdmin.noBody': '暂无内容',
+          'admin.skillsAdmin.executorTypes.scf': '可执行',
+          'admin.skillsAdmin.executorTypes.tool': '工具',
+          'admin.skillsAdmin.executorTypes.prompt': '仅提示词',
           'common.actions.search': '搜索',
           'common.actions.refresh': '刷新',
         } satisfies Record<string, string>
@@ -116,13 +128,13 @@ describe('AdminSkillsView', () => {
     expect(mocks.listAdminSkills).toHaveBeenCalledWith({
       search_word: '',
       current_page: 1,
-      page_size: 20,
+      page_size: 100,
       category: '',
     })
     expect(wrapper.text()).toContain('Skills管理')
     expect(wrapper.text()).toContain('Frontend Skill')
     expect(wrapper.text()).toContain('frontend-skill')
-    expect(wrapper.text()).toContain('prompt')
+    expect(wrapper.text()).toContain('仅提示词')
     expect(wrapper.text()).toContain('frontend')
 
     await wrapper.find('input').setValue('frontend')
@@ -133,7 +145,7 @@ describe('AdminSkillsView', () => {
     expect(mocks.listAdminSkills).toHaveBeenLastCalledWith({
       search_word: 'frontend',
       current_page: 1,
-      page_size: 20,
+      page_size: 100,
       category: '',
     })
   })
