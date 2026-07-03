@@ -1,18 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Message, type FileItem, type ValidatedError, Form } from '@arco-design/web-vue'
+import { Message, Modal, type FileItem, type ValidatedError, Form } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import {
-  useCreateApiToolProvider,
-  useDeleteApiToolProvider,
-  useGenerateIconPreview,
-  useGetApiToolProvider,
-  useUpdateApiToolProvider,
-  useValidateOpenAPISchema,
-} from '@/hooks/use-tool'
+import { useGenerateIconPreview, useValidateOpenAPISchema } from '@/hooks/use-tool'
 import { useUploadImage } from '@/hooks/use-upload-file'
-import { getApiToolProvidersWithPage } from '@/services/api-tool'
-import type { CreateApiToolProviderRequest } from '@/models/api-tool'
+import {
+  createAdminApiTool,
+  deleteAdminApiTool,
+  getAdminApiTool,
+  listAdminApiTools,
+  updateAdminApiTool,
+} from '@/services/admin-tools'
+import type { CreateApiToolProviderRequest, UpdateApiToolProviderRequest } from '@/models/api-tool'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
@@ -50,16 +49,11 @@ type ToolPaginator = {
  */
 const { t } = useI18n()
 const { image_url, handleUploadImage } = useUploadImage()
-const { api_tool_provider, loadApiToolProvider } = useGetApiToolProvider()
-const { handleDelete: handleDeleteApiToolProvider } = useDeleteApiToolProvider()
-const { loading: updateApiToolProviderLoading, handleUpdateApiToolProvider } =
-  useUpdateApiToolProvider()
-const { loading: createApiToolProviderLoading, handleCreateApiToolProvider } =
-  useCreateApiToolProvider()
 const { handleValidateOpenAPISchema } = useValidateOpenAPISchema()
 const { loading: generateIconPreviewLoading, handleGenerateIconPreview } = useGenerateIconPreview()
 
 const loading = ref(false)
+const saving = ref(false)
 const providers = ref<ApiToolProviderListItem[]>([])
 const search_word = ref('')
 const paginator = ref<ToolPaginator>({
@@ -106,18 +100,18 @@ const emptyDescription = computed(() => {
 })
 
 /**
- * 拉取 API Tool Provider 分页列表。
+ * 拉取后台 API Tool Provider 分页列表。
  */
 const loadProviders = async () => {
   loading.value = true
   try {
-    const resp = await getApiToolProvidersWithPage(
-      paginator.value.current_page,
-      paginator.value.page_size,
-      search_word.value.trim(),
-    )
-    providers.value = (resp.data.list as ApiToolProviderListItem[]) || []
-    paginator.value = resp.data.paginator
+    const data = await listAdminApiTools({
+      current_page: paginator.value.current_page,
+      page_size: paginator.value.page_size,
+      search_word: search_word.value.trim(),
+    })
+    providers.value = (data.list as ApiToolProviderListItem[]) || []
+    paginator.value = data.paginator
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.toolsAdmin.loadFailed')))
   } finally {
@@ -161,21 +155,22 @@ const openCreateModal = () => {
 const openEditModal = async (record: ApiToolProviderListItem) => {
   resetForm()
   editingProviderId.value = record.id
-  await loadApiToolProvider(record.id)
-  const detail = api_tool_provider.value as {
-    icon: string
-    name: string
-    openapi_schema: string
-    headers: Array<{ key: string; value: string }>
+  try {
+    const detail = await getAdminApiTool(record.id)
+    form.value.icon = detail.icon || ''
+    form.value.fileList = detail.icon
+      ? [{ uid: '1', name: t('space.tools.iconPlaceholder'), url: detail.icon }]
+      : []
+    form.value.name = detail.name || ''
+    form.value.openapi_schema = detail.openapi_schema || ''
+    form.value.headers = (detail.headers || []).map((h: { key: string; value: string }) => ({
+      key: h.key,
+      value: h.value,
+    }))
+    showUpdateModal.value = true
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.toolsAdmin.loadFailed')))
   }
-  form.value.icon = detail.icon || ''
-  form.value.fileList = detail.icon
-    ? [{ uid: '1', name: t('space.tools.iconPlaceholder'), url: detail.icon }]
-    : []
-  form.value.name = detail.name || ''
-  form.value.openapi_schema = detail.openapi_schema || ''
-  form.value.headers = (detail.headers || []).map((h) => ({ key: h.key, value: h.value }))
-  showUpdateModal.value = true
 }
 
 const handleUploadIcon = async (file: File) => {
@@ -228,21 +223,42 @@ const handleSubmit = async ({
   errors: Record<string, ValidatedError> | undefined
 }) => {
   if (errors) return
-  if (showUpdateModal.value && editingProviderId.value) {
-    await handleUpdateApiToolProvider(
-      editingProviderId.value,
-      values as CreateApiToolProviderRequest,
-    )
-  } else {
-    await handleCreateApiToolProvider(values as CreateApiToolProviderRequest)
+  saving.value = true
+  try {
+    if (showUpdateModal.value && editingProviderId.value) {
+      await updateAdminApiTool(
+        editingProviderId.value,
+        values as UpdateApiToolProviderRequest,
+      )
+      Message.success(t('admin.toolsAdmin.updateSuccess'))
+    } else {
+      await createAdminApiTool(values as CreateApiToolProviderRequest)
+      Message.success(t('admin.toolsAdmin.createSuccess'))
+    }
+    handleModalCancel()
+    await loadProviders()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.toolsAdmin.saveFailed')))
+  } finally {
+    saving.value = false
   }
-  handleModalCancel()
-  await loadProviders()
 }
 
 const handleDelete = (record: ApiToolProviderListItem) => {
-  handleDeleteApiToolProvider(record.id, () => {
-    void loadProviders()
+  Modal.warning({
+    title: t('admin.toolsAdmin.deleteTitle'),
+    content: t('admin.toolsAdmin.deleteContent'),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await deleteAdminApiTool(record.id)
+        Message.success(t('admin.toolsAdmin.deleteSuccess'))
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.toolsAdmin.deleteFailed')))
+      } finally {
+        void loadProviders()
+      }
+    },
   })
 }
 
@@ -476,7 +492,7 @@ onMounted(() => {
               {{ t('common.actions.cancel') }}
             </a-button>
             <a-button
-              :loading="createApiToolProviderLoading || updateApiToolProviderLoading"
+              :loading="saving"
               type="primary"
               html-type="submit"
               class="rounded-lg"

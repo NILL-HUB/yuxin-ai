@@ -482,6 +482,8 @@ class AdminUserService:
 
     def _serialize_current_admin_user(self, admin_user: AdminUser) -> dict[str, object]:
         result = self._serialize_admin_user(admin_user)
+        account_id = getattr(admin_user, "account_id", None)
+        result["account_id"] = str(account_id) if account_id else None
         result["roles"] = self._get_role_codes(admin_user.id)
         result["permissions"] = self._get_permission_codes(result["roles"])
         return result

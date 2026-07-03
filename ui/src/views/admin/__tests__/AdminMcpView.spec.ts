@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/services/admin-mcp', () => ({
   listAdminMcpProviders: mocks.listAdminMcpProviders,
+  createAdminMcp: vi.fn(),
+  deleteAdminMcp: vi.fn(),
 }))
 
 vi.mock('vue-router', () => ({
@@ -33,7 +35,10 @@ vi.mock('@arco-design/web-vue', async () => {
     ...actual,
     Message: {
       error: mocks.messageError,
+      success: vi.fn(),
+      warning: vi.fn(),
     },
+    Modal: { warning: vi.fn() },
   }
 })
 

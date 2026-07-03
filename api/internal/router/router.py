@@ -16,6 +16,7 @@ from internal.handler import (
     AdminAgentPoolHandler,
     AdminAppHandler,
     AdminAppAssignmentHandler,
+    AdminApiToolHandler,
     AdminAuditLogHandler,
     AdminAuthHandler,
     AdminBillingPlanHandler,
@@ -25,6 +26,7 @@ from internal.handler import (
     AdminModelPoolHandler,
     AdminCostStatsHandler,
     AdminCustomerUserHandler,
+    AdminMcpHandler,
     AdminRbacHandler,
     AdminRedeemCodeHandler,
     AdminResourceEntryHandler,
@@ -84,6 +86,7 @@ class Router:
     admin_sub_pool_handler: AdminSubPoolHandler
     admin_app_handler: AdminAppHandler
     admin_app_assignment_handler: AdminAppAssignmentHandler
+    admin_api_tool_handler: AdminApiToolHandler
     admin_audit_log_handler: AdminAuditLogHandler
     admin_auth_handler: AdminAuthHandler
     admin_billing_plan_handler: AdminBillingPlanHandler
@@ -91,6 +94,7 @@ class Router:
     admin_orchestration_flag_handler: AdminOrchestrationFlagHandler
     admin_orchestration_release_handler: AdminOrchestrationReleaseHandler
     admin_customer_user_handler: AdminCustomerUserHandler
+    admin_mcp_handler: AdminMcpHandler
     admin_rbac_handler: AdminRbacHandler
     admin_redeem_code_handler: AdminRedeemCodeHandler
     admin_resource_entry_handler: AdminResourceEntryHandler
@@ -761,6 +765,30 @@ class Router:
             view_func=self.admin_app_handler.offline,
         )
         bp.add_url_rule(
+            "/admin/apps",
+            endpoint="admin_app_create",
+            methods=["POST"],
+            view_func=self.admin_app_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>",
+            endpoint="admin_app_delete",
+            methods=["DELETE"],
+            view_func=self.admin_app_handler.delete,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/draft-app-config",
+            endpoint="admin_app_draft_config_get",
+            methods=["GET"],
+            view_func=self.admin_app_handler.get_draft_app_config,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/draft-app-config",
+            endpoint="admin_app_draft_config_update",
+            methods=["POST"],
+            view_func=self.admin_app_handler.update_draft_app_config,
+        )
+        bp.add_url_rule(
             "/admin/workflows",
             endpoint="admin_workflow_list",
             methods=["GET"],
@@ -785,6 +813,36 @@ class Router:
             view_func=self.admin_workflow_handler.offline,
         )
         bp.add_url_rule(
+            "/admin/workflows",
+            endpoint="admin_workflow_create",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>",
+            endpoint="admin_workflow_delete",
+            methods=["DELETE"],
+            view_func=self.admin_workflow_handler.delete,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>/draft-graph",
+            endpoint="admin_workflow_draft_graph_get",
+            methods=["GET"],
+            view_func=self.admin_workflow_handler.get_draft_graph,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>/draft-graph",
+            endpoint="admin_workflow_draft_graph_update",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.update_draft_graph,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>/publish",
+            endpoint="admin_workflow_publish",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.publish,
+        )
+        bp.add_url_rule(
             "/admin/datasets",
             endpoint="admin_dataset_entry",
             methods=["GET"],
@@ -807,6 +865,48 @@ class Router:
             endpoint="admin_skill_entry",
             methods=["GET"],
             view_func=self.admin_resource_entry_handler.skills,
+        )
+        bp.add_url_rule(
+            "/admin/api-tools",
+            endpoint="admin_api_tool_list",
+            methods=["GET"],
+            view_func=self.admin_api_tool_handler.list,
+        )
+        bp.add_url_rule(
+            "/admin/api-tools",
+            endpoint="admin_api_tool_create",
+            methods=["POST"],
+            view_func=self.admin_api_tool_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/api-tools/<uuid:provider_id>",
+            endpoint="admin_api_tool_get",
+            methods=["GET"],
+            view_func=self.admin_api_tool_handler.get,
+        )
+        bp.add_url_rule(
+            "/admin/api-tools/<uuid:provider_id>",
+            endpoint="admin_api_tool_update",
+            methods=["PATCH"],
+            view_func=self.admin_api_tool_handler.update,
+        )
+        bp.add_url_rule(
+            "/admin/api-tools/<uuid:provider_id>",
+            endpoint="admin_api_tool_delete",
+            methods=["DELETE"],
+            view_func=self.admin_api_tool_handler.delete,
+        )
+        bp.add_url_rule(
+            "/admin/mcp",
+            endpoint="admin_mcp_create",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.create,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/<uuid:provider_id>",
+            endpoint="admin_mcp_delete",
+            methods=["DELETE"],
+            view_func=self.admin_mcp_handler.delete,
         )
         bp.add_url_rule(
             "/admin/system-knowledge",

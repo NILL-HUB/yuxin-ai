@@ -9,6 +9,8 @@ import DetailView from '../DetailView.vue'
 const mocks = vi.hoisted(() => ({
   route: {
     params: { app_id: 'app-1' },
+    path: '/space/apps/app-1/edit',
+    meta: { realm: 'space' },
   } as any,
   draftAppConfigForm: null as null | { value: Record<string, any> },
   loadDraftAppConfig: vi.fn().mockResolvedValue(undefined),

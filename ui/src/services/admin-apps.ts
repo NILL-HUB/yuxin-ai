@@ -1,6 +1,6 @@
-import { type AgentMetadata } from '@/models/app'
+import { type AgentMetadata, type CreateAppRequest, type GetDraftAppConfigResponse, type UpdateDraftAppConfigRequest } from '@/models/app'
 import type { BasePaginatorResponse, BaseResponse } from '@/models/base'
-import { get, post, request } from '@/utils/request'
+import { del, get, post, request } from '@/utils/request'
 
 export type AdminAppRecord = {
   id: string
@@ -97,5 +97,47 @@ export const updateAdminAppIsPublic = async (
  */
 export const offlineAdminApp = async (appId: string): Promise<Record<string, never>> => {
   const response = await post<BaseResponse<Record<string, never>>>(`/admin/apps/${appId}/offline`)
+  return response.data
+}
+
+/**
+ * 创建后台应用。admin 创建仅需要 name/icon/description。
+ */
+export const createAdminApp = async (
+  body: CreateAppRequest,
+): Promise<AdminAppRecord> => {
+  const response = await post<BaseResponse<AdminAppRecord>>('/admin/apps', { body })
+  return response.data
+}
+
+/**
+ * 删除后台应用。
+ */
+export const deleteAdminApp = async (appId: string): Promise<Record<string, never>> => {
+  const response = await del<BaseResponse<Record<string, never>>>(`/admin/apps/${appId}`)
+  return response.data
+}
+
+/**
+ * 获取后台应用草稿配置。
+ */
+export const getAdminAppDraftConfig = async (
+  appId: string,
+): Promise<GetDraftAppConfigResponse['data']> => {
+  const response = await get<GetDraftAppConfigResponse>(`/admin/apps/${appId}/draft-app-config`)
+  return response.data
+}
+
+/**
+ * 更新后台应用草稿配置。
+ */
+export const updateAdminAppDraftConfig = async (
+  appId: string,
+  body: UpdateDraftAppConfigRequest,
+): Promise<GetDraftAppConfigResponse['data']> => {
+  const response = await post<GetDraftAppConfigResponse>(
+    `/admin/apps/${appId}/draft-app-config`,
+    { body },
+  )
   return response.data
 }

@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  createAdminWorkflow,
+  deleteAdminWorkflow,
   getAdminWorkflow,
+  getAdminWorkflowDraftGraph,
   listAdminWorkflows,
   offlineAdminWorkflow,
+  publishAdminWorkflow,
   updateAdminWorkflow,
+  updateAdminWorkflowDraftGraph,
 } from '@/services/admin-workflows'
 import * as request from '@/utils/request'
 
 vi.mock('@/utils/request', () => ({
   get: vi.fn(),
   post: vi.fn(),
+  del: vi.fn(),
 }))
 
 describe('admin workflows service', () => {
@@ -114,5 +120,55 @@ describe('admin workflows service', () => {
 
     expect(request.post).toHaveBeenCalledWith('/admin/workflows/wf-1/offline')
     expect(result).toEqual({})
+  })
+
+  it('createAdminWorkflow calls POST /admin/workflows with body', async () => {
+    const workflow = { id: 'wf-2', name: 'new' }
+    vi.mocked(request.post).mockResolvedValue({ data: workflow } as never)
+
+    const body = { name: 'new', description: 'd' } as never
+    const result = await createAdminWorkflow(body)
+
+    expect(request.post).toHaveBeenCalledWith('/admin/workflows', { body })
+    expect(result).toEqual(workflow)
+  })
+
+  it('deleteAdminWorkflow calls DELETE /admin/workflows/:id', async () => {
+    vi.mocked(request.del).mockResolvedValue({ data: {} } as never)
+
+    await deleteAdminWorkflow('wf-1')
+
+    expect(request.del).toHaveBeenCalledWith('/admin/workflows/wf-1')
+  })
+
+  it('getAdminWorkflowDraftGraph calls GET /admin/workflows/:id/draft-graph', async () => {
+    const graphData = { nodes: [], edges: [] }
+    vi.mocked(request.get).mockResolvedValue({ data: graphData } as never)
+
+    const result = await getAdminWorkflowDraftGraph('wf-1')
+
+    expect(request.get).toHaveBeenCalledWith('/admin/workflows/wf-1/draft-graph')
+    expect(result).toEqual(graphData)
+  })
+
+  it('updateAdminWorkflowDraftGraph calls POST /admin/workflows/:id/draft-graph with body', async () => {
+    const graphData = { nodes: [], edges: [] }
+    vi.mocked(request.post).mockResolvedValue({ data: graphData } as never)
+
+    const body = { nodes: [], edges: [] } as never
+    const result = await updateAdminWorkflowDraftGraph('wf-1', body)
+
+    expect(request.post).toHaveBeenCalledWith('/admin/workflows/wf-1/draft-graph', { body })
+    expect(result).toEqual(graphData)
+  })
+
+  it('publishAdminWorkflow calls POST /admin/workflows/:id/publish', async () => {
+    const workflow = { id: 'wf-1', status: 'published' }
+    vi.mocked(request.post).mockResolvedValue({ data: workflow } as never)
+
+    const result = await publishAdminWorkflow('wf-1')
+
+    expect(request.post).toHaveBeenCalledWith('/admin/workflows/wf-1/publish')
+    expect(result).toEqual(workflow)
   })
 })

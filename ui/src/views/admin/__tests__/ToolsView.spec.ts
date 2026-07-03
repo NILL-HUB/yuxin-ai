@@ -3,28 +3,29 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ToolsView from '@/views/admin/ToolsView.vue'
 
 const mocks = vi.hoisted(() => ({
-  getApiToolProvidersWithPage: vi.fn(),
+  listAdminApiTools: vi.fn(),
   messageError: vi.fn(),
 }))
 
-vi.mock('@/services/api-tool', () => ({
-  getApiToolProvidersWithPage: mocks.getApiToolProvidersWithPage,
+vi.mock('@/services/admin-tools', () => ({
+  listAdminApiTools: mocks.listAdminApiTools,
+  createAdminApiTool: vi.fn(),
+  getAdminApiTool: vi.fn(),
+  updateAdminApiTool: vi.fn(),
+  deleteAdminApiTool: vi.fn(),
 }))
 
 vi.mock('@arco-design/web-vue', async () => {
   const actual = await vi.importActual<typeof import('@arco-design/web-vue')>('@arco-design/web-vue')
   return {
     ...actual,
-    Message: { error: mocks.messageError },
+    Message: { error: mocks.messageError, success: vi.fn(), warning: vi.fn() },
+    Modal: { warning: vi.fn() },
   }
 })
 
 vi.mock('@/hooks/use-tool', () => ({
-  useCreateApiToolProvider: () => ({ loading: { value: false }, handleCreateApiToolProvider: vi.fn() }),
-  useDeleteApiToolProvider: () => ({ handleDelete: vi.fn() }),
   useGenerateIconPreview: () => ({ loading: { value: false }, handleGenerateIconPreview: vi.fn() }),
-  useGetApiToolProvider: () => ({ api_tool_provider: { value: {} }, loadApiToolProvider: vi.fn() }),
-  useUpdateApiToolProvider: () => ({ loading: { value: false }, handleUpdateApiToolProvider: vi.fn() }),
   useValidateOpenAPISchema: () => ({ handleValidateOpenAPISchema: vi.fn() }),
 }))
 
@@ -110,26 +111,22 @@ describe('Admin ToolsView', () => {
   })
 
   it('loads api tool providers on mount and supports keyword search', async () => {
-    mocks.getApiToolProvidersWithPage.mockResolvedValue({
-      code: '0',
-      message: 'ok',
-      data: {
-        list: [
-          {
-            id: 'provider-1',
-            name: '天气查询',
-            icon: '',
-            description: '天气工具',
-            headers: [],
-            tools: [{ name: 'getCurrentWeather', description: 'get weather' }],
-            creator_name: 'Alice',
-            creator_avatar: '',
-            updated_at: 1710003600,
-            created_at: 1710000000,
-          },
-        ],
-        paginator: { total_record: 1, total_page: 1, current_page: 1, page_size: 20 },
-      },
+    mocks.listAdminApiTools.mockResolvedValue({
+      list: [
+        {
+          id: 'provider-1',
+          name: '天气查询',
+          icon: '',
+          description: '天气工具',
+          headers: [],
+          tools: [{ name: 'getCurrentWeather', description: 'get weather' }],
+          creator_name: 'Alice',
+          creator_avatar: '',
+          updated_at: 1710003600,
+          created_at: 1710000000,
+        },
+      ],
+      paginator: { total_record: 1, total_page: 1, current_page: 1, page_size: 20 },
     })
 
     const wrapper = mount(ToolsView, {
@@ -139,13 +136,18 @@ describe('Admin ToolsView', () => {
           'a-button': buttonStub,
           'a-table': tableStub,
           'a-modal': modalStub,
+          IconUploadGenerator: true,
         },
       },
     })
 
     await flushPromises()
 
-    expect(mocks.getApiToolProvidersWithPage).toHaveBeenCalledWith(1, 20, '')
+    expect(mocks.listAdminApiTools).toHaveBeenCalledWith({
+      current_page: 1,
+      page_size: 20,
+      search_word: '',
+    })
     expect(wrapper.text()).toContain('API工具管理')
     expect(wrapper.text()).toContain('天气查询')
     expect(wrapper.text()).toContain('进入完整治理中心')
@@ -155,6 +157,10 @@ describe('Admin ToolsView', () => {
     await wrapper.findAll('button')[0].trigger('click')
     await flushPromises()
 
-    expect(mocks.getApiToolProvidersWithPage).toHaveBeenLastCalledWith(1, 20, 'weather')
+    expect(mocks.listAdminApiTools).toHaveBeenLastCalledWith({
+      current_page: 1,
+      page_size: 20,
+      search_word: 'weather',
+    })
   })
 })

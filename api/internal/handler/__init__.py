@@ -25,6 +25,7 @@ from .analysis_handler import AnalysisHandler
 from .admin_agent_pool_handler import AdminAgentPoolHandler
 from .admin_app_handler import AdminAppHandler
 from .admin_app_assignment_handler import AdminAppAssignmentHandler
+from .admin_api_tool_handler import AdminApiToolHandler
 from .admin_audit_log_handler import AdminAuditLogHandler
 from .admin_auth_handler import AdminAuthHandler
 from .admin_billing_plan_handler import AdminBillingPlanHandler
@@ -32,6 +33,7 @@ from .admin_dataset_handler import AdminDatasetHandler
 from .admin_orchestration_flag_handler import AdminOrchestrationFlagHandler
 from .admin_orchestration_release_handler import AdminOrchestrationReleaseHandler
 from .admin_customer_user_handler import AdminCustomerUserHandler
+from .admin_mcp_handler import AdminMcpHandler
 from .admin_rbac_handler import AdminRbacHandler
 from .admin_redeem_code_handler import AdminRedeemCodeHandler
 from .admin_resource_entry_handler import AdminResourceEntryHandler
@@ -84,6 +86,7 @@ __all__ = [
     "AnalysisHandler",
     "AdminAppHandler",
     "AdminAgentPoolHandler",
+    "AdminApiToolHandler",
     "AdminAuditLogHandler",
     "AdminAuthHandler",
     "AdminBillingPlanHandler",
@@ -91,6 +94,7 @@ __all__ = [
     "AdminOrchestrationFlagHandler",
     "AdminOrchestrationReleaseHandler",
     "AdminCustomerUserHandler",
+    "AdminMcpHandler",
     "AdminRbacHandler",
     "AdminRedeemCodeHandler",
     "AdminResourceEntryHandler",

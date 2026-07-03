@@ -413,6 +413,42 @@ class AppService(BaseService):
         self.delete(app)
         return app
 
+    def _get_app_for_admin(self, app_id: UUID) -> App:
+        """管理员视角：根据应用id获取应用，不校验账号归属"""
+        app = self.get(App, app_id)
+        if not app:
+            raise NotFoundException("该应用不存在，请核实后重试")
+        return app
+
+    def _get_owner_account(self, account_id) -> Account:
+        """根据账号id加载资源归属账号"""
+        account = self.db.session.query(Account).filter(Account.id == account_id).one_or_none()
+        if not account:
+            raise NotFoundException("资源所属账号不存在")
+        return account
+
+    def delete_app_for_admin(self, app_id: UUID):
+        """管理员删除应用，不校验账号归属"""
+        app = self._get_app_for_admin(app_id)
+        self.delete(app)
+        return app
+
+    def get_draft_app_config_for_admin(self, app_id: UUID) -> dict[str, Any]:
+        """管理员获取应用草稿配置，复用空间端逻辑（以应用归属账号执行）"""
+        app = self._get_app_for_admin(app_id)
+        account = self._get_owner_account(app.account_id)
+        return self.get_draft_app_config(app_id, account)
+
+    def update_draft_app_config_for_admin(
+            self,
+            app_id: UUID,
+            draft_app_config: dict[str, Any],
+    ) -> AppConfigVersion:
+        """管理员保存应用草稿配置，复用空间端逻辑（以应用归属账号执行）"""
+        app = self._get_app_for_admin(app_id)
+        account = self._get_owner_account(app.account_id)
+        return self.update_draft_app_config(app_id, draft_app_config, account)
+
     def update_app(self, app_id: UUID, account: Account, **kwargs) -> App:
         """根据传递的应用id+账号+信息,更新指定的应用"""
         app = self.get_app(app_id, account)

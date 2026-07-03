@@ -6,13 +6,19 @@ import AdminWorkflowsView from '@/views/admin/AdminWorkflowsView.vue'
 
 const mocks = vi.hoisted(() => ({
   listAdminWorkflows: vi.fn(),
+  createAdminWorkflow: vi.fn(),
+  deleteAdminWorkflow: vi.fn(),
   routerPush: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
+  messageWarning: vi.fn(),
+  modalWarning: vi.fn(),
 }))
 
 vi.mock('@/services/admin-workflows', () => ({
   listAdminWorkflows: mocks.listAdminWorkflows,
+  createAdminWorkflow: mocks.createAdminWorkflow,
+  deleteAdminWorkflow: mocks.deleteAdminWorkflow,
 }))
 
 vi.mock('vue-router', async () => {
@@ -32,7 +38,9 @@ vi.mock('@arco-design/web-vue', async () => {
     Message: {
       success: mocks.messageSuccess,
       error: mocks.messageError,
+      warning: mocks.messageWarning,
     },
+    Modal: { warning: mocks.modalWarning },
   }
 })
 

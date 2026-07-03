@@ -1,4 +1,4 @@
-import { get, post } from '@/utils/request'
+import { del, get, post } from '@/utils/request'
 import type {
   AdminWorkflowData,
   AdminWorkflowOfflineResponse,
@@ -8,6 +8,12 @@ import type {
   GetAdminWorkflowsRequest,
   UpdateAdminWorkflowRequest,
 } from '@/models/admin-workflow'
+import type {
+  CreateWorkflowRequest,
+  GetDraftGraphResponse,
+  UpdateDraftGraphRequest,
+} from '@/models/workflow'
+import type { BaseResponse } from '@/models/base'
 
 /**
  * 获取后台工作流分页列表，并解包接口返回的 data 字段。
@@ -43,5 +49,59 @@ export const updateAdminWorkflow = async (
  */
 export const offlineAdminWorkflow = async (workflowId: string): Promise<Record<string, never>> => {
   const response = await post<AdminWorkflowOfflineResponse>(`/admin/workflows/${workflowId}/offline`)
+  return response.data
+}
+
+/**
+ * 创建后台工作流。注意：admin 创建仅需要 name 与 description，tool_call_name 由后端自动生成。
+ */
+export const createAdminWorkflow = async (
+  body: CreateWorkflowRequest,
+): Promise<AdminWorkflowData> => {
+  const response = await post<AdminWorkflowResponse>('/admin/workflows', { body })
+  return response.data
+}
+
+/**
+ * 删除后台工作流。
+ */
+export const deleteAdminWorkflow = async (workflowId: string): Promise<Record<string, never>> => {
+  const response = await del<BaseResponse<Record<string, never>>>(`/admin/workflows/${workflowId}`)
+  return response.data
+}
+
+/**
+ * 获取后台工作流图草稿配置。
+ */
+export const getAdminWorkflowDraftGraph = async (
+  workflowId: string,
+): Promise<GetDraftGraphResponse['data']> => {
+  const response = await get<GetDraftGraphResponse>(`/admin/workflows/${workflowId}/draft-graph`)
+  return response.data
+}
+
+/**
+ * 更新后台工作流图草稿配置。
+ */
+export const updateAdminWorkflowDraftGraph = async (
+  workflowId: string,
+  body: UpdateDraftGraphRequest,
+): Promise<GetDraftGraphResponse['data']> => {
+  const response = await post<GetDraftGraphResponse>(
+    `/admin/workflows/${workflowId}/draft-graph`,
+    { body },
+  )
+  return response.data
+}
+
+/**
+ * 发布后台工作流。
+ */
+export const publishAdminWorkflow = async (
+  workflowId: string,
+): Promise<AdminWorkflowData> => {
+  const response = await post<AdminWorkflowResponse>(
+    `/admin/workflows/${workflowId}/publish`,
+  )
   return response.data
 }

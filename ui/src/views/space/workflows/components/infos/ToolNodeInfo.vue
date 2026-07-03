@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, inject } from 'vue'
+import { useRoute } from 'vue-router'
 import { useVueFlow } from '@vue-flow/core'
 import { cloneDeep, debounce } from 'lodash'
 import { getReferencedVariables } from '@/utils/helper'
 import { apiPrefix } from '@/config'
 import { useGetBuiltinTool, useGetBuiltinTools, useGetCategories } from '@/hooks/use-builtin-tool'
 import { useGetApiToolProvidersWithPage } from '@/hooks/use-tool'
+import { listAdminMcpProviders } from '@/services/admin-mcp'
+import { listAdminSkills } from '@/services/admin-skills'
+import { listAdminWorkflows } from '@/services/admin-workflows'
+import { getMcpProvidersWithPage } from '@/services/mcp'
+import { getSkillsWithPage } from '@/services/skill'
+import { getWorkflowsWithPage } from '@/services/workflow'
 import type { ValidatedError } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 
@@ -137,6 +144,140 @@ const computedBuiltinTools = computed(() => {
   if (toolsActivateCategory.value === 'all') return builtin_tools.value
   return builtin_tools.value.filter((item: { category: string }) => item.category === toolsActivateCategory.value)
 })
+
+// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
+const route = useRoute()
+const isAdminContext = computed(
+  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
+)
+
+// MCP/Skill/Workflow 下拉选项状态
+type DropdownOption = { label: string; value: string }
+const mcpProviderOptions = ref<DropdownOption[]>([])
+const mcpToolOptions = ref<DropdownOption[]>([])
+const skillOptions = ref<DropdownOption[]>([])
+const workflowOptions = ref<DropdownOption[]>([])
+const dropdownLoading = ref(false)
+
+/**
+ * 加载 MCP Provider 下拉选项（admin/space 上下文自动切换）。
+ */
+const loadMcpProviderOptions = async () => {
+  dropdownLoading.value = true
+  try {
+    const params = { current_page: 1, page_size: 100, search_word: '' }
+    let list: Array<{ id: string; name: string; label?: string; tools?: Array<{ name: string; label?: string; description?: string }> }> = []
+    if (isAdminContext.value) {
+      const data = await listAdminMcpProviders(params)
+      list = data.list || []
+    } else {
+      const resp = await getMcpProvidersWithPage(params)
+      list = resp.data.list || []
+    }
+    mcpProviderOptions.value = list.map((item) => ({
+      label: item.label || item.name,
+      value: item.id,
+    }))
+  } catch {
+    mcpProviderOptions.value = []
+  } finally {
+    dropdownLoading.value = false
+  }
+}
+
+/**
+ * 根据 MCP Provider id 加载其下的 tool 选项。
+ */
+const loadMcpToolOptions = async (providerId: string) => {
+  if (!providerId) {
+    mcpToolOptions.value = []
+    return
+  }
+  try {
+    let list: Array<{ id: string; name: string; label?: string; tools?: Array<{ name: string; label?: string; description?: string }> }> = []
+    const params = { current_page: 1, page_size: 100, search_word: '' }
+    if (isAdminContext.value) {
+      const data = await listAdminMcpProviders(params)
+      list = data.list || []
+    } else {
+      const resp = await getMcpProvidersWithPage(params)
+      list = resp.data.list || []
+    }
+    const provider = list.find((item) => item.id === providerId)
+    const tools = provider?.tools || []
+    mcpToolOptions.value = tools.map((tool) => ({
+      label: tool.label || tool.name,
+      value: tool.name,
+    }))
+  } catch {
+    mcpToolOptions.value = []
+  }
+}
+
+/**
+ * 加载 Skill 下拉选项（admin/space 上下文自动切换）。
+ */
+const loadSkillOptions = async () => {
+  dropdownLoading.value = true
+  try {
+    const params = { current_page: 1, page_size: 100, search_word: '' }
+    let list: Array<{ id: string; name: string; label?: string }> = []
+    if (isAdminContext.value) {
+      const data = await listAdminSkills(params)
+      list = data.list || []
+    } else {
+      const resp = await getSkillsWithPage(params)
+      list = resp.data.list || []
+    }
+    skillOptions.value = list.map((item) => ({
+      label: item.label || item.name,
+      value: item.id,
+    }))
+  } catch {
+    skillOptions.value = []
+  } finally {
+    dropdownLoading.value = false
+  }
+}
+
+/**
+ * 加载 Workflow 下拉选项（admin/space 上下文自动切换）。
+ */
+const loadWorkflowOptions = async () => {
+  dropdownLoading.value = true
+  try {
+    let list: Array<{ id: string; name: string; tool_call_name?: string }> = []
+    if (isAdminContext.value) {
+      const data = await listAdminWorkflows({
+        search: '',
+        status: '',
+        current_page: 1,
+        page_size: 100,
+      })
+      list = data.list || []
+    } else {
+      const resp = await getWorkflowsWithPage({ current_page: 1, page_size: 100, search_word: '' }, false)
+      list = resp.data.list || []
+    }
+    workflowOptions.value = list.map((item) => ({
+      label: item.name,
+      value: item.id,
+    }))
+  } catch {
+    workflowOptions.value = []
+  } finally {
+    dropdownLoading.value = false
+  }
+}
+
+/**
+ * MCP provider 选择变化时，重新加载其下的 tool 选项。
+ */
+const handleMcpProviderChange = async (value: string | number | Record<string, any> | (string | number | Record<string, any>)[]) => {
+  form.value.provider_id = String(value)
+  form.value.tool_id = ''
+  await loadMcpToolOptions(String(value))
+}
 const pythonTypeMap: Record<string, string> = {
   str: 'string',
   int: 'int',
@@ -210,6 +351,14 @@ const handleChangeToolType = (newToolType: string) => {
   // 同步模态窗的激活类型，便于 builtin_tool/api_tool 选择
   if (newToolType === 'builtin_tool' || newToolType === 'api_tool') {
     toolsActivateType.value = newToolType
+  }
+  // 切换到 mcp/skill/workflow 时预加载下拉选项
+  if (newToolType === 'mcp') {
+    void loadMcpProviderOptions()
+  } else if (newToolType === 'skill') {
+    void loadSkillOptions()
+  } else if (newToolType === 'workflow') {
+    void loadWorkflowOptions()
   }
 }
 
@@ -463,6 +612,17 @@ watch(
       }),
       outputs: [{ name: 'text', type: 'string', value: { type: 'generated', content: '' } }],
     }
+    // 已有保存值的节点加载时，预加载对应下拉选项，避免下拉为空无法显示已选标签
+    if (toolType === 'mcp') {
+      void loadMcpProviderOptions()
+      if (form.value.provider_id) {
+        void loadMcpToolOptions(form.value.provider_id)
+      }
+    } else if (toolType === 'skill') {
+      void loadSkillOptions()
+    } else if (toolType === 'workflow') {
+      void loadWorkflowOptions()
+    }
     nextTick(() => {
       isSyncingForm.value = false
     })
@@ -616,15 +776,23 @@ onMounted(() => {
       <!-- mcp: provider_id（provider key）+ tool_id（tool name） -->
       <template v-else-if="form.tool_type === 'mcp'">
         <a-form-item field="provider_id" :label="t('workflowEditor.toolNode.mcpProviderId')">
-          <a-input
+          <a-select
             v-model="form.provider_id"
             :placeholder="t('workflowEditor.toolNode.mcpProviderIdPlaceholder')"
+            :options="mcpProviderOptions"
+            :loading="dropdownLoading"
+            allow-search
+            @change="handleMcpProviderChange"
           />
         </a-form-item>
         <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.mcpToolId')">
-          <a-input
+          <a-select
             v-model="form.tool_id"
             :placeholder="t('workflowEditor.toolNode.mcpToolIdPlaceholder')"
+            :options="mcpToolOptions"
+            :loading="dropdownLoading"
+            :disabled="!form.provider_id"
+            allow-search
           />
         </a-form-item>
         <a-divider class="my-4" />
@@ -644,9 +812,12 @@ onMounted(() => {
       <!-- skill: tool_id（skill_package_id） -->
       <template v-else-if="form.tool_type === 'skill'">
         <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.skillId')">
-          <a-input
+          <a-select
             v-model="form.tool_id"
             :placeholder="t('workflowEditor.toolNode.skillIdPlaceholder')"
+            :options="skillOptions"
+            :loading="dropdownLoading"
+            allow-search
           />
         </a-form-item>
         <a-divider class="my-4" />
@@ -655,9 +826,12 @@ onMounted(() => {
       <!-- workflow: tool_id（workflow_id） -->
       <template v-else-if="form.tool_type === 'workflow'">
         <a-form-item field="tool_id" :label="t('workflowEditor.toolNode.workflowId')">
-          <a-input
+          <a-select
             v-model="form.tool_id"
             :placeholder="t('workflowEditor.toolNode.workflowIdPlaceholder')"
+            :options="workflowOptions"
+            :loading="dropdownLoading"
+            allow-search
           />
         </a-form-item>
         <a-divider class="my-4" />

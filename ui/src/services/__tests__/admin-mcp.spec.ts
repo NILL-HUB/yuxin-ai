@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { listAdminMcpProviders } from '@/services/admin-mcp'
+import { createAdminMcp, deleteAdminMcp, listAdminMcpProviders } from '@/services/admin-mcp'
 import * as request from '@/utils/request'
 
 vi.mock('@/utils/request', () => ({
   get: vi.fn(),
+  post: vi.fn(),
+  del: vi.fn(),
 }))
 
 describe('admin mcp service', () => {
@@ -72,5 +74,24 @@ describe('admin mcp service', () => {
       },
     })
     expect(result).toEqual(pageData)
+  })
+
+  it('createAdminMcp calls POST /admin/mcp with body and unwraps data', async () => {
+    const providerData = { id: 'p1', name: 'mcp1' }
+    vi.mocked(request.post).mockResolvedValue({ data: providerData } as never)
+
+    const body = { name: 'mcp1', description: 'd', transport: 'streamable_http', url: 'http://x' } as never
+    const result = await createAdminMcp(body)
+
+    expect(request.post).toHaveBeenCalledWith('/admin/mcp', { body })
+    expect(result).toEqual(providerData)
+  })
+
+  it('deleteAdminMcp calls DELETE /admin/mcp/:id', async () => {
+    vi.mocked(request.del).mockResolvedValue({ data: {} } as never)
+
+    await deleteAdminMcp('p1')
+
+    expect(request.del).toHaveBeenCalledWith('/admin/mcp/p1')
   })
 })

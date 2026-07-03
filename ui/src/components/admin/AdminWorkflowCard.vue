@@ -9,12 +9,14 @@ import type { AdminWorkflowRecord } from '@/models/admin-workflow'
 const props = defineProps<{
   workflow: AdminWorkflowRecord
   canUpdate: boolean
+  canDelete?: boolean
 }>()
 
 const emit = defineEmits<{
   (event: 'edit', workflowId: string): void
   (event: 'toggle-public', workflow: AdminWorkflowRecord): void
   (event: 'offline', workflow: AdminWorkflowRecord): void
+  (event: 'delete', workflow: AdminWorkflowRecord): void
 }>()
 
 const { t } = useI18n()
@@ -70,6 +72,15 @@ const visibilityActionLabel = computed(() => {
         @click="emit('offline', workflow)"
       >
         {{ t('admin.workflowsAdmin.actions.offline') }}
+      </a-button>
+      <a-button
+        v-if="canDelete ?? canUpdate"
+        status="danger"
+        type="outline"
+        :data-testid="`workflow-delete-${workflow.id}`"
+        @click="emit('delete', workflow)"
+      >
+        {{ t('admin.workflowsAdmin.actions.delete') }}
       </a-button>
     </div>
   </article>

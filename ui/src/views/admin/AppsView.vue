@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { type AdminAppRecord, listAdminApps, updateAdminAppBasicInfo } from '@/services/admin-apps'
+import {
+  type AdminAppRecord,
+  createAdminApp,
+  deleteAdminApp,
+  listAdminApps,
+  updateAdminAppBasicInfo,
+} from '@/services/admin-apps'
 import { useAdminStore } from '@/stores/admin'
 import { getErrorMessage } from '@/utils/error'
 
@@ -13,6 +19,7 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const saving = ref(false)
+const creating = ref(false)
 const apps = ref<AdminAppRecord[]>([])
 const total = ref(0)
 const filters = ref({
@@ -23,10 +30,14 @@ const filters = ref({
 const keyword = ref('')
 
 const modalVisible = ref(false)
+const createModalVisible = ref(false)
 const editingApp = ref<AdminAppRecord | null>(null)
 const form = ref({ name: '', description: '', icon: '' })
+const createForm = ref({ name: '', description: '', icon: '' })
 
 const canUpdate = computed(() => adminStore.hasPermission('app:update'))
+const canCreate = computed(() => adminStore.hasPermission('app:create'))
+const canDelete = computed(() => adminStore.hasPermission('app:delete'))
 const hasActiveFilters = computed(() => Boolean(filters.value.search))
 const emptyDescription = computed(() => {
   return hasActiveFilters.value
@@ -76,7 +87,7 @@ const onPageSizeChange = (size: number) => {
 }
 
 /**
- * 跳转到空间端应用编辑页查看详情。
+ * 跳转到应用编辑页查看详情。
  */
 const handleViewDetail = async (app: AdminAppRecord) => {
   await router.push({ name: 'admin-app-edit', params: { app_id: app.id } })
@@ -111,6 +122,60 @@ const submitEditBasic = async () => {
   } finally {
     saving.value = false
   }
+}
+
+/**
+ * 打开创建应用弹窗。
+ */
+const openCreateModal = () => {
+  createForm.value = { name: '', description: '', icon: '' }
+  createModalVisible.value = true
+}
+
+/**
+ * 提交创建应用，成功后跳转到编辑器。
+ */
+const submitCreate = async () => {
+  if (!createForm.value.name?.trim()) {
+    Message.warning(t('admin.apps.nameRequired'))
+    return
+  }
+  creating.value = true
+  try {
+    const app = await createAdminApp({
+      name: createForm.value.name,
+      description: createForm.value.description,
+      icon: createForm.value.icon || 'https://placehold.co/100x100/png?text=APP',
+    })
+    Message.success(t('admin.apps.createSuccess'))
+    createModalVisible.value = false
+    await router.push({ name: 'admin-app-edit', params: { app_id: app.id } })
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.apps.createFailed')))
+  } finally {
+    creating.value = false
+  }
+}
+
+/**
+ * 删除后台应用。
+ */
+const handleDelete = (app: AdminAppRecord) => {
+  Modal.warning({
+    title: t('admin.apps.deleteTitle'),
+    content: t('admin.apps.deleteContent', { name: app.name }),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await deleteAdminApp(app.id)
+        Message.success(t('admin.apps.deleteSuccess'))
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.apps.deleteFailed')))
+      } finally {
+        void loadApps()
+      }
+    },
+  })
 }
 
 const formatTimestamp = (timestamp?: number) => {
@@ -148,9 +213,17 @@ onMounted(() => {
 
 <template>
   <section class="space-y-6 p-6">
-    <header>
-      <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.apps.title') }}</h1>
-      <p class="mt-1 text-sm text-gray-500">{{ t('admin.apps.description') }}</p>
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.apps.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500">{{ t('admin.apps.description') }}</p>
+      </div>
+      <a-button v-if="canUpdate" type="primary" @click="openCreateModal">
+        <template #icon>
+          <icon-plus />
+        </template>
+        {{ t('admin.apps.createButton') }}
+      </a-button>
     </header>
 
     <!-- 搜索栏 -->
@@ -258,6 +331,15 @@ onMounted(() => {
             >
               {{ t('admin.apps.editBasic') }}
             </a-button>
+            <a-button
+              v-if="canDelete"
+              size="small"
+              status="danger"
+              :data-testid="`app-delete-${app.id}`"
+              @click="handleDelete(app)"
+            >
+              {{ t('admin.apps.deleteButton') }}
+            </a-button>
           </div>
         </article>
       </section>
@@ -305,6 +387,31 @@ onMounted(() => {
         </a-form-item>
         <a-form-item :label="t('admin.apps.appIcon')" field="icon">
           <a-input v-model="form.icon" :placeholder="t('admin.apps.iconPlaceholder')" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 创建应用弹窗（name + description + icon） -->
+    <a-modal
+      v-model:visible="createModalVisible"
+      :title="t('admin.apps.createButton')"
+      :ok-loading="creating"
+      :mask-closable="false"
+      @ok="submitCreate"
+    >
+      <a-form :model="createForm" layout="vertical">
+        <a-form-item :label="t('admin.apps.appName')" field="name" required>
+          <a-input v-model="createForm.name" :placeholder="t('admin.apps.namePlaceholder')" />
+        </a-form-item>
+        <a-form-item :label="t('admin.apps.appDescription')" field="description">
+          <a-textarea
+            v-model="createForm.description"
+            :placeholder="t('admin.apps.descriptionPlaceholder')"
+            :auto-size="{ minRows: 2, maxRows: 6 }"
+          />
+        </a-form-item>
+        <a-form-item :label="t('admin.apps.appIcon')" field="icon">
+          <a-input v-model="createForm.icon" :placeholder="t('admin.apps.iconPlaceholder')" />
         </a-form-item>
       </a-form>
     </a-modal>

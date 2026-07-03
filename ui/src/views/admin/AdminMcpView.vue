@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import type { GetMcpProvidersWithPageRequest, McpProvider } from '@/models/mcp'
-import { listAdminMcpProviders } from '@/services/admin-mcp'
+import type { CreateMcpProviderRequest, GetMcpProvidersWithPageRequest, McpProvider } from '@/models/mcp'
+import { createAdminMcp, deleteAdminMcp, listAdminMcpProviders } from '@/services/admin-mcp'
 import { getErrorMessage } from '@/utils/error'
 import CreateOrUpdateMcpModal from '@/views/space/mcp/components/CreateOrUpdateMcpModal.vue'
 
@@ -16,14 +16,16 @@ type McpPaginator = {
 }
 
 /**
- * 后台 MCP 管理页，负责展示平台可见的 MCP Provider 列表。
+ * 后台 MCP 管理页，负责展示平台可见的 MCP Provider 列表，并提供创建/删除入口。
  */
 const router = useRouter()
 const { t } = useI18n()
 
 const loading = ref(false)
+const saving = ref(false)
 const providers = ref<McpProvider[]>([])
 const showCreateOrUpdateMcpModalVisible = ref(false)
+const showAdminCreateModal = ref(false)
 const updateMcpProviderId = ref('')
 const paginator = ref<McpPaginator>({
   total_record: 0,
@@ -36,6 +38,13 @@ const filters = ref<GetMcpProvidersWithPageRequest>({
   current_page: 1,
   page_size: 20,
   category: '',
+})
+const adminForm = ref<CreateMcpProviderRequest>({
+  name: '',
+  description: '',
+  transport: 'streamable_http',
+  url: '',
+  command: '',
 })
 
 const hasActiveFilters = computed(() => Boolean(filters.value.search_word?.trim()))
@@ -70,19 +79,67 @@ const handleSearch = async () => {
 }
 
 /**
- * 打开创建 MCP 弹窗（复用空间端创建组件）。
+ * 打开后台创建 MCP 弹窗（直接调 admin 接口）。
  */
-const openCreateModal = () => {
-  updateMcpProviderId.value = ''
-  showCreateOrUpdateMcpModalVisible.value = true
+const openAdminCreateModal = () => {
+  adminForm.value = {
+    name: '',
+    description: '',
+    transport: 'streamable_http',
+    url: '',
+    command: '',
+  }
+  showAdminCreateModal.value = true
 }
 
 /**
- * 打开编辑 MCP 弹窗。
+ * 提交后台创建 MCP。
+ */
+const submitAdminCreate = async () => {
+  if (!adminForm.value.name?.trim()) {
+    Message.warning(t('admin.mcpAdmin.nameRequired'))
+    return
+  }
+  saving.value = true
+  try {
+    await createAdminMcp(adminForm.value)
+    Message.success(t('admin.mcpAdmin.createSuccess'))
+    showAdminCreateModal.value = false
+    await loadProviders()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.mcpAdmin.createFailed')))
+  } finally {
+    saving.value = false
+  }
+}
+
+/**
+ * 打开编辑 MCP 弹窗（复用空间端组件，完整编辑能力）。
  */
 const openEditModal = (provider: McpProvider) => {
   updateMcpProviderId.value = provider.id
   showCreateOrUpdateMcpModalVisible.value = true
+}
+
+/**
+ * 删除后台 MCP Provider。
+ */
+const handleDelete = (provider: McpProvider) => {
+  Modal.warning({
+    title: t('admin.mcpAdmin.deleteTitle'),
+    content: t('admin.mcpAdmin.deleteContent'),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await deleteAdminMcp(provider.id)
+        Message.success(t('admin.mcpAdmin.deleteSuccess'))
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.mcpAdmin.deleteFailed')))
+      } finally {
+        void loadProviders()
+      }
+    },
+  })
 }
 
 /**
@@ -108,7 +165,7 @@ onMounted(() => {
         <a-button @click="handleManage">
           {{ t('admin.mcpAdmin.manageEntry') }}
         </a-button>
-        <a-button type="primary" @click="openCreateModal">
+        <a-button type="primary" @click="openAdminCreateModal">
           {{ t('admin.mcpAdmin.createButton') }}
         </a-button>
       </div>
@@ -168,9 +225,12 @@ onMounted(() => {
           </div>
         </dl>
 
-        <div class="mt-4 flex justify-end">
+        <div class="mt-4 flex justify-end gap-2">
           <a-button size="small" type="outline" @click="openEditModal(provider)">
             {{ t('admin.mcpAdmin.editButton') }}
+          </a-button>
+          <a-button size="small" status="danger" @click="handleDelete(provider)">
+            {{ t('admin.mcpAdmin.deleteButton') }}
           </a-button>
         </div>
       </article>
@@ -193,5 +253,47 @@ onMounted(() => {
       v-model:mcp_provider_id="updateMcpProviderId"
       :callback="async () => await loadProviders()"
     />
+
+    <!-- 后台创建 MCP 弹窗（直接调 admin 接口） -->
+    <a-modal
+      v-model:visible="showAdminCreateModal"
+      :title="t('admin.mcpAdmin.createButton')"
+      :ok-loading="saving"
+      :mask-closable="false"
+      @ok="submitAdminCreate"
+    >
+      <a-form :model="adminForm" layout="vertical">
+        <a-form-item :label="t('admin.mcpAdmin.formName')" field="name" required>
+          <a-input v-model="adminForm.name" :placeholder="t('admin.mcpAdmin.namePlaceholder')" />
+        </a-form-item>
+        <a-form-item :label="t('admin.mcpAdmin.formDescription')" field="description">
+          <a-textarea
+            v-model="adminForm.description"
+            :placeholder="t('admin.mcpAdmin.descriptionPlaceholder')"
+            :auto-size="{ minRows: 2, maxRows: 6 }"
+          />
+        </a-form-item>
+        <a-form-item :label="t('admin.mcpAdmin.formTransport')" field="transport">
+          <a-select v-model="adminForm.transport">
+            <a-option value="streamable_http">streamable_http</a-option>
+            <a-option value="stdio">stdio</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item
+          v-if="adminForm.transport === 'streamable_http'"
+          :label="t('admin.mcpAdmin.formUrl')"
+          field="url"
+        >
+          <a-input v-model="adminForm.url" placeholder="https://example.com/mcp" />
+        </a-form-item>
+        <a-form-item
+          v-if="adminForm.transport === 'stdio'"
+          :label="t('admin.mcpAdmin.formCommand')"
+          field="command"
+        >
+          <a-input v-model="adminForm.command" placeholder="npx -y @modelcontextprotocol/server" />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </section>
 </template>

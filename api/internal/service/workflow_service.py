@@ -96,6 +96,44 @@ class WorkflowService(BaseService):
 
         return workflow
 
+    def _get_workflow_for_admin(self, workflow_id: UUID) -> Workflow:
+        """管理员视角：根据工作流id获取工作流，不校验账号归属"""
+        workflow = self.get(Workflow, workflow_id)
+        if not workflow:
+            raise NotFoundException("该工作流不存在，请核实后重试")
+        return workflow
+
+    def _get_owner_account(self, account_id) -> Account:
+        """根据账号id加载资源归属账号"""
+        account = self.db.session.query(Account).filter(Account.id == account_id).one_or_none()
+        if not account:
+            raise NotFoundException("资源所属账号不存在")
+        return account
+
+    def delete_workflow_for_admin(self, workflow_id: UUID) -> Workflow:
+        """管理员删除工作流，不校验账号归属"""
+        workflow = self._get_workflow_for_admin(workflow_id)
+        self.delete(workflow)
+        return workflow
+
+    def get_draft_graph_for_admin(self, workflow_id: UUID) -> dict[str, Any]:
+        """管理员获取工作流草稿图，复用空间端逻辑（以工作流归属账号执行）"""
+        workflow = self._get_workflow_for_admin(workflow_id)
+        account = self._get_owner_account(workflow.account_id)
+        return self.get_draft_graph(workflow_id, account)
+
+    def update_draft_graph_for_admin(self, workflow_id: UUID, draft_graph: dict[str, Any]) -> Workflow:
+        """管理员保存工作流草稿图，复用空间端逻辑（以工作流归属账号执行）"""
+        workflow = self._get_workflow_for_admin(workflow_id)
+        account = self._get_owner_account(workflow.account_id)
+        return self.update_draft_graph(workflow_id, draft_graph, account)
+
+    def publish_workflow_for_admin(self, workflow_id: UUID) -> Workflow:
+        """管理员发布工作流，复用空间端逻辑（以工作流归属账号执行）"""
+        workflow = self._get_workflow_for_admin(workflow_id)
+        account = self._get_owner_account(workflow.account_id)
+        return self.publish_workflow(workflow_id, account)
+
     def update_workflow(self, workflow_id: UUID, account: Account, **kwargs) -> Workflow:
         """根据传递的工作流id+请求更新工作流基础信息"""
         # 1.获取工作流基础信息并校验权限

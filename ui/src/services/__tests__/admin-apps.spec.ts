@@ -1,8 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  createAdminApp,
+  deleteAdminApp,
+  getAdminAppDraftConfig,
   listAdminApps,
   offlineAdminApp,
   updateAdminAppBasicInfo,
+  updateAdminAppDraftConfig,
   updateAdminAppIsPublic,
   updateAdminAppMetadata,
 } from '@/services/admin-apps'
@@ -11,6 +15,7 @@ import * as requestModule from '@/utils/request'
 vi.mock('@/utils/request', () => ({
   get: vi.fn(),
   post: vi.fn(),
+  del: vi.fn(),
   request: vi.fn(),
 }))
 
@@ -137,5 +142,45 @@ describe('admin apps service', () => {
 
     expect(requestModule.post).toHaveBeenCalledWith('/admin/apps/app-1/offline')
     expect(result).toEqual({})
+  })
+
+  it('createAdminApp calls POST /admin/apps with body and unwraps data', async () => {
+    const appData = { id: 'app-2', name: 'New App' }
+    vi.mocked(requestModule.post).mockResolvedValue({ data: appData } as never)
+
+    const body = { name: 'New App', description: 'd', icon: '🤖' } as never
+    const result = await createAdminApp(body)
+
+    expect(requestModule.post).toHaveBeenCalledWith('/admin/apps', { body })
+    expect(result).toEqual(appData)
+  })
+
+  it('deleteAdminApp calls DELETE /admin/apps/:id', async () => {
+    vi.mocked(requestModule.del).mockResolvedValue({ data: {} } as never)
+
+    await deleteAdminApp('app-1')
+
+    expect(requestModule.del).toHaveBeenCalledWith('/admin/apps/app-1')
+  })
+
+  it('getAdminAppDraftConfig calls GET /admin/apps/:id/draft-app-config', async () => {
+    const configData = { dialog_round: 10, preset_prompt: 'hi' }
+    vi.mocked(requestModule.get).mockResolvedValue({ data: configData } as never)
+
+    const result = await getAdminAppDraftConfig('app-1')
+
+    expect(requestModule.get).toHaveBeenCalledWith('/admin/apps/app-1/draft-app-config')
+    expect(result).toEqual(configData)
+  })
+
+  it('updateAdminAppDraftConfig calls POST /admin/apps/:id/draft-app-config with body', async () => {
+    const configData = { dialog_round: 10, preset_prompt: 'hi' }
+    vi.mocked(requestModule.post).mockResolvedValue({ data: configData } as never)
+
+    const body = { dialog_round: 10, preset_prompt: 'hi' } as never
+    const result = await updateAdminAppDraftConfig('app-1', body)
+
+    expect(requestModule.post).toHaveBeenCalledWith('/admin/apps/app-1/draft-app-config', { body })
+    expect(result).toEqual(configData)
   })
 })

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { useGetDraftAppConfig } from '@/hooks/use-app'
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { getAdminAppDraftConfig } from '@/services/admin-apps'
 import AgentAppAbility from './components/AgentAppAbility.vue'
 import ModelConfig from './components/ModelConfig.vue'
 import PresetPromptTextarea from './components/PresetPromptTextarea.vue'
@@ -24,13 +25,48 @@ const { t } = useI18n()
 const { draftAppConfigForm, loadDraftAppConfig } = useGetDraftAppConfig()
 const isDraftAppConfigRefreshing = ref(false)
 
+// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
+const isAdminContext = computed(
+  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
+)
+
+// 包装：加载应用草稿配置（admin/space 上下文自动切换）
+const loadDraftAppConfigDetail = async (appId: string) => {
+  if (isAdminContext.value) {
+    const data = await getAdminAppDraftConfig(appId)
+    draftAppConfigForm.value = {
+      dialog_round: data.dialog_round,
+      model_config: data.model_config,
+      capabilities: data.capabilities || {},
+      preset_prompt: data.preset_prompt,
+      long_term_memory: data.long_term_memory,
+      opening_statement: data.opening_statement,
+      opening_questions: data.opening_questions,
+      suggested_after_answer: data.suggested_after_answer,
+      review_config: data.review_config,
+      datasets: data.datasets,
+      retrieval_config: data.retrieval_config,
+      tools: data.tools,
+      mcp_bindings: data.mcp_bindings || [],
+      mcp_tool_snapshots: data.mcp_tool_snapshots || [],
+      agent_bindings: data.agent_bindings || [],
+      skills: data.skills,
+      workflows: data.workflows,
+      speech_to_text: data.speech_to_text,
+      text_to_speech: data.text_to_speech,
+    }
+  } else {
+    await loadDraftAppConfig(appId)
+  }
+}
+
 const refreshDraftAppConfig = async () => {
   const appId = String(route.params?.app_id ?? '')
   if (!appId) return
 
   try {
     isDraftAppConfigRefreshing.value = true
-    await loadDraftAppConfig(appId)
+    await loadDraftAppConfigDetail(appId)
   } finally {
     isDraftAppConfigRefreshing.value = false
   }

@@ -14,6 +14,13 @@ import {
   useUpdateDraftGraph,
   useShareWorkflow,
 } from '@/hooks/use-workflow'
+import {
+  getAdminWorkflow,
+  getAdminWorkflowDraftGraph,
+  publishAdminWorkflow,
+  updateAdminWorkflowDraftGraph,
+} from '@/services/admin-workflows'
+import { getErrorMessage } from '@/utils/error'
 import StartNode from './components/nodes/StartNode.vue'
 import LlmNode from './components/nodes/LLMNode.vue'
 import DatasetRetrievalNode from './components/nodes/DatasetRetrievalNode.vue'
@@ -216,6 +223,72 @@ const { nodes, edges, loadDraftGraph } = useGetDraftGraph()
 const { loading: publishWorkflowLoading, handlePublishWorkflow } = usePublishWorkflow()
 const { handleCancelPublish } = useCancelPublishWorkflow()
 const { loading: shareWorkflowLoading, handleShareWorkflow } = useShareWorkflow()
+
+// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
+const isAdminContext = computed(
+  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
+)
+
+// 包装：加载工作流基础信息（admin/space 上下文自动切换）
+const loadWorkflowDetail = async (workflowId: string) => {
+  if (isAdminContext.value) {
+    try {
+      getWorkflowLoading.value = true
+      const data = await getAdminWorkflow(workflowId)
+      workflow.value = data as unknown as Record<string, any>
+    } finally {
+      getWorkflowLoading.value = false
+    }
+  } else {
+    await loadWorkflow(workflowId)
+  }
+}
+
+// 包装：加载草稿图（admin/space 上下文自动切换，admin 路径下复用与 hook 一致的节点/边转换逻辑）
+const loadGraph = async (workflowId: string) => {
+  if (isAdminContext.value) {
+    try {
+      const data = await getAdminWorkflowDraftGraph(workflowId)
+      nodes.value = (data.nodes || []).map((node: Record<string, any>) => {
+        const { id, node_type: type, position, ...rest } = node
+        return { id, type, position, data: rest }
+      })
+      edges.value = (data.edges || []).map((edge: Record<string, any>) => {
+        const { source_handle, target_handle, ...rest } = edge
+        const finalSourceHandle =
+          edge.source_type === 'if_else' ? source_handle || 'true' : source_handle || undefined
+        const label =
+          edge.source_type === 'if_else' ? (finalSourceHandle === 'true' ? 'True' : 'False') : undefined
+        return {
+          ...rest,
+          sourceHandle: finalSourceHandle,
+          targetHandle: target_handle || undefined,
+          label,
+          animated: true,
+          style: { strokeWidth: 2, stroke: '#9ca3af' },
+        }
+      })
+    } catch (error: unknown) {
+      Message.error(getErrorMessage(error, t('appStudio.shell.loadGraphFailed')))
+    }
+  } else {
+    await loadDraftGraph(workflowId)
+  }
+}
+
+// 包装：发布工作流（admin/space 上下文自动切换）
+const publishWorkflowHandler = async (workflowId: string) => {
+  if (isAdminContext.value) {
+    await publishAdminWorkflow(workflowId)
+    Message.success(t('appStudio.shell.workflowConfigUpdated'))
+  } else {
+    await handlePublishWorkflow(workflowId)
+  }
+}
+
+// admin 上下文下隐藏分享/取消发布等仅个人空间可用的操作
+const showShareActions = computed(() => !isAdminContext.value)
+
 const {
   forkLoading,
   headerBackRoute,
@@ -231,6 +304,15 @@ const {
   workflow,
   router,
 })
+
+// admin 上下文下回退到后台工作流列表
+const headerBackRouteResolved = computed(() => {
+  if (isAdminContext.value && !isPreviewMode.value) {
+    return { name: 'admin-workflows' }
+  }
+  return headerBackRoute.value
+})
+
 const {
   shareActionLabel,
   canOperatePublishedActions,
@@ -240,9 +322,13 @@ const {
   handleCancelPublishAction,
 } = useWorkflowPublishActions({
   workflow,
-  handlePublishWorkflow,
-  handleShareWorkflow,
-  loadWorkflow,
+  handlePublishWorkflow: publishWorkflowHandler,
+  // admin 上下文下分享为空操作（admin 无分享到广场的能力）
+  handleShareWorkflow: async (workflowId: string, isPublic: boolean) => {
+    if (isAdminContext.value) return
+    await handleShareWorkflow(workflowId, isPublic)
+  },
+  loadWorkflow: loadWorkflowDetail,
   handleCancelPublish,
 })
 
@@ -250,7 +336,7 @@ const {
 const handleDebugSuccess = async () => {
   // 延迟重新加载 workflow 数据，确保后端已更新 is_debug_passed 状态
   setTimeout(async () => {
-    await loadWorkflow(workflowId.value)
+    await loadWorkflowDetail(workflowId.value)
   }, 500)
 }
 
@@ -407,11 +493,17 @@ const canSaveDraftGraph = () => {
 const saveDraftGraph = async (is_notify: boolean = false) => {
   if (isInitializing.value || isPreviewMode.value) return // 预览模式下不保存
   if (!canSaveDraftGraph()) return
-  await handleUpdateDraftGraph(
-    workflowId.value,
-    convertGraphToReq(nodes.value, edges.value),
-    is_notify,
-  )
+  const reqBody = convertGraphToReq(nodes.value, edges.value)
+  if (isAdminContext.value) {
+    try {
+      updateDraftGraphLoading.value = true
+      await updateAdminWorkflowDraftGraph(workflowId.value, reqBody)
+    } finally {
+      updateDraftGraphLoading.value = false
+    }
+  } else {
+    await handleUpdateDraftGraph(workflowId.value, reqBody, is_notify)
+  }
   workflow.value.updated_at = Math.floor(Date.now() / 1000)
 }
 const debounceSaveDraftGraph = debounce(() => {
@@ -499,16 +591,22 @@ onViewportChange((viewportTransform) => {
 // 页面DOM挂载完毕后加载数据
 onMounted(async () => {
   workflowId.value = String(route.params?.workflow_id ?? '')
-  await loadWorkflowDetailByMode({
-    workflowId: workflowId.value,
-    isPreviewMode: isPreviewMode.value,
-    workflow: workflow,
-    nodes: nodes,
-    edges: edges,
-    loadWorkflow,
-    loadDraftGraph,
-    onError: (message: string) => Message.error(message),
-  })
+  if (isAdminContext.value) {
+    // admin 上下文：直接调用 admin 服务加载工作流详情与草稿图
+    await loadWorkflowDetail(workflowId.value)
+    await loadGraph(workflowId.value)
+  } else {
+    await loadWorkflowDetailByMode({
+      workflowId: workflowId.value,
+      isPreviewMode: isPreviewMode.value,
+      workflow: workflow,
+      nodes: nodes,
+      edges: edges,
+      loadWorkflow,
+      loadDraftGraph,
+      onError: (message: string) => Message.error(message),
+    })
+  }
 
   isInitializing.value = false
 })
@@ -529,7 +627,7 @@ onBeforeUnmount(() => {
       <!-- 左侧工作流信息 -->
       <div class="flex items-center gap-2">
         <!-- 回退按钮 -->
-        <router-link :to="headerBackRoute">
+        <router-link :to="headerBackRouteResolved">
           <a-button size="mini">
             <template #icon>
               <icon-left />
@@ -612,7 +710,7 @@ onBeforeUnmount(() => {
             >
               {{ t('appStudio.shell.publishUpdate') }}
             </a-button>
-            <a-dropdown position="br">
+            <a-dropdown v-if="showShareActions" position="br">
               <a-button
                 type="primary"
                 class="!rounded-tr-lg !rounded-br-lg !w-5"
@@ -642,6 +740,15 @@ onBeforeUnmount(() => {
                 </a-doption>
               </template>
             </a-dropdown>
+            <!-- admin 上下文：仅保留发布配置按钮，无分享/取消发布下拉 -->
+            <a-button
+              v-else
+              type="primary"
+              class="!rounded-tr-lg !rounded-br-lg"
+              @click="handleUpdateConfig"
+            >
+              <icon-down />
+            </a-button>
           </a-button-group>
         </a-space>
       </div>
