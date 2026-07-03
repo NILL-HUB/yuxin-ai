@@ -33,6 +33,7 @@ class CreateSkillPackageReq(FlaskForm):
     enabled = BooleanField("enabled", default=True)
     readme = StringField("readme", validators=[Optional()])
     skill_code = StringField("skill_code", validators=[Optional()])
+    capabilities = DictField("capabilities", validators=[Optional()])
 
 
 class UpdateSkillPackageReq(FlaskForm):
@@ -50,6 +51,7 @@ class UpdateSkillPackageReq(FlaskForm):
     enabled = BooleanField("enabled", validators=[Optional()])
     readme = StringField("readme", validators=[Optional()])
     skill_code = StringField("skill_code", validators=[Optional()])
+    capabilities = DictField("capabilities", validators=[Optional()])
 
 
 class ImportCatalogSkillReq(FlaskForm):

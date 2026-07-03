@@ -110,7 +110,7 @@ class AdminSkillsHandler:
             "skill_code": req.skill_code.data,
             "tools": data.get("tools") or [],
             "tags": data.get("tags") or [],
-            "capabilities": data.get("capabilities") or {},
+            "capabilities": req.capabilities.data if req.capabilities.data is not None else (data.get("capabilities") or {}),
         }
         skill_package = self.skill_service.create_skill_package_for_admin(payload)
         resp = SkillPackageResp()
@@ -137,7 +137,7 @@ class AdminSkillsHandler:
             "skill_code": req.skill_code.data,
             "tools": data.get("tools") or [],
             "tags": data.get("tags") or [],
-            "capabilities": data.get("capabilities") or {},
+            "capabilities": req.capabilities.data if req.capabilities.data is not None else (data.get("capabilities") or {}),
         }
         skill_package = self.skill_service.update_skill_package_for_admin(skill_id, payload)
         resp = SkillPackageResp()

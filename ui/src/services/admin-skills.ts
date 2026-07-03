@@ -105,13 +105,13 @@ export type CreateSkillPackagePayload = {
   description?: string
   category?: string
   icon?: string
-  executor_type: 'scf' | 'prompt' | 'tool'
+  executor_type: 'scf' | 'prompt'
   enabled?: boolean
   readme?: string
   skill_code?: string
   tools?: SkillToolDefinition[]
   tags?: string[]
-  capabilities?: Record<string, unknown>
+  capabilities?: Record<string, boolean>
 }
 
 export type UpdateSkillPackagePayload = Omit<CreateSkillPackagePayload, 'source_key'> & {
