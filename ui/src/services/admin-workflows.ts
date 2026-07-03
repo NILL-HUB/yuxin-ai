@@ -6,7 +6,11 @@ import type {
   AdminWorkflowPageResponse,
   AdminWorkflowResponse,
   GetAdminWorkflowsRequest,
+  PublishAdminWorkflowRequest,
+  RollbackWorkflowVersionRequest,
   UpdateAdminWorkflowRequest,
+  WorkflowVersionListResponse,
+  WorkflowVersionRecord,
 } from '@/models/admin-workflow'
 import type {
   CreateWorkflowRequest,
@@ -99,9 +103,38 @@ export const updateAdminWorkflowDraftGraph = async (
  */
 export const publishAdminWorkflow = async (
   workflowId: string,
+  body?: PublishAdminWorkflowRequest,
 ): Promise<AdminWorkflowData> => {
   const response = await post<AdminWorkflowResponse>(
     `/admin/workflows/${workflowId}/publish`,
+    { body },
+  )
+  return response.data
+}
+
+/**
+ * 获取后台工作流版本历史列表。
+ */
+export const listAdminWorkflowVersions = async (
+  workflowId: string,
+): Promise<WorkflowVersionRecord[]> => {
+  const response = await get<WorkflowVersionListResponse>(
+    `/admin/workflows/${workflowId}/versions`,
+  )
+  return response.data.list
+}
+
+/**
+ * 回滚后台工作流到指定历史版本。
+ */
+export const rollbackAdminWorkflowVersion = async (
+  workflowId: string,
+  versionId: string,
+  body?: RollbackWorkflowVersionRequest,
+): Promise<Record<string, never>> => {
+  const response = await post<BaseResponse<Record<string, never>>>(
+    `/admin/workflows/${workflowId}/versions/${versionId}/rollback`,
+    { body },
   )
   return response.data
 }

@@ -32,7 +32,7 @@ from internal.core.workflow.nodes import (
 from internal.entity.workflow_entity import WorkflowStatus, DEFAULT_WORKFLOW_CONFIG, WorkflowResultStatus
 from internal.exception import ValidateErrorException, NotFoundException, ForbiddenException, FailException
 from internal.lib.helper import convert_model_to_dict, escape_like_pattern
-from internal.model import Account, Workflow, Dataset, ApiTool, WorkflowResult
+from internal.model import Account, Workflow, Dataset, ApiTool, WorkflowResult, WorkflowVersion
 from internal.schema.workflow_schema import CreateWorkflowReq, GetWorkflowsWithPageReq
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
@@ -128,11 +128,88 @@ class WorkflowService(BaseService):
         account = self._get_owner_account(workflow.account_id)
         return self.update_draft_graph(workflow_id, draft_graph, account)
 
-    def publish_workflow_for_admin(self, workflow_id: UUID) -> Workflow:
+    def publish_workflow_for_admin(self, workflow_id: UUID, summary: str = "") -> Workflow:
         """管理员发布工作流，复用空间端逻辑（以工作流归属账号执行）"""
         workflow = self._get_workflow_for_admin(workflow_id)
         account = self._get_owner_account(workflow.account_id)
-        return self.publish_workflow(workflow_id, account)
+        return self.publish_workflow(workflow_id, account, summary=summary)
+
+    def get_workflow_versions(self, workflow_id: UUID, account: Account) -> list[WorkflowVersion]:
+        """获取工作流的版本历史列表（按版本号倒序）"""
+        workflow = self.get_workflow(workflow_id, account)
+        return (
+            self.db.session.query(WorkflowVersion)
+            .filter(WorkflowVersion.workflow_id == workflow.id)
+            .order_by(WorkflowVersion.version.desc())
+            .all()
+        )
+
+    def get_workflow_versions_for_admin(self, workflow_id: UUID) -> list[WorkflowVersion]:
+        """管理员获取工作流版本历史列表，不校验账号归属"""
+        workflow = self._get_workflow_for_admin(workflow_id)
+        return (
+            self.db.session.query(WorkflowVersion)
+            .filter(WorkflowVersion.workflow_id == workflow.id)
+            .order_by(WorkflowVersion.version.desc())
+            .all()
+        )
+
+    def rollback_workflow_version(self, workflow_id: UUID, version_id: UUID, account: Account) -> Workflow:
+        """回滚工作流到指定历史版本
+
+        策略：将历史版本的 graph 复制回 draft_graph 与 graph，同时状态置为 PUBLISHED，
+        并创建一条新的版本记录标记为当前发布版本（历史版本 is_current_published 全部置 False）。
+        """
+        # 1.获取工作流并校验权限
+        workflow = self.get_workflow(workflow_id, account)
+
+        # 2.查询目标历史版本
+        target_version = self.db.session.query(WorkflowVersion).filter(
+            WorkflowVersion.id == version_id,
+            WorkflowVersion.workflow_id == workflow.id,
+        ).one_or_none()
+        if target_version is None:
+            raise NotFoundException("目标工作流版本不存在")
+
+        # 3.将历史版本 graph 复制回 workflow 的 draft_graph 与 graph
+        historical_graph = target_version.graph or {}
+        self.update(workflow, **{
+            "draft_graph": historical_graph,
+            "graph": historical_graph,
+            "status": WorkflowStatus.PUBLISHED.value,
+            "is_debug_passed": False,
+            "published_at": datetime.now(UTC),
+        })
+
+        # 4.创建新版本记录（基于历史版本内容），并将其他版本标记为非当前发布
+        try:
+            latest_version = self.db.session.query(WorkflowVersion).filter(
+                WorkflowVersion.workflow_id == workflow.id
+            ).order_by(WorkflowVersion.version.desc()).first()
+            new_version_no = (latest_version.version + 1) if latest_version else 1
+
+            self.db.session.query(WorkflowVersion).filter(
+                WorkflowVersion.workflow_id == workflow.id,
+                WorkflowVersion.is_current_published.is_(True),
+            ).update({WorkflowVersion.is_current_published: False}, synchronize_session=False)
+
+            self.create(WorkflowVersion, **{
+                "workflow_id": workflow.id,
+                "version": new_version_no,
+                "graph": historical_graph,
+                "is_current_published": True,
+                "summary": f"回滚自版本 v{target_version.version}",
+            })
+        except Exception as e:
+            logger.warning("回滚创建工作流版本记录失败: workflow_id=%s, error=%s", workflow.id, e)
+
+        return workflow
+
+    def rollback_workflow_version_for_admin(self, workflow_id: UUID, version_id: UUID) -> Workflow:
+        """管理员回滚工作流到指定历史版本，不校验账号归属"""
+        workflow = self._get_workflow_for_admin(workflow_id)
+        account = self._get_owner_account(workflow.account_id)
+        return self.rollback_workflow_version(workflow_id, version_id, account)
 
     def update_workflow(self, workflow_id: UUID, account: Account, **kwargs) -> Workflow:
         """根据传递的工作流id+请求更新工作流基础信息"""
@@ -440,8 +517,12 @@ class WorkflowService(BaseService):
 
         return handle_stream()
 
-    def publish_workflow(self, workflow_id: UUID, account: Account) -> Workflow:
-        """根据传递的工作流id，发布指定的工作流"""
+    def publish_workflow(self, workflow_id: UUID, account: Account, summary: str = "") -> Workflow:
+        """根据传递的工作流id，发布指定的工作流
+
+        发布时同时创建一条 WorkflowVersion 记录，标记为当前发布版本，
+        并将历史版本的 is_current_published 置为 False。
+        """
         # 1.根据传递的id获取工作流并校验权限
         workflow = self.get_workflow(workflow_id, account)
 
@@ -470,6 +551,30 @@ class WorkflowService(BaseService):
             "is_debug_passed": False,
             "published_at": datetime.now(UTC),
         })
+
+        # 5.创建版本记录：计算新版本号，并将历史版本的 is_current_published 置为 False
+        try:
+            latest_version = self.db.session.query(WorkflowVersion).filter(
+                WorkflowVersion.workflow_id == workflow.id
+            ).order_by(WorkflowVersion.version.desc()).first()
+            new_version_no = (latest_version.version + 1) if latest_version else 1
+
+            if latest_version is not None:
+                # 将所有历史版本标记为非当前发布
+                self.db.session.query(WorkflowVersion).filter(
+                    WorkflowVersion.workflow_id == workflow.id,
+                    WorkflowVersion.is_current_published.is_(True),
+                ).update({WorkflowVersion.is_current_published: False}, synchronize_session=False)
+
+            self.create(WorkflowVersion, **{
+                "workflow_id": workflow.id,
+                "version": new_version_no,
+                "graph": executable_graph,
+                "is_current_published": True,
+                "summary": summary or "",
+            })
+        except Exception as e:
+            logger.warning("创建工作流版本记录失败: workflow_id=%s, error=%s", workflow.id, e)
 
         return workflow
 

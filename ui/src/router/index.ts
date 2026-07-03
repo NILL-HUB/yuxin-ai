@@ -292,7 +292,7 @@ const router = createRouter({
               path: 'apps/:app_id/edit',
               name: 'admin-app-edit',
               component: () => import('@/views/admin/apps/AdminAppDetailView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'], fluid: true },
             },
             {
               path: 'apps/:app_id/published',
@@ -322,7 +322,7 @@ const router = createRouter({
               path: 'workflows/:workflow_id/edit',
               name: 'admin-workflow-edit',
               component: () => import('@/views/admin/workflows/AdminWorkflowDetailView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'], fluid: true },
             },
             {
               path: 'datasets/:dataset_id/documents',

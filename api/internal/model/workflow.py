@@ -58,6 +58,13 @@ class Workflow(db.Model):
 
     # 关系定义
     account = relationship("Account", foreign_keys=[account_id], lazy="joined")
+    versions = relationship(
+        "WorkflowVersion",
+        foreign_keys="WorkflowVersion.workflow_id",
+        back_populates="workflow",
+        lazy="selectin",
+        order_by="WorkflowVersion.version.desc()",
+    )
 
 
 class WorkflowResult(db.Model):
@@ -86,3 +93,41 @@ class WorkflowResult(db.Model):
         default=_utcnow_naive,
     )
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
+
+
+class WorkflowVersion(db.Model):
+    """工作流版本历史表，存储每次发布的 graph 快照，支持回滚到任意历史版本。
+
+    对标 AppConfigVersion 的设计：
+    - 每次 publish 时创建新版本记录
+    - is_current_published 标记当前发布版本
+    - 支持回滚：将历史版本 graph 复制回 draft_graph
+    """
+    __tablename__ = "workflow_version"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="pk_workflow_version_id"),
+        Index("workflow_version_workflow_id_idx", "workflow_id"),
+        Index("workflow_version_is_current_idx", "is_current_published"),
+    )
+
+    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    workflow_id = Column(UUID, ForeignKey("workflow.id"), nullable=False)
+    version = Column(Integer, nullable=False, server_default=text("1"))  # 版本号，递增
+    graph = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 该版本的 graph 快照
+    is_current_published = Column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )  # 是否是当前发布版本
+    summary = Column(Text, nullable=False, server_default=text("''::text"))  # 版本说明/发布备注
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(0)"),
+        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
+        default=_utcnow_naive,
+    )
+    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
+
+    # 关系定义
+    workflow = relationship("Workflow", foreign_keys=[workflow_id], lazy="joined")

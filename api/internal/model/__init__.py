@@ -7,7 +7,7 @@ from .dataset import Dataset, Document, Segment, KeywordTable, DatasetQuery, Pro
 from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, MemoryCandidate, ExternalDataSource
 from .end_user import EndUser
 from .upload_file import UploadFile
-from .workflow import Workflow, WorkflowResult
+from .workflow import Workflow, WorkflowResult, WorkflowVersion
 from .platform import WechatConfig, WechatEndUser, WechatMessage
 from .tag import Tag, AppTag, WorkflowTag
 from .tool_confirmation import ToolConfirmation
@@ -34,7 +34,7 @@ __all__ = [
     "Conversation", "Message", "MessageAgentThought",
     "Account", "AccountOAuth", "AccountSession",
     "ApiKey", "EndUser",
-    "Workflow", "WorkflowResult",
+    "Workflow", "WorkflowResult", "WorkflowVersion",
     "WechatConfig", "WechatEndUser", "WechatMessage",
     "Tag", "AppTag", "WorkflowTag",
     "McpProvider",

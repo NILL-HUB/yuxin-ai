@@ -13,7 +13,7 @@ class AdminWorkflowService:
 
     def list_workflows(self, *, search: str = "", status: str = "all", current_page: int = 1, page_size: int = 20) -> dict[str, object]:
         current_page = max(int(current_page or 1), 1)
-        page_size = max(min(int(page_size or 20), 50), 1)
+        page_size = max(min(int(page_size or 20), 100), 1)
         query = self.session.query(Workflow)
         if search:
             query = query.filter(Workflow.name.ilike(f"%{escape_like_pattern(search)}%"))

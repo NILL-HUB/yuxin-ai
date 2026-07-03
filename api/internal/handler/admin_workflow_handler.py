@@ -11,7 +11,11 @@ from internal.schema.admin_workflow_schema import (
     AdminWorkflowPageResp,
     AdminWorkflowResp,
     GetAdminWorkflowsReq,
+    PublishAdminWorkflowReq,
+    RollbackWorkflowVersionReq,
     UpdateAdminWorkflowReq,
+    WorkflowVersionListResp,
+    WorkflowVersionResp,
 )
 from internal.schema.workflow_schema import CreateWorkflowReq
 from internal.service import WorkflowService
@@ -102,7 +106,10 @@ class AdminWorkflowHandler:
     @permission_required("workflow:update")
     def publish(self, workflow_id: UUID):
         """发布工作流（管理员视角，复用空间端服务）"""
-        self.workflow_service.publish_workflow_for_admin(workflow_id)
+        req = PublishAdminWorkflowReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        self.workflow_service.publish_workflow_for_admin(workflow_id, summary=req.summary.data or "")
         return success_message("发布工作流成功")
 
     @admin_login_required
@@ -110,6 +117,39 @@ class AdminWorkflowHandler:
     def offline(self, workflow_id: UUID):
         self.admin_workflow_service.offline_workflow(workflow_id)
         return success_message("下架工作流成功")
+
+    @admin_login_required
+    @permission_required("workflow:read")
+    def get_versions(self, workflow_id: UUID):
+        """获取工作流版本历史列表"""
+        versions = self.workflow_service.get_workflow_versions_for_admin(workflow_id)
+        from internal.lib.helper import datetime_to_timestamp
+        payload = {
+            "list": [
+                {
+                    "id": str(v.id),
+                    "workflow_id": str(v.workflow_id),
+                    "version": v.version,
+                    "is_current_published": v.is_current_published,
+                    "summary": v.summary or "",
+                    "created_at": datetime_to_timestamp(v.created_at),
+                    "updated_at": datetime_to_timestamp(v.updated_at),
+                }
+                for v in versions
+            ]
+        }
+        resp = WorkflowVersionListResp()
+        return success_json(resp.dump(payload))
+
+    @admin_login_required
+    @permission_required("workflow:update")
+    def rollback_version(self, workflow_id: UUID, version_id: UUID):
+        """回滚工作流到指定历史版本"""
+        req = RollbackWorkflowVersionReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        self.workflow_service.rollback_workflow_version_for_admin(workflow_id, version_id)
+        return success_message("回滚工作流版本成功")
 
     def _get_admin_account(self) -> Account:
         """获取管理员绑定的空间账号，作为资源的归属账号"""

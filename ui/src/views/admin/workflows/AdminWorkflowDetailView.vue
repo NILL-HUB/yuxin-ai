@@ -17,9 +17,12 @@ import {
 import {
   getAdminWorkflow,
   getAdminWorkflowDraftGraph,
+  listAdminWorkflowVersions,
   publishAdminWorkflow,
+  rollbackAdminWorkflowVersion,
   updateAdminWorkflowDraftGraph,
 } from '@/services/admin-workflows'
+import type { WorkflowVersionRecord } from '@/models/admin-workflow'
 import { getErrorMessage } from '@/utils/error'
 import StartNode from '@/views/space/workflows/components/nodes/StartNode.vue'
 import LlmNode from '@/views/space/workflows/components/nodes/LLMNode.vue'
@@ -228,6 +231,55 @@ const { loading: shareWorkflowLoading, handleShareWorkflow } = useShareWorkflow(
 const isAdminContext = computed(
   () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
 )
+
+// 版本历史抽屉（仅 admin 上下文使用）
+const versionDrawerVisible = ref(false)
+const versionLoading = ref(false)
+const versionList = ref<WorkflowVersionRecord[]>([])
+const rollbackLoading = ref(false)
+const rollbackConfirmVisible = ref(false)
+const pendingRollbackVersion = ref<WorkflowVersionRecord | null>(null)
+
+const openVersionDrawer = async () => {
+  versionDrawerVisible.value = true
+  versionLoading.value = true
+  try {
+    versionList.value = await listAdminWorkflowVersions(workflowId.value)
+  } catch (err) {
+    Message.error(getErrorMessage(err, t('workflowEditor.version.loadFailed')))
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+const confirmRollback = (version: WorkflowVersionRecord) => {
+  pendingRollbackVersion.value = version
+  rollbackConfirmVisible.value = true
+}
+
+const handleRollback = async () => {
+  if (!pendingRollbackVersion.value) return
+  rollbackLoading.value = true
+  try {
+    await rollbackAdminWorkflowVersion(workflowId.value, pendingRollbackVersion.value.id)
+    Message.success(t('workflowEditor.version.rollbackSuccess'))
+    rollbackConfirmVisible.value = false
+    pendingRollbackVersion.value = null
+    // 回滚后重新加载版本列表与画布
+    await openVersionDrawer()
+    await loadGraph(workflowId.value)
+    await loadWorkflowDetail(workflowId.value)
+  } catch (err) {
+    Message.error(getErrorMessage(err, t('workflowEditor.version.rollbackFailed')))
+  } finally {
+    rollbackLoading.value = false
+  }
+}
+
+const formatVersionTime = (ts: number) => {
+  if (!ts) return '-'
+  return new Date(ts * 1000).toLocaleString(locale.value === 'zh-CN' ? 'zh-CN' : 'en-US')
+}
 
 // 包装：加载工作流基础信息（admin/space 上下文自动切换）
 const loadWorkflowDetail = async (workflowId: string) => {
@@ -619,7 +671,7 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- 外部容器 -->
-  <div class="w-screen h-screen flex flex-col overflow-hidden relative">
+  <div class="w-full h-full flex flex-col overflow-hidden relative">
     <!-- 顶部Header -->
     <div
       class="h-[77px] flex-shrink-0 bg-white p-4 flex items-center justify-between relative border-b"
@@ -689,6 +741,14 @@ onBeforeUnmount(() => {
       <!-- 右侧操作按钮 -->
       <div class="">
         <a-space :size="12">
+          <!-- admin 上下文：版本历史按钮 -->
+          <a-button
+            v-if="isAdminContext && !isPreviewMode"
+            @click="openVersionDrawer"
+          >
+            <template #icon><icon-history /></template>
+            {{ t('workflowEditor.version.history') }}
+          </a-button>
           <!-- 预览模式：显示"添加到我的个人空间"按钮 -->
           <a-button
             v-if="isPreviewMode"
@@ -1140,6 +1200,73 @@ onBeforeUnmount(() => {
         />
       </vue-flow>
     </div>
+    <!-- admin 上下文：版本历史抽屉 -->
+    <a-drawer
+      v-if="isAdminContext"
+      :visible="versionDrawerVisible"
+      :width="480"
+      :title="t('workflowEditor.version.historyTitle')"
+      :footer="false"
+      @cancel="versionDrawerVisible = false"
+    >
+      <a-spin :loading="versionLoading" tip="" class="w-full">
+        <div v-if="versionList.length === 0 && !versionLoading" class="text-center text-gray-400 py-12">
+          {{ t('workflowEditor.version.empty') }}
+        </div>
+        <a-timeline v-else class="!mt-2">
+          <a-timeline-item
+            v-for="v in versionList"
+            :key="v.id"
+            :dot-color="v.is_current_published ? '#00b42a' : '#86909c'"
+          >
+            <div class="flex items-start justify-between gap-2 pb-1">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="font-semibold text-gray-800">v{{ v.version }}</span>
+                  <a-tag
+                    v-if="v.is_current_published"
+                    size="small"
+                    color="green"
+                    class="!rounded"
+                  >
+                    {{ t('workflowEditor.version.current') }}
+                  </a-tag>
+                </div>
+                <div v-if="v.summary" class="text-sm text-gray-600 mt-1 break-all">
+                  {{ v.summary }}
+                </div>
+                <div class="text-xs text-gray-400 mt-1">
+                  {{ formatVersionTime(v.created_at) }}
+                </div>
+              </div>
+              <a-button
+                v-if="!v.is_current_published"
+                size="mini"
+                type="outline"
+                :loading="rollbackLoading && pendingRollbackVersion?.id === v.id"
+                @click="confirmRollback(v)"
+              >
+                {{ t('workflowEditor.version.rollback') }}
+              </a-button>
+            </div>
+          </a-timeline-item>
+        </a-timeline>
+      </a-spin>
+    </a-drawer>
+    <!-- 回滚确认弹窗 -->
+    <a-modal
+      :visible="rollbackConfirmVisible"
+      :title="t('workflowEditor.version.rollbackConfirmTitle')"
+      :confirm-loading="rollbackLoading"
+      :ok-text="t('workflowEditor.version.confirmRollback')"
+      :cancel-text="t('workflowEditor.version.cancel')"
+      @ok="handleRollback"
+      @cancel="rollbackConfirmVisible = false"
+    >
+      <p class="text-gray-600">
+        {{ t('workflowEditor.version.rollbackConfirmText', { version: pendingRollbackVersion ? 'v' + pendingRollbackVersion.version : '' }) }}
+      </p>
+    </a-modal>
   </div>
 </template>
 

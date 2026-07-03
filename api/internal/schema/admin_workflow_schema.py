@@ -8,12 +8,20 @@ class GetAdminWorkflowsReq(FlaskForm):
     search = StringField("search", default="", validators=[Optional(), Length(max=255)])
     status = StringField("status", default="all", validators=[Optional(), Length(max=255)])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
-    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
+    page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
 class UpdateAdminWorkflowReq(FlaskForm):
     status = StringField("status", validators=[Optional(), Length(max=255)])
     is_public = BooleanField("is_public", validators=[Optional()])
+
+
+class PublishAdminWorkflowReq(FlaskForm):
+    summary = StringField("summary", default="", validators=[Optional(), Length(max=500)])
+
+
+class RollbackWorkflowVersionReq(FlaskForm):
+    summary = StringField("summary", default="", validators=[Optional(), Length(max=500)])
 
 
 class AdminWorkflowResp(Schema):
@@ -31,3 +39,18 @@ class AdminWorkflowResp(Schema):
 class AdminWorkflowPageResp(Schema):
     list = fields.List(fields.Nested(AdminWorkflowResp))
     paginator = fields.Dict()
+
+
+class WorkflowVersionResp(Schema):
+    id = fields.String()
+    workflow_id = fields.String()
+    version = fields.Integer()
+    is_current_published = fields.Boolean()
+    summary = fields.String()
+    created_at = fields.Integer()
+    updated_at = fields.Integer()
+
+
+class WorkflowVersionListResp(Schema):
+    list = fields.List(fields.Nested(WorkflowVersionResp))
+

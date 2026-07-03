@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import { adminChangePassword, adminLogout } from '@/services/admin-auth'
@@ -9,7 +9,11 @@ import storage from '@/utils/storage'
 
 const { t } = useI18n()
 const router = useRouter()
+const route = useRoute()
 const adminStore = useAdminStore()
+
+// 编辑器路由（工作流/应用编排画布）需要 fluid 布局：取消 padding，让画布填满 topbar 下方区域
+const isFluidRoute = computed(() => Boolean(route.meta.fluid))
 const passwordModalVisible = ref(false)
 const passwordLoading = ref(false)
 const passwordForm = ref({ currentPassword: '', newPassword: '', confirmPassword: '' })
@@ -248,7 +252,7 @@ const handleLogout = async () => {
           <a-button type="outline" @click="handleLogout">{{ t('admin.adminLayout.logout') }}</a-button>
         </div>
       </header>
-      <section class="admin-content">
+      <section class="admin-content" :class="{ 'admin-content--fluid': isFluidRoute }">
         <router-view />
       </section>
     </main>
@@ -491,6 +495,9 @@ const handleLogout = async () => {
 
 .admin-main {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
 }
 
 .admin-topbar {
@@ -502,6 +509,7 @@ const handleLogout = async () => {
   border-bottom: 1px solid #e1e8f2;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(12px);
+  flex-shrink: 0;
 }
 
 .topbar-kicker {
@@ -543,5 +551,14 @@ h1 {
 
 .admin-content {
   padding: 28px 32px 56px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* fluid 模式：编辑器画布路由取消 padding，让画布填满 topbar 下方区域 */
+.admin-content--fluid {
+  padding: 0;
+  overflow: hidden;
 }
 </style>

@@ -845,6 +845,18 @@ class Router:
             view_func=self.admin_workflow_handler.publish,
         )
         bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>/versions",
+            endpoint="admin_workflow_versions",
+            methods=["GET"],
+            view_func=self.admin_workflow_handler.get_versions,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>/versions/<uuid:version_id>/rollback",
+            endpoint="admin_workflow_version_rollback",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.rollback_version,
+        )
+        bp.add_url_rule(
             "/admin/datasets",
             endpoint="admin_dataset_entry",
             methods=["GET"],

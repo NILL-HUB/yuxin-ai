@@ -29,3 +29,17 @@ export type AdminWorkflowResponse = BaseResponse<AdminWorkflowRecord>
 export type AdminWorkflowPageData = AdminWorkflowPageResponse['data']
 export type AdminWorkflowData = AdminWorkflowResponse['data']
 export type AdminWorkflowOfflineResponse = BaseResponse<Record<string, never>>
+
+export type WorkflowVersionRecord = {
+  id: string
+  workflow_id: string
+  version: number
+  is_current_published: boolean
+  summary: string
+  created_at: number
+  updated_at: number
+}
+
+export type WorkflowVersionListResponse = BaseResponse<{ list: WorkflowVersionRecord[] }>
+export type PublishAdminWorkflowRequest = { summary?: string }
+export type RollbackWorkflowVersionRequest = { summary?: string }
