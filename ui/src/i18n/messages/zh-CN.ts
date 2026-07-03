@@ -350,6 +350,7 @@ export default {
       userCreatedSource: '用户创建',
       published: '已发布',
       unpublished: '未发布',
+      catalogReadonly: '目录内置（只读）',
     },
     skillsAdmin: {
       title: 'Skills管理',

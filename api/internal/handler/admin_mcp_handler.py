@@ -7,7 +7,7 @@ from injector import inject
 from internal.extension.database_extension import db
 from internal.middleware import admin_login_required, permission_required
 from internal.model import Account
-from internal.schema.mcp_schema import CreateMcpProviderReq
+from internal.schema.mcp_schema import CreateMcpProviderReq, McpProviderResp, UpdateMcpProviderReq
 from internal.service.mcp_service import McpService
 from pkg.response import success_json, success_message, validate_error_json
 
@@ -30,6 +30,31 @@ class AdminMcpHandler:
         account = self._get_admin_account()
         provider = self.mcp_service.create_mcp_provider(req, account)
         return success_json({"id": str(provider.id)})
+
+    @admin_login_required
+    @permission_required("mcp:read")
+    def get(self, provider_id: UUID):
+        """获取 MCP 详情（管理员视角，不校验账号归属）"""
+        provider = self.mcp_service.get_mcp_provider_for_admin(provider_id)
+        resp = McpProviderResp()
+        return success_json(resp.dump(provider))
+
+    @admin_login_required
+    @permission_required("mcp:update")
+    def update(self, provider_id: UUID):
+        """更新 MCP（管理员视角，不校验账号归属）"""
+        req = UpdateMcpProviderReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        self.mcp_service.update_mcp_provider_for_admin(provider_id, req)
+        return success_message("更新MCP成功")
+
+    @admin_login_required
+    @permission_required("mcp:update")
+    def regenerate_icon(self, provider_id: UUID):
+        """重新生成 MCP 图标（管理员视角，不校验账号归属）"""
+        icon = self.mcp_service.regenerate_icon_for_admin(provider_id)
+        return success_json({"icon": icon})
 
     @admin_login_required
     @permission_required("mcp:delete")

@@ -13,6 +13,11 @@ from pkg.paginator import PaginatorReq
 class GetSkillsWithPageReq(PaginatorReq):
     """获取技能包分页列表请求。"""
 
+    page_size = IntegerField(
+        "page_size",
+        default=20,
+        validators=[Optional(), NumberRange(min=1, max=100, message="每页数据的条数范围在1-100")],
+    )
     search_word = StringField("search_word", default="", validators=[Optional()])
     category = StringField("category", default="", validators=[Optional(), Length(max=64)])
 

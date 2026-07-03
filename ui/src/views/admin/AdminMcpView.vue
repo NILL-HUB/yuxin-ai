@@ -436,12 +436,25 @@ onMounted(async () => {
             class="flex items-center justify-end gap-1.5 mt-2.5 pt-2 border-t border-gray-100"
             @click="stopPropagation"
           >
-            <a-button size="mini" type="outline" @click="openEditModal(provider)">
+            <a-button
+              v-if="provider.source_type !== 'catalog'"
+              size="mini"
+              type="outline"
+              @click="openEditModal(provider)"
+            >
               {{ t('admin.mcpAdmin.editButton') }}
             </a-button>
-            <a-button size="mini" status="danger" @click="handleDelete(provider)">
+            <a-button
+              v-if="provider.source_type !== 'catalog'"
+              size="mini"
+              status="danger"
+              @click="handleDelete(provider)"
+            >
               {{ t('admin.mcpAdmin.deleteButton') }}
             </a-button>
+            <span v-else class="text-[11px] text-gray-400">
+              {{ t('admin.mcpAdmin.catalogReadonly') }}
+            </span>
           </div>
         </a-card>
       </a-col>
@@ -617,6 +630,7 @@ onMounted(async () => {
     <create-or-update-mcp-modal
       v-model:visible="showCreateOrUpdateMcpModalVisible"
       v-model:mcp_provider_id="updateMcpProviderId"
+      :admin-mode="true"
       :callback="async () => await loadProviders()"
     />
 

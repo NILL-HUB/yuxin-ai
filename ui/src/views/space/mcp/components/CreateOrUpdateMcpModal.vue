@@ -7,6 +7,7 @@ import { useUploadImage } from '@/hooks/use-upload-file'
 import { getErrorMessage } from '@/utils/error'
 import { getStoreCategoryDisplayName } from '@/utils/store-display'
 import { getMcpCategories, getMcpProvider, createMcpProvider, updateMcpProvider, generateMcpIconPreview, regenerateMcpIcon } from '@/services/mcp'
+import { getAdminMcp, updateAdminMcp, regenerateAdminMcpIcon } from '@/services/admin-mcp'
 import { mcpSchemaAssistantChat } from '@/services/ai'
 import type { McpCategory } from '@/models/mcp'
 
@@ -32,6 +33,7 @@ const props = defineProps({
   mcp_provider_id: { type: String, default: '', required: false },
   visible: { type: Boolean, required: true },
   callback: { type: Function, required: false },
+  adminMode: { type: Boolean, default: false, required: false },
 })
 
 const emits = defineEmits(['update:visible', 'update:mcp_provider_id'])
@@ -142,7 +144,7 @@ const loadProvider = async (providerId: string) => {
 
   loadingProvider.value = true
   try {
-    const res = await getMcpProvider(providerId)
+    const res = props.adminMode ? await getAdminMcp(providerId) : await getMcpProvider(providerId)
     applyMcpPayload(res.data)
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('space.mcp.detailLoadFailed')))
@@ -168,7 +170,9 @@ const handleGenerateIcon = async () => {
     generateLoading.value = true
     if (isEditMode.value) {
       const providerId = props.mcp_provider_id
-      const res = await regenerateMcpIcon(providerId)
+      const res = props.adminMode
+        ? await regenerateAdminMcpIcon(providerId)
+        : await regenerateMcpIcon(providerId)
       if (res.data.icon) {
         form.value.icon = res.data.icon
         form.value.fileList = [{ uid: '1', name: t('space.mcp.iconPlaceholder'), url: res.data.icon }]
@@ -270,7 +274,11 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
   submitLoading.value = true
   try {
     if (isEditMode.value) {
-      await updateMcpProvider(props.mcp_provider_id, payload)
+      if (props.adminMode) {
+        await updateAdminMcp(props.mcp_provider_id, payload)
+      } else {
+        await updateMcpProvider(props.mcp_provider_id, payload)
+      }
       Message.success(t('space.mcp.updateSuccess'))
     } else {
       await createMcpProvider(payload)

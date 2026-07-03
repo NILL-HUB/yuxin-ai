@@ -666,6 +666,50 @@ class McpService(BaseService):
         self.delete(provider)
         return provider
 
+    def get_mcp_provider_for_admin(self, provider_id: UUID) -> dict[str, Any]:
+        """管理员获取 MCP 详情，不校验账号归属。"""
+        self._ensure_mcp_provider_table()
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+        return self._build_private_provider_payload(provider, include_tools=True)
+
+    def update_mcp_provider_for_admin(self, provider_id: UUID, req: UpdateMcpProviderReq) -> McpProvider:
+        """管理员更新 MCP，不校验账号归属。"""
+        self._ensure_mcp_provider_table()
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+        label = _normalize_text(req.label.data) or _normalize_text(req.name.data)
+        category = normalize_mcp_category(req.category.data, name=req.name.data, description=req.description.data)
+        self.update(
+            provider,
+            name=req.name.data.strip(),
+            label=label,
+            icon=_normalize_text(req.icon.data),
+            description=req.description.data.strip(),
+            category=category,
+            transport=normalize_mcp_transport(req.transport.data) or "streamable_http",
+            url=_normalize_text(req.url.data),
+            command=_normalize_text(req.command.data),
+            headers=req.headers.data or [],
+            tool_names=req.tool_names.data or [],
+            args=req.args.data or [],
+            env=req.env.data or {},
+            timeout_seconds=int(req.timeout_seconds.data or 30),
+        )
+        return provider
+
+    def regenerate_icon_for_admin(self, provider_id: UUID) -> str:
+        """管理员重新生成 MCP 图标，不校验账号归属。"""
+        self._ensure_mcp_provider_table()
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+        icon = self.icon_generator_service.generate_icon(provider.name, provider.description)
+        self.update(provider, icon=icon)
+        return icon
+
     def publish_mcp_provider(self, provider_id: UUID, account: Account) -> McpProvider:
         provider = self._resolve_private_provider(provider_id, account)
         if not _normalize_text(provider.name) or not _normalize_text(provider.description):

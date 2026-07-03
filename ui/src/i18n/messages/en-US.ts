@@ -350,6 +350,7 @@ export default {
       userCreatedSource: 'User created',
       published: 'Published',
       unpublished: 'Unpublished',
+      catalogReadonly: 'Catalog built-in (read-only)',
     },
     skillsAdmin: {
       title: 'Skills management',

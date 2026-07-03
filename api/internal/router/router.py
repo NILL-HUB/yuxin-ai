@@ -904,6 +904,24 @@ class Router:
         )
         bp.add_url_rule(
             "/admin/mcp/<uuid:provider_id>",
+            endpoint="admin_mcp_get",
+            methods=["GET"],
+            view_func=self.admin_mcp_handler.get,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/<uuid:provider_id>",
+            endpoint="admin_mcp_update",
+            methods=["PATCH"],
+            view_func=self.admin_mcp_handler.update,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/<uuid:provider_id>/regenerate-icon",
+            endpoint="admin_mcp_regenerate_icon",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.regenerate_icon,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/<uuid:provider_id>",
             endpoint="admin_mcp_delete",
             methods=["DELETE"],
             view_func=self.admin_mcp_handler.delete,
