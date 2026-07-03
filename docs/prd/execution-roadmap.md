@@ -229,3 +229,43 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | 修复 UserMemory.scope | P5 | ✅ 完成 | scope 参数+过滤+字段 |
 | 接入 ToolConfirmationCard | P5 | ✅ 已完成 | 4 个聊天页面 |
 | Prompt 注入防护加固 | P5 | ✅ 已完成 | PromptInjectionDetector |
+
+---
+
+## 5. 管理端五板块 UX 治理
+
+### 背景
+
+管理端五个板块（资源编排 / 资源运营 / 池治理 / 编排控制 / 观测中心）的职责分离逻辑清晰，但实现完整度不足：资源运营是空壳、资源编排半成品、数据所有权混乱、跨板块导航断裂。经全面调研发现 5 类重叠、7 项缺陷，需分阶段修复。
+
+### 已完成（UX 快速修复）
+
+| 任务 | 文件 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| i18n 标签修复 | zh-CN.ts, en-US.ts | ✅ 已完成 | 资源编排 tools 标签 API工具治理→API工具管理，消除与池治理板块命名冲突 |
+| 治理模式状态栏 | GovernanceModeBanner.vue（新建）, AgentPoolView.vue, ToolGovernanceView.vue | ✅ 已完成 | 池治理页面顶部显示当前治理模式（观测期/敏感阻断/全量），含切换模式+查看决策日志链接 |
+| 编排控制开关分组 | OrchestrationFlagsView.vue | ✅ 已完成 | 按域分组（池治理开关/其他），池治理组含三阶段优先级提示 |
+| 观测中心跨板块跳转 | RoutingLogsView.vue | ✅ 已完成 | agent_pool/tool_pool 列加跳转链接到池治理配置页 |
+
+### 待修复任务
+
+| 任务 | 优先级 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| **UX-1 ToolsView 改造为真正的工具管理** | P1 | ⏳ 待开始 | 当前只读展示 ToolPolicy，与 ToolGovernanceView 严重重叠。改为管理工具本身（创建/编辑/删除 API Tool Provider），与 ToolGovernanceView 职责分离 |
+| **UX-2 AppsView 重写 + 数据所有权统一** | P1 | ⏳ 待开始 | 裸 HTML 重写为 Arco Design 风格；primary_pool/risk_level/routing_priority 只在 AgentPoolView 编辑，AppsView 只读展示 |
+| **UX-3 资源运营补充上架/下架操作** | P2 | ⏳ 待开始 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件 |
+| **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | P2 | ⏳ 待开始 | 上架是运营动作，不应在编排页面。移到资源运营的工作流商店页 |
+| **UX-5 AdminDatasetsView/MCP/Skills 补充 CRUD** | P2 | ⏳ 待开始 | 资源编排 3 个只读页面补充创建/编辑/删除，使"编排"名副其实 |
+| **UX-6 ModelsView 成本策略移到计费运营** | P3 | ⏳ 待开始 | 成本策略（maxCostPerRequest/billingMode）是计费策略，应从池治理移到计费运营板块 |
+| **UX-7 审计日志加跳转** | P3 | ⏳ 待开始 | AuditLogsView 的 resourceType/resourceId 可点击跳转到对应资源管理页 |
+| **UX-8 商店预览模式** | P3 | ⏳ 待开始 | 资源运营上架操作旁加"预览商店效果"按钮，让管理员看到用户视角 |
+
+### 板块职责定义（架构文档对齐）
+
+| 板块 | 职责 | 管什么 | 不管什么 |
+| --- | --- | --- | --- |
+| 资源编排 | 资源实体 CRUD | 资源存在不存在、长什么样 | 上架到商店、使用规则、开关 |
+| 资源运营 | 上下架到商店 | 用户能不能看到、能不能安装 | 资源本身定义、使用规则 |
+| 池治理 | 使用规则策略 | 风险等级、路由优先级、可见性、限流 | 资源本身、规则是否生效 |
+| 编排控制 | 运行时开关 | 策略启用/灰度/回滚/熔断 | 规则定义、事后观测 |
+| 观测中心 | 事后观测反馈 | 决策记录、质量反馈、审计 | 规则定义、开关控制 |
