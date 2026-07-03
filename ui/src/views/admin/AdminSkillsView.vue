@@ -12,6 +12,7 @@ import { formatTimestampShort } from '@/utils/time-formatter'
 import 'github-markdown-css'
 import type { GetSkillsWithPageRequest, SkillPackage } from '@/models/skill'
 import {
+  deleteAdminSkill,
   disableAdminSkill,
   enableAdminSkill,
   getAdminSkill,
@@ -22,6 +23,8 @@ import {
   type SkillVersion,
 } from '@/services/admin-skills'
 import { getSkillCategoryDisplayName } from '@/utils/store-display'
+import CreateOrUpdateSkillModal from './skills/CreateOrUpdateSkillModal.vue'
+import ImportCatalogSkillModal from './skills/ImportCatalogSkillModal.vue'
 
 type SkillPaginator = {
   total_record: number
@@ -60,6 +63,12 @@ const showVersionsVisible = ref(false)
 const versions = ref<SkillVersion[]>([])
 const versionsLoading = ref(false)
 const { renderMarkdown } = useMarkdownRenderer()
+
+// CRUD 弹窗状态
+const showCreateModal = ref(false)
+const showEditModal = ref(false)
+const showImportModal = ref(false)
+const editingSkill = ref<SkillPackage | null>(null)
 
 const avatarPalettes = [
   ['#334155', '#0f172a'],
@@ -142,6 +151,71 @@ const handleCategoryChange = async (category: string) => {
  */
 const handleBrowseStore = async () => {
   await router.push({ name: 'admin-store-skills' })
+}
+
+/**
+ * 打开创建技能弹窗。
+ */
+const openCreateModal = () => {
+  editingSkill.value = null
+  showCreateModal.value = true
+}
+
+/**
+ * 打开编辑技能弹窗（关闭详情抽屉）。
+ */
+const openEditModal = (skill: SkillPackage) => {
+  editingSkill.value = skill
+  showEditModal.value = true
+  showDetailVisible.value = false
+}
+
+/**
+ * 打开 catalog 导入弹窗。
+ */
+const openImportModal = () => {
+  showImportModal.value = true
+}
+
+/**
+ * CRUD 完成后的统一回调：刷新列表 + 关闭弹窗 + 更新详情抽屉。
+ */
+const handleCrudCallback = async () => {
+  showCreateModal.value = false
+  showEditModal.value = false
+  showImportModal.value = false
+  editingSkill.value = null
+  await loadSkills()
+  // 若详情抽屉仍打开，刷新详情数据
+  if (showDetailVisible.value && activeSkill.value) {
+    try {
+      const detail = await getAdminSkill(activeSkill.value.id)
+      activeSkill.value = { ...activeSkill.value, ...detail }
+    } catch (_error: unknown) {
+      // ignore
+    }
+  }
+}
+
+/**
+ * 删除技能包（仅 DB 来源，即 source_path 为空才允许）。
+ */
+const handleDelete = (skill: SkillPackage) => {
+  Modal.warning({
+    title: t('admin.skillsAdmin.deleteTitle'),
+    content: t('admin.skillsAdmin.deleteContent', { name: skill.label || skill.name }),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await deleteAdminSkill(skill.id)
+        Message.success(t('admin.skillsAdmin.deleteSuccess'))
+        showDetailVisible.value = false
+        await loadSkills()
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.skillsAdmin.deleteFailed')))
+      }
+    },
+  })
 }
 
 /**
@@ -327,9 +401,17 @@ onMounted(() => {
         <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.skillsAdmin.title') }}</h1>
         <p class="mt-1 text-sm text-slate-500">{{ t('admin.skillsAdmin.description') }}</p>
       </div>
-      <a-button type="primary" @click="handleBrowseStore">
-        {{ t('admin.skillsAdmin.browseStore') }}
-      </a-button>
+      <div class="flex items-center gap-2">
+        <a-button type="primary" @click="openCreateModal">
+          {{ t('admin.skillsAdmin.createButton') }}
+        </a-button>
+        <a-button @click="openImportModal">
+          {{ t('admin.skillsAdmin.importButton') }}
+        </a-button>
+        <a-button type="text" @click="handleBrowseStore">
+          {{ t('admin.skillsAdmin.browseStore') }}
+        </a-button>
+      </div>
     </header>
 
     <a-alert type="info" :show-icon="true">
@@ -460,6 +542,22 @@ onMounted(() => {
               </a-button>
               <a-button
                 size="mini"
+                type="outline"
+                @click="openEditModal(skill)"
+              >
+                {{ t('admin.skillsAdmin.editButton') }}
+              </a-button>
+              <a-button
+                v-if="!skill.source_path"
+                size="mini"
+                type="text"
+                status="danger"
+                @click="handleDelete(skill)"
+              >
+                {{ t('admin.skillsAdmin.deleteButton') }}
+              </a-button>
+              <a-button
+                size="mini"
                 type="text"
                 @click="handleShowVersions(skill)"
               >
@@ -543,6 +641,17 @@ onMounted(() => {
             @click="handleSync(activeSkill)"
           >
             {{ t('admin.skillsAdmin.syncButton') }}
+          </a-button>
+          <a-button type="outline" @click="openEditModal(activeSkill)">
+            {{ t('admin.skillsAdmin.editButton') }}
+          </a-button>
+          <a-button
+            v-if="!activeSkill.source_path"
+            type="text"
+            status="danger"
+            @click="handleDelete(activeSkill)"
+          >
+            {{ t('admin.skillsAdmin.deleteButton') }}
           </a-button>
           <a-button type="text" @click="handleShowVersions(activeSkill)">
             {{ t('admin.skillsAdmin.versionsButton') }}
@@ -660,6 +769,23 @@ onMounted(() => {
       </div>
       <a-empty v-else :description="t('admin.skillsAdmin.noVersions')" />
     </a-drawer>
+
+    <CreateOrUpdateSkillModal
+      v-model:visible="showCreateModal"
+      :skill_id="''"
+      :skill="null"
+      :callback="handleCrudCallback"
+    />
+    <CreateOrUpdateSkillModal
+      v-model:visible="showEditModal"
+      :skill_id="editingSkill?.id || ''"
+      :skill="editingSkill"
+      :callback="handleCrudCallback"
+    />
+    <ImportCatalogSkillModal
+      v-model:visible="showImportModal"
+      :callback="handleCrudCallback"
+    />
   </section>
 </template>
 

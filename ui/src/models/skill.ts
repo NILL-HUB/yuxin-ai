@@ -24,6 +24,7 @@ export type SkillTool = {
 export type SkillPackage = {
   id: string
   source_key: string
+  source_path?: string
   name: string
   label: string
   icon: string

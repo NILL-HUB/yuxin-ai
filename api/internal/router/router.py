@@ -905,6 +905,36 @@ class Router:
             view_func=self.admin_skills_handler.rollback_skill_package,
         )
         bp.add_url_rule(
+            "/admin/skills",
+            endpoint="admin_skill_create",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.create_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>",
+            endpoint="admin_skill_update",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.update_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/<uuid:skill_id>/delete",
+            endpoint="admin_skill_delete",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.delete_skill_package,
+        )
+        bp.add_url_rule(
+            "/admin/skills/catalog-packages",
+            endpoint="admin_skill_catalog_list",
+            methods=["GET"],
+            view_func=self.admin_skills_handler.list_catalog_packages,
+        )
+        bp.add_url_rule(
+            "/admin/skills/import-catalog",
+            endpoint="admin_skill_catalog_import",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.import_catalog_package,
+        )
+        bp.add_url_rule(
             "/admin/api-tools",
             endpoint="admin_api_tool_list",
             methods=["GET"],

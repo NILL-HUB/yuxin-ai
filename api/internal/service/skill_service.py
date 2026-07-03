@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import yaml
 from flask import Flask, current_app, has_app_context
 from injector import inject
 from sqlalchemy import desc, func, inspect, or_
@@ -28,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def yaml_dump_safe(data: Any) -> str:
+    """安全的 YAML 序列化，允许 Unicode 字符。"""
+    try:
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    except Exception:
+        return json.dumps(data, ensure_ascii=False, default=str)
 
 
 def _normalize_bool(value: Any, default: bool = True) -> bool:
@@ -499,6 +508,389 @@ class SkillService(BaseService):
             force=True,
         )
         return self.get_skill_package(skill_id)
+
+    # ------------------------------------------------------------------ #
+    #  管理员 CRUD（DB 直接管理，不依赖磁盘 catalog）                      #
+    # ------------------------------------------------------------------ #
+
+    def create_skill_package_for_admin(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """管理员直接创建技能包到 DB（不写入磁盘 catalog）。
+
+        payload 字段：
+        - source_key (必填)、name、label、description、category、tags、capabilities、icon
+        - executor_type (scf/prompt/tool, 默认 prompt)
+        - enabled (默认 True)
+        - readme (markdown 文本)
+        - skill_code (scf 类型时的 skill.py 内容)
+        - tools (scf 类型时的工具定义列表)
+        """
+        self._ensure_skill_package_table()
+
+        source_key = _normalize_text(payload.get("source_key"))
+        if not source_key:
+            raise ValidateErrorException("source_key 不能为空")
+
+        existing = self.db.session.query(SkillPackage).filter(
+            SkillPackage.source_key == source_key,
+        ).one_or_none()
+        if existing:
+            raise ValidateErrorException(f"source_key 已存在: {source_key}")
+
+        executor_type = _normalize_text(payload.get("executor_type") or "prompt").lower() or "prompt"
+        if executor_type not in {"scf", "prompt", "tool"}:
+            raise ValidateErrorException("executor_type 必须为 scf/prompt/tool 之一")
+        if executor_type != "scf":
+            # 非 scf 类型强制清空 tools
+            tools_raw: list[dict[str, Any]] = []
+        else:
+            tools_raw = self._normalize_tool_definitions(payload.get("tools"))
+
+        name = _normalize_text(payload.get("name") or source_key)
+        label = _normalize_text(payload.get("label") or name)
+        description = _normalize_text(payload.get("description"))
+        category = _normalize_text(payload.get("category") or "通用")
+        icon = _normalize_text(payload.get("icon"))
+        tags = [str(t).strip() for t in (payload.get("tags") or []) if str(t).strip()]
+        capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
+        enabled = _normalize_bool(payload.get("enabled"), True)
+        readme = _normalize_text(payload.get("readme"))
+        skill_code = _normalize_text(payload.get("skill_code")) if executor_type == "scf" else ""
+
+        manifest = {
+            "source_key": source_key,
+            "name": name,
+            "label": label,
+            "description": description,
+            "category": category,
+            "tags": tags,
+            "icon": icon,
+            "executor_type": executor_type,
+            "capabilities": capabilities,
+            "enabled": enabled,
+            "version": 1,
+            "tools": [
+                {
+                    "name": t["name"],
+                    "label": t["label"],
+                    "description": t["description"],
+                    "entrypoint": t["entrypoint"],
+                    "input_schema": t.get("input_schema") or {},
+                }
+                for t in tools_raw
+            ],
+            "readme": readme,
+        }
+        bundle: dict[str, str] = {"manifest.yaml": yaml_dump_safe(manifest)}
+        if readme:
+            bundle["skill.md"] = readme
+        if executor_type == "scf" and skill_code:
+            bundle["skill.py"] = skill_code
+
+        checksum = generate_text_hash(
+            json.dumps({"manifest": manifest, "bundle": bundle}, ensure_ascii=False, sort_keys=True, default=str)
+        )
+
+        with self.db.auto_commit():
+            package = SkillPackage(
+                source_key=source_key,
+                source_path="",  # 标记为 DB 来源（非磁盘 catalog）
+                name=name,
+                label=label,
+                icon=icon,
+                description=description,
+                category=category,
+                tags=tags,
+                capabilities=capabilities,
+                executor_type=executor_type,
+                enabled=enabled,
+                current_version=1,
+                latest_source_version=1,
+                source_checksum=checksum,
+                sync_status="pending",
+                sync_error="",
+                published_at=None,
+                updated_at=utc_now_naive(),
+            )
+            self.db.session.add(package)
+            self.db.session.flush()
+
+            version_record = SkillPackageVersion(
+                skill_package_id=package.id,
+                version=1,
+                manifest=manifest,
+                bundle=bundle,
+                checksum=checksum,
+                sync_status="pending",
+                sync_error="",
+                updated_at=utc_now_naive(),
+            )
+            self.db.session.add(version_record)
+
+        # scf 类型需要同步到 SCF；其他类型直接标记为 skipped
+        if executor_type == "scf" and tools_raw:
+            self._sync_package_to_scf(
+                package=package,
+                version_record=version_record,
+                local_package=None,
+                action="create",
+                force=True,
+            )
+        else:
+            with self.db.auto_commit():
+                self.update(
+                    package,
+                    sync_status="skipped",
+                    sync_error="",
+                    published_at=package.published_at or utc_now_naive(),
+                    updated_at=utc_now_naive(),
+                )
+                self.update(
+                    version_record,
+                    sync_status="skipped",
+                    sync_error="",
+                    updated_at=utc_now_naive(),
+                )
+
+        return self.get_skill_package(package.id)
+
+    def update_skill_package_for_admin(self, skill_id: UUID | str, payload: dict[str, Any]) -> dict[str, Any]:
+        """管理员更新技能包；若关键字段变化则创建新版本。"""
+        self._ensure_skill_package_table()
+        package = self._get_skill_package_record(skill_id)
+        if not package:
+            raise NotFoundException("该技能包不存在，请核实后重试")
+
+        executor_type = _normalize_text(payload.get("executor_type") or package.executor_type).lower()
+        if executor_type not in {"scf", "prompt", "tool"}:
+            raise ValidateErrorException("executor_type 必须为 scf/prompt/tool 之一")
+
+        name = _normalize_text(payload.get("name") or package.name)
+        label = _normalize_text(payload.get("label") or package.label)
+        description = _normalize_text(payload.get("description"))
+        category = _normalize_text(payload.get("category") or package.category)
+        icon = _normalize_text(payload.get("icon") if payload.get("icon") is not None else package.icon)
+        tags = [str(t).strip() for t in (payload.get("tags") or package.tags or []) if str(t).strip()]
+        capabilities = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else (package.capabilities or {})
+        enabled = _normalize_bool(payload.get("enabled"), package.enabled)
+        readme = _normalize_text(payload.get("readme"))
+        skill_code = _normalize_text(payload.get("skill_code")) if executor_type == "scf" else ""
+        tools_raw = self._normalize_tool_definitions(payload.get("tools")) if executor_type == "scf" else []
+
+        current_version_record = self._get_skill_package_version_record(package.id, package.current_version)
+        current_bundle = (current_version_record.bundle or {}) if current_version_record else {}
+        current_manifest = (current_version_record.manifest or {}) if current_version_record else {}
+
+        new_manifest = {
+            "source_key": package.source_key,
+            "name": name,
+            "label": label,
+            "description": description,
+            "category": category,
+            "tags": tags,
+            "icon": icon,
+            "executor_type": executor_type,
+            "capabilities": capabilities,
+            "enabled": enabled,
+            "version": package.current_version,
+            "tools": [
+                {
+                    "name": t["name"],
+                    "label": t["label"],
+                    "description": t["description"],
+                    "entrypoint": t["entrypoint"],
+                    "input_schema": t.get("input_schema") or {},
+                }
+                for t in tools_raw
+            ],
+            "readme": readme,
+        }
+        new_bundle: dict[str, str] = {"manifest.yaml": yaml_dump_safe(new_manifest)}
+        if readme:
+            new_bundle["skill.md"] = readme
+        if executor_type == "scf" and skill_code:
+            new_bundle["skill.py"] = skill_code
+
+        new_checksum = generate_text_hash(
+            json.dumps({"manifest": new_manifest, "bundle": new_bundle}, ensure_ascii=False, sort_keys=True, default=str)
+        )
+
+        # 基础字段总是更新
+        with self.db.auto_commit():
+            self.update(
+                package,
+                name=name,
+                label=label,
+                description=description,
+                category=category,
+                icon=icon,
+                tags=tags,
+                capabilities=capabilities,
+                executor_type=executor_type,
+                enabled=enabled,
+                updated_at=utc_now_naive(),
+            )
+
+        # 若 manifest/bundle 变化，创建新版本
+        if new_checksum != package.source_checksum:
+            new_version_number = package.latest_source_version + 1
+            with self.db.auto_commit():
+                version_record = SkillPackageVersion(
+                    skill_package_id=package.id,
+                    version=new_version_number,
+                    manifest=new_manifest,
+                    bundle=new_bundle,
+                    checksum=new_checksum,
+                    sync_status="pending",
+                    sync_error="",
+                    updated_at=utc_now_naive(),
+                )
+                self.db.session.add(version_record)
+                self.update(
+                    package,
+                    current_version=new_version_number,
+                    latest_source_version=new_version_number,
+                    source_checksum=new_checksum,
+                    sync_status="pending",
+                    sync_error="",
+                    updated_at=utc_now_naive(),
+                )
+        else:
+            # 内容未变化，仅刷新当前版本的 manifest/bundle（用于 readme 等非版本字段）
+            if current_version_record:
+                with self.db.auto_commit():
+                    self.update(
+                        current_version_record,
+                        manifest=new_manifest,
+                        bundle=new_bundle,
+                        updated_at=utc_now_naive(),
+                    )
+            version_record = current_version_record
+
+        # scf 类型触发同步
+        if executor_type == "scf" and version_record:
+            self._sync_package_to_scf(
+                package=package,
+                version_record=version_record,
+                local_package=None,
+                action="update",
+                force=True,
+            )
+        else:
+            with self.db.auto_commit():
+                self.update(
+                    package,
+                    sync_status="skipped",
+                    sync_error="",
+                    published_at=package.published_at or utc_now_naive(),
+                    updated_at=utc_now_naive(),
+                )
+                if version_record:
+                    self.update(
+                        version_record,
+                        sync_status="skipped",
+                        sync_error="",
+                        updated_at=utc_now_naive(),
+                    )
+
+        return self.get_skill_package(package.id)
+
+    def delete_skill_package_for_admin(self, skill_id: UUID | str) -> None:
+        """删除技能包；仅允许删除 DB 来源（source_path 为空）的包。"""
+        self._ensure_skill_package_table()
+        package = self._get_skill_package_record(skill_id)
+        if not package:
+            raise NotFoundException("该技能包不存在，请核实后重试")
+
+        # catalog 来源的包禁止删除（避免重启后被自动同步回来）
+        if _normalize_text(package.source_path):
+            raise ValidateErrorException(
+                "该技能包来自平台 catalog 目录，禁止直接删除；请通过代码仓库移除 catalog 包"
+            )
+
+        # 检查是否有 App 在使用
+        bindings_count = self._count_skill_bindings(package.id)
+        if bindings_count > 0:
+            raise ValidateErrorException(f"该技能包被 {bindings_count} 个应用绑定，请先解除绑定再删除")
+
+        with self.db.auto_commit():
+            # 先删除所有版本
+            self.db.session.query(SkillPackageVersion).filter(
+                SkillPackageVersion.skill_package_id == package.id,
+            ).delete(synchronize_session=False)
+            # 再删除包
+            self.db.session.delete(package)
+
+    def list_catalog_packages_for_admin(self) -> list[dict[str, Any]]:
+        """列出磁盘 catalog 目录中所有可导入的技能包（用于"从 catalog 导入"选择器）。"""
+        packages = self.catalog_manager.list_packages()
+        # 查询已存在的 source_key
+        existing_keys: set[str] = set()
+        if self._has_skill_package_table():
+            try:
+                rows = self.db.session.query(SkillPackage.source_key).all()
+                existing_keys = {str(row[0]) for row in rows if row[0]}
+            except ProgrammingError as exc:
+                if not self._is_missing_skill_package_table_error(exc):
+                    raise
+
+        result: list[dict[str, Any]] = []
+        for pkg in packages:
+            result.append(
+                {
+                    "source_key": pkg.source_key,
+                    "name": pkg.name,
+                    "label": pkg.label,
+                    "description": pkg.description,
+                    "category": pkg.category,
+                    "executor_type": pkg.executor_type,
+                    "version": pkg.version,
+                    "tool_count": len(pkg.tools),
+                    "imported": pkg.source_key in existing_keys,
+                }
+            )
+        return result
+
+    def import_catalog_package_for_admin(self, source_key: str) -> dict[str, Any]:
+        """从磁盘 catalog 强制导入指定 source_key 的包到 DB。"""
+        self._ensure_skill_package_table()
+        normalized_key = _normalize_text(source_key)
+        if not normalized_key:
+            raise ValidateErrorException("source_key 不能为空")
+
+        local_package = self.catalog_manager.get_package(normalized_key)
+        if not local_package:
+            raise NotFoundException(f"catalog 中未找到技能包: {normalized_key}")
+
+        self._sync_local_package(local_package, force=True)
+        return self.get_skill_package_by_source_key(normalized_key)
+
+    def get_skill_package_by_source_key(self, source_key: str) -> dict[str, Any]:
+        """按 source_key 查询技能包详情。"""
+        self._ensure_skill_package_table()
+        normalized_key = _normalize_text(source_key)
+        package = self.db.session.query(SkillPackage).filter(
+            SkillPackage.source_key == normalized_key,
+        ).one_or_none()
+        if not package:
+            raise NotFoundException(f"技能包不存在: {normalized_key}")
+        return self._build_skill_package_detail(package)
+
+    def _count_skill_bindings(self, skill_id: UUID) -> int:
+        """统计有多少 App 配置绑定了该技能包。"""
+        try:
+            from internal.model import AppConfig
+            if not self._has_skill_package_table():
+                return 0
+            # PostgreSQL JSONB @> 包含操作符：skills 数组中是否存在 {"skill_id": "<id>"} 元素
+            target_str = str(skill_id)
+            target_json = json.dumps([{"skill_id": target_str}])
+            rows = self.db.session.query(AppConfig.app_id).filter(
+                AppConfig.skills.op("@>")(target_json)
+            ).all()
+            return len(rows)
+        except Exception:
+            # 容错：表不存在或语法不支持时返回 0（不阻塞删除）
+            return 0
 
     # ------------------------------------------------------------------ #
     #  内部辅助                                                             #
