@@ -6,7 +6,8 @@ import { useRouter } from 'vue-router'
 import AdminWorkflowCard from '@/components/admin/AdminWorkflowCard.vue'
 import AdminWorkflowToolbar from '@/components/admin/AdminWorkflowToolbar.vue'
 import type { AdminWorkflowRecord, GetAdminWorkflowsRequest } from '@/models/admin-workflow'
-import { listAdminWorkflows } from '@/services/admin-workflows'
+import { listAdminWorkflows, offlineAdminWorkflow, updateAdminWorkflow } from '@/services/admin-workflows'
+import { useAdminStore } from '@/stores/admin'
 import { getErrorMessage } from '@/utils/error'
 
 type WorkflowPaginator = {
@@ -17,9 +18,10 @@ type WorkflowPaginator = {
 }
 
 /**
- * 后台工作流管理页，负责列表查询与跳转编辑器。商店上下架（公开/私有）请在「资源运营」中管理。
+ * 资源运营-工作流商店上下架管理页，负责公共商店中工作流资源的上架/下架操作。
  */
 const router = useRouter()
+const adminStore = useAdminStore()
 const { t } = useI18n()
 
 const loading = ref(false)
@@ -37,6 +39,7 @@ const filters = ref<GetAdminWorkflowsRequest>({
   page_size: 20,
 })
 
+const canUpdate = computed(() => adminStore.hasPermission('workflow:update'))
 const hasActiveFilters = computed(() => Boolean(filters.value.search || filters.value.status))
 const emptyDescription = computed(() => {
   return hasActiveFilters.value
@@ -85,6 +88,39 @@ const handleEdit = async (workflowId: string) => {
   await router.push({ name: 'admin-workflow-edit', params: { workflow_id: workflowId } })
 }
 
+/**
+ * 切换工作流公开状态（上架/下架），并在成功后刷新当前列表。
+ */
+const handleTogglePublic = async (workflow: AdminWorkflowRecord) => {
+  try {
+    await updateAdminWorkflow(workflow.id, { is_public: !workflow.is_public })
+    Message.success(t('admin.workflowsAdmin.updateSuccess'))
+    await loadWorkflows()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.updateFailed')))
+  }
+}
+
+/**
+ * 强制下架工作流，并在成功后刷新当前列表。
+ */
+const handleOffline = async (workflow: AdminWorkflowRecord) => {
+  try {
+    await offlineAdminWorkflow(workflow.id)
+    Message.success(t('admin.workflowsAdmin.offlineSuccess', { name: workflow.name }))
+    await loadWorkflows()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.offlineFailed')))
+  }
+}
+
+/**
+ * 在新标签页中以用户视角预览公共工作流商店。
+ */
+const handlePreviewStore = () => {
+  window.open('/store/workflows', '_blank')
+}
+
 onMounted(() => {
   void loadWorkflows()
 })
@@ -92,13 +128,23 @@ onMounted(() => {
 
 <template>
   <section class="space-y-6">
-    <header>
-      <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.workflowsAdmin.title') }}</h1>
-      <p class="mt-1 text-sm text-slate-500">{{ t('admin.workflowsAdmin.description') }}</p>
+    <header class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.storeOps.workflowsTitle') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.storeOps.workflowsDescription') }}</p>
+      </div>
+      <a-tooltip :content="t('admin.storeOps.previewStoreTip')" position="bl">
+        <a-button @click="handlePreviewStore">
+          <template #icon>
+            <icon-eye />
+          </template>
+          {{ t('admin.storeOps.previewStore') }}
+        </a-button>
+      </a-tooltip>
     </header>
 
     <a-alert type="info" :show-icon="true">
-      {{ t('admin.storeOps.storeHint') }}
+      {{ t('admin.storeOps.opsHint') }}
     </a-alert>
 
     <AdminWorkflowToolbar
@@ -115,8 +161,10 @@ onMounted(() => {
         v-for="workflow in workflows"
         :key="workflow.id"
         :workflow="workflow"
-        :can-update="false"
+        :can-update="canUpdate"
         @edit="handleEdit"
+        @toggle-public="handleTogglePublic"
+        @offline="handleOffline"
       />
     </section>
 

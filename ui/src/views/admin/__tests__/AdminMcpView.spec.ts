@@ -5,10 +5,26 @@ import AdminMcpView from '@/views/admin/AdminMcpView.vue'
 const mocks = vi.hoisted(() => ({
   listAdminMcpProviders: vi.fn(),
   messageError: vi.fn(),
+  routerPush: vi.fn(),
 }))
 
 vi.mock('@/services/admin-mcp', () => ({
   listAdminMcpProviders: mocks.listAdminMcpProviders,
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({
+    push: mocks.routerPush,
+  }),
+}))
+
+vi.mock('@/views/space/mcp/components/CreateOrUpdateMcpModal.vue', () => ({
+  default: {
+    name: 'CreateOrUpdateMcpModal',
+    props: ['visible', 'mcpProviderId', 'callback'],
+    emits: ['update:visible', 'update:mcpProviderId'],
+    template: '<div class="create-or-update-mcp-modal-stub"></div>',
+  },
 }))
 
 vi.mock('@arco-design/web-vue', async () => {
@@ -38,6 +54,10 @@ vi.mock('vue-i18n', () => ({
           'admin.mcpAdmin.owner': '创建者',
           'admin.mcpAdmin.toolCount': '工具数',
           'admin.mcpAdmin.transport': '传输协议',
+          'admin.mcpAdmin.manageEntry': '前往管理',
+          'admin.mcpAdmin.createButton': '新建 MCP',
+          'admin.mcpAdmin.manageHint': '在管理页可执行发布、删除等操作',
+          'admin.mcpAdmin.editButton': '编辑',
           'common.actions.search': '搜索',
           'common.actions.refresh': '刷新',
         } satisfies Record<string, string>
@@ -56,6 +76,11 @@ const buttonStub = {
   props: ['type', 'status', 'loading'],
   emits: ['click'],
   template: '<button type="button" :disabled="loading" @click="$emit(\'click\')"><slot /></button>',
+}
+
+const alertStub = {
+  props: ['type', 'showIcon'],
+  template: '<div class="a-alert"><slot /></div>',
 }
 
 describe('AdminMcpView', () => {
@@ -107,6 +132,7 @@ describe('AdminMcpView', () => {
         stubs: {
           'a-input': inputStub,
           'a-button': buttonStub,
+          'a-alert': alertStub,
         },
       },
     })
@@ -126,7 +152,8 @@ describe('AdminMcpView', () => {
     expect(wrapper.text()).toContain('db:provider-1')
 
     await wrapper.find('input').setValue('weather')
-    await wrapper.findAll('button')[0].trigger('click')
+    const searchButton = wrapper.findAll('button').find((b) => b.text().includes('搜索'))
+    await searchButton!.trigger('click')
     await flushPromises()
 
     expect(mocks.listAdminMcpProviders).toHaveBeenLastCalledWith({

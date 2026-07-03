@@ -7,10 +7,15 @@ import AdminDatasetsView from '@/views/admin/AdminDatasetsView.vue'
 const mocks = vi.hoisted(() => ({
   listAdminDatasets: vi.fn(),
   messageError: vi.fn(),
+  routerPush: vi.fn(),
 }))
 
 vi.mock('@/services/admin-datasets', () => ({
   listAdminDatasets: mocks.listAdminDatasets,
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: mocks.routerPush }),
 }))
 
 vi.mock('@arco-design/web-vue', async () => {
@@ -43,6 +48,8 @@ vi.mock('vue-i18n', () => ({
           'admin.datasetsAdmin.detail': '查看详情',
           'admin.datasetsAdmin.total': `共 ${params?.count ?? 0} 个知识库`,
           'admin.datasetsAdmin.noDescription': '暂无描述',
+          'admin.datasetsAdmin.manageHint': '知识库的创建与删除涉及文件上传与分段配置，请在知识库管理页操作。',
+          'admin.datasetsAdmin.manageEntry': '前往知识库管理',
         } satisfies Record<string, string>
       )[key] ?? key,
   }),
@@ -65,6 +72,11 @@ const paginationStub = {
   props: ['current', 'pageSize', 'total'],
   emits: ['change'],
   template: '<nav><slot /></nav>',
+}
+
+const alertStub = {
+  props: ['type', 'showIcon'],
+  template: '<div><slot /></div>',
 }
 
 const renderView = async () => {
@@ -108,6 +120,7 @@ const renderView = async () => {
         'a-input': inputStub,
         'a-button': buttonStub,
         'a-pagination': paginationStub,
+        'a-alert': alertStub,
       },
     },
   })
@@ -134,5 +147,16 @@ describe('AdminDatasetsView', () => {
     expect(wrapper.text()).toContain('Alice')
     expect(wrapper.text()).toContain('12,000')
     expect(wrapper.text()).toContain('查看详情')
+  })
+
+  it('navigates to the dataset management page when the manage entry is clicked', async () => {
+    const wrapper = await renderView()
+
+    const buttons = wrapper.findAll('button')
+    const manageButton = buttons.find((btn) => btn.text().includes('前往知识库管理'))
+    expect(manageButton).toBeTruthy()
+    await manageButton!.trigger('click')
+
+    expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'admin-dataset-list' })
   })
 })

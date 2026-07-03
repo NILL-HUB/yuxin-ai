@@ -6,8 +6,6 @@ import AdminWorkflowsView from '@/views/admin/AdminWorkflowsView.vue'
 
 const mocks = vi.hoisted(() => ({
   listAdminWorkflows: vi.fn(),
-  updateAdminWorkflow: vi.fn(),
-  offlineAdminWorkflow: vi.fn(),
   routerPush: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
@@ -15,8 +13,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/services/admin-workflows', () => ({
   listAdminWorkflows: mocks.listAdminWorkflows,
-  updateAdminWorkflow: mocks.updateAdminWorkflow,
-  offlineAdminWorkflow: mocks.offlineAdminWorkflow,
 }))
 
 vi.mock('vue-router', async () => {
@@ -65,7 +61,11 @@ const buttonStub = {
   template: '<button type="button" :disabled="loading" @click="$emit(\'click\')"><slot /></button>',
 }
 
-const renderView = async (permissions = ['workflow:read', 'workflow:update']) => {
+const alertStub = {
+  template: '<div><slot /></div>',
+}
+
+const renderView = async () => {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAdminStore(pinia).update({
@@ -76,7 +76,7 @@ const renderView = async (permissions = ['workflow:read', 'workflow:update']) =>
     avatar: '',
     status: 'active',
     roles: ['operator'],
-    permissions,
+    permissions: ['workflow:read', 'workflow:update'],
   })
 
   mocks.listAdminWorkflows.mockResolvedValue({
@@ -104,6 +104,7 @@ const renderView = async (permissions = ['workflow:read', 'workflow:update']) =>
         'a-select': selectStub,
         'a-option': optionStub,
         'a-button': buttonStub,
+        'a-alert': alertStub,
       },
     },
   })
@@ -131,28 +132,16 @@ describe('AdminWorkflowsView', () => {
     expect(wrapper.text()).toContain('进入编辑')
   })
 
-  it('hides write actions without workflow:update permission', async () => {
-    const wrapper = await renderView(['workflow:read'])
-
-    expect(wrapper.find('[data-testid="workflow-offline-wf-1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="workflow-visibility-wf-1"]').exists()).toBe(false)
-  })
-
-  it('calls update and offline services from workflow actions', async () => {
-    mocks.updateAdminWorkflow.mockResolvedValue({
-      id: 'wf-1',
-      is_public: false,
-    })
-    mocks.offlineAdminWorkflow.mockResolvedValue({})
+  it('shows read-only visibility and store hint without publish/offline actions', async () => {
     const wrapper = await renderView()
 
-    await wrapper.find('[data-testid="workflow-visibility-wf-1"]').trigger('click')
-    await flushPromises()
-    expect(mocks.updateAdminWorkflow).toHaveBeenCalledWith('wf-1', { is_public: false })
-
-    await wrapper.find('[data-testid="workflow-offline-wf-1"]').trigger('click')
-    await flushPromises()
-    expect(mocks.offlineAdminWorkflow).toHaveBeenCalledWith('wf-1')
+    // toggle-public 与 offline 操作已移至资源运营，本页不再渲染
+    expect(wrapper.find('[data-testid="workflow-offline-wf-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="workflow-visibility-wf-1"]').exists()).toBe(false)
+    // 保留公开状态只读展示
+    expect(wrapper.text()).toContain('公开')
+    // 展示前往资源运营的提示
+    expect(wrapper.text()).toContain('资源运营')
   })
 
   it('navigates to the workflow editor from edit action', async () => {

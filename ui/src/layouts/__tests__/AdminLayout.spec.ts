@@ -101,7 +101,7 @@ describe('AdminLayout', () => {
 
     expect(wrapper.text()).toContain('应用编排')
     expect(wrapper.text()).toContain('知识库管理')
-    expect(wrapper.text()).toContain('API工具治理')
+    expect(wrapper.text()).toContain('API工具管理')
     expect(wrapper.text()).toContain('MCP管理')
     expect(wrapper.text()).toContain('Skills管理')
     expect(wrapper.text()).toContain('客户用户')

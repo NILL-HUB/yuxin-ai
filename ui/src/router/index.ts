@@ -241,6 +241,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['cost_stats:read'] },
             },
             {
+              path: 'cost-strategy',
+              name: 'admin-cost-strategy',
+              component: () => import('@/views/admin/CostStrategyView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['model_pool:read'] },
+            },
+            {
               path: 'admin-users',
               name: 'admin-admin-users',
               component: () => import('@/views/admin/AdminUsersView.vue'),
@@ -357,31 +363,31 @@ const router = createRouter({
             {
               path: 'store/public-apps',
               name: 'admin-store-apps',
-              component: () => import('@/views/store/public-apps/ListView.vue'),
+              component: () => import('@/views/admin/StoreAppsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['app:read'] },
             },
             {
               path: 'store/workflows',
               name: 'admin-store-workflows',
-              component: () => import('@/views/store/workflows/ListView.vue'),
+              component: () => import('@/views/admin/StoreWorkflowsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
             },
             {
               path: 'store/tools',
               name: 'admin-store-tools',
-              component: () => import('@/views/store/tools/ListView.vue'),
+              component: () => import('@/views/admin/StoreToolsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['tool:read'] },
             },
             {
               path: 'store/skills',
               name: 'admin-store-skills',
-              component: () => import('@/views/store/skills/ListView.vue'),
+              component: () => import('@/views/admin/StoreSkillsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['skill:read'] },
             },
             {
               path: 'store/mcp',
               name: 'admin-store-mcp',
-              component: () => import('@/views/store/mcp/ListView.vue'),
+              component: () => import('@/views/admin/StoreMcpView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['mcp:read'] },
             },
             {

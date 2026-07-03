@@ -2,9 +2,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import type { GetMcpProvidersWithPageRequest, McpProvider } from '@/models/mcp'
 import { listAdminMcpProviders } from '@/services/admin-mcp'
 import { getErrorMessage } from '@/utils/error'
+import CreateOrUpdateMcpModal from '@/views/space/mcp/components/CreateOrUpdateMcpModal.vue'
 
 type McpPaginator = {
   total_record: number
@@ -16,10 +18,13 @@ type McpPaginator = {
 /**
  * 后台 MCP 管理页，负责展示平台可见的 MCP Provider 列表。
  */
+const router = useRouter()
 const { t } = useI18n()
 
 const loading = ref(false)
 const providers = ref<McpProvider[]>([])
+const showCreateOrUpdateMcpModalVisible = ref(false)
+const updateMcpProviderId = ref('')
 const paginator = ref<McpPaginator>({
   total_record: 0,
   total_page: 0,
@@ -64,6 +69,29 @@ const handleSearch = async () => {
   await loadProviders()
 }
 
+/**
+ * 打开创建 MCP 弹窗（复用空间端创建组件）。
+ */
+const openCreateModal = () => {
+  updateMcpProviderId.value = ''
+  showCreateOrUpdateMcpModalVisible.value = true
+}
+
+/**
+ * 打开编辑 MCP 弹窗。
+ */
+const openEditModal = (provider: McpProvider) => {
+  updateMcpProviderId.value = provider.id
+  showCreateOrUpdateMcpModalVisible.value = true
+}
+
+/**
+ * 跳转到 MCP 管理页（内嵌空间端 MCP 管理视图，支持发布、删除等完整操作）。
+ */
+const handleManage = async () => {
+  await router.push({ name: 'admin-mcp-list' })
+}
+
 onMounted(() => {
   void loadProviders()
 })
@@ -71,10 +99,24 @@ onMounted(() => {
 
 <template>
   <section class="space-y-6">
-    <header>
-      <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.mcpAdmin.title') }}</h1>
-      <p class="mt-1 text-sm text-slate-500">{{ t('admin.mcpAdmin.description') }}</p>
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.mcpAdmin.title') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.mcpAdmin.description') }}</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <a-button @click="handleManage">
+          {{ t('admin.mcpAdmin.manageEntry') }}
+        </a-button>
+        <a-button type="primary" @click="openCreateModal">
+          {{ t('admin.mcpAdmin.createButton') }}
+        </a-button>
+      </div>
     </header>
+
+    <a-alert type="info" :show-icon="true">
+      {{ t('admin.mcpAdmin.manageHint') }}
+    </a-alert>
 
     <section class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <a-input
@@ -125,6 +167,12 @@ onMounted(() => {
             <dd class="mt-1 text-slate-700">{{ provider.transport }}</dd>
           </div>
         </dl>
+
+        <div class="mt-4 flex justify-end">
+          <a-button size="small" type="outline" @click="openEditModal(provider)">
+            {{ t('admin.mcpAdmin.editButton') }}
+          </a-button>
+        </div>
       </article>
     </section>
 
@@ -139,5 +187,11 @@ onMounted(() => {
     <footer class="text-xs text-slate-400">
       {{ t('admin.mcpAdmin.total', { count: paginator.total_record }) }}
     </footer>
+
+    <create-or-update-mcp-modal
+      v-model:visible="showCreateOrUpdateMcpModalVisible"
+      v-model:mcp_provider_id="updateMcpProviderId"
+      :callback="async () => await loadProviders()"
+    />
   </section>
 </template>

@@ -5,10 +5,17 @@ import AdminSkillsView from '@/views/admin/AdminSkillsView.vue'
 const mocks = vi.hoisted(() => ({
   listAdminSkills: vi.fn(),
   messageError: vi.fn(),
+  routerPush: vi.fn(),
 }))
 
 vi.mock('@/services/admin-skills', () => ({
   listAdminSkills: mocks.listAdminSkills,
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({
+    push: mocks.routerPush,
+  }),
 }))
 
 vi.mock('@arco-design/web-vue', async () => {
@@ -38,6 +45,8 @@ vi.mock('vue-i18n', () => ({
           'admin.skillsAdmin.category': '分类',
           'admin.skillsAdmin.executorType': '执行方式',
           'admin.skillsAdmin.toolCount': '工具数',
+          'admin.skillsAdmin.browseStore': '前往商店浏览',
+          'admin.skillsAdmin.manageHint': '在商店页可查看与安装 Skill 包',
           'common.actions.search': '搜索',
           'common.actions.refresh': '刷新',
         } satisfies Record<string, string>
@@ -56,6 +65,11 @@ const buttonStub = {
   props: ['type', 'status', 'loading'],
   emits: ['click'],
   template: '<button type="button" :disabled="loading" @click="$emit(\'click\')"><slot /></button>',
+}
+
+const alertStub = {
+  props: ['type', 'showIcon'],
+  template: '<div class="a-alert"><slot /></div>',
 }
 
 describe('AdminSkillsView', () => {
@@ -92,6 +106,7 @@ describe('AdminSkillsView', () => {
         stubs: {
           'a-input': inputStub,
           'a-button': buttonStub,
+          'a-alert': alertStub,
         },
       },
     })
@@ -111,7 +126,8 @@ describe('AdminSkillsView', () => {
     expect(wrapper.text()).toContain('frontend')
 
     await wrapper.find('input').setValue('frontend')
-    await wrapper.findAll('button')[0].trigger('click')
+    const searchButton = wrapper.findAll('button').find((b) => b.text().includes('搜索'))
+    await searchButton!.trigger('click')
     await flushPromises()
 
     expect(mocks.listAdminSkills).toHaveBeenLastCalledWith({

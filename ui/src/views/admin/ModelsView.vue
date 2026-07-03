@@ -5,16 +5,13 @@ import { useI18n } from 'vue-i18n'
 import {
   createModel,
   createModelKey,
-  createCostPolicy,
   deleteModel,
   deleteModelKey,
-  listCostPolicies,
   listModelKeys,
   listModels,
   listTierPolicies,
   setModelKeyStatus,
   setModelStatus,
-  updateCostPolicy,
   updateModel,
   updateTierPolicy,
 } from '@/services/admin-model-pool'
@@ -61,17 +58,6 @@ type TierPolicy = {
   updated_at?: number
 }
 
-type CostPolicy = {
-  id: string
-  policy_name: string
-  model_tier: string
-  max_cost_per_request: string
-  billing_mode: string
-  upgrade_threshold: string
-  created_at?: number
-  updated_at?: number
-}
-
 const { t } = useI18n()
 
 const MODEL_TIERS = ['cheap', 'standard', 'strong']
@@ -81,12 +67,6 @@ const MODEL_TIER_LABELS: Record<string, string> = {
   strong: t('admin.models.tierLabels.strong'),
 }
 const PROVIDERS = ['openai', 'anthropic', 'deepseek', 'qwen', 'zhipu', 'other']
-const BILLING_MODES = ['token', 'request', 'credit']
-const BILLING_MODE_LABELS: Record<string, string> = {
-  token: '按 Token',
-  request: '按请求',
-  credit: '按积分',
-}
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -95,7 +75,6 @@ const activeTab = ref('models')
 const models = ref<ModelRecord[]>([])
 const keys = ref<ModelKeyRecord[]>([])
 const tiers = ref<TierPolicy[]>([])
-const costPolicies = ref<CostPolicy[]>([])
 
 const stats = computed(() => ({
   modelTotal: models.value.length,
@@ -140,41 +119,17 @@ const tierForm = ref({
   default_model: '',
 })
 
-const costModalVisible = ref(false)
-const editingCostId = ref('')
-const costForm = ref({
-  policy_name: '',
-  model_tier: 'standard',
-  max_cost_per_request: '0.000000',
-  billing_mode: 'token',
-  upgrade_threshold: '0.000000',
-})
-
-const openCreateCost = () => {
-  editingCostId.value = ''
-  costForm.value = {
-    policy_name: '',
-    model_tier: 'standard',
-    max_cost_per_request: '0.000000',
-    billing_mode: 'token',
-    upgrade_threshold: '0.000000',
-  }
-  costModalVisible.value = true
-}
-
 const loadAll = async () => {
   loading.value = true
   try {
-    const [modelResult, keyResult, tierResult, costResult] = await Promise.all([
+    const [modelResult, keyResult, tierResult] = await Promise.all([
       listModels({ current_page: 1, page_size: 50 }),
       listModelKeys({ current_page: 1, page_size: 50 }),
       listTierPolicies(),
-      listCostPolicies(),
-    ]) as [{ data?: { list?: ModelRecord[] } }, { data?: { list?: ModelKeyRecord[] } }, { data?: { list?: TierPolicy[] } }, { data?: { list?: CostPolicy[] } }]
+    ]) as [{ data?: { list?: ModelRecord[] } }, { data?: { list?: ModelKeyRecord[] } }, { data?: { list?: TierPolicy[] } }]
     models.value = modelResult.data?.list || []
     keys.value = keyResult.data?.list || []
     tiers.value = tierResult.data?.list || []
-    costPolicies.value = costResult.data?.list || []
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.models.messages.loadFailed')))
   } finally {
@@ -336,48 +291,6 @@ const submitTier = async () => {
     await loadAll()
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.models.messages.updateTierFailed')))
-  } finally {
-    actionLoading.value = false
-  }
-}
-
-const openEditCost = (policy: CostPolicy) => {
-  editingCostId.value = policy.id
-  costForm.value = {
-    policy_name: policy.policy_name,
-    model_tier: policy.model_tier,
-    max_cost_per_request: policy.max_cost_per_request,
-    billing_mode: policy.billing_mode,
-    upgrade_threshold: policy.upgrade_threshold,
-  }
-  costModalVisible.value = true
-}
-
-const submitCost = async () => {
-  actionLoading.value = true
-  try {
-    if (editingCostId.value) {
-      await updateCostPolicy(editingCostId.value, {
-        model_tier: costForm.value.model_tier,
-        max_cost_per_request: costForm.value.max_cost_per_request,
-        billing_mode: costForm.value.billing_mode,
-        upgrade_threshold: costForm.value.upgrade_threshold,
-      })
-      Message.success(t('admin.models.messages.costUpdated'))
-    } else {
-      await createCostPolicy({
-        policy_name: costForm.value.policy_name,
-        model_tier: costForm.value.model_tier,
-        max_cost_per_request: costForm.value.max_cost_per_request,
-        billing_mode: costForm.value.billing_mode,
-        upgrade_threshold: costForm.value.upgrade_threshold,
-      })
-      Message.success('成本策略创建成功')
-    }
-    costModalVisible.value = false
-    await loadAll()
-  } catch (error) {
-    Message.error(getErrorMessage(error, editingCostId.value ? t('admin.models.messages.updateCostFailed') : '创建成本策略失败'))
   } finally {
     actionLoading.value = false
   }
@@ -547,41 +460,15 @@ onMounted(loadAll)
       </a-tab-pane>
 
       <a-tab-pane key="cost" :title="t('admin.models.tabs.costPolicies')">
-        <div class="mb-3 flex items-center justify-between">
-          <span></span>
-          <a-button size="small" type="primary" @click="openCreateCost">新建成本策略</a-button>
-        </div>
-        <a-spin :loading="loading" class="block">
-          <div class="overflow-hidden rounded-lg border bg-white">
-            <table class="w-full text-left text-sm">
-              <thead class="bg-gray-50 text-gray-500">
-                <tr>
-                  <th class="p-3">{{ t('admin.models.columns.policyName') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.modelTier') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.maxCostPerRequest') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.billingMode') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.upgradeThreshold') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.actions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="!costPolicies.length">
-                  <td class="p-6 text-center text-gray-400" colspan="6">{{ t('admin.models.empty.costPolicies') }}</td>
-                </tr>
-                <tr v-for="policy in costPolicies" :key="policy.id" class="border-t">
-                  <td class="p-3">{{ policy.policy_name }}</td>
-                  <td class="p-3">{{ MODEL_TIER_LABELS[policy.model_tier] || policy.model_tier }}</td>
-                  <td class="p-3">{{ policy.max_cost_per_request }}</td>
-                  <td class="p-3">{{ BILLING_MODE_LABELS[policy.billing_mode] || policy.billing_mode }}</td>
-                  <td class="p-3">{{ policy.upgrade_threshold }}</td>
-                  <td class="p-3">
-                    <a-button size="mini" @click="openEditCost(policy)">{{ t('admin.models.actions.edit') }}</a-button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </a-spin>
+        <a-alert type="info" :show-icon="true">
+          <template #title>{{ t('admin.models.costMovedNotice.title') }}</template>
+          {{ t('admin.models.costMovedNotice.desc') }}
+          <template #action>
+            <router-link to="/admin/cost-strategy" class="font-medium text-blue-600 hover:underline">
+              {{ t('admin.models.costMovedNotice.link') }}
+            </router-link>
+          </template>
+        </a-alert>
       </a-tab-pane>
     </a-tabs>
 
@@ -698,36 +585,6 @@ onMounted(loadAll)
         </a-form-item>
         <a-form-item :label="t('admin.models.columns.defaultModel')" field="default_model">
           <a-input v-model="tierForm.default_model" :placeholder="t('admin.models.tierModal.placeholders.defaultModel')" />
-        </a-form-item>
-      </a-form>
-    </a-modal>
-
-    <a-modal
-      v-model:visible="costModalVisible"
-      :title="editingCostId ? t('admin.models.costModal.title') : '新建成本策略'"
-      :ok-loading="actionLoading"
-      :mask-closable="false"
-      @ok="submitCost"
-    >
-      <a-form :model="costForm" layout="vertical">
-        <a-form-item :label="t('admin.models.columns.policyName')" field="policy_name">
-          <a-input v-model="costForm.policy_name" :disabled="!!editingCostId" placeholder="例如: default" />
-        </a-form-item>
-        <a-form-item :label="t('admin.models.columns.modelTier')" field="model_tier">
-          <a-select v-model="costForm.model_tier">
-            <a-option v-for="tier in MODEL_TIERS" :key="tier" :value="tier">{{ MODEL_TIER_LABELS[tier] }}</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.models.columns.maxCostPerRequest')" field="max_cost_per_request">
-          <a-input v-model="costForm.max_cost_per_request" :placeholder="t('admin.models.costModal.placeholders.price')" />
-        </a-form-item>
-        <a-form-item :label="t('admin.models.columns.billingMode')" field="billing_mode">
-          <a-select v-model="costForm.billing_mode">
-            <a-option v-for="m in BILLING_MODES" :key="m" :value="m">{{ BILLING_MODE_LABELS[m] || m }}</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.models.columns.upgradeThreshold')" field="upgrade_threshold">
-          <a-input v-model="costForm.upgrade_threshold" :placeholder="t('admin.models.costModal.placeholders.price')" />
         </a-form-item>
       </a-form>
     </a-modal>

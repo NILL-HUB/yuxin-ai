@@ -12,6 +12,51 @@ const logs = ref<AuditLog[]>([])
 const total = ref(0)
 const detailTarget = ref<AuditLog | null>(null)
 
+const RESOURCE_ROUTES: Record<string, string> = {
+  app: '/admin/apps',
+  workflow: '/admin/workflows',
+  dataset: '/admin/datasets',
+  tool: '/admin/tools',
+  api_tool: '/admin/tools',
+  mcp: '/admin/mcp',
+  skill: '/admin/skills',
+  agent_pool_config: '/admin/agent-pool',
+  tool_governance_policy: '/admin/tool-governance',
+  model: '/admin/models',
+  orchestration_flag: '/admin/orchestration-flags',
+  sub_pool_definition: '/admin/sub-pool-definition',
+}
+
+const RESOURCE_TYPE_COLORS: Record<string, string> = {
+  app: 'arcoblue',
+  workflow: 'purple',
+  dataset: 'cyan',
+  tool: 'orange',
+  api_tool: 'orangered',
+  mcp: 'magenta',
+  skill: 'green',
+  agent_pool_config: 'blue',
+  tool_governance_policy: 'gold',
+  model: 'pinkpurple',
+  orchestration_flag: 'red',
+  sub_pool_definition: 'lime',
+}
+
+const getResourceRoute = (resourceType: string | null | undefined): string => {
+  if (!resourceType) return ''
+  return RESOURCE_ROUTES[resourceType] || ''
+}
+
+const getResourceTypeColor = (resourceType: string | null | undefined): string => {
+  if (!resourceType) return 'gray'
+  return RESOURCE_TYPE_COLORS[resourceType] || 'gray'
+}
+
+const truncateId = (id: string | null | undefined): string => {
+  if (!id) return ''
+  return id.length > 8 ? `${id.slice(0, 8)}...` : id
+}
+
 const actionOptions = computed(() => [
   { label: t('admin.auditLogs.allActions'), value: '' },
   { label: t('admin.auditLogs.actionCreate'), value: 'create' },
@@ -144,8 +189,22 @@ onMounted(loadLogs)
               <td class="p-3">
                 <a-tag size="small">{{ log.action }}</a-tag>
               </td>
-              <td class="p-3">{{ log.resource_type || '-' }}</td>
-              <td class="p-3 font-mono text-xs">{{ log.resource_id || '-' }}</td>
+              <td class="p-3">
+                <a-tag v-if="log.resource_type" :color="getResourceTypeColor(log.resource_type)" size="small">{{ log.resource_type }}</a-tag>
+                <a-tag v-else color="gray" size="small">{{ t('admin.auditLogs.unknownResource') }}</a-tag>
+              </td>
+              <td class="p-3 font-mono text-xs">
+                <a-tooltip
+                  v-if="log.resource_id && getResourceRoute(log.resource_type)"
+                  :content="`${log.resource_id} · ${t('admin.auditLogs.resourceLinkTip')}`"
+                  position="top"
+                  mini
+                >
+                  <router-link :to="getResourceRoute(log.resource_type)" class="text-blue-600 hover:underline">{{ truncateId(log.resource_id) }}</router-link>
+                </a-tooltip>
+                <span v-else-if="log.resource_id">{{ log.resource_id }}</span>
+                <span v-else class="text-gray-400">-</span>
+              </td>
               <td class="p-3 text-xs">{{ log.ip || '-' }}</td>
               <td class="p-3">
                 <a-button size="mini" @click="openDetail(log)">{{ t('admin.auditLogs.view') }}</a-button>

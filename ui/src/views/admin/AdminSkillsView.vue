@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import type { GetSkillsWithPageRequest, SkillPackage } from '@/models/skill'
 import { listAdminSkills } from '@/services/admin-skills'
 import { getErrorMessage } from '@/utils/error'
@@ -16,6 +17,7 @@ type SkillPaginator = {
 /**
  * 后台 Skills 管理页，负责展示平台技能目录列表。
  */
+const router = useRouter()
 const { t } = useI18n()
 
 const loading = ref(false)
@@ -64,6 +66,13 @@ const handleSearch = async () => {
   await loadSkills()
 }
 
+/**
+ * 跳转到 Skills 商店浏览页（Skill 包的上传与删除暂未在后台开放）。
+ */
+const handleBrowseStore = async () => {
+  await router.push({ name: 'admin-store-skills' })
+}
+
 onMounted(() => {
   void loadSkills()
 })
@@ -71,10 +80,19 @@ onMounted(() => {
 
 <template>
   <section class="space-y-6">
-    <header>
-      <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.skillsAdmin.title') }}</h1>
-      <p class="mt-1 text-sm text-slate-500">{{ t('admin.skillsAdmin.description') }}</p>
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.skillsAdmin.title') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.skillsAdmin.description') }}</p>
+      </div>
+      <a-button type="primary" @click="handleBrowseStore">
+        {{ t('admin.skillsAdmin.browseStore') }}
+      </a-button>
     </header>
+
+    <a-alert type="info" :show-icon="true">
+      {{ t('admin.skillsAdmin.manageHint') }}
+    </a-alert>
 
     <section class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <a-input

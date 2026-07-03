@@ -126,6 +126,7 @@ const menuGroups = computed(() => ([
     items: [
       { to: '/admin/billing', label: t('admin.adminLayout.menu.billing'), permissions: ['plan:read', 'redeem_code:read'] },
       { to: '/admin/cost-stats', label: t('admin.adminLayout.menu.costStats'), permissions: ['cost_stats:read'] },
+      { to: '/admin/cost-strategy', label: t('admin.adminLayout.menu.costStrategy'), permission: 'model_pool:read' },
     ],
   },
   {

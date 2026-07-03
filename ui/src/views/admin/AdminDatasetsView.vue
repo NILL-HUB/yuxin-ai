@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import type { AdminDatasetRecord, GetAdminDatasetsRequest } from '@/models/admin-dataset'
 import { listAdminDatasets } from '@/services/admin-datasets'
 import { getErrorMessage } from '@/utils/error'
@@ -16,6 +17,7 @@ type DatasetPaginator = {
 /**
  * 后台知识库管理页，负责跨账号知识库列表查询与分页浏览。
  */
+const router = useRouter()
 const { t } = useI18n()
 
 const loading = ref(false)
@@ -86,6 +88,13 @@ const formatCount = (value: number) => {
   return value.toLocaleString()
 }
 
+/**
+ * 跳转到知识库管理页（内嵌空间端知识库管理视图，支持创建与删除）。
+ */
+const handleManage = async () => {
+  await router.push({ name: 'admin-dataset-list' })
+}
+
 onMounted(() => {
   void loadDatasets()
 })
@@ -93,10 +102,19 @@ onMounted(() => {
 
 <template>
   <section class="space-y-6">
-    <header>
-      <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.datasetsAdmin.title') }}</h1>
-      <p class="mt-1 text-sm text-slate-500">{{ t('admin.datasetsAdmin.description') }}</p>
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.datasetsAdmin.title') }}</h1>
+        <p class="mt-1 text-sm text-slate-500">{{ t('admin.datasetsAdmin.description') }}</p>
+      </div>
+      <a-button type="primary" @click="handleManage">
+        {{ t('admin.datasetsAdmin.manageEntry') }}
+      </a-button>
     </header>
+
+    <a-alert type="info" :show-icon="true">
+      {{ t('admin.datasetsAdmin.manageHint') }}
+    </a-alert>
 
     <section class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <a-input
@@ -127,9 +145,10 @@ onMounted(() => {
             </p>
           </div>
           <a-button
-            disabled
+            type="outline"
             size="small"
-            data-testid="dataset-detail-disabled"
+            data-testid="dataset-detail"
+            @click="handleManage"
           >
             {{ t('admin.datasetsAdmin.detail') }}
           </a-button>
