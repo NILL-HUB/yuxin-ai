@@ -18,6 +18,7 @@ import {
 import { useAudioPlayer, useAudioToText } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
 import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import type { RoutingDecision } from '@/models/orchestration'
 import { useAccountStore } from '@/stores/account'
 import { getErrorMessage } from '@/utils/error'
 import { Message } from '@arco-design/web-vue'
@@ -125,7 +126,7 @@ const isRouteMessageFocusActive = ref(false)
 const routeMessageFocusRequestId = ref(0)
 const selectedConversationId = ref(String(route.query.conversation_id || '').trim())
 const enableDeepThinking = ref(false)
-const routingDecision = ref<Record<string, unknown> | null>(null)
+const routingDecision = ref<RoutingDecision | null>(null)
 const orchestratorReject = ref<{ reason: string; message: string } | null>(null)
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
 const accountStore = useAccountStore()
@@ -159,12 +160,23 @@ const canImageInput = computed(() => {
 const routingSummary = computed(() => {
   const decision = routingDecision.value
   if (!decision) return null
+  const costPolicy = decision.cost_policy
+  const agentSubset = decision.agent_subset
+  const toolSubset = decision.tool_subset
+  const selectedAgents = (agentSubset?.selected_agents as string[] | undefined) ?? []
+  const selectedTools = (toolSubset?.selected_tools as string[] | undefined) ?? []
   return {
     intent: String(decision.intent ?? ''),
     execution_mode: String(decision.execution_mode ?? ''),
     complexity: String(decision.complexity ?? ''),
     recommended_model_tier: String(decision.recommended_model_tier ?? ''),
     risk_level: String(decision.risk_level ?? ''),
+    needs_deep_thinking: Boolean(decision.needs_deep_thinking),
+    cost_allowed: costPolicy ? Boolean(costPolicy.allowed) : null,
+    max_agent_count: costPolicy ? Number(costPolicy.max_agent_count ?? 0) : null,
+    max_tool_count: costPolicy ? Number(costPolicy.max_tool_count ?? 0) : null,
+    selected_agents: selectedAgents,
+    selected_tools: selectedTools,
   }
 })
 
@@ -780,6 +792,33 @@ onUnmounted(() => {
               <span><span class="text-gray-500">复杂度：</span>{{ routingSummary.complexity }}</span>
               <span><span class="text-gray-500">推荐档位：</span>{{ routingSummary.recommended_model_tier }}</span>
               <span><span class="text-gray-500">风险等级：</span>{{ routingSummary.risk_level }}</span>
+              <span v-if="routingSummary.needs_deep_thinking">
+                <span class="text-gray-500">深度思考：</span>是
+              </span>
+              <span v-if="routingSummary.cost_allowed !== null">
+                <span class="text-gray-500">成本策略：</span>
+                <a-tag :color="routingSummary.cost_allowed ? 'green' : 'red'" size="small">
+                  {{ routingSummary.cost_allowed ? '允许' : '拒绝' }}
+                </a-tag>
+              </span>
+              <span v-if="routingSummary.max_agent_count !== null">
+                <span class="text-gray-500">最大Agent：</span>{{ routingSummary.max_agent_count }}
+              </span>
+              <span v-if="routingSummary.max_tool_count !== null">
+                <span class="text-gray-500">最大工具：</span>{{ routingSummary.max_tool_count }}
+              </span>
+            </div>
+            <div v-if="routingSummary.selected_agents.length > 0" class="mt-1 flex flex-wrap items-center gap-1">
+              <span class="text-gray-500">选中Agent：</span>
+              <a-tag v-for="agent in routingSummary.selected_agents" :key="agent" size="small" color="arcoblue">
+                {{ agent }}
+              </a-tag>
+            </div>
+            <div v-if="routingSummary.selected_tools.length > 0" class="mt-1 flex flex-wrap items-center gap-1">
+              <span class="text-gray-500">选中工具：</span>
+              <a-tag v-for="tool in routingSummary.selected_tools" :key="tool" size="small" color="cyan">
+                {{ tool }}
+              </a-tag>
             </div>
           </div>
         </div>

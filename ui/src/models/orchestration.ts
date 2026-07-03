@@ -87,14 +87,7 @@ export interface AgentMessagePayload {
 }
 
 /** SSE 事件载荷 - orchestrator_routing */
-export interface OrchestratorRoutingPayload {
-  intent: string
-  execution_mode: ExecutionMode
-  complexity: string
-  recommended_model_tier: ModelTier
-  risk_level: RiskLevel
-  reason: string
-}
+export interface OrchestratorRoutingPayload extends RoutingDecision {}
 
 /** SSE 事件载荷 - orchestrator_reject */
 export interface OrchestratorRejectPayload {

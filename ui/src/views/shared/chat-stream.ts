@@ -1,6 +1,7 @@
 import { QueueEvent } from '@/config'
 import type { BillingUsageEvent } from '@/models/billing-metering'
 import type { MemoryCandidatePrompt } from '@/models/memory'
+import type { RoutingDecision } from '@/models/orchestration'
 import type { ToolConfirmationPrompt } from '@/models/tool-confirmation'
 export type { ToolConfirmationPrompt }
 export type { MemoryCandidatePrompt }
@@ -80,7 +81,7 @@ export type StreamState = {
   conversation_id: string
   billingEvents: BillingUsageEvent[]
   deepThinkingProposal?: DeepThinkingProposal | null
-  routingDecision?: Record<string, unknown> | null
+  routingDecision?: RoutingDecision | null
   orchestratorReject?: { reason: string; message: string } | null
   toolConfirmationPrompt?: ToolConfirmationPrompt | null
   memoryCandidatePrompt?: MemoryCandidatePrompt | null
@@ -293,7 +294,7 @@ export const applyChatStreamEvent = (
     nextState.billingEvents = [...nextState.billingEvents, data as unknown as BillingUsageEvent]
     return { state: nextState, didUpdate: true }
   } else if (event === QueueEvent.orchestratorRouting) {
-    nextState.routingDecision = data as Record<string, unknown>
+    nextState.routingDecision = data as unknown as RoutingDecision
     return { state: nextState, didUpdate: true }
   } else if (event === QueueEvent.orchestratorReject) {
     nextState.orchestratorReject = {
