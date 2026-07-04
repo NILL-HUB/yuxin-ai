@@ -4,6 +4,8 @@ import { Message } from '@arco-design/web-vue'
 import { apiPrefix } from '@/config'
 import { getErrorMessage } from '@/utils/error'
 import { getSkillCategories, getSkillsWithPage } from '@/services/skill'
+import { listAdminSkills } from '@/services/admin-skills'
+import { useRealm } from '@/hooks/use-realm'
 import type { SkillBinding, SkillCategory, SkillPackage } from '@/models/skill'
 import { useI18n } from 'vue-i18n'
 import { getStoreCategoryDisplayName } from '@/utils/store-display'
@@ -26,6 +28,7 @@ const props = defineProps({
 })
 
 const { t, locale } = useI18n()
+const { isAdmin: isAdminContext } = useRealm()
 const emits = defineEmits(['update:visible', 'select'])
 
 const loading = ref(false)
@@ -119,19 +122,36 @@ const loadSkills = async (reset = false) => {
       }
     }
 
-    const res = await getSkillsWithPage({
-      current_page: nextPage,
-      page_size: PAGE_SIZE,
-      search_word: searchWord.value.trim(),
-      category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
-    })
-    skills.value = reset ? (res.data.list || []) : [...skills.value, ...(res.data.list || [])]
-    paginator.value = res.data.paginator || {
-      total_page: nextPage,
-      total_record: skills.value.length,
-      current_page: nextPage,
-      page_size: PAGE_SIZE,
-    }
+    const res = isAdminContext.value
+      ? await listAdminSkills({
+          current_page: nextPage,
+          page_size: PAGE_SIZE,
+          search_word: searchWord.value.trim(),
+          category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+        })
+      : await getSkillsWithPage({
+          current_page: nextPage,
+          page_size: PAGE_SIZE,
+          search_word: searchWord.value.trim(),
+          category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+        })
+    // admin 服务已解包 data 字段，space 服务返回原始响应
+    const list = isAdminContext.value ? (res.list || []) : (res.data.list || [])
+    const respPaginator = isAdminContext.value
+      ? (res.paginator || {
+          total_page: nextPage,
+          total_record: list.length,
+          current_page: nextPage,
+          page_size: PAGE_SIZE,
+        })
+      : (res.data.paginator || {
+          total_page: nextPage,
+          total_record: list.length,
+          current_page: nextPage,
+          page_size: PAGE_SIZE,
+        })
+    skills.value = reset ? list : [...skills.value, ...list]
+    paginator.value = respPaginator
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('appStudio.abilities.skills.loadMarketplaceFailed')))
   } finally {

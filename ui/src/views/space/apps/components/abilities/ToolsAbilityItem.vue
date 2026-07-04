@@ -3,7 +3,10 @@ import { computed, onMounted, type PropType, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { type GetDraftAppConfigResponse } from '@/models/app'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
-import { useGetApiTool, useGetApiToolProvidersWithPage } from '@/hooks/use-tool'
+import { useGetApiTool } from '@/hooks/use-tool'
+import { useRealm } from '@/hooks/use-realm'
+import { listAdminApiTools } from '@/services/admin-tools'
+import { getApiToolProvidersWithPage } from '@/services/api-tool'
 import { useGetBuiltinTool, useGetBuiltinTools, useGetCategories } from '@/hooks/use-builtin-tool'
 import { apiPrefix, typeMap } from '@/config'
 import { Message } from '@arco-design/web-vue'
@@ -84,11 +87,10 @@ const defaultToolInfo: ToolInfoState = {
 // 1.定义自定义组件所需数据
 const route = useRoute()
 const { t, locale } = useI18n()
+const { isAdmin: isAdminContext } = useRealm()
 // 创建工具按钮路由名：admin 上下文下跳转到 admin-tools，避免跳回 space
 const createToolRouteName = computed(() =>
-  route.path.startsWith('/admin/') || route.meta.realm === 'admin'
-    ? 'admin-tools'
-    : 'space-tools-list',
+  isAdminContext.value ? 'admin-tools' : 'space-tools-list',
 )
 const props = defineProps({
   app_id: { type: String, default: '', required: true },
@@ -102,12 +104,67 @@ const emits = defineEmits(['update:tools'])
 const { loading: updateDraftAppConfigLoading, handleUpdateDraftAppConfig } =
   useUpdateDraftAppConfig()
 const { loading: getApiToolLoading, api_tool, loadApiTool } = useGetApiTool()
-const {
-  loading: getApiToolProvidersLoading,
-  paginator,
-  api_tool_providers,
-  loadApiToolProviders,
-} = useGetApiToolProvidersWithPage()
+
+// API 工具 Provider 列表状态（统一 admin/space 双上下文）
+const getApiToolProvidersLoading = ref(false)
+const api_tool_providers = ref<Record<string, any>[]>([])
+const defaultApiToolPaginator = {
+  current_page: 1,
+  page_size: 20,
+  total_page: 0,
+  total_record: 0,
+}
+const paginator = ref(defaultApiToolPaginator)
+
+/**
+ * 统一的 API 工具 Provider 加载函数。
+ * - admin 上下文：调用 listAdminApiTools → GET /admin/api-tools 跨账号加载
+ * - space 上下文：调用 getApiToolProvidersWithPage → GET /api-tools 仅当前账号
+ */
+const loadApiToolProviders = async (init: boolean = false, search_word: string = '') => {
+  if (init) {
+    paginator.value = defaultApiToolPaginator
+  } else if (paginator.value.current_page > paginator.value.total_page) {
+    return
+  }
+
+  try {
+    getApiToolProvidersLoading.value = true
+    let list: Record<string, any>[] = []
+    let respPaginator = defaultApiToolPaginator
+
+    if (isAdminContext.value) {
+      const data = await listAdminApiTools({
+        current_page: paginator.value.current_page,
+        page_size: paginator.value.page_size,
+        search_word,
+      })
+      list = data.list || []
+      respPaginator = data.paginator
+    } else {
+      const resp = await getApiToolProvidersWithPage(
+        paginator.value.current_page,
+        paginator.value.page_size,
+        search_word,
+      )
+      list = resp.data.list
+      respPaginator = resp.data.paginator
+    }
+
+    paginator.value = respPaginator
+    if (paginator.value.current_page <= paginator.value.total_page) {
+      paginator.value.current_page += 1
+    }
+
+    if (init) {
+      api_tool_providers.value = list
+    } else {
+      api_tool_providers.value.push(...list)
+    }
+  } finally {
+    getApiToolProvidersLoading.value = false
+  }
+}
 const { loading: getBuiltinToolLoading, builtin_tool, loadBuiltinTool } = useGetBuiltinTool()
 const { categories, loadCategories } = useGetCategories()
 const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools()

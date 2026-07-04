@@ -4,7 +4,9 @@ import { Message } from '@arco-design/web-vue'
 import { apiPrefix } from '@/config'
 import { getErrorMessage } from '@/utils/error'
 import { getAppsWithPage } from '@/services/app'
+import { listAdminApps } from '@/services/admin-apps'
 import { getPublicApps, type PublicApp } from '@/services/public-app'
+import { useRealm } from '@/hooks/use-realm'
 import type { AgentBinding } from '@/models/app'
 import { useI18n } from 'vue-i18n'
 
@@ -41,6 +43,7 @@ const props = defineProps({
 })
 
 const { t } = useI18n()
+const { isAdmin: isAdminContext } = useRealm()
 const emits = defineEmits(['update:visible', 'select'])
 
 const activeTab = ref<'own' | 'public'>('own')
@@ -162,23 +165,41 @@ const loadOwnApps = async (reset = false) => {
       }
     }
 
-    const res = await getAppsWithPage({
-      current_page: nextPage,
-      page_size: PAGE_SIZE,
-      search_word: searchWord.value.trim(),
-      published_only: true,
-    })
-
-    const nextApps = (res.data.list || [])
-      .map((app) => normalizeOwnApp(app))
-      .filter((item): item is BindingTarget => Boolean(item))
-
-    ownApps.value = reset ? nextApps : [...ownApps.value, ...nextApps]
-    ownPaginator.value = res.data.paginator || {
-      total_page: nextPage,
-      total_record: ownApps.value.length,
-      current_page: nextPage,
-      page_size: PAGE_SIZE,
+    // admin 上下文：跨账号加载所有已发布应用；space 上下文：仅加载当前账号已发布应用
+    if (isAdminContext.value) {
+      const data = await listAdminApps({
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+        search: searchWord.value.trim(),
+        status: 'published',
+      })
+      const nextApps = (data.list || [])
+        .map((app) => normalizeOwnApp(app))
+        .filter((item): item is BindingTarget => Boolean(item))
+      ownApps.value = reset ? nextApps : [...ownApps.value, ...nextApps]
+      ownPaginator.value = data.paginator || {
+        total_page: nextPage,
+        total_record: ownApps.value.length,
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+      }
+    } else {
+      const res = await getAppsWithPage({
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+        search_word: searchWord.value.trim(),
+        published_only: true,
+      })
+      const nextApps = (res.data.list || [])
+        .map((app) => normalizeOwnApp(app))
+        .filter((item): item is BindingTarget => Boolean(item))
+      ownApps.value = reset ? nextApps : [...ownApps.value, ...nextApps]
+      ownPaginator.value = res.data.paginator || {
+        total_page: nextPage,
+        total_record: ownApps.value.length,
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+      }
     }
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('appStudio.abilities.agents.loadOwnFailed')))

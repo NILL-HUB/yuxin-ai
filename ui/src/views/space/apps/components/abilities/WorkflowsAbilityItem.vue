@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { nextTick, type PropType, ref, watch } from 'vue'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
+import { useRealm } from '@/hooks/use-realm'
 import { cloneDeep, isEqual } from 'lodash'
 import { Message } from '@arco-design/web-vue'
-import { useGetWorkflowsWithPage } from '@/hooks/use-workflow'
+import { getWorkflowsWithPage } from '@/services/workflow'
+import { listAdminWorkflows } from '@/services/admin-workflows'
 import { useI18n } from 'vue-i18n'
 
 type WorkflowSelection = {
@@ -26,7 +28,74 @@ const props = defineProps({
 const emits = defineEmits(['update:workflows'])
 const { loading: updateDraftAppConfigLoading, handleUpdateDraftAppConfig } =
   useUpdateDraftAppConfig()
-const { loading, paginator, workflows: apiWorkflows, loadWorkflows } = useGetWorkflowsWithPage()
+const { isAdmin: isAdminContext } = useRealm()
+
+// 工作流列表状态（统一 admin/space 双上下文）
+const loading = ref(false)
+const apiWorkflows = ref<Record<string, any>[]>([])
+const defaultPaginator = {
+  current_page: 1,
+  page_size: 20,
+  total_page: 0,
+  total_record: 0,
+}
+const paginator = ref(defaultPaginator)
+
+/**
+ * 统一的工作流加载函数，与原 useGetWorkflowsWithPage 的 loadWorkflows 接口一致。
+ * - admin 上下文：调用 listAdminWorkflows → GET /admin/workflows 跨账号加载
+ * - space 上下文：调用 getWorkflowsWithPage → GET /workflows 仅当前账号
+ */
+const loadWorkflows = async (
+  search_word: string = '',
+  status: string = '',
+  init: boolean = false,
+) => {
+  if (init) {
+    paginator.value = defaultPaginator
+  } else if (paginator.value.current_page > paginator.value.total_page) {
+    return
+  }
+
+  try {
+    loading.value = true
+    let list: Record<string, any>[] = []
+    let respPaginator = defaultPaginator
+
+    if (isAdminContext.value) {
+      const data = await listAdminWorkflows({
+        search: search_word,
+        status,
+        current_page: paginator.value.current_page,
+        page_size: paginator.value.page_size,
+      })
+      list = data.list || []
+      respPaginator = data.paginator
+    } else {
+      const resp = await getWorkflowsWithPage({
+        current_page: paginator.value.current_page,
+        page_size: paginator.value.page_size,
+        search_word,
+        status,
+      })
+      list = resp.data.list
+      respPaginator = resp.data.paginator
+    }
+
+    paginator.value = respPaginator
+    if (paginator.value.current_page <= paginator.value.total_page) {
+      paginator.value.current_page += 1
+    }
+
+    if (init) {
+      apiWorkflows.value = list
+    } else {
+      apiWorkflows.value.push(...list)
+    }
+  } finally {
+    loading.value = false
+  }
+}
 const workflowsModalVisible = ref(false)
 const isWorkflowsInit = ref(false)
 const activateWorkflows = ref<WorkflowSelection[]>([])

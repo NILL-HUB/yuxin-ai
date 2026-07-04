@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { nextTick, onMounted, type PropType, ref, watch } from 'vue'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
-import { useGetDatasetsWithPage } from '@/hooks/use-dataset'
+import { useRealm } from '@/hooks/use-realm'
+import { getDatasetsWithPage } from '@/services/dataset'
+import { listAdminDatasets } from '@/services/admin-datasets'
 import { cloneDeep, isEqual } from 'lodash'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
@@ -40,7 +42,68 @@ const props = defineProps({
 const emits = defineEmits(['update:datasets', 'update:retrieval_config'])
 const { loading: updateDraftAppConfigLoading, handleUpdateDraftAppConfig } =
   useUpdateDraftAppConfig()
-const { loading, paginator, datasets: apiDatasets, loadDatasets } = useGetDatasetsWithPage()
+const { isAdmin: isAdminContext } = useRealm()
+
+// 数据集列表状态（统一 admin/space 双上下文）
+const loading = ref(false)
+const apiDatasets = ref<Record<string, any>[]>([])
+const defaultPaginator = {
+  current_page: 1,
+  page_size: 20,
+  total_page: 0,
+  total_record: 0,
+}
+const paginator = ref(defaultPaginator)
+
+/**
+ * 统一的数据集加载函数，与原 useGetDatasetsWithPage 的 loadDatasets 接口一致。
+ * - admin 上下文：调用 listAdminDatasets → GET /admin/datasets 跨账号加载
+ * - space 上下文：调用 getDatasetsWithPage → GET /datasets 仅当前账号
+ */
+const loadDatasets = async (init: boolean = false, search_word: string = '') => {
+  if (init) {
+    paginator.value = defaultPaginator
+  } else if (paginator.value.current_page > paginator.value.total_page) {
+    return
+  }
+
+  try {
+    loading.value = true
+    let list: Record<string, any>[] = []
+    let respPaginator = defaultPaginator
+
+    if (isAdminContext.value) {
+      const data = await listAdminDatasets({
+        search_word,
+        current_page: paginator.value.current_page,
+        page_size: paginator.value.page_size,
+      })
+      list = data.list || []
+      respPaginator = data.paginator
+    } else {
+      const resp = await getDatasetsWithPage(
+        paginator.value.current_page,
+        paginator.value.page_size,
+        search_word,
+      )
+      list = resp.data.list
+      respPaginator = resp.data.paginator
+    }
+
+    paginator.value = respPaginator
+    if (paginator.value.current_page <= paginator.value.total_page) {
+      paginator.value.current_page += 1
+    }
+
+    if (init) {
+      apiDatasets.value = list
+    } else {
+      apiDatasets.value.push(...list)
+    }
+  } finally {
+    loading.value = false
+  }
+}
 const datasetsModalVisible = ref(false)
 const retrievalConfigModalVisible = ref(false)
 const isDatasetsInit = ref(false)
