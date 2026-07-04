@@ -71,10 +71,12 @@ class WorkflowConfig(BaseModel):
             EndNodeData,
             HttpRequestNodeData,
             IfElseNodeData,
+            IntentClassifierNodeData,
             IterationNodeData,
             LLMNodeData,
             ParameterExtractorNodeData,
             StartNodeData,
+            SubWorkflowNodeData,
             TemplateTransformNodeData,
             TextProcessorNodeData,
             ToolNodeData,
@@ -94,6 +96,8 @@ class WorkflowConfig(BaseModel):
             NodeType.PARAMETER_EXTRACTOR.value: ParameterExtractorNodeData,
             NodeType.IF_ELSE.value: IfElseNodeData,
             NodeType.ITERATION.value: IterationNodeData,
+            NodeType.SUB_WORKFLOW.value: SubWorkflowNodeData,
+            NodeType.INTENT_CLASSIFIER.value: IntentClassifierNodeData,
         }
 
         # 5.循环遍历所有节点

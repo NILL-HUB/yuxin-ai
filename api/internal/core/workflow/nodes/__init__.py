@@ -4,10 +4,12 @@ from .dataset_retrieval.dataset_retrieval_node import DatasetRetrievalNode, Data
 from .end.end_node import EndNode, EndNodeData
 from .http_request.http_request_node import HttpRequestNode, HttpRequestNodeData
 from .if_else.if_else_node import IfElseNode, IfElseNodeData
+from .intent_classifier.intent_classifier_node import IntentClassifierNode, IntentClassifierNodeData
 from .iteration.iteration_node import IterationNode, IterationNodeData
 from .llm.llm_node import LLMNode, LLMNodeData
 from .parameter_extractor.parameter_extractor_node import ParameterExtractorNode, ParameterExtractorNodeData
 from .start.start_node import StartNode, StartNodeData
+from .sub_workflow.sub_workflow_node import SubWorkflowNode, SubWorkflowNodeData
 from .template_transform.template_transform_node import TemplateTransformNode, TemplateTransformNodeData
 from .text_processor.text_processor_node import TextProcessorNode, TextProcessorNodeData
 from .tool.tool_node import ToolNode, ToolNodeData
@@ -27,5 +29,7 @@ __all__ = [
     "VariableAssignerNode", "VariableAssignerNodeData",
     "IfElseNode", "IfElseNodeData",
     "IterationNode", "IterationNodeData",
+    "SubWorkflowNode", "SubWorkflowNodeData",
+    "IntentClassifierNode", "IntentClassifierNodeData",
     "EndNode", "EndNodeData",
 ]

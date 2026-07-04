@@ -18,6 +18,8 @@ class NodeType(str, Enum):
     PARAMETER_EXTRACTOR = "parameter_extractor"
     IF_ELSE = "if_else"
     ITERATION = "iteration"  # 循环节点（数组遍历）
+    SUB_WORKFLOW = "sub_workflow"  # 子流程节点（workflow 调用 workflow）
+    INTENT_CLASSIFIER = "intent_classifier"  # 意图识别节点（文本分类打标）
     END = "end"
 
 

@@ -24,6 +24,8 @@ from .nodes import (
     VariableAssignerNode,
     IfElseNode,
     IterationNode,
+    SubWorkflowNode,
+    IntentClassifierNode,
     EndNode,
 )
 # 节点类映射
@@ -41,6 +43,8 @@ NodeClasses = {
     NodeType.PARAMETER_EXTRACTOR.value: ParameterExtractorNode,
     NodeType.IF_ELSE.value: IfElseNode,
     NodeType.ITERATION.value: IterationNode,
+    NodeType.SUB_WORKFLOW.value: SubWorkflowNode,
+    NodeType.INTENT_CLASSIFIER.value: IntentClassifierNode,
 }
 
 
@@ -166,6 +170,16 @@ class Workflow(BaseTool):
                 graph.add_node(
                     node_flag,
                     NodeClasses[NodeType.ITERATION.value](node_data=node),
+                )
+            elif node.node_type == NodeType.SUB_WORKFLOW.value:
+                graph.add_node(
+                    node_flag,
+                    NodeClasses[NodeType.SUB_WORKFLOW.value](node_data=node),
+                )
+            elif node.node_type == NodeType.INTENT_CLASSIFIER.value:
+                graph.add_node(
+                    node_flag,
+                    NodeClasses[NodeType.INTENT_CLASSIFIER.value](node_data=node),
                 )
             elif node.node_type == NodeType.END.value:
                 graph.add_node(
