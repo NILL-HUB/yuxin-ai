@@ -33,8 +33,20 @@ type ToolMeta = {
   params: Record<string, unknown>
 }
 
-// API 工具 Provider 在 ToolProvider 基础上额外携带 tools 数组（用于模板 v-for 迭代与选择判断）
-type ApiToolProvider = ToolProvider & { tools: ToolMeta[] }
+// API 工具 Provider 实际响应结构（与 @/models/api-tool.ts GetApiToolProvidersWithPageResponse 元素一致）
+// 注意：实际响应无 label 字段，tools 为 Array<any>（元素含 inputs 等动态字段）
+type ApiToolProvider = {
+  id: string
+  name: string
+  icon: string
+  description: string
+  headers: Array<any>
+  tools: Array<any>
+  creator_name: string
+  creator_avatar: string
+  updated_at: number
+  created_at: number
+}
 
 type ToolSelection = {
   type: string
@@ -438,7 +450,8 @@ const isModalSelectorType = computed(() => {
 })
 
 // 5.定义是否关联工具判断函数
-const isToolSelected = (provider: ToolProvider, tool: ToolMeta) => {
+// 参数使用结构性类型 { name: string } 以兼容 ApiToolProvider（无 label）与 builtin_tool（Record<string, any>）
+const isToolSelected = (provider: { name: string }, tool: { name: string }) => {
   return (
     form.value.tool?.provider?.name === provider.name && form.value.tool?.tool.name === tool.name
   )
