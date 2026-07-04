@@ -6,7 +6,8 @@ import { cloneDeep, debounce } from 'lodash'
 import { getReferencedVariables } from '@/utils/helper'
 import { apiPrefix } from '@/config'
 import { useGetBuiltinTool, useGetBuiltinTools, useGetCategories } from '@/hooks/use-builtin-tool'
-import { useGetApiToolProvidersWithPage } from '@/hooks/use-tool'
+import { listAdminApiTools } from '@/services/admin-tools'
+import { getApiToolProvidersWithPage } from '@/services/api-tool'
 import { listAdminMcpProviders } from '@/services/admin-mcp'
 import { listAdminSkills } from '@/services/admin-skills'
 import { listAdminWorkflows } from '@/services/admin-workflows'
@@ -91,12 +92,77 @@ const props = defineProps({
 })
 const emits = defineEmits(['update:visible', 'updateNode'])
 const { nodes, edges } = useVueFlow()
-const {
-  loading: getApiToolProvidersLoading,
-  paginator,
-  api_tool_providers,
-  loadApiToolProviders,
-} = useGetApiToolProvidersWithPage()
+
+// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
+// admin 上下文下所有工具类资源均从 /admin/* 端点跨账号加载，space 上下文下仅加载当前账号资源
+const route = useRoute()
+const isAdminContext = computed(
+  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
+)
+
+// API 工具 Provider 列表状态（统一 admin/space 双上下文）
+const getApiToolProvidersLoading = ref(false)
+const api_tool_providers = ref<Record<string, any>[]>([])
+const defaultApiToolPaginator = {
+  current_page: 1,
+  page_size: 20,
+  total_page: 0,
+  total_record: 0,
+}
+const paginator = ref(defaultApiToolPaginator)
+
+/**
+ * 统一的 API 工具 Provider 加载函数，与原 useGetApiToolProvidersWithPage 的 loadApiToolProviders 接口一致。
+ * - admin 上下文：调用 listAdminApiTools → GET /admin/api-tools
+ * - space 上下文：调用 getApiToolProvidersWithPage → GET /api-tools
+ */
+const loadApiToolProviders = async (init: boolean = false, search_word: string = '') => {
+  if (init) {
+    paginator.value = defaultApiToolPaginator
+  } else if (paginator.value.current_page > paginator.value.total_page) {
+    return
+  }
+
+  try {
+    getApiToolProvidersLoading.value = true
+    let list: Record<string, any>[] = []
+    let respPaginator = defaultApiToolPaginator
+
+    if (isAdminContext.value) {
+      // admin 上下文：跨账号加载所有 API 工具
+      const data = await listAdminApiTools({
+        current_page: paginator.value.current_page,
+        page_size: paginator.value.page_size,
+        search_word,
+      })
+      list = data.list || []
+      respPaginator = data.paginator
+    } else {
+      // space 上下文：仅加载当前账号 API 工具
+      const resp = await getApiToolProvidersWithPage(
+        paginator.value.current_page,
+        paginator.value.page_size,
+        search_word,
+      )
+      list = resp.data.list
+      respPaginator = resp.data.paginator
+    }
+
+    paginator.value = respPaginator
+    if (paginator.value.current_page <= paginator.value.total_page) {
+      paginator.value.current_page += 1
+    }
+
+    if (init) {
+      api_tool_providers.value = list
+    } else {
+      api_tool_providers.value.push(...list)
+    }
+  } finally {
+    getApiToolProvidersLoading.value = false
+  }
+}
+
 const { builtin_tool, loadBuiltinTool } = useGetBuiltinTool()
 const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
 const { categories, loadCategories } = useGetCategories()
@@ -144,12 +210,6 @@ const computedBuiltinTools = computed(() => {
   if (toolsActivateCategory.value === 'all') return builtin_tools.value
   return builtin_tools.value.filter((item: { category: string }) => item.category === toolsActivateCategory.value)
 })
-
-// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
-const route = useRoute()
-const isAdminContext = computed(
-  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
-)
 
 // 创建自定义工具的路由：admin 上下文下指向 admin-tools，否则指向 space-tools-list
 const createToolRoute = computed(() =>

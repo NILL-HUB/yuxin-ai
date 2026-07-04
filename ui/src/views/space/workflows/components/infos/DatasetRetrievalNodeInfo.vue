@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, inject } from 'vue'
+import { useRoute } from 'vue-router'
 import { useVueFlow } from '@vue-flow/core'
 import { cloneDeep, debounce } from 'lodash'
 import { getReferencedVariables } from '@/utils/helper'
-import { useGetDatasetsWithPage } from '@/hooks/use-dataset'
+import { getDatasetsWithPage } from '@/services/dataset'
+import { listAdminDatasets } from '@/services/admin-datasets'
 import { type ValidatedError, Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 type DatasetItem = {
@@ -92,12 +94,79 @@ const debounceAutoSave = debounce(() => {
   void onSubmit({ errors: undefined })
 }, 800)
 const { nodes, edges } = useVueFlow()
-const {
-  loading: getDatasetsWithPageLoading,
-  paginator,
-  datasets,
-  loadDatasets,
-} = useGetDatasetsWithPage()
+
+// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
+// admin 上下文下调用 /admin/datasets 跨账号加载所有知识库；space 上下文下调用 /datasets 仅加载当前账号知识库
+const route = useRoute()
+const isAdminContext = computed(
+  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
+)
+
+// 数据集列表状态（统一 admin/space 双上下文）
+const getDatasetsWithPageLoading = ref(false)
+const datasets = ref<Record<string, any>[]>([])
+const defaultPaginator = {
+  current_page: 1,
+  page_size: 20,
+  total_page: 0,
+  total_record: 0,
+}
+const paginator = ref(defaultPaginator)
+
+/**
+ * 统一的数据集加载函数，与原 useGetDatasetsWithPage 的 loadDatasets(init, search_word) 接口保持一致。
+ * - admin 上下文：调用 listAdminDatasets → GET /admin/datasets
+ * - space 上下文：调用 getDatasetsWithPage → GET /datasets
+ */
+const loadDatasets = async (init: boolean = false, search_word: string = '') => {
+  // 1.初始化时重置分页器；非初始化且已超出总页数则直接返回
+  if (init) {
+    paginator.value = defaultPaginator
+  } else if (paginator.value.current_page > paginator.value.total_page) {
+    return
+  }
+
+  try {
+    getDatasetsWithPageLoading.value = true
+    let list: Record<string, any>[] = []
+    let respPaginator = defaultPaginator
+
+    if (isAdminContext.value) {
+      // admin 上下文：跨账号加载所有知识库
+      const data = await listAdminDatasets({
+        search_word,
+        current_page: paginator.value.current_page,
+        page_size: paginator.value.page_size,
+      })
+      list = data.list || []
+      respPaginator = data.paginator
+    } else {
+      // space 上下文：仅加载当前账号知识库
+      const resp = await getDatasetsWithPage(
+        paginator.value.current_page,
+        paginator.value.page_size,
+        search_word,
+      )
+      list = resp.data.list
+      respPaginator = resp.data.paginator
+    }
+
+    // 2.更新分页器并预读下一页码
+    paginator.value = respPaginator
+    if (paginator.value.current_page <= paginator.value.total_page) {
+      paginator.value.current_page += 1
+    }
+
+    // 3.初始化覆盖，否则追加
+    if (init) {
+      datasets.value = list
+    } else {
+      datasets.value.push(...list)
+    }
+  } finally {
+    getDatasetsWithPageLoading.value = false
+  }
+}
 
 // 2.定义节点可引用的变量选项
 const inputRefOptions = computed(() => {
