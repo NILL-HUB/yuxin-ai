@@ -53,6 +53,7 @@ from internal.service.tool_inventory_service import (
 )
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.composite_tool_resolver import CompositeToolResolver
+from internal.service.conversation_variable_service import ConversationVariableService
 from internal.service.runtime_tool_governance_gate import RuntimeToolGovernanceGate
 from internal.service.governance_mode_resolver import GovernanceModeResolver
 from internal.service.governance_audit_logger import GovernanceAuditLogger
@@ -130,5 +131,8 @@ class ExtensionModule(Module):
 
         # 注册治理审计日志器（激活阶段1渐进式启用观测期：路由日志中工具治理决策覆盖率 ≥ 95%）
         binder.bind(GovernanceAuditLogger, to=GovernanceAuditLogger)
+
+        # 注册会话变量服务（Plan D-3 ConversationVariable CRUD）
+        binder.bind(ConversationVariableService, to=ConversationVariableService)
 
 injector = Injector([ExtensionModule])

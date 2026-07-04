@@ -131,3 +131,87 @@ class WorkflowVersion(db.Model):
 
     # 关系定义
     workflow = relationship("Workflow", foreign_keys=[workflow_id], lazy="joined")
+
+
+class WorkflowRun(db.Model):
+    """工作流执行记录，每次工作流运行创建一条记录。
+
+    对标 Dify 的 WorkflowRun，记录：
+    - 触发信息（触发源、触发者）
+    - 输入参数
+    - 最终输出
+    - 执行状态（running/succeeded/failed/stopped）
+    - 总耗时
+    - 关联的节点执行记录（通过 workflow_node_execution 表）
+    """
+    __tablename__ = "workflow_run"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="pk_workflow_run_id"),
+        Index("workflow_run_workflow_id_idx", "workflow_id"),
+        Index("workflow_run_app_id_idx", "app_id"),
+        Index("workflow_run_account_id_idx", "account_id"),
+        Index("workflow_run_status_idx", "status"),
+        Index("workflow_run_created_at_idx", "created_at"),
+    )
+
+    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    workflow_id = Column(UUID, ForeignKey("workflow.id"), nullable=False)  # 关联工作流
+    app_id = Column(UUID, nullable=True)  # 调用工作流的应用ID（可选，直接调用为空）
+    account_id = Column(UUID, nullable=False)  # 触发账号ID
+    trigger_source = Column(String(32), nullable=False, server_default=text("'debug'::character varying"))  # 触发源: debug/app/schedule/api
+    inputs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 输入参数
+    outputs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 最终输出
+    status = Column(String(32), nullable=False, server_default=text("'running'::character varying"))  # running/succeeded/failed/stopped
+    error = Column(Text, nullable=False, server_default=text("''::text"))  # 错误信息
+    total_steps = Column(Integer, nullable=False, server_default=text("0"))  # 总节点数
+    elapsed_time = Column(Float, nullable=False, server_default=text("0.0"))  # 总耗时（秒）
+    total_tokens = Column(Integer, nullable=False, server_default=text("0"))  # 总 token 消耗
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(0)"),
+        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
+        default=_utcnow_naive,
+    )
+    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
+
+
+class WorkflowNodeExecution(db.Model):
+    """工作流节点执行记录，每个节点的执行都会创建一条记录。
+
+    对标 Dify 的 WorkflowNodeExecution，记录：
+    - 节点基本信息（node_id, node_type, title）
+    - 节点输入数据
+    - 节点输出数据
+    - 执行状态
+    - 耗时
+    - 错误信息
+    - 重试信息
+    """
+    __tablename__ = "workflow_node_execution"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="pk_workflow_node_execution_id"),
+        Index("workflow_node_execution_run_id_idx", "workflow_run_id"),
+        Index("workflow_node_execution_node_id_idx", "workflow_run_id", "node_id"),
+        Index("workflow_node_execution_status_idx", "status"),
+    )
+
+    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    workflow_run_id = Column(UUID, ForeignKey("workflow_run.id", ondelete="CASCADE"), nullable=False)  # 关联执行记录
+    node_id = Column(UUID, nullable=False)  # 节点ID
+    node_type = Column(String(32), nullable=False, server_default=text("''::character varying"))  # 节点类型
+    title = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 节点标题
+    inputs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 节点输入
+    outputs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 节点输出
+    status = Column(String(32), nullable=False, server_default=text("'running'::character varying"))  # running/succeeded/failed/skipped
+    error = Column(Text, nullable=False, server_default=text("''::text"))  # 错误信息
+    elapsed_time = Column(Float, nullable=False, server_default=text("0.0"))  # 耗时（秒）
+    execution_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 执行元数据（重试次数、token 消耗等）
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(0)"),
+        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
+        default=_utcnow_naive,
+    )
+    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
