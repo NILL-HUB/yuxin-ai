@@ -3209,7 +3209,7 @@ class TestAppServiceDraftConfigValidation:
         assert "生成失败" in str(exc_info.value)
 
     def test_resolve_debug_conversation_should_raise_when_conversation_invalid(self, monkeypatch):
-        service = _build_service()
+        debug_service = _new_app_debug_service()
         account = SimpleNamespace(id=uuid4())
         app = SimpleNamespace(id=uuid4(), debug_conversation_id=None, debug_conversation=None)
         invalid_conversation = SimpleNamespace(
@@ -3219,10 +3219,10 @@ class TestAppServiceDraftConfigValidation:
             is_deleted=False,
             invoke_from=InvokeFrom.DEBUGGER.value,
         )
-        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: invalid_conversation)
+        monkeypatch.setattr(debug_service, "get", lambda *_args, **_kwargs: invalid_conversation)
 
         with pytest.raises(NotFoundException):
-            service._resolve_debug_conversation(
+            debug_service._resolve_debug_conversation(
                 app=app,
                 account=account,
                 conversation_id=uuid4(),
@@ -3230,7 +3230,7 @@ class TestAppServiceDraftConfigValidation:
             )
 
     def test_resolve_debug_conversation_should_sync_active_debug_pointer(self, monkeypatch):
-        service = _build_service()
+        debug_service = _new_app_debug_service()
         account = SimpleNamespace(id=uuid4())
         app = SimpleNamespace(id=uuid4(), debug_conversation_id=uuid4(), debug_conversation=None)
         conversation = SimpleNamespace(
@@ -3241,14 +3241,14 @@ class TestAppServiceDraftConfigValidation:
             invoke_from=InvokeFrom.DEBUGGER.value,
         )
         updates = []
-        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
+        monkeypatch.setattr(debug_service, "get", lambda *_args, **_kwargs: conversation)
         monkeypatch.setattr(
-            service,
+            debug_service,
             "update",
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
 
-        result = service._resolve_debug_conversation(
+        result = debug_service._resolve_debug_conversation(
             app=app,
             account=account,
             conversation_id=conversation.id,
@@ -3259,7 +3259,7 @@ class TestAppServiceDraftConfigValidation:
         assert updates == [(app, {"debug_conversation_id": conversation.id})]
 
     def test_resolve_debug_conversation_should_skip_update_when_pointer_already_synced(self, monkeypatch):
-        service = _build_service()
+        debug_service = _new_app_debug_service()
         account = SimpleNamespace(id=uuid4())
         conversation_id = uuid4()
         app = SimpleNamespace(id=uuid4(), debug_conversation_id=conversation_id, debug_conversation=None)
@@ -3271,14 +3271,14 @@ class TestAppServiceDraftConfigValidation:
             invoke_from=InvokeFrom.DEBUGGER.value,
         )
         updates = []
-        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
+        monkeypatch.setattr(debug_service, "get", lambda *_args, **_kwargs: conversation)
         monkeypatch.setattr(
-            service,
+            debug_service,
             "update",
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
 
-        result = service._resolve_debug_conversation(
+        result = debug_service._resolve_debug_conversation(
             app=app,
             account=account,
             conversation_id=conversation.id,
