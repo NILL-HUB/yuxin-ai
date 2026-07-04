@@ -6,6 +6,7 @@ from injector import inject
 
 from internal.schema.app_schema import DebugChatReq
 from internal.schema.my_app_schema import MyAppListResp
+from internal.service.app_debug_service import AppDebugService
 from internal.service.app_service import AppService
 from internal.service.my_app_service import MyAppService
 from pkg.response import compact_generate_response, success_json, validate_error_json
@@ -16,6 +17,7 @@ from pkg.response import compact_generate_response, success_json, validate_error
 class MyAppHandler:
     my_app_service: MyAppService
     app_service: AppService
+    app_debug_service: AppDebugService
 
     @login_required
     def list_my_apps(self):
@@ -28,4 +30,4 @@ class MyAppHandler:
         req = DebugChatReq()
         if not req.validate():
             return validate_error_json(req.errors)
-        return compact_generate_response(self.app_service.debug_chat(app_id, req, current_user))
+        return compact_generate_response(self.app_debug_service.debug_chat(app_id, req, current_user))

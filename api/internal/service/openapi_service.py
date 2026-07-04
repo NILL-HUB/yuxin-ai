@@ -22,6 +22,7 @@ from pkg.response import Response
 from pkg.sqlalchemy import SQLAlchemy
 from .app_config_service import AppConfigService
 from .app_config_service import call_config_loader
+from .app_runtime_service import AppRuntimeService
 from .app_service import AppService
 from .base_service import BaseService
 from .conversation_service import ConversationService
@@ -36,6 +37,7 @@ class OpenAPIService(BaseService):
     """开放API服务"""
     db: SQLAlchemy
     app_service: AppService
+    app_runtime_service: AppRuntimeService
     retrieval_service: RetrievalService
     app_config_service: AppConfigService
     conversation_service: ConversationService
@@ -123,10 +125,10 @@ class OpenAPIService(BaseService):
         )
 
         # 11.根据应用配置构建运行时工具
-        tools = AppService._build_runtime_tools_for_config(
+        tools = AppRuntimeService.build_runtime_tools_for_config(
             app_config_service=self.app_config_service,
             retrieval_service=self.retrieval_service,
-            app_service=self.app_service,
+            app_service=self.app_runtime_service,
             account=account,
             draft_app_config=app_config,
             flask_app=current_app._get_current_object() if has_app_context() else None,
@@ -134,7 +136,7 @@ class OpenAPIService(BaseService):
 
         # 12.根据LLM是否支持tool_call决定使用不同的Agent
         agent_class = FunctionCallAgent if ModelFeature.TOOL_CALL.value in llm.features else ReACTAgent
-        agent_binding_prompt_appendix = AppService._build_agent_binding_prompt_appendix(
+        agent_binding_prompt_appendix = AppRuntimeService.build_agent_binding_prompt_appendix(
             app_config.get("agent_bindings", [])
         )
         preset_prompt = app_config["preset_prompt"]

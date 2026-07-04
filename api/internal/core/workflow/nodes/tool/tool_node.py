@@ -296,13 +296,13 @@ class ToolNode(BaseNode):
         return tools[0].invoke(inputs_dict, config=nested_config)
 
     def _invoke_agent_binding_tool(self, inputs_dict: dict[str, Any], config: Optional[RunnableConfig]) -> Any:
-        """复用 AppService 调用子 App（带环检测）。
+        """复用 AppRuntimeService 调用子 App（带环检测）。
 
         node_data.tool_id 存目标 app_id。
         环检测：通过 RunnableConfig.configurable 的调用栈，若 app_id 已在栈中则拒绝。
         """
         from app.http.module import injector
-        from internal.service.app_service import AppService
+        from internal.service.app_runtime_service import AppRuntimeService
 
         target_app_id = self.node_data.tool_id
         if not target_app_id:
@@ -320,13 +320,13 @@ class ToolNode(BaseNode):
                 f"Agent 嵌套深度超过上限 {MAX_NESTED_DEPTH}，已停止执行"
             )
 
-        app_service = injector.get(AppService)
+        app_runtime_service = injector.get(AppRuntimeService)
         flask_app = self._get_flask_app()
         account = self._extract_account(config)
         # 当前 app_id 从 config 获取（嵌套执行时由调用方传入）
         current_app_id = self._extract_current_app_id(config)
 
-        tools = app_service.get_langchain_tools_by_agent_bindings(
+        tools = app_runtime_service.get_langchain_tools_by_agent_bindings(
             [{"app_id": target_app_id_str}],
             account=account,
             app_id=self._to_uuid(current_app_id) if current_app_id else self._to_uuid(target_app_id_str),

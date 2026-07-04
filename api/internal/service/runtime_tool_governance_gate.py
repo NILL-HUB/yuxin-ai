@@ -1,6 +1,6 @@
 """治理注入门：BaseTool 列表 → 治理过滤 → 返回过滤后列表 + 审计上下文。
 
-注入到 AppService._build_runtime_tools_for_config 的 return 前，把裸 BaseTool 列表
+注入到 AppRuntimeService.build_runtime_tools_for_config 的 return 前，把裸 BaseTool 列表
 经 ToolPolicyFilter 治理过滤。详见架构文档 10.5.2 节。
 
 渐进式启用：observe_only=True 时只记录审计不实际阻断（阶段1）。

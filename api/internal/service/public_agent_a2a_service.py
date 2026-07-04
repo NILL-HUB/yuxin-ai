@@ -24,7 +24,7 @@ from sqlalchemy.orm import selectinload
 from pkg.sqlalchemy import SQLAlchemy
 
 from .app_config_service import AppConfigService, call_config_loader
-from .app_service import AppService
+from .app_runtime_service import AppRuntimeService
 from .base_service import BaseService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
@@ -37,7 +37,7 @@ class PublicAgentA2AService(BaseService):
     """公共Agent的A2A协议服务。"""
 
     db: SQLAlchemy
-    app_service: AppService
+    app_runtime_service: AppRuntimeService
     app_config_service: AppConfigService
     language_model_service: LanguageModelService
     public_agent_registry_service: PublicAgentRegistryService
@@ -637,21 +637,21 @@ class PublicAgentA2AService(BaseService):
         else:
             llm = self.language_model_service.load_language_model(app_config.get("model_config", {}))
         owner_account = SimpleNamespace(id=app.account_id)
-        tools = self.app_service._build_runtime_tools(
+        tools = self.app_runtime_service.build_runtime_tools(
             app.id,
             owner_account,
             app_config,
             flask_app=flask_app,
             runtime_context=runtime_context,
         )
-        agent = self.app_service._create_runtime_agent(
+        agent = self.app_runtime_service.create_runtime_agent(
             llm,
             owner_account,
             app_config,
             tools,
             flask_app=flask_app,
         )
-        agent = self.app_service._create_runtime_agent(
+        agent = self.app_runtime_service.create_runtime_agent(
             llm,
             owner_account,
             app_config,
@@ -755,21 +755,21 @@ class PublicAgentA2AService(BaseService):
         else:
             llm = self.language_model_service.load_language_model(app_config.get("model_config", {}))
         owner_account = SimpleNamespace(id=app.account_id)
-        tools = self.app_service._build_runtime_tools(
+        tools = self.app_runtime_service.build_runtime_tools(
             app.id,
             owner_account,
             app_config,
             flask_app=flask_app,
             runtime_context=runtime_context,
         )
-        agent = self.app_service._create_runtime_agent(
+        agent = self.app_runtime_service.create_runtime_agent(
             llm,
             owner_account,
             app_config,
             tools,
             flask_app=flask_app,
         )
-        agent = self.app_service._create_runtime_agent(
+        agent = self.app_runtime_service.create_runtime_agent(
             llm,
             owner_account,
             app_config,

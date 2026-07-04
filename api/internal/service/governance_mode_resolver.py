@@ -90,7 +90,7 @@ class GovernanceModeResolver:
         }
 
     def build_governance_context(self, **overrides: Any) -> dict[str, Any]:
-        """构建 governance_context，供 AppService._build_runtime_tools_for_config 使用。
+        """构建 governance_context，供 AppRuntimeService.build_runtime_tools_for_config 使用。
 
         默认包含：
             - observe_only: bool（阶段1为True，阶段2/3为False）

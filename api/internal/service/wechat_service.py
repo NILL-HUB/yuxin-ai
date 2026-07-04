@@ -24,7 +24,7 @@ from internal.exception import FailException
 from internal.model import App, WechatEndUser, EndUser, Message, WechatMessage, Conversation
 from pkg.sqlalchemy import SQLAlchemy
 from .app_config_service import AppConfigService, call_config_loader
-from .app_service import AppService
+from .app_runtime_service import AppRuntimeService
 from .base_service import BaseService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
@@ -40,7 +40,7 @@ class WechatService(BaseService):
     app_config_service: AppConfigService
     conversation_service: ConversationService
     language_model_service: LanguageModelService
-    app_service: AppService | None = None
+    app_runtime_service: AppRuntimeService | None = None
 
     def wechat(self, app_id: UUID):
         """微信公众号(订阅号/服务号)校验与消息推送, 运行逻辑参考`Agent对接微信公众号思路.drawio`"""
@@ -207,10 +207,10 @@ class WechatService(BaseService):
             )
 
             # 3.根据应用配置构建运行时工具
-            tools = AppService._build_runtime_tools_for_config(
+            tools = AppRuntimeService.build_runtime_tools_for_config(
                 app_config_service=self.app_config_service,
                 retrieval_service=self.retrieval_service,
-                app_service=self.app_service,
+                app_service=self.app_runtime_service,
                 account=SimpleNamespace(id=app.account_id),
                 draft_app_config=app_config,
                 flask_app=flask_app._get_current_object(),
@@ -218,7 +218,7 @@ class WechatService(BaseService):
 
             # 4.根据LLM是否支持tool_call决定使用不同的Agent
             agent_class = FunctionCallAgent if ModelFeature.TOOL_CALL in llm.features else ReACTAgent
-            agent_binding_prompt_appendix = AppService._build_agent_binding_prompt_appendix(
+            agent_binding_prompt_appendix = AppRuntimeService.build_agent_binding_prompt_appendix(
                 app_config.get("agent_bindings", [])
             )
             preset_prompt = app_config["preset_prompt"]

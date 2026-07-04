@@ -24,6 +24,7 @@ from internal.schema.app_schema import (
     GetDebugConversationMessagesWithPageResp
 )
 from internal.service import AppService, RetrievalService
+from internal.service.app_debug_service import AppDebugService
 from pkg.paginator import PageModel
 from pkg.response import validate_error_json, success_json, success_message, compact_generate_response
 from internal.core.language_model import LanguageModelManager
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 class AppHandler:
     """应用控制器"""
     app_service: AppService
+    app_debug_service: AppDebugService
     retrieval_service: RetrievalService
     language_model_manager: LanguageModelManager
 
@@ -173,7 +175,7 @@ class AppHandler:
     @login_required
     def get_debug_conversation_summary(self, app_id: UUID):
         """根据传递的应用id获取调试会话长期记忆"""
-        summary = self.app_service.get_debug_conversation_summary(app_id, current_user)
+        summary = self.app_debug_service.get_debug_conversation_summary(app_id, current_user)
         return success_json({"summary": summary})
 
     @login_required
@@ -185,14 +187,14 @@ class AppHandler:
             return validate_error_json(req.errors)
 
         # 2.调用服务更新调试会话长期记忆
-        self.app_service.update_debug_conversation_summary(app_id, req.summary.data, current_user)
+        self.app_debug_service.update_debug_conversation_summary(app_id, req.summary.data, current_user)
 
         return success_message("更新AI应用长期记忆成功")
 
     @login_required
     def delete_debug_conversation(self, app_id: UUID):
         """根据传递的应用id 清空该应用的调试会话记录"""
-        self.app_service.delete_debug_conversation(app_id, current_user)
+        self.app_debug_service.delete_debug_conversation(app_id, current_user)
 
         return success_message("清空应用调试会话记录成功")
 
@@ -205,7 +207,7 @@ class AppHandler:
             return validate_error_json(req.errors)
 
         # 2.调试服务发起会话调试
-        response = self.app_service.debug_chat(app_id, req, current_user)
+        response = self.app_debug_service.debug_chat(app_id, req, current_user)
 
         return compact_generate_response(response)
 
@@ -216,20 +218,20 @@ class AppHandler:
         if not req.validate():
             return validate_error_json(req.errors)
 
-        response = self.app_service.prompt_compare_chat(app_id, req, current_user)
+        response = self.app_debug_service.prompt_compare_chat(app_id, req, current_user)
 
         return compact_generate_response(response)
 
     @login_required
     def stop_debug_chat(self, app_id: UUID, task_id: UUID):
         """根据传递的应用id+任务id停止某个应用的指定调试会话"""
-        self.app_service.stop_debug_chat(app_id, task_id, current_user)
+        self.app_debug_service.stop_debug_chat(app_id, task_id, current_user)
         return success_message("停止应用调试会话成功")
 
     @login_required
     def stop_prompt_compare_chat(self, app_id: UUID, task_id: UUID):
         """根据传递的应用id+任务id停止某个提示词对比调试会话"""
-        self.app_service.stop_prompt_compare_chat(app_id, task_id, current_user)
+        self.app_debug_service.stop_prompt_compare_chat(app_id, task_id, current_user)
         return success_message("停止提示词对比调试会话成功")
 
     @login_required
@@ -276,7 +278,7 @@ class AppHandler:
             return validate_error_json(req.errors)
 
         # 2.调用服务获取数据
-        messages, paginator = self.app_service.get_debug_conversation_messages_with_page(app_id, req, current_user)
+        messages, paginator = self.app_debug_service.get_debug_conversation_messages_with_page(app_id, req, current_user)
 
         # 3.创建响应结构
         resp = GetDebugConversationMessagesWithPageResp(many=True)

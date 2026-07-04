@@ -19,7 +19,7 @@ from internal.core.memory import TokenBufferMemory
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.entity.dataset_entity import RetrievalSource
 from .app_config_service import AppConfigService, call_config_loader
-from .app_service import AppService
+from .app_runtime_service import AppRuntimeService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
 from .retrieval_service import RetrievalService
@@ -35,7 +35,7 @@ class WebAppService(BaseService):
     conversation_service: ConversationService
     language_model_service: LanguageModelService
     retrieval_service: RetrievalService
-    app_service: AppService | None = None
+    app_runtime_service: AppRuntimeService | None = None
 
     def get_web_app(self, token: str) -> App:
         """根据传递的token获取WebApp实例"""
@@ -159,10 +159,10 @@ class WebAppService(BaseService):
         )
 
         # 8.根据应用配置构建运行时工具
-        tools = AppService._build_runtime_tools_for_config(
+        tools = AppRuntimeService.build_runtime_tools_for_config(
             app_config_service=self.app_config_service,
             retrieval_service=self.retrieval_service,
-            app_service=self.app_service,
+            app_service=self.app_runtime_service,
             account=account,
             draft_app_config=app_config,
             flask_app=current_app._get_current_object(),
@@ -171,7 +171,7 @@ class WebAppService(BaseService):
 
         # 9.复用运行时Agent工厂，确保已发布WebApp与调试态应用共用深度思考链路
         runtime_flask_app = current_app._get_current_object()
-        agent = AppService._create_runtime_agent(
+        agent = AppRuntimeService.create_runtime_agent(
             llm=llm,
             account=account,
             draft_app_config=app_config,
