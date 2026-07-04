@@ -122,34 +122,37 @@ const loadSkills = async (reset = false) => {
       }
     }
 
-    const res = isAdminContext.value
-      ? await listAdminSkills({
-          current_page: nextPage,
-          page_size: PAGE_SIZE,
-          search_word: searchWord.value.trim(),
-          category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
-        })
-      : await getSkillsWithPage({
-          current_page: nextPage,
-          page_size: PAGE_SIZE,
-          search_word: searchWord.value.trim(),
-          category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
-        })
     // admin 服务已解包 data 字段，space 服务返回原始响应
-    const list = isAdminContext.value ? (res.list || []) : (res.data.list || [])
-    const respPaginator = isAdminContext.value
-      ? (res.paginator || {
-          total_page: nextPage,
-          total_record: list.length,
-          current_page: nextPage,
-          page_size: PAGE_SIZE,
-        })
-      : (res.data.paginator || {
-          total_page: nextPage,
-          total_record: list.length,
-          current_page: nextPage,
-          page_size: PAGE_SIZE,
-        })
+    // 分别处理两种返回类型，避免联合类型访问错误
+    let list: SkillPackage[] = []
+    let respPaginator: PaginatorState = {
+      total_page: nextPage,
+      total_record: 0,
+      current_page: nextPage,
+      page_size: PAGE_SIZE,
+    }
+    if (isAdminContext.value) {
+      const adminRes = await listAdminSkills({
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+        search_word: searchWord.value.trim(),
+        category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+      })
+      list = adminRes.list || []
+      respPaginator = adminRes.paginator || respPaginator
+    } else {
+      const spaceRes = await getSkillsWithPage({
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+        search_word: searchWord.value.trim(),
+        category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+      })
+      list = spaceRes.data.list || []
+      respPaginator = spaceRes.data.paginator || respPaginator
+    }
+    if (respPaginator.total_record === 0 && list.length > 0) {
+      respPaginator.total_record = list.length
+    }
     skills.value = reset ? list : [...skills.value, ...list]
     paginator.value = respPaginator
   } catch (error: unknown) {

@@ -33,6 +33,9 @@ type ToolMeta = {
   params: Record<string, unknown>
 }
 
+// API 工具 Provider 在 ToolProvider 基础上额外携带 tools 数组（用于模板 v-for 迭代与选择判断）
+type ApiToolProvider = ToolProvider & { tools: ToolMeta[] }
+
 type ToolSelection = {
   type: string
   provider: ToolProvider
@@ -102,7 +105,7 @@ const isAdminContext = computed(
 
 // API 工具 Provider 列表状态（统一 admin/space 双上下文）
 const getApiToolProvidersLoading = ref(false)
-const api_tool_providers = ref<Record<string, any>[]>([])
+const api_tool_providers = ref<ApiToolProvider[]>([])
 const defaultApiToolPaginator = {
   current_page: 1,
   page_size: 20,
@@ -125,7 +128,7 @@ const loadApiToolProviders = async (init: boolean = false, search_word: string =
 
   try {
     getApiToolProvidersLoading.value = true
-    let list: Record<string, any>[] = []
+    let list: ApiToolProvider[] = []
     let respPaginator = defaultApiToolPaginator
 
     if (isAdminContext.value) {
