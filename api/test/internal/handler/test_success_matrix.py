@@ -546,21 +546,21 @@ CASES = [
         "method": "post",
         "url": f"/apps/{APP_ID}/summary",
         "kwargs": {"json": {"summary": "memory"}},
-        "patches": [("internal.service.app_service.AppService.update_debug_conversation_summary", None)],
+        "patches": [("internal.service.app_debug_service.AppDebugService.update_debug_conversation_summary", None)],
     },
     {
         "name": "delete_debug_conversation_success",
         "method": "post",
         "url": f"/apps/{APP_ID}/conversations/delete-debug-conversation",
         "kwargs": {"json": {}},
-        "patches": [("internal.service.app_service.AppService.delete_debug_conversation", None)],
+        "patches": [("internal.service.app_debug_service.AppDebugService.delete_debug_conversation", None)],
     },
     {
         "name": "stop_debug_chat_success",
         "method": "post",
         "url": f"/apps/{APP_ID}/conversations/tasks/{TASK_ID}/stop",
         "kwargs": {"json": {}},
-        "patches": [("internal.service.app_service.AppService.stop_debug_chat", None)],
+        "patches": [("internal.service.app_debug_service.AppDebugService.stop_debug_chat", None)],
     },
     {
         "name": "debug_chat_success",
@@ -569,7 +569,7 @@ CASES = [
         "kwargs": {"json": {"query": "hello"}},
         "patches": [
             (
-                "internal.service.app_service.AppService.debug_chat",
+                "internal.service.app_debug_service.AppDebugService.debug_chat",
                 Response(code=HttpCode.SUCCESS, data={"answer": "ok"}),
             )
         ],
@@ -593,7 +593,7 @@ CASES = [
         },
         "patches": [
             (
-                "internal.service.app_service.AppService.prompt_compare_chat",
+                "internal.service.app_debug_service.AppDebugService.prompt_compare_chat",
                 Response(code=HttpCode.SUCCESS, data={"answer": "ok"}),
             )
         ],
@@ -603,7 +603,7 @@ CASES = [
         "method": "post",
         "url": f"/apps/{APP_ID}/prompt-compare/tasks/{TASK_ID}/stop",
         "kwargs": {"json": {}},
-        "patches": [("internal.service.app_service.AppService.stop_prompt_compare_chat", None)],
+        "patches": [("internal.service.app_debug_service.AppDebugService.stop_prompt_compare_chat", None)],
     },
     {
         "name": "delete_app_success",
@@ -1100,7 +1100,7 @@ CASES += [
         "method": "get",
         "url": f"/apps/{APP_ID}/conversations/messages",
         "kwargs": {},
-        "patches": [("internal.service.app_service.AppService.get_debug_conversation_messages_with_page", ([_message_obj()], _paginator()))],
+        "patches": [("internal.service.app_debug_service.AppDebugService.get_debug_conversation_messages_with_page", ([_message_obj()], _paginator()))],
         "assertion": _assert_message_page,
     },
     {

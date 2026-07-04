@@ -38,7 +38,7 @@ class TestMyAppHandler:
             yield "data: ok\n\n"
 
         monkeypatch.setattr("internal.service.my_app_service.MyAppService.get_assigned_app", _get_assigned_app, raising=False)
-        monkeypatch.setattr("internal.service.app_service.AppService.debug_chat", _debug_chat, raising=False)
+        monkeypatch.setattr("internal.service.app_debug_service.AppDebugService.debug_chat", _debug_chat, raising=False)
 
         resp = client.post(f"/my/apps/{app_id}/chat", json={"query": "hello"})
 

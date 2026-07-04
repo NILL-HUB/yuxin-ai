@@ -15,6 +15,8 @@ from internal.entity.audio_entity import ALLOWED_AUDIO_VOICES
 from internal.core.language_model.entities.model_entity import ModelParameterType
 from internal.exception import FailException, ForbiddenException, NotFoundException, ValidateErrorException
 from internal.model import ApiTool, Workflow, Dataset
+from internal.service.app_debug_service import AppDebugService
+from internal.service.app_runtime_service import AppRuntimeService
 from internal.service.app_service import AppService
 
 
@@ -88,6 +90,35 @@ def _build_service() -> AppService:
         language_model_service=SimpleNamespace(),
         builtin_provider_manager=SimpleNamespace(),
     )
+
+
+def _new_app_runtime_service(**kwargs) -> AppRuntimeService:
+    kwargs.setdefault("db", _DummyDB())
+    kwargs.setdefault(
+        "app_config_service",
+        SimpleNamespace(
+            _build_agent_runtime_tool_name=lambda target_app_id: f"agent_app_{str(target_app_id).replace('-', '')}",
+            get_langchain_tools_by_tools_config=lambda *_args, **_kwargs: [],
+            get_langchain_tools_by_mcp_bindings=lambda *_args, **_kwargs: [],
+            get_langchain_tools_by_workflow_ids=lambda *_args, **_kwargs: [],
+        ),
+    )
+    kwargs.setdefault("retrieval_service", SimpleNamespace())
+    kwargs.setdefault("language_model_service", SimpleNamespace())
+    kwargs.setdefault("language_model_manager", SimpleNamespace())
+    kwargs.setdefault("builtin_provider_manager", SimpleNamespace())
+    kwargs.setdefault("conversation_service", SimpleNamespace())
+    return AppRuntimeService(**kwargs)
+
+
+def _new_app_debug_service(**kwargs) -> AppDebugService:
+    app_service = kwargs.get("app_service") or _build_service()
+    kwargs.setdefault("app_service", app_service)
+    kwargs.setdefault("app_runtime_service", _new_app_runtime_service(db=app_service.db))
+    kwargs.setdefault("language_model_service", SimpleNamespace())
+    kwargs.setdefault("conversation_service", SimpleNamespace())
+    kwargs.setdefault("db", app_service.db)
+    return AppDebugService(**kwargs)
 
 
 class TestAppService:
@@ -479,6 +510,7 @@ class TestAppService:
 
     def test_get_debug_conversation_summary_should_raise_when_long_term_memory_disabled(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         app = SimpleNamespace(debug_conversation=SimpleNamespace(summary="old"))
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(
@@ -488,10 +520,11 @@ class TestAppService:
         )
 
         with pytest.raises(FailException):
-            service.get_debug_conversation_summary(uuid4(), SimpleNamespace(id=uuid4()))
+            debug_service.get_debug_conversation_summary(uuid4(), SimpleNamespace(id=uuid4()))
 
     def test_get_debug_conversation_summary_should_return_summary_when_enabled(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         app = SimpleNamespace(debug_conversation=SimpleNamespace(summary="new-summary"))
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(
@@ -500,12 +533,13 @@ class TestAppService:
             lambda *_args, **_kwargs: {"long_term_memory": {"enable": True}},
         )
 
-        result = service.get_debug_conversation_summary(uuid4(), SimpleNamespace(id=uuid4()))
+        result = debug_service.get_debug_conversation_summary(uuid4(), SimpleNamespace(id=uuid4()))
 
         assert result == "new-summary"
 
     def test_update_debug_conversation_summary_should_update_when_enabled(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         debug_conversation = SimpleNamespace(summary="old-summary")
         app = SimpleNamespace(debug_conversation=debug_conversation)
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
@@ -517,12 +551,12 @@ class TestAppService:
 
         updates = []
         monkeypatch.setattr(
-            service,
+            debug_service,
             "update",
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
 
-        result = service.update_debug_conversation_summary(
+        result = debug_service.update_debug_conversation_summary(
             uuid4(),
             "fresh-summary",
             SimpleNamespace(id=uuid4()),
@@ -534,6 +568,7 @@ class TestAppService:
 
     def test_update_debug_conversation_summary_should_raise_when_long_term_memory_disabled(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         app = SimpleNamespace(debug_conversation=SimpleNamespace(summary="old-summary"))
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(
@@ -543,38 +578,40 @@ class TestAppService:
         )
 
         with pytest.raises(FailException):
-            service.update_debug_conversation_summary(uuid4(), "fresh-summary", SimpleNamespace(id=uuid4()))
+            debug_service.update_debug_conversation_summary(uuid4(), "fresh-summary", SimpleNamespace(id=uuid4()))
 
     def test_delete_debug_conversation_should_noop_when_not_exists(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         app = SimpleNamespace(debug_conversation_id=None)
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
 
         update_calls = []
         monkeypatch.setattr(
-            service,
+            debug_service,
             "update",
             lambda target, **kwargs: update_calls.append((target, kwargs)) or target,
         )
 
-        result = service.delete_debug_conversation(uuid4(), SimpleNamespace(id=uuid4()))
+        result = debug_service.delete_debug_conversation(uuid4(), SimpleNamespace(id=uuid4()))
 
         assert result is app
         assert update_calls == []
 
     def test_delete_debug_conversation_should_clear_debug_conversation_id(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         app = SimpleNamespace(debug_conversation_id=uuid4())
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
 
         updates = []
         monkeypatch.setattr(
-            service,
+            debug_service,
             "update",
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
 
-        result = service.delete_debug_conversation(uuid4(), SimpleNamespace(id=uuid4()))
+        result = debug_service.delete_debug_conversation(uuid4(), SimpleNamespace(id=uuid4()))
 
         assert result is app
         assert updates[0][0] is app
@@ -702,6 +739,7 @@ class TestAppService:
 
     def test_build_runtime_tools_for_config_should_merge_mcp_and_agent_bindings(self):
         service = _build_service()
+        runtime_service = _new_app_runtime_service()
         app_id = uuid4()
         agent_binding_calls = []
         service.app_config_service = SimpleNamespace(
@@ -712,14 +750,14 @@ class TestAppService:
             get_langchain_tools_by_workflow_ids=lambda workflow_ids: ["wf-a"] if workflow_ids == ["wf-1"] else [],
         )
         service.retrieval_service = SimpleNamespace()
-        service.get_langchain_tools_by_agent_bindings = lambda agent_bindings, **kwargs: agent_binding_calls.append(
+        runtime_service.get_langchain_tools_by_agent_bindings = lambda agent_bindings, **kwargs: agent_binding_calls.append(
             {"agent_bindings": agent_bindings, "kwargs": kwargs}
         ) or (["agent-a"] if agent_bindings == [{"app_id": "agent-1"}] else [])
 
-        tools = AppService._build_runtime_tools_for_config(
+        tools = AppRuntimeService.build_runtime_tools_for_config(
             app_config_service=service.app_config_service,
             retrieval_service=service.retrieval_service,
-            app_service=service,
+            app_service=runtime_service,
             account=SimpleNamespace(id=uuid4()),
             app_id=app_id,
             draft_app_config={
@@ -760,15 +798,15 @@ class TestAppService:
                 capture["agent_config"] = agent_config
 
         monkeypatch.setattr(
-            "internal.service.app_service.AgentConfig",
+            "internal.service.app_runtime_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.app_service.DeepThinkingAgent",
+            "internal.service.app_runtime_service.DeepThinkingAgent",
             _FakeDeepThinkingAgent,
         )
 
-        agent = AppService._create_runtime_agent(
+        agent = AppRuntimeService.create_runtime_agent(
             llm=llm,
             account=account,
             draft_app_config=draft_app_config,
@@ -812,15 +850,15 @@ class TestAppService:
                 capture["agent_config"] = agent_config
 
         monkeypatch.setattr(
-            "internal.service.app_service.AgentConfig",
+            "internal.service.app_runtime_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.app_service.DeepThinkingAgent",
+            "internal.service.app_runtime_service.DeepThinkingAgent",
             _FakeDeepThinkingAgent,
         )
 
-        agent = AppService._create_runtime_agent(
+        agent = AppRuntimeService.create_runtime_agent(
             llm=llm,
             account=account,
             draft_app_config=draft_app_config,
@@ -862,15 +900,15 @@ class TestAppService:
                 capture["agent_config"] = agent_config
 
         monkeypatch.setattr(
-            "internal.service.app_service.AgentConfig",
+            "internal.service.app_runtime_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.app_service.DeepThinkingAgent",
+            "internal.service.app_runtime_service.DeepThinkingAgent",
             _FakeDeepThinkingAgent,
         )
 
-        agent = AppService._create_runtime_agent(
+        agent = AppRuntimeService.create_runtime_agent(
             llm=llm,
             account=account,
             draft_app_config=draft_app_config,
@@ -908,15 +946,15 @@ class TestAppService:
                 capture["agent_config"] = agent_config
 
         monkeypatch.setattr(
-            "internal.service.app_service.AgentConfig",
+            "internal.service.app_runtime_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.app_service.DeepThinkingAgent",
+            "internal.service.app_runtime_service.DeepThinkingAgent",
             _FakeDeepThinkingAgent,
         )
 
-        agent = AppService._create_runtime_agent(
+        agent = AppRuntimeService.create_runtime_agent(
             llm=llm,
             account=account,
             draft_app_config=draft_app_config,
@@ -1763,6 +1801,7 @@ class TestAppService:
 
     def test_debug_chat_should_stream_agent_events_and_persist_thoughts(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         conversation = SimpleNamespace(id=uuid4(), summary="memory")
@@ -1850,23 +1889,23 @@ class TestAppService:
         )
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(service, "get_draft_app_config", lambda *_args, **_kwargs: draft_config)
-        monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: message)
-        service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
-        service.app_config_service = SimpleNamespace(
+        monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: message)
+        debug_service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
+        debug_service.app_runtime_service.app_config_service = SimpleNamespace(
             get_langchain_tools_by_tools_config=lambda _tools: [],
             get_langchain_tools_by_workflow_ids=lambda _workflow_ids: [],
         )
         monkeypatch.setattr(
-            "internal.service.app_service.TokenBufferMemory",
+            "internal.service.app_debug_service.TokenBufferMemory",
             lambda **_kwargs: SimpleNamespace(get_history_prompt_messages=lambda **_args: []),
         )
-        monkeypatch.setattr("internal.service.app_service.FunctionCallAgent", _Agent)
+        monkeypatch.setattr("internal.service.app_runtime_service.FunctionCallAgent", _Agent)
         save_calls = []
-        service.conversation_service = SimpleNamespace(
+        debug_service.conversation_service = SimpleNamespace(
             save_agent_thoughts=lambda **kwargs: save_calls.append(kwargs),
         )
 
-        events = list(service.debug_chat(app_id, req, account))
+        events = list(debug_service.debug_chat(app_id, req, account))
 
         assert len(events) == 1
         assert events[0].startswith("event: agent_message")
@@ -1876,6 +1915,7 @@ class TestAppService:
 
     def test_debug_chat_should_attach_dataset_workflow_tools_and_merge_agent_messages(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         conversation = SimpleNamespace(id=uuid4(), summary="memory")
@@ -1907,25 +1947,25 @@ class TestAppService:
         )
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(service, "get_draft_app_config", lambda *_args, **_kwargs: draft_config)
-        monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: message)
-        service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
+        monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: message)
+        debug_service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
 
         retrieval_capture = {}
-        service.retrieval_service = SimpleNamespace(
+        debug_service.app_runtime_service.retrieval_service = SimpleNamespace(
             create_langchain_tool_from_search=lambda **kwargs: retrieval_capture.update(kwargs) or "dataset-tool"
         )
         workflow_capture = {}
-        service.app_config_service = SimpleNamespace(
+        debug_service.app_runtime_service.app_config_service = SimpleNamespace(
             get_langchain_tools_by_tools_config=lambda _tools: ["builtin-tool"],
             get_langchain_tools_by_workflow_ids=lambda workflow_ids: workflow_capture.update({"ids": workflow_ids})
             or ["workflow-tool"],
         )
         monkeypatch.setattr(
-            "internal.service.app_service.TokenBufferMemory",
+            "internal.service.app_debug_service.TokenBufferMemory",
             lambda **_kwargs: SimpleNamespace(get_history_prompt_messages=lambda **_args: ["history"]),
         )
         monkeypatch.setattr(
-            "internal.service.app_service.AgentConfig",
+            "internal.service.app_runtime_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
 
@@ -1969,14 +2009,14 @@ class TestAppService:
             def stream(_payload):
                 return iter(stream_events)
 
-        monkeypatch.setattr("internal.service.app_service.FunctionCallAgent", _Agent)
+        monkeypatch.setattr("internal.service.app_runtime_service.FunctionCallAgent", _Agent)
         save_calls = []
-        service.conversation_service = SimpleNamespace(
+        debug_service.conversation_service = SimpleNamespace(
             save_agent_thoughts=lambda **kwargs: save_calls.append(kwargs),
         )
 
         with Flask(__name__).app_context():
-            events = list(service.debug_chat(app_id, req, account))
+            events = list(debug_service.debug_chat(app_id, req, account))
 
         assert len(events) == 4
         assert events[0].startswith("event: ping")
@@ -1991,6 +2031,7 @@ class TestAppService:
 
     def test_debug_chat_should_emit_aggregate_metrics(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         conversation = SimpleNamespace(id=uuid4(), summary="memory")
@@ -2020,14 +2061,14 @@ class TestAppService:
         )
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(service, "get_draft_app_config", lambda *_args, **_kwargs: draft_config)
-        monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: message)
-        service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
-        service.app_config_service = SimpleNamespace(
+        monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: message)
+        debug_service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
+        debug_service.app_runtime_service.app_config_service = SimpleNamespace(
             get_langchain_tools_by_tools_config=lambda _tools: [],
             get_langchain_tools_by_workflow_ids=lambda _workflow_ids: [],
         )
         monkeypatch.setattr(
-            "internal.service.app_service.TokenBufferMemory",
+            "internal.service.app_debug_service.TokenBufferMemory",
             lambda **_kwargs: SimpleNamespace(get_history_prompt_messages=lambda **_args: []),
         )
 
@@ -2063,10 +2104,10 @@ class TestAppService:
             def stream(_payload):
                 return iter(stream_events)
 
-        monkeypatch.setattr("internal.service.app_service.FunctionCallAgent", _Agent)
-        service.conversation_service = SimpleNamespace(save_agent_thoughts=lambda **_kwargs: None)
+        monkeypatch.setattr("internal.service.app_runtime_service.FunctionCallAgent", _Agent)
+        debug_service.conversation_service = SimpleNamespace(save_agent_thoughts=lambda **_kwargs: None)
 
-        events = list(service.debug_chat(app_id, req, account))
+        events = list(debug_service.debug_chat(app_id, req, account))
 
         first_payload = json.loads(events[0].split("data:", 1)[1])
         second_payload = json.loads(events[1].split("data:", 1)[1])
@@ -2080,6 +2121,7 @@ class TestAppService:
         self, monkeypatch
     ):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         conversation = SimpleNamespace(id=uuid4(), summary="memory")
@@ -2110,8 +2152,8 @@ class TestAppService:
 
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
         monkeypatch.setattr(service, "get_draft_app_config", lambda *_args, **_kwargs: draft_config)
-        monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: message)
-        service.language_model_service = SimpleNamespace(
+        monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: message)
+        debug_service.language_model_service = SimpleNamespace(
             resolve_runtime_language_model=lambda model_config, image_urls, entrypoint: resolution_capture.update(
                 {
                     "model_config": model_config,
@@ -2122,23 +2164,23 @@ class TestAppService:
             or SimpleNamespace(llm=llm, capabilities=capabilities)
         )
         monkeypatch.setattr(
-            "internal.service.app_service.TokenBufferMemory",
+            "internal.service.app_debug_service.TokenBufferMemory",
             lambda **_kwargs: SimpleNamespace(
                 get_history_prompt_messages=lambda **_args: ["history"]
             ),
         )
         monkeypatch.setattr(
-            service,
-            "_stream_agent_events",
+            debug_service.app_runtime_service,
+            "stream_agent_events",
             lambda **kwargs: stream_capture.update(kwargs)
             or iter(["event: agent_end\ndata:{}\n\n"]),
         )
-        service.conversation_service = SimpleNamespace(
+        debug_service.conversation_service = SimpleNamespace(
             save_agent_thoughts=lambda **kwargs: save_calls.append(kwargs),
         )
 
         with Flask(__name__).app_context():
-            events = list(service.debug_chat(app_id, req, account))
+            events = list(debug_service.debug_chat(app_id, req, account))
 
         assert events == ["event: agent_end\ndata:{}\n\n"]
         assert resolution_capture == {
@@ -2153,25 +2195,27 @@ class TestAppService:
 
     def test_stop_debug_chat_should_validate_app_then_set_stop_flag(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         task_id = uuid4()
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: SimpleNamespace(id=app_id))
         captures = {}
         monkeypatch.setattr(
-            "internal.service.app_service.AgentQueueManager.set_stop_flag",
+            "internal.service.app_debug_service.AgentQueueManager.set_stop_flag",
             lambda _task_id, invoke_from, account_id: captures.update(
                 {"task_id": _task_id, "invoke_from": invoke_from, "account_id": account_id}
             ),
         )
 
-        service.stop_debug_chat(app_id, task_id, account)
+        debug_service.stop_debug_chat(app_id, task_id, account)
 
         assert captures["task_id"] == task_id
         assert captures["account_id"] == account.id
 
     def test_prompt_compare_chat_should_stream_events_with_overridden_prompt_only(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         app = SimpleNamespace(id=app_id, debug_conversation_id=uuid4())
@@ -2207,26 +2251,26 @@ class TestAppService:
             lambda payload, _account: payload,
         )
         monkeypatch.setattr(
-            service,
+            debug_service,
             "_build_compare_history_prompt_messages",
             lambda **_kwargs: ["history"],
         )
         monkeypatch.setattr(
-            service,
+            debug_service,
             "_get_debug_long_term_memory_snapshot",
             lambda *_args, **_kwargs: "memory",
         )
         monkeypatch.setattr(
-            service,
-            "_stream_agent_events",
+            debug_service.app_runtime_service,
+            "stream_agent_events",
             lambda **kwargs: stream_capture.update(kwargs) or iter(["event: agent_message\ndata:{}\n\n"]),
         )
-        service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
-        service.conversation_service = SimpleNamespace(
+        debug_service.language_model_service = SimpleNamespace(load_language_model=lambda _config: llm)
+        debug_service.conversation_service = SimpleNamespace(
             save_agent_thoughts=lambda **_kwargs: save_guard.append("called"),
         )
 
-        events = list(service.prompt_compare_chat(app_id, req, account))
+        events = list(debug_service.prompt_compare_chat(app_id, req, account))
 
         assert events == ["event: agent_message\ndata:{}\n\n"]
         assert stream_capture["query"] == "你好"
@@ -2240,25 +2284,27 @@ class TestAppService:
 
     def test_stop_prompt_compare_chat_should_validate_app_then_set_stop_flag(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app_id = uuid4()
         task_id = uuid4()
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: SimpleNamespace(id=app_id))
         captures = {}
         monkeypatch.setattr(
-            "internal.service.app_service.AgentQueueManager.set_stop_flag",
+            "internal.service.app_debug_service.AgentQueueManager.set_stop_flag",
             lambda _task_id, invoke_from, account_id: captures.update(
                 {"task_id": _task_id, "invoke_from": invoke_from, "account_id": account_id}
             ),
         )
 
-        service.stop_prompt_compare_chat(app_id, task_id, account)
+        debug_service.stop_prompt_compare_chat(app_id, task_id, account)
 
         assert captures["task_id"] == task_id
         assert captures["account_id"] == account.id
 
     def test_get_debug_conversation_messages_with_page_should_paginate_and_fetch_full_messages(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app = SimpleNamespace(id=uuid4(), debug_conversation=SimpleNamespace(id=uuid4()))
         message = SimpleNamespace(id=uuid4())
@@ -2303,13 +2349,13 @@ class TestAppService:
                 captures["query"] = query
                 return [message.id]
 
-        monkeypatch.setattr("internal.service.app_service.Paginator", _Paginator)
+        monkeypatch.setattr("internal.service.app_debug_service.Paginator", _Paginator)
         req = SimpleNamespace(
             created_at=SimpleNamespace(data=1704067200),
             conversation_id=SimpleNamespace(data=""),
         )
 
-        messages, paginator = service.get_debug_conversation_messages_with_page(app.id, req, account)
+        messages, paginator = debug_service.get_debug_conversation_messages_with_page(app.id, req, account)
 
         assert messages == [message]
         assert captures["req"] is req
@@ -2331,6 +2377,7 @@ class TestAppService:
         self, monkeypatch
     ):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app = SimpleNamespace(id=uuid4(), debug_conversation=SimpleNamespace(id=uuid4()))
         message = SimpleNamespace(id=uuid4())
@@ -2377,13 +2424,13 @@ class TestAppService:
                 captures["query"] = query
                 return [_RowLike(message.id)]
 
-        monkeypatch.setattr("internal.service.app_service.Paginator", _Paginator)
+        monkeypatch.setattr("internal.service.app_debug_service.Paginator", _Paginator)
         req = SimpleNamespace(
             created_at=SimpleNamespace(data=None),
             conversation_id=SimpleNamespace(data=""),
         )
 
-        messages, paginator = service.get_debug_conversation_messages_with_page(app.id, req, account)
+        messages, paginator = debug_service.get_debug_conversation_messages_with_page(app.id, req, account)
 
         assert messages == [message]
         assert captures["req"] is req
@@ -2394,6 +2441,7 @@ class TestAppService:
 
     def test_get_debug_conversation_messages_with_page_should_skip_created_at_filter_when_absent(self, monkeypatch):
         service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
         account = SimpleNamespace(id=uuid4())
         app = SimpleNamespace(id=uuid4(), debug_conversation=SimpleNamespace(id=uuid4()))
         message = SimpleNamespace(id=uuid4())
@@ -2433,13 +2481,13 @@ class TestAppService:
                 return [message.id]
 
         service.db.session = _Session()
-        monkeypatch.setattr("internal.service.app_service.Paginator", _Paginator)
+        monkeypatch.setattr("internal.service.app_debug_service.Paginator", _Paginator)
         req = SimpleNamespace(
             created_at=SimpleNamespace(data=None),
             conversation_id=SimpleNamespace(data=""),
         )
 
-        messages, _paginator = service.get_debug_conversation_messages_with_page(app.id, req, account)
+        messages, _paginator = debug_service.get_debug_conversation_messages_with_page(app.id, req, account)
 
         assert messages == [message]
         assert len(id_query.filter_calls[0]) == 4

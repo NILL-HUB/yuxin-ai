@@ -392,7 +392,7 @@ class TestWebAppService:
             return _FakeAgent()
 
         monkeypatch.setattr(
-            "internal.service.web_app_service.AppService._create_runtime_agent",
+            "internal.service.web_app_service.AppRuntimeService.create_runtime_agent",
             _fake_create_runtime_agent,
         )
         save_payload = {}
@@ -496,7 +496,7 @@ class TestWebAppService:
             return _FakeAgent()
 
         monkeypatch.setattr(
-            "internal.service.web_app_service.AppService._create_runtime_agent",
+            "internal.service.web_app_service.AppRuntimeService.create_runtime_agent",
             _fake_create_runtime_agent,
         )
         save_payload = {}
@@ -602,7 +602,7 @@ class TestWebAppService:
             return _FakeAgent()
 
         monkeypatch.setattr(
-            "internal.service.web_app_service.AppService._create_runtime_agent",
+            "internal.service.web_app_service.AppRuntimeService.create_runtime_agent",
             _fake_create_runtime_agent,
         )
         save_payload = {}

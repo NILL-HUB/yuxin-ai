@@ -1,21 +1,21 @@
-"""P0-4 AppService 治理注入 端到端集成测试。
+"""P0-4 AppRuntimeService 治理注入 端到端集成测试。
 
 验证环节：
-    AppService._build_runtime_tools_for_config 在 return 前注入 RuntimeToolGovernanceGate，
+    AppRuntimeService.build_runtime_tools_for_config 在 return 前注入 RuntimeToolGovernanceGate，
     对 BaseTool 列表进行治理过滤。governance_gate=None 时行为不变。
 
 测试场景：
     1. governance_gate=None 行为不变（返回 tools 列表与不注入治理时一致）
     2. governance_gate 非 None + observe_only=True 不阻断（tools 不被过滤，gate.apply 被调用）
     3. governance_gate 非 None + block_all 阻断高风险（只含 safe 工具）
-    4. _build_tool_id_hints 生成正确（agent_bindings → {runtime_name: "agent_binding:{app_id}"}）
+    4. build_tool_id_hints 生成正确（agent_bindings → {runtime_name: "agent_binding:{app_id}"}）
     5. governance_context=None 时自动构建默认 context（observe_only=True 阶段1）
 """
 
 from types import SimpleNamespace
 from uuid import uuid4
 
-from internal.service.app_service import AppService
+from internal.service.app_runtime_service import AppRuntimeService
 
 
 # ------------------------------------------------------------------ #
@@ -134,7 +134,7 @@ def test_governance_gate_none_keeps_behavior_unchanged():
         # governance_gate=None（默认）
     )
 
-    tools = AppService._build_runtime_tools_for_config(**inputs)
+    tools = AppRuntimeService.build_runtime_tools_for_config(**inputs)
 
     # 返回的 tools 列表与 services 返回的完全一致，未被过滤
     assert tools == [tool_a, tool_b]
@@ -163,7 +163,7 @@ def test_governance_gate_with_observe_only_does_not_filter_but_records_audit():
         governance_context={"observe_only": True, "block_sensitive_only": False, "mode": "observe_only"},
     )
 
-    tools = AppService._build_runtime_tools_for_config(**inputs)
+    tools = AppRuntimeService.build_runtime_tools_for_config(**inputs)
 
     # observe_only：tools 不被过滤
     assert tools == [tool_a, tool_b]
@@ -200,7 +200,7 @@ def test_governance_gate_with_block_all_filters_high_risk_tool():
         governance_context={"observe_only": False, "block_sensitive_only": False, "mode": "block_all"},
     )
 
-    tools = AppService._build_runtime_tools_for_config(**inputs)
+    tools = AppRuntimeService.build_runtime_tools_for_config(**inputs)
 
     # 只含 safe 工具（gate 过滤了 high risk）
     assert tools == [safe_tool]
@@ -230,7 +230,7 @@ def test_build_tool_id_hints_generates_agent_binding_mapping():
         "datasets": [],
     }
 
-    hints = AppService._build_tool_id_hints(draft_app_config)
+    hints = AppRuntimeService.build_tool_id_hints(draft_app_config)
 
     # agent_bindings 的 runtime_name = f"agent_app_{app_id去横线}"
     assert hints == {
@@ -262,7 +262,7 @@ def test_governance_context_none_auto_builds_default_observe_only_context():
         # governance_context=None（默认）→ 内部调 _resolve_default_governance_context
     )
 
-    tools = AppService._build_runtime_tools_for_config(**inputs)
+    tools = AppRuntimeService.build_runtime_tools_for_config(**inputs)
 
     # 默认 context 应为 observe_only=True（阶段1 或异常降级），tools 不被过滤
     assert tools == [tool_a]

@@ -242,7 +242,7 @@ JSON_CASES = [
         "kwargs": {},
         "patches": [
             (
-                "internal.service.app_service.AppService.get_debug_conversation_summary",
+                "internal.service.app_debug_service.AppDebugService.get_debug_conversation_summary",
                 "memory-summary",
             )
         ],
