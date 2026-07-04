@@ -71,6 +71,7 @@ class WorkflowConfig(BaseModel):
             EndNodeData,
             HttpRequestNodeData,
             IfElseNodeData,
+            IterationNodeData,
             LLMNodeData,
             ParameterExtractorNodeData,
             StartNodeData,
@@ -92,6 +93,7 @@ class WorkflowConfig(BaseModel):
             NodeType.VARIABLE_ASSIGNER.value: VariableAssignerNodeData,
             NodeType.PARAMETER_EXTRACTOR.value: ParameterExtractorNodeData,
             NodeType.IF_ELSE.value: IfElseNodeData,
+            NodeType.ITERATION.value: IterationNodeData,
         }
 
         # 5.循环遍历所有节点

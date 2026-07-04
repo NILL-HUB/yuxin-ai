@@ -17,6 +17,7 @@ class NodeType(str, Enum):
     VARIABLE_ASSIGNER = "variable_assigner"
     PARAMETER_EXTRACTOR = "parameter_extractor"
     IF_ELSE = "if_else"
+    ITERATION = "iteration"  # 循环节点（数组遍历）
     END = "end"
 
 

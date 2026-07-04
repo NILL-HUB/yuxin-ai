@@ -23,6 +23,7 @@ from .nodes import (
     TextProcessorNode,
     VariableAssignerNode,
     IfElseNode,
+    IterationNode,
     EndNode,
 )
 # 节点类映射
@@ -39,6 +40,7 @@ NodeClasses = {
     NodeType.VARIABLE_ASSIGNER.value: VariableAssignerNode,
     NodeType.PARAMETER_EXTRACTOR.value: ParameterExtractorNode,
     NodeType.IF_ELSE.value: IfElseNode,
+    NodeType.ITERATION.value: IterationNode,
 }
 
 
@@ -159,6 +161,11 @@ class Workflow(BaseTool):
                 graph.add_node(
                     node_flag,
                     NodeClasses[NodeType.IF_ELSE.value](node_data=node),
+                )
+            elif node.node_type == NodeType.ITERATION.value:
+                graph.add_node(
+                    node_flag,
+                    NodeClasses[NodeType.ITERATION.value](node_data=node),
                 )
             elif node.node_type == NodeType.END.value:
                 graph.add_node(
