@@ -52,6 +52,14 @@ class AppStatus(str, Enum):
     PUBLISHED = "published"
 
 
+class AppType(str, Enum):
+    """应用类型枚举"""
+    CHATBOT = "chatbot"        # 对话型（默认，向后兼容）
+    AGENT = "agent"            # Agent 型（带工具调用）
+    WORKFLOW = "workflow"      # 工作流型（绑定一个 workflow）
+    COMPLETION = "completion"  # 补全型（单轮文本生成，无对话记忆）
+
+
 class AppConfigType(str, Enum):
     """应用配置类型枚举类"""
     DRAFT = "draft"
@@ -60,6 +68,7 @@ class AppConfigType(str, Enum):
 
 # 应用默认配置信息
 DEFAULT_APP_CONFIG = {
+    "app_type": "chatbot",
     "model_config": {
         "provider": "deepseek",
         "model": "deepseek-chat",

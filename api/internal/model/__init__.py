@@ -3,6 +3,7 @@ from .api_key import ApiKey
 from .api_tool import ApiTool, ApiToolProvider
 from .app import App, AppAssignment, AppDatasetJoin, AppConfig, AppConfigVersion
 from .conversation import Conversation, Message, MessageAgentThought
+from .conversation_variable import ConversationVariable
 from .dataset import Dataset, Document, Segment, KeywordTable, DatasetQuery, ProcessRule
 from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, MemoryCandidate, ExternalDataSource
 from .end_user import EndUser
@@ -32,6 +33,7 @@ __all__ = [
     "UploadFile",
     "Dataset", "Document", "Segment", "KeywordTable", "DatasetQuery", "ProcessRule",
     "Conversation", "Message", "MessageAgentThought",
+    "ConversationVariable",
     "Account", "AccountOAuth", "AccountSession",
     "ApiKey", "EndUser",
     "Workflow", "WorkflowResult", "WorkflowVersion",

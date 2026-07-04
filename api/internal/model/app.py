@@ -37,6 +37,7 @@ class App(db.Model):
         PrimaryKeyConstraint("id", name="pk_app_id"),
         Index("app_account_id_idx", "account_id"),
         Index("app_is_public_idx", "is_public"),
+        Index("app_app_type_idx", "app_type"),
         Index("app_tags_idx", "tags", postgresql_using="gin"),
     )
 
@@ -50,6 +51,7 @@ class App(db.Model):
     description = Column(Text, nullable=False, server_default=text("''::text"))  # 应用描述
     token = Column(String(255), nullable=True, server_default=text("''::character varying"))  # 应用凭证
     status = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 应用状态
+    app_type = Column(String(32), nullable=False, server_default=text("'chatbot'::character varying"))  # 应用类型
     is_public = Column(Boolean, nullable=False, server_default=text("false"))  # 是否公开到广场
     tags = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用标签列表
     agent_metadata = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
