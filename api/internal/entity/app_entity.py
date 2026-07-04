@@ -67,8 +67,10 @@ class AppConfigType(str, Enum):
 
 
 # 应用默认配置信息
+# 注意：app_type 是 App 级别属性（存储在 App 表），不放在 AppConfigVersion 配置中
+# workflow_id 是 AppConfigVersion 级别属性，因为 draft 和 published 可能绑定不同 workflow
 DEFAULT_APP_CONFIG = {
-    "app_type": "chatbot",
+    "workflow_id": None,  # Workflow 应用类型绑定的 workflow_id（仅 app_type=workflow 时有效）
     "model_config": {
         "provider": "deepseek",
         "model": "deepseek-chat",

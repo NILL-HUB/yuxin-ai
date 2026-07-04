@@ -1,0 +1,540 @@
+"""GraphEngine 单元测试。
+
+覆盖：
+- 拓扑分层（线性/并行/环检测）
+- 工作流执行（事件序列、节点输出写入 VariablePool、节点输入解析）
+- 节点失败终止工作流
+- workflow_started / workflow_finished 事件（成功/失败）
+- 默认/自定义节点执行器
+- _build_node_inputs（literal/ref/generated）
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from uuid import uuid4
+
+import pytest
+
+from internal.core.workflow.entities.node_entity import NodeType
+from internal.core.workflow.entities.variable_entity import VariableValueType
+from internal.core.workflow.entities.workflow_entity import WorkflowConfig
+from internal.core.workflow.graph_engine import GraphEngine
+from internal.core.workflow.variable_pool import VariablePool
+
+
+# ----------------------------------------------------------------------
+# 测试用 WorkflowConfig 构建辅助函数
+# ----------------------------------------------------------------------
+def _start_node(node_id, title="start", inputs=None):
+    """构建 start 节点 payload。"""
+    return {
+        "id": node_id,
+        "node_type": "start",
+        "title": title,
+        "description": "",
+        "position": {"x": 0, "y": 0},
+        "inputs": inputs if inputs is not None else [
+            {
+                "name": "query",
+                "description": "query",
+                "required": True,
+                "type": "string",
+                "value": {"type": VariableValueType.GENERATED.value, "content": ""},
+            }
+        ],
+    }
+
+
+def _code_node(node_id, title, inputs=None, outputs=None):
+    """构建 code 节点 payload。"""
+    return {
+        "id": node_id,
+        "node_type": "code",
+        "title": title,
+        "description": "",
+        "position": {"x": 50, "y": 0},
+        "code": "def main(params):\n    return params",
+        "inputs": inputs if inputs is not None else [],
+        "outputs": outputs if outputs is not None else [],
+    }
+
+
+def _end_node(node_id, title="end", outputs=None):
+    """构建 end 节点 payload。"""
+    return {
+        "id": node_id,
+        "node_type": "end",
+        "title": title,
+        "description": "",
+        "position": {"x": 100, "y": 0},
+        "outputs": outputs if outputs is not None else [],
+    }
+
+
+def _edge(edge_id, source, source_type, target, target_type):
+    """构建 edge payload。"""
+    return {
+        "id": edge_id,
+        "source": source,
+        "source_type": source_type,
+        "target": target,
+        "target_type": target_type,
+    }
+
+
+def _ref(ref_node_id, ref_var_name):
+    """构建 ref 类型 value payload。"""
+    return {
+        "type": VariableValueType.REF.value,
+        "content": {"ref_node_id": str(ref_node_id), "ref_var_name": ref_var_name},
+    }
+
+
+def _generated():
+    """构建 generated 类型 value payload。"""
+    return {"type": VariableValueType.GENERATED.value, "content": ""}
+
+
+def _literal(content):
+    """构建 literal 类型 value payload。"""
+    return {"type": VariableValueType.LITERAL.value, "content": content}
+
+
+def _var(name, value, var_type="string", required=True, description=""):
+    """构建变量 payload。"""
+    return {
+        "name": name,
+        "description": description,
+        "required": required,
+        "type": var_type,
+        "value": value,
+    }
+
+
+def _build_simple_config() -> WorkflowConfig:
+    """构建简单线性工作流: start -> code -> end。
+
+    - start: inputs=[query:generated]
+    - code:  inputs=[input:ref(start.query)], outputs=[result:generated]
+    - end:   outputs=[answer:ref(code.result)]
+    """
+    start_id = uuid4()
+    code_id = uuid4()
+    end_id = uuid4()
+    payload = {
+        "account_id": uuid4(),
+        "name": "wf_linear",
+        "description": "线性工作流测试",
+        "nodes": [
+            _start_node(start_id),
+            _code_node(
+                code_id,
+                "code_1",
+                inputs=[_var("input", _ref(start_id, "query"))],
+                outputs=[_var("result", _generated())],
+            ),
+            _end_node(
+                end_id,
+                outputs=[_var("answer", _ref(code_id, "result"))],
+            ),
+        ],
+        "edges": [
+            _edge(uuid4(), start_id, "start", code_id, "code"),
+            _edge(uuid4(), code_id, "code", end_id, "end"),
+        ],
+    }
+    return WorkflowConfig(**payload)
+
+
+def _build_parallel_config() -> WorkflowConfig:
+    """构建并行工作流: start -> [code_1, code_2] -> end。
+
+    - start:  inputs=[query:generated]
+    - code_1: inputs=[input:ref(start.query)], outputs=[result:generated]
+    - code_2: inputs=[input:ref(start.query)], outputs=[result:generated]
+    - end:    outputs=[answer:ref(code_1.result)]
+    """
+    start_id = uuid4()
+    code_1_id = uuid4()
+    code_2_id = uuid4()
+    end_id = uuid4()
+    payload = {
+        "account_id": uuid4(),
+        "name": "wf_parallel",
+        "description": "并行工作流测试",
+        "nodes": [
+            _start_node(start_id),
+            _code_node(
+                code_1_id,
+                "code_1",
+                inputs=[_var("input", _ref(start_id, "query"))],
+                outputs=[_var("result", _generated())],
+            ),
+            _code_node(
+                code_2_id,
+                "code_2",
+                inputs=[_var("input", _ref(start_id, "query"))],
+                outputs=[_var("result", _generated())],
+            ),
+            _end_node(
+                end_id,
+                outputs=[_var("answer", _ref(code_1_id, "result"))],
+            ),
+        ],
+        "edges": [
+            _edge(uuid4(), start_id, "start", code_1_id, "code"),
+            _edge(uuid4(), start_id, "start", code_2_id, "code"),
+            _edge(uuid4(), code_1_id, "code", end_id, "end"),
+            _edge(uuid4(), code_2_id, "code", end_id, "end"),
+        ],
+    }
+    return WorkflowConfig(**payload)
+
+
+def _start_executor(node, pool):
+    """start 节点执行器：将 sys.inputs.query 作为输出写出。"""
+    if node.node_type == NodeType.START.value:
+        sys_inputs = pool.get_system_variable("inputs") or {}
+        return {"query": sys_inputs.get("query")}
+    return {}
+
+
+# ----------------------------------------------------------------------
+# 拓扑分层测试
+# ----------------------------------------------------------------------
+class TestGraphEngineTopologicalLayers:
+    """拓扑分层相关测试。"""
+
+    def test_topological_layers_linear(self):
+        """线性图分层正确（start -> code -> end 分 3 层，每层 1 节点）。"""
+        config = _build_simple_config()
+        engine = GraphEngine(config, VariablePool())
+
+        layers = engine._topological_layers()
+
+        assert len(layers) == 3
+        assert layers[0] == [config.nodes[0].id]  # start
+        assert layers[1] == [config.nodes[1].id]  # code
+        assert layers[2] == [config.nodes[2].id]  # end
+
+    def test_topological_layers_parallel(self):
+        """并行图分层正确（start -> [code_1, code_2] -> end 分 3 层，中间层 2 节点）。"""
+        config = _build_parallel_config()
+        engine = GraphEngine(config, VariablePool())
+
+        layers = engine._topological_layers()
+
+        assert len(layers) == 3
+        assert layers[0] == [config.nodes[0].id]  # start
+        # 中间层应包含 code_1 和 code_2（顺序按邻接表遍历顺序）
+        assert set(layers[1]) == {config.nodes[1].id, config.nodes[2].id}
+        assert len(layers[1]) == 2
+        assert layers[2] == [config.nodes[3].id]  # end
+
+    def test_topological_layers_cycle_detected(self):
+        """有环图抛 ValueError 异常。"""
+        config = _build_simple_config()
+        engine = GraphEngine(config, VariablePool())
+
+        # 手动构造环：start -> code -> end -> start
+        start_id = config.nodes[0].id
+        code_id = config.nodes[1].id
+        end_id = config.nodes[2].id
+        engine._adj_list = defaultdict(list, {
+            start_id: [code_id],
+            code_id: [end_id],
+            end_id: [start_id],  # 回边，形成环
+        })
+        engine._in_degree = {start_id: 1, code_id: 1, end_id: 1}
+
+        with pytest.raises(ValueError, match="环路"):
+            engine._topological_layers()
+
+
+# ----------------------------------------------------------------------
+# 工作流执行测试
+# ----------------------------------------------------------------------
+class TestGraphEngineExecute:
+    """工作流执行相关测试。"""
+
+    def test_execute_linear_workflow(self):
+        """线性工作流执行，事件序列正确。"""
+        config = _build_simple_config()
+        engine = GraphEngine(config, VariablePool(), node_executor=_start_executor)
+
+        events = list(engine.execute({"query": "hello"}))
+        event_types = [e["event"] for e in events]
+
+        # 期望事件序列：workflow_started, node_started, node_finished (×3), workflow_finished
+        assert event_types[0] == "workflow_started"
+        assert event_types[-1] == "workflow_finished"
+        # 3 个节点各有一对 node_started/node_finished
+        assert event_types.count("node_started") == 3
+        assert event_types.count("node_finished") == 3
+        # 事件顺序：started 在 finished 之前
+        for i in range(len(event_types)):
+            if event_types[i] == "node_finished":
+                assert event_types[i - 1] == "node_started"
+
+    def test_execute_parallel_workflow(self):
+        """并行工作流执行，同层节点事件成对出现。"""
+        config = _build_parallel_config()
+        engine = GraphEngine(config, VariablePool(), node_executor=_start_executor)
+
+        events = list(engine.execute({"query": "hello"}))
+        event_types = [e["event"] for e in events]
+
+        # 4 个节点：start, code_1, code_2, end
+        assert event_types.count("node_started") == 4
+        assert event_types.count("node_finished") == 4
+        assert event_types[0] == "workflow_started"
+        assert event_types[-1] == "workflow_finished"
+
+        # code_1 和 code_2 都在 start 之后、end 之前执行
+        start_id = str(config.nodes[0].id)
+        code_1_id = str(config.nodes[1].id)
+        code_2_id = str(config.nodes[2].id)
+        end_id = str(config.nodes[3].id)
+
+        node_started_ids = [
+            e["data"]["node_id"] for e in events if e["event"] == "node_started"
+        ]
+        assert node_started_ids[0] == start_id
+        assert node_started_ids[-1] == end_id
+        # code_1 和 code_2 在中间（顺序不严格要求，但都应在 start 之后 end 之前）
+        assert set(node_started_ids[1:3]) == {code_1_id, code_2_id}
+
+    def test_execute_node_output_written_to_pool(self):
+        """节点输出写入 VariablePool。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+
+        def executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                return {"result": "processed_data"}
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=executor)
+        list(engine.execute({"query": "hello"}))
+
+        # code 节点输出应写入 pool
+        assert pool.get_node_output(str(code_node.id), "result") == "processed_data"
+        # start 节点输出也应写入 pool
+        start_node = config.nodes[0]
+        assert pool.get_node_output(str(start_node.id), "query") == "hello"
+
+    def test_execute_node_inputs_resolved_from_pool(self):
+        """节点输入从 VariablePool 解析（ref 类型）。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+
+        engine = GraphEngine(config, pool, node_executor=_start_executor)
+        events = list(engine.execute({"query": "hello"}))
+
+        # 找到 code 节点的 node_started 事件
+        code_started = next(
+            e for e in events
+            if e["event"] == "node_started" and e["data"]["node_id"] == str(code_node.id)
+        )
+        # code 节点的 input 应从 start 节点的输出解析为 "hello"
+        assert code_started["data"]["inputs"]["input"] == "hello"
+
+    def test_node_failure_terminates_workflow(self):
+        """节点失败终止整个工作流。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        end_node = config.nodes[2]
+
+        def failing_executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                raise RuntimeError("节点执行失败")
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=failing_executor)
+        events = list(engine.execute({"query": "hello"}))
+        event_types = [e["event"] for e in events]
+
+        # 应有 node_failed 事件
+        assert "node_failed" in event_types
+        # workflow_finished 应为 failed
+        finished = next(e for e in events if e["event"] == "workflow_finished")
+        assert finished["data"]["status"] == "failed"
+        assert "节点执行失败" in finished["data"]["error"]
+        # end 节点不应被执行
+        end_started = any(
+            e["event"] == "node_started" and e["data"]["node_id"] == str(end_node.id)
+            for e in events
+        )
+        assert not end_started
+
+    def test_workflow_started_event(self):
+        """第一个事件是 workflow_started，且包含输入数据。"""
+        config = _build_simple_config()
+        engine = GraphEngine(config, VariablePool(), node_executor=_start_executor)
+
+        events = list(engine.execute({"query": "hello"}))
+
+        assert events[0]["event"] == "workflow_started"
+        assert events[0]["data"]["inputs"] == {"query": "hello"}
+        assert events[0]["data"]["node_count"] == 3
+
+    def test_workflow_finished_event_succeeded(self):
+        """成功完成时 workflow_finished status=succeeded。"""
+        config = _build_simple_config()
+        engine = GraphEngine(config, VariablePool(), node_executor=_start_executor)
+
+        events = list(engine.execute({"query": "hello"}))
+        finished = events[-1]
+
+        assert finished["event"] == "workflow_finished"
+        assert finished["data"]["status"] == "succeeded"
+        assert finished["data"]["error"] == ""
+
+    def test_workflow_finished_event_failed(self):
+        """失败时 workflow_finished status=failed。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+
+        def always_fail(node, pool):
+            raise RuntimeError("boom")
+
+        engine = GraphEngine(config, pool, node_executor=always_fail)
+        events = list(engine.execute({"query": "hello"}))
+        finished = events[-1]
+
+        assert finished["event"] == "workflow_finished"
+        assert finished["data"]["status"] == "failed"
+        assert "boom" in finished["data"]["error"]
+
+
+# ----------------------------------------------------------------------
+# 节点执行器测试
+# ----------------------------------------------------------------------
+class TestGraphEngineNodeExecutor:
+    """节点执行器相关测试。"""
+
+    def test_default_node_executor_returns_empty(self):
+        """默认执行器返回空 dict。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        engine = GraphEngine(config, pool)  # 不传 node_executor，使用默认
+
+        events = list(engine.execute({"query": "hello"}))
+
+        # 所有节点都应执行成功，输出为空 dict
+        finished_events = [e for e in events if e["event"] == "node_finished"]
+        assert len(finished_events) == 3
+        for ev in finished_events:
+            assert ev["data"]["outputs"] == {}
+        # workflow_finished 应为 succeeded
+        assert events[-1]["data"]["status"] == "succeeded"
+
+    def test_custom_node_executor(self):
+        """自定义执行器被调用，返回值写入 outputs。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        call_log: list[str] = []
+
+        def custom_executor(node, pool):
+            call_log.append(node.title)
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            return {"result": f"custom_{node.title}"}
+
+        engine = GraphEngine(config, pool, node_executor=custom_executor)
+        events = list(engine.execute({"query": "hello"}))
+
+        # 3 个节点都被调用
+        assert len(call_log) == 3
+        # code 节点输出应为自定义返回值
+        code_node = config.nodes[1]
+        code_finished = next(
+            e for e in events
+            if e["event"] == "node_finished" and e["data"]["node_id"] == str(code_node.id)
+        )
+        assert code_finished["data"]["outputs"]["result"] == "custom_code_1"
+
+
+# ----------------------------------------------------------------------
+# _build_node_inputs 测试
+# ----------------------------------------------------------------------
+class TestGraphEngineBuildNodeInputs:
+    """_build_node_inputs 方法测试。"""
+
+    def test_build_node_inputs_literal(self):
+        """literal 类型输入直接使用 content 值。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        engine = GraphEngine(config, pool)
+
+        # 构造一个带 literal 输入的 code 节点（直接使用 config 中的 code 节点）
+        # 修改 code 节点的 inputs 为 literal 类型
+        code_node = config.nodes[1]
+        # 直接测试 _build_node_inputs 方法：先在 pool 中无相关输出
+        # 将 code 节点 inputs 改为 literal（绕过 pydantic 校验，直接替换内存对象）
+        from internal.core.workflow.entities.variable_entity import VariableEntity
+        code_node.inputs = [
+            VariableEntity(name="count", type="int", value=_literal(42)),
+            VariableEntity(name="name", type="string", value=_literal("alice")),
+        ]
+
+        result = engine._build_node_inputs(code_node)
+
+        assert result["count"] == 42
+        assert result["name"] == "alice"
+
+    def test_build_node_inputs_ref(self):
+        """ref 类型输入从 VariablePool 解析。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        engine = GraphEngine(config, pool)
+
+        # 在 pool 中写入 start 节点的输出
+        start_node = config.nodes[0]
+        pool.set_node_output(str(start_node.id), {"query": "hello_from_pool"})
+
+        # code 节点的 inputs 引用 start.query
+        code_node = config.nodes[1]
+        result = engine._build_node_inputs(code_node)
+
+        assert result["input"] == "hello_from_pool"
+
+    def test_build_node_inputs_generated(self):
+        """generated 类型从 sys.inputs 读取（start 节点输入）。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        pool.set_system_variable("inputs", {"query": "generated_input"})
+        engine = GraphEngine(config, pool)
+
+        # start 节点的 inputs 是 generated 类型
+        start_node = config.nodes[0]
+        result = engine._build_node_inputs(start_node)
+
+        assert result["query"] == "generated_input"
+
+    def test_build_node_inputs_end_node_uses_outputs(self):
+        """END 节点从 outputs 提取变量（而非 inputs）。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        engine = GraphEngine(config, pool)
+
+        # 在 pool 中写入 code 节点的输出
+        code_node = config.nodes[1]
+        pool.set_node_output(str(code_node.id), {"result": "code_output"})
+
+        # end 节点的 outputs 引用 code.result
+        end_node = config.nodes[2]
+        result = engine._build_node_inputs(end_node)
+
+        assert result["answer"] == "code_output"

@@ -298,6 +298,7 @@ class AppConfigVersion(db.Model):
         server_default=text("'{\"enable\": true}'::jsonb"),
     )  # 回答后生成建议问题
     review_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 审核配置
+    workflow_id = Column(UUID, nullable=True)  # Workflow 应用类型绑定的 workflow_id（仅 app_type=workflow 时有效）
     version = Column(Integer, nullable=False, server_default=text("0"))  # 发布版本号
     config_type = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 配置类型
     updated_at = Column(
