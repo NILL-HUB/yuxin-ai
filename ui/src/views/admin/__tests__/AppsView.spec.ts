@@ -7,6 +7,7 @@ import AppsView from '@/views/admin/AppsView.vue'
 const mocks = vi.hoisted(() => ({
   listAdminApps: vi.fn(),
   updateAdminAppBasicInfo: vi.fn(),
+  updateAdminAppMetadata: vi.fn(),
   createAdminApp: vi.fn(),
   deleteAdminApp: vi.fn(),
   routerPush: vi.fn(),
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/services/admin-apps', () => ({
   listAdminApps: mocks.listAdminApps,
   updateAdminAppBasicInfo: mocks.updateAdminAppBasicInfo,
+  updateAdminAppMetadata: mocks.updateAdminAppMetadata,
   createAdminApp: mocks.createAdminApp,
   deleteAdminApp: mocks.deleteAdminApp,
 }))
@@ -110,6 +112,7 @@ const renderView = async (permissions = ['app:read', 'app:update']) => {
         'a-textarea': textareaStub,
         'a-button': buttonStub,
         'router-link': { template: '<a><slot /></a>' },
+        AgentMetadataEditor: true,
       },
     },
   })
@@ -123,7 +126,7 @@ describe('Admin AppsView', () => {
     vi.clearAllMocks()
   })
 
-  it('loads apps on mount and renders app info without metadata editing controls', async () => {
+  it('loads apps on mount and renders app info without inline metadata controls', async () => {
     const wrapper = await renderView()
 
     expect(mocks.listAdminApps).toHaveBeenCalledWith({
@@ -133,7 +136,7 @@ describe('Admin AppsView', () => {
     })
     expect(wrapper.text()).toContain('编程 Agent')
     expect(wrapper.text()).toContain('面向编程场景的智能体')
-    // 数据所有权统一后不再有元数据编辑控件
+    // 池治理字段以只读形式展示在卡片上，编辑入口由独立弹窗提供（不在卡片内联 data-test 控件）
     expect(wrapper.find('[data-test="primary-pool"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="save-metadata"]').exists()).toBe(false)
     // 池治理字段以只读形式展示，并提供跳转提示
@@ -141,6 +144,17 @@ describe('Admin AppsView', () => {
     const poolLink = wrapper.find('a')
     expect(poolLink.exists()).toBe(true)
     expect(poolLink.text()).toBeTruthy()
+  })
+
+  it('opens edit metadata modal without immediately calling the service', async () => {
+    mocks.updateAdminAppMetadata.mockResolvedValue({ id: 'app-1' } as never)
+    const wrapper = await renderView()
+
+    await wrapper.find('[data-testid="app-edit-metadata-app-1"]').trigger('click')
+    await flushPromises()
+
+    // 点击“编辑池治理字段”仅打开弹窗，不应立即调用保存接口
+    expect(mocks.updateAdminAppMetadata).not.toHaveBeenCalled()
   })
 
   it('navigates to the space app editor from view detail action', async () => {

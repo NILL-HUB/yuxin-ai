@@ -32,8 +32,10 @@ class AdminAppResp(Schema):
     icon = fields.String()
     description = fields.String()
     status = fields.String()
+    app_type = fields.String()
     is_public = fields.Boolean()
     agent_metadata = fields.Dict()
+    debug_conversation_id = fields.String(allow_none=True)
     created_at = fields.Integer()
     updated_at = fields.Integer()
 

@@ -8,9 +8,11 @@ export type AdminAppRecord = {
   icon?: string
   description?: string
   status?: string
+  app_type?: string
   is_public?: boolean
   account_id?: string
   agent_metadata?: AgentMetadata
+  debug_conversation_id?: string
   created_at?: number
   updated_at?: number
 }
@@ -55,6 +57,14 @@ export const listAdminApps = async (
   if (params.search) query.set('search', params.search)
   if (params.status && params.status !== 'all') query.set('status', params.status)
   const response = await get<AdminAppPageResponse>(`/admin/apps?${query.toString()}`)
+  return response.data
+}
+
+/**
+ * 获取后台应用单条记录（含 app_type / debug_conversation_id 等字段）。
+ */
+export const getAdminApp = async (appId: string): Promise<AdminAppRecord> => {
+  const response = await get<BaseResponse<AdminAppRecord>>(`/admin/apps/${appId}`)
   return response.data
 }
 

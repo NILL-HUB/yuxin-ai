@@ -11,7 +11,10 @@ import {
   deleteAdminApp,
   listAdminApps,
   updateAdminAppBasicInfo,
+  updateAdminAppMetadata,
 } from '@/services/admin-apps'
+import type { AgentMetadata } from '@/models/app'
+import AgentMetadataEditor from '@/components/admin/AgentMetadataEditor.vue'
 import { useAdminStore } from '@/stores/admin'
 import { getErrorMessage } from '@/utils/error'
 
@@ -38,11 +41,40 @@ const allSelected = computed(
 )
 const selectedCount = computed(() => selectedIds.value.size)
 
+// AgentMetadata 默认值（与后端 api/internal/entity/agent_entity.py 的 DEFAULT_AGENT_METADATA 对齐）
+// 用于在打开编辑弹窗时补齐字段，避免 PATCH 时把未编辑字段覆盖为默认值。
+const DEFAULT_AGENT_METADATA: AgentMetadata = {
+  primary_pool: 'general',
+  secondary_pools: [],
+  capabilities: [],
+  task_types: [],
+  input_modalities: ['text'],
+  output_modalities: ['text'],
+  risk_level: 'safe',
+  model_tier: 'standard',
+  model_id: '',
+  key_policy: 'default',
+  cost_level: 'medium',
+  routing_priority: 50,
+  allowed_tool_categories: [],
+  quality_score: 0.5,
+  success_rate: 0.0,
+  latency_p95: 0,
+  max_context_tokens: 0,
+  enabled: true,
+}
+
 const modalVisible = ref(false)
 const createModalVisible = ref(false)
 const editingApp = ref<AdminAppRecord | null>(null)
 const form = ref({ name: '', description: '', icon: '' })
 const createForm = ref({ name: '', description: '', icon: '' })
+
+// 池治理字段编辑弹窗
+const metadataModalVisible = ref(false)
+const metadataSaving = ref(false)
+const editingMetadataApp = ref<AdminAppRecord | null>(null)
+const metadataForm = ref<AgentMetadata>({ ...DEFAULT_AGENT_METADATA })
 
 const canUpdate = computed(() => adminStore.hasPermission('app:update'))
 const canCreate = computed(() => adminStore.hasPermission('app:create'))
@@ -142,6 +174,34 @@ const submitEditBasic = async () => {
     Message.error(getErrorMessage(error, t('admin.apps.saveFailed')))
   } finally {
     saving.value = false
+  }
+}
+
+/**
+ * 打开池治理字段编辑弹窗。
+ * 用默认值补齐 agent_metadata 缺失字段，确保提交时传完整对象，避免 PATCH 覆盖其他字段为默认值。
+ */
+const openEditMetadata = (app: AdminAppRecord) => {
+  editingMetadataApp.value = app
+  metadataForm.value = { ...DEFAULT_AGENT_METADATA, ...(app.agent_metadata || {}) }
+  metadataModalVisible.value = true
+}
+
+/**
+ * 提交池治理字段编辑。
+ */
+const submitEditMetadata = async () => {
+  if (!editingMetadataApp.value) return
+  metadataSaving.value = true
+  try {
+    await updateAdminAppMetadata(editingMetadataApp.value.id, metadataForm.value)
+    Message.success(t('admin.apps.metadataSaveSuccess'))
+    metadataModalVisible.value = false
+    await loadApps()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.apps.metadataSaveFailed')))
+  } finally {
+    metadataSaving.value = false
   }
 }
 
@@ -514,6 +574,14 @@ onMounted(() => {
               {{ t('admin.apps.editBasic') }}
             </a-button>
             <a-button
+              v-if="canUpdate"
+              size="small"
+              :data-testid="`app-edit-metadata-${app.id}`"
+              @click="openEditMetadata(app)"
+            >
+              {{ t('admin.apps.editMetadata') }}
+            </a-button>
+            <a-button
               v-if="canDelete"
               size="small"
               status="danger"
@@ -597,6 +665,18 @@ onMounted(() => {
           <a-input v-model="createForm.icon" :placeholder="t('admin.apps.iconPlaceholder')" />
         </a-form-item>
       </a-form>
+    </a-modal>
+
+    <!-- 编辑池治理字段弹窗（primary_pool / risk_level / model_tier / routing_priority） -->
+    <a-modal
+      v-model:visible="metadataModalVisible"
+      :title="t('admin.apps.editMetadataTitle')"
+      :ok-loading="metadataSaving"
+      :mask-closable="false"
+      unmount-on-close
+      @ok="submitEditMetadata"
+    >
+      <AgentMetadataEditor v-model="metadataForm" />
     </a-modal>
   </section>
 </template>

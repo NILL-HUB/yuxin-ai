@@ -3,8 +3,9 @@ import { useGetDraftAppConfig } from '@/hooks/use-app'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAdminAppDraftConfig } from '@/services/admin-apps'
+import { getAdminApp, getAdminAppDraftConfig } from '@/services/admin-apps'
 import AgentAppAbility from '@/views/space/apps/components/AgentAppAbility.vue'
+import WorkflowAppAbility from '@/views/space/apps/components/WorkflowAppAbility.vue'
 import ModelConfig from '@/views/space/apps/components/ModelConfig.vue'
 import PresetPromptTextarea from '@/views/space/apps/components/PresetPromptTextarea.vue'
 import PreviewDebugChat from '@/views/space/apps/components/PreviewDebugChat.vue'
@@ -30,6 +31,25 @@ const isAdminContext = computed(
   () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
 )
 
+// admin 上下文下没有 AppLayoutView 父级注入 props.app，需要本地加载应用信息
+const localApp = ref<Record<string, any>>({})
+// 当前生效的应用对象：admin 上下文用 localApp，space 上下文用 props.app
+const currentApp = computed(() =>
+  isAdminContext.value ? localApp.value : props.app,
+)
+// 应用类型：用于在编排区按 app_type 分支渲染（默认 chatbot 兼容旧数据）
+const appType = computed(() => (currentApp.value?.app_type ?? 'chatbot') as string)
+
+// 包装：加载应用基础信息（admin 上下文调用 getAdminApp，space 上下文由父级注入）
+const loadApp = async (appId: string) => {
+  if (!isAdminContext.value) return
+  try {
+    localApp.value = await getAdminApp(appId)
+  } catch (e) {
+    localApp.value = {}
+  }
+}
+
 // 包装：加载应用草稿配置（admin/space 上下文自动切换）
 const loadDraftAppConfigDetail = async (appId: string) => {
   if (isAdminContext.value) {
@@ -54,6 +74,8 @@ const loadDraftAppConfigDetail = async (appId: string) => {
       workflows: data.workflows,
       speech_to_text: data.speech_to_text,
       text_to_speech: data.text_to_speech,
+      workflow_id: data.workflow_id ?? null,
+      workflow_detail: data.workflow_detail ?? null,
     }
   } else {
     await loadDraftAppConfig(appId)
@@ -74,6 +96,11 @@ const refreshDraftAppConfig = async () => {
 
 // 2.页面DOM加载完毕时执行函数
 onMounted(async () => {
+  const appId = String(route.params?.app_id ?? '')
+  // admin 上下文：先加载应用基础信息（含 app_type / debug_conversation_id）
+  if (isAdminContext.value && appId) {
+    await loadApp(appId)
+  }
   await refreshDraftAppConfig()
 })
 
@@ -108,8 +135,15 @@ watch(
               v-model:preset_prompt="draftAppConfigForm.preset_prompt"
               :app_id="String(route.params?.app_id)" />
           </div>
-          <!-- 右侧应用能力 -->
+          <!-- 右侧应用能力：按 app_type 分支 -->
+          <workflow-app-ability
+            v-if="appType === 'workflow'"
+            v-model:draft_app_config="draftAppConfigForm"
+            :app_id="String(route.params?.app_id)"
+            @reload-draft-app-config="refreshDraftAppConfig"
+          />
           <agent-app-ability
+            v-else
             v-model:draft_app_config="draftAppConfigForm"
             :app_id="String(route.params?.app_id)"
             @reload-draft-app-config="refreshDraftAppConfig"
@@ -120,7 +154,10 @@ watch(
       <div class="min-w-[404px] flex min-h-0 flex-col overflow-hidden">
         <!-- 头部信息 -->
         <preview-debug-header :app_id="String(route.params?.app_id)"
-          :long_term_memory="draftAppConfigForm.long_term_memory" />
+          :app_type="appType"
+          :workflow_id="String(draftAppConfigForm.workflow_id ?? '')"
+          :long_term_memory="draftAppConfigForm.long_term_memory"
+          :debug_conversation_id="String(currentApp?.debug_conversation_id ?? '')" />
         <!-- 对话窗口 -->
         <preview-debug-chat
           class="flex-1 min-h-0"
@@ -129,8 +166,8 @@ watch(
           :opening_statement="draftAppConfigForm.opening_statement" 
           :capabilities="draftAppConfigForm.capabilities"
           :text_to_speech="draftAppConfigForm.text_to_speech"
-          :app="props.app" 
-          :app_id="props.app?.id" />
+          :app="currentApp" 
+          :app_id="currentApp?.id" />
       </div>
     </div>
   </div>

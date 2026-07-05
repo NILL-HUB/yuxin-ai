@@ -9,9 +9,11 @@ import {
   getPublicMcpCategories,
   getPublicMcpProvidersWithPage,
 } from '@/services/mcp'
+import { listAdminMcpProviders } from '@/services/admin-mcp'
 import type { McpBinding, McpCategory, McpProvider } from '@/models/mcp'
 import { useI18n } from 'vue-i18n'
 import { getStoreCategoryDisplayName } from '@/utils/store-display'
+import { useRealm } from '@/hooks/use-realm'
 
 type PaginatorState = {
   total_page: number
@@ -31,6 +33,7 @@ const props = defineProps({
 })
 
 const { t, locale } = useI18n()
+const { isAdmin: isAdminContext } = useRealm()
 const emits = defineEmits(['update:visible', 'select'])
 
 const loading = ref(false)
@@ -167,14 +170,33 @@ const loadProviders = async (reset = false) => {
       }
     }
 
-    const res = await getPublicMcpProvidersWithPage({
-      current_page: nextPage,
-      page_size: PAGE_SIZE,
-      search_word: searchWord.value.trim(),
-      category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
-    })
-    providers.value = reset ? (res.data.list || []) : [...providers.value, ...(res.data.list || [])]
-    paginator.value = res.data.paginator || {
+    let list: McpProvider[] = []
+    let respPaginator: PaginatorState | null = null
+
+    if (isAdminContext.value) {
+      // admin 上下文：走 admin API 获取全平台 MCP Provider 列表（跨账号）
+      const data = await listAdminMcpProviders({
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+        search_word: searchWord.value.trim(),
+        category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+      })
+      list = data.list || []
+      respPaginator = data.paginator || null
+    } else {
+      // space 上下文：走公开市场 API
+      const res = await getPublicMcpProvidersWithPage({
+        current_page: nextPage,
+        page_size: PAGE_SIZE,
+        search_word: searchWord.value.trim(),
+        category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+      })
+      list = res.data.list || []
+      respPaginator = res.data.paginator || null
+    }
+
+    providers.value = reset ? list : [...providers.value, ...list]
+    paginator.value = respPaginator || {
       total_page: nextPage,
       total_record: providers.value.length,
       current_page: nextPage,

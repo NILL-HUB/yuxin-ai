@@ -114,8 +114,10 @@ class AdminAppService:
             "icon": app.icon,
             "description": app.description,
             "status": app.status,
+            "app_type": app.app_type,
             "is_public": app.is_public,
             "agent_metadata": app.normalized_agent_metadata,
+            "debug_conversation_id": str(app.debug_conversation_id) if app.debug_conversation_id else None,
             "created_at": datetime_to_timestamp(app.created_at),
             "updated_at": datetime_to_timestamp(app.updated_at),
         }
