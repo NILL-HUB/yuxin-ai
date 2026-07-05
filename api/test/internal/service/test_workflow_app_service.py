@@ -66,9 +66,43 @@ class _DummyDB:
         self.session = _DummySession()
 
 
-def _new_service(db: _DummyDB | None = None) -> WorkflowAppService:
-    """构造 WorkflowAppService 实例，注入 mock db。"""
-    return WorkflowAppService(db=db or _DummyDB())
+class _MockWorkflowRunService:
+    """模拟 WorkflowRunService，记录调用并返回带 id 的桩对象。
+
+    Plan B-11 在 execute_workflow/execute_workflow_stream 中注入了持久化调用，
+    旧测试不验证持久化行为，因此使用 no-op mock 保证向后兼容。
+    """
+
+    def __init__(self):
+        self.create_run_calls: list[dict] = []
+        self.update_run_calls: list[dict] = []
+        self.create_node_execution_calls: list[dict] = []
+        self.update_node_execution_calls: list[dict] = []
+
+    def create_run(self, **kwargs):
+        self.create_run_calls.append(kwargs)
+        return SimpleNamespace(id=uuid4())
+
+    def update_run(self, **kwargs):
+        self.update_run_calls.append(kwargs)
+
+    def create_node_execution(self, **kwargs):
+        self.create_node_execution_calls.append(kwargs)
+        return SimpleNamespace(id=uuid4())
+
+    def update_node_execution(self, **kwargs):
+        self.update_node_execution_calls.append(kwargs)
+
+
+def _new_service(
+    db: _DummyDB | None = None,
+    run_service: _MockWorkflowRunService | None = None,
+) -> WorkflowAppService:
+    """构造 WorkflowAppService 实例，注入 mock db 与 mock run_service。"""
+    return WorkflowAppService(
+        db=db or _DummyDB(),
+        workflow_run_service=run_service or _MockWorkflowRunService(),
+    )
 
 
 def _make_app(app_type: str = AppType.WORKFLOW.value, workflow_id=None) -> SimpleNamespace:
@@ -352,3 +386,144 @@ class TestWorkflowAppService:
         assert result["status"] == "failed"
         assert "节点执行爆炸" in result["error"]
         assert result["outputs"] == {}
+
+    # --- Plan B-11：执行历史持久化集成 ---
+
+    def test_execute_workflow_should_persist_run_and_node_executions(self, monkeypatch):
+        """执行 workflow 时应调用 WorkflowRunService 持久化执行记录。"""
+        wf_id = uuid4()
+        app_id = uuid4()
+        app = _make_app(app_type=AppType.WORKFLOW.value, workflow_id=str(wf_id))
+        workflow = _make_workflow(workflow_id=wf_id, graph={
+            "name": "wf_test",
+            "description": "测试",
+            "nodes": [],
+            "edges": [],
+        })
+
+        db = _DummyDB()
+        db.session.set_result(App, app)
+        db.session.set_result(Workflow, workflow)
+        run_service = _MockWorkflowRunService()
+        service = _new_service(db, run_service=run_service)
+
+        node_id_str = str(uuid4())
+        captured_events = [
+            {"event": "workflow_started", "data": {"inputs": {"q": "hi"}, "node_count": 2}},
+            {"event": "node_started", "data": {
+                "node_id": node_id_str, "node_type": "llm", "title": "LLM", "inputs": {"p": "x"},
+            }},
+            {"event": "node_finished", "data": {
+                "node_id": node_id_str, "outputs": {"text": "ok"}, "elapsed_time": 0.5,
+            }},
+            {"event": "workflow_finished", "data": {"status": "succeeded", "error": ""}},
+        ]
+
+        class _FakeEngine:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def execute(self, _inputs):
+                return iter(captured_events)
+
+        fake_end_node = SimpleNamespace(id=uuid4(), node_type="end")
+        fake_config = SimpleNamespace(nodes=[fake_end_node])
+        monkeypatch.setattr(
+            "internal.service.workflow_app_service.GraphEngine",
+            _FakeEngine,
+        )
+        monkeypatch.setattr(
+            WorkflowAppService,
+            "_build_workflow_config",
+            lambda self, wf, account: fake_config,
+        )
+        monkeypatch.setattr(
+            WorkflowAppService,
+            "_extract_outputs",
+            lambda self, pool, cfg: {"answer": "final"},
+        )
+
+        result = service.execute_workflow(app_id, {"q": "hi"}, SimpleNamespace(id=uuid4()))
+
+        # 业务结果不变
+        assert result["status"] == "succeeded"
+        assert result["outputs"] == {"answer": "final"}
+
+        # 持久化调用按预期发生
+        assert len(run_service.create_run_calls) == 1
+        create_run_args = run_service.create_run_calls[0]
+        assert create_run_args["workflow_id"] == wf_id
+        assert create_run_args["app_id"] == app_id
+        assert create_run_args["trigger_source"] == "app"
+        assert create_run_args["inputs"] == {"q": "hi"}
+        assert create_run_args["total_steps"] == 2
+
+        # 节点执行记录：1 个 node_started + 1 个 node_finished
+        assert len(run_service.create_node_execution_calls) == 1
+        node_call = run_service.create_node_execution_calls[0]
+        assert node_call["node_type"] == "llm"
+        assert node_call["title"] == "LLM"
+        assert node_call["inputs"] == {"p": "x"}
+
+        assert len(run_service.update_node_execution_calls) == 1
+        update_node_call = run_service.update_node_execution_calls[0]
+        assert update_node_call["status"] == "succeeded"
+        assert update_node_call["outputs"] == {"text": "ok"}
+        assert update_node_call["elapsed_time"] == 0.5
+
+        # workflow_finished 触发 update_run
+        assert len(run_service.update_run_calls) == 1
+        update_run_call = run_service.update_run_calls[0]
+        assert update_run_call["status"] == "succeeded"
+        assert update_run_call["outputs"] == {"answer": "final"}
+        assert update_run_call["error"] == ""
+
+    def test_execute_workflow_should_continue_when_persistence_fails(self, monkeypatch):
+        """持久化抛异常时不应中断工作流执行。"""
+        wf_id = uuid4()
+        app = _make_app(app_type=AppType.WORKFLOW.value, workflow_id=str(wf_id))
+        workflow = _make_workflow(workflow_id=wf_id)
+
+        db = _DummyDB()
+        db.session.set_result(App, app)
+        db.session.set_result(Workflow, workflow)
+
+        class _CrashingRunService(_MockWorkflowRunService):
+            def create_run(self, **kwargs):
+                raise RuntimeError("DB 挂了")
+
+        service = _new_service(db, run_service=_CrashingRunService())
+
+        captured_events = [
+            {"event": "workflow_started", "data": {"inputs": {}}},
+            {"event": "workflow_finished", "data": {"status": "succeeded", "error": ""}},
+        ]
+
+        class _FakeEngine:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def execute(self, _inputs):
+                return iter(captured_events)
+
+        fake_config = SimpleNamespace(nodes=[SimpleNamespace(id=uuid4(), node_type="end")])
+        monkeypatch.setattr(
+            "internal.service.workflow_app_service.GraphEngine",
+            _FakeEngine,
+        )
+        monkeypatch.setattr(
+            WorkflowAppService,
+            "_build_workflow_config",
+            lambda self, wf, account: fake_config,
+        )
+        monkeypatch.setattr(
+            WorkflowAppService,
+            "_extract_outputs",
+            lambda self, pool, cfg: {"ok": True},
+        )
+
+        # 即使持久化抛异常，工作流也应正常返回 succeeded
+        result = service.execute_workflow(uuid4(), {}, SimpleNamespace(id=uuid4()))
+
+        assert result["status"] == "succeeded"
+        assert result["outputs"] == {"ok": True}

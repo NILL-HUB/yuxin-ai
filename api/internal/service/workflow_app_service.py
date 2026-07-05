@@ -27,8 +27,13 @@ from internal.core.workflow.graph_engine import GraphEngine
 from internal.core.workflow.real_node_executor import RealNodeExecutor
 from internal.core.workflow.variable_pool import VariablePool
 from internal.entity.app_entity import AppType
+from internal.entity.workflow_entity import (
+    WorkflowNodeExecutionStatus,
+    WorkflowTriggerSource,
+)
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.model import App, Workflow
+from internal.service.workflow_run_service import WorkflowRunService
 from pkg.sqlalchemy import SQLAlchemy
 
 logger = logging.getLogger(__name__)
@@ -44,6 +49,7 @@ class WorkflowAppService:
     """
 
     db: SQLAlchemy
+    workflow_run_service: WorkflowRunService
 
     # ------------------------------------------------------------------
     # 配置读写：workflow_id 提取与校验
@@ -244,21 +250,95 @@ class WorkflowAppService:
         workflow_status = "succeeded"
         workflow_error = ""
         outputs: dict[str, Any] = {}
+        run_id: UUID | None = None
+        node_exec_map: dict[str, UUID] = {}
 
         try:
             # GraphEngine.execute 返回生成器，消费事件以推进执行
             for event in engine.execute(inputs or {}):
                 event_type = event.get("event")
                 data = event.get("data") or {}
+                # 持久化执行记录（容错：失败不中断工作流）
+                try:
+                    if event_type == "workflow_started":
+                        run = self.workflow_run_service.create_run(
+                            workflow_id=workflow.id,
+                            account_id=account.id,
+                            trigger_source=WorkflowTriggerSource.APP.value,
+                            inputs=data.get("inputs") or {},
+                            total_steps=data.get("node_count") or 0,
+                            app_id=app_id,
+                        )
+                        run_id = run.id
+                    elif event_type == "node_started":
+                        node_id_str = data.get("node_id", "")
+                        node_exec = self.workflow_run_service.create_node_execution(
+                            run_id=run_id,
+                            node_id=UUID(node_id_str) if node_id_str else UUID(int=0),
+                            node_type=data.get("node_type", ""),
+                            title=data.get("title", ""),
+                            inputs=data.get("inputs") or {},
+                        )
+                        node_exec_map[node_id_str] = node_exec.id
+                    elif event_type == "node_finished":
+                        node_id_str = data.get("node_id", "")
+                        node_exec_id = node_exec_map.get(node_id_str)
+                        if node_exec_id:
+                            self.workflow_run_service.update_node_execution(
+                                node_exec_id=node_exec_id,
+                                status=WorkflowNodeExecutionStatus.SUCCEEDED.value,
+                                outputs=data.get("outputs") or {},
+                                elapsed_time=data.get("elapsed_time") or 0.0,
+                            )
+                    elif event_type == "node_failed":
+                        node_id_str = data.get("node_id", "")
+                        node_exec_id = node_exec_map.get(node_id_str)
+                        if node_exec_id:
+                            self.workflow_run_service.update_node_execution(
+                                node_exec_id=node_exec_id,
+                                status=WorkflowNodeExecutionStatus.FAILED.value,
+                                outputs=data.get("outputs") or {},
+                                error=data.get("error") or "",
+                                elapsed_time=data.get("elapsed_time") or 0.0,
+                            )
+                    elif event_type == "workflow_finished":
+                        workflow_status = str(data.get("status") or "succeeded")
+                        workflow_error = str(data.get("error") or "")
+                        # outputs 通过 VariablePool 获取（end 节点输出）
+                        outputs = self._extract_outputs(variable_pool, workflow_config)
+                except Exception as persist_err:  # noqa: BLE001 - 持久化失败不应中断工作流
+                    logger.warning("工作流执行记录持久化失败: %s", persist_err)
+
+                # 业务事件处理：workflow_finished 时记录最终状态（上面 try 内已读取）
                 if event_type == "workflow_finished":
-                    workflow_status = str(data.get("status") or "succeeded")
-                    workflow_error = str(data.get("error") or "")
-                    # outputs 通过 VariablePool 获取（end 节点输出）
-                    outputs = self._extract_outputs(variable_pool, workflow_config)
+                    # outputs/状态在 try 中已更新，此处仅触发 run 更新
+                    try:
+                        if run_id:
+                            self.workflow_run_service.update_run(
+                                run_id=run_id,
+                                status=workflow_status,
+                                outputs=outputs,
+                                error=workflow_error,
+                                elapsed_time=time.perf_counter() - start_time,
+                            )
+                    except Exception as persist_err:  # noqa: BLE001
+                        logger.warning("工作流执行记录更新失败: %s", persist_err)
         except Exception as exc:  # noqa: BLE001 - 执行期异常需转化为失败结果
             workflow_status = "failed"
             workflow_error = str(exc)
             logger.exception("工作流执行异常: app_id=%s, workflow_id=%s", app_id, workflow_id)
+            # 异常时尝试更新 run 状态为 failed
+            try:
+                if run_id:
+                    self.workflow_run_service.update_run(
+                        run_id=run_id,
+                        status="failed",
+                        outputs=outputs,
+                        error=workflow_error,
+                        elapsed_time=time.perf_counter() - start_time,
+                    )
+            except Exception as persist_err:  # noqa: BLE001
+                logger.warning("工作流执行记录更新失败: %s", persist_err)
 
         elapsed_time = time.perf_counter() - start_time
 
@@ -355,18 +435,100 @@ class WorkflowAppService:
         )
 
         # 5.遍历事件并 yield SSE 字符串
+        run_id: UUID | None = None
+        node_exec_map: dict[str, UUID] = {}
+        stream_start_time = time.perf_counter()
+        stream_status = "succeeded"
+        stream_error = ""
+        stream_outputs: dict[str, Any] = {}
+
         try:
             for event in engine.execute(inputs or {}):
                 event_type = event.get("event", "message")
                 data = event.get("data") or {}
+                # 持久化执行记录（容错：失败不中断工作流）
+                try:
+                    if event_type == "workflow_started":
+                        run = self.workflow_run_service.create_run(
+                            workflow_id=workflow.id,
+                            account_id=account.id,
+                            trigger_source=WorkflowTriggerSource.APP.value,
+                            inputs=data.get("inputs") or {},
+                            total_steps=data.get("node_count") or 0,
+                            app_id=app_id,
+                        )
+                        run_id = run.id
+                    elif event_type == "node_started":
+                        node_id_str = data.get("node_id", "")
+                        node_exec = self.workflow_run_service.create_node_execution(
+                            run_id=run_id,
+                            node_id=UUID(node_id_str) if node_id_str else UUID(int=0),
+                            node_type=data.get("node_type", ""),
+                            title=data.get("title", ""),
+                            inputs=data.get("inputs") or {},
+                        )
+                        node_exec_map[node_id_str] = node_exec.id
+                    elif event_type == "node_finished":
+                        node_id_str = data.get("node_id", "")
+                        node_exec_id = node_exec_map.get(node_id_str)
+                        if node_exec_id:
+                            self.workflow_run_service.update_node_execution(
+                                node_exec_id=node_exec_id,
+                                status=WorkflowNodeExecutionStatus.SUCCEEDED.value,
+                                outputs=data.get("outputs") or {},
+                                elapsed_time=data.get("elapsed_time") or 0.0,
+                            )
+                    elif event_type == "node_failed":
+                        node_id_str = data.get("node_id", "")
+                        node_exec_id = node_exec_map.get(node_id_str)
+                        if node_exec_id:
+                            self.workflow_run_service.update_node_execution(
+                                node_exec_id=node_exec_id,
+                                status=WorkflowNodeExecutionStatus.FAILED.value,
+                                outputs=data.get("outputs") or {},
+                                error=data.get("error") or "",
+                                elapsed_time=data.get("elapsed_time") or 0.0,
+                            )
+                except Exception as persist_err:  # noqa: BLE001 - 持久化失败不应中断工作流
+                    logger.warning("工作流执行记录持久化失败: %s", persist_err)
+
                 # workflow_finished 时附加 outputs
                 if event_type == "workflow_finished":
-                    data = {**data, "outputs": self._extract_outputs(variable_pool, workflow_config)}
+                    stream_status = str(data.get("status") or "succeeded")
+                    stream_error = str(data.get("error") or "")
+                    stream_outputs = self._extract_outputs(variable_pool, workflow_config)
+                    data = {**data, "outputs": stream_outputs}
                 yield self._emit_sse(event_type, data)
+
+                # workflow_finished 后更新 run 记录
+                if event_type == "workflow_finished":
+                    try:
+                        if run_id:
+                            self.workflow_run_service.update_run(
+                                run_id=run_id,
+                                status=stream_status,
+                                outputs=stream_outputs,
+                                error=stream_error,
+                                elapsed_time=time.perf_counter() - stream_start_time,
+                            )
+                    except Exception as persist_err:  # noqa: BLE001
+                        logger.warning("工作流执行记录更新失败: %s", persist_err)
         except Exception as exc:  # noqa: BLE001 - 执行期异常需转化为失败事件
             logger.exception(
                 "工作流流式执行异常: app_id=%s, workflow_id=%s", app_id, workflow_id,
             )
+            # 异常时尝试更新 run 状态为 failed
+            try:
+                if run_id:
+                    self.workflow_run_service.update_run(
+                        run_id=run_id,
+                        status="failed",
+                        outputs={},
+                        error=str(exc),
+                        elapsed_time=time.perf_counter() - stream_start_time,
+                    )
+            except Exception as persist_err:  # noqa: BLE001
+                logger.warning("工作流执行记录更新失败: %s", persist_err)
             yield self._emit_sse("workflow_finished", {
                 "status": "failed",
                 "error": str(exc),

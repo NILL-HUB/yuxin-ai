@@ -134,6 +134,7 @@ watch(
         <!-- 头部信息 -->
         <preview-debug-header :app_id="String(route.params?.app_id)"
           :app_type="String(props.app?.app_type ?? '')"
+          :workflow_id="String(draftAppConfigForm.workflow_id ?? '')"
           :long_term_memory="draftAppConfigForm.long_term_memory"
           :debug_conversation_id="String(props.app?.debug_conversation_id ?? '')" />
         <!-- 对话窗口 -->

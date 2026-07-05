@@ -11,7 +11,7 @@ from internal.schema.workflow_schema import (
     GetWorkflowsWithPageReq,
     GetWorkflowsWithPageResp,
 )
-from internal.service import WorkflowService
+from internal.service import WorkflowRunService, WorkflowService
 from pkg.paginator import PageModel
 from pkg.response import validate_error_json, success_json, success_message, compact_generate_response
 
@@ -21,6 +21,7 @@ from pkg.response import validate_error_json, success_json, success_message, com
 class WorkflowHandler:
     """工作流处理器"""
     workflow_service: WorkflowService
+    workflow_run_service: WorkflowRunService
 
     @login_required
     def create_workflow(self):
@@ -155,3 +156,68 @@ class WorkflowHandler:
 
         message = "分享工作流到广场成功" if is_public else "取消分享工作流成功"
         return success_message(message)
+
+    # ------------------------------------------------------------------
+    # 工作流执行历史（Plan B-11）
+    # ------------------------------------------------------------------
+    @login_required
+    def get_workflow_runs_with_page(self, workflow_id: UUID):
+        """分页查询工作流的执行历史记录。
+
+        查询参数：
+        - page: 当前页码，默认 1
+        - page_size: 每页条数，默认 10
+        - status: 可选状态过滤（running/succeeded/failed/stopped）
+        - trigger_source: 可选触发源过滤（debug/app/schedule/api）
+        """
+        # 1.校验 workflow_id 归属当前账号（防止越权查询他人工作流的执行历史）
+        self.workflow_service.get_workflow(workflow_id, current_user)
+
+        # 2.提取分页参数
+        page = request.args.get("page", default=1, type=int)
+        page_size = request.args.get("page_size", default=10, type=int)
+        status = request.args.get("status", default=None, type=str) or None
+        trigger_source = request.args.get("trigger_source", default=None, type=str) or None
+
+        # 3.查询分页数据
+        runs, paginator = self.workflow_run_service.get_runs_with_page(
+            workflow_id=workflow_id,
+            account=current_user,
+            page=page,
+            page_size=page_size,
+            status=status,
+            trigger_source=trigger_source,
+        )
+
+        # 4.序列化并返回
+        list_data = [self.workflow_run_service.serialize_run(run) for run in runs]
+        return success_json(PageModel(list=list_data, paginator=paginator))
+
+    @login_required
+    def get_workflow_run(self, workflow_id: UUID, run_id: UUID):
+        """获取单条执行记录详情。"""
+        # 1.校验 workflow_id 归属当前账号
+        self.workflow_service.get_workflow(workflow_id, current_user)
+
+        # 2.查询执行记录
+        run = self.workflow_run_service.get_run(run_id, current_user)
+        if run is None:
+            return success_json(None)
+
+        return success_json(self.workflow_run_service.serialize_run(run))
+
+    @login_required
+    def get_workflow_run_node_executions(self, workflow_id: UUID, run_id: UUID):
+        """获取执行记录的节点级回放数据。"""
+        # 1.校验 workflow_id 归属当前账号
+        self.workflow_service.get_workflow(workflow_id, current_user)
+
+        # 2.查询节点执行记录
+        node_executions = self.workflow_run_service.get_node_executions(run_id, current_user)
+
+        # 3.序列化并返回
+        list_data = [
+            self.workflow_run_service.serialize_node_execution(node_exec)
+            for node_exec in node_executions
+        ]
+        return success_json({"list": list_data})

@@ -39,6 +39,7 @@ from .upload_file_service import UploadFileService
 from .vector_database_service import VectorDatabaseService
 from .workflow_service import WorkflowService
 from .workflow_app_service import WorkflowAppService
+from .workflow_run_service import WorkflowRunService
 from .language_model_service import LanguageModelService
 from .assistant_agent_service import AssistantAgentService
 from .faiss_service import FaissService
@@ -123,6 +124,7 @@ __all__ = [
     "OpenAPIService",
     "WorkflowService",
     "WorkflowAppService",
+    "WorkflowRunService",
     "LanguageModelService",
     "AssistantAgentService",
     "ExternalDataSourceService",

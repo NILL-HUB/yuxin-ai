@@ -1677,6 +1677,21 @@ class Router:
             methods=["POST"],
             view_func=self.workflow_handler.share_workflow_to_public,
         )
+        bp.add_url_rule(
+            "/workflows/<uuid:workflow_id>/runs",
+            methods=["GET"],
+            view_func=self.workflow_handler.get_workflow_runs_with_page,
+        )
+        bp.add_url_rule(
+            "/workflows/<uuid:workflow_id>/runs/<uuid:run_id>",
+            methods=["GET"],
+            view_func=self.workflow_handler.get_workflow_run,
+        )
+        bp.add_url_rule(
+            "/workflows/<uuid:workflow_id>/runs/<uuid:run_id>/node-executions",
+            methods=["GET"],
+            view_func=self.workflow_handler.get_workflow_run_node_executions,
+        )
 
         # 12.语言模型模块
         bp.add_url_rule("/language-models", view_func=self.language_model_handler.get_language_models)
