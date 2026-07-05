@@ -204,6 +204,12 @@ class Router:
             view_func=self.app_handler.debug_chat,
         )
         bp.add_url_rule(
+            "/apps/<uuid:app_id>/workflow/debug",
+            methods=["POST"],
+            view_func=self.app_handler.debug_workflow_app,
+            endpoint="app_debug_workflow",
+        )
+        bp.add_url_rule(
             "/apps/<uuid:app_id>/prompt-compare/chat",
             methods=["POST"],
             view_func=self.app_handler.prompt_compare_chat,

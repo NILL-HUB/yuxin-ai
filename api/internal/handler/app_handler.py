@@ -25,6 +25,7 @@ from internal.schema.app_schema import (
 )
 from internal.service import AppService, RetrievalService
 from internal.service.app_debug_service import AppDebugService
+from internal.service.workflow_app_service import WorkflowAppService
 from pkg.paginator import PageModel
 from pkg.response import validate_error_json, success_json, success_message, compact_generate_response
 from internal.core.language_model import LanguageModelManager
@@ -39,6 +40,7 @@ class AppHandler:
     app_debug_service: AppDebugService
     retrieval_service: RetrievalService
     language_model_manager: LanguageModelManager
+    workflow_app_service: WorkflowAppService
 
     @login_required
     def create_app(self):
@@ -209,6 +211,18 @@ class AppHandler:
         # 2.调试服务发起会话调试
         response = self.app_debug_service.debug_chat(app_id, req, current_user)
 
+        return compact_generate_response(response)
+
+    @login_required
+    def debug_workflow_app(self, app_id: UUID):
+        """workflow 应用调试 SSE 接口。
+
+        以 SSE 流式输出工作流执行过程，事件类型遵循 GraphEngine 协议：
+        ``workflow_started`` / ``node_started`` / ``node_finished`` /
+        ``node_failed`` / ``workflow_finished``。
+        """
+        inputs = request.get_json(force=True, silent=True) or {}
+        response = self.workflow_app_service.execute_workflow_stream(app_id, inputs, current_user)
         return compact_generate_response(response)
 
     @login_required

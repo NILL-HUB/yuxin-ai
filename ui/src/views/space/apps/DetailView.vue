@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAdminAppDraftConfig } from '@/services/admin-apps'
 import AgentAppAbility from './components/AgentAppAbility.vue'
+import WorkflowAppAbility from './components/WorkflowAppAbility.vue'
 import ModelConfig from './components/ModelConfig.vue'
 import PresetPromptTextarea from './components/PresetPromptTextarea.vue'
 import PreviewDebugChat from './components/PreviewDebugChat.vue'
@@ -24,6 +25,9 @@ const props = defineProps({
 const { t } = useI18n()
 const { draftAppConfigForm, loadDraftAppConfig } = useGetDraftAppConfig()
 const isDraftAppConfigRefreshing = ref(false)
+
+// 应用类型：用于在编排区按 app_type 分支渲染（默认 chatbot 兼容旧数据）
+const appType = computed(() => (props.app?.app_type ?? 'chatbot') as string)
 
 // admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
 const isAdminContext = computed(
@@ -54,6 +58,8 @@ const loadDraftAppConfigDetail = async (appId: string) => {
       workflows: data.workflows,
       speech_to_text: data.speech_to_text,
       text_to_speech: data.text_to_speech,
+      workflow_id: data.workflow_id ?? null,
+      workflow_detail: data.workflow_detail ?? null,
     }
   } else {
     await loadDraftAppConfig(appId)
@@ -108,8 +114,15 @@ watch(
               v-model:preset_prompt="draftAppConfigForm.preset_prompt"
               :app_id="String(route.params?.app_id)" />
           </div>
-          <!-- 右侧应用能力 -->
+          <!-- 右侧应用能力：按 app_type 分支 -->
+          <workflow-app-ability
+            v-if="appType === 'workflow'"
+            v-model:draft_app_config="draftAppConfigForm"
+            :app_id="String(route.params?.app_id)"
+            @reload-draft-app-config="refreshDraftAppConfig"
+          />
           <agent-app-ability
+            v-else
             v-model:draft_app_config="draftAppConfigForm"
             :app_id="String(route.params?.app_id)"
             @reload-draft-app-config="refreshDraftAppConfig"
@@ -120,6 +133,7 @@ watch(
       <div class="min-w-[404px] flex min-h-0 flex-col overflow-hidden">
         <!-- 头部信息 -->
         <preview-debug-header :app_id="String(route.params?.app_id)"
+          :app_type="String(props.app?.app_type ?? '')"
           :long_term_memory="draftAppConfigForm.long_term_memory"
           :debug_conversation_id="String(props.app?.debug_conversation_id ?? '')" />
         <!-- 对话窗口 -->
@@ -127,10 +141,10 @@ watch(
           class="flex-1 min-h-0"
           :suggested_after_answer="draftAppConfigForm.suggested_after_answer"
           :opening_questions="draftAppConfigForm.opening_questions"
-          :opening_statement="draftAppConfigForm.opening_statement" 
+          :opening_statement="draftAppConfigForm.opening_statement"
           :capabilities="draftAppConfigForm.capabilities"
           :text_to_speech="draftAppConfigForm.text_to_speech"
-          :app="props.app" 
+          :app="props.app"
           :app_id="props.app?.id" />
       </div>
     </div>

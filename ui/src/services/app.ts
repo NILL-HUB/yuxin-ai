@@ -92,6 +92,15 @@ export const promptCompareChat = (
   return ssePost(`/apps/${app_id}/prompt-compare/chat`, { body: req }, onData)
 }
 
+// 工作流应用调试，该接口为流式事件输出（SSE 推送节点级执行事件）
+export const debugWorkflowApp = (
+  app_id: string,
+  inputs: Record<string, any>,
+  onData: (event_response: { event: string; data: any }) => void,
+) => {
+  return ssePost(`/apps/${app_id}/workflow/debug`, { body: inputs }, onData)
+}
+
 // 停止某次应用的调试会话
 export const stopDebugChat = (app_id: string, task_id: string) => {
   return post<BaseResponse<any>>(`/apps/${app_id}/conversations/tasks/${task_id}/stop`)

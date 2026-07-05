@@ -3,11 +3,13 @@ import { useGetDebugConversationSummary, useUpdateDebugConversationSummary } fro
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ConversationVariableDrawer from './ConversationVariableDrawer.vue'
+import WorkflowDebugPanel from './WorkflowDebugPanel.vue'
 
 // 1.定义自定义组件所需数据
 const { t } = useI18n()
 const props = defineProps({
   app_id: { type: String, required: true },
+  app_type: { type: String, default: '' },
   long_term_memory: {
     type: Object,
     default: () => {
@@ -25,6 +27,7 @@ const { debug_conversation_summary, loadDebugConversationSummary } =
 const { loading, handleUpdateDebugConversationSummary } = useUpdateDebugConversationSummary()
 const summaryModalVisible = ref(false)
 const variableDrawerVisible = ref(false)
+const debugPanelVisible = ref(false)
 
 // 2.模态窗打开处理器
 const openSummaryModal = async () => {
@@ -65,6 +68,18 @@ const openSummaryModal = async () => {
             <icon-storage />
           </template>
           {{ t('appStudio.debug.conversationVariables.button') }}
+        </a-button>
+        <a-button
+          v-if="props.app_type === 'workflow'"
+          size="mini"
+          type="text"
+          class="rounded-lg px-1 !text-blue-700"
+          @click="debugPanelVisible = true"
+        >
+          <template #icon>
+            <icon-play-arrow />
+          </template>
+          {{ t('appStudio.debug.workflowDebug.button') }}
         </a-button>
       </div>
     </div>
@@ -132,6 +147,11 @@ const openSummaryModal = async () => {
     <ConversationVariableDrawer
       v-model:visible="variableDrawerVisible"
       :conversation_id="String(props.debug_conversation_id ?? '')"
+    />
+    <!-- 工作流调试面板 -->
+    <WorkflowDebugPanel
+      v-model:visible="debugPanelVisible"
+      :app_id="props.app_id"
     />
   </div>
 </template>

@@ -253,6 +253,8 @@ export type GetDraftAppConfigResponse = BaseResponse<{
     inputs_config: { enable: boolean; preset_response: string }
     outputs_config: { enable: boolean }
   }
+  workflow_id: string | null // Workflow 应用绑定的主工作流 ID（仅 app_type=workflow 时有效）
+  workflow_detail?: { id: string; name: string; icon: string; description: string } | null // 绑定的工作流详情
   updated_at: number
   created_at: number
 }>
@@ -281,6 +283,7 @@ export type UpdateDraftAppConfigRequest = {
     inputs_config: { enable: boolean; preset_response: string }
     outputs_config: { enable: boolean }
   }
+  workflow_id?: string | null
 }
 
 export type PromptCompareHistoryItem = {

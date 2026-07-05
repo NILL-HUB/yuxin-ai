@@ -12,10 +12,11 @@ AppService/AppRuntimeService 中并接入真实节点执行器。
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Generator
 from uuid import UUID
 
 from flask import current_app
@@ -267,6 +268,123 @@ class WorkflowAppService:
             "status": workflow_status,
             "error": workflow_error,
         }
+
+    # ------------------------------------------------------------------
+    # 流式执行入口（SSE）
+    # ------------------------------------------------------------------
+    def execute_workflow_stream(
+        self,
+        app_id: UUID,
+        inputs: dict[str, Any],
+        account: Any,
+    ) -> Generator[str, None, None]:
+        """以 SSE 流式方式执行应用绑定的 workflow。
+
+        复用 ``execute_workflow`` 的步骤 1-5（加载 App/校验类型/加载 Workflow/
+        构建 WorkflowConfig/创建 VariablePool+RealNodeExecutor+GraphEngine），
+        改为遍历 ``engine.execute(inputs)`` 生成器，将每个事件序列化为 SSE
+        字符串 yield 给前端。
+
+        事件类型遵循 GraphEngine 协议：
+        ``workflow_started`` / ``node_started`` / ``node_finished`` /
+        ``node_failed`` / ``workflow_finished``。
+
+        Args:
+            app_id: 应用 ID
+            inputs: workflow start 节点的输入字典
+            account: 触发账号（保留参数，便于后续权限/审计）
+
+        Yields:
+            SSE 字符串，格式为 ``event: <type>\\ndata: <json>\\n\\n``
+        """
+        # 1.加载应用并校验类型
+        app = self.db.session.query(App).filter(App.id == app_id).one_or_none()
+        if app is None:
+            yield self._emit_sse("workflow_finished", {
+                "status": "failed",
+                "error": f"应用不存在: {app_id}",
+            })
+            return
+
+        if not self.is_workflow_app(app):
+            yield self._emit_sse("workflow_finished", {
+                "status": "failed",
+                "error": f"当前应用类型不是 workflow（实际: {app.app_type}），无法调用 execute_workflow_stream",
+            })
+            return
+
+        # 2.加载 draft_app_config 并校验 workflow 绑定
+        draft_app_config = self._load_app_config_dict(app)
+        try:
+            workflow_id = self.validate_workflow_binding(draft_app_config)
+        except (NotFoundException, ValidateErrorException) as exc:
+            yield self._emit_sse("workflow_finished", {
+                "status": "failed",
+                "error": str(exc),
+            })
+            return
+
+        # 3.加载 workflow
+        workflow = self.db.session.query(Workflow).filter(
+            Workflow.id == workflow_id,
+        ).one_or_none()
+        if workflow is None:
+            yield self._emit_sse("workflow_finished", {
+                "status": "failed",
+                "error": f"绑定的 workflow 不存在: {workflow_id}",
+            })
+            return
+
+        # 4.构建 WorkflowConfig 与 GraphEngine
+        workflow_config = self._build_workflow_config(workflow, account)
+        variable_pool = VariablePool()
+        try:
+            flask_app = current_app._get_current_object()
+        except RuntimeError:
+            flask_app = None
+        executor = RealNodeExecutor(
+            flask_app=flask_app,
+            account_id=getattr(account, "id", None),
+            account=account,
+            app_id=app_id,
+        )
+        engine = GraphEngine(
+            workflow_config=workflow_config,
+            variable_pool=variable_pool,
+            node_executor=executor,
+        )
+
+        # 5.遍历事件并 yield SSE 字符串
+        try:
+            for event in engine.execute(inputs or {}):
+                event_type = event.get("event", "message")
+                data = event.get("data") or {}
+                # workflow_finished 时附加 outputs
+                if event_type == "workflow_finished":
+                    data = {**data, "outputs": self._extract_outputs(variable_pool, workflow_config)}
+                yield self._emit_sse(event_type, data)
+        except Exception as exc:  # noqa: BLE001 - 执行期异常需转化为失败事件
+            logger.exception(
+                "工作流流式执行异常: app_id=%s, workflow_id=%s", app_id, workflow_id,
+            )
+            yield self._emit_sse("workflow_finished", {
+                "status": "failed",
+                "error": str(exc),
+                "outputs": {},
+            })
+
+    @staticmethod
+    def _emit_sse(event_type: str, data: dict[str, Any]) -> str:
+        """将事件序列化为 SSE 字符串。
+
+        Args:
+            event_type: 事件类型
+            data: 事件数据字典
+
+        Returns:
+            SSE 格式字符串 ``event: <type>\\ndata: <json>\\n\\n``
+        """
+        return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
     # ------------------------------------------------------------------
     # 内部辅助方法

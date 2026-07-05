@@ -46,8 +46,10 @@ from .public_agent_registry_service import PublicAgentRegistryService
 from .retrieval_service import RetrievalService
 from .icon_generator_service import IconGeneratorService
 from .skill_service import SkillService
+from .workflow_app_service import WorkflowAppService
 from ..core.language_model.entities.model_entity import ModelParameterType, ModelFeature
 from ..core.language_model.providers.deepseek.chat import Chat
+from ..entity.app_entity import AppType
 from ..entity.workflow_entity import WorkflowStatus
 
 
@@ -71,6 +73,7 @@ class AppService(BaseService):
     icon_generator_service: IconGeneratorService
     app_icon_service: AppIconService
     public_agent_registry_service: PublicAgentRegistryService | None = None
+    workflow_app_service: WorkflowAppService | None = None
     AUTO_CREATE_DEFAULT_TOOLS = [
         {
             "type": "builtin_tool",
@@ -507,6 +510,8 @@ class AppService(BaseService):
         """根据传递的应用id，获取指定的应用草稿配置信息"""
         app = self.get_app(app_id, account)
         draft_app_config = self.app_config_service.get_draft_app_config(app)
+        # 显式补齐 workflow_id 字段，确保前端始终能拿到该字段（即使为 None）
+        draft_app_config.setdefault("workflow_id", getattr(getattr(app, "draft_app_config", None), "workflow_id", None))
         if hasattr(self.language_model_service, "describe_runtime_capabilities"):
             draft_app_config["capabilities"] = self.language_model_service.describe_runtime_capabilities(
                 draft_app_config.get("model_config", {}),
@@ -592,6 +597,7 @@ class AppService(BaseService):
             text_to_speech=draft_app_config["text_to_speech"],
             suggested_after_answer=draft_app_config["suggested_after_answer"],
             review_config=draft_app_config["review_config"],
+            workflow_id=draft_app_config.get("workflow_id"),
         )
 
         # 3.更新应用关联的运行时配置、状态
@@ -822,6 +828,7 @@ class AppService(BaseService):
             "tools", "mcp_bindings", "mcp_tool_snapshots", "skills", "agent_bindings", "workflows", "datasets", "retrieval_config",
             "long_term_memory", "opening_statement", "opening_questions",
             "speech_to_text", "text_to_speech", "suggested_after_answer", "review_config",
+            "workflow_id",
         ]
 
         # 2.判断传递的草稿配置是否在可接受字段内
@@ -999,6 +1006,33 @@ class AppService(BaseService):
 
             workflow_sets = set([str(workflow_record.id) for workflow_record in workflow_records])
             draft_app_config["workflows"] = [workflow_id for workflow_id in workflows if workflow_id in workflow_sets]
+
+        # 7.6 校验 workflow_id（仅 workflow 类型应用有效，单值字段，区别于多选 workflows）
+        if "workflow_id" in draft_app_config:
+            # 加载应用实例以判断 app_type（fallback_history_to_draft/update_draft_app_config 均会传 app_id）
+            app_record = self.db.session.get(App, app_id) if app_id is not None else None
+            if app_record is not None and app_record.app_type == AppType.WORKFLOW.value:
+                workflow_id = draft_app_config.get("workflow_id")
+                if workflow_id:
+                    # 校验 workflow_id 必须是有效 UUID
+                    try:
+                        wf_id = UUID(str(workflow_id)) if not isinstance(workflow_id, UUID) else workflow_id
+                    except (ValueError, TypeError):
+                        raise ValidateErrorException("workflow_id 必须是有效的 UUID")
+                    # 校验 workflow 存在且属于当前账号、且为已发布状态
+                    workflow = self.db.session.get(Workflow, wf_id)
+                    if not workflow or workflow.account_id != account.id:
+                        raise NotFoundException("工作流不存在或无权访问")
+                    if workflow.status != WorkflowStatus.PUBLISHED.value:
+                        raise ValidateErrorException("只能绑定已发布的工作流")
+                    # 规范化为字符串形式存储
+                    draft_app_config["workflow_id"] = str(wf_id)
+                else:
+                    # 显式 None 表示解绑
+                    draft_app_config["workflow_id"] = None
+            else:
+                # 非 workflow 类型应用不允许设置 workflow_id
+                draft_app_config["workflow_id"] = None
 
         # 8.校验MCP绑定配置
         if "mcp_bindings" in draft_app_config:

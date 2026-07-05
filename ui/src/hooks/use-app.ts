@@ -17,6 +17,7 @@ import {
   getVersions,
   publish,
   promptCompareChat,
+  debugWorkflowApp,
   regenerateWebAppToken,
   regenerateIcon,
   generateIconPreview,
@@ -363,6 +364,8 @@ export const useGetDraftAppConfig = () => {
         agent_bindings: data.agent_bindings || [],
         skills: data.skills,
         workflows: data.workflows,
+        workflow_id: data.workflow_id ?? null,
+        workflow_detail: data.workflow_detail ?? null,
         speech_to_text: data.speech_to_text,
         text_to_speech: data.text_to_speech,
       }
@@ -547,6 +550,32 @@ export const useDebugChat = () => {
   }
 
   return { loading, handleDebugChat }
+}
+
+export const useDebugWorkflowApp = () => {
+  // 1.定义hooks所需数据
+  const loading = ref(false)
+  const error = ref('')
+
+  // 2.定义工作流调试处理器
+  const handleDebugWorkflowApp = async (
+    app_id: string,
+    inputs: Record<string, unknown>,
+    onData: (event_response: { event: string; data: any }) => void,
+  ) => {
+    try {
+      loading.value = true
+      error.value = ''
+      const resp = await debugWorkflowApp(app_id, inputs, onData)
+      if (typeof resp === 'object' && resp !== null && 'message' in resp) {
+        error.value = typeof resp.message === 'string' ? resp.message : '工作流调试失败'
+      }
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, error, handleDebugWorkflowApp }
 }
 
 export const useStopDebugChat = () => {
