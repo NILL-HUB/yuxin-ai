@@ -2,6 +2,7 @@
 import { useGetDebugConversationSummary, useUpdateDebugConversationSummary } from '@/hooks/use-app'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import ConversationVariableDrawer from './ConversationVariableDrawer.vue'
 
 // 1.定义自定义组件所需数据
 const { t } = useI18n()
@@ -14,11 +15,16 @@ const props = defineProps({
     },
     required: true,
   },
+  debug_conversation_id: {
+    type: String,
+    default: '',
+  },
 })
 const { debug_conversation_summary, loadDebugConversationSummary } =
   useGetDebugConversationSummary()
 const { loading, handleUpdateDebugConversationSummary } = useUpdateDebugConversationSummary()
 const summaryModalVisible = ref(false)
+const variableDrawerVisible = ref(false)
 
 // 2.模态窗打开处理器
 const openSummaryModal = async () => {
@@ -35,18 +41,32 @@ const openSummaryModal = async () => {
     <!-- 预览与调试头组件 -->
     <div class="flex items-center justify-between border-b h-[64px] px-4">
       <div class="text-lg text-gray-700">{{ t('appStudio.debug.title') }}</div>
-      <a-button
-        :disabled="!props.long_term_memory?.enable"
-        size="mini"
-        type="text"
-        class="rounded-lg px-1 !text-blue-700"
-        @click="openSummaryModal"
-      >
-        <template #icon>
-          <icon-save />
-        </template>
-        {{ t('appStudio.debug.longTermMemory') }}
-      </a-button>
+      <div class="flex items-center gap-2">
+        <a-button
+          :disabled="!props.long_term_memory?.enable"
+          size="mini"
+          type="text"
+          class="rounded-lg px-1 !text-blue-700"
+          @click="openSummaryModal"
+        >
+          <template #icon>
+            <icon-save />
+          </template>
+          {{ t('appStudio.debug.longTermMemory') }}
+        </a-button>
+        <a-button
+          :disabled="!props.debug_conversation_id"
+          size="mini"
+          type="text"
+          class="rounded-lg px-1 !text-blue-700"
+          @click="variableDrawerVisible = true"
+        >
+          <template #icon>
+            <icon-storage />
+          </template>
+          {{ t('appStudio.debug.conversationVariables.button') }}
+        </a-button>
+      </div>
     </div>
     <!-- 长期记忆模态窗 -->
     <a-modal
@@ -108,6 +128,11 @@ const openSummaryModal = async () => {
         </div>
       </div>
     </a-modal>
+    <!-- 会话变量抽屉 -->
+    <ConversationVariableDrawer
+      v-model:visible="variableDrawerVisible"
+      :conversation_id="String(props.debug_conversation_id ?? '')"
+    />
   </div>
 </template>
 

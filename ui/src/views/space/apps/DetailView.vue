@@ -120,7 +120,8 @@ watch(
       <div class="min-w-[404px] flex min-h-0 flex-col overflow-hidden">
         <!-- 头部信息 -->
         <preview-debug-header :app_id="String(route.params?.app_id)"
-          :long_term_memory="draftAppConfigForm.long_term_memory" />
+          :long_term_memory="draftAppConfigForm.long_term_memory"
+          :debug_conversation_id="String(props.app?.debug_conversation_id ?? '')" />
         <!-- 对话窗口 -->
         <preview-debug-chat
           class="flex-1 min-h-0"

@@ -49,6 +49,7 @@ from .admin_model_pool_handler import AdminModelPoolHandler
 from .admin_cost_stats_handler import AdminCostStatsHandler
 from .web_app_handler import WebAppHandler
 from .conversation_handler import ConversationHandler
+from .conversation_variable_handler import ConversationVariableHandler
 from .audio_handler import AudioHandler
 from .platform_handler import PlatformHandler
 from .wechat_handler import WechatHandler
@@ -111,6 +112,7 @@ __all__ = [
     "AdminCostStatsHandler",
     "WebAppHandler",
     "ConversationHandler",
+    "ConversationVariableHandler",
     "AudioHandler",
     "PlatformHandler",
     "WechatHandler",

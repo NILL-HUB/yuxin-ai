@@ -142,6 +142,10 @@ class TestRouterFullMatrix:
             '/conversations/<uuid:conversation_id>/messages/<uuid:message_id>': {'POST'},
             '/conversations/<uuid:conversation_id>/messages/<uuid:message_id>/delete': {'POST'},
             '/conversations/<uuid:conversation_id>/name': {'GET', 'POST'},
+            '/conversations/<uuid:conversation_id>/variables': {'GET', 'POST'},
+            '/conversations/<uuid:conversation_id>/variables/batch': {'POST'},
+            '/conversations/<uuid:conversation_id>/variables/delete-all': {'POST'},
+            '/conversations/<uuid:conversation_id>/variables/<string:name>/delete': {'POST'},
             '/conversations/recent': {'GET'},
             '/conversations/search': {'GET'},
             '/datasets': {'GET', 'POST'},
@@ -274,4 +278,4 @@ class TestRouterFullMatrix:
         assert by_blueprint["openapi"] == 1
         assert by_blueprint["llmops"] == len(rules) - 1
         # 当前系统的接口总量是一个重要契约，避免漏挂导致线上能力消失。
-        assert len(rules) == 281
+        assert len(rules) == 286

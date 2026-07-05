@@ -48,6 +48,7 @@ from internal.handler import (
     AnalysisHandler,
     WebAppHandler,
     ConversationHandler,
+    ConversationVariableHandler,
     AudioHandler,
     PlatformHandler,
     WechatHandler,
@@ -118,6 +119,7 @@ class Router:
     analysis_handler: AnalysisHandler
     web_app_handler: WebAppHandler
     conversation_handler: ConversationHandler
+    conversation_variable_handler: ConversationVariableHandler
     audio_handler: AudioHandler
     platform_handler: PlatformHandler
     wechat_handler: WechatHandler
@@ -1779,7 +1781,34 @@ class Router:
             view_func=self.conversation_handler.search_conversations,
         )
 
-        # 17.语音转换模块
+        # 17.会话变量模块
+        bp.add_url_rule(
+            "/conversations/<uuid:conversation_id>/variables",
+            view_func=self.conversation_variable_handler.get_variables,
+            methods=["GET"],
+        )
+        bp.add_url_rule(
+            "/conversations/<uuid:conversation_id>/variables",
+            view_func=self.conversation_variable_handler.set_variable,
+            methods=["POST"],
+        )
+        bp.add_url_rule(
+            "/conversations/<uuid:conversation_id>/variables/batch",
+            view_func=self.conversation_variable_handler.batch_set_variables,
+            methods=["POST"],
+        )
+        bp.add_url_rule(
+            "/conversations/<uuid:conversation_id>/variables/<string:name>/delete",
+            view_func=self.conversation_variable_handler.delete_variable,
+            methods=["POST"],
+        )
+        bp.add_url_rule(
+            "/conversations/<uuid:conversation_id>/variables/delete-all",
+            view_func=self.conversation_variable_handler.delete_all_variables,
+            methods=["POST"],
+        )
+
+        # 18.语音转换模块
         bp.add_url_rule(
             "/audio/audio-to-text",
             methods=["POST"],
@@ -1795,7 +1824,7 @@ class Router:
             methods=["POST"],
             view_func=self.audio_handler.text_to_audio,
         )
-        # 18.第三方平台配置模块
+        # 19.第三方平台配置模块
         bp.add_url_rule(
             "/platform/<uuid:app_id>/wechat-config",
             view_func=self.platform_handler.get_wechat_config,
@@ -1811,7 +1840,7 @@ class Router:
             view_func=self.wechat_handler.wechat,
         )
 
-        # 19.公共应用广场模块
+        # 20.公共应用广场模块
         bp.add_url_rule(
             "/public/apps",
             view_func=self.public_app_handler.get_public_apps_with_page,
@@ -1858,7 +1887,7 @@ class Router:
             methods=["POST"],
             view_func=self.public_app_handler.fork_public_app,
         )
-        # 20.公共工作流广场模块
+        # 21.公共工作流广场模块
         bp.add_url_rule(
             "/public/workflows",
             view_func=self.public_workflow_handler.get_public_workflows_with_page,
@@ -1886,7 +1915,7 @@ class Router:
             methods=["POST"],
             view_func=self.public_workflow_handler.fork_public_workflow,
         )
-        # 21.标签模块
+        # 22.标签模块
         bp.add_url_rule("/tags", view_func=self.tag_handler.list_tags)
         bp.add_url_rule("/tags", methods=["POST"], view_func=self.tag_handler.create_tag)
         bp.add_url_rule("/tags/hot", view_func=self.tag_handler.get_hot_tags)
@@ -1895,7 +1924,7 @@ class Router:
         bp.add_url_rule("/tags/<uuid:tag_id>", methods=["POST"], view_func=self.tag_handler.update_tag)
         bp.add_url_rule("/tags/<uuid:tag_id>/delete", methods=["POST"], view_func=self.tag_handler.delete_tag)
 
-        # 22.通知模块
+        # 23.通知模块
         bp.add_url_rule("/notifications", view_func=self.notification_handler.get_notifications)
         bp.add_url_rule(
             "/notifications/<string:notification_id>/read",
@@ -1908,7 +1937,7 @@ class Router:
             view_func=self.notification_handler.delete_notification,
         )
 
-        # 23.路由日志用户侧简化视图
+        # 24.路由日志用户侧简化视图
         bp.add_url_rule(
             "/routing-logs/summary",
             endpoint="routing_log_summary",
@@ -1916,7 +1945,7 @@ class Router:
             view_func=self.routing_log_handler.summary,
         )
 
-        # 25.展示案例模块
+        # 26.展示案例模块
         bp.add_url_rule(
             "/showcase/cases",
             endpoint="showcase_case_create",

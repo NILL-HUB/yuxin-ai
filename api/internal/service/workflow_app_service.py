@@ -18,10 +18,12 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from flask import current_app
 from injector import inject
 
 from internal.core.workflow.entities.workflow_entity import WorkflowConfig
 from internal.core.workflow.graph_engine import GraphEngine
+from internal.core.workflow.real_node_executor import RealNodeExecutor
 from internal.core.workflow.variable_pool import VariablePool
 from internal.entity.app_entity import AppType
 from internal.exception import NotFoundException, ValidateErrorException
@@ -172,8 +174,8 @@ class WorkflowAppService:
         加载 App + Workflow，构建 WorkflowConfig，调用 GraphEngine 执行，
         返回最终输出与执行状态。
 
-        第一版不实现 SSE 流式，同步执行返回结果；GraphEngine 使用默认节点
-        执行器（占位），后续任务才接入真实节点执行器。
+        第一版不实现 SSE 流式，同步执行返回结果；GraphEngine 注入
+        RealNodeExecutor 调用真实节点 invoke 方法。
 
         Args:
             app_id: 应用 ID
@@ -219,10 +221,22 @@ class WorkflowAppService:
         # 4.构建 WorkflowConfig 并执行
         workflow_config = self._build_workflow_config(workflow, account)
         variable_pool = VariablePool()
+        # 解析 Flask 应用实例，供 DatasetRetrievalNode 等需要 flask_app 的节点使用
+        # 在应用上下文外（如单元测试 mock GraphEngine）时降级为 None，不影响执行
+        try:
+            flask_app = current_app._get_current_object()
+        except RuntimeError:
+            flask_app = None
+        executor = RealNodeExecutor(
+            flask_app=flask_app,
+            account_id=getattr(account, "id", None),
+            account=account,
+            app_id=app_id,
+        )
         engine = GraphEngine(
             workflow_config=workflow_config,
             variable_pool=variable_pool,
-            node_executor=None,  # 使用默认占位执行器，后续任务替换
+            node_executor=executor,
         )
 
         start_time = time.perf_counter()
