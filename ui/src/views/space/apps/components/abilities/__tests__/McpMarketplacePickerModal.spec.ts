@@ -8,11 +8,24 @@ import type { McpBinding } from '@/models/mcp'
 const mocks = vi.hoisted(() => ({
   getPublicMcpCategories: vi.fn(),
   getPublicMcpProvidersWithPage: vi.fn(),
+  listAdminMcpProviders: vi.fn(),
 }))
 
 vi.mock('@/services/mcp', () => ({
   getPublicMcpCategories: (...args: unknown[]) => mocks.getPublicMcpCategories(...args),
   getPublicMcpProvidersWithPage: (...args: unknown[]) => mocks.getPublicMcpProvidersWithPage(...args),
+}))
+
+vi.mock('@/services/admin-mcp', () => ({
+  listAdminMcpProviders: (...args: unknown[]) => mocks.listAdminMcpProviders(...args),
+}))
+
+// useRealm 依赖 vue-router 的 useRoute，测试环境无 router，需 mock 为 space 上下文
+vi.mock('@/hooks/use-realm', () => ({
+  useRealm: () => ({
+    realm: { value: 'space' },
+    isAdmin: { value: false },
+  }),
 }))
 
 vi.mock('@arco-design/web-vue', () => ({

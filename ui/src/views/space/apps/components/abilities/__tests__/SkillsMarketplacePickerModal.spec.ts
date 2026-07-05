@@ -8,11 +8,24 @@ import type { SkillBinding, SkillPackage } from '@/models/skill'
 const mocks = vi.hoisted(() => ({
   getSkillCategories: vi.fn(),
   getSkillsWithPage: vi.fn(),
+  listAdminSkills: vi.fn(),
 }))
 
 vi.mock('@/services/skill', () => ({
   getSkillCategories: (...args: unknown[]) => mocks.getSkillCategories(...args),
   getSkillsWithPage: (...args: unknown[]) => mocks.getSkillsWithPage(...args),
+}))
+
+vi.mock('@/services/admin-skills', () => ({
+  listAdminSkills: (...args: unknown[]) => mocks.listAdminSkills(...args),
+}))
+
+// useRealm 依赖 vue-router 的 useRoute，测试环境无 router，需 mock 为 space 上下文
+vi.mock('@/hooks/use-realm', () => ({
+  useRealm: () => ({
+    realm: { value: 'space' },
+    isAdmin: { value: false },
+  }),
 }))
 
 vi.mock('@arco-design/web-vue', () => ({

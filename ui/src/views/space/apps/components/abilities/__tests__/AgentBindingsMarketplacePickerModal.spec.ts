@@ -8,6 +8,7 @@ import type { AgentBinding } from '@/models/app'
 const mocks = vi.hoisted(() => ({
   getAppsWithPage: vi.fn(),
   getPublicApps: vi.fn(),
+  listAdminApps: vi.fn(),
 }))
 
 vi.mock('@/services/app', () => ({
@@ -18,7 +19,19 @@ vi.mock('@/services/public-app', () => ({
   getPublicApps: (...args: unknown[]) => mocks.getPublicApps(...args),
 }))
 
+vi.mock('@/services/admin-apps', () => ({
+  listAdminApps: (...args: unknown[]) => mocks.listAdminApps(...args),
+}))
+
 vi.mock('@/hooks/use-app', () => ({}))
+
+// useRealm 依赖 vue-router 的 useRoute，测试环境无 router，需 mock 为 space 上下文
+vi.mock('@/hooks/use-realm', () => ({
+  useRealm: () => ({
+    realm: { value: 'space' },
+    isAdmin: { value: false },
+  }),
+}))
 
 vi.mock('@arco-design/web-vue', () => ({
   Message: {

@@ -133,6 +133,7 @@ describe('Admin AppsView', () => {
       current_page: 1,
       page_size: 20,
       search: '',
+      status: '',
     })
     expect(wrapper.text()).toContain('编程 Agent')
     expect(wrapper.text()).toContain('面向编程场景的智能体')
