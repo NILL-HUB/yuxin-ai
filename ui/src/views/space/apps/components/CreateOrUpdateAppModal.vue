@@ -5,6 +5,8 @@ import { useI18n } from 'vue-i18n'
 import { useCreateApp, useGetApp, useUpdateApp, useRegenerateIcon, useGenerateIconPreview } from '@/hooks/use-app'
 import { useUploadImage } from '@/hooks/use-upload-file'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
+import AppTypeSelector from '@/components/AppTypeSelector.vue'
+import { type AppType } from '@/models/app'
 import { getErrorMessage } from '@/utils/error'
 
 // 1.定义自定义组件所需数据
@@ -27,12 +29,14 @@ type AppForm = {
   icon: string
   name: string
   description: string
+  app_type: AppType // 应用类型，仅在创建时可修改
 }
 const defaultForm: AppForm = {
   fileList: [],
   icon: '',
   name: '',
   description: '',
+  app_type: 'chatbot',
 }
 const form = ref<AppForm>({ ...defaultForm })
 const formRef = ref<InstanceType<typeof Form>>()
@@ -89,9 +93,20 @@ const saveApp = async ({ errors }: { errors: Record<string, ValidatedError> | un
 
   // 3.2 检测是保存还是新增，调用不同的API接口
   if (props.app_id) {
-    await handleUpdateApp(props.app_id, form.value)
+    // 编辑模式：app_type 创建后不可更改，不提交该字段
+    await handleUpdateApp(props.app_id, {
+      name: form.value.name,
+      icon: form.value.icon,
+      description: form.value.description,
+    })
   } else {
-    await handleCreateApp(form.value)
+    // 创建模式：携带 app_type 字段
+    await handleCreateApp({
+      name: form.value.name,
+      icon: form.value.icon,
+      description: form.value.description,
+      app_type: form.value.app_type,
+    })
   }
 
   // 3.3 完成保存操作，隐藏模态窗并调用回调函数
@@ -113,12 +128,13 @@ watch(
         // 4.4 调用接口获取文档片段详情
         await loadApp(props.app_id)
 
-        // 4.5 更新表单数据
+        // 4.5 更新表单数据（app_type 创建后不可更改，回填后由 AppTypeSelector 禁用）
         form.value = {
           fileList: [{ uid: '1', name: t('appStudio.createModal.iconFileName'), url: app.value.icon }],
           icon: app.value.icon,
           name: app.value.name,
           description: app.value.description,
+          app_type: (app.value.app_type as AppType) || 'chatbot',
         }
       }
     } else {
@@ -190,6 +206,14 @@ watch(
             :placeholder="t('appStudio.createModal.descriptionPlaceholder')"
             class="rounded-lg"
           />
+        </a-form-item>
+        <a-form-item :label="t('appStudio.createModal.appType')">
+          <div class="w-full">
+            <AppTypeSelector v-model="form.app_type" :disabled="!!props.app_id" />
+            <div v-if="props.app_id" class="text-xs text-gray-400 mt-1">
+              {{ t('appStudio.createModal.appTypeDisabled') }}
+            </div>
+          </div>
         </a-form-item>
         <!-- 底部按钮 -->
         <div class="flex items-center justify-end gap-3 mt-6">

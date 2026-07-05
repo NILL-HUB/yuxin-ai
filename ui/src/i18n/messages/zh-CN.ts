@@ -2880,6 +2880,12 @@ export default {
       loading: '加载中',
       loadedAll: '数据已加载完成',
       unknownUser: '未知用户',
+      appTypeLabels: {
+        chatbot: '对话型',
+        agent: 'Agent 型',
+        workflow: '工作流型',
+        completion: '补全型',
+      },
     },
     createModal: {
       uploadIconSuccess: '图标上传成功',
@@ -2901,6 +2907,8 @@ export default {
       namePlaceholder: '请输入应用名称',
       descriptionLabel: '应用描述',
       descriptionPlaceholder: '请输入关于该应用的描述信息',
+      appType: '应用类型',
+      appTypeDisabled: '创建后不可更改',
     },
     publishHistory: {
       title: '发布历史',

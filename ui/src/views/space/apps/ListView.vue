@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
 import { getUserAvatarUrl } from '@/utils/helper'
+import { type AppType } from '@/models/app'
 
 // 1.定义页面所需数据
 const route = useRoute()
@@ -16,6 +17,25 @@ const accountStore = useAccountStore()
 const { handleCopyApp } = useCopyApp()
 const { loading: getAppsWithPageLoading, apps, paginator, loadApps } = useGetAppsWithPage()
 const { handleDeleteApp } = useDeleteApp()
+
+// 应用类型对应的 a-tag 颜色（chatbot=blue, agent=green, workflow=purple, completion=orange）
+const APP_TYPE_TAG_COLOR: Record<AppType, string> = {
+  chatbot: 'arc-blue',
+  agent: 'green',
+  workflow: 'purple',
+  completion: 'orange',
+}
+
+// 获取应用类型标签文本，向后兼容（旧数据无 app_type 时按 chatbot 兜底）
+const getAppTypeLabel = (appType?: AppType): string => {
+  const fallback: AppType = 'chatbot'
+  return t(`appStudio.list.appTypeLabels.${appType || fallback}`)
+}
+
+// 获取应用类型标签颜色
+const getAppTypeColor = (appType?: AppType): string => {
+  return APP_TYPE_TAG_COLOR[appType || 'chatbot']
+}
 
 // 2.定义滚动数据分页处理器
 const handleScroll = (event: Event) => {
@@ -84,6 +104,13 @@ const handleEditApp = (appId: string) => {
                     <div class="text-base text-gray-900 font-bold line-clamp-1 min-w-0">
                       {{ app.name }}
                     </div>
+                    <a-tag
+                      :color="getAppTypeColor(app.app_type)"
+                      size="small"
+                      class="flex-shrink-0 !mr-0"
+                    >
+                      {{ getAppTypeLabel(app.app_type) }}
+                    </a-tag>
                     <icon-check-circle-fill
                       v-if="app.status === 'published'"
                       class="text-green-700 flex-shrink-0"

@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 from internal.core.workflow.entities.node_entity import NodeType
+from internal.core.workflow.entities.retry_entity import RetryConfig
 from internal.core.workflow.entities.variable_entity import VariableValueType
 from internal.core.workflow.entities.workflow_entity import WorkflowConfig
 from internal.core.workflow.graph_engine import GraphEngine
@@ -538,3 +539,171 @@ class TestGraphEngineBuildNodeInputs:
         result = engine._build_node_inputs(end_node)
 
         assert result["answer"] == "code_output"
+
+
+# ----------------------------------------------------------------------
+# GraphEngine 节点重试测试
+# ----------------------------------------------------------------------
+class TestGraphEngineRetry:
+    """GraphEngine 节点重试相关测试（Plan B-8）。"""
+
+    def test_node_retry_on_fail_succeeds_after_retry(self):
+        """节点首次失败，重试后成功。
+
+        验证：
+        - 节点最终成功执行
+        - workflow_finished status=succeeded
+        - 输出包含 _retry_attempts 字段（>=2 表示发生过重试）
+        """
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        # 启用重试，最多 3 次，间隔 0 秒
+        code_node.retry_config = RetryConfig(
+            retry_on_fail=True, max_tries=3, retry_interval=0.0
+        )
+
+        call_count = {"code": 0}
+
+        def executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                call_count["code"] += 1
+                if call_count["code"] < 2:
+                    raise RuntimeError("首次失败")
+                return {"result": "retried_ok"}
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=executor)
+        events = list(engine.execute({"query": "hello"}))
+
+        # code 节点应被执行 2 次（首次失败 + 重试成功）
+        assert call_count["code"] == 2
+
+        # 应有 node_finished 事件（不是 node_failed）
+        code_finished = next(
+            e for e in events
+            if e["event"] == "node_finished" and e["data"]["node_id"] == str(code_node.id)
+        )
+        # outputs 应包含 _retry_attempts 字段
+        assert code_finished["data"]["outputs"]["result"] == "retried_ok"
+        assert code_finished["data"]["outputs"]["_retry_attempts"] == 2
+
+        # workflow 应成功完成
+        finished = next(e for e in events if e["event"] == "workflow_finished")
+        assert finished["data"]["status"] == "succeeded"
+
+    def test_node_retry_exhausted_terminates_workflow(self):
+        """重试耗尽后终止工作流。
+
+        验证：
+        - 节点失败时抛出 node_failed 事件
+        - workflow_finished status=failed
+        - 节点被执行 max_tries 次
+        """
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        end_node = config.nodes[2]
+        # 启用重试，最多 3 次，间隔 0 秒
+        code_node.retry_config = RetryConfig(
+            retry_on_fail=True, max_tries=3, retry_interval=0.0
+        )
+
+        call_count = {"code": 0}
+
+        def executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                call_count["code"] += 1
+                raise RuntimeError(f"always_fail_{call_count['code']}")
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=executor)
+        events = list(engine.execute({"query": "hello"}))
+        event_types = [e["event"] for e in events]
+
+        # code 节点应被执行 3 次（max_tries）
+        assert call_count["code"] == 3
+
+        # 应有 node_failed 事件
+        assert "node_failed" in event_types
+        # workflow_finished 应为 failed
+        finished = next(e for e in events if e["event"] == "workflow_finished")
+        assert finished["data"]["status"] == "failed"
+        assert "always_fail_3" in finished["data"]["error"]
+
+        # end 节点不应被执行
+        end_started = any(
+            e["event"] == "node_started" and e["data"]["node_id"] == str(end_node.id)
+            for e in events
+        )
+        assert not end_started
+
+    def test_node_no_retry_when_disabled(self):
+        """retry_on_fail=False 时失败直接终止工作流，不重试。
+
+        验证：
+        - 节点只执行 1 次
+        - workflow_finished status=failed
+        """
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        # 不启用重试（默认配置）
+        code_node.retry_config = RetryConfig(retry_on_fail=False, max_tries=5)
+
+        call_count = {"code": 0}
+
+        def executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                call_count["code"] += 1
+                raise RuntimeError("fail_no_retry")
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=executor)
+        events = list(engine.execute({"query": "hello"}))
+
+        # code 节点应只被执行 1 次（不重试）
+        assert call_count["code"] == 1
+
+        # workflow 应失败
+        finished = next(e for e in events if e["event"] == "workflow_finished")
+        assert finished["data"]["status"] == "failed"
+        assert "fail_no_retry" in finished["data"]["error"]
+
+    def test_node_no_retry_attempts_when_first_succeeds(self):
+        """节点首次执行成功时，outputs 不包含 _retry_attempts 字段。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        # 启用重试但首次成功
+        code_node.retry_config = RetryConfig(
+            retry_on_fail=True, max_tries=3, retry_interval=0.0
+        )
+
+        def executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                return {"result": "first_try_ok"}
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=executor)
+        events = list(engine.execute({"query": "hello"}))
+
+        code_finished = next(
+            e for e in events
+            if e["event"] == "node_finished" and e["data"]["node_id"] == str(code_node.id)
+        )
+        # 不应包含 _retry_attempts 字段（首次成功）
+        assert "_retry_attempts" not in code_finished["data"]["outputs"]
+        assert code_finished["data"]["outputs"]["result"] == "first_try_ok"

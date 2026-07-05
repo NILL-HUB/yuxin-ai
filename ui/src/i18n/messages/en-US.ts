@@ -2826,6 +2826,12 @@ export default {
       loading: 'Loading',
       loadedAll: 'All data loaded',
       unknownUser: 'Unknown user',
+      appTypeLabels: {
+        chatbot: 'Chatbot',
+        agent: 'Agent',
+        workflow: 'Workflow',
+        completion: 'Completion',
+      },
     },
     createModal: {
       uploadIconSuccess: 'Icon uploaded',
@@ -2847,6 +2853,8 @@ export default {
       namePlaceholder: 'Enter the app name',
       descriptionLabel: 'App Description',
       descriptionPlaceholder: 'Enter a description for this app',
+      appType: 'App Type',
+      appTypeDisabled: 'Cannot be changed after creation',
     },
     publishHistory: {
       title: 'Publish History',

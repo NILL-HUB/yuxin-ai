@@ -3,6 +3,8 @@ from uuid import UUID
 from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
+from .retry_entity import RetryConfig
+
 
 class NodeType(str, Enum):
     """节点类型枚举"""
@@ -39,6 +41,7 @@ class BaseNodeData(BaseModel):
     title: str = ""  # 节点标题，数据也必须唯一
     description: str = ""  # 节点描述信息
     position: Position = Field(default_factory=lambda: {"x": 0, "y": 0})  # 节点对应的坐标信息
+    retry_config: RetryConfig = Field(default_factory=RetryConfig)  # 节点重试配置
 
     @field_validator('node_type', mode='before')
     def convert_node_type(cls, v):

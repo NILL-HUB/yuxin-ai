@@ -5,6 +5,52 @@ import {
 } from '@/models/base' // 获取应用信息响应结构
 import type { SkillBinding, SkillBindingRequest } from '@/models/skill'
 
+// 应用类型枚举：chatbot 对话型 / agent 智能体 / workflow 工作流 / completion 补全型
+export type AppType = 'chatbot' | 'agent' | 'workflow' | 'completion'
+
+// 应用类型选项（用于选择器）
+export const APP_TYPE_OPTIONS: Array<{
+  value: AppType
+  label: string
+  labelEn: string
+  description: string
+  descriptionEn: string
+  icon: string
+}> = [
+  {
+    value: 'chatbot',
+    label: '对话型',
+    labelEn: 'Chatbot',
+    description: '多轮对话，支持上下文记忆',
+    descriptionEn: 'Multi-turn conversation with context memory',
+    icon: 'icon-message',
+  },
+  {
+    value: 'agent',
+    label: 'Agent 型',
+    labelEn: 'Agent',
+    description: '带工具调用的智能体',
+    descriptionEn: 'Intelligent agent with tool calling',
+    icon: 'icon-robot',
+  },
+  {
+    value: 'workflow',
+    label: '工作流型',
+    labelEn: 'Workflow',
+    description: '绑定工作流，对话式调用',
+    descriptionEn: 'Bind a workflow, called via conversation',
+    icon: 'icon-mind-mapping',
+  },
+  {
+    value: 'completion',
+    label: '补全型',
+    labelEn: 'Completion',
+    description: '单轮文本生成，无对话记忆',
+    descriptionEn: 'Single-turn text generation, no memory',
+    icon: 'icon-edit',
+  },
+]
+
 // 应用版本类型
 export type AppVersion = {
   id: string
@@ -101,6 +147,7 @@ export type GetAppResponse = BaseResponse<{
   icon: string
   description: string
   status: string
+  app_type: AppType // 应用类型，创建后不可更改
   is_public: boolean
   category: string
   draft_updated_at: number
@@ -109,7 +156,12 @@ export type GetAppResponse = BaseResponse<{
 }>
 
 // 新增应用请求结构
-export type CreateAppRequest = { name: string; icon: string; description: string }
+export type CreateAppRequest = {
+  name: string
+  icon: string
+  description: string
+  app_type?: AppType // 应用类型，可选，默认 chatbot
+}
 
 // 更新应用请求结构
 export type UpdateAppRequest = {
@@ -137,6 +189,7 @@ export type GetAppsWithPageResponse = BasePaginatorResponse<{
     model: string
   }
   status: string
+  app_type?: AppType // 应用类型，向后兼容（旧数据可能为空，前端按 chatbot 兜底）
   is_public: boolean
   creator_name: string
   creator_avatar: string

@@ -28,8 +28,10 @@ from typing import Any, Callable, Iterator
 from uuid import UUID
 
 from .entities.node_entity import BaseNodeData, NodeType
+from .entities.retry_entity import RetryConfig
 from .entities.variable_entity import VariableValueType
 from .entities.workflow_entity import WorkflowConfig
+from .utils.retry_executor import RetryExecutor
 from .variable_pool import VariablePool
 from .variable_parser import VariableParser
 
@@ -247,7 +249,8 @@ class GraphEngine:
     def _execute_node(self, node: BaseNodeData) -> dict[str, Any]:
         """执行单个节点，返回节点输出字典。
 
-        调用注入的 ``node_executor`` 执行节点逻辑。输出由调用方
+        调用注入的 ``node_executor`` 执行节点逻辑，并根据节点的
+        ``retry_config`` 配置在失败时自动重试。输出由调用方
         （``execute`` 方法）写入 VariablePool。
 
         Args:
@@ -257,9 +260,23 @@ class GraphEngine:
             节点输出字典
 
         Raises:
-            Exception: 节点执行器抛出的任何异常
+            Exception: 节点执行器抛出的任何异常（重试耗尽后仍失败时）
         """
-        return self.node_executor(node, self.variable_pool)
+        retry_config = getattr(node, "retry_config", None) or RetryConfig()
+
+        try:
+            output, attempts = RetryExecutor.execute_with_retry(
+                func=lambda: self.node_executor(node, self.variable_pool),
+                config=retry_config,
+                node_title=node.title,
+            )
+            # 如果重试过，在 outputs 中记录 retry 信息
+            if attempts > 1:
+                output = {**output, "_retry_attempts": attempts}
+            return output
+        except Exception:
+            # 重试耗尽后仍然失败，向上抛出由 execute 方法推送 node_failed 事件
+            raise
 
     def _default_node_executor(
         self, node: BaseNodeData, pool: VariablePool
