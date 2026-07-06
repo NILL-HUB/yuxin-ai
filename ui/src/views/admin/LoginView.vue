@@ -41,7 +41,7 @@ async function handleLogin() {
   errorMessage.value = ''
 
   if (!identifier.value.trim() || !password.value) {
-    errorMessage.value = '请输入管理员账号或邮箱和密码'
+    errorMessage.value = t('login.errors.missingCredentials')
     return
   }
 
@@ -57,7 +57,7 @@ async function handleLogin() {
 
     await router.replace('/admin')
   } catch (error) {
-    errorMessage.value = getErrorMessage(error, '登录失败，请检查账号或邮箱和密码')
+    errorMessage.value = getErrorMessage(error, t('login.errors.loginFailed'))
     Message.error(errorMessage.value)
   } finally {
     loading.value = false
@@ -81,11 +81,11 @@ onMounted(() => {
             <span class="brand-name">OpenAgent</span>
           </div>
 
-          <p class="hero-eyebrow">Admin Console</p>
+          <p class="hero-eyebrow">{{ t('login.heroEyebrow') }}</p>
           <h1 class="hero-title">{{ t('login.adminConsoleTitle') }}</h1>
           <p class="hero-desc">
-            独立的管理员入口，聚焦权限控制、操作审计与系统级配置。<br />
-            保持更稳的后台气质，也让登录页更有品牌识别度。
+            {{ t('login.heroDescLine1') }}<br />
+            {{ t('login.heroDescLine2') }}
           </p>
 
           <div class="hero-tags">
@@ -95,10 +95,10 @@ onMounted(() => {
           </div>
 
           <div class="hero-panel">
-            <div class="hero-panel-label">Secure Access</div>
+            <div class="hero-panel-label">{{ t('login.heroPanelLabel') }}</div>
             <div class="hero-panel-title">{{ t('login.heroPanelTitle') }}</div>
             <p class="hero-panel-text">
-              使用管理员身份完成登录后，可进入配置、审计、角色与系统级管理操作。
+              {{ t('login.heroPanelText') }}
             </p>
           </div>
         </section>
@@ -108,7 +108,7 @@ onMounted(() => {
 
           <div class="form-card">
             <header class="form-header">
-              <div class="header-badge">SECURE</div>
+              <div class="header-badge">{{ t('login.headerBadge') }}</div>
               <h2 class="form-title">{{ t('login.formTitle') }}</h2>
               <p class="form-subtitle">{{ t('login.formSubtitle') }}</p>
             </header>
@@ -169,7 +169,7 @@ onMounted(() => {
                 <span v-if="!loading">{{ t('login.enterAdmin') }}</span>
                 <span v-else class="loading-text">
                   <span class="spinner"></span>
-                  正在验证...
+                  {{ t('login.verifying') }}
                 </span>
               </button>
             </form>

@@ -504,17 +504,17 @@ onMounted(loadAll)
         </a-form-item>
         <a-form-item :label="t('admin.models.fields.maxTokens')" field="max_tokens">
           <a-select v-model="modelForm.max_tokens" allow-search>
-            <a-option :value="4096" label="4K (4,096)" />
-            <a-option :value="8192" label="8K (8,192)" />
-            <a-option :value="16384" label="16K (16,384)" />
-            <a-option :value="32768" label="32K (32,768)" />
-            <a-option :value="65536" label="64K (65,536)" />
-            <a-option :value="131072" label="128K (131,072)" />
-            <a-option :value="200000" label="200K (200,000)" />
-            <a-option :value="524288" label="512K (524,288)" />
-            <a-option :value="1048576" label="1M (1,048,576)" />
-            <a-option :value="1572864" label="1.5M (1,572,864)" />
-            <a-option :value="2000000" label="2M (2,000,000)" />
+            <a-option :value="4096" :label="t('admin.models.maxTokensOptions.4k')" />
+            <a-option :value="8192" :label="t('admin.models.maxTokensOptions.8k')" />
+            <a-option :value="16384" :label="t('admin.models.maxTokensOptions.16k')" />
+            <a-option :value="32768" :label="t('admin.models.maxTokensOptions.32k')" />
+            <a-option :value="65536" :label="t('admin.models.maxTokensOptions.64k')" />
+            <a-option :value="131072" :label="t('admin.models.maxTokensOptions.128k')" />
+            <a-option :value="200000" :label="t('admin.models.maxTokensOptions.200k')" />
+            <a-option :value="524288" :label="t('admin.models.maxTokensOptions.512k')" />
+            <a-option :value="1048576" :label="t('admin.models.maxTokensOptions.1m')" />
+            <a-option :value="1572864" :label="t('admin.models.maxTokensOptions.1_5m')" />
+            <a-option :value="2000000" :label="t('admin.models.maxTokensOptions.2m')" />
           </a-select>
         </a-form-item>
         <a-form-item :label="t('admin.models.fields.fallbackModelId')" field="fallback_model_id">
@@ -550,11 +550,11 @@ onMounted(loadAll)
         </a-form-item>
         <a-form-item :label="t('admin.models.columns.tenantQuota')" field="tenant_quota">
           <a-input v-model="keyForm.tenant_quota" :placeholder="t('admin.models.keyModal.placeholders.tenantQuota')" />
-          <template #extra>消费上限（元），Key 累计消费达到此金额后自动停用。0 表示不限制</template>
+          <template #extra>{{ t('admin.models.keyModal.hints.tenantQuota') }}</template>
         </a-form-item>
-        <a-form-item label="绑定模型" field="model_id">
+        <a-form-item :label="t('admin.models.fields.boundModel')" field="model_id">
           <a-select v-model="keyForm.model_id" allow-search allow-clear :placeholder="t('admin.models.keyModal.placeholders.modelId')">
-            <a-option value="" label="不限模型（自动匹配同供应商可用 Key）" />
+            <a-option value="" :label="t('admin.models.keyModal.options.unlimitedModel')" />
             <a-option v-for="m in models" :key="m.id" :value="m.id" :label="`${m.display_name || m.model_name} (${m.provider})`" />
           </a-select>
         </a-form-item>

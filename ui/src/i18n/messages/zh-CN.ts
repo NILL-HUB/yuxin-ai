@@ -821,6 +821,20 @@ export default {
         expiresAt: '过期时间',
         baseUrl: 'API 地址',
         effectiveRange: '有效时间范围',
+        boundModel: '绑定模型',
+      },
+      maxTokensOptions: {
+        '4k': '4K (4,096)',
+        '8k': '8K (8,192)',
+        '16k': '16K (16,384)',
+        '32k': '32K (32,768)',
+        '64k': '64K (65,536)',
+        '128k': '128K (131,072)',
+        '200k': '200K (200,000)',
+        '512k': '512K (524,288)',
+        '1m': '1M (1,048,576)',
+        '1_5m': '1.5M (1,572,864)',
+        '2m': '2M (2,000,000)',
       },
       tierLabels: {
         cheap: '经济版',
@@ -853,6 +867,12 @@ export default {
           expiresAt: '可选，ISO 格式时间或时间戳',
           effectiveStart: '生效开始',
           effectiveEnd: '生效结束',
+        },
+        hints: {
+          tenantQuota: '消费上限（元），Key 累计消费达到此金额后自动停用。0 表示不限制',
+        },
+        options: {
+          unlimitedModel: '不限模型（自动匹配同供应商可用 Key）',
         },
       },
       tierModal: {
@@ -2246,6 +2266,15 @@ export default {
       loaded: '数据已加载完成',
       emptyTip: '引用文本类型的数据，实现知识问答，工作流最多支持关联 5 个知识库。',
       limitExceeded: '关联知识库已超过 5 个，无法继续关联',
+      // 数据源类型相关
+      sourceType: '数据源类型',
+      sourceTypes: {
+        dataset: '知识库(旧版)',
+        knowledgeBase: '知识库',
+      },
+      knowledgeBaseLabel: '选择知识库',
+      knowledgeBasePlaceholder: '请选择知识库',
+      knowledgeBaseMaxHint: '最多选择 5 个',
     },
     toolNode: {
       title: '绑定插件',
@@ -3745,6 +3774,17 @@ export default {
       isolatedCredentials: '独立凭证',
       permissionAudit: '权限审计',
       systemEntry: '系统入口',
+    },
+    heroEyebrow: 'Admin Console',
+    heroDescLine1: '独立的管理员入口，聚焦权限控制、操作审计与系统级配置。',
+    heroDescLine2: '保持更稳的后台气质，也让登录页更有品牌识别度。',
+    heroPanelLabel: 'Secure Access',
+    heroPanelText: '使用管理员身份完成登录后，可进入配置、审计、角色与系统级管理操作。',
+    headerBadge: 'SECURE',
+    verifying: '正在验证...',
+    errors: {
+      missingCredentials: '请输入管理员账号或邮箱和密码',
+      loginFailed: '登录失败，请检查账号或邮箱和密码',
     },
   },
 }

@@ -6,14 +6,27 @@ import { cloneDeep, debounce } from 'lodash'
 import { getReferencedVariables } from '@/utils/helper'
 import { getDatasetsWithPage } from '@/services/dataset'
 import { listAdminDatasets } from '@/services/admin-datasets'
+import { listSystemKnowledge } from '@/services/admin-system-knowledge'
 import { type ValidatedError, Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+
+// 旧版 Dataset 数据项
 type DatasetItem = {
   id: string
   name: string
   icon: string
   description: string
 }
+
+// 新版 KnowledgeBase 数据项（用于节点内展示与回显）
+type KnowledgeBaseItem = {
+  id: string
+  name: string
+  description: string
+}
+
+// 数据源类型：dataset(旧版) / knowledge_base(新版)
+type SourceType = 'dataset' | 'knowledge_base'
 
 type NodeInputField = {
   name: string
@@ -50,6 +63,10 @@ type DatasetRetrievalNodeForm = {
   title: string
   description: string
   datasets: DatasetItem[]
+  // 新版知识库相关字段
+  source_type: SourceType
+  knowledge_base_ids: string[]
+  knowledge_bases: KnowledgeBaseItem[]
   retrieval_config: RetrievalConfig
   inputs: FormInputField[]
   outputs: Array<Record<string, unknown>>
@@ -76,6 +93,10 @@ const form = ref<DatasetRetrievalNodeForm>({
   title: '',
   description: '',
   datasets: [],
+  // 默认使用旧版 dataset，向后兼容
+  source_type: 'dataset',
+  knowledge_base_ids: [],
+  knowledge_bases: [],
   retrieval_config: {
     retrieval_strategy: 'semantic',
     k: 4,
@@ -168,6 +189,81 @@ const loadDatasets = async (init: boolean = false, search_word: string = '') => 
   }
 }
 
+// 新版系统知识库列表状态（系统级知识库全局可见，admin/space 上下文均可调用）
+const knowledgeBasesLoading = ref(false)
+const knowledgeBases = ref<KnowledgeBaseItem[]>([])
+
+/**
+ * 加载系统知识库列表（新版 KnowledgeBase）。
+ * 调用 /admin/system-knowledge 接口，仅加载启用状态的知识库。
+ * 一次性加载前 100 条，足以覆盖常见的多选场景。
+ */
+const loadKnowledgeBases = async () => {
+  try {
+    knowledgeBasesLoading.value = true
+    const data = await listSystemKnowledge({
+      page: 1,
+      page_size: 100,
+      search_word: '',
+    })
+    // 仅保留启用状态的知识库，并映射为节点所需的最小字段集
+    knowledgeBases.value = (data.items || [])
+      .filter((item) => item.enabled)
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description || '',
+      }))
+  } catch {
+    // 接口不可用时降级为空列表，不阻断节点配置
+    knowledgeBases.value = []
+  } finally {
+    knowledgeBasesLoading.value = false
+  }
+}
+
+// 系统知识库多选可选项（供 a-select 使用）
+const knowledgeBaseOptions = computed(() =>
+  knowledgeBases.value.map((kb) => ({
+    label: kb.name,
+    value: kb.id,
+  })),
+)
+
+/**
+ * 数据源类型切换处理器：切换时清空另一组 id，避免数据残留。
+ * - 切到 dataset：清空 knowledge_base_ids / knowledge_bases
+ * - 切到 knowledge_base：清空 datasets
+ */
+const handleSourceTypeChange = (val: SourceType) => {
+  if (val === 'dataset') {
+    form.value.knowledge_base_ids = []
+    form.value.knowledge_bases = []
+  } else if (val === 'knowledge_base') {
+    form.value.datasets = []
+  }
+}
+
+/**
+ * 新版知识库多选变更处理器：同步维护 knowledge_base_ids 与 knowledge_bases，
+ * 保证最多 5 个，并按当前选中顺序回填展示信息。
+ */
+const handleKnowledgeBaseChange = (ids: (string | number)[]) => {
+  // 限制最多 5 个
+  const stringIds = ids.map((id) => String(id))
+  if (stringIds.length > 5) {
+    Message.warning(t('workflowEditor.datasetRetrieval.limitExceeded'))
+    // 截断到前 5 个
+    form.value.knowledge_base_ids = stringIds.slice(0, 5)
+  } else {
+    form.value.knowledge_base_ids = stringIds
+  }
+  // 根据当前选中 id 从已加载列表回填展示信息
+  form.value.knowledge_bases = form.value.knowledge_base_ids
+    .map((id) => knowledgeBases.value.find((kb) => kb.id === id))
+    .filter((kb): kb is KnowledgeBaseItem => !!kb)
+}
+
 // 2.定义节点可引用的变量选项
 const inputRefOptions = computed(() => {
   return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
@@ -224,16 +320,32 @@ const onSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | u
   // 6.2 深度拷贝表单数据内容
   const cloneInputs = cloneDeep(form.value.inputs)
   const cloneDatasets = cloneDeep(form.value.datasets)
+  const cloneKnowledgeBases = cloneDeep(form.value.knowledge_bases)
 
-  // 6.3 数据校验通过，通过事件触发数据更新
+  // 6.3 根据 source_type 计算需要提交的 id 列表
+  // - dataset：提交 dataset_ids，knowledge_base_ids 置空
+  // - knowledge_base：提交 knowledge_base_ids，dataset_ids 置空
+  const isKnowledgeBase = form.value.source_type === 'knowledge_base'
+  const datasetIds = isKnowledgeBase ? [] : cloneDatasets.map((dataset: DatasetItem) => dataset.id)
+  const knowledgeBaseIds = isKnowledgeBase
+    ? cloneKnowledgeBases.map((kb: KnowledgeBaseItem) => kb.id)
+    : []
+
+  // 6.4 数据校验通过，通过事件触发数据更新
   emits('updateNode', {
     id: props.node.id,
+    type: form.value.type,
     title: form.value.title,
     description: form.value.description,
-    dataset_ids: cloneDatasets.map((dataset: DatasetItem) => {
-      return dataset.id
-    }),
-    meta: { datasets: cloneDatasets },
+    datasets: cloneDatasets,
+    source_type: form.value.source_type,
+    dataset_ids: datasetIds,
+    knowledge_base_ids: knowledgeBaseIds,
+    knowledge_bases: cloneKnowledgeBases,
+    meta: {
+      datasets: cloneDatasets,
+      knowledge_bases: cloneKnowledgeBases,
+    },
     retrieval_config: cloneDeep(form.value.retrieval_config),
     inputs: cloneInputs.map((input: FormInputField) => {
       return {
@@ -268,25 +380,44 @@ watch(
     debounceAutoSave.flush()
     debounceAutoSave.cancel()
     const cloneInputs = cloneDeep(newNode.data.inputs)
+
+    // 7.1 回填新版知识库信息：优先取 meta.knowledge_bases（含展示信息），否则用 knowledge_base_ids 占位
+    const rawKnowledgeBaseIds: string[] = cloneDeep(newNode.data.knowledge_base_ids) ?? []
+    const rawKnowledgeBases: KnowledgeBaseItem[] =
+      cloneDeep(newNode.data.meta?.knowledge_bases) ?? []
+    // 若 meta 中缺失展示信息但有 id，则用 id 构造占位项，确保回显选中态
+    const knowledgeBases: KnowledgeBaseItem[] =
+      rawKnowledgeBases.length > 0
+        ? rawKnowledgeBases
+        : rawKnowledgeBaseIds.map((id) => ({ id, name: id, description: '' }))
+
+    // 7.2 根据 knowledge_base_ids 是否非空自动判定数据源类型（向后兼容：旧节点无该字段则默认 dataset）
+    const sourceType: SourceType =
+      rawKnowledgeBaseIds.length > 0 ? 'knowledge_base' : 'dataset'
+
     form.value = {
       id: newNode.id,
       type: newNode.type,
       title: newNode.data.title,
       description: newNode.data.description,
       datasets: cloneDeep(newNode.data.meta?.datasets) ?? [],
+      // 新版知识库相关字段
+      source_type: sourceType,
+      knowledge_base_ids: rawKnowledgeBaseIds,
+      knowledge_bases: knowledgeBases,
       retrieval_config: cloneDeep(newNode.data.retrieval_config) ?? {
         k: 4,
         retrieval_strategy: 'semantic',
         score: 0,
       },
       inputs: cloneInputs.map((input: NodeInputField) => {
-        // 7.1 计算引用的变量值信息
+        // 7.3 计算引用的变量值信息
         const ref =
           input.value.type === 'ref'
             ? `${input.value.content.ref_node_id}/${input.value.content.ref_var_name}`
             : ''
 
-        // 7.2 判断引用的变量值信息是否存在，如果不存在则设置为空
+        // 7.4 判断引用的变量值信息是否存在，如果不存在则设置为空
         let refExists = false
         if (input.value.type === 'ref') {
           for (const inputRefOption of inputRefOptions.value) {
@@ -331,7 +462,9 @@ onBeforeUnmount(() => {
 })
 
 onMounted(() => {
+  // 同时加载旧版 dataset 列表与新版系统知识库列表
   loadDatasets(true)
+  loadKnowledgeBases()
 })
 </script>
 
@@ -515,8 +648,25 @@ onMounted(() => {
         </div>
       </div>
       <a-divider class="my-4" />
-      <!-- 关联知识库 -->
+      <!-- 数据源类型切换 -->
       <div class="flex flex-col gap-2">
+        <!-- 标题 -->
+        <div class="flex items-center gap-2 text-gray-700 font-semibold">
+          <div class="">{{ t('workflowEditor.datasetRetrieval.sourceType') }}</div>
+        </div>
+        <!-- 类型切换 radio -->
+        <a-radio-group
+          v-model="form.source_type"
+          @change="(val: string | number | boolean) => handleSourceTypeChange(val as SourceType)"
+          :options="[
+            { label: t('workflowEditor.datasetRetrieval.sourceTypes.dataset'), value: 'dataset' },
+            { label: t('workflowEditor.datasetRetrieval.sourceTypes.knowledgeBase'), value: 'knowledge_base' },
+          ]"
+        />
+      </div>
+      <a-divider class="my-4" />
+      <!-- 关联知识库（旧版 dataset） -->
+      <div v-if="form.source_type === 'dataset'" class="flex flex-col gap-2">
         <!-- 标题&操作按钮 -->
         <div class="flex items-center justify-between">
           <!-- 左侧标题 -->
@@ -579,6 +729,44 @@ onMounted(() => {
         </div>
         <div v-else class="text-xs text-gray-500 leading-[22px]">
           {{ t('workflowEditor.datasetRetrieval.emptyTip') }}
+        </div>
+      </div>
+      <!-- 选择知识库（新版 knowledge_base） -->
+      <div v-else class="flex flex-col gap-2">
+        <!-- 标题 -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2 text-gray-700 font-semibold">
+            <div class="">{{ t('workflowEditor.datasetRetrieval.knowledgeBaseLabel') }}</div>
+          </div>
+          <div class="text-xs text-gray-500">{{ t('workflowEditor.datasetRetrieval.knowledgeBaseMaxHint') }}</div>
+        </div>
+        <!-- 多选选择器 -->
+        <a-select
+          multiple
+          allow-search
+          :loading="knowledgeBasesLoading"
+          :model-value="form.knowledge_base_ids"
+          :options="knowledgeBaseOptions"
+          :placeholder="t('workflowEditor.datasetRetrieval.knowledgeBasePlaceholder')"
+          :disabled="isReadonly"
+          @change="handleKnowledgeBaseChange"
+        />
+        <!-- 已选知识库列表（展示名称与描述） -->
+        <div v-if="form.knowledge_bases?.length > 0" class="flex flex-col gap-1">
+          <div
+            v-for="kb in form.knowledge_bases"
+            :key="kb.id"
+            class="flex items-center justify-between bg-white p-3 rounded-lg border"
+          >
+            <div class="flex flex-col flex-1 gap-1 min-w-0">
+              <div class="text-gray-700 font-bold leading-[18px] line-clamp-1 break-all">
+                {{ kb.name }}
+              </div>
+              <div class="text-gray-500 text-xs line-clamp-1 break-all">
+                {{ kb.description || '-' }}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <a-divider class="my-4" />

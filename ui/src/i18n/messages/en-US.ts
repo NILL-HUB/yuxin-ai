@@ -821,6 +821,20 @@ export default {
         expiresAt: 'Expiry time',
         baseUrl: 'API Base URL',
         effectiveRange: 'Validity Period',
+        boundModel: 'Bound Model',
+      },
+      maxTokensOptions: {
+        '4k': '4K (4,096)',
+        '8k': '8K (8,192)',
+        '16k': '16K (16,384)',
+        '32k': '32K (32,768)',
+        '64k': '64K (65,536)',
+        '128k': '128K (131,072)',
+        '200k': '200K (200,000)',
+        '512k': '512K (524,288)',
+        '1m': '1M (1,048,576)',
+        '1_5m': '1.5M (1,572,864)',
+        '2m': '2M (2,000,000)',
       },
       tierLabels: {
         cheap: 'Economy',
@@ -853,6 +867,12 @@ export default {
           expiresAt: 'Optional, ISO time or timestamp',
           effectiveStart: 'Start date',
           effectiveEnd: 'End date',
+        },
+        hints: {
+          tenantQuota: 'Spend limit (CNY). Key auto-disables when cumulative spend reaches this amount. 0 means no limit.',
+        },
+        options: {
+          unlimitedModel: 'Any model (auto-match available keys from same provider)',
         },
       },
       tierModal: {
@@ -2260,6 +2280,15 @@ export default {
       emptyTip:
         'Use text-based data for Q&A. A workflow can bind up to 5 knowledge bases.',
       limitExceeded: 'You have already bound more than 5 knowledge bases.',
+      // Source type related
+      sourceType: 'Source Type',
+      sourceTypes: {
+        dataset: 'Knowledge Base (Legacy)',
+        knowledgeBase: 'Knowledge Base',
+      },
+      knowledgeBaseLabel: 'Select Knowledge Base',
+      knowledgeBasePlaceholder: 'Please select knowledge base',
+      knowledgeBaseMaxHint: 'Up to 5',
     },
     toolNode: {
       title: 'Bind Plugin',
@@ -3767,6 +3796,17 @@ export default {
       isolatedCredentials: 'Isolated Credentials',
       permissionAudit: 'Permission Audit',
       systemEntry: 'System Entry',
+    },
+    heroEyebrow: 'Admin Console',
+    heroDescLine1: 'A dedicated admin entrance focused on permission control, audit logging, and system-level configuration.',
+    heroDescLine2: 'A calmer backend aesthetic that also strengthens brand identity.',
+    heroPanelLabel: 'Secure Access',
+    heroPanelText: 'After signing in as admin, you can access configuration, audit, roles, and system-level management.',
+    headerBadge: 'SECURE',
+    verifying: 'Verifying...',
+    errors: {
+      missingCredentials: 'Please enter admin account or email and password',
+      loginFailed: 'Sign-in failed, please check your account or email and password',
     },
   },
 }
