@@ -51,8 +51,25 @@ class PoolIntentResolver:
                         {"pool": normalized, "reason": f"intent:{intent}"}
                     )
 
-        # 第 1 步：LLM 语义匹配（优先）
-        if self.language_model_service is not None:
+        # 第 1 步：关键词匹配优先（命中即返回，速度快、零成本）
+        text = query or ""
+        for pool in self.registry.list_pools():
+            pool_name = pool["name"]
+            if pool_name in matched_pools:
+                continue
+            keywords = pool.get("task_keywords") or []
+            keyword = self._first_keyword(text, keywords)
+            if keyword is None:
+                continue
+            matched_pools.append(pool_name)
+            pool_reasons.append({"pool": pool_name, "reason": f"keyword:{keyword}"})
+
+        # 第 2 步：LLM 语义匹配兜底（仅在关键词零命中时调用，处理模糊 query）
+        # 注意：关键词已命中任何池时跳过 LLM，避免冗余调用
+        has_keyword_hit = any(
+            r.get("reason", "").startswith("keyword:") for r in pool_reasons
+        )
+        if not has_keyword_hit and self.language_model_service is not None:
             try:
                 llm_pools = self._resolve_with_llm(query)
                 if llm_pools:
@@ -65,20 +82,7 @@ class PoolIntentResolver:
                                     {"pool": normalized, "reason": "llm:semantic"}
                                 )
             except Exception:
-                logger.warning("LLM 子池匹配失败，降级到关键词匹配", exc_info=True)
-
-        # 第 2 步：关键词兜底（LLM 未匹配或失败时补充）
-        text = query or ""
-        for pool in self.registry.list_pools():
-            pool_name = pool["name"]
-            if pool_name in matched_pools:
-                continue
-            keywords = pool.get("task_keywords") or []
-            keyword = self._first_keyword(text, keywords)
-            if keyword is None:
-                continue
-            matched_pools.append(pool_name)
-            pool_reasons.append({"pool": pool_name, "reason": f"keyword:{keyword}"})
+                logger.warning("LLM 子池匹配失败，降级到关键词匹配结果", exc_info=True)
 
         if not matched_pools:
             matched_pools = ["general"]

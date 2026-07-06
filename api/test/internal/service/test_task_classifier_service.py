@@ -139,7 +139,8 @@ class TestTaskClassifierLLMDriven:
                 confidence=0.7,
             )
         )
-        decision = service.classify("搜索资料并撰写深度分析报告")
+        # query 不含工具/agent 关键词，确保走 LLM 路径验证 needs_deep_thinking 覆盖逻辑
+        decision = service.classify("评估迁移到 gRPC 的利弊并给出迁移计划")
         assert decision.intent == "deep_thinking_task"
         assert decision.execution_mode == ExecutionMode.DEEP_THINKING.value
         assert decision.needs_deep_thinking is True
@@ -245,3 +246,79 @@ class TestTaskClassifierBudget:
         decision = service.classify("帮我查询今天北京天气并整理成表格")
         assert decision.intent == "tool_task"
         assert decision.execution_mode == ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value
+
+
+class TestTaskClassifierKeywordFirst:
+    """验证关键词优先策略：命中明确意图时跳过 LLM 调用，未命中才走 LLM 兜底。"""
+
+    def test_tool_keyword_hit_should_skip_llm_call(self):
+        """工具关键词命中时直接返回，不调用 LLM（节省成本与延迟）。"""
+        service = _build_service(
+            TaskClassificationResult(
+                intent="general_qa",
+                execution_mode="DIRECT_ANSWER",
+                confidence=0.9,
+            )
+        )
+        decision = service.classify("帮我查询今天北京天气")
+        assert decision.intent == "tool_task"
+        assert decision.execution_mode == ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value
+        # 关键词命中明确意图，LLM 不应被调用
+        service.language_model_service.get_cheap_chat_model.assert_not_called()
+
+    def test_vertical_agent_keyword_hit_should_skip_llm_call(self):
+        """垂直领域 + agent 关键词同时命中时直接返回，不调用 LLM。"""
+        service = _build_service(
+            TaskClassificationResult(
+                intent="general_qa",
+                execution_mode="DIRECT_ANSWER",
+                confidence=0.9,
+            )
+        )
+        decision = service.classify("请使用护肤智能体回答我油痘肌该怎么护肤")
+        assert decision.intent == "vertical_agent_task"
+        service.language_model_service.get_cheap_chat_model.assert_not_called()
+
+    def test_multi_agent_keyword_hit_should_skip_llm_call(self):
+        """多 agent + tool 关键词同时命中时直接返回，不调用 LLM。"""
+        service = _build_service(
+            TaskClassificationResult(
+                intent="general_qa",
+                execution_mode="DIRECT_ANSWER",
+                confidence=0.9,
+            )
+        )
+        decision = service.classify("分别从多个角度搜索并综合分析市场趋势")
+        assert decision.intent == "multi_agent_task"
+        assert decision.execution_mode == ExecutionMode.MULTI_AGENT_PARALLEL.value
+        service.language_model_service.get_cheap_chat_model.assert_not_called()
+
+    def test_keyword_miss_should_fallback_to_llm(self):
+        """关键词未命中明确意图（general_qa）时走 LLM 兜底。"""
+        service = _build_service(
+            TaskClassificationResult(
+                intent="deep_thinking_task",
+                execution_mode="DEEP_THINKING",
+                needs_deep_thinking=True,
+                confidence=0.85,
+                reason="需要深度分析",
+            )
+        )
+        decision = service.classify("评估迁移到 gRPC 的利弊并给出迁移计划")
+        assert decision.intent == "deep_thinking_task"
+        # 关键词未命中，LLM 应被调用
+        service.language_model_service.get_cheap_chat_model.assert_called_once()
+
+    def test_general_qa_keyword_miss_llm_returns_general_should_not_call_llm_again(self):
+        """关键词未命中 + LLM 也返回 general_qa，应直接返回（不重复调用）。"""
+        service = _build_service(
+            TaskClassificationResult(
+                intent="general_qa",
+                execution_mode="DIRECT_ANSWER",
+                confidence=0.95,
+            )
+        )
+        decision = service.classify("你好")
+        assert decision.intent == "general_qa"
+        assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
+        service.language_model_service.get_cheap_chat_model.assert_called_once()

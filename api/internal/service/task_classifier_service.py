@@ -113,6 +113,7 @@ class TaskClassifierService:
     def classify(self, query: str, *, budget_allowed: bool = True) -> RoutingDecision:
         normalized = self._normalize(query)
 
+        # ① 高风险关键词拦截（最高优先级，安全兜底）
         if self._contains_high_risk(normalized):
             return RoutingDecision(
                 intent="high_risk_operation",
@@ -125,15 +126,23 @@ class TaskClassifierService:
                 reason="用户请求包含高风险操作，需要拒绝或二次确认",
             )
 
+        # ② 关键词匹配优先（命中即返回，速度快、零成本）
+        # 命中明确意图（vertical/multi_agent/tool）时直接返回，general_qa 视为"未命中"继续走 LLM
+        keyword_decision = self._classify_with_keywords(normalized)
+        if keyword_decision.intent != "general_qa":
+            return keyword_decision
+
+        # ③ LLM 语义识别兜底（关键词未命中明确意图时调用，处理模糊 query）
         if budget_allowed and self.language_model_service is not None:
             try:
                 llm_result = self._classify_with_llm(normalized)
                 if llm_result is not None:
                     return self._build_decision_from_llm(llm_result, normalized)
             except Exception:
-                logger.warning("LLM 任务分类失败，降级到关键词匹配", exc_info=True)
+                logger.warning("LLM 任务分类失败，降级到默认意图", exc_info=True)
 
-        return self._classify_with_keywords(normalized)
+        # ④ 最终兜底：general_qa（关键词 + LLM 均未命中明确意图）
+        return keyword_decision
 
     def _classify_with_llm(self, query: str) -> TaskClassificationResult:
         llm = self.language_model_service.get_cheap_chat_model()
