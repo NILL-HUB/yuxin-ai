@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import { adminLogin } from '@/services/admin-auth'
 import { getErrorMessage } from '@/utils/error'
@@ -10,6 +11,7 @@ import IconOpenAgent from '@/components/icons/IconOpenAgent.vue'
 defineOptions({ name: 'AdminLoginView' })
 
 const router = useRouter()
+const { t } = useI18n()
 const identifier = ref('')
 const password = ref('')
 const showPassword = ref(false)
@@ -80,21 +82,21 @@ onMounted(() => {
           </div>
 
           <p class="hero-eyebrow">Admin Console</p>
-          <h1 class="hero-title">管理控制台</h1>
+          <h1 class="hero-title">{{ t('login.adminConsoleTitle') }}</h1>
           <p class="hero-desc">
             独立的管理员入口，聚焦权限控制、操作审计与系统级配置。<br />
             保持更稳的后台气质，也让登录页更有品牌识别度。
           </p>
 
           <div class="hero-tags">
-            <span class="hero-tag">独立凭证</span>
-            <span class="hero-tag">权限审计</span>
-            <span class="hero-tag">系统入口</span>
+            <span class="hero-tag">{{ t('login.heroTag.isolatedCredentials') }}</span>
+            <span class="hero-tag">{{ t('login.heroTag.permissionAudit') }}</span>
+            <span class="hero-tag">{{ t('login.heroTag.systemEntry') }}</span>
           </div>
 
           <div class="hero-panel">
             <div class="hero-panel-label">Secure Access</div>
-            <div class="hero-panel-title">后台能力与用户侧登录完全隔离</div>
+            <div class="hero-panel-title">{{ t('login.heroPanelTitle') }}</div>
             <p class="hero-panel-text">
               使用管理员身份完成登录后，可进入配置、审计、角色与系统级管理操作。
             </p>
@@ -107,40 +109,40 @@ onMounted(() => {
           <div class="form-card">
             <header class="form-header">
               <div class="header-badge">SECURE</div>
-              <h2 class="form-title">管理员登录</h2>
-              <p class="form-subtitle">仅限系统管理员访问，请使用管理员凭证</p>
+              <h2 class="form-title">{{ t('login.formTitle') }}</h2>
+              <p class="form-subtitle">{{ t('login.formSubtitle') }}</p>
             </header>
 
             <form class="form-body" @submit.prevent="handleLogin">
               <label class="field">
-                <span class="field-label">管理员账号或邮箱</span>
+                <span class="field-label">{{ t('login.accountLabel') }}</span>
                 <div class="field-control">
                   <icon-user class="field-icon" />
                   <input
                     v-model="identifier"
                     type="text"
                     autocomplete="username"
-                    placeholder="输入管理员账号或邮箱"
+                    :placeholder="t('login.accountPlaceholder')"
                     @keyup.enter="handleLogin"
                   />
                 </div>
               </label>
 
               <label class="field">
-                <span class="field-label">管理员密码</span>
+                <span class="field-label">{{ t('login.passwordLabel') }}</span>
                 <div class="field-control">
                   <icon-lock class="field-icon" />
                   <input
                     v-model="password"
                     :type="showPassword ? 'text' : 'password'"
                     autocomplete="current-password"
-                    placeholder="输入管理员密码"
+                    :placeholder="t('login.adminPasswordPlaceholder')"
                     @keyup.enter="handleLogin"
                   />
                   <button
                     type="button"
                     class="field-toggle"
-                    :title="showPassword ? '隐藏密码' : '显示密码'"
+                    :title="showPassword ? t('login.hidePassword') : t('login.showPassword')"
                     @click="showPassword = !showPassword"
                   >
                     <icon-eye v-if="showPassword" />
@@ -152,7 +154,7 @@ onMounted(() => {
               <div class="form-options">
                 <label class="remember">
                   <input v-model="remember" type="checkbox" />
-                  <span>记住账号</span>
+                  <span>{{ t('login.rememberAccount') }}</span>
                 </label>
               </div>
 
@@ -164,7 +166,7 @@ onMounted(() => {
               </transition>
 
               <button type="submit" class="submit-btn" :disabled="!canSubmit">
-                <span v-if="!loading">进入管理后台</span>
+                <span v-if="!loading">{{ t('login.enterAdmin') }}</span>
                 <span v-else class="loading-text">
                   <span class="spinner"></span>
                   正在验证...
@@ -173,7 +175,7 @@ onMounted(() => {
             </form>
 
             <footer class="form-footer">
-              <span class="footer-hint">本入口与用户端登录完全隔离</span>
+              <span class="footer-hint">{{ t('login.footerHint') }}</span>
             </footer>
           </div>
         </section>

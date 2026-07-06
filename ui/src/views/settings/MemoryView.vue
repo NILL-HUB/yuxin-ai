@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import { useI18n } from 'vue-i18n'
 import {
   confirmMemoryCandidate,
   createUserMemory,
@@ -10,39 +11,42 @@ import {
   listUserMemories,
   updateUserMemory,
 } from '@/services/user-memory'
-import type { MemoryCandidate, UserMemory } from '@/services/user-memory'
+import type { MemoryCandidate, UserMemory } from '@/models/memory'
 import { getErrorMessage } from '@/utils/error'
 import moment from 'moment'
 
+const { t } = useI18n()
+
+// 记忆类型元信息：value 与颜色不依赖 i18n，文案走 i18n 键
 type MemoryTypeMeta = {
   value: string
-  label: string
   color: string
-  desc: string
 }
 
 const MEMORY_TYPES: MemoryTypeMeta[] = [
-  { value: 'profile', label: '个人资料', color: 'arcoblue', desc: '用户的基本身份信息，如姓名、职业等' },
-  { value: 'preference', label: '偏好', color: 'green', desc: '用户喜好与习惯，如语言、风格偏好' },
-  { value: 'relationship', label: '关系', color: 'purple', desc: '用户与他人或事物的关联关系' },
-  { value: 'event', label: '事件', color: 'orange', desc: '发生过的具体事件或时间节点' },
-  { value: 'project', label: '项目', color: 'cyan', desc: '用户参与的项目或长期目标' },
-  { value: 'secret', label: '机密', color: 'red', desc: '敏感信息，使用时需格外谨慎' },
+  { value: 'profile', color: 'arcoblue' },
+  { value: 'preference', color: 'green' },
+  { value: 'relationship', color: 'purple' },
+  { value: 'event', color: 'orange' },
+  { value: 'project', color: 'cyan' },
+  { value: 'secret', color: 'red' },
 ]
 
 const typeMeta = (type: string): MemoryTypeMeta =>
-  MEMORY_TYPES.find((item) => item.value === type) || { value: type, label: type, color: 'gray', desc: '' }
-const typeLabel = (type: string) => typeMeta(type).label
+  MEMORY_TYPES.find((item) => item.value === type) || { value: type, color: 'gray' }
+const typeLabel = (type: string) => {
+  const key = `memory.memoryType.${type}`
+  const translated = t(key)
+  return translated === key ? type : translated
+}
 const typeColor = (type: string) => typeMeta(type).color
 
+// 来源字段的本地化映射，未命中时回退展示原始值
 const sourceLabel = (source: string) => {
-  const map: Record<string, string> = {
-    manual_input: '手动',
-    llm_extracted: '自动抽取',
-    confirmed: '已确认',
-    auto_save: '自动保存',
-  }
-  return map[source] || source || '-'
+  if (!source) return '-'
+  const key = `memory.source.${source}`
+  const translated = t(key)
+  return translated === key ? source : translated
 }
 
 const loading = ref(false)
@@ -63,7 +67,7 @@ const loadMemories = async () => {
   try {
     memories.value = await listUserMemories()
   } catch (error) {
-    Message.error(getErrorMessage(error, '加载记忆失败'))
+    Message.error(getErrorMessage(error, t('memory.loadFailed')))
     memories.value = []
   } finally {
     loading.value = false
@@ -107,7 +111,7 @@ const openEdit = (record: UserMemory) => {
 
 const handleSave = async () => {
   if (!form.value.content.trim()) {
-    Message.warning('请输入记忆内容')
+    Message.warning(t('memory.contentRequired'))
     return
   }
   saving.value = true
@@ -124,11 +128,11 @@ const handleSave = async () => {
         confidence: form.value.confidence,
       })
     }
-    Message.success(editMode.value ? '更新成功' : '创建成功')
+    Message.success(editMode.value ? t('memory.updateSuccess') : t('memory.createSuccess'))
     modalVisible.value = false
     await loadMemories()
   } catch (error) {
-    Message.error(getErrorMessage(error, '保存失败'))
+    Message.error(getErrorMessage(error, t('memory.saveFailed')))
   } finally {
     saving.value = false
   }
@@ -137,20 +141,20 @@ const handleSave = async () => {
 const toggleStatus = async (record: UserMemory, value: boolean) => {
   try {
     await updateUserMemory(record.id, { enabled: value })
-    Message.success(value ? '已启用' : '已禁用')
+    Message.success(value ? t('memory.enableSuccess') : t('memory.disableSuccess'))
     await loadMemories()
   } catch (error) {
-    Message.error(getErrorMessage(error, '更新失败'))
+    Message.error(getErrorMessage(error, t('memory.updateFailed')))
   }
 }
 
 const handleDelete = async (record: UserMemory) => {
   try {
     await deleteUserMemory(record.id)
-    Message.success('删除成功')
+    Message.success(t('memory.deleteSuccess'))
     await loadMemories()
   } catch (error) {
-    Message.error(getErrorMessage(error, '删除失败'))
+    Message.error(getErrorMessage(error, t('memory.deleteFailed')))
   }
 }
 
@@ -159,10 +163,10 @@ const handleConfirmCandidate = async (record: MemoryCandidate) => {
   confirmingId.value = record.id
   try {
     await confirmMemoryCandidate(record.id, 'manual_confirm')
-    Message.success('已保存为正式记忆')
+    Message.success(t('memory.confirmCandidateSuccess'))
     await Promise.all([loadMemories(), loadCandidates()])
   } catch (error) {
-    Message.error(getErrorMessage(error, '确认失败'))
+    Message.error(getErrorMessage(error, t('memory.confirmFailed')))
   } finally {
     confirmingId.value = ''
   }
@@ -171,10 +175,10 @@ const handleConfirmCandidate = async (record: MemoryCandidate) => {
 const handleIgnoreCandidate = async (record: MemoryCandidate, neverRemind: boolean) => {
   try {
     await ignoreMemoryCandidate(record.id, neverRemind)
-    Message.success(neverRemind ? '已忽略并不再提醒' : '已忽略')
+    Message.success(neverRemind ? t('memory.ignoreNeverRemindSuccess') : t('memory.ignoreSuccess'))
     await loadCandidates()
   } catch (error) {
-    Message.error(getErrorMessage(error, '忽略失败'))
+    Message.error(getErrorMessage(error, t('memory.ignoreFailed')))
   }
 }
 
@@ -191,7 +195,7 @@ const confidenceStars = (value: number) => {
 }
 
 const memoryTypeOptions = MEMORY_TYPES.map((item) => ({
-  label: `${item.label} · ${item.desc}`,
+  label: `${t(`memory.memoryType.${item.value}`)} · ${t(`memory.memoryTypeDesc.${item.value}`)}`,
   value: item.value,
 }))
 
@@ -205,25 +209,23 @@ onMounted(() => {
   <section class="space-y-6 p-6">
     <header class="flex items-start justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-semibold text-gray-900">长期记忆管理</h1>
-        <p class="mt-1 text-sm text-gray-500">
-          管理你的长期记忆与待确认候选，记忆会在对话中自动召回以提供更贴合的回复。
-        </p>
+        <h1 class="text-2xl font-semibold text-gray-900">{{ t('memory.pageTitle') }}</h1>
+        <p class="mt-1 text-sm text-gray-500">{{ t('memory.pageDescription') }}</p>
       </div>
       <a-button type="primary" data-test="create-memory-btn" @click="openCreate">
         <template #icon>
           <icon-plus />
         </template>
-        新建记忆
+        {{ t('memory.createBtn') }}
       </a-button>
     </header>
 
     <a-tabs v-model:active-key="activeTab" type="rounded">
-      <a-tab-pane key="saved" title="已保存记忆">
+      <a-tab-pane key="saved" :title="t('memory.savedTab')">
         <div class="mb-3 flex items-center gap-3">
           <a-input
             v-model="keyword"
-            placeholder="按内容搜索记忆"
+            :placeholder="t('memory.searchPlaceholder')"
             allow-clear
             class="max-w-sm"
           >
@@ -231,7 +233,7 @@ onMounted(() => {
               <icon-search />
             </template>
           </a-input>
-          <span class="text-sm text-gray-400">共 {{ filteredMemories.length }} 条</span>
+          <span class="text-sm text-gray-400">{{ t('memory.totalCount', { count: filteredMemories.length }) }}</span>
         </div>
         <a-spin :loading="loading" class="block">
           <div
@@ -239,7 +241,7 @@ onMounted(() => {
             class="flex flex-col items-center justify-center py-16 text-gray-400"
           >
             <icon-bookmark class="text-5xl mb-3" />
-            <p>暂无已保存的记忆</p>
+            <p>{{ t('memory.savedEmpty') }}</p>
           </div>
           <div v-else class="overflow-hidden rounded-lg border bg-white">
             <a-table
@@ -250,7 +252,7 @@ onMounted(() => {
               row-key="id"
             >
               <template #columns>
-                <a-table-column title="类型" data-index="memory_type" :width="120">
+                <a-table-column :title="t('memory.columns.type')" data-index="memory_type" :width="120">
                   <template #cell="{ record }">
                     <a-tag
                       :color="typeColor(record.memory_type)"
@@ -261,19 +263,19 @@ onMounted(() => {
                     </a-tag>
                   </template>
                 </a-table-column>
-                <a-table-column title="内容" data-index="content">
+                <a-table-column :title="t('memory.columns.content')" data-index="content">
                   <template #cell="{ record }">
                     <span class="text-sm text-gray-700" :title="record.content">{{ record.content }}</span>
                   </template>
                 </a-table-column>
-                <a-table-column title="置信度" data-index="confidence" :width="130">
+                <a-table-column :title="t('memory.columns.confidence')" data-index="confidence" :width="130">
                   <template #cell="{ record }">
                     <span class="text-amber-500 tracking-wider" :data-confidence="record.confidence">
                       {{ confidenceStars(record.confidence) }}
                     </span>
                   </template>
                 </a-table-column>
-                <a-table-column title="状态" data-index="status" :width="110">
+                <a-table-column :title="t('memory.columns.status')" data-index="status" :width="110">
                   <template #cell="{ record }">
                     <a-switch
                       :model-value="record.status === 'active'"
@@ -281,25 +283,25 @@ onMounted(() => {
                     />
                   </template>
                 </a-table-column>
-                <a-table-column title="来源" data-index="created_from" :width="100">
+                <a-table-column :title="t('memory.columns.source')" data-index="created_from" :width="100">
                   <template #cell="{ record }">
                     <span class="text-sm text-gray-500">{{ sourceLabel(record.created_from) }}</span>
                   </template>
                 </a-table-column>
-                <a-table-column title="创建时间" data-index="created_at" :width="160">
+                <a-table-column :title="t('memory.columns.createdAt')" data-index="created_at" :width="160">
                   <template #cell="{ record }">
                     <span class="text-sm text-gray-500">{{ formatTime(record.created_at) }}</span>
                   </template>
                 </a-table-column>
-                <a-table-column title="操作" :width="170">
+                <a-table-column :title="t('memory.columns.actions')" :width="170">
                   <template #cell="{ record }">
                     <a-space>
-                      <a-button size="mini" @click="openEdit(record)">编辑</a-button>
+                      <a-button size="mini" @click="openEdit(record)">{{ t('memory.editBtn') }}</a-button>
                       <a-popconfirm
-                        content="确定删除这条记忆吗？删除后无法恢复。"
+                        :content="t('memory.deleteConfirmContent')"
                         @ok="handleDelete(record)"
                       >
-                        <a-button size="mini" status="danger">删除</a-button>
+                        <a-button size="mini" status="danger">{{ t('memory.deleteBtn') }}</a-button>
                       </a-popconfirm>
                     </a-space>
                   </template>
@@ -310,14 +312,14 @@ onMounted(() => {
         </a-spin>
       </a-tab-pane>
 
-      <a-tab-pane key="candidates" title="待确认候选">
+      <a-tab-pane key="candidates" :title="t('memory.candidatesTab')">
         <a-spin :loading="candidatesLoading" class="block">
           <div
             v-if="!candidatesLoading && !candidates.length"
             class="flex flex-col items-center justify-center py-16 text-gray-400"
           >
             <icon-bulb class="text-5xl mb-3" />
-            <p>暂无待确认的记忆候选</p>
+            <p>{{ t('memory.candidateEmpty') }}</p>
           </div>
           <div v-else class="grid gap-3">
             <div
@@ -329,19 +331,19 @@ onMounted(() => {
                 <div class="min-w-0 flex-1">
                   <div class="mb-2 flex flex-wrap items-center gap-2">
                     <a-tag
-                      :color="typeColor(candidate.memory_type)"
-                      :data-memory-type="candidate.memory_type"
+                      :color="typeColor(candidate.memory_type ?? 'profile')"
+                      :data-memory-type="candidate.memory_type ?? 'profile'"
                       size="small"
                     >
-                      {{ typeLabel(candidate.memory_type) }}
+                      {{ typeLabel(candidate.memory_type ?? 'profile') }}
                     </a-tag>
-                    <span class="text-xs text-gray-400">出现 {{ candidate.occurrences }} 次</span>
+                    <span class="text-xs text-gray-400">
+                      {{ t('memory.candidateOccurrence', { count: candidate.occurrences }) }}
+                    </span>
                     <span class="text-xs text-amber-500">{{ confidenceStars(candidate.confidence) }}</span>
                   </div>
                   <p class="text-sm text-gray-700">{{ candidate.content }}</p>
-                  <p class="mt-1 text-xs text-gray-400">
-                    系统在对话中识别到该信息，确认后将作为正式长期记忆参与召回。
-                  </p>
+                  <p class="mt-1 text-xs text-gray-400">{{ t('memory.candidateHint') }}</p>
                 </div>
                 <div class="flex flex-shrink-0 flex-col gap-2">
                   <a-button
@@ -350,11 +352,13 @@ onMounted(() => {
                     :loading="confirmingId === candidate.id"
                     @click="handleConfirmCandidate(candidate)"
                   >
-                    确认保存
+                    {{ t('memory.confirmCandidate') }}
                   </a-button>
-                  <a-button size="small" @click="handleIgnoreCandidate(candidate, false)">忽略</a-button>
+                  <a-button size="small" @click="handleIgnoreCandidate(candidate, false)">
+                    {{ t('memory.ignoreCandidate') }}
+                  </a-button>
                   <a-button size="small" status="warning" @click="handleIgnoreCandidate(candidate, true)">
-                    不再提醒
+                    {{ t('memory.neverRemind') }}
                   </a-button>
                 </div>
               </div>
@@ -366,25 +370,25 @@ onMounted(() => {
 
     <a-modal
       v-model:visible="modalVisible"
-      :title="editMode ? '编辑记忆' : '新建记忆'"
-      :ok-text="editMode ? '保存' : '创建'"
-      cancel-text="取消"
+      :title="editMode ? t('memory.editTitle') : t('memory.createTitle')"
+      :ok-text="editMode ? t('common.actions.save') : t('common.actions.create')"
+      :cancel-text="t('common.actions.cancel')"
       :ok-loading="saving"
       @ok="handleSave"
       @cancel="modalVisible = false"
     >
       <a-form layout="vertical">
-        <a-form-item label="记忆类型">
+        <a-form-item :label="t('memory.memoryTypeLabel')">
           <a-select v-model="form.memory_type" :options="memoryTypeOptions" />
         </a-form-item>
-        <a-form-item label="记忆内容">
+        <a-form-item :label="t('memory.memoryContentLabel')">
           <a-textarea
             v-model="form.content"
             :auto-size="{ minRows: 4, maxRows: 8 }"
-            placeholder="请输入记忆内容"
+            :placeholder="t('memory.contentPlaceholder')"
           />
         </a-form-item>
-        <a-form-item label="置信度">
+        <a-form-item :label="t('memory.confidenceLabel')">
           <a-slider v-model="form.confidence" :min="1" :max="5" show-input />
         </a-form-item>
       </a-form>

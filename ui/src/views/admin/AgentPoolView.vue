@@ -78,51 +78,13 @@ const RISK_LEVELS = ['low', 'medium', 'high']
 const MODEL_TIERS = ['cheap', 'standard', 'strong']
 const COST_LEVELS = ['low', 'medium', 'high']
 
-const POOL_LABELS: Record<string, string> = {
-  tenant: '租户池',
-  system: '系统池',
-  global: '全局池',
-  general: '通用池',
-  coding: '编程池',
-  office: '办公池',
-  data: '数据池',
-  research: '研究池',
-  customer_service: '客服池',
-  internal_admin: '内部管理池',
-}
-
-const RISK_LABELS: Record<string, string> = {
-  low: '低风险',
-  medium: '中风险',
-  high: '高风险',
-}
-
-const TIER_LABELS: Record<string, string> = {
-  cheap: '基础版',
-  standard: '标准版',
-  strong: '强力版',
-}
-
-const COST_LABELS: Record<string, string> = {
-  low: '低成本',
-  medium: '中成本',
-  high: '高成本',
-}
-
-const HEALTH_LABELS: Record<string, string> = {
-  healthy: '健康',
-  degraded: '降级',
-  offline: '离线',
-  unknown: '未知',
-}
-
 // ==================== 标签 & 颜色映射 ====================
 
-const poolLabel = (pool: string) => POOL_LABELS[pool] || pool
-const riskLabel = (risk: string) => RISK_LABELS[risk] || risk
-const tierLabel = (tier: string) => TIER_LABELS[tier] || tier
-const costLabel = (cost: string) => COST_LABELS[cost] || cost
-const healthLabel = (status: string) => HEALTH_LABELS[status] || status
+const poolLabel = (pool: string) => t(`admin.agentPool.poolLabels.${pool}`)
+const riskLabel = (risk: string) => t(`admin.agentPool.riskLabels.${risk}`)
+const tierLabel = (tier: string) => t(`admin.agentPool.tierLabels.${tier}`)
+const costLabel = (cost: string) => t(`admin.agentPool.costLabels.${cost}`)
+const healthLabel = (status: string) => t(`admin.agentPool.healthLabels.${status}`)
 
 const riskColor = (risk: string) =>
   ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[risk] || 'gray'
@@ -406,7 +368,7 @@ onMounted(loadPoolConfigs)
           <thead class="bg-gray-50 text-gray-500">
             <tr>
               <th class="p-3">{{ t('admin.agentPool.appId') }}</th>
-              <th class="p-3" style="width: 200px">提示词摘要</th>
+              <th class="p-3" style="width: 200px">{{ t('admin.agentPool.presetPromptSummary') }}</th>
               <th class="p-3">{{ t('admin.agentPool.primaryPool') }}</th>
               <th class="p-3">{{ t('admin.agentPool.secondaryPools') }}</th>
               <th class="p-3">{{ t('admin.agentPool.riskLevel') }}</th>
@@ -515,7 +477,7 @@ onMounted(loadPoolConfigs)
           </a-select>
         </a-form-item>
         <a-form-item :label="t('admin.agentPool.secondaryPools')" field="secondary_pools">
-          <a-select v-model="form.secondary_pools" multiple allow-search allow-create placeholder="选择领域子池，如编程池、办公池">
+          <a-select v-model="form.secondary_pools" multiple allow-search allow-create :placeholder="t('admin.agentPool.capabilitiesPlaceholder')">
             <a-option v-for="opt in subPoolOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</a-option>
           </a-select>
         </a-form-item>
@@ -540,12 +502,12 @@ onMounted(loadPoolConfigs)
         </a-form-item>
         <a-form-item :label="t('admin.agentPool.taskTypes')" field="task_types">
           <a-select v-model="form.task_types" multiple allow-search allow-create>
-            <a-option value="qa">问答</a-option>
-            <a-option value="analysis">分析</a-option>
-            <a-option value="workflow">工作流</a-option>
-            <a-option value="tool_use">工具调用</a-option>
-            <a-option value="coding">编程</a-option>
-            <a-option value="research">研究</a-option>
+            <a-option value="qa">{{ t('admin.agentPool.taskTypeLabels.qa') }}</a-option>
+            <a-option value="analysis">{{ t('admin.agentPool.taskTypeLabels.analysis') }}</a-option>
+            <a-option value="workflow">{{ t('admin.agentPool.taskTypeLabels.workflow') }}</a-option>
+            <a-option value="tool_use">{{ t('admin.agentPool.taskTypeLabels.tool_use') }}</a-option>
+            <a-option value="coding">{{ t('admin.agentPool.taskTypeLabels.coding') }}</a-option>
+            <a-option value="research">{{ t('admin.agentPool.taskTypeLabels.research') }}</a-option>
           </a-select>
         </a-form-item>
         <a-form-item :label="t('admin.agentPool.modelId')" field="model_id">
