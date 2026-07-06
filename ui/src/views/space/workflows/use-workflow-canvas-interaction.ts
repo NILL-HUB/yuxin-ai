@@ -146,7 +146,7 @@ export const useWorkflowCanvasInteraction = (options: UseWorkflowCanvasInteracti
     const nodeData = cloneDeep(options.nodeDataMap.value[nodeType])
     if (!nodeData) return
 
-    options.nodes.value.push({
+    const newNode = {
       id: v4(),
       type: nodeType,
       position: { x: xAverage, y: yAverage },
@@ -154,6 +154,15 @@ export const useWorkflowCanvasInteraction = (options: UseWorkflowCanvasInteracti
         ...nodeData,
         title: `${String(nodeData.title || nodeType)}_${generateRandomString(5)}`,
       },
+    }
+
+    options.nodes.value.push(newNode)
+
+    // 自动打开新节点的配置面板，提升编辑体验
+    options.onNodeSelected({
+      id: newNode.id,
+      type: nodeType,
+      data: newNode.data,
     })
   }
 

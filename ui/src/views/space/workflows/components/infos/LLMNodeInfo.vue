@@ -142,7 +142,7 @@ watch(
       title: newNode.data.title,
       description: newNode.data.description,
       prompt: newNode.data.prompt,
-      model_config: newNode.data.language_model_config,
+      model_config: newNode.data.model_config ?? newNode.data.language_model_config,
       inputs: cloneInputs.map((input: NodeInputField) => {
         // 5.1 计算引用的变量值信息
         const ref =
