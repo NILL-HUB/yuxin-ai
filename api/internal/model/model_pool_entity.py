@@ -30,6 +30,8 @@ class ModelPoolConfig(db.Model):
         Index("model_pool_config_provider_idx", "provider"),
         Index("model_pool_config_status_idx", "status"),
         Index("model_pool_config_tier_idx", "tier"),
+        Index("ix_model_pool_config_provider_model", "provider", "model_name"),
+        Index("ix_model_pool_config_model_type", "model_type"),
     )
 
     id = Column(UUID, nullable=False, default=uuid4, server_default=text("uuid_generate_v4()"))
@@ -41,7 +43,8 @@ class ModelPoolConfig(db.Model):
     price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
     max_tokens = Column(Integer, nullable=False, server_default=text("0"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
-    base_url = Column(String(512), nullable=True)
+    model_type = Column(String(32), nullable=False, server_default=text("'chat'::character varying"))
+    compatible_api = Column(String(32), nullable=False, server_default=text("'openai'::character varying"))
     fallback_model_id = Column(String(36), nullable=True)
     priority = Column(Integer, nullable=False, server_default=text("0"))
     updated_at = Column(
