@@ -412,88 +412,63 @@ class LanguageModelService(BaseService):
         合并静态 providers.yaml 与动态 model_pool_config 表中的模型,
         使 AppConfig 选模型时能看到管理端配置的全部模型。
         """
-        # 1.调用语言模型管理器获取提供商列表
-        providers = self.language_model_manager.get_providers()
+        # 1.从数据库获取所有活跃模型，按 provider 分组
+        from internal.model.model_pool_entity import ModelPoolConfig
+        from internal.extension.database_extension import db
 
-        # 2.构建语言模型列表，循环读取数据
-        language_models = []
-        existing_provider_names = set()
-        for provider in providers:
-            # 3.获取提供商实体和模型实体列表
-            provider_entity = provider.provider_entity
-            model_entities = provider.get_model_entities()
-
-            # 4.构建响应字典结构
-            language_model = {
-                "name": provider_entity.name,
-                "position": provider.position,
-                "label": provider_entity.label,
-                "icon": provider_entity.icon,
-                "description": provider_entity.description,
-                "background": provider_entity.background,
-                "support_model_types": provider_entity.supported_model_types,
-                "models": convert_model_to_dict(model_entities),
-            }
-            language_models.append(language_model)
-            existing_provider_names.add(provider_entity.name)
-
-        # 5.合并数据库 model_pool_config 中的动态模型
+        dynamic_by_provider: dict[str, list[dict[str, Any]]] = {}
         try:
-            from internal.model.model_pool_entity import ModelPoolConfig
-            from internal.extension.database_extension import db
             dynamic_models = db.session.query(ModelPoolConfig).filter(
                 ModelPoolConfig.status == "active",
             ).all()
-            # 按 provider 分组
-            dynamic_by_provider: dict[str, list[dict[str, Any]]] = {}
-            existing_model_keys: dict[str, set[str]] = {}
             for m in dynamic_models:
                 if m.provider not in dynamic_by_provider:
                     dynamic_by_provider[m.provider] = []
-                    existing_model_keys[m.provider] = set()
-                # 避免重复: 如果 providers.yaml 中已有同名模型则跳过
-                model_key = m.model_name
-                if model_key in existing_model_keys[m.provider]:
-                    continue
-                existing_model_keys[m.provider].add(model_key)
                 dynamic_by_provider[m.provider].append({
                     "model_name": m.model_name,
                     "label": m.display_name or m.model_name,
-                    "model_type": "chat",
+                    "model_type": getattr(m, "model_type", None) or "chat",
                     "features": m.capabilities or [],
                     "context_windows": m.max_tokens or 0,
                     "max_output_tokens": m.max_tokens or 0,
-                    "attributes": {"tier": m.tier, "base_url": m.base_url or ""},
+                    "attributes": {"tier": m.tier, "base_url": ""},
                     "metadata": {"price_per_1k_tokens": str(m.price_per_1k_tokens)},
                     "parameters": [],
                 })
-            # 合并到已有 provider 或创建新 provider
-            next_position = len(language_models) + 1
-            for provider_name, models in dynamic_by_provider.items():
-                if provider_name in existing_provider_names:
-                    # 追加到已有 provider 的 models 列表
-                    for lm in language_models:
-                        if lm["name"] == provider_name:
-                            existing_names = {m.get("model_name") for m in lm["models"]}
-                            for m in models:
-                                if m["model_name"] not in existing_names:
-                                    lm["models"].append(m)
-                            break
-                else:
-                    # 创建新 provider 分组
-                    language_models.append({
-                        "name": provider_name,
-                        "position": next_position,
-                        "label": provider_name,
-                        "icon": "icon.png",
-                        "description": "",
-                        "background": "#FFFFFF",
-                        "support_model_types": ["chat"],
-                        "models": models,
-                    })
-                    next_position += 1
         except Exception:
-            logger.warning("合并 model_pool_config 动态模型失败", exc_info=True)
+            logger.warning("查询 model_pool_config 动态模型失败", exc_info=True)
+
+        # 2.获取 provider 元数据列表（从数据库懒加载）
+        providers = self.language_model_manager.get_providers()
+
+        # 3.合并 provider 元数据与模型列表
+        language_models = []
+        for idx, pe in enumerate(providers):
+            language_models.append({
+                "name": pe.name,
+                "position": idx + 1,
+                "label": pe.label,
+                "icon": pe.icon,
+                "description": pe.description,
+                "background": pe.background,
+                "support_model_types": pe.supported_model_types,
+                "models": dynamic_by_provider.pop(pe.name, []),
+            })
+
+        # 4.添加有模型但无 provider 元数据的 provider
+        next_position = len(language_models) + 1
+        for provider_name, models in dynamic_by_provider.items():
+            language_models.append({
+                "name": provider_name,
+                "position": next_position,
+                "label": provider_name,
+                "icon": "icon.png",
+                "description": "",
+                "background": "#FFFFFF",
+                "support_model_types": ["chat"],
+                "models": models,
+            })
+            next_position += 1
 
         return language_models
 
