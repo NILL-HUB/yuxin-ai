@@ -21,8 +21,15 @@ class DefaultModelParameterName(str, Enum):
 class ModelType(str, Enum):
     """模型类型枚举"""
     CHAT = "chat"  # 聊天模型
-    COMPLETION = "completion"  # 文本生成模型
+    COMPLETION = "completion"  # 文本生成模型（保留向后兼容）
     EMBEDDING = "embedding"  # 文本嵌入模型
+    MULTIMODAL = "multimodal"  # 多模态模型
+    IMAGE_GENERATION = "image_generation"  # 图片生成模型
+    VIDEO_GENERATION = "video_generation"  # 视频生成模型
+    OCR = "ocr"  # OCR 文字识别
+    TTS = "tts"  # 语音合成
+    ASR = "asr"  # 语音识别
+    RERANK = "rerank"  # 重排序模型
 
 
 class ModelParameterType(str, Enum):
