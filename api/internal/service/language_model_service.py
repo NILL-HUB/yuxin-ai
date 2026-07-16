@@ -407,12 +407,17 @@ class LanguageModelService(BaseService):
     ENTRYPOINT_PUBLIC_A2A = "public_a2a"
 
     def get_language_models(self) -> list[dict[str, Any]]:
-        """获取 OpenAgent 项目中的所有模型列表信息"""
+        """获取 OpenAgent 项目中的所有模型列表信息
+
+        合并静态 providers.yaml 与动态 model_pool_config 表中的模型,
+        使 AppConfig 选模型时能看到管理端配置的全部模型。
+        """
         # 1.调用语言模型管理器获取提供商列表
         providers = self.language_model_manager.get_providers()
 
         # 2.构建语言模型列表，循环读取数据
         language_models = []
+        existing_provider_names = set()
         for provider in providers:
             # 3.获取提供商实体和模型实体列表
             provider_entity = provider.provider_entity
@@ -430,6 +435,65 @@ class LanguageModelService(BaseService):
                 "models": convert_model_to_dict(model_entities),
             }
             language_models.append(language_model)
+            existing_provider_names.add(provider_entity.name)
+
+        # 5.合并数据库 model_pool_config 中的动态模型
+        try:
+            from internal.model.model_pool_entity import ModelPoolConfig
+            from internal.extension.database_extension import db
+            dynamic_models = db.session.query(ModelPoolConfig).filter(
+                ModelPoolConfig.status == "active",
+            ).all()
+            # 按 provider 分组
+            dynamic_by_provider: dict[str, list[dict[str, Any]]] = {}
+            existing_model_keys: dict[str, set[str]] = {}
+            for m in dynamic_models:
+                if m.provider not in dynamic_by_provider:
+                    dynamic_by_provider[m.provider] = []
+                    existing_model_keys[m.provider] = set()
+                # 避免重复: 如果 providers.yaml 中已有同名模型则跳过
+                model_key = m.model_name
+                if model_key in existing_model_keys[m.provider]:
+                    continue
+                existing_model_keys[m.provider].add(model_key)
+                dynamic_by_provider[m.provider].append({
+                    "model_name": m.model_name,
+                    "label": m.display_name or m.model_name,
+                    "model_type": "chat",
+                    "features": m.capabilities or [],
+                    "context_windows": m.max_tokens or 0,
+                    "max_output_tokens": m.max_tokens or 0,
+                    "attributes": {"tier": m.tier, "base_url": m.base_url or ""},
+                    "metadata": {"price_per_1k_tokens": str(m.price_per_1k_tokens)},
+                    "parameters": [],
+                })
+            # 合并到已有 provider 或创建新 provider
+            next_position = len(language_models) + 1
+            for provider_name, models in dynamic_by_provider.items():
+                if provider_name in existing_provider_names:
+                    # 追加到已有 provider 的 models 列表
+                    for lm in language_models:
+                        if lm["name"] == provider_name:
+                            existing_names = {m.get("model_name") for m in lm["models"]}
+                            for m in models:
+                                if m["model_name"] not in existing_names:
+                                    lm["models"].append(m)
+                            break
+                else:
+                    # 创建新 provider 分组
+                    language_models.append({
+                        "name": provider_name,
+                        "position": next_position,
+                        "label": provider_name,
+                        "icon": "icon.png",
+                        "description": "",
+                        "background": "#FFFFFF",
+                        "support_model_types": ["chat"],
+                        "models": models,
+                    })
+                    next_position += 1
+        except Exception:
+            logger.warning("合并 model_pool_config 动态模型失败", exc_info=True)
 
         return language_models
 
@@ -505,17 +569,28 @@ class LanguageModelService(BaseService):
         )
 
     def _load_model_components(self, model_config: dict[str, Any]) -> tuple[Any, Any, Any]:
-        """根据模型配置加载 provider、model_entity 与 model_class。"""
+        """从数据库懒加载 provider/model 实体和 model_class
+
+        返回 (provider_entity, model_entity, model_class)
+        """
         normalized_model_config = deepcopy(model_config or {})
         provider_name = str(normalized_model_config.get("provider", "")).strip()
         model_name = str(normalized_model_config.get("model", "")).strip()
 
-        provider = self.language_model_manager.get_provider(provider_name)
-        model_entity = provider.get_model_entity(model_name)
-        if not model_entity:
-            raise NotFoundException("该模型不存在")
-        model_class = provider.get_model_class(model_entity.model_type)
-        return provider, model_entity, model_class
+        # 懒加载 provider 和 model entity（从 DB）
+        provider_entity = self.language_model_manager.get_or_load_provider(provider_name)
+        model_entity = self.language_model_manager.get_or_load_model_entity(provider_name, model_name)
+
+        # 从 model_entity.metadata 获取 compatible_api，再通过 ModelClassRegistry 解析
+        compatible_api = model_entity.metadata.get("compatible_api", "openai")
+        model_type = model_entity.model_type if isinstance(model_entity.model_type, str) else (
+            model_entity.model_type.value if hasattr(model_entity.model_type, 'value') else str(model_entity.model_type)
+        )
+
+        from internal.core.language_model.model_class_registry import ModelClassRegistry
+        model_class = ModelClassRegistry.resolve(compatible_api, model_type)
+
+        return provider_entity, model_entity, model_class
 
     def _instantiate_language_model(self, model_config: dict[str, Any], attribute_overrides: dict[str, Any] | None = None) -> BaseLanguageModel:
         """严格按模型配置实例化语言模型。"""
