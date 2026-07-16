@@ -192,7 +192,7 @@ onMounted(loadAll)
   <section class="space-y-6 p-6">
     <header>
       <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.modelProviders.title') }}</h1>
-      <p class="mt-1 text-sm text-gray-500">{{ t('admin.modelProviders.description') }}</p>
+      <p class="mt-1 text-sm text-gray-500">{{ t('admin.modelProviders.pageDescription') }}</p>
     </header>
 
     <div class="grid gap-4 md:grid-cols-3">

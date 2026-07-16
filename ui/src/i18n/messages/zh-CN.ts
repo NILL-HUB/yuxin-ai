@@ -989,7 +989,7 @@ export default {
     },
     modelProviders: {
       title: '供应商管理',
-      description: '管理模型供应商配置，包括 base URL、支持的模型类型等',
+      pageDescription: '管理模型供应商配置，包括 base URL、支持的模型类型等',
       name: '供应商标识',
       label: '显示名称',
       description: '描述',

@@ -989,7 +989,7 @@ export default {
     },
     modelProviders: {
       title: 'Provider Management',
-      description: 'Manage model provider configurations including base URL, supported model types, etc.',
+      pageDescription: 'Manage model provider configurations including base URL, supported model types, etc.',
       name: 'Provider Name',
       label: 'Display Label',
       description: 'Description',
