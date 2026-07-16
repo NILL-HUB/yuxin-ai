@@ -64,6 +64,14 @@ class AdminRbacService:
         {"code": "routing_quality:rollback", "name": "回滚策略变更", "resource": "routing_quality", "action": "rollback", "description": "回滚已应用的策略变更"},
         {"code": "system_knowledge:read", "name": "查看系统知识库", "resource": "system_knowledge", "action": "read", "description": "查看系统级知识库"},
         {"code": "system_knowledge:write", "name": "管理系统知识库", "resource": "system_knowledge", "action": "write", "description": "创建、编辑、删除系统级知识库"},
+        {"code": "model_provider:read", "name": "查看模型供应商", "resource": "model_provider", "action": "read", "description": "查看模型供应商配置"},
+        {"code": "model_provider:create", "name": "创建模型供应商", "resource": "model_provider", "action": "create", "description": "创建模型供应商"},
+        {"code": "model_provider:update", "name": "更新模型供应商", "resource": "model_provider", "action": "update", "description": "更新模型供应商配置"},
+        {"code": "model_provider:delete", "name": "删除模型供应商", "resource": "model_provider", "action": "delete", "description": "删除模型供应商"},
+        {"code": "model_pool:read", "name": "查看模型池", "resource": "model_pool", "action": "read", "description": "查看模型池配置"},
+        {"code": "model_pool:create", "name": "创建模型", "resource": "model_pool", "action": "create", "description": "创建模型配置"},
+        {"code": "model_pool:update", "name": "更新模型", "resource": "model_pool", "action": "update", "description": "更新模型配置"},
+        {"code": "model_pool:delete", "name": "删除模型", "resource": "model_pool", "action": "delete", "description": "删除模型配置"},
     ]
 
     DEFAULT_ROLES = [
