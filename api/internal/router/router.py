@@ -7,9 +7,6 @@ from internal.handler import (
     BuiltinToolHandler,
     ApiToolHandler,
     UploadFileHandler,
-    DatasetHandler,
-    DocumentHandler,
-    SegmentHandler,
     OAuthHandler,
     AccountHandler,
     AuthHandler,
@@ -20,10 +17,11 @@ from internal.handler import (
     AdminAuditLogHandler,
     AdminAuthHandler,
     AdminBillingPlanHandler,
-    AdminDatasetHandler,
+    AdminBuiltinToolHandler,
     AdminOrchestrationFlagHandler,
     AdminOrchestrationReleaseHandler,
     AdminModelPoolHandler,
+    AdminModelProviderHandler,
     AdminCostStatsHandler,
     AdminCustomerUserHandler,
     AdminMcpHandler,
@@ -37,6 +35,7 @@ from internal.handler import (
     AdminSkillsHandler,
     AdminSystemKnowledgeHandler,
     AdminToolGovernanceHandler,
+    AdminUploadFileHandler,
     AdminUserHandler,
     AdminWorkflowHandler,
     AIHandler,
@@ -57,7 +56,8 @@ from internal.handler import (
     RedeemCodeHandler,
     ShowcaseHandler,
     McpHandler,
-    MemoryCandidateHandler,
+    MemoryHandler,
+    MetricsHandler,
     ExternalDataSourceHandler,
     ToolConfirmationHandler,
     ToolInventoryHandler,
@@ -65,8 +65,8 @@ from internal.handler import (
     SkillHandler,
     HomeHandler,
     NotificationHandler,
+    KnowledgeBaseHandler,
     TagHandler,
-    UserMemoryHandler,
 )
 
 
@@ -78,9 +78,6 @@ class Router:
     builtin_tool_handler: BuiltinToolHandler
     api_tool_handler: ApiToolHandler
     upload_file_handler: UploadFileHandler
-    dataset_handler: DatasetHandler
-    document_handler: DocumentHandler
-    segment_handler: SegmentHandler
     oauth_handler: OAuthHandler
     account_handler: AccountHandler
     auth_handler: AuthHandler
@@ -92,7 +89,7 @@ class Router:
     admin_audit_log_handler: AdminAuditLogHandler
     admin_auth_handler: AdminAuthHandler
     admin_billing_plan_handler: AdminBillingPlanHandler
-    admin_dataset_handler: AdminDatasetHandler
+    admin_builtin_tool_handler: AdminBuiltinToolHandler
     admin_orchestration_flag_handler: AdminOrchestrationFlagHandler
     admin_orchestration_release_handler: AdminOrchestrationReleaseHandler
     admin_customer_user_handler: AdminCustomerUserHandler
@@ -106,9 +103,11 @@ class Router:
     admin_skills_handler: AdminSkillsHandler
     admin_system_knowledge_handler: AdminSystemKnowledgeHandler
     admin_tool_governance_handler: AdminToolGovernanceHandler
+    admin_upload_file_handler: AdminUploadFileHandler
     admin_user_handler: AdminUserHandler
     admin_workflow_handler: AdminWorkflowHandler
     admin_model_pool_handler: AdminModelPoolHandler
+    admin_model_provider_handler: AdminModelProviderHandler
     admin_cost_stats_handler: AdminCostStatsHandler
     ai_handler: AIHandler
     api_key_handler: ApiKeyHandler
@@ -127,15 +126,16 @@ class Router:
     public_workflow_handler: PublicWorkflowHandler
     redeem_code_handler: RedeemCodeHandler
     mcp_handler: McpHandler
-    memory_candidate_handler: MemoryCandidateHandler
+    memory_handler: MemoryHandler
+    metrics_handler: MetricsHandler
     external_data_source_handler: ExternalDataSourceHandler
     tool_confirmation_handler: ToolConfirmationHandler
     tool_inventory_handler: ToolInventoryHandler
     my_app_handler: MyAppHandler
-    user_memory_handler: UserMemoryHandler
     skill_handler: SkillHandler
     home_handler: HomeHandler
     notification_handler: NotificationHandler
+    knowledge_base_handler: KnowledgeBaseHandler
     tag_handler: TagHandler
     showcase_handler: ShowcaseHandler
 
@@ -149,6 +149,13 @@ class Router:
         bp.add_url_rule("/health", view_func=self.app_handler.health)
         bp.add_url_rule("/healthz", view_func=self.app_handler.healthz)
         bp.add_url_rule("/ping", view_func=self.app_handler.ping)
+        # H3: Prometheus 指标端点（无需鉴权，由网络层隔离）
+        bp.add_url_rule(
+            "/metrics",
+            endpoint="prometheus_metrics",
+            methods=["GET"],
+            view_func=self.metrics_handler.metrics,
+        )
         bp.add_url_rule("/apps", view_func=self.app_handler.get_apps_with_page)
         bp.add_url_rule("/apps", methods=["POST"], view_func=self.app_handler.create_app)
         bp.add_url_rule("/apps/<uuid:app_id>", view_func=self.app_handler.get_app)
@@ -346,93 +353,85 @@ class Router:
         bp.add_url_rule("/upload-files/file", methods=["POST"], view_func=self.upload_file_handler.upload_file)
         bp.add_url_rule("/upload-files/image", methods=["POST"], view_func=self.upload_file_handler.upload_image)
 
-        # 5.知识库模块
-        bp.add_url_rule("/datasets", view_func=self.dataset_handler.get_datasets_with_page)
-        bp.add_url_rule("/datasets", methods=["POST"], view_func=self.dataset_handler.create_dataset)
-        bp.add_url_rule("/datasets/<uuid:dataset_id>", view_func=self.dataset_handler.get_dataset)
-        bp.add_url_rule("/datasets/<uuid:dataset_id>", methods=["POST"], view_func=self.dataset_handler.update_dataset)
-        bp.add_url_rule("/datasets/<uuid:dataset_id>/queries", view_func=self.dataset_handler.get_dataset_queries)
+        # 5.用户端知识库模块（基于 KnowledgeBase，仅管理 user_content 知识库）
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/delete",
+            "/space/knowledge-bases",
+            view_func=self.knowledge_base_handler.get_knowledge_bases_with_page,
+            endpoint="knowledge_base_list",
+        )
+        bp.add_url_rule(
+            "/space/knowledge-bases",
             methods=["POST"],
-            view_func=self.dataset_handler.delete_dataset,
+            view_func=self.knowledge_base_handler.create_knowledge_base,
+            endpoint="knowledge_base_create",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents",
-            view_func=self.document_handler.get_documents_with_page,
+            "/space/knowledge-bases/<uuid:knowledge_base_id>",
+            view_func=self.knowledge_base_handler.get_knowledge_base,
+            endpoint="knowledge_base_detail",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>",
             methods=["POST"],
-            view_func=self.document_handler.create_documents,
+            view_func=self.knowledge_base_handler.update_knowledge_base,
+            endpoint="knowledge_base_update",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>",
-            view_func=self.document_handler.get_document,
-        )
-        bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/name",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/delete",
             methods=["POST"],
-            view_func=self.document_handler.update_document_name,
+            view_func=self.knowledge_base_handler.delete_knowledge_base,
+            endpoint="knowledge_base_delete",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/enabled",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/hit",
             methods=["POST"],
-            view_func=self.document_handler.update_document_enabled,
+            view_func=self.knowledge_base_handler.hit_test,
+            endpoint="knowledge_base_hit_test",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/delete",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/documents",
+            view_func=self.knowledge_base_handler.get_documents_with_page,
+            endpoint="knowledge_base_document_list",
+        )
+        bp.add_url_rule(
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/upload",
             methods=["POST"],
-            view_func=self.document_handler.delete_document,
+            view_func=self.knowledge_base_handler.upload_document,
+            endpoint="knowledge_base_document_upload",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/batch/<string:batch>",
-            view_func=self.document_handler.get_documents_status,
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>",
+            view_func=self.knowledge_base_handler.get_document,
+            endpoint="knowledge_base_document_detail",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/segments",
-            view_func=self.segment_handler.get_segments_with_page,
-        )
-        bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/segments",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/delete",
             methods=["POST"],
-            view_func=self.segment_handler.create_segment,
+            view_func=self.knowledge_base_handler.delete_document,
+            endpoint="knowledge_base_document_delete",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/segments/<uuid:segment_id>",
-            view_func=self.segment_handler.get_segment,
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/segments",
+            view_func=self.knowledge_base_handler.get_segments_with_page,
+            endpoint="knowledge_base_segment_list",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/segments/<uuid:segment_id>",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/segments/<uuid:segment_id>",
             methods=["POST"],
-            view_func=self.segment_handler.update_segment,
+            view_func=self.knowledge_base_handler.update_segment,
+            endpoint="knowledge_base_segment_update",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/segments/<uuid:segment_id>/enabled",
+            "/space/knowledge-bases/<uuid:knowledge_base_id>/regenerate-icon",
             methods=["POST"],
-            view_func=self.segment_handler.update_segment_enabled,
+            view_func=self.knowledge_base_handler.regenerate_icon,
+            endpoint="knowledge_base_regenerate_icon",
         )
         bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/documents/<uuid:document_id>/segments/<uuid:segment_id>/delete",
+            "/space/knowledge-bases/generate-icon-preview",
             methods=["POST"],
-            view_func=self.segment_handler.delete_segment,
-        )
-        bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/hit",
-            methods=["POST"],
-            view_func=self.dataset_handler.hit,
-        )
-        bp.add_url_rule(
-            "/datasets/<uuid:dataset_id>/regenerate-icon",
-            methods=["POST"],
-            view_func=self.dataset_handler.regenerate_icon,
-            endpoint="dataset_regenerate_icon",
-        )
-        bp.add_url_rule(
-            "/datasets/generate-icon-preview",
-            methods=["POST"],
-            view_func=self.dataset_handler.generate_icon_preview,
-            endpoint="dataset_generate_icon_preview",
+            view_func=self.knowledge_base_handler.generate_icon_preview,
+            endpoint="knowledge_base_generate_icon_preview",
         )
 
         # 6.授权认证模块
@@ -503,6 +502,24 @@ class Router:
             endpoint="admin_user_disable",
             methods=["POST"],
             view_func=self.admin_user_handler.disable,
+        )
+        bp.add_url_rule(
+            "/admin/admin-users/<uuid:admin_id>/enable",
+            endpoint="admin_user_enable",
+            methods=["POST"],
+            view_func=self.admin_user_handler.enable,
+        )
+        bp.add_url_rule(
+            "/admin/admin-users/<uuid:admin_id>/reset-password",
+            endpoint="admin_user_reset_password",
+            methods=["POST"],
+            view_func=self.admin_user_handler.reset_password,
+        )
+        bp.add_url_rule(
+            "/admin/admin-users/<uuid:admin_id>/sessions/revoke",
+            endpoint="admin_user_revoke_sessions",
+            methods=["POST"],
+            view_func=self.admin_user_handler.revoke_sessions,
         )
         bp.add_url_rule(
             "/admin/users",
@@ -811,6 +828,72 @@ class Router:
             view_func=self.admin_app_handler.update_draft_app_config,
         )
         bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/published-config",
+            endpoint="admin_app_published_config_get",
+            methods=["GET"],
+            view_func=self.admin_app_handler.get_published_config,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/published-config/regenerate-web-app-token",
+            endpoint="admin_app_regenerate_web_app_token",
+            methods=["POST"],
+            view_func=self.admin_app_handler.regenerate_web_app_token,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/wechat-config",
+            endpoint="admin_app_wechat_config_get",
+            methods=["GET"],
+            view_func=self.admin_app_handler.get_wechat_config,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/wechat-config",
+            endpoint="admin_app_wechat_config_update",
+            methods=["POST"],
+            view_func=self.admin_app_handler.update_wechat_config,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/share-to-square",
+            endpoint="admin_app_share_to_square",
+            methods=["POST"],
+            view_func=self.admin_app_handler.share_app_to_square,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/unshare-from-square",
+            endpoint="admin_app_unshare_from_square",
+            methods=["POST"],
+            view_func=self.admin_app_handler.unshare_app_from_square,
+        )
+        bp.add_url_rule(
+            "/admin/apps/tags",
+            endpoint="admin_app_tags",
+            methods=["GET"],
+            view_func=self.admin_app_handler.get_app_tags,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/prompt-compare/chat",
+            endpoint="admin_app_prompt_compare_chat",
+            methods=["POST"],
+            view_func=self.admin_app_handler.prompt_compare_chat,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/prompt-compare/tasks/<uuid:task_id>/stop",
+            endpoint="admin_app_stop_prompt_compare_chat",
+            methods=["POST"],
+            view_func=self.admin_app_handler.stop_prompt_compare_chat,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/analysis",
+            endpoint="admin_app_analysis",
+            methods=["GET"],
+            view_func=self.admin_app_handler.get_app_analysis,
+        )
+        bp.add_url_rule(
+            "/admin/apps/<uuid:app_id>/versions",
+            endpoint="admin_app_versions",
+            methods=["GET"],
+            view_func=self.admin_app_handler.get_versions,
+        )
+        bp.add_url_rule(
             "/admin/workflows",
             endpoint="admin_workflow_list",
             methods=["GET"],
@@ -887,12 +970,6 @@ class Router:
             endpoint="admin_workflow_batch_offline",
             methods=["POST"],
             view_func=self.admin_workflow_handler.batch_offline,
-        )
-        bp.add_url_rule(
-            "/admin/datasets",
-            endpoint="admin_dataset_entry",
-            methods=["GET"],
-            view_func=self.admin_dataset_handler.list,
         )
         bp.add_url_rule(
             "/admin/tools",
@@ -1009,6 +1086,44 @@ class Router:
             view_func=self.admin_api_tool_handler.delete,
         )
         bp.add_url_rule(
+            "/admin/api-tools/generate-icon-preview",
+            endpoint="admin_api_tool_generate_icon_preview",
+            methods=["POST"],
+            view_func=self.admin_api_tool_handler.generate_icon_preview,
+        )
+        bp.add_url_rule(
+            "/admin/api-tools/validate-openapi-schema",
+            endpoint="admin_api_tool_validate_openapi_schema",
+            methods=["POST"],
+            view_func=self.admin_api_tool_handler.validate_openapi_schema,
+        )
+        # 管理员内置工具模块
+        bp.add_url_rule(
+            "/admin/builtin-tools",
+            endpoint="admin_builtin_tools",
+            methods=["GET"],
+            view_func=self.admin_builtin_tool_handler.get_builtin_tools,
+        )
+        bp.add_url_rule(
+            "/admin/builtin-tools/categories",
+            endpoint="admin_builtin_tool_categories",
+            methods=["GET"],
+            view_func=self.admin_builtin_tool_handler.get_categories,
+        )
+        # 管理员上传文件模块
+        bp.add_url_rule(
+            "/admin/upload-files/image",
+            endpoint="admin_upload_file_image",
+            methods=["POST"],
+            view_func=self.admin_upload_file_handler.upload_image,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/categories",
+            endpoint="admin_mcp_categories",
+            methods=["GET"],
+            view_func=self.admin_mcp_handler.get_mcp_categories,
+        )
+        bp.add_url_rule(
             "/admin/mcp",
             endpoint="admin_mcp_create",
             methods=["POST"],
@@ -1079,6 +1194,49 @@ class Router:
             endpoint="admin_system_knowledge_delete",
             methods=["DELETE"],
             view_func=self.admin_system_knowledge_handler.delete,
+        )
+        # --- Model Provider 路由 ---
+        bp.add_url_rule(
+            "/admin/model-providers",
+            endpoint="admin_model_provider_list",
+            methods=["GET"],
+            view_func=self.admin_model_provider_handler.list_providers,
+        )
+        bp.add_url_rule(
+            "/admin/model-providers/options",
+            endpoint="admin_model_provider_options",
+            methods=["GET"],
+            view_func=self.admin_model_provider_handler.list_provider_options,
+        )
+        bp.add_url_rule(
+            "/admin/model-providers",
+            endpoint="admin_model_provider_create",
+            methods=["POST"],
+            view_func=self.admin_model_provider_handler.create_provider,
+        )
+        bp.add_url_rule(
+            "/admin/model-providers/<uuid:provider_id>",
+            endpoint="admin_model_provider_get",
+            methods=["GET"],
+            view_func=self.admin_model_provider_handler.get_provider,
+        )
+        bp.add_url_rule(
+            "/admin/model-providers/<uuid:provider_id>",
+            endpoint="admin_model_provider_update",
+            methods=["PATCH"],
+            view_func=self.admin_model_provider_handler.update_provider,
+        )
+        bp.add_url_rule(
+            "/admin/model-providers/<uuid:provider_id>",
+            endpoint="admin_model_provider_delete",
+            methods=["DELETE"],
+            view_func=self.admin_model_provider_handler.delete_provider,
+        )
+        bp.add_url_rule(
+            "/admin/model-providers/<uuid:provider_id>/status",
+            endpoint="admin_model_provider_status",
+            methods=["POST"],
+            view_func=self.admin_model_provider_handler.set_provider_status,
         )
         bp.add_url_rule(
             "/admin/models",
@@ -1393,52 +1551,85 @@ class Router:
         bp.add_url_rule("/membership/summary", view_func=self.redeem_code_handler.summary)
         bp.add_url_rule("/membership/redeem-records", view_func=self.redeem_code_handler.records)
         bp.add_url_rule(
-            "/memory-candidates",
-            endpoint="memory_candidate_list",
+            "/memory/write",
+            endpoint="memory_write",
+            methods=["POST"],
+            view_func=self.memory_handler.write,
+        )
+        # H4: 记忆系统健康检查（无需鉴权，供监控探针调用）
+        bp.add_url_rule(
+            "/memory/health",
+            endpoint="memory_health",
             methods=["GET"],
-            view_func=self.memory_candidate_handler.list,
+            view_func=self.memory_handler.health,
         )
         bp.add_url_rule(
-            "/memory-candidates/<uuid:candidate_id>/confirm",
-            endpoint="memory_candidate_confirm",
+            "/memory/retrieve",
+            endpoint="memory_retrieve",
             methods=["POST"],
-            view_func=self.memory_candidate_handler.confirm,
+            view_func=self.memory_handler.retrieve,
         )
         bp.add_url_rule(
-            "/memory-candidates/<uuid:candidate_id>/ignore",
-            endpoint="memory_candidate_ignore",
-            methods=["POST"],
-            view_func=self.memory_candidate_handler.ignore,
-        )
-        bp.add_url_rule(
-            "/user/memory",
-            endpoint="user_memory_list",
+            "/memory/digest/<string:user_id>",
+            endpoint="memory_digest",
             methods=["GET"],
-            view_func=self.user_memory_handler.list,
+            view_func=self.memory_handler.get_digest,
         )
         bp.add_url_rule(
-            "/user/memory",
-            endpoint="user_memory_create",
+            "/memory/consolidate/<string:user_id>",
+            endpoint="memory_consolidate",
             methods=["POST"],
-            view_func=self.user_memory_handler.create,
+            view_func=self.memory_handler.consolidate,
         )
+        # D4: 图谱 API + 记忆 CRUD API
         bp.add_url_rule(
-            "/user/memory/<uuid:memory_id>",
-            endpoint="user_memory_get",
+            "/memory/graph/<string:user_id>",
+            endpoint="memory_graph",
             methods=["GET"],
-            view_func=self.user_memory_handler.get,
+            view_func=self.memory_handler.get_memory_graph,
         )
         bp.add_url_rule(
-            "/user/memory/<uuid:memory_id>",
-            endpoint="user_memory_update",
+            "/memory/graph/<string:user_id>/cluster/<string:cluster_type>",
+            endpoint="memory_cluster_subgraph",
+            methods=["GET"],
+            view_func=self.memory_handler.get_cluster_subgraph,
+        )
+        bp.add_url_rule(
+            "/memory/<string:memory_id>",
+            endpoint="memory_detail",
+            methods=["GET"],
+            view_func=self.memory_handler.get_memory_detail,
+        )
+        bp.add_url_rule(
+            "/memory/<string:memory_id>/edit",
+            endpoint="memory_edit",
             methods=["POST"],
-            view_func=self.user_memory_handler.update,
+            view_func=self.memory_handler.edit_memory,
         )
         bp.add_url_rule(
-            "/user/memory/<uuid:memory_id>",
-            endpoint="user_memory_delete",
-            methods=["DELETE"],
-            view_func=self.user_memory_handler.delete,
+            "/memory/<string:memory_id>/soft-delete",
+            endpoint="memory_soft_delete",
+            methods=["POST"],
+            view_func=self.memory_handler.soft_delete_memory,
+        )
+        bp.add_url_rule(
+            "/memory/<string:memory_id>/hard-delete",
+            endpoint="memory_hard_delete",
+            methods=["POST"],
+            view_func=self.memory_handler.hard_delete_memory,
+        )
+        bp.add_url_rule(
+            "/memory/<string:memory_id>/decay",
+            endpoint="memory_decay",
+            methods=["POST"],
+            view_func=self.memory_handler.decay_memory,
+        )
+        # E2: 技能列表 API
+        bp.add_url_rule(
+            "/memory/skills/<string:user_id>",
+            endpoint="memory_skills",
+            methods=["GET"],
+            view_func=self.memory_handler.list_skills,
         )
         bp.add_url_rule(
             "/external-data-sources",

@@ -5,14 +5,12 @@ from .api_tool_handler import ApiToolHandler
 from .app_handler import AppHandler
 from .auth_handler import AuthHandler
 from .builtin_tool_handler import BuiltinToolHandler
-from .dataset_handler import DatasetHandler
-from .document_handler import DocumentHandler
 from .external_data_source_handler import ExternalDataSourceHandler
 from .home_handler import HomeHandler
+from .knowledge_base_handler import KnowledgeBaseHandler
 from .notification_handler import NotificationHandler
 from .oauth_handler import OAuthHandler
 from .openapi_handler import OpenAPIHandler
-from .segment_handler import SegmentHandler
 from .tag_handler import TagHandler
 from .tool_confirmation_handler import ToolConfirmationHandler
 from .tool_inventory_handler import ToolInventoryHandler
@@ -29,7 +27,7 @@ from .admin_api_tool_handler import AdminApiToolHandler
 from .admin_audit_log_handler import AdminAuditLogHandler
 from .admin_auth_handler import AdminAuthHandler
 from .admin_billing_plan_handler import AdminBillingPlanHandler
-from .admin_dataset_handler import AdminDatasetHandler
+from .admin_builtin_tool_handler import AdminBuiltinToolHandler
 from .admin_orchestration_flag_handler import AdminOrchestrationFlagHandler
 from .admin_orchestration_release_handler import AdminOrchestrationReleaseHandler
 from .admin_customer_user_handler import AdminCustomerUserHandler
@@ -43,9 +41,11 @@ from .admin_skills_handler import AdminSkillsHandler
 from .admin_sub_pool_handler import AdminSubPoolHandler
 from .admin_system_knowledge_handler import AdminSystemKnowledgeHandler
 from .admin_tool_governance_handler import AdminToolGovernanceHandler
+from .admin_upload_file_handler import AdminUploadFileHandler
 from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
 from .admin_model_pool_handler import AdminModelPoolHandler
+from .admin_model_provider_handler import AdminModelProviderHandler
 from .admin_cost_stats_handler import AdminCostStatsHandler
 from .web_app_handler import WebAppHandler
 from .conversation_handler import ConversationHandler
@@ -57,11 +57,11 @@ from .public_app_handler import PublicAppHandler
 from .public_workflow_handler import PublicWorkflowHandler
 from .redeem_code_handler import RedeemCodeHandler
 from .mcp_handler import McpHandler
-from .memory_candidate_handler import MemoryCandidateHandler
+from .memory_handler import MemoryHandler
+from .metrics_handler import MetricsHandler
 from .my_app_handler import MyAppHandler
 from .skill_handler import SkillHandler
 from .showcase_handler import ShowcaseHandler
-from .user_memory_handler import UserMemoryHandler
 
 
 __all__ = [
@@ -69,9 +69,6 @@ __all__ = [
     "BuiltinToolHandler",
     "ApiToolHandler",
     "UploadFileHandler",
-    "DatasetHandler",
-    "DocumentHandler",
-    "SegmentHandler",
     "TagHandler",
     "ToolConfirmationHandler",
     "ToolInventoryHandler",
@@ -92,7 +89,7 @@ __all__ = [
     "AdminAuditLogHandler",
     "AdminAuthHandler",
     "AdminBillingPlanHandler",
-    "AdminDatasetHandler",
+    "AdminBuiltinToolHandler",
     "AdminOrchestrationFlagHandler",
     "AdminOrchestrationReleaseHandler",
     "AdminCustomerUserHandler",
@@ -106,9 +103,11 @@ __all__ = [
     "AdminSubPoolHandler",
     "AdminSystemKnowledgeHandler",
     "AdminToolGovernanceHandler",
+    "AdminUploadFileHandler",
     "AdminUserHandler",
     "AdminWorkflowHandler",
     "AdminModelPoolHandler",
+    "AdminModelProviderHandler",
     "AdminCostStatsHandler",
     "WebAppHandler",
     "ConversationHandler",
@@ -120,12 +119,13 @@ __all__ = [
     "PublicWorkflowHandler",
     "RedeemCodeHandler",
     "McpHandler",
-    "MemoryCandidateHandler",
+    "MemoryHandler",
+    "MetricsHandler",
     "MyAppHandler",
-    "UserMemoryHandler",
     "SkillHandler",
     "ExternalDataSourceHandler",
     "HomeHandler",
     "NotificationHandler",
+    "KnowledgeBaseHandler",
     "ShowcaseHandler",
 ]
