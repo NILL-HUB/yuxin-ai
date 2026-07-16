@@ -49,7 +49,10 @@ def _make_key(db, **overrides):
 
 
 def _service(db):
-    return RuntimeModelPoolService(db=db)
+    from unittest.mock import MagicMock
+    mock_manager = MagicMock()
+    mock_manager.get_or_load_provider.return_value = MagicMock(default_base_url="https://api.openai.com/v1")
+    return RuntimeModelPoolService(db=db, language_model_manager=mock_manager)
 
 
 class TestRuntimeModelPoolService:

@@ -135,6 +135,7 @@ CREATE TABLE model_key_config (
     status VARCHAR(64) NOT NULL DEFAULT 'active',
     failure_count INTEGER NOT NULL DEFAULT 0,
     last_used_at DATETIME,
+    effective_at DATETIME,
     expires_at DATETIME,
     used_credits NUMERIC NOT NULL DEFAULT 0,
     model_id VARCHAR(36),

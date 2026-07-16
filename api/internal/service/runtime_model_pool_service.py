@@ -5,6 +5,7 @@ from typing import Any
 
 from injector import inject
 
+from internal.core.language_model.language_model_manager import LanguageModelManager
 from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig
 from internal.service.admin_model_pool_service import _decrypt_key_value
 from pkg.sqlalchemy import SQLAlchemy
@@ -16,6 +17,7 @@ class RuntimeModelPoolService:
     """桥接 admin 模型池配置与运行时 LLM 调用"""
 
     db: SQLAlchemy
+    language_model_manager: LanguageModelManager
 
     def _session(self):
         return self.db.session
@@ -105,6 +107,11 @@ class RuntimeModelPoolService:
             "key_id": str(key.id),
             "model_id": str(model.id),
         }
-        if model.base_url:
-            config["base_url"] = model.base_url
+        # 通过 LanguageModelManager 缓存获取 Provider 的 base_url
+        try:
+            provider_entity = self.language_model_manager.get_or_load_provider(model.provider)
+            if provider_entity.default_base_url:
+                config["base_url"] = provider_entity.default_base_url
+        except Exception:
+            pass  # Provider 不存在时降级，不传 base_url
         return config
