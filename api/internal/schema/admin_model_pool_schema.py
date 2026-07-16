@@ -7,8 +7,13 @@ from internal.schema import DictField, ListField
 
 MODEL_STATUSES = ["active", "disabled"]
 KEY_STATUSES = ["active", "disabled", "circuit_open"]
-MODEL_TIERS = ["cheap", "standard", "strong"]
+MODEL_TIERS = ["cheap", "standard", "strong", "vision", "long_context"]
 BILLING_MODES = ["token", "request", "credit"]
+MODEL_TYPES = [
+    "chat", "completion", "embedding", "multimodal",
+    "image_generation", "video_generation", "ocr", "tts", "asr", "rerank",
+]
+COMPATIBLE_APIS = ["openai", "claude"]
 
 
 class GetAdminModelsReq(FlaskForm):
@@ -16,6 +21,7 @@ class GetAdminModelsReq(FlaskForm):
     provider = StringField("provider", default="", validators=[Optional(), Length(max=128)])
     tier = StringField("tier", default="", validators=[Optional(), AnyOf(["", *MODEL_TIERS])])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", *MODEL_STATUSES])])
+    model_type = StringField("model_type", default="", validators=[Optional(), AnyOf(["", *MODEL_TYPES])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
@@ -29,7 +35,8 @@ class CreateAdminModelReq(FlaskForm):
     price_per_1k_tokens = StringField("price_per_1k_tokens", default="0.000000", validators=[Optional(), Length(max=32)])
     max_tokens = IntegerField("max_tokens", default=0, validators=[Optional(), NumberRange(min=0, max=10_000_000)])
     status = StringField("status", default="active", validators=[Optional(), AnyOf(MODEL_STATUSES)])
-    base_url = StringField("base_url", default="", validators=[Optional(), Length(max=512)])
+    model_type = StringField("model_type", default="chat", validators=[Optional(), AnyOf(MODEL_TYPES)])
+    compatible_api = StringField("compatible_api", default="openai", validators=[Optional(), AnyOf(COMPATIBLE_APIS)])
 
 
 class UpdateAdminModelReq(FlaskForm):
@@ -41,7 +48,8 @@ class UpdateAdminModelReq(FlaskForm):
     price_per_1k_tokens = StringField("price_per_1k_tokens", validators=[Optional(), Length(max=32)])
     max_tokens = IntegerField("max_tokens", validators=[Optional(), NumberRange(min=0, max=10_000_000)])
     status = StringField("status", validators=[Optional(), AnyOf(MODEL_STATUSES)])
-    base_url = StringField("base_url", default="", validators=[Optional(), Length(max=512)])
+    model_type = StringField("model_type", validators=[Optional(), AnyOf(MODEL_TYPES)])
+    compatible_api = StringField("compatible_api", validators=[Optional(), AnyOf(COMPATIBLE_APIS)])
 
 
 class SetAdminModelStatusReq(FlaskForm):
@@ -97,7 +105,8 @@ class AdminModelResp(Schema):
     price_per_1k_tokens = fields.String()
     max_tokens = fields.Integer()
     status = fields.String()
-    base_url = fields.String(allow_none=True)
+    model_type = fields.String()
+    compatible_api = fields.String()
     created_at = fields.Integer(allow_none=True)
     updated_at = fields.Integer(allow_none=True)
 
