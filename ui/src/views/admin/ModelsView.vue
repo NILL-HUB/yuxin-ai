@@ -15,6 +15,7 @@ import {
   updateModel,
   updateTierPolicy,
 } from '@/services/admin-model-pool'
+import { listProviderOptions } from '@/services/admin-model-providers'
 import { getErrorMessage } from '@/utils/error'
 
 type ModelRecord = {
@@ -29,7 +30,8 @@ type ModelRecord = {
   status: string
   fallback_model_id?: string
   priority?: number
-  base_url?: string
+  model_type?: string
+  compatible_api?: string
   created_at?: number
   updated_at?: number
 }
@@ -60,13 +62,28 @@ type TierPolicy = {
 
 const { t } = useI18n()
 
-const MODEL_TIERS = ['cheap', 'standard', 'strong']
+const MODEL_TIERS = ['cheap', 'standard', 'strong', 'vision', 'long_context']
 const MODEL_TIER_LABELS: Record<string, string> = {
   cheap: t('admin.models.tierLabels.cheap'),
   standard: t('admin.models.tierLabels.standard'),
   strong: t('admin.models.tierLabels.strong'),
+  vision: t('admin.models.tierLabels.vision'),
+  long_context: t('admin.models.tierLabels.long_context'),
 }
-const PROVIDERS = ['openai', 'anthropic', 'deepseek', 'qwen', 'zhipu', 'other']
+const ALL_MODEL_TYPES = [
+  'chat', 'completion', 'embedding', 'multimodal',
+  'image_generation', 'video_generation', 'ocr', 'tts', 'asr', 'rerank',
+]
+const COMPATIBLE_APIS = ['openai', 'claude']
+
+type ProviderOption = {
+  id: string
+  name: string
+  label: string
+  default_base_url: string
+  supported_model_types: string[]
+}
+const providerOptions = ref<ProviderOption[]>([])
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -87,7 +104,7 @@ const modelModalVisible = ref(false)
 const modelEditMode = ref(false)
 const editingModelId = ref('')
 const modelForm = ref({
-  provider: 'openai',
+  provider: '',
   model_name: '',
   display_name: '',
   tier: 'standard',
@@ -96,7 +113,17 @@ const modelForm = ref({
   max_tokens: 0,
   fallback_model_id: '',
   priority: 0,
-  base_url: '',
+  model_type: 'chat',
+  compatible_api: 'openai',
+})
+
+const selectedProvider = computed(() =>
+  providerOptions.value.find((p) => p.name === modelForm.value.provider),
+)
+const selectedProviderBaseUrl = computed(() => selectedProvider.value?.default_base_url || '')
+const filteredModelTypeOptions = computed(() => {
+  const supported = selectedProvider.value?.supported_model_types
+  return supported && supported.length > 0 ? supported : ALL_MODEL_TYPES
 })
 
 const keyModalVisible = ref(false)
@@ -122,14 +149,21 @@ const tierForm = ref({
 const loadAll = async () => {
   loading.value = true
   try {
-    const [modelResult, keyResult, tierResult] = await Promise.all([
+    const [modelResult, keyResult, tierResult, optionsResult] = await Promise.all([
       listModels({ current_page: 1, page_size: 50 }),
       listModelKeys({ current_page: 1, page_size: 50 }),
       listTierPolicies(),
-    ]) as [{ data?: { list?: ModelRecord[] } }, { data?: { list?: ModelKeyRecord[] } }, { data?: { list?: TierPolicy[] } }]
+      listProviderOptions(),
+    ]) as [
+      { data?: { list?: ModelRecord[] } },
+      { data?: { list?: ModelKeyRecord[] } },
+      { data?: { list?: TierPolicy[] } },
+      { data?: { options?: ProviderOption[] } },
+    ]
     models.value = modelResult.data?.list || []
     keys.value = keyResult.data?.list || []
     tiers.value = tierResult.data?.list || []
+    providerOptions.value = optionsResult.data?.options || []
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.models.messages.loadFailed')))
   } finally {
@@ -141,7 +175,7 @@ const openCreateModel = () => {
   modelEditMode.value = false
   editingModelId.value = ''
   modelForm.value = {
-    provider: 'openai',
+    provider: providerOptions.value[0]?.name || '',
     model_name: '',
     display_name: '',
     tier: 'standard',
@@ -150,7 +184,8 @@ const openCreateModel = () => {
     max_tokens: 131072,
     fallback_model_id: '',
     priority: 0,
-    base_url: '',
+    model_type: 'chat',
+    compatible_api: 'openai',
   }
   modelModalVisible.value = true
 }
@@ -168,7 +203,8 @@ const openEditModel = (model: ModelRecord) => {
     max_tokens: model.max_tokens,
     fallback_model_id: model.fallback_model_id || '',
     priority: model.priority ?? 0,
-    base_url: model.base_url || '',
+    model_type: model.model_type || 'chat',
+    compatible_api: model.compatible_api || 'openai',
   }
   modelModalVisible.value = true
 }
@@ -219,7 +255,7 @@ const removeModel = async (model: ModelRecord) => {
 }
 
 const openCreateKey = () => {
-  keyForm.value = { provider: 'openai', key_alias: '', key_value: '', tenant_quota: '0.0000', model_id: '', effective_at: '', expires_at: '' }
+  keyForm.value = { provider: providerOptions.value[0]?.name || '', key_alias: '', key_value: '', tenant_quota: '0.0000', model_id: '', effective_at: '', expires_at: '' }
   keyDateRange.value = []
   keyModalVisible.value = true
 }
@@ -458,18 +494,6 @@ onMounted(loadAll)
           </div>
         </a-spin>
       </a-tab-pane>
-
-      <a-tab-pane key="cost" :title="t('admin.models.tabs.costPolicies')">
-        <a-alert type="info" :show-icon="true">
-          <template #title>{{ t('admin.models.costMovedNotice.title') }}</template>
-          {{ t('admin.models.costMovedNotice.desc') }}
-          <template #action>
-            <router-link to="/admin/cost-strategy" class="font-medium text-blue-600 hover:underline">
-              {{ t('admin.models.costMovedNotice.link') }}
-            </router-link>
-          </template>
-        </a-alert>
-      </a-tab-pane>
     </a-tabs>
 
     <a-modal
@@ -481,9 +505,22 @@ onMounted(loadAll)
     >
       <a-form :model="modelForm" layout="vertical">
         <a-form-item :label="t('admin.models.columns.provider')" field="provider">
-          <a-select v-model="modelForm.provider">
-            <a-option v-for="p in PROVIDERS" :key="p" :value="p">{{ p }}</a-option>
+          <a-select v-model="modelForm.provider" allow-search>
+            <a-option v-for="p in providerOptions" :key="p.id" :value="p.name">{{ p.label || p.name }}</a-option>
           </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.models.modelType')" field="model_type">
+          <a-select v-model="modelForm.model_type">
+            <a-option v-for="mt in filteredModelTypeOptions" :key="mt" :value="mt">{{ t(`admin.models.modelTypeOptions.${mt}`) }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.models.compatibleApi')" field="compatible_api">
+          <a-select v-model="modelForm.compatible_api">
+            <a-option v-for="api in COMPATIBLE_APIS" :key="api" :value="api">{{ t(`admin.models.compatibleApiOptions.${api}`) }}</a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.models.baseUrlFromProvider')" field="base_url">
+          <a-input :model-value="selectedProviderBaseUrl" disabled />
         </a-form-item>
         <a-form-item :label="t('admin.models.columns.modelName')" field="model_name">
           <a-input v-model="modelForm.model_name" :placeholder="t('admin.models.modelModal.placeholders.modelName')" />
@@ -520,9 +557,6 @@ onMounted(loadAll)
         <a-form-item :label="t('admin.models.fields.fallbackModelId')" field="fallback_model_id">
           <a-input v-model="modelForm.fallback_model_id" :placeholder="t('admin.models.modelModal.placeholders.fallbackModelId')" />
         </a-form-item>
-        <a-form-item :label="t('admin.models.fields.baseUrl')" field="base_url">
-          <a-input v-model="modelForm.base_url" :placeholder="t('admin.models.modelModal.placeholders.baseUrl')" />
-        </a-form-item>
         <a-form-item :label="t('admin.models.fields.priority')" field="priority">
           <a-input-number v-model="modelForm.priority" :min="0" :step="1" />
         </a-form-item>
@@ -538,8 +572,8 @@ onMounted(loadAll)
     >
       <a-form :model="keyForm" layout="vertical">
         <a-form-item :label="t('admin.models.columns.provider')" field="provider">
-          <a-select v-model="keyForm.provider">
-            <a-option v-for="p in PROVIDERS" :key="p" :value="p">{{ p }}</a-option>
+          <a-select v-model="keyForm.provider" allow-search>
+            <a-option v-for="p in providerOptions" :key="p.id" :value="p.name">{{ p.label || p.name }}</a-option>
           </a-select>
         </a-form-item>
         <a-form-item :label="t('admin.models.columns.alias')" field="key_alias">
