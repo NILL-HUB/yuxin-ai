@@ -59,11 +59,6 @@ const router = createRouter({
           component: () => import('@/views/space/datasets/documents/ListView.vue'),
         },
         {
-          path: 'space/datasets/:dataset_id/documents/create',
-          name: 'space-datasets-documents-create',
-          component: () => import('@/views/space/datasets/documents/CreateView.vue'),
-        },
-        {
           path: 'space/datasets/:dataset_id/documents/:document_id/segments',
           name: 'space-datasets-documents-segments-list',
           component: () => import('@/views/space/datasets/documents/segments/ListView.vue'),
@@ -132,7 +127,7 @@ const router = createRouter({
         },
         {
           path: 'memory',
-          name: 'user-memory-list',
+          name: 'user-memory-graph',
           component: () => import('@/views/settings/MemoryView.vue'),
           meta: { requiresAuth: true },
         },
@@ -199,10 +194,10 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
             },
             {
-              path: 'datasets',
-              name: 'admin-datasets',
-              component: () => import('@/views/admin/AdminDatasetsView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
+              path: 'system-knowledge',
+              name: 'admin-system-knowledge',
+              component: () => import('@/views/admin/AdminSystemKnowledgeView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_knowledge:read'] },
             },
             {
               path: 'tools',
@@ -325,24 +320,6 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'], fluid: true },
             },
             {
-              path: 'datasets/:dataset_id/documents',
-              name: 'admin-dataset-documents',
-              component: () => import('@/views/admin/AdminDatasetDocumentsView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
-            },
-            {
-              path: 'datasets/:dataset_id/documents/create',
-              name: 'admin-dataset-document-create',
-              component: () => import('@/views/admin/AdminDatasetDocumentCreateView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
-            },
-            {
-              path: 'datasets/:dataset_id/documents/:document_id/segments',
-              name: 'admin-dataset-segments',
-              component: () => import('@/views/admin/AdminDatasetSegmentsView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['dataset:read'] },
-            },
-            {
               path: 'store/public-apps',
               name: 'admin-store-apps',
               component: () => import('@/views/admin/StoreAppsView.vue'),
@@ -395,6 +372,12 @@ const router = createRouter({
               name: 'admin-models',
               component: () => import('@/views/admin/ModelsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['model_pool:read'] },
+            },
+            {
+              path: 'model-providers',
+              name: 'AdminModelProviders',
+              component: () => import('@/views/admin/ModelProvidersView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['model_provider:read'] },
             },
             {
               path: 'showcase',
@@ -550,7 +533,6 @@ const CUSTOMER_CONFIG_ROUTE_NAMES = new Set([
   'space-mcp-list',
   'space-datasets-list',
   'space-datasets-documents-list',
-  'space-datasets-documents-create',
   'space-datasets-documents-segments-list',
   'space-apps-detail',
   'space-apps-published',

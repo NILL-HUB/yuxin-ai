@@ -81,7 +81,7 @@ const menuGroups = computed(() => ([
     items: [
       { to: '/admin/apps', label: t('admin.adminLayout.menu.apps'), permission: 'app:read' },
       { to: '/admin/workflows', label: t('admin.adminLayout.menu.workflows'), permission: 'workflow:read' },
-      { to: '/admin/datasets', label: t('admin.adminLayout.menu.datasets'), permission: 'dataset:read' },
+      { to: '/admin/system-knowledge', label: t('admin.adminLayout.menu.systemKnowledge'), permission: 'system_knowledge:read' },
       { to: '/admin/tools', label: t('admin.adminLayout.menu.tools'), permission: 'tool:read' },
       { to: '/admin/mcp', label: t('admin.adminLayout.menu.mcp'), permission: 'mcp:read' },
       { to: '/admin/skills', label: t('admin.adminLayout.menu.skills'), permission: 'skill:read' },
@@ -105,6 +105,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/agent-pool', label: t('admin.adminLayout.menu.agentPool'), permission: 'agent_pool:read' },
       { to: '/admin/tool-governance', label: t('admin.adminLayout.menu.toolGovernance'), permission: 'tool_governance:read' },
       { to: '/admin/sub-pool-definition', label: t('admin.adminLayout.menu.subPoolDef'), permission: 'agent_pool:read' },
+      { to: '/admin/model-providers', label: t('admin.adminLayout.menu.modelProviders'), permission: 'model_provider:read' },
       { to: '/admin/models', label: t('admin.adminLayout.menu.models'), permission: 'model_pool:read' },
     ],
   },
@@ -274,12 +275,13 @@ const handleLogout = async () => {
 
 <style scoped>
 .admin-layout {
-  min-height: 100vh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 252px 1fr;
   background: #f4f7fb;
   color: #172033;
   transition: grid-template-columns 0.25s ease;
+  overflow: hidden;
 }
 
 .admin-layout.collapsed {
@@ -497,7 +499,8 @@ const handleLogout = async () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .admin-topbar {
@@ -554,6 +557,7 @@ h1 {
   flex: 1;
   min-height: 0;
   display: flex;
+  overflow-y: auto;
 }
 
 /* fluid 模式：编辑器画布路由取消 padding，让画布填满 topbar 下方区域 */
