@@ -37,6 +37,11 @@ class NotFoundException(CustomException):
     code = HttpCode.NOT_FOUND
 
 
+class ConflictException(CustomException):
+    """资源冲突异常"""
+    code = HttpCode.CONFLICT
+
+
 class UnauthorizedException(CustomException):
     """未授权异常"""
     code = HttpCode.UNAUTHORIZED

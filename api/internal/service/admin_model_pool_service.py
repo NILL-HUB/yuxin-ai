@@ -7,7 +7,7 @@ from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from internal.exception import NotFoundException
+from internal.exception import ConflictException, NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.model_pool_entity import (
@@ -139,6 +139,22 @@ class AdminModelPoolService:
         return self._serialize_model(self._get_model_or_raise(model_id))
 
     def create_model(self, payload: dict) -> dict:
+        # 校验 provider 存在且 active
+        provider_name = payload["provider"]
+        from internal.model.model_provider_entity import ModelProviderConfig
+        provider = self.session.query(ModelProviderConfig).filter_by(
+            name=provider_name, status="active"
+        ).first()
+        if not provider:
+            raise NotFoundException(f"供应商 {provider_name} 不存在或已禁用")
+
+        # 校验同 provider 下 model_name 唯一
+        existing = self.session.query(ModelPoolConfig).filter_by(
+            provider=provider_name, model_name=payload["model_name"]
+        ).first()
+        if existing:
+            raise ConflictException(f"模型 {payload['model_name']} 在供应商 {provider_name} 下已存在")
+
         model = ModelPoolConfig(
             provider=payload["provider"],
             model_name=payload["model_name"],
@@ -148,12 +164,15 @@ class AdminModelPoolService:
             price_per_1k_tokens=self._decimal(payload.get("price_per_1k_tokens")),
             max_tokens=int(payload.get("max_tokens") or 0),
             status=payload.get("status") or "active",
-            base_url=payload.get("base_url") or None,
+            model_type=payload.get("model_type") or "chat",
+            compatible_api=payload.get("compatible_api") or "openai",
             fallback_model_id=payload.get("fallback_model_id") or None,
             priority=int(payload.get("priority") or 0),
         )
         self.session.add(model)
         self.session.commit()
+
+        self._invalidate_model_cache(model.provider, model.model_name)
         return self._serialize_model(model)
 
     def update_model(self, model_id: UUID, payload: dict) -> dict:
@@ -178,22 +197,39 @@ class AdminModelPoolService:
             model.fallback_model_id = payload["fallback_model_id"] or None
         if "priority" in payload:
             model.priority = int(payload.get("priority") or 0)
-        if "base_url" in payload:
-            model.base_url = payload["base_url"] or None
+        if "model_type" in payload:
+            model.model_type = payload["model_type"]
+        if "compatible_api" in payload:
+            model.compatible_api = payload["compatible_api"]
         model.updated_at = self._now()
         self.session.commit()
         return self._serialize_model(model)
 
     def delete_model(self, model_id: UUID) -> None:
         model = self._get_model_or_raise(model_id)
+        # 前置校验：无 model_id 精确关联的 Key
+        precise_keys_count = (
+            self.session.query(ModelKeyConfig)
+            .filter(ModelKeyConfig.model_id == str(model.id))
+            .count()
+        )
+        if precise_keys_count > 0:
+            raise ConflictException(
+                f"存在 {precise_keys_count} 个 model_id 精确关联的 Key，请先删除或解绑"
+            )
+        provider_name = model.provider
+        model_name = model.model_name
         self.session.delete(model)
         self.session.commit()
+
+        self._invalidate_model_cache(provider_name, model_name)
 
     def set_model_status(self, model_id: UUID, status: str) -> dict:
         model = self._get_model_or_raise(model_id)
         model.status = status
         model.updated_at = self._now()
         self.session.commit()
+        self._invalidate_model_cache(model.provider, model.model_name)
         return self._serialize_model(model)
 
     def list_keys(self, *, provider: str = "", status: str = "", current_page: int = 1, page_size: int = 20) -> dict:
@@ -217,6 +253,22 @@ class AdminModelPoolService:
         }
 
     def create_key(self, payload: dict) -> dict:
+        # 校验 provider 存在且 active
+        from internal.model.model_provider_entity import ModelProviderConfig
+        provider = self.session.query(ModelProviderConfig).filter_by(
+            name=payload["provider"], status="active"
+        ).first()
+        if not provider:
+            raise NotFoundException(f"供应商 {payload['provider']} 不存在或已禁用")
+
+        # 若填了 model_id，校验模型存在且 provider 一致
+        if payload.get("model_id"):
+            model = self.session.query(ModelPoolConfig).filter_by(id=payload["model_id"]).first()
+            if not model:
+                raise NotFoundException("关联模型不存在")
+            if model.provider != payload["provider"]:
+                raise ConflictException("模型的供应商与 Key 的供应商不一致")
+
         key = ModelKeyConfig(
             provider=payload["provider"],
             key_alias=payload["key_alias"],
@@ -270,7 +322,27 @@ class AdminModelPoolService:
 
     def list_tier_policies(self) -> dict:
         policies = self.session.query(ModelTierPolicy).order_by(ModelTierPolicy.tier_code.asc()).all()
+        if not policies:
+            self._ensure_default_tier_policies()
+            policies = self.session.query(ModelTierPolicy).order_by(ModelTierPolicy.tier_code.asc()).all()
         return {"list": [self._serialize_tier_policy(policy) for policy in policies]}
+
+    def _ensure_default_tier_policies(self) -> None:
+        """首次查询时自动 seed 5 个默认档位策略。"""
+        default_tiers = ["cheap", "standard", "strong", "vision", "long_context"]
+        now = self._now()
+        for tier_code in default_tiers:
+            existing = self.session.query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier_code).one_or_none()
+            if existing is None:
+                self.session.add(ModelTierPolicy(
+                    tier_code=tier_code,
+                    allowed_models=[],
+                    default_model="",
+                    routing_rules={},
+                    created_at=now,
+                    updated_at=now,
+                ))
+        self.session.commit()
 
     def update_tier_policy(self, tier_code: str, payload: dict) -> dict:
         policy = self.session.query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier_code).one_or_none()
@@ -324,6 +396,17 @@ class AdminModelPoolService:
             raise NotFoundException("模型配置不存在")
         return model
 
+    def _invalidate_model_cache(self, provider_name: str, model_name: str) -> None:
+        """失效 LanguageModelManager 中的 model 缓存"""
+        try:
+            from internal.core.language_model.language_model_manager import LanguageModelManager
+            from injector import Injector
+            injector = Injector()
+            manager = injector.get(LanguageModelManager)
+            manager.invalidate_model(provider_name, model_name)
+        except Exception:
+            pass
+
     def _get_key_or_raise(self, key_id: UUID) -> ModelKeyConfig:
         key = self.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == key_id).one_or_none()
         if key is None:
@@ -347,7 +430,8 @@ class AdminModelPoolService:
             "price_per_1k_tokens": f"{Decimal(str(model.price_per_1k_tokens or 0)):.6f}",
             "max_tokens": int(model.max_tokens or 0),
             "status": model.status,
-            "base_url": model.base_url or None,
+            "model_type": model.model_type,
+            "compatible_api": model.compatible_api,
             "fallback_model_id": model.fallback_model_id or None,
             "priority": int(model.priority or 0),
             "created_at": self._timestamp(model.created_at),
