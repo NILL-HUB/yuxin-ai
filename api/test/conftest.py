@@ -116,6 +116,8 @@ CREATE TABLE model_pool_config (
     price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
     max_tokens INTEGER NOT NULL DEFAULT 0,
     status VARCHAR(64) NOT NULL DEFAULT 'active',
+    model_type VARCHAR(32) NOT NULL DEFAULT 'chat',
+    compatible_api VARCHAR(32) NOT NULL DEFAULT 'openai',
     fallback_model_id VARCHAR(36),
     priority INTEGER NOT NULL DEFAULT 0,
     updated_at DATETIME NOT NULL,
