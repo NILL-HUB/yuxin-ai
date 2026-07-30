@@ -1111,26 +1111,6 @@ class SkillService(BaseService):
             **({"bundle": version_record.bundle or {}} if include_bundle and version_record else {}),
         }
 
-    def _build_skill_package_payload(
-        self,
-        *,
-        package: SkillPackage,
-        version_record: SkillPackageVersion | None,
-        include_versions: bool = False,
-        include_tools: bool = False,
-        include_bundle: bool = False,
-        version_payload: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
-        """兼容旧命名，避免内部调用遗漏时直接报错。"""
-        return self._build_package_payload(
-            package=package,
-            version_record=version_record,
-            include_versions=include_versions,
-            include_tools=include_tools,
-            include_bundle=include_bundle,
-            version_payload=version_payload,
-        )
-
     def _extract_skill_readme(
         self,
         package: SkillPackage,
