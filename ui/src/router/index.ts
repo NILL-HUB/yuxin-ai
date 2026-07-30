@@ -374,6 +374,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['model_pool:read'] },
             },
             {
+              path: 'public-ai-features',
+              name: 'admin-public-ai-features',
+              component: () => import('@/views/admin/PublicAIFeatureConfigView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['model_pool:read'] },
+            },
+            {
               path: 'model-providers',
               name: 'AdminModelProviders',
               component: () => import('@/views/admin/ModelProvidersView.vue'),

@@ -1,0 +1,7 @@
+# Prompt 模板清单
+# prompt_sync_service 启动时遍历此清单，按 category/key 加载对应 YAML 同步到 DB。
+# 路径规则: internal/core/prompts/<category>/<prompt_key>.yaml
+
+- key: conductor
+  category: routing
+  file: routing/conductor.yaml

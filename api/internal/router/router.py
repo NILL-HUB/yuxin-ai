@@ -22,6 +22,8 @@ from internal.handler import (
     AdminOrchestrationReleaseHandler,
     AdminModelPoolHandler,
     AdminModelProviderHandler,
+    AdminPublicAIFeatureHandler,
+    AdminPromptTemplateHandler,
     AdminCostStatsHandler,
     AdminCustomerUserHandler,
     AdminMcpHandler,
@@ -108,6 +110,8 @@ class Router:
     admin_workflow_handler: AdminWorkflowHandler
     admin_model_pool_handler: AdminModelPoolHandler
     admin_model_provider_handler: AdminModelProviderHandler
+    admin_public_ai_feature_handler: AdminPublicAIFeatureHandler
+    admin_prompt_template_handler: AdminPromptTemplateHandler
     admin_cost_stats_handler: AdminCostStatsHandler
     ai_handler: AIHandler
     api_key_handler: ApiKeyHandler
@@ -432,6 +436,13 @@ class Router:
             methods=["POST"],
             view_func=self.knowledge_base_handler.generate_icon_preview,
             endpoint="knowledge_base_generate_icon_preview",
+        )
+        # 用户端：列出对 Agent 可读的系统知识库（enabled=True），供 App 配置引用
+        bp.add_url_rule(
+            "/space/system-knowledge-bases",
+            methods=["GET"],
+            view_func=self.knowledge_base_handler.list_system_knowledge_bases,
+            endpoint="system_knowledge_base_list_readable",
         )
 
         # 6.授权认证模块
@@ -971,6 +982,19 @@ class Router:
             methods=["POST"],
             view_func=self.admin_workflow_handler.batch_offline,
         )
+        # 管理员工作流导入导出（阶段 6）
+        bp.add_url_rule(
+            "/admin/workflows/import",
+            endpoint="admin_workflow_import",
+            methods=["POST"],
+            view_func=self.admin_workflow_handler.import_workflow,
+        )
+        bp.add_url_rule(
+            "/admin/workflows/<uuid:workflow_id>/export",
+            endpoint="admin_workflow_export",
+            methods=["GET"],
+            view_func=self.admin_workflow_handler.export_workflow,
+        )
         bp.add_url_rule(
             "/admin/tools",
             endpoint="admin_tool_entry",
@@ -1056,6 +1080,24 @@ class Router:
             view_func=self.admin_skills_handler.import_catalog_package,
         )
         bp.add_url_rule(
+            "/admin/skills/import-zip",
+            endpoint="admin_skill_import_zip",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.import_skill_zip,
+        )
+        bp.add_url_rule(
+            "/admin/skills/import-github",
+            endpoint="admin_skill_import_github",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.import_skill_github,
+        )
+        bp.add_url_rule(
+            "/admin/skills/import-json",
+            endpoint="admin_skill_import_json",
+            methods=["POST"],
+            view_func=self.admin_skills_handler.import_skill_json,
+        )
+        bp.add_url_rule(
             "/admin/api-tools",
             endpoint="admin_api_tool_list",
             methods=["GET"],
@@ -1110,6 +1152,18 @@ class Router:
             methods=["GET"],
             view_func=self.admin_builtin_tool_handler.get_categories,
         )
+        bp.add_url_rule(
+            "/admin/builtin-tools/<uuid:tool_id>",
+            endpoint="admin_builtin_tool_detail",
+            methods=["GET"],
+            view_func=self.admin_builtin_tool_handler.get_tool,
+        )
+        bp.add_url_rule(
+            "/admin/builtin-tools/<uuid:tool_id>",
+            endpoint="admin_builtin_tool_update",
+            methods=["PATCH"],
+            view_func=self.admin_builtin_tool_handler.update_tool,
+        )
         # 管理员上传文件模块
         bp.add_url_rule(
             "/admin/upload-files/image",
@@ -1122,6 +1176,30 @@ class Router:
             endpoint="admin_mcp_categories",
             methods=["GET"],
             view_func=self.admin_mcp_handler.get_mcp_categories,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/import-mcp-json",
+            endpoint="admin_mcp_import_mcp_json",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.import_mcp_json,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/preview-url",
+            endpoint="admin_mcp_preview_url",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.preview_mcp_url,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/import-url",
+            endpoint="admin_mcp_import_url",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.import_mcp_url,
+        )
+        bp.add_url_rule(
+            "/admin/mcp/import-json",
+            endpoint="admin_mcp_import_json",
+            methods=["POST"],
+            view_func=self.admin_mcp_handler.import_mcp_json_config,
         )
         bp.add_url_rule(
             "/admin/mcp",
@@ -1311,10 +1389,22 @@ class Router:
             view_func=self.admin_model_pool_handler.list_tier_policies,
         )
         bp.add_url_rule(
+            "/admin/model-tiers",
+            endpoint="admin_model_tier_create",
+            methods=["POST"],
+            view_func=self.admin_model_pool_handler.create_tier_policy,
+        )
+        bp.add_url_rule(
             "/admin/model-tiers/<string:tier_code>",
             endpoint="admin_model_tier_update",
             methods=["PUT"],
             view_func=self.admin_model_pool_handler.update_tier_policy,
+        )
+        bp.add_url_rule(
+            "/admin/model-tiers/<string:tier_code>",
+            endpoint="admin_model_tier_delete",
+            methods=["DELETE"],
+            view_func=self.admin_model_pool_handler.delete_tier_policy,
         )
         bp.add_url_rule(
             "/admin/cost-policies",
@@ -1333,6 +1423,57 @@ class Router:
             endpoint="admin_cost_policy_update",
             methods=["PUT"],
             view_func=self.admin_model_pool_handler.update_cost_policy,
+        )
+        # 公共 AI 功能配置
+        bp.add_url_rule(
+            "/admin/public-ai-features",
+            endpoint="admin_public_ai_feature_list",
+            methods=["GET"],
+            view_func=self.admin_public_ai_feature_handler.list_features,
+        )
+        bp.add_url_rule(
+            "/admin/public-ai-features/models",
+            endpoint="admin_public_ai_feature_models",
+            methods=["GET"],
+            view_func=self.admin_public_ai_feature_handler.list_available_models,
+        )
+        bp.add_url_rule(
+            "/admin/public-ai-features/<string:feature_key>",
+            endpoint="admin_public_ai_feature_get",
+            methods=["GET"],
+            view_func=self.admin_public_ai_feature_handler.get_feature,
+        )
+        bp.add_url_rule(
+            "/admin/public-ai-features/<string:feature_key>",
+            endpoint="admin_public_ai_feature_update",
+            methods=["PATCH"],
+            view_func=self.admin_public_ai_feature_handler.update_feature,
+        )
+
+        # Prompt 模板管理（指挥官等系统 prompt 后台编辑）
+        bp.add_url_rule(
+            "/admin/prompt-templates",
+            endpoint="admin_prompt_template_list",
+            methods=["GET"],
+            view_func=self.admin_prompt_template_handler.list_templates,
+        )
+        bp.add_url_rule(
+            "/admin/prompt-templates/<string:prompt_key>",
+            endpoint="admin_prompt_template_get",
+            methods=["GET"],
+            view_func=self.admin_prompt_template_handler.get_template,
+        )
+        bp.add_url_rule(
+            "/admin/prompt-templates/<string:prompt_key>",
+            endpoint="admin_prompt_template_update",
+            methods=["PATCH"],
+            view_func=self.admin_prompt_template_handler.update_template,
+        )
+        bp.add_url_rule(
+            "/admin/prompt-templates/<string:prompt_key>/reset",
+            endpoint="admin_prompt_template_reset",
+            methods=["POST"],
+            view_func=self.admin_prompt_template_handler.reset_template,
         )
         bp.add_url_rule(
             "/admin/cost-stats/overview",
@@ -1749,6 +1890,12 @@ class Router:
             view_func=self.mcp_handler.create_mcp_provider,
         )
         bp.add_url_rule(
+            "/mcp-providers/import-mcp-json",
+            endpoint="mcp_provider_import_mcp_json",
+            methods=["POST"],
+            view_func=self.mcp_handler.import_mcp_json,
+        )
+        bp.add_url_rule(
             "/mcp-providers/<uuid:provider_id>",
             view_func=self.mcp_handler.get_mcp_provider,
         )
@@ -1882,6 +2029,19 @@ class Router:
             "/workflows/<uuid:workflow_id>/runs/<uuid:run_id>/node-executions",
             methods=["GET"],
             view_func=self.workflow_handler.get_workflow_run_node_executions,
+        )
+        # 10.1 工作流导入导出（阶段 6）
+        bp.add_url_rule(
+            "/workflows/import",
+            endpoint="workflow_import",
+            methods=["POST"],
+            view_func=self.workflow_handler.import_workflow,
+        )
+        bp.add_url_rule(
+            "/workflows/<uuid:workflow_id>/export",
+            endpoint="workflow_export",
+            methods=["GET"],
+            view_func=self.workflow_handler.export_workflow,
         )
 
         # 12.语言模型模块
@@ -2204,3 +2364,46 @@ class Router:
         # 24.在应用上注册蓝图
         app.register_blueprint(bp)
         app.register_blueprint(openapi_bp)
+
+        # 25.注册本地文件存储访问路由（仅在 STORAGE_BACKEND=local 时启用）
+        self._register_local_storage_route(app)
+
+    def _register_local_storage_route(self, app: Flask) -> None:
+        """注册本地文件存储的 HTTP 访问路由。
+
+        仅在 ``STORAGE_BACKEND=local`` 时启用，提供 ``/storage/local/<path:key>``
+        端点用于访问本地存储的文件。生产环境应通过 Nginx 直接代理此路径。
+        """
+        import os
+        from flask import send_from_directory, abort
+
+        backend = (os.getenv("STORAGE_BACKEND") or "local").strip().lower()
+        if backend != "local":
+            return
+
+        from internal.service.storage.local_storage_service import (
+            DEFAULT_LOCAL_STORAGE_ROOT,
+            LOCAL_STORAGE_URL_PREFIX,
+            _get_local_storage_root,
+        )
+
+        storage_root = _get_local_storage_root()
+
+        @app.route(f"{LOCAL_STORAGE_URL_PREFIX}/<path:key>", methods=["GET"])
+        def serve_local_storage_file(key: str):
+            """提供本地存储文件的 HTTP 访问。"""
+            # 防止路径穿越攻击
+            import os.path as _osp
+            safe_key = _osp.normpath(key).lstrip("/\\")
+            if ".." in safe_key.split(_osp.sep):
+                abort(400, description="非法路径")
+
+            file_path = _osp.join(storage_root, safe_key)
+            if not _osp.isfile(file_path):
+                abort(404, description="文件不存在")
+
+            return send_from_directory(
+                storage_root,
+                safe_key,
+                as_attachment=False,
+            )

@@ -7,19 +7,24 @@ from internal.schema import DictField, ListField
 
 MODEL_STATUSES = ["active", "disabled"]
 KEY_STATUSES = ["active", "disabled", "circuit_open"]
-MODEL_TIERS = ["cheap", "standard", "strong", "vision", "long_context"]
+# 档位改为数据库动态管理，不再硬编码 MODEL_TIERS
+# 保留旧常量用于向后兼容引用（如已迁移数据的校验回退），但运行时不使用
+LEGACY_MODEL_TIERS = ["cheap", "standard", "strong", "vision", "long_context"]
 BILLING_MODES = ["token", "request", "credit"]
 MODEL_TYPES = [
-    "chat", "completion", "embedding", "multimodal",
+    "chat", "embedding", "multimodal",
     "image_generation", "video_generation", "ocr", "tts", "asr", "rerank",
 ]
 COMPATIBLE_APIS = ["openai", "claude"]
+
+# embedding 模型可选维度（与 EmbeddingTableRouter.SUPPORTED_DIMENSIONS 对齐）
+EMBEDDING_DIMENSIONS = [512, 768, 1024, 1280, 1536, 2048, 2560, 3072, 4096, 8192]
 
 
 class GetAdminModelsReq(FlaskForm):
     search = StringField("search", default="", validators=[Optional(), Length(max=255)])
     provider = StringField("provider", default="", validators=[Optional(), Length(max=128)])
-    tier = StringField("tier", default="", validators=[Optional(), AnyOf(["", *MODEL_TIERS])])
+    tier = StringField("tier", default="", validators=[Optional(), Length(max=64)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", *MODEL_STATUSES])])
     model_type = StringField("model_type", default="", validators=[Optional(), AnyOf(["", *MODEL_TYPES])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
@@ -30,26 +35,28 @@ class CreateAdminModelReq(FlaskForm):
     provider = StringField("provider", validators=[InputRequired(), Length(max=128)])
     model_name = StringField("model_name", validators=[InputRequired(), Length(max=255)])
     display_name = StringField("display_name", default="", validators=[Optional(), Length(max=255)])
-    tier = StringField("tier", default="standard", validators=[Optional(), AnyOf(MODEL_TIERS)])
+    tier = StringField("tier", default="2", validators=[Optional(), Length(max=64)])
     capabilities = ListField("capabilities", default=[])
     price_per_1k_tokens = StringField("price_per_1k_tokens", default="0.000000", validators=[Optional(), Length(max=32)])
     max_tokens = IntegerField("max_tokens", default=0, validators=[Optional(), NumberRange(min=0, max=10_000_000)])
     status = StringField("status", default="active", validators=[Optional(), AnyOf(MODEL_STATUSES)])
     model_type = StringField("model_type", default="chat", validators=[Optional(), AnyOf(MODEL_TYPES)])
     compatible_api = StringField("compatible_api", default="openai", validators=[Optional(), AnyOf(COMPATIBLE_APIS)])
+    # embedding_dimension 由后端自动探测（调用 API 探测实际维度），不接受前端传入
 
 
 class UpdateAdminModelReq(FlaskForm):
     provider = StringField("provider", validators=[Optional(), Length(max=128)])
     model_name = StringField("model_name", validators=[Optional(), Length(max=255)])
     display_name = StringField("display_name", validators=[Optional(), Length(max=255)])
-    tier = StringField("tier", validators=[Optional(), AnyOf(MODEL_TIERS)])
+    tier = StringField("tier", validators=[Optional(), Length(max=64)])
     capabilities = ListField("capabilities", default=[])
-    price_per_1k_tokens = StringField("price_per_1k_tokens", validators=[Optional(), Length(max=32)])
-    max_tokens = IntegerField("max_tokens", validators=[Optional(), NumberRange(min=0, max=10_000_000)])
+    price_per_1k_tokens = StringField("price_per_1k_tokens", default="0.000000", validators=[Optional(), Length(max=32)])
+    max_tokens = IntegerField("max_tokens", default=0, validators=[Optional(), NumberRange(min=0, max=10_000_000)])
     status = StringField("status", validators=[Optional(), AnyOf(MODEL_STATUSES)])
     model_type = StringField("model_type", validators=[Optional(), AnyOf(MODEL_TYPES)])
-    compatible_api = StringField("compatible_api", validators=[Optional(), AnyOf(COMPATIBLE_APIS)])
+    compatible_api = StringField("compatible_api", default="openai", validators=[Optional(), AnyOf(COMPATIBLE_APIS)])
+    # embedding_dimension 由后端自动探测，不接受前端传入
 
 
 class SetAdminModelStatusReq(FlaskForm):
@@ -82,17 +89,28 @@ class SetAdminModelKeyStatusReq(FlaskForm):
     status = StringField("status", validators=[InputRequired(), AnyOf(KEY_STATUSES)])
 
 
+class CreateAdminModelTierReq(FlaskForm):
+    tier_code = StringField("tier_code", validators=[InputRequired(), Length(min=1, max=64)])
+    tier_name = StringField("tier_name", validators=[InputRequired(), Length(min=1, max=128)])
+    sort_order = IntegerField("sort_order", default=0, validators=[Optional(), NumberRange(min=0, max=9999)])
+    allowed_models = ListField("allowed_models", default=[])
+    default_model = StringField("default_model", default="", validators=[Optional(), Length(max=255)])
+    routing_rules = DictField("routing_rules", default=None)
+
+
 class UpdateAdminModelTierReq(FlaskForm):
+    tier_name = StringField("tier_name", validators=[Optional(), Length(min=1, max=128)])
+    sort_order = IntegerField("sort_order", validators=[Optional(), NumberRange(min=0, max=9999)])
     allowed_models = ListField("allowed_models", default=[])
     default_model = StringField("default_model", default="", validators=[Optional(), Length(max=255)])
     routing_rules = DictField("routing_rules", default=None)
 
 
 class UpdateAdminCostPolicyReq(FlaskForm):
-    model_tier = StringField("model_tier", validators=[Optional(), AnyOf(MODEL_TIERS)])
-    max_cost_per_request = StringField("max_cost_per_request", validators=[Optional(), Length(max=32)])
+    model_tier = StringField("model_tier", validators=[Optional(), Length(max=64)])
+    max_cost_per_request = StringField("max_cost_per_request", default="", validators=[Optional(), Length(max=32)])
     billing_mode = StringField("billing_mode", validators=[Optional(), AnyOf(BILLING_MODES)])
-    upgrade_threshold = StringField("upgrade_threshold", validators=[Optional(), Length(max=32)])
+    upgrade_threshold = StringField("upgrade_threshold", default="", validators=[Optional(), Length(max=32)])
 
 
 class AdminModelResp(Schema):
@@ -100,6 +118,7 @@ class AdminModelResp(Schema):
     provider = fields.String()
     model_name = fields.String()
     display_name = fields.String()
+    description = fields.String(allow_none=True)
     tier = fields.String()
     capabilities = fields.List(fields.String())
     price_per_1k_tokens = fields.String()
@@ -107,6 +126,7 @@ class AdminModelResp(Schema):
     status = fields.String()
     model_type = fields.String()
     compatible_api = fields.String()
+    embedding_dimension = fields.Integer(allow_none=True)
     created_at = fields.Integer(allow_none=True)
     updated_at = fields.Integer(allow_none=True)
 
@@ -136,6 +156,8 @@ class AdminModelKeyPageResp(Schema):
 class AdminModelTierResp(Schema):
     id = fields.String()
     tier_code = fields.String()
+    tier_name = fields.String()
+    sort_order = fields.Integer()
     allowed_models = fields.List(fields.String())
     default_model = fields.String()
     routing_rules = fields.Dict()

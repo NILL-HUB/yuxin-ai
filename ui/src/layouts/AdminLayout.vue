@@ -107,6 +107,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/sub-pool-definition', label: t('admin.adminLayout.menu.subPoolDef'), permission: 'agent_pool:read' },
       { to: '/admin/model-providers', label: t('admin.adminLayout.menu.modelProviders'), permission: 'model_provider:read' },
       { to: '/admin/models', label: t('admin.adminLayout.menu.models'), permission: 'model_pool:read' },
+      { to: '/admin/public-ai-features', label: t('admin.adminLayout.menu.publicAIFeatures'), permission: 'model_pool:read' },
     ],
   },
   {
@@ -557,7 +558,19 @@ h1 {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   overflow-y: auto;
+}
+
+/*
+  约束所有页面根元素的最小宽度，防止宽内容（长表格、长按钮行）撑开
+  导致按钮被挤出屏幕；同时 flex-direction: column 让交叉轴 stretch
+  使空内容页面也能填满容器宽度，避免按钮缩成一团。
+*/
+.admin-content > * {
+  min-width: 0;
+  width: 100%;
+  flex-shrink: 0;
 }
 
 /* fluid 模式：编辑器画布路由取消 padding，让画布填满 topbar 下方区域 */
