@@ -9,7 +9,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import type { EChartsOption } from 'echarts'
 import moment from 'moment'
-import { useGetAppAnalysis } from '@/hooks/use-analysis'
+import { useGetAdminAppAnalysis } from '@/hooks/use-admin-analysis'
 import OverviewIndicator from '@/components/OverviewIndicator.vue'
 
 use([GridComponent, LineChart, CanvasRenderer, TooltipComponent])
@@ -38,7 +38,7 @@ type TrendInsight = {
 
 const route = useRoute()
 const { t, locale } = useI18n()
-const { loading: getAppAnalysisLoading, app_analysis, loadAppAnalysis } = useGetAppAnalysis()
+const { loading: getAppAnalysisLoading, app_analysis, loadAppAnalysis } = useGetAdminAppAnalysis()
 
 const trendCards = computed<TrendCard[]>(() => [
   {

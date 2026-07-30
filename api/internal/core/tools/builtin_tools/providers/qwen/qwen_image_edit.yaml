@@ -2,13 +2,21 @@ name: qwen_image_edit
 label: 千问图像编辑
 description: 千问图像编辑基础版，支持单张图片输入进行编辑
 params:
-  - name: num_inference_steps
-    label: 推理步数
-    type: number
-    default: 50
-    required: false
-  - name: cfg
-    label: CFG引导系数
-    type: number
-    default: 4.0
-    required: false
+- name: num_inference_steps
+  label: 推理步数
+  type: number
+  default: 50
+  required: false
+- name: cfg
+  label: CFG引导系数
+  type: number
+  default: 4.0
+  required: false
+task_keywords:
+- 图片编辑
+- 图像编辑
+- qwen
+- 千问
+- 改图
+- 编辑图片
+- 图片修改

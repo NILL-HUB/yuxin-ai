@@ -20,6 +20,7 @@ from sqlalchemy import desc
 from .base_service import BaseService
 from internal.core.tools.api_tools.providers import ApiProviderManager
 from .icon_generator_service import IconGeneratorService
+from .tool_credential_encryptor import encrypt_headers, mask_headers
 
 @inject
 @dataclass
@@ -60,17 +61,18 @@ class ApiToolService(BaseService):
                 ApiTool.account_id == account.id,
             ).delete()
 
-        # 6.修改工具提供者信息
+        # 6.修改工具提供者信息（headers 落库前加密）
         self.update(
             api_tool_provider,
             name=req.name.data,
             icon=req.icon.data,
-            headers=req.headers.data,
+            headers=encrypt_headers(req.headers.data),
             description=openapi_schema.description,
             openapi_schema=req.openapi_schema.data,
         )
 
-        # 7.新增工具信息从而完成覆盖更新
+        # 7.新增工具信息从而完成覆盖更新（task_keywords 透传到每个工具）
+        task_keywords = req.task_keywords.data or []
         for path, path_item in openapi_schema.paths.items():
             for method, method_item in path_item.items():
                 self.create(
@@ -82,6 +84,7 @@ class ApiToolService(BaseService):
                     url=f"{openapi_schema.server}{path}",
                     method=method,
                     parameters=method_item.get("parameters", []),
+                    task_keywords=task_keywords,
                 )
 
     def get_api_tool_providers_wiith_page(
@@ -102,6 +105,10 @@ class ApiToolService(BaseService):
         api_tool_providers = paginator.paginate(
             self.db.session.query(ApiToolProvider).filter(*filters).order_by(desc("created_at"))
         )
+        # 4.对返回数据中的 headers 进行脱敏（已加密值会先解密再脱敏）
+        for provider in api_tool_providers:
+            if getattr(provider, "headers", None):
+                provider.headers = mask_headers(provider.headers)
         return api_tool_providers,paginator
 
     def get_api_tool(
@@ -132,6 +139,9 @@ class ApiToolService(BaseService):
         # 2.检验数据是否为空 并且判断该数据是否属于当前帐号
         if api_tool_provider is None or str(api_tool_provider.account_id) != str(account.id):
             raise NotFoundException("该工具提供者不存在")
+        # 3.对 headers 进行脱敏处理（已加密值会先解密再脱敏）
+        if api_tool_provider.headers:
+            api_tool_provider.headers = mask_headers(api_tool_provider.headers)
         return api_tool_provider
 
     def create_api_tool(
@@ -160,10 +170,11 @@ class ApiToolService(BaseService):
             icon=req.icon.data,
             description=openapi_schema.description,
             openapi_schema=req.openapi_schema.data,
-            headers=req.headers.data
+            headers=encrypt_headers(req.headers.data)
         )
 
-        # 4.创建api工具并关联api_tool_provider
+        # 4.创建api工具并关联api_tool_provider（task_keywords 透传到每个工具）
+        task_keywords = req.task_keywords.data or []
         for path, path_item in openapi_schema.paths.items():
             for method,method_item in path_item.items():
                 self.create(
@@ -175,6 +186,7 @@ class ApiToolService(BaseService):
                     url=f"{openapi_schema.server}{path}",
                     method=method,
                     parameters=method_item.get("parameters", []),
+                    task_keywords=task_keywords,
                 )
 
     def delete_api_tool_provider(
@@ -216,6 +228,10 @@ class ApiToolService(BaseService):
         api_tool_providers = paginator.paginate(
             self.db.session.query(ApiToolProvider).filter(*filters).order_by(desc("created_at"))
         )
+        # 4.对返回数据中的 headers 进行脱敏（管理员视角同样脱敏）
+        for provider in api_tool_providers:
+            if getattr(provider, "headers", None):
+                provider.headers = mask_headers(provider.headers)
         return api_tool_providers, paginator
 
     def get_api_tool_provider_for_admin(self, provider_id: UUID):
@@ -223,6 +239,9 @@ class ApiToolService(BaseService):
         api_tool_provider = self.get(ApiToolProvider, provider_id)
         if api_tool_provider is None:
             raise NotFoundException("该工具提供者不存在")
+        # 管理员视角同样对 headers 做脱敏处理
+        if api_tool_provider.headers:
+            api_tool_provider.headers = mask_headers(api_tool_provider.headers)
         return api_tool_provider
 
     def update_api_tool_provider_for_admin(
@@ -254,12 +273,12 @@ class ApiToolService(BaseService):
                 ApiTool.provider_id == api_tool_provider.id,
             ).delete()
 
-        # 6.修改工具提供者信息
+        # 6.修改工具提供者信息（headers 落库前加密）
         self.update(
             api_tool_provider,
             name=req.name.data,
             icon=req.icon.data,
-            headers=req.headers.data,
+            headers=encrypt_headers(req.headers.data),
             description=openapi_schema.description,
             openapi_schema=req.openapi_schema.data,
         )

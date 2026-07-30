@@ -201,3 +201,138 @@ def track_language_model_usage(model: Any):
         yield tracker
     finally:
         tracker.restore()
+
+
+def extract_token_usage(response) -> dict | None:
+    """从 LangChain LLM response 对象提取 token usage。
+
+    支持多种格式：
+    - response.response_metadata.token_usage（OpenAI 兼容）
+    - response.usage_metadata（LangChain v0.2+）
+    - response.response_metadata.usage
+
+    Returns:
+        {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+        或 None（无法提取时）
+    """
+    # 1. 尝试 response_metadata.token_usage（OpenAI 兼容格式）
+    metadata = getattr(response, "response_metadata", None) or {}
+    usage = metadata.get("token_usage") or metadata.get("usage") or {}
+    if usage:
+        return {
+            "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+            "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+
+    # 2. 尝试 usage_metadata（LangChain v0.2+ AIMessage）
+    usage_meta = getattr(response, "usage_metadata", None) or {}
+    if usage_meta:
+        return {
+            "prompt_tokens": usage_meta.get("input_tokens", 0),
+            "completion_tokens": usage_meta.get("output_tokens", 0),
+            "total_tokens": usage_meta.get("total_tokens", 0),
+        }
+
+    return None
+
+
+def extract_token_usage_from_stream(chunks: list) -> dict | None:
+    """从 LangChain 流式调用的 chunk 列表中提取 token usage。
+
+    流式调用中，最后一个 chunk 通常携带 usage_metadata。
+
+    Args:
+        chunks: llm.stream() 返回的所有 chunk 列表
+
+    Returns:
+        与 extract_token_usage 相同格式，或 None
+    """
+    if not chunks:
+        return None
+
+    # 检查最后一个 chunk
+    last_chunk = chunks[-1]
+
+    # 1. 检查 usage_metadata
+    usage_meta = getattr(last_chunk, "usage_metadata", None) or {}
+    if usage_meta:
+        return {
+            "prompt_tokens": usage_meta.get("input_tokens", 0),
+            "completion_tokens": usage_meta.get("output_tokens", 0),
+            "total_tokens": usage_meta.get("total_tokens", 0),
+        }
+
+    # 2. 检查 response_metadata.token_usage
+    metadata = getattr(last_chunk, "response_metadata", None) or {}
+    usage = metadata.get("token_usage") or metadata.get("usage") or {}
+    if usage:
+        return {
+            "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
+            "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+
+    return None
+
+
+def charge_for_feature(credit_service, account_id, feature_key: str, token_count: int) -> bool:
+    """公共 AI 功能 LLM 调用后扣减用户额度。
+
+    Args:
+        credit_service: CreditService 实例（可为 None，None 时不扣费）
+        account_id: 用户账户 ID
+        feature_key: 公共 AI 功能标识
+        token_count: 总 token 数
+
+    Returns:
+        True 表示已扣费，False 表示未扣费（credit_service 为 None 或 token_count <= 0）
+    """
+    if credit_service is None or token_count <= 0:
+        return False
+
+    try:
+        from internal.service.credit_service import CreditService
+        if isinstance(credit_service, CreditService):
+            credit_service.consume_for_feature(account_id, feature_key, token_count=token_count)
+            return True
+    except Exception:
+        # 计费失败不应影响主流程
+        import logging
+        logging.getLogger(__name__).warning(
+            "charge_for_feature failed: feature=%s, tokens=%d",
+            feature_key, token_count, exc_info=True
+        )
+    return False
+
+
+# ---------------------------------------------------------------------------
+# LCEL 链式调用 token 用量捕获
+# ---------------------------------------------------------------------------
+
+# 优先使用 langchain_community 的 get_openai_callback；若未安装则降级为
+# 基于 langchain_core BaseCallbackHandler 的自定义 handler。
+try:
+    from langchain_community.callbacks import get_openai_callback  # type: ignore
+except ImportError:  # pragma: no cover - 环境差异
+    get_openai_callback = None  # type: ignore
+
+
+from langchain_core.callbacks import BaseCallbackHandler
+
+
+class _UsageTrackingHandler(BaseCallbackHandler):
+    """get_openai_callback 不可用时的降级方案：通过回调捕获 token usage。
+
+    使用方式：将实例传入 chain.invoke/stream 的 config={"callbacks": [handler]}，
+    调用结束后通过 handler.total_tokens 读取总 token 数。
+    """
+
+    def __init__(self) -> None:
+        self.total_tokens: int = 0
+
+    def on_llm_end(self, response, **_kwargs) -> None:
+        llm_output = getattr(response, "llm_output", None) or {}
+        token_usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
+        if token_usage:
+            self.total_tokens += int(token_usage.get("total_tokens", 0) or 0)

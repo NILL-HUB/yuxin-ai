@@ -1,8 +1,8 @@
-import os
 import requests
 from langchain_core.tools import Tool
 from pydantic import BaseModel, Field
 from internal.lib.helper import add_attribute
+from internal.service.language_model_service import LanguageModelService
 
 
 class SiliconFlowKolorsTextToImageArgsSchema(BaseModel):
@@ -12,11 +12,13 @@ class SiliconFlowKolorsTextToImageArgsSchema(BaseModel):
 
 def _generate_image(prompt: str, **kwargs) -> str:
     """使用SiliconFlow Kolors生成图像"""
-    api_key = os.getenv("SILICONFLOW_API_KEY")
-    if not api_key:
-        return "错误：未配置SILICONFLOW_API_KEY环境变量。请在.env文件中添加：SILICONFLOW_API_KEY=your_api_key"
+    creds = LanguageModelService.get_provider_credentials(provider="SiliconFlow")
+    api_key = (creds.get("api_key") or "").strip()
+    base_url = (creds.get("base_url") or "").rstrip("/")
+    if not api_key or not base_url:
+        return "错误：数据库未配置 SiliconFlow 凭证，请在 admin 后台配置 provider=SiliconFlow 的模型及对应 key"
 
-    url = "https://api.siliconflow.cn/v1/images/generations"
+    url = f"{base_url}/images/generations"
 
     # 获取参数，使用默认值
     image_size = kwargs.get("image_size", "1024x1024")

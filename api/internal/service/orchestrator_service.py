@@ -1,4 +1,5 @@
 import logging
+import time
 logger = logging.getLogger(__name__)
 from types import SimpleNamespace
 
@@ -7,10 +8,14 @@ from injector import inject
 from internal.entity.orchestrator_entity import ExecutionMode, RiskLevel, RoutingDecision
 from internal.service.billing_metering_service import BillingUsageAggregator
 from internal.service.cost_policy_service import CostPolicyService
+from internal.service.tool_selector_service import ToolSelectorService
 from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
 from internal.service.model_assignment_policy_service import ModelAssignmentPolicy
 from internal.service.model_gateway_service import ModelGatewayService
+from internal.service.orchestration_feature_flag_service import OrchestrationFeatureFlagService
 from internal.service.request_context_builder_service import RequestContextBuilder
+from internal.service.routing_event_logger import RoutingEventLogger
+from internal.service.routing_log_service import RoutingLogService
 from internal.service.routing_observability_service import RoutingObservabilityService
 from internal.service.task_planner_service import TaskPlannerService
 from .agent_pool_service import CrossPoolAgentSubsetBuilder
@@ -29,8 +34,9 @@ class OrchestratorService:
         subset_builder: CrossPoolAgentSubsetBuilder | None = None,
         tool_subset_builder: CrossPoolToolSubsetBuilder | None = None,
         task_planner: TaskPlannerService | None = None,
-        feature_flag_service=None,
-        event_logger=None,
+        feature_flag_service: OrchestrationFeatureFlagService | None = None,
+        event_logger: RoutingEventLogger | None = None,
+        routing_log_service: RoutingLogService | None = None,
         request_context_builder: RequestContextBuilder | None = None,
         model_assignment_policy: ModelAssignmentPolicy | None = None,
         model_gateway_service: ModelGatewayService | None = None,
@@ -38,6 +44,7 @@ class OrchestratorService:
         execution_mode_selector: ExecutionModeSelectorService | None = None,
         routing_observability_service: RoutingObservabilityService | None = None,
         agent_pool_service: AgentPoolService | None = None,
+        tool_selector_service: ToolSelectorService | None = None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver
@@ -46,6 +53,7 @@ class OrchestratorService:
         self.task_planner = task_planner
         self.feature_flag_service = feature_flag_service
         self.event_logger = event_logger
+        self.routing_log_service = routing_log_service
         self.request_context_builder = request_context_builder
         self.model_assignment_policy = model_assignment_policy
         self.model_gateway_service = model_gateway_service
@@ -53,8 +61,10 @@ class OrchestratorService:
         self.cost_policy_service = cost_policy_service
         self.execution_mode_selector = execution_mode_selector
         self.routing_observability_service = routing_observability_service
+        self.tool_selector_service = tool_selector_service
 
     def decide(self, query: str, **context) -> RoutingDecision:
+        start_time = time.monotonic()
         ctx = self.request_context_builder.build(query, **context) if self.request_context_builder is not None else SimpleNamespace(
             query=query,
             routing_log_id=context.get("routing_log_id"),
@@ -66,12 +76,28 @@ class OrchestratorService:
             image_urls=context.get("image_urls", []),
         )
         routing_log_id = ctx.routing_log_id
+        # ENABLE_ROUTING_LOGS 开启且调用方未传 routing_log_id 时，自动创建 pending 记录
+        routing_log_created = False
+        if routing_log_id is None and self._flag_enabled("ENABLE_ROUTING_LOGS", default=False):
+            if self.routing_log_service is not None and ctx.account_id is not None:
+                try:
+                    routing_log = self.routing_log_service.create_pending(
+                        account_id=ctx.account_id,
+                        user_query=ctx.query,
+                    )
+                    routing_log_id = routing_log.id
+                    routing_log_created = True
+                except Exception:
+                    logger.warning("创建 routing_log 记录失败", exc_info=True)
         budget_allowed = ctx.budget_allowed and bool(context.get("budget_allowed", True))
         try:
             self._emit("routing_started", routing_log_id, {"query": ctx.query})
             if not self._flag_enabled("ENABLE_ORCHESTRATOR", default=True):
                 return self._feature_disabled_decision()
             decision = self.task_classifier_service.classify(query, budget_allowed=budget_allowed)
+            # ENABLE_AUTO_DEEP_THINKING 关闭时，不自动触发深度思考（用户手动请求仍生效）
+            if not self._flag_enabled("ENABLE_AUTO_DEEP_THINKING", default=True):
+                decision.needs_deep_thinking = False
             self._emit(
                 "task_classified",
                 routing_log_id,
@@ -118,7 +144,7 @@ class OrchestratorService:
                     image_count=len(ctx.image_urls),
                     preliminary_mode=decision.execution_mode,
                 )
-            decision.tool_subset = self._build_tool_subset(ctx.account_id)
+            decision.tool_subset = self._build_tool_subset(ctx.account_id, query=ctx.query)
             self._emit(
                 "tool_candidates_found",
                 routing_log_id,
@@ -140,12 +166,46 @@ class OrchestratorService:
                 },
             )
             self._attach_phase6_summaries(ctx.query, decision)
-            self._record_observability(routing_log_id, decision, ctx)
+            self._record_observability(routing_log_id, decision, ctx, start_time)
+            # 更新 routing_log 记录为最终状态
+            if routing_log_created and self.routing_log_service is not None:
+                try:
+                    agent_subset = decision.agent_subset or {}
+                    tool_subset = decision.tool_subset or {}
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    self.routing_log_service.finalize(
+                        routing_log_id,
+                        routing_decision=decision.to_dict(),
+                        agent_candidates=agent_subset.get("selected_agents", []),
+                        filtered_out_agents=agent_subset.get("filtered_out_agents", []),
+                        tool_candidates=tool_subset.get("selected_tools", []),
+                        filtered_out_tools=tool_subset.get("filtered_out_tools", []),
+                        knowledge_hits=[],
+                        billing_events=decision.billing_events or [],
+                        status="success",
+                        agent_pool_hits=agent_subset.get("selected_agents", []) if isinstance(agent_subset, dict) else [],
+                        tool_pool_hits=tool_subset.get("selected_tools", []) if isinstance(tool_subset, dict) else [],
+                        latency_ms=latency_ms,
+                    )
+                except Exception:
+                    logger.warning("更新 routing_log 记录失败", exc_info=True)
             return decision
         except Exception as exc:
             logger.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
             self._emit("routing_failed", routing_log_id, {"error": str(exc)})
             self._emit("fallback_triggered", routing_log_id, {"reason": "classifier_error"})
+            # 更新 routing_log 记录为 fallback 状态
+            if routing_log_created and self.routing_log_service is not None:
+                try:
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    self.routing_log_service.finalize(
+                        routing_log_id,
+                        status="fallback",
+                        fallback_reason="classifier_error",
+                        latency_ms=latency_ms,
+                    )
+                except Exception:
+                    logger.warning("更新 routing_log fallback 记录失败", exc_info=True)
             return RoutingDecision(
                 intent="fallback",
                 complexity="unknown",
@@ -153,7 +213,7 @@ class OrchestratorService:
                 needs_tools=True,
                 needs_agent=True,
                 needs_multi_agent=False,
-                recommended_model_tier="standard",
+                recommended_model_tier="2",
                 risk_level=RiskLevel.UNKNOWN.value,
                 reason="调度决策失败，已回退到原 Assistant Agent 流程",
                 agent_subset={
@@ -178,7 +238,7 @@ class OrchestratorService:
             needs_tools=False,
             needs_agent=False,
             needs_multi_agent=False,
-            recommended_model_tier="cheap",
+            recommended_model_tier="1",
             risk_level=RiskLevel.SAFE.value,
             reason="feature_flag_disabled",
             agent_subset={
@@ -201,6 +261,8 @@ class OrchestratorService:
         return self.feature_flag_service.is_enabled(code)
 
     def _emit(self, event_type: str, routing_log_id, detail: dict | None = None) -> None:
+        if not self._flag_enabled("ENABLE_ROUTING_LOGS", default=False):
+            return
         if self.event_logger is None or routing_log_id is None:
             return
         try:
@@ -208,9 +270,12 @@ class OrchestratorService:
         except Exception:
             logger.warning("记录路由离散事件失败: %s", event_type, exc_info=True)
 
-    def _record_observability(self, routing_log_id, decision: RoutingDecision, ctx) -> None:
+    def _record_observability(self, routing_log_id, decision: RoutingDecision, ctx, start_time: float | None = None) -> None:
         if routing_log_id is None:
             return
+        if not self._flag_enabled("ENABLE_ROUTING_LOGS", default=False):
+            return
+        latency_ms = int((time.monotonic() - start_time) * 1000) if start_time is not None else 0
         try:
             self._emit(
                 "routing_completed",
@@ -224,6 +289,7 @@ class OrchestratorService:
                     "needs_deep_thinking": decision.needs_deep_thinking,
                     "needs_multi_agent": decision.needs_multi_agent,
                     "cost_policy_allowed": decision.cost_policy.get("allowed", True) if decision.cost_policy else True,
+                    "latency_ms": latency_ms,
                 },
             )
         except Exception:
@@ -241,7 +307,7 @@ class OrchestratorService:
                         complexity=decision.complexity,
                         risk_level=decision.risk_level,
                         fallback_reason="",
-                        latency_ms=0,
+                        latency_ms=latency_ms,
                         cost_summary={"total_credits": 0},
                         agent_pool_hits=agent_subset.get("selected_agents", []) if isinstance(agent_subset, dict) else [],
                         tool_pool_hits=tool_subset.get("selected_tools", []) if isinstance(tool_subset, dict) else [],
@@ -253,6 +319,11 @@ class OrchestratorService:
                 logger.warning("路由可观测摘要记录失败", exc_info=True)
 
     def _attach_phase6_summaries(self, query: str, decision: RoutingDecision) -> None:
+        # ENABLE_RESULT_SYNTHESIZER 关闭时，跳过 TaskPlanner 详细规划，使用简化摘要
+        if not self._flag_enabled("ENABLE_RESULT_SYNTHESIZER", default=False):
+            decision.task_plan_summary = self._safe_task_plan_summary()
+            decision.synthesis_summary = self._empty_synthesis_summary()
+            return
         if self.task_planner is not None:
             task_plan = self.task_planner.plan(query, decision)
             decision.task_plan_summary = task_plan.to_summary()
@@ -332,7 +403,13 @@ class OrchestratorService:
         event["event"] = event["event_type"]
         return [event]
 
-    def _build_tool_subset(self, account_id=None) -> dict:
+    def _build_tool_subset(self, account_id=None, query: str = "") -> dict:
+        """构建工具子集（方案A：关键词快通道 + LLM 兜底）。
+
+        ToolSelectorService 已重构为全 source_type 覆盖：
+        - 关键词快通道：匹配 task_keywords + tool_name + description
+        - LLM 兜底：对 builtin + mcp + skill + workflow + api_tool 做语义选择
+        """
         if not self._flag_enabled("ENABLE_TOOL_POOL_RETRIEVAL", default=True):
             return self._empty_tool_subset("feature_flag_disabled")
         if self.tool_subset_builder is None:
@@ -342,9 +419,86 @@ class OrchestratorService:
             try:
                 collected = self.tool_subset_builder.build(account_id)
                 candidates = collected.get("candidates", []) if isinstance(collected, dict) else []
-            except Exception:
-                logger.warning("工具候选收集失败，使用空候选列表", exc_info=True)
+            except Exception as exc:
+                logger.warning("工具候选收集失败，使用空候选列表: %s", exc, exc_info=True)
+
+        # 工具选择器：关键词快通道 + LLM 语义兜底（覆盖全 source_type）
+        if query and self.tool_selector_service is not None and candidates:
+            try:
+                selected = self.tool_selector_service.select_tools(
+                    query, candidates=candidates, max_tools=5,
+                )
+                if selected:
+                    return self._merge_llm_selection_with_ranked(
+                        candidates, selected, max_tools=5,
+                    )
+                # 选择器返回空（如 query="你好"），回退到默认排序
+                logger.info(
+                    "工具选择器返回空列表，回退默认排序 query=%s",
+                    query[:80],
+                )
+            except Exception as exc:
+                logger.warning("工具选择异常，回退到默认排序: %s", exc, exc_info=True)
+
+        # fallback: 默认排序（无查询感知）
         return self.tool_subset_builder.build_ranked_subset(candidates)
+
+    def _merge_llm_selection_with_ranked(
+        self,
+        candidates: list,
+        selected: list[dict[str, str]],
+        *,
+        max_tools: int = 5,
+    ) -> dict:
+        """将选中的工具与默认排序结果合并。
+
+        选中的工具（关键词或 LLM 命中）排在前面，其余按默认排序补充。
+        使用 (source_type, provider_id, tool_name) 三元组 key 匹配，
+        适配全 source_type（builtin/mcp/skill/workflow/api_tool）。
+        """
+        ranked = self.tool_subset_builder.build_ranked_subset(candidates)
+        all_tools = ranked.get("selected_tools", []) + ranked.get("backup_tools", [])
+
+        # 构建选中工具的三元组 key 查找表
+        selected_keys: set[tuple[str, str, str]] = set()
+        for sel in selected:
+            selected_keys.add((
+                str(sel.get("source_type", "")),
+                str(sel.get("provider_id", "")),
+                str(sel.get("tool_name", "")),
+            ))
+
+        # 分离选中的工具和其他工具
+        matched_tools = []
+        other_tools = []
+        for tool in all_tools:
+            if not isinstance(tool, dict):
+                continue
+            key = (
+                str(tool.get("source_type", "")),
+                str(tool.get("provider_id", "")),
+                str(tool.get("name", "")),
+            )
+            if key in selected_keys:
+                matched_tools.append(tool)
+            else:
+                other_tools.append(tool)
+
+        # 选中的工具排在前面
+        top_selected = matched_tools[:max_tools]
+        # 用其他工具补充到 max_tools
+        if len(top_selected) < max_tools:
+            top_selected.extend(other_tools[:max_tools - len(top_selected)])
+
+        backup = all_tools[max_tools:] if len(all_tools) > max_tools else []
+
+        return {
+            "selected_tools": top_selected,
+            "backup_tools": backup,
+            "filtered_out_tools": ranked.get("filtered_out_tools", []),
+            "selection_reason": "keyword_fast_path_then_llm_then_ranked",
+            "matched_count": len(matched_tools),
+        }
 
     @staticmethod
     def _empty_tool_subset(selection_reason: str) -> dict:

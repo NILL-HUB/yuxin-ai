@@ -158,12 +158,12 @@ class CompositeToolResolver:
                 is_recursive=False,
             ))
 
-        # datasets 字段：AppConfig 通过 app_dataset_joins 属性获取，AppConfigVersion 有 datasets 列
-        for idx, dataset_id in enumerate(self._extract_dataset_ids(config)):
+        # 知识库字段：读取 knowledge_base_ids
+        for idx, knowledge_base_id in enumerate(self._extract_knowledge_base_ids(config)):
             components.append(CompositeComponentRef(
-                tool_id=build_tool_id("knowledge", dataset_id),
+                tool_id=build_tool_id("knowledge", knowledge_base_id),
                 source_type="knowledge",
-                ref_path=f"agent_binding.app_config.datasets[{idx}]",
+                ref_path=f"agent_binding.app_config.knowledge_base_ids[{idx}]",
                 is_recursive=False,
             ))
 
@@ -309,17 +309,20 @@ class CompositeToolResolver:
 
     @staticmethod
     def _build_workflow_dataset_refs(node: dict, idx: int) -> list[CompositeComponentRef]:
-        """从 DatasetRetrievalNode 节点构建 CompositeComponentRef 列表（dataset_ids 是列表）。"""
-        dataset_ids = node.get("dataset_ids", [])
-        if not isinstance(dataset_ids, list):
+        """从 DatasetRetrievalNode 节点构建 CompositeComponentRef 列表。
+
+        读取 knowledge_base_ids 字段（新版 KnowledgeBase），按 knowledge source_type 构建。
+        """
+        ref_ids = node.get("knowledge_base_ids", [])
+        if not isinstance(ref_ids, list):
             return []
         refs: list[CompositeComponentRef] = []
-        for dataset_id in dataset_ids:
-            dataset_id_str = str(dataset_id).strip()
-            if not dataset_id_str:
+        for ref_id in ref_ids:
+            ref_id_str = str(ref_id).strip()
+            if not ref_id_str:
                 continue
             refs.append(CompositeComponentRef(
-                tool_id=build_tool_id("knowledge", dataset_id_str),
+                tool_id=build_tool_id("knowledge", ref_id_str),
                 source_type="knowledge",
                 ref_path=f"workflow.nodes[{idx}].dataset_retrieval",
                 is_recursive=False,
@@ -367,24 +370,17 @@ class CompositeToolResolver:
         return str(item).strip() if item else ""
 
     @staticmethod
-    def _extract_dataset_ids(config: Any) -> list[str]:
+    def _extract_knowledge_base_ids(config: Any) -> list[str]:
         """提取知识库 id 列表。
 
-        AppConfig 通过 app_dataset_joins 属性获取（返回 AppDatasetJoin 列表），
-        AppConfigVersion 通过 datasets JSONB 列获取（list[str]）。
+        仅读取新版 knowledge_base_ids 字段（AppConfig/AppConfigVersion 均有该 JSONB 列）。
         """
-        joins = getattr(config, "app_dataset_joins", None)
-        if joins:
+        knowledge_base_ids = getattr(config, "knowledge_base_ids", None)
+        if isinstance(knowledge_base_ids, list) and knowledge_base_ids:
             result = []
-            for join in joins:
-                dataset_id = getattr(join, "dataset_id", None)
-                if dataset_id is not None:
-                    dataset_id_str = str(dataset_id).strip()
-                    if dataset_id_str:
-                        result.append(dataset_id_str)
-            if result:
-                return result
-        datasets = getattr(config, "datasets", None)
-        if isinstance(datasets, list):
-            return [str(item).strip() for item in datasets if item]
+            for kb_id in knowledge_base_ids:
+                kb_id_str = str(kb_id).strip() if kb_id else ""
+                if kb_id_str:
+                    result.append(kb_id_str)
+            return result
         return []

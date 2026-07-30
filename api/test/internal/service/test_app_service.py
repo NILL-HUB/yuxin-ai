@@ -14,7 +14,7 @@ from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.audio_entity import ALLOWED_AUDIO_VOICES
 from internal.core.language_model.entities.model_entity import ModelParameterType
 from internal.exception import FailException, ForbiddenException, NotFoundException, ValidateErrorException
-from internal.model import ApiTool, Workflow, Dataset
+from internal.model import ApiTool, KnowledgeBase, Workflow
 from internal.service.app_debug_service import AppDebugService
 from internal.service.app_runtime_service import AppRuntimeService
 from internal.service.app_service import AppService
@@ -765,7 +765,7 @@ class TestAppService:
                 "mcp_bindings": [{"name": "mcp"}],
                 "workflows": [{"id": "wf-1"}],
                 "agent_bindings": [{"app_id": "agent-1"}],
-                "datasets": [],
+                "knowledge_base_ids": [],
             },
         )
 
@@ -1031,7 +1031,7 @@ class TestAppService:
             model_config={"provider": "openai", "model": "gpt-4o-mini"},
             tools=[],
             workflows=[],
-            datasets=[],
+            knowledge_base_ids=[],
             retrieval_config={},
             long_term_memory={"enable": True},
             opening_statement="hello",
@@ -1218,16 +1218,6 @@ class TestAppService:
         assert validated["agent_bindings"] == validate_bindings
 
     def test_publish_draft_app_config_should_create_runtime_config_and_history(self, monkeypatch):
-        class _DeleteQuery:
-            def __init__(self):
-                self.deleted = False
-
-            def filter(self, *_args):
-                return self
-
-            def delete(self):
-                self.deleted = True
-
         class _ScalarQuery:
             def __init__(self, value):
                 self.value = value
@@ -1239,14 +1229,11 @@ class TestAppService:
                 return self.value
 
         class _Session:
-            def __init__(self, delete_query, scalar_query):
-                self.delete_query = delete_query
+            def __init__(self, scalar_query):
                 self.scalar_query = scalar_query
-                self.calls = 0
 
             def query(self, _model):
-                self.calls += 1
-                return self.delete_query if self.calls == 1 else self.scalar_query
+                return self.scalar_query
 
         class _DB:
             def __init__(self, session):
@@ -1258,11 +1245,10 @@ class TestAppService:
                 self.auto_commit_count += 1
                 yield
 
-        delete_query = _DeleteQuery()
         scalar_query = _ScalarQuery(2)
         synced_app_ids = []
         service = _new_app_service(
-            db=_DB(_Session(delete_query, scalar_query)),
+            db=_DB(_Session(scalar_query)),
             redis_client=SimpleNamespace(),
             cos_service=SimpleNamespace(),
             retrieval_service=SimpleNamespace(),
@@ -1329,7 +1315,7 @@ class TestAppService:
                 preset_prompt="prompt",
                 tools=[],
                 workflows=[],
-                datasets=[],
+                knowledge_base_ids=[],
                 retrieval_config={},
                 long_term_memory={"enable": True},
                 opening_statement="hello",
@@ -1384,7 +1370,7 @@ class TestAppService:
                     }
                 ],
                 "workflows": [{"id": "wf-1"}],
-                "datasets": [{"id": "dataset-1"}],
+                "knowledge_base_ids": ["dataset-1"],
                 "retrieval_config": {},
                 "long_term_memory": {"enable": True},
                 "opening_statement": "hello",
@@ -1447,10 +1433,8 @@ class TestAppService:
         result = service.publish_draft_app_config(app_id, account)
 
         assert result is app
-        assert delete_query.deleted is True
         assert service.db.auto_commit_count == 1
         assert any(payload.get("status") == AppStatus.PUBLISHED.value for _, payload in updates)
-        assert sum(1 for model, _ in create_calls if model.__name__ == "AppDatasetJoin") == 1
         app_config_call = [payload for model, payload in create_calls if model.__name__ == "AppConfig"][0]
         assert app_config_call["mcp_bindings"] == [
             {
@@ -1490,16 +1474,6 @@ class TestAppService:
         assert prewarm_calls == [(app.id, AppConfigType.PUBLISHED.value)]
 
     def test_publish_draft_app_config_should_skip_public_and_published_at_when_not_shared_and_already_published(self, monkeypatch):
-        class _DeleteQuery:
-            def __init__(self):
-                self.deleted = False
-
-            def filter(self, *_args):
-                return self
-
-            def delete(self):
-                self.deleted = True
-
         class _ScalarQuery:
             def __init__(self, value):
                 self.value = value
@@ -1511,14 +1485,11 @@ class TestAppService:
                 return self.value
 
         class _Session:
-            def __init__(self, delete_query, scalar_query):
-                self.delete_query = delete_query
+            def __init__(self, scalar_query):
                 self.scalar_query = scalar_query
-                self.calls = 0
 
             def query(self, _model):
-                self.calls += 1
-                return self.delete_query if self.calls == 1 else self.scalar_query
+                return self.scalar_query
 
         class _DB:
             def __init__(self, session):
@@ -1530,10 +1501,9 @@ class TestAppService:
                 self.auto_commit_count += 1
                 yield
 
-        delete_query = _DeleteQuery()
         scalar_query = _ScalarQuery(5)
         service = _new_app_service(
-            db=_DB(_Session(delete_query, scalar_query)),
+            db=_DB(_Session(scalar_query)),
             redis_client=SimpleNamespace(),
             cos_service=SimpleNamespace(),
             retrieval_service=SimpleNamespace(),
@@ -1561,7 +1531,7 @@ class TestAppService:
                 preset_prompt="prompt",
                 tools=[],
                 workflows=[],
-                datasets=[],
+                knowledge_base_ids=[],
                 retrieval_config={},
                 long_term_memory={"enable": False},
                 opening_statement="hello",
@@ -1582,7 +1552,7 @@ class TestAppService:
                 "preset_prompt": "prompt",
                 "tools": [],
                 "workflows": [],
-                "datasets": [],
+                "knowledge_base_ids": [],
                 "retrieval_config": {},
                 "long_term_memory": {"enable": False},
                 "opening_statement": "hello",
@@ -1612,7 +1582,6 @@ class TestAppService:
         result = service.publish_draft_app_config(app_id, account, share_to_square=False)
 
         assert result is app
-        assert delete_query.deleted is True
         assert service.db.auto_commit_count == 1
         update_payload = updates[0][1]
         assert update_payload["status"] == AppStatus.PUBLISHED.value
@@ -1741,7 +1710,7 @@ class TestAppService:
             preset_prompt="prompt",
             tools=[],
             workflows=[],
-            datasets=[],
+            knowledge_base_ids=[],
             retrieval_config={},
             long_term_memory={"enable": True},
             opening_statement="hello",
@@ -1817,7 +1786,7 @@ class TestAppService:
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "dialog_round": 3,
             "tools": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
             "workflows": [],
             "retrieval_config": {},
             "preset_prompt": "prompt",
@@ -1933,7 +1902,7 @@ class TestAppService:
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "dialog_round": 3,
             "tools": [],
-            "datasets": [{"id": dataset_id}],
+            "knowledge_base_ids": [dataset_id],
             "workflows": [{"id": workflow_id}],
             "retrieval_config": {"retrieval_strategy": "semantic", "k": 2, "score": 0.3},
             "preset_prompt": "prompt",
@@ -2047,7 +2016,7 @@ class TestAppService:
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "dialog_round": 3,
             "tools": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
             "workflows": [],
             "retrieval_config": {},
             "preset_prompt": "prompt",
@@ -2137,7 +2106,7 @@ class TestAppService:
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "dialog_round": 2,
             "tools": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
             "workflows": [],
             "retrieval_config": {},
             "preset_prompt": "prompt",
@@ -2232,7 +2201,7 @@ class TestAppService:
             "model_config": {"provider": "openai", "model": "gpt-4o-mini", "parameters": {}},
             "dialog_round": 3,
             "tools": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
             "workflows": [],
             "retrieval_config": {},
             "preset_prompt": "默认提示词",
@@ -2546,10 +2515,10 @@ class _ValidationQuery:
 
 
 class _ValidationSession:
-    def __init__(self, *, api_tool_results=None, workflow_records=None, dataset_records=None):
+    def __init__(self, *, api_tool_results=None, workflow_records=None, knowledge_base_records=None):
         self._api_tool_results = list(api_tool_results or [])
         self._workflow_records = list(workflow_records or [])
-        self._dataset_records = list(dataset_records or [])
+        self._knowledge_base_records = list(knowledge_base_records or [])
 
     def query(self, model):
         if model is ApiTool:
@@ -2557,8 +2526,8 @@ class _ValidationSession:
             return _ValidationQuery(one_or_none_result=result)
         if model is Workflow:
             return _ValidationQuery(all_result=self._workflow_records)
-        if model is Dataset:
-            return _ValidationQuery(all_result=self._dataset_records)
+        if model is KnowledgeBase:
+            return _ValidationQuery(all_result=self._knowledge_base_records)
         raise AssertionError(f"unexpected query model: {model}")
 
 
@@ -2718,7 +2687,7 @@ class TestAppServiceDraftConfigValidation:
         assert parameters["temp"] == 0.8
         assert parameters["flag"] is True
 
-    def test_validate_should_filter_tools_workflows_and_datasets(self):
+    def test_validate_should_filter_tools_workflows_and_knowledge_base_ids(self):
         workflow_ok = uuid4()
         workflow_skip = uuid4()
         dataset_ok = uuid4()
@@ -2726,7 +2695,7 @@ class TestAppServiceDraftConfigValidation:
         session = _ValidationSession(
             api_tool_results=[SimpleNamespace(id=uuid4()), None],
             workflow_records=[SimpleNamespace(id=workflow_ok)],
-            dataset_records=[SimpleNamespace(id=dataset_ok)],
+            knowledge_base_records=[SimpleNamespace(id=dataset_ok)],
         )
         service = _build_validation_service(session=session)
         account = SimpleNamespace(id=uuid4())
@@ -2758,7 +2727,7 @@ class TestAppServiceDraftConfigValidation:
                 },
             ],
             "workflows": [str(workflow_ok), str(workflow_skip)],
-            "datasets": [str(dataset_ok), str(dataset_skip)],
+            "knowledge_base_ids": [str(dataset_ok), str(dataset_skip)],
         }
 
         validated = service._validate_draft_app_config(payload, account)
@@ -2767,7 +2736,7 @@ class TestAppServiceDraftConfigValidation:
         assert validated["tools"][0]["tool_id"] == "builtin-tool"
         assert validated["tools"][1]["tool_id"] == "api-ok"
         assert validated["workflows"] == [str(workflow_ok)]
-        assert validated["datasets"] == [str(dataset_ok)]
+        assert validated["knowledge_base_ids"] == [str(dataset_ok)]
 
     @pytest.mark.parametrize(
         "payload",
@@ -2780,17 +2749,17 @@ class TestAppServiceDraftConfigValidation:
             },
             {"workflows": [str(uuid4()), str(uuid4())[:8]]},
             {"workflows": [str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4())]},
-            {"datasets": [str(uuid4()), str(uuid4())[:8]]},
-            {"datasets": [str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4())]},
+            {"knowledge_base_ids": [str(uuid4()), str(uuid4())[:8]]},
+            {"knowledge_base_ids": [str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4())]},
         ],
     )
-    def test_validate_should_raise_for_invalid_tools_workflows_or_datasets(self, payload):
+    def test_validate_should_raise_for_invalid_tools_workflows_or_knowledge_base_ids(self, payload):
         service = _build_validation_service()
 
         with pytest.raises(ValidateErrorException):
             service._validate_draft_app_config(payload, SimpleNamespace(id=uuid4()))
 
-    def test_validate_should_raise_for_duplicate_workflows_and_datasets(self):
+    def test_validate_should_raise_for_duplicate_workflows_and_knowledge_base_ids(self):
         service = _build_validation_service()
         repeated_workflow_id = str(uuid4())
         repeated_dataset_id = str(uuid4())
@@ -2803,7 +2772,7 @@ class TestAppServiceDraftConfigValidation:
 
         with pytest.raises(ValidateErrorException):
             service._validate_draft_app_config(
-                {"datasets": [repeated_dataset_id, repeated_dataset_id]},
+                {"knowledge_base_ids": [repeated_dataset_id, repeated_dataset_id]},
                 SimpleNamespace(id=uuid4()),
             )
 
@@ -2946,7 +2915,7 @@ class TestAppServiceDraftConfigValidation:
             {"tools": [{"type": "builtin_tool", "provider_id": "", "tool_id": "t", "params": {}}]},
             {"tools": [{"type": "builtin_tool", "provider_id": "p", "tool_id": "t", "params": []}]},
             {"workflows": "bad"},
-            {"datasets": "bad"},
+            {"knowledge_base_ids": "bad"},
             {"retrieval_config": []},
             {"retrieval_config": {"retrieval_strategy": "semantic", "k": 2}},
             {"retrieval_config": {"retrieval_strategy": "invalid", "k": 2, "score": 0.3}},
@@ -3336,14 +3305,6 @@ class TestAppServiceDraftConfigValidation:
             service.generate_icon_preview(name="预览应用", description="应用描述")
 
     def test_publish_draft_app_config_should_not_force_public_when_share_to_square_disabled(self, monkeypatch):
-        class _DeleteQuery:
-            def filter(self, *_args):
-                return self
-
-            @staticmethod
-            def delete():
-                return None
-
         class _ScalarQuery:
             def filter(self, *_args):
                 return self
@@ -3353,13 +3314,7 @@ class TestAppServiceDraftConfigValidation:
                 return 1
 
         class _Session:
-            def __init__(self):
-                self.calls = 0
-
             def query(self, _model):
-                self.calls += 1
-                if self.calls == 1:
-                    return _DeleteQuery()
                 return _ScalarQuery()
 
         class _DB:
@@ -3402,7 +3357,7 @@ class TestAppServiceDraftConfigValidation:
                 preset_prompt="prompt",
                 tools=[],
                 workflows=[],
-                datasets=[],
+                knowledge_base_ids=[],
                 retrieval_config={},
                 long_term_memory={"enable": True},
                 opening_statement="hello",
@@ -3423,7 +3378,7 @@ class TestAppServiceDraftConfigValidation:
                 "preset_prompt": "prompt",
                 "tools": [],
                 "workflows": [],
-                "datasets": [],
+                "knowledge_base_ids": [],
                 "retrieval_config": {},
                 "long_term_memory": {"enable": True},
                 "opening_statement": "hello",
@@ -3450,14 +3405,6 @@ class TestAppServiceDraftConfigValidation:
         assert "published_at" not in update_payload
 
     def test_publish_draft_app_config_should_not_fail_when_public_registry_enqueue_failed(self, monkeypatch):
-        class _DeleteQuery:
-            def filter(self, *_args):
-                return self
-
-            @staticmethod
-            def delete():
-                return None
-
         class _ScalarQuery:
             def filter(self, *_args):
                 return self
@@ -3467,13 +3414,7 @@ class TestAppServiceDraftConfigValidation:
                 return 1
 
         class _Session:
-            def __init__(self):
-                self.calls = 0
-
             def query(self, _model):
-                self.calls += 1
-                if self.calls == 1:
-                    return _DeleteQuery()
                 return _ScalarQuery()
 
         class _DB:
@@ -3521,7 +3462,7 @@ class TestAppServiceDraftConfigValidation:
                 preset_prompt="prompt",
                 tools=[],
                 workflows=[],
-                datasets=[],
+                knowledge_base_ids=[],
                 retrieval_config={},
                 long_term_memory={"enable": True},
                 opening_statement="hello",
@@ -3542,7 +3483,7 @@ class TestAppServiceDraftConfigValidation:
                 "preset_prompt": "prompt",
                 "tools": [],
                 "workflows": [],
-                "datasets": [],
+                "knowledge_base_ids": [],
                 "retrieval_config": {},
                 "long_term_memory": {"enable": True},
                 "opening_statement": "hello",

@@ -29,15 +29,30 @@ def _build_service_with_llm(invoke_return=None, invoke_side_effect=None):
     return RerankService(language_model_service=mock_lms)
 
 
+@pytest.fixture(autouse=True)
+def _mock_no_provider_credentials(monkeypatch):
+    """禁用 provider rerank 路径，强制走 LLM 打分路径。
+
+    rerank_service 改造后优先从数据库查询 rerank 凭证调用 provider API，
+    测试环境数据库可能存在真实 rerank 配置导致走了 provider 路径而非 LLM。
+    这里统一 mock 返回空凭证，让 _rerank_with_provider 返回 None 降级到 LLM。
+    """
+    from internal.service.language_model_service import LanguageModelService
+
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_provider_credentials",
+        classmethod(lambda cls, provider=None, model_type=None: {}),
+    )
+
+
 class TestRerankService:
-    def test_rerank_empty_documents_returns_empty_list(self, monkeypatch):
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    def test_rerank_empty_documents_returns_empty_list(self):
         service = RerankService(language_model_service=Mock())
 
         assert service.rerank("查询", [], top_n=5) == []
 
-    def test_rerank_single_document_returns_directly(self, monkeypatch):
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    def test_rerank_single_document_returns_directly(self):
         service = RerankService(language_model_service=Mock())
         doc = {"content": "唯一文档", "score": 0.5}
 
@@ -45,8 +60,7 @@ class TestRerankService:
 
         assert result == [doc]
 
-    def test_rerank_llm_scoring_should_sort_by_llm_score(self, monkeypatch):
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    def test_rerank_llm_scoring_should_sort_by_llm_score(self):
         service = _build_service_with_llm(
             invoke_return=_FakeResponse('[{"index": 0, "score": 3}, {"index": 1, "score": 9}]'),
         )
@@ -59,8 +73,7 @@ class TestRerankService:
         assert result[1]["content"] == "文档A内容"
         assert result[1]["rerank_score"] == 3.0
 
-    def test_rerank_falls_back_to_original_score_when_llm_fails(self, monkeypatch):
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    def test_rerank_falls_back_to_original_score_when_llm_fails(self):
         service = _build_service_with_llm(invoke_side_effect=RuntimeError("LLM down"))
 
         result = service.rerank("查询", _make_docs(), top_n=5)
@@ -71,8 +84,7 @@ class TestRerankService:
         assert result[1]["content"] == "文档B内容"
         assert result[1]["score"] == 0.1
 
-    def test_rerank_top_n_truncation(self, monkeypatch):
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    def test_rerank_top_n_truncation(self):
         docs = [
             {"content": f"doc{i}", "score": 0.1 * i}
             for i in range(4)
@@ -92,8 +104,7 @@ class TestRerankService:
         assert result[1]["content"] == "doc2"
         assert result[1]["rerank_score"] == 3.0
 
-    def test_rerank_documents_preserves_metadata_and_scores(self, monkeypatch):
-        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    def test_rerank_documents_preserves_metadata_and_scores(self):
         from langchain_core.documents import Document as LCDocument
 
         service = _build_service_with_llm(

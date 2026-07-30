@@ -60,6 +60,7 @@ class ApiTool(db.Model):
         Index("api_tool_account_id_idx", "account_id"),
         Index("api_tool_provider_id_idx", "provider_id"),
         Index("api_tool_name_idx", "name"),
+        Index("api_tool_task_keywords_idx", "task_keywords", postgresql_using="gin"),
     )
 
     id = Column(UUID, nullable=False, server_default=text('uuid_generate_v4()'))
@@ -70,6 +71,9 @@ class ApiTool(db.Model):
     url = Column(String(255), nullable=False, server_default=text("''::character varying"))
     method = Column(String(255), nullable=False, server_default=text("''::character varying"))
     parameters = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # 输出 schema（用于 Agent 选择工具时判断输出形态，可选字段）
+    output_schema = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    task_keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 任务关键词列表，用于 ToolSelector 关键词快速匹配（方案A）
     updated_at = Column(
         DateTime,
         nullable=False,

@@ -18,7 +18,7 @@ class AgentQueueManager:
     redis_client: Redis
     _queues: dict[str, Queue]
     _terminal_events: dict[str, set[str]]
-    _DEFAULT_LISTEN_TIMEOUT_SECONDS: int = 1800
+    _DEFAULT_LISTEN_TIMEOUT_SECONDS: int = 86400
 
     def __init__(
             self,

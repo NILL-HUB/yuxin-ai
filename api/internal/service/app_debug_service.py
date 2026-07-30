@@ -119,6 +119,59 @@ class AppDebugService(BaseService):
 
         return conversation
 
+    @staticmethod
+    def _extract_builtin_tools_from_tool_subset(
+        tool_subset: dict,
+        *,
+        existing_tools: list[dict],
+        query: str = "",
+        max_extra: int = 3,
+    ) -> list[dict]:
+        """从 orchestrator 的 tool_subset 中提取 builtin 工具，转换为运行时 tools_config 格式。
+
+        orchestrator 的 tool_subset 已由 LLM 工具选择器（ToolSelectorService）根据查询语义选出
+        最相关的工具，此处仅做格式转换与去重。跳过应用已绑定的工具，返回运行时格式（带
+        provider/tool 嵌套对象）。
+        """
+        selected = tool_subset.get("selected_tools") or []
+        if not selected:
+            return []
+        # 应用已绑定的 builtin 工具去重键：(provider_id, tool_name)
+        existing_keys: set[tuple[str, str]] = set()
+        for t in existing_tools:
+            if not isinstance(t, dict):
+                continue
+            if t.get("type") != "builtin_tool":
+                continue
+            prov = t.get("provider_id") or (t.get("provider") or {}).get("id")
+            name = t.get("tool_id") or (t.get("tool") or {}).get("name")
+            if prov and name:
+                existing_keys.add((prov, name))
+
+        result: list[dict] = []
+        seen_keys: set[tuple[str, str]] = set()
+        for cand in selected:
+            if not isinstance(cand, dict):
+                continue
+            if cand.get("source_type") != "builtin":
+                continue
+            if len(result) >= max_extra:
+                break
+            provider_id = cand.get("provider_id", "")
+            tool_name = cand.get("name", "")
+            if not provider_id or not tool_name:
+                continue
+            key = (provider_id, tool_name)
+            if key in existing_keys or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            result.append({
+                "type": "builtin_tool",
+                "provider": {"id": provider_id, "name": provider_id},
+                "tool": {"name": tool_name, "params": {}},
+            })
+        return result
+
     def debug_chat(self, app_id: UUID, req: DebugChatReq, account: Account) -> Generator:
         """根据传递的应用id+提问query向特定的应用发起会话调试"""
         # 1.获取应用信息并校验权限
@@ -226,65 +279,106 @@ class AppDebugService(BaseService):
             if execution_mode in ("deep_thinking",):
                 execution_mode = ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value
 
-        if execution_mode and self.ENABLE_ORCHESTRATOR_FOR_DEBUG:
-            enable_deep_thinking = bool(req.confirm_deep_thinking.data)
-            agent_class = DeepThinkingAgent if enable_deep_thinking else (
-                FunctionCallAgent if ModelFeature.TOOL_CALL.value in llm.features else ReACTAgent
-            )
-            tools = self.app_runtime_service.build_runtime_tools(app_id, account, draft_app_config, flask_app=runtime_flask_app)
-            agent = self.app_runtime_service.create_runtime_agent(
-                llm,
-                account,
-                draft_app_config,
-                tools,
-                enable_deep_thinking,
-                flask_app=runtime_flask_app,
-                language_model_service=self.language_model_service,
-            )
-            agent_config = agent.agent_config
-            executor = SingleAgentExecutor(
-                agent_class=agent_class,
-                agent_config=agent_config,
-                tools=tools,
-                llm=llm,
-                history=history,
-                query=req.query.data,
-                long_term_memory=debug_conversation.summary,
-                user_memory="",
-            )
-            yield from executor.execute(
-                query=req.query.data,
-                conversation=debug_conversation,
-                message=message,
-                execution_mode=execution_mode,
-                routing_decision=routing_decision,
-            )
-        else:
-            yield from self.app_runtime_service.stream_agent_events(
-                app_id=app_id,
-                account=account,
-                draft_app_config=draft_app_config,
-                llm=llm,
-                query=req.query.data,
-                image_urls=req.image_urls.data,
-                history=history,
-                long_term_memory=debug_conversation.summary,
-                conversation_id=str(debug_conversation.id),
-                message_id=str(message.id),
-                agent_thoughts=agent_thoughts,
-                enable_deep_thinking=bool(req.confirm_deep_thinking.data),
-                flask_app=runtime_flask_app,
-            )
-
-        # 17.将消息以及推理过程添加到数据库
-        self.conversation_service.save_agent_thoughts(
-            account_id=account.id,
-            app_id=app_id,
-            app_config=draft_app_config,
-            conversation_id=debug_conversation.id,
-            message_id=message.id,
-            agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()],
-        )
+        try:
+            if execution_mode and self.ENABLE_ORCHESTRATOR_FOR_DEBUG:
+                enable_deep_thinking = bool(req.confirm_deep_thinking.data)
+                agent_class = DeepThinkingAgent if enable_deep_thinking else (
+                    FunctionCallAgent if ModelFeature.TOOL_CALL.value in llm.features else ReACTAgent
+                )
+                # 治理联动：当路由决策 needs_tools=True 时，把 orchestrator 选出的 builtin 工具
+                # 自动注入到运行时工具列表，避免用户必须手动给应用绑定工具才能调用工具。
+                # 仅注入 builtin 工具（最稳定，无需额外凭证），并跳过应用已绑定的工具去重。
+                runtime_app_config = draft_app_config
+                if routing_decision and routing_decision.get("needs_tools"):
+                    extra_tools_config = self._extract_builtin_tools_from_tool_subset(
+                        routing_decision.get("tool_subset") or {},
+                        existing_tools=draft_app_config.get("tools", []),
+                        query=req.query.data,
+                        max_extra=3,
+                    )
+                    if extra_tools_config:
+                        runtime_app_config = {
+                            **draft_app_config,
+                            "tools": list(draft_app_config.get("tools", [])) + extra_tools_config,
+                        }
+                        logger.warning(
+                            "应用调试注入治理池 builtin 工具 app_id=%s extra_tools=%s",
+                            app_id, [t["tool"]["name"] for t in extra_tools_config],
+                        )
+                # 传递 runtime_context 包含 conversation_id 和 message_id，供治理审计写入路由日志
+                tools = self.app_runtime_service.build_runtime_tools(
+                    app_id, account, runtime_app_config,
+                    flask_app=runtime_flask_app,
+                    runtime_context={
+                        "app_id": str(app_id),
+                        "account_id": str(account.id),
+                        "conversation_id": str(debug_conversation.id),
+                        "message_id": str(message.id),
+                    },
+                )
+                tool_names = [getattr(t, "name", str(t)) for t in tools]
+                logger.warning(
+                    "应用调试工具构建完成 app_id=%s execution_mode=%s tools_count=%d tool_names=%s",
+                    app_id, execution_mode, len(tools), tool_names,
+                )
+                agent = self.app_runtime_service.create_runtime_agent(
+                    llm,
+                    account,
+                    draft_app_config,
+                    tools,
+                    enable_deep_thinking,
+                    flask_app=runtime_flask_app,
+                    language_model_service=self.language_model_service,
+                )
+                agent_config = agent.agent_config
+                executor = SingleAgentExecutor(
+                    agent_class=agent_class,
+                    agent_config=agent_config,
+                    tools=tools,
+                    llm=llm,
+                    history=history,
+                    query=req.query.data,
+                    long_term_memory=debug_conversation.summary,
+                    user_memory="",
+                )
+                yield from executor.execute(
+                    query=req.query.data,
+                    conversation=debug_conversation,
+                    message=message,
+                    execution_mode=execution_mode,
+                    routing_decision=routing_decision,
+                )
+            else:
+                yield from self.app_runtime_service.stream_agent_events(
+                    app_id=app_id,
+                    account=account,
+                    draft_app_config=draft_app_config,
+                    llm=llm,
+                    query=req.query.data,
+                    image_urls=req.image_urls.data,
+                    history=history,
+                    long_term_memory=debug_conversation.summary,
+                    conversation_id=str(debug_conversation.id),
+                    message_id=str(message.id),
+                    agent_thoughts=agent_thoughts,
+                    enable_deep_thinking=bool(req.confirm_deep_thinking.data),
+                    flask_app=runtime_flask_app,
+                )
+        finally:
+            # 17.将消息以及推理过程添加到数据库
+            # 无论 Agent 流正常完成还是异常终止，都尝试落库已收集的推理过程
+            try:
+                self.conversation_service.save_agent_thoughts(
+                    account_id=account.id,
+                    app_id=app_id,
+                    app_config=draft_app_config,
+                    conversation_id=debug_conversation.id,
+                    message_id=message.id,
+                    agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()],
+                )
+            except Exception:
+                logger.warning("Debug会话落库失败，conversation_id=%s message_id=%s",
+                               debug_conversation.id, message.id, exc_info=True)
 
     def prompt_compare_chat(self, app_id: UUID, req: Any, account: Account) -> Generator[str, None, None]:
         """根据传递的应用id发起无状态提示词对比调试"""
@@ -335,6 +429,16 @@ class AppDebugService(BaseService):
         """根据传递的应用id+任务id停止某个提示词对比调试会话"""
         self.app_service.get_app(app_id, account)
         AgentQueueManager.set_stop_flag(task_id, InvokeFrom.DEBUGGER.value, account.id)
+
+    def prompt_compare_chat_for_admin(self, app_id: UUID, req: Any) -> Generator[str, None, None]:
+        """管理员发起提示词对比调试（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.prompt_compare_chat(app_id, req, account)
+
+    def stop_prompt_compare_chat_for_admin(self, app_id: UUID, task_id: UUID) -> None:
+        """管理员停止提示词对比调试会话（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        self.stop_prompt_compare_chat(app_id, task_id, account)
 
     def get_debug_conversation_messages_with_page(
             self,

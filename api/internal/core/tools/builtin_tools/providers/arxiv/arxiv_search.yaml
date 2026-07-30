@@ -2,8 +2,17 @@ name: arxiv_search
 label: Arxiv论文搜索
 description: 搜索Arxiv学术论文数据库，获取最新的科研论文和技术文献
 params:
-  - name: max_results
-    label: 最大结果数
-    type: number
-    default: 5
-    required: false
+- name: max_results
+  label: 最大结果数
+  type: number
+  default: 5
+  required: false
+task_keywords:
+- 论文
+- arxiv
+- 学术论文
+- 科研论文
+- 论文搜索
+- 学术搜索
+- 研究论文
+- paper

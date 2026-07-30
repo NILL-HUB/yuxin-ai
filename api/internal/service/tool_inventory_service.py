@@ -1,13 +1,38 @@
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
 from injector import inject
 
+from internal.entity.knowledge_entity import KnowledgeScope
 from internal.entity.tool_inventory_entity import RiskLevel, ToolSourceType, normalize_tool_metadata
+from internal.entity.tool_pool_entity import ToolSubPoolRegistry
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.extension.database_extension import db
-from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider, SkillPackage, Workflow
+from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider, SkillPackage, UserMemory, Workflow
 from .builtin_tool_service import BuiltinToolService
+
+logger = logging.getLogger(__name__)
+
+# 知识库 knowledge_scope 到工具子池的映射（架构文档 11.6）
+# 将原单一 "knowledge" 池拆分为 5 个子池，按 scope 精细化治理
+KNOWLEDGE_SCOPE_TO_TOOL_POOL: dict[str, str] = {
+    KnowledgeScope.SYSTEM.value: "system_knowledge_retriever",
+    KnowledgeScope.USER_CONTENT.value: "user_content_retriever",
+    KnowledgeScope.TENANT.value: "tenant_knowledge_retriever",
+    KnowledgeScope.PROJECT.value: "project_knowledge_retriever",
+    KnowledgeScope.USER_MEMORY.value: "user_memory_retriever",
+}
+
+# 所有知识类工具子池集合（含旧池 "knowledge" 以保持向后兼容）
+KNOWLEDGE_TOOL_POOLS = frozenset({
+    "knowledge",  # 旧池，向后兼容
+    "system_knowledge_retriever",
+    "user_memory_retriever",
+    "user_content_retriever",
+    "tenant_knowledge_retriever",
+    "project_knowledge_retriever",
+})
 
 
 def build_tool_id(source_type: str, *parts) -> str:
@@ -42,10 +67,64 @@ def parse_tool_id(tool_id: str) -> tuple[str, str]:
     return source_type, entity_id
 
 
+class ToolInventory:
+    """从 ToolSubPoolRegistry 读取可治理工具清单（架构 5.3 Phase 3）。
+
+    与 AgentInventory 之于 AgentSubPoolRegistry 的角色对称：作为子池注册表的轻量封装，
+    提供子池查询和归一化能力，供 ToolCandidateCollector 在收集候选时使用。
+    ToolInventory 不直接暴露给 Agent，只作为候选来源（架构 8.4.2）。
+    """
+
+    def __init__(self, registry: ToolSubPoolRegistry | None = None):
+        self.registry = registry or ToolSubPoolRegistry()
+
+    def list_pools(self) -> list[dict]:
+        """列出所有已注册的工具子池。"""
+        try:
+            return self.registry.list_pools()
+        except Exception:
+            logger.warning("工具子池列表查询失败", exc_info=True)
+            return []
+
+    def get_pool(self, name: str | None) -> dict:
+        """获取指定名称的工具子池定义，不存在时回退到 general。"""
+        return self.registry.get_pool(name)
+
+    def normalize_pool_name(self, name: str | None) -> str:
+        """将子池名称归一化为 registry 中定义的标准名称。
+
+        用于 ToolCandidateCollector 在收集候选时确保子池名与 registry 一致，
+        避免硬编码子池名与 registry 定义脱节。
+        """
+        return self.registry.normalize_pool_name(name)
+
+    def is_pool_visible(self, name: str | None) -> bool:
+        """判断子池是否对普通用户可见（system_admin 子池默认不可见）。"""
+        pool = self.get_pool(name)
+        return pool.get("visible_to_user", True)
+
+    def is_pool_enabled(self, name: str | None) -> bool:
+        """判断子池是否启用。"""
+        pool = self.get_pool(name)
+        return pool.get("default_enabled", True)
+
+
+@inject
 class ToolCandidateCollector:
-    def __init__(self, session=None, builtin_tool_service: BuiltinToolService | None = None):
+    """工具候选收集器：跨池收集 api_tool/mcp/builtin/knowledge/skill/workflow 候选。
+
+    使用 @inject 让 injector 自动注入 BuiltinToolService，
+    避免内置工具因 builtin_tool_service=None 被静默跳过。
+    """
+    def __init__(
+        self,
+        session=None,
+        builtin_tool_service: BuiltinToolService | None = None,
+        inventory: ToolInventory | None = None,
+    ):
         self.session = session or db.session
         self.builtin_tool_service = builtin_tool_service
+        self.inventory = inventory or ToolInventory()
 
     def collect(self, account_id: UUID) -> list[dict[str, object]]:
         candidates = []
@@ -53,6 +132,7 @@ class ToolCandidateCollector:
         candidates.extend(self._collect_mcp_tools(account_id))
         candidates.extend(self._collect_builtin_tools())
         candidates.extend(self._collect_knowledge_tools(account_id))
+        candidates.extend(self._collect_user_memory_tools(account_id))
         candidates.extend(self._collect_external_data_tools(account_id))
         candidates.extend(self._collect_skill_tools(account_id))
         candidates.extend(self._collect_workflow_tools(account_id))
@@ -60,17 +140,22 @@ class ToolCandidateCollector:
 
     def _collect_api_tools(self, account_id: UUID) -> list[dict[str, object]]:
         tools = self.session.query(ApiTool).filter(ApiTool.account_id == account_id).all()
+        api_pool = self.inventory.normalize_pool_name("api")
         result = []
         for tool in tools:
             provider = tool.provider
             metadata = normalize_tool_metadata({
-                **(getattr(tool, "metadata", {}) or {}),
-                "tool_pool": "api",
+                **(getattr(tool, "metadata_", None) or {}),
+                "tool_pool": api_pool,
                 "capabilities": [tool.name],
                 "permission_scope": "user",
             })
             if not self._is_available(metadata):
                 continue
+            # task_keywords 优先级：tool.task_keywords（用户配置） + tool.name（兜底）
+            tool_keywords = list(tool.task_keywords or [])
+            if tool.name and tool.name not in tool_keywords:
+                tool_keywords.append(tool.name)
             result.append({
                 "id": build_tool_id("api_tool", str(tool.id)),
                 "name": tool.name,
@@ -85,6 +170,8 @@ class ToolCandidateCollector:
                 "metadata": metadata,
                 "visibility": "private",
                 "enabled": True,
+                # 关键词快速匹配通道（方案A）：API 工具的关键词 = tool.task_keywords + tool.name
+                "task_keywords": tool_keywords,
             })
         return result
 
@@ -94,12 +181,15 @@ class ToolCandidateCollector:
             .filter((McpProvider.account_id == account_id) | (McpProvider.is_public == True))
             .all()
         )
+        mcp_pool = self.inventory.normalize_pool_name("mcp")
         result = []
         for provider in providers:
+            # MCP provider 级别的 task_keywords 作为所有 tool 的关键词候选
+            provider_keywords = list(provider.task_keywords or [])
             for tool_name in provider.tool_names or []:
                 metadata = normalize_tool_metadata({
-                    **(getattr(provider, "metadata", {}) or {}),
-                    "tool_pool": "mcp",
+                    **(getattr(provider, "metadata_", None) or {}),
+                    "tool_pool": mcp_pool,
                     "capabilities": [tool_name],
                     "permission_scope": "public" if provider.is_public else "user",
                 })
@@ -116,25 +206,38 @@ class ToolCandidateCollector:
                     "metadata": metadata,
                     "visibility": "public" if provider.is_public else "private",
                     "enabled": True,
+                    # 关键词快速匹配通道（方案A）：MCP 工具的关键词 = provider.task_keywords + tool_name
+                    "task_keywords": provider_keywords + [tool_name] if tool_name else provider_keywords,
                 })
         return result
 
     def _collect_builtin_tools(self) -> list[dict[str, object]]:
         if self.builtin_tool_service is None:
             return []
+        builtin_pool = self.inventory.normalize_pool_name("builtin")
         result = []
         for provider in self.builtin_tool_service.get_builtin_tools():
             for tool in provider.get("tools", []):
                 metadata = normalize_tool_metadata({
                     **(provider.get("metadata") or {}),
                     **(tool.get("metadata") or {}),
-                    "tool_pool": "builtin",
+                    "tool_pool": builtin_pool,
                     "capabilities": [tool.get("name", "")],
-                    "permission_scope": "system",
+                    # builtin 工具由系统提供但对所有用户公开可用，使用 "public" 而非 "system"
+                    # 否则 ToolPolicyFilter 会以 "permission_scope_denied" 将其全部过滤掉
+                    "permission_scope": "public",
+                    "user_scope": "public",
                     "owner": "system",
                 })
                 if not self._is_available(metadata):
                     continue
+                # task_keywords 来自 YAML 配置（tool_entity.task_keywords）+ tool.name（兜底）
+                # tool dict 由 BuiltinToolService.get_builtin_tools 通过 tool_entity.model_dump() 生成，
+                # 已包含 task_keywords 字段（ToolEntity.task_keywords 默认为 []）
+                tool_keywords = list(tool.get("task_keywords") or [])
+                tool_name = tool.get("name", "")
+                if tool_name and tool_name not in tool_keywords:
+                    tool_keywords.append(tool_name)
                 result.append({
                     "id": build_tool_id(
                         ToolSourceType.BUILTIN.value,
@@ -150,10 +253,21 @@ class ToolCandidateCollector:
                     "metadata": metadata,
                     "visibility": "system",
                     "enabled": True,
+                    # 关键词快速匹配通道（方案A）：builtin 工具的关键词 = YAML.task_keywords + tool.name
+                    "task_keywords": tool_keywords,
                 })
         return result
 
     def _collect_knowledge_tools(self, account_id: UUID) -> list[dict[str, object]]:
+        """收集 KnowledgeBase 作为知识检索工具候选。
+
+        按 knowledge_scope 拆分为 4 个子池（架构文档 11.6）：
+        - system → system_knowledge_retriever
+        - user_content → user_content_retriever
+        - tenant → tenant_knowledge_retriever
+        - project → project_knowledge_retriever
+        user_memory 子池由 _collect_user_memory_tools 单独收集。
+        """
         bases = (
             self.session.query(KnowledgeBase)
             .filter(
@@ -164,9 +278,13 @@ class ToolCandidateCollector:
         )
         result = []
         for base in bases:
+            # 按 knowledge_scope 映射到对应子池，未知 scope 回退到旧池 "knowledge"
+            tool_pool = KNOWLEDGE_SCOPE_TO_TOOL_POOL.get(
+                base.knowledge_scope, "knowledge"
+            )
             metadata = normalize_tool_metadata({
-                **(getattr(base, "metadata", {}) or {}),
-                "tool_pool": "knowledge",
+                **(getattr(base, "metadata_", {}) or {}),
+                "tool_pool": tool_pool,
                 "capabilities": [base.knowledge_scope],
                 "risk_level": RiskLevel.SAFE.value,
                 "permission_scope": "system" if base.knowledge_scope == "system" else "user",
@@ -195,6 +313,58 @@ class ToolCandidateCollector:
                 "enabled": True,
             })
         return result
+
+    def _collect_user_memory_tools(self, account_id: UUID) -> list[dict[str, object]]:
+        """收集当前用户的 UserMemory 作为 user_memory_retriever 工具候选。
+
+        按账号过滤，仅当用户存在有效记忆时收集为一个候选工具。
+        """
+        # 排除设置标记记录（memory_type == "__settings__"），只收集有效记忆
+        memories = (
+            self.session.query(UserMemory)
+            .filter(
+                UserMemory.owner_account_id == account_id,
+                UserMemory.status == "active",
+                UserMemory.memory_type != "__settings__",
+            )
+            .all()
+        )
+        if not memories:
+            return []
+        metadata = normalize_tool_metadata({
+            "tool_pool": "user_memory_retriever",
+            "capabilities": ["user_memory"],
+            "risk_level": RiskLevel.SAFE.value,
+            "permission_scope": "user",
+            "knowledge_scope": KnowledgeScope.USER_MEMORY.value,
+            "cost_level": "low",
+            "owner": str(account_id),
+            "user_scope": "owner",
+            "enabled": True,
+        })
+        if not self._is_available(metadata):
+            return []
+        return [{
+            "id": build_tool_id(
+                ToolSourceType.KNOWLEDGE.value, "user_memory", str(account_id)
+            ),
+            "name": "user_memory_retriever",
+            "description": "检索当前用户的历史记忆（偏好、事实等）",
+            "source_type": ToolSourceType.KNOWLEDGE.value,
+            "provider_id": str(account_id),
+            "provider_name": "user_memory",
+            "inputs": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "required": True,
+                    "description": "检索问题",
+                }
+            ],
+            "metadata": metadata,
+            "visibility": "private",
+            "enabled": True,
+        }]
 
     def _collect_external_data_tools(self, account_id: UUID) -> list[dict[str, object]]:
         data_sources = (
@@ -255,7 +425,7 @@ class ToolCandidateCollector:
         result = []
         for package in packages:
             metadata = normalize_tool_metadata({
-                **(getattr(package, "metadata", {}) or {}),
+                **(getattr(package, "metadata_", None) or {}),
                 "tool_pool": "skill",
                 "capabilities": package.capabilities or [],
                 "risk_level": RiskLevel.LOW.value,
@@ -277,6 +447,10 @@ class ToolCandidateCollector:
                 "metadata": metadata,
                 "visibility": "system",
                 "enabled": True,
+                # 关键词快速匹配通道（方案A）：Skill 的关键词 = task_keywords + capabilities 的 key
+                "task_keywords": list(package.task_keywords or []) + [
+                    str(c) for c in (package.capabilities or []) if c
+                ],
             })
         return result
 
@@ -316,6 +490,10 @@ class ToolCandidateCollector:
                 "metadata": metadata,
                 "visibility": "private",
                 "enabled": True,
+                # 关键词快速匹配通道（方案A）：Workflow 的关键词 = task_keywords + tool_call_name + name
+                "task_keywords": list(wf.task_keywords or []) + [
+                    k for k in [wf.tool_call_name, wf.name] if k
+                ],
             })
         return result
 
@@ -371,7 +549,7 @@ class ToolPolicyFilter:
             return "tool_disabled"
         if metadata.get("health_status") == "unhealthy":
             return "tool_unhealthy"
-        if metadata.get("tool_pool") == "knowledge" and not self._owner_allowed(
+        if metadata.get("tool_pool") in KNOWLEDGE_TOOL_POOLS and not self._owner_allowed(
             metadata, account_id
         ):
             return "knowledge_scope_denied"

@@ -8,6 +8,7 @@ from injector import inject
 from internal.middleware import admin_login_required, permission_required
 from internal.schema.admin_system_knowledge_schema import (
     CreateSystemKnowledgeReq,
+    GetSystemKnowledgeListReq,
     SystemKnowledgeListResp,
     SystemKnowledgeResp,
     UpdateSystemKnowledgeReq,
@@ -24,9 +25,17 @@ class AdminSystemKnowledgeHandler:
     @admin_login_required
     @permission_required("system_knowledge:read")
     def list(self):
-        bases = self.system_knowledge_service.list_system_knowledge()
+        # 从 query string 解析分页与搜索参数
+        req = GetSystemKnowledgeListReq(request.args)
+        if not req.validate():
+            return validate_error_json(req.errors)
+        result = self.system_knowledge_service.list_system_knowledge(
+            page=req.page.data,
+            page_size=req.page_size.data,
+            search_word=req.search_word.data or "",
+        )
         resp = SystemKnowledgeListResp()
-        return success_json(resp.dump({"items": bases, "total": len(bases)}))
+        return success_json(resp.dump(result))
 
     @admin_login_required
     @permission_required("system_knowledge:write")
@@ -39,6 +48,7 @@ class AdminSystemKnowledgeHandler:
             name=req.name.data,
             description=req.description.data,
             admin_user=admin_user,
+            visibility_scope=req.visibility_scope.data or "internal",
         )
         resp = SystemKnowledgeResp()
         return success_json(resp.dump(knowledge_base))
@@ -57,11 +67,14 @@ class AdminSystemKnowledgeHandler:
         if not req.validate():
             return validate_error_json(req.errors)
         payload = request.get_json(silent=True) or {}
+        admin_user = SimpleNamespace(id=g.current_admin_user["id"])
         knowledge_base = self.system_knowledge_service.update_system_knowledge(
             knowledge_base_id,
             name=payload.get("name") if "name" in payload else None,
             description=payload.get("description") if "description" in payload else None,
             enabled=payload.get("enabled") if "enabled" in payload else None,
+            visibility_scope=payload.get("visibility_scope") if "visibility_scope" in payload else None,
+            admin_user=admin_user,
         )
         resp = SystemKnowledgeResp()
         return success_json(resp.dump(knowledge_base))
@@ -69,5 +82,8 @@ class AdminSystemKnowledgeHandler:
     @admin_login_required
     @permission_required("system_knowledge:write")
     def delete(self, knowledge_base_id: UUID):
-        self.system_knowledge_service.delete_system_knowledge(knowledge_base_id)
+        admin_user = SimpleNamespace(id=g.current_admin_user["id"])
+        self.system_knowledge_service.delete_system_knowledge(
+            knowledge_base_id, admin_user=admin_user
+        )
         return success_json({"id": str(knowledge_base_id)})

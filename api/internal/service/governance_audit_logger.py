@@ -41,8 +41,10 @@ class GovernanceAuditLogger:
         *,
         request_id: str | None = None,
         conversation_id: str | None = None,
+        message_id: str | None = None,
         account_id: str | None = None,
         app_id: str | None = None,
+        actor_id: str | None = None,
     ) -> None:
         """将 RuntimeToolGovernanceGate 的 audit_context 写入路由日志。
 
@@ -51,9 +53,13 @@ class GovernanceAuditLogger:
         Args:
             audit_context: RuntimeToolGovernanceGate.apply() 返回的审计上下文
             request_id: 请求标识（best-effort，从 runtime_context 或 flask g 获取）
-            conversation_id: 会话标识（透传到 routing_log.message_id）
-            account_id: 账号 id（优先级：参数 > audit_context.account_id）
+            conversation_id: 会话标识（写入 routing_decision.conversation_id 上下文）
+            message_id: 消息标识（写入 routing_log.message_id 字段，关联具体消息记录）
+            account_id: 账号 id（写入 routing_log.account_id FK，优先级：参数 > audit_context.account_id）
+                注意：WebApp 访客不在 account 表中，需传入 app owner 的 account_id 作为 FK
             app_id: 应用 id
+            actor_id: 实际触发治理决策的 actor 标识（如 WebApp 访客 ID），
+                仅写入 routing_decision.actor_id 上下文用于追溯，不参与 FK 约束
         """
         if not audit_context:
             logger.debug(
@@ -69,8 +75,10 @@ class GovernanceAuditLogger:
                 audit_context,
                 request_id=request_id,
                 conversation_id=conversation_id,
+                message_id=message_id,
                 account_id=account_id,
                 app_id=app_id,
+                actor_id=actor_id,
             )
         except Exception as exc:
             # 任何异常都降级为 warning，不阻断主流程
@@ -93,13 +101,16 @@ class GovernanceAuditLogger:
         *,
         request_id: str | None,
         conversation_id: str | None,
+        message_id: str | None,
         account_id: str | None,
         app_id: str | None,
+        actor_id: str | None = None,
     ) -> None:
         """实际写入路由日志。失败时抛异常由 log_governance_decision 捕获降级。"""
 
         # account_id 优先级：参数 > audit_context
         # routing_log.account_id 为 NOT NULL FK，缺失时无法写入，抛 ValueError 触发降级
+        # 注意：WebApp 访客不在 account 表中，调用方需传入 app owner 的 account_id 作为 FK
         effective_account_id = account_id or audit_context.get("account_id")
         account_uuid = self._parse_uuid(effective_account_id)
         if account_uuid is None:
@@ -108,8 +119,9 @@ class GovernanceAuditLogger:
                 f"(routing_log.account_id is NOT NULL FK)"
             )
 
-        # conversation_id 透传到 message_id（可解析为 UUID 时），否则为 None
-        message_uuid = self._parse_uuid(conversation_id)
+        # message_id 写入 routing_log.message_id 字段（关联具体消息记录）
+        # 缺失时为 None（routing_log.message_id 允许为 NULL）
+        message_uuid = self._parse_uuid(message_id)
 
         accepted = list(audit_context.get("accepted") or [])
         filtered_out = list(audit_context.get("filtered_out") or [])
@@ -130,6 +142,8 @@ class GovernanceAuditLogger:
 
         # routing_decision 包含 decision_type/payload/summary/请求上下文
         # decision_type 用于在路由日志中区分治理决策与普通路由决策
+        # conversation_id 和 message_id 同时保留在上下文中，便于按会话或消息追溯
+        # actor_id 记录实际触发治理决策的 actor（如 WebApp 访客 ID），用于追溯
         routing_decision = {
             "decision_type": DECISION_TYPE_TOOL_GOVERNANCE,
             "payload": audit_context,
@@ -137,6 +151,8 @@ class GovernanceAuditLogger:
             "request_id": request_id,
             "app_id": app_id,
             "conversation_id": conversation_id,
+            "message_id": message_id,
+            "actor_id": actor_id,
         }
 
         log = RoutingLog(

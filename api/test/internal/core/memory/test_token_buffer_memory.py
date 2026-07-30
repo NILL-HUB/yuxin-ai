@@ -92,23 +92,21 @@ def test_get_history_prompt_messages_should_build_prompt_and_trim(monkeypatch):
     assert captured["end_on"] == "ai"
 
 
-def test_build_context_should_assemble_three_layers(monkeypatch):
+def test_build_context_should_assemble_two_layers(monkeypatch):
     memory = TokenBufferMemory(db=SimpleNamespace(), conversation=None, model_instance=None)
     monkeypatch.setattr(memory, "_get_conversation", lambda cid: SimpleNamespace(id=cid, summary="s"))
     monkeypatch.setattr(memory, "extract_recent", lambda cid: [HumanMessage("hi"), AIMessage("yo")])
     monkeypatch.setattr(memory, "get_distant_summary", lambda conv: "远期摘要")
-    monkeypatch.setattr(memory, "get_relevant_facts", lambda acc, q: ["事实A", "事实B"])
 
     context = memory.build_context(uuid4(), "query", SimpleNamespace(id=uuid4()))
 
     assert set(context.keys()) == {
-        "recent_messages", "distant_summary", "relevant_facts", "combined_token_count"
+        "recent_messages", "distant_summary", "combined_token_count"
     }
     assert len(context["recent_messages"]) == 2
     assert isinstance(context["recent_messages"][0], HumanMessage)
     assert isinstance(context["recent_messages"][1], AIMessage)
     assert context["distant_summary"] == "远期摘要"
-    assert context["relevant_facts"] == ["事实A", "事实B"]
     assert context["combined_token_count"] >= 0
 
 
@@ -156,53 +154,6 @@ def test_get_distant_summary_should_combine_segments_when_exceeding_recent_limit
     assert "最新摘要" in result
 
 
-def test_get_relevant_facts_should_recall_via_user_memory_service(monkeypatch):
-    memory = TokenBufferMemory(db=SimpleNamespace(), conversation=None, model_instance=None)
-    account = SimpleNamespace(id=uuid4())
-    captured = {}
-
-    class _FakeUserMemoryService:
-        def __init__(self, db=None):
-            pass
-
-        def recall_relevant_memories(self, acc, query, top_k=5):
-            captured["account"] = acc
-            captured["query"] = query
-            captured["top_k"] = top_k
-            return [{"content": "偏好Python"}, {"content": "关注测试"}, {"other": "x"}]
-
-    monkeypatch.setattr(
-        "internal.service.scoped_knowledge_service.UserMemoryService",
-        _FakeUserMemoryService,
-    )
-
-    result = memory.get_relevant_facts(account, "最近在做什么")
-
-    assert result == ["偏好Python", "关注测试"]
-    assert captured["top_k"] == 5
-    assert captured["query"] == "最近在做什么"
-    assert captured["account"] is account
-
-
-def test_get_relevant_facts_should_degrade_to_empty_when_recall_fails(monkeypatch):
-    memory = TokenBufferMemory(db=SimpleNamespace(), conversation=None, model_instance=None)
-    account = SimpleNamespace(id=uuid4())
-
-    class _FailingUserMemoryService:
-        def __init__(self, db=None):
-            pass
-
-        def recall_relevant_memories(self, acc, query, top_k=5):
-            raise RuntimeError("向量服务不可用")
-
-    monkeypatch.setattr(
-        "internal.service.scoped_knowledge_service.UserMemoryService",
-        _FailingUserMemoryService,
-    )
-
-    assert memory.get_relevant_facts(account, "query") == []
-
-
 def test_get_total_token_budget_should_use_model_max_tokens():
     memory = TokenBufferMemory(
         db=SimpleNamespace(),
@@ -235,7 +186,6 @@ def test_build_context_should_allocate_recent_budget_as_remaining(monkeypatch):
     monkeypatch.setattr(memory, "_get_conversation", lambda cid: SimpleNamespace(id=cid, summary="", distant_summaries=[]))
     monkeypatch.setattr(memory, "extract_recent", lambda cid: [])
     monkeypatch.setattr(memory, "get_distant_summary", lambda conv: "")
-    monkeypatch.setattr(memory, "get_relevant_facts", lambda acc, q: [])
 
     total_budget = memory._get_total_token_budget()
     context = memory.build_context(uuid4(), "query", SimpleNamespace(id=uuid4()))
@@ -244,13 +194,3 @@ def test_build_context_should_allocate_recent_budget_as_remaining(monkeypatch):
     assert context["combined_token_count"] == 0
     assert context["recent_messages"] == []
     assert context["distant_summary"] == ""
-
-
-def test_truncate_facts_to_budget_should_drop_facts_exceeding_budget():
-    memory = TokenBufferMemory(db=SimpleNamespace(), conversation=None, model_instance=None)
-    long_fact = "事实" * 200
-
-    result = memory._truncate_facts_to_budget([long_fact, "短事实"], max_tokens=50)
-
-    assert "短事实" not in result or len(result) <= 2
-    assert isinstance(result, list)

@@ -2,3 +2,11 @@ name: exchange_rate
 label: 汇率查询
 description: 查询实时汇率并进行货币转换
 params: []
+task_keywords:
+- 汇率
+- 货币转换
+- exchange rate
+- 外汇报价
+- 美元汇率
+- 欧元汇率
+- 日元汇率

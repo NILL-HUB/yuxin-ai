@@ -11,7 +11,7 @@ class RoutingDecisionResp(Schema):
     needs_agent = fields.Boolean(dump_default=False)
     needs_multi_agent = fields.Boolean(dump_default=False)
     needs_deep_thinking = fields.Boolean(dump_default=False)
-    recommended_model_tier = fields.String(dump_default="cheap")
+    recommended_model_tier = fields.String(dump_default="1")
     risk_level = fields.String(dump_default="safe")
     reason = fields.String(dump_default="")
     agent_subset = fields.Dict(dump_default=None)

@@ -20,7 +20,7 @@ from internal.schema.admin_workflow_schema import (
     WorkflowVersionListResp,
     WorkflowVersionResp,
 )
-from internal.schema.workflow_schema import CreateWorkflowReq
+from internal.schema.workflow_schema import CreateWorkflowReq, ImportWorkflowResp
 from internal.service import WorkflowService
 from internal.service.admin_workflow_service import AdminWorkflowService
 from pkg.response import success_json, success_message, validate_error_json
@@ -76,6 +76,7 @@ class AdminWorkflowHandler:
             workflow_id,
             status=req.status.data,
             is_public=payload.get("is_public") if "is_public" in payload else None,
+            task_keywords=req.task_keywords.data if req.task_keywords.data is not None else None,
         )
         resp = AdminWorkflowResp()
         return success_json(resp.dump(result))
@@ -188,6 +189,58 @@ class AdminWorkflowHandler:
         result = self.admin_workflow_service.batch_offline_workflows([UUID(wid) for wid in workflow_ids])
         resp = BatchOperationResp()
         return success_json(resp.dump(result))
+
+    # ------------------------------------------------------------------
+    # 工作流导入导出（阶段 6）
+    # ------------------------------------------------------------------
+    @admin_login_required
+    @permission_required("workflow:read")
+    def export_workflow(self, workflow_id: UUID):
+        """管理员导出工作流为 JSON
+
+        查询参数：
+        - include_versions: 是否附带版本历史元数据（不含 graph 内容），默认 false
+        """
+        include_versions = request.args.get("include_versions", "").lower() in ("true", "1", "yes")
+        data = self.workflow_service.export_workflow_for_admin(
+            workflow_id, include_versions=include_versions
+        )
+        return success_json(data)
+
+    @admin_login_required
+    @permission_required("workflow:create")
+    def import_workflow(self):
+        """管理员导入工作流 JSON
+
+        支持两种 body：
+        1. 信封格式：{"json_data": {...}, "overwrite_name": false}
+        2. 直接格式：直接 POST 导出的工作流 JSON（含 format=openagent-workflow 字段）
+           此时 overwrite_name 从查询参数 ?overwrite_name=true 读取
+        """
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict):
+            return validate_error_json({"json_data": ["请求体必须是 JSON 对象"]})
+
+        # 判断是信封格式还是直接格式
+        if "json_data" in body and isinstance(body.get("json_data"), dict):
+            json_data = body.get("json_data")
+            overwrite_name = bool(body.get("overwrite_name", False))
+        elif body.get("format") == "openagent-workflow":
+            json_data = body
+            overwrite_name = request.args.get("overwrite_name", "").lower() in ("true", "1", "yes")
+        else:
+            return validate_error_json({"json_data": ["无法识别的导入数据格式，缺少 json_data 字段或 format 字段不正确"]})
+
+        # 管理员导入归属到管理员绑定的空间账号
+        account = self._get_admin_account()
+        workflow = self.workflow_service.import_workflow(
+            json_data=json_data,
+            account_id=account.id,
+            overwrite_name=overwrite_name,
+        )
+
+        resp = ImportWorkflowResp()
+        return success_json(resp.dump(workflow))
 
     def _get_admin_account(self) -> Account:
         """获取管理员绑定的空间账号，作为资源的归属账号"""

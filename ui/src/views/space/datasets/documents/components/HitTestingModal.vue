@@ -2,14 +2,12 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
-import { useGetDatasetQueries, useHit } from '@/hooks/use-dataset'
-import type { GetDatasetQueriesResponse, HitRequest, HitResponse } from '@/models/dataset'
-import { formatTimestampShort } from '@/utils/time-formatter'
+import { useHitKnowledgeBase } from '@/hooks/use-knowledge-base'
+import type { HitRequest, HitResponse } from '@/models/knowledge-base'
 
 type RetrievalSetting = Pick<HitRequest, 'retrieval_strategy' | 'k' | 'score'>
 type HitTestingForm = RetrievalSetting & { query: string }
-type DatasetQueryItem = GetDatasetQueriesResponse['data'][number]
-type HitTestingSegment = HitResponse['data'][number] & { content?: string }
+type HitTestingSegment = HitResponse['data'][number]
 
 // 1.定义组件接收数据以及事件
 const props = defineProps({
@@ -23,8 +21,7 @@ const defaultRetrievalSetting: RetrievalSetting = { retrieval_strategy: 'semanti
 const retrievalSettingForm = ref<RetrievalSetting>({ ...defaultRetrievalSetting })
 const hitTestingSegments = ref<HitTestingSegment[]>([])
 const hitTestingForm = ref<HitTestingForm>({ query: '', ...defaultRetrievalSetting })
-const { loading: getDatasetQueriesLoading, queries, loadDatasetQueries } = useGetDatasetQueries()
-const { loading: hitLoading, hits, handleHit } = useHit()
+const { loading: hitLoading, hits, handleHit } = useHitKnowledgeBase()
 
 // 2.定义知识库检索设置相关
 const hideRetrievalSettingModal = () => {
@@ -61,21 +58,14 @@ const handleHitTesting = async () => {
   // 5.2 调用处理器执行召回测试
   await handleHit(props.dataset_id, hitTestingForm.value as HitRequest)
   hitTestingSegments.value = hits.value as unknown as HitTestingSegment[]
-
-  // 5.3 重新更新知识库最近查询
-  await loadDatasetQueries(props.dataset_id)
 }
 
 // 6.监听数据变化
 watch(
   () => props.visible,
-  async (newValue) => {
-    if (newValue) {
-      // 6.1 模态窗开启，加载最近查询
-      await loadDatasetQueries(props.dataset_id)
-    } else {
-      // 6.2 模态窗关闭，清空最近查询、召回记录、初始化检索配置
-      queries.value = []
+  (newValue) => {
+    if (!newValue) {
+      // 6.1 模态窗关闭，清空召回记录、初始化检索配置
       hitTestingSegments.value = []
       hitTestingForm.value = { query: '', ...defaultRetrievalSetting }
       retrievalSettingForm.value = defaultRetrievalSetting
@@ -109,7 +99,7 @@ watch(
       <!-- 中间内容区 -->
       <div class="pt-6">
         <div class="w-full flex justify-between gap-2">
-          <!-- 左侧输入框以及最近查询 -->
+          <!-- 左侧输入框 -->
           <div class="flex flex-col w-1/2">
             <!-- 顶部输入框 -->
             <div class="border border-blue-700 bg-blue-100 rounded-lg flex flex-col mb-6">
@@ -159,51 +149,6 @@ watch(
                   </a-button>
                 </div>
               </div>
-            </div>
-            <!-- 底部最近查询 -->
-            <div class="">
-              <div class="text-gray-700 font-bold mb-4">{{ t('space.datasets.documents.hitTesting.recentQueries') }}</div>
-              <a-table
-                :loading="getDatasetQueriesLoading"
-                :pagination="false"
-                size="small"
-                :bordered="{ wrapper: false }"
-                :data="queries"
-                @row-click="(record: DatasetQueryItem) => (hitTestingForm.query = record.query)"
-              >
-                <template #columns>
-                  <a-table-column
-                    :title="t('space.datasets.documents.columns.source')"
-                    data-index="source"
-                    header-cell-class="text-gray-500 bg-transparent border-b font-bold"
-                    cell-class="text-gray-500"
-                    :width="110"
-                  />
-                  <a-table-column
-                    :title="t('space.datasets.documents.columns.text')"
-                    data-index="query"
-                    header-cell-class="text-gray-500 bg-transparent border-b font-bold"
-                    cell-class="text-gray-500"
-                  >
-                    <template #cell="{ record }">
-                      <div class="line-clamp-1">{{ record.query }}</div>
-                    </template>
-                  </a-table-column>
-                  <a-table-column
-                    :title="t('space.datasets.documents.columns.time')"
-                    data-index="created_at"
-                    header-cell-class="text-gray-500 bg-transparent border-b font-bold"
-                    cell-class="text-gray-500"
-                    :width="160"
-                  >
-                    <template #cell="{ record }">
-                      <div class="">
-                        {{ formatTimestampShort(record.created_at) }}
-                      </div>
-                    </template>
-                  </a-table-column>
-                </template>
-              </a-table>
             </div>
           </div>
           <a-divider direction="vertical" />

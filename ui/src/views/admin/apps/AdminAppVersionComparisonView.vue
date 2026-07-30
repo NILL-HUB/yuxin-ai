@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useGetVersions } from '@/hooks/use-app'
+import { useGetAdminVersions } from '@/hooks/use-admin-app'
 import { formatTimestampLong } from '@/utils/time-formatter'
 import VersionComparisonSectionContent from '@/views/space/apps/components/VersionComparisonSectionContent.vue'
 
@@ -19,7 +19,7 @@ const props = defineProps({
 const showOnlyChanged = ref(false)
 const leftVersionId = ref('')
 const rightVersionId = ref('')
-const { loading, versions, loadVersions } = useGetVersions()
+const { loading, versions, loadVersions } = useGetAdminVersions()
 
 const normalizeValue = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -75,7 +75,7 @@ const comparisonSections = computed(() => [
   createSection('mcp_bindings', t('appStudio.versions.sectionLabels.mcpBindings'), (version) => version?.config.mcp_bindings),
   createSection('agent_bindings', t('appStudio.versions.sectionLabels.agentBindings'), (version) => version?.config.agent_bindings),
   createSection('workflows', t('appStudio.versions.sectionLabels.workflows'), (version) => version?.config.workflows),
-  createSection('datasets', t('appStudio.versions.sectionLabels.datasets'), (version) => version?.config.datasets),
+  createSection('knowledge_base_ids', t('appStudio.versions.sectionLabels.datasets'), (version) => version?.config.knowledge_base_ids),
   createSection('retrieval_config', t('appStudio.versions.sectionLabels.retrievalConfig'), (version) => version?.config.retrieval_config),
   createSection('opening', t('appStudio.versions.sectionLabels.opening'), (version) => ({
     opening_statement: version?.config.opening_statement || '',

@@ -31,6 +31,7 @@ class Workflow(db.Model):
         Index("workflow_tool_call_name_idx", "tool_call_name"),
         Index("workflow_is_public_idx", "is_public"),
         Index("workflow_tags_idx", "tags", postgresql_using="gin"),
+        Index("workflow_task_keywords_idx", "task_keywords", postgresql_using="gin"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
@@ -45,6 +46,7 @@ class Workflow(db.Model):
     status = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 工作流状态
     is_public = Column(Boolean, nullable=False, server_default=text("false"))  # 是否公开到广场
     tags = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 工作流标签列表
+    task_keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 任务关键词列表，用于 ToolSelector 关键词快速匹配
     original_workflow_id = Column(UUID, nullable=True)  # 原始工作流ID（用于Fork追踪）
     published_at = Column(DateTime, nullable=True)  # 发布时间
     updated_at = Column(

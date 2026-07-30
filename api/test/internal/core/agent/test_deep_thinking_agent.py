@@ -37,7 +37,7 @@ from internal.core.agent.entities.agent_entity import AgentConfig, DEEP_THINKING
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.agent.middleware import DeepTimelineMiddleware
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
-from internal.core.language_model.providers.openai.chat import Chat as OpenAIChat
+from langchain_openai import ChatOpenAI as OpenAIChat
 from internal.entity.conversation_entity import InvokeFrom
 from internal.service.language_model_service import RuntimeFallbackLanguageModelProxy
 

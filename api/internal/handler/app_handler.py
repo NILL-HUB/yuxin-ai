@@ -304,7 +304,7 @@ class AppHandler:
         components = {
             "database": self._probe_database(),
             "redis": self._probe_redis(),
-            "weaviate": self._probe_weaviate(),
+            "pgvector": self._probe_pgvector(),
             "celery": self._probe_celery(),
         }
 
@@ -328,7 +328,7 @@ class AppHandler:
         })
 
     def healthz(self):
-        """轻量存活检查，不探测外部依赖，避免容器健康检查被 DB/Redis/Weaviate 阻塞。"""
+        """轻量存活检查，不探测外部依赖，避免容器健康检查被 DB/Redis/pgvector 阻塞。"""
         return success_json({
             "status": "ok",
             "service": "llmops-api",
@@ -384,27 +384,17 @@ class AppHandler:
         except Exception as error:
             return {"status": "unhealthy", "detail": self._build_probe_error_detail(error)}
 
-    @classmethod
-    def _probe_weaviate(cls) -> dict[str, str]:
-        weaviate_extension = current_app.extensions.get("weaviate")
-        if weaviate_extension is None:
-            return {"status": "skipped", "detail": "Weaviate未初始化"}
-
+    def _probe_pgvector(self) -> dict[str, str]:
+        """检测 pgvector 扩展是否可用（向量检索依赖）"""
         try:
-            weaviate_client = weaviate_extension.client
+            result = self.app_service.db.session.execute(
+                text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+            ).fetchone()
+            if result and result[0]:
+                return {"status": "healthy", "detail": f"pgvector {result[0]}"}
+            return {"status": "unhealthy", "detail": "pgvector 扩展未安装"}
         except Exception as error:
-            return {"status": "unhealthy", "detail": cls._build_probe_error_detail(error)}
-
-        if weaviate_client is None:
-            return {"status": "skipped", "detail": "Weaviate未初始化"}
-
-        try:
-            is_ready = bool(weaviate_client.is_ready())
-            if is_ready:
-                return {"status": "healthy", "detail": ""}
-            return {"status": "unhealthy", "detail": "Weaviate未就绪"}
-        except Exception as error:
-            return {"status": "unhealthy", "detail": cls._build_probe_error_detail(error)}
+            return {"status": "unhealthy", "detail": self._build_probe_error_detail(error)}
 
     @classmethod
     def _probe_celery(cls) -> dict[str, str]:

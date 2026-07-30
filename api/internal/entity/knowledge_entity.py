@@ -28,6 +28,7 @@ class KnowledgeCreatedFrom(str, Enum):
     CONVERSATION_MEMORY = "conversation_memory"
     ADMIN_CONFIG = "admin_config"
     EXTERNAL_SYNC = "external_sync"
+    WORKFLOW_IMPORT = "workflow_import"  # 工作流导入
 
 
 class ExternalSourceType(str, Enum):

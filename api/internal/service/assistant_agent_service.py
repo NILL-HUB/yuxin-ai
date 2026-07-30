@@ -32,10 +32,13 @@ from internal.core.agent.agents import (
 )
 from internal.core.agent.entities.agent_entity import AgentConfig
 from internal.core.agent.entities.queue_entity import QueueEvent
+from internal.core.agent.usage_utils import (
+    charge_for_feature,
+    extract_token_usage_from_stream,
+)
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
 from internal.entity.cancel_token_entity import CancelToken
 from internal.core.language_model.entities.model_entity import ModelFeature
-from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
 from internal.core.memory import TokenBufferMemory
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.lib.helper import datetime_to_timestamp
@@ -53,10 +56,14 @@ from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .app_config_service import AppConfigService
 from .conversation_service import ConversationService
+from .credit_service import CreditService
 from .faiss_service import FaissService
 from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
+from .conductor_service import ConductorService
+from .orchestration_feature_flag_service import OrchestrationFeatureFlagService
 from .result_synthesizer_service import ResultSynthesizerService
+from .retrieval_service import RetrievalService
 from .runtime_tool_mount_service import RuntimeToolMountService
 from internal.entity.runtime_tool_entity import RuntimeToolDescriptor
 from .public_agent_a2a_service import PublicAgentA2AService
@@ -84,12 +91,16 @@ class AssistantAgentService(BaseService):
     faiss_service: FaissService
     conversation_service: ConversationService
     redis_client: Redis
+    credit_service: CreditService | None = None
     app_config_service: AppConfigService | None = None
     language_model_service: LanguageModelService | None = None
     public_agent_a2a_service: PublicAgentA2AService | None = None
     public_agent_registry_service: PublicAgentRegistryService | None = None
     orchestrator_service: OrchestratorService | None = None
+    conductor_service: ConductorService | None = None
+    orchestration_feature_flag_service: OrchestrationFeatureFlagService | None = None
     result_synthesizer_service: ResultSynthesizerService | None = None
+    retrieval_service: RetrievalService | None = None
     runtime_tool_mount_service: RuntimeToolMountService | None = None
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
@@ -168,8 +179,8 @@ class AssistantAgentService(BaseService):
         """返回辅助 Agent 当前可用能力。"""
         if self.language_model_service is None:
             return {
-                "requested_model": {"provider": "deepseek", "model": "deepseek-chat"},
-                "effective_model": {"provider": "deepseek", "model": "deepseek-chat"},
+                "requested_model": {},
+                "effective_model": {},
                 "features": [ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
                 "requested_features": [ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
                 "image_input": {
@@ -197,19 +208,6 @@ class AssistantAgentService(BaseService):
             entrypoint=LanguageModelService.ENTRYPOINT_ASSISTANT_AGENT,
         )
 
-    @staticmethod
-    def _build_default_assistant_llm() -> DeepSeekChat:
-        """构建历史兼容的辅助 Agent 文本模型。"""
-        return DeepSeekChat(
-            model="deepseek-chat",
-            temperature=0.8,
-            features=[
-                ModelFeature.TOOL_CALL.value,
-                ModelFeature.AGENT_THOUGHT.value,
-            ],
-            metadata={},
-        )
-
     def _stream_deep_thinking_proposal(self, routing_decision: dict):
         """阶段1：判定需要深度思考后，返回提案事件等待用户确认。"""
         import json
@@ -229,8 +227,12 @@ class AssistantAgentService(BaseService):
         }
         yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    def _stream_direct_answer(self, req, account, conversation, message):
-        """direct_answer 路径：经 ExecutionCoordinatorService 编排 DirectAnswerExecutor。"""
+    def _stream_direct_answer(self, req, account, conversation, message, routing_decision=None):
+        """direct_answer 路径：经 ExecutionCoordinatorService 编排 DirectAnswerExecutor。
+
+        如果指挥官已给出 direct_answer 内容（routing_decision.task_plan_summary.direct_answer），
+        直接使用，省一次 LLM 调用；否则走 DirectAnswerExecutor 重新生成。
+        """
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
         from internal.service.executors.direct_answer_executor import DirectAnswerExecutor
@@ -242,8 +244,23 @@ class AssistantAgentService(BaseService):
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
+        # 指挥官直接回复路径：省一次 LLM 调用
+        conductor_answer = None
+        if routing_decision is not None:
+            task_plan_summary = routing_decision.get("task_plan_summary") or {}
+            conductor_answer = task_plan_summary.get("direct_answer")
+        if conductor_answer and conductor_answer.strip():
+            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': conductor_answer, 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+            yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_aggregator.final().to_sse())}\n\n"
+            yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+            return
+
         try:
-            executor = DirectAnswerExecutor(language_model_service=self.language_model_service)
+            executor = DirectAnswerExecutor(
+                language_model_service=self.language_model_service,
+                credit_service=self.credit_service,
+                account_id=account.id,
+            )
             plan = TaskPlan(
                 original_query=req.query.data,
                 items=[
@@ -261,6 +278,7 @@ class AssistantAgentService(BaseService):
             results = coordinator.execute(plan)
 
             final_answer = ""
+            fallback_msg = ""
             for result in results:
                 token_usage = (result.metadata or {}).get("token_usage") or {}
                 if token_usage:
@@ -277,11 +295,45 @@ class AssistantAgentService(BaseService):
 
             if final_answer:
                 yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': final_answer, 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+            else:
+                # LLM 调用失败或返回空回答时，提取错误信息发送兜底 AGENT_MESSAGE，
+                # 避免用户看到空响应（DirectAnswerExecutor.execute 内部 try/except 会吞掉异常）
+                error_detail = ""
+                for result in results:
+                    if result.errors:
+                        error_detail = "; ".join(result.errors)
+                        break
+                # 同时从 metadata 提取原始错误信息（如果有的话）
+                for result in results:
+                    meta_error = (result.metadata or {}).get("error") or ""
+                    if meta_error:
+                        error_detail = f"{error_detail}: {meta_error}" if error_detail else meta_error
+                        break
+                fallback_msg = f"直接回答执行失败（{error_detail}），请稍后重试或换种方式提问。" if error_detail else "未获得有效回答，请稍后重试或换种方式提问。"
+                logger.warning("direct_answer 路径未获得有效回答: errors=%s", error_detail)
+                yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': fallback_msg, 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
 
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+
+            # 持久化 answer 到 Message 表（save_agent_thoughts 仅在 agent_thoughts 含 AGENT_MESSAGE 事件时更新 answer，
+            # direct_answer 路径传入空 agent_thoughts，需在此显式落库，否则前端 reload 后 answer 为空）
+            # final_answer 为空时持久化兜底消息，避免 reload 后 answer 仍为空
+            answer_to_persist = final_answer or fallback_msg
+            if answer_to_persist:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=answer_to_persist)
+                except Exception:
+                    logger.warning("持久化 direct_answer 到 Message.answer 失败", exc_info=True)
+
+            # 对话后写入记忆（同步降级，不影响主流程）
+            yield from self._write_memory_from_conversation(
+                account, req.query.data, answer_to_persist, conversation.id
+            )
         except Exception:
             logger.warning("direct_answer 经协调器执行失败", exc_info=True)
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["直接回答"])
@@ -310,7 +362,9 @@ class AssistantAgentService(BaseService):
                 dag_engine=DAGEngine(db=self.db),
                 agent_instance_pool=AgentInstancePool(),
             )
-            yield from executor.execute(
+            final_answer = ""
+            agent_message_event_prefix = f"event: {QueueEvent.AGENT_MESSAGE.value}"
+            for chunk in executor.execute(
                 query=req.query.data,
                 account=account,
                 conversation=conversation,
@@ -319,12 +373,36 @@ class AssistantAgentService(BaseService):
                 llm=llm,
                 tools=tools,
                 history=history,
-            )
+            ):
+                # 截获 AGENT_MESSAGE 事件以提取最终答案，用于记忆写入
+                if chunk.startswith(agent_message_event_prefix):
+                    try:
+                        data_part = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(data_part)
+                        if payload.get("answer"):
+                            final_answer = payload["answer"]
+                    except Exception:
+                        pass
+                yield chunk
 
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+
+            # 持久化 answer 到 Message 表（同 direct_answer / single_agent 路径）
+            if final_answer:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=final_answer)
+                except Exception:
+                    logger.warning("持久化 multi_agent answer 到 Message.answer 失败", exc_info=True)
+
+            # 对话后写入记忆（同步降级，不影响主流程）
+            yield from self._write_memory_from_conversation(
+                account, req.query.data, final_answer, conversation.id
+            )
         except Exception as e:
             logger.warning("多智能体执行失败: %s", e, exc_info=True)
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["多智能体执行"])
@@ -394,34 +472,69 @@ class AssistantAgentService(BaseService):
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
 
-            yield from self._extract_long_term_memory(account, req.query.data, collected_answer, conversation.id)
+            # 持久化 answer 到 Message 表（与 direct_answer 路径同理，
+            # _persist_assistant_thoughts 传入空 agent_thoughts，需在此显式落库）
+            if collected_answer:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=collected_answer)
+                except Exception:
+                    logger.warning("持久化 single_agent answer 到 Message.answer 失败", exc_info=True)
+
+            yield from self._write_memory_from_conversation(account, req.query.data, collected_answer, conversation.id)
         except Exception as e:
             logger.warning("单智能体经协调器执行失败: %s", e, exc_info=True)
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["单智能体执行"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '单智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
 
-    def _extract_long_term_memory(self, account, query, ai_response, conversation_id):
-        """执行完成后抽取并存储长期记忆候选，推送需用户确认的候选为 SSE 事件。"""
-        if not ai_response:
-            return
+    def _write_memory_from_conversation(self, account, query, ai_response, conversation_id):
+        """对话后自动写入记忆，无需用户确认。降级时跳过。
+
+        保持 generator 形式以兼容调用方的 ``yield from``。
+        记忆写入涉及 LLM 调用（实体抽取/显著性评分），改为后台线程异步执行，
+        避免阻塞主响应流（历史问题：同步执行时 entity_extractor 30s 超时阻塞主响应）。
+        """
         try:
-            from internal.service.long_term_memory_service import LongTermMemoryService
-            long_term_memory_service = current_app.injector.get(LongTermMemoryService)
-            results = long_term_memory_service.extract_and_store(
-                account=account,
-                query=query,
-                ai_response=ai_response,
-                conversation_id=conversation_id,
-            )
-            for result in results:
-                if result.get("should_prompt") and result.get("candidate_id"):
-                    yield (
-                        f"event: {QueueEvent.MEMORY_CANDIDATE_PROMPT.value}\n"
-                        f"data:{json.dumps(result, ensure_ascii=False)}\n\n"
-                    )
+            from internal.config.memory_settings import settings as memory_settings
+
+            if not memory_settings.memory_engine_enabled:
+                logger.warning("记忆引擎已禁用，跳过写入")
+            elif ai_response:
+                from internal.service.memory.memory_write_service import MemoryWriteService
+
+                # 捕获 Flask app 引用，供后台线程 push app context
+                flask_app = current_app._get_current_object() if has_app_context() else None
+                account_id = account.id
+
+                def _bg_write():
+                    """后台线程：push app context 后执行记忆写入。"""
+                    if flask_app is None:
+                        logger.warning("记忆写入后台线程跳过: 缺少 Flask app 引用")
+                        return
+                    ctx = flask_app.app_context()
+                    ctx.push()
+                    try:
+                        from app.http.app import injector
+                        memory_write_service = injector.get(MemoryWriteService)
+                        memory_write_service.write_from_conversation(
+                            account=account,
+                            query=query,
+                            ai_response=ai_response,
+                            conversation_id=conversation_id,
+                        )
+                    except Exception:
+                        logger.warning("后台记忆写入失败，不影响主流程", exc_info=True)
+                    finally:
+                        ctx.pop()
+
+                Thread(target=_bg_write, daemon=True).start()
         except Exception:
-            logger.warning("长期记忆抽取失败，不影响主流程", exc_info=True)
+            logger.warning("记忆写入调度失败，不影响主流程", exc_info=True)
+
+        # 保持 generator 兼容性，不再 yield 任何 SSE 事件
+        yield from ()
 
     def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用和全局 MCP 绑定。"""
@@ -531,35 +644,158 @@ class AssistantAgentService(BaseService):
             logger.warning("RuntimeToolMountService 挂载失败，回退固有工具", exc_info=True)
             return prebound_tools
 
-        mounted_mcp_provider_ids = {
+        mounted_tools = mount_result.get("mounted_tools", []) or []
+
+        # 按来源类型分组：MCP 用 provider_id 集合加载，builtin/api 单独加载
+        mcp_provider_ids = {
             d.provider_id
-            for d in mount_result.get("mounted_tools", [])
+            for d in mounted_tools
             if d.source_type == "mcp" and d.provider_id
         }
-        if not mounted_mcp_provider_ids:
-            return prebound_tools
+        non_mcp_descriptors = [
+            d for d in mounted_tools
+            if d.source_type in ("api", "api_tool", "builtin", "builtin_tool", "knowledge")
+        ]
 
-        extra_mcp_tools = self._load_mcp_tools_by_provider_ids(
-            account_id, mounted_mcp_provider_ids
-        )
-        if not extra_mcp_tools:
+        extra_tools: list[BaseTool] = []
+
+        # 1. 加载 MCP 工具
+        if mcp_provider_ids:
+            extra_tools.extend(
+                self._load_mcp_tools_by_provider_ids(account_id, mcp_provider_ids)
+            )
+
+        # 2. 加载非 MCP 工具（builtin / api_tool / knowledge）
+        for descriptor in non_mcp_descriptors:
+            tool = self._load_non_mcp_tool(descriptor, account_id=account_id)
+            if tool is not None:
+                extra_tools.append(tool)
+
+        if not extra_tools:
+            logger.info(
+                "工具挂载完成: 固有%d 动态0 总计%d hidden=%d (无动态工具加载成功)",
+                len(prebound_tools),
+                len(prebound_tools),
+                len(mount_result.get("hidden_tools", [])),
+            )
             return prebound_tools
 
         merged: list[BaseTool] = list(prebound_tools)
         existing_names = {getattr(t, "name", "") for t in merged}
-        for tool in extra_mcp_tools:
+        added = 0
+        for tool in extra_tools:
             tool_name = getattr(tool, "name", "")
             if tool_name and tool_name not in existing_names:
                 merged.append(tool)
                 existing_names.add(tool_name)
+                added += 1
         logger.info(
-            "工具挂载完成: 固有%d 动态MCP%d 总计%d hidden=%d",
+            "工具挂载完成: 固有%d 动态%d 总计%d hidden=%d",
             len(prebound_tools),
-            len(extra_mcp_tools),
+            added,
             len(merged),
             len(mount_result.get("hidden_tools", [])),
         )
         return merged
+
+    def _load_non_mcp_tool(self, descriptor, *, account_id: str = "") -> BaseTool | None:
+        """根据 RuntimeToolDescriptor 加载 builtin/api_tool/knowledge 类型的 LangChain 工具。
+
+        - builtin: 通过 ``builtin_provider_manager.get_tool(provider_name, tool_name)`` 加载
+        - api: 查询 ApiTool 后通过 ``api_provider_manager.get_tool`` 加载
+        - knowledge: 通过 ``RetrievalService.create_knowledge_retrieval_tool`` 加载
+        - 其他 source_type 返回 None
+        """
+        if descriptor is None or self.app_config_service is None:
+            return None
+
+        source_type = (getattr(descriptor, "source_type", "") or "").lower()
+        tool_id = getattr(descriptor, "tool_id", "") or ""
+        runtime_name = getattr(descriptor, "runtime_name", "") or getattr(descriptor, "name", "") or ""
+
+        try:
+            if source_type in ("builtin", "builtin_tool"):
+                # builtin 工具 ID 格式: "builtin:{provider_name}:{tool_name}"
+                # provider_id 字段在 builtin 候选里存的就是 provider_name
+                provider_name = getattr(descriptor, "provider_id", "") or getattr(descriptor, "provider_name", "") or ""
+                tool_name = getattr(descriptor, "name", "") or ""
+                if not provider_name or not tool_name:
+                    # 回退到从 tool_id 解析
+                    parts = tool_id.split(":", 2)
+                    if len(parts) >= 3:
+                        provider_name = provider_name or parts[1]
+                        tool_name = tool_name or parts[2]
+                if not provider_name or not tool_name:
+                    logger.warning("builtin 工具缺少 provider_name/tool_name: %s", tool_id)
+                    return None
+                builtin_tool_cls = self.app_config_service.builtin_provider_manager.get_tool(
+                    provider_name, tool_name
+                )
+                if builtin_tool_cls is None:
+                    logger.warning("builtin 工具未找到: provider=%s tool=%s", provider_name, tool_name)
+                    return None
+                # 内置工具类实例化（无参数）
+                return builtin_tool_cls()
+
+            if source_type in ("api", "api_tool"):
+                # api 工具 ID 格式: "api_tool:{api_tool_uuid}"
+                entity_id = tool_id.split(":", 1)[1] if ":" in tool_id else ""
+                if not entity_id:
+                    logger.warning("api 工具 ID 缺少实体 ID: %s", tool_id)
+                    return None
+                from internal.model import ApiTool
+                api_tool_record = self.db.session.query(ApiTool).filter(ApiTool.id == entity_id).first()
+                if api_tool_record is None:
+                    logger.warning("api 工具记录未找到: %s", entity_id)
+                    return None
+                from internal.core.tools.api_tools.entities import ToolEntity
+                tool_entity = ToolEntity(
+                    id=str(api_tool_record.id),
+                    name=api_tool_record.name,
+                    url=api_tool_record.url,
+                    method=api_tool_record.method,
+                    description=api_tool_record.description or "",
+                    headers=api_tool_record.provider.headers if api_tool_record.provider else [],
+                    parameters=api_tool_record.parameters or [],
+                )
+                return self.app_config_service.api_provider_manager.get_tool(tool_entity)
+
+            if source_type == "knowledge":
+                # knowledge 工具 ID 格式: "knowledge:{knowledge_base_id}"
+                if self.retrieval_service is None:
+                    logger.warning("knowledge 工具加载失败: RetrievalService 未注入, tool_id=%s", tool_id)
+                    return None
+                if not has_app_context():
+                    logger.warning("knowledge 工具加载失败: 缺少 Flask application context, tool_id=%s", tool_id)
+                    return None
+                entity_id = tool_id.split(":", 1)[1] if ":" in tool_id else ""
+                if not entity_id:
+                    logger.warning("knowledge 工具 ID 缺少 knowledge_base_id: %s", tool_id)
+                    return None
+                try:
+                    kb_uuid = UUID(str(entity_id))
+                except (ValueError, TypeError):
+                    logger.warning("knowledge 工具 knowledge_base_id 非法: %s", entity_id)
+                    return None
+                try:
+                    account_uuid = UUID(str(account_id)) if account_id else None
+                except (ValueError, TypeError):
+                    account_uuid = None
+                if account_uuid is None:
+                    logger.warning("knowledge 工具加载失败: 缺少 account_id, tool_id=%s", tool_id)
+                    return None
+                flask_app = current_app._get_current_object()
+                return self.retrieval_service.create_knowledge_retrieval_tool(
+                    flask_app=flask_app,
+                    knowledge_base_ids=[kb_uuid],
+                    account_id=account_uuid,
+                )
+
+            logger.debug("未支持的工具 source_type=%s, 跳过", source_type)
+            return None
+        except Exception:
+            logger.warning("加载非 MCP 工具失败: %s", tool_id, exc_info=True)
+            return None
 
     def _load_mcp_tools_by_provider_ids(
         self, account_id, provider_ids: set[str]
@@ -607,12 +843,13 @@ class AssistantAgentService(BaseService):
                 self.language_model_service.get_assistant_agent_model_config(),
                 image_urls=req.image_urls.data,
                 entrypoint=LanguageModelService.ENTRYPOINT_ASSISTANT_AGENT,
-                tier="strong",
+                tier="3",
             )
             llm = model_resolution.llm
         else:
+            # 兜底：language_model_service 未注入时走类方法获取默认模型
             model_resolution = None
-            llm = self._build_default_assistant_llm()
+            llm = LanguageModelService.get_chat_model_by_tier("3")
 
         # 4.新建一条消息记录
         message = self.create(
@@ -626,7 +863,31 @@ class AssistantAgentService(BaseService):
             status=MessageStatus.NORMAL.value,
         )
         routing_decision = None
-        if self.orchestrator_service is not None:
+        # 指挥官模式：ENABLE_CONDUCTOR 开关启用时，由 LLM 指挥官替代规则编排
+        use_conductor = (
+            self.conductor_service is not None
+            and self.orchestration_feature_flag_service is not None
+            and self.orchestration_feature_flag_service.is_enabled("ENABLE_CONDUCTOR")
+        )
+        if use_conductor:
+            try:
+                conductor_plan = self.conductor_service.plan(
+                    req.query.data,
+                    image_url_count=len(req.image_urls.data or []),
+                )
+                routing_decision = self.conductor_service.to_routing_decision_dict(conductor_plan)
+                logger.info(
+                    "指挥官决策 intent=%s mode=%s complexity=%s agents=%d",
+                    conductor_plan.intent,
+                    conductor_plan.execution_mode,
+                    conductor_plan.complexity,
+                    len(conductor_plan.agents),
+                )
+            except Exception as exc:
+                logger.warning("指挥官决策失败，回退到规则编排: %s", exc)
+                routing_decision = None
+
+        if routing_decision is None and self.orchestrator_service is not None:
             try:
                 routing_decision = self.orchestrator_service.decide(
                     req.query.data,
@@ -659,8 +920,6 @@ class AssistantAgentService(BaseService):
         context = token_buffer_memory.build_context(conversation.id, req.query.data, account)
         history = context["recent_messages"]
         distant_summary = context.get("distant_summary", "")
-        relevant_facts = context.get("relevant_facts", [])
-        user_memory_text = "\n".join(f"- {fact}" for fact in relevant_facts) if relevant_facts else ""
 
         # 6.构建首页助手运行时工具
         prebound_tools = self._build_assistant_runtime_tools(account.id)
@@ -687,7 +946,7 @@ class AssistantAgentService(BaseService):
                 yield from self._stream_deep_thinking_proposal(routing_decision)
                 return
             if execution_mode == "direct_answer":
-                yield from self._stream_direct_answer(req, account, conversation, message)
+                yield from self._stream_direct_answer(req, account, conversation, message, routing_decision)
                 self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
             if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential"):
@@ -707,7 +966,7 @@ class AssistantAgentService(BaseService):
                 "needs_tools": bool(tools),
                 "needs_agent": True,
                 "needs_multi_agent": False,
-                "recommended_model_tier": "standard",
+                "recommended_model_tier": "2",
                 "risk_level": "safe",
                 "reason": "路由决策缺失，回退到默认单智能体执行",
             }
@@ -719,11 +978,15 @@ class AssistantAgentService(BaseService):
                 routing_decision.get("intent"),
             )
 
-        yield from self._stream_single_agent(
-            req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
-            distant_summary=distant_summary, user_memory_text=user_memory_text,
-        )
-        self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
+        try:
+            yield from self._stream_single_agent(
+                req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
+                distant_summary=distant_summary,
+            )
+        finally:
+            # 无论 Agent 流正常完成还是异常终止，都尝试落库
+            # _persist_assistant_thoughts 内部已有 try/except，不会抛异常出去
+            self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
         return
 
     def _persist_assistant_thoughts(self, account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision):
@@ -791,7 +1054,7 @@ class AssistantAgentService(BaseService):
                 "message_id": "",
                 "suggested_questions_message_id": "",
             }
-            yield f"event: intro_done\ndata:{json.dumps(data)}\n\n"
+            yield f"event: intro_done\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
             return
 
         # 4.生成消息指纹并尝试从缓存获取
@@ -810,7 +1073,7 @@ class AssistantAgentService(BaseService):
             for i in range(0, len(cached_introduction), chunk_size):
                 chunk = cached_introduction[i : i + chunk_size]
                 data = {"content": chunk}
-                yield f"event: intro_chunk\ndata:{json.dumps(data)}\n\n"
+                yield f"event: intro_chunk\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
             # 输出完成事件
             done_data = {
@@ -829,13 +1092,8 @@ class AssistantAgentService(BaseService):
             f"辅助Agent介绍缓存未命中，调用LLM生成，账号ID: {account.id}, 指纹: {fingerprint}"
         )
 
-        # 7.准备DeepSeek模型并构建提示消息
-        llm = DeepSeekChat(
-            model="deepseek-chat",
-            temperature=0.7,
-            features=[ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
-            metadata={},
-        )
+        # 7.准备 LLM 并构建提示消息（走数据库配置 + compatible_api 分发）
+        llm = LanguageModelService.get_feature_model("assistant_agent_intro")
 
         prompt_messages = self._build_introduction_prompt_messages(
             account=account,
@@ -859,10 +1117,19 @@ class AssistantAgentService(BaseService):
                 "辅助Agent介绍提示词trim_messages失败，将退化为原始消息继续生成"
             )
 
-        # 9.流式生成并持续返回前端
+        # 9.流式生成并持续返回前端（用活跃探针替代固定超时）
+        from internal.service.memory.llm_activity_probe import (
+            LLMActivityProbe,
+            LLMActivityTimeoutError,
+        )
+
         introduction = ""
+        chunks = []
         try:
-            for chunk in llm.stream(prompt_messages):
+            for chunk in LLMActivityProbe.stream_messages_with_probe(
+                llm, prompt_messages, feature_key="assistant_agent_intro"
+            ):
+                chunks.append(chunk)
                 chunk_content = self._extract_chunk_content(
                     chunk.content if hasattr(chunk, "content") else chunk
                 )
@@ -871,12 +1138,27 @@ class AssistantAgentService(BaseService):
 
                 introduction += chunk_content
                 data = {"content": chunk_content}
-                yield f"event: intro_chunk\ndata:{json.dumps(data)}\n\n"
+                yield f"event: intro_chunk\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+        except LLMActivityTimeoutError:
+            logger.warning("辅助Agent介绍生成被探针终止（模型无响应）")
+            error_data = {"observation": "个性化介绍生成超时，请稍后重试"}
+            yield f"event: error\ndata:{json.dumps(error_data)}\n\n"
+            return
         except Exception:
             logger.exception("辅助Agent介绍流式生成失败")
             error_data = {"observation": "个性化介绍生成失败，请稍后重试"}
             yield f"event: error\ndata:{json.dumps(error_data)}\n\n"
             return
+
+        # 9.1 公共 AI 功能计费（流式调用，从 chunk 列表提取 token usage）
+        token_usage = extract_token_usage_from_stream(chunks)
+        if token_usage:
+            charge_for_feature(
+                self.credit_service,
+                account.id,
+                "assistant_agent_intro",
+                token_usage["total_tokens"],
+            )
 
         # 10.输出完成事件
         formatted_introduction = self._ensure_introduction_markdown(

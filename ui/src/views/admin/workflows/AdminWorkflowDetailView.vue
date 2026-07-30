@@ -124,6 +124,9 @@ const NODE_DATA_MAP = computed<Record<string, Record<string, unknown>>>(() => ({
   dataset_retrieval: {
     title: t('workflowEditor.nodePalette.datasetRetrieval.title'),
     description: t('workflowEditor.nodePalette.datasetRetrieval.description'),
+    // 主字段：新版 KnowledgeBase（工作流检索节点已统一切换到 KnowledgeBase）
+    knowledge_base_ids: [],
+    // 兼容字段：旧版 Dataset（仅用于兼容已存在的工作流）
     dataset_ids: [],
     retrieval_config: {
       retrieval_strategy: 'semantic',
@@ -140,7 +143,7 @@ const NODE_DATA_MAP = computed<Record<string, Record<string, unknown>>>(() => ({
     outputs: [
       { name: 'combine_documents', type: 'string', value: { type: 'generated', content: '' } },
     ],
-    meta: { datasets: [] },
+    meta: { knowledge_bases: [] },
   },
   template_transform: {
     title: t('workflowEditor.nodePalette.templateTransform.title'),

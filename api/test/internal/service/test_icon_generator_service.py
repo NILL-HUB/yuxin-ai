@@ -34,11 +34,37 @@ def _mock_icon_prompt_generation(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _mock_provider_credentials(monkeypatch):
+    """默认 mock 数据库凭证查询，避免测试触发真实数据库访问。"""
+    from internal.service.language_model_service import LanguageModelService
+
+    def _fake_get_creds(cls, provider=None, model_type=None):
+        if provider == "SiliconFlow":
+            return {
+                "api_key": "test-sf-key",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "model": "Kwai-Kolors/Kolors",
+                "provider": "SiliconFlow",
+            }
+        if provider == "OpenAI" and model_type == "image_generation":
+            return {
+                "api_key": "test-openai-key",
+                "base_url": "https://api.openai.com/v1",
+                "model": "dall-e-3",
+                "provider": "OpenAI",
+            }
+        return {}
+
+    monkeypatch.setattr(
+        LanguageModelService, "get_provider_credentials", classmethod(_fake_get_creds)
+    )
+
+
 class TestIconGeneratorService:
     def test_generate_icon_with_kolors_success(self, monkeypatch):
         mock_app = Mock()
         mock_app.config = {
-            "SILICONFLOW_API_KEY": "test-key",
             "COS_DOMAIN": "https://test.cos.com",
         }
         monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
@@ -70,7 +96,7 @@ class TestIconGeneratorService:
 
     def test_generate_icon_should_fallback_to_qwen_when_kolors_rate_limited(self, monkeypatch):
         mock_app = Mock()
-        mock_app.config = {"SILICONFLOW_API_KEY": "test-key", "COS_DOMAIN": "https://test.cos.com"}
+        mock_app.config = {"COS_DOMAIN": "https://test.cos.com"}
         monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
 
         service = _build_service()
@@ -88,8 +114,6 @@ class TestIconGeneratorService:
     def test_generate_icon_should_fallback_to_dalle_when_siliconflow_providers_rate_limited(self, monkeypatch):
         mock_app = Mock()
         mock_app.config = {
-            "SILICONFLOW_API_KEY": "test-key",
-            "OPENAI_API_KEY": "openai-key",
             "COS_DOMAIN": "https://test.cos.com",
         }
         monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
@@ -112,12 +136,13 @@ class TestIconGeneratorService:
         assert icon_url == "https://dalle/icon.png"
 
     def test_generate_icon_all_services_fail(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {
-            "SILICONFLOW_API_KEY": None,
-            "OPENAI_API_KEY": None,
-        }
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
+        from internal.service.language_model_service import LanguageModelService
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {}),
+        )
 
         service = _build_service()
 
@@ -143,9 +168,11 @@ class TestIconGeneratorService:
             "internal.service.icon_generator_service.ChatPromptTemplate.from_template",
             lambda _template: _Pipe(),
         )
+        from internal.service.language_model_service import LanguageModelService
         monkeypatch.setattr(
-            "internal.core.language_model.providers.deepseek.chat.Chat",
-            lambda **_kwargs: object(),
+            LanguageModelService,
+            "get_cheap_chat_model",
+            classmethod(lambda cls: object()),
         )
 
         service = _build_service()
@@ -228,10 +255,6 @@ class TestIconGeneratorService:
             service._download_and_upload_image("https://example.com/a.png", "kolors")
 
     def test_generate_with_kolors_should_raise_when_images_empty(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"SILICONFLOW_API_KEY": "test-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         mock_response = Mock()
         mock_response.json.return_value = {"images": []}
         mock_response.raise_for_status = Mock()
@@ -243,10 +266,6 @@ class TestIconGeneratorService:
             service._generate_with_kolors("测试应用", "desc")
 
     def test_generate_with_kolors_should_raise_when_image_url_missing(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"SILICONFLOW_API_KEY": "test-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         mock_response = Mock()
         mock_response.json.return_value = {"images": [{}]}
         mock_response.raise_for_status = Mock()
@@ -258,10 +277,6 @@ class TestIconGeneratorService:
             service._generate_with_kolors("测试应用", "desc")
 
     def test_generate_with_qwen_should_raise_when_images_empty(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"SILICONFLOW_API_KEY": "test-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         mock_response = Mock()
         mock_response.json.return_value = {"images": []}
         mock_response.raise_for_status = Mock()
@@ -273,10 +288,6 @@ class TestIconGeneratorService:
             service._generate_with_qwen("测试应用", "desc")
 
     def test_generate_with_qwen_should_raise_when_image_url_missing(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"SILICONFLOW_API_KEY": "test-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         mock_response = Mock()
         mock_response.json.return_value = {"images": [{}]}
         mock_response.raise_for_status = Mock()
@@ -288,10 +299,6 @@ class TestIconGeneratorService:
             service._generate_with_qwen("测试应用", "desc")
 
     def test_generate_with_kolors_should_raise_when_http_429(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"SILICONFLOW_API_KEY": "test-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         class _Response:
             status_code = 429
 
@@ -310,10 +317,6 @@ class TestIconGeneratorService:
             service._generate_with_kolors("测试应用", "desc")
 
     def test_generate_with_dalle_should_raise_when_image_url_empty(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"OPENAI_API_KEY": "openai-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         service = _build_service()
 
         mock_dalle = Mock()
@@ -362,12 +365,17 @@ class TestIconGeneratorService:
         assert call_order == ["kolors", "qwen", "dalle"]
 
     def test_generate_with_kolors_should_send_expected_request_payload(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {
-            "SILICONFLOW_API_KEY": "sf-key",
-            "SILICONFLOW_API_BASE": "https://api.example.com",
-        }
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
+        from internal.service.language_model_service import LanguageModelService
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {
+                "api_key": "sf-key",
+                "base_url": "https://api.example.com/v1",
+                "provider": "SiliconFlow",
+            } if provider == "SiliconFlow" else {}),
+        )
 
         request_snapshot = {}
         response = Mock()
@@ -409,12 +417,17 @@ class TestIconGeneratorService:
         }
 
     def test_generate_with_qwen_should_send_expected_request_payload(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {
-            "SILICONFLOW_API_KEY": "sf-key",
-            "SILICONFLOW_API_BASE": "https://api.example.com",
-        }
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
+        from internal.service.language_model_service import LanguageModelService
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {
+                "api_key": "sf-key",
+                "base_url": "https://api.example.com/v1",
+                "provider": "SiliconFlow",
+            } if provider == "SiliconFlow" else {}),
+        )
 
         request_snapshot = {}
         response = Mock()
@@ -455,10 +468,6 @@ class TestIconGeneratorService:
         }
 
     def test_generate_with_dalle_should_construct_wrapper_with_expected_options(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"OPENAI_API_KEY": "openai-key"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         wrapper_kwargs = {}
         run_payload = {}
 
@@ -484,7 +493,7 @@ class TestIconGeneratorService:
         assert result == "https://cos/dalle?url=https://dalle.example/icon.png"
         assert wrapper_kwargs == {
             "model": "dall-e-3",
-            "api_key": "openai-key",
+            "api_key": "test-openai-key",
             "size": "1024x1024",
             "quality": "standard",
             "n": 1,

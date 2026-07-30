@@ -23,8 +23,13 @@ class CreateAdminUserReq(FlaskForm):
 
 class UpdateAdminUserReq(FlaskForm):
     name = StringField("name", validators=[Optional(), Length(min=1, max=255)])
+    email = StringField("email", validators=[Optional(), Length(max=255)])
     status = StringField("status", validators=[Optional(), AnyOf(["active", "disabled", "pending"])])
     role_ids = FieldList(StringField("role_id"), default=[])
+
+
+class ResetAdminUserPasswordReq(FlaskForm):
+    password = StringField("password", validators=[DataRequired("密码不能为空"), regexp(regex=password_pattern, message="密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")])
 
 
 class AdminUserResp(Schema):
@@ -35,8 +40,17 @@ class AdminUserResp(Schema):
     avatar = fields.String()
     status = fields.String()
     roles = fields.List(fields.String())
+    account_id = fields.String(allow_none=True)
+    created_at = fields.Integer(allow_none=True)
+    last_login_at = fields.Integer(allow_none=True)
+    last_login_ip = fields.String()
+    is_online = fields.Boolean()
 
 
 class AdminUserPageResp(Schema):
     list = fields.List(fields.Nested(AdminUserResp))
     paginator = fields.Dict()
+
+
+class RevokeAdminUserSessionsResp(Schema):
+    revoked_sessions = fields.Int()

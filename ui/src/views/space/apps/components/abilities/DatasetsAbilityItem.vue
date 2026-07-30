@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { nextTick, onMounted, type PropType, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type PropType } from 'vue'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
-import { useRealm } from '@/hooks/use-realm'
-import { getDatasetsWithPage } from '@/services/dataset'
-import { listAdminDatasets } from '@/services/admin-datasets'
-import { cloneDeep, isEqual } from 'lodash'
+import { listReadableSystemKnowledgeBases } from '@/services/knowledge-base'
+import { useGetLanguageModels } from '@/hooks/use-language-model'
+import { cloneDeep } from 'lodash'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-type DatasetSelection = {
+
+// 新版 KnowledgeBase 展示项结构（用于已选列表回显）
+type KnowledgeBaseItem = {
   id: string
   name: string
-  icon: string
   description: string
 }
 
@@ -33,82 +33,88 @@ const props = defineProps({
     }),
     required: true,
   },
-  datasets: {
-    type: Array as PropType<DatasetSelection[]>,
+  // 新版知识库 id 列表
+  knowledge_base_ids: {
+    type: Array as PropType<string[]>,
     default: () => [],
     required: true,
   },
+  // App 级别 embedding 模型 ID（决定用户记忆向量存储维度）
+  embedding_model_id: {
+    type: String,
+    default: '',
+  },
 })
-const emits = defineEmits(['update:datasets', 'update:retrieval_config'])
+const emits = defineEmits([
+  'update:retrieval_config',
+  'update:knowledge_base_ids',
+  'update:embedding_model_id',
+])
 const { loading: updateDraftAppConfigLoading, handleUpdateDraftAppConfig } =
   useUpdateDraftAppConfig()
-const { isAdmin: isAdminContext } = useRealm()
+const { language_models, loadLanguageModels } = useGetLanguageModels()
 
-// 数据集列表状态（统一 admin/space 双上下文）
-const loading = ref(false)
-const apiDatasets = ref<Record<string, any>[]>([])
-const defaultPaginator = {
-  current_page: 1,
-  page_size: 20,
-  total_page: 0,
-  total_record: 0,
-}
-const paginator = ref(defaultPaginator)
+// 新版系统知识库列表状态（系统级知识库全局可见）
+const knowledgeBasesLoading = ref(false)
+const knowledgeBases = ref<KnowledgeBaseItem[]>([])
 
 /**
- * 统一的数据集加载函数，与原 useGetDatasetsWithPage 的 loadDatasets 接口一致。
- * - admin 上下文：调用 listAdminDatasets → GET /admin/datasets 跨账号加载
- * - space 上下文：调用 getDatasetsWithPage → GET /datasets 仅当前账号
+ * 加载对 Agent 可读的系统知识库列表（enabled=True）。
+ * 调用用户端接口 /space/system-knowledge-bases，无需 admin 权限。
+ * admin 通过 enabled 开关控制系统知识库是否对 Agent 生效。
  */
-const loadDatasets = async (init: boolean = false, search_word: string = '') => {
-  if (init) {
-    paginator.value = defaultPaginator
-  } else if (paginator.value.current_page > paginator.value.total_page) {
-    return
-  }
-
+const loadKnowledgeBases = async () => {
   try {
-    loading.value = true
-    let list: Record<string, any>[] = []
-    let respPaginator = defaultPaginator
-
-    if (isAdminContext.value) {
-      const data = await listAdminDatasets({
-        search_word,
-        current_page: paginator.value.current_page,
-        page_size: paginator.value.page_size,
-      })
-      list = data.list || []
-      respPaginator = data.paginator
-    } else {
-      const resp = await getDatasetsWithPage(
-        paginator.value.current_page,
-        paginator.value.page_size,
-        search_word,
-      )
-      list = resp.data.list
-      respPaginator = resp.data.paginator
-    }
-
-    paginator.value = respPaginator
-    if (paginator.value.current_page <= paginator.value.total_page) {
-      paginator.value.current_page += 1
-    }
-
-    if (init) {
-      apiDatasets.value = list
-    } else {
-      apiDatasets.value.push(...list)
-    }
+    knowledgeBasesLoading.value = true
+    const response = await listReadableSystemKnowledgeBases()
+    knowledgeBases.value = (response.data?.list || []).map((item) => ({
+      id: item.id,
+      name: item.name,
+      description: item.description || '',
+    }))
+  } catch {
+    // 接口不可用时降级为空列表，不阻断组件配置
+    knowledgeBases.value = []
   } finally {
-    loading.value = false
+    knowledgeBasesLoading.value = false
   }
 }
-const datasetsModalVisible = ref(false)
+
+// 系统知识库多选可选项（供 a-select 使用）
+const knowledgeBaseOptions = computed(() =>
+  knowledgeBases.value.map((kb) => ({
+    label: kb.name,
+    value: kb.id,
+  })),
+)
+
+// 已选知识库展示列表（根据当前选中 id 从已加载列表回填展示信息）
+const selectedKnowledgeBases = computed(() =>
+  knowledgeBaseIds.value
+    .map((id) => knowledgeBases.value.find((kb) => kb.id === id))
+    .filter((kb): kb is KnowledgeBaseItem => !!kb),
+)
+
+// 提取所有 embedding 类型模型，扁平化为 {model_id, label, provider_name, dimension} 列表
+const embeddingModelOptions = computed(() => {
+  const options: Array<{ model_id: string; label: string; provider_name: string; dimension: number }> = []
+  for (const provider of language_models.value || []) {
+    for (const model of provider.models || []) {
+      if (model.model_type === 'embedding') {
+        const dimension = Number(model.metadata?.embedding_dimension || 0)
+        options.push({
+          model_id: model.model_id,
+          label: model.label || model.model_name,
+          provider_name: provider.name,
+          dimension,
+        })
+      }
+    }
+  }
+  return options
+})
+
 const retrievalConfigModalVisible = ref(false)
-const isDatasetsInit = ref(false)
-const activateDatasets = ref<DatasetSelection[]>([])
-const originDatasets = ref<DatasetSelection[]>([])
 const retrievalConfigForm = ref<RetrievalConfigForm>({
   retrieval_strategy: 'semantic',
   k: 4,
@@ -121,99 +127,31 @@ const originRetrievalConfigForm = ref<RetrievalConfigForm>({
 })
 const isRetrievalConfigInit = ref(false)
 
+// 新版知识库 id 列表（本地工作副本）与原始备份
+const knowledgeBaseIds = ref<string[]>([])
+const originKnowledgeBaseIds = ref<string[]>([])
+
+// embedding 模型 id 本地工作副本
+const embeddingModelId = ref<string>('')
+const originEmbeddingModelId = ref<string>('')
+
 const getRetrievalStrategyLabel = (strategy: string) => {
   if (strategy === 'semantic') return t('appStudio.abilities.datasets.retrievalStrategies.semantic')
   if (strategy === 'full_text') return t('appStudio.abilities.datasets.retrievalStrategies.fullText')
   return t('appStudio.abilities.datasets.retrievalStrategies.hybrid')
 }
 
-// 2.定义滚动数据分页处理器
-const handleScroll = async (event: UIEvent) => {
-  // 2.1 获取滚动距离、可滚动的最大距离、客户端/浏览器窗口的高度
-  const { scrollTop, scrollHeight, clientHeight } = event.target as HTMLElement
-
-  // 2.2 判断是否滑动到底部
-  if (scrollTop + clientHeight >= scrollHeight - 10) {
-    if (loading.value) return
-    await loadDatasets()
-  }
-}
-
-// 3.定义判断知识库数据是否发生变化函数
-const isDatasetsModified = () => {
-  return isEqual(activateDatasets.value, originDatasets.value)
-}
-
-// 4.定义判断检索设置是否发生变化函数
-const isRetrievalConfigFormModified = () => {
-  return isEqual(retrievalConfigForm.value, originRetrievalConfigForm.value)
-}
-
-// 5.定义取消模态窗处理器
-const handleCancelDatasetsModal = () => {
-  // 5.1 隐藏模态窗
-  datasetsModalVisible.value = false
-
-  // 5.2 还原初始值
-  activateDatasets.value = originDatasets.value
-  isDatasetsInit.value = false
-}
-
-// 6.定义取消检索设置模态窗处理器
+// 2.定义取消检索设置模态窗处理器
 const handleCancelRetrievalConfigModal = () => {
-  // 6.1 隐藏模态窗
+  // 2.1 隐藏模态窗
   retrievalConfigModalVisible.value = false
 
-  // 6.2 还原初始值
+  // 2.2 还原初始值
   retrievalConfigForm.value = originRetrievalConfigForm.value
   isRetrievalConfigInit.value = false
 }
 
-// 7.知识库选择处理器
-const handleSelectDataset = (idx: number) => {
-  // 7.1 提取对应的知识库id
-  const dataset = apiDatasets.value[idx]
-
-  // 7.2 检测id是否选中，如果是选中则删除
-  if (activateDatasets.value.some((activateDataset) => activateDataset.id === dataset.id)) {
-    activateDatasets.value = activateDatasets.value.filter(
-      (activateDataset) => activateDataset.id !== dataset.id,
-    )
-  } else {
-    // 7.3 检测已关联的知识库数量
-    if (activateDatasets.value.length >= 5) {
-      Message.warning(t('appStudio.abilities.datasets.maxReached'))
-      return
-    }
-    // 7.4 添加数据到激活知识库列表
-    activateDatasets.value.push({
-      id: dataset.id,
-      name: dataset.name,
-      icon: dataset.icon,
-      description: dataset.description,
-    })
-  }
-}
-
-// 8.提交更新关联知识库
-const handleSubmitDatasets = async () => {
-  // 8.1 处理数据并完成API接口提交
-  await handleUpdateDraftAppConfig(props.app_id, {
-    datasets: activateDatasets.value.map((activateDataset) => activateDataset.id),
-  })
-
-  // 8.2 接口更新更新成功，同步表单信息
-  originDatasets.value = activateDatasets.value
-  await nextTick()
-
-  // 8.3 双向同步更新props中的数据
-  emits('update:datasets', activateDatasets.value)
-
-  // 8.4 隐藏模态窗
-  handleCancelDatasetsModal()
-}
-
-// 9.提交更新检索配置
+// 3.提交更新检索配置
 const handleSubmitRetrievalConfig = async () => {
   const retrievalConfig = {
     retrieval_strategy: String(retrievalConfigForm.value.retrieval_strategy || 'semantic'),
@@ -221,61 +159,71 @@ const handleSubmitRetrievalConfig = async () => {
     score: Number(retrievalConfigForm.value.score ?? 0),
   }
 
-  // 9.1 处理数据并完成API接口提交
+  // 3.1 处理数据并完成API接口提交
   await handleUpdateDraftAppConfig(props.app_id, {
     retrieval_config: retrievalConfig,
   })
 
-  // 9.2 接口更新更新成功，同步表单信息
+  // 3.2 接口更新更新成功，同步表单信息
   originRetrievalConfigForm.value = retrievalConfig
 
-  // 9.3 双向同步更新props中的数据
+  // 3.3 双向同步更新props中的数据
   emits('update:retrieval_config', retrievalConfig)
 
-  // 9.4 隐藏模态窗
+  // 3.4 隐藏模态窗
   handleCancelRetrievalConfigModal()
 }
 
-// 10.监听草稿配置关联的知识库列表
-watch(
-  () => props.datasets,
-  (newValue) => {
-    // 10.1 检测数据是否初始化
-    if (!isDatasetsInit.value || !isDatasetsModified()) {
-      // 10.2 判断草稿配置是否已传递配置
-      if (newValue && newValue.length > 0) {
-        // 10.3 赋初始值
-        const initData = props.datasets.map((dataset) => {
-          return {
-            id: dataset.id,
-            name: dataset.name,
-            icon: dataset.icon,
-            description: dataset.description,
-          }
-        })
-        activateDatasets.value = cloneDeep(initData)
-        originDatasets.value = cloneDeep(initData)
+/**
+ * 新版知识库多选变更处理器：限制最多 5 个，立即持久化到草稿配置。
+ */
+const handleKnowledgeBaseChange = async (ids: (string | number)[]) => {
+  // 限制最多 5 个
+  const stringIds = ids.map((id) => String(id))
+  if (stringIds.length > 5) {
+    Message.warning(t('appStudio.abilities.datasets.limitExceeded'))
+    knowledgeBaseIds.value = stringIds.slice(0, 5)
+  } else {
+    knowledgeBaseIds.value = stringIds
+  }
 
-        // 10.4 修改初始化状态
-        isDatasetsInit.value = true
-      }
-    }
-  },
-  { immediate: true, deep: true },
-)
+  // 持久化到草稿配置
+  await handleUpdateDraftAppConfig(props.app_id, {
+    knowledge_base_ids: knowledgeBaseIds.value,
+  })
+  originKnowledgeBaseIds.value = cloneDeep(knowledgeBaseIds.value)
 
-// 11.监听检索配置
+  // 双向同步更新props中的数据
+  emits('update:knowledge_base_ids', knowledgeBaseIds.value)
+}
+
+/**
+ * embedding 模型变更处理器：立即持久化到草稿配置。
+ */
+const handleEmbeddingModelChange = async (modelId: string | number | undefined) => {
+  const value = modelId ? String(modelId) : ''
+  embeddingModelId.value = value
+
+  await handleUpdateDraftAppConfig(props.app_id, {
+    embedding_model_id: value,
+  })
+  originEmbeddingModelId.value = value
+
+  emits('update:embedding_model_id', value)
+}
+
+// 4.监听检索配置
 watch(
   () => props.retrieval_config,
   (newValue) => {
-    // 11.1 检测是否是否更新并且未初始化
-    if (!isRetrievalConfigInit.value || !isRetrievalConfigFormModified()) {
+    // 4.1 检测是否是否更新并且未初始化
+    if (!isRetrievalConfigInit.value || retrievalConfigForm.value === originRetrievalConfigForm.value) {
       if (newValue && Object.keys(newValue).length > 0) {
-        // 11.2 更新表单数据和备份数据
+        // 4.2 更新表单数据和备份数据
         retrievalConfigForm.value = { ...newValue }
         originRetrievalConfigForm.value = { ...newValue }
 
-        // 11.3 标记为已初始化
+        // 4.3 标记为已初始化
         isRetrievalConfigInit.value = true
       }
     }
@@ -283,22 +231,31 @@ watch(
   { immediate: true, deep: true },
 )
 
-// 12.监听知识库模态窗显示or隐藏
+// 5.监听新版知识库 id 列表（编辑回填）
 watch(
-  () => datasetsModalVisible.value,
-  async (newValue) => {
-    // 12.1 显示状态，重新加载数据，获取最新的知识库列表
-    if (newValue) {
-      await loadDatasets(true)
-    } else {
-      // 12.2 隐藏状态，清空数据
-      apiDatasets.value.splice(0, apiDatasets.value.length)
-    }
+  () => props.knowledge_base_ids,
+  (newValue) => {
+    const ids = Array.isArray(newValue) ? [...newValue] : []
+    knowledgeBaseIds.value = ids
+    originKnowledgeBaseIds.value = cloneDeep(ids)
   },
+  { immediate: true, deep: true },
+)
+
+// 6.监听 embedding 模型 id（编辑回填）
+watch(
+  () => props.embedding_model_id,
+  (newValue) => {
+    const val = newValue || ''
+    embeddingModelId.value = val
+    originEmbeddingModelId.value = val
+  },
+  { immediate: true },
 )
 
 onMounted(() => {
-  loadDatasets(true)
+  loadKnowledgeBases()
+  loadLanguageModels()
 })
 </script>
 
@@ -320,174 +277,75 @@ onMounted(() => {
             </template>
             <div class="">{{ getRetrievalStrategyLabel(retrieval_config?.retrieval_strategy || 'hybrid') }}</div>
           </a-button>
-          <a-button
-            size="mini"
-            type="text"
-            class="!text-gray-700"
-            @click.stop="datasetsModalVisible = true"
-          >
-            <template #icon>
-              <icon-plus />
-            </template>
-          </a-button>
         </a-space>
       </template>
-      <div v-if="props.datasets?.length > 0" class="flex flex-col gap-1">
-        <div
-          v-for="(dataset, idx) in props.datasets"
-          :key="dataset.id"
-          class="flex items-center justify-between bg-white p-3 rounded-lg cursor-pointer hover:shadow-sm group"
-        >
-          <!-- 左侧知识库信息 -->
-          <div class="flex items-center gap-2 min-w-0">
-            <!-- 图标 -->
-            <a-avatar
-              :size="36"
-              shape="square"
-              class="rounded flex-shrink-0"
-              :image-url="dataset.icon"
-            />
-            <!-- 名称与描述信息 -->
-            <div class="flex flex-col flex-1 min-w-0 gap-1 h-9">
+      <!-- 新版 knowledge_base 配置 -->
+      <div class="flex flex-col gap-2">
+        <!-- 多选选择器 -->
+        <a-select
+          multiple
+          allow-search
+          :loading="knowledgeBasesLoading"
+          :model-value="knowledgeBaseIds"
+          :options="knowledgeBaseOptions"
+          :placeholder="t('appStudio.abilities.datasets.knowledgeBasePlaceholder')"
+          @change="handleKnowledgeBaseChange"
+        />
+        <!-- 已选知识库列表（展示名称与描述） -->
+        <div v-if="selectedKnowledgeBases.length > 0" class="flex flex-col gap-1">
+          <div
+            v-for="kb in selectedKnowledgeBases"
+            :key="kb.id"
+            class="flex items-center justify-between bg-white p-3 rounded-lg border"
+          >
+            <div class="flex flex-col flex-1 min-w-0 gap-1">
               <div class="text-gray-700 font-bold leading-[18px] line-clamp-1 min-w-0">
-                {{ dataset.name }}
+                {{ kb.name }}
               </div>
               <div class="text-gray-500 text-xs line-clamp-1 min-w-0">
-                {{ dataset.description }}
+                {{ kb.description || '-' }}
               </div>
             </div>
           </div>
-          <!-- 右侧删除按钮 -->
-          <a-button
-            size="mini"
-            type="text"
-            class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
-            @click="
-              async () => {
-                // 1.清除props中指定的数据
-                const newDatasets = [...props.datasets]
-                newDatasets.splice(idx, 1)
-
-                // 2.提交草稿配置到接口
-                await handleUpdateDraftAppConfig(props.app_id, {
-                  datasets: newDatasets.map((item) => item.id),
-                })
-
-                // 3.更新数据并确保数据完成更新
-                isDatasetsInit = false
-                emits('update:datasets', newDatasets)
-              }
-            "
-          >
-            <template #icon>
-              <icon-delete />
-            </template>
-          </a-button>
         </div>
-      </div>
-      <div v-else class="text-xs text-gray-500 leading-[22px]">
-        {{ t('appStudio.abilities.datasets.empty') }}
+        <div v-else class="text-xs text-gray-500 leading-[22px]">
+          {{ t('appStudio.abilities.datasets.empty') }}
+        </div>
+        <!-- 最多选择提示 -->
+        <div class="text-xs text-gray-400">
+          {{ t('appStudio.abilities.datasets.knowledgeBaseMaxHint') }}
+        </div>
+        <!-- App 级别 embedding 模型选择（决定用户记忆向量存储维度） -->
+        <div class="mt-2 pt-3 border-t border-gray-100">
+          <div class="text-sm text-gray-700 font-bold mb-2">
+            {{ t('appStudio.abilities.datasets.embeddingModelLabel') }}
+          </div>
+          <a-select
+            :model-value="embeddingModelId || undefined"
+            allow-search
+            allow-clear
+            :placeholder="t('appStudio.abilities.datasets.embeddingModelPlaceholder')"
+            @change="handleEmbeddingModelChange"
+          >
+            <a-option
+              v-for="opt in embeddingModelOptions"
+              :key="opt.model_id"
+              :value="opt.model_id"
+            >
+              {{ opt.label }} ({{ opt.provider_name }}{{ opt.dimension ? ` · ${opt.dimension}d` : '' }})
+            </a-option>
+            <template #empty>
+              <div class="text-center text-gray-400 py-2">
+                {{ t('appStudio.abilities.datasets.noEmbeddingModels') }}
+              </div>
+            </template>
+          </a-select>
+          <div class="text-xs text-gray-400 mt-1">
+            {{ t('appStudio.abilities.datasets.embeddingModelHint') }}
+          </div>
+        </div>
       </div>
     </a-collapse-item>
-    <!-- 知识库模态窗 -->
-    <a-modal
-      :visible="datasetsModalVisible"
-      hide-title
-      :footer="false"
-      :width="400"
-      class="datasets-modal"
-      modal-class="h-[calc(100vh-32px)] right-4"
-      @cancel="handleCancelDatasetsModal"
-    >
-      <!-- 顶部标题 -->
-      <div class="flex items-center justify-between mb-6">
-        <div class="text-lg font-bold text-gray-700">
-          {{ t('appStudio.abilities.datasets.selectTitle') }}
-        </div>
-        <a-button
-          type="text"
-          class="!text-gray-700"
-          size="small"
-          @click="handleCancelDatasetsModal"
-        >
-          <template #icon>
-            <icon-close />
-          </template>
-        </a-button>
-      </div>
-      <!-- 中间知识库容器 -->
-      <div class="h-[calc(100vh-180px)] mb-4 overflow-scroll scrollbar-w-none">
-        <a-spin
-          :loading="loading"
-          class="block h-full w-full scrollbar-w-none overflow-scroll"
-          @scroll="handleScroll"
-        >
-          <!-- 知识库列表 -->
-          <div class="flex flex-col gap-2">
-            <!-- 有数据UI状态 -->
-            <div
-              v-for="(dataset, idx) in apiDatasets"
-              :key="dataset.id"
-              :class="`flex items-center gap-2 border px-3 py-2 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-700 ${activateDatasets.some((activateDataset) => activateDataset.id === dataset.id) ? 'bg-blue-50 border-blue-700' : ''}`"
-              @click="() => handleSelectDataset(idx)"
-            >
-              <a-avatar
-                :size="24"
-                shape="square"
-                class="flex-shrink-0 rounded"
-                :image-url="dataset.icon"
-              />
-              <div class="line-clamp-1 text-gray-500 flex-1">{{ dataset.name }}</div>
-            </div>
-            <!-- 无数据UI状态 -->
-            <a-empty
-              v-if="apiDatasets.length === 0"
-              :description="t('appStudio.abilities.datasets.noAvailable')"
-              class="h-[400px] flex flex-col items-center justify-center"
-            />
-          </div>
-          <!-- 加载器 -->
-          <a-row v-if="paginator.total_page >= 2">
-            <!-- 加载数据中 -->
-            <a-col
-              v-if="loading"
-              :span="24"
-              class="!text-center"
-            >
-              <a-space class="my-4">
-                <a-spin />
-                <div class="text-gray-400">{{ t('appStudio.list.loading') }}</div>
-              </a-space>
-            </a-col>
-            <!-- 数据加载完成 -->
-            <a-col v-else-if="paginator.current_page > paginator.total_page" :span="24" class="!text-center">
-              <div class="text-gray-400 my-4">{{ t('appStudio.list.loadedAll') }}</div>
-            </a-col>
-          </a-row>
-        </a-spin>
-      </div>
-      <!-- 底部选中知识库及按钮 -->
-      <div class="flex items-center justify-between">
-        <!-- 左侧提示文字 -->
-        <div class="">
-          {{ t('appStudio.abilities.datasets.selectedCount', { count: activateDatasets.length }) }}
-        </div>
-        <!-- 按钮组 -->
-        <a-space :size="12">
-          <a-button class="rounded-lg" @click="handleCancelDatasetsModal">
-            {{ t('common.actions.cancel') }}
-          </a-button>
-          <a-button
-            :loading="updateDraftAppConfigLoading"
-            type="primary"
-            class="rounded-lg"
-            @click="handleSubmitDatasets"
-          >
-            {{ t('appStudio.abilities.tools.add') }}
-          </a-button>
-        </a-space>
-      </div>
-    </a-modal>
     <!-- 检索设置模态窗 -->
     <a-modal
       :visible="retrievalConfigModalVisible"
@@ -579,11 +437,3 @@ onMounted(() => {
     </a-modal>
   </div>
 </template>
-
-<style>
-.datasets-modal {
-  .arco-modal-wrapper {
-    @apply text-right;
-  }
-}
-</style>

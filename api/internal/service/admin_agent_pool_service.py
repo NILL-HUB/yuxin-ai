@@ -12,6 +12,11 @@ from internal.model.agent_pool_entity import AgentPoolConfig
 from internal.model.app import App, AppConfig
 
 
+def _parse_app_id(value: str) -> UUID:
+    """将字符串解析为 UUID，非法格式抛出 ValueError 上抛后由全局异常处理返回 400。"""
+    return UUID(str(value))
+
+
 class AdminAgentPoolService:
     def __init__(self, session=None):
         self.session = session or db.session
@@ -26,20 +31,14 @@ class AdminAgentPoolService:
     def _now() -> datetime:
         return datetime.now(UTC).replace(tzinfo=None)
 
-    def list_configs(self, *, page: int = 1, per_page: int = 20, pool: str = "", enabled: str = "", keyword: str = "") -> dict:
+    def list_configs(self, *, page: int = 1, per_page: int = 20, enabled: str = "", keyword: str = "") -> dict:
         page = max(int(page or 1), 1)
         per_page = max(min(int(per_page or 20), 100), 1)
         query = self.session.query(AgentPoolConfig)
         keyword = (keyword or "").strip()
         if keyword:
             like_value = f"%{escape_like_pattern(keyword)}%"
-            query = query.filter(
-                (AgentPoolConfig.primary_pool.ilike(like_value))
-                | (AgentPoolConfig.model_id.ilike(like_value))
-                | (cast(AgentPoolConfig.app_id, Text).ilike(like_value))
-            )
-        if pool:
-            query = query.filter(AgentPoolConfig.primary_pool == pool)
+            query = query.filter(cast(AgentPoolConfig.app_id, Text).ilike(like_value))
         if enabled == "true":
             query = query.filter(AgentPoolConfig.enabled.is_(True))
         elif enabled == "false":
@@ -67,14 +66,18 @@ class AdminAgentPoolService:
         return self._serialize_config(config)
 
     def create_config(self, payload: dict) -> dict:
+        app_id = payload["app_id"]
+        # 校验 UUID 格式，避免 SQLAlchemy 查询抛出 StatementError
+        try:
+            _parse_app_id(app_id)
+        except ValueError:
+            raise ValueError("app_id必须为UUID格式")
+        # 校验 App 是否存在，避免创建悬空配置
+        app = self.session.query(App).filter(App.id == app_id).one_or_none()
+        if app is None:
+            raise NotFoundException("应用不存在，无法创建Agent池配置")
         config = AgentPoolConfig(
-            app_id=payload["app_id"],
-            primary_pool=payload.get("primary_pool") or "tenant",
-            secondary_pools=payload.get("secondary_pools") or [],
-            risk_level=payload.get("risk_level") or "medium",
-            model_tier=payload.get("model_tier") or "standard",
-            model_id=payload.get("model_id") or None,
-            routing_priority=int(payload.get("routing_priority") or 100),
+            app_id=app_id,
             enabled=self._parse_bool(payload.get("enabled"), True),
             health_status="unknown",
             metadata_=payload.get("metadata_") or payload.get("metadata") or {},
@@ -85,18 +88,6 @@ class AdminAgentPoolService:
 
     def update_config(self, config_id: UUID, payload: dict) -> dict:
         config = self._get_config_or_raise(config_id)
-        if "primary_pool" in payload:
-            config.primary_pool = payload["primary_pool"]
-        if "secondary_pools" in payload:
-            config.secondary_pools = payload["secondary_pools"] or []
-        if "risk_level" in payload:
-            config.risk_level = payload["risk_level"]
-        if "model_tier" in payload:
-            config.model_tier = payload["model_tier"]
-        if "model_id" in payload:
-            config.model_id = payload["model_id"] or None
-        if "routing_priority" in payload:
-            config.routing_priority = int(payload["routing_priority"] or 0)
         if "enabled" in payload:
             config.enabled = self._parse_bool(payload.get("enabled"), config.enabled)
         if "metadata_" in payload:
@@ -135,17 +126,12 @@ class AdminAgentPoolService:
         return self._serialize_config(config)
 
     def list_pool_stats(self) -> dict:
+        """按 enabled/health_status 聚合统计，不再按 primary_pool 分桶（已删除）。"""
         configs = self.session.query(AgentPoolConfig).all()
-        stats_map: dict[str, dict[str, int]] = {}
-        for config in configs:
-            pool = config.primary_pool or "unknown"
-            bucket = stats_map.setdefault(pool, {"pool": pool, "total": 0, "enabled": 0, "healthy": 0})
-            bucket["total"] += 1
-            if config.enabled:
-                bucket["enabled"] += 1
-            if config.health_status == "healthy":
-                bucket["healthy"] += 1
-        return {"list": list(stats_map.values())}
+        total = len(configs)
+        enabled_count = sum(1 for c in configs if c.enabled)
+        healthy_count = sum(1 for c in configs if c.health_status == "healthy")
+        return {"list": [{"total": total, "enabled": enabled_count, "healthy": healthy_count}]}
 
     def _get_config_or_raise(self, config_id: UUID) -> AgentPoolConfig:
         config = self.session.query(AgentPoolConfig).filter(AgentPoolConfig.id == config_id).one_or_none()
@@ -167,12 +153,6 @@ class AdminAgentPoolService:
         return {
             "id": str(config.id),
             "app_id": str(config.app_id),
-            "primary_pool": config.primary_pool,
-            "secondary_pools": list(config.secondary_pools or []),
-            "risk_level": config.risk_level,
-            "model_tier": config.model_tier,
-            "model_id": config.model_id or "",
-            "routing_priority": int(config.routing_priority or 0),
             "enabled": bool(config.enabled),
             "health_status": config.health_status,
             "last_health_check_at": self._timestamp(config.last_health_check_at),

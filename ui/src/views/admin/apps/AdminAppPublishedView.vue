@@ -3,9 +3,9 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { useGetPublishedConfig, useRegenerateWebAppToken } from '@/hooks/use-app'
-import { useGetWechatConfig, useUpdateWechatConfig } from '@/hooks/use-platform'
-import { shareAppToSquare, unshareAppFromSquare, getAppTags, type AppTag } from '@/services/public-app'
+import { useGetAdminPublishedConfig, useRegenerateAdminWebAppToken } from '@/hooks/use-admin-app'
+import { useGetAdminWechatConfig, useUpdateAdminWechatConfig } from '@/hooks/use-admin-platform'
+import { shareAdminAppToSquare, unshareAdminAppFromSquare, getAdminAppTags, type AppTag } from '@/services/admin-apps'
 import { getErrorMessage } from '@/utils/error'
 import { getPublicAppTagDisplayName } from '@/utils/public-app-tag-display'
 
@@ -30,14 +30,14 @@ const {
   loading: getPublishedConfigLoading,
   published_config,
   loadPublishedConfig,
-} = useGetPublishedConfig()
+} = useGetAdminPublishedConfig()
 const {
   loading: regenerateWebAppTokenLoading,
   token,
   handleRegenerateWebAppToken,
-} = useRegenerateWebAppToken()
-const { loading: getWechatConfigLoading, wechat_config, loadWechatConfig } = useGetWechatConfig()
-const { loading: updateWechatConfigLoading, handleUpdateWechatConfig } = useUpdateWechatConfig()
+} = useRegenerateAdminWebAppToken()
+const { loading: getWechatConfigLoading, wechat_config, loadWechatConfig } = useGetAdminWechatConfig()
+const { loading: updateWechatConfigLoading, handleUpdateWechatConfig } = useUpdateAdminWechatConfig()
 const { t, locale } = useI18n()
 const webAppUrl = computed(() => {
   if (published_config.value?.web_app?.status === 'published') {
@@ -104,7 +104,7 @@ const handleSubmitWechatConfigModal = async () => {
 // 6.加载应用标签
 const loadCategories = async () => {
   try {
-    const res = await getAppTags()
+    const res = await getAdminAppTags()
     categories.value = res.data.tags
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('appStudio.published.square.loadTagsFailed')))
@@ -135,7 +135,7 @@ const handleSubmitShareToSquare = async () => {
   }
 
   try {
-    await shareAppToSquare(String(route.params?.app_id), shareCategory.value)
+    await shareAdminAppToSquare(String(route.params?.app_id), shareCategory.value)
     Message.success(t('appStudio.published.square.sharedSuccess'))
     shareToSquareModalVisible.value = false
     // 重新加载配置
@@ -148,7 +148,7 @@ const handleSubmitShareToSquare = async () => {
 // 10.取消共享
 const handleUnshareFromSquare = async () => {
   try {
-    await unshareAppFromSquare(String(route.params?.app_id))
+    await unshareAdminAppFromSquare(String(route.params?.app_id))
     Message.success(t('appStudio.published.square.unsharedSuccess'))
     // 重新加载配置
     await loadPublishedConfig(String(route.params?.app_id))

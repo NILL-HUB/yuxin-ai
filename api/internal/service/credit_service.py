@@ -71,6 +71,28 @@ class CreditService:
             "idempotent": False,
         }
 
+    def consume_for_feature(self, account_id: UUID, feature_key: str, *, token_count: int) -> dict:
+        """扣减用户额度，用于非消息上下文的公共 AI 功能调用。
+
+        与 consume_for_message 不同，此方法不基于 message_id 做幂等去重，
+        每次调用都生成新的随机 ID，确保每次 LLM 调用都扣费。
+
+        Args:
+            account_id: 用户账户 ID
+            feature_key: 公共 AI 功能标识（如 "prompt_optimization"）
+            token_count: 本次 LLM 调用的总 token 数
+
+        Returns:
+            与 consume_for_message 相同格式的字典
+        """
+        if token_count <= 0:
+            return {"consumed": False, "reason": "no tokens", "token_count": 0}
+
+        # 生成合成 message_id 用于复用 consume_for_message 的逻辑
+        import uuid
+        synthetic_id = uuid.uuid4()
+        return self.consume_for_message(account_id, synthetic_id, token_count=token_count)
+
     def _get_existing_message_consume(self, message_id: UUID) -> CreditTransaction | None:
         return (
             self.session.query(CreditTransaction)

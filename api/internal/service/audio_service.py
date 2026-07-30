@@ -1,7 +1,6 @@
 import base64
 import json
 import logging
-import os
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
@@ -16,6 +15,7 @@ from internal.model import Account, Message, App, AppConfig, AppConfigVersion
 from pkg.sqlalchemy import SQLAlchemy
 from .app_service import AppService
 from .base_service import BaseService
+from .language_model_service import LanguageModelService
 from ..entity.app_entity import AppStatus
 from ..entity.conversation_entity import InvokeFrom
 
@@ -30,19 +30,27 @@ class AudioService(BaseService):
     app_service: AppService
 
     @classmethod
-    def _validate_siliconflow_config(cls) -> tuple[str, str]:
-        """校验语音服务配置是否完整。"""
-        api_key = (os.environ.get("SILICONFLOW_API_KEY") or "").strip()
-        base_url = (os.environ.get("SILICONFLOW_API_BASE") or "").strip()
+    def _resolve_siliconflow_credentials(cls) -> tuple[str, str]:
+        """从数据库查询 SiliconFlow 凭证（api_key + base_url）。
+
+        替代原来从环境变量 SILICONFLOW_API_KEY/SILICONFLOW_API_BASE 读取的方式，
+        统一走 admin 数据库管理。
+        """
+        creds = LanguageModelService.get_provider_credentials(provider="SiliconFlow")
+        api_key = (creds.get("api_key") or "").strip()
+        base_url = (creds.get("base_url") or "").strip()
 
         missing_configs = []
         if api_key == "":
-            missing_configs.append("SILICONFLOW_API_KEY")
+            missing_configs.append("api_key")
         if base_url == "":
-            missing_configs.append("SILICONFLOW_API_BASE")
+            missing_configs.append("base_url")
 
         if missing_configs:
-            raise FailException(f"语音服务配置缺失: {', '.join(missing_configs)}")
+            raise FailException(
+                f"语音服务配置缺失（数据库 model_provider_config / model_key_config 中 "
+                f"SiliconFlow 缺少: {', '.join(missing_configs)}），请在 admin 中配置"
+            )
 
         return api_key, base_url
 
@@ -50,8 +58,8 @@ class AudioService(BaseService):
         """将语音转换为文本（SiliconFlow ASR）."""
         if not audio or not (content := audio.stream.read()):
             raise FailException("音频文件无效或为空")
-        api_key, base_url = self._validate_siliconflow_config()
-        endpoint = f"{base_url.rstrip('/')}/v1/audio/transcriptions"
+        api_key, base_url = self._resolve_siliconflow_credentials()
+        endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
 
         try:
             resp = self._get_requests_session().post(
@@ -163,8 +171,8 @@ class AudioService(BaseService):
 
     def _create_tts_response(self, input_text: str, voice: str) -> requests.Response:
         """请求TTS服务并返回流式响应对象"""
-        api_key, base_url = self._validate_siliconflow_config()
-        endpoint = f"{base_url.rstrip('/')}/v1/audio/speech"
+        api_key, base_url = self._resolve_siliconflow_credentials()
+        endpoint = f"{base_url.rstrip('/')}/audio/speech"
 
         model = "FunAudioLLM/CosyVoice2-0.5B"
         full_voice = f"{model}:{voice}"
@@ -229,7 +237,7 @@ class AudioService(BaseService):
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk:
                         data = {**common_data, "audio": base64.b64encode(chunk).decode("utf-8")}
-                        yield f"event: tts_message\ndata: {json.dumps(data)}\n\n"
+                        yield f"event: tts_message\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
                 yield f"event: tts_end\ndata: {json.dumps(common_data)}\n\n"
             except Exception as error:
                 logger.error("流式输出语音数据失败: %(error)s", {"error": error}, exc_info=True)

@@ -3,9 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { Message, Modal, type FileItem, type ValidatedError, Form } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { apiPrefix } from '@/config'
-import { useGenerateIconPreview, useValidateOpenAPISchema } from '@/hooks/use-tool'
-import { useUploadImage } from '@/hooks/use-upload-file'
-import { useGetBuiltinTools, useGetCategories } from '@/hooks/use-builtin-tool'
+import { useGenerateAdminIconPreview, useValidateAdminOpenAPISchema } from '@/hooks/use-admin-tool'
+import { useAdminUploadImage } from '@/hooks/use-admin-upload-file'
+import { useGetAdminBuiltinTools, useGetAdminCategories } from '@/hooks/use-admin-builtin-tool'
 import {
   createAdminApiTool,
   deleteAdminApiTool,
@@ -54,9 +54,9 @@ type ToolPaginator = {
  * 同时展示系统内置工具（只读）。
  */
 const { t, locale } = useI18n()
-const { image_url, handleUploadImage } = useUploadImage()
-const { handleValidateOpenAPISchema } = useValidateOpenAPISchema()
-const { loading: generateIconPreviewLoading, handleGenerateIconPreview } = useGenerateIconPreview()
+const { image_url, handleUploadImage } = useAdminUploadImage()
+const { handleValidateOpenAPISchema } = useValidateAdminOpenAPISchema()
+const { loading: generateIconPreviewLoading, handleGenerateIconPreview } = useGenerateAdminIconPreview()
 
 const activeTab = ref('api')
 
@@ -89,8 +89,8 @@ const emptyDescription = computed(() => {
 })
 
 // ---- 内置工具 ----
-const { loading: builtinLoading, builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
-const { categories, loadCategories } = useGetCategories()
+const { loading: builtinLoading, builtin_tools, loadBuiltinTools } = useGetAdminBuiltinTools()
+const { categories, loadCategories } = useGetAdminCategories()
 const builtin_category = ref<string>('all')
 const builtin_search_word = ref<string>('')
 const showBuiltinDrawer = ref(false)

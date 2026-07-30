@@ -5,7 +5,7 @@ import BillingUsageIndicator from '@/components/BillingUsageIndicator.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
 import DeepThinkingProposalCard from '@/components/DeepThinkingProposalCard.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
-import MemoryConfirmationCard from '@/components/MemoryConfirmationCard.vue'
+import RoutingDecisionCard from '@/components/RoutingDecisionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
 import { AI_SURFACE_BACKGROUND_GRADIENT, QueueEvent } from '@/config'
@@ -25,7 +25,6 @@ import {
 import { useAudioToText, useAudioPlayer } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
 import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
-import { confirmMemoryCandidate, ignoreMemoryCandidate } from '@/services/memory'
 import { createShowcaseCase } from '@/services/showcase'
 import { getErrorMessage } from '@/utils/error'
 import { useAccountStore } from '@/stores/account'
@@ -62,7 +61,6 @@ import {
   withChatRenderId,
   type DeepThinkingProposal,
   type ToolConfirmationPrompt,
-  type MemoryCandidatePrompt,
   type StreamMessage,
   type StreamState,
 } from '@/views/shared/chat-stream'
@@ -75,6 +73,7 @@ import {
 } from '@/views/shared/chat-metrics'
 import type { HomeIntentData } from '@/models/home'
 import type { BillingUsageEvent } from '@/models/billing-metering'
+import type { RoutingDecision } from '@/models/orchestration'
 import { calculateScrollDuration, smoothScroll } from '@/utils/scrollAnimation'
 import { OPEN_AGENT_ASSISTANT_APP } from '@/config/openagent'
 
@@ -141,7 +140,8 @@ const isStreamingResponse = ref(false)
 const billingEvents = ref<BillingUsageEvent[]>([])
 const deepThinkingProposal = ref<DeepThinkingProposal | null>(null)
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
-const memoryCandidatePrompt = ref<MemoryCandidatePrompt | null>(null)
+const routingDecision = ref<RoutingDecision | null>(null)
+const orchestratorReject = ref<{ reason: string; message: string } | null>(null)
 const lastHumanQuery = ref('')
 const lastHumanImageUrls = ref<string[]>([])
 const route = useRoute()
@@ -1104,7 +1104,8 @@ const handleSubmit = async () => {
   shouldAutoScrollToBottom.value = true
   billingEvents.value = []
   toolConfirmationPrompt.value = null
-  memoryCandidatePrompt.value = null
+  routingDecision.value = null
+  orchestratorReject.value = null
   stopAudioStream()
 
   // 5.4 往消息列表中添加基础人类消息
@@ -1183,8 +1184,11 @@ const handleSubmit = async () => {
           if (streamResult.state.toolConfirmationPrompt) {
             toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
           }
-          if (streamResult.state.memoryCandidatePrompt) {
-            memoryCandidatePrompt.value = streamResult.state.memoryCandidatePrompt
+          if (streamResult.state.routingDecision && !routingDecision.value) {
+            routingDecision.value = streamResult.state.routingDecision
+          }
+          if (streamResult.state.orchestratorReject && !orchestratorReject.value) {
+            orchestratorReject.value = streamResult.state.orchestratorReject
           }
           scheduleScrollToBottom()
         }
@@ -1249,24 +1253,6 @@ const handleCancelTool = async (id: string) => {
     // 取消失败时不阻塞用户体验
   }
   toolConfirmationPrompt.value = null
-}
-
-const handleConfirmMemory = async (id: string) => {
-  try {
-    await confirmMemoryCandidate(id, { policy: 'manual_confirm' })
-  } catch {
-    // 确认失败时不阻塞用户体验
-  }
-  memoryCandidatePrompt.value = null
-}
-
-const handleIgnoreMemory = async (id: string) => {
-  try {
-    await ignoreMemoryCandidate(id, { never_remind: false })
-  } catch {
-    // 取消失败时不阻塞用户体验
-  }
-  memoryCandidatePrompt.value = null
 }
 
 const handleClearConversation = async () => {
@@ -1726,6 +1712,15 @@ onUnmounted(() => {
       <!-- 对话输入框 -->
       <div class="w-full flex flex-col flex-shrink-0 pb-2 pt-2 gap-3">
         <div
+          v-if="routingDecision || orchestratorReject"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4"
+        >
+          <RoutingDecisionCard
+            :decision="routingDecision"
+            :reject="orchestratorReject"
+          />
+        </div>
+        <div
           v-if="deepThinkingProposal"
           class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
         >
@@ -1743,17 +1738,6 @@ onUnmounted(() => {
             :prompt="toolConfirmationPrompt"
             @confirm="handleConfirmTool"
             @cancel="handleCancelTool"
-          />
-        </div>
-        <div
-          v-if="memoryCandidatePrompt"
-          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
-        >
-          <MemoryConfirmationCard
-            :candidate="memoryCandidatePrompt"
-            @confirm="handleConfirmMemory"
-            @ignore="handleIgnoreMemory"
-            @never-remind="(id) => handleIgnoreMemory(id)"
           />
         </div>
         <div

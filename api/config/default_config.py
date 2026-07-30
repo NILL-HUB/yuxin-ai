@@ -21,15 +21,6 @@ DEFAULT_CONFIG = {
     "SQLALCHEMY_STATEMENT_TIMEOUT_MS": 30000,
     "SQLALCHEMY_ECHO": "False",
 
-    # Weaviate向量数据库配置
-    "WEAVIATE_HTTP_HOST": "localhost",
-    "WEAVIATE_HTTP_PORT": 8080,
-    "WEAVIATE_GRPC_HOST": "localhost",
-    "WEAVIATE_GRPC_PORT": 50051,
-    "WEAVIATE_TIMEOUT_QUERY": 15,
-    "WEAVIATE_TIMEOUT_INSERT": 90,
-    "WEAVIATE_TIMEOUT_INIT": 5,
-
     # Redis数据库配置
     "REDIS_HOST": "localhost",
     "REDIS_PORT": 6379,

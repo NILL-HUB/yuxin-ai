@@ -238,7 +238,7 @@ class TestAIService:
             def __or__(self, _other):
                 return self
 
-            def stream(self, _payload):
+            def stream(self, _payload, **_kwargs):
                 return iter(["step-1", "step-2"])
 
         monkeypatch.setattr(
@@ -260,7 +260,7 @@ class TestAIService:
             def __or__(self, _other):
                 return self
 
-            def stream(self, _payload):
+            def stream(self, _payload, **_kwargs):
                 return iter(["part-1", "", "part-2"])
 
         monkeypatch.setattr(
@@ -282,7 +282,7 @@ class TestAIService:
             def __or__(self, _other):
                 return self
 
-            def stream(self, _payload):
+            def stream(self, _payload, **_kwargs):
                 return iter(["{\"server\":", "", "\"https://a.com\"}"])
 
         monkeypatch.setattr(

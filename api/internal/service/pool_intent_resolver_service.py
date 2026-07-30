@@ -64,12 +64,15 @@ class PoolIntentResolver:
             matched_pools.append(pool_name)
             pool_reasons.append({"pool": pool_name, "reason": f"keyword:{keyword}"})
 
-        # 第 2 步：LLM 语义匹配兜底（仅在关键词零命中时调用，处理模糊 query）
-        # 注意：关键词已命中任何池时跳过 LLM，避免冗余调用
+        # 第 2 步：LLM 语义匹配兜底（仅在 intent 映射与关键词均零命中时调用，处理模糊 query）
+        # 注意：intent 已映射或关键词已命中任何池时跳过 LLM，避免冗余调用与 30s 超时阻塞
         has_keyword_hit = any(
             r.get("reason", "").startswith("keyword:") for r in pool_reasons
         )
-        if not has_keyword_hit and self.language_model_service is not None:
+        has_intent_hit = any(
+            r.get("reason", "").startswith("intent:") for r in pool_reasons
+        )
+        if not has_keyword_hit and not has_intent_hit and self.language_model_service is not None:
             try:
                 llm_pools = self._resolve_with_llm(query)
                 if llm_pools:
@@ -90,7 +93,11 @@ class PoolIntentResolver:
         return {"matched_pools": matched_pools, "pool_reasons": pool_reasons}
 
     def _resolve_with_llm(self, query: str) -> list[str]:
-        """用 LLM 判断用户消息应归入哪些子池。"""
+        """用 LLM 判断用户消息应归入哪些子池。
+
+        LLM 调用为非关键路径，使用较短超时（10s）避免阻塞主流程。
+        超时/失败时返回空列表，由上层降级到 general 池。
+        """
         pools = self.registry.list_pools()
         visible_pools = [p for p in pools if p.get("visible_to_user", True)]
         if not visible_pools:
@@ -102,9 +109,19 @@ class PoolIntentResolver:
             for p in visible_pools
         )
 
-        llm = self.language_model_service.get_cheap_chat_model()
+        import concurrent.futures
+        llm = self.language_model_service.get_feature_model("pool_intent_resolution")
         structured = llm.with_structured_output(PoolMatchResult)
-        result = structured.invoke(self._build_prompt(query, pool_descriptions, visible_pools))
+        prompt = self._build_prompt(query, pool_descriptions, visible_pools)
+
+        # LLM 子池匹配为优化项，10 秒未返回则放弃，避免阻塞主流程
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(structured.invoke, prompt)
+                result = future.result(timeout=10.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("_resolve_with_llm: LLM 调用 10s 超时，返回空列表")
+            return []
         valid_names = {p["name"] for p in visible_pools}
         return [name for name in result.matched_pools if name in valid_names]
 

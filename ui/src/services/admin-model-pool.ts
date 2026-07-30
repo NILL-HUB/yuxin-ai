@@ -27,8 +27,11 @@ export const setModelKeyStatus = (id: string, enabled: boolean) =>
   post(`/admin/model-keys/${id}/status`, { body: { status: enabled ? 'active' : 'disabled' } })
 
 export const listTierPolicies = () => get('/admin/model-tiers')
+export const createTierPolicy = (data: Record<string, unknown>) =>
+  post('/admin/model-tiers', { body: data })
 export const updateTierPolicy = (tierCode: string, data: Record<string, unknown>) =>
   put(`/admin/model-tiers/${tierCode}`, data)
+export const deleteTierPolicy = (tierCode: string) => del(`/admin/model-tiers/${tierCode}`)
 
 export const listCostPolicies = () => get('/admin/cost-policies')
 export const createCostPolicy = (data: Record<string, unknown>) =>

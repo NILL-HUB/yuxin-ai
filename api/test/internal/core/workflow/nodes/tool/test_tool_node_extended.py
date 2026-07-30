@@ -326,7 +326,7 @@ class TestToolNodeAgentBinding:
                 [_AgentTool()],
             )[1]
         )
-        monkeypatch.setattr("app.http.module.injector", _InjectorStub({"AppService": app_service}))
+        monkeypatch.setattr("app.http.module.injector", _InjectorStub({"AppRuntimeService": app_service}))
 
         target_app_id = str(uuid4())
         node_data = _make_node_data("agent_binding", tool_id=target_app_id)

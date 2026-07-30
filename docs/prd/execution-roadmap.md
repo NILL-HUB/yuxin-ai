@@ -96,7 +96,7 @@
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
-| **Weaviate scope 过滤增强** | `knowledge_vector_service.py` + `retrieval_service.py` | ✅ KnowledgeVectorService.search() 和 search_in_knowledge_base() 支持 knowledge_scope 过滤 |
+| **pgvector scope 过滤增强** | `knowledge_vector_service.py` + `retrieval_service.py` | ✅ KnowledgeVectorService.search() 和 search_in_knowledge_base() 支持 knowledge_scope 过滤 |
 | **打通记忆确认对话推送** | `assistant_agent_service.py` + `chat-stream.ts` + `HomeView.vue` | ✅ MemoryConfirmationCard 接入对话 SSE 流 |
 
 ### P3（已完成）

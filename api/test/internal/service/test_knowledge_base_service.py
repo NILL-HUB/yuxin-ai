@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from internal.exception import ForbiddenException, NotFoundException
-from internal.model import ExternalDataSource, KnowledgeBase, MemoryCandidate, UserMemory
+from internal.model import ExternalDataSource, KnowledgeBase, UserMemory
 from internal.service.knowledge_base_service import KnowledgeBaseService
 
 
@@ -160,13 +160,6 @@ def test_core_models_should_expose_phase1_fields():
         status="active",
         created_from="conversation_memory",
     )
-    candidate = MemoryCandidate(
-        owner_account_id=account_id,
-        candidate_key="language_preference:zh",
-        content="用户连续偏好中文回答",
-        confidence=3,
-        status="pending",
-    )
     source = ExternalDataSource(
         owner_account_id=account_id,
         knowledge_base_id=uuid4(),
@@ -177,7 +170,6 @@ def test_core_models_should_expose_phase1_fields():
 
     assert base.knowledge_scope == "user_content"
     assert memory.created_from == "conversation_memory"
-    assert candidate.confidence == 3
     assert source.source_type == "notion"
 
 

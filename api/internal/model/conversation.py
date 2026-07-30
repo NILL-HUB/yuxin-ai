@@ -60,6 +60,7 @@ class Conversation(db.Model):
         """只读属性，用于判断该会话是否是第一次创建"""
         message_count = db.session.query(func.count(Message.id)).filter(
             Message.conversation_id == self.id,
+            Message.is_deleted == False,
         ).scalar()
 
         return False if message_count > 1 else True

@@ -2,3 +2,14 @@ name: timezone_converter
 label: 时区转换
 description: 在不同时区之间转换时间
 params: []
+task_keywords:
+- 时区
+- 时区转换
+- 转换时区
+- timezone
+- UTC
+- 时差
+- 纽约时间
+- 伦敦时间
+- 东京时间
+- 北京时间

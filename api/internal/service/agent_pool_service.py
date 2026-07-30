@@ -11,13 +11,8 @@ from internal.model.app import App, AppAssignment
 
 
 # AgentPoolConfig 不存在时的降级默认值，保证无配置记录的 App 也能被收集
-_DEFAULT_POOL_CONFIG = {
-    "primary_pool": "general",
-    "secondary_pools": [],
-    "risk_level": "safe",
-    "model_tier": "standard",
-    "routing_priority": 100,
-}
+# 路由字段已统一由 agent_metadata 承载，此处仅保留部署/健康相关字段
+_DEFAULT_POOL_CONFIG: dict[str, object] = {}
 
 
 BUILTIN_AGENT_CANDIDATES = [
@@ -101,25 +96,30 @@ class AgentCandidateCollector:
     def _unpack_app_row(row) -> tuple[App, AgentPoolConfig | None]:
         """从 query(App, AgentPoolConfig).outerjoin(...).all() 的结果中拆出 App 和 AgentPoolConfig。
 
-        真实查询返回 Row/tuple；测试 stub 可能直接返回 App 对象，此时降级为 (app, None)。
+        SQLAlchemy 1.4+ 的 query(App, AgentPoolConfig).all() 返回 Row 对象，
+        Row 既不是 tuple 也不是 list，但支持索引访问和 _mapping 属性。
+        测试 stub 可能直接返回 App 对象，此时降级为 (app, None)。
         """
-        if isinstance(row, tuple):
+        # SQLAlchemy Row 对象（支持索引访问）
+        if hasattr(row, "_mapping") or isinstance(row, tuple):
             app = row[0]
             pool_config = row[1] if len(row) > 1 else None
             return app, pool_config
+        # 测试 stub 直接返回 App 对象
         return row, None
 
     @staticmethod
     def _normalize_pool_config(config: AgentPoolConfig | None) -> dict[str, object]:
-        """把 AgentPoolConfig ORM 对象归一化为 dict；记录不存在时降级为默认值。"""
+        """把 AgentPoolConfig ORM 对象归一化为 dict；记录不存在时降级为默认值。
+
+        路由字段（primary_pool/secondary_pools/risk_level/model_tier/model_id/routing_priority）
+        已统一由 agent_metadata 承载，此处不再输出。AgentPoolConfig 仅保留部署/健康元数据。
+        """
         if config is None:
             return dict(_DEFAULT_POOL_CONFIG)
         return {
-            "primary_pool": config.primary_pool,
-            "secondary_pools": config.secondary_pools or [],
-            "risk_level": config.risk_level,
-            "model_tier": config.model_tier,
-            "routing_priority": config.routing_priority,
+            "enabled": bool(config.enabled),
+            "health_status": config.health_status,
         }
 
     def collect_raw(self, account_id: UUID) -> list[dict[str, object]]:
@@ -263,6 +263,7 @@ class AgentCandidateCollector:
         app = candidate["app"]
         source_scope = candidate["source_scope"]
         pool_config = candidate.get("pool_config") or {}
+        # 路由字段已统一由 metadata（agent_metadata）承载，不再从 pool_config 输出冗余顶层字段
         return {
             "id": str(app.id),
             "agent_id": str(app.id),
@@ -276,11 +277,7 @@ class AgentCandidateCollector:
             "app_id": str(app.id),
             "visibility": "public" if app.is_public else "private",
             "metadata": candidate["metadata"],
-            "primary_pool": pool_config.get("primary_pool", _DEFAULT_POOL_CONFIG["primary_pool"]),
-            "secondary_pools": pool_config.get("secondary_pools", _DEFAULT_POOL_CONFIG["secondary_pools"]),
-            "risk_level": pool_config.get("risk_level", _DEFAULT_POOL_CONFIG["risk_level"]),
-            "model_tier": pool_config.get("model_tier", _DEFAULT_POOL_CONFIG["model_tier"]),
-            "routing_priority": pool_config.get("routing_priority", _DEFAULT_POOL_CONFIG["routing_priority"]),
+            "pool_config": pool_config,
         }
 
     @staticmethod

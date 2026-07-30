@@ -1,14 +1,13 @@
 import os
 import logging
 from flask import Flask
-from flask_weaviate import FlaskWeaviate
 from flask_migrate import Migrate
 from flask_login import LoginManager
 from flask_mail import Mail
 from config import Config
 from internal.exception import CustomException
 from internal.router import Router
-from internal.extension import logging_extension, redis_extension, celery_extension
+from internal.extension import logging_extension, redis_extension, celery_extension, neo4j_extension
 from internal.extension.socketio_extension import init_socketio, resolve_cors_settings
 from pkg.response import json, Response, HttpCode
 from pkg.sqlalchemy import SQLAlchemy
@@ -23,7 +22,6 @@ class Http(Flask):
             *args,
             conf: Config,
             db: SQLAlchemy,
-            weaviate: FlaskWeaviate,
             migrate: Migrate,
             login_manager: LoginManager,
             mail: Mail,
@@ -53,11 +51,11 @@ class Http(Flask):
 
         # 5.初始化flask扩展
         db.init_app(self)
-        weaviate.init_app(self)
         migrate.init_app(self, db, directory="internal/migration")
         logging_extension.init_app(self)
         redis_extension.init_app(self)
         celery_extension.init_app(self)
+        neo4j_extension.init_app(self)
         login_manager.init_app(self)
         mail.init_app(self)
         init_socketio(self)

@@ -19,8 +19,8 @@ class SandboxPolicy:
     default_sandbox_profile: str = "lite"
     default_sandbox_template_alias: str = "llmops-code-interpreter-lite"
     default_sandbox_fallback_template_alias: str = "code-interpreter-v1"
-    default_sandbox_timeout_seconds: int = 1800
-    default_execute_timeout_seconds: int = 600
+    default_sandbox_timeout_seconds: int = 86400
+    default_execute_timeout_seconds: int = 3600
     default_artifact_base_dirs: tuple[str, ...] = ("/workspace", "/home/user", "/tmp", "/mnt/data")
     document_build_base_dir: str = "/tmp/openagent_doc_build"
     code_interpreter_data_dir: str = "/mnt/data"

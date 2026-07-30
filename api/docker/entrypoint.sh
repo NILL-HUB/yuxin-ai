@@ -26,7 +26,7 @@ set_default_if_unset "HF_ENDPOINT" "https://hf-mirror.com"
 # 服务器配置
 set_default_if_unset "SERVER_WORKER_AMOUNT" "1"
 set_default_if_unset "SERVER_THREAD_AMOUNT" "32"
-set_default_if_unset "GUNICORN_TIMEOUT" "120"
+set_default_if_unset "GUNICORN_TIMEOUT" "0"
 set_default_if_unset "CELERY_WORKER_AMOUNT" "4"
 
 # 数据库连接池配置
@@ -65,13 +65,10 @@ set_default_if_unset "COS_ENABLE_OLD_DOMAIN" "True"
 set_default_if_unset "COS_ENABLE_INTERNAL_DOMAIN" "False"
 
 # API 基础地址（非敏感）
-set_default_if_unset "LLM_REQUEST_TIMEOUT" "120"
-set_default_if_unset "AGENT_LISTEN_TIMEOUT_SECONDS" "1800"
-set_default_if_unset "SANDBOX_TIMEOUT_SECONDS" "1800"
-set_default_if_unset "SANDBOX_EXECUTE_TIMEOUT_SECONDS" "600"
-set_default_if_unset "OPENAI_API_BASE" "https://api.openai.com/v1"
-set_default_if_unset "DEEPSEEK_API_BASE" "https://api.deepseek.com/v1"
-set_default_if_unset "SILICONFLOW_API_BASE" "https://api.siliconflow.cn"
+set_default_if_unset "LLM_REQUEST_TIMEOUT" "300"
+set_default_if_unset "AGENT_LISTEN_TIMEOUT_SECONDS" "86400"
+set_default_if_unset "SANDBOX_TIMEOUT_SECONDS" "86400"
+set_default_if_unset "SANDBOX_EXECUTE_TIMEOUT_SECONDS" "3600"
 set_default_if_unset "LANGCHAIN_ENDPOINT" "https://api.smith.langchain.com"
 
 # Docker 环境下优先使用容器内数据库地址拼接连接串
@@ -122,10 +119,13 @@ if [[ "${MIGRATION_ENABLED}" == "true" ]]; then
   flask db upgrade --directory internal/migration
 fi
 
-# 6.检测运行的模式(api/celery) 以执行不同的脚本
+# 6.检测运行的模式(api/celery/celery-beat) 以执行不同的脚本
 if [[ "${MODE}" == "celery" ]]; then
   # 7.运行Celery命令
   celery -A app.http.app.celery worker -P ${CELERY_WORKER_CLASS:-prefork} -c ${CELERY_WORKER_AMOUNT:-1} --loglevel DEBUG
+elif [[ "${MODE}" == "celery-beat" ]]; then
+  # 7b.运行Celery Beat调度器
+  celery -A app.http.app.celery beat --loglevel DEBUG
 else
   GUNICORN_WORKER_CLASS="${SERVER_WORKER_CLASS:-gthread}"
   GUNICORN_WORKER_AMOUNT="${SERVER_WORKER_AMOUNT:-1}"
@@ -146,7 +146,7 @@ else
         --workers ${GUNICORN_WORKER_AMOUNT} \
         --worker-class ${GUNICORN_WORKER_CLASS} \
         --threads ${SERVER_THREAD_AMOUNT:-2} \
-        --timeout ${GUNICORN_TIMEOUT:-600} \
+        --timeout ${GUNICORN_TIMEOUT:-0} \
         --preload \
         app.http.app:app
     fi

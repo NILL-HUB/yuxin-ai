@@ -108,7 +108,7 @@ class TaskPlannerService:
         subset = decision.agent_subset or {}
         selected_agents = subset.get("selected_agents") or []
         if selected_agents and isinstance(selected_agents[0], dict):
-            return selected_agents[0].get("primary_pool") or "general"
+            return (selected_agents[0].get("metadata") or {}).get("primary_pool") or "general"
         return "general"
 
     @staticmethod

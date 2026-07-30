@@ -14,14 +14,13 @@ from internal.entity.app_entity import DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException
-from internal.model import ApiTool, AppDatasetJoin, Dataset, Message, Workflow
+from internal.model import ApiTool, Message, Workflow
 from internal.service.app_config_service import AppConfigService
 from internal.service.assistant_agent_service import AssistantAgentService
 from internal.service.cos_service import CosService
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.faiss_service import FaissService
 from internal.service.upload_file_service import UploadFileService
-from internal.service.vector_database_service import VectorDatabaseService
 
 
 @contextmanager

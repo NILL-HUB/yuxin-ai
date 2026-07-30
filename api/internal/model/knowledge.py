@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, PrimaryKeyConstraint, String, Text, UUID, text
 from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import relationship
 
 from internal.extension.database_extension import db
@@ -35,11 +36,16 @@ class KnowledgeBase(db.Model):
     created_from = Column(String(64), nullable=False, server_default=text("'manual_upload'::character varying"))
     settings = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    # 知识库绑定的 embedding 模型 ID（FK → model_pool_config.id）
+    # 为空时使用系统默认 embedding 模型（priority 最高的 active 模型）
+    # 非空时按此模型维度路由到对应的 knowledge_segment_embedding_{dim} 表
+    embedding_model_id = Column(UUID, ForeignKey("model_pool_config.id"), nullable=True)
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), server_onupdate=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
     owner_account = relationship("Account", foreign_keys=[owner_account_id], lazy="joined")
     owner_admin_user = relationship("AdminUser", foreign_keys=[owner_admin_user_id], lazy="joined")
+    embedding_model = relationship("ModelPoolConfig", foreign_keys=[embedding_model_id], lazy="joined")
 
 
 class KnowledgeDocument(db.Model):
@@ -94,6 +100,8 @@ class KnowledgeSegment(db.Model):
     hit_count = Column(Integer, nullable=False, server_default=text("0"))
     status = Column(String(64), nullable=False, server_default=text("'waiting'::character varying"))
     enabled = Column(Boolean, nullable=False, server_default=text("true"))
+    # pgvector 向量列（HNSW 索引）
+    embedding = Column(Vector(1536), nullable=True)
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), server_onupdate=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
@@ -118,33 +126,11 @@ class UserMemory(db.Model):
     created_from = Column(String(64), nullable=False, server_default=text("'conversation_memory'::character varying"))
     metadata_ = Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     embedding_node_id = Column(String(255), nullable=True)
+    # pgvector 向量列（HNSW 索引）
+    embedding = Column(Vector(1536), nullable=True)
     scope = Column(String(64), nullable=False, server_default=text("'global'::character varying"))
     source_conversation_ids = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     last_used_at = Column(DateTime, nullable=True)
-    updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), server_onupdate=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)
-    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
-
-
-class MemoryCandidate(db.Model):
-    __tablename__ = "memory_candidate"
-    __table_args__ = (
-        PrimaryKeyConstraint("id", name="pk_memory_candidate_id"),
-        Index("memory_candidate_owner_key_idx", "owner_account_id", "candidate_key"),
-        Index("memory_candidate_status_idx", "status"),
-    )
-
-    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    owner_account_id = Column(UUID, ForeignKey("account.id"), nullable=False)
-    candidate_key = Column(String(255), nullable=False, server_default=text("''::character varying"))
-    content = Column(Text, nullable=False, server_default=text("''::text"))
-    confidence = Column(Integer, nullable=False, server_default=text("0"))
-    occurrences = Column(Integer, nullable=False, server_default=text("1"))
-    status = Column(String(64), nullable=False, server_default=text("'pending'::character varying"))
-    memory_type = Column(String(64), nullable=False, server_default=text("'preference'::character varying"))
-    scope = Column(String(64), nullable=False, server_default=text("'global'::character varying"))
-    source_conversation_id = Column(UUID, nullable=True)
-    extracted_at = Column(DateTime, nullable=True)
-    metadata_ = Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     updated_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), server_onupdate=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 

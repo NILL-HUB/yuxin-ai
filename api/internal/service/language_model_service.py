@@ -19,10 +19,11 @@ from .base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_RUNTIME_FALLBACK_MODEL_CONFIG = {
-    "provider": "deepseek",
-    "model": "deepseek-chat",
-}
+# 数据库未配置模型时的兜底档位（按 tier 升序取第一个 active 模型）
+# "2" 对应标准型（原 "standard"）
+_DEFAULT_FALLBACK_TIER = "2"
+# 历史软超时常量，已废弃：_build_soft_timeout_model 不再压缩 timeout，
+# LLM 死机检测完全由 LLMActivityProbe 活跃探针接管（60s 无 token 产出才判定死机）
 _RUNTIME_FALLBACK_SOFT_TIMEOUT_SECONDS = 30.0
 _RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 _RETRYABLE_EXCEPTION_NAME_PARTS = (
@@ -164,29 +165,15 @@ def _contains_image_input(value: Any, _visited: set[int] | None = None) -> bool:
 
 
 def _build_soft_timeout_model(model: Any, timeout_seconds: float) -> Any:
-    """为运行时首个请求构建一个更短超时的模型副本。"""
+    """构建禁用重试的模型副本（保留原始 timeout，由 LLMActivityProbe 接管死机检测）。
+
+    历史上此函数会压缩 timeout 到 30s 以实现"快速失败切换兜底"，
+    但这会误杀需要长耗时思考的 LLM（如编程 Agent 连续工作数小时）。
+    现在仅设置 max_retries=0（不重试），timeout 保留原始值（由 LLM_REQUEST_TIMEOUT 控制），
+    死机检测完全交给 LLMActivityProbe 活跃探针（60s 无 token 产出才判定死机）。
+    """
     model_fields = getattr(model.__class__, "model_fields", {}) or {}
     update: dict[str, Any] = {}
-    timeout_update_value: float | None = None
-    timeout_payload_key: str | None = None
-
-    timeout_field_name = next(
-        (
-            field_name
-            for field_name in ("request_timeout", "timeout")
-            if field_name in model_fields or hasattr(model, field_name)
-        ),
-        None,
-    )
-    if timeout_field_name is not None:
-        current_timeout = getattr(model, timeout_field_name, None)
-        if isinstance(current_timeout, (int, float)) and not isinstance(current_timeout, bool) and current_timeout > 0:
-            timeout_update_value = min(float(current_timeout), float(timeout_seconds))
-        else:
-            timeout_update_value = float(timeout_seconds)
-        update[timeout_field_name] = timeout_update_value
-        timeout_field_info = model_fields.get(timeout_field_name)
-        timeout_payload_key = str(getattr(timeout_field_info, "alias", None) or timeout_field_name)
 
     if "max_retries" in model_fields or hasattr(model, "max_retries"):
         current_max_retries = getattr(model, "max_retries", None)
@@ -195,19 +182,6 @@ def _build_soft_timeout_model(model: Any, timeout_seconds: float) -> Any:
 
     if not update:
         return model
-
-    dump_method = getattr(model, "model_dump", None)
-    if callable(dump_method):
-        try:
-            payload = dump_method(by_alias=True)
-            if isinstance(payload, dict):
-                if timeout_update_value is not None and timeout_payload_key is not None:
-                    payload[timeout_payload_key] = timeout_update_value
-                if "max_retries" in update:
-                    payload["max_retries"] = 0
-                return model.__class__(**payload)
-        except Exception:
-            pass
 
     for clone_method_name in ("model_copy", "copy"):
         clone_method = getattr(model, clone_method_name, None)
@@ -253,11 +227,14 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
             metadata=deepcopy(getattr(model, "metadata", None) or metadata_source or {}),
         )
         object.__setattr__(instance, "_model", model)
-        object.__setattr__(
-            instance,
-            "_primary_model",
-            _build_soft_timeout_model(model, _RUNTIME_FALLBACK_SOFT_TIMEOUT_SECONDS),
-        )
+        # 仅在启用运行时兜底时才应用软超时（快速失败以触发兜底切换）。
+        # 当 runtime_fallback_enabled=False 时保留原始模型超时（如 LLM_REQUEST_TIMEOUT=300s），
+        # 避免 30s 软超时误杀深度思考模型（探针 60s 检测间隔 > 30s 软超时，探针尚未触发 httpx 已超时）。
+        if runtime_fallback_enabled:
+            primary_model = _build_soft_timeout_model(model, _RUNTIME_FALLBACK_SOFT_TIMEOUT_SECONDS)
+        else:
+            primary_model = model
+        object.__setattr__(instance, "_primary_model", primary_model)
         object.__setattr__(instance, "_fallback_loader", fallback_loader)
         object.__setattr__(instance, "_fallback_model", None)
         object.__setattr__(instance, "_requested_model_config", deepcopy(requested_model_config or {}))
@@ -305,7 +282,7 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
             if not self._can_fallback(input_value, exc):
                 raise
             logger.warning(
-                "LLM 运行时%s失败，切换到 deepseek-chat 兜底: requested=%s error=%s",
+                "LLM 运行时%s失败，切换到默认模型兜底: requested=%s error=%s",
                 method_name,
                 self._requested_model_ref,
                 exc,
@@ -322,7 +299,7 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
             if not self._can_fallback(input_value, exc):
                 raise
             logger.warning(
-                "LLM 运行时%s失败，切换到 deepseek-chat 兜底: requested=%s error=%s",
+                "LLM 运行时%s失败，切换到默认模型兜底: requested=%s error=%s",
                 method_name,
                 self._requested_model_ref,
                 exc,
@@ -344,7 +321,7 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
             if yielded_any_chunk or not self._can_fallback(input_value, exc):
                 raise
             logger.warning(
-                "LLM 运行时stream失败，切换到 deepseek-chat 兜底: requested=%s error=%s",
+                "LLM 运行时stream失败，切换到默认模型兜底: requested=%s error=%s",
                 self._requested_model_ref,
                 exc,
             )
@@ -409,7 +386,7 @@ class LanguageModelService(BaseService):
     def get_language_models(self) -> list[dict[str, Any]]:
         """获取 OpenAgent 项目中的所有模型列表信息
 
-        合并静态 providers.yaml 与动态 model_pool_config 表中的模型,
+        从动态 model_pool_config 表中读取模型，
         使 AppConfig 选模型时能看到管理端配置的全部模型。
         """
         # 1.从数据库获取所有活跃模型，按 provider 分组
@@ -425,6 +402,7 @@ class LanguageModelService(BaseService):
                 if m.provider not in dynamic_by_provider:
                     dynamic_by_provider[m.provider] = []
                 dynamic_by_provider[m.provider].append({
+                    "model_id": str(m.id),
                     "model_name": m.model_name,
                     "label": m.display_name or m.model_name,
                     "model_type": getattr(m, "model_type", None) or "chat",
@@ -432,7 +410,10 @@ class LanguageModelService(BaseService):
                     "context_windows": m.max_tokens or 0,
                     "max_output_tokens": m.max_tokens or 0,
                     "attributes": {"tier": m.tier, "base_url": ""},
-                    "metadata": {"price_per_1k_tokens": str(m.price_per_1k_tokens)},
+                    "metadata": {
+                        "price_per_1k_tokens": str(m.price_per_1k_tokens),
+                        "embedding_dimension": int(getattr(m, "embedding_dimension", 0) or 0),
+                    },
                     "parameters": [],
                 })
         except Exception:
@@ -474,16 +455,8 @@ class LanguageModelService(BaseService):
 
     def get_language_model(self, provider_name: str, model_name: str) -> dict[str, Any]:
         """根据传递的提供者名字+模型名字获取模型详细信息"""
-        # 1.获取提供者+模型实体信息
-        provider = self.language_model_manager.get_provider(provider_name)
-        if not provider:
-            raise NotFoundException("该服务提供者不存在")
-
-        # 2.获取模型实体
-        model_entity = provider.get_model_entity(model_name)
-        if not model_entity:
-            raise NotFoundException("该模型不存在")
-
+        # 直接通过 manager 懒加载模型实体（内部会校验 provider 存在性）
+        model_entity = self.language_model_manager.get_or_load_model_entity(provider_name, model_name)
         return convert_model_to_dict(model_entity)
 
     @classmethod
@@ -495,53 +468,342 @@ class LanguageModelService(BaseService):
 
     @classmethod
     def get_default_model_config(cls) -> dict[str, Any]:
-        """返回默认文本模型配置。"""
+        """返回默认文本模型配置。
+
+        通过 injector 获取自身实例，从数据库查询 priority 最高的 active 模型，
+        不再硬编码任何 provider/model。
+        """
+        from flask import current_app
+
+        _ctx = None
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            _ctx = app.app_context()
+            _ctx.push()
+        try:
+            from app.http.module import injector
+            svc = injector.get(LanguageModelService)
+            return svc._load_default_model_config_from_db(tier=None)
+        finally:
+            if _ctx is not None:
+                _ctx.pop()
+
+    @classmethod
+    def get_assistant_agent_model_config(cls) -> dict[str, Any]:
+        """返回辅助 Agent 的基础模型配置。
+
+        从数据库查询 standard tier 中 priority 最高的 active 模型，
+        不再硬编码 deepseek-chat。
+        """
+        from flask import current_app
+
+        _ctx = None
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            _ctx = app.app_context()
+            _ctx.push()
+        try:
+            from app.http.module import injector
+            svc = injector.get(LanguageModelService)
+            return svc._load_default_model_config_from_db(tier="2")
+        finally:
+            if _ctx is not None:
+                _ctx.pop()
+
+    def _load_default_model_config_from_db(self, tier: str | None = None) -> dict[str, Any]:
+        """从数据库查询默认模型配置。
+
+        Args:
+            tier: 指定档位时按 tier 过滤；None 时取 priority 最高的 active 模型
+
+        Returns:
+            {provider, model, parameters} 字典
+
+        Raises:
+            NotFoundException: 数据库无可用模型
+        """
+        from internal.model.model_pool_entity import ModelPoolConfig
+
+        query = self.db.session.query(ModelPoolConfig).filter_by(status="active")
+        if tier:
+            query = query.filter(ModelPoolConfig.tier == tier)
+        config = query.order_by(
+            ModelPoolConfig.priority.desc(),
+            ModelPoolConfig.created_at.asc(),
+        ).first()
+        if config is None:
+            raise NotFoundException(
+                f"数据库无可用 active 模型（tier={tier or 'any'}），请在 admin 中配置模型池"
+            )
         return {
-            "provider": "deepseek",
-            "model": "deepseek-chat",
+            "provider": config.provider,
+            "model": config.model_name,
             "parameters": {},
         }
 
     @classmethod
-    def get_assistant_agent_model_config(cls) -> dict[str, Any]:
-        """返回辅助 Agent 的基础模型配置。"""
+    def get_provider_credentials(
+        cls,
+        provider: str | None = None,
+        model_type: str | None = None,
+    ) -> dict[str, str]:
+        """从数据库查询 provider 的 API 凭证（api_key + base_url + model_name）。
+
+        用于非 Chat 类的 LLM 服务（audio/rerank/embedding/image）从数据库获取凭证，
+        替代原来从环境变量读取的方式。
+
+        Args:
+            provider: 指定 provider 名称（如 "SiliconFlow"）。为 None 时按 model_type 查询。
+            model_type: 指定模型类型（如 "speech_to_text"/"rerank"/"embedding"/"text_to_image"）。
+                       provider 和 model_type 至少传一个；同时提供时以 provider 优先。
+
+        Returns:
+            {"api_key": "...", "base_url": "...", "model": "...", "provider": "..."}
+            查询失败或无配置时返回空字典。
+        """
+        from flask import current_app
+
+        _ctx = None
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            _ctx = app.app_context()
+            _ctx.push()
+        try:
+            from app.http.module import injector
+            svc = injector.get(LanguageModelService)
+            return svc._load_provider_credentials_from_db(provider=provider, model_type=model_type)
+        finally:
+            if _ctx is not None:
+                _ctx.pop()
+
+    def _load_provider_credentials_from_db(
+        self,
+        provider: str | None = None,
+        model_type: str | None = None,
+    ) -> dict[str, str]:
+        """从数据库查询 provider 凭证。"""
+        from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig
+        from internal.model.model_provider_entity import ModelProviderConfig
+        from internal.service.admin_model_pool_service import _decrypt_key_value
+
+        if not provider and not model_type:
+            return {}
+
+        query = self.db.session.query(ModelPoolConfig).filter_by(status="active")
+        if provider:
+            query = query.filter(ModelPoolConfig.provider == provider)
+        if model_type:
+            query = query.filter(ModelPoolConfig.model_type == model_type)
+        model_record = query.order_by(
+            ModelPoolConfig.priority.desc(),
+            ModelPoolConfig.created_at.asc(),
+        ).first()
+        if model_record is None:
+            return {}
+
+        key = self.db.session.query(ModelKeyConfig).filter(
+            ModelKeyConfig.provider == model_record.provider,
+            ModelKeyConfig.status == "active",
+        ).order_by(
+            ModelKeyConfig.used_credits.asc(),
+            ModelKeyConfig.created_at.asc(),
+        ).first()
+        if key is None:
+            return {}
+
+        provider_config = self.db.session.query(ModelProviderConfig).filter_by(
+            name=model_record.provider,
+        ).first()
+
         return {
-            "provider": "deepseek",
-            "model": "deepseek-chat",
-            "parameters": {
-                "temperature": 0.8,
-            },
+            "api_key": _decrypt_key_value(key.key_value_encrypted),
+            "base_url": (provider_config.default_base_url if provider_config else "") or "",
+            "model": model_record.model_name,
+            "provider": model_record.provider,
         }
 
     @classmethod
     def get_cheap_chat_model(cls):
-        """返回用于意图判断等轻量任务的 cheap 档 LLM 实例。"""
-        from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
-        return DeepSeekChat(
-            model="deepseek-chat",
-            temperature=0.1,
-            features=[],
-            metadata={},
-        )
+        """返回用于意图判断等轻量任务的 cheap 档 LLM 实例。
+
+        通过依赖注入获取 LanguageModelService 实例，走完整的 compatible_api 分发链路，
+        根据数据库中模型的 compatible_api 字段选择正确的 Chat 类（如 ChatOpenAI）。
+        """
+        return cls._get_runtime_chat_model_by_tier("1")
 
     @classmethod
-    def get_chat_model_by_tier(cls, tier: str = "cheap"):
-        """根据档位返回对应 LLM 实例。cheap/standard 走 deepseek-chat，strong 走 deepseek-reasoner。"""
-        from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
-        tier = (tier or "cheap").lower()
-        if tier == "strong":
-            return DeepSeekChat(
-                model="deepseek-reasoner",
-                temperature=0.0,
-                features=[],
-                metadata={},
-            )
-        return DeepSeekChat(
-            model="deepseek-chat",
-            temperature=0.1 if tier == "cheap" else 0.3,
-            features=[],
-            metadata={},
-        )
+    def get_chat_model_by_tier(cls, tier: str = "1"):
+        """根据档位返回对应 LLM 实例。走完整的 compatible_api 分发链路。"""
+        return cls._get_runtime_chat_model_by_tier(tier)
+
+    @classmethod
+    def _get_runtime_chat_model_by_tier(cls, tier: str, model_type: str | None = None):
+        """统一运行时 LLM 获取入口：通过 injector 获取 LanguageModelService 实例，
+        走 _try_resolve_pool_llm → _instantiate_language_model → ModelClassRegistry 分发链路。
+
+        在后台线程（记忆系统等）中调用时，手动 push/pop app context。
+        所有 LLM 获取统一走数据库配置，不再有任何硬编码 provider/key。
+        """
+        tier = (tier or "1").strip()
+        from flask import current_app
+
+        _ctx = None
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            _ctx = app.app_context()
+            _ctx.push()
+
+        try:
+            from app.http.module import injector
+            svc = injector.get(LanguageModelService)
+            result = svc._try_resolve_pool_llm(tier, model_type)
+            if result is not None:
+                llm, _config = result
+                return llm
+            # 降级到默认模型（也走 DB 配置，无硬编码）
+            return svc.load_default_language_model()
+        finally:
+            if _ctx is not None:
+                _ctx.pop()
+
+    @classmethod
+    def get_feature_model(cls, feature_key: str):
+        """根据公共 AI 功能键返回 LLM 实例。
+
+        优先读取 public_ai_feature_config 表中该 feature_key 绑定的模型；
+        未配置或模型不可用时，按 fallback_tier 自动降级到模型池中的对应档位模型。
+
+        Args:
+            feature_key: 功能键，如 "icon_prompt"、"memory_consolidation"、"intent_recognition"
+
+        Returns:
+            BaseLanguageModel 实例
+        """
+        from flask import current_app
+
+        _ctx = None
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            _ctx = app.app_context()
+            _ctx.push()
+
+        try:
+            from app.http.module import injector
+            from internal.service.public_ai_feature_service import PublicAIFeatureService
+
+            svc = injector.get(PublicAIFeatureService)
+
+            # 1. 优先使用功能绑定的模型
+            model_config = svc.get_feature_model_config(feature_key)
+            if model_config is not None:
+                llm = cls._instantiate_model_from_pool_config(model_config)
+                if llm is not None:
+                    return llm
+                logger.warning("get_feature_model: 绑定模型实例化失败 feature_key=%s model=%s", feature_key, model_config.model_name)
+
+            # 2. 回退到 fallback_tier（按 model_type 过滤，防止类型不匹配）
+            fallback_tier = svc.get_feature_fallback_tier(feature_key)
+            model_type = svc.get_feature_model_type(feature_key)
+            return cls._get_runtime_chat_model_by_tier(fallback_tier, model_type)
+        finally:
+            if _ctx is not None:
+                _ctx.pop()
+
+    @classmethod
+    def get_feature_credentials(cls, feature_key: str) -> dict[str, str]:
+        """根据公共 AI 功能键返回非 Chat 类凭证（api_key + base_url + model）。
+
+        用于 image_generation / audio / rerank 等非 Chat 类功能的凭证获取。
+        直接从功能绑定的 model_config_id 对应 ModelPoolConfig 记录读取凭证
+        （provider + base_url + API Key）。未绑定模型时返回空字典。
+
+        Args:
+            feature_key: 功能键，如 "icon_image_generation"
+
+        Returns:
+            {"api_key": "...", "base_url": "...", "model": "...", "provider": "..."}
+            未绑定模型时返回空字典。
+        """
+        from flask import current_app
+
+        _ctx = None
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            _ctx = app.app_context()
+            _ctx.push()
+
+        try:
+            from app.http.module import injector
+            from internal.service.public_ai_feature_service import PublicAIFeatureService
+
+            svc = injector.get(PublicAIFeatureService)
+            model_config = svc.get_feature_model_config(feature_key)
+
+            if model_config is not None:
+                # 使用绑定模型的 provider 凭证
+                creds = cls.get_provider_credentials(provider=model_config.provider)
+                if creds:
+                    # 覆盖 model 为功能绑定的具体模型
+                    creds["model"] = model_config.model_name
+                    return creds
+
+            return {}
+        finally:
+            if _ctx is not None:
+                _ctx.pop()
+
+    @classmethod
+    def _instantiate_model_from_pool_config(cls, model_config) -> object | None:
+        """从 ModelPoolConfig 记录实例化 LLM。"""
+        try:
+            svc = cls._get_service_instance()
+            config_dict = {
+                "provider": model_config.provider,
+                "model": model_config.model_name,
+                "parameters": {},
+            }
+            # 加载 key 覆盖（与 resolve_runtime_language_model 一致）
+            # _try_load_key_overrides_for_config 是实例方法，必须通过 svc 调用
+            overridden = svc._try_load_key_overrides_for_config(config_dict)
+            if overridden is not None:
+                config_dict = overridden
+
+            return svc._instantiate_language_model(config_dict)
+        except Exception:
+            logger.warning("_instantiate_model_from_pool_config: 实例化失败", exc_info=True)
+            return None
+
+    @classmethod
+    def _get_service_instance(cls):
+        """获取 LanguageModelService 实例（通过 injector）。"""
+        from flask import current_app
+
+        try:
+            current_app._get_current_object()
+        except RuntimeError:
+            from app.http.app import app
+            ctx = app.app_context()
+            ctx.push()
+            try:
+                from app.http.module import injector
+                return injector.get(LanguageModelService)
+            finally:
+                ctx.pop()
+
+        from app.http.module import injector
+        return injector.get(LanguageModelService)
 
     def _load_model_components(self, model_config: dict[str, Any]) -> tuple[Any, Any, Any]:
         """从数据库懒加载 provider/model 实体和 model_class
@@ -586,12 +848,50 @@ class LanguageModelService(BaseService):
                 name: value for name, value in parameters.items()
                 if name in allowed_parameter_names
             }
-        return model_class(
+        # 构造原生模型实例（如 ChatOpenAI）
+        # 注入 LLM_REQUEST_TIMEOUT 超时配置（原 providers/_defaults.py 能力迁移至此）
+        # 网络层兜底超时：探针每 60s 检测一次 token 活性，httpx 流式模式下每个 chunk
+        # 会重置 read timeout，因此 300s 仅在模型完全静默时触发，作为探针的最后一道防线
+        # LLM_REQUEST_TIMEOUT 环境变量优先于模型 attributes 中的 request_timeout，
+        # 避免数据库中遗留的短超时（如 30s）导致深度思考模型被误杀
+        raw_timeout = os.getenv("LLM_REQUEST_TIMEOUT", "").strip()
+        if raw_timeout:
+            try:
+                attributes["timeout"] = float(raw_timeout)
+                # 清除 request_timeout，避免与 timeout 冲突
+                attributes.pop("request_timeout", None)
+            except (TypeError, ValueError):
+                pass
+        elif attributes.get("timeout") is None and attributes.get("request_timeout") is None:
+            attributes["timeout"] = 300.0
+        instance = model_class(
             **attributes,
             **parameters,
-            features=model_entity.features,
-            metadata=model_entity.metadata,
         )
+        # 用 RuntimeFallbackLanguageModelProxy 包装，使其继承 BaseLanguageModel 的
+        # features/metadata/convert_to_human_message/get_pricing 等方法和字段
+        features_source = list(getattr(model_entity, "features", []) or [])
+        metadata_source = dict(getattr(model_entity, "metadata", {}) or {})
+        try:
+            return RuntimeFallbackLanguageModelProxy.from_model(
+                instance,
+                fallback_loader=lambda: instance,
+                requested_model_config=normalized_model_config,
+                runtime_fallback_enabled=False,
+                features_source=features_source,
+                metadata_source=metadata_source,
+            )
+        except Exception:
+            # 包装失败时回退到直接注入方式
+            try:
+                object.__setattr__(instance, "features", features_source)
+            except Exception:
+                pass
+            try:
+                object.__setattr__(instance, "metadata", metadata_source)
+            except Exception:
+                pass
+            return instance
 
     def _get_model_entity_or_none(self, model_config: dict[str, Any] | None) -> Any:
         """安全获取模型实体，失败时返回 None。"""
@@ -789,7 +1089,8 @@ class LanguageModelService(BaseService):
         image_urls = image_urls or []
 
         try:
-            llm = self._instantiate_language_model(normalized_model_config)
+            key_overrides = self._try_load_key_overrides_for_config(normalized_model_config)
+            llm = self._instantiate_language_model(normalized_model_config, attribute_overrides=key_overrides)
             effective_model_config = normalized_model_config
         except Exception:
             llm = self.load_default_language_model()
@@ -905,13 +1206,61 @@ class LanguageModelService(BaseService):
             reason_code=reason_code,
         )
 
-    def _try_resolve_pool_llm(self, tier: str) -> tuple[BaseLanguageModel, dict[str, Any]] | None:
-        """尝试从 admin 模型池解析运行时模型与 Key，失败或无配置时返回 None 以降级到 providers.yaml。"""
+    def _try_load_key_overrides_for_config(self, model_config: dict[str, Any]) -> dict[str, Any] | None:
+        """根据 model_config 中的 provider+model 从数据库加载对应 key，返回 attribute_overrides。
+
+        当用户配置了 provider+model 但系统未通过 pool 路径加载 key 时，
+        需要主动从 model_key_config 表加载并解密 key，避免 api_key 为空导致 401。
+        """
+        try:
+            from internal.service.runtime_model_pool_service import RuntimeModelPoolService
+            from internal.model.model_pool_entity import ModelPoolConfig
+
+            provider = (model_config or {}).get("provider", "")
+            model_name = (model_config or {}).get("model", "")
+            if not provider or not model_name:
+                return None
+
+            pool_service = RuntimeModelPoolService(db=self.db)
+            # 按 provider + model_name 精确查找模型池记录
+            model_record = (
+                pool_service._session()
+                .query(ModelPoolConfig)
+                .filter(
+                    ModelPoolConfig.provider == provider,
+                    ModelPoolConfig.model_name == model_name,
+                    ModelPoolConfig.status == "active",
+                )
+                .first()
+            )
+            if model_record is None:
+                return None
+
+            key = pool_service.select_key(model_record.id)
+            if key is None:
+                return None
+
+            llm_config = pool_service.build_llm_config(model_record, key)
+            overrides: dict[str, Any] = {}
+            api_key = llm_config.get("api_key")
+            if api_key:
+                overrides["api_key"] = api_key
+            base_url = llm_config.get("base_url")
+            if base_url:
+                overrides["base_url"] = base_url
+            return overrides if overrides else None
+        except Exception as exc:
+            logger.warning("加载模型 key 失败，降级到默认行为: provider=%s model=%s error=%s",
+                           (model_config or {}).get("provider"), (model_config or {}).get("model"), exc)
+            return None
+
+    def _try_resolve_pool_llm(self, tier: str, model_type: str | None = None) -> tuple[BaseLanguageModel, dict[str, Any]] | None:
+        """尝试从 admin 模型池解析运行时模型与 Key，失败或无配置时返回 None。"""
         try:
             from internal.service.runtime_model_pool_service import RuntimeModelPoolService
 
             pool_service = RuntimeModelPoolService(db=self.db)
-            primary, _fallback_candidates = pool_service.select_model_with_fallback(tier)
+            primary, _fallback_candidates = pool_service.select_model_with_fallback(tier, model_type)
             if primary is None:
                 return None
             pool_model_config = {
@@ -935,7 +1284,7 @@ class LanguageModelService(BaseService):
             pool_llm = self._instantiate_language_model(pool_model_config, attribute_overrides=attribute_overrides)
             return pool_llm, pool_model_config
         except Exception as exc:
-            logger.warning("模型池解析失败，降级到 providers.yaml 默认逻辑: tier=%s error=%s", tier, exc)
+            logger.warning("模型池解析失败: tier=%s error=%s", tier, exc)
             return None
 
     def invoke_with_model_pool_fallback(self, tier: str, messages: Any, **kwargs) -> Any:
@@ -970,6 +1319,16 @@ class LanguageModelService(BaseService):
         if requested_model_ref == _normalize_model_ref(self.get_default_model_config()):
             return llm
 
+        # 如果已经是 RuntimeFallbackLanguageModelProxy（_instantiate_language_model 已包装），
+        # 只更新运行时兜底相关字段，避免再次 from_model 导致 _build_soft_timeout_model
+        # 克隆内层 proxy 时产生 _primary_model 损坏的副本（双重包装 Bug）
+        if isinstance(llm, RuntimeFallbackLanguageModelProxy):
+            object.__setattr__(llm, "_fallback_loader", self.load_default_language_model)
+            object.__setattr__(llm, "_requested_model_config", deepcopy(model_config or {}))
+            object.__setattr__(llm, "_requested_model_ref", _normalize_model_ref(model_config))
+            object.__setattr__(llm, "_runtime_fallback_enabled", True)
+            return llm
+
         return RuntimeFallbackLanguageModelProxy.from_model(
             llm,
             fallback_loader=self.load_default_language_model,
@@ -980,67 +1339,127 @@ class LanguageModelService(BaseService):
         )
 
     def get_language_model_icon(self, provider_name: str) -> tuple[bytes, str]:
-        """根据传递的提供者名字获取提供商对应的图标信息"""
-        # 1.获取提供者信息
-        provider = self.language_model_manager.get_provider(provider_name)
-        if not provider:
-            raise NotFoundException("该服务提供者不存在")
+        """根据传递的提供者名字获取提供商对应的图标信息
 
-        # 2.获取项目的根路径信息
-        root_path = os.path.dirname(os.path.dirname(current_app.root_path))
+        新架构下 icon 数据从 DB 的 ModelProviderConfig.icon 字段读取，
+        该字段存储的是图标 URL 或 base64 数据；若为空则抛 NotFoundException。
+        """
+        provider_entity = self.language_model_manager.get_or_load_provider(provider_name)
+        icon_value = (provider_entity.icon or "").strip()
+        if not icon_value:
+            raise NotFoundException("该模型提供者未配置图标")
 
-        # 3.拼接得到提供者所在的文件夹
-        provider_path = os.path.join(
-            root_path,
-            "internal", "core", "language_model", "providers", provider_name,
-        )
+        # 如果 icon 是 URL（http/https），返回字节流形式的占位说明
+        if icon_value.startswith(("http://", "https://")):
+            # 返回 URL 本身的字节，由调用方决定如何处理
+            return icon_value.encode("utf-8"), "text/plain"
 
-        # 4.拼接得到icon对应的路径
-        icon_path = os.path.join(provider_path, "_asset", provider.provider_entity.icon)
+        # 如果 icon 是 base64 data URI，直接返回原始字节
+        if icon_value.startswith("data:"):
+            # 解析 data URI: data:image/png;base64,xxxx
+            header, _, data = icon_value.partition(",")
+            mimetype = "application/octet-stream"
+            if ";base64," in header:
+                import base64
+                try:
+                    return base64.b64decode(data), mimetype
+                except Exception:
+                    pass
+            return data.encode("utf-8"), mimetype
 
-        # 5.检测icon是否存在
-        if not os.path.exists(icon_path):
-            raise NotFoundException(f"该模型提供者_asset下未提供图标")
-
-        # 6.读取icon的类型
-        mimetype, _ = mimetypes.guess_type(icon_path)
-        mimetype = mimetype or "application/octet-stream"
-
-        # 7.读取icon的字节数据
-        with open(icon_path, "rb") as f:
-            byte_data = f.read()
-            return byte_data, mimetype
+        # 其他情况视为纯文本图标标识
+        return icon_value.encode("utf-8"), "text/plain"
 
     def load_language_model(self, model_config: dict[str, Any]) -> BaseLanguageModel:
-        """根据传递的模型配置加载大语言模型，并返回其实例"""
+        """根据传递的模型配置加载大语言模型，并返回其实例
+
+        与 resolve_runtime_language_model（Agent 路径）保持一致，
+        主动从 model_key_config 表加载并解密 key，避免 api_key 为空导致 401。
+        工作流 LLM 节点通过此方法加载模型。
+        """
         try:
-            llm = self._instantiate_language_model(model_config)
+            key_overrides = self._try_load_key_overrides_for_config(model_config)
+            llm = self._instantiate_language_model(model_config, attribute_overrides=key_overrides)
         except Exception as _:
             return self.load_default_language_model()
         return self._wrap_runtime_fallback_model(llm, model_config)
 
     def load_default_language_model(self) -> BaseLanguageModel:
-        """加载默认的大语言模型，在模型管理器中获取不到模型或者出错时使用默认模型进行兜底"""
-        # 1.获取DeepSeek服务提供者与模型类
-        provider = self.language_model_manager.get_provider("deepseek")
-        model_entity = provider.get_model_entity("deepseek-chat")
-        model_class = provider.get_model_class(model_entity.model_type)
-        metadata = getattr(model_entity, "metadata", {}) or {}
-        max_tokens = (
-            getattr(model_entity, "max_output_tokens", 0)
-            or getattr(model_entity, "context_window", 0)
-            or metadata.get("ctx", 0)
-            or metadata.get("context_window", 0)
-            or 8000
-        )
+        """加载默认的大语言模型，在模型管理器中获取不到模型或者出错时使用默认模型进行兜底。
 
-        # bug:原先写法使用的是LangChain封装的LLM类，需要替换成自定义封装的类，否则会识别到模型不存在features
+        所有路径都走数据库配置，无任何硬编码 provider/key。
+        """
+        # 优先尝试从模型池解析兜底模型（按 tier 升序取第一个 active 模型）
+        try:
+            pool_llm_result = self._try_resolve_pool_llm(_DEFAULT_FALLBACK_TIER)
+            if pool_llm_result is not None:
+                llm, _ = pool_llm_result
+                return llm
+        except Exception:
+            logger.warning("模型池解析默认模型失败", exc_info=True)
 
-        # 2.实例化模型并返回
-        return model_class(
-            **model_entity.attributes,
-            temperature=1,
-            max_tokens=max_tokens,
-            features=model_entity.features,
-            metadata=metadata,
+        # 模型池无可用模型时，直接从数据库取任意 active 模型 + active key 构建实例
+        # 不再回退到硬编码 deepseek/deepseek-chat
+        from internal.core.language_model.model_class_registry import ModelClassRegistry
+        from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig
+        from internal.model.model_provider_entity import ModelProviderConfig
+        from internal.service.admin_model_pool_service import _decrypt_key_value
+
+        model = self.db.session.query(ModelPoolConfig).filter_by(status="active").order_by(
+            ModelPoolConfig.priority.desc(),
+            ModelPoolConfig.created_at.asc(),
+        ).first()
+        if model is None:
+            raise RuntimeError("无可用兜底模型，请在 admin 中配置模型池")
+        provider_config = self.db.session.query(ModelProviderConfig).filter_by(name=model.provider).first()
+        key = self.db.session.query(ModelKeyConfig).filter(
+            ModelKeyConfig.provider == model.provider,
+            ModelKeyConfig.status == "active",
+        ).first()
+        if key is None:
+            raise RuntimeError(f"provider={model.provider} 无可用 key，请在 admin 中配置")
+
+        model_class = ModelClassRegistry.resolve(
+            model.compatible_api or "openai",
+            model.model_type or "chat",
         )
+        kwargs = {
+            "model": model.model_name,
+            "api_key": _decrypt_key_value(key.key_value_encrypted),
+            "temperature": 1,
+            "max_tokens": 8000,
+        }
+        if provider_config and provider_config.default_base_url:
+            kwargs["base_url"] = provider_config.default_base_url
+        raw_instance = model_class(**kwargs)
+        # 用 RuntimeFallbackLanguageModelProxy 包装，确保具有
+        # features/metadata/convert_to_human_message/get_pricing 等方法
+        # 注意：ModelPoolConfig 是 SQLAlchemy 模型，其 .metadata 是表元数据(MetaData)而非 dict
+        safe_features: list[Any] = []
+        try:
+            raw_features = getattr(model, "features", None)
+            if isinstance(raw_features, (list, tuple)):
+                safe_features = list(raw_features)
+        except Exception:
+            pass
+        safe_metadata: dict[str, Any] = {}
+        try:
+            raw_metadata = getattr(model, "metadata", None)
+            if isinstance(raw_metadata, dict):
+                safe_metadata = dict(raw_metadata)
+        except Exception:
+            pass
+        try:
+            return RuntimeFallbackLanguageModelProxy.from_model(
+                raw_instance,
+                fallback_loader=lambda: raw_instance,
+                requested_model_config={
+                    "provider": model.provider,
+                    "model": model.model_name,
+                },
+                runtime_fallback_enabled=False,
+                features_source=safe_features,
+                metadata_source=safe_metadata,
+            )
+        except Exception:
+            return raw_instance

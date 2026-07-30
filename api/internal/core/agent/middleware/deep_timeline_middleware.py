@@ -25,7 +25,7 @@ def _stringify(value: Any, default: str = "") -> str:
     if isinstance(value, str):
         return value
     try:
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False, default=str)
     except Exception:
         return str(value)
 

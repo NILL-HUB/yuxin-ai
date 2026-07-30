@@ -27,6 +27,7 @@ type McpForm = {
   args_text: string
   env_text: string
   timeout_seconds: number
+  task_keywords_text: string
 }
 
 const props = defineProps({
@@ -63,6 +64,7 @@ const defaultForm = (): McpForm => ({
   args_text: '',
   env_text: '{}',
   timeout_seconds: 30,
+  task_keywords_text: '',
 })
 
 const form = ref<McpForm>(defaultForm())
@@ -131,6 +133,11 @@ const applyMcpPayload = (payload: Record<string, any>) => {
   form.value.env_text = JSON.stringify(env, null, 2)
   form.value.timeout_seconds = Number(payload.timeout_seconds || 30)
   form.value.icon = String(payload.icon || form.value.icon || '')
+  const taskKeywords = Array.isArray(payload.task_keywords) ? payload.task_keywords : []
+  form.value.task_keywords_text = taskKeywords
+    .map((item: unknown) => String(item || '').trim())
+    .filter(Boolean)
+    .join(', ')
   if (form.value.icon) {
     form.value.fileList = [{ uid: '1', name: t('space.mcp.iconPlaceholder'), url: form.value.icon }]
   }
@@ -246,6 +253,10 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+  const taskKeywords = String(form.value.task_keywords_text || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 
   const payload = {
     name: form.value.name.trim(),
@@ -260,6 +271,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
     env,
     timeout_seconds: Number(form.value.timeout_seconds || 30),
     icon: form.value.icon,
+    task_keywords: taskKeywords,
   }
 
   if (payload.transport === 'stdio' && !payload.command) {
@@ -453,6 +465,10 @@ watch(
 
               <a-form-item field="args_text" :label="t('space.mcp.argsLabel')">
                 <a-input v-model:model-value="form.args_text" :placeholder="t('space.mcp.argsPlaceholder')" />
+              </a-form-item>
+
+              <a-form-item field="task_keywords_text" :label="t('space.mcp.taskKeywordsLabel')" class="lg:col-span-2">
+                <a-input v-model:model-value="form.task_keywords_text" :placeholder="t('space.mcp.taskKeywordsPlaceholder')" />
               </a-form-item>
 
               <a-form-item field="headers_text" :label="t('space.mcp.headersLabel')" class="lg:col-span-2">

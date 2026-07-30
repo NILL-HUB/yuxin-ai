@@ -1,15 +1,19 @@
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from internal.exception import NotFoundException
+from internal.exception import FailException, NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.account import Account, AccountSession
+from internal.model.admin import AdminUser
 from internal.service.audit_log_service import AuditLogService
 
 
 class AdminCustomerUserService:
+    # 在线判定阈值：近 10 分钟内有活跃会话即视为在线
+    ONLINE_THRESHOLD_MINUTES = 10
+
     def __init__(self, session=None, audit_log_service=None):
         self.session = session or db.session
         self.audit_log_service = audit_log_service or AuditLogService(session=self.session)
@@ -59,6 +63,10 @@ class AdminCustomerUserService:
         current_page = max(int(current_page or 1), 1)
         page_size = max(min(int(page_size or 20), 50), 1)
         query = self.session.query(Account)
+        # 排除绑定到管理员的账号，管理员不应出现在客户用户列表中
+        admin_bound_ids = self._admin_bound_account_ids()
+        if admin_bound_ids:
+            query = query.filter(~Account.id.in_(admin_bound_ids))
         keyword = (keyword or "").strip()
         if keyword:
             like_value = f"%{escape_like_pattern(keyword)}%"
@@ -170,7 +178,23 @@ class AdminCustomerUserService:
         account = self.session.query(Account).filter(Account.id == account_id).one_or_none()
         if account is None:
             raise NotFoundException("用户不存在")
+        self._ensure_not_admin_bound(account)
         return account
+
+    def _ensure_not_admin_bound(self, account: Account) -> None:
+        """管理员绑定的账号不允许在客户用户管理中操作，避免误禁用管理员导致系统瘫痪。"""
+        bound = (
+            self.session.query(AdminUser.id)
+            .filter(AdminUser.account_id == account.id)
+            .first()
+        )
+        if bound is not None:
+            raise FailException("该账号为管理员账号，不能在用户管理中操作")
+
+    def _admin_bound_account_ids(self) -> set:
+        """返回所有绑定到 AdminUser 的 Account ID 集合，用于列表排除。"""
+        rows = self.session.query(AdminUser.account_id).filter(AdminUser.account_id.isnot(None)).all()
+        return {row[0] for row in rows}
 
     def _list_sessions(self, account_id: UUID) -> list[AccountSession]:
         return (
@@ -204,6 +228,20 @@ class AdminCustomerUserService:
             return False
         return True
 
+    def _is_customer_user_online(self, account_id: UUID) -> bool:
+        """判断用户是否在线：近 10 分钟内有未撤销的活跃会话即视为在线。"""
+        now = self._now()
+        threshold = now - timedelta(minutes=self.ONLINE_THRESHOLD_MINUTES)
+        count = (
+            self.session.query(AccountSession)
+            .filter(AccountSession.account_id == account_id)
+            .filter(AccountSession.revoked_at.is_(None))
+            .filter(AccountSession.last_active_at.isnot(None))
+            .filter(AccountSession.last_active_at >= threshold)
+            .count()
+        )
+        return count > 0
+
     def _serialize_account(self, account: Account) -> dict[str, object]:
         return {
             "id": str(account.id),
@@ -217,6 +255,8 @@ class AdminCustomerUserService:
             "last_login_at": self._timestamp(account.last_login_at),
             "last_login_ip": account.last_login_ip or "",
             "created_at": self._timestamp(account.created_at),
+            # 新增：在线状态字段，供前端展示在线/离线标识
+            "is_online": self._is_customer_user_online(account.id),
         }
 
     def _serialize_session(self, account_session: AccountSession) -> dict[str, object]:

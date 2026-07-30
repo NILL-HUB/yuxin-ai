@@ -16,7 +16,6 @@ from .embeddings_service import EmbeddingsService
 @inject
 class FaissService:
     """公共Agent本地向量数据库服务"""
-    faiss: FAISS
     embeddings_service: EmbeddingsService
 
     def __init__(self, embeddings_service: EmbeddingsService):
@@ -27,7 +26,16 @@ class FaissService:
         internal_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.faiss_vector_store_path = os.path.join(internal_path, "core", "vector_store")
         os.makedirs(self.faiss_vector_store_path, exist_ok=True)
-        self.faiss = self._load_or_create_vector_store()
+        self._faiss: FAISS | None = None
+
+    @property
+    def faiss(self) -> FAISS:
+        """延迟加载 FAISS 索引，避免启动时触发 embeddings 数据库查询。"""
+        if self._faiss is None:
+            with self._lock:
+                if self._faiss is None:
+                    self._faiss = self._load_or_create_vector_store()
+        return self._faiss
 
     def _load_or_create_vector_store(self) -> FAISS:
         """加载本地索引；不存在时初始化一个空索引。"""
@@ -61,13 +69,13 @@ class FaissService:
         """确保公共Agent索引已初始化并落盘。"""
         with self._lock:
             if not self._store_exists():
-                self.faiss = self._create_empty_vector_store()
+                self._faiss = self._create_empty_vector_store()
                 self.save_local()
 
     def recreate_public_agent_store(self) -> None:
         """重建公共Agent索引并清空历史内容。"""
         with self._lock:
-            self.faiss = self._create_empty_vector_store()
+            self._faiss = self._create_empty_vector_store()
             self.save_local()
 
     def save_local(self) -> None:

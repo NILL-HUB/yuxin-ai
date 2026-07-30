@@ -274,9 +274,11 @@ class TestMultiAgentExecutor:
 
             events = _run_execute(executor)
 
-        assert len(events) == 1
-        assert events[0].startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}")
-        payload = _parse_payload(events[0])
+        # 现在执行器会下发 orchestrator_routing / task_plan / agent_message / agent_end 等多个事件
+        # 只校验 AGENT_MESSAGE 事件存在且内容为默认提示
+        messages = [e for e in events if e.startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}")]
+        assert len(messages) == 1
+        payload = _parse_payload(messages[0])
         assert payload["answer"] == "多智能体执行完成，但未获得有效回答。"
 
     def test_execute_coordinator_failure_yields_fallback(self):
@@ -291,9 +293,10 @@ class TestMultiAgentExecutor:
 
             events = _run_execute(executor)
 
-        assert len(events) == 1
-        assert events[0].startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}")
-        payload = _parse_payload(events[0])
+        # 异常路径走 _fallback_sse，只产出 AGENT_MESSAGE 事件
+        messages = [e for e in events if e.startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}")]
+        assert len(messages) == 1
+        payload = _parse_payload(messages[0])
         assert payload["answer"] == "多智能体执行遇到问题，请稍后重试。"
 
     def test_execute_single_item_skips_aggregation(self):

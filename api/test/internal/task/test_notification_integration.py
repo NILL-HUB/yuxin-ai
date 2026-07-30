@@ -227,7 +227,7 @@ class TestAgentNotificationIntegration:
         agent_navigate_path = f"/space/apps/{self.app_id}"
 
         # 文档索引通知点击后导航到文档片段列表页
-        document_navigate_path = f"/space/datasets/{self.dataset_id}/documents/{self.document_id}/segments"
+        document_navigate_path = f"/space/knowledge-bases/{self.dataset_id}/documents/{self.document_id}/segments"
 
         # 验证导航路径不同
         assert agent_navigate_path != document_navigate_path, \

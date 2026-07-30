@@ -168,6 +168,7 @@ export const QueueEvent = {
   billingFinal: 'billing_final',
   orchestratorRouting: 'orchestrator_routing',
   orchestratorReject: 'orchestrator_reject',
+  subtaskStarted: 'subtask_started',
+  subtaskCompleted: 'subtask_completed',
   toolConfirmationRequired: 'tool_confirmation_required',
-  memoryCandidatePrompt: 'memory_candidate_prompt',
 }

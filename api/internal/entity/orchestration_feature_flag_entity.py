@@ -17,6 +17,8 @@ ORCHESTRATION_FEATURE_FLAG_CODES = [
     "ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY",
     "ENABLE_POOL_GOVERNANCE_BLOCK_SENSITIVE",
     "ENABLE_POOL_GOVERNANCE_BLOCK_ALL",
+    # 指挥官决策层开关（默认关闭，启用后由 LLM 指挥官替代规则编排）
+    "ENABLE_CONDUCTOR",
 ]
 
 
@@ -55,7 +57,7 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             code="ENABLE_AGENT_METADATA_ROUTING",
             name="Agent metadata routing",
             description="Use agent metadata to select candidate agent pools",
-            enabled=False,
+            enabled=True,
             risk_level="medium",
             fallback_behavior="skip_agent_subset",
         ),
@@ -63,7 +65,7 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             code="ENABLE_TOOL_POOL_RETRIEVAL",
             name="Tool pool retrieval",
             description="Use governed tool pool retrieval for tool candidates",
-            enabled=False,
+            enabled=True,
             risk_level="high",
             fallback_behavior="skip_tool_subset",
         ),
@@ -71,7 +73,7 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             code="ENABLE_COST_MODEL_ROUTING",
             name="Cost model routing",
             description="Use cost policy to select model tier and budget hints",
-            enabled=False,
+            enabled=True,
             risk_level="medium",
             fallback_behavior="safe_cheap_policy",
         ),
@@ -87,7 +89,7 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             code="ENABLE_MULTI_AGENT_EXECUTION",
             name="Multi-agent execution",
             description="Enable multi-agent planning and execution modes",
-            enabled=False,
+            enabled=True,
             risk_level="high",
             fallback_behavior="single_or_direct",
         ),
@@ -138,6 +140,14 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             enabled=False,
             risk_level="high",
             fallback_behavior="observe_only",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_CONDUCTOR",
+            name="Conductor decision layer",
+            description="Enable LLM conductor to replace rule-based orchestration for task planning and model matching",
+            enabled=False,
+            risk_level="medium",
+            fallback_behavior="orchestrator",
         ),
     ]
 

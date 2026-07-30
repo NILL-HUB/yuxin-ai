@@ -10,6 +10,7 @@ from internal.schema.workflow_schema import (
     GetWorkflowResp,
     GetWorkflowsWithPageReq,
     GetWorkflowsWithPageResp,
+    ImportWorkflowResp,
 )
 from internal.service import WorkflowRunService, WorkflowService
 from pkg.paginator import PageModel
@@ -156,6 +157,63 @@ class WorkflowHandler:
 
         message = "分享工作流到广场成功" if is_public else "取消分享工作流成功"
         return success_message(message)
+
+    # ------------------------------------------------------------------
+    # 工作流导入导出（阶段 6）
+    # ------------------------------------------------------------------
+    @login_required
+    def export_workflow(self, workflow_id: UUID):
+        """导出工作流为 JSON
+
+        查询参数：
+        - include_versions: 是否附带版本历史元数据（不含 graph 内容），默认 false
+        """
+        # 1.校验工作流归属当前账号
+        self.workflow_service.get_workflow(workflow_id, current_user)
+
+        # 2.解析查询参数
+        include_versions = request.args.get("include_versions", "").lower() in ("true", "1", "yes")
+
+        # 3.调用服务导出
+        data = self.workflow_service.export_workflow(workflow_id, include_versions=include_versions)
+        return success_json(data)
+
+    @login_required
+    def import_workflow(self):
+        """导入工作流 JSON
+
+        支持两种 body：
+        1. 信封格式：{"json_data": {...}, "overwrite_name": false}
+        2. 直接格式：直接 POST 导出的工作流 JSON（含 format=openagent-workflow 字段）
+           此时 overwrite_name 从查询参数 ?overwrite_name=true 读取
+        """
+        # 1.解析请求 body
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict):
+            return validate_error_json({"json_data": ["请求体必须是 JSON 对象"]})
+
+        # 2.判断是信封格式还是直接格式
+        if "json_data" in body and isinstance(body.get("json_data"), dict):
+            # 信封格式：从 body 中直接读取 json_data 与 overwrite_name
+            json_data = body.get("json_data")
+            overwrite_name = bool(body.get("overwrite_name", False))
+        elif body.get("format") == "openagent-workflow":
+            # 直接格式：body 本身就是导出的工作流 JSON
+            json_data = body
+            overwrite_name = request.args.get("overwrite_name", "").lower() in ("true", "1", "yes")
+        else:
+            return validate_error_json({"json_data": ["无法识别的导入数据格式，缺少 json_data 字段或 format 字段不正确"]})
+
+        # 3.调用服务导入
+        workflow = self.workflow_service.import_workflow(
+            json_data=json_data,
+            account_id=current_user.id,
+            overwrite_name=overwrite_name,
+        )
+
+        # 4.返回新创建的工作流信息
+        resp = ImportWorkflowResp()
+        return success_json(resp.dump(workflow))
 
     # ------------------------------------------------------------------
     # 工作流执行历史（Plan B-11）

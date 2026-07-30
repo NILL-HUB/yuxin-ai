@@ -1,11 +1,12 @@
 from flask_wtf import FlaskForm
 from marshmallow import Schema, fields, pre_dump
-from wtforms import StringField
-from wtforms.validators import DataRequired, Length, Regexp, URL, Optional, AnyOf
+from wtforms import BooleanField, StringField
+from wtforms.validators import DataRequired, Length, Regexp, URL, Optional, AnyOf, ValidationError
 from internal.core.workflow.entities.workflow_entity import WORKFLOW_CONFIG_NAME_PATTERN
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.lib.helper import datetime_to_timestamp
 from internal.model import Workflow
+from internal.schema import DictField, ListField
 from pkg.paginator import PaginatorReq
 
 
@@ -28,6 +29,17 @@ class CreateWorkflowReq(FlaskForm):
         DataRequired("工作流描述不能为空"),
         Length(max=1024, message="工作流描述不能超过1024个字符")
     ])
+    task_keywords = ListField("task_keywords", default=[])
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
 class UpdateWorkflowReq(FlaskForm):
@@ -49,6 +61,17 @@ class UpdateWorkflowReq(FlaskForm):
         DataRequired("工作流描述不能为空"),
         Length(max=1024, message="工作流描述不能超过1024个字符")
     ])
+    task_keywords = ListField("task_keywords", default=[])
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
 class GetWorkflowResp(Schema):
@@ -62,6 +85,7 @@ class GetWorkflowResp(Schema):
     is_debug_passed = fields.Boolean(dump_default=False)
     is_public = fields.Boolean(dump_default=False)
     node_count = fields.Integer(dump_default=0)
+    task_keywords = fields.List(fields.String(), dump_default=[])
     published_at = fields.Integer(dump_default=0)
     updated_at = fields.Integer(dump_default=0)
     created_at = fields.Integer(dump_default=0)
@@ -78,6 +102,7 @@ class GetWorkflowResp(Schema):
             "is_debug_passed": data.is_debug_passed,
             "is_public": data.is_public,
             "node_count": len(data.draft_graph.get("nodes", [])),
+            "task_keywords": list(getattr(data, "task_keywords", None) or []),
             "published_at": datetime_to_timestamp(data.published_at),
             "updated_at": datetime_to_timestamp(data.updated_at),
             "created_at": datetime_to_timestamp(data.created_at),
@@ -104,6 +129,7 @@ class GetWorkflowsWithPageResp(Schema):
     is_debug_passed = fields.Boolean(dump_default=False)
     is_public = fields.Boolean(dump_default=False)
     node_count = fields.Integer(dump_default=0)
+    task_keywords = fields.List(fields.String(), dump_default=[])
     creator_name = fields.String(dump_default="")
     creator_avatar = fields.String(dump_default="")
     published_at = fields.Integer(dump_default=0)
@@ -122,9 +148,30 @@ class GetWorkflowsWithPageResp(Schema):
             "is_debug_passed": data.is_debug_passed,
             "is_public": data.is_public,
             "node_count": len(data.draft_graph.get("nodes", [])),
+            "task_keywords": list(getattr(data, "task_keywords", None) or []),
             "creator_name": data.account.name if data.account else "",
             "creator_avatar": data.account.avatar if data.account else "",
             "published_at": datetime_to_timestamp(data.published_at),
             "updated_at": datetime_to_timestamp(data.updated_at),
             "created_at": datetime_to_timestamp(data.created_at),
         }
+
+
+class ImportWorkflowReq(FlaskForm):
+    """导入工作流请求
+
+    支持两种 body 格式：
+    1. 信封格式（推荐）：{"json_data": {...}, "overwrite_name": false}
+    2. 直接格式：直接 POST 导出的工作流 JSON（format=openagent-workflow），
+       此时 overwrite_name 从查询参数 ?overwrite_name=true 读取。
+    """
+    json_data = DictField("json_data", default=None)
+    overwrite_name = BooleanField("overwrite_name", default=False, validators=[Optional()])
+
+
+class ImportWorkflowResp(Schema):
+    """导入工作流响应结构"""
+    id = fields.UUID(dump_default="")
+    name = fields.String(dump_default="")
+    tool_call_name = fields.String(dump_default="")
+    status = fields.String(dump_default="")

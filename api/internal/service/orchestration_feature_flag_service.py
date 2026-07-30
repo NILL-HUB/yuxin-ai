@@ -40,13 +40,23 @@ class OrchestrationFeatureFlagService(BaseService):
         return [self._serialize(flag) for flag in flags]
 
     def is_enabled(self, code: str) -> bool:
-        known_codes = {flag.code for flag in get_default_orchestration_feature_flags()}
+        """查询开关是否启用。
+
+        flag 不在已知列表中返回 False；在表中找不到记录时从
+        get_default_orchestration_feature_flags() 查找代码默认值，
+        避免数据库为空时所有开关返回 False 导致系统崩溃。
+        """
+        defaults = get_default_orchestration_feature_flags()
+        known_codes = {flag.code for flag in defaults}
         if code not in known_codes:
             return False
         flag = self._find_by_code(code)
         if flag is None:
-            default = get_disabled_orchestration_feature_flag(code)
-            return default.enabled
+            # 数据库无记录时降级到代码默认值（而非统一返回 False）
+            for default_flag in defaults:
+                if default_flag.code == code:
+                    return default_flag.enabled
+            return False
         return bool(flag.enabled)
 
     def update_flag(self, *, code: str, enabled: bool, operator_id: UUID) -> dict:

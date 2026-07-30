@@ -8,7 +8,6 @@ from pkg.response import HttpCode, Response
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
 WORKFLOW_ID = "00000000-0000-0000-0000-000000000002"
-DATASET_ID = "00000000-0000-0000-0000-000000000003"
 PROVIDER_ID = "00000000-0000-0000-0000-000000000004"
 PUBLIC_STRING_APP_ID = "00000000-0000-0000-0000-00000000aa01"
 
@@ -96,9 +95,9 @@ BATCH_A_VALIDATE_CASES = [
         "kwargs": {"json": {}},
     },
     {
-        "name": "dataset_icon_preview_missing_name",
+        "name": "knowledge_base_icon_preview_missing_name",
         "method": "post",
-        "url": "/datasets/generate-icon-preview",
+        "url": "/space/knowledge-bases/generate-icon-preview",
         "kwargs": {"json": {}},
     },
     {
@@ -268,14 +267,14 @@ BATCH_B_SUCCESS_CASES = [
         ],
     },
     {
-        "name": "dataset_icon_preview_success",
+        "name": "knowledge_base_icon_preview_success",
         "method": "post",
-        "url": "/datasets/generate-icon-preview",
-        "kwargs": {"json": {"name": "dataset-a", "description": "desc"}},
+        "url": "/space/knowledge-bases/generate-icon-preview",
+        "kwargs": {"json": {"name": "kb-a", "description": "desc"}},
         "patches": [
             (
-                "internal.service.dataset_service.DatasetService.generate_icon_preview",
-                "https://a.com/dataset-preview.png",
+                "internal.service.knowledge_base_service.KnowledgeBaseService.generate_icon_preview",
+                "https://a.com/kb-preview.png",
             )
         ],
     },
@@ -360,18 +359,6 @@ BATCH_B_SUCCESS_CASES = [
             (
                 "internal.service.public_app_service.PublicAppService.unshare_app_from_square",
                 None,
-            )
-        ],
-    },
-    {
-        "name": "dataset_regenerate_icon_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/regenerate-icon",
-        "kwargs": {"json": {}},
-        "patches": [
-            (
-                "internal.service.dataset_service.DatasetService.regenerate_icon",
-                "https://a.com/dataset.png",
             )
         ],
     },

@@ -10,6 +10,8 @@ from internal.schema.admin_user_schema import (
     AdminUserResp,
     CreateAdminUserReq,
     GetAdminUsersReq,
+    ResetAdminUserPasswordReq,
+    RevokeAdminUserSessionsResp,
     UpdateAdminUserReq,
 )
 from internal.service.admin_user_service import AdminUserService
@@ -83,6 +85,7 @@ class AdminUserHandler:
         result = self.admin_user_service.update_admin_user(
             admin_id,
             name=req.name.data,
+            email=req.email.data,
             status=req.status.data,
             role_ids=payload.get("role_ids") if "role_ids" in payload else None,
             operator_id=operator_id,
@@ -103,3 +106,47 @@ class AdminUserHandler:
             user_agent=user_agent,
         )
         return success_message("禁用管理员成功")
+
+    @admin_login_required
+    @permission_required("admin_user:disable")
+    def enable(self, admin_id: UUID):
+        operator_id, ip, user_agent = _get_operator_context()
+        result = self.admin_user_service.enable_admin_user(
+            admin_id,
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = AdminUserResp()
+        return success_json(resp.dump(result))
+
+    @admin_login_required
+    @permission_required("admin_user:disable")
+    def reset_password(self, admin_id: UUID):
+        req = ResetAdminUserPasswordReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+        operator_id, ip, user_agent = _get_operator_context()
+        result = self.admin_user_service.reset_admin_user_password(
+            admin_id,
+            password=req.password.data,
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = AdminUserResp()
+        return success_json(resp.dump(result))
+
+    @admin_login_required
+    @permission_required("admin_user:disable")
+    def revoke_sessions(self, admin_id: UUID):
+        """撤销管理员所有活跃会话（踢下线）。"""
+        operator_id, ip, user_agent = _get_operator_context()
+        result = self.admin_user_service.revoke_admin_sessions(
+            admin_id,
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = RevokeAdminUserSessionsResp()
+        return success_json(resp.dump(result))

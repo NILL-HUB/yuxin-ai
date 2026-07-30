@@ -72,8 +72,10 @@ class TestAppHandler:
         )
         return AppHandler(
             app_service=app_service,
+            app_debug_service=SimpleNamespace(),
             retrieval_service=SimpleNamespace(),
             language_model_manager=SimpleNamespace(),
+            workflow_app_service=SimpleNamespace(),
         )
 
     def test_probe_database_should_return_healthy_when_select_one_success(self):
@@ -110,109 +112,39 @@ class TestAppHandler:
         assert result["status"] == "unhealthy"
         assert "redis-down" in result["detail"]
 
-    def test_probe_weaviate_should_return_skipped_when_extension_missing(self, app):
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions.pop("weaviate", None)
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
+    def test_probe_pgvector_should_return_healthy_when_extension_installed(self):
+        def db_execute(_sql):
+            return SimpleNamespace(fetchone=lambda: ("0.8.5",))
 
-        assert result["status"] == "skipped"
+        handler = self._new_app_handler(db_execute=db_execute)
 
-    def test_probe_weaviate_should_return_skipped_when_client_is_none(self, app):
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = SimpleNamespace(client=None)
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
-                else:
-                    app.extensions.pop("weaviate", None)
+        result = handler._probe_pgvector()
 
-        assert result["status"] == "skipped"
+        assert result["status"] == "healthy"
+        assert "pgvector" in result["detail"]
+        assert "0.8.5" in result["detail"]
 
-    def test_probe_weaviate_should_return_healthy_when_ready(self, app):
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = SimpleNamespace(
-                client=SimpleNamespace(is_ready=lambda: True)
-            )
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
+    def test_probe_pgvector_should_return_unhealthy_when_extension_missing(self):
+        def db_execute(_sql):
+            return SimpleNamespace(fetchone=lambda: None)
 
-        assert result == {"status": "healthy", "detail": ""}
+        handler = self._new_app_handler(db_execute=db_execute)
 
-    def test_probe_weaviate_should_return_unhealthy_when_not_ready(self, app):
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = SimpleNamespace(
-                client=SimpleNamespace(is_ready=lambda: False)
-            )
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
+        result = handler._probe_pgvector()
 
         assert result["status"] == "unhealthy"
+        assert result["detail"] == "pgvector 扩展未安装"
 
-    def test_probe_weaviate_should_return_unhealthy_when_exception_raised(self, app):
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = SimpleNamespace(
-                client=SimpleNamespace(
-                    is_ready=lambda: (_ for _ in ()).throw(RuntimeError("weaviate-down"))
-                )
-            )
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
+    def test_probe_pgvector_should_return_unhealthy_when_exception_raised(self):
+        def db_execute(_sql):
+            raise RuntimeError("pgvector-down")
+
+        handler = self._new_app_handler(db_execute=db_execute)
+
+        result = handler._probe_pgvector()
 
         assert result["status"] == "unhealthy"
-        assert "weaviate-down" in result["detail"]
-
-    def test_probe_weaviate_should_return_skipped_when_client_is_none(self, app):
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = SimpleNamespace(client=None)
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
-
-        assert result == {"status": "skipped", "detail": "Weaviate未初始化"}
-
-    def test_probe_weaviate_should_return_unhealthy_when_client_property_raises(self, app):
-        """测试访问 weaviate_extension.client 属性时抛异常"""
-        class BrokenExtension:
-            @property
-            def client(self):
-                raise RuntimeError("client property broken")
-
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = BrokenExtension()
-            try:
-                result = AppHandler._probe_weaviate()
-            finally:
-                if original is not None:
-                    app.extensions["weaviate"] = original
-                else:
-                    app.extensions.pop("weaviate", None)
-
-        assert result["status"] == "unhealthy"
-        assert "client property broken" in result["detail"]
+        assert "pgvector-down" in result["detail"]
 
     def test_probe_celery_should_return_skipped_when_extension_missing(self, app):
         with app.app_context():
@@ -293,7 +225,7 @@ class TestAppHandler:
         handler = self._new_app_handler()
         monkeypatch.setattr(handler, "_probe_database", lambda: {"status": "healthy", "detail": ""})
         monkeypatch.setattr(handler, "_probe_redis", lambda: {"status": "healthy", "detail": ""})
-        monkeypatch.setattr(handler, "_probe_weaviate", lambda: {"status": "healthy", "detail": ""})
+        monkeypatch.setattr(handler, "_probe_pgvector", lambda: {"status": "healthy", "detail": ""})
         monkeypatch.setattr(handler, "_probe_celery", lambda: {"status": "healthy", "detail": ""})
 
         with app.app_context():
@@ -310,7 +242,7 @@ class TestAppHandler:
         handler = self._new_app_handler()
         monkeypatch.setattr(handler, "_probe_database", lambda: {"status": "healthy", "detail": ""})
         monkeypatch.setattr(handler, "_probe_redis", lambda: {"status": "unhealthy", "detail": "redis-down"})
-        monkeypatch.setattr(handler, "_probe_weaviate", lambda: {"status": "healthy", "detail": ""})
+        monkeypatch.setattr(handler, "_probe_pgvector", lambda: {"status": "healthy", "detail": ""})
         monkeypatch.setattr(handler, "_probe_celery", lambda: {"status": "skipped", "detail": "no-worker"})
 
         with app.app_context():
@@ -325,7 +257,7 @@ class TestAppHandler:
         handler = self._new_app_handler()
         monkeypatch.setattr(handler, "_probe_database", lambda: {"status": "unhealthy", "detail": "db-down"})
         monkeypatch.setattr(handler, "_probe_redis", lambda: {"status": "healthy", "detail": ""})
-        monkeypatch.setattr(handler, "_probe_weaviate", lambda: {"status": "healthy", "detail": ""})
+        monkeypatch.setattr(handler, "_probe_pgvector", lambda: {"status": "healthy", "detail": ""})
         monkeypatch.setattr(handler, "_probe_celery", lambda: {"status": "healthy", "detail": ""})
 
         with app.app_context():
@@ -340,7 +272,7 @@ class TestAppHandler:
         handler = self._new_app_handler()
         monkeypatch.setattr(handler, "_probe_database", lambda: pytest.fail("healthz must not probe database"))
         monkeypatch.setattr(handler, "_probe_redis", lambda: pytest.fail("healthz must not probe redis"))
-        monkeypatch.setattr(handler, "_probe_weaviate", lambda: pytest.fail("healthz must not probe weaviate"))
+        monkeypatch.setattr(handler, "_probe_pgvector", lambda: pytest.fail("healthz must not probe pgvector"))
         monkeypatch.setattr(handler, "_probe_celery", lambda: pytest.fail("healthz must not probe celery"))
 
         with app.app_context():
@@ -402,31 +334,25 @@ class TestAppHandler:
         assert result["status"] == "unhealthy"
         assert result["detail"] == "internal error"
 
-    def test_probe_weaviate_should_hide_error_detail_in_production(self, app):
+    def test_probe_pgvector_should_hide_error_detail_in_production(self, app):
+        handler = self._new_app_handler(
+            db_execute=lambda _sql: (_ for _ in ()).throw(RuntimeError("pgvector-down"))
+        )
+
         previous_testing = app.config.get("TESTING")
         previous_debug = app.debug
         previous_flask_env = app.config.get("FLASK_ENV")
+        try:
+            app.config["TESTING"] = False
+            app.debug = False
+            app.config["FLASK_ENV"] = "production"
 
-        with app.app_context():
-            original = app.extensions.get("weaviate")
-            app.extensions["weaviate"] = SimpleNamespace(
-                client=SimpleNamespace(
-                    is_ready=lambda: (_ for _ in ()).throw(RuntimeError("weaviate-down"))
-                )
-            )
-            try:
-                app.config["TESTING"] = False
-                app.debug = False
-                app.config["FLASK_ENV"] = "production"
-                result = AppHandler._probe_weaviate()
-            finally:
-                app.config["TESTING"] = previous_testing
-                app.debug = previous_debug
-                app.config["FLASK_ENV"] = previous_flask_env
-                if original is not None:
-                    app.extensions["weaviate"] = original
-                else:
-                    app.extensions.pop("weaviate", None)
+            with app.app_context():
+                result = handler._probe_pgvector()
+        finally:
+            app.config["TESTING"] = previous_testing
+            app.debug = previous_debug
+            app.config["FLASK_ENV"] = previous_flask_env
 
         assert result["status"] == "unhealthy"
         assert result["detail"] == "internal error"

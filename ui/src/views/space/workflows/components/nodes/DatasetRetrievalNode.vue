@@ -1,10 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Handle, type NodeProps, Position } from '@vue-flow/core'
 import { useI18n } from 'vue-i18n'
 
 // 1.定义自定义组件所需数据
 const props = defineProps<NodeProps>()
 const { t } = useI18n()
+
+// 当前数据源类型对应的展示文案
+const sourceTypeLabel = computed(() => {
+  return t('workflowEditor.datasetRetrieval.sourceTypes.knowledgeBase')
+})
 </script>
 
 <template>
@@ -66,20 +72,26 @@ const { t } = useI18n()
       <div class="flex items-center gap-2 mb-2 text-gray-700">
         <icon-caret-down />
         <div class="text-xs font-semibold">{{ t('workflowEditor.datasetRetrieval.bindDataset') }}</div>
+        <!-- 数据源类型标签 -->
+        <div class="text-[10px] text-gray-500 bg-gray-200 px-1 py-0.5 rounded flex-shrink-0">
+          {{ sourceTypeLabel }}
+        </div>
       </div>
       <!-- 关联知识库列表 -->
       <div class="flex flex-col gap-2 w-full min-w-0">
         <div
-          v-for="dataset in props.data?.meta?.datasets ?? []"
-          :key="dataset.id"
+          v-for="kb in props.data?.meta?.knowledge_bases ?? []"
+          :key="kb.id"
           class="flex items-center gap-2 text-xs min-w-0"
         >
           <!-- 左侧知识库图标 -->
-          <a-avatar :size="16" shape="square" :image-url="dataset?.icon" class="flex-shrink-0" />
+          <a-avatar :size="16" shape="square" class="bg-violet-500 flex-shrink-0 rounded">
+            <icon-storage :size="10" />
+          </a-avatar>
           <!-- 右侧知识库名称 -->
-          <div class="text-gray-700 break-words flex-1">{{ dataset?.name }}</div>
+          <div class="text-gray-700 break-words flex-1">{{ kb?.name }}</div>
         </div>
-        <div v-if="!props.data?.meta?.datasets?.length" class="text-gray-500 text-xs px-0.5">-</div>
+        <div v-if="!props.data?.meta?.knowledge_bases?.length" class="text-gray-500 text-xs px-0.5">-</div>
       </div>
     </div>
     <!-- 输出变量 -->

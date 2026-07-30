@@ -9,6 +9,7 @@ import {
   revokeCustomerUserSessions,
 } from '@/services/admin-customer-users'
 import { assignAppsToUser, listUserAppAssignments, revokeUserAppAssignment } from '@/services/admin-app-assignments'
+import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
 import { type AppAssignment } from '@/models/app-assignment'
 import { getErrorMessage } from '@/utils/error'
 import { type CustomerUser } from '@/models/admin-customer-user'
@@ -19,10 +20,13 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const users = ref<CustomerUser[]>([])
 const total = ref(0)
+const filters = ref({ keyword: '', status: '' as '' | 'active' | 'disabled', current_page: 1, page_size: 20 })
+
+// 应用分配弹窗
 const selectedAssignmentUser = ref<CustomerUser | null>(null)
 const assignments = ref<AppAssignment[]>([])
-const assignmentAppId = ref('')
-const filters = ref({ keyword: '', status: '' as '' | 'active' | 'disabled', current_page: 1, page_size: 20 })
+const assignmentAppIds = ref<string[]>([])
+const availableApps = ref<AdminAppRecord[]>([])
 
 const statusOptions = computed(() => [
   { label: t('admin.customerUsers.allStatus'), value: '' },
@@ -37,6 +41,18 @@ const formatTime = (value: number | null) => {
   return new Date(value * 1000).toLocaleString('zh-CN', { hour12: false })
 }
 
+const columns = computed(() => [
+  { title: t('admin.customerUsers.user'), slotName: 'user' },
+  { title: t('admin.customerUsers.status'), slotName: 'status' },
+  { title: t('admin.customerUsers.onlineStatus'), slotName: 'online_status' },
+  { title: t('admin.customerUsers.lastLogin'), slotName: 'last_login' },
+  { title: t('admin.customerUsers.actions'), slotName: 'actions', width: 280 },
+])
+
+const appOptions = computed(() =>
+  availableApps.value.map((app) => ({ label: app.name, value: app.id })),
+)
+
 const loadUsers = async () => {
   loading.value = true
   try {
@@ -50,7 +66,27 @@ const loadUsers = async () => {
   }
 }
 
+const loadAvailableApps = async () => {
+  try {
+    const data = await listAdminApps({ current_page: 1, page_size: 100, status: 'all' })
+    availableApps.value = data.list || []
+  } catch {
+    availableApps.value = []
+  }
+}
+
 const handleSearch = async () => {
+  filters.value.current_page = 1
+  await loadUsers()
+}
+
+const onPageChange = async (page: number) => {
+  filters.value.current_page = page
+  await loadUsers()
+}
+
+const onPageSizeChange = async (size: number) => {
+  filters.value.page_size = size
   filters.value.current_page = 1
   await loadUsers()
 }
@@ -95,6 +131,7 @@ const handleRevokeSessions = async (user: CustomerUser) => {
 
 const openAssignments = async (user: CustomerUser) => {
   selectedAssignmentUser.value = user
+  assignmentAppIds.value = []
   actionLoading.value = true
   try {
     const response = await listUserAppAssignments(user.id)
@@ -106,14 +143,21 @@ const openAssignments = async (user: CustomerUser) => {
   }
 }
 
-const handleAssignApp = async () => {
-  if (!selectedAssignmentUser.value || !assignmentAppId.value.trim()) return
+const closeAssignments = () => {
+  selectedAssignmentUser.value = null
+  assignments.value = []
+  assignmentAppIds.value = []
+}
+
+const handleAssignApps = async () => {
+  if (!selectedAssignmentUser.value || assignmentAppIds.value.length === 0) return
   actionLoading.value = true
   try {
-    await assignAppsToUser(selectedAssignmentUser.value.id, [assignmentAppId.value.trim()])
-    assignmentAppId.value = ''
+    await assignAppsToUser(selectedAssignmentUser.value.id, assignmentAppIds.value)
+    assignmentAppIds.value = []
     Message.success(t('admin.customerUsers.appAssigned'))
-    await openAssignments(selectedAssignmentUser.value)
+    const response = await listUserAppAssignments(selectedAssignmentUser.value.id)
+    assignments.value = response.list
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.customerUsers.assignFailed')))
   } finally {
@@ -127,7 +171,8 @@ const handleRevokeAssignment = async (assignment: AppAssignment) => {
   try {
     await revokeUserAppAssignment(selectedAssignmentUser.value.id, assignment.id)
     Message.success(t('admin.customerUsers.assignmentRevoked'))
-    await openAssignments(selectedAssignmentUser.value)
+    const response = await listUserAppAssignments(selectedAssignmentUser.value.id)
+    assignments.value = response.list
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.customerUsers.revokeAssignmentFailed')))
   } finally {
@@ -135,242 +180,167 @@ const handleRevokeAssignment = async (assignment: AppAssignment) => {
   }
 }
 
-onMounted(loadUsers)
+onMounted(async () => {
+  await loadUsers()
+  await loadAvailableApps()
+})
 </script>
 
 <template>
-  <section class="customer-users-page">
-    <header class="page-header">
+  <section class="space-y-6 p-6">
+    <!-- 页头 -->
+    <header class="flex items-center justify-between">
       <div>
-        <p class="page-kicker">Customer Governance</p>
-        <h2>{{ t('admin.customerUsers.title') }}</h2>
-        <p>{{ t('admin.customerUsers.description') }}</p>
+        <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.customerUsers.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500">{{ t('admin.customerUsers.description') }}</p>
       </div>
-      <div class="metric-card">
-        <span>{{ t('admin.customerUsers.activeUsersLabel') }}</span>
-        <strong>{{ activeCount }}</strong>
+      <div class="flex items-center gap-2 rounded-lg border bg-white px-4 py-2">
+        <span class="text-sm text-gray-500">{{ t('admin.customerUsers.activeUsersLabel') }}</span>
+        <span class="text-xl font-semibold text-green-600">{{ activeCount }}</span>
       </div>
     </header>
 
-    <section class="toolbar">
-      <a-input v-model="filters.keyword" :placeholder="t('admin.customerUsers.searchPlaceholder')" allow-clear />
-      <a-select v-model="filters.status" :options="statusOptions" />
-      <a-button type="primary" :loading="loading" @click="handleSearch">{{ t('admin.customerUsers.search') }}</a-button>
-    </section>
-
-    <section class="users-table" :aria-busy="loading">
-      <div class="table-header">
-        <span>{{ t('admin.customerUsers.user') }}</span>
-        <span>{{ t('admin.customerUsers.status') }}</span>
-        <span>{{ t('admin.customerUsers.lastLogin') }}</span>
-        <span>{{ t('admin.customerUsers.actions') }}</span>
+    <!-- 筛选 -->
+    <div class="rounded-lg border bg-white p-4">
+      <div class="grid gap-3 md:grid-cols-4">
+        <a-input v-model="filters.keyword" :placeholder="t('admin.customerUsers.searchPlaceholder')" allow-clear @press-enter="handleSearch" />
+        <a-select v-model="filters.status" :options="statusOptions" />
+        <a-button type="primary" :loading="loading" @click="handleSearch">{{ t('admin.customerUsers.search') }}</a-button>
       </div>
-      <div v-if="users.length === 0" class="empty-state">{{ t('admin.customerUsers.empty') }}</div>
-      <article v-for="user in users" :key="user.id" class="table-row">
-        <div>
-          <strong>{{ user.name || user.email }}</strong>
-          <p>{{ user.email }}</p>
-        </div>
-        <div>
-          <span class="status-pill" :class="`status-${user.status}`">{{ user.status === 'active' ? t('admin.customerUsers.pillActive') : t('admin.customerUsers.pillDisabled') }}</span>
-          <p v-if="user.disabled_reason" class="muted">{{ user.disabled_reason }}</p>
-        </div>
-        <div>
-          <strong>{{ formatTime(user.last_login_at) }}</strong>
-          <p>{{ user.last_login_ip || '-' }}</p>
-        </div>
-        <div class="actions">
-          <a-button v-if="user.status === 'active'" size="small" status="danger" :loading="actionLoading" @click="handleDisable(user)">{{ t('admin.customerUsers.disable') }}</a-button>
-          <a-button v-else size="small" type="primary" :loading="actionLoading" @click="handleEnable(user)">{{ t('admin.customerUsers.enable') }}</a-button>
-          <a-button size="small" :loading="actionLoading" @click="handleRevokeSessions(user)">{{ t('admin.customerUsers.revokeSessions') }}</a-button>
-          <a-button size="small" type="primary" :loading="actionLoading" @click="openAssignments(user)">{{ t('admin.customerUsers.assignApp') }}</a-button>
-        </div>
-      </article>
-    </section>
+    </div>
 
-    <section v-if="selectedAssignmentUser" class="assignment-panel">
-      <div>
-        <h3>{{ t('admin.customerUsers.assignTitle', { name: selectedAssignmentUser.name || selectedAssignmentUser.email }) }}</h3>
-        <p>{{ t('admin.customerUsers.assignDesc') }}</p>
-      </div>
-      <div class="assignment-form">
-        <a-input v-model="assignmentAppId" :placeholder="t('admin.customerUsers.appIdPlaceholder')" />
-        <a-button type="primary" :loading="actionLoading" @click="handleAssignApp">{{ t('admin.customerUsers.confirmAssign') }}</a-button>
-      </div>
-      <article v-for="assignment in assignments" :key="assignment.id" class="assignment-row">
-        <div>
-          <strong>{{ assignment.app?.name || assignment.app_id }}</strong>
-          <p>{{ assignment.status === 'active' ? t('admin.customerUsers.assigned') : t('admin.customerUsers.revoked') }}</p>
-        </div>
-        <a-button v-if="assignment.status === 'active'" size="small" status="danger" :loading="actionLoading" @click="handleRevokeAssignment(assignment)">{{ t('admin.customerUsers.revoke') }}</a-button>
-      </article>
-    </section>
+    <!-- 用户表格 -->
+    <a-table
+      :loading="loading"
+      :data="users"
+      :columns="columns"
+      :pagination="false"
+      :bordered="{ wrapper: true, cell: true }"
+      row-key="id"
+    >
+      <template #columns>
+        <a-table-column v-for="col of columns" :key="col.slotName" :title="col.title" :width="col.width">
+          <template #cell="{ record }">
+            <template v-if="col.slotName === 'user'">
+              <div class="flex items-center gap-2">
+                <a-avatar :size="32">{{ (record.name || record.email || '?').charAt(0).toUpperCase() }}</a-avatar>
+                <div class="flex flex-col">
+                  <span class="font-medium text-gray-900">{{ record.name || '-' }}</span>
+                  <span class="text-xs text-gray-500">{{ record.email }}</span>
+                </div>
+              </div>
+            </template>
+            <template v-else-if="col.slotName === 'status'">
+              <a-tag v-if="record.status === 'active'" size="small" color="green">{{ t('admin.customerUsers.pillActive') }}</a-tag>
+              <a-tag v-else size="small" color="red">{{ t('admin.customerUsers.pillDisabled') }}</a-tag>
+              <div v-if="record.disabled_reason" class="text-xs text-gray-400 mt-1">{{ record.disabled_reason }}</div>
+            </template>
+            <template v-else-if="col.slotName === 'online_status'">
+              <a-tag v-if="record.is_online" size="small" color="green">{{ t('admin.customerUsers.online') }}</a-tag>
+              <a-tag v-else size="small" color="gray">{{ t('admin.customerUsers.offline') }}</a-tag>
+            </template>
+            <template v-else-if="col.slotName === 'last_login'">
+              <div>{{ formatTime(record.last_login_at) }}</div>
+              <div v-if="record.last_login_ip" class="text-xs text-gray-400">{{ record.last_login_ip }}</div>
+            </template>
+            <template v-else-if="col.slotName === 'actions'">
+              <a-space wrap>
+                <a-button
+                  v-if="record.status === 'active'"
+                  size="mini"
+                  status="danger"
+                  :loading="actionLoading"
+                  @click="handleDisable(record)"
+                >{{ t('admin.customerUsers.disable') }}</a-button>
+                <a-button
+                  v-else
+                  size="mini"
+                  type="primary"
+                  :loading="actionLoading"
+                  @click="handleEnable(record)"
+                >{{ t('admin.customerUsers.enable') }}</a-button>
+                <a-button
+                  v-if="record.is_online"
+                  size="mini"
+                  status="warning"
+                  :loading="actionLoading"
+                  @click="handleRevokeSessions(record)"
+                >{{ t('admin.customerUsers.revokeSessions') }}</a-button>
+                <a-button size="mini" type="primary" :loading="actionLoading" @click="openAssignments(record)">{{ t('admin.customerUsers.assignApp') }}</a-button>
+              </a-space>
+            </template>
+          </template>
+        </a-table-column>
+      </template>
+    </a-table>
 
-    <footer class="table-footer">{{ t('admin.customerUsers.totalUsers', { count: total }) }}</footer>
+    <!-- 分页 -->
+    <div class="flex justify-end">
+      <a-pagination
+        :total="total"
+        :current="filters.current_page"
+        :page-size="filters.page_size"
+        show-total
+        show-page-size
+        :page-size-options="[10, 20, 50]"
+        @change="onPageChange"
+        @page-size-change="onPageSizeChange"
+      />
+    </div>
+
+    <!-- 应用分配抽屉 -->
+    <a-drawer
+      :visible="!!selectedAssignmentUser"
+      :width="560"
+      :title="t('admin.customerUsers.assignTitle', { name: selectedAssignmentUser?.name || selectedAssignmentUser?.email || '' })"
+      @cancel="closeAssignments"
+    >
+      <div class="space-y-4">
+        <!-- 分配新应用 -->
+        <div class="rounded-lg border bg-gray-50 p-4">
+          <div class="text-sm font-medium text-gray-700 mb-2">{{ t('admin.customerUsers.assignDesc') }}</div>
+          <div class="flex gap-2">
+            <a-select
+              v-model="assignmentAppIds"
+              :options="appOptions"
+              multiple
+              allow-search
+              :placeholder="t('admin.customerUsers.appSelectPlaceholder')"
+              class="flex-1"
+            />
+            <a-button type="primary" :loading="actionLoading" :disabled="assignmentAppIds.length === 0" @click="handleAssignApps">{{ t('admin.customerUsers.confirmAssign') }}</a-button>
+          </div>
+        </div>
+
+        <!-- 已分配列表 -->
+        <div class="space-y-2">
+          <div class="text-sm font-medium text-gray-700">{{ t('admin.customerUsers.assignedApps') }}</div>
+          <div v-if="assignments.length === 0" class="text-sm text-gray-400 py-4 text-center">{{ t('admin.customerUsers.noAssignments') }}</div>
+          <div
+            v-for="assignment in assignments"
+            :key="assignment.id"
+            class="flex items-center justify-between rounded-lg border bg-white p-3"
+          >
+            <div class="flex items-center gap-3 min-w-0">
+              <a-avatar :size="32" shape="square">{{ (assignment.app?.name || assignment.app_id || '?').charAt(0).toUpperCase() }}</a-avatar>
+              <div class="flex flex-col min-w-0">
+                <span class="font-medium text-gray-900 truncate">{{ assignment.app?.name || assignment.app_id }}</span>
+                <span class="text-xs text-gray-500">
+                  {{ assignment.status === 'active' ? t('admin.customerUsers.assigned') : t('admin.customerUsers.revoked') }}
+                  · {{ formatTime(assignment.assigned_at) }}
+                </span>
+              </div>
+            </div>
+            <a-button
+              v-if="assignment.status === 'active'"
+              size="mini"
+              status="danger"
+              :loading="actionLoading"
+              @click="handleRevokeAssignment(assignment)"
+            >{{ t('admin.customerUsers.revoke') }}</a-button>
+          </div>
+        </div>
+      </div>
+    </a-drawer>
   </section>
 </template>
-
-<style scoped>
-.customer-users-page {
-  display: grid;
-  gap: 20px;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 28px;
-  border-radius: 24px;
-  background: linear-gradient(135deg, #101828, #263a5f);
-  color: #fff;
-}
-
-.page-kicker {
-  margin: 0 0 8px;
-  color: #9fc0ff;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-h2 {
-  margin: 0 0 8px;
-  font-size: 30px;
-}
-
-.page-header p {
-  margin: 0;
-  color: #cbd8ec;
-}
-
-.metric-card {
-  min-width: 160px;
-  display: grid;
-  align-content: center;
-  gap: 8px;
-  padding: 20px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.metric-card span {
-  color: #dbe7ff;
-  font-size: 13px;
-}
-
-.metric-card strong {
-  font-size: 34px;
-}
-
-.toolbar {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) 180px auto;
-  gap: 12px;
-  padding: 18px;
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.06);
-}
-
-.users-table {
-  overflow: hidden;
-  border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.06);
-}
-
-.table-header,
-.table-row {
-  display: grid;
-  grid-template-columns: 1.3fr 0.8fr 1fr 280px;
-  gap: 16px;
-  align-items: center;
-  padding: 18px 22px;
-}
-
-.table-header {
-  color: #667085;
-  font-size: 13px;
-  font-weight: 700;
-  background: #f8fafc;
-}
-
-.table-row {
-  border-top: 1px solid #edf2f7;
-}
-
-.table-row p,
-.muted {
-  margin: 4px 0 0;
-  color: #667085;
-  font-size: 13px;
-}
-
-.status-pill {
-  display: inline-flex;
-  padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.status-active {
-  color: #047857;
-  background: #d1fae5;
-}
-
-.status-disabled {
-  color: #b42318;
-  background: #fee4e2;
-}
-
-.actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.assignment-panel {
-  display: grid;
-  gap: 14px;
-  padding: 22px;
-  border-radius: 20px;
-  background: #fff;
-  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.06);
-}
-
-.assignment-panel h3,
-.assignment-panel p {
-  margin: 0;
-}
-
-.assignment-panel p,
-.assignment-row p {
-  margin-top: 4px;
-  color: #667085;
-  font-size: 13px;
-}
-
-.assignment-form {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto;
-  gap: 10px;
-}
-
-.assignment-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  padding-top: 12px;
-  border-top: 1px solid #edf2f7;
-}
-
-.empty-state,
-.table-footer {
-  padding: 24px;
-  color: #667085;
-  text-align: center;
-}
-</style>

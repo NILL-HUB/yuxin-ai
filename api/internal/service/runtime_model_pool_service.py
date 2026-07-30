@@ -1,12 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Optional
 
 from injector import inject
 
 from internal.core.language_model.language_model_manager import LanguageModelManager
-from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig
+from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig, ModelTierPolicy
+from internal.model.model_provider_entity import ModelProviderConfig
 from internal.service.admin_model_pool_service import _decrypt_key_value
 from pkg.sqlalchemy import SQLAlchemy
 
@@ -17,7 +18,7 @@ class RuntimeModelPoolService:
     """桥接 admin 模型池配置与运行时 LLM 调用"""
 
     db: SQLAlchemy
-    language_model_manager: LanguageModelManager
+    language_model_manager: Optional[LanguageModelManager] = None
 
     def _session(self):
         return self.db.session
@@ -26,22 +27,54 @@ class RuntimeModelPoolService:
     def _now() -> datetime:
         return datetime.now(UTC).replace(tzinfo=None)
 
-    def get_active_models(self, tier: str | None = None) -> list[ModelPoolConfig]:
+    def get_active_models(self, tier: str | None = None, model_type: str | None = None) -> list[ModelPoolConfig]:
         query = self._session().query(ModelPoolConfig).filter(ModelPoolConfig.status == "active")
         if tier:
             query = query.filter(ModelPoolConfig.tier == tier)
+        if model_type:
+            query = query.filter(ModelPoolConfig.model_type == model_type)
         return query.order_by(
             ModelPoolConfig.priority.desc(),
             ModelPoolConfig.created_at.asc(),
         ).all()
 
+    def _get_tier_policy(self, tier: str) -> ModelTierPolicy | None:
+        """查询档位策略配置（包含 default_model 和 allowed_models 白名单）。"""
+        return self._session().query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier).one_or_none()
+
     def select_model_with_fallback(
         self,
-        tier: str = "standard",
+        tier: str = "2",
+        model_type: str | None = None,
     ) -> tuple[ModelPoolConfig | None, list[ModelPoolConfig]]:
-        models = self.get_active_models(tier)
+        models = self.get_active_models(tier, model_type)
         if not models:
             return None, []
+
+        # 读取档位策略配置
+        policy = self._get_tier_policy(tier)
+        if policy is None:
+            # 无策略配置，按原逻辑取 priority 最高的
+            return models[0], models[1:]
+
+        # 应用 allowed_models 白名单过滤（如果配置了非空白名单）
+        allowed = policy.allowed_models or []
+        if allowed:
+            # allowed_models 存储的是模型 ID 列表
+            allowed_set = {str(item) for item in allowed}
+            filtered = [m for m in models if str(m.id) in allowed_set]
+            if filtered:
+                models = filtered
+
+        # 优先使用 default_model（如果在白名单内且 active）
+        default_model_id = (policy.default_model or "").strip()
+        if default_model_id:
+            for i, m in enumerate(models):
+                if str(m.id) == default_model_id:
+                    # 将默认模型移到首位
+                    return m, models[:i] + models[i + 1:]
+
+        # 无 default_model 或 default_model 不在候选中，取排序后第一个
         return models[0], models[1:]
 
     def get_keys_for_model(self, model_id: Any) -> list[ModelKeyConfig]:
@@ -107,11 +140,21 @@ class RuntimeModelPoolService:
             "key_id": str(key.id),
             "model_id": str(model.id),
         }
-        # 通过 LanguageModelManager 缓存获取 Provider 的 base_url
+        # 获取 Provider 的 base_url：优先用 LanguageModelManager 缓存，降级直接查库
+        base_url = ""
         try:
-            provider_entity = self.language_model_manager.get_or_load_provider(model.provider)
-            if provider_entity.default_base_url:
-                config["base_url"] = provider_entity.default_base_url
+            if self.language_model_manager is not None:
+                provider_entity = self.language_model_manager.get_or_load_provider(model.provider)
+                base_url = provider_entity.default_base_url or ""
         except Exception:
-            pass  # Provider 不存在时降级，不传 base_url
+            pass
+        if not base_url:
+            try:
+                provider_config = self._session().query(ModelProviderConfig).filter_by(name=model.provider).first()
+                if provider_config and provider_config.default_base_url:
+                    base_url = provider_config.default_base_url
+            except Exception:
+                pass
+        if base_url:
+            config["base_url"] = base_url
         return config

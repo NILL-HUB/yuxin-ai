@@ -1,9 +1,9 @@
-import os
 import requests
 from langchain_core.tools import Tool
 from pydantic import BaseModel, Field
 from internal.exception import FailException
 from internal.lib.helper import add_attribute
+from internal.service.language_model_service import LanguageModelService
 from .image_persistence import persist_remote_image
 
 
@@ -14,11 +14,13 @@ class QwenImageTextToImageArgsSchema(BaseModel):
 
 def _generate_image(prompt: str, **kwargs) -> str:
     """使用千问Qwen-Image生成图像"""
-    api_key = os.getenv("SILICONFLOW_API_KEY")
-    if not api_key:
-        raise FailException("未配置SILICONFLOW_API_KEY环境变量")
+    creds = LanguageModelService.get_provider_credentials(provider="SiliconFlow")
+    api_key = (creds.get("api_key") or "").strip()
+    base_url = (creds.get("base_url") or "").rstrip("/")
+    if not api_key or not base_url:
+        raise FailException("数据库未配置 SiliconFlow 凭证，请在 admin 后台配置 provider=SiliconFlow 的模型及对应 key")
 
-    url = "https://api.siliconflow.cn/v1/images/generations"
+    url = f"{base_url}/images/generations"
 
     # 获取参数
     image_size = kwargs.get("image_size", "1328x1328")

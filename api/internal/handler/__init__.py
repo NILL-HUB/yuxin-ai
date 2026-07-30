@@ -46,6 +46,8 @@ from .admin_user_handler import AdminUserHandler
 from .admin_workflow_handler import AdminWorkflowHandler
 from .admin_model_pool_handler import AdminModelPoolHandler
 from .admin_model_provider_handler import AdminModelProviderHandler
+from .admin_public_ai_feature_handler import AdminPublicAIFeatureHandler
+from .admin_prompt_template_handler import AdminPromptTemplateHandler
 from .admin_cost_stats_handler import AdminCostStatsHandler
 from .web_app_handler import WebAppHandler
 from .conversation_handler import ConversationHandler
@@ -108,6 +110,7 @@ __all__ = [
     "AdminWorkflowHandler",
     "AdminModelPoolHandler",
     "AdminModelProviderHandler",
+    "AdminPublicAIFeatureHandler",
     "AdminCostStatsHandler",
     "WebAppHandler",
     "ConversationHandler",

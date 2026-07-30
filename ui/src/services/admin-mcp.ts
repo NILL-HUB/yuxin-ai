@@ -1,12 +1,20 @@
 import { del, get, post, request } from '@/utils/request'
 import type {
   CreateMcpProviderRequest,
+  GetMcpCategoriesResponse,
   GetMcpProviderResponse,
   GetMcpProvidersWithPageRequest,
   GetMcpProvidersWithPageResponse,
   UpdateMcpProviderRequest,
 } from '@/models/mcp'
 import type { BaseResponse } from '@/models/base'
+
+/**
+ * 获取后台 MCP 分类列表（管理员视角）。
+ */
+export const getAdminMcpCategories = () => {
+  return get<GetMcpCategoriesResponse>('/admin/mcp/categories')
+}
 
 /**
  * 获取后台 MCP Provider 分页列表，并解包接口返回的 data 字段。
@@ -74,5 +82,104 @@ export const unpublishAdminMcp = (id: string) => {
  */
 export const deleteAdminMcp = async (id: string): Promise<Record<string, never>> => {
   const response = await del<BaseResponse<Record<string, never>>>(`/admin/mcp/${id}`)
+  return response.data
+}
+
+/**
+ * 批量导入结果条目。
+ */
+export type McpImportResultItem = {
+  name: string
+  provider_key?: string
+  reason?: string
+}
+
+/**
+ * 批量导入结果汇总。
+ */
+export type McpImportBatchResult = {
+  imported: McpImportResultItem[]
+  skipped: McpImportResultItem[]
+  failed: McpImportResultItem[]
+}
+
+/**
+ * URL 预览返回的单个工具信息。
+ */
+export type McpUrlPreviewTool = {
+  name: string
+  label?: string
+  description?: string
+  inputs?: Array<{
+    name: string
+    type?: string
+    description?: string
+    required?: boolean
+  }>
+}
+
+/**
+ * URL 预览结果。
+ */
+export type McpUrlPreviewResult = {
+  tools: McpUrlPreviewTool[]
+}
+
+/**
+ * 通过标准 mcp.json 批量导入 MCP 服务器，并解包接口返回的 data 字段。
+ */
+export const importAdminMcpJson = async (
+  config_json: string,
+  overwrite = false,
+): Promise<McpImportBatchResult> => {
+  const response = await post<BaseResponse<McpImportBatchResult>>(
+    '/admin/mcp/import-mcp-json',
+    { body: { config_json, overwrite } },
+  )
+  return response.data
+}
+
+/**
+ * 预览指定 URL 下的 MCP 工具列表，并解包接口返回的 data 字段。
+ */
+export const previewAdminMcpUrl = async (
+  url: string,
+  transport = 'http',
+  headers: Array<{ key: string; value: string }> = [],
+): Promise<McpUrlPreviewResult> => {
+  const response = await post<BaseResponse<McpUrlPreviewResult>>(
+    '/admin/mcp/preview-url',
+    { body: { url, transport, headers } },
+  )
+  return response.data
+}
+
+/**
+ * 通过 URL 一键导入 MCP 服务器，并解包接口返回的 data 字段。
+ */
+export const importAdminMcpUrl = async (body: {
+  url: string
+  name: string
+  description?: string
+  transport?: string
+  headers?: Array<{ key: string; value: string }>
+  category?: string
+  icon?: string
+}): Promise<GetMcpProviderResponse['data']> => {
+  const response = await post<GetMcpProviderResponse>('/admin/mcp/import-url', { body })
+  return response.data
+}
+
+/**
+ * 通过单 server JSON 配置导入 MCP 服务器，并解包接口返回的 data 字段。
+ */
+export const importAdminMcpJsonConfig = async (
+  config_json: string,
+  overwrite = false,
+): Promise<McpImportBatchResult> => {
+  const response = await post<BaseResponse<McpImportBatchResult>>(
+    '/admin/mcp/import-json',
+    { body: { config_json, overwrite } },
+  )
   return response.data
 }

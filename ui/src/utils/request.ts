@@ -631,6 +631,10 @@ export const post = <T>(url: string, options: FetchOptionType = {}) => {
   return request<T>(url, Object.assign({}, options, { method: 'POST' }))
 }
 
+export const patch = <T>(url: string, options: FetchOptionType = {}) => {
+  return request<T>(url, Object.assign({}, options, { method: 'PATCH' }))
+}
+
 export const del = <T>(url: string, options: FetchOptionType = {}) => {
   return request<T>(url, Object.assign({}, options, { method: 'DELETE' }))
 }

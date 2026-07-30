@@ -1,5 +1,5 @@
-# 使用 Debian12 的 Python3.11 版本作为基础镜像
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm
+# 使用 Python3.12 版本作为基础镜像（3.13 部分依赖如 pipreqs/unstructured 尚未完全兼容）
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 FROM ${PYTHON_IMAGE} AS base
 
 # 设置 shell 为 bash（可选）
@@ -8,8 +8,8 @@ SHELL ["/bin/bash", "-c"]
 # 设置工作目录
 WORKDIR /app/api
 
-# 安装系统依赖（包括 curl，用于下载 tiktoken 文件）
-RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 curl tzdata && rm -rf /var/lib/apt/lists/*
+# 安装系统依赖（包括 curl 用于下载 tiktoken 文件，nodejs 用于支持 npx 类 MCP stdio server）
+RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 curl tzdata nodejs npm && rm -rf /var/lib/apt/lists/*
 
 # 预下载 tiktoken 编码文件到缓存目录
 RUN mkdir -p /root/.cache/tiktoken && \

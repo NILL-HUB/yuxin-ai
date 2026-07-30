@@ -25,7 +25,13 @@ class QueueEvent(str, Enum):
     BILLING_SUMMARY = "billing_summary"
     BILLING_CANCELLED = "billing_cancelled"
     BILLING_FINAL = "billing_final"
-    MEMORY_CANDIDATE_PROMPT = "memory_candidate_prompt"
+    # 编排/路由决策事件：把 routing_decision 推给前端展示执行模式/模型档位/选中工具等
+    # 与 QueueEvent.BILLING_* 同级，属于编排层事件，由 SingleAgentExecutor / MultiAgentExecutor 在入口发出
+    ORCHESTRATOR_ROUTING = "orchestrator_routing"
+    ORCHESTRATOR_REJECT = "orchestrator_reject"
+    # 子任务进度事件（多智能体 DAG 执行专用）
+    SUBTASK_STARTED = "subtask_started"
+    SUBTASK_COMPLETED = "subtask_completed"
 
 
 class AgentThought(BaseModel):

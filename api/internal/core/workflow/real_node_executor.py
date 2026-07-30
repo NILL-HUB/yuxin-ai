@@ -9,10 +9,9 @@ from langchain_core.runnables import RunnableConfig
 
 from internal.core.workflow.entities.node_entity import BaseNodeData, NodeType
 from internal.core.workflow.entities.workflow_entity import WorkflowState
-from internal.core.workflow.nodes import BaseNode
+from internal.core.workflow.nodes import BaseNode, NodeClasses
 from internal.core.workflow.nodes.dataset_retrieval.dataset_retrieval_node import DatasetRetrievalNode
 from internal.core.workflow.variable_pool import VariablePool
-from internal.core.workflow.workflow import NodeClasses
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +50,22 @@ class RealNodeExecutor:
         # 2. 从 VariablePool 投影出 WorkflowState
         state = self._build_state_from_pool(pool)
 
-        # 3. 调用真实 invoke
-        config = self._build_runnable_config()
+        # 3. 调用真实 invoke（通过 config 传递 pool，供节点解析 {{#...#}} 引用）
+        config = self._build_runnable_config(pool)
         new_state = node.invoke(state, config)
 
         # 4. 提取最新 NodeResult，累积到内部 list 供后续节点引用
         new_results = new_state.get("node_results", [])
         self._accumulated_results.extend(new_results)
 
-        # 5. 返回 outputs dict（GraphEngine 会写入 pool）
+        # 5. 返回 outputs dict（GraphEngine 会用 node_id 写入 pool）
+        #    同时添加 node_type 别名，支持 {{#node_type.field#}} 引用语法
         if new_results:
-            return new_results[-1].outputs or {}
+            outputs = new_results[-1].outputs or {}
+            node_type = node_data.node_type
+            node_type_str = node_type.value if hasattr(node_type, "value") else str(node_type)
+            pool.set_node_output(node_type_str, outputs)
+            return outputs
         return {}
 
     def _get_or_create_node(self, node_data: BaseNodeData) -> BaseNode:
@@ -97,8 +101,12 @@ class RealNodeExecutor:
             "node_results": list(self._accumulated_results),
         }
 
-    def _build_runnable_config(self) -> RunnableConfig:
-        """构建 RunnableConfig，传递 account_id 等上下文。"""
+    def _build_runnable_config(self, pool: VariablePool | None = None) -> RunnableConfig:
+        """构建 RunnableConfig，传递 account_id、variable_pool 等上下文。
+
+        Args:
+            pool: GraphEngine 的 VariablePool，供节点解析 {{#...#}} 引用语法
+        """
         configurable: dict[str, Any] = {}
         if self.account_id is not None:
             configurable["account_id"] = str(self.account_id)
@@ -106,4 +114,6 @@ class RealNodeExecutor:
             configurable["app_id"] = str(self.app_id)
         if self.account is not None:
             configurable["account"] = self.account
+        if pool is not None:
+            configurable["variable_pool"] = pool
         return {"configurable": configurable}

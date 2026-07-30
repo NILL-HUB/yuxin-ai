@@ -1,5 +1,5 @@
 import time
-from typing import Optional
+from typing import Any, Optional
 from jinja2 import Template
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
@@ -7,6 +7,8 @@ from internal.core.workflow.entities.node_entity import NodeResult, NodeStatus
 from internal.core.workflow.entities.workflow_entity import WorkflowState
 from internal.core.workflow.nodes import BaseNode
 from internal.core.workflow.utils.helper import extract_variables_from_state
+from internal.core.workflow.variable_parser import REFERENCE_PATTERN, VariableParser
+from internal.core.workflow.variable_pool import VariablePool
 from .llm_entity import LLMNodeData
 
 
@@ -20,16 +22,26 @@ class LLMNode(BaseNode):
         start_at = time.perf_counter()
         inputs_dict = extract_variables_from_state(self.node_data.inputs, state)
 
-        # 2.使用jinja2格式模板信息
-        template = Template(self.node_data.prompt)
-        prompt_value = template.render(**inputs_dict)
+        # 2.解析 prompt 模板
+        #    优先使用 VariableParser 解析 {{#node.field#}} 工作流引用语法（架构标准路径）
+        #    RealNodeExecutor 通过 config["configurable"]["variable_pool"] 传递 GraphEngine 的 pool
+        #    无引用或无 pool 时回退到 jinja2 渲染（向后兼容 {{ var }} 语法）
+        prompt_template = self.node_data.prompt
+        pool: VariablePool | None = None
+        if config is not None:
+            pool = config.get("configurable", {}).get("variable_pool")
 
-        # 3.通过以来管理器获取language_model_service并加载模型
+        if pool is not None and REFERENCE_PATTERN.search(prompt_template):
+            prompt_value: Any = VariableParser().parse(prompt_template, pool)
+        else:
+            template = Template(prompt_template)
+            prompt_value = template.render(**inputs_dict)
+
+        # 3.通过依赖管理器获取language_model_service并加载模型
         from app.http.app import injector
         from internal.service import LanguageModelService
         language_model_service = injector.get(LanguageModelService)
         llm = language_model_service.load_language_model(self.node_data.language_model_config)
-
 
         # 4.使用stream来代替invoke，避免接口长时间未响应超时
         content = ""

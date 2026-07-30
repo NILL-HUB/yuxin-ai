@@ -15,8 +15,31 @@ from .text_processor.text_processor_node import TextProcessorNode, TextProcessor
 from .tool.tool_node import ToolNode, ToolNodeData
 from .variable_assigner.variable_assigner_node import VariableAssignerNode, VariableAssignerNodeData
 
+# 节点类映射（按 node_type 字符串 -> BaseNode 子类）
+# 供 RealNodeExecutor 及其他模块按类型实例化节点，避免循环导入
+from ..entities.node_entity import NodeType
+
+NodeClasses = {
+    NodeType.START.value: StartNode,
+    NodeType.END.value: EndNode,
+    NodeType.LLM.value: LLMNode,
+    NodeType.TEMPLATE_TRANSFORM.value: TemplateTransformNode,
+    NodeType.DATASET_RETRIEVAL.value: DatasetRetrievalNode,
+    NodeType.CODE.value: CodeNode,
+    NodeType.TOOL.value: ToolNode,
+    NodeType.HTTP_REQUEST.value: HttpRequestNode,
+    NodeType.TEXT_PROCESSOR.value: TextProcessorNode,
+    NodeType.VARIABLE_ASSIGNER.value: VariableAssignerNode,
+    NodeType.PARAMETER_EXTRACTOR.value: ParameterExtractorNode,
+    NodeType.IF_ELSE.value: IfElseNode,
+    NodeType.ITERATION.value: IterationNode,
+    NodeType.SUB_WORKFLOW.value: SubWorkflowNode,
+    NodeType.INTENT_CLASSIFIER.value: IntentClassifierNode,
+}
+
 __all__ = [
     "BaseNode",
+    "NodeClasses",
     "StartNode", "StartNodeData",
     "LLMNode", "LLMNodeData",
     "ParameterExtractorNode", "ParameterExtractorNodeData",

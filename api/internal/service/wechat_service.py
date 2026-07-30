@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from threading import Thread
 from typing import Any
 from uuid import UUID
+import logging
 
 from flask import request, current_app, Flask
 from injector import inject
@@ -16,7 +17,7 @@ from internal.core.agent.agents import FunctionCallAgent, ReACTAgent
 from internal.core.agent.entities.agent_entity import AgentConfig
 from internal.core.language_model.entities.model_entity import ModelFeature
 from internal.core.memory import TokenBufferMemory
-from internal.entity.app_entity import AppStatus
+from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import MessageStatus, InvokeFrom
 from internal.entity.dataset_entity import RetrievalSource
 from internal.entity.platform_entity import WechatConfigStatus
@@ -28,7 +29,12 @@ from .app_runtime_service import AppRuntimeService
 from .base_service import BaseService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
+from .orchestrator_service import OrchestratorService
 from .retrieval_service import RetrievalService
+from .skill_service import SkillService
+
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -41,6 +47,54 @@ class WechatService(BaseService):
     conversation_service: ConversationService
     language_model_service: LanguageModelService
     app_runtime_service: AppRuntimeService | None = None
+    skill_service: SkillService | None = None
+    orchestrator_service: OrchestratorService | None = None
+
+    @staticmethod
+    def _extract_builtin_tools_from_tool_subset(
+        tool_subset: dict,
+        *,
+        existing_tools: list[dict],
+        max_extra: int = 3,
+    ) -> list[dict]:
+        """从 orchestrator 的 tool_subset 中提取 builtin 工具，转换为运行时 tools_config 格式。"""
+        selected = tool_subset.get("selected_tools") or []
+        if not selected:
+            return []
+        existing_keys: set[tuple[str, str]] = set()
+        for t in existing_tools:
+            if not isinstance(t, dict):
+                continue
+            if t.get("type") != "builtin_tool":
+                continue
+            prov = t.get("provider_id") or (t.get("provider") or {}).get("id")
+            name = t.get("tool_id") or (t.get("tool") or {}).get("name")
+            if prov and name:
+                existing_keys.add((prov, name))
+
+        result: list[dict] = []
+        seen_keys: set[tuple[str, str]] = set()
+        for cand in selected:
+            if not isinstance(cand, dict):
+                continue
+            if cand.get("source_type") != "builtin":
+                continue
+            if len(result) >= max_extra:
+                break
+            provider_id = cand.get("provider_id", "")
+            tool_name = cand.get("name", "")
+            if not provider_id or not tool_name:
+                continue
+            key = (provider_id, tool_name)
+            if key in existing_keys or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            result.append({
+                "type": "builtin_tool",
+                "provider": {"id": provider_id, "name": provider_id},
+                "tool": {"name": tool_name, "params": {}},
+            })
+        return result
 
     def wechat(self, app_id: UUID):
         """微信公众号(订阅号/服务号)校验与消息推送, 运行逻辑参考`Agent对接微信公众号思路.drawio`"""
@@ -195,6 +249,21 @@ class WechatService(BaseService):
             app = self.get(App, app_id)
             llm = self.language_model_service.load_language_model(app_config.get("model_config", {}))
 
+            # 1.1 治理架构接入：通过 OrchestratorService 进行任务分类与 LLM 工具选择
+            #     微信终端用户不在 account 表中，routing_log.account_id 使用 app owner 的 account_id
+            routing_decision = None
+            if self.orchestrator_service is not None:
+                try:
+                    routing_decision = self.orchestrator_service.decide(
+                        query,
+                        account_id=app.account_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                    ).to_dict()
+                except Exception:
+                    logger.warning("WeChat 调度决策失败，继续原流程", exc_info=True)
+                    routing_decision = None
+
             # 2.实例化TokenBufferMemory用于提取短期记忆
             conversation = self.get(Conversation, conversation_id)
             token_buffer_memory = TokenBufferMemory(
@@ -207,13 +276,37 @@ class WechatService(BaseService):
             )
 
             # 3.根据应用配置构建运行时工具
+            # 传递 runtime_context 包含 conversation_id 和 message_id，供治理审计写入路由日志
+            # 3.1 治理联动：当路由决策 needs_tools=True 时，注入 LLM 选择的 builtin 工具
+            runtime_app_config = app_config
+            if routing_decision and routing_decision.get("needs_tools"):
+                extra_tools_config = self._extract_builtin_tools_from_tool_subset(
+                    routing_decision.get("tool_subset") or {},
+                    existing_tools=app_config.get("tools", []),
+                    max_extra=3,
+                )
+                if extra_tools_config:
+                    runtime_app_config = {
+                        **app_config,
+                        "tools": list(app_config.get("tools", [])) + extra_tools_config,
+                    }
             tools = AppRuntimeService.build_runtime_tools_for_config(
                 app_config_service=self.app_config_service,
                 retrieval_service=self.retrieval_service,
+                skill_service=self.skill_service,
                 app_service=self.app_runtime_service,
                 account=SimpleNamespace(id=app.account_id),
-                draft_app_config=app_config,
+                app_id=app.id,
+                draft_app_config=runtime_app_config,
                 flask_app=flask_app._get_current_object(),
+                runtime_context={
+                    "app_id": str(app.id),
+                    "account_id": str(app.account_id),
+                    "governance_account_id": str(app.account_id),
+                    "conversation_id": str(conversation.id),
+                    "message_id": str(message_id),
+                },
+                governance_gate=getattr(self.app_runtime_service, 'runtime_tool_governance_gate', None),
             )
 
             # 4.根据LLM是否支持tool_call决定使用不同的Agent
@@ -226,16 +319,20 @@ class WechatService(BaseService):
             if agent_binding_prompt_appendix:
                 prompt_parts.append(agent_binding_prompt_appendix.strip())
             preset_prompt = "\n\n".join(part for part in prompt_parts if part)
+            # 规范化 review_config：DB 默认可能是 {}，需合并默认值确保结构完整
+            review_config = dict(DEFAULT_APP_CONFIG["review_config"])
+            review_config.update(app_config.get("review_config") or {})
+
             agent = agent_class(
                 llm=llm,
                 agent_config=AgentConfig(
                     user_id=app.account_id,
-                    invoke_from=InvokeFrom.DEBUGGER,
+                    invoke_from=InvokeFrom.SERVICE_API,
                     preset_prompt=preset_prompt,
-                    enable_long_term_memory=app_config["long_term_memory"]["enable"],
+                    enable_long_term_memory=(app_config.get("long_term_memory") or {}).get("enable", False),
                     language_model_service=self.language_model_service,
                     tools=tools,
-                    review_config=app_config["review_config"],
+                    review_config=review_config,
                 ),
             )
 

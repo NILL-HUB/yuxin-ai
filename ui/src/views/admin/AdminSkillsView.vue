@@ -25,6 +25,7 @@ import {
 import { getSkillCategoryDisplayName } from '@/utils/store-display'
 import CreateOrUpdateSkillModal from './skills/CreateOrUpdateSkillModal.vue'
 import ImportCatalogSkillModal from './skills/ImportCatalogSkillModal.vue'
+import ImportExternalSkillModal from './skills/ImportExternalSkillModal.vue'
 
 type SkillPaginator = {
   total_record: number
@@ -68,6 +69,7 @@ const { renderMarkdown } = useMarkdownRenderer()
 const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showImportModal = ref(false)
+const showImportExternalModal = ref(false)
 const editingSkill = ref<SkillPackage | null>(null)
 
 const avatarPalettes = [
@@ -178,12 +180,20 @@ const openImportModal = () => {
 }
 
 /**
+ * 打开 zip/github/json 导入弹窗。
+ */
+const openImportExternalModal = () => {
+  showImportExternalModal.value = true
+}
+
+/**
  * CRUD 完成后的统一回调：刷新列表 + 关闭弹窗 + 更新详情抽屉。
  */
 const handleCrudCallback = async () => {
   showCreateModal.value = false
   showEditModal.value = false
   showImportModal.value = false
+  showImportExternalModal.value = false
   editingSkill.value = null
   await loadSkills()
   // 若详情抽屉仍打开，刷新详情数据
@@ -407,6 +417,9 @@ onMounted(() => {
         </a-button>
         <a-button @click="openImportModal">
           {{ t('admin.skillsAdmin.importButton') }}
+        </a-button>
+        <a-button @click="openImportExternalModal">
+          {{ t('admin.skillsAdmin.importExternal.title') }}
         </a-button>
         <a-button type="text" @click="handleBrowseStore">
           {{ t('admin.skillsAdmin.browseStore') }}
@@ -784,6 +797,10 @@ onMounted(() => {
     />
     <ImportCatalogSkillModal
       v-model:visible="showImportModal"
+      :callback="handleCrudCallback"
+    />
+    <ImportExternalSkillModal
+      v-model:visible="showImportExternalModal"
       :callback="handleCrudCallback"
     />
   </section>

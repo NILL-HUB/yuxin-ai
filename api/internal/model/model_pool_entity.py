@@ -38,7 +38,8 @@ class ModelPoolConfig(db.Model):
     provider = Column(String(128), nullable=False)
     model_name = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=False, server_default=text("''::character varying"))
-    tier = Column(String(64), nullable=False, server_default=text("'standard'::character varying"))
+    description = Column(String(512), nullable=False, server_default=text("''::character varying"))
+    tier = Column(String(64), nullable=False, server_default=text("'2'::character varying"))
     capabilities = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
     max_tokens = Column(Integer, nullable=False, server_default=text("0"))
@@ -47,6 +48,9 @@ class ModelPoolConfig(db.Model):
     compatible_api = Column(String(32), nullable=False, server_default=text("'openai'::character varying"))
     fallback_model_id = Column(String(36), nullable=True)
     priority = Column(Integer, nullable=False, server_default=text("0"))
+    # embedding 模型专属：向量维度（仅 model_type='embedding' 时有意义）
+    # 0 或 NULL 表示未配置，由 EmbeddingsService 内置字典兜底识别
+    embedding_dimension = Column(Integer, nullable=True, server_default=text("0"))
     updated_at = Column(
         DateTime,
         nullable=False,
@@ -97,7 +101,12 @@ class ModelTierPolicy(db.Model):
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
+    # tier_code: 数字字符串标识（"1","2","3"...），用户可自定义
     tier_code = Column(String(64), nullable=False)
+    # tier_name: 显示名（如"经济型"、"标准型"），用户可自定义
+    tier_name = Column(String(128), nullable=False, server_default=text("''::character varying"))
+    # sort_order: 排序序号，数字越小越靠前
+    sort_order = Column(Integer, nullable=False, server_default=text("0"))
     allowed_models = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     default_model = Column(String(255), nullable=False, server_default=text("''::character varying"))
     routing_rules = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
@@ -121,7 +130,7 @@ class CostPolicy(db.Model):
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     policy_name = Column(String(255), nullable=False)
-    model_tier = Column(String(64), nullable=False, server_default=text("'standard'::character varying"))
+    model_tier = Column(String(64), nullable=False, server_default=text("'2'::character varying"))
     max_cost_per_request = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
     billing_mode = Column(String(64), nullable=False, server_default=text("'token'::character varying"))
     upgrade_threshold = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))

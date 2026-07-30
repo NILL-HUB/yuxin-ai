@@ -2,3 +2,8 @@ name: gaode_regeo
 label: 高德逆地理编码
 description: 将经纬度坐标转换为地址信息
 params: []
+task_keywords:
+- 逆地理编码
+- 坐标转地址
+- regeo
+- 经纬度定位

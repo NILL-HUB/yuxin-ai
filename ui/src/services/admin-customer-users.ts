@@ -7,22 +7,27 @@ import {
   type RevokeCustomerUserSessionsResponse,
 } from '@/models/admin-customer-user'
 
-export const listCustomerUsers = (params: CustomerUserListRequest) => {
-  return get<CustomerUserListResponse['data']>('/admin/users', { params })
+export const listCustomerUsers = async (params: CustomerUserListRequest) => {
+  const response = await get<CustomerUserListResponse>('/admin/users', { params })
+  return response.data
 }
 
-export const getCustomerUser = (id: string) => {
-  return get<CustomerUserDetailResponse['data']>(`/admin/users/${id}`)
+export const getCustomerUser = async (id: string) => {
+  const response = await get<CustomerUserDetailResponse>(`/admin/users/${id}`)
+  return response.data
 }
 
-export const disableCustomerUser = (id: string, reason: string) => {
-  return post<CustomerUserResponse['data']>(`/admin/users/${id}/disable`, { body: { reason } })
+export const disableCustomerUser = async (id: string, reason: string) => {
+  const response = await post<CustomerUserResponse>(`/admin/users/${id}/disable`, { body: { reason } })
+  return response.data
 }
 
-export const enableCustomerUser = (id: string) => {
-  return post<CustomerUserResponse['data']>(`/admin/users/${id}/enable`)
+export const enableCustomerUser = async (id: string) => {
+  const response = await post<CustomerUserResponse>(`/admin/users/${id}/enable`)
+  return response.data
 }
 
-export const revokeCustomerUserSessions = (id: string) => {
-  return post<RevokeCustomerUserSessionsResponse['data']>(`/admin/users/${id}/sessions/revoke`)
+export const revokeCustomerUserSessions = async (id: string) => {
+  const response = await post<RevokeCustomerUserSessionsResponse>(`/admin/users/${id}/sessions/revoke`)
+  return response.data
 }

@@ -1,5 +1,6 @@
+from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator  # 更新引入方式
+from pydantic import BaseModel, Field, field_validator, model_validator  # 更新引入方式
 from internal.core.workflow.entities.node_entity import BaseNodeData
 from internal.core.workflow.entities.variable_entity import VariableEntity, VariableType, VariableValueType
 from internal.entity.dataset_entity import RetrievalStrategy
@@ -14,8 +15,12 @@ class RetrievalConfig(BaseModel):
 
 
 class DatasetRetrievalNodeData(BaseNodeData):
-    """知识库检索节点数据"""
-    dataset_ids: list[UUID]  # 关联的知识库id列表
+    """知识库检索节点数据
+
+    工作流检索节点已统一切换到新版 KnowledgeBase 系统：
+    - knowledge_base_ids 为主字段（新版知识库），必须配置
+    """
+    knowledge_base_ids: Optional[list[UUID]] = None  # 关联的新版知识库id列表（主字段）
     retrieval_config: RetrievalConfig = RetrievalConfig()  # 检索配置
     inputs: list[VariableEntity] = Field(default_factory=list)  # 输入变量信息
     outputs: list[VariableEntity] = Field(
@@ -23,6 +28,14 @@ class DatasetRetrievalNodeData(BaseNodeData):
             VariableEntity(name="combine_documents", value={"type": VariableValueType.GENERATED.value})
         ]
     )
+
+    @model_validator(mode="after")
+    def validate_knowledge_base_ids(self) -> "DatasetRetrievalNodeData":
+        """校验必须提供 knowledge_base_ids"""
+        kb_ids = self.knowledge_base_ids or []
+        if not kb_ids:
+            raise FailException("知识库检索节点必须配置 knowledge_base_ids")
+        return self
 
     @classmethod
     @field_validator("outputs", mode="before")

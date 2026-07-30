@@ -10,15 +10,16 @@ import type {
 import {
   deleteAdminMcp,
   getAdminMcp,
+  getAdminMcpCategories,
   listAdminMcpProviders,
   publishAdminMcp,
   unpublishAdminMcp,
 } from '@/services/admin-mcp'
-import { getPublicMcpCategories } from '@/services/mcp'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 import CreateOrUpdateMcpModal from '@/views/space/mcp/components/CreateOrUpdateMcpModal.vue'
+import ImportMcpModal from '@/views/admin/mcp/ImportMcpModal.vue'
 import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
 
@@ -42,6 +43,7 @@ const categories = ref<McpCategory[]>([])
 const providers = ref<McpProvider[]>([])
 const selectedCategory = ref('all')
 const showCreateOrUpdateMcpModalVisible = ref(false)
+const showImportModal = ref(false)
 const updateMcpProviderId = ref('')
 const showDetailVisible = ref(false)
 const activeProvider = ref<McpProvider | null>(null)
@@ -153,7 +155,7 @@ const activeToolsCount = computed(() => {
  */
 const loadCategories = async () => {
   try {
-    const res = await getPublicMcpCategories()
+    const res = await getAdminMcpCategories()
     categories.value = res.data.categories || []
   } catch (_error: unknown) {
     categories.value = []
@@ -229,6 +231,10 @@ const stopPropagation = (event: Event) => {
 const openCreateModal = () => {
   updateMcpProviderId.value = ''
   showCreateOrUpdateMcpModalVisible.value = true
+}
+
+const openImportModal = () => {
+  showImportModal.value = true
 }
 
 /**
@@ -308,6 +314,9 @@ onMounted(async () => {
         <p class="mt-1 text-sm text-slate-500">{{ t('admin.mcpAdmin.description') }}</p>
       </div>
       <div class="flex items-center gap-2">
+        <a-button @click="openImportModal">
+          {{ t('admin.mcpAdmin.importButton') }}
+        </a-button>
         <a-button type="primary" @click="openCreateModal">
           {{ t('admin.mcpAdmin.createButton') }}
         </a-button>
@@ -676,6 +685,8 @@ onMounted(async () => {
       :admin-mode="true"
       :callback="async () => await loadProviders()"
     />
+
+    <ImportMcpModal v-model:visible="showImportModal" :callback="loadProviders" />
   </section>
 </template>
 

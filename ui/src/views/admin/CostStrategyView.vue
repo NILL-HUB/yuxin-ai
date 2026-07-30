@@ -22,11 +22,13 @@ type CostPolicy = {
 
 const { t } = useI18n()
 
-const MODEL_TIERS = ['cheap', 'standard', 'strong']
+const MODEL_TIERS = ['cheap', 'standard', 'strong', 'vision', 'long_context']
 const MODEL_TIER_LABELS: Record<string, string> = {
   cheap: t('admin.models.tierLabels.cheap'),
   standard: t('admin.models.tierLabels.standard'),
   strong: t('admin.models.tierLabels.strong'),
+  vision: t('admin.models.tierLabels.vision'),
+  long_context: t('admin.models.tierLabels.long_context'),
 }
 const BILLING_MODES = ['token', 'request', 'credit']
 const BILLING_MODE_LABELS: Record<string, string> = {

@@ -2,3 +2,9 @@ name: wikipedia_summary
 label: 维基百科摘要
 description: 获取维基百科词条的摘要信息
 params: []
+task_keywords:
+- 维基百科
+- wiki
+- 百科摘要
+- 百科
+- wikipedia

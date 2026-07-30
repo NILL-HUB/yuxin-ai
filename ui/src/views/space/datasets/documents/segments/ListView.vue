@@ -1,26 +1,27 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  useDeleteSegment,
-  useGetDocument,
-  useGetSegmentsWithPage,
-  useUpdateSegmentEnabled,
-} from '@/hooks/use-dataset'
-import CreateOrUpdateSegmentModal from './components/CreateOrUpdateSegmentModal.vue'
+  useGetKnowledgeDocument,
+  useGetKnowledgeSegmentsWithPage,
+  useUpdateKnowledgeSegment,
+} from '@/hooks/use-knowledge-base'
 import { formatTimestampShort } from '@/utils/time-formatter'
 
 // 1.定义页面所需的基础数据
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const createOrUpdateModalVisible = ref(false)
-const updateSegmentID = ref('')
-const { document, loadDocument } = useGetDocument()
-const { loading, segments, paginator, loadSegments } = useGetSegmentsWithPage()
-const { handleDelete } = useDeleteSegment()
-const { handleUpdate: handleUpdateSegmentEnabled } = useUpdateSegmentEnabled()
+const { document, loadDocument } = useGetKnowledgeDocument()
+const { loading, segments, paginator, loadSegments } = useGetKnowledgeSegmentsWithPage()
+const { handleUpdate: handleUpdateSegment } = useUpdateKnowledgeSegment()
+
+// 分段内容编辑模态窗
+const editModalVisible = ref(false)
+const editingSegment = ref<{ id: string; content: string } | null>(null)
+const editSubmitting = ref(false)
 
 // 2.滚动数据分页处理器
 const handleScroll = async (event: UIEvent) => {
@@ -41,6 +42,52 @@ const handleScroll = async (event: UIEvent) => {
   }
 }
 
+// 3.定义片段启用状态切换处理器
+const handleSegmentEnabledChange = async (
+  knowledge_base_id: string,
+  document_id: string,
+  segment_id: string,
+  enabled: boolean,
+) => {
+  await handleUpdateSegment(knowledge_base_id, document_id, segment_id, { enabled })
+}
+
+// 4.打开分段内容编辑模态窗
+const handleOpenEditSegment = (segment: Record<string, any>) => {
+  editingSegment.value = { id: String(segment.id), content: String(segment.content ?? '') }
+  editModalVisible.value = true
+}
+
+// 5.提交分段内容修改（会触发后端向量重建）
+const handleSubmitEditSegment = async () => {
+  if (!editingSegment.value) return
+  if (!editingSegment.value.content.trim()) {
+    Message.warning(t('space.datasets.documents.segments.contentRequired'))
+    return
+  }
+  editSubmitting.value = true
+  try {
+    await handleUpdateSegment(
+      String(route.params?.dataset_id),
+      String(route.params?.document_id),
+      editingSegment.value.id,
+      { content: editingSegment.value.content },
+    )
+    Message.success(t('space.datasets.documents.segments.editSuccess'))
+    editModalVisible.value = false
+    editingSegment.value = null
+    // 刷新当前页
+    await loadSegments(
+      String(route.params?.dataset_id),
+      String(route.params?.document_id),
+      true,
+      String(route.query?.search_word ?? ''),
+    )
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
 // 监听路由query的变化
 watch(
   () => route.query?.search_word,
@@ -53,7 +100,7 @@ watch(
     ),
 )
 
-// 3.页面DOM加载完毕时加载数据
+// 6.页面DOM加载完毕时加载数据
 onMounted(() => {
   loadDocument(String(route.params?.dataset_id), String(route.params?.document_id))
   loadSegments(
@@ -108,9 +155,6 @@ onMounted(() => {
                 {{ t('space.datasets.documents.segments.segmentCount', { count: document.segment_count }) }}
               </a-tag>
               <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-gray-200 text-gray-500">
-                {{ t('space.datasets.documents.segments.hitCount', { count: document.hit_count }) }}
-              </a-tag>
-              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-gray-200 text-gray-500">
                 {{ t('space.datasets.documents.segments.lastEdited', { time: formatTimestampShort(document.updated_at) }) }}
               </a-tag>
             </div>
@@ -133,34 +177,6 @@ onMounted(() => {
             }
           "
         />
-        <!-- 右侧功能区 -->
-        <a-space :size="12">
-          <div
-            class="flex items-center gap-2 h-8 leading-8 bg-white rounded-lg px-3 text-gray-700 border"
-          >
-            <div
-              v-if="document.enabled"
-              class="w-2 h-2 bg-green-500 border border-green-700 rounded-sm"
-            ></div>
-            <div v-else class="w-2 h-2 bg-gray-500 border border-gray-200 rounded-sm"></div>
-            {{ document.enabled ? t('space.datasets.documents.segments.enabled') : t('space.datasets.documents.segments.disabled') }}
-          </div>
-          <a-button
-            type="primary"
-            class="rounded-lg"
-            @click="
-              () => {
-                createOrUpdateModalVisible = true
-                updateSegmentID = ''
-              }
-            "
-          >
-            <template #icon>
-              <icon-file />
-            </template>
-            {{ t('space.datasets.documents.segments.addSegment') }}
-          </a-button>
-        </a-space>
       </div>
     </div>
     <!-- 中间列表区域 -->
@@ -173,7 +189,7 @@ onMounted(() => {
       <a-row :gutter="[20, 20]">
         <!-- 有数据的UI状态 -->
         <a-col v-for="segment in segments" :key="segment.id" :span="6">
-          <a-card hoverable class="cursor-pointer rounded-lg">
+          <a-card hoverable class="rounded-lg">
             <!-- 顶部片段位置及状态 -->
             <div class="flex items-center justify-between mb-2">
               <a-tag size="small" class="rounded-md text-gray-500">
@@ -194,7 +210,7 @@ onMounted(() => {
                   :disabled="segment.status !== 'completed'"
                   @change="
                     async (value) =>
-                      await handleUpdateSegmentEnabled(
+                      await handleSegmentEnabledChange(
                         route.params?.dataset_id as string,
                         route.params?.document_id as string,
                         segment.id,
@@ -207,54 +223,27 @@ onMounted(() => {
               </div>
             </div>
             <!-- 中间片段内容 -->
-            <div
-              class="leading-[18px] text-gray-700 h-[72px] line-clamp-4 mb-2 break-all"
-              @click="
-                () => {
-                  updateSegmentID = segment.id
-                  createOrUpdateModalVisible = true
-                }
-              "
-            >
+            <div class="leading-[18px] text-gray-700 h-[72px] line-clamp-4 mb-2 break-all">
               {{ segment.content }}
             </div>
             <!-- 底部扩展信息 -->
-            <div class="flex items-center justify-between">
-              <!-- 左侧扩展 -->
-              <div class="flex items-center gap-3">
-                <div class="flex items-center gap-1 text-xs text-gray-500">
-                  <icon-bookmark />
-                  {{ segment.character_count }} {{ t('space.datasets.documents.columns.characterCount') }}
-                </div>
-                <div class="flex items-center gap-1 text-xs text-gray-500">
-                  <icon-pushpin />
-                  {{ segment.hit_count }} {{ t('space.datasets.documents.columns.hitCount') }}
-                </div>
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-1 text-xs text-gray-500">
+                <icon-bookmark />
+                {{ segment.character_count }} {{ t('space.datasets.documents.columns.characterCount') }}
               </div>
-              <!-- 右侧删除 -->
+              <div class="flex items-center gap-1 text-xs text-gray-500">
+                <icon-pushpin />
+                {{ segment.hit_count }} {{ t('space.datasets.documents.columns.hitCount') }}
+              </div>
               <a-button
-                type="text"
                 size="mini"
-                class="!text-gray-500"
-                @click="
-                  async () =>
-                    await handleDelete(
-                      route.params?.dataset_id as string,
-                      route.params?.document_id as string,
-                      segment.id,
-                      () =>
-                        loadSegments(
-                          String(route.params?.dataset_id),
-                          String(route.params?.document_id),
-                          true,
-                          String(route.query?.search_word ?? ''),
-                        ),
-                    )
-                "
+                type="text"
+                class="ml-auto"
+                :disabled="segment.status !== 'completed'"
+                @click="handleOpenEditSegment(segment)"
               >
-                <template #icon>
-                  <icon-delete />
-                </template>
+                {{ t('space.datasets.documents.segments.editBtn') }}
               </a-button>
             </div>
           </a-card>
@@ -282,22 +271,28 @@ onMounted(() => {
         </a-col>
       </a-row>
     </a-spin>
-    <!-- 新建/修改模态窗 -->
-    <create-or-update-segment-modal
-      v-model:visible="createOrUpdateModalVisible"
-      :dataset_id="route.params?.dataset_id as string"
-      :document_id="route.params?.document_id as string"
-      :segment_id="updateSegmentID"
-      :callback="
-        () =>
-          loadSegments(
-            String(route.params?.dataset_id),
-            String(route.params?.document_id),
-            true,
-            String(route.query?.search_word ?? ''),
-          )
-      "
-    />
+
+    <!-- 分段内容编辑模态窗 -->
+    <a-modal
+      v-model:visible="editModalVisible"
+      :title="t('space.datasets.documents.segments.editTitle')"
+      :confirm-loading="editSubmitting"
+      :ok-text="t('common.actions.save')"
+      :cancel-text="t('common.actions.cancel')"
+      @ok="handleSubmitEditSegment"
+    >
+      <a-textarea
+        v-if="editingSegment"
+        v-model="editingSegment.content"
+        :auto-size="{ minRows: 6, maxRows: 12 }"
+        :placeholder="t('space.datasets.documents.segments.contentPlaceholder')"
+        show-word-limit
+        :max-length="5000"
+      />
+      <div class="mt-2 text-xs text-gray-400">
+        {{ t('space.datasets.documents.segments.editHint') }}
+      </div>
+    </a-modal>
   </div>
 </template>
 

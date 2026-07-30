@@ -44,6 +44,7 @@ vi.mock('@arco-design/web-vue', async () => {
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({
+    locale: { value: 'zh-CN' },
     t: (key: string, params?: { count?: number }) =>
       (
         {
@@ -61,8 +62,10 @@ vi.mock('vue-i18n', () => ({
           'admin.mcpAdmin.transport': '传输协议',
           'admin.mcpAdmin.manageEntry': '前往管理',
           'admin.mcpAdmin.createButton': '新建 MCP',
+          'admin.mcpAdmin.importButton': '导入 MCP',
           'admin.mcpAdmin.manageHint': '在管理页可执行发布、删除等操作',
           'admin.mcpAdmin.editButton': '编辑',
+          'admin.mcpAdmin.all': '全部',
           'common.actions.search': '搜索',
           'common.actions.refresh': '刷新',
         } satisfies Record<string, string>
@@ -147,14 +150,13 @@ describe('AdminMcpView', () => {
     expect(mocks.listAdminMcpProviders).toHaveBeenCalledWith({
       search_word: '',
       current_page: 1,
-      page_size: 20,
+      page_size: 50,
       category: '',
     })
     expect(wrapper.text()).toContain('MCP管理')
     expect(wrapper.text()).toContain('天气MCP')
     expect(wrapper.text()).toContain('Alice')
     expect(wrapper.text()).toContain('streamable_http')
-    expect(wrapper.text()).toContain('db:provider-1')
 
     await wrapper.find('input').setValue('weather')
     const searchButton = wrapper.findAll('button').find((b) => b.text().includes('搜索'))
@@ -164,7 +166,7 @@ describe('AdminMcpView', () => {
     expect(mocks.listAdminMcpProviders).toHaveBeenLastCalledWith({
       search_word: 'weather',
       current_page: 1,
-      page_size: 20,
+      page_size: 50,
       category: '',
     })
   })

@@ -2,11 +2,15 @@
 import moment from 'moment/moment'
 import { useDeleteWorkflow, useGetWorkflowsWithPage } from '@/hooks/use-workflow'
 import { onMounted, ref, watch } from 'vue'
+import { Message } from '@arco-design/web-vue'
 import { useAccountStore } from '@/stores/account'
 import { useRoute, useRouter } from 'vue-router'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
+import ImportWorkflowModal from '@/views/admin/workflows/ImportWorkflowModal.vue'
 import { getUserAvatarUrl } from '@/utils/helper'
 import { useI18n } from 'vue-i18n'
+import { exportWorkflow } from '@/services/workflow'
+import { getErrorMessage } from '@/utils/error'
 
 // 1.定义页面所需数据
 const route = useRoute()
@@ -20,6 +24,9 @@ const {
   loadWorkflows,
 } = useGetWorkflowsWithPage()
 const { handleDeleteWorkflow } = useDeleteWorkflow()
+
+const showImportModal = ref(false)
+const exportingId = ref<string | null>(null)
 
 // 2.定义滚动数据分页处理器
 const handleScroll = (event: Event) => {
@@ -58,12 +65,60 @@ const handleCardClick = (workflowId: string) => {
 const handleEditWorkflow = (workflowId: string) => {
   router.push({ name: 'admin-workflow-edit', params: { workflow_id: workflowId } })
 }
+
+// 4.打开导入工作流弹窗
+const openImportModal = () => {
+  showImportModal.value = true
+}
+
+// 5.触发浏览器下载 JSON 文件
+const downloadJsonFile = (filename: string, data: unknown) => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+// 6.导出指定工作流
+const handleExportWorkflow = async (workflowId: string, workflowName: string) => {
+  if (exportingId.value) return
+  exportingId.value = workflowId
+  try {
+    const resp = await exportWorkflow(workflowId, false)
+    const safeName = (workflowName || workflowId || 'workflow').replace(/[^\w.-]+/g, '_')
+    downloadJsonFile(`${safeName}.json`, resp.data)
+    Message.success(t('admin.workflowsAdmin.export.success'))
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.export.failed')))
+  } finally {
+    exportingId.value = null
+  }
+}
+
+// 7.导入成功后刷新列表
+const handleImportCallback = async () => {
+  await loadWorkflows(String(route.query?.search_word ?? ''), '', true)
+}
 </script>
 
 <template>
   <div class="block h-full w-full scrollbar-w-none overflow-y-scroll overflow-x-hidden" @scroll="handleScroll">
     <card-grid-skeleton v-if="getWorkflowsWithPageLoading && workflows.length === 0" :count="8" />
     <template v-else>
+      <!-- 顶部导入入口 -->
+      <div class="mb-3 flex items-center justify-end">
+        <a-button type="primary" size="small" @click="openImportModal">
+          <template #icon>
+            <icon-upload />
+          </template>
+          {{ t('space.workflows.list.importWorkflow') }}
+        </a-button>
+      </div>
       <!-- 底部工作流列表 -->
       <a-row :gutter="[20, 20]">
         <!-- 有数据的UI状态 -->
@@ -107,6 +162,12 @@ const handleEditWorkflow = (workflowId: string) => {
                   <template #content>
                     <a-doption @click="handleEditWorkflow(workflow.id)">
                       {{ t('space.workflows.list.editWorkflow') }}
+                    </a-doption>
+                    <a-doption
+                      :disabled="exportingId === workflow.id"
+                      @click="handleExportWorkflow(workflow.id, workflow.name)"
+                    >
+                      {{ t('space.workflows.list.exportWorkflow') }}
                     </a-doption>
                     <a-doption
                       class="text-red-700"
@@ -162,6 +223,12 @@ const handleEditWorkflow = (workflowId: string) => {
         </a-col>
       </a-row>
     </template>
+
+    <ImportWorkflowModal
+      v-model:visible="showImportModal"
+      api-mode="user"
+      :callback="handleImportCallback"
+    />
   </div>
 </template>
 

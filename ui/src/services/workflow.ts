@@ -81,3 +81,17 @@ export const generateIconPreview = (name: string, description: string) => {
 export const shareWorkflow = (workflow_id: string, is_public: boolean) => {
   return post<BaseResponse<any>>(`/workflows/${workflow_id}/share`, { body: { is_public } })
 }
+
+// 导出指定工作流为可迁移 JSON 数据
+export const exportWorkflow = (workflow_id: string, includeVersions = false) => {
+  return get<BaseResponse<Record<string, any>>>(`/workflows/${workflow_id}/export`, {
+    params: { include_versions: includeVersions },
+  })
+}
+
+// 导入工作流（基于已导出的 JSON 数据）
+export const importWorkflow = (json_data: Record<string, any>, overwrite_name = false) => {
+  return post<BaseResponse<{ id: string }>>('/workflows/import', {
+    body: { json_data, overwrite_name },
+  })
+}

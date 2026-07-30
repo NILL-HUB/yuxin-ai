@@ -178,7 +178,26 @@ class CosService:
         content: bytes,
         folder: str = "generated-images",
     ) -> str:
-        """上传内存字节到 COS，但不创建 UploadFile 记录。"""
+        """上传内存字节到 COS，但不创建 UploadFile 记录。
+
+        根据 ``STORAGE_BACKEND`` 环境变量分发到对应后端实现：
+        - ``local``: 本地文件存储
+        - ``oss``:   阿里云 OSS
+        - ``cos``:   腾讯云 COS（默认）
+        """
+        backend = (os.getenv("STORAGE_BACKEND") or "cos").strip().lower()
+        if backend == "local":
+            from internal.service.storage.local_storage_service import LocalStorageService
+            return LocalStorageService.upload_bytes_without_record(
+                filename=filename, content=content, folder=folder
+            )
+        if backend == "oss":
+            from internal.service.storage.aliyun_oss_service import AliyunOSSService
+            return AliyunOSSService.upload_bytes_without_record(
+                filename=filename, content=content, folder=folder
+            )
+
+        # 默认走 COS
         upload_filename = cls._build_object_key(filename, folder=folder)
         bucket = None
         try:
@@ -226,11 +245,25 @@ class CosService:
     def get_file_url(cls, key: str, download_name: str | None = None) -> str:
         """根据 COS key 获取文件 URL。
 
+        根据 ``STORAGE_BACKEND`` 环境变量分发到对应后端实现：
+        - ``local``: 本地文件存储（``/storage/local/{key}``）
+        - ``oss``:   阿里云 OSS
+        - ``cos``:   腾讯云 COS（默认）
+
         默认返回匿名可访问的裸 URL，避免给公网对象附加
         response-content-disposition 后触发 COS 匿名 GET 限制。
         如需私有桶签名下载，可通过 COS_PRESIGNED_DOWNLOAD_URL_EXPIRE_SECONDS
         显式开启预签名。
         """
+        backend = (os.getenv("STORAGE_BACKEND") or "cos").strip().lower()
+        if backend == "local":
+            from internal.service.storage.local_storage_service import LocalStorageService
+            return LocalStorageService.get_file_url(key, download_name)
+        if backend == "oss":
+            from internal.service.storage.aliyun_oss_service import AliyunOSSService
+            return AliyunOSSService.get_file_url(key, download_name)
+
+        # 默认走 COS
         if str(key or "").startswith("local/"):
             raise FailException("本地文件存储已禁用，请重新上传")
 

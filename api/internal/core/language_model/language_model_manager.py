@@ -18,6 +18,42 @@ from internal.model.model_provider_entity import ModelProviderConfig
 from internal.model.model_pool_entity import ModelPoolConfig
 from .entities.model_entity import ModelEntity, ModelFeature
 from .entities.provider_entity import ProviderEntity
+
+
+# capabilities 标签归一化映射：将人类可读标签映射到 ModelFeature 枚举值
+_CAPABILITY_LABEL_TO_FEATURE: dict[str, ModelFeature] = {
+    # tool_call 别名
+    "tool_call": ModelFeature.TOOL_CALL,
+    "tool_calling": ModelFeature.TOOL_CALL,
+    "tool": ModelFeature.TOOL_CALL,
+    "tools": ModelFeature.TOOL_CALL,
+    "function_calling": ModelFeature.TOOL_CALL,
+    "function_call": ModelFeature.TOOL_CALL,
+    "function calling": ModelFeature.TOOL_CALL,
+    "tools_call": ModelFeature.TOOL_CALL,
+    # agent_thought 别名
+    "agent_thought": ModelFeature.AGENT_THOUGHT,
+    "agent": ModelFeature.AGENT_THOUGHT,
+    "thought": ModelFeature.AGENT_THOUGHT,
+    "reasoning": ModelFeature.AGENT_THOUGHT,
+    "reasoning_model": ModelFeature.AGENT_THOUGHT,
+}
+
+
+def _normalize_capability_to_feature(raw: str) -> ModelFeature | None:
+    """将 capabilities 字符串归一化为 ModelFeature 枚举值，无法识别时返回 None。"""
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip().lower().replace(" ", "_").replace("-", "_")
+    # 1. 直接匹配 ModelFeature 枚举值
+    try:
+        return ModelFeature(normalized)
+    except ValueError:
+        pass
+    # 2. 匹配别名映射
+    return _CAPABILITY_LABEL_TO_FEATURE.get(normalized)
+
+
 from pkg.sqlalchemy import SQLAlchemy
 
 logger = logging.getLogger(__name__)
@@ -182,14 +218,13 @@ class LanguageModelManager(BaseModel):
         provider_entity: ProviderEntity,
     ) -> ModelEntity:
         """从 DB 记录构建 ModelEntity（替代从 yaml 构建）"""
-        # 将 capabilities 列表转换为 ModelFeature 枚举列表
+        # 将 capabilities 列表转换为 ModelFeature 枚举列表（支持人类可读标签归一化）
         raw_features = model_config.capabilities or []
-        features = []
+        features: list[ModelFeature] = []
         for f in raw_features:
-            try:
-                features.append(ModelFeature(f))
-            except ValueError:
-                pass  # 忽略不支持的 feature
+            feature = _normalize_capability_to_feature(f)
+            if feature is not None and feature not in features:
+                features.append(feature)
 
         return ModelEntity(
             model=model_config.model_name,
@@ -217,11 +252,3 @@ class LanguageModelManager(BaseModel):
                 "fallback_model_id": model_config.fallback_model_id,
             },
         )
-
-    # ------------------------------------------------------------------
-    # 兼容旧接口（逐步迁移）
-    # ------------------------------------------------------------------
-
-    def get_provider(self, provider_name: str) -> ProviderEntity:
-        """兼容旧接口 — 委托到 get_or_load_provider"""
-        return self.get_or_load_provider(provider_name)

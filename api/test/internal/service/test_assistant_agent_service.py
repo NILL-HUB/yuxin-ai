@@ -15,14 +15,13 @@ from internal.entity.app_entity import DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException
-from internal.model import ApiTool, AppDatasetJoin, Dataset, Message, Workflow
+from internal.model import ApiTool, Message, Workflow
 from internal.service.app_config_service import AppConfigService
 from internal.service.assistant_agent_service import AssistantAgentService
 from internal.service.cos_service import CosService
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.faiss_service import FaissService
 from internal.service.upload_file_service import UploadFileService
-from internal.service.vector_database_service import VectorDatabaseService
 
 
 @contextmanager
@@ -848,8 +847,8 @@ class TestAssistantAgentService:
                 return iter(["欢迎回来。", "建议先定义你的目标。"])
 
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.DeepSeekChat",
-            lambda **_kwargs: _FakeLLM(),
+            "internal.service.language_model_service.LanguageModelService.get_cheap_chat_model",
+            classmethod(lambda cls: _FakeLLM()),
         )
         service = AssistantAgentService(
             db=SimpleNamespace(session=_Session()),
@@ -1010,8 +1009,8 @@ class TestAssistantAgentService:
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.DeepSeekChat",
-            lambda **kwargs: _FakeLLM(**kwargs),
+            "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
+            classmethod(lambda cls, tier: _FakeLLM()),
         )
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.TokenBufferMemory",
@@ -1030,7 +1029,6 @@ class TestAssistantAgentService:
         assert create_calls[0][1]["conversation_id"] == conversation.id
         assert create_calls[0][1]["query"] == req.query.data
         assert create_calls[0][1]["image_urls"] == req.image_urls.data
-        assert llm_capture["kwargs"]["model"] == "deepseek-chat"
         assert llm_capture["build_context_args"][1] == req.query.data
         assert len(executor_capture["kwargs"]["agent_config"].tools) == 3
         assert executor_capture["kwargs"]["agent_config"].tools == [
@@ -1125,7 +1123,7 @@ class TestAssistantAgentService:
                 return [_FakeResult(answer="答案")]
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
-        monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
+        monkeypatch.setattr("internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier", classmethod(lambda cls, tier: _FakeLLM()))
         monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
         monkeypatch.setattr(
             "internal.service.execution_coordinator_service.ExecutionCoordinatorService",
@@ -1203,7 +1201,7 @@ class TestAssistantAgentService:
                 }
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
-        monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
+        monkeypatch.setattr("internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier", classmethod(lambda cls, tier: _FakeLLM()))
         monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
         with app.app_context():
@@ -1267,7 +1265,7 @@ class TestAssistantAgentService:
                 }
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
-        monkeypatch.setattr("internal.service.assistant_agent_service.DeepSeekChat", lambda **kwargs: _FakeLLM(**kwargs))
+        monkeypatch.setattr("internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier", classmethod(lambda cls, tier: _FakeLLM()))
         monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
         with app.app_context():
@@ -1311,7 +1309,7 @@ class TestAssistantAgentService:
                     "provider": "openai",
                     "model": "gpt-4o-mini",
                 },
-                resolve_runtime_language_model=lambda model_config, image_urls, entrypoint: resolution_capture.update(
+                resolve_runtime_language_model=lambda model_config, image_urls, entrypoint, **_kwargs: resolution_capture.update(
                     {
                         "model_config": model_config,
                         "image_urls": image_urls,
@@ -1458,8 +1456,8 @@ class TestAssistantAgentService:
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.DeepSeekChat",
-            lambda **kwargs: _FakeLLM(**kwargs),
+            "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
+            classmethod(lambda cls, tier: _FakeLLM()),
         )
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.TokenBufferMemory",
@@ -1550,8 +1548,8 @@ class TestAssistantAgentService:
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.DeepSeekChat",
-            lambda **kwargs: _FakeLLM(**kwargs),
+            "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
+            classmethod(lambda cls, tier: _FakeLLM()),
         )
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.TokenBufferMemory",
@@ -1607,8 +1605,8 @@ class TestAssistantAgentService:
                 return iter(["", {"text": "欢迎回来。"}, None, "建议先定义目标。"])
 
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.DeepSeekChat",
-            lambda **_kwargs: _FakeLLM(),
+            "internal.service.language_model_service.LanguageModelService.get_cheap_chat_model",
+            classmethod(lambda cls: _FakeLLM()),
         )
         service = AssistantAgentService(
             db=SimpleNamespace(session=_Session()),
@@ -1668,8 +1666,8 @@ class TestAssistantAgentService:
                 raise RuntimeError("stream boom")
 
         monkeypatch.setattr(
-            "internal.service.assistant_agent_service.DeepSeekChat",
-            lambda **_kwargs: _FakeLLM(),
+            "internal.service.language_model_service.LanguageModelService.get_cheap_chat_model",
+            classmethod(lambda cls: _FakeLLM()),
         )
         service = AssistantAgentService(
             db=SimpleNamespace(session=_Session()),

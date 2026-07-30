@@ -2,3 +2,9 @@ name: ip_lookup
 label: IP地址查询
 description: 查询IP地址的地理位置、运营商等详细信息
 params: []
+task_keywords:
+- IP
+- ip
+- ip地址
+- ip查询
+- ip位置

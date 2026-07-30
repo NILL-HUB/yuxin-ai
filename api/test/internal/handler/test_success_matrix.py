@@ -11,9 +11,6 @@ from pkg.response import HttpCode, Response
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
 PROVIDER_ID = "00000000-0000-0000-0000-000000000002"
-DATASET_ID = "00000000-0000-0000-0000-000000000003"
-DOCUMENT_ID = "00000000-0000-0000-0000-000000000004"
-SEGMENT_ID = "00000000-0000-0000-0000-000000000005"
 WORKFLOW_ID = "00000000-0000-0000-0000-000000000006"
 CONVERSATION_ID = "00000000-0000-0000-0000-000000000007"
 TASK_ID = "00000000-0000-0000-0000-000000000008"
@@ -150,7 +147,7 @@ def _history_obj():
                 }
             ],
             "workflows": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
             "retrieval_config": {"retrieval_strategy": "semantic", "k": 10, "score": 0.5},
             "long_term_memory": {"enable": True},
             "opening_statement": "hello",
@@ -198,7 +195,7 @@ def _draft_version_obj():
                 }
             ],
             "workflows": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
             "retrieval_config": {"retrieval_strategy": "semantic", "k": 10, "score": 0.5},
             "long_term_memory": {"enable": True},
             "opening_statement": "draft hello",
@@ -225,71 +222,6 @@ def _workflow_obj():
         graph={"nodes": [{}]},
         account=_account_obj("workflow-owner"),
         published_at=_dt(),
-        updated_at=_dt(),
-        created_at=_dt(),
-    )
-
-
-def _dataset_obj():
-    return SimpleNamespace(
-        id=_uuid(DATASET_ID),
-        name="Dataset Demo",
-        icon="https://a.com/ds.png",
-        description="知识库描述",
-        document_count=5,
-        hit_count=9,
-        related_app_count=2,
-        character_count=1024,
-        account=_account_obj("dataset-owner"),
-        updated_at=_dt(),
-        created_at=_dt(),
-    )
-
-
-def _dataset_query_obj():
-    return SimpleNamespace(
-        id=_uuid("00000000-0000-0000-0000-000000000011"),
-        dataset_id=_uuid(DATASET_ID),
-        query="召回测试",
-        source="debugger",
-        created_at=_dt(),
-    )
-
-
-def _document_obj():
-    return SimpleNamespace(
-        id=_uuid(DOCUMENT_ID),
-        dataset_id=_uuid(DATASET_ID),
-        name="文档A",
-        segment_count=3,
-        character_count=300,
-        hit_count=7,
-        position=1,
-        enabled=True,
-        disabled_at=_dt(),
-        status="completed",
-        error="",
-        updated_at=_dt(),
-        created_at=_dt(),
-    )
-
-
-def _segment_obj():
-    return SimpleNamespace(
-        id=_uuid(SEGMENT_ID),
-        document_id=_uuid(DOCUMENT_ID),
-        dataset_id=_uuid(DATASET_ID),
-        position=1,
-        content="片段内容",
-        keywords=["weather", "query"],
-        character_count=16,
-        token_count=8,
-        hit_count=3,
-        hash="hash-1",
-        enabled=True,
-        disabled_at=_dt(),
-        status="completed",
-        error="",
         updated_at=_dt(),
         created_at=_dt(),
     )
@@ -418,57 +350,6 @@ def _assert_get_workflows_with_page(data: dict):
     assert workflow["id"] == WORKFLOW_ID
     assert workflow["node_count"] == 2
     assert workflow["status"] == "published"
-
-
-def _assert_get_dataset(data: dict):
-    assert data["id"] == DATASET_ID
-    assert data["document_count"] == 5
-    assert data["hit_count"] == 9
-    assert data["upload_at"] > 0
-
-
-def _assert_get_datasets_with_page(data: dict):
-    _assert_page_model(data)
-    dataset = data["list"][0]
-    assert dataset["id"] == DATASET_ID
-    assert dataset["document_count"] == 5
-    assert dataset["upload_at"] > 0
-
-
-def _assert_get_dataset_queries(data: list):
-    assert data[0]["dataset_id"] == DATASET_ID
-    assert data[0]["query"] == "召回测试"
-    assert data[0]["created_at"] > 0
-
-
-def _assert_get_document(data: dict):
-    assert data["id"] == DOCUMENT_ID
-    assert data["dataset_id"] == DATASET_ID
-    assert data["segment_count"] == 3
-    assert data["disabled_at"] > 0
-
-
-def _assert_get_documents_with_page(data: dict):
-    _assert_page_model(data)
-    document = data["list"][0]
-    assert document["id"] == DOCUMENT_ID
-    assert document["character_count"] == 300
-    assert document["disabled_at"] > 0
-
-
-def _assert_get_segment(data: dict):
-    assert data["id"] == SEGMENT_ID
-    assert data["document_id"] == DOCUMENT_ID
-    assert data["hash"] == "hash-1"
-    assert data["disabled_at"] > 0
-
-
-def _assert_get_segments_with_page(data: dict):
-    _assert_page_model(data)
-    segment = data["list"][0]
-    assert segment["id"] == SEGMENT_ID
-    assert segment["token_count"] == 8
-    assert segment["disabled_at"] > 0
 
 
 def _assert_get_api_tool_provider(data: dict):
@@ -752,84 +633,6 @@ CASES = [
         "url": "/account/sessions/revoke-others",
         "kwargs": {"json": {}},
         "patches": [("internal.service.account_service.AccountService.revoke_other_account_sessions", None)],
-    },
-    # dataset/document/segment
-    {
-        "name": "create_dataset_success",
-        "method": "post",
-        "url": "/datasets",
-        "kwargs": {"json": {"name": "ds", "icon": "https://a.com/a.png", "description": ""}},
-        "patches": [("internal.service.dataset_service.DatasetService.create_dataset", None)],
-    },
-    {
-        "name": "update_dataset_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}",
-        "kwargs": {"json": {"name": "ds", "icon": "https://a.com/a.png", "description": ""}},
-        "patches": [("internal.service.dataset_service.DatasetService.update_dataset", None)],
-    },
-    {
-        "name": "delete_dataset_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/delete",
-        "kwargs": {"json": {}},
-        "patches": [("internal.service.dataset_service.DatasetService.delete_dataset", None)],
-    },
-    {
-        "name": "dataset_hit_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/hit",
-        "kwargs": {"json": {"query": "hello", "retrieval_strategy": "semantic", "k": 2, "score": 0.5}},
-        "patches": [("internal.service.dataset_service.DatasetService.hit", {"result": []})],
-    },
-    {
-        "name": "update_document_name_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/name",
-        "kwargs": {"json": {"name": "doc-1"}},
-        "patches": [("internal.service.document_service.DocumentService.update_document", None)],
-    },
-    {
-        "name": "update_document_enabled_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/enabled",
-        "kwargs": {"json": {"enabled": True}},
-        "patches": [("internal.service.document_service.DocumentService.update_document_enabled", None)],
-    },
-    {
-        "name": "delete_document_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/delete",
-        "kwargs": {"json": {}},
-        "patches": [("internal.service.document_service.DocumentService.delete_document", None)],
-    },
-    {
-        "name": "create_segment_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments",
-        "kwargs": {"json": {"content": "hello", "keywords": ["k1"]}},
-        "patches": [("internal.service.segment_service.SegmentService.create_segment", None)],
-    },
-    {
-        "name": "update_segment_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments/{SEGMENT_ID}",
-        "kwargs": {"json": {"content": "hello", "keywords": ["k1"]}},
-        "patches": [("internal.service.segment_service.SegmentService.update_segment", None)],
-    },
-    {
-        "name": "update_segment_enabled_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments/{SEGMENT_ID}/enabled",
-        "kwargs": {"json": {"enabled": True}},
-        "patches": [("internal.service.segment_service.SegmentService.update_segment_enabled", None)],
-    },
-    {
-        "name": "delete_segment_success",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments/{SEGMENT_ID}/delete",
-        "kwargs": {"json": {}},
-        "patches": [("internal.service.segment_service.SegmentService.delete_segment", None)],
     },
     # ai/assistant/audio/upload
     {
@@ -1126,62 +929,6 @@ CASES += [
         "kwargs": {},
         "patches": [("internal.service.workflow_service.WorkflowService.get_workflows_with_page", ([_workflow_obj()], _paginator()))],
         "assertion": _assert_get_workflows_with_page,
-    },
-    {
-        "name": "get_dataset_detail_serialization_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}",
-        "kwargs": {},
-        "patches": [("internal.service.dataset_service.DatasetService.get_dataset", _dataset_obj())],
-        "assertion": _assert_get_dataset,
-    },
-    {
-        "name": "get_datasets_with_page_serialization_success",
-        "method": "get",
-        "url": "/datasets",
-        "kwargs": {},
-        "patches": [("internal.service.dataset_service.DatasetService.get_datasets_with_page", ([_dataset_obj()], _paginator()))],
-        "assertion": _assert_get_datasets_with_page,
-    },
-    {
-        "name": "get_dataset_queries_serialization_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}/queries",
-        "kwargs": {},
-        "patches": [("internal.service.dataset_service.DatasetService.get_dataset_queries", [_dataset_query_obj()])],
-        "assertion": _assert_get_dataset_queries,
-    },
-    {
-        "name": "get_document_detail_serialization_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}",
-        "kwargs": {},
-        "patches": [("internal.service.document_service.DocumentService.get_document", _document_obj())],
-        "assertion": _assert_get_document,
-    },
-    {
-        "name": "get_documents_with_page_serialization_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}/documents",
-        "kwargs": {},
-        "patches": [("internal.service.document_service.DocumentService.get_documents_with_page", ([_document_obj()], _paginator()))],
-        "assertion": _assert_get_documents_with_page,
-    },
-    {
-        "name": "get_segment_detail_serialization_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments/{SEGMENT_ID}",
-        "kwargs": {},
-        "patches": [("internal.service.segment_service.SegmentService.get_segment", _segment_obj())],
-        "assertion": _assert_get_segment,
-    },
-    {
-        "name": "get_segments_with_page_serialization_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments",
-        "kwargs": {},
-        "patches": [("internal.service.segment_service.SegmentService.get_segments_with_page", ([_segment_obj()], _paginator()))],
-        "assertion": _assert_get_segments_with_page,
     },
     {
         "name": "get_api_tool_provider_detail_serialization_success",

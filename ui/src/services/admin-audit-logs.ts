@@ -4,6 +4,9 @@ import { type BaseResponse } from '@/models/base'
 export interface AuditLog {
   id: string
   admin_user_id?: string
+  admin_user_name?: string
+  account_id?: string
+  account_name?: string
   action: string
   resource_type?: string
   resource_id?: string

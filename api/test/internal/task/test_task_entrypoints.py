@@ -5,7 +5,7 @@ import httpx
 import pytest
 from openai import APIConnectionError
 
-from internal.task import app_task, dataset_task, document_task
+from internal.task import app_task
 
 
 class _RecordingInjector:
@@ -16,79 +16,6 @@ class _RecordingInjector:
     def get(self, cls):
         self.requested_classes.append(cls)
         return self.service
-
-
-def test_document_task_build_documents_should_delegate_to_indexing_service(monkeypatch):
-    calls = []
-    indexing_service = SimpleNamespace(build_documents=lambda document_ids: calls.append(("build", document_ids)))
-    notification_service = SimpleNamespace(create_notification=lambda **_kwargs: None)
-    db = SimpleNamespace(
-        session=SimpleNamespace(
-            query=lambda *_args, **_kwargs: SimpleNamespace(
-                filter=lambda *_args, **_kwargs: SimpleNamespace(first=lambda: None)
-            )
-        )
-    )
-    injector = SimpleNamespace(
-        requested_classes=[],
-        get=lambda cls: (
-            injector.requested_classes.append(cls)
-            or (
-                indexing_service
-                if cls.__name__ == "IndexingService"
-                else notification_service
-                if cls.__name__ == "NotificationService"
-                else db
-            )
-        ),
-    )
-    monkeypatch.setattr("app.http.app.injector", injector)
-
-    document_ids = [uuid4(), uuid4()]
-    document_task.build_documents.run(document_ids)
-
-    assert calls == [("build", document_ids)]
-    assert injector.requested_classes[0].__name__ == "IndexingService"
-
-
-def test_document_task_update_document_enabled_should_delegate(monkeypatch):
-    calls = []
-    service = SimpleNamespace(update_document_enabled=lambda document_id: calls.append(("update", document_id)))
-    injector = _RecordingInjector(service)
-    monkeypatch.setattr("app.http.app.injector", injector)
-
-    document_id = uuid4()
-    document_task.update_document_enabled.run(document_id)
-
-    assert calls == [("update", document_id)]
-    assert injector.requested_classes[-1].__name__ == "IndexingService"
-
-
-def test_document_task_delete_document_should_delegate(monkeypatch):
-    calls = []
-    service = SimpleNamespace(delete_document=lambda dataset_id, document_id: calls.append((dataset_id, document_id)))
-    injector = _RecordingInjector(service)
-    monkeypatch.setattr("app.http.module.injector", injector)
-
-    dataset_id = uuid4()
-    document_id = uuid4()
-    document_task.delete_document.run(dataset_id, document_id)
-
-    assert calls == [(dataset_id, document_id)]
-    assert injector.requested_classes[-1].__name__ == "IndexingService"
-
-
-def test_dataset_task_delete_dataset_should_delegate(monkeypatch):
-    calls = []
-    service = SimpleNamespace(delete_dataset=lambda dataset_id: calls.append(dataset_id))
-    injector = _RecordingInjector(service)
-    monkeypatch.setattr("app.http.app.injector", injector)
-
-    dataset_id = uuid4()
-    dataset_task.delete_dataset.run(dataset_id)
-
-    assert calls == [dataset_id]
-    assert injector.requested_classes[-1].__name__ == "IndexingService"
 
 
 def test_app_task_auto_create_app_should_delegate(monkeypatch):

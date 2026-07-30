@@ -1,10 +1,8 @@
 import { QueueEvent } from '@/config'
 import type { BillingUsageEvent } from '@/models/billing-metering'
-import type { MemoryCandidatePrompt } from '@/models/memory'
 import type { RoutingDecision } from '@/models/orchestration'
 import type { ToolConfirmationPrompt } from '@/models/tool-confirmation'
 export type { ToolConfirmationPrompt }
-export type { MemoryCandidatePrompt }
 import {
   buildChatOutputParts,
   extractInlineImageUrls,
@@ -18,6 +16,7 @@ type StreamEventData = {
   conversation_id?: string
   event?: string
   thought?: string
+  answer?: string
   observation?: string
   tool?: string
   tool_input?: unknown
@@ -40,6 +39,19 @@ type StreamEventData = {
   confidence?: number
   occurrences?: number
   status?: string
+  // 多智能体子任务规划（subtask_started 事件）
+  execution_mode?: string
+  aggregation_strategy?: string
+  task_count?: number
+  items?: SubtaskPlanItem[]
+  // 子任务完成（subtask_completed 事件）
+  agent_id?: string
+  answer_preview?: string
+  errors?: string[]
+  // 结果合成元数据（agent_message 事件附加）
+  summary?: string
+  visible_sources?: unknown[]
+  user_warnings?: string[]
 }
 
 export type StreamEventResponse = {
@@ -57,6 +69,37 @@ export type ChatThought = {
   tool_input: Record<string, unknown>
   latency: number
   created_at: number
+}
+
+// 多智能体子任务规划项（subtask_started 事件 items 数组元素）
+export type SubtaskPlanItem = {
+  task_id: string
+  title: string
+  description: string
+  depends_on: string[]
+  execution_order: number
+  agent_id: string
+  tools: string[]
+  risk_level: string
+}
+
+// 子任务执行进度跟踪（subtask_started 初始化，subtask_completed 更新）
+export type SubtaskProgress = {
+  task_id: string
+  title: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  agent_id: string
+  answer_preview?: string
+  confidence?: number
+  errors?: string[]
+}
+
+// 多智能体结果合成元数据（agent_message 事件附加字段）
+export type SynthesisMeta = {
+  summary: string
+  confidence: number
+  visible_sources: unknown[]
+  user_warnings: string[]
 }
 
 export type StreamMessage = {
@@ -84,7 +127,17 @@ export type StreamState = {
   routingDecision?: RoutingDecision | null
   orchestratorReject?: { reason: string; message: string } | null
   toolConfirmationPrompt?: ToolConfirmationPrompt | null
-  memoryCandidatePrompt?: MemoryCandidatePrompt | null
+  // 多智能体子任务进度（subtask_started 初始化，subtask_completed 更新）
+  subtasks?: SubtaskProgress[] | null
+  // 任务规划元数据（subtask_started 事件携带）
+  taskPlan?: {
+    execution_mode: string
+    aggregation_strategy: string
+    reason: string
+    task_count: number
+  } | null
+  // 结果合成元数据（agent_message 事件附加）
+  synthesisMeta?: SynthesisMeta | null
 }
 
 export type DeepThinkingProposal = {
@@ -238,7 +291,23 @@ export const applyChatStreamEvent = (
 
   if (event === QueueEvent.agentMessage) {
     upsertThought(thoughts, data, nextState, { appendThought: true })
-    message.answer += String(data.thought ?? '')
+    // 后端 AGENT_MESSAGE 事件 payload 使用 'answer' 字段（新契约，所有执行器遵循）
+    // 旧测试 / 历史数据可能使用 'thought' 字段，两者兼容：优先 answer，回退 thought
+    const answerChunk = String(data.answer ?? data.thought ?? '')
+    message.answer += answerChunk
+    // 多智能体合成元数据：summary / confidence / visible_sources / user_warnings
+    // 仅 MultiAgentExecutor 在多结果合成时会附加这些字段
+    const hasSynthesisMeta = Boolean(
+      data.summary || data.user_warnings?.length || data.visible_sources?.length,
+    )
+    if (hasSynthesisMeta) {
+      nextState.synthesisMeta = {
+        summary: String(data.summary ?? ''),
+        confidence: Number(data.confidence ?? 0) || 0,
+        visible_sources: Array.isArray(data.visible_sources) ? data.visible_sources : [],
+        user_warnings: Array.isArray(data.user_warnings) ? data.user_warnings : [],
+      }
+    }
     shouldRefreshOutputParts = true
   } else if (event === QueueEvent.agentAction) {
     upsertThought(thoughts, data, nextState, { appendThought: false })
@@ -302,6 +371,43 @@ export const applyChatStreamEvent = (
       message: String(data?.message ?? ''),
     }
     return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.subtaskStarted) {
+    // 多智能体任务分解：subtask_started 事件携带完整任务规划
+    // 初始化 subtasks 数组，每个子任务初始状态为 pending
+    const items = Array.isArray(data.items) ? data.items : []
+    const subtasks: SubtaskProgress[] = items.map((item) => ({
+      task_id: String(item?.task_id ?? ''),
+      title: String(item?.title ?? ''),
+      status: 'pending' as const,
+      agent_id: String(item?.agent_id ?? ''),
+    }))
+    nextState.subtasks = subtasks
+    nextState.taskPlan = {
+      execution_mode: String(data.execution_mode ?? ''),
+      aggregation_strategy: String(data.aggregation_strategy ?? ''),
+      reason: String(data.reason ?? ''),
+      task_count: Number(data.task_count ?? 0) || 0,
+    }
+    return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.subtaskCompleted) {
+    // 单个子任务完成：更新对应 task 状态
+    const taskId = String(data.task_id ?? '')
+    const status: SubtaskProgress['status'] = data.status === 'failed' ? 'failed' : 'completed'
+    const errors = Array.isArray(data.errors) ? data.errors.map(String) : []
+    const currentSubtasks = nextState.subtasks ?? []
+    nextState.subtasks = currentSubtasks.map((subtask) => {
+      if (subtask.task_id !== taskId) {
+        return subtask
+      }
+      return {
+        ...subtask,
+        status,
+        answer_preview: String(data.answer_preview ?? ''),
+        confidence: Number(data.confidence ?? 0) || 0,
+        errors,
+      }
+    })
+    return { state: nextState, didUpdate: true }
   } else if (event === QueueEvent.toolConfirmationRequired) {
     nextState.toolConfirmationPrompt = {
       id: String(data.id ?? ''),
@@ -315,15 +421,6 @@ export const applyChatStreamEvent = (
       rollback_strategy: String(data.rollback_strategy ?? ''),
       audit_hint: String(data.audit_hint ?? ''),
     } as ToolConfirmationPrompt
-    return { state: nextState, didUpdate: true }
-  } else if (event === QueueEvent.memoryCandidatePrompt) {
-    nextState.memoryCandidatePrompt = {
-      id: String(data.candidate_id ?? ''),
-      content: String(data.content ?? ''),
-      confidence: Number(data.confidence ?? 0) || 0,
-      occurrences: Number(data.occurrences ?? 1) || 1,
-      status: String(data.status ?? 'pending'),
-    } as MemoryCandidatePrompt
     return { state: nextState, didUpdate: true }
   } else {
     nextState.position += 1

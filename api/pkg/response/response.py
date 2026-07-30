@@ -90,7 +90,7 @@ def compact_generate_response(response: Union[Response, Generator]) -> FlaskResp
                     "event": failure_event.value,
                     "observation": build_failure_observation(error, "流式响应执行失败"),
                 }
-                yield f"event: {failure_event.value}\ndata:{json_module.dumps(payload, ensure_ascii=False)}\n\n"
+                yield f"event: {failure_event.value}\ndata:{json_module.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
         # 3.返回携带上下文的流式事件输出
         flask_response = FlaskResponse(

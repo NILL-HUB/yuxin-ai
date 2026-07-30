@@ -34,6 +34,7 @@ class CreateApiToolReq(FlaskForm):
         DataRequired(message="openapi_schema字符串不能为空")
     ])
     headers = ListField("headers",default=[])
+    task_keywords = ListField("task_keywords", default=[])
 
     @classmethod
     def validate_headers(cls,form,field):
@@ -44,6 +45,16 @@ class CreateApiToolReq(FlaskForm):
             if set(header.keys()) != {"key", "value"}:
                 # header = {"key": "Content-Type", "value": "application/json"}
                 raise ValidationError("headers里的每一格元素都必须包含key和value两个属性 不允许有其他属性")
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 class UpdateApiToolProviderReq(FlaskForm):
     """更新API工具提供者请求"""
@@ -61,6 +72,7 @@ class UpdateApiToolProviderReq(FlaskForm):
         DataRequired(message="openapi_schema字符串不能为空")
     ])
     headers = ListField("headers",default=[])
+    task_keywords = ListField("task_keywords", default=[])
 
     @classmethod
     def validate_headers(cls, form, field):
@@ -71,6 +83,16 @@ class UpdateApiToolProviderReq(FlaskForm):
             if set(header.keys()) != {"key", "value"}:
                 # header = {"key": "Content-Type", "value": "application/json"}
                 raise ValidationError("headers里的每一格元素都必须包含key和value两个属性 不允许有其他属性")
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 class GetApiToolProviderResp(Schema):
     """获取API工具提供者响应信息"""
     id = fields.UUID()
@@ -99,6 +121,7 @@ class GetApiToolResp(Schema):
     name = fields.String()
     description = fields.String()
     inputs = fields.List(fields.Dict, dump_default=[])
+    task_keywords = fields.List(fields.String(), dump_default=[])
     provider = fields.Dict()
 
     @pre_dump
@@ -109,6 +132,7 @@ class GetApiToolResp(Schema):
             "name":data.name,
             "description":data.description,
             "inputs":[{k: v for k, v in parameter.items() if k != "in"} for parameter in data.parameters],
+            "task_keywords": data.task_keywords or [],
             "provider": {
                 "id": provider.id,
                 "name": provider.name,

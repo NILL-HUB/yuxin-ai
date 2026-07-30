@@ -1,6 +1,20 @@
-import { type AgentMetadata, type CreateAppRequest, type GetDraftAppConfigResponse, type UpdateDraftAppConfigRequest } from '@/models/app'
+import {
+  type AgentMetadata,
+  type CreateAppRequest,
+  type GetDraftAppConfigResponse,
+  type GetPublishedConfigResponse,
+  type GetVersionsResponse,
+  type PromptCompareChatRequest,
+  type RegenerateWebAppTokenResponse,
+  type UpdateDraftAppConfigRequest,
+} from '@/models/app'
+import type { GetWechatConfigResponse, UpdateWechatConfigRequest } from '@/models/platform'
+import type { GetAppAnalysisResponse } from '@/models/analysis'
 import type { BasePaginatorResponse, BaseResponse } from '@/models/base'
-import { del, get, post, request } from '@/utils/request'
+import { type AppTag } from '@/services/public-app'
+import { del, get, post, request, ssePost } from '@/utils/request'
+
+export type { AppTag }
 
 export type AdminAppRecord = {
   id: string
@@ -175,4 +189,92 @@ export const updateAdminAppDraftConfig = async (
     { body },
   )
   return response.data
+}
+
+/**
+ * 获取后台应用的发布配置信息。
+ */
+export const getAdminAppPublishedConfig = (appId: string) => {
+  return get<GetPublishedConfigResponse>(`/admin/apps/${appId}/published-config`)
+}
+
+/**
+ * 重新生成后台应用 WebApp 的凭证标识。
+ */
+export const regenerateAdminAppWebAppToken = (appId: string) => {
+  return post<RegenerateWebAppTokenResponse>(
+    `/admin/apps/${appId}/published-config/regenerate-web-app-token`,
+  )
+}
+
+/**
+ * 获取后台应用的微信公众号发布配置信息。
+ */
+export const getAdminAppWechatConfig = (appId: string) => {
+  return get<GetWechatConfigResponse>(`/admin/apps/${appId}/wechat-config`)
+}
+
+/**
+ * 更新后台应用的微信公众号发布配置。
+ */
+export const updateAdminAppWechatConfig = (
+  appId: string,
+  body: UpdateWechatConfigRequest,
+) => {
+  return post<BaseResponse<any>>(`/admin/apps/${appId}/wechat-config`, { body })
+}
+
+/**
+ * 分享后台应用到广场。
+ */
+export const shareAdminAppToSquare = (appId: string, tags: string) => {
+  return post<BaseResponse<any>>(`/admin/apps/${appId}/share-to-square`, { body: { tags } })
+}
+
+/**
+ * 取消分享后台应用到广场。
+ */
+export const unshareAdminAppFromSquare = (appId: string) => {
+  return post<BaseResponse<any>>(`/admin/apps/${appId}/unshare-from-square`)
+}
+
+/**
+ * 获取后台应用标签列表。
+ */
+export const getAdminAppTags = () => {
+  return get<BaseResponse<{ tags: AppTag[] }>>('/admin/apps/tags')
+}
+
+/**
+ * 后台提示词对比调试，该接口为流式事件输出。
+ */
+export const adminPromptCompareChat = (
+  appId: string,
+  req: PromptCompareChatRequest,
+  onData: (event_response: Record<string, any>) => void,
+) => {
+  return ssePost(`/admin/apps/${appId}/prompt-compare/chat`, { body: req }, onData)
+}
+
+/**
+ * 停止后台某次提示词对比调试会话。
+ */
+export const stopAdminPromptCompareChat = (appId: string, taskId: string) => {
+  return post<BaseResponse<any>>(
+    `/admin/apps/${appId}/prompt-compare/tasks/${taskId}/stop`,
+  )
+}
+
+/**
+ * 获取后台应用统计分析数据。
+ */
+export const getAdminAppAnalysis = (appId: string) => {
+  return get<GetAppAnalysisResponse>(`/admin/apps/${appId}/analysis`)
+}
+
+/**
+ * 获取后台应用版本对比数据（草稿 + 发布历史）。
+ */
+export const getAdminAppVersions = (appId: string) => {
+  return get<GetVersionsResponse>(`/admin/apps/${appId}/versions`)
 }

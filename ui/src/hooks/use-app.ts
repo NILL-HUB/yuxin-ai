@@ -29,6 +29,7 @@ import {
   shareAppToSquare,
   unshareAppFromSquare,
 } from '@/services/app'
+import { updateAdminAppDraftConfig } from '@/services/admin-apps'
 import { Message, Modal } from '@arco-design/web-vue'
 import { mergeChatHistoryMessages } from '@/views/shared/chat-stream'
 import type {
@@ -40,7 +41,7 @@ import type {
   UpdateAppRequest,
   UpdateDraftAppConfigRequest,
 } from '@/models/app'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getErrorMessage } from '@/utils/error'
 import { i18n } from '@/i18n'
 
@@ -356,7 +357,7 @@ export const useGetDraftAppConfig = () => {
         opening_questions: data.opening_questions,
         suggested_after_answer: data.suggested_after_answer,
         review_config: data.review_config,
-        datasets: data.datasets,
+        knowledge_base_ids: data.knowledge_base_ids || [],
         retrieval_config: data.retrieval_config,
         tools: data.tools,
         mcp_bindings: data.mcp_bindings || [],
@@ -379,6 +380,7 @@ export const useGetDraftAppConfig = () => {
 
 export const useUpdateDraftAppConfig = () => {
   // 1.定义hooks所需数据
+  const route = useRoute()
   const loading = ref(false)
 
   // 2.定义更新草稿配置处理器
@@ -388,8 +390,13 @@ export const useUpdateDraftAppConfig = () => {
   ) => {
     try {
       loading.value = true
-      const resp = await updateDraftAppConfig(app_id, draft_app_config)
-      Message.success(resp.message)
+      // admin 上下文调用 admin 端点，space 上下文调用 space 端点
+      if (route.path.startsWith('/admin/')) {
+        await updateAdminAppDraftConfig(app_id, draft_app_config)
+      } else {
+        const resp = await updateDraftAppConfig(app_id, draft_app_config)
+        Message.success(resp.message)
+      }
     } catch (error: unknown) {
       const msg = getErrorMessage(error, t('appStudio.shell.updateDraftFailed'))
       Message.error(msg)

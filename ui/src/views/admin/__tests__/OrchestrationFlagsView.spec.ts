@@ -40,9 +40,26 @@ vi.mock('vue-i18n', () => ({
         'admin.orchestrationFlags.off': 'Off',
         'admin.orchestrationFlags.loadFailed': 'Load failed',
         'admin.orchestrationFlags.updateFailed': 'Update failed',
+        'admin.orchestrationFlags.poolGovernanceGroup': 'Pool governance',
+        'admin.orchestrationFlags.poolGovernanceGroupDesc': 'Pool governance desc',
+        'admin.orchestrationFlags.otherGroup': 'Other flags',
+        'admin.orchestrationFlags.priorityHint': 'Priority hint',
       })[key] ?? key,
+    locale: { value: 'en-US' },
   }),
 }))
+
+// Stub Arco table/switch to render slot content for text assertions
+const tableStub = {
+  props: ['columns', 'data', 'pagination', 'rowKey', 'bordered', 'size'],
+  template: `<table><tbody><tr v-for="row in data" :key="row.code"><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.description }}</td><td>{{ row.risk_level }}</td><td>{{ row.fallback_behavior }}</td><td><slot name="enabled" :record="row" /></td></tr></tbody></table>`,
+}
+
+const switchStub = {
+  props: ['modelValue', 'loading'],
+  emits: ['change', 'update:modelValue'],
+  template: '<button type="button" class="arco-switch" @click="$emit(\'change\', !modelValue)"></button>',
+}
 
 const renderView = async () => {
   mocks.listAdminOrchestrationFlags.mockResolvedValue([
@@ -67,7 +84,14 @@ const renderView = async () => {
   })
   mocks.updateAdminOrchestrationFlag.mockResolvedValue({ enabled: false })
 
-  const wrapper = mount(OrchestrationFlagsView)
+  const wrapper = mount(OrchestrationFlagsView, {
+    global: {
+      stubs: {
+        'a-table': tableStub,
+        'a-switch': switchStub,
+      },
+    },
+  })
   await flushPromises()
   return wrapper
 }
@@ -89,7 +113,7 @@ describe('OrchestrationFlagsView', () => {
   it('updates flag enabled state', async () => {
     const wrapper = await renderView()
 
-    await wrapper.find('button').trigger('click')
+    await wrapper.find('.arco-switch').trigger('click')
 
     expect(mocks.updateAdminOrchestrationFlag).toHaveBeenCalledWith(
       'ENABLE_ORCHESTRATOR',

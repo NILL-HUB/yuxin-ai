@@ -16,9 +16,9 @@ from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
 from internal.core.language_model import LanguageModelManager
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
-from internal.entity.app_entity import AppStatus
+from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
-from internal.entity.dataset_entity import RetrievalSource
+from internal.entity.dataset_entity import RetrievalStrategy
 from internal.exception import FailException
 from internal.model import App, Account
 from pkg.sqlalchemy import SQLAlchemy
@@ -28,6 +28,7 @@ from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
 from .public_agent_registry_service import PublicAgentRegistryService
 from .retrieval_service import RetrievalService
+from .runtime_tool_governance_gate import RuntimeToolGovernanceGate
 from .skill_service import SkillService
 from .tool_inventory_service import build_tool_id
 from ..core.language_model.entities.model_entity import ModelFeature
@@ -53,6 +54,7 @@ class AppRuntimeService(BaseService):
     builtin_provider_manager: BuiltinProviderManager
     conversation_service: ConversationService
     public_agent_registry_service: PublicAgentRegistryService | None = None
+    runtime_tool_governance_gate: RuntimeToolGovernanceGate | None = None
 
     def get_skill_service(self) -> SkillService:
         """获取技能服务，兼容测试里传入的简化 app_config_service。"""
@@ -82,7 +84,7 @@ class AppRuntimeService(BaseService):
             draft_app_config=draft_app_config,
             flask_app=flask_app,
             runtime_context=runtime_context,
-            governance_gate=governance_gate,
+            governance_gate=governance_gate or self.runtime_tool_governance_gate,
             governance_context=governance_context,
         )
 
@@ -252,20 +254,38 @@ class AppRuntimeService(BaseService):
                 )
             )
 
-        if draft_app_config.get("datasets"):
+        # 知识库检索工具构建：仅使用新版 knowledge_base_ids 调用分层检索
+        knowledge_base_ids = list(draft_app_config.get("knowledge_base_ids") or [])
+
+        if knowledge_base_ids:
             runtime_flask_app = flask_app
             if runtime_flask_app is None and has_app_context():
                 runtime_flask_app = current_app._get_current_object()
             if runtime_flask_app is None:
                 raise FailException("构建知识库检索工具失败: 缺少 Flask application context")
-            dataset_retrieval = retrieval_service.create_langchain_tool_from_search(
-                flask_app=runtime_flask_app,
-                dataset_ids=[dataset["id"] for dataset in draft_app_config.get("datasets", [])],
-                account_id=account.id,
-                retrieval_source=RetrievalSource.APP.value,
-                **draft_app_config.get("retrieval_config", {}),
-            )
-            tools.append(dataset_retrieval)
+            retrieval_config = draft_app_config.get("retrieval_config", {}) or {}
+            # 统一转换为 UUID 以兼容底层数据库查询
+            kb_uuid_ids: list[UUID] = []
+            for kb_id in knowledge_base_ids:
+                if isinstance(kb_id, UUID):
+                    kb_uuid_ids.append(kb_id)
+                    continue
+                try:
+                    kb_uuid_ids.append(UUID(str(kb_id)))
+                except Exception:
+                    # 非法 id 直接跳过，不阻断工具构建
+                    continue
+            if kb_uuid_ids:
+                knowledge_retrieval = retrieval_service.create_knowledge_retrieval_tool(
+                    flask_app=runtime_flask_app,
+                    knowledge_base_ids=kb_uuid_ids,
+                    account_id=account.id,
+                    retrieval_strategy=retrieval_config.get(
+                        "retrieval_strategy", RetrievalStrategy.HYBRID.value
+                    ),
+                    k=retrieval_config.get("k", 4),
+                )
+                tools.append(knowledge_retrieval)
 
         if draft_app_config.get("workflows"):
             workflow_tools = app_config_service.get_langchain_tools_by_workflow_ids(
@@ -296,6 +316,9 @@ class AppRuntimeService(BaseService):
                 )
             else:
                 ctx = governance_context
+            # mode=disabled 时完全跳过治理（OBSERVE_ONLY 开关关闭且未开启阻断）
+            if ctx.get("mode") == "disabled":
+                return tools
             tools, audit_context = governance_gate.apply(
                 tools,
                 account_id=ctx.get("account_id"),
@@ -347,11 +370,22 @@ class AppRuntimeService(BaseService):
     ) -> None:
         """将治理决策持久化到路由日志（阶段1渐进式启用观测期）。
 
-        best-effort：从 runtime_context 或 flask g 获取 request_id/conversation_id，
+        best-effort：从 runtime_context 或 flask g 获取 request_id/conversation_id/message_id，
         写入失败不阻断主流程（GovernanceAuditLogger 内部 try/except 降级为 warning）。
         governance_gate=None 时本方法不会被调用。
+
+        字段语义：
+            - account_id: 写入 routing_log.account_id FK（必须是 account 表中的真实账号）
+            - actor_id: 实际触发治理决策的 actor（如 WebApp 访客 ID），仅写入 routing_decision 上下文
+            - conversation_id: 写入 routing_decision 上下文，便于按会话追溯
+            - message_id: 写入 routing_log.message_id 字段，关联具体消息记录
+
+        WebApp 访客场景：account_id 参数可能是访客 ID（不在 account 表中），
+        runtime_context.governance_account_id 是 app owner 的 account_id（FK 有效）。
+        此时用 governance_account_id 作为 FK，原 account_id 作为 actor_id 用于追溯。
         """
         if not audit_context:
+            logger.debug("governance_audit_log skipped: empty audit_context (app_id=%s)", app_id)
             return
         try:
             from .governance_audit_logger import GovernanceAuditLogger
@@ -359,6 +393,19 @@ class AppRuntimeService(BaseService):
             runtime_context = runtime_context or {}
             request_id = runtime_context.get("request_id")
             conversation_id = runtime_context.get("conversation_id")
+            message_id = runtime_context.get("message_id")
+
+            # WebApp 访客场景：governance_account_id 是 app owner（FK 有效）
+            # 优先使用 governance_account_id 作为 routing_log.account_id FK，
+            # 原 account_id 降级为 actor_id 写入 routing_decision 上下文用于追溯
+            governance_account_id = runtime_context.get("governance_account_id")
+            if governance_account_id:
+                fk_account_id = governance_account_id
+                actor_id = account_id
+            else:
+                fk_account_id = account_id
+                actor_id = None
+
             # best-effort：runtime_context 没有时尝试 flask g
             if request_id is None and has_app_context():
                 try:
@@ -370,8 +417,10 @@ class AppRuntimeService(BaseService):
                 audit_context,
                 request_id=request_id,
                 conversation_id=conversation_id,
-                account_id=account_id,
+                message_id=message_id,
+                account_id=fk_account_id,
                 app_id=app_id,
+                actor_id=actor_id,
             )
         except Exception:
             # 双重保险：即使 GovernanceAuditLogger 内部异常漏出也不阻断主流程
@@ -701,7 +750,7 @@ class AppRuntimeService(BaseService):
         if enable_deep_thinking:
             agent_class = DeepThinkingAgent
         else:
-            agent_class = FunctionCallAgent if ModelFeature.TOOL_CALL.value in llm.features else ReACTAgent
+            agent_class = FunctionCallAgent if ModelFeature.TOOL_CALL.value in (getattr(llm, "features", None) or []) else ReACTAgent
 
         skill_prompt_appendix = cls.build_skill_prompt_appendix(draft_app_config.get("skills", []))
         agent_binding_prompt_appendix = cls.build_agent_binding_prompt_appendix(
@@ -726,18 +775,22 @@ class AppRuntimeService(BaseService):
             prompt_parts.append(runtime_mcp_tools_prompt_appendix.strip())
         preset_prompt = "\n\n".join(part for part in prompt_parts if part)
 
+        # 规范化 review_config：DB 默认可能是 {}，需合并默认值确保 enable/inputs_config 等键存在
+        review_config = dict(DEFAULT_APP_CONFIG["review_config"])
+        review_config.update(draft_app_config.get("review_config") or {})
+
         return agent_class(
             llm=llm,
             agent_config=AgentConfig(
                 user_id=account.id,
                 invoke_from=invoke_from,
                 preset_prompt=preset_prompt,
-                enable_long_term_memory=draft_app_config["long_term_memory"]["enable"],
+                enable_long_term_memory=(draft_app_config.get("long_term_memory") or {}).get("enable", False),
                 enable_deep_thinking=enable_deep_thinking,
                 runtime_flask_app=flask_app,
                 language_model_service=language_model_service,
                 tools=tools,
-                review_config=draft_app_config["review_config"],
+                review_config=review_config,
             ),
         )
 
@@ -813,4 +866,4 @@ class AppRuntimeService(BaseService):
                 "message_id": message_id,
                 "task_id": str(agent_thought.task_id),
             }
-            yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
+            yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"

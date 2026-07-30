@@ -52,10 +52,17 @@ class ExternalDataSourceHandler:
         req = CreateExternalDataSourceReq()
         if not req.validate():
             return validate_error_json(req.errors)
-        knowledge_base = self.knowledge_base_service.get_user_content_base(
-            UUID(req.knowledge_base_id.data),
-            current_user,
-        )
+        # knowledge_base_id 可选：未提供时自动创建一个用户内容知识库绑定数据源
+        if req.knowledge_base_id.data:
+            knowledge_base = self.knowledge_base_service.get_user_content_base(
+                UUID(req.knowledge_base_id.data),
+                current_user,
+            )
+        else:
+            knowledge_base = self.knowledge_base_service.create_user_content_base(
+                name=req.source_name.data,
+                account=current_user,
+            )
         data_source = self.external_data_source_service.create_connection(
             account=current_user,
             knowledge_base=knowledge_base,

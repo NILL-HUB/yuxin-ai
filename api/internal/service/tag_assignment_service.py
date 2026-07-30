@@ -4,13 +4,13 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from internal.core.agent.usage_utils import charge_for_feature, extract_token_usage
 from internal.entity.tag_entity import (
     TAG_KEYWORDS_MAPPING,
     APP_TAG_PRIORITY,
     sort_tags_by_priority,
 )
-from internal.core.language_model.providers.deepseek.chat import Chat
-from internal.core.language_model.entities.model_entity import ModelFeature
+from internal.service.language_model_service import LanguageModelService
 
 
 class TagAssignmentInput(BaseModel):
@@ -71,25 +71,30 @@ class TagAssignmentService:
         return []
 
     @staticmethod
-    def assign_tags_by_deepseek(name: str, description: str) -> List[str]:
+    def assign_tags_by_deepseek(
+        name: str,
+        description: str,
+        credit_service=None,
+        account_id=None,
+    ) -> List[str]:
         """
-        使用DeepSeek模型通过FunctionCall分配标签（第二层）
+        通过 FunctionCall 分配标签（第二层）
+
+        LLM 通过 LanguageModelService.get_cheap_chat_model() 获取，
+        走数据库配置 + compatible_api 分发链路。
 
         Args:
             name: 应用/工作流名称
             description: 应用/工作流描述
+            credit_service: 额度计费服务实例（可选，传入时按 token 扣费）
+            account_id: 账户 ID（可选，与 credit_service 配合用于计费）
 
         Returns:
             分配的标签列表
         """
         try:
-            # 创建LLM实例
-            llm = Chat(
-                model="deepseek-chat",
-                temperature=0.3,
-                features=[ModelFeature.TOOL_CALL.value],
-                metadata={},
-            )
+            # 走数据库配置 + compatible_api 分发
+            llm = LanguageModelService.get_feature_model("tag_assignment")
 
             # 定义FunctionCall工具
             tools = [
@@ -150,6 +155,16 @@ class TagAssignmentService:
             # 调用LLM
             response = llm.invoke(prompt)
 
+            # 公共 AI 功能计费（非消息上下文）
+            token_usage = extract_token_usage(response)
+            if token_usage and account_id is not None:
+                charge_for_feature(
+                    credit_service,
+                    account_id,
+                    "tag_assignment",
+                    token_usage["total_tokens"],
+                )
+
             # 解析响应中的标签
             # 这里需要根据实际的LLM响应格式进行解析
             # 假设LLM返回的是JSON格式的FunctionCall结果
@@ -168,13 +183,20 @@ class TagAssignmentService:
             return []
 
     @staticmethod
-    def auto_assign_tags(name: str, description: str) -> List[str]:
+    def auto_assign_tags(
+        name: str,
+        description: str,
+        credit_service=None,
+        account_id=None,
+    ) -> List[str]:
         """
         自动分配标签 - 先用关键词匹配，失败则调用DeepSeek
 
         Args:
             name: 应用/工作流名称
             description: 应用/工作流描述
+            credit_service: 额度计费服务实例（可选，传入时按 token 扣费）
+            account_id: 账户 ID（可选，与 credit_service 配合用于计费）
 
         Returns:
             分配的标签列表
@@ -186,7 +208,9 @@ class TagAssignmentService:
             return tags
 
         # 第二层：调用DeepSeek
-        tags = TagAssignmentService.assign_tags_by_deepseek(name, description)
+        tags = TagAssignmentService.assign_tags_by_deepseek(
+            name, description, credit_service=credit_service, account_id=account_id
+        )
 
         if tags:
             return tags
@@ -195,18 +219,27 @@ class TagAssignmentService:
         return ["other"]
 
     @staticmethod
-    def assign_tags_for_assistant_agent(name: str, description: str) -> List[str]:
+    def assign_tags_for_assistant_agent(
+        name: str,
+        description: str,
+        credit_service=None,
+        account_id=None,
+    ) -> List[str]:
         """
         为辅助Agent创建的应用分配标签 - 直接使用DeepSeek FunctionCall
 
         Args:
             name: 应用/工作流名称
             description: 应用/工作流描述
+            credit_service: 额度计费服务实例（可选，传入时按 token 扣费）
+            account_id: 账户 ID（可选，与 credit_service 配合用于计费）
 
         Returns:
             分配的标签列表
         """
-        tags = TagAssignmentService.assign_tags_by_deepseek(name, description)
+        tags = TagAssignmentService.assign_tags_by_deepseek(
+            name, description, credit_service=credit_service, account_id=account_id
+        )
 
         if tags:
             return tags

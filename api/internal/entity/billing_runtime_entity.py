@@ -4,7 +4,6 @@ from typing import Any
 from .base_entity import SerializableMixin
 
 
-MODEL_TIERS = {"cheap", "standard", "strong"}
 MODEL_HEALTH_STATUSES = {"healthy", "degraded", "unknown"}
 KEY_STATUSES = {"active", "inactive", "circuit_open"}
 
@@ -13,7 +12,7 @@ KEY_STATUSES = {"active", "inactive", "circuit_open"}
 class ModelPoolItem(SerializableMixin):
     provider: str
     model: str
-    tier: str = "standard"
+    tier: str = "2"
     capabilities: list[str] = field(default_factory=list)
     price_per_1k_input_tokens: float = 0
     price_per_1k_output_tokens: float = 0
@@ -24,7 +23,7 @@ class ModelPoolItem(SerializableMixin):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelPoolItem":
-        tier = _one_of(data.get("tier"), MODEL_TIERS, "standard")
+        tier = data.get("tier") or "2"
         return cls(
             provider=_text(data.get("provider")),
             model=_text(data.get("model")),

@@ -5,7 +5,6 @@ import logging
 from threading import Thread
 from typing import Optional, Any, Iterator
 from flask import has_app_context
-from internal.core.language_model.entities.model_entity import BaseLanguageModel
 from langchain_core.load import Serializable
 from pydantic import ConfigDict, PrivateAttr
 from langchain_core.runnables import Runnable, RunnableConfig
@@ -20,7 +19,7 @@ from .agent_queue_manager import AgentQueueManager
 class BaseAgent(Serializable, Runnable):
     """基于Runnable的基础智能体基类"""
     name: str = "default_agent"  # 添加默认名称
-    llm: BaseLanguageModel
+    llm: Any
     agent_config: AgentConfig
     _agent: CompiledStateGraph = PrivateAttr(None)
     _agent_queue_manager: AgentQueueManager = PrivateAttr(None)
@@ -29,7 +28,7 @@ class BaseAgent(Serializable, Runnable):
 
     def __init__(
             self,
-            llm: BaseLanguageModel,
+            llm: Any,
             agent_config: AgentConfig,
             *args,
             **kwargs,
@@ -154,7 +153,9 @@ class BaseAgent(Serializable, Runnable):
             if callable(is_alive) and is_alive():
                 join = getattr(thread, "join", None)
                 if callable(join):
-                    join(timeout=1)
+                    join(timeout=10)
+                if callable(is_alive) and is_alive():
+                    logging.warning("Agent 子线程在 join(10s) 后仍在运行，task_id=%s", input.get("task_id"))
 
     @property
     def agent_queue_manager(self) -> AgentQueueManager:

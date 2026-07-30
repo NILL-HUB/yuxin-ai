@@ -26,7 +26,7 @@ class ReACTAgent(FunctionCallAgent):
     def _long_term_memory_recall_node(self, state: AgentState) -> AgentState:
         """重写长期记忆召回节点，使用prompt实现工具调用及规范数据生成"""
         # 1.判断是否支持工具调用，如果支持工具调用，则可以直接使用工具智能体的长期记忆召回节点
-        if ModelFeature.TOOL_CALL.value in self.llm.features:
+        if ModelFeature.TOOL_CALL.value in (getattr(self.llm, "features", None) or []):
             return super()._long_term_memory_recall_node(state)
 
         # 2.根据传递的智能体配置判断是否需要召回长期记忆
@@ -42,7 +42,7 @@ class ReACTAgent(FunctionCallAgent):
 
         # 3.检测是否支持AGENT_THOUGHT，如果不支持，则使用没有工具描述的prompt
         user_memory = state.get("user_memory", "") or ""
-        if ModelFeature.AGENT_THOUGHT.value not in self.llm.features:
+        if ModelFeature.AGENT_THOUGHT.value not in (getattr(self.llm, "features", None) or []):
             preset_messages = [
                 SystemMessage(AGENT_SYSTEM_PROMPT_TEMPLATE.format(
                     preset_prompt=self.agent_config.preset_prompt,
@@ -68,7 +68,7 @@ class ReACTAgent(FunctionCallAgent):
             if len(history) % 2 != 0:
                 self.agent_queue_manager.publish_error(state["task_id"], "智能体历史消息列表格式错误")
                 logging.exception(
-                    f"智能体历史消息列表格式错误, len(history)={len(history)}, history={json.dumps(messages_to_dict(history))}"
+                    f"智能体历史消息列表格式错误, len(history)={len(history)}, history={json.dumps(messages_to_dict(history), ensure_ascii=False, default=str)}"
                 )
                 raise FailException("智能体历史消息列表格式错误")
             # 7.拼接历史消息
@@ -86,7 +86,7 @@ class ReACTAgent(FunctionCallAgent):
     def _llm_node(self, state: AgentState) -> AgentState:
         """重写工具调用智能体的LLM节点"""
         # 1.判断当前LLM是否支持tool_call，如果是则使用FunctionCallAgent的_llm_node
-        if ModelFeature.TOOL_CALL.value in self.llm.features:
+        if ModelFeature.TOOL_CALL.value in (getattr(self.llm, "features", None) or []):
             return super()._llm_node(state)
 
         # 2.检测当前Agent迭代次数是否符合需求
@@ -198,7 +198,7 @@ class ReACTAgent(FunctionCallAgent):
                     id=id,
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_THOUGHT.value,
-                    thought=json.dumps(gathered.tool_calls),
+                    thought=json.dumps(gathered.tool_calls, ensure_ascii=False, default=str),
                     # 消息相关字段
                     message=messages_to_dict(state["messages"]),
                     message_token_count=input_token_count,
@@ -261,6 +261,11 @@ class ReACTAgent(FunctionCallAgent):
                 total_token_count=total_token_count,
                 total_price=total_price,
                 latency=(time.perf_counter() - start_at),
+            ))
+            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                id=uuid.uuid4(),
+                task_id=state["task_id"],
+                event=QueueEvent.AGENT_END.value,
             ))
 
         return {

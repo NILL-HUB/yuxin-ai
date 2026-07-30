@@ -9,6 +9,7 @@ from internal.core.workflow.entities.node_entity import NodeResult, NodeStatus
 from internal.core.workflow.entities.workflow_entity import WorkflowState
 from internal.core.workflow.nodes import BaseNode
 from internal.core.workflow.utils.helper import extract_variables_from_state
+from internal.entity.dataset_entity import RetrievalStrategy
 from .dataset_retrieval_entity import DatasetRetrievalNodeData
 
 
@@ -40,12 +41,16 @@ class DatasetRetrievalNode(BaseNode):
             else retrieval_config.dict()
         )
 
-        # 3.构建检索服务工具
-        self._retrieval_tool = retrieval_service.create_langchain_tool_from_search(
+        # 3.构建检索服务工具：使用新版 KnowledgeBase 检索工具（基于 layered_search 分层检索）
+        self._retrieval_tool = retrieval_service.create_knowledge_retrieval_tool(
             flask_app=flask_app,
-            dataset_ids=self.node_data.dataset_ids,
+            knowledge_base_ids=self.node_data.knowledge_base_ids,
             account_id=account_id,
-            **retrieval_config_payload,
+            retrieval_strategy=retrieval_config_payload.get(
+                "retrieval_strategy",
+                RetrievalStrategy.SEMANTIC.value,
+            ),
+            k=retrieval_config_payload.get("k", 4),
         )
 
     def invoke(self, state: WorkflowState, config: Optional[RunnableConfig] = None) -> WorkflowState:

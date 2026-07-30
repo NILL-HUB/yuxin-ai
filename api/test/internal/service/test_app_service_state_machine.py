@@ -9,20 +9,7 @@ import pytest
 
 from internal.entity.app_entity import AppStatus
 from internal.exception import FailException
-from internal.model import AppDatasetJoin
 from internal.service.app_service import AppService
-
-
-class _DeleteQuery:
-    def __init__(self, session):
-        self.session = session
-
-    def filter(self, *_args, **_kwargs):
-        return self
-
-    def delete(self):
-        with self.session.lock:
-            self.session.delete_calls += 1
 
 
 class _ScalarQuery:
@@ -40,13 +27,9 @@ class _ScalarQuery:
 class _Session:
     def __init__(self):
         self.lock = threading.Lock()
-        self.delete_calls = 0
         self.max_published_version = 0
 
     def query(self, model):
-        model_name = getattr(model, "__name__", "")
-        if model_name == AppDatasetJoin.__name__:
-            return _DeleteQuery(self)
         return _ScalarQuery(self)
 
 
@@ -95,9 +78,6 @@ def _build_service_with_state(app, draft_config):
         if model.__name__ == "AppConfig":
             return SimpleNamespace(id=uuid4(), **kwargs)
 
-        if model.__name__ == "AppDatasetJoin":
-            return SimpleNamespace(id=uuid4(), **kwargs)
-
         if model.__name__ == "AppConfigVersion":
             with db.session.lock:
                 db.session.max_published_version = kwargs["version"]
@@ -133,7 +113,7 @@ def _build_draft_config():
             }
         ],
         "workflows": [{"id": str(uuid4())}],
-        "datasets": [{"id": str(uuid4())}, {"id": str(uuid4())}],
+        "knowledge_base_ids": [str(uuid4()), str(uuid4())],
         "retrieval_config": {"k": 3, "score": 0.5},
         "long_term_memory": {"enable": True},
         "opening_statement": "hello",
@@ -166,7 +146,7 @@ def _build_stateful_app(status: str = AppStatus.DRAFT.value):
             preset_prompt="prompt",
             tools=[],
             workflows=[],
-            datasets=[],
+            knowledge_base_ids=[],
             retrieval_config={},
             long_term_memory={"enable": True},
             opening_statement="hello",
@@ -209,7 +189,7 @@ class TestAppServiceStateMachine:
                 preset_prompt="prompt",
                 tools=[],
                 workflows=[],
-                datasets=[],
+                knowledge_base_ids=[],
                 retrieval_config={},
                 long_term_memory={"enable": True},
                 opening_statement="hello",
@@ -269,8 +249,6 @@ class TestAppServiceStateMachine:
             assert history_versions[-1] == expected_history_version
 
         assert db.auto_commit_count == publish_count
-        assert db.session.delete_calls == publish_count
-        assert sum(1 for model_name, _ in create_calls if model_name == "AppDatasetJoin") == publish_count * 2
         assert cancel_success_count >= 1
 
     def test_publish_cancel_concurrency_should_keep_app_state_consistent(self):
@@ -293,7 +271,7 @@ class TestAppServiceStateMachine:
                 preset_prompt="prompt",
                 tools=[],
                 workflows=[],
-                datasets=[],
+                knowledge_base_ids=[],
                 retrieval_config={},
                 long_term_memory={"enable": True},
                 opening_statement="hello",
@@ -401,14 +379,6 @@ class TestAppServiceStateMachine:
         versions = _extract_versions(create_calls)
         assert versions == list(range(1, expected_publish_count + 1))
         assert db.auto_commit_count == expected_publish_count
-        assert db.session.delete_calls == expected_publish_count
-
-        dataset_join_count = sum(
-            1
-            for model_name, _kwargs in create_calls
-            if model_name == "AppDatasetJoin"
-        )
-        assert dataset_join_count == expected_publish_count * 2
 
     def test_publish_cancel_multi_actor_concurrency_should_preserve_core_invariants(self):
         app = _build_stateful_app(status=AppStatus.PUBLISHED.value)
@@ -460,16 +430,9 @@ class TestAppServiceStateMachine:
             if model_name == "AppConfig"
         )
         versions = _extract_versions(create_calls)
-        dataset_join_count = sum(
-            1
-            for model_name, _kwargs in create_calls
-            if model_name == "AppDatasetJoin"
-        )
 
         assert publish_count == len(versions)
         assert db.auto_commit_count == publish_count
-        assert db.session.delete_calls == publish_count
-        assert dataset_join_count == publish_count * 2
 
         if app.status == AppStatus.DRAFT.value:
             assert app.app_config_id is None

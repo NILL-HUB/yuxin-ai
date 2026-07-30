@@ -399,7 +399,7 @@ onMounted(() => {
         <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.apps.title') }}</h1>
         <p class="mt-1 text-sm text-gray-500">{{ t('admin.apps.description') }}</p>
       </div>
-      <a-button v-if="canUpdate" type="primary" @click="openCreateModal">
+      <a-button v-if="canCreate" type="primary" @click="openCreateModal">
         <template #icon>
           <icon-plus />
         </template>

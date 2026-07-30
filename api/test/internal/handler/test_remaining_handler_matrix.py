@@ -11,7 +11,6 @@ from pkg.response import HttpCode, Response
 APP_ID = "00000000-0000-0000-0000-000000000001"
 WORKFLOW_ID = "00000000-0000-0000-0000-000000000002"
 MESSAGE_ID = "00000000-0000-0000-0000-000000000003"
-DATASET_ID = "00000000-0000-0000-0000-000000000004"
 CONVERSATION_ID = "00000000-0000-0000-0000-000000000005"
 TASK_ID = "00000000-0000-0000-0000-000000000006"
 
@@ -69,10 +68,6 @@ def _assert_debug_summary(data: dict):
 def _assert_analysis(data: dict):
     assert data["total_messages"]["data"] == 12
     assert data["active_accounts"]["pop"] == 0.5
-
-
-def _assert_documents_status(data: list):
-    assert data[0]["status"] == "completed"
 
 
 def _assert_language_models(data: list):
@@ -289,19 +284,6 @@ JSON_CASES = [
             )
         ],
         "assertion": _assert_text_to_audio,
-    },
-    {
-        "name": "get_documents_status_success",
-        "method": "get",
-        "url": f"/datasets/{DATASET_ID}/documents/batch/batch-1",
-        "kwargs": {},
-        "patches": [
-            (
-                "internal.service.document_service.DocumentService.get_documents_status",
-                [{"id": "doc-1", "status": "completed"}],
-            )
-        ],
-        "assertion": _assert_documents_status,
     },
     {
         "name": "get_language_models_success",

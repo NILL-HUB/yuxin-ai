@@ -27,3 +27,4 @@ class ToolEntity(BaseModel):
     label: str # 工具标签
     description: str # 工具描述
     params: list[ToolParams] = Field(default_factory=list) # 工具的参数信息
+    task_keywords: list[str] = Field(default_factory=list)  # 任务关键词列表，用于 ToolSelector 关键词快速匹配（方案A）

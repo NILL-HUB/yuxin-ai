@@ -39,6 +39,7 @@ class AdminCustomerUserResp(Schema):
     last_login_ip = fields.String()
     created_at = fields.Integer(allow_none=True)
     sessions = fields.List(fields.Nested(AdminCustomerUserSessionResp))
+    is_online = fields.Boolean()
 
 
 class AdminCustomerUserPageResp(Schema):

@@ -6,8 +6,8 @@
 - 直接调用 LLM 生成回复，不使用工具
 - 适用于翻译、摘要、改写等场景
 
-Plan D-5：实现 app_type=completion 的应用基础逻辑，第一版直接使用
-DeepSeek Chat 构建 LLM，后续任务才通过 LanguageModelService 动态构建。
+LLM 完全由 admin + 数据库统一管理，通过 LanguageModelService 的
+compatible_api 分发链路实例化，无任何硬编码 provider/key。
 """
 
 from __future__ import annotations
@@ -23,8 +23,6 @@ from injector import inject
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from internal.core.language_model.entities.model_entity import ModelFeature
-from internal.core.language_model.providers.deepseek.chat import Chat
 from internal.entity.app_entity import AppType
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.model import App, AppConfigVersion
@@ -102,22 +100,17 @@ class CompletionAppService:
     def get_model_config(app_config: AppConfigVersion | dict[str, Any] | None) -> dict[str, Any]:
         """从应用配置中读取模型配置。
 
-        返回 ``{provider, model, parameters}`` 结构，缺失时返回默认配置。
+        返回 ``{provider, model, parameters}`` 结构。当应用配置未指定模型时，
+        返回空字典，由 ``_build_llm`` 通过 LanguageModelService 走数据库默认配置。
 
         Args:
             app_config: 应用配置，可为 AppConfigVersion 模型实例或 dict
 
         Returns:
-            模型配置字典
+            模型配置字典（可能为空，由调用方处理兜底）
         """
-        default_model_config = {
-            "provider": "deepseek",
-            "model": "deepseek-chat",
-            "parameters": {},
-        }
-
         if app_config is None:
-            return default_model_config
+            return {}
 
         # 兼容 dict 与 AppConfigVersion 模型两种形式
         if isinstance(app_config, dict):
@@ -126,12 +119,11 @@ class CompletionAppService:
             model_config = getattr(app_config, "model_config", {}) or {}
 
         if not isinstance(model_config, dict) or not model_config:
-            return default_model_config
+            return {}
 
-        # 补全缺失字段，保证返回结构一致
         return {
-            "provider": model_config.get("provider") or default_model_config["provider"],
-            "model": model_config.get("model") or default_model_config["model"],
+            "provider": model_config.get("provider") or "",
+            "model": model_config.get("model") or "",
             "parameters": model_config.get("parameters") or {},
         }
 
@@ -195,7 +187,7 @@ class CompletionAppService:
         draft_app_config = self._load_app_config(app)
         prompt_template = self.get_prompt_template(draft_app_config)
         model_config = self.get_model_config(draft_app_config)
-        model_name = str(model_config.get("model") or "deepseek-chat")
+        model_name = str(model_config.get("model") or "default")
 
         # 3.构建 LLM 与 prompt 链
         llm = self._build_llm(model_config)
@@ -277,36 +269,33 @@ class CompletionAppService:
             "model_config": getattr(draft, "model_config", {}) or {},
         }
 
-    @staticmethod
-    def _build_llm(model_config: dict[str, Any]) -> Chat:
+    def _build_llm(self, model_config: dict[str, Any]):
         """根据模型配置构建 LLM 实例。
 
-        第一版简化实现：直接使用 DeepSeek Chat 构建固定 provider 的 LLM，
-        忽略 provider 字段，仅消费 model 与 parameters.temperature。
-        后续任务才通过 LanguageModelService 动态构建。
+        统一通过 LanguageModelService 走数据库配置 + compatible_api 分发：
+        - 当 model_config 含 provider+model 时，走 resolve_runtime_language_model
+        - 当 model_config 为空时，走 load_default_language_model（DB 默认配置）
 
         Args:
-            model_config: 模型配置字典 ``{provider, model, parameters}``
+            model_config: 模型配置字典 ``{provider, model, parameters}``，可能为空
 
         Returns:
-            DeepSeek Chat LLM 实例
+            BaseLanguageModel 实例
         """
-        model_name = str(model_config.get("model") or "deepseek-chat")
-        parameters = model_config.get("parameters") or {}
-        temperature = parameters.get("temperature", 1)
-        # 兜底类型转换，避免 parameters 中类型异常
-        if not isinstance(temperature, (int, float)) or isinstance(temperature, bool):
-            temperature = 1
-
-        return Chat(
-            model=model_name,
-            temperature=temperature,
-            features=[ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
-            metadata={},
-        )
+        provider = (model_config or {}).get("provider") or ""
+        model_name = (model_config or {}).get("model") or ""
+        if provider and model_name:
+            # 应用配置中指定了模型，走完整解析链路（带 key 注入 + 图片能力兜底）
+            resolution = self.language_model_service.resolve_runtime_language_model(
+                model_config,
+                entrypoint=LanguageModelService.ENTRYPOINT_ASSISTANT_AGENT,
+            )
+            return resolution.llm
+        # 应用配置未指定模型，走数据库默认配置
+        return self.language_model_service.load_default_language_model()
 
     @staticmethod
-    def _build_chain(prompt_template: str, llm: Chat):
+    def _build_chain(prompt_template: str, llm):
         """根据 prompt 模板与 LLM 构建调用链。
 
         - 模板含 ``{input}`` 占位符：使用 ChatPromptTemplate.from_template

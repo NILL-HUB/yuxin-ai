@@ -140,16 +140,17 @@ describe('AdminWorkflowsView', () => {
     expect(wrapper.text()).toContain('进入编辑')
   })
 
-  it('shows read-only visibility and store hint without publish/offline actions', async () => {
+  it('shows visibility label, store hint and workflow actions', async () => {
     const wrapper = await renderView()
 
-    // toggle-public 与 offline 操作已移至资源运营，本页不再渲染
-    expect(wrapper.find('[data-testid="workflow-offline-wf-1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="workflow-visibility-wf-1"]').exists()).toBe(false)
-    // 保留公开状态只读展示
+    // 公开状态展示
     expect(wrapper.text()).toContain('公开')
     // 展示前往资源运营的提示
     expect(wrapper.text()).toContain('资源运营')
+    // 批量操作版本下，单卡片的 visibility/offline/export 按钮均渲染
+    expect(wrapper.find('[data-testid="workflow-visibility-wf-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workflow-offline-wf-1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="workflow-export-wf-1"]').exists()).toBe(true)
   })
 
   it('navigates to the workflow editor from edit action', async () => {

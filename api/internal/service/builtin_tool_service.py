@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 import os
 from typing import Any
@@ -9,6 +10,9 @@ from flask import current_app
 from internal.exception import NotFoundException
 from internal.core.tools.builtin_tools.categories import BuiltinCategoryManager
 
+logger = logging.getLogger(__name__)
+
+
 @inject
 @dataclass
 class BuiltinToolService:
@@ -17,7 +21,86 @@ class BuiltinToolService:
     builtin_category_manager: BuiltinCategoryManager
 
     def get_builtin_tools(self) -> list:
-        """获取 OpenAgent 项目中的所有内置提供商和工具信息"""
+        """获取 OpenAgent 项目中的所有内置提供商和工具信息
+
+        优先从 DB 镜像表读取（admin 编辑后的元数据），失败时回退到
+        BuiltinProviderManager 内存中的 YAML 数据。
+        返回的工具 dict 包含 task_keywords，与现有结构一致。
+        """
+        try:
+            tools = self._get_builtin_tools_from_db()
+            if tools:
+                return tools
+            logger.info("DB 中无 builtin 工具数据，回退到 BuiltinProviderManager 内存数据")
+        except Exception:
+            logger.exception("从 DB 读取 builtin 工具失败，回退到 BuiltinProviderManager")
+
+        return self._get_builtin_tools_from_manager()
+
+    def _get_builtin_tools_from_db(self) -> list:
+        """从 DB 镜像表读取 builtin 工具信息（包含 task_keywords）"""
+        from internal.extension.database_extension import db
+        from internal.model.builtin_tool import BuiltinTool, BuiltinToolProvider
+        from internal.lib.helper import dynamic_import
+
+        providers = (
+            db.session.query(BuiltinToolProvider)
+            .order_by(BuiltinToolProvider.created_at)
+            .all()
+        )
+        if not providers:
+            return []
+
+        builtin_tools: list[dict] = []
+        for provider in providers:
+            provider_dict = {
+                "name": provider.name,
+                "label": provider.label,
+                "description": provider.description,
+                "background": provider.background,
+                "category": provider.category,
+                "created_at": _to_timestamp(provider.created_at),
+                "tools": [],
+            }
+
+            tools = (
+                db.session.query(BuiltinTool)
+                .filter_by(provider_id=provider.id)
+                .order_by(BuiltinTool.created_at)
+                .all()
+            )
+            for tool in tools:
+                if not tool.enabled:
+                    continue
+                # Python 执行代码仍从本地 dynamic_import 加载，用于读取 args_schema
+                tool_func = None
+                try:
+                    module_path = tool.python_module or (
+                        f"internal.core.tools.builtin_tools.providers.{provider.name}"
+                    )
+                    tool_func = dynamic_import(module_path, tool.name)
+                except Exception:
+                    logger.exception(
+                        "dynamic_import 失败 provider=%s tool=%s",
+                        provider.name,
+                        tool.name,
+                    )
+
+                tool_dict = {
+                    "name": tool.name,
+                    "label": tool.label,
+                    "description": tool.description,
+                    "params": tool.params or [],
+                    "task_keywords": tool.task_keywords or [],
+                    "inputs": self.get_tool_inputs(tool_func),
+                }
+                provider_dict["tools"].append(tool_dict)
+
+            builtin_tools.append(provider_dict)
+        return builtin_tools
+
+    def _get_builtin_tools_from_manager(self) -> list:
+        """从 BuiltinProviderManager 内存数据读取 builtin 工具信息（YAML 回退路径）"""
         # 1.获取所有的提供商
         providers = self.builtin_provider_manager.get_providers()
         # 2.遍历所有的提供商并提取工具信息
@@ -126,3 +209,17 @@ class BuiltinToolService:
                     "type": model_field.annotation.__name__,
                 })
         return inputs
+
+
+def _to_timestamp(dt) -> int:
+    """将 datetime 转换为秒级时间戳（兼容 None）"""
+    if dt is None:
+        return 0
+    import datetime as _dt
+    if isinstance(dt, _dt.datetime):
+        if dt.tzinfo is None:
+            from datetime import timezone
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    return int(dt)
+

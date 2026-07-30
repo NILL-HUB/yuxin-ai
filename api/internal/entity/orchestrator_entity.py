@@ -38,7 +38,7 @@ class RoutingDecision(SerializableMixin):
     needs_agent: bool = False
     needs_multi_agent: bool = False
     needs_deep_thinking: bool = False
-    recommended_model_tier: str = "cheap"
+    recommended_model_tier: str = "1"
     risk_level: str = RiskLevel.SAFE.value
     reason: str = ""
     agent_subset: dict | None = None

@@ -112,6 +112,7 @@ export type CreateSkillPackagePayload = {
   tools?: SkillToolDefinition[]
   tags?: string[]
   capabilities?: Record<string, boolean>
+  task_keywords?: string[]
 }
 
 export type UpdateSkillPackagePayload = Omit<CreateSkillPackagePayload, 'source_key'> & {
@@ -176,6 +177,66 @@ export const listCatalogSkills = async (): Promise<CatalogPackage[]> => {
 export const importCatalogSkill = async (sourceKey: string): Promise<SkillPackage> => {
   const response = await post<GetSkillResponse>('/admin/skills/import-catalog', {
     body: { source_key: sourceKey },
+  })
+  return response.data
+}
+
+// ------------------------------------------------------------------ //
+//  外部导入：zip / GitHub / JSON                                       //
+// ------------------------------------------------------------------ //
+
+export type SkillImportResult = {
+  imported: SkillPackage[]
+  failed: Array<Record<string, unknown>>
+}
+
+/**
+ * 通过 zip 包上传导入技能包。
+ *
+ * @param file zip 文件（File 对象）
+ * @param overwrite 是否覆盖已存在的 source_key（默认 false）
+ */
+export const importSkillFromZip = async (
+  file: File,
+  overwrite: boolean = false,
+): Promise<SkillImportResult> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('overwrite', String(overwrite))
+  const response = await post<BaseResponse<SkillImportResult>>('/admin/skills/import-zip', {
+    body: formData,
+  })
+  return response.data
+}
+
+/**
+ * 通过 GitHub URL 导入技能包。
+ *
+ * @param githubUrl GitHub 仓库 URL 或 raw 文件 URL
+ * @param overwrite 是否覆盖已存在的 source_key（默认 false）
+ */
+export const importSkillFromGithub = async (
+  githubUrl: string,
+  overwrite: boolean = false,
+): Promise<SkillImportResult> => {
+  const response = await post<BaseResponse<SkillImportResult>>('/admin/skills/import-github', {
+    body: { github_url: githubUrl, overwrite },
+  })
+  return response.data
+}
+
+/**
+ * 通过 JSON 文本导入技能包（支持 prompt 类型，无需 skill.py）。
+ *
+ * @param configJson JSON 字符串，结构与 manifest.yaml 字段一致
+ * @param overwrite 是否覆盖已存在的 source_key（默认 false）
+ */
+export const importSkillFromJson = async (
+  configJson: string,
+  overwrite: boolean = false,
+): Promise<SkillImportResult> => {
+  const response = await post<BaseResponse<SkillImportResult>>('/admin/skills/import-json', {
+    body: { config_json: configJson, overwrite },
   })
   return response.data
 }

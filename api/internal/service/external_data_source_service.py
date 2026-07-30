@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 
 from injector import inject
@@ -11,8 +12,11 @@ from internal.entity.knowledge_entity import (
 from internal.exception import NotFoundException
 from internal.model import Account, ExternalDataSource, KnowledgeBase, KnowledgeDocument, KnowledgeSegment
 from internal.service.external_data_source_connector_factory import ConnectorFactory
+from internal.service.knowledge_vector_service import KnowledgeVectorService
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
+
+logger = logging.getLogger(__name__)
 
 
 class MockExternalConnector:
@@ -25,10 +29,12 @@ class MockExternalConnector:
 
 class ExternalDataSourceService(BaseService):
     @inject
-    def __init__(self, db: SQLAlchemy, connector=None):
+    def __init__(self, db: SQLAlchemy, connector=None, knowledge_vector_service: KnowledgeVectorService = None):
         self.db = db
         self.connector = connector
         self.connector_factory = ConnectorFactory()
+        # 向量库服务，用于将同步的 segment 写入向量索引
+        self.knowledge_vector_service = knowledge_vector_service
 
     def create_connection(
         self,
@@ -82,6 +88,8 @@ class ExternalDataSourceService(BaseService):
             }
         segment_count = 0
         operation_context = OperationContext.USER.value
+        # 预加载知识库，用于后续向量索引（按 knowledge_base_id 查询一次）
+        knowledge_base = self._get_knowledge_base(data_source.knowledge_base_id)
         for document in documents:
             content = document.get("content", "")
             knowledge_doc = self.create(
@@ -101,7 +109,7 @@ class ExternalDataSourceService(BaseService):
             )
             segments = self._split_document(content)
             for idx, segment_text in enumerate(segments):
-                self.create(
+                segment = self.create(
                     KnowledgeSegment,
                     knowledge_base_id=data_source.knowledge_base_id,
                     knowledge_document_id=knowledge_doc.id,
@@ -115,6 +123,8 @@ class ExternalDataSourceService(BaseService):
                     enabled=True,
                 )
                 segment_count += 1
+                # 写入向量索引，失败不阻断同步主流程，仅记录 error 状态
+                self._index_segment_safely(segment, knowledge_base)
             if document.get("cursor"):
                 data_source.sync_cursor = document["cursor"]
         data_source.sync_status = ExternalSyncStatus.SUCCESS.value
@@ -148,6 +158,36 @@ class ExternalDataSourceService(BaseService):
         if data_source is None or data_source.owner_account_id != account.id:
             raise NotFoundException("外部数据源不存在")
         return data_source
+
+    def _get_knowledge_base(self, knowledge_base_id) -> KnowledgeBase | None:
+        """根据知识库id查询知识库，用于向量索引时获取作用域等信息"""
+        if not knowledge_base_id:
+            return None
+        return (
+            self.db.session.query(KnowledgeBase)
+            .filter_by(id=knowledge_base_id)
+            .one_or_none()
+        )
+
+    def _index_segment_safely(self, segment: KnowledgeSegment, knowledge_base: KnowledgeBase | None) -> None:
+        """将 segment 写入向量索引，失败不阻断同步主流程，仅记录 error 状态"""
+        # 向量库服务或知识库未就绪时跳过（例如测试环境或知识库被删除）
+        if self.knowledge_vector_service is None or knowledge_base is None:
+            return
+        try:
+            self.knowledge_vector_service.index_segment(segment, knowledge_base)
+        except Exception as exc:
+            # 向量索引失败不阻断同步主流程，记录 error 状态便于后续排查
+            logger.warning(
+                "外部数据源同步写入向量索引失败 segment_id=%s 错误信息:%s",
+                getattr(segment, "id", None),
+                str(exc),
+                exc_info=True,
+            )
+            try:
+                self.update(segment, status="error")
+            except Exception:
+                logger.warning("更新 segment 状态为 error 失败", exc_info=True)
 
     @staticmethod
     def _split_document(content: str, chunk_size: int = 500) -> list[str]:

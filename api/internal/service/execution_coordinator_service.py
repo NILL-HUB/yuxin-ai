@@ -195,7 +195,7 @@ class ExecutionCoordinatorService:
         try:
             metadata = getattr(result, "metadata", None) or {}
             token_count = metadata.get("token_usage", {}).get("total_tokens", 0)
-            current_tier = metadata.get("tier", "standard")
+            current_tier = metadata.get("tier", "2")
             task_complexity = getattr(item, "complexity", "simple")
             balance_credits = getattr(item, "balance_credits", float("inf"))
             budget_level = getattr(item, "budget_level", "medium")

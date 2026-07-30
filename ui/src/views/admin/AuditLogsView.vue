@@ -12,21 +12,6 @@ const logs = ref<AuditLog[]>([])
 const total = ref(0)
 const detailTarget = ref<AuditLog | null>(null)
 
-const RESOURCE_ROUTES: Record<string, string> = {
-  app: '/admin/apps',
-  workflow: '/admin/workflows',
-  dataset: '/admin/datasets',
-  tool: '/admin/tools',
-  api_tool: '/admin/tools',
-  mcp: '/admin/mcp',
-  skill: '/admin/skills',
-  agent_pool_config: '/admin/agent-pool',
-  tool_governance_policy: '/admin/tool-governance',
-  model: '/admin/models',
-  orchestration_flag: '/admin/orchestration-flags',
-  sub_pool_definition: '/admin/sub-pool-definition',
-}
-
 const RESOURCE_TYPE_COLORS: Record<string, string> = {
   app: 'arcoblue',
   workflow: 'purple',
@@ -42,11 +27,6 @@ const RESOURCE_TYPE_COLORS: Record<string, string> = {
   sub_pool_definition: 'lime',
 }
 
-const getResourceRoute = (resourceType: string | null | undefined): string => {
-  if (!resourceType) return ''
-  return RESOURCE_ROUTES[resourceType] || ''
-}
-
 const getResourceTypeColor = (resourceType: string | null | undefined): string => {
   if (!resourceType) return 'gray'
   return RESOURCE_TYPE_COLORS[resourceType] || 'gray'
@@ -55,6 +35,62 @@ const getResourceTypeColor = (resourceType: string | null | undefined): string =
 const truncateId = (id: string | null | undefined): string => {
   if (!id) return ''
   return id.length > 8 ? `${id.slice(0, 8)}...` : id
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  create: 'admin.auditLogs.actionCreate',
+  update: 'admin.auditLogs.actionUpdate',
+  disable: 'admin.auditLogs.actionDisable',
+  enable: 'admin.auditLogs.actionEnable',
+  delete: 'admin.auditLogs.actionDelete',
+  reset_password: 'admin.auditLogs.actionResetPassword',
+  revoke_sessions: 'admin.auditLogs.actionRevokeSessions',
+  assign: 'admin.auditLogs.actionAssign',
+  revoke: 'admin.auditLogs.actionRevoke',
+  generate: 'admin.auditLogs.actionGenerate',
+  set_status: 'admin.auditLogs.actionSetStatus',
+  sync: 'admin.auditLogs.actionSync',
+  rollback: 'admin.auditLogs.actionRollback',
+  confirm: 'admin.auditLogs.actionConfirm',
+  cancel: 'admin.auditLogs.actionCancel',
+  tool_invocation: 'admin.auditLogs.actionToolInvocation',
+  policy_change_apply: 'admin.auditLogs.actionPolicyApply',
+  policy_change_rollback: 'admin.auditLogs.actionPolicyRollback',
+}
+
+const RESOURCE_TYPE_LABELS: Record<string, string> = {
+  admin_user: 'admin.auditLogs.resourceAdminUser',
+  customer_user: 'admin.auditLogs.resourceCustomerUser',
+  role: 'admin.auditLogs.resourceRole',
+  app: 'admin.auditLogs.resourceApp',
+  app_assignment: 'admin.auditLogs.resourceAppAssignment',
+  workflow: 'admin.auditLogs.resourceWorkflow',
+  tool: 'admin.auditLogs.resourceTool',
+  api_tool: 'admin.auditLogs.resourceApiTool',
+  mcp: 'admin.auditLogs.resourceMcp',
+  skill: 'admin.auditLogs.resourceSkill',
+  plan: 'admin.auditLogs.resourcePlan',
+  redeem_code: 'admin.auditLogs.resourceRedeemCode',
+  redeem_code_batch: 'admin.auditLogs.resourceRedeemCodeBatch',
+  system_knowledge: 'admin.auditLogs.resourceSystemKnowledge',
+  agent_pool_config: 'admin.auditLogs.resourceAgentPoolConfig',
+  tool_governance_policy: 'admin.auditLogs.resourceToolGovernancePolicy',
+  model: 'admin.auditLogs.resourceModel',
+  orchestration_flag: 'admin.auditLogs.resourceOrchestrationFlag',
+  sub_pool_definition: 'admin.auditLogs.resourceSubPoolDefinition',
+  policy_change_draft: 'admin.auditLogs.resourcePolicyChangeDraft',
+}
+
+const actionLabel = (action: string | null | undefined): string => {
+  if (!action) return '-'
+  const key = ACTION_LABELS[action]
+  return key ? t(key) : action
+}
+
+const resourceTypeLabel = (resourceType: string | null | undefined): string => {
+  if (!resourceType) return t('admin.auditLogs.unknownResource')
+  const key = RESOURCE_TYPE_LABELS[resourceType]
+  return key ? t(key) : resourceType
 }
 
 const actionOptions = computed(() => [
@@ -185,24 +221,22 @@ onMounted(loadLogs)
             </tr>
             <tr v-for="log in logs" :key="log.id" class="border-t">
               <td class="p-3 whitespace-nowrap">{{ formatTime(log.created_at) }}</td>
-              <td class="p-3 font-mono text-xs">{{ log.admin_user_id || '-' }}</td>
               <td class="p-3">
-                <a-tag size="small">{{ log.action }}</a-tag>
+                <span v-if="log.admin_user_name">{{ log.admin_user_name }}</span>
+                <span v-else-if="log.account_name">{{ log.account_name }}</span>
+                <span v-else class="text-gray-400">{{ truncateId(log.admin_user_id) || '-' }}</span>
               </td>
               <td class="p-3">
-                <a-tag v-if="log.resource_type" :color="getResourceTypeColor(log.resource_type)" size="small">{{ log.resource_type }}</a-tag>
+                <a-tag size="small">{{ actionLabel(log.action) }}</a-tag>
+              </td>
+              <td class="p-3">
+                <a-tag v-if="log.resource_type" :color="getResourceTypeColor(log.resource_type)" size="small">{{ resourceTypeLabel(log.resource_type) }}</a-tag>
                 <a-tag v-else color="gray" size="small">{{ t('admin.auditLogs.unknownResource') }}</a-tag>
               </td>
               <td class="p-3 font-mono text-xs">
-                <a-tooltip
-                  v-if="log.resource_id && getResourceRoute(log.resource_type)"
-                  :content="`${log.resource_id} · ${t('admin.auditLogs.resourceLinkTip')}`"
-                  position="top"
-                  mini
-                >
-                  <router-link :to="getResourceRoute(log.resource_type)" class="text-blue-600 hover:underline">{{ truncateId(log.resource_id) }}</router-link>
+                <a-tooltip v-if="log.resource_id" :content="log.resource_id" position="top" mini>
+                  <span class="text-gray-600">{{ truncateId(log.resource_id) }}</span>
                 </a-tooltip>
-                <span v-else-if="log.resource_id">{{ log.resource_id }}</span>
                 <span v-else class="text-gray-400">-</span>
               </td>
               <td class="p-3 text-xs">{{ log.ip || '-' }}</td>
@@ -231,8 +265,9 @@ onMounted(loadLogs)
       <template #title>{{ t('admin.auditLogs.detailTitle') }}</template>
       <div v-if="detailTarget" class="space-y-4">
         <div class="grid grid-cols-2 gap-3 text-sm">
-          <div><span class="text-gray-500">{{ t('admin.auditLogs.actionLabel') }}</span>{{ detailTarget.action }}</div>
-          <div><span class="text-gray-500">{{ t('admin.auditLogs.resourceTypeLabel') }}</span>{{ detailTarget.resource_type || '-' }}</div>
+          <div><span class="text-gray-500">{{ t('admin.auditLogs.admin') }}</span>{{ detailTarget.admin_user_name || detailTarget.account_name || truncateId(detailTarget.admin_user_id) || '-' }}</div>
+          <div><span class="text-gray-500">{{ t('admin.auditLogs.actionLabel') }}</span>{{ actionLabel(detailTarget.action) }}</div>
+          <div><span class="text-gray-500">{{ t('admin.auditLogs.resourceTypeLabel') }}</span>{{ resourceTypeLabel(detailTarget.resource_type) }}</div>
           <div><span class="text-gray-500">{{ t('admin.auditLogs.resourceIdLabel') }}</span>{{ detailTarget.resource_id || '-' }}</div>
           <div><span class="text-gray-500">IP：</span>{{ detailTarget.ip || '-' }}</div>
           <div class="col-span-2"><span class="text-gray-500">User-Agent：</span>{{ detailTarget.user_agent || '-' }}</div>

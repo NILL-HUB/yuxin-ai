@@ -4,6 +4,8 @@ import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from flask import request
+
 from internal.exception import FailException, NotFoundException, UnauthorizedException
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
@@ -17,6 +19,10 @@ from pkg.password import compare_password, hash_password, validate_password
 class AdminUserService:
     DEFAULT_TOKEN_EXPIRE_SECONDS = 60 * 60 * 24 * 7
     USER_TOKEN_EXPIRE_DAYS = 30
+    # 管理员会话活跃时间刷新节流间隔（参考 account_service.SESSION_TOUCH_INTERVAL_SECONDS）
+    ADMIN_SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60
+    # 在线判定阈值：近 10 分钟内有活跃会话即视为在线
+    ONLINE_THRESHOLD_MINUTES = 10
 
     def __init__(self, session=None, jwt_service=None, audit_log_service=None):
         self.session = session or db.session
@@ -153,10 +159,15 @@ class AdminUserService:
             raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
         now = self._now()
         expires_at = now + timedelta(seconds=self.DEFAULT_TOKEN_EXPIRE_SECONDS)
+        # 更新最后登录信息
+        admin_user.last_login_at = now
+        admin_user.last_login_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
         admin_session = AdminSession(
             admin_user_id=admin_user.id,
             last_active_at=now,
             expires_at=expires_at,
+            last_login_ip=admin_user.last_login_ip,
+            user_agent=request.headers.get("User-Agent", ""),
         )
         self.session.add(admin_session)
         self.session.flush()
@@ -259,7 +270,25 @@ class AdminUserService:
         admin_session = self.session.query(AdminSession).filter(AdminSession.id == payload["session_id"]).one_or_none()
         if admin_session is None or admin_session.admin_user_id != admin_user.id or not admin_session.is_active:
             raise UnauthorizedException("管理员登录会话已失效，请重新登录")
+        # 刷新管理员会话活跃时间（5分钟节流）
+        self.touch_admin_session(admin_session)
         return admin_user, admin_session
+
+    def touch_admin_session(self, admin_session: AdminSession) -> None:
+        """刷新管理员会话活跃时间（5分钟节流）。
+
+        参考 account_service.touch_account_session 的实现模式：仅在距上次活跃时间
+        超过节流间隔时才落库更新，避免每个请求都写数据库。
+        """
+        now = self._now()
+        last_active_at = getattr(admin_session, "last_active_at", None)
+        if (
+            last_active_at is not None
+            and (now - last_active_at).total_seconds() < self.ADMIN_SESSION_TOUCH_INTERVAL_SECONDS
+        ):
+            return  # 节流：5分钟内不重复刷新
+        admin_session.last_active_at = now
+        self.session.commit()
 
     def list_admin_users(self, *, search: str = "", status: str = "all", current_page: int = 1, page_size: int = 20) -> dict[str, object]:
         current_page = max(int(current_page or 1), 1)
@@ -355,6 +384,7 @@ class AdminUserService:
         admin_id: UUID,
         *,
         name: str | None = None,
+        email: str | None = None,
         status: str | None = None,
         role_ids: list[str] | None = None,
         operator_id=None,
@@ -367,6 +397,7 @@ class AdminUserService:
         before_roles = self._get_role_codes(admin_user.id)
         before_data = {
             "name": admin_user.name,
+            "email": admin_user.email,
             "status": admin_user.status,
             "roles": before_roles,
         }
@@ -379,6 +410,24 @@ class AdminUserService:
         self._ensure_super_admin_still_available(admin_user.id, before_roles, target_roles, target_status)
         if name is not None:
             admin_user.name = name
+        if email is not None:
+            normalized_email = self._normalize_email(email) if email else ""
+            # 校验邮箱唯一性（排除自身）
+            if normalized_email:
+                existing = (
+                    self.session.query(AdminUser)
+                    .filter(AdminUser.email == normalized_email)
+                    .filter(AdminUser.id != admin_user.id)
+                    .first()
+                )
+                if existing is not None:
+                    raise FailException("管理员邮箱已存在")
+            admin_user.email = normalized_email
+            # 同步更新绑定的 Account 邮箱
+            if admin_user.account_id:
+                account = self.session.query(Account).filter(Account.id == admin_user.account_id).one_or_none()
+                if account is not None:
+                    account.email = normalized_email
         if status is not None:
             admin_user.status = status
         if role_ids is not None:
@@ -394,6 +443,7 @@ class AdminUserService:
             before_data=before_data,
             after_data={
                 "name": serialized.get("name"),
+                "email": serialized.get("email"),
                 "status": serialized.get("status"),
                 "roles": [str(rid) for rid in role_ids] if role_ids is not None else before_data["roles"],
             },
@@ -412,8 +462,11 @@ class AdminUserService:
         admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_id).one_or_none()
         if admin_user is None:
             raise NotFoundException("管理员不存在")
-        before_status = admin_user.status
         before_roles = self._get_role_codes(admin_user.id)
+        # 超级管理员账号不允许被禁用，避免系统最高权限账号失效导致系统瘫痪
+        if "super_admin" in before_roles:
+            raise FailException("超级管理员账号不允许禁用")
+        before_status = admin_user.status
         self._ensure_super_admin_still_available(admin_user.id, before_roles, before_roles, "disabled")
         admin_user.status = "disabled"
         self._emit_audit(
@@ -427,6 +480,126 @@ class AdminUserService:
             after_data={"status": "disabled"},
         )
         self.session.commit()
+
+    def enable_admin_user(
+        self,
+        admin_id: UUID,
+        *,
+        operator_id=None,
+        ip: str = "",
+        user_agent: str = "",
+    ) -> dict[str, object]:
+        admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_id).one_or_none()
+        if admin_user is None:
+            raise NotFoundException("管理员不存在")
+        before_status = admin_user.status
+        admin_user.status = "active"
+        self._emit_audit(
+            operator_id=operator_id,
+            action="enable",
+            resource_type="admin_user",
+            resource_id=str(admin_user.id),
+            ip=ip,
+            user_agent=user_agent,
+            before_data={"status": before_status},
+            after_data={"status": "active"},
+        )
+        self.session.commit()
+        return self._serialize_admin_user_with_roles(admin_user)
+
+    def reset_admin_user_password(
+        self,
+        admin_id: UUID,
+        *,
+        password: str,
+        operator_id=None,
+        ip: str = "",
+        user_agent: str = "",
+    ) -> dict[str, object]:
+        admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_id).one_or_none()
+        if admin_user is None:
+            raise NotFoundException("管理员不存在")
+        # 超级管理员账号不允许被重置密码，避免系统最高权限账号被篡改
+        if "super_admin" in self._get_role_codes(admin_user.id):
+            raise FailException("超级管理员账号不允许重置密码")
+        try:
+            validate_password(password)
+        except ValueError:
+            raise FailException("密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")
+        salt = os.urandom(16)
+        hashed_password = base64.b64encode(hash_password(password, salt)).decode()
+        encoded_salt = base64.b64encode(salt).decode()
+        admin_user.password = hashed_password
+        admin_user.password_salt = encoded_salt
+        # 同步更新绑定的用户端账号密码
+        if getattr(admin_user, "account_id", None):
+            account = self.session.query(Account).filter(Account.id == admin_user.account_id).one_or_none()
+            if account is not None:
+                account.password = hashed_password
+                account.password_salt = encoded_salt
+        self._emit_audit(
+            operator_id=operator_id,
+            action="reset_password",
+            resource_type="admin_user",
+            resource_id=str(admin_user.id),
+            ip=ip,
+            user_agent=user_agent,
+            before_data={},
+            after_data={},
+        )
+        self.session.commit()
+        return self._serialize_admin_user_with_roles(admin_user)
+
+    def revoke_admin_sessions(
+        self,
+        admin_user_id: UUID,
+        *,
+        operator_id=None,
+        ip: str = "",
+        user_agent: str = "",
+    ) -> dict[str, int]:
+        """撤销管理员所有活跃会话（踢下线）。
+
+        - 超级管理员不允许被踢下线，避免系统最高权限账号被强制下线。
+        - 同时撤销绑定的 Account 会话，确保两端登录态一并失效。
+        """
+        admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_user_id).one_or_none()
+        if admin_user is None:
+            raise NotFoundException("管理员不存在")
+        # 超级管理员账号不允许被踢下线，与 disable_admin_user 保持一致的判定模式
+        if "super_admin" in self._get_role_codes(admin_user.id):
+            raise FailException("超级管理员不允许被踢下线")
+        now = self._now()
+        # 撤销该管理员的所有活跃 AdminSession
+        sessions = self.session.query(AdminSession).filter(AdminSession.admin_user_id == admin_user_id).all()
+        revoked_count = 0
+        for session in sessions:
+            if session.revoked_at is None and (session.expires_at is None or session.expires_at >= now):
+                session.revoked_at = now
+                revoked_count += 1
+        # 同时撤销绑定的 Account 会话，确保用户端登录态一并失效
+        if getattr(admin_user, "account_id", None):
+            account_sessions = (
+                self.session.query(AccountSession)
+                .filter(AccountSession.account_id == admin_user.account_id)
+                .all()
+            )
+            for session in account_sessions:
+                if session.revoked_at is None and (session.expires_at is None or session.expires_at >= now):
+                    session.revoked_at = now
+                    revoked_count += 1
+        self.session.commit()
+        # 审计日志：记录踢下线操作及撤销会话数量
+        self._emit_audit(
+            operator_id=operator_id,
+            action="revoke_admin_sessions",
+            resource_type="admin_user",
+            resource_id=str(admin_user.id),
+            ip=ip,
+            user_agent=user_agent,
+            after_data={"revoked_count": revoked_count},
+        )
+        return {"revoked_sessions": revoked_count}
 
     def _resolve_role_codes(self, role_ids: list[str]) -> list[str]:
         if not role_ids:
@@ -488,9 +661,25 @@ class AdminUserService:
         result["permissions"] = self._get_permission_codes(result["roles"])
         return result
 
+    def _is_admin_online(self, admin_user_id: UUID) -> bool:
+        """判断管理员是否在线：近 10 分钟内有未撤销的活跃会话即视为在线。"""
+        now = self._now()
+        threshold = now - timedelta(minutes=self.ONLINE_THRESHOLD_MINUTES)
+        count = (
+            self.session.query(AdminSession)
+            .filter(AdminSession.admin_user_id == admin_user_id)
+            .filter(AdminSession.revoked_at.is_(None))
+            .filter(AdminSession.last_active_at.isnot(None))
+            .filter(AdminSession.last_active_at >= threshold)
+            .count()
+        )
+        return count > 0
+
     def _serialize_admin_user_with_roles(self, admin_user: AdminUser) -> dict[str, object]:
         result = self._serialize_admin_user(admin_user)
         result["roles"] = self._get_role_codes(admin_user.id)
+        # 新增：在线状态字段，供前端展示在线/离线标识
+        result["is_online"] = self._is_admin_online(admin_user.id)
         return result
 
     def _get_role_codes(self, admin_user_id) -> list[str]:
@@ -526,6 +715,12 @@ class AdminUserService:
         }
 
     @staticmethod
+    def _timestamp(value) -> int | None:
+        if value is None:
+            return None
+        return int(value.replace(tzinfo=UTC).timestamp())
+
+    @staticmethod
     def _serialize_admin_user(admin_user: AdminUser) -> dict[str, object]:
         return {
             "id": str(admin_user.id),
@@ -534,4 +729,8 @@ class AdminUserService:
             "name": admin_user.name,
             "avatar": admin_user.avatar or "",
             "status": admin_user.status,
+            "account_id": str(admin_user.account_id) if admin_user.account_id else None,
+            "created_at": AdminUserService._timestamp(admin_user.created_at),
+            "last_login_at": AdminUserService._timestamp(admin_user.last_login_at),
+            "last_login_ip": admin_user.last_login_ip or "",
         }

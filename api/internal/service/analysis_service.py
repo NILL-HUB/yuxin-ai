@@ -61,6 +61,11 @@ class AnalysisService(BaseService):
 
         return app_analysis
 
+    def get_app_analysis_for_admin(self, app_id: UUID) -> dict[str, Any]:
+        """管理员获取应用分析信息（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.get_app_analysis(app_id, account)
+
     def get_messages_by_time_range(self, app: App, start_at: datetime, end_at: datetime) -> list[Message]:
         """根据传递的时间段获取指定应用的消息会话数据"""
         return self.db.session.query(Message).with_entities(

@@ -11,6 +11,7 @@ export type GetLanguageModelsResponse = BaseResponse<
     background: string
     support_model_types: string[]
     models: {
+      model_id: string
       model_name: string
       label: string
       model_type: string

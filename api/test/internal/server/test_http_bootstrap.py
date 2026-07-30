@@ -30,14 +30,6 @@ class _FakeDB:
         self.init_calls.append(app)
 
 
-class _FakeWeaviate:
-    def __init__(self):
-        self.init_calls = []
-
-    def init_app(self, app):
-        self.init_calls.append(app)
-
-
 class _FakeMigrate:
     def __init__(self):
         self.init_calls = []
@@ -107,7 +99,6 @@ def _new_http_app(monkeypatch):
     )
 
     db = _FakeDB()
-    weaviate = _FakeWeaviate()
     migrate = _FakeMigrate()
     login_manager = _FakeLoginManager()
     mail = _FakeMail()
@@ -118,22 +109,20 @@ def _new_http_app(monkeypatch):
         "test-http",
         conf=_FakeConf(),
         db=db,
-        weaviate=weaviate,
         migrate=migrate,
         login_manager=login_manager,
         mail=mail,
         middleware=middleware,
         router=router,
     )
-    return app, db, weaviate, migrate, login_manager, mail, router, cors_calls, ext_calls, socketio_calls
+    return app, db, migrate, login_manager, mail, router, cors_calls, ext_calls, socketio_calls
 
 
 def test_http_init_should_wire_extensions_middleware_and_router(monkeypatch):
-    app, db, weaviate, migrate, login_manager, mail, router, cors_calls, ext_calls, socketio_calls = _new_http_app(monkeypatch)
+    app, db, migrate, login_manager, mail, router, cors_calls, ext_calls, socketio_calls = _new_http_app(monkeypatch)
 
     assert app.config["CELERY"] == {"broker_url": "redis://example"}
     assert db.init_calls == [app]
-    assert weaviate.init_calls == [app]
     assert migrate.init_calls == [(app, db, "internal/migration")]
     assert login_manager.init_calls == [app]
     assert mail.init_calls == [app]
@@ -162,7 +151,6 @@ def test_http_init_should_fallback_to_localhost_when_wildcard_conflicts_with_cre
         "test-http",
         conf=_WildcardCorsConf(),
         db=_FakeDB(),
-        weaviate=_FakeWeaviate(),
         migrate=_FakeMigrate(),
         login_manager=_FakeLoginManager(),
         mail=_FakeMail(),
@@ -242,9 +230,6 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     class _FakeSQLAlchemy:
         pass
 
-    class _FakeFlaskWeaviate:
-        pass
-
     class _FakeMigrate:
         pass
 
@@ -285,9 +270,6 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     fake_pkg_sqlalchemy = types.ModuleType("pkg.sqlalchemy")
     fake_pkg_sqlalchemy.SQLAlchemy = _FakeSQLAlchemy
 
-    fake_flask_weaviate = types.ModuleType("flask_weaviate")
-    fake_flask_weaviate.FlaskWeaviate = _FakeFlaskWeaviate
-
     fake_flask_login = types.ModuleType("flask_login")
     fake_flask_login.LoginManager = _FakeLoginManager
 
@@ -301,7 +283,6 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     fake_app_http_module.injector = _FakeInjector(
         {
             _FakeSQLAlchemy: object(),
-            _FakeFlaskWeaviate: object(),
             _FakeMigrate: object(),
             _FakeLoginManager: object(),
             _FakeMail: object(),
@@ -316,7 +297,6 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "internal.router", fake_internal_router)
     monkeypatch.setitem(__import__("sys").modules, "internal.server", fake_internal_server)
     monkeypatch.setitem(__import__("sys").modules, "pkg.sqlalchemy", fake_pkg_sqlalchemy)
-    monkeypatch.setitem(__import__("sys").modules, "flask_weaviate", fake_flask_weaviate)
     monkeypatch.setitem(__import__("sys").modules, "flask_login", fake_flask_login)
     monkeypatch.setitem(__import__("sys").modules, "flask_mail", fake_flask_mail)
     monkeypatch.setitem(__import__("sys").modules, "internal.middleware", fake_internal_middleware)

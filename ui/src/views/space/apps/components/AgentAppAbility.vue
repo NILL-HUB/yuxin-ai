@@ -108,11 +108,17 @@ const defaultActivateKeys = [
               ...props.draft_app_config,
               retrieval_config,
             })
-        " :datasets="props.draft_app_config.datasets" @update:datasets="
-            (datasets) =>
+        " :knowledge_base_ids="props.draft_app_config.knowledge_base_ids || []" @update:knowledge_base_ids="
+            (knowledge_base_ids) =>
               emits('update:draft_app_config', {
                 ...props.draft_app_config,
-                datasets,
+                knowledge_base_ids,
+              })
+          " :embedding_model_id="props.draft_app_config.embedding_model_id || ''" @update:embedding_model_id="
+            (embedding_model_id) =>
+              emits('update:draft_app_config', {
+                ...props.draft_app_config,
+                embedding_model_id,
               })
           " :app_id="props.app_id" />
         <!-- 长期记忆召回 -->

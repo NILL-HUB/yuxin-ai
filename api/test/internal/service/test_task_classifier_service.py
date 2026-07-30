@@ -236,7 +236,8 @@ class TestTaskClassifierBudget:
                 execution_mode="DEEP_THINKING",
             )
         )
-        decision = service.classify("深度分析一下", budget_allowed=False)
+        # 选择一个语义上需要深度思考但不命中关键词的 query，验证预算控制下跳过 LLM 降级为 general_qa
+        decision = service.classify("评估迁移到 gRPC 的利弊", budget_allowed=False)
         service.language_model_service.get_cheap_chat_model.assert_not_called()
         assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
 

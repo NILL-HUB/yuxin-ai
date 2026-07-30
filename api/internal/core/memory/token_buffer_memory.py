@@ -7,7 +7,6 @@ from langchain_core.messages import AnyMessage, AIMessage, HumanMessage, trim_me
 from sqlalchemy import desc, func
 
 from internal.core.language_model.entities.model_entity import BaseLanguageModel
-from internal.core.ports.user_memory_port import UserMemoryServicePort
 from internal.entity.conversation_entity import MessageStatus
 from internal.model import Conversation, Message
 from pkg.sqlalchemy import SQLAlchemy
@@ -30,7 +29,6 @@ class TokenBufferMemory:
 
     RECENT_MESSAGE_LIMIT: ClassVar[int] = 20
     DISTANT_SUMMARY_TOKENS: ClassVar[int] = 1000
-    FACTS_TOKENS: ClassVar[int] = 500
     CONTEXT_TOKEN_RATIO: ClassVar[float] = 0.3
     DEFAULT_MODEL_MAX_TOKENS: ClassVar[int] = 8192
 
@@ -60,25 +58,21 @@ class TokenBufferMemory:
         conversation = self._get_conversation(conversation_id)
         recent_messages = self.extract_recent(conversation_id)
         distant_summary = self.get_distant_summary(conversation)
-        relevant_facts = self.get_relevant_facts(account, current_query)
 
         total_budget = self._get_total_token_budget()
-        recent_budget = max(total_budget - self.FACTS_TOKENS - self.DISTANT_SUMMARY_TOKENS, 0)
+        recent_budget = max(total_budget - self.DISTANT_SUMMARY_TOKENS, 0)
 
         recent_messages = self._trim_recent_messages(recent_messages, recent_budget)
         distant_summary = self._truncate_text_to_tokens(distant_summary, self.DISTANT_SUMMARY_TOKENS)
-        relevant_facts = self._truncate_facts_to_budget(relevant_facts, self.FACTS_TOKENS)
 
         combined_token_count = (
             self._count_messages_tokens(recent_messages)
             + self._count_text_tokens(distant_summary)
-            + sum(self._count_text_tokens(fact) for fact in relevant_facts)
         )
 
         return {
             "recent_messages": recent_messages,
             "distant_summary": distant_summary,
-            "relevant_facts": relevant_facts,
             "combined_token_count": combined_token_count,
         }
 
@@ -122,24 +116,6 @@ class TokenBufferMemory:
         if summary:
             parts.append(summary)
         return "\n".join(parts)
-
-    def get_relevant_facts(self, account, current_query: str) -> list[str]:
-        user_memory_service: UserMemoryServicePort | None = getattr(self, "_user_memory_service", None)
-        if user_memory_service is None:
-            try:
-                from internal.service.scoped_knowledge_service import UserMemoryService
-                user_memory_service = UserMemoryService(db=self.db)
-            except Exception:
-                logger.warning("无法构造 UserMemoryService，降级返回空列表", exc_info=True)
-                return []
-        try:
-            relevant = user_memory_service.recall_relevant_memories(
-                account, current_query, top_k=5
-            )
-            return [m.get("content", "") for m in relevant if m.get("content")]
-        except Exception:
-            logger.warning("关键事实向量召回失败，降级返回空列表", exc_info=True)
-            return []
 
     def get_history_prompt_messages(
             self,
@@ -262,15 +238,4 @@ class TokenBufferMemory:
             char_limit = max_tokens * 4
             return text[:char_limit] if len(text) > char_limit else text
 
-    def _truncate_facts_to_budget(self, facts: list[str], max_tokens: int) -> list[str]:
-        if not facts:
-            return []
-        result: list[str] = []
-        used = 0
-        for fact in facts:
-            fact_tokens = self._count_text_tokens(fact)
-            if result and used + fact_tokens > max_tokens:
-                break
-            result.append(fact)
-            used += fact_tokens
-        return result
+

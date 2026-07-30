@@ -13,14 +13,13 @@ from internal.entity.app_entity import DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException
-from internal.model import ApiTool, AppDatasetJoin, Dataset, Message, Workflow
+from internal.model import ApiTool, Message, Workflow
 from internal.service.app_config_service import AppConfigService
 from internal.service.assistant_agent_service import AssistantAgentService
 from internal.service.cos_service import CosService
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.faiss_service import FaissService
 from internal.service.upload_file_service import UploadFileService
-from internal.service.vector_database_service import VectorDatabaseService
 
 
 @contextmanager
@@ -46,13 +45,24 @@ class TestEmbeddingsService:
         cache_embeddings = object()
 
         monkeypatch.setattr("internal.service.embeddings_service.RedisStore", lambda client: store)
-        monkeypatch.setattr("internal.service.embeddings_service.OpenAIEmbeddings", lambda model: embeddings)
+        monkeypatch.setattr("internal.service.embeddings_service.OpenAIEmbeddings", lambda **kwargs: embeddings)
         monkeypatch.setattr(
             "internal.service.embeddings_service.CacheBackedEmbeddings.from_bytes_store",
             staticmethod(lambda _embeddings, _store, namespace, key_encoder: cache_embeddings),
         )
+        from internal.service.language_model_service import LanguageModelService
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {
+                "api_key": "test-key",
+                "base_url": "https://api.example.com/v1",
+                "model": "Qwen/Qwen3-Embedding-8B",
+                "provider": "SiliconFlow",
+            } if model_type == "embedding" else {}),
+        )
 
-        service = EmbeddingsService(redis=SimpleNamespace(), language_model_service=SimpleNamespace())
+        service = EmbeddingsService(redis=SimpleNamespace())
 
         assert service.embeddings is embeddings
         assert service.cache_backed_embeddings is cache_embeddings

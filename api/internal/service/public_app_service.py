@@ -19,7 +19,6 @@ from internal.exception import NotFoundException, ForbiddenException, ValidateEr
 from internal.model import (
     App,
     AppConfigVersion,
-    AppDatasetJoin,
     Account,
     ApiToolProvider,
     ApiTool,
@@ -30,6 +29,7 @@ from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .app_config_service import AppConfigService
+from .credit_service import CreditService
 from .language_model_service import LanguageModelService
 from .public_agent_registry_service import PublicAgentRegistryService
 
@@ -40,6 +40,7 @@ class PublicAppService(BaseService):
     """公共应用服务"""
     db: SQLAlchemy
     builtin_provider_manager: BuiltinProviderManager
+    credit_service: CreditService | None = None
     app_config_service: AppConfigService | None = None
     language_model_service: LanguageModelService | None = None
     public_agent_registry_service: PublicAgentRegistryService | None = None
@@ -223,7 +224,11 @@ class PublicAppService(BaseService):
             tag_list = sort_tags_by_priority(tag_list)
         else:
             # 如果没有提供标签，自动分配
-            tag_list = TagAssignmentService.auto_assign_tags(app.name, app.description)
+            tag_list = TagAssignmentService.auto_assign_tags(
+                app.name, app.description,
+                credit_service=self.credit_service,
+                account_id=account.id,
+            )
 
         # 4.更新应用为公开状态
         self.update(app, **{
@@ -257,6 +262,26 @@ class PublicAppService(BaseService):
             self._enqueue_public_app_registry_sync(app.id)
         logging.info(f"应用已从广场取消共享: app_id={app_id}")
         return app
+
+    def share_app_to_square_for_admin(self, app_id: UUID, tags: str) -> App:
+        """管理员将应用共享到广场（不校验账号归属，以应用归属账号执行）"""
+        account = self._get_app_owner_account(app_id)
+        return self.share_app_to_square(app_id, tags, account)
+
+    def unshare_app_from_square_for_admin(self, app_id: UUID) -> App:
+        """管理员取消应用从广场的共享（不校验账号归属，以应用归属账号执行）"""
+        account = self._get_app_owner_account(app_id)
+        return self.unshare_app_from_square(app_id, account)
+
+    def _get_app_owner_account(self, app_id: UUID) -> Account:
+        """获取应用归属账号（管理员视角，不校验归属）"""
+        app = self.db.session.query(App).filter(App.id == app_id).one_or_none()
+        if not app:
+            raise NotFoundException("应用不存在")
+        account = self.db.session.query(Account).filter(Account.id == app.account_id).one_or_none()
+        if not account:
+            raise NotFoundException("资源所属账号不存在")
+        return account
 
     def get_public_apps_with_page(
             self,
@@ -406,6 +431,8 @@ class PublicAppService(BaseService):
             "tools": app_config.tools,
             "mcp_bindings": getattr(app_config, "mcp_bindings", []),
             "workflows": app_config.workflows,
+            # 直接复制 knowledge_base_ids 到草稿配置
+            "knowledge_base_ids": getattr(app_config, "knowledge_base_ids", []),
             "retrieval_config": app_config.retrieval_config,
             "long_term_memory": app_config.long_term_memory,
             "opening_statement": app_config.opening_statement,
@@ -429,28 +456,12 @@ class PublicAppService(BaseService):
                 app_id=new_app.id,
                 version=0,
                 config_type="draft",
-                datasets=[]  # 草稿配置需要datasets字段
             )
             self.db.session.add(new_draft_config)
             self.db.session.flush()
 
             # 9.更新应用的草稿配置ID
             new_app.draft_app_config_id = new_draft_config.id
-
-            # 10.复制知识库关联(如果有)
-            dataset_joins = app_config.app_dataset_joins
-            copied_dataset_ids: set[UUID] = set()
-            for join in dataset_joins:
-                # 仅复制关联关系，不复制知识库数据本体。
-                if join.dataset_id in copied_dataset_ids:
-                    continue
-                copied_dataset_ids.add(join.dataset_id)
-                self.db.session.add(
-                    AppDatasetJoin(
-                        app_id=new_app.id,
-                        dataset_id=join.dataset_id,
-                        )
-                )
 
         logging.info(f"应用已Fork: original_app_id={app_id}, new_app_id={new_app.id}, account_id={account.id}")
         return new_app
@@ -541,7 +552,7 @@ class PublicAppService(BaseService):
                 "tools": self._enrich_tools(app_config.tools),  # 填充完整的 tool 信息
                 "mcp_bindings": getattr(app_config, "mcp_bindings", []),
                 "workflows": self._enrich_workflows(app_config.workflows),
-                "datasets": [],  # 公共应用不暴露知识库详情
+                "knowledge_base_ids": [],  # 公共应用不暴露知识库详情
                 "retrieval_config": app_config.retrieval_config,
                 "long_term_memory": app_config.long_term_memory,
                 "opening_statement": app_config.opening_statement,

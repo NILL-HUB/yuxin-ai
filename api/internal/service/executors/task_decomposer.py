@@ -54,7 +54,7 @@ class TaskDecomposer:
         available_agents: list[dict],
         available_tools: list[dict],
     ) -> TaskPlanModel:
-        llm = self.language_model_service.get_cheap_chat_model()
+        llm = self.language_model_service.get_feature_model("task_decomposition")
         structured = llm.with_structured_output(TaskPlanModel)
         prompt = self._build_prompt(query, available_agents, available_tools)
         plan_model = structured.invoke(prompt)

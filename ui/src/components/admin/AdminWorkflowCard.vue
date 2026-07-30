@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (event: 'toggle-public', workflow: AdminWorkflowRecord): void
   (event: 'offline', workflow: AdminWorkflowRecord): void
   (event: 'delete', workflow: AdminWorkflowRecord): void
+  (event: 'export', workflow: AdminWorkflowRecord): void
 }>()
 
 const { t } = useI18n()
@@ -72,6 +73,12 @@ const visibilityActionLabel = computed(() => {
         @click="emit('toggle-public', workflow)"
       >
         {{ visibilityActionLabel }}
+      </a-button>
+      <a-button
+        :data-testid="`workflow-export-${workflow.id}`"
+        @click="emit('export', workflow)"
+      >
+        {{ t('admin.workflowsAdmin.actions.export') }}
       </a-button>
       <a-button
         v-if="canUpdate"

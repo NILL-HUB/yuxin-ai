@@ -51,3 +51,13 @@ class PlatformService(BaseService):
         })
 
         return wechat_config
+
+    def get_wechat_config_for_admin(self, app_id: UUID) -> WechatConfig:
+        """管理员获取微信配置（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.get_wechat_config(app_id, account)
+
+    def update_wechat_config_for_admin(self, app_id: UUID, req: UpdateWechatConfigReq) -> WechatConfig:
+        """管理员更新微信配置（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.update_wechat_config(app_id, req, account)

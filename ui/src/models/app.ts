@@ -240,7 +240,13 @@ export type GetDraftAppConfigResponse = BaseResponse<{
   skills: SkillBinding[]
   workflows: { id: string; name: string; icon: string; description: string }[]
   datasets: { id: string; name: string; icon: string; description: string }[]
+  // 新版知识库 id 列表，与 datasets 同级，二者可共存（向后兼容：旧配置无该字段）
+  knowledge_base_ids?: string[]
+  // 新版知识库展示信息列表（后端 _process_and_validate_knowledge_base_ids 返回，含 id/name/description）
+  knowledge_bases?: { id: string; name: string; description: string }[]
   retrieval_config: { retrieval_strategy: string; k: number; score: number }
+  // App 级别 embedding 模型 ID（决定用户记忆向量存储维度，为空则使用系统默认）
+  embedding_model_id?: string
   long_term_memory: { enable: boolean }
   opening_statement: string
   opening_questions: string[]
@@ -270,7 +276,11 @@ export type UpdateDraftAppConfigRequest = {
   skills?: SkillBindingRequest[]
   workflows?: string[]
   datasets?: string[]
+  // 新版知识库 id 列表，与 datasets 同级，二者可共存
+  knowledge_base_ids?: string[]
   retrieval_config?: { retrieval_strategy: string; k: number; score: number }
+  // App 级别 embedding 模型 ID（决定用户记忆向量存储维度，为空则使用系统默认）
+  embedding_model_id?: string
   long_term_memory?: { enable: boolean }
   opening_statement?: string
   opening_questions?: string[]

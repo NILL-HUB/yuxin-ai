@@ -1,8 +1,8 @@
 from flask_wtf import FlaskForm
 from marshmallow import Schema, fields
 from wtforms import BooleanField, IntegerField, StringField
-from wtforms.validators import Length, NumberRange, Optional
-from internal.schema import DictField
+from wtforms.validators import Length, NumberRange, Optional, ValidationError
+from internal.schema import DictField, ListField
 
 
 class GetAdminWorkflowsReq(FlaskForm):
@@ -15,6 +15,17 @@ class GetAdminWorkflowsReq(FlaskForm):
 class UpdateAdminWorkflowReq(FlaskForm):
     status = StringField("status", validators=[Optional(), Length(max=255)])
     is_public = BooleanField("is_public", validators=[Optional()])
+    task_keywords = ListField("task_keywords", default=[])
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
 class PublishAdminWorkflowReq(FlaskForm):
@@ -41,6 +52,7 @@ class AdminWorkflowResp(Schema):
     description = fields.String()
     status = fields.String()
     is_public = fields.Boolean()
+    task_keywords = fields.List(fields.String(), dump_default=[])
     created_at = fields.Integer()
     updated_at = fields.Integer()
 

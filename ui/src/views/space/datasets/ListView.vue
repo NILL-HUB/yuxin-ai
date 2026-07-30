@@ -5,12 +5,13 @@ import moment from 'moment'
 import type { ValidatedError } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import {
-  useCreateOrUpdateDataset,
-  useDeleteDataset,
-  useGetDataset,
-  useGetDatasetsWithPage,
-  useRegenerateIcon,
-} from '@/hooks/use-dataset'
+  useCreateOrUpdateKnowledgeBase,
+  useDeleteKnowledgeBase,
+  useGenerateKnowledgeBaseIconPreview,
+  useGetKnowledgeBase,
+  useGetKnowledgeBasesWithPage,
+  useRegenerateKnowledgeBaseIcon,
+} from '@/hooks/use-knowledge-base'
 import { useUploadImage } from '@/hooks/use-upload-file'
 import { useAccountStore } from '@/stores/account'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
@@ -23,28 +24,43 @@ const router = useRouter()
 const { t } = useI18n()
 const accountStore = useAccountStore()
 let updateDatasetID = ''
-const { dataset, loadDataset } = useGetDataset()
-const { loading, datasets, paginator, loadDatasets } = useGetDatasetsWithPage()
+const { knowledgeBase: dataset, loadKnowledgeBase: loadDataset } = useGetKnowledgeBase()
+const {
+  loading,
+  knowledgeBases: datasets,
+  paginator,
+  loadKnowledgeBases: loadDatasets,
+} = useGetKnowledgeBasesWithPage()
 const { image_url, handleUploadImage } = useUploadImage()
 const {
   loading: submitLoading,
   form,
   formRef,
-  saveDataset,
+  saveKnowledgeBase: saveDataset,
   showUpdateModal,
   updateShowUpdateModal,
-} = useCreateOrUpdateDataset()
-const { handleDelete } = useDeleteDataset()
-const { loading: regenerateIconLoading, handleRegenerateIcon } = useRegenerateIcon()
+} = useCreateOrUpdateKnowledgeBase()
+const { handleDelete } = useDeleteKnowledgeBase()
+const { loading: regenerateIconLoading, handleRegenerateIcon } = useRegenerateKnowledgeBaseIcon()
+const {
+  loading: generateIconPreviewLoading,
+  handleGenerateIconPreview,
+} = useGenerateKnowledgeBaseIconPreview()
 const search_word = computed(() => {
   return String(route.query?.search_word ?? '')
 })
+// 模态窗模式：新建/更新
+const isUpdateMode = computed(() => updateDatasetID !== '')
+// 图标生成 loading：合并两种模式的 loading
+const iconGenerateLoading = computed(() => regenerateIconLoading.value || generateIconPreviewLoading.value)
 
 // 2.定义上传图标处理器
 const handleUploadIcon = async (file: File) => {
   await handleUploadImage(file)
   form.value.icon = image_url.value
   form.value.fileList = [{ uid: '1', name: t('space.datasets.modal.iconPlaceholder'), url: image_url.value }]
+  // 显式触发 fileList 字段校验，清除"图标不能为空"错误
+  formRef.value?.validateField('fileList')
   Message.success(t('space.datasets.uploadSuccess'))
 }
 
@@ -56,11 +72,17 @@ const handleGenerateIcon = async () => {
   }
 
   try {
-    // 更新模式：调用 regenerateIcon
-    const iconUrl = await handleRegenerateIcon(updateDatasetID)
+    // 根据模式调用不同的生成接口
+    // 新建模式：仅需 name + description，无需 KB id
+    // 更新模式：调用 regenerateIcon，需要已存在的 KB id
+    const iconUrl = isUpdateMode.value
+      ? await handleRegenerateIcon(updateDatasetID)
+      : await handleGenerateIconPreview(form.value.name, form.value.description || '')
     if (iconUrl) {
       form.value.icon = iconUrl
       form.value.fileList = [{ uid: '1', name: t('space.datasets.modal.iconPlaceholder'), url: iconUrl }]
+      // 显式触发 fileList 字段校验，清除"图标不能为空"错误
+      formRef.value?.validateField('fileList')
       Message.success(t('space.datasets.generateSuccess'))
     }
   } catch (_error: unknown) {
@@ -93,6 +115,18 @@ const handleUpdate = (dataset_id: string) => {
     form.value.icon = dataset.value.icon
     form.value.name = dataset.value.name
     form.value.description = dataset.value.description
+  })
+}
+
+// 5.1 定义新建知识库处理器
+const handleCreate = () => {
+  updateShowUpdateModal(true, () => {
+    updateDatasetID = ''
+    formRef.value?.resetFields()
+    form.value.icon = ''
+    form.value.fileList = []
+    form.value.name = ''
+    form.value.description = ''
   })
 }
 
@@ -139,11 +173,23 @@ const handleCardClick = (datasetId: string) => {
 </script>
 
 <template>
-  <a-spin
-    :loading="loading"
-    class="block h-full w-full scrollbar-w-none overflow-y-scroll overflow-x-hidden"
-    @scroll="handleScroll"
-  >
+  <div class="flex h-full w-full flex-col overflow-hidden">
+    <!-- 顶部工具栏（固定不滚动） -->
+    <div class="flex items-center justify-between flex-shrink-0 px-6 py-4 bg-white border-b border-gray-100">
+      <div class="text-lg font-semibold text-gray-900">{{ t('space.datasets.title') }}</div>
+      <a-button type="primary" class="rounded-lg" @click="handleCreate">
+        <template #icon>
+          <icon-plus />
+        </template>
+        {{ t('space.datasets.create') }}
+      </a-button>
+    </div>
+    <!-- 滚动列表区域 -->
+    <a-spin
+      :loading="loading"
+      class="block flex-1 min-h-0 w-full scrollbar-w-none overflow-y-scroll overflow-x-hidden"
+      @scroll="handleScroll"
+    >
     <!-- 底部知识库列表 -->
     <a-row :gutter="[20, 20]">
       <!-- 有数据的UI状态 -->
@@ -171,7 +217,7 @@ const handleCardClick = (datasetId: string) => {
                   {{ t('space.datasets.stats', {
                     documents: dataset.document_count,
                     characters: Math.round(dataset.character_count / 1000),
-                    apps: dataset.related_app_count,
+                    apps: dataset.related_app_count || 0,
                   }) }}
                 </div>
               </div>
@@ -232,6 +278,7 @@ const handleCardClick = (datasetId: string) => {
         <div class="text-gray-400 my-4">{{ t('space.datasets.loadedAll') }}</div>
       </a-col>
     </a-row>
+    </a-spin>
     <!-- 修改模态窗 -->
     <a-modal
       :width="520"
@@ -244,7 +291,7 @@ const handleCardClick = (datasetId: string) => {
       <!-- 顶部标题 -->
       <div class="flex items-center justify-between">
         <div class="text-lg font-bold text-gray-700">
-          {{ t('space.datasets.modal.updateTitle') }}
+          {{ isUpdateMode ? t('space.datasets.modal.updateTitle') : t('space.datasets.modal.createTitle') }}
         </div>
         <a-button type="text" class="!text-gray-700" size="small" @click="handleCancel">
           <template #icon>
@@ -258,14 +305,13 @@ const handleCardClick = (datasetId: string) => {
           <a-form-item
             field="fileList"
             hide-label
-            :rules="[{ required: true, message: t('space.datasets.modal.iconRequired') }]"
           >
             <IconUploadGenerator
               :name="form.name"
               :description="form.description"
               :icon="form.icon"
               :file-list="form.fileList"
-              :loading="regenerateIconLoading"
+              :loading="iconGenerateLoading"
               :placeholder="t('space.datasets.modal.iconPlaceholder')"
               :on-upload="handleUploadIcon"
               :on-generate="handleGenerateIcon"
@@ -293,6 +339,7 @@ const handleCardClick = (datasetId: string) => {
               :placeholder="t('space.datasets.modal.descriptionPlaceholder')"
             />
           </a-form-item>
+          <!-- embedding 模型由后端自动选择（维度优先+健康度），用户不能自选，避免维度错位 -->
           <!-- 底部按钮 -->
           <div class="flex items-center justify-between">
             <div class=""></div>
@@ -311,7 +358,7 @@ const handleCardClick = (datasetId: string) => {
         </a-form>
       </div>
     </a-modal>
-  </a-spin>
+  </div>
 </template>
 
 <style scoped>

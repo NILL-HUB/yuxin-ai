@@ -2,3 +2,9 @@ name: url_shortener
 label: 短链接生成
 description: 将长URL转换为短链接
 params: []
+task_keywords:
+- 短链接
+- 短网址
+- url缩短
+- short url
+- 短链

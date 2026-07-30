@@ -10,9 +10,9 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from redis import Redis
 
-from internal.core.language_model.providers.deepseek.chat import Chat
 from internal.exception import FailException
 from .base_service import BaseService
+from .language_model_service import LanguageModelService
 
 
 @inject
@@ -91,7 +91,7 @@ class IntentRecognitionService(BaseService):
             lc_messages = self._build_langchain_messages(messages)
 
             # 2. 使用trim_messages限制token
-            model = Chat(model="deepseek-chat")
+            model = LanguageModelService.get_feature_model("intent_recognition")
             trimmed_messages = trim_messages(
                 messages=lc_messages,
                 max_tokens=self.MAX_TOKENS,
@@ -105,8 +105,7 @@ class IntentRecognitionService(BaseService):
             messages_text = self._format_messages(trimmed_messages)
             prompt_text = self.PROMPT_TEMPLATE.format(messages=messages_text)
 
-            # 4. 调用DeepSeek模型
-            model = Chat(model="deepseek-chat")
+            # 4. 调用模型（走数据库配置 + compatible_api 分发）
             response = model.invoke(prompt_text)
 
             # 5. 解析响应

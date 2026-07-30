@@ -545,4 +545,217 @@ describe('chat-stream', () => {
     expect(message.agent_thoughts).toHaveLength(0)
     expect(message.answer).toBe('')
   })
+
+  it('initializes subtasks and taskPlan on subtask_started event', () => {
+    const message = createMessage()
+    const state = createState()
+    const event: StreamEventResponse = {
+      event: QueueEvent.subtaskStarted,
+      data: {
+        id: 'msg-1',
+        message_id: 'msg-1',
+        conversation_id: 'conv-1',
+        execution_mode: 'multi_agent_parallel',
+        aggregation_strategy: 'summarize',
+        reason: 'complex_query',
+        task_count: 2,
+        items: [
+          {
+            task_id: 'subtask_a',
+            title: '搜索资料',
+            description: '查找相关文档',
+            depends_on: [],
+            execution_order: 0,
+            agent_id: 'agent_search',
+            tools: ['search'],
+            risk_level: 'safe',
+          },
+          {
+            task_id: 'subtask_b',
+            title: '生成总结',
+            description: '整合资料生成总结',
+            depends_on: ['subtask_a'],
+            execution_order: 1,
+            agent_id: 'agent_writer',
+            tools: [],
+            risk_level: 'safe',
+          },
+        ],
+      },
+    }
+
+    const result = applyChatStreamEvent(message, event, state)
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.subtasks).toHaveLength(2)
+    expect(result.state.subtasks?.[0]).toEqual({
+      task_id: 'subtask_a',
+      title: '搜索资料',
+      status: 'pending',
+      agent_id: 'agent_search',
+    })
+    expect(result.state.subtasks?.[1].status).toBe('pending')
+    expect(result.state.taskPlan).toEqual({
+      execution_mode: 'multi_agent_parallel',
+      aggregation_strategy: 'summarize',
+      reason: 'complex_query',
+      task_count: 2,
+    })
+    // subtask_started 不应该污染 agent_thoughts
+    expect(message.agent_thoughts).toHaveLength(0)
+  })
+
+  it('updates subtask status to completed on subtask_completed event', () => {
+    const message = createMessage()
+    let state = createState()
+    // 先发 subtask_started 初始化
+    const startedResult = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.subtaskStarted,
+        data: {
+          id: 'msg-1',
+          message_id: 'msg-1',
+          conversation_id: 'conv-1',
+          execution_mode: 'multi_agent_parallel',
+          aggregation_strategy: 'summarize',
+          reason: 'complex_query',
+          task_count: 1,
+          items: [
+            {
+              task_id: 'subtask_a',
+              title: '搜索资料',
+              description: '',
+              depends_on: [],
+              execution_order: 0,
+              agent_id: 'agent_search',
+              tools: [],
+              risk_level: 'safe',
+            },
+          ],
+        },
+      },
+      state,
+    )
+    state = startedResult.state
+
+    // 再发 subtask_completed 更新状态
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.subtaskCompleted,
+        data: {
+          id: 'subtask_a',
+          task_id: 'subtask_a',
+          conversation_id: 'conv-1',
+          message_id: 'msg-1',
+          agent_id: 'agent_search',
+          status: 'completed',
+          confidence: 0.92,
+          answer_preview: '搜索完成，找到 3 个相关文档',
+          errors: [],
+        },
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.subtasks).toHaveLength(1)
+    expect(result.state.subtasks?.[0]).toEqual({
+      task_id: 'subtask_a',
+      title: '搜索资料',
+      status: 'completed',
+      agent_id: 'agent_search',
+      answer_preview: '搜索完成，找到 3 个相关文档',
+      confidence: 0.92,
+      errors: [],
+    })
+  })
+
+  it('marks subtask as failed when status is failed', () => {
+    const message = createMessage()
+    let state = createState()
+    const startedResult = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.subtaskStarted,
+        data: {
+          id: 'msg-1',
+          message_id: 'msg-1',
+          conversation_id: 'conv-1',
+          execution_mode: 'multi_agent_parallel',
+          aggregation_strategy: 'summarize',
+          reason: '',
+          task_count: 1,
+          items: [
+            {
+              task_id: 'subtask_x',
+              title: '执行失败的任务',
+              description: '',
+              depends_on: [],
+              execution_order: 0,
+              agent_id: 'agent_x',
+              tools: [],
+              risk_level: 'safe',
+            },
+          ],
+        },
+      },
+      state,
+    )
+    state = startedResult.state
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.subtaskCompleted,
+        data: {
+          id: 'subtask_x',
+          task_id: 'subtask_x',
+          conversation_id: 'conv-1',
+          message_id: 'msg-1',
+          agent_id: 'agent_x',
+          status: 'failed',
+          confidence: 0,
+          answer_preview: '',
+          errors: ['tool_invocation_timeout'],
+        },
+      },
+      state,
+    )
+
+    expect(result.state.subtasks?.[0].status).toBe('failed')
+    expect(result.state.subtasks?.[0].errors).toEqual(['tool_invocation_timeout'])
+  })
+
+  it('extracts synthesis_meta from agent_message event', () => {
+    const message = createMessage()
+    const state = createState()
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.agentMessage,
+        data: {
+          id: 'msg-1',
+          message_id: 'msg-1',
+          conversation_id: 'conv-1',
+          answer: '综合后的最终答案',
+          summary: '汇总了 3 个子任务的结论',
+          confidence: 0.85,
+          visible_sources: ['source_1', 'source_2'],
+          user_warnings: ['部分子任务结果置信度较低'],
+        },
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.synthesisMeta).toEqual({
+      summary: '汇总了 3 个子任务的结论',
+      confidence: 0.85,
+      visible_sources: ['source_1', 'source_2'],
+      user_warnings: ['部分子任务结果置信度较低'],
+    })
+    expect(message.answer).toBe('综合后的最终答案')
+  })
 })

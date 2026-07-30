@@ -8,6 +8,7 @@ from .app_service import AppService
 from .base_service import BaseService
 from .billing_metering_service import BillingMetering, BillingUsageAggregator
 from .builtin_tool_service import BuiltinToolService
+from .builtin_tool_sync_service import BuiltinToolSyncService
 from .tool_confirmation_service import ToolConfirmationService
 from .tool_inventory_service import ToolCandidateCollector, ToolPolicyFilter, CrossPoolToolSubsetBuilder
 from .conversation_service import ConversationService
@@ -49,11 +50,13 @@ from .public_agent_registry_service import PublicAgentRegistryService
 from .public_app_service import PublicAppService
 from .public_workflow_service import PublicWorkflowService
 from .mcp_service import McpService
+from .mcp_import_service import McpImportService
 from .my_app_service import MyAppService
 from .model_assignment_policy_service import ModelAssignmentPolicy
 from .request_context_builder_service import RequestContextBuilder
 from .routing_log_service import RoutingLogService
 from .skill_service import SkillService
+from .skill_import_service import SkillImportService
 from .admin_app_service import AdminAppService
 from .admin_app_assignment_service import AdminAppAssignmentService
 from .admin_billing_plan_service import AdminBillingPlanService
@@ -71,6 +74,7 @@ __all__ = [
     "BaseService",
     "AppService",
     "BuiltinToolService",
+    "BuiltinToolSyncService",
     "AgentCandidateCollector",
     "AgentPolicyFilter",
     "CrossPoolAgentSubsetBuilder",
@@ -124,8 +128,10 @@ __all__ = [
     "PublicWorkflowService",
     "NotificationService",
     "McpService",
+    "McpImportService",
     "MyAppService",
     "SkillService",
+    "SkillImportService",
     "SystemKnowledgeService",
     "UserContentKnowledgeService",
     "AdminAppService",

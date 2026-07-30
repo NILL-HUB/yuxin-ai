@@ -10,18 +10,43 @@ from langchain_core.documents import Document as LCDocument
 from sqlalchemy import func
 
 from internal.core.file_extractor import FileExtractor
-from internal.entity.dataset_entity import DEFAULT_PROCESS_RULE, DocumentStatus, ProcessType, SegmentStatus
+from internal.entity.dataset_entity import DocumentStatus, SegmentStatus
 from internal.exception import NotFoundException
 from internal.lib.helper import generate_text_hash
-from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, ProcessRule, UploadFile
+from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UploadFile
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.jieba_service import JiebaService
 from internal.service.knowledge_vector_service import KnowledgeVectorService
-from internal.service.process_rule_service import ProcessRuleService
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 
 logger = logging.getLogger(__name__)
+
+# 默认的处理规则（文档分割与预处理配置）
+_DEFAULT_PROCESS_RULE = {
+    "mode": "custom",
+    "rule": {
+        "pre_process_rules": [
+            {"id": "remove_extra_space", "enabled": True},
+            {"id": "remove_url_and_email", "enabled": True},
+        ],
+        "segment": {
+            "separators": [
+                "\n\n",
+                "\n",
+                "。|！|？",
+                r"\.\s|\!\s|\?\s",
+                r"；|;\s",
+                r"，|,\s",
+                " ",
+                ""
+            ],
+            "chunk_size": 500,
+            "chunk_overlap": 50,
+        }
+    }
+}
 
 
 @inject
@@ -29,7 +54,6 @@ logger = logging.getLogger(__name__)
 class KnowledgeIndexingService(BaseService):
     db: SQLAlchemy
     file_extractor: FileExtractor
-    process_rule_service: ProcessRuleService
     embeddings_service: EmbeddingsService
     jieba_service: JiebaService
     knowledge_vector_service: KnowledgeVectorService
@@ -97,17 +121,19 @@ class KnowledgeIndexingService(BaseService):
         return lc_documents
 
     def _splitting(self, document: KnowledgeDocument, lc_documents: list[LCDocument]) -> list[LCDocument]:
-        process_rule = self._build_process_rule(document)
+        rule = _DEFAULT_PROCESS_RULE["rule"]
 
-        text_splitter = self.process_rule_service.get_text_splitter_by_process_rule(
-            process_rule,
-            self.embeddings_service.calculate_token_count,
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=rule["segment"]["chunk_size"],
+            chunk_overlap=rule["segment"]["chunk_overlap"],
+            separators=rule["segment"]["separators"],
+            is_separator_regex=True,
+            length_function=self.embeddings_service.calculate_token_count,
         )
 
         for lc_document in lc_documents:
-            lc_document.page_content = self.process_rule_service.clean_text_by_process_rule(
-                lc_document.page_content,
-                process_rule,
+            lc_document.page_content = self._clean_text_by_process_rule(
+                lc_document.page_content, rule,
             )
 
         lc_segments = text_splitter.split_documents(lc_documents)
@@ -192,13 +218,25 @@ class KnowledgeIndexingService(BaseService):
             status=DocumentStatus.COMPLETED.value,
         )
 
-    def _build_process_rule(self, document: KnowledgeDocument) -> ProcessRule:
-        return ProcessRule(
-            account_id=document.owner_account_id,
-            dataset_id=document.knowledge_base_id,
-            mode=ProcessType.AUTOMATIC.value,
-            rule=DEFAULT_PROCESS_RULE["rule"],
-        )
+    @staticmethod
+    def _clean_text_by_process_rule(text: str, rule: dict) -> str:
+        """根据处理规则清除多余的字符串"""
+        # 循环遍历所有预处理规则
+        for pre_process_rule in rule["pre_process_rules"]:
+            # 删除多余空格
+            if pre_process_rule["id"] == "remove_extra_space" and pre_process_rule["enabled"] is True:
+                pattern = r'\n{3,}'
+                text = re.sub(pattern, '\n\n', text)
+                pattern = r'[\t\f\r\x20\u00a0\u1680\u180e\u2000-\u200a\u202f\u205f\u3000]{2,}'
+                text = re.sub(pattern, ' ', text)
+            # 删除多余的URL链接及邮箱
+            if pre_process_rule["id"] == "remove_url_and_email" and pre_process_rule["enabled"] is True:
+                pattern = r'([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)'
+                text = re.sub(pattern, '', text)
+                pattern = r'https?://[^\s]+'
+                text = re.sub(pattern, '', text)
+
+        return text
 
     @staticmethod
     def _clean_extra_text(text: str) -> str:

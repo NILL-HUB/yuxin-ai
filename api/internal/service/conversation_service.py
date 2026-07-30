@@ -5,12 +5,11 @@ import logging
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any, ClassVar
-from uuid import UUID
+from uuid import UUID, uuid4
 from flask import Flask, current_app
 from injector import inject
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from internal.core.language_model.providers.deepseek.chat import Chat
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
 from sqlalchemy import desc, func
 from sqlalchemy.orm import selectinload
@@ -27,11 +26,15 @@ from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .credit_service import CreditService
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
-from internal.core.agent.usage_utils import summarize_agent_thoughts
+from internal.core.agent.usage_utils import (
+    summarize_agent_thoughts,
+    charge_for_feature,
+    get_openai_callback,
+    _UsageTrackingHandler,
+)
 from internal.model import App, Conversation, Message, MessageAgentThought, Account
 from internal.schema.conversation_schema import GetConversationMessagesWithPageReq
 from internal.exception import NotFoundException
-from ..core.language_model.entities.model_entity import ModelFeature
 
 
 @inject
@@ -124,32 +127,55 @@ class ConversationService(BaseService):
             cls._conversation_name_cache.pop(str(conversation_id), None)
 
     @classmethod
-    def summary(cls, human_message: str, ai_message: str, old_summary: str = "") -> str:
+    def _get_credit_service(cls):
+        """从依赖注入器获取 CreditService 实例，获取失败返回 None。"""
+        try:
+            from app.http.module import injector
+            return injector.get(CreditService)
+        except Exception:
+            return None
+
+    @classmethod
+    def summary(cls, human_message: str, ai_message: str, old_summary: str = "", account_id: UUID | None = None) -> str:
         """根据传递的人类消息、AI消息还有原始的摘要信息总结生成一段新的摘要"""
         # 1.创建prompt
         prompt = ChatPromptTemplate.from_template(SUMMARIZER_TEMPLATE)
 
-        # 2.构建大语言模型实例，提升温度让标题表达更丰富
-        llm = Chat(
-            model="deepseek-chat",
-            temperature=1.2,
-            features=[ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
-            metadata={},
-        )
+        # 2.通过动态模型注册表加载模型（带 API key 注入），避免硬编码静态配置导致 401
+        llm = cls._load_summary_llm()
 
         # 3.构建链应用
         summary_chain = prompt | llm | StrOutputParser()
 
-        # 4.调用链并获取新摘要信息
-        new_summary = summary_chain.invoke({
+        # 4.调用链并获取新摘要信息，同时捕获 token 用量用于计费
+        invoke_input = {
             "summary": old_summary,
             "new_lines": f"Human: {human_message}\nAI: {ai_message}",
-        })
+        }
+        if get_openai_callback is not None:
+            with get_openai_callback() as cb:
+                new_summary = summary_chain.invoke(invoke_input)
+            token_count = cb.total_tokens
+        else:
+            handler = _UsageTrackingHandler()
+            new_summary = summary_chain.invoke(invoke_input, config={"callbacks": [handler]})
+            token_count = handler.total_tokens
+
+        # 5.计费（失败不影响主流程）
+        if account_id is not None:
+            charge_for_feature(cls._get_credit_service(), account_id, "conversation_summary", token_count)
 
         return new_summary
 
     @classmethod
-    def generate_conversation_name(cls, query: str) -> str:
+    def _load_summary_llm(cls):
+        """加载摘要任务用的 LLM，统一走数据库配置 + compatible_api 分发。"""
+        from app.http.module import injector
+        from internal.service.language_model_service import LanguageModelService
+        return LanguageModelService.get_feature_model("conversation_summary")
+
+    @classmethod
+    def generate_conversation_name(cls, query: str, account_id: UUID | None = None) -> str:
         """根据传递的query生成对应的会话名字，并且语言与用户的输入保持一致"""
         # 1.创建prompt
         prompt = ChatPromptTemplate.from_messages([
@@ -157,13 +183,8 @@ class ConversationService(BaseService):
             ("human", "{query}")
         ])
 
-        # 2.构建大语言模型实例，适度提高温度让标题表达更丰富
-        llm = Chat(
-            model="deepseek-chat",
-            temperature=1.2,
-            features=[ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
-            metadata={},
-        )
+        # 2.通过动态模型注册表加载模型（带 API key 注入），避免硬编码静态配置导致 401
+        llm = cls._load_summary_llm()
         structured_llm = llm.with_structured_output(ConversationInfo)
 
         # 3.构建链应用
@@ -172,10 +193,22 @@ class ConversationService(BaseService):
         # 4.提取并整理query，截取长度过长的部分
         query = cls._normalize_conversation_name_query(query)
 
-        # 5.调用链并获取会话信息
-        conversation_info = chain.invoke({"query": query})
+        # 5.调用链并获取会话信息，同时捕获 token 用量用于计费
+        invoke_input = {"query": query}
+        if get_openai_callback is not None:
+            with get_openai_callback() as cb:
+                conversation_info = chain.invoke(invoke_input)
+            token_count = cb.total_tokens
+        else:
+            handler = _UsageTrackingHandler()
+            conversation_info = chain.invoke(invoke_input, config={"callbacks": [handler]})
+            token_count = handler.total_tokens
 
-        # 6.提取会话名称
+        # 6.计费（失败不影响主流程）
+        if account_id is not None:
+            charge_for_feature(cls._get_credit_service(), account_id, "conversation_summary", token_count)
+
+        # 7.提取会话名称
         name = "新的会话"
         try:
             if conversation_info and hasattr(conversation_info, "subject"):
@@ -196,13 +229,8 @@ class ConversationService(BaseService):
             ("human", "{histories}")
         ])
 
-        # 2.构建大语言模型实例，并且将大语言模型的温度调低，降低幻觉的概率
-        llm = Chat(
-            model="deepseek-chat",
-            temperature=0.8,
-            features=[ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
-            metadata={},
-        )
+        # 2.通过动态模型注册表加载模型，避免硬编码静态配置导致 401
+        llm = cls._load_summary_llm()
         structured_llm = llm.with_structured_output(SuggestedQuestions)
 
         # 3.构建链应用
@@ -278,7 +306,7 @@ class ConversationService(BaseService):
                     app_id=app_id,
                     conversation_id=conversation.id,
                     message_id=message.id,
-                    invoke_from=InvokeFrom.DEBUGGER.value,
+                    invoke_from=message.invoke_from,
                     created_by=account_id,
                     position=position,
                     event=agent_thought.event,
@@ -325,11 +353,12 @@ class ConversationService(BaseService):
                 )
 
                 # 9.检测是否开启长期记忆
-                if app_config["long_term_memory"]["enable"]:
+                if (app_config.get("long_term_memory") or {}).get("enable", False):
                     self._generate_summary_and_update(
                         conversation_id=conversation_id,
                         query=message.query,
                         answer=message.answer,
+                        account_id=account_id,
                     )
 
                 # 10.处理生成新会话名称（兜底处理首轮异常导致名称未更新）
@@ -337,6 +366,7 @@ class ConversationService(BaseService):
                     self._generate_conversation_name_and_update(
                         conversation_id=conversation.id,
                         query=message.query,
+                        account_id=account_id,
                     )
 
             # 11.判断是否为停止或者错误，如果是则需要更新消息状态
@@ -360,13 +390,15 @@ class ConversationService(BaseService):
             conversation_id: UUID,
             query: str,
             answer: str,
+            account_id: UUID | None = None,
     ):
         conversation = self.get(Conversation, conversation_id)
 
         new_summary = self.summary(
             query,
             answer,
-            conversation.summary
+            conversation.summary,
+            account_id=account_id,
         )
 
         message_count = self._count_conversation_messages(conversation_id)
@@ -399,6 +431,7 @@ class ConversationService(BaseService):
             self,
             conversation_id: UUID,
             query: str,
+            account_id: UUID | None = None,
     ) -> None:
         """生成会话名字并更新"""
         # 1.根据会话id获取会话
@@ -419,7 +452,7 @@ class ConversationService(BaseService):
             return
 
         # 3.同query无缓存时，调用模型重新生成主题并写入临时缓存
-        new_conversation_name = self.generate_conversation_name(normalized_query)
+        new_conversation_name = self.generate_conversation_name(normalized_query, account_id=account_id)
         self._set_cached_conversation_name(
             conversation_id=conversation_id,
             normalized_query=normalized_query,

@@ -1,5 +1,3 @@
-import hashlib
-import base64
 import logging
 from dataclasses import dataclass
 from uuid import UUID
@@ -69,39 +67,17 @@ class AppIconService(BaseService):
 
     def _generate_default_icon(self, app_name: str) -> str:
         """
-        生成一个默认的彩色SVG图标
+        生成默认图标占位值
 
         Args:
             app_name: 应用名称
 
         Returns:
-            str: 图标的COS URL或数据URI
+            str: 空字符串占位符（app.icon 列为 VARCHAR(255)，无法容纳 data URI）
         """
-        hash_obj = hashlib.md5(app_name.encode())
-        hash_hex = hash_obj.hexdigest()
-
-        r = int(hash_hex[0:2], 16)
-        g = int(hash_hex[2:4], 16)
-        b = int(hash_hex[4:6], 16)
-
-        brightness = (r * 299 + g * 587 + b * 114) / 1000
-        if brightness < 100:
-            r = min(255, r + 100)
-            g = min(255, g + 100)
-            b = min(255, b + 100)
-
-        first_char = app_name[0].upper() if app_name else "A"
-
-        svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
-  <rect width="200" height="200" fill="rgb({r},{g},{b})" rx="40"/>
-  <text x="100" y="120" font-size="100" font-weight="bold" fill="white" text-anchor="middle" font-family="Arial, sans-serif">{first_char}</text>
-</svg>'''
-
-        svg_bytes = svg_content.encode('utf-8')
-        svg_base64 = base64.b64encode(svg_bytes).decode('utf-8')
-        data_uri = f"data:image/svg+xml;base64,{svg_base64}"
-
-        return data_uri
+        # app.icon 列为 VARCHAR(255)，base64 SVG data URI 会超长导致写入失败
+        # 返回空字符串占位，前端可基于应用名首字母渲染默认图标
+        return ""
 
     def get_app(self, app_id: UUID, account: Account) -> App:
         """根据传递的id获取应用的基础信息"""

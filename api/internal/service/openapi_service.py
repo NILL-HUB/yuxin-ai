@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import dataclass
 from threading import Thread
 from typing import Generator
@@ -11,7 +12,7 @@ from internal.core.agent.agents import FunctionCallAgent, ReACTAgent
 from internal.core.agent.entities.agent_entity import AgentConfig
 from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.core.memory import TokenBufferMemory
-from internal.entity.app_entity import AppStatus
+from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.entity.dataset_entity import RetrievalSource
 from internal.exception import NotFoundException, ForbiddenException
@@ -27,8 +28,13 @@ from .app_service import AppService
 from .base_service import BaseService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
+from .orchestrator_service import OrchestratorService
 from .retrieval_service import RetrievalService
+from .skill_service import SkillService
 from ..core.language_model.entities.model_entity import ModelFeature
+
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -42,6 +48,54 @@ class OpenAPIService(BaseService):
     app_config_service: AppConfigService
     conversation_service: ConversationService
     language_model_service: LanguageModelService
+    skill_service: SkillService | None = None
+    orchestrator_service: OrchestratorService | None = None
+
+    @staticmethod
+    def _extract_builtin_tools_from_tool_subset(
+        tool_subset: dict,
+        *,
+        existing_tools: list[dict],
+        max_extra: int = 3,
+    ) -> list[dict]:
+        """从 orchestrator 的 tool_subset 中提取 builtin 工具，转换为运行时 tools_config 格式。"""
+        selected = tool_subset.get("selected_tools") or []
+        if not selected:
+            return []
+        existing_keys: set[tuple[str, str]] = set()
+        for t in existing_tools:
+            if not isinstance(t, dict):
+                continue
+            if t.get("type") != "builtin_tool":
+                continue
+            prov = t.get("provider_id") or (t.get("provider") or {}).get("id")
+            name = t.get("tool_id") or (t.get("tool") or {}).get("name")
+            if prov and name:
+                existing_keys.add((prov, name))
+
+        result: list[dict] = []
+        seen_keys: set[tuple[str, str]] = set()
+        for cand in selected:
+            if not isinstance(cand, dict):
+                continue
+            if cand.get("source_type") != "builtin":
+                continue
+            if len(result) >= max_extra:
+                break
+            provider_id = cand.get("provider_id", "")
+            tool_name = cand.get("name", "")
+            if not provider_id or not tool_name:
+                continue
+            key = (provider_id, tool_name)
+            if key in existing_keys or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            result.append({
+                "type": "builtin_tool",
+                "provider": {"id": provider_id, "name": provider_id},
+                "tool": {"name": tool_name, "params": {}},
+            })
+        return result
 
     def chat(self, req: OpenAPIChatReq, account: Account):
         """根据传递的请求+账号信息发起聊天对话，返回数据为块内容或者生成器"""
@@ -114,6 +168,22 @@ class OpenAPIService(BaseService):
             "status": MessageStatus.NORMAL,
         })
 
+        # 9.1 治理架构接入：通过 OrchestratorService 进行任务分类与 LLM 工具选择
+        #     OpenAPI 终端用户不在 account 表中，routing_log.account_id 使用 app owner 的 account_id
+        routing_decision = None
+        if self.orchestrator_service is not None:
+            try:
+                routing_decision = self.orchestrator_service.decide(
+                    req.query.data,
+                    account_id=app.account_id,
+                    conversation_id=conversation.id,
+                    message_id=message.id,
+                    image_urls=req.image_urls.data,
+                ).to_dict()
+            except Exception:
+                logger.warning("OpenAPI 调度决策失败，继续原流程", exc_info=True)
+                routing_decision = None
+
         # 10.实例化TokenBufferMemory用于提取短期记忆
         token_buffer_memory = TokenBufferMemory(
             db=self.db,
@@ -125,13 +195,37 @@ class OpenAPIService(BaseService):
         )
 
         # 11.根据应用配置构建运行时工具
+        # 传递 runtime_context 包含 conversation_id 和 message_id，供治理审计写入路由日志
+        # 11.1 治理联动：当路由决策 needs_tools=True 时，注入 LLM 选择的 builtin 工具
+        runtime_app_config = app_config
+        if routing_decision and routing_decision.get("needs_tools"):
+            extra_tools_config = self._extract_builtin_tools_from_tool_subset(
+                routing_decision.get("tool_subset") or {},
+                existing_tools=app_config.get("tools", []),
+                max_extra=3,
+            )
+            if extra_tools_config:
+                runtime_app_config = {
+                    **app_config,
+                    "tools": list(app_config.get("tools", [])) + extra_tools_config,
+                }
         tools = AppRuntimeService.build_runtime_tools_for_config(
             app_config_service=self.app_config_service,
             retrieval_service=self.retrieval_service,
+            skill_service=self.skill_service,
             app_service=self.app_runtime_service,
             account=account,
-            draft_app_config=app_config,
+            app_id=app.id,
+            draft_app_config=runtime_app_config,
             flask_app=current_app._get_current_object() if has_app_context() else None,
+            runtime_context={
+                "app_id": str(app.id),
+                "account_id": str(account.id),
+                "governance_account_id": str(app.account_id),
+                "conversation_id": str(conversation.id),
+                "message_id": str(message.id),
+            },
+            governance_gate=getattr(self.app_runtime_service, 'runtime_tool_governance_gate', None),
         )
 
         # 12.根据LLM是否支持tool_call决定使用不同的Agent
@@ -144,24 +238,30 @@ class OpenAPIService(BaseService):
         if agent_binding_prompt_appendix:
             prompt_parts.append(agent_binding_prompt_appendix.strip())
         preset_prompt = "\n\n".join(part for part in prompt_parts if part)
+        # 规范化 review_config：DB 默认可能是 {}，需合并默认值确保结构完整
+        review_config = dict(DEFAULT_APP_CONFIG["review_config"])
+        review_config.update(app_config.get("review_config") or {})
+
         agent = agent_class(
             llm=llm,
             agent_config=AgentConfig(
                 user_id=account.id,
-                invoke_from=InvokeFrom.DEBUGGER.value,
+                invoke_from=InvokeFrom.SERVICE_API.value,
                 preset_prompt=preset_prompt,
-                enable_long_term_memory=app_config["long_term_memory"]["enable"],
+                enable_long_term_memory=(app_config.get("long_term_memory") or {}).get("enable", False),
                 language_model_service=self.language_model_service,
                 tools=tools,
-                review_config=app_config["review_config"],
+                review_config=review_config,
             ),
         )
 
         # 15.定义智能体状态基础数据
+        # 获取完整长期记忆：包含 distant_summaries（远期分段摘要）和 summary（当前滚动摘要）
+        long_term_memory = token_buffer_memory.get_distant_summary(conversation) or (conversation.summary or "")
         agent_state = {
             "messages": [llm.convert_to_human_message(req.query.data, req.image_urls.data)],
             "history": history,
-            "long_term_memory": conversation.summary,
+            "long_term_memory": long_term_memory,
         }
 
         # 16.根据stream类型差异执行不同的代码
@@ -177,48 +277,54 @@ class OpenAPIService(BaseService):
 
             def handle_stream() -> Generator:
                 """流式事件处理器，在Python只要在函数内部使用了yield关键字，那么这个函数的返回值类型肯定是生成器"""
-                for agent_thought in agent.stream(agent_state):
-                    # 提取thought以及answer
-                    event_id = str(agent_thought.id)
+                try:
+                    for agent_thought in agent.stream(agent_state):
+                        # 提取thought以及answer
+                        event_id = str(agent_thought.id)
 
-                    # 将数据填充到agent_thought，便于存储到数据库服务中
-                    if agent_thought.event != QueueEvent.PING.value:
-                        # 除了agent_message数据为叠加，其他均为覆盖
-                        if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
-                            if event_id not in agent_thoughts_dict:
-                                # 初始化智能体消息事件
-                                agent_thoughts_dict[event_id] = agent_thought
+                        # 将数据填充到agent_thought，便于存储到数据库服务中
+                        if agent_thought.event != QueueEvent.PING.value:
+                            # 除了agent_message数据为叠加，其他均为覆盖
+                            if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
+                                if event_id not in agent_thoughts_dict:
+                                    # 初始化智能体消息事件
+                                    agent_thoughts_dict[event_id] = agent_thought
+                                else:
+                                    # 叠加智能体消息
+                                    agent_thoughts_dict[event_id] = agent_thoughts_dict[event_id].model_copy(update={
+                                        "thought": agent_thoughts_dict[event_id].thought + agent_thought.thought,
+                                        "answer": agent_thoughts_dict[event_id].answer + agent_thought.answer,
+                                        "latency": agent_thought.latency,
+                                    })
                             else:
-                                # 叠加智能体消息
-                                agent_thoughts_dict[event_id] = agent_thoughts_dict[event_id].model_copy(update={
-                                    "thought": agent_thoughts_dict[event_id].thought + agent_thought.thought,
-                                    "answer": agent_thoughts_dict[event_id].answer + agent_thought.answer,
-                                    "latency": agent_thought.latency,
-                                })
-                        else:
-                            # 处理其他类型事件的消息
-                            agent_thoughts_dict[event_id] = agent_thought
-                    data = {
-                        **agent_thought.model_dump(include={
-                            "event", "thought", "observation", "tool", "tool_input", "answer", "latency",
-                        }),
-                        "id": event_id,
-                        "end_user_id": end_user_id,
-                        "conversation_id": conversation_id,
-                        "message_id": message_id,
-                        "task_id": str(agent_thought.task_id),
-                    }
-                    yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data)}\n\n"
-
-                # 22.将消息以及推理过程添加到数据库
-                self.conversation_service.save_agent_thoughts(
-                    account_id=account_id,
-                    app_id=app_id,
-                    app_config=app_config,
-                    conversation_id=conversation_id,
-                    message_id=message_id,
-                    agent_thoughts=[agent_thought for agent_thought in agent_thoughts_dict.values()],
-                )
+                                # 处理其他类型事件的消息
+                                agent_thoughts_dict[event_id] = agent_thought
+                        data = {
+                            **agent_thought.model_dump(include={
+                                "event", "thought", "observation", "tool", "tool_input", "answer", "latency",
+                            }),
+                            "id": event_id,
+                            "end_user_id": end_user_id,
+                            "conversation_id": conversation_id,
+                            "message_id": message_id,
+                            "task_id": str(agent_thought.task_id),
+                        }
+                        yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                finally:
+                    # 22.将消息以及推理过程添加到数据库
+                    # 无论 Agent 流正常完成还是异常终止，都尝试落库已收集的推理过程
+                    try:
+                        self.conversation_service.save_agent_thoughts(
+                            account_id=account_id,
+                            app_id=app_id,
+                            app_config=app_config,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            agent_thoughts=[agent_thought for agent_thought in agent_thoughts_dict.values()],
+                        )
+                    except Exception:
+                        logger.warning("OpenAPI会话落库失败，conversation_id=%s message_id=%s",
+                                       conversation_id, message_id, exc_info=True)
 
             return handle_stream()
 

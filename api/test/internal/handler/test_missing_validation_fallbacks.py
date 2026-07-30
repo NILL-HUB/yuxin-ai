@@ -8,9 +8,6 @@ from pkg.response import HttpCode
 APP_ID = "00000000-0000-0000-0000-000000000001"
 API_KEY_ID = "00000000-0000-0000-0000-000000000002"
 CONVERSATION_ID = "00000000-0000-0000-0000-000000000003"
-DATASET_ID = "00000000-0000-0000-0000-000000000004"
-DOCUMENT_ID = "00000000-0000-0000-0000-000000000005"
-SEGMENT_ID = "00000000-0000-0000-0000-000000000006"
 
 
 CASES = [
@@ -39,22 +36,10 @@ CASES = [
         "patch_target": "internal.handler.conversation_handler.UpdateConversationIsPinnedReq",
     },
     {
-        "name": "document_enabled_validation_fallback",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/enabled",
-        "patch_target": "internal.handler.document_handler.UpdateDocumentEnabledReq",
-    },
-    {
         "name": "platform_wechat_config_validation_fallback",
         "method": "post",
         "url": f"/platform/{APP_ID}/wechat-config",
         "patch_target": "internal.handler.platform_handler.UpdateWechatConfigReq",
-    },
-    {
-        "name": "segment_enabled_validation_fallback",
-        "method": "post",
-        "url": f"/datasets/{DATASET_ID}/documents/{DOCUMENT_ID}/segments/{SEGMENT_ID}/enabled",
-        "patch_target": "internal.handler.segment_handler.UpdateSegmentEnabledReq",
     },
     {
         "name": "web_app_conversations_validation_fallback",

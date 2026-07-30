@@ -2,3 +2,11 @@ name: google_translate
 label: 谷歌翻译
 description: 使用Google翻译API进行文本翻译
 params: []
+task_keywords:
+- 翻译
+- 谷歌翻译
+- translate
+- 英语翻译
+- 中文翻译
+- 翻译成
+- 译成

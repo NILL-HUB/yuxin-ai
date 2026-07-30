@@ -1,5 +1,5 @@
-# 使用官方 Node.js 镜像作为基础镜像
-FROM node:18-alpine AS builder
+# 使用官方 Node.js 24 LTS 镜像作为基础镜像
+FROM node:24-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app/web
@@ -21,7 +21,7 @@ RUN VITE_API_PREFIX="$(node ./scripts/read-dotenv-value.mjs /app/api/.env VITE_A
     && npm run build
 
 # 二阶段使用 Nginx 来部署 Vue 静态页面+
-FROM nginx:alpine AS production
+FROM nginx:1.30-alpine AS production
 COPY --from=builder /app/web/dist /usr/share/nginx/html
 COPY --from=builder /app/web/docker/nginx/nginx.conf /etc/nginx/conf.d/default.conf
 

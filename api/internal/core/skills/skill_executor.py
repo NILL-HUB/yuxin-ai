@@ -46,6 +46,29 @@ def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+# 占位符模式：以 your- 开头或包含 -here 的 URL 视为未配置
+_PLACEHOLDER_PREFIXES = ("your-", "example-", "placeholder-")
+_PLACEHOLDER_SUBSTRINGS = ("-here", "your-scf", "your-url", "your-domain")
+
+
+def _is_placeholder_url(url: str) -> bool:
+    """检测 URL 是否为占位符（如 https://your-scf-url.tencentscf.com）。
+
+    占位符判定规则：
+        - 以 your-/example-/placeholder- 开头（忽略 http(s):// 前缀）
+        - 包含 -here/your-scf/your-url/your-domain 等子串
+    """
+    if not url:
+        return True
+    # 去掉协议前缀后小写比较
+    stripped = re.sub(r"^https?://", "", url).lower()
+    if any(stripped.startswith(prefix) for prefix in _PLACEHOLDER_PREFIXES):
+        return True
+    if any(sub in stripped for sub in _PLACEHOLDER_SUBSTRINGS):
+        return True
+    return False
+
+
 def _normalize_timeout(value: Any, default: int = 60) -> int:
     try:
         timeout = int(value)
@@ -79,7 +102,13 @@ class SkillScfClient:
 
     @property
     def is_configured(self) -> bool:
-        return bool(_normalize_text(self.endpoint))
+        """endpoint 非空且非占位符时才视为已配置。
+
+        占位符 URL（如 https://your-scf-url.tencentscf.com）视为未配置，
+        避免 sync_package/execute_skill 请求无效地址产生网络错误。
+        """
+        endpoint = _normalize_text(self.endpoint)
+        return bool(endpoint) and not _is_placeholder_url(endpoint)
 
     def sync_package(self, payload: dict[str, Any]) -> dict[str, Any]:
         """同步/更新技能包到 SCF。"""

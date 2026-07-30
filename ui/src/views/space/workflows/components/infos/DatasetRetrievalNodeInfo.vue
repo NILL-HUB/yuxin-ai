@@ -1,22 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, inject } from 'vue'
-import { useRoute } from 'vue-router'
 import { useVueFlow } from '@vue-flow/core'
 import { cloneDeep, debounce } from 'lodash'
 import { getReferencedVariables } from '@/utils/helper'
-import { getDatasetsWithPage } from '@/services/dataset'
-import { listAdminDatasets } from '@/services/admin-datasets'
 import { listSystemKnowledge } from '@/services/admin-system-knowledge'
 import { type ValidatedError, Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-
-// 旧版 Dataset 数据项
-type DatasetItem = {
-  id: string
-  name: string
-  icon: string
-  description: string
-}
 
 // 新版 KnowledgeBase 数据项（用于节点内展示与回显）
 type KnowledgeBaseItem = {
@@ -24,9 +13,6 @@ type KnowledgeBaseItem = {
   name: string
   description: string
 }
-
-// 数据源类型：dataset(旧版) / knowledge_base(新版)
-type SourceType = 'dataset' | 'knowledge_base'
 
 type NodeInputField = {
   name: string
@@ -62,9 +48,7 @@ type DatasetRetrievalNodeForm = {
   type: string
   title: string
   description: string
-  datasets: DatasetItem[]
   // 新版知识库相关字段
-  source_type: SourceType
   knowledge_base_ids: string[]
   knowledge_bases: KnowledgeBaseItem[]
   retrieval_config: RetrievalConfig
@@ -85,16 +69,13 @@ const props = defineProps({
   loading: { type: Boolean, required: true, default: false },
 })
 const emits = defineEmits(['update:visible', 'updateNode'])
-const datasetsModalVisible = ref(false)
 const { t } = useI18n()
 const form = ref<DatasetRetrievalNodeForm>({
   id: '',
   type: '',
   title: '',
   description: '',
-  datasets: [],
-  // 默认使用旧版 dataset，向后兼容
-  source_type: 'dataset',
+  // 工作流检索节点已统一切换到 KnowledgeBase
   knowledge_base_ids: [],
   knowledge_bases: [],
   retrieval_config: {
@@ -116,80 +97,7 @@ const debounceAutoSave = debounce(() => {
 }, 800)
 const { nodes, edges } = useVueFlow()
 
-// admin 上下文检测：route.path 以 /admin/ 开头或 route.meta.realm === 'admin'
-// admin 上下文下调用 /admin/datasets 跨账号加载所有知识库；space 上下文下调用 /datasets 仅加载当前账号知识库
-const route = useRoute()
-const isAdminContext = computed(
-  () => route.path.startsWith('/admin/') || route.meta.realm === 'admin',
-)
-
-// 数据集列表状态（统一 admin/space 双上下文）
-const getDatasetsWithPageLoading = ref(false)
-const datasets = ref<Record<string, any>[]>([])
-const defaultPaginator = {
-  current_page: 1,
-  page_size: 20,
-  total_page: 0,
-  total_record: 0,
-}
-const paginator = ref(defaultPaginator)
-
-/**
- * 统一的数据集加载函数，与原 useGetDatasetsWithPage 的 loadDatasets(init, search_word) 接口保持一致。
- * - admin 上下文：调用 listAdminDatasets → GET /admin/datasets
- * - space 上下文：调用 getDatasetsWithPage → GET /datasets
- */
-const loadDatasets = async (init: boolean = false, search_word: string = '') => {
-  // 1.初始化时重置分页器；非初始化且已超出总页数则直接返回
-  if (init) {
-    paginator.value = defaultPaginator
-  } else if (paginator.value.current_page > paginator.value.total_page) {
-    return
-  }
-
-  try {
-    getDatasetsWithPageLoading.value = true
-    let list: Record<string, any>[] = []
-    let respPaginator = defaultPaginator
-
-    if (isAdminContext.value) {
-      // admin 上下文：跨账号加载所有知识库
-      const data = await listAdminDatasets({
-        search_word,
-        current_page: paginator.value.current_page,
-        page_size: paginator.value.page_size,
-      })
-      list = data.list || []
-      respPaginator = data.paginator
-    } else {
-      // space 上下文：仅加载当前账号知识库
-      const resp = await getDatasetsWithPage(
-        paginator.value.current_page,
-        paginator.value.page_size,
-        search_word,
-      )
-      list = resp.data.list
-      respPaginator = resp.data.paginator
-    }
-
-    // 2.更新分页器并预读下一页码
-    paginator.value = respPaginator
-    if (paginator.value.current_page <= paginator.value.total_page) {
-      paginator.value.current_page += 1
-    }
-
-    // 3.初始化覆盖，否则追加
-    if (init) {
-      datasets.value = list
-    } else {
-      datasets.value.push(...list)
-    }
-  } finally {
-    getDatasetsWithPageLoading.value = false
-  }
-}
-
-// 新版系统知识库列表状态（系统级知识库全局可见，admin/space 上下文均可调用）
+// 新版系统知识库列表状态（系统级知识库全局可见）
 const knowledgeBasesLoading = ref(false)
 const knowledgeBases = ref<KnowledgeBaseItem[]>([])
 
@@ -231,20 +139,6 @@ const knowledgeBaseOptions = computed(() =>
 )
 
 /**
- * 数据源类型切换处理器：切换时清空另一组 id，避免数据残留。
- * - 切到 dataset：清空 knowledge_base_ids / knowledge_bases
- * - 切到 knowledge_base：清空 datasets
- */
-const handleSourceTypeChange = (val: SourceType) => {
-  if (val === 'dataset') {
-    form.value.knowledge_base_ids = []
-    form.value.knowledge_bases = []
-  } else if (val === 'knowledge_base') {
-    form.value.datasets = []
-  }
-}
-
-/**
  * 新版知识库多选变更处理器：同步维护 knowledge_base_ids 与 knowledge_bases，
  * 保证最多 5 个，并按当前选中顺序回填展示信息。
  */
@@ -269,81 +163,27 @@ const inputRefOptions = computed(() => {
   return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
 })
 
-// 3.定义滚动数据分页处理器
-const handleScroll = async (event: UIEvent) => {
-  // 3.1 获取滚动距离、可滚动的最大距离、客户端/浏览器窗口的高度
-  const { scrollTop, scrollHeight, clientHeight } = event.target as HTMLElement
-
-  // 3.2 判断是否滑动到底部
-  if (scrollTop + clientHeight >= scrollHeight - 10) {
-    if (getDatasetsWithPageLoading.value) return
-    await loadDatasets()
-  }
-}
-
-// 4.定义取消关联知识库函数
-const removeDataset = (idx: number) => {
-  form.value.datasets.splice(idx, 1)
-}
-
-// 5.知识库选择处理器
-const handleSelectDataset = (idx: number) => {
-  // 5.1 提取对应的知识库id
-  const dataset = datasets.value[idx]
-
-  // 5.2 检测id是否选中，如果是选中则删除
-  if (form.value.datasets.some((activateDataset: DatasetItem) => activateDataset.id === dataset.id)) {
-    form.value.datasets = form.value.datasets.filter(
-      (activateDataset: DatasetItem) => activateDataset.id !== dataset.id,
-    )
-  } else {
-    // 5.3 检测已关联的知识库数量
-  if (form.value.datasets.length >= 5) {
-      Message.warning(t('workflowEditor.datasetRetrieval.limitExceeded'))
-      return
-    }
-    // 5.4 添加数据到激活知识库列表
-    form.value.datasets.push({
-      id: dataset.id,
-      name: dataset.name,
-      icon: dataset.icon,
-      description: dataset.description,
-    })
-  }
-}
-
-// 6.定义表单提交函数
+// 3.定义表单提交函数
 const onSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | undefined }) => {
-  // 6.1 检查表单是否出现错误，如果出现错误则直接结束
+  // 3.1 检查表单是否出现错误，如果出现错误则直接结束
   if (errors) return
 
-  // 6.2 深度拷贝表单数据内容
+  // 3.2 深度拷贝表单数据内容
   const cloneInputs = cloneDeep(form.value.inputs)
-  const cloneDatasets = cloneDeep(form.value.datasets)
   const cloneKnowledgeBases = cloneDeep(form.value.knowledge_bases)
 
-  // 6.3 根据 source_type 计算需要提交的 id 列表
-  // - dataset：提交 dataset_ids，knowledge_base_ids 置空
-  // - knowledge_base：提交 knowledge_base_ids，dataset_ids 置空
-  const isKnowledgeBase = form.value.source_type === 'knowledge_base'
-  const datasetIds = isKnowledgeBase ? [] : cloneDatasets.map((dataset: DatasetItem) => dataset.id)
-  const knowledgeBaseIds = isKnowledgeBase
-    ? cloneKnowledgeBases.map((kb: KnowledgeBaseItem) => kb.id)
-    : []
+  // 3.3 提交 knowledge_base_ids（新版知识库为唯一数据源）
+  const knowledgeBaseIds = cloneKnowledgeBases.map((kb: KnowledgeBaseItem) => kb.id)
 
-  // 6.4 数据校验通过，通过事件触发数据更新
+  // 3.4 数据校验通过，通过事件触发数据更新
   emits('updateNode', {
     id: props.node.id,
     type: form.value.type,
     title: form.value.title,
     description: form.value.description,
-    datasets: cloneDatasets,
-    source_type: form.value.source_type,
-    dataset_ids: datasetIds,
     knowledge_base_ids: knowledgeBaseIds,
     knowledge_bases: cloneKnowledgeBases,
     meta: {
-      datasets: cloneDatasets,
       knowledge_bases: cloneKnowledgeBases,
     },
     retrieval_config: cloneDeep(form.value.retrieval_config),
@@ -370,7 +210,7 @@ const onSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | u
   })
 }
 
-// 7.监听数据，将数据映射到表单模型上
+// 4.监听数据，将数据映射到表单模型上
 watch(
   () => props.node?.id,
   () => {
@@ -381,7 +221,7 @@ watch(
     debounceAutoSave.cancel()
     const cloneInputs = cloneDeep(newNode.data.inputs)
 
-    // 7.1 回填新版知识库信息：优先取 meta.knowledge_bases（含展示信息），否则用 knowledge_base_ids 占位
+    // 4.1 回填新版知识库信息：优先取 meta.knowledge_bases（含展示信息），否则用 knowledge_base_ids 占位
     const rawKnowledgeBaseIds: string[] = cloneDeep(newNode.data.knowledge_base_ids) ?? []
     const rawKnowledgeBases: KnowledgeBaseItem[] =
       cloneDeep(newNode.data.meta?.knowledge_bases) ?? []
@@ -391,18 +231,12 @@ watch(
         ? rawKnowledgeBases
         : rawKnowledgeBaseIds.map((id) => ({ id, name: id, description: '' }))
 
-    // 7.2 根据 knowledge_base_ids 是否非空自动判定数据源类型（向后兼容：旧节点无该字段则默认 dataset）
-    const sourceType: SourceType =
-      rawKnowledgeBaseIds.length > 0 ? 'knowledge_base' : 'dataset'
-
     form.value = {
       id: newNode.id,
       type: newNode.type,
       title: newNode.data.title,
       description: newNode.data.description,
-      datasets: cloneDeep(newNode.data.meta?.datasets) ?? [],
       // 新版知识库相关字段
-      source_type: sourceType,
       knowledge_base_ids: rawKnowledgeBaseIds,
       knowledge_bases: knowledgeBases,
       retrieval_config: cloneDeep(newNode.data.retrieval_config) ?? {
@@ -411,13 +245,13 @@ watch(
         score: 0,
       },
       inputs: cloneInputs.map((input: NodeInputField) => {
-        // 7.3 计算引用的变量值信息
+        // 4.2 计算引用的变量值信息
         const ref =
           input.value.type === 'ref'
             ? `${input.value.content.ref_node_id}/${input.value.content.ref_var_name}`
             : ''
 
-        // 7.4 判断引用的变量值信息是否存在，如果不存在则设置为空
+        // 4.3 判断引用的变量值信息是否存在，如果不存在则设置为空
         let refExists = false
         if (input.value.type === 'ref') {
           for (const inputRefOption of inputRefOptions.value) {
@@ -462,8 +296,7 @@ onBeforeUnmount(() => {
 })
 
 onMounted(() => {
-  // 同时加载旧版 dataset 列表与新版系统知识库列表
-  loadDatasets(true)
+  // 加载新版系统知识库列表
   loadKnowledgeBases()
 })
 </script>
@@ -472,7 +305,8 @@ onMounted(() => {
   <div
     id="dataset-retrieval-node-info"
     class="absolute top-0 right-0 bottom-0 w-[400px] border-l z-50 bg-white overflow-scroll scrollbar-w-none p-3"
-  >    <!-- 只读模式提示横幅 -->
+  >
+    <!-- 只读模式提示横幅 -->
     <div v-if="isReadonly" class="mb-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
       <div class="flex items-center gap-2 text-orange-700">
         <icon-lock class="flex-shrink-0" />
@@ -648,91 +482,8 @@ onMounted(() => {
         </div>
       </div>
       <a-divider class="my-4" />
-      <!-- 数据源类型切换 -->
-      <div class="flex flex-col gap-2">
-        <!-- 标题 -->
-        <div class="flex items-center gap-2 text-gray-700 font-semibold">
-          <div class="">{{ t('workflowEditor.datasetRetrieval.sourceType') }}</div>
-        </div>
-        <!-- 类型切换 radio -->
-        <a-radio-group
-          v-model="form.source_type"
-          @change="(val: string | number | boolean) => handleSourceTypeChange(val as SourceType)"
-          :options="[
-            { label: t('workflowEditor.datasetRetrieval.sourceTypes.dataset'), value: 'dataset' },
-            { label: t('workflowEditor.datasetRetrieval.sourceTypes.knowledgeBase'), value: 'knowledge_base' },
-          ]"
-        />
-      </div>
-      <a-divider class="my-4" />
-      <!-- 关联知识库（旧版 dataset） -->
-      <div v-if="form.source_type === 'dataset'" class="flex flex-col gap-2">
-        <!-- 标题&操作按钮 -->
-        <div class="flex items-center justify-between">
-          <!-- 左侧标题 -->
-          <div class="flex items-center gap-2 text-gray-700 font-semibold">
-            <div class="">{{ t('workflowEditor.datasetRetrieval.bindDataset') }}</div>
-            <a-tooltip :content="t('workflowEditor.datasetRetrieval.bindDatasetHelp')">
-              <icon-question-circle />
-            </a-tooltip>
-          </div>
-          <!-- 右侧关联知识库按钮 -->
-          <a-button
-            size="mini"
-            type="text"
-            class="!text-gray-700"
-            @click="() => (datasetsModalVisible = true)"
-          >
-            <template #icon>
-              <icon-plus />
-            </template>
-          </a-button>
-        </div>
-        <div v-if="form.datasets?.length > 0" class="flex flex-col gap-1">
-          <div
-            v-for="(dataset, idx) in form.datasets"
-            :key="dataset.id"
-            class="flex items-center justify-between bg-white p-3 rounded-lg cursor-pointer hover:shadow-sm group border"
-          >
-            <!-- 左侧知识库信息 -->
-            <div class="flex items-center gap-2">
-              <!-- 图标 -->
-              <a-avatar
-                :size="36"
-                shape="square"
-                class="rounded flex-shrink-0"
-                :image-url="dataset.icon"
-              />
-              <!-- 名称与描述信息 -->
-              <div class="flex flex-col flex-1 gap-1 h-9">
-                <div class="text-gray-700 font-bold leading-[18px] line-clamp-1 break-all">
-                  {{ dataset.name }}
-                </div>
-                <div class="text-gray-500 text-xs line-clamp-1 break-all">
-                  {{ dataset.description }}
-                </div>
-              </div>
-            </div>
-            <!-- 右侧删除按钮 -->
-            <a-button
-              v-if="!isReadonly"
-              size="mini"
-              type="text"
-              class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
-              @click="() => removeDataset(idx)"
-            >
-              <template #icon>
-                <icon-delete />
-              </template>
-            </a-button>
-          </div>
-        </div>
-        <div v-else class="text-xs text-gray-500 leading-[22px]">
-          {{ t('workflowEditor.datasetRetrieval.emptyTip') }}
-        </div>
-      </div>
       <!-- 选择知识库（新版 knowledge_base） -->
-      <div v-else class="flex flex-col gap-2">
+      <div class="flex flex-col gap-2">
         <!-- 标题 -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2 text-gray-700 font-semibold">
@@ -785,91 +536,5 @@ onMounted(() => {
         </div>
       </div>
     </a-form>
-    <!-- 关联知识库 -->
-    <a-modal
-      :visible="datasetsModalVisible"
-      hide-title
-      :footer="false"
-      :width="400"
-      modal-class="h-[calc(100vh-32px)]"
-      @cancel="() => (datasetsModalVisible = false)"
-    >
-      <!-- 顶部标题 -->
-      <div class="flex items-center justify-between mb-6">
-        <div class="text-lg font-bold text-gray-700">{{ t('workflowEditor.datasetRetrieval.chooseDatasetTitle') }}</div>
-        <a-button
-          type="text"
-          class="!text-gray-700"
-          size="small"
-          @click="() => (datasetsModalVisible = false)"
-        >
-          <template #icon>
-            <icon-close />
-          </template>
-        </a-button>
-      </div>
-      <!-- 中间知识库容器 -->
-      <div class="h-[calc(100vh-180px)] mb-4 overflow-scroll scrollbar-w-none">
-        <a-spin
-          :loading="getDatasetsWithPageLoading"
-          class="block h-full w-full scrollbar-w-none overflow-scroll"
-          @scroll="handleScroll"
-        >
-          <!-- 知识库列表 -->
-          <div class="flex flex-col gap-2">
-            <!-- 有数据UI状态 -->
-            <div
-              v-for="(dataset, idx) in datasets"
-              :key="dataset.id"
-              :class="`flex items-center gap-2 border px-3 py-2 rounded-lg cursor-pointer hover:bg-blue-50 hover:border-blue-700 ${form.datasets.some((activateDataset: DatasetItem) => activateDataset.id === dataset.id) ? 'bg-blue-50 border-blue-700' : ''}`"
-              @click="() => handleSelectDataset(idx)"
-            >
-              <a-avatar
-                :size="24"
-                shape="square"
-                class="flex-shrink-0 rounded"
-                :image-url="dataset.icon"
-              />
-              <div class="line-clamp-1 text-gray-500 flex-1">{{ dataset.name }}</div>
-            </div>
-            <!-- 无数据UI状态 -->
-            <a-empty
-              v-if="datasets.length === 0"
-              :description="t('workflowEditor.datasetRetrieval.noAvailable')"
-              class="h-[400px] flex flex-col items-center justify-center"
-            />
-          </div>
-          <!-- 加载器 -->
-          <a-row v-if="paginator.total_page >= 2">
-            <!-- 加载数据中 -->
-            <a-col
-              v-if="getDatasetsWithPageLoading"
-              :span="24"
-              class="!text-center"
-            >
-              <a-space class="my-4">
-                <a-spin />
-                <div class="text-gray-400">{{ t('workflowEditor.datasetRetrieval.loading') }}</div>
-              </a-space>
-            </a-col>
-            <!-- 数据加载完成 -->
-            <a-col v-else-if="paginator.current_page > paginator.total_page" :span="24" class="!text-center">
-              <div class="text-gray-400 my-4">{{ t('workflowEditor.datasetRetrieval.loaded') }}</div>
-            </a-col>
-          </a-row>
-        </a-spin>
-      </div>
-      <!-- 底部选中知识库及按钮 -->
-      <div class="flex items-center justify-between">
-        <!-- 左侧提示文字 -->
-        <div class="">{{ t('workflowEditor.datasetRetrieval.selectedCount', { count: form.datasets.length }) }}</div>
-        <!-- 按钮组 -->
-        <a-space :size="12">
-          <a-button type="primary" class="rounded-lg" @click="() => (datasetsModalVisible = false)">
-            {{ t('workflowEditor.datasetRetrieval.chooseDatasetButton') }}
-          </a-button>
-        </a-space>
-      </div>
-    </a-modal>
   </div>
 </template>

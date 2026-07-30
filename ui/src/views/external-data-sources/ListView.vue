@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n'
 import moment from 'moment'
 import {
   authorizeExternalDataSource,
+  createExternalDataSource,
   deleteExternalDataSource,
   getExternalDataSources,
   syncExternalDataSource,
@@ -24,6 +25,94 @@ const dataSources = ref<Array<ExternalDataSource>>([])
 const loading = ref(false)
 const syncingIds = ref<Record<string, boolean>>({})
 const authorizingIds = ref<Record<string, boolean>>({})
+
+// 新建数据源弹窗状态
+const createModalVisible = ref(false)
+const creating = ref(false)
+const createForm = ref({
+  source_type: 'lark',
+  source_name: '',
+  config: {} as Record<string, string>,
+})
+
+// 数据源类型选项
+const sourceTypeOptions = computed(() => [
+  { value: 'lark', label: t('externalDataSource.lark') },
+  { value: 'notion', label: t('externalDataSource.notion') },
+  { value: 'drive', label: t('externalDataSource.drive') },
+  { value: 'github', label: t('externalDataSource.github') },
+  { value: 'enterprise_knowledge', label: t('externalDataSource.enterpriseKnowledge') },
+])
+
+// 按 source_type 动态展示的凭证字段定义
+const credentialFields = computed(() => {
+  switch (createForm.value.source_type) {
+    case 'lark':
+      return [
+        { key: 'app_id', label: t('externalDataSource.fields.appId'), required: true },
+        { key: 'app_secret', label: t('externalDataSource.fields.appSecret'), required: true },
+        { key: 'folder_token', label: t('externalDataSource.fields.folderToken'), required: false },
+      ]
+    case 'notion':
+      return [
+        { key: 'integration_token', label: t('externalDataSource.fields.integrationToken'), required: true },
+        { key: 'database_id', label: t('externalDataSource.fields.databaseId'), required: false },
+        { key: 'page_id', label: t('externalDataSource.fields.pageId'), required: false },
+      ]
+    case 'github':
+      return [
+        { key: 'personal_access_token', label: t('externalDataSource.fields.personalAccessToken'), required: true },
+        { key: 'owner', label: t('externalDataSource.fields.owner'), required: true },
+        { key: 'repo', label: t('externalDataSource.fields.repo'), required: true },
+      ]
+    case 'drive':
+      return [
+        { key: 'folder_path', label: t('externalDataSource.fields.folderPath'), required: false },
+      ]
+    case 'enterprise_knowledge':
+      return [
+        { key: 'endpoint', label: t('externalDataSource.fields.endpoint'), required: false },
+        { key: 'api_key', label: t('externalDataSource.fields.apiKey'), required: false },
+      ]
+    default:
+      return []
+  }
+})
+
+const resetCreateForm = () => {
+  createForm.value = {
+    source_type: 'lark',
+    source_name: '',
+    config: {},
+  }
+}
+
+const openCreateModal = () => {
+  resetCreateForm()
+  createModalVisible.value = true
+}
+
+const handleCreate = async () => {
+  if (!createForm.value.source_name.trim()) {
+    Message.error(t('externalDataSource.createFailed'))
+    return
+  }
+  creating.value = true
+  try {
+    await createExternalDataSource({
+      source_type: createForm.value.source_type,
+      source_name: createForm.value.source_name,
+      config: { ...createForm.value.config },
+    })
+    Message.success(t('externalDataSource.createSuccess'))
+    createModalVisible.value = false
+    await loadDataSources()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('externalDataSource.createFailed')))
+  } finally {
+    creating.value = false
+  }
+}
 
 const openLoginModal = () => {
   if (typeof window === 'undefined') return
@@ -58,8 +147,12 @@ const sourceTypeLabel = (sourceType: string) => {
   switch (sourceType) {
     case 'lark':
       return t('externalDataSource.lark')
+    case 'notion':
+      return t('externalDataSource.notion')
     case 'drive':
       return t('externalDataSource.drive')
+    case 'github':
+      return t('externalDataSource.github')
     case 'enterprise_knowledge':
       return t('externalDataSource.enterpriseKnowledge')
     default:
@@ -71,8 +164,12 @@ const sourceTypeColor = (sourceType: string) => {
   switch (sourceType) {
     case 'lark':
       return 'arcoblue'
+    case 'notion':
+      return 'green'
     case 'drive':
       return 'cyan'
+    case 'github':
+      return 'orangered'
     case 'enterprise_knowledge':
       return 'purple'
     default:
@@ -246,11 +343,28 @@ watch(
       <p class="text-gray-500 mb-6 text-center max-w-md">
         {{ t('externalDataSource.noData') }}
       </p>
+      <a-button
+        type="primary"
+        size="large"
+        class="!rounded-lg !bg-gray-900 hover:!bg-gray-800"
+        @click="openCreateModal"
+      >
+        <template #icon><icon-plus /></template>
+        {{ t('externalDataSource.create') }}
+      </a-button>
     </div>
 
     <div v-else>
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-xl font-semibold text-gray-900">{{ t('externalDataSource.title') }}</h2>
+        <a-button
+          type="primary"
+          class="!rounded-lg !bg-gray-900 hover:!bg-gray-800"
+          @click="openCreateModal"
+        >
+          <template #icon><icon-plus /></template>
+          {{ t('externalDataSource.create') }}
+        </a-button>
       </div>
       <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <a-table
@@ -370,6 +484,38 @@ watch(
         </a-table>
       </div>
     </div>
+
+    <!-- 新建数据源弹窗 -->
+    <a-modal
+      :visible="createModalVisible"
+      :title="t('externalDataSource.createTitle')"
+      :ok-loading="creating"
+      :mask-closable="false"
+      :ok-text="t('externalDataSource.create')"
+      :cancel-text="t('common.actions.cancel')"
+      @ok="handleCreate"
+      @cancel="createModalVisible = false"
+    >
+      <a-form :model="createForm" layout="vertical">
+        <a-form-item :label="t('externalDataSource.sourceTypeLabel')">
+          <a-select v-model="createForm.source_type" :options="sourceTypeOptions" />
+        </a-form-item>
+        <a-form-item :label="t('externalDataSource.sourceNameLabel')">
+          <a-input v-model="createForm.source_name" allow-clear />
+        </a-form-item>
+        <a-form-item
+          v-for="field in credentialFields"
+          :key="field.key"
+          :label="field.label"
+        >
+          <a-input
+            v-model="createForm.config[field.key]"
+            :placeholder="field.label"
+            allow-clear
+          />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </div>
 </template>
 

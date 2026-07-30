@@ -16,7 +16,7 @@ class CostPolicyService:
         if balance_credits < self.minimum_balance_credits:
             return {
                 "allowed": False,
-                "model_tier": "cheap",
+                "model_tier": "1",
                 "max_agent_count": 0,
                 "max_tool_count": 0,
                 "deep_thinking": False,
@@ -25,7 +25,7 @@ class CostPolicyService:
         if budget_level == "low":
             return {
                 "allowed": True,
-                "model_tier": "cheap",
+                "model_tier": "1",
                 "max_agent_count": 2,
                 "max_tool_count": 4,
                 "deep_thinking": False,
@@ -34,7 +34,7 @@ class CostPolicyService:
         if task_complexity == "complex":
             return {
                 "allowed": True,
-                "model_tier": "strong",
+                "model_tier": "3",
                 "max_agent_count": 5,
                 "max_tool_count": 10,
                 "deep_thinking": deep_thinking_requested,
@@ -43,7 +43,7 @@ class CostPolicyService:
         if task_complexity == "medium":
             return {
                 "allowed": True,
-                "model_tier": "standard",
+                "model_tier": "2",
                 "max_agent_count": 3,
                 "max_tool_count": 6,
                 "deep_thinking": False,
@@ -51,7 +51,7 @@ class CostPolicyService:
             }
         return {
             "allowed": True,
-            "model_tier": "cheap",
+            "model_tier": "1",
             "max_agent_count": 1,
             "max_tool_count": 3,
             "deep_thinking": False,
@@ -59,7 +59,8 @@ class CostPolicyService:
         }
 
 
-_TIER_RANK = {"cheap": 0, "standard": 1, "strong": 2}
+# 档位排序：数字标识越大通常档位越高（1=经济型, 2=标准型, 3=强力型）
+_TIER_RANK = {"1": 0, "2": 1, "3": 2}
 
 
 @dataclass
@@ -73,15 +74,15 @@ class EscalationPolicy:
     def __post_init__(self):
         if self.complexity_escalation is None:
             self.complexity_escalation = {
-                "simple": "cheap",
-                "medium": "standard",
-                "complex": "strong",
+                "simple": "1",
+                "medium": "2",
+                "complex": "3",
             }
         if self.budget_downgrade_map is None:
             self.budget_downgrade_map = {
-                "low": "cheap",
-                "medium": "standard",
-                "high": "strong",
+                "low": "1",
+                "medium": "2",
+                "high": "3",
             }
 
 
@@ -90,7 +91,7 @@ class EscalationPolicyService:
         self.policy = policy or EscalationPolicy()
 
     def should_escalate(self, current_tier: str, token_count: int, task_complexity: str) -> bool:
-        target_tier = self.policy.complexity_escalation.get(task_complexity, "standard")
+        target_tier = self.policy.complexity_escalation.get(task_complexity, "2")
         if self._tier_rank(target_tier) > self._tier_rank(current_tier):
             return True
         if token_count > self.policy.token_escalation_threshold:
@@ -101,8 +102,8 @@ class EscalationPolicyService:
         self, current_tier: str, balance_credits: float, budget_level: str
     ) -> tuple:
         if balance_credits < self.policy.balance_downgrade_threshold:
-            return True, "cheap"
-        target_tier = self.policy.budget_downgrade_map.get(budget_level, "standard")
+            return True, "1"
+        target_tier = self.policy.budget_downgrade_map.get(budget_level, "2")
         if self._tier_rank(target_tier) < self._tier_rank(current_tier):
             return True, target_tier
         return False, current_tier
@@ -121,10 +122,12 @@ class EscalationPolicyService:
         if should_downgrade:
             return downgrade_tier
         if self.should_escalate(current_tier, token_count, task_complexity):
-            target_tier = self.policy.complexity_escalation.get(task_complexity, "standard")
+            target_tier = self.policy.complexity_escalation.get(task_complexity, "2")
             return target_tier
         return current_tier
 
     @staticmethod
     def _tier_rank(tier: str) -> int:
         return _TIER_RANK.get(tier, 1)
+
+

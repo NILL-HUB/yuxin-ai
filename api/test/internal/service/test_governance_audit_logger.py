@@ -4,7 +4,7 @@
     1. 正常写入路由日志（mock session）
     2. 路由日志表不存在时降级为 warning（session.flush 抛异常）
     3. audit_context 完整序列化到 payload
-    4. request_id/conversation_id/account_id 透传
+    4. request_id/conversation_id/message_id/account_id/actor_id 透传
     5. 空审计上下文（无工具）正常处理
 """
 
@@ -103,6 +103,7 @@ def test_normal_write_persists_routing_log_with_audit_context():
         audit,
         request_id="req-123",
         conversation_id=None,
+        message_id=None,
         account_id=account_id,
         app_id="app-1",
     )
@@ -113,7 +114,7 @@ def test_normal_write_persists_routing_log_with_audit_context():
     assert isinstance(log, RoutingLog)
     # account_id 透传（UUID 化）
     assert str(log.account_id) == account_id
-    # message_id 为 None（conversation_id=None）
+    # message_id 为 None（未传入 message_id）
     assert log.message_id is None
     # routing_decision 含 decision_type/payload/summary
     assert log.routing_decision["decision_type"] == DECISION_TYPE_TOOL_GOVERNANCE
@@ -198,14 +199,20 @@ def test_audit_context_fully_serialized_to_payload():
     assert "mode:block_sensitive_only" in log.routing_decision["summary"]
 
 
-def test_request_id_conversation_id_account_id_pass_through():
-    """场景4：request_id/conversation_id/account_id 透传。
+def test_request_id_conversation_id_message_id_account_id_pass_through():
+    """场景4：request_id/conversation_id/message_id/account_id/actor_id 透传。
 
-    所有三个 id 透传到 RoutingLog 字段：account_id→account_id，
-    conversation_id→message_id（UUID 化），request_id→routing_decision.request_id。
+    字段语义：
+        - account_id → routing_log.account_id（UUID 化，FK 到 account 表）
+        - message_id → routing_log.message_id（UUID 化，关联具体消息记录）
+        - conversation_id → routing_decision.conversation_id（上下文，便于按会话追溯）
+        - request_id → routing_decision.request_id
+        - actor_id → routing_decision.actor_id（实际触发 actor，如 WebApp 访客 ID，不参与 FK）
     """
     account_id = str(uuid.uuid4())
     conversation_id = str(uuid.uuid4())
+    message_id = str(uuid.uuid4())
+    actor_id = str(uuid.uuid4())
     request_id = "req-abc-123"
     audit = _audit_context(
         accepted=[{"tool_id": "builtin:t", "name": "t"}],
@@ -219,15 +226,21 @@ def test_request_id_conversation_id_account_id_pass_through():
         audit,
         request_id=request_id,
         conversation_id=conversation_id,
+        message_id=message_id,
         account_id=account_id,
         app_id="app-1",
+        actor_id=actor_id,
     )
 
     log = session.add.call_args[0][0]
     assert str(log.account_id) == account_id
-    assert str(log.message_id) == conversation_id
+    # message_id 写入 routing_log.message_id 字段
+    assert str(log.message_id) == message_id
+    # conversation_id/message_id/actor_id 保留在 routing_decision 上下文中
     assert log.routing_decision["request_id"] == request_id
     assert log.routing_decision["conversation_id"] == conversation_id
+    assert log.routing_decision["message_id"] == message_id
+    assert log.routing_decision["actor_id"] == actor_id
 
 
 def test_empty_audit_context_is_handled_gracefully():
@@ -311,8 +324,11 @@ def test_invalid_account_id_degrades_to_warning(caplog):
     assert session.add.call_count == 0
 
 
-def test_invalid_conversation_id_does_not_break_but_message_id_is_none():
-    """补充：conversation_id 非法时 message_id 为 None，不阻断写入。"""
+def test_invalid_message_id_does_not_break_but_message_id_is_none():
+    """补充：message_id 非法时 routing_log.message_id 为 None，不阻断写入。
+
+    conversation_id 同时透传到 routing_decision 上下文（保留原始字符串可读性）。
+    """
     audit = _audit_context(
         accepted=[{"tool_id": "builtin:t", "name": "t"}],
         account_id=str(uuid.uuid4()),
@@ -323,10 +339,13 @@ def test_invalid_conversation_id_does_not_break_but_message_id_is_none():
     logger_service.log_governance_decision(
         audit,
         conversation_id="not-a-uuid",
+        message_id="also-not-a-uuid",
         account_id=str(uuid.uuid4()),
     )
 
     log = session.add.call_args[0][0]
+    # message_id 无法解析为 UUID，routing_log.message_id 为 None
     assert log.message_id is None
-    # routing_decision.conversation_id 透传原始字符串（保留可读性）
+    # conversation_id 和 message_id 透传原始字符串到 routing_decision 上下文
     assert log.routing_decision["conversation_id"] == "not-a-uuid"
+    assert log.routing_decision["message_id"] == "also-not-a-uuid"

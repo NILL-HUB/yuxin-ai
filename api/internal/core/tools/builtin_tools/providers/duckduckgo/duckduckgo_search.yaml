@@ -2,3 +2,11 @@ name: duckduckgo_search
 label: DuckDuckGo搜索
 description: 一个注重隐私的搜索引擎
 params: []
+task_keywords:
+- 搜索
+- duckduckgo
+- 隐私搜索
+- 查一下
+- 查找
+- 联网搜索
+- search

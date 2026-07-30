@@ -23,9 +23,8 @@ from internal.model import (
     Account,
     AppConfigVersion,
     ApiTool,
-    Dataset,
+    KnowledgeBase,
     AppConfig,
-    AppDatasetJoin,
     Workflow,
 )
 from internal.schema.app_schema import (
@@ -47,8 +46,7 @@ from .retrieval_service import RetrievalService
 from .icon_generator_service import IconGeneratorService
 from .skill_service import SkillService
 from .workflow_app_service import WorkflowAppService
-from ..core.language_model.entities.model_entity import ModelParameterType, ModelFeature
-from ..core.language_model.providers.deepseek.chat import Chat
+from ..core.language_model.entities.model_entity import ModelParameterType
 from ..entity.app_entity import AppType
 from ..entity.workflow_entity import WorkflowStatus
 
@@ -230,13 +228,8 @@ class AppService(BaseService):
         name = (name or "").strip()
         description = (description or "").strip()
 
-        # 1.创建LLM，用于生成icon提示与预设提示词
-        llm = Chat(
-            model="deepseek-chat",
-            temperature=0.8,
-            features=[ModelFeature.TOOL_CALL.value, ModelFeature.AGENT_THOUGHT.value],
-            metadata={},
-        )
+        # 1.创建LLM（走数据库配置 + compatible_api 分发）
+        llm = self.language_model_service.get_feature_model("app_auto_creation")
 
         # 2.生成预设prompt链
         generate_preset_prompt_chain = ChatPromptTemplate.from_messages([
@@ -431,6 +424,26 @@ class AppService(BaseService):
         account = self._get_owner_account(app.account_id)
         return self.update_draft_app_config(app_id, draft_app_config, account)
 
+    def get_app_owner_account_for_admin(self, app_id: UUID) -> Account:
+        """管理员视角：获取应用归属账号（不校验归属），供其他服务复用"""
+        app = self._get_app_for_admin(app_id)
+        return self._get_owner_account(app.account_id)
+
+    def get_published_config_for_admin(self, app_id: UUID) -> dict[str, Any]:
+        """管理员获取应用发布配置（不校验账号归属，以应用归属账号执行）"""
+        account = self.get_app_owner_account_for_admin(app_id)
+        return self.get_published_config(app_id, account)
+
+    def get_versions_for_admin(self, app_id: UUID) -> list[AppConfigVersion]:
+        """管理员获取应用版本对比数据（不校验账号归属，以应用归属账号执行）"""
+        account = self.get_app_owner_account_for_admin(app_id)
+        return self.get_versions(app_id, account)
+
+    def regenerate_web_app_token_for_admin(self, app_id: UUID) -> str:
+        """管理员重新生成WebApp凭证标识（不校验账号归属，以应用归属账号执行）"""
+        account = self.get_app_owner_account_for_admin(app_id)
+        return self.regenerate_web_app_token(app_id, account)
+
     def update_app(self, app_id: UUID, account: Account, **kwargs) -> App:
         """根据传递的应用id+账号+信息,更新指定的应用"""
         app = self.get_app(app_id, account)
@@ -589,6 +602,10 @@ class AppService(BaseService):
             skills=[{"skill_id": skill["skill_id"]} for skill in draft_app_config.get("skills", [])],
             agent_bindings=draft_app_config.get("agent_bindings", []),
             workflows=[workflow["id"] for workflow in draft_app_config["workflows"]],
+            # knowledge_base_ids 直接存入 AppConfig JSONB 列
+            knowledge_base_ids=draft_app_config.get("knowledge_base_ids", []),
+            # embedding_model_id 从草稿复制到运行时配置
+            embedding_model_id=draft_app_config.get("embedding_model_id") or None,
             retrieval_config=draft_app_config["retrieval_config"],
             long_term_memory=draft_app_config["long_term_memory"],
             opening_statement=draft_app_config["opening_statement"],
@@ -616,17 +633,7 @@ class AppService(BaseService):
 
         self.update(app, **update_data)
 
-        # 4.先删除原有的知识库关联记录
-        with self.db.auto_commit():
-            self.db.session.query(AppDatasetJoin).filter(
-                AppDatasetJoin.app_id == app_id,
-            ).delete()
-
-        # 5.新增新的知识库关联记录
-        for dataset in draft_app_config["datasets"]:
-            self.create(AppDatasetJoin, app_id=app_id, dataset_id=dataset["id"])
-
-        # 6.获取应用草稿记录，并移除id、version、config_type、updated_at、created_at字段
+        # 4.获取应用草稿记录，并移除id、version、config_type、updated_at、created_at字段
         draft_app_config_copy = app.draft_app_config.__dict__.copy()
         remove_fields(
             draft_app_config_copy,
@@ -825,7 +832,12 @@ class AppService(BaseService):
         # 1.校验上传的草稿配置中对应的字段，至少拥有一个可以更新的配置
         acceptable_fields = [
             "model_config", "dialog_round", "preset_prompt",
-            "tools", "mcp_bindings", "mcp_tool_snapshots", "skills", "agent_bindings", "workflows", "datasets", "retrieval_config",
+            "tools", "mcp_bindings", "mcp_tool_snapshots", "skills", "agent_bindings", "workflows",
+            # knowledge_base_ids（App 配置主用字段，新建/编辑 App 时仅使用此字段）
+            "knowledge_base_ids",
+            # App 级别绑定的 embedding 模型 ID（用于按维度路由向量存储）
+            "embedding_model_id",
+            "retrieval_config",
             "long_term_memory", "opening_statement", "opening_questions",
             "speech_to_text", "text_to_speech", "suggested_after_answer", "review_config",
             "workflow_id",
@@ -853,15 +865,19 @@ class AppService(BaseService):
             # 3.3 判断模型提供者信息是否正确
             if not model_config["provider"] or not isinstance(model_config["provider"], str):
                 raise ValidateErrorException("模型服务提供商类型必须为字符串")
-            provider = self.language_model_manager.get_provider(model_config["provider"])
-            if not provider:
+            try:
+                self.language_model_manager.get_or_load_provider(model_config["provider"])
+            except NotFoundException:
                 raise ValidateErrorException("该模型服务提供商不存在 请核实后重试")
 
             # 3.3 判断模型信息是否正确
             if not model_config["model"] or not isinstance(model_config["model"], str):
                 raise ValidateErrorException("模型名字类型必须为字符串")
-            model_entity = provider.get_model_entity(model_config["model"])
-            if not model_entity:
+            try:
+                model_entity = self.language_model_manager.get_or_load_model_entity(
+                    model_config["provider"], model_config["model"]
+                )
+            except NotFoundException:
                 raise ValidateErrorException("该模型服务提供商下不存在该模型,请核实后重试")
 
             # 3.5 判断传递的parameters是否正确 如果不正确则设置为默认值 并剔除多余字段 补全未传递的字段
@@ -1170,32 +1186,62 @@ class AppService(BaseService):
             _, validate_skills = skill_service.process_and_validate_skill_bindings(skills)
             draft_app_config["skills"] = validate_skills
 
-        # 10.校验datasets知识库列表
-        if "datasets" in draft_app_config:
-            datasets = draft_app_config["datasets"]
+        # 10.校验 knowledge_base_ids 知识库列表（App 配置主用字段）
+        if "knowledge_base_ids" in draft_app_config:
+            knowledge_base_ids = draft_app_config["knowledge_base_ids"]
 
-            # 8.1 判断datasets类型是否为列表
-            if not isinstance(datasets, list):
-                raise ValidateErrorException("绑定知识库列表参数格式错误")
-            # 8.2 判断关联的知识库列表是否超过5个
-            if len(datasets) > 5:
+            # 校验类型必须为列表
+            if not isinstance(knowledge_base_ids, list):
+                raise ValidateErrorException("知识库ID列表参数格式错误")
+            # 校验数量不能超过5个
+            if len(knowledge_base_ids) > 5:
                 raise ValidateErrorException("Agent绑定的知识库数量不能超过5个")
-            # 8.3 循环校验知识库的每个参数
-            for dataset_id in datasets:
+            # 校验每个 id 是否为合法 UUID
+            for kb_id in knowledge_base_ids:
                 try:
-                    UUID(dataset_id)
-                except Exception as e:
-                    raise ValidateErrorException("知识库列表参数必须是UUID")
-            # 8.4 判断是否传递了重复的知识库
-            if len(set(datasets)) != len(datasets):
+                    UUID(str(kb_id))
+                except Exception:
+                    raise ValidateErrorException("知识库ID列表参数必须是UUID")
+            # 校验是否传递了重复的知识库
+            normalized_kb_ids = [str(kb_id) for kb_id in knowledge_base_ids]
+            if len(set(normalized_kb_ids)) != len(normalized_kb_ids):
                 raise ValidateErrorException("绑定知识库存在重复")
-            # 8.5 校验绑定的知识库权限，剔除不属于当前账号的知识库
-            dataset_records = self.db.session.query(Dataset).filter(
-                Dataset.id.in_(datasets),
-                Dataset.account_id == account.id,
+            # 校验绑定的知识库是否存在且启用，剔除不可用的知识库
+            try:
+                kb_uuid_ids = [UUID(kb_id) for kb_id in normalized_kb_ids]
+            except Exception:
+                raise ValidateErrorException("知识库ID列表参数必须是UUID")
+            kb_records = self.db.session.query(KnowledgeBase).filter(
+                KnowledgeBase.id.in_(kb_uuid_ids),
+                KnowledgeBase.enabled.is_(True),
             ).all()
-            dataset_sets = set([str(dataset_record.id) for dataset_record in dataset_records])
-            draft_app_config["datasets"] = [dataset_id for dataset_id in datasets if dataset_id in dataset_sets]
+            kb_id_sets = set([str(kb_record.id) for kb_record in kb_records])
+            draft_app_config["knowledge_base_ids"] = [
+                kb_id for kb_id in normalized_kb_ids if kb_id in kb_id_sets
+            ]
+
+        # 10.5 校验 embedding_model_id（App 级别绑定的 embedding 模型 ID）
+        # 允许传空字符串/None 表示解绑，传字符串则校验为合法 UUID 且对应模型存在
+        if "embedding_model_id" in draft_app_config:
+            raw_embedding_model_id = draft_app_config.get("embedding_model_id")
+            if raw_embedding_model_id is None or str(raw_embedding_model_id).strip() == "":
+                draft_app_config["embedding_model_id"] = None
+            else:
+                embedding_model_id_str = str(raw_embedding_model_id).strip()
+                try:
+                    UUID(embedding_model_id_str)
+                except Exception:
+                    raise ValidateErrorException("embedding_model_id 必须是有效的 UUID")
+                # 校验对应模型是否存在且为 embedding 类型
+                from internal.model.model_pool_entity import ModelPoolConfig
+                model_record = self.db.session.query(ModelPoolConfig).filter(
+                    ModelPoolConfig.id == UUID(embedding_model_id_str),
+                ).one_or_none()
+                if not model_record:
+                    raise ValidateErrorException("embedding_model_id 对应的模型不存在")
+                if (getattr(model_record, "model_type", None) or "chat") != "embedding":
+                    raise ValidateErrorException("embedding_model_id 对应的模型必须是 embedding 类型")
+                draft_app_config["embedding_model_id"] = embedding_model_id_str
 
         # 11.校验retrieval_config检索配置
         if "retrieval_config" in draft_app_config:

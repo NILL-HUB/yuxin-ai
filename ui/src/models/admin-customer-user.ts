@@ -8,6 +8,7 @@ export type CustomerUser = {
   name: string
   avatar: string
   status: CustomerUserStatus
+  is_online: boolean
   disabled_at: number | null
   disabled_by: string | null
   disabled_reason: string

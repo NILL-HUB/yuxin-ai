@@ -9,8 +9,6 @@ from pkg.paginator import Paginator
 
 
 APP_ID = "00000000-0000-0000-0000-000000000001"
-DATASET_ID = "00000000-0000-0000-0000-000000000002"
-UPLOAD_FILE_ID = "00000000-0000-0000-0000-000000000003"
 
 
 class TestRemainingHandlerSuccessDelegation:
@@ -46,48 +44,6 @@ class TestRemainingHandlerSuccessDelegation:
         assert resp.json["data"]["id"] == APP_ID
         assert captures["req"].name.data == "Agent Demo"
         assert captures["req"].icon.data == "https://a.com/icon.png"
-
-    def test_create_documents_should_delegate_to_service_and_return_batch(self, http_client, monkeypatch):
-        captures = {}
-
-        def _create_documents(_self, dataset_id, upload_file_ids, process_type, rule, account):
-            captures["dataset_id"] = dataset_id
-            captures["upload_file_ids"] = upload_file_ids
-            captures["process_type"] = process_type
-            captures["rule"] = rule
-            captures["account"] = account
-            return (
-                [
-                    SimpleNamespace(
-                        id=UUID(UPLOAD_FILE_ID),
-                        name="doc-a",
-                        status="waiting",
-                        created_at=datetime(2024, 1, 1, 0, 0, 0),
-                    )
-                ],
-                "batch-1",
-            )
-
-        monkeypatch.setattr(
-            "internal.service.document_service.DocumentService.create_documents",
-            _create_documents,
-        )
-
-        resp = http_client.post(
-            f"/datasets/{DATASET_ID}/documents",
-            json={
-                "upload_file_ids": [UPLOAD_FILE_ID],
-                "process_type": "automatic",
-                "rule": {},
-            },
-        )
-
-        assert resp.status_code == 200
-        assert resp.json["code"] == HttpCode.SUCCESS
-        assert resp.json["data"]["batch"] == "batch-1"
-        assert captures["dataset_id"] == UUID(DATASET_ID)
-        assert captures["upload_file_ids"] == [UPLOAD_FILE_ID]
-        assert captures["process_type"] == "automatic"
 
     def test_get_assistant_agent_messages_should_delegate_with_parsed_request(self, http_client, monkeypatch):
         current_user_stub = SimpleNamespace(id=UUID(APP_ID))

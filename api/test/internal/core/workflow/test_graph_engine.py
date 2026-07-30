@@ -347,7 +347,7 @@ class TestGraphEngineExecute:
         assert code_started["data"]["inputs"]["input"] == "hello"
 
     def test_node_failure_terminates_workflow(self):
-        """节点失败终止整个工作流。"""
+        """节点失败时不终止整个工作流（错误恢复），但跳过下游节点。"""
         config = _build_simple_config()
         pool = VariablePool()
         code_node = config.nodes[1]
@@ -367,11 +367,10 @@ class TestGraphEngineExecute:
 
         # 应有 node_failed 事件
         assert "node_failed" in event_types
-        # workflow_finished 应为 failed
+        # workflow_finished 应为 partial_failed（start 成功，code 失败，end 跳过）
         finished = next(e for e in events if e["event"] == "workflow_finished")
-        assert finished["data"]["status"] == "failed"
-        assert "节点执行失败" in finished["data"]["error"]
-        # end 节点不应被执行
+        assert finished["data"]["status"] == "partial_failed"
+        # end 节点不应被执行（因上游失败被跳过）
         end_started = any(
             e["event"] == "node_started" and e["data"]["node_id"] == str(end_node.id)
             for e in events
@@ -402,7 +401,7 @@ class TestGraphEngineExecute:
         assert finished["data"]["error"] == ""
 
     def test_workflow_finished_event_failed(self):
-        """失败时 workflow_finished status=failed。"""
+        """全部节点失败时 workflow_finished status=failed。"""
         config = _build_simple_config()
         pool = VariablePool()
 
@@ -415,7 +414,7 @@ class TestGraphEngineExecute:
 
         assert finished["event"] == "workflow_finished"
         assert finished["data"]["status"] == "failed"
-        assert "boom" in finished["data"]["error"]
+        assert "失败" in finished["data"]["error"]
 
 
 # ----------------------------------------------------------------------
@@ -632,10 +631,9 @@ class TestGraphEngineRetry:
 
         # 应有 node_failed 事件
         assert "node_failed" in event_types
-        # workflow_finished 应为 failed
+        # workflow_finished 应为 partial_failed（start 成功，code 重试耗尽失败，end 跳过）
         finished = next(e for e in events if e["event"] == "workflow_finished")
-        assert finished["data"]["status"] == "failed"
-        assert "always_fail_3" in finished["data"]["error"]
+        assert finished["data"]["status"] == "partial_failed"
 
         # end 节点不应被执行
         end_started = any(
@@ -674,10 +672,9 @@ class TestGraphEngineRetry:
         # code 节点应只被执行 1 次（不重试）
         assert call_count["code"] == 1
 
-        # workflow 应失败
+        # workflow 应为 partial_failed（start 成功，code 失败不重试，end 跳过）
         finished = next(e for e in events if e["event"] == "workflow_finished")
-        assert finished["data"]["status"] == "failed"
-        assert "fail_no_retry" in finished["data"]["error"]
+        assert finished["data"]["status"] == "partial_failed"
 
     def test_node_no_retry_attempts_when_first_succeeds(self):
         """节点首次执行成功时，outputs 不包含 _retry_attempts 字段。"""

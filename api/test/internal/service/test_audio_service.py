@@ -51,22 +51,47 @@ def _clear_audio_session_cache():
     AudioService._get_requests_session.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _mock_siliconflow_credentials(monkeypatch):
+    """默认 mock 数据库凭证查询，避免测试触发真实数据库访问。"""
+    from internal.service.language_model_service import LanguageModelService
+
+    def _fake_get_creds(cls, provider=None, model_type=None):
+        if provider == "SiliconFlow":
+            return {
+                "api_key": "test-key",
+                "base_url": "https://api.example.com/v1",
+                "model": "TeleAI/TeleSpeechASR",
+                "provider": "SiliconFlow",
+            }
+        return {}
+
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_provider_credentials",
+        classmethod(_fake_get_creds),
+    )
+
+
 class TestAudioService:
     def test_validate_siliconflow_config_should_report_missing_keys(self, monkeypatch):
-        monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
-        monkeypatch.delenv("SILICONFLOW_API_BASE", raising=False)
+        from internal.service.language_model_service import LanguageModelService
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {}),
+        )
 
         with pytest.raises(FailException) as exc_info:
-            AudioService._validate_siliconflow_config()
+            AudioService._resolve_siliconflow_credentials()
 
         message = str(exc_info.value)
-        assert "SILICONFLOW_API_KEY" in message
-        assert "SILICONFLOW_API_BASE" in message
+        assert "api_key" in message
+        assert "base_url" in message
 
     def test_audio_to_text_should_call_asr_endpoint_and_trim_text(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
         captured = {}
 
         class _Response:
@@ -103,9 +128,14 @@ class TestAudioService:
             service.audio_to_text(audio)
 
     def test_audio_to_text_should_raise_when_siliconflow_config_missing(self, monkeypatch):
+        from internal.service.language_model_service import LanguageModelService
+
         service = _build_service()
-        monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
-        monkeypatch.delenv("SILICONFLOW_API_BASE", raising=False)
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {}),
+        )
         audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
 
         with pytest.raises(FailException, match="语音服务配置缺失"):
@@ -113,8 +143,6 @@ class TestAudioService:
 
     def test_audio_to_text_should_wrap_request_error(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
         monkeypatch.setattr(
             "internal.service.audio_service.requests.Session",
             lambda: _FakeSession(
@@ -431,8 +459,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_raise_fail_exception_when_request_fails(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
         monkeypatch.setattr(
             "internal.service.audio_service.requests.Session",
             lambda: _FakeSession(
@@ -444,17 +470,20 @@ class TestAudioService:
             service._create_tts_response(input_text="hello", voice="alex")
 
     def test_create_tts_response_should_raise_when_siliconflow_config_missing(self, monkeypatch):
+        from internal.service.language_model_service import LanguageModelService
+
         service = _build_service()
-        monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
-        monkeypatch.delenv("SILICONFLOW_API_BASE", raising=False)
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(lambda cls, provider=None, model_type=None: {}),
+        )
 
         with pytest.raises(FailException, match="语音服务配置缺失"):
             service._create_tts_response(input_text="hello", voice="alex")
 
     def test_create_tts_response_should_raise_balance_insufficient_when_http_403(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 403
@@ -476,8 +505,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_raise_permission_denied_when_http_403_without_balance_message(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 403
@@ -499,8 +526,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_raise_rate_limited_when_http_429(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 429
@@ -522,8 +547,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_keep_generic_message_for_unmapped_http_status(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 500
@@ -545,8 +568,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_fallback_to_generic_message_when_error_response_not_json(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 500
@@ -568,8 +589,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_raise_access_denied_when_http_403_without_balance_message(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 403
@@ -591,8 +610,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_keep_default_message_when_http_error_body_not_json(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
 
         class _Response:
             status_code = 403
@@ -614,8 +631,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_return_response_when_request_succeeds(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
         captures = {}
 
         class _Response:
@@ -643,8 +658,6 @@ class TestAudioService:
 
     def test_create_tts_response_should_raise_fail_exception_on_unexpected_error(self, monkeypatch):
         service = _build_service()
-        monkeypatch.setenv("SILICONFLOW_API_KEY", "test-key")
-        monkeypatch.setenv("SILICONFLOW_API_BASE", "https://api.example.com")
         monkeypatch.setattr(
             "internal.service.audio_service.requests.Session",
             lambda: _FakeSession(

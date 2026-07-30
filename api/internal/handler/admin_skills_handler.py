@@ -12,11 +12,15 @@ from internal.schema.skill_schema import (
     CreateSkillPackageReq,
     GetSkillsWithPageReq,
     ImportCatalogSkillReq,
+    ImportSkillGithubReq,
+    ImportSkillJsonReq,
+    ImportSkillZipReq,
     RollbackSkillPackageReq,
     SkillPackageResp,
     SkillVersionResp,
     UpdateSkillPackageReq,
 )
+from internal.service.skill_import_service import SkillImportService
 from internal.service.skill_service import SkillService
 from pkg.paginator import PageModel
 from pkg.response import success_json, success_message, validate_error_json
@@ -34,6 +38,7 @@ class AdminSkillsHandler:
     """
 
     skill_service: SkillService
+    skill_import_service: SkillImportService
 
     @admin_login_required
     @permission_required("skill:read")
@@ -111,6 +116,7 @@ class AdminSkillsHandler:
             "tools": data.get("tools") or [],
             "tags": data.get("tags") or [],
             "capabilities": req.capabilities.data if req.capabilities.data is not None else (data.get("capabilities") or {}),
+            "task_keywords": req.task_keywords.data if req.task_keywords.data is not None else [],
         }
         skill_package = self.skill_service.create_skill_package_for_admin(payload)
         resp = SkillPackageResp()
@@ -138,6 +144,7 @@ class AdminSkillsHandler:
             "tools": data.get("tools") or [],
             "tags": data.get("tags") or [],
             "capabilities": req.capabilities.data if req.capabilities.data is not None else (data.get("capabilities") or {}),
+            "task_keywords": req.task_keywords.data if req.task_keywords.data is not None else None,
         }
         skill_package = self.skill_service.update_skill_package_for_admin(skill_id, payload)
         resp = SkillPackageResp()
@@ -170,3 +177,78 @@ class AdminSkillsHandler:
         skill_package = self.skill_service.import_catalog_package_for_admin(req.source_key.data)
         resp = SkillPackageResp()
         return success_json(resp.dump(skill_package))
+
+    # ------------------------------------------------------------------ #
+    #  外部导入：zip / GitHub / JSON                                        #
+    # ------------------------------------------------------------------ #
+
+    @admin_login_required
+    @permission_required("skill:create")
+    def import_skill_zip(self):
+        """上传 zip 包导入技能包。
+
+        请求格式：multipart/form-data
+            - file: zip 文件（必需）
+            - overwrite: 是否覆盖已存在的 source_key（可选，默认 false）
+        """
+        file = request.files.get("file")
+        if file is None or not file.filename:
+            return validate_error_json({"file": ["请选择要上传的 zip 文件"]})
+
+        # 读取 overwrite 字段（multipart form 字段）
+        form_data = request.form or {}
+        req = ImportSkillZipReq(data=form_data)
+        if not req.validate():
+            return validate_error_json(req.errors)
+
+        overwrite = bool(req.overwrite.data)
+        try:
+            file_bytes = file.read()
+        except Exception as exc:
+            return validate_error_json({"file": [f"读取上传文件失败: {exc}"]})
+
+        result = self.skill_import_service.import_from_zip(
+            file_bytes,
+            overwrite=overwrite,
+        )
+        return success_json(result)
+
+    @admin_login_required
+    @permission_required("skill:create")
+    def import_skill_github(self):
+        """通过 GitHub URL 导入技能包。
+
+        请求格式：application/json
+            - github_url: GitHub 仓库 URL 或 raw 文件 URL（必需）
+            - overwrite: 是否覆盖已存在的 source_key（可选，默认 false）
+        """
+        data = request.get_json(force=True, silent=True) or {}
+        req = ImportSkillGithubReq(data=data)
+        if not req.validate():
+            return validate_error_json(req.errors)
+
+        result = self.skill_import_service.import_from_github_url(
+            req.github_url.data,
+            overwrite=bool(req.overwrite.data),
+        )
+        return success_json(result)
+
+    @admin_login_required
+    @permission_required("skill:create")
+    def import_skill_json(self):
+        """通过 JSON 文本导入技能包（支持 prompt 类型，无需 skill.py）。
+
+        请求格式：application/json
+            - config_json: JSON 字符串（必需），结构与 manifest.yaml 字段一致
+            - overwrite: 是否覆盖已存在的 source_key（可选，默认 false）
+        """
+        data = request.get_json(force=True, silent=True) or {}
+        req = ImportSkillJsonReq(data=data)
+        if not req.validate():
+            return validate_error_json(req.errors)
+
+        result = self.skill_import_service.import_from_json(
+            req.config_json.data,
+            overwrite=bool(req.overwrite.data),
+        )
+        return success_json(result)

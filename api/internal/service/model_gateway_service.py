@@ -25,8 +25,8 @@ class ModelGatewayService:
         try:
             tier = self.model_assignment_policy.assign(decision, context)
         except Exception:
-            logger.warning("模型档位策略解析失败，回退 cheap", exc_info=True)
-            return "cheap"
+            logger.warning("模型档位策略解析失败，回退档位1", exc_info=True)
+            return "1"
         if self.runtime_model_pool_service is not None:
             try:
                 model, _fallbacks = self.runtime_model_pool_service.select_model_with_fallback(tier)
@@ -37,11 +37,11 @@ class ModelGatewayService:
         return tier
 
     def get_model(self, decision: RoutingDecision = None, context: RequestContext = None):
-        tier = self.resolve_model_tier(decision, context) if decision else "cheap"
+        tier = self.resolve_model_tier(decision, context) if decision else "1"
         try:
             if self.language_model_service is not None:
                 return self.language_model_service.get_chat_model_by_tier(tier)
             return LanguageModelService.get_chat_model_by_tier(tier)
         except Exception:
             logger.warning("模型实例化失败，回退默认", exc_info=True)
-            return LanguageModelService.get_chat_model_by_tier("cheap")
+            return LanguageModelService.get_chat_model_by_tier("1")

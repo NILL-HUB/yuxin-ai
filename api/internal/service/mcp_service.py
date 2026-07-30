@@ -14,7 +14,6 @@ from sqlalchemy.exc import ProgrammingError
 from internal.core.tools.mcp_tools.entities import McpCatalogProvider
 from internal.core.tools.mcp_tools.providers import McpProviderManager, McpToolFactory
 from internal.entity.mcp_entity import (
-    MCP_CATEGORY_OPTIONS,
     get_mcp_category_meta,
     normalize_mcp_category,
     normalize_mcp_transport,
@@ -22,12 +21,21 @@ from internal.entity.mcp_entity import (
 from internal.exception import ForbiddenException, NotFoundException, ValidateErrorException
 from internal.lib.helper import datetime_to_timestamp, utc_now_naive, escape_like_pattern
 from internal.model import Account, McpProvider
+from internal.model.mcp import McpTool
 from internal.schema.mcp_schema import CreateMcpProviderReq, GetMcpProvidersWithPageReq, UpdateMcpProviderReq
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
 
 from .base_service import BaseService
 from .icon_generator_service import IconGeneratorService
+from .tool_credential_encryptor import (
+    encrypt_headers,
+    encrypt_env,
+    decrypt_headers,
+    decrypt_env,
+    mask_headers,
+    mask_env,
+)
 
 
 def _normalize_text(value: Any) -> str:
@@ -141,7 +149,7 @@ class McpService(BaseService):
 
         transport = normalize_mcp_transport(binding.get("transport"))
         if transport == "stdio":
-            return False
+            return bool(_normalize_text(binding.get("name"))) and bool(_normalize_text(binding.get("command")))
 
         if transport in {"http", "sse", "streamable_http"}:
             return bool(_normalize_text(binding.get("name"))) and bool(_normalize_text(binding.get("url")))
@@ -151,7 +159,9 @@ class McpService(BaseService):
     def _binding_reason(self, binding: dict[str, Any]) -> str:
         transport = normalize_mcp_transport(binding.get("transport"))
         if transport == "stdio":
-            return "当前环境未启用 MCP stdio 适配，无法直接绑定"
+            if not _normalize_text(binding.get("command")):
+                return "stdio 模式需要 command"
+            return ""
         if transport in {"http", "sse", "streamable_http"}:
             if not _normalize_text(binding.get("url")):
                 return "HTTP/SSE 模式需要 url"
@@ -246,6 +256,7 @@ class McpService(BaseService):
         created_at=None,
         updated_at=None,
         include_tools: bool = False,
+        task_keywords: list[str] | None = None,
     ) -> dict[str, Any]:
         normalized_category = normalize_mcp_category(category, name=name, description=description)
         category_meta = get_mcp_category_meta(normalized_category)
@@ -303,18 +314,34 @@ class McpService(BaseService):
             "tool_count": 0,
             "tools": [],
             "binding": binding,
+            "task_keywords": list(task_keywords or []),
         }
 
         if include_tools:
-            tools = self._build_tool_list(binding) if is_bindable else []
+            # 工具发现需要真实 headers/env，构造解密后的临时 binding 用于调用 MCP 远端
+            runtime_binding = dict(binding)
+            if isinstance(runtime_binding.get("headers"), list):
+                runtime_binding["headers"] = decrypt_headers(runtime_binding.get("headers") or [])
+            if isinstance(runtime_binding.get("env"), dict):
+                runtime_binding["env"] = decrypt_env(runtime_binding.get("env") or {})
+            tools = self._build_tool_list(runtime_binding) if is_bindable else []
             provider_dict["tools"] = tools
             provider_dict["tool_count"] = len(tools)
+        # 顶级 headers/env 字段对外展示需脱敏（已加密值会先解密再脱敏）
+        provider_dict["headers"] = mask_headers(provider_dict.get("headers") or [])
+        provider_dict["env"] = mask_env(provider_dict.get("env") or {})
+        # 注意：binding 字段保留原始（加密）值，供前端存入 app_config 后由
+        # McpToolFactory 在运行时统一调用 decrypt_headers/decrypt_env 还原
         return provider_dict
 
     def _build_private_provider_payload(self, provider: McpProvider, *, include_tools: bool = False) -> dict[str, Any]:
         creator_name = provider.account.name if provider.account else ""
         creator_avatar = provider.account.avatar if provider.account else ""
         provider_key = self._provider_key_for_db(provider.id)
+        # DB 中 headers/env 已加密，原样传入 _build_provider_payload：
+        # - binding 字段保留加密值（供前端存入 app_config，运行时由 McpToolFactory 解密）
+        # - 顶级 headers/env 字段在 _build_provider_payload 末尾统一脱敏
+        # - 工具发现 _build_tool_list 使用解密后的临时 binding
         return self._build_provider_payload(
             provider_key=provider_key,
             provider_id=str(provider.id),
@@ -341,6 +368,7 @@ class McpService(BaseService):
             created_at=provider.created_at,
             updated_at=provider.updated_at,
             include_tools=include_tools,
+            task_keywords=list(provider.task_keywords or []),
         )
 
     def _build_catalog_provider_payload(self, catalog_provider: McpCatalogProvider, *, include_tools: bool = False) -> dict[str, Any]:
@@ -383,6 +411,118 @@ class McpService(BaseService):
             raise ForbiddenException("无权限操作该 MCP")
         return provider
 
+    # ── MCP 工具同步逻辑 ──────────────────────────────────────────────
+
+    def sync_mcp_tools(self, provider_id: UUID) -> dict[str, Any]:
+        """拉取 MCP server 的工具列表，写入 mcp_tool 表。
+
+        供 create/update provider 后自动触发，也可由管理员手动调用。
+        失败不抛异常，返回 sync_status 标记。
+        """
+        provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).first()
+        if not provider:
+            raise NotFoundException("MCP 不存在")
+
+        binding = self._provider_to_binding(provider)
+        try:
+            tool_definitions = self._tool_factory.list_remote_tool_definitions(binding)
+        except Exception as exc:
+            logging.exception("同步 MCP 工具失败 provider=%s: %s", provider_id, exc)
+            self._mark_tools_sync_status(provider_id, "stale")
+            return {"synced": 0, "status": "failed", "error": str(exc)}
+
+        synced = self._upsert_mcp_tools(provider, tool_definitions)
+        return {"synced": synced, "status": "ready" if tool_definitions else "empty"}
+
+    def _provider_to_binding(self, provider: McpProvider) -> dict[str, Any]:
+        """将 McpProvider 实体转换为 McpToolFactory 期望的 binding dict。"""
+        return {
+            "name": provider.name,
+            "label": provider.label,
+            "description": provider.description,
+            "transport": normalize_mcp_transport(provider.transport) or "streamable_http",
+            "url": provider.url,
+            "command": provider.command,
+            "headers": provider.headers or [],
+            "args": provider.args or [],
+            "env": provider.env or {},
+            "timeout_seconds": provider.timeout_seconds or 30,
+            "tool_names": provider.tool_names or [],
+            "source_key": provider.source_key,
+            "source_type": provider.source_type,
+            "enabled": True,
+        }
+
+    def _upsert_mcp_tools(self, provider: McpProvider, tool_definitions: list[dict[str, Any]]) -> int:
+        """增量更新 mcp_tool 表：新增/更新/删除。用 schema_hash 避免无意义重写。"""
+        existing_tools = {
+            tool.name: tool
+            for tool in self.db.session.query(McpTool).filter(McpTool.provider_id == provider.id).all()
+        }
+
+        inherited_keywords = list(provider.task_keywords or [])
+        seen_names: set[str] = set()
+        now = utc_now_naive()
+
+        for tool_def in tool_definitions:
+            tool_name = _normalize_text(tool_def.get("name"))
+            if not tool_name:
+                continue
+            seen_names.add(tool_name)
+
+            schema_hash = self._compute_tool_schema_hash(tool_def)
+            existing = existing_tools.get(tool_name)
+
+            # schema_hash 未变则跳过，避免无意义写入
+            if existing and existing.schema_hash == schema_hash:
+                continue
+
+            tool_data = {
+                "provider_id": provider.id,
+                "name": tool_name,
+                "title": _normalize_text(tool_def.get("title")) or tool_name,
+                "description": _normalize_text(tool_def.get("description")),
+                "input_schema": tool_def.get("inputSchema") or tool_def.get("input_schema") or {},
+                "output_schema": tool_def.get("outputSchema") or tool_def.get("output_schema") or {},
+                "annotations": tool_def.get("annotations") or {},
+                "task_keywords": inherited_keywords,
+                "schema_hash": schema_hash,
+                "sync_status": "ready",
+                "last_synced_at": now,
+                "enabled": True,
+            }
+
+            if existing:
+                for key, value in tool_data.items():
+                    setattr(existing, key, value)
+            else:
+                self.db.session.add(McpTool(**tool_data))
+
+        # 删除不再存在的工具
+        for tool_name, tool in existing_tools.items():
+            if tool_name not in seen_names:
+                self.db.session.delete(tool)
+
+        self.db.session.commit()
+        return len(seen_names)
+
+    @staticmethod
+    def _compute_tool_schema_hash(tool_def: dict[str, Any]) -> str:
+        import hashlib
+        import json
+        payload = json.dumps(tool_def, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _mark_tools_sync_status(self, provider_id: UUID, status: str) -> None:
+        """同步失败时，标记 provider 下所有工具为指定状态。"""
+        tools = self.db.session.query(McpTool).filter(McpTool.provider_id == provider_id).all()
+        for tool in tools:
+            tool.sync_status = status
+        if tools:
+            self.db.session.commit()
+
+    # ── MCP 工具同步逻辑结束 ──────────────────────────────────────────
+
     def _get_public_candidates(self) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for catalog_provider in self.mcp_provider_manager.get_providers():
@@ -420,7 +560,34 @@ class McpService(BaseService):
         )
 
     def get_mcp_categories(self) -> list[dict[str, Any]]:
-        return MCP_CATEGORY_OPTIONS
+        """获取数据库中实际存在的 MCP 分类列表（去重并合并元信息）。"""
+        if not self._has_mcp_provider_table():
+            return []
+        try:
+            rows = (
+                self.db.session.query(McpProvider.category)
+                .filter(McpProvider.category != "")
+                .distinct()
+                .all()
+            )
+        except ProgrammingError as exc:
+            if not self._is_missing_mcp_provider_table_error(exc):
+                raise
+            return []
+        except Exception:
+            return []
+
+        seen: set[str] = set()
+        categories: list[dict[str, Any]] = []
+        for (category,) in rows:
+            normalized = normalize_mcp_category(category)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            categories.append(get_mcp_category_meta(normalized))
+
+        categories.sort(key=lambda item: item.get("priority", 99))
+        return categories
 
     def get_mcp_providers_with_page(
         self,
@@ -616,11 +783,13 @@ class McpService(BaseService):
             transport=normalize_mcp_transport(req.transport.data) or "streamable_http",
             url=_normalize_text(req.url.data),
             command=_normalize_text(req.command.data),
-            headers=req.headers.data or [],
+            # 落库前对 headers/env 加密（幂等：已加密值会被跳过）
+            headers=encrypt_headers(req.headers.data or []),
             tool_names=req.tool_names.data or [],
             args=req.args.data or [],
-            env=req.env.data or {},
+            env=encrypt_env(req.env.data or {}),
             timeout_seconds=int(req.timeout_seconds.data or 30),
+            task_keywords=req.task_keywords.data or [],
             is_public=False,
             source_type="custom",
             source_key="",
@@ -628,6 +797,11 @@ class McpService(BaseService):
         )
         with self.db.auto_commit():
             self.db.session.add(provider)
+        # best-effort 同步工具到 mcp_tool 表，失败不阻塞创建
+        try:
+            self.sync_mcp_tools(provider.id)
+        except Exception:
+            logging.exception("创建 MCP 后同步工具失败 provider=%s", provider.id)
         return provider
 
     def update_mcp_provider(self, provider_id: UUID, req: UpdateMcpProviderReq, account: Account) -> McpProvider:
@@ -644,12 +818,19 @@ class McpService(BaseService):
             transport=normalize_mcp_transport(req.transport.data) or "streamable_http",
             url=_normalize_text(req.url.data),
             command=_normalize_text(req.command.data),
-            headers=req.headers.data or [],
+            # 落库前对 headers/env 加密（幂等：已加密值会被跳过）
+            headers=encrypt_headers(req.headers.data or []),
             tool_names=req.tool_names.data or [],
             args=req.args.data or [],
-            env=req.env.data or {},
+            env=encrypt_env(req.env.data or {}),
             timeout_seconds=int(req.timeout_seconds.data or 30),
+            task_keywords=req.task_keywords.data or [],
         )
+        # best-effort 同步工具到 mcp_tool 表
+        try:
+            self.sync_mcp_tools(provider.id)
+        except Exception:
+            logging.exception("更新 MCP 后同步工具失败 provider=%s", provider.id)
         return provider
 
     def delete_mcp_provider(self, provider_id: UUID, account: Account) -> McpProvider:
@@ -692,12 +873,19 @@ class McpService(BaseService):
             transport=normalize_mcp_transport(req.transport.data) or "streamable_http",
             url=_normalize_text(req.url.data),
             command=_normalize_text(req.command.data),
-            headers=req.headers.data or [],
+            # 落库前对 headers/env 加密（幂等：已加密值会被跳过）
+            headers=encrypt_headers(req.headers.data or []),
             tool_names=req.tool_names.data or [],
             args=req.args.data or [],
-            env=req.env.data or {},
+            env=encrypt_env(req.env.data or {}),
             timeout_seconds=int(req.timeout_seconds.data or 30),
+            task_keywords=req.task_keywords.data or [],
         )
+        # best-effort 同步工具到 mcp_tool 表
+        try:
+            self.sync_mcp_tools(provider.id)
+        except Exception:
+            logging.exception("管理员更新 MCP 后同步工具失败 provider=%s", provider.id)
         return provider
 
     def regenerate_icon_for_admin(self, provider_id: UUID) -> str:

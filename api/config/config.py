@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any
 from kombu import Queue
-from weaviate.config import AdditionalConfig, Timeout
+from celery.schedules import crontab
 from .default_config import DEFAULT_CONFIG
 
 
@@ -102,21 +102,6 @@ class Config:
             }
         self.SQLALCHEMY_ECHO = _get_bool_env("SQLALCHEMY_ECHO")
 
-        # Weaviate向量数据库配置
-        self.WEAVIATE_HTTP_HOST = _get_env("WEAVIATE_HTTP_HOST")
-        self.WEAVIATE_HTTP_PORT = _get_env("WEAVIATE_HTTP_PORT")
-        self.WEAVIATE_GRPC_HOST = _get_env("WEAVIATE_GRPC_HOST")
-        self.WEAVIATE_GRPC_PORT = _get_env("WEAVIATE_GRPC_PORT")
-        # API Key must come from environment/.env only, no default fallback.
-        self.WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY")
-        self.WEAVIATE_ADDITIONAL_CONFIG = AdditionalConfig(
-            timeout=Timeout(
-                query=float(_get_env("WEAVIATE_TIMEOUT_QUERY")),
-                insert=float(_get_env("WEAVIATE_TIMEOUT_INSERT")),
-                init=float(_get_env("WEAVIATE_TIMEOUT_INIT")),
-            )
-        )
-
         # Redis配置
         self.REDIS_HOST = _get_env("REDIS_HOST")
         self.REDIS_PORT = _get_env("REDIS_PORT")
@@ -163,9 +148,21 @@ class Config:
             "task_queues": (
                 Queue("celery"),
                 Queue("mail"),
+                Queue("consolidation"),
             ),
             "task_routes": {
                 "internal.task.email_task.send_verification_email_task": {"queue": "mail"},
+                "internal.task.consolidation_tasks.*": {"queue": "consolidation"},
+            },
+            "beat_schedule": {
+                "daily-consolidation": {
+                    "task": "internal.task.consolidation_tasks.run_daily_consolidation",
+                    "schedule": crontab(hour=3, minute=0),
+                },
+                "weight-scan": {
+                    "task": "internal.task.consolidation_tasks.run_weight_scan",
+                    "schedule": crontab(hour="*/6", minute=30),
+                },
             },
         }
 
@@ -177,17 +174,27 @@ class Config:
         self.VISION_FALLBACK_PROVIDER = _get_env("VISION_FALLBACK_PROVIDER")
         self.VISION_FALLBACK_MODEL = _get_env("VISION_FALLBACK_MODEL")
 
-        # 图标生成服务 API Key
-        self.SILICONFLOW_API_KEY = _get_env("SILICONFLOW_API_KEY")
-        self.DASHSCOPE_API_KEY = _get_env("DASHSCOPE_API_KEY")
-        self.OPENAI_API_KEY = _get_env("OPENAI_API_KEY")
+        # 文件存储后端配置（local/cos/oss）
+        # 详见 docs/prd/architecture-design.md 第 17 节「文件存储与对象存储架构」
+        self.STORAGE_BACKEND = _get_env("STORAGE_BACKEND") or "local"
 
-        # COS 配置
+        # 本地文件存储配置（STORAGE_BACKEND=local 时生效）
+        self.LOCAL_STORAGE_ROOT = _get_env("LOCAL_STORAGE_ROOT") or "storage/uploads"
+        self.LOCAL_STORAGE_BASE_URL = _get_env("LOCAL_STORAGE_BASE_URL") or ""
+
+        # 腾讯云 COS 配置（STORAGE_BACKEND=cos 时生效）
         self.COS_SECRET_ID = _get_env("COS_SECRET_ID")
         self.COS_SECRET_KEY = _get_env("COS_SECRET_KEY")
         self.COS_BUCKET = _get_env("COS_BUCKET")
         self.COS_REGION = _get_env("COS_REGION")
         self.COS_DOMAIN = _get_env("COS_DOMAIN")
+
+        # 阿里云 OSS 配置（STORAGE_BACKEND=oss 时生效）
+        self.OSS_ACCESS_KEY_ID = _get_env("OSS_ACCESS_KEY_ID")
+        self.OSS_ACCESS_KEY_SECRET = _get_env("OSS_ACCESS_KEY_SECRET")
+        self.OSS_ENDPOINT = _get_env("OSS_ENDPOINT")
+        self.OSS_BUCKET = _get_env("OSS_BUCKET")
+        self.OSS_DOMAIN = _get_env("OSS_DOMAIN")
 
         # Flask-Mail 邮件服务配置
         self.MAIL_SERVER = _get_env("MAIL_SERVER")

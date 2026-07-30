@@ -169,7 +169,16 @@ class GetPublishHistoriesWithPageResp(Schema):
                 ),
                 "skills": display_config.get("skills", getattr(data, "skills", [])),
                 "workflows": display_config.get("workflows", data.workflows),
-                "datasets": display_config.get("datasets", data.datasets),
+                # 新版知识库 id 列表，替代旧版 datasets 字段
+                "knowledge_base_ids": display_config.get(
+                    "knowledge_base_ids",
+                    getattr(data, "knowledge_base_ids", None) or [],
+                ),
+                # App 级别绑定的 embedding 模型 ID（用于按维度路由向量存储）
+                "embedding_model_id": display_config.get(
+                    "embedding_model_id",
+                    str(getattr(data, "embedding_model_id", "") or "") or "",
+                ),
                 "retrieval_config": display_config.get("retrieval_config", data.retrieval_config),
                 "long_term_memory": display_config.get("long_term_memory", data.long_term_memory),
                 "opening_statement": display_config.get("opening_statement", data.opening_statement),

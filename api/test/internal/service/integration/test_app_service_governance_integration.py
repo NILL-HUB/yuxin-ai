@@ -101,7 +101,7 @@ def _build_inputs(
             "skills": [],
             "workflows": [],
             "agent_bindings": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
         },
         "governance_gate": governance_gate,
         "governance_context": governance_context,
@@ -129,7 +129,7 @@ def test_governance_gate_none_keeps_behavior_unchanged():
             "skills": [],
             "workflows": [],
             "agent_bindings": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
         },
         # governance_gate=None（默认）
     )
@@ -157,7 +157,7 @@ def test_governance_gate_with_observe_only_does_not_filter_but_records_audit():
             "skills": [],
             "workflows": [],
             "agent_bindings": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
         },
         governance_gate=gate,
         governance_context={"observe_only": True, "block_sensitive_only": False, "mode": "observe_only"},
@@ -194,7 +194,7 @@ def test_governance_gate_with_block_all_filters_high_risk_tool():
             "skills": [],
             "workflows": [],
             "agent_bindings": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
         },
         governance_gate=gate,
         governance_context={"observe_only": False, "block_sensitive_only": False, "mode": "block_all"},
@@ -227,7 +227,7 @@ def test_build_tool_id_hints_generates_agent_binding_mapping():
         "mcp_bindings": [{"name": "mcp"}],
         "workflows": [{"id": "wf-1"}],
         "skills": [{"skill_id": "skill-1"}],
-        "datasets": [],
+        "knowledge_base_ids": [],
     }
 
     hints = AppRuntimeService.build_tool_id_hints(draft_app_config)
@@ -256,7 +256,7 @@ def test_governance_context_none_auto_builds_default_observe_only_context():
             "skills": [],
             "workflows": [],
             "agent_bindings": [],
-            "datasets": [],
+            "knowledge_base_ids": [],
         },
         governance_gate=gate,
         # governance_context=None（默认）→ 内部调 _resolve_default_governance_context

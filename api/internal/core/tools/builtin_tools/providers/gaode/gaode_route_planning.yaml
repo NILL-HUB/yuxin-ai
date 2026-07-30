@@ -2,3 +2,11 @@ name: gaode_route_planning
 label: 高德路径规划
 description: 根据起点和终点坐标规划驾车路线，返回距离、时间和费用信息
 params: []
+task_keywords:
+- 路径规划
+- 路线规划
+- 导航
+- 驾车路线
+- 路线
+- 怎么走
+- 从哪走

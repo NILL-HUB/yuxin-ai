@@ -265,7 +265,7 @@ class TestConversationServiceBasics:
                 return other
 
         class _StructuredLLM:
-            def invoke(self, payload):
+            def invoke(self, payload, **_kwargs):
                 captured_query["value"] = payload["query"]
                 return SimpleNamespace(subject="会话标题")
 
@@ -298,7 +298,7 @@ class TestConversationServiceBasics:
                 captured["parser"] = parser
                 return self
 
-            def invoke(self, payload):
+            def invoke(self, payload, **_kwargs):
                 captured["payload"] = payload
                 return "新的摘要结果"
 
@@ -352,7 +352,7 @@ class TestConversationServiceBasics:
                 raise RuntimeError("subject read failed")
 
         class _StructuredLLM:
-            def invoke(self, _payload):
+            def invoke(self, _payload, **_kwargs):
                 return _ConversationInfo()
 
         logged = {}
@@ -382,7 +382,7 @@ class TestConversationServiceBasics:
                 return other
 
         class _StructuredLLM:
-            def invoke(self, _payload):
+            def invoke(self, _payload, **_kwargs):
                 return SimpleNamespace(subject="x" * 130)
 
         monkeypatch.setattr(
@@ -407,7 +407,7 @@ class TestConversationServiceBasics:
                 return other
 
         class _StructuredLLM:
-            def invoke(self, _payload):
+            def invoke(self, _payload, **_kwargs):
                 return SimpleNamespace()
 
         monkeypatch.setattr(
@@ -433,7 +433,7 @@ class TestConversationServiceBasics:
                 return other
 
         class _StructuredLLM:
-            def invoke(self, payload):
+            def invoke(self, payload, **_kwargs):
                 captured_histories["value"] = payload["histories"]
                 return SimpleNamespace(questions=["q1", "q2", "q3", "q4"])
 
@@ -471,7 +471,7 @@ class TestConversationServiceBasics:
                 raise RuntimeError("questions read failed")
 
         class _StructuredLLM:
-            def invoke(self, _payload):
+            def invoke(self, _payload, **_kwargs):
                 return _SuggestedQuestions()
 
         logged = {}
@@ -501,7 +501,7 @@ class TestConversationServiceBasics:
                 return other
 
         class _StructuredLLM:
-            def invoke(self, _payload):
+            def invoke(self, _payload, **_kwargs):
                 return SimpleNamespace()
 
         monkeypatch.setattr(
@@ -530,7 +530,7 @@ class TestConversationServiceBasics:
         monkeypatch.setattr(
             service,
             "summary",
-            lambda query, answer, old_summary: captured.update(
+            lambda query, answer, old_summary, **_kwargs: captured.update(
                 {"query": query, "answer": answer, "old_summary": old_summary}
             )
             or "新摘要",
@@ -558,7 +558,7 @@ class TestConversationServiceBasics:
         )
         monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
         monkeypatch.setattr(service, "_count_conversation_messages", lambda _cid: 45)
-        monkeypatch.setattr(service, "summary", lambda _q, _a, _s: "新摘要")
+        monkeypatch.setattr(service, "summary", lambda _q, _a, _s, **_kwargs: "新摘要")
         updates = []
         monkeypatch.setattr(
             service,
@@ -581,7 +581,7 @@ class TestConversationServiceBasics:
         service = self._build_service()
         conversation = SimpleNamespace(id=uuid4(), name="旧名字")
         monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
-        monkeypatch.setattr(service, "generate_conversation_name", lambda _query: "新名字")
+        monkeypatch.setattr(service, "generate_conversation_name", lambda _query, **_kwargs: "新名字")
         updates = []
         monkeypatch.setattr(
             service,
@@ -605,7 +605,7 @@ class TestConversationServiceBasics:
         monkeypatch.setattr(
             service,
             "generate_conversation_name",
-            lambda query: generate_calls.append(query) or "缓存主题",
+            lambda query, **_kwargs: generate_calls.append(query) or "缓存主题",
         )
         updates = []
 
@@ -657,7 +657,7 @@ class TestConversationServiceBasics:
 
         generate_calls = []
 
-        def _fake_generate(query):
+        def _fake_generate(query, **_kwargs):
             generate_calls.append(query)
             return f"主题:{query}"
 
@@ -691,7 +691,7 @@ class TestConversationServiceBasics:
         service = self._build_service()
         conversation = SimpleNamespace(id=uuid4(), name="固定主题")
         monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: conversation)
-        monkeypatch.setattr(service, "generate_conversation_name", lambda _query: "固定主题")
+        monkeypatch.setattr(service, "generate_conversation_name", lambda _query, **_kwargs: "固定主题")
         updates = []
         monkeypatch.setattr(
             service,

@@ -143,10 +143,10 @@ class TestIterationNodeData:
 
 
 class TestIterationNodeInvoke:
-    """IterationNode.invoke 执行逻辑"""
+    """IterationNode.invoke 执行逻辑（真实实现，子节点通过 GraphEngine 执行）"""
 
     def test_iteration_node_invoke_with_array(self):
-        """遍历数组返回 result 列表（占位实现：原始数组副本）"""
+        """遍历数组返回 result 列表（无真实子节点逻辑时每项为空 dict）"""
         ref_node_id = uuid4()
         node_data = _make_node_data(ref_node_id=ref_node_id)
         node = IterationNode(node_data=node_data)
@@ -155,7 +155,8 @@ class TestIterationNodeInvoke:
         result = node.invoke(_state_with_array(ref_node_id, array))
 
         node_result = result["node_results"][0]
-        assert node_result.outputs["result"] == ["a", "b", "c"]
+        # 子节点无真实执行逻辑，每次迭代返回空 dict
+        assert node_result.outputs["result"] == [{}, {}, {}]
         assert node_result.status == NodeStatus.SUCCEEDED.value
 
     def test_iteration_node_invoke_with_empty_array(self):
@@ -224,7 +225,7 @@ class TestIterationNodeInvoke:
         node_result = result["node_results"][0]
         assert node_result.node_data is node_data
         assert node_result.status == NodeStatus.SUCCEEDED.value
-        assert node_result.inputs == {"iterator": array}
+        assert node_result.inputs == {"iterator": array, "count": len(array)}
         assert "result" in node_result.outputs
 
     def test_iteration_node_invoke_elapsed_time(self):

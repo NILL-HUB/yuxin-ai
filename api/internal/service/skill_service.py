@@ -518,7 +518,7 @@ class SkillService(BaseService):
 
         payload 字段：
         - source_key (必填)、name、label、description、category、tags、capabilities、icon
-        - executor_type (scf/prompt/tool, 默认 prompt)
+        - executor_type (scf/prompt, 默认 prompt)
         - enabled (默认 True)
         - readme (markdown 文本)
         - skill_code (scf 类型时的 skill.py 内容)
@@ -537,8 +537,8 @@ class SkillService(BaseService):
             raise ValidateErrorException(f"source_key 已存在: {source_key}")
 
         executor_type = _normalize_text(payload.get("executor_type") or "prompt").lower() or "prompt"
-        if executor_type not in {"scf", "prompt", "tool"}:
-            raise ValidateErrorException("executor_type 必须为 scf/prompt/tool 之一")
+        if executor_type not in {"scf", "prompt"}:
+            raise ValidateErrorException("executor_type 必须为 scf/prompt 之一")
         if executor_type != "scf":
             # 非 scf 类型强制清空 tools
             tools_raw: list[dict[str, Any]] = []
@@ -555,6 +555,7 @@ class SkillService(BaseService):
         enabled = _normalize_bool(payload.get("enabled"), True)
         readme = _normalize_text(payload.get("readme"))
         skill_code = _normalize_text(payload.get("skill_code")) if executor_type == "scf" else ""
+        task_keywords = [str(k).strip() for k in (payload.get("task_keywords") or []) if isinstance(k, str) and str(k).strip()]
 
         manifest = {
             "source_key": source_key,
@@ -609,6 +610,7 @@ class SkillService(BaseService):
                 sync_status="pending",
                 sync_error="",
                 published_at=None,
+                task_keywords=task_keywords,
                 updated_at=utc_now_naive(),
             )
             self.db.session.add(package)
@@ -661,8 +663,8 @@ class SkillService(BaseService):
             raise NotFoundException("该技能包不存在，请核实后重试")
 
         executor_type = _normalize_text(payload.get("executor_type") or package.executor_type).lower()
-        if executor_type not in {"scf", "prompt", "tool"}:
-            raise ValidateErrorException("executor_type 必须为 scf/prompt/tool 之一")
+        if executor_type not in {"scf", "prompt"}:
+            raise ValidateErrorException("executor_type 必须为 scf/prompt 之一")
 
         name = _normalize_text(payload.get("name") or package.name)
         label = _normalize_text(payload.get("label") or package.label)
@@ -675,6 +677,11 @@ class SkillService(BaseService):
         readme = _normalize_text(payload.get("readme"))
         skill_code = _normalize_text(payload.get("skill_code")) if executor_type == "scf" else ""
         tools_raw = self._normalize_tool_definitions(payload.get("tools")) if executor_type == "scf" else []
+        # task_keywords：未提供则保留原值
+        if "task_keywords" in payload and payload.get("task_keywords") is not None:
+            task_keywords = [str(k).strip() for k in (payload.get("task_keywords") or []) if isinstance(k, str) and str(k).strip()]
+        else:
+            task_keywords = list(package.task_keywords or [])
 
         current_version_record = self._get_skill_package_version_record(package.id, package.current_version)
         current_bundle = (current_version_record.bundle or {}) if current_version_record else {}
@@ -727,6 +734,7 @@ class SkillService(BaseService):
                 capabilities=capabilities,
                 executor_type=executor_type,
                 enabled=enabled,
+                task_keywords=task_keywords,
                 updated_at=utc_now_naive(),
             )
 
@@ -1036,6 +1044,7 @@ class SkillService(BaseService):
             "capabilities": package.capabilities or {},
             "executor_type": package.executor_type,
             "tool_count": len(tool_definitions),
+            "task_keywords": list(getattr(package, "task_keywords", None) or []),
             "tools": [
                 {
                     "name": tool["name"],
@@ -1094,6 +1103,9 @@ class SkillService(BaseService):
             "executor_type": package.executor_type,
             "tool_count": current_tool_count,
             "tools": tools,
+            "task_keywords": list(getattr(package, "task_keywords", None) or []),
+            "sync_status": getattr(package, "sync_status", "") or "",
+            "sync_error": getattr(package, "sync_error", "") or "",
             "created_at": datetime_to_timestamp(package.created_at),
             "updated_at": datetime_to_timestamp(package.updated_at),
             **({"bundle": version_record.bundle or {}} if include_bundle and version_record else {}),

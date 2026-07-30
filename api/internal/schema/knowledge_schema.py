@@ -92,16 +92,6 @@ class UserMemoryResp(Schema):
     created_from = fields.String(dump_default="")
 
 
-class MemoryCandidateResp(Schema):
-    id = fields.UUID(dump_default="")
-    owner_account_id = fields.UUID(dump_default="")
-    candidate_key = fields.String(dump_default="")
-    content = fields.String(dump_default="")
-    confidence = fields.Integer(dump_default=0)
-    occurrences = fields.Integer(dump_default=0)
-    status = fields.String(dump_default="")
-
-
 class ExternalDataSourceResp(Schema):
     id = fields.UUID(dump_default="")
     owner_account_id = fields.UUID(allow_none=True)

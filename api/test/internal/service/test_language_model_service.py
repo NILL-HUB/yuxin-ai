@@ -8,8 +8,8 @@ from pydantic import BaseModel
 
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
-from internal.core.language_model.providers.atlascloud.chat import Chat as AtlasCloudChat
 from internal.service.language_model_service import LanguageModelService, _build_soft_timeout_model
+from langchain_openai import ChatOpenAI
 
 
 class _Provider:
@@ -339,11 +339,11 @@ class TestLanguageModelService:
         assert llm.invoke("hello") == "fallback-result"
 
     def test_build_soft_timeout_model_should_rebuild_chat_client_with_short_timeout(self):
-        original_model = AtlasCloudChat(
+        original_model = ChatOpenAI(
             model="openai/gpt-5.2",
             api_key="test-key",
             base_url="https://api.atlascloud.ai/v1",
-            timeout=1800,
+            request_timeout=1800,
             max_retries=2,
         )
 

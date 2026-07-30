@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import requests
@@ -13,12 +14,37 @@ from internal.exception import FailException
 from .code_entity import CodeNodeData
 
 
+# 占位符 URL 检测：以 your-/example-/placeholder- 开头或包含 -here/your-scf 等子串
+_PLACEHOLDER_PREFIXES = ("your-", "example-", "placeholder-")
+_PLACEHOLDER_SUBSTRINGS = ("-here", "your-scf", "your-url", "your-domain")
+
+
+def _is_placeholder_url(url: str) -> bool:
+    """检测 URL 是否为占位符（如 https://your-scf-url.tencentscf.com）。"""
+    if not url:
+        return True
+    stripped = re.sub(r"^https?://", "", url).lower()
+    if any(stripped.startswith(prefix) for prefix in _PLACEHOLDER_PREFIXES):
+        return True
+    if any(sub in stripped for sub in _PLACEHOLDER_SUBSTRINGS):
+        return True
+    return False
+
+
+def _resolve_sandbox_url() -> str:
+    """读取 SANDBOX_URL 环境变量，占位符视为未配置返回空字符串。"""
+    raw = (os.getenv("SANDBOX_URL") or "").strip().rstrip("/")
+    if _is_placeholder_url(raw):
+        return ""
+    return raw
+
+
 class CodeNode(BaseNode):
     """Python代码运行节点"""
     node_data: CodeNodeData
 
-    # 腾讯云函数沙箱地址
-    Sandbox_URL: ClassVar[str] = os.getenv("SANDBOX_URL").rstrip("/")
+    # 腾讯云函数沙箱地址（占位符 URL 视为未配置，避免请求无效地址）
+    Sandbox_URL: ClassVar[str] = _resolve_sandbox_url()
 
     def invoke(self, state: WorkflowState, config: Optional[RunnableConfig] = None) -> WorkflowState:
         """Python代码运行节点，执行的代码函数名字必须为main，并且参数名为params，有且只有一个参数，通过腾讯云函数沙箱执行"""

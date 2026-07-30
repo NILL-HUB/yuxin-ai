@@ -139,11 +139,25 @@ class AdminModelPoolHandler:
 
     @admin_login_required
     @permission_required("model_pool:manage")
+    def create_tier_policy(self):
+        payload = request.get_json(silent=True) or {}
+        result = self.admin_model_pool_service.create_tier_policy(payload)
+        resp = AdminModelTierResp()
+        return success_json(resp.dump(result))
+
+    @admin_login_required
+    @permission_required("model_pool:manage")
     def update_tier_policy(self, tier_code: str):
         payload = request.get_json(silent=True) or {}
         result = self.admin_model_pool_service.update_tier_policy(tier_code, payload)
         resp = AdminModelTierResp()
         return success_json(resp.dump(result))
+
+    @admin_login_required
+    @permission_required("model_pool:manage")
+    def delete_tier_policy(self, tier_code: str):
+        self.admin_model_pool_service.delete_tier_policy(tier_code)
+        return success_message("删除档位策略成功")
 
     @admin_login_required
     @permission_required("model_pool:read")

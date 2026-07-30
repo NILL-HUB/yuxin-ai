@@ -40,7 +40,7 @@ class AdminWorkflowService:
             raise NotFoundException("工作流不存在")
         return self._serialize_workflow(workflow)
 
-    def update_workflow(self, workflow_id: UUID, *, status: str | None = None, is_public: bool | None = None) -> dict[str, object]:
+    def update_workflow(self, workflow_id: UUID, *, status: str | None = None, is_public: bool | None = None, task_keywords: list[str] | None = None) -> dict[str, object]:
         workflow = self.session.query(Workflow).filter(Workflow.id == workflow_id).one_or_none()
         if workflow is None:
             raise NotFoundException("工作流不存在")
@@ -48,6 +48,8 @@ class AdminWorkflowService:
             workflow.status = status
         if is_public is not None:
             workflow.is_public = is_public
+        if task_keywords is not None:
+            workflow.task_keywords = [str(k).strip() for k in task_keywords if isinstance(k, str) and str(k).strip()]
         self.session.commit()
         return self._serialize_workflow(workflow)
 
@@ -88,6 +90,7 @@ class AdminWorkflowService:
             "description": workflow.description,
             "status": workflow.status,
             "is_public": workflow.is_public,
+            "task_keywords": list(getattr(workflow, "task_keywords", None) or []),
             "created_at": datetime_to_timestamp(workflow.created_at),
             "updated_at": datetime_to_timestamp(workflow.updated_at),
         }

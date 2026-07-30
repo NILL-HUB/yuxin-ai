@@ -39,6 +39,7 @@ class SkillPackage(db.Model):
         Index("skill_package_category_idx", "category"),
         Index("skill_package_enabled_idx", "enabled"),
         Index("skill_package_current_version_idx", "current_version"),
+        Index("skill_package_task_keywords_idx", "task_keywords", postgresql_using="gin"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
@@ -51,6 +52,7 @@ class SkillPackage(db.Model):
     category = Column(String(255), nullable=False, server_default=text("''::character varying"))
     tags = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     capabilities = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    task_keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 任务关键词列表，用于 ToolSelector 关键词快速匹配
     executor_type = Column(String(64), nullable=False, server_default=text("'scf'::character varying"))
     enabled = Column(Boolean, nullable=False, server_default=text("true"))
     current_version = Column(Integer, nullable=False, server_default=text("1"))

@@ -79,9 +79,15 @@ class GovernanceModeResolver:
                 "block_all": False,
                 "mode": POOL_GOVERNANCE_MODE_BLOCK_SENSITIVE,
             }
-        # 阶段1：只观测不阻断（observe_only_flag 控制是否启用观测门；
-        # 关闭观测门时仍按 observe_only 语义返回，避免误阻断）
-        _ = observe_only_flag  # 显式标记已使用
+        if not observe_only_flag:
+            # 观测门关闭且未开启阻断：完全跳过治理（不观测不阻断）
+            return {
+                "observe_only": False,
+                "block_sensitive": False,
+                "block_all": False,
+                "mode": "disabled",
+            }
+        # 阶段1：只观测不阻断（默认启用）
         return {
             "observe_only": True,
             "block_sensitive": False,

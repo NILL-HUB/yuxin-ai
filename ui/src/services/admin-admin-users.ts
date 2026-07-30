@@ -12,8 +12,11 @@ export interface AdminUser {
   avatar: string
   status: string
   roles: string[]
-  created_at?: number
-  last_login_at?: number
+  is_online: boolean
+  account_id?: string | null
+  created_at?: number | null
+  last_login_at?: number | null
+  last_login_ip?: string
 }
 
 export type AdminUserPaginator = {
@@ -45,6 +48,7 @@ export type CreateAdminUserPayload = {
 
 export type UpdateAdminUserPayload = Partial<{
   name: string
+  email: string
   status: string
   role_ids: string[]
 }>
@@ -63,3 +67,13 @@ export const updateAdminUser = (id: string, data: UpdateAdminUserPayload) =>
 
 export const disableAdminUser = (id: string) =>
   post<BaseResponse<Record<string, unknown>>>(`/admin/admin-users/${id}/disable`)
+
+export const enableAdminUser = (id: string) =>
+  post<BaseResponse<AdminUser>>(`/admin/admin-users/${id}/enable`)
+
+export const resetAdminUserPassword = (id: string, password: string) =>
+  post<BaseResponse<AdminUser>>(`/admin/admin-users/${id}/reset-password`, { body: { password } })
+
+export const revokeAdminUserSessions = (adminId: string) => {
+  return post<BaseResponse<{ revoked_sessions: number }>>(`/admin/admin-users/${adminId}/sessions/revoke`)
+}

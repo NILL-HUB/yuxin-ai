@@ -123,8 +123,23 @@ class AuditLogService:
                 pass
         total = query.count()
         audit_logs = query.order_by(AuditLog.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
+
+        # 批量查询关联的管理员和账号名称，避免依赖 relationship 加载，同时防止 N+1 查询
+        admin_user_ids = {log.admin_user_id for log in audit_logs if log.admin_user_id}
+        account_ids = {log.account_id for log in audit_logs if log.account_id}
+        admin_user_map: dict = {}
+        account_map: dict = {}
+        if admin_user_ids:
+            from internal.model.admin import AdminUser
+            rows = self.session.query(AdminUser.id, AdminUser.username, AdminUser.name).filter(AdminUser.id.in_(admin_user_ids)).all()
+            admin_user_map = {row[0]: (row[1] or row[2] or "") for row in rows}
+        if account_ids:
+            from internal.model.account import Account
+            rows = self.session.query(Account.id, Account.name, Account.email).filter(Account.id.in_(account_ids)).all()
+            account_map = {row[0]: (row[1] or row[2] or "") for row in rows}
+
         return {
-            "list": [self._serialize_audit_log(audit_log) for audit_log in audit_logs],
+            "list": [self._serialize_audit_log(audit_log, admin_user_map, account_map) for audit_log in audit_logs],
             "paginator": {
                 "total_record": total,
                 "total_page": math.ceil(total / page_size) if total else 0,
@@ -134,11 +149,21 @@ class AuditLogService:
         }
 
     @staticmethod
-    def _serialize_audit_log(audit_log: AuditLog) -> dict[str, object]:
+    def _serialize_audit_log(
+        audit_log: AuditLog,
+        admin_user_map: dict | None = None,
+        account_map: dict | None = None,
+    ) -> dict[str, object]:
+        admin_user_map = admin_user_map or {}
+        account_map = account_map or {}
+        admin_user_name = admin_user_map.get(audit_log.admin_user_id, "") if audit_log.admin_user_id else ""
+        account_name = account_map.get(audit_log.account_id, "") if audit_log.account_id else ""
         return {
             "id": str(audit_log.id),
             "admin_user_id": str(audit_log.admin_user_id) if audit_log.admin_user_id else None,
+            "admin_user_name": admin_user_name,
             "account_id": str(audit_log.account_id) if audit_log.account_id else None,
+            "account_name": account_name,
             "action": audit_log.action,
             "resource_type": audit_log.resource_type,
             "resource_id": audit_log.resource_id,

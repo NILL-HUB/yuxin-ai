@@ -3,12 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
- useDeleteDocument,
- useGetDataset,
- useGetDocumentsWithPage,
- useUpdateDocumentEnabled,
-} from '@/hooks/use-dataset'
-import UpdateDocumentNameModal from '@/views/space/datasets/documents/components/UpdateDocumentNameModal.vue'
+  useDeleteKnowledgeDocument,
+  useGetKnowledgeBase,
+  useGetKnowledgeDocumentsWithPage,
+  useUploadKnowledgeDocument,
+} from '@/hooks/use-knowledge-base'
 import HitTestingModal from '@/views/space/datasets/documents/components/HitTestingModal.vue'
 import { formatTimestampLong } from '@/utils/time-formatter'
 
@@ -18,14 +17,34 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const hitModalVisible = ref(false)
-const updateDocumentNameModalVisible = ref(false)
-const updateDocumentID = ref('')
 const searchInput = ref('')
-const updatingDocumentId = ref('')
-const { dataset, loadDataset } = useGetDataset()
-const { loading, documents, paginator, loadDocuments } = useGetDocumentsWithPage()
-const { handleDelete } = useDeleteDocument()
-const { handleUpdate: handleUpdateEnabled } = useUpdateDocumentEnabled()
+const { knowledgeBase: dataset, loadKnowledgeBase: loadDataset } = useGetKnowledgeBase()
+const { loading, documents, paginator, loadDocuments } = useGetKnowledgeDocumentsWithPage()
+const { handleDelete } = useDeleteKnowledgeDocument()
+const { loading: uploadLoading, handleUploadDocument } = useUploadKnowledgeDocument()
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// 触发隐藏的文件选择器
+const triggerFileInput = () => {
+  fileInputRef.value?.click()
+}
+
+// 文件选择后调用上传接口，成功后刷新文档列表与知识库详情
+const handleFileChange = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  // 重置 input 的 value，便于重复选择同一文件
+  target.value = ''
+  if (!file) return
+  try {
+    await handleUploadDocument(datasetId.value, file)
+    // 上传成功后刷新文档列表与知识库详情
+    void loadDocuments(datasetId.value, req.value)
+    void loadDataset(datasetId.value)
+  } catch {
+    // 错误提示已由 hook 统一处理
+  }
+}
 
 const datasetId = computed(() => String(route.params?.dataset_id ?? ''))
 const searchWord = computed(() => String(route.query?.search_word ?? ''))
@@ -90,14 +109,13 @@ const getProcessingStatusClass = (status: string) => {
 }
 
 const getAvailabilityLabel = (record: DocumentRecord) => {
- if (record.status !== 'completed') return t('space.datasets.documents.statuses.unavailable')
- return record.enabled ? t('space.datasets.documents.statuses.available') : t('space.datasets.documents.statuses.disabled')
+  if (record.status !== 'completed') return t('space.datasets.documents.statuses.unavailable')
+  return t('space.datasets.documents.statuses.available')
 }
 
 const getAvailabilityClass = (record: DocumentRecord) => {
- if (record.status !== 'completed') return 'bg-slate-100 text-slate-500 border-slate-200'
- if (record.enabled) return 'bg-sky-50 text-sky-700 border-sky-200'
- return 'bg-slate-100 text-slate-600 border-slate-200'
+  if (record.status !== 'completed') return 'bg-slate-100 text-slate-500 border-slate-200'
+  return 'bg-sky-50 text-sky-700 border-sky-200'
 }
 
 const handleSearch = async (value: string) => {
@@ -122,25 +140,6 @@ const handlePageSizeChange = async (pageSize: number) => {
  page_size: pageSize,
  search_word: searchWord.value || undefined,
  })
-}
-
-const handleDocumentEnabledChange = async (
- record: DocumentRecord,
- value: boolean,
-) => {
- if (updatingDocumentId.value) return
-
- updatingDocumentId.value = String(record.id)
- try {
- await handleUpdateEnabled(datasetId.value, String(record.id), value, () => {
- const targetDocument = documents.value.find((item) => String(item.id) === String(record.id))
- if (targetDocument) {
- targetDocument.enabled = value
- }
- })
- } finally {
- updatingDocumentId.value = ''
- }
 }
 
 const getDisplayIndex = (rowIndex: number) => {
@@ -201,27 +200,27 @@ watch(
  {{ dataset.character_count ||0 }} {{ t('space.datasets.documents.columns.characterCount') }}
  </a-tag>
  <a-tag class="!m-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-slate-600">
- {{ dataset.hit_count }} {{ t('space.datasets.documents.columns.hitCount') }}
- </a-tag>
- <a-tag class="!m-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-slate-600">
- {{ dataset.related_app_count }} {{ t('space.datasets.documents.columns.relatedApps') }}
+ {{ dataset.document_count ||0 }} {{ t('space.datasets.documents.columns.documentCount') }}
  </a-tag>
  </div>
  </div>
  </div>
  <div class="flex flex-col gap-2 lg:items-end">
  <div class="flex flex-wrap items-center justify-end gap-3">
+ <a-button
+ type="primary"
+ class="rounded-xl px-4"
+ :loading="uploadLoading"
+ @click="triggerFileInput"
+ >
+ <template #icon>
+ <icon-upload />
+ </template>
+ {{ t('space.datasets.documents.addFile') }}
+ </a-button>
  <a-button class="rounded-xl border-slate-200 bg-white px-4 !text-slate-700" @click="hitModalVisible = true">
  {{ t('space.datasets.documents.recallTest') }}
  </a-button>
- <router-link
- :to="{
- name: 'space-datasets-documents-create',
- params: { dataset_id: datasetId },
- }"
- >
- <a-button type="primary" class="rounded-xl px-4">{{ t('space.datasets.documents.addFile') }}</a-button>
- </router-link>
  </div>
  <div
  class="relative h-8 w-[220px] max-w-full self-end rounded-xl border border-slate-300 bg-white transition focus-within:border-sky-400 focus-within:shadow-sm hover:border-slate-400"
@@ -329,20 +328,6 @@ watch(
  {{ (record.character_count /1000).toFixed(1) }}k
  </template>
  </a-table-column>
-<a-table-column
- :title="t('space.datasets.documents.columns.hitCount')"
- data-index="hit_count"
- align="center"
- :width="110"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
- >
- <template #cell="{ record }">
- <span class="text-sm text-slate-600">
- {{ record.hit_count === null || record.hit_count === undefined || record.hit_count === '' ? '-' : record.hit_count }}
- </span>
- </template>
- </a-table-column>
  <a-table-column
  :title="t('space.datasets.documents.columns.processingStatus')"
  data-index="status"
@@ -404,69 +389,16 @@ watch(
  :title="t('space.datasets.documents.columns.actions')"
  data-index="operator"
  align="center"
- :width="220"
+ :width="120"
  header-cell-class="!bg-slate-100 text-slate-700"
  cell-class="bg-transparent text-slate-700"
  >
  <template #cell="{ record }">
- <div class="flex items-center justify-center gap-2">
- <button
- type="button"
- class="inline-flex h-8 items-center gap-2 rounded-full border px-1.5 pr-3 transition"
- :class="
- record.status !== 'completed'
- ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
- : record.enabled
- ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
- : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-50'
- "
- :disabled="record.status !== 'completed' || updatingDocumentId === record.id"
- @click="handleDocumentEnabledChange(record, !record.enabled)"
- >
- <span
- class="relative h-5 w-9 rounded-full transition"
- :class="
- record.status !== 'completed'
- ? 'bg-slate-300'
- : record.enabled
- ? 'bg-sky-500'
- : 'bg-slate-300'
- "
- >
- <span
- class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition"
- :class="record.enabled && record.status === 'completed' ? 'left-4' : 'left-0.5'"
- />
- </span>
- <span class="text-xs font-medium">
- {{ updatingDocumentId === record.id
-    ? t('space.datasets.documents.statuses.switching')
-    : record.status !== 'completed'
-      ? t('space.datasets.documents.statuses.unavailable')
-      : record.enabled
-        ? t('space.datasets.documents.statuses.enabled')
-        : t('space.datasets.documents.statuses.disabled') }}
- </span>
- </button>
- <a-dropdown position="br">
- <a-button type="text" size="mini" class="rounded-lg !text-slate-600">
- <template #icon>
- <icon-more />
- </template>
- </a-button>
- <template #content>
- <a-doption
- @click="
- () => {
- updateDocumentNameModalVisible = true
- updateDocumentID = record.id
- }
- "
- >
- {{ t('common.actions.rename') }}
- </a-doption>
- <a-doption
- class="!text-red-700"
+ <div class="flex items-center justify-center">
+ <a-button
+ type="text"
+ size="mini"
+ class="!text-red-600 hover:!text-red-700"
  @click="
  () =>
  handleDelete(datasetId, record.id, () => {
@@ -476,9 +408,7 @@ watch(
  "
  >
  {{ t('common.actions.delete') }}
- </a-doption>
- </template>
- </a-dropdown>
+ </a-button>
  </div>
  </template>
  </a-table-column>
@@ -497,13 +427,15 @@ watch(
  </div>
  </div>
 
- <update-document-name-modal
- :document_id="updateDocumentID"
- :dataset_id="datasetId"
- v-model:visible="updateDocumentNameModalVisible"
- :on-after-update="() => loadDocuments(datasetId, req)"
- />
  <hit-testing-modal v-model:visible="hitModalVisible" :dataset_id="datasetId" />
+ <!-- 隐藏的文件选择器，由上传按钮触发 -->
+ <input
+ ref="fileInputRef"
+ type="file"
+ accept=".txt,.md,.markdown,.pdf,.docx,.doc,.csv"
+ class="hidden"
+ @change="handleFileChange"
+ />
  </div>
 </template>
 

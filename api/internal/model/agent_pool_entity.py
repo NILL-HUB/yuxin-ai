@@ -5,7 +5,6 @@ from sqlalchemy import (
     Column,
     DateTime,
     Index,
-    Integer,
     PrimaryKeyConstraint,
     String,
     UUID,
@@ -21,23 +20,21 @@ def _utcnow_naive() -> datetime:
 
 
 class AgentPoolConfig(db.Model):
+    """App 级 Agent 池配置。
+
+    路由字段（primary_pool/secondary_pools/risk_level/model_tier/model_id/routing_priority）
+    已统一由 App.agent_metadata 承载，本表仅保留部署/健康/元数据。
+    """
     __tablename__ = "agent_pool_config"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_agent_pool_config_id"),
         Index("agent_pool_config_app_id_idx", "app_id"),
-        Index("agent_pool_config_primary_pool_idx", "primary_pool"),
         Index("agent_pool_config_enabled_idx", "enabled"),
         Index("agent_pool_config_health_status_idx", "health_status"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     app_id = Column(UUID, nullable=False)
-    primary_pool = Column(String(64), nullable=False, server_default=text("'tenant'::character varying"))
-    secondary_pools = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
-    risk_level = Column(String(32), nullable=False, server_default=text("'medium'::character varying"))
-    model_tier = Column(String(32), nullable=False, server_default=text("'standard'::character varying"))
-    model_id = Column(String(128), nullable=True)
-    routing_priority = Column(Integer, nullable=False, server_default=text("100"))
     enabled = Column(Boolean, nullable=False, server_default=text("true"))
     health_status = Column(String(32), nullable=False, server_default=text("'unknown'::character varying"))
     last_health_check_at = Column(DateTime, nullable=True)

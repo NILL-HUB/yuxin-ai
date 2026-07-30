@@ -8,7 +8,7 @@ from internal.schema import DictField, ListField
 
 PROVIDER_STATUSES = ["active", "disabled"]
 MODEL_TYPES = [
-    "chat", "completion", "embedding", "multimodal",
+    "chat", "embedding", "multimodal",
     "image_generation", "video_generation", "ocr", "tts", "asr", "rerank",
 ]
 COMPATIBLE_APIS = ["openai", "claude"]
@@ -74,6 +74,7 @@ class AdminModelProviderOptionResp(Schema):
     id = fields.String()
     name = fields.String()
     label = fields.String()
+    description = fields.String()
     default_base_url = fields.String()
     supported_model_types = fields.List(fields.String())
 

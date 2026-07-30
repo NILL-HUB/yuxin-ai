@@ -13,6 +13,7 @@ from internal.schema.api_tool_schema import (
     GetApiToolProvidersWithPageReq,
     GetApiToolProvidersWithPageResp,
     UpdateApiToolProviderReq,
+    ValidateOpenAPISchemaReq,
 )
 from internal.service import ApiToolService
 from pkg.paginator import PageModel
@@ -75,6 +76,31 @@ class AdminApiToolHandler:
         """删除API工具提供者（管理员视角，不校验账号）"""
         self.api_tool_service.delete_api_tool_provider_for_admin(provider_id)
         return success_message("删除自定义API插件成功")
+
+    @admin_login_required
+    @permission_required("tool:read")
+    def generate_icon_preview(self):
+        """根据传递的名称和描述生成图标预览（不保存到插件）"""
+        data = request.get_json(force=True, silent=True) or {}
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
+
+        if not name:
+            return validate_error_json({'name': ['插件名称不能为空']})
+
+        icon_url = self.api_tool_service.generate_icon_preview(name, description)
+        return success_json({"icon": icon_url})
+
+    @admin_login_required
+    @permission_required("tool:read")
+    def validate_openapi_schema(self):
+        """校验传递的openapi_schema字符串是否正确"""
+        req = ValidateOpenAPISchemaReq()
+        if not req.validate():
+            return validate_error_json(req.errors)
+
+        self.api_tool_service.parse_openapi_schema(req.openapi_schema.data)
+        return success_message("数据校验成功")
 
     def _get_admin_account(self) -> Account:
         """获取管理员绑定的空间账号，作为资源的归属账号"""

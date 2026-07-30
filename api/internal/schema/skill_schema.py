@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask_wtf import FlaskForm
 from marshmallow import Schema, fields, pre_dump
 from wtforms import BooleanField, IntegerField, StringField
-from wtforms.validators import DataRequired, Length, NumberRange, Optional, ValidationError
+from wtforms.validators import DataRequired, Length, NumberRange, Optional, Regexp, ValidationError
 
 from internal.lib.helper import datetime_to_timestamp
 from internal.schema import DictField, ListField
@@ -18,6 +18,10 @@ class CreateSkillPackageReq(FlaskForm):
         validators=[
             DataRequired("source_key 不能为空"),
             Length(min=1, max=255, message="source_key 长度范围在1-255"),
+            Regexp(
+                r"^[A-Za-z0-9_-]+$",
+                message="source_key 必须使用 ASCII 格式(仅支持字母、数字、下划线和连字符)",
+            ),
         ],
     )
     name = StringField("name", validators=[Optional(), Length(max=255)])
@@ -34,6 +38,17 @@ class CreateSkillPackageReq(FlaskForm):
     readme = StringField("readme", validators=[Optional()])
     skill_code = StringField("skill_code", validators=[Optional()])
     capabilities = DictField("capabilities", validators=[Optional()])
+    task_keywords = ListField("task_keywords", default=[])
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
 class UpdateSkillPackageReq(FlaskForm):
@@ -52,6 +67,17 @@ class UpdateSkillPackageReq(FlaskForm):
     readme = StringField("readme", validators=[Optional()])
     skill_code = StringField("skill_code", validators=[Optional()])
     capabilities = DictField("capabilities", validators=[Optional()])
+    task_keywords = ListField("task_keywords", default=[])
+
+    def validate_task_keywords(self, field):
+        """校验 task_keywords 必须是字符串列表。"""
+        if field.data in (None, []):
+            return
+        if not isinstance(field.data, list):
+            raise ValidationError("task_keywords 必须是数组")
+        for kw in field.data:
+            if not isinstance(kw, str):
+                raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
 class ImportCatalogSkillReq(FlaskForm):
@@ -62,8 +88,55 @@ class ImportCatalogSkillReq(FlaskForm):
         validators=[
             DataRequired("source_key 不能为空"),
             Length(min=1, max=255, message="source_key 长度范围在1-255"),
+            Regexp(
+                r"^[A-Za-z0-9_-]+$",
+                message="source_key 必须使用 ASCII 格式(仅支持字母、数字、下划线和连字符)",
+            ),
         ],
     )
+
+
+class ImportSkillZipReq(FlaskForm):
+    """zip 包上传导入技能包请求。
+
+    file 通过 multipart/form-data 上传，由 handler 直接从 request.files 读取；
+    此 Form 仅校验 overwrite 字段。
+    """
+
+    overwrite = BooleanField("overwrite", default=False)
+
+
+class ImportSkillGithubReq(FlaskForm):
+    """GitHub URL 导入技能包请求。"""
+
+    github_url = StringField(
+        "github_url",
+        validators=[
+            DataRequired("github_url 不能为空"),
+            Length(min=1, max=2048, message="github_url 长度范围在1-2048"),
+        ],
+    )
+    overwrite = BooleanField("overwrite", default=False)
+
+
+class ImportSkillJsonReq(FlaskForm):
+    """JSON 文本导入技能包请求。"""
+
+    config_json = StringField(
+        "config_json",
+        validators=[
+            DataRequired("config_json 不能为空"),
+            Length(min=1, message="config_json 不能为空"),
+        ],
+    )
+    overwrite = BooleanField("overwrite", default=False)
+
+
+class ImportSkillResultResp(Schema):
+    """技能导入结果响应。"""
+
+    imported = fields.List(fields.Dict(), dump_default=[])
+    failed = fields.List(fields.Dict(), dump_default=[])
 
 
 class CatalogPackageResp(Schema):
@@ -148,6 +221,7 @@ class SkillPackageResp(Schema):
     executor_type = fields.String(dump_default="scf")
     tool_count = fields.Integer(dump_default=0)
     tools = fields.List(fields.Nested(SkillToolResp), dump_default=[])
+    task_keywords = fields.List(fields.String(), dump_default=[])
     enabled = fields.Boolean(dump_default=True)
     current_version = fields.Integer(dump_default=1)
     sync_status = fields.String(dump_default="pending")
@@ -189,6 +263,7 @@ class SkillPackageResp(Schema):
             "executor_type": data.executor_type,
             "tool_count": getattr(data, "tool_count", 0),
             "tools": getattr(data, "tools", []),
+            "task_keywords": getattr(data, "task_keywords", []) or [],
             "enabled": getattr(data, "enabled", True),
             "current_version": getattr(data, "current_version", 1),
             "sync_status": getattr(data, "sync_status", "pending"),

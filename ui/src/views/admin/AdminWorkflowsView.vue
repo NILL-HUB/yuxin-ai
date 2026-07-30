@@ -5,13 +5,17 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AdminWorkflowCard from '@/components/admin/AdminWorkflowCard.vue'
 import AdminWorkflowToolbar from '@/components/admin/AdminWorkflowToolbar.vue'
+import ImportWorkflowModal from '@/views/admin/workflows/ImportWorkflowModal.vue'
 import type { AdminWorkflowRecord, GetAdminWorkflowsRequest } from '@/models/admin-workflow'
 import {
   batchOfflineAdminWorkflows,
   batchPublishAdminWorkflows,
   createAdminWorkflow,
   deleteAdminWorkflow,
+  exportAdminWorkflow,
   listAdminWorkflows,
+  offlineAdminWorkflow,
+  updateAdminWorkflow,
 } from '@/services/admin-workflows'
 import { getErrorMessage } from '@/utils/error'
 
@@ -53,7 +57,11 @@ const filters = ref<GetAdminWorkflowsRequest>({
 })
 const showCreateModal = ref(false)
 const createForm = ref<CreateWorkflowForm>({ name: '', description: '', icon: '', tool_call_name: '' })
+const toolCallNameError = ref('')
+const TOOL_CALL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const selectedIds = ref<Set<string>>(new Set())
+const showImportModal = ref(false)
+const exportingId = ref<string | null>(null)
 const allSelected = computed(() => workflows.value.length > 0 && workflows.value.every((w) => selectedIds.value.has(w.id)))
 const selectedCount = computed(() => selectedIds.value.size)
 
@@ -110,7 +118,65 @@ const handleEdit = async (workflowId: string) => {
  */
 const openCreateModal = () => {
   createForm.value = { name: '', description: '', icon: '', tool_call_name: '' }
+  toolCallNameError.value = ''
   showCreateModal.value = true
+}
+
+/**
+ * 打开导入工作流弹窗。
+ */
+const openImportModal = () => {
+  showImportModal.value = true
+}
+
+/**
+ * 触发浏览器下载 JSON 文件。
+ */
+const downloadJsonFile = (filename: string, data: unknown) => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * 导出指定工作流为 JSON 文件并触发下载。
+ */
+const handleExport = async (workflow: AdminWorkflowRecord) => {
+  if (exportingId.value) return
+  exportingId.value = workflow.id
+  try {
+    const data = await exportAdminWorkflow(workflow.id, false)
+    const safeName = (workflow.name || workflow.id || 'workflow').replace(/[^\w.-]+/g, '_')
+    downloadJsonFile(`${safeName}.json`, data)
+    Message.success(t('admin.workflowsAdmin.export.success'))
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.export.failed')))
+  } finally {
+    exportingId.value = null
+  }
+}
+
+/**
+ * 校验 tool_call_name 格式，失焦与提交时复用。
+ */
+const validateToolCallName = () => {
+  const value = createForm.value.tool_call_name?.trim() || ''
+  if (!value) {
+    toolCallNameError.value = t('admin.workflowsAdmin.toolCallNameRequired')
+    return false
+  }
+  if (!TOOL_CALL_NAME_PATTERN.test(value)) {
+    toolCallNameError.value = t('admin.workflowsAdmin.toolCallNameInvalid')
+    return false
+  }
+  toolCallNameError.value = ''
+  return true
 }
 
 /**
@@ -121,13 +187,16 @@ const submitCreate = async () => {
     Message.warning(t('admin.workflowsAdmin.nameRequired'))
     return
   }
+  if (!validateToolCallName()) {
+    return
+  }
   saving.value = true
   try {
     const workflow = await createAdminWorkflow({
       name: createForm.value.name,
       description: createForm.value.description,
       icon: createForm.value.icon || 'https://placehold.co/100x100/png?text=WF',
-      tool_call_name: createForm.value.tool_call_name || createForm.value.name,
+      tool_call_name: createForm.value.tool_call_name.trim(),
     })
     Message.success(t('admin.workflowsAdmin.createSuccess'))
     showCreateModal.value = false
@@ -161,6 +230,41 @@ const handleDelete = (workflow: AdminWorkflowRecord) => {
       }
     },
   })
+}
+
+/**
+ * 下架单条工作流，成功后刷新列表。
+ */
+const handleOffline = (workflow: AdminWorkflowRecord) => {
+  Modal.warning({
+    title: t('admin.workflowsAdmin.actions.offline'),
+    content: t('admin.workflowsAdmin.deleteContent', { name: workflow.name }),
+    hideCancel: false,
+    onOk: async () => {
+      try {
+        await offlineAdminWorkflow(workflow.id)
+        Message.success(t('admin.workflowsAdmin.offlineSuccess', { name: workflow.name }))
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.workflowsAdmin.offlineFailed')))
+      } finally {
+        void loadWorkflows()
+      }
+    },
+  })
+}
+
+/**
+ * 切换单条工作流公开状态，成功后刷新列表。
+ */
+const handleTogglePublic = async (workflow: AdminWorkflowRecord) => {
+  try {
+    await updateAdminWorkflow(workflow.id, { is_public: !workflow.is_public })
+    Message.success(t('admin.workflowsAdmin.updateSuccess'))
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.updateFailed')))
+  } finally {
+    void loadWorkflows()
+  }
 }
 
 /**
@@ -288,12 +392,20 @@ onMounted(() => {
         <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.workflowsAdmin.title') }}</h1>
         <p class="mt-1 text-sm text-slate-500">{{ t('admin.workflowsAdmin.description') }}</p>
       </div>
-      <a-button type="primary" @click="openCreateModal">
-        <template #icon>
-          <icon-plus />
-        </template>
-        {{ t('admin.workflowsAdmin.createButton') }}
-      </a-button>
+      <div class="flex items-center gap-2">
+        <a-button @click="openImportModal">
+          <template #icon>
+            <icon-upload />
+          </template>
+          {{ t('admin.workflowsAdmin.import.button') }}
+        </a-button>
+        <a-button type="primary" @click="openCreateModal">
+          <template #icon>
+            <icon-plus />
+          </template>
+          {{ t('admin.workflowsAdmin.createButton') }}
+        </a-button>
+      </div>
     </header>
 
     <a-alert type="info" :show-icon="true">
@@ -367,10 +479,13 @@ onMounted(() => {
         <AdminWorkflowCard
           class="flex-1"
           :workflow="workflow"
-          :can-update="false"
+          :can-update="true"
           :can-delete="true"
           @edit="handleEdit"
           @delete="handleDelete"
+          @offline="handleOffline"
+          @toggle-public="handleTogglePublic"
+          @export="handleExport"
         />
       </div>
     </section>
@@ -399,7 +514,7 @@ onMounted(() => {
       />
     </div>
 
-    <!-- 创建工作流弹窗（仅 name + description） -->
+    <!-- 创建工作流弹窗 -->
     <a-modal
       v-model:visible="showCreateModal"
       :title="t('admin.workflowsAdmin.createButton')"
@@ -411,6 +526,19 @@ onMounted(() => {
         <a-form-item :label="t('admin.workflowsAdmin.formName')" field="name" required>
           <a-input v-model="createForm.name" :placeholder="t('admin.workflowsAdmin.namePlaceholder')" />
         </a-form-item>
+        <a-form-item
+          :label="t('admin.workflowsAdmin.toolCallName')"
+          field="tool_call_name"
+          required
+          :validate-status="toolCallNameError ? 'error' : undefined"
+          :help="toolCallNameError"
+        >
+          <a-input
+            v-model="createForm.tool_call_name"
+            :placeholder="t('admin.workflowsAdmin.toolCallNamePlaceholder')"
+            @blur="validateToolCallName"
+          />
+        </a-form-item>
         <a-form-item :label="t('admin.workflowsAdmin.formDescription')" field="description">
           <a-textarea
             v-model="createForm.description"
@@ -420,5 +548,11 @@ onMounted(() => {
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <ImportWorkflowModal
+      v-model:visible="showImportModal"
+      api-mode="admin"
+      :callback="loadWorkflows"
+    />
   </section>
 </template>

@@ -51,7 +51,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
         start_at = time.perf_counter()
         llm = self.llm
         if (
-            ModelFeature.TOOL_CALL.value in llm.features
+            ModelFeature.TOOL_CALL.value in (getattr(llm, "features", None) or [])
             and hasattr(llm, "bind_tools")
             and callable(getattr(llm, "bind_tools"))
             and len(self.agent_config.tools) > 0
@@ -110,7 +110,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
                     id=event_id,
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_THOUGHT.value,
-                    thought=json.dumps(final_tool_calls),
+                    thought=json.dumps(final_tool_calls, ensure_ascii=False, default=str),
                     message=messages_to_dict(state["messages"]),
                     message_token_count=input_token_count,
                     message_unit_price=input_price,

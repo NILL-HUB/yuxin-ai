@@ -3,40 +3,68 @@ import { flushPromises, mount } from '@vue/test-utils'
 import MemoryView from '@/views/settings/MemoryView.vue'
 
 const mocks = vi.hoisted(() => ({
-  listUserMemories: vi.fn(),
-  listMemoryCandidates: vi.fn(),
-  createUserMemory: vi.fn(),
-  updateUserMemory: vi.fn(),
-  deleteUserMemory: vi.fn(),
-  confirmMemoryCandidate: vi.fn(),
-  ignoreMemoryCandidate: vi.fn(),
-  getUserMemory: vi.fn(),
+  getMemoryGraph: vi.fn(),
+  getClusterSubgraph: vi.fn(),
+  getMemoryDetail: vi.fn(),
+  getMemoryDigest: vi.fn(),
+  triggerConsolidation: vi.fn(),
+  listSkills: vi.fn(),
+  editMemory: vi.fn(),
+  softDeleteMemory: vi.fn(),
+  hardDeleteMemory: vi.fn(),
+  decayMemory: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
-  messageWarning: vi.fn(),
 }))
 
-vi.mock('@/services/user-memory', () => ({
-  listUserMemories: mocks.listUserMemories,
-  listMemoryCandidates: mocks.listMemoryCandidates,
-  createUserMemory: mocks.createUserMemory,
-  updateUserMemory: mocks.updateUserMemory,
-  deleteUserMemory: mocks.deleteUserMemory,
-  confirmMemoryCandidate: mocks.confirmMemoryCandidate,
-  ignoreMemoryCandidate: mocks.ignoreMemoryCandidate,
-  getUserMemory: mocks.getUserMemory,
+vi.mock('@/services/memory-graph', () => ({
+  getMemoryGraph: mocks.getMemoryGraph,
+  getClusterSubgraph: mocks.getClusterSubgraph,
+  getMemoryDetail: mocks.getMemoryDetail,
+  getMemoryDigest: mocks.getMemoryDigest,
+  triggerConsolidation: mocks.triggerConsolidation,
+  listSkills: mocks.listSkills,
+  editMemory: mocks.editMemory,
+  softDeleteMemory: mocks.softDeleteMemory,
+  hardDeleteMemory: mocks.hardDeleteMemory,
+  decayMemory: mocks.decayMemory,
 }))
 
 vi.mock('@arco-design/web-vue', () => ({
   Message: {
     success: mocks.messageSuccess,
     error: mocks.messageError,
-    warning: mocks.messageWarning,
+    warning: vi.fn(),
   },
 }))
 
-const slotStub = { template: '<div><slot /></div>' }
+vi.mock('@/stores/account', () => ({
+  useAccountStore: () => ({
+    account: { id: 'test-user-id' },
+  }),
+}))
 
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({
+    t: (key: string, params?: Record<string, unknown>) => {
+      const map: Record<string, string> = {
+        'memory.graph.pageTitle': '记忆图谱',
+        'memory.graph.pageDescription': '以图谱方式查看和管理你的记忆',
+        'memory.graph.graphTab': '记忆图谱',
+        'memory.graph.consolidateBtn': '执行巩固',
+        'memory.graph.selectClusterHint': '点击上方分类查看记忆子图',
+        'memory.graph.totalNodes': `共 ${params?.count ?? 0} 条记忆`,
+        'memory.graph.lastUpdated': '最近更新',
+        'memory.memoryType.profile': '个人资料',
+        'memory.memoryType.preference': '偏好',
+        'memory.memoryTypeDesc.profile': '用户的基本身份信息',
+      }
+      return map[key] ?? key
+    },
+  }),
+}))
+
+const slotStub = { template: '<div><slot /></div>' }
 const buttonStub = {
   props: ['type', 'size', 'status', 'loading', 'disabled'],
   emits: ['click'],
@@ -44,50 +72,53 @@ const buttonStub = {
     '<button type="button" :disabled="disabled || loading" @click="$emit(\'click\')"><slot /></button>',
 }
 
-const modalStub = {
-  props: { visible: Boolean, title: String, okText: String, cancelText: String, okLoading: Boolean },
-  emits: ['update:visible', 'ok', 'cancel'],
-  template: '<div v-if="visible" class="modal-stub"><slot /></div>',
-}
+const renderView = async (graphData: any = null) => {
+  mocks.getMemoryGraph.mockResolvedValue(
+    graphData || {
+      user_id: 'test-user-id',
+      clusters: [
+        { memory_type: 'profile', node_count: 5, last_updated_at: '2026-07-01T00:00:00Z' },
+        { memory_type: 'preference', node_count: 3, last_updated_at: '2026-07-02T00:00:00Z' },
+      ],
+      total_nodes: 8,
+    },
+  )
+  mocks.getClusterSubgraph.mockResolvedValue({ nodes: [], edges: [], truncated: false })
+  mocks.getMemoryDetail.mockResolvedValue({ memory_id: '', content: '', related: [] })
+  mocks.getMemoryDigest.mockResolvedValue({ user_id: 'test-user-id', digest: '', cached: false })
+  mocks.triggerConsolidation.mockResolvedValue({
+    user_id: 'test-user-id',
+    success: true,
+    total_items: 0,
+    phase_results: {},
+    errors: [],
+    task_id: null,
+  })
+  mocks.listSkills.mockResolvedValue({ user_id: 'test-user-id', skills: [], total: 0 })
 
-const formItemStub = {
-  props: ['label'],
-  template: '<div class="form-item"><label>{{ label }}</label><slot /></div>',
-}
-
-const tableStub = {
-  props: { data: { type: Array, default: () => [] }, loading: Boolean },
-  template:
-    '<div class="table-stub"><div v-for="item in data" :key="item.id" :data-memory-type="item.memory_type" class="memory-row">{{ item.memory_type }}</div></div>',
-}
-
-const renderView = async (memories: any[] = [], candidates: any[] = []) => {
-  mocks.listUserMemories.mockResolvedValue(memories)
-  mocks.listMemoryCandidates.mockResolvedValue(candidates)
   const wrapper = mount(MemoryView, {
     global: {
       stubs: {
         'a-button': buttonStub,
-        'a-modal': modalStub,
-        'a-form': slotStub,
-        'a-form-item': formItemStub,
-        'a-select': slotStub,
-        'a-textarea': slotStub,
-        'a-slider': slotStub,
-        'a-input': slotStub,
-        'a-tag': slotStub,
-        'a-switch': slotStub,
-        'a-table': tableStub,
-        'a-table-column': slotStub,
         'a-tabs': slotStub,
         'a-tab-pane': slotStub,
         'a-spin': slotStub,
-        'a-space': slotStub,
+        'a-tag': slotStub,
+        'a-modal': slotStub,
+        'a-form': slotStub,
+        'a-form-item': slotStub,
+        'a-textarea': slotStub,
+        'a-slider': slotStub,
         'a-popconfirm': slotStub,
-        'icon-plus': { template: '<i />' },
-        'icon-search': { template: '<i />' },
+        'icon-refresh': { template: '<i />' },
         'icon-bookmark': { template: '<i />' },
         'icon-bulb': { template: '<i />' },
+        'icon-edit': { template: '<i />' },
+        'icon-delete': { template: '<i />' },
+        'icon-minus-circle': { template: '<i />' },
+        MemoryClusterView: true,
+        MemoryGraphView: true,
+        MemoryNodeDetail: true,
       },
     },
   })
@@ -98,42 +129,25 @@ const renderView = async (memories: any[] = [], candidates: any[] = []) => {
 describe('MemoryView', () => {
   it('renders the page title', async () => {
     const wrapper = await renderView()
-
-    expect(wrapper.text()).toContain('长期记忆管理')
+    expect(wrapper.text()).toContain('记忆图谱')
   })
 
-  it('opens the create memory modal', async () => {
+  it('loads graph data on mount', async () => {
+    await renderView()
+    expect(mocks.getMemoryGraph).toHaveBeenCalledWith('test-user-id')
+  })
+
+  it('renders the consolidate button', async () => {
     const wrapper = await renderView()
-
-    expect(wrapper.text()).not.toContain('记忆类型')
-
-    await wrapper.find('[data-test="create-memory-btn"]').trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.text()).toContain('记忆类型')
-    expect(wrapper.text()).toContain('记忆内容')
-    expect(wrapper.text()).toContain('置信度')
+    expect(wrapper.text()).toContain('执行巩固')
   })
 
-  it('renders memory type tags', async () => {
-    const wrapper = await renderView([
-      {
-        id: 'm1',
-        memory_type: 'preference',
-        content: '偏好深色主题',
-        confidence: 4,
-        status: 'active',
-        created_from: 'manual_input',
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ])
-
-    expect(wrapper.find('[data-memory-type="preference"]').exists()).toBe(true)
-  })
-
-  it('shows the empty state when no memories', async () => {
-    const wrapper = await renderView([])
-
-    expect(wrapper.text()).toContain('暂无已保存的记忆')
+  it('triggers consolidation on button click', async () => {
+    const wrapper = await renderView()
+    const btn = wrapper.find('[data-test="consolidate-btn"]')
+    await btn.trigger('click')
+    await flushPromises()
+    expect(mocks.triggerConsolidation).toHaveBeenCalledWith('test-user-id')
+    expect(mocks.messageSuccess).toHaveBeenCalled()
   })
 })

@@ -73,6 +73,7 @@ export type McpProvider = {
   tool_count: number
   tools: McpTool[]
   binding: McpBinding
+  task_keywords: string[]
 }
 
 export type GetMcpProvidersWithPageRequest = BasePaginatorRequest & {
@@ -94,6 +95,7 @@ export type CreateMcpProviderRequest = {
   args?: string[]
   env?: Record<string, string>
   timeout_seconds?: number
+  task_keywords?: string[]
 }
 
 export type UpdateMcpProviderRequest = CreateMcpProviderRequest

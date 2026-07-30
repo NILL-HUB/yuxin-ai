@@ -18,6 +18,7 @@ const defaultActivateKeys = [
   'agent_bindings',
   'workflows',
   'datasets',
+  'knowledge_bases',
   'long_term_memory',
   'opening',
   'suggested_after_answer',
@@ -33,7 +34,8 @@ const mcpToolSnapshots = computed(() => props.draft_app_config?.mcp_tool_snapsho
 const skillsCount = computed(() => props.draft_app_config?.skills?.length || 0)
 const agentBindingsCount = computed(() => props.draft_app_config?.agent_bindings?.length || 0)
 const workflowsCount = computed(() => props.draft_app_config?.workflows?.length || 0)
-const datasetsCount = computed(() => props.draft_app_config?.datasets?.length || 0)
+// 新版知识库展示信息列表（后端返回 knowledge_bases 字段，含 id/name/description）
+const knowledgeBasesCount = computed(() => props.draft_app_config?.knowledge_bases?.length || 0)
 const longTermMemoryEnabled = computed(() => props.draft_app_config?.long_term_memory?.enable || false)
 const openingStatementEnabled = computed(() => !!props.draft_app_config?.opening_statement)
 const openingQuestionsCount = computed(() => props.draft_app_config?.opening_questions?.length || 0)
@@ -442,15 +444,15 @@ const formatToolCount = (count: number) => {
           <div v-else class="text-gray-400 text-sm">{{ t('appStudio.abilities.readonly.noWorkflows') }}</div>
         </a-collapse-item>
 
-        <!-- 知识库 -->
+        <!-- 新版知识库（knowledge_base_ids，App 配置主用字段） -->
         <a-collapse-item
-          key="datasets"
+          key="knowledge_bases"
           :header="t('appStudio.abilities.datasets.title')"
           class="app-ability-item"
         >
-          <div v-if="datasetsCount > 0" class="space-y-2">
+          <div v-if="knowledgeBasesCount > 0" class="space-y-2">
             <div
-              v-for="(dataset, index) in props.draft_app_config.datasets"
+              v-for="(kb, index) in props.draft_app_config.knowledge_bases"
               :key="index"
               class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg"
             >
@@ -459,12 +461,15 @@ const formatToolCount = (count: number) => {
               </a-avatar>
               <div class="flex-1 min-w-0">
                 <div class="text-sm font-medium text-gray-700 truncate">
-                  {{ dataset.name || t('appStudio.abilities.readonly.unnamedDataset') }}
+                  {{ kb.name || t('appStudio.abilities.readonly.unnamedKnowledgeBase') }}
+                </div>
+                <div v-if="kb.description" class="text-xs text-gray-500 truncate">
+                  {{ kb.description }}
                 </div>
               </div>
             </div>
           </div>
-          <div v-else class="text-gray-400 text-sm">{{ t('appStudio.abilities.readonly.noDatasets') }}</div>
+          <div v-else class="text-gray-400 text-sm">{{ t('appStudio.abilities.readonly.noKnowledgeBases') }}</div>
         </a-collapse-item>
 
         <!-- 长期记忆召回 -->

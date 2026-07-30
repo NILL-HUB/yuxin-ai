@@ -5,6 +5,7 @@ import requests
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel,create_model, Field
 from internal.core.tools.api_tools.entities import ToolEntity,ParameterTypeMap, ParameterIn
+from internal.service.tool_credential_encryptor import decrypt_headers
 
 DEFAULT_API_TOOL_TIMEOUT_SECONDS = 30
 
@@ -28,7 +29,9 @@ class ApiProviderManager(BaseModel):
             }
             # 2.更改参数结构映射
             parameter_map = {parameter.get("name"): parameter for parameter in tool_entity.parameters}
-            header_map = {header.get("key"): header.get("value") for header in tool_entity.headers}
+            # 运行时解密 headers：DB 中存储的是加密 token
+            decrypted_headers = decrypt_headers(tool_entity.headers)
+            header_map = {header.get("key"): header.get("value") for header in decrypted_headers}
 
             # 3.循环遍历传递的所有字段并校验
             for key, value in kwargs.items():

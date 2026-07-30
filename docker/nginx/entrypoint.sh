@@ -86,6 +86,11 @@ server {
         include /etc/nginx/proxy.conf;
     }
 
+    location /storage/local/ {
+        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/storage/local/;
+        include /etc/nginx/proxy.conf;
+    }
+
     location / {
         proxy_pass http://${UI_UPSTREAM_HOST}:${UI_UPSTREAM_PORT};
         include /etc/nginx/proxy.conf;
@@ -112,6 +117,11 @@ server {
 
     location /api/ {
         proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/;
+        include /etc/nginx/proxy.conf;
+    }
+
+    location /storage/local/ {
+        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/storage/local/;
         include /etc/nginx/proxy.conf;
     }
 

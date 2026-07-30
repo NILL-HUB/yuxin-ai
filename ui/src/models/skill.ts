@@ -36,10 +36,12 @@ export type SkillPackage = {
   executor_type: string
   tool_count: number
   tools: SkillTool[]
+  task_keywords?: string[]
   enabled?: boolean
   current_version?: number
   sync_status?: string
   sync_error?: string
+  skill_code?: string
   created_at: number
   updated_at: number
 }

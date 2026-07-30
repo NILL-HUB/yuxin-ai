@@ -17,6 +17,9 @@ class GetAuditLogsReq(FlaskForm):
 class AuditLogResp(Schema):
     id = fields.String()
     admin_user_id = fields.String(allow_none=True)
+    admin_user_name = fields.String(allow_none=True)
+    account_id = fields.String(allow_none=True)
+    account_name = fields.String(allow_none=True)
     action = fields.String()
     resource_type = fields.String()
     resource_id = fields.String()

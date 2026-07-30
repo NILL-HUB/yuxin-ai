@@ -12,7 +12,7 @@ from internal.exception import (
     NotFoundException,
     ValidateErrorException,
 )
-from internal.model import ApiTool, Dataset
+from internal.model import ApiTool, KnowledgeBase
 from internal.service.workflow_service import WorkflowService as _WorkflowService
 
 
@@ -844,7 +844,7 @@ class TestWorkflowService:
 
         assert result["nodes"][0]["meta"]["tool"]["params"] == {"query": "上海天气"}
 
-    def test_get_draft_graph_should_enrich_api_tool_and_dataset_meta(self, monkeypatch):
+    def test_get_draft_graph_should_enrich_api_tool_and_knowledge_base_meta(self, monkeypatch):
         class _ToolQuery:
             def __init__(self, tool_record):
                 self.tool_record = tool_record
@@ -873,7 +873,7 @@ class TestWorkflowService:
             def query(self, model):
                 if model is ApiTool:
                     return _ToolQuery(self.tool_record)
-                if model is Dataset:
+                if model is KnowledgeBase:
                     return _DatasetQuery(self.datasets)
                 raise AssertionError(f"unexpected model query: {model}")
 
@@ -918,7 +918,7 @@ class TestWorkflowService:
                 },
                 {
                     "node_type": NodeType.DATASET_RETRIEVAL.value,
-                    "dataset_ids": [str(dataset_records[0].id), str(dataset_records[1].id)],
+                    "knowledge_base_ids": [str(dataset_records[0].id), str(dataset_records[1].id)],
                 },
             ],
             "edges": [],
@@ -934,8 +934,8 @@ class TestWorkflowService:
         assert api_tool_node["meta"]["provider"]["name"] == "api-provider"
         assert api_tool_node["meta"]["tool"]["name"] == "weather_tool"
         assert unknown_tool_node["meta"]["provider"]["id"] == ""
-        assert len(dataset_node["meta"]["datasets"]) == 2
-        assert dataset_node["meta"]["datasets"][0]["name"] == "dataset-a"
+        assert len(dataset_node["meta"]["knowledge_bases"]) == 2
+        assert dataset_node["meta"]["knowledge_bases"][0]["name"] == "dataset-a"
 
     def test_get_draft_graph_should_keep_non_tool_non_dataset_nodes_untouched(self, monkeypatch):
         service = _build_service()
@@ -996,7 +996,7 @@ class TestWorkflowService:
 
         assert prepared["outputs"] == outputs
 
-    def test_validate_graph_should_trim_dataset_ids_for_valid_graph(self):
+    def test_validate_graph_should_trim_knowledge_base_ids_for_valid_graph(self):
         class _DatasetQuery:
             def __init__(self, datasets):
                 self.datasets = datasets
@@ -1012,7 +1012,7 @@ class TestWorkflowService:
                 self.datasets = datasets
 
             def query(self, model):
-                if model is Dataset:
+                if model is KnowledgeBase:
                     return _DatasetQuery(self.datasets)
                 raise AssertionError(f"unexpected model query: {model}")
 
@@ -1038,7 +1038,7 @@ class TestWorkflowService:
                     "id": str(dataset_node_id),
                     "node_type": NodeType.DATASET_RETRIEVAL.value,
                     "title": "dataset",
-                    "dataset_ids": [str(owned_dataset.id), str(uuid4())],
+                    "knowledge_base_ids": [str(owned_dataset.id), str(uuid4())],
                     "retrieval_config": {"retrieval_strategy": "semantic", "k": 2, "score": 0.4},
                     "inputs": [
                         {
@@ -1072,8 +1072,8 @@ class TestWorkflowService:
         assert len(validated["nodes"]) == 3
         assert len(validated["edges"]) == 1
         dataset_node = next(node for node in validated["nodes"] if node["node_type"] == NodeType.DATASET_RETRIEVAL.value)
-        # _validate_graph 会根据权限过滤 dataset_ids，仅保留当前账号可访问的数据集。
-        assert dataset_node["dataset_ids"] == [str(owned_dataset.id)]
+        # _validate_graph 会根据权限过滤 knowledge_base_ids，仅保留当前账号可访问的知识库。
+        assert dataset_node["knowledge_base_ids"] == [str(owned_dataset.id)]
 
     def test_get_draft_graph_should_use_empty_meta_when_api_tool_record_missing(self, monkeypatch):
         class _ToolQuery:
@@ -1089,7 +1089,7 @@ class TestWorkflowService:
             def query(model):
                 if model is ApiTool:
                     return _ToolQuery()
-                if model is Dataset:
+                if model is KnowledgeBase:
                     return SimpleNamespace(filter=lambda *_a, **_k: SimpleNamespace(all=lambda: []))
                 raise AssertionError(f"unexpected model query: {model}")
 

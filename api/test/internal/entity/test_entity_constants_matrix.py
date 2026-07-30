@@ -27,10 +27,7 @@ from internal.entity.conversation_entity import (
     MessageStatus,
 )
 from internal.entity.dataset_entity import (
-    DEFAULT_DATASET_DESCRIPTION_FORMATTER,
-    DEFAULT_PROCESS_RULE,
     DocumentStatus,
-    ProcessType,
     RetrievalSource,
     RetrievalStrategy,
     SegmentStatus,
@@ -67,7 +64,7 @@ def test_app_entity_should_keep_expected_defaults_and_enums():
         "mcp_tool_snapshots",
         "skills",
         "workflows",
-        "datasets",
+        "knowledge_base_ids",
         "retrieval_config",
         "long_term_memory",
         "opening_statement",
@@ -84,25 +81,11 @@ def test_app_entity_should_keep_expected_defaults_and_enums():
     assert DEFAULT_APP_CONFIG["text_to_speech"]["voice"] in ALLOWED_AUDIO_VOICES
 
 
-def test_dataset_entity_should_keep_expected_rule_shape_and_enums():
-    assert _enum_values(ProcessType) == ["automatic", "custom"]
+def test_dataset_entity_should_keep_expected_enums():
     assert _enum_values(DocumentStatus) == ["waiting", "parsing", "splitting", "indexing", "completed", "error"]
     assert _enum_values(SegmentStatus) == ["waiting", "indexing", "completed", "error"]
     assert _enum_values(RetrievalStrategy) == ["full_text", "semantic", "hybrid"]
     assert _enum_values(RetrievalSource) == ["hit_testing", "app"]
-
-    assert "{name}" in DEFAULT_DATASET_DESCRIPTION_FORMATTER
-
-    assert DEFAULT_PROCESS_RULE["mode"] == "custom"
-    rule = DEFAULT_PROCESS_RULE["rule"]
-    pre_process_ids = {item["id"] for item in rule["pre_process_rules"]}
-    assert pre_process_ids == {"remove_extra_space", "remove_url_and_email"}
-    assert all(isinstance(item["enabled"], bool) for item in rule["pre_process_rules"])
-
-    segment = rule["segment"]
-    assert isinstance(segment["separators"], list) and len(segment["separators"]) > 0
-    assert 100 <= segment["chunk_size"] <= 1000
-    assert 0 <= segment["chunk_overlap"] <= int(segment["chunk_size"] * 0.5)
 
 
 def test_workflow_entity_should_keep_expected_defaults_and_enums():

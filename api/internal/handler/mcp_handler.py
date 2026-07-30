@@ -11,9 +11,11 @@ from internal.schema.mcp_schema import (
     CreateMcpProviderReq,
     GetMcpCategoriesResp,
     GetMcpProvidersWithPageReq,
+    ImportMcpJsonReq,
     McpProviderResp,
     UpdateMcpProviderReq,
 )
+from internal.service.mcp_import_service import McpImportService
 from internal.service.mcp_service import McpService
 from pkg.paginator import PageModel
 from pkg.response import compact_generate_response, success_json, success_message, validate_error_json
@@ -25,6 +27,7 @@ class McpHandler:
     """MCP 处理器。"""
 
     mcp_service: McpService
+    mcp_import_service: McpImportService
 
     def get_mcp_categories(self):
         """获取 MCP 分类列表。"""
@@ -135,4 +138,24 @@ class McpHandler:
 
         icon = self.mcp_service.generate_icon_preview(name, description)
         return success_json({"icon": icon})
+
+    @login_required
+    def import_mcp_json(self):
+        """标准 mcp.json 批量导入（用户空间）。
+
+        请求格式：application/json
+            - config_json: 标准 mcp.json 文本（必需）
+            - overwrite: 是否覆盖已存在的同名 server（可选，默认 false）
+        """
+        data = request.get_json(force=True, silent=True) or {}
+        req = ImportMcpJsonReq(data=data)
+        if not req.validate():
+            return validate_error_json(req.errors)
+
+        result = self.mcp_import_service.import_from_mcp_json(
+            req.config_json.data,
+            current_user.id,
+            overwrite=bool(req.overwrite.data),
+        )
+        return success_json(result)
 

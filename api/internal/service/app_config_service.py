@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from copy import deepcopy
 from inspect import Parameter, signature
@@ -14,15 +15,17 @@ from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from internal.core.tools.mcp_tools.providers import McpToolFactory
 from .skill_service import SkillService
 from internal.lib.helper import datetime_to_timestamp, get_value_type
-from internal.model import App, ApiTool, Dataset, AppConfig, AppConfigVersion, AppDatasetJoin, Workflow
+from internal.model import App, ApiTool, KnowledgeBase, AppConfig, AppConfigVersion, Workflow
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from internal.core.language_model.entities.model_entity import ModelParameterType
 from internal.entity.app_entity import DEFAULT_APP_CONFIG, AppStatus
 from internal.entity.workflow_entity import WorkflowStatus
-from internal.core.workflow import Workflow as WorkflowTool
+from internal.core.workflow.workflow import WorkflowToolAdapter as WorkflowTool
 from ..core.workflow.entities.workflow_entity import WorkflowConfig
-from internal.exception import ValidateErrorException
+from internal.exception import NotFoundException, ValidateErrorException
+
+logger = logging.getLogger(__name__)
 
 
 def call_config_loader(loader: Any, app: App, *, persist_changes: bool) -> dict[str, Any]:
@@ -302,11 +305,15 @@ class AppConfigService(BaseService):
             self.update(draft_app_config, tools=validate_tools)
 
         # 5.校验知识库列表，如果引用了不存在/被删除的知识库，需要剔除数据并更新，同时获取知识库的额外信息
-        datasets, validate_datasets = self._process_and_validate_datasets(draft_app_config.datasets)
-
-        # 6.判断是否存在已删除的知识库，如果存在则更新
-        if persist_changes and set(validate_datasets) != set(draft_app_config.datasets):
-            self.update(draft_app_config, datasets=validate_datasets)
+        # 新版：优先校验 knowledge_base_ids（App 配置主用字段），并加 owner/scope 权限校验
+        knowledge_bases, validate_knowledge_base_ids = self._process_and_validate_knowledge_base_ids(
+            getattr(draft_app_config, "knowledge_base_ids", []),
+            current_account_id=getattr(app, "account_id", None),
+        )
+        if persist_changes and set(validate_knowledge_base_ids) != set(
+            getattr(draft_app_config, "knowledge_base_ids", [])
+        ):
+            self.update(draft_app_config, knowledge_base_ids=validate_knowledge_base_ids)
 
         # 7.校验工作流列表对应的数据
         workflows, validate_workflows = self._process_and_validate_workflows(draft_app_config.workflows)
@@ -349,12 +356,12 @@ class AppConfigService(BaseService):
             validate_model_config,
             tools,
             workflows,
-            datasets,
             mcp_bindings,
             mcp_tool_snapshots,
             skills,
             agent_bindings,
-            draft_app_config
+            draft_app_config,
+            knowledge_bases,
         )
         if not persist_changes:
             self._set_runtime_config_cache(cache_key, result)
@@ -389,15 +396,15 @@ class AppConfigService(BaseService):
             self.update(app_config, tools=validate_tools)
 
         # 5.校验知识库列表，如果引用了不存在/被删除的知识库，需要剔除数据并更新，同时获取知识库的额外信息
-        app_dataset_joins = app_config.app_dataset_joins
-        origin_datasets = [str(app_dataset_join.dataset_id) for app_dataset_join in app_dataset_joins]
-        datasets, validate_datasets = self._process_and_validate_datasets(origin_datasets)
-
-        # 6.判断是否存在已删除的知识库，如果存在则更新
-        if persist_changes:
-            for dataset_id in (set(origin_datasets) - set(validate_datasets)):
-                with self.db.auto_commit():
-                    self.db.session.query(AppDatasetJoin).filter(AppDatasetJoin.dataset_id == dataset_id).delete()
+        # 校验 knowledge_base_ids（AppConfig.knowledge_base_ids 列），并加 owner/scope 权限校验
+        knowledge_bases, validate_knowledge_base_ids = self._process_and_validate_knowledge_base_ids(
+            getattr(app_config, "knowledge_base_ids", []),
+            current_account_id=getattr(app, "account_id", None),
+        )
+        if persist_changes and set(validate_knowledge_base_ids) != set(
+            getattr(app_config, "knowledge_base_ids", [])
+        ):
+            self.update(app_config, knowledge_base_ids=validate_knowledge_base_ids)
 
         # 7.校验工作流列表对应的数据
         workflows, validate_workflows = self._process_and_validate_workflows(app_config.workflows)
@@ -440,12 +447,12 @@ class AppConfigService(BaseService):
             validate_model_config,
             tools,
             workflows,
-            datasets,
             mcp_bindings,
             mcp_tool_snapshots,
             skills,
             agent_bindings,
-            app_config
+            app_config,
+            knowledge_bases,
         )
         if not persist_changes:
             self._set_runtime_config_cache(cache_key, result)
@@ -470,7 +477,11 @@ class AppConfigService(BaseService):
 
         validate_model_config = self._process_and_validate_model_config(app_config_version.model_config)
         tools, _ = self._process_and_validate_tools(app_config_version.tools)
-        datasets, _ = self._process_and_validate_datasets(getattr(app_config_version, "datasets", []))
+        # 新版：校验 knowledge_base_ids（AppConfigVersion.knowledge_base_ids 列），并加 owner/scope 权限校验
+        knowledge_bases, _ = self._process_and_validate_knowledge_base_ids(
+            getattr(app_config_version, "knowledge_base_ids", []),
+            current_account_id=current_account_id,
+        )
         workflows, _ = self._process_and_validate_workflows(app_config_version.workflows)
         mcp_bindings, _ = self._process_and_validate_mcp_bindings(getattr(app_config_version, "mcp_bindings", []))
         mcp_tool_snapshots, _ = self._process_and_validate_mcp_tool_snapshots(
@@ -488,41 +499,15 @@ class AppConfigService(BaseService):
             validate_model_config,
             tools,
             workflows,
-            datasets,
             mcp_bindings,
             mcp_tool_snapshots,
             skills,
             agent_bindings,
             app_config_version,
+            knowledge_bases,
         )
         self._set_runtime_config_cache(cache_key, result)
         return result
-
-    def get_langchain_tools_by_mcp_bindings(
-        self,
-        mcp_bindings: list[dict],
-        mcp_tool_snapshots: list[dict] | None = None,
-    ) -> list[BaseTool]:
-        """根据传递的 MCP 绑定列表获取 LangChain 工具。"""
-        if not isinstance(mcp_bindings, list):
-            return []
-        return McpToolFactory().get_tools(mcp_bindings, mcp_tool_snapshots=mcp_tool_snapshots)
-
-    def prepare_mcp_tool_snapshots(
-        self,
-        mcp_bindings: list[dict],
-        existing_snapshots: list[dict] | None = None,
-    ) -> list[dict]:
-        """根据 MCP 绑定生成预热快照，不进行远端发现。"""
-        return McpToolFactory().prepare_binding_snapshots(mcp_bindings, existing_snapshots)
-
-    def refresh_mcp_tool_snapshots(
-        self,
-        mcp_bindings: list[dict],
-        existing_snapshots: list[dict] | None = None,
-    ) -> list[dict]:
-        """根据 MCP 绑定刷新远端快照。"""
-        return McpToolFactory().refresh_binding_snapshots(mcp_bindings, existing_snapshots)
 
     def get_langchain_tools_by_mcp_bindings(
         self,
@@ -564,7 +549,15 @@ class AppConfigService(BaseService):
                 )
                 if not builtin_tool:
                     continue
-                tools.append(builtin_tool(**tool["tool"]["params"]))
+                try:
+                    tools.append(builtin_tool(**tool["tool"]["params"]))
+                except Exception as exc:
+                    # 工具实例化失败（如依赖缺失、凭证无效）时跳过，避免单个工具阻断整个流程
+                    logger.warning(
+                        "内置工具实例化失败，已跳过 provider=%s tool=%s: %s",
+                        tool["provider"].get("id"), tool["tool"].get("name"), exc,
+                    )
+                    continue
             else:
                 # 4.API工具，首先根据id找到ApiTool记录，然后创建示例
                 api_tool = self.get(ApiTool, tool["tool"]["id"])
@@ -617,12 +610,12 @@ class AppConfigService(BaseService):
             model_config: dict[str, Any],
             tools: list[dict],
             workflows: list[dict],
-            datasets: list[dict],
             mcp_bindings: list[dict],
             mcp_tool_snapshots: list[dict],
             skills: list[dict],
             agent_bindings: list[dict],
-            app_config: Union[AppConfig, AppConfigVersion]
+            app_config: Union[AppConfig, AppConfigVersion],
+            knowledge_bases: list[dict] | None = None,
     ) -> dict[str, Any]:
         """根据传递的插件列表、工作流列表、知识库列表以及应用配置创建字典信息"""
         return {
@@ -636,7 +629,13 @@ class AppConfigService(BaseService):
             "skills": skills,
             "agent_bindings": agent_bindings,
             "workflows": workflows,
-            "datasets": datasets,
+            # 新版 knowledge_base_ids + 展示信息（App 配置主用字段）
+            "knowledge_base_ids": [
+                str(kb["id"]) for kb in (knowledge_bases or [])
+            ],
+            "knowledge_bases": knowledge_bases or [],
+            # App 级别绑定的 embedding 模型 ID（用于按维度路由向量存储）
+            "embedding_model_id": str(getattr(app_config, "embedding_model_id", "") or "") or "",
             "retrieval_config": app_config.retrieval_config,
             "long_term_memory": app_config.long_term_memory,
             "opening_statement": app_config.opening_statement,
@@ -899,28 +898,91 @@ class AppConfigService(BaseService):
 
         return validate_snapshots, validate_snapshots
 
-    def _process_and_validate_datasets(self, origin_datasets: list[dict]) -> tuple[list[dict], list[dict]]:
-        """根据传递的知识库并返回知识库配置与校验后的数据"""
-        # 1.校验知识库配置列表，如果引用了不存在的/被删除的知识库，则需要剔除数据并更新，同时获取知识库的额外信息
-        datasets = []
-        dataset_records = self.db.session.query(Dataset).filter(Dataset.id.in_(origin_datasets)).all()
-        dataset_dict = {str(dataset_record.id): dataset_record for dataset_record in dataset_records}
-        dataset_sets = set(dataset_dict.keys())
+    def _process_and_validate_knowledge_base_ids(
+        self,
+        origin_knowledge_base_ids: list[Any],
+        current_account_id: Any = None,
+    ) -> tuple[list[dict], list[str]]:
+        """校验新版知识库 id 列表，返回展示信息与可落库的 id 字符串列表。
 
-        # 2.计算存在的知识库id列表，为了保留原始顺序，使用列表循环的方式来判断
-        validate_datasets = [dataset_id for dataset_id in origin_datasets if dataset_id in dataset_sets]
+        权限校验规则（防越权引用）：
+            - user_content / user_memory 知识库：必须 owner_account_id == current_account_id
+            - system 知识库：必须 enabled=True（admin 通过 enabled 开关控制对 Agent 可读）
+            - tenant / project 知识库：当前未开放给用户端 App，一律拒绝
 
-        # 3.循环获取知识库数据
-        for dataset_id in validate_datasets:
-            dataset = dataset_dict.get(str(dataset_id))
-            datasets.append({
-                "id": str(dataset.id),
-                "name": dataset.name,
-                "icon": dataset.icon,
-                "description": dataset.description,
+        Args:
+            origin_knowledge_base_ids: 原始知识库 id 列表
+            current_account_id: 当前用户 account.id，用于 user_content/user_memory 库归属校验
+
+        Returns:
+            (展示信息列表, 可落库的 id 字符串列表)
+        """
+        if not isinstance(origin_knowledge_base_ids, list) or not origin_knowledge_base_ids:
+            return [], []
+
+        # 1.统一转换为字符串形式，便于去重与比较
+        normalized_ids: list[str] = []
+        seen: set[str] = set()
+        for kb_id in origin_knowledge_base_ids:
+            kb_id_str = str(kb_id).strip()
+            if not kb_id_str or kb_id_str in seen:
+                continue
+            seen.add(kb_id_str)
+            normalized_ids.append(kb_id_str)
+
+        if not normalized_ids:
+            return [], []
+
+        # 2.查询数据库中存在且启用的知识库
+        try:
+            from uuid import UUID as _UUID
+            uuid_ids = [_UUID(kb_id) for kb_id in normalized_ids]
+        except Exception:
+            # 非法 id 直接返回空
+            return [], []
+
+        kb_records = self.db.session.query(KnowledgeBase).filter(
+            KnowledgeBase.id.in_(uuid_ids),
+            KnowledgeBase.enabled.is_(True),
+        ).all()
+        kb_dict = {str(kb_record.id): kb_record for kb_record in kb_records}
+
+        # 3.权限校验：仅保留授权可引用的知识库
+        from internal.entity.knowledge_entity import KnowledgeScope
+
+        authorized_scopes = {
+            KnowledgeScope.SYSTEM.value,
+            KnowledgeScope.USER_CONTENT.value,
+            KnowledgeScope.USER_MEMORY.value,
+        }
+        validate_knowledge_base_ids: list[str] = []
+        for kb_id in normalized_ids:
+            kb = kb_dict.get(kb_id)
+            if kb is None:
+                continue
+            # 拒绝未开放 scope
+            if kb.knowledge_scope not in authorized_scopes:
+                continue
+            # system 库：enabled=True 即授权（admin 控制）
+            if kb.knowledge_scope == KnowledgeScope.SYSTEM.value:
+                validate_knowledge_base_ids.append(kb_id)
+                continue
+            # user_content / user_memory 库：必须 owner == 当前用户
+            if str(kb.owner_account_id) != str(current_account_id or ""):
+                continue
+            validate_knowledge_base_ids.append(kb_id)
+
+        # 4.循环获取知识库展示数据
+        knowledge_bases: list[dict] = []
+        for kb_id in validate_knowledge_base_ids:
+            kb = kb_dict.get(kb_id)
+            knowledge_bases.append({
+                "id": str(kb.id),
+                "name": kb.name,
+                "description": kb.description or "",
             })
 
-        return datasets, validate_datasets
+        return knowledge_bases, validate_knowledge_base_ids
 
     def _process_and_validate_model_config(self, origin_model_config: dict[str, Any]) -> dict[str, Any]:
         """根据传递的模型配置处理并校验，随后返回校验后的信息"""
@@ -938,15 +1000,19 @@ class AppConfigService(BaseService):
         # 3.判断provider是否存在、类型是否正确，如果不符合规则则返回默认值
         if not model_config["provider"] or not isinstance(model_config["provider"], str):
             return DEFAULT_APP_CONFIG["model_config"]
-        provider = self.language_model_manager.get_provider(model_config["provider"])
-        if not provider:
+        try:
+            self.language_model_manager.get_or_load_provider(model_config["provider"])
+        except NotFoundException:
             return DEFAULT_APP_CONFIG["model_config"]
 
-        # 4.判断model是否存在、类型是否正确，如果不符合则返回默认值
+        # 4.判断model是否存在、类型是否正确，如果不符合规则则返回默认值
         if not model_config["model"] or not isinstance(model_config["model"], str):
             return DEFAULT_APP_CONFIG["model_config"]
-        model_entity = provider.get_model_entity(model_config["model"])
-        if not model_entity:
+        try:
+            model_entity = self.language_model_manager.get_or_load_model_entity(
+                model_config["provider"], model_config["model"]
+            )
+        except NotFoundException:
             return DEFAULT_APP_CONFIG["model_config"]
 
         # 5.判断parameters信息类型是否错误，如果错误则设置为默认值

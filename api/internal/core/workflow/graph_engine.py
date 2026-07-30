@@ -2,9 +2,10 @@
 
 核心能力：
 - 拓扑排序：将 DAG 节点分层，同层可并行
-- 并行 wave 执行：按层依次执行，同层节点并发（第一版顺序执行，保留分层结构）
+- 并行 wave 执行：按层依次执行，同层节点并发执行（ThreadPoolExecutor）
 - SSE 流式事件：每个节点执行前后推送事件
 - VariablePool 集成：节点输出写入 VariablePool，后续节点通过引用读取
+- 错误恢复：节点失败时不终止整个工作流，标记失败并继续执行无依赖的后续节点
 - 执行记录持久化：每节点执行可创建 WorkflowNodeExecution 记录（由上层消费事件完成）
 
 执行流程：
@@ -12,10 +13,11 @@
 2. 构建邻接表 + 入度表
 3. 拓扑分层（Kahn 算法变体，按层分组）
 4. 逐层执行：
-   a. 同层节点顺序执行（第一版不引入 ThreadPoolExecutor，保留分层结构供后续优化）
+   a. 同层节点并行执行（ThreadPoolExecutor，max_workers=8）
    b. 每节点执行前推送 node_started 事件
    c. 节点执行后输出写入 VariablePool
    d. 节点执行后推送 node_finished/node_failed 事件
+   e. 节点失败时标记失败，不终止整个工作流（错误恢复）
 5. 全部完成后推送 workflow_finished 事件
 """
 
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any, Callable, Iterator
 from uuid import UUID
@@ -41,12 +44,11 @@ logger = logging.getLogger(__name__)
 class GraphEngine:
     """工作流图执行引擎，参考 Dify 的 GraphEngine 设计。
 
-    通过拓扑排序将 DAG 节点分层，逐层顺序执行节点，并以生成器形式
-    yield SSE 事件，供上层（如 SSE 接口）流式推送给客户端。
+    通过拓扑排序将 DAG 节点分层，逐层并行执行节点（同层并发），
+    并以生成器形式 yield SSE 事件，供上层（如 SSE 接口）流式推送给客户端。
 
     节点执行器可注入（``node_executor`` 参数），默认为占位执行器返回空 dict。
-    节点失败时（第一版简化实现）终止整个工作流，推送 workflow_finished
-    事件（status=failed）。
+    节点失败时不终止整个工作流，标记失败并继续执行无依赖的后续节点（错误恢复）。
     """
 
     def __init__(
@@ -147,7 +149,10 @@ class GraphEngine:
         事件序列：
         1. ``workflow_started``: 工作流开始
         2. 每个节点：``node_started`` -> ``node_finished`` 或 ``node_failed``
-        3. ``workflow_finished``: 工作流结束（status=succeeded 或 failed）
+        3. ``workflow_finished``: 工作流结束（status=succeeded 或 partial_failed 或 failed）
+
+        同层节点并行执行（ThreadPoolExecutor），节点失败时不终止整个工作流，
+        标记失败并继续执行无依赖的后续节点（错误恢复）。
 
         Args:
             inputs: 工作流输入，会写入 ``sys.inputs`` 系统变量
@@ -174,19 +179,52 @@ class GraphEngine:
             })
             return
 
-        workflow_status = "succeeded"
-        workflow_error = ""
+        failed_node_ids: set[UUID] = set()
+        total_executed = 0
+        total_failed = 0
 
-        # 4.逐层执行节点（第一版顺序执行同层节点）
+        # 4.逐层并行执行节点
         for layer in layers:
-            layer_failed = False
+            # 4.1 过滤掉依赖失败节点的节点（错误恢复：跳过不可达节点）
+            executable_nodes = []
             for node_id in layer:
                 node = self._node_map[node_id]
+                # 检查是否有前置依赖节点失败
+                deps = self._get_dependencies(node_id)
+                if any(dep in failed_node_ids for dep in deps):
+                    # 前置依赖失败，跳过此节点
+                    yield self._emit_event("node_skipped", {
+                        "node_id": str(node_id),
+                        "node_type": self._node_type_str(node),
+                        "title": node.title,
+                        "reason": "上游节点失败",
+                    })
+                    failed_node_ids.add(node_id)
+                    total_failed += 1
+                else:
+                    executable_nodes.append(node_id)
 
-                # 4.1 构建节点输入（解析变量引用）
+            if not executable_nodes:
+                continue
+
+            # 4.2 单节点时直接执行（避免线程池开销）
+            if len(executable_nodes) == 1:
+                node_id = executable_nodes[0]
+                node = self._node_map[node_id]
+                for event in self._execute_single_node(node):
+                    yield event
+                    if event["event"] == "node_failed":
+                        failed_node_ids.add(node_id)
+                        total_failed += 1
+                    elif event["event"] == "node_finished":
+                        total_executed += 1
+                continue
+
+            # 4.3 多节点并行执行
+            # 先推送所有 node_started 事件
+            for node_id in executable_nodes:
+                node = self._node_map[node_id]
                 node_inputs = self._build_node_inputs(node)
-
-                # 4.2 推送节点开始事件
                 yield self._emit_event("node_started", {
                     "node_id": str(node_id),
                     "node_type": self._node_type_str(node),
@@ -194,53 +232,71 @@ class GraphEngine:
                     "inputs": node_inputs,
                 })
 
-                # 4.3 执行节点并计时
-                start_time = datetime.now(UTC)
-                try:
-                    outputs = self._execute_node(node)
-                    elapsed_time = (datetime.now(UTC) - start_time).total_seconds()
+            # 并行执行
+            results: dict[UUID, tuple[dict[str, Any] | None, Exception | None, float]] = {}
+            with ThreadPoolExecutor(max_workers=min(8, len(executable_nodes))) as executor:
+                future_to_node = {
+                    executor.submit(self._execute_node_safe, self._node_map[nid]): nid
+                    for nid in executable_nodes
+                }
+                for future in as_completed(future_to_node):
+                    node_id = future_to_node[future]
+                    try:
+                        outputs, exc, elapsed = future.result()
+                        results[node_id] = (outputs, exc, elapsed)
+                    except Exception as exc:
+                        results[node_id] = (None, exc, 0.0)
 
-                    # 4.4 节点输出写入 VariablePool
+            # 按节点顺序推送完成/失败事件（保证事件顺序稳定）
+            for node_id in executable_nodes:
+                node = self._node_map[node_id]
+                outputs, exc, elapsed = results.get(node_id, (None, None, 0.0))
+                node_inputs = self._build_node_inputs(node)
+
+                if exc is None and outputs is not None:
+                    # 成功：输出写入 VariablePool
                     self.variable_pool.set_node_output(str(node_id), outputs)
-
-                    # 4.5 推送节点完成事件
                     yield self._emit_event("node_finished", {
                         "node_id": str(node_id),
                         "node_type": self._node_type_str(node),
                         "title": node.title,
                         "inputs": node_inputs,
                         "outputs": outputs,
-                        "elapsed_time": elapsed_time,
+                        "elapsed_time": elapsed,
                         "error": "",
                     })
-                except Exception as exc:  # noqa: BLE001 - 节点执行异常需捕获并转化为失败事件
-                    elapsed_time = (datetime.now(UTC) - start_time).total_seconds()
-                    workflow_status = "failed"
-                    workflow_error = str(exc)
+                    total_executed += 1
+                else:
+                    # 失败：标记失败，不终止工作流
+                    failed_node_ids.add(node_id)
+                    total_failed += 1
                     logger.exception("工作流节点执行失败: node_id=%s", node_id)
-
-                    # 4.6 推送节点失败事件
                     yield self._emit_event("node_failed", {
                         "node_id": str(node_id),
                         "node_type": self._node_type_str(node),
                         "title": node.title,
                         "inputs": node_inputs,
                         "outputs": {},
-                        "elapsed_time": elapsed_time,
-                        "error": str(exc),
+                        "elapsed_time": elapsed,
+                        "error": str(exc) if exc else "未知错误",
                     })
 
-                    # 4.7 第一版简化：节点失败终止整个工作流
-                    layer_failed = True
-                    break
-
-            if layer_failed:
-                break
-
         # 5.推送工作流结束事件
+        if total_failed == 0:
+            workflow_status = "succeeded"
+            workflow_error = ""
+        elif total_executed > 0:
+            workflow_status = "partial_failed"
+            workflow_error = f"{total_failed} 个节点失败，{total_executed} 个节点成功"
+        else:
+            workflow_status = "failed"
+            workflow_error = f"全部 {total_failed} 个节点失败"
+
         yield self._emit_event("workflow_finished", {
             "status": workflow_status,
             "error": workflow_error,
+            "total_executed": total_executed,
+            "total_failed": total_failed,
         })
 
     # ------------------------------------------------------------------
@@ -277,6 +333,74 @@ class GraphEngine:
         except Exception:
             # 重试耗尽后仍然失败，向上抛出由 execute 方法推送 node_failed 事件
             raise
+
+    def _execute_node_safe(self, node: BaseNodeData) -> tuple[dict[str, Any] | None, Exception | None, float]:
+        """安全执行单个节点（并行执行用），返回 (outputs, exception, elapsed_time)。
+
+        不会抛出异常，异常以返回值形式传递给调用方。
+        """
+        start_time = datetime.now(UTC)
+        try:
+            outputs = self._execute_node(node)
+            elapsed = (datetime.now(UTC) - start_time).total_seconds()
+            return outputs, None, elapsed
+        except Exception as exc:
+            elapsed = (datetime.now(UTC) - start_time).total_seconds()
+            return None, exc, elapsed
+
+    def _execute_single_node(self, node: BaseNodeData) -> Iterator[dict[str, Any]]:
+        """执行单个节点并 yield 事件（单节点层用，避免线程池开销）。
+
+        Yields:
+            node_started -> node_finished 或 node_failed
+        """
+        node_inputs = self._build_node_inputs(node)
+
+        yield self._emit_event("node_started", {
+            "node_id": str(node.id),
+            "node_type": self._node_type_str(node),
+            "title": node.title,
+            "inputs": node_inputs,
+        })
+
+        start_time = datetime.now(UTC)
+        try:
+            outputs = self._execute_node(node)
+            elapsed_time = (datetime.now(UTC) - start_time).total_seconds()
+
+            # 节点输出写入 VariablePool
+            self.variable_pool.set_node_output(str(node.id), outputs)
+
+            yield self._emit_event("node_finished", {
+                "node_id": str(node.id),
+                "node_type": self._node_type_str(node),
+                "title": node.title,
+                "inputs": node_inputs,
+                "outputs": outputs,
+                "elapsed_time": elapsed_time,
+                "error": "",
+            })
+        except Exception as exc:
+            elapsed_time = (datetime.now(UTC) - start_time).total_seconds()
+            logger.exception("工作流节点执行失败: node_id=%s", node.id)
+
+            yield self._emit_event("node_failed", {
+                "node_id": str(node.id),
+                "node_type": self._node_type_str(node),
+                "title": node.title,
+                "inputs": node_inputs,
+                "outputs": {},
+                "elapsed_time": elapsed_time,
+                "error": str(exc),
+            })
+
+    def _get_dependencies(self, node_id: UUID) -> list[UUID]:
+        """获取节点的所有直接前置依赖节点 ID。"""
+        deps: list[UUID] = []
+        for edge in self.workflow_config.edges:
+            if edge.target == node_id:
+                deps.append(edge.source)
+        return deps
 
     def _default_node_executor(
         self, node: BaseNodeData, pool: VariablePool

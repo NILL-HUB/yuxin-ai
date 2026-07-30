@@ -5,14 +5,21 @@ import { useI18n } from 'vue-i18n'
 import {
   createAdminUser,
   disableAdminUser,
+  enableAdminUser,
   listAdminUsers,
+  resetAdminUserPassword,
+  revokeAdminUserSessions,
   updateAdminUser,
   type AdminUser,
 } from '@/services/admin-admin-users'
 import { listRoles, type Role } from '@/services/admin-roles'
 import { getErrorMessage } from '@/utils/error'
+import { useAdminStore } from '@/stores/admin'
 
 const { t } = useI18n()
+const adminStore = useAdminStore()
+const canManageAdmin = computed(() => adminStore.hasPermission('admin_user:disable'))
+const canUpdateAdmin = computed(() => adminStore.hasPermission('admin_user:update'))
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -34,6 +41,7 @@ const statusOptions = computed(() => [
   { label: t('admin.adminUsers.statusPending'), value: 'pending' },
 ])
 
+// 编辑/新建表单弹窗
 const modalVisible = ref(false)
 const editMode = ref(false)
 const editingId = ref('')
@@ -45,6 +53,12 @@ const form = ref({
   status: 'active',
   role_ids: [] as string[],
 })
+
+// 重置密码弹窗
+const resetPwdVisible = ref(false)
+const resetPwdId = ref('')
+const resetPwdName = ref('')
+const resetPwdPassword = ref('')
 
 const roleCodeToName = computed(() => {
   const map: Record<string, string> = {}
@@ -75,6 +89,22 @@ const roleNames = (codes: string[]) => {
   if (!codes || codes.length === 0) return []
   return codes.map((code) => roleCodeToName.value[code] || code)
 }
+
+const isSuperAdmin = (record: AdminUser) => {
+  return Array.isArray(record.roles) && record.roles.includes('super_admin')
+}
+
+const columns = computed(() => [
+  { title: t('admin.adminUsers.username'), slotName: 'username' },
+  { title: t('admin.adminUsers.name'), slotName: 'name' },
+  { title: t('admin.adminUsers.email'), slotName: 'email' },
+  { title: t('admin.adminUsers.role'), slotName: 'role' },
+  { title: t('admin.adminUsers.status'), slotName: 'status' },
+  { title: t('admin.adminUsers.onlineStatus'), slotName: 'online_status' },
+  { title: t('admin.adminUsers.createdAt'), slotName: 'created_at' },
+  { title: t('admin.adminUsers.lastLogin'), slotName: 'last_login_at' },
+  { title: t('admin.adminUsers.actions'), slotName: 'actions', width: 280 },
+])
 
 const loadRoles = async () => {
   try {
@@ -163,6 +193,7 @@ const submit = async () => {
     if (editMode.value) {
       await updateAdminUser(editingId.value, {
         name: form.value.name,
+        email: form.value.email,
         status: form.value.status,
         role_ids: form.value.role_ids,
       })
@@ -199,6 +230,56 @@ const handleDisable = async (admin: AdminUser) => {
   }
 }
 
+const handleEnable = async (admin: AdminUser) => {
+  actionLoading.value = true
+  try {
+    await enableAdminUser(admin.id)
+    Message.success(t('admin.adminUsers.adminEnabled'))
+    await loadAdmins()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.adminUsers.enableFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+const handleRevokeSessions = async (record: AdminUser) => {
+  actionLoading.value = true
+  try {
+    const response = await revokeAdminUserSessions(record.id)
+    Message.success(t('admin.adminUsers.sessionsRevoked', { count: response.data.revoked_sessions }))
+    await loadAdmins()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.adminUsers.revokeSessionsFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+const openResetPwd = (admin: AdminUser) => {
+  resetPwdId.value = admin.id
+  resetPwdName.value = admin.username || admin.name
+  resetPwdPassword.value = ''
+  resetPwdVisible.value = true
+}
+
+const submitResetPwd = async () => {
+  if (!resetPwdPassword.value) {
+    Message.warning(t('admin.adminUsers.passwordRequired'))
+    return
+  }
+  actionLoading.value = true
+  try {
+    await resetAdminUserPassword(resetPwdId.value, resetPwdPassword.value)
+    Message.success(t('admin.adminUsers.passwordReset'))
+    resetPwdVisible.value = false
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.adminUsers.resetPasswordFailed')))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(async () => {
   await loadRoles()
   await loadAdmins()
@@ -223,57 +304,69 @@ onMounted(async () => {
       </div>
     </div>
 
-    <a-spin :loading="loading" class="block">
-      <div class="overflow-hidden rounded-lg border bg-white">
-        <table class="w-full text-left text-sm">
-          <thead class="bg-gray-50 text-gray-500">
-            <tr>
-              <th class="p-3">{{ t('admin.adminUsers.username') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.name') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.email') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.role') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.status') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.createdAt') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.lastLogin') }}</th>
-              <th class="p-3">{{ t('admin.adminUsers.actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="!admins.length">
-              <td class="p-6 text-center text-gray-400" colspan="8">{{ t('admin.adminUsers.empty') }}</td>
-            </tr>
-            <tr v-for="admin in admins" :key="admin.id" class="border-t">
-              <td class="p-3">{{ admin.username || '-' }}</td>
-              <td class="p-3">{{ admin.name || '-' }}</td>
-              <td class="p-3">{{ admin.email || '-' }}</td>
-              <td class="p-3">
-                <a-tag v-for="name in roleNames(admin.roles)" :key="name" size="small" color="arcoblue">{{ name }}</a-tag>
-                <span v-if="!roleNames(admin.roles).length" class="text-gray-400">-</span>
-              </td>
-              <td class="p-3">
-                <a-tag v-if="admin.status === 'active'" size="small" color="green">{{ t('admin.adminUsers.tagActive') }}</a-tag>
-                <a-tag v-else-if="admin.status === 'disabled'" size="small" color="red">{{ t('admin.adminUsers.tagDisabled') }}</a-tag>
-                <a-tag v-else size="small" color="orange">{{ admin.status }}</a-tag>
-              </td>
-              <td class="p-3">{{ formatTime(admin.created_at) }}</td>
-              <td class="p-3">{{ formatTime(admin.last_login_at) }}</td>
-              <td class="p-3">
-                <a-space>
-                  <a-button size="mini" @click="openEdit(admin)">{{ t('admin.adminUsers.edit') }}</a-button>
-                  <a-button
-                    v-if="admin.status === 'active'"
-                    size="mini"
-                    status="danger"
-                    :loading="actionLoading"
-                    @click="handleDisable(admin)"
-                  >{{ t('admin.adminUsers.disable') }}</a-button>
-                </a-space>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </a-spin>
+    <a-table
+      :loading="loading"
+      :data="admins"
+      :columns="columns"
+      :pagination="false"
+      :bordered="{ wrapper: true, cell: true }"
+      row-key="id"
+    >
+      <template #columns>
+        <a-table-column v-for="col of columns" :key="col.slotName" :title="col.title" :width="col.width">
+          <template #cell="{ record }">
+            <template v-if="col.slotName === 'username'">{{ record.username || '-' }}</template>
+            <template v-else-if="col.slotName === 'name'">{{ record.name || '-' }}</template>
+            <template v-else-if="col.slotName === 'email'">{{ record.email || '-' }}</template>
+            <template v-else-if="col.slotName === 'role'">
+              <a-tag v-for="name in roleNames(record.roles)" :key="name" size="small" color="arcoblue">{{ name }}</a-tag>
+              <span v-if="!roleNames(record.roles).length" class="text-gray-400">-</span>
+            </template>
+            <template v-else-if="col.slotName === 'status'">
+              <a-tag v-if="record.status === 'active'" size="small" color="green">{{ t('admin.adminUsers.tagActive') }}</a-tag>
+              <a-tag v-else-if="record.status === 'disabled'" size="small" color="red">{{ t('admin.adminUsers.tagDisabled') }}</a-tag>
+              <a-tag v-else size="small" color="orange">{{ record.status }}</a-tag>
+            </template>
+            <template v-else-if="col.slotName === 'online_status'">
+              <a-tag v-if="record.is_online" size="small" color="green">{{ t('admin.adminUsers.online') }}</a-tag>
+              <a-tag v-else size="small" color="gray">{{ t('admin.adminUsers.offline') }}</a-tag>
+            </template>
+            <template v-else-if="col.slotName === 'created_at'">{{ formatTime(record.created_at) }}</template>
+            <template v-else-if="col.slotName === 'last_login_at'">
+              <div>{{ formatTime(record.last_login_at) }}</div>
+              <div v-if="record.last_login_ip" class="text-xs text-gray-400">{{ record.last_login_ip }}</div>
+            </template>
+            <template v-else-if="col.slotName === 'actions'">
+              <a-space>
+                <a-button v-if="canUpdateAdmin" size="mini" @click="openEdit(record)">{{ t('admin.adminUsers.edit') }}</a-button>
+                <a-button v-if="canManageAdmin && !isSuperAdmin(record)" size="mini" @click="openResetPwd(record)">{{ t('admin.adminUsers.resetPassword') }}</a-button>
+                <a-button
+                  v-if="canManageAdmin && record.is_online && !isSuperAdmin(record)"
+                  size="mini"
+                  status="warning"
+                  :loading="actionLoading"
+                  @click="handleRevokeSessions(record)"
+                >{{ t('admin.adminUsers.revokeSessions') }}</a-button>
+                <a-button
+                  v-if="canManageAdmin && record.status === 'active' && !isSuperAdmin(record)"
+                  size="mini"
+                  status="danger"
+                  :loading="actionLoading"
+                  @click="handleDisable(record)"
+                >{{ t('admin.adminUsers.disable') }}</a-button>
+                <a-button
+                  v-else-if="canManageAdmin && record.status === 'disabled'"
+                  size="mini"
+                  type="primary"
+                  :loading="actionLoading"
+                  @click="handleEnable(record)"
+                >{{ t('admin.adminUsers.enable') }}</a-button>
+              </a-space>
+            </template>
+          </template>
+        </a-table-column>
+      </template>
+    </a-table>
 
     <div class="flex justify-end">
       <a-pagination
@@ -282,11 +375,13 @@ onMounted(async () => {
         :page-size="filters.page_size"
         show-total
         show-page-size
+        :page-size-options="[10, 20, 50]"
         @change="onPageChange"
         @page-size-change="onPageSizeChange"
       />
     </div>
 
+    <!-- 新建/编辑管理员弹窗 -->
     <a-modal
       v-model:visible="modalVisible"
       :title="editMode ? t('admin.adminUsers.editTitle') : t('admin.adminUsers.createTitle')"
@@ -299,7 +394,7 @@ onMounted(async () => {
           <a-input v-model="form.username" :disabled="editMode" :placeholder="t('admin.adminUsers.usernamePlaceholder')" />
         </a-form-item>
         <a-form-item :label="t('admin.adminUsers.email')" field="email">
-          <a-input v-model="form.email" :disabled="editMode" :placeholder="t('admin.adminUsers.emailPlaceholder')" />
+          <a-input v-model="form.email" :placeholder="t('admin.adminUsers.emailPlaceholder')" />
         </a-form-item>
         <a-form-item :label="t('admin.adminUsers.name')" field="name">
           <a-input v-model="form.name" :placeholder="t('admin.adminUsers.namePlaceholder')" />
@@ -322,6 +417,21 @@ onMounted(async () => {
             allow-search
             :placeholder="t('admin.adminUsers.rolePlaceholder')"
           />
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 重置密码弹窗 -->
+    <a-modal
+      v-model:visible="resetPwdVisible"
+      :title="t('admin.adminUsers.resetPasswordTitle', { name: resetPwdName })"
+      :ok-loading="actionLoading"
+      :mask-closable="false"
+      @ok="submitResetPwd"
+    >
+      <a-form layout="vertical">
+        <a-form-item :label="t('admin.adminUsers.password')" field="password">
+          <a-input v-model="resetPwdPassword" :placeholder="t('admin.adminUsers.passwordPlaceholder')" />
         </a-form-item>
       </a-form>
     </a-modal>

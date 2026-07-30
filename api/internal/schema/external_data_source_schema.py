@@ -9,7 +9,7 @@ from internal.schema import DictField
 class CreateExternalDataSourceReq(FlaskForm):
     knowledge_base_id = StringField(
         "knowledge_base_id",
-        validators=[DataRequired(), Length(min=1, max=64)],
+        validators=[Optional(), Length(min=1, max=64)],
     )
     source_type = StringField(
         "source_type",

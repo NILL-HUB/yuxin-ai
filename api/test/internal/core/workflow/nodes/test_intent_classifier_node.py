@@ -153,11 +153,13 @@ class TestIntentClassifierNodeData:
 
 
 class TestIntentClassifierNodeInvoke:
-    """IntentClassifierNode.invoke 执行逻辑（占位实现）"""
+    """IntentClassifierNode.invoke 执行逻辑（真实实现，LLM 调用降级）"""
 
     def test_intent_classifier_node_invoke_returns_node_result(self):
         """invoke 返回包含 NodeResult 的 state"""
-        node_data = _make_node_data()
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", "你好"),
+        )
         node = IntentClassifierNode(node_data=node_data)
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
@@ -170,7 +172,9 @@ class TestIntentClassifierNodeInvoke:
 
     def test_intent_classifier_node_invoke_returns_class_name(self):
         """返回的 outputs 包含 class_name 字段"""
-        node_data = _make_node_data()
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", "你好"),
+        )
         node = IntentClassifierNode(node_data=node_data)
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
@@ -181,7 +185,9 @@ class TestIntentClassifierNodeInvoke:
 
     def test_intent_classifier_node_invoke_returns_confidence(self):
         """返回的 outputs 包含 confidence 字段"""
-        node_data = _make_node_data()
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", "你好"),
+        )
         node = IntentClassifierNode(node_data=node_data)
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
@@ -190,23 +196,28 @@ class TestIntentClassifierNodeInvoke:
         assert "confidence" in node_result.outputs
         assert isinstance(node_result.outputs["confidence"], float)
 
-    def test_intent_classifier_node_invoke_uses_first_class_as_placeholder(self):
-        """占位实现返回第一个分类作为 class_name，confidence 为 1.0"""
-        node_data = _make_node_data(classes=[
-            IntentClass(name="first_class", description="第一个分类"),
-            IntentClass(name="second_class", description="第二个分类"),
-        ])
+    def test_intent_classifier_node_invoke_degradation_returns_first_class(self):
+        """LLM 不可用时降级返回第一个分类，confidence 为 0.0"""
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", "你好"),
+            classes=[
+                IntentClass(name="first_class", description="第一个分类"),
+                IntentClass(name="second_class", description="第二个分类"),
+            ],
+        )
         node = IntentClassifierNode(node_data=node_data)
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
 
         node_result = result["node_results"][0]
         assert node_result.outputs["class_name"] == "first_class"
-        assert node_result.outputs["confidence"] == 1.0
+        assert node_result.outputs["confidence"] == 0.0
 
     def test_intent_classifier_node_invoke_elapsed_time_positive(self):
         """耗时 latency 大于 0"""
-        node_data = _make_node_data()
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", "你好"),
+        )
         node = IntentClassifierNode(node_data=node_data)
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
@@ -216,7 +227,9 @@ class TestIntentClassifierNodeInvoke:
 
     def test_intent_classifier_node_invoke_status_succeeded(self):
         """节点状态为 succeeded"""
-        node_data = _make_node_data()
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", "你好"),
+        )
         node = IntentClassifierNode(node_data=node_data)
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
@@ -251,8 +264,22 @@ class TestIntentClassifierNodeInvoke:
         node_result = result["node_results"][0]
         assert node_result.inputs == {"input_text": "resolved-text"}
 
-    def test_intent_classifier_node_invoke_ref_missing_returns_none(self):
-        """REF 引用的节点不存在时 input_text 为 None"""
+    def test_intent_classifier_node_invoke_empty_input_raises(self):
+        """输入文本为空时抛 FailException"""
+        from internal.exception import FailException
+
+        node_data = _make_node_data(
+            input_variable=_literal_input("query", ""),
+        )
+        node = IntentClassifierNode(node_data=node_data)
+
+        with pytest.raises(FailException, match="输入文本不能为空"):
+            node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
+
+    def test_intent_classifier_node_invoke_ref_missing_raises(self):
+        """REF 引用的节点不存在时 input_text 为 None，抛 FailException"""
+        from internal.exception import FailException
+
         ref_node_id = uuid4()
         node_data = _make_node_data(
             input_variable=_ref_input("query", ref_node_id, "out"),
@@ -260,10 +287,8 @@ class TestIntentClassifierNodeInvoke:
         )
         node = IntentClassifierNode(node_data=node_data)
 
-        result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
-
-        node_result = result["node_results"][0]
-        assert node_result.inputs == {"input_text": None}
+        with pytest.raises(FailException, match="输入文本不能为空"):
+            node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
 
 
 class TestIntentClassifierNodeRegistered:

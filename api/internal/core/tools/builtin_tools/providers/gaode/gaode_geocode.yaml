@@ -2,3 +2,9 @@ name: gaode_geocode
 label: 高德地理编码
 description: 将地址转换为经纬度坐标
 params: []
+task_keywords:
+- 地理编码
+- 地址转坐标
+- 经纬度
+- geocode
+- 地址定位

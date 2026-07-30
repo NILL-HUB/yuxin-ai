@@ -2,9 +2,23 @@ from internal.entity.execution_orchestration_entity import OrchestratedAgentResu
 
 
 class FinalAnswerComposer:
-    def compose(self, merged_sources: dict, conflicts: dict, results: list) -> dict:
+    def compose(
+        self,
+        merged_sources: dict,
+        conflicts: dict,
+        results: list,
+        *,
+        context_sections: str = "",
+    ) -> dict:
         try:
             final_answer = self._merge_answers(results)
+            # 注入检索上下文区段（系统规则/用户偏好），架构文档 11.4 第 6 点
+            # context_sections 非空时前置到 final_answer，保证系统规则优先级
+            if context_sections:
+                if final_answer:
+                    final_answer = f"{context_sections}\n\n{final_answer}"
+                else:
+                    final_answer = context_sections
             confidence = self._compute_confidence(results, conflicts)
             warnings = self._collect_warnings(conflicts)
             return {

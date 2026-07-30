@@ -5,11 +5,10 @@ from uuid import uuid4
 import pytest
 
 from internal.exception import ForbiddenException
-from internal.model import KnowledgeBase, UserMemory
+from internal.model import KnowledgeBase
 from internal.service.scoped_knowledge_service import (
     SystemKnowledgeService,
     UserContentKnowledgeService,
-    UserMemoryService,
 )
 
 
@@ -79,30 +78,6 @@ def test_system_knowledge_service_should_require_admin_context(monkeypatch):
 
     with pytest.raises(ForbiddenException):
         service.create_system_knowledge(name="非法系统知识", admin_user=None)
-
-
-def test_user_memory_service_should_write_only_current_user_memory(monkeypatch):
-    account_id = uuid4()
-    service = UserMemoryService(db=_fake_db(_SessionStub()))
-    created = []
-    monkeypatch.setattr(
-        service,
-        "create",
-        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
-    )
-
-    result = service.remember(
-        account=SimpleNamespace(id=account_id),
-        memory_type="preference",
-        content="用户喜欢中文回答",
-        confidence=3,
-    )
-
-    assert created[0][0] is UserMemory
-    assert result.owner_account_id == account_id
-    assert result.memory_type == "preference"
-    assert result.confidence == 3
-    assert result.status == "active"
 
 
 def test_user_content_service_should_create_home_upload_as_user_content(monkeypatch):

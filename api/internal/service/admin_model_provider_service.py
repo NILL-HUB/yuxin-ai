@@ -92,6 +92,7 @@ class AdminModelProviderService:
                     "id": str(p.id),
                     "name": p.name,
                     "label": p.label,
+                    "description": p.description or "",
                     "default_base_url": p.default_base_url,
                     "supported_model_types": p.supported_model_types or [],
                 }

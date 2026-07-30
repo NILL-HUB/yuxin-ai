@@ -20,6 +20,11 @@ from internal.model.model_pool_entity import (
 
 logger = logging.getLogger(__name__)
 
+# 无上下文概念的模型类型：不展示也不校验 max_tokens，后端自动置 0
+CONTEXT_LESS_MODEL_TYPES = frozenset(
+    {"image_generation", "video_generation", "tts", "asr", "ocr"}
+)
+
 
 def _load_fernet() -> Fernet:
     raw_key = os.getenv("MODEL_KEY_ENCRYPTION_KEY", "").strip()
@@ -155,34 +160,58 @@ class AdminModelPoolService:
         if existing:
             raise ConflictException(f"模型 {payload['model_name']} 在供应商 {provider_name} 下已存在")
 
+        model_type = payload.get("model_type") or "chat"
+        # embedding 模型自动探测维度（忽略前端传入的 embedding_dimension）
+        embedding_dimension = 0
+        if model_type == "embedding":
+            embedding_dimension = self._auto_probe_dimension(
+                provider_name, payload["model_name"]
+            )
+        # 无上下文概念的模型类型（图片/视频生成、TTS/ASR/OCR），max_tokens 强制 0
+        if model_type in CONTEXT_LESS_MODEL_TYPES:
+            max_tokens = 0
+        else:
+            max_tokens = int(payload.get("max_tokens") or 0)
+
         model = ModelPoolConfig(
             provider=payload["provider"],
             model_name=payload["model_name"],
             display_name=payload.get("display_name") or "",
-            tier=payload.get("tier") or "standard",
+            description=payload.get("description") or "",
+            tier=payload.get("tier") or "2",
             capabilities=payload.get("capabilities") or [],
             price_per_1k_tokens=self._decimal(payload.get("price_per_1k_tokens")),
-            max_tokens=int(payload.get("max_tokens") or 0),
+            max_tokens=max_tokens,
             status=payload.get("status") or "active",
-            model_type=payload.get("model_type") or "chat",
+            model_type=model_type,
             compatible_api=payload.get("compatible_api") or "openai",
             fallback_model_id=payload.get("fallback_model_id") or None,
             priority=int(payload.get("priority") or 0),
+            embedding_dimension=embedding_dimension,
         )
         self.session.add(model)
         self.session.commit()
 
         self._invalidate_model_cache(model.provider, model.model_name)
+        # embedding 模型维度变更时失效 EmbeddingsService 和 EmbeddingTableRouter 缓存
+        self._invalidate_embedding_caches()
         return self._serialize_model(model)
 
     def update_model(self, model_id: UUID, payload: dict) -> dict:
         model = self._get_model_or_raise(model_id)
+        # 记录变更前的关键字段，用于判断是否需要重新探测维度
+        old_provider = model.provider
+        old_model_name = model.model_name
+        old_model_type = model.model_type
+
         if "provider" in payload:
             model.provider = payload["provider"]
         if "model_name" in payload:
             model.model_name = payload["model_name"]
         if "display_name" in payload:
             model.display_name = payload["display_name"] or ""
+        if "description" in payload:
+            model.description = payload["description"] or ""
         if "tier" in payload:
             model.tier = payload["tier"]
         if "capabilities" in payload:
@@ -201,8 +230,37 @@ class AdminModelPoolService:
             model.model_type = payload["model_type"]
         if "compatible_api" in payload:
             model.compatible_api = payload["compatible_api"]
+        # 忽略前端传入的 embedding_dimension，由系统自动探测
+
+        # 无上下文概念的模型类型（图片/视频生成、TTS/ASR/OCR），max_tokens 强制 0
+        if model.model_type in CONTEXT_LESS_MODEL_TYPES:
+            model.max_tokens = 0
+        elif "max_tokens" in payload:
+            model.max_tokens = int(payload.get("max_tokens") or 0)
+
+        # 判断是否需要重新探测维度：
+        # 1. model_type 变为 embedding（之前不是）
+        # 2. model_type 仍为 embedding，但 provider 或 model_name 变更
+        new_model_type = model.model_type
+        need_probe = False
+        if new_model_type == "embedding":
+            if old_model_type != "embedding":
+                need_probe = True
+            elif old_provider != model.provider or old_model_name != model.model_name:
+                need_probe = True
+        else:
+            # 非 embedding 类型，维度清零
+            model.embedding_dimension = 0
+
+        if need_probe:
+            model.embedding_dimension = self._auto_probe_dimension(
+                model.provider, model.model_name
+            )
+
         model.updated_at = self._now()
         self.session.commit()
+        # embedding 模型维度变更时失效 EmbeddingsService 和 EmbeddingTableRouter 缓存
+        self._invalidate_embedding_caches()
         return self._serialize_model(model)
 
     def delete_model(self, model_id: UUID) -> None:
@@ -219,10 +277,14 @@ class AdminModelPoolService:
             )
         provider_name = model.provider
         model_name = model.model_name
+        # 记录是否为 embedding 模型，删除后需失效维度缓存
+        is_embedding = model.model_type == "embedding"
         self.session.delete(model)
         self.session.commit()
 
         self._invalidate_model_cache(provider_name, model_name)
+        if is_embedding:
+            self._invalidate_embedding_caches()
 
     def set_model_status(self, model_id: UUID, status: str) -> dict:
         model = self._get_model_or_raise(model_id)
@@ -230,6 +292,8 @@ class AdminModelPoolService:
         model.updated_at = self._now()
         self.session.commit()
         self._invalidate_model_cache(model.provider, model.model_name)
+        if model.model_type == "embedding":
+            self._invalidate_embedding_caches()
         return self._serialize_model(model)
 
     def list_keys(self, *, provider: str = "", status: str = "", current_page: int = 1, page_size: int = 20) -> dict:
@@ -321,21 +385,37 @@ class AdminModelPoolService:
         return self._serialize_key(key)
 
     def list_tier_policies(self) -> dict:
-        policies = self.session.query(ModelTierPolicy).order_by(ModelTierPolicy.tier_code.asc()).all()
+        # 不再自动 seed 硬编码档位，档位由用户通过 CRUD 自定义
+        policies = self.session.query(ModelTierPolicy).order_by(
+            ModelTierPolicy.sort_order.asc(),
+            ModelTierPolicy.tier_code.asc(),
+        ).all()
+        # 首次访问且表为空时，seed 默认的 5 个数字档位
         if not policies:
             self._ensure_default_tier_policies()
-            policies = self.session.query(ModelTierPolicy).order_by(ModelTierPolicy.tier_code.asc()).all()
+            policies = self.session.query(ModelTierPolicy).order_by(
+                ModelTierPolicy.sort_order.asc(),
+                ModelTierPolicy.tier_code.asc(),
+            ).all()
         return {"list": [self._serialize_tier_policy(policy) for policy in policies]}
 
     def _ensure_default_tier_policies(self) -> None:
-        """首次查询时自动 seed 5 个默认档位策略。"""
-        default_tiers = ["cheap", "standard", "strong", "vision", "long_context"]
+        """首次查询表为空时 seed 5 个默认数字档位。"""
+        default_tiers = [
+            ("1", "经济型", 1),
+            ("2", "标准型", 2),
+            ("3", "强力型", 3),
+            ("4", "视觉型", 4),
+            ("5", "长上下文型", 5),
+        ]
         now = self._now()
-        for tier_code in default_tiers:
+        for tier_code, tier_name, sort_order in default_tiers:
             existing = self.session.query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier_code).one_or_none()
             if existing is None:
                 self.session.add(ModelTierPolicy(
                     tier_code=tier_code,
+                    tier_name=tier_name,
+                    sort_order=sort_order,
                     allowed_models=[],
                     default_model="",
                     routing_rules={},
@@ -344,10 +424,38 @@ class AdminModelPoolService:
                 ))
         self.session.commit()
 
+    def create_tier_policy(self, payload: dict) -> dict:
+        tier_code = str(payload.get("tier_code") or "").strip()
+        if not tier_code:
+            raise ValueError("tier_code 不能为空")
+        existing = self.session.query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier_code).one_or_none()
+        if existing is not None:
+            raise ConflictException(f"档位标识 {tier_code} 已存在")
+        tier_name = str(payload.get("tier_name") or "").strip()
+        if not tier_name:
+            raise ValueError("tier_name 不能为空")
+        policy = ModelTierPolicy(
+            tier_code=tier_code,
+            tier_name=tier_name,
+            sort_order=int(payload.get("sort_order") or 0),
+            allowed_models=payload.get("allowed_models") or [],
+            default_model=payload.get("default_model") or "",
+            routing_rules=payload.get("routing_rules") or {},
+            created_at=self._now(),
+            updated_at=self._now(),
+        )
+        self.session.add(policy)
+        self.session.commit()
+        return self._serialize_tier_policy(policy)
+
     def update_tier_policy(self, tier_code: str, payload: dict) -> dict:
         policy = self.session.query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier_code).one_or_none()
         if policy is None:
             raise NotFoundException("档位策略不存在")
+        if "tier_name" in payload and payload["tier_name"]:
+            policy.tier_name = str(payload["tier_name"]).strip()
+        if "sort_order" in payload:
+            policy.sort_order = int(payload.get("sort_order") or 0)
         if "allowed_models" in payload:
             policy.allowed_models = payload["allowed_models"] or []
         if "default_model" in payload:
@@ -358,6 +466,22 @@ class AdminModelPoolService:
         self.session.commit()
         return self._serialize_tier_policy(policy)
 
+    def delete_tier_policy(self, tier_code: str) -> None:
+        policy = self.session.query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier_code).one_or_none()
+        if policy is None:
+            raise NotFoundException("档位策略不存在")
+        # 前置校验：仍有模型引用该档位时不允许删除
+        ref_count = self.session.query(ModelPoolConfig).filter(ModelPoolConfig.tier == tier_code).count()
+        if ref_count > 0:
+            raise ConflictException(f"仍有 {ref_count} 个模型引用该档位，请先迁移后再删除")
+        self.session.delete(policy)
+        self.session.commit()
+
+    def get_tier_name_map(self) -> dict[str, str]:
+        """返回 {tier_code: tier_name} 映射，用于前端下拉选择和显示。"""
+        policies = self.session.query(ModelTierPolicy).all()
+        return {p.tier_code: p.tier_name for p in policies}
+
     def list_cost_policies(self) -> dict:
         policies = self.session.query(CostPolicy).order_by(CostPolicy.created_at.desc()).all()
         return {"list": [self._serialize_cost_policy(policy) for policy in policies]}
@@ -365,7 +489,7 @@ class AdminModelPoolService:
     def create_cost_policy(self, payload: dict) -> dict:
         policy = CostPolicy(
             policy_name=payload.get("policy_name") or "default",
-            model_tier=payload.get("model_tier") or "standard",
+            model_tier=payload.get("model_tier") or "2",
             max_cost_per_request=self._decimal(payload.get("max_cost_per_request"), "0.000000"),
             billing_mode=payload.get("billing_mode") or "token",
             upgrade_threshold=self._decimal(payload.get("upgrade_threshold"), "0.000000"),
@@ -407,6 +531,177 @@ class AdminModelPoolService:
         except Exception:
             pass
 
+    @staticmethod
+    def _invalidate_embedding_caches() -> None:
+        """失效 EmbeddingsService 和 EmbeddingTableRouter 的维度缓存。
+
+        在 embedding 模型创建/更新/删除/状态变更时调用，确保后续请求读取最新维度配置。
+        """
+        try:
+            from internal.service.embedding_table_router import EmbeddingTableRouter
+            router = EmbeddingTableRouter.get_instance()
+            router.invalidate_dimension_cache()
+        except Exception:
+            pass
+        try:
+            from app.http.module import injector
+            from internal.service.embeddings_service import EmbeddingsService
+            svc = injector.get(EmbeddingsService)
+            svc.invalidate_model_cache()
+            # 重置系统默认 embeddings（触发下次访问时重新从 DB 加载）
+            svc._embeddings = None
+            svc._cache_backed_embeddings = None
+            svc._dimension = None
+            svc._provider = None
+            svc._model = None
+        except Exception:
+            pass
+
+    @staticmethod
+    def _probe_embedding_dimension(
+        provider: str,
+        model_name: str,
+        api_key: str,
+        base_url: str | None = None,
+    ) -> int:
+        """探测 embedding 模型的实际输出维度。
+
+        通过调用 embed_query 获取一个真实向量，返回其维度。
+        如果原生维度 > 2000（pgvector 限制），自动尝试 MRL 降维。
+
+        降维策略：部分供应商（如 SiliconFlow）只支持特定维度值（如 512/1024/1536/2048/4096），
+        不支持任意值。因此按候选维度列表从大到小尝试，找到第一个 ≤2000 且成功的维度。
+
+        Args:
+            provider: 供应商名称
+            model_name: 模型名称
+            api_key: API Key
+            base_url: API 基础 URL
+
+        Returns:
+            探测到的维度（1-2000），探测失败返回 0
+        """
+        from langchain_openai import OpenAIEmbeddings
+        from internal.service.embedding_table_router import MAX_SUPPORTED_DIMENSION
+        from internal.service.embeddings_service import _EMBEDDING_MODEL_DIMENSIONS
+
+        probe_text = "维度探测测试"
+        # MRL 降维候选维度（从大到小尝试，均为 ≤2000 的常用值，避免浪费 API 调用）
+        mrl_candidates = [1536, 1024, 768, 512]
+
+        try:
+            # 1. 先不传 dimensions，探测原生维度
+            embeddings = OpenAIEmbeddings(
+                model=model_name,
+                api_key=api_key,
+                base_url=base_url or None,
+            )
+            vector = embeddings.embed_query(probe_text)
+            native_dim = len(vector)
+            logger.info(
+                "_probe_embedding_dimension: %s/%s 原生维度 %d",
+                provider, model_name, native_dim,
+            )
+
+            # 2. 原生维度 ≤ 2000，直接使用
+            if native_dim <= MAX_SUPPORTED_DIMENSION:
+                return native_dim
+
+            # 3. 原生维度 > 2000，按候选维度列表尝试 MRL 降维
+            logger.info(
+                "_probe_embedding_dimension: %s/%s 原生维度 %d > %d，尝试 MRL 降维候选 %s",
+                provider, model_name, native_dim, MAX_SUPPORTED_DIMENSION, mrl_candidates,
+            )
+            for candidate_dim in mrl_candidates:
+                try:
+                    embeddings_mrl = OpenAIEmbeddings(
+                        model=model_name,
+                        api_key=api_key,
+                        base_url=base_url or None,
+                        dimensions=candidate_dim,
+                    )
+                    vector_mrl = embeddings_mrl.embed_query(probe_text)
+                    actual_dim = len(vector_mrl)
+                    if actual_dim <= MAX_SUPPORTED_DIMENSION:
+                        logger.info(
+                            "_probe_embedding_dimension: %s/%s MRL 降维成功 %d -> %d",
+                            provider, model_name, native_dim, actual_dim,
+                        )
+                        return actual_dim
+                except Exception as e:
+                    logger.info(
+                        "_probe_embedding_dimension: %s/%s 候选维度 %d 不支持，尝试下一个: %s",
+                        provider, model_name, candidate_dim, str(e)[:80],
+                    )
+                    continue
+
+            # 4. 所有候选维度都失败，使用内置字典兜底
+            logger.warning(
+                "_probe_embedding_dimension: %s/%s 所有 MRL 候选维度都失败，使用内置字典兜底",
+                provider, model_name,
+            )
+            fallback_dim = _EMBEDDING_MODEL_DIMENSIONS.get(provider, {}).get(model_name)
+            if fallback_dim and fallback_dim <= MAX_SUPPORTED_DIMENSION:
+                return fallback_dim
+            return 0
+        except Exception as e:
+            logger.warning(
+                "_probe_embedding_dimension: 探测失败 %s/%s，错误: %s",
+                provider, model_name, str(e),
+            )
+            # 探测失败时使用内置字典兜底
+            fallback_dim = _EMBEDDING_MODEL_DIMENSIONS.get(provider, {}).get(model_name)
+            if fallback_dim:
+                return min(fallback_dim, MAX_SUPPORTED_DIMENSION)
+            return 0
+
+    def _resolve_api_key_and_base_url(self, provider: str) -> tuple[str, str | None]:
+        """解析供应商的 API Key 和 base_url（用于维度探测）。
+
+        优先使用 provider 级别的 active key，找不到则返回空字符串。
+        """
+        from internal.model.model_provider_entity import ModelProviderConfig
+        provider_config = self.session.query(ModelProviderConfig).filter_by(
+            name=provider
+        ).first()
+        base_url = (provider_config.default_base_url if provider_config else "") or None
+
+        key = self.session.query(ModelKeyConfig).filter(
+            ModelKeyConfig.provider == provider,
+            ModelKeyConfig.status == "active",
+        ).order_by(
+            ModelKeyConfig.used_credits.asc(),
+            ModelKeyConfig.created_at.asc(),
+        ).first()
+        if key is None:
+            return "", base_url
+        api_key = _decrypt_key_value(key.key_value_encrypted)
+        return api_key, base_url
+
+    def _auto_probe_dimension(self, provider: str, model_name: str) -> int:
+        """自动探测 embedding 模型维度。
+
+        解析 provider 的 API Key，调用 _probe_embedding_dimension。
+        探测失败时记录警告，返回 0（由内置字典兜底）。
+        """
+        api_key, base_url = self._resolve_api_key_and_base_url(provider)
+        if not api_key:
+            logger.warning(
+                "_auto_probe_dimension: provider=%s 无可用 API Key，跳过维度探测",
+                provider,
+            )
+            # 使用内置字典兜底
+            from internal.service.embeddings_service import _EMBEDDING_MODEL_DIMENSIONS
+            from internal.service.embedding_table_router import MAX_SUPPORTED_DIMENSION
+            dim = _EMBEDDING_MODEL_DIMENSIONS.get(provider, {}).get(model_name)
+            return min(dim, MAX_SUPPORTED_DIMENSION) if dim else 0
+        return self._probe_embedding_dimension(
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            base_url=base_url,
+        )
+
     def _get_key_or_raise(self, key_id: UUID) -> ModelKeyConfig:
         key = self.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == key_id).one_or_none()
         if key is None:
@@ -425,6 +720,7 @@ class AdminModelPoolService:
             "provider": model.provider,
             "model_name": model.model_name,
             "display_name": model.display_name or "",
+            "description": model.description or "",
             "tier": model.tier,
             "capabilities": list(model.capabilities or []),
             "price_per_1k_tokens": f"{Decimal(str(model.price_per_1k_tokens or 0)):.6f}",
@@ -432,6 +728,7 @@ class AdminModelPoolService:
             "status": model.status,
             "model_type": model.model_type,
             "compatible_api": model.compatible_api,
+            "embedding_dimension": int(model.embedding_dimension or 0),
             "fallback_model_id": model.fallback_model_id or None,
             "priority": int(model.priority or 0),
             "created_at": self._timestamp(model.created_at),
@@ -461,6 +758,8 @@ class AdminModelPoolService:
         return {
             "id": str(policy.id),
             "tier_code": policy.tier_code,
+            "tier_name": policy.tier_name or "",
+            "sort_order": int(policy.sort_order or 0),
             "allowed_models": list(policy.allowed_models or []),
             "default_model": policy.default_model or "",
             "routing_rules": dict(policy.routing_rules or {}),

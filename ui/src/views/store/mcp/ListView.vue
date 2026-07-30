@@ -176,15 +176,17 @@ onMounted(async () => {
             <div class="text-lg font-medium text-gray-900">{{ t('store.mcp.title') }}</div>
           </div>
         </div>
-        <a-button
-          v-if="!hideCreate"
-          data-testid="store-mcp-create-button"
-          type="primary"
-          class="rounded-lg"
-          @click="openCreateModal"
-        >
-          {{ t('store.mcp.createButton') }}
-        </a-button>
+        <div class="flex items-center gap-2">
+          <a-button
+            v-if="!hideCreate"
+            data-testid="store-mcp-create-button"
+            type="primary"
+            class="rounded-lg"
+            @click="openCreateModal"
+          >
+            {{ t('store.mcp.createButton') }}
+          </a-button>
+        </div>
       </div>
 
       <div class="flex items-center justify-between mb-6 flex-wrap gap-2">

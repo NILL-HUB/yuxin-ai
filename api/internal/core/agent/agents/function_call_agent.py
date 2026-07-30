@@ -25,6 +25,8 @@ from internal.exception import FailException
 from .base_agent import BaseAgent
 from internal.core.language_model.entities.model_entity import ModelFeature
 
+logger = logging.getLogger(__name__)
+
 
 class FunctionCallAgent(BaseAgent):
     """基于函数/工具调用的智能体"""
@@ -119,7 +121,7 @@ class FunctionCallAgent(BaseAgent):
             if len(history) % 2 != 0:
                 self.agent_queue_manager.publish_error(state["task_id"], "智能体历史消息列表格式错误")
                 logging.exception(
-                    f"智能体历史消息列表格式错误, len(history)={len(history)}, history={json.dumps(messages_to_dict(history))}"
+                    f"智能体历史消息列表格式错误, len(history)={len(history)}, history={json.dumps(messages_to_dict(history), ensure_ascii=False, default=str)}"
                 )
                 raise FailException("智能体历史消息列表格式错误")
             # 5.拼接历史消息
@@ -167,7 +169,7 @@ class FunctionCallAgent(BaseAgent):
 
         # 3.检测大语言模型实例是否有bind_tools方法，如果没有则不绑定，如果有还需要检测tools是否为空，不为空则绑定
         if (
-            ModelFeature.TOOL_CALL.value in llm.features
+            ModelFeature.TOOL_CALL.value in (getattr(llm, "features", None) or [])
             and hasattr(llm, "bind_tools")
             and callable(getattr(llm, "bind_tools"))
             and len(self.agent_config.tools) > 0
@@ -233,7 +235,7 @@ class FunctionCallAgent(BaseAgent):
                 id=id,
                 task_id=state["task_id"],
                 event=QueueEvent.AGENT_THOUGHT.value,
-                thought=json.dumps(final_tool_calls),
+                thought=json.dumps(final_tool_calls, ensure_ascii=False, default=str),
                 # 消息相关字段
                 message=messages_to_dict(state["messages"]),
                 message_token_count=input_token_count,  # 消息花费的token数
@@ -393,6 +395,23 @@ class FunctionCallAgent(BaseAgent):
                             name=tool_call["name"],
                         ))
                         continue
+                    # 确认机制创建失败时阻止执行，不允许高风险工具绕过确认直接执行
+                    tool_result = f"高风险工具 {tool_call['name']} 确认机制不可用，已阻止执行"
+                    self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                        id=id,
+                        task_id=state["task_id"],
+                        event=QueueEvent.AGENT_ACTION.value,
+                        observation=tool_result,
+                        tool=tool_call["name"],
+                        tool_input=tool_call["args"],
+                        latency=(time.perf_counter() - start_at),
+                    ))
+                    messages.append(ToolMessage(
+                        tool_call_id=tool_call["id"],
+                        content=tool_result,
+                        name=tool_call["name"],
+                    ))
+                    continue
 
                 tool_result = tool.invoke(tool_call["args"])
             except LookupError as e:
@@ -663,61 +682,6 @@ class FunctionCallAgent(BaseAgent):
             injected_messages.insert(insert_at + index, prompt_message)
 
         return injected_messages
-
-    @staticmethod
-    def _build_tool_not_found_result(tool_call_name: str, tools_by_name: dict[str, Any]) -> str:
-        """把可用工具名回灌给模型，促使其基于真实列表重新选择。"""
-        available_tool_names = list(tools_by_name.keys())
-        preview_limit = 30
-        preview = available_tool_names[:preview_limit]
-        suffix = ""
-        if len(available_tool_names) > preview_limit:
-            suffix = f" 等共 {len(available_tool_names)} 个工具"
-        available_text = ", ".join(preview) if preview else "无"
-        return (
-            f"工具未找到: {tool_call_name}。"
-            f"请从当前可用工具列表中重新选择并调用: {available_text}{suffix}。"
-        )
-
-    def _resolve_tool(
-        self,
-        tool_call_name: str,
-        tools_by_name: dict[str, Any],
-        tools_by_alias: dict[str, Any],
-    ) -> Any | None:
-        """按精确名、别名顺序解析工具。"""
-        tool_policy = getattr(self.agent_config, "tool_policy", None) or ToolPolicy()
-        requested_name = tool_policy.resolve_tool_name(tool_call_name)
-
-        candidates = (
-            requested_name,
-        )
-        for candidate in candidates:
-            if not candidate:
-                continue
-            tool = tools_by_name.get(candidate)
-            if tool is not None:
-                return tool
-
-            tool = tools_by_alias.get(candidate)
-            if tool is not None:
-                return tool
-
-        return None
-
-    @staticmethod
-    def _normalize_tool_alias(tool_name: str | None) -> str:
-        if not tool_name:
-            return ""
-
-        normalized = str(tool_name).strip()
-        if not normalized:
-            return ""
-
-        parts = normalized.split("__", 2)
-        if len(parts) == 3:
-            return parts[2]
-        return normalized.replace("-", "_").replace(" ", "_")
 
     @classmethod
     def _tools_condition(cls, state: AgentState) -> Literal["tools", "__end__"]:

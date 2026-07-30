@@ -187,7 +187,16 @@ def test_qwen_image_tool_should_persist_generated_image_url(monkeypatch):
                 "seed": 7,
             }
 
-    monkeypatch.setenv("SILICONFLOW_API_KEY", "token")
+    from internal.service.language_model_service import LanguageModelService
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_provider_credentials",
+        classmethod(lambda cls, provider=None, model_type=None: {
+            "api_key": "token",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "provider": "SiliconFlow",
+        } if provider == "SiliconFlow" else {}),
+    )
     monkeypatch.setattr(qwen_module.requests, "post", lambda *args, **kwargs: _PostResponse())
     monkeypatch.setattr(
         qwen_module,
@@ -217,7 +226,16 @@ def test_qwen_image_tool_should_raise_when_persistence_failed(monkeypatch):
                 "images": [{"url": "https://temporary.example.com/output.png?token=1"}],
             }
 
-    monkeypatch.setenv("SILICONFLOW_API_KEY", "token")
+    from internal.service.language_model_service import LanguageModelService
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_provider_credentials",
+        classmethod(lambda cls, provider=None, model_type=None: {
+            "api_key": "token",
+            "base_url": "https://api.siliconflow.cn/v1",
+            "provider": "SiliconFlow",
+        } if provider == "SiliconFlow" else {}),
+    )
     monkeypatch.setattr(qwen_module.requests, "post", lambda *args, **kwargs: _PostResponse())
     monkeypatch.setattr(
         qwen_module,

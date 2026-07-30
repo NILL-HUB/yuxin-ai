@@ -29,7 +29,7 @@ type ProviderRecord = {
 const { t } = useI18n()
 
 const ALL_MODEL_TYPES = [
-  'chat', 'completion', 'embedding', 'multimodal',
+  'chat', 'embedding', 'multimodal',
   'image_generation', 'video_generation', 'ocr', 'tts', 'asr', 'rerank',
 ]
 
@@ -254,7 +254,11 @@ onMounted(loadAll)
             </tr>
             <tr v-for="provider in filteredProviders" :key="provider.id" class="border-t">
               <td class="p-3 font-mono">{{ provider.name }}</td>
-              <td class="p-3">{{ provider.label || '-' }}</td>
+              <td class="p-3">
+                <a-tooltip :content="provider.description || t('admin.modelProviders.noDescription')" position="top" mini>
+                  <span class="cursor-help underline decoration-dotted underline-offset-2">{{ provider.label || '-' }}</span>
+                </a-tooltip>
+              </td>
               <td class="p-3 font-mono text-xs">{{ provider.default_base_url || '-' }}</td>
               <td class="p-3">
                 <a-tag v-for="mt in provider.supported_model_types" :key="mt" size="small" color="arcoblue">{{ mt }}</a-tag>

@@ -64,7 +64,7 @@ const loadDraftAppConfigDetail = async (appId: string) => {
       opening_questions: data.opening_questions,
       suggested_after_answer: data.suggested_after_answer,
       review_config: data.review_config,
-      datasets: data.datasets,
+      knowledge_base_ids: data.knowledge_base_ids || [],
       retrieval_config: data.retrieval_config,
       tools: data.tools,
       mcp_bindings: data.mcp_bindings || [],

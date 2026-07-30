@@ -24,7 +24,7 @@ export type ExternalDataSourceSyncResult = {
 }
 
 export type CreateExternalDataSourceRequest = {
-  knowledge_base_id: string
+  knowledge_base_id?: string
   source_type: string
   source_name: string
   config: Record<string, unknown>

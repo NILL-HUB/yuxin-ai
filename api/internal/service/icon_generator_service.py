@@ -42,6 +42,17 @@ class IconGeneratorService(BaseService):
         """
         errors = []
 
+        # 0. 优先尝试公共 AI 配置或自动选择的 image_generation 模型
+        try:
+            icon_url = self._generate_with_configured_model(name, description)
+            if icon_url:
+                logging.info(f"配置模型生成图标成功: {icon_url}")
+                return icon_url
+        except Exception as e:
+            error_msg = str(e)
+            logging.warning(f"配置模型生成图标失败，回退到降级链: {error_msg}")
+            errors.append(f"configured: {error_msg}")
+
         # 1. 尝试使用 Kolors (硅基流动)
         try:
             logging.info(f"尝试使用 Kolors 生成图标: name={name}")
@@ -86,13 +97,9 @@ class IconGeneratorService(BaseService):
     def _generate_icon_prompt(self, name: str, description: str) -> str:
         """生成图标描述提示词"""
         try:
-            # 使用 DeepSeek 生成英文的图标描述
-            from internal.core.language_model.providers.deepseek.chat import Chat as DeepSeekChat
-
-            llm = DeepSeekChat(
-                model="deepseek-chat",
-                temperature=0.7,
-            )
+            # LLM 走数据库配置 + compatible_api 分发
+            from .language_model_service import LanguageModelService
+            llm = LanguageModelService.get_feature_model("icon_prompt")
 
             prompt_chain = ChatPromptTemplate.from_template(
                 GENERATE_ICON_PROMPT_TEMPLATE
@@ -153,12 +160,14 @@ class IconGeneratorService(BaseService):
             **payload: object,
     ) -> str:
         """请求 SiliconFlow 文生图并返回上传后的 COS 地址"""
-        api_key = current_app.config.get("SILICONFLOW_API_KEY")
-        if not api_key:
-            raise FailException("SILICONFLOW_API_KEY 未配置")
+        from .language_model_service import LanguageModelService
+        creds = LanguageModelService.get_provider_credentials(provider="SiliconFlow")
+        api_key = (creds.get("api_key") or "").strip()
+        base_url = (creds.get("base_url") or "").rstrip("/")
+        if not api_key or not base_url:
+            raise FailException("数据库未配置 SiliconFlow 凭证，请在 admin 后台配置 provider=SiliconFlow 的模型及对应 key")
 
-        api_base = current_app.config.get("SILICONFLOW_API_BASE", "https://api.siliconflow.cn")
-        url = f"{str(api_base).rstrip('/')}/v1/images/generations"
+        url = f"{base_url}/images/generations"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -185,6 +194,54 @@ class IconGeneratorService(BaseService):
             raise FailException(f"{provider_name} 返回的图片URL为空")
 
         return self._download_and_upload_image(image_url, source)
+
+    def _generate_with_configured_model(self, name: str, description: str) -> Optional[str]:
+        """使用公共 AI 配置的 image_generation 模型生成图标。
+
+        1. 读取 public_ai_feature_config["icon_image_generation"] 的凭证
+        2. 未配置时返回 None（调用方走硬编码降级链）
+        """
+        from .language_model_service import LanguageModelService
+
+        # 优先读公共配置凭证
+        creds = LanguageModelService.get_feature_credentials("icon_image_generation")
+
+        if not creds or not creds.get("api_key"):
+            return None
+
+        api_key = creds["api_key"]
+        base_url = (creds.get("base_url") or "").rstrip("/")
+        model = creds.get("model") or "dall-e-3"
+
+        prompt = self._generate_icon_prompt(name, description)
+
+        # 统一走 OpenAI 兼容的 images/generations 接口
+        url = f"{base_url}/images/generations"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        body = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "size": "1024x1024",
+        }
+
+        response = requests.post(url, json=body, headers=headers, timeout=60)
+        response.raise_for_status()
+
+        result = response.json()
+        images = result.get("images") or result.get("data") or []
+        if not images:
+            raise FailException(f"配置模型 {model} 返回的图片列表为空")
+
+        # 兼容 OpenAI 和 SiliconFlow 两种响应格式
+        image_url = images[0].get("url") if isinstance(images[0], dict) else images[0]
+        if not image_url:
+            raise FailException(f"配置模型 {model} 返回的图片URL为空")
+
+        return self._download_and_upload_image(image_url, "configured")
 
     def _generate_with_kolors(self, name: str, description: str) -> Optional[str]:
         """使用 Kolors (硅基流动) 生成图标"""
@@ -215,9 +272,11 @@ class IconGeneratorService(BaseService):
 
     def _generate_with_dalle(self, name: str, description: str) -> Optional[str]:
         """使用 DALLE 生成图标"""
-        api_key = current_app.config.get("OPENAI_API_KEY")
+        from .language_model_service import LanguageModelService
+        creds = LanguageModelService.get_provider_credentials(provider="OpenAI", model_type="image_generation")
+        api_key = (creds.get("api_key") or "").strip()
         if not api_key:
-            raise FailException("OPENAI_API_KEY 未配置")
+            raise FailException("数据库未配置 OpenAI image_generation 凭证，请在 admin 后台配置 provider=OpenAI 且 model_type=image_generation 的模型及对应 key")
 
         # 生成图标描述
         prompt = self._generate_icon_prompt(name, description)
@@ -241,15 +300,14 @@ class IconGeneratorService(BaseService):
         return self._download_and_upload_image(image_url, "dalle")
 
     def _download_and_upload_image(self, image_url: str, source: str) -> str:
-        """
-        下载图片并上传到COS
+        """下载图片并通过统一存储端口上传，返回可访问 URL。
 
         Args:
             image_url: 图片URL
             source: 图片来源 (kolors/qwen/dalle)
 
         Returns:
-            str: COS中的图片URL
+            str: 存储后的可访问 URL
         """
         # 1. 下载图片
         response = requests.get(image_url, timeout=30)
@@ -257,26 +315,10 @@ class IconGeneratorService(BaseService):
 
         image_data = response.content
 
-        # 2. 获取COS客户端和存储桶
-        client = self.cos_service._get_client()
-        bucket = self.cos_service._get_bucket()
-
-        # 3. 生成文件名
-        random_filename = f"{uuid.uuid4()}.png"
-        now = utc_now_naive()
-        upload_filename = f"{now.year}/{now.month:02d}/{now.day:02d}/icons/{source}_{random_filename}"
-
-        # 4. 上传到COS
-        client.put_object(
-            Bucket=bucket,
-            Body=image_data,
-            Key=upload_filename,
-            ContentType="image/png"
+        # 2. 通过统一存储端口上传（不再直接调用 COS SDK）
+        filename = f"{source}_{uuid.uuid4()}.png"
+        return self.cos_service.upload_bytes_without_record(
+            filename=filename,
+            content=image_data,
+            folder="icons",
         )
-
-        # 5. 返回COS URL
-        cos_domain = current_app.config.get("COS_DOMAIN")
-        if not cos_domain:
-            raise FailException("COS_DOMAIN 未配置")
-
-        return f"{cos_domain}/{upload_filename}"

@@ -215,8 +215,8 @@ class TestRealNodeExecutorIntegration:
 
         events = list(engine.execute({"query": "hello"}))
         finished = events[-1]["data"]
-        assert finished["status"] == "failed"
-        assert "不支持的节点类型" in finished["error"]
+        # start 成功，va 节点失败（不支持的节点类型），end 跳过 → partial_failed
+        assert finished["status"] == "partial_failed"
 
 
 # ----------------------------------------------------------------------

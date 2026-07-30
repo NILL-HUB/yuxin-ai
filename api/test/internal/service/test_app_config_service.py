@@ -14,14 +14,13 @@ from internal.entity.app_entity import DEFAULT_APP_CONFIG, AppStatus
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException, ValidateErrorException
-from internal.model import ApiTool, AppDatasetJoin, Dataset, Message, Workflow
+from internal.model import ApiTool, KnowledgeBase, Message, Workflow
 from internal.service.app_config_service import AppConfigService
 from internal.service.assistant_agent_service import AssistantAgentService
 from internal.service.cos_service import CosService
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.faiss_service import FaissService
 from internal.service.upload_file_service import UploadFileService
-from internal.service.vector_database_service import VectorDatabaseService
 
 
 @contextmanager
@@ -378,29 +377,15 @@ class TestAppConfigService:
     def test_get_app_config_should_sync_invalid_refs_and_return_transformed_payload(self, monkeypatch):
         """覆盖 get_app_config 的关键分支:
         1. model/tools/workflows 与校验结果不一致时会触发 update
-        2. app_dataset_joins 中失效知识库会被删除
-        3. 返回值应使用校验后的 model/tools/workflows/datasets 组装
+        2. knowledge_base_ids 中失效知识库会被剔除并触发 update
+        3. 返回值应使用校验后的 model/tools/workflows/knowledge_bases 组装
         """
 
         keep_dataset_id = uuid4()
         remove_dataset_id = uuid4()
 
-        class _DeleteQuery:
-            def __init__(self):
-                self.deleted = False
-
-            def filter(self, *_args, **_kwargs):
-                return self
-
-            def delete(self):
-                self.deleted = True
-
-        delete_query = _DeleteQuery()
-
         class _Session:
-            def query(self, model):
-                if model is AppDatasetJoin:
-                    return delete_query
+            def query(self, _model):
                 return _QueryStub(all_result=[])
 
         auto_commit_calls = []
@@ -421,10 +406,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "legacy"},
             tools=[{"type": "api_tool", "tool_id": "legacy"}],
-            app_dataset_joins=[
-                SimpleNamespace(dataset_id=keep_dataset_id),
-                SimpleNamespace(dataset_id=remove_dataset_id),
-            ],
+            knowledge_base_ids=[str(keep_dataset_id), str(remove_dataset_id)],
             workflows=["wf-legacy"],
             dialog_round=3,
             preset_prompt="prompt",
@@ -456,7 +438,7 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
+            "_process_and_validate_knowledge_base_ids",
             lambda _dataset_ids: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
@@ -480,36 +462,22 @@ class TestAppConfigService:
 
         result = service.get_app_config(app)
 
-        assert delete_query.deleted is True
         assert len(auto_commit_calls) == 1
         assert any("model_config" in payload for _, payload in updates)
         assert any("tools" in payload for _, payload in updates)
+        assert any("knowledge_base_ids" in payload for _, payload in updates)
         assert any("workflows" in payload for _, payload in updates)
         assert result["model_config"]["provider"] == "openai"
         assert result["tools"][0]["type"] == "builtin_tool"
         assert result["workflows"][0]["id"] == "wf-new"
-        assert result["datasets"][0]["id"] == str(keep_dataset_id)
+        assert result["knowledge_bases"][0]["id"] == str(keep_dataset_id)
 
     def test_get_app_config_should_not_persist_when_disabled(self, monkeypatch):
         keep_dataset_id = uuid4()
         remove_dataset_id = uuid4()
 
-        class _DeleteQuery:
-            def __init__(self):
-                self.deleted = False
-
-            def filter(self, *_args, **_kwargs):
-                return self
-
-            def delete(self):
-                self.deleted = True
-
-        delete_query = _DeleteQuery()
-
         class _Session:
-            def query(self, model):
-                if model is AppDatasetJoin:
-                    return delete_query
+            def query(self, _model):
                 return _QueryStub(all_result=[])
 
         auto_commit_calls = []
@@ -530,10 +498,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "legacy"},
             tools=[{"type": "api_tool", "tool_id": "legacy"}],
-            app_dataset_joins=[
-                SimpleNamespace(dataset_id=keep_dataset_id),
-                SimpleNamespace(dataset_id=remove_dataset_id),
-            ],
+            knowledge_base_ids=[str(keep_dataset_id), str(remove_dataset_id)],
             workflows=["wf-legacy"],
             dialog_round=3,
             preset_prompt="prompt",
@@ -565,7 +530,7 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
+            "_process_and_validate_knowledge_base_ids",
             lambda _dataset_ids: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
@@ -589,13 +554,12 @@ class TestAppConfigService:
 
         result = service.get_app_config(app, persist_changes=False)
 
-        assert delete_query.deleted is False
         assert auto_commit_calls == []
         assert updates == []
         assert result["model_config"]["provider"] == "openai"
         assert result["tools"][0]["type"] == "builtin_tool"
         assert result["workflows"][0]["id"] == "wf-new"
-        assert result["datasets"][0]["id"] == str(keep_dataset_id)
+        assert result["knowledge_bases"][0]["id"] == str(keep_dataset_id)
 
     def test_get_app_config_should_cache_runtime_result_when_disabled(self, monkeypatch):
         service = self._build_service()
@@ -603,7 +567,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "legacy"},
             tools=[{"type": "api_tool", "tool_id": "legacy"}],
-            app_dataset_joins=[],
+            knowledge_base_ids=[],
             workflows=[],
             mcp_bindings=[],
             mcp_tool_snapshots=[],
@@ -623,7 +587,7 @@ class TestAppConfigService:
             created_at=datetime(2024, 1, 1, 0, 0, 0),
         )
         app = SimpleNamespace(account_id=uuid4(), id=uuid4(), app_config=app_config)
-        call_counts = {"model": 0, "tools": 0, "datasets": 0, "workflows": 0, "skills": 0, "agents": 0}
+        call_counts = {"model": 0, "tools": 0, "knowledge_base_ids": 0, "workflows": 0, "skills": 0, "agents": 0}
 
         def _wrap(key, value):
             def _handler(*_args, **_kwargs):
@@ -644,8 +608,8 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
-            _wrap("datasets", ([], [])),
+            "_process_and_validate_knowledge_base_ids",
+            _wrap("knowledge_base_ids", ([], [])),
         )
         monkeypatch.setattr(
             service,
@@ -672,7 +636,7 @@ class TestAppConfigService:
         assert first == second
         assert updates == []
         assert first["agent_bindings"] == []
-        assert call_counts == {"model": 1, "tools": 1, "datasets": 1, "workflows": 1, "skills": 1, "agents": 1}
+        assert call_counts == {"model": 1, "tools": 1, "knowledge_base_ids": 1, "workflows": 1, "skills": 1, "agents": 1}
 
     def test_get_draft_app_config_should_sync_invalid_refs_and_return_transformed_payload(self, monkeypatch):
         service = self._build_service()
@@ -682,7 +646,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "legacy"},
             tools=[{"type": "api_tool", "tool_id": "legacy"}],
-            datasets=["to-remove", str(keep_dataset_id)],
+            knowledge_base_ids=["to-remove", str(keep_dataset_id)],
             workflows=["wf-legacy"],
             dialog_round=3,
             preset_prompt="prompt",
@@ -714,7 +678,7 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
+            "_process_and_validate_knowledge_base_ids",
             lambda _dataset_ids: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
@@ -740,12 +704,12 @@ class TestAppConfigService:
 
         assert any("model_config" in payload for _, payload in updates)
         assert any("tools" in payload for _, payload in updates)
-        assert any("datasets" in payload for _, payload in updates)
+        assert any("knowledge_base_ids" in payload for _, payload in updates)
         assert any("workflows" in payload for _, payload in updates)
         assert result["model_config"]["provider"] == "openai"
         assert result["tools"][0]["type"] == "builtin_tool"
         assert result["workflows"][0]["id"] == "wf-new"
-        assert result["datasets"][0]["id"] == str(keep_dataset_id)
+        assert result["knowledge_bases"][0]["id"] == str(keep_dataset_id)
         assert result["agent_bindings"] == []
 
     def test_get_draft_app_config_should_not_persist_when_disabled(self, monkeypatch):
@@ -756,7 +720,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "legacy"},
             tools=[{"type": "api_tool", "tool_id": "legacy"}],
-            datasets=["to-remove", str(keep_dataset_id)],
+            knowledge_base_ids=["to-remove", str(keep_dataset_id)],
             workflows=["wf-legacy"],
             dialog_round=3,
             preset_prompt="prompt",
@@ -788,7 +752,7 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
+            "_process_and_validate_knowledge_base_ids",
             lambda _dataset_ids: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
@@ -816,7 +780,7 @@ class TestAppConfigService:
         assert result["model_config"]["provider"] == "openai"
         assert result["tools"][0]["type"] == "builtin_tool"
         assert result["workflows"][0]["id"] == "wf-new"
-        assert result["datasets"][0]["id"] == str(keep_dataset_id)
+        assert result["knowledge_bases"][0]["id"] == str(keep_dataset_id)
 
     def test_get_draft_app_config_should_skip_updates_when_validated_values_unchanged(self, monkeypatch):
         service = self._build_service()
@@ -828,7 +792,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config=model_config,
             tools=tools_config,
-            datasets=[dataset_id],
+            knowledge_base_ids=[dataset_id],
             workflows=[workflow_id],
             dialog_round=3,
             preset_prompt="prompt",
@@ -853,7 +817,7 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
+            "_process_and_validate_knowledge_base_ids",
             lambda _dataset_ids: ([{"id": dataset_id, "name": "知识库A", "icon": "", "description": ""}], [dataset_id]),
         )
         monkeypatch.setattr(
@@ -875,7 +839,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "openai", "model": "gpt-4o-mini", "parameters": {}},
             tools=[],
-            datasets=[],
+            knowledge_base_ids=[],
             workflows=[],
             dialog_round=3,
             preset_prompt="prompt",
@@ -893,7 +857,7 @@ class TestAppConfigService:
         app = SimpleNamespace(draft_app_config=draft_app_config)
         monkeypatch.setattr(service, "_process_and_validate_model_config", lambda config: config)
         monkeypatch.setattr(service, "_process_and_validate_tools", lambda tools: ([], []))
-        monkeypatch.setattr(service, "_process_and_validate_datasets", lambda datasets: ([], []))
+        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_workflows", lambda workflows: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_mcp_bindings", lambda mcp_bindings: ([], []))
         updates = []
@@ -927,7 +891,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "openai", "model": "gpt-4o-mini", "parameters": {}},
             tools=[],
-            datasets=[],
+            knowledge_base_ids=[],
             workflows=[],
             mcp_bindings=[],
             mcp_tool_snapshots=[],
@@ -949,7 +913,7 @@ class TestAppConfigService:
         app = SimpleNamespace(account_id=account_id, id=app_id, draft_app_config=draft_app_config)
         monkeypatch.setattr(service, "_process_and_validate_model_config", lambda config: config)
         monkeypatch.setattr(service, "_process_and_validate_tools", lambda tools: ([], []))
-        monkeypatch.setattr(service, "_process_and_validate_datasets", lambda datasets: ([], []))
+        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_workflows", lambda workflows: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_mcp_bindings", lambda mcp_bindings: ([], []))
         monkeypatch.setattr(service.skill_service, "process_and_validate_skill_bindings", lambda skills: ([], []))
@@ -966,7 +930,7 @@ class TestAppConfigService:
         assert result["agent_bindings"] == display_bindings
         assert any(payload.get("agent_bindings") == validate_bindings for _, payload in updates)
 
-    def test_get_app_config_should_skip_updates_and_dataset_cleanup_when_valid(self, monkeypatch):
+    def test_get_app_config_should_skip_updates_when_valid(self, monkeypatch):
         dataset_id = str(uuid4())
         workflow_id = "wf-1"
         model_config = {"provider": "openai", "model": "gpt-4o-mini", "parameters": {}}
@@ -986,7 +950,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config=model_config,
             tools=tools_config,
-            app_dataset_joins=[SimpleNamespace(dataset_id=dataset_id)],
+            knowledge_base_ids=[dataset_id],
             workflows=[workflow_id],
             dialog_round=3,
             preset_prompt="prompt",
@@ -1010,7 +974,7 @@ class TestAppConfigService:
         )
         monkeypatch.setattr(
             service,
-            "_process_and_validate_datasets",
+            "_process_and_validate_knowledge_base_ids",
             lambda _dataset_ids: ([{"id": dataset_id, "name": "知识库A", "icon": "", "description": ""}], [dataset_id]),
         )
         monkeypatch.setattr(
@@ -1041,7 +1005,7 @@ class TestAppConfigService:
             id=uuid4(),
             model_config={"provider": "openai", "model": "gpt-4o-mini", "parameters": {}},
             tools=[],
-            app_dataset_joins=[],
+            knowledge_base_ids=[],
             workflows=[],
             dialog_round=3,
             preset_prompt="prompt",
@@ -1059,7 +1023,7 @@ class TestAppConfigService:
         app = SimpleNamespace(app_config=app_config)
         monkeypatch.setattr(service, "_process_and_validate_model_config", lambda config: config)
         monkeypatch.setattr(service, "_process_and_validate_tools", lambda tools: ([], []))
-        monkeypatch.setattr(service, "_process_and_validate_datasets", lambda datasets: ([], []))
+        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_workflows", lambda workflows: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_mcp_bindings", lambda mcp_bindings: ([], []))
         updates = []
@@ -1266,27 +1230,27 @@ class TestAppConfigService:
         assert validate_tools[0]["params"] == {"query": "hello"}
         assert tools[0]["tool"]["params"] == {"query": "hello"}
 
-    def test_process_and_validate_datasets_should_filter_missing_and_keep_order(self):
-        dataset_a = SimpleNamespace(
+    def test_process_and_validate_knowledge_base_ids_should_filter_missing_and_keep_order(self):
+        knowledge_base_a = SimpleNamespace(
             id=uuid4(),
             name="知识库A",
             icon="a.png",
             description="A",
         )
-        dataset_b = SimpleNamespace(
+        knowledge_base_b = SimpleNamespace(
             id=uuid4(),
             name="知识库B",
             icon="b.png",
             description="B",
         )
-        session = SimpleNamespace(query=lambda model: _QueryStub(all_result=[dataset_b, dataset_a]) if model is Dataset else _QueryStub())
+        session = SimpleNamespace(query=lambda model: _QueryStub(all_result=[knowledge_base_b, knowledge_base_a]) if model is KnowledgeBase else _QueryStub())
         service = self._build_service(session=session)
-        origin_ids = [str(dataset_a.id), "missing", str(dataset_b.id)]
+        origin_ids = [str(knowledge_base_a.id), "missing", str(knowledge_base_b.id)]
 
-        datasets, validate_datasets = service._process_and_validate_datasets(origin_ids)
+        knowledge_bases, validate_knowledge_base_ids = service._process_and_validate_knowledge_base_ids(origin_ids)
 
-        assert validate_datasets == [str(dataset_a.id), str(dataset_b.id)]
-        assert [item["id"] for item in datasets] == [str(dataset_a.id), str(dataset_b.id)]
+        assert validate_knowledge_base_ids == [str(knowledge_base_a.id), str(knowledge_base_b.id)]
+        assert [item["id"] for item in knowledge_bases] == [str(knowledge_base_a.id), str(knowledge_base_b.id)]
 
     def test_process_and_validate_workflows_should_filter_missing_and_keep_order(self):
         workflow_a = SimpleNamespace(

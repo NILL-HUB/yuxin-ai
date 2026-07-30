@@ -2,3 +2,13 @@ name: google_serper
 label: 谷歌Serper搜索
 description: 这是一个谷歌搜索API，当你需要搜索的时候 可以使用该工具 该工具的输入是一个查询语句
 params: []
+task_keywords:
+- 搜索
+- 谷歌搜索
+- google搜索
+- 查一下
+- 查找
+- 联网搜索
+- 网上的
+- search
+- google

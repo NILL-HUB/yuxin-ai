@@ -30,7 +30,7 @@ services:
       FLASK_ENV: production
       FLASK_DEBUG: '0'
       SERVER_THREAD_AMOUNT: 32
-      GUNICORN_TIMEOUT: 120
+      GUNICORN_TIMEOUT: '0'
       SQLALCHEMY_ECHO: 'false'
       MODE: api
       SKILL_CATALOG_SYNC_ENABLED: 'true'
@@ -40,11 +40,14 @@ services:
       # Redis 连接使用 Docker 服务名
       REDIS_HOST: llmops-redis
       REDIS_PORT: 6379
-      # Weaviate 连接使用 Docker 服务名
-      WEAVIATE_HTTP_HOST: llmops-weaviate
-      WEAVIATE_HTTP_PORT: 8080
-      WEAVIATE_GRPC_HOST: llmops-weaviate
-      WEAVIATE_GRPC_PORT: 50051
+      # Neo4j 连接（记忆系统 TKG）
+      NEO4J_URI: bolt://llmops-neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openagent123}
+      # MinIO 连接（记忆系统对象存储）
+      MINIO_ENDPOINT: http://llmops-minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
     ports:
       - "127.0.0.1:${API_PORT:-5001}:5001"
     healthcheck:
@@ -58,8 +61,6 @@ services:
         condition: service_healthy
       llmops-redis:
         condition: service_healthy
-      llmops-weaviate:
-        condition: service_started
 
   llmops-celery:
     image: llmops-api:${IMAGE_VERSION:-0.1.0}
@@ -85,21 +86,55 @@ services:
       # Redis 连接使用 Docker 服务名
       REDIS_HOST: llmops-redis
       REDIS_PORT: 6379
-      # Weaviate 连接使用 Docker 服务名
-      WEAVIATE_HTTP_HOST: llmops-weaviate
-      WEAVIATE_HTTP_PORT: 8080
-      WEAVIATE_GRPC_HOST: llmops-weaviate
-      WEAVIATE_GRPC_PORT: 50051
+      # Neo4j 连接（记忆系统 TKG）
+      NEO4J_URI: bolt://llmops-neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openagent123}
+      # MinIO 连接（记忆系统对象存储）
+      MINIO_ENDPOINT: http://llmops-minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
     depends_on:
       llmops-db:
         condition: service_healthy
       llmops-redis:
         condition: service_healthy
-      llmops-weaviate:
-        condition: service_started
+
+  llmops-celery-beat:
+    image: llmops-api:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: llmops-celery-beat
+    restart: always
+    volumes:
+      - ./volumes/app/storage:/app/api/storage
+    env_file:
+      - ../api/.env
+    environment:
+      FLASK_ENV: production
+      FLASK_DEBUG: '0'
+      SQLALCHEMY_ECHO: 'false'
+      MODE: celery-beat
+      MIGRATION_ENABLED: 'false'
+      POSTGRES_HOST: llmops-db
+      POSTGRES_PORT: 5432
+      REDIS_HOST: llmops-redis
+      REDIS_PORT: 6379
+      NEO4J_URI: bolt://llmops-neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openagent123}
+      MINIO_ENDPOINT: http://llmops-minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    depends_on:
+      llmops-db:
+        condition: service_healthy
+      llmops-redis:
+        condition: service_healthy
 
   llmops-redis:
-    image: redis:6-alpine
+    image: redis:8-alpine
     restart: always
     container_name: llmops-redis
     env_file:
@@ -116,7 +151,7 @@ services:
       - "127.0.0.1:${REDIS_PORT:-16379}:6379"
 
   llmops-db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg18
     restart: always
     container_name: llmops-db
     env_file:
@@ -134,31 +169,8 @@ services:
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
 
-  llmops-weaviate:
-    image: semitechnologies/weaviate:1.28.4
-    container_name: llmops-weaviate
-    restart: always
-    env_file:
-      - ../api/.env
-    environment:
-      QUERY_DEFAULTS_LIMIT: 25
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'false'
-      PERSISTENCE_DATA_PATH: /var/lib/weaviate
-      DEFAULT_VECTORIZER_MODEL: 'none'
-      CLUSTER_HOSTNAME: 'node1'
-      AUTHENTICATION_APIKEY_ENABLED: 'true'
-      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:-ftBC9hKkjfdbdi0W3T6kEtMh5BZFpGa1DF8}
-      AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_USER:-admin@localhost}
-      AUTHORIZATION_ADMINLIST_ENABLED: 'true'
-      AUTHORIZATION_ADMINLIST_USERS: ${WEAVIATE_USER:-admin@localhost}
-    volumes:
-      - ./volumes/weaviate:/var/lib/weaviate
-    ports:
-      - "127.0.0.1:${WEAVIATE_HTTP_PORT:-8080}:8080"
-      - "127.0.0.1:${WEAVIATE_GRPC_PORT:-50051}:50051"
-
   llmops-nginx:
-    image: nginx:latest
+    image: nginx:1.30-alpine
     restart: always
     container_name: llmops-nginx
     env_file:
@@ -173,7 +185,7 @@ services:
       - ./nginx/proxy.conf:/etc/nginx/proxy.conf
       - ./nginx/entrypoint.sh:/docker-entrypoint.sh
       - ./nginx/ssl:/etc/ssl
-    entrypoint: ["/bin/bash", "/docker-entrypoint.sh"]
+    entrypoint: ["/bin/sh", "/docker-entrypoint.sh"]
     depends_on:
       llmops-ui:
         condition: service_started
@@ -182,3 +194,49 @@ services:
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
+
+  # ==================== 记忆系统容器（架构文档 v5.0 第 16 章） ====================
+
+  llmops-neo4j:
+    image: neo4j:2026-community
+    restart: always
+    container_name: llmops-neo4j
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-openagent123}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_memory_heap_initial__size: 256m
+      NEO4J_dbms_memory_heap_max__size: 512m
+      NEO4J_dbms_memory_pagecache_size: 256m
+    volumes:
+      - ./volumes/neo4j/data:/data
+      - ./volumes/neo4j/logs:/logs
+    ports:
+      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  llmops-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: always
+    container_name: llmops-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - ./volumes/minio/data:/data
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

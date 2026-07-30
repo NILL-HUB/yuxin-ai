@@ -1,37 +1,40 @@
 from .account import Account, AccountOAuth, AccountSession
 from .api_key import ApiKey
 from .api_tool import ApiTool, ApiToolProvider
-from .app import App, AppAssignment, AppDatasetJoin, AppConfig, AppConfigVersion
+from .builtin_tool import BuiltinTool, BuiltinToolProvider
+from .app import App, AppAssignment, AppConfig, AppConfigVersion
 from .conversation import Conversation, Message, MessageAgentThought
 from .conversation_variable import ConversationVariable
-from .dataset import Dataset, Document, Segment, KeywordTable, DatasetQuery, ProcessRule
-from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, MemoryCandidate, ExternalDataSource
+from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, ExternalDataSource
 from .end_user import EndUser
 from .upload_file import UploadFile
 from .workflow import Workflow, WorkflowResult, WorkflowVersion, WorkflowRun, WorkflowNodeExecution
 from .platform import WechatConfig, WechatEndUser, WechatMessage
 from .tag import Tag, AppTag, WorkflowTag
 from .tool_confirmation import ToolConfirmation
-from .mcp import McpProvider
+from .mcp import McpProvider, McpTool
 from .skill import SkillPackage, SkillPackageVersion
 from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, RolePermission, AuditLog
 from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTransaction, RedeemCodeBatch, RedeemCode
 from .routing_log import RoutingLog
 from .orchestration_feature_flag import OrchestrationFeatureFlagModel
+from .resource_vector_index import ResourceVectorIndex
 from .routing_quality import (
     PolicyChangeDraftModel,
     RoutingOptimizationSuggestionModel,
     RoutingQualityFeedbackModel,
 )
 from .showcase_entity import ShowcaseCase
+from .public_ai_feature_config import PublicAIFeatureConfig
+from .prompt_template import PromptTemplate
 
 __all__ = [
-    "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "MemoryCandidate", "ExternalDataSource",
+    "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "ExternalDataSource",
     "ToolConfirmation",
-    "App", "AppAssignment", "AppDatasetJoin", "AppConfig", "AppConfigVersion",
+    "App", "AppAssignment", "AppConfig", "AppConfigVersion",
     "ApiTool", "ApiToolProvider",
+    "BuiltinTool", "BuiltinToolProvider",
     "UploadFile",
-    "Dataset", "Document", "Segment", "KeywordTable", "DatasetQuery", "ProcessRule",
     "Conversation", "Message", "MessageAgentThought",
     "ConversationVariable",
     "Account", "AccountOAuth", "AccountSession",
@@ -39,13 +42,14 @@ __all__ = [
     "Workflow", "WorkflowResult", "WorkflowVersion", "WorkflowRun", "WorkflowNodeExecution",
     "WechatConfig", "WechatEndUser", "WechatMessage",
     "Tag", "AppTag", "WorkflowTag",
-    "McpProvider",
+    "McpProvider", "McpTool",
     "SkillPackage", "SkillPackageVersion",
     "AdminUser", "AdminSession", "Role", "Permission", "AdminUserRole", "RolePermission", "AuditLog",
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
     "RoutingLog", "OrchestrationFeatureFlagModel",
+    "ResourceVectorIndex",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
     "PolicyChangeDraftModel",
     "ShowcaseCase",
-    "Dataset", "Document", "Segment", "KeywordTable", "DatasetQuery", "ProcessRule",
+    "PromptTemplate",
 ]

@@ -30,7 +30,6 @@ class AdminAgentPoolHandler:
         result = self.admin_agent_pool_service.list_configs(
             page=req.current_page.data,
             per_page=req.page_size.data,
-            pool=req.pool.data,
             enabled=req.enabled.data,
             keyword=req.keyword.data,
         )

@@ -15,6 +15,41 @@ from .base_service import BaseService
 class RoutingLogService(BaseService):
     db: SQLAlchemy
 
+    def create_pending(self, *, account_id, user_query: str | None = None):
+        """创建 pending 状态的 routing_log 记录，供编排过程中追加事件。
+
+        编排开始时调用，获取 routing_log_id 供 _emit 追加离散事件。
+        编排完成后通过 finalize 更新为最终状态。
+        """
+        return self.create(
+            RoutingLog,
+            account_id=account_id,
+            message_id=None,
+            routing_decision={"status": "pending"},
+            agent_candidates=[],
+            filtered_out_agents=[],
+            tool_candidates=[],
+            filtered_out_tools=[],
+            knowledge_hits=[],
+            billing_events=[],
+            status="pending",
+            user_query=user_query,
+        )
+
+    def finalize(self, routing_log_id, **fields) -> None:
+        """更新 routing_log 记录为最终状态。"""
+        with self.db.auto_commit():
+            log = (
+                self.db.session.query(RoutingLog)
+                .filter(RoutingLog.id == routing_log_id)
+                .first()
+            )
+            if log is None:
+                return
+            for key, value in fields.items():
+                if hasattr(log, key):
+                    setattr(log, key, value)
+
     def record(
         self,
         *,

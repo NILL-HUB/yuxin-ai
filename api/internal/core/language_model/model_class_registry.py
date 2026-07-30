@@ -28,7 +28,6 @@ class ModelClassRegistry:
         # OpenAI 兼容协议 — 使用 langchain_openai
         ("openai", "chat"): _import_class("langchain_openai", "ChatOpenAI"),
         ("openai", "multimodal"): _import_class("langchain_openai", "ChatOpenAI"),
-        ("openai", "completion"): _import_class("langchain_openai", "OpenAI"),
         ("openai", "embedding"): _import_class("langchain_openai", "OpenAIEmbeddings"),
         # Claude 兼容协议 — 使用 langchain_anthropic
         ("claude", "chat"): _import_class("langchain_anthropic", "ChatAnthropic"),

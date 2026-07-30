@@ -1,4 +1,4 @@
-import { del, get, post } from '@/utils/request'
+import { del, get, patch, post } from '@/utils/request'
 import type {
   AdminWorkflowData,
   AdminWorkflowOfflineResponse,
@@ -44,7 +44,7 @@ export const updateAdminWorkflow = async (
   workflowId: string,
   body: UpdateAdminWorkflowRequest,
 ): Promise<AdminWorkflowData> => {
-  const response = await post<AdminWorkflowResponse>(`/admin/workflows/${workflowId}`, { body })
+  const response = await patch<AdminWorkflowResponse>(`/admin/workflows/${workflowId}`, { body })
   return response.data
 }
 
@@ -167,5 +167,32 @@ export const batchOfflineAdminWorkflows = async (
     '/admin/workflows/batch/offline',
     { body: { workflow_ids: workflowIds } },
   )
+  return response.data
+}
+
+/**
+ * 导出指定后台工作流为可迁移 JSON 数据，并解包接口返回的 data 字段。
+ */
+export const exportAdminWorkflow = async (
+  workflowId: string,
+  includeVersions = false,
+): Promise<Record<string, any>> => {
+  const response = await get<BaseResponse<Record<string, any>>>(
+    `/admin/workflows/${workflowId}/export`,
+    { params: { include_versions: includeVersions } },
+  )
+  return response.data
+}
+
+/**
+ * 导入后台工作流，返回新创建的工作流详情，并解包接口返回的 data 字段。
+ */
+export const importAdminWorkflow = async (
+  jsonData: Record<string, any>,
+  overwriteName = false,
+): Promise<AdminWorkflowData> => {
+  const response = await post<AdminWorkflowResponse>('/admin/workflows/import', {
+    body: { json_data: jsonData, overwrite_name: overwriteName },
+  })
   return response.data
 }

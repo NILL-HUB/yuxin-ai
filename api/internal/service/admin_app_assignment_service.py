@@ -5,6 +5,7 @@ from internal.entity.app_entity import AppStatus
 from internal.exception import FailException, NotFoundException
 from internal.extension.database_extension import db
 from internal.model.account import Account
+from internal.model.admin import AdminUser
 from internal.model.app import App, AppAssignment
 from internal.service.audit_log_service import AuditLogService
 
@@ -115,6 +116,10 @@ class AdminAppAssignmentService:
         account = self.session.query(Account).filter(Account.id == account_id).one_or_none()
         if account is None:
             raise NotFoundException("用户不存在")
+        # 管理员绑定的账号不参与客户应用分配
+        bound = self.session.query(AdminUser.id).filter(AdminUser.account_id == account.id).first()
+        if bound is not None:
+            raise FailException("该账号为管理员账号，不能在用户管理中操作")
         return account
 
     def _get_app_or_raise(self, app_id: UUID) -> App:

@@ -7,10 +7,10 @@ import HumanMessage from '@/components/HumanMessage.vue'
 import AiMessage from '@/components/AiMessage.vue'
 import MarkdownEditor from '@/components/MarkdownEditor.vue'
 import PromptOptimizeTrigger from '@/components/PromptOptimizeTrigger.vue'
-import { useGetDraftAppConfig, useUpdateDraftAppConfig } from '@/hooks/use-app'
+import { useGetAdminDraftAppConfig, useUpdateAdminDraftAppConfig } from '@/hooks/use-admin-app'
 import { useAccountStore } from '@/stores/account'
 import { getErrorMessage } from '@/utils/error'
-import { promptCompareChat, stopPromptCompareChat } from '@/services/app'
+import { adminPromptCompareChat, stopAdminPromptCompareChat } from '@/services/admin-apps'
 import type { PromptCompareChatRequest } from '@/models/app'
 import PromptCompareModelConfigTrigger from '@/views/space/apps/components/PromptCompareModelConfigTrigger.vue'
 import {
@@ -71,8 +71,8 @@ const laneScrollRefs = ref<Record<LaneKey, HTMLDivElement | null>>({
   candidate: null,
 })
 const lanes = ref<CompareLane[]>([])
-const { draftAppConfigForm, loadDraftAppConfig } = useGetDraftAppConfig()
-const { handleUpdateDraftAppConfig } = useUpdateDraftAppConfig()
+const { draftAppConfigForm, loadDraftAppConfig } = useGetAdminDraftAppConfig()
+const { handleUpdateDraftAppConfig } = useUpdateAdminDraftAppConfig()
 
 const appId = computed(() => String(route.params?.app_id || ''))
 const anyLaneLoading = computed(() => lanes.value.some((lane) => lane.loading))
@@ -220,7 +220,7 @@ const streamLane = async (lane: CompareLane, userQuery: string) => {
   const requestStartAt = Date.now()
 
   try {
-    const resp = await promptCompareChat(
+    const resp = await adminPromptCompareChat(
       appId.value,
       {
         lane_id: lane.lane_id,
@@ -276,7 +276,7 @@ const handleStop = async () => {
 
   try {
     stopLoading.value = true
-    await Promise.all(taskIds.map((taskId) => stopPromptCompareChat(appId.value, taskId)))
+    await Promise.all(taskIds.map((taskId) => stopAdminPromptCompareChat(appId.value, taskId)))
   } finally {
     stopLoading.value = false
   }

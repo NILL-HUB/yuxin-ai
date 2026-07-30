@@ -13,6 +13,8 @@ import requests
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .mcp_schema_compiler import McpSchemaCompiler
+from .mcp_stdio_client import McpStdioClient
+from internal.service.tool_credential_encryptor import decrypt_headers
 
 DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 30
 SUPPORTED_HTTP_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http"}
@@ -119,6 +121,7 @@ class McpToolFactory:
 
     timeout_seconds: int = DEFAULT_MCP_TOOL_TIMEOUT_SECONDS
     schema_compiler: McpSchemaCompiler = field(default_factory=McpSchemaCompiler)
+    _stdio_client: McpStdioClient = field(default_factory=McpStdioClient)
 
     @staticmethod
     def build_binding_identity(binding: dict[str, Any] | None) -> str:
@@ -324,20 +327,7 @@ class McpToolFactory:
                 continue
 
             transport = self._normalize_transport(binding.get("transport"))
-            if transport in SUPPORTED_STDIO_TRANSPORTS:
-                snapshots.append(
-                    self._build_snapshot_payload(
-                        binding=binding,
-                        status="unsupported",
-                        tool_definitions=existing_snapshot.get("tool_definitions") if isinstance(existing_snapshot, dict) else [],
-                        existing_snapshot=existing_snapshot,
-                        last_error="当前环境未启用 MCP stdio 适配",
-                        retry_count=int(existing_snapshot.get("retry_count") or 0) if isinstance(existing_snapshot, dict) else 0,
-                        retryable=False,
-                    )
-                )
-                continue
-            if transport not in SUPPORTED_HTTP_TRANSPORTS:
+            if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
                 snapshots.append(
                     self._build_snapshot_payload(
                         binding=binding,
@@ -432,11 +422,7 @@ class McpToolFactory:
                 continue
 
             transport = self._normalize_transport(binding.get("transport"))
-            if transport in SUPPORTED_STDIO_TRANSPORTS:
-                logging.warning("当前环境未启用 MCP stdio 适配，跳过该绑定: %s", _normalize_text(binding.get("name")))
-                continue
-
-            if transport not in SUPPORTED_HTTP_TRANSPORTS:
+            if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
                 logging.warning("不支持的 MCP transport，已跳过: %s", transport)
                 continue
 
@@ -488,7 +474,7 @@ class McpToolFactory:
                 continue
 
             transport = self._normalize_transport(binding.get("transport"))
-            if transport in SUPPORTED_STDIO_TRANSPORTS or transport not in SUPPORTED_HTTP_TRANSPORTS:
+            if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
                 continue
 
             snapshot = snapshot_map.get(self.build_binding_identity(binding))
@@ -529,10 +515,7 @@ class McpToolFactory:
             return []
 
         transport = self._normalize_transport(binding.get("transport"))
-        if transport in SUPPORTED_STDIO_TRANSPORTS:
-            logging.warning("当前环境未启用 MCP stdio 适配，跳过该绑定: %s", _normalize_text(binding.get("name")))
-            return []
-        if transport not in SUPPORTED_HTTP_TRANSPORTS:
+        if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
             logging.warning("不支持的 MCP transport，已跳过: %s", transport)
             return []
 
@@ -651,6 +634,9 @@ class McpToolFactory:
         )
 
     def _list_remote_tools(self, binding: dict[str, Any]) -> list[dict[str, Any]]:
+        transport = self._normalize_transport(binding.get("transport"))
+        if transport in SUPPORTED_STDIO_TRANSPORTS:
+            return self._stdio_client.list_tools_sync(binding)
         payload = self._jsonrpc_request(binding, "tools/list", params={})
         if isinstance(payload, dict):
             tools = payload.get("tools")
@@ -661,14 +647,18 @@ class McpToolFactory:
         return []
 
     def _call_remote_tool(self, binding: dict[str, Any], tool_name: str, arguments: dict[str, Any]) -> str:
-        payload = self._jsonrpc_request(
-            binding,
-            "tools/call",
-            params={
-                "name": tool_name,
-                "arguments": arguments,
-            },
-        )
+        transport = self._normalize_transport(binding.get("transport"))
+        if transport in SUPPORTED_STDIO_TRANSPORTS:
+            payload = self._stdio_client.call_tool_sync(binding, tool_name, arguments)
+        else:
+            payload = self._jsonrpc_request(
+                binding,
+                "tools/call",
+                params={
+                    "name": tool_name,
+                    "arguments": arguments,
+                },
+            )
         if isinstance(payload, dict):
             if payload.get("isError") is True:
                 return _extract_text_from_mcp_content(payload.get("content")) or json.dumps(payload, ensure_ascii=False)
@@ -707,7 +697,9 @@ class McpToolFactory:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        headers.update(_normalize_headers(binding.get("headers")))
+        # 运行时解密 headers：binding 来自 app_config，headers 中存储的是加密 token
+        decrypted_headers = decrypt_headers(binding.get("headers"))
+        headers.update(_normalize_headers(decrypted_headers))
 
         url = _normalize_text(binding.get("url"))
         payload: dict[str, Any] = {

@@ -21,6 +21,7 @@ from internal.schema.public_workflow_schema import GetPublicWorkflowsWithPageReq
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
+from .credit_service import CreditService
 
 
 @inject
@@ -28,6 +29,7 @@ from .base_service import BaseService
 class PublicWorkflowService(BaseService):
     """公共工作流服务"""
     db: SQLAlchemy
+    credit_service: CreditService | None = None
 
     @staticmethod
     def _resolve_public_workflow_tags(workflow: Workflow) -> list[str]:
@@ -58,7 +60,11 @@ class PublicWorkflowService(BaseService):
             tag_list = sort_tags_by_priority(tag_list)
         else:
             # 如果没有提供标签，自动分配
-            tag_list = TagAssignmentService.auto_assign_tags(workflow.name, workflow.description)
+            tag_list = TagAssignmentService.auto_assign_tags(
+                workflow.name, workflow.description,
+                credit_service=self.credit_service,
+                account_id=account.id,
+            )
 
         # 4.更新工作流为公开状态
         self.update(workflow, **{

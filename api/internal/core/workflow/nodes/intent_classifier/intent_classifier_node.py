@@ -1,4 +1,5 @@
 """意图识别节点执行器模块。"""
+import json
 import time
 from typing import Any, Optional
 
@@ -18,22 +19,14 @@ class IntentClassifierNode(BaseNode):
     执行逻辑：
     1. 从 input_variable 读取待分类文本
     2. 构建 LLM prompt（包含所有分类的 name + description）
-    3. 调用 LLM 返回分类名称
+    3. 调用 LLM 返回分类名称与置信度
     4. 输出 class_name 和 confidence
-
-    第一版占位实现说明：
-    - 当前 ``invoke`` 仅解析 input_variable 并校验 classes 配置，不真正调用 LLM。
-    - 占位输出为 ``{"class_name": classes[0].name, "confidence": 1.0}``，
-      便于下游节点引用调试。
-    - 真正分类需要通过 ``LanguageModelService.load_language_model`` 构建 LLM，
-      再用包含所有分类 name + description 的 prompt 进行分类调用，
-      该集成由后续任务实现。
     """
 
     node_data: IntentClassifierNodeData
 
     def invoke(self, state: WorkflowState, config: Optional[RunnableConfig] = None) -> WorkflowState:
-        """对输入文本进行意图分类（第一版占位实现）"""
+        """对输入文本进行意图分类"""
         start_at = time.perf_counter()
 
         # 1.校验 classes 列表（实体层已校验，这里防御性二次校验）
@@ -41,25 +34,36 @@ class IntentClassifierNode(BaseNode):
             raise FailException("意图识别节点至少需要1个分类")
 
         # 2.从 state 中解析 input_variable 引用的文本
-        # 占位实现：仅解析并记录到 inputs 字段，不真正传递给 LLM
         input_text = self._resolve_variable(self.node_data.input_variable, state)
+        if not input_text or not str(input_text).strip():
+            raise FailException("意图识别节点的输入文本不能为空")
 
-        # 3.调用 LLM 进行意图分类（占位实现）
-        # 后续任务接入 LanguageModelService 时，在此处：
-        #   a) 通过 llm_config（或继承应用配置）构建 LanguageModel
-        #   b) 构建 prompt，包含所有分类的 name + description
-        #   c) 调用 LLM 返回分类名称与置信度
-        # 当前占位输出：直接返回第一个分类，confidence 为 1.0
-        class_name = self.node_data.classes[0].name
-        confidence = 1.0
+        # 3.构建分类提示词
+        classes_desc = "\n".join(
+            f"- {c.name}: {c.description}" if c.description else f"- {c.name}"
+            for c in self.node_data.classes
+        )
+        class_names = [c.name for c in self.node_data.classes]
 
-        # 4.构建输出数据
+        prompt = (
+            "你是一个意图分类器。请根据输入文本判断它属于以下哪个分类。\n\n"
+            f"分类列表:\n{classes_desc}\n\n"
+            f"输入文本:\n{input_text}\n\n"
+            "请只返回一个 JSON 对象，格式为: {\"class_name\": \"分类名称\", \"confidence\": 0.0-1.0}\n"
+            f"class_name 必须是以下之一: {class_names}\n"
+            "confidence 为 0.0 到 1.0 之间的浮点数，表示分类置信度。"
+        )
+
+        # 4.调用 LLM 进行分类
+        class_name, confidence = self._call_llm(prompt, class_names)
+
+        # 5.构建输出数据
         outputs: dict[str, Any] = {
             "class_name": class_name,
             "confidence": confidence,
         }
 
-        # 5.构建状态数据并返回
+        # 6.构建状态数据并返回
         return {
             "node_results": [
                 NodeResult(
@@ -71,6 +75,68 @@ class IntentClassifierNode(BaseNode):
                 )
             ]
         }
+
+    def _call_llm(self, prompt: str, valid_names: list[str]) -> tuple[str, float]:
+        """调用 LLM 进行意图分类，返回 (class_name, confidence)。
+
+        降级策略：LLM 调用失败或解析失败时，返回第一个分类，confidence=0.0。
+        """
+        try:
+            from app.http.app import injector
+            from internal.service import LanguageModelService
+
+            language_model_service = injector.get(LanguageModelService)
+            llm_config = self.node_data.llm_config or {}
+            llm = language_model_service.load_language_model(llm_config)
+
+            content = ""
+            for chunk in llm.stream(prompt):
+                content += chunk.content
+
+            # 解析 LLM 返回的 JSON
+            result = self._parse_llm_response(content, valid_names)
+            return result
+        except Exception:
+            # 降级：返回第一个分类，confidence=0.0 表示不确定
+            return valid_names[0], 0.0
+
+    @staticmethod
+    def _parse_llm_response(content: str, valid_names: list[str]) -> tuple[str, float]:
+        """解析 LLM 返回的 JSON 响应。
+
+        尝试从 LLM 输出中提取 JSON 对象，兼容模型可能添加的 markdown 代码块。
+        """
+        # 1.尝试直接解析
+        try:
+            data = json.loads(content)
+            name = str(data.get("class_name", "")).strip()
+            conf = float(data.get("confidence", 0.0))
+            if name in valid_names:
+                return name, max(0.0, min(1.0, conf))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+        # 2.尝试从 markdown 代码块中提取
+        import re
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(1))
+                name = str(data.get("class_name", "")).strip()
+                conf = float(data.get("confidence", 0.0))
+                if name in valid_names:
+                    return name, max(0.0, min(1.0, conf))
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+
+        # 3.尝试从纯文本中匹配分类名称
+        content_lower = content.lower()
+        for name in valid_names:
+            if name.lower() in content_lower:
+                return name, 0.5
+
+        # 4.兜底：返回第一个分类
+        return valid_names[0], 0.0
 
     @staticmethod
     def _resolve_variable(variable, state: WorkflowState) -> Any:

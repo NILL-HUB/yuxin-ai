@@ -234,7 +234,7 @@ class AppConfig(db.Model):
     skills = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联技能列表
     agent_bindings = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联 Agent 子应用列表
     workflows = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联的工作流列表
-    retrieval_config = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 检索配置
+    retrieval_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 检索配置
     long_term_memory = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 长期记忆配置
     opening_statement = Column(Text, nullable=False, server_default=text("''::text"))  # 开场白文案
     opening_questions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 开场白建议问题列表
@@ -247,6 +247,12 @@ class AppConfig(db.Model):
     )  # 回答后生成建议问题
     review_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 审核配置
     workflow_id = Column(UUID, nullable=True)  # Workflow 应用类型绑定的 workflow_id（仅 app_type=workflow 时有效）
+    # 新版知识库 id 列表，App 配置主用字段
+    knowledge_base_ids = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # Agent 绑定的 embedding 模型 ID（FK → model_pool_config.id）
+    # 为空时使用系统默认 embedding 模型（priority 最高的 active 模型）
+    # 非空时按此模型维度路由到对应的 user_memory_embedding_{dim} 表
+    embedding_model_id = Column(UUID, ForeignKey("model_pool_config.id"), nullable=True)
     updated_at = Column(
         DateTime,
         nullable=False,
@@ -255,16 +261,6 @@ class AppConfig(db.Model):
         default=_utcnow_naive,
     )
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
-
-
-    @property
-    def app_dataset_joins(self) -> list["AppDatasetJoin"]:
-        """只读属性 获取配置的知识库关联记录"""
-        return (
-            db.session.query(AppDatasetJoin).filter(
-                AppDatasetJoin.app_id == self.app_id,
-            ).all()
-        )
 
 
 class AppConfigVersion(db.Model):
@@ -286,7 +282,11 @@ class AppConfigVersion(db.Model):
     skills = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联技能列表
     agent_bindings = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联 Agent 子应用列表
     workflows = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联的工作流列表
-    datasets = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))  # 应用关联的知识库列表
+    # 新版知识库 id 列表，App 配置主用字段（新建/编辑 App 时仅使用此字段）
+    knowledge_base_ids = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # App 级别绑定的 embedding 模型 ID（用于按维度路由向量存储）
+    # 为空时使用系统默认 embedding 模型（priority 最高的 active 模型）
+    embedding_model_id = Column(UUID, ForeignKey("model_pool_config.id"), nullable=True)
     retrieval_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 检索配置
     long_term_memory = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))  # 长期记忆配置
     opening_statement = Column(Text, nullable=False, server_default=text("''::text"))  # 开场白文案
@@ -302,28 +302,6 @@ class AppConfigVersion(db.Model):
     workflow_id = Column(UUID, nullable=True)  # Workflow 应用类型绑定的 workflow_id（仅 app_type=workflow 时有效）
     version = Column(Integer, nullable=False, server_default=text("0"))  # 发布版本号
     config_type = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 配置类型
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP(0)"),
-        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
-        default=_utcnow_naive,
-    )
-    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
-
-
-class AppDatasetJoin(db.Model):
-    """应用知识库关联表模型"""
-    __tablename__ = "app_dataset_join"
-    __table_args__ = (
-        PrimaryKeyConstraint("id", name="pk_app_dataset_join_id"),
-        Index("app_dataset_join_app_id_idx", "app_id"),
-        Index("app_dataset_join_dataset_id_idx", "dataset_id"),
-    )
-
-    id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    app_id = Column(UUID, nullable=False)
-    dataset_id = Column(UUID, nullable=False)
     updated_at = Column(
         DateTime,
         nullable=False,

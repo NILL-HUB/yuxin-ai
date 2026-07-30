@@ -21,7 +21,6 @@ class DefaultModelParameterName(str, Enum):
 class ModelType(str, Enum):
     """模型类型枚举"""
     CHAT = "chat"  # 聊天模型
-    COMPLETION = "completion"  # 文本生成模型（保留向后兼容）
     EMBEDDING = "embedding"  # 文本嵌入模型
     MULTIMODAL = "multimodal"  # 多模态模型
     IMAGE_GENERATION = "image_generation"  # 图片生成模型

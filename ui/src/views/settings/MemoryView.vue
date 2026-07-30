@@ -2,365 +2,441 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import {
-  confirmMemoryCandidate,
-  createUserMemory,
-  deleteUserMemory,
-  ignoreMemoryCandidate,
-  listMemoryCandidates,
-  listUserMemories,
-  updateUserMemory,
-} from '@/services/user-memory'
-import type { MemoryCandidate, UserMemory } from '@/models/memory'
+import { useAccountStore } from '@/stores/account'
 import { getErrorMessage } from '@/utils/error'
 import moment from 'moment'
+import MemoryClusterView from '@/components/memory/MemoryClusterView.vue'
+import MemoryGraphView from '@/components/memory/MemoryGraphView.vue'
+import MemoryNodeDetail from '@/components/memory/MemoryNodeDetail.vue'
+import {
+  decayMemory,
+  editMemory,
+  getClusterSubgraph,
+  getMemoryDetail,
+  getMemoryDigest,
+  getMemoryGraph,
+  hardDeleteMemory,
+  listSkills,
+  softDeleteMemory,
+  triggerConsolidation,
+} from '@/services/memory-graph'
+import type {
+  ClusterSubgraph,
+  MemoryDetail,
+  MemoryGraphData,
+  SkillInfo,
+} from '@/models/memory-graph'
 
 const { t } = useI18n()
+const accountStore = useAccountStore()
 
-// 记忆类型元信息：value 与颜色不依赖 i18n，文案走 i18n 键
-type MemoryTypeMeta = {
-  value: string
-  color: string
-}
+// 当前用户 ID
+const userId = computed(() => accountStore.account.id || '')
 
-const MEMORY_TYPES: MemoryTypeMeta[] = [
-  { value: 'profile', color: 'arcoblue' },
-  { value: 'preference', color: 'green' },
-  { value: 'relationship', color: 'purple' },
-  { value: 'event', color: 'orange' },
-  { value: 'project', color: 'cyan' },
-  { value: 'secret', color: 'red' },
-]
+// Tab 切换：graph / digest / skills
+const activeTab = ref('graph')
 
-const typeMeta = (type: string): MemoryTypeMeta =>
-  MEMORY_TYPES.find((item) => item.value === type) || { value: type, color: 'gray' }
-const typeLabel = (type: string) => {
-  const key = `memory.memoryType.${type}`
-  const translated = t(key)
-  return translated === key ? type : translated
-}
-const typeColor = (type: string) => typeMeta(type).color
+// ============ 图谱视图状态 ============
+const graphData = ref<MemoryGraphData | null>(null)
+const graphLoading = ref(false)
+const selectedClusterType = ref<string>('')
+const subgraph = ref<ClusterSubgraph | null>(null)
+const subgraphLoading = ref(false)
+const selectedNodeId = ref<string>('')
+const nodeDetail = ref<MemoryDetail | null>(null)
+const detailLoading = ref(false)
 
-// 来源字段的本地化映射，未命中时回退展示原始值
-const sourceLabel = (source: string) => {
-  if (!source) return '-'
-  const key = `memory.source.${source}`
-  const translated = t(key)
-  return translated === key ? source : translated
-}
+// ============ Digest 视图状态 ============
+const digestText = ref('')
+const digestLoading = ref(false)
+const digestCached = ref(false)
 
-const loading = ref(false)
-const candidatesLoading = ref(false)
-const memories = ref<UserMemory[]>([])
-const candidates = ref<MemoryCandidate[]>([])
-const activeTab = ref('saved')
-const keyword = ref('')
+// ============ 技能视图状态 ============
+const skills = ref<SkillInfo[]>([])
+const skillsLoading = ref(false)
 
-const filteredMemories = computed(() => {
-  const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return memories.value
-  return memories.value.filter((m) => m.content.toLowerCase().includes(kw))
-})
+// ============ 编辑弹窗 ============
+const editModalVisible = ref(false)
+const editContent = ref('')
+const editSaving = ref(false)
 
-const loadMemories = async () => {
-  loading.value = true
+// ============ 降权弹窗 ============
+const decayModalVisible = ref(false)
+const decayFactor = ref(0.5)
+const decaySaving = ref(false)
+
+// 加载图谱聚类数据
+const loadGraph = async () => {
+  if (!userId.value) return
+  graphLoading.value = true
   try {
-    memories.value = await listUserMemories()
+    graphData.value = await getMemoryGraph(userId.value)
   } catch (error) {
-    Message.error(getErrorMessage(error, t('memory.loadFailed')))
-    memories.value = []
+    Message.error(getErrorMessage(error, t('memory.graph.loadFailed')))
+    graphData.value = null
   } finally {
-    loading.value = false
+    graphLoading.value = false
   }
 }
 
-const loadCandidates = async () => {
-  candidatesLoading.value = true
+// 选择聚类类型 → 加载子图
+const handleSelectCluster = async (type: string) => {
+  selectedClusterType.value = type
+  subgraphLoading.value = true
+  subgraph.value = null
   try {
-    candidates.value = await listMemoryCandidates()
+    subgraph.value = await getClusterSubgraph(userId.value, type)
   } catch (error) {
-    candidates.value = []
+    Message.error(getErrorMessage(error, t('memory.graph.loadFailed')))
+    subgraph.value = null
   } finally {
-    candidatesLoading.value = false
+    subgraphLoading.value = false
   }
 }
 
-const modalVisible = ref(false)
-const editMode = ref(false)
-const editingId = ref('')
-const saving = ref(false)
-const form = ref({ memory_type: 'profile', content: '', confidence: 3 })
-
-const openCreate = () => {
-  editMode.value = false
-  editingId.value = ''
-  form.value = { memory_type: 'profile', content: '', confidence: 3 }
-  modalVisible.value = true
-}
-
-const openEdit = (record: UserMemory) => {
-  editMode.value = true
-  editingId.value = record.id
-  form.value = {
-    memory_type: record.memory_type,
-    content: record.content,
-    confidence: typeof record.confidence === 'number' ? Math.max(1, Math.min(5, record.confidence)) : 3,
-  }
-  modalVisible.value = true
-}
-
-const handleSave = async () => {
-  if (!form.value.content.trim()) {
-    Message.warning(t('memory.contentRequired'))
-    return
-  }
-  saving.value = true
+// 选择节点 → 加载详情
+const handleSelectNode = async (nodeId: string) => {
+  selectedNodeId.value = nodeId
+  detailLoading.value = true
+  nodeDetail.value = null
   try {
-    if (editMode.value) {
-      await updateUserMemory(editingId.value, {
-        content: form.value.content,
-        memory_type: form.value.memory_type,
-      })
+    nodeDetail.value = await getMemoryDetail(nodeId)
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('memory.graph.loadFailed')))
+    nodeDetail.value = null
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+// 选择关联节点
+const handleSelectRelated = (nodeId: string) => {
+  handleSelectNode(nodeId)
+}
+
+// ============ CRUD 操作 ============
+
+// 编辑记忆
+const handleEdit = () => {
+  if (!nodeDetail.value) return
+  editContent.value = nodeDetail.value.content
+  editModalVisible.value = true
+}
+
+const handleEditSave = async () => {
+  const trimmed = editContent.value.trim()
+  if (!trimmed || !selectedNodeId.value) return
+  editSaving.value = true
+  try {
+    const resp = await editMemory(selectedNodeId.value, trimmed)
+    if (resp.success) {
+      Message.success(t('memory.graph.editSuccess'))
+      editModalVisible.value = false
+      // 重新加载详情和子图
+      await Promise.all([
+        handleSelectNode(selectedNodeId.value),
+        selectedClusterType.value && handleSelectCluster(selectedClusterType.value),
+      ])
     } else {
-      await createUserMemory({
-        memory_type: form.value.memory_type,
-        content: form.value.content,
-        confidence: form.value.confidence,
-      })
+      Message.error(resp.error || t('memory.graph.editFailed'))
     }
-    Message.success(editMode.value ? t('memory.updateSuccess') : t('memory.createSuccess'))
-    modalVisible.value = false
-    await loadMemories()
   } catch (error) {
-    Message.error(getErrorMessage(error, t('memory.saveFailed')))
+    Message.error(getErrorMessage(error, t('memory.graph.editFailed')))
   } finally {
-    saving.value = false
+    editSaving.value = false
   }
 }
 
-const toggleStatus = async (record: UserMemory, value: boolean) => {
+// 软删除
+const handleSoftDelete = async () => {
+  if (!selectedNodeId.value) return
   try {
-    await updateUserMemory(record.id, { enabled: value })
-    Message.success(value ? t('memory.enableSuccess') : t('memory.disableSuccess'))
-    await loadMemories()
+    const resp = await softDeleteMemory(selectedNodeId.value)
+    if (resp.deleted) {
+      Message.success(t('memory.graph.softDeleteSuccess'))
+      nodeDetail.value = null
+      selectedNodeId.value = ''
+      // 重新加载子图和图谱
+      if (selectedClusterType.value) {
+        await handleSelectCluster(selectedClusterType.value)
+      }
+      await loadGraph()
+    } else {
+      Message.error(t('memory.graph.deleteFailed'))
+    }
   } catch (error) {
-    Message.error(getErrorMessage(error, t('memory.updateFailed')))
+    Message.error(getErrorMessage(error, t('memory.graph.deleteFailed')))
   }
 }
 
-const handleDelete = async (record: UserMemory) => {
+// 彻底删除
+const handleHardDelete = async () => {
+  if (!selectedNodeId.value) return
   try {
-    await deleteUserMemory(record.id)
-    Message.success(t('memory.deleteSuccess'))
-    await loadMemories()
+    const resp = await hardDeleteMemory(selectedNodeId.value)
+    if (resp.deleted) {
+      Message.success(t('memory.graph.hardDeleteSuccess'))
+      nodeDetail.value = null
+      selectedNodeId.value = ''
+      if (selectedClusterType.value) {
+        await handleSelectCluster(selectedClusterType.value)
+      }
+      await loadGraph()
+    } else {
+      Message.error(t('memory.graph.deleteFailed'))
+    }
   } catch (error) {
-    Message.error(getErrorMessage(error, t('memory.deleteFailed')))
+    Message.error(getErrorMessage(error, t('memory.graph.deleteFailed')))
   }
 }
 
-const confirmingId = ref('')
-const handleConfirmCandidate = async (record: MemoryCandidate) => {
-  confirmingId.value = record.id
+// 降权
+const handleDecay = () => {
+  decayFactor.value = 0.5
+  decayModalVisible.value = true
+}
+
+const handleDecaySave = async () => {
+  if (!selectedNodeId.value) return
+  decaySaving.value = true
   try {
-    await confirmMemoryCandidate(record.id, 'manual_confirm')
-    Message.success(t('memory.confirmCandidateSuccess'))
-    await Promise.all([loadMemories(), loadCandidates()])
+    await decayMemory(selectedNodeId.value, decayFactor.value)
+    Message.success(t('memory.graph.decaySuccess'))
+    decayModalVisible.value = false
+    await handleSelectNode(selectedNodeId.value)
   } catch (error) {
-    Message.error(getErrorMessage(error, t('memory.confirmFailed')))
+    Message.error(getErrorMessage(error, t('memory.graph.decayFailed')))
   } finally {
-    confirmingId.value = ''
+    decaySaving.value = false
   }
 }
 
-const handleIgnoreCandidate = async (record: MemoryCandidate, neverRemind: boolean) => {
+// ============ Digest ============
+const loadDigest = async () => {
+  if (!userId.value) return
+  digestLoading.value = true
   try {
-    await ignoreMemoryCandidate(record.id, neverRemind)
-    Message.success(neverRemind ? t('memory.ignoreNeverRemindSuccess') : t('memory.ignoreSuccess'))
-    await loadCandidates()
+    const resp = await getMemoryDigest(userId.value)
+    digestText.value = resp.digest || ''
+    digestCached.value = resp.cached
   } catch (error) {
-    Message.error(getErrorMessage(error, t('memory.ignoreFailed')))
+    Message.error(getErrorMessage(error, t('memory.graph.digestLoadFailed')))
+    digestText.value = ''
+  } finally {
+    digestLoading.value = false
   }
 }
 
-const formatTime = (value: number | string) => {
+// ============ 巩固 ============
+const consolidating = ref(false)
+const handleConsolidate = async () => {
+  if (!userId.value) return
+  consolidating.value = true
+  try {
+    const resp = await triggerConsolidation(userId.value)
+    if (resp.success) {
+      Message.success(
+        t('memory.graph.consolidateSuccess', { count: resp.total_items }),
+      )
+      // 重新加载所有视图
+      await loadGraph()
+      if (selectedClusterType.value) {
+        await handleSelectCluster(selectedClusterType.value)
+      }
+    } else {
+      Message.error(t('memory.graph.consolidateFailed'))
+    }
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('memory.graph.consolidateFailed')))
+  } finally {
+    consolidating.value = false
+  }
+}
+
+// ============ 技能 ============
+const loadSkills = async () => {
+  if (!userId.value) return
+  skillsLoading.value = true
+  try {
+    const resp = await listSkills(userId.value)
+    skills.value = resp.skills || []
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('memory.graph.skillsLoadFailed')))
+    skills.value = []
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
+// 技能状态颜色
+const skillStatusColor = (status: string): string => {
+  const map: Record<string, string> = {
+    active: 'green',
+    emerging: 'arcoblue',
+    candidate: 'orange',
+    stale: 'gray',
+    deprecated: 'red',
+  }
+  return map[status] || 'gray'
+}
+
+const skillStatusLabel = (status: string): string => {
+  const key = `memory.graph.skillStatus.${status}`
+  const translated = t(key)
+  return translated === key ? status : translated
+}
+
+// Tab 切换时按需加载
+const handleTabChange = (key: string | number) => {
+  const tabKey = String(key)
+  if (tabKey === 'digest' && !digestText.value) {
+    loadDigest()
+  } else if (tabKey === 'skills' && skills.value.length === 0) {
+    loadSkills()
+  }
+}
+
+const formatTime = (value?: string) => {
   if (!value) return '-'
-  const time = typeof value === 'number' ? (value < 1e12 ? value * 1000 : value) : value
-  const date = moment(time)
-  return date.isValid() ? date.format('YYYY-MM-DD HH:mm') : String(value)
+  const date = moment(value)
+  return date.isValid() ? date.format('YYYY-MM-DD HH:mm') : value
 }
-
-const confidenceStars = (value: number) => {
-  const n = Math.max(1, Math.min(5, Math.round(Number(value) || 0)))
-  return '★'.repeat(n) + '☆'.repeat(5 - n)
-}
-
-const memoryTypeOptions = MEMORY_TYPES.map((item) => ({
-  label: `${t(`memory.memoryType.${item.value}`)} · ${t(`memory.memoryTypeDesc.${item.value}`)}`,
-  value: item.value,
-}))
 
 onMounted(() => {
-  loadMemories()
-  loadCandidates()
+  loadGraph()
 })
 </script>
 
 <template>
-  <section class="space-y-6 p-6">
+  <section class="space-y-4 p-6">
     <header class="flex items-start justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-semibold text-gray-900">{{ t('memory.pageTitle') }}</h1>
-        <p class="mt-1 text-sm text-gray-500">{{ t('memory.pageDescription') }}</p>
+        <h1 class="text-2xl font-semibold text-gray-900">{{ t('memory.graph.pageTitle') }}</h1>
+        <p class="mt-1 text-sm text-gray-500">{{ t('memory.graph.pageDescription') }}</p>
       </div>
-      <a-button type="primary" data-test="create-memory-btn" @click="openCreate">
+      <a-button
+        type="primary"
+        :loading="consolidating"
+        data-test="consolidate-btn"
+        @click="handleConsolidate"
+      >
         <template #icon>
-          <icon-plus />
+          <icon-refresh />
         </template>
-        {{ t('memory.createBtn') }}
+        {{ t('memory.graph.consolidateBtn') }}
       </a-button>
     </header>
 
-    <a-tabs v-model:active-key="activeTab" type="rounded">
-      <a-tab-pane key="saved" :title="t('memory.savedTab')">
-        <div class="mb-3 flex items-center gap-3">
-          <a-input
-            v-model="keyword"
-            :placeholder="t('memory.searchPlaceholder')"
-            allow-clear
-            class="max-w-sm"
-          >
-            <template #prefix>
-              <icon-search />
-            </template>
-          </a-input>
-          <span class="text-sm text-gray-400">{{ t('memory.totalCount', { count: filteredMemories.length }) }}</span>
+    <a-tabs v-model:active-key="activeTab" type="rounded" @change="handleTabChange">
+      <!-- 图谱视图 Tab -->
+      <a-tab-pane key="graph" :title="t('memory.graph.graphTab')">
+        <div class="space-y-4">
+          <!-- 聚类视图 -->
+          <MemoryClusterView
+            :clusters="graphData?.clusters || []"
+            :loading="graphLoading"
+            :selected-type="selectedClusterType"
+            data-test="cluster-view"
+            @select-cluster="handleSelectCluster"
+          />
+
+          <!-- 子图 + 详情联动布局 -->
+          <div class="grid gap-4 lg:grid-cols-3">
+            <!-- 力导向子图（占 2 列） -->
+            <div class="lg:col-span-2">
+              <div v-if="!selectedClusterType" class="flex h-[500px] items-center justify-center rounded-lg border bg-white text-gray-400">
+                <div class="text-center">
+                  <icon-bookmark class="mb-3 text-5xl" />
+                  <p>{{ t('memory.graph.selectClusterHint') }}</p>
+                </div>
+              </div>
+              <MemoryGraphView
+                v-else
+                :subgraph="subgraph"
+                :loading="subgraphLoading"
+                data-test="graph-view"
+                @select-node="handleSelectNode"
+              />
+            </div>
+
+            <!-- 节点详情面板（占 1 列） -->
+            <div class="rounded-lg border bg-white">
+              <MemoryNodeDetail
+                :detail="nodeDetail"
+                :loading="detailLoading"
+                data-test="node-detail"
+                @edit="handleEdit"
+                @soft-delete="handleSoftDelete"
+                @hard-delete="handleHardDelete"
+                @decay="handleDecay"
+                @select-related="handleSelectRelated"
+              />
+            </div>
+          </div>
         </div>
-        <a-spin :loading="loading" class="block">
-          <div
-            v-if="!loading && !filteredMemories.length"
-            class="flex flex-col items-center justify-center py-16 text-gray-400"
-          >
-            <icon-bookmark class="text-5xl mb-3" />
-            <p>{{ t('memory.savedEmpty') }}</p>
-          </div>
-          <div v-else class="overflow-hidden rounded-lg border bg-white">
-            <a-table
-              :data="filteredMemories"
-              :bordered="false"
-              :hoverable="true"
-              :pagination="false"
-              row-key="id"
-            >
-              <template #columns>
-                <a-table-column :title="t('memory.columns.type')" data-index="memory_type" :width="120">
-                  <template #cell="{ record }">
-                    <a-tag
-                      :color="typeColor(record.memory_type)"
-                      :data-memory-type="record.memory_type"
-                      size="small"
-                    >
-                      {{ typeLabel(record.memory_type) }}
-                    </a-tag>
-                  </template>
-                </a-table-column>
-                <a-table-column :title="t('memory.columns.content')" data-index="content">
-                  <template #cell="{ record }">
-                    <span class="text-sm text-gray-700" :title="record.content">{{ record.content }}</span>
-                  </template>
-                </a-table-column>
-                <a-table-column :title="t('memory.columns.confidence')" data-index="confidence" :width="130">
-                  <template #cell="{ record }">
-                    <span class="text-amber-500 tracking-wider" :data-confidence="record.confidence">
-                      {{ confidenceStars(record.confidence) }}
-                    </span>
-                  </template>
-                </a-table-column>
-                <a-table-column :title="t('memory.columns.status')" data-index="status" :width="110">
-                  <template #cell="{ record }">
-                    <a-switch
-                      :model-value="record.status === 'active'"
-                      @change="(v: string | number | boolean) => toggleStatus(record, Boolean(v))"
-                    />
-                  </template>
-                </a-table-column>
-                <a-table-column :title="t('memory.columns.source')" data-index="created_from" :width="100">
-                  <template #cell="{ record }">
-                    <span class="text-sm text-gray-500">{{ sourceLabel(record.created_from) }}</span>
-                  </template>
-                </a-table-column>
-                <a-table-column :title="t('memory.columns.createdAt')" data-index="created_at" :width="160">
-                  <template #cell="{ record }">
-                    <span class="text-sm text-gray-500">{{ formatTime(record.created_at) }}</span>
-                  </template>
-                </a-table-column>
-                <a-table-column :title="t('memory.columns.actions')" :width="170">
-                  <template #cell="{ record }">
-                    <a-space>
-                      <a-button size="mini" @click="openEdit(record)">{{ t('memory.editBtn') }}</a-button>
-                      <a-popconfirm
-                        :content="t('memory.deleteConfirmContent')"
-                        @ok="handleDelete(record)"
-                      >
-                        <a-button size="mini" status="danger">{{ t('memory.deleteBtn') }}</a-button>
-                      </a-popconfirm>
-                    </a-space>
-                  </template>
-                </a-table-column>
-              </template>
-            </a-table>
-          </div>
-        </a-spin>
       </a-tab-pane>
 
-      <a-tab-pane key="candidates" :title="t('memory.candidatesTab')">
-        <a-spin :loading="candidatesLoading" class="block">
-          <div
-            v-if="!candidatesLoading && !candidates.length"
-            class="flex flex-col items-center justify-center py-16 text-gray-400"
-          >
-            <icon-bulb class="text-5xl mb-3" />
-            <p>{{ t('memory.candidateEmpty') }}</p>
+      <!-- Digest Tab -->
+      <a-tab-pane key="digest" :title="t('memory.graph.digestTab')">
+        <div class="rounded-lg border bg-white p-6">
+          <div class="mb-3 flex items-center justify-between">
+            <span class="text-sm font-medium text-gray-700">{{ t('memory.graph.digestTitle') }}</span>
+            <div class="flex items-center gap-2">
+              <a-tag v-if="digestCached" size="small" color="arcoblue">
+                {{ t('memory.graph.cached') }}
+              </a-tag>
+              <a-button size="small" :loading="digestLoading" @click="loadDigest">
+                <template #icon><icon-refresh /></template>
+                {{ t('memory.graph.refreshDigest') }}
+              </a-button>
+            </div>
           </div>
-          <div v-else class="grid gap-3">
+          <a-spin :loading="digestLoading" class="block">
+            <div v-if="digestText" class="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+              {{ digestText }}
+            </div>
+            <div v-else class="py-8 text-center text-gray-400">
+              {{ t('memory.graph.digestEmpty') }}
+            </div>
+          </a-spin>
+        </div>
+      </a-tab-pane>
+
+      <!-- 技能 Tab -->
+      <a-tab-pane key="skills" :title="t('memory.graph.skillsTab')">
+        <a-spin :loading="skillsLoading" class="block">
+          <div v-if="!skillsLoading && skills.length === 0" class="flex flex-col items-center justify-center py-16 text-gray-400">
+            <icon-bulb class="mb-3 text-5xl" />
+            <p>{{ t('memory.graph.skillsEmpty') }}</p>
+          </div>
+          <div v-else class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div
-              v-for="candidate in candidates"
-              :key="candidate.id"
+              v-for="(skill, idx) in skills"
+              :key="idx"
               class="rounded-lg border bg-white p-4"
             >
-              <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0 flex-1">
-                  <div class="mb-2 flex flex-wrap items-center gap-2">
-                    <a-tag
-                      :color="typeColor(candidate.memory_type ?? 'profile')"
-                      :data-memory-type="candidate.memory_type ?? 'profile'"
-                      size="small"
-                    >
-                      {{ typeLabel(candidate.memory_type ?? 'profile') }}
-                    </a-tag>
-                    <span class="text-xs text-gray-400">
-                      {{ t('memory.candidateOccurrence', { count: candidate.occurrences }) }}
-                    </span>
-                    <span class="text-xs text-amber-500">{{ confidenceStars(candidate.confidence) }}</span>
-                  </div>
-                  <p class="text-sm text-gray-700">{{ candidate.content }}</p>
-                  <p class="mt-1 text-xs text-gray-400">{{ t('memory.candidateHint') }}</p>
-                </div>
-                <div class="flex flex-shrink-0 flex-col gap-2">
-                  <a-button
-                    type="primary"
-                    size="small"
-                    :loading="confirmingId === candidate.id"
-                    @click="handleConfirmCandidate(candidate)"
-                  >
-                    {{ t('memory.confirmCandidate') }}
-                  </a-button>
-                  <a-button size="small" @click="handleIgnoreCandidate(candidate, false)">
-                    {{ t('memory.ignoreCandidate') }}
-                  </a-button>
-                  <a-button size="small" status="warning" @click="handleIgnoreCandidate(candidate, true)">
-                    {{ t('memory.neverRemind') }}
-                  </a-button>
-                </div>
+              <div class="mb-2 flex items-center justify-between">
+                <span class="font-medium text-gray-800">{{ skill.name }}</span>
+                <a-tag :color="skillStatusColor(skill.status)" size="small">
+                  {{ skillStatusLabel(skill.status) }}
+                </a-tag>
+              </div>
+              <p v-if="skill.description" class="mb-2 text-sm text-gray-600">
+                {{ skill.description }}
+              </p>
+              <div class="flex flex-wrap gap-3 text-xs text-gray-400">
+                <span v-if="skill.maturity !== undefined">
+                  {{ t('memory.graph.maturity') }}：{{ (skill.maturity * 100).toFixed(0) }}%
+                </span>
+                <span v-if="skill.use_count !== undefined">
+                  {{ t('memory.graph.useCount') }}：{{ skill.use_count }}
+                </span>
+                <span v-if="skill.frequency !== undefined">
+                  {{ t('memory.graph.frequency') }}：{{ skill.frequency }}
+                </span>
+              </div>
+              <div v-if="skill.last_updated_at" class="mt-2 text-xs text-gray-300">
+                {{ formatTime(skill.last_updated_at) }}
               </div>
             </div>
           </div>
@@ -368,28 +444,40 @@ onMounted(() => {
       </a-tab-pane>
     </a-tabs>
 
+    <!-- 编辑弹窗 -->
     <a-modal
-      v-model:visible="modalVisible"
-      :title="editMode ? t('memory.editTitle') : t('memory.createTitle')"
-      :ok-text="editMode ? t('common.actions.save') : t('common.actions.create')"
+      v-model:visible="editModalVisible"
+      :title="t('memory.graph.editTitle')"
+      :ok-text="t('common.actions.save')"
       :cancel-text="t('common.actions.cancel')"
-      :ok-loading="saving"
-      @ok="handleSave"
-      @cancel="modalVisible = false"
+      :ok-loading="editSaving"
+      @ok="handleEditSave"
+      @cancel="editModalVisible = false"
     >
       <a-form layout="vertical">
-        <a-form-item :label="t('memory.memoryTypeLabel')">
-          <a-select v-model="form.memory_type" :options="memoryTypeOptions" />
-        </a-form-item>
-        <a-form-item :label="t('memory.memoryContentLabel')">
+        <a-form-item :label="t('memory.graph.contentLabel')">
           <a-textarea
-            v-model="form.content"
+            v-model="editContent"
             :auto-size="{ minRows: 4, maxRows: 8 }"
-            :placeholder="t('memory.contentPlaceholder')"
+            :placeholder="t('memory.graph.contentPlaceholder')"
           />
         </a-form-item>
-        <a-form-item :label="t('memory.confidenceLabel')">
-          <a-slider v-model="form.confidence" :min="1" :max="5" show-input />
+      </a-form>
+    </a-modal>
+
+    <!-- 降权弹窗 -->
+    <a-modal
+      v-model:visible="decayModalVisible"
+      :title="t('memory.graph.decayTitle')"
+      :ok-text="t('common.actions.confirm')"
+      :cancel-text="t('common.actions.cancel')"
+      :ok-loading="decaySaving"
+      @ok="handleDecaySave"
+      @cancel="decayModalVisible = false"
+    >
+      <a-form layout="vertical">
+        <a-form-item :label="t('memory.graph.decayFactorLabel')">
+          <a-slider v-model="decayFactor" :min="0" :max="1" :step="0.1" show-input />
         </a-form-item>
       </a-form>
     </a-modal>

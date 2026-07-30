@@ -2,3 +2,14 @@ name: gaode_poi_search
 label: 高德POI搜索
 description: 搜索指定城市或周边的地点信息（餐厅、酒店、景点等）
 params: []
+task_keywords:
+- POI
+- poi搜索
+- 地点搜索
+- 周边搜索
+- 餐厅
+- 酒店
+- 景点
+- 附近
+- 高德
+- 位置

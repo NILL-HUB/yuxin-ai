@@ -11,8 +11,7 @@ import {
   setAgentPoolStatus,
   updateAgentPoolConfig,
 } from '@/services/admin-agent-pool'
-import { listSubPoolDefinitions } from '@/services/admin-sub-pool'
-import { listModels } from '@/services/admin-model-pool'
+import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
 import { getErrorMessage } from '@/utils/error'
 import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
 
@@ -23,12 +22,6 @@ const { t } = useI18n()
 type AgentPoolConfig = {
   id: string
   app_id: string
-  primary_pool: string
-  secondary_pools: string[]
-  risk_level: string
-  model_tier: string
-  model_id: string
-  routing_priority: number
   enabled: boolean
   health_status: string
   last_health_check_at?: number
@@ -39,64 +32,31 @@ type AgentPoolConfig = {
 }
 
 type PoolStatsItem = {
-  pool: string
   total: number
   enabled: number
   healthy: number
 }
 
-type SubPoolDefinition = {
-  id: string
-  pool_type: string
-  name: string
+type AppOption = {
+  value: string
   label: string
-  description: string
-  visible_to_user: boolean
-  default_enabled: boolean
-  default_capabilities: string[]
-  task_keywords: string[]
-  is_system: boolean
-  sort_order: number
-  enabled: boolean
-  created_at?: number
-  updated_at?: number
-}
-
-type ModelRecord = {
-  id: string
-  provider: string
-  model_name: string
-  display_name: string
-  tier: string
-  status: string
+  name: string
 }
 
 // ==================== 常量定义 ====================
 
-const PRIMARY_POOLS = ['tenant', 'system', 'global']
-const RISK_LEVELS = ['low', 'medium', 'high']
-const MODEL_TIERS = ['cheap', 'standard', 'strong']
 const COST_LEVELS = ['low', 'medium', 'high']
 
 // ==================== 标签 & 颜色映射 ====================
 
-const poolLabel = (pool: string) => t(`admin.agentPool.poolLabels.${pool}`)
-const riskLabel = (risk: string) => t(`admin.agentPool.riskLabels.${risk}`)
-const tierLabel = (tier: string) => t(`admin.agentPool.tierLabels.${tier}`)
 const costLabel = (cost: string) => t(`admin.agentPool.costLabels.${cost}`)
 const healthLabel = (status: string) => t(`admin.agentPool.healthLabels.${status}`)
-
-const riskColor = (risk: string) =>
-  ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[risk] || 'gray'
 
 const healthColor = (status: string) =>
   ({ healthy: 'green', degraded: 'orange', offline: 'red', unknown: 'gray' } as Record<string, string>)[status] || 'gray'
 
 const costColor = (cost: string) =>
   ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[cost] || 'gray'
-
-const tierColor = (tier: string) =>
-  ({ cheap: 'gray', standard: 'blue', strong: 'purple' } as Record<string, string>)[tier] || 'gray'
 
 const formatTimestamp = (timestamp?: number) =>
   timestamp ? new Date(timestamp * 1000).toLocaleString() : '-'
@@ -125,8 +85,8 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const configs = ref<AgentPoolConfig[]>([])
 const stats = ref<PoolStatsItem[]>([])
-const models = ref<ModelRecord[]>([])
-const availableSubPools = ref<SubPoolDefinition[]>([])
+const apps = ref<AdminAppRecord[]>([])
+const appSearchLoading = ref(false)
 
 const filters = ref({
   current_page: 1,
@@ -134,37 +94,43 @@ const filters = ref({
 })
 const total = ref(0)
 
-// 模型选项：仅 active 状态
-const modelOptions = computed(() =>
-  models.value
-    .filter((m) => m.status === 'active')
-    .map((m) => ({
-      value: m.model_name,
-      label: `${m.display_name || m.model_name} (${m.provider})`,
-    }))
+// App 选项：将已加载的 App 转为下拉选项
+const appOptions = computed<AppOption[]>(() =>
+  apps.value.map((app) => ({
+    value: app.id,
+    label: app.name || app.id,
+    name: app.name || app.id,
+  })),
 )
 
-// 子池选项：仅 agent 类型且启用
-const subPoolOptions = computed(() =>
-  availableSubPools.value
-    .filter((p) => p.pool_type === 'agent' && p.enabled)
-    .map((p) => ({
-      value: p.name,
-      label: p.label || p.name,
-    }))
-)
+// 根据 app_id 获取 App 名称，未命中时回退为截断的 UUID
+const getAppLabel = (appId: string) => {
+  const app = apps.value.find((a) => a.id === appId)
+  return app?.name || `${appId.substring(0, 8)}...`
+}
+
+// 远程搜索 App，用于 a-select 的 @search 事件
+const searchApps = async (keyword: string) => {
+  appSearchLoading.value = true
+  try {
+    const data = await listAdminApps({
+      current_page: 1,
+      page_size: 50,
+      search: keyword || undefined,
+    })
+    apps.value = data.list || []
+  } catch {
+    // 搜索失败时保留已有列表，不打断用户操作
+  } finally {
+    appSearchLoading.value = false
+  }
+}
 
 const modalVisible = ref(false)
 const editMode = ref(false)
 const editingId = ref('')
 const form = ref({
   app_id: '',
-  primary_pool: 'tenant',
-  secondary_pools: [] as string[],
-  risk_level: 'medium',
-  model_tier: 'standard',
-  model_id: '',
-  routing_priority: 100,
   enabled: true,
   cost_level: 'medium',
   capabilities: [] as string[],
@@ -182,22 +148,18 @@ const healthyConfigs = computed(() => configs.value.filter((c) => c.health_statu
 const loadPoolConfigs = async () => {
   loading.value = true
   try {
-    const [configResult, statsResult, modelResult, subPoolResult] = await Promise.all([
+    const [configResult, statsResult, appResult] = await Promise.all([
       listAgentPoolConfigs({ current_page: filters.value.current_page, page_size: filters.value.page_size }),
       getAgentPoolStats(),
-      listModels({ current_page: 1, page_size: 50 }),
-      listSubPoolDefinitions({ current_page: 1, page_size: 50, pool_type: 'agent' }),
+      listAdminApps({ current_page: 1, page_size: 100 }),
     ])
     // request 返回完整 {code, message, data} 对象，data 中包含 list 和 paginator
     const configData = (configResult as { data?: { list?: AgentPoolConfig[]; paginator?: { total_record?: number } } }).data
     const statsData = (statsResult as { data?: { list?: PoolStatsItem[] } }).data
-    const modelData = (modelResult as { data?: { list?: ModelRecord[] } }).data
-    const subPoolData = (subPoolResult as { data?: { list?: SubPoolDefinition[] } }).data
     configs.value = configData?.list || []
     total.value = configData?.paginator?.total_record || 0
     stats.value = statsData?.list || []
-    models.value = modelData?.list || []
-    availableSubPools.value = subPoolData?.list || []
+    apps.value = appResult.list || []
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.agentPool.loadFailed')))
   } finally {
@@ -221,12 +183,6 @@ const openCreate = () => {
   editingId.value = ''
   form.value = {
     app_id: '',
-    primary_pool: 'tenant',
-    secondary_pools: [],
-    risk_level: 'medium',
-    model_tier: 'standard',
-    model_id: '',
-    routing_priority: 100,
     enabled: true,
     cost_level: 'medium',
     capabilities: [],
@@ -241,12 +197,6 @@ const openEdit = (config: AgentPoolConfig) => {
   const metadata = config.metadata || {}
   form.value = {
     app_id: config.app_id,
-    primary_pool: config.primary_pool,
-    secondary_pools: [...(config.secondary_pools || [])],
-    risk_level: config.risk_level,
-    model_tier: config.model_tier,
-    model_id: config.model_id || '',
-    routing_priority: config.routing_priority,
     enabled: config.enabled,
     cost_level: (metadata.cost_level as string) || 'medium',
     capabilities: [...((metadata.capabilities as string[]) || [])],
@@ -260,12 +210,6 @@ const submit = async () => {
   try {
     const payload = {
       app_id: form.value.app_id,
-      primary_pool: form.value.primary_pool,
-      secondary_pools: form.value.secondary_pools,
-      risk_level: form.value.risk_level,
-      model_tier: form.value.model_tier,
-      model_id: form.value.model_id,
-      routing_priority: form.value.routing_priority,
       enabled: form.value.enabled,
       metadata: {
         cost_level: form.value.cost_level,
@@ -369,13 +313,8 @@ onMounted(loadPoolConfigs)
             <tr>
               <th class="p-3">{{ t('admin.agentPool.appId') }}</th>
               <th class="p-3" style="width: 200px">{{ t('admin.agentPool.presetPromptSummary') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.primaryPool') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.secondaryPools') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.riskLevel') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.modelTier') }}</th>
               <th class="p-3">{{ t('admin.agentPool.costLevel') }}</th>
               <th class="p-3">{{ t('admin.agentPool.capabilities') }}</th>
-              <th class="p-3">{{ t('admin.agentPool.routingPriority') }}</th>
               <th class="p-3">{{ t('admin.agentPool.status') }}</th>
               <th class="p-3">{{ t('admin.agentPool.healthStatus') }}</th>
               <th class="p-3">{{ t('admin.agentPool.actions') }}</th>
@@ -383,10 +322,14 @@ onMounted(loadPoolConfigs)
           </thead>
           <tbody>
             <tr v-if="!configs.length">
-              <td class="p-6 text-center text-gray-400" colspan="12">{{ t('admin.agentPool.empty') }}</td>
+              <td class="p-6 text-center text-gray-400" colspan="7">{{ t('admin.agentPool.empty') }}</td>
             </tr>
             <tr v-for="config in configs" :key="config.id" class="border-t">
-              <td class="p-3 font-mono text-xs">{{ config.app_id.substring(0, 8) }}...</td>
+              <td class="p-3">
+                <a-tooltip :content="config.app_id" position="tl" mini>
+                  <div class="max-w-[180px] truncate cursor-help">{{ getAppLabel(config.app_id) }}</div>
+                </a-tooltip>
+              </td>
               <td class="p-3">
                 <a-tooltip
                   v-if="config.preset_prompt_summary"
@@ -399,21 +342,6 @@ onMounted(loadPoolConfigs)
                 <span v-else class="text-gray-400">—</span>
               </td>
               <td class="p-3">
-                <a-tag size="small">{{ poolLabel(config.primary_pool) }}</a-tag>
-              </td>
-              <td class="p-3">
-                <a-tag v-for="pool in config.secondary_pools" :key="pool" size="small" color="arcoblue">
-                  {{ poolLabel(pool) }}
-                </a-tag>
-                <span v-if="!config.secondary_pools?.length" class="text-gray-400">-</span>
-              </td>
-              <td class="p-3">
-                <a-tag :color="riskColor(config.risk_level)" size="small">{{ riskLabel(config.risk_level) }}</a-tag>
-              </td>
-              <td class="p-3">
-                <a-tag :color="tierColor(config.model_tier)" size="small">{{ tierLabel(config.model_tier) }}</a-tag>
-              </td>
-              <td class="p-3">
                 <a-tag :color="costColor(getCostLevel(config))" size="small">{{ costLabel(getCostLevel(config)) }}</a-tag>
               </td>
               <td class="p-3">
@@ -422,7 +350,6 @@ onMounted(loadPoolConfigs)
                   <span v-if="!getCapabilities(config).length" class="text-gray-400">-</span>
                 </div>
               </td>
-              <td class="p-3">{{ config.routing_priority }}</td>
               <td class="p-3">
                 <a-switch
                   :model-value="config.enabled"
@@ -469,27 +396,17 @@ onMounted(loadPoolConfigs)
     >
       <a-form :model="form" layout="vertical">
         <a-form-item :label="t('admin.agentPool.appId')" field="app_id">
-          <a-input v-model="form.app_id" :placeholder="t('admin.agentPool.appIdPlaceholder')" :disabled="editMode" />
-        </a-form-item>
-        <a-form-item :label="t('admin.agentPool.primaryPool')" field="primary_pool">
-          <a-select v-model="form.primary_pool">
-            <a-option v-for="pool in PRIMARY_POOLS" :key="pool" :value="pool">{{ poolLabel(pool) }}</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.agentPool.secondaryPools')" field="secondary_pools">
-          <a-select v-model="form.secondary_pools" multiple allow-search allow-create :placeholder="t('admin.agentPool.capabilitiesPlaceholder')">
-            <a-option v-for="opt in subPoolOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.agentPool.riskLevel')" field="risk_level">
-          <a-select v-model="form.risk_level">
-            <a-option v-for="risk in RISK_LEVELS" :key="risk" :value="risk">{{ riskLabel(risk) }}</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.agentPool.modelTier')" field="model_tier">
-          <a-select v-model="form.model_tier">
-            <a-option v-for="tier in MODEL_TIERS" :key="tier" :value="tier">{{ tierLabel(tier) }}</a-option>
-          </a-select>
+          <a-select
+            v-model="form.app_id"
+            :placeholder="t('admin.agentPool.appIdPlaceholder')"
+            :disabled="editMode"
+            :loading="appSearchLoading"
+            :options="appOptions"
+            allow-search
+            allow-clear
+            :filterable="false"
+            @search="searchApps"
+          />
         </a-form-item>
         <a-form-item :label="t('admin.agentPool.costLevel')" field="cost_level">
           <a-select v-model="form.cost_level">
@@ -509,19 +426,6 @@ onMounted(loadPoolConfigs)
             <a-option value="coding">{{ t('admin.agentPool.taskTypeLabels.coding') }}</a-option>
             <a-option value="research">{{ t('admin.agentPool.taskTypeLabels.research') }}</a-option>
           </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.agentPool.modelId')" field="model_id">
-          <a-select
-            v-model="form.model_id"
-            allow-search
-            allow-clear
-            :placeholder="t('admin.agentPool.modelIdPlaceholder')"
-          >
-            <a-option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</a-option>
-          </a-select>
-        </a-form-item>
-        <a-form-item :label="t('admin.agentPool.routingPriority')" field="routing_priority">
-          <a-input-number v-model="form.routing_priority" :min="0" :max="9999" />
         </a-form-item>
         <a-form-item :label="t('admin.agentPool.formEnabled')" field="enabled">
           <a-switch v-model="form.enabled" />

@@ -11,10 +11,7 @@ from internal.schema.admin_model_provider_schema import (
     AdminModelProviderOptionsResp,
     AdminModelProviderPageResp,
     AdminModelProviderResp,
-    CreateAdminModelProviderReq,
     GetAdminModelProvidersReq,
-    SetAdminModelProviderStatusReq,
-    UpdateAdminModelProviderReq,
 )
 from internal.service.admin_model_provider_service import AdminModelProviderService
 from pkg.response import success_json, success_message, validate_error_json
@@ -49,19 +46,23 @@ class AdminModelProviderHandler:
     @admin_login_required
     @permission_required("model_provider:create")
     def create_provider(self):
-        req = CreateAdminModelProviderReq(request.form)
-        if not req.validate():
-            return validate_error_json(req.errors)
-        payload = {
-            "name": req.name.data,
-            "label": req.label.data,
-            "description": req.description.data or "",
-            "icon": req.icon.data or "",
-            "background": req.background.data or "#FFFFFF",
-            "default_base_url": req.default_base_url.data,
-            "supported_model_types": req.supported_model_types.data or ["chat"],
-            "status": req.status.data or "active",
-        }
+        payload = request.get_json(silent=True) or {}
+        # 必填字段校验
+        errors = {}
+        if not payload.get("name"):
+            errors["name"] = ["This field is required."]
+        if not payload.get("label"):
+            errors["label"] = ["This field is required."]
+        if not payload.get("default_base_url"):
+            errors["default_base_url"] = ["This field is required."]
+        if errors:
+            return validate_error_json(errors)
+        # 填充默认值
+        payload.setdefault("description", "")
+        payload.setdefault("icon", "")
+        payload.setdefault("background", "#FFFFFF")
+        payload.setdefault("supported_model_types", ["chat"])
+        payload.setdefault("status", "active")
         result = self.admin_model_provider_service.create_provider(payload)
         resp = AdminModelProviderResp()
         return success_json(resp.dump(result))
@@ -69,14 +70,13 @@ class AdminModelProviderHandler:
     @admin_login_required
     @permission_required("model_provider:update")
     def update_provider(self, provider_id: UUID):
-        req = UpdateAdminModelProviderReq(request.form)
-        if not req.validate():
-            return validate_error_json(req.errors)
-        payload = {}
-        for field in ["label", "description", "icon", "background", "default_base_url", "supported_model_types", "status"]:
-            if hasattr(req, field) and getattr(req, field).data is not None:
-                payload[field] = getattr(req, field).data
-        result = self.admin_model_provider_service.update_provider(provider_id, payload)
+        payload = request.get_json(silent=True) or {}
+        # 仅保留允许更新的字段
+        allowed_fields = ["label", "description", "icon", "background", "default_base_url", "supported_model_types", "status"]
+        update_data = {k: v for k, v in payload.items() if k in allowed_fields}
+        if not update_data:
+            return validate_error_json({"_": ["No valid fields to update."]})
+        result = self.admin_model_provider_service.update_provider(provider_id, update_data)
         resp = AdminModelProviderResp()
         return success_json(resp.dump(result))
 
@@ -89,10 +89,11 @@ class AdminModelProviderHandler:
     @admin_login_required
     @permission_required("model_provider:update")
     def set_provider_status(self, provider_id: UUID):
-        req = SetAdminModelProviderStatusReq(request.form)
-        if not req.validate():
-            return validate_error_json(req.errors)
-        result = self.admin_model_provider_service.set_provider_status(provider_id, req.status.data)
+        payload = request.get_json(silent=True) or {}
+        status = payload.get("status")
+        if not status:
+            return validate_error_json({"status": ["This field is required."]})
+        result = self.admin_model_provider_service.set_provider_status(provider_id, status)
         resp = AdminModelProviderResp()
         return success_json(resp.dump(result))
 

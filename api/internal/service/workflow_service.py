@@ -7,14 +7,16 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from typing import Any, Generator
 from uuid import UUID
-from flask import request
+from flask import request, current_app
 from injector import inject
 from sqlalchemy import desc
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
-from internal.core.workflow import Workflow as WorkflowTool
 from internal.core.workflow.entities.edge_entity import BaseEdgeData
 from internal.core.workflow.entities.node_entity import NodeType, BaseNodeData
 from internal.core.workflow.entities.workflow_entity import WorkflowConfig
+from internal.core.workflow.graph_engine import GraphEngine
+from internal.core.workflow.real_node_executor import RealNodeExecutor
+from internal.core.workflow.variable_pool import VariablePool
 from internal.core.workflow.nodes import (
     CodeNodeData,
     DatasetRetrievalNodeData,
@@ -31,8 +33,8 @@ from internal.core.workflow.nodes import (
 )
 from internal.entity.workflow_entity import WorkflowStatus, DEFAULT_WORKFLOW_CONFIG, WorkflowResultStatus
 from internal.exception import ValidateErrorException, NotFoundException, ForbiddenException, FailException
-from internal.lib.helper import convert_model_to_dict, escape_like_pattern
-from internal.model import Account, Workflow, Dataset, ApiTool, WorkflowResult, WorkflowVersion
+from internal.lib.helper import convert_model_to_dict, escape_like_pattern, datetime_to_timestamp
+from internal.model import Account, Workflow, ApiTool, WorkflowResult, WorkflowVersion, KnowledgeBase
 from internal.schema.workflow_schema import CreateWorkflowReq, GetWorkflowsWithPageReq
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
@@ -409,42 +411,60 @@ class WorkflowService(BaseService):
                         },
                     }
             elif node.get("node_type") == NodeType.DATASET_RETRIEVAL.value:
-                # 5.节点类型为知识库检索，需要附加知识库的名称、图标等信息
-                datasets = self.db.session.query(Dataset).filter(
-                    Dataset.id.in_(node.get("dataset_ids", [])),
-                    Dataset.account_id == account.id,
-                ).all()
-                node["meta"] = {
-                    "datasets": [{
-                        "id": dataset.id,
-                        "name": dataset.name,
-                        "icon": dataset.icon,
-                        "description": dataset.description,
-                    } for dataset in datasets]
-                }
+                # 5.节点类型为知识库检索，附加知识库的名称、图标等信息
+                # 使用新版 KnowledgeBase 元数据填充
+                knowledge_base_ids = node.get("knowledge_base_ids", []) or []
+                if knowledge_base_ids:
+                    knowledge_bases = self.db.session.query(KnowledgeBase).filter(
+                        KnowledgeBase.id.in_(knowledge_base_ids),
+                    ).all()
+                    node["meta"] = {
+                        "knowledge_bases": [{
+                            "id": str(kb.id),
+                            "name": kb.name,
+                            "description": kb.description or "",
+                        } for kb in knowledge_bases]
+                    }
 
         return validate_draft_graph
 
     def debug_workflow(self, workflow_id: UUID, inputs: dict[str, Any], account: Account) -> Generator:
-        """调试指定的工作流API接口，该接口为流式事件输出"""
+        """调试指定的工作流API接口，基于 GraphEngine 流式事件输出。
+
+        统一采用 GraphEngine 执行（与 WorkflowAppService 一致），
+        消费 GraphEngine 的 SSE 事件并转发给前端，同时持久化调试结果。
+        """
         # 1.根据传递的id获取工作流并校验权限
         workflow = self.get_workflow(workflow_id, account)
         executable_graph = self._build_executable_graph(workflow.draft_graph)
 
-        # 2.创建工作流工具
-        workflow_tool = WorkflowTool(workflow_config=WorkflowConfig(
+        # 2.构建 WorkflowConfig + GraphEngine
+        workflow_config = WorkflowConfig(
             account_id=account.id,
             name=workflow.tool_call_name,
             description=workflow.description,
             nodes=executable_graph.get("nodes", []),
             edges=executable_graph.get("edges", []),
-        ))
+        )
+        variable_pool = VariablePool()
+        try:
+            flask_app = current_app._get_current_object()
+        except RuntimeError:
+            flask_app = None
+        executor = RealNodeExecutor(
+            flask_app=flask_app,
+            account_id=account.id,
+            account=account,
+        )
+        engine = GraphEngine(
+            workflow_config=workflow_config,
+            variable_pool=variable_pool,
+            node_executor=executor,
+        )
 
         def handle_stream() -> Generator:
-            # 3.定义变量存储所有节点运行结果
-            node_results = []
-
-            # 4.添加数据库工作流运行结果记录
+            # 3.添加数据库工作流运行结果记录
+            node_results: list[dict[str, Any]] = []
             workflow_result = self.create(WorkflowResult, **{
                 "app_id": None,
                 "account_id": account.id,
@@ -455,65 +475,61 @@ class WorkflowService(BaseService):
                 "status": WorkflowResultStatus.RUNNING.value,
             })
 
-            # 4.调用stream服务获取工具信息
             start_at = time.perf_counter()
-            is_last_node = False
+            final_status = WorkflowResultStatus.SUCCEEDED.value
             try:
-                for chunk in workflow_tool.stream(inputs):
-                    # 5.chunk的格式为:{"node_name": WorkflowState}，所以需要取出节点响应结构的第1个key
-                    first_key = next(iter(chunk))
+                for event in engine.execute(inputs or {}):
+                    event_type = event.get("event", "message")
+                    data = event.get("data") or {}
 
-                    # 6.取出各个节点的运行结果
-                    node_result = chunk[first_key]["node_results"][0]
-                    node_result_dict = convert_model_to_dict(node_result)
-                    node_results.append(node_result_dict)
+                    # 收集节点执行结果（兼容旧版 state 结构）
+                    if event_type in ("node_finished", "node_failed"):
+                        node_results.append({
+                            "id": str(uuid.uuid4()),
+                            "node_id": data.get("node_id", ""),
+                            "node_type": data.get("node_type", ""),
+                            "title": data.get("title", ""),
+                            "inputs": data.get("inputs", {}),
+                            "outputs": data.get("outputs", {}),
+                            "status": "succeeded" if event_type == "node_finished" else "failed",
+                            "latency": data.get("elapsed_time", 0),
+                            "error": data.get("error", ""),
+                        })
 
-                    # 7.组装响应数据并流式事件输出
-                    data = {
-                        "id": str(uuid.uuid4()),
-                        **node_result_dict,
-                    }
-                    yield f"event: workflow\ndata: {json.dumps(data)}\n\n"
+                    # 转发 SSE 事件给前端
+                    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
-                    # 8.检查是否是最后一个节点（end节点）
-                    node_type = node_result_dict.get("node_data", {}).get("node_type")
-                    logging.info(f"节点类型: {node_type}, 节点数据: {node_result_dict.get('node_data', {})}")
-                    if node_type == "end":
-                        is_last_node = True
-                        logging.info("检测到 end 节点，设置 is_last_node = True")
+                    # 工作流结束时记录最终状态
+                    if event_type == "workflow_finished":
+                        wf_status = str(data.get("status") or "succeeded")
+                        if wf_status == "succeeded":
+                            final_status = WorkflowResultStatus.SUCCEEDED.value
+                        else:
+                            final_status = WorkflowResultStatus.FAILED.value
 
-                # 9.流式输出完毕后，将结果存储到数据库中
-                logging.info(f"for 循环结束，is_last_node = {is_last_node}")
-                if is_last_node:
-                    logging.info("开始更新 workflow_result...")
-                    self.update(workflow_result, **{
-                        "status": WorkflowResultStatus.SUCCEEDED.value,
-                        "state": node_results,
-                        "latency": (time.perf_counter() - start_at),
-                    })
-                    logging.info("workflow_result 更新完成，开始更新 workflow.is_debug_passed...")
-                    logging.info(f"workflow 对象: {workflow}, workflow.id: {workflow.id}")
+                # 更新调试结果
+                self.update(workflow_result, **{
+                    "status": final_status,
+                    "state": node_results,
+                    "latency": (time.perf_counter() - start_at),
+                })
 
-                    # 手动更新 workflow 的 is_debug_passed 字段
+                # 调试成功时更新 workflow.is_debug_passed
+                if final_status == WorkflowResultStatus.SUCCEEDED.value:
                     workflow.is_debug_passed = True
                     self.db.session.add(workflow)
                     self.db.session.commit()
 
-                    logging.info("workflow.is_debug_passed 更新完成！")
-                else:
-                    # 如果没有end节点，也标记为成功
-                    self.update(workflow_result, **{
-                        "status": WorkflowResultStatus.SUCCEEDED.value,
-                        "state": node_results,
-                        "latency": (time.perf_counter() - start_at),
-                    })
             except Exception as e:
                 logging.error(f"工作流调试失败: {str(e)}", exc_info=True)
                 self.update(workflow_result, **{
                     "status": WorkflowResultStatus.FAILED.value,
                     "state": node_results,
-                    "latency": (time.perf_counter() - start_at)
+                    "latency": (time.perf_counter() - start_at),
                 })
+                # 推送失败事件给前端
+                error_data = {"status": "failed", "error": str(e)}
+                yield f"event: workflow_finished\ndata: {json.dumps(error_data, ensure_ascii=False, default=str)}\n\n"
 
         return handle_stream()
 
@@ -732,6 +748,204 @@ class WorkflowService(BaseService):
 
         return workflow
 
+    # ------------------------------------------------------------------
+    # 工作流导入导出（阶段 6）
+    # ------------------------------------------------------------------
+    EXPORT_FORMAT = "openagent-workflow"
+    EXPORT_VERSION = "1.0"
+
+    def export_workflow(self, workflow_id: UUID, *, include_versions: bool = False) -> dict[str, Any]:
+        """导出工作流为 JSON 字典结构（不含权限校验，调用方需先验证权限）。
+
+        返回结构：
+            {
+                "format": "openagent-workflow",
+                "version": "1.0",
+                "exported_at": "2026-07-27T...",
+                "workflow": {
+                    "name": "...",
+                    "tool_call_name": "...",
+                    "icon": "...",
+                    "description": "...",
+                    "graph": {...},
+                    "draft_graph": {...},
+                    "tags": [...],
+                    "task_keywords": [...]
+                },
+                "versions": [...]  # 仅当 include_versions=True
+            }
+        """
+        # 1.加载工作流（不校验账号归属，由调用方负责）
+        workflow = self.get(Workflow, workflow_id)
+        if not workflow:
+            raise NotFoundException("该工作流不存在，请核实后重试")
+
+        # 2.构建导出结构（不包含 account_id、is_public 等敏感/环境相关信息）
+        payload: dict[str, Any] = {
+            "format": self.EXPORT_FORMAT,
+            "version": self.EXPORT_VERSION,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "workflow": {
+                "name": workflow.name or "",
+                "tool_call_name": workflow.tool_call_name or "",
+                "icon": workflow.icon or "",
+                "description": workflow.description or "",
+                "graph": workflow.graph or {},
+                "draft_graph": workflow.draft_graph or {},
+                "tags": workflow.tags or [],
+                "task_keywords": workflow.task_keywords or [],
+            },
+        }
+
+        # 3.可选附带版本元数据（不含 graph 内容，仅元数据）
+        if include_versions:
+            versions = self.db.session.query(WorkflowVersion).filter(
+                WorkflowVersion.workflow_id == workflow.id
+            ).order_by(WorkflowVersion.version.desc()).all()
+            payload["versions"] = [
+                {
+                    "version": v.version,
+                    "is_current_published": v.is_current_published,
+                    "summary": v.summary or "",
+                    "created_at": datetime_to_timestamp(v.created_at),
+                    "updated_at": datetime_to_timestamp(v.updated_at),
+                }
+                for v in versions
+            ]
+
+        return payload
+
+    def export_workflow_for_admin(self, workflow_id: UUID, *, include_versions: bool = False) -> dict[str, Any]:
+        """管理员端导出工作流，不校验账号归属"""
+        # 复用 _get_workflow_for_admin 做存在性校验
+        self._get_workflow_for_admin(workflow_id)
+        return self.export_workflow(workflow_id, include_versions=include_versions)
+
+    def import_workflow(
+            self,
+            json_data: dict[str, Any],
+            account_id: UUID,
+            *,
+            overwrite_name: bool = False,
+    ) -> Workflow:
+        """从 JSON 字典导入工作流，创建新的工作流记录（status=draft）。
+
+        参数：
+            json_data: 导出的工作流 JSON 字典
+            account_id: 新工作流归属账号 ID
+            overwrite_name: True 时若 tool_call_name 冲突则覆盖现有工作流（需归属同一账号）；
+                           False 时自动加 `_imported_{8位hex}` 后缀
+        """
+        # 1.加载归属账号（_validate_graph 需要 Account 对象）
+        account = self._get_owner_account(account_id)
+
+        # 2.校验导出格式
+        if not isinstance(json_data, dict):
+            raise ValidateErrorException("导入数据格式错误，必须是JSON对象")
+
+        fmt = json_data.get("format")
+        if fmt != self.EXPORT_FORMAT:
+            raise ValidateErrorException(
+                f"不支持的工作流导出格式: {fmt}，应为 {self.EXPORT_FORMAT}"
+            )
+
+        # 3.校验版本兼容性（当前仅支持 1.x）
+        version = str(json_data.get("version", "") or "")
+        if not version:
+            raise ValidateErrorException("导入数据缺少 version 字段")
+        if not version.startswith("1."):
+            raise ValidateErrorException(f"不支持的工作流导出版本: {version}")
+
+        # 4.提取 workflow 字段
+        wf_data = json_data.get("workflow")
+        if not isinstance(wf_data, dict):
+            raise ValidateErrorException("导入数据缺少 workflow 字段")
+
+        name = str(wf_data.get("name") or "").strip()
+        tool_call_name = str(wf_data.get("tool_call_name") or "").strip()
+        icon = str(wf_data.get("icon") or "")
+        description = str(wf_data.get("description") or "")
+        graph = wf_data.get("graph") or {}
+        draft_graph = wf_data.get("draft_graph") or {}
+        tags = wf_data.get("tags") or []
+        task_keywords = wf_data.get("task_keywords") or []
+
+        if not name:
+            raise ValidateErrorException("导入工作流名称不能为空")
+        if not tool_call_name:
+            raise ValidateErrorException("导入工作流英文名称（tool_call_name）不能为空")
+
+        # 5.处理 tool_call_name 冲突
+        existing = self.db.session.query(Workflow).filter(
+            Workflow.tool_call_name == tool_call_name,
+            Workflow.account_id == account.id,
+        ).one_or_none()
+
+        if existing:
+            if overwrite_name:
+                # 直接覆盖：需校验归属（已在查询条件中限制 account_id）
+                # 覆盖图与基本信息，状态置为 draft
+                validated_draft_graph = self._safe_validate_graph(draft_graph, account)
+                self.update(existing, **{
+                    "name": name,
+                    "icon": icon,
+                    "description": description,
+                    "graph": {},  # 覆盖后重置为 draft 状态，清空已发布图
+                    "draft_graph": validated_draft_graph,
+                    "tags": tags,
+                    "task_keywords": task_keywords,
+                    "is_debug_passed": False,
+                    "status": WorkflowStatus.DRAFT.value,
+                    "is_public": False,
+                })
+                logger.info(
+                    "工作流导入覆盖: workflow_id=%s, tool_call_name=%s, account_id=%s",
+                    existing.id, tool_call_name, account.id,
+                )
+                return existing
+            else:
+                # 自动加后缀避免冲突
+                suffix = f"_imported_{uuid.uuid4().hex[:8]}"
+                tool_call_name = f"{tool_call_name}{suffix}"
+                # 加后缀后可能仍超长，做截断保护
+                if len(tool_call_name) > 255:
+                    tool_call_name = tool_call_name[:255]
+
+        # 6.校验并清洗导入的草稿图（复用 _validate_graph）
+        validated_draft_graph = self._safe_validate_graph(draft_graph, account)
+
+        # 7.创建新的工作流记录（status=draft，is_debug_passed=False）
+        new_workflow = self.create(Workflow, **{
+            "account_id": account.id,
+            "name": name,
+            "tool_call_name": tool_call_name,
+            "icon": icon,
+            "description": description,
+            "graph": {},  # 导入后为 draft 状态，清空已发布图
+            "draft_graph": validated_draft_graph,
+            "tags": tags,
+            "task_keywords": task_keywords,
+            "is_debug_passed": False,
+            "status": WorkflowStatus.DRAFT.value,
+            "is_public": False,
+        })
+
+        logger.info(
+            "工作流导入创建: workflow_id=%s, tool_call_name=%s, account_id=%s",
+            new_workflow.id, tool_call_name, account.id,
+        )
+        return new_workflow
+
+    def _safe_validate_graph(self, graph: dict[str, Any], account: Account) -> dict[str, Any]:
+        """安全地校验图结构，校验失败时回退到原始图（避免导入时因工具引用缺失而阻断）"""
+        if not isinstance(graph, dict) or not graph:
+            return {"nodes": [], "edges": []}
+        try:
+            return self._validate_graph(graph, account)
+        except Exception as e:
+            logger.warning("导入工作流图校验失败，使用原始图: %s", e)
+            return graph
+
     def _validate_graph(
             self,
             graph: dict[str, Any],
@@ -807,12 +1021,13 @@ class WorkflowService(BaseService):
                         raise ValidateErrorException("工作流只能有一个结束节点")
 
                 elif node_type == NodeType.DATASET_RETRIEVAL.value:
-                    # 验证知识库权限
-                    datasets = self.db.session.query(Dataset).filter(
-                        Dataset.id.in_(node_data.dataset_ids),
-                        Dataset.account_id == account.id,
-                    ).all()
-                    node_data.dataset_ids = [str(d.id) for d in datasets]
+                    # 验证知识库权限：校验 knowledge_base_ids（新版 KnowledgeBase）
+                    if node_data.knowledge_base_ids:
+                        knowledge_bases = self.db.session.query(KnowledgeBase).filter(
+                            KnowledgeBase.id.in_(node_data.knowledge_base_ids),
+                            KnowledgeBase.enabled.is_(True),
+                        ).all()
+                        node_data.knowledge_base_ids = [str(kb.id) for kb in knowledge_bases]
 
                 node_data_dict[node_data.id] = node_data
 
