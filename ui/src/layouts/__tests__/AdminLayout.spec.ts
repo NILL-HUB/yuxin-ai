@@ -19,6 +19,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({
     replace: mocks.routerReplace,
   }),
+  useRoute: () => ({ meta: {} }),
   RouterLink: RouterLinkStub,
   RouterView: { template: '<section data-test="router-view">管理内容</section>' },
 }))
@@ -100,16 +101,16 @@ describe('AdminLayout', () => {
     const wrapper = mountAdminLayout()
 
     expect(wrapper.text()).toContain('应用编排')
-    expect(wrapper.text()).toContain('知识库管理')
     expect(wrapper.text()).toContain('API工具管理')
     expect(wrapper.text()).toContain('MCP管理')
     expect(wrapper.text()).toContain('Skills管理')
-    expect(wrapper.text()).toContain('客户用户')
+    expect(wrapper.text()).toContain('用户管理')
     expect(wrapper.text()).toContain('套餐卡密')
     expect(wrapper.text()).toContain('审计日志')
     expect(wrapper.text()).not.toContain('工作流编排')
     expect(wrapper.text()).not.toContain('管理员')
     expect(wrapper.text()).not.toContain('角色权限')
+    expect(wrapper.text()).not.toContain('系统知识库')
   })
 
   it('hides billing menu when redeem code read permission is missing', () => {

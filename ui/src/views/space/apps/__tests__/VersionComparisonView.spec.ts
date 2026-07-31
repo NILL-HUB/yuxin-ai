@@ -200,7 +200,6 @@ describe('VersionComparisonView', () => {
     expect(wrapper.text()).toContain('提供方 deepseek')
     expect(wrapper.text()).toContain('最大输出')
     expect(wrapper.text()).toContain('搜索服务 / 天气查询')
-    expect(wrapper.text()).toContain('产品知识库')
     expect(wrapper.text()).toContain('内容审核')
     expect(wrapper.text()).toContain('扩展插件')
     expect(wrapper.html()).not.toContain('<pre')

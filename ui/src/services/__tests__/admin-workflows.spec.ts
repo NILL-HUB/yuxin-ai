@@ -15,6 +15,7 @@ import * as request from '@/utils/request'
 vi.mock('@/utils/request', () => ({
   get: vi.fn(),
   post: vi.fn(),
+  patch: vi.fn(),
   del: vi.fn(),
 }))
 
@@ -97,14 +98,14 @@ describe('admin workflows service', () => {
       created_at: 1710000000,
       updated_at: 1710007200,
     }
-    vi.mocked(request.post).mockResolvedValue({ data: workflow } as never)
+    vi.mocked(request.patch).mockResolvedValue({ data: workflow } as never)
 
     const result = await updateAdminWorkflow('wf-1', {
       status: 'published',
       is_public: false,
     })
 
-    expect(request.post).toHaveBeenCalledWith('/admin/workflows/wf-1', {
+    expect(request.patch).toHaveBeenCalledWith('/admin/workflows/wf-1', {
       body: {
         status: 'published',
         is_public: false,
@@ -168,7 +169,7 @@ describe('admin workflows service', () => {
 
     const result = await publishAdminWorkflow('wf-1')
 
-    expect(request.post).toHaveBeenCalledWith('/admin/workflows/wf-1/publish')
+    expect(request.post).toHaveBeenCalledWith('/admin/workflows/wf-1/publish', { body: undefined })
     expect(result).toEqual(workflow)
   })
 })

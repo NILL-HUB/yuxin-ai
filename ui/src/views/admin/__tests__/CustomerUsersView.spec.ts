@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, h, inject, onMounted, provide, ref } from 'vue'
 import CustomerUsersView from '@/views/admin/CustomerUsersView.vue'
 
 const mocks = vi.hoisted(() => ({
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listUserAppAssignments: vi.fn(),
   assignAppsToUser: vi.fn(),
   revokeUserAppAssignment: vi.fn(),
+  listAdminApps: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
 }))
@@ -27,6 +29,10 @@ vi.mock('@/services/admin-app-assignments', () => ({
   revokeUserAppAssignment: mocks.revokeUserAppAssignment,
 }))
 
+vi.mock('@/services/admin-apps', () => ({
+  listAdminApps: mocks.listAdminApps,
+}))
+
 vi.mock('@arco-design/web-vue', () => ({
   Message: {
     success: mocks.messageSuccess,
@@ -41,16 +47,59 @@ const inputStub = {
 }
 
 const selectStub = {
-  props: ['modelValue', 'options'],
+  props: {
+    modelValue: { default: null },
+    options: { default: () => [] },
+    multiple: { type: Boolean, default: false },
+    allowSearch: { type: Boolean, default: false },
+    placeholder: { type: String, default: '' },
+  },
   emits: ['update:modelValue'],
-  template: '<select :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
+  template: `
+    <select v-if="!multiple" :value="modelValue" @change="$emit('update:modelValue', $event.target.value)">
+      <option v-for="option in (options || [])" :key="option.value" :value="option.value">{{ option.label }}</option>
+    </select>
+    <input v-else type="text" :value="(modelValue || []).join(',')" :placeholder="placeholder" @input="$emit('update:modelValue', $event.target.value ? $event.target.value.split(',') : [])" />
+  `,
 }
 
 const buttonStub = {
-  props: ['loading', 'size', 'type', 'status'],
+  props: ['loading', 'size', 'type', 'status', 'disabled'],
   emits: ['click'],
-  template: '<button type="button" :disabled="loading" @click="$emit(\'click\')"><slot /></button>',
+  template: '<button type="button" :disabled="loading || disabled" @click="$emit(\'click\')"><slot /></button>',
 }
+
+// Table stub that collects cell slots from a-table-column via provide/inject
+const tableStub = defineComponent({
+  props: ['data', 'columns', 'loading', 'pagination', 'bordered', 'rowKey', 'size'],
+  setup(props, { slots }) {
+    const cellSlots = ref<Array<(props: { record: any }) => any>>([])
+    provide('cellSlots', cellSlots)
+    return () => h('div', { class: 'a-table' }, [
+      h('div', { style: 'display:none' }, slots.columns?.()),
+      ...(props.data || []).map((row: any) =>
+        h('div', { class: 'table-row', 'data-id': row.id },
+          cellSlots.value.map(cellSlot =>
+            h('div', { class: 'table-cell' }, cellSlot({ record: row }))
+          )
+        )
+      )
+    ])
+  }
+})
+
+const tableColumnStub = defineComponent({
+  props: ['title', 'width'],
+  setup(props, { slots }) {
+    const cellSlots = inject<import('vue').Ref<Array<(props: { record: any }) => any>>>('cellSlots', ref([]))
+    onMounted(() => {
+      if (slots.cell) {
+        cellSlots.value.push(slots.cell as (props: { record: any }) => any)
+      }
+    })
+    return () => null
+  }
+})
 
 const user = {
   id: 'user-1',
@@ -58,6 +107,7 @@ const user = {
   name: 'User One',
   avatar: '',
   status: 'active' as const,
+  is_online: true,
   disabled_at: null,
   disabled_by: null,
   disabled_reason: '',
@@ -72,6 +122,7 @@ const disabledUser = {
   email: 'disabled@example.com',
   name: 'Disabled User',
   status: 'disabled' as const,
+  is_online: false,
   disabled_reason: 'risk',
 }
 
@@ -83,12 +134,27 @@ const renderView = async () => {
   mocks.listUserAppAssignments.mockResolvedValue({
     list: [{ id: 'assignment-1', app_id: 'app-1', account_id: 'user-1', assigned_by: 'admin-1', status: 'active', assigned_at: 1893456000, revoked_at: null, app: { id: 'app-1', name: '合同审查助手', icon: '', description: '', status: 'published', is_public: false } }],
   })
+  mocks.listAdminApps.mockResolvedValue({ list: [{ id: 'app-2', name: 'App 2', icon: '', description: '', status: 'published', is_public: false }] })
   const wrapper = mount(CustomerUsersView, {
     global: {
       stubs: {
         'a-input': inputStub,
         'a-select': selectStub,
         'a-button': buttonStub,
+        'a-table': tableStub,
+        'a-table-column': tableColumnStub,
+        'a-drawer': {
+          props: ['visible', 'width', 'title'],
+          emits: ['cancel'],
+          template: '<div v-if="visible" class="a-drawer"><slot /></div>',
+        },
+        'a-pagination': {
+          props: ['total', 'current', 'pageSize', 'showTotal', 'showPageSize', 'pageSizeOptions'],
+          template: '<div class="a-pagination">共 {{ total }} 个用户</div>',
+        },
+        'a-avatar': { template: '<span class="a-avatar"><slot /></span>' },
+        'a-tag': { template: '<span class="a-tag"><slot /></span>' },
+        'a-space': { template: '<div class="a-space"><slot /></div>' },
       },
     },
   })
@@ -164,7 +230,7 @@ describe('CustomerUsersView', () => {
     expect(mocks.listUserAppAssignments).toHaveBeenCalledWith('user-1')
     expect(wrapper.text()).toContain('合同审查助手')
 
-    await wrapper.find('input[placeholder="输入 App ID"]').setValue('app-2')
+    await wrapper.find('.a-drawer input').setValue('app-2')
     await wrapper.findAll('button').find((button) => button.text() === '确认分配')?.trigger('click')
     await flushPromises()
 

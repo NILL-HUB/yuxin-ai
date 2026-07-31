@@ -13,6 +13,8 @@ vi.mock('@/services/admin-tools', () => ({
   getAdminApiTool: vi.fn(),
   updateAdminApiTool: vi.fn(),
   deleteAdminApiTool: vi.fn(),
+  getAdminBuiltinTools: vi.fn().mockResolvedValue({ data: [] }),
+  getAdminBuiltinCategories: vi.fn().mockResolvedValue({ data: [] }),
 }))
 
 vi.mock('@arco-design/web-vue', async () => {
@@ -24,9 +26,22 @@ vi.mock('@arco-design/web-vue', async () => {
   }
 })
 
-vi.mock('@/hooks/use-tool', () => ({
+vi.mock('@/hooks/use-builtin-tool', () => ({
   useGenerateIconPreview: () => ({ loading: { value: false }, handleGenerateIconPreview: vi.fn() }),
   useValidateOpenAPISchema: () => ({ handleValidateOpenAPISchema: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-admin-builtin-tool', () => ({
+  useGetAdminBuiltinTools: () => ({
+    loading: { value: false },
+    builtin_tools: { value: [] },
+    loadBuiltinTools: vi.fn(),
+  }),
+  useGetAdminCategories: () => ({
+    loading: { value: false },
+    categories: { value: [] },
+    loadCategories: vi.fn(),
+  }),
 }))
 
 vi.mock('@/hooks/use-upload-file', () => ({

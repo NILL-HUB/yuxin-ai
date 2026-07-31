@@ -61,6 +61,12 @@ const switchStub = {
   template: '<button type="button" class="arco-switch" @click="$emit(\'change\', !modelValue)"></button>',
 }
 
+const modalStub = {
+  props: ['visible', 'title', 'okText', 'cancelText', 'okLoading', 'maskClosable', 'width'],
+  emits: ['ok', 'cancel', 'update:visible'],
+  template: '<div v-if="visible" class="confirm-modal"><slot /><button type="button" class="modal-ok-btn" @click="$emit(\'ok\')">ok</button></div>',
+}
+
 const renderView = async () => {
   mocks.listAdminOrchestrationFlags.mockResolvedValue([
     {
@@ -89,6 +95,13 @@ const renderView = async () => {
       stubs: {
         'a-table': tableStub,
         'a-switch': switchStub,
+        'a-modal': modalStub,
+        'a-tag': { template: '<span><slot /></span>' },
+        'a-tooltip': { template: '<span><slot /></span>' },
+        'a-collapse': { template: '<div><slot /></div>' },
+        'a-collapse-item': { template: '<div><slot name="header" /><slot /></div>' },
+        'a-spin': { template: '<div><slot /></div>' },
+        'a-divider': { template: '<hr />' },
       },
     },
   })
@@ -114,6 +127,8 @@ describe('OrchestrationFlagsView', () => {
     const wrapper = await renderView()
 
     await wrapper.find('.arco-switch').trigger('click')
+    await wrapper.find('.modal-ok-btn').trigger('click')
+    await flushPromises()
 
     expect(mocks.updateAdminOrchestrationFlag).toHaveBeenCalledWith(
       'ENABLE_ORCHESTRATOR',

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   credentialUpdate: vi.fn(),
   adminLogin: vi.fn(),
   passwordLogin: vi.fn(),
+  directRegister: vi.fn(),
   prepareRegister: vi.fn(),
   verifyRegister: vi.fn(),
   logout: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock('@arco-design/web-vue', () => ({
 
 vi.mock('@/services/auth', () => ({
   passwordLogin: mocks.passwordLogin,
+  directRegister: mocks.directRegister,
   prepareRegister: mocks.prepareRegister,
   verifyRegister: mocks.verifyRegister,
   logout: mocks.logout,
@@ -185,7 +187,9 @@ describe('LoginForm auto register flow', () => {
     mocks.routeQuery = {}
     mocks.adminLogin.mockReset()
     mocks.passwordLogin.mockReset()
+    mocks.directRegister.mockReset()
     mocks.prepareRegister.mockReset()
+    mocks.sendResetCode.mockReset()
   })
 
   it('emits success after embedded admin login so the login modal closes immediately', async () => {
@@ -203,16 +207,12 @@ describe('LoginForm auto register flow', () => {
     expect(mocks.routerReplace).not.toHaveBeenCalled()
   })
 
-  it('switches to register verification after generic login failure when prepare-register succeeds', async () => {
+  it('attempts auto-register but shows password required error when login fails with invalid credentials', async () => {
     mocks.passwordLogin.mockRejectedValue(
       createAuthRequestError('账号不存在或者密码错误', {
         reason_code: 'INVALID_CREDENTIALS',
       }),
     )
-    mocks.prepareRegister.mockResolvedValue({
-      message: '验证码已发送到您的邮箱,请查收',
-      data: {},
-    })
 
     const wrapper = renderForm()
     await fillLoginForm(wrapper, 'new-user@example.com', 'Abcd1234')
@@ -221,68 +221,19 @@ describe('LoginForm auto register flow', () => {
     await flushPromises()
 
     expect(mocks.passwordLogin).toHaveBeenCalledWith('new-user@example.com', 'Abcd1234')
-    expect(mocks.prepareRegister).toHaveBeenCalledWith('', 'new-user@example.com', 'Abcd1234')
-    expect(wrapper.text()).toContain('首次注册需要完成邮箱验证码验证')
-    expect(wrapper.text()).toContain('该邮箱尚未注册')
-    expect(mocks.messageSuccess).toHaveBeenCalledWith('验证码已发送到您的邮箱,请查收')
+    expect(mocks.directRegister).not.toHaveBeenCalled()
+    expect(mocks.messageError).toHaveBeenCalledWith('请输入注册密码')
   })
 
-  it('keeps the user on the login view when prepare-register reports the account already exists', async () => {
-    mocks.passwordLogin.mockRejectedValue(
-      createAuthRequestError('账号不存在或者密码错误', {
-        reason_code: 'INVALID_CREDENTIALS',
-      }),
-    )
-    mocks.prepareRegister.mockRejectedValue(
+  it('shows error message and stays on register view when direct register reports the account already exists', async () => {
+    mocks.directRegister.mockRejectedValue(
       createAuthRequestError('账号已存在，请直接登录', {
         reason_code: 'ACCOUNT_EXISTS',
       }),
     )
 
     const wrapper = renderForm()
-    await fillLoginForm(wrapper, 'demo@example.com', 'Abcd1234')
-
-    await wrapper.get('form').trigger('submit')
-    await flushPromises()
-
-    expect(mocks.prepareRegister).toHaveBeenCalledWith('', 'demo@example.com', 'Abcd1234')
-    expect(wrapper.text()).toContain('账号不存在或者密码错误')
-    expect(wrapper.text()).not.toContain('首次注册需要完成邮箱验证码验证')
-    expect((wrapper.get('input[placeholder="账号密码"]').element as HTMLInputElement).value).toBe('')
-  })
-
-  it('hides oauth-only provider suggestions when auto register falls back to an oauth-only account', async () => {
-    mocks.passwordLogin.mockRejectedValue(
-      createAuthRequestError('账号不存在或者密码错误', {
-        reason_code: 'INVALID_CREDENTIALS',
-      }),
-    )
-    mocks.prepareRegister.mockRejectedValue(
-      createAuthRequestError('该账号尚未设置密码，请使用Google登录', {
-        reason_code: 'OAUTH_ONLY_ACCOUNT',
-        providers: ['google'],
-      }),
-    )
-
-    const wrapper = renderForm()
-    await fillLoginForm(wrapper, 'oauth-user@example.com', 'Abcd1234')
-
-    await wrapper.get('form').trigger('submit')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('该账号尚未设置密码，请使用Google登录')
-    expect(wrapper.find('[data-testid="oauth-only-suggestions"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('Google 登录')
-  })
-
-  it('provides an explicit register entry that sends a verification code and opens the register verify view', async () => {
-    mocks.prepareRegister.mockResolvedValue({
-      message: '验证码已发送到您的邮箱,请查收',
-      data: {},
-    })
-
-    const wrapper = renderForm()
-    await fillLoginForm(wrapper, 'register@example.com', 'Abcd1234')
+    await fillLoginForm(wrapper, 'existinguser', 'Abcd1234')
 
     const registerEntryButton = findButtonContainingText(wrapper, '用户名/邮箱注册')
     expect(registerEntryButton).toBeTruthy()
@@ -292,20 +243,71 @@ describe('LoginForm auto register flow', () => {
 
     expect(wrapper.text()).toContain('设置用户名并使用邮箱验证，完成后即可登录')
 
-    const sendRegisterCodeButton = findButtonContainingText(wrapper, '发送注册验证码')
-    expect(sendRegisterCodeButton).toBeTruthy()
+    const registerButton = findButtonContainingText(wrapper, '注册')
+    expect(registerButton).toBeTruthy()
 
-    await sendRegisterCodeButton!.trigger('click')
+    await registerButton!.trigger('click')
     await flushPromises()
 
-    expect(mocks.prepareRegister).toHaveBeenCalledWith('', 'register@example.com', 'Abcd1234')
-    expect(wrapper.text()).toContain('首次注册需要完成邮箱验证码验证')
+    expect(mocks.directRegister).toHaveBeenCalledWith('existinguser', 'Abcd1234')
+    expect(wrapper.text()).toContain('账号已存在，请直接登录')
+    expect(wrapper.text()).toContain('设置用户名并使用邮箱验证，完成后即可登录')
   })
 
-  it('registers with username, email and relaxed password characters', async () => {
-    mocks.prepareRegister.mockResolvedValue({
-      message: '验证码已发送到您的邮箱,请查收',
-      data: {},
+  it('hides oauth-only provider suggestions when direct register falls back to an oauth-only account', async () => {
+    mocks.directRegister.mockRejectedValue(
+      createAuthRequestError('该账号尚未设置密码，请使用Google登录', {
+        reason_code: 'OAUTH_ONLY_ACCOUNT',
+        providers: ['google'],
+      }),
+    )
+
+    const wrapper = renderForm()
+    await fillLoginForm(wrapper, 'oauthuser', 'Abcd1234')
+
+    const registerEntryButton = findButtonContainingText(wrapper, '用户名/邮箱注册')
+    await registerEntryButton!.trigger('click')
+    await flushPromises()
+
+    const registerButton = findButtonContainingText(wrapper, '注册')
+    await registerButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.directRegister).toHaveBeenCalledWith('oauthuser', 'Abcd1234')
+    expect(wrapper.text()).toContain('该账号尚未设置密码，请使用Google登录')
+    expect(wrapper.find('[data-testid="oauth-only-suggestions"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Google 登录')
+  })
+
+  it('provides an explicit register entry that registers and finalizes login', async () => {
+    mocks.directRegister.mockResolvedValue({
+      data: { access_token: 'new-token', expire_at: 9999999999 },
+    })
+
+    const wrapper = renderForm()
+    await fillLoginForm(wrapper, 'registeruser', 'Abcd1234')
+
+    const registerEntryButton = findButtonContainingText(wrapper, '用户名/邮箱注册')
+    expect(registerEntryButton).toBeTruthy()
+
+    await registerEntryButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('设置用户名并使用邮箱验证，完成后即可登录')
+
+    const registerButton = findButtonContainingText(wrapper, '注册')
+    expect(registerButton).toBeTruthy()
+
+    await registerButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.directRegister).toHaveBeenCalledWith('registeruser', 'Abcd1234')
+    expect(wrapper.emitted('success')).toHaveLength(1)
+  })
+
+  it('registers with username and relaxed password characters', async () => {
+    mocks.directRegister.mockResolvedValue({
+      data: { access_token: 'new-token', expire_at: 9999999999 },
     })
 
     const wrapper = renderForm()
@@ -314,18 +316,18 @@ describe('LoginForm auto register flow', () => {
 
     await registerEntryButton!.trigger('click')
     await flushPromises()
+
     await wrapper.get('input[placeholder="请输入用户名(大小写字母或数字)"]').setValue('AtlasUser1')
-    await wrapper.get('input[placeholder="请输入注册邮箱"]').setValue('atlas@example.com')
     await wrapper.get('input[placeholder="请设置密码(字母+数字，可含_和.，6-32位)"]').setValue('Abcd_1234.')
 
-    const sendRegisterCodeButton = findButtonContainingText(wrapper, '发送注册验证码')
-    expect(sendRegisterCodeButton).toBeTruthy()
+    const registerButton = findButtonContainingText(wrapper, '注册')
+    expect(registerButton).toBeTruthy()
 
-    await sendRegisterCodeButton!.trigger('click')
+    await registerButton!.trigger('click')
     await flushPromises()
 
-    expect(mocks.prepareRegister).toHaveBeenCalledWith('AtlasUser1', 'atlas@example.com', 'Abcd_1234.')
-    expect(wrapper.text()).toContain('首次注册需要完成邮箱验证码验证')
+    expect(mocks.directRegister).toHaveBeenCalledWith('AtlasUser1', 'Abcd_1234.')
+    expect(wrapper.emitted('success')).toHaveLength(1)
   })
 
   it('uses the generic forgot-password message and proceeds to the reset step', async () => {

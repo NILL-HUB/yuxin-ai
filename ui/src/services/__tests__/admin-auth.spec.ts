@@ -18,7 +18,7 @@ describe('admin auth service', () => {
     vi.clearAllMocks()
   })
 
-  it('posts admin login credentials and writes admin credential only', async () => {
+  it('posts admin login credentials and writes both admin and user credentials', async () => {
     vi.mocked(request.post).mockResolvedValue({
       data: {
         access_token: 'admin-token',
@@ -59,8 +59,8 @@ describe('admin auth service', () => {
     })
     expect(result.data.access_token).toBe('admin-token')
     expect(storage.get('admin_credential')).toEqual({ access_token: 'admin-token', expire_at: 1893456000 })
-    expect(storage.get('credential')).toBe('')
-    expect(credentialStore.credential.access_token).toBe('')
+    expect(storage.get('credential')).toEqual({ access_token: 'user-token', expire_at: 1896048000 })
+    expect(credentialStore.credential.access_token).toBe('user-token')
     expect(adminStore.admin.username).toBe('admin')
     expect(adminStore.admin.permissions).toEqual(['admin:access'])
   })
@@ -110,7 +110,7 @@ describe('admin auth service', () => {
     })
   })
 
-  it('posts admin logout and clears admin state only', async () => {
+  it('posts admin logout and clears both admin and user credentials', async () => {
     storage.set('credential', { access_token: 'user-token', expire_at: 1896048000 })
     storage.set('admin_credential', { access_token: 'admin-token', expire_at: 1893456000 })
     const adminStore = useAdminStore()
@@ -130,7 +130,7 @@ describe('admin auth service', () => {
 
     expect(request.post).toHaveBeenCalledWith('/admin/auth/logout')
     expect(storage.get('admin_credential')).toBe('')
-    expect(storage.get('credential')).toEqual({ access_token: 'user-token', expire_at: 1896048000 })
+    expect(storage.get('credential')).toBe('')
     expect(adminStore.admin.email).toBe('')
   })
 })
