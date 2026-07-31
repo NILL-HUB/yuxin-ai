@@ -71,16 +71,27 @@ class CreditService:
             "idempotent": False,
         }
 
-    def consume_for_feature(self, account_id: UUID, feature_key: str, *, token_count: int) -> dict:
+    def consume_for_feature(
+        self,
+        account_id: UUID,
+        feature_key: str,
+        *,
+        token_count: int,
+        idempotency_key: str | None = None,
+    ) -> dict:
         """扣减用户额度，用于非消息上下文的公共 AI 功能调用。
 
-        与 consume_for_message 不同，此方法不基于 message_id 做幂等去重，
+        与 consume_for_message 不同，此方法默认不基于 message_id 做幂等去重，
         每次调用都生成新的随机 ID，确保每次 LLM 调用都扣费。
+
+        当传入 idempotency_key 时，会基于其生成确定性 synthetic_id，从而复用
+        consume_for_message 的幂等去重逻辑，避免重试导致重复扣费。
 
         Args:
             account_id: 用户账户 ID
             feature_key: 公共 AI 功能标识（如 "prompt_optimization"）
             token_count: 本次 LLM 调用的总 token 数
+            idempotency_key: 可选幂等键，传入时基于其生成确定性 synthetic_id 做去重
 
         Returns:
             与 consume_for_message 相同格式的字典
@@ -90,7 +101,11 @@ class CreditService:
 
         # 生成合成 message_id 用于复用 consume_for_message 的逻辑
         import uuid
-        synthetic_id = uuid.uuid4()
+
+        if idempotency_key:
+            synthetic_id = uuid.uuid5(uuid.NAMESPACE_DNS, f"{idempotency_key}:{feature_key}")
+        else:
+            synthetic_id = uuid.uuid4()
         return self.consume_for_message(account_id, synthetic_id, token_count=token_count)
 
     def _get_existing_message_consume(self, message_id: UUID) -> CreditTransaction | None:

@@ -70,8 +70,8 @@ class PromptTemplate(db.Model):
         DateTime,
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP(0)"),
-        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
         default=_utcnow_naive,
+        onupdate=_utcnow_naive,
     )
     created_at = Column(
         DateTime,

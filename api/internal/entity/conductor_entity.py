@@ -83,6 +83,7 @@ class ConductorAgentTask:
     def to_dict(self) -> dict[str, Any]:
         return {
             "task_id": self.task_id,
+            "agent_id": self.task_id,  # 兼容 MultiAgentExecutor 读取的标识符键名
             "title": self.title,
             "description": self.description,
             "agent_pool": self.agent_pool,

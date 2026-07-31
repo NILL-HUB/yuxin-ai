@@ -251,10 +251,26 @@ class AssistantAgentService(BaseService):
             conductor_answer = task_plan_summary.get("direct_answer")
         if conductor_answer and conductor_answer.strip():
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': conductor_answer, 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+            # 指挥官 direct_answer 计费 SUMMARY + FINAL
+            billing_summary = billing_aggregator.summary()
+            yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_aggregator.final().to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+            # 持久化 answer 到 Message 表
+            try:
+                msg = self.get(Message, message.id)
+                if msg is not None:
+                    self.update(msg, answer=conductor_answer)
+            except Exception:
+                logger.warning("持久化 conductor direct_answer 到 Message.answer 失败", exc_info=True)
+            # 写入记忆
+            yield from self._write_memory_from_conversation(
+                account, req.query.data, conductor_answer, conversation.id
+            )
             return
 
+        final_answer = ""
+        fallback_msg = ""
         try:
             executor = DirectAnswerExecutor(
                 language_model_service=self.language_model_service,
@@ -277,8 +293,6 @@ class AssistantAgentService(BaseService):
             coordinator = ExecutionCoordinatorService(executor=executor)
             results = coordinator.execute(plan)
 
-            final_answer = ""
-            fallback_msg = ""
             for result in results:
                 token_usage = (result.metadata or {}).get("token_usage") or {}
                 if token_usage:
@@ -315,22 +329,17 @@ class AssistantAgentService(BaseService):
 
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
+            # 外层 aggregator 在 final() 时根据累计的 total_tokens 触发实际扣费（问题6修复）
+            billing_aggregator.credit_service = self.credit_service
+            billing_aggregator.account_id = account.id
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
 
-            # 持久化 answer 到 Message 表（save_agent_thoughts 仅在 agent_thoughts 含 AGENT_MESSAGE 事件时更新 answer，
-            # direct_answer 路径传入空 agent_thoughts，需在此显式落库，否则前端 reload 后 answer 为空）
-            # final_answer 为空时持久化兜底消息，避免 reload 后 answer 仍为空
-            answer_to_persist = final_answer or fallback_msg
-            if answer_to_persist:
-                try:
-                    msg = self.get(Message, message.id)
-                    if msg is not None:
-                        self.update(msg, answer=answer_to_persist)
-                except Exception:
-                    logger.warning("持久化 direct_answer 到 Message.answer 失败", exc_info=True)
+            # 发送 AGENT_END 事件，让前端能识别流结束
+            yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
 
             # 对话后写入记忆（同步降级，不影响主流程）
+            answer_to_persist = final_answer or fallback_msg
             yield from self._write_memory_from_conversation(
                 account, req.query.data, answer_to_persist, conversation.id
             )
@@ -339,6 +348,16 @@ class AssistantAgentService(BaseService):
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["直接回答"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '直接回答遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+        finally:
+            # 无论正常完成、异常、还是 GeneratorExit（用户关闭页面），都持久化已收集的 answer
+            answer_to_persist = final_answer or fallback_msg
+            if answer_to_persist:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=answer_to_persist)
+                except Exception:
+                    logger.warning("持久化 direct_answer 到 Message.answer 失败（finally）", exc_info=True)
 
     def _stream_multi_agent(self, req, account, conversation, message, routing_decision, llm, tools, history):
         """multi_agent 路径：委托 MultiAgentExecutor 协调多 Agent 执行，外层包裹计费事件。"""
@@ -351,6 +370,7 @@ class AssistantAgentService(BaseService):
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
+        final_answer = ""
         try:
             from internal.service.dag_engine_service import DAGEngine
             from internal.service.agent_instance_pool import AgentInstancePool
@@ -362,8 +382,8 @@ class AssistantAgentService(BaseService):
                 dag_engine=DAGEngine(db=self.db),
                 agent_instance_pool=AgentInstancePool(),
             )
-            final_answer = ""
             agent_message_event_prefix = f"event: {QueueEvent.AGENT_MESSAGE.value}"
+            billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
                 query=req.query.data,
                 account=account,
@@ -383,21 +403,32 @@ class AssistantAgentService(BaseService):
                             final_answer = payload["answer"]
                     except Exception:
                         pass
+                # 截获 executor 发出的 billing delta 事件，累计到外层 aggregator（问题6/7修复）
+                if chunk.startswith(billing_delta_prefix):
+                    try:
+                        data_part = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(data_part)
+                        meta = payload.get("metadata") or {}
+                        in_tok = int(meta.get("input_tokens", 0) or 0)
+                        out_tok = int(meta.get("output_tokens", 0) or 0)
+                        if in_tok or out_tok:
+                            billing_aggregator.model_tokens(
+                                "multi_agent",
+                                input_tokens=in_tok,
+                                output_tokens=out_tok,
+                                reason="agent_llm_invoke",
+                            )
+                    except Exception:
+                        pass
                 yield chunk
 
+            # 外层 aggregator 在 final() 时根据累计的 total_tokens 触发实际扣费（问题6修复）
+            billing_aggregator.credit_service = self.credit_service
+            billing_aggregator.account_id = account.id
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
-
-            # 持久化 answer 到 Message 表（同 direct_answer / single_agent 路径）
-            if final_answer:
-                try:
-                    msg = self.get(Message, message.id)
-                    if msg is not None:
-                        self.update(msg, answer=final_answer)
-                except Exception:
-                    logger.warning("持久化 multi_agent answer 到 Message.answer 失败", exc_info=True)
 
             # 对话后写入记忆（同步降级，不影响主流程）
             yield from self._write_memory_from_conversation(
@@ -408,6 +439,15 @@ class AssistantAgentService(BaseService):
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["多智能体执行"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '多智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+        finally:
+            # 无论正常完成、异常、还是 GeneratorExit（用户关闭页面），都持久化已收集的 answer
+            if final_answer:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=final_answer)
+                except Exception:
+                    logger.warning("持久化 multi_agent answer 到 Message.answer 失败（finally）", exc_info=True)
 
     def _stream_single_agent(
         self, req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
@@ -423,6 +463,7 @@ class AssistantAgentService(BaseService):
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
+        collected_answer = ""
         try:
             agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent
             agent_config = AgentConfig(
@@ -450,7 +491,7 @@ class AssistantAgentService(BaseService):
                 long_term_memory=distant_summary,
                 user_memory=user_memory_text,
             )
-            collected_answer = ""
+            billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
                 query=req.query.data,
                 conversation=conversation,
@@ -465,22 +506,33 @@ class AssistantAgentService(BaseService):
                         collected_answer = payload.get("answer", "")
                     except Exception:
                         pass
+                # 截获 executor 发出的 billing delta 事件，累计到外层 aggregator
+                # executor 内部不再创建独立 aggregator（问题7修复），由外层统一累计
+                if chunk.startswith(billing_delta_prefix):
+                    try:
+                        data_part = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(data_part)
+                        meta = payload.get("metadata") or {}
+                        in_tok = int(meta.get("input_tokens", 0) or 0)
+                        out_tok = int(meta.get("output_tokens", 0) or 0)
+                        if in_tok or out_tok:
+                            billing_aggregator.model_tokens(
+                                "single_agent",
+                                input_tokens=in_tok,
+                                output_tokens=out_tok,
+                                reason="agent_llm_invoke",
+                            )
+                    except Exception:
+                        pass
                 yield chunk
 
+            # 外层 aggregator 在 final() 时根据累计的 total_tokens 触发实际扣费（问题6修复）
+            billing_aggregator.credit_service = self.credit_service
+            billing_aggregator.account_id = account.id
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
             billing_final = billing_aggregator.final()
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
-
-            # 持久化 answer 到 Message 表（与 direct_answer 路径同理，
-            # _persist_assistant_thoughts 传入空 agent_thoughts，需在此显式落库）
-            if collected_answer:
-                try:
-                    msg = self.get(Message, message.id)
-                    if msg is not None:
-                        self.update(msg, answer=collected_answer)
-                except Exception:
-                    logger.warning("持久化 single_agent answer 到 Message.answer 失败", exc_info=True)
 
             yield from self._write_memory_from_conversation(account, req.query.data, collected_answer, conversation.id)
         except Exception as e:
@@ -488,6 +540,15 @@ class AssistantAgentService(BaseService):
             billing_cancelled = billing_aggregator.cancelled(pending_phases=["单智能体执行"])
             yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
             yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '单智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+        finally:
+            # 无论正常完成、异常、还是 GeneratorExit（用户关闭页面），都持久化已收集的 answer
+            if collected_answer:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=collected_answer)
+                except Exception:
+                    logger.warning("持久化 single_agent answer 到 Message.answer 失败（finally）", exc_info=True)
 
     def _write_memory_from_conversation(self, account, query, ai_response, conversation_id):
         """对话后自动写入记忆，无需用户确认。降级时跳过。
@@ -517,9 +578,14 @@ class AssistantAgentService(BaseService):
                     ctx.push()
                     try:
                         from app.http.app import injector
+                        # 重新查询 account 对象，避免使用请求结束后变为 detached 的实例
+                        account_obj = self.db.session.get(Account, account_id)
+                        if account_obj is None:
+                            logger.warning("记忆写入后台线程跳过: account 不存在 id=%s", account_id)
+                            return
                         memory_write_service = injector.get(MemoryWriteService)
                         memory_write_service.write_from_conversation(
-                            account=account,
+                            account=account_obj,
                             query=query,
                             ai_response=ai_response,
                             conversation_id=conversation_id,
@@ -537,7 +603,7 @@ class AssistantAgentService(BaseService):
         yield from ()
 
     def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
-        """构建首页助手运行时工具，包括公共 Agent、创建应用和全局 MCP 绑定。"""
+        """构建首页助手运行时工具，包括公共 Agent、创建应用、全局 MCP 绑定和用户知识库检索。"""
         search_public_agents_tool = (
             self.public_agent_registry_service.convert_public_agent_search_to_tool()
             if self.public_agent_registry_service
@@ -566,6 +632,29 @@ class AssistantAgentService(BaseService):
             tools.extend(
                 self.app_config_service.get_langchain_tools_by_mcp_bindings(assistant_mcp_bindings)
             )
+
+        # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
+        try:
+            if self.retrieval_service is not None and has_app_context():
+                from internal.model import KnowledgeBase
+                kb_records = (
+                    self.db.session.query(KnowledgeBase)
+                    .filter(
+                        KnowledgeBase.owner_account_id == account_id,
+                        KnowledgeBase.enabled.is_(True),
+                    )
+                    .all()
+                )
+                kb_ids = [kb.id for kb in kb_records]
+                if kb_ids:
+                    knowledge_tool = self.retrieval_service.create_knowledge_retrieval_tool(
+                        flask_app=current_app._get_current_object(),
+                        knowledge_base_ids=kb_ids,
+                        account_id=account_id,
+                    )
+                    tools.append(knowledge_tool)
+        except Exception:
+            logger.warning("构建用户知识库检索工具失败，不影响其他工具", exc_info=True)
 
         return tools
 
@@ -941,16 +1030,33 @@ class AssistantAgentService(BaseService):
         if not is_confirm_phase and routing_decision is not None:
             if not routing_decision.get("cost_policy", {}).get("allowed", True):
                 yield from self._stream_insufficient_balance()
+                # 补上 AGENT_END 事件和持久化，避免孤儿 Message
+                yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+                self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
             if execution_mode == "deep_thinking":
                 yield from self._stream_deep_thinking_proposal(routing_decision)
+                # 补上 AGENT_END 事件和持久化，避免孤儿 Message
+                yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+                self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
             if execution_mode == "direct_answer":
                 yield from self._stream_direct_answer(req, account, conversation, message, routing_decision)
                 self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
             if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential"):
-                yield from self._stream_multi_agent(req, account, conversation, message, routing_decision, llm, tools, history)
+                # v5.2: MultiAgent 执行路径存在已知问题（实例创建缺 agent_config、DAG 引擎忽略 coordinator），
+                # 暂降级为 single_agent 执行，避免 100% 失败。待 MultiAgent 重构完成后恢复。
+                logger.warning(
+                    "MultiAgent 执行路径暂不可用（已知架构问题），降级为 single_agent: execution_mode=%s",
+                    execution_mode,
+                )
+                routing_decision = {**routing_decision, "execution_mode": "single_agent"}
+                yield from self._stream_single_agent(
+                    req, account, conversation, message, routing_decision, llm, tools, history, False,
+                    distant_summary=distant_summary,
+                )
+                self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision)
                 return
 
         should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
@@ -992,6 +1098,53 @@ class AssistantAgentService(BaseService):
     def _persist_assistant_thoughts(self, account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision):
         """持久化消息与推理过程到数据库。"""
         try:
+            # 若 agent_thoughts 为空，从 Message 表读取已持久化的 answer 构造伪 thought，
+            # 让 save_agent_thoughts 能更新 Message 状态并触发计费
+            if not agent_thoughts:
+                msg = self.get(Message, message.id)
+                if msg and msg.answer:
+                    from internal.core.agent.entities.queue_entity import AgentThought
+                    agent_thoughts = [
+                        AgentThought(
+                            id=message.id,
+                            task_id=message.id,
+                            event=QueueEvent.AGENT_MESSAGE,
+                            thought="assistant_agent",
+                            observation=msg.answer,
+                            answer=msg.answer,
+                            latency=0,
+                            total_token_count=0,
+                        )
+                    ]
+            else:
+                # 将 dict 形式的 agent_thoughts 转为 AgentThought 对象
+                from internal.core.agent.entities.queue_entity import AgentThought
+                raw_list = list(agent_thoughts.values()) if isinstance(agent_thoughts, dict) else (agent_thoughts or [])
+                normalized = []
+                for item in raw_list:
+                    if isinstance(item, AgentThought):
+                        normalized.append(item)
+                    elif isinstance(item, dict):
+                        event_val = item.get("event", QueueEvent.AGENT_MESSAGE.value)
+                        # 字符串事件值转为 QueueEvent 枚举
+                        if isinstance(event_val, str):
+                            try:
+                                event_val = QueueEvent(event_val)
+                            except ValueError:
+                                event_val = QueueEvent.AGENT_MESSAGE
+                        normalized.append(AgentThought(
+                            id=item.get("id", message.id),
+                            task_id=item.get("task_id", message.id),
+                            event=event_val,
+                            thought=item.get("thought", ""),
+                            observation=item.get("observation", ""),
+                            answer=item.get("answer", ""),
+                            latency=item.get("latency", 0),
+                            total_token_count=item.get("total_token_count", 0),
+                            tool=item.get("tool", ""),
+                            tool_input=item.get("tool_input", {}),
+                        ))
+                agent_thoughts = normalized
             self.conversation_service.save_agent_thoughts(
                 account_id=account.id,
                 app_id=assistant_agent_id,
@@ -1000,7 +1153,7 @@ class AssistantAgentService(BaseService):
                 },
                 conversation_id=conversation.id,
                 message_id=message.id,
-                agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()] if isinstance(agent_thoughts, dict) else (agent_thoughts or []),
+                agent_thoughts=agent_thoughts,
                 routing_decision=routing_decision,
             )
         except Exception:

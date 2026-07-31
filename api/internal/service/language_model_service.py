@@ -775,12 +775,11 @@ class LanguageModelService(BaseService):
                 "parameters": {},
             }
             # 加载 key 覆盖（与 resolve_runtime_language_model 一致）
-            # _try_load_key_overrides_for_config 是实例方法，必须通过 svc 调用
-            overridden = svc._try_load_key_overrides_for_config(config_dict)
-            if overridden is not None:
-                config_dict = overridden
+            # _try_load_key_overrides_for_config 返回 attribute_overrides（api_key/base_url），
+            # 必须作为 attribute_overrides 传入，不能替换 config_dict（否则丢失 provider/model）
+            attribute_overrides = svc._try_load_key_overrides_for_config(config_dict)
 
-            return svc._instantiate_language_model(config_dict)
+            return svc._instantiate_language_model(config_dict, attribute_overrides=attribute_overrides)
         except Exception:
             logger.warning("_instantiate_model_from_pool_config: 实例化失败", exc_info=True)
             return None

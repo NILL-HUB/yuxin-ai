@@ -194,7 +194,7 @@ class PromptSyncService:
 
         try:
             return content.format(**variables)
-        except (KeyError, IndexError):
+        except (KeyError, IndexError, ValueError):
             logger.warning(
                 "prompt %s 变量填充失败，返回原始内容。variables=%s",
                 prompt_key, variables,

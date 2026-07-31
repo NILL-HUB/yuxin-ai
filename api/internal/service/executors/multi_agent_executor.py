@@ -170,13 +170,28 @@ class MultiAgentExecutor:
             for result in results:
                 token_usage = (result.metadata or {}).get("token_usage") or {}
                 if token_usage:
-                    from internal.entity.billing_metering_entity import BillingEventType
-                    from internal.service.billing_metering_service import BillingUsageAggregator
-                    billing_delta = BillingUsageAggregator(task_id=message_id).model_tokens(
-                        "multi_agent",
-                        input_tokens=token_usage.get("prompt_tokens", 0),
-                        output_tokens=token_usage.get("completion_tokens", 0),
+                    # 直接构造 BillingUsageDelta 用于 SSE 事件，不再创建独立 aggregator
+                    # 外层 assistant_agent_service 的 billing_aggregator 负责累计与扣费
+                    from internal.entity.billing_metering_entity import (
+                        BillingEventType,
+                        BillingUsageDelta,
+                    )
+                    input_tokens = token_usage.get("prompt_tokens", 0) or 0
+                    output_tokens = token_usage.get("completion_tokens", 0) or 0
+                    total_tokens = max(input_tokens, 0) + max(output_tokens, 0)
+                    delta_credits = int(total_tokens / 1000)
+                    billing_delta = BillingUsageDelta(
+                        event_type=BillingEventType.DELTA.value,
+                        task_id=message_id,
+                        source_type="model",
+                        source_name="multi_agent",
+                        delta_credits=delta_credits,
+                        total_credits=delta_credits,
                         reason="agent_llm_invoke",
+                        metadata={
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                        },
                     )
                     yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"
                 # 子任务完成事件：让前端可见每个子任务的完成状态、答案摘要与错误信息

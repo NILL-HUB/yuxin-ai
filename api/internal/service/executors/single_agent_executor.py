@@ -129,13 +129,28 @@ class SingleAgentExecutor:
                 for result in results:
                     token_usage = (result.metadata or {}).get("token_usage") or {}
                     if token_usage:
-                        from internal.entity.billing_metering_entity import BillingEventType
-                        from internal.service.billing_metering_service import BillingUsageAggregator
-                        billing_delta = BillingUsageAggregator(task_id=message_id).model_tokens(
-                            "single_agent",
-                            input_tokens=token_usage.get("prompt_tokens", 0),
-                            output_tokens=token_usage.get("completion_tokens", 0),
+                        # 直接构造 BillingUsageDelta 用于 SSE 事件，不再创建独立 aggregator
+                        # 外层 assistant_agent_service 的 billing_aggregator 负责累计与扣费
+                        from internal.entity.billing_metering_entity import (
+                            BillingEventType,
+                            BillingUsageDelta,
+                        )
+                        input_tokens = token_usage.get("prompt_tokens", 0) or 0
+                        output_tokens = token_usage.get("completion_tokens", 0) or 0
+                        total_tokens = max(input_tokens, 0) + max(output_tokens, 0)
+                        delta_credits = int(total_tokens / 1000)
+                        billing_delta = BillingUsageDelta(
+                            event_type=BillingEventType.DELTA.value,
+                            task_id=message_id,
+                            source_type="model",
+                            source_name="single_agent",
+                            delta_credits=delta_credits,
+                            total_credits=delta_credits,
                             reason="agent_llm_invoke",
+                            metadata={
+                                "input_tokens": input_tokens,
+                                "output_tokens": output_tokens,
+                            },
                         )
                         yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"
                     # 主 thought 事件（兼容前端旧协议，将真实 answer 作为 observation）
@@ -152,6 +167,8 @@ class SingleAgentExecutor:
         except Exception as e:
             logger.warning("SingleAgentExecutor 执行失败: %s", e, exc_info=True)
             yield self._fallback_sse(conversation_id, message_id)
+            # 补发 AGENT_END 事件，让前端能识别流结束
+            yield self._agent_end_sse(conversation_id, message_id)
 
     def _build_plan(self, query, execution_mode) -> TaskPlan:
         mode = execution_mode or ExecutionMode.SINGLE_AGENT.value

@@ -159,19 +159,23 @@ def _build_agent_pool_summary() -> list[dict[str, Any]]:
     只暴露：name + label + description + default_capabilities + task_keywords
     仅包含 visible_to_user=True 的池（internal_admin 不暴露给指挥官 LLM）。
     """
-    registry = AgentSubPoolRegistry()
-    pools = registry.list_pools()
-    return [
-        {
-            "name": p["name"],
-            "label": p["label"],
-            "description": p["description"],
-            "capabilities": list(p.get("default_capabilities") or []),
-            "task_keywords": list(p.get("task_keywords") or [])[:10],
-        }
-        for p in pools
-        if p.get("visible_to_user", True)
-    ]
+    try:
+        registry = AgentSubPoolRegistry()
+        pools = registry.list_pools()
+        return [
+            {
+                "name": p.get("name", ""),
+                "label": p.get("label", p.get("name", "")),
+                "description": p.get("description", ""),
+                "capabilities": list(p.get("default_capabilities") or []),
+                "task_keywords": list(p.get("task_keywords") or [])[:10],
+            }
+            for p in pools
+            if p.get("visible_to_user", True)
+        ]
+    except Exception:
+        logger.warning("构建 Agent 池摘要失败", exc_info=True)
+        return []
 
 
 def _build_model_summary(top_k: int = 12) -> list[dict[str, Any]]:
@@ -338,7 +342,24 @@ class ConductorService:
 ---
 
 请分析上述请求，按 schema 输出执行计划。"""
-        return structured_llm.invoke(prompt)
+        response = structured_llm.invoke(prompt)
+        # 指挥官 LLM 计费：conductor 是 billable=false 的 feature_key（见
+        # public_ai_feature_config 表），不扣用户额度。charge_for_feature 的实际签名为
+        # (credit_service, account_id, feature_key, token_count)，需要 credit_service 与
+        # account_id，而 _invoke_llm 上下文中不可得，故此处仅记录 token usage 到日志，
+        # 供成本统计与对账使用。
+        try:
+            usage = getattr(response, "usage_metadata", None) or {}
+            input_tokens = usage.get("input_tokens", 0) if isinstance(usage, dict) else 0
+            output_tokens = usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
+            if input_tokens or output_tokens:
+                logger.info(
+                    "指挥官 LLM token usage: input=%d, output=%d",
+                    input_tokens, output_tokens,
+                )
+        except Exception:
+            logger.warning("指挥官 LLM token usage 记录失败", exc_info=True)
+        return response
 
     # ── 计划转换 ───────────────────────────────────────────────
 
@@ -472,8 +493,10 @@ class ConductorService:
                 recommended_tier = str(max(tiers))
 
         # agent_subset：供现有执行器读取的 Agent 子集
+        selected_agents = [a.to_dict() for a in plan.agents]
         agent_subset = {
-            "selected": [a.to_dict() for a in plan.agents],
+            "selected": selected_agents,
+            "selected_agents": selected_agents,  # 兼容 MultiAgentExecutor 读取的键名
             "aggregation_strategy": plan.aggregation_strategy,
             "source": "conductor",
         }
@@ -505,7 +528,7 @@ class ConductorService:
             "reason": plan.reason,
             "agent_subset": agent_subset,
             "tool_subset": None,  # 工具由 Agent 自行检索，不由指挥官指定
-            "cost_policy": None,
+            "cost_policy": {"allowed": True, "reason": "conductor_default_allow"},
             "billing_events": [],
             "task_plan_summary": task_plan_summary,
             "synthesis_summary": None,

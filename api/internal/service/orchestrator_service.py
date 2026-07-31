@@ -209,13 +209,13 @@ class OrchestratorService:
             return RoutingDecision(
                 intent="fallback",
                 complexity="unknown",
-                execution_mode=ExecutionMode.SINGLE_AGENT.value,
-                needs_tools=True,
-                needs_agent=True,
+                execution_mode=ExecutionMode.DIRECT_ANSWER.value,
+                needs_tools=False,
+                needs_agent=False,
                 needs_multi_agent=False,
-                recommended_model_tier="2",
+                recommended_model_tier="1",
                 risk_level=RiskLevel.UNKNOWN.value,
-                reason="调度决策失败，已回退到原 Assistant Agent 流程",
+                reason=f"路由决策异常，回退到直接回答: {exc}",
                 agent_subset={
                     "matched_agent_pools": [],
                     "selected_agents": [],

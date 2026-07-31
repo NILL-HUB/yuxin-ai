@@ -1,10 +1,14 @@
+import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from internal.entity.billing_metering_entity import (
     BillingEventType,
     BillingUsageCancelled,
     BillingUsageDelta,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -13,6 +17,12 @@ class BillingUsageAggregator:
     total_credits: int = 0
     credits_per_1k_tokens: int = 1
     events: list[BillingUsageDelta | BillingUsageCancelled] = field(default_factory=list)
+    # 可选注入：注入后 final() 会实际调用 CreditService 扣费
+    credit_service: Any = None
+    account_id: Any = None
+    feature_key: str = "assistant_agent"
+    # 累计原始 token 数，用于 final() 调用 consume_for_feature(token_count=...)
+    total_tokens: int = 0
 
     def started(self) -> BillingUsageDelta:
         return self._record(
@@ -33,6 +43,11 @@ class BillingUsageAggregator:
         metadata: dict | None = None,
     ) -> BillingUsageDelta:
         self.total_credits += delta_credits
+        # 累计 model 来源的原始 token，供 final() 实际扣费使用
+        if source_type == "model" and metadata:
+            self.total_tokens += int(metadata.get("input_tokens", 0) or 0) + int(
+                metadata.get("output_tokens", 0) or 0
+            )
         return self._record(
             BillingEventType.DELTA.value,
             source_type,
@@ -86,13 +101,32 @@ class BillingUsageAggregator:
         return event
 
     def final(self) -> BillingUsageDelta:
-        return self._record(
+        event = self._record(
             BillingEventType.FINAL.value,
             "summary",
             "billing",
             0,
             "billing_final",
         )
+        # 实际扣费：如果注入了 credit_service 和 account_id，则调用 CreditService
+        # consume_for_feature 签名为 (account_id, feature_key, *, token_count)，
+        # 因此使用累计的 total_tokens 而非 total_credits
+        if (
+            self.credit_service is not None
+            and self.account_id is not None
+            and self.total_tokens > 0
+        ):
+            try:
+                self.credit_service.consume_for_feature(
+                    account_id=self.account_id,
+                    feature_key=self.feature_key,
+                    token_count=self.total_tokens,
+                )
+            except Exception:
+                logger.warning(
+                    "BillingUsageAggregator 扣费失败 task_id=%s", self.task_id, exc_info=True
+                )
+        return event
 
     def _record(
         self,
