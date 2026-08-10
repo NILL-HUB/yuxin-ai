@@ -9,7 +9,7 @@
 
 ## 16. 脑启发记忆系统（v5.0 新增）
 
-> **定位**：本章定义 OpenAgent 的长期记忆系统。记忆系统与知识库系统（第 11 章）是两个独立系统：知识库系统解决"知识资产管理"问题（文档上传、RAG 检索、外部数据源同步），记忆系统解决"Agent 认知记忆"问题——如何让 Agent 像人脑一样写入、巩固、召回和遗忘记忆。
+> **定位**：本章定义 钰心AI 的长期记忆系统。记忆系统与知识库系统（第 11 章）是两个独立系统：知识库系统解决"知识资产管理"问题（文档上传、RAG 检索、外部数据源同步），记忆系统解决"Agent 认知记忆"问题——如何让 Agent 像人脑一样写入、巩固、召回和遗忘记忆。
 >
 > **与旧记忆系统的关系**：本章**完全替代**旧记忆系统（MemoryCandidateExtractor + MemoryConfidenceTracker + UserMemoryConfirmationService 的"候选→确认→保存"流程）。旧系统的逐条确认流程被**自动写入 + 图可视化事后管理**替代：SalienceScorer 评分后自动写入，用户通过图数据库可视化界面随时 CRUD 自己的记忆。系统处于二开阶段，无生产数据，不做向后兼容，旧代码直接删除。
 >
@@ -345,3 +345,62 @@ DB 实际预置（11 个，全部 billable=false，model_type=chat）：
 记忆系统的 11 个 `memory_*` feature_key 全部 `billable=false`（系统基础设施，不扣用户配额）。`CreditService.consume_for_feature` 对这些 feature_key 直接返回 None，平台承担 LLM 调用成本。
 
 用户付费能力（`billable=true`）8 个：`direct_answer` / `conversation_summary` / `assistant_agent_intro` / `rerank_fallback` / `prompt_optimization` / `code_assistant` / `schema_assistant` / `tag_assignment`。详见 [../modules/07-public-ai-config.md](../modules/07-public-ai-config.md) §24.3.6。
+
+### 16.19 Hermes 优秀基因吸纳与演进路线（v5.2 新增）
+
+> **背景**：调研 [Hermes Agent](https://github.com/NousResearch/hermes-agent)（Nous Research 出品，MIT 协议）后，选择性吸收其 5 个优秀设计基因。钰心AI 记忆系统在检索能力（System 1/2 双路 + BM25+向量+图扩展）、冲突处理（SUPERSEDE/COMPLEMENT + 四时间戳双时间模型）、遗忘机制（赫布权重衰减 + 衰减豁免）、上下文压缩（FunnelCompressor 五层漏斗）上明显优于 Hermes；但 Hermes 在 Agent 自主性（Agent-Curated Memory + 周期性 Nudge）和 Skill 生命周期治理（即时触发 + Curator 剪枝 + bump_use 实时统计）上更成熟。本节记录吸纳的 5 个基因和 3 个已修复的断裂点。
+>
+> **详细设计**：[03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) §8.5-§8.7、[01-data-models-and-write-path.md](./01-data-models-and-write-path.md) §16.5.4-§16.5.5
+
+#### 16.19.1 断裂点修复（已完成，P0）
+
+v5.2 修复了 3 个设计与实现之间的断裂点：
+
+| 断裂点 | 修复前状态 | 修复方式 | 验证 |
+|---|---|---|---|
+| ⚠️-1 SkillEmergence 未被调用 | `ConsolidationEngine` 五阶段均未调用 `scan_and_emerge`，仅测试中调用 | 新增 `ConsolidationPhase.SKILL` 枚举值，巩固引擎改为六阶段，Phase 5 委托 `SkillEmergence.scan_and_emerge` | ✅ 单元测试通过 |
+| ⚠️-2 skills_emerged 取错字段 | `report.skills_emerged` 取的是 `semantics_created`（语义记忆数）而非技能涌现数 | 从 Phase 5（SKILL）返回值 `skills_emerged` 字段获取真实技能涌现数 | ✅ e2e 测试 `assert hasattr(report, "skills_emerged")` 通过 |
+| ⚠️-3 无 Curator 周期剪枝触发器 | `SKILL_TRANSITIONS` 状态机有设计无触发，STALE→DEPRECATED 永不执行 | 新增 `SkillEmergence.curate_skills()` 方法 + Celery 任务 `run_skill_curation`（每周日凌晨 4:00） | ✅ 语法检查通过 |
+
+**修改文件**：
+- [api/internal/model/memory_models.py](../../../api/internal/model/memory_models.py) — `ConsolidationPhase` 新增 `SKILL` 枚举值
+- [api/internal/service/memory/consolidation_engine.py](../../../api/internal/service/memory/consolidation_engine.py) — 五阶段→六阶段，新增 `_phase5_skill_emergence` + `_get_redis`
+- [api/internal/service/memory/skill_emergence.py](../../../api/internal/service/memory/skill_emergence.py) — 新增 `curate_skills` + `_read_skill_stats` + `_clear_skill_stats`
+- [api/internal/task/consolidation_tasks.py](../../../api/internal/task/consolidation_tasks.py) — 新增 `run_skill_curation` Celery 任务 + beat_schedule 注册
+
+#### 16.19.2 待吸纳的 5 个 Hermes 基因
+
+以下 5 个基因已设计完成，按优先级分批落地。详细设计见子文档。
+
+| 基因 | 优先级 | 灵感来源 | 目标文档 | 状态 |
+|---|---|---|---|---|
+| 1. Skill 即时触发机制 | P0 | Hermes: "Autonomous skill creation after complex tasks" | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) §8.5 | 设计完成，待实施 |
+| 2. Progressive Disclosure 分层加载 | P1 | 分层加载设计思想（⚠️ 来源未直接证实，标注为设计思想参考） | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) §8.6 | 设计完成，待实施 |
+| 3. Curator 周期剪枝 + bump_use 实时统计 | P1 | Hermes: "Skills self-improve during use" | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) §8.7 | Curator 部分已实施（断裂点 ⚠️-3），bump_use 待实施 |
+| 4. Agent-Curated Memory（Agent 自主记忆） | P2 | Hermes: "Agent-curated memory with periodic nudges" | [01-data-models-and-write-path.md](./01-data-models-and-write-path.md) §16.5.4 | 设计完成，待实施 |
+| 5. 周期性 Nudge 机制 | P2 | Hermes: "Agent-curated memory with periodic nudges" | [01-data-models-and-write-path.md](./01-data-models-and-write-path.md) §16.5.5 | 设计完成，待实施 |
+
+#### 16.19.3 基因吸纳的架构原则
+
+1. **不替换，只增强**：钰心AI 记忆系统的核心架构（三层抽象 + System 1/2 + 四级存储 + 赫布衰减）保持不变，Hermes 基因作为增强层叠加
+2. **复用现有代码**：基因 1 复用 `SkillEmergence._extract_template()` / `_find_existing_skill()` / `_persist_skill()`；基因 3 复用 `_compute_maturity()` / `_transition_status()` / `SKILL_TRANSITIONS` 状态机
+3. **双通道并存**：基因 4 的 Agent-Curated 写入与现有系统自动记录写入并存（系统自动记录作为兜底快路径，Agent-Curated 作为精准路径）
+4. **渐进式落地**：按 P0→P1→P2 优先级分批实施，每个基因可独立落地，无强依赖
+
+#### 16.19.4 依赖关系
+
+```
+断裂点修复（已完成）──→ 基因1（即时触发）──→ 基因3（Curator + bump_use）
+                                              │
+                                         基因2（分层加载，独立）
+
+基因4（Agent-Curated）──→ 基因5（Nudge 触发）
+```
+
+#### 16.19.5 与 Hermes 的能力边界
+
+钰心AI 记忆系统**不吸纳**的 Hermes 特性：
+- **SQLite + FTS5 存储后端**：钰心AI 已有更强的 Neo4j TKG + pgvector 双存储
+- **MEMORY.md / USER.md 文件格式**：钰心AI 已有结构化的 Pydantic 数据模型
+- **Honcho 辩证用户建模**：v5.1 已将其降级为可插拔后端之一，非默认路径
+- **agentskills.io 开放标准**：与 钰心AI 的多租户平台架构不匹配，暂不兼容

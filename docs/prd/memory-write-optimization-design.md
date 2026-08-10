@@ -837,7 +837,7 @@ weights = {"emotion": 0.20, "novelty": 0.16, "goal_relevance": 0.20,
 
 ## 7. API 端点设计说明
 
-显式检测优化**复用现有 API**，不新增端点。架构文档定义的 13 个 API 端点（见 [03-consolidation-skill-policy-api.md](file:///d:/DEMO/openagent-main/docs/prd/memory-system/03-consolidation-skill-policy-api.md) 第 10 章）完全覆盖显式检测的需求：
+显式检测优化**复用现有 API**，不新增端点。架构文档定义的 13 个 API 端点（见 [03-consolidation-skill-policy-api.md](./memory-system/03-consolidation-skill-policy-api.md) 第 10 章）完全覆盖显式检测的需求：
 
 | 现有端点 | 显式检测复用方式 |
 |---|---|

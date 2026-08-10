@@ -128,7 +128,7 @@
 10. 路由日志只暴露给管理员；保留时长应可配置，若第一阶段配置复杂则默认保留一个月；当前暂不要求脱敏。
 11. 成本统计在管理员后台按用户、Agent、工具、模型、Key 等维度拆分；用户侧统一聚合为积分 / token 扣费。
 12. 动态工具改造应先设计通用 ToolPool 抽象，再用 MCP 作为第一类适配器试点，后续扩展 API、Builtin、知识库和 Workflow。
-13. 高风险工具按系统归属隔离：涉及 OpenAgent 平台自身系统的工具普通用户不可触发；涉及用户自己系统、用户授权业务系统、沙箱或测试环境的高风险工具，可以在授权、作用域、审计和必要确认下触发。
+13. 高风险工具按系统归属隔离：涉及 钰心AI 平台自身系统的工具普通用户不可触发；涉及用户自己系统、用户授权业务系统、沙箱或测试环境的高风险工具，可以在授权、作用域、审计和必要确认下触发。
 14. 执行过程需要实时计费，前端持续展示已消耗积分 / token，用户可在成本过高时手动终止任务止损；系统只扣已实际发生的成本。
 15. 子池分类第一阶段由管理员手动分配和打标签，不依赖自动分类。
 16. Agent 和工具质量评分第一阶段先由管理员手动维护，后续再基于成功率、反馈、耗时和成本数据做自动或半自动评分。
@@ -183,7 +183,7 @@
 
 ## 27. 总结
 
-本 PRD 建议将 OpenAgent 的演进方向定义为"通用 Agent 调度平台"。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、AppAssignment、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、脑启发记忆引擎（时序知识图谱+巩固引擎+技能涌现）、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
+本 PRD 建议将 钰心AI 的演进方向定义为"通用 Agent 调度平台"。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、AppAssignment、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、脑启发记忆引擎（时序知识图谱+巩固引擎+技能涌现）、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
 
 当前路径已经完成：
 

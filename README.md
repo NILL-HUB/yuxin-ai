@@ -1,16 +1,16 @@
 <a id="readme-top"></a>
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/15024f52-cb4d-4222-bd8e-b7aa385a6f3e" alt="OpenAgent Logo" width="360" />
+  <img src="https://github.com/user-attachments/assets/15024f52-cb4d-4222-bd8e-b7aa385a6f3e" alt="钰心AI Logo" width="360" />
 
   <p align="center">
-    An end-to-end AI agent platform for building, orchestrating, publishing, and operating AI applications.
+    YuxinAI (钰心AI): a device-agent and partner co-creation platform.
     <br />
-    Flask + LangChain/LangGraph backend, Vue 3 workspace, visual workflows, datasets, tools, and OpenAPI delivery.
+    Quart + LangChain/LangGraph backend, Vue 3 workspace, visual workflows, device tools, skills, avatars, and OpenAPI delivery.
   </p>
 
   <p align="center">
-    <strong>Sponsored by <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=openagent">Atlas Cloud</a></strong>
+    <strong>Sponsored by <a href="https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yuxin-ai">Atlas Cloud</a></strong>
   </p>
 
   <p align="center">
@@ -20,7 +20,7 @@
     ·
     <a href="README_ZH.md">中文文档</a>
     ·
-    <a href="https://github.com/Haohao-end/openagent">GitHub</a>
+    <a href="https://github.com/NILL-HUB/yuxin-ai">GitHub</a>
   </p>
 
   <p align="center">
@@ -29,7 +29,7 @@
     <img src="https://img.shields.io/badge/vue-3-4FC08D?logo=vue.js&logoColor=white" alt="Vue 3" />
     <img src="https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white" alt="Docker Compose" />
     <img src="https://img.shields.io/badge/weaviate-vector%20db-00C6A7" alt="Weaviate" />
-    <a href="https://deepwiki.com/Haohao-end/openagent"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
+    <a href="https://deepwiki.com/NILL-HUB/yuxin-ai"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki" /></a>
   </p>
 </div>
 
@@ -48,9 +48,11 @@
 
 ## About The Project
 
-<img width="2560" height="1418" alt="OpenAgent Product Overview" src="https://github.com/user-attachments/assets/0f8f7517-1622-46ea-9554-fb13af4841a1" />
+<img width="2560" height="1418" alt="钰心AI Product Overview" src="https://github.com/user-attachments/assets/0f8f7517-1622-46ea-9554-fb13af4841a1" />
 
-OpenAgent is a full-stack platform for teams building AI applications rather than a single chat demo. The repository combines a Flask backend, Celery workers, a Vue 3 frontend, visual workflow authoring, dataset and document management, public app and workflow publishing, and OpenAPI-based delivery.
+> Current direction: 钰心AI is being repositioned as a device-agent and partner co-creation platform. The sections below describe the current implementation baseline, which is being refactored.
+
+YuxinAI (钰心AI) is a platform that combines device-level agent control, skill packaging, digital avatars, and a partner revenue ecosystem. The repository currently contains a Quart backend, Celery workers, a Vue 3 frontend, visual workflow authoring, tool governance, model routing, skills, memory, billing, and OpenAPI-based delivery.
 
 What the current codebase already supports:
 
@@ -73,7 +75,7 @@ Click the diagram to view the full-resolution architecture image.
 
 - AI framework and orchestration: LangChain, LangGraph, workflow orchestration, tool calling, A2A delegation, skills, memory
 - Knowledge and retrieval: RAG, semantic retrieval, full-text retrieval, hybrid retrieval, Weaviate, FAISS
-- Backend: Python, Flask, SQLAlchemy, Celery, Flask-SocketIO, Redis, PostgreSQL
+- Backend: Python, Quart, SQLAlchemy, Celery, Socket.IO, Redis, PostgreSQL
 - Frontend: Vue 3, JavaScript / TypeScript, Vite, TailwindCSS, Pinia, Vue Flow, Arco Design
 - Infrastructure and delivery: Docker Compose, Nginx, OpenAPI, SSE
 - Model integrations: OpenAI, Atlas Cloud, DeepSeek, Grok, Google, Moonshot, Tongyi, Wenxin, Ollama, Zhipu
@@ -81,11 +83,11 @@ Click the diagram to view the full-resolution architecture image.
 ### Provider Ecosystem
 
 <p align="center">
-  <img src="ui/public/atlas-cloudXopenagent.jpg" alt="Atlas Cloud" width="520" />
+  <img src="ui/public/atlas-cloudXyuxin-ai.jpg" alt="Atlas Cloud" width="520" />
 </p>
 
 - Atlas Cloud is now available as an OpenAI-compatible provider with `ATLASCLOUD_API_KEY` and `ATLASCLOUD_API_BASE`.
-- Official website: [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=openagent)
+- Official website: [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yuxin-ai)
 - Integration docs: [https://www.atlascloud.ai/docs](https://www.atlascloud.ai/docs)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -104,8 +106,8 @@ Click the diagram to view the full-resolution architecture image.
 1. Clone the repository.
 
    ```bash
-   git clone https://github.com/Haohao-end/openagent.git
-   cd openagent
+   git clone https://github.com/NILL-HUB/yuxin-ai.git
+   cd yuxin-ai
    ```
 
 2. Create the runtime environment file.
@@ -135,7 +137,7 @@ Click the diagram to view the full-resolution architecture image.
    | Service | URL | Notes |
    | --- | --- | --- |
    | Frontend | http://localhost:3000 | Vue 3 web UI |
-   | API | http://localhost:5001 | Flask REST API |
+   | API | http://localhost:5001 | Quart REST API |
    | Nginx | http://localhost | Reverse proxy |
 
 ### Local Development
@@ -179,13 +181,13 @@ npm run test:unit -- --run
 
 ### 1. Home Assistant Experience
 
-<img width="2560" height="1418" alt="OpenAgent Home Assistant" src="https://github.com/user-attachments/assets/7ebb7827-838b-4bd2-b522-9f544f32416a" />
+<img width="2560" height="1418" alt="钰心AI Home Assistant" src="https://github.com/user-attachments/assets/7ebb7827-838b-4bd2-b522-9f544f32416a" />
 
 Use the home page as the default assistant entry point to route user questions to the most relevant published public agents through A2A, or describe a new idea in natural language and trigger AI app creation. The same surface also supports multi-turn chat, suggested prompts, image upload, and audio input.
 
 ### 2. App Workspace and Deep Research
 
-<img width="1920" height="1080" alt="OpenAgent App Workspace Deep Research" src="https://github.com/user-attachments/assets/2dd4dc3e-f216-4c8d-96e4-7a2f81e138ae" />
+<img width="1920" height="1080" alt="钰心AI App Workspace Deep Research" src="https://github.com/user-attachments/assets/2dd4dc3e-f216-4c8d-96e4-7a2f81e138ae" />
 
 The app workspace is the main work area for an AI app, not a standalone settings page. The left side handles model, prompt, and capability bindings. The right side is used for live debugging, execution traces, and result checks. In the current codebase, the README term `Deep Research` maps to the deep thinking mode behind `enable_deep_thinking`.
 
@@ -199,19 +201,19 @@ Key capabilities:
 
 ### 3. Visual Workflow Editor
 
-<img width="2560" height="1599" alt="OpenAgent Workflow Editor" src="https://github.com/user-attachments/assets/23b510e2-1232-4f52-9262-812a7523ae21" />
+<img width="2560" height="1599" alt="钰心AI Workflow Editor" src="https://github.com/user-attachments/assets/23b510e2-1232-4f52-9262-812a7523ae21" />
 
 Author workflows with nodes such as LLM, tool, dataset retrieval, code, HTTP request, template transform, text processor, variable assigner, parameter extractor, if/else, start, and end.
 
 ### 4. Dataset and Retrieval
 
-<img width="2560" height="1418" alt="OpenAgent Dataset Management" src="https://github.com/user-attachments/assets/6f000681-db56-461a-bac9-a2dd5d6cd009" />
+<img width="2560" height="1418" alt="钰心AI Dataset Management" src="https://github.com/user-attachments/assets/6f000681-db56-461a-bac9-a2dd5d6cd009" />
 
 Create datasets, upload documents, inspect segments, and wire retrieval nodes into workflows or AI apps for knowledge-enabled behavior.
 
 ### 5. OpenAPI Delivery
 
-<img width="2560" height="1418" alt="OpenAgent OpenAPI" src="https://github.com/user-attachments/assets/40769d35-89e1-4b76-9686-a431a77a42c7" />
+<img width="2560" height="1418" alt="钰心AI OpenAPI" src="https://github.com/user-attachments/assets/40769d35-89e1-4b76-9686-a431a77a42c7" />
 
 Publish an app and call it over `POST /api/openapi/chat` with standard or streaming responses, including support for multi-turn conversation identifiers.
 
@@ -247,14 +249,14 @@ The repository already includes automated backend and frontend tests.
 
 ## Contact
 
-- Project Link: https://github.com/Haohao-end/openagent
+- Project Link: https://github.com/NILL-HUB/yuxin-ai
 - Website: https://openllm.cloud
 - API Docs: https://s.apifox.cn/c76bd530-fd50-429c-94cc-f0e41c2675d1/api-305434417
-- DeepWiki: https://deepwiki.com/Haohao-end/openagent
+- DeepWiki: https://deepwiki.com/NILL-HUB/yuxin-ai
 
 ## Acknowledgments
 
-- Thanks to Atlas Cloud for supporting OpenAgent.
+- Thanks to Atlas Cloud for supporting 钰心AI.
 - Special thanks to Rui Yang and Haoyu Wang (Johns Hopkins University) for responsibly reporting a Host Header poisoning issue in the built-in tool icon URL construction and helping improve the security of this project.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

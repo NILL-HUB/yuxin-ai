@@ -1292,6 +1292,181 @@ async with self._neo4j.session() as session:
 
 ---
 
+### 8.5 Skill 即时触发机制（v5.2 新增）
+
+> **灵感来源**：Hermes Agent — "Autonomous skill creation after complex tasks"
+> **实施优先级**：P0
+> **依赖**：断裂点 ⚠️-1 已修复（`SkillEmergence.scan_and_emerge` 已接通巩固引擎）
+
+#### 设计思路
+
+当前 Skill 涌现是**每日凌晨巩固时批处理扫描**（Celery `daily-consolidation`，每日 3:00），延迟太大。吸纳 Hermes 的**任务结束后即时评估**机制，形成"即时涌现 + 批量巩固"双路径。
+
+#### 触发流程
+
+```
+对话/任务结束
+    │
+    ▼
+PostExecutionHook（新增，挂在 AssistantAgentService._write_memory_from_conversation 之后）
+    │
+    ├─ 检查触发条件（满足任一）:
+    │   ├── 本次任务 tool_call ≥ 5 次（复杂任务）
+    │   ├── 出错后自动恢复（自我纠错）
+    │   ├── 用户纠正 Agent 输出（correction signal）
+    │   └── 非显而易见的工作流（novel workflow detection）
+    │
+    ▼ [命中触发条件]
+异步后台任务（Celery beat_one_off）
+    │
+    ├─ 1. 收集执行轨迹（trajectory）
+    │      从本次会话的 Episode 节点提取工具调用序列
+    │
+    ├─ 2. 调用 SkillEmergence._extract_template()    ← 复用现有代码
+    │      LLM 分析轨迹，提取参数化技能模板
+    │
+    ├─ 3. 查找已有 Skill（_find_existing_skill）      ← 复用现有代码
+    │      ├── 命中 → _update_skill（增量更新，调用 bump_use）
+    │      └── 未命中 → _persist_skill（创建 CANDIDATE 状态 Skill）
+    │
+    └─ 4. 完全静默，用户无感
+```
+
+#### 与现有架构的融合点
+
+| 现有组件 | 融合方式 |
+|---|---|
+| `AssistantAgentService._write_memory_from_conversation()` | 在现有后台线程中追加调用 `PostExecutionHook` |
+| `SkillEmergence._extract_template()` | **复用现有代码**，无需修改 |
+| `SkillEmergence._find_existing_skill()` | **复用现有代码** |
+| `SkillEmergence._update_skill()` / `_persist_skill()` | **复用现有代码** |
+| `ConsolidationEngine` Phase 5（SKILL） | **保持不变**，每日巩固仍做批量扫描（作为即时涌现的补充） |
+
+#### 配置项（SkillConfig 新增）
+
+```python
+instant_emergence_enabled: bool = True
+instant_emergence_min_tool_calls: int = 5
+instant_emergence_model: str = "gpt-4o-mini"  # 复用 extraction_model
+instant_emergence_async: bool = True  # 异步执行，不阻塞响应
+```
+
+---
+
+### 8.6 Skill 分层加载策略（Progressive Disclosure，v5.2 新增）
+
+> **灵感来源**：分层加载设计思想（⚠️ 此设计思想参考自社区文章对 Hermes 的描述，但未能在 Hermes 源码中直接找到 `progressive_disclosure` 或 `tier_loader` 命名的实现文件，标注为设计思想参考）
+> **实施优先级**：P1
+
+#### 设计思路
+
+当前 `DigestManager._fetch_skills()` 查所有 ACTIVE 状态 `:Skill` 节点，**全量返回** name+description+template+use_count，拼接后注入 Digest。当 Skill 数量增长到 100+ 时，上下文成本失控。采用三层渐进式披露解决。
+
+#### 三层加载
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Tier 0：目录卡片（始终注入 system prompt）            │
+│ 仅加载：skill_name + description（一行摘要）          │
+│ 总量上限：~3000 tokens                               │
+│ 存储：Redis hash key "skill:tier0:{user_id}"         │
+└──────────────────────┬──────────────────────────────┘
+                       │ Agent 判断某 Skill 方向匹配
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│ Tier 1：完整内容（按需加载）                          │
+│ 加载：template + parameters + 完整描述               │
+│ 触发：Agent 主动请求 / ToolSelector 匹配命中          │
+│ 存储：Neo4j :Skill 节点全量属性                       │
+└──────────────────────┬──────────────────────────────┘
+                       │ 需要更多细节
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│ Tier 2：补充说明（深度参考）                          │
+│ 加载：source_memories（原始行为序列）+ 使用示例       │
+│ 触发：Agent 显式请求 detail（新增 tool: get_skill_detail）│
+│ 存储：Neo4j :Skill.source_memories + Episode 节点    │
+└─────────────────────────────────────────────────────┘
+```
+
+#### Token 预算控制
+
+```python
+# DigestManager 配置新增
+skill_tier0_max_tokens: int = 3000      # Tier 0 总量上限
+skill_tier0_max_items: int = 50         # Tier 0 最多 50 个技能卡片
+skill_tier1_max_concurrent: int = 3     # Tier 1 同时展开不超过 3 个
+skill_tier2_enabled: bool = True        # Tier 2 开关
+```
+
+#### 与现有架构的融合点
+
+| 现有组件 | 改造方式 |
+|---|---|
+| `DigestManager._fetch_skills()` | 改为只返回 Tier 0 数据（name + description） |
+| `ToolSelectorService.select_tools()` | 匹配命中后自动触发 Tier 1 加载 |
+| `SkillToolFactory.build_tools()` | 构建 tool 时注入 Tier 1 内容 |
+| 新增 `get_skill_detail` tool | Agent 可主动请求 Tier 2 深度信息 |
+
+---
+
+### 8.7 Skill 生命周期治理（Curator + bump_use，v5.2 部分实施）
+
+> **灵感来源**：Hermes Agent — "Skills self-improve during use"
+> **实施优先级**：P1
+> **实施状态**：Curator 周期剪枝已实施（断裂点 ⚠️-3 修复），bump_use 实时统计待实施
+
+#### 8.7.1 实时使用统计（bump_use，待实施）
+
+```
+Agent 调用 Skill（SkillExecutor 执行）
+    │
+    ▼
+SkillExecutor 执行后（新增 hook）
+    │
+    ├─ Redis HINCRBY skill:stats:{user_id} {skill_id}:use_count 1
+    ├─ Redis HSET  skill:stats:{user_id} {skill_id}:last_used_at now
+    └─ 异步标记 Neo4j :Skill 节点（延迟批量写入，避免高频写图）
+```
+
+#### 8.7.2 Curator 周期任务（已实施）
+
+```
+Celery Beat: 每周日凌晨 04:00 执行（crontab(hour=4, minute=0, day_of_week=0)）
+    │
+    ▼
+SkillEmergence.curate_skills(user_id)  ← 已实现
+    │
+    ├─ 1. 读取所有 :Skill 节点（status IN [active, stale]）
+    │
+    ├─ 2. 合并 Redis 实时统计到 Neo4j
+    │      use_count = Neo4j.use_count + Redis.use_count
+    │      last_used_at = max(Neo4j, Redis)
+    │
+    ├─ 3. 重算成熟度（_compute_maturity）    ← 复用现有代码
+    │      maturity = freq*0.4 + usage*0.4 + recency*0.2
+    │
+    ├─ 4. 状态转移判定
+    │      ├── maturity < 0.2 且 90 天未用 → ACTIVE → STALE
+    │      ├── STALE 且 30 天未用 → DEPRECATED
+    │      └── STALE 但近期又被使用 → STALE → ACTIVE（复活）
+    │
+    └─ 5. 报告：scanned / transitioned / deprecated
+```
+
+#### 8.7.3 配置项（SkillConfig 新增）
+
+```python
+curator_enabled: bool = True
+curator_interval_days: int = 7
+curator_merge_similarity_threshold: float = 0.85
+curator_stale_to_deprecated_days: int = 30
+bump_use_redis_enabled: bool = True
+bump_use_neo4j_flush_interval: int = 3600  # 每小时批量回写 Neo4j
+```
+
+---
+
 ##
 9. Policy 层
 

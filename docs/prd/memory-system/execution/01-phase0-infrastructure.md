@@ -72,7 +72,7 @@ services:
     container_name: llmops-neo4j
     ports: ["7474:7474", "7687:7687"]
     environment:
-      NEO4J_AUTH: neo4j/openagent
+      NEO4J_AUTH: neo4j/yuxin_ai
     healthcheck:
       test: ["CMD-SHELL", "wget -O /dev/null -q http://localhost:7474 || exit 1"]
 
@@ -81,8 +81,8 @@ services:
     container_name: llmops-minio
     ports: ["9000:9000", "9001:9001"]
     environment:
-      MINIO_ROOT_USER: openagent
-      MINIO_ROOT_PASSWORD: openagent123
+      MINIO_ROOT_USER: yuxin_ai
+      MINIO_ROOT_PASSWORD: yuxin_ai123
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
 ```
@@ -97,7 +97,7 @@ services:
    - `restart: always`
    - 端口映射：`"7474:7474"`（HTTP/Bolt 浏览器）、`"7687:7687"`（Bolt 协议）；建议绑定 `127.0.0.1:` 前缀以与现有服务一致（仅本机访问，nginx/api 内部走服务名）。
    - `environment`：
-     - `NEO4J_AUTH: neo4j/openagent`（用户名 `neo4j`，密码 `openagent`）
+     - `NEO4J_AUTH: neo4j/yuxin_ai`（用户名 `neo4j`，密码 `yuxin_ai`）
      - `NEO4J_PLUGINS: '["apoc"]'`（APOC 库，供后续复杂 Cypher 用，可选但推荐）
    - `volumes`：
      - `./volumes/neo4j/data:/data`
@@ -112,8 +112,8 @@ services:
    - `restart: always`
    - 端口：`"9000:9000"`（S3 API）、`"9001:9001"`（管理控制台）。
    - `environment`：
-     - `MINIO_ROOT_USER: openagent`
-     - `MINIO_ROOT_PASSWORD: openagent123`
+     - `MINIO_ROOT_USER: yuxin_ai`
+     - `MINIO_ROOT_PASSWORD: yuxin_ai123`
    - `command: ["server", "/data", "--console-address", ":9001"]`
    - `volumes`：
      - `./volumes/minio/data:/data`
@@ -129,10 +129,10 @@ services:
    - 在 `llmops-api` 的 `environment` 下追加（供 I2 配置类读取）：
      - `NEO4J_URI: bolt://llmops-neo4j:7687`
      - `NEO4J_USER: neo4j`
-     - `NEO4J_PASSWORD: openagent`
+     - `NEO4J_PASSWORD: yuxin_ai`
      - `MINIO_ENDPOINT: llmops-minio:9000`
-     - `MINIO_ACCESS_KEY: openagent`
-     - `MINIO_SECRET_KEY: openagent123`
+     - `MINIO_ACCESS_KEY: yuxin_ai`
+     - `MINIO_SECRET_KEY: yuxin_ai123`
    - 说明：向量检索复用现有 `llmops-db` PostgreSQL，需确认其镜像已内置 `pgvector` 扩展并在 `init.sql` 中执行 `CREATE EXTENSION IF NOT EXISTS vector`。
 
 5. **同步更新 `llmops-celery`**：在 `llmops-celery` 的 `environment` 追加与 `llmops-api` 相同的 `NEO4J_*`、`MINIO_*` 环境变量（celery worker 需访问同一基础设施）。
@@ -143,7 +143,7 @@ services:
 
 - [ ] `docker compose -f docker/docker-compose.yaml config` 无报错输出。
 - [ ] `docker compose -f docker/docker-compose.yaml up -d llmops-neo4j llmops-minio` 两个容器均 `healthy`（neo4j 约 40s 后健康）。
-- [ ] 浏览器访问 `http://localhost:7474` 可见 Neo4j Browser，用 `neo4j/openagent` 可登录。
+- [ ] 浏览器访问 `http://localhost:7474` 可见 Neo4j Browser，用 `neo4j/yuxin_ai` 可登录。
 - [ ] `curl http://localhost:9000/minio/health/live` 返回 200。
 - [ ] 从 `llmops-api` 容器内 `ping llmops-neo4j` / `llmops-minio` 可解析（服务名互通）。
 - [ ] 两服务重启后数据持久化（卷挂载生效）。
@@ -247,7 +247,7 @@ settings = Settings()  # 模块级单例
      class Neo4jConfig(BaseModel):
          uri: str = Field(default="bolt://localhost:7687", validation_alias="NEO4J_URI")
          user: str = Field(default="neo4j", validation_alias="NEO4J_USER")
-         password: str = Field(default="openagent", validation_alias="NEO4J_PASSWORD")
+         password: str = Field(default="yuxin_ai", validation_alias="NEO4J_PASSWORD")
      ```
 
    - **LLMConfig**：
@@ -356,7 +356,7 @@ settings = Settings()  # 模块级单例
    - **ColdStorageConfig**：
      ```python
      class ColdStorageConfig(BaseModel):
-         s3_bucket: str = "openagent-cold-memory"
+         s3_bucket: str = "yuxin-ai-cold-memory"
          s3_prefix: str = "cold-memories/"
          aws_region: str = "us-east-1"
          threshold_weight: float = 0.5
@@ -550,7 +550,7 @@ CREATE FULLTEXT INDEX entityFullText IF NOT EXISTS FOR (n:Entity) ON EACH [n.nam
 
 1. **新建文件**：创建 `api/internal/migration/neo4j_init.cypher`（注意：该目录现有 Alembic 迁移，cypher 脚本与 Alembic 无关，独立放置即可）。
 
-2. **编写文件头注释**：说明用途、Neo4j 版本要求（5.x）、执行方式（`cat neo4j_init.cypher | cypher-shell -u neo4j -p openagent` 或通过 Neo4j Browser 粘贴执行）。
+2. **编写文件头注释**：说明用途、Neo4j 版本要求（5.x）、执行方式（`cat neo4j_init.cypher | cypher-shell -u neo4j -p yuxin_ai` 或通过 Neo4j Browser 粘贴执行）。
 
 3. **编写约束段（4 条 UNIQUE 约束）**：
    - `Episode.node_id` UNIQUE
@@ -584,7 +584,7 @@ CREATE FULLTEXT INDEX entityFullText IF NOT EXISTS FOR (n:Entity) ON EACH [n.nam
 
 ### 验收标准
 
-- [ ] 文件可被 `cypher-shell` 完整执行无报错：`cat api/internal/migration/neo4j_init.cypher | docker exec -i llmops-neo4j cypher-shell -u neo4j -p openagent`。
+- [ ] 文件可被 `cypher-shell` 完整执行无报错：`cat api/internal/migration/neo4j_init.cypher | docker exec -i llmops-neo4j cypher-shell -u neo4j -p yuxin_ai`。
 - [ ] 执行后 `SHOW CONSTRAINTS;` 返回 4 条约束。
 - [ ] 执行后 `SHOW INDEXES;` 返回 9 条 B-tree 索引 + 2 条 fulltext 索引。
 - [ ] 重复执行（幂等）不报错。
@@ -632,7 +632,7 @@ TABLE_NAME = os.getenv("PGVECTOR_TABLE", "user_memory")
 EMBEDDING_COLUMN = os.getenv("PGVECTOR_EMBEDDING_COLUMN", "embedding")
 EMBEDDING_DIM = int(os.getenv("PGVECTOR_EMBEDDING_DIM", "1536"))
 INDEX_NAME = os.getenv("PGVECTOR_INDEX_NAME", "user_memory_embedding_hnsw_idx")
-DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URI", "postgresql+asyncpg://openagent:openagent@llmops-db:5432/openagent")
+DATABASE_URL = os.getenv("SQLALCHEMY_DATABASE_URI", "postgresql+asyncpg://yuxin_ai:yuxin_ai@llmops-db:5432/yuxin_ai")
 
 async def verify_extension(engine) -> bool: ...
 async def verify_embedding_column(engine) -> bool: ...
@@ -952,10 +952,10 @@ I1-I6 引入的环境变量汇总（供 `api/.env.example` 补充）：
 |---|---|---|---|
 | `NEO4J_URI` | `bolt://localhost:7687` | I1/I2 | Neo4j Bolt 连接 URI |
 | `NEO4J_USER` | `neo4j` | I1/I2 | Neo4j 用户名 |
-| `NEO4J_PASSWORD` | `openagent` | I1/I2 | Neo4j 密码 |
+| `NEO4J_PASSWORD` | `yuxin_ai` | I1/I2 | Neo4j 密码 |
 | `MINIO_ENDPOINT` | `localhost:9000` | I1 | MinIO S3 endpoint |
-| `MINIO_ACCESS_KEY` | `openagent` | I1 | MinIO access key |
-| `MINIO_SECRET_KEY` | `openagent123` | I1 | MinIO secret key |
+| `MINIO_ACCESS_KEY` | `yuxin_ai` | I1 | MinIO access key |
+| `MINIO_SECRET_KEY` | `yuxin_ai123` | I1 | MinIO secret key |
 | `CELERY_BROKER_URL` | `redis://localhost:6379/1` | I2/I3 | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://localhost:6379/2` | I2/I3 | Celery result backend |
 | `MEMORY_SALIENCE__WEIGHTS` | （JSON） | I2 | 显著性权重覆盖 |

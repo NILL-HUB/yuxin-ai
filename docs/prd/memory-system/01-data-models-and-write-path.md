@@ -1841,6 +1841,148 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
 
 ---
 
+### 2.5 Agent-Curated 写入通道（v5.2 新增）
+
+> **对应主文档**：[00-overview.md](./00-overview.md) §16.19.2 基因 4
+> **灵感来源**：Hermes Agent — "Agent-curated memory with periodic nudges"
+> **实施优先级**：P2
+
+#### 设计思路
+
+当前记忆写入是**系统自动记录**（`AssistantAgentService._write_memory_from_conversation` 每次对话后后台线程触发 `MemoryWriteService`），Agent 本身没有"什么值得记"的自主权。吸纳 Hermes 的 Agent-Curated 机制，形成"系统自动记录（兜底快路径）+ Agent 自主记忆（精准路径）"双通道。
+
+**修正说明**：钰心AI 已有 `user_memory_retriever` 检索工具（让 Agent 检索用户记忆），以下新增的是**写入工具**，与检索工具配套形成完整的 memory tool 家族。
+
+#### 双通道写入
+
+```
+现有路径（保持不变）:
+  对话结束 → 后台线程 → MemoryWriteService.write_from_event()
+  → SalienceScorer 评分 → LedgerWriter 写入（系统自动记录）
+
+新增路径（Agent-Curated）:
+  Agent 执行过程中 → 调用 memory tool（新增写入工具）
+  │
+  ├─ memory_add(content, category?)
+  │   → 跳过 SalienceScorer（Agent 已判定有价值）
+  │   → 直接走 FULL 写入路径
+  │   → metadata 标记 source='agent_curated'
+  │
+  ├─ memory_replace(old_id, new_content)
+  │   → 触发 SUPERSEDE 流程（复用 WriteTimeConflictResolver）
+  │
+  └─ memory_remove(memory_id)
+      → 软删除（status='deprecated'）
+      → 记录 Agent 主动遗忘原因
+```
+
+#### memory tool 定义
+
+```python
+# 新增 LangChain tool，注入 Conductor 的工具集
+# 与已有的 user_memory_retriever（检索）配套
+
+@tool
+def memory_add(content: str, category: str = "general") -> str:
+    """将你认为值得永久记住的信息写入长期记忆。
+    
+    适用场景: 用户明确表达偏好/习惯/目标、发现可复用问题解决模式、重要决策及原因
+    不适用场景: 临时性信息、已有记忆的重复内容
+    """
+    # 直接走 FULL 路径，跳过 SalienceScorer
+    # metadata.source = 'agent_curated', metadata.explicitness = 1.0
+    ...
+
+@tool
+def memory_replace(memory_id: str, new_content: str, reason: str) -> str:
+    """更新已有记忆（旧记忆被标记为 superseded）。"""
+    # 复用 WriteTimeConflictResolver 的 SUPERSEDE 流程
+    ...
+```
+
+#### 与现有架构的融合点
+
+| 现有组件 | 改造方式 |
+|---|---|
+| `MemoryWriteService.write_from_event()` | **保持不变**（系统自动记录路径） |
+| `LedgerWriter` | 新增 `write_agent_curated()` 方法（跳过 SalienceScorer） |
+| `WriteTimeConflictResolver` | **复用现有代码**（memory_replace 走 SUPERSEDE） |
+| `user_memory_retriever`（检索工具） | **保持不变**，新增 3 个写入工具配套 |
+| `UserMemory.metadata_` | 新增 `source` 字段（`system_auto` / `agent_curated`） |
+
+#### 设计约束
+
+> **避免 Agent 滥用 memory tool**：设置每会话 memory_add 上限（默认 5 次），超出时 tool 返回提示"已达本会话记忆上限，请优先更新已有记忆"。
+
+---
+
+### 2.6 周期性 Nudge 触发器（v5.2 新增）
+
+> **对应主文档**：[00-overview.md](./00-overview.md) §16.19.2 基因 5
+> **灵感来源**：Hermes Agent — "Agent-curated memory with periodic nudges"
+> **实施优先级**：P2
+> **依赖**：基因 4（Agent-Curated Memory）— Nudge 是 Agent-Curated 的触发器
+
+#### 设计思路
+
+当前记忆写入是**每次对话都触发**，可能写入大量低价值信息。吸纳 Hermes 的**只在满足条件时 nudge Agent 思考记忆**机制，更精准。Nudge 让 Agent 主动调用 memory tool（基因 4），比"每次对话都触发系统自动记录"更精准。
+
+#### 触发条件（满足任一）
+
+| 条件 | 判定方式 | 说明 |
+|---|---|---|
+| 复杂任务完成 | tool_call ≥ 5 且任务成功 | 任务中产生了值得总结的经验 |
+| 出错后恢复 | error → retry → success | 自我纠错经验值得记忆 |
+| 用户纠正 | 检测"否定→重新指令"模式 | 用户纠正意味着 Agent 的认知需要更新 |
+| 会话轮次 ≥ 10 | 对话消息数统计 | 长对话可能有遗漏的记忆点 |
+
+#### Nudge Prompt
+
+```
+[内部提醒] 本次对话中是否有什么值得永久记住的信息？
+
+请检查以下类型：
+1. 用户偏好/习惯（用户明确表达或从行为推断）
+2. 重要决策及其原因
+3. 可复用的问题解决模式
+4. 用户纠正了你之前的错误认知
+
+如果有，请调用 memory_add 写入。
+如果没有，忽略此提醒。
+
+注意：不要重复已有记忆，调用 memory_replace 更新而非新增。
+```
+
+#### 执行流程
+
+```
+对话结束 / 触发条件命中
+    │
+    ▼
+NudgeEvaluator.should_nudge(conversation) → bool
+    │
+    ▼ [True]
+在 PostExecutionHook 中注入 Nudge Prompt
+    │
+    ▼
+Agent（Conductor）收到 Nudge → 自主判断
+    │
+    ├─ 有价值 → 调用 memory_add / memory_replace（基因 4）
+    └─ 无价值 → 忽略（不产生任何写入）
+```
+
+#### 配置项（MemoryWriteConfig 新增）
+
+```python
+nudge_enabled: bool = True
+nudge_min_tool_calls: int = 5
+nudge_min_conversation_turns: int = 10
+nudge_max_per_session: int = 3  # 每会话最多 nudge 3 次
+nudge_model: str = "gpt-4o-mini"  # nudge 条件判定用轻量模型
+```
+
+---
+
 ## 旧系统替代说明
 
 本写入路径完全替代以下旧系统组件，旧代码已删除：
