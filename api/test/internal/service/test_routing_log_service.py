@@ -103,6 +103,7 @@ def test_page_should_return_serialized_logs_with_filters():
         filtered_out_tools=[],
         knowledge_hits=[],
         billing_events=[],
+        invoke_from="web",
         user_query="帮我分析市场",
         task_classification={"complexity": "complex"},
         model_selection={"model_id": "deepseek-chat"},
@@ -139,6 +140,7 @@ def test_page_should_return_serialized_logs_with_filters():
     assert result["paginator"]["total_record"] == 1
     assert result["list"][0]["routing_decision"]["intent"] == "general_qa"
     assert result["list"][0]["user_query"] == "帮我分析市场"
+    assert result["list"][0]["invoke_from"] == "web"
     assert result["list"][0]["task_classification"] == {"complexity": "complex"}
     assert result["list"][0]["model_selection"] == {"model_id": "deepseek-chat"}
     assert result["list"][0]["agent_pool_hits"] == [{"pool": "research"}]

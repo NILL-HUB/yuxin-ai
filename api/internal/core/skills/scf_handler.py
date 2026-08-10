@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import traceback
 from typing import Any
 
@@ -150,6 +151,13 @@ def main_handler(event, context):
             args = [args]
         if not isinstance(kwargs, dict):
             kwargs = {}
+
+        # 注入技能包 env（由平台侧解密后随请求传入），供 skill.py 内 os.environ 读取
+        request_env = body.get("env")
+        if isinstance(request_env, dict):
+            for env_key, env_value in request_env.items():
+                if isinstance(env_key, str) and env_key:
+                    os.environ[env_key] = str(env_value)
 
         exec_globals: dict[str, Any] = {
             "__builtins__": _safe_builtins(),

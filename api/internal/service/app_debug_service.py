@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Generator
 from uuid import UUID, uuid4
 
-from flask import current_app, has_app_context
+from internal.context import current_app, has_app_context
 from injector import inject
 from langchain_core.messages import AIMessage
 from langchain_core.messages import trim_messages
@@ -229,6 +229,7 @@ class AppDebugService(BaseService):
                     message_id=message.id,
                     image_urls=req.image_urls.data,
                     enable_deep_thinking=bool(req.confirm_deep_thinking.data),
+                    invoke_from=InvokeFrom.DEBUGGER.value,
                 ).to_dict()
             except Exception as exc:
                 logger.warning("应用调试调度决策失败，回退到原调试流程: %s", exc)
@@ -255,6 +256,17 @@ class AppDebugService(BaseService):
                 }
                 yield "event: orchestrator_reject\ndata:" + json.dumps(reject_payload) + "\n\n"
                 return
+
+        # 记忆基座重复任务检测：同应用相似需求高频出现时建议创建定时任务
+        try:
+            from internal.service.task_dedup_service import TaskDedupService
+            suggestion = TaskDedupService().check_suggestion(
+                account.id, app_id, req.query.data, debug_conversation.id,
+            )
+            if suggestion:
+                yield "event: schedule_suggestion\ndata:" + json.dumps(suggestion) + "\n\n"
+        except Exception as dedup_exc:
+            logger.debug("定时任务建议检测跳过: %s", dedup_exc)
 
         # 6.实例化TokenBufferMemory用于提取短期记忆
         token_buffer_memory = TokenBufferMemory(

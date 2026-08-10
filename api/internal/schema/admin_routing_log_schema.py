@@ -1,10 +1,9 @@
-from flask_wtf import FlaskForm
 from marshmallow import Schema, fields
 from wtforms import Form, IntegerField, StringField
 from wtforms.validators import Length, NumberRange, Optional
 
 
-class GetRoutingLogsReq(FlaskForm):
+class GetRoutingLogsReq(Form):
     current_page = IntegerField(
         "current_page",
         default=1,
@@ -58,6 +57,7 @@ class RoutingLogResp(Schema):
     filtered_out_tools = fields.List(fields.Dict())
     knowledge_hits = fields.List(fields.Dict())
     billing_events = fields.List(fields.Dict())
+    invoke_from = fields.String(dump_default="")
     user_query = fields.String(allow_none=True)
     task_classification = fields.Dict()
     model_selection = fields.Dict()

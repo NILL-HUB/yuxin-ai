@@ -13,6 +13,9 @@ from sqlalchemy import (
 
 from internal.entity.conversation_entity import InvokeFrom
 from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
+
+
 from .conversation import Conversation
 
 
@@ -21,7 +24,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class WechatConfig(db.Model):
+class WechatConfig(Base):
     """Agent微信配置信息"""
     __tablename__ = "wechat_config"
     __table_args__ = (
@@ -44,7 +47,7 @@ class WechatConfig(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))  # 创建时间
 
 
-class WechatEndUser(db.Model):
+class WechatEndUser(Base):
     """微信公众号与终端用户标识关联表"""
     __tablename__ = "wechat_end_user"
     __table_args__ = (
@@ -88,7 +91,7 @@ class WechatEndUser(db.Model):
         return conversation
 
 
-class WechatMessage(db.Model):
+class WechatMessage(Base):
     """微信公众号消息模型，用于记录未推送的消息记录"""
     __tablename__ = "wechat_message"
     __table_args__ = (

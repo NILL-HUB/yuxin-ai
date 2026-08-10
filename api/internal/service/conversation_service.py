@@ -1,23 +1,22 @@
 from collections import OrderedDict
 from datetime import UTC, datetime
+import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any, ClassVar
 from uuid import UUID, uuid4
-from flask import Flask, current_app
+from internal.context import current_app
 from injector import inject
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 from internal.entity.conversation_entity import (
-    SUMMARIZER_TEMPLATE,
-    CONVERSATION_NAME_TEMPLATE,
     ConversationInfo,
-    SUGGESTED_QUESTIONS_TEMPLATE,
     SuggestedQuestions, InvokeFrom, MessageStatus,
 )
 from internal.lib.helper import datetime_to_timestamp
@@ -32,9 +31,11 @@ from internal.core.agent.usage_utils import (
     get_openai_callback,
     _UsageTrackingHandler,
 )
+from internal.extension.async_database_extension import async_db
 from internal.model import App, Conversation, Message, MessageAgentThought, Account
 from internal.schema.conversation_schema import GetConversationMessagesWithPageReq
 from internal.exception import NotFoundException
+from internal.service.system_prompt_library_service import SystemPromptLibraryService
 
 
 @inject
@@ -139,7 +140,7 @@ class ConversationService(BaseService):
     def summary(cls, human_message: str, ai_message: str, old_summary: str = "", account_id: UUID | None = None) -> str:
         """根据传递的人类消息、AI消息还有原始的摘要信息总结生成一段新的摘要"""
         # 1.创建prompt
-        prompt = ChatPromptTemplate.from_template(SUMMARIZER_TEMPLATE)
+        prompt = ChatPromptTemplate.from_template(SystemPromptLibraryService().get_prompt_or_default("conversation_summarizer_template"))
 
         # 2.通过动态模型注册表加载模型（带 API key 注入），避免硬编码静态配置导致 401
         llm = cls._load_summary_llm()
@@ -179,7 +180,7 @@ class ConversationService(BaseService):
         """根据传递的query生成对应的会话名字，并且语言与用户的输入保持一致"""
         # 1.创建prompt
         prompt = ChatPromptTemplate.from_messages([
-            ("system", CONVERSATION_NAME_TEMPLATE),
+            ("system", SystemPromptLibraryService().get_prompt_or_default("conversation_name_template")),
             ("human", "{query}")
         ])
 
@@ -225,7 +226,7 @@ class ConversationService(BaseService):
         """根据传递的历史信息生成最多不超过3个的建议问题"""
         # 1.创建prompt
         prompt = ChatPromptTemplate.from_messages([
-            ("system", SUGGESTED_QUESTIONS_TEMPLATE),
+            ("system", SystemPromptLibraryService().get_prompt_or_default("conversation_suggested_questions_template")),
             ("human", "{histories}")
         ])
 
@@ -280,6 +281,8 @@ class ConversationService(BaseService):
                     observation=json.dumps(routing_decision, ensure_ascii=False),
                     tool="orchestrator",
                     tool_input=routing_decision,
+                    # 使用 usage_summary 的总耗时，避免 latency=0 显示 "0.00s"
+                    latency=usage_summary.latency,
                 )
             ] + agent_thoughts
 
@@ -493,7 +496,11 @@ class ConversationService(BaseService):
             .filter(
                 Message.created_by == account.id,
                 Message.invoke_from.in_(
-                    [InvokeFrom.ASSISTANT_AGENT.value, InvokeFrom.DEBUGGER.value]
+                    [
+                        InvokeFrom.ASSISTANT_AGENT.value,
+                        InvokeFrom.DEBUGGER.value,
+                        InvokeFrom.SCHEDULE.value,
+                    ]
                 ),
                 Message.status.in_([MessageStatus.STOP.value, MessageStatus.NORMAL.value]),
                 Message.answer != "",
@@ -571,7 +578,24 @@ class ConversationService(BaseService):
         )
         app_map = {app.id: app for app in apps}
 
-        # 5.组装响应列表
+        # 5.组装响应列表（共享纯逻辑，供同步/异步版本复用）
+        return self._build_recent_conversation_results(
+            message_by_conversation,
+            conversation_map,
+            app_map,
+            account,
+            assistant_agent_id,
+        )
+
+    def _build_recent_conversation_results(
+        self,
+        message_by_conversation: OrderedDict,
+        conversation_map: dict,
+        app_map: dict,
+        account: Account,
+        assistant_agent_id: str | None,
+    ) -> list[dict]:
+        """组装最近会话响应列表（纯逻辑，不依赖 app context）。"""
         results = []
         for message in message_by_conversation.values():
             conversation = conversation_map.get(message.conversation_id)
@@ -579,7 +603,9 @@ class ConversationService(BaseService):
                 continue
 
             source_type = (
-                "assistant_agent"
+                "schedule"
+                if message.invoke_from == InvokeFrom.SCHEDULE.value
+                else "assistant_agent"
                 if message.invoke_from == InvokeFrom.ASSISTANT_AGENT.value
                 else "public_app"
                 if message.invoke_from == InvokeFrom.SERVICE_API.value
@@ -593,6 +619,8 @@ class ConversationService(BaseService):
             if source_type == "assistant_agent":
                 agent_name = ASSISTANT_AGENT_DISPLAY_NAME
                 is_active = account.assistant_agent_conversation_id == conversation.id
+            elif source_type == "schedule":
+                app_id = str(message.app_id) if message.app_id else ""
             else:
                 app = app_map.get(message.app_id)
                 if not app:
@@ -607,6 +635,7 @@ class ConversationService(BaseService):
                     "id": str(conversation.id),
                     "name": conversation.name,
                     "source_type": source_type,
+                    "invoke_from": conversation.invoke_from or message.invoke_from,
                     "app_id": app_id,
                     "app_name": app_name,
                     "agent_name": agent_name,
@@ -620,6 +649,131 @@ class ConversationService(BaseService):
             )
 
         return results
+
+    async def get_recent_conversations_async(
+        self,
+        account: Account,
+        limit: int = 20,
+        assistant_agent_id: str | None = None,
+    ) -> list[dict]:
+        """异步版本：async session 直查最近会话列表，不占用工作线程。
+
+        async 数据库未启用时降级到同步实现（asyncio.to_thread 线程池执行），
+        保证在任何部署形态下都可用。
+        """
+        factory = async_db.session_factory()
+        if factory is None:
+            return await asyncio.to_thread(self.get_recent_conversations, account, limit)
+
+        safe_limit = max(1, min(limit, 1000))
+        message_scan_limit = max(80, safe_limit * 30)
+
+        async with factory() as session:
+            private_recent_messages = list(
+                (
+                    await session.scalars(
+                        select(Message)
+                        .where(
+                            Message.created_by == account.id,
+                            Message.invoke_from.in_(
+                                [
+                                    InvokeFrom.ASSISTANT_AGENT.value,
+                                    InvokeFrom.DEBUGGER.value,
+                                    InvokeFrom.SCHEDULE.value,
+                                ]
+                            ),
+                            Message.status.in_(
+                                [MessageStatus.STOP.value, MessageStatus.NORMAL.value]
+                            ),
+                            Message.answer != "",
+                            ~Message.is_deleted,
+                        )
+                        .order_by(desc(Message.created_at))
+                        .limit(message_scan_limit)
+                    )
+                ).all()
+            )
+            public_recent_messages = list(
+                (
+                    await session.scalars(
+                        select(Message)
+                        .where(
+                            Message.invoke_from == InvokeFrom.SERVICE_API.value,
+                            Message.status.in_(
+                                [MessageStatus.STOP.value, MessageStatus.NORMAL.value]
+                            ),
+                            Message.answer != "",
+                            ~Message.is_deleted,
+                        )
+                        .order_by(desc(Message.created_at))
+                        .limit(message_scan_limit)
+                    )
+                ).all()
+            )
+
+            message_by_conversation = OrderedDict()
+            for message in private_recent_messages + public_recent_messages:
+                if message.conversation_id in message_by_conversation:
+                    continue
+                message_by_conversation[message.conversation_id] = message
+                if len(message_by_conversation) >= safe_limit:
+                    break
+
+            if not message_by_conversation:
+                return []
+
+            conversation_ids = list(message_by_conversation.keys())
+
+            conversations = list(
+                (
+                    await session.scalars(
+                        select(Conversation)
+                        .where(
+                            Conversation.id.in_(conversation_ids),
+                            (
+                                (Conversation.created_by == account.id)
+                                | (
+                                    Conversation.invoke_from
+                                    == InvokeFrom.SERVICE_API.value
+                                )
+                            ),
+                            ~Conversation.is_deleted,
+                        )
+                    )
+                ).all()
+            )
+            conversation_map = {conversation.id: conversation for conversation in conversations}
+
+            app_ids = {
+                message.app_id
+                for message in message_by_conversation.values()
+                if message.invoke_from
+                in (
+                    InvokeFrom.DEBUGGER.value,
+                    InvokeFrom.SERVICE_API.value,
+                )
+            }
+            if assistant_agent_id:
+                for message in message_by_conversation.values():
+                    if message.invoke_from == InvokeFrom.ASSISTANT_AGENT.value:
+                        app_ids.add(assistant_agent_id)
+
+            app_map = {}
+            if app_ids:
+                apps = list(
+                    (
+                        await session.scalars(select(App).where(App.id.in_(app_ids)))
+                    ).all()
+                )
+                app_map = {app.id: app for app in apps}
+
+        return self._build_recent_conversation_results(
+            message_by_conversation,
+            conversation_map,
+            app_map,
+            account,
+            assistant_agent_id,
+        )
 
     def get_message(self, message_id: UUID, account: Account) -> Message:
         """根据传递的消息id+账号，获取指定的消息"""
@@ -678,6 +832,82 @@ class ConversationService(BaseService):
             .all()
         )
 
+        return messages, paginator
+
+    async def get_conversation_messages_with_page_async(
+        self,
+        conversation_id: UUID,
+        req: GetConversationMessagesWithPageReq,
+        account: Account,
+    ) -> tuple[list[Message], Paginator]:
+        """异步版本：async session 直查会话消息分页，不占用工作线程。
+
+        async 数据库未启用时降级到同步实现（asyncio.to_thread 线程池执行），
+        保证在任何部署形态下都可用。
+        """
+        factory = async_db.session_factory()
+        if factory is None:
+            return await asyncio.to_thread(
+                self.get_conversation_messages_with_page,
+                conversation_id,
+                req,
+                account,
+            )
+
+        current_page = max(1, req.current_page.data or 1)
+        page_size = max(1, min(req.page_size.data or 20, 50))
+
+        async with factory() as session:
+            # 1.获取会话并校验权限
+            conversation = await session.scalar(
+                select(Conversation).where(
+                    Conversation.id == conversation_id,
+                    Conversation.created_by == account.id,
+                    ~Conversation.is_deleted,
+                )
+            )
+            if conversation is None:
+                raise NotFoundException("该会话不存在或被删除 请核实后重试")
+
+            # 2.构建过滤条件
+            filters = [
+                Message.conversation_id == conversation_id,
+                Message.status.in_(
+                    [MessageStatus.STOP.value, MessageStatus.NORMAL.value]
+                ),
+                Message.answer != "",
+                Message.is_deleted == False,
+            ]
+            if req.created_at.data:
+                created_at_datetime = datetime.fromtimestamp(req.created_at.data, UTC)
+                filters.append(Message.created_at <= created_at_datetime)
+
+            # 3.查询总数
+            total = (
+                await session.scalar(
+                    select(func.count()).select_from(Message).where(*filters)
+                )
+            ) or 0
+
+            # 4.分页查询完整消息（含 agent_thoughts 预加载）
+            messages = list(
+                (
+                    await session.scalars(
+                        select(Message)
+                        .options(selectinload(Message.agent_thoughts))
+                        .where(*filters)
+                        .order_by(desc(Message.created_at), desc(Message.id))
+                        .offset((current_page - 1) * page_size)
+                        .limit(page_size)
+                    )
+                ).all()
+            )
+
+        paginator = Paginator(db=self.db)
+        paginator.current_page = current_page
+        paginator.page_size = page_size
+        paginator.total_record = total
+        paginator.total_page = math.ceil(total / page_size) if total else 0
         return messages, paginator
 
     def delete_conversation(self, conversation_id: UUID, account: Account) -> Conversation:
@@ -800,7 +1030,11 @@ class ConversationService(BaseService):
             .filter(
                 Message.created_by == account.id,
                 Message.invoke_from.in_(
-                    [InvokeFrom.ASSISTANT_AGENT.value, InvokeFrom.DEBUGGER.value]
+                    [
+                        InvokeFrom.ASSISTANT_AGENT.value,
+                        InvokeFrom.DEBUGGER.value,
+                        InvokeFrom.SCHEDULE.value,
+                    ]
                 ),
                 Message.status.in_([MessageStatus.STOP.value, MessageStatus.NORMAL.value]),
                 Message.answer != "",
@@ -880,6 +1114,8 @@ class ConversationService(BaseService):
             source_type = (
                 "assistant_agent"
                 if latest_message is None or latest_message.invoke_from == InvokeFrom.ASSISTANT_AGENT.value
+                else "schedule"
+                if latest_message.invoke_from == InvokeFrom.SCHEDULE.value
                 else "app_debugger"
             )
             app_id = ""
@@ -919,6 +1155,8 @@ class ConversationService(BaseService):
                     "id": str(conversation.id),
                     "name": conversation.name,
                     "source_type": source_type,
+                    "invoke_from": conversation.invoke_from
+                    or (preview_message.invoke_from if preview_message else ""),
                     "app_id": app_id,
                     "app_name": app_name,
                     "agent_name": agent_name,

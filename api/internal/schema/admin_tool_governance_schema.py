@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField
 from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Optional
@@ -11,7 +11,7 @@ VISIBILITIES = ["private", "tenant", "public"]
 INVOCATION_STATUSES = ["success", "failed", "blocked", "timeout"]
 
 
-class GetAdminToolGovernancePoliciesReq(FlaskForm):
+class GetAdminToolGovernancePoliciesReq(Form):
     source_type = StringField("source_type", default="", validators=[Optional(), AnyOf(["", *SOURCE_TYPES])])
     risk_level = StringField("risk_level", default="", validators=[Optional(), AnyOf(["", *RISK_LEVELS])])
     visibility = StringField("visibility", default="", validators=[Optional(), AnyOf(["", *VISIBILITIES])])
@@ -21,12 +21,12 @@ class GetAdminToolGovernancePoliciesReq(FlaskForm):
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
-class BatchUpdateToolGovernanceRiskReq(FlaskForm):
+class BatchUpdateToolGovernanceRiskReq(Form):
     policy_ids = ListField("policy_ids", validators=[InputRequired()])
     risk_level = StringField("risk_level", validators=[InputRequired(), AnyOf(RISK_LEVELS)])
 
 
-class GetAdminToolGovernanceAuditReq(FlaskForm):
+class GetAdminToolGovernanceAuditReq(Form):
     tool_id = StringField("tool_id", default="", validators=[Optional(), Length(max=128)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", *INVOCATION_STATUSES])])
     start_date = StringField("start_date", default="", validators=[Optional(), Length(max=32)])

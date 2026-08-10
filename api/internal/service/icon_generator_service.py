@@ -4,16 +4,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 import requests
-from flask import current_app
 from injector import inject
 from langchain_community.utilities.dalle_image_generator import DallEAPIWrapper
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 from internal.core.language_model import LanguageModelManager
-from internal.entity.app_entity import GENERATE_ICON_PROMPT_TEMPLATE
 from internal.exception import FailException
-from internal.lib.helper import utc_now_naive
 from .base_service import BaseService
 from .cos_service import CosService
 
@@ -99,10 +96,14 @@ class IconGeneratorService(BaseService):
         try:
             # LLM 走数据库配置 + compatible_api 分发
             from .language_model_service import LanguageModelService
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
             llm = LanguageModelService.get_feature_model("icon_prompt")
 
+            icon_template = SystemPromptLibraryService().get_prompt_or_default(
+                "app_icon_generate_prompt"
+            )
             prompt_chain = ChatPromptTemplate.from_template(
-                GENERATE_ICON_PROMPT_TEMPLATE
+                icon_template
             ) | llm | StrOutputParser()
 
             icon_prompt = prompt_chain.invoke({
@@ -113,12 +114,11 @@ class IconGeneratorService(BaseService):
             return str(icon_prompt).strip()
         except Exception as e:
             logging.warning(f"生成图标提示词失败，使用默认提示词: {str(e)}")
-            return (
-                f"A premium mobile app launcher icon for {name}, single centered subject, "
-                f"rounded square app icon composition, modern polished visual style, distinctive color palette, "
-                f"premium material finish, soft studio lighting, clean plain background, crisp silhouette, "
-                f"high recognizability at small sizes, no text, no watermark, no extra elements"
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+            fallback_template = SystemPromptLibraryService().get_prompt_or_default(
+                "icon_dalle_fallback_prompt"
             )
+            return fallback_template.format(name=name).strip()
 
     def _raise_request_error(self, provider_name: str, error: Exception) -> None:
         """将上游 HTTP 异常转换为统一的业务异常"""

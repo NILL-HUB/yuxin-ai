@@ -45,13 +45,15 @@ class IntentClassifierNode(BaseNode):
         )
         class_names = [c.name for c in self.node_data.classes]
 
-        prompt = (
-            "你是一个意图分类器。请根据输入文本判断它属于以下哪个分类。\n\n"
-            f"分类列表:\n{classes_desc}\n\n"
-            f"输入文本:\n{input_text}\n\n"
-            "请只返回一个 JSON 对象，格式为: {\"class_name\": \"分类名称\", \"confidence\": 0.0-1.0}\n"
-            f"class_name 必须是以下之一: {class_names}\n"
-            "confidence 为 0.0 到 1.0 之间的浮点数，表示分类置信度。"
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        template = SystemPromptLibraryService().get_prompt_or_default(
+            "workflow_intent_classifier_prompt"
+        )
+        prompt = template.format(
+            classes_desc=classes_desc,
+            input_text=input_text,
+            class_names=class_names,
         )
 
         # 4.调用 LLM 进行分类

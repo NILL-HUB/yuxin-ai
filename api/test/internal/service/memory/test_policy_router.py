@@ -86,11 +86,14 @@ class TestPolicyRouterShouldUseSystem2:
 
 
 class TestPolicyRouterRetrievalStrategy:
-    def test_disabled_without_degradation_manager(self):
+    def test_disabled_without_degradation_manager(self, monkeypatch):
+        import internal.service.memory.degradation_manager as degradation_module
+
+        monkeypatch.setattr(degradation_module, "get_degradation_manager", lambda: None)
         router = PolicyRouter(neo4j_driver=None, llm_available=False)
         strategy = router.select_retrieval_strategy()
-        # 无 Neo4j 驱动时应返回 disabled
-        assert strategy in ("disabled", "graph_only")
+        # 无 DegradationManager 且无 Neo4j 驱动时应返回 disabled
+        assert strategy == "disabled"
 
 
 class TestPredefinedViews:

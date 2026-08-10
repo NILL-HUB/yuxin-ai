@@ -4,14 +4,14 @@ from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, PrimaryKeyC
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class ToolConfirmation(db.Model):
+class ToolConfirmation(Base):
     __tablename__ = "tool_confirmation"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_tool_confirmation_id"),

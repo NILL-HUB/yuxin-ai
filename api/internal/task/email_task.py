@@ -2,8 +2,8 @@ import socket
 from datetime import timedelta
 
 from celery import shared_task
-from flask import current_app
-from flask_mail import Mail, Message
+from internal.context import current_app
+from internal.extension.mail_extension import Mail, Message
 
 from internal.extension.redis_extension import redis_client
 
@@ -14,7 +14,7 @@ def send_verification_email_task(
     scene: str,
     client_ip: str,
 ) -> None:
-    from app.http.app import injector
+    from app.http.module import injector
     from internal.service.email_service import EmailService
 
     mail = injector.get(Mail)

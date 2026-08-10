@@ -21,12 +21,12 @@ from internal.schema.workflow_schema import (
     GetWorkflowsWithPageResp,
     UpdateWorkflowReq,
 )
-from test.internal.schema.utils import ns, utc_dt
+from test.internal.schema.utils import build_formdata, ns, utc_dt
 
 
 def _validate_form(form_request, form_cls, *, data=None, json=None, content_type=None):
     with form_request(data=data, json=json, content_type=content_type):
-        form = form_cls(meta={"csrf": False})
+        form = form_cls(formdata=build_formdata(), meta={"csrf": False})
         return form.validate(), form
 
 
@@ -73,7 +73,7 @@ def test_create_and_update_api_tool_forms_should_validate_required_fields(form_r
 
 def test_api_tool_header_validator_should_enforce_dict_and_exact_keys(form_request):
     with form_request():
-        create_form = CreateApiToolReq(meta={"csrf": False})
+        create_form = CreateApiToolReq(formdata=build_formdata(), meta={"csrf": False})
         create_form.headers.data = [{"key": "Authorization", "value": "Bearer token"}]
         CreateApiToolReq.validate_headers(create_form, create_form.headers)
 
@@ -85,7 +85,7 @@ def test_api_tool_header_validator_should_enforce_dict_and_exact_keys(form_reque
         with pytest.raises(ValidationError, match="headers里的每一格元素都必须包含key和value两个属性"):
             CreateApiToolReq.validate_headers(create_form, create_form.headers)
 
-        update_form = UpdateApiToolProviderReq(meta={"csrf": False})
+        update_form = UpdateApiToolProviderReq(formdata=build_formdata(), meta={"csrf": False})
         update_form.headers.data = [{"key": "k", "value": "v"}]
         UpdateApiToolProviderReq.validate_headers(update_form, update_form.headers)
 
@@ -123,6 +123,7 @@ def test_api_tool_response_schemas_should_strip_internal_parameter_fields():
             {"name": "query", "in": "query", "type": "string"},
             {"name": "body", "in": "body", "type": "object"},
         ],
+        task_keywords=[],
         provider=provider,
     )
     tool_payload = GetApiToolResp().dump(tool)

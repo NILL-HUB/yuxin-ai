@@ -30,7 +30,6 @@
 
 from __future__ import annotations
 
-import concurrent.futures
 import logging
 import math
 from dataclasses import dataclass, field
@@ -71,22 +70,6 @@ class _ConflictJudgment(BaseModel):
     )
     confidence: float = Field(..., ge=0.0, le=1.0, description="置信度 0-1")
     explanation: str = Field(default="", description="判定理由")
-
-
-# 冲突检测 prompt 模板
-_CONFLICT_DETECTION_PROMPT = """你是一个记忆冲突检测专家。请判断以下两条记忆之间的关系。
-
-记忆 A（现存记忆）: {memory_a}
-记忆 B（新写入记忆）: {memory_b}
-
-请判断它们之间的关系类型:
-- contradiction: 两条记忆直接矛盾，不能同时为真（如"我喜欢苹果" vs "我讨厌苹果"）
-- update: 记忆 B 是记忆 A 的更新版本，B 更准确或更近期（如偏好变化）
-- complement: 两条记忆互补，可以共存（如"我喜欢苹果" vs "我也喜欢菠萝"）
-- none: 两条记忆无关或完全相同
-
-请返回 JSON，包含 type（类型）、confidence（置信度 0-1）、explanation（理由）。
-"""
 
 
 # =========================================================
@@ -283,7 +266,11 @@ class WriteTimeConflictResolver:
             LLMActivityTimeoutError,
         )
 
-        prompt = _CONFLICT_DETECTION_PROMPT.format(
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_write_time_conflict_resolver_prompt"
+        ).format(
             memory_a=old_content[:500],
             memory_b=new_content[:500],
         )
@@ -490,7 +477,7 @@ class WriteTimeConflictResolver:
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None 触发降级。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             if driver is not None:

@@ -38,11 +38,11 @@ class TestAutoCreateAppTask:
             get=lambda cls: mock_app_service if cls.__name__ == "AppService" else mock_notification_service
         )
 
-        with patch("app.http.app.injector", injector), patch(
+        with patch("app.http.module.injector", injector), patch(
             "internal.lib.websocket_manager.ws_manager",
             mock_ws_manager,
         ):
-            auto_create_app(self.app_name, self.description, self.account_id)
+            auto_create_app.run(self.app_name, self.description, self.account_id)
 
         mock_app_service.auto_create_app.assert_called_once_with(
             self.app_name, self.description, self.account_id
@@ -73,11 +73,11 @@ class TestAutoCreateAppTask:
             get=lambda cls: mock_app_service if cls.__name__ == "AppService" else mock_notification_service
         )
 
-        with patch("app.http.app.injector", injector), patch(
+        with patch("app.http.module.injector", injector), patch(
             "internal.lib.websocket_manager.ws_manager",
             mock_ws_manager,
         ):
-            auto_create_app(self.app_name, self.description, self.account_id)
+            auto_create_app.run(self.app_name, self.description, self.account_id)
 
         expected_key = f"agent:{self.account_id}"
         mock_ws_manager.emit_notification_to_user.assert_called_once()
@@ -105,11 +105,11 @@ class TestAutoCreateAppTask:
             get=lambda cls: mock_app_service if cls.__name__ == "AppService" else mock_notification_service
         )
 
-        with patch("app.http.app.injector", injector), patch(
+        with patch("app.http.module.injector", injector), patch(
             "internal.lib.websocket_manager.ws_manager",
             mock_ws_manager,
         ):
-            auto_create_app(self.app_name, self.description, self.account_id)
+            auto_create_app.run(self.app_name, self.description, self.account_id)
 
         key = mock_ws_manager.emit_notification_to_user.call_args[0][0]
         assert key.startswith("agent:")
@@ -123,6 +123,6 @@ class TestAutoCreateAppTask:
             get=lambda cls: mock_app_service if cls.__name__ == "AppService" else Mock()
         )
 
-        with patch("app.http.app.injector", injector):
+        with patch("app.http.module.injector", injector):
             with pytest.raises(Exception):
-                auto_create_app(self.app_name, self.description, self.account_id)
+                auto_create_app.run(self.app_name, self.description, self.account_id)

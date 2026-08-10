@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Generator
 from uuid import UUID
 
-from flask import current_app
+from internal.context import current_app
 from injector import inject
 
 from internal.core.workflow.entities.workflow_entity import WorkflowConfig

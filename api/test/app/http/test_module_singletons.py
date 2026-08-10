@@ -18,7 +18,18 @@ def _build_injector_with_stubbed_infra(monkeypatch):
     )
     monkeypatch.setattr(
         "internal.service.embeddings_service.OpenAIEmbeddings",
-        lambda model: fake_embeddings_client,
+        lambda model, api_key, base_url=None, **kwargs: fake_embeddings_client,
+    )
+    monkeypatch.setattr(
+        "internal.service.embeddings_service.EmbeddingsService._resolve_embeddings_config",
+        lambda self: {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "api_key": "test-api-key",
+            "base_url": None,
+            "embedding_dimension": 0,
+            "model_id": None,
+        },
     )
     monkeypatch.setattr(
         "internal.service.embeddings_service.CacheBackedEmbeddings.from_bytes_store",

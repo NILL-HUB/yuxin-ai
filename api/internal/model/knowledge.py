@@ -5,14 +5,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import relationship
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class KnowledgeBase(db.Model):
+class KnowledgeBase(Base):
     __tablename__ = "knowledge_base"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_knowledge_base_id"),
@@ -48,7 +48,7 @@ class KnowledgeBase(db.Model):
     embedding_model = relationship("ModelPoolConfig", foreign_keys=[embedding_model_id], lazy="joined")
 
 
-class KnowledgeDocument(db.Model):
+class KnowledgeDocument(Base):
     __tablename__ = "knowledge_document"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_knowledge_document_id"),
@@ -77,7 +77,7 @@ class KnowledgeDocument(db.Model):
     knowledge_base = relationship("KnowledgeBase", lazy="joined")
 
 
-class KnowledgeSegment(db.Model):
+class KnowledgeSegment(Base):
     __tablename__ = "knowledge_segment"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_knowledge_segment_id"),
@@ -109,7 +109,7 @@ class KnowledgeSegment(db.Model):
     knowledge_document = relationship("KnowledgeDocument", lazy="joined")
 
 
-class UserMemory(db.Model):
+class UserMemory(Base):
     __tablename__ = "user_memory"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_user_memory_id"),
@@ -135,7 +135,7 @@ class UserMemory(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class ExternalDataSource(db.Model):
+class ExternalDataSource(Base):
     __tablename__ = "external_data_source"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_external_data_source_id"),

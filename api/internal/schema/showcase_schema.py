@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField, TextAreaField
 from wtforms.validators import DataRequired, Length, NumberRange, Optional
@@ -7,7 +7,7 @@ from internal.schema import ListField
 from pkg.paginator import PaginatorReq
 
 
-class CreateShowcaseCaseReq(FlaskForm):
+class CreateShowcaseCaseReq(Form):
     conversation_id = StringField("conversation_id", validators=[DataRequired("会话id不能为空")])
     title = StringField(
         "title",
@@ -36,7 +36,7 @@ class GetAdminShowcaseCasesReq(PaginatorReq):
     status = StringField("status", default="all", validators=[Optional(), Length(max=32)])
 
 
-class RejectShowcaseCaseReq(FlaskForm):
+class RejectShowcaseCaseReq(Form):
     reason = StringField("reason", validators=[Optional(), Length(max=500)])
 
 

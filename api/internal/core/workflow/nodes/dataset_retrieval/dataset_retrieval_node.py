@@ -1,7 +1,7 @@
 import time
 from typing import Optional, Any
 from uuid import UUID
-from flask import Flask
+from pkg.sqlalchemy import SQLAlchemy
 from pydantic import PrivateAttr
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -21,7 +21,7 @@ class DatasetRetrievalNode(BaseNode):
     def __init__(
             self,
             *args: Any,
-            flask_app: Flask,
+            flask_app: "SQLAlchemy",
             account_id: UUID,
             **kwargs: Any,
     ):

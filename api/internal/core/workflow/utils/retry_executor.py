@@ -8,9 +8,10 @@
 4. 返回执行结果或抛出最后一次异常
 """
 
+import asyncio
 import logging
 import time
-from typing import Callable, TypeVar
+from typing import Awaitable, Callable, TypeVar
 
 from internal.core.workflow.entities.retry_entity import RetryConfig
 
@@ -71,6 +72,59 @@ class RetryExecutor:
                     )
                     if config.retry_interval > 0:
                         time.sleep(config.retry_interval)
+                else:
+                    logger.error(
+                        "节点[%s]第%d次尝试失败（已达最大尝试次数）: %s",
+                        node_title, attempt, str(e),
+                    )
+
+        raise last_error  # type: ignore
+
+    @staticmethod
+    async def execute_with_retry_async(
+        func: Callable[[], Awaitable[T]],
+        config: RetryConfig,
+        node_title: str = "",
+    ) -> tuple[T, int]:
+        """执行带重试的异步函数（async 版，供事件循环内使用）。
+
+        与 ``execute_with_retry`` 逻辑一致，但等待间隔使用 ``asyncio.sleep``，
+        不阻塞事件循环。
+
+        Args:
+            func: 要执行的异步函数（无参数，返回 awaitable）
+            config: 重试配置
+            node_title: 节点标题（用于日志）
+
+        Returns:
+            tuple: (执行结果, 实际尝试次数)
+
+        Raises:
+            最后一次执行的异常（如果所有重试都失败）
+        """
+        max_tries = config.max_tries if config.retry_on_fail else 1
+        last_error: Exception | None = None
+        attempts = 0
+
+        for attempt in range(1, max_tries + 1):
+            attempts = attempt
+            try:
+                result = await func()
+                if attempt > 1:
+                    logger.info(
+                        "节点[%s]第%d次尝试成功（重试了%d次）",
+                        node_title, attempt, attempt - 1,
+                    )
+                return result, attempts
+            except Exception as e:
+                last_error = e
+                if attempt < max_tries:
+                    logger.warning(
+                        "节点[%s]第%d次尝试失败: %s，%.1f秒后重试",
+                        node_title, attempt, str(e), config.retry_interval,
+                    )
+                    if config.retry_interval > 0:
+                        await asyncio.sleep(config.retry_interval)
                 else:
                     logger.error(
                         "节点[%s]第%d次尝试失败（已达最大尝试次数）: %s",

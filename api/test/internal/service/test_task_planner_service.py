@@ -39,7 +39,10 @@ def test_task_planner_should_create_single_agent_task():
             needs_agent=True,
             agent_subset={
                 "selected_agents": [
-                    {"agent_id": "frontend-agent", "primary_pool": "frontend"}
+                    {
+                        "agent_id": "frontend-agent",
+                        "metadata": {"primary_pool": "frontend"},
+                    }
                 ]
             },
         ),

@@ -11,9 +11,10 @@ from internal.service.admin_app_assignment_service import AdminAppAssignmentServ
 
 
 class _QueryStub:
-    def __init__(self, *, one_or_none_result=None, all_result=None):
+    def __init__(self, *, one_or_none_result=None, all_result=None, first_result=None):
         self._one_or_none_result = one_or_none_result
         self._all_result = [] if all_result is None else all_result
+        self._first_result = first_result
         self.filters = []
         self.order_by_args = []
 
@@ -27,6 +28,9 @@ class _QueryStub:
 
     def one_or_none(self):
         return self._one_or_none_result
+
+    def first(self):
+        return self._first_result
 
     def all(self):
         return self._all_result
@@ -106,6 +110,7 @@ class TestAdminAppAssignmentService:
         service = AdminAppAssignmentService(
             session=_SessionStub([
                 _QueryStub(one_or_none_result=account),
+                _QueryStub(),
                 _QueryStub(one_or_none_result=app),
                 _QueryStub(one_or_none_result=None),
             ]),
@@ -131,6 +136,7 @@ class TestAdminAppAssignmentService:
         app = _app(status=AppStatus.DRAFT.value)
         service = AdminAppAssignmentService(session=_SessionStub([
             _QueryStub(one_or_none_result=account),
+            _QueryStub(),
             _QueryStub(one_or_none_result=app),
         ]))
 
@@ -143,6 +149,7 @@ class TestAdminAppAssignmentService:
         assignment = _assignment(app_id=app.id, account_id=account.id, status="revoked", revoked_at=datetime(2030, 1, 1, 0, 0, 0))
         service = AdminAppAssignmentService(session=_SessionStub([
             _QueryStub(one_or_none_result=account),
+            _QueryStub(),
             _QueryStub(one_or_none_result=app),
             _QueryStub(one_or_none_result=assignment),
         ]))
@@ -161,6 +168,7 @@ class TestAdminAppAssignmentService:
         assignment = _assignment(app_id=app.id, account_id=account.id, status="active")
         service = AdminAppAssignmentService(session=_SessionStub([
             _QueryStub(one_or_none_result=account),
+            _QueryStub(),
             _QueryStub(one_or_none_result=app),
             _QueryStub(one_or_none_result=assignment),
         ]))
@@ -201,6 +209,7 @@ class TestAdminAppAssignmentService:
         assignment.app = app
         service = AdminAppAssignmentService(session=_SessionStub([
             _QueryStub(one_or_none_result=account),
+            _QueryStub(),
             _QueryStub(all_result=[assignment]),
         ]))
 

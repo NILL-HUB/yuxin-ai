@@ -11,12 +11,12 @@ from internal.schema.api_key_schema import (
 from internal.schema.audio_schema import AudioToTextReq, MessageToAudioReq, TextToAudioReq
 from internal.schema.platform_schema import GetWechatConfigResp, UpdateWechatConfigReq
 from internal.schema.upload_file_schema import UploadFileReq, UploadFileResp, UploadImageReq
-from test.internal.schema.utils import ns, upload, utc_dt
+from test.internal.schema.utils import build_formdata, ns, upload, utc_dt
 
 
 def _validate_form(form_request, form_cls, *, data=None, json=None, content_type=None):
     with form_request(data=data, json=json, content_type=content_type):
-        form = form_cls(meta={"csrf": False})
+        form = form_cls(formdata=build_formdata(), meta={"csrf": False})
         return form.validate(), form
 
 

@@ -6,9 +6,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from alembic import command
+from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from flask_migrate import upgrade
 from sqlalchemy.exc import OperationalError
 
 
@@ -36,7 +37,9 @@ def main() -> int:
 
     with app.app_context():
         try:
-            upgrade(directory=str(MIGRATION_DIR), revision="head")
+            alembic_cfg = AlembicConfig(str(MIGRATION_DIR / "alembic.ini"))
+            alembic_cfg.set_main_option("script_location", str(MIGRATION_DIR))
+            command.upgrade(alembic_cfg, "head")
         except OperationalError as exc:
             raise RuntimeError(
                 "Database upgrade verification failed because the database connection could not be established. "

@@ -23,11 +23,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
-from typing import Any, Callable, Iterator
+from typing import Any, AsyncIterator, Callable, Iterator
 from uuid import UUID
 
 from .entities.node_entity import BaseNodeData, NodeType
@@ -299,6 +301,155 @@ class GraphEngine:
             "total_failed": total_failed,
         })
 
+    async def execute_async(self, inputs: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        """执行工作流（async 版），以异步生成器形式 yield SSE 事件。
+
+        与 ``execute`` 事件语义完全一致（workflow_started -> 节点事件 ->
+        workflow_finished），但同层节点使用 ``asyncio.gather`` 并行执行，
+        不占用子线程：
+        - 注入的 node_executor 为协程函数时，直接在事件循环中执行（await）
+        - 注入的 node_executor 为同步函数时，通过 ``asyncio.to_thread``
+          移入线程池执行，避免阻塞事件循环
+
+        Args:
+            inputs: 工作流输入，会写入 ``sys.inputs`` 系统变量
+
+        Yields:
+            SSE 事件 dict，结构为 ``{"event": <type>, "data": {...}}``
+        """
+        # 1.推送工作流开始事件
+        yield self._emit_event("workflow_started", {
+            "inputs": inputs,
+            "node_count": len(self._node_map),
+        })
+
+        # 2.初始化 VariablePool：写入系统变量 sys.inputs
+        self.variable_pool.set_system_variable("inputs", inputs)
+
+        # 3.拓扑分层，若存在环则直接推送失败事件并结束
+        try:
+            layers = self._topological_layers()
+        except ValueError as exc:
+            yield self._emit_event("workflow_finished", {
+                "status": "failed",
+                "error": str(exc),
+            })
+            return
+
+        failed_node_ids: set[UUID] = set()
+        total_executed = 0
+        total_failed = 0
+
+        # 4.逐层并行执行节点
+        for layer in layers:
+            # 4.1 过滤掉依赖失败节点的节点（错误恢复：跳过不可达节点）
+            executable_nodes = []
+            for node_id in layer:
+                node = self._node_map[node_id]
+                deps = self._get_dependencies(node_id)
+                if any(dep in failed_node_ids for dep in deps):
+                    yield self._emit_event("node_skipped", {
+                        "node_id": str(node_id),
+                        "node_type": self._node_type_str(node),
+                        "title": node.title,
+                        "reason": "上游节点失败",
+                    })
+                    failed_node_ids.add(node_id)
+                    total_failed += 1
+                else:
+                    executable_nodes.append(node_id)
+
+            if not executable_nodes:
+                continue
+
+            # 4.2 单节点时直接执行（避免 gather 开销）
+            if len(executable_nodes) == 1:
+                node_id = executable_nodes[0]
+                node = self._node_map[node_id]
+                async for event in self._execute_single_node_async(node):
+                    yield event
+                    if event["event"] == "node_failed":
+                        failed_node_ids.add(node_id)
+                        total_failed += 1
+                    elif event["event"] == "node_finished":
+                        total_executed += 1
+                continue
+
+            # 4.3 多节点并行执行
+            # 先推送所有 node_started 事件
+            for node_id in executable_nodes:
+                node = self._node_map[node_id]
+                node_inputs = self._build_node_inputs(node)
+                yield self._emit_event("node_started", {
+                    "node_id": str(node_id),
+                    "node_type": self._node_type_str(node),
+                    "title": node.title,
+                    "inputs": node_inputs,
+                })
+
+            # 并行执行（gather 保持输入顺序，结果按提交顺序对齐）
+            outcomes = await asyncio.gather(
+                *(
+                    self._execute_node_safe_async(self._node_map[nid])
+                    for nid in executable_nodes
+                ),
+            )
+            results: dict[UUID, tuple[dict[str, Any] | None, Exception | None, float]] = dict(
+                zip(executable_nodes, outcomes)
+            )
+
+            # 按节点顺序推送完成/失败事件（保证事件顺序稳定）
+            for node_id in executable_nodes:
+                node = self._node_map[node_id]
+                outputs, exc, elapsed = results.get(node_id, (None, None, 0.0))
+                node_inputs = self._build_node_inputs(node)
+
+                if exc is None and outputs is not None:
+                    # 成功：输出写入 VariablePool
+                    self.variable_pool.set_node_output(str(node_id), outputs)
+                    yield self._emit_event("node_finished", {
+                        "node_id": str(node_id),
+                        "node_type": self._node_type_str(node),
+                        "title": node.title,
+                        "inputs": node_inputs,
+                        "outputs": outputs,
+                        "elapsed_time": elapsed,
+                        "error": "",
+                    })
+                    total_executed += 1
+                else:
+                    # 失败：标记失败，不终止工作流
+                    failed_node_ids.add(node_id)
+                    total_failed += 1
+                    logger.exception("工作流节点执行失败: node_id=%s", node_id)
+                    yield self._emit_event("node_failed", {
+                        "node_id": str(node_id),
+                        "node_type": self._node_type_str(node),
+                        "title": node.title,
+                        "inputs": node_inputs,
+                        "outputs": {},
+                        "elapsed_time": elapsed,
+                        "error": str(exc) if exc else "未知错误",
+                    })
+
+        # 5.推送工作流结束事件
+        if total_failed == 0:
+            workflow_status = "succeeded"
+            workflow_error = ""
+        elif total_executed > 0:
+            workflow_status = "partial_failed"
+            workflow_error = f"{total_failed} 个节点失败，{total_executed} 个节点成功"
+        else:
+            workflow_status = "failed"
+            workflow_error = f"全部 {total_failed} 个节点失败"
+
+        yield self._emit_event("workflow_finished", {
+            "status": workflow_status,
+            "error": workflow_error,
+            "total_executed": total_executed,
+            "total_failed": total_failed,
+        })
+
     # ------------------------------------------------------------------
     # 节点执行
     # ------------------------------------------------------------------
@@ -347,6 +498,101 @@ class GraphEngine:
         except Exception as exc:
             elapsed = (datetime.now(UTC) - start_time).total_seconds()
             return None, exc, elapsed
+
+    async def _execute_node_async(self, node: BaseNodeData) -> dict[str, Any]:
+        """执行单个节点（async 版），返回节点输出字典。
+
+        - node_executor 为协程函数时：在事件循环中执行，带 async 重试
+        - node_executor 为同步函数时：通过 ``asyncio.to_thread`` 移入线程池
+          执行（复用同步重试逻辑），避免阻塞事件循环
+
+        Args:
+            node: 节点数据
+
+        Returns:
+            节点输出字典
+
+        Raises:
+            Exception: 节点执行器抛出的任何异常（重试耗尽后仍失败时）
+        """
+        retry_config = getattr(node, "retry_config", None) or RetryConfig()
+
+        if inspect.iscoroutinefunction(self.node_executor):
+            try:
+                output, attempts = await RetryExecutor.execute_with_retry_async(
+                    func=lambda: self.node_executor(node, self.variable_pool),
+                    config=retry_config,
+                    node_title=node.title,
+                )
+                # 如果重试过，在 outputs 中记录 retry 信息
+                if attempts > 1:
+                    output = {**output, "_retry_attempts": attempts}
+                return output
+            except Exception:
+                # 重试耗尽后仍然失败，向上抛出由执行方推送 node_failed 事件
+                raise
+
+        return await asyncio.to_thread(self._execute_node, node)
+
+    async def _execute_node_safe_async(self, node: BaseNodeData) -> tuple[dict[str, Any] | None, Exception | None, float]:
+        """安全执行单个节点（async 并行执行用），返回 (outputs, exception, elapsed_time)。
+
+        不会抛出异常，异常以返回值形式传递给调用方。
+        """
+        start_time = datetime.now(UTC)
+        try:
+            outputs = await self._execute_node_async(node)
+            elapsed = (datetime.now(UTC) - start_time).total_seconds()
+            return outputs, None, elapsed
+        except Exception as exc:
+            elapsed = (datetime.now(UTC) - start_time).total_seconds()
+            return None, exc, elapsed
+
+    async def _execute_single_node_async(self, node: BaseNodeData) -> AsyncIterator[dict[str, Any]]:
+        """执行单个节点并 yield 事件（async 单节点层用，避免 gather 开销）。
+
+        Yields:
+            node_started -> node_finished 或 node_failed
+        """
+        node_inputs = self._build_node_inputs(node)
+
+        yield self._emit_event("node_started", {
+            "node_id": str(node.id),
+            "node_type": self._node_type_str(node),
+            "title": node.title,
+            "inputs": node_inputs,
+        })
+
+        start_time = datetime.now(UTC)
+        try:
+            outputs = await self._execute_node_async(node)
+            elapsed_time = (datetime.now(UTC) - start_time).total_seconds()
+
+            # 节点输出写入 VariablePool
+            self.variable_pool.set_node_output(str(node.id), outputs)
+
+            yield self._emit_event("node_finished", {
+                "node_id": str(node.id),
+                "node_type": self._node_type_str(node),
+                "title": node.title,
+                "inputs": node_inputs,
+                "outputs": outputs,
+                "elapsed_time": elapsed_time,
+                "error": "",
+            })
+        except Exception as exc:
+            elapsed_time = (datetime.now(UTC) - start_time).total_seconds()
+            logger.exception("工作流节点执行失败: node_id=%s", node.id)
+
+            yield self._emit_event("node_failed", {
+                "node_id": str(node.id),
+                "node_type": self._node_type_str(node),
+                "title": node.title,
+                "inputs": node_inputs,
+                "outputs": {},
+                "elapsed_time": elapsed_time,
+                "error": str(exc),
+            })
 
     def _execute_single_node(self, node: BaseNodeData) -> Iterator[dict[str, Any]]:
         """执行单个节点并 yield 事件（单节点层用，避免线程池开销）。

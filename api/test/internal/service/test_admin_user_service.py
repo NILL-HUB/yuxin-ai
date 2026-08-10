@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from test.context import TestApp
 
 from internal.exception import FailException, UnauthorizedException
 from internal.model.account import Account, AccountSession
@@ -12,9 +13,10 @@ from pkg.password import compare_password, hash_password
 
 
 class _QueryStub:
-    def __init__(self, *, one_or_none_result=None, all_result=None):
+    def __init__(self, *, one_or_none_result=None, all_result=None, count_result=0):
         self._one_or_none_result = one_or_none_result
         self._all_result = [] if all_result is None else all_result
+        self._count_result = count_result
         self.filters = []
         self.deletes = 0
 
@@ -30,6 +32,9 @@ class _QueryStub:
 
     def all(self):
         return self._all_result
+
+    def count(self):
+        return self._count_result
 
     def delete(self):
         self.deletes += 1
@@ -103,18 +108,22 @@ class TestAdminUserService:
 
         created_users = [item for item in session.added if isinstance(item, AdminUser)]
         created_bindings = [item for item in session.added if isinstance(item, AdminUserRole)]
+        created_accounts = [item for item in session.added if isinstance(item, Account)]
         assert result == {"created": True, "reason": "created"}
         assert len(created_users) == 1
         assert created_users[0].username == "admin"
         assert created_users[0].email == ""
         assert created_users[0].name == "Root"
         assert created_users[0].status == "active"
+        assert created_users[0].account_id is None
         assert created_users[0].password != "Root123456"
         assert created_users[0].password_salt != ""
         assert compare_password("Root123456", created_users[0].password, created_users[0].password_salt) is True
         assert len(created_bindings) == 1
         assert created_bindings[0].admin_user_id == created_users[0].id
         assert created_bindings[0].role_id == super_admin_role.id
+        # 完全解耦：初始化超级管理员不再创建/复用用户端账号
+        assert len(created_accounts) == 0
         assert session.commits == 1
 
     def test_initialize_super_admin_should_skip_existing_user(self, monkeypatch):
@@ -145,17 +154,7 @@ class TestAdminUserService:
     def test_password_login_should_issue_admin_token_without_password_fields(self, monkeypatch):
         monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-with-32-bytes-min-123456")
         admin_user_id = uuid4()
-        account_id = uuid4()
         password, salt = _hashed_password("Root123456")
-        account = Account(
-            id=account_id,
-            username="admin",
-            email="",
-            name="Root",
-            password=password,
-            password_salt=salt,
-            status="active",
-        )
         admin_user = AdminUser(
             id=admin_user_id,
             username="admin",
@@ -165,56 +164,47 @@ class TestAdminUserService:
             password_salt=salt,
             status="active",
         )
-        admin_user.account_id = account_id
         session = _SessionStub([
             _QueryStub(one_or_none_result=admin_user),
-            _QueryStub(one_or_none_result=account),
             _QueryStub(all_result=[("super_admin",)]),
             _QueryStub(all_result=[("admin:access",), ("account:read",)]),
         ])
         service = AdminUserService(session=session)
 
-        result = service.password_login("ADMIN", "Root123456")
+        app = TestApp(__name__)
+        with app.test_request_context("/"):
+            result = service.password_login("ADMIN", "Root123456")
 
         created_sessions = [item for item in session.added if isinstance(item, AdminSession)]
         created_account_sessions = [item for item in session.added if isinstance(item, AccountSession)]
         assert result["access_token"]
         assert result["admin_access_token"] == result["access_token"]
-        assert result["user_access_token"]
-        assert result["user_expire_at"] > 0
         assert result["expire_at"] > 0
-        assert result["admin_user"] == {
-            "id": str(admin_user_id),
-            "username": "admin",
-            "email": "",
-            "name": "Root",
-            "avatar": "",
-            "status": "active",
-            "roles": ["super_admin"],
-            "permissions": ["account:read", "admin:access"],
-        }
-        assert result["user"] == {
-            "id": str(account_id),
-            "username": "admin",
-            "email": "",
-            "name": "Root",
-            "avatar": "",
-            "status": "active",
-        }
+        assert "user_access_token" not in result
+        assert "user_expire_at" not in result
+        assert "user" not in result
+        admin_user_serialized = result["admin_user"]
+        assert admin_user_serialized["id"] == str(admin_user_id)
+        assert admin_user_serialized["username"] == "admin"
+        assert admin_user_serialized["email"] == ""
+        assert admin_user_serialized["name"] == "Root"
+        assert admin_user_serialized["status"] == "active"
+        # 完全解耦：管理员不再绑定用户端账号
+        assert admin_user_serialized["account_id"] is None
+        assert admin_user_serialized["last_login_at"] > 0
+        assert admin_user_serialized["roles"] == ["super_admin"]
+        assert admin_user_serialized["permissions"] == ["account:read", "admin:access"]
         assert "password" not in result["admin_user"]
         assert "password_salt" not in result["admin_user"]
         assert len(created_sessions) == 1
-        assert len(created_account_sessions) == 1
-        assert created_account_sessions[0].account_id == account_id
+        # 完全解耦：管理员登录不再创建用户端会话
+        assert len(created_account_sessions) == 0
         assert created_sessions[0].admin_user_id == admin_user_id
         assert session.commits == 1
         payload = service.parse_admin_token(result["access_token"])
         assert payload["sub"] == str(admin_user_id)
         assert payload["realm"] == "admin"
         assert payload["session_id"] == str(created_sessions[0].id)
-        user_payload = service.jwt_service.parse_token(result["user_access_token"])
-        assert user_payload["sub"] == str(account_id)
-        assert user_payload["jti"] == str(created_account_sessions[0].id)
 
     def test_password_login_should_reject_wrong_password(self, monkeypatch):
         monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-with-32-bytes-min-123456")
@@ -388,20 +378,19 @@ class TestAdminUserService:
         assert "至少保留一个超级管理员" in str(exc_info.value)
         assert session.commits == 0
 
-    def test_disable_admin_user_should_reject_disabling_only_super_admin(self):
+    def test_disable_admin_user_should_reject_disabling_super_admin(self):
         super_admin_id = uuid4()
         admin_user = AdminUser(id=super_admin_id, email="root@example.com", name="Root", status="active")
         session = _SessionStub([
             _QueryStub(one_or_none_result=admin_user),
             _QueryStub(all_result=[("super_admin",)]),
-            _QueryStub(one_or_none_result=None),
         ])
         service = AdminUserService(session=session)
 
         with pytest.raises(FailException) as exc_info:
             service.disable_admin_user(super_admin_id)
 
-        assert "至少保留一个超级管理员" in str(exc_info.value)
+        assert "超级管理员账号不允许禁用" in str(exc_info.value)
         assert admin_user.status == "active"
         assert session.commits == 0
 
@@ -473,8 +462,8 @@ class TestAdminUserService:
             "resource_id": str(admin_id),
             "ip": "127.0.0.1",
             "user_agent": "pytest",
-            "before_data": {"name": "Old", "status": "active", "roles": ["viewer"]},
-            "after_data": {"name": "New", "status": "disabled", "roles": [role_id]},
+            "before_data": {"name": "Old", "email": "admin@example.com", "status": "active", "roles": ["viewer"]},
+            "after_data": {"name": "New", "email": "admin@example.com", "status": "disabled", "roles": [role_id]},
         }]
 
     def test_disable_admin_user_should_record_audit_log(self):

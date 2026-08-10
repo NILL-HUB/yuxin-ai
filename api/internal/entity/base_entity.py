@@ -1,4 +1,4 @@
-from dataclasses import asdict, fields, is_dataclass
+from dataclasses import fields, is_dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any

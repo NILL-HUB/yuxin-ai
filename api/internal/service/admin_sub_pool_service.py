@@ -2,8 +2,6 @@ import math
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Text, cast
-
 from internal.entity.agent_pool_entity import refresh_cache as refresh_agent_cache
 from internal.entity.tool_pool_entity import refresh_cache as refresh_tool_cache
 from internal.exception import FailException, NotFoundException

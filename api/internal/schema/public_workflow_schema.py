@@ -1,5 +1,5 @@
 """公共工作流Schema"""
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import StringField
 from wtforms.validators import Length, Optional
@@ -7,7 +7,7 @@ from wtforms.validators import Length, Optional
 from pkg.paginator import PaginatorReq
 
 
-class ShareWorkflowToSquareReq(FlaskForm):
+class ShareWorkflowToSquareReq(Form):
     """共享工作流到广场请求"""
     tags = StringField(
         "tags",

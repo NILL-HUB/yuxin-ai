@@ -76,13 +76,12 @@ class _Db:
         return _auto_commit()
 
 
-def _build_service(db=None, file_extractor=None, process_rule_service=None,
+def _build_service(db=None, file_extractor=None,
                    embeddings_service=None, jieba_service=None,
                    knowledge_vector_service=None):
     return KnowledgeIndexingService(
         db=db or SimpleNamespace(session=SimpleNamespace()),
         file_extractor=file_extractor or SimpleNamespace(),
-        process_rule_service=process_rule_service or SimpleNamespace(),
         embeddings_service=embeddings_service or SimpleNamespace(calculate_token_count=lambda _t: 1),
         jieba_service=jieba_service or SimpleNamespace(extract_keywords=lambda _t, _k: ["kw"]),
         knowledge_vector_service=knowledge_vector_service or SimpleNamespace(

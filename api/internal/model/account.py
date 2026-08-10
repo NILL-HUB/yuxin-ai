@@ -1,5 +1,4 @@
-from flask import current_app
-from flask_login import UserMixin
+from internal.context import current_app
 from sqlalchemy import (
     Column,
     UUID,
@@ -12,6 +11,9 @@ from sqlalchemy import (
 from datetime import UTC, datetime
 
 from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
+
+
 from .conversation import Conversation
 from ..entity.conversation_entity import InvokeFrom
 
@@ -19,7 +21,7 @@ from ..entity.conversation_entity import InvokeFrom
 def _utcnow_naive() -> datetime:
     """返回无时区的 UTC 时间，兼容数据库 DateTime 列且避免 utcnow 退化警告。"""
     return datetime.now(UTC).replace(tzinfo=None)
-class Account(UserMixin, db.Model):
+class Account(Base):
     """账号模型"""
     __tablename__ = "account"
     __table_args__ = (
@@ -97,7 +99,7 @@ class Account(UserMixin, db.Model):
         return conversation
 
 
-class AccountOAuth(db.Model):
+class AccountOAuth(Base):
     """账号与第三方授权认证记录表"""
     __tablename__ = "account_oauth"
     __table_args__ = (
@@ -121,7 +123,7 @@ class AccountOAuth(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class AccountSession(db.Model):
+class AccountSession(Base):
     """账号登录会话记录表"""
     __tablename__ = "account_session"
     __table_args__ = (

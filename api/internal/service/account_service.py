@@ -9,14 +9,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
 
-from flask import has_request_context, request
+from internal.context import has_request_context, request
 from injector import inject
 import requests
 from sqlalchemy.exc import SQLAlchemyError
 
 from internal.exception import FailException, NotFoundException, UnauthorizedException
 from internal.extension.redis_extension import redis_client
-from internal.model import Account, AccountOAuth, AccountSession
+from internal.model import Account, AccountOAuth, AccountSession, AdminUser
 from pkg.password import compare_password, hash_password
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -1002,9 +1002,20 @@ class AccountService(BaseService):
         if getattr(account, "is_disabled", False):
             raise FailException("账号已被禁用")
 
+    def _ensure_account_not_admin_bound(self, account: Account) -> None:
+        """管理员绑定的账号不允许在用户端登录，确保 admin 与用户身份完全隔离。"""
+        bound = (
+            self.db.session.query(AdminUser)
+            .filter(AdminUser.account_id == account.id)
+            .first()
+        )
+        if bound is not None:
+            raise FailException("该账号已绑定管理员身份，请前往管理端登录")
+
     def begin_login(self, account: Account) -> dict[str, Any]:
         """根据登录风险返回授权凭证或二次验证挑战。"""
         self._ensure_account_enabled(account)
+        self._ensure_account_not_admin_bound(account)
         client_ip = self._resolve_client_ip()
         if self._should_require_login_challenge(account, client_ip):
             return self._create_login_challenge(account, risk_reason="new_ip")

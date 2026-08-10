@@ -22,9 +22,9 @@ class SandboxPolicy:
     default_sandbox_timeout_seconds: int = 86400
     default_execute_timeout_seconds: int = 3600
     default_artifact_base_dirs: tuple[str, ...] = ("/workspace", "/home/user", "/tmp", "/mnt/data")
-    document_build_base_dir: str = "/tmp/openagent_doc_build"
+    document_build_base_dir: str = "/tmp/yuxin_ai_doc_build"
     code_interpreter_data_dir: str = "/mnt/data"
-    artifact_marker_prefix: str = ".openagent_artifact_marker_"
+    artifact_marker_prefix: str = ".yuxin_ai_artifact_marker_"
 
     @classmethod
     def build_default_artifact_root(cls, task_id: object) -> str:

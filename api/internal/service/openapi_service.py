@@ -1,12 +1,10 @@
 import json
 import logging
 from dataclasses import dataclass
-from threading import Thread
 from typing import Generator
 
-from flask import current_app, has_app_context
+from internal.context import current_app, has_app_context
 from injector import inject
-from langchain_core.messages import HumanMessage
 
 from internal.core.agent.agents import FunctionCallAgent, ReACTAgent
 from internal.core.agent.entities.agent_entity import AgentConfig
@@ -14,7 +12,6 @@ from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.core.memory import TokenBufferMemory
 from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
-from internal.entity.dataset_entity import RetrievalSource
 from internal.exception import NotFoundException, ForbiddenException
 from internal.lib.helper import build_input_parts, build_output_payload
 from internal.model import Account, EndUser, Conversation, Message

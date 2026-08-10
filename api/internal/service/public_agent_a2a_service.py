@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any, Generator
 from uuid import UUID
 
-from flask import Flask, current_app, has_app_context
+from internal.context import current_app, has_app_context, is_active_app
 from injector import inject
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool, tool
@@ -58,7 +58,7 @@ class PublicAgentA2AService(BaseService):
         @tool("route_public_agents", args_schema=PublicAgentRouteInput)
         def route_public_agents(query: str) -> dict[str, Any]:
             """当用户明确要求使用某个已有智能体回答，或当前问题更适合交给已发布公共/垂直/Agent这样的细分具体问题处理时，优先调用该工具。它会先检索公开Agent，再筛选出真正相关的候选，最后按A2A协议依次调用，最多返回3个相关Agent的结果。对于“请使用xx智能体回答”“让xxAgent来回答”“帮我解决xx”“帮我解决xx等垂直问题”等这类请求，必须优先使用本工具，禁止改用 `create_app` 新建应用。"""
-            if flask_app is not None and not has_app_context():
+            if flask_app is not None and not is_active_app(flask_app):
                 with flask_app.app_context():
                     return self.route_public_agents(
                         query=query,
@@ -82,7 +82,7 @@ class PublicAgentA2AService(BaseService):
         caller_account_id: UUID,
         limit: int = 3,
         assistant_agent_id: str = "",
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
     ) -> dict[str, Any]:
         """先检索，再委派公开Agent处理问题。"""
         normalized_query = str(query or "").strip()
@@ -275,6 +275,8 @@ class PublicAgentA2AService(BaseService):
         limit: int,
     ) -> tuple[str, str]:
         """构建公共Agent二次筛选提示词。"""
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         candidates = [
             {
                 "app_id": str(match.get("app_id", "")).strip(),
@@ -285,16 +287,8 @@ class PublicAgentA2AService(BaseService):
             }
             for match in matches
         ]
-        system_prompt = (
-            "你是公共Agent路由裁决器。"
-            "你的任务是从候选公共Agent中筛选出真正应该被调用的Agent。"
-            "请严格遵守以下规则：\n"
-            "1. 只选择能够直接回答、处理或覆盖用户问题核心意图的Agent。\n"
-            "2. 不要因为候选是向量检索召回结果就默认相关。\n"
-            "3. 对明显无关、仅有弱关联或只是泛泛可聊的Agent，必须过滤掉。\n"
-            "4. 只有当多个Agent分别覆盖用户请求中不同且必要的部分时，才允许多选。\n"
-            "5. 如果没有足够相关的Agent，可以返回空列表。\n"
-            "6. 输出时优先调用 select_public_agents 工具；若不能调用工具，则输出JSON对象，字段为 selected_app_ids 和 reason。"
+        system_prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "public_agent_router_prompt"
         )
         human_prompt = (
             f"用户问题:\n{query}\n\n"
@@ -518,7 +512,7 @@ class PublicAgentA2AService(BaseService):
         self,
         app_id: UUID | str,
         payload: dict[str, Any] | None,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
     ) -> dict[str, Any]:
         """以A2A消息格式调用指定公开Agent。"""
         app = self._get_public_app(app_id)
@@ -574,7 +568,7 @@ class PublicAgentA2AService(BaseService):
         self,
         app_id: UUID | str,
         payload: dict[str, Any] | None,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
     ) -> Generator[str, None, None]:
         """以A2A消息格式流式调用指定公开Agent。"""
         app = self._get_public_app(app_id)
@@ -621,7 +615,7 @@ class PublicAgentA2AService(BaseService):
         query: str,
         context_id: str,
         request_payload: dict[str, Any],
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         runtime_context: dict[str, Any] | None = None,
     ) -> Generator[str, None, None]:
         """流式输出公开Agent事件。"""
@@ -739,7 +733,7 @@ class PublicAgentA2AService(BaseService):
         self,
         app: App,
         query: str,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         runtime_context: dict[str, Any] | None = None,
     ):
         """以内存方式调用公开Agent，不落库。"""

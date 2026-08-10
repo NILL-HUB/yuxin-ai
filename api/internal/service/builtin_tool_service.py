@@ -6,7 +6,7 @@ from injector import inject
 from dataclasses import dataclass
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from pydantic import BaseModel
-from flask import current_app
+from internal.context import current_app
 from internal.exception import NotFoundException
 from internal.core.tools.builtin_tools.categories import BuiltinCategoryManager
 
@@ -21,7 +21,7 @@ class BuiltinToolService:
     builtin_category_manager: BuiltinCategoryManager
 
     def get_builtin_tools(self) -> list:
-        """获取 OpenAgent 项目中的所有内置提供商和工具信息
+        """获取 钰心AI 项目中的所有内置提供商和工具信息
 
         优先从 DB 镜像表读取（admin 编辑后的元数据），失败时回退到
         BuiltinProviderManager 内存中的 YAML 数据。

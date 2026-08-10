@@ -1,0 +1,48 @@
+source_key: image-vision
+name: 图片识别
+label: 图片识别
+description: 让纯文本模型获得识图能力。当用户上传图片、截图、照片，或需要理解图像/图表/界面内容、提取图片中的文字（OCR）时使用。自动调用免费视觉模型将图片转为文字描述，三模型依次降级保证可用性。
+category: 多模态
+tags:
+  - 识图
+  - OCR
+  - 多模态
+  - 视觉
+  - image
+  - vision
+icon: icon.svg
+enabled: true
+version: 1
+executor_type: scf
+capabilities:
+  network: true
+  vision: true
+task_keywords:
+  - 识图
+  - 看图
+  - 图片识别
+  - 图片内容
+  - OCR
+  - 截图识别
+  - 图像理解
+  - 描述图片
+  - 识别图片
+  - 图片里
+  - 这张图
+  - 照片识别
+tools:
+  - name: recognize_image
+    label: 图片识别
+    description: 传入图片 base64（data URL 格式），返回图像内容的文字描述。支持 OCR 与图像理解。
+    entrypoint: recognize_image
+    input_schema:
+      type: object
+      properties:
+        image:
+          type: string
+          description: 图片的 data URL（如 data:image/jpeg;base64,xxxx），或 http(s) 图片直链
+        question:
+          type: string
+          description: 对图片的具体提问，如"图中文字是什么""描述这张图的布局"
+      required:
+        - image

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 import base64
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,7 +15,6 @@ from internal.exception import (
     NotFoundException,
     ValidateErrorException,
 )
-from internal.entity.ai_entity import OPENAPI_SCHEMA_ASSISTANT_PROMPT, PYTHON_CODE_ASSISTANT_PROMPT
 from internal.model import Account, AccountOAuth, ApiKey, ApiTool, ApiToolProvider
 from internal.service.account_service import AccountService as _AccountService
 from internal.service.ai_service import AIService, PythonMarkdownOutputParser
@@ -138,16 +137,23 @@ class _AppDBStub:
 
 
 class TestAIService:
-    def test_python_prompt_template_should_only_require_question(self):
+    def test_python_prompt_template_should_be_buildable_with_current_system_prompt(self):
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        system_prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "ai_python_code_assistant"
+        )
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", PYTHON_CODE_ASSISTANT_PROMPT),
+            ("system", system_prompt),
             ("human", "{question}"),
         ])
 
-        assert prompt_template.input_variables == ["question"]
+        assert "question" in prompt_template.input_variables
 
     def test_openapi_schema_prompt_template_should_only_require_question(self):
-        system_prompt = OPENAPI_SCHEMA_ASSISTANT_PROMPT.replace("{", "{{").replace("}", "}}")
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        system_prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "ai_openapi_schema_assistant"
+        ).replace("{", "{{").replace("}", "}}")
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("human", "{question}"),
@@ -245,7 +251,19 @@ class TestAIService:
             "internal.service.ai_service.ChatPromptTemplate.from_messages",
             lambda _messages: _FakePipe(),
         )
-        monkeypatch.setattr("internal.service.ai_service.Chat", lambda **_kwargs: object())
+        monkeypatch.setattr(
+            "internal.service.ai_service.SystemPromptLibraryService.get_prompt_or_default",
+            lambda _self, _prompt_key: "system prompt",
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LanguageModelService.get_feature_model",
+            lambda _feature_key: object(),
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LLMActivityProbe.monitor_stream",
+            lambda stream_factory, **kwargs: stream_factory(),
+        )
+        monkeypatch.setattr("internal.service.ai_service.get_openai_callback", None)
         monkeypatch.setattr("internal.service.ai_service.StrOutputParser", lambda: object())
 
         events = list(AIService.optimize_prompt("make it better"))
@@ -267,7 +285,19 @@ class TestAIService:
             "internal.service.ai_service.ChatPromptTemplate.from_messages",
             lambda _messages: _FakePipe(),
         )
-        monkeypatch.setattr("internal.service.ai_service.Chat", lambda **_kwargs: object())
+        monkeypatch.setattr(
+            "internal.service.ai_service.SystemPromptLibraryService.get_prompt_or_default",
+            lambda _self, _prompt_key: "system prompt",
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LanguageModelService.get_feature_model",
+            lambda _feature_key: object(),
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LLMActivityProbe.monitor_stream",
+            lambda stream_factory, **kwargs: stream_factory(),
+        )
+        monkeypatch.setattr("internal.service.ai_service.get_openai_callback", None)
         monkeypatch.setattr("internal.service.ai_service.PythonMarkdownOutputParser", lambda: object())
 
         events = list(AIService.code_assistant_chat("请生成代码"))
@@ -289,7 +319,19 @@ class TestAIService:
             "internal.service.ai_service.ChatPromptTemplate.from_messages",
             lambda _messages: _FakePipe(),
         )
-        monkeypatch.setattr("internal.service.ai_service.Chat", lambda **_kwargs: object())
+        monkeypatch.setattr(
+            "internal.service.ai_service.SystemPromptLibraryService.get_prompt_or_default",
+            lambda _self, _prompt_key: "system prompt",
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LanguageModelService.get_feature_model",
+            lambda _feature_key: object(),
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LLMActivityProbe.monitor_stream",
+            lambda stream_factory, **kwargs: stream_factory(),
+        )
+        monkeypatch.setattr("internal.service.ai_service.get_openai_callback", None)
         monkeypatch.setattr("internal.service.ai_service.StrOutputParser", lambda: object())
 
         events = list(AIService.openapi_schema_assistant_chat("请生成天气schema"))

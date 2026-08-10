@@ -14,12 +14,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from datetime import UTC, datetime
 
 from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     """返回无时区的 UTC 时间，兼容数据库 DateTime 列且避免 utcnow 退化警告。"""
     return datetime.now(UTC).replace(tzinfo=None)
-class ApiToolProvider(db.Model):
+class ApiToolProvider(Base):
     """API工具提供者模型"""
     __tablename__ = "api_tool_provider"
     __table_args__ = (
@@ -29,7 +30,8 @@ class ApiToolProvider(db.Model):
     )
 
     id = Column(UUID, nullable=False, server_default=text('uuid_generate_v4()'))
-    account_id = Column(UUID, ForeignKey('account.id'), nullable=False)
+    account_id = Column(UUID, ForeignKey('account.id'), nullable=True)
+    created_by_admin = Column(UUID, ForeignKey('admin_user.id'), nullable=True)  # 创建管理员id（管理端创建时记录）
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))
     icon = Column(String(255), nullable=False, server_default=text("''::character varying"))
     description = Column(Text, nullable=False, server_default=text("''::text"))
@@ -52,7 +54,7 @@ class ApiToolProvider(db.Model):
         return db.session.query(ApiTool).filter_by(provider_id=self.id).all()
 
 
-class ApiTool(db.Model):
+class ApiTool(Base):
     """API工具表"""
     __tablename__ = "api_tool"
     __table_args__ = (
@@ -64,7 +66,7 @@ class ApiTool(db.Model):
     )
 
     id = Column(UUID, nullable=False, server_default=text('uuid_generate_v4()'))
-    account_id = Column(UUID, nullable=False)
+    account_id = Column(UUID, nullable=True)
     provider_id = Column(UUID, nullable=False)
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))
     description = Column(Text, nullable=False, server_default=text("''::text"))

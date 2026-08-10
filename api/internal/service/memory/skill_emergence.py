@@ -23,7 +23,7 @@ import hashlib
 import json
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -73,6 +73,17 @@ class SkillConfig(BaseModel):
     stale_days: int = 90
     extraction_model: str = "gpt-4o-mini"
     extraction_temperature: float = 0.2
+    # ── 基因1: Skill 即时触发（§8.5）──
+    instant_emergence_enabled: bool = True
+    instant_emergence_min_tool_calls: int = 5
+    instant_emergence_async: bool = True
+    # ── 基因3: Curator + bump_use（§8.7）──
+    curator_enabled: bool = True
+    curator_interval_days: int = 7
+    curator_merge_similarity_threshold: float = 0.85
+    curator_stale_to_deprecated_days: int = 30
+    bump_use_redis_enabled: bool = True
+    bump_use_neo4j_flush_interval: int = 3600
 
 
 # =========================================================
@@ -86,54 +97,6 @@ SKILL_TRANSITIONS: dict[SkillStatus, list[SkillStatus]] = {
     SkillStatus.STALE: [SkillStatus.ACTIVE, SkillStatus.DEPRECATED],
     SkillStatus.DEPRECATED: [],
 }
-
-
-# =========================================================
-# LLM Prompt 模板
-# =========================================================
-
-SKILL_EXTRACTION_PROMPT = """请从以下重复行为序列中提取参数化技能模板。
-
-行为序列:
-{sequences}
-
-请分析这些行为的共同模式，提取一个可复用的技能模板。
-返回 JSON，格式:
-{{
-  "name": "技能名称（简短）",
-  "description": "技能描述",
-  "template": "技能模板（参数化后的通用形式）",
-  "parameters": [{{"name": "参数名", "type": "string|number|boolean", "description": "参数说明"}}]
-}}
-
-只返回 JSON，不要其他内容。"""
-
-SKILL_UPDATE_PROMPT = """请根据新证据更新已有技能。
-
-已有技能:
-- 名称: {name}
-- 描述: {description}
-- 模板: {template}
-
-新证据（最近行为）:
-{new_evidence}
-
-请判断应该采取的操作:
-- keep: 技能仍然有效，无需修改
-- update: 技能需要更新（参数/描述/模板变化）
-- deprecate: 技能已过时，应废弃
-
-返回 JSON:
-{{
-  "action": "keep|update|deprecate",
-  "reason": "判断理由",
-  "name": "更新后的名称（action=update 时）",
-  "description": "更新后的描述（action=update 时）",
-  "template": "更新后的模板（action=update 时）",
-  "parameters": [{{"name": "...", "type": "...", "description": "..."}}]
-}}
-
-只返回 JSON，不要其他内容。"""
 
 
 class SkillEmergence:
@@ -454,7 +417,11 @@ class SkillEmergence:
                 for m in pattern_memories[:10]
             )
 
-            prompt = SKILL_EXTRACTION_PROMPT.format(sequences=sequences_text)
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+            prompt = SystemPromptLibraryService().get_prompt_or_default(
+                "memory_skill_extraction_prompt"
+            ).format(sequences=sequences_text)
 
             llm = LanguageModelService.get_feature_model("memory_skill_emergence")
             response = LLMActivityProbe.invoke_with_probe(
@@ -537,7 +504,11 @@ class SkillEmergence:
             memories = self._fetch_memories(new_memory_ids[:5])
             new_evidence_text = "\n".join(f"- {m.get('content', '')}" for m in memories)
 
-            prompt = SKILL_UPDATE_PROMPT.format(
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+            prompt = SystemPromptLibraryService().get_prompt_or_default(
+                "memory_skill_update_prompt"
+            ).format(
                 name=skill.name,
                 description=skill.description,
                 template=skill.template,
@@ -710,7 +681,7 @@ class SkillEmergence:
         if self._neo4j_driver is not None:
             return self._neo4j_driver
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             return driver
@@ -723,3 +694,268 @@ class SkillEmergence:
         except Exception:
             logger.warning("_get_driver: 获取 Neo4j 驱动失败", exc_info=True)
             return None
+
+    # =========================================================
+    # Curator 周期治理（修复断裂点 ⚠️-3）
+    # =========================================================
+
+    def curate_skills(self, user_id: str) -> dict:
+        """周期性技能治理：重算成熟度 + 状态转移 + 剪枝。
+
+        合并 Redis 实时使用统计到 Neo4j，重算所有 ACTIVE/STALE 技能的成熟度，
+        执行状态转移（ACTIVE→STALE、STALE→DEPRECATED、STALE→ACTIVE 复活）。
+
+        设计参考：docs/prd/memory-system/03-consolidation-skill-policy-api.md §8.7
+
+        Args:
+            user_id: 用户标识
+
+        Returns:
+            ``{"scanned": int, "transitioned": int, "deprecated": int}``
+        """
+        driver = self._get_driver()
+        if driver is None:
+            return {"scanned": 0, "transitioned": 0, "deprecated": 0}
+
+        # 1. 查询所有 ACTIVE/STALE 技能
+        try:
+            cypher = """
+            MATCH (s:Skill {user_id: $user_id})
+            WHERE s.status IN ['active', 'stale']
+            RETURN s
+            """
+            with driver.session() as session:
+                result = session.run(cypher, {"user_id": user_id})
+                records = list(result)
+        except Exception:
+            logger.warning("curate_skills: 查询技能失败", exc_info=True)
+            return {"scanned": 0, "transitioned": 0, "deprecated": 0}
+
+        if not records:
+            return {"scanned": 0, "transitioned": 0, "deprecated": 0}
+
+        # 2. 合并 Redis 实时统计 + 重算成熟度 + 状态转移
+        redis_stats = self._read_skill_stats(user_id)
+        scanned = 0
+        transitioned = 0
+        deprecated = 0
+
+        for record in records:
+            node = record.get("s", {})
+            skill = self._node_to_skill(node)
+            if skill is None:
+                continue
+
+            scanned += 1
+
+            # 合并 Redis 统计
+            stat = redis_stats.get(skill.skill_id, {})
+            if stat:
+                skill.use_count += int(stat.get("use_count", 0))
+                redis_last = stat.get("last_used_at")
+                if redis_last and (
+                    skill.last_used_at is None or redis_last > skill.last_used_at
+                ):
+                    skill.last_used_at = redis_last
+
+            # 重算成熟度
+            old_status = skill.status
+            skill.maturity = self._compute_maturity(skill)
+            skill.status = self._transition_status(skill)
+            skill.last_updated_at = datetime.utcnow()
+
+            if skill.status != old_status:
+                transitioned += 1
+                if skill.status == SkillStatus.DEPRECATED:
+                    deprecated += 1
+
+            # 持久化
+            self._persist_skill(skill)
+
+        # 3. 清理已合并的 Redis 统计
+        self._clear_skill_stats(user_id)
+
+        logger.info(
+            "curate_skills: user=%s scanned=%d transitioned=%d deprecated=%d",
+            user_id,
+            scanned,
+            transitioned,
+            deprecated,
+        )
+        return {
+            "scanned": scanned,
+            "transitioned": transitioned,
+            "deprecated": deprecated,
+        }
+
+    def _read_skill_stats(self, user_id: str) -> dict[str, dict]:
+        """从 Redis 读取技能实时使用统计（bump_use 累积的计数）。"""
+        if not self._redis:
+            return {}
+        try:
+            key = f"skill:stats:{user_id}"
+            raw = self._redis.hgetall(key)
+            if not raw:
+                return {}
+            stats: dict[str, dict] = {}
+            for field, value in raw.items():
+                field_str = field.decode("utf-8") if isinstance(field, bytes) else field
+                value_str = value.decode("utf-8") if isinstance(value, bytes) else value
+                # field 格式: {skill_id}:use_count 或 {skill_id}:last_used_at
+                if ":" not in field_str:
+                    continue
+                skill_id, metric = field_str.rsplit(":", 1)
+                if skill_id not in stats:
+                    stats[skill_id] = {}
+                if metric == "use_count":
+                    stats[skill_id]["use_count"] = int(value_str)
+                elif metric == "last_used_at":
+                    stats[skill_id]["last_used_at"] = value_str
+            return stats
+        except Exception:
+            logger.warning("_read_skill_stats: 读取失败", exc_info=True)
+            return {}
+
+    def _clear_skill_stats(self, user_id: str) -> None:
+        """清理已合并的 Redis 统计键。"""
+        redis_client = self._get_redis()
+        if redis_client is None:
+            return
+        try:
+            redis_client.delete(f"skill:stats:{user_id}")
+        except Exception:
+            logger.warning("_clear_skill_stats: 清理失败", exc_info=True)
+
+    def _get_redis(self):
+        """获取 Redis 客户端，不可用时返回 None。
+
+        优先使用构造函数传入的 ``self._redis``，回退到
+        ``current_app.extensions['redis']``，最后回退到全局 ``redis_client``。
+        """
+        if self._redis is not None:
+            return self._redis
+        try:
+            from internal.context import current_app
+
+            return current_app.extensions.get("redis")
+        except RuntimeError:
+            pass
+        try:
+            from internal.extension.redis_extension import redis_client
+
+            return redis_client
+        except Exception:
+            logger.warning("_get_redis: 获取 Redis 客户端失败", exc_info=True)
+            return None
+
+    # =========================================================
+    # 基因3: bump_use 实时统计（§8.7）
+    # =========================================================
+
+    def bump_use(self, user_id: str, skill_id: str) -> bool:
+        """技能使用实时计数（基因3, §8.7）。
+
+        使用 Redis HINCRBY 累加 use_count，HSET 更新 last_used_at。
+        高频调用（每次技能被使用/即时涌现触发时），避免频繁写 Neo4j。
+        由 ``flush_bump_use_to_neo4j`` 或 ``curate_skills`` 定期合并到 Neo4j。
+
+        设计为"写入侧"，与 ``_read_skill_stats``（读取侧）、
+        ``_clear_skill_stats``（清理侧）组成完整的 Redis 统计生命周期。
+
+        Args:
+            user_id: 用户标识
+            skill_id: 技能 ID
+
+        Returns:
+            成功返回 True，Redis 不可用或配置关闭返回 False
+        """
+        if not self._config.bump_use_redis_enabled:
+            return False
+
+        redis_client = self._get_redis()
+        if redis_client is None:
+            return False
+
+        try:
+            key = f"skill:stats:{user_id}"
+            now = datetime.utcnow().isoformat()
+            pipe = redis_client.pipeline()
+            pipe.hincrby(key, f"{skill_id}:use_count", 1)
+            pipe.hset(key, f"{skill_id}:last_used_at", now)
+            pipe.execute()
+            return True
+        except Exception:
+            logger.warning("bump_use: Redis 计数失败", exc_info=True)
+            return False
+
+    def flush_bump_use_to_neo4j(self, user_id: str) -> dict:
+        """将 Redis 中的技能使用统计合并到 Neo4j（基因3, §8.7）。
+
+        独立于 ``curate_skills``，只做统计合并，不做 maturity 重算和状态转移。
+        将 Redis 中的 use_count 累加到 Neo4j Skill 节点，更新 last_used_at，
+        然后清理 Redis。
+
+        设计为高频定时任务（默认每小时），与低频 ``curate_skills``（每周）形成双轨：
+        - flush: 高频合并统计，保持 Neo4j use_count 近实时
+        - curate: 低频重算 maturity + 状态转移 + 剪枝
+
+        Returns:
+            ``{"flushed": int, "errors": int}``
+        """
+        redis_client = self._get_redis()
+        if redis_client is None:
+            return {"flushed": 0, "errors": 0}
+
+        driver = self._get_driver()
+        if driver is None:
+            return {"flushed": 0, "errors": 0}
+
+        # 1. 读取 Redis 统计
+        redis_stats = self._read_skill_stats(user_id)
+        if not redis_stats:
+            return {"flushed": 0, "errors": 0}
+
+        # 2. 逐个合并到 Neo4j
+        flushed = 0
+        errors = 0
+        for skill_id, stat in redis_stats.items():
+            try:
+                use_count_delta = int(stat.get("use_count", 0))
+                last_used_at = stat.get("last_used_at")
+                if use_count_delta <= 0:
+                    continue
+
+                cypher = """
+                MATCH (s:Skill {skill_id: $skill_id, user_id: $user_id})
+                SET s.use_count = coalesce(s.use_count, 0) + $delta,
+                    s.last_used_at = CASE
+                        WHEN $last_used_at IS NOT NULL
+                         AND ($last_used_at > coalesce(toString(s.last_used_at), ''))
+                        THEN $last_used_at
+                        ELSE s.last_used_at
+                    END,
+                    s.last_updated_at = datetime()
+                """
+                with driver.session() as session:
+                    session.run(cypher, {
+                        "skill_id": skill_id,
+                        "user_id": user_id,
+                        "delta": use_count_delta,
+                        "last_used_at": last_used_at,
+                    })
+                flushed += 1
+            except Exception:
+                logger.warning(
+                    "flush_bump_use_to_neo4j: 合并 %s 失败", skill_id, exc_info=True
+                )
+                errors += 1
+
+        # 3. 清理已合并的 Redis 统计
+        if flushed > 0:
+            self._clear_skill_stats(user_id)
+
+        logger.info(
+            "flush_bump_use_to_neo4j: user=%s flushed=%d errors=%d",
+            user_id, flushed, errors,
+        )
+        return {"flushed": flushed, "errors": errors}

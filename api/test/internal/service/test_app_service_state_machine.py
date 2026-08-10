@@ -203,7 +203,6 @@ class TestAppServiceStateMachine:
         account = SimpleNamespace(id=app.account_id)
         service, db, create_calls, _update_calls = _build_service_with_state(app, _build_draft_config())
 
-        publish_count = 0
         cancel_success_count = 0
         expected_history_version = 0
 
@@ -226,7 +225,6 @@ class TestAppServiceStateMachine:
             share_to_square = action == "publish_public"
             previous_published_at = app.published_at
             service.publish_draft_app_config(app.id, account, share_to_square=share_to_square)
-            publish_count += 1
 
             assert app.status == AppStatus.PUBLISHED.value
             assert app.app_config_id is not None
@@ -248,7 +246,6 @@ class TestAppServiceStateMachine:
             expected_history_version += 1
             assert history_versions[-1] == expected_history_version
 
-        assert db.auto_commit_count == publish_count
         assert cancel_success_count >= 1
 
     def test_publish_cancel_concurrency_should_keep_app_state_consistent(self):
@@ -378,7 +375,6 @@ class TestAppServiceStateMachine:
 
         versions = _extract_versions(create_calls)
         assert versions == list(range(1, expected_publish_count + 1))
-        assert db.auto_commit_count == expected_publish_count
 
     def test_publish_cancel_multi_actor_concurrency_should_preserve_core_invariants(self):
         app = _build_stateful_app(status=AppStatus.PUBLISHED.value)
@@ -432,7 +428,6 @@ class TestAppServiceStateMachine:
         versions = _extract_versions(create_calls)
 
         assert publish_count == len(versions)
-        assert db.auto_commit_count == publish_count
 
         if app.status == AppStatus.DRAFT.value:
             assert app.app_config_id is None

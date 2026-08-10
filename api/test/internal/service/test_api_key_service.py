@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 import base64
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,7 +15,6 @@ from internal.exception import (
     NotFoundException,
     ValidateErrorException,
 )
-from internal.entity.ai_entity import OPENAPI_SCHEMA_ASSISTANT_PROMPT, PYTHON_CODE_ASSISTANT_PROMPT
 from internal.model import Account, AccountOAuth, ApiKey, ApiTool, ApiToolProvider
 from internal.service.account_service import AccountService as _AccountService
 from internal.service.ai_service import AIService, PythonMarkdownOutputParser

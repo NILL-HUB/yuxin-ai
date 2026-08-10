@@ -59,6 +59,7 @@ def _conversation(
     conversation_id: UUID | None = None,
     name: str,
     account_id: UUID,
+    invoke_from: str = "",
     created_at: datetime | None = None,
 ):
     return SimpleNamespace(
@@ -66,6 +67,7 @@ def _conversation(
         name=name,
         created_by=account_id,
         is_deleted=False,
+        invoke_from=invoke_from,
         created_at=created_at or datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
     )
 
@@ -121,7 +123,11 @@ class TestConversationSearchService:
 
     def test_search_conversations_should_return_debugger_match_with_current_fields(self, app):
         account = _account()
-        conversation = _conversation(name="Python教程", account_id=account.id)
+        conversation = _conversation(
+            name="Python教程",
+            account_id=account.id,
+            invoke_from=InvokeFrom.DEBUGGER.value,
+        )
         debug_app_id = uuid4()
         message = _message(
             conversation_id=conversation.id,
@@ -157,10 +163,15 @@ class TestConversationSearchService:
         assert result["ai_message"] == "Python是一门很好的编程语言"
         assert set(result["matched_fields"]) == {"name", "human_message", "ai_message"}
         assert result["message_id"] == str(message.id)
+        assert result["invoke_from"] == InvokeFrom.DEBUGGER.value
 
     def test_search_conversations_should_return_name_match_even_without_messages(self, app):
         account = _account()
-        conversation = _conversation(name="天气查询系统", account_id=account.id)
+        conversation = _conversation(
+            name="天气查询系统",
+            account_id=account.id,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+        )
         assistant_app = _app(app_id=ASSISTANT_AGENT_ID, name="辅助Agent")
         service = _build_service(
             [],
@@ -176,15 +187,20 @@ class TestConversationSearchService:
         result = results[0]
         assert result["name"] == "天气查询系统"
         assert result["source_type"] == "assistant_agent"
-        assert result["agent_name"] == "OpenAgent"
+        assert result["agent_name"] == "钰心AI"
         assert result["human_message"] == ""
         assert result["ai_message"] == ""
         assert result["matched_fields"] == ["name"]
         assert result["latest_message_at"] == datetime_to_timestamp(conversation.created_at)
+        assert result["invoke_from"] == InvokeFrom.ASSISTANT_AGENT.value
 
     def test_search_conversations_should_not_return_unrelated_qa_for_title_only_match(self, app):
         account = _account()
-        conversation = _conversation(name="Python 标题命中", account_id=account.id)
+        conversation = _conversation(
+            name="Python 标题命中",
+            account_id=account.id,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+        )
         latest_message = _message(
             conversation_id=conversation.id,
             account_id=account.id,
@@ -210,6 +226,7 @@ class TestConversationSearchService:
         assert result["ai_message"] == ""
         assert result["matched_fields"] == ["name"]
         assert result["message_id"] == str(latest_message.id)
+        assert result["invoke_from"] == InvokeFrom.ASSISTANT_AGENT.value
 
     def test_search_conversations_should_return_empty_when_nothing_matches(self, app):
         account = _account()
@@ -227,7 +244,11 @@ class TestConversationSearchService:
 
     def test_search_conversations_should_truncate_long_match_and_keep_one_result_per_conversation(self, app):
         account = _account()
-        conversation = _conversation(name="长消息测试", account_id=account.id)
+        conversation = _conversation(
+            name="长消息测试",
+            account_id=account.id,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+        )
         long_query = "前缀" * 80 + "Python" + "后缀" * 80
         long_answer = "答案" * 90 + "PYTHON" + "结尾" * 90
         first_message = _message(
@@ -265,3 +286,4 @@ class TestConversationSearchService:
         assert len(result["human_message"]) < len(long_query)
         assert len(result["ai_message"]) < len(long_answer)
         assert set(result["matched_fields"]) == {"human_message", "ai_message"}
+        assert result["invoke_from"] == InvokeFrom.ASSISTANT_AGENT.value

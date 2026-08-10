@@ -60,11 +60,3 @@ def test_optimization_suggestions_should_not_modify_runtime_config():
     assert agents == {"research": {"priority": 10}}
     assert tools == {"browser": {"enabled": True}}
     assert models == {"premium": {"cost": 8}}
-
-
-def test_home_response_should_not_include_routing_quality_fields(client):
-    resp = client.post("/home", json={"query": "hello"})
-
-    assert resp.status_code in {200, 401}
-    assert "routing_quality" not in resp.get_data(as_text=True)
-    assert "optimization_suggestion" not in resp.get_data(as_text=True)

@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from sqlalchemy import func
 from wtforms import BooleanField, IntegerField, SelectField, StringField
@@ -6,10 +6,10 @@ from wtforms.validators import DataRequired, Length, NumberRange, Optional
 
 from internal.extension.database_extension import db
 from internal.lib.helper import datetime_to_timestamp
-from internal.model import AdminUser, KnowledgeBase, KnowledgeDocument
+from internal.model import AdminUser, KnowledgeBase, KnowledgeDocument, KnowledgeSegment
 
 
-class GetSystemKnowledgeListReq(FlaskForm):
+class GetSystemKnowledgeListReq(Form):
     # 页码，默认第 1 页
     page = IntegerField("page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     # 每页大小，默认 20，项目硬约束最大 100
@@ -18,7 +18,7 @@ class GetSystemKnowledgeListReq(FlaskForm):
     search_word = StringField("search_word", default="", validators=[Optional(), Length(max=255)])
 
 
-class CreateSystemKnowledgeReq(FlaskForm):
+class CreateSystemKnowledgeReq(Form):
     name = StringField("name", validators=[DataRequired("知识库名称不能为空"), Length(max=255)])
     description = StringField("description", default="", validators=[Optional(), Length(max=2000)])
     # 可见范围：private/internal/public
@@ -30,7 +30,13 @@ class CreateSystemKnowledgeReq(FlaskForm):
     )
 
 
-class UpdateSystemKnowledgeReq(FlaskForm):
+class CreateDocumentTextReq(Form):
+    """admin 新建/编辑系统知识库纯文本文档请求"""
+    name = StringField("name", validators=[DataRequired("文档名称不能为空"), Length(max=255)])
+    content = StringField("content", validators=[DataRequired("文档内容不能为空"), Length(max=200000)])
+
+
+class UpdateSystemKnowledgeReq(Form):
     name = StringField("name", validators=[Optional(), Length(min=1, max=255)])
     description = StringField("description", default="", validators=[Optional(), Length(max=2000)])
     enabled = BooleanField("enabled", validators=[Optional()])
@@ -69,10 +75,12 @@ class SystemKnowledgeResp(Schema):
             .scalar()
             or 0
         )
-        # 查询该知识库下文档的字符总数（KnowledgeDocument 表有 character_count 字段）
+        # 查询该知识库下文档的字符总数（优先统计分段真实字符数，
+        # segment.character_count 可能因历史原因失真，按内容长度统计）
         character_count = (
-            db.session.query(func.sum(KnowledgeDocument.character_count))
-            .filter_by(knowledge_base_id=data.id)
+            db.session.query(func.sum(func.length(KnowledgeSegment.content)))
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeSegment.knowledge_document_id)
+            .filter(KnowledgeDocument.knowledge_base_id == data.id)
             .scalar()
             or 0
         )

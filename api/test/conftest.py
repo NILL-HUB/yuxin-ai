@@ -1,11 +1,16 @@
 import os
 from types import SimpleNamespace
-from uuid import UUID
 
 import pytest
 import sqlalchemy as sa
 from cryptography.fernet import Fernet
-from sqlalchemy.orm import scoped_session, sessionmaker
+from sqlalchemy.orm import sessionmaker
+
+# Python 3.11 兼容：项目使用 from datetime import UTC（3.11+ 语法），
+# 本地测试环境若为 3.10 则在导入项目模块前注入 UTC 别名。
+import datetime as _dt
+if not hasattr(_dt, "UTC"):
+    _dt.UTC = _dt.timezone.utc
 
 # 在导入应用前关闭外部 tracing，避免初始化阶段产生联网副作用。
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
@@ -13,6 +18,13 @@ os.environ["LANGSMITH_TRACING"] = "false"
 os.environ.pop("LANGCHAIN_API_KEY", None)
 os.environ.pop("LANGSMITH_API_KEY", None)
 
+# 测试默认连接本机 Docker 容器内的 PostgreSQL（docker-compose 将 5432 映射到 127.0.0.1），
+# 与生产部署（docker）保持一致，真实模拟生产环境。可用环境变量覆盖（如 CI 使用独立实例）。
+from pkg.env_loader import load_project_env  # noqa: E402
+
+load_project_env()
+if not os.getenv("POSTGRES_HOST"):
+    os.environ["POSTGRES_HOST"] = "127.0.0.1"
 if os.getenv("POSTGRES_HOST"):
     os.environ["SQLALCHEMY_DATABASE_URI"] = (
         f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@"
@@ -53,56 +65,6 @@ def app():
     return _app
 
 
-@pytest.fixture
-def client(app):
-    """返回 Flask 测试客户端。"""
-    with app.test_client() as test_client:
-        yield test_client
-
-
-@pytest.fixture
-def db(app):
-    """每个测试使用独立事务，结束后统一回滚，确保不污染真实数据。"""
-    from internal.extension.database_extension import db as _db
-
-    with app.app_context():
-        # 1) 基于原始连接开启事务；2) 复用该连接构造测试会话。
-        connection = _db.engine.connect()
-        transaction = connection.begin()
-        session_factory = sessionmaker(bind=connection)
-        session = scoped_session(session_factory)
-        _db.session = session
-
-        yield _db
-
-        # 无论测试成功/失败都回滚，保证数据库状态不被测试持久化。
-        transaction.rollback()
-        connection.close()
-        session.remove()
-
-
-@pytest.fixture(autouse=True)
-def _rollback_http_tests(request):
-    """所有使用 `client` 夹具的 HTTP 测试自动绑定事务回滚。"""
-    # 说明：部分矩阵测试使用自定义 http_client 且完整 mock service，不依赖数据库连接。
-    if "client" in request.fixturenames:
-        request.getfixturevalue("db")
-    yield
-
-
-@pytest.fixture
-def login_account(monkeypatch):
-    """兼容旧测试的登录态夹具，提供稳定 current_user 桩。"""
-    account = SimpleNamespace(
-        id=UUID("00000000-0000-0000-0000-000000000001"),
-        is_authenticated=True,
-        email="tester@example.com",
-        name="tester",
-    )
-    monkeypatch.setattr("internal.handler.app_handler.current_user", account)
-    return account
-
-
 _TEST_FERNET = Fernet(Fernet.generate_key())
 
 _MODEL_POOL_CONFIG_DDL = """
@@ -111,15 +73,19 @@ CREATE TABLE model_pool_config (
     provider VARCHAR(128) NOT NULL,
     model_name VARCHAR(255) NOT NULL,
     display_name VARCHAR(255) NOT NULL DEFAULT '',
+    description VARCHAR(512) NOT NULL DEFAULT '',
     tier VARCHAR(64) NOT NULL DEFAULT 'standard',
     capabilities TEXT NOT NULL DEFAULT '[]',
     price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
     max_tokens INTEGER NOT NULL DEFAULT 0,
+    max_input_tokens INTEGER NOT NULL DEFAULT 0,
+    max_output_tokens INTEGER NOT NULL DEFAULT 0,
     status VARCHAR(64) NOT NULL DEFAULT 'active',
     model_type VARCHAR(32) NOT NULL DEFAULT 'chat',
     compatible_api VARCHAR(32) NOT NULL DEFAULT 'openai',
     fallback_model_id VARCHAR(36),
     priority INTEGER NOT NULL DEFAULT 0,
+    embedding_dimension INTEGER,
     updated_at DATETIME NOT NULL,
     created_at DATETIME NOT NULL
 )
@@ -144,6 +110,36 @@ CREATE TABLE model_key_config (
 )
 """
 
+_MODEL_PROVIDER_CONFIG_DDL = """
+CREATE TABLE model_provider_config (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    label VARCHAR(255) NOT NULL DEFAULT '',
+    description TEXT,
+    icon VARCHAR(512),
+    background VARCHAR(32) NOT NULL DEFAULT '#FFFFFF',
+    default_base_url VARCHAR(512) NOT NULL,
+    supported_model_types TEXT NOT NULL DEFAULT '["chat"]',
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    updated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL
+)
+"""
+
+_MODEL_TIER_POLICY_DDL = """
+CREATE TABLE model_tier_policy (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    tier_code VARCHAR(64) NOT NULL,
+    tier_name VARCHAR(128) NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    allowed_models TEXT NOT NULL DEFAULT '[]',
+    default_model VARCHAR(255) NOT NULL DEFAULT '',
+    routing_rules TEXT NOT NULL DEFAULT '{}',
+    updated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL
+)
+"""
+
 
 @pytest.fixture
 def model_pool_db(monkeypatch):
@@ -156,6 +152,8 @@ def model_pool_db(monkeypatch):
     with engine.connect() as conn:
         conn.exec_driver_sql(_MODEL_POOL_CONFIG_DDL)
         conn.exec_driver_sql(_MODEL_KEY_CONFIG_DDL)
+        conn.exec_driver_sql(_MODEL_PROVIDER_CONFIG_DDL)
+        conn.exec_driver_sql(_MODEL_TIER_POLICY_DDL)
         conn.commit()
 
     session_factory = sessionmaker(bind=engine, autoflush=False)
@@ -166,8 +164,3 @@ def model_pool_db(monkeypatch):
     finally:
         session.close()
         engine.dispose()
-
-
-@pytest.fixture
-def fernet_key():
-    return _TEST_FERNET

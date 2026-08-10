@@ -1,13 +1,13 @@
 import math
 from dataclasses import dataclass
 from typing import Any
-from flask_wtf import FlaskForm
+from wtforms import Form
 from wtforms import IntegerField
 from wtforms.validators import Optional, NumberRange
 from pkg.sqlalchemy import SQLAlchemy
 
 
-class PaginatorReq(FlaskForm):
+class PaginatorReq(Form):
     """分页请求基础类，涵盖当前页数、每页条数，如果接口请求需要携带分页信息，可直接继承该类"""
     current_page = IntegerField("current_page", default=1, validators=[
         Optional(),

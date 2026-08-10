@@ -13,11 +13,12 @@ from sqlalchemy import (
     Text,
     DateTime,
     PrimaryKeyConstraint,
-    ForeignKey,
     Index,
     text,
 )
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
+
+
 from internal.entity.tag_entity import TagStatus, TagType
 
 
@@ -26,7 +27,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class Tag(db.Model):
+class Tag(Base):
     """标签模型"""
     __tablename__ = "tag"
     __table_args__ = (
@@ -52,7 +53,7 @@ class Tag(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class AppTag(db.Model):
+class AppTag(Base):
     """应用标签关联模型"""
     __tablename__ = "app_tag"
     __table_args__ = (
@@ -76,7 +77,7 @@ class AppTag(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class WorkflowTag(db.Model):
+class WorkflowTag(Base):
     """工作流标签关联模型"""
     __tablename__ = "workflow_tag"
     __table_args__ = (

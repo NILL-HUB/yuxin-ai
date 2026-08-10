@@ -5,7 +5,7 @@ from inspect import Parameter, signature
 from typing import Any, Union
 from uuid import UUID
 
-from flask import g, has_app_context
+from internal.context import g, has_app_context
 from injector import inject
 from langchain_core.tools import BaseTool
 from internal.core.language_model import LanguageModelManager

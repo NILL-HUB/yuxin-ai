@@ -1,17 +1,17 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField
 from wtforms.validators import AnyOf, Length, NumberRange, Optional
 
 
-class GetAdminCustomerUsersReq(FlaskForm):
+class GetAdminCustomerUsersReq(Form):
     keyword = StringField("keyword", default="", validators=[Optional(), Length(max=255)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", "active", "disabled"])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
 
 
-class DisableAdminCustomerUserReq(FlaskForm):
+class DisableAdminCustomerUserReq(Form):
     reason = StringField("reason", default="", validators=[Optional(), Length(max=1024)])
 
 

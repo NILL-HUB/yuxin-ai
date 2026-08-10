@@ -126,27 +126,15 @@ class ConductorPlanModel(BaseModel):
 # prompt_key 常量，与 internal/core/prompts/routing/conductor.yaml 对应
 CONDUCTOR_PROMPT_KEY = "conductor"
 
-# 兜底 prompt：DB 未加载时使用（确保系统可用）
-_FALLBACK_CONDUCTOR_PROMPT = """你是任务指挥官（Conductor），负责分析用户需求并制定执行计划。
 
-# 核心职责
-1. 判断请求是简单任务（自己直接回复）还是需要派发 Agent；
-2. 为每个 Agent 子任务匹配合适的模型档位；
-3. 输出结构化的执行计划。
+def _get_fallback_conductor_prompt() -> str:
+    """读取指挥官兜底提示词（系统提示词库可管理，YAML 兜底）。
 
-# 模型档位
-- model_tier="1"：轻量省钱
-- model_tier="2"：标准
-- model_tier="3"：强模型
-
-# 硬约束
-1. execution_mode 必须是枚举值之一
-2. direct_answer 模式下 agents 必须为空
-3. agent 数量 ≤ {max_agents}
-4. model_tier 必须是 1/2/3 之一
-
-严格按 schema 输出。
-""".format(max_agents=MAX_AGENTS_PER_PLAN)
+    默认文本集中在 internal/core/prompts/system_prompts.yaml
+    （key=conductor_fallback），管理员可在系统提示词库中编辑覆盖。
+    """
+    from internal.service.system_prompt_library_service import SystemPromptLibraryService
+    return SystemPromptLibraryService().get_prompt_or_default("conductor_fallback")
 
 
 # =========================================================
@@ -318,7 +306,7 @@ class ConductorService:
         )
         if not system_prompt:
             logger.warning("DB 中未找到 conductor prompt，使用兜底 prompt")
-            system_prompt = _FALLBACK_CONDUCTOR_PROMPT
+            system_prompt = _get_fallback_conductor_prompt().format(max_agents=MAX_AGENTS_PER_PLAN)
 
         user_section = _build_user_context_section(
             query=query,
@@ -329,6 +317,10 @@ class ConductorService:
         )
         resource_section = _build_resource_section(agent_pools, models)
 
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        plan_instruction = SystemPromptLibraryService().get_prompt_or_default(
+            "conductor_plan_instruction"
+        )
         prompt = f"""{system_prompt}
 
 ---
@@ -341,8 +333,26 @@ class ConductorService:
 
 ---
 
-请分析上述请求，按 schema 输出执行计划。"""
-        response = structured_llm.invoke(prompt)
+{plan_instruction}"""
+        # 复用 LLMActivityProbe 探针：用 stream() 替代 invoke() 获取 token 活性，
+        # 后台线程每 60s 检测一次，LLM 持续产出 chunk 则不干扰（复杂需求可运行数小时），
+        # 仅在 LLM 死机（60s 无 chunk）时才终止调用。
+        # 比固定超时更合理：正常长任务不受影响，死机时能快速检测并回退。
+        from internal.service.memory.llm_activity_probe import (
+            LLMActivityProbe,
+            LLMActivityTimeoutError,
+        )
+        try:
+            response = LLMActivityProbe.invoke_structured_with_probe(
+                llm,
+                ConductorPlanModel,
+                prompt,
+                feature_key="conductor",
+            )
+        except LLMActivityTimeoutError:
+            raise
+        except Exception:
+            raise
         # 指挥官 LLM 计费：conductor 是 billable=false 的 feature_key（见
         # public_ai_feature_config 表），不扣用户额度。charge_for_feature 的实际签名为
         # (credit_service, account_id, feature_key, token_count)，需要 credit_service 与
@@ -398,27 +408,21 @@ class ConductorService:
 
     @staticmethod
     def _fallback_plan(query: str, reason: str) -> ConductorPlan:
-        """校验或调用失败时回退到 single_agent 模式。"""
+        """校验或调用失败时回退到 direct_answer 模式。
+
+        回退到 direct_answer 而非 single_agent，避免 FunctionCallAgent 循环
+        导致持续烧 token 且前端无内容回显的问题。direct_answer 路径直接调用
+        LLM 流式生成回答，简单高效。
+        """
         return ConductorPlan(
-            execution_mode=ConductorMode.SINGLE_AGENT.value,
+            execution_mode=ConductorMode.DIRECT_ANSWER.value,
             intent="fallback",
-            complexity="moderate",
+            complexity="simple",
             reason=f"指挥官回退: {reason}",
-            agents=[
-                ConductorAgentTask(
-                    task_id="t1",
-                    title="执行用户请求",
-                    description=query,
-                    agent_pool="general",
-                    required_capabilities=[],
-                    model_tier="2",
-                    depends_on=[],
-                    risk_level=ConductorRiskLevel.SAFE.value,
-                )
-            ],
+            agents=[],
             aggregation_strategy=AggregationStrategy.CONCAT.value,
             risk_level=ConductorRiskLevel.SAFE.value,
-            estimated_cost_tier="medium",
+            estimated_cost_tier="low",
         )
 
     # ── 档位对齐：capability 触发 tier 升级 ────────────────────

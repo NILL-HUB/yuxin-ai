@@ -260,7 +260,7 @@ class EmbeddingsService:
             from internal.model.model_pool_entity import ModelPoolConfig, ModelKeyConfig
             from internal.model.model_provider_entity import ModelProviderConfig
             from internal.extension.database_extension import db
-            from internal.service.admin_model_pool_service import _decrypt_key_value
+            from internal.service.admin_model_pool_service import _decrypt_key_value, normalize_provider_base_url
 
             model = db.session.query(ModelPoolConfig).filter_by(
                 id=model_id_str, status="active", model_type="embedding"
@@ -292,7 +292,12 @@ class EmbeddingsService:
             ).first()
 
             api_key = _decrypt_key_value(key.key_value_encrypted)
-            base_url = (provider_config.default_base_url if provider_config else "") or None
+            base_url = (
+                normalize_provider_base_url(
+                    provider_config.default_base_url,
+                    is_full_url=bool(getattr(provider_config, "is_full_url", False)),
+                ) if provider_config and provider_config.default_base_url else None
+            )
 
             # 解析维度
             if model.embedding_dimension and model.embedding_dimension > 0:

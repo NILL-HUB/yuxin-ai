@@ -2,7 +2,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from flask import Flask, has_app_context
+from test.context import TestApp
+from internal.context import has_app_context
 
 from internal.exception import ValidateErrorException
 from internal.service.public_agent_a2a_service import PublicAgentA2AService
@@ -10,7 +11,7 @@ from internal.service.public_agent_a2a_service import PublicAgentA2AService
 
 def _build_service(**kwargs) -> PublicAgentA2AService:
     kwargs.setdefault("db", SimpleNamespace(session=SimpleNamespace(query=lambda *_args, **_kwargs: None)))
-    kwargs.setdefault("app_service", SimpleNamespace())
+    kwargs.setdefault("app_runtime_service", SimpleNamespace())
     kwargs.setdefault("app_config_service", SimpleNamespace())
     kwargs.setdefault("language_model_service", SimpleNamespace())
     kwargs.setdefault("public_agent_registry_service", SimpleNamespace())
@@ -359,7 +360,7 @@ class TestPublicAgentA2AService:
         assert captured["request_payload"]["query"] == "hello"
 
     def test_convert_public_agent_route_to_tool_should_capture_app_context(self, monkeypatch):
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         flask_app.config["ASSISTANT_AGENT_ID"] = "assistant-app-id"
         caller_account_id = uuid4()
         captured = {}
@@ -382,7 +383,7 @@ class TestPublicAgentA2AService:
         assert captured["flask_app"] is flask_app
 
     def test_convert_public_agent_route_to_tool_should_reenter_app_context(self, monkeypatch):
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         caller_account_id = uuid4()
         captured = {}
         service = _build_service()

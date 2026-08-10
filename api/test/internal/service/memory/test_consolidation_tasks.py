@@ -32,16 +32,17 @@ class TestConsolidationTasks:
 
     def test_beat_schedule_should_contain_both_tasks(self):
         """beat schedule 应包含 daily-consolidation 和 weight-scan。"""
-        from internal.task.consolidation_tasks import _celery_app
+        from app.http.celery_app import celery_app
 
-        schedule = _celery_app.conf.beat_schedule
+        schedule = celery_app.conf.beat_schedule
         assert "daily-consolidation" in schedule
         assert "weight-scan" in schedule
+        assert "skill-stats-flush" in schedule
 
     def test_task_routes_should_route_to_consolidation_queue(self):
         """任务应路由到 consolidation 队列。"""
-        from internal.task.consolidation_tasks import _celery_app
+        from app.http.celery_app import celery_app
 
-        routes = _celery_app.conf.task_routes
+        routes = celery_app.conf.task_routes
         assert "internal.task.consolidation_tasks.*" in routes
         assert routes["internal.task.consolidation_tasks.*"]["queue"] == "consolidation"

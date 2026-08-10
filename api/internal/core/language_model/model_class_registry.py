@@ -22,6 +22,7 @@ class ModelClassRegistry:
 
     替代原 Provider 中硬编码的 model_class_map，支持通过
     compatible_api + model_type 二元组查找对应的 LangChain 模型类。
+    同时提供 async 模型类注册表（AsyncChatOpenAI 等），用于 asyncio 化调用链。
     """
 
     _REGISTRY: dict[tuple[str, str], Optional[Type[BaseLanguageModel]]] = {
@@ -32,6 +33,17 @@ class ModelClassRegistry:
         # Claude 兼容协议 — 使用 langchain_anthropic
         ("claude", "chat"): _import_class("langchain_anthropic", "ChatAnthropic"),
         ("claude", "multimodal"): _import_class("langchain_anthropic", "ChatAnthropic"),
+    }
+
+    # async 模型类注册表：与 _REGISTRY 同构，供异步执行链路使用
+    _ASYNC_REGISTRY: dict[tuple[str, str], Optional[Type]] = {
+        # OpenAI 兼容协议 — 使用 langchain_openai 的 async 类
+        ("openai", "chat"): _import_class("langchain_openai", "AsyncChatOpenAI"),
+        ("openai", "multimodal"): _import_class("langchain_openai", "AsyncChatOpenAI"),
+        ("openai", "embedding"): _import_class("langchain_openai", "AsyncOpenAIEmbeddings"),
+        # Claude 兼容协议 — 使用 langchain_anthropic 的 async 类
+        ("claude", "chat"): _import_class("langchain_anthropic", "AsyncChatAnthropic"),
+        ("claude", "multimodal"): _import_class("langchain_anthropic", "AsyncChatAnthropic"),
     }
 
     @classmethod
@@ -53,6 +65,28 @@ class ModelClassRegistry:
         if model_class is None:
             raise NotFoundException(
                 f"不支持的模型类型组合: compatible_api={compatible_api}, model_type={model_type}"
+            )
+        return model_class
+
+    @classmethod
+    def resolve_async(cls, compatible_api: str, model_type: str) -> Type:
+        """根据兼容协议和模型类型查找 async 模型类
+
+        Args:
+            compatible_api: 兼容协议标识，如 'openai' / 'claude'
+            model_type: 模型类型，如 'chat' / 'embedding' / 'multimodal'
+
+        Returns:
+            对应的 LangChain async 模型类（AsyncChatOpenAI 等）
+
+        Raises:
+            NotFoundException: 不支持的组合
+        """
+        key = (compatible_api, model_type)
+        model_class = cls._ASYNC_REGISTRY.get(key)
+        if model_class is None:
+            raise NotFoundException(
+                f"不支持的 async 模型类型组合: compatible_api={compatible_api}, model_type={model_type}"
             )
         return model_class
 

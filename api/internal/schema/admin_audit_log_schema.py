@@ -1,10 +1,10 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField
 from wtforms.validators import Length, NumberRange, Optional
 
 
-class GetAuditLogsReq(FlaskForm):
+class GetAuditLogsReq(Form):
     action = StringField("action", default="", validators=[Optional(), Length(max=255)])
     resource_type = StringField("resource_type", default="", validators=[Optional(), Length(max=255)])
     admin_user_id = StringField("admin_user_id", default="", validators=[Optional(), Length(max=64)])

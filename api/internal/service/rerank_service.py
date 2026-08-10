@@ -150,11 +150,14 @@ class RerankService:
         for idx, doc in enumerate(candidates):
             content = str(doc.get("content", ""))[:_MAX_DOC_CONTENT_CHARS]
             lines.append(f"[{idx}] {content}")
-        prompt = (
-            "你是相关性评估助手。请根据用户问题为每个候选文档的相关性打分（1-10，10最相关）。\n"
-            f"用户问题：{query}\n"
-            "候选文档：\n" + "\n".join(lines) + "\n"
-            "请只输出JSON数组，格式：[{\"index\": 0, \"score\": 9}, ...]，不要输出其他内容。"
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        template = SystemPromptLibraryService().get_prompt_or_default(
+            "rerank_scorer_prompt"
+        )
+        prompt = template.format(
+            query=query,
+            documents="\n".join(lines),
         )
         response = llm.invoke(prompt)
 

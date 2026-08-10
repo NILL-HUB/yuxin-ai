@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 import logging
 
-from flask import request, current_app, Flask
+from internal.context import current_app
 from injector import inject
 from sqlalchemy import desc
 from wechatpy import parse_message
@@ -19,7 +19,6 @@ from internal.core.language_model.entities.model_entity import ModelFeature
 from internal.core.memory import TokenBufferMemory
 from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import MessageStatus, InvokeFrom
-from internal.entity.dataset_entity import RetrievalSource
 from internal.entity.platform_entity import WechatConfigStatus
 from internal.exception import FailException
 from internal.model import App, WechatEndUser, EndUser, Message, WechatMessage, Conversation
@@ -96,14 +95,18 @@ class WechatService(BaseService):
             })
         return result
 
-    def wechat(self, app_id: UUID):
-        """微信公众号(订阅号/服务号)校验与消息推送, 运行逻辑参考`Agent对接微信公众号思路.drawio`"""
+    def wechat(self, app_id: UUID, method: str = "GET", body: bytes | None = None, query: dict | None = None):
+        """微信公众号(订阅号/服务号)校验与消息推送, 运行逻辑参考`Agent对接微信公众号思路.drawio`
+
+        Quart 单栈下不再访问 Flask request 上下文：HTTP 数据（method/body/query）
+        由路由层从 Quart request 提取后显式传入。
+        """
         # 1.根据传递的app_id获取应用信息，并校验应用是否已发布
         app = self.get(App, app_id)
-        msg = parse_message(request.data)
+        msg = parse_message(body or b"")
         if not app or app.status != AppStatus.PUBLISHED:
             # 2.根据不同的请求方法返回不同的数据，GET请求抛出错误、POST请求返回提示信息
-            if request.method == "GET":
+            if method == "GET":
                 raise FailException("该应用未发布或不存在，无法使用，请核实后重试")
             else:
                 reply = TextReply(content="该应用未发布或不存在，无法使用，请核实后重试", message=msg)
@@ -112,19 +115,19 @@ class WechatService(BaseService):
         # 3.获取应用的Wechat发布配置信息，并根据GET/POST返回不同的数据
         wechat_config = app.wechat_config
         if wechat_config.status != WechatConfigStatus.CONFIGURED:
-            if request.method == "GET":
+            if method == "GET":
                 raise FailException("该应用未发布到微信公众号，无法使用，请核实后重试")
             else:
                 reply = TextReply(content="该应用未发布到微信公众号，无法使用，请核实后重试", message=msg)
                 return reply.render()
 
         # 4.校验通过，根据不同的方法执行不同的操作，GET方法校验权限，POST方法推送数据
-        if request.method == "GET":
+        if method == "GET":
             # 5.从query中提取推送的签名、时间戳、nonce、echostr等数据
-            signature = request.args.get("signature")
-            timestamp = request.args.get("timestamp")
-            nonce = request.args.get("nonce")
-            echostr = request.args.get("echostr")
+            signature = (query or {}).get("signature")
+            timestamp = (query or {}).get("timestamp")
+            nonce = (query or {}).get("nonce")
+            echostr = (query or {}).get("echostr")
 
             # 6.校验签名信息，如果成功则原样返回echostr，否则抛出异常
             try:
@@ -236,7 +239,7 @@ class WechatService(BaseService):
 
     def _thread_chat(
             self,
-            flask_app: Flask,
+            flask_app: Any,
             app_id: UUID,
             app_config: dict[str, Any],
             message_id: UUID,

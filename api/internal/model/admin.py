@@ -16,14 +16,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class AdminUser(db.Model):
+class AdminUser(Base):
     __tablename__ = "admin_user"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_admin_user_id"),
@@ -67,7 +67,7 @@ class AdminUser(db.Model):
         return self.status == "active"
 
 
-class AdminSession(db.Model):
+class AdminSession(Base):
     __tablename__ = "admin_session"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_admin_session_id"),
@@ -103,7 +103,7 @@ class AdminSession(db.Model):
         return self.expires_at >= _utcnow_naive()
 
 
-class Role(db.Model):
+class Role(Base):
     __tablename__ = "role"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_role_id"),
@@ -130,7 +130,7 @@ class Role(db.Model):
     permissions = relationship("RolePermission", back_populates="role", lazy="selectin")
 
 
-class Permission(db.Model):
+class Permission(Base):
     __tablename__ = "permission"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_permission_id"),
@@ -157,7 +157,7 @@ class Permission(db.Model):
     roles = relationship("RolePermission", back_populates="permission", lazy="selectin")
 
 
-class AdminUserRole(db.Model):
+class AdminUserRole(Base):
     __tablename__ = "admin_user_role"
     __table_args__ = (
         PrimaryKeyConstraint("admin_user_id", "role_id", name="pk_admin_user_role"),
@@ -173,7 +173,7 @@ class AdminUserRole(db.Model):
     role = relationship("Role", back_populates="admin_users", lazy="joined")
 
 
-class RolePermission(db.Model):
+class RolePermission(Base):
     __tablename__ = "role_permission"
     __table_args__ = (
         PrimaryKeyConstraint("role_id", "permission_id", name="pk_role_permission"),
@@ -189,7 +189,7 @@ class RolePermission(db.Model):
     permission = relationship("Permission", back_populates="roles", lazy="joined")
 
 
-class AuditLog(db.Model):
+class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_audit_log_id"),

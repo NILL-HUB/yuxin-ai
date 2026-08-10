@@ -84,6 +84,7 @@ class OrchestratorService:
                     routing_log = self.routing_log_service.create_pending(
                         account_id=ctx.account_id,
                         user_query=ctx.query,
+                        invoke_from=context.get("invoke_from"),
                     )
                     routing_log_id = routing_log.id
                     routing_log_created = True

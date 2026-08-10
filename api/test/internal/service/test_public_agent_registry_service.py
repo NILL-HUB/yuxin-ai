@@ -3,7 +3,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
-from flask import Flask, has_app_context
+from test.context import TestApp
+from internal.context import has_app_context
 from openai import APIConnectionError
 
 from internal.service.public_agent_registry_service import PublicAgentRegistryService
@@ -355,7 +356,7 @@ class TestPublicAgentRegistryService:
         ]
 
     def test_convert_public_agent_search_to_tool_should_reenter_app_context(self, monkeypatch):
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         service = _build_service()
         captured = {}
 

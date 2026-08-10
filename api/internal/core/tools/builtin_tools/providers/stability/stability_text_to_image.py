@@ -1,5 +1,4 @@
 import os
-import base64
 import requests
 from langchain_core.tools import Tool
 from pydantic import BaseModel, Field

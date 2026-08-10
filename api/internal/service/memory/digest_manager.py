@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Optional
 
 from dataclasses import dataclass
 from injector import inject
@@ -39,24 +38,6 @@ from internal.service.language_model_service import LanguageModelService
 from internal.service.memory.metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
-
-
-# Digest 渲染模板
-_DIGEST_TEMPLATE = """【用户记忆摘要】
-更新时间: {updated_at}
-
-== 用户画像 ==
-{profile}
-
-== 已习得技能 ==
-{skills}
-
-== 近期事件 ==
-{events}
-
-== 待办任务 ==
-{tasks}
-"""
 
 
 @inject
@@ -139,7 +120,20 @@ class DigestManager:
             )
             token_count = self._count_tokens(digest_text)
 
-        # 4. 写 Redis 缓存
+        # 4. 基因5: 检查并注入 Nudge Prompt（§2.6）
+        # Nudge Prompt 在截断后追加，确保不被截断。读取后自动消费（删除），
+        # 每条 Nudge 只注入一次。Agent 看到后可自主调用 memory_add 记录有价值信息。
+        try:
+            from internal.service.memory.post_execution_hook import NudgeEvaluator
+
+            nudge_prompt = NudgeEvaluator.consume_nudge_prompt(user_id)
+            if nudge_prompt:
+                digest_text += f"\n\n{nudge_prompt}"
+                token_count = self._count_tokens(digest_text)
+        except Exception:
+            logger.warning("Nudge Prompt 注入失败", exc_info=True)
+
+        # 5. 写 Redis 缓存
         cache_key = self._cache_key(user_id)
         cache_data = json.dumps(
             {
@@ -314,9 +308,11 @@ class DigestManager:
             return "暂无用户画像数据"
 
     def _fetch_skills(self, user_id: str) -> str:
-        """查活跃技能（:Skill 节点 status=ACTIVE）。
+        """查活跃技能 Tier0 摘要（基因2, §8.6）。
 
-        E3 改造：从 Entity 节点查询改为查询 SkillEmergence 涌现的 :Skill 节点。
+        Tier0 只注入 name + description + use_count，不加载 template/parameters，
+        控制 context 成本。Agent 可通过 ``get_skill_detail`` 工具按需加载 Tier1/Tier2。
+
         优先从 Redis 缓存读取（key: skill:pool:{user_id}）。
         无数据返回 "暂无已习得技能"。
         """
@@ -336,19 +332,20 @@ class DigestManager:
             return "暂无已习得技能"
 
         try:
+            # Tier0: 只查摘要字段，不查 template（减少查询开销与 context 占用）
             cypher = """
             MATCH (s:Skill {user_id: $user_id})
             WHERE s.status = 'active'
             RETURN s.name AS name, s.description AS description,
-                   s.template AS template, s.maturity AS maturity,
                    s.use_count AS use_count
             ORDER BY s.maturity DESC, s.use_count DESC
             LIMIT $limit
             """
+            tier0_max = settings.digest.skill_tier0_max_items
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": settings.digest.skills_max_items},
+                    {"user_id": user_id, "limit": tier0_max},
                 )
                 records = list(result)
 
@@ -365,6 +362,10 @@ class DigestManager:
                 else:
                     lines.append(f"- {name} (使用: {count}次)")
 
+            # Tier0 提示：引导 Agent 使用 get_skill_detail 工具加载详情
+            if lines:
+                lines.append("（如需技能模板与参数详情，调用 get_skill_detail 工具）")
+
             skills_text = "\n".join(lines) if lines else "暂无已习得技能"
 
             # 写回 Redis 缓存（TTL 5min）
@@ -378,6 +379,147 @@ class DigestManager:
         except Exception:
             logger.warning("_fetch_skills: 查询失败", exc_info=True)
             return "暂无已习得技能"
+
+    def get_skill_detail(self, user_id: str, skill_name: str, tier: int = 1) -> str:
+        """基因2: 按需加载技能详情（Tier1/Tier2, §8.6）。
+
+        与 ``_fetch_skills``（Tier0 摘要注入）配合实现 Progressive Disclosure：
+        - Tier0: Digest 注入 name + description + use_count（每轮对话自动）
+        - Tier1: Agent 调用本方法查看 template + parameters（按需）
+        - Tier2: Agent 调用本方法查看 source_memories + 相关 Episode（深度按需）
+
+        Args:
+            user_id: 用户标识
+            skill_name: 技能名称（支持 CONTAINS 模糊匹配）
+            tier: 加载层级（1=模板+参数，2=模板+参数+来源记忆）
+
+        Returns:
+            技能详情文本，未找到返回提示信息
+        """
+        driver = self._get_driver()
+        if driver is None:
+            return "技能详情不可用：图存储未连接"
+
+        try:
+            if tier <= 1:
+                # Tier1: template + parameters
+                cypher = """
+                MATCH (s:Skill {user_id: $user_id})
+                WHERE s.status IN ['active', 'emerging']
+                  AND s.name CONTAINS $skill_name
+                RETURN s.name AS name, s.description AS description,
+                       s.template AS template, s.parameters AS parameters,
+                       s.use_count AS use_count, s.maturity AS maturity
+                LIMIT 1
+                """
+            else:
+                # Tier2: template + parameters + source_memories
+                cypher = """
+                MATCH (s:Skill {user_id: $user_id})
+                WHERE s.status IN ['active', 'emerging']
+                  AND s.name CONTAINS $skill_name
+                RETURN s.name AS name, s.description AS description,
+                       s.template AS template, s.parameters AS parameters,
+                       s.use_count AS use_count, s.maturity AS maturity,
+                       s.source_memories AS source_memories
+                LIMIT 1
+                """
+
+            with driver.session() as session:
+                result = session.run(
+                    cypher,
+                    {"user_id": user_id, "skill_name": skill_name[:50]},
+                )
+                record = result.single()
+
+            if record is None:
+                return f"未找到名称包含 '{skill_name}' 的技能"
+
+            name = record.get("name", "")
+            desc = record.get("description", "")
+            template = record.get("template", "")
+            parameters = record.get("parameters", [])
+            use_count = record.get("use_count", 0)
+            maturity = record.get("maturity", 0.0)
+
+            lines = [
+                f"技能: {name}",
+                f"描述: {desc}",
+                f"使用次数: {use_count}, 成熟度: {maturity:.2f}",
+            ]
+
+            if template:
+                lines.append(f"模板:\n{template}")
+
+            if parameters:
+                param_text = self._format_parameters(parameters)
+                if param_text:
+                    lines.append(f"参数:\n{param_text}")
+
+            # Tier2: 加载 source_memories 内容
+            if tier >= 2:
+                source_memories = record.get("source_memories", [])
+                if source_memories:
+                    memory_texts = self._fetch_memory_contents(source_memories[:5])
+                    if memory_texts:
+                        lines.append(f"来源记忆:\n{memory_texts}")
+
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("get_skill_detail: 查询失败", exc_info=True)
+            return "技能详情查询失败"
+
+    @staticmethod
+    def _format_parameters(parameters) -> str:
+        """格式化参数列表为文本。"""
+        if not parameters:
+            return ""
+        try:
+            if isinstance(parameters, str):
+                params = json.loads(parameters)
+            else:
+                params = parameters
+            if not isinstance(params, list):
+                return str(params)
+            lines = []
+            for p in params:
+                if isinstance(p, dict):
+                    name = p.get("name", "")
+                    ptype = p.get("type", "")
+                    pdesc = p.get("description", "")
+                    lines.append(f"  - {name} ({ptype}): {pdesc}")
+                else:
+                    lines.append(f"  - {p}")
+            return "\n".join(lines)
+        except Exception:
+            return str(parameters)
+
+    def _fetch_memory_contents(self, memory_ids: list[str]) -> str:
+        """批量获取记忆节点内容（用于 Tier2 深度加载）。"""
+        if not memory_ids:
+            return ""
+        driver = self._get_driver()
+        if driver is None:
+            return ""
+        try:
+            cypher = """
+            UNWIND $ids AS mid
+            MATCH (n) WHERE (n:MemoryNode OR n:Episode) AND n.node_id = mid
+            RETURN n.content AS content, n.summary AS summary
+            LIMIT 10
+            """
+            with driver.session() as session:
+                result = session.run(cypher, ids=memory_ids)
+                records = list(result)
+            lines = []
+            for r in records:
+                text = r.get("summary") or r.get("content") or ""
+                if text:
+                    lines.append(f"  - {text[:100]}")
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("_fetch_memory_contents: 查询失败", exc_info=True)
+            return ""
 
     def _fetch_recent_episodes(self, user_id: str) -> str:
         """查近期事件（Episode 节点，storage_tier IN ['hot','warm'] 或 IS NULL）。
@@ -483,7 +625,12 @@ class DigestManager:
         优先使用模板拼接，可选调用 LLM 进一步精炼。
         """
         # 模板拼接
-        text = _DIGEST_TEMPLATE.format(
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        digest_template = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_digest_template"
+        )
+        text = digest_template.format(
             updated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
             profile=profile,
             skills=skills,
@@ -499,10 +646,10 @@ class DigestManager:
 
         try:
             llm = LanguageModelService.get_feature_model("memory_digest")
-            prompt = (
-                "请将以下记忆摘要精炼为不超过 2000 tokens 的结构化文本，"
-                "保持关键信息不变，去除冗余：\n\n" + text
-            )
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+            prompt = SystemPromptLibraryService().get_prompt_or_default(
+                "memory_digest_refine_prompt"
+            ).format(text=text)
             result = LLMActivityProbe.invoke_with_probe(
                 llm, prompt, feature_key="memory_digest"
             )
@@ -556,11 +703,16 @@ class DigestManager:
         max_tokens: int,
     ) -> str:
         """超过 max_tokens 时按段截断（优先保留画像与技能）。"""
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        digest_template = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_digest_template"
+        )
         # 逐步缩减 events 和 tasks
         for reduce_factor in [0.5, 0.25, 0.1, 0.0]:
             truncated_events = "\n".join(events.split("\n")[: max(1, int(len(events.split("\n")) * reduce_factor))])
             truncated_tasks = "\n".join(tasks.split("\n")[: max(1, int(len(tasks.split("\n")) * reduce_factor))])
-            text = _DIGEST_TEMPLATE.format(
+            text = digest_template.format(
                 updated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
                 profile=profile,
                 skills=skills,
@@ -571,7 +723,7 @@ class DigestManager:
                 return text
 
         # 最终兜底：仅保留画像
-        return _DIGEST_TEMPLATE.format(
+        return digest_template.format(
             updated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
             profile=profile,
             skills="",
@@ -582,7 +734,7 @@ class DigestManager:
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             if driver is not None:

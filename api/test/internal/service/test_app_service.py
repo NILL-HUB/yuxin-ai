@@ -3,10 +3,10 @@ import json
 import random
 from types import SimpleNamespace
 from unittest.mock import Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.app_entity import AppConfigType, AppStatus
@@ -14,7 +14,7 @@ from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.audio_entity import ALLOWED_AUDIO_VOICES
 from internal.core.language_model.entities.model_entity import ModelParameterType
 from internal.exception import FailException, ForbiddenException, NotFoundException, ValidateErrorException
-from internal.model import ApiTool, KnowledgeBase, Workflow
+from internal.model import Account, ApiTool, KnowledgeBase, Workflow
 from internal.service.app_debug_service import AppDebugService
 from internal.service.app_runtime_service import AppRuntimeService
 from internal.service.app_service import AppService
@@ -214,7 +214,6 @@ class TestAppService:
             def invoke(_payload):
                 return "你是一个专业助手"
 
-        monkeypatch.setattr("internal.service.app_service.Chat", lambda **_kwargs: object())
         monkeypatch.setattr("internal.service.app_service.ChatPromptTemplate.from_messages", lambda _messages: _Pipe())
         monkeypatch.setattr("internal.service.app_service.StrOutputParser", lambda: object())
         mock_icon_generator = SimpleNamespace(
@@ -231,7 +230,7 @@ class TestAppService:
                 generate_suggested_questions=lambda _histories: [" 你好 ", "", "你好", "问题2", "问题3", "问题4"]
             ),
             language_model_manager=SimpleNamespace(),
-            language_model_service=SimpleNamespace(),
+            language_model_service=SimpleNamespace(get_feature_model=lambda _feature: object()),
             builtin_provider_manager=SimpleNamespace(),
             icon_generator_service=mock_icon_generator,
         )
@@ -369,7 +368,6 @@ class TestAppService:
             def invoke(_payload):
                 return "你是一个专业助手"
 
-        monkeypatch.setattr("internal.service.app_service.Chat", lambda **_kwargs: object())
         monkeypatch.setattr("internal.service.app_service.ChatPromptTemplate.from_messages", lambda _messages: _Pipe())
         monkeypatch.setattr("internal.service.app_service.StrOutputParser", lambda: object())
         mock_icon_generator = SimpleNamespace(
@@ -387,7 +385,7 @@ class TestAppService:
                 generate_suggested_questions=lambda _histories: (_ for _ in ()).throw(RuntimeError("llm failed"))
             ),
             language_model_manager=SimpleNamespace(),
-            language_model_service=SimpleNamespace(),
+            language_model_service=SimpleNamespace(get_feature_model=lambda _feature: object()),
             builtin_provider_manager=SimpleNamespace(),
             icon_generator_service=mock_icon_generator,
         )
@@ -411,7 +409,6 @@ class TestAppService:
             def invoke(_payload):
                 return "你是一个专业助手"
 
-        monkeypatch.setattr("internal.service.app_service.Chat", lambda **_kwargs: object())
         monkeypatch.setattr("internal.service.app_service.ChatPromptTemplate.from_messages", lambda _messages: _Pipe())
         monkeypatch.setattr("internal.service.app_service.StrOutputParser", lambda: object())
         service = _new_app_service(
@@ -423,7 +420,7 @@ class TestAppService:
             api_provider_manager=SimpleNamespace(),
             conversation_service=SimpleNamespace(generate_suggested_questions=lambda _histories: []),
             language_model_manager=SimpleNamespace(),
-            language_model_service=SimpleNamespace(),
+            language_model_service=SimpleNamespace(get_feature_model=lambda _feature: object()),
             builtin_provider_manager=SimpleNamespace(),
             icon_generator_service=SimpleNamespace(
                 generate_icon=Mock(side_effect=FailException("icon failed"))
@@ -644,18 +641,24 @@ class TestAppService:
         assert updates[0][0] is app
         assert updates[0][1]["token"] == "fixed-token-1234"
 
-    def test_delete_app_should_delegate_delete_and_return_app(self, monkeypatch):
+    def test_delete_app_should_enter_recycle_bin_and_return_app(self, monkeypatch):
         service = _build_service()
         account = SimpleNamespace(id=uuid4())
-        app = SimpleNamespace(id=uuid4(), account_id=account.id)
+        app = SimpleNamespace(id=uuid4(), account_id=account.id, name="测试应用")
         monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
-        deleted = []
-        monkeypatch.setattr(service, "delete", lambda target: deleted.append(target))
+        calls = []
+        monkeypatch.setattr(
+            "internal.service.recycle_bin_service.RecycleBinService.delete_resource",
+            lambda self, **kwargs: calls.append(kwargs) or True,
+        )
 
         result = service.delete_app(app.id, account)
 
         assert result is app
-        assert deleted == [app]
+        assert calls[0]["resource_type"] == "app"
+        assert calls[0]["resource_id"] == app.id
+        assert calls[0]["resource_name"] == app.name
+        assert calls[0]["deleted_by"] == account.id
 
     def test_update_app_should_delegate_update_and_return_app(self, monkeypatch):
         service = _build_service()
@@ -1433,7 +1436,6 @@ class TestAppService:
         result = service.publish_draft_app_config(app_id, account)
 
         assert result is app
-        assert service.db.auto_commit_count == 1
         assert any(payload.get("status") == AppStatus.PUBLISHED.value for _, payload in updates)
         app_config_call = [payload for model, payload in create_calls if model.__name__ == "AppConfig"][0]
         assert app_config_call["mcp_bindings"] == [
@@ -1582,7 +1584,6 @@ class TestAppService:
         result = service.publish_draft_app_config(app_id, account, share_to_square=False)
 
         assert result is app
-        assert service.db.auto_commit_count == 1
         update_payload = updates[0][1]
         assert update_payload["status"] == AppStatus.PUBLISHED.value
         assert "is_public" not in update_payload
@@ -1921,7 +1922,7 @@ class TestAppService:
 
         retrieval_capture = {}
         debug_service.app_runtime_service.retrieval_service = SimpleNamespace(
-            create_langchain_tool_from_search=lambda **kwargs: retrieval_capture.update(kwargs) or "dataset-tool"
+            create_knowledge_retrieval_tool=lambda **kwargs: retrieval_capture.update(kwargs) or "dataset-tool"
         )
         workflow_capture = {}
         debug_service.app_runtime_service.app_config_service = SimpleNamespace(
@@ -1984,13 +1985,13 @@ class TestAppService:
             save_agent_thoughts=lambda **kwargs: save_calls.append(kwargs),
         )
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             events = list(debug_service.debug_chat(app_id, req, account))
 
         assert len(events) == 4
         assert events[0].startswith("event: ping")
-        assert retrieval_capture["dataset_ids"] == [dataset_id]
-        assert retrieval_capture["retrieval_source"] == "app"
+        assert retrieval_capture["knowledge_base_ids"] == [UUID(dataset_id)]
+        assert retrieval_capture["retrieval_strategy"] == "semantic"
         assert workflow_capture["ids"] == [workflow_id]
         assert len(agent_capture["tools"]) == 3
         assert len(save_calls[0]["agent_thoughts"]) == 2
@@ -2148,7 +2149,7 @@ class TestAppService:
             save_agent_thoughts=lambda **kwargs: save_calls.append(kwargs),
         )
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             events = list(debug_service.debug_chat(app_id, req, account))
 
         assert events == ["event: agent_end\ndata:{}\n\n"]
@@ -2498,6 +2499,173 @@ class TestAppService:
             "category": "general",
         }
 
+    # ---------------- 应用导出 / 导入（format=yuxin-ai-app） ----------------
+
+    def test_export_app_should_build_yuxin_ai_app_payload(self, monkeypatch):
+        draft_config = SimpleNamespace(
+            model_config={"provider": "openai", "model": "gpt-4o-mini"},
+            dialog_round=4,
+            preset_prompt="prompt",
+            tools=[],
+            mcp_bindings=[],
+            mcp_tool_snapshots=[],
+            skills=[],
+            agent_bindings=[],
+            workflows=[],
+            knowledge_base_ids=[],
+            embedding_model_id=None,
+            retrieval_config={},
+            long_term_memory={"enable": True},
+            opening_statement="hello",
+            opening_questions=["q1"],
+            speech_to_text={"enable": True},
+            text_to_speech={"enable": True, "voice": "alex"},
+            suggested_after_answer={"enable": True},
+            review_config={"enable": False},
+            workflow_id=None,
+        )
+
+        class _ExportQuery:
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def one_or_none(self):
+                return draft_config
+
+        class _ExportSession:
+            def query(self, _model):
+                return _ExportQuery()
+
+        service = _build_service()
+        service.db.session = _ExportSession()
+        app = SimpleNamespace(
+            id=uuid4(),
+            account_id=uuid4(),
+            name="测试应用",
+            icon="https://icon",
+            description="desc",
+            app_type="chatbot",
+            tags=["t1"],
+            agent_metadata={"a": 1},
+        )
+        monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
+
+        payload = service.export_app(uuid4(), SimpleNamespace(id=app.account_id))
+
+        assert payload["format"] == "yuxin-ai-app"
+        assert payload["version"] == "1.0"
+        assert payload["app"]["name"] == "测试应用"
+        assert payload["app"]["tags"] == ["t1"]
+        assert payload["config"]["preset_prompt"] == "prompt"
+        assert payload["config"]["opening_statement"] == "hello"
+
+    def test_import_app_should_create_app_and_tolerate_missing_references(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+
+        class _ImportSession:
+            def __init__(self):
+                self.added = []
+
+            def query(self, model):
+                if model is Account:
+                    return _ValidationQuery(one_or_none_result=account)
+                # App 同名冲突检查：无同名应用
+                return _ValidationQuery(one_or_none_result=None)
+
+            def add(self, obj):
+                self.added.append(obj)
+
+            def flush(self):
+                for obj in self.added:
+                    if getattr(obj, "id", None) is None:
+                        obj.id = uuid4()
+
+        service = _build_service()
+        service.db.session = _ImportSession()
+        monkeypatch.setattr(
+            service,
+            "icon_generator_service",
+            SimpleNamespace(generate_icon=lambda name, description: "https://icon"),
+        )
+
+        payload = {
+            "format": "yuxin-ai-app",
+            "version": "1.0",
+            "app": {
+                "name": "导入应用",
+                "icon": "",
+                "description": "desc",
+                "app_type": "chatbot",
+                "tags": ["t1"],
+                "agent_metadata": {},
+            },
+            "config": {
+                "preset_prompt": "prompt",
+                # 引用容错：目标环境缺少的 tools / knowledge_base_ids 原样写入草稿
+                "tools": [{"type": "builtin_tool", "provider_id": "missing"}],
+                "knowledge_base_ids": ["missing-kb-id"],
+            },
+        }
+
+        new_app = service.import_app(payload, account.id, overwrite_name=False)
+
+        assert new_app.name == "导入应用"
+        assert new_app.status == AppStatus.DRAFT.value
+        assert len(service.db.session.added) == 2
+        draft_config = service.db.session.added[1]
+        assert draft_config.preset_prompt == "prompt"
+        assert draft_config.tools == [{"type": "builtin_tool", "provider_id": "missing"}]
+        assert draft_config.knowledge_base_ids == ["missing-kb-id"]
+        assert new_app.draft_app_config_id == draft_config.id
+
+    def test_import_app_should_append_suffix_when_name_conflict(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+
+        class _ConflictSession:
+            def __init__(self):
+                self.added = []
+
+            def query(self, model):
+                if model is Account:
+                    return _ValidationQuery(one_or_none_result=account)
+                # 存在同名应用，触发名称后缀
+                return _ValidationQuery(one_or_none_result=SimpleNamespace(id=uuid4()))
+
+            def add(self, obj):
+                self.added.append(obj)
+
+            def flush(self):
+                for obj in self.added:
+                    if getattr(obj, "id", None) is None:
+                        obj.id = uuid4()
+
+        service = _build_service()
+        service.db.session = _ConflictSession()
+        monkeypatch.setattr(
+            service,
+            "icon_generator_service",
+            SimpleNamespace(generate_icon=lambda name, description: "https://icon"),
+        )
+
+        payload = {
+            "format": "openagent-app",
+            "version": "1.0",
+            "app": {"name": "已有应用", "icon": "", "description": "desc", "app_type": "chatbot"},
+            "config": {},
+        }
+
+        new_app = service.import_app(payload, account.id, overwrite_name=False)
+
+        assert new_app.name.startswith("已有应用_imported_")
+
+    def test_import_app_should_reject_unknown_format_and_version(self):
+        service = _build_service()
+
+        with pytest.raises(ValidateErrorException):
+            service.import_app({"format": "unknown", "version": "1.0", "app": {"name": "x"}}, uuid4())
+        with pytest.raises(ValidateErrorException):
+            service.import_app({"format": "openagent-app", "version": "2.0", "app": {"name": "x"}}, uuid4())
+
 
 class _ValidationQuery:
     def __init__(self, *, one_or_none_result=None, all_result=None):
@@ -2582,8 +2750,15 @@ def _build_validation_service(session=None, builtin_lookup=None):
     provider = SimpleNamespace(
         get_model_entity=lambda model_name: model_entity if model_name == "model-a" else None
     )
+
+    def _raise_not_found(*_args, **_kwargs):
+        raise NotFoundException()
+
     service.language_model_manager = SimpleNamespace(
-        get_provider=lambda provider_name: provider if provider_name == "provider-a" else None
+        get_or_load_provider=lambda provider_name: provider if provider_name == "provider-a" else _raise_not_found(),
+        get_or_load_model_entity=lambda provider_name, model_name: model_entity
+        if provider_name == "provider-a" and model_name == "model-a"
+        else _raise_not_found(),
     )
     return service
 
@@ -3087,9 +3262,8 @@ class TestAppServiceDraftConfigValidation:
         app = service.create_app(req, account)
 
         assert create_db.auto_commit_count == 1
-        # 使用默认兜底图标 - SVG数据URI
-        assert app.icon.startswith("data:image/svg+xml;base64,")
-        assert "测" in app.icon or "A" in app.icon  # 应该包含应用名称的首字母或默认字母
+        # app.icon 列为 VARCHAR(255)，无法容纳 data URI，回退为空字符串由前端渲染默认图标
+        assert app.icon == ""
 
     def test_regenerate_icon_success(self):
         """测试重新生成图标成功"""

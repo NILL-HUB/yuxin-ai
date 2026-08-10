@@ -28,7 +28,7 @@ from typing import Optional
 from dataclasses import dataclass
 from injector import inject
 
-from flask import current_app
+from internal.context import current_app
 
 from pkg.sqlalchemy import SQLAlchemy
 from internal.model.knowledge import UserMemory
@@ -886,3 +886,181 @@ class LedgerWriter:
                 logger.warning("_get_driver: get_driver() 调用异常", exc_info=True)
                 driver = None
         return driver
+
+    # =========================================================
+    # 基因4: Agent-Curated Memory（§2.5）
+    # =========================================================
+
+    def write_agent_curated(
+        self,
+        account_id: UUID,
+        content: str,
+        memory_type: str = "preference",
+        metadata: Optional[dict] = None,
+    ) -> Optional[str]:
+        """Agent 主动策展记忆写入（基因4, §2.5）。
+
+        与系统自动写入（write_full_path 等）形成双路径：
+        - 系统路径：对话后自动提取记忆，source="system"
+        - Agent 路径：Agent 调用 memory_add 工具主动记录，source="agent_curated"
+
+        写入 UserMemory 表（pgvector）+ Neo4j Episode 节点，
+        metadata_ 中标记 source="agent_curated" 以区分来源。
+
+        Args:
+            account_id: 用户账号 ID
+            content: 记忆内容文本
+            memory_type: 记忆类型（preference/habit/identity/goal/capability/episode）
+            metadata: 额外元数据（如 explicit_category, explicit_polarity）
+
+        Returns:
+            成功返回 memory_id 字符串，失败返回 None
+        """
+        if not content or not account_id:
+            return None
+
+        now = datetime.utcnow()
+        memory_id = uuid4()
+
+        # 合并 metadata，强制标记 source
+        curated_metadata = dict(metadata or {})
+        curated_metadata["source"] = "agent_curated"
+        curated_metadata["curated_at"] = now.isoformat()
+
+        # 1. 写入 UserMemory 表（不含 embedding，由后台任务异步补充）
+        try:
+            user_memory = UserMemory(
+                id=memory_id,
+                owner_account_id=account_id,
+                memory_type=memory_type,
+                content=content,
+                scope="user_memory",
+                created_from="agent_curated",
+                metadata_=curated_metadata,
+            )
+            self.db.session.add(user_memory)
+            self.db.session.commit()
+        except Exception:
+            logger.warning("write_agent_curated: UserMemory 写入失败", exc_info=True)
+            self.db.session.rollback()
+            return None
+
+        # 2. 写入 Neo4j Episode 节点（标记 source="agent_curated"）
+        driver = self._get_driver()
+        if driver is not None:
+            try:
+                cypher = """
+                CREATE (e:Episode {
+                    node_id: $node_id,
+                    user_id: $user_id,
+                    content: $content,
+                    summary: $content,
+                    created_at: datetime(),
+                    storage_tier: 'hot',
+                    source: 'agent_curated',
+                    memory_type: $memory_type
+                })
+                RETURN e.node_id AS node_id
+                """
+                with driver.session() as session:
+                    session.run(cypher, {
+                        "node_id": str(memory_id),
+                        "user_id": str(account_id),
+                        "content": content,
+                        "memory_type": memory_type,
+                    })
+            except Exception:
+                logger.warning(
+                    "write_agent_curated: Neo4j 写入失败（UserMemory 已写入）",
+                    exc_info=True,
+                )
+
+        logger.info(
+            "write_agent_curated: account=%s memory_id=%s type=%s",
+            account_id, memory_id, memory_type,
+        )
+        return str(memory_id)
+
+    def invalidate_agent_curated(
+        self,
+        account_id: UUID,
+        memory_id: str,
+        action: str = "remove",
+    ) -> bool:
+        """Agent 主动标记记忆失效（基因4, §2.5）。
+
+        支持两种操作：
+        - replace: 标记 status='superseded'（配合 write_agent_curated 写入新记忆）
+        - remove:  标记 status='deprecated'（彻底移除）
+
+        同时更新 UserMemory 表和 Neo4j Episode 节点状态。
+
+        Args:
+            account_id: 用户账号 ID（权限校验）
+            memory_id: 要失效的记忆 ID
+            action: "replace" 或 "remove"
+
+        Returns:
+            成功返回 True，记忆不存在或权限不匹配返回 False
+        """
+        if not memory_id or not account_id:
+            return False
+
+        status = "superseded" if action == "replace" else "deprecated"
+
+        # 1. 更新 UserMemory 表
+        try:
+            from sqlalchemy import text as _text
+
+            result = self.db.session.execute(
+                _text("""
+                    UPDATE user_memory
+                    SET status = :status, updated_at = CURRENT_TIMESTAMP(0)
+                    WHERE id = :memory_id AND owner_account_id = :account_id
+                      AND created_from = 'agent_curated'
+                """),
+                {
+                    "status": status,
+                    "memory_id": memory_id,
+                    "account_id": str(account_id),
+                },
+            )
+            self.db.session.commit()
+
+            if result.rowcount == 0:
+                logger.warning(
+                    "invalidate_agent_curated: 记忆不存在或无权操作 id=%s",
+                    memory_id,
+                )
+                return False
+        except Exception:
+            logger.warning("invalidate_agent_curated: UserMemory 更新失败", exc_info=True)
+            self.db.session.rollback()
+            return False
+
+        # 2. 更新 Neo4j Episode 节点状态
+        driver = self._get_driver()
+        if driver is not None:
+            try:
+                cypher = """
+                MATCH (e:Episode {node_id: $node_id, user_id: $user_id})
+                SET e.status = $status,
+                    e.t_invalidated_at = datetime()
+                """
+                with driver.session() as session:
+                    session.run(cypher, {
+                        "node_id": memory_id,
+                        "user_id": str(account_id),
+                        "status": status,
+                    })
+            except Exception:
+                logger.warning(
+                    "invalidate_agent_curated: Neo4j 更新失败（UserMemory 已更新）",
+                    exc_info=True,
+                )
+
+        logger.info(
+            "invalidate_agent_curated: account=%s memory_id=%s action=%s",
+            account_id, memory_id, action,
+        )
+        return True

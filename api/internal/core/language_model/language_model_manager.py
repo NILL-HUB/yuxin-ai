@@ -202,13 +202,18 @@ class LanguageModelManager(BaseModel):
 
     def _build_provider_entity(self, config: ModelProviderConfig) -> ProviderEntity:
         """从 DB 记录构建 ProviderEntity"""
+        from internal.service.admin_model_pool_service import normalize_provider_base_url
+
         return ProviderEntity(
             name=config.name,
             label=config.label or config.name,
             description=config.description or "",
             icon=config.icon or "",
             background=config.background or "#FFFFFF",
-            default_base_url=config.default_base_url,
+            default_base_url=normalize_provider_base_url(
+                config.default_base_url,
+                is_full_url=bool(getattr(config, "is_full_url", False)),
+            ),
             supported_model_types=config.supported_model_types or ["chat"],
         )
 
@@ -226,13 +231,18 @@ class LanguageModelManager(BaseModel):
             if feature is not None and feature not in features:
                 features.append(feature)
 
+        # 上下文窗口与输出上限拆分：输入侧用 max_input_tokens，输出侧用 max_output_tokens
+        # （兼容历史 max_tokens 总窗口字段）
+        context_window = model_config.max_input_tokens or model_config.max_tokens or 4096
+        max_output_tokens = model_config.max_output_tokens or 4096
+
         return ModelEntity(
             model=model_config.model_name,
             label=model_config.display_name or model_config.model_name,
             model_type=model_config.model_type,
             features=features,
-            context_window=model_config.max_tokens or 4096,
-            max_output_tokens=model_config.max_tokens or 4096,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
             attributes={
                 "model": model_config.model_name,
                 "openai_api_base": provider_entity.default_base_url,
@@ -250,5 +260,8 @@ class LanguageModelManager(BaseModel):
                 "tier": model_config.tier,
                 "priority": model_config.priority,
                 "fallback_model_id": model_config.fallback_model_id,
+                # 供运行时上下文控制消费：输入窗口（记忆/上下文裁剪预算）与输出上限
+                "context_window": context_window,
+                "max_output_tokens": max_output_tokens,
             },
         )

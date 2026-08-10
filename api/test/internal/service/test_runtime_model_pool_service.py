@@ -16,10 +16,13 @@ def _make_model(db, **overrides):
         provider=overrides.pop("provider", "openai"),
         model_name=overrides.pop("model_name", "gpt-4o"),
         display_name=overrides.pop("display_name", ""),
+        model_type=overrides.pop("model_type", "chat"),
         tier=overrides.pop("tier", "standard"),
         capabilities=overrides.pop("capabilities", ["chat"]),
         price_per_1k_tokens=overrides.pop("price_per_1k_tokens", Decimal("0.03")),
         max_tokens=overrides.pop("max_tokens", 128000),
+        max_input_tokens=overrides.pop("max_input_tokens", 128000),
+        max_output_tokens=overrides.pop("max_output_tokens", 0),
         status=overrides.pop("status", "active"),
         fallback_model_id=overrides.pop("fallback_model_id", None),
         priority=overrides.pop("priority", 0),
@@ -152,3 +155,38 @@ class TestRuntimeModelPoolService:
         assert refreshed.failure_count == 3
         assert refreshed.status == "circuit_open"
         _ = model
+
+    # ---------------- 输出长度上限注入（max_output_tokens → max_tokens 参数） ----------------
+
+    def test_build_llm_config_should_inject_output_max_tokens(self, model_pool_db):
+        model = _make_model(
+            model_pool_db, provider="openai", model_name="m", priority=10,
+            max_tokens=131072, max_input_tokens=131072, max_output_tokens=4096,
+        )
+        key = _make_key(model_pool_db, key_alias="k", provider="openai")
+
+        service = _service(model_pool_db)
+        config = service.build_llm_config(model, key)
+
+        assert config["parameters"] == {"max_tokens": 4096}
+
+    def test_build_llm_config_should_not_inject_when_output_zero(self, model_pool_db):
+        model = _make_model(model_pool_db, provider="openai", model_name="m", priority=10)
+        key = _make_key(model_pool_db, key_alias="k", provider="openai")
+
+        service = _service(model_pool_db)
+        config = service.build_llm_config(model, key)
+
+        assert config["parameters"] == {}
+
+    def test_build_llm_config_should_not_inject_for_context_less_model(self, model_pool_db):
+        model = _make_model(
+            model_pool_db, provider="openai", model_name="m", priority=10,
+            model_type="tts", max_tokens=0, max_input_tokens=0, max_output_tokens=0,
+        )
+        key = _make_key(model_pool_db, key_alias="k", provider="openai")
+
+        service = _service(model_pool_db)
+        config = service.build_llm_config(model, key)
+
+        assert config["parameters"] == {}

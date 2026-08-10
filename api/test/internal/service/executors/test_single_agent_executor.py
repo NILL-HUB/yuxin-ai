@@ -113,10 +113,11 @@ class TestSingleAgentExecutor:
             mock_coord_cls.return_value = manager.coordinator
             events = _run_execute(executor)
 
-        assert len(events) == 1
+        assert len(events) == 2
         assert events[0].startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}")
         payload = _parse_payload(events[0])
         assert payload["answer"] == "单智能体执行遇到问题，请稍后重试。"
+        assert events[1].startswith(f"event: {QueueEvent.AGENT_END.value}")
 
     def test_single_agent_executor_build_plan(self):
         executor = SingleAgentExecutor(agent_class=MagicMock())

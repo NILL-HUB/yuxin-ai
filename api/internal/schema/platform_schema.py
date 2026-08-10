@@ -1,6 +1,6 @@
 import os
 
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField
 from wtforms.validators import Optional
@@ -36,7 +36,7 @@ class GetWechatConfigResp(Schema):
         }
 
 
-class UpdateWechatConfigReq(FlaskForm):
+class UpdateWechatConfigReq(Form):
     """更新微信配置请求"""
     wechat_app_id = StringField("wechat_app_id", default="", validators=[Optional()])
     wechat_app_secret = StringField("wechat_app_secret", default="", validators=[Optional()])

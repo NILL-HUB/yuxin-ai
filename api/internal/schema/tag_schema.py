@@ -4,7 +4,7 @@
 定义标签相关的请求和响应数据结构。
 """
 
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import StringField
 from wtforms.validators import AnyOf, DataRequired, Length, Optional
@@ -14,7 +14,7 @@ from internal.lib.helper import datetime_to_timestamp
 from pkg.paginator import PaginatorReq
 
 
-class CreateTagReq(FlaskForm):
+class CreateTagReq(Form):
     """创建标签请求"""
     name = StringField("name", validators=[
         DataRequired("标签名称不能为空"),
@@ -33,7 +33,7 @@ class CreateTagReq(FlaskForm):
     ])
 
 
-class UpdateTagReq(FlaskForm):
+class UpdateTagReq(Form):
     """更新标签请求"""
     name = StringField("name", validators=[
         DataRequired("标签名称不能为空"),

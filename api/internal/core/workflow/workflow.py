@@ -66,7 +66,7 @@ class WorkflowToolAdapter(BaseTool):
         variable_pool = VariablePool()
         # 在应用上下文外（如测试）降级为 None
         try:
-            from flask import current_app
+            from internal.context import current_app
             flask_app = current_app._get_current_object()
         except RuntimeError:
             flask_app = None

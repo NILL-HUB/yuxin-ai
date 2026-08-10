@@ -5,6 +5,7 @@ from uuid import UUID
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
+from internal.model.admin import AdminUser
 from internal.model.workflow import Workflow
 
 logger = logging.getLogger(__name__)
@@ -80,8 +81,16 @@ class AdminWorkflowService:
         self.session.commit()
         return {"succeeded": succeeded, "failed": failed}
 
-    @staticmethod
-    def _serialize_workflow(workflow: Workflow) -> dict[str, object]:
+    def _resolve_creator_name(self, created_by_admin) -> str:
+        """根据创建管理员 id 解析展示名（平台级资源归属显示为创建者）"""
+        if not created_by_admin:
+            return ""
+        admin_user = self.session.query(AdminUser.name).filter(AdminUser.id == created_by_admin).one_or_none()
+        if admin_user is None:
+            return ""
+        return admin_user[0] or ""
+
+    def _serialize_workflow(self, workflow: Workflow) -> dict[str, object]:
         return {
             "id": str(workflow.id),
             "name": workflow.name,
@@ -91,6 +100,7 @@ class AdminWorkflowService:
             "status": workflow.status,
             "is_public": workflow.is_public,
             "task_keywords": list(getattr(workflow, "task_keywords", None) or []),
+            "creator_name": self._resolve_creator_name(workflow.created_by_admin),
             "created_at": datetime_to_timestamp(workflow.created_at),
             "updated_at": datetime_to_timestamp(workflow.updated_at),
         }

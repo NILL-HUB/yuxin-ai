@@ -1,14 +1,20 @@
 from dataclasses import dataclass
+import logging
 import math
 
 from injector import inject
+from sqlalchemy import asc, desc, func
 
+from internal.entity.dataset_entity import DocumentStatus
 from internal.entity.knowledge_entity import KnowledgeCreatedFrom, KnowledgeScope, OperationContext, VisibilityScope
 from internal.exception import ForbiddenException, NotFoundException
-from internal.model import Account, AdminUser, KnowledgeBase
+from internal.lib.helper import escape_like_pattern
+from internal.model import Account, AdminUser, KnowledgeBase, KnowledgeDocument, KnowledgeSegment
+from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
-from .base_service import BaseService
 from .knowledge_base_service import KnowledgeBaseService
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -65,9 +71,13 @@ class SystemKnowledgeService(KnowledgeBaseService):
         # 规范化分页参数，page 不小于 1，page_size 限制在 1~100（项目硬约束）
         page = max(int(page or 1), 1)
         page_size = max(min(int(page_size or 20), 100), 1)
+        from internal.service.system_prompt_library_service import SYSTEM_PROMPT_LIBRARY_BASE_NAME
         query = (
             self.db.session.query(KnowledgeBase)
             .filter(KnowledgeBase.knowledge_scope == KnowledgeScope.SYSTEM.value)
+            # 系统提示词库是内置提示词的存储容器，由「系统内置提示词」页签管理，
+            # 不作为普通系统知识库展示在列表中
+            .filter(KnowledgeBase.name != SYSTEM_PROMPT_LIBRARY_BASE_NAME)
         )
         # search_word 非空时按名称模糊匹配
         if search_word:
@@ -171,22 +181,307 @@ class SystemKnowledgeService(KnowledgeBaseService):
         knowledge_base_id,
         *,
         admin_user: AdminUser | None = None,
+        retention_days: int | None = None,
     ) -> None:
+        """删除系统知识库（进入回收站，留存期到期后彻底销毁）。
+
+        删除 = 写入 recycle_bin（完整快照） + 物理删除知识库及其文档/分段/向量。
+        恢复由回收站按快照重建；回收站不可手动清空。
+        """
         knowledge_base = self.get_system_knowledge(knowledge_base_id)
-        # 记录变更前数据用于审计
+        kb_id_str = str(knowledge_base.id)
+        # 内置系统知识库保护：系统提示词库不允许删除（可改为停用）
+        if knowledge_base.name == "系统提示词库":
+            from internal.exception import ValidateErrorException
+            raise ValidateErrorException(
+                "「系统提示词库」为平台内置知识库，禁止删除；如需停用请关闭启用开关"
+            )
+        # 记录变更前数据用于审计（在物理删除前拷贝，避免删除后 ORM 实例失效）
         before_data = {
             "name": knowledge_base.name,
             "description": knowledge_base.description,
             "enabled": getattr(knowledge_base, "enabled", True),
         }
-        self.update(knowledge_base, enabled=False)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="knowledge_base",
+            resource_id=knowledge_base.id,
+            resource_key=kb_id_str,
+            resource_name=knowledge_base.name,
+            deleted_by=getattr(admin_user, "id", None),
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("系统知识库不存在")
         # 记录系统级知识库删除审计日志
         self._emit_audit(
             admin_user_id=getattr(admin_user, "id", None),
             action="delete",
-            resource_id=str(getattr(knowledge_base, "id", "")),
+            resource_id=kb_id_str,
             before_data=before_data,
+            after_data={"retention_days": retention_days},
         )
+
+    # ==================== admin 端：库内文档管理 + 命中测试 ====================
+    # 仅校验知识库为 system scope（get_system_knowledge），不校验账号归属
+
+    def list_documents_for_admin(
+        self,
+        knowledge_base_id,
+        req,
+    ) -> tuple[list[KnowledgeDocument], Paginator]:
+        """admin 分页获取系统知识库下的文档列表"""
+        knowledge_base = self.get_system_knowledge(knowledge_base_id)
+
+        paginator = Paginator(db=self.db, req=req)
+        filters = [KnowledgeDocument.knowledge_base_id == knowledge_base.id]
+        if req.search_word.data:
+            filters.append(
+                KnowledgeDocument.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%")
+            )
+
+        documents = paginator.paginate(
+            self.db.session.query(KnowledgeDocument).filter(*filters).order_by(desc("created_at"))
+        )
+
+        for document in documents:
+            # 实时统计分段数与真实字符数（segment.character_count 可能因历史原因失真，按内容长度统计）
+            seg_count, seg_chars = (
+                self.db.session.query(
+                    func.count(KnowledgeSegment.id),
+                    func.coalesce(func.sum(func.length(KnowledgeSegment.content)), 0),
+                )
+                .filter(KnowledgeSegment.knowledge_document_id == document.id)
+                .one()
+            )
+            setattr(document, "segment_count", seg_count)
+            setattr(document, "segment_character_count", seg_chars)
+
+        return documents, paginator
+
+    def get_document_for_admin(self, knowledge_base_id, document_id) -> KnowledgeDocument:
+        """admin 获取系统知识库下指定文档详情"""
+        self.get_system_knowledge(knowledge_base_id)
+
+        document = self.get(KnowledgeDocument, document_id)
+        if document is None or str(document.knowledge_base_id) != str(knowledge_base_id):
+            raise NotFoundException("该文档不存在，请核实后重试")
+
+        segment_count = self.db.session.query(func.count(KnowledgeSegment.id)).filter(
+            KnowledgeSegment.knowledge_document_id == document.id,
+        ).scalar() or 0
+        setattr(document, "segment_count", segment_count)
+
+        return document
+
+    def delete_document_for_admin(self, knowledge_base_id, document_id, *, admin_user=None, retention_days=None) -> KnowledgeDocument:
+        """admin 删除系统知识库文档：进入回收站（销毁保护，留存期满自动销毁存储文件）。"""
+        self.get_system_knowledge(knowledge_base_id)
+
+        document = self.get(KnowledgeDocument, document_id)
+        if document is None or str(document.knowledge_base_id) != str(knowledge_base_id):
+            raise NotFoundException("该文档不存在，请核实后重试")
+
+        # 系统资源删除统一走回收站：先快照（文档+分段+上传文件记录），
+        # 再物理删除 DB 记录；底层存储对象留待留存期满由回收站任务销毁
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="knowledge_document",
+            resource_id=document.id,
+            resource_key=str(document.id),
+            resource_name=document.name,
+            deleted_by=getattr(admin_user, "id", None),
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("该文档不存在，请核实后重试")
+        return document
+
+    def create_text_document_for_admin(self, knowledge_base_id, name, content) -> KnowledgeDocument:
+        """admin 以纯文本新建系统知识库文档（内容按 txt 走完整索引链路，可被检索）"""
+        knowledge_base = self.get_system_knowledge(knowledge_base_id)
+
+        upload_file = self._upload_text_as_file(name, content)
+        document = self.create(
+            KnowledgeDocument,
+            knowledge_base_id=knowledge_base.id,
+            owner_account_id=None,
+            name=name,
+            content_type="document",
+            source_type=KnowledgeCreatedFrom.MANUAL_UPLOAD.value,
+            source_id=str(upload_file.id),
+            upload_file_id=upload_file.id,
+            metadata_={
+                "upload_file_id": str(upload_file.id),
+                "operation_context": OperationContext.ADMIN.value,
+            },
+            character_count=0,
+            status=DocumentStatus.WAITING.value,
+        )
+
+        self._dispatch_document_indexing(document.id)
+        return document
+
+    def update_text_document_for_admin(
+        self,
+        knowledge_base_id,
+        document_id,
+        name,
+        content,
+    ) -> KnowledgeDocument:
+        """admin 编辑系统知识库文档（重建内容索引，保持文档 id 不变）"""
+        self.get_system_knowledge(knowledge_base_id)
+
+        document = self.get(KnowledgeDocument, document_id)
+        if document is None or str(document.knowledge_base_id) != str(knowledge_base_id):
+            raise NotFoundException("该文档不存在，请核实后重试")
+
+        # 1. 将新内容作为 txt 文件上传
+        upload_file = self._upload_text_as_file(name, content)
+        # 2. 清理旧分段与向量数据
+        self._clear_document_segments(document)
+        # 3. 更新文档指向新内容并重建索引
+        self.update(
+            document,
+            name=name,
+            upload_file_id=upload_file.id,
+            source_id=str(upload_file.id),
+            metadata_={
+                "upload_file_id": str(upload_file.id),
+                "operation_context": OperationContext.ADMIN.value,
+            },
+            character_count=0,
+            token_count=0,
+            status=DocumentStatus.WAITING.value,
+            error="",
+        )
+        self._get_knowledge_indexing_service().build_document(document.id, None)
+        return document
+
+    def _upload_text_as_file(self, name, content):
+        """把纯文本内容包装为 txt 文件上传到对象存储，返回 UploadFile 记录。"""
+        from io import BytesIO
+        from werkzeug.datastructures import FileStorage
+
+        base_name = (name or "未命名文档").strip() or "未命名文档"
+        filename = base_name if base_name.lower().endswith(".txt") else f"{base_name}.txt"
+        file = FileStorage(
+            stream=BytesIO(content.encode("utf-8")),
+            filename=filename,
+            content_type="text/plain",
+        )
+        return self._get_cos_service().upload_file(file=file, only_image=False, account=None)
+
+    def _clear_document_segments(self, document) -> None:
+        """删除文档下所有分段记录及其向量数据（不删除文档本身，供重建索引使用）。"""
+        document_id = document.id
+        segments = self.db.session.query(KnowledgeSegment).filter(
+            KnowledgeSegment.knowledge_document_id == document_id,
+        ).all()
+        knowledge_vector_service = self._get_knowledge_vector_service()
+        for segment in segments:
+            try:
+                knowledge_vector_service.remove_segment(segment)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "清理系统知识库文档分段向量失败 segment_id=%s",
+                    segment.id, exc_info=True,
+                )
+        with self.db.auto_commit():
+            self.db.session.query(KnowledgeSegment).filter(
+                KnowledgeSegment.knowledge_document_id == document_id,
+            ).delete(synchronize_session=False)
+
+    def upload_document_for_admin(self, knowledge_base_id, file) -> KnowledgeDocument:
+        """admin 上传文档到系统知识库并触发索引构建（owner 置空，不校验账号归属）"""
+        knowledge_base = self.get_system_knowledge(knowledge_base_id)
+
+        cos_service = self._get_cos_service()
+        upload_file = cos_service.upload_file(file=file, only_image=False, account=None)
+
+        document = self.create(
+            KnowledgeDocument,
+            knowledge_base_id=knowledge_base.id,
+            owner_account_id=None,
+            name=upload_file.name,
+            content_type="document",
+            source_type=KnowledgeCreatedFrom.MANUAL_UPLOAD.value,
+            source_id=str(upload_file.id),
+            upload_file_id=upload_file.id,
+            metadata_={
+                "upload_file_id": str(upload_file.id),
+                "operation_context": OperationContext.ADMIN.value,
+            },
+            character_count=0,
+            status=DocumentStatus.WAITING.value,
+        )
+
+        self._dispatch_document_indexing(document.id)
+
+        return document
+
+    def _dispatch_document_indexing(self, document_id) -> None:
+        """异步派发文档索引任务。
+
+        优先通过 Celery 后台执行索引，避免阻塞上传/新建/编辑接口；
+        Celery 不可用时回退为同步执行，保证索引不丢失。
+        """
+        try:
+            from internal.task.knowledge_indexing_tasks import build_document_task
+
+            build_document_task.delay(str(document_id), None)
+            logger.info("文档索引已派发 Celery document_id=%s", document_id)
+        except Exception:
+            logger.warning(
+                "文档索引 Celery 派发失败，回退同步执行 document_id=%s",
+                document_id, exc_info=True,
+            )
+            self._get_knowledge_indexing_service().build_document(document_id, None)
+
+    def get_segments_for_admin(
+        self,
+        knowledge_base_id,
+        document_id,
+        req,
+    ) -> tuple[list[KnowledgeSegment], Paginator]:
+        """admin 分页获取系统知识库文档下的片段列表"""
+        self.get_system_knowledge(knowledge_base_id)
+
+        document = self.get(KnowledgeDocument, document_id)
+        if document is None or str(document.knowledge_base_id) != str(knowledge_base_id):
+            raise NotFoundException("该文档不存在，请核实后重试")
+
+        paginator = Paginator(db=self.db, req=req)
+        filters = [
+            KnowledgeSegment.knowledge_base_id == knowledge_base_id,
+            KnowledgeSegment.knowledge_document_id == document_id,
+        ]
+        if req.search_word.data:
+            filters.append(
+                KnowledgeSegment.content.ilike(f"%{escape_like_pattern(req.search_word.data)}%")
+            )
+
+        segments = paginator.paginate(
+            self.db.session.query(KnowledgeSegment).filter(*filters).order_by(asc("position"))
+        )
+
+        return segments, paginator
+
+    def hit_test_for_admin(self, knowledge_base_id, req) -> list[dict]:
+        """admin 对系统知识库执行召回测试（允许 system scope）"""
+        knowledge_base = self.get_system_knowledge(knowledge_base_id)
+
+        lc_documents = self.retrieval_service.search_in_knowledge_base(
+            knowledge_base_ids=[knowledge_base.id],
+            query=req.query.data,
+            account_id=None,
+            k=req.k.data,
+            retrieval_strategy=req.retrieval_strategy.data,
+            knowledge_scope=KnowledgeScope.SYSTEM.value,
+        )
+
+        return self._build_hit_result(lc_documents)
 
     def _get_audit_log_service(self):
         """获取审计日志服务实例，便于子类覆写或测试 mock。"""

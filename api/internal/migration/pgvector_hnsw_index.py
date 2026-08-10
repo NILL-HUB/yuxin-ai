@@ -20,7 +20,7 @@ EMBEDDING_DIM = int(os.getenv("PGVECTOR_EMBEDDING_DIM", "1536"))
 INDEX_NAME = os.getenv("PGVECTOR_INDEX_NAME", "user_memory_embedding_hnsw_idx")
 DATABASE_URL = os.getenv(
     "SQLALCHEMY_DATABASE_URI",
-    "postgresql+asyncpg://openagent:openagent@localhost:5432/openagent",
+    "postgresql+asyncpg://yuxin_ai:yuxin_ai@localhost:5432/yuxin_ai",
 )
 
 

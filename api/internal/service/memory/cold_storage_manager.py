@@ -22,13 +22,11 @@
 from __future__ import annotations
 
 import gzip
-import json
 import logging
 import re
 from collections import Counter
 from datetime import datetime
 from typing import Optional
-from uuid import uuid4
 
 from internal.config.memory_settings import settings
 from internal.model.memory_models import ColdStorageEntry, RebuildResult
@@ -327,7 +325,7 @@ class ColdStorageManager:
         ObjectStoragePort 实例分发到当前 STORAGE_BACKEND 配置的后端。
         """
         try:
-            from flask import current_app
+            from internal.context import current_app
             current_app._get_current_object()
         except RuntimeError:
             return None
@@ -343,7 +341,7 @@ class ColdStorageManager:
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             if driver is not None:

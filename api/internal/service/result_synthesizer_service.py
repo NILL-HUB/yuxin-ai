@@ -285,7 +285,7 @@ class ResultSynthesizerService:
     def _get_digest_manager():
         """懒加载 DigestManager 实例，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             injector = getattr(current_app, "injector", None)
             if injector is not None:

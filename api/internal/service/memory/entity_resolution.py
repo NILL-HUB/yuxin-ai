@@ -296,11 +296,14 @@ class EntityResolver:
             if preliminary < 0.6:
                 c["llm_score"] = 0.0
                 continue
-            prompt = (
-                f"判断以下两个实体是否为同一实体：\n"
-                f"实体A: \"{new_name}\" -- {new_summary}\n"
-                f"实体B: \"{c.get('name', '')}\" -- {c.get('summary', '')}\n\n"
-                f"输出 JSON: {{\"score\": 0.0-1.0, \"reasoning\": \"理由\"}}"
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+            prompt = SystemPromptLibraryService().get_prompt_or_default(
+                "memory_entity_resolution_prompt"
+            ).format(
+                new_name=new_name,
+                new_summary=new_summary,
+                entity_b_name=c.get("name", ""),
+                entity_b_summary=c.get("summary", ""),
             )
             try:
                 llm = LanguageModelService.get_feature_model("memory_entity_resolution")
@@ -350,7 +353,7 @@ class EntityResolver:
         Returns:
             Driver 实例或 None（不可用时降级）。
         """
-        from flask import current_app
+        from internal.context import current_app
         driver = current_app.extensions.get("neo4j")
         if driver is None:
             from internal.extension.neo4j_extension import get_driver

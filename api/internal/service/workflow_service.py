@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from typing import Any, Generator
 from uuid import UUID
-from flask import request, current_app
+from internal.context import current_app
 from injector import inject
 from sqlalchemy import desc
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
@@ -53,12 +53,12 @@ class WorkflowService(BaseService):
     builtin_provider_manager: BuiltinProviderManager
     icon_generator_service: IconGeneratorService
 
-    def create_workflow(self, req: CreateWorkflowReq, account: Account) -> Workflow:
-        """根据传递的请求信息创建工作流"""
+    def create_workflow(self, req: CreateWorkflowReq, account: Account = None, *, created_by_admin=None) -> Workflow:
+        """根据传递的请求信息创建工作流（管理端创建时 account 为空，记录 created_by_admin）"""
         # 1.根据传递的工作流工具名称查询工作流信息
         check_workflow = self.db.session.query(Workflow).filter(
             Workflow.tool_call_name == req.tool_call_name.data.strip(),
-            Workflow.account_id == account.id,
+            Workflow.account_id == (account.id if account is not None else None),
         ).one_or_none()
         if check_workflow:
             raise ValidateErrorException(f"在当前账号下已创建[{req.tool_call_name.data}]工作流，不支持重名")
@@ -67,7 +67,8 @@ class WorkflowService(BaseService):
         return self.create(Workflow, **{
             **req.data,
             **DEFAULT_WORKFLOW_CONFIG,
-            "account_id": account.id,
+            "account_id": account.id if account is not None else None,
+            "created_by_admin": created_by_admin,
             "is_debug_passed": False,
             "status": WorkflowStatus.DRAFT.value,
             "tool_call_name": req.tool_call_name.data.strip(),
@@ -89,12 +90,22 @@ class WorkflowService(BaseService):
         return workflow
 
     def delete_workflow(self, workflow_id: UUID, account: Account) -> Workflow:
-        """根据传递的工作流id+账号信息，删除指定的工作流"""
+        """根据传递的工作流id+账号信息，删除指定的工作流（进入回收站，默认留存 30 天）"""
         # 1.获取工作流基础信息并校验权限
         workflow = self.get_workflow(workflow_id, account)
 
-        # 2.删除工作流
-        self.delete(workflow)
+        # 2.写入回收站并物理删除原记录
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="workflow",
+            resource_id=workflow.id,
+            resource_key=str(workflow.id),
+            resource_name=workflow.name,
+            deleted_by=account.id,
+            deleted_by_type="user",
+        )
+        if not deleted:
+            raise NotFoundException("该工作流不存在，请核实后重试")
 
         return workflow
 
@@ -106,16 +117,34 @@ class WorkflowService(BaseService):
         return workflow
 
     def _get_owner_account(self, account_id) -> Account:
-        """根据账号id加载资源归属账号"""
+        """根据账号id加载资源归属账号（平台级资源 account_id 为空时返回 None）"""
+        if not account_id:
+            return None
         account = self.db.session.query(Account).filter(Account.id == account_id).one_or_none()
         if not account:
             raise NotFoundException("资源所属账号不存在")
         return account
 
-    def delete_workflow_for_admin(self, workflow_id: UUID) -> Workflow:
+    def delete_workflow_for_admin(
+        self,
+        workflow_id: UUID,
+        *,
+        retention_days: int | None = None,
+        deleted_by=None,
+    ) -> Workflow:
         """管理员删除工作流，不校验账号归属"""
         workflow = self._get_workflow_for_admin(workflow_id)
-        self.delete(workflow)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="workflow",
+            resource_id=workflow.id,
+            resource_key=str(workflow.id),
+            resource_name=workflow.name,
+            deleted_by=deleted_by,
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("该工作流不存在，请核实后重试")
         return workflow
 
     def get_draft_graph_for_admin(self, workflow_id: UUID) -> dict[str, Any]:
@@ -751,15 +780,20 @@ class WorkflowService(BaseService):
     # ------------------------------------------------------------------
     # 工作流导入导出（阶段 6）
     # ------------------------------------------------------------------
-    EXPORT_FORMAT = "openagent-workflow"
+    EXPORT_FORMAT = "yuxin-ai-workflow"
+    LEGACY_EXPORT_FORMATS = frozenset({"openagent-workflow"})
     EXPORT_VERSION = "1.0"
+
+    @classmethod
+    def _is_supported_export_format(cls, fmt: str | None) -> bool:
+        return fmt == cls.EXPORT_FORMAT or fmt in cls.LEGACY_EXPORT_FORMATS
 
     def export_workflow(self, workflow_id: UUID, *, include_versions: bool = False) -> dict[str, Any]:
         """导出工作流为 JSON 字典结构（不含权限校验，调用方需先验证权限）。
 
         返回结构：
             {
-                "format": "openagent-workflow",
+                "format": "yuxin-ai-workflow",
                 "version": "1.0",
                 "exported_at": "2026-07-27T...",
                 "workflow": {
@@ -824,19 +858,20 @@ class WorkflowService(BaseService):
     def import_workflow(
             self,
             json_data: dict[str, Any],
-            account_id: UUID,
+            account_id: UUID | None = None,
             *,
             overwrite_name: bool = False,
+            created_by_admin=None,
     ) -> Workflow:
         """从 JSON 字典导入工作流，创建新的工作流记录（status=draft）。
 
         参数：
             json_data: 导出的工作流 JSON 字典
-            account_id: 新工作流归属账号 ID
+            account_id: 新工作流归属账号 ID（为空表示平台级资源，管理端导入）
             overwrite_name: True 时若 tool_call_name 冲突则覆盖现有工作流（需归属同一账号）；
                            False 时自动加 `_imported_{8位hex}` 后缀
         """
-        # 1.加载归属账号（_validate_graph 需要 Account 对象）
+        # 1.加载归属账号（_validate_graph 需要 Account 对象；平台级资源为空）
         account = self._get_owner_account(account_id)
 
         # 2.校验导出格式
@@ -844,7 +879,7 @@ class WorkflowService(BaseService):
             raise ValidateErrorException("导入数据格式错误，必须是JSON对象")
 
         fmt = json_data.get("format")
-        if fmt != self.EXPORT_FORMAT:
+        if not self._is_supported_export_format(fmt):
             raise ValidateErrorException(
                 f"不支持的工作流导出格式: {fmt}，应为 {self.EXPORT_FORMAT}"
             )
@@ -878,7 +913,7 @@ class WorkflowService(BaseService):
         # 5.处理 tool_call_name 冲突
         existing = self.db.session.query(Workflow).filter(
             Workflow.tool_call_name == tool_call_name,
-            Workflow.account_id == account.id,
+            Workflow.account_id == account_id,
         ).one_or_none()
 
         if existing:
@@ -900,7 +935,7 @@ class WorkflowService(BaseService):
                 })
                 logger.info(
                     "工作流导入覆盖: workflow_id=%s, tool_call_name=%s, account_id=%s",
-                    existing.id, tool_call_name, account.id,
+                    existing.id, tool_call_name, account_id,
                 )
                 return existing
             else:
@@ -916,7 +951,8 @@ class WorkflowService(BaseService):
 
         # 7.创建新的工作流记录（status=draft，is_debug_passed=False）
         new_workflow = self.create(Workflow, **{
-            "account_id": account.id,
+            "account_id": account_id,
+            "created_by_admin": created_by_admin,
             "name": name,
             "tool_call_name": tool_call_name,
             "icon": icon,
@@ -932,7 +968,7 @@ class WorkflowService(BaseService):
 
         logger.info(
             "工作流导入创建: workflow_id=%s, tool_call_name=%s, account_id=%s",
-            new_workflow.id, tool_call_name, account.id,
+            new_workflow.id, tool_call_name, account_id,
         )
         return new_workflow
 

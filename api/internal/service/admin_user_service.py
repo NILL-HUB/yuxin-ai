@@ -4,21 +4,20 @@ import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from flask import request
-
 from internal.exception import FailException, NotFoundException, UnauthorizedException
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
-from internal.model.account import Account, AccountSession
 from internal.model.admin import AdminSession, AdminUser, AdminUserRole, Permission, Role, RolePermission
 from internal.service.audit_log_service import AuditLogService
 from internal.service.jwt_service import JwtService
 from pkg.password import compare_password, hash_password, validate_password
 
+# 平台系统账号用户名（辅助 Agent 等内部服务使用的系统账号，不参与用户/应用分配管理）
+SYSTEM_OWNER_ACCOUNT_USERNAME = "yuxin_ai"
+
 
 class AdminUserService:
     DEFAULT_TOKEN_EXPIRE_SECONDS = 60 * 60 * 24 * 7
-    USER_TOKEN_EXPIRE_DAYS = 30
     # 管理员会话活跃时间刷新节流间隔（参考 account_service.SESSION_TOUCH_INTERVAL_SECONDS）
     ADMIN_SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60
     # 在线判定阈值：近 10 分钟内有活跃会话即视为在线
@@ -70,31 +69,6 @@ class AdminUserService:
     def _normalize_identifier(identifier: str) -> str:
         return (identifier or "").strip()
 
-    def _ensure_bound_account_for_admin_username(
-        self,
-        *,
-        username: str,
-        email: str,
-        name: str,
-        password: str,
-        status: str,
-    ) -> Account:
-        account = self.session.query(Account).filter(Account.username == username).one_or_none()
-        if account is None and email:
-            account = self.session.query(Account).filter(Account.email == email).one_or_none()
-        salt = os.urandom(16)
-        if account is None:
-            account = Account(username=username, email=email, name=name, status=status)
-            self.session.add(account)
-            self.session.flush()
-        account.username = username
-        account.email = email
-        account.name = name
-        account.status = status
-        account.password = base64.b64encode(hash_password(password, salt)).decode()
-        account.password_salt = base64.b64encode(salt).decode()
-        return account
-
     def initialize_super_admin_from_env(self) -> dict[str, object]:
         username = self._normalize_username(os.getenv("ADMIN_INITIAL_USERNAME", "admin"))
         email = os.getenv("ADMIN_INITIAL_EMAIL", "").strip().lower()
@@ -118,17 +92,10 @@ class AdminUserService:
             existing_email_user = self.session.query(AdminUser).filter(AdminUser.email == email).one_or_none()
             if existing_email_user is not None:
                 return {"created": False, "reason": "exists"}
-        account = self._ensure_bound_account_for_admin_username(
-            username=username,
-            email=email,
-            name=name,
-            password=password,
-            status="active",
-        )
         salt = os.urandom(16)
         password_hashed = hash_password(password, salt)
         admin_user = AdminUser(
-            account_id=account.id,
+            account_id=None,
             username=username,
             email=email,
             name=name,
@@ -142,7 +109,18 @@ class AdminUserService:
         self.session.commit()
         return {"created": True, "reason": "created"}
 
-    def password_login(self, identifier: str, password: str) -> dict[str, object]:
+    def password_login(
+        self,
+        identifier: str,
+        password: str,
+        client_ip: str = "",
+        user_agent: str = "",
+    ) -> dict[str, object]:
+        """管理员密码登录。
+
+        登录 IP/UA 由调用方（Quart 端点）从请求中提取后传入，
+        不直接依赖 Flask request（Quart 单栈下无 Flask request context）。
+        """
         generic_error_message = "账号不存在或者密码错误"
         identifier = self._normalize_identifier(identifier)
         normalized_email = self._normalize_email(identifier)
@@ -159,20 +137,18 @@ class AdminUserService:
             raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
         now = self._now()
         expires_at = now + timedelta(seconds=self.DEFAULT_TOKEN_EXPIRE_SECONDS)
-        # 更新最后登录信息
+        # 更新最后登录信息（IP/UA 由调用方传入，避免依赖 Flask request）
         admin_user.last_login_at = now
-        admin_user.last_login_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+        admin_user.last_login_ip = client_ip
         admin_session = AdminSession(
             admin_user_id=admin_user.id,
             last_active_at=now,
             expires_at=expires_at,
-            last_login_ip=admin_user.last_login_ip,
-            user_agent=request.headers.get("User-Agent", ""),
+            last_login_ip=client_ip,
+            user_agent=user_agent,
         )
         self.session.add(admin_session)
         self.session.flush()
-        account = self._resolve_bound_account(admin_user)
-        user_credential = self._issue_user_credential(account, now=now)
         access_token = self.jwt_service.generate_token({
             "sub": str(admin_user.id),
             "realm": "admin",
@@ -184,44 +160,7 @@ class AdminUserService:
             "access_token": access_token,
             "admin_access_token": access_token,
             "expire_at": int(expires_at.replace(tzinfo=UTC).timestamp()),
-            "user_access_token": user_credential["access_token"],
-            "user_expire_at": user_credential["expire_at"],
             "admin_user": self._serialize_current_admin_user(admin_user),
-            "user": self._serialize_account(account),
-        }
-
-    def _resolve_bound_account(self, admin_user: AdminUser) -> Account:
-        account = None
-        if getattr(admin_user, "account_id", None):
-            account = self.session.query(Account).filter(Account.id == admin_user.account_id).one_or_none()
-        if account is None:
-            account = self.session.query(Account).filter(Account.username == admin_user.username).one_or_none()
-        if account is None or getattr(account, "is_disabled", False):
-            raise FailException("管理员未绑定可用的用户端账号")
-        if getattr(admin_user, "account_id", None) != account.id:
-            admin_user.account_id = account.id
-        return account
-
-    def _issue_user_credential(self, account: Account, *, now: datetime | None = None) -> dict[str, object]:
-        now = now or self._now()
-        expires_at = now + timedelta(days=self.USER_TOKEN_EXPIRE_DAYS)
-        account_session = AccountSession(
-            account_id=account.id,
-            last_active_at=now,
-            expires_at=expires_at,
-        )
-        self.session.add(account_session)
-        self.session.flush()
-        access_token = self.jwt_service.generate_token({
-            "sub": str(account.id),
-            "iss": "llmops",
-            "jti": str(account_session.id),
-            "exp": int(expires_at.replace(tzinfo=UTC).timestamp()),
-        })
-        account.last_login_at = now
-        return {
-            "access_token": access_token,
-            "expire_at": int(expires_at.replace(tzinfo=UTC).timestamp()),
         }
 
     def parse_admin_token(self, token: str) -> dict[str, object]:
@@ -254,11 +193,6 @@ class AdminUserService:
         encoded_salt = base64.b64encode(salt).decode()
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
-        if getattr(admin_user, "account_id", None):
-            account = self.session.query(Account).filter(Account.id == admin_user.account_id).one_or_none()
-            if account is not None:
-                account.password = hashed_password
-                account.password_salt = encoded_salt
         self.session.commit()
         return self._serialize_admin_user(admin_user)
 
@@ -347,15 +281,8 @@ class AdminUserService:
             raise FailException("密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")
         self._ensure_super_admin_assignment_allowed(role_ids or [])
         salt = os.urandom(16)
-        account = self._ensure_bound_account_for_admin_username(
-            username=username,
-            email=email,
-            name=name,
-            password=password,
-            status="active",
-        )
         admin_user = AdminUser(
-            account_id=account.id,
+            account_id=None,
             username=username,
             email=email,
             name=name,
@@ -423,11 +350,6 @@ class AdminUserService:
                 if existing is not None:
                     raise FailException("管理员邮箱已存在")
             admin_user.email = normalized_email
-            # 同步更新绑定的 Account 邮箱
-            if admin_user.account_id:
-                account = self.session.query(Account).filter(Account.id == admin_user.account_id).one_or_none()
-                if account is not None:
-                    account.email = normalized_email
         if status is not None:
             admin_user.status = status
         if role_ids is not None:
@@ -531,12 +453,6 @@ class AdminUserService:
         encoded_salt = base64.b64encode(salt).decode()
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
-        # 同步更新绑定的用户端账号密码
-        if getattr(admin_user, "account_id", None):
-            account = self.session.query(Account).filter(Account.id == admin_user.account_id).one_or_none()
-            if account is not None:
-                account.password = hashed_password
-                account.password_salt = encoded_salt
         self._emit_audit(
             operator_id=operator_id,
             action="reset_password",
@@ -561,7 +477,6 @@ class AdminUserService:
         """撤销管理员所有活跃会话（踢下线）。
 
         - 超级管理员不允许被踢下线，避免系统最高权限账号被强制下线。
-        - 同时撤销绑定的 Account 会话，确保两端登录态一并失效。
         """
         admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_user_id).one_or_none()
         if admin_user is None:
@@ -577,17 +492,6 @@ class AdminUserService:
             if session.revoked_at is None and (session.expires_at is None or session.expires_at >= now):
                 session.revoked_at = now
                 revoked_count += 1
-        # 同时撤销绑定的 Account 会话，确保用户端登录态一并失效
-        if getattr(admin_user, "account_id", None):
-            account_sessions = (
-                self.session.query(AccountSession)
-                .filter(AccountSession.account_id == admin_user.account_id)
-                .all()
-            )
-            for session in account_sessions:
-                if session.revoked_at is None and (session.expires_at is None or session.expires_at >= now):
-                    session.revoked_at = now
-                    revoked_count += 1
         self.session.commit()
         # 审计日志：记录踢下线操作及撤销会话数量
         self._emit_audit(
@@ -702,17 +606,6 @@ class AdminUserService:
             .all()
         )
         return sorted({row[0] for row in rows})
-
-    @staticmethod
-    def _serialize_account(account: Account) -> dict[str, object]:
-        return {
-            "id": str(account.id),
-            "username": account.username,
-            "email": account.email or "",
-            "name": account.name,
-            "avatar": account.avatar or "",
-            "status": account.status,
-        }
 
     @staticmethod
     def _timestamp(value) -> int | None:

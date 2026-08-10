@@ -1,6 +1,6 @@
 from uuid import UUID
 from urllib.parse import urlparse
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField, IntegerField, BooleanField
 from wtforms.validators import DataRequired, Length, URL, ValidationError, Optional, NumberRange
@@ -13,7 +13,7 @@ from pkg.paginator import PaginatorReq
 from internal.schema import DictField, ListField
 
 
-class CreateAppReq(FlaskForm):
+class CreateAppReq(Form):
     """创建Agent应用请求结构体"""
     name = StringField("name", validators=[
         DataRequired("应用名称不能为空"),
@@ -28,7 +28,7 @@ class CreateAppReq(FlaskForm):
     ])
 
 
-class UpdateAppReq(FlaskForm):
+class UpdateAppReq(Form):
     """更新Agent应用请求结构体"""
     name = StringField("name", validators=[
         DataRequired("应用名称不能为空"),
@@ -196,7 +196,7 @@ class GetPublishHistoriesWithPageResp(Schema):
         }
 
 
-class FallbackHistoryToDraftReq(FlaskForm):
+class FallbackHistoryToDraftReq(Form):
     """回退历史版本到草稿请求结构体"""
     app_config_version_id = StringField("app_config_version_id", validators=[
         DataRequired("回退配置版本id不能为空")
@@ -210,12 +210,12 @@ class FallbackHistoryToDraftReq(FlaskForm):
             raise ValidationError("回退配置版本id必须为UUID")
 
 
-class UpdateDebugConversationSummaryReq(FlaskForm):
+class UpdateDebugConversationSummaryReq(Form):
     """更新应用调试会话长期记忆请求体"""
     summary = StringField("summary", default="")
 
 
-class DebugChatReq(FlaskForm):
+class DebugChatReq(Form):
     """应用调试会话请求结构体"""
     image_urls = ListField("image_urls", default=[])
     conversation_id = StringField("conversation_id", default="", validators=[Optional()])
@@ -250,7 +250,7 @@ class DebugChatReq(FlaskForm):
                 raise ValidationError("上传的图片URL地址格式错误，请核实后重试")
 
 
-class PromptCompareChatReq(FlaskForm):
+class PromptCompareChatReq(Form):
     """提示词对比调试请求结构体"""
     lane_id = StringField("lane_id", default="", validators=[Optional(), Length(max=64)])
     query = StringField("query", validators=[

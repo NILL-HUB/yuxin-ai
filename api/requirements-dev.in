@@ -10,10 +10,6 @@ dotenv
 email-validator
 eventlet
 faiss-cpu
-flask-cors
-flask-login
-flask-migrate
-flask-wtf
 gevent
 injector
 jiter

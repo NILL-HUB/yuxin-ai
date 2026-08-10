@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Callable
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 
 
 @pytest.fixture(scope="session")
-def schema_flask_app() -> Flask:
-    """提供 schema 表单校验所需的最小 Flask 应用上下文。"""
-    app = Flask("schema-tests")
+def schema_flask_app() -> TestApp:
+    """提供 schema 表单校验所需的最小运行时容器。"""
+    app = TestApp("schema-tests")
     app.config.update(
         TESTING=True,
         SECRET_KEY="schema-test-secret",
@@ -19,12 +19,12 @@ def schema_flask_app() -> Flask:
 
 
 @pytest.fixture
-def form_request(schema_flask_app: Flask) -> Callable:
+def form_request(schema_flask_app: TestApp) -> Callable:
     """
     统一创建请求上下文。
 
     说明：
-    1. FlaskForm 默认从 request 中读取数据，这里统一封装，避免每个测试重复样板代码。
+    1. 表单校验从 request scope 中读取数据，这里统一封装，避免每个测试重复样板代码。
     2. 支持 form-data/json/multipart，便于覆盖 upload 与 JSON 关键词校验等分支。
     """
 

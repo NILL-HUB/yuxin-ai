@@ -1,7 +1,8 @@
 from datetime import datetime
 from uuid import uuid4
 
-from internal.model.admin import AuditLog
+from internal.model.account import Account
+from internal.model.admin import AdminUser, AuditLog
 from internal.service.audit_log_service import AuditLogService
 
 
@@ -37,10 +38,12 @@ class _QueryStub:
 
 
 class _SessionStub:
-    def __init__(self, query=None):
+    def __init__(self, query=None, admin_user_rows=None, account_rows=None):
         self.added = []
         self.commits = 0
         self.query_stub = query
+        self.admin_user_rows = [] if admin_user_rows is None else admin_user_rows
+        self.account_rows = [] if account_rows is None else account_rows
 
     def add(self, obj):
         self.added.append(obj)
@@ -49,6 +52,10 @@ class _SessionStub:
         self.commits += 1
 
     def query(self, *_args, **_kwargs):
+        if _args and _args[0] is AdminUser.id:
+            return _QueryStub(rows=self.admin_user_rows)
+        if _args and _args[0] is Account.id:
+            return _QueryStub(rows=self.account_rows)
         return self.query_stub or _QueryStub()
 
 
@@ -115,9 +122,10 @@ class TestAuditLogService:
         assert session.commits == 0
 
     def test_list_audit_logs_should_apply_admin_and_time_filters(self):
+        admin_user_id = uuid4()
         audit_log = AuditLog(
             id=uuid4(),
-            admin_user_id=uuid4(),
+            admin_user_id=admin_user_id,
             action="create",
             resource_type="admin_user",
             resource_id="admin-1",
@@ -128,13 +136,14 @@ class TestAuditLogService:
         )
         audit_log.created_at = datetime(2030, 1, 1, 0, 0, 0)
         query = _QueryStub(rows=[audit_log])
-        session = _SessionStub(query=query)
+        admin_user_rows = [(admin_user_id, "root", "Root")]
+        session = _SessionStub(query=query, admin_user_rows=admin_user_rows)
         service = AuditLogService(session=session)
 
         result = service.list_audit_logs(
             action="create",
             resource_type="admin_user",
-            admin_user_id=str(audit_log.admin_user_id),
+            admin_user_id=str(admin_user_id),
             start_time=1893456000,
             end_time=1893542400,
             current_page=1,
@@ -144,7 +153,8 @@ class TestAuditLogService:
         assert len(query.filters) == 5
         assert query.offset_value == 0
         assert query.limit_value == 20
-        assert result["list"][0]["admin_user_id"] == str(audit_log.admin_user_id)
+        assert result["list"][0]["admin_user_id"] == str(admin_user_id)
+        assert result["list"][0]["admin_user_name"] == "root"
         assert result["list"][0]["created_at"] == int(audit_log.created_at.timestamp())
         assert result["paginator"] == {
             "total_record": 1,

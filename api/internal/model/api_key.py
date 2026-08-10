@@ -11,13 +11,16 @@ from sqlalchemy import (
 from datetime import UTC, datetime
 
 from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
+
+
 from .account import Account
 
 
 def _utcnow_naive() -> datetime:
     """返回无时区的 UTC 时间，兼容数据库 DateTime 列且避免 utcnow 退化警告。"""
     return datetime.now(UTC).replace(tzinfo=None)
-class ApiKey(db.Model):
+class ApiKey(Base):
     """API秘钥模型"""
     __tablename__ = "api_key"
     __table_args__ = (

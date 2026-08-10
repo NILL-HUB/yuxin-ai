@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from wtforms import StringField
 from wtforms.validators import DataRequired, Email, Length, Optional, regexp
 from pkg.password import password_pattern
@@ -7,7 +7,7 @@ from marshmallow import Schema, fields
 USERNAME_PATTERN = r"^[A-Za-z0-9]{3,32}$"
 PASSWORD_RULE_MESSAGE = "密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位"
 
-class PasswordLoginReq(FlaskForm):
+class PasswordLoginReq(Form):
     """账号密码登陆请求结构"""
     identifier = StringField('identifier', validators=[
         Optional(),
@@ -40,7 +40,7 @@ class PasswordLoginResp(Schema):
     masked_email = fields.String(allow_none=True)
     risk_reason = fields.String(allow_none=True)
 
-class PrepareRegisterReq(FlaskForm):
+class PrepareRegisterReq(Form):
     """准备注册请求结构"""
     username = StringField('username', validators=[
         Optional(),
@@ -57,7 +57,7 @@ class PrepareRegisterReq(FlaskForm):
     ])
 
 
-class DirectRegisterReq(FlaskForm):
+class DirectRegisterReq(Form):
     """直接注册请求结构（无需邮箱验证码）"""
     username = StringField('username', validators=[
         DataRequired("用户名不能为空"),
@@ -69,7 +69,7 @@ class DirectRegisterReq(FlaskForm):
     ])
 
 
-class VerifyRegisterReq(FlaskForm):
+class VerifyRegisterReq(Form):
     """验证码注册请求结构"""
     username = StringField('username', validators=[
         Optional(),
@@ -89,7 +89,7 @@ class VerifyRegisterReq(FlaskForm):
         Length(min=6, max=6, message="验证码必须是6位数字")
     ])
 
-class SendResetCodeReq(FlaskForm):
+class SendResetCodeReq(Form):
     """发送重置验证码请求结构"""
     email = StringField('email', validators=[
         DataRequired("邮箱不能为空"),
@@ -97,7 +97,7 @@ class SendResetCodeReq(FlaskForm):
         Length(min=3, max=254, message="邮箱长度在3~254之间")
     ])
 
-class ResetPasswordReq(FlaskForm):
+class ResetPasswordReq(Form):
     """重置密码请求结构"""
     email = StringField('email', validators=[
         DataRequired("邮箱不能为空"),
@@ -113,7 +113,7 @@ class ResetPasswordReq(FlaskForm):
     ])
 
 
-class VerifyLoginChallengeReq(FlaskForm):
+class VerifyLoginChallengeReq(Form):
     """登录二次验证请求结构"""
     challenge_id = StringField('challenge_id', validators=[
         DataRequired("challenge_id 不能为空"),
@@ -125,7 +125,7 @@ class VerifyLoginChallengeReq(FlaskForm):
     ])
 
 
-class ResendLoginChallengeReq(FlaskForm):
+class ResendLoginChallengeReq(Form):
     """重发登录二次验证验证码请求结构"""
     challenge_id = StringField('challenge_id', validators=[
         DataRequired("challenge_id 不能为空"),

@@ -142,7 +142,7 @@ class McpImportService:
     #  阶段 4.1：标准 mcp.json 批量导入                                     #
     # ------------------------------------------------------------------ #
 
-    def import_from_mcp_json(self, json_str: str, account_id: UUID, *, overwrite: bool = False) -> dict:
+    def import_from_mcp_json(self, json_str: str, account_id: UUID | None = None, *, overwrite: bool = False) -> dict:
         """解析标准 mcp.json 并批量导入。
 
         标准 mcp.json 格式（mcpServers 字典）：
@@ -198,7 +198,7 @@ class McpImportService:
         self,
         name: str,
         config: Any,
-        account: Account,
+        account: Account | None,
         *,
         overwrite: bool,
     ) -> dict[str, Any]:
@@ -323,7 +323,7 @@ class McpImportService:
         name: str,
         description: str,
         headers: list,
-        account_id: UUID,
+        account_id: UUID | None = None,
         *,
         transport: str = "http",
         category: str = "",

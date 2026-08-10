@@ -176,6 +176,7 @@ class ConsolidationPhase(str, Enum):
     RESOLVE = "resolve"    # 冲突解决
     MERGE = "merge"        # 冗余合并
     TIER = "tier"          # 层级迁移
+    SKILL = "skill"        # 技能涌现：高频行为模式→Skill 节点
     REPORT = "report"      # 报告生成
 
 

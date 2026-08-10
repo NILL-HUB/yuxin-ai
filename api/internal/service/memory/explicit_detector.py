@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import concurrent.futures
 import logging
 import re
 from dataclasses import dataclass
@@ -299,28 +298,16 @@ class ExplicitStatementDetector:
         self, event: MemoryEvent, hint_category: ExplicitCategory
     ) -> str:
         """构造 LLM 确认 prompt。"""
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         recent_context = "\n".join(event.context_messages[-3:]) or "(无上下文)"
-        return (
-            "你是显式陈述检测专家。请判断用户消息是否为显式陈述（如偏好、习惯、"
-            "身份、厌恶、目标、元指令、能力），并提取主体/谓词/客体三元组。\n\n"
-            "分类说明:\n"
-            "- preference: 偏好（我喜欢/不喜欢...）\n"
-            "- habit: 习惯（我习惯/通常...）\n"
-            "- identity: 身份（我是/我叫...）\n"
-            "- aversion: 厌恶（我讨厌/害怕/过敏...）\n"
-            "- goal: 目标（我想/我打算...）\n"
-            "- meta_instruction: 元指令（以后请/记住...）\n"
-            "- capability: 能力（我擅长/我会...）\n"
-            "- none: 非显式陈述\n\n"
-            "极性说明:\n"
-            "- positive: 正向（喜欢、想要、擅长）\n"
-            "- negative: 负向（讨厌、害怕、不擅长）\n"
-            "- neutral: 中性（是、习惯、打算）\n\n"
-            f"正则预筛候选类别: {hint_category.value}\n"
-            f"用户消息: {event.content}\n"
-            f"上下文:\n{recent_context}\n\n"
-            "请输出: is_explicit, category, polarity, confidence, "
-            "subject(主体实体), predicate(谓词), object(客体,无则空), reasoning"
+        template = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_explicit_detection_prompt"
+        )
+        return template.format(
+            hint_category=hint_category.value,
+            event_content=event.content,
+            recent_context=recent_context,
         )
 
     # ----------------------------------------------------------

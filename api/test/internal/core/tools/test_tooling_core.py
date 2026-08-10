@@ -32,6 +32,7 @@ from internal.core.tools.mcp_tools.providers.mcp_provider_manager import (
     McpProviderManager,
 )
 from internal.exception import FailException, NotFoundException, ValidateErrorException
+from internal.service.tool_credential_encryptor import encrypt_headers
 
 
 def test_api_provider_manager_should_create_dynamic_model_from_parameters():
@@ -94,7 +95,7 @@ def test_api_provider_manager_should_create_tool_function_and_dispatch_parameter
         url="https://api.example.com/items/{item_id}",
         method="post",
         description="desc",
-        headers=[{"key": "x-api-key", "value": "fixed"}],
+        headers=encrypt_headers([{"key": "x-api-key", "value": "fixed"}]),
         parameters=[
             {"name": "item_id", "in": ParameterIn.PATH, "type": ParameterType.STR},
             {"name": "keyword", "in": ParameterIn.QUERY, "type": ParameterType.STR},

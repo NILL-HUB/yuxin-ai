@@ -1,5 +1,5 @@
 import uuid
-from flask_wtf import FlaskForm
+from wtforms import Form
 from urllib.parse import urlparse
 from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField, IntegerField, BooleanField
@@ -10,7 +10,7 @@ from pkg.paginator import PaginatorReq
 from .schema import ListField
 
 
-class AssistantAgentChat(FlaskForm):
+class AssistantAgentChat(Form):
     """辅助Agent会话请求结构体"""
     confirm_deep_thinking = BooleanField("confirm_deep_thinking", default=False)
     image_urls = ListField("image_urls", default=[])
@@ -66,7 +66,7 @@ class GetAssistantAgentMessagesWithPageReq(PaginatorReq):
             raise ValidationError("会话id格式必须为UUID")
 
 
-class GetAssistantAgentConversationsReq(FlaskForm):
+class GetAssistantAgentConversationsReq(Form):
     """获取辅助Agent最近会话列表请求结构"""
     limit = IntegerField("limit", default=20, validators=[
         Optional(),
@@ -134,7 +134,7 @@ class GetAssistantAgentMessagesWithPageResp(Schema):
             raise
 
 
-class AssistantAgentGenerateIntroduction(FlaskForm):
+class AssistantAgentGenerateIntroduction(Form):
     """生成辅助Agent个性化介绍请求结构体"""
     pass
 

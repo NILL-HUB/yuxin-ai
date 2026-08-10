@@ -5,6 +5,22 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
+from internal.context import request
+from werkzeug.datastructures import CombinedMultiDict, ImmutableMultiDict
+
+
+def build_formdata():
+    """从当前 request scope 提取表单数据，供 wtforms Form(formdata=...) 使用。"""
+    if request.files:
+        return CombinedMultiDict(
+            (request.files, ImmutableMultiDict(request.form or {}))
+        )
+    if request.form:
+        return ImmutableMultiDict(request.form)
+    if request.json is not None:
+        return ImmutableMultiDict(request.json)
+    return None
+
 
 def ns(**kwargs: Any) -> SimpleNamespace:
     """快速构造带属性访问能力的测试对象。"""
@@ -26,4 +42,3 @@ def utc_dt(
 def upload(filename: str, content: bytes | None = None):
     """构造 Flask/Werkzeug 可识别的上传文件元组。"""
     return (io.BytesIO(content or b"test-bytes"), filename)
-

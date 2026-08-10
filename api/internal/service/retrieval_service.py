@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID
 
-from flask import Flask
 from injector import inject
 from langchain_core.documents import Document as LCDocument
 from sqlalchemy import func
@@ -281,7 +281,7 @@ class RetrievalService(BaseService):
 
     def create_knowledge_retrieval_tool(
             self,
-            flask_app: Flask,
+            flask_app: Any,
             knowledge_base_ids: list[UUID],
             account_id: UUID,
             retrieval_strategy: str = RetrievalStrategy.HYBRID.value,

@@ -18,7 +18,6 @@ from sqlalchemy import (
     Column,
     DateTime,
     Index,
-    Integer,
     PrimaryKeyConstraint,
     String,
     Text,
@@ -29,7 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
@@ -48,7 +47,7 @@ RESOURCE_TYPE_BUILTIN_TOOL = "builtin_tool"
 RESOURCE_TYPE_API_TOOL = "api_tool"
 
 
-class ResourceVectorIndex(db.Model):
+class ResourceVectorIndex(Base):
     """资源向量索引：统一存储各类资源的语义向量，供指挥官和 Agent 检索。"""
     __tablename__ = "resource_vector_index"
     __table_args__ = (

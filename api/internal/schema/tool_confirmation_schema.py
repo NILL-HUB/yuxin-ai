@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField
 from wtforms.validators import AnyOf, DataRequired, Length, NumberRange, Optional
@@ -6,7 +6,7 @@ from wtforms.validators import AnyOf, DataRequired, Length, NumberRange, Optiona
 from internal.schema import DictField
 
 
-class CreateToolConfirmationReq(FlaskForm):
+class CreateToolConfirmationReq(Form):
     tool_name = StringField(
         "tool_name",
         validators=[DataRequired(), Length(min=1, max=255)],
@@ -44,7 +44,7 @@ class CreateToolConfirmationReq(FlaskForm):
     )
 
 
-class ListToolConfirmationReq(FlaskForm):
+class ListToolConfirmationReq(Form):
     status = StringField(
         "status",
         default="",

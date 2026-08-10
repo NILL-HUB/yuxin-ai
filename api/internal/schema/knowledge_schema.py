@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField
 from wtforms.validators import AnyOf, DataRequired, Length, Optional
@@ -16,7 +16,7 @@ from internal.lib.helper import datetime_to_timestamp
 from internal.model import KnowledgeBase
 
 
-class CreateKnowledgeBaseReq(FlaskForm):
+class CreateKnowledgeBaseReq(Form):
     name = StringField("name", validators=[DataRequired("知识库名称不能为空"), Length(max=100)])
     description = StringField("description", default="", validators=[Optional(), Length(max=2000)])
     knowledge_scope = StringField("knowledge_scope", validators=[
@@ -34,7 +34,7 @@ class CreateKnowledgeBaseReq(FlaskForm):
     ])
 
 
-class CreateExternalDataSourceReq(FlaskForm):
+class CreateExternalDataSourceReq(Form):
     source_type = StringField("source_type", validators=[
         DataRequired("外部数据源类型不能为空"),
         AnyOf([item.value for item in ExternalSourceType], message="外部数据源类型格式错误"),

@@ -14,7 +14,6 @@ from langchain_core.tools import BaseTool, StructuredTool
 
 from .mcp_schema_compiler import McpSchemaCompiler
 from .mcp_stdio_client import McpStdioClient
-from internal.service.tool_credential_encryptor import decrypt_headers
 
 DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 30
 SUPPORTED_HTTP_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http"}
@@ -698,6 +697,8 @@ class McpToolFactory:
             "Accept": "application/json, text/event-stream",
         }
         # 运行时解密 headers：binding 来自 app_config，headers 中存储的是加密 token
+        from internal.service.tool_credential_encryptor import decrypt_headers
+
         decrypted_headers = decrypt_headers(binding.get("headers"))
         headers.update(_normalize_headers(decrypted_headers))
 

@@ -1,5 +1,4 @@
 import os.path
-from typing import Any
 
 import yaml
 from injector import inject, singleton

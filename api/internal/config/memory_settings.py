@@ -91,7 +91,7 @@ class Neo4jConfig(BaseModel):
 
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
-    password: str = "openagent"
+    password: str = "yuxin_ai"
 
 
 class LLMConfig(BaseModel):
@@ -117,6 +117,14 @@ class WriteConfig(BaseModel):
     """记忆写入路径配置，内嵌实体消歧子模型。"""
 
     entity_resolution: EntityResolution = Field(default_factory=EntityResolution)
+    # ── 基因4: Agent-Curated Memory（§2.5）──
+    memory_add_max_per_session: int = 5
+    # ── 基因5: 周期性 Nudge（§2.6）──
+    nudge_enabled: bool = True
+    nudge_min_tool_calls: int = 5
+    nudge_min_conversation_turns: int = 10
+    nudge_max_per_session: int = 3
+    nudge_model: str = "gpt-4o-mini"
 
 
 class DecayConfig(BaseModel):
@@ -167,6 +175,11 @@ class DigestConfig(BaseModel):
     # 摘要渲染所用 LLM
     render_model: str = "gpt-4o-mini"
     render_temperature: float = 0.0
+    # ── 基因2: Progressive Disclosure 分层加载（§8.6）──
+    skill_tier0_max_tokens: int = 3000
+    skill_tier0_max_items: int = 50
+    skill_tier1_max_concurrent: int = 3
+    skill_tier2_enabled: bool = True
 
 
 class ConsolidationConfig(BaseModel):
@@ -200,6 +213,17 @@ class SkillConfig(BaseModel):
     # 技能抽取所用 LLM
     extraction_model: str = "gpt-4o-mini"
     extraction_temperature: float = 0.2
+    # ── 基因1: Skill 即时触发（§8.5）──
+    instant_emergence_enabled: bool = True
+    instant_emergence_min_tool_calls: int = 5
+    instant_emergence_async: bool = True
+    # ── 基因3: Curator + bump_use（§8.7）──
+    curator_enabled: bool = True
+    curator_interval_days: int = 7
+    curator_merge_similarity_threshold: float = 0.85
+    curator_stale_to_deprecated_days: int = 30
+    bump_use_redis_enabled: bool = True
+    bump_use_neo4j_flush_interval: int = 3600
 
 
 class SpreadConfig(BaseModel):
@@ -228,7 +252,7 @@ class FunnelConfig(BaseModel):
 class ColdStorageConfig(BaseModel):
     """冷存储（Cold Storage）配置。"""
 
-    s3_bucket: str = "openagent-cold-memory"
+    s3_bucket: str = "yuxin-ai-cold-memory"
     s3_prefix: str = "cold-memories/"
     aws_region: str = "us-east-1"
     # 转入冷存储的权重阈值

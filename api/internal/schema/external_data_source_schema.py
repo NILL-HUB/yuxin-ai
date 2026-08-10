@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import StringField
 from wtforms.validators import DataRequired, Length, Optional
@@ -6,7 +6,7 @@ from wtforms.validators import DataRequired, Length, Optional
 from internal.schema import DictField
 
 
-class CreateExternalDataSourceReq(FlaskForm):
+class CreateExternalDataSourceReq(Form):
     knowledge_base_id = StringField(
         "knowledge_base_id",
         validators=[Optional(), Length(min=1, max=64)],
@@ -22,11 +22,11 @@ class CreateExternalDataSourceReq(FlaskForm):
     config = DictField("config", default={}, validators=[Optional()])
 
 
-class AuthorizeExternalDataSourceReq(FlaskForm):
+class AuthorizeExternalDataSourceReq(Form):
     auth_config = DictField("auth_config", default={}, validators=[Optional()])
 
 
-class ListExternalDataSourceReq(FlaskForm):
+class ListExternalDataSourceReq(Form):
     status = StringField(
         "status",
         default="",

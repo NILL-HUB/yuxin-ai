@@ -196,7 +196,7 @@ class TestIntentClassifierNodeInvoke:
         assert "confidence" in node_result.outputs
         assert isinstance(node_result.outputs["confidence"], float)
 
-    def test_intent_classifier_node_invoke_degradation_returns_first_class(self):
+    def test_intent_classifier_node_invoke_degradation_returns_first_class(self, monkeypatch):
         """LLM 不可用时降级返回第一个分类，confidence 为 0.0"""
         node_data = _make_node_data(
             input_variable=_literal_input("query", "你好"),
@@ -206,6 +206,14 @@ class TestIntentClassifierNodeInvoke:
             ],
         )
         node = IntentClassifierNode(node_data=node_data)
+
+        def _raise_load_language_model(self, *_args, **_kwargs):
+            raise RuntimeError("llm unavailable")
+
+        monkeypatch.setattr(
+            "internal.service.language_model_service.LanguageModelService.load_language_model",
+            _raise_load_language_model,
+        )
 
         result = node.invoke({"inputs": {}, "outputs": {}, "node_results": []})
 

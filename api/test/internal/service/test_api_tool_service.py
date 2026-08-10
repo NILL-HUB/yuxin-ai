@@ -1,10 +1,10 @@
-from contextlib import contextmanager
+﻿from contextlib import contextmanager
 import json
 from types import SimpleNamespace
 from uuid import uuid4
 import base64
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 from pydantic import BaseModel, Field
@@ -16,7 +16,6 @@ from internal.exception import (
     NotFoundException,
     ValidateErrorException,
 )
-from internal.entity.ai_entity import OPENAPI_SCHEMA_ASSISTANT_PROMPT, PYTHON_CODE_ASSISTANT_PROMPT
 from internal.model import Account, AccountOAuth, ApiKey, ApiTool, ApiToolProvider
 from internal.service.account_service import AccountService as _AccountService
 from internal.service.ai_service import AIService, PythonMarkdownOutputParser
@@ -145,6 +144,7 @@ class TestApiToolService:
             icon=SimpleNamespace(data="https://a.com/icon.png"),
             openapi_schema=SimpleNamespace(data='{"openapi":"3.0.0"}'),
             headers=SimpleNamespace(data=[{"key": "Authorization", "value": "Bearer x"}]),
+            task_keywords=SimpleNamespace(data=[]),
         )
 
     def test_parse_openapi_schema_should_raise_for_invalid_json(self):
@@ -339,18 +339,24 @@ class TestApiToolService:
         with pytest.raises(NotFoundException):
             service.get_api_tool_provider(uuid4(), SimpleNamespace(id=str(uuid4())))
 
-    def test_delete_api_tool_provider_should_delete_tools_and_provider(self, monkeypatch):
+    def test_delete_api_tool_provider_should_enter_recycle_bin(self, monkeypatch):
         account = SimpleNamespace(id=str(uuid4()))
-        provider = SimpleNamespace(id=uuid4(), account_id=account.id)
-        tool_query = _QueryStub()
-        db = _DBStub(_SessionStub({ApiTool: tool_query}))
+        provider = SimpleNamespace(id=uuid4(), account_id=account.id, name="测试工具")
+        db = _DBStub(_SessionStub({}))
         service = _new_api_tool_service(db=db, api_provider_manager=SimpleNamespace())
         monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: provider)
+        calls = []
+        monkeypatch.setattr(
+            "internal.service.recycle_bin_service.RecycleBinService.delete_resource",
+            lambda self, **kwargs: calls.append(kwargs) or True,
+        )
 
         service.delete_api_tool_provider(provider.id, account)
 
-        assert tool_query.deleted is True
-        assert provider in db.session.deleted_entities
+        assert calls[0]["resource_type"] == "api_tool"
+        assert calls[0]["resource_id"] == provider.id
+        assert calls[0]["resource_name"] == provider.name
+        assert calls[0]["deleted_by"] == account.id
 
     def test_update_api_tool_provider_should_replace_tools_and_update_provider(self, monkeypatch):
         account = SimpleNamespace(id=uuid4())
@@ -532,7 +538,7 @@ class TestApiToolService:
     def test_get_api_tool_provider_should_return_record_when_owned(self, monkeypatch):
         service = _new_api_tool_service(db=SimpleNamespace(session=SimpleNamespace()), api_provider_manager=SimpleNamespace())
         account_uuid = uuid4()
-        provider = SimpleNamespace(id=uuid4(), account_id=account_uuid)
+        provider = SimpleNamespace(id=uuid4(), account_id=account_uuid, headers=None)
         monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: provider)
 
         result = service.get_api_tool_provider(provider.id, SimpleNamespace(id=str(account_uuid)))
@@ -633,3 +639,166 @@ class TestApiToolService:
 
         with pytest.raises(FailException):
             service.generate_icon_preview("weather-api", "desc")
+
+    # ---------------- API 工具导入：URL / 文件（OpenAPI JSON / YAML） ----------------
+
+    def _valid_openapi(self) -> str:
+        """构造通过 OpenAPISchema 全量校验的 OpenAPI JSON 文本。"""
+        return json.dumps(
+            {
+                "server": "https://api.example.com",
+                "description": "demo",
+                "paths": {
+                    "/weather": {
+                        "get": {
+                            "description": "查询天气",
+                            "operationId": "get_weather",
+                            "parameters": [
+                                {
+                                    "name": "city",
+                                    "in": "query",
+                                    "description": "城市名",
+                                    "required": True,
+                                    "type": "str",
+                                }
+                            ],
+                        }
+                    }
+                },
+            }
+        )
+
+    def test_parse_openapi_text_should_accept_json_and_yaml(self):
+        service = _new_api_tool_service(db=_DBStub(_SessionStub({})), api_provider_manager=SimpleNamespace())
+
+        json_schema = service._parse_openapi_text(self._valid_openapi(), source_label="测试")
+        assert json_schema.server == "https://api.example.com"
+
+        yaml_schema = service._parse_openapi_text(
+            "server: https://api.example.com\n"
+            "description: demo\n"
+            "paths:\n"
+            "  /weather:\n"
+            "    get:\n"
+            "      description: 查询天气\n"
+            "      operationId: get_weather\n"
+            "      parameters:\n"
+            "        - name: city\n"
+            "          in: query\n"
+            "          description: 城市名\n"
+            "          required: true\n"
+            "          type: str\n",
+            source_label="测试",
+        )
+        assert yaml_schema.server == "https://api.example.com"
+        assert "get_weather" in {
+            op.get("operationId")
+            for path_item in yaml_schema.paths.values()
+            for op in path_item.values()
+        }
+
+    def test_parse_openapi_text_should_raise_for_invalid_content(self):
+        service = _new_api_tool_service(db=_DBStub(_SessionStub({})), api_provider_manager=SimpleNamespace())
+
+        with pytest.raises(ValidateErrorException):
+            service._parse_openapi_text("", source_label="测试")
+        with pytest.raises(ValidateErrorException):
+            service._parse_openapi_text("[not-a-dict]", source_label="测试")
+
+    def test_import_from_file_should_create_provider_and_tools(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+        db = _DBStub(_SessionStub({ApiToolProvider: _QueryStub(one_or_none_result=None)}))
+        service = _new_api_tool_service(db=db, api_provider_manager=SimpleNamespace())
+        create_calls = []
+
+        def _fake_create(model, **kwargs):
+            create_calls.append((model, kwargs))
+            if model is ApiToolProvider:
+                return SimpleNamespace(id=uuid4())
+            return SimpleNamespace(id=uuid4(), **kwargs)
+
+        monkeypatch.setattr(service, "create", _fake_create)
+        monkeypatch.setattr(
+            service,
+            "icon_generator_service",
+            SimpleNamespace(generate_icon=lambda name, description: "https://icon"),
+        )
+
+        result = service.import_from_file(
+            self._valid_openapi(), "天气API", "desc", [], account, overwrite=False, task_keywords=["天气"]
+        )
+
+        assert result["action"] == "imported"
+        assert result["is_new"] is True
+        assert result["tool_count"] == 1
+        assert create_calls[0][0] is ApiToolProvider
+        tool_call = [call for call in create_calls if call[0] is ApiTool][0]
+        assert tool_call[1]["url"] == "https://api.example.com/weather"
+        assert tool_call[1]["task_keywords"] == ["天气"]
+
+    def test_import_from_file_should_skip_when_exists_and_no_overwrite(self):
+        account = SimpleNamespace(id=uuid4())
+        existing_id = uuid4()
+        db = _DBStub(_SessionStub({ApiToolProvider: _QueryStub(one_or_none_result=SimpleNamespace(id=existing_id))}))
+        service = _new_api_tool_service(db=db, api_provider_manager=SimpleNamespace())
+
+        result = service.import_from_file(
+            self._valid_openapi(),
+            "天气API",
+            "",
+            [],
+            account,
+            overwrite=False,
+        )
+
+        assert result["action"] == "skipped"
+        assert result["reason"] == "已存在且 overwrite=False"
+        assert result["id"] == str(existing_id)
+
+    def test_import_from_url_should_fetch_and_create(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+        db = _DBStub(_SessionStub({ApiToolProvider: _QueryStub(one_or_none_result=None)}))
+        service = _new_api_tool_service(db=db, api_provider_manager=SimpleNamespace())
+        monkeypatch.setattr(
+            "internal.service.api_tool_service.requests.get",
+            lambda *_args, **_kwargs: SimpleNamespace(
+                status_code=200,
+                text=self._valid_openapi(),
+            ),
+        )
+        monkeypatch.setattr(
+            service,
+            "icon_generator_service",
+            SimpleNamespace(generate_icon=lambda name, description: "https://icon"),
+        )
+        monkeypatch.setattr(
+            service,
+            "create",
+            lambda model, **kwargs: SimpleNamespace(id=uuid4(), **kwargs),
+        )
+
+        result = service.import_from_url(
+            "https://example.com/openapi.json", "天气API", "", [], account, overwrite=False
+        )
+
+        assert result["action"] == "imported"
+
+    def test_import_from_url_should_raise_when_fetch_failed(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+        db = _DBStub(_SessionStub({}))
+        service = _new_api_tool_service(db=db, api_provider_manager=SimpleNamespace())
+        monkeypatch.setattr(
+            "internal.service.api_tool_service.requests.get",
+            lambda *_args, **_kwargs: SimpleNamespace(status_code=500, text=""),
+        )
+
+        with pytest.raises(FailException):
+            service.import_from_url(
+                "https://example.com/openapi.json", "天气API", "", [], account, overwrite=False
+            )
+
+    def test_import_from_url_should_raise_when_url_empty(self):
+        service = _new_api_tool_service(db=_DBStub(_SessionStub({})), api_provider_manager=SimpleNamespace())
+
+        with pytest.raises(ValidateErrorException):
+            service.import_from_url("", "天气API", "", [], SimpleNamespace(id=uuid4()), overwrite=False)

@@ -94,6 +94,7 @@ class AdminModelProviderService:
                     "label": p.label,
                     "description": p.description or "",
                     "default_base_url": p.default_base_url,
+                    "is_full_url": bool(getattr(p, "is_full_url", False)),
                     "supported_model_types": p.supported_model_types or [],
                 }
                 for p in providers
@@ -121,6 +122,7 @@ class AdminModelProviderService:
             icon=payload.get("icon") or "",
             background=payload.get("background") or "#FFFFFF",
             default_base_url=payload.get("default_base_url") or "",
+            is_full_url=bool(payload.get("is_full_url", False)),
             supported_model_types=payload.get("supported_model_types") or ["chat"],
             status=payload.get("status") or "active",
         )
@@ -143,6 +145,8 @@ class AdminModelProviderService:
             provider.background = payload["background"] or "#FFFFFF"
         if "default_base_url" in payload:
             provider.default_base_url = payload["default_base_url"] or ""
+        if "is_full_url" in payload:
+            provider.is_full_url = bool(payload["is_full_url"])
         if "supported_model_types" in payload:
             provider.supported_model_types = payload["supported_model_types"] or ["chat"]
         if "status" in payload:
@@ -222,6 +226,7 @@ class AdminModelProviderService:
             "icon": provider.icon or "",
             "background": provider.background or "#FFFFFF",
             "default_base_url": provider.default_base_url,
+            "is_full_url": bool(getattr(provider, "is_full_url", False)),
             "supported_model_types": provider.supported_model_types or [],
             "status": provider.status,
             "model_count": model_count,

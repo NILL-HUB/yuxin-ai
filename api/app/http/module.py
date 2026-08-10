@@ -1,15 +1,10 @@
-from flask_migrate import Migrate
 from injector import Module, Binder, singleton
 from internal.extension.database_extension import db
-from internal.extension.migrate_extension import migrate
 from internal.extension.redis_extension import redis_client
 from pkg.sqlalchemy import SQLAlchemy
 from redis import Redis
 from injector import Injector
-from flask_login import LoginManager
-from internal.extension.login_extension import login_manager
-from internal.extension.mail_extension import mail
-from flask_mail import Mail
+from internal.extension.mail_extension import mail, Mail
 from internal.core.language_model import LanguageModelManager
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from internal.core.tools.api_tools.providers import ApiProviderManager
@@ -22,6 +17,7 @@ from internal.core.ports.storage_port import ObjectStoragePort
 from internal.service.orchestrator_service import OrchestratorService
 from internal.service.conductor_service import ConductorService
 from internal.service.prompt_sync_service import PromptSyncService
+from internal.service.recycle_bin_service import RecycleBinService
 from internal.service.orchestration_feature_flag_service import OrchestrationFeatureFlagService
 from internal.service.task_classifier_service import TaskClassifierService
 from internal.service.execution_mode_selector_service import ExecutionModeSelectorService
@@ -56,7 +52,6 @@ from internal.service.tool_inventory_service import (
     ToolPolicyFilter,
     ToolRanker,
 )
-from internal.service.builtin_tool_service import BuiltinToolService
 from internal.service.builtin_tool_sync_service import BuiltinToolSyncService
 from internal.service.tool_selector_service import ToolSelectorService
 from internal.entity.tool_pool_entity import ToolSubPoolRegistry
@@ -88,9 +83,7 @@ class ExtensionModule(Module):
 
     def configure(self, binder: Binder) -> None:
         binder.bind(SQLAlchemy, to=db, scope=singleton)
-        binder.bind(Migrate, to=migrate, scope=singleton)
         binder.bind(Redis, to=redis_client, scope=singleton)
-        binder.bind(LoginManager, to=login_manager, scope=singleton)
         binder.bind(Mail, to=mail, scope=singleton)
 
         # 注册核心管理器类为单例
@@ -108,12 +101,19 @@ class ExtensionModule(Module):
         binder.bind(RerankService, to=RerankService, scope=singleton)
 
         # 注册端口绑定（反转 core→service 反向依赖）
-        # 根据 STORAGE_BACKEND 环境变量动态选择存储后端实现
-        from internal.service.storage.factory import get_storage_service_class
-        storage_service_class = get_storage_service_class()
-        binder.bind(ObjectStoragePort, to=storage_service_class)
-        # 同时绑定 CosService 到当前后端，兼容现有注入 CosService 的代码
-        binder.bind(CosService, to=storage_service_class)
+        # 绑定运行时存储分发代理：根据 storage_config 激活的后端动态路由
+        # 新上传文件立即进入 Admin 端切换后的激活后端
+        from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+        binder.bind(ObjectStoragePort, to=RuntimeStorageProxy)
+        # 同时绑定 CosService 到运行时代理，兼容现有注入 CosService 的代码
+        binder.bind(CosService, to=RuntimeStorageProxy)
+
+        # 注册内容存储配置/迁移服务
+        from internal.service.storage.storage_config_service import StorageConfigService
+        from internal.service.storage.storage_migration_service import StorageMigrationService
+        binder.bind(StorageConfigService, to=StorageConfigService, scope=singleton)
+        binder.bind(StorageMigrationService, to=StorageMigrationService, scope=singleton)
+        binder.bind(RuntimeStorageProxy, to=RuntimeStorageProxy, scope=singleton)
 
         # 注册编排子系统依赖（激活主调度链）
         binder.bind(OrchestrationFeatureFlagService, to=OrchestrationFeatureFlagService)
@@ -129,6 +129,7 @@ class ExtensionModule(Module):
         binder.bind(OrchestratorService, to=OrchestratorService)
         binder.bind(ConductorService, to=ConductorService)
         binder.bind(PromptSyncService, to=PromptSyncService)
+        binder.bind(RecycleBinService, to=RecycleBinService)
 
         # 注册结果汇总层依赖（激活 L7 结果合成与质量检查）
         binder.bind(ResultQualityCheckerService, to=ResultQualityCheckerService)

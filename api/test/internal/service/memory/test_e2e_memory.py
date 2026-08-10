@@ -1,13 +1,15 @@
-"""H5 E2E 集成测试 -- 记忆系统全链路 7 场景。
+"""H5 E2E 集成测试 -- 记忆系统全链路。
 
 覆盖以下场景（mock 依赖，不依赖 Docker compose）：
     1. 写入（FULL 路径）：MemoryEvent → MemoryWriteService → LedgerWriter
     2. 检索：MemoryRetriever.retrieve → 返回 RetrievalResult 列表
     3. Digest：DigestManager.get_digest → 缓存命中/未命中
     4. 巩固：ConsolidationEngine.run_consolidation → ConsolidationReport
-    5. 图可视化：MemoryHandler.get_memory_graph → GraphResp 结构
-    6. CRUD：编辑/软删除/彻底删除流程
-    7. 降级：DegradationManager 状态切换 → /memory/health 反映
+    5. 降级：DegradationManager 状态切换 → HealthService 健康检查反映
+
+说明：
+    图可视化（GET /memory/graph）与 CRUD（编辑/软删除/彻底删除）端点
+    已由 A1 轨 test_user_routes_9 覆盖，handler 层不再单独测试。
 
 设计说明:
     由于 Docker compose 未启动，本测试使用 mock 替代真实 Neo4j/pgvector/Redis。
@@ -20,23 +22,20 @@
 
 from __future__ import annotations
 
-import json
-import time
 from datetime import datetime
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 
-from internal.handler.memory_handler import MemoryHandler
 from internal.model.memory_models import (
     EventSource,
     MemoryEvent,
     RetrievalOptions,
     WritePath,
 )
+from internal.service.health_service import HealthService
 from internal.service.memory.consolidation_engine import ConsolidationEngine
 from internal.service.memory.degradation_manager import (
     DegradationManager,
@@ -59,35 +58,9 @@ from internal.service.memory.metrics import MetricsCollector
 @pytest.fixture
 def flask_app():
     """提供 Flask 应用上下文。"""
-    app = Flask(__name__)
+    app = TestApp(__name__)
     app.config["TESTING"] = True
     with app.app_context():
-        yield app
-
-
-@pytest.fixture
-def flask_request_app(monkeypatch):
-    """提供 Flask 请求上下文（handler 方法使用 request.args）。
-
-    设置 LOGIN_DISABLED=True 绕过 @login_required，
-    并 mock current_user 供 handler 方法使用。
-    """
-    from types import SimpleNamespace
-    from uuid import UUID
-
-    app = Flask(__name__)
-    app.config["TESTING"] = True
-    app.config["LOGIN_DISABLED"] = True
-    app.config["WTF_CSRF_ENABLED"] = False
-    app.config["SECRET_KEY"] = "test-secret-key"
-    # mock current_user（@login_required 在 LOGIN_DISABLED 下仍可能访问 current_user）
-    fake_user = SimpleNamespace(
-        id=UUID("00000000-0000-0000-0000-000000000001"),
-        is_authenticated=True,
-    )
-    monkeypatch.setattr("internal.handler.memory_handler.current_user", fake_user)
-
-    with app.test_request_context():
         yield app
 
 
@@ -366,117 +339,12 @@ class TestE2EConsolidate:
 
 
 # =========================================================
-# 场景 5：图可视化
-# =========================================================
-
-
-class TestE2EGraph:
-    """场景 5：GET /memory/graph/{user_id}。"""
-
-    def _build_handler(self) -> MemoryHandler:
-        return MemoryHandler(
-            memory_write_service=MagicMock(),
-            digest_manager=MagicMock(),
-        )
-
-    def test_e2e_graph_returns_response(self, flask_request_app, user_id):
-        """图可视化 API 应返回响应（无 Neo4j 时降级）。"""
-        handler = self._build_handler()
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.get_memory_graph(user_id)
-
-        # 应返回 200
-        assert response[1] == 200
-        data = response[0].get_json()["data"]
-        # GraphResp 结构：user_id, clusters, total_nodes
-        assert "clusters" in data
-        assert "total_nodes" in data
-        assert data["user_id"] == user_id
-
-    def test_e2e_graph_respects_lod_limit(self, flask_request_app, user_id):
-        """图可视化应尊重 LOD 限制（total_nodes ≤ 200）。"""
-        handler = self._build_handler()
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.get_memory_graph(user_id)
-
-        data = response[0].get_json()["data"]
-        assert data["total_nodes"] <= 200
-
-
-# =========================================================
-# 场景 6：CRUD
-# =========================================================
-
-
-class TestE2ECRUD:
-    """场景 6：编辑/软删除/彻底删除。"""
-
-    def _build_handler(self) -> MemoryHandler:
-        return MemoryHandler(
-            memory_write_service=MagicMock(),
-            digest_manager=MagicMock(),
-        )
-
-    def test_e2e_edit_memory_returns_response(self, flask_request_app):
-        """编辑记忆 API 应返回响应。"""
-        handler = self._build_handler()
-        memory_id = str(uuid4())
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.edit_memory(memory_id)
-
-        assert response[1] == 200
-
-    def test_e2e_soft_delete_returns_response(self, flask_request_app):
-        """软删除 API 应返回响应。"""
-        handler = self._build_handler()
-        memory_id = str(uuid4())
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.soft_delete_memory(memory_id)
-
-        assert response[1] == 200
-
-    def test_e2e_hard_delete_returns_response(self, flask_request_app):
-        """彻底删除 API 应返回响应。"""
-        handler = self._build_handler()
-        memory_id = str(uuid4())
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.hard_delete_memory(memory_id)
-
-        assert response[1] == 200
-
-    def test_e2e_get_memory_detail_returns_response(self, flask_request_app):
-        """获取记忆详情 API 应返回响应。"""
-        handler = self._build_handler()
-        memory_id = str(uuid4())
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.get_memory_detail(memory_id)
-
-        assert response[1] == 200
-
-    def test_e2e_decay_memory_returns_response(self, flask_request_app):
-        """衰减记忆 API 应返回响应。"""
-        handler = self._build_handler()
-        memory_id = str(uuid4())
-
-        with patch.object(handler, "_get_neo4j_driver", return_value=None):
-            response = handler.decay_memory(memory_id)
-
-        assert response[1] == 200
-
-
-# =========================================================
-# 场景 7：降级
+# 场景 5：降级
 # =========================================================
 
 
 class TestE2EDegradation:
-    """场景 7：DegradationManager 状态切换与 /memory/health 反映。"""
+    """场景 5：DegradationManager 状态切换与 HealthService 健康检查反映。"""
 
     def test_e2e_degradation_disabled_when_all_unavailable(self):
         """全部依赖不可用时 retrieval_strategy=disabled。"""
@@ -492,32 +360,23 @@ class TestE2EDegradation:
         assert not dm.is_write_available()
         assert not dm.is_consolidation_available()
 
-    def test_e2e_degradation_status_reflected_in_health(self, flask_app):
-        """/memory/health 应反映 DegradationManager 的降级状态。"""
-        dm = DegradationManager(
-            neo4j_driver=None,
-            db=None,
-            redis_client=None,
-            celery_app=None,
-        )
-        dm.check_all()
-
-        handler = MemoryHandler(
-            memory_write_service=MagicMock(),
-            digest_manager=MagicMock(),
+    def test_e2e_degradation_status_reflected_in_health(self, monkeypatch):
+        """健康检查应反映全部依赖不可用时的 unhealthy 状态。"""
+        app_service = MagicMock()
+        app_service.db.session.execute.side_effect = RuntimeError("db down")
+        app_service.redis_client.ping.side_effect = RuntimeError("redis down")
+        monkeypatch.setattr(
+            HealthService,
+            "_probe_celery",
+            classmethod(lambda cls: {"status": "skipped", "detail": ""}),
         )
 
-        with patch(
-            "internal.handler.memory_handler.get_degradation_manager",
-            return_value=dm,
-        ):
-            response = handler.health()
+        data = HealthService(app_service=app_service).check()
 
-        data = response[0].get_json()["data"]
         assert data["status"] == "unhealthy"
-        assert data["neo4j"] == "unreachable"
-        assert data["pgvector"] == "unreachable"
-        assert data["redis"] == "unreachable"
+        assert data["components"]["database"]["status"] == "unhealthy"
+        assert data["components"]["pgvector"]["status"] == "unhealthy"
+        assert data["components"]["redis"]["status"] == "unhealthy"
 
     def test_e2e_degradation_vector_only_when_neo4j_down(self):
         """Neo4j 不可用但 pgvector 可用时 retrieval_strategy=vector_only。"""
@@ -588,33 +447,20 @@ class TestE2EDegradation:
         assert status["write_available"] is False
         assert status["consolidation_available"] is False
 
-    def test_e2e_degradation_health_shows_degraded_when_one_down(self, flask_app):
-        """一个依赖不可用时 /memory/health 返回 degraded。"""
-        dm = DegradationManager(
-            neo4j_driver=None,
-            db=None,
-            redis_client=None,
-            celery_app=None,
-        )
-        dm._neo4j_ok = True
-        dm._pgvector_ok = True
-        dm._redis_ok = False
-        dm._celery_ok = True
-        dm._memory_engine_enabled = True
-
-        handler = MemoryHandler(
-            memory_write_service=MagicMock(),
-            digest_manager=MagicMock(),
+    def test_e2e_degradation_health_shows_degraded_when_one_down(self, monkeypatch):
+        """一个依赖不可用时健康检查应返回 degraded。"""
+        app_service = MagicMock()
+        app_service.db.session.execute.return_value.fetchone.return_value = ("16.0",)
+        app_service.redis_client.ping.side_effect = RuntimeError("redis down")
+        monkeypatch.setattr(
+            HealthService,
+            "_probe_celery",
+            classmethod(lambda cls: {"status": "skipped", "detail": ""}),
         )
 
-        with patch(
-            "internal.handler.memory_handler.get_degradation_manager",
-            return_value=dm,
-        ):
-            response = handler.health()
+        data = HealthService(app_service=app_service).check()
 
-        data = response[0].get_json()["data"]
         assert data["status"] == "degraded"
-        assert data["redis"] == "unreachable"
-        assert data["neo4j"] == "healthy"
-        assert data["pgvector"] == "healthy"
+        assert data["components"]["database"]["status"] == "healthy"
+        assert data["components"]["pgvector"]["status"] == "healthy"
+        assert data["components"]["redis"]["status"] == "unhealthy"

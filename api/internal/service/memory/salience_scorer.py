@@ -322,11 +322,17 @@ class SalienceScorer:
 
     def _build_prompt(self, role: str, task: str, event: MemoryEvent) -> str:
         """构造包含事件内容与最近 3 条上下文消息的 prompt。"""
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         recent_context = "\n".join(event.context_messages[-3:]) or "(无上下文)"
-        return (
-            f"你是一个{role}。{task}\n\n"
-            f"用户消息: {event.content}\n"
-            f"上下文:\n{recent_context}\n"
+        template = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_salience_prompt"
+        )
+        return template.format(
+            role=role,
+            task=task,
+            event_content=event.content,
+            recent_context=recent_context,
         )
 
     def _safe_factor_result(

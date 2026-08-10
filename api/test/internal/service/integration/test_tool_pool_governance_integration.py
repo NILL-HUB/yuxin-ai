@@ -88,6 +88,7 @@ def _make_api_tool(*, tool_id=None, name="search_orders", provider=None):
         provider=provider or SimpleNamespace(id=uuid4(), name="erp-provider"),
         parameters=[{"name": "q", "in": "query", "type": "string"}],
         metadata={},
+        task_keywords=[],
         account_id=ACCOUNT_ID,
     )
 
@@ -99,6 +100,7 @@ def _make_mcp_provider(*, provider_id=None, tool_names=None, is_public=False):
         label="GitHub MCP",
         description="GitHub MCP 服务",
         tool_names=tool_names or ["create_issue", "list_prs"],
+        task_keywords=[],
         metadata={},
         is_public=is_public,
         account_id=ACCOUNT_ID,
@@ -119,6 +121,7 @@ def _make_builtin_tool_service():
                         "description": "获取天气",
                         "metadata": {},
                         "inputs": [],
+                        "task_keywords": [],
                     }
                 ],
             }
@@ -145,6 +148,7 @@ def _make_skill_package(*, package_id=None, name="pdf"):
         label="PDF 工具",
         description="PDF 处理技能包",
         capabilities=["pdf_parse"],
+        task_keywords=[],
         enabled=True,
         metadata={},
     )
@@ -157,6 +161,7 @@ def _make_workflow(*, workflow_id=None, name="数据流", status=None):
         tool_call_name="data_flow",
         description="数据处理工作流",
         status=status or WorkflowStatus.PUBLISHED.value,
+        task_keywords=[],
         account_id=ACCOUNT_ID,
     )
 

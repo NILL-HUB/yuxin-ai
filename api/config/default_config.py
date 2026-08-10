@@ -14,6 +14,7 @@ DEFAULT_CONFIG = {
     # SQLAlchemy数据库配置
     "SQLALCHEMY_DATABASE_URI": "",
     "SQLALCHEMY_POOL_SIZE": 30,
+    "SQLALCHEMY_MAX_OVERFLOW": 20,
     "SQLALCHEMY_POOL_RECYCLE": 3600,
     "SQLALCHEMY_POOL_TIMEOUT": 10,
     "SQLALCHEMY_POOL_PRE_PING": "True",
@@ -49,7 +50,7 @@ DEFAULT_CONFIG = {
     "VISION_FALLBACK_PROVIDER": "",
     "VISION_FALLBACK_MODEL": "",
 
-    # Flask-Mail 邮件服务默认配置
+    # SMTP 邮件服务默认配置
     "MAIL_SERVER": "smtp.gmail.com",
     "MAIL_PORT": 587,
     "MAIL_USE_TLS": "True",

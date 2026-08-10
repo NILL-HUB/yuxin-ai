@@ -11,15 +11,10 @@ from internal.core.agent.usage_utils import (
     get_openai_callback,
     _UsageTrackingHandler,
 )
-from internal.entity.ai_entity import (
-    OPTIMIZE_PROMPT_TEMPLATE,
-    MCP_SCHEMA_ASSISTANT_PROMPT,
-    OPENAPI_SCHEMA_ASSISTANT_PROMPT,
-    PYTHON_CODE_ASSISTANT_PROMPT,
-)
 from internal.exception import ForbiddenException
 from internal.model import Account, Message
 from internal.service.memory.llm_activity_probe import LLMActivityProbe
+from internal.service.system_prompt_library_service import SystemPromptLibraryService
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .conversation_service import ConversationService
@@ -69,13 +64,11 @@ class AIService(BaseService):
 
     @classmethod
     def _get_account_id(cls) -> UUID | None:
-        """从当前登录用户获取 account_id，不在请求上下文时返回 None。"""
-        try:
-            from flask_login import current_user
-            if current_user.is_authenticated:
-                return current_user.id
-        except Exception:
-            pass
+        """获取当前账号 id。
+
+        Quart 单栈下（无 Flask request context）当前账号由路由层显式传递，
+        不再依赖 flask_login.current_user，计费链路待后续改造，此处固定返回 None。
+        """
         return None
 
     def generate_suggested_questions_from_message_id(self, message_id: UUID, account: Account) -> list[str]:
@@ -105,7 +98,7 @@ class AIService(BaseService):
         """根据传递的prompt进行优化生成"""
         # 1.构建优化prompt的提示词模板
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", OPTIMIZE_PROMPT_TEMPLATE),
+            ("system", SystemPromptLibraryService().get_prompt_or_default("ai_optimize_prompt")),
             ("human", "{prompt}")
         ])
 
@@ -148,7 +141,7 @@ class AIService(BaseService):
         """代码助手聊天 - 流式输出"""
         # 1.构建提示词模板
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", PYTHON_CODE_ASSISTANT_PROMPT),
+            ("system", SystemPromptLibraryService().get_prompt_or_default("ai_python_code_assistant")),
             ("human", "{question}")
         ])
 
@@ -193,7 +186,7 @@ class AIService(BaseService):
     @classmethod
     def openapi_schema_assistant_chat(cls, question: str) -> Generator[str, None, None]:
         """OpenAPI Schema 助手聊天 - 流式输出"""
-        system_prompt = OPENAPI_SCHEMA_ASSISTANT_PROMPT.replace("{", "{{").replace("}", "}}")
+        system_prompt = SystemPromptLibraryService().get_prompt_or_default("ai_openapi_schema_assistant").replace("{", "{{").replace("}", "}}")
 
         # 1.构建提示词模板
         prompt_template = ChatPromptTemplate.from_messages([
@@ -242,7 +235,7 @@ class AIService(BaseService):
     @classmethod
     def mcp_schema_assistant_chat(cls, question: str) -> Generator[str, None, None]:
         """MCP Schema 助手聊天 - 流式输出"""
-        system_prompt = MCP_SCHEMA_ASSISTANT_PROMPT.replace("{", "{{").replace("}", "}}")
+        system_prompt = SystemPromptLibraryService().get_prompt_or_default("ai_mcp_schema_assistant").replace("{", "{{").replace("}", "}}")
 
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_prompt),

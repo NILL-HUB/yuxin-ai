@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import BooleanField, IntegerField, StringField
 from wtforms.validators import DataRequired, Length, NumberRange, Optional, Regexp, ValidationError
@@ -10,7 +10,7 @@ from internal.schema import DictField, ListField
 from pkg.paginator import PaginatorReq
 
 
-class CreateSkillPackageReq(FlaskForm):
+class CreateSkillPackageReq(Form):
     """管理员创建技能包请求。"""
 
     source_key = StringField(
@@ -51,7 +51,7 @@ class CreateSkillPackageReq(FlaskForm):
                 raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
-class UpdateSkillPackageReq(FlaskForm):
+class UpdateSkillPackageReq(Form):
     """管理员更新技能包请求。source_key 不可修改。"""
 
     name = StringField("name", validators=[Optional(), Length(max=255)])
@@ -80,7 +80,7 @@ class UpdateSkillPackageReq(FlaskForm):
                 raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
-class ImportCatalogSkillReq(FlaskForm):
+class ImportCatalogSkillReq(Form):
     """从 catalog 导入技能包请求。"""
 
     source_key = StringField(
@@ -96,7 +96,7 @@ class ImportCatalogSkillReq(FlaskForm):
     )
 
 
-class ImportSkillZipReq(FlaskForm):
+class ImportSkillZipReq(Form):
     """zip 包上传导入技能包请求。
 
     file 通过 multipart/form-data 上传，由 handler 直接从 request.files 读取；
@@ -106,7 +106,7 @@ class ImportSkillZipReq(FlaskForm):
     overwrite = BooleanField("overwrite", default=False)
 
 
-class ImportSkillGithubReq(FlaskForm):
+class ImportSkillGithubReq(Form):
     """GitHub URL 导入技能包请求。"""
 
     github_url = StringField(
@@ -119,7 +119,7 @@ class ImportSkillGithubReq(FlaskForm):
     overwrite = BooleanField("overwrite", default=False)
 
 
-class ImportSkillJsonReq(FlaskForm):
+class ImportSkillJsonReq(Form):
     """JSON 文本导入技能包请求。"""
 
     config_json = StringField(
@@ -165,7 +165,7 @@ class GetSkillsWithPageReq(PaginatorReq):
     category = StringField("category", default="", validators=[Optional(), Length(max=64)])
 
 
-class RollbackSkillPackageReq(FlaskForm):
+class RollbackSkillPackageReq(Form):
     """技能包回滚请求。"""
 
     version = IntegerField(

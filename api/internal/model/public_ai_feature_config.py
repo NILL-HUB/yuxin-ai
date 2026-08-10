@@ -5,7 +5,6 @@
 所使用的模型配置。每个 feature_key 独立配置一个 model_pool_config 中的模型。
 """
 from datetime import UTC, datetime
-from uuid import uuid4
 
 from sqlalchemy import (
     Boolean,
@@ -19,14 +18,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class PublicAIFeatureConfig(db.Model):
+class PublicAIFeatureConfig(Base):
     """公共 AI 功能配置表。
 
     每行对应一个公共 AI 功能的模型配置，通过 model_config_id 引用模型池中的模型。
@@ -56,6 +55,8 @@ class PublicAIFeatureConfig(db.Model):
     # 是否已废弃：指挥官模式下被替代的旧路由 feature_key 标记为 True
     # admin 后台展示时标注"仅指挥官禁用时生效"，便于识别和未来清理
     deprecated = Column(Boolean, nullable=False, server_default=text("false"))
+    # 最后被调用时间：get_feature_model() 调用时更新，用于管理员识别未使用的配置
+    last_called_at = Column(DateTime, nullable=True)
     extra_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     updated_at = Column(
         DateTime,

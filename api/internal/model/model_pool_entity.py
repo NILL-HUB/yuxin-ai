@@ -2,7 +2,6 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
-    BigInteger,
     Column,
     DateTime,
     Index,
@@ -16,14 +15,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class ModelPoolConfig(db.Model):
+class ModelPoolConfig(Base):
     __tablename__ = "model_pool_config"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_model_pool_config_id"),
@@ -42,7 +41,12 @@ class ModelPoolConfig(db.Model):
     tier = Column(String(64), nullable=False, server_default=text("'2'::character varying"))
     capabilities = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # max_tokens: 历史兼容字段（总上下文窗口），新版本使用 max_input_tokens / max_output_tokens 拆分控制
     max_tokens = Column(Integer, nullable=False, server_default=text("0"))
+    # 最大输入长度：送入模型的 prompt/context 上限，用于上下文裁剪与记忆预算
+    max_input_tokens = Column(Integer, nullable=False, server_default=text("0"))
+    # 最大输出长度：模型生成内容的上限，注入 LLM 调用作为 max_tokens 输出参数
+    max_output_tokens = Column(Integer, nullable=False, server_default=text("0"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     model_type = Column(String(32), nullable=False, server_default=text("'chat'::character varying"))
     compatible_api = Column(String(32), nullable=False, server_default=text("'openai'::character varying"))
@@ -61,7 +65,7 @@ class ModelPoolConfig(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class ModelKeyConfig(db.Model):
+class ModelKeyConfig(Base):
     __tablename__ = "model_key_config"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_model_key_config_id"),
@@ -93,7 +97,7 @@ class ModelKeyConfig(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class ModelTierPolicy(db.Model):
+class ModelTierPolicy(Base):
     __tablename__ = "model_tier_policy"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_model_tier_policy_id"),
@@ -120,7 +124,7 @@ class ModelTierPolicy(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class CostPolicy(db.Model):
+class CostPolicy(Base):
     __tablename__ = "cost_policy"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_cost_policy_id"),

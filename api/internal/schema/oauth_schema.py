@@ -1,9 +1,9 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import StringField
 from wtforms.validators import DataRequired, Optional, AnyOf
 
-class AuthorizeReq(FlaskForm):
+class AuthorizeReq(Form):
     """第三方授权认证登陆"""
     code = StringField("code",validators=[
         DataRequired("code代码不能为空")

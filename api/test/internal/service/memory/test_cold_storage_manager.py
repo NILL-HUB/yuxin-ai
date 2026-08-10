@@ -19,9 +19,10 @@ def _make_entry(content: str = "测试冷记忆内容", weight: float = 0.3) -> 
 
 
 class TestColdStorageArchive:
-    def test_archive_should_return_none_when_cos_unavailable(self):
-        """COS 不可用时应返回 None。"""
+    def test_archive_should_return_none_when_cos_unavailable(self, monkeypatch):
+        """存储服务不可用时应返回 None（cos_client 已废弃，存储走 ObjectStoragePort）。"""
         manager = ColdStorageManager(cos_client=None, bucket=None)
+        monkeypatch.setattr(manager, "_get_storage_service", lambda: None)
         entry = _make_entry()
 
         result = manager.archive(entry)

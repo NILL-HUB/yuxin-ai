@@ -16,7 +16,7 @@ def test_simple_question_should_route_to_direct_answer():
     assert decision.needs_tools is False
     assert decision.needs_agent is False
     assert decision.needs_multi_agent is False
-    assert decision.recommended_model_tier == "cheap"
+    assert decision.recommended_model_tier == "1"
     assert decision.risk_level == RiskLevel.SAFE.value
 
 
@@ -56,8 +56,8 @@ def test_orchestrator_should_fallback_when_classifier_fails():
     decision = OrchestratorService(task_classifier_service=_BrokenClassifier()).decide("任意问题")
 
     assert decision.intent == "fallback"
-    assert decision.execution_mode == ExecutionMode.SINGLE_AGENT.value
-    assert decision.needs_agent is True
+    assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
+    assert decision.needs_agent is False
     assert decision.risk_level == RiskLevel.UNKNOWN.value
     assert decision.cost_policy["allowed"] is True
     assert decision.billing_events[0]["event"] == "billing_started"
@@ -121,11 +121,11 @@ def test_orchestrator_should_attach_cost_policy_and_billing_started_event():
 
     decision = service.decide("帮我解释 Python list")
 
-    assert decision.cost_policy["model_tier"] == "cheap"
+    assert decision.cost_policy["model_tier"] == "1"
     assert decision.cost_policy["reason"] == "simple_task_low_cost"
     assert decision.billing_events[0]["event"] == "billing_started"
     assert decision.billing_events[0]["total_credits"] == 0
-    assert decision.task_plan_summary["task_count"] == 1
+    assert decision.task_plan_summary["task_count"] == 0
     assert decision.synthesis_summary == {
         "final_answer": "",
         "summary": "execution_not_started",
@@ -200,7 +200,7 @@ def test_routing_decision_should_dump_stable_dict():
         "needs_agent": False,
         "needs_multi_agent": False,
         "needs_deep_thinking": False,
-        "recommended_model_tier": "cheap",
+        "recommended_model_tier": "1",
         "risk_level": "safe",
         "reason": "简单问答",
         "agent_subset": None,

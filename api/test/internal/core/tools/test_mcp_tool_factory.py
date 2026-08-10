@@ -1,6 +1,7 @@
 import json
 
 from internal.core.tools.mcp_tools.providers.mcp_tool_factory import McpToolFactory
+from internal.service.tool_credential_encryptor import encrypt_headers
 
 
 class _FakeResponse:
@@ -94,9 +95,11 @@ def test_mcp_tool_factory_should_list_remote_tools_and_call_selected_tool(monkey
                 "transport": "streamable_http",
                 "url": "https://mcp.example.com",
                 "enabled": True,
-                "headers": [
-                    {"key": "Authorization", "value": "Bearer token"},
-                ],
+                "headers": encrypt_headers(
+                    [
+                        {"key": "Authorization", "value": "Bearer token"},
+                    ]
+                ),
                 "tool_names": ["weather"],
                 "timeout_seconds": 15,
                 "args": [],

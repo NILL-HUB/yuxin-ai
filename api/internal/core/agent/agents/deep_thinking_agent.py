@@ -17,7 +17,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.constants import END
 from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from flask import has_app_context
+from internal.context import is_active_app
 
 from internal.core.agent.agents.function_call_agent import FunctionCallAgent
 from internal.core.agent.agents.deep_thinking_utils import (
@@ -37,11 +37,10 @@ from internal.core.agent.agents.deep_thinking_utils import (
     render_document_section_block,
     sanitize_deep_answer,
     sanitize_document_section_body,
-    score_plain_text_artifact_content,
 )
 from internal.core.agent.entities.artifact_policy_entity import ArtifactPolicy
 from internal.core.agent.entities.agent_entity import (
-    DEEP_THINKING_SYSTEM_PROMPT,
+    get_agent_system_prompt_template,
     AgentState,
 )
 from internal.core.agent.entities.deep_thinking_entity import (
@@ -84,20 +83,26 @@ class DeepThinkingAgent(FunctionCallAgent):
         graph.add_edge("deep_agent", "llm")
         graph.add_conditional_edges("llm", self._tools_condition)
         graph.add_edge("tools", "llm")
+        agent_config = getattr(self, "agent_config", None)
+        if agent_config is not None and getattr(agent_config, "enable_checkpoint", False):
+            from internal.core.agent.checkpointer import get_async_checkpointer
+            checkpointer = get_async_checkpointer()
+            if checkpointer is not None:
+                return graph.compile(checkpointer=checkpointer)
         return graph.compile()
 
-    def _llm_node(self, state: AgentState) -> AgentState:
+    async def _llm_node(self, state: AgentState) -> AgentState:
         """深度执行后的最终回答阶段只做整理，不再绑定普通工具。"""
         messages = state.get("messages") or []
         last_message = messages[-1] if messages else None
         last_content = self._extract_query(last_message) if last_message is not None else ""
         if "<deep_execution_summary>" not in last_content:
-            return super()._llm_node(state)
+            return await super()._llm_node(state)
 
         original_tools = self.agent_config.tools
         self.agent_config.tools = []
         try:
-            return super()._llm_node(state)
+            return await super()._llm_node(state)
         finally:
             self.agent_config.tools = original_tools
 
@@ -363,18 +368,17 @@ class DeepThinkingAgent(FunctionCallAgent):
             )
         )
 
-    def _invoke_plain_text_fallback(self, query: str) -> str:
+    async def _invoke_plain_text_fallback(self, query: str) -> str:
         """在模型请求被拒时，退回到无工具的纯文本生成。"""
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         fallback_llm = self._load_default_plain_text_fallback_llm()
         if fallback_llm is not None:
             try:
-                response = fallback_llm.invoke([
+                response = await fallback_llm.ainvoke([
                     SystemMessage(content=(
                         f"{self.agent_config.preset_prompt}\n\n"
-                        "你正在直接生成用户需要的最终内容。"
-                        "不要调用任何工具，不要输出 XML/JSON 工具标签，不要输出代码块围栏，"
-                        "不要输出解释性前缀。"
-                        "如果用户要求生成文件，请直接输出该文件的正文内容。"
+                        f"{SystemPromptLibraryService().get_prompt_or_default('deep_thinking_fallback_instruction')}"
                     ).strip()),
                     HumanMessage(content=query),
                 ])
@@ -618,27 +622,17 @@ class DeepThinkingAgent(FunctionCallAgent):
     ) -> str:
         requested_section_lines = "\n".join(f"- {title}" for title in requested_section_titles) if requested_section_titles else "（用户未显式列出固定章节）"
         current_outline_text = current_outline.model_dump_json() if current_outline is not None else "（无）"
-        return textwrap.dedent(
-            f"""
-            你是一个结构化文档大纲修复器。
-            你的任务不是自由写作，而是把文档整理成可供后续章节生成使用的 StructuredDocumentOutlinePlan。
-            规则：
-            - 尽量保留用户已经明确写出的章节/条目，并维持其顺序。
-            - 如果用户没有给出明确章节，就根据任务意图生成最小可用大纲。
-            - 章节数由任务意图和用户要求决定，不要为了凑数强行增删章节。
-            - 章节标题应简洁、可直接用于最终文件。
-            - 不要输出解释性文字，只输出结构化结果。
-            - 如果当前大纲不完整，请修复，而不是复述原文或输出普通文本。
-
-            目标文件：{filename}
-            用户任务：{query}
-            路由摘要：{route_decision.summary or route_decision.reason}
-            修复原因：{reason or '结构化输出失败或章节覆盖不完整'}
-            用户显式章节候选：
-            {requested_section_lines}
-            当前大纲（仅供修复参考，可能不完整）：
-            {current_outline_text}
-            """
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        repair_template = SystemPromptLibraryService().get_prompt_or_default(
+            "deep_thinking_outline_repair_prompt"
+        )
+        return repair_template.format(
+            filename=filename,
+            query=query,
+            route_summary=route_decision.summary or route_decision.reason,
+            reason=reason or "结构化输出失败或章节覆盖不完整",
+            requested_section_lines=requested_section_lines,
+            current_outline_text=current_outline_text,
         ).strip()
 
     @classmethod
@@ -747,27 +741,21 @@ class DeepThinkingAgent(FunctionCallAgent):
     ) -> str:
         output_style = "Markdown" if markdown else "纯文本"
         key_points = "；".join(section.key_points[:8]) or "按章节目标展开"
-        return textwrap.dedent(
-            f"""
-            你正在为最终会被拼接成文件的文档撰写单个章节正文。
-            输出风格：{output_style}
-            规则：
-            - 只输出本章节正文，不要输出章节标题，不要输出前言，不要输出代码块围栏。
-            - 不要提及“以下是”“我将”“本章将”这类元叙述。
-            - 内容要与整篇文档保持一致，并且可以直接拼接到最终文件中。
-            - 如有需要，可以使用简洁的列表，但不要在每一小段前重复章节标题。
-
-            文档标题：{outline.document_title}
-            目标文件：{filename}
-            章节序号：{section_index}/{section_total}
-            章节标题：{section.title}
-            写作目的：{section.purpose or '围绕章节标题展开'}
-            关键点：{key_points}
-            长度提示：{section.target_length_hint or '保持适度篇幅，内容完整'}
-
-            用户原始请求：
-            {query}
-            """
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        section_template = SystemPromptLibraryService().get_prompt_or_default(
+            "deep_thinking_section_prompt"
+        )
+        return section_template.format(
+            output_style=output_style,
+            document_title=outline.document_title,
+            filename=filename,
+            section_index=section_index,
+            section_total=section_total,
+            section_title=section.title,
+            purpose=section.purpose or "围绕章节标题展开",
+            key_points=key_points,
+            target_length_hint=section.target_length_hint or "保持适度篇幅，内容完整",
+            query=query,
         ).strip()
 
     @classmethod
@@ -790,7 +778,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             markdown=markdown,
         )
 
-    def _generate_structured_document_outline(
+    async def _generate_structured_document_outline(
         self,
         *,
         query: str,
@@ -815,28 +803,20 @@ class DeepThinkingAgent(FunctionCallAgent):
             tool="document_outline",
         )
 
-        outline_prompt = textwrap.dedent(
-            f"""
-            你是一个结构化文档大纲规划器。
-            你的目标是为最终要拼接成文件的文档输出标题和章节列表。
-            规则：
-            - 章节数由任务复杂度和用户要求决定，避免空洞或重复，不要为了凑数强行控制为固定数量。
-            - 章节标题必须简洁、可直接作为最终文件中的章节名。
-            - 每章都要包含写作目的、关键点和长度提示。
-            - 如果用户明确要求了固定章节，请优先满足用户要求。
-            - 不要输出 Markdown、JSON 或解释性文字，只通过结构化输出返回结果。
-
-            目标文件：{filename}
-            用户任务：{query}
-            路由摘要：{route_decision.summary or route_decision.reason}
-            用户显式章节候选：
-            {requested_section_titles_text}
-            """
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        outline_template = SystemPromptLibraryService().get_prompt_or_default(
+            "deep_thinking_outline_prompt"
+        )
+        outline_prompt = outline_template.format(
+            filename=filename,
+            query=query,
+            route_summary=route_decision.summary or route_decision.reason,
+            requested_section_titles_text=requested_section_titles_text,
         ).strip()
 
         try:
             structured_llm = self.llm.with_structured_output(StructuredDocumentOutlinePlan)
-            response = structured_llm.invoke([
+            response = await structured_llm.ainvoke([
                 HumanMessage(content=outline_prompt),
             ])
             outline = self._normalize_structured_document_outline(
@@ -848,7 +828,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                 outline,
                 requested_section_titles,
             ):
-                repaired_outline = self._repair_structured_document_outline(
+                repaired_outline = await self._repair_structured_document_outline(
                     query=query,
                     filename=filename,
                     route_decision=route_decision,
@@ -876,7 +856,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                 logger.warning("结构化文档大纲生成请求被模型提供方拒绝，将回退到外层纯文本兜底: %s", exc)
                 raise
             logger.warning("结构化文档大纲生成失败，回退到启发式大纲: %s", exc)
-            repaired_outline = self._repair_structured_document_outline(
+            repaired_outline = await self._repair_structured_document_outline(
                 query=query,
                 filename=filename,
                 route_decision=route_decision,
@@ -897,7 +877,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             )
             return outline
 
-    def _repair_structured_document_outline(
+    async def _repair_structured_document_outline(
         self,
         *,
         query: str,
@@ -930,7 +910,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
         try:
             structured_llm = self.llm.with_structured_output(StructuredDocumentOutlinePlan)
-            response = structured_llm.invoke([
+            response = await structured_llm.ainvoke([
                 HumanMessage(content=repair_prompt),
             ])
             repaired_outline = self._normalize_structured_document_outline(
@@ -992,7 +972,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             )
             return None
 
-    def _generate_document_section_body(
+    async def _generate_document_section_body(
         self,
         *,
         query: str,
@@ -1026,12 +1006,13 @@ class DeepThinkingAgent(FunctionCallAgent):
             markdown=markdown,
         )
 
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         try:
-            response = self.llm.invoke([
+            response = await self.llm.ainvoke([
                 SystemMessage(
-                    content=(
-                        "你正在生成最终文档的一个章节正文。"
-                        "只输出章节正文，不要输出章节标题，不要输出解释。"
+                    content=SystemPromptLibraryService().get_prompt_or_default(
+                        "deep_thinking_section_instruction"
                     )
                 ),
                 HumanMessage(content=section_prompt),
@@ -1079,7 +1060,7 @@ class DeepThinkingAgent(FunctionCallAgent):
     def _sanitize_document_section_body(text: str, section_title: str = "") -> str:
         return sanitize_document_section_body(text, section_title)
 
-    def _generate_structured_document_artifact(
+    async def _generate_structured_document_artifact(
         self,
         *,
         backend: Any,
@@ -1095,7 +1076,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             raise ValueError("结构化文档流水线要求明确的目标文件名")
 
         markdown = os.path.splitext(filename)[1].lower() in {".md", ".markdown"}
-        outline = self._generate_structured_document_outline(
+        outline = await self._generate_structured_document_outline(
             query=query,
             filename=filename,
             route_decision=route_decision,
@@ -1128,7 +1109,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             raise ValueError("结构化文档大纲没有章节")
 
         for index, section in enumerate(outline.sections, start=1):
-            body = self._generate_document_section_body(
+            body = await self._generate_document_section_body(
                 query=query,
                 filename=filename,
                 outline=outline,
@@ -1225,7 +1206,7 @@ class DeepThinkingAgent(FunctionCallAgent):
     ) -> dict[str, Any] | None:
         flask_app = self.agent_config.runtime_flask_app
         app_context = nullcontext()
-        if flask_app is not None and not has_app_context():
+        if flask_app is not None and not is_active_app(flask_app):
             app_context = flask_app.app_context()
 
         with app_context:
@@ -1411,7 +1392,7 @@ class DeepThinkingAgent(FunctionCallAgent):
         )
         return True
 
-    def _deep_agent_node(self, state: AgentState) -> AgentState:
+    async def _deep_agent_node(self, state: AgentState) -> AgentState:
         task_id = state["task_id"]
         start_at = time.perf_counter()
         timeline = DeepTimelineMiddleware(
@@ -1431,7 +1412,7 @@ class DeepThinkingAgent(FunctionCallAgent):
         )
 
         with track_language_model_usage(self.llm) as usage_tracker:
-            route_decision = self._decide_deep_route(query)
+            route_decision = await self._decide_deep_route(query)
             timeline.publish_step(
                 step_id=route_step_id,
                 step_type="plan",
@@ -1448,6 +1429,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                     task_id=task_id,
                     route_decision=route_decision,
                     timeline=timeline,
+                    state=state,
                 )
             except Exception as e:
                 logger.warning("deepagents 子 Agent 构建失败，降级为普通模式: %s", e)
@@ -1467,7 +1449,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             skip_regular_deep_invoke = False
             if structured_document_mode:
                 try:
-                    deep_answer, artifacts = self._generate_structured_document_artifact(
+                    deep_answer, artifacts = await self._generate_structured_document_artifact(
                         backend=backend,
                         artifact_root=artifact_root,
                         query=query,
@@ -1500,7 +1482,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                                 }
                             },
                         )
-                        deep_answer = self._invoke_plain_text_fallback(query)
+                        deep_answer = await self._invoke_plain_text_fallback(query)
                         if used_sandbox and route_decision.need_artifact_output and deep_answer:
                             if self._recover_missing_artifact_from_deep_answer(
                                 backend=backend,
@@ -1540,7 +1522,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
             try:
                 if not structured_document_mode and not skip_regular_deep_invoke:
-                    result = deep_agent.invoke({
+                    result = await deep_agent.ainvoke({
                         "messages": [HumanMessage(content=query)],
                     })
                     messages = result.get("messages", [])
@@ -1595,7 +1577,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                             }
                         },
                     )
-                    deep_answer = self._invoke_plain_text_fallback(query)
+                    deep_answer = await self._invoke_plain_text_fallback(query)
                     if used_sandbox and route_decision.need_artifact_output and deep_answer:
                         if self._recover_missing_artifact_from_deep_answer(
                             backend=backend,
@@ -1662,7 +1644,9 @@ class DeepThinkingAgent(FunctionCallAgent):
     def _extract_query(message: Any) -> str:
         return extract_query(message)
 
-    def _decide_deep_route(self, query: str) -> DeepRouteDecision:
+    async def _decide_deep_route(self, query: str) -> DeepRouteDecision:
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         if self._is_explicit_artifact_request(query):
             normalized = self._heuristic_deep_route(query)
             normalized.need_file_io = True
@@ -1672,15 +1656,12 @@ class DeepThinkingAgent(FunctionCallAgent):
             normalized.summary = "需要沙箱执行"
             return normalized
 
-        routing_prompt = (
-            "你是一个深度执行路由器。请判断这次任务是否需要沙箱执行、文件读写、"
-            "代码执行、子任务拆解、产物输出。"
-            "如果需要生成 txt/csv/json/md/html/docx/xlsx/代码文件，need_artifact_output 必须为 true。"
-            "如果需要执行 Python/Shell、读写真实文件或生成可下载附件，need_sandbox 必须为 true。"
+        routing_prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "deep_thinking_route_instruction"
         )
         try:
             structured_llm = self.llm.with_structured_output(DeepRouteDecision)
-            decision = structured_llm.invoke([
+            decision = await structured_llm.ainvoke([
                 HumanMessage(
                     content=(
                         f"{routing_prompt}\n\n"
@@ -1862,6 +1843,7 @@ class DeepThinkingAgent(FunctionCallAgent):
         task_id,
         route_decision: DeepRouteDecision,
         timeline: DeepTimelineMiddleware,
+        state: AgentState | None = None,
     ):
         from deepagents import create_deep_agent  # noqa: PLC0415
         from deepagents.backends import StateBackend  # noqa: PLC0415
@@ -1914,7 +1896,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                 )
                 setattr(
                     backend,
-                    "_openagent_artifact_markers",
+                    "_yuxin_ai_artifact_markers",
                     self._prepare_artifact_markers(backend=backend, artifact_root=artifact_root),
                 )
                 used_sandbox = True
@@ -1953,19 +1935,22 @@ class DeepThinkingAgent(FunctionCallAgent):
                 tool="state_backend",
             )
 
-        system_prompt = DEEP_THINKING_SYSTEM_PROMPT.format(
+        # 长期记忆注入：从 AgentState 读取（与 FunctionCallAgent 一致），
+        # 避免深度思考子 Agent 丢失用户长期记忆
+        long_term_memory = ""
+        if state is not None:
+            long_term_memory = str(state.get("long_term_memory", "") or "")
+        system_prompt = get_agent_system_prompt_template("deep_thinking_system_prompt").format(
             preset_prompt=self.agent_config.preset_prompt,
-            long_term_memory="",
+            long_term_memory=long_term_memory,
         )
-        system_prompt += (
-            f"\n\n## 本次运行约束\n"
-            f"- 是否允许沙箱执行: {'是' if sandbox_enabled else '否'}\n"
-            f"- 产物输出目录: {artifact_root}\n"
-            f"- 如需生成最终可下载文件，请只写入该目录。\n"
-            f"- 生成完文件后，请在最终回答中简要说明文件名称和用途。\n"
-            f"- 如需生成配图，默认只保留一张主图；如果已经成功生成且可直接满足需求，不要重复调用图像工具。\n"
-            f"- 禁止把沙箱本地路径（如 /workspace、/home/user、/tmp、sandbox:/mnt/data 下的路径）当成下载链接返回给用户。\n"
-            f"- 如果生成了附件，只能说明文件名和用途，真实下载链接由系统注入。"
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        constraints_template = SystemPromptLibraryService().get_prompt_or_default(
+            "deep_thinking_run_constraints"
+        )
+        system_prompt += "\n\n" + constraints_template.format(
+            sandbox_status="是" if sandbox_enabled else "否",
+            artifact_root=artifact_root,
         )
         if not sandbox_enabled:
             system_prompt += "\n- 当前未提供沙箱执行能力，不要调用 execute 解决任务。"
@@ -2040,7 +2025,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             fallback_roots = SandboxPolicy.build_fallback_artifact_roots(artifact_root)
             marker_paths_by_root = {
                 os.path.dirname(path): path
-                for path in (getattr(backend, "_openagent_artifact_markers", None) or [])
+                for path in (getattr(backend, "_yuxin_ai_artifact_markers", None) or [])
                 if path
             }
             if fallback_roots and marker_paths_by_root:
@@ -2080,7 +2065,7 @@ class DeepThinkingAgent(FunctionCallAgent):
 
         flask_app = self.agent_config.runtime_flask_app
         app_context = nullcontext()
-        if flask_app is not None and not has_app_context():
+        if flask_app is not None and not is_active_app(flask_app):
             app_context = flask_app.app_context()
 
         with app_context:

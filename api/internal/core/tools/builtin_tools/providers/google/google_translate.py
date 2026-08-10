@@ -1,4 +1,3 @@
-import os
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from internal.lib.helper import add_attribute

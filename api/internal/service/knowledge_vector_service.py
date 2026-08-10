@@ -121,11 +121,13 @@ class KnowledgeVectorService:
 
         # 构建 SQL：从维度分表检索 + JOIN 原表获取元数据
         # pgvector 的 <=> 操作符为余弦距离，1 - distance = similarity
+        # 注意：绑定参数需 CAST 为 vector，否则 psycopg2 将 list 推断为 numeric[]
+        # 导致 "operator does not exist: vector <=> numeric[]" 检索静默失败
         sql = f"""
             SELECT ks.id AS segment_id,
                    ks.content,
                    ks.knowledge_document_id,
-                   1 - (v.embedding <=> :embedding) AS score
+                   1 - (v.embedding <=> CAST(:embedding AS vector)) AS score
             FROM {table_name} v
             JOIN knowledge_segment ks ON v.segment_id = ks.id
             JOIN knowledge_base kb ON ks.knowledge_base_id = kb.id
@@ -133,7 +135,7 @@ class KnowledgeVectorService:
             WHERE v.knowledge_base_id = :kb_id
               AND ks.enabled = true
               AND kb.enabled = true
-              AND kd.enabled = true
+              AND kd.status = 'completed'
         """
         params: dict = {
             "kb_id": str(knowledge_base.id),
@@ -143,7 +145,7 @@ class KnowledgeVectorService:
             sql += " AND kb.knowledge_scope = :scope"
             params["scope"] = knowledge_scope
 
-        sql += " ORDER BY v.embedding <=> :embedding LIMIT :limit"
+        sql += " ORDER BY v.embedding <=> CAST(:embedding AS vector) LIMIT :limit"
         params["limit"] = top_k
 
         try:

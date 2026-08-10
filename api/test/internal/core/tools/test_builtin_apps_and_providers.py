@@ -105,9 +105,13 @@ def test_gaode_weather_tool_should_cover_timeout_and_missing_city(monkeypatch):
 def test_current_time_tool_and_factory_should_work():
     tool = CurrentTimeTool()
     result = tool._run()
-    # 固定断言到前 19 位，避免时区字符串在不同环境下表现不一致。
-    assert len(result[:19]) == 19
-    assert result[4] == "-" and result[7] == "-"
+    # 返回格式为 "本地时间(UTC+8): YYYY-MM-DD HH:MM:SS\nUTC时间: YYYY-MM-DD HH:MM:SS UTC"
+    first_line, second_line = result.splitlines()
+    assert first_line.startswith("本地时间(UTC+8): ")
+    assert second_line.startswith("UTC时间: ")
+    local_time = first_line.split("): ", 1)[1]
+    assert len(local_time) == 19
+    assert local_time[4] == "-" and local_time[7] == "-"
     assert asyncio.run(tool._arun())[:19] == result[:19]
     assert isinstance(current_time(), CurrentTimeTool)
 

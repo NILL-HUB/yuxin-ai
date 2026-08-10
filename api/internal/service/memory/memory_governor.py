@@ -446,7 +446,7 @@ class MemoryGovernor:
         if self._neo4j_driver is not None:
             return self._neo4j_driver
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             return driver
@@ -465,7 +465,7 @@ class MemoryGovernor:
         if self._db is not None:
             return self._db
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             db = current_app.extensions.get("database")
             if db is not None:
@@ -484,7 +484,7 @@ class MemoryGovernor:
         if self._redis is not None:
             return self._redis
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             return current_app.extensions.get("redis")
         except RuntimeError:

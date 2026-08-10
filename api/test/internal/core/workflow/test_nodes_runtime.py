@@ -265,8 +265,8 @@ class TestLLMAndDatasetNodes:
 
         class _FakeRetrievalService:
             @staticmethod
-            def create_langchain_tool_from_search(**kwargs):
-                assert "dataset_ids" in kwargs
+            def create_knowledge_retrieval_tool(**kwargs):
+                assert "knowledge_base_ids" in kwargs
                 return _FakeRetrievalTool()
 
         class _FakeInjector:
@@ -284,7 +284,7 @@ class TestLLMAndDatasetNodes:
             id=uuid4(),
             node_type="dataset_retrieval",
             title="retrieval",
-            dataset_ids=[uuid4()],
+            knowledge_base_ids=[uuid4()],
             inputs=[
                 _ref_var(name="query", ref_node_id=source_data.id, ref_var_name="query")
             ],
@@ -312,7 +312,7 @@ class TestLLMAndDatasetNodes:
 
         class _FakeRetrievalService:
             @staticmethod
-            def create_langchain_tool_from_search(**kwargs):
+            def create_knowledge_retrieval_tool(**kwargs):
                 captured_kwargs.update(kwargs)
                 return _FakeRetrievalTool()
 
@@ -332,7 +332,7 @@ class TestLLMAndDatasetNodes:
             node_type="dataset_retrieval",
             title="retrieval",
             position={"x": 0, "y": 0},
-            dataset_ids=[uuid4()],
+            knowledge_base_ids=[uuid4()],
             retrieval_config=SimpleNamespace(
                 # 兼容层校验：当前实现应优先使用 model_dump，而不是 legacy dict。
                 model_dump=lambda: payload_build_calls.append("model_dump")

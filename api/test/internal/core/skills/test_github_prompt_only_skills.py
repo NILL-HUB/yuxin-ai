@@ -42,4 +42,4 @@ def test_github_prompt_only_skills_are_loaded_and_remain_prompt_only():
         package = packages[key]
         assert package.executor_type == "prompt"
         assert package.tools == []
-        assert package.readme
+        assert package.description

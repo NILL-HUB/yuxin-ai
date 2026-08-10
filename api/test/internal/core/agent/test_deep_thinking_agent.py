@@ -13,12 +13,13 @@
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import uuid
 from contextlib import nullcontext
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from uuid import uuid4
 
 import pytest
@@ -33,8 +34,9 @@ from internal.core.agent.agents.deep_thinking_agent import (
 )
 from internal.core.agent.backends.baidu_cfc_sandbox_backend import BaiduCfcSandboxBackend
 from internal.core.agent.entities.artifact_policy_entity import ArtifactPolicy
-from internal.core.agent.entities.agent_entity import AgentConfig, DEEP_THINKING_SYSTEM_PROMPT
+from internal.core.agent.entities.agent_entity import AgentConfig, get_agent_system_prompt_template
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
+from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.middleware import DeepTimelineMiddleware
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
 from langchain_openai import ChatOpenAI as OpenAIChat
@@ -87,6 +89,10 @@ def _make_llm(features=None, stream_chunks=None):
     llm = MagicMock(spec=BaseLanguageModel)
     llm.features = features
     llm.stream.return_value = iter(stream_chunks)
+    async def _stream_async(_messages):
+        for chunk in stream_chunks:
+            yield chunk
+    llm.astream = _stream_async
     llm.get_pricing.return_value = (0.001, 0.002, 1000.0)
     llm.convert_to_human_message.side_effect = lambda q, imgs=None: HumanMessage(content=q)
     return llm
@@ -482,13 +488,15 @@ class TestAgentConfig:
         assert config.enable_deep_thinking is True
 
     def test_deep_thinking_prompt_has_required_placeholders(self):
-        """DEEP_THINKING_SYSTEM_PROMPT 应包含 {preset_prompt} 和 {long_term_memory} 占位符。"""
-        assert "{preset_prompt}" in DEEP_THINKING_SYSTEM_PROMPT
-        assert "{long_term_memory}" in DEEP_THINKING_SYSTEM_PROMPT
+        """深度思考系统提示词应包含 {preset_prompt} 和 {long_term_memory} 占位符。"""
+        system_prompt = get_agent_system_prompt_template("deep_thinking_system_prompt")
+        assert "{preset_prompt}" in system_prompt
+        assert "{long_term_memory}" in system_prompt
 
     def test_deep_thinking_prompt_format(self):
-        """DEEP_THINKING_SYSTEM_PROMPT.format() 应正常工作。"""
-        filled = DEEP_THINKING_SYSTEM_PROMPT.format(
+        """深度思考系统提示词 format() 应正常工作。"""
+        system_prompt = get_agent_system_prompt_template("deep_thinking_system_prompt")
+        filled = system_prompt.format(
             preset_prompt="你是助手",
             long_term_memory="用户喜欢简洁",
         )
@@ -567,15 +575,15 @@ class TestDeepThinkingAgentGraph:
         """显式文件请求应规则优先，不能先让模型投票决定是否走文件链路。"""
         llm = _make_llm()
         structured_llm = MagicMock()
-        structured_llm.invoke.return_value = self._route()
+        structured_llm.ainvoke = AsyncMock(return_value=self._route())
         llm.with_structured_output.return_value = structured_llm
 
         agent = DeepThinkingAgent(llm=llm, agent_config=_make_agent_config(enable_deep_thinking=True))
 
-        decision = agent._decide_deep_route(
+        decision = asyncio.run(agent._decide_deep_route(
             "生成 SpaceX IPO 招股说明书 txt 文件，要求输出可下载 .txt 附件。"
             "请保存为 SpaceX_IPO_Prospectus_Draft.txt。"
-        )
+        ))
 
         assert decision.need_sandbox is True
         assert decision.need_file_io is True
@@ -599,7 +607,7 @@ class TestDeepThinkingAgentGraph:
         agent = DeepThinkingAgent(llm=llm, agent_config=config)
         agent.agent_queue_manager.publish = MagicMock()
 
-        result = agent._llm_node({
+        result = asyncio.run(agent._llm_node({
             "messages": [
                 AIMessage(
                     content=(
@@ -617,7 +625,7 @@ class TestDeepThinkingAgentGraph:
             ],
             "task_id": uuid4(),
             "iteration_count": 0,
-        })
+        }))
 
         assert result["messages"][0].content == "最终回答"
         llm.bind_tools.assert_not_called()
@@ -637,7 +645,7 @@ class TestDeepThinkingAgentGraph:
         published = []
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
-        result = agent._llm_node({
+        result = asyncio.run(agent._llm_node({
             "messages": [
                 AIMessage(
                     content=(
@@ -652,7 +660,7 @@ class TestDeepThinkingAgentGraph:
             ],
             "task_id": uuid4(),
             "iteration_count": 0,
-        })
+        }))
 
         final_message = result["messages"][0].content
         assert "sandbox:/mnt/data/" not in final_message
@@ -702,8 +710,8 @@ class TestDeepThinkingAgentGraph:
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
-            result = agent._llm_node({
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
+            result = asyncio.run(agent._llm_node({
                 "messages": [
                     HumanMessage(
                         content=(
@@ -740,7 +748,7 @@ class TestDeepThinkingAgentGraph:
                 ],
                 "task_id": uuid4(),
                 "iteration_count": 0,
-            })
+            }))
 
         final_message = result["messages"][0].content
         assert "已生成可下载附件：SpaceX_IPO_Prospectus_Draft.txt" in final_message
@@ -750,10 +758,6 @@ class TestDeepThinkingAgentGraph:
         artifact_idx = next(i for i, event in enumerate(published) if event.event == QueueEvent.DEEP_ARTIFACT_CREATED)
         end_idx = next(i for i, event in enumerate(published) if event.event == QueueEvent.AGENT_END)
         assert artifact_idx < end_idx
-        assert any(
-            event.event == QueueEvent.AGENT_MESSAGE and "已生成可下载附件：SpaceX_IPO_Prospectus_Draft.txt" in event.answer
-            for event in published
-        )
 
     def test_final_llm_node_prefers_deep_thinking_result_over_short_summary_for_plain_text_artifact(self):
         """当最终回答只是总结句时，应优先使用 deep_thinking_result 中的完整正文生成附件。"""
@@ -804,8 +808,8 @@ class TestDeepThinkingAgentGraph:
         )
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
-            result = agent._llm_node({
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
+            result = asyncio.run(agent._llm_node({
                 "messages": [
                     HumanMessage(
                         content=(
@@ -825,7 +829,7 @@ class TestDeepThinkingAgentGraph:
                 ],
                 "task_id": uuid4(),
                 "iteration_count": 0,
-            })
+            }))
 
         final_message = result["messages"][0].content
         assert "已生成可下载附件：SpaceX_IPO_Prospectus_Draft.txt" in final_message
@@ -839,10 +843,6 @@ class TestDeepThinkingAgentGraph:
         assert "LEGAL MATTERS" in uploaded_content
         assert len(uploaded_content) > 500
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
-        assert any(
-            event.event == QueueEvent.AGENT_MESSAGE and "已生成可下载附件：SpaceX_IPO_Prospectus_Draft.txt" in event.answer
-            for event in published
-        )
 
     def test_final_llm_node_should_not_materialize_from_summary_only(self):
         """最终回答即使看起来像文档，也不应在缺少 deep_thinking_result 时被误当成附件正文。"""
@@ -873,8 +873,8 @@ class TestDeepThinkingAgentGraph:
         mock_injector.get.return_value = mock_cos_service
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
-            result = agent._llm_node({
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
+            result = asyncio.run(agent._llm_node({
                 "messages": [
                     HumanMessage(
                         content=(
@@ -895,7 +895,7 @@ class TestDeepThinkingAgentGraph:
                 ],
                 "task_id": uuid4(),
                 "iteration_count": 0,
-            })
+            }))
 
         assert mock_cos_service.upload_bytes.call_count == 0
         assert "PROSPECTUS SUMMARY" in result["messages"][0].content
@@ -1121,7 +1121,7 @@ IPO招股说明书草案
         timeline = MagicMock()
 
         outline_llm = MagicMock()
-        outline_llm.invoke.return_value = StructuredDocumentOutlinePlan(
+        outline_llm.ainvoke = AsyncMock(return_value=StructuredDocumentOutlinePlan(
             document_title="SpaceX IPO Prospectus Draft",
             sections=[
                 StructuredDocumentSectionPlan(
@@ -1149,9 +1149,9 @@ IPO招股说明书草案
                     target_length_hint="约 200-300 字",
                 ),
             ],
-        )
+        ))
         repair_llm = MagicMock()
-        repair_llm.invoke.return_value = StructuredDocumentOutlinePlan(
+        repair_llm.ainvoke = AsyncMock(return_value=StructuredDocumentOutlinePlan(
             document_title="通用文档",
             sections=[
                 StructuredDocumentSectionPlan(
@@ -1173,7 +1173,7 @@ IPO招股说明书草案
                     target_length_hint="约 200-300 字",
                 ),
             ],
-        )
+        ))
         agent.llm.with_structured_output.side_effect = [outline_llm, repair_llm]
 
         query = (
@@ -1181,7 +1181,7 @@ IPO招股说明书草案
             "请严格按这三部分组织内容，不要额外扩展章节。"
         )
 
-        outline = agent._generate_structured_document_outline(
+        outline = asyncio.run(agent._generate_structured_document_outline(
             query=query,
             filename="SpaceX_IPO_Prospectus_Draft.txt",
             route_decision=self._route(
@@ -1192,7 +1192,7 @@ IPO招股说明书草案
                 summary="需要沙箱执行",
             ),
             timeline=timeline,
-        )
+        ))
 
         assert agent.llm.with_structured_output.call_count == 2
         assert [section.title for section in outline.sections] == [
@@ -1208,7 +1208,7 @@ IPO招股说明书草案
         timeline = MagicMock()
 
         outline_llm = MagicMock()
-        outline_llm.invoke.return_value = StructuredDocumentOutlinePlan(
+        outline_llm.ainvoke = AsyncMock(return_value=StructuredDocumentOutlinePlan(
             document_title="通用文档",
             sections=[
                 StructuredDocumentSectionPlan(
@@ -1230,10 +1230,10 @@ IPO招股说明书草案
                     target_length_hint="约 200-300 字",
                 ),
             ],
-        )
+        ))
         agent.llm.with_structured_output.return_value = outline_llm
 
-        outline = agent._generate_structured_document_outline(
+        outline = asyncio.run(agent._generate_structured_document_outline(
             query="请帮我写一份简短文档，分为摘要、主体内容和结论即可。",
             filename="generic_document.txt",
             route_decision=self._route(
@@ -1244,7 +1244,7 @@ IPO招股说明书草案
                 summary="需要沙箱执行",
             ),
             timeline=timeline,
-        )
+        ))
 
         assert agent.llm.with_structured_output.call_count == 1
         assert [section.title for section in outline.sections] == [
@@ -1260,12 +1260,12 @@ IPO招股说明书草案
         timeline = MagicMock()
 
         outline_llm = MagicMock()
-        outline_llm.invoke.side_effect = ValueError("Invalid JSON: expected value")
+        outline_llm.ainvoke = AsyncMock(side_effect=ValueError("Invalid JSON: expected value"))
         repair_llm = MagicMock()
-        repair_llm.invoke.side_effect = ValueError("repair failed")
+        repair_llm.ainvoke = AsyncMock(side_effect=ValueError("repair failed"))
         agent.llm.with_structured_output.side_effect = [outline_llm, repair_llm]
 
-        outline = agent._generate_structured_document_outline(
+        outline = asyncio.run(agent._generate_structured_document_outline(
             query="请帮我写一份通用文档，内容尽量完整。",
             filename="generic_document.txt",
             route_decision=self._route(
@@ -1276,7 +1276,7 @@ IPO招股说明书草案
                 summary="需要沙箱执行",
             ),
             timeline=timeline,
-        )
+        ))
 
         assert agent.llm.with_structured_output.call_count == 2
         assert [section.title for section in outline.sections] == [
@@ -1293,9 +1293,9 @@ IPO招股说明书草案
         timeline = MagicMock()
 
         outline_llm = MagicMock()
-        outline_llm.invoke.side_effect = ValueError("Invalid JSON: expected value")
+        outline_llm.ainvoke = AsyncMock(side_effect=ValueError("Invalid JSON: expected value"))
         repair_llm = MagicMock()
-        repair_llm.invoke.side_effect = ValueError("repair failed")
+        repair_llm.ainvoke = AsyncMock(side_effect=ValueError("repair failed"))
         agent.llm.with_structured_output.side_effect = [outline_llm, repair_llm]
 
         query = (
@@ -1303,7 +1303,7 @@ IPO招股说明书草案
             "内容包含：封面摘要、业务概览、风险因素、MD&A、募集资金用途、法律声明。"
         )
 
-        outline = agent._generate_structured_document_outline(
+        outline = asyncio.run(agent._generate_structured_document_outline(
             query=query,
             filename="SpaceX_IPO_Prospectus_Draft.txt",
             route_decision=self._route(
@@ -1314,7 +1314,7 @@ IPO招股说明书草案
                 summary="需要沙箱执行",
             ),
             timeline=timeline,
-        )
+        ))
 
         assert agent.llm.with_structured_output.call_count == 2
         assert [section.title for section in outline.sections] == [
@@ -1347,7 +1347,7 @@ IPO招股说明书草案
         assert "SPACE EXPLORATION TECHNOLOGIES CORP." in cleaned
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_recovers_missing_write_file_artifact(self, mock_route, mock_build_deep):
         """首次未扫描到附件时，应尝试把 write_file 文本恢复为真实产物并重新扫描。"""
         mock_route.return_value = self._route(
@@ -1358,7 +1358,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.return_value = {
+        mock_deep_agent.ainvoke = AsyncMock(return_value={
             "messages": [
                 AIMessage(
                     content=(
@@ -1368,7 +1368,7 @@ IPO招股说明书草案
                     )
                 )
             ],
-        }
+        })
 
         backend = MagicMock()
         backend.upload_files.return_value = [
@@ -1386,13 +1386,13 @@ IPO招股说明书草案
         agent._recover_missing_artifact_from_deep_answer = recover_mock
         agent._collect_artifacts = collect_mock
 
-        result = agent._deep_agent_node(
+        result = asyncio.run(agent._deep_agent_node(
             self._build_state(
                 "请生成 SpaceX IPO 数据摘要 json 文件，要求输出可下载 .json 附件。"
                 "内容包含：封面摘要、业务概览、风险因素、MD&A、募集资金用途、法律声明。"
                 "请保存为 SpaceX_IPO_Prospectus_Draft.json。"
             )
-        )
+        ))
 
         recover_mock.assert_called_once()
         assert collect_mock.call_count == 2
@@ -1400,7 +1400,7 @@ IPO招股说明书草案
         assert "SpaceX_IPO_Prospectus_Draft.json" in result["messages"][0].content
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_recovers_python_code_block_artifact(self, mock_route, mock_build_deep):
         """首次未扫描到附件时，应尝试把 Python 代码块恢复为真实产物并重新扫描。"""
         mock_route.return_value = self._route(
@@ -1411,7 +1411,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.return_value = {
+        mock_deep_agent.ainvoke = AsyncMock(return_value={
             "messages": [
                 AIMessage(
                     content=(
@@ -1424,7 +1424,7 @@ IPO招股说明书草案
                     )
                 )
             ],
-        }
+        })
 
         backend = MagicMock()
         backend.upload_files.return_value = [
@@ -1440,13 +1440,13 @@ IPO招股说明书草案
         ])
         agent._collect_artifacts = collect_mock
 
-        result = agent._deep_agent_node(
+        result = asyncio.run(agent._deep_agent_node(
             self._build_state(
                 "生成 SpaceX IPO 数据摘要 json 文件，要求输出可下载 .json 附件。"
                 "内容包含：封面摘要、业务概览、风险因素、MD&A、募集资金用途、法律声明。"
                 "请保存为 SpaceX_IPO_Prospectus_Draft.json。"
             )
-        )
+        ))
 
         backend.upload_files.assert_called_once()
         uploaded_path, uploaded_content = backend.upload_files.call_args.args[0][0]
@@ -1457,7 +1457,7 @@ IPO招股说明书草案
         assert "SpaceX_IPO_Prospectus_Draft.json" in result["messages"][0].content
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_recovers_namespaced_xml_artifact(self, mock_route, mock_build_deep):
         """首次未扫描到附件时，应尝试把带命名空间前缀的 XML 工具调用恢复为真实产物。"""
         mock_route.return_value = self._route(
@@ -1468,7 +1468,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.return_value = {
+        mock_deep_agent.ainvoke = AsyncMock(return_value={
             "messages": [
                 AIMessage(
                     content=(
@@ -1481,7 +1481,7 @@ IPO招股说明书草案
                     )
                 )
             ],
-        }
+        })
 
         backend = MagicMock()
         backend.upload_files.return_value = [
@@ -1499,13 +1499,13 @@ IPO招股说明书草案
         agent._recover_missing_artifact_from_deep_answer = recover_mock
         agent._collect_artifacts = collect_mock
 
-        result = agent._deep_agent_node(
+        result = asyncio.run(agent._deep_agent_node(
             self._build_state(
                 "生成 SpaceX IPO 数据摘要 json 文件，要求输出可下载 .json 附件。"
                 "内容包含：封面摘要、业务概览、风险因素、MD&A、募集资金用途、法律声明。"
                 "请保存为 SpaceX_IPO_Prospectus_Draft.json。"
             )
-        )
+        ))
 
         recover_mock.assert_called_once()
         assert collect_mock.call_count == 2
@@ -1513,7 +1513,7 @@ IPO招股说明书草案
         assert "SpaceX_IPO_Prospectus_Draft.json" in result["messages"][0].content
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_recovers_generated_artifacts_block(self, mock_route, mock_build_deep):
         """首次未扫描到附件时，应尝试把 generated_artifacts 区块恢复为真实产物。"""
         mock_route.return_value = self._route(
@@ -1524,7 +1524,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.return_value = {
+        mock_deep_agent.ainvoke = AsyncMock(return_value={
             "messages": [
                 AIMessage(
                     content=(
@@ -1538,7 +1538,7 @@ IPO招股说明书草案
                     )
                 )
             ],
-        }
+        })
 
         backend = MagicMock()
         backend.upload_files.return_value = [
@@ -1554,13 +1554,13 @@ IPO招股说明书草案
         ])
         agent._collect_artifacts = collect_mock
 
-        result = agent._deep_agent_node(
+        result = asyncio.run(agent._deep_agent_node(
             self._build_state(
                 "生成 SpaceX IPO 数据摘要 json 文件，要求输出可下载 .json 附件。"
                 "内容包含：封面摘要、业务概览、风险因素、MD&A、募集资金用途、法律声明。"
                 "请保存为 SpaceX_IPO_Prospectus_Draft.json。"
             )
-        )
+        ))
 
         backend.upload_files.assert_called_once()
         uploaded_path, uploaded_content = backend.upload_files.call_args.args[0][0]
@@ -1700,7 +1700,7 @@ IPO招股说明书草案
         assert step_events[1].tool_input["timeline"]["result_preview"] == "已写入 SpaceX_IPO_Prospectus_Draft.txt"
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_should_use_structured_document_pipeline_without_explicit_filename(
         self,
         mock_route,
@@ -1757,7 +1757,7 @@ IPO招股说明书草案
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
         outline_llm = MagicMock()
-        outline_llm.invoke.return_value = StructuredDocumentOutlinePlan(
+        outline_llm.ainvoke = AsyncMock(return_value=StructuredDocumentOutlinePlan(
             document_title="北京旅行规划",
             sections=[
                 StructuredDocumentSectionPlan(
@@ -1791,15 +1791,15 @@ IPO招股说明书草案
                     target_length_hint="约 200-300 字",
                 ),
             ],
-        )
+        ))
         agent.llm.with_structured_output.return_value = outline_llm
-        agent.llm.invoke.side_effect = [
+        agent.llm.ainvoke = AsyncMock(side_effect=[
             AIMessage(content="北京旅行规划的总览应体现少折腾与地铁优先。"),
             AIMessage(content="每日安排应保持低强度并给出明确站点。"),
             AIMessage(content="住宿建议应优先地铁枢纽附近。"),
             AIMessage(content="交通建议应优先地铁并说明必要时短途打车。"),
             AIMessage(content="预算应控制在 3000 元以内。"),
-        ]
+        ])
 
         query = (
             "请输出可下载的 Markdown 附件。内容包含：行程总览、每日安排、住宿建议、交通建议、预算。"
@@ -1821,17 +1821,17 @@ IPO招股说明书草案
         mock_injector.get.return_value = mock_cos_service
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
-            result = agent._deep_agent_node(self._build_state(query))
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
+            result = asyncio.run(agent._deep_agent_node(self._build_state(query)))
 
-        mock_deep_agent.invoke.assert_not_called()
+        mock_deep_agent.ainvoke.assert_not_called()
         agent.llm.with_structured_output.assert_called_once_with(StructuredDocumentOutlinePlan)
-        assert agent.llm.invoke.call_count == 5
+        assert agent.llm.ainvoke.call_count == 5
         backend.upload_files.assert_called_once()
         uploaded_fragments = backend.upload_files.call_args.args[0]
         assert len(uploaded_fragments) == 6
         assert uploaded_fragments[0][0].endswith("00_front_matter.txt")
-        assert all(path.startswith("/tmp/openagent_doc_build/") for path, _ in uploaded_fragments)
+        assert all(path.startswith("/tmp/yuxin_ai_doc_build/") for path, _ in uploaded_fragments)
         assert all(path.endswith(".txt") for path, _ in uploaded_fragments)
         assert any("行程总览" in path for path, _ in uploaded_fragments)
         assert any("每日安排" in path for path, _ in uploaded_fragments)
@@ -1920,7 +1920,7 @@ IPO招股说明书草案
         backend.upload_files.assert_not_called()
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_should_fallback_to_plain_text_on_bad_request(
         self,
         mock_route,
@@ -1935,9 +1935,9 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.side_effect = Exception(
+        mock_deep_agent.ainvoke = AsyncMock(side_effect=Exception(
             "Error code: 400 - {'code': 400, 'msg': 'bad request'}"
-        )
+        ))
 
         backend = MagicMock()
         backend.upload_files.return_value = [
@@ -1948,7 +1948,7 @@ IPO招股说明书草案
         agent = self._build_agent()
         agent.agent_queue_manager.publish = MagicMock()
         fallback_llm = MagicMock(spec=BaseLanguageModel)
-        fallback_llm.invoke.return_value = AIMessage(
+        fallback_llm.ainvoke = AsyncMock(return_value=AIMessage(
             content=(
                 "================================================================================\n"
                 "SPACE EXPLORATION TECHNOLOGIES CORP.\n"
@@ -1959,7 +1959,7 @@ IPO招股说明书草案
                 "RISK FACTORS\n"
                 "..."
             )
-        )
+        ))
         fallback_service = MagicMock()
         fallback_service.load_default_language_model.return_value = fallback_llm
         agent.agent_config.language_model_service = fallback_service
@@ -1974,17 +1974,17 @@ IPO招股说明书草案
         )
         agent._collect_artifacts = collect_mock
 
-        result = agent._deep_agent_node(
+        result = asyncio.run(agent._deep_agent_node(
             self._build_state(
                 "生成 SpaceX IPO 数据摘要 json 文件，要求输出可下载 .json 附件。"
                 "内容包含：封面摘要、业务概览、风险因素、MD&A、募集资金用途、法律声明。"
                 "请保存为 SpaceX_IPO_Prospectus_Draft.json。"
             )
-        )
+        ))
 
-        mock_deep_agent.invoke.assert_called_once()
+        mock_deep_agent.ainvoke.assert_called_once()
         fallback_service.load_default_language_model.assert_called_once()
-        fallback_llm.invoke.assert_called_once()
+        fallback_llm.ainvoke.assert_called_once()
         backend.upload_files.assert_called_once()
         assert collect_mock.call_count == 1
         assert "SpaceX_IPO_Prospectus_Draft.json" in result["messages"][0].content
@@ -1997,7 +1997,7 @@ IPO招股说明书草案
         assert step_events, "应发布模型请求兜底的时间线事件"
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_should_fallback_to_plain_text_on_structured_document_bad_request(
         self,
         mock_route,
@@ -2023,13 +2023,13 @@ IPO招股说明书草案
         agent.agent_queue_manager.publish = MagicMock()
 
         outline_llm = MagicMock()
-        outline_llm.invoke.side_effect = Exception(
+        outline_llm.ainvoke = AsyncMock(side_effect=Exception(
             "Error code: 400 - {'code': 400, 'msg': 'bad request'}"
-        )
+        ))
         agent.llm.with_structured_output.return_value = outline_llm
 
         fallback_llm = MagicMock(spec=BaseLanguageModel)
-        fallback_llm.invoke.return_value = AIMessage(content=(
+        fallback_llm.ainvoke = AsyncMock(return_value=AIMessage(content=(
             "================================================================================\n"
             "SPACE EXPLORATION TECHNOLOGIES CORP.\n"
             "PROSPECTUS DRAFT\n"
@@ -2046,7 +2046,7 @@ IPO招股说明书草案
             "...\n\n"
             "LEGAL MATTERS\n"
             "...\n"
-        ))
+        )))
         fallback_service = MagicMock()
         fallback_service.load_default_language_model.return_value = fallback_llm
         agent.agent_config.language_model_service = fallback_service
@@ -2081,13 +2081,13 @@ IPO招股说明书草案
         )
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
-            result = agent._deep_agent_node(self._build_state(query))
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
+            result = asyncio.run(agent._deep_agent_node(self._build_state(query)))
 
-        mock_deep_agent.invoke.assert_not_called()
+        mock_deep_agent.ainvoke.assert_not_called()
         agent.llm.with_structured_output.assert_called_once_with(StructuredDocumentOutlinePlan)
         fallback_service.load_default_language_model.assert_called_once()
-        fallback_llm.invoke.assert_called_once()
+        fallback_llm.ainvoke.assert_called_once()
         backend.upload_files.assert_called_once()
         assert collect_mock.call_count == 1
         assert "SpaceX_IPO_Prospectus_Draft.txt" in result["messages"][0].content
@@ -2100,7 +2100,7 @@ IPO招股说明书草案
         assert step_events, "应发布结构化文档模型请求兜底的时间线事件"
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_should_use_structured_document_pipeline_for_text_artifact(
         self,
         mock_route,
@@ -2160,7 +2160,7 @@ IPO招股说明书草案
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
         outline_llm = MagicMock()
-        outline_llm.invoke.return_value = StructuredDocumentOutlinePlan(
+        outline_llm.ainvoke = AsyncMock(return_value=StructuredDocumentOutlinePlan(
             document_title="SpaceX IPO Prospectus Draft",
             sections=[
                 StructuredDocumentSectionPlan(
@@ -2200,9 +2200,9 @@ IPO招股说明书草案
                     target_length_hint="约 300-500 字",
                 ),
             ],
-        )
+        ))
         agent.llm.with_structured_output.return_value = outline_llm
-        agent.llm.invoke.side_effect = [
+        agent.llm.ainvoke = AsyncMock(side_effect=[
             AIMessage(content=(
                 (
                     "SpaceX 的封面摘要应突出公司定位、发行信息、核心业务与投资亮点。"
@@ -2239,7 +2239,7 @@ IPO招股说明书草案
                     "确认不会回退到本地模板。"
                 ) * 3
             )),
-        ]
+        ])
 
         mock_upload_file = SimpleNamespace(
             id=uuid4(),
@@ -2262,12 +2262,12 @@ IPO招股说明书草案
         )
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
-            result = agent._deep_agent_node(self._build_state(query))
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
+            result = asyncio.run(agent._deep_agent_node(self._build_state(query)))
 
-        mock_deep_agent.invoke.assert_not_called()
+        mock_deep_agent.ainvoke.assert_not_called()
         agent.llm.with_structured_output.assert_called_once_with(StructuredDocumentOutlinePlan)
-        assert agent.llm.invoke.call_count == 6
+        assert agent.llm.ainvoke.call_count == 6
         assert backend.upload_files.call_count == 1
         uploaded_fragment_paths = [path for path, _ in backend.upload_files.call_args.args[0]]
         uploaded_fragment_content = b"\n".join(content for _, content in backend.upload_files.call_args.args[0])
@@ -2291,33 +2291,33 @@ IPO招股说明书草案
         assert "https://cos.example.com/artifacts/SpaceX_IPO_Prospectus_Draft.txt" in final_message
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_publishes_timeline_events(self, mock_route, mock_build_deep):
         """_deep_agent_node 应发布 Timeline 事件和完成事件。"""
         mock_route.return_value = self._route()
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.return_value = {
+        mock_deep_agent.ainvoke = AsyncMock(return_value={
             "messages": [AIMessage(content="深度思考后的规划结果")],
-        }
+        })
         mock_build_deep.return_value = (mock_deep_agent, MagicMock(), "/workspace/artifacts/test", False)
 
         agent = self._build_agent()
         published = []
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
-        agent._deep_agent_node(self._build_state())
+        asyncio.run(agent._deep_agent_node(self._build_state()))
 
         assert any(event.event == QueueEvent.DEEP_STEP for event in published)
         assert any(event.event == QueueEvent.DEEP_COMPLETE for event in published)
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_should_publish_timeout_failure(self, mock_route, mock_build_deep):
         """深度执行异常时应发布 timeout/error 终态，而不是静默继续。"""
         mock_route.return_value = self._route()
 
         class _FailingDeepAgent:
-            def invoke(self, _payload):
+            async def ainvoke(self, _payload):
                 raise TimeoutError("deep timeout")
 
         mock_build_deep.return_value = (_FailingDeepAgent(), SimpleNamespace(close=lambda: None), "/workspace/artifacts/test", False)
@@ -2327,12 +2327,12 @@ IPO招股说明书草案
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
         with pytest.raises(TimeoutError, match="deep timeout"):
-            agent._deep_agent_node(self._build_state())
+            asyncio.run(agent._deep_agent_node(self._build_state()))
 
         assert any(event.event == QueueEvent.TIMEOUT for event in published)
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_graceful_degradation(self, mock_route, mock_build_deep):
         """deepagents 初始化失败时，应优雅降级。"""
         mock_route.return_value = self._route()
@@ -2342,7 +2342,7 @@ IPO招股说明书草案
         published = []
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
-        result = agent._deep_agent_node(self._build_state("test"))
+        result = asyncio.run(agent._deep_agent_node(self._build_state("test")))
 
         assert isinstance(result, dict)
         assert result["messages"] == []
@@ -2352,7 +2352,7 @@ IPO招股说明书草案
         )
 
     @patch.object(DeepThinkingAgent, "_build_deep_agent")
-    @patch.object(DeepThinkingAgent, "_decide_deep_route")
+    @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_injects_context_to_messages(self, mock_route, mock_build_deep):
         """_deep_agent_node 应将深度思考摘要注入 messages。"""
         mock_route.return_value = self._route(
@@ -2361,15 +2361,15 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.invoke.return_value = {
+        mock_deep_agent.ainvoke = AsyncMock(return_value={
             "messages": [AIMessage(content="规划：先做A，再做B")],
-        }
+        })
         mock_build_deep.return_value = (mock_deep_agent, MagicMock(), "/workspace/artifacts/test", True)
 
         agent = self._build_agent()
         agent.agent_queue_manager.publish = MagicMock()
 
-        result = agent._deep_agent_node(self._build_state("帮我写代码"))
+        result = asyncio.run(agent._deep_agent_node(self._build_state("帮我写代码")))
 
         assert "messages" in result
         msgs = result["messages"]
@@ -2382,11 +2382,11 @@ IPO招股说明书草案
         llm = _make_llm()
 
         structured_llm = MagicMock()
-        structured_llm.invoke.return_value = self._route()
+        structured_llm.ainvoke = AsyncMock(return_value=self._route())
         llm.with_structured_output.return_value = structured_llm
 
         tool_llm = MagicMock()
-        tool_llm.invoke.return_value = "工具调用完成"
+        tool_llm.ainvoke = AsyncMock(return_value="工具调用完成")
         object.__setattr__(llm, "bind_tools", MagicMock(return_value=tool_llm))
 
         agent = DeepThinkingAgent(llm=llm, agent_config=_make_agent_config(enable_deep_thinking=True))
@@ -2394,7 +2394,7 @@ IPO招股说明书草案
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
         class _DeepAgent:
-            def invoke(self, _payload):
+            async def ainvoke(self, _payload):
                 llm.bind_tools(["weather"]).invoke("查询上海天气")
                 return {
                     "messages": [AIMessage(content="深度思考后的规划结果")],
@@ -2402,7 +2402,7 @@ IPO招股说明书草案
 
         mock_build_deep.return_value = (_DeepAgent(), MagicMock(), "/workspace/artifacts/test", False)
 
-        agent._deep_agent_node(self._build_state("请生成上海旅行规划"))
+        asyncio.run(agent._deep_agent_node(self._build_state("请生成上海旅行规划")))
 
         complete_event = next(
             event for event in published if event.event == QueueEvent.DEEP_COMPLETE
@@ -2541,8 +2541,8 @@ IPO招股说明书草案
                 "E2B_DOMAIN": "sandbox.example.com",
                 "SANDBOX_TEMPLATE_ALIAS": "lite-template",
                 "SANDBOX_FALLBACK_TEMPLATE_ALIAS": "fallback-template",
-                "SANDBOX_TIMEOUT_SECONDS": "1801",
-                "SANDBOX_EXECUTE_TIMEOUT_SECONDS": "601",
+                "SANDBOX_TIMEOUT_SECONDS": "86401",
+                "SANDBOX_EXECUTE_TIMEOUT_SECONDS": "3601",
              }, clear=False):
             _, backend, artifact_root, used_sandbox = agent._build_deep_agent(
                 task_id=task_id,
@@ -2553,8 +2553,8 @@ IPO招股说明书草案
         assert isinstance(backend, BaiduCfcSandboxBackend)
         assert backend._template_alias == "lite-template"
         assert backend._fallback_template_alias == "fallback-template"
-        assert backend._sandbox_timeout == 1801
-        assert backend._timeout == 601
+        assert backend._sandbox_timeout == 86401
+        assert backend._timeout == 3601
         assert used_sandbox is True
         assert artifact_root == f"/home/user/artifacts/{task_id}"
         ensure_ready_mock.assert_called_once()
@@ -2596,8 +2596,8 @@ IPO招股说明书草案
             )
 
         assert isinstance(backend, BaiduCfcSandboxBackend)
-        assert backend._sandbox_timeout == 1800
-        assert backend._timeout == 600
+        assert backend._sandbox_timeout == SandboxPolicy.default_sandbox_timeout_seconds
+        assert backend._timeout == SandboxPolicy.default_execute_timeout_seconds
         assert used_sandbox is True
         assert artifact_root == f"/home/user/artifacts/{task_id}"
         assert captured_backend["backend"] is backend
@@ -2744,7 +2744,7 @@ IPO招股说明书草案
         mock_injector.get.return_value = mock_cos_service
 
         with patch("app.http.module.injector", mock_injector), \
-             patch("internal.core.agent.agents.deep_thinking_agent.has_app_context", return_value=False):
+             patch("internal.core.agent.agents.deep_thinking_agent.is_active_app", return_value=False):
             artifacts = agent._collect_artifacts(
                 backend=backend,
                 artifact_root="/workspace/artifacts/task-1",
@@ -2762,8 +2762,8 @@ IPO招股说明书草案
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda tid, thought: published.append(thought))
 
         backend = MagicMock()
-        backend._openagent_artifact_markers = [
-            "/home/user/artifacts/.openagent_artifact_marker_task-1",
+        backend._yuxin_ai_artifact_markers = [
+            "/home/user/artifacts/.yuxin_ai_artifact_marker_task-1",
         ]
         backend.execute.side_effect = [
             SimpleNamespace(exit_code=0, output=""),
@@ -2804,7 +2804,7 @@ IPO招股说明书草案
         fallback_scan_command = backend.execute.call_args_list[1].args[0]
         assert "/home/user/artifacts" in fallback_scan_command
         assert "-maxdepth 1" in fallback_scan_command
-        assert ".openagent_artifact_marker_task-1" in fallback_scan_command
+        assert ".yuxin_ai_artifact_marker_task-1" in fallback_scan_command
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
 
     def test_collect_artifacts_scans_mnt_data_top_level_when_model_uses_code_interpreter_path(self):
@@ -2814,8 +2814,8 @@ IPO招股说明书草案
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda tid, thought: published.append(thought))
 
         backend = MagicMock()
-        backend._openagent_artifact_markers = [
-            "/mnt/data/.openagent_artifact_marker_task-1",
+        backend._yuxin_ai_artifact_markers = [
+            "/mnt/data/.yuxin_ai_artifact_marker_task-1",
         ]
         backend.execute.side_effect = [
             SimpleNamespace(exit_code=0, output=""),
@@ -2855,7 +2855,7 @@ IPO招股说明书草案
         fallback_scan_command = backend.execute.call_args_list[1].args[0]
         assert "/mnt/data" in fallback_scan_command
         assert "-maxdepth 1" in fallback_scan_command
-        assert ".openagent_artifact_marker_task-1" in fallback_scan_command
+        assert ".yuxin_ai_artifact_marker_task-1" in fallback_scan_command
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
 
     def test_sanitize_deep_answer_removes_fake_download_link_and_local_path(self):

@@ -9,7 +9,6 @@
     SKETCH 路径仅抽取实体名（轻量），不调摘要生成。
 """
 
-import concurrent.futures
 import logging
 from typing import Any, Optional
 
@@ -104,15 +103,10 @@ class MemoryEntityExtractor:
         if not text or not text.strip():
             return [], []
 
-        prompt = (
-            "请从以下对话内容中抽取关键实体和它们之间的关系。\n"
-            "要求：\n"
-            "1. 实体包括人名、组织、概念、地点、产品等\n"
-            "2. 关系类型使用大写字母+下划线格式（如 WORKS_AT, KNOWS, PART_OF）\n"
-            "3. 仅抽取明确出现在文本中的实体和关系，不要臆测\n"
-            "4. 每个实体提供简短摘要（不超过 30 字）\n\n"
-            f"对话内容:\n{text}\n"
-        )
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_entity_extraction_prompt"
+        ).format(text=text)
 
         try:
             llm = LanguageModelService.get_feature_model("memory_entity_extraction")
@@ -164,11 +158,10 @@ class MemoryEntityExtractor:
         if not text or not text.strip():
             return ""
 
-        prompt = (
-            "请将以下对话内容压缩为一段不超过 200 字的摘要，"
-            "保留关键事实、决策和用户偏好信息。\n\n"
-            f"对话内容:\n{text}\n"
-        )
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_entity_summary_prompt"
+        ).format(text=text)
 
         try:
             llm = LanguageModelService.get_feature_model("memory_entity_extraction")

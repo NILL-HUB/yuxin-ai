@@ -1,8 +1,8 @@
 services:
   llmops-api:
     environment:
-      FLASK_ENV: development
-      FLASK_DEBUG: '1'
+      APP_ENV: development
+      APP_DEBUG: '1'
       MIGRATION_ENABLED: 'true'
 
   llmops-ui:

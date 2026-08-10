@@ -52,7 +52,7 @@ def _make_config(**overrides):
         "skills": [],
         "workflows": [],
         "agent_bindings": [],
-        "app_dataset_joins": [],
+        "knowledge_base_ids": [],
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -118,7 +118,7 @@ def test_resolve_workflow_extracts_tool_and_dataset_nodes():
             },
             {
                 "node_type": "dataset_retrieval",
-                "dataset_ids": [str(dataset_id)],
+                "knowledge_base_ids": [str(dataset_id)],
             },
             {
                 "node_type": "llm",
@@ -184,7 +184,7 @@ def test_resolve_agent_binding_private_app_recursively_expands():
         tools=[{"type": "api_tool", "provider_id": "erp", "tool_id": "search_orders"}],
         mcp_bindings=[{"name": "github", "provider_key": "gh-key"}],
         skills=[{"skill_id": "code-review"}],
-        app_dataset_joins=[SimpleNamespace(dataset_id=uuid4())],
+        knowledge_base_ids=[str(uuid4())],
         workflows=[str(workflow_id)],
         agent_bindings=[{"app_id": str(app2_id)}],
     )
@@ -596,7 +596,7 @@ def test_resolve_workflow_mixed_tool_types_in_one_workflow():
             {"node_type": "tool", "tool_type": "skill", "tool_id": str(skill_id)},
             {"node_type": "tool", "tool_type": "workflow", "tool_id": str(inner_workflow_id)},
             {"node_type": "tool", "tool_type": "agent_binding", "tool_id": str(target_app_id)},
-            {"node_type": "dataset_retrieval", "dataset_ids": [str(dataset_id)]},
+            {"node_type": "dataset_retrieval", "knowledge_base_ids": [str(dataset_id)]},
         ],
         "edges": [],
     }

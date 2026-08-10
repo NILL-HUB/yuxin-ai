@@ -11,7 +11,7 @@ from sqlalchemy import desc, or_
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.entity.tag_entity import sort_tags_by_priority
 from internal.service.tag_assignment_service import TagAssignmentService
-from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
+from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException
 from internal.lib.helper import escape_like_pattern
 from internal.model import (
     Workflow,

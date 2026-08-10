@@ -5,7 +5,6 @@ from injector import inject
 
 from internal.entity.orchestration_feature_flag_entity import (
     get_default_orchestration_feature_flags,
-    get_disabled_orchestration_feature_flag,
 )
 from internal.model import OrchestrationFeatureFlagModel
 from pkg.sqlalchemy import SQLAlchemy

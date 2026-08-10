@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from fnmatch import fnmatch
 from uuid import uuid4
 
@@ -8,6 +9,8 @@ from internal.entity.agent_notification_entity import AgentNotificationEntity
 from internal.entity.document_index_notification_entity import (
     DocumentIndexNotificationEntity,
 )
+from internal.schema.agent_notification_schema import AgentNotificationSchema
+from internal.schema.document_index_notification_schema import DocumentIndexNotificationSchema
 from internal.service.notification_service import NotificationService
 
 
@@ -58,6 +61,103 @@ def fake_redis(monkeypatch):
 @pytest.fixture
 def notification_service(fake_redis):
     return NotificationService()
+
+
+def test_agent_notification_serialization():
+    user_id = uuid4()
+    app_id = uuid4()
+
+    agent_notification = AgentNotificationEntity(
+        id="agent-1",
+        user_id=user_id,
+        app_id=app_id,
+        app_name="Test Agent",
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        is_read=False,
+    )
+
+    serialized = AgentNotificationSchema().dump(agent_notification)
+
+    assert serialized["id"] == "agent-1"
+    assert serialized["app_id"] == str(app_id)
+    assert serialized["app_name"] == "Test Agent"
+    assert "dataset_id" not in serialized
+    assert "document_id" not in serialized
+
+
+def test_document_notification_serialization():
+    user_id = uuid4()
+    dataset_id = uuid4()
+    document_id = uuid4()
+
+    doc_notification = DocumentIndexNotificationEntity(
+        id="doc-1",
+        user_id=user_id,
+        dataset_id=dataset_id,
+        document_id=document_id,
+        document_name="test.pdf",
+        segment_count=10,
+        index_duration=5.5,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        status="success",
+        error_message="",
+        is_read=False,
+    )
+
+    serialized = DocumentIndexNotificationSchema().dump(doc_notification)
+
+    assert serialized["id"] == "doc-1"
+    assert serialized["dataset_id"] == str(dataset_id)
+    assert serialized["document_id"] == str(document_id)
+    assert serialized["document_name"] == "test.pdf"
+    assert "app_id" not in serialized
+    assert "app_name" not in serialized
+
+
+def test_mixed_notifications_serialization():
+    user_id = uuid4()
+    dataset_id = uuid4()
+    document_id = uuid4()
+    app_id = uuid4()
+
+    doc_notification = DocumentIndexNotificationEntity(
+        id="doc-1",
+        user_id=user_id,
+        dataset_id=dataset_id,
+        document_id=document_id,
+        document_name="test.pdf",
+        segment_count=10,
+        index_duration=5.5,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        status="success",
+        error_message="",
+        is_read=False,
+    )
+    agent_notification = AgentNotificationEntity(
+        id="agent-1",
+        user_id=user_id,
+        app_id=app_id,
+        app_name="Test Agent",
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+        is_read=False,
+    )
+
+    serialized_list = []
+    for notification in [agent_notification, doc_notification]:
+        if isinstance(notification, AgentNotificationEntity):
+            serialized_list.append(AgentNotificationSchema().dump(notification))
+        elif isinstance(notification, DocumentIndexNotificationEntity):
+            serialized_list.append(DocumentIndexNotificationSchema().dump(notification))
+
+    assert len(serialized_list) == 2
+
+    agent_serialized = serialized_list[0]
+    assert agent_serialized["app_name"] == "Test Agent"
+    assert "dataset_id" not in agent_serialized
+
+    doc_serialized = serialized_list[1]
+    assert doc_serialized["document_name"] == "test.pdf"
+    assert "app_id" not in doc_serialized
 
 
 def test_create_and_get_document_index_notification(notification_service):

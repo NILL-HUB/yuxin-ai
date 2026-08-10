@@ -16,13 +16,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from datetime import UTC, datetime
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     """返回无时区的 UTC 时间，兼容数据库 DateTime 列且避免 utcnow 退化警告。"""
     return datetime.now(UTC).replace(tzinfo=None)
-class Workflow(db.Model):
+class Workflow(Base):
     """工作流模型"""
     __tablename__ = "workflow"
     __table_args__ = (
@@ -35,7 +35,8 @@ class Workflow(db.Model):
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    account_id = Column(UUID, ForeignKey('account.id'), nullable=False)  # 创建账号id
+    account_id = Column(UUID, ForeignKey('account.id'), nullable=True)  # 创建账号id（平台级资源为空）
+    created_by_admin = Column(UUID, ForeignKey('admin_user.id'), nullable=True)  # 创建管理员id（管理端创建时记录）
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 工作流名字
     tool_call_name = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 工作流工具调用名字
     icon = Column(String(255), nullable=False, server_default=text("''::character varying"))  # 工作流图标
@@ -69,7 +70,7 @@ class Workflow(db.Model):
     )
 
 
-class WorkflowResult(db.Model):
+class WorkflowResult(Base):
     """工作流存储结果模型"""
     __tablename__ = "workflow_result"
     __table_args__ = (
@@ -97,7 +98,7 @@ class WorkflowResult(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class WorkflowVersion(db.Model):
+class WorkflowVersion(Base):
     """工作流版本历史表，存储每次发布的 graph 快照，支持回滚到任意历史版本。
 
     对标 AppConfigVersion 的设计：
@@ -135,7 +136,7 @@ class WorkflowVersion(db.Model):
     workflow = relationship("Workflow", foreign_keys=[workflow_id], lazy="joined")
 
 
-class WorkflowRun(db.Model):
+class WorkflowRun(Base):
     """工作流执行记录，每次工作流运行创建一条记录。
 
     对标 Dify 的 WorkflowRun，记录：
@@ -178,7 +179,7 @@ class WorkflowRun(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class WorkflowNodeExecution(db.Model):
+class WorkflowNodeExecution(Base):
     """工作流节点执行记录，每个节点的执行都会创建一条记录。
 
     对标 Dify 的 WorkflowNodeExecution，记录：

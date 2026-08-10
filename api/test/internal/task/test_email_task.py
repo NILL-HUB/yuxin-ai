@@ -10,7 +10,7 @@ def test_send_verification_email_task_should_build_message_and_send(monkeypatch)
     fake_mail = SimpleNamespace(send=lambda msg: sent_messages.append(msg))
     injector = SimpleNamespace(get=lambda _cls: fake_mail)
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(
         "internal.task.email_task.Message",
         lambda **kwargs: SimpleNamespace(**kwargs),
@@ -36,7 +36,7 @@ def test_send_verification_email_task_should_build_message_and_send(monkeypatch)
     )
 
     assert len(sent_messages) == 1
-    assert sent_messages[0].subject == "【OpenAgent】密码重置验证码"
+    assert sent_messages[0].subject == "【钰心AI】密码重置验证码"
     assert sent_messages[0].recipients == ["demo@example.com"]
     assert "123456" in sent_messages[0].body
     assert "123456" in sent_messages[0].html
@@ -66,7 +66,7 @@ def test_send_verification_email_task_should_prefer_ipv4_server_and_restore(monk
     fake_mail = SimpleNamespace(server="smtp.qq.com", send=_fake_send)
     injector = SimpleNamespace(get=lambda _cls: fake_mail)
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(
         "internal.task.email_task.Message",
         lambda **kwargs: SimpleNamespace(**kwargs),
@@ -123,7 +123,7 @@ def test_send_verification_email_task_should_restore_previous_default_timeout(mo
     fake_mail = SimpleNamespace(server="smtp.qq.com", send=_fake_send)
     injector = SimpleNamespace(get=lambda _cls: fake_mail)
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(
         "internal.task.email_task.Message",
         lambda **kwargs: SimpleNamespace(**kwargs),
@@ -180,7 +180,7 @@ def test_send_verification_email_task_should_fallback_to_original_server_when_dn
     fake_mail = SimpleNamespace(server="smtp.qq.com", send=_fake_send)
     injector = SimpleNamespace(get=lambda _cls: fake_mail)
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(
         "internal.task.email_task.Message",
         lambda **kwargs: SimpleNamespace(**kwargs),
@@ -225,7 +225,7 @@ def test_send_verification_email_task_should_clear_pending_keys_when_send_failed
     setex_calls = []
     delete_calls = []
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(
         "internal.task.email_task.Message",
         lambda **kwargs: SimpleNamespace(**kwargs),

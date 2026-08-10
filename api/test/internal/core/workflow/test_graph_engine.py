@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from uuid import uuid4
 
@@ -704,3 +705,170 @@ class TestGraphEngineRetry:
         # 不应包含 _retry_attempts 字段（首次成功）
         assert "_retry_attempts" not in code_finished["data"]["outputs"]
         assert code_finished["data"]["outputs"]["result"] == "first_try_ok"
+
+
+# ----------------------------------------------------------------------
+# execute_async 测试（阶段 2：GraphEngine async 节点支持）
+# ----------------------------------------------------------------------
+async def _collect_async(engine, inputs):
+    """异步收集 execute_async 生成的所有事件。"""
+    return [event async for event in engine.execute_async(inputs)]
+
+
+async def _async_executor(node, pool):
+    """协程节点执行器：start 输出 sys.inputs.query，code 输出固定结果。"""
+    if node.node_type == NodeType.START.value:
+        sys_inputs = pool.get_system_variable("inputs") or {}
+        return {"query": sys_inputs.get("query")}
+    if node.node_type == NodeType.CODE.value:
+        return {"result": "async_result"}
+    return {}
+
+
+class TestGraphEngineExecuteAsync:
+    """execute_async（async 版工作流执行）相关测试。"""
+
+    def test_linear_workflow_with_sync_executor(self):
+        """同步执行器在 async 路径下走 to_thread，事件序列与同步版一致。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        engine = GraphEngine(config, pool, node_executor=_start_executor)
+
+        events = asyncio.run(_collect_async(engine, {"query": "hello"}))
+        event_types = [e["event"] for e in events]
+
+        assert event_types[0] == "workflow_started"
+        assert event_types[-1] == "workflow_finished"
+        assert event_types.count("node_started") == 3
+        assert event_types.count("node_finished") == 3
+        assert "node_failed" not in event_types
+        assert events[-1]["data"]["status"] == "succeeded"
+        assert events[0]["data"]["inputs"] == {"query": "hello"}
+
+    def test_parallel_workflow_outputs_written_to_pool(self):
+        """并行层通过 gather 执行，输出写入 VariablePool，node_finished 顺序稳定。"""
+        config = _build_parallel_config()
+        pool = VariablePool()
+        code_1 = config.nodes[1]
+        code_2 = config.nodes[2]
+
+        def executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_1.id:
+                return {"result": "r1"}
+            if node.id == code_2.id:
+                return {"result": "r2"}
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=executor)
+        events = asyncio.run(_collect_async(engine, {"query": "hello"}))
+
+        finished_events = [e for e in events if e["event"] == "node_finished"]
+        assert len(finished_events) == 4  # start + code_1 + code_2 + end
+        finished_ids = [e["data"]["node_id"] for e in finished_events]
+        assert finished_ids.index(str(code_1.id)) < finished_ids.index(str(code_2.id))
+        assert pool.get_node_output(str(code_1.id), "result") == "r1"
+        assert pool.get_node_output(str(code_2.id), "result") == "r2"
+        assert events[-1]["data"]["status"] == "succeeded"
+
+    def test_async_executor_runs_in_event_loop(self):
+        """协程执行器在事件循环中直接执行，无需线程池。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        engine = GraphEngine(config, pool, node_executor=_async_executor)
+
+        events = asyncio.run(_collect_async(engine, {"query": "hello"}))
+        finished_events = [e for e in events if e["event"] == "node_finished"]
+
+        code_node = config.nodes[1]
+        code_finished = next(
+            e for e in finished_events if e["data"]["node_id"] == str(code_node.id)
+        )
+        assert code_finished["data"]["outputs"]["result"] == "async_result"
+        assert events[-1]["data"]["status"] == "succeeded"
+
+    def test_node_failure_recovery_skips_downstream(self):
+        """async 路径节点失败时不终止工作流，跳过下游节点，状态 partial_failed。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        end_node = config.nodes[2]
+
+        async def failing_executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                raise RuntimeError("节点执行失败")
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=failing_executor)
+        events = asyncio.run(_collect_async(engine, {"query": "hello"}))
+        event_types = [e["event"] for e in events]
+
+        assert "node_failed" in event_types
+        assert "node_skipped" in event_types
+        finished = next(e for e in events if e["event"] == "workflow_finished")
+        assert finished["data"]["status"] == "partial_failed"
+        end_started = any(
+            e["event"] == "node_started" and e["data"]["node_id"] == str(end_node.id)
+            for e in events
+        )
+        assert not end_started
+
+    def test_cycle_detected_emits_failed_finish(self):
+        """存在环路时 execute_async 推送 workflow_finished status=failed。"""
+        config = _build_simple_config()
+        # 构造环路：end -> start
+        config.edges.append(
+            type(config.edges[0])(
+                id=uuid4(),
+                source=config.nodes[2].id,
+                source_type=NodeType.END.value,
+                target=config.nodes[0].id,
+                target_type=NodeType.START.value,
+            )
+        )
+        engine = GraphEngine(config, VariablePool(), node_executor=_start_executor)
+
+        events = asyncio.run(_collect_async(engine, {"query": "hello"}))
+        finished = events[-1]
+
+        assert finished["event"] == "workflow_finished"
+        assert finished["data"]["status"] == "failed"
+
+    def test_async_retry_succeeds_after_retry(self):
+        """协程执行器失败后经 execute_with_retry_async 重试成功，输出含 _retry_attempts。"""
+        config = _build_simple_config()
+        pool = VariablePool()
+        code_node = config.nodes[1]
+        code_node.retry_config = RetryConfig(
+            retry_on_fail=True, max_tries=3, retry_interval=0.0
+        )
+        call_count = {"code": 0}
+
+        async def retrying_executor(node, pool):
+            if node.node_type == NodeType.START.value:
+                sys_inputs = pool.get_system_variable("inputs") or {}
+                return {"query": sys_inputs.get("query")}
+            if node.id == code_node.id:
+                call_count["code"] += 1
+                if call_count["code"] < 2:
+                    raise RuntimeError("首次失败")
+                return {"result": "retried_ok"}
+            return {}
+
+        engine = GraphEngine(config, pool, node_executor=retrying_executor)
+        events = asyncio.run(_collect_async(engine, {"query": "hello"}))
+
+        assert call_count["code"] == 2
+        code_finished = next(
+            e for e in events
+            if e["event"] == "node_finished" and e["data"]["node_id"] == str(code_node.id)
+        )
+        assert code_finished["data"]["outputs"]["result"] == "retried_ok"
+        assert code_finished["data"]["outputs"]["_retry_attempts"] == 2
+        finished = next(e for e in events if e["event"] == "workflow_finished")
+        assert finished["data"]["status"] == "succeeded"

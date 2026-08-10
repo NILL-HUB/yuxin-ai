@@ -5,7 +5,7 @@ from injector import inject
 
 from internal.entity.routing_quality_entity import RoutingOptimizationSuggestion
 from internal.exception import NotFoundException
-from internal.model import PolicyChangeDraftModel, RoutingOptimizationSuggestionModel
+from internal.model import RoutingOptimizationSuggestionModel
 from pkg.sqlalchemy import SQLAlchemy
 
 

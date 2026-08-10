@@ -14,14 +14,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class ToolGovernancePolicy(db.Model):
+class ToolGovernancePolicy(Base):
     __tablename__ = "tool_governance_policy"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_tool_governance_policy_id"),
@@ -55,7 +55,7 @@ class ToolGovernancePolicy(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class ToolInvocationAudit(db.Model):
+class ToolInvocationAudit(Base):
     __tablename__ = "tool_invocation_audit"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_tool_invocation_audit_id"),

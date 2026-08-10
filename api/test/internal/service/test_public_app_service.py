@@ -493,7 +493,7 @@ class TestPublicAppService:
         with pytest.raises(FailException):
             service.fork_public_app(str(public_app.id), account)
 
-    def test_fork_public_app_should_copy_dataset_joins(self, monkeypatch):
+    def test_fork_public_app_should_copy_knowledge_base_ids(self, monkeypatch):
         account = SimpleNamespace(id=uuid4())
         app_config = SimpleNamespace(
             model_config={"provider": "openai"},
@@ -509,7 +509,7 @@ class TestPublicAppService:
             text_to_speech={"enable": False},
             suggested_after_answer={"enable": True},
             review_config={"enable": False},
-            app_dataset_joins=[SimpleNamespace(dataset_id=uuid4())],
+            knowledge_base_ids=[str(uuid4())],
         )
         public_app = SimpleNamespace(
             id=uuid4(),
@@ -528,31 +528,22 @@ class TestPublicAppService:
         service = _build_service(session=session)
         monkeypatch.setattr("internal.service.public_app_service.App", _FakeApp)
         monkeypatch.setattr("internal.service.public_app_service.AppConfigVersion", _FakeAppConfigVersion)
-        monkeypatch.setattr(
-            service,
-            "update",
-            lambda target, **kwargs: target.__dict__.update(kwargs) or target,
-        )
 
         copied = service.fork_public_app(str(public_app.id), account)
 
         assert copied.name.endswith("(副本)")
-        assert len(session.added) == 3
-        assert getattr(session.added[2], "dataset_id", None) == app_config.app_dataset_joins[0].dataset_id
+        assert len(session.added) == 2
+        assert isinstance(session.added[0], _FakeApp)
+        assert isinstance(session.added[1], _FakeAppConfigVersion)
+        assert session.added[1].knowledge_base_ids == app_config.knowledge_base_ids
 
-    def test_fork_public_app_should_skip_duplicate_dataset_joins(self, monkeypatch):
+    def test_fork_public_app_should_create_app_and_draft_config_version(self, monkeypatch):
         account = SimpleNamespace(id=uuid4())
-        dataset_id_1 = uuid4()
-        dataset_id_2 = uuid4()
         app_config = SimpleNamespace(
             model_config={"provider": "openai"},
             dialog_round=3,
             preset_prompt="prompt",
             tools=[],
-            agent_bindings=[
-                {"app_id": str(uuid4()), "invoke_mode": "a2a"},
-                {"app_id": str(uuid4()), "invoke_mode": "tool"},
-            ],
             mcp_bindings=[],
             workflows=[],
             retrieval_config={},
@@ -563,11 +554,7 @@ class TestPublicAppService:
             text_to_speech={"enable": False},
             suggested_after_answer={"enable": True},
             review_config={"enable": False},
-            app_dataset_joins=[
-                SimpleNamespace(dataset_id=dataset_id_1),
-                SimpleNamespace(dataset_id=dataset_id_1),
-                SimpleNamespace(dataset_id=dataset_id_2),
-            ],
+            knowledge_base_ids=[str(uuid4()), str(uuid4())],
         )
         public_app = SimpleNamespace(
             id=uuid4(),
@@ -586,14 +573,13 @@ class TestPublicAppService:
 
         copied = service.fork_public_app(str(public_app.id), account)
 
-        dataset_joins = [obj for obj in session.added if hasattr(obj, "dataset_id")]
         assert copied.name.endswith("(副本)")
         assert copied.original_app_id == public_app.id
         assert copied.status == AppStatus.DRAFT.value
         assert copied.tags == [AppCategory.GENERAL.value]
-        assert len(session.added) == 4
-        assert len(dataset_joins) == 2
-        assert {join.dataset_id for join in dataset_joins} == {dataset_id_1, dataset_id_2}
+        assert len(session.added) == 2
+        assert isinstance(session.added[0], _FakeApp)
+        assert isinstance(session.added[1], _FakeAppConfigVersion)
         assert session.added[1].app_id == copied.id
         assert session.added[1].version == 0
 

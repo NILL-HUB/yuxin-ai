@@ -1,10 +1,10 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField
 from wtforms.validators import DataRequired, Length, NumberRange, Optional
 
 
-class MemoryWriteReq(FlaskForm):
+class MemoryWriteReq(Form):
     """记忆写入请求表单。"""
 
     content = StringField("content", validators=[DataRequired(), Length(max=8000)])
@@ -27,7 +27,7 @@ class MemoryWriteResp(Schema):
     vector_id = fields.String(allow_none=True)
 
 
-class MemoryRetrieveReq(FlaskForm):
+class MemoryRetrieveReq(Form):
     """记忆检索请求表单。"""
 
     query = StringField("query", validators=[DataRequired(), Length(max=4000)])
@@ -74,7 +74,7 @@ class ConsolidationResp(Schema):
 # =========================================================
 
 
-class EditMemoryReq(FlaskForm):
+class EditMemoryReq(Form):
     """编辑记忆请求表单。"""
 
     new_content = StringField(
@@ -83,7 +83,7 @@ class EditMemoryReq(FlaskForm):
     )
 
 
-class DecayReq(FlaskForm):
+class DecayReq(Form):
     """手动降权请求表单。"""
 
     decay_factor = StringField(

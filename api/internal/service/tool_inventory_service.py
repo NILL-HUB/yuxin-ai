@@ -11,6 +11,7 @@ from internal.entity.workflow_entity import WorkflowStatus
 from internal.extension.database_extension import db
 from internal.model import ApiTool, ExternalDataSource, KnowledgeBase, McpProvider, SkillPackage, UserMemory, Workflow
 from .builtin_tool_service import BuiltinToolService
+from .mcp_runtime_adapter import McpRuntimeAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,33 @@ def parse_tool_id(tool_id: str) -> tuple[str, str]:
         return "", tool_id if isinstance(tool_id, str) else ""
     source_type, _, entity_id = tool_id.partition(":")
     return source_type, entity_id
+
+
+def with_runtime_fields(candidates: list[dict]) -> list[dict]:
+    adapter = McpRuntimeAdapter()
+    result = []
+    for candidate in candidates:
+        item = dict(candidate)
+        descriptor = adapter.to_runtime_tool(item)
+        item["runtime_name"] = descriptor.runtime_name if descriptor else ""
+        item["mounted"] = False
+        item["mount_reason"] = "not_mounted"
+        result.append(item)
+    return result
+
+
+def filter_candidates(
+    candidates: list[dict], *, tool_pool: str, risk_level: str
+) -> list[dict]:
+    result = []
+    for candidate in candidates:
+        metadata = candidate.get("metadata") or {}
+        if tool_pool and metadata.get("tool_pool") != tool_pool:
+            continue
+        if risk_level and metadata.get("risk_level") != risk_level:
+            continue
+        result.append(candidate)
+    return result
 
 
 class ToolInventory:

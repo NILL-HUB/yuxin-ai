@@ -309,7 +309,7 @@ def _tier_item(task_id="task-1", complexity=None, balance=None, budget=None):
 
 
 def test_escalation_triggers_upgrade():
-    executor = _metadata_executor(tier="standard", total_tokens=0)
+    executor = _metadata_executor(tier="2", total_tokens=0)
     item = _tier_item(
         complexity="complex", balance=float("inf"), budget="high"
     )
@@ -320,11 +320,11 @@ def test_escalation_triggers_upgrade():
 
     results = coordinator.execute(plan)
 
-    assert "escalation:standard->strong" in results[0].warnings
+    assert "escalation:2->3" in results[0].warnings
 
 
 def test_escalation_triggers_downgrade():
-    executor = _metadata_executor(tier="strong", total_tokens=0)
+    executor = _metadata_executor(tier="3", total_tokens=0)
     item = _tier_item(
         complexity="simple", balance=50.0, budget="high"
     )
@@ -335,11 +335,11 @@ def test_escalation_triggers_downgrade():
 
     results = coordinator.execute(plan)
 
-    assert "escalation:strong->cheap" in results[0].warnings
+    assert "escalation:3->1" in results[0].warnings
 
 
 def test_escalation_no_change():
-    executor = _metadata_executor(tier="standard", total_tokens=0)
+    executor = _metadata_executor(tier="2", total_tokens=0)
     item = _tier_item(
         complexity="medium", balance=float("inf"), budget="medium"
     )

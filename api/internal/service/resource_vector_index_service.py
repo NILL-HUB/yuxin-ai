@@ -156,7 +156,9 @@ class ResourceVectorIndexService:
                 "tier": model.tier,
                 "price_per_1k_tokens": str(model.price_per_1k_tokens),
                 "compatible_api": model.compatible_api,
-                "max_tokens": model.max_tokens,
+                "max_tokens": (model.max_input_tokens or 0) + (model.max_output_tokens or 0),
+                "max_input_tokens": model.max_input_tokens or 0,
+                "max_output_tokens": model.max_output_tokens or 0,
             }
             if self._upsert_index(
                 RESOURCE_TYPE_MODEL,

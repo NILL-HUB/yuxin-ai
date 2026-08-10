@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from urllib.parse import urlparse
 from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField, BooleanField, IntegerField
@@ -32,7 +32,7 @@ class GetWebAppResp(Schema):
         }
 
 
-class WebAppChatReq(FlaskForm):
+class WebAppChatReq(Form):
     """WebApp对话请求结构体"""
     confirm_deep_thinking = BooleanField("confirm_deep_thinking", default=False)
     conversation_id = StringField("conversation_id", default="", validators=[
@@ -61,7 +61,7 @@ class WebAppChatReq(FlaskForm):
                 raise ValidationError("上传的图片URL地址格式错误，请核实后重试")
 
 
-class GetConversationsReq(FlaskForm):
+class GetConversationsReq(Form):
     """获取WebApp会话列表请求结构体"""
     is_pinned = BooleanField("is_pinned", default=False)
     current_page = IntegerField("current_page", default=1, validators=[

@@ -1,11 +1,12 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Generator
+from typing import Any, AsyncGenerator, Generator
 from uuid import UUID
 
-from flask import Flask, current_app, g, has_app_context
+from internal.context import current_app, g, has_app_context
 from injector import inject
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
@@ -19,7 +20,6 @@ from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.dataset_entity import RetrievalStrategy
-from internal.exception import FailException
 from internal.model import App, Account
 from pkg.sqlalchemy import SQLAlchemy
 from .app_config_service import AppConfigService, call_config_loader
@@ -68,7 +68,7 @@ class AppRuntimeService(BaseService):
         app_id: UUID,
         account: Account,
         draft_app_config: dict[str, Any],
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         runtime_context: dict[str, Any] | None = None,
         governance_gate: Any | None = None,
         governance_context: dict[str, Any] | None = None,
@@ -227,7 +227,7 @@ class AppRuntimeService(BaseService):
         account: Account,
         app_id: UUID | None = None,
         draft_app_config: dict[str, Any],
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         runtime_context: dict[str, Any] | None = None,
         governance_gate: Any | None = None,
         governance_context: dict[str, Any] | None = None,
@@ -258,11 +258,7 @@ class AppRuntimeService(BaseService):
         knowledge_base_ids = list(draft_app_config.get("knowledge_base_ids") or [])
 
         if knowledge_base_ids:
-            runtime_flask_app = flask_app
-            if runtime_flask_app is None and has_app_context():
-                runtime_flask_app = current_app._get_current_object()
-            if runtime_flask_app is None:
-                raise FailException("构建知识库检索工具失败: 缺少 Flask application context")
+            runtime_flask_app = flask_app or current_app._get_current_object()
             retrieval_config = draft_app_config.get("retrieval_config", {}) or {}
             # 统一转换为 UUID 以兼容底层数据库查询
             kb_uuid_ids: list[UUID] = []
@@ -555,7 +551,7 @@ class AppRuntimeService(BaseService):
         *,
         account: Account | None,
         app_id: UUID,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         runtime_context: dict[str, Any] | None = None,
     ) -> list[BaseTool]:
         """根据 Agent 绑定列表生成 LangChain 工具。"""
@@ -628,7 +624,7 @@ class AppRuntimeService(BaseService):
         binding: dict[str, Any],
         query: str,
         account: Account | SimpleNamespace | None,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         runtime_context: dict[str, Any] | None = None,
     ) -> str:
         """实际执行一个 Agent 子应用绑定。"""
@@ -738,7 +734,7 @@ class AppRuntimeService(BaseService):
         draft_app_config: dict[str, Any],
         tools: list[Any],
         enable_deep_thinking: bool = False,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
         language_model_service: Any | None = None,
         invoke_from: InvokeFrom = InvokeFrom.DEBUGGER.value,
     ) -> FunctionCallAgent | ReACTAgent | DeepThinkingAgent:
@@ -808,7 +804,7 @@ class AppRuntimeService(BaseService):
         message_id: str = "",
         agent_thoughts: dict[str, Any] | None = None,
         enable_deep_thinking: bool = False,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
     ) -> Generator[str, None, None]:
         """统一流式执行应用Agent并输出事件"""
         tools = self.build_runtime_tools(app_id, account, draft_app_config, flask_app=flask_app)
@@ -824,6 +820,90 @@ class AppRuntimeService(BaseService):
         agent_thoughts = agent_thoughts if agent_thoughts is not None else {}
 
         for agent_thought in agent.stream({
+            "messages": [llm.convert_to_human_message(query, image_urls)],
+            "history": history,
+            "long_term_memory": long_term_memory,
+        }):
+            event_id = str(agent_thought.id)
+
+            if agent_thought.event != QueueEvent.PING.value:
+                if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
+                    if event_id not in agent_thoughts:
+                        agent_thoughts[event_id] = agent_thought
+                    else:
+                        agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(update={
+                            "thought": agent_thoughts[event_id].thought + agent_thought.thought,
+                            "message": agent_thought.message,
+                            "message_token_count": agent_thought.message_token_count,
+                            "message_unit_price": agent_thought.message_unit_price,
+                            "message_price_unit": agent_thought.message_price_unit,
+                            "answer": agent_thoughts[event_id].answer + agent_thought.answer,
+                            "answer_token_count": agent_thought.answer_token_count,
+                            "answer_unit_price": agent_thought.answer_unit_price,
+                            "answer_price_unit": agent_thought.answer_price_unit,
+                            "total_token_count": agent_thought.total_token_count,
+                            "total_price": agent_thought.total_price,
+                            "latency": agent_thought.latency,
+                        })
+                else:
+                    agent_thoughts[event_id] = agent_thought
+
+            usage_summary = summarize_agent_thoughts(agent_thoughts.values())
+            data = {
+                **agent_thought.model_dump(include={
+                    "event", "thought", "observation", "tool", "tool_input", "answer",
+                    "total_token_count", "total_price", "latency",
+                }),
+                "aggregate_total_token_count": usage_summary.total_token_count,
+                "aggregate_total_price": usage_summary.total_price,
+                "aggregate_latency": usage_summary.latency,
+                "id": event_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "task_id": str(agent_thought.task_id),
+            }
+            yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+    async def stream_agent_events_async(
+        self,
+        app_id: UUID,
+        account: Account,
+        draft_app_config: dict[str, Any],
+        llm: Any,
+        query: str,
+        image_urls: list[str],
+        history: list[Any],
+        long_term_memory: str,
+        conversation_id: str = "",
+        message_id: str = "",
+        agent_thoughts: dict[str, Any] | None = None,
+        enable_deep_thinking: bool = False,
+        flask_app: Any | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """统一流式执行应用Agent并输出事件（async 版，供 ASGI/Quart 链路使用）。
+
+        与 stream_agent_events 逻辑一致，但消费 agent.astream（事件循环中执行，
+        LLM 节点已 async 化），不占用额外子线程，是并发承载优化的推荐路径。
+        """
+        tools = await asyncio.to_thread(
+            self.build_runtime_tools,
+            app_id,
+            account,
+            draft_app_config,
+            flask_app=flask_app,
+        )
+        agent = self.create_runtime_agent(
+            llm,
+            account,
+            draft_app_config,
+            tools,
+            enable_deep_thinking,
+            flask_app=flask_app,
+            language_model_service=self.language_model_service,
+        )
+        agent_thoughts = agent_thoughts if agent_thoughts is not None else {}
+
+        async for agent_thought in agent.astream({
             "messages": [llm.convert_to_human_message(query, image_urls)],
             "history": history,
             "long_term_memory": long_term_memory,

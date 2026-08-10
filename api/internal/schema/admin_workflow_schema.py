@@ -1,18 +1,18 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import BooleanField, IntegerField, StringField
 from wtforms.validators import Length, NumberRange, Optional, ValidationError
 from internal.schema import DictField, ListField
 
 
-class GetAdminWorkflowsReq(FlaskForm):
+class GetAdminWorkflowsReq(Form):
     search = StringField("search", default="", validators=[Optional(), Length(max=255)])
     status = StringField("status", default="all", validators=[Optional(), Length(max=255)])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=100)])
 
 
-class UpdateAdminWorkflowReq(FlaskForm):
+class UpdateAdminWorkflowReq(Form):
     status = StringField("status", validators=[Optional(), Length(max=255)])
     is_public = BooleanField("is_public", validators=[Optional()])
     task_keywords = ListField("task_keywords", default=[])
@@ -28,19 +28,19 @@ class UpdateAdminWorkflowReq(FlaskForm):
                 raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
-class PublishAdminWorkflowReq(FlaskForm):
+class PublishAdminWorkflowReq(Form):
     summary = StringField("summary", default="", validators=[Optional(), Length(max=500)])
 
 
-class RollbackWorkflowVersionReq(FlaskForm):
+class RollbackWorkflowVersionReq(Form):
     summary = StringField("summary", default="", validators=[Optional(), Length(max=500)])
 
 
-class BatchPublishWorkflowsReq(FlaskForm):
+class BatchPublishWorkflowsReq(Form):
     workflow_ids = DictField("workflow_ids", default=None)
 
 
-class BatchOfflineWorkflowsReq(FlaskForm):
+class BatchOfflineWorkflowsReq(Form):
     workflow_ids = DictField("workflow_ids", default=None)
 
 
@@ -53,6 +53,7 @@ class AdminWorkflowResp(Schema):
     status = fields.String()
     is_public = fields.Boolean()
     task_keywords = fields.List(fields.String(), dump_default=[])
+    creator_name = fields.String(dump_default="")
     created_at = fields.Integer()
     updated_at = fields.Integer()
 

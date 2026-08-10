@@ -9,7 +9,7 @@ from sqlalchemy import (
     Numeric,
     Float,
     text,
-    PrimaryKeyConstraint, func, asc,
+    PrimaryKeyConstraint, func,
     Index
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -17,6 +17,7 @@ from sqlalchemy.orm import relationship
 from datetime import UTC, datetime
 
 from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
@@ -24,7 +25,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class Conversation(db.Model):
+class Conversation(Base):
     """交流会话模型"""
     __tablename__ = "conversation"
     __table_args__ = (
@@ -66,7 +67,7 @@ class Conversation(db.Model):
         return False if message_count > 1 else True
 
 
-class Message(db.Model):
+class Message(Base):
     """交流消息模型"""
     __tablename__ = "message"
     __table_args__ = (
@@ -86,7 +87,7 @@ class Message(db.Model):
         nullable=False,
         server_default=text("''::character varying"),
     )  # 调用来源，涵盖service_api、web_app、debugger等
-    created_by = Column(UUID, nullable=False)  # 消息的创建来源，有可能是 OpenAgent 的用户，也有可能是开放 API 的终端用户
+    created_by = Column(UUID, nullable=False)  # 消息的创建来源，有可能是 钰心AI 的用户，也有可能是开放 API 的终端用户
 
     # 消息关联的原始问题
     query = Column(Text, nullable=False, server_default=text("''::text"))  # 用户提问的原始query
@@ -138,7 +139,7 @@ class Message(db.Model):
         return db.session.query(Conversation).get(self.conversation_id)
 
 
-class MessageAgentThought(db.Model):
+class MessageAgentThought(Base):
     """智能体消息推理模型，用于记录Agent生成最终消息答案时"""
     __tablename__ = "message_agent_thought"
     __table_args__ = (
@@ -160,7 +161,7 @@ class MessageAgentThought(db.Model):
         nullable=False,
         server_default=text("''::character varying"),
     )  # 调用来源，涵盖service_api、web_app、debugger等
-    created_by = Column(UUID, nullable=False)  # 消息的创建来源，有可能是 OpenAgent 的用户，也有可能是开放 API 的终端用户
+    created_by = Column(UUID, nullable=False)  # 消息的创建来源，有可能是 钰心AI 的用户，也有可能是开放 API 的终端用户
 
     # 该步骤在消息中执行的位置
     position = Column(Integer, nullable=False, server_default=text("0"))  # 推理观察的位置

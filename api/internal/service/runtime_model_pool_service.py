@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Optional
@@ -8,7 +8,7 @@ from injector import inject
 from internal.core.language_model.language_model_manager import LanguageModelManager
 from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig, ModelTierPolicy
 from internal.model.model_provider_entity import ModelProviderConfig
-from internal.service.admin_model_pool_service import _decrypt_key_value
+from internal.service.admin_model_pool_service import _decrypt_key_value, CONTEXT_LESS_MODEL_TYPES, normalize_provider_base_url
 from pkg.sqlalchemy import SQLAlchemy
 
 
@@ -132,10 +132,15 @@ class RuntimeModelPoolService:
 
     def build_llm_config(self, model: ModelPoolConfig, key: ModelKeyConfig) -> dict[str, Any]:
         api_key = _decrypt_key_value(key.key_value_encrypted)
+        parameters: dict[str, Any] = {}
+        # 注入输出长度上限：按模型池配置的 max_output_tokens 限制单次生成长度，
+        # 避免"只写总上限导致上下文爆掉"——输出侧独立受控
+        if model.model_type not in CONTEXT_LESS_MODEL_TYPES and (model.max_output_tokens or 0) > 0:
+            parameters["max_tokens"] = int(model.max_output_tokens)
         config: dict[str, Any] = {
             "provider": model.provider,
             "model": model.model_name,
-            "parameters": {},
+            "parameters": parameters,
             "api_key": api_key,
             "key_id": str(key.id),
             "model_id": str(model.id),
@@ -152,7 +157,10 @@ class RuntimeModelPoolService:
             try:
                 provider_config = self._session().query(ModelProviderConfig).filter_by(name=model.provider).first()
                 if provider_config and provider_config.default_base_url:
-                    base_url = provider_config.default_base_url
+                    base_url = normalize_provider_base_url(
+                        provider_config.default_base_url,
+                        is_full_url=bool(getattr(provider_config, "is_full_url", False)),
+                    )
             except Exception:
                 pass
         if base_url:

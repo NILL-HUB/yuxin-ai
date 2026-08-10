@@ -28,12 +28,12 @@ from internal.schema.auth_schema import (
 )
 from internal.schema.oauth_schema import AuthorizeReq, AuthorizeResp
 from internal.schema.schema import DictField, ListField
-from test.internal.schema.utils import ns, utc_dt
+from test.internal.schema.utils import build_formdata, ns, utc_dt
 
 
 def _validate_form(form_request, form_cls, *, data=None, json=None, content_type=None):
     with form_request(data=data, json=json, content_type=content_type):
-        form = form_cls(meta={"csrf": False})
+        form = form_cls(formdata=build_formdata(), meta={"csrf": False})
         return form.validate(), form
 
 

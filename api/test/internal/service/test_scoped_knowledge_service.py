@@ -54,14 +54,28 @@ def _fake_db(session):
 
 def test_system_knowledge_service_should_require_admin_context(monkeypatch):
     admin_user_id = uuid4()
+    embedding_model_id = uuid4()
     service = SystemKnowledgeService(
-        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)]))
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)])),
+        retrieval_service=SimpleNamespace(),
+        icon_generator_service=SimpleNamespace(),
     )
     created = []
     monkeypatch.setattr(
         service,
         "create",
         lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        service,
+        "auto_select_embedding_model",
+        lambda: SimpleNamespace(id=embedding_model_id),
+    )
+    updated = []
+    monkeypatch.setattr(
+        service,
+        "update",
+        lambda kb, **kwargs: updated.append(kwargs) or kb,
     )
 
     result = service.create_system_knowledge(
@@ -75,6 +89,7 @@ def test_system_knowledge_service_should_require_admin_context(monkeypatch):
     assert result.owner_account_id is None
     assert result.owner_admin_user_id == admin_user_id
     assert result.operation_context == "admin"
+    assert updated == [{"embedding_model_id": embedding_model_id}]
 
     with pytest.raises(ForbiddenException):
         service.create_system_knowledge(name="非法系统知识", admin_user=None)
@@ -83,7 +98,11 @@ def test_system_knowledge_service_should_require_admin_context(monkeypatch):
 def test_user_content_service_should_create_home_upload_as_user_content(monkeypatch):
     account_id = uuid4()
     admin_user_id = uuid4()
-    service = UserContentKnowledgeService(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)])))
+    service = UserContentKnowledgeService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=None)])),
+        retrieval_service=SimpleNamespace(),
+        icon_generator_service=SimpleNamespace(),
+    )
     monkeypatch.setattr(service, "create", lambda _model, **kwargs: SimpleNamespace(**kwargs))
 
     result = service.create_home_upload_base(
@@ -112,7 +131,9 @@ def test_user_content_service_should_list_authorized_system_and_current_user_bas
         id=uuid4(), name="别人资料", knowledge_scope="user_content", owner_account_id=other_account_id, enabled=True
     )
     service = UserContentKnowledgeService(
-        db=_fake_db(_SessionStub([_QueryStub(all_result=[system_base, own_base, other_base])]))
+        db=_fake_db(_SessionStub([_QueryStub(all_result=[system_base, own_base, other_base])])),
+        retrieval_service=SimpleNamespace(),
+        icon_generator_service=SimpleNamespace(),
     )
 
     result = service.list_authorized_bases(SimpleNamespace(id=account_id))

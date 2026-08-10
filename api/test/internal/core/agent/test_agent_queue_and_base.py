@@ -4,6 +4,9 @@ from uuid import uuid4
 
 import pytest
 import queue as py_queue
+import sys
+import types as _types
+import importlib as _importlib
 from langchain_core.messages import HumanMessage
 from langchain_core.outputs import LLMResult
 from pydantic import PrivateAttr
@@ -17,6 +20,40 @@ from internal.core.agent.failure_utils import build_failure_observation, classif
 from internal.core.language_model.entities.model_entity import BaseLanguageModel
 from internal.entity.conversation_entity import InvokeFrom
 from internal.exception import FailException
+
+
+@pytest.fixture(autouse=True)
+def _inject_fake_http_module():
+    """测试执行期间用 fake app.http.module 覆盖 sys.modules。
+
+    避免 monkeypatch.setattr("app.http.module.injector", ...) 触发真实模块的
+    既有循环 import（providers -> tool_credential_encryptor -> crypto_key_service
+    -> app.http.module）；agent_queue_manager 在函数内动态 import injector，
+    覆盖 sys.modules 即可生效。
+
+    pytest 9 的 monkeypatch.setattr 用 getattr 链解析字符串路径
+    （先 getattr(app.http, "module") 再 import_module），而 app/http/__init__.py
+    为空、不挂 module 属性，且 import_module 命中缓存时不会回填父包属性，
+    因此需要把 fake 显式挂到 app.http 包上，保证解析成功。
+    """
+    fake_module = _types.ModuleType("app.http.module")
+    fake_module.injector = None
+    original = sys.modules.get("app.http.module")
+    sys.modules["app.http.module"] = fake_module
+
+    http_pkg = _importlib.import_module("app.http")
+    _had_module_attr = hasattr(http_pkg, "module")
+    _prev_module_attr = getattr(http_pkg, "module", None)
+    http_pkg.module = fake_module
+    yield
+    if _had_module_attr:
+        http_pkg.module = _prev_module_attr
+    else:
+        delattr(http_pkg, "module")
+    if original is None:
+        sys.modules.pop("app.http.module", None)
+    else:
+        sys.modules["app.http.module"] = original
 
 
 class _FakeRedis:
@@ -153,7 +190,7 @@ def test_agent_queue_manager_listen_timeout_default_should_allow_long_tasks(monk
 
     manager = AgentQueueManager(user_id=uuid4(), invoke_from=InvokeFrom.WEB_APP)
 
-    assert manager._read_listen_timeout_seconds() == 1800
+    assert manager._read_listen_timeout_seconds() == 86400
 
 
 def test_agent_queue_manager_set_stop_flag_should_validate_task_owner(monkeypatch):
@@ -225,10 +262,13 @@ class _DummyAgent(BaseAgent):
     _invoke_payloads: list = PrivateAttr(default_factory=list)
 
     def _build_agent(self):
-        def _invoke(payload):
+        def _invoke(payload, config=None):
             self._invoke_payloads.append(payload)
 
-        return SimpleNamespace(invoke=_invoke)
+        async def _ainvoke(payload, config=None):
+            self._invoke_payloads.append(payload)
+
+        return SimpleNamespace(invoke=_invoke, ainvoke=_ainvoke)
 
 
 def test_agent_config_should_default_iteration_limit_to_ten():
@@ -243,6 +283,10 @@ def test_base_agent_stream_should_prepare_state_and_delegate_to_queue(monkeypatc
             self.user_id = user_id
             self.invoke_from = invoke_from
             self.listen_calls = []
+            self.failures = []
+
+        def publish_failure(self, task_id, error, context=""):
+            self.failures.append((task_id, error, context))
 
         def listen(self, task_id):
             self.listen_calls.append(task_id)
@@ -278,6 +322,10 @@ def test_base_agent_stream_should_enter_runtime_flask_app_context_in_worker_thre
             self.user_id = user_id
             self.invoke_from = invoke_from
             self.listen_calls = []
+            self.failures = []
+
+        def publish_failure(self, task_id, error, context=""):
+            self.failures.append((task_id, error, context))
 
         def listen(self, task_id):
             self.listen_calls.append(task_id)
@@ -293,7 +341,7 @@ def test_base_agent_stream_should_enter_runtime_flask_app_context_in_worker_thre
 
     monkeypatch.setattr("internal.core.agent.agents.base_agent.AgentQueueManager", _FakeQueueManager)
     monkeypatch.setattr("internal.core.agent.agents.base_agent.Thread", _FakeThread)
-    monkeypatch.setattr("internal.core.agent.agents.base_agent.has_app_context", lambda: False)
+    monkeypatch.setattr("internal.core.agent.agents.base_agent.is_active_app", lambda _app: False)
 
     runtime_flask_app = MagicMock()
     runtime_flask_app.app_context.return_value = nullcontext()
@@ -342,7 +390,10 @@ def test_base_agent_stream_should_publish_worker_timeout_as_terminal_event(monke
                 yield item
 
     class _FailingAgent:
-        def invoke(self, _payload):
+        def invoke(self, _payload, config=None):
+            raise TimeoutError("LLM request timed out")
+
+        async def ainvoke(self, _payload, config=None):
             raise TimeoutError("LLM request timed out")
 
     class _FakeThread:

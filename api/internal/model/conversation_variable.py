@@ -11,7 +11,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
@@ -19,7 +19,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class ConversationVariable(db.Model):
+class ConversationVariable(Base):
     """会话变量持久化表，存储跨轮次共享的变量。
 
     用于 Plan B 的 VariablePool 持久化层：

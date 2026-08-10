@@ -6,6 +6,7 @@ from internal.entity.agent_entity import normalize_agent_metadata
 from internal.exception import NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
+from internal.model.admin import AdminUser
 from internal.model.app import App
 
 logger = logging.getLogger(__name__)
@@ -88,8 +89,9 @@ class AdminAppService:
         self.session.commit()
         return {"succeeded": succeeded, "failed": failed}
 
-    def batch_delete_apps(self, app_ids: list[UUID]) -> dict[str, object]:
-        """批量删除应用（仅删除数据库记录，不触发级联清理），返回成功/失败统计"""
+    def batch_delete_apps(self, app_ids: list[UUID], *, retention_days: int | None = None, deleted_by=None) -> dict[str, object]:
+        """批量删除应用（逐个进入回收站），返回成功/失败统计"""
+        from internal.service.recycle_bin_service import RecycleBinService
         succeeded: list[str] = []
         failed: list[dict[str, str]] = []
         for app_id in app_ids:
@@ -98,16 +100,33 @@ class AdminAppService:
                 if app is None:
                     failed.append({"id": str(app_id), "reason": "应用不存在"})
                     continue
-                self.session.delete(app)
+                deleted = RecycleBinService().delete_resource(
+                    resource_type="app",
+                    resource_id=app.id,
+                    resource_key=str(app.id),
+                    resource_name=app.name,
+                    deleted_by=deleted_by,
+                    retention_days=retention_days,
+                )
+                if not deleted:
+                    failed.append({"id": str(app_id), "reason": "应用不存在"})
+                    continue
                 succeeded.append(str(app_id))
             except Exception as e:
                 logger.warning("批量删除应用失败: app_id=%s, error=%s", app_id, e)
                 failed.append({"id": str(app_id), "reason": str(e)})
-        self.session.commit()
         return {"succeeded": succeeded, "failed": failed}
 
-    @staticmethod
-    def _serialize_app(app: App) -> dict[str, object]:
+    def _resolve_creator_name(self, created_by_admin) -> str:
+        """根据创建管理员 id 解析展示名（平台级资源归属显示为创建者）"""
+        if not created_by_admin:
+            return ""
+        admin_user = self.session.query(AdminUser.name).filter(AdminUser.id == created_by_admin).one_or_none()
+        if admin_user is None:
+            return ""
+        return admin_user[0] or ""
+
+    def _serialize_app(self, app: App) -> dict[str, object]:
         return {
             "id": str(app.id),
             "name": app.name,
@@ -118,6 +137,7 @@ class AdminAppService:
             "is_public": app.is_public,
             "agent_metadata": app.normalized_agent_metadata,
             "debug_conversation_id": str(app.debug_conversation_id) if app.debug_conversation_id else None,
+            "creator_name": self._resolve_creator_name(app.created_by_admin),
             "created_at": datetime_to_timestamp(app.created_at),
             "updated_at": datetime_to_timestamp(app.updated_at),
         }

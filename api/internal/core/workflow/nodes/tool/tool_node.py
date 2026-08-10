@@ -346,7 +346,7 @@ class ToolNode(BaseNode):
     def _get_flask_app():
         """安全获取当前 Flask 应用，无应用上下文时返回 None。"""
         try:
-            from flask import has_app_context, current_app
+            from internal.context import has_app_context, current_app
             if has_app_context():
                 return current_app._get_current_object()
         except Exception:

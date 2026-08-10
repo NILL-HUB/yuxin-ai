@@ -23,14 +23,14 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import UTC, datetime
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class BuiltinToolProvider(db.Model):
+class BuiltinToolProvider(Base):
     """Builtin 工具提供商元数据镜像表"""
     __tablename__ = "builtin_tool_provider"
     __table_args__ = (
@@ -66,7 +66,7 @@ class BuiltinToolProvider(db.Model):
         return self.tools
 
 
-class BuiltinTool(db.Model):
+class BuiltinTool(Base):
     """Builtin 工具元数据镜像表（每个工具一行）"""
     __tablename__ = "builtin_tool"
     __table_args__ = (

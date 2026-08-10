@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 import base64
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,7 +15,6 @@ from internal.exception import (
     NotFoundException,
     ValidateErrorException,
 )
-from internal.entity.ai_entity import OPENAPI_SCHEMA_ASSISTANT_PROMPT, PYTHON_CODE_ASSISTANT_PROMPT
 from internal.model import Account, AccountOAuth, ApiKey, ApiTool, ApiToolProvider
 from internal.service.account_service import AccountService as _AccountService
 from internal.service.ai_service import AIService, PythonMarkdownOutputParser
@@ -146,7 +145,7 @@ class TestOAuthService:
         )
 
     def test_resolve_redirect_uri_should_use_origin_when_in_allowlist(self, monkeypatch):
-        app = Flask(__name__)
+        app = TestApp(__name__)
         app.config["OAUTH_ALLOWED_ORIGINS"] = ["http://localhost:5173"]
         monkeypatch.setenv("GITHUB_REDIRECT_URI", "https://ui.example.com/auth/authorize/github")
         with app.test_request_context(
@@ -158,7 +157,7 @@ class TestOAuthService:
         assert uri == "http://localhost:5173/auth/authorize/github"
 
     def test_resolve_redirect_uri_should_fallback_to_env_when_origin_not_allowed(self, monkeypatch):
-        app = Flask(__name__)
+        app = TestApp(__name__)
         app.config["OAUTH_ALLOWED_ORIGINS"] = ["https://allowed.example.com"]
         monkeypatch.setenv("GITHUB_REDIRECT_URI", "https://ui.example.com/auth/authorize/github")
         with app.test_request_context(
@@ -170,7 +169,7 @@ class TestOAuthService:
         assert uri == "https://ui.example.com/auth/authorize/github"
 
     def test_resolve_redirect_uri_should_fallback_to_env_when_origin_blank(self, monkeypatch):
-        app = Flask(__name__)
+        app = TestApp(__name__)
         monkeypatch.setenv("GITHUB_REDIRECT_URI", "https://ui.example.com/auth/authorize/github")
         with app.test_request_context(
             "/oauth/github",
@@ -181,7 +180,7 @@ class TestOAuthService:
         assert uri == "https://ui.example.com/auth/authorize/github"
 
     def test_allowed_origins_should_parse_comma_separated_string_from_config(self, monkeypatch):
-        app = Flask(__name__)
+        app = TestApp(__name__)
         app.config["OAUTH_ALLOWED_ORIGINS"] = "https://a.example.com, https://b.example.com/ "
         monkeypatch.delenv("OAUTH_ALLOWED_ORIGINS", raising=False)
         monkeypatch.setattr("internal.service.oauth_service.has_request_context", lambda: True)
@@ -192,7 +191,7 @@ class TestOAuthService:
         assert origins == {"https://a.example.com", "https://b.example.com"}
 
     def test_allowed_origins_should_fallback_to_env_when_configured_string_is_blank(self, monkeypatch):
-        app = Flask(__name__)
+        app = TestApp(__name__)
         app.config["OAUTH_ALLOWED_ORIGINS"] = "   "
         monkeypatch.setenv("OAUTH_ALLOWED_ORIGINS", "https://env-only.example.com")
 
@@ -283,7 +282,7 @@ class TestOAuthService:
             lambda target, **kwargs: update_calls.append((target, kwargs)),
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
             result = service.oauth_login("github", "code-1")
 
@@ -330,7 +329,7 @@ class TestOAuthService:
             lambda target, **kwargs: update_calls.append((target, kwargs)),
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.9"}):
             result = service.oauth_login("github", "code-existing")
 
@@ -375,7 +374,7 @@ class TestOAuthService:
             lambda target, **kwargs: update_calls.append((target, kwargs)),
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.10"}):
             result = service.oauth_login("github", "code-existing-email")
 

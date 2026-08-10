@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from langchain_core.documents import Document
-from pydantic import BaseModel
 
 
 _IMAGE_EXTENSIONS = frozenset(

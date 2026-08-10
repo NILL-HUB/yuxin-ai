@@ -12,7 +12,6 @@
 """
 import json
 import logging
-from typing import Any
 
 from injector import inject
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -21,47 +20,6 @@ from .builtin_tool_service import BuiltinToolService
 from .language_model_service import LanguageModelService
 
 logger = logging.getLogger(__name__)
-
-# 工具选择系统提示词：让 LLM 根据查询语义选择最相关的工具（全 source_type）
-_TOOL_SELECTOR_SYSTEM_PROMPT = """你是一个工具选择专家。根据用户查询，从可用工具列表中选择最相关的工具。
-
-## 任务
-1. 分析用户查询的真实意图
-2. 从提供的工具列表中，选择最多 {max_tools} 个最相关的工具
-3. 只选择用户查询确实需要的工具，不要过度选择
-
-## 输出格式
-返回 JSON 数组，每个元素包含：
-- "source_type": 工具来源类型（builtin/api_tool/mcp/skill/workflow/knowledge）
-- "provider_id": 工具提供者 ID
-- "tool_name": 工具名称
-- "reason": 选择该工具的理由（简短）
-
-如果用户查询不需要任何工具，返回空数组 []。
-
-## 示例
-查询: "现在几点了"
-工具列表: [{{"source_type": "builtin", "provider_id": "time", "tool_name": "current_time", "description": "获取当前系统时间"}}]
-输出: [{{"source_type": "builtin", "provider_id": "time", "tool_name": "current_time", "reason": "用户询问时间，需要 current_time 工具"}}]
-
-查询: "你好"
-工具列表: [{{"source_type": "builtin", "provider_id": "time", "tool_name": "current_time", "description": "获取当前系统时间"}}]
-输出: []
-
-查询: "用 GitHub MCP 工具查仓库 issues"
-工具列表: [
-  {{"source_type": "mcp", "provider_id": "mcp-gh-001", "tool_name": "list_issues", "description": "列出 GitHub 仓库 issues"}},
-  {{"source_type": "builtin", "provider_id": "time", "tool_name": "current_time", "description": "获取当前系统时间"}}
-]
-输出: [{{"source_type": "mcp", "provider_id": "mcp-gh-001", "tool_name": "list_issues", "reason": "用户明确要求用 GitHub MCP 工具查 issues"}}]
-
-## 重要约束
-- 只能从提供的工具列表中选择，不能编造工具
-- 优先选择用户明确提及的工具（按 source_type 和 tool_name 匹配）
-- 如果查询意图模糊，选择 0-1 个工具
-- 最多选择 {max_tools} 个工具
-- builtin 工具最稳定，无凭证依赖；MCP/Skill/Workflow 需要明确意图才选
-"""
 
 # 关键词快速匹配的最小查询长度（短查询留给 LLM）
 _MIN_QUERY_LEN_FOR_KEYWORD = 4
@@ -282,6 +240,8 @@ class ToolSelectorService:
             max_tools: 最多返回数量
             exclude_keys: 已被关键词命中的工具 key 集合，LLM 不再重复选择
         """
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         # 过滤掉已命中的候选
         exclude = exclude_keys or set()
         llm_candidates = [
@@ -303,8 +263,8 @@ class ToolSelectorService:
                 return []
 
             messages = [
-                SystemMessage(content=_TOOL_SELECTOR_SYSTEM_PROMPT.format(max_tools=max_tools)),
-                HumanMessage(content=f"## 用户查询\n{query}\n\n## 可用工具列表\n{tools_text}\n\n## 请输出 JSON"),
+                SystemMessage(content=SystemPromptLibraryService().get_prompt_or_default("tool_selector_prompt").format(max_tools=max_tools)),
+                HumanMessage(content=f"## 用户查询\n{query}\n\n## 可用工具列表\n{tools_text}\n\n{SystemPromptLibraryService().get_prompt_or_default('tool_selector_output_instruction')}"),
             ]
 
             # 使用 probe 监控 LLM 活性，避免死机

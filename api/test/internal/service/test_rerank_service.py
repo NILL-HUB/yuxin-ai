@@ -18,14 +18,20 @@ def _make_docs():
     ]
 
 
-def _build_service_with_llm(invoke_return=None, invoke_side_effect=None):
+def _build_service_with_llm(monkeypatch, invoke_return=None, invoke_side_effect=None):
+    from internal.service.language_model_service import LanguageModelService
+
     mock_llm = Mock()
     if invoke_side_effect is not None:
         mock_llm.invoke.side_effect = invoke_side_effect
     else:
         mock_llm.invoke.return_value = invoke_return
     mock_lms = Mock()
-    mock_lms.get_cheap_chat_model.return_value = mock_llm
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_feature_model",
+        classmethod(lambda cls, feature_key=None: mock_llm),
+    )
     return RerankService(language_model_service=mock_lms)
 
 
@@ -36,13 +42,23 @@ def _mock_no_provider_credentials(monkeypatch):
     rerank_service 改造后优先从数据库查询 rerank 凭证调用 provider API，
     测试环境数据库可能存在真实 rerank 配置导致走了 provider 路径而非 LLM。
     这里统一 mock 返回空凭证，让 _rerank_with_provider 返回 None 降级到 LLM。
+    同时 mock 系统提示词库，避免依赖数据库。
     """
     from internal.service.language_model_service import LanguageModelService
+    from internal.service.system_prompt_library_service import SystemPromptLibraryService
 
     monkeypatch.setattr(
         LanguageModelService,
         "get_provider_credentials",
         classmethod(lambda cls, provider=None, model_type=None: {}),
+    )
+    monkeypatch.setattr(
+        SystemPromptLibraryService,
+        "get_prompt_or_default",
+        lambda self, prompt_key: (
+            "你是相关性评估助手。请根据用户问题为每个候选文档的相关性打分（1-10，10最相关）。\n"
+            "用户问题：{query}\n候选文档：\n{documents}"
+        ),
     )
 
 
@@ -60,8 +76,9 @@ class TestRerankService:
 
         assert result == [doc]
 
-    def test_rerank_llm_scoring_should_sort_by_llm_score(self):
+    def test_rerank_llm_scoring_should_sort_by_llm_score(self, monkeypatch):
         service = _build_service_with_llm(
+            monkeypatch,
             invoke_return=_FakeResponse('[{"index": 0, "score": 3}, {"index": 1, "score": 9}]'),
         )
 
@@ -73,8 +90,11 @@ class TestRerankService:
         assert result[1]["content"] == "文档A内容"
         assert result[1]["rerank_score"] == 3.0
 
-    def test_rerank_falls_back_to_original_score_when_llm_fails(self):
-        service = _build_service_with_llm(invoke_side_effect=RuntimeError("LLM down"))
+    def test_rerank_falls_back_to_original_score_when_llm_fails(self, monkeypatch):
+        service = _build_service_with_llm(
+            monkeypatch,
+            invoke_side_effect=RuntimeError("LLM down"),
+        )
 
         result = service.rerank("查询", _make_docs(), top_n=5)
 
@@ -84,12 +104,13 @@ class TestRerankService:
         assert result[1]["content"] == "文档B内容"
         assert result[1]["score"] == 0.1
 
-    def test_rerank_top_n_truncation(self):
+    def test_rerank_top_n_truncation(self, monkeypatch):
         docs = [
             {"content": f"doc{i}", "score": 0.1 * i}
             for i in range(4)
         ]
         service = _build_service_with_llm(
+            monkeypatch,
             invoke_return=_FakeResponse(
                 '[{"index": 0, "score": 1}, {"index": 1, "score": 2}, '
                 '{"index": 2, "score": 3}, {"index": 3, "score": 4}]'
@@ -104,10 +125,11 @@ class TestRerankService:
         assert result[1]["content"] == "doc2"
         assert result[1]["rerank_score"] == 3.0
 
-    def test_rerank_documents_preserves_metadata_and_scores(self):
+    def test_rerank_documents_preserves_metadata_and_scores(self, monkeypatch):
         from langchain_core.documents import Document as LCDocument
 
         service = _build_service_with_llm(
+            monkeypatch,
             invoke_return=_FakeResponse('[{"index": 0, "score": 2}, {"index": 1, "score": 9}]'),
         )
         docs = [

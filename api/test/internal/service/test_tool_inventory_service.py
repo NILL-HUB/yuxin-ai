@@ -4,7 +4,10 @@ from uuid import UUID
 from internal.entity.tool_inventory_entity import ToolSourceType
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.model import SkillPackage, Workflow
-from internal.service.tool_inventory_service import ToolCandidateCollector
+from internal.service.tool_inventory_service import (
+    ToolCandidateCollector,
+    with_runtime_fields,
+)
 
 ACCOUNT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -55,6 +58,7 @@ def _make_package(
     capabilities=None,
     enabled=True,
     metadata=None,
+    task_keywords=None,
 ):
     return SimpleNamespace(
         id=package_id,
@@ -63,7 +67,8 @@ def _make_package(
         description=description,
         capabilities=capabilities if capabilities is not None else ["pdf_parse"],
         enabled=enabled,
-        metadata=metadata or {},
+        metadata_=metadata or {},
+        task_keywords=task_keywords or [],
     )
 
 
@@ -90,6 +95,7 @@ def test_collect_skill_tools_returns_correct_format():
     assert metadata["owner"] == "system"
     assert metadata["enabled"] is True
     assert metadata["health_status"] == "healthy"
+    assert candidate["task_keywords"] == ["pdf_parse"]
 
 
 def test_collect_skill_tools_filters_disabled_package():
@@ -145,6 +151,38 @@ def test_collect_includes_skill_candidates():
     assert skill_candidates[0]["id"] == f"skill:{package.id}"
 
 
+def test_with_runtime_fields_should_decorate_governance_fields():
+    candidates = [
+        {
+            "id": "tool-1",
+            "name": "Search",
+            "description": "Search tool",
+            "source_type": "mcp",
+            "provider_id": "provider-1",
+            "provider_name": "MCP",
+            "inputs": [],
+            "visibility": "public",
+            "enabled": True,
+            "metadata": {
+                "tool_pool": "mcp",
+                "risk_level": "medium",
+                "permission_scope": "public",
+                "health_status": "healthy",
+                "cost_level": "low",
+            },
+        }
+    ]
+
+    result = with_runtime_fields(candidates)
+
+    assert result[0]["metadata"]["tool_pool"] == "mcp"
+    assert result[0]["metadata"]["risk_level"] == "medium"
+    assert result[0]["metadata"]["health_status"] == "healthy"
+    assert result[0]["runtime_name"] == "mcp__provider_1__search"
+    assert result[0]["mounted"] is False
+    assert result[0]["mount_reason"] == "not_mounted"
+
+
 # ------------------------------------------------------------------ #
 #  Workflow 候选收集测试                                              #
 # ------------------------------------------------------------------ #
@@ -157,6 +195,7 @@ def _make_workflow(
     description="组合数据检索工作流",
     status=WorkflowStatus.PUBLISHED.value,
     account_id=ACCOUNT_ID,
+    task_keywords=None,
 ):
     return SimpleNamespace(
         id=workflow_id,
@@ -165,6 +204,7 @@ def _make_workflow(
         description=description,
         status=status,
         account_id=account_id,
+        task_keywords=task_keywords or [],
     )
 
 
@@ -191,6 +231,7 @@ def test_collect_workflow_tools_returns_correct_format():
     assert metadata["owner"] == str(ACCOUNT_ID)
     assert metadata["enabled"] is True
     assert metadata["health_status"] == "healthy"
+    assert candidate["task_keywords"] == ["data_retrieval_flow", "数据检索流"]
 
 
 def test_collect_workflow_tools_filters_non_published():

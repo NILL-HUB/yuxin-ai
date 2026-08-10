@@ -145,7 +145,7 @@ def test_workflow_composite_resolve_and_gate_effective_risk_is_max():
             },
             {
                 "node_type": "dataset_retrieval",
-                "dataset_ids": [str(dataset_id)],
+                "knowledge_base_ids": [str(dataset_id)],
             },
         ],
         "edges": [],

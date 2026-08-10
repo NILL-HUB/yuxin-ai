@@ -2,7 +2,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.language_model.entities.model_entity import ModelFeature
@@ -28,6 +28,7 @@ def _build_service() -> OpenAPIService:
     return OpenAPIService(
         db=SimpleNamespace(),
         app_service=SimpleNamespace(),
+        app_runtime_service=SimpleNamespace(),
         retrieval_service=SimpleNamespace(),
         app_config_service=SimpleNamespace(),
         conversation_service=SimpleNamespace(),
@@ -89,7 +90,7 @@ class TestOpenAPIService:
     def test_chat_should_return_block_response_when_stream_disabled(self, monkeypatch):
         service = _build_service()
         account = SimpleNamespace(id=uuid4())
-        app = SimpleNamespace(id=uuid4(), status=AppStatus.PUBLISHED.value)
+        app = SimpleNamespace(id=uuid4(), account_id=uuid4(), status=AppStatus.PUBLISHED.value)
         req = _build_req(app.id)
         service.app_service = SimpleNamespace(get_app=lambda _app_id, _account: app)
 
@@ -148,6 +149,9 @@ class TestOpenAPIService:
                 assert message_limit == 3
                 return ["history-message"]
 
+            def get_distant_summary(self, conversation):
+                return ""
+
         monkeypatch.setattr("internal.service.openapi_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
         agent_thought = AgentThought(
@@ -157,38 +161,6 @@ class TestOpenAPIService:
             thought="thinking",
             answer="answer",
             latency=0.2,
-        )
-        artifact_thought = AgentThought(
-            id=uuid4(),
-            task_id=uuid4(),
-            event=QueueEvent.DEEP_ARTIFACT_CREATED,
-            thought="trip-plan.docx",
-            observation="https://cos.example.com/trip-plan.docx",
-            tool="artifact",
-            tool_input={
-                "artifact": {
-                    "name": "trip-plan.docx",
-                    "url": "https://cos.example.com/trip-plan.docx",
-                    "extension": "docx",
-                }
-            },
-            latency=0.1,
-        )
-        artifact_thought = AgentThought(
-            id=uuid4(),
-            task_id=uuid4(),
-            event=QueueEvent.DEEP_ARTIFACT_CREATED,
-            thought="trip-plan.docx",
-            observation="https://cos.example.com/trip-plan.docx",
-            tool="artifact",
-            tool_input={
-                "artifact": {
-                    "name": "trip-plan.docx",
-                    "url": "https://cos.example.com/trip-plan.docx",
-                    "extension": "docx",
-                }
-            },
-            latency=0.1,
         )
         captured_state = {}
 
@@ -230,7 +202,7 @@ class TestOpenAPIService:
     ):
         service = _build_service()
         account = SimpleNamespace(id=uuid4())
-        app = SimpleNamespace(id=uuid4(), status=AppStatus.PUBLISHED.value)
+        app = SimpleNamespace(id=uuid4(), account_id=uuid4(), status=AppStatus.PUBLISHED.value)
         req = _build_req(app.id)
         req.image_urls.data = ["https://a.com/1.png"]
         service.app_service = SimpleNamespace(get_app=lambda _app_id, _account: app)
@@ -299,155 +271,8 @@ class TestOpenAPIService:
                 assert message_limit == 1
                 return ["history-message"]
 
-        monkeypatch.setattr("internal.service.openapi_service.TokenBufferMemory", _FakeTokenBufferMemory)
-
-        agent_thought = AgentThought(
-            id=uuid4(),
-            task_id=uuid4(),
-            event=QueueEvent.AGENT_MESSAGE,
-            thought="thinking",
-            answer="answer",
-            latency=0.2,
-        )
-        artifact_thought = AgentThought(
-            id=uuid4(),
-            task_id=uuid4(),
-            event=QueueEvent.DEEP_ARTIFACT_CREATED,
-            thought="trip-plan.docx",
-            observation="https://cos.example.com/trip-plan.docx",
-            tool="artifact",
-            tool_input={
-                "artifact": {
-                    "name": "trip-plan.docx",
-                    "url": "https://cos.example.com/trip-plan.docx",
-                    "extension": "docx",
-                }
-            },
-            latency=0.1,
-        )
-
-        class _FakeFunctionCallAgent:
-            def __init__(self, llm, agent_config):
-                self._llm = llm
-                self._agent_config = agent_config
-
-            def invoke(self, agent_state):
-                assert agent_state["messages"] == ["hello:1"]
-                return SimpleNamespace(
-                    answer="final-answer",
-                    latency=0.6,
-                    agent_thoughts=[agent_thought, artifact_thought],
-                )
-
-        monkeypatch.setattr("internal.service.openapi_service.FunctionCallAgent", _FakeFunctionCallAgent)
-        save_payload = {}
-        service.conversation_service = SimpleNamespace(
-            save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
-        )
-
-        response = service.chat(req, account)
-
-        assert response.data["input_parts"] == [
-            {"type": "text", "text": "hello"},
-            {"type": "image", "url": "https://a.com/1.png"},
-        ]
-        assert response.data["answer_parts"] == [
-            {"type": "text", "text": "final-answer"},
-            {
-                "type": "artifact",
-                "name": "trip-plan.docx",
-                "url": "https://cos.example.com/trip-plan.docx",
-                "extension": "docx",
-            },
-        ]
-        assert response.data["artifacts"] == [
-            {
-                "name": "trip-plan.docx",
-                "url": "https://cos.example.com/trip-plan.docx",
-                "extension": "docx",
-            }
-        ]
-        assert response.data["capabilities"] == capabilities
-        assert save_payload["app_config"]["capabilities"] == capabilities
-        assert resolution_capture == {
-            "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
-            "image_urls": req.image_urls.data,
-            "entrypoint": "openapi",
-        }
-
-    def test_chat_should_return_runtime_capabilities_and_parts_when_resolution_available(
-        self, monkeypatch
-    ):
-        service = _build_service()
-        account = SimpleNamespace(id=uuid4())
-        app = SimpleNamespace(id=uuid4(), status=AppStatus.PUBLISHED.value)
-        req = _build_req(app.id)
-        req.image_urls.data = ["https://a.com/1.png"]
-        service.app_service = SimpleNamespace(get_app=lambda _app_id, _account: app)
-
-        app_config = {
-            "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
-            "dialog_round": 1,
-            "tools": [],
-            "knowledge_base_ids": [],
-            "retrieval_config": {"retrieval_strategy": "semantic", "k": 2, "score": 0.5},
-            "workflows": [],
-            "preset_prompt": "preset",
-            "long_term_memory": {"enable": True},
-            "review_config": {"enable": False},
-        }
-        service.app_config_service = SimpleNamespace(
-            get_app_config=lambda _app: app_config,
-            get_langchain_tools_by_tools_config=lambda _tools: [],
-        )
-
-        created_records = []
-        end_user_id = uuid4()
-        conversation_id = uuid4()
-        message_id = uuid4()
-
-        def fake_create(model, **kwargs):
-            created_records.append((model, kwargs))
-            if model is EndUser:
-                return SimpleNamespace(id=end_user_id, app_id=app.id)
-            if model is Conversation:
-                return SimpleNamespace(
-                    id=conversation_id,
-                    app_id=app.id,
-                    created_by=end_user_id,
-                    invoke_from=InvokeFrom.SERVICE_API.value,
-                    summary="",
-                )
-            if model is Message:
-                return SimpleNamespace(id=message_id)
-            raise AssertionError(f"unexpected model: {model}")
-
-        monkeypatch.setattr(service, "create", fake_create)
-
-        llm = SimpleNamespace(
-            features=[ModelFeature.TOOL_CALL.value],
-            convert_to_human_message=lambda query, image_urls: f"{query}:{len(image_urls)}",
-        )
-        capabilities = {"image_input": {"enabled": True, "via_fallback": False}}
-        resolution_capture = {}
-        service.language_model_service = SimpleNamespace(
-            resolve_runtime_language_model=lambda model_config, image_urls, entrypoint: resolution_capture.update(
-                {
-                    "model_config": model_config,
-                    "image_urls": image_urls,
-                    "entrypoint": entrypoint,
-                }
-            )
-            or SimpleNamespace(llm=llm, capabilities=capabilities)
-        )
-
-        class _FakeTokenBufferMemory:
-            def __init__(self, **_kwargs):
-                pass
-
-            def get_history_prompt_messages(self, message_limit):
-                assert message_limit == 1
-                return ["history-message"]
+            def get_distant_summary(self, conversation):
+                return ""
 
         monkeypatch.setattr("internal.service.openapi_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
@@ -528,7 +353,7 @@ class TestOpenAPIService:
     def test_chat_should_stream_and_aggregate_agent_message_chunks(self, monkeypatch):
         service = _build_service()
         account = SimpleNamespace(id=uuid4())
-        app = SimpleNamespace(id=uuid4(), status=AppStatus.PUBLISHED.value)
+        app = SimpleNamespace(id=uuid4(), account_id=uuid4(), status=AppStatus.PUBLISHED.value)
         end_user = SimpleNamespace(id=uuid4(), app_id=app.id)
         conversation = SimpleNamespace(
             id=uuid4(),
@@ -561,11 +386,12 @@ class TestOpenAPIService:
             lambda model, **_kwargs: SimpleNamespace(id=message_id) if model is Message else None,
         )
 
+        kb_dataset_id = uuid4()
         app_config = {
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "dialog_round": 2,
             "tools": [{"type": "builtin_tool"}],
-            "knowledge_base_ids": ["dataset-1"],
+            "knowledge_base_ids": [str(kb_dataset_id)],
             "retrieval_config": {"retrieval_strategy": "semantic", "k": 2, "score": 0.7},
             "workflows": [{"id": "workflow-1"}],
             "preset_prompt": "preset",
@@ -580,7 +406,7 @@ class TestOpenAPIService:
 
         retrieval_call = {}
         service.retrieval_service = SimpleNamespace(
-            create_langchain_tool_from_search=lambda **kwargs: retrieval_call.update(kwargs) or "dataset-tool"
+            create_knowledge_retrieval_tool=lambda **kwargs: retrieval_call.update(kwargs) or "dataset-tool"
         )
 
         llm = SimpleNamespace(
@@ -596,6 +422,9 @@ class TestOpenAPIService:
             def get_history_prompt_messages(self, message_limit):
                 assert message_limit == 2
                 return ["history-1"]
+
+            def get_distant_summary(self, conversation):
+                return ""
 
         monkeypatch.setattr("internal.service.openapi_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
@@ -650,14 +479,16 @@ class TestOpenAPIService:
             save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
         )
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             events = list(service.chat(req, account))
 
         assert events[0].startswith("event: ping")
         assert events[1].startswith("event: agent_message")
         assert len(captured_agent_tools["tools"]) == 3
-        assert retrieval_call["dataset_ids"] == ["dataset-1"]
+        assert [str(kb_id) for kb_id in retrieval_call["knowledge_base_ids"]] == [str(kb_dataset_id)]
         assert retrieval_call["account_id"] == account.id
+        assert retrieval_call["retrieval_strategy"] == "semantic"
+        assert retrieval_call["k"] == 2
         assert len(save_payload["agent_thoughts"]) == 2
         assert save_payload["agent_thoughts"][0].thought == "AB"
         assert save_payload["agent_thoughts"][0].answer == "AB"

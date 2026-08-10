@@ -1,10 +1,10 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import StringField
 from wtforms.validators import DataRequired, Length
 
 
-class RedeemCodeReq(FlaskForm):
+class RedeemCodeReq(Form):
     code = StringField("code", validators=[DataRequired(), Length(min=6, max=128)])
 
 

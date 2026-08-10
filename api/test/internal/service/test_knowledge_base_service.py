@@ -50,7 +50,11 @@ def _fake_db(session):
 
 
 def _new_service(session=None):
-    return KnowledgeBaseService(db=_fake_db(session or _SessionStub()))
+    return KnowledgeBaseService(
+        db=_fake_db(session or _SessionStub()),
+        retrieval_service=SimpleNamespace(),
+        icon_generator_service=SimpleNamespace(),
+    )
 
 
 def test_admin_user_context_should_create_user_content_for_own_account(monkeypatch):

@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import BooleanField, StringField
 from wtforms.validators import Length
@@ -7,7 +7,7 @@ from internal.lib.helper import datetime_to_timestamp
 from internal.model import ApiKey
 
 
-class CreateApiKeyReq(FlaskForm):
+class CreateApiKeyReq(Form):
     """创建API秘钥请求"""
     is_active = BooleanField("is_active")
     remark = StringField("remark", validators=[
@@ -15,7 +15,7 @@ class CreateApiKeyReq(FlaskForm):
     ])
 
 
-class UpdateApiKeyReq(FlaskForm):
+class UpdateApiKeyReq(Form):
     """更新API秘钥请求"""
     is_active = BooleanField("is_active")
     remark = StringField("remark", validators=[
@@ -23,7 +23,7 @@ class UpdateApiKeyReq(FlaskForm):
     ])
 
 
-class UpdateApiKeyIsActiveReq(FlaskForm):
+class UpdateApiKeyIsActiveReq(Form):
     """更新API秘钥激活请求"""
     is_active = BooleanField("is_active")
 

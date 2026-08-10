@@ -1,5 +1,5 @@
 from internal.core.agent.entities.tool_policy_entity import (
-    DATASET_RETRIEVAL_TOOL_NAME,
+    KNOWLEDGE_RETRIEVAL_TOOL_NAME,
     ToolPolicy,
 )
 
@@ -7,9 +7,9 @@ from internal.core.agent.entities.tool_policy_entity import (
 def test_tool_policy_should_expose_default_shared_strategy():
     policy = ToolPolicy()
 
-    assert policy.dataset_retrieval_tool_name == DATASET_RETRIEVAL_TOOL_NAME
-    assert policy.resolve_tool_name("recall_dataset") == DATASET_RETRIEVAL_TOOL_NAME
-    assert policy.resolve_tool_name("dataset_retrieval") == DATASET_RETRIEVAL_TOOL_NAME
+    assert policy.dataset_retrieval_tool_name == "dataset_retrieval"
+    assert policy.resolve_tool_name("recall_dataset") == KNOWLEDGE_RETRIEVAL_TOOL_NAME
+    assert policy.resolve_tool_name("dataset_retrieval") == KNOWLEDGE_RETRIEVAL_TOOL_NAME
     assert policy.is_hard_fail_tool("qwen_image_edit")
     assert policy.is_hard_fail_tool("qwen_image_edit_2509")
     assert policy.is_image_result_tool("qwen_image_text_to_image")

@@ -373,17 +373,19 @@ class MemoryRetriever:
             table_name = router.get_user_memory_table_name(dimension)
 
             # 从维度分表检索 + JOIN user_memory 获取元数据
+            # 绑定参数需 CAST 为 vector（同 knowledge_vector_service），
+            # 否则 psycopg2 将 list 推断为 numeric[] 导致检索失败
             sql = text(f"""
                 SELECT um.id AS memory_id,
                        um.content,
                        um.embedding_node_id,
                        um.created_at,
-                       1 - (v.embedding <=> :embedding) AS score
+                       1 - (v.embedding <=> CAST(:embedding AS vector)) AS score
                 FROM {table_name} v
                 JOIN user_memory um ON v.memory_id = um.id
                 WHERE v.owner_account_id = :user_id
                   AND um.status = 'active'
-                ORDER BY v.embedding <=> :embedding
+                ORDER BY v.embedding <=> CAST(:embedding AS vector)
                 LIMIT :top_k
             """)
 
@@ -645,7 +647,7 @@ class MemoryRetriever:
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             if driver is not None:
@@ -663,7 +665,7 @@ class MemoryRetriever:
     def _get_db(self):
         """获取 SQLAlchemy 实例，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             db = current_app.extensions.get("database")
             if db is not None:
@@ -681,7 +683,7 @@ class MemoryRetriever:
     def _get_embeddings_service(self):
         """获取 EmbeddingsService 实例，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             injector = getattr(current_app, "injector", None)
             if injector is not None:

@@ -1,10 +1,10 @@
 # api/internal/schema/admin_model_provider_schema.py
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
-from wtforms import IntegerField, StringField
-from wtforms.validators import AnyOf, InputRequired, Length, Optional, URL
+from wtforms import BooleanField, IntegerField, StringField
+from wtforms.validators import AnyOf, InputRequired, Length, Optional
 
-from internal.schema import DictField, ListField
+from internal.schema import ListField
 
 PROVIDER_STATUSES = ["active", "disabled"]
 MODEL_TYPES = [
@@ -14,39 +14,41 @@ MODEL_TYPES = [
 COMPATIBLE_APIS = ["openai", "claude"]
 
 
-class GetAdminModelProvidersReq(FlaskForm):
+class GetAdminModelProvidersReq(Form):
     search = StringField("search", default="", validators=[Optional(), Length(max=255)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", *PROVIDER_STATUSES])])
     current_page = IntegerField("current_page", default=1, validators=[Optional()])
     page_size = IntegerField("page_size", default=20, validators=[Optional()])
 
 
-class CreateAdminModelProviderReq(FlaskForm):
+class CreateAdminModelProviderReq(Form):
     name = StringField("name", validators=[InputRequired(), Length(min=1, max=128)])
     label = StringField("label", validators=[InputRequired(), Length(min=1, max=255)])
     description = StringField("description", default="", validators=[Optional(), Length(max=2000)])
     icon = StringField("icon", default="", validators=[Optional(), Length(max=512)])
     background = StringField("background", default="#FFFFFF", validators=[Optional(), Length(max=32)])
     default_base_url = StringField("default_base_url", validators=[InputRequired(), Length(min=1, max=512)])
+    is_full_url = BooleanField("is_full_url", default=False)
     supported_model_types = ListField(
         StringField("supported_model_types", validators=[Optional(), AnyOf(MODEL_TYPES)])
     )
     status = StringField("status", default="active", validators=[Optional(), AnyOf(PROVIDER_STATUSES)])
 
 
-class UpdateAdminModelProviderReq(FlaskForm):
+class UpdateAdminModelProviderReq(Form):
     label = StringField("label", validators=[Optional(), Length(min=1, max=255)])
     description = StringField("description", validators=[Optional(), Length(max=2000)])
     icon = StringField("icon", validators=[Optional(), Length(max=512)])
     background = StringField("background", validators=[Optional(), Length(max=32)])
     default_base_url = StringField("default_base_url", validators=[Optional(), Length(min=1, max=512)])
+    is_full_url = BooleanField("is_full_url", default=False)
     supported_model_types = ListField(
         StringField("supported_model_types", validators=[Optional(), AnyOf(MODEL_TYPES)])
     )
     status = StringField("status", validators=[Optional(), AnyOf(PROVIDER_STATUSES)])
 
 
-class SetAdminModelProviderStatusReq(FlaskForm):
+class SetAdminModelProviderStatusReq(Form):
     status = StringField("status", validators=[InputRequired(), AnyOf(PROVIDER_STATUSES)])
 
 
@@ -58,6 +60,7 @@ class AdminModelProviderResp(Schema):
     icon = fields.String()
     background = fields.String()
     default_base_url = fields.String()
+    is_full_url = fields.Boolean()
     supported_model_types = fields.List(fields.String())
     status = fields.String()
     model_count = fields.Integer()
@@ -76,6 +79,7 @@ class AdminModelProviderOptionResp(Schema):
     label = fields.String()
     description = fields.String()
     default_base_url = fields.String()
+    is_full_url = fields.Boolean()
     supported_model_types = fields.List(fields.String())
 
 

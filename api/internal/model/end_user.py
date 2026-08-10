@@ -8,13 +8,13 @@ from sqlalchemy import (
 )
 from datetime import UTC, datetime
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     """返回无时区的 UTC 时间，兼容数据库 DateTime 列且避免 utcnow 退化警告。"""
     return datetime.now(UTC).replace(tzinfo=None)
-class EndUser(db.Model):
+class EndUser(Base):
     """终端用户表模型"""
     __tablename__ = "end_user"
     __table_args__ = (

@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4 as _uuid4
 
 from injector import inject
 from langchain_core.output_parsers import StrOutputParser
@@ -13,7 +13,7 @@ from sqlalchemy import func, desc
 from internal.core.language_model import LanguageModelManager
 from internal.core.tools.api_tools.providers import ApiProviderManager
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
-from internal.entity.ai_entity import OPTIMIZE_PROMPT_TEMPLATE
+from internal.service.system_prompt_library_service import SystemPromptLibraryService
 from internal.entity.app_entity import AppStatus, AppConfigType, DEFAULT_APP_CONFIG
 from internal.entity.agent_entity import normalize_agent_metadata
 from internal.exception import NotFoundException, ForbiddenException, ValidateErrorException, FailException
@@ -233,7 +233,7 @@ class AppService(BaseService):
 
         # 2.生成预设prompt链
         generate_preset_prompt_chain = ChatPromptTemplate.from_messages([
-            ("system", OPTIMIZE_PROMPT_TEMPLATE),
+            ("system", SystemPromptLibraryService().get_prompt_or_default("ai_optimize_prompt")),
             ("human", "应用名称: {name}\n\n应用描述: {description}")
         ]) | llm | StrOutputParser()
 
@@ -322,8 +322,8 @@ class AppService(BaseService):
         # 11.返回创建的应用
         return app
 
-    def create_app(self, req: CreateAppReq, account: Account) -> App:
-        """创建Agent应用服务"""
+    def create_app(self, req: CreateAppReq, account: Account = None, *, created_by_admin=None) -> App:
+        """创建Agent应用服务（管理端创建时 account 为空，记录 created_by_admin）"""
         # 1. 如果用户未提供图标，自动生成图标
         icon_url = req.icon.data
         if not icon_url:
@@ -343,7 +343,8 @@ class AppService(BaseService):
         with self.db.auto_commit():
             # 3.创建应用记录，并刷新数据，从而可以拿到应用id
             app = App(
-                account_id=account.id,
+                account_id=account.id if account is not None else None,
+                created_by_admin=created_by_admin,
                 name=req.name.data,
                 icon=icon_url,
                 description=req.description.data,
@@ -385,7 +386,17 @@ class AppService(BaseService):
 
     def delete_app(self, app_id: UUID, account: Account):
         app = self.get_app(app_id, account)
-        self.delete(app)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="app",
+            resource_id=app.id,
+            resource_key=str(app.id),
+            resource_name=app.name,
+            deleted_by=account.id,
+            deleted_by_type="user",
+        )
+        if not deleted:
+            raise NotFoundException("该应用不存在，请核实后重试")
         return app
 
     def _get_app_for_admin(self, app_id: UUID) -> App:
@@ -402,10 +413,20 @@ class AppService(BaseService):
             raise NotFoundException("资源所属账号不存在")
         return account
 
-    def delete_app_for_admin(self, app_id: UUID):
+    def delete_app_for_admin(self, app_id: UUID, *, retention_days: int | None = None, deleted_by=None):
         """管理员删除应用，不校验账号归属"""
         app = self._get_app_for_admin(app_id)
-        self.delete(app)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="app",
+            resource_id=app.id,
+            resource_key=str(app.id),
+            resource_name=app.name,
+            deleted_by=deleted_by,
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("该应用不存在，请核实后重试")
         return app
 
     def get_draft_app_config_for_admin(self, app_id: UUID) -> dict[str, Any]:
@@ -427,7 +448,10 @@ class AppService(BaseService):
     def get_app_owner_account_for_admin(self, app_id: UUID) -> Account:
         """管理员视角：获取应用归属账号（不校验归属），供其他服务复用"""
         app = self._get_app_for_admin(app_id)
-        return self._get_owner_account(app.account_id)
+        account = self._get_owner_account(app.account_id)
+        if account is None:
+            raise FailException("该应用为平台级资源，暂不支持以账号维度执行该操作")
+        return account
 
     def get_published_config_for_admin(self, app_id: UUID) -> dict[str, Any]:
         """管理员获取应用发布配置（不校验账号归属，以应用归属账号执行）"""
@@ -494,6 +518,179 @@ class AppService(BaseService):
 
         # 8.返回创建好的新应用
         return new_app
+
+    # ------------------------------------------------------------------ #
+    #  应用导出 / 导入（format=yuxin-ai-app，兼容旧版 openagent-app）       #
+    # ------------------------------------------------------------------ #
+
+    EXPORT_FORMAT = "yuxin-ai-app"
+    LEGACY_EXPORT_FORMATS = frozenset({"openagent-app"})
+    EXPORT_VERSION = "1.0"
+
+    @classmethod
+    def _is_supported_export_format(cls, fmt: str | None) -> bool:
+        return fmt == cls.EXPORT_FORMAT or fmt in cls.LEGACY_EXPORT_FORMATS
+
+    # AppConfigVersion 中随应用导出的配置字段（完整快照，导入时原样写入）
+    _CONFIG_EXPORT_FIELDS = [
+        "model_config",
+        "dialog_round",
+        "preset_prompt",
+        "tools",
+        "mcp_bindings",
+        "mcp_tool_snapshots",
+        "skills",
+        "agent_bindings",
+        "workflows",
+        "knowledge_base_ids",
+        "embedding_model_id",
+        "retrieval_config",
+        "long_term_memory",
+        "opening_statement",
+        "opening_questions",
+        "speech_to_text",
+        "text_to_speech",
+        "suggested_after_answer",
+        "review_config",
+        "workflow_id",
+    ]
+
+    def export_app_for_admin(self, app_id: UUID) -> dict[str, Any]:
+        """管理员导出应用为 JSON（format=yuxin-ai-app），不校验账号归属。"""
+        app = self._get_app_for_admin(app_id)
+        return self._build_app_export(app)
+
+    def export_app(self, app_id: UUID, account: Account) -> dict[str, Any]:
+        """用户导出应用为 JSON（format=yuxin-ai-app）。"""
+        app = self.get_app(app_id, account)
+        return self._build_app_export(app)
+
+    def _build_app_export(self, app: App) -> dict[str, Any]:
+        """将 App + 草稿配置打包为导出 JSON。"""
+        draft_config = self.db.session.query(AppConfigVersion).filter(
+            AppConfigVersion.app_id == app.id,
+            AppConfigVersion.config_type == AppConfigType.DRAFT.value,
+        ).one_or_none()
+
+        config_payload: dict[str, Any] = {}
+        if draft_config:
+            for field in self._CONFIG_EXPORT_FIELDS:
+                config_payload[field] = getattr(draft_config, field, None)
+
+        return {
+            "format": self.EXPORT_FORMAT,
+            "version": self.EXPORT_VERSION,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "app": {
+                "name": app.name,
+                "icon": app.icon,
+                "description": app.description,
+                "app_type": app.app_type,
+                "tags": list(app.tags or []),
+                "agent_metadata": app.agent_metadata or {},
+            },
+            "config": config_payload,
+        }
+
+    def import_app(
+        self,
+        json_data: dict[str, Any],
+        account_id: UUID | None = None,
+        *,
+        overwrite_name: bool = False,
+        created_by_admin=None,
+    ) -> App:
+        """从 JSON 导入应用，创建新应用（status=draft）。
+
+        account_id 为空表示平台级资源（管理端导入），此时记录 created_by_admin。
+        引用容错：tools / mcp_bindings / skills / workflows / knowledge_base_ids
+        等外部引用原样写入草稿配置；目标环境缺少对应资源时，应用仍可创建，
+        运行时按缺失引用降级处理（与平台现有容错策略一致）。
+        """
+        if not isinstance(json_data, dict):
+            raise ValidateErrorException("导入数据格式错误，必须是 JSON 对象")
+
+        fmt = json_data.get("format")
+        if not self._is_supported_export_format(fmt):
+            raise ValidateErrorException(f"不支持的应用导出格式: {fmt}，应为 {self.EXPORT_FORMAT}")
+
+        version = str(json_data.get("version", "") or "")
+        if not version:
+            raise ValidateErrorException("导入数据缺少 version 字段")
+        if not version.startswith("1."):
+            raise ValidateErrorException(f"不支持的应用导出版本: {version}")
+
+        app_data = json_data.get("app")
+        if not isinstance(app_data, dict):
+            raise ValidateErrorException("导入数据缺少 app 字段")
+        config_data = json_data.get("config")
+        if not isinstance(config_data, dict):
+            config_data = {}
+
+        name = str(app_data.get("name") or "").strip()
+        if not name:
+            raise ValidateErrorException("导入应用名称不能为空")
+
+        account = self._get_owner_account(account_id)
+
+        # 名称冲突：overwrite_name=False 时自动加后缀
+        if overwrite_name:
+            existing = self.db.session.query(App).filter(
+                App.account_id == account_id,
+                App.name == name,
+            ).one_or_none()
+            if existing:
+                name = f"{name}_imported_{datetime.now(UTC).strftime('%H%M%S')}"
+        else:
+            existing = self.db.session.query(App).filter(
+                App.account_id == account_id,
+                App.name == name,
+            ).one_or_none()
+            if existing:
+                name = f"{name}_imported_{_uuid4().hex[:8]}"
+
+        icon = str(app_data.get("icon") or "")
+        if not icon:
+            try:
+                icon = self.icon_generator_service.generate_icon(name=name, description=str(app_data.get("description") or ""))
+            except Exception:
+                icon = self.app_icon_service._generate_default_icon(name)
+
+        with self.db.auto_commit():
+            new_app = App(
+                account_id=account_id,
+                created_by_admin=created_by_admin,
+                name=name,
+                icon=icon,
+                description=str(app_data.get("description") or ""),
+                app_type=str(app_data.get("app_type") or AppType.CHATBOT.value),
+                tags=list(app_data.get("tags") or []),
+                agent_metadata=app_data.get("agent_metadata") or {},
+                status=AppStatus.DRAFT.value,
+            )
+            self.db.session.add(new_app)
+            self.db.session.flush()
+
+            config_kwargs: dict[str, Any] = {}
+            for field in self._CONFIG_EXPORT_FIELDS:
+                if field in config_data:
+                    config_kwargs[field] = config_data.get(field)
+            draft_config = AppConfigVersion(
+                app_id=new_app.id,
+                version=0,
+                config_type=AppConfigType.DRAFT.value,
+                **config_kwargs,
+            )
+            self.db.session.add(draft_config)
+            self.db.session.flush()
+            new_app.draft_app_config_id = draft_config.id
+
+        logger.info("应用导入创建: app_id=%s, name=%s, account_id=%s", new_app.id, name, account_id)
+        return new_app
+
+    def import_app_for_admin(self, json_data: dict[str, Any], *, overwrite_name: bool = False, created_by_admin=None) -> App:
+        """管理员导入应用，作为平台级资源（不归属任何用户账号）。"""
+        return self.import_app(json_data, None, overwrite_name=overwrite_name, created_by_admin=created_by_admin)
 
     def get_apps_with_page(self, req: GetAppsWithPageReq, account: Account) -> tuple[list[App], Paginator]:
         """根据传递的分页参数获取当前登录账号下的应用分页列表数据"""

@@ -7,7 +7,6 @@
 import logging
 from typing import Optional
 
-from flask import Flask
 from neo4j import GraphDatabase, Driver
 from neo4j.exceptions import ServiceUnavailable
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 neo4j_driver: Optional[Driver] = None
 
 
-def init_app(app: Flask):
+def init_app(app) -> None:
     """初始化 Neo4j 驱动，挂载到 app.extensions。"""
     global neo4j_driver
 

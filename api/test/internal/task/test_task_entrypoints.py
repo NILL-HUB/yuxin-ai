@@ -42,7 +42,7 @@ def test_app_task_auto_create_app_should_delegate(monkeypatch):
             or (app_service if cls.__name__ == "AppService" else notification_service)
         ),
     )
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(
         "internal.lib.websocket_manager.ws_manager",
         SimpleNamespace(emit_notification_to_user=lambda *_args, **_kwargs: None),
@@ -61,7 +61,7 @@ def test_app_task_sync_public_app_registry_should_delegate(monkeypatch):
         sync_public_app=lambda app_id: calls.append(app_id),
     )
     injector = _RecordingInjector(registry_service)
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
 
     app_id = uuid4()
     app_task.sync_public_app_registry.run(str(app_id))
@@ -88,7 +88,7 @@ def test_app_task_sync_public_app_registry_should_retry_on_connection_error(monk
         retry_calls.append((exc, countdown))
         raise _RetryTriggered()
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(app_task.sync_public_app_registry, "retry", _retry)
 
     app_id = uuid4()
@@ -109,7 +109,7 @@ def test_app_task_prewarm_mcp_tool_snapshots_should_delegate(monkeypatch):
         or [{"binding_identity": "binding-a", "status": "ready", "retryable": False}],
     )
     injector = _RecordingInjector(service)
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
 
     app_id = uuid4()
     app_task.prewarm_mcp_tool_snapshots.run(str(app_id), "draft")
@@ -135,7 +135,7 @@ def test_app_task_prewarm_mcp_tool_snapshots_should_retry_on_pending_snapshot(mo
         retry_calls.append((exc, countdown))
         raise _RetryTriggered()
 
-    monkeypatch.setattr("app.http.app.injector", injector)
+    monkeypatch.setattr("app.http.module.injector", injector)
     monkeypatch.setattr(app_task.prewarm_mcp_tool_snapshots, "retry", _retry)
 
     with pytest.raises(_RetryTriggered):

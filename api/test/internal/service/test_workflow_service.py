@@ -33,9 +33,17 @@ class _DummyQuery:
 class _DummySession:
     def __init__(self):
         self.query_result = None
+        self.added = []
+        self.commit_calls = 0
 
     def query(self, _model):
         return _DummyQuery(self.query_result)
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def commit(self):
+        self.commit_calls += 1
 
 
 class _DummyDB:
@@ -328,18 +336,24 @@ class TestWorkflowService:
         # 输入参数中含未知字段时，会回退到工具参数默认值集合。
         assert node["meta"]["tool"]["params"] == {"query": "默认查询", "top_k": 5}
 
-    def test_delete_workflow_should_delegate_delete_and_return_record(self, monkeypatch):
+    def test_delete_workflow_should_enter_recycle_bin_and_return_record(self, monkeypatch):
         service = _build_service()
         account = SimpleNamespace(id=uuid4())
-        workflow = SimpleNamespace(id=uuid4(), account_id=account.id)
+        workflow = SimpleNamespace(id=uuid4(), account_id=account.id, name="测试工作流")
         monkeypatch.setattr(service, "get_workflow", lambda *_args, **_kwargs: workflow)
-        deleted = []
-        monkeypatch.setattr(service, "delete", lambda target: deleted.append(target))
+        calls = []
+        monkeypatch.setattr(
+            "internal.service.recycle_bin_service.RecycleBinService.delete_resource",
+            lambda self, **kwargs: calls.append(kwargs) or True,
+        )
 
         result = service.delete_workflow(workflow.id, account)
 
         assert result is workflow
-        assert deleted == [workflow]
+        assert calls[0]["resource_type"] == "workflow"
+        assert calls[0]["resource_id"] == workflow.id
+        assert calls[0]["resource_name"] == workflow.name
+        assert calls[0]["deleted_by"] == account.id
 
     def test_get_workflows_with_page_should_use_paginator(self, monkeypatch):
         service = _build_service()
@@ -405,20 +419,43 @@ class TestWorkflowService:
             "internal.service.workflow_service.WorkflowConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
-
-        class _WorkflowTool:
-            def __init__(self, workflow_config):
-                self.workflow_config = workflow_config
-
-            @staticmethod
-            def stream(_inputs):
-                yield {"node_1": {"node_results": [SimpleNamespace(node_id="node_1", status="succeeded")]}}
-
-        monkeypatch.setattr("internal.service.workflow_service.WorkflowTool", _WorkflowTool)
         monkeypatch.setattr(
-            "internal.service.workflow_service.convert_model_to_dict",
-            lambda node_result: {"node_id": node_result.node_id, "status": node_result.status},
+            "internal.service.workflow_service.VariablePool",
+            lambda: SimpleNamespace(),
         )
+        monkeypatch.setattr(
+            "internal.service.workflow_service.RealNodeExecutor",
+            lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+
+        class _GraphEngine:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def execute(self, _inputs):
+                yield {
+                    "event": "node_finished",
+                    "data": {
+                        "node_id": "node_1",
+                        "node_type": "code",
+                        "title": "Node 1",
+                        "inputs": {},
+                        "outputs": {"result": "ok"},
+                        "elapsed_time": 0.1,
+                        "error": "",
+                    },
+                }
+                yield {
+                    "event": "workflow_finished",
+                    "data": {
+                        "status": "succeeded",
+                        "error": "",
+                        "total_executed": 1,
+                        "total_failed": 0,
+                    },
+                }
+
+        monkeypatch.setattr("internal.service.workflow_service.GraphEngine", _GraphEngine)
 
         workflow_result = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: workflow_result)
@@ -431,8 +468,9 @@ class TestWorkflowService:
 
         events = list(service.debug_workflow(workflow.id, {"query": "hello"}, account))
 
-        assert len(events) == 1
-        assert events[0].startswith("event: workflow")
+        assert len(events) == 2
+        assert events[0].startswith("event: node_finished")
+        assert events[1].startswith("event: workflow_finished")
         assert any(
             target is workflow_result and payload["status"] == WorkflowResultStatus.SUCCEEDED.value
             for target, payload in updates
@@ -637,17 +675,24 @@ class TestWorkflowService:
             "internal.service.workflow_service.WorkflowConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
+        monkeypatch.setattr(
+            "internal.service.workflow_service.VariablePool",
+            lambda: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            "internal.service.workflow_service.RealNodeExecutor",
+            lambda **kwargs: SimpleNamespace(**kwargs),
+        )
 
-        class _WorkflowTool:
-            def __init__(self, workflow_config):
-                self.workflow_config = workflow_config
+        class _GraphEngine:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
 
-            @staticmethod
-            def stream(_inputs):
+            def execute(self, _inputs):
                 raise RuntimeError("stream-error")
                 yield  # pragma: no cover
 
-        monkeypatch.setattr("internal.service.workflow_service.WorkflowTool", _WorkflowTool)
+        monkeypatch.setattr("internal.service.workflow_service.GraphEngine", _GraphEngine)
         workflow_result = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: workflow_result)
         updates = []
@@ -657,10 +702,11 @@ class TestWorkflowService:
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
 
-        # 发生异常时内部会吞掉异常并写入失败状态，这里应拿到空事件列表。
+        # 发生异常时内部会吞掉异常并写入失败状态，同时推送一条失败的 workflow_finished 事件。
         events = list(service.debug_workflow(workflow.id, {"query": "hello"}, account))
 
-        assert events == []
+        assert len(events) == 1
+        assert events[0].startswith("event: workflow_finished")
         assert any(
             target is workflow_result and payload["status"] == WorkflowResultStatus.FAILED.value
             for target, payload in updates
@@ -712,20 +758,31 @@ class TestWorkflowService:
             return SimpleNamespace(**kwargs)
 
         monkeypatch.setattr("internal.service.workflow_service.WorkflowConfig", _fake_workflow_config)
-
-        class _WorkflowTool:
-            def __init__(self, workflow_config):
-                self.workflow_config = workflow_config
-
-            @staticmethod
-            def stream(_inputs):
-                yield {"node_1": {"node_results": [SimpleNamespace(node_id="node_1", status="succeeded")]}}
-
-        monkeypatch.setattr("internal.service.workflow_service.WorkflowTool", _WorkflowTool)
         monkeypatch.setattr(
-            "internal.service.workflow_service.convert_model_to_dict",
-            lambda node_result: {"node_id": node_result.node_id, "status": node_result.status},
+            "internal.service.workflow_service.VariablePool",
+            lambda: SimpleNamespace(),
         )
+        monkeypatch.setattr(
+            "internal.service.workflow_service.RealNodeExecutor",
+            lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+
+        class _GraphEngine:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def execute(self, _inputs):
+                yield {
+                    "event": "workflow_finished",
+                    "data": {
+                        "status": "succeeded",
+                        "error": "",
+                        "total_executed": 0,
+                        "total_failed": 0,
+                    },
+                }
+
+        monkeypatch.setattr("internal.service.workflow_service.GraphEngine", _GraphEngine)
         workflow_result = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(service, "create", lambda *_args, **_kwargs: workflow_result)
         monkeypatch.setattr(service, "update", lambda target, **kwargs: target)
@@ -1456,24 +1513,43 @@ class TestWorkflowService:
             "internal.service.workflow_service.WorkflowConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
         )
-
-        class _WorkflowTool:
-            def __init__(self, workflow_config):
-                self.workflow_config = workflow_config
-
-            @staticmethod
-            def stream(_inputs):
-                yield {"end_node": {"node_results": [SimpleNamespace(node_id="end-1", status="succeeded")]}}
-
-        monkeypatch.setattr("internal.service.workflow_service.WorkflowTool", _WorkflowTool)
         monkeypatch.setattr(
-            "internal.service.workflow_service.convert_model_to_dict",
-            lambda node_result: {
-                "node_id": node_result.node_id,
-                "status": node_result.status,
-                "node_data": {"node_type": "end"},
-            },
+            "internal.service.workflow_service.VariablePool",
+            lambda: SimpleNamespace(),
         )
+        monkeypatch.setattr(
+            "internal.service.workflow_service.RealNodeExecutor",
+            lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+
+        class _GraphEngine:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def execute(self, _inputs):
+                yield {
+                    "event": "node_finished",
+                    "data": {
+                        "node_id": "end-1",
+                        "node_type": "end",
+                        "title": "End",
+                        "inputs": {},
+                        "outputs": {},
+                        "elapsed_time": 0.1,
+                        "error": "",
+                    },
+                }
+                yield {
+                    "event": "workflow_finished",
+                    "data": {
+                        "status": "succeeded",
+                        "error": "",
+                        "total_executed": 1,
+                        "total_failed": 0,
+                    },
+                }
+
+        monkeypatch.setattr("internal.service.workflow_service.GraphEngine", _GraphEngine)
 
         class _Session:
             def __init__(self):

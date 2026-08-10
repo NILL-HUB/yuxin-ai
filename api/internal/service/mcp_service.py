@@ -804,7 +804,7 @@ class McpService(BaseService):
             logging.exception("创建 MCP 后同步工具失败 provider=%s", provider.id)
         return provider
 
-    def update_mcp_provider(self, provider_id: UUID, req: UpdateMcpProviderReq, account: Account) -> McpProvider:
+    def update_mcp_provider(self, provider_id: UUID, req: UpdateMcpProviderReq, account: Account | None = None) -> McpProvider:
         provider = self._resolve_private_provider(provider_id, account)
         label = _normalize_text(req.label.data) or _normalize_text(req.name.data)
         category = normalize_mcp_category(req.category.data, name=req.name.data, description=req.description.data)
@@ -835,16 +835,42 @@ class McpService(BaseService):
 
     def delete_mcp_provider(self, provider_id: UUID, account: Account) -> McpProvider:
         provider = self._resolve_private_provider(provider_id, account)
-        self.delete(provider)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="mcp",
+            resource_id=provider.id,
+            resource_key=str(provider.id),
+            resource_name=provider.label or provider.name,
+            deleted_by=account.id,
+            deleted_by_type="user",
+        )
+        if not deleted:
+            raise NotFoundException("MCP 不存在")
         return provider
 
-    def delete_mcp_provider_for_admin(self, provider_id: UUID) -> McpProvider:
+    def delete_mcp_provider_for_admin(
+        self,
+        provider_id: UUID,
+        *,
+        retention_days: int | None = None,
+        deleted_by=None,
+    ) -> McpProvider:
         """管理员删除 MCP，不校验账号归属。"""
         self._ensure_mcp_provider_table()
         provider = self.db.session.query(McpProvider).filter(McpProvider.id == provider_id).one_or_none()
         if not provider:
             raise NotFoundException("MCP 不存在")
-        self.delete(provider)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="mcp",
+            resource_id=provider.id,
+            resource_key=str(provider.id),
+            resource_name=provider.label or provider.name,
+            deleted_by=deleted_by,
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("MCP 不存在")
         return provider
 
     def get_mcp_provider_for_admin(self, provider_id: UUID) -> dict[str, Any]:

@@ -1,23 +1,23 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import IntegerField, StringField
 from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Optional
 
 
-class GenerateRedeemCodesReq(FlaskForm):
+class GenerateRedeemCodesReq(Form):
     name = StringField("name", validators=[InputRequired(), Length(max=255)])
     plan_id = StringField("plan_id", validators=[InputRequired(), Length(max=64)])
     quantity = IntegerField("quantity", validators=[InputRequired(), NumberRange(min=1, max=1000)])
     expires_at = IntegerField("expires_at", validators=[Optional(), NumberRange(min=1)])
 
 
-class GetRedeemCodeBatchesReq(FlaskForm):
+class GetRedeemCodeBatchesReq(Form):
     keyword = StringField("keyword", default="", validators=[Optional(), Length(max=255)])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
 
 
-class GetRedeemCodesReq(FlaskForm):
+class GetRedeemCodesReq(Form):
     batch_id = StringField("batch_id", default="", validators=[Optional(), Length(max=64)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", "unused", "used", "disabled", "expired"])])
     code_keyword = StringField("code_keyword", default="", validators=[Optional(), Length(max=64)])

@@ -1,12 +1,12 @@
-from flask_wtf import FlaskForm
-from flask_wtf.file import FileField, FileAllowed, FileRequired, FileSize
+from wtforms import Form
+from pkg.wtforms_compat import FileField, FileAllowed, FileRequired, FileSize
 from internal.entity.upload_file_entity import ALLOWED_DOCUMENT_EXTENSION, ALLOWED_IMAGE_EXTENSION
 from marshmallow import Schema, fields, pre_dump
 from internal.lib.helper import datetime_to_timestamp
 from internal.model import UploadFile
 
 
-class UploadFileReq(FlaskForm):
+class UploadFileReq(Form):
     """上传文件请求"""
     file = FileField("file",validators=[
         FileRequired("上传文件不能为空"),
@@ -14,7 +14,7 @@ class UploadFileReq(FlaskForm):
         FileAllowed(ALLOWED_DOCUMENT_EXTENSION, message=f"仅允许上传{'/'.join(ALLOWED_DOCUMENT_EXTENSION)}文件")
     ])
 
-class UploadImageReq(FlaskForm):
+class UploadImageReq(Form):
     """上传图片请求结构体"""
     file = FileField("file", validators=[
         FileRequired("上传图片不能为空"),

@@ -36,7 +36,7 @@ def auto_create_app(
         account_id: UUID,
 ) -> None:
     """根据传递的名称、描述、账号id创建一个Agent"""
-    from app.http.app import injector
+    from app.http.module import injector
     from internal.service import AppService
     from internal.service.notification_service import NotificationService
     from internal.lib.websocket_manager import ws_manager
@@ -76,7 +76,7 @@ def auto_create_app(
 @shared_task(bind=True, max_retries=5)
 def prewarm_mcp_tool_snapshots(self, app_id: str, config_type: str) -> None:
     """预热指定应用配置的 MCP 工具快照。"""
-    from app.http.app import injector
+    from app.http.module import injector
     from internal.service import AppService
 
     app_service = injector.get(AppService)
@@ -128,7 +128,7 @@ def prewarm_mcp_tool_snapshots(self, app_id: str, config_type: str) -> None:
 @shared_task(bind=True, max_retries=3)
 def sync_public_app_registry(self, app_id: str) -> None:
     """根据应用当前状态同步公共Agent索引。"""
-    from app.http.app import injector
+    from app.http.module import injector
     from internal.service import PublicAgentRegistryService
 
     registry_service = injector.get(PublicAgentRegistryService)

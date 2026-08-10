@@ -246,56 +246,11 @@ class TaskClassifierService:
 
     @staticmethod
     def _build_classification_prompt(query: str) -> str:
-        return (
-            "你是一名任务分类专家，负责对用户查询进行路由分类。\n\n"
-            "## 输入\n"
-            f"用户查询：{query}\n\n"
-            "## 分类规则（按优先级匹配，选择最匹配的一项）\n"
-            "- deep_thinking_task：需要深度分析、多步推理、长文创作、复杂规划、可行性评估、技术方案设计或结构化报告。\n"
-            "  关键信号词：调研、深度分析、可行性、架构设计、路线图、规划方案、报告、多步骤、对比分析、权衡\n"
-            "- vertical_agent_task：明确需要使用特定领域智能体（如护肤、法务、财务、招聘、客服、运营、投研、代码、设计、医疗、教育、翻译等）。\n"
-            "  关键信号词：智能体、agent、交给、委托 + 垂直领域名词\n"
-            "- multi_agent_task：需要多个角度、并行、协作、多维度综合处理，或问题明确包含多个子任务需要不同角色/能力处理。\n"
-            "  关键信号词：分别、多个角度、同时、并行、协作、综合、多维度、分工、联合\n"
-            "- tool_task：需要调用工具（搜索、天气、股票、汇率、联网、下载、文件生成、表格整理、发送邮件、API 调用、时间/日期查询等）才能给出准确答案。\n"
-            "  关键信号词：查询、搜索、联网、下载、调用、发送、生成文件、整理成表格、几点、时间、日期、星期几\n"
-            "- general_qa：简单问答、闲聊、知识查询、定义解释等可直接由 LLM 回答的问题，无需工具或深度推理。\n\n"
-            "## 复杂度判定（与 intent 解耦）\n"
-            "- complex：多步推理、跨领域综合、长文创作、深度分析\n"
-            "- medium：单一领域的中等问题、需调用工具、需垂直 Agent\n"
-            "- simple：直接问答、闲聊、事实查询\n\n"
-            "## few-shot 示例\n"
-            '查询："帮我调研一下主流大模型的架构对比，并给出选型建议"\n'
-            "输出：intent=deep_thinking_task, complexity=complex, needs_deep_thinking=true, "
-            "needs_tools=false, confidence=0.95, reason=\"调研+架构对比+选型建议需要深度分析\"\n\n"
-            '查询："查一下北京今天的天气"\n'
-            "输出：intent=tool_task, complexity=simple, needs_tools=true, "
-            "needs_deep_thinking=false, confidence=0.98, reason=\"需要调用天气工具\"\n\n"
-            '查询："现在几点了？"\n'
-            "输出：intent=tool_task, complexity=simple, needs_tools=true, "
-            "needs_deep_thinking=false, confidence=0.98, reason=\"需要调用时间工具获取当前时间\"\n\n"
-            '查询："今天星期几？"\n'
-            "输出：intent=tool_task, complexity=simple, needs_tools=true, "
-            "needs_deep_thinking=false, confidence=0.97, reason=\"需要调用时间工具获取日期信息\"\n\n"
-            '查询："让法务Agent审查这份合同"\n'
-            "输出：intent=vertical_agent_task, complexity=medium, needs_tools=true, "
-            "needs_deep_thinking=false, confidence=0.95, reason=\"明确委托法务 Agent\"\n\n"
-            '查询："分别从财务和运营两个角度分析这次并购"\n'
-            "输出：intent=multi_agent_task, complexity=complex, needs_multi_agent=true, "
-            "needs_deep_thinking=false, confidence=0.9, reason=\"分别+两个角度+分析需要多 Agent 协作\"\n\n"
-            '查询："你好，介绍一下你自己"\n'
-            "输出：intent=general_qa, complexity=simple, needs_tools=false, "
-            "needs_deep_thinking=false, confidence=0.99, reason=\"闲聊型问答\"\n\n"
-            "## 输出要求\n"
-            "- intent：上述 5 个类别之一（必须严格匹配枚举值）\n"
-            "- execution_mode：DEEP_THINKING / SINGLE_AGENT_WITH_TOOLS / MULTI_AGENT_PARALLEL / DIRECT_ANSWER\n"
-            "- complexity：complex / medium / simple\n"
-            "- needs_deep_thinking：是否需要深度思考\n"
-            "- needs_multi_agent：是否需要多智能体协作\n"
-            "- needs_tools：是否需要调用工具\n"
-            "- confidence：0 到 1 之间的分类置信度\n"
-            "- reason：简短分类理由\n"
-        )
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        return SystemPromptLibraryService().get_prompt_or_default(
+            "task_classifier_prompt"
+        ).format(query=query)
 
     def _build_decision_from_llm(
         self, llm_result: TaskClassificationResult, query: str

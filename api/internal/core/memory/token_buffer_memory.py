@@ -32,6 +32,9 @@ class TokenBufferMemory:
     CONTEXT_TOKEN_RATIO: ClassVar[float] = 0.3
     DEFAULT_MODEL_MAX_TOKENS: ClassVar[int] = 8192
 
+    # 智能压缩开关：超预算时优先用 LLM 压缩早期消息，而非直接丢弃
+    ENABLE_SMART_COMPRESSION: ClassVar[bool] = True
+
     def _fallback_token_counter(self, messages: list[AnyMessage]) -> int:
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
@@ -61,6 +64,18 @@ class TokenBufferMemory:
 
         total_budget = self._get_total_token_budget()
         recent_budget = max(total_budget - self.DISTANT_SUMMARY_TOKENS, 0)
+
+        # 智能压缩：超预算时优先用 LLM 压缩早期消息，避免直接丢弃关键信息
+        if self.ENABLE_SMART_COMPRESSION and recent_messages:
+            recent_messages, compressed_summary = self._smart_compress(
+                recent_messages, recent_budget
+            )
+            if compressed_summary:
+                distant_summary = (
+                    f"{compressed_summary}\n{distant_summary}".strip()
+                    if distant_summary
+                    else compressed_summary
+                )
 
         recent_messages = self._trim_recent_messages(recent_messages, recent_budget)
         distant_summary = self._truncate_text_to_tokens(distant_summary, self.DISTANT_SUMMARY_TOKENS)
@@ -171,18 +186,52 @@ class TokenBufferMemory:
         ).scalar() or 0
 
     def _get_total_token_budget(self) -> int:
+        """计算上下文裁剪预算：基于模型"输入窗口"（max_input_tokens/context_window）而非输出上限。
+
+        读取优先级：
+        1. model_instance.metadata["context_window"]（模型池配置注入，来源 max_input_tokens）
+        2. model_instance.context_window（实体属性，来源 max_input_tokens）
+        3. model_instance.max_tokens（历史兼容：输出上限，作为输入预算的最后兜底）
+        4. 辅助 Agent 模型配置
+        5. 内置默认值
+        """
         max_tokens = 0
         if self.model_instance is not None:
-            max_tokens = getattr(self.model_instance, "max_tokens", 0) or 0
+            instance_metadata = getattr(self.model_instance, "metadata", None) or {}
+            if isinstance(instance_metadata, dict):
+                max_tokens = instance_metadata.get("context_window", 0) or 0
+            if not max_tokens:
+                max_tokens = getattr(self.model_instance, "context_window", 0) or 0
+            if not max_tokens:
+                max_tokens = getattr(self.model_instance, "max_tokens", 0) or 0
         if not max_tokens and self.language_model_service is not None:
             try:
                 config = self.language_model_service.get_assistant_agent_model_config()
-                max_tokens = config.get("max_tokens", 0) or 0
+                max_tokens = config.get("context_window", 0) or config.get("max_tokens", 0) or 0
             except Exception:
                 max_tokens = 0
         if not max_tokens:
             max_tokens = self.DEFAULT_MODEL_MAX_TOKENS
         return int(max_tokens * self.CONTEXT_TOKEN_RATIO)
+
+    def _smart_compress(
+        self,
+        messages: list[AnyMessage],
+        max_tokens: int,
+    ) -> tuple[list[AnyMessage], str]:
+        """智能压缩：超预算时用 LLM 压缩最早的消息，返回 (保留消息, 压缩摘要)。
+
+        LLM 不可用或压缩失败时返回 (原消息, "")，由调用方回退到原截断逻辑。
+        """
+        try:
+            from internal.core.memory.context_compressor import ContextCompressor
+
+            compressor = ContextCompressor()
+            token_counter = self._count_messages_tokens
+            return compressor.compress_messages(messages, max_tokens, token_counter)
+        except Exception:
+            logger.warning("智能压缩初始化失败，回退到原截断逻辑", exc_info=True)
+            return messages, ""
 
     def _trim_recent_messages(self, messages: list[AnyMessage], max_tokens: int) -> list[AnyMessage]:
         if not messages:

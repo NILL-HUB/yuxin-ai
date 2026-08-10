@@ -20,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
@@ -28,7 +28,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class SkillPackage(db.Model):
+class SkillPackage(Base):
     """技能包基础信息。"""
 
     __tablename__ = "skill_package"
@@ -78,7 +78,7 @@ class SkillPackage(db.Model):
     )
 
 
-class SkillPackageVersion(db.Model):
+class SkillPackageVersion(Base):
     """技能包版本历史表。"""
 
     __tablename__ = "skill_package_version"

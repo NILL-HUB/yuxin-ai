@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
-from typing import Callable, Optional
+from typing import Callable
 
 from prometheus_client import (
     Counter,

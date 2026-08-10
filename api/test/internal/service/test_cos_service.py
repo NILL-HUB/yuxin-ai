@@ -118,6 +118,7 @@ class TestCosService:
         assert captured["upload_payload"]["extension"] == "png"
 
     def test_get_file_url_should_use_custom_domain_when_present(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
         monkeypatch.setenv("COS_DOMAIN", "https://cos.example.com")
 
         url = CosService.get_file_url("2026/01/01/demo.txt")
@@ -125,6 +126,7 @@ class TestCosService:
         assert url == "https://cos.example.com/2026/01/01/demo.txt"
 
     def test_get_file_url_should_build_domain_from_bucket_when_custom_domain_missing(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
         monkeypatch.delenv("COS_DOMAIN", raising=False)
         monkeypatch.setenv("COS_BUCKET", "bucket-a")
         monkeypatch.setenv("COS_SCHEME", "https")
@@ -135,6 +137,7 @@ class TestCosService:
         assert url == "https://bucket-a.cos.ap-shanghai.myqcloud.com/demo.txt"
 
     def test_get_file_url_should_return_plain_url_for_anonymous_downloads(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
         monkeypatch.setenv("COS_DOMAIN", "https://cos.example.com")
 
         url = CosService.get_file_url(
@@ -144,11 +147,14 @@ class TestCosService:
 
         assert url == "https://cos.example.com/2026/01/01/demo.txt"
 
-    def test_get_file_url_should_reject_local_keys(self):
+    def test_get_file_url_should_reject_local_keys(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
+
         with pytest.raises(FailException, match="本地文件存储已禁用"):
             CosService.get_file_url("local/2026/01/01/demo.txt")
 
     def test_get_file_url_should_build_presigned_download_url_when_enabled(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
         monkeypatch.setenv("COS_DOMAIN", "https://cos.example.com")
         monkeypatch.setenv("COS_PRESIGNED_DOWNLOAD_URL_EXPIRE_SECONDS", "600")
 
@@ -173,6 +179,7 @@ class TestCosService:
 
     def test_upload_bytes_without_record_should_upload_and_return_public_url(self, monkeypatch):
         captured = {}
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
 
         class _Client:
             @staticmethod
@@ -201,6 +208,8 @@ class TestCosService:
         assert url.startswith("https://cos.example.com/2026/01/02/generated-images/")
 
     def test_upload_bytes_without_record_should_raise_when_cos_upload_failed(self, monkeypatch):
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
+
         class _Client:
             @staticmethod
             def put_object(*_args, **_kwargs):

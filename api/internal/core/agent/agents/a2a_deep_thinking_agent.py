@@ -6,7 +6,7 @@ import uuid
 
 from langchain_core.messages import AIMessage, messages_to_dict
 
-from internal.core.agent.entities.agent_entity import AgentState, MAX_ITERATION_RESPONSE
+from internal.core.agent.entities.agent_entity import AgentState, get_max_iteration_response
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.language_model.entities.model_entity import ModelFeature
 
@@ -23,17 +23,18 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
 
     name: str = "a2a_deep_thinking_agent"
 
-    def _llm_node(self, state: AgentState) -> AgentState:
+    async def _llm_node(self, state: AgentState) -> AgentState:
         if state["iteration_count"] > self.agent_config.max_iteration_count:
+            max_iteration_response = get_max_iteration_response()
             self.agent_queue_manager.publish(
                 state["task_id"],
                 AgentThought(
                     id=uuid.uuid4(),
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_MESSAGE.value,
-                    thought=MAX_ITERATION_RESPONSE,
+                    thought=max_iteration_response,
                     message=messages_to_dict(state["messages"]),
-                    answer=MAX_ITERATION_RESPONSE,
+                    answer=max_iteration_response,
                     latency=0,
                 ),
             )
@@ -45,7 +46,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
                     event=QueueEvent.AGENT_END.value,
                 ),
             )
-            return {"messages": [AIMessage(MAX_ITERATION_RESPONSE)]}
+            return {"messages": [AIMessage(max_iteration_response)]}
 
         event_id = uuid.uuid4()
         start_at = time.perf_counter()
@@ -62,7 +63,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
         saw_tool_calls = False
         buffered_text_chunks: list[str] = []
         try:
-            for chunk in llm.stream(state["messages"]):
+            async for chunk in llm.astream(state["messages"]):
                 if chunk is None:
                     continue
                 if gathered is None:

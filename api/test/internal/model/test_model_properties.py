@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from flask import Flask
+from test.context import TestApp
 
 from internal.entity.app_entity import AppStatus
 from internal.entity.conversation_entity import InvokeFrom
@@ -110,7 +110,7 @@ class TestAccountModel:
         session = _SessionStub([_QueryStub(get_result=existing)])
         monkeypatch.setattr(account_model, "db", _fake_db(session))
         account = account_model.Account(id=account_id, assistant_agent_conversation_id=uuid4())
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         flask_app.config["ASSISTANT_AGENT_ID"] = str(uuid4())
 
         with flask_app.app_context():
@@ -129,7 +129,7 @@ class TestAccountModel:
         monkeypatch.setattr(account_model, "db", _fake_db(session))
         monkeypatch.setattr(account_model, "Conversation", _Conversation)
         account = account_model.Account(id=uuid4(), assistant_agent_conversation_id=None)
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         flask_app.config["ASSISTANT_AGENT_ID"] = str(uuid4())
 
         with flask_app.app_context():
@@ -389,13 +389,11 @@ class TestAppModel:
         assert config_unknown_status.status == WechatConfigStatus.UNCONFIGURED
         assert session_unknown_status.commits == 0
 
-    def test_app_config_dataset_joins_should_delegate_query(self, monkeypatch):
-        joins = [SimpleNamespace(id=uuid4())]
-        session = _SessionStub([_QueryStub(all_result=joins)])
-        monkeypatch.setattr(app_model, "db", _fake_db(session))
+    def test_app_config_knowledge_base_ids_should_be_jsonb_column(self, monkeypatch):
         config = app_model.AppConfig(app_id=uuid4())
-
-        assert config.app_dataset_joins == joins
+        kb_ids = [str(uuid4())]
+        config.knowledge_base_ids = kb_ids
+        assert config.knowledge_base_ids == kb_ids
 
 
 class TestPlatformDatasetConversationAndApiModels:
@@ -413,36 +411,18 @@ class TestPlatformDatasetConversationAndApiModels:
         assert session_missing.added == [created]
 
     def test_dataset_document_and_segment_properties_should_delegate_queries(self, monkeypatch):
-        dataset_id = uuid4()
-        document = dataset_model.Document(id=uuid4(), dataset_id=dataset_id, upload_file_id=uuid4(), process_rule_id=uuid4())
-        segment = dataset_model.Segment(document_id=document.id)
-        upload_file = SimpleNamespace(id=document.upload_file_id)
-        process_rule = SimpleNamespace(id=document.process_rule_id)
-        session = _SessionStub(
-            [
-                _QueryStub(scalar_result=3),
-                _QueryStub(scalar_result=5),
-                _QueryStub(scalar_result=7),
-                _QueryStub(scalar_result=9),
-                _QueryStub(one_or_none_result=upload_file),
-                _QueryStub(one_or_none_result=process_rule),
-                _QueryStub(scalar_result=11),
-                _QueryStub(scalar_result=13),
-                _QueryStub(get_result=document),
-            ]
-        )
-        monkeypatch.setattr(dataset_model, "db", _fake_db(session))
-        dataset = dataset_model.Dataset(id=dataset_id)
+        base_id = uuid4()
+        doc_id = uuid4()
+        upload_file_id = uuid4()
+        base = dataset_model.Dataset(id=base_id)
+        document = dataset_model.Document(id=doc_id, knowledge_base_id=base_id, upload_file_id=upload_file_id)
+        segment = dataset_model.Segment(knowledge_base_id=base_id, knowledge_document_id=doc_id)
 
-        assert dataset.document_count == 3
-        assert dataset.hit_count == 5
-        assert dataset.related_app_count == 7
-        assert dataset.character_count == 9
-        assert document.upload_file is upload_file
-        assert document.process_rule is process_rule
-        assert document.segment_count == 11
-        assert document.hit_count == 13
-        assert segment.document is document
+        assert base.id == base_id
+        assert document.knowledge_base_id == base_id
+        assert document.upload_file_id == upload_file_id
+        assert segment.knowledge_base_id == base_id
+        assert segment.knowledge_document_id == doc_id
 
     def test_conversation_message_and_api_properties_should_delegate_queries(self, monkeypatch):
         conv = conversation_model.Conversation(id=uuid4())

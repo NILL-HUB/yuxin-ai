@@ -56,7 +56,7 @@ def test_dataset_retrieval_node_data_should_validate_inputs_and_outputs():
         id=uuid4(),
         node_type="dataset_retrieval",
         title="retrieval",
-        dataset_ids=[uuid4()],
+        knowledge_base_ids=[uuid4()],
         inputs=[VariableEntity(name="query", type="string", required=True)],
         outputs=[VariableEntity(name="custom", value={"type": "generated"})],
     )

@@ -184,6 +184,13 @@ class SkillScfClient:
         request_payload["func_name"] = func_name
         request_payload["args"] = args
         request_payload["kwargs"] = kwargs
+
+        # 透传技能包 env（已解密），由云函数侧注入 os.environ
+        bundle = request_payload.get("bundle")
+        if isinstance(bundle, dict):
+            env_values = _decrypt_bundle_env(bundle)
+            if env_values:
+                request_payload["env"] = env_values
         return request_payload
 
     def _extract_skill_code(self, payload: dict[str, Any]) -> str:
@@ -259,6 +266,32 @@ class SkillScfClient:
             raise FailException(f"技能云函数调用失败: {str(exc)}")
 
 
+def _decrypt_bundle_env(bundle: dict[str, Any]) -> dict[str, str]:
+    """解密 bundle.__env__ 为真实 env 字典；失败/缺失返回空 dict。
+
+    供 SkillScfClient / SkillSandboxExecutor 共用：技能包内 .env 的值在导入时
+    已用 Fernet 加密存入 bundle 的 __env__ 键，执行前在此解密。
+    """
+    raw = bundle.get("__env__")
+    if not raw:
+        return {}
+    try:
+        encrypted_env = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (ValueError, TypeError) as exc:
+        logger.warning("技能包 __env__ 解析失败，已忽略: %s", exc)
+        return {}
+    if not isinstance(encrypted_env, dict):
+        return {}
+    try:
+        from internal.service.tool_credential_encryptor import decrypt_env
+
+        real_env = decrypt_env(encrypted_env)
+    except Exception as exc:
+        logger.warning("技能包 __env__ 解密失败，已忽略: %s", exc)
+        return {}
+    return {str(k): str(v) for k, v in real_env.items() if isinstance(k, str) and k}
+
+
 @dataclass(slots=True)
 class SkillSandboxExecutor:
     """技能包的本地沙箱执行器。
@@ -303,6 +336,8 @@ class SkillSandboxExecutor:
             "tool_name": payload.get("tool_name"),
             "entrypoint": entrypoint,
             "input": payload.get("input") or {},
+            # 服务端解密技能包 env，随 input 传入远程沙箱，由 runner 注入
+            "env": _decrypt_bundle_env(bundle),
         }
         files_to_upload.append((f"{workspace_dir}/_skill_runner.py", runner_script.encode("utf-8")))
         files_to_upload.append((f"{workspace_dir}/_skill_input.json", _coerce_json_text(input_payload).encode("utf-8")))
@@ -356,49 +391,72 @@ class SkillSandboxExecutor:
             raise FailException("技能本地执行失败：缺少入口函数")
         source_key = _normalize_payload_text(payload.get("source_key") or "skill")
 
-        with tempfile.TemporaryDirectory(prefix="skill_local_") as tmp_dir:
-            base_dir = Path(tmp_dir)
-            for relative_path, content in bundle.items():
-                normalized_path = str(relative_path or "").strip().lstrip("/")
-                if not normalized_path:
-                    continue
-                file_path = base_dir / normalized_path
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(str(content), encoding="utf-8")
+        # 注入技能包自带 env（bundle.__env__，值已加密），执行后恢复
+        env_backup = self._apply_bundle_env(bundle)
+        try:
+            with tempfile.TemporaryDirectory(prefix="skill_local_") as tmp_dir:
+                base_dir = Path(tmp_dir)
+                for relative_path, content in bundle.items():
+                    normalized_path = str(relative_path or "").strip().lstrip("/")
+                    if not normalized_path:
+                        continue
+                    file_path = base_dir / normalized_path
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text(str(content), encoding="utf-8")
 
-            module_path = base_dir / "skill.py"
-            if not module_path.exists():
-                raise FailException("技能本地执行失败：bundle 中缺少 skill.py")
+                module_path = base_dir / "skill.py"
+                if not module_path.exists():
+                    raise FailException("技能本地执行失败：bundle 中缺少 skill.py")
 
-            spec = importlib.util.spec_from_file_location("skill_module", module_path)
-            if spec is None or spec.loader is None:
-                raise FailException("技能本地执行失败：无法加载 skill.py")
+                spec = importlib.util.spec_from_file_location("skill_module", module_path)
+                if spec is None or spec.loader is None:
+                    raise FailException("技能本地执行失败：无法加载 skill.py")
 
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
 
-            func = getattr(module, entrypoint, None)
-            if not callable(func):
-                raise FailException(f"技能本地执行失败：函数 {entrypoint!r} 不存在或不可调用")
+                func = getattr(module, entrypoint, None)
+                if not callable(func):
+                    raise FailException(f"技能本地执行失败：函数 {entrypoint!r} 不存在或不可调用")
 
-            call_input = payload.get("input") or {}
-            stdout_buffer = io.StringIO()
-            stderr_buffer = io.StringIO()
-            try:
-                with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
-                    result = func(call_input)
-            except Exception as exc:
-                raise FailException(f"技能本地执行失败: {exc}") from exc
+                call_input = payload.get("input") or {}
+                stdout_buffer = io.StringIO()
+                stderr_buffer = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                        result = func(call_input)
+                except Exception as exc:
+                    raise FailException(f"技能本地执行失败: {exc}") from exc
 
-            if stderr_buffer.getvalue():
-                logger.info("技能本地执行 stderr: %s", stderr_buffer.getvalue())
-            logger.info(
-                "技能工具 sandbox local success: execution_id=%s entrypoint=%s source_key=%s",
-                payload.get("execution_id"),
-                entrypoint,
-                source_key,
-            )
-            return result
+                if stderr_buffer.getvalue():
+                    logger.info("技能本地执行 stderr: %s", stderr_buffer.getvalue())
+                logger.info(
+                    "技能工具 sandbox local success: execution_id=%s entrypoint=%s source_key=%s",
+                    payload.get("execution_id"),
+                    entrypoint,
+                    source_key,
+                )
+                return result
+        finally:
+            self._restore_env(env_backup)
+
+    def _apply_bundle_env(self, bundle: dict[str, Any]) -> dict[str, str | None]:
+        """从 bundle.__env__ 解密并注入环境变量，返回原值备份（用于恢复）。"""
+        real_env = _decrypt_bundle_env(bundle)
+        backup: dict[str, str | None] = {}
+        for key, value in real_env.items():
+            backup[key] = os.environ.get(key)
+            os.environ[key] = value
+        return backup
+
+    @staticmethod
+    def _restore_env(backup: dict[str, str | None]) -> None:
+        """恢复被注入的环境变量原值。"""
+        for key, original in backup.items():
+            if original is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original
 
     def _build_runner_script(self) -> str:
         return textwrap.dedent(
@@ -409,6 +467,7 @@ class SkillSandboxExecutor:
             import importlib.util
             import io
             import json
+            import os
             import pathlib
             import traceback
 
@@ -418,6 +477,12 @@ class SkillSandboxExecutor:
                 base_dir = pathlib.Path(__file__).resolve().parent
                 with (base_dir / "_skill_input.json").open("r", encoding="utf-8") as f:
                     payload = json.load(f)
+
+                # 注入技能包 env（服务端已解密）
+                env_values = payload.get("env") or {}
+                if isinstance(env_values, dict):
+                    for env_key, env_value in env_values.items():
+                        os.environ[str(env_key)] = str(env_value)
 
                 module_path = base_dir / "skill.py"
                 if not module_path.exists():

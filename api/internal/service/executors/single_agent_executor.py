@@ -5,9 +5,8 @@ import threading
 import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Any
 
-from flask import current_app, has_app_context
+from internal.context import current_app, has_app_context
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.execution_orchestration_entity import (
@@ -49,6 +48,8 @@ class SingleAgentExecutor:
     query: str = ""
     long_term_memory: str = ""
     user_memory: str = ""
+    # 收集流式期间的 AgentThought 对象，供外层持久化（修复 reload 丢失根因）
+    collected_thoughts: list = field(default_factory=list)
 
     def execute(
         self,
@@ -71,10 +72,23 @@ class SingleAgentExecutor:
             # 主线程实时消费 agent.stream() 产出的 AgentThought 并 yield SSE
             sse_queue: "queue.Queue[Any]" = queue.Queue()
             flask_app = current_app._get_current_object() if has_app_context() else None
+            # 跟踪是否已通过流式发送了 answer（避免 _message_sse 重复累加）
+            stream_state = {"has_streamed_answer": False}
 
             def _event_emitter(thought: AgentThought) -> None:
                 """AgentTaskExecutor 的实时回调：把 thought 转 SSE 并放入队列。"""
                 try:
+                    # 收集 thought 对象供外层持久化（修复 reload 丢失根因）
+                    self.collected_thoughts.append(thought)
+                    # 检测是否是携带 answer 的 AGENT_MESSAGE 事件（流式 token）
+                    event_name = getattr(thought, "event", "") or ""
+                    if hasattr(event_name, "value"):
+                        event_name = event_name.value
+                    if (
+                        event_name == QueueEvent.AGENT_MESSAGE.value
+                        and getattr(thought, "answer", "")
+                    ):
+                        stream_state["has_streamed_answer"] = True
                     sse = self._thought_to_realtime_sse(thought, conversation_id, message_id)
                     if sse:
                         sse_queue.put(sse)
@@ -160,7 +174,10 @@ class SingleAgentExecutor:
 
                 if not final_answer:
                     final_answer = self._pick_answer(results)
-                yield self._message_sse(final_answer, conversation_id, message_id)
+                # 如果已通过流式发送了 answer，不再发完整 answer 的 _message_sse（避免前端重复累加）
+                # 仅在未流式发送（例如 tool_calls 场景或 LLM 返回空）时发 _message_sse 兜底
+                if not stream_state["has_streamed_answer"]:
+                    yield self._message_sse(final_answer, conversation_id, message_id)
 
             # 收尾事件：让前端明确知道 Agent 执行结束
             yield self._agent_end_sse(conversation_id, message_id)
@@ -232,7 +249,8 @@ class SingleAgentExecutor:
     def _thought_to_realtime_sse(thought: AgentThought, conversation_id: str, message_id: str):
         """把 ``AgentThought`` 实时转为 SSE 字符串。
 
-        - 跳过 ``AGENT_MESSAGE``：避免与最终 ``_message_sse`` 重复，同时避免缓冲文本被部分下发
+        - ``AGENT_MESSAGE``：实时转发（LLM 流式 token），让前端能看到逐字输出
+          answer 字段携带 chunk 文本，前端 chat-stream.ts 会累加到 message.answer
         - 跳过 ``AGENT_END`` / ``PING``：``AGENT_END`` 由本执行器在末尾统一发出
         - 其余事件（如 ``agent_thought`` / ``agent_action`` / ``dataset_retrieval`` /
           ``long_term_memory_recall`` / ``deep_step`` / ``deep_complete`` / ``deep_artifact_created`` /
@@ -243,7 +261,6 @@ class SingleAgentExecutor:
             event_value = event_value.value
 
         if event_value in (
-            QueueEvent.AGENT_MESSAGE.value,
             QueueEvent.AGENT_END.value,
             QueueEvent.PING.value,
         ):
@@ -253,9 +270,17 @@ class SingleAgentExecutor:
         observation = getattr(thought, "observation", "") or ""
         tool_name = getattr(thought, "tool", "") or ""
         tool_input = getattr(thought, "tool_input", {}) or {}
+        answer = getattr(thought, "answer", "") or ""
 
-        # 仅转发有内容的事件，避免空事件污染前端
-        if not (thought_text or observation or tool_name):
+        # AGENT_MESSAGE 事件：即使 thought_text 为空也转发（可能携带 token 统计）
+        # 其他事件：仅转发有内容的事件，避免空事件污染前端
+        if event_value != QueueEvent.AGENT_MESSAGE.value:
+            if not (thought_text or observation or tool_name):
+                return None
+
+        # 对于 AGENT_MESSAGE：仅转发有 answer 内容的 chunk（跳过纯 token 统计的空 answer 事件）
+        # 空 answer 的 AGENT_MESSAGE 由 coordinator 完成后统一处理（_thought_sse + _message_sse）
+        if event_value == QueueEvent.AGENT_MESSAGE.value and not answer:
             return None
 
         payload = {
@@ -264,7 +289,7 @@ class SingleAgentExecutor:
             "observation": observation,
             "tool": tool_name,
             "tool_input": tool_input if isinstance(tool_input, dict) else {},
-            "answer": "",
+            "answer": answer,
             "conversation_id": conversation_id,
             "message_id": message_id,
             "latency": float(getattr(thought, "latency", 0.0) or 0.0),

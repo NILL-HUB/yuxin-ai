@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import types
 from contextlib import nullcontext
@@ -13,12 +14,6 @@ from pkg.response import HttpCode
 class _FakeConf:
     CELERY = {"broker_url": "redis://example"}
     CORS_ALLOW_ORIGINS = ["https://ui.example.com"]
-    CORS_SUPPORTS_CREDENTIALS = True
-
-
-class _WildcardCorsConf:
-    CELERY = {"broker_url": "redis://example"}
-    CORS_ALLOW_ORIGINS = ["*"]
     CORS_SUPPORTS_CREDENTIALS = True
 
 
@@ -38,18 +33,6 @@ class _FakeMigrate:
         self.init_calls.append((app, db, directory))
 
 
-class _FakeLoginManager:
-    def __init__(self):
-        self.init_calls = []
-        self.request_loader_fn = None
-
-    def init_app(self, app):
-        self.init_calls.append(app)
-
-    def request_loader(self, fn):
-        self.request_loader_fn = fn
-
-
 class _FakeMail:
     def __init__(self):
         self.init_calls = []
@@ -58,29 +41,9 @@ class _FakeMail:
         self.init_calls.append(app)
 
 
-class _FakeMiddleware:
-    @staticmethod
-    def request_loader(_request):
-        return None
-
-
-class _FakeRouter:
-    def __init__(self):
-        self.register_calls = []
-
-    def register_router(self, app):
-        self.register_calls.append(app)
-
-
 def _new_http_app(monkeypatch):
-    cors_calls = []
     ext_calls = []
-    socketio_calls = []
 
-    monkeypatch.setattr(
-        "internal.server.http.CORS",
-        lambda app, resources: cors_calls.append((app, resources)),
-    )
     monkeypatch.setattr(
         "internal.server.http.logging_extension.init_app",
         lambda app: ext_calls.append(("logging", app)),
@@ -89,80 +52,30 @@ def _new_http_app(monkeypatch):
         "internal.server.http.redis_extension.init_app",
         lambda app: ext_calls.append(("redis", app)),
     )
-    monkeypatch.setattr(
-        "internal.server.http.celery_extension.init_app",
-        lambda app: ext_calls.append(("celery", app)),
-    )
-    monkeypatch.setattr(
-        "internal.server.http.init_socketio",
-        lambda app: socketio_calls.append(app),
-    )
 
     db = _FakeDB()
     migrate = _FakeMigrate()
-    login_manager = _FakeLoginManager()
     mail = _FakeMail()
-    middleware = _FakeMiddleware()
-    router = _FakeRouter()
+    conf = _FakeConf()
 
     app = Http(
         "test-http",
-        conf=_FakeConf(),
+        conf=conf,
         db=db,
         migrate=migrate,
-        login_manager=login_manager,
         mail=mail,
-        middleware=middleware,
-        router=router,
     )
-    return app, db, migrate, login_manager, mail, router, cors_calls, ext_calls, socketio_calls
+    return app, db, migrate, mail, ext_calls, conf
 
 
-def test_http_init_should_wire_extensions_middleware_and_router(monkeypatch):
-    app, db, migrate, login_manager, mail, router, cors_calls, ext_calls, socketio_calls = _new_http_app(monkeypatch)
+def test_http_init_should_wire_extensions(monkeypatch):
+    app, db, migrate, mail, ext_calls, conf = _new_http_app(monkeypatch)
 
     assert app.config["CELERY"] == {"broker_url": "redis://example"}
-    assert db.init_calls == [app]
-    assert migrate.init_calls == [(app, db, "internal/migration")]
-    assert login_manager.init_calls == [app]
-    assert mail.init_calls == [app]
-    assert login_manager.request_loader_fn == _FakeMiddleware.request_loader
-    assert router.register_calls == [app]
-    assert len(cors_calls) == 1
-    assert cors_calls[0][1]["/*"]["origins"] == ["https://ui.example.com"]
-    assert cors_calls[0][1]["/*"]["supports_credentials"] is True
-    assert [name for name, _ in ext_calls] == ["logging", "redis", "celery"]
-    assert socketio_calls == [app]
-
-
-def test_http_init_should_fallback_to_localhost_when_wildcard_conflicts_with_credentials(monkeypatch):
-    cors_calls = []
-
-    monkeypatch.setattr(
-        "internal.server.http.CORS",
-        lambda app, resources: cors_calls.append((app, resources)),
-    )
-    monkeypatch.setattr("internal.server.http.logging_extension.init_app", lambda app: None)
-    monkeypatch.setattr("internal.server.http.redis_extension.init_app", lambda app: None)
-    monkeypatch.setattr("internal.server.http.celery_extension.init_app", lambda app: None)
-    monkeypatch.setattr("internal.server.http.init_socketio", lambda app: None)
-
-    Http(
-        "test-http",
-        conf=_WildcardCorsConf(),
-        db=_FakeDB(),
-        migrate=_FakeMigrate(),
-        login_manager=_FakeLoginManager(),
-        mail=_FakeMail(),
-        middleware=_FakeMiddleware(),
-        router=_FakeRouter(),
-    )
-
-    assert cors_calls[0][1]["/*"]["origins"] == [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ]
-    assert cors_calls[0][1]["/*"]["supports_credentials"] is True
+    assert db.init_calls == [conf]
+    assert migrate.init_calls == []  # flask_migrate 已解耦，容器不再挂载
+    assert mail.init_calls == [conf]
+    assert [name for name, _ in ext_calls] == ["logging", "redis"]
 
 
 def test_http_error_handler_should_return_custom_exception_payload(monkeypatch):
@@ -172,7 +85,7 @@ def test_http_error_handler_should_return_custom_exception_payload(monkeypatch):
         response, status = app._register_error_handler(NotFoundException("missing", {"detail": "x"}))
 
     assert status == 200
-    payload = response.get_json()
+    payload = asyncio.run(response.get_json())
     assert payload["code"] == HttpCode.NOT_FOUND.value
     assert payload["message"] == "missing"
     assert payload["data"] == {"detail": "x"}
@@ -181,39 +94,43 @@ def test_http_error_handler_should_return_custom_exception_payload(monkeypatch):
 def test_http_error_handler_should_reraise_non_custom_error_when_debug(monkeypatch):
     app, *_ = _new_http_app(monkeypatch)
     app.debug = True
-    monkeypatch.delenv("FLASK_ENV", raising=False)
+    monkeypatch.delenv("APP_ENV", raising=False)
 
     with app.app_context():
         with pytest.raises(RuntimeError, match="boom"):
             app._register_error_handler(RuntimeError("boom"))
 
 
-def test_http_error_handler_should_reraise_non_custom_error_when_development_env(monkeypatch):
+def test_http_error_handler_should_not_rely_on_app_env(monkeypatch):
+    """容器以 debug 开关为准，APP_ENV 不再影响异常处理。"""
     app, *_ = _new_http_app(monkeypatch)
     app.debug = False
-    monkeypatch.setenv("FLASK_ENV", "development")
-
-    with app.app_context():
-        with pytest.raises(RuntimeError, match="boom"):
-            app._register_error_handler(RuntimeError("boom"))
-
-
-def test_http_error_handler_should_return_fail_payload_in_production(monkeypatch):
-    app, *_ = _new_http_app(monkeypatch)
-    app.debug = False
-    monkeypatch.setenv("FLASK_ENV", "production")
+    monkeypatch.setenv("APP_ENV", "development")
 
     with app.app_context():
         response, status = app._register_error_handler(RuntimeError("boom"))
 
     assert status == 200
-    payload = response.get_json()
+    payload = asyncio.run(response.get_json())
+    assert payload["code"] == HttpCode.FAIL.value
+
+
+def test_http_error_handler_should_return_fail_payload_in_production(monkeypatch):
+    app, *_ = _new_http_app(monkeypatch)
+    app.debug = False
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with app.app_context():
+        response, status = app._register_error_handler(RuntimeError("boom"))
+
+    assert status == 200
+    payload = asyncio.run(response.get_json())
     assert payload["code"] == HttpCode.FAIL.value
     assert payload["message"] == "服务器内部错误"
     assert payload["data"] == {}
 
 
-def test_app_module_main_should_invoke_http_run(monkeypatch):
+def test_app_module_main_should_bootstrap_container_and_celery(monkeypatch):
     run_calls = []
 
     class _FakeHttp:
@@ -233,13 +150,7 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     class _FakeMigrate:
         pass
 
-    class _FakeLoginManager:
-        pass
-
     class _FakeMail:
-        pass
-
-    class _FakeMiddleware:
         pass
 
     class _FakeRouter:
@@ -270,26 +181,22 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     fake_pkg_sqlalchemy = types.ModuleType("pkg.sqlalchemy")
     fake_pkg_sqlalchemy.SQLAlchemy = _FakeSQLAlchemy
 
-    fake_flask_login = types.ModuleType("flask_login")
-    fake_flask_login.LoginManager = _FakeLoginManager
-
     fake_flask_mail = types.ModuleType("flask_mail")
     fake_flask_mail.Mail = _FakeMail
-
-    fake_internal_middleware = types.ModuleType("internal.middleware")
-    fake_internal_middleware.Middleware = _FakeMiddleware
 
     fake_app_http_module = types.ModuleType("app.http.module")
     fake_app_http_module.injector = _FakeInjector(
         {
             _FakeSQLAlchemy: object(),
             _FakeMigrate: object(),
-            _FakeLoginManager: object(),
             _FakeMail: object(),
-            _FakeMiddleware: object(),
             _FakeRouter: object(),
         }
     )
+
+    # 阶段 C：app.http.celery_app 是独立 Celery 实例（解耦于容器）
+    fake_celery_app = types.ModuleType("app.http.celery_app")
+    fake_celery_app.celery_app = types.SimpleNamespace(main="llmops")
 
     monkeypatch.setitem(__import__("sys").modules, "dotenv", fake_dotenv)
     monkeypatch.setitem(__import__("sys").modules, "flask_migrate", fake_flask_migrate)
@@ -297,10 +204,11 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "internal.router", fake_internal_router)
     monkeypatch.setitem(__import__("sys").modules, "internal.server", fake_internal_server)
     monkeypatch.setitem(__import__("sys").modules, "pkg.sqlalchemy", fake_pkg_sqlalchemy)
-    monkeypatch.setitem(__import__("sys").modules, "flask_login", fake_flask_login)
     monkeypatch.setitem(__import__("sys").modules, "flask_mail", fake_flask_mail)
-    monkeypatch.setitem(__import__("sys").modules, "internal.middleware", fake_internal_middleware)
     monkeypatch.setitem(__import__("sys").modules, "app.http.module", fake_app_http_module)
+    monkeypatch.setitem(__import__("sys").modules, "app.http.celery_app", fake_celery_app)
+    # 避免模块级 init_runtime 污染全局容器
+    monkeypatch.setattr("internal.context.init_runtime", lambda _app: None)
 
     app_file = Path(__file__).resolve().parents[3] / "app" / "http" / "app.py"
     globals_dict = {
@@ -312,5 +220,7 @@ def test_app_module_main_should_invoke_http_run(monkeypatch):
     # 通过 `__main__` 方式执行模块，精确覆盖 app/http/app.py 的入口分支。
     exec(compile(app_file.read_text(encoding="utf-8"), str(app_file), "exec"), globals_dict)
 
-    assert globals_dict["celery"] == "fake-celery-app"
-    assert run_calls == [{"debug": True, "port": 5001}]
+    assert globals_dict["celery"].main == "llmops"
+    assert isinstance(globals_dict["app"], _FakeHttp)
+    # 新入口契约：HTTP 由 uvicorn 承载，__main__ 不再直接 run 开发服务器
+    assert run_calls == []

@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 import numpy as np
 
@@ -202,7 +201,7 @@ class RepresentationRepulsion:
     def _get_db(self):
         """获取 SQLAlchemy 实例，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             db = current_app.extensions.get("database")
             if db is not None:

@@ -164,6 +164,26 @@ def test_get_total_token_budget_should_use_model_max_tokens():
     assert memory._get_total_token_budget() == int(10000 * TokenBufferMemory.CONTEXT_TOKEN_RATIO)
 
 
+def test_get_total_token_budget_should_prefer_context_window_from_metadata():
+    memory = TokenBufferMemory(
+        db=SimpleNamespace(),
+        conversation=None,
+        model_instance=SimpleNamespace(metadata={"context_window": 100000}, max_tokens=10000),
+    )
+
+    assert memory._get_total_token_budget() == int(100000 * TokenBufferMemory.CONTEXT_TOKEN_RATIO)
+
+
+def test_get_total_token_budget_should_prefer_context_window_attribute_over_max_tokens():
+    memory = TokenBufferMemory(
+        db=SimpleNamespace(),
+        conversation=None,
+        model_instance=SimpleNamespace(context_window=60000, max_tokens=10000),
+    )
+
+    assert memory._get_total_token_budget() == int(60000 * TokenBufferMemory.CONTEXT_TOKEN_RATIO)
+
+
 def test_get_total_token_budget_should_fallback_to_default_when_model_max_tokens_missing():
     memory = TokenBufferMemory(
         db=SimpleNamespace(),

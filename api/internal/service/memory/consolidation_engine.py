@@ -1,14 +1,15 @@
-"""五阶段巩固引擎（ConsolidationEngine）。
+"""六阶段巩固引擎（ConsolidationEngine）。
 
-实现五阶段巩固流程，作为后台定时任务执行记忆整理。灵感来自睡眠记忆巩固
+实现六阶段巩固流程，作为后台定时任务执行记忆整理。灵感来自睡眠记忆巩固
 理论——睡眠期间海马体将日间经验转移到新皮层进行长期存储。
 
-五阶段:
+六阶段:
     - Phase 1 EXTRACT:  7 天以上 Episode → LLM 提取共性 → SemanticMemory + IS_ABSTRACTION_OF
     - Phase 2 RESOLVE:  委托 ConflictDetector.detect
     - Phase 3 TIER:     HebbianDecay.batch_update_weights + tier 降级
     - Phase 4 MERGE:    相似度 > 0.9 的节点合并（MERGED_INTO 边）
-    - Phase 5 REPORT:   统计摘要
+    - Phase 5 SKILL:    委托 SkillEmergence.scan_and_emerge 涌现技能
+    - Phase 6 REPORT:   统计摘要
 
 降级策略:
     - 单阶段失败不阻断后续阶段，错误记录到 report.errors
@@ -18,6 +19,7 @@
 设计参考:
     docs/prd/memory-system/03-consolidation-skill-policy-api.md §7.1
     docs/prd/memory-system/execution/04-track-c-consolidation.md C1
+    docs/prd/memory-system/execution/06-track-e-skill-pool.md E1
 """
 
 from __future__ import annotations
@@ -38,17 +40,6 @@ from internal.service.language_model_service import LanguageModelService
 from internal.service.memory.metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
-
-
-# 语义提取 prompt 模板
-_SEMANTIC_EXTRACTION_PROMPT = """你是一个记忆语义提取专家。以下是一组相似的情景记忆，请提取它们的共性语义。
-
-情景记忆列表:
-{episodes}
-
-请提取这些记忆的共性语义，用一句话描述一个通用模式或概念。
-只返回语义描述文本，不要添加额外说明。
-"""
 
 
 class ConsolidationEngine:
@@ -106,13 +97,14 @@ class ConsolidationEngine:
             started_at=datetime.utcnow(),
         )
 
-        # 五阶段定义
+        # 六阶段定义
         phases = [
             (ConsolidationPhase.EXTRACT.value, self._phase1_episodic_to_semantic),
             (ConsolidationPhase.RESOLVE.value, self._phase2_conflict_detection),
             (ConsolidationPhase.TIER.value, self._phase3_weight_scan),
             (ConsolidationPhase.MERGE.value, self._phase4_redundancy_merge),
-            (ConsolidationPhase.REPORT.value, self._phase5_stats_summary),
+            (ConsolidationPhase.SKILL.value, self._phase5_skill_emergence),
+            (ConsolidationPhase.REPORT.value, self._phase6_stats_summary),
         ]
 
         for phase_name, phase_func in phases:
@@ -125,8 +117,9 @@ class ConsolidationEngine:
                     report.conflicts_resolved = phase_result.get("count", 0)
                 elif phase_name == ConsolidationPhase.MERGE.value:
                     report.merged_count = phase_result.get("merged", 0)
-                elif phase_name == ConsolidationPhase.EXTRACT.value:
-                    report.skills_emerged = phase_result.get("semantics_created", 0)
+                elif phase_name == ConsolidationPhase.SKILL.value:
+                    # 修复：skills_emerged 从 SKILL 阶段获取真实技能涌现数
+                    report.skills_emerged = phase_result.get("skills_emerged", 0)
 
             except Exception as exc:
                 error_msg = f"阶段 {phase_name} 失败: {exc}"
@@ -356,11 +349,46 @@ class ConsolidationEngine:
         return {"count": count, "merged": merged}
 
     # =========================================================
-    # Phase 5: 统计摘要
+    # Phase 5: 技能涌现
     # =========================================================
 
-    def _phase5_stats_summary(self, user_id: str) -> dict:
-        """阶段 5：更新统计计数器。
+    def _phase5_skill_emergence(self, user_id: str) -> dict:
+        """阶段 5：委托 SkillEmergence.scan_and_emerge 涌现技能。
+
+        扫描 30 天内高频行为模式（≥ min_pattern_frequency 次），LLM 提取
+        参数化技能模板，执行 CANDIDATE→EMERGING→ACTIVE→STALE→DEPRECATED
+        状态转移。种子提示机制：有 positive 种子的技能阈值降为 1。
+
+        Returns:
+            ``{"skills_emerged": int, "skills_updated": int}``
+        """
+        try:
+            from internal.service.memory.skill_emergence import SkillEmergence
+
+            emergence = SkillEmergence(
+                neo4j_driver=self._driver or self._get_driver(),
+                redis_client=self._get_redis(),
+            )
+            skills = emergence.scan_and_emerge(user_id)
+            # 区分新增和更新：status=CANDIDATE 视为新增，其余视为更新
+            new_count = sum(
+                1 for s in skills if s.status.value == "candidate"
+            )
+            updated_count = len(skills) - new_count
+            return {
+                "skills_emerged": new_count,
+                "skills_updated": updated_count,
+            }
+        except Exception:
+            logger.warning("_phase5: 技能涌现失败", exc_info=True)
+            return {"skills_emerged": 0, "skills_updated": 0}
+
+    # =========================================================
+    # Phase 6: 统计摘要
+    # =========================================================
+
+    def _phase6_stats_summary(self, user_id: str) -> dict:
+        """阶段 6：更新统计计数器。
 
         Returns:
             ``{"total_nodes", "total_edges", "tier_distribution"}``
@@ -546,7 +574,11 @@ class ConsolidationEngine:
         if not episodes_text.strip():
             return None
 
-        prompt = _SEMANTIC_EXTRACTION_PROMPT.format(episodes=episodes_text)
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_semantic_extraction_prompt"
+        ).format(episodes=episodes_text)
 
         try:
             llm = LanguageModelService.get_feature_model("memory_consolidation")
@@ -813,7 +845,7 @@ class ConsolidationEngine:
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             if driver is not None:
@@ -831,7 +863,7 @@ class ConsolidationEngine:
     def _get_db(self):
         """获取 SQLAlchemy 实例，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             db = current_app.extensions.get("database")
             if db is not None:
@@ -844,4 +876,16 @@ class ConsolidationEngine:
             return db
         except Exception:
             logger.warning("_get_db: 获取数据库失败", exc_info=True)
+            return None
+
+    def _get_redis(self):
+        """获取 Redis 客户端，不可用时返回 None。"""
+        try:
+            from internal.context import current_app
+
+            return current_app.extensions.get("redis")
+        except RuntimeError:
+            return None
+        except Exception:
+            logger.warning("_get_redis: 获取 Redis 失败", exc_info=True)
             return None

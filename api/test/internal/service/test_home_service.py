@@ -153,7 +153,7 @@ class TestHomeService:
         assert result["recommended_agents"] == []
         assert result["matched_tool_pools"] == ["general"]
         assert result["recommended_tools"] == []
-        assert result["cost_policy"]["model_tier"] == "cheap"
+        assert result["cost_policy"]["model_tier"] == "1"
         assert result["billing_events"][0]["event"] == "billing_started"
         assert result["task_plan_summary"] == {
             "execution_mode": "direct_answer",

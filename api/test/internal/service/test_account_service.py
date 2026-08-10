@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 import base64
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -18,8 +18,7 @@ from internal.exception import (
     UnauthorizedException,
     ValidateErrorException,
 )
-from internal.entity.ai_entity import OPENAPI_SCHEMA_ASSISTANT_PROMPT, PYTHON_CODE_ASSISTANT_PROMPT
-from internal.model import Account, AccountOAuth, ApiKey, ApiTool, ApiToolProvider
+from internal.model import Account, AccountOAuth, AdminUser, ApiKey, ApiTool, ApiToolProvider
 from internal.service.account_service import AccountService as _AccountService
 from internal.service.ai_service import AIService, PythonMarkdownOutputParser
 from internal.service.api_key_service import ApiKeyService
@@ -46,6 +45,9 @@ class _QueryStub:
         return self
 
     def one_or_none(self):
+        return self._one_or_none_result
+
+    def first(self):
         return self._one_or_none_result
 
     def all(self):
@@ -354,7 +356,7 @@ class TestAccountService:
             lambda target, **kwargs: update_calls.append((target, kwargs)) or target,
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -396,7 +398,7 @@ class TestAccountService:
             ],
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -432,7 +434,7 @@ class TestAccountService:
             lambda target, **kwargs: update_calls.append((target, kwargs)) or target,
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -570,7 +572,7 @@ class TestAccountService:
         monkeypatch.setattr(service, "resolve_ip_location", lambda ip: "上海市" if ip == "10.0.0.5" else "")
         monkeypatch.setattr(service, "get_account_sessions_by_account_id", lambda _account_id: [])
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -600,7 +602,7 @@ class TestAccountService:
 
         monkeypatch.setattr(service, "get_account_sessions_by_account_id", _raise_session_error)
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -688,7 +690,7 @@ class TestAccountService:
         monkeypatch.setattr(service, "resolve_ip_location", lambda ip: "上海市" if ip == "10.0.0.5" else "")
         monkeypatch.setattr(service, "get_account_sessions_by_account_id", lambda _account_id: [])
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -727,7 +729,7 @@ class TestAccountService:
 
         monkeypatch.setattr(service, "get_account_sessions_by_account_id", _raise_session_error)
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context(
             "/",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/123.0"},
@@ -852,7 +854,7 @@ class TestAccountService:
         monkeypatch.setattr("internal.service.account_service.redis_client", _RedisStub())
         monkeypatch.setattr(service, "get_account_by_email", lambda _email: None)
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}):
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "pwd")
@@ -872,7 +874,7 @@ class TestAccountService:
         monkeypatch.setattr(service, "get_account_by_email", lambda _email: account)
         monkeypatch.setattr("internal.service.account_service.compare_password", lambda *_args, **_kwargs: True)
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}):
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "pwd")
@@ -894,7 +896,7 @@ class TestAccountService:
             lambda *_args, **_kwargs: False,
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}):
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "bad-pwd")
@@ -917,7 +919,7 @@ class TestAccountService:
             lambda _account_id: [SimpleNamespace(provider="google")],
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}):
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "new-pwd")
@@ -1000,6 +1002,7 @@ class TestAccountService:
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
         service = self._build_service()
+        monkeypatch.setattr(service, "_ensure_account_not_admin_bound", lambda account: None)
         account = SimpleNamespace(
             id=uuid4(),
             password="hashed-password",
@@ -1019,7 +1022,7 @@ class TestAccountService:
             or {"access_token": "jwt-token", "expire_at": 123},
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.5"}):
             result = service.password_login("demo@example.com", "good-pwd")
 
@@ -1037,6 +1040,7 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(send_login_challenge_code=lambda email: email_calls.append(email)),
         )
+        monkeypatch.setattr(service, "_ensure_account_not_admin_bound", lambda account: None)
         account = SimpleNamespace(
             id=uuid4(),
             email="demo@example.com",
@@ -1058,7 +1062,7 @@ class TestAccountService:
             lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should require challenge first")),
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
             result = service.password_login("demo@example.com", "good-pwd")
 
@@ -1069,6 +1073,44 @@ class TestAccountService:
         assert email_calls == ["demo@example.com"]
         assert service._login_challenge_key(result["challenge_id"]) in redis_stub.values
         assert len(redis_stub.delete_calls) == 0
+
+    def test_begin_login_should_reject_admin_bound_account(self, monkeypatch):
+        account_id = uuid4()
+        admin_user = SimpleNamespace(id=uuid4())
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=admin_user)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        account = SimpleNamespace(id=account_id)
+
+        with pytest.raises(FailException) as exc_info:
+            service.begin_login(account)
+
+        assert "管理员" in str(exc_info.value)
+
+    def test_begin_login_should_allow_regular_account(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        account_id = uuid4()
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "_should_require_login_challenge", lambda *args, **kwargs: False)
+        issued = []
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda target: issued.append(target) or {"access_token": "t", "expire_at": 1},
+        )
+        account = SimpleNamespace(id=account_id)
+
+        result = service.begin_login(account)
+
+        assert result["access_token"] == "t"
+        assert issued == [account]
 
     def test_resend_login_challenge_should_reuse_pending_challenge(self, monkeypatch):
         redis_stub = _RedisStub()
@@ -1159,7 +1201,7 @@ class TestAccountService:
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
         monkeypatch.setattr(service, "get_account_by_email", lambda _email: None)
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": ip}):
             with pytest.raises(FailException) as exc_info:
                 service.password_login(email, "pwd")
@@ -1226,7 +1268,7 @@ class TestAccountService:
             lambda *_args, **_kwargs: False,
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": ip}):
             with pytest.raises(FailException) as exc_info:
                 service.password_login(email, "wrong")

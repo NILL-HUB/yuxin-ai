@@ -23,6 +23,7 @@ _TEXT_FILE_SUFFIXES = {
     ".ini",
     ".cfg",
     ".svg",
+    ".env",
 }
 
 
@@ -189,19 +190,46 @@ class SkillCatalogManager:
             tools = []
 
         bundle: dict[str, str] = {"manifest.yaml": manifest_text}
+        env_values: dict[str, str] = {}
         for file_path in sorted(package_path.rglob("*")):
             if file_path.is_dir():
                 continue
             if file_path.name == "manifest.yaml":
                 continue
+            # .env 特殊处理（Path(".env").suffix 为空，需按文件名判断）
+            if file_path.name == ".env" or file_path.suffix.lower() == ".env":
+                try:
+                    env_values.update(self._parse_dotenv(file_path.read_text(encoding="utf-8")))
+                except UnicodeDecodeError:
+                    logger.warning("跳过非 UTF-8 技能包 .env 文件: %s", file_path)
+                except Exception as exc:
+                    logger.exception("读取技能包 .env 失败: %s", exc)
+                continue
             if file_path.suffix.lower() not in _TEXT_FILE_SUFFIXES:
                 continue
             try:
-                bundle[file_path.relative_to(package_path).as_posix()] = file_path.read_text(encoding="utf-8")
+                content = file_path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 logger.warning("跳过非 UTF-8 技能包文件: %s", file_path)
+                continue
             except Exception as exc:
                 logger.exception("读取技能包文件失败: %s", exc)
+                continue
+
+            relative_key = file_path.relative_to(package_path).as_posix()
+            bundle[relative_key] = content
+
+        if env_values:
+            try:
+                from internal.service.tool_credential_encryptor import ensure_encrypted_env
+
+                bundle["__env__"] = json.dumps(
+                    ensure_encrypted_env(env_values),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            except Exception as exc:
+                logger.exception("技能包 .env 加密失败，已忽略: %s", exc)
 
         checksum = generate_text_hash(
             json.dumps(
@@ -247,6 +275,21 @@ class SkillCatalogManager:
             except Exception as exc:
                 logger.exception("读取技能正文失败: %s", exc)
         return ""
+
+    @staticmethod
+    def _parse_dotenv(content: str) -> dict[str, str]:
+        """解析 .env 文本为键值对（忽略注释与空行）。"""
+        result: dict[str, str] = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                result[key] = value
+        return result
 
     def _normalize_tool_definitions(self, raw_tools: Any) -> list[SkillToolDefinition]:
         if not isinstance(raw_tools, list):

@@ -1,8 +1,6 @@
 import logging
 import re
-import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from uuid import UUID
 
 from injector import inject
@@ -12,8 +10,7 @@ from sqlalchemy import func
 from internal.core.file_extractor import FileExtractor
 from internal.entity.dataset_entity import DocumentStatus, SegmentStatus
 from internal.exception import NotFoundException
-from internal.lib.helper import generate_text_hash
-from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UploadFile
+from internal.model import KnowledgeDocument, KnowledgeSegment, UploadFile
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.jieba_service import JiebaService
 from internal.service.knowledge_vector_service import KnowledgeVectorService
@@ -215,6 +212,7 @@ class KnowledgeIndexingService(BaseService):
 
         self.update(
             document,
+            character_count=sum([len(seg.page_content) for seg in lc_segments]),
             status=DocumentStatus.COMPLETED.value,
         )
 

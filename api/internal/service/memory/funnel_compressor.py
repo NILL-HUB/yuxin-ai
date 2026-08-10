@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -36,20 +35,6 @@ from internal.service.memory.llm_activity_probe import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# 压缩 prompt 模板
-_COMPRESSION_PROMPT = """你是一个记忆压缩助手。请将以下记忆证据压缩为不超过 {budget} tokens 的结构化摘要。
-
-证据列表:
-{evidence}
-
-要求:
-1. 保留关键事实与重要细节，去除冗余信息
-2. 按主题或时间顺序组织
-3. 使用简洁的 Markdown 格式
-4. 不要添加证据中没有的信息
-"""
 
 
 class FunnelCompressor:
@@ -233,7 +218,11 @@ class FunnelCompressor:
         异常时回退为格式化证据文本。
         """
         evidence_text = self._format_evidence_for_llm(evidence)
-        prompt = _COMPRESSION_PROMPT.format(
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_funnel_compression_prompt"
+        ).format(
             budget=budget_tokens,
             evidence=evidence_text,
         )

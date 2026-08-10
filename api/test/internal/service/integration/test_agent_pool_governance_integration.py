@@ -1,13 +1,14 @@
 """P0-5 AgentPoolConfig 接入 AgentCandidateCollector 端到端集成测试。
 
 验证环节：
-    AgentPoolConfig（路由元数据）接入 AgentCandidateCollector 后，候选 Agent
-    携带路由元数据（primary_pool/risk_level/model_tier/routing_priority），
-    并能被下游 AgentPolicyFilter / AgentRanker 正常处理。
+    路由字段（primary_pool/risk_level/model_tier/routing_priority）已统一由
+    App.agent_metadata 承载；AgentPoolConfig 仅保留部署/健康字段（enabled/
+    health_status）。候选 Agent 的 metadata 携带路由元数据，pool_config 携带
+    部署/健康元数据，并能被下游 AgentPolicyFilter / AgentRanker 正常处理。
 
 测试场景：
-    1. AgentPoolConfig 存在时候选携带路由元数据，缺失时降级默认值
-    2. AgentPoolConfig 字段值透传到候选 dict 顶层
+    1. App 带 agent_metadata 路由元数据时候选携带，缺失时降级默认值
+    2. agent_metadata 路由字段透传到候选 metadata，AgentPoolConfig 字段透传到 pool_config
     3. collect 后接 AgentPolicyFilter 不破坏
     4. collect 后接 AgentRanker 按 routing_priority 影响排序
     5. AgentPoolConfig 缺失的 App 仍能被收集（降级默认值保证可用性）
@@ -90,13 +91,14 @@ def _app(**kwargs):
 
 
 def _pool_config(**kwargs):
-    """构造 AgentPoolConfig 桩对象。"""
+    """构造 AgentPoolConfig 桩对象。
+
+    路由字段已由 App.agent_metadata 承载，实现仅读取 AgentPoolConfig 的
+    enabled / health_status 部署与健康字段。
+    """
     defaults = {
-        "primary_pool": "general",
-        "secondary_pools": [],
-        "risk_level": "safe",
-        "model_tier": "standard",
-        "routing_priority": 100,
+        "enabled": True,
+        "health_status": "healthy",
     }
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -107,21 +109,27 @@ def _pool_config(**kwargs):
 # ------------------------------------------------------------------ #
 
 def test_candidate_carries_routing_metadata_when_pool_config_exists():
-    """场景1：AgentPoolConfig 存在时候选携带路由元数据，缺失时降级默认值。
+    """场景1：App 带 agent_metadata 路由元数据时候选携带，缺失时降级默认值。
 
-    构造 2 个公开 App：第 1 个有 AgentPoolConfig（primary_pool=coding,
-    risk_level=safe, model_tier=premium, routing_priority=10），第 2 个没有。
-    collect() 后第 1 个候选应含配置字段，第 2 个应含降级默认值。
+    构造 2 个公开 App：第 1 个在 agent_metadata 中设置 primary_pool=coding,
+    risk_level=safe, model_tier=strong, routing_priority=10，第 2 个使用默认
+    agent_metadata。collect() 后第 1 个候选的 metadata 含配置字段，第 2 个
+    含降级默认值；AgentPoolConfig 存在与否决定 pool_config 是否非空。
     """
     account_id = uuid4()
-    app_with_config = _app(name="编程 Agent", is_public=True)
-    app_without_config = _app(name="通用 Agent", is_public=True)
-    pool_config = _pool_config(
-        primary_pool="coding",
-        risk_level="safe",
-        model_tier="premium",
-        routing_priority=10,
+    app_with_config = _app(
+        name="编程 Agent",
+        is_public=True,
+        agent_metadata={
+            **DEFAULT_AGENT_METADATA,
+            "primary_pool": "coding",
+            "risk_level": "safe",
+            "model_tier": "strong",
+            "routing_priority": 10,
+        },
     )
+    app_without_config = _app(name="通用 Agent", is_public=True)
+    pool_config = _pool_config()
     collector = AgentCandidateCollector(
         session=_SessionStub([
             # public_rows: (app, pool_config) 元组 + 裸 app（降级为 (app, None)）
@@ -135,37 +143,44 @@ def test_candidate_carries_routing_metadata_when_pool_config_exists():
 
     app_candidates = [c for c in result if c["source_type"] == "app"]
     assert len(app_candidates) == 2
-    # 第 1 个候选携带 AgentPoolConfig 路由元数据
+    # 第 1 个候选的 metadata 携带路由元数据，pool_config 保留部署/健康字段
     first = app_candidates[0]
     assert first["name"] == "编程 Agent"
-    assert first["primary_pool"] == "coding"
-    assert first["risk_level"] == "safe"
-    assert first["model_tier"] == "premium"
-    assert first["routing_priority"] == 10
-    # 第 2 个候选降级默认值
+    assert first["metadata"]["primary_pool"] == "coding"
+    assert first["metadata"]["risk_level"] == "safe"
+    assert first["metadata"]["model_tier"] == "strong"
+    assert first["metadata"]["routing_priority"] == 10
+    assert first["pool_config"] == {"enabled": True, "health_status": "healthy"}
+    # 第 2 个候选降级默认值（metadata 默认 + pool_config 为空 dict）
     second = app_candidates[1]
     assert second["name"] == "通用 Agent"
-    assert second["primary_pool"] == "general"
-    assert second["risk_level"] == "safe"
-    assert second["model_tier"] == "standard"
-    assert second["routing_priority"] == 100
+    assert second["metadata"]["primary_pool"] == "general"
+    assert second["metadata"]["risk_level"] == "safe"
+    assert second["metadata"]["model_tier"] == "standard"
+    assert second["metadata"]["routing_priority"] == 50
+    assert second["pool_config"] == {}
 
 
 def test_pool_config_fields_transparently_passed_to_candidate_top_level():
-    """场景2：AgentPoolConfig 字段值透传到候选 dict 顶层。
+    """场景2：agent_metadata 路由字段透传到候选 metadata，AgentPoolConfig 部署/健康字段透传到 pool_config。
 
-    构造 AgentPoolConfig(primary_pool=data_analysis, risk_level=sensitive,
-    model_tier=premium, routing_priority=5)，collect() 后候选 dict 顶层
-    应能直接读取这些字段。
+    构造 App（agent_metadata: primary_pool=data_analysis, risk_level=high,
+    model_tier=strong, routing_priority=5）与 AgentPoolConfig（enabled=True,
+    health_status=degraded），collect() 后候选应能直接读取这些字段。
     """
     account_id = uuid4()
-    app = _app(name="数据分析 Agent", is_public=True)
-    pool_config = _pool_config(
-        primary_pool="data_analysis",
-        risk_level="sensitive",
-        model_tier="premium",
-        routing_priority=5,
+    app = _app(
+        name="数据分析 Agent",
+        is_public=True,
+        agent_metadata={
+            **DEFAULT_AGENT_METADATA,
+            "primary_pool": "data_analysis",
+            "risk_level": "high",
+            "model_tier": "strong",
+            "routing_priority": 5,
+        },
     )
+    pool_config = _pool_config(enabled=True, health_status="degraded")
     collector = AgentCandidateCollector(
         session=_SessionStub([
             _QueryStub(all_result=[(app, pool_config)]),
@@ -179,11 +194,13 @@ def test_pool_config_fields_transparently_passed_to_candidate_top_level():
     app_candidates = [c for c in result if c["source_type"] == "app"]
     assert len(app_candidates) == 1
     candidate = app_candidates[0]
-    # 顶层可直接读取 AgentPoolConfig 字段
-    assert candidate["primary_pool"] == "data_analysis"
-    assert candidate["risk_level"] == "sensitive"
-    assert candidate["model_tier"] == "premium"
-    assert candidate["routing_priority"] == 5
+    # metadata 顶层可直接读取路由字段
+    assert candidate["metadata"]["primary_pool"] == "data_analysis"
+    assert candidate["metadata"]["risk_level"] == "high"
+    assert candidate["metadata"]["model_tier"] == "strong"
+    assert candidate["metadata"]["routing_priority"] == 5
+    # pool_config 保留 AgentPoolConfig 部署/健康字段
+    assert candidate["pool_config"] == {"enabled": True, "health_status": "degraded"}
     # id/app_id/agent_id 仍正确
     assert candidate["id"] == str(app.id)
     assert candidate["app_id"] == str(app.id)
@@ -198,7 +215,7 @@ def test_collect_result_can_be_processed_by_policy_filter():
     account_id = uuid4()
     published = _app(name="已发布", is_public=True, status="published")
     draft = _app(name="草稿", is_public=True, status="draft")
-    pool_config = _pool_config(primary_pool="coding", routing_priority=10)
+    pool_config = _pool_config()
     collector = AgentCandidateCollector(
         session=_SessionStub([
             _QueryStub(all_result=[(published, pool_config), draft]),
@@ -236,9 +253,9 @@ def test_collect_result_can_be_processed_by_policy_filter():
 def test_collect_result_can_be_ranked_by_agent_ranker():
     """场景4：collect 后接 AgentRanker 排序，routing_priority 影响排序。
 
-    构造 2 个候选，routing_priority 不同（10 vs 100），其余评分因子接近。
-    AgentRanker 的 priority_score = routing_priority / 1000，routing_priority
-    数值大的 priority_score 更高，总分更高，排在前。
+    构造 2 个候选，agent_metadata 中的 routing_priority 不同（100 vs 10），
+    其余评分因子接近。AgentRanker 的 priority_score = routing_priority / 1000，
+    routing_priority 数值大的 priority_score 更高，总分更高，排在前。
     """
     account_id = uuid4()
     high_priority_app = _app(
@@ -254,8 +271,8 @@ def test_collect_result_can_be_ranked_by_agent_ranker():
     collector = AgentCandidateCollector(
         session=_SessionStub([
             _QueryStub(all_result=[
-                (high_priority_app, _pool_config(routing_priority=100)),
-                (low_priority_app, _pool_config(routing_priority=10)),
+                (high_priority_app, _pool_config()),
+                (low_priority_app, _pool_config()),
             ]),
             _QueryStub(all_result=[]),
             _QueryStub(all_result=[]),
@@ -270,7 +287,7 @@ def test_collect_result_can_be_ranked_by_agent_ranker():
             "agent_id": c["agent_id"],
             "name": c["name"],
             "semantic_score": 0.5,  # 保持一致，让 routing_priority 成为决定因子
-            "metadata": {**DEFAULT_AGENT_METADATA, "routing_priority": c["routing_priority"]},
+            "metadata": {**DEFAULT_AGENT_METADATA, "routing_priority": c["metadata"]["routing_priority"]},
         }
         for c in app_candidates
     ]
@@ -290,7 +307,7 @@ def test_app_without_pool_config_still_collected_with_defaults():
     """场景5：AgentPoolConfig 缺失的 App 仍能被收集（降级默认值保证可用性）。
 
     全部 App 均无 AgentPoolConfig（outerjoin 返回裸 App 对象），collect() 后
-    候选应含降级默认值且不被丢弃。
+    候选的 metadata 为默认路由元数据、pool_config 为空 dict，且不被丢弃。
     """
     account_id = uuid4()
     app_a = _app(name="Agent A", is_public=True)
@@ -309,8 +326,10 @@ def test_app_without_pool_config_still_collected_with_defaults():
     app_candidates = [c for c in result if c["source_type"] == "app"]
     assert len(app_candidates) == 2
     for candidate in app_candidates:
-        # 全部降级为默认值
-        assert candidate["primary_pool"] == "general"
-        assert candidate["risk_level"] == "safe"
-        assert candidate["model_tier"] == "standard"
-        assert candidate["routing_priority"] == 100
+        # metadata 全部降级为默认路由元数据
+        assert candidate["metadata"]["primary_pool"] == "general"
+        assert candidate["metadata"]["risk_level"] == "safe"
+        assert candidate["metadata"]["model_tier"] == "standard"
+        assert candidate["metadata"]["routing_priority"] == 50
+        # AgentPoolConfig 缺失 → pool_config 降级为空 dict
+        assert candidate["pool_config"] == {}

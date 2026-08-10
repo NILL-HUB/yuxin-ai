@@ -7,12 +7,12 @@ def test_sandbox_policy_should_expose_default_profile():
     assert SandboxPolicy.default_sandbox_profile == "lite"
     assert SandboxPolicy.default_sandbox_template_alias == "llmops-code-interpreter-lite"
     assert SandboxPolicy.default_sandbox_fallback_template_alias == "code-interpreter-v1"
-    assert SandboxPolicy.default_sandbox_timeout_seconds == 1800
-    assert SandboxPolicy.default_execute_timeout_seconds == 600
+    assert SandboxPolicy.default_sandbox_timeout_seconds == 86400
+    assert SandboxPolicy.default_execute_timeout_seconds == 3600
     assert SandboxPolicy.default_artifact_base_dirs == ("/workspace", "/home/user", "/tmp", "/mnt/data")
-    assert SandboxPolicy.document_build_base_dir == "/tmp/openagent_doc_build"
+    assert SandboxPolicy.document_build_base_dir == "/tmp/yuxin_ai_doc_build"
     assert SandboxPolicy.code_interpreter_data_dir == "/mnt/data"
-    assert SandboxPolicy.artifact_marker_prefix == ".openagent_artifact_marker_"
+    assert SandboxPolicy.artifact_marker_prefix == ".yuxin_ai_artifact_marker_"
 
 
 def test_sandbox_policy_should_build_default_artifact_root():

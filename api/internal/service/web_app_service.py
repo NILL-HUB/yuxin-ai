@@ -2,9 +2,8 @@ import json
 import logging
 from typing import Generator, Any
 from uuid import UUID
-from flask import current_app
+from internal.context import current_app
 from injector import inject
-from langchain_core.messages import HumanMessage
 from sqlalchemy import desc
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -18,7 +17,6 @@ from internal.core.agent.usage_utils import summarize_agent_thoughts
 from internal.core.language_model.entities.model_entity import ModelFeature
 from internal.core.memory import TokenBufferMemory
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
-from internal.entity.dataset_entity import RetrievalSource
 from .app_config_service import AppConfigService, call_config_loader
 from .app_runtime_service import AppRuntimeService
 from .conversation_service import ConversationService

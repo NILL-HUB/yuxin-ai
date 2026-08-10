@@ -1,16 +1,10 @@
 from __future__ import annotations
 
 import internal.entity as entity_pkg
-from internal.entity.ai_entity import (
-    OPENAPI_SCHEMA_ASSISTANT_PROMPT,
-    OPTIMIZE_PROMPT_TEMPLATE,
-    PYTHON_CODE_ASSISTANT_PROMPT,
-)
 from internal.entity.app_entity import (
     AppConfigType,
     AppStatus,
     DEFAULT_APP_CONFIG,
-    GENERATE_ICON_PROMPT_TEMPLATE,
 )
 from internal.entity.audio_entity import ALLOWED_AUDIO_VOICES
 from internal.entity.cache_entity import (
@@ -20,9 +14,6 @@ from internal.entity.cache_entity import (
     LOCK_SEGMENT_UPDATE_ENABLED,
 )
 from internal.entity.conversation_entity import (
-    CONVERSATION_NAME_TEMPLATE,
-    SUGGESTED_QUESTIONS_TEMPLATE,
-    SUMMARIZER_TEMPLATE,
     InvokeFrom,
     MessageStatus,
 )
@@ -52,8 +43,10 @@ def test_app_entity_should_keep_expected_defaults_and_enums():
     assert _enum_values(AppStatus) == ["draft", "published"]
     assert _enum_values(AppConfigType) == ["draft", "published"]
 
-    assert "{name}" in GENERATE_ICON_PROMPT_TEMPLATE
-    assert "{description}" in GENERATE_ICON_PROMPT_TEMPLATE
+    from internal.service.system_prompt_library_service import SystemPromptLibraryService
+    icon_template = SystemPromptLibraryService().get_prompt_or_default("app_icon_generate_prompt")
+    assert "{name}" in icon_template
+    assert "{description}" in icon_template
 
     required_keys = {
         "model_config",
@@ -76,8 +69,8 @@ def test_app_entity_should_keep_expected_defaults_and_enums():
     }
     assert required_keys.issubset(DEFAULT_APP_CONFIG.keys())
     assert DEFAULT_APP_CONFIG["dialog_round"] == 3
-    assert DEFAULT_APP_CONFIG["model_config"]["provider"] == "deepseek"
-    assert DEFAULT_APP_CONFIG["model_config"]["model"] == "deepseek-chat"
+    # 模型配置由管理员在模型池统一管理，默认配置不内嵌具体模型
+    assert DEFAULT_APP_CONFIG["model_config"] == {}
     assert DEFAULT_APP_CONFIG["text_to_speech"]["voice"] in ALLOWED_AUDIO_VOICES
 
 
@@ -123,39 +116,8 @@ def test_cache_entity_lock_patterns_should_support_formatting():
     assert segment_lock == "lock:segment:update:enabled_seg-id"
 
 
-def test_ai_and_conversation_templates_should_keep_core_constraints_and_placeholders():
-    assert "# 角色" in OPTIMIZE_PROMPT_TEMPLATE
-    assert "## 目标" in OPTIMIZE_PROMPT_TEMPLATE
-    assert "## 必须遵守" in OPTIMIZE_PROMPT_TEMPLATE
-    assert "## 内部工作流程" in OPTIMIZE_PROMPT_TEMPLATE
-    assert "默认输出中文" in OPTIMIZE_PROMPT_TEMPLATE
-    assert "禁止输出 <example> 等无关标签" in OPTIMIZE_PROMPT_TEMPLATE
-    assert "步骤1：识别用户业务目标" in OPTIMIZE_PROMPT_TEMPLATE
-
-    assert "def main(params)" in PYTHON_CODE_ASSISTANT_PROMPT
-    assert "params.get('key', default)" in PYTHON_CODE_ASSISTANT_PROMPT
-    assert "只输出一个 Markdown 的 Python 代码块" in PYTHON_CODE_ASSISTANT_PROMPT
-    assert "few-shot" in PYTHON_CODE_ASSISTANT_PROMPT
-
-    assert "OPENAPI_SCHEMA" in OPENAPI_SCHEMA_ASSISTANT_PROMPT
-    assert "server" in OPENAPI_SCHEMA_ASSISTANT_PROMPT
-    assert "paths" in OPENAPI_SCHEMA_ASSISTANT_PROMPT
-    assert "few-shot" in OPENAPI_SCHEMA_ASSISTANT_PROMPT
-
-    assert "{summary}" in SUMMARIZER_TEMPLATE
-    assert "{new_lines}" in SUMMARIZER_TEMPLATE
-    assert "新的总结:" in SUMMARIZER_TEMPLATE
-
-    assert "subject" in CONVERSATION_NAME_TEMPLATE
-    assert "language_type" in CONVERSATION_NAME_TEMPLATE
-    assert "reasoning" in CONVERSATION_NAME_TEMPLATE
-
-    assert "questions" in SUGGESTED_QUESTIONS_TEMPLATE
-    assert "三个问题" in SUGGESTED_QUESTIONS_TEMPLATE
-
-
 def test_conversation_and_jieba_entities_should_keep_expected_values():
-    assert _enum_values(InvokeFrom) == ["service_api", "web_app", "debugger", "assistant_agent"]
+    assert _enum_values(InvokeFrom) == ["service_api", "web_app", "debugger", "assistant_agent", "schedule"]
     assert _enum_values(MessageStatus) == ["normal", "stop", "timeout", "error"]
 
     # stopword 集合很大，这里断言关键中英文停用词与标点存在，避免资源文件被误删或截断。

@@ -1,11 +1,11 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from wtforms import BooleanField, FieldList, StringField
 from wtforms.validators import AnyOf, DataRequired, Length, Optional
 
 POOL_TYPES = ["agent", "tool"]
 
 
-class CreateSubPoolDefinitionReq(FlaskForm):
+class CreateSubPoolDefinitionReq(Form):
     pool_type = StringField("pool_type", validators=[DataRequired(), AnyOf(POOL_TYPES)])
     name = StringField("name", validators=[DataRequired(), Length(min=1, max=64)])
     label = StringField("label", validators=[DataRequired(), Length(min=1, max=128)])
@@ -17,7 +17,7 @@ class CreateSubPoolDefinitionReq(FlaskForm):
     sort_order = StringField("sort_order", default="0")
 
 
-class UpdateSubPoolDefinitionReq(FlaskForm):
+class UpdateSubPoolDefinitionReq(Form):
     label = StringField("label", validators=[Optional(), Length(min=1, max=128)])
     description = StringField("description", validators=[Optional(), Length(max=500)])
     visible_to_user = BooleanField("visible_to_user")

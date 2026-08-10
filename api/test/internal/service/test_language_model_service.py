@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -15,6 +15,12 @@ from langchain_openai import ChatOpenAI
 class _Provider:
     def __init__(self, provider_entity, models):
         self.provider_entity = provider_entity
+        self.name = getattr(provider_entity, "name", None)
+        self.label = getattr(provider_entity, "label", None)
+        self.icon = getattr(provider_entity, "icon", None)
+        self.description = getattr(provider_entity, "description", None)
+        self.background = getattr(provider_entity, "background", None)
+        self.supported_model_types = getattr(provider_entity, "supported_model_types", None)
         self.position = 1
         self._models = models
 
@@ -135,6 +141,34 @@ def _build_service(manager):
     return LanguageModelService(db=SimpleNamespace(), language_model_manager=manager)
 
 
+def _build_runtime_service(model_entity, model_class_factory, monkeypatch, default_model_config=None):
+    """按当前架构构建服务：manager 使用 get_or_load_* 接口，隔离 DB / 注册表 / 默认模型配置。
+
+    - get_or_load_provider / get_or_load_model_entity：新架构懒加载接口
+    - ModelClassRegistry.resolve：返回测试用模型类工厂
+    - _try_load_key_overrides_for_config：避免走真实 DB 加载 key
+    - get_default_model_config：返回与请求模型不同的默认配置，确保运行时兜底代理被启用
+    """
+    manager = SimpleNamespace(
+        get_or_load_provider=lambda _name: SimpleNamespace(name=_name),
+        get_or_load_model_entity=lambda _provider, _model: model_entity,
+    )
+    service = _build_service(manager=manager)
+    monkeypatch.setattr(
+        "internal.core.language_model.model_class_registry.ModelClassRegistry.resolve",
+        lambda _compatible_api, _model_type: model_class_factory,
+    )
+    monkeypatch.setattr(service, "_try_load_key_overrides_for_config", lambda _config: None)
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_default_model_config",
+        classmethod(
+            lambda cls: default_model_config or {"provider": "default", "model": "default-model"}
+        ),
+    )
+    return service
+
+
 class TestLanguageModelService:
     def test_get_language_models_should_map_provider_and_models(self, monkeypatch):
         provider_entity = SimpleNamespace(
@@ -145,32 +179,65 @@ class TestLanguageModelService:
             background="#fff",
             supported_model_types=["chat"],
         )
-        model_entity = SimpleNamespace(name="gpt-4o-mini")
-        provider = _Provider(provider_entity=provider_entity, models={"gpt-4o-mini": model_entity})
+        provider = _Provider(provider_entity=provider_entity, models={})
         manager = SimpleNamespace(get_providers=lambda: [provider])
         service = _build_service(manager=manager)
 
+        class _PoolModel:
+            id = "m1"
+            provider = "openai"
+            model_name = "gpt-4o-mini"
+            display_name = "GPT-4o mini"
+            model_type = "chat"
+            capabilities = ["chat"]
+            max_tokens = 128000
+            max_input_tokens = 124000
+            max_output_tokens = 4000
+            tier = "standard"
+            price_per_1k_tokens = 0.03
+            embedding_dimension = 0
+            status = "active"
+
+        class _Query:
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def all(self):
+                return [_PoolModel()]
+
+        # get_language_models 内部通过 database_extension 按需 import db，需 patch 该模块属性
         monkeypatch.setattr(
-            "internal.service.language_model_service.convert_model_to_dict",
-            lambda model_entities: [{"name": model_entities[0].name}],
+            "internal.extension.database_extension.db",
+            SimpleNamespace(session=SimpleNamespace(query=lambda _model: _Query())),
         )
 
         result = service.get_language_models()
 
         assert result[0]["name"] == "openai"
         assert result[0]["label"] == "OpenAI"
-        assert result[0]["models"][0]["name"] == "gpt-4o-mini"
+        assert result[0]["models"][0]["model_name"] == "gpt-4o-mini"
+        # 上下文窗口与输出上限拆分：输入侧来自 max_input_tokens，输出侧来自 max_output_tokens
+        assert result[0]["models"][0]["context_windows"] == 124000
+        assert result[0]["models"][0]["max_output_tokens"] == 4000
 
     def test_get_language_model_should_raise_when_provider_not_found(self):
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: None))
+        def _raise_not_found(_provider_name, _model_name):
+            raise NotFoundException()
+
+        service = _build_service(
+            manager=SimpleNamespace(get_or_load_model_entity=_raise_not_found)
+        )
 
         with pytest.raises(NotFoundException):
             service.get_language_model("missing", "gpt-4o-mini")
 
     def test_get_language_model_should_raise_when_model_not_found(self):
-        provider_entity = SimpleNamespace(name="openai")
-        provider = _Provider(provider_entity=provider_entity, models={})
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
+        def _raise_not_found(_provider_name, _model_name):
+            raise NotFoundException()
+
+        service = _build_service(
+            manager=SimpleNamespace(get_or_load_model_entity=_raise_not_found)
+        )
 
         with pytest.raises(NotFoundException):
             service.get_language_model("openai", "missing-model")
@@ -178,7 +245,11 @@ class TestLanguageModelService:
     def test_get_language_model_should_return_serialized_model(self, monkeypatch):
         model_entity = SimpleNamespace(name="gpt-4o-mini")
         provider = _Provider(provider_entity=SimpleNamespace(name="openai"), models={"gpt-4o-mini": model_entity})
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
+        service = _build_service(
+            manager=SimpleNamespace(
+                get_or_load_model_entity=lambda _provider_name, _model_name: provider.get_model_entity(_model_name)
+            )
+        )
         monkeypatch.setattr(
             "internal.service.language_model_service.convert_model_to_dict",
             lambda model: {"name": model.name, "model_type": "chat"},
@@ -197,34 +268,38 @@ class TestLanguageModelService:
 
         # current_app.root_path 会向上回退两级，因此这里构造 api/app 目录让计算后回到 tmp_root。
         (root_path / "api/app").mkdir(parents=True, exist_ok=True)
-        flask_app = Flask(__name__, root_path=str(root_path / "api/app"))
+        flask_app = TestApp(__name__, root_path=str(root_path / "api/app"))
 
         provider_entity = SimpleNamespace(icon="openai.png")
-        provider = SimpleNamespace(provider_entity=provider_entity)
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
+        service = _build_service(
+            manager=SimpleNamespace(get_or_load_provider=lambda _name: provider_entity)
+        )
 
         with flask_app.app_context():
             content, mimetype = service.get_language_model_icon("openai")
 
-        assert content == b"icon-bytes"
-        assert mimetype == "image/png"
+        # 新架构下 icon 从 DB 读取，本地文件名按纯文本图标标识返回
+        assert content == b"openai.png"
+        assert mimetype == "text/plain"
 
     def test_get_language_model_icon_should_raise_when_provider_missing(self):
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: None))
+        def _raise_not_found(_provider_name):
+            raise NotFoundException()
+
+        service = _build_service(manager=SimpleNamespace(get_or_load_provider=_raise_not_found))
 
         with pytest.raises(NotFoundException):
             service.get_language_model_icon("missing")
 
-    def test_get_language_model_icon_should_raise_when_icon_missing(self, tmp_path):
-        root_path = Path(tmp_path)
-        (root_path / "api/app").mkdir(parents=True, exist_ok=True)
-        flask_app = Flask(__name__, root_path=str(root_path / "api/app"))
-        provider = SimpleNamespace(provider_entity=SimpleNamespace(icon="missing.png"))
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
+    def test_get_language_model_icon_should_raise_when_icon_missing(self):
+        # 新架构下 icon 从 DB 读取；icon 为空字符串时抛 NotFoundException
+        provider_entity = SimpleNamespace(icon="")
+        service = _build_service(
+            manager=SimpleNamespace(get_or_load_provider=lambda _name: provider_entity)
+        )
 
-        with flask_app.app_context():
-            with pytest.raises(NotFoundException):
-                service.get_language_model_icon("openai")
+        with pytest.raises(NotFoundException):
+            service.get_language_model_icon("openai")
 
     def test_load_language_model_should_fallback_to_default_model(self, monkeypatch):
         service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: None))
@@ -235,21 +310,21 @@ class TestLanguageModelService:
 
         assert result is marker
 
-    def test_load_language_model_should_build_model_instance_when_config_valid(self):
+    def test_load_language_model_should_build_model_instance_when_config_valid(self, monkeypatch):
         model_entity = SimpleNamespace(
             model_type="chat",
             attributes={"model": "gpt-4o-mini", "temperature": 0.5},
             parameters=[
                 SimpleNamespace(name="max_tokens"),
             ],
-            features=["tool_call"],
+            features=[ModelFeature.TOOL_CALL.value],
             metadata={"ctx": 8192},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
 
         llm = service.load_language_model(
             {
@@ -262,10 +337,10 @@ class TestLanguageModelService:
         assert llm.model == "gpt-4o-mini"
         assert llm.temperature == 0.5
         assert llm.max_tokens == 4096
-        assert llm.features == ["tool_call"]
+        assert llm.features == [ModelFeature.TOOL_CALL.value]
         assert llm.metadata.get("ctx") == 8192
 
-    def test_load_language_model_should_satisfy_base_language_model_field_validation(self):
+    def test_load_language_model_should_satisfy_base_language_model_field_validation(self, monkeypatch):
         model_entity = SimpleNamespace(
             model_type="chat",
             attributes={"model": "gpt-4o-mini", "temperature": 0.5},
@@ -273,11 +348,11 @@ class TestLanguageModelService:
             features=[ModelFeature.TOOL_CALL.value],
             metadata={"ctx": 8192},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
 
         llm = service.load_language_model(
             {
@@ -292,7 +367,7 @@ class TestLanguageModelService:
         assert isinstance(holder.llm, BaseLanguageModel)
         assert holder.llm.model == "gpt-4o-mini"
 
-    def test_load_language_model_should_apply_soft_timeout_to_runtime_proxy(self, monkeypatch):
+    def test_load_language_model_should_enable_runtime_fallback_and_apply_soft_timeout_on_bind(self, monkeypatch):
         model_entity = SimpleNamespace(
             model_type="chat",
             attributes={"model": "gpt-4o-mini", "temperature": 0.5},
@@ -300,19 +375,17 @@ class TestLanguageModelService:
             features=[ModelFeature.TOOL_CALL.value],
             metadata={"ctx": 8192},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (
-                lambda **kwargs: _RuntimeFallbackFakeLLM(
-                    **kwargs,
-                    request_timeout=1800,
-                    max_retries=2,
-                    fail_invoke_error=_RetryableRuntimeError("gateway timeout"),
-                    return_value="primary-result",
-                )
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: _RuntimeFallbackFakeLLM(
+                **kwargs,
+                request_timeout=1800,
+                max_retries=2,
+                fail_invoke_error=_RetryableRuntimeError("gateway timeout"),
+                return_value="primary-result",
             ),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
         monkeypatch.setattr(
             service,
             "load_default_language_model",
@@ -332,13 +405,16 @@ class TestLanguageModelService:
 
         bound_llm = llm.bind_tools(["tool-a"])
 
-        assert llm.request_timeout == 30.0
-        assert llm.max_retries == 0
-        assert bound_llm.request_timeout == 30.0
+        # load_language_model 路径保留原始超时（软超时仅禁重试，不压缩 timeout）
+        assert llm.request_timeout == 1800.0
+        assert llm.max_retries == 2
+        # bind 后的新代理应用软超时：保留 timeout，仅禁重试
+        assert bound_llm.request_timeout == 1800.0
         assert bound_llm.max_retries == 0
+        # 运行时兜底：主模型抛可重试错误时切换到默认模型
         assert llm.invoke("hello") == "fallback-result"
 
-    def test_build_soft_timeout_model_should_rebuild_chat_client_with_short_timeout(self):
+    def test_build_soft_timeout_model_should_disable_retries_and_preserve_timeout(self):
         original_model = ChatOpenAI(
             model="openai/gpt-5.2",
             api_key="test-key",
@@ -349,13 +425,12 @@ class TestLanguageModelService:
 
         soft_timeout_model = _build_soft_timeout_model(original_model, 30.0)
 
-        assert soft_timeout_model.request_timeout == 30.0
+        # 软超时模型不再压缩 timeout（由 LLMActivityProbe 接管死机检测），仅禁用重试
+        assert soft_timeout_model.request_timeout == 1800.0
         assert soft_timeout_model.max_retries == 0
-        assert soft_timeout_model.root_client.timeout == 30.0
-        assert soft_timeout_model.root_client is not original_model.root_client
-        assert soft_timeout_model.client is not original_model.client
+        assert soft_timeout_model is not original_model
 
-    def test_load_language_model_should_strip_unsupported_parameters(self):
+    def test_load_language_model_should_strip_unsupported_parameters(self, monkeypatch):
         model_entity = SimpleNamespace(
             model_type="chat",
             attributes={"model": "gpt-5.2"},
@@ -364,14 +439,14 @@ class TestLanguageModelService:
                 SimpleNamespace(name="top_p"),
                 SimpleNamespace(name="max_tokens"),
             ],
-            features=["tool_call"],
+            features=[ModelFeature.TOOL_CALL.value],
             metadata={"ctx": 200000},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
 
         llm = service.load_language_model(
             {
@@ -391,38 +466,87 @@ class TestLanguageModelService:
         assert llm.max_tokens == 4096
         assert not hasattr(llm, "repetition_penalty")
 
-    def test_load_default_language_model_should_use_expected_defaults(self):
-        model_entity = SimpleNamespace(
+    def test_load_default_language_model_should_use_expected_defaults(self, monkeypatch):
+        from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig
+        from internal.model.model_provider_entity import ModelProviderConfig
+
+        class _OneResultQuery:
+            def __init__(self, result):
+                self._result = result
+
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def filter_by(self, *_args, **_kwargs):
+                return self
+
+            def order_by(self, *_args, **_kwargs):
+                return self
+
+            def first(self):
+                return self._result
+
+            def all(self):
+                return [self._result] if self._result is not None else []
+
+            def one_or_none(self):
+                return self._result
+
+        class _DefaultModelSession:
+            def __init__(self, model, provider_record, key_record):
+                self._model = model
+                self._provider_record = provider_record
+                self._key_record = key_record
+
+            def query(self, model_class):
+                if model_class is ModelPoolConfig:
+                    return _OneResultQuery(self._model)
+                if model_class is ModelProviderConfig:
+                    return _OneResultQuery(self._provider_record)
+                return _OneResultQuery(self._key_record)
+
+        model = SimpleNamespace(
+            provider="openai",
+            model_name="gpt-4o-mini",
+            compatible_api="openai",
             model_type="chat",
-            attributes={"api_base": "https://api.example.com"},
-            features=["tool_call"],
+            max_output_tokens=8192,
+            features=[ModelFeature.TOOL_CALL.value],
             metadata={"ctx": 8192},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        provider_record = SimpleNamespace(default_base_url="https://api.example.com")
+        key_record = SimpleNamespace(key_value_encrypted="not-a-real-token")
+
+        service = LanguageModelService(
+            db=SimpleNamespace(session=_DefaultModelSession(model, provider_record, key_record)),
+            language_model_manager=SimpleNamespace(),
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
+        monkeypatch.setattr(service, "_try_resolve_pool_llm", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            "internal.core.language_model.model_class_registry.ModelClassRegistry.resolve",
+            lambda _compatible_api, _model_type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        )
 
         llm = service.load_default_language_model()
 
+        # 默认模型注入 temperature=1，输出上限取模型池配置 max_output_tokens
         assert llm.temperature == 1
         assert llm.max_tokens == 8192
-        assert llm.features == ["tool_call"]
+        assert llm.features == [ModelFeature.TOOL_CALL.value]
         assert llm.metadata.get("ctx") == 8192
 
-    def test_describe_runtime_capabilities_should_report_native_image_input(self):
+    def test_describe_runtime_capabilities_should_report_native_image_input(self, monkeypatch):
         image_model_entity = SimpleNamespace(
             model_type="chat",
             attributes={"model": "gpt-4o-mini"},
             features=[ModelFeature.TOOL_CALL.value, ModelFeature.IMAGE_INPUT.value],
             metadata={},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: image_model_entity,
-            get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        service = _build_runtime_service(
+            model_entity=image_model_entity,
+            model_class_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
 
         capabilities = service.describe_runtime_capabilities(
             {"provider": "openai", "model": "gpt-4o-mini"},
@@ -451,13 +575,23 @@ class TestLanguageModelService:
             ),
         }
 
-        def _get_provider(provider_name: str):
-            return SimpleNamespace(
-                get_model_entity=lambda model_name: model_entities.get((provider_name, model_name)),
-                get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
-            )
-
-        service = _build_service(manager=SimpleNamespace(get_provider=_get_provider))
+        manager = SimpleNamespace(
+            get_or_load_provider=lambda _name: SimpleNamespace(name=_name),
+            get_or_load_model_entity=lambda provider_name, model_name: model_entities.get(
+                (provider_name, model_name)
+            ),
+        )
+        service = _build_service(manager=manager)
+        monkeypatch.setattr(
+            "internal.core.language_model.model_class_registry.ModelClassRegistry.resolve",
+            lambda _compatible_api, _model_type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        )
+        monkeypatch.setattr(service, "_try_load_key_overrides_for_config", lambda _config: None)
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_default_model_config",
+            classmethod(lambda cls: {"provider": "default", "model": "default-model"}),
+        )
         monkeypatch.setattr(
             service,
             "_get_config_value",
@@ -485,11 +619,11 @@ class TestLanguageModelService:
             features=[ModelFeature.TOOL_CALL.value],
             metadata={},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: text_model_entity,
-            get_model_class=lambda _type: (lambda **kwargs: SimpleNamespace(**kwargs)),
+        service = _build_runtime_service(
+            model_entity=text_model_entity,
+            model_class_factory=lambda **kwargs: SimpleNamespace(**kwargs),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
         monkeypatch.setattr(service, "_get_config_value", lambda _key, default=None: default)
 
         with pytest.raises(ValidateErrorException) as exc:
@@ -510,17 +644,15 @@ class TestLanguageModelService:
             metadata={"ctx": 8192},
         )
 
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (
-                lambda **kwargs: _RuntimeFallbackFakeLLM(
-                    **kwargs,
-                    fail_invoke_error=_RetryableRuntimeError("gateway timeout"),
-                    return_value="primary-result",
-                )
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: _RuntimeFallbackFakeLLM(
+                **kwargs,
+                fail_invoke_error=_RetryableRuntimeError("gateway timeout"),
+                return_value="primary-result",
             ),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
         fallback_calls = []
         monkeypatch.setattr(
             service,
@@ -592,16 +724,14 @@ class TestLanguageModelService:
             features=[ModelFeature.TOOL_CALL.value],
             metadata={},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (
-                lambda **kwargs: _RuntimeFallbackFakeLLM(
-                    **kwargs,
-                    fail_stream_error=_RetryableRuntimeError("gateway timeout"),
-                )
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: _RuntimeFallbackFakeLLM(
+                **kwargs,
+                fail_stream_error=_RetryableRuntimeError("gateway timeout"),
             ),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
         fallback_calls = []
         monkeypatch.setattr(
             service,
@@ -629,16 +759,14 @@ class TestLanguageModelService:
             features=[ModelFeature.TOOL_CALL.value],
             metadata={},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (
-                lambda **kwargs: _RuntimeFallbackFakeLLM(
-                    **kwargs,
-                    fail_invoke_error=_RetryableRuntimeError("gateway timeout"),
-                )
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: _RuntimeFallbackFakeLLM(
+                **kwargs,
+                fail_invoke_error=_RetryableRuntimeError("gateway timeout"),
             ),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
         fallback_calls = []
         monkeypatch.setattr(
             service,
@@ -677,16 +805,14 @@ class TestLanguageModelService:
             features=[ModelFeature.TOOL_CALL.value],
             metadata={},
         )
-        provider = SimpleNamespace(
-            get_model_entity=lambda _name: model_entity,
-            get_model_class=lambda _type: (
-                lambda **kwargs: _RuntimeFallbackFakeLLM(
-                    **kwargs,
-                    fail_invoke_error=_NonRetryableRuntimeError("bad request"),
-                )
+        service = _build_runtime_service(
+            model_entity=model_entity,
+            model_class_factory=lambda **kwargs: _RuntimeFallbackFakeLLM(
+                **kwargs,
+                fail_invoke_error=_NonRetryableRuntimeError("bad request"),
             ),
+            monkeypatch=monkeypatch,
         )
-        service = _build_service(manager=SimpleNamespace(get_provider=lambda _name: provider))
         fallback_calls = []
         monkeypatch.setattr(
             service,

@@ -9,6 +9,7 @@ import os
 import subprocess
 from typing import Any
 
+from internal.context import current_app
 from injector import inject
 
 from internal.service.orchestration_feature_flag_service import (
@@ -82,7 +83,7 @@ class OrchestrationReleaseCheckService:
         }
 
         # 仅在非生产环境或显式启用时运行测试
-        env = os.getenv("FLASK_ENV", "production")
+        env = os.getenv("APP_ENV", "production")
         if env == "production":
             status["backend"] = "skip_production"
             return status
@@ -113,7 +114,6 @@ class OrchestrationReleaseCheckService:
 
         try:
             # 检查 alembic 版本表
-            from flask import current_app
             from pkg.sqlalchemy import SQLAlchemy
             from injector import Injector
 
@@ -163,7 +163,6 @@ class OrchestrationReleaseCheckService:
     def _check_sensitive_tools_governed(self) -> bool:
         """检查敏感工具是否有治理策略。"""
         try:
-            from flask import current_app
             from internal.model import ToolGovernancePolicy
             from pkg.sqlalchemy import SQLAlchemy
             from injector import Injector
@@ -181,7 +180,6 @@ class OrchestrationReleaseCheckService:
     def _check_circuit_breaker(self) -> bool:
         """检查是否有配置了熔断的 Key。"""
         try:
-            from flask import current_app
             from internal.model.model_pool_entity import ModelKeyConfig
             from pkg.sqlalchemy import SQLAlchemy
             from injector import Injector
@@ -207,7 +205,6 @@ class OrchestrationReleaseCheckService:
         }
 
         try:
-            from flask import current_app
             from internal.model.model_pool_entity import CostPolicy
             from pkg.sqlalchemy import SQLAlchemy
             from injector import Injector
@@ -242,7 +239,6 @@ class OrchestrationReleaseCheckService:
         }
 
         try:
-            from flask import current_app
             from internal.model import RoutingLog
             from pkg.sqlalchemy import SQLAlchemy
             from sqlalchemy import func

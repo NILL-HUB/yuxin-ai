@@ -67,19 +67,20 @@ class CosService:
                 "COS upload failed: bucket=%s key=%s account_id=%s",
                 bucket,
                 upload_filename,
-                account.id,
+                getattr(account, "id", None),
             )
             raise FailException("上传文件失败，请稍后重试")
 
         # 6.创建upload_file记录
         return self.upload_file_service.create_upload_file(
-            account_id=account.id,
+            account_id=account.id if account is not None else None,
             name=filename,
             key=stored_key,
             size=len(file_content),
             extension=extension_lower,
             mime_type=file.mimetype,
             hash=hashlib.sha3_256(file_content).hexdigest(),
+            storage_backend="cos",
         )
 
     def upload_bytes(
@@ -118,6 +119,7 @@ class CosService:
             extension=extension,
             mime_type=resolved_mime_type,
             hash=hashlib.sha3_256(content).hexdigest(),
+            storage_backend="cos",
         )
 
     @staticmethod

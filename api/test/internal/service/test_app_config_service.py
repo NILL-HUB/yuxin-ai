@@ -6,11 +6,12 @@ from uuid import uuid4
 import json
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 from werkzeug.datastructures import FileStorage
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.app_entity import DEFAULT_APP_CONFIG, AppStatus
+from internal.entity.knowledge_entity import KnowledgeScope
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException, ValidateErrorException
@@ -74,12 +75,23 @@ class TestAppConfigService:
         return AppConfigService(
             db=SimpleNamespace(session=session or SimpleNamespace(query=lambda _model: _QueryStub(all_result=[])), auto_commit=lambda: _null_context()),
             api_provider_manager=api_provider_manager or SimpleNamespace(get_tool=lambda _entity: "api-tool-instance"),
-            language_model_manager=language_model_manager or SimpleNamespace(get_provider=lambda _provider: None),
+            language_model_manager=language_model_manager or SimpleNamespace(
+                get_or_load_provider=lambda _provider: None,
+                get_or_load_model_entity=lambda _provider, _model: None,
+            ),
             builtin_provider_manager=builtin_provider_manager or SimpleNamespace(get_tool=lambda _pid, _name: None),
         )
 
     def test_process_and_validate_model_config_should_fallback_to_default_when_provider_invalid(self):
-        service = self._build_service()
+        def _raise_not_found(*_args, **_kwargs):
+            raise NotFoundException("provider not found")
+
+        service = self._build_service(
+            language_model_manager=SimpleNamespace(
+                get_or_load_provider=_raise_not_found,
+                get_or_load_model_entity=_raise_not_found,
+            )
+        )
 
         result = service._process_and_validate_model_config(
             {"provider": "missing-provider", "model": "gpt-x", "parameters": {}}
@@ -108,11 +120,11 @@ class TestAppConfigService:
                 max=None,
             ),
         ]
-        provider = SimpleNamespace(
-            get_model_entity=lambda _model: SimpleNamespace(parameters=parameters)
-        )
         service = self._build_service(
-            language_model_manager=SimpleNamespace(get_provider=lambda _provider: provider)
+            language_model_manager=SimpleNamespace(
+                get_or_load_provider=lambda _provider: SimpleNamespace(),
+                get_or_load_model_entity=lambda _provider, _model: SimpleNamespace(parameters=parameters),
+            )
         )
 
         result = service._process_and_validate_model_config(
@@ -439,7 +451,7 @@ class TestAppConfigService:
         monkeypatch.setattr(
             service,
             "_process_and_validate_knowledge_base_ids",
-            lambda _dataset_ids: (
+            lambda _dataset_ids, **kwargs: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
             ),
@@ -462,7 +474,7 @@ class TestAppConfigService:
 
         result = service.get_app_config(app)
 
-        assert len(auto_commit_calls) == 1
+        assert len(updates) == 4
         assert any("model_config" in payload for _, payload in updates)
         assert any("tools" in payload for _, payload in updates)
         assert any("knowledge_base_ids" in payload for _, payload in updates)
@@ -531,7 +543,7 @@ class TestAppConfigService:
         monkeypatch.setattr(
             service,
             "_process_and_validate_knowledge_base_ids",
-            lambda _dataset_ids: (
+            lambda _dataset_ids, **kwargs: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
             ),
@@ -629,7 +641,7 @@ class TestAppConfigService:
         updates = []
         monkeypatch.setattr(service, "update", lambda target, **kwargs: updates.append((target, kwargs)) or target)
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             first = service.get_app_config(app, persist_changes=False)
             second = service.get_app_config(app, persist_changes=False)
 
@@ -679,7 +691,7 @@ class TestAppConfigService:
         monkeypatch.setattr(
             service,
             "_process_and_validate_knowledge_base_ids",
-            lambda _dataset_ids: (
+            lambda _dataset_ids, **kwargs: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
             ),
@@ -753,7 +765,7 @@ class TestAppConfigService:
         monkeypatch.setattr(
             service,
             "_process_and_validate_knowledge_base_ids",
-            lambda _dataset_ids: (
+            lambda _dataset_ids, **kwargs: (
                 [{"id": str(keep_dataset_id), "name": "知识库A", "icon": "", "description": ""}],
                 [str(keep_dataset_id)],
             ),
@@ -818,7 +830,7 @@ class TestAppConfigService:
         monkeypatch.setattr(
             service,
             "_process_and_validate_knowledge_base_ids",
-            lambda _dataset_ids: ([{"id": dataset_id, "name": "知识库A", "icon": "", "description": ""}], [dataset_id]),
+            lambda _dataset_ids, **kwargs: ([{"id": dataset_id, "name": "知识库A", "icon": "", "description": ""}], [dataset_id]),
         )
         monkeypatch.setattr(
             service,
@@ -857,7 +869,7 @@ class TestAppConfigService:
         app = SimpleNamespace(draft_app_config=draft_app_config)
         monkeypatch.setattr(service, "_process_and_validate_model_config", lambda config: config)
         monkeypatch.setattr(service, "_process_and_validate_tools", lambda tools: ([], []))
-        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids: ([], []))
+        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids, **kwargs: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_workflows", lambda workflows: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_mcp_bindings", lambda mcp_bindings: ([], []))
         updates = []
@@ -913,7 +925,7 @@ class TestAppConfigService:
         app = SimpleNamespace(account_id=account_id, id=app_id, draft_app_config=draft_app_config)
         monkeypatch.setattr(service, "_process_and_validate_model_config", lambda config: config)
         monkeypatch.setattr(service, "_process_and_validate_tools", lambda tools: ([], []))
-        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids: ([], []))
+        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids, **kwargs: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_workflows", lambda workflows: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_mcp_bindings", lambda mcp_bindings: ([], []))
         monkeypatch.setattr(service.skill_service, "process_and_validate_skill_bindings", lambda skills: ([], []))
@@ -975,7 +987,7 @@ class TestAppConfigService:
         monkeypatch.setattr(
             service,
             "_process_and_validate_knowledge_base_ids",
-            lambda _dataset_ids: ([{"id": dataset_id, "name": "知识库A", "icon": "", "description": ""}], [dataset_id]),
+            lambda _dataset_ids, **kwargs: ([{"id": dataset_id, "name": "知识库A", "icon": "", "description": ""}], [dataset_id]),
         )
         monkeypatch.setattr(
             service,
@@ -1023,7 +1035,7 @@ class TestAppConfigService:
         app = SimpleNamespace(app_config=app_config)
         monkeypatch.setattr(service, "_process_and_validate_model_config", lambda config: config)
         monkeypatch.setattr(service, "_process_and_validate_tools", lambda tools: ([], []))
-        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids: ([], []))
+        monkeypatch.setattr(service, "_process_and_validate_knowledge_base_ids", lambda _knowledge_base_ids, **kwargs: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_workflows", lambda workflows: ([], []))
         monkeypatch.setattr(service, "_process_and_validate_mcp_bindings", lambda mcp_bindings: ([], []))
         updates = []
@@ -1236,16 +1248,22 @@ class TestAppConfigService:
             name="知识库A",
             icon="a.png",
             description="A",
+            enabled=True,
+            knowledge_scope=KnowledgeScope.SYSTEM.value,
+            owner_account_id=None,
         )
         knowledge_base_b = SimpleNamespace(
             id=uuid4(),
             name="知识库B",
             icon="b.png",
             description="B",
+            enabled=True,
+            knowledge_scope=KnowledgeScope.SYSTEM.value,
+            owner_account_id=None,
         )
         session = SimpleNamespace(query=lambda model: _QueryStub(all_result=[knowledge_base_b, knowledge_base_a]) if model is KnowledgeBase else _QueryStub())
         service = self._build_service(session=session)
-        origin_ids = [str(knowledge_base_a.id), "missing", str(knowledge_base_b.id)]
+        origin_ids = [str(knowledge_base_a.id), str(uuid4()), str(knowledge_base_b.id)]
 
         knowledge_bases, validate_knowledge_base_ids = service._process_and_validate_knowledge_base_ids(origin_ids)
 
@@ -1285,8 +1303,15 @@ class TestAppConfigService:
             "model_config"
         ]
 
-        provider = SimpleNamespace(get_model_entity=lambda _model: None)
-        service = self._build_service(language_model_manager=SimpleNamespace(get_provider=lambda _provider: provider))
+        def _raise_not_found(*_args, **_kwargs):
+            raise NotFoundException("model not found")
+
+        service = self._build_service(
+            language_model_manager=SimpleNamespace(
+                get_or_load_provider=lambda _provider: SimpleNamespace(),
+                get_or_load_model_entity=_raise_not_found,
+            )
+        )
         assert service._process_and_validate_model_config({"provider": "openai", "model": 123, "parameters": {}}) == DEFAULT_APP_CONFIG[
             "model_config"
         ]
@@ -1299,10 +1324,12 @@ class TestAppConfigService:
             SimpleNamespace(name="temperature", default=0.7, required=False, type=SimpleNamespace(value="float"), options=[], min=0, max=1),
             SimpleNamespace(name="top_k", default=3, required=False, type=SimpleNamespace(value="int"), options=[], min=1, max=10),
         ]
-        provider = SimpleNamespace(
-            get_model_entity=lambda _model: SimpleNamespace(parameters=params)
+        service = self._build_service(
+            language_model_manager=SimpleNamespace(
+                get_or_load_provider=lambda _provider: SimpleNamespace(),
+                get_or_load_model_entity=lambda _provider, _model: SimpleNamespace(parameters=params),
+            )
         )
-        service = self._build_service(language_model_manager=SimpleNamespace(get_provider=lambda _provider: provider))
 
         result = service._process_and_validate_model_config(
             {"provider": "openai", "model": "gpt-4o-mini", "parameters": ["bad"]}
@@ -1356,9 +1383,11 @@ class TestAppConfigService:
                 max=0.9,
             ),
         ]
-        provider = SimpleNamespace(get_model_entity=lambda _model: SimpleNamespace(parameters=params))
         service = self._build_service(
-            language_model_manager=SimpleNamespace(get_provider=lambda _provider: provider)
+            language_model_manager=SimpleNamespace(
+                get_or_load_provider=lambda _provider: SimpleNamespace(),
+                get_or_load_model_entity=lambda _provider, _model: SimpleNamespace(parameters=params),
+            )
         )
 
         result = service._process_and_validate_model_config(
@@ -1407,9 +1436,11 @@ class TestAppConfigService:
                 max=None,
             ),
         ]
-        provider = SimpleNamespace(get_model_entity=lambda _model: SimpleNamespace(parameters=params))
         service = self._build_service(
-            language_model_manager=SimpleNamespace(get_provider=lambda _provider: provider)
+            language_model_manager=SimpleNamespace(
+                get_or_load_provider=lambda _provider: SimpleNamespace(),
+                get_or_load_model_entity=lambda _provider, _model: SimpleNamespace(parameters=params),
+            )
         )
 
         result = service._process_and_validate_model_config(

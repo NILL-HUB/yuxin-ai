@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 import base64
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
@@ -15,7 +15,6 @@ from internal.exception import (
     NotFoundException,
     ValidateErrorException,
 )
-from internal.entity.ai_entity import OPENAPI_SCHEMA_ASSISTANT_PROMPT, PYTHON_CODE_ASSISTANT_PROMPT
 from internal.model import Account, AccountOAuth, ApiKey, ApiTool, ApiToolProvider
 from internal.service.account_service import AccountService as _AccountService
 from internal.service.ai_service import AIService, PythonMarkdownOutputParser
@@ -138,7 +137,7 @@ class _AppDBStub:
 
 
 class TestBuiltinToolService:
-    def test_get_builtin_tools_should_flatten_provider_and_tool_inputs(self):
+    def test_get_builtin_tools_should_flatten_provider_and_tool_inputs(self, monkeypatch):
         class _ArgsSchema(BaseModel):
             city: str = Field(description="城市")
 
@@ -158,6 +157,8 @@ class TestBuiltinToolService:
             builtin_provider_manager=SimpleNamespace(get_providers=lambda: [provider]),
             builtin_category_manager=SimpleNamespace(),
         )
+        # DB 镜像表可能有预置数据，本测试聚焦 YAML manager 回退路径，强制走内存数据
+        monkeypatch.setattr(service, "_get_builtin_tools_from_db", lambda: [])
 
         result = service.get_builtin_tools()
 
@@ -187,7 +188,7 @@ class TestBuiltinToolService:
             builtin_provider_manager=SimpleNamespace(get_provider=lambda _name: provider),
             builtin_category_manager=SimpleNamespace(),
         )
-        app = Flask(__name__, root_path=str(app_root))
+        app = TestApp(__name__, root_path=str(app_root))
         with app.app_context():
             content, mimetype, icon_url = service.get_provider_icon("demo_provider")
 
@@ -311,7 +312,7 @@ class TestBuiltinToolService:
             builtin_provider_manager=SimpleNamespace(get_provider=lambda _name: provider),
             builtin_category_manager=SimpleNamespace(),
         )
-        app = Flask(__name__, root_path=str(app_root))
+        app = TestApp(__name__, root_path=str(app_root))
 
         with app.app_context():
             with pytest.raises(NotFoundException):

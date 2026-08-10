@@ -27,8 +27,7 @@ RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
 COPY . .
 
 # 设置镜像级固定环境变量（业务配置通过 env_file/.env 注入）
-ENV FLASK_APP=app/http/app.py \
-    NLTK_DATA=/app/api/internal/core/unstructured/nltk_data \
+ENV NLTK_DATA=/app/api/internal/core/unstructured/nltk_data \
     TZ=Asia/Shanghai
 
 RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone

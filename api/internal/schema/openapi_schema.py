@@ -1,11 +1,11 @@
 import uuid
 from .schema import ListField
-from flask_wtf import FlaskForm
+from wtforms import Form
 from urllib.parse import urlparse
 from wtforms import StringField, BooleanField
 from wtforms.validators import DataRequired, UUID, Optional, ValidationError
 
-class OpenAPIChatReq(FlaskForm):
+class OpenAPIChatReq(Form):
     """开放API聊天接口请求结构体"""
     app_id = StringField("app_id", validators=[
         DataRequired("应用id不能为空"),

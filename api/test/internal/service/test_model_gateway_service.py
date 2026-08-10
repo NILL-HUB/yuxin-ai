@@ -31,14 +31,14 @@ def test_resolve_model_tier_should_return_policy_result_on_success():
     policy.assign.assert_called_once()
 
 
-def test_resolve_model_tier_should_fallback_to_cheap_when_policy_raises():
+def test_resolve_model_tier_should_fallback_to_tier_1_when_policy_raises():
     policy = MagicMock()
     policy.assign.side_effect = RuntimeError("boom")
     gateway = ModelGatewayService(model_assignment_policy=policy)
 
     tier = gateway.resolve_model_tier(_build_decision(), None)
 
-    assert tier == "cheap"
+    assert tier == "1"
     policy.assign.assert_called_once()
 
 
@@ -73,4 +73,4 @@ def test_get_model_should_work_when_decision_is_none():
 
     assert model is fake_model
     policy.assign.assert_not_called()
-    language_model_service.get_chat_model_by_tier.assert_called_once_with("cheap")
+    language_model_service.get_chat_model_by_tier.assert_called_once_with("1")

@@ -23,14 +23,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-class PromptTemplate(db.Model):
+class PromptTemplate(Base):
     """Prompt 模板表。
 
     prompt_key 为主键，与 public_ai_feature_config.feature_key 对应但不强制外键关联。
@@ -44,7 +44,7 @@ class PromptTemplate(db.Model):
         Index("prompt_template_source_idx", "source"),
     )
 
-    # prompt_key：业务键，如 conductor、task_classifier、task_decomposer
+    # prompt_key：业务键，如 conductor、task_classifier
     prompt_key = Column(String(64), nullable=False)
     # 中文名称
     name = Column(String(128), nullable=False, server_default=text("''::character varying"))

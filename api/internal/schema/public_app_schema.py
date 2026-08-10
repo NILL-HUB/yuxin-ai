@@ -1,14 +1,14 @@
 """公共应用Schema - 请求和响应验证"""
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import StringField
-from wtforms.validators import DataRequired, Length, Optional
+from wtforms.validators import Length, Optional
 
 from pkg.paginator import PaginatorReq
 from internal.entity.tag_entity import APP_TAGS
 
 
-class ShareAppToSquareReq(FlaskForm):
+class ShareAppToSquareReq(Form):
     """共享应用到广场请求"""
     tags = StringField(
         "tags",

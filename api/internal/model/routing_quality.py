@@ -13,14 +13,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class RoutingQualityFeedbackModel(db.Model):
+class RoutingQualityFeedbackModel(Base):
     __tablename__ = "routing_quality_feedback"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_routing_quality_feedback_id"),
@@ -52,7 +52,7 @@ class RoutingQualityFeedbackModel(db.Model):
     )
 
 
-class RoutingOptimizationSuggestionModel(db.Model):
+class RoutingOptimizationSuggestionModel(Base):
     __tablename__ = "routing_optimization_suggestion"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_routing_optimization_suggestion_id"),
@@ -86,7 +86,7 @@ class RoutingOptimizationSuggestionModel(db.Model):
     )
 
 
-class PolicyChangeDraftModel(db.Model):
+class PolicyChangeDraftModel(Base):
     __tablename__ = "policy_change_draft"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_policy_change_draft_id"),

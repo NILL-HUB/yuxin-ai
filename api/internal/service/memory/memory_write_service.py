@@ -361,7 +361,7 @@ class MemoryWriteService:
         设计参考: docs/prd/memory-write-optimization-design.md §5.7
         """
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             from internal.service.memory.skill_emergence import SkillEmergence
 

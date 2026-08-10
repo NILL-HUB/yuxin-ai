@@ -1,10 +1,9 @@
 from dataclasses import dataclass, field
 import logging
-from typing import Callable
 
 from injector import inject
 
-from internal.exception import ForbiddenException, NotFoundException
+from internal.exception import NotFoundException
 from internal.model import Account, ToolConfirmation
 from internal.service.tool_invocation_audit_service import ToolInvocationAuditService
 from internal.service.tool_invoker_service import build_non_interruptible_write_audit_hint

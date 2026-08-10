@@ -109,52 +109,54 @@ class WebSocketManager:
             return self._sid_to_connection.get(sid)
 
     def emit_to_account(self, account_id: UUID, event: str, data: dict) -> None:
-        from internal.extension.socketio_extension import socketio
+        from internal.extension.socketio_extension import get_redis_manager
 
         sids = self.get_user_sids(account_id)
         if not sids:
             logging.debug(f"[WS] No connections for account {account_id}, skipping emit")
             return
 
+        try:
+            manager = get_redis_manager()
+        except Exception as exc:
+            logging.error(f"[WS] RedisManager 不可用，跳过 {event}: {exc}")
+            return
+
         for sid in sids:
             try:
-                socketio.emit(event, data, room=sid)
+                manager.emit(event, data, room=sid)
                 logging.debug(f"[WS] Emitted {event} to sid={sid}, account={account_id}")
             except Exception as e:
                 logging.error(f"[WS] Failed to emit {event} to sid={sid}: {e}")
 
     def subscribe_notification(self, sid: str, user_id: str) -> None:
-        from flask_socketio import join_room
-
         with self._lock:
             if user_id not in self._notification_subscribers:
                 self._notification_subscribers[user_id] = set()
             self._notification_subscribers[user_id].add(sid)
 
-        join_room(user_id, sid=sid)
         logging.info(f"[WS] sid={sid} subscribed to notifications for user={user_id}")
 
     def unsubscribe_notification(self, sid: str, user_id: str) -> None:
-        from flask_socketio import leave_room
-
         with self._lock:
             if user_id in self._notification_subscribers:
                 self._notification_subscribers[user_id].discard(sid)
                 if not self._notification_subscribers[user_id]:
                     del self._notification_subscribers[user_id]
 
-        leave_room(user_id, sid=sid)
         logging.info(f"[WS] sid={sid} unsubscribed from notifications for user={user_id}")
 
     def emit_notification_to_user(self, user_id: str, notification_data: dict, event: str = "document_index_notification") -> None:
-        from internal.extension.socketio_extension import socketio
+        from internal.extension.socketio_extension import get_redis_manager
 
-        if socketio is None:
-            logging.warning(f"[WS] SocketIO not initialized, skipping {event} for user={user_id}")
+        try:
+            manager = get_redis_manager()
+        except Exception as exc:
+            logging.warning(f"[WS] RedisManager 不可用，跳过 {event} for user={user_id}: {exc}")
             return
 
         try:
-            socketio.emit(event, notification_data, room=user_id)
+            manager.emit(event, notification_data, room=user_id)
             logging.debug(f"[WS] Emitted {event} to room={user_id}")
         except Exception as e:
             logging.error(f"[WS] Failed to emit {event} to room={user_id}: {e}")

@@ -2,10 +2,9 @@ from dataclasses import dataclass
 from typing import Type, Optional, Callable
 from injector import inject
 import requests
-from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel,create_model, Field
 from internal.core.tools.api_tools.entities import ToolEntity,ParameterTypeMap, ParameterIn
-from internal.service.tool_credential_encryptor import decrypt_headers
 
 DEFAULT_API_TOOL_TIMEOUT_SECONDS = 30
 
@@ -30,6 +29,8 @@ class ApiProviderManager(BaseModel):
             # 2.更改参数结构映射
             parameter_map = {parameter.get("name"): parameter for parameter in tool_entity.parameters}
             # 运行时解密 headers：DB 中存储的是加密 token
+            from internal.service.tool_credential_encryptor import decrypt_headers
+
             decrypted_headers = decrypt_headers(tool_entity.headers)
             header_map = {header.get("key"): header.get("value") for header in decrypted_headers}
 

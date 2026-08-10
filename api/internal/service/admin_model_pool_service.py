@@ -25,6 +25,35 @@ CONTEXT_LESS_MODEL_TYPES = frozenset(
     {"image_generation", "video_generation", "tts", "asr", "ocr"}
 )
 
+# OpenAI 兼容 Chat 类接口的路径后缀，完整地址模式下需要剥离，避免 langchain 重复追加
+_OPENAI_COMPAT_PATH_SUFFIXES = (
+    "/chat/completions",
+    "/completions",
+    "/embeddings",
+    "/images/generations",
+    "/audio/transcriptions",
+    "/audio/speech",
+    "/rerank",
+)
+
+
+def normalize_provider_base_url(base_url: str, is_full_url: bool = False) -> str:
+    """将供应商 base_url 规范化为 langchain 可用的形式。
+
+    - is_full_url=False（默认）：base_url 已填到 /v1 级，原样返回（langchain 会自行追加路径）。
+    - is_full_url=True：base_url 为完整 endpoint（含 /chat/completions 等），
+      剥离尾部路径后缀，让 langchain 自行追加，避免出现重复路径。
+    """
+    if not base_url:
+        return base_url
+    if not is_full_url:
+        return base_url
+    normalized = base_url.rstrip("/")
+    for suffix in _OPENAI_COMPAT_PATH_SUFFIXES:
+        if normalized.lower().endswith(suffix):
+            return normalized[: -len(suffix)].rstrip("/")
+    return normalized
+
 
 def _load_fernet() -> Fernet:
     raw_key = os.getenv("MODEL_KEY_ENCRYPTION_KEY", "").strip()
@@ -167,11 +196,22 @@ class AdminModelPoolService:
             embedding_dimension = self._auto_probe_dimension(
                 provider_name, payload["model_name"]
             )
-        # 无上下文概念的模型类型（图片/视频生成、TTS/ASR/OCR），max_tokens 强制 0
+        # 无上下文概念的模型类型（图片/视频生成、TTS/ASR/OCR），token 上限强制 0
         if model_type in CONTEXT_LESS_MODEL_TYPES:
-            max_tokens = 0
+            max_input_tokens = 0
+            max_output_tokens = 0
         else:
-            max_tokens = int(payload.get("max_tokens") or 0)
+            # 新字段优先；兼容仅传 max_tokens 的旧客户端（输入沿用总窗口，输出给安全默认）
+            max_input_tokens = int(
+                payload.get("max_input_tokens")
+                if payload.get("max_input_tokens") is not None
+                else (payload.get("max_tokens") or 0)
+            )
+            max_output_tokens = int(
+                payload.get("max_output_tokens")
+                if payload.get("max_output_tokens") is not None
+                else 4096
+            )
 
         model = ModelPoolConfig(
             provider=payload["provider"],
@@ -181,7 +221,9 @@ class AdminModelPoolService:
             tier=payload.get("tier") or "2",
             capabilities=payload.get("capabilities") or [],
             price_per_1k_tokens=self._decimal(payload.get("price_per_1k_tokens")),
-            max_tokens=max_tokens,
+            max_tokens=max_input_tokens + max_output_tokens,
+            max_input_tokens=max_input_tokens,
+            max_output_tokens=max_output_tokens,
             status=payload.get("status") or "active",
             model_type=model_type,
             compatible_api=payload.get("compatible_api") or "openai",
@@ -218,8 +260,10 @@ class AdminModelPoolService:
             model.capabilities = payload["capabilities"] or []
         if "price_per_1k_tokens" in payload:
             model.price_per_1k_tokens = self._decimal(payload.get("price_per_1k_tokens"))
-        if "max_tokens" in payload:
-            model.max_tokens = int(payload.get("max_tokens") or 0)
+        if "max_input_tokens" in payload:
+            model.max_input_tokens = int(payload.get("max_input_tokens") or 0)
+        if "max_output_tokens" in payload:
+            model.max_output_tokens = int(payload.get("max_output_tokens") or 0)
         if "status" in payload:
             model.status = payload["status"]
         if "fallback_model_id" in payload:
@@ -232,11 +276,17 @@ class AdminModelPoolService:
             model.compatible_api = payload["compatible_api"]
         # 忽略前端传入的 embedding_dimension，由系统自动探测
 
-        # 无上下文概念的模型类型（图片/视频生成、TTS/ASR/OCR），max_tokens 强制 0
+        # 无上下文概念的模型类型（图片/视频生成、TTS/ASR/OCR），token 上限强制 0
         if model.model_type in CONTEXT_LESS_MODEL_TYPES:
+            model.max_input_tokens = 0
+            model.max_output_tokens = 0
             model.max_tokens = 0
-        elif "max_tokens" in payload:
-            model.max_tokens = int(payload.get("max_tokens") or 0)
+        else:
+            # 兼容旧客户端：仅传 max_tokens（总窗口）时，作为输入窗口更新，输出侧保持原值
+            if "max_input_tokens" not in payload and "max_tokens" in payload:
+                model.max_input_tokens = int(payload.get("max_tokens") or 0)
+            # 兼容字段 = 输入 + 输出总窗口
+            model.max_tokens = (model.max_input_tokens or 0) + (model.max_output_tokens or 0)
 
         # 判断是否需要重新探测维度：
         # 1. model_type 变为 embedding（之前不是）
@@ -664,7 +714,12 @@ class AdminModelPoolService:
         provider_config = self.session.query(ModelProviderConfig).filter_by(
             name=provider
         ).first()
-        base_url = (provider_config.default_base_url if provider_config else "") or None
+        base_url = (
+            normalize_provider_base_url(
+                provider_config.default_base_url,
+                is_full_url=bool(getattr(provider_config, "is_full_url", False)),
+            ) if provider_config and provider_config.default_base_url else None
+        )
 
         key = self.session.query(ModelKeyConfig).filter(
             ModelKeyConfig.provider == provider,
@@ -724,7 +779,9 @@ class AdminModelPoolService:
             "tier": model.tier,
             "capabilities": list(model.capabilities or []),
             "price_per_1k_tokens": f"{Decimal(str(model.price_per_1k_tokens or 0)):.6f}",
-            "max_tokens": int(model.max_tokens or 0),
+            "max_tokens": int((model.max_input_tokens or 0) + (model.max_output_tokens or 0)),
+            "max_input_tokens": int(model.max_input_tokens or 0),
+            "max_output_tokens": int(model.max_output_tokens or 0),
             "status": model.status,
             "model_type": model.model_type,
             "compatible_api": model.compatible_api,

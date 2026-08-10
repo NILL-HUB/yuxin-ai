@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
-from flask import Flask, current_app, has_app_context
+from internal.context import current_app, has_app_context, is_active_app
 from injector import inject
 from langchain_core.documents import Document
 from langchain_core.tools import BaseTool, tool
@@ -208,10 +208,10 @@ class PublicAgentRegistryService(BaseService):
         query: str,
         limit: int,
         metadata_filter: dict[str, Any] | None,
-        flask_app: Flask | None = None,
+        flask_app: Any | None = None,
     ) -> list[dict[str, Any]]:
         """在需要时显式补充 Flask application context，再执行公开Agent检索。"""
-        if flask_app is not None and not has_app_context():
+        if flask_app is not None and not is_active_app(flask_app):
             with flask_app.app_context():
                 return self.search_public_apps(
                     query=query,

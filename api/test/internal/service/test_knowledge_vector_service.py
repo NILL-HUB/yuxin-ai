@@ -1,52 +1,85 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
-from langchain_core.documents import Document as LCDocument
-
+from internal.service.embedding_table_router import EmbeddingTableRouter
 from internal.service.knowledge_vector_service import KnowledgeVectorService
 
 
-class _VectorStoreStub:
+class _EmbeddingsStub:
+    def __init__(self, embedding=None):
+        self.embedding = embedding if embedding is not None else [0.1, 0.2, 0.3]
+        self.embed_query_calls = []
+
+    def embed_query(self, text):
+        self.embed_query_calls.append(text)
+        return self.embedding
+
+
+class _EmbeddingsServiceStub:
+    def __init__(self, dimension=1024, embeddings=None):
+        self.dimension = dimension
+        self.embeddings = embeddings or _EmbeddingsStub()
+        self.calls = []
+
+    def get_embeddings_for_model_id(self, model_id):
+        self.calls.append(model_id)
+        return self.embeddings, self.dimension
+
+
+class _RouterStub:
+    def __init__(self, table_name="knowledge_segment_embedding_1024"):
+        self.table_name = table_name
+        self.ensured_dimensions = []
+
+    def ensure_tables_for_dimension(self, dimension):
+        self.ensured_dimensions.append(dimension)
+
+    def get_knowledge_segment_table_name(self, dimension):
+        return self.table_name
+
+
+class _SessionStub:
     def __init__(self):
-        self.add_documents_calls = []
-        self.search_results = []
+        self.execute_calls = []
+        self.result_rows = []
+        self.execute_error = None
+        self.committed = 0
+        self.rolled_back = 0
 
-    def add_documents(self, *, documents, ids):
-        self.add_documents_calls.append((documents, ids))
-        return ids
+    def execute(self, stmt, params):
+        if self.execute_error is not None:
+            raise self.execute_error
+        self.execute_calls.append((str(stmt), params))
+        return self.result_rows
 
-    def similarity_search_with_relevance_scores(self, *, query, k, filters):
-        return self.search_results
+    def commit(self):
+        self.committed += 1
+
+    def rollback(self):
+        self.rolled_back += 1
 
 
-class _CollectionDataStub:
+class _DbStub:
     def __init__(self):
-        self.deleted_ids = []
-
-    def delete_by_id(self, node_id):
-        self.deleted_ids.append(node_id)
+        self.session = _SessionStub()
 
 
-class _CollectionStub:
-    def __init__(self):
-        self.data = _CollectionDataStub()
-
-
-def _build_service(monkeypatch, vector_store=None, collection=None):
+def _build_service(monkeypatch, db=None, embeddings_service=None, rerank_service=None):
     service = KnowledgeVectorService.__new__(KnowledgeVectorService)
-    vs = vector_store or _VectorStoreStub()
-    col = collection or _CollectionStub()
-    monkeypatch.setattr(type(service), "vector_store", property(lambda _self: vs))
-    monkeypatch.setattr(type(service), "collection", property(lambda _self: col))
+    service.db = db or _DbStub()
+    service.embeddings_service = embeddings_service or _EmbeddingsServiceStub()
+    service.rerank_service = rerank_service
+    monkeypatch.setattr(service, "_get_router", lambda: _RouterStub())
     return service
 
 
-def _make_segment(segment_id=None, content="知识片段内容", enabled=True):
+def _make_segment(segment_id=None, content="知识片段内容", enabled=True, knowledge_base=None):
     return SimpleNamespace(
         id=segment_id or uuid4(),
         content=content,
         enabled=enabled,
         knowledge_document_id=uuid4(),
+        knowledge_base=knowledge_base,
     )
 
 
@@ -60,11 +93,14 @@ def _make_knowledge_base(base_id=None, scope="user_content"):
 
 class TestKnowledgeVectorService:
     def test_collection_name_is_isolated_from_dataset(self):
-        assert KnowledgeVectorService.COLLECTION_NAME == "KnowledgeBase"
+        assert EmbeddingTableRouter.get_knowledge_segment_table_name(1024) == "knowledge_segment_embedding_1024"
+        assert EmbeddingTableRouter.get_knowledge_segment_table_name(1536) == "knowledge_segment_embedding_1536"
+        assert EmbeddingTableRouter.get_knowledge_segment_table_name(1024) != EmbeddingTableRouter.get_knowledge_segment_table_name(1536)
 
     def test_index_segment_should_write_vector_with_metadata(self, monkeypatch):
-        vector_store = _VectorStoreStub()
-        service = _build_service(monkeypatch, vector_store=vector_store)
+        embeddings_service = _EmbeddingsServiceStub()
+        db = _DbStub()
+        service = _build_service(monkeypatch, db=db, embeddings_service=embeddings_service)
 
         segment = _make_segment(content="测试内容")
         knowledge_base = _make_knowledge_base()
@@ -72,55 +108,57 @@ class TestKnowledgeVectorService:
         node_id = service.index_segment(segment, knowledge_base)
 
         assert node_id == str(segment.id)
-        assert len(vector_store.add_documents_calls) == 1
-        documents, ids = vector_store.add_documents_calls[0]
-        assert ids == [str(segment.id)]
-        assert documents[0].page_content == "测试内容"
-        metadata = documents[0].metadata
-        assert metadata["segment_id"] == str(segment.id)
-        assert metadata["knowledge_base_id"] == str(knowledge_base.id)
-        assert metadata["knowledge_scope"] == "user_content"
-        assert metadata["document_id"] == str(segment.knowledge_document_id)
-        assert metadata["document_enabled"] is True
+        assert embeddings_service.embeddings.embed_query_calls == ["测试内容"]
+        assert len(db.session.execute_calls) == 1
+        sql, params = db.session.execute_calls[0]
+        assert "INSERT INTO knowledge_segment_embedding_1024" in sql
+        assert "ON CONFLICT (segment_id) DO UPDATE" in sql
+        assert params["segment_id"] == str(segment.id)
+        assert params["kb_id"] == str(knowledge_base.id)
+        assert params["embedding"] == embeddings_service.embeddings.embedding
+        assert db.session.committed == 1
 
     def test_remove_segment_should_delete_node_by_segment_id(self, monkeypatch):
-        collection = _CollectionStub()
-        service = _build_service(monkeypatch, collection=collection)
+        db = _DbStub()
+        service = _build_service(monkeypatch, db=db)
 
-        segment = _make_segment()
+        knowledge_base = _make_knowledge_base()
+        segment = _make_segment(knowledge_base=knowledge_base)
 
         service.remove_segment(segment)
 
-        assert collection.data.deleted_ids == [str(segment.id)]
+        assert len(db.session.execute_calls) == 1
+        sql, params = db.session.execute_calls[0]
+        assert "DELETE FROM knowledge_segment_embedding_1024" in sql
+        assert params["segment_id"] == str(segment.id)
+        assert db.session.committed == 1
 
     def test_remove_segment_should_swallow_deletion_failure(self, monkeypatch):
-        collection = _CollectionStub()
-        collection.data.delete_by_id = lambda _node_id: (_ for _ in ()).throw(RuntimeError("delete-failed"))
-        service = _build_service(monkeypatch, collection=collection)
+        db = _DbStub()
+        db.session.execute_error = RuntimeError("delete-failed")
+        service = _build_service(monkeypatch, db=db)
 
-        segment = _make_segment()
+        knowledge_base = _make_knowledge_base()
+        segment = _make_segment(knowledge_base=knowledge_base)
 
         service.remove_segment(segment)
 
+        assert db.session.rolled_back == 1
+
     def test_search_should_return_content_score_and_segment_id(self, monkeypatch):
-        vector_store = _VectorStoreStub()
+        db = _DbStub()
         seg_id = uuid4()
         doc_id = uuid4()
         kb_id = uuid4()
-        vector_store.search_results = [
-            (
-                LCDocument(
-                    page_content="命中内容",
-                    metadata={
-                        "segment_id": str(seg_id),
-                        "document_id": str(doc_id),
-                        "knowledge_base_id": str(kb_id),
-                    },
-                ),
-                0.88,
+        db.session.result_rows = [
+            SimpleNamespace(
+                segment_id=seg_id,
+                content="命中内容",
+                knowledge_document_id=doc_id,
+                score=0.88,
             )
         ]
-        service = _build_service(monkeypatch, vector_store=vector_store)
+        service = _build_service(monkeypatch, db=db)
         knowledge_base = _make_knowledge_base(base_id=kb_id)
 
         results = service.search(knowledge_base, "查询", top_k=5)
@@ -133,10 +171,16 @@ class TestKnowledgeVectorService:
         assert hit["document_id"] == str(doc_id)
         assert hit["knowledge_base_id"] == str(kb_id)
 
+        assert len(db.session.execute_calls) == 1
+        sql, params = db.session.execute_calls[0]
+        assert "JOIN knowledge_segment ks" in sql
+        assert params["kb_id"] == str(kb_id)
+        assert params["limit"] == 5
+
     def test_search_should_return_empty_when_no_hits(self, monkeypatch):
-        vector_store = _VectorStoreStub()
-        vector_store.search_results = []
-        service = _build_service(monkeypatch, vector_store=vector_store)
+        db = _DbStub()
+        db.session.result_rows = []
+        service = _build_service(monkeypatch, db=db)
 
         results = service.search(_make_knowledge_base(), "查询", top_k=5)
 

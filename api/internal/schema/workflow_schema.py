@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import BooleanField, StringField
 from wtforms.validators import DataRequired, Length, Regexp, URL, Optional, AnyOf, ValidationError
@@ -10,7 +10,7 @@ from internal.schema import DictField, ListField
 from pkg.paginator import PaginatorReq
 
 
-class CreateWorkflowReq(FlaskForm):
+class CreateWorkflowReq(Form):
     """创建工作流基础请求"""
     name = StringField("name", validators=[
         DataRequired("工作流名称不能为空"),
@@ -42,7 +42,7 @@ class CreateWorkflowReq(FlaskForm):
                 raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
 
-class UpdateWorkflowReq(FlaskForm):
+class UpdateWorkflowReq(Form):
     """创建工作流基础请求"""
     name = StringField("name", validators=[
         DataRequired("工作流名称不能为空"),
@@ -157,12 +157,12 @@ class GetWorkflowsWithPageResp(Schema):
         }
 
 
-class ImportWorkflowReq(FlaskForm):
+class ImportWorkflowReq(Form):
     """导入工作流请求
 
     支持两种 body 格式：
     1. 信封格式（推荐）：{"json_data": {...}, "overwrite_name": false}
-    2. 直接格式：直接 POST 导出的工作流 JSON（format=openagent-workflow），
+    2. 直接格式：直接 POST 导出的工作流 JSON（format=yuxin-ai-workflow），
        此时 overwrite_name 从查询参数 ?overwrite_name=true 读取。
     """
     json_data = DictField("json_data", default=None)

@@ -1,11 +1,10 @@
 import redis
-from flask import Flask
 from redis.connection import Connection, SSLConnection
 
 # redis客户端
 redis_client = redis.Redis()
 
-def init_app(app: Flask):
+def init_app(app) -> None:
     """初始化redis客户端"""
     # 1.检测不同的场景使用不同的连接方式
     connection_class = Connection
@@ -24,6 +23,8 @@ def init_app(app: Flask):
         "socket_connect_timeout": app.config.get("REDIS_SOCKET_CONNECT_TIMEOUT", 5),
         "socket_timeout": app.config.get("REDIS_SOCKET_TIMEOUT", 5),
         "health_check_interval": app.config.get("REDIS_HEALTH_CHECK_INTERVAL", 30),
+        # 兼容不支持 HELLO 命令的旧版 Redis（本地/部分部署环境）
+        "protocol": 2,
     }, connection_class=connection_class)
 
     app.extensions["redis"] = redis_client

@@ -1,12 +1,17 @@
 import logging
-from flask import Flask
-from logging.handlers import TimedRotatingFileHandler
 from concurrent_log_handler import ConcurrentTimedRotatingFileHandler
 import os
-def init_app(app: Flask):
+
+
+def _env_is_development() -> bool:
+    value = os.getenv("APP_ENV")
+    return value == "development"
+
+
+def init_app(app) -> None:
     """日志记录器初始化"""
     # 1.根据不同的化境设置logging根处理器的日志级别
-    logging.getLogger().setLevel(logging.DEBUG if app.debug or os.getenv("FLASK_ENV") == "development" else logging.WARNING)
+    logging.getLogger().setLevel(logging.DEBUG if app.debug or _env_is_development() else logging.WARNING)
 
     # 2.设置日志存储的文件夹 如果不存在则创建
     log_folder = os.path.join(os.getcwd(), "storage", "log")
@@ -28,12 +33,12 @@ def init_app(app: Flask):
         "[%(asctime)s.%(msecs)03d] %(filename)s -> %(funcName)s line:%(lineno)d [%(levelname)s]: %(message)s"
     )
     # 5.设置要处理的等级和处理格式 获取实例并添加处理器
-    handler.setLevel(logging.DEBUG if app.debug or os.getenv("FLASK_ENV") == "development" else logging.WARNING)
+    handler.setLevel(logging.DEBUG if app.debug or _env_is_development() else logging.WARNING)
     handler.setFormatter(formatter)
     logging.getLogger().addHandler(handler)
 
     # 6.在开发环境下同时将日志输出到控制台
-    if app.debug or os.getenv('FLASK_ENV') == 'development':
+    if app.debug or _env_is_development():
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         logging.getLogger().addHandler(console_handler)

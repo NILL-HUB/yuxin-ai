@@ -16,6 +16,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
+
+
 from internal.entity.agent_entity import normalize_agent_metadata
 from internal.entity.app_entity import AppConfigType, DEFAULT_APP_CONFIG, AppStatus
 from .conversation import Conversation
@@ -30,7 +33,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class App(db.Model):
+class App(Base):
     """AI应用基础模型类"""
     __tablename__ = "app"
     __table_args__ = (
@@ -42,7 +45,8 @@ class App(db.Model):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
-    account_id = Column(UUID, ForeignKey('account.id'), nullable=False)  # 创建账号id
+    account_id = Column(UUID, ForeignKey('account.id'), nullable=True)  # 创建账号id（平台级资源为空）
+    created_by_admin = Column(UUID, ForeignKey('admin_user.id'), nullable=True)  # 创建管理员id（管理端创建时记录）
     app_config_id = Column(UUID, nullable=True)  # 发布配置id，当值为空时代表没有发布
     draft_app_config_id = Column(UUID, nullable=True)  # 关联的草稿配置id
     debug_conversation_id = Column(UUID, nullable=True)  # 应用调试会话id，为None则代表没有会话信息
@@ -186,7 +190,7 @@ class App(db.Model):
         return config
 
 
-class AppAssignment(db.Model):
+class AppAssignment(Base):
     __tablename__ = "app_assignment"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_app_assignment_id"),
@@ -215,7 +219,7 @@ class AppAssignment(db.Model):
     account = relationship("Account", foreign_keys=[account_id], lazy="joined")
 
 
-class AppConfig(db.Model):
+class AppConfig(Base):
     """应用配置模型"""
     __tablename__ = "app_config"
     __table_args__ = (
@@ -263,7 +267,7 @@ class AppConfig(db.Model):
     created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class AppConfigVersion(db.Model):
+class AppConfigVersion(Base):
     """应用配置版本历史表，用于存储草稿配置+历史发布配置"""
     __tablename__ = "app_config_version"
     __table_args__ = (

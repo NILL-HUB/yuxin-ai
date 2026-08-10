@@ -36,7 +36,7 @@ import threading
 from typing import Optional
 from uuid import UUID
 
-from flask import current_app
+from internal.context import current_app
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)

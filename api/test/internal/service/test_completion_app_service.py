@@ -24,6 +24,7 @@ from internal.entity.app_entity import AppType
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.model import App
 from internal.service.completion_app_service import CompletionAppService
+from internal.service.language_model_service import LanguageModelService
 
 
 # ----------------------------------------------------------------------
@@ -136,6 +137,33 @@ class _MockChain:
         return self._text
 
 
+class _FakeLanguageModelService:
+    """模拟 LanguageModelService，记录 resolve/default 调用并返回假 LLM。
+
+    与当前实现 _build_llm 的行为对应：
+    - provider+model 同时存在 -> resolve_runtime_language_model，返回 resolution.llm
+    - 否则 -> load_default_language_model，返回默认 LLM
+    """
+
+    def __init__(self):
+        self.resolve_calls = 0
+        self.resolve_config = None
+        self.resolve_entrypoint = None
+        self.resolved_llm = SimpleNamespace(model_name="deepseek-reasoner")
+        self.default_calls = 0
+        self.default_llm = SimpleNamespace(model_name="deepseek-chat")
+
+    def resolve_runtime_language_model(self, model_config, entrypoint=None):
+        self.resolve_calls += 1
+        self.resolve_config = model_config
+        self.resolve_entrypoint = entrypoint
+        return SimpleNamespace(llm=self.resolved_llm)
+
+    def load_default_language_model(self):
+        self.default_calls += 1
+        return self.default_llm
+
+
 # ----------------------------------------------------------------------
 # 测试用例
 # ----------------------------------------------------------------------
@@ -229,31 +257,27 @@ class TestCompletionAppService:
         assert result["model"] == "deepseek-chat"
         assert result["parameters"] == {"temperature": 0.7}
 
-    def test_get_model_config_returns_default_when_missing(self):
-        """配置中无 model_config 时返回默认配置。"""
+    def test_get_model_config_returns_empty_when_missing(self):
+        """配置中无 model_config 时返回空字典，由 _build_llm 走数据库默认配置。"""
         result = CompletionAppService.get_model_config({"preset_prompt": ""})
 
-        assert result["provider"] == "deepseek"
-        assert result["model"] == "deepseek-chat"
-        assert result["parameters"] == {}
+        assert result == {}
 
-    def test_get_model_config_returns_default_when_none_config(self):
-        """app_config 为 None 时返回默认配置。"""
+    def test_get_model_config_returns_empty_when_none_config(self):
+        """app_config 为 None 时返回空字典。"""
         result = CompletionAppService.get_model_config(None)
 
-        assert result["provider"] == "deepseek"
-        assert result["model"] == "deepseek-chat"
-        assert result["parameters"] == {}
+        assert result == {}
 
     def test_get_model_config_fills_missing_fields(self):
-        """model_config 中部分字段缺失时补全为默认值。"""
+        """model_config 中缺失字段留空，不做默认值补全。"""
         config = {"model_config": {"provider": "deepseek"}}
 
         result = CompletionAppService.get_model_config(config)
 
-        # 缺失 model 与 parameters 时使用默认值
+        # 缺失 model 与 parameters 时留空，不补默认值
         assert result["provider"] == "deepseek"
-        assert result["model"] == "deepseek-chat"
+        assert result["model"] == ""
         assert result["parameters"] == {}
 
     # --- generate ---
@@ -551,29 +575,36 @@ class TestCompletionAppService:
     # --- _build_llm ---
 
     def test_build_llm_uses_model_name_from_config(self):
-        """_build_llm 使用 model_config 中的 model 名构建 LLM。"""
+        """_build_llm 将 model_config 交给 language_model_service 解析并返回其 LLM。"""
         model_config = {
             "provider": "deepseek",
             "model": "deepseek-reasoner",
             "parameters": {"temperature": 0.2},
         }
+        lm_service = _FakeLanguageModelService()
+        service = CompletionAppService(db=_DummyDB(), language_model_service=lm_service)
 
-        llm = CompletionAppService._build_llm(model_config)
+        llm = service._build_llm(model_config)
 
-        assert llm is not None
-        # DeepSeek Chat 模型通过 model_name 或 model 属性暴露模型名
-        model_attr = getattr(llm, "model_name", None) or getattr(llm, "model", None)
-        assert model_attr == "deepseek-reasoner"
+        # 配置中含 provider+model 时走 resolve_runtime_language_model 解析链路
+        assert lm_service.resolve_calls == 1
+        assert lm_service.resolve_config["model"] == "deepseek-reasoner"
+        assert lm_service.resolve_entrypoint == LanguageModelService.ENTRYPOINT_ASSISTANT_AGENT
+        assert llm is lm_service.resolved_llm
+        assert lm_service.default_calls == 0
 
     def test_build_llm_uses_default_when_model_missing(self):
-        """model_config 缺失 model 字段时使用默认值 deepseek-chat。"""
+        """model_config 缺失 model 字段时走 load_default_language_model。"""
         model_config = {"provider": "deepseek", "parameters": {}}
+        lm_service = _FakeLanguageModelService()
+        service = CompletionAppService(db=_DummyDB(), language_model_service=lm_service)
 
-        llm = CompletionAppService._build_llm(model_config)
+        llm = service._build_llm(model_config)
 
-        assert llm is not None
-        model_attr = getattr(llm, "model_name", None) or getattr(llm, "model", None)
-        assert model_attr == "deepseek-chat"
+        # 未同时指定 provider+model 时使用数据库默认配置
+        assert lm_service.default_calls == 1
+        assert lm_service.resolve_calls == 0
+        assert llm is lm_service.default_llm
 
     # --- _build_chain ---
 

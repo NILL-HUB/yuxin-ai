@@ -20,7 +20,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import Optional
@@ -56,22 +55,6 @@ class _ConflictJudgment(BaseModel):
         ..., ge=0.0, le=1.0, description="置信度 0-1"
     )
     explanation: str = Field(default="", description="判定理由")
-
-
-# 冲突检测 prompt 模板
-_CONFLICT_DETECTION_PROMPT = """你是一个记忆冲突检测专家。请判断以下两条记忆之间的关系。
-
-记忆 A: {memory_a}
-记忆 B: {memory_b}
-
-请判断它们之间的关系类型:
-- contradiction: 两条记忆直接矛盾，不能同时为真
-- update: 记忆 B 是记忆 A 的更新版本，B 更准确或更近期
-- complement: 两条记忆互补，可以共存
-- none: 两条记忆无关或完全相同
-
-请返回 JSON，包含 type（类型）、confidence（置信度 0-1）、explanation（理由）。
-"""
 
 
 class ConflictDetector:
@@ -204,7 +187,11 @@ class ConflictDetector:
         Returns:
             ConflictResult 或 None
         """
-        prompt = _CONFLICT_DETECTION_PROMPT.format(
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
+        prompt = SystemPromptLibraryService().get_prompt_or_default(
+            "memory_write_time_conflict_resolver_prompt"
+        ).format(
             memory_a=a_content[:500],
             memory_b=b_content[:500],
         )
@@ -459,7 +446,7 @@ class ConflictDetector:
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None。"""
         try:
-            from flask import current_app
+            from internal.context import current_app
 
             driver = current_app.extensions.get("neo4j")
             if driver is not None:

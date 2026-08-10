@@ -86,6 +86,7 @@ class Config:
             )
         self.SQLALCHEMY_ENGINE_OPTIONS = {
             "pool_size": int(_get_env("SQLALCHEMY_POOL_SIZE")),
+            "max_overflow": int(_get_env("SQLALCHEMY_MAX_OVERFLOW")),
             "pool_recycle": int(_get_env("SQLALCHEMY_POOL_RECYCLE")),
             "pool_timeout": int(_get_env("SQLALCHEMY_POOL_TIMEOUT")),
             "pool_pre_ping": _get_bool_env("SQLALCHEMY_POOL_PRE_PING"),
@@ -163,6 +164,14 @@ class Config:
                     "task": "internal.task.consolidation_tasks.run_weight_scan",
                     "schedule": crontab(hour="*/6", minute=30),
                 },
+                "recycle-bin-expiration": {
+                    "task": "internal.task.recycle_bin_tasks.run_recycle_bin_expiration",
+                    "schedule": crontab(minute=0),
+                },
+                "run-scheduled-tasks": {
+                    "task": "internal.task.schedule_tasks.run_scheduled_tasks",
+                    "schedule": crontab(minute="*"),
+                },
             },
         }
 
@@ -196,7 +205,7 @@ class Config:
         self.OSS_BUCKET = _get_env("OSS_BUCKET")
         self.OSS_DOMAIN = _get_env("OSS_DOMAIN")
 
-        # Flask-Mail 邮件服务配置
+        # SMTP 邮件服务配置
         self.MAIL_SERVER = _get_env("MAIL_SERVER")
         self.MAIL_PORT = int(_get_env("MAIL_PORT")) if _get_env("MAIL_PORT") else 587
         self.MAIL_USE_TLS = _get_bool_env("MAIL_USE_TLS")

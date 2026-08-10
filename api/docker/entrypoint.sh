@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenAgent Docker 容器启动脚本
+# 钰心AI Docker 容器启动脚本
 # 注意：所有敏感信息（API Keys、密钥等）必须通过 api/.env 或 docker-compose environment 提供
 # 本脚本仅设置非敏感的默认配置
 
@@ -16,9 +16,9 @@ set_default_if_unset() {
   fi
 }
 
-# Flask 基础配置
-set_default_if_unset "FLASK_ENV" "production"
-set_default_if_unset "FLASK_DEBUG" "0"
+# 应用基础配置
+set_default_if_unset "APP_ENV" "production"
+set_default_if_unset "APP_DEBUG" "0"
 
 # HuggingFace 镜像
 set_default_if_unset "HF_ENDPOINT" "https://hf-mirror.com"
@@ -28,6 +28,9 @@ set_default_if_unset "SERVER_WORKER_AMOUNT" "1"
 set_default_if_unset "SERVER_THREAD_AMOUNT" "32"
 set_default_if_unset "GUNICORN_TIMEOUT" "0"
 set_default_if_unset "CELERY_WORKER_AMOUNT" "4"
+# ASGI 模式配置（阶段 3：渐进式 Quart 迁移）
+set_default_if_unset "ASGI_WORKER_AMOUNT" "1"
+set_default_if_unset "MODE" "asgi"
 
 # 数据库连接池配置
 set_default_if_unset "SQLALCHEMY_POOL_SIZE" "30"
@@ -110,44 +113,35 @@ check_required_env
 
 # 5.判断是否启用的迁移数据同步 如果是则将数据库迁移同步到数据库中
 if [[ "${MIGRATION_ENABLED}" == "true" ]]; then
-  echo "Checking database migrations..."
-  if [ ! -d "internal/migration" ]; then
-    echo "Initializing new migrations..."
-    flask db init --directory internal/migration
-  fi
-  echo "Applying pending migrations..."
-  flask db upgrade --directory internal/migration
+  echo "Applying pending migrations (alembic)..."
+  alembic upgrade head
 fi
 
-# 6.检测运行的模式(api/celery/celery-beat) 以执行不同的脚本
-if [[ "${MODE}" == "celery" ]]; then
-  # 7.运行Celery命令
-  celery -A app.http.app.celery worker -P ${CELERY_WORKER_CLASS:-prefork} -c ${CELERY_WORKER_AMOUNT:-1} --loglevel DEBUG
+# 6.检测运行的模式(api/celery/celery-beat/asgi) 以执行不同的脚本
+if [[ "${MODE}" == "asgi" ]]; then
+  # 全量 Quart 迁移完成：app.http.asgi_app.quart_app 承载全部 393 个端点（含 SSE）。
+  # HTTP 层仅走 ASGI；Http 容器仅作为 Celery/SocketIO 的依赖宿主。
+  # 并发扩展：ASGI_WORKER_AMOUNT 起多 worker（每 worker 独立事件循环），
+  # 同时按需放大 SQLALCHEMY_POOL_SIZE（默认 30，受 PostgreSQL max_connections 约束）。
+  echo "Starting ASGI server (uvicorn + quart_app + socketio)..."
+  uvicorn \
+    --host "${LLMOPS_BIND_ADDRESS:-0.0.0.0}" \
+    --port "${LLMOPS_PORT:-5001}" \
+    --workers ${ASGI_WORKER_AMOUNT:-1} \
+    --timeout-keep-alive 75 \
+    app.http.asgi_app:app
+elif [[ "${MODE}" == "celery" ]]; then
+  # 7.运行Celery命令（阶段 C：独立 Celery 应用，与 Flask 初始化解耦）
+  celery -A app.http.celery_app:celery_app worker -P ${CELERY_WORKER_CLASS:-prefork} -c ${CELERY_WORKER_AMOUNT:-1} --loglevel DEBUG
 elif [[ "${MODE}" == "celery-beat" ]]; then
   # 7b.运行Celery Beat调度器
-  celery -A app.http.app.celery beat --loglevel DEBUG
+  celery -A app.http.celery_app:celery_app beat --loglevel DEBUG
 else
-  GUNICORN_WORKER_CLASS="${SERVER_WORKER_CLASS:-gthread}"
-  GUNICORN_WORKER_AMOUNT="${SERVER_WORKER_AMOUNT:-1}"
-
-  if [[ "${GUNICORN_WORKER_CLASS}" == "gthread" && "${GUNICORN_WORKER_AMOUNT}" != "1" ]]; then
-    echo "WARNING: forcing SERVER_WORKER_AMOUNT=1 because Flask-SocketIO with gthread/simple-websocket requires a single gunicorn worker."
-    GUNICORN_WORKER_AMOUNT="1"
-  fi
-
-  # 8.判断当前API环境是开发环境还是生产环境 以执行不同的脚本
-  if [[ "${FLASK_ENV}" == "development" ]]; then
-    # 9.开发环境使用flask内置服务器
-    flask run --host=${LLMOPS_BIND_ADDRESS:-0.0.0.0} --port=${LLMOPS_PORT:-5001} --debug
-    else
-      # 10.生产环境使用gunicorn服务器进行部署 并配置worker worker_class 超时时间 预加载等
-      gunicorn \
-        --bind "${LLMOPS_BIND_ADDRESS:-0.0.0.0}:${LLMOPS_PORT:-5001}" \
-        --workers ${GUNICORN_WORKER_AMOUNT} \
-        --worker-class ${GUNICORN_WORKER_CLASS} \
-        --threads ${SERVER_THREAD_AMOUNT:-2} \
-        --timeout ${GUNICORN_TIMEOUT:-0} \
-        --preload \
-        app.http.app:app
-    fi
+  echo "Starting ASGI server (uvicorn + quart_app + socketio) [MODE=${MODE}]..."
+  uvicorn \
+    --host "${LLMOPS_BIND_ADDRESS:-0.0.0.0}" \
+    --port "${LLMOPS_PORT:-5001}" \
+    --workers ${ASGI_WORKER_AMOUNT:-1} \
+    --timeout-keep-alive 75 \
+    app.http.asgi_app:app
 fi

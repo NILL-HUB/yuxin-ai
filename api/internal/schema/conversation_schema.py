@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import IntegerField, StringField, BooleanField
 from wtforms.validators import Optional, NumberRange, DataRequired, Length
@@ -20,6 +20,7 @@ class GetConversationMessagesWithPageResp(Schema):
     """获取指定会话消息列表分页数据响应结构"""
     id = fields.UUID(dump_default="")
     conversation_id = fields.UUID(dump_default="")
+    invoke_from = fields.String(dump_default="")
     query = fields.String(dump_default="")
     image_urls = fields.List(fields.String, dump_default=[])
     input_parts = fields.List(fields.Dict, dump_default=[])
@@ -38,6 +39,7 @@ class GetConversationMessagesWithPageResp(Schema):
         return {
             "id": data.id,
             "conversation_id": data.conversation_id,
+            "invoke_from": data.invoke_from,
             "query": data.query,
             "image_urls": data.image_urls,
             "input_parts": build_input_parts(data.query, data.image_urls),
@@ -62,7 +64,7 @@ class GetConversationMessagesWithPageResp(Schema):
         }
 
 
-class UpdateConversationNameReq(FlaskForm):
+class UpdateConversationNameReq(Form):
     """更新会话名字请求结构体"""
     name = StringField("name", validators=[
         DataRequired(message="会话名字不能为空"),
@@ -70,12 +72,12 @@ class UpdateConversationNameReq(FlaskForm):
     ])
 
 
-class UpdateConversationIsPinnedReq(FlaskForm):
+class UpdateConversationIsPinnedReq(Form):
     """更新会话置顶选项请求请求结构体"""
     is_pinned = BooleanField("is_pinned", default=False)
 
 
-class GetRecentConversationsReq(FlaskForm):
+class GetRecentConversationsReq(Form):
     """获取最近会话列表请求结构体"""
     limit = IntegerField("limit", default=20, validators=[
         Optional(),
@@ -88,6 +90,7 @@ class GetRecentConversationsResp(Schema):
     id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
     source_type = fields.String(dump_default="")
+    invoke_from = fields.String(dump_default="")
     app_id = fields.UUID(dump_default="")
     app_name = fields.String(dump_default="")
     message_id = fields.UUID(dump_default="")
@@ -98,7 +101,7 @@ class GetRecentConversationsResp(Schema):
     ai_message = fields.String(dump_default="")
 
 
-class SearchConversationsReq(FlaskForm):
+class SearchConversationsReq(Form):
     """搜索会话请求结构体"""
     query = StringField("query", default="", validators=[
         Optional(),
@@ -115,6 +118,7 @@ class SearchConversationsResp(Schema):
     id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
     source_type = fields.String(dump_default="")
+    invoke_from = fields.String(dump_default="")
     app_id = fields.UUID(dump_default="")
     app_name = fields.String(dump_default="")
     agent_name = fields.String(dump_default="")

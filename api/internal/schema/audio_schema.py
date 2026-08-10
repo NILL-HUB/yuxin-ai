@@ -1,10 +1,10 @@
-from flask_wtf import FlaskForm
-from flask_wtf.file import FileField, FileRequired, FileSize, FileAllowed
+from wtforms import Form
+from pkg.wtforms_compat import FileField, FileRequired, FileSize, FileAllowed
 from wtforms.fields import StringField
 from wtforms.validators import DataRequired, Length
 
 
-class AudioToTextReq(FlaskForm):
+class AudioToTextReq(Form):
     """语音转文本请求结构"""
     file = FileField("file", validators=[
         FileRequired(message="转换音频文件不能为空"),
@@ -13,14 +13,14 @@ class AudioToTextReq(FlaskForm):
     ])
 
 
-class MessageToAudioReq(FlaskForm):
+class MessageToAudioReq(Form):
     """消息转流式事件语音请求结构"""
     message_id = StringField("message_id", validators=[
         DataRequired(message="消息id不能为空"),
     ])
 
 
-class TextToAudioReq(FlaskForm):
+class TextToAudioReq(Form):
     """文本转流式事件语音请求结构"""
     message_id = StringField("message_id")
     text = StringField("text", validators=[

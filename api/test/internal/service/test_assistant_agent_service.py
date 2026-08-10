@@ -6,7 +6,7 @@ from uuid import uuid4
 import json
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 from langchain_core.messages import HumanMessage, SystemMessage
 from werkzeug.datastructures import FileStorage
 
@@ -36,8 +36,17 @@ class _QueryStub:
     def filter(self, *_args, **_kwargs):
         return self
 
+    def order_by(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
     def all(self):
         return self._all_result
+
+    def get(self, _primary_key):
+        return None
 
 
 class TestAssistantAgentService:
@@ -117,7 +126,7 @@ class TestAssistantAgentService:
 
         monkeypatch.setattr(service, "generate_introduction", _generate_introduction)
 
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         flask_app.config["TESTING"] = False
         flask_app.config["ASSISTANT_INTRO_PREWARM_ENABLED"] = True
 
@@ -316,10 +325,8 @@ class TestAssistantAgentService:
 
         capabilities = service.get_capabilities()
 
-        assert capabilities["requested_model"] == {
-            "provider": "deepseek",
-            "model": "deepseek-chat",
-        }
+        assert capabilities["requested_model"] == {}
+        assert capabilities["effective_model"] == {}
         assert capabilities["image_input"]["enabled"] is False
         assert capabilities["image_input"]["policy"] == "strict"
         assert capabilities["image_output"]["enabled"] is True
@@ -609,8 +616,18 @@ class TestAssistantAgentService:
             "convert_create_app_to_tool",
             lambda _account_id: f"create:{_account_id}",
         )
+        # 技能详情/记忆策展工具属于独立模块构建，本测试聚焦 MCP 绑定工具，
+        # mock 为固定占位符以匹配当前实现追加工具的次序
+        monkeypatch.setattr(
+            "internal.service.memory.skill_detail_tool.create_skill_detail_tool",
+            lambda **kwargs: "skill-detail-tool",
+        )
+        monkeypatch.setattr(
+            "internal.service.memory.agent_memory_tool.create_agent_memory_tools",
+            lambda **kwargs: ["memory-add-tool", "memory-replace-tool", "memory-remove-tool"],
+        )
 
-        flask_app = Flask(__name__)
+        flask_app = TestApp(__name__)
         flask_app.config["ASSISTANT_MCP_BINDINGS"] = expected_bindings
 
         with flask_app.app_context():
@@ -621,6 +638,10 @@ class TestAssistantAgentService:
             "search-tool",
             f"create:{account_id}",
             "mcp-tool",
+            "skill-detail-tool",
+            "memory-add-tool",
+            "memory-replace-tool",
+            "memory-remove-tool",
         ]
         assert captured["bindings"] == expected_bindings
 
@@ -846,15 +867,18 @@ class TestAssistantAgentService:
                 # 故意输出纯文本，验证服务会兜底格式化为 Markdown
                 return iter(["欢迎回来。", "建议先定义你的目标。"])
 
+            def get_num_tokens_from_messages(self, messages):
+                return 10
+
         monkeypatch.setattr(
-            "internal.service.language_model_service.LanguageModelService.get_cheap_chat_model",
-            classmethod(lambda cls: _FakeLLM()),
+            "internal.service.language_model_service.LanguageModelService.get_feature_model",
+            classmethod(lambda cls, feature_key: _FakeLLM()),
         )
         service = AssistantAgentService(
             db=SimpleNamespace(session=_Session()),
             faiss_service=SimpleNamespace(),
             conversation_service=SimpleNamespace(),
-            redis_client=SimpleNamespace(get=lambda key: None),
+            redis_client=SimpleNamespace(get=lambda key: None, setex=lambda key, ttl, value: None),
         )
         account = SimpleNamespace(id=uuid4(), name="测试用户")
 
@@ -944,7 +968,9 @@ class TestAssistantAgentService:
 
         save_payload = {}
         service = AssistantAgentService(
-            db=SimpleNamespace(session=SimpleNamespace()),
+            db=SimpleNamespace(
+                session=SimpleNamespace(query=lambda *_a, **_kw: _QueryStub())
+            ),
             faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
             conversation_service=SimpleNamespace(
                 save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
@@ -995,6 +1021,8 @@ class TestAssistantAgentService:
         executor_capture = {}
 
         class _FakeSingleAgentExecutor:
+            collected_thoughts = []
+
             def __init__(self, **kwargs):
                 executor_capture["kwargs"] = kwargs
 
@@ -1007,6 +1035,15 @@ class TestAssistantAgentService:
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+        # 技能详情/记忆策展工具与断言相关，mock 为固定占位符以匹配当前实现追加工具的次序
+        monkeypatch.setattr(
+            "internal.service.memory.skill_detail_tool.create_skill_detail_tool",
+            lambda **kwargs: "skill-detail-tool",
+        )
+        monkeypatch.setattr(
+            "internal.service.memory.agent_memory_tool.create_agent_memory_tools",
+            lambda **kwargs: ["memory-add-tool", "memory-replace-tool", "memory-remove-tool"],
         )
         monkeypatch.setattr(
             "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
@@ -1030,11 +1067,14 @@ class TestAssistantAgentService:
         assert create_calls[0][1]["query"] == req.query.data
         assert create_calls[0][1]["image_urls"] == req.image_urls.data
         assert llm_capture["build_context_args"][1] == req.query.data
-        assert len(executor_capture["kwargs"]["agent_config"].tools) == 3
         assert executor_capture["kwargs"]["agent_config"].tools == [
             "public-agent-route-tool",
             "faiss-tool",
             "create-app-tool",
+            "skill-detail-tool",
+            "memory-add-tool",
+            "memory-replace-tool",
+            "memory-remove-tool",
         ]
         assert executor_capture["kwargs"]["history"] == ["历史消息"]
         assert len(events) == 4
@@ -1064,7 +1104,9 @@ class TestAssistantAgentService:
         routing_calls = []
         save_payload = {}
         service = AssistantAgentService(
-            db=SimpleNamespace(session=SimpleNamespace()),
+            db=SimpleNamespace(
+                session=SimpleNamespace(query=lambda *_a, **_kw: _QueryStub())
+            ),
             faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
             conversation_service=SimpleNamespace(
                 save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
@@ -1109,40 +1151,40 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
-        class _FakeResult:
-            def __init__(self, answer):
-                self.answer = answer
-                self.task_id = "direct_answer"
-                self.metadata = {}
+        class _FakeDirectAnswerExecutor:
+            last_answer = "答案"
+            last_token_usage = None
+            collected_thoughts = []
 
-        class _FakeCoordinator:
             def __init__(self, **_kwargs):
                 pass
 
-            def execute(self, plan):
-                return [_FakeResult(answer="答案")]
+            def stream(self, query, history=None, conversation_id="", message_id=""):
+                return iter([
+                    f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '答案', 'id': message_id, 'conversation_id': conversation_id, 'message_id': message_id})}\n\n",
+                ])
 
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
         monkeypatch.setattr("internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier", classmethod(lambda cls, tier: _FakeLLM()))
         monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
         monkeypatch.setattr(
-            "internal.service.execution_coordinator_service.ExecutionCoordinatorService",
-            _FakeCoordinator,
+            "internal.service.executors.direct_answer_executor.DirectAnswerExecutor",
+            _FakeDirectAnswerExecutor,
         )
 
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert len(events) == 5
-        assert events[0].startswith("event: billing_started")
-        assert events[1].startswith("event: agent_thought")
+        assert len(events) == 6
+        assert events[0].startswith("event: agent_thought")
+        assert events[1].startswith("event: billing_started")
         assert events[2].startswith("event: agent_message")
         assert events[3].startswith("event: billing_summary")
         assert events[4].startswith("event: billing_final")
+        assert events[5].startswith("event: agent_end")
         assert routing_calls[0][0] == req.query.data
         assert routing_calls[0][1]["account_id"] == account.id
-        assert save_payload["routing_decision"]["execution_mode"] == "direct_answer"
-        assert save_payload["routing_decision"]["intent"] == "general_qa"
+        assert save_payload["routing_decision"] is None
 
     def test_chat_should_yield_deep_thinking_proposal_when_mode_is_deep_thinking(
         self, monkeypatch, app
@@ -1298,7 +1340,9 @@ class TestAssistantAgentService:
         resolution_capture = {}
         save_payload = {}
         service = AssistantAgentService(
-            db=SimpleNamespace(session=SimpleNamespace()),
+            db=SimpleNamespace(
+                session=SimpleNamespace(query=lambda *_a, **_kw: _QueryStub())
+            ),
             faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
             conversation_service=SimpleNamespace(
                 save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
@@ -1349,6 +1393,8 @@ class TestAssistantAgentService:
         executor_capture = {}
 
         class _FakeSingleAgentExecutor:
+            collected_thoughts = []
+
             def __init__(self, **kwargs):
                 executor_capture["kwargs"] = kwargs
 
@@ -1358,6 +1404,15 @@ class TestAssistantAgentService:
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+        # 技能详情/记忆策展工具与断言相关，mock 为固定占位符以匹配当前实现追加工具的次序
+        monkeypatch.setattr(
+            "internal.service.memory.skill_detail_tool.create_skill_detail_tool",
+            lambda **kwargs: "skill-detail-tool",
+        )
+        monkeypatch.setattr(
+            "internal.service.memory.agent_memory_tool.create_agent_memory_tools",
+            lambda **kwargs: ["memory-add-tool", "memory-replace-tool", "memory-remove-tool"],
         )
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.TokenBufferMemory",
@@ -1385,6 +1440,10 @@ class TestAssistantAgentService:
             "public-agent-route-tool",
             "faiss-tool",
             "create-app-tool",
+            "skill-detail-tool",
+            "memory-add-tool",
+            "memory-replace-tool",
+            "memory-remove-tool",
         ]
         assert save_payload["agent_thoughts"] == []
 
@@ -1403,7 +1462,9 @@ class TestAssistantAgentService:
         )
 
         service = AssistantAgentService(
-            db=SimpleNamespace(session=SimpleNamespace()),
+            db=SimpleNamespace(
+                session=SimpleNamespace(query=lambda *_a, **_kw: _QueryStub())
+            ),
             faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
             conversation_service=SimpleNamespace(save_agent_thoughts=lambda **_kwargs: None),
             redis_client=SimpleNamespace(),
@@ -1445,6 +1506,8 @@ class TestAssistantAgentService:
         executor_capture = {}
 
         class _FakeSingleAgentExecutor:
+            collected_thoughts = []
+
             def __init__(self, **kwargs):
                 executor_capture["kwargs"] = kwargs
 
@@ -1490,7 +1553,9 @@ class TestAssistantAgentService:
         )
 
         service = AssistantAgentService(
-            db=SimpleNamespace(session=SimpleNamespace()),
+            db=SimpleNamespace(
+                session=SimpleNamespace(query=lambda *_a, **_kw: _QueryStub())
+            ),
             faiss_service=SimpleNamespace(convert_faiss_to_tool=lambda: "faiss-tool"),
             conversation_service=SimpleNamespace(
                 save_agent_thoughts=lambda **_kwargs: None
@@ -1537,6 +1602,8 @@ class TestAssistantAgentService:
         executor_capture = {}
 
         class _FakeSingleAgentExecutor:
+            collected_thoughts = []
+
             def __init__(self, **kwargs):
                 executor_capture["kwargs"] = kwargs
 
@@ -1546,6 +1613,15 @@ class TestAssistantAgentService:
         monkeypatch.setattr(
             "internal.service.assistant_agent_service.AgentConfig",
             lambda **kwargs: SimpleNamespace(**kwargs),
+        )
+        # 技能详情/记忆策展工具与断言相关，mock 为固定占位符以匹配当前实现追加工具的次序
+        monkeypatch.setattr(
+            "internal.service.memory.skill_detail_tool.create_skill_detail_tool",
+            lambda **kwargs: "skill-detail-tool",
+        )
+        monkeypatch.setattr(
+            "internal.service.memory.agent_memory_tool.create_agent_memory_tools",
+            lambda **kwargs: ["memory-add-tool", "memory-replace-tool", "memory-remove-tool"],
         )
         monkeypatch.setattr(
             "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
@@ -1567,6 +1643,10 @@ class TestAssistantAgentService:
             "public-agent-route-tool",
             "registry-search-tool",
             "create-app-tool",
+            "skill-detail-tool",
+            "memory-add-tool",
+            "memory-replace-tool",
+            "memory-remove-tool",
         ]
 
     def test_generate_introduction_should_skip_empty_chunks(self, monkeypatch):
@@ -1604,15 +1684,18 @@ class TestAssistantAgentService:
                 # 这里故意混入空分块，验证服务会跳过空输出分片。
                 return iter(["", {"text": "欢迎回来。"}, None, "建议先定义目标。"])
 
+            def get_num_tokens_from_messages(self, messages):
+                return 10
+
         monkeypatch.setattr(
-            "internal.service.language_model_service.LanguageModelService.get_cheap_chat_model",
-            classmethod(lambda cls: _FakeLLM()),
+            "internal.service.language_model_service.LanguageModelService.get_feature_model",
+            classmethod(lambda cls, feature_key: _FakeLLM()),
         )
         service = AssistantAgentService(
             db=SimpleNamespace(session=_Session()),
             faiss_service=SimpleNamespace(),
             conversation_service=SimpleNamespace(),
-            redis_client=SimpleNamespace(get=lambda key: None),
+            redis_client=SimpleNamespace(get=lambda key: None, setex=lambda key, ttl, value: None),
         )
         account = SimpleNamespace(id=uuid4(), name="测试用户")
 
@@ -1665,15 +1748,18 @@ class TestAssistantAgentService:
             def stream(_messages):
                 raise RuntimeError("stream boom")
 
+            def get_num_tokens_from_messages(self, messages):
+                return 10
+
         monkeypatch.setattr(
-            "internal.service.language_model_service.LanguageModelService.get_cheap_chat_model",
-            classmethod(lambda cls: _FakeLLM()),
+            "internal.service.language_model_service.LanguageModelService.get_feature_model",
+            classmethod(lambda cls, feature_key: _FakeLLM()),
         )
         service = AssistantAgentService(
             db=SimpleNamespace(session=_Session()),
             faiss_service=SimpleNamespace(),
             conversation_service=SimpleNamespace(),
-            redis_client=SimpleNamespace(get=lambda key: None),
+            redis_client=SimpleNamespace(get=lambda key: None, setex=lambda key, ttl, value: None),
         )
         account = SimpleNamespace(id=uuid4(), name="测试用户")
 
@@ -1767,7 +1853,7 @@ class TestAssistantAgentService:
 
         contents = [getattr(item, "content", "") for item in prompt_messages]
         assert isinstance(prompt_messages[0], SystemMessage)
-        assert "你是OpenAgent" in prompt_messages[0].content
+        assert "你是钰心AI" in prompt_messages[0].content
         assert all(isinstance(item, HumanMessage) for item in prompt_messages[1:])
         assert "用户历史会话摘要如下" not in "\n".join(contents)
         assert any("最近在做测试" in content for content in contents)

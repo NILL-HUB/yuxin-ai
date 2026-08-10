@@ -6,7 +6,7 @@ def test_model_pool_item_should_normalize_defaults_and_prices():
         {
             "provider": " openai ",
             "model": " gpt-4o-mini ",
-            "tier": "invalid",
+            "tier": "",
             "capabilities": ["chat", "chat", "tool_calling"],
             "price_per_1k_input_tokens": -1,
             "price_per_1k_output_tokens": 0.03,
@@ -19,7 +19,7 @@ def test_model_pool_item_should_normalize_defaults_and_prices():
 
     assert item.provider == "openai"
     assert item.model == "gpt-4o-mini"
-    assert item.tier == "standard"
+    assert item.tier == "2"
     assert item.capabilities == ["chat", "tool_calling"]
     assert item.price_per_1k_input_tokens == 0
     assert item.price_per_1k_output_tokens == 0.03

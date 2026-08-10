@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 import re
 import time
 import uuid
@@ -14,8 +13,8 @@ from langgraph.graph import StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from internal.core.agent.entities.agent_entity import (
     AgentState,
-    AGENT_SYSTEM_PROMPT_TEMPLATE,
-    MAX_ITERATION_RESPONSE,
+    get_agent_system_prompt_template,
+    get_max_iteration_response,
 )
 from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.entities.tool_policy_entity import ToolPolicy
@@ -51,7 +50,14 @@ class FunctionCallAgent(BaseAgent):
         graph.add_conditional_edges("llm", self._tools_condition)
         graph.add_edge("tools", "llm")
 
-        # 4.编译应用并返回
+        # 4.编译应用并返回（兼容 object.__new__ 构造的测试实例：agent_config 可能不存在）
+        agent_config = getattr(self, "agent_config", None)
+        if agent_config is not None and getattr(agent_config, "enable_checkpoint", False):
+            from internal.core.agent.checkpointer import get_async_checkpointer
+            checkpointer = get_async_checkpointer()
+            if checkpointer is not None:
+                agent = graph.compile(checkpointer=checkpointer)
+                return agent
         agent = graph.compile()
 
         return agent
@@ -107,7 +113,7 @@ class FunctionCallAgent(BaseAgent):
         # 2.构建预设消息列表，并将preset_prompt+long_term_memory+user_memory填充到系统消息中
         user_memory = state.get("user_memory", "") or ""
         preset_messages = [
-            SystemMessage(AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+            SystemMessage(get_agent_system_prompt_template("agent_system_prompt_template").format(
                 preset_prompt=self.agent_config.preset_prompt,
                 long_term_memory=long_term_memory,
                 user_memory=user_memory,
@@ -136,19 +142,20 @@ class FunctionCallAgent(BaseAgent):
             "messages": [RemoveMessage(id=human_message.id), *preset_messages],
         }
 
-    def _llm_node(self, state: AgentState) -> AgentState:
-        """大语言模型节点"""
+    async def _llm_node(self, state: AgentState) -> AgentState:
+        """大语言模型节点（async：LLM 流式调用使用 astream，不阻塞事件循环）"""
         # 1.检测当前Agent迭代次数是否符合需求
         if state["iteration_count"] > self.agent_config.max_iteration_count:
+            max_iteration_response = get_max_iteration_response()
             self.agent_queue_manager.publish(
                 state["task_id"],
                 AgentThought(
                     id=uuid.uuid4(),
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_MESSAGE.value,
-                    thought=MAX_ITERATION_RESPONSE,
+                    thought=max_iteration_response,
                     message=messages_to_dict(state["messages"]),
-                    answer=MAX_ITERATION_RESPONSE,
+                    answer=max_iteration_response,
                     latency=0,
                 ))
             self.agent_queue_manager.publish(
@@ -158,7 +165,7 @@ class FunctionCallAgent(BaseAgent):
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_END.value,
                 ))
-            return {"messages": [AIMessage(MAX_ITERATION_RESPONSE)], "pending_skill_prompts": []}
+            return {"messages": [AIMessage(max_iteration_response)], "pending_skill_prompts": []}
 
         # 2.从智能体配置中提取大语言模型
         id = uuid.uuid4()
@@ -181,7 +188,7 @@ class FunctionCallAgent(BaseAgent):
         buffered_text_chunks: list[str] = []
         saw_tool_calls = False
         try:
-            for chunk in llm.stream(llm_messages):
+            async for chunk in llm.astream(llm_messages):
                 if chunk is None:  # 跳过无效 chunk
                     continue
                 if gathered is None:
@@ -196,7 +203,19 @@ class FunctionCallAgent(BaseAgent):
 
                 content = self._normalize_chunk_content(getattr(chunk, "content", ""))
                 if content:
-                    buffered_text_chunks.append(self._apply_output_review(content))
+                    reviewed = self._apply_output_review(content)
+                    buffered_text_chunks.append(reviewed)
+                    # 实时推送流式 token，让前端能看到 LLM 正在逐字输出
+                    # 前端 chat-stream.ts 的 agentMessage 处理是 message.answer += answerChunk
+                    self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                        id=id,
+                        task_id=state["task_id"],
+                        event=QueueEvent.AGENT_MESSAGE.value,
+                        thought=reviewed,
+                        message=messages_to_dict(state["messages"]),
+                        answer=reviewed,
+                        latency=0,
+                    ))
         except Exception as e:
             logging.exception(f"LLM节点发生错误, 错误信息: {str(e)}")
             self.agent_queue_manager.publish_failure(
@@ -259,17 +278,10 @@ class FunctionCallAgent(BaseAgent):
 
         final_content = self._finalize_llm_output(state, "".join(buffered_text_chunks))
         final_content = self._postprocess_llm_output(state, final_content)
-        self.agent_queue_manager.publish(state["task_id"], AgentThought(
-            id=id,
-            task_id=state["task_id"],
-            event=QueueEvent.AGENT_MESSAGE.value,
-            thought=final_content,
-            message=messages_to_dict(state["messages"]),
-            answer=final_content,
-            latency=(time.perf_counter() - start_at),
-        ))
 
         if buffered_text_chunks:
+            # 流式 chunk 已通过上面的循环实时推送，这里只发一条空 answer 的 AGENT_MESSAGE
+            # 用于 token 统计和触发 AGENT_END（避免前端重复累加完整 answer）
             if pending_skill_prompts:
                 logger.info(
                     "技能 prompt 租约已回收: lease_ids=%s",
@@ -279,7 +291,6 @@ class FunctionCallAgent(BaseAgent):
                         if isinstance(item, dict)
                     ],
                 )
-            # 12.如果LLM直接生成answer则表示已经拿到了最终答案，推送一条空内容用于计算总token+总成本,则停止监听
             self.agent_queue_manager.publish(state["task_id"], AgentThought(
                 id=id,
                 task_id=state["task_id"],
@@ -304,6 +315,17 @@ class FunctionCallAgent(BaseAgent):
                 id=uuid.uuid4(),
                 task_id=state["task_id"],
                 event=QueueEvent.AGENT_END.value,
+            ))
+        else:
+            # 无流式 chunk（例如 LLM 返回空内容或仅 tool_calls 已处理），发完整 answer 兜底
+            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                id=id,
+                task_id=state["task_id"],
+                event=QueueEvent.AGENT_MESSAGE.value,
+                thought=final_content,
+                message=messages_to_dict(state["messages"]),
+                answer=final_content,
+                latency=(time.perf_counter() - start_at),
             ))
 
         return {
@@ -451,10 +473,16 @@ class FunctionCallAgent(BaseAgent):
             ))
 
             # 7.判断执行工具的名字，提交不同事件，涵盖智能体动作以及知识库检索
+            # 注意：LLM 实际输出的工具名可能是 search_knowledge_base（检索工具注册名），
+            # 也可能是 dataset_retrieval / recall_dataset 等历史别名，统一归一到知识库检索事件
             event = (
-                QueueEvent.AGENT_ACTION.value
-                if tool_call["name"] != tool_policy.dataset_retrieval_tool_name
-                else QueueEvent.DATASET_RETRIEVAL.value
+                QueueEvent.DATASET_RETRIEVAL.value
+                if tool_call["name"] in {
+                    tool_policy.dataset_retrieval_tool_name,
+                    "search_knowledge_base",
+                    "recall_dataset",
+                }
+                else QueueEvent.AGENT_ACTION.value
             )
             self.agent_queue_manager.publish(state["task_id"], AgentThought(
                 id=id,
@@ -478,10 +506,10 @@ class FunctionCallAgent(BaseAgent):
         tool_policy: ToolPolicy,
     ) -> dict[str, Any] | None:
         try:
-            from flask import current_app
+            from internal.extension.database_extension import db
             from internal.model.tool_confirmation import ToolConfirmation
 
-            db = current_app.extensions["migrate"].db
+            session = db.sync_session()
             tool_name = tool_call.get("name", "")
             is_sensitive = tool_name in {"send_email", "send_sms"}
             risk_level = "sensitive" if is_sensitive else "high"
@@ -495,8 +523,8 @@ class FunctionCallAgent(BaseAgent):
                 spent_credits=0,
                 reason=f"Agent 调用高风险工具 {tool_name}，等待用户确认",
             )
-            db.session.add(confirmation)
-            db.session.commit()
+            session.add(confirmation)
+            session.commit()
             return {"id": str(confirmation.id), "status": confirmation.status}
         except Exception:
             return None
@@ -638,12 +666,11 @@ class FunctionCallAgent(BaseAgent):
         if not deduplicated:
             return []
 
-        sections: list[str] = [
-            "## 按需加载的 Prompt-only Skills",
-            "",
-            "以下内容仅在当前轮次有效，当前轮次结束后会自动回收。不要把它当作长期上下文，也不要在后续轮次继续假设它仍然存在。",
-            "",
-        ]
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        wrapper = SystemPromptLibraryService().get_prompt_or_default(
+            "prompt_only_skill_wrapper"
+        )
+        sections: list[str] = [wrapper, ""]
         for prompt_item in deduplicated:
             title = str(prompt_item.get("label") or prompt_item.get("name") or prompt_item.get("source_key") or "Skill").strip()
             source_key = str(prompt_item.get("source_key") or "").strip()

@@ -1,6 +1,30 @@
 import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
+
+
+def _bash_available() -> bool:
+    """entrypoint.sh 为 bash 脚本，需真实 bash（Linux/容器内可用；Windows 本机 WSL 挂载失败则跳过）。"""
+    if not shutil.which("bash"):
+        return False
+    try:
+        result = subprocess.run(
+            ["bash", "-c", "exit 0"],
+            capture_output=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _bash_available(),
+    reason="bash 不可用（Windows 本机无可用 bash/WSL），entrypoint 脚本验证需在 Linux/容器环境执行",
+)
 
 
 def _write_fake_nginx(tmp_path: Path) -> Path:
@@ -57,12 +81,13 @@ def test_nginx_entrypoint_should_generate_socketio_proxy_with_upgrade_headers_in
     assert "map $http_upgrade $connection_upgrade {" in config
     assert config.index("location /api/socket.io/ {") < config.index("location /api/ {")
     assert "location /api/socket.io/ {" in config
-    assert "proxy_pass http://llmops-api:5001/socket.io/;" in config
+    assert r"rewrite ^/api/socket\.io/(.*)$ /socket.io/$1 break;" in config
+    assert "proxy_pass http://$api_upstream_host:$api_upstream_port;" in config
     assert "include /etc/nginx/proxy.conf;" in config
     assert "proxy_set_header Upgrade $http_upgrade;" in config
     assert "proxy_set_header Connection $connection_upgrade;" in config
     assert "location /api/ {" in config
-    assert "proxy_pass http://llmops-api:5001/;" in config
+    assert "proxy_pass http://$api_upstream_host:$api_upstream_port;" in config
 
 
 def test_nginx_entrypoint_should_generate_socketio_proxy_in_https_mode(tmp_path):
@@ -73,7 +98,8 @@ def test_nginx_entrypoint_should_generate_socketio_proxy_in_https_mode(tmp_path)
     assert "ssl_certificate_key /etc/ssl/server.key;" in config
     assert config.index("location /api/socket.io/ {") < config.index("location /api/ {")
     assert "location /api/socket.io/ {" in config
-    assert "proxy_pass http://llmops-api:5001/socket.io/;" in config
+    assert r"rewrite ^/api/socket\.io/(.*)$ /socket.io/$1 break;" in config
+    assert "proxy_pass http://$api_upstream_host:$api_upstream_port;" in config
     assert "proxy_set_header Upgrade $http_upgrade;" in config
     assert "proxy_set_header Connection $connection_upgrade;" in config
     assert "location /api/ {" in config

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from types import SimpleNamespace
 from uuid import uuid4
@@ -8,12 +9,17 @@ from langchain_core.outputs import LLMResult
 
 from internal.core.agent.agents.function_call_agent import FunctionCallAgent
 from internal.core.agent.agents.react_agent import ReACTAgent
-from internal.core.agent.entities.agent_entity import DATASET_RETRIEVAL_TOOL_NAME, AgentConfig, MAX_ITERATION_RESPONSE
-from internal.core.agent.entities.tool_policy_entity import ToolPolicy
+from internal.core.agent.entities.agent_entity import DATASET_RETRIEVAL_TOOL_NAME, AgentConfig
+from internal.core.agent.entities.tool_policy_entity import KNOWLEDGE_RETRIEVAL_TOOL_NAME, ToolPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
 from internal.entity.conversation_entity import InvokeFrom
 from internal.exception import FailException
+
+
+def _run_llm_node(agent, state):
+    """同步调用 async 化的 _llm_node（测试适配：内部用 asyncio.run 驱动协程）"""
+    return asyncio.run(agent._llm_node(state))
 
 
 class _Chunk:
@@ -69,6 +75,12 @@ class _NodeLLM(BaseLanguageModel):
         return self
 
     def stream(self, _messages):
+        if self.stream_error is not None:
+            raise self.stream_error
+        for chunk in self.stream_chunks:
+            yield chunk
+
+    async def astream(self, _messages):
         if self.stream_error is not None:
             raise self.stream_error
         for chunk in self.stream_chunks:
@@ -263,7 +275,7 @@ def test_function_call_agent_llm_node_should_handle_message_and_thought_and_erro
     )
     agent_message = _new_function_call_agent(llm_message, config_message)
     state = {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0}
-    message_result = agent_message._llm_node(state)
+    message_result = _run_llm_node(agent_message, state)
     events = [thought.event for _, thought in agent_message.agent_queue_manager.published]
 
     assert llm_message.bound_tools == config_message.tools
@@ -279,14 +291,14 @@ def test_function_call_agent_llm_node_should_handle_message_and_thought_and_erro
     )
     agent_thought = _new_function_call_agent(llm_thought, _build_agent_config())
     thought_state = {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0}
-    thought_result = agent_thought._llm_node(thought_state)
+    thought_result = _run_llm_node(agent_thought, thought_state)
     assert thought_result["iteration_count"] == 1
     assert agent_thought.agent_queue_manager.published[-1][1].event == QueueEvent.AGENT_THOUGHT
 
     llm_error = _NodeLLM(features=[], stream_error=RuntimeError("llm-broken"))
     agent_error = _new_function_call_agent(llm_error, _build_agent_config())
     with pytest.raises(RuntimeError, match="llm-broken"):
-        agent_error._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
+        _run_llm_node(agent_error, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
     assert "LLM节点发生错误" in agent_error.agent_queue_manager.failures[0][2]
 
 
@@ -301,7 +313,7 @@ def test_function_call_agent_llm_node_should_cover_none_chunk_and_no_generation_
         stream_chunks=[None, _Chunk("x")],
     )
     agent_none = _new_function_call_agent(llm_with_none, _build_agent_config())
-    result_none = agent_none._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
+    result_none = _run_llm_node(agent_none, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
     assert result_none["iteration_count"] == 1
 
     # 2) 覆盖 line176: is_first_chunk=False 且 gathered is None 分支
@@ -311,7 +323,7 @@ def test_function_call_agent_llm_node_should_cover_none_chunk_and_no_generation_
         stream_chunks=[_ChunkSetNoneOnAdd("a"), _ChunkSetNoneOnAdd("b"), _Chunk("c")],
     )
     agent_gathered_none = _new_function_call_agent(llm_gathered_none, _build_agent_config())
-    result_gathered_none = agent_gathered_none._llm_node(
+    result_gathered_none = _run_llm_node(agent_gathered_none, 
         {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0}
     )
     assert result_gathered_none["messages"][0].content == "abc"
@@ -323,19 +335,24 @@ def test_function_call_agent_llm_node_should_cover_none_chunk_and_no_generation_
         stream_chunks=[_Chunk("", tool_calls=[])],
     )
     agent_no_type = _new_function_call_agent(llm_no_type, _build_agent_config())
-    result_no_type = agent_no_type._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
+    result_no_type = _run_llm_node(agent_no_type, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
     assert result_no_type["messages"][0].content == ""
     assert len(agent_no_type.agent_queue_manager.published) == 1
     assert agent_no_type.agent_queue_manager.published[0][1].event == QueueEvent.AGENT_MESSAGE
     assert agent_no_type.agent_queue_manager.published[0][1].thought == ""
 
 
-def test_function_call_agent_llm_node_should_stop_when_iteration_limit_reached():
+def test_function_call_agent_llm_node_should_stop_when_iteration_limit_reached(monkeypatch):
+    max_iteration_response = "当前Agent迭代次数已超过限制，请重试"
+    monkeypatch.setattr(
+        "internal.core.agent.agents.function_call_agent.get_max_iteration_response",
+        lambda: max_iteration_response,
+    )
     agent = _new_function_call_agent(_NodeLLM(features=[]), _build_agent_config(max_iteration_count=0))
     task_id = uuid4()
-    result = agent._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 1})
+    result = _run_llm_node(agent, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 1})
 
-    assert result["messages"][0].content == MAX_ITERATION_RESPONSE
+    assert result["messages"][0].content == max_iteration_response
     assert [thought.event for _, thought in agent.agent_queue_manager.published] == [
         QueueEvent.AGENT_MESSAGE,
         QueueEvent.AGENT_END,
@@ -365,7 +382,7 @@ def test_function_call_agent_llm_node_should_buffer_text_when_tool_call_arrives_
     )
     agent = _new_function_call_agent(llm, config)
 
-    result = agent._llm_node({
+    result = _run_llm_node(agent, {
         "task_id": task_id,
         "messages": [HumanMessage(content="如何评估《阿甘正传》的导演手法和摄影？")],
         "iteration_count": 0,
@@ -377,7 +394,7 @@ def test_function_call_agent_llm_node_should_buffer_text_when_tool_call_arrives_
     assert llm.bound_tools == config.tools
     assert result["iteration_count"] == 1
     assert result["messages"][0].tool_calls[0]["name"] == "google_serper"
-    assert events == [QueueEvent.AGENT_THOUGHT]
+    assert events == [QueueEvent.AGENT_MESSAGE, QueueEvent.AGENT_THOUGHT]
 def test_function_call_agent_tools_node_and_conditions_should_cover_branches():
     class _Tool:
         def __init__(self, name, result=None, error=None):
@@ -458,7 +475,7 @@ def test_function_call_agent_tools_node_should_resolve_common_agent_aliases():
             self.invocations.append(args)
             return self._result
 
-    dataset_tool = _Tool("dataset_retrieval", result="retrieved")
+    dataset_tool = _Tool(KNOWLEDGE_RETRIEVAL_TOOL_NAME, result="retrieved")
     train_tool = _Tool("mcp__12306-mcp__12306_mcp_query_ticket_price", result={"ok": True})
     agent = _new_function_call_agent(_NodeLLM(features=[]), _build_agent_config(tools=[dataset_tool, train_tool]))
     task_id = uuid4()
@@ -665,7 +682,7 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
         stream_chunks=[_Chunk("```json{\"name\":\"search\",\"args\":{\"q\":\"ai\"}}```")],
     )
     react_json = _new_react_agent(no_tool_llm, _build_agent_config())
-    json_result = react_json._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
+    json_result = _run_llm_node(react_json, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
     assert json_result["messages"][0].tool_calls[0]["name"] == "search"
     assert react_json.agent_queue_manager.published[-1][1].event == QueueEvent.AGENT_THOUGHT
 
@@ -675,7 +692,7 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
         stream_chunks=[_Chunk("```jsonnot-a-json```")],
     )
     react_bad_json = _new_react_agent(bad_json_llm, _build_agent_config())
-    bad_json_result = react_bad_json._llm_node(
+    bad_json_result = _run_llm_node(react_bad_json, 
         {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0}
     )
     assert bad_json_result["messages"][0].content.startswith("```json")
@@ -697,7 +714,7 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
             }
         ),
     )
-    plain_result = plain_agent._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
+    plain_result = _run_llm_node(plain_agent, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0})
     assert plain_result["messages"][0].content == "hello world tail"
     assert any(thought.thought == "hello world" for _, thought in plain_agent.agent_queue_manager.published)
 
@@ -710,7 +727,7 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
         ),
         _build_agent_config(),
     )
-    plain_no_review_result = plain_no_review._llm_node(
+    plain_no_review_result = _run_llm_node(plain_no_review, 
         {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0}
     )
     assert plain_no_review_result["messages"][0].content == "plain message next"
@@ -724,7 +741,7 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
         ),
         _build_agent_config(),
     )
-    short_result = short_content_agent._llm_node(
+    short_result = _run_llm_node(short_content_agent, 
         {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 0}
     )
     assert short_result["messages"][0].content == "ab"
@@ -742,9 +759,15 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
         for chunk in self.stream_chunks:
             yield chunk
 
+    async def _prompt_loader_astream(self, messages):
+        captured_prompt_messages["messages"] = messages
+        for chunk in self.stream_chunks:
+            yield chunk
+
     monkeypatch.setattr(_NodeLLM, "stream", _prompt_loader_stream)
+    monkeypatch.setattr(_NodeLLM, "astream", _prompt_loader_astream)
     prompt_loader_agent = _new_react_agent(prompt_loader_llm, _build_agent_config())
-    prompt_loader_result = prompt_loader_agent._llm_node(
+    prompt_loader_result = _run_llm_node(prompt_loader_agent, 
         {
             "task_id": task_id,
             "messages": [HumanMessage(content="q")],
@@ -771,18 +794,26 @@ def test_react_agent_should_delegate_and_cover_message_and_tool_json_branches(mo
         for message in captured_prompt_messages["messages"]
     )
 
+    monkeypatch.setattr(
+        "internal.core.agent.agents.react_agent.get_max_iteration_response",
+        lambda: "当前Agent迭代次数已超过限制，请重试",
+    )
     limit_agent = _new_react_agent(_NodeLLM(features=[]), _build_agent_config(max_iteration_count=0))
-    limit_result = limit_agent._llm_node(
+    limit_result = _run_llm_node(limit_agent, 
         {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 1}
     )
-    assert limit_result["messages"][0].content == MAX_ITERATION_RESPONSE
+    assert limit_result["messages"][0].content == "当前Agent迭代次数已超过限制，请重试"
 
     delegated_llm = _new_react_agent(_NodeLLM(features=[ModelFeature.TOOL_CALL.value]), _build_agent_config())
+
+    async def _fake_delegated_llm_node(self, state):
+        return {"delegated": state["iteration_count"]}
+
     monkeypatch.setattr(
         "internal.core.agent.agents.react_agent.FunctionCallAgent._llm_node",
-        lambda self, state: {"delegated": state["iteration_count"]},
+        _fake_delegated_llm_node,
     )
-    assert delegated_llm._llm_node({"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 3}) == {
+    assert _run_llm_node(delegated_llm, {"task_id": task_id, "messages": [HumanMessage(content="q")], "iteration_count": 3}) == {
         "delegated": 3
     }
 

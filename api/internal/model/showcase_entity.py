@@ -12,14 +12,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class ShowcaseCase(db.Model):
+class ShowcaseCase(Base):
     __tablename__ = "showcase_case"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_showcase_case_id"),

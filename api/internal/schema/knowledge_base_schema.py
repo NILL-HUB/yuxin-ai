@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields, pre_dump
 from wtforms import StringField, IntegerField, FloatField, BooleanField
 from wtforms.validators import (
@@ -24,7 +24,7 @@ def _get_icon(data) -> str:
     return ""
 
 
-class CreateKnowledgeBaseReq(FlaskForm):
+class CreateKnowledgeBaseReq(Form):
     """创建知识库请求"""
     name = StringField("name", validators=[
         DataRequired("知识库名称不能为空"),
@@ -43,7 +43,7 @@ class CreateKnowledgeBaseReq(FlaskForm):
     # 避免维度错位导致整个知识库向量失效
 
 
-class UpdateKnowledgeBaseReq(FlaskForm):
+class UpdateKnowledgeBaseReq(Form):
     """更新知识库请求"""
     name = StringField("name", validators=[
         DataRequired("知识库名称不能为空"),
@@ -128,7 +128,7 @@ class GetKnowledgeBasesWithPageResp(Schema):
         }
 
 
-class HitReq(FlaskForm):
+class HitReq(Form):
     """知识库召回测试请求"""
     query = StringField("query", validators=[
         DataRequired("查询语句不能为空"),
@@ -159,6 +159,8 @@ class GetKnowledgeDocumentsWithPageResp(Schema):
     id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
     character_count = fields.Integer(dump_default=0)
+    segment_count = fields.Integer(dump_default=0)
+    segment_character_count = fields.Integer(dump_default=0)
     status = fields.String(dump_default="")
     error = fields.String(dump_default="")
     updated_at = fields.Integer(dump_default=0)
@@ -166,10 +168,14 @@ class GetKnowledgeDocumentsWithPageResp(Schema):
 
     @pre_dump
     def process_data(self, data: KnowledgeDocument, **kwargs):
+        # segment_count/segment_character_count 由 admin 列表实时统计后 setattr 注入，
+        # 未注入时回退到文档自身字段（兼容用户端）
         return {
             "id": data.id,
             "name": data.name,
             "character_count": data.character_count,
+            "segment_count": getattr(data, "segment_count", 0),
+            "segment_character_count": getattr(data, "segment_character_count", data.character_count or 0),
             "status": data.status,
             "error": data.error,
             "updated_at": datetime_to_timestamp(data.updated_at),
@@ -246,7 +252,7 @@ class GetKnowledgeSegmentsWithPageResp(Schema):
         }
 
 
-class UpdateKnowledgeSegmentReq(FlaskForm):
+class UpdateKnowledgeSegmentReq(Form):
     """更新文档片段请求"""
     enabled = BooleanField("enabled", validators=[
         Optional(),

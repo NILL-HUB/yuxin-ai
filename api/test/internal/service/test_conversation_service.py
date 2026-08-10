@@ -58,7 +58,7 @@ def _build_service(monkeypatch, conversation, message):
 class TestConversationServiceSaveAgentThoughts:
     def test_should_rename_when_conversation_is_new(self, monkeypatch):
         conversation = SimpleNamespace(id=uuid4(), is_new=True, name="自定义会话", summary="")
-        message = SimpleNamespace(id=uuid4(), query="你好", answer="")
+        message = SimpleNamespace(id=uuid4(), query="你好", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
         service = _build_service(monkeypatch, conversation, message)
 
         rename_calls = []
@@ -84,7 +84,7 @@ class TestConversationServiceSaveAgentThoughts:
 
     def test_should_rename_when_name_is_default_even_if_not_new(self, monkeypatch):
         conversation = SimpleNamespace(id=uuid4(), is_new=False, name="New Conversation", summary="")
-        message = SimpleNamespace(id=uuid4(), query="hello", answer="")
+        message = SimpleNamespace(id=uuid4(), query="hello", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
         service = _build_service(monkeypatch, conversation, message)
 
         rename_calls = []
@@ -109,7 +109,7 @@ class TestConversationServiceSaveAgentThoughts:
 
     def test_should_not_rename_when_not_new_and_name_is_not_default(self, monkeypatch):
         conversation = SimpleNamespace(id=uuid4(), is_new=False, name="项目讨论", summary="")
-        message = SimpleNamespace(id=uuid4(), query="hello", answer="")
+        message = SimpleNamespace(id=uuid4(), query="hello", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
         service = _build_service(monkeypatch, conversation, message)
 
         rename_calls = []
@@ -133,7 +133,7 @@ class TestConversationServiceSaveAgentThoughts:
 
     def test_should_update_summary_when_long_term_memory_enabled(self, monkeypatch):
         conversation = SimpleNamespace(id=uuid4(), is_new=False, name="自定义", summary="old")
-        message = SimpleNamespace(id=uuid4(), query="这个问题", answer="")
+        message = SimpleNamespace(id=uuid4(), query="这个问题", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
         service = _build_service(monkeypatch, conversation, message)
 
         summary_calls = []
@@ -181,7 +181,7 @@ class TestConversationServiceSaveAgentThoughts:
     def test_should_consume_compute_units_after_message_usage_saved(self, monkeypatch):
         account_id = uuid4()
         conversation = SimpleNamespace(id=uuid4(), is_new=False, name="自定义", summary="")
-        message = SimpleNamespace(id=uuid4(), query="hello", answer="")
+        message = SimpleNamespace(id=uuid4(), query="hello", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
         service = _build_service(monkeypatch, conversation, message)
         consume_calls = []
         service.credit_service = SimpleNamespace(
@@ -204,7 +204,7 @@ class TestConversationServiceSaveAgentThoughts:
 
     def test_should_skip_compute_consumption_when_usage_is_zero(self, monkeypatch):
         conversation = SimpleNamespace(id=uuid4(), is_new=False, name="自定义", summary="")
-        message = SimpleNamespace(id=uuid4(), query="hello", answer="")
+        message = SimpleNamespace(id=uuid4(), query="hello", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
         service = _build_service(monkeypatch, conversation, message)
         consume_calls = []
         service.credit_service = SimpleNamespace(
@@ -274,8 +274,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -312,8 +312,8 @@ class TestConversationServiceBasics:
             lambda _template: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **kwargs: SimpleNamespace(**kwargs),
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(model="deepseek-chat"),
         )
         monkeypatch.setattr(
             "internal.service.conversation_service.StrOutputParser",
@@ -361,8 +361,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -390,8 +390,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -415,8 +415,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -442,8 +442,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -480,8 +480,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -509,8 +509,8 @@ class TestConversationServiceBasics:
             lambda _messages: _Prompt(),
         )
         monkeypatch.setattr(
-            "internal.service.conversation_service.Chat",
-            lambda **_kwargs: SimpleNamespace(
+            "internal.service.conversation_service.ConversationService._load_summary_llm",
+            lambda: SimpleNamespace(
                 with_structured_output=lambda _schema: _StructuredLLM(),
             ),
         )
@@ -1033,6 +1033,7 @@ class TestConversationServiceBasics:
             created_by=account_id,
             is_deleted=False,
             created_at=now,
+            invoke_from=None,
         )
         debugger_conversation = SimpleNamespace(
             id=uuid4(),
@@ -1040,6 +1041,7 @@ class TestConversationServiceBasics:
             created_by=account_id,
             is_deleted=False,
             created_at=now,
+            invoke_from=None,
         )
         app = SimpleNamespace(
             id=uuid4(),
@@ -1144,8 +1146,8 @@ class TestConversationServiceBasics:
         service = self._build_service()
         account_id = uuid4()
         now = datetime(2026, 3, 1, tzinfo=UTC)
-        conversation_a = SimpleNamespace(id=uuid4(), name="A", created_at=now, created_by=account_id, is_deleted=False)
-        conversation_b = SimpleNamespace(id=uuid4(), name="B", created_at=now, created_by=account_id, is_deleted=False)
+        conversation_a = SimpleNamespace(id=uuid4(), name="A", created_at=now, created_by=account_id, is_deleted=False, invoke_from=None)
+        conversation_b = SimpleNamespace(id=uuid4(), name="B", created_at=now, created_by=account_id, is_deleted=False, invoke_from=None)
         message_a = SimpleNamespace(id=uuid4(), conversation_id=conversation_a.id, invoke_from=InvokeFrom.ASSISTANT_AGENT.value, app_id=None, query="A", answer="A-answer", created_at=now)
         message_b = SimpleNamespace(id=uuid4(), conversation_id=conversation_b.id, invoke_from=InvokeFrom.ASSISTANT_AGENT.value, app_id=None, query="B", answer="B-answer", created_at=now)
 
@@ -1417,8 +1419,8 @@ class TestConversationServiceBasics:
         service = self._build_service()
         account_id = uuid4()
         now = datetime(2026, 3, 1, tzinfo=UTC)
-        conversation_1 = SimpleNamespace(id=uuid4(), name="会话1", created_by=account_id, is_deleted=False, created_at=now)
-        conversation_2 = SimpleNamespace(id=uuid4(), name="会话2", created_by=account_id, is_deleted=False, created_at=now)
+        conversation_1 = SimpleNamespace(id=uuid4(), name="会话1", created_by=account_id, is_deleted=False, created_at=now, invoke_from=None)
+        conversation_2 = SimpleNamespace(id=uuid4(), name="会话2", created_by=account_id, is_deleted=False, created_at=now, invoke_from=None)
         message_1 = SimpleNamespace(
             id=uuid4(),
             conversation_id=conversation_1.id,
@@ -1484,6 +1486,7 @@ class TestConversationServiceBasics:
                 created_by=account_id,
                 is_deleted=False,
                 created_at=now,
+                invoke_from=None,
             )
             for index in range(60)
         ]
@@ -1547,6 +1550,7 @@ class TestConversationServiceBasics:
             created_by=account_id,
             is_deleted=False,
             created_at=now,
+            invoke_from=None,
         )
         message_missing_conversation = SimpleNamespace(
             id=uuid4(),

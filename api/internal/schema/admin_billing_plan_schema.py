@@ -1,23 +1,23 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import FieldList, FormField, IntegerField, StringField
 from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Optional
 
 
-class PlanEntitlementForm(FlaskForm):
+class PlanEntitlementForm(Form):
     feature_key = StringField("feature_key", validators=[InputRequired(), Length(max=128)])
     feature_value = StringField("feature_value", validators=[InputRequired(), Length(max=1024)])
     value_type = StringField("value_type", default="string", validators=[InputRequired(), AnyOf(["string", "number", "decimal", "boolean", "json"])])
 
 
-class GetAdminPlansReq(FlaskForm):
+class GetAdminPlansReq(Form):
     keyword = StringField("keyword", default="", validators=[Optional(), Length(max=255)])
     status = StringField("status", default="", validators=[Optional(), AnyOf(["", "active", "disabled"])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
 
 
-class UpsertAdminPlanReq(FlaskForm):
+class UpsertAdminPlanReq(Form):
     code = StringField("code", validators=[Optional(), Length(max=128)])
     name = StringField("name", validators=[Optional(), Length(max=255)])
     description = StringField("description", default="", validators=[Optional(), Length(max=1024)])
@@ -29,7 +29,7 @@ class UpsertAdminPlanReq(FlaskForm):
     entitlements = FieldList(FormField(PlanEntitlementForm), default=[], validators=[Optional()])
 
 
-class SetAdminPlanStatusReq(FlaskForm):
+class SetAdminPlanStatusReq(Form):
     status = StringField("status", validators=[InputRequired(), AnyOf(["active", "disabled"])])
 
 

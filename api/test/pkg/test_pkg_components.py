@@ -2,27 +2,13 @@ import base64
 from types import SimpleNamespace
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 
 from pkg.oauth.github_oauth import GithubOAuth
 from pkg.oauth.google_oauth import GoogleOAuth
 from pkg.oauth.oauth import OAuth, OAuthUserInfo
 from pkg.paginator.paginator import Paginator
 from pkg.password.password import compare_password, hash_password, validate_password
-from pkg.response.http_code import HttpCode
-from pkg.response.response import (
-    Response,
-    compact_generate_response,
-    fail_json,
-    fail_message,
-    forbidden_message,
-    message,
-    not_found_message,
-    success_json,
-    success_message,
-    unauthorized_message,
-    validate_error_json,
-)
 from pkg.sqlalchemy.sqlalchemy import SQLAlchemy
 
 
@@ -222,54 +208,8 @@ class TestPaginatorPasswordResponseAndDB:
         assert compare_password("abc12345", hashed_base64, salt_base64) is True
         assert compare_password("wrong123", hashed_base64, salt_base64) is False
 
-    def test_response_helpers_should_cover_json_message_and_stream(self):
-        app = Flask(__name__)
-        with app.test_request_context("/"):
-            success_resp, success_status = success_json({"ok": True})
-            fail_resp, fail_status = fail_json({"ok": False})
-            msg_resp, msg_status = message(code=HttpCode.SUCCESS, msg="done")
-            validate_resp, validate_status = validate_error_json({"name": ["required"]})
-            validate_none_key_resp, _ = validate_error_json({None: ["required"]})
-
-            assert success_status == 200
-            assert fail_status == 200
-            assert msg_status == 200
-            assert validate_status == 200
-            assert success_resp.get_json()["code"] == HttpCode.SUCCESS
-            assert fail_resp.get_json()["code"] == HttpCode.FAIL
-            assert msg_resp.get_json()["message"] == "done"
-            assert validate_resp.get_json()["message"] == "required"
-            assert validate_none_key_resp.get_json()["message"] == ""
-
-            assert success_message("ok")[0].get_json()["code"] == HttpCode.SUCCESS
-            assert fail_message("bad")[0].get_json()["code"] == HttpCode.FAIL
-            assert not_found_message("404")[0].get_json()["code"] == HttpCode.NOT_FOUND
-            assert unauthorized_message("401")[0].get_json()["code"] == HttpCode.UNAUTHORIZED
-            assert forbidden_message("403")[0].get_json()["code"] == HttpCode.FORBIDDEN
-
-            compact_json, compact_status = compact_generate_response(Response(code=HttpCode.SUCCESS, message="m", data={}))
-            assert compact_status == 200
-            assert compact_json.get_json()["message"] == "m"
-
-            stream_response = compact_generate_response((chunk for chunk in ["a", "b"]))
-            assert stream_response.mimetype == "text/event-stream"
-            assert stream_response.headers["Cache-Control"] == "no-cache"
-            assert stream_response.headers["Connection"] == "keep-alive"
-            assert stream_response.headers["X-Accel-Buffering"] == "no"
-            assert stream_response.get_data(as_text=True) == "ab"
-
-            def _failing_stream():
-                yield "event: ping\ndata:{}\n\n"
-                raise TimeoutError("gateway timed out")
-
-            failing_response = compact_generate_response(_failing_stream())
-            failing_body = failing_response.get_data(as_text=True)
-            assert "event: timeout" in failing_body
-            assert "流式响应执行失败" in failing_body
-            assert "gateway timed out" in failing_body
-
     def test_sqlalchemy_auto_commit_should_commit_and_rollback(self, monkeypatch):
-        app = Flask(__name__)
+        app = TestApp(__name__)
         app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite://"
         app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
         db = SQLAlchemy(app)

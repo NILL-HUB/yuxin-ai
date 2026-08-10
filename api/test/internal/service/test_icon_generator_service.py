@@ -1,4 +1,3 @@
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -59,16 +58,15 @@ def _mock_provider_credentials(monkeypatch):
     monkeypatch.setattr(
         LanguageModelService, "get_provider_credentials", classmethod(_fake_get_creds)
     )
+    monkeypatch.setattr(
+        LanguageModelService,
+        "get_feature_credentials",
+        classmethod(lambda cls, feature_key=None: {}),
+    )
 
 
 class TestIconGeneratorService:
     def test_generate_icon_with_kolors_success(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {
-            "COS_DOMAIN": "https://test.cos.com",
-        }
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         mock_response = Mock()
         mock_response.json.return_value = {
             "images": [{"url": "https://kolors.com/image.png"}]
@@ -81,24 +79,26 @@ class TestIconGeneratorService:
 
         with patch("internal.service.icon_generator_service.requests.post", return_value=mock_response):
             with patch("internal.service.icon_generator_service.requests.get", return_value=mock_download_response):
-                mock_cos_client = Mock()
                 mock_cos_service = SimpleNamespace(
-                    _get_client=Mock(return_value=mock_cos_client),
+                    _get_client=Mock(return_value=Mock()),
                     _get_bucket=Mock(return_value="test-bucket"),
+                    upload_bytes_without_record=Mock(
+                        return_value="https://test.cos.com/icons/kolors_abc.png"
+                    ),
                 )
 
                 service = _build_service(cos_service=mock_cos_service)
                 icon_url = service.generate_icon("测试应用", "这是一个测试应用")
 
-                assert icon_url.startswith("https://test.cos.com/")
-                assert "/icons/kolors_" in icon_url
-                mock_cos_client.put_object.assert_called_once()
+                assert icon_url == "https://test.cos.com/icons/kolors_abc.png"
+                mock_cos_service.upload_bytes_without_record.assert_called_once()
+                upload_kwargs = mock_cos_service.upload_bytes_without_record.call_args.kwargs
+                assert upload_kwargs["content"] == b"fake-image-data"
+                assert upload_kwargs["folder"] == "icons"
+                assert upload_kwargs["filename"].startswith("kolors_")
+                assert upload_kwargs["filename"].endswith(".png")
 
     def test_generate_icon_should_fallback_to_qwen_when_kolors_rate_limited(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"COS_DOMAIN": "https://test.cos.com"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         service = _build_service()
         monkeypatch.setattr(
             service,
@@ -112,12 +112,6 @@ class TestIconGeneratorService:
         assert icon_url == "https://qwen/icon.png"
 
     def test_generate_icon_should_fallback_to_dalle_when_siliconflow_providers_rate_limited(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {
-            "COS_DOMAIN": "https://test.cos.com",
-        }
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         service = _build_service()
         monkeypatch.setattr(
             service,
@@ -171,8 +165,8 @@ class TestIconGeneratorService:
         from internal.service.language_model_service import LanguageModelService
         monkeypatch.setattr(
             LanguageModelService,
-            "get_cheap_chat_model",
-            classmethod(lambda cls: object()),
+            "get_feature_model",
+            classmethod(lambda cls, feature_key=None: object()),
         )
 
         service = _build_service()
@@ -203,55 +197,42 @@ class TestIconGeneratorService:
         assert "no text, no watermark, no extra elements" in prompt
 
     def test_download_and_upload_image(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {"COS_DOMAIN": "https://test.cos.com"}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-        monkeypatch.setattr(
-            "internal.service.icon_generator_service.utc_now_naive",
-            lambda: datetime(2026, 1, 2, 3, 4, 5),
-        )
-
         mock_download_response = Mock()
         mock_download_response.content = b"fake-image-data"
         mock_download_response.raise_for_status = Mock()
 
         with patch("internal.service.icon_generator_service.requests.get", return_value=mock_download_response):
-            mock_cos_client = Mock()
             mock_cos_service = SimpleNamespace(
-                _get_client=Mock(return_value=mock_cos_client),
-                _get_bucket=Mock(return_value="test-bucket"),
+                upload_bytes_without_record=Mock(
+                    return_value="https://test.cos.com/icons/test_abc.png"
+                ),
             )
 
             service = _build_service(cos_service=mock_cos_service)
             icon_url = service._download_and_upload_image("https://example.com/image.png", "test")
 
-            assert icon_url.startswith("https://test.cos.com/")
-            assert "2026/01/02/icons/" in icon_url
-            assert "/icons/test_" in icon_url
-            mock_cos_client.put_object.assert_called_once()
+            assert icon_url == "https://test.cos.com/icons/test_abc.png"
+            mock_cos_service.upload_bytes_without_record.assert_called_once()
+            upload_kwargs = mock_cos_service.upload_bytes_without_record.call_args.kwargs
+            assert upload_kwargs["content"] == b"fake-image-data"
+            assert upload_kwargs["folder"] == "icons"
+            assert upload_kwargs["filename"].startswith("test_")
+            assert upload_kwargs["filename"].endswith(".png")
 
-            call_args = mock_cos_client.put_object.call_args
-            assert call_args[1]["Bucket"] == "test-bucket"
-            assert call_args[1]["Body"] == b"fake-image-data"
-            assert call_args[1]["ContentType"] == "image/png"
-
-    def test_download_and_upload_image_should_raise_when_cos_domain_missing(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
+    def test_download_and_upload_image_should_propagate_upload_failure(self, monkeypatch):
         mock_download_response = Mock()
         mock_download_response.content = b"image"
         mock_download_response.raise_for_status = Mock()
         monkeypatch.setattr("internal.service.icon_generator_service.requests.get", lambda *_args, **_kwargs: mock_download_response)
 
         mock_cos_service = SimpleNamespace(
-            _get_client=Mock(return_value=Mock()),
-            _get_bucket=Mock(return_value="bucket"),
+            upload_bytes_without_record=Mock(
+                side_effect=FailException("上传产物文件失败，请稍后重试")
+            ),
         )
         service = _build_service(cos_service=mock_cos_service)
 
-        with pytest.raises(FailException):
+        with pytest.raises(FailException, match="上传产物文件失败"):
             service._download_and_upload_image("https://example.com/a.png", "kolors")
 
     def test_generate_with_kolors_should_raise_when_images_empty(self, monkeypatch):
@@ -336,10 +317,6 @@ class TestIconGeneratorService:
             service.generate_icon("测试应用", "desc")
 
     def test_generate_icon_should_try_providers_in_order_when_all_raise(self, monkeypatch):
-        mock_app = Mock()
-        mock_app.config = {}
-        monkeypatch.setattr("internal.service.icon_generator_service.current_app", mock_app)
-
         service = _build_service()
         call_order = []
 

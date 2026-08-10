@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from flask import Flask
+from test.context import TestApp
 import pytest
 
 from internal.exception import FailException
@@ -9,8 +9,9 @@ from internal.service.email_service import EmailService
 
 
 class TestEmailService:
-    def test_resolve_client_ip_should_use_forwarded_for_first_ip(self):
-        app = Flask(__name__)
+    def test_resolve_client_ip_should_use_forwarded_for_first_ip(self, monkeypatch):
+        app = TestApp(__name__)
+        monkeypatch.setattr("internal.service.email_service.has_request_context", lambda: True)
         with app.test_request_context(
             "/",
             headers={"X-Forwarded-For": "1.1.1.1, 2.2.2.2"},
@@ -18,8 +19,9 @@ class TestEmailService:
         ):
             assert EmailService._resolve_client_ip() == "1.1.1.1"
 
-    def test_resolve_client_ip_should_fallback_to_remote_addr_or_unknown(self):
-        app = Flask(__name__)
+    def test_resolve_client_ip_should_fallback_to_remote_addr_or_unknown(self, monkeypatch):
+        app = TestApp(__name__)
+        monkeypatch.setattr("internal.service.email_service.has_request_context", lambda: True)
         with app.test_request_context("/", environ_base={"REMOTE_ADDR": "8.8.8.8"}):
             assert EmailService._resolve_client_ip() == "8.8.8.8"
 
@@ -119,7 +121,7 @@ class TestEmailService:
             SimpleNamespace(apply_async=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("queue down"))),
         )
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.app_context():
             with pytest.raises(FailException, match="邮件发送失败"):
                 service.send_verification_code("demo@example.com")
@@ -168,7 +170,7 @@ class TestEmailService:
 
         monkeypatch.setattr("internal.service.email_service.Message", _FakeMessage)
 
-        app = Flask(__name__)
+        app = TestApp(__name__)
         with app.app_context():
             service.send_login_alert_email(
                 "demo@example.com",
@@ -180,7 +182,7 @@ class TestEmailService:
 
         assert len(sent_messages) == 1
         assert sent_messages[0].recipients == ["demo@example.com"]
-        assert sent_messages[0].subject == "【OpenAgent】检测到新 IP 登录"
+        assert sent_messages[0].subject == "【钰心AI】检测到新 IP 登录"
         assert "10.0.0.5" in sent_messages[0].body
 
     def test_verify_change_email_code_should_delegate_to_change_email_scene(self, monkeypatch):

@@ -4,14 +4,14 @@ import json
 
 from sqlalchemy import BigInteger, Column, DateTime, Index, Numeric, PrimaryKeyConstraint, String, UUID, text
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class Plan(db.Model):
+class Plan(Base):
     __tablename__ = "plan"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_plan_id"),
@@ -36,7 +36,7 @@ class Plan(db.Model):
         return self.status == "active"
 
 
-class PlanEntitlement(db.Model):
+class PlanEntitlement(Base):
     __tablename__ = "plan_entitlement"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_plan_entitlement_id"),
@@ -64,7 +64,7 @@ class PlanEntitlement(db.Model):
         return self.feature_value
 
 
-class Membership(db.Model):
+class Membership(Base):
     __tablename__ = "membership"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_membership_id"),
@@ -89,7 +89,7 @@ class Membership(db.Model):
         return self.status == "active" and self.expires_at is not None and self.expires_at >= _utcnow_naive()
 
 
-class CreditAccount(db.Model):
+class CreditAccount(Base):
     __tablename__ = "credit_account"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_credit_account_id"),
@@ -109,7 +109,7 @@ class CreditAccount(db.Model):
         return int(self.balance or 0)
 
 
-class CreditTransaction(db.Model):
+class CreditTransaction(Base):
     __tablename__ = "credit_transaction"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_credit_transaction_id"),
@@ -129,7 +129,7 @@ class CreditTransaction(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class RedeemCodeBatch(db.Model):
+class RedeemCodeBatch(Base):
     __tablename__ = "redeem_code_batch"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_redeem_code_batch_id"),
@@ -148,7 +148,7 @@ class RedeemCodeBatch(db.Model):
     created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
 
 
-class RedeemCode(db.Model):
+class RedeemCode(Base):
     __tablename__ = "redeem_code"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_redeem_code_id"),

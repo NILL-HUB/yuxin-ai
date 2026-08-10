@@ -2,13 +2,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from flask import Flask
+from test.context import TestApp
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.language_model.entities.model_entity import ModelFeature
 from internal.entity.app_entity import AppStatus
 from internal.entity.conversation_entity import InvokeFrom
-from internal.entity.dataset_entity import RetrievalSource
 from internal.exception import NotFoundException, ForbiddenException
 from internal.model import Conversation, Message
 from internal.service.web_app_service import WebAppService
@@ -321,7 +320,7 @@ class TestWebAppService:
             "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
             "dialog_round": 3,
             "tools": [{"type": "builtin_tool"}],
-            "knowledge_base_ids": ["dataset-1"],
+            "knowledge_base_ids": [str(uuid4())],
             "retrieval_config": {"retrieval_strategy": "semantic", "k": 2, "score": 0.6},
             "workflows": [{"id": "workflow-1"}],
             "preset_prompt": "preset",
@@ -335,7 +334,7 @@ class TestWebAppService:
         )
         retrieval_capture = {}
         service.retrieval_service = SimpleNamespace(
-            create_langchain_tool_from_search=lambda **kwargs: retrieval_capture.update(kwargs) or "dataset-tool"
+            create_knowledge_retrieval_tool=lambda **kwargs: retrieval_capture.update(kwargs) or "dataset-tool"
         )
         llm = SimpleNamespace(
             features=[ModelFeature.TOOL_CALL.value],
@@ -350,6 +349,9 @@ class TestWebAppService:
             def get_history_prompt_messages(self, message_limit):
                 assert message_limit == 3
                 return ["history"]
+
+            def get_distant_summary(self, conversation):
+                return getattr(conversation, "summary", "") or ""
 
         monkeypatch.setattr("internal.service.web_app_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
@@ -400,7 +402,7 @@ class TestWebAppService:
             save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
         )
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             events = list(service.web_app_chat("public-token", req, account))
 
         assert created[0][0] is Conversation
@@ -410,7 +412,10 @@ class TestWebAppService:
         assert len(captured_agent_factory["tools"]) == 3
         assert captured_agent_factory["enable_deep_thinking"] is True
         assert captured_agent_factory["invoke_from"] == InvokeFrom.WEB_APP.value
-        assert retrieval_capture["retrieval_source"] == RetrievalSource.APP.value
+        assert len(retrieval_capture["knowledge_base_ids"]) == 1
+        assert retrieval_capture["account_id"] == account.id
+        assert retrieval_capture["retrieval_strategy"] == "semantic"
+        assert retrieval_capture["k"] == 2
         assert len(save_payload["agent_thoughts"]) == 2
         assert save_payload["agent_thoughts"][0].thought == "AB"
         assert save_payload["agent_thoughts"][0].answer == "AB"
@@ -474,6 +479,9 @@ class TestWebAppService:
                 assert message_limit == 1
                 return ["history"]
 
+            def get_distant_summary(self, conversation):
+                return getattr(conversation, "summary", "") or ""
+
         monkeypatch.setattr("internal.service.web_app_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
         captured_agent_factory = {}
@@ -504,7 +512,7 @@ class TestWebAppService:
             save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
         )
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             events = list(service.web_app_chat("public-token", req, account))
 
         assert create_models == [Message]
@@ -580,6 +588,9 @@ class TestWebAppService:
                 assert message_limit == 1
                 return ["history"]
 
+            def get_distant_summary(self, conversation):
+                return getattr(conversation, "summary", "") or ""
+
         monkeypatch.setattr("internal.service.web_app_service.TokenBufferMemory", _FakeTokenBufferMemory)
 
         captured_agent_factory = {}
@@ -610,7 +621,7 @@ class TestWebAppService:
             save_agent_thoughts=lambda **kwargs: save_payload.update(kwargs)
         )
 
-        with Flask(__name__).app_context():
+        with TestApp(__name__).app_context():
             events = list(service.web_app_chat("public-token", req, account))
 
         assert events[0].startswith("event: agent_end")

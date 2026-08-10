@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import types
 from pathlib import Path
 
 import pytest
@@ -66,14 +67,17 @@ def test_main_should_upgrade_to_single_head(monkeypatch):
 
     monkeypatch.setattr(module, "_load_runtime_dependencies", _load_runtime_dependencies)
     monkeypatch.setattr(module, "ScriptDirectory", lambda _path: _FakeScriptDirectory(["b1c2d3e4f5a6"]))
-    monkeypatch.setattr(module, "upgrade", lambda **kwargs: calls.append(("upgrade", kwargs)))
+    fake_command = types.SimpleNamespace(
+        upgrade=lambda cfg, revision: calls.append(("upgrade", cfg, revision))
+    )
+    monkeypatch.setattr(module, "command", fake_command)
     monkeypatch.setattr(module.MigrationContext, "configure", lambda _conn: _FakeMigrationContext("b1c2d3e4f5a6"))
 
     assert module.main() == 0
-    assert calls == [
-        "load_env",
-        ("upgrade", {"directory": str(module.MIGRATION_DIR), "revision": "head"}),
-    ]
+    assert calls[0] == "load_env"
+    assert calls[1][0] == "upgrade"
+    assert calls[1][2] == "head"
+    assert calls[1][1].get_main_option("script_location") == str(module.MIGRATION_DIR)
 
 
 def test_main_should_fail_when_multiple_heads_exist(monkeypatch):

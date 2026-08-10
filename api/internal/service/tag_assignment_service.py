@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 from internal.core.agent.usage_utils import charge_for_feature, extract_token_usage
 from internal.entity.tag_entity import (
     TAG_KEYWORDS_MAPPING,
-    APP_TAG_PRIORITY,
     sort_tags_by_priority,
 )
 from internal.service.language_model_service import LanguageModelService
@@ -129,28 +128,11 @@ class TagAssignmentService:
             ]
 
             # 构建提示词
-            prompt = f"""你是一个应用分类专家。根据给定的应用/工作流名称和描述，从以下13个预定义标签中选择最相关的1-3个标签。
-
-可选标签：
-1. 通用 (general) - 通用型工具，适用多个场景
-2. 写作助手 (writing) - 文案、内容、文章生成
-3. 编程助手 (coding) - 代码生成、调试、优化
-4. 商业分析 (business) - 商业决策、数据分析、市场研究
-5. 教育学习 (education) - 教学、学习、培训、考试
-6. 娱乐休闲 (entertainment) - 游戏、娱乐、创意
-7. 效率工具 (productivity) - 任务管理、时间管理、自动化
-8. 客户服务 (customer_service) - 客服、支持、反馈
-9. 数据分析 (data_analysis) - 数据处理、可视化、统计
-10. 翻译 (translation) - 多语言翻译、本地化
-11. 营销 (marketing) - 营销策略、广告、推广
-12. 研究 (research) - 学术研究、论文、知识库
-13. 其他 (other) - 不属于上述任何分类
-
-应用/工作流信息：
-- 名称: {name}
-- 描述: {description}
-
-请选择最相关的标签。优先选择具体的功能标签，只有在无法确定时才选择"通用"或"其他"。"""
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+            template = SystemPromptLibraryService().get_prompt_or_default(
+                "app_tag_assignment_prompt"
+            )
+            prompt = template.format(name=name, description=description)
 
             # 调用LLM
             response = llm.invoke(prompt)

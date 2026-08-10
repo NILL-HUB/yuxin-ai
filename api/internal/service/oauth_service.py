@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass
 from typing import Any
-from flask import request, has_request_context, current_app
+from internal.context import current_app, has_request_context, request
 from injector import inject
 from internal.exception import FailException
 from internal.exception import NotFoundException
@@ -55,7 +55,7 @@ class OAuthService(BaseService):
 
     @classmethod
     def get_all_oauth(cls) -> dict[str, OAuth]:
-        """获取 OpenAgent 集成的所有第三方授权认证方式"""
+        """获取 钰心AI 集成的所有第三方授权认证方式"""
         # 1.实例化集成的第三方授权认证OAuth
         github = GithubOAuth(
             client_id=os.getenv("GITHUB_CLIENT_ID"),

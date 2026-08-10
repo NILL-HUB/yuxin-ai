@@ -1,4 +1,4 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from wtforms import StringField, ValidationError
 from wtforms.validators import DataRequired,Length,URL, Optional
 from .schema import ListField
@@ -7,7 +7,7 @@ from internal.model import ApiToolProvider,ApiTool
 from internal.lib.helper import datetime_to_timestamp
 from pkg.paginator import PaginatorReq
 
-class ValidateOpenAPISchemaReq(FlaskForm):
+class ValidateOpenAPISchemaReq(Form):
     """校验OpenAPI规范字符串请求"""
     openapi_schema = StringField("openapi_schema",validators=[
         DataRequired(message="openapi_schema字符串不能为空")
@@ -18,7 +18,7 @@ class GetApiToolProvidersWithPageReq(PaginatorReq):
     search_word = StringField("search_word",validators=[
         Optional()
     ])
-class CreateApiToolReq(FlaskForm):
+class CreateApiToolReq(Form):
     """创建自定义API工具请求"""
     name = StringField(
         "name",validators=[
@@ -56,7 +56,7 @@ class CreateApiToolReq(FlaskForm):
             if not isinstance(kw, str):
                 raise ValidationError("task_keywords 里的每个元素都必须是字符串")
 
-class UpdateApiToolProviderReq(FlaskForm):
+class UpdateApiToolProviderReq(Form):
     """更新API工具提供者请求"""
     name = StringField(
         "name", validators=[
@@ -170,7 +170,7 @@ class GetApiToolProvidersWithPageResp(Schema):
                 "name": tool.name,
                 "inputs": [{k: v for k,  v in parameter.items() if k != "in"} for parameter in tool.parameters]
             } for tool in tools],
-            "creator_name": data.account.name if data.account else "",
+            "creator_name": getattr(data, "_creator_name", "") or (data.account.name if data.account else ""),
             "creator_avatar": data.account.avatar if data.account else "",
             "updated_at": datetime_to_timestamp(data.updated_at),
             "created_at": datetime_to_timestamp(data.created_at)

@@ -16,6 +16,7 @@ from injector import inject
 
 from internal.exception import FailException, NotFoundException, ValidateErrorException
 from internal.model import SkillPackage
+from internal.service.tool_credential_encryptor import ensure_encrypted_env
 from pkg.sqlalchemy import SQLAlchemy
 
 from .base_service import BaseService
@@ -71,11 +72,15 @@ class SkillImportService(BaseService):
     ) -> dict[str, Any]:
         """从 zip 包导入技能包。
 
-        zip 内部结构：
+        zip 内部结构（支持完整多文件技能包）：
             manifest.yaml    # 必需
             skill.py         # scf 类型必需
             skill.md         # 可选
-            icon.svg         # 可选（仅以文本形式存入 bundle）
+            icon.svg         # 可选
+            .env             # 可选，键值对配置；值会被加密后存入 bundle（__env__）
+            scripts/         # 可选，辅助脚本（递归读取）
+            references/      # 可选，参考文档（递归读取）
+        其余文本文件同样递归读入 bundle；二进制文件忽略。
         """
         if not file_bytes:
             raise ValidateErrorException("zip 文件内容为空")
@@ -88,6 +93,7 @@ class SkillImportService(BaseService):
                 manifest_text = self._read_zip_member(zf, "manifest.yaml", required=True)
                 skill_code = self._read_zip_member(zf, "skill.py", required=False) or ""
                 readme = self._read_zip_member(zf, "skill.md", required=False) or ""
+                bundle_files = self._read_zip_bundle_files(zf)
         except zipfile.BadZipFile as exc:
             raise ValidateErrorException(f"zip 文件格式无效: {exc}") from exc
 
@@ -98,6 +104,7 @@ class SkillImportService(BaseService):
             manifest,
             skill_code=skill_code,
             readme=readme,
+            bundle_files=bundle_files,
         )
         return self._do_import(payload, overwrite=overwrite)
 
@@ -176,7 +183,15 @@ class SkillImportService(BaseService):
     # ------------------------------------------------------------------ #
 
     def _do_import(self, payload: dict[str, Any], *, overwrite: bool) -> dict[str, Any]:
-        """执行实际导入：处理 overwrite 与调用 skill_service 创建记录。"""
+        """执行实际导入：处理 overwrite 与调用 skill_service 创建/更新记录。
+
+        多版本兼容导入规则：
+        - source_key 不存在：创建技能包（version=1）
+        - source_key 已存在且 overwrite=False：报错提示
+        - source_key 已存在且 overwrite=True：走版本更新逻辑，
+          内容变化时自动递增版本号（latest_source_version + 1）并保留历史版本，
+          内容未变化时仅刷新当前版本记录。
+        """
         source_key = _normalize_text(payload.get("source_key"))
         if not source_key:
             raise ValidateErrorException("source_key 不能为空")
@@ -187,8 +202,9 @@ class SkillImportService(BaseService):
                 raise ValidateErrorException(
                     f"source_key 已存在: {source_key}（如需覆盖请设置 overwrite=true）"
                 )
-            # 覆盖：先删除已有记录（含版本），失败则抛出原始异常
-            self.skill_service.delete_skill_package_for_admin(existing.id)
+            # 多版本兼容导入：复用更新逻辑，内容变化时自动创建新版本，保留历史版本
+            result = self.skill_service.update_skill_package_for_admin(existing.id, payload)
+            return {"imported": [result], "failed": []}
 
         result = self.skill_service.create_skill_package_for_admin(payload)
         return {"imported": [result], "failed": []}
@@ -217,7 +233,10 @@ class SkillImportService(BaseService):
         """从 zip 中按文件名（顶级）读取文本成员。"""
         target = member_name
         for member in zf.namelist():
-            normalized = member.replace("\\", "/").lstrip("./")
+            normalized = member.replace("\\", "/")
+            while normalized.startswith("./"):
+                normalized = normalized[2:]
+            normalized = normalized.lstrip("/")
             if normalized == target or normalized.endswith("/" + target):
                 try:
                     with zf.open(member, "r") as f:
@@ -229,6 +248,77 @@ class SkillImportService(BaseService):
         if required:
             raise ValidateErrorException(f"zip 包内缺少必需文件: {member_name}")
         return ""
+
+    def _read_zip_bundle_files(self, zf: zipfile.ZipFile) -> dict[str, str]:
+        """递归读取 zip 内全部文本文件到 bundle（含 scripts/、references/、.env 等）。
+
+        规则：
+        - 目录成员跳过；二进制/未知后缀文件跳过（仅保留文本白名单）
+        - .env 特殊处理：解析为键值对，值经 Fernet 加密后存入 bundle 的 __env__ 键，
+          避免明文密钥落库；bundle 中不再保留原始 .env 明文
+        - manifest.yaml 由调用方单独解析，这里跳过，避免重复
+        """
+        env_values: dict[str, str] = {}
+        bundle: dict[str, str] = {}
+        for member in zf.namelist():
+            normalized = member.replace("\\", "/")
+            # 仅去除 "./" 前缀与首层冗余分隔符，保留 .env 这类点开头文件名
+            while normalized.startswith("./"):
+                normalized = normalized[2:]
+            normalized = normalized.lstrip("/")
+            if not normalized or normalized.endswith("/"):
+                continue
+            if normalized in ("manifest.yaml",) or normalized.endswith("/manifest.yaml"):
+                continue
+
+            lower_name = normalized.lower()
+            if lower_name.endswith(".env") or normalized == ".env":
+                try:
+                    content = zf.read(member).decode("utf-8", errors="replace")
+                except (KeyError, OSError) as exc:
+                    logger.warning("读取 zip 内 .env 失败: %s", exc)
+                    continue
+                env_values.update(self._parse_dotenv(content))
+                continue
+
+            if not self._is_bundle_text_file(lower_name):
+                continue
+            try:
+                content = zf.read(member).decode("utf-8", errors="replace")
+            except (KeyError, OSError) as exc:
+                logger.warning("读取 zip 内文件失败，已跳过 %s: %s", normalized, exc)
+                continue
+            bundle[normalized] = content
+
+        if env_values:
+            bundle["__env__"] = json.dumps(
+                ensure_encrypted_env(env_values),
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        return bundle
+
+    @staticmethod
+    def _parse_dotenv(content: str) -> dict[str, str]:
+        """解析 .env 文本为键值对（忽略注释与空行）。"""
+        result: dict[str, str] = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _is_bundle_text_file(lower_name: str) -> bool:
+        """判断文件名是否为可入 bundle 的文本文件。"""
+        if lower_name.endswith((".py", ".yaml", ".yml", ".json", ".md", ".txt", ".toml", ".ini", ".cfg", ".svg", ".html", ".js", ".ts", ".sh", ".csv", ".xml")):
+            return True
+        return False
 
     def _parse_manifest(self, manifest_text: str) -> dict[str, Any]:
         """用 PyYAML safe_load 解析 manifest.yaml。"""
@@ -290,6 +380,7 @@ class SkillImportService(BaseService):
         *,
         skill_code: str,
         readme: str,
+        bundle_files: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """从 manifest 构造 create_skill_package_for_admin 所需 payload。"""
         source_key = _normalize_text(manifest.get("source_key"))
@@ -323,13 +414,31 @@ class SkillImportService(BaseService):
             "icon": _normalize_text(manifest.get("icon") or ""),
             "executor_type": executor_type,
             "enabled": _normalize_bool(manifest.get("enabled"), True),
+            "version": self._parse_manifest_version(manifest),
             "readme": _normalize_text(readme) or _normalize_text(manifest.get("readme")),
             "skill_code": _normalize_text(skill_code) if executor_type == "scf" else "",
             "tools": tools_raw,
             "tags": tags,
             "capabilities": capabilities,
             "task_keywords": task_keywords,
+            "bundle_files": dict(bundle_files or {}),
         }
+
+    @staticmethod
+    def _parse_manifest_version(manifest: dict[str, Any]) -> int | None:
+        """解析 manifest 中的版本号；缺失或非法时返回 None（由服务层自动处理）。"""
+        raw = manifest.get("version")
+        if isinstance(raw, bool):
+            return None
+        if isinstance(raw, int):
+            return raw if raw > 0 else None
+        if isinstance(raw, str):
+            try:
+                value = int(raw.strip())
+                return value if value > 0 else None
+            except (TypeError, ValueError):
+                return None
+        return None
 
     # ------------------------------------------------------------------ #
     #  GitHub URL 处理                                                     #

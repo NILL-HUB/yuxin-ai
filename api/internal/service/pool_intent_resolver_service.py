@@ -127,16 +127,16 @@ class PoolIntentResolver:
 
     @staticmethod
     def _build_prompt(query: str, pool_descriptions: str, pools: list[dict]) -> str:
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+
         pool_names = "、".join(p["name"] for p in pools)
-        return (
-            "你是一名任务路由专家，负责将用户消息匹配到最合适的子池。\n\n"
-            f"可用的子池列表：\n{pool_descriptions}\n\n"
-            f"用户消息：{query}\n\n"
-            f"请从以下子池中选择与用户消息最相关的：{pool_names}\n"
-            "规则：\n"
-            "1. 可选择 1-3 个子池，按相关度从高到低排列\n"
-            "2. 如果没有明确匹配，返回 [\"general\"]\n"
-            "3. 只能从上述子池列表中选择，不要编造不存在的子池名\n"
+        template = SystemPromptLibraryService().get_prompt_or_default(
+            "pool_intent_resolver_prompt"
+        )
+        return template.format(
+            pool_descriptions=pool_descriptions,
+            query=query,
+            pool_names=pool_names,
         )
 
     @staticmethod

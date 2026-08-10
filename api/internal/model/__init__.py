@@ -8,6 +8,7 @@ from .conversation_variable import ConversationVariable
 from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, ExternalDataSource
 from .end_user import EndUser
 from .upload_file import UploadFile
+from .storage_config import StorageConfig
 from .workflow import Workflow, WorkflowResult, WorkflowVersion, WorkflowRun, WorkflowNodeExecution
 from .platform import WechatConfig, WechatEndUser, WechatMessage
 from .tag import Tag, AppTag, WorkflowTag
@@ -27,14 +28,20 @@ from .routing_quality import (
 from .showcase_entity import ShowcaseCase
 from .public_ai_feature_config import PublicAIFeatureConfig
 from .prompt_template import PromptTemplate
+from .recycle_bin import RecycleBin
+from .schedule_task import ScheduleTask, ScheduleTaskRun
+from .model_pool_entity import ModelPoolConfig
+from .model_provider_entity import ModelProviderConfig
 
 __all__ = [
+    "ModelPoolConfig", "ModelProviderConfig",
     "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "ExternalDataSource",
     "ToolConfirmation",
     "App", "AppAssignment", "AppConfig", "AppConfigVersion",
     "ApiTool", "ApiToolProvider",
     "BuiltinTool", "BuiltinToolProvider",
     "UploadFile",
+    "StorageConfig",
     "Conversation", "Message", "MessageAgentThought",
     "ConversationVariable",
     "Account", "AccountOAuth", "AccountSession",
@@ -52,4 +59,5 @@ __all__ = [
     "PolicyChangeDraftModel",
     "ShowcaseCase",
     "PromptTemplate",
+    "RecycleBin",
 ]

@@ -34,7 +34,7 @@ from internal.schema.web_app_schema import (
     GetWebAppResp,
     WebAppChatReq,
 )
-from test.internal.schema.utils import ns, utc_dt
+from test.internal.schema.utils import build_formdata, ns, utc_dt
 
 
 MULTIMODAL_ARTIFACT_THOUGHT_ID = UUID("ff1e16f0-2c22-426b-b3c4-fa11435f4a02")
@@ -42,7 +42,7 @@ MULTIMODAL_ARTIFACT_THOUGHT_ID = UUID("ff1e16f0-2c22-426b-b3c4-fa11435f4a02")
 
 def _validate_form(form_request, form_cls, *, data=None, json=None, content_type=None):
     with form_request(data=data, json=json, content_type=content_type):
-        form = form_cls(meta={"csrf": False})
+        form = form_cls(formdata=build_formdata(), meta={"csrf": False})
         return form.validate(), form
 
 
@@ -61,6 +61,7 @@ def _message_payload():
     return ns(
         id=uuid4(),
         conversation_id=uuid4(),
+        invoke_from="web_app",
         query="hello",
         image_urls=["https://img.example.com/1.png"],
         answer="world",
@@ -95,6 +96,7 @@ def _multimodal_message_payload():
     return ns(
         id=uuid4(),
         conversation_id=uuid4(),
+        invoke_from="web_app",
         query="生成图表",
         image_urls=[],
         answer="已生成图表",
@@ -205,7 +207,8 @@ def test_get_publish_histories_resp_should_dump_version_payload():
         preset_prompt="prompt",
         tools=[{"type": "builtin_tool", "provider_id": "google", "tool_id": "google_serper", "params": {}}],
         workflows=["workflow-1"],
-        datasets=["dataset-1"],
+        knowledge_base_ids=["dataset-1"],
+        embedding_model_id="embedding-model-1",
         retrieval_config={"retrieval_strategy": "semantic", "k": 10, "score": 0.5},
         long_term_memory={"enable": True},
         opening_statement="hello",
@@ -229,7 +232,8 @@ def test_get_publish_histories_resp_should_dump_version_payload():
                 }
             ],
             "workflows": [{"id": "workflow-1", "name": "工作流A"}],
-            "datasets": [{"id": "dataset-1", "name": "知识库A"}],
+            "knowledge_base_ids": ["dataset-1"],
+            "embedding_model_id": "embedding-model-1",
             "retrieval_config": {"retrieval_strategy": "semantic", "k": 10, "score": 0.5},
             "long_term_memory": {"enable": True},
             "opening_statement": "hello",
@@ -247,7 +251,8 @@ def test_get_publish_histories_resp_should_dump_version_payload():
     assert data["config"]["model_config"] == {"provider": "deepseek", "model": "deepseek-chat"}
     assert data["config"]["tools"][0]["provider"]["label"] == "Google 搜索"
     assert data["config"]["workflows"][0]["name"] == "工作流A"
-    assert data["config"]["datasets"][0]["name"] == "知识库A"
+    assert data["config"]["knowledge_base_ids"] == ["dataset-1"]
+    assert data["config"]["embedding_model_id"] == "embedding-model-1"
     assert data["updated_at"] == int(utc_dt(2024, 1, 1, 1, 0, 0).timestamp())
     assert data["created_at"] == int(utc_dt(2024, 1, 1, 0, 0, 0).timestamp())
     assert data["is_current_published"] is True
@@ -299,7 +304,7 @@ def test_debug_chat_req_should_validate_image_urls(form_request):
 
 def test_debug_chat_req_validate_image_urls_should_ignore_non_list_input(form_request):
     with form_request():
-        form = DebugChatReq(meta={"csrf": False})
+        form = DebugChatReq(formdata=build_formdata(), meta={"csrf": False})
         form.image_urls.data = None  # type: ignore[assignment]
         assert form.validate_image_urls(form.image_urls) == []
 
@@ -335,6 +340,7 @@ def test_conversation_schema_should_validate_and_dump(form_request):
     assert "created_at" in form.errors
 
     payload = GetConversationMessagesWithPageResp().dump(_message_payload())
+    assert payload["invoke_from"] == "web_app"
     assert payload["answer"] == "world"
     assert payload["input_parts"] == [
         {"type": "text", "text": "hello"},
@@ -497,7 +503,7 @@ def test_openapi_chat_req_should_validate_conversation_and_images(form_request):
 
 def test_openapi_chat_req_validate_image_urls_should_ignore_non_list_input(form_request):
     with form_request():
-        form = OpenAPIChatReq(meta={"csrf": False})
+        form = OpenAPIChatReq(formdata=build_formdata(), meta={"csrf": False})
         form.image_urls.data = None  # type: ignore[assignment]
         assert form.validate_image_urls(form.image_urls) == []
 
@@ -549,7 +555,7 @@ def test_assistant_agent_schema_should_validate_and_dump(form_request):
 
 def test_assistant_agent_chat_validate_image_urls_should_ignore_non_list_input(form_request):
     with form_request():
-        form = AssistantAgentChat(meta={"csrf": False})
+        form = AssistantAgentChat(formdata=build_formdata(), meta={"csrf": False})
         form.image_urls.data = None  # type: ignore[assignment]
         assert form.validate_image_urls(form.image_urls) == []
 
@@ -582,7 +588,7 @@ def test_web_app_chat_req_should_validate_image_url_length_and_format(form_reque
 
 def test_web_app_chat_req_validate_image_urls_should_ignore_non_list_input(form_request):
     with form_request():
-        form = WebAppChatReq(meta={"csrf": False})
+        form = WebAppChatReq(formdata=build_formdata(), meta={"csrf": False})
         form.image_urls.data = None  # type: ignore[assignment]
         assert form.validate_image_urls(form.image_urls) == []
 

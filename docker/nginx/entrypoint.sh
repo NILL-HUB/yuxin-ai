@@ -21,6 +21,8 @@ export API_UPSTREAM_HOST=${API_UPSTREAM_HOST:-llmops-api}
 export API_UPSTREAM_PORT=${API_UPSTREAM_PORT:-5001}
 export UI_UPSTREAM_HOST=${UI_UPSTREAM_HOST:-llmops-ui}
 export UI_UPSTREAM_PORT=${UI_UPSTREAM_PORT:-3000}
+export KKFILEVIEW_UPSTREAM_HOST=${KKFILEVIEW_UPSTREAM_HOST:-llmops-kkfileview}
+export KKFILEVIEW_UPSTREAM_PORT=${KKFILEVIEW_UPSTREAM_PORT:-8012}
 DEFAULT_CONF_PATH="${NGINX_CONF_DIR}/default.conf"
 
 echo "域名: $NGINX_DOMAIN_NAME"
@@ -29,6 +31,7 @@ echo "SSL 私钥: $NGINX_SSL_KEY_FILE"
 echo "启用 HTTPS: $NGINX_ENABLE_HTTPS"
 echo "API 上游: ${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}"
 echo "UI 上游: ${UI_UPSTREAM_HOST}:${UI_UPSTREAM_PORT}"
+echo "kkFileView 上游: ${KKFILEVIEW_UPSTREAM_HOST}:${KKFILEVIEW_UPSTREAM_PORT}"
 echo ""
 
 # 检查 SSL 证书文件是否存在
@@ -74,25 +77,47 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
+    # 使用 Docker 内嵌 DNS 动态解析上游，容器重建更换 IP 后无需重启 nginx 即可恢复
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set \$api_upstream_host ${API_UPSTREAM_HOST};
+    set \$api_upstream_port ${API_UPSTREAM_PORT};
+    set \$ui_upstream_host ${UI_UPSTREAM_HOST};
+    set \$ui_upstream_port ${UI_UPSTREAM_PORT};
+    set \$kkfileview_upstream_host ${KKFILEVIEW_UPSTREAM_HOST};
+    set \$kkfileview_upstream_port ${KKFILEVIEW_UPSTREAM_PORT};
+
     location /api/socket.io/ {
-        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/socket.io/;
+        rewrite ^/api/socket\.io/(.*)\$ /socket.io/\$1 break;
+        proxy_pass http://\$api_upstream_host:\$api_upstream_port;
         include /etc/nginx/proxy.conf;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
     }
 
     location /api/ {
-        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/;
+        rewrite ^/api/(.*)\$ /\$1 break;
+        proxy_pass http://\$api_upstream_host:\$api_upstream_port;
         include /etc/nginx/proxy.conf;
     }
 
     location /storage/local/ {
-        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/storage/local/;
+        proxy_pass http://\$api_upstream_host:\$api_upstream_port\$request_uri;
+        include /etc/nginx/proxy.conf;
+    }
+
+    # kkFileView 多格式文件预览（页面资源前缀与 UI 的 /assets 不冲突）
+    location /kkfileview/ {
+        rewrite ^/kkfileview/(.*)\$ /\$1 break;
+        proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
+        include /etc/nginx/proxy.conf;
+    }
+    location ~ ^/(js|css|img|fonts|pdfjs|bootstrap)/ {
+        proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
         include /etc/nginx/proxy.conf;
     }
 
     location / {
-        proxy_pass http://${UI_UPSTREAM_HOST}:${UI_UPSTREAM_PORT};
+        proxy_pass http://\$ui_upstream_host:\$ui_upstream_port;
         include /etc/nginx/proxy.conf;
     }
 }
@@ -108,25 +133,47 @@ server {
     listen 80;
     server_name ${NGINX_DOMAIN_NAME};
 
+    # 使用 Docker 内嵌 DNS 动态解析上游，容器重建更换 IP 后无需重启 nginx 即可恢复
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set \$api_upstream_host ${API_UPSTREAM_HOST};
+    set \$api_upstream_port ${API_UPSTREAM_PORT};
+    set \$ui_upstream_host ${UI_UPSTREAM_HOST};
+    set \$ui_upstream_port ${UI_UPSTREAM_PORT};
+    set \$kkfileview_upstream_host ${KKFILEVIEW_UPSTREAM_HOST};
+    set \$kkfileview_upstream_port ${KKFILEVIEW_UPSTREAM_PORT};
+
     location /api/socket.io/ {
-        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/socket.io/;
+        rewrite ^/api/socket\.io/(.*)\$ /socket.io/\$1 break;
+        proxy_pass http://\$api_upstream_host:\$api_upstream_port;
         include /etc/nginx/proxy.conf;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
     }
 
     location /api/ {
-        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/;
+        rewrite ^/api/(.*)\$ /\$1 break;
+        proxy_pass http://\$api_upstream_host:\$api_upstream_port;
         include /etc/nginx/proxy.conf;
     }
 
     location /storage/local/ {
-        proxy_pass http://${API_UPSTREAM_HOST}:${API_UPSTREAM_PORT}/storage/local/;
+        proxy_pass http://\$api_upstream_host:\$api_upstream_port\$request_uri;
+        include /etc/nginx/proxy.conf;
+    }
+
+    # kkFileView 多格式文件预览（页面资源前缀与 UI 的 /assets 不冲突）
+    location /kkfileview/ {
+        rewrite ^/kkfileview/(.*)\$ /\$1 break;
+        proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
+        include /etc/nginx/proxy.conf;
+    }
+    location ~ ^/(js|css|img|fonts|pdfjs|bootstrap)/ {
+        proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
         include /etc/nginx/proxy.conf;
     }
 
     location / {
-        proxy_pass http://${UI_UPSTREAM_HOST}:${UI_UPSTREAM_PORT};
+        proxy_pass http://\$ui_upstream_host:\$ui_upstream_port;
         include /etc/nginx/proxy.conf;
     }
 }

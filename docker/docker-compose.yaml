@@ -27,14 +27,19 @@ services:
       - ../api/.env
     environment:
       # Docker 环境特定配置（覆盖 .env 中的对应配置）
-      FLASK_ENV: production
-      FLASK_DEBUG: '0'
+      APP_ENV: production
+      APP_DEBUG: '0'
       SERVER_THREAD_AMOUNT: 32
       GUNICORN_TIMEOUT: '0'
       SQLALCHEMY_ECHO: 'false'
-      MODE: api
+      MODE: asgi
+      # HTTP 层已 100% 迁移到 Quart（uvicorn 多 worker 承载）
+      ASGI_WORKER_AMOUNT: 2
+      # HTTP 单栈：Quart（uvicorn）承载全部 HTTP，Http 容器仅作依赖宿主
       SKILL_CATALOG_SYNC_ENABLED: 'true'
       MIGRATION_ENABLED: 'true'
+      # kkFileView 预览：其服务端下载文件时使用的内网可达基础地址
+      KKFILEVIEW_FILE_HOST: http://llmops-nginx:80
       POSTGRES_HOST: llmops-db
       POSTGRES_PORT: 5432
       # Redis 连接使用 Docker 服务名
@@ -43,7 +48,7 @@ services:
       # Neo4j 连接（记忆系统 TKG）
       NEO4J_URI: bolt://llmops-neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openagent123}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-yuxin_ai123}
       # MinIO 连接（记忆系统对象存储）
       MINIO_ENDPOINT: http://llmops-minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -70,14 +75,15 @@ services:
     container_name: llmops-celery
     restart: always
     volumes:
+      - ../api:/app/api
       - ./volumes/app/storage:/app/api/storage
     # 从 api/.env 读取配置
     env_file:
       - ../api/.env
     environment:
       # Docker 环境特定配置（覆盖 .env 中的对应配置）
-      FLASK_ENV: production
-      FLASK_DEBUG: '0'
+      APP_ENV: production
+      APP_DEBUG: '0'
       SQLALCHEMY_ECHO: 'false'
       MODE: celery
       MIGRATION_ENABLED: 'false'
@@ -89,7 +95,7 @@ services:
       # Neo4j 连接（记忆系统 TKG）
       NEO4J_URI: bolt://llmops-neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openagent123}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-yuxin_ai123}
       # MinIO 连接（记忆系统对象存储）
       MINIO_ENDPOINT: http://llmops-minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -108,12 +114,13 @@ services:
     container_name: llmops-celery-beat
     restart: always
     volumes:
+      - ../api:/app/api
       - ./volumes/app/storage:/app/api/storage
     env_file:
       - ../api/.env
     environment:
-      FLASK_ENV: production
-      FLASK_DEBUG: '0'
+      APP_ENV: production
+      APP_DEBUG: '0'
       SQLALCHEMY_ECHO: 'false'
       MODE: celery-beat
       MIGRATION_ENABLED: 'false'
@@ -123,7 +130,7 @@ services:
       REDIS_PORT: 6379
       NEO4J_URI: bolt://llmops-neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openagent123}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-yuxin_ai123}
       MINIO_ENDPOINT: http://llmops-minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -180,6 +187,8 @@ services:
       API_UPSTREAM_PORT: 5001
       UI_UPSTREAM_HOST: llmops-ui
       UI_UPSTREAM_PORT: 3000
+      KKFILEVIEW_UPSTREAM_HOST: llmops-kkfileview
+      KKFILEVIEW_UPSTREAM_PORT: 8012
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
       - ./nginx/proxy.conf:/etc/nginx/proxy.conf
@@ -195,6 +204,20 @@ services:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
 
+  # ==================== 文件预览服务（kkFileView，多格式在线预览） ====================
+  llmops-kkfileview:
+    image: keking/kkfileview:latest
+    restart: always
+    container_name: llmops-kkfileview
+    environment:
+      # 允许预览内网地址文件（docker 网络内通过 llmops-nginx 访问本地存储）
+      KKFILEVIEW_DISABLE_INTERNAL_HOSTS: "false"
+    ports:
+      - "127.0.0.1:${KKFILEVIEW_PORT:-8012}:8012"
+    depends_on:
+      llmops-nginx:
+        condition: service_started
+
   # ==================== 记忆系统容器（架构文档 v5.0 第 16 章） ====================
 
   llmops-neo4j:
@@ -202,7 +225,7 @@ services:
     restart: always
     container_name: llmops-neo4j
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-openagent123}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-yuxin_ai123}
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: apoc.*
       NEO4J_dbms_memory_heap_initial__size: 256m

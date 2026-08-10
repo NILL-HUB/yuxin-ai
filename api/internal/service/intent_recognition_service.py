@@ -6,8 +6,6 @@ from typing import Any
 
 from injector import inject
 from langchain_core.messages import trim_messages, BaseMessage, HumanMessage, AIMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from redis import Redis
 
 from internal.exception import FailException
@@ -24,7 +22,7 @@ class IntentRecognitionService(BaseService):
     INTENT_CACHE_TTL = 24 * 60 * 60  # 24小时
     MAX_TOKENS = 4000
     DEFAULT_INTENT = {
-        "intent": "你好，欢迎来到 OpenAgent 🎉\n\n我可以帮你从想法出发，快速创建专属 AI 应用。\n我支持根据你的需求执行 function call，自动调用工具并生成垂直 Agent 的后端能力代码与配置。\n你可以把应用一键发布到 OpenAgent 平台、微信等多个渠道，也可以部署到你自己的网站。",
+        "intent": "你好，欢迎来到 钰心AI 🎉\n\n我可以帮你从想法出发，快速创建专属 AI 应用。\n我支持根据你的需求执行 function call，自动调用工具并生成垂直 Agent 的后端能力代码与配置。\n你可以把应用一键发布到 钰心AI 平台、微信等多个渠道，也可以部署到你自己的网站。",
         "confidence": 0,
         "suggested_actions": [
             {
@@ -46,35 +44,8 @@ class IntentRecognitionService(BaseService):
         "is_default": True
     }
 
-    PROMPT_TEMPLATE = """你是一个用户意图识别专家。根据用户最近的对话历史，识别用户最可能想做的事情。
-
-用户最近的对话历史：
-{messages}
-
-请分析用户的意图，并返回以下JSON格式的结果：
-{{
-  "intent": "用户想做的事情的简洁描述（一句话）",
-  "confidence": 0.0-1.0之间的置信度,
-  "suggested_actions": [
-    {{
-      "label": "操作标签",
-      "action": "操作标识符",
-      "icon": "图标名称"
-    }}
-  ]
-}}
-
-可选的操作标识符：
-- create_app: 创建应用
-- view_apps: 查看应用
-- create_workflow: 创建工作流
-- view_workflows: 查看工作流
-- create_dataset: 创建数据集
-- view_datasets: 查看数据集
-- view_examples: 查看示例
-- view_capabilities: 查看功能
-
-请确保返回有效的JSON格式。"""
+    # 提示词统一从系统提示词库读取（system_prompts.yaml 默认值，管理员可编辑覆盖）
+    PROMPT_TEMPLATE_KEY = "intent_recognition_prompt"
 
     def recognize(self, messages: list[dict[str, str]]) -> dict[str, Any]:
         """
@@ -101,9 +72,13 @@ class IntentRecognitionService(BaseService):
                 end_on="ai",
             )
 
-            # 3. 构建prompt
+            # 3. 构建prompt（系统提示词库可管理，YAML 兜底）
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
+            prompt_template = SystemPromptLibraryService().get_prompt_or_default(
+                self.PROMPT_TEMPLATE_KEY
+            )
             messages_text = self._format_messages(trimmed_messages)
-            prompt_text = self.PROMPT_TEMPLATE.format(messages=messages_text)
+            prompt_text = prompt_template.format(messages=messages_text)
 
             # 4. 调用模型（走数据库配置 + compatible_api 分发）
             response = model.invoke(prompt_text)

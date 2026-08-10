@@ -28,7 +28,16 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "feature_description": "LLM 指挥官：任务规划、Agent 派发、模型档位匹配",
         "model_type": "chat",
         "fallback_tier": "3",  # 指挥官需要强模型，默认档位 3
-        "billable": False,     # 系统治理功能，系统承担成本
+        "billable": False,     # 系统治理功能，系统承担成本（平台路由决策，用户不直接受益）
+    },
+    {
+        "feature_key": "schedule_intent_parser",
+        "feature_name": "定时任务配置解析",
+        "feature_category": "routing",
+        "feature_description": "把用户一句话需求解析为 6 段秒级 cron + 精化 prompt + 缺失字段反问",
+        "model_type": "chat",
+        "fallback_tier": "3",  # 配置解析需要较强的结构化输出能力
+        "billable": False,     # 系统侧辅助调用（用户创建定时任务时后台解析），系统承担成本
     },
 ]
 
@@ -103,6 +112,33 @@ class PublicAIFeatureService:
         except Exception:
             logger.warning("get_feature_model_config: 模型查询失败 feature_key=%s", feature_key, exc_info=True)
             return None
+
+    def touch_last_called(self, feature_key: str) -> None:
+        """更新功能最后调用时间，用于管理员识别未使用的配置。
+
+        在 get_feature_model() 成功返回时调用。采用低频更新策略：同进程内 60s 内
+        重复调用跳过，避免高频功能每次调用都写库。
+        """
+        import time as _time
+        now = _time.time()
+        cache_key = f"_touch_ts:{feature_key}"
+        last = getattr(self, cache_key, 0)
+        if now - last < 60:
+            return
+        setattr(self, cache_key, now)
+        try:
+            from sqlalchemy import text
+            self.db.session.execute(
+                text(
+                    "UPDATE public_ai_feature_config SET last_called_at = NOW() "
+                    "WHERE feature_key = :key"
+                ),
+                {"key": feature_key},
+            )
+            self.db.session.commit()
+        except Exception:
+            logger.debug("touch_last_called 更新失败 feature_key=%s", feature_key, exc_info=True)
+            self.db.session.rollback()
 
     def get_feature_fallback_tier(self, feature_key: str) -> str:
         """读取功能的回退档位，未配置返回 'cheap'。"""

@@ -10,8 +10,8 @@ from langchain_core.tools import render_text_description_and_args
 
 from internal.core.agent.entities.agent_entity import (
     AgentState,
-    AGENT_SYSTEM_PROMPT_TEMPLATE,
-    REACT_AGENT_SYSTEM_PROMPT_TEMPLATE, MAX_ITERATION_RESPONSE,
+    get_agent_system_prompt_template,
+    get_max_iteration_response,
 )
 from internal.core.agent.entities.queue_entity import QueueEvent, AgentThought
 from internal.core.agent.usage_utils import normalize_usage_text
@@ -44,16 +44,16 @@ class ReACTAgent(FunctionCallAgent):
         user_memory = state.get("user_memory", "") or ""
         if ModelFeature.AGENT_THOUGHT.value not in (getattr(self.llm, "features", None) or []):
             preset_messages = [
-                SystemMessage(AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+                SystemMessage(get_agent_system_prompt_template("agent_system_prompt_template").format(
                     preset_prompt=self.agent_config.preset_prompt,
                     long_term_memory=long_term_memory,
                     user_memory=user_memory,
                 ))
             ]
         else:
-            # 4.支持智能体推理，则使用REACT_AGENT_SYSTEM_PROMPT_TEMPLATE并添加工具描述
+            # 4.支持智能体推理，则使用REACT模板并添加工具描述
             preset_messages = [
-                SystemMessage(REACT_AGENT_SYSTEM_PROMPT_TEMPLATE.format(
+                SystemMessage(get_agent_system_prompt_template("react_agent_system_prompt_template").format(
                     preset_prompt=self.agent_config.preset_prompt,
                     long_term_memory=long_term_memory,
                     user_memory=user_memory,
@@ -83,23 +83,24 @@ class ReACTAgent(FunctionCallAgent):
             "messages": [RemoveMessage(id=human_message.id), *preset_messages],
         }
 
-    def _llm_node(self, state: AgentState) -> AgentState:
-        """重写工具调用智能体的LLM节点"""
+    async def _llm_node(self, state: AgentState) -> AgentState:
+        """重写工具调用智能体的LLM节点（async）"""
         # 1.判断当前LLM是否支持tool_call，如果是则使用FunctionCallAgent的_llm_node
         if ModelFeature.TOOL_CALL.value in (getattr(self.llm, "features", None) or []):
-            return super()._llm_node(state)
+            return await super()._llm_node(state)
 
         # 2.检测当前Agent迭代次数是否符合需求
         if state["iteration_count"] > self.agent_config.max_iteration_count:
+            max_iteration_response = get_max_iteration_response()
             self.agent_queue_manager.publish(
                 state["task_id"],
                 AgentThought(
                     id=uuid.uuid4(),
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_MESSAGE.value,
-                    thought=MAX_ITERATION_RESPONSE,
+                    thought=max_iteration_response,
                     message=messages_to_dict(state["messages"]),
-                    answer=MAX_ITERATION_RESPONSE,
+                    answer=max_iteration_response,
                     latency=0,
                 ))
             self.agent_queue_manager.publish(
@@ -109,7 +110,7 @@ class ReACTAgent(FunctionCallAgent):
                     task_id=state["task_id"],
                     event=QueueEvent.AGENT_END.value,
                 ))
-            return {"messages": [AIMessage(MAX_ITERATION_RESPONSE)], "pending_skill_prompts": []}
+            return {"messages": [AIMessage(max_iteration_response)], "pending_skill_prompts": []}
 
         # 3.从智能体配置中提取大语言模型
         id = uuid.uuid4()
@@ -124,7 +125,7 @@ class ReACTAgent(FunctionCallAgent):
         generation_type = ""
 
         # 5.流式输出调用LLM，并判断输出内容是否以"```json"为开头，用于区分工具调用和文本生成
-        for chunk in llm.stream(llm_messages):
+        async for chunk in llm.astream(llm_messages):
             # 6.处理流式输出内容块叠加
             if is_first_chunk:
                 gathered = chunk

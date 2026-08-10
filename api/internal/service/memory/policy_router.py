@@ -267,29 +267,11 @@ class PolicyRouter:
         try:
             from internal.service.language_model_service import LanguageModelService
             from internal.service.memory.llm_activity_probe import LLMActivityProbe
+            from internal.service.system_prompt_library_service import SystemPromptLibraryService
 
-            prompt = f"""请对以下用户查询进行意图分类。
-
-查询: {query}
-
-意图类别（只能选一个）:
-- factual: 事实查询（询问知识、定义、属性）
-- temporal: 时间查询（涉及时间、日期、历史事件）
-- relational: 关系查询（询问人/物之间的关系）
-- action: 行动指令（要求执行某个操作）
-- reflection: 自省（回顾、总结自己的行为）
-- greeting: 问候
-- meta: 元查询（询问系统知道/记得什么）
-
-请返回 JSON，格式:
-{{
-  "intent": "factual|temporal|relational|action|reflection|greeting|meta",
-  "confidence": 0.0-1.0,
-  "entities": ["实体1", "实体2"],
-  "time_reference": "时间引用或null"
-}}
-
-只返回 JSON，不要其他内容。"""
+            prompt = SystemPromptLibraryService().get_prompt_or_default(
+                "memory_query_intent_prompt"
+            ).format(query=query)
 
             llm = LanguageModelService.get_feature_model("memory_policy_routing")
             response = LLMActivityProbe.invoke_with_probe(

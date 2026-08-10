@@ -1,10 +1,10 @@
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import FieldList, StringField
 from wtforms.validators import DataRequired, Length
 
 
-class AssignAppsReq(FlaskForm):
+class AssignAppsReq(Form):
     app_ids = FieldList(StringField("app_id", validators=[DataRequired(), Length(min=1, max=64)]), min_entries=1)
 
 

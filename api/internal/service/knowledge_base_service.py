@@ -2,11 +2,12 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
+from internal.context import current_app
 from injector import inject
 from sqlalchemy import desc, asc, func
 from werkzeug.datastructures import FileStorage
 
-from internal.entity.dataset_entity import DocumentStatus, RetrievalStrategy, SegmentStatus
+from internal.entity.dataset_entity import DocumentStatus
 from internal.entity.knowledge_entity import KnowledgeCreatedFrom, KnowledgeScope, OperationContext, VisibilityScope
 from internal.exception import ForbiddenException, FailException, NotFoundException, ValidateErrorException
 from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
@@ -16,6 +17,7 @@ from internal.model import (
     KnowledgeBase,
     KnowledgeDocument,
     KnowledgeSegment,
+    UploadFile,
 )
 from internal.schema.knowledge_base_schema import (
     CreateKnowledgeBaseReq,
@@ -201,18 +203,15 @@ class KnowledgeBaseService(BaseService):
         return document
 
     def _get_cos_service(self):
-        from flask import current_app
         from .cos_service import CosService
         return current_app.injector.get(CosService)
 
     def _get_knowledge_indexing_service(self):
-        from flask import current_app
         from .knowledge_indexing_service import KnowledgeIndexingService
         return current_app.injector.get(KnowledgeIndexingService)
 
     def _get_knowledge_vector_service(self):
         """延迟获取知识库向量服务，避免循环依赖"""
-        from flask import current_app
         from .knowledge_vector_service import KnowledgeVectorService
         return current_app.injector.get(KnowledgeVectorService)
 
@@ -380,44 +379,33 @@ class KnowledgeBaseService(BaseService):
         return knowledge_base
 
     def delete_user_content_base(self, knowledge_base_id: UUID, account: Account) -> KnowledgeBase:
-        """删除 user_content 知识库及其所有文档、片段、向量数据"""
+        """删除 user_content 知识库：进入回收站（默认留存 30 天），管理员可在回收站恢复。
+
+        用户删除后资源立即从当前账号视角消失，底层存储文件在留存期内保留，
+        由回收站定时任务在留存期结束后统一销毁。
+        """
         # 1.校验知识库归属
         knowledge_base = self.get_user_content_base(knowledge_base_id, account)
 
+        # 2.写入回收站并物理删除原记录（文档/分段/向量/上传文件记录一并清理）
         try:
-            # 2.查询该知识库下所有片段，用于清理 pgvector 向量
-            segments = self.db.session.query(KnowledgeSegment).filter(
-                KnowledgeSegment.knowledge_base_id == knowledge_base_id,
-            ).all()
-
-            # 3.清理 pgvector 中的向量数据（置 NULL）
-            knowledge_vector_service = self._get_knowledge_vector_service()
-            for segment in segments:
-                try:
-                    knowledge_vector_service.remove_segment(segment)
-                except Exception as e:
-                    logging.warning(
-                        "清理知识库片段向量失败 segment_id=%s, 错误: %s",
-                        segment.id, str(e),
-                    )
-
-            # 4.删除知识库下的所有片段、文档（数据库记录）
-            with self.db.auto_commit():
-                self.db.session.query(KnowledgeSegment).filter(
-                    KnowledgeSegment.knowledge_base_id == knowledge_base_id,
-                ).delete(synchronize_session=False)
-                self.db.session.query(KnowledgeDocument).filter(
-                    KnowledgeDocument.knowledge_base_id == knowledge_base_id,
-                ).delete(synchronize_session=False)
-
-            # 5.删除知识库基础记录
-            self.delete(knowledge_base)
+            from internal.service.recycle_bin_service import RecycleBinService
+            deleted = RecycleBinService().delete_resource(
+                resource_type="knowledge_base",
+                resource_id=knowledge_base.id,
+                resource_key=str(knowledge_base.id),
+                resource_name=knowledge_base.name,
+                deleted_by=account.id,
+                deleted_by_type="user",
+            )
         except Exception as e:
             logging.exception(
                 "删除知识库失败 knowledge_base_id=%s, 错误: %s",
                 knowledge_base_id, str(e),
             )
             raise FailException("删除知识库失败，请稍后重试")
+        if not deleted:
+            raise NotFoundException("知识库不存在，请核实后重试")
 
         return knowledge_base
 
@@ -436,7 +424,12 @@ class KnowledgeBaseService(BaseService):
             knowledge_scope=KnowledgeScope.USER_CONTENT.value,
         )
 
-        # 3.提取 segment_id 列表并查询对应的片段与文档信息
+        # 3.组装响应数据
+        return self._build_hit_result(lc_documents)
+
+    def _build_hit_result(self, lc_documents) -> list[dict]:
+        """将检索结果组装为命中测试响应数据（按检索顺序排序片段并携带匹配分数）"""
+        # 1.提取 segment_id 列表并查询对应的片段与文档信息
         segment_id_list = [
             str(lc_document.metadata.get("segment_id"))
             for lc_document in lc_documents
@@ -450,14 +443,14 @@ class KnowledgeBaseService(BaseService):
         ).all()
         segment_dict = {str(segment.id): segment for segment in segments}
 
-        # 4.按检索结果顺序排序片段
+        # 2.按检索结果顺序排序片段
         sorted_segments = [
             segment_dict[str(lc_document.metadata["segment_id"])]
             for lc_document in lc_documents
             if str(lc_document.metadata["segment_id"]) in segment_dict
         ]
 
-        # 5.组装响应数据
+        # 3.组装响应数据
         hit_result = []
         for segment in sorted_segments:
             document = segment.knowledge_document
@@ -556,7 +549,7 @@ class KnowledgeBaseService(BaseService):
             document_id: UUID,
             account: Account,
     ) -> KnowledgeDocument:
-        """删除知识库下指定文档及其片段和向量数据"""
+        """删除知识库下指定文档：进入回收站（默认留存 30 天），管理员可在回收站恢复。"""
         # 1.校验知识库归属
         self.get_user_content_base(knowledge_base_id, account)
 
@@ -565,13 +558,49 @@ class KnowledgeBaseService(BaseService):
         if document is None or str(document.knowledge_base_id) != str(knowledge_base_id):
             raise NotFoundException("该文档不存在，请核实后重试")
 
+        # 3.写入回收站并物理删除原记录（向量/分段/文档/上传文件记录一并清理；
+        #    底层存储对象在留存期结束后由回收站定时任务统一销毁，留存期内可恢复）
         try:
-            # 3.查询该文档下的所有片段，用于清理 pgvector 向量
+            from internal.service.recycle_bin_service import RecycleBinService
+            deleted = RecycleBinService().delete_resource(
+                resource_type="knowledge_document",
+                resource_id=document.id,
+                resource_key=str(document.id),
+                resource_name=document.name,
+                deleted_by=account.id,
+                deleted_by_type="user",
+            )
+        except Exception as e:
+            logging.exception(
+                "删除知识库文档失败 document_id=%s, 错误: %s",
+                document_id, str(e),
+            )
+            raise FailException("删除文档失败，请稍后重试")
+        if not deleted:
+            raise NotFoundException("该文档不存在，请核实后重试")
+
+        return document
+
+    def _delete_document_data(self, document: KnowledgeDocument, *, delete_upload_file: bool = True) -> None:
+        """物理删除文档的向量数据、分段记录与文档记录（不校验归属，供用户端与 admin 端复用）
+
+        若文档关联了上传文件，默认同步删除文件记录与底层存储对象，
+        避免删除文档后文件残留在存储文件列表中。
+        """
+        document_id = document.id
+        upload_file_id = getattr(document, "upload_file_id", None)
+        upload_file = None
+        if delete_upload_file and upload_file_id is not None:
+            upload_file = self.db.session.query(UploadFile).filter(
+                UploadFile.id == upload_file_id,
+            ).one_or_none()
+        try:
+            # 1.查询该文档下的所有片段，用于清理 pgvector 向量
             segments = self.db.session.query(KnowledgeSegment).filter(
                 KnowledgeSegment.knowledge_document_id == document_id,
             ).all()
 
-            # 4.清理 pgvector 中的向量数据
+            # 2.清理 pgvector 中的向量数据
             knowledge_vector_service = self._get_knowledge_vector_service()
             for segment in segments:
                 try:
@@ -582,20 +611,32 @@ class KnowledgeBaseService(BaseService):
                         segment.id, str(e),
                     )
 
-            # 5.删除片段记录与文档记录
+            # 3.删除片段记录、文档记录与上传文件记录
             with self.db.auto_commit():
                 self.db.session.query(KnowledgeSegment).filter(
                     KnowledgeSegment.knowledge_document_id == document_id,
                 ).delete(synchronize_session=False)
                 self.db.session.delete(document)
+                if upload_file is not None:
+                    self.db.session.delete(upload_file)
+
+            # 4.删除底层存储对象（local 物理文件 / COS、OSS 对象）
+            if upload_file is not None:
+                try:
+                    from internal.service.storage.storage_migration_service import _delete_object
+                    backend = (upload_file.storage_backend or "local").strip() or "local"
+                    _delete_object(backend, upload_file.key)
+                except Exception as e:
+                    logging.warning(
+                        "删除文档关联的存储文件失败 key=%s, 错误: %s",
+                        upload_file.key, str(e),
+                    )
         except Exception as e:
             logging.exception(
                 "删除知识库文档失败 document_id=%s, 错误: %s",
                 document_id, str(e),
             )
             raise FailException("删除文档失败，请稍后重试")
-
-        return document
 
     def get_segments_with_page(
             self,

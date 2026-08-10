@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask_wtf import FlaskForm
+from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import BooleanField, IntegerField, StringField
 from wtforms.validators import DataRequired, Length, NumberRange, Optional, URL, ValidationError
@@ -20,7 +20,7 @@ class GetMcpProvidersWithPageReq(PaginatorReq):
     category = StringField("category", default="", validators=[Optional(), Length(max=64)])
 
 
-class CreateMcpProviderReq(FlaskForm):
+class CreateMcpProviderReq(Form):
     """创建 MCP 提供者请求。"""
 
     name = StringField(
@@ -123,7 +123,7 @@ class UpdateMcpProviderReq(CreateMcpProviderReq):
     """更新 MCP 提供者请求。"""
 
 
-class ImportMcpJsonReq(FlaskForm):
+class ImportMcpJsonReq(Form):
     """标准 mcp.json 批量导入请求。
 
     请求格式：application/json
@@ -141,7 +141,7 @@ class ImportMcpJsonReq(FlaskForm):
     overwrite = BooleanField("overwrite", default=False)
 
 
-class ImportMcpJsonConfigReq(FlaskForm):
+class ImportMcpJsonConfigReq(Form):
     """单个 MCP server JSON 配置导入请求（非标准 mcp.json 格式）。
 
     请求格式：application/json
@@ -159,7 +159,7 @@ class ImportMcpJsonConfigReq(FlaskForm):
     overwrite = BooleanField("overwrite", default=False)
 
 
-class PreviewMcpUrlReq(FlaskForm):
+class PreviewMcpUrlReq(Form):
     """URL 预览请求：调用 tools/list 预览远端工具列表，不写 DB。
 
     请求格式：application/json
@@ -197,7 +197,7 @@ class PreviewMcpUrlReq(FlaskForm):
                 raise ValidationError("headers 里的每个元素都必须只包含 key 和 value")
 
 
-class ImportMcpUrlReq(FlaskForm):
+class ImportMcpUrlReq(Form):
     """URL 一键导入请求：先预览校验可达，再创建 DB 记录。
 
     请求格式：application/json

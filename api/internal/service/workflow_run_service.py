@@ -11,7 +11,6 @@ from sqlalchemy import desc
 from internal.entity.workflow_entity import (
     WorkflowNodeExecutionStatus,
     WorkflowRunStatus,
-    WorkflowTriggerSource,
 )
 from internal.model.workflow import WorkflowNodeExecution, WorkflowRun
 from pkg.sqlalchemy import SQLAlchemy

@@ -1,59 +1,36 @@
 import logging
+import os
 from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 
-from internal.extension import celery_extension, logging_extension, redis_extension, socketio_extension
+from internal.extension import logging_extension, redis_extension, socketio_extension
 
 
-def test_celery_extension_should_bind_flask_context_and_mount_extension(monkeypatch):
-    class _BaseTask:
-        def run(self, *args, **kwargs):
-            return {"args": args, "kwargs": kwargs}
+def test_celery_app_should_be_independent_from_flask_app():
+    from app.http.celery_app import celery_app
 
-    class _FakeCelery:
-        def __init__(self, name, task_cls):
-            self.name = name
-            self.task_cls = task_cls
-            self.config_obj = None
-            self.default_called = False
+    assert celery_app.main == "llmops"
+    assert "broker_url" in celery_app.conf
+    assert "result_backend" in celery_app.conf
+    # 记忆系统定时任务已注册（阶段 C：beat 配置移入独立 Celery 应用）
+    beat = celery_app.conf.beat_schedule
+    assert "skill-stats-flush" in beat
+    assert "run-scheduled-tasks" in beat
+    # 定时任务路由（consolidation 队列）
+    routes = celery_app.conf.task_routes
+    assert "internal.task.recycle_bin_tasks.*" in routes
 
-        def config_from_object(self, obj):
-            self.config_obj = obj
 
-        def set_default(self):
-            self.default_called = True
+def test_app_context_task_should_call_run_directly_without_app_context(monkeypatch):
+    """阶段 3.4：任务不再包裹 Flask app context，直接执行 run。"""
+    from app.http.celery_app import AppContextTask
 
-    class _FakeApp:
-        def __init__(self):
-            self.name = "demo-app"
-            self.config = {"CELERY": {"broker_url": "redis://example"}}
-            self.extensions = {}
-            self.context_entered = 0
+    task = AppContextTask()
+    task.run = lambda: "done"
 
-        @contextmanager
-        def app_context(self):
-            self.context_entered += 1
-            yield
-
-    monkeypatch.setattr(celery_extension, "Task", _BaseTask)
-    monkeypatch.setattr(celery_extension, "Celery", _FakeCelery)
-    app = _FakeApp()
-
-    celery_extension.init_app(app)
-
-    celery_app = app.extensions["celery"]
-    task_cls = celery_app.task_cls
-    task_instance = task_cls()
-    task_instance.run = lambda *args, **kwargs: {"args": args, "kwargs": kwargs}
-    result = task_instance(1, x=2)
-
-    assert isinstance(celery_app, _FakeCelery)
-    assert celery_app.config_obj == {"broker_url": "redis://example"}
-    assert celery_app.default_called is True
-    assert result == {"args": (1,), "kwargs": {"x": 2}}
-    assert app.context_entered == 1
+    assert task() == "done"
 
 
 class _FakeLogger:
@@ -89,7 +66,7 @@ class _FakeHandler:
 
 
 @pytest.mark.parametrize(
-    "debug, flask_env, folder_exists, expected_level, expected_handlers, expect_makedirs",
+    "debug, app_env, folder_exists, expected_level, expected_handlers, expect_makedirs",
     [
         (True, "production", False, logging.DEBUG, 2, True),
         (False, "development", True, logging.DEBUG, 2, False),
@@ -99,25 +76,32 @@ class _FakeHandler:
 def test_logging_extension_should_cover_debug_dev_and_prod_branches(
     monkeypatch,
     debug,
-    flask_env,
+    app_env,
     folder_exists,
     expected_level,
     expected_handlers,
     expect_makedirs,
 ):
+    import logging as _real_logging
+
     fake_logger = _FakeLogger()
     makedirs_calls = []
 
-    monkeypatch.setattr(logging_extension.logging, "getLogger", lambda: fake_logger)
+    # 仅替换 logging_extension 模块内的 logging 引用，避免污染标准库 logging
+    # （防止与 pytest 的 logging 插件 / loggerDict 交互产生残留副作用）
+    fake_logging_mod = SimpleNamespace(
+        DEBUG=_real_logging.DEBUG,
+        WARNING=_real_logging.WARNING,
+        INFO=_real_logging.INFO,
+        getLogger=lambda: fake_logger,
+        StreamHandler=lambda: _FakeHandler(),
+        Formatter=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(logging_extension, "logging", fake_logging_mod)
     monkeypatch.setattr(
         logging_extension,
         "ConcurrentTimedRotatingFileHandler",
         lambda *args, **kwargs: _FakeHandler(*args, **kwargs),
-    )
-    monkeypatch.setattr(
-        logging_extension.logging,
-        "StreamHandler",
-        lambda: _FakeHandler(),
     )
     monkeypatch.setattr(logging_extension.os.path, "exists", lambda _path: folder_exists)
     monkeypatch.setattr(logging_extension.os, "makedirs", lambda path: makedirs_calls.append(path))
@@ -125,7 +109,7 @@ def test_logging_extension_should_cover_debug_dev_and_prod_branches(
     monkeypatch.setattr(
         logging_extension.os,
         "getenv",
-        lambda key: flask_env if key == "FLASK_ENV" else None,
+        lambda key: app_env if key == "APP_ENV" else None,
     )
 
     app = SimpleNamespace(debug=debug)
@@ -133,8 +117,9 @@ def test_logging_extension_should_cover_debug_dev_and_prod_branches(
 
     assert fake_logger.levels[-1] == expected_level
     assert len(fake_logger.handlers) == expected_handlers
+    expected_log_dir = os.path.join("/tmp/project", "storage", "log")
     if expect_makedirs:
-        assert makedirs_calls == ["/tmp/project/storage/log"]
+        assert makedirs_calls == [expected_log_dir]
     else:
         assert makedirs_calls == []
 
@@ -179,65 +164,94 @@ def test_redis_extension_should_select_connection_class_by_ssl_flag(
 
 
 def test_socketio_extension_should_align_cors_settings_with_http_defaults(monkeypatch):
+    import socketio as socketio_lib
+
+    asgi_calls = []
     register_calls = []
-    socketio_calls = []
 
-    class _FakeSocketIO:
-        def __init__(self, app, **kwargs):
-            self.app = app
+    class _FakeAsyncServer:
+        def __init__(self, *args, **kwargs):
             self.kwargs = kwargs
-            socketio_calls.append((app, kwargs))
+            asgi_calls.append(kwargs)
 
-    monkeypatch.setattr("flask_socketio.SocketIO", _FakeSocketIO)
+        def on(self, event):
+            def deco(handler):
+                return handler
+
+            return deco
+
+    class _FakeASGIApp:
+        def __init__(self, server, other_asgi_app=None, **kwargs):
+            pass
+
+    monkeypatch.setattr(socketio_lib, "AsyncServer", _FakeAsyncServer)
+    monkeypatch.setattr(socketio_lib, "ASGIApp", _FakeASGIApp)
     monkeypatch.setattr(
-        "internal.handler.websocket_handler.register_socketio_handlers",
+        "internal.extension.websocket_handlers.register_socketio_handlers",
         lambda socketio: register_calls.append(socketio),
     )
 
-    app = SimpleNamespace(
-        config={
-            "CORS_ALLOW_ORIGINS": ["*"],
-            "CORS_SUPPORTS_CREDENTIALS": True,
-            "REDIS_URL": "redis://example",
-        }
-    )
+    socketio_extension._socketio = None
+    socketio_extension._socketio_app = None
 
-    socketio = socketio_extension.init_socketio(app)
+    flask_config = {
+        "CORS_ALLOW_ORIGINS": ["*"],
+        "CORS_SUPPORTS_CREDENTIALS": True,
+        "REDIS_URL": "redis://example",
+    }
 
-    assert socketio_calls[0][1]["cors_allowed_origins"] == [
+    app = socketio_extension.init_socketio_asgi(object(), flask_config)
+
+    assert asgi_calls[0]["cors_allowed_origins"] == [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
-    assert socketio_calls[0][1]["async_mode"] == "threading"
-    assert socketio_calls[0][1]["cors_credentials"] is True
-    assert socketio_calls[0][1]["logger"] is False
-    assert socketio_calls[0][1]["engineio_logger"] is False
-    assert socketio_calls[0][1]["message_queue"] == "redis://example"
-    assert register_calls == [socketio]
+    assert asgi_calls[0]["async_mode"] == "asgi"
+    assert asgi_calls[0]["cors_credentials"] is True
+    assert asgi_calls[0]["logger"] is False
+    assert asgi_calls[0]["engineio_logger"] is False
+    assert asgi_calls[0]["message_queue"] == "redis://example"
+    assert len(register_calls) == 1
+    assert app is not None
 
 
 def test_socketio_extension_should_keep_default_socketio_path_for_edge_prefix_rewrite(monkeypatch):
-    socketio_calls = []
+    import socketio as socketio_lib
 
-    class _FakeSocketIO:
-        def __init__(self, app, **kwargs):
-            socketio_calls.append((app, kwargs))
+    asgi_calls = []
 
-    monkeypatch.setattr("flask_socketio.SocketIO", _FakeSocketIO)
+    class _FakeAsyncServer:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            asgi_calls.append(kwargs)
+
+        def on(self, event):
+            def deco(handler):
+                return handler
+
+            return deco
+
+    class _FakeASGIApp:
+        def __init__(self, server, other_asgi_app=None, **kwargs):
+            pass
+
+    monkeypatch.setattr(socketio_lib, "AsyncServer", _FakeAsyncServer)
+    monkeypatch.setattr(socketio_lib, "ASGIApp", _FakeASGIApp)
     monkeypatch.setattr(
-        "internal.handler.websocket_handler.register_socketio_handlers",
+        "internal.extension.websocket_handlers.register_socketio_handlers",
         lambda _socketio: None,
     )
 
-    app = SimpleNamespace(
-        config={
-            "CORS_ALLOW_ORIGINS": ["http://localhost:5173"],
-            "CORS_SUPPORTS_CREDENTIALS": True,
-            "REDIS_URL": None,
-        }
-    )
+    socketio_extension._socketio = None
+    socketio_extension._socketio_app = None
 
-    socketio_extension.init_socketio(app)
+    flask_config = {
+        "CORS_ALLOW_ORIGINS": ["http://localhost:5173"],
+        "CORS_SUPPORTS_CREDENTIALS": True,
+        "REDIS_URL": None,
+    }
 
-    assert socketio_calls[0][1]["message_queue"] is None
-    assert "path" not in socketio_calls[0][1]
+    socketio_extension.init_socketio_asgi(object(), flask_config)
+
+    assert asgi_calls[0]["message_queue"] is None
+    assert "path" not in asgi_calls[0]

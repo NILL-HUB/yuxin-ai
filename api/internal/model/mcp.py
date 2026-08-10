@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
@@ -25,7 +25,7 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class McpProvider(db.Model):
+class McpProvider(Base):
     """MCP 提供者模型"""
     __tablename__ = "mcp_provider"
     __table_args__ = (
@@ -71,7 +71,7 @@ class McpProvider(db.Model):
     tools = relationship("McpTool", back_populates="provider", cascade="all, delete-orphan", lazy="selectin")
 
 
-class McpTool(db.Model):
+class McpTool(Base):
     """MCP 工具元数据表（工具粒度，与 McpProvider 1:N 关联）。
 
     用途：供向量索引（mcp_index）和关键词检索使用。

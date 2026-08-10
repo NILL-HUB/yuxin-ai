@@ -15,7 +15,13 @@ from .base_service import BaseService
 class RoutingLogService(BaseService):
     db: SQLAlchemy
 
-    def create_pending(self, *, account_id, user_query: str | None = None):
+    def create_pending(
+        self,
+        *,
+        account_id,
+        user_query: str | None = None,
+        invoke_from: str | None = None,
+    ):
         """创建 pending 状态的 routing_log 记录，供编排过程中追加事件。
 
         编排开始时调用，获取 routing_log_id 供 _emit 追加离散事件。
@@ -34,6 +40,7 @@ class RoutingLogService(BaseService):
             billing_events=[],
             status="pending",
             user_query=user_query,
+            invoke_from=invoke_from,
         )
 
     def finalize(self, routing_log_id, **fields) -> None:
@@ -209,6 +216,7 @@ class RoutingLogService(BaseService):
             "filtered_out_tools": log.filtered_out_tools,
             "knowledge_hits": log.knowledge_hits,
             "billing_events": log.billing_events,
+            "invoke_from": log.invoke_from,
             "user_query": log.user_query,
             "task_classification": log.task_classification,
             "model_selection": log.model_selection,

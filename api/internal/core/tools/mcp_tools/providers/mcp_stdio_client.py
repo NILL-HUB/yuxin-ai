@@ -17,8 +17,6 @@ import os
 import shlex
 from typing import Any
 
-from internal.service.tool_credential_encryptor import decrypt_env
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_STDIO_TIMEOUT_SECONDS = 30
@@ -97,6 +95,8 @@ class McpStdioClient:
 
         encrypted_env = binding.get("env") or {}
         if isinstance(encrypted_env, dict):
+            from internal.service.tool_credential_encryptor import decrypt_env
+
             decrypted = decrypt_env(encrypted_env)
             for key, value in decrypted.items():
                 if value is None:

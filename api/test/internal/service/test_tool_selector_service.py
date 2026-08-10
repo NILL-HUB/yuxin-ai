@@ -209,8 +209,8 @@ class TestPass3DescriptionSubstring:
                 task_keywords=[],
             ),
         ]
-        # 查询前 8 字符 = "翻译文本内容查询"，是 description 的子串
-        result = svc.select_tools("翻译文本内容查询请帮我", candidates=candidates, max_tools=3)
+        # 查询前 12 字符 = "翻译文本内容查询翻译多语"，是 description 的子串
+        result = svc.select_tools("翻译文本内容查询翻译多语言工具怎么用", candidates=candidates, max_tools=3)
         assert len(result) == 1
         assert result[0]["tool_name"] == "translate_tool"
         assert result[0]["match_type"] == "keyword"

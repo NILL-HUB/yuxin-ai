@@ -1,5 +1,4 @@
 import logging
-from uuid import UUID
 from injector import inject
 from internal.entity.agent_pool_entity import AgentSubPoolRegistry
 

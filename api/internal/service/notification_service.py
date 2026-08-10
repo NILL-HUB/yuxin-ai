@@ -4,8 +4,6 @@ from datetime import datetime, UTC
 from uuid import UUID
 from typing import Literal
 
-from flask import current_app
-
 from internal.entity.document_index_notification_entity import DocumentIndexNotificationEntity
 from internal.entity.agent_notification_entity import AgentNotificationEntity
 from internal.extension.redis_extension import redis_client

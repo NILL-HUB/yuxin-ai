@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from internal.handler.home_handler import HomeHandler
 from internal.service.home_service import HomeService
 from internal.service.intent_recognition_service import IntentRecognitionService
 from internal.model import Message
@@ -37,11 +36,6 @@ class TestHomeIntentIntegration:
     def home_service(self, mock_db, intent_service):
         """创建首页服务"""
         return HomeService(db=mock_db, intent_recognition_service=intent_service)
-
-    @pytest.fixture
-    def home_handler(self, home_service):
-        """创建首页处理器"""
-        return HomeHandler(home_service=home_service)
 
     def test_complete_flow_with_cache_miss(
         self,
@@ -212,23 +206,5 @@ class TestHomeIntentIntegration:
 
         # 验证返回默认意图
         assert result["is_default"] is True
-        assert "欢迎来到 OpenAgent" in result["intent"]
+        assert "欢迎来到 钰心AI" in result["intent"]
         assert "haohao" not in result["intent"]
-
-    def test_handler_integration(self, home_handler, home_service, mock_db, mock_redis):
-        """测试处理器集成"""
-        # 准备用户
-        user = SimpleNamespace(id=uuid4())
-
-        # Mock数据库查询
-        mock_query = Mock()
-        query_all = (
-            mock_query.filter.return_value.order_by.return_value.limit.return_value.all
-        )
-        query_all.return_value = []
-        mock_db.session.query.return_value = mock_query
-
-        # 由于处理器需要Flask请求上下文，这里只验证处理器的存在和基本结构
-        assert home_handler is not None
-        assert hasattr(home_handler, "get_intent")
-        assert hasattr(home_handler, "home_service")

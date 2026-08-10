@@ -4,18 +4,15 @@ import json
 import logging
 import mimetypes
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 import yaml
-from flask import Flask, current_app, has_app_context
 from injector import inject
 from sqlalchemy import desc, func, inspect, or_
 from sqlalchemy.exc import ProgrammingError
 
 from internal.core.skills import LocalSkillPackage, SkillCatalogManager, SkillScfClient, SkillToolFactory
-from internal.entity.app_entity import AppStatus
 from internal.exception import FailException, NotFoundException, ValidateErrorException
 from internal.lib.helper import datetime_to_timestamp, generate_text_hash, utc_now_naive, escape_like_pattern
 from internal.model import SkillPackage, SkillPackageVersion
@@ -556,6 +553,7 @@ class SkillService(BaseService):
         readme = _normalize_text(payload.get("readme"))
         skill_code = _normalize_text(payload.get("skill_code")) if executor_type == "scf" else ""
         task_keywords = [str(k).strip() for k in (payload.get("task_keywords") or []) if isinstance(k, str) and str(k).strip()]
+        requested_version = _normalize_int(payload.get("version"), 1)
 
         manifest = {
             "source_key": source_key,
@@ -568,7 +566,7 @@ class SkillService(BaseService):
             "executor_type": executor_type,
             "capabilities": capabilities,
             "enabled": enabled,
-            "version": 1,
+            "version": requested_version,
             "tools": [
                 {
                     "name": t["name"],
@@ -587,6 +585,17 @@ class SkillService(BaseService):
         if executor_type == "scf" and skill_code:
             bundle["skill.py"] = skill_code
 
+        # 合并 zip 导入的多文件 bundle（scripts/、references/、__env__ 等）
+        extra_bundle = payload.get("bundle_files")
+        if isinstance(extra_bundle, dict) and extra_bundle:
+            for relative_path, content in extra_bundle.items():
+                normalized_path = str(relative_path or "").strip().lstrip("/")
+                if not normalized_path:
+                    continue
+                if normalized_path in ("manifest.yaml", "skill.py", "skill.md"):
+                    continue
+                bundle[normalized_path] = str(content)
+
         checksum = generate_text_hash(
             json.dumps({"manifest": manifest, "bundle": bundle}, ensure_ascii=False, sort_keys=True, default=str)
         )
@@ -604,8 +613,8 @@ class SkillService(BaseService):
                 capabilities=capabilities,
                 executor_type=executor_type,
                 enabled=enabled,
-                current_version=1,
-                latest_source_version=1,
+                current_version=requested_version,
+                latest_source_version=requested_version,
                 source_checksum=checksum,
                 sync_status="pending",
                 sync_error="",
@@ -618,7 +627,7 @@ class SkillService(BaseService):
 
             version_record = SkillPackageVersion(
                 skill_package_id=package.id,
-                version=1,
+                version=requested_version,
                 manifest=manifest,
                 bundle=bundle,
                 checksum=checksum,
@@ -717,6 +726,17 @@ class SkillService(BaseService):
         if executor_type == "scf" and skill_code:
             new_bundle["skill.py"] = skill_code
 
+        # 合并 zip 导入的多文件 bundle（scripts/、references/、__env__ 等）
+        extra_bundle = payload.get("bundle_files")
+        if isinstance(extra_bundle, dict) and extra_bundle:
+            for relative_path, content in extra_bundle.items():
+                normalized_path = str(relative_path or "").strip().lstrip("/")
+                if not normalized_path:
+                    continue
+                if normalized_path in ("manifest.yaml", "skill.py", "skill.md"):
+                    continue
+                new_bundle[normalized_path] = str(content)
+
         new_checksum = generate_text_hash(
             json.dumps({"manifest": new_manifest, "bundle": new_bundle}, ensure_ascii=False, sort_keys=True, default=str)
         )
@@ -740,7 +760,27 @@ class SkillService(BaseService):
 
         # 若 manifest/bundle 变化，创建新版本
         if new_checksum != package.source_checksum:
-            new_version_number = package.latest_source_version + 1
+            # 多版本兼容导入：支持显式版本号（manifest 声明），否则自动递增
+            requested_version = _normalize_int(payload.get("version"), 0)
+            if requested_version and requested_version > package.latest_source_version:
+                new_version_number = requested_version
+            else:
+                new_version_number = package.latest_source_version + 1
+
+            # 让 manifest 记录实际生效版本号，并同步重建 bundle 与 checksum，
+            # 避免「导入→导出」后 manifest.version 与版本记录不一致
+            if new_manifest.get("version") != new_version_number:
+                new_manifest["version"] = new_version_number
+                new_bundle["manifest.yaml"] = yaml_dump_safe(new_manifest)
+                new_checksum = generate_text_hash(
+                    json.dumps(
+                        {"manifest": new_manifest, "bundle": new_bundle},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        default=str,
+                    )
+                )
+
             with self.db.auto_commit():
                 version_record = SkillPackageVersion(
                     skill_package_id=package.id,
@@ -802,7 +842,13 @@ class SkillService(BaseService):
 
         return self.get_skill_package(package.id)
 
-    def delete_skill_package_for_admin(self, skill_id: UUID | str) -> None:
+    def delete_skill_package_for_admin(
+        self,
+        skill_id: UUID | str,
+        *,
+        retention_days: int | None = None,
+        deleted_by=None,
+    ) -> None:
         """删除技能包；仅允许删除 DB 来源（source_path 为空）的包。"""
         self._ensure_skill_package_table()
         package = self._get_skill_package_record(skill_id)
@@ -820,13 +866,17 @@ class SkillService(BaseService):
         if bindings_count > 0:
             raise ValidateErrorException(f"该技能包被 {bindings_count} 个应用绑定，请先解除绑定再删除")
 
-        with self.db.auto_commit():
-            # 先删除所有版本
-            self.db.session.query(SkillPackageVersion).filter(
-                SkillPackageVersion.skill_package_id == package.id,
-            ).delete(synchronize_session=False)
-            # 再删除包
-            self.db.session.delete(package)
+        from internal.service.recycle_bin_service import RecycleBinService
+        deleted = RecycleBinService().delete_resource(
+            resource_type="skill",
+            resource_id=package.id,
+            resource_key=str(package.id),
+            resource_name=package.label or package.name,
+            deleted_by=deleted_by,
+            retention_days=retention_days,
+        )
+        if not deleted:
+            raise NotFoundException("该技能包不存在，请核实后重试")
 
     def list_catalog_packages_for_admin(self) -> list[dict[str, Any]]:
         """列出磁盘 catalog 目录中所有可导入的技能包（用于"从 catalog 导入"选择器）。"""

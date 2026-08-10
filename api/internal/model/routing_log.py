@@ -16,14 +16,14 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class RoutingLog(db.Model):
+class RoutingLog(Base):
     __tablename__ = "routing_log"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_routing_log_id"),
@@ -44,6 +44,9 @@ class RoutingLog(db.Model):
     filtered_out_tools = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     knowledge_hits = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     billing_events = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    invoke_from = Column(
+        String(32), nullable=False, server_default=text("''::character varying")
+    )
     user_query = Column(Text, nullable=True)
     task_classification = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     model_selection = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))

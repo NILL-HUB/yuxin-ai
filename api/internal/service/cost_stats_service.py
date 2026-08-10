@@ -3,7 +3,7 @@ from datetime import datetime, UTC
 
 from injector import inject
 from sqlalchemy import func, cast, Integer, literal_column
-from sqlalchemy.types import String, Text
+from sqlalchemy.types import Text
 
 from internal.model.routing_log import RoutingLog
 from pkg.sqlalchemy import SQLAlchemy
@@ -134,6 +134,8 @@ class CostStatsService(BaseService):
             return RoutingLog.status.label("name")
         if dimension == "agent_pool":
             return literal_column("model_selection->>'model_tier'").label("name")
+        if dimension == "source":
+            return RoutingLog.invoke_from.label("name")
         return RoutingLog.account_id.cast(Text()).label("name")
 
     def _apply_time_filter(self, query, start_at: int | None, end_at: int | None):

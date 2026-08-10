@@ -8,7 +8,7 @@ import pytest
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
-from internal.entity.conversation_entity import MessageStatus
+from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.model import Conversation, Message
 from internal.service.conversation_service import ConversationService
 
@@ -190,6 +190,7 @@ class TestConversationServiceStateMachine:
             status=MessageStatus.NORMAL.value,
             error="",
             latency=0.0,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
         )
         long_term_memory_enabled = rng.choice([True, False])
         service, create_calls, update_calls, summary_calls, rename_calls = _build_service(
@@ -272,6 +273,7 @@ class TestConversationServiceStateMachine:
             status=MessageStatus.NORMAL.value,
             error="",
             latency=0.0,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
         )
         service, create_calls, update_calls, summary_calls, rename_calls = _build_service(
             monkeypatch,

@@ -13,14 +13,14 @@ from sqlalchemy import (
     text,
 )
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class OrchestrationFeatureFlagModel(db.Model):
+class OrchestrationFeatureFlagModel(Base):
     __tablename__ = "orchestration_feature_flag"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_orchestration_feature_flag_id"),

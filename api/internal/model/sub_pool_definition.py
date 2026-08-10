@@ -16,14 +16,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class SubPoolDefinition(db.Model):
+class SubPoolDefinition(Base):
     __tablename__ = "sub_pool_definition"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_sub_pool_definition_id"),

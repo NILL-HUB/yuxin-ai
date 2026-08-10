@@ -1,7 +1,7 @@
 from marshmallow import Schema, fields, pre_dump
 from internal.model import Account
 from internal.lib.helper import datetime_to_timestamp
-from flask_wtf import FlaskForm
+from wtforms import Form
 from wtforms import StringField, IntegerField
 from wtforms.validators import AnyOf, DataRequired, regexp, Length, NumberRange, URL, Optional, Email
 from pkg.password import password_pattern
@@ -146,7 +146,7 @@ class GetAccountLoginHistoryResp(Schema):
     page_size = fields.Integer(dump_default=20)
 
 
-class GetAccountLoginHistoryReq(FlaskForm):
+class GetAccountLoginHistoryReq(Form):
     """获取账号登录历史请求"""
     status = StringField("status", default="all", validators=[
         Optional(),
@@ -166,7 +166,7 @@ class GetAccountLoginHistoryReq(FlaskForm):
     ])
 
 
-class UpdatePasswordReq(FlaskForm):
+class UpdatePasswordReq(Form):
     """更新账号密码请求"""
     current_password = StringField("current_password", validators=[
         Optional(),
@@ -177,7 +177,7 @@ class UpdatePasswordReq(FlaskForm):
         regexp(regex=password_pattern, message="密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")
     ])
 
-class UpdateNameReq(FlaskForm):
+class UpdateNameReq(Form):
     """更新账号名称请求"""
     name = StringField("avatar", validators=[
         DataRequired("账号名称不能为空"),
@@ -185,7 +185,7 @@ class UpdateNameReq(FlaskForm):
     ])
 
 
-class UpdateAvatarReq(FlaskForm):
+class UpdateAvatarReq(Form):
     """更新账号头像请求"""
     avatar = StringField("avatar", validators=[
         DataRequired("账号头像不能为空"),
@@ -193,7 +193,7 @@ class UpdateAvatarReq(FlaskForm):
     ])
 
 
-class SendChangeEmailCodeReq(FlaskForm):
+class SendChangeEmailCodeReq(Form):
     """发送换绑邮箱验证码请求"""
     email = StringField("email", validators=[
         DataRequired("邮箱不能为空"),
@@ -202,7 +202,7 @@ class SendChangeEmailCodeReq(FlaskForm):
     ])
 
 
-class UpdateEmailReq(FlaskForm):
+class UpdateEmailReq(Form):
     """更新账号邮箱请求"""
     email = StringField("email", validators=[
         DataRequired("邮箱不能为空"),

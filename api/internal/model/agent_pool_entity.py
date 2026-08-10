@@ -12,14 +12,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
-from internal.extension.database_extension import db
+from pkg.sqlalchemy import Base
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
-class AgentPoolConfig(db.Model):
+class AgentPoolConfig(Base):
     """App 级 Agent 池配置。
 
     路由字段（primary_pool/secondary_pools/risk_level/model_tier/model_id/routing_priority）
