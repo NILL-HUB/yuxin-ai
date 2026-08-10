@@ -56,7 +56,22 @@ const dimensionOptions = computed(() => [
   { value: 'model', label: t('admin.costStats.model') },
   { value: 'status', label: t('admin.costStats.status') },
   { value: 'agent_pool', label: t('admin.costStats.agentPool') },
+  { value: 'source', label: t('admin.costStats.source') },
 ])
+
+const dimensionValueLabel = (value: string) => {
+  if (dimension.value !== 'source') return value
+  switch (value) {
+    case 'schedule':
+      return t('admin.costStats.sourceSchedule')
+    case 'assistant_agent':
+      return t('admin.costStats.sourceAssistantAgent')
+    case 'debugger':
+      return t('admin.costStats.sourceDebugger')
+    default:
+      return value
+  }
+}
 
 const granularityOptions = computed(() => [
   { value: 'day', label: t('admin.costStats.day') },
@@ -171,7 +186,7 @@ onMounted(() => {
         </thead>
         <tbody>
           <tr v-for="item in dimensionData.items" :key="item.name" class="border-b">
-            <td class="p-3 font-medium">{{ item.name }}</td>
+            <td class="p-3 font-medium">{{ dimensionValueLabel(item.name) }}</td>
             <td class="p-3">{{ item.total_credits }}</td>
             <td class="p-3">{{ item.request_count }}</td>
             <td class="p-3">{{ item.avg_credits }}</td>

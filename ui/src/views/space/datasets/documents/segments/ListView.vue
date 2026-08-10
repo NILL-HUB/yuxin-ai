@@ -53,7 +53,7 @@ const handleSegmentEnabledChange = async (
 }
 
 // 4.打开分段内容编辑模态窗
-const handleOpenEditSegment = (segment: Record<string, any>) => {
+const handleOpenEditSegment = (segment: Record<string, unknown>) => {
   editingSegment.value = { id: String(segment.id), content: String(segment.content ?? '') }
   editModalVisible.value = true
 }

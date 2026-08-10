@@ -26,6 +26,7 @@ import { getSkillCategoryDisplayName } from '@/utils/store-display'
 import CreateOrUpdateSkillModal from './skills/CreateOrUpdateSkillModal.vue'
 import ImportCatalogSkillModal from './skills/ImportCatalogSkillModal.vue'
 import ImportExternalSkillModal from './skills/ImportExternalSkillModal.vue'
+import RecycleBinDeleteModal from '@/components/admin/RecycleBinDeleteModal.vue'
 
 type SkillPaginator = {
   total_record: number
@@ -201,31 +202,41 @@ const handleCrudCallback = async () => {
     try {
       const detail = await getAdminSkill(activeSkill.value.id)
       activeSkill.value = { ...activeSkill.value, ...detail }
-    } catch (_error: unknown) {
+    } catch {
       // ignore
     }
   }
 }
 
 /**
- * 删除技能包（仅 DB 来源，即 source_path 为空才允许）。
+ * 删除技能包（仅 DB 来源，即 source_path 为空才允许；进入回收站，选择留存天数）。
  */
+const deleteTarget = ref<SkillPackage | null>(null)
+const deleteLoading = ref(false)
+
 const handleDelete = (skill: SkillPackage) => {
-  Modal.warning({
-    title: t('admin.skillsAdmin.deleteTitle'),
-    content: t('admin.skillsAdmin.deleteContent', { name: skill.label || skill.name }),
-    hideCancel: false,
-    onOk: async () => {
-      try {
-        await deleteAdminSkill(skill.id)
-        Message.success(t('admin.skillsAdmin.deleteSuccess'))
-        showDetailVisible.value = false
-        await loadSkills()
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.skillsAdmin.deleteFailed')))
-      }
-    },
-  })
+  deleteTarget.value = skill
+  deleteLoading.value = false
+}
+
+const handleDeleteVisibleChange = (visible: boolean) => {
+  if (!visible) deleteTarget.value = null
+}
+
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteAdminSkill(deleteTarget.value.id, retentionDays)
+    Message.success(t('admin.skillsAdmin.deleteSuccess'))
+    deleteTarget.value = null
+    showDetailVisible.value = false
+    await loadSkills()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.skillsAdmin.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 /**
@@ -238,7 +249,7 @@ const handleCardClick = async (skill: SkillPackage) => {
   try {
     const detail = await getAdminSkill(skill.id)
     activeSkill.value = { ...skill, ...detail }
-  } catch (_error: unknown) {
+  } catch {
     // 详情拉取失败时保留列表数据
   } finally {
     detailLoading.value = false
@@ -803,6 +814,20 @@ onMounted(() => {
       v-model:visible="showImportExternalModal"
       :callback="handleCrudCallback"
     />
+
+    <!-- 删除技能包确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="deleteTarget !== null"
+      :title="t('admin.skillsAdmin.deleteTitle')"
+      :resource-name="deleteTarget?.label || deleteTarget?.name"
+      :loading="deleteLoading"
+      @update:visible="handleDeleteVisibleChange"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-slate-500">
+        {{ deleteTarget ? t('admin.skillsAdmin.deleteContent', { name: deleteTarget.label || deleteTarget.name }) : '' }}
+      </p>
+    </RecycleBinDeleteModal>
   </section>
 </template>
 

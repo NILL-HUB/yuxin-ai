@@ -5,8 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import HomeView from '@/views/pages/HomeView.vue'
 import { HOME_NEW_CONVERSATION_QUERY_KEY } from '@/views/pages/home-new-conversation'
 
+type MockRouteLike = {
+  path: string
+  fullPath: string
+  query: Record<string, unknown>
+  params: Record<string, unknown>
+}
+
 const mocks = vi.hoisted(() => ({
-  route: undefined as any,
+  route: undefined as MockRouteLike | undefined,
   routerReplace: vi.fn(),
   routerPush: vi.fn(),
   loadHomeIntent: vi.fn(),
@@ -237,7 +244,7 @@ describe('HomeView sidebar new conversation request', () => {
     expect(mocks.loadHomeIntent).toHaveBeenCalledTimes(1)
     expect(mocks.handleDeleteAssistantAgentConversation).not.toHaveBeenCalled()
 
-    mocks.route.query = {
+    mocks.route!.query = {
       [HOME_NEW_CONVERSATION_QUERY_KEY]: '1710835200000',
     }
     await flushPromises()

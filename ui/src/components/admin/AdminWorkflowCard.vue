@@ -51,6 +51,9 @@ const visibilityActionLabel = computed(() => {
         <p class="mt-3 line-clamp-2 text-sm text-slate-600">
           {{ workflow.description || t('admin.workflowsAdmin.noDescription') }}
         </p>
+        <p class="mt-2 text-xs text-slate-400">
+          {{ t('admin.workflowsAdmin.creator') }}: {{ workflow.creator_name || '-' }}
+        </p>
       </div>
       <div class="flex shrink-0 flex-col items-end gap-2 text-xs text-slate-500">
         <span class="rounded-full bg-slate-100 px-2 py-1">{{ workflow.status }}</span>

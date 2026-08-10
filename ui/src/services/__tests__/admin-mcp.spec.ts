@@ -92,6 +92,6 @@ describe('admin mcp service', () => {
 
     await deleteAdminMcp('p1')
 
-    expect(request.del).toHaveBeenCalledWith('/admin/mcp/p1')
+    expect(request.del).toHaveBeenCalledWith('/admin/mcp/p1', { body: undefined })
   })
 })

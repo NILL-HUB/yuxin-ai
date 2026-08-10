@@ -7,14 +7,14 @@ import { i18n } from '@/i18n'
 import { generateRandomString } from '@/utils/helper'
 import type { SelectedWorkflowNode, WorkflowNodeData, WorkflowNodeLike } from '@/views/space/workflows/use-workflow-node-sidebar'
 
-type FlowEdge = Record<string, unknown> & {
+export type FlowEdge = Record<string, unknown> & {
   source?: string
   target?: string
   sourceHandle?: string | null
   targetHandle?: string | null
 }
 
-type FlowNode = WorkflowNodeLike & {
+export type FlowNode = WorkflowNodeLike & {
   position: { x: number; y: number }
   dimensions?: { width?: number; height?: number }
 }
@@ -263,7 +263,7 @@ export const useWorkflowCanvasInteraction = (options: UseWorkflowCanvasInteracti
     zoomLevel.value = viewportTransform.zoom
   }
 
-  const handleZoomSelect = (value: string | number) => {
+  const handleZoomSelect = (value: string | number | Record<string, unknown> | undefined) => {
     zoomLevel.value = Number(value)
     instance.value?.zoomTo(Number(value))
   }

@@ -21,7 +21,7 @@ type FormInputField = {
   name: string
   type: string
   ref: string
-  content?: unknown
+  content?: string
 }
 
 type TemplateTransformNodeForm = {
@@ -68,9 +68,12 @@ const debounceAutoSave = debounce(() => {
   void onSubmit({ errors: undefined })
 }, 800)
 
+type RefOption = { label: string; value: string }
+type RefOptionGroup = { isGroup: true; label: string; options: RefOption[] }
+
 // 2.定义输入变量引用选项
-const inputRefOptions = computed(() => {
-  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
+const inputRefOptions = computed<RefOptionGroup[]>(() => {
+  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id) as RefOptionGroup[]
 })
 
 // 2.定义添加表单字段函数
@@ -158,7 +161,7 @@ watch(
         return {
           name: input.name, // 变量名
           type: input.value.type === 'literal' ? input.type : 'ref', // 数据类型(涵盖ref/string/int/float/boolean
-          content: input.value.type === 'literal' ? input.value.content : '', // 变量值内容
+          content: input.value.type === 'literal' ? String(input.value.content ?? '') : '', // 变量值内容
           ref: input.value.type === 'ref' && refExists ? ref : '', // 变量引用信息，存储引用节点id+引用变量名
         }
       }),
@@ -354,6 +357,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 #llm-node-info {
   .arco-select-option-content {
     @apply !text-xs;

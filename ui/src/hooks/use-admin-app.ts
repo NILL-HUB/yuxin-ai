@@ -7,7 +7,12 @@ import {
   regenerateAdminAppWebAppToken,
   updateAdminAppDraftConfig,
 } from '@/services/admin-apps'
-import type { AppVersion, UpdateDraftAppConfigRequest } from '@/models/app'
+import type {
+  AppVersion,
+  DraftAppConfigForm,
+  GetPublishedConfigResponse,
+  UpdateDraftAppConfigRequest,
+} from '@/models/app'
 import { getErrorMessage } from '@/utils/error'
 import { i18n } from '@/i18n'
 
@@ -17,7 +22,7 @@ const t = (key: string, params?: Record<string, unknown>) =>
 export const useGetAdminPublishedConfig = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const published_config = ref<Record<string, any>>({})
+  const published_config = ref<GetPublishedConfigResponse['data']>({} as GetPublishedConfigResponse['data'])
 
   // 2.定义加载数据函数
   const loadPublishedConfig = async (appId: string) => {
@@ -56,7 +61,7 @@ export const useRegenerateAdminWebAppToken = () => {
 export const useGetAdminDraftAppConfig = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const draftAppConfigForm = ref<Record<string, any>>({})
+  const draftAppConfigForm = ref<DraftAppConfigForm>({} as DraftAppConfigForm)
 
   // 2.定义加载数据函数
   const loadDraftAppConfig = async (appId: string) => {
@@ -88,7 +93,7 @@ export const useGetAdminDraftAppConfig = () => {
         workflow_detail: data.workflow_detail ?? null,
         speech_to_text: data.speech_to_text,
         text_to_speech: data.text_to_speech,
-      }
+      } as DraftAppConfigForm
     } finally {
       loading.value = false
     }

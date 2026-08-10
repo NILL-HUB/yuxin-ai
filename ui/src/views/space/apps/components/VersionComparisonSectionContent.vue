@@ -12,8 +12,21 @@ const props = defineProps<{
 }>()
 const { t } = useI18n()
 
-const isPlainObject = (value: unknown): value is Record<string, any> => {
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+// 版本对比列表项：覆盖渲染与对比所需的动态字段结构
+type VersionListItem = {
+  id?: string
+  name?: string
+  type?: string
+  icon?: string
+  provider_id?: string
+  tool_id?: string
+  description?: string
+  provider?: { id?: string; name?: string; label?: string; icon?: string; description?: string }
+  tool?: { id?: string; name?: string; label?: string; description?: string }
 }
 
 const renderText = (value: unknown) => {
@@ -188,12 +201,12 @@ const buildTextDiffSegments = (value: unknown, compareValue: unknown) => {
   return segments.length ? segments : [{ text: currentText, changed: true }]
 }
 
-const listValue = computed<any[]>(() => (Array.isArray(props.value) ? props.value : []))
-const compareListValue = computed<any[]>(() => (Array.isArray(props.compareValue) ? props.compareValue : []))
-const objectValue = computed<Record<string, any>>(() =>
+const listValue = computed<VersionListItem[]>(() => (Array.isArray(props.value) ? props.value as VersionListItem[] : []))
+const compareListValue = computed<VersionListItem[]>(() => (Array.isArray(props.compareValue) ? props.compareValue as VersionListItem[] : []))
+const objectValue = computed<Record<string, unknown>>(() =>
   isPlainObject(props.value) ? props.value : {},
 )
-const compareObjectValue = computed<Record<string, any>>(() =>
+const compareObjectValue = computed<Record<string, unknown>>(() =>
   isPlainObject(props.compareValue) ? props.compareValue : {},
 )
 
@@ -222,11 +235,9 @@ const parameterEntries = computed(() => {
   }))
 })
 
-const promptText = computed(() => renderText(props.value))
 const dialogRoundValue = computed(() => renderText(props.value))
 const dialogRoundChanged = computed(() => isDifferent(props.value, props.compareValue))
 const promptSegments = computed(() => buildTextDiffSegments(props.value, props.compareValue))
-const openingStatement = computed(() => renderText(objectValue.value.opening_statement))
 const openingQuestions = computed(() =>
   Array.isArray(objectValue.value.opening_questions) ? objectValue.value.opening_questions : [],
 )
@@ -267,10 +278,16 @@ const retrievalItems = computed(() => [
 ])
 
 const experienceItems = computed(() => {
-  const longTermMemoryEnabled = !!objectValue.value.long_term_memory?.enable
-  const speechToTextEnabled = !!objectValue.value.speech_to_text?.enable
-  const textToSpeechEnabled = !!objectValue.value.text_to_speech?.enable
-  const suggestedAfterAnswerEnabled = !!objectValue.value.suggested_after_answer?.enable
+  const longTermMemory = isPlainObject(objectValue.value.long_term_memory) ? objectValue.value.long_term_memory : {}
+  const speechToText = isPlainObject(objectValue.value.speech_to_text) ? objectValue.value.speech_to_text : {}
+  const textToSpeech = isPlainObject(objectValue.value.text_to_speech) ? objectValue.value.text_to_speech : {}
+  const suggestedAfterAnswer = isPlainObject(objectValue.value.suggested_after_answer)
+    ? objectValue.value.suggested_after_answer
+    : {}
+  const longTermMemoryEnabled = longTermMemory.enable === true
+  const speechToTextEnabled = speechToText.enable === true
+  const textToSpeechEnabled = textToSpeech.enable === true
+  const suggestedAfterAnswerEnabled = suggestedAfterAnswer.enable === true
 
   return [
     {
@@ -303,8 +320,8 @@ const experienceItems = computed(() => {
       enabled: textToSpeechEnabled,
       detail: textToSpeechEnabled
         ? t('appStudio.versions.sectionContent.textToSpeechEnabled', {
-            voice: renderText(objectValue.value.text_to_speech?.voice),
-            mode: objectValue.value.text_to_speech?.auto_play
+            voice: renderText(textToSpeech.voice),
+            mode: textToSpeech.auto_play
               ? t('appStudio.versions.sectionContent.autoPlay')
               : t('appStudio.versions.sectionContent.manualPlay'),
           })
@@ -337,8 +354,15 @@ const compareReviewKeywords = computed(() =>
 )
 
 const reviewConfigEnabled = computed(() => !!objectValue.value.enable)
-const inputReviewEnabled = computed(() => !!objectValue.value.inputs_config?.enable)
-const outputReviewEnabled = computed(() => !!objectValue.value.outputs_config?.enable)
+const inputsConfig = computed<Record<string, unknown>>(() =>
+  isPlainObject(objectValue.value.inputs_config) ? objectValue.value.inputs_config : {},
+)
+const outputsConfig = computed<Record<string, unknown>>(() =>
+  isPlainObject(objectValue.value.outputs_config) ? objectValue.value.outputs_config : {},
+)
+const inputReviewEnabled = computed(() => inputsConfig.value.enable === true)
+const outputReviewEnabled = computed(() => outputsConfig.value.enable === true)
+const inputReviewPresetResponse = computed(() => renderText(inputsConfig.value.preset_response))
 const reviewConfigChanged = computed(() => isDifferent(objectValue.value.enable, compareObjectValue.value.enable))
 const inputReviewChanged = computed(() =>
   isDifferent(objectValue.value.inputs_config, compareObjectValue.value.inputs_config),
@@ -347,7 +371,7 @@ const outputReviewChanged = computed(() =>
   isDifferent(objectValue.value.outputs_config, compareObjectValue.value.outputs_config),
 )
 
-const getListItemIdentifier = (item: Record<string, any>) => {
+const getListItemIdentifier = (item: VersionListItem) => {
   if (props.sectionKey === 'tools') {
     return [
       item.type || '',
@@ -359,7 +383,7 @@ const getListItemIdentifier = (item: Record<string, any>) => {
   return item.id || item.name || JSON.stringify(item)
 }
 
-const getListItemStatus = (item: Record<string, any>) => {
+const getListItemStatus = (item: VersionListItem) => {
   const compareIds = new Set(compareListValue.value.map((compareItem) => getListItemIdentifier(compareItem)))
   const existsInCompare = compareIds.has(getListItemIdentifier(item))
 
@@ -378,7 +402,7 @@ const getTextListItemStatus = (item: string, compareItems: string[]) => {
   return props.side === 'right' ? ('added' as const) : ('removed' as const)
 }
 
-const getListItemName = (item: Record<string, any>, fallback: string) => {
+const getListItemName = (item: VersionListItem, fallback: string) => {
   if (props.sectionKey === 'tools') {
     const providerLabel =
       item.provider?.label
@@ -392,7 +416,7 @@ const getListItemName = (item: Record<string, any>, fallback: string) => {
   return item.name || fallback
 }
 
-const getListItemDescription = (item: Record<string, any>) => {
+const getListItemDescription = (item: VersionListItem) => {
   if (props.sectionKey === 'tools') {
     return item.tool?.description || item.provider?.description || t('appStudio.versions.sectionContent.noToolDescription')
   }
@@ -400,7 +424,7 @@ const getListItemDescription = (item: Record<string, any>) => {
   return item.description || t('appStudio.versions.sectionContent.noDescription')
 }
 
-const getListItemIcon = (item: Record<string, any>) => {
+const getListItemIcon = (item: VersionListItem) => {
   if (props.sectionKey === 'tools') {
     return normalizeIconUrl(item.provider?.icon || '')
   }
@@ -642,7 +666,7 @@ const getListItemIcon = (item: Record<string, any>) => {
                 {{ renderEnableLabel(inputReviewEnabled) }}
               </div>
               <div class="mt-1 text-xs text-gray-500">
-                {{ t('appStudio.versions.sectionContent.violationReply', { value: renderText(objectValue.inputs_config?.preset_response) }) }}
+                {{ t('appStudio.versions.sectionContent.violationReply', { value: inputReviewPresetResponse }) }}
               </div>
             </div>
             <div :class="outputReviewChanged ? 'rounded-xl border border-blue-200 bg-blue-50/70 p-3' : 'rounded-xl border border-gray-200 bg-gray-50 p-3'">

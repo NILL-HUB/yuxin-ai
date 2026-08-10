@@ -73,14 +73,14 @@ const buttonStub = {
 const tableStub = defineComponent({
   props: ['data', 'columns', 'loading', 'pagination', 'bordered', 'rowKey', 'size'],
   setup(props, { slots }) {
-    const cellSlots = ref<Array<(props: { record: any }) => any>>([])
+    const cellSlots = ref<Array<(props: { record: Record<string, unknown> }) => unknown>>([])
     provide('cellSlots', cellSlots)
     return () => h('div', { class: 'a-table' }, [
       h('div', { style: 'display:none' }, slots.columns?.()),
-      ...(props.data || []).map((row: any) =>
+      ...(props.data || []).map((row: Record<string, unknown>) =>
         h('div', { class: 'table-row', 'data-id': row.id },
           cellSlots.value.map(cellSlot =>
-            h('div', { class: 'table-cell' }, cellSlot({ record: row }))
+            h('div', { class: 'table-cell' }, cellSlot({ record: row }) as unknown as import('vue').VNode)
           )
         )
       )
@@ -91,10 +91,10 @@ const tableStub = defineComponent({
 const tableColumnStub = defineComponent({
   props: ['title', 'width'],
   setup(props, { slots }) {
-    const cellSlots = inject<import('vue').Ref<Array<(props: { record: any }) => any>>>('cellSlots', ref([]))
+    const cellSlots = inject<import('vue').Ref<Array<(props: { record: Record<string, unknown> }) => unknown>>>('cellSlots', ref([]))
     onMounted(() => {
       if (slots.cell) {
-        cellSlots.value.push(slots.cell as (props: { record: any }) => any)
+        cellSlots.value.push(slots.cell as (props: { record: Record<string, unknown> }) => unknown)
       }
     })
     return () => null

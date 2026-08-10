@@ -28,7 +28,7 @@ const { handleUpdateDraftAppConfig } = useUpdateDraftAppConfig()
       <template #extra>
         <a-dropdown
           @select="
-            async (value: string | number | boolean) => {
+            async (value: string | number | Record<string, any> | undefined) => {
               if (Boolean(value) !== props.long_term_memory?.enable) {
                 emits('update:long_term_memory', { enable: Boolean(value) })
                 await handleUpdateDraftAppConfig(props.app_id, {

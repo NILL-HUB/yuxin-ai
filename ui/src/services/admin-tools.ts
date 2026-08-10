@@ -65,10 +65,15 @@ export const updateAdminApiTool = async (
 }
 
 /**
- * 删除后台 API 工具 Provider。
+ * 删除后台 API 工具 Provider（进入回收站，可指定留存天数）。
  */
-export const deleteAdminApiTool = async (id: string): Promise<Record<string, never>> => {
-  const response = await del<BaseResponse<Record<string, never>>>(`/admin/api-tools/${id}`)
+export const deleteAdminApiTool = async (
+  id: string,
+  retentionDays?: number,
+): Promise<Record<string, never>> => {
+  const response = await del<BaseResponse<Record<string, never>>>(`/admin/api-tools/${id}`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
   return response.data
 }
 
@@ -85,7 +90,7 @@ export const generateAdminIconPreview = (name: string, description: string) => {
  * 校验后台 OpenAPI Schema 数据。
  */
 export const validateAdminOpenAPISchema = (openapi_schema: string) => {
-  return post<BaseResponse<any>>('/admin/api-tools/validate-openapi-schema', {
+  return post<BaseResponse<Record<string, unknown>>>('/admin/api-tools/validate-openapi-schema', {
     body: { openapi_schema },
   })
 }

@@ -31,6 +31,8 @@ const {
 const loading = computed(() => runLoading.value || nodesLoading.value)
 const expandedNodeIds = ref<Set<string>>(new Set())
 
+type BadgeStatus = 'success' | 'processing' | 'warning' | 'normal' | 'danger'
+
 // 3.状态徽标颜色映射
 const statusColorMap: Record<WorkflowRunStatus, string> = {
   running: 'blue',
@@ -74,7 +76,7 @@ const hasError = computed(() => {
 })
 
 // 5.工具函数
-const formatJson = (obj: any): string => {
+const formatJson = (obj: unknown): string => {
   if (obj === undefined || obj === null) return ''
   try {
     return JSON.stringify(obj, null, 2)
@@ -150,7 +152,7 @@ watch(
           <!-- 状态徽标 -->
           <a-badge
             v-if="run"
-            :status="statusColorMap[run.status] || 'gray'"
+            :status="(statusColorMap[run.status] || 'gray') as BadgeStatus"
             :text="t(`appStudio.debug.executionHistory.status.${run.status}`)"
           />
           <span class="text-sm text-gray-600">
@@ -239,7 +241,7 @@ watch(
             </div>
             <div class="flex items-center gap-3">
               <a-badge
-                :status="nodeStatusColorMap[node.status] || 'gray'"
+                :status="(nodeStatusColorMap[node.status] || 'gray') as BadgeStatus"
                 :text="t(`appStudio.debug.executionHistory.status.${node.status}`)"
               />
               <span class="text-xs text-gray-500">

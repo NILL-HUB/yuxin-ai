@@ -5,6 +5,7 @@ import BillingUsageIndicator from '@/components/BillingUsageIndicator.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
 import DeepThinkingProposalCard from '@/components/DeepThinkingProposalCard.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
+import ScheduleSuggestionCard, { type ScheduleSuggestion } from '@/components/ScheduleSuggestionCard.vue'
 import RoutingDecisionCard from '@/components/RoutingDecisionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
@@ -24,7 +25,7 @@ import {
 } from '@/hooks/use-assistant-agent'
 import { useAudioToText, useAudioPlayer } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
-import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import { postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import { createShowcaseCase } from '@/services/showcase'
 import { getErrorMessage } from '@/utils/error'
 import { useAccountStore } from '@/stores/account'
@@ -75,7 +76,7 @@ import type { HomeIntentData } from '@/models/home'
 import type { BillingUsageEvent } from '@/models/billing-metering'
 import type { RoutingDecision } from '@/models/orchestration'
 import { calculateScrollDuration, smoothScroll } from '@/utils/scrollAnimation'
-import { OPEN_AGENT_ASSISTANT_APP } from '@/config/openagent'
+import { YUXIN_AI_ASSISTANT_APP } from '@/config/brand'
 
 // 定义组件名称以支持 keep-alive
 defineOptions({
@@ -124,6 +125,16 @@ type RecorderLike = {
   getWAVBlob: () => Blob
 }
 let recorder: RecorderLike | null = null // RecordRTC实例
+
+// 个性化介绍流式事件数据
+interface IntroductionStreamData {
+  content?: string
+  is_first_time?: boolean
+  suggested_questions_message_id?: string
+  message_id?: string
+  latency?: number
+  total_token_count?: number
+}
 const task_id = ref('')
 const message_id = ref('')
 const scroller = ref<HTMLElement | null>(null)
@@ -140,6 +151,7 @@ const isStreamingResponse = ref(false)
 const billingEvents = ref<BillingUsageEvent[]>([])
 const deepThinkingProposal = ref<DeepThinkingProposal | null>(null)
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
+const scheduleSuggestion = ref<ScheduleSuggestion | null>(null)
 const routingDecision = ref<RoutingDecision | null>(null)
 const orchestratorReject = ref<{ reason: string; message: string } | null>(null)
 const lastHumanQuery = ref('')
@@ -629,7 +641,7 @@ const loadAssistantIntroduction = async () => {
     await handleGenerateAssistantAgentIntroduction((event_response) => {
       if (controller.signal.aborted || homeIntentApplied.value) return
       const event = event_response?.event
-      const data = event_response?.data || {}
+      const data = (event_response?.data || {}) as IntroductionStreamData
 
       if (event === 'intro_chunk') {
         introductionBuffer += data?.content || ''
@@ -1104,6 +1116,7 @@ const handleSubmit = async () => {
   shouldAutoScrollToBottom.value = true
   billingEvents.value = []
   toolConfirmationPrompt.value = null
+  scheduleSuggestion.value = null
   routingDecision.value = null
   orchestratorReject.value = null
   stopAudioStream()
@@ -1164,6 +1177,10 @@ const handleSubmit = async () => {
 
         const streamResult = applyChatStreamEvent(currentMessage, event_response, streamState)
         streamState = streamResult.state
+
+        if (event_response?.event === QueueEvent.scheduleSuggestion) {
+          scheduleSuggestion.value = event_response.data as ScheduleSuggestion
+        }
 
         if (message_id.value === '' && streamResult.state.message_id) {
           task_id.value = streamResult.state.task_id
@@ -1253,6 +1270,10 @@ const handleCancelTool = async (id: string) => {
     // 取消失败时不阻塞用户体验
   }
   toolConfirmationPrompt.value = null
+}
+
+const handleDismissScheduleSuggestion = () => {
+  scheduleSuggestion.value = null
 }
 
 const handleClearConversation = async () => {
@@ -1545,16 +1566,18 @@ onUnmounted(() => {
                 :query="item.query"
                 :image_urls="item.image_urls"
                 :account="accountStore.account"
+                :invoke_from="item.invoke_from"
               />
             </div>
             <ai-message
               :message_id="item.id"
+              :invoke_from="item.invoke_from"
               :enable_text_to_speech="true"
               :agent_thoughts="item.agent_thoughts"
               :answer="item.answer"
               :answer_parts="item.answer_parts || []"
               :artifacts="item.artifacts || []"
-              :app="OPEN_AGENT_ASSISTANT_APP"
+              :app="YUXIN_AI_ASSISTANT_APP"
               :suggested_questions="
                 item.suggested_questions && item.suggested_questions.length > 0
                   ? item.suggested_questions
@@ -1567,7 +1590,8 @@ onUnmounted(() => {
               :total_token_count="item.total_token_count"
               message_class="glass-message-bubble bg-white/40 backdrop-blur-md border border-white/60 text-gray-700 px-4 py-3 rounded-2xl break-all w-fit max-w-full shadow-lg shadow-blue-500/5"
               agent_thought_variant="inline"
-              :agent_thought_default_visible="false"
+              :agent_thought_default_visible="item.id === message_id && isStreamingResponse"
+              :agent_thought_follow_latest="item.id === message_id && isStreamingResponse"
               @select-suggested-question="handleSubmitQuestion"
             />
             <div
@@ -1695,7 +1719,7 @@ onUnmounted(() => {
             :enable_text_to_speech="true"
             :agent_thoughts="[]"
             :answer="assistantIntroduction"
-            :app="OPEN_AGENT_ASSISTANT_APP"
+            :app="YUXIN_AI_ASSISTANT_APP"
             :loading="
               generateAssistantAgentIntroductionLoading && assistantIntroduction.trim() === ''
             "
@@ -1738,6 +1762,15 @@ onUnmounted(() => {
             :prompt="toolConfirmationPrompt"
             @confirm="handleConfirmTool"
             @cancel="handleCancelTool"
+          />
+        </div>
+        <div
+          v-if="scheduleSuggestion"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
+        >
+          <ScheduleSuggestionCard
+            :suggestion="scheduleSuggestion"
+            @dismiss="handleDismissScheduleSuggestion"
           />
         </div>
         <div
@@ -1787,7 +1820,7 @@ onUnmounted(() => {
             class="flex items-center justify-center gap-2 text-xs text-[#d0d7e0] pb-2 px-2 min-w-0"
           >
             <span class="whitespace-nowrap">{{ t('home.messages.disclaimer') }}</span>
-            <span class="whitespace-nowrap">© 2026 OpenAgent</span>
+            <span class="whitespace-nowrap">© 2026 钰心AI</span>
             <a
               href="https://beian.miit.gov.cn"
               target="_blank"
@@ -1810,7 +1843,7 @@ onUnmounted(() => {
               <span>{{ t('home.footer.publicSecurityLabel') }}45010202000868号</span>
             </a>
             <a
-              href="https://github.com/Haohao-end/openagent"
+              href="https://github.com/NILL-HUB/yuxin-ai"
               target="_blank"
               rel="noopener noreferrer"
               class="inline-flex items-center justify-center leading-none hover:opacity-80 transition-opacity"
@@ -1843,7 +1876,7 @@ onUnmounted(() => {
       <p class="text-sm text-gray-500 mb-4">
         您的对话将被公开展示在案例展示页，帮助其他用户了解平台能力。
       </p>
-      <a-form layout="vertical">
+      <a-form layout="vertical" :model="{}">
         <a-form-item label="案例标题" required>
           <a-input
             v-model="showcaseForm.title"

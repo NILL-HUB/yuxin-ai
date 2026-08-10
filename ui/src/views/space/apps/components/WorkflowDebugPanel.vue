@@ -10,20 +10,20 @@ type NodeExecState = {
   node_type: string
   title: string
   status: 'running' | 'succeeded' | 'failed'
-  inputs?: Record<string, any>
-  outputs?: Record<string, any>
+  inputs?: Record<string, unknown>
+  outputs?: Record<string, unknown>
   elapsed_time?: number
   error?: string
 }
 
 type WorkflowExecState = {
   status: 'idle' | 'running' | 'succeeded' | 'failed'
-  inputs?: Record<string, any>
+  inputs?: Record<string, unknown>
   node_count?: number
   nodes: NodeExecState[]
   total_elapsed?: number
   error?: string
-  outputs?: Record<string, any>
+  outputs?: Record<string, unknown>
 }
 
 // 2.组件 props 与 emits
@@ -42,6 +42,8 @@ const workflowState = ref<WorkflowExecState>({
 })
 const inputsText = ref('{}')
 const expandedNodeIds = ref<Set<string>>(new Set())
+
+type BadgeStatus = 'success' | 'processing' | 'warning' | 'normal' | 'danger'
 
 // 4.状态徽标颜色映射
 const statusColorMap: Record<string, string> = {
@@ -83,7 +85,7 @@ const hasOutputs = computed(() => {
 })
 
 // 6.事件 reducer：处理 GraphEngine 的 5 种事件
-const reduceEvent = (event_response: { event: string; data: any }) => {
+const reduceEvent = (event_response: { event: string; data: Record<string, unknown> }) => {
   const { event, data } = event_response
   const payload = data || {}
 
@@ -91,8 +93,8 @@ const reduceEvent = (event_response: { event: string; data: any }) => {
     case 'workflow_started': {
       workflowState.value = {
         status: 'running',
-        inputs: payload.inputs,
-        node_count: payload.node_count,
+        inputs: payload.inputs as Record<string, unknown> | undefined,
+        node_count: payload.node_count as number | undefined,
         nodes: [],
         total_elapsed: undefined,
         error: undefined,
@@ -103,11 +105,11 @@ const reduceEvent = (event_response: { event: string; data: any }) => {
     }
     case 'node_started': {
       const node: NodeExecState = {
-        node_id: payload.node_id,
-        node_type: payload.node_type,
-        title: payload.title,
+        node_id: payload.node_id as string,
+        node_type: payload.node_type as string,
+        title: payload.title as string,
         status: 'running',
-        inputs: payload.inputs,
+        inputs: payload.inputs as Record<string, unknown> | undefined,
       }
       workflowState.value.nodes.push(node)
       break
@@ -120,8 +122,8 @@ const reduceEvent = (event_response: { event: string; data: any }) => {
         workflowState.value.nodes[idx] = {
           ...workflowState.value.nodes[idx],
           status: 'succeeded',
-          outputs: payload.outputs,
-          elapsed_time: payload.elapsed_time,
+          outputs: payload.outputs as Record<string, unknown> | undefined,
+          elapsed_time: payload.elapsed_time as number | undefined,
           error: '',
         }
       }
@@ -135,9 +137,9 @@ const reduceEvent = (event_response: { event: string; data: any }) => {
         workflowState.value.nodes[idx] = {
           ...workflowState.value.nodes[idx],
           status: 'failed',
-          outputs: payload.outputs,
-          elapsed_time: payload.elapsed_time,
-          error: payload.error,
+          outputs: payload.outputs as Record<string, unknown> | undefined,
+          elapsed_time: payload.elapsed_time as number | undefined,
+          error: payload.error as string | undefined,
         }
       }
       break
@@ -146,11 +148,10 @@ const reduceEvent = (event_response: { event: string; data: any }) => {
       workflowState.value = {
         ...workflowState.value,
         status: payload.status === 'succeeded' ? 'succeeded' : 'failed',
-        error: payload.error,
-        outputs: payload.outputs,
+        error: payload.error as string | undefined,
+        outputs: payload.outputs as Record<string, unknown> | undefined,
         total_elapsed:
-          payload.total_elapsed ??
-          computeTotalElapsed(workflowState.value.nodes),
+          (payload.total_elapsed ?? computeTotalElapsed(workflowState.value.nodes)) as number | undefined,
       }
       break
     }
@@ -167,15 +168,15 @@ const computeTotalElapsed = (nodes: NodeExecState[]): number => {
 // 7.运行工作流
 const onRun = async () => {
   // 7.1 解析输入 JSON
-  let inputs: Record<string, any> = {}
+  let inputs: Record<string, unknown> = {}
   try {
     const parsed = JSON.parse(inputsText.value || '{}')
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
       Message.error(t('appStudio.debug.workflowDebug.invalidJson'))
       return
     }
-    inputs = parsed as Record<string, any>
-  } catch (e) {
+    inputs = parsed as Record<string, unknown>
+  } catch {
     Message.error(t('appStudio.debug.workflowDebug.invalidJson'))
     return
   }
@@ -213,7 +214,7 @@ const toggleNodeExpand = (node_id: string) => {
 
 const isNodeExpanded = (node_id: string) => expandedNodeIds.value.has(node_id)
 
-const formatJson = (obj: any): string => {
+const formatJson = (obj: unknown): string => {
   if (obj === undefined || obj === null) return ''
   try {
     return JSON.stringify(obj, null, 2)
@@ -305,7 +306,7 @@ watch(
     <!-- 状态徽标 + 总耗时 + 节点数 -->
     <div class="mt-4 flex items-center gap-4 border-t pt-4">
       <a-badge
-        :status="statusColorMap[workflowState.status] || 'gray'"
+        :status="(statusColorMap[workflowState.status] || 'gray') as BadgeStatus"
         :text="t(`appStudio.debug.workflowDebug.${workflowState.status}`)"
       />
       <div class="text-sm text-gray-600">
@@ -359,7 +360,7 @@ watch(
             </div>
             <div class="flex items-center gap-3">
               <a-badge
-                :status="nodeStatusColorMap[node.status] || 'gray'"
+                :status="(nodeStatusColorMap[node.status] || 'gray') as BadgeStatus"
                 :text="t(`appStudio.debug.workflowDebug.${node.status}`)"
               />
               <span class="text-xs text-gray-500">

@@ -26,12 +26,12 @@ const summary = ref<AdminRoutingLogSummary>({
 
 const feedbackTarget = ref<AdminRoutingLogRecord | null>(null)
 const feedbackForm = ref({
-  rating: 5,
-  accuracy: 5,
-  latency: 5,
-  cost: 5,
-  safety: 5,
-  completeness: 5,
+  rating: '5',
+  accuracy: '5',
+  latency: '5',
+  cost: '5',
+  safety: '5',
+  completeness: '5',
   comment: '',
 })
 
@@ -67,12 +67,12 @@ const loadRoutingLogs = async () => {
 const openFeedback = (log: AdminRoutingLogRecord) => {
   feedbackTarget.value = log
   feedbackForm.value = {
-    rating: 5,
-    accuracy: 5,
-    latency: 5,
-    cost: 5,
-    safety: 5,
-    completeness: 5,
+    rating: '5',
+    accuracy: '5',
+    latency: '5',
+    cost: '5',
+    safety: '5',
+    completeness: '5',
     comment: '',
   }
 }
@@ -82,13 +82,13 @@ const submitFeedback = async () => {
   try {
     await createAdminRoutingQualityFeedback({
       routing_log_id: feedbackTarget.value.id,
-      rating: feedbackForm.value.rating,
+      rating: Number(feedbackForm.value.rating),
       dimension_scores: {
-        accuracy: feedbackForm.value.accuracy,
-        latency: feedbackForm.value.latency,
-        cost: feedbackForm.value.cost,
-        safety: feedbackForm.value.safety,
-        completeness: feedbackForm.value.completeness,
+        accuracy: Number(feedbackForm.value.accuracy),
+        latency: Number(feedbackForm.value.latency),
+        cost: Number(feedbackForm.value.cost),
+        safety: Number(feedbackForm.value.safety),
+        completeness: Number(feedbackForm.value.completeness),
       },
       comment: feedbackForm.value.comment,
     })
@@ -169,6 +169,7 @@ onMounted(loadRoutingLogs)
             <th class="p-3">{{ t('admin.routingLogs.credits') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.latency') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.status') }}</th>
+            <th class="p-3">{{ t('admin.routingLogs.invokeFrom') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.fallbackReason') }}</th>
             <th class="p-3">{{ t('admin.routingLogs.feedback') }}</th>
           </tr>
@@ -197,6 +198,12 @@ onMounted(loadRoutingLogs)
             <td class="p-3">{{ log.cost_summary.total_credits || 0 }}</td>
             <td class="p-3">{{ log.latency_ms }} ms</td>
             <td class="p-3">{{ log.status }}</td>
+            <td class="p-3">
+              <a-tag v-if="log.invoke_from === 'schedule'" size="small" color="orange">{{ t('admin.routingLogs.sourceSchedule') }}</a-tag>
+              <a-tag v-else-if="log.invoke_from === 'assistant_agent'" size="small" color="arcoblue">{{ t('admin.routingLogs.sourceAssistantAgent') }}</a-tag>
+              <a-tag v-else-if="log.invoke_from === 'debugger'" size="small" color="gray">{{ t('admin.routingLogs.sourceDebugger') }}</a-tag>
+              <span v-else class="text-gray-400">—</span>
+            </td>
             <td class="p-3">{{ log.fallback_reason || '-' }}</td>
             <td class="p-3">
               <a-button size="mini" @click="openFeedback(log)">

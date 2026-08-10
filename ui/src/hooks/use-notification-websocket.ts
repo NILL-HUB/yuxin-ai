@@ -10,7 +10,7 @@ type SubscriptionAck = {
   error?: string
 }
 
-type NotificationSocketOptions<TNotification> = {
+type NotificationSocketOptions = {
   connectLogMessage: string
   notificationEvent: string
   receiveLogMessage: string
@@ -24,7 +24,7 @@ type NotificationHandler<TNotification> = (notification: TNotification) => void
 const SUBSCRIBE_ACK_TIMEOUT_MS = 5000
 
 export const createNotificationWebSocket = <TNotification>(
-  options: NotificationSocketOptions<TNotification>,
+  options: NotificationSocketOptions,
 ) => {
   return () => {
     const credentialStore = useCredentialStore()
@@ -197,7 +197,6 @@ export const createNotificationWebSocket = <TNotification>(
     })
 
     return {
-      socket,
       isConnected,
       isEnabled,
       isReady: computed(() => isEnabled.value && isConnected.value && Boolean(subscribedChannel.value)),

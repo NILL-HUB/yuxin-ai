@@ -5,7 +5,53 @@ import { QueueEvent } from '@/config'
 import { isImageArtifact, type ChatArtifact } from '@/views/shared/chat-output'
 import ChatImageGallery from './ChatImageGallery.vue'
 
-type TimelineThought = Record<string, any>
+type TimelineThought = Record<string, unknown>
+
+type TimelineTodo = {
+  content: string
+  title: string
+  status: string
+  position: number
+  [key: string]: unknown
+}
+
+type TimelineArtifact = {
+  name?: string
+  url?: string
+  path?: string
+  extension?: string
+  size?: number
+  mime_type?: string
+  [key: string]: unknown
+}
+
+type TimelineItem = {
+  id: string
+  renderKey: string
+  event: unknown
+  position: number
+  title: string
+  detail: string
+  technicalDetail: string
+  stepType: string
+  stepTypeLabel: string
+  status: string
+  tool: string
+  latency: number
+  artifact: TimelineArtifact | null
+  preview: string
+  previewKind: string
+  resultPreview: string
+  resultKind: string
+  errorKind: string
+  recovered: boolean
+  recoverable: boolean
+  outputEmpty: boolean
+  stateLabel: string
+  todos: TimelineTodo[]
+  showTodos: boolean
+  todoCount: number
+}
 
 const props = defineProps({
   thoughts: {
@@ -64,14 +110,14 @@ const normalizeTodoStatus = (status: unknown) => {
   return aliases[normalized] || 'pending'
 }
 
-const normalizeTodoItems = (todos: unknown): Array<Record<string, any>> => {
+const normalizeTodoItems = (todos: unknown): TimelineTodo[] => {
   if (!Array.isArray(todos))
     return []
 
   return todos
     .map((todo, index) => {
       if (todo && typeof todo === 'object') {
-        const record = todo as Record<string, any>
+        const record = todo as Record<string, unknown>
         const content = String(
           record.content ?? record.text ?? record.description ?? record.title ?? record.name ?? '',
         ).trim()
@@ -92,7 +138,7 @@ const normalizeTodoItems = (todos: unknown): Array<Record<string, any>> => {
       return {
         content: text,
         title: text,
-        status: 'pending',
+        status: 'pending' as string,
         position: index,
       }
     })
@@ -127,11 +173,11 @@ const getStateLabel = (status: string, errorKind: string, recovered: boolean, re
   return ''
 }
 
-const timelineItems = computed(() => {
+const timelineItems = computed<TimelineItem[]>(() => {
   return props.thoughts.map((thought, index) => {
-    const toolInput = (thought.tool_input || {}) as Record<string, any>
-    const timeline = (toolInput.timeline || {}) as Record<string, any>
-    const artifact = (toolInput.artifact || null) as Record<string, any> | null
+    const toolInput = (thought.tool_input || {}) as Record<string, unknown>
+    const timeline = (toolInput.timeline || {}) as Record<string, unknown>
+    const artifact = (toolInput.artifact || null) as TimelineArtifact | null
     const todos = normalizeTodoItems(timeline.todos || toolInput.todos || [])
     const renderKey = String(thought.id || `step-${index}`)
     const tool = String(thought.tool || '')
@@ -168,6 +214,9 @@ const timelineItems = computed(() => {
         recoverable: false,
         outputEmpty: false,
         stateLabel: '',
+        todos: [],
+        showTodos: false,
+        todoCount: 0,
       }
     }
 

@@ -72,7 +72,7 @@ const buttonStub = {
     '<button type="button" :disabled="disabled || loading" @click="$emit(\'click\')"><slot /></button>',
 }
 
-const renderView = async (graphData: any = null) => {
+const renderView = async (graphData: unknown = null) => {
   mocks.getMemoryGraph.mockResolvedValue(
     graphData || {
       user_id: 'test-user-id',

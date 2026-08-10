@@ -20,7 +20,7 @@ export type ConversationVariable = {
   conversation_id: string
   name: string
   value_type: ConversationVariableValueType
-  value: any
+  value: unknown
   updated_at: string | null
   created_at: string | null
 }
@@ -28,13 +28,13 @@ export type ConversationVariable = {
 // 设置会话变量请求
 export type SetVariableReq = {
   name: string
-  value: any
+  value: unknown
   value_type: ConversationVariableRequestValueType
 }
 
 // 批量设置会话变量请求
 export type BatchSetVariablesReq = {
-  variables: Record<string, any>
+  variables: Record<string, unknown>
 }
 
 // 获取会话变量列表响应

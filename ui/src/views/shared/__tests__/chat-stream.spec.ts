@@ -225,7 +225,7 @@ describe('chat-stream', () => {
     expect(result.didUpdate).toBe(true)
     expect(message.agent_thoughts).toHaveLength(1)
     expect(message.agent_thoughts[0].event).toBe(QueueEvent.deepArtifactCreated)
-    expect((message.agent_thoughts[0].tool_input as any).artifact.name).toBe('trip-plan.docx')
+    expect((message.agent_thoughts[0].tool_input as { artifact: { name: string } }).artifact.name).toBe('trip-plan.docx')
     expect(message.artifacts).toEqual([
       {
         name: 'trip-plan.docx',

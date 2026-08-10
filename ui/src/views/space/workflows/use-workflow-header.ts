@@ -41,7 +41,7 @@ export const useWorkflowHeader = (options: UseWorkflowHeaderOptions) => {
 
   const headerBackRoute = computed<RouteLocationRaw>(() => {
     return {
-      name: options.isPreviewMode.value ? 'store-workflows-list' : 'space-workflows-list',
+      name: options.isPreviewMode.value ? 'store-workflows-list' : 'admin-workflows',
     }
   })
 
@@ -78,8 +78,7 @@ export const useWorkflowHeader = (options: UseWorkflowHeaderOptions) => {
       const res = await forkPublicWorkflow(currentWorkflowId)
       Message.success(t('appStudio.shell.addToMySpaceSuccess', { name: res.data.name }))
       await options.router.push({
-        name: 'space-workflows-detail',
-        params: { workflow_id: res.data.id },
+        name: 'admin-workflows',
       })
     } catch (error: unknown) {
       Message.error(getErrorMessage(error, t('appStudio.shell.addToMySpaceFailed')))

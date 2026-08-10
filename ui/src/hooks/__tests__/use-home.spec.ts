@@ -1,4 +1,3 @@
-import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useGetHomeIntent } from '@/hooks/use-home'

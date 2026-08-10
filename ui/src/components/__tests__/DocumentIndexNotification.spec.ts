@@ -1,15 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
+import type { ComponentPublicInstance } from 'vue'
 import { markNotificationAsRead } from '@/services/notification'
 import DocumentIndexNotification from '../DocumentIndexNotification.vue'
 import type { DocumentIndexNotification as DocumentNotificationType } from '@/models/notification'
+
+type DocumentNotificationVm = {
+  notifications: DocumentNotificationType[]
+  addNotification: (notification: DocumentNotificationType) => void
+  removeNotification: (notificationId: string) => void
+}
 
 vi.mock('@/services/notification', () => ({
   markNotificationAsRead: vi.fn().mockResolvedValue(undefined),
 }))
 
 describe('DocumentIndexNotification.vue', () => {
-  let wrapper: any
+  let wrapper: VueWrapper<ComponentPublicInstance & DocumentNotificationVm>
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -19,7 +26,7 @@ describe('DocumentIndexNotification.vue', () => {
           'icon-close': true,
         },
       },
-    })
+    }) as unknown as VueWrapper<ComponentPublicInstance & DocumentNotificationVm>
   })
 
   it('should render empty notification list initially', () => {

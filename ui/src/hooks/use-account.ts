@@ -13,10 +13,14 @@ import {
   unbindOAuth,
 } from '@/services/account'
 import { Message } from '@arco-design/web-vue'
+import type {
+  GetAccountSessionsResponse,
+  GetCurrentUserResponse,
+} from '@/models/account'
 export const useGetCurrentUser = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const current_user = ref<Record<string, any>>({})
+  const current_user = ref<GetCurrentUserResponse['data']>({} as GetCurrentUserResponse['data'])
 
   // 2.定义加载数据处理器
   const loadCurrentUser = async () => {
@@ -119,11 +123,7 @@ export const useUpdatePassword = () => {
 
 export const useGetAccountSessions = () => {
   const loading = ref(false)
-  const session_state = ref<{
-    session_capable: boolean
-    current_session_id: string | null
-    sessions: Array<Record<string, any>>
-  }>({
+  const session_state = ref<GetAccountSessionsResponse['data']>({
     session_capable: false,
     current_session_id: null,
     sessions: [],
@@ -145,7 +145,7 @@ export const useGetAccountSessions = () => {
 export const useGetAccountLoginHistory = () => {
   const loading = ref(false)
   const history_state = ref<{
-    history: Array<Record<string, any>>
+    history: Array<Record<string, unknown>>
     total: number
     current_page: number
     page_size: number

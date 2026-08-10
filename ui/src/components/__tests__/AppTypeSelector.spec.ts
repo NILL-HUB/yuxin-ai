@@ -5,7 +5,7 @@ import AppTypeSelector from '@/components/AppTypeSelector.vue'
 import { APP_TYPE_OPTIONS } from '@/models/app'
 
 // 渲染组件的辅助函数：可指定语言和 props
-const mountSelector = (props: Record<string, any> = {}, locale: 'zh-CN' | 'en-US' = 'zh-CN') => {
+const mountSelector = (props: Record<string, unknown> = {}, locale: 'zh-CN' | 'en-US' = 'zh-CN') => {
   return mount(AppTypeSelector, {
     props,
     global: {

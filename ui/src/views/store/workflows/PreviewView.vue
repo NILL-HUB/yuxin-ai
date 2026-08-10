@@ -109,11 +109,7 @@ const workflow = ref<PreviewWorkflow | null>(null)
 const workflowForHeader = computed<Record<string, unknown>>(() => {
   return workflow.value ?? {}
 })
-const {
-  forkLoading,
-  headerBackRoute,
-  handleAddToMySpace,
-} = useWorkflowHeader({
+const { headerBackRoute } = useWorkflowHeader({
   isPreviewMode,
   workflowId,
   workflow: workflowForHeader,
@@ -375,19 +371,6 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      <!-- 右侧操作按钮 -->
-      <div class="">
-        <a-button
-          :loading="forkLoading"
-          type="primary"
-          @click="handleAddToMySpace"
-        >
-          <template #icon>
-            <icon-plus />
-          </template>
-          {{ t('store.workflows.addToMySpace') }}
-        </a-button>
-      </div>
     </div>
     <!-- 中间编排画布 -->
     <div class="flex-1">
@@ -423,7 +406,7 @@ onMounted(async () => {
                 <a-dropdown
                   trigger="hover"
                   @select="
-                    (value: string | number) => {
+                    (value: string | number | Record<string, any> | undefined) => {
                       zoomLevel = Number(value)
                       instance?.zoomTo(Number(value))
                     }
@@ -524,6 +507,7 @@ onMounted(async () => {
 </template>
 
 <style>
+@reference "tailwindcss";
 .selected {
   .vue-flow__edge-path {
     @apply !stroke-blue-700;

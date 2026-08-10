@@ -77,7 +77,7 @@ const handleSubmit = async () => {
 
   try {
     const response = await codeAssistantChat(question, (eventResponse) => {
-      const content = String(eventResponse?.data?.content ?? '')
+      const content = String((eventResponse?.data as { content?: string } | undefined)?.content ?? '')
       if (!content) return
       aiResponse.value += content
     })
@@ -135,7 +135,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
         <div class="flex flex-col gap-3 p-4">
           <div v-if="aiResponse || isLoading" class="max-h-[360px] overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-3">
             <div v-if="isLoading" class="mb-2 flex items-center gap-2 text-xs text-gray-500">
-              <a-spin size="14" />
+              <a-spin :size="14" />
               <span>{{ isEnglish ? 'AI is generating code...' : 'AI 正在生成代码...' }}</span>
             </div>
 
@@ -184,6 +184,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 </template>
 
 <style scoped>
+@reference "tailwindcss";
 :deep(.assistant-markdown) {
   @apply text-sm leading-relaxed;
 }

@@ -13,9 +13,9 @@ const mocks = vi.hoisted(() => ({
     query: {} as Record<string, unknown>,
     params: {} as Record<string, unknown>,
   },
-  recentConversations: [] as any[],
-  recentConversationsRef: undefined as any,
-  allRecentConversations: [] as any[],
+  recentConversations: [] as Record<string, unknown>[],
+  recentConversationsRef: undefined as { value: Record<string, unknown>[] } | undefined,
+  allRecentConversations: [] as Record<string, unknown>[],
   loadRecentConversations: vi.fn(),
   handleDeleteConversation: vi.fn(),
 }))
@@ -169,7 +169,7 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).not.toContain('资源编排')
   })
 
-  it('shows exactly six entries for regular users', async () => {
+  it('shows exactly eight entries for regular users', async () => {
     const wrapper = mountSidebar()
     await flushPromises()
 
@@ -177,7 +177,7 @@ describe('LayoutSidebar home navigation', () => {
     expect(homeButton.exists()).toBe(true)
 
     const navLinks = wrapper.findAll('a[data-to]')
-    expect(navLinks).toHaveLength(5)
+    expect(navLinks).toHaveLength(8)
 
     const tos = navLinks.map((link) => link.attributes('data-to'))
     expect(tos).toContain('/search')
@@ -185,8 +185,10 @@ describe('LayoutSidebar home navigation', () => {
     expect(tos).toContain('/my-knowledge')
     expect(tos).toContain('/external-data-sources')
     expect(tos).toContain('/showcase')
+    expect(tos).toContain('/schedules')
+    expect(tos).toContain('/membership')
+    expect(tos).toContain('/store/public-apps')
 
-    expect(wrapper.findAll('a[data-to="/store/public-apps"]')).toHaveLength(0)
     expect(wrapper.findAll('a[data-to="/store/workflows"]')).toHaveLength(0)
     expect(wrapper.findAll('a[data-to="/store/skills"]')).toHaveLength(0)
     expect(wrapper.findAll('a[data-to="/store/tools"]')).toHaveLength(0)
@@ -207,7 +209,7 @@ describe('LayoutSidebar home navigation', () => {
     }))
     mocks.loadRecentConversations.mockImplementation(async (limit: number) => {
       const nextList = mocks.allRecentConversations.slice(0, limit)
-      mocks.recentConversationsRef.value = nextList
+      mocks.recentConversationsRef!.value = nextList
     })
 
     const wrapper = mountSidebar()

@@ -18,22 +18,12 @@ describe('admin auth service', () => {
     vi.clearAllMocks()
   })
 
-  it('posts admin login credentials and writes both admin and user credentials', async () => {
+  it('posts admin login credentials and writes only admin credential', async () => {
     vi.mocked(request.post).mockResolvedValue({
       data: {
         access_token: 'admin-token',
         admin_access_token: 'admin-token',
-        user_access_token: 'user-token',
         expire_at: 1893456000,
-        user_expire_at: 1896048000,
-        user: {
-          id: 'account-1',
-          username: 'admin',
-          email: '',
-          name: 'Root',
-          avatar: '',
-          status: 'active',
-        },
         admin_user: {
           id: 'admin-1',
           username: 'admin',
@@ -58,9 +48,10 @@ describe('admin auth service', () => {
       body: { identifier: 'admin', password: 'Root123456' },
     })
     expect(result.data.access_token).toBe('admin-token')
-    expect(storage.get('admin_credential')).toEqual({ access_token: 'admin-token', expire_at: 1893456000 })
-    expect(storage.get('credential')).toEqual({ access_token: 'user-token', expire_at: 1896048000 })
-    expect(credentialStore.credential.access_token).toBe('user-token')
+    expect(storage.get('admin_credential', null)).toEqual({ access_token: 'admin-token', expire_at: 1893456000 })
+    // 完全解耦：管理员登录不再写入用户端凭证
+    expect(storage.get('credential', null)).toBeNull()
+    expect(credentialStore.credential.access_token).toBe('')
     expect(adminStore.admin.username).toBe('admin')
     expect(adminStore.admin.permissions).toEqual(['admin:access'])
   })
@@ -110,7 +101,7 @@ describe('admin auth service', () => {
     })
   })
 
-  it('posts admin logout and clears both admin and user credentials', async () => {
+  it('posts admin logout and clears only admin credential', async () => {
     storage.set('credential', { access_token: 'user-token', expire_at: 1896048000 })
     storage.set('admin_credential', { access_token: 'admin-token', expire_at: 1893456000 })
     const adminStore = useAdminStore()
@@ -129,8 +120,9 @@ describe('admin auth service', () => {
     await adminLogout()
 
     expect(request.post).toHaveBeenCalledWith('/admin/auth/logout')
-    expect(storage.get('admin_credential')).toBe('')
-    expect(storage.get('credential')).toBe('')
+    expect(storage.get('admin_credential', '')).toBe('')
+    // 完全解耦：管理端登出不影响独立的用户端会话
+    expect(storage.get('credential', null)).toEqual({ access_token: 'user-token', expire_at: 1896048000 })
     expect(adminStore.admin.email).toBe('')
   })
 })

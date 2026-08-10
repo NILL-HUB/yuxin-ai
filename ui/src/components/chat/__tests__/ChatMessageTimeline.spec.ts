@@ -2,6 +2,13 @@ import { shallowMount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
 import ChatMessageTimeline from '../ChatMessageTimeline.vue'
+import type { RenderableStreamMessage } from '@/views/shared/chat-stream'
+
+type MockTimelineMessage = RenderableStreamMessage & {
+  query: string
+  image_urls: string[]
+  suggested_questions?: string[]
+}
 
 const dynamicScrollerStub = {
   props: ['items', 'keyField'],
@@ -50,13 +57,13 @@ describe('ChatMessageTimeline', () => {
             created_at: 1710000000,
             suggested_questions: ['继续'],
           },
-        ] as any,
+        ] as unknown as MockTimelineMessage[],
         account: {
           name: 'Tester',
           avatar: '',
         },
         app: {
-          name: 'OpenAgent',
+          name: '钰心AI',
           icon: '',
         },
         loading: false,

@@ -40,8 +40,8 @@ type ApiToolProvider = {
   name: string
   icon: string
   description: string
-  headers: Array<any>
-  tools: Array<any>
+  headers: Array<Record<string, unknown>>
+  tools: Array<Record<string, unknown>>
   creator_name: string
   creator_avatar: string
   updated_at: number
@@ -70,7 +70,7 @@ type ToolFormInputField = {
   name: string
   type: string
   value_type: string
-  content?: unknown
+  content?: string
   ref: string
 }
 
@@ -355,7 +355,7 @@ const loadWorkflowOptions = async () => {
 /**
  * MCP provider 选择变化时，重新加载其下的 tool 选项。
  */
-const handleMcpProviderChange = async (value: string | number | Record<string, any> | (string | number | Record<string, any>)[]) => {
+const handleMcpProviderChange = async (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
   form.value.provider_id = String(value)
   form.value.tool_id = ''
   await loadMcpToolOptions(String(value))
@@ -396,9 +396,12 @@ const normalizeIconUrl = (icon: string = '') => {
   return `${apiUrl.origin}${path}`
 }
 
+type RefOption = { label: string; value: string }
+type RefOptionGroup = { isGroup: true; label: string; options: RefOption[] }
+
 // 2.定义节点可引用的变量选项
-const inputRefOptions = computed(() => {
-  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
+const inputRefOptions = computed<RefOptionGroup[]>(() => {
+  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id) as RefOptionGroup[]
 })
 
 // 3.定义显示工具列表模态窗
@@ -423,16 +426,16 @@ const removeBindTool = () => {
 }
 
 // 4.1 切换 tool_type 时清空不适用的字段
-const handleChangeToolType = (newToolType: string) => {
+const handleChangeToolType = (newToolType: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
   // 清空所有工具相关字段
-  form.value.tool = { ...defaultToolMeta, type: newToolType }
+  form.value.tool = { ...defaultToolMeta, type: newToolType as string }
   form.value.provider_id = ''
   form.value.tool_id = ''
   form.value.params = []
   form.value.inputs = []
   // 同步模态窗的激活类型，便于 builtin_tool/api_tool 选择
   if (newToolType === 'builtin_tool' || newToolType === 'api_tool') {
-    toolsActivateType.value = newToolType
+    toolsActivateType.value = newToolType as string
   }
   // 切换到 mcp/skill/workflow 时预加载下拉选项
   if (newToolType === 'mcp') {
@@ -450,10 +453,11 @@ const isModalSelectorType = computed(() => {
 })
 
 // 5.定义是否关联工具判断函数
-// 参数使用结构性类型 { name: string } 以兼容 ApiToolProvider（无 label）与 builtin_tool（Record<string, any>）
-const isToolSelected = (provider: { name: string }, tool: { name: string }) => {
+// 参数使用 Record<string, unknown> 以兼容 ApiToolProvider（无 label）与 builtin_tool 列表元素
+const isToolSelected = (provider: Record<string, unknown>, tool: Record<string, unknown>) => {
   return (
-    form.value.tool?.provider?.name === provider.name && form.value.tool?.tool.name === tool.name
+    form.value.tool?.provider?.name === String(provider?.name ?? '') &&
+    form.value.tool?.tool.name === String(tool?.name ?? '')
   )
 }
 
@@ -475,10 +479,10 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
         description: apiToolProvider.description,
       },
       tool: {
-        id: apiTool.name,
-        name: apiTool.name,
-        label: apiTool.name,
-        description: apiTool.description,
+        id: String(apiTool?.name ?? ''),
+        name: String(apiTool?.name ?? ''),
+        label: String(apiTool?.name ?? ''),
+        description: String(apiTool?.description ?? ''),
         params: {},
       },
     }
@@ -486,7 +490,7 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
     // 6.3 获取内置工具提供者+内置工具，并提取选择工具
     const builtinToolProvider = computedBuiltinTools.value[provider_idx]
     const builtinTool = builtinToolProvider['tools'][tool_idx]
-    const params = builtinTool['params']
+    const params = (builtinTool['params'] || []) as Array<{ name: string; default: unknown }>
     selectTool = {
       type: 'builtin_tool',
       provider: {
@@ -497,10 +501,10 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
         description: builtinToolProvider.description,
       },
       tool: {
-        id: builtinTool.name,
-        name: builtinTool.name,
-        label: builtinTool.label,
-        description: builtinTool.description,
+        id: String(builtinTool?.name ?? ''),
+        name: String(builtinTool?.name ?? ''),
+        label: String(builtinTool?.label ?? ''),
+        description: String(builtinTool?.description ?? ''),
         params: params.reduce((newObj: Record<string, unknown>, item: { name: string; default: unknown }) => {
           newObj[item.name] = item.default
           return newObj
@@ -548,7 +552,7 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
       // 6.10 自定义插件直接使用列表数据中的inputs，无需再次调用API
       const apiToolProvider = api_tool_providers.value[provider_idx]
       const apiTool = apiToolProvider['tools'][tool_idx]
-      const inputs = apiTool.inputs || []
+      const inputs = (apiTool.inputs || []) as Array<{ name: string; type: string }>
 
       // 6.11 更新inputs+params
       form.value.inputs = inputs.map((item: { name: string; type: string }) => {
@@ -689,7 +693,7 @@ watch(
           name: input.name, // 变量名
           type: input.type,
           value_type: input.value.type === 'literal' ? input.type : 'ref', // 数据类型(涵盖ref/string/int/float/boolean
-          content: input.value.type === 'literal' ? input.value.content : '', // 变量值内容
+          content: input.value.type === 'literal' ? String(input.value.content ?? '') : '', // 变量值内容
           ref: input.value.type === 'ref' && refExists ? ref : '', // 变量引用信息，存储引用节点id+引用变量名
         }
       }),
@@ -1017,7 +1021,12 @@ onMounted(() => {
             </div>
           </div>
           <div class="w-[80%] flex-shrink-0">
-            <a-input size="mini" v-model="param.value" :placeholder="t('workflowEditor.parameterValue')" />
+            <a-input
+              size="mini"
+              :model-value="String(param.value ?? '')"
+              @update:model-value="(value) => (param.value = value)"
+              :placeholder="t('workflowEditor.parameterValue')"
+            />
           </div>
         </div>
         <!-- 空数据状态 -->
@@ -1137,7 +1146,7 @@ onMounted(() => {
               <div class="flex flex-col gap-1">
                 <div
                   v-for="(tool, tool_idx) in builtin_tool.tools"
-                  :key="tool.name"
+                  :key="String(tool.name)"
                   :class="`flex items-center justify-between px-2 h-8 rounded-lg cursor-pointer hover:bg-gray-50 group ${isToolSelected(builtin_tool, tool) ? 'bg-blue-50 border border-blue-700' : ''}`"
                 >
                   <!-- 工具信息 -->
@@ -1153,7 +1162,7 @@ onMounted(() => {
                   <a-button
                     size="mini"
                     class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
-                    @click="() => handleSelectTool(builtin_tool_idx, tool_idx)"
+                    @click="() => handleSelectTool(Number(builtin_tool_idx), Number(tool_idx))"
                   >
                     <template #icon>
                       <icon-plus />
@@ -1188,7 +1197,7 @@ onMounted(() => {
                 <div class="flex flex-col gap-1">
                   <div
                     v-for="(tool, tool_idx) in api_tool_provider.tools"
-                    :key="tool.name"
+                    :key="String(tool.name)"
                     :class="`flex items-center justify-between px-2 h-8 rounded-lg cursor-pointer hover:bg-gray-50 group ${isToolSelected(api_tool_provider, tool) ? 'bg-blue-50 border border-blue-700' : ''}`"
                   >
                     <!-- 工具信息 -->
@@ -1247,6 +1256,7 @@ onMounted(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 .tool-setting-modal {
   .arco-modal-wrapper {
     @apply text-right;

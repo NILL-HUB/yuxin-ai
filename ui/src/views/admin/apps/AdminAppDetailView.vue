@@ -4,6 +4,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAdminApp, getAdminAppDraftConfig } from '@/services/admin-apps'
+import type { AdminAppRecord } from '@/services/admin-apps'
+import type { DraftAppConfigForm } from '@/models/app'
 import AgentAppAbility from '@/views/space/apps/components/AgentAppAbility.vue'
 import WorkflowAppAbility from '@/views/space/apps/components/WorkflowAppAbility.vue'
 import ModelConfig from '@/views/space/apps/components/ModelConfig.vue'
@@ -32,7 +34,7 @@ const isAdminContext = computed(
 )
 
 // admin 上下文下没有 AppLayoutView 父级注入 props.app，需要本地加载应用信息
-const localApp = ref<Record<string, any>>({})
+const localApp = ref<AdminAppRecord>({} as AdminAppRecord)
 // 当前生效的应用对象：admin 上下文用 localApp，space 上下文用 props.app
 const currentApp = computed(() =>
   isAdminContext.value ? localApp.value : props.app,
@@ -45,8 +47,8 @@ const loadApp = async (appId: string) => {
   if (!isAdminContext.value) return
   try {
     localApp.value = await getAdminApp(appId)
-  } catch (e) {
-    localApp.value = {}
+  } catch {
+    localApp.value = {} as AdminAppRecord
   }
 }
 
@@ -76,7 +78,7 @@ const loadDraftAppConfigDetail = async (appId: string) => {
       text_to_speech: data.text_to_speech,
       workflow_id: data.workflow_id ?? null,
       workflow_detail: data.workflow_detail ?? null,
-    }
+    } as DraftAppConfigForm
   } else {
     await loadDraftAppConfig(appId)
   }

@@ -4,7 +4,7 @@ import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 const env = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '')
-const appTitle = env.VITE_TITLE?.trim() || 'OpenAgent'
+const appTitle = env.VITE_TITLE?.trim() || '钰心AI'
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -30,7 +30,6 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        onlyExplicitManualChunks: true,
         manualChunks(id) {
           if (!id.includes('node_modules')) return
 

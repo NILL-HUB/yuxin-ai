@@ -1,5 +1,5 @@
 # ============================================================
-# openagent 全面验证 + 批量导入脚本（MCP + Skills）
+# 钰心AI 全面验证 + 批量导入脚本（MCP + Skills）
 # 用法: 在项目根目录打开 PowerShell 窗口执行:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\full_setup.ps1
 # 兼容 PowerShell 5.1 (Windows 自带) 和 PowerShell 7+ (pwsh)

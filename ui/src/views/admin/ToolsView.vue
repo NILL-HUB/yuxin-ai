@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Message, Modal, type FileItem, type ValidatedError, Form } from '@arco-design/web-vue'
+import { Message, type FileItem, type ValidatedError, Form } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { apiPrefix } from '@/config'
 import { useGenerateAdminIconPreview, useValidateAdminOpenAPISchema } from '@/hooks/use-admin-tool'
@@ -17,6 +17,7 @@ import type { CreateApiToolProviderRequest, UpdateApiToolProviderRequest } from 
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
+import RecycleBinDeleteModal from '@/components/admin/RecycleBinDeleteModal.vue'
 import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
@@ -47,6 +48,30 @@ type ToolPaginator = {
   total_page: number
   current_page: number
   page_size: number
+}
+
+type ToolInput = {
+  name: string
+  type: string
+  required: boolean
+  description: string
+}
+
+type ToolItem = {
+  name: string
+  label: string
+  description: string
+  inputs: ToolInput[]
+}
+
+type BuiltinToolItem = {
+  background: string
+  category: string
+  created_at: number
+  description: string
+  label: string
+  name: string
+  tools: ToolItem[]
 }
 
 /**
@@ -96,8 +121,9 @@ const builtin_search_word = ref<string>('')
 const showBuiltinDrawer = ref(false)
 const activeBuiltinIdx = ref(-1)
 
-const filteredBuiltinTools = computed(() => {
-  return builtin_tools.value.filter((item: any) => {
+const filteredBuiltinTools = computed<BuiltinToolItem[]>(() => {
+  const list = builtin_tools.value as BuiltinToolItem[]
+  return list.filter((item) => {
     const matchCategory =
       builtin_category.value === 'all' || item.category === builtin_category.value
     const matchSearch =
@@ -174,11 +200,11 @@ const getApiToolAvatarStyle = (provider: ApiToolProviderListItem) => {
   }
 }
 
-const getBuiltinAvatarText = (tool: any) => {
-  return extractAvatarText(tool.label || tool.name || 'B')
+const getBuiltinAvatarText = (tool: Record<string, unknown>) => {
+  return extractAvatarText((tool.label as string) || (tool.name as string) || 'B')
 }
 
-const getBuiltinAvatarStyle = (tool: any) => {
+const getBuiltinAvatarStyle = (tool: Record<string, unknown>) => {
   const palette = avatarPalettes[hashString(`${tool.name}:${tool.label}`) % avatarPalettes.length]
   return {
     background: `linear-gradient(135deg, ${palette[0]} 0%, ${palette[1]} 100%)`,
@@ -242,9 +268,9 @@ const openEditModal = async (record: ApiToolProviderListItem) => {
       : []
     form.value.name = detail.name || ''
     form.value.openapi_schema = detail.openapi_schema || ''
-    form.value.headers = (detail.headers || []).map((h: { key: string; value: string }) => ({
-      key: h.key,
-      value: h.value,
+    form.value.headers = (detail.headers || []).map((h) => ({
+      key: h.key as string,
+      value: h.value as string,
     }))
     showUpdateModal.value = true
   } catch (error) {
@@ -298,7 +324,7 @@ const handleSubmit = async ({
   values,
   errors,
 }: {
-  values: ApiToolProviderFormValues
+  values: Record<string, unknown>
   errors: Record<string, ValidatedError> | undefined
 }) => {
   if (errors) return
@@ -323,22 +349,31 @@ const handleSubmit = async ({
   }
 }
 
+const deleteTarget = ref<ApiToolProviderListItem | null>(null)
+const deleteLoading = ref(false)
+
 const handleDelete = (record: ApiToolProviderListItem) => {
-  Modal.warning({
-    title: t('admin.toolsAdmin.deleteTitle'),
-    content: t('admin.toolsAdmin.deleteContent'),
-    hideCancel: false,
-    onOk: async () => {
-      try {
-        await deleteAdminApiTool(record.id)
-        Message.success(t('admin.toolsAdmin.deleteSuccess'))
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.toolsAdmin.deleteFailed')))
-      } finally {
-        void loadProviders()
-      }
-    },
-  })
+  deleteTarget.value = record
+  deleteLoading.value = false
+}
+
+const handleDeleteVisibleChange = (visible: boolean) => {
+  if (!visible) deleteTarget.value = null
+}
+
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteAdminApiTool(deleteTarget.value.id, retentionDays)
+    Message.success(t('admin.toolsAdmin.deleteSuccess'))
+    deleteTarget.value = null
+    await loadProviders()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.toolsAdmin.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 onMounted(() => {
@@ -430,8 +465,9 @@ onMounted(() => {
                 <resource-card-description :text="record.description" />
 
                 <div class="flex items-center justify-between mt-2.5">
-                  <div class="text-[11px] text-gray-400">
-                    {{ formatTimestampShort(record.created_at) }}
+                  <div class="text-[11px] text-gray-400 flex items-center gap-2">
+                    <span v-if="record.creator_name">{{ t('admin.toolsAdmin.creator') }}: {{ record.creator_name }}</span>
+                    <span>{{ formatTimestampShort(record.created_at) }}</span>
                   </div>
                   <a-space :size="4">
                     <a-button type="text" size="mini" @click.stop="openEditModal(record)">
@@ -516,7 +552,7 @@ onMounted(() => {
                 hoverable
                 class="cursor-pointer rounded-lg h-full overflow-hidden"
                 :body-style="{ padding: '12px' }"
-                @click="openBuiltinDrawer(idx)"
+                @click="openBuiltinDrawer(Number(idx))"
               >
                 <div class="flex items-start gap-2.5 mb-2">
                   <a-avatar
@@ -791,5 +827,17 @@ onMounted(() => {
         </a-form>
       </div>
     </a-modal>
+
+    <!-- 删除 API 工具 Provider 确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="deleteTarget !== null"
+      :title="t('admin.toolsAdmin.deleteTitle')"
+      :resource-name="deleteTarget?.name"
+      :loading="deleteLoading"
+      @update:visible="handleDeleteVisibleChange"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-slate-500">{{ t('admin.toolsAdmin.deleteContent') }}</p>
+    </RecycleBinDeleteModal>
   </section>
 </template>

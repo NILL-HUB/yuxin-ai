@@ -177,7 +177,8 @@ const handleSubmitRetrievalConfig = async () => {
 /**
  * 新版知识库多选变更处理器：限制最多 5 个，立即持久化到草稿配置。
  */
-const handleKnowledgeBaseChange = async (ids: (string | number)[]) => {
+const handleKnowledgeBaseChange = async (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
+  const ids = value as (string | number)[]
   // 限制最多 5 个
   const stringIds = ids.map((id) => String(id))
   if (stringIds.length > 5) {
@@ -200,16 +201,17 @@ const handleKnowledgeBaseChange = async (ids: (string | number)[]) => {
 /**
  * embedding 模型变更处理器：立即持久化到草稿配置。
  */
-const handleEmbeddingModelChange = async (modelId: string | number | undefined) => {
-  const value = modelId ? String(modelId) : ''
-  embeddingModelId.value = value
+const handleEmbeddingModelChange = async (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
+  const modelId = value as string | number | undefined
+  const modelValue = modelId ? String(modelId) : ''
+  embeddingModelId.value = modelValue
 
   await handleUpdateDraftAppConfig(props.app_id, {
-    embedding_model_id: value,
+    embedding_model_id: modelValue,
   })
-  originEmbeddingModelId.value = value
+  originEmbeddingModelId.value = modelValue
 
-  emits('update:embedding_model_id', value)
+  emits('update:embedding_model_id', modelValue)
 }
 
 // 4.监听检索配置

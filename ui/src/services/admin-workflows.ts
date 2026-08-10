@@ -67,10 +67,15 @@ export const createAdminWorkflow = async (
 }
 
 /**
- * 删除后台工作流。
+ * 删除后台工作流（进入回收站，可指定留存天数）。
  */
-export const deleteAdminWorkflow = async (workflowId: string): Promise<Record<string, never>> => {
-  const response = await del<BaseResponse<Record<string, never>>>(`/admin/workflows/${workflowId}`)
+export const deleteAdminWorkflow = async (
+  workflowId: string,
+  retentionDays?: number,
+): Promise<Record<string, never>> => {
+  const response = await del<BaseResponse<Record<string, never>>>(`/admin/workflows/${workflowId}`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
   return response.data
 }
 
@@ -176,8 +181,8 @@ export const batchOfflineAdminWorkflows = async (
 export const exportAdminWorkflow = async (
   workflowId: string,
   includeVersions = false,
-): Promise<Record<string, any>> => {
-  const response = await get<BaseResponse<Record<string, any>>>(
+): Promise<Record<string, unknown>> => {
+  const response = await get<BaseResponse<Record<string, unknown>>>(
     `/admin/workflows/${workflowId}/export`,
     { params: { include_versions: includeVersions } },
   )
@@ -188,7 +193,7 @@ export const exportAdminWorkflow = async (
  * 导入后台工作流，返回新创建的工作流详情，并解包接口返回的 data 字段。
  */
 export const importAdminWorkflow = async (
-  jsonData: Record<string, any>,
+  jsonData: Record<string, unknown>,
   overwriteName = false,
 ): Promise<AdminWorkflowData> => {
   const response = await post<AdminWorkflowResponse>('/admin/workflows/import', {

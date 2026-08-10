@@ -68,7 +68,7 @@ describe('AdminLayout', () => {
   it('renders admin shell with account and router view', () => {
     const wrapper = mountAdminLayout()
 
-    expect(wrapper.text()).toContain('OpenAgent Admin')
+    expect(wrapper.text()).toContain('钰心AI Admin')
     expect(wrapper.text()).toContain('Root')
     expect(wrapper.find('[data-test="router-view"]').exists()).toBe(true)
   })

@@ -5,7 +5,6 @@ import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
   getPublicWorkflows,
-  forkPublicWorkflow,
   type PublicWorkflow
 } from '@/services/public-workflow'
 import { getAppTags, type AppTag } from '@/services/public-app'
@@ -57,17 +56,6 @@ const loadTags = async () => {
     tags.value = res.data.tags
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('store.workflows.loadTagsFailed')))
-  }
-}
-
-const handleFork = async (workflow: PublicWorkflow) => {
-  try {
-    const res = await forkPublicWorkflow(workflow.id)
-    Message.success(t('store.workflows.forkSuccess', { name: res.data.name }))
-    await loadWorkflows()
-    router.push({ name: 'space-workflows-detail', params: { workflow_id: res.data.id } })
-  } catch (error: unknown) {
-    Message.error(getErrorMessage(error, t('store.workflows.actionFailed')))
   }
 }
 
@@ -189,28 +177,12 @@ onMounted(() => {
                 <resource-card-description :text="workflow.description" />
               </button>
 
-              <!-- 发布者、发布时间和Fork按钮 -->
-              <div class="mt-3 flex items-center justify-between gap-3">
-                <div class="flex min-w-0 flex-1 items-center gap-1.5">
-                  <a-avatar :size="18" :image-url="workflow.account_avatar" />
-                  <div class="min-w-0 flex-1 truncate text-xs text-gray-400">
-                    {{ workflow.account_name || t('store.workflows.unknownUser') }} · {{ t('store.workflows.publishedAt', { time: workflow.published_at > 0 ? formatTimestampShort(workflow.published_at) : t('store.workflows.unknownTime') }) }}
-                  </div>
+              <!-- 发布者、发布时间 -->
+              <div class="mt-3 flex items-center gap-1.5">
+                <a-avatar :size="18" :image-url="workflow.account_avatar" />
+                <div class="min-w-0 flex-1 truncate text-xs text-gray-400">
+                  {{ workflow.account_name || t('store.workflows.unknownUser') }} · {{ t('store.workflows.publishedAt', { time: workflow.published_at > 0 ? formatTimestampShort(workflow.published_at) : t('store.workflows.unknownTime') }) }}
                 </div>
-                <a-tooltip :content="workflow.is_forked ? t('store.workflows.addedToSpace') : t('store.workflows.addToSpace')">
-                  <button
-                    type="button"
-                    class="flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 hover:scale-105"
-                    :class="workflow.is_forked ? 'bg-gray-100 cursor-not-allowed opacity-50' : 'bg-blue-50 hover:bg-blue-100'"
-                    :disabled="workflow.is_forked"
-                    @click.stop="handleFork(workflow)"
-                  >
-                    <icon-branch
-                      :size="16"
-                      :style="{ color: workflow.is_forked ? '#9ca3af' : '#3b82f6' }"
-                    />
-                  </button>
-                </a-tooltip>
               </div>
             </a-card>
           </a-col>

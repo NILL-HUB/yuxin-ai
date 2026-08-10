@@ -10,6 +10,7 @@ export interface PromptTemplateItem {
   variables: Record<string, unknown>
   source: string
   version: number
+  enabled?: boolean
   updated_at: number
 }
 

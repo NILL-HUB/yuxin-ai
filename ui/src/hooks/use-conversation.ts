@@ -92,7 +92,7 @@ export const useDeleteConversation = () => {
         Message.success(resp.message)
 
         // 2.调用callback函数指定回调功能
-        success_callback && success_callback()
+        if (success_callback) success_callback()
       },
     })
   }
@@ -168,7 +168,7 @@ export const useUpdateConversationIsPinned = () => {
       loading.value = true
       const resp = await updateConversationIsPinned(conversation_id, is_pinned)
       Message.success(resp.message)
-      success_callback && success_callback()
+      if (success_callback) success_callback()
     } finally {
       loading.value = false
     }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { Message, type FileItem } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { getErrorMessage } from '@/utils/error'
 import {
@@ -53,9 +53,9 @@ watch(
   },
 )
 
-const handleFileChange = (fileList: File[] | undefined) => {
+const handleFileChange = (fileList: FileItem[]) => {
   if (Array.isArray(fileList) && fileList.length > 0) {
-    zipFile.value = fileList[0]
+    zipFile.value = fileList[0].file ?? null
   } else {
     zipFile.value = null
   }
@@ -160,7 +160,7 @@ const handleImport = async () => {
     <!-- zip 上传 -->
     <div v-if="method === 'zip'" class="space-y-2">
       <a-upload
-        :file-list="zipFile ? [zipFile] : []"
+        :file-list="zipFile ? [{ uid: zipFile.name, name: zipFile.name, file: zipFile }] : []"
         :auto-upload="false"
         :show-remove-button="true"
         :limit="1"

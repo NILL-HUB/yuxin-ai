@@ -23,7 +23,7 @@ export const createWorkflow = (req: CreateWorkflowRequest) => {
 
 // 修改工作流基础信息
 export const updateWorkflow = (workflow_id: string, req: UpdateWorkflowRequest) => {
-  return post<BaseResponse<any>>(`/workflows/${workflow_id}`, { body: req })
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}`, { body: req })
 }
 
 // 获取工作流基础信息
@@ -33,7 +33,7 @@ export const getWorkflow = (workflow_id: string) => {
 
 // 删除指定的工作流
 export const deleteWorkflow = (workflow_id: string) => {
-  return post<BaseResponse<any>>(`/workflows/${workflow_id}/delete`)
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/delete`)
 }
 
 // 获取指定工作流的graph图草稿配置
@@ -43,24 +43,24 @@ export const getDraftGraph = (workflow_id: string) => {
 
 // 更新指定工作流的graph图草稿配置
 export const updateDraftGraph = (workflow_id: string, req: UpdateDraftGraphRequest) => {
-  return post<BaseResponse<any>>(`/workflows/${workflow_id}/draft-graph`, { body: req })
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/draft-graph`, { body: req })
 }
 
 // 发布指定的工作流
 export const publishWorkflow = (workflow_id: string) => {
-  return post<BaseResponse<any>>(`/workflows/${workflow_id}/publish`)
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/publish`)
 }
 
 // 取消发布指定的工作流
 export const cancelPublishWorkflow = (workflow_id: string) => {
-  return post<BaseResponse<any>>(`/workflows/${workflow_id}/cancel-publish`)
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/cancel-publish`)
 }
 
 // 工作流调试，该接口为流式事件输出
 export const debugWorkflow = (
   workflow_id: string,
-  inputs: Record<string, any>,
-  onData: (event_response: Record<string, any>) => void,
+  inputs: Record<string, unknown>,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/workflows/${workflow_id}/debug`, { body: inputs }, onData)
 }
@@ -79,18 +79,18 @@ export const generateIconPreview = (name: string, description: string) => {
 
 // 分享或取消分享工作流到广场
 export const shareWorkflow = (workflow_id: string, is_public: boolean) => {
-  return post<BaseResponse<any>>(`/workflows/${workflow_id}/share`, { body: { is_public } })
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/share`, { body: { is_public } })
 }
 
 // 导出指定工作流为可迁移 JSON 数据
 export const exportWorkflow = (workflow_id: string, includeVersions = false) => {
-  return get<BaseResponse<Record<string, any>>>(`/workflows/${workflow_id}/export`, {
+  return get<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/export`, {
     params: { include_versions: includeVersions },
   })
 }
 
 // 导入工作流（基于已导出的 JSON 数据）
-export const importWorkflow = (json_data: Record<string, any>, overwrite_name = false) => {
+export const importWorkflow = (json_data: Record<string, unknown>, overwrite_name = false) => {
   return post<BaseResponse<{ id: string }>>('/workflows/import', {
     body: { json_data, overwrite_name },
   })

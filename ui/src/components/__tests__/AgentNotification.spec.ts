@@ -1,15 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
+import type { ComponentPublicInstance } from 'vue'
 import { markNotificationAsRead } from '@/services/notification'
 import AgentNotification from '../AgentNotification.vue'
 import type { AgentNotification as AgentNotificationType } from '@/models/agent-notification'
+
+type AgentNotificationVm = {
+  notifications: AgentNotificationType[]
+  addNotification: (notification: AgentNotificationType) => void
+  removeNotification: (notificationId: string) => void
+}
 
 vi.mock('@/services/notification', () => ({
   markNotificationAsRead: vi.fn().mockResolvedValue(undefined),
 }))
 
 describe('AgentNotification.vue', () => {
-  let wrapper: any
+  let wrapper: VueWrapper<ComponentPublicInstance & AgentNotificationVm>
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -19,7 +26,7 @@ describe('AgentNotification.vue', () => {
           'icon-close': true,
         },
       },
-    })
+    }) as unknown as VueWrapper<ComponentPublicInstance & AgentNotificationVm>
   })
 
   it('should render empty notification list initially', () => {

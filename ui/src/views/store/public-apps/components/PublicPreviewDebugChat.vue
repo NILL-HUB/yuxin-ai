@@ -11,7 +11,7 @@ import {
   sendPublicAppA2aMessage,
 } from '@/services/public-app'
 import { uploadImage } from '@/services/upload-file'
-import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import { postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import { useAccountStore } from '@/stores/account'
 import { Message } from '@arco-design/web-vue'
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'

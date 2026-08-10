@@ -140,7 +140,7 @@ def check_db(label: str, sql: str):
 
 def main():
     print("=" * 60)
-    print("OpenAgent 执行链路端到端测试")
+    print("钰心AI 执行链路端到端测试")
     print("=" * 60)
 
     token = login()

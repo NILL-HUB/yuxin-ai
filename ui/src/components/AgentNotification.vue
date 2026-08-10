@@ -88,9 +88,9 @@ const handleNotificationClick = (notification: AgentNotification) => {
     autoHideTimers.value.delete(notification.id)
   }
 
-  // 导航到Agent调试页面
+  // 导航到应用商店预览页（用户端应用详情已收编 admin）
   router.push({
-    path: `/space/apps/${notification.app_id}`,
+    path: `/store/public-apps/${notification.app_id}/preview`,
   })
 
   // 设置 2 秒后消失

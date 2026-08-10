@@ -8,12 +8,14 @@ const initCredential = {
   expire_at: 0,
 }
 
-export const useCredentialStore = defineStore('credential', () => {
-  const credential = ref(storage.get('credential', initCredential))
+type Credential = typeof initCredential
 
-  const update = (params: any) => {
-    credential.value = params
-    storage.set('credential', params)
+export const useCredentialStore = defineStore('credential', () => {
+  const credential = ref<Credential>(storage.get('credential', initCredential) as Credential)
+
+  const update = (params: Partial<Credential>) => {
+    credential.value = { ...initCredential, ...params }
+    storage.set('credential', credential.value)
   }
 
   const clear = () => {

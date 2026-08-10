@@ -171,4 +171,5 @@ export const QueueEvent = {
   subtaskStarted: 'subtask_started',
   subtaskCompleted: 'subtask_completed',
   toolConfirmationRequired: 'tool_confirmation_required',
+  scheduleSuggestion: 'schedule_suggestion',
 }

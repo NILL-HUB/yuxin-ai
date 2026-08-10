@@ -69,6 +69,6 @@ describe('admin api tools service', () => {
 
     await deleteAdminApiTool('t1')
 
-    expect(requestModule.del).toHaveBeenCalledWith('/admin/api-tools/t1')
+    expect(requestModule.del).toHaveBeenCalledWith('/admin/api-tools/t1', { body: undefined })
   })
 })

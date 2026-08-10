@@ -1,8 +1,22 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { QueueEvent } from '@/config'
 
 import AiMessage from '../AiMessage.vue'
+
+// AiMessage 用 requestAnimationFrame 节流 markdown 渲染（SSE 流式优化）。
+// jsdom 下 RAF 是异步的，测试同步查询会取到空列表，这里改为同步执行。
+beforeEach(() => {
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+    cb(0)
+    return 0
+  })
+  vi.stubGlobal('cancelAnimationFrame', () => {})
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 vi.mock('@/hooks/use-audio', () => ({
   useAudioPlayer: () => ({
@@ -30,10 +44,10 @@ describe('AiMessage.vue', () => {
     mount(AiMessage, {
       props: {
         app: {
-          name: 'OpenAgent',
-          avatar_text: 'OpenAgent',
+          name: '钰心AI',
+          avatar_text: '钰心AI',
         },
-        answer: '欢迎使用 OpenAgent',
+        answer: '欢迎使用 钰心AI',
         agent_thoughts: [],
         ...props,
       },
@@ -61,11 +75,11 @@ describe('AiMessage.vue', () => {
       },
     })
 
-  it('renders the OpenAgent full-text avatar when avatar_text is provided', () => {
+  it('renders the 钰心AI full-text avatar when avatar_text is provided', () => {
     const wrapper = mountAiMessage()
 
-    expect(wrapper.find('.avatar-stub').text()).toBe('OpenAgent')
-    expect(wrapper.text()).toContain('OpenAgent')
+    expect(wrapper.find('.avatar-stub').text()).toBe('钰心AI')
+    expect(wrapper.text()).toContain('钰心AI')
     expect(wrapper.find('.avatar-stub').attributes('data-image-url')).toBeUndefined()
   })
 

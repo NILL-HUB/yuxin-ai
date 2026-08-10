@@ -58,9 +58,6 @@ const healthColor = (status: string) =>
 const costColor = (cost: string) =>
   ({ low: 'green', medium: 'orange', high: 'red' } as Record<string, string>)[cost] || 'gray'
 
-const formatTimestamp = (timestamp?: number) =>
-  timestamp ? new Date(timestamp * 1000).toLocaleString() : '-'
-
 // 从 metadata 中提取 cost_level
 const getCostLevel = (config: AgentPoolConfig) => {
   const metadata = config.metadata || {}
@@ -71,12 +68,6 @@ const getCostLevel = (config: AgentPoolConfig) => {
 const getCapabilities = (config: AgentPoolConfig) => {
   const metadata = config.metadata || {}
   return (metadata.capabilities as string[]) || []
-}
-
-// 从 metadata 中提取 task_types
-const getTaskTypes = (config: AgentPoolConfig) => {
-  const metadata = config.metadata || {}
-  return (metadata.task_types as string[]) || []
 }
 
 // ==================== Agent 池配置状态 ====================

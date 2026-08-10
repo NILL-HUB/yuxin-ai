@@ -23,43 +23,24 @@ const router = createRouter({
           component: () => import('@/views/pages/HomeView.vue'),
         },
         {
-          path: 'space',
-          component: () => import('@/views/space/SpaceLayoutView.vue'),
-          children: [
-            {
-              path: 'apps',
-              name: 'space-apps-list',
-              component: () => import('@/views/space/apps/ListView.vue'),
-            },
-            {
-              path: 'tools',
-              name: 'space-tools-list',
-              component: () => import('@/views/space/tools/ListView.vue'),
-            },
-            {
-              path: 'workflows',
-              name: 'space-workflows-list',
-              component: () => import('@/views/space/workflows/ListView.vue'),
-            },
-            {
-              path: 'mcp',
-              name: 'space-mcp-list',
-              component: () => import('@/views/space/mcp/ListView.vue'),
-            },
-            {
-              path: 'datasets',
-              name: 'space-datasets-list',
-              component: () => import('@/views/space/datasets/ListView.vue'),
-            },
-          ],
+          path: 'schedules',
+          name: 'user-schedules',
+          component: () => import('@/views/space/schedules/ListView.vue'),
+          meta: { requiresAuth: true },
         },
         {
-          path: 'space/datasets/:dataset_id/documents',
+          path: 'schedules/runs/:task_id',
+          name: 'user-schedules-runs',
+          component: () => import('@/views/space/schedules/RunsView.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
+          path: 'my-knowledge/:dataset_id/documents',
           name: 'space-datasets-documents-list',
           component: () => import('@/views/space/datasets/documents/ListView.vue'),
         },
         {
-          path: 'space/datasets/:dataset_id/documents/:document_id/segments',
+          path: 'my-knowledge/:dataset_id/documents/:document_id/segments',
           name: 'space-datasets-documents-segments-list',
           component: () => import('@/views/space/datasets/documents/segments/ListView.vue'),
         },
@@ -118,11 +99,6 @@ const router = createRouter({
               name: 'openapi-index',
               component: () => import('@/views/openapi/IndexView.vue'),
             },
-            {
-              path: 'api-keys',
-              name: 'openapi-api-keys-list',
-              component: () => import('@/views/openapi/api-keys/ListView.vue'),
-            },
           ],
         },
         {
@@ -149,10 +125,9 @@ const router = createRouter({
           meta: { requiresAuth: true },
         },
         {
-          path: 'settings',
-          name: 'settings',
-          component: () => import('@/views/pages/SettingsView.vue'),
-          meta: { requiresAuth: true },
+          path: 'membership',
+          name: 'membership-index',
+          component: () => import('@/views/membership/MembershipView.vue'),
         },
       ],
     },
@@ -258,6 +233,18 @@ const router = createRouter({
               name: 'admin-audit-logs',
               component: () => import('@/views/admin/AuditLogsView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['audit_log:read'], roles: ['super_admin'] },
+            },
+            {
+              path: 'recycle-bin',
+              name: 'admin-recycle-bin',
+              component: () => import('@/views/admin/AdminRecycleBinView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['recycle_bin:read'], roles: ['super_admin'] },
+            },
+            {
+              path: 'storage',
+              name: 'admin-storage',
+              component: () => import('@/views/admin/AdminStorageView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['storage:read'], roles: ['super_admin'] },
             },
             {
               path: 'routing-logs',
@@ -403,6 +390,18 @@ const router = createRouter({
               component: () => import('@/views/openapi/api-keys/ListView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['openapi:read'] },
             },
+            {
+              path: 'schedules',
+              name: 'admin-schedules',
+              component: () => import('@/views/space/schedules/ListView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['admin:access'] },
+            },
+            {
+              path: 'schedules/runs/:task_id',
+              name: 'admin-schedules-runs',
+              component: () => import('@/views/space/schedules/RunsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['admin:access'] },
+            },
           ],
         },
         {
@@ -411,51 +410,10 @@ const router = createRouter({
           component: () => import('@/views/auth/AuthorizeView.vue'),
         },
         {
-          path: 'membership',
-          name: 'membership-index',
-          component: () => import('@/views/membership/MembershipView.vue'),
-        },
-        {
           path: 'admin/login',
           name: 'admin-login',
           component: () => import('@/views/admin/LoginView.vue'),
           meta: { adminGuestOnly: true },
-        },
-        {
-          path: 'space/apps',
-          component: () => import('@/views/space/apps/AppLayoutView.vue'),
-          children: [
-            {
-              path: ':app_id',
-              name: 'space-apps-detail',
-              component: () => import('@/views/space/apps/DetailView.vue'),
-            },
-            {
-              path: ':app_id/published',
-              name: 'space-apps-published',
-              component: () => import('@/views/space/apps/PublishedView.vue'),
-            },
-            {
-              path: ':app_id/analysis',
-              name: 'space-apps-analysis',
-              component: () => import('@/views/space/apps/AnalysisView.vue'),
-            },
-            {
-              path: ':app_id/versions',
-              name: 'space-apps-versions',
-              component: () => import('@/views/space/apps/VersionComparisonView.vue'),
-            },
-            {
-              path: ':app_id/prompt-compare',
-              name: 'space-apps-prompt-compare',
-              component: () => import('@/views/space/apps/PromptCompareView.vue'),
-            },
-          ],
-        },
-        {
-          path: 'space/workflows/:workflow_id',
-          name: 'space-workflows-detail',
-          component: () => import('@/views/space/workflows/DetailView.vue'),
         },
         {
           path: 'web-apps/:token',
@@ -501,14 +459,7 @@ const PUBLIC_ROUTE_NAMES = new Set([
   'admin-login',
 ])
 
-const ANONYMOUS_PROMPT_ROUTE_NAMES = new Set([
-  'space-apps-list',
-  'space-tools-list',
-  'space-workflows-list',
-  'space-mcp-list',
-  'space-datasets-list',
-  'openapi-api-keys-list',
-])
+const ANONYMOUS_PROMPT_ROUTE_NAMES = new Set<string>()
 
 export const getAuthGuardRedirect = ({
   path,
@@ -532,22 +483,7 @@ export const shouldEvaluateUserAuth = (path: string): boolean => {
   return !path.startsWith('/admin')
 }
 
-const CUSTOMER_CONFIG_ROUTE_NAMES = new Set([
-  'space-apps-list',
-  'space-tools-list',
-  'space-workflows-list',
-  'space-mcp-list',
-  'space-datasets-list',
-  'space-datasets-documents-list',
-  'space-datasets-documents-segments-list',
-  'space-apps-detail',
-  'space-apps-published',
-  'space-apps-analysis',
-  'space-apps-versions',
-  'space-apps-prompt-compare',
-  'space-workflows-detail',
-  'openapi-api-keys-list',
-])
+const CUSTOMER_CONFIG_ROUTE_NAMES = new Set<string>()
 
 export const getCustomerConfigGuardRedirect = ({
   path,
@@ -614,6 +550,19 @@ export const getAdminAuthGuardRedirect = ({
 router.beforeEach(async (to) => {
   const adminStore = useAdminStore()
   const path = to.fullPath
+
+  // 已登录的管理员：每次导航前刷新资料/权限快照，保证新增权限
+  // （如 storage:read）与角色调整即时生效，无需重新登录。
+  // /admin/auth/me 失败（如 token 失效）时静默忽略，由下方守卫统一拦截。
+  if (path.startsWith('/admin') && isAdminCredentialLoggedIn(getStoredAdminCredential())) {
+    try {
+      const { getCurrentAdmin } = await import('@/services/admin-auth')
+      await getCurrentAdmin()
+    } catch {
+      /* 忽略，交由后续守卫处理 */
+    }
+  }
+
   const adminRedirect = getAdminAuthGuardRedirect({
     path,
     routeName: String(to.name || ''),

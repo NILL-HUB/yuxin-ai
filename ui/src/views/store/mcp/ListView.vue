@@ -12,7 +12,6 @@ import {
   getPublicMcpProvidersWithPage,
 } from '@/services/mcp'
 import type { McpCategory, McpProvider } from '@/models/mcp'
-import CreateOrUpdateMcpModal from '@/views/space/mcp/components/CreateOrUpdateMcpModal.vue'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
 withDefaults(
@@ -33,7 +32,6 @@ const searchWord = ref('')
 const showDetailVisible = ref(false)
 const detailLoading = ref(false)
 const activeProvider = ref<McpProvider | null>(null)
-const showCreateMcpModalVisible = ref(false)
 
 const avatarPalettes = [
   ['#334155', '#0f172a'],
@@ -101,15 +99,11 @@ const getCategoryButtonClass = (active: boolean) =>
     active ? 'mcp-category-btn-active' : 'mcp-category-btn-inactive',
   ].join(' ')
 
-const openCreateModal = () => {
-  showCreateMcpModalVisible.value = true
-}
-
 const loadCategories = async () => {
   try {
     const res = await getPublicMcpCategories()
     categories.value = res.data.categories || []
-  } catch (_error: unknown) {
+  } catch {
     categories.value = []
   }
 }
@@ -175,17 +169,6 @@ onMounted(async () => {
           <div>
             <div class="text-lg font-medium text-gray-900">{{ t('store.mcp.title') }}</div>
           </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <a-button
-            v-if="!hideCreate"
-            data-testid="store-mcp-create-button"
-            type="primary"
-            class="rounded-lg"
-            @click="openCreateModal"
-          >
-            {{ t('store.mcp.createButton') }}
-          </a-button>
         </div>
       </div>
 
@@ -388,12 +371,6 @@ onMounted(async () => {
         </div>
       </a-spin>
     </a-drawer>
-
-    <create-or-update-mcp-modal
-      v-if="!hideCreate"
-      v-model:visible="showCreateMcpModalVisible"
-      :callback="loadProviders"
-    />
   </a-spin>
 </template>
 

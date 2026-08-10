@@ -62,37 +62,37 @@ describe('getAuthGuardRedirect', () => {
     ).toBeNull()
   })
 
-  it('allows anonymous users to access login-prompt workspace routes', () => {
+  it('allows anonymous users to access public store and search routes', () => {
     expect(
       getAuthGuardRedirect({
-        path: '/space/apps',
-        routeName: 'space-apps-list',
+        path: '/store/public-apps',
+        routeName: 'store-public-apps-list',
         isLoggedIn: false,
       }),
     ).toBeNull()
 
     expect(
       getAuthGuardRedirect({
-        path: '/openapi/api-keys',
-        routeName: 'openapi-api-keys-list',
+        path: '/search',
+        routeName: 'conversation-search',
         isLoggedIn: false,
       }),
     ).toBeNull()
   })
 
-  it('redirects anonymous users away from private workspace detail routes', () => {
+  it('redirects anonymous users away from private user routes', () => {
     expect(
       getAuthGuardRedirect({
-        path: '/space/apps/app-1',
-        routeName: 'space-apps-detail',
+        path: '/schedules',
+        routeName: 'user-schedules',
         isLoggedIn: false,
       }),
     ).toEqual({ path: '/home' })
 
     expect(
       getAuthGuardRedirect({
-        path: '/space/workflows/wf-1',
-        routeName: 'space-workflows-detail',
+        path: '/my-knowledge',
+        routeName: 'my-knowledge',
         isLoggedIn: false,
       }),
     ).toEqual({ path: '/home' })
@@ -111,8 +111,8 @@ describe('getAuthGuardRedirect', () => {
   it('allows authenticated users to access private routes', () => {
     expect(
       getAuthGuardRedirect({
-        path: '/space/apps/app-1',
-        routeName: 'space-apps-detail',
+        path: '/schedules',
+        routeName: 'user-schedules',
         isLoggedIn: true,
       }),
     ).toBeNull()
@@ -120,23 +120,20 @@ describe('getAuthGuardRedirect', () => {
 })
 
 describe('getCustomerConfigGuardRedirect', () => {
-  it('blocks non-admin users from config center routes', () => {
-    expect(getCustomerConfigGuardRedirect({ path: '/space/apps', routeName: 'space-apps-list', isAdminLoggedIn: false })).toEqual({
-      path: '/errors/403',
-    })
-    expect(getCustomerConfigGuardRedirect({ path: '/space/datasets/dataset-1/documents', routeName: 'space-datasets-documents-list', isAdminLoggedIn: false })).toEqual({
-      path: '/errors/403',
-    })
-    expect(getCustomerConfigGuardRedirect({ path: '/openapi/api-keys', routeName: 'openapi-api-keys-list', isAdminLoggedIn: false })).toEqual({
+  it('does not block non-admin users from regular user routes', () => {
+    expect(getCustomerConfigGuardRedirect({ path: '/schedules', routeName: 'user-schedules', isAdminLoggedIn: false })).toBeNull()
+    expect(getCustomerConfigGuardRedirect({ path: '/search', routeName: 'conversation-search', isAdminLoggedIn: false })).toBeNull()
+    expect(getCustomerConfigGuardRedirect({ path: '/my-knowledge', routeName: 'my-knowledge', isAdminLoggedIn: false })).toBeNull()
+  })
+
+  it('blocks non-admin users from routes carrying a create_type query', () => {
+    expect(getCustomerConfigGuardRedirect({ path: '/store/public-apps?create_type=app', routeName: 'store-public-apps-list', isAdminLoggedIn: false })).toEqual({
       path: '/errors/403',
     })
   })
 
-  it('allows admin users to access config center routes', () => {
-    expect(getCustomerConfigGuardRedirect({ path: '/space/apps', routeName: 'space-apps-list', isAdminLoggedIn: true })).toBeNull()
-    expect(getCustomerConfigGuardRedirect({ path: '/space/datasets/dataset-1/documents', routeName: 'space-datasets-documents-list', isAdminLoggedIn: true })).toBeNull()
-    expect(getCustomerConfigGuardRedirect({ path: '/openapi/api-keys', routeName: 'openapi-api-keys-list', isAdminLoggedIn: true })).toBeNull()
-    expect(getCustomerConfigGuardRedirect({ path: '/space/apps?create_type=app', routeName: 'space-apps-list', isAdminLoggedIn: true })).toBeNull()
+  it('allows admin users to access user routes even with create_type query', () => {
+    expect(getCustomerConfigGuardRedirect({ path: '/store/public-apps?create_type=app', routeName: 'store-public-apps-list', isAdminLoggedIn: true })).toBeNull()
   })
 
   it('allows non-admin users to access non-config routes', () => {

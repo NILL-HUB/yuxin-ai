@@ -14,17 +14,17 @@ export const createApiKey = (req: CreateApiKeyRequest) => {
 
 // 删除API秘钥请求
 export const deleteApiKey = (api_key_id: string) => {
-  return post<BaseResponse<any>>(`/openapi/api-keys/${api_key_id}/delete`)
+  return post<BaseResponse<Record<string, unknown>>>(`/openapi/api-keys/${api_key_id}/delete`)
 }
 
 // 修改API秘钥请求
 export const updateApiKey = (api_key_id: string, req: UpdateApiKeyRequest) => {
-  return post<BaseResponse<any>>(`/openapi/api-keys/${api_key_id}`, { body: req })
+  return post<BaseResponse<Record<string, unknown>>>(`/openapi/api-keys/${api_key_id}`, { body: req })
 }
 
 // 修改API秘钥激活请求
 export const updateApiKeyIsActive = (api_key_id: string, is_active: boolean) => {
-  return post<BaseResponse<any>>(`/openapi/api-keys/${api_key_id}/is-active`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/openapi/api-keys/${api_key_id}/is-active`, {
     body: { is_active },
   })
 }

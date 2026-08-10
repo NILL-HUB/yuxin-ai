@@ -243,6 +243,14 @@ const upsertThought = (
   const { appendThought } = options
   const eventId = String(data.id ?? '')
   const event = String(data.event ?? '')
+
+  // 修复 ID 覆盖：如果 id 为空，直接 push 新 thought，避免 findIndex 匹配到空 id 的条目导致覆盖
+  if (!eventId) {
+    nextState.position += 1
+    thoughts.push(buildThought(data, nextState.position))
+    return
+  }
+
   const thoughtIdx = thoughts.findIndex((item) => item.id === eventId && item.event === event)
 
   if (thoughtIdx === -1) {
@@ -290,7 +298,11 @@ export const applyChatStreamEvent = (
   let shouldRefreshOutputParts = false
 
   if (event === QueueEvent.agentMessage) {
-    upsertThought(thoughts, data, nextState, { appendThought: true })
+    // 只有当 payload 携带 thought 内容时才创建/更新 thought 条目
+    // 真流式 token 事件只有 answer 字段，没有 thought，不应创建空 thought
+    if (data.thought) {
+      upsertThought(thoughts, data, nextState, { appendThought: true })
+    }
     // 后端 AGENT_MESSAGE 事件 payload 使用 'answer' 字段（新契约，所有执行器遵循）
     // 旧测试 / 历史数据可能使用 'thought' 字段，两者兼容：优先 answer，回退 thought
     const answerChunk = String(data.answer ?? data.thought ?? '')

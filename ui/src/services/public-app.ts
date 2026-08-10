@@ -3,7 +3,6 @@
  */
 import { get, post, ssePost } from '@/utils/request'
 import type { BaseResponse, BasePaginatorResponse } from '@/models/base'
-import type { ChatConversationMessage } from '@/models/chat'
 
 export interface PublicApp {
   id: string
@@ -53,14 +52,14 @@ export function getAppTags() {
  * 共享应用到广场
  */
 export function shareAppToSquare(appId: string, tags: string) {
-  return post<BaseResponse<any>>(`/apps/${appId}/share-to-square`, { body: { tags } })
+  return post<BaseResponse<Record<string, unknown>>>(`/apps/${appId}/share-to-square`, { body: { tags } })
 }
 
 /**
  * 取消共享应用
  */
 export function unshareAppFromSquare(appId: string) {
-  return post<BaseResponse<any>>(`/apps/${appId}/unshare-from-square`)
+  return post<BaseResponse<Record<string, unknown>>>(`/apps/${appId}/unshare-from-square`)
 }
 
 /**

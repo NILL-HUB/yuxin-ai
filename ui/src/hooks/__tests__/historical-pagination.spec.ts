@@ -51,13 +51,13 @@ type PagedMessage = {
   conversation_id: string
   query: string
   image_urls: string[]
-  input_parts: Array<Record<string, any>>
+  input_parts: Array<Record<string, unknown>>
   answer: string
-  answer_parts: Array<Record<string, any>>
-  artifacts: Array<Record<string, any>>
+  answer_parts: Array<Record<string, unknown>>
+  artifacts: Array<Record<string, unknown>>
   total_token_count: number
   latency: number
-  agent_thoughts: Array<Record<string, any>>
+  agent_thoughts: Array<Record<string, unknown>>
   suggested_questions: string[]
   created_at: number
 }

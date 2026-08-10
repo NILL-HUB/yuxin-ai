@@ -12,6 +12,7 @@ export interface PublicAIFeature {
   enabled: boolean
   fallback_tier: string
   extra_config: Record<string, unknown>
+  last_called_at: string | null
   updated_at: string
   created_at: string
 }
@@ -53,6 +54,7 @@ export type UpdatePublicAIFeaturePayload = {
   model_config_id?: string
   enabled?: boolean
   fallback_tier?: string
+  billable?: boolean
 }
 
 export async function updatePublicAIFeature(

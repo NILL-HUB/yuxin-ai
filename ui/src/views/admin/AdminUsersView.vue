@@ -429,7 +429,7 @@ onMounted(async () => {
       :mask-closable="false"
       @ok="submitResetPwd"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" :model="{}">
         <a-form-item :label="t('admin.adminUsers.password')" field="password">
           <a-input v-model="resetPwdPassword" :placeholder="t('admin.adminUsers.passwordPlaceholder')" />
         </a-form-item>

@@ -38,19 +38,19 @@ export const createMcpProvider = (req: CreateMcpProviderRequest) => {
 }
 
 export const updateMcpProvider = (provider_id: string, req: UpdateMcpProviderRequest) => {
-  return post<BaseResponse<any>>(`/mcp-providers/${provider_id}`, { body: req })
+  return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}`, { body: req })
 }
 
 export const deleteMcpProvider = (provider_id: string) => {
-  return post<BaseResponse<any>>(`/mcp-providers/${provider_id}/delete`)
+  return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}/delete`)
 }
 
 export const publishMcpProvider = (provider_id: string) => {
-  return post<BaseResponse<any>>(`/mcp-providers/${provider_id}/publish`)
+  return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}/publish`)
 }
 
 export const unpublishMcpProvider = (provider_id: string) => {
-  return post<BaseResponse<any>>(`/mcp-providers/${provider_id}/unpublish`)
+  return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}/unpublish`)
 }
 
 export const regenerateMcpIcon = (provider_id: string) => {

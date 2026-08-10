@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# OpenAgent 服务器快速部署脚本
-# 用途: 在服务器上一键部署 OpenAgent 平台
+# 钰心AI 服务器快速部署脚本
+# 用途: 在服务器上一键部署 钰心AI 平台
 
 set -e
 
 echo "=========================================="
-echo "  OpenAgent 平台服务器部署脚本"
+echo "  钰心AI 平台服务器部署脚本"
 echo "=========================================="
 echo ""
 
@@ -18,7 +18,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # 配置
-REPO_URL="https://github.com/Haohao-end/openagent.git"
+REPO_URL="https://github.com/NILL-HUB/yuxin-ai.git"
 INSTALL_DIR="/opt/llmops"
 
 # 1. 检查是否为 root 用户

@@ -31,7 +31,7 @@ const generatedCodes = ref<GeneratedRedeemCode[]>([])
 const generatedBatchName = ref('')
 
 const planForm = ref({ code: '', name: '', duration_days: 30, grant_token_credits: 100, price: '0.00', status: 'active' as const })
-const codeForm = ref({ name: '', quantity: 1 })
+const codeForm = ref({ name: '', quantity: '1' })
 const codeFilter = ref({ batch_id: '', status: '' as '' | 'unused' | 'used' | 'disabled' | 'expired', code_keyword: '', current_page: 1, page_size: 20 })
 
 const loadBilling = async () => {
@@ -162,7 +162,7 @@ const handleGenerateCodes = async () => {
   }
   actionLoading.value = true
   try {
-    const result = await generateRedeemCodes({ name: codeForm.value.name, plan_id: firstPlan.id, quantity: codeForm.value.quantity })
+    const result = await generateRedeemCodes({ name: codeForm.value.name, plan_id: firstPlan.id, quantity: Number(codeForm.value.quantity) })
     generatedBatchName.value = result.batch.name || codeForm.value.name
     generatedCodes.value = result.codes
     Message.success(t('admin.billing.codesGenerated'))

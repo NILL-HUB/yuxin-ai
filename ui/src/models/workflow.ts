@@ -60,12 +60,12 @@ export type GetWorkflowResponse = BaseResponse<{
 
 // 获取指定工作流图草稿配置
 export type GetDraftGraphResponse = BaseResponse<{
-  nodes: Record<string, any>[]
-  edges: Record<string, any>[]
+  nodes: Record<string, unknown>[]
+  edges: Record<string, unknown>[]
 }>
 
 // 更新指定工作流图草稿配置
 export type UpdateDraftGraphRequest = {
-  nodes: Record<string, any>[]
-  edges: Record<string, any>[]
+  nodes: Record<string, unknown>[]
+  edges: Record<string, unknown>[]
 }

@@ -11,13 +11,19 @@ import {
   validateOpenAPISchema,
 } from '@/services/api-tool'
 import { Message, Modal } from '@arco-design/web-vue'
-import type { CreateApiToolProviderRequest, UpdateApiToolProviderRequest } from '@/models/api-tool'
+import type {
+  CreateApiToolProviderRequest,
+  GetApiToolProviderResponse,
+  GetApiToolProvidersWithPageResponse,
+  GetApiToolResponse,
+  UpdateApiToolProviderRequest,
+} from '@/models/api-tool'
 import { getErrorMessage } from '@/utils/error'
 
 export const useGetApiToolProvider = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const api_tool_provider = ref<Record<string, any>>({})
+  const api_tool_provider = ref<GetApiToolProviderResponse['data']>({} as GetApiToolProviderResponse['data'])
 
   // 2.定义加载数据函数
   const loadApiToolProvider = async (provider_id: string) => {
@@ -36,7 +42,7 @@ export const useGetApiToolProvider = () => {
 export const useGetApiTool = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const api_tool = ref<Record<string, any>>({})
+  const api_tool = ref<GetApiToolResponse['data']>({} as GetApiToolResponse['data'])
 
   // 2.定义加载函数
   const loadApiTool = async (provider_id: string, tool_name: string) => {
@@ -55,7 +61,7 @@ export const useGetApiTool = () => {
 export const useGetApiToolProvidersWithPage = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const api_tool_providers = ref<Record<string, any>>([])
+  const api_tool_providers = ref<GetApiToolProvidersWithPageResponse['data']['list']>([])
   const defaultPaginator = {
     current_page: 1,
     page_size: 20,
@@ -118,7 +124,7 @@ export const useDeleteApiToolProvider = () => {
           const resp = await deleteApiToolProvider(provider_id)
           Message.success(resp.message)
         } finally {
-          success_callback && success_callback()
+          if (success_callback) success_callback()
         }
       },
     })

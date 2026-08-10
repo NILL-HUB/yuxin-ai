@@ -16,12 +16,14 @@ const initAccount = {
   oauth_bindings: [] as Array<{ provider: string; bound: boolean; bound_at: number }>,
 }
 
-export const useAccountStore = defineStore('account', () => {
-  const account = ref(storage.get('account', initAccount))
+type Account = typeof initAccount
 
-  const update = (params: any) => {
-    account.value = params
-    storage.set('account', params)
+export const useAccountStore = defineStore('account', () => {
+  const account = ref<Account>(storage.get('account', initAccount) as Account)
+
+  const update = (params: Partial<Account>) => {
+    account.value = { ...initAccount, ...params }
+    storage.set('account', account.value)
   }
 
   const clear = () => {

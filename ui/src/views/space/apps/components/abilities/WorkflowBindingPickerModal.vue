@@ -206,6 +206,7 @@ watch(
 </template>
 
 <style>
+@reference "tailwindcss";
 .workflow-binding-modal {
   .arco-modal-wrapper {
     @apply text-right;

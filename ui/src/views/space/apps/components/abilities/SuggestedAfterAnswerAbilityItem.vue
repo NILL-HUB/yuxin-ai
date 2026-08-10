@@ -28,7 +28,7 @@ const { handleUpdateDraftAppConfig } = useUpdateDraftAppConfig()
       <template #extra>
         <a-dropdown
           @select="
-            async (value: string | number | boolean) => {
+            async (value: string | number | Record<string, any> | undefined) => {
               if (Boolean(value) !== props.suggested_after_answer?.enable) {
                 emits('update:suggested_after_answer', { enable: Boolean(value) })
                 await handleUpdateDraftAppConfig(props.app_id, {

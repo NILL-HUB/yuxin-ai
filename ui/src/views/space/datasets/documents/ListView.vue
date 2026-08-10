@@ -11,7 +11,7 @@ import {
 import HitTestingModal from '@/views/space/datasets/documents/components/HitTestingModal.vue'
 import { formatTimestampLong } from '@/utils/time-formatter'
 
-type DocumentRecord = Record<string, any>
+type DocumentRecord = Record<string, unknown>
 
 const route = useRoute()
 const router = useRouter()
@@ -182,7 +182,7 @@ watch(
  <div class="flex flex-col gap-2">
  <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
  <div class="flex min-w-0 items-start gap-3">
- <router-link :to="{ name: 'space-datasets-list' }">
+ <router-link :to="{ name: 'my-knowledge' }">
  <a-button size="mini" type="text" class="mt-1 !text-slate-600">
  <template #icon>
  <icon-left />

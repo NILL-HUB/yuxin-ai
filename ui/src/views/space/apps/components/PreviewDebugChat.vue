@@ -18,7 +18,7 @@ import {
 } from '@/hooks/use-app'
 import { useAudioPlayer, useAudioToText } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
-import { getToolConfirmation, postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import { postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import type { RoutingDecision } from '@/models/orchestration'
 import { useAccountStore } from '@/stores/account'
 import { getErrorMessage } from '@/utils/error'
@@ -65,7 +65,7 @@ const props = defineProps({
   opening_statement: { type: String, default: '', required: true },
   opening_questions: { type: Array as PropType<string[]>, default: () => [], required: true },
   capabilities: {
-    type: Object as PropType<Record<string, any>>,
+    type: Object as PropType<Record<string, unknown>>,
     default: () => {
       return {}
     },
@@ -154,8 +154,12 @@ const { triggerFileInput, handleFileChange } = useChatImageUpload({
   onError: (message) => Message.error(message),
   onSuccess: (message) => Message.success(message),
 })
+type ImageInputCapability = {
+  enabled?: boolean
+}
 const canImageInput = computed(() => {
-  return props.capabilities?.image_input?.enabled === true
+  const imageInput = props.capabilities?.image_input
+  return imageInput !== null && typeof imageInput === 'object' && (imageInput as ImageInputCapability).enabled === true
 })
 
 const normalizeConversationId = (value: unknown) => String(value || '').trim()
@@ -952,8 +956,8 @@ onUnmounted(() => {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.74) 0%, rgba(247, 251, 255, 0.62) 100%) !important;
   border-color: rgba(255, 255, 255, 0.9) !important;
   box-shadow:
-    0 10px 28px rgba(148, 163, 184, 0.1) !important,
-    inset 0 1px 0 rgba(255, 255, 255, 0.95) !important,
+    0 10px 28px rgba(148, 163, 184, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
     inset 0 -1px 0 rgba(255, 255, 255, 0.4) !important;
   backdrop-filter: blur(18px) saturate(1.08) !important;
   -webkit-backdrop-filter: blur(18px) saturate(1.08) !important;
@@ -963,8 +967,8 @@ onUnmounted(() => {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.82) 0%, rgba(243, 248, 255, 0.72) 100%) !important;
   border-color: rgba(255, 255, 255, 0.96) !important;
   box-shadow:
-    0 14px 36px rgba(148, 163, 184, 0.14) !important,
-    inset 0 1px 0 rgba(255, 255, 255, 1) !important,
+    0 14px 36px rgba(148, 163, 184, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 1),
     inset 0 -1px 0 rgba(255, 255, 255, 0.5) !important;
 }
 
@@ -972,8 +976,8 @@ onUnmounted(() => {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(247, 251, 255, 0.58) 100%) !important;
   border-color: rgba(255, 255, 255, 0.84) !important;
   box-shadow:
-    0 8px 24px rgba(148, 163, 184, 0.08) !important,
-    inset 0 1px 0 rgba(255, 255, 255, 0.9) !important,
+    0 8px 24px rgba(148, 163, 184, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
     inset 0 -1px 0 rgba(255, 255, 255, 0.32) !important;
   backdrop-filter: blur(16px) saturate(1.04) !important;
   -webkit-backdrop-filter: blur(16px) saturate(1.04) !important;

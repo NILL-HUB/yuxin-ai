@@ -32,7 +32,7 @@ export type SkillPackage = {
   readme: string
   category: string
   tags: string[]
-  capabilities: Record<string, any>
+  capabilities: Record<string, unknown>
   executor_type: string
   tool_count: number
   tools: SkillTool[]

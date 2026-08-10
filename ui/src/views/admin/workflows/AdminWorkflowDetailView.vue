@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { markRaw, onBeforeUnmount, onMounted, ref, computed, defineAsyncComponent, watch } from 'vue'
+import { markRaw, onBeforeUnmount, onMounted, ref, computed, defineAsyncComponent, watch, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ConnectionMode, Panel, useVueFlow, VueFlow } from '@vue-flow/core'
+import { ConnectionMode, Panel, useVueFlow, VueFlow, type Node, type Edge } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { MiniMap } from '@vue-flow/minimap'
 import { debounce } from 'lodash'
@@ -52,10 +52,14 @@ import TextProcessorNodeInfo from '@/views/space/workflows/components/infos/Text
 import VariableAssignerNodeInfo from '@/views/space/workflows/components/infos/VariableAssignerNodeInfo.vue'
 import ParameterExtractorNodeInfo from '@/views/space/workflows/components/infos/ParameterExtractorNodeInfo.vue'
 import IfElseNodeInfo from '@/views/space/workflows/components/infos/IfElseNodeInfo.vue'
-import { useWorkflowCanvasInteraction } from '@/views/space/workflows/use-workflow-canvas-interaction'
+import {
+  useWorkflowCanvasInteraction,
+  type FlowEdge,
+  type FlowNode,
+} from '@/views/space/workflows/use-workflow-canvas-interaction'
 import { loadWorkflowDetailByMode } from '@/views/space/workflows/use-workflow-detail-loader'
 import { useWorkflowHeader } from '@/views/space/workflows/use-workflow-header'
-import { useWorkflowNodeSidebar } from '@/views/space/workflows/use-workflow-node-sidebar'
+import { useWorkflowNodeSidebar, type WorkflowNodeLike } from '@/views/space/workflows/use-workflow-node-sidebar'
 import { useWorkflowPublishActions } from '@/views/space/workflows/use-workflow-publish-actions'
 
 const CodeNodeInfo = defineAsyncComponent(
@@ -225,7 +229,21 @@ const {
   handleUpdateDraftGraph,
   convertGraphToReq,
 } = useUpdateDraftGraph()
-const { nodes, edges, loadDraftGraph } = useGetDraftGraph()
+const { nodes: draftNodes, edges: draftEdges, loadDraftGraph } = useGetDraftGraph()
+
+// vue-flow 视图层使用的可写包装：将宽松的 Record 数据断言为 Node/Edge，兼容模板与 hooks 的强类型
+const nodes = computed<Node[]>({
+  get: () => draftNodes.value as unknown as Node[],
+  set: (value) => {
+    draftNodes.value = value as unknown as Record<string, unknown>[]
+  },
+})
+const edges = computed<Edge[]>({
+  get: () => draftEdges.value as unknown as Edge[],
+  set: (value) => {
+    draftEdges.value = value as unknown as Record<string, unknown>[]
+  },
+})
 const { loading: publishWorkflowLoading, handlePublishWorkflow } = usePublishWorkflow()
 const { handleCancelPublish } = useCancelPublishWorkflow()
 const { loading: shareWorkflowLoading, handleShareWorkflow } = useShareWorkflow()
@@ -290,7 +308,7 @@ const loadWorkflowDetail = async (workflowId: string) => {
     try {
       getWorkflowLoading.value = true
       const data = await getAdminWorkflow(workflowId)
-      workflow.value = data as unknown as Record<string, any>
+      workflow.value = data as unknown as typeof workflow.value
     } finally {
       getWorkflowLoading.value = false
     }
@@ -304,11 +322,11 @@ const loadGraph = async (workflowId: string) => {
   if (isAdminContext.value) {
     try {
       const data = await getAdminWorkflowDraftGraph(workflowId)
-      nodes.value = (data.nodes || []).map((node: Record<string, any>) => {
+      nodes.value = (data.nodes || []).map((node: Record<string, unknown>) => {
         const { id, node_type: type, position, ...rest } = node
         return { id, type, position, data: rest }
-      })
-      edges.value = (data.edges || []).map((edge: Record<string, any>) => {
+      }) as Node[]
+      edges.value = (data.edges || []).map((edge: Record<string, unknown>) => {
         const { source_handle, target_handle, ...rest } = edge
         const finalSourceHandle =
           edge.source_type === 'if_else' ? source_handle || 'true' : source_handle || undefined
@@ -322,7 +340,7 @@ const loadGraph = async (workflowId: string) => {
           animated: true,
           style: { strokeWidth: 2, stroke: '#9ca3af' },
         }
-      })
+      }) as Edge[]
     } catch (error: unknown) {
       Message.error(getErrorMessage(error, t('appStudio.shell.loadGraphFailed')))
     }
@@ -548,7 +566,7 @@ const canSaveDraftGraph = () => {
 const saveDraftGraph = async (is_notify: boolean = false) => {
   if (isInitializing.value || isPreviewMode.value) return // 预览模式下不保存
   if (!canSaveDraftGraph()) return
-  const reqBody = convertGraphToReq(nodes.value, edges.value)
+  const reqBody = convertGraphToReq(draftNodes.value, draftEdges.value)
   if (isAdminContext.value) {
     try {
       updateDraftGraphLoading.value = true
@@ -583,7 +601,7 @@ const {
   enterDebugMode,
   onUpdateNode,
 } = useWorkflowNodeSidebar({
-  nodes,
+  nodes: nodes as unknown as Ref<WorkflowNodeLike[]>,
   triggerDraftGraphSave: () => triggerDraftGraphSave(),
 })
 
@@ -602,8 +620,8 @@ const {
   handleViewportChange,
   handleZoomSelect,
 } = useWorkflowCanvasInteraction({
-  nodes,
-  edges,
+  nodes: nodes as unknown as Ref<FlowNode[]>,
+  edges: edges as unknown as Ref<FlowEdge[]>,
   allNodes,
   findNode: (id) => (id ? findNode(id) : undefined),
   isPreviewMode,
@@ -655,8 +673,8 @@ onMounted(async () => {
       workflowId: workflowId.value,
       isPreviewMode: isPreviewMode.value,
       workflow: workflow,
-      nodes: nodes,
-      edges: edges,
+      nodes: draftNodes,
+      edges: draftEdges,
       loadWorkflow,
       loadDraftGraph,
       onError: (message: string) => Message.error(message),
@@ -1274,6 +1292,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 .selected {
   .vue-flow__edge-path {
     @apply !stroke-blue-700;

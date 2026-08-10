@@ -31,7 +31,7 @@ export const useMessageToAudio = () => {
   // 2.定义消息转音频处理器
   const handleMessageToAudio = async (
     message_id: string,
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
   ) => {
     try {
       pendingCount.value += 1
@@ -53,7 +53,7 @@ export const useTextToAudio = () => {
   const handleTextToAudio = async (
     message_id: string = '',
     text: string,
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
   ) => {
     try {
       pendingCount.value += 1
@@ -67,7 +67,7 @@ export const useTextToAudio = () => {
 }
 
 type TtsRequestFn = (
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => Promise<void>
 
 // 全局单例播放器状态，确保整个应用只会有一个音频在播放
@@ -134,7 +134,7 @@ const base64ToUint8Array = (base64Data: string) => {
       uint8Array[i] = binaryString.charCodeAt(i)
     }
     return uint8Array
-  } catch (_error: unknown) {
+  } catch {
     return null
   }
 }
@@ -161,7 +161,7 @@ const collectAudioBuffer = async (sessionId: number, request: TtsRequestFn) => {
       if (sessionId !== playSessionId.value) return
 
       const event = event_response?.event
-      const data = event_response?.data
+      const data = event_response?.data as { audio?: string } | undefined
 
       if (event === 'tts_error') {
         hasStreamError = true
@@ -174,7 +174,7 @@ const collectAudioBuffer = async (sessionId: number, request: TtsRequestFn) => {
         chunks.push(chunk)
       }
     })
-  } catch (_error: unknown) {
+  } catch {
     if (sessionId !== playSessionId.value) return null
     return null
   }
@@ -192,7 +192,7 @@ const playAudioBuffer = async (audioBuffer: Uint8Array, sessionId: number) => {
   const audio = audioElement.value
   if (!audio) return
 
-  const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' })
+  const audioBlob = new Blob([audioBuffer as unknown as BlobPart], { type: 'audio/mpeg' })
   const audioUrl = URL.createObjectURL(audioBlob)
 
   if (sessionId !== playSessionId.value) {
@@ -209,7 +209,7 @@ const playAudioBuffer = async (audioBuffer: Uint8Array, sessionId: number) => {
 
   try {
     await audio.play()
-  } catch (_error: unknown) {
+  } catch {
     if (sessionId !== playSessionId.value) return
     isPlaying.value = false
     resetActiveState()

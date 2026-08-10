@@ -6,8 +6,8 @@ export type GetApiToolProvidersWithPageResponse = BasePaginatorResponse<{
   name: string
   icon: string
   description: string
-  headers: Array<any>
-  tools: Array<any>
+  headers: Array<Record<string, unknown>>
+  tools: Array<Record<string, unknown>>
   creator_name: string
   creator_avatar: string
   updated_at: number
@@ -19,7 +19,7 @@ export type CreateApiToolProviderRequest = {
   name: string
   icon: string
   openapi_schema: string
-  headers: Array<any>
+  headers: Array<Record<string, unknown>>
 }
 
 // 更新自定义API工具提供者请求与响应结构
@@ -27,7 +27,7 @@ export type UpdateApiToolProviderRequest = {
   name: string
   icon: string
   openapi_schema: string
-  headers: Array<any>
+  headers: Array<Record<string, unknown>>
 }
 
 // 获取自定义API工具提供者响应结构体
@@ -36,7 +36,7 @@ export type GetApiToolProviderResponse = BaseResponse<{
   name: string
   icon: string
   openapi_schema: string
-  headers: Array<any>
+  headers: Array<Record<string, unknown>>
   updated_at: number
   created_at: number
 }>

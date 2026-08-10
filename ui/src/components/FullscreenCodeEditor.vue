@@ -229,6 +229,7 @@ const handleInsertCode = (code: string) => {
 </template>
 
 <style scoped>
+@reference "tailwindcss";
 :deep(.arco-modal) {
   @apply top-5;
 }

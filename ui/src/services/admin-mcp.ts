@@ -49,7 +49,7 @@ export const getAdminMcp = (id: string) => {
  * 返回结构与 mcp.ts 的 updateMcpProvider 保持一致。
  */
 export const updateAdminMcp = (id: string, body: UpdateMcpProviderRequest) => {
-  return request<BaseResponse<any>>(`/admin/mcp/${id}`, {
+  return request<BaseResponse<Record<string, unknown>>>(`/admin/mcp/${id}`, {
     method: 'PATCH',
     body,
   })
@@ -78,10 +78,15 @@ export const unpublishAdminMcp = (id: string) => {
 }
 
 /**
- * 删除后台 MCP Provider。
+ * 删除后台 MCP Provider（进入回收站，可指定留存天数）。
  */
-export const deleteAdminMcp = async (id: string): Promise<Record<string, never>> => {
-  const response = await del<BaseResponse<Record<string, never>>>(`/admin/mcp/${id}`)
+export const deleteAdminMcp = async (
+  id: string,
+  retentionDays?: number,
+): Promise<Record<string, never>> => {
+  const response = await del<BaseResponse<Record<string, never>>>(`/admin/mcp/${id}`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
   return response.data
 }
 

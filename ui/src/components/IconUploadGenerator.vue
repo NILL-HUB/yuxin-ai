@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
+import type { RequestOption, UploadRequest } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 // 定义组件props
 const props = defineProps({
@@ -45,19 +46,22 @@ watch(
   },
 )
 
-// 处理上传
-const handleCustomRequest = async (option: any) => {
-  const { fileItem, onSuccess, onError } = option
-  try {
-    // 上传前清空旧文件列表（确保只保留最新上传的图标）
-    localFileList.value = []
-    emits('update:fileList', [])
-
-    await props.onUpload(fileItem.file)
-    onSuccess()
-  } catch (error: unknown) {
-    onError(error as Error)
-  }
+// 处理上传
+const handleCustomRequest = (option: RequestOption): UploadRequest => {
+  const { fileItem, onSuccess, onError } = option
+  void (async () => {
+    try {
+      // 上传前清空旧文件列表（确保只保留最新上传的图标）
+      localFileList.value = []
+      emits('update:fileList', [])
+
+      await props.onUpload(fileItem.file)
+      onSuccess()
+    } catch (error: unknown) {
+      onError(error as Error)
+    }
+  })()
+  return { abort: () => {} }
 }
 
 // 处理删除
@@ -161,7 +165,8 @@ const handleGenerate = async () => {
   </a-space>
 </template>
 
-<style scoped>
+<style scoped>
+@reference "tailwindcss";
 /* 确保 Upload 组件完全居中 */
 :deep(.centered-upload) {
   display: flex;

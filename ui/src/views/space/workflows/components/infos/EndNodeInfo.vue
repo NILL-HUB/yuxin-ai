@@ -21,7 +21,7 @@ type FormOutputField = {
   name: string
   type: string
   ref: string
-  content?: unknown
+  content?: string
 }
 
 type EndNodeForm = {
@@ -71,9 +71,12 @@ const variableTypes = [
   { label: t('workflowEditor.variableTypes.boolean'), value: 'boolean' },
 ]
 
+type RefOption = { label: string; value: string }
+type RefOptionGroup = { isGroup: true; label: string; options: RefOption[] }
+
 // 2.定义输出变量引用选项
-const outputRefOptions = computed(() => {
-  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
+const outputRefOptions = computed<RefOptionGroup[]>(() => {
+  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id) as RefOptionGroup[]
 })
 
 // 3.定义添加表单字段函数
@@ -157,7 +160,7 @@ watch(
         return {
           name: output.name, // 变量名
           type: output.value.type === 'literal' ? output.type : 'ref', // 数据类型(涵盖ref/string/int/float/boolean
-          content: output.value.type === 'literal' ? output.value.content : '', // 变量值内容
+          content: output.value.type === 'literal' ? String(output.value.content ?? '') : '', // 变量值内容
           ref: output.value.type === 'ref' && refExists ? ref : '', // 变量引用信息，存储引用节点id+引用变量名
         }
       }),
@@ -298,6 +301,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 #llm-node-info {
   .arco-select-option-content {
     @apply !text-xs;

@@ -101,7 +101,7 @@ const saveApiKey = async ({ errors }: { errors: Record<string, ValidatedError> |
 
   // 3.5 隐藏模态窗
   hideModal()
-  props.callback && props.callback()
+  if (props.callback) props.callback()
 }
 
 // 4.监听模态窗的显示or隐藏状态

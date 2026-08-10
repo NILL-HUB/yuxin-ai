@@ -102,7 +102,7 @@ const normalizeIconUrl = (icon: string = '') => {
 
 const isSelectedBinding = (binding: BindingTarget) => selectedAppIdSet.value.has(binding.app_id)
 
-const normalizeOwnApp = (app: Record<string, any>): BindingTarget | null => {
+const normalizeOwnApp = (app: Record<string, unknown>): BindingTarget | null => {
   const appId = String(app.id || '').trim()
   if (!appId || appId === String(props.current_app_id || '').trim()) {
     return null

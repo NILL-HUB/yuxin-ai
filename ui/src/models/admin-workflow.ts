@@ -8,6 +8,7 @@ export type AdminWorkflowRecord = {
   description: string
   status: string
   is_public: boolean
+  creator_name?: string
   created_at: number
   updated_at: number
 }

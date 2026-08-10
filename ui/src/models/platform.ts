@@ -7,7 +7,7 @@ export type GetWechatConfigResponse = BaseResponse<{
   url: string
   wechat_app_id: string
   wechat_app_secret: string
-  wechat_app_token: string
+  wechat_token: string
   status: string
   updated_at: number
   created_at: number

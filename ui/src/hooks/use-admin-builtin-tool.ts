@@ -1,10 +1,11 @@
 import { ref } from 'vue'
 import { getAdminBuiltinCategories, getAdminBuiltinTools } from '@/services/admin-tools'
+import type { GetBuiltinToolsResponse, GetCategoriesResponse } from '@/models/builtin-tool'
 
 export const useGetAdminCategories = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
-  const categories = ref<Record<string, any>>([])
+  const categories = ref<GetCategoriesResponse['data']>([])
 
   // 2.定义加载数据函数
   const loadCategories = async () => {
@@ -23,7 +24,7 @@ export const useGetAdminCategories = () => {
 export const useGetAdminBuiltinTools = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
-  const builtin_tools = ref<Record<string, any>>([])
+  const builtin_tools = ref<GetBuiltinToolsResponse['data']>([])
 
   // 2.定义加载数据函数
   const loadBuiltinTools = async () => {

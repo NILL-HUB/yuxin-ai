@@ -35,14 +35,14 @@ export function getPublicWorkflows(params: GetPublicWorkflowsParams) {
  * 共享工作流到广场
  */
 export function shareWorkflowToSquare(workflowId: string, tags: string) {
-  return post<BaseResponse<any>>(`/workflows/${workflowId}/share-to-square`, { body: { tags } })
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflowId}/share-to-square`, { body: { tags } })
 }
 
 /**
  * 取消共享工作流
  */
 export function unshareWorkflowFromSquare(workflowId: string) {
-  return post<BaseResponse<any>>(`/workflows/${workflowId}/unshare-from-square`)
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflowId}/unshare-from-square`)
 }
 
 /**

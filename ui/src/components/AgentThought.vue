@@ -14,7 +14,7 @@ const props = defineProps({
   default_visible: { type: Boolean, default: false, required: false },
   follow_latest_thought: { type: Boolean, default: false, required: false },
   agent_thoughts: {
-    type: Array as PropType<Record<string, any>[]>,
+    type: Array as PropType<Record<string, unknown>[]>,
     default: () => [],
     required: true,
   },
@@ -24,6 +24,54 @@ const { t } = useI18n()
 const visible = ref(props.default_visible)
 const containerRef = ref<HTMLElement | null>(null)
 const activeThoughtKeys = ref<(string | number)[]>([])
+
+// 流式期间（loading 或 follow_latest_thought 为 true）强制展开所有思考项，
+// 保证推理过程逐 token 实时可见；用户手动折叠/展开后恢复正常交互。
+// 不依赖 syncLatestThought 的 watch 时序，避免流式早期 follow 状态
+// 尚未建立（item.id === message_id 未匹配）时卡片保持折叠。
+const effectiveActiveKeys = computed(() => {
+  if (props.loading || props.follow_latest_thought) {
+    return thoughtItems.value.map((item) => getThoughtKey(item))
+  }
+  return activeThoughtKeys.value
+})
+
+const handleCollapseChange = (keys: (string | number)[]) => {
+  activeThoughtKeys.value = keys
+}
+
+// 手动展开/收起整个卡片：展开时把所有思考项一起展开，方便查看完整推理
+const handleToggle = () => {
+  visible.value = !visible.value
+  if (visible.value) {
+    activeThoughtKeys.value = thoughtItems.value.map((item) => getThoughtKey(item))
+  }
+}
+
+// 流式期间（loading 或 follow_latest_thought）强制展开思考容器并展开所有思考项，
+// 保证推理过程逐 token 实时可见；流式结束（两者均变 false）后默认收起：
+// 一次到位、不闪烁，用户想看推理时可手动展开。
+watch(
+  [() => props.loading, () => props.follow_latest_thought],
+  ([loading, follow], [prevLoading, prevFollow]) => {
+    if (loading || follow) {
+      visible.value = true
+      activeThoughtKeys.value = thoughtItems.value.map((item) => getThoughtKey(item))
+    } else if (prevLoading && !loading) {
+      // 流式刚结束：稳定收起（不闪），避免 syncLatestThought 等时序把卡片留在展开态
+      visible.value = false
+      activeThoughtKeys.value = []
+    }
+  },
+)
+
+// 当 default_visible prop 变化时（如流式开始/结束），同步展开/折叠状态
+watch(
+  () => props.default_visible,
+  (newVal) => {
+    visible.value = newVal
+  },
+)
 const {
   activeMessageId,
   activeThoughtId,
@@ -34,18 +82,23 @@ const {
 } = useAudioPlayer()
 
 const thoughtItems = computed(() =>
-  props.agent_thoughts.filter((item: any) =>
+  props.agent_thoughts.filter((item: Record<string, unknown>) =>
     [
       QueueEvent.longTermMemoryRecall,
       QueueEvent.agentThought,
       QueueEvent.datasetRetrieval,
       QueueEvent.agentAction,
-      QueueEvent.agentMessage,
-    ].includes(item.event),
+      // agent_message（"回复"卡片）与答案气泡内容重复，不再单独渲染卡片
+    ].includes(String(item.event)) &&
+    // 过滤无实际内容的思考条目，避免渲染只有标题+耗时的空卡片。
+    // agent_action 即使观察为空也可能携带工具信息，予以保留
+    (String(
+      item.thought ?? item.content ?? item.reasoning ?? item.answer ?? item.observation ?? item.result ?? item.output ?? '',
+    ).trim() !== '' || String(item.event) === QueueEvent.agentAction),
   ),
 )
 
-const getThoughtKey = (agentThought: Record<string, any>) => {
+const getThoughtKey = (agentThought: Record<string, unknown>) => {
   if (typeof agentThought?.id === 'number') return agentThought.id
   return String(agentThought?.id ?? '')
 }
@@ -56,16 +109,16 @@ const latestThoughtKey = computed(() => {
 })
 const isInlineVariant = computed(() => props.variant === 'inline')
 
-const isLatestThought = (agentThought: Record<string, any>) => {
+const isLatestThought = (agentThought: Record<string, unknown>) => {
   return String(getThoughtKey(agentThought)) === latestThoughtKey.value
 }
 
 const containerClass = computed(() => {
-  const baseClass = 'flex flex-col rounded-2xl border border-gray-200 bg-white overflow-hidden'
+  const baseClass = 'flex flex-col rounded-2xl border border-gray-200 bg-white overflow-hidden transition-all duration-300'
   if (isInlineVariant.value) {
-    return `${baseClass} max-w-full flex-shrink-0 ${visible.value ? 'w-[320px]' : 'w-[180px]'}`
+    return `${baseClass} max-w-full flex-shrink-0 ${visible.value ? 'w-[min(560px,100%)]' : 'w-[180px]'}`
   }
-  return `${baseClass} max-w-full ${visible.value ? 'w-[320px]' : 'w-[180px]'}`
+  return `${baseClass} max-w-full ${visible.value ? 'w-[min(560px,100%)]' : 'w-[180px]'}`
 })
 
 const toggleTitle = computed(() => {
@@ -82,10 +135,67 @@ const headerClass = computed(() => {
   }`
 })
 
-const getThoughtContent = (agentThought: Record<string, any>) => {
-  const fromThought =
-    agentThought?.event === QueueEvent.agentThought || agentThought?.event === QueueEvent.agentMessage
-  return ((fromThought ? agentThought?.thought : agentThought?.observation) || '').trim()
+// 后端持久化时写入 thought 字段的占位文字（真实内容在 observation / answer）
+const PLACEHOLDER_THOUGHT_TEXTS = new Set([
+  'assistant_agent',
+  'Orchestrator routing decision',
+  'orchestrator',
+  '指挥官决策',
+  'agent',
+])
+
+const isPlaceholderThought = (thought: string) => PLACEHOLDER_THOUGHT_TEXTS.has(thought)
+
+const getThoughtContent = (agentThought: Record<string, unknown>) => {
+  const event = agentThought?.event
+  if (event === QueueEvent.agentThought || event === QueueEvent.agentMessage) {
+    // 推理/回答内容：优先 thought / content / reasoning / answer
+    // 但排除占位文字（如 "assistant_agent"、"Orchestrator routing decision"），
+    // 这些是后端持久化时写入的固定标题，真实内容在 observation 字段
+    const primary = String(
+      agentThought?.thought || agentThought?.content || agentThought?.reasoning || agentThought?.answer || '',
+    ).trim()
+    if (primary && !isPlaceholderThought(primary)) return primary
+    // 回退到 observation（路由决策详情 / 最终回答）
+    const observation = String(agentThought?.observation || '').trim()
+    if (observation) {
+      // 路由决策详情是 JSON，格式化展示更易读
+      if (observation.startsWith('{') || observation.startsWith('[')) {
+        try {
+          return JSON.stringify(JSON.parse(observation), null, 2)
+        } catch {
+          return observation
+        }
+      }
+      return observation
+    }
+    return primary
+  }
+  // 工具调用 / 记忆召回 / 数据检索：兼容 observation / result / output
+  return String(agentThought?.observation || agentThought?.result || agentThought?.output || '').trim()
+}
+
+const formatToolInput = (toolInput: unknown) => {
+  if (!toolInput) return ''
+  if (typeof toolInput === 'string') {
+    try {
+      const parsed = JSON.parse(toolInput)
+      return JSON.stringify(parsed).slice(0, 120)
+    } catch {
+      return toolInput.slice(0, 120)
+    }
+  }
+  try {
+    return JSON.stringify(toolInput).slice(0, 120)
+  } catch {
+    return String(toolInput).slice(0, 120)
+  }
+}
+
+const getThoughtLatency = (agentThought: Record<string, unknown>) => {
+  const raw = Number(agentThought?.latency)
+  if (!Number.isFinite(raw) || raw <= 0) return '0.00s'
+  return `${raw.toFixed(2)}s`
 }
 
 const getThoughtTitle = (event: string) => {
@@ -127,7 +237,7 @@ const syncLatestThought = async () => {
   scrollThoughtIntoView(latestKey)
 }
 
-const handleCopyThought = async (agentThought: Record<string, any>) => {
+const handleCopyThought = async (agentThought: Record<string, unknown>) => {
   const content = getThoughtContent(agentThought)
   if (!content) {
     Message.warning(t('chat.thought.noCopyableContent'))
@@ -158,7 +268,7 @@ const canShowThoughtAudioAction = computed(() => {
   return !props.loading && Boolean(props.message_id)
 })
 
-const handlePlayThought = async (agentThought: Record<string, any>) => {
+const handlePlayThought = async (agentThought: Record<string, unknown>) => {
   if (!props.message_id) {
     Message.warning(t('chat.thought.unsupportedAudioForMessage'))
     return
@@ -185,19 +295,30 @@ const handlePlayThought = async (agentThought: Record<string, any>) => {
 }
 
 watch(
-  () => thoughtItems.value.map((item) => String(getThoughtKey(item))),
-  (currentIds, previousIds = []) => {
+  () =>
+    thoughtItems.value.map((item) => ({
+      key: String(getThoughtKey(item)),
+      content: String(getThoughtContent(item) ?? ''),
+    })),
+  (currentItems, previousItems = []) => {
     if (!props.follow_latest_thought) return
+
+    const currentIds = currentItems.map((item) => item.key)
+    const previousIds = previousItems.map((item) => item.key)
 
     const latestChanged =
       currentIds.length !== previousIds.length ||
       currentIds[currentIds.length - 1] !== previousIds[previousIds.length - 1]
 
+    // 最新推理内容变化时（流式推理逐 token 更新同一条 thought）也触发展开
+    const latestContentChanged =
+      currentItems[currentItems.length - 1]?.content !== previousItems[previousItems.length - 1]?.content
+
     const currentLatest = currentIds[currentIds.length - 1]
     const hasPinnedLatest =
       currentLatest !== undefined && activeThoughtKeys.value.map((key) => String(key)).includes(currentLatest)
 
-    if (latestChanged || !hasPinnedLatest) {
+    if (latestChanged || latestContentChanged || !hasPinnedLatest) {
       void syncLatestThought()
     }
   },
@@ -224,8 +345,8 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- 智能体推理步骤 -->
-  <div ref="containerRef" :class="containerClass">
-    <div :class="headerClass" :title="toggleTitle" @click="visible = !visible">
+  <div v-if="thoughtItems.length > 0" ref="containerRef" :class="containerClass">
+    <div :class="headerClass" :title="toggleTitle" @click="handleToggle">
       <!-- 左侧图标与标题 -->
       <div class="flex items-center gap-2 font-medium text-gray-700 whitespace-nowrap">
         <icon-list />
@@ -248,7 +369,8 @@ onBeforeUnmount(() => {
       class="agent-thought bg-transparent"
       destroy-on-hide
       :bordered="false"
-      v-model:active-key="activeThoughtKeys"
+      :active-key="effectiveActiveKeys"
+      @change="handleCollapseChange"
     >
       <a-collapse-item
         v-for="agent_thought in thoughtItems"
@@ -283,16 +405,24 @@ onBeforeUnmount(() => {
               'inline-block min-w-[6em] whitespace-nowrap font-semibold',
               isLatestThought(agent_thought) ? 'text-gray-800' : 'text-gray-700',
             ]"
-            :title="getThoughtTitleTooltip(agent_thought.event)"
+            :title="getThoughtTitleTooltip(String(agent_thought.event))"
           >
-            {{ getThoughtTitle(agent_thought.event) }}
+            {{ getThoughtTitle(String(agent_thought.event)) }}
           </div>
         </template>
         <template #extra>
-          <div class="text-xs text-gray-400">{{ agent_thought.latency.toFixed(2) }}s</div>
+          <div class="text-xs text-gray-400">{{ getThoughtLatency(agent_thought) }}</div>
         </template>
         <div class="flex items-start gap-2">
-          <div class="flex-1 text-xs text-gray-500 line-clamp-4 break-all">
+          <div class="flex-1 text-xs text-gray-500 whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
+            <template v-if="agent_thought.event === QueueEvent.agentAction && agent_thought.tool">
+              <div class="mb-1">
+                <span class="font-mono text-blue-600 font-semibold">{{ agent_thought.tool }}</span>
+                <span v-if="agent_thought.tool_input" class="text-gray-400 ml-1">
+                  ({{ formatToolInput(agent_thought.tool_input) }})
+                </span>
+              </div>
+            </template>
             {{ getThoughtContent(agent_thought) || '-' }}
           </div>
           <div class="flex items-center gap-1 flex-shrink-0">

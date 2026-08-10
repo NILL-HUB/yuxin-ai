@@ -5,12 +5,11 @@ import { useCredentialStore } from '@/stores/credential'
 import { isCredentialLoggedIn } from '@/utils/auth'
 import UpdateConversationNameModal from '@/views/layouts/components/UpdateConversationNameModal.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Message } from '@arco-design/web-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import IconHomeFull from '@/components/icons/IconHomeFull.vue'
 import IconHome from '@/components/icons/IconHome.vue'
-import IconSpaceFull from '@/components/icons/IconSpaceFull.vue'
-import IconSpace from '@/components/icons/IconSpace.vue'
 import IconApps from '@/components/icons/IconApps.vue'
 
 interface Props {
@@ -109,6 +108,11 @@ const loadMoreRecentConversations = async () => {
 const changeConversation = async (conversation: RecentConversation) => {
   if (!conversation.id) return
 
+  if (conversation.invoke_from === 'schedule') {
+    Message.info(t('chat.schedules.conversationNotOpenable'))
+    return
+  }
+
   if (conversation.source_type === 'assistant_agent') {
     await router.push({
       path: '/home',
@@ -129,13 +133,8 @@ const changeConversation = async (conversation: RecentConversation) => {
   }
 
   if (conversation.source_type === 'app_debugger' && conversation.app_id) {
-    await router.push({
-      path: `/space/apps/${conversation.app_id}`,
-      query: {
-        conversation_id: conversation.id,
-        message_id: conversation.message_id,
-      },
-    })
+    Message.info(t('chat.schedules.conversationNotOpenable'))
+    return
   }
 }
 
@@ -344,6 +343,36 @@ onUnmounted(() => {
           {{ $t('layout.sidebar.showcase') }}
         </span>
       </router-link>
+      <router-link
+        to="/schedules"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/schedules') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/schedules') ? t('layout.sidebar.schedules') : ''"
+      >
+        <icon-schedule class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.schedules') }}
+        </span>
+      </router-link>
+      <router-link
+        to="/membership"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/membership') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/membership') ? t('layout.sidebar.membership') : ''"
+      >
+        <icon-user class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.membership') }}
+        </span>
+      </router-link>
+      <router-link
+        to="/store/public-apps"
+        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store') ? 'bg-gray-100' : ''}`"
+        :title="route.path.startsWith('/store') ? t('layout.sidebar.store') : ''"
+      >
+        <icon-apps class="flex-shrink-0 w-4 h-4" />
+        <span v-if="!props.collapsed" class="truncate text-sm">
+          {{ $t('layout.sidebar.store') }}
+        </span>
+      </router-link>
     </div>
 
     <!-- 最近对话区域 - 可滚动 -->
@@ -376,12 +405,24 @@ onUnmounted(() => {
             @click="() => changeConversation(conversation)"
           >
             <div class="flex-1 min-w-0 flex items-center gap-1.5">
+              <icon-schedule
+                v-if="conversation.invoke_from === 'schedule'"
+                class="text-orange-400 group-hover:text-current flex-shrink-0"
+              />
               <icon-message
-                v-if="conversation.source_type === 'assistant_agent'"
+                v-else-if="conversation.source_type === 'assistant_agent'"
                 class="text-gray-400 group-hover:text-current flex-shrink-0"
               />
               <icon-apps v-else class="text-gray-400 group-hover:text-current flex-shrink-0" />
               <div class="flex-1 line-clamp-1 break-all">{{ conversation.name }}</div>
+              <a-tag
+                v-if="conversation.invoke_from === 'schedule'"
+                size="small"
+                color="orange"
+                class="flex-shrink-0 !mr-0"
+              >
+                {{ t('chat.schedules.shortLabel') }}
+              </a-tag>
             </div>
             <a-dropdown position="br">
               <a-button

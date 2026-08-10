@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { uploadFile, uploadImage } from '@/services/upload-file'
-import type { UploadFileResponse, UploadImageResponse } from '@/models/upload-file'
+import type { UploadFileResponse } from '@/models/upload-file'
 
 export const useUploadImage = () => {
   // 1.定义hooks所需数据
@@ -25,7 +25,7 @@ export const useUploadImage = () => {
 export const useUploadFile = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const upload_file = ref<Record<string, any>>({})
+  const upload_file = ref<UploadFileResponse['data']>({} as UploadFileResponse['data'])
 
   // 2.定义上传文件处理器
   const handleUploadFile = async (file: File): Promise<UploadFileResponse | undefined> => {

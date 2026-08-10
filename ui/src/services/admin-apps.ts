@@ -25,6 +25,7 @@ export type AdminAppRecord = {
   app_type?: string
   is_public?: boolean
   account_id?: string
+  creator_name?: string
   agent_metadata?: AgentMetadata
   debug_conversation_id?: string
   created_at?: number
@@ -135,10 +136,15 @@ export const createAdminApp = async (
 }
 
 /**
- * 删除后台应用。
+ * 删除后台应用（进入回收站，可指定留存天数）。
  */
-export const deleteAdminApp = async (appId: string): Promise<Record<string, never>> => {
-  const response = await del<BaseResponse<Record<string, never>>>(`/admin/apps/${appId}`)
+export const deleteAdminApp = async (
+  appId: string,
+  retentionDays?: number,
+): Promise<Record<string, never>> => {
+  const response = await del<BaseResponse<Record<string, never>>>(`/admin/apps/${appId}`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
   return response.data
 }
 
@@ -158,11 +164,14 @@ export const batchOfflineAdminApps = async (appIds: string[]): Promise<BatchOper
 }
 
 /**
- * 批量删除应用。
+ * 批量删除应用（逐个进入回收站，可指定留存天数）。
  */
-export const batchDeleteAdminApps = async (appIds: string[]): Promise<BatchOperationResult> => {
+export const batchDeleteAdminApps = async (
+  appIds: string[],
+  retentionDays?: number,
+): Promise<BatchOperationResult> => {
   const response = await post<BaseResponse<BatchOperationResult>>('/admin/apps/batch/delete', {
-    body: { app_ids: appIds },
+    body: retentionDays ? { app_ids: appIds, retention_days: retentionDays } : { app_ids: appIds },
   })
   return response.data
 }
@@ -221,21 +230,21 @@ export const updateAdminAppWechatConfig = (
   appId: string,
   body: UpdateWechatConfigRequest,
 ) => {
-  return post<BaseResponse<any>>(`/admin/apps/${appId}/wechat-config`, { body })
+  return post<BaseResponse<Record<string, unknown>>>(`/admin/apps/${appId}/wechat-config`, { body })
 }
 
 /**
  * 分享后台应用到广场。
  */
 export const shareAdminAppToSquare = (appId: string, tags: string) => {
-  return post<BaseResponse<any>>(`/admin/apps/${appId}/share-to-square`, { body: { tags } })
+  return post<BaseResponse<Record<string, unknown>>>(`/admin/apps/${appId}/share-to-square`, { body: { tags } })
 }
 
 /**
  * 取消分享后台应用到广场。
  */
 export const unshareAdminAppFromSquare = (appId: string) => {
-  return post<BaseResponse<any>>(`/admin/apps/${appId}/unshare-from-square`)
+  return post<BaseResponse<Record<string, unknown>>>(`/admin/apps/${appId}/unshare-from-square`)
 }
 
 /**
@@ -251,7 +260,7 @@ export const getAdminAppTags = () => {
 export const adminPromptCompareChat = (
   appId: string,
   req: PromptCompareChatRequest,
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/admin/apps/${appId}/prompt-compare/chat`, { body: req }, onData)
 }
@@ -260,7 +269,7 @@ export const adminPromptCompareChat = (
  * 停止后台某次提示词对比调试会话。
  */
 export const stopAdminPromptCompareChat = (appId: string, taskId: string) => {
-  return post<BaseResponse<any>>(
+  return post<BaseResponse<Record<string, unknown>>>(
     `/admin/apps/${appId}/prompt-compare/tasks/${taskId}/stop`,
   )
 }

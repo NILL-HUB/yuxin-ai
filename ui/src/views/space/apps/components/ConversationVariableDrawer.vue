@@ -39,14 +39,14 @@ const formModel = ref<{
   value_type: ConversationVariableValueType
   raw_value: string
   bool_value: boolean
-  number_value: number | null
+  number_value: number | undefined
   string_value: string
 }>({
   name: '',
   value_type: 'string',
   raw_value: '',
   bool_value: false,
-  number_value: null,
+  number_value: undefined,
   string_value: '',
 })
 
@@ -84,7 +84,7 @@ const openAddForm = () => {
     value_type: 'string',
     raw_value: '',
     bool_value: false,
-    number_value: null,
+    number_value: undefined,
     string_value: '',
   }
   formVisible.value = true
@@ -106,7 +106,7 @@ const openEditForm = (variable: ConversationVariable) => {
     number_value:
       variable.value_type === 'int' || variable.value_type === 'float'
         ? Number(variable.value)
-        : null,
+        : undefined,
     string_value: variable.value_type === 'string' ? String(variable.value ?? '') : '',
   }
   formVisible.value = true
@@ -122,8 +122,8 @@ const handleSubmit = async () => {
   }
 
   // 根据类型构造 value
-  let value: any
-  let value_type: ConversationVariableValueType = formModel.value.value_type
+  let value: unknown
+  const value_type: ConversationVariableValueType = formModel.value.value_type
   switch (formModel.value.value_type) {
     case 'string':
       value = formModel.value.string_value

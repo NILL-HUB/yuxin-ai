@@ -25,7 +25,7 @@ const props = defineProps({
 const emits = defineEmits(['update:visible', 'debug-success'])
 const { t } = useI18n()
 const { nodes } = useVueFlow()
-const form = ref<Record<string, string | number | boolean>>({})
+const form = ref<Record<string, unknown>>({})
 const nodeResults = ref<DebugNodeResult[]>([])
 const activatedTab = ref('input')
 const {
@@ -74,9 +74,10 @@ const onSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | u
   await handleDebugWorkflow(
     props.workflow_id,
     form.value,
-    (event_response: { data?: DebugNodeResult }) => {
-      if (event_response?.data) {
-        nodeResults.value.push(event_response.data)
+    (event_response: Record<string, unknown>) => {
+      const data = event_response?.data as DebugNodeResult | undefined
+      if (data) {
+        nodeResults.value.push(data)
       }
     },
   )
@@ -148,17 +149,23 @@ watch(
             </template>
             <a-input
               v-if="input.type === 'string'"
-              v-model="form[input.name]"
+              :model-value="String(form[input.name] ?? '')"
+              @update:model-value="(value) => (form[input.name] = value)"
               :placeholder="t('workflowEditor.parameterValue')"
               class="!rounded-lg"
             />
             <a-input-number
               v-else-if="['int', 'float'].includes(input.type)"
-              v-model="form[input.name]"
+              :model-value="typeof form[input.name] === 'number' ? (form[input.name] as number) : undefined"
+              @update:model-value="(value) => (form[input.name] = value)"
               :placeholder="t('workflowEditor.parameterValue')"
               class="!rounded-lg"
             />
-            <a-radio-group v-else-if="input.type === 'boolean'" v-model="form[input.name]">
+            <a-radio-group
+              v-else-if="input.type === 'boolean'"
+              :model-value="typeof form[input.name] === 'string' || typeof form[input.name] === 'number' || typeof form[input.name] === 'boolean' ? (form[input.name] as string | number | boolean) : undefined"
+              @update:model-value="(value) => (form[input.name] = value)"
+            >
               <a-radio :value="true">{{ t('common.status.active') }}</a-radio>
               <a-radio :value="false">{{ t('common.status.revoked') }}</a-radio>
             </a-radio-group>

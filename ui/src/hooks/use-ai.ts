@@ -33,8 +33,8 @@ export const useOptimizePrompt = () => {
       optimize_prompt.value = ''
       await optimizePrompt(prompt, (event_response) => {
         // 2.2 提取数据并更新optimize_prompt
-        const data = event_response.data
-        optimize_prompt.value += data?.optimize_prompt
+        const data = event_response.data as { optimize_prompt?: string } | undefined
+        optimize_prompt.value += data?.optimize_prompt ?? ''
       })
     } finally {
       loading.value = false

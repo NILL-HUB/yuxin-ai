@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type PropType } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import DotFlashing from '@/components/DotFlashing.vue'
@@ -71,6 +71,7 @@ const props = defineProps({
   agent_thought_follow_latest: { type: Boolean, default: false, required: false },
   always_show_actions: { type: Boolean, default: false, required: false },
   audio_stream_id: { type: String, default: '', required: false },
+  invoke_from: { type: String, default: '', required: false },
 })
 const emits = defineEmits(['selectSuggestedQuestion'])
 const { t } = useI18n()
@@ -81,13 +82,38 @@ const normalizedArtifacts = computed(() => {
 const resolvedAnswerParts = computed(() => {
   return normalizeChatOutputParts(props.answer_parts, props.answer, normalizedArtifacts.value) as ChatOutputPart[]
 })
-const renderedTextParts = computed(() => {
+const renderedTextParts = ref<Array<{ key: string, html: string }>>([])
+let renderRafId: number | null = null
+
+const computeRenderedTextParts = () => {
   return resolvedAnswerParts.value
     .filter((part): part is Extract<ChatOutputPart, { type: 'text' }> => part.type === 'text')
     .map((part, index) => ({
       key: `text-${index}`,
       html: renderMarkdown(part.text),
     }))
+}
+
+// 渲染节流：用 requestAnimationFrame 合并多次 SSE 事件为单帧渲染
+// 真流式模式下每个 LLM token 都会触发 resolvedAnswerParts 变化，
+// 不节流会导致每个 token 都全量重算 markdown（含语法高亮），造成严重闪烁
+watch(
+  () => resolvedAnswerParts.value,
+  () => {
+    if (renderRafId !== null) return
+    renderRafId = requestAnimationFrame(() => {
+      renderRafId = null
+      renderedTextParts.value = computeRenderedTextParts()
+    })
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (renderRafId !== null) {
+    cancelAnimationFrame(renderRafId)
+    renderRafId = null
+  }
 })
 const galleryImages = computed(() => {
   const images: Array<{ name: string, url: string, mime_type?: string, extension?: string }> = []
@@ -124,6 +150,9 @@ const renderedArtifactParts = computed(() => {
 })
 const hasRenderableAnswer = computed(() => {
   return renderedTextParts.value.length > 0 || galleryImages.value.length > 0 || renderedArtifactParts.value.length > 0
+})
+const hasThoughtContent = computed(() => {
+  return Array.isArray(props.agent_thoughts) && props.agent_thoughts.length > 0
 })
 const avatarText = computed(() => {
   return String(props.app?.avatar_text || '').trim()
@@ -254,7 +283,17 @@ const handleMarkdownClick = async (event: MouseEvent) => {
     <!-- 右侧名称与消息 -->
     <div class="flex-1 min-w-0 max-w-full flex flex-col items-start gap-2">
       <!-- 应用名称 -->
-      <div class="text-gray-700 font-bold text-sm">{{ props.app?.name }}</div>
+      <div class="flex items-center gap-2">
+        <div class="text-gray-700 font-bold text-sm">{{ props.app?.name }}</div>
+        <a-tag
+          v-if="props.invoke_from === 'schedule'"
+          size="small"
+          color="orange"
+          class="!mr-0"
+        >
+          {{ t('chat.schedules.task') }}
+        </a-tag>
+      </div>
       <!-- 深度思考面板（在推理步骤之前单独展示） -->
       <deep-agent-timeline
         v-if="deepTimelineThoughts.length > 0"
@@ -278,9 +317,17 @@ const handleMarkdownClick = async (event: MouseEvent) => {
         :follow_latest_thought="props.agent_thought_follow_latest"
       />
       <div class="w-full max-w-full min-w-0 flex flex-col gap-1">
-        <!-- AI消息 -->
+        <!-- 正在思考角标提示（仅无思考框时显示，避免与 AgentThought 重复） -->
         <div
-          v-if="props.loading && !hasRenderableAnswer"
+          v-if="props.loading && !hasRenderableAnswer && !hasThoughtContent"
+          class="inline-flex items-center gap-1.5 self-start px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-medium"
+        >
+          <icon-loading class="text-[12px]" />
+          {{ t('chat.thought.thinking') }}
+        </div>
+        <!-- AI消息（仅在无思考框且无答案时显示加载动画，避免与思考框重复） -->
+        <div
+          v-if="props.loading && !hasRenderableAnswer && !hasThoughtContent"
           class="message-bubble-content glass-message-bubble px-4 py-3 rounded-2xl break-all transition-all duration-300"
         >
           <dot-flashing />

@@ -34,7 +34,7 @@ type FormInputField = {
     content: unknown
   }
   ref: string
-  content?: unknown
+  content?: string
 }
 
 type RetrievalConfig = {
@@ -142,9 +142,9 @@ const knowledgeBaseOptions = computed(() =>
  * 新版知识库多选变更处理器：同步维护 knowledge_base_ids 与 knowledge_bases，
  * 保证最多 5 个，并按当前选中顺序回填展示信息。
  */
-const handleKnowledgeBaseChange = (ids: (string | number)[]) => {
+const handleKnowledgeBaseChange = (ids: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
   // 限制最多 5 个
-  const stringIds = ids.map((id) => String(id))
+  const stringIds = (ids as (string | number)[]).map((id) => String(id))
   if (stringIds.length > 5) {
     Message.warning(t('workflowEditor.datasetRetrieval.limitExceeded'))
     // 截断到前 5 个
@@ -158,9 +158,12 @@ const handleKnowledgeBaseChange = (ids: (string | number)[]) => {
     .filter((kb): kb is KnowledgeBaseItem => !!kb)
 }
 
+type RefOption = { label: string; value: string }
+type RefOptionGroup = { isGroup: true; label: string; options: RefOption[] }
+
 // 2.定义节点可引用的变量选项
-const inputRefOptions = computed(() => {
-  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
+const inputRefOptions = computed<RefOptionGroup[]>(() => {
+  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id) as RefOptionGroup[]
 })
 
 // 3.定义表单提交函数
@@ -266,7 +269,7 @@ watch(
         return {
           name: input.name, // 变量名
           type: input.value.type === 'literal' ? input.type : 'ref', // 数据类型(涵盖ref/string/int/float/boolean
-          content: input.value.type === 'literal' ? input.value.content : '', // 变量值内容
+          content: input.value.type === 'literal' ? String(input.value.content ?? '') : '', // 变量值内容
           ref: input.value.type === 'ref' && refExists ? ref : '', // 变量引用信息，存储引用节点id+引用变量名
         }
       }),

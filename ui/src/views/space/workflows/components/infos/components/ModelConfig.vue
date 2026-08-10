@@ -32,6 +32,39 @@ const form = ref<ModelForm>({
   model: '',
   parameters: {},
 })
+
+// 模型参数值统一收窄为可绑定到表单组件的类型（代替 v-model 直接绑定 unknown）
+const normalizeParamValue = (
+  value: unknown,
+): string | number | boolean | Record<string, unknown> => {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'object' && value !== null) {
+    return value as Record<string, unknown>
+  }
+  return ''
+}
+
+const getParamFormValue = (name: string): string | number | boolean | Record<string, unknown> | undefined => {
+  const value = form.value.parameters[name]
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value
+  }
+  if (typeof value === 'object' && value !== null) {
+    return value as Record<string, unknown>
+  }
+  return undefined
+}
+
+const typedParameterOptions = (
+  options?: Array<{ label: string; value: unknown }>,
+): Array<{ label: string; value: string | number | boolean | Record<string, unknown> }> => {
+  return (options || []).map((option) => ({
+    label: option.label,
+    value: normalizeParamValue(option.value),
+  }))
+}
 const {
   loading: getLanguageModelLoading,
   language_model,
@@ -55,9 +88,9 @@ const modelOptions = computed(() => {
 })
 
 // 2.定义选择模型处理器
-const changeModel = (value: string) => {
+const changeModel = (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
   // 2.1 使用/拆分出提供商+模型名字
-  const [provider_name, model_name] = value.split('/')
+  const [provider_name, model_name] = (value as string).split('/')
 
   // 2.2 发起请求获取模型详情
   loadLanguageModel(provider_name, model_name).then(() => {
@@ -98,7 +131,7 @@ watch(
     form.value.parameters = (newValue?.parameters || {}) as Record<string, unknown>
 
     // 2.请求语言模型详情API接口
-    newValue?.provider && loadLanguageModel(String(newValue?.provider), String(newValue?.model))
+    if (newValue?.provider) loadLanguageModel(String(newValue?.provider), String(newValue?.model))
   },
   { immediate: true },
 )
@@ -188,16 +221,18 @@ onMounted(() => {
             <!-- 字段输入框 -->
             <template v-if="parameter?.options?.length > 0">
               <a-select
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="getParamFormValue(parameter.name)"
+                @update:model-value="(value) => (form.parameters[parameter.name] = value)"
+                :default-value="normalizeParamValue(parameter.default)"
                 :placeholder="t('workflowEditor.modelConfig.parameterValue')"
-                :options="parameter.options"
+                :options="typedParameterOptions(parameter.options)"
               />
             </template>
             <template v-else-if="parameter.type === 'boolean'">
               <a-select
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="getParamFormValue(parameter.name)"
+                @update:model-value="(value) => (form.parameters[parameter.name] = value)"
+                :default-value="normalizeParamValue(parameter.default)"
                 :placeholder="t('workflowEditor.modelConfig.parameterValue')"
                 :options="[
                   { label: t('common.yes'), value: true },
@@ -207,8 +242,9 @@ onMounted(() => {
             </template>
             <template v-else-if="['int', 'float'].includes(parameter.type)">
               <a-slider
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="typeof form.parameters[parameter.name] === 'number' ? (form.parameters[parameter.name] as number) : undefined"
+                @update:model-value="(value) => (form.parameters[parameter.name] = value)"
+                :default-value="typeof parameter.default === 'number' ? parameter.default : 0"
                 :min="parameter?.min"
                 :max="parameter?.max"
                 :step="parameter?.type === 'float' ? 0.1 : 1"
@@ -217,8 +253,9 @@ onMounted(() => {
             </template>
             <template v-else-if="parameter.type === 'string'">
               <a-input
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="String(form.parameters[parameter.name] ?? '')"
+                @update:model-value="(value) => (form.parameters[parameter.name] = value)"
+                :default-value="String(parameter.default ?? '')"
                 :placeholder="t('workflowEditor.modelConfig.stringValue')"
               />
             </template>

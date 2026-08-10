@@ -57,7 +57,7 @@ export type AppVersion = {
   app_id: string
   version: number
   config_type: string
-  config: Record<string, any>
+  config: Record<string, unknown>
   is_current_published: boolean
   label: string
   summary: string
@@ -91,7 +91,7 @@ export type McpToolSnapshot = {
   binding_hash: string
   binding: McpBinding
   status: string
-  tool_definitions: Record<string, any>[]
+  tool_definitions: Record<string, unknown>[]
   tool_names: string[]
   tool_count: number
   schema_hash: string
@@ -201,7 +201,7 @@ export type GetAppsWithPageResponse = BasePaginatorResponse<{
 // 获取特定应用的草稿配置响应结构
 export type GetDraftAppConfigResponse = BaseResponse<{
   id: string
-  model_config: { provider: string; model: string; parameters: Record<string, any> }
+  model_config: { provider: string; model: string; parameters: Record<string, unknown> }
   capabilities?: {
     requested_model: { provider: string; model: string }
     effective_model: { provider: string; model: string }
@@ -231,7 +231,7 @@ export type GetDraftAppConfigResponse = BaseResponse<{
       name: string
       label: string
       description: string
-      params: Record<string, any>
+      params: Record<string, unknown>
     }
   }[]
   mcp_bindings: McpBinding[]
@@ -265,12 +265,43 @@ export type GetDraftAppConfigResponse = BaseResponse<{
   created_at: number
 }>
 
+// App 草稿配置编辑表单结构（编排区各组件 v-model 绑定的最小字段集）
+export type DraftAppConfigForm = {
+  dialog_round: number
+  model_config: { provider: string; model: string; parameters: Record<string, unknown> }
+  capabilities?: GetDraftAppConfigResponse['data']['capabilities']
+  preset_prompt: string
+  long_term_memory: { enable: boolean }
+  opening_statement: string
+  opening_questions: string[]
+  suggested_after_answer: { enable: boolean }
+  review_config: {
+    enable: boolean
+    keywords: string[]
+    inputs_config: { enable: boolean; preset_response: string }
+    outputs_config: { enable: boolean }
+  }
+  knowledge_base_ids: string[]
+  retrieval_config: { retrieval_strategy: string; k: number; score: number }
+  embedding_model_id?: string
+  tools: GetDraftAppConfigResponse['data']['tools']
+  mcp_bindings: McpBinding[]
+  mcp_tool_snapshots: McpToolSnapshot[]
+  agent_bindings: AgentBinding[]
+  skills: SkillBinding[]
+  workflows: { id: string; name: string; icon: string; description: string }[]
+  workflow_id: string | null
+  workflow_detail: { id: string; name: string; icon: string; description: string } | null
+  speech_to_text: { enable: boolean }
+  text_to_speech: { enable: boolean; voice: string; auto_play: boolean }
+}
+
 // 更新特定应用的草稿配置请求结构
 export type UpdateDraftAppConfigRequest = {
-  model_config?: { provider: string; model: string; parameters: Record<string, any> }
+  model_config?: { provider: string; model: string; parameters: Record<string, unknown> }
   dialog_round?: number
   preset_prompt?: string
-  tools?: { type: string; provider_id: string; tool_id: string; params: Record<string, any> }[]
+  tools?: { type: string; provider_id: string; tool_id: string; params: Record<string, unknown> }[]
   mcp_bindings?: McpBinding[]
   agent_bindings?: AgentBindingRequest[]
   skills?: SkillBindingRequest[]
@@ -305,7 +336,7 @@ export type PromptCompareChatRequest = {
   lane_id: string
   query: string
   preset_prompt: string
-  model_config: { provider: string; model: string; parameters: Record<string, any> }
+  model_config: { provider: string; model: string; parameters: Record<string, unknown> }
   history: PromptCompareHistoryItem[]
 }
 
@@ -315,10 +346,10 @@ export type GetDebugConversationMessagesWithPageResponse = BasePaginatorResponse
   conversation_id: string
   query: string
   image_urls: string[]
-  input_parts: Array<Record<string, any>>
+  input_parts: Array<Record<string, unknown>>
   answer: string
-  answer_parts: Array<Record<string, any>>
-  artifacts: Array<Record<string, any>>
+  answer_parts: Array<Record<string, unknown>>
+  artifacts: Array<Record<string, unknown>>
   total_token_count: number
   latency: number
   agent_thoughts: {
@@ -328,7 +359,7 @@ export type GetDebugConversationMessagesWithPageResponse = BasePaginatorResponse
     thought: string
     observation: string
     tool: string
-    tool_input: Record<string, any>
+    tool_input: Record<string, unknown>
     latency: number
     created_at: number
   }[]
@@ -342,7 +373,7 @@ export type GetPublishHistoriesWithPageResponse = BasePaginatorResponse<{
   app_id: string
   version: number
   config_type: string
-  config: Record<string, any>
+  config: Record<string, unknown>
   updated_at: number
   created_at: number
   is_current_published: boolean
@@ -366,6 +397,8 @@ export type GetPublishedConfigResponse = BaseResponse<{
     token: string
     status: string
   }
+  is_public: boolean
+  category: string
 }>
 
 // 重新生成WebApp凭证标识响应结构

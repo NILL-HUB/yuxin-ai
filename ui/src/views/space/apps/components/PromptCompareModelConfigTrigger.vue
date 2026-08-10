@@ -8,7 +8,7 @@ type ModelForm = {
   selectValue: string
   provider: string
   model: string
-  parameters: Record<string, unknown>
+  parameters: Record<string, string | number | boolean | undefined>
 }
 
 const props = defineProps({
@@ -48,25 +48,41 @@ const modelOptions = computed(() => {
   })
 })
 
-const syncFormFromProps = (value: Record<string, any>) => {
+// 将模型参数的 options（value 为 unknown）收窄为 a-select 可接受的选项
+const getParameterOptions = (
+  parameter: { options?: Array<{ label: string; value: unknown }> } | undefined,
+): Array<{ label: string; value: string | number | boolean }> =>
+  (parameter?.options ?? []).map((opt) => ({
+    label: opt.label,
+    value: opt.value as string | number | boolean,
+  }))
+
+const asSelectValue = (value: unknown): string | number | boolean | undefined =>
+  value as string | number | boolean | undefined
+const asNumberValue = (value: unknown): number | undefined =>
+  typeof value === 'number' ? value : undefined
+const asStringValue = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined
+
+const syncFormFromProps = (value: Record<string, unknown>) => {
   form.value.selectValue = value?.provider && value?.model ? `${value.provider}/${value.model}` : ''
   form.value.provider = String(value?.provider || '')
   form.value.model = String(value?.model || '')
-  form.value.parameters = (value?.parameters || {}) as Record<string, unknown>
+  form.value.parameters = (value?.parameters || {}) as Record<string, string | number | boolean | undefined>
 }
 
-const changeModel = (value: string) => {
-  const [provider_name, model_name] = value.split('/')
+const changeModel = (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
+  const [provider_name, model_name] = (value as string).split('/')
 
   loadLanguageModel(provider_name, model_name).then(() => {
     form.value.provider = provider_name
     form.value.model = model_name
     form.value.parameters = language_model.value.parameters.reduce(
-      (acc: Record<string, unknown>, parameter: { name: string; default?: unknown }) => {
-        acc[parameter.name] = parameter.default ?? null
+      (acc, parameter) => {
+        acc[parameter.name] = (parameter.default ?? null) as string | number | boolean | undefined
         return acc
       },
-      {} as Record<string, unknown>,
+      {} as Record<string, string | number | boolean | undefined>,
     )
   })
 }
@@ -86,7 +102,7 @@ const handleApply = () => {
 watch(
   () => props.model_config,
   (newValue) => {
-    syncFormFromProps((newValue || {}) as Record<string, any>)
+    syncFormFromProps((newValue || {}) as Record<string, unknown>)
     if (newValue?.provider && newValue?.model) {
       void loadLanguageModel(String(newValue.provider), String(newValue.model))
     }
@@ -96,7 +112,7 @@ watch(
 
 watch(popupVisible, (visible) => {
   if (!visible) return
-  syncFormFromProps((props.model_config || {}) as Record<string, any>)
+  syncFormFromProps((props.model_config || {}) as Record<string, unknown>)
   if (props.model_config?.provider && props.model_config?.model) {
     void loadLanguageModel(String(props.model_config.provider), String(props.model_config.model))
   }
@@ -185,15 +201,15 @@ onMounted(() => {
             <template v-if="parameter?.options?.length > 0">
               <a-select
                 v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :default-value="asSelectValue(parameter.default)"
                 :placeholder="t('appStudio.promptCompareModel.parameterPlaceholder')"
-                :options="parameter.options"
+                :options="getParameterOptions(parameter)"
               />
             </template>
             <template v-else-if="parameter.type === 'boolean'">
               <a-select
                 v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :default-value="asSelectValue(parameter.default)"
                 :placeholder="t('appStudio.promptCompareModel.parameterPlaceholder')"
                 :options="[
                   { label: t('appStudio.modelConfig.booleanYes'), value: true },
@@ -203,8 +219,9 @@ onMounted(() => {
             </template>
             <template v-else-if="['int', 'float'].includes(parameter.type)">
               <a-slider
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="asNumberValue(form.parameters[parameter.name])"
+                @update:model-value="(value) => { form.parameters[parameter.name] = value as number }"
+                :default-value="parameter.default as number"
                 :min="parameter?.min"
                 :max="parameter?.max"
                 :step="parameter?.type === 'float' ? 0.1 : 1"
@@ -213,8 +230,9 @@ onMounted(() => {
             </template>
             <template v-else-if="parameter.type === 'string'">
               <a-input
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="asStringValue(form.parameters[parameter.name])"
+                @update:model-value="(value) => { form.parameters[parameter.name] = value }"
+                :default-value="parameter.default as string"
                 :placeholder="t('appStudio.promptCompareModel.parameterInputPlaceholder')"
               />
             </template>

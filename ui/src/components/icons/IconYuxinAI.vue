@@ -4,9 +4,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import openagentFull from '@/assets/images/openagent.png'
-import openagentCharacter from '@/assets/images/openagent_character.png'
-import openagentMini from '@/assets/images/openagent_mini.png'
+import yuxinAIFull from '@/assets/images/yuxin_ai.png'
+import yuxinAICharacter from '@/assets/images/yuxin_ai_character.png'
+import yuxinAIMini from '@/assets/images/yuxin_ai_mini.png'
 
 interface Props {
   type?: 'character' | 'mini' | 'full'
@@ -23,25 +23,24 @@ const props = withDefaults(defineProps<Props>(), {
 const imageUrl = computed(() => {
   switch (props.type) {
     case 'character':
-      return openagentCharacter
+      return yuxinAICharacter
     case 'mini':
-      return openagentMini
+      return yuxinAIMini
     case 'full':
     default:
-      return openagentFull
+      return yuxinAIFull
   }
 })
 
 const alt = computed(() => {
   switch (props.type) {
     case 'character':
-      return 'OpenAgent Character'
+      return '钰心AI Character'
     case 'mini':
-      return 'OpenAgent Mini'
+      return '钰心AI Mini'
     case 'full':
     default:
-      return 'OpenAgent'
+      return '钰心AI'
   }
 })
 </script>
-

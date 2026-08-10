@@ -30,7 +30,7 @@ const saveName = async ({ errors }: { errors: Record<string, ValidatedError> | u
   await handleUpdateConversationName(props.conversation_id, form.value.name)
 
   // 3.3 完成保存操作，隐藏模态窗并调用回调函数
-  props.success_callback && props.success_callback(props.conversation_id, form.value.name)
+  if (props.success_callback) props.success_callback(props.conversation_id, form.value.name)
   emits('update:visible', false)
 }
 

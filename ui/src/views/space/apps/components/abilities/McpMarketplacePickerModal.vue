@@ -146,7 +146,7 @@ const loadCategories = async () => {
   try {
     const res = await getPublicMcpCategories()
     categories.value = res.data.categories || []
-  } catch (_error: unknown) {
+  } catch {
     categories.value = []
   }
 }

@@ -79,7 +79,7 @@ const loadCategories = async () => {
   try {
     const res = await getMcpCategories()
     categories.value = res.data.categories || []
-  } catch (_error: unknown) {
+  } catch {
     categories.value = []
   }
 }
@@ -115,7 +115,7 @@ const extractJsonObject = (content: string) => {
   return normalized
 }
 
-const applyMcpPayload = (payload: Record<string, any>) => {
+const applyMcpPayload = (payload: Record<string, unknown>) => {
   const headers = Array.isArray(payload.headers) ? payload.headers : []
   const toolNames = Array.isArray(payload.tool_names) ? payload.tool_names : []
   const args = Array.isArray(payload.args) ? payload.args : []
@@ -211,7 +211,7 @@ const handleGenerateByAI = async () => {
   aiAnswer.value = ''
   try {
     await mcpSchemaAssistantChat(question, (eventResponse) => {
-      const content = String(eventResponse?.data?.content ?? '')
+      const content = String((eventResponse?.data as { content?: string } | undefined)?.content ?? '')
       if (!content) return
       aiAnswer.value += content
     })
@@ -302,7 +302,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
     }
     emits('update:visible', false)
     emits('update:mcp_provider_id', '')
-    props.callback && props.callback()
+    if (props.callback) props.callback()
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('space.mcp.saveFailed')))
   } finally {
@@ -508,6 +508,7 @@ watch(
 </template>
 
 <style>
+@reference "tailwindcss";
 .mcp-create-modal-shell {
   height: calc(100dvh - 32px);
   max-height: calc(100dvh - 32px);

@@ -185,7 +185,7 @@ onMounted(loadCases)
         <a-table
           :data="cases"
           :columns="columns"
-          :row-key="(record: ShowcaseCase) => record.id"
+          row-key="id"
           :pagination="false"
           :bordered="{ wrapper: true, cell: true }"
           :scroll="{ x: 960 }"
@@ -289,7 +289,7 @@ onMounted(loadCases)
       @ok="handleRejectConfirm"
       @cancel="rejectVisible = false"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" :model="{}">
         <a-form-item :label="t('admin.showcase.rejectReason')">
           <a-textarea
             v-model="rejectReason"

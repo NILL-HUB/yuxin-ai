@@ -13,9 +13,10 @@ import LoginModal from '@/views/auth/components/LoginModal.vue'
 import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
 
-import IconOpenAgent from '@/components/icons/IconOpenAgent.vue'
+import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
 import { useRoute } from 'vue-router'
 import { getUserAvatarUrl } from '@/utils/helper'
+import type { RecentConversation } from '@/models/conversation'
 
 const SettingModal = defineAsyncComponent(
   () => import('@/views/layouts/components/SettingModal.vue'),
@@ -30,7 +31,14 @@ const loginModalVisible = ref(false)
 const loginRedirectPath = ref('')
 const sidebarCollapsed = ref(false)
 const popoverVisible = ref(false)
-const popoverData = ref<any>(null)
+type RecentConversationsPopoverData = {
+  conversations: RecentConversation[]
+  loading: boolean
+}
+type RecentConversationsShowDetail = RecentConversationsPopoverData & {
+  triggerRect: { top: number; right: number }
+}
+const popoverData = ref<RecentConversationsPopoverData | null>(null)
 const popoverPosition = ref({ top: 0, left: 0 })
 const RECENT_CONVERSATIONS_POPOVER_MARGIN = 12
 const OAUTH_RESULT_STORAGE_KEY = 'account_oauth_result'
@@ -130,7 +138,7 @@ const adjustRecentConversationsPopoverPosition = async () => {
 }
 
 const handleRecentConversationsShow = (event: Event) => {
-  const customEvent = event as CustomEvent<any>
+  const customEvent = event as CustomEvent<RecentConversationsShowDetail>
   const detail = customEvent.detail
   const rect = detail.triggerRect
 

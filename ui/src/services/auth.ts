@@ -37,19 +37,19 @@ export const verifyRegister = (username: string, email: string, password: string
 
 // 退出登录请求
 export const logout = () => {
-  return post<BaseResponse<any>>(`/auth/logout`)
+  return post<BaseResponse<Record<string, unknown>>>(`/auth/logout`)
 }
 
 // 发送密码重置验证码
 export const sendResetCode = (email: string) => {
-  return post<BaseResponse<any>>(`/auth/send-reset-code`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/auth/send-reset-code`, {
     body: { email },
   })
 }
 
 // 重置密码
 export const resetPassword = (email: string, code: string, new_password: string) => {
-  return post<BaseResponse<any>>(`/auth/reset-password`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/auth/reset-password`, {
     body: { email, code, new_password },
   })
 }
@@ -63,7 +63,7 @@ export const verifyLoginChallenge = (challenge_id: string, code: string) => {
 
 // 重发异常登录验证码
 export const resendLoginChallenge = (challenge_id: string) => {
-  return post<BaseResponse<any>>(`/auth/login-challenge/resend`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/auth/login-challenge/resend`, {
     body: { challenge_id },
   })
 }

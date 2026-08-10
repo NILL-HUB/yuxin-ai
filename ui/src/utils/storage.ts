@@ -1,18 +1,18 @@
 export default {
   // 获取localStorage中的值
-  get: (key: string, defaultValue: any = ''): any => {
+  get: <T>(key: string, defaultValue: T): T => {
     const value = localStorage.getItem(key)
     if (value) {
       try {
-        return JSON.parse(value)
+        return JSON.parse(value) as T
       } catch {
-        return value
+        return value as T
       }
     }
     return defaultValue
   },
   // 设置localStorage中的值
-  set: (key: string, value: any): void => {
+  set: (key: string, value: unknown): void => {
     if (typeof value === 'string') {
       localStorage.setItem(key, value)
     } else {

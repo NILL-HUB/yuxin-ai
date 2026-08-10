@@ -7,8 +7,8 @@ export type WorkflowRun = {
   app_id: string | null
   account_id: string
   trigger_source: WorkflowTriggerSource
-  inputs: Record<string, any>
-  outputs: Record<string, any>
+  inputs: Record<string, unknown>
+  outputs: Record<string, unknown>
   status: WorkflowRunStatus
   error: string
   total_steps: number
@@ -26,12 +26,12 @@ export type WorkflowNodeExecution = {
   node_id: string
   node_type: string
   title: string
-  inputs: Record<string, any>
-  outputs: Record<string, any>
+  inputs: Record<string, unknown>
+  outputs: Record<string, unknown>
   status: WorkflowNodeExecutionStatus
   error: string
   elapsed_time: number
-  execution_metadata: Record<string, any>
+  execution_metadata: Record<string, unknown>
   created_at: string | null
   updated_at: string | null
 }

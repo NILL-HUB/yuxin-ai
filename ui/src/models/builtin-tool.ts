@@ -18,7 +18,7 @@ export type GetBuiltinToolsResponse = BaseResponse<
     description: string
     label: string
     name: string
-    tools: Array<any>
+    tools: Array<Record<string, unknown>>
   }>
 >
 
@@ -39,7 +39,7 @@ export type GetBuiltinToolResponse = BaseResponse<{
     label: string
     type: string
     required: boolean
-    default: any
+    default: unknown
     min: number
     max: number
     options: { value: string; label: string }[]

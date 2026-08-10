@@ -13,7 +13,7 @@ export const assistantAgentChat = (
   query: string,
   image_urls: string[] = [],
   conversation_id: string = '',
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
   confirm_deep_thinking: boolean = false,
 ) => {
   return ssePost(
@@ -31,7 +31,7 @@ export const assistantAgentChat = (
 
 // 生成辅助Agent首页个性化介绍
 export const assistantAgentGenerateIntroduction = (
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
   signal?: AbortSignal,
 ) => {
   return ssePost(
@@ -55,7 +55,7 @@ export const getAssistantAgentCapabilities = () => {
 
 // 停止与辅助Agent进行对话
 export const stopAssistantAgentChat = (task_id: string) => {
-  return post<BaseResponse<any>>(`/assistant-agent/chat/${task_id}/stop`)
+  return post<BaseResponse<Record<string, unknown>>>(`/assistant-agent/chat/${task_id}/stop`)
 }
 
 // 获取当前登录账号的辅助 Agent 对话历史列表
@@ -76,5 +76,5 @@ export const getAssistantAgentConversations = (limit: number = 20) => {
 
 // 清空当前登录账号与辅助 Agent 的对话列表
 export const deleteAssistantAgentConversation = () => {
-  return post<BaseResponse<any>>(`/assistant-agent/delete-conversation`)
+  return post<BaseResponse<Record<string, unknown>>>(`/assistant-agent/delete-conversation`)
 }

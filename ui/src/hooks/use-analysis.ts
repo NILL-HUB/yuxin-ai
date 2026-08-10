@@ -1,10 +1,11 @@
 import { ref } from 'vue'
 import { getAppAnalysis } from '@/services/analysis'
+import type { GetAppAnalysisResponse } from '@/models/analysis'
 
 export const useGetAppAnalysis = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const app_analysis = ref<Record<string, any>>({})
+  const app_analysis = ref<GetAppAnalysisResponse['data']>({} as GetAppAnalysisResponse['data'])
 
   // 2.定义加载数据处理器
   const loadAppAnalysis = async (app_id: string) => {

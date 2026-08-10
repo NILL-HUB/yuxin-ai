@@ -77,19 +77,22 @@ const buildChartOption = () => {
   return {
     tooltip: {
       trigger: 'item',
-      formatter: (params: any) => {
-        if (params.dataType === 'node' && params.data?.rawData) {
-          const node = params.data.rawData as MemoryNode
-          return `<div style="max-width:300px">
-            <div style="font-weight:600;margin-bottom:4px">${typeLabel(node.memory_type)}</div>
-            <div style="color:#666">${node.content}</div>
-            <div style="color:#999;font-size:12px;margin-top:4px">
-              weight: ${node.weight?.toFixed(2) ?? '-'} | tier: ${node.tier ?? '-'}
-            </div>
-          </div>`
+      formatter: (params: Record<string, unknown>) => {
+        if (params.dataType === 'node') {
+          const rawData = (params.data as { rawData?: MemoryNode } | undefined)?.rawData
+          if (rawData) {
+            const node = rawData as MemoryNode
+            return `<div style="max-width:300px">
+              <div style="font-weight:600;margin-bottom:4px">${typeLabel(node.memory_type)}</div>
+              <div style="color:#666">${node.content}</div>
+              <div style="color:#999;font-size:12px;margin-top:4px">
+                weight: ${node.weight?.toFixed(2) ?? '-'} | tier: ${node.tier ?? '-'}
+              </div>
+            </div>`
+          }
         }
         if (params.dataType === 'edge') {
-          return params.data?.value || ''
+          return String((params.data as { value?: unknown } | undefined)?.value ?? '')
         }
         return ''
       },
@@ -125,9 +128,10 @@ const initChart = () => {
   if (!chartContainer.value) return
   chartInstance = echarts.init(chartContainer.value)
   chartInstance.setOption(buildChartOption())
-  chartInstance.on('click', (params: any) => {
-    if (params.dataType === 'node' && params.data?.id) {
-      emit('select-node', params.data.id)
+  chartInstance.on('click', (params: Record<string, unknown>) => {
+    const data = params.data as { id?: string } | undefined
+    if (params.dataType === 'node' && data?.id) {
+      emit('select-node', data.id)
     }
   })
 }

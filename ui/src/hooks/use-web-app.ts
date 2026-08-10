@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { getWebApp, getWebAppConversations, stopWebAppChat, webAppChat } from '@/services/web-app'
-import type { WebAppChatRequest } from '@/models/web-app'
+import type { GetWebAppConversationsResponse, GetWebAppResponse, WebAppChatRequest } from '@/models/web-app'
 import { Message } from '@arco-design/web-vue'
 import { getErrorMessage } from '@/utils/error'
 
@@ -23,7 +23,7 @@ const runWithLoading = async <T>(
 export const useGetWebApp = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
-  const web_app = ref<Record<string, any>>({})
+  const web_app = ref<GetWebAppResponse['data']>({} as GetWebAppResponse['data'])
 
   // 2.定义加载数据处理器
   const loadWebApp = async (token: string) => {
@@ -44,7 +44,7 @@ export const useWebAppChat = () => {
   const handleWebAppChat = async (
     token: string,
     req: WebAppChatRequest,
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
   ) => {
     await runWithLoading(loading, '发送消息失败，请稍后重试', async () => {
       await webAppChat(token, req, onData)
@@ -71,8 +71,8 @@ export const useStopWebAppChat = () => {
 export const useGetAppConversations = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const pinned_conversations = ref<Record<string, any>[]>([])
-  const unpinned_conversations = ref<Record<string, any>[]>([])
+  const pinned_conversations = ref<GetWebAppConversationsResponse['data']>([])
+  const unpinned_conversations = ref<GetWebAppConversationsResponse['data']>([])
 
   // 2.定义加载数据处理器
   const loadWebAppConversations = async (token: string) => {

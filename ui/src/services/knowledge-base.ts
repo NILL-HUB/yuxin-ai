@@ -22,7 +22,7 @@ export const uploadKnowledgeDocument = (
 ) => {
   const formData = new FormData()
   formData.append('file', file)
-  return post<BaseResponse<any>>(
+  return post<BaseResponse<Record<string, unknown>>>(
     `/space/knowledge-bases/${knowledge_base_id}/documents/upload`,
     {
       body: formData,
@@ -43,7 +43,7 @@ export const getKnowledgeBasesWithPage = (
 
 // 新增用户端知识库
 export const createKnowledgeBase = (req: CreateKnowledgeBaseRequest) => {
-  return post<BaseResponse<any>>(`/space/knowledge-bases`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/space/knowledge-bases`, {
     body: req,
   })
 }
@@ -53,14 +53,14 @@ export const updateKnowledgeBase = (
   knowledge_base_id: string,
   req: UpdateKnowledgeBaseRequest,
 ) => {
-  return post<BaseResponse<any>>(`/space/knowledge-bases/${knowledge_base_id}`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/space/knowledge-bases/${knowledge_base_id}`, {
     body: req,
   })
 }
 
 // 删除用户端知识库
 export const deleteKnowledgeBase = (knowledge_base_id: string) => {
-  return post<BaseResponse<any>>(`/space/knowledge-bases/${knowledge_base_id}/delete`)
+  return post<BaseResponse<Record<string, unknown>>>(`/space/knowledge-bases/${knowledge_base_id}/delete`)
 }
 
 // 获取用户端知识库详情
@@ -107,7 +107,7 @@ export const deleteKnowledgeDocument = (
   knowledge_base_id: string,
   document_id: string,
 ) => {
-  return post<BaseResponse<any>>(
+  return post<BaseResponse<Record<string, unknown>>>(
     `/space/knowledge-bases/${knowledge_base_id}/documents/${document_id}/delete`,
   )
 }
@@ -133,7 +133,7 @@ export const updateKnowledgeSegment = (
   segment_id: string,
   req: UpdateKnowledgeSegmentRequest,
 ) => {
-  return post<BaseResponse<any>>(
+  return post<BaseResponse<Record<string, unknown>>>(
     `/space/knowledge-bases/${knowledge_base_id}/documents/${document_id}/segments/${segment_id}`,
     { body: req },
   )

@@ -21,28 +21,28 @@ export const getApiToolProvidersWithPage = (
 
 // 校验OpenAPI Schema数据
 export const validateOpenAPISchema = (openapi_schema: string) => {
-  return post<BaseResponse<any>>('/api-tools/validate-openapi-schema', {
+  return post<BaseResponse<Record<string, unknown>>>('/api-tools/validate-openapi-schema', {
     body: { openapi_schema },
   })
 }
 
 // 创建API工具提供者
 export const createApiToolProvider = (req: CreateApiToolProviderRequest) => {
-  return post<BaseResponse<any>>('/api-tools', {
+  return post<BaseResponse<Record<string, unknown>>>('/api-tools', {
     body: req,
   })
 }
 
 // 更新API工具提供者详情
 export const updateApiToolProvider = (provider_id: string, req: UpdateApiToolProviderRequest) => {
-  return post<BaseResponse<any>>(`/api-tools/${provider_id}`, {
+  return post<BaseResponse<Record<string, unknown>>>(`/api-tools/${provider_id}`, {
     body: req,
   })
 }
 
 // 删除API工具提供者详情
 export const deleteApiToolProvider = (provider_id: string) => {
-  return post<BaseResponse<any>>(`/api-tools/${provider_id}/delete`)
+  return post<BaseResponse<Record<string, unknown>>>(`/api-tools/${provider_id}/delete`)
 }
 
 // 获取API工具提供者详情

@@ -61,8 +61,11 @@ const debounceAutoSave = debounce(() => {
   void onSubmit({ errors: undefined })
 }, 800)
 
-const inputRefOptions = computed(() => {
-  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
+type RefOption = { label: string; value: string }
+type RefOptionGroup = { isGroup: true; label: string; options: RefOption[] }
+
+const inputRefOptions = computed<RefOptionGroup[]>(() => {
+  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id) as RefOptionGroup[]
 })
 
 const onSubmit = async ({ errors }: { errors: Record<string, ValidatedError> | undefined }) => {
@@ -256,6 +259,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 #text-processor-node-info {
   .arco-textarea {
     @apply !text-xs;

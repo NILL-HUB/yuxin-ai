@@ -141,10 +141,12 @@ export const updateAdminSkill = async (
 }
 
 /**
- * 删除技能包（仅允许删除 DB 来源的包）。
+ * 删除技能包（仅允许删除 DB 来源的包；进入回收站，可指定留存天数）。
  */
-export const deleteAdminSkill = (id: string) => {
-  return post<BaseResponse<null>>(`/admin/skills/${id}/delete`)
+export const deleteAdminSkill = (id: string, retentionDays?: number) => {
+  return post<BaseResponse<null>>(`/admin/skills/${id}/delete`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
 }
 
 // ------------------------------------------------------------------ //

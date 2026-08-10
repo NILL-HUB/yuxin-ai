@@ -17,8 +17,14 @@ import {
   uploadKnowledgeDocument,
 } from '@/services/knowledge-base'
 import type {
+  GetKnowledgeBaseResponse,
+  GetKnowledgeBasesWithPageResponse,
+  GetKnowledgeDocumentResponse,
   GetKnowledgeDocumentsWithPageRequest,
+  GetKnowledgeDocumentsWithPageResponse,
+  GetKnowledgeSegmentsWithPageResponse,
   HitRequest,
+  HitResponse,
   UpdateKnowledgeSegmentRequest,
 } from '@/models/knowledge-base'
 import { getErrorMessage } from '@/utils/error'
@@ -27,7 +33,7 @@ import { getErrorMessage } from '@/utils/error'
 export const useGetKnowledgeBasesWithPage = () => {
   // 1.定义数据，涵盖加载状态、列表以及分页器
   const loading = ref(false)
-  const knowledgeBases = ref<Record<string, any>[]>([])
+  const knowledgeBases = ref<GetKnowledgeBasesWithPageResponse['data']['list']>([])
   const defaultPaginator = {
     current_page: 1,
     page_size: 20,
@@ -89,7 +95,7 @@ export const useDeleteKnowledgeBase = () => {
           const resp = await deleteKnowledgeBase(knowledge_base_id)
           Message.success(resp.message)
         } finally {
-          callback && callback()
+          if (callback) callback()
         }
       },
     })
@@ -103,7 +109,7 @@ export const useCreateOrUpdateKnowledgeBase = () => {
   // 1.定义新增和更新需要使用的数据
   const loading = ref(false)
   const defaultForm = {
-    fileList: [] as any,
+    fileList: [] as Record<string, unknown>[],
     icon: '',
     name: '',
     description: '',
@@ -115,7 +121,7 @@ export const useCreateOrUpdateKnowledgeBase = () => {
   // 2.定义更新模态窗显隐函数
   const updateShowUpdateModal = (new_value: boolean, callback?: () => void) => {
     showUpdateModal.value = new_value
-    callback && callback()
+    if (callback) callback()
   }
 
   // 3.定义表单提交函数
@@ -155,7 +161,7 @@ export const useCreateOrUpdateKnowledgeBase = () => {
 // 获取用户端知识库详情
 export const useGetKnowledgeBase = () => {
   const loading = ref(false)
-  const knowledgeBase = ref<Record<string, any>>({})
+  const knowledgeBase = ref<GetKnowledgeBaseResponse['data']>({} as GetKnowledgeBaseResponse['data'])
 
   const loadKnowledgeBase = async (knowledge_base_id: string) => {
     try {
@@ -173,7 +179,7 @@ export const useGetKnowledgeBase = () => {
 // 获取文档分页列表
 export const useGetKnowledgeDocumentsWithPage = () => {
   const loading = ref(false)
-  const documents = ref<Record<string, any>[]>([])
+  const documents = ref<GetKnowledgeDocumentsWithPageResponse['data']['list']>([])
   const defaultPaginator = {
     current_page: 1,
     page_size: 20,
@@ -220,7 +226,7 @@ export const useDeleteKnowledgeDocument = () => {
         try {
           const resp = await deleteKnowledgeDocument(knowledge_base_id, document_id)
           Message.success(resp.message)
-          callback && callback()
+          if (callback) callback()
         } catch (error: unknown) {
           Message.error(getErrorMessage(error, '删除文档失败，请稍后重试'))
           throw error
@@ -235,7 +241,7 @@ export const useDeleteKnowledgeDocument = () => {
 // 获取文档详情
 export const useGetKnowledgeDocument = () => {
   const loading = ref(false)
-  const document = ref<Record<string, any>>({})
+  const document = ref<GetKnowledgeDocumentResponse['data']>({} as GetKnowledgeDocumentResponse['data'])
 
   const loadDocument = async (knowledge_base_id: string, document_id: string) => {
     try {
@@ -253,7 +259,7 @@ export const useGetKnowledgeDocument = () => {
 // 获取片段分页列表
 export const useGetKnowledgeSegmentsWithPage = () => {
   const loading = ref(false)
-  const segments = ref<Record<string, any>[]>([])
+  const segments = ref<GetKnowledgeSegmentsWithPageResponse['data']['list']>([])
   const defaultPaginator = {
     current_page: 1,
     page_size: 20,
@@ -331,7 +337,7 @@ export const useUpdateKnowledgeSegment = () => {
 // 知识库召回测试
 export const useHitKnowledgeBase = () => {
   const loading = ref(false)
-  const hits = ref<Record<string, any>[]>([])
+  const hits = ref<HitResponse['data']>([])
 
   const handleHit = async (knowledge_base_id: string, req: HitRequest) => {
     try {

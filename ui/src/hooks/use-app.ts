@@ -1,10 +1,7 @@
 import { ref } from 'vue'
 import {
   cancelPublish,
-  copyApp,
-  createApp,
   debugChat,
-  deleteApp,
   deleteDebugConversation,
   fallbackHistoryToDraft,
   getApp,
@@ -34,14 +31,17 @@ import { Message, Modal } from '@arco-design/web-vue'
 import { mergeChatHistoryMessages } from '@/views/shared/chat-stream'
 import type {
   AppVersion,
-  CreateAppRequest,
+  DraftAppConfigForm,
+  GetAppResponse,
   GetAppsWithPageResponse,
   GetDebugConversationMessagesWithPageResponse,
+  GetPublishedConfigResponse,
+  GetPublishHistoriesWithPageResponse,
   PromptCompareChatRequest,
   UpdateAppRequest,
   UpdateDraftAppConfigRequest,
 } from '@/models/app'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { getErrorMessage } from '@/utils/error'
 import { i18n } from '@/i18n'
 
@@ -51,7 +51,7 @@ const t = (key: string, params?: Record<string, unknown>) =>
 export const useGetApp = () => {
   // 1.定义hooks所需的基础数据
   const loading = ref(false)
-  const app = ref<Record<string, any>>({})
+  const app = ref<GetAppResponse['data']>({} as GetAppResponse['data'])
 
   // 2.定义加载数据所需的函数
   const loadApp = async (app_id: string) => {
@@ -121,29 +121,6 @@ export const useGetAppsWithPage = () => {
   return { loading, apps, paginator, loadApps }
 }
 
-export const useCreateApp = () => {
-  // 1.定义hooks所需数据
-  const router = useRouter()
-  const loading = ref(false)
-
-  // 2.定义新增应用处理器
-  const handleCreateApp = async (req: CreateAppRequest) => {
-    try {
-      loading.value = true
-      const resp = await createApp(req)
-      Message.success(t('appStudio.createModal.createSuccess'))
-      await router.push({
-        name: 'space-apps-detail',
-        params: { app_id: resp.data.id },
-      })
-    } finally {
-      loading.value = false
-    }
-  }
-
-  return { loading, handleCreateApp }
-}
-
 export const useUpdateApp = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
@@ -160,51 +137,6 @@ export const useUpdateApp = () => {
   }
 
   return { loading, handleUpdateApp }
-}
-
-export const useCopyApp = () => {
-  // 1.定义hooks所需数据
-  const router = useRouter()
-  const loading = ref(false)
-
-  // 2.定义拷贝应用副本处理器
-  const handleCopyApp = async (app_id: string) => {
-    try {
-      // 2.1 修改loading并发起请求
-      loading.value = true
-      const resp = await copyApp(app_id)
-
-      // 2.2 成功修改则进行提示并跳转页面
-      Message.success(t('appStudio.list.duplicateSuccess'))
-      await router.push({ name: 'space-apps-detail', params: { app_id: resp.data.id } })
-    } finally {
-      loading.value = false
-    }
-  }
-
-  return { loading, handleCopyApp }
-}
-
-export const useDeleteApp = () => {
-  const handleDeleteApp = async (app_id: string, callback?: () => void) => {
-    Modal.warning({
-      title: t('appStudio.shell.deleteConfirmTitle'),
-      content: t('appStudio.shell.deleteConfirmContent'),
-      hideCancel: false,
-      onOk: async () => {
-        try {
-          // 1.点击确定后向API接口发起请求
-          const resp = await deleteApp(app_id)
-          Message.success(resp.message)
-        } finally {
-          // 2.调用callback函数指定回调功能
-          callback && callback()
-        }
-      },
-    })
-  }
-
-  return { handleDeleteApp }
 }
 
 export const usePublish = () => {
@@ -249,7 +181,7 @@ export const useCancelPublish = () => {
         } finally {
           // 2.3 调用callback函数指定回调功能
           loading.value = false
-          callback && callback()
+          if (callback) callback()
         }
       },
     })
@@ -267,7 +199,7 @@ export const useGetPublishHistoriesWithPage = () => {
     total_page: 0,
     total_record: 0,
   }
-  const publishHistories = ref<Record<string, any>[]>([])
+  const publishHistories = ref<GetPublishHistoriesWithPageResponse['data']['list']>([])
   const paginator = ref(defaultPaginator)
 
   // 2.定义加载数据函数
@@ -326,7 +258,7 @@ export const useFallbackHistoryToDraft = () => {
       Message.success(resp.message)
     } finally {
       loading.value = false
-      callback && callback()
+      if (callback) callback()
     }
   }
 
@@ -336,7 +268,7 @@ export const useFallbackHistoryToDraft = () => {
 export const useGetDraftAppConfig = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const draftAppConfigForm = ref<Record<string, any>>({})
+  const draftAppConfigForm = ref<DraftAppConfigForm>({} as DraftAppConfigForm)
 
   // 2.定义加载数据函数
   const loadDraftAppConfig = async (app_id: string) => {
@@ -369,7 +301,7 @@ export const useGetDraftAppConfig = () => {
         workflow_detail: data.workflow_detail ?? null,
         speech_to_text: data.speech_to_text,
         text_to_speech: data.text_to_speech,
-      }
+      } as DraftAppConfigForm
     } finally {
       loading.value = false
     }
@@ -545,7 +477,7 @@ export const useDebugChat = () => {
     query: string,
     image_urls: string[] = [],
     conversation_id: string = '',
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
     confirm_deep_thinking: boolean = false,
   ) => {
     try {
@@ -568,7 +500,7 @@ export const useDebugWorkflowApp = () => {
   const handleDebugWorkflowApp = async (
     app_id: string,
     inputs: Record<string, unknown>,
-    onData: (event_response: { event: string; data: any }) => void,
+    onData: (event_response: { event: string; data: Record<string, unknown> }) => void,
   ) => {
     try {
       loading.value = true
@@ -608,7 +540,7 @@ export const usePromptCompareChat = () => {
   const handlePromptCompareChat = async (
     app_id: string,
     req: PromptCompareChatRequest,
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
   ) => {
     try {
       loading.value = true
@@ -639,7 +571,7 @@ export const useStopPromptCompareChat = () => {
 export const useGetPublishedConfig = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const published_config = ref<Record<string, any>>({})
+  const published_config = ref<GetPublishedConfigResponse['data']>({} as GetPublishedConfigResponse['data'])
 
   // 2.定义加载数据函数
   const loadPublishedConfig = async (app_id: string) => {
@@ -765,7 +697,7 @@ export const useShareAppToSquare = () => {
       Message.success(t('appStudio.published.square.sharedSuccess'))
     } finally {
       loading.value = false
-      callback && callback()
+      if (callback) callback()
     }
   }
 
@@ -789,7 +721,7 @@ export const useUnshareAppFromSquare = () => {
           Message.success(t('appStudio.published.square.unsharedSuccess'))
         } finally {
           loading.value = false
-          callback && callback()
+          if (callback) callback()
         }
       },
     })

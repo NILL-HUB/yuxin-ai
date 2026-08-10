@@ -43,16 +43,16 @@ watch(
   },
 )
 
-const parsedJson = computed<Record<string, any> | null>(() => {
+const parsedJson = computed<Record<string, unknown> | null>(() => {
   const text = jsonText.value.trim()
   if (!text) return null
   try {
     const value = JSON.parse(text)
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-      return value as Record<string, any>
+      return value as Record<string, unknown>
     }
     return null
-  } catch (error) {
+  } catch {
     return null
   }
 })

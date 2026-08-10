@@ -3,7 +3,7 @@ import { onMounted, onUnmounted } from 'vue'
 
 let canvas: HTMLCanvasElement
 let ctx: CanvasRenderingContext2D
-let particles: any[] = []
+let particles: Array<{ x: number; y: number; vx: number; vy: number }> = []
 const PARTICLE_COUNT = 80
 
 onMounted(() => {
@@ -35,7 +35,7 @@ function initParticles() {
   }))
 }
 
-let mouse: { x: number | null; y: number | null } = { x: null, y: null }
+const mouse: { x: number | null; y: number | null } = { x: null, y: null }
 function handleMouseMove(e: MouseEvent) {
   const rect = canvas.getBoundingClientRect()
   mouse.x = e.clientX - rect.left

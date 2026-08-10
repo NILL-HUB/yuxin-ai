@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { socketInstance, timeoutEmit, handlers, ioMock } = vi.hoisted(() => {
   const timeoutEmit = vi.fn()
-  const handlers = new Map<string, (...args: any[]) => void>()
+  const handlers = new Map<string, (...args: unknown[]) => void>()
   const socketInstance = {
     connected: false,
     auth: {},
@@ -62,7 +62,7 @@ describe('useDocumentIndexNotificationWebSocket', () => {
     socketInstance.connected = false
     socketInstance.auth = {}
     socketInstance.off.mockImplementation(() => socketInstance)
-    socketInstance.on.mockImplementation((event: string, handler: (...args: any[]) => void) => {
+    socketInstance.on.mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
       handlers.set(event, handler)
       return socketInstance
     })

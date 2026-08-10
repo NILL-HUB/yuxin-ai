@@ -92,12 +92,22 @@ export const getPredecessorsByNodeId = (
   return predecessors
 }
 
+// 节点输出变量选项
+type NodeVariable = Record<string, unknown>
+
+// 前置节点输出变量分组
+interface NodeVariables {
+  isGroup: boolean
+  label: string
+  options: NodeVariable[]
+}
+
 // 根据传递的节点、边与目标节点id，获取该节点可引用的所有变量信息
 export const getReferencedVariables = (
   nodes: GraphNode[],
   edges: GraphEdge[],
   target_node_id: string,
-): Record<string, any>[] => {
+): NodeVariables[] => {
   // 2.1 构建逆邻接表
   const reverseAdjList = buildReverseAdjList(edges)
 
@@ -108,22 +118,22 @@ export const getReferencedVariables = (
   const predecessorNodes = nodes.filter((node) => predecessors.includes(node.id))
 
   // 2.4 遍历节点，提取输出数据变量列表
-  const options: any[] = []
+  const options: NodeVariables[] = []
   predecessorNodes.forEach((node) => {
     // 2.5 创建节点变量列表
-    const node_variables = {
+    const node_variables: NodeVariables = {
       isGroup: true,
       label: node.data.title,
-      options: [] as any,
+      options: [],
     }
 
     // 2.6 根据节点的差异取出可以引用的数据
     if (node.type === 'start') {
-      node.data?.inputs.forEach((variable: any) => {
+      node.data?.inputs.forEach((variable: Record<string, unknown>) => {
         node_variables.options.push({ label: variable.name, value: `${node.id}/${variable.name}` })
       })
     } else {
-      node.data?.outputs.forEach((variable: any) => {
+      node.data?.outputs.forEach((variable: Record<string, unknown>) => {
         node_variables.options.push({
           label: `${variable.name}`,
           value: `${node.id}/${variable.name}`,
@@ -137,7 +147,7 @@ export const getReferencedVariables = (
 }
 
 // 获取用户头像 URL，如果没有设置则使用用户名首字母
-export const getUserAvatarUrl = (avatar: string | undefined, name: string): string => {
+export const getUserAvatarUrl = (avatar: string | undefined, _name: string): string => {
   // 如果用户设置了自定义头像，直接返回
   if (avatar && avatar.trim()) {
     return avatar

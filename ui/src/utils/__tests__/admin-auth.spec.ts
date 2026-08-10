@@ -21,8 +21,8 @@ describe('admin auth utils', () => {
 
     expect(getStoredAdminCredential()?.access_token).toBe('admin-token')
     clearStoredAdminCredential()
-    expect(storage.get('credential').access_token).toBe('customer-token')
-    expect(storage.get('admin_credential')).toBe('')
+    expect(storage.get('credential', { access_token: '' }).access_token).toBe('customer-token')
+    expect(storage.get('admin_credential', '')).toBe('')
   })
 
   it('returns empty token and logged-out state when admin credential is missing or expired', () => {

@@ -1,17 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
-import { getPublicAppDetail, forkPublicApp, type PublicApp } from '@/services/public-app'
+import { getPublicAppDetail, type PublicApp } from '@/services/public-app'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
 
 const route = useRoute()
-const router = useRouter()
 const { t } = useI18n()
 const loading = ref(false)
-const forkLoading = ref(false)
 const normalizeIconUrl = (icon: string = '') => {
   if (!icon) return ''
   if (icon.startsWith('data:') || /^https?:\/\//.test(icon)) return icon
@@ -102,20 +100,6 @@ const loadApp = async () => {
   }
 }
 
-// Fork 到个人空间
-const handleForkToMySpace = async () => {
-  try {
-    forkLoading.value = true
-    const res = await forkPublicApp(String(route.params?.app_id))
-    Message.success(t('publicApps.preview.addToSpaceSuccess', { name: res.data.name }))
-    router.push({ name: 'space-apps-detail', params: { app_id: res.data.id } })
-  } catch (error: unknown) {
-    Message.error(getErrorMessage(error, t('publicApps.preview.actionFailed')))
-  } finally {
-    forkLoading.value = false
-  }
-}
-
 watch(
   () => app.value.icon,
   (icon) => {
@@ -211,19 +195,6 @@ watch(
             </div>
           </div>
         </div>
-      </div>
-      <!-- 右侧按钮信息 -->
-      <div class="">
-        <a-button
-          :loading="forkLoading"
-          type="primary"
-          @click="handleForkToMySpace"
-        >
-          <template #icon>
-            <icon-plus />
-          </template>
-          {{ t('publicApps.preview.addToMySpace') }}
-        </a-button>
       </div>
     </div>
     <!-- 底部内容区 -->

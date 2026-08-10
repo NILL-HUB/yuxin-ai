@@ -1,11 +1,11 @@
 import { ref } from 'vue'
 import { getWechatConfig, updateWechatConfig } from '@/services/platform'
-import type { UpdateWechatConfigRequest } from '@/models/platform'
+import type { GetWechatConfigResponse, UpdateWechatConfigRequest } from '@/models/platform'
 import { Message } from '@arco-design/web-vue'
 export const useGetWechatConfig = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
-  const wechat_config = ref<Record<string, any>>({})
+  const wechat_config = ref<GetWechatConfigResponse['data']>({} as GetWechatConfigResponse['data'])
 
   // 2.定义加载数据处理器
   const loadWechatConfig = async (app_id: string) => {

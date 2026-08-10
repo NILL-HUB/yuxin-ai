@@ -24,24 +24,25 @@ const toggleSidebar = () => {
 }
 watch(collapsed, (val) => storage.set('admin_sidebar_collapsed', val))
 
-const _storedGroups = storage.get('admin_expanded_groups', null) as string[] | null
-const expandedGroups = ref<Set<string> | null>(
-  _storedGroups === null ? null : new Set(_storedGroups)
+// 侧边栏分组折叠状态：记录"用户手动折叠的组"，未记录的组（含新增菜单）默认展开
+const _storedCollapsed = storage.get('admin_collapsed_groups', null) as string[] | null
+const collapsedGroups = ref<Set<string> | null>(
+  _storedCollapsed === null ? null : new Set(_storedCollapsed)
 )
 const isGroupExpanded = (title: string) => {
-  if (expandedGroups.value === null) return true
-  return expandedGroups.value.has(title)
+  if (collapsedGroups.value === null) return true
+  return !collapsedGroups.value.has(title)
 }
 const toggleGroup = (title: string) => {
   if (collapsed.value) return
-  const set = new Set(expandedGroups.value || [])
+  const set = new Set(collapsedGroups.value || [])
   if (set.has(title)) {
     set.delete(title)
   } else {
     set.add(title)
   }
-  expandedGroups.value = set
-  storage.set('admin_expanded_groups', Array.from(set))
+  collapsedGroups.value = set
+  storage.set('admin_collapsed_groups', Array.from(set))
 }
 
 type MenuItem = {
@@ -85,6 +86,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/tools', label: t('admin.adminLayout.menu.tools'), permission: 'tool:read' },
       { to: '/admin/mcp', label: t('admin.adminLayout.menu.mcp'), permission: 'mcp:read' },
       { to: '/admin/skills', label: t('admin.adminLayout.menu.skills'), permission: 'skill:read' },
+      { to: '/admin/schedules', label: t('admin.adminLayout.menu.schedules'), permission: 'admin:access' },
     ],
   },
   {
@@ -117,6 +119,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/routing-logs', label: t('admin.adminLayout.menu.routingLogs'), permission: 'routing_log:read' },
       { to: '/admin/routing-quality', label: t('admin.adminLayout.menu.routingQuality'), permission: 'routing_quality:read' },
       { to: '/admin/audit-logs', label: t('admin.adminLayout.menu.auditLogs'), permission: 'audit_log:read' },
+      { to: '/admin/recycle-bin', label: t('admin.adminLayout.menu.recycleBin'), permission: 'recycle_bin:read' },
     ],
   },
   {
@@ -124,6 +127,13 @@ const menuGroups = computed(() => ([
     icon: 'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83',
     items: [
       { to: '/admin/orchestration-flags', label: t('admin.adminLayout.menu.orchestrationFlags'), permission: 'orchestration_flag:read' },
+    ],
+  },
+  {
+    title: t('admin.adminLayout.menu.systemConfig'),
+    icon: 'M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12',
+    items: [
+      { to: '/admin/storage', label: t('admin.adminLayout.menu.storage'), permission: 'storage:read' },
     ],
   },
   {
@@ -195,7 +205,7 @@ const handleLogout = async () => {
       <div class="sidebar-header">
         <router-link class="admin-brand" to="/admin">
           <span class="brand-mark">OA</span>
-          <span class="brand-text">OpenAgent Admin</span>
+          <span class="brand-text">钰心AI Admin</span>
         </router-link>
         <button class="collapse-btn" :title="collapsed ? t('admin.adminLayout.expandSidebar') : t('admin.adminLayout.collapseSidebar')" @click="toggleSidebar">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

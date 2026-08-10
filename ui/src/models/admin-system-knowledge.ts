@@ -55,3 +55,69 @@ export type SystemKnowledgePageResponse = BaseResponse<SystemKnowledgePageData>
 
 // 单条系统知识库响应
 export type SystemKnowledgeDetailResponse = BaseResponse<SystemKnowledgeRecord>
+
+// 系统知识库文档记录
+export type AdminKnowledgeDocument = {
+  id: string
+  knowledge_base_id: string
+  name: string
+  segment_count?: number
+  segment_character_count?: number
+  character_count: number
+  status: string
+  error: string
+  updated_at: number | null
+  created_at: number | null
+}
+
+// 文档分页请求
+export type GetAdminDocumentsRequest = {
+  current_page: number
+  page_size: number
+  search_word: string
+}
+
+// 文档分页响应数据
+export type AdminDocumentsPageData = {
+  items: AdminKnowledgeDocument[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  total_record: number
+}
+
+export type AdminDocumentsPageResponse = BaseResponse<AdminDocumentsPageData>
+
+// 命中测试请求
+export type AdminHitTestRequest = {
+  query: string
+  retrieval_strategy: string
+  k: number
+  score: number
+}
+
+// 命中测试响应数据
+export type AdminHitTestItem = {
+  id: string
+  document: {
+    id: string
+    name: string
+    extension: string
+    mime_type: string
+  }
+  knowledge_base_id: string
+  score: number
+  position: number
+  content: string
+  keywords: string[]
+  character_count: number
+  token_count: number
+  hit_count: number
+  enabled: boolean
+  status: string
+  updated_at: number | null
+  created_at: number | null
+}
+
+export type AdminHitTestResponse = BaseResponse<AdminHitTestItem[]>

@@ -16,7 +16,7 @@ export const audioToText = (file: Blob) => {
 // 消息转语音服务接口
 export const messageToAudio = (
     message_id: string,
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
 ) => {
     return ssePost(`/audio/message-to-audio`, { body: { message_id } }, onData)
 }
@@ -25,7 +25,7 @@ export const messageToAudio = (
 export const textToAudio = (
     message_id: string,
     text: string,
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
 ) => {
     return ssePost(`/audio/text-to-audio`, { body: { message_id, text } }, onData)
 }

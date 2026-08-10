@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import moment from 'moment'
 import type { ValidatedError } from '@arco-design/web-vue'
@@ -17,6 +17,12 @@ import { useAccountStore } from '@/stores/account'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
 import { Message } from '@arco-design/web-vue'
 import { getUserAvatarUrl } from '@/utils/helper'
+import type { GetKnowledgeBasesWithPageResponse } from '@/models/knowledge-base'
+
+// 数据集列表项：后端列表接口会返回相关应用计数，模型未声明该字段，这里局部扩展
+type DatasetListItem = GetKnowledgeBasesWithPageResponse['data']['list'][number] & {
+  related_app_count?: number
+}
 
 // 1.定义页面所需数据
 const route = useRoute()
@@ -31,6 +37,8 @@ const {
   paginator,
   loadKnowledgeBases: loadDatasets,
 } = useGetKnowledgeBasesWithPage()
+// 带 related_app_count 字段的本地类型化列表
+const datasetList = computed<DatasetListItem[]>(() => datasets.value as DatasetListItem[])
 const { image_url, handleUploadImage } = useUploadImage()
 const {
   loading: submitLoading,
@@ -85,7 +93,7 @@ const handleGenerateIcon = async () => {
       formRef.value?.validateField('fileList')
       Message.success(t('space.datasets.generateSuccess'))
     }
-  } catch (_error: unknown) {
+  } catch {
     // 错误已在 hooks 中处理
   }
 }
@@ -194,7 +202,7 @@ const handleCardClick = (datasetId: string) => {
     <a-row :gutter="[20, 20]">
       <!-- 有数据的UI状态 -->
       <a-col
-        v-for="dataset in datasets"
+        v-for="dataset in datasetList"
         :key="dataset.id"
         :xs="24"
         :sm="12"
@@ -257,7 +265,7 @@ const handleCardClick = (datasetId: string) => {
         </a-card>
       </a-col>
       <!-- 没数据的UI状态 -->
-      <a-col v-if="datasets.length === 0" :span="24">
+      <a-col v-if="datasetList.length === 0" :span="24">
         <a-empty
           :description="t('space.datasets.empty')"
           class="h-[400px] flex flex-col items-center justify-center"

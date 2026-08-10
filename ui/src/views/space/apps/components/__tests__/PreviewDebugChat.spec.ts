@@ -9,11 +9,11 @@ const mocks = vi.hoisted(() => ({
     params: { app_id: 'app-1' },
     query: {},
     fullPath: '/space/apps/app-1',
-  } as Record<string, any>,
+  } as Record<string, unknown>,
   replace: vi.fn().mockResolvedValue(undefined),
   query: { value: '' },
   suggestedQuestions: { value: [] as string[] },
-  messages: { value: [] as Record<string, any>[] },
+  messages: { value: [] as Record<string, unknown>[] },
   targetVisible: { value: false } as { value: boolean },
   paginator: {
     value: {
@@ -69,13 +69,6 @@ const dynamicScrollerItemStub = {
   props: ['item', 'active', 'sizeDependencies'],
   template:
     '<div class="vue-recycle-scroller__item-view" style="transform: translateY(0px) translateX(0px);"><div class="dynamic-scroller-item-stub" :data-index="item.id" :data-size-dependencies="JSON.stringify(sizeDependencies)"><slot /></div></div>',
-}
-
-const dynamicScrollerItemNoTargetStub = {
-  inheritAttrs: false,
-  props: ['item', 'active', 'sizeDependencies'],
-  template:
-    '<div class="dynamic-scroller-item-stub-no-target" :data-size-dependencies="JSON.stringify(sizeDependencies)"><slot /></div>',
 }
 
 const dynamicScrollerItemHiddenTargetStub = {
@@ -135,7 +128,7 @@ vi.mock('@/hooks/use-ai', () => ({
 vi.mock('@/hooks/use-app', async () => {
   const { ref } = await import('vue')
 
-  mocks.messages = ref<Record<string, any>[]>([])
+  mocks.messages = ref<Record<string, unknown>[]>([])
 
   return {
     useDebugChat: () => ({
@@ -203,7 +196,7 @@ describe('PreviewDebugChat', () => {
     mocks.query.value = ''
     mocks.suggestedQuestions.value = []
     mocks.messages.value = []
-    mocks.targetVisible = ref(false) as any
+    mocks.targetVisible = ref(false)
     mocks.paginator.value = {
       current_page: 1,
       page_size: 5,
@@ -242,7 +235,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: 'OpenAgent',
+          name: '钰心AI',
           icon: '',
         },
         suggested_after_answer: { enable: true },
@@ -288,7 +281,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: 'OpenAgent',
+          name: '钰心AI',
           icon: '',
         },
         suggested_after_answer: { enable: true },
@@ -473,7 +466,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: 'OpenAgent',
+          name: '钰心AI',
           icon: '',
         },
         suggested_after_answer: { enable: true },
@@ -580,7 +573,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: 'OpenAgent',
+          name: '钰心AI',
           icon: '',
         },
         suggested_after_answer: { enable: true },

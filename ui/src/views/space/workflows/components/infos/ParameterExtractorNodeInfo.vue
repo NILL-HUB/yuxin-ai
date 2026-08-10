@@ -344,6 +344,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 #parameter-extractor-node-info {
   .arco-select-option-content {
     @apply !text-xs;

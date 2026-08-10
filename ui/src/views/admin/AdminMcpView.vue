@@ -20,6 +20,7 @@ import { formatTimestampShort } from '@/utils/time-formatter'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 import CreateOrUpdateMcpModal from '@/views/space/mcp/components/CreateOrUpdateMcpModal.vue'
 import ImportMcpModal from '@/views/admin/mcp/ImportMcpModal.vue'
+import RecycleBinDeleteModal from '@/components/admin/RecycleBinDeleteModal.vue'
 import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
 import CardGridSkeleton from '@/components/skeletons/CardGridSkeleton.vue'
 
@@ -157,7 +158,7 @@ const loadCategories = async () => {
   try {
     const res = await getAdminMcpCategories()
     categories.value = res.data.categories || []
-  } catch (_error: unknown) {
+  } catch {
     categories.value = []
   }
 }
@@ -210,7 +211,7 @@ const handleCardClick = async (provider: McpProvider) => {
       if (res.data) {
         activeProvider.value = { ...provider, ...res.data }
       }
-    } catch (_error: unknown) {
+    } catch {
       // 详情拉取失败时保留列表数据
     } finally {
       detailLoading.value = false
@@ -246,24 +247,33 @@ const openEditModal = (provider: McpProvider) => {
 }
 
 /**
- * 删除后台 MCP Provider。
+ * 删除后台 MCP Provider（进入回收站：打开确认弹窗，选择留存天数）。
  */
+const deleteTarget = ref<McpProvider | null>(null)
+const deleteLoading = ref(false)
+
 const handleDelete = (provider: McpProvider) => {
-  Modal.warning({
-    title: t('admin.mcpAdmin.deleteTitle'),
-    content: t('admin.mcpAdmin.deleteContent'),
-    hideCancel: false,
-    onOk: async () => {
-      try {
-        await deleteAdminMcp(provider.id)
-        Message.success(t('admin.mcpAdmin.deleteSuccess'))
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.mcpAdmin.deleteFailed')))
-      } finally {
-        void loadProviders()
-      }
-    },
-  })
+  deleteTarget.value = provider
+  deleteLoading.value = false
+}
+
+const handleDeleteVisibleChange = (visible: boolean) => {
+  if (!visible) deleteTarget.value = null
+}
+
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteAdminMcp(deleteTarget.value.id, retentionDays)
+    Message.success(t('admin.mcpAdmin.deleteSuccess'))
+    deleteTarget.value = null
+    await loadProviders()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.mcpAdmin.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 /**
@@ -687,6 +697,18 @@ onMounted(async () => {
     />
 
     <ImportMcpModal v-model:visible="showImportModal" :callback="loadProviders" />
+
+    <!-- 删除 MCP Provider 确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="deleteTarget !== null"
+      :title="t('admin.mcpAdmin.deleteTitle')"
+      :resource-name="deleteTarget?.label || deleteTarget?.name"
+      :loading="deleteLoading"
+      @update:visible="handleDeleteVisibleChange"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-slate-500">{{ t('admin.mcpAdmin.deleteContent') }}</p>
+    </RecycleBinDeleteModal>
   </section>
 </template>
 

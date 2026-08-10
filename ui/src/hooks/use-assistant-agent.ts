@@ -9,6 +9,7 @@ import {
   stopAssistantAgentChat,
 } from '@/services/assistant-agent'
 import type {
+  GetAssistantAgentCapabilitiesResponse,
   GetAssistantAgentConversationsResponse,
   GetAssistantAgentMessagesWithPageResponse,
 } from '@/models/assistant-agent'
@@ -23,7 +24,7 @@ export const useAssistantAgentChat = () => {
     query: string,
     image_urls: string[] = [],
     conversation_id: string = '',
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
     confirm_deep_thinking: boolean = false,
   ) => {
     try {
@@ -49,7 +50,7 @@ export const useGenerateAssistantAgentIntroduction = () => {
 
   // 2.定义个性化介绍生成处理器
   const handleGenerateAssistantAgentIntroduction = async (
-    onData: (event_response: Record<string, any>) => void,
+    onData: (event_response: Record<string, unknown>) => void,
     signal?: AbortSignal,
   ) => {
     try {
@@ -65,7 +66,9 @@ export const useGenerateAssistantAgentIntroduction = () => {
 
 export const useGetAssistantAgentCapabilities = () => {
   const loading = ref(false)
-  const capabilities = ref<Record<string, any>>({})
+  const capabilities = ref<GetAssistantAgentCapabilitiesResponse['data']['capabilities']>(
+    {} as GetAssistantAgentCapabilitiesResponse['data']['capabilities'],
+  )
 
   const loadAssistantAgentCapabilities = async () => {
     try {

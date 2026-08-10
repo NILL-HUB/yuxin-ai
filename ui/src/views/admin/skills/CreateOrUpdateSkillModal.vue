@@ -8,7 +8,6 @@ import {
   updateAdminSkill,
   type CreateSkillPackagePayload,
   type SkillToolDefinition,
-  type UpdateSkillPackagePayload,
 } from '@/services/admin-skills'
 import type { SkillPackage } from '@/models/skill'
 
@@ -87,7 +86,7 @@ const loadSkillToForm = (skill: SkillPackage | null) => {
     executor_type: (skill.executor_type === 'scf' ? 'scf' : 'prompt') as 'scf' | 'prompt',
     enabled: skill.enabled !== false,
     readme: skill.readme || '',
-    skill_code: (skill as any).skill_code || '',
+    skill_code: skill.skill_code || '',
     tools_text: JSON.stringify(skill.tools || [], null, 2),
     tags_text: (skill.tags || []).join(', '),
     cap_code: Boolean(caps.code),
@@ -117,8 +116,8 @@ const parseTools = (text: string): SkillToolDefinition[] => {
     throw new Error('tools must be a JSON array')
   }
   return parsed
-    .filter((item: any) => item && typeof item === 'object' && item.name)
-    .map((item: any) => ({
+    .filter((item: Record<string, unknown>) => item && typeof item === 'object' && item.name)
+    .map((item: Record<string, unknown>) => ({
       name: String(item.name),
       label: String(item.label || item.name),
       description: String(item.description || ''),
@@ -184,7 +183,7 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
   )
 }
 
-const handleSubmit = async (errors: undefined | Record<string, ValidatedError>, values: any) => {
+const handleSubmit = async (errors: undefined | Record<string, ValidatedError>) => {
   if (errors) return false
   submitLoading.value = true
   try {
@@ -215,8 +214,8 @@ const handleSubmit = async (errors: undefined | Record<string, ValidatedError>, 
     }
 
     if (isEditMode.value) {
-      const updatePayload: UpdateSkillPackagePayload = { ...payload } as any
-      delete (updatePayload as any).source_key
+      const updatePayload: Omit<CreateSkillPackagePayload, 'source_key'> = { ...payload }
+      delete (updatePayload as Record<string, unknown>).source_key
       await updateAdminSkill(props.skill_id, updatePayload)
       Message.success(t('admin.skillsAdmin.updateSuccess'))
     } else {
@@ -239,7 +238,7 @@ const handleSubmitClick = async () => {
     const errors = await validate()
     if (errors) return
   }
-  await handleSubmit(undefined, form.value)
+  await handleSubmit(undefined)
 }
 </script>
 

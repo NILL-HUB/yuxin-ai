@@ -1,10 +1,15 @@
 import { ref } from 'vue'
 import { getBuiltinTool, getBuiltinTools, getCategories } from '@/services/builtin-tool'
+import type {
+  GetBuiltinToolResponse,
+  GetBuiltinToolsResponse,
+  GetCategoriesResponse,
+} from '@/models/builtin-tool'
 
 export const useGetCategories = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
-  const categories = ref<Record<string, any>>([])
+  const categories = ref<GetCategoriesResponse['data']>([])
 
   // 2.定义加载数据函数
   const loadCategories = async () => {
@@ -23,7 +28,7 @@ export const useGetCategories = () => {
 export const useGetBuiltinTool = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const builtin_tool = ref<Record<string, any>>({})
+  const builtin_tool = ref<GetBuiltinToolResponse['data']>({} as GetBuiltinToolResponse['data'])
 
   // 2.定义加载函数
   const loadBuiltinTool = async (provider_name: string, tool_name: string) => {
@@ -42,7 +47,7 @@ export const useGetBuiltinTool = () => {
 export const useGetBuiltinTools = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
-  const builtin_tools = ref<Record<string, any>>([])
+  const builtin_tools = ref<GetBuiltinToolsResponse['data']>([])
 
   // 2.定义加载数据函数
   const loadBuiltinTools = async () => {

@@ -56,7 +56,7 @@ onMounted(loadSummary)
       </div>
       <div class="balance-card">
         <span>当前算力值</span>
-        <strong>{{ summary?.credit_account.balance ?? 0 }}</strong>
+        <strong>{{ summary?.credit_account?.balance ?? 0 }}</strong>
       </div>
     </header>
 
@@ -73,8 +73,8 @@ onMounted(loadSummary)
       </article>
       <article class="panel">
         <h3>算力值账户</h3>
-        <p>累计获得：{{ summary?.credit_account.total_granted ?? 0 }}</p>
-        <p>累计消耗：{{ summary?.credit_account.total_consumed ?? 0 }}</p>
+        <p>累计获得：{{ summary?.credit_account?.total_granted ?? 0 }}</p>
+        <p>累计消耗：{{ summary?.credit_account?.total_consumed ?? 0 }}</p>
       </article>
     </section>
 
@@ -105,7 +105,8 @@ onMounted(loadSummary)
 
 <style scoped>
 .membership-page {
-  min-height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   display: grid;
   gap: 20px;
   padding: 32px;

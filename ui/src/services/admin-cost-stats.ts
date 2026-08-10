@@ -1,6 +1,5 @@
 import { get } from '@/utils/request'
 import type {
-  CostStatsByDimension,
   CostStatsByDimension as DimensionResponse,
   CostStatsDimensionFilters,
   CostStatsFilters,

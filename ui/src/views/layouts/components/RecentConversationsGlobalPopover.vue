@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { OPEN_AGENT_NAME } from '@/config/openagent'
+import { Message } from '@arco-design/web-vue'
+import { useI18n } from 'vue-i18n'
+import { YUXIN_AI_NAME } from '@/config/brand'
 import type { RecentConversation } from '@/models/conversation'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -13,6 +15,8 @@ const props = withDefaults(defineProps<Props>(), {
   conversations: () => [],
   loading: false,
 })
+
+const { t } = useI18n()
 
 const router = useRouter()
 const isHovering = ref(false)
@@ -30,12 +34,6 @@ const formatRelativeTime = (timestamp: number) => {
   return `${Math.floor(diff / 604800)}周前`
 }
 
-// 获取消息预览
-const getMessagePreview = (conversation: RecentConversation) => {
-  const message = conversation.human_message || conversation.ai_message || '暂无消息'
-  return message.length > 40 ? `${message.substring(0, 40)}...` : message
-}
-
 // 获取用户消息预览
 const getHumanMessagePreview = (conversation: RecentConversation) => {
   if (!conversation.human_message) return ''
@@ -51,8 +49,11 @@ const getAiMessagePreview = (conversation: RecentConversation) => {
 }
 
 const getConversationSourceLabel = (conversation: RecentConversation) => {
+  if (conversation.invoke_from === 'schedule') {
+    return t('chat.schedules.task')
+  }
   if (conversation.source_type === 'assistant_agent') {
-    return conversation.agent_name || OPEN_AGENT_NAME
+    return conversation.agent_name || YUXIN_AI_NAME
   }
   return conversation.app_name || '应用'
 }
@@ -80,6 +81,11 @@ const handleMouseLeave = () => {
 // 处理卡片点击
 const handleCardClick = async (conversation: RecentConversation) => {
   if (hoverTimeout) clearTimeout(hoverTimeout)
+  if (conversation.invoke_from === 'schedule') {
+    Message.info(t('chat.schedules.conversationNotOpenable'))
+    window.dispatchEvent(new CustomEvent('recent-conversations:hide'))
+    return
+  }
   if (conversation.source_type === 'assistant_agent') {
     await router.push({
       path: '/home',
@@ -161,15 +167,29 @@ onUnmounted(() => {
         <!-- 对话头部 -->
         <div class="flex items-start gap-2 mb-2">
           <div class="flex-shrink-0 mt-0.5">
+            <icon-schedule
+              v-if="conversation.invoke_from === 'schedule'"
+              class="w-4 h-4 text-orange-400"
+            />
             <icon-message
-              v-if="conversation.source_type === 'assistant_agent'"
+              v-else-if="conversation.source_type === 'assistant_agent'"
               class="w-4 h-4 text-gray-400"
             />
             <icon-apps v-else class="w-4 h-4 text-gray-400" />
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm text-gray-900 truncate">
-              {{ conversation.name }}
+            <div class="flex items-center gap-1.5">
+              <div class="font-medium text-sm text-gray-900 truncate">
+                {{ conversation.name }}
+              </div>
+              <a-tag
+                v-if="conversation.invoke_from === 'schedule'"
+                size="small"
+                color="orange"
+                class="flex-shrink-0 !mr-0"
+              >
+                {{ t('chat.schedules.shortLabel') }}
+              </a-tag>
             </div>
             <div class="text-xs text-gray-500 mt-0.5">
               {{ getConversationSourceLabel(conversation) }}

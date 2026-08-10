@@ -1,11 +1,11 @@
 @echo off
-REM openagent 全面验证 + 批量导入脚本启动器
+REM 钰心AI 全面验证 + 批量导入脚本启动器
 REM 双击此文件或在 cmd 中运行: scripts\run_setup.bat
 REM 兼容 Windows PowerShell 5.1 (无需安装 pwsh)
 
 cd /d "%~dp0\.."
 echo ============================================================
-echo  openagent 全面验证 + 批量导入 (MCP + Skills)
+echo  钰心AI 全面验证 + 批量导入 (MCP + Skills)
 echo ============================================================
 echo.
 echo 将执行以下步骤:

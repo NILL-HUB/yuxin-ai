@@ -6,10 +6,10 @@ import WebAppsIndexView from '@/views/web-apps/IndexView.vue'
 const mocks = vi.hoisted(() => ({
   state: {
     query: null as null | { value: string },
-    messages: null as null | { value: Array<Record<string, any>> },
-    webApp: null as null | { value: Record<string, any> },
-    pinnedConversations: null as null | { value: Array<Record<string, any>> },
-    unpinnedConversations: null as null | { value: Array<Record<string, any>> },
+    messages: null as null | { value: Array<Record<string, unknown>> },
+    webApp: null as null | { value: Record<string, unknown> },
+    pinnedConversations: null as null | { value: Array<Record<string, unknown>> },
+    unpinnedConversations: null as null | { value: Array<Record<string, unknown>> },
   },
   loadWebApp: vi.fn().mockResolvedValue(undefined),
   loadWebAppConversations: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +66,7 @@ vi.mock('@/hooks/use-chat-query-input', async () => {
 vi.mock('@/hooks/use-conversation', async () => {
   const { ref } = await import('vue')
   if (!mocks.state.messages) {
-    mocks.state.messages = ref<Array<Record<string, any>>>([])
+    mocks.state.messages = ref<Array<Record<string, unknown>>>([])
   }
   return {
     useDeleteConversation: () => ({

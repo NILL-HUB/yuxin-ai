@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, type PropType, ref } from 'vue'
-import { useRoute } from 'vue-router'
 import { type GetDraftAppConfigResponse } from '@/models/app'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
 import { useGetApiTool } from '@/hooks/use-tool'
@@ -29,14 +28,14 @@ type ToolMeta = {
 }
 
 // API 工具 Provider 实际响应结构（与 @/models/api-tool.ts GetApiToolProvidersWithPageResponse 元素一致）
-// 注意：实际响应无 label 字段，tools 为 Array<any>（元素含 inputs 等动态字段）
+// 注意：实际响应无 label 字段，tools 为 Array<Record<string, unknown>>（元素含 name/description/inputs 等动态字段）
 type ApiToolProvider = {
   id: string
   name: string
   icon: string
   description: string
-  headers: Array<any>
-  tools: Array<any>
+  headers: Array<Record<string, unknown>>
+  tools: Array<Record<string, unknown>>
   creator_name: string
   creator_avatar: string
   updated_at: number
@@ -100,12 +99,11 @@ const defaultToolInfo: ToolInfoState = {
 }
 
 // 1.定义自定义组件所需数据
-const route = useRoute()
 const { t, locale } = useI18n()
 const { isAdmin: isAdminContext } = useRealm()
-// 创建工具按钮路由名：admin 上下文下跳转到 admin-tools，避免跳回 space
+// 创建工具按钮路由名：admin 上下文下跳转到 admin-tools，否则跳转商店浏览
 const createToolRouteName = computed(() =>
-  isAdminContext.value ? 'admin-tools' : 'space-tools-list',
+  isAdminContext.value ? 'admin-tools' : 'store-tools-list',
 )
 const props = defineProps({
   app_id: { type: String, default: '', required: true },
@@ -187,7 +185,13 @@ const toolInfoModalVisible = ref(false)
 const toolInfoNavType = ref('info')
 const toolInfo = ref<ToolInfoState>(defaultToolInfo)
 const toolInfoIdx = ref(-1)
-const toolInfoSettingForm = ref<Record<string, unknown>>({})
+const toolInfoSettingForm = ref<Record<string, string | number | boolean | undefined>>({})
+const asSelectValue = (value: unknown): string | number | boolean | undefined =>
+  value as string | number | boolean | undefined
+const asStringValue = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined
+const asNumberValue = (value: unknown): number | undefined =>
+  typeof value === 'number' ? value : undefined
 const toolsModalVisible = ref(false)
 const toolsActivateType = ref('api_tool')
 const toolsActivateCategory = ref('all')
@@ -279,7 +283,7 @@ const handleShowToolInfoModal = async (idx: number) => {
   // 2.3 更新工具设置表单，从草稿中获取配置，如果没有则设置默认值
   const params = tool.tool.params
   toolInfo.value.tool.params.forEach((param: { name: string; default?: unknown }) => {
-    toolInfoSettingForm.value[param.name] = params[param.name] ?? param.default
+    toolInfoSettingForm.value[param.name] = (params[param.name] ?? param.default) as string | number | boolean | undefined
   })
 
   // 2.3 显示模态窗
@@ -378,7 +382,7 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
   let selectTool: ToolSelection
   if (toolsActivateType.value === 'api_tool') {
     const apiToolProvider = api_tool_providers.value[provider_idx]
-    const apiTool = apiToolProvider['tools'][tool_idx]
+    const apiTool = apiToolProvider['tools'][tool_idx] as { name?: string; description?: string }
     selectTool = {
       type: 'api_tool',
       provider: {
@@ -389,17 +393,22 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
         description: apiToolProvider.description,
       },
       tool: {
-        id: apiTool.name,
-        name: apiTool.name,
-        label: apiTool.name,
-        description: apiTool.description,
+        id: apiTool.name ?? '',
+        name: apiTool.name ?? '',
+        label: apiTool.name ?? '',
+        description: apiTool.description ?? '',
         params: {},
       },
     }
   } else {
     const builtinToolProvider = computedBuiltinTools.value[provider_idx]
-    const builtinTool = builtinToolProvider['tools'][tool_idx]
-    const params = builtinTool['params']
+    const builtinTool = builtinToolProvider['tools'][tool_idx] as {
+      name?: string
+      label?: string
+      description?: string
+      params?: unknown
+    }
+    const params = (Array.isArray(builtinTool.params) ? builtinTool.params : []) as Array<{ name: string; default?: unknown }>
     selectTool = {
       type: 'builtin_tool',
       provider: {
@@ -410,11 +419,11 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
         description: builtinToolProvider.description,
       },
       tool: {
-        id: builtinTool.name,
-        name: builtinTool.name,
-        label: builtinTool.label,
-        description: builtinTool.description,
-        params: params.reduce((newObj: Record<string, unknown>, item: { name: string; default: unknown }) => {
+        id: builtinTool.name ?? '',
+        name: builtinTool.name ?? '',
+        label: builtinTool.label ?? '',
+        description: builtinTool.description ?? '',
+        params: params.reduce((newObj: Record<string, unknown>, item: { name: string; default?: unknown }) => {
           newObj[item.name] = item.default
           return newObj
         }, {} as Record<string, unknown>),
@@ -473,12 +482,11 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
 }
 
 // 9.定义是否关联工具判断函数
-const isToolSelected = (
-  provider: { name: string },
-  tool: { name: string },
-) => {
+const isToolSelected = (provider: { name?: unknown }, tool: { name?: unknown }) => {
   return props.tools.some(
-    (item) => item.provider.name === provider.name && item.tool.name === tool.name,
+    (item) =>
+      item.provider.name === String(provider.name ?? '') &&
+      item.tool.name === String(tool.name ?? ''),
   )
 }
 
@@ -662,7 +670,7 @@ onMounted(() => {
             </template>
             <a-select
               v-if="param.type === 'select'"
-              :default-value="param.default"
+              :default-value="asSelectValue(param.default)"
               v-model:model-value="toolInfoSettingForm[param.name]"
               :placeholder="t('appStudio.abilities.tools.parameterValuePlaceholder')"
               :options="param.options"
@@ -670,21 +678,23 @@ onMounted(() => {
             <a-input
               v-if="param.type === 'string'"
               :placeholder="t('appStudio.abilities.tools.parameterValuePlaceholder')"
-              v-model:model-value="toolInfoSettingForm[param.name]"
-              :default-value="param.default"
+              :model-value="asStringValue(toolInfoSettingForm[param.name])"
+              @update:model-value="(value) => { toolInfoSettingForm[param.name] = value }"
+              :default-value="param.default as string"
             />
             <a-input-number
               v-if="param.type === 'number'"
               :placeholder="t('appStudio.abilities.tools.parameterValuePlaceholder')"
-              v-model:model-value="toolInfoSettingForm[param.name]"
-              :default-value="param.default"
+              :model-value="asNumberValue(toolInfoSettingForm[param.name])"
+              @update:model-value="(value) => { toolInfoSettingForm[param.name] = value }"
+              :default-value="param.default as number"
               :min="param.min"
               :max="param.max"
             />
             <a-radio-group
               v-if="param.type === 'boolean'"
               v-model:model-value="toolInfoSettingForm[param.name]"
-              :default-value="param.default"
+              :default-value="asSelectValue(param.default)"
             >
               <a-radio :value="true">{{ t('appStudio.abilities.longTermMemory.on') }}</a-radio>
               <a-radio :value="false">{{ t('appStudio.abilities.longTermMemory.off') }}</a-radio>
@@ -807,7 +817,7 @@ onMounted(() => {
               <div class="flex flex-col gap-1">
                 <div
                   v-for="(tool, tool_idx) in builtin_tool.tools"
-                  :key="tool.name"
+                  :key="String(tool.name)"
                   :class="`flex items-center justify-between px-2 h-8 rounded-lg cursor-pointer hover:bg-gray-50 group ${isToolSelected(builtin_tool, tool) ? 'bg-blue-50 border border-blue-700' : ''}`"
                 >
                   <!-- 工具信息 -->
@@ -823,7 +833,7 @@ onMounted(() => {
                   <a-button
                     size="mini"
                     class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
-                    @click="async () => await handleSelectTool(builtin_tool_idx, tool_idx)"
+                    @click="async () => await handleSelectTool(Number(builtin_tool_idx), Number(tool_idx))"
                   >
                     <template #icon>
                       <icon-plus />
@@ -862,7 +872,7 @@ onMounted(() => {
                 <div class="flex flex-col gap-1">
                   <div
                     v-for="(tool, tool_idx) in api_tool_provider.tools"
-                    :key="tool.name"
+                    :key="String(tool.name)"
                     :class="`flex items-center justify-between px-2 h-8 rounded-lg cursor-pointer hover:bg-gray-50 group ${isToolSelected(api_tool_provider, tool) ? 'bg-blue-50 border border-blue-700' : ''}`"
                   >
                     <!-- 工具信息 -->
@@ -879,7 +889,7 @@ onMounted(() => {
                       size="mini"
                       class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
                       @click="
-                        async () => await handleSelectTool(Number(api_tool_provider_idx), tool_idx)
+                        async () => await handleSelectTool(Number(api_tool_provider_idx), Number(tool_idx))
                       "
                     >
                       <template #icon>
@@ -927,6 +937,7 @@ onMounted(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 .app-side-modal-shell {
   height: calc(100dvh - 32px);
   max-height: calc(100dvh - 32px);

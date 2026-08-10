@@ -1,5 +1,4 @@
 import { type BasePaginatorRequest, type BasePaginatorResponse, type BaseResponse } from '@/models/base'
-import type { ChatConversationMessage } from '@/models/chat'
 
 // 获取指定会话消息列表请求结构
 export type GetConversationMessagesWithPageRequest = BasePaginatorRequest & {
@@ -12,10 +11,10 @@ export type GetConversationMessagesWithPageResponse = BasePaginatorResponse<{
   conversation_id: string
   query: string
   image_urls: string[]
-  input_parts: Array<Record<string, any>>
+  input_parts: Array<Record<string, unknown>>
   answer: string
-  answer_parts: Array<Record<string, any>>
-  artifacts: Array<Record<string, any>>
+  answer_parts: Array<Record<string, unknown>>
+  artifacts: Array<Record<string, unknown>>
   total_token_count: number
   latency: number
   agent_thoughts: {
@@ -25,7 +24,7 @@ export type GetConversationMessagesWithPageResponse = BasePaginatorResponse<{
     thought: string
     observation: string
     tool: string
-    tool_input: Record<string, any>
+    tool_input: Record<string, unknown>
     latency: number
     created_at: number
   }[]
@@ -36,7 +35,8 @@ export type GetConversationMessagesWithPageResponse = BasePaginatorResponse<{
 export type RecentConversation = {
   id: string
   name: string
-  source_type: 'assistant_agent' | 'app_debugger' | 'public_app'
+  source_type: 'assistant_agent' | 'app_debugger' | 'public_app' | 'schedule'
+  invoke_from?: string
   app_id: string
   app_name: string
   agent_name: string

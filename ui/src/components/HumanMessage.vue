@@ -15,6 +15,7 @@ const props = defineProps({
   },
   query: { type: String, default: '', required: true },
   image_urls: { type: Array, default: () => [] },
+  invoke_from: { type: String, default: '', required: false },
 })
 const { t } = useI18n()
 
@@ -34,7 +35,17 @@ const handleCopyHumanMessage = async () => {
       <!-- 左侧昵称与消息 -->
       <div class="flex min-w-0 max-w-full flex-col items-end gap-2">
         <!-- 账号昵称 -->
-        <div class="text-gray-700 font-bold text-right text-sm">{{ props.account?.name }}</div>
+        <div class="flex items-center gap-2">
+          <div class="text-gray-700 font-bold text-right text-sm">{{ props.account?.name }}</div>
+          <a-tag
+            v-if="props.invoke_from === 'schedule'"
+            size="small"
+            color="orange"
+            class="!mr-0"
+          >
+            {{ t('chat.schedules.task') }}
+          </a-tag>
+        </div>
         <!-- 人类消息 -->
         <div class="flex max-w-full min-w-0 flex-col items-end gap-1">
           <div

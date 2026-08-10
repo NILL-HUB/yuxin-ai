@@ -454,7 +454,7 @@ onMounted(() => {
       @ok="handleEditSave"
       @cancel="editModalVisible = false"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" :model="{}">
         <a-form-item :label="t('memory.graph.contentLabel')">
           <a-textarea
             v-model="editContent"
@@ -475,7 +475,7 @@ onMounted(() => {
       @ok="handleDecaySave"
       @cancel="decayModalVisible = false"
     >
-      <a-form layout="vertical">
+      <a-form layout="vertical" :model="{}">
         <a-form-item :label="t('memory.graph.decayFactorLabel')">
           <a-slider v-model="decayFactor" :min="0" :max="1" :step="0.1" show-input />
         </a-form-item>

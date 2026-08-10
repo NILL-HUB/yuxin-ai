@@ -60,7 +60,7 @@ const loadCategories = async () => {
   try {
     const res = await getSkillCategories()
     categories.value = res.data.categories || []
-  } catch (_error: unknown) {
+  } catch {
     categories.value = []
   }
 }

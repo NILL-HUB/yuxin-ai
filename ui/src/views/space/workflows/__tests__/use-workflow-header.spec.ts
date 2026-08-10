@@ -64,14 +64,14 @@ describe('use-workflow-header', () => {
       is_debug_passed: true,
     }
 
-    expect(header.headerBackRoute.value).toEqual({ name: 'space-workflows-list' })
+    expect(header.headerBackRoute.value).toEqual({ name: 'admin-workflows' })
     expect(header.workflowStatusText.value).toBe('已发布')
     expect(header.showPreviewReadonlyTag.value).toBe(false)
     expect(header.showDebugPassedTag.value).toBe(true)
     expect(header.showDebugPendingTag.value).toBe(false)
   })
 
-  it('forks workflow and redirects to personal detail page', async () => {
+  it('forks workflow and redirects to admin workflows list', async () => {
     forkPublicWorkflowMock.mockResolvedValue({
       data: { id: 'new-workflow-id', name: '新工作流' },
     })
@@ -87,8 +87,7 @@ describe('use-workflow-header', () => {
     expect(forkPublicWorkflowMock).toHaveBeenCalledWith('workflow-1')
     expect(messageSuccessMock).toHaveBeenCalledWith('已添加到个人空间: 新工作流')
     expect(router.push).toHaveBeenCalledWith({
-      name: 'space-workflows-detail',
-      params: { workflow_id: 'new-workflow-id' },
+      name: 'admin-workflows',
     })
     expect(header.forkLoading.value).toBe(false)
   })

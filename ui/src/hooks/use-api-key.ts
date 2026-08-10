@@ -61,7 +61,7 @@ export const useDeleteApiKey = () => {
     Modal.warning({
       title: '要删除该API秘钥吗?',
       content:
-        '删除秘钥后，无法使用该秘钥访问 OpenAgent 个人空间中的所有 Agent，并且无法恢复，如果临时关闭请使用禁用功能。',
+        '删除秘钥后，无法使用该秘钥访问 钰心AI 个人空间中的所有 Agent，并且无法恢复，如果临时关闭请使用禁用功能。',
       hideCancel: false,
       onOk: async () => {
         try {
@@ -70,7 +70,7 @@ export const useDeleteApiKey = () => {
           Message.success(resp.message)
         } finally {
           // 2.调用callback函数指定回调功能
-          callback && callback()
+          if (callback) callback()
         }
       },
     })
@@ -113,7 +113,7 @@ export const useUpdateApiKeyIsActive = () => {
       Message.success(resp.message)
     } finally {
       loading.value = false
-      callback && callback()
+      if (callback) callback()
     }
   }
 

@@ -30,6 +30,8 @@ type ModelRecord = {
   capabilities: string[]
   price_per_1k_tokens: string
   max_tokens: number
+  max_input_tokens: number
+  max_output_tokens: number
   status: string
   fallback_model_id?: string
   priority?: number
@@ -86,10 +88,22 @@ const MAX_TOKENS_PRESETS = [
   { value: 65536, label: '64K' },
   { value: 131072, label: '128K' },
   { value: 200000, label: '200K' },
+  { value: 393216, label: '384K' },
   { value: 524288, label: '512K' },
   { value: 1048576, label: '1M' },
   { value: 1572864, label: '1.5M' },
   { value: 2000000, label: '2M' },
+]
+// 最大输出长度预设值（通常远小于输入窗口）
+const OUTPUT_TOKENS_PRESETS = [
+  { value: 512, label: '512' },
+  { value: 1024, label: '1K' },
+  { value: 2048, label: '2K' },
+  { value: 4096, label: '4K' },
+  { value: 8192, label: '8K' },
+  { value: 16384, label: '16K' },
+  { value: 32768, label: '32K' },
+  { value: 65536, label: '64K' },
 ]
 // embedding 模型维度由后端自动探测（调用 API 探测实际维度），前端无需配置
 
@@ -111,10 +125,19 @@ const models = ref<ModelRecord[]>([])
 const keys = ref<ModelKeyRecord[]>([])
 const tiers = ref<TierPolicy[]>([])
 
+// 模型列表档位筛选：空字符串表示"全部档位"
+const filterTier = ref('')
+
 const getTierLabel = (tierCode: string) => {
   const tier = tiers.value.find((t) => t.tier_code === tierCode)
   return tier ? `${tier.tier_code} - ${tier.tier_name}` : tierCode
 }
+
+// 按档位筛选后的模型列表
+const filteredModels = computed(() => {
+  if (!filterTier.value) return models.value
+  return models.value.filter((m) => m.tier === filterTier.value)
+})
 
 const stats = computed(() => ({
   modelTotal: models.value.length,
@@ -135,6 +158,8 @@ const modelForm = ref({
   capabilities: [] as string[],
   price_per_1k_tokens: '0.000000',
   max_tokens: 0,
+  max_input_tokens: 0,
+  max_output_tokens: 0,
   fallback_model_id: '',
   priority: 0,
   model_type: 'chat',
@@ -152,15 +177,20 @@ const filteredModelTypeOptions = computed(() => {
 })
 // 当前模型类型是否需要上下文长度配置
 const hasContextField = computed(() => !CONTEXT_LESS_MODEL_TYPES.includes(modelForm.value.model_type))
-// 切换模型类型时，自动调整 max_tokens：切到无上下文类型时清零，切到有上下文类型且当前为 0 时恢复默认
+// 切换模型类型时，自动调整 token 上限：切到无上下文类型时清零，切到有上下文类型且当前为 0 时恢复默认
 watch(
   () => modelForm.value.model_type,
   (newType, oldType) => {
     if (newType === oldType) return
     if (CONTEXT_LESS_MODEL_TYPES.includes(newType)) {
+      modelForm.value.max_input_tokens = 0
+      modelForm.value.max_output_tokens = 0
       modelForm.value.max_tokens = 0
-    } else if (CONTEXT_LESS_MODEL_TYPES.includes(oldType) && modelForm.value.max_tokens === 0) {
-      modelForm.value.max_tokens = 131072
+    } else if (CONTEXT_LESS_MODEL_TYPES.includes(oldType) && modelForm.value.max_input_tokens === 0) {
+      modelForm.value.max_input_tokens = 131072
+      if (modelForm.value.max_output_tokens === 0) {
+        modelForm.value.max_output_tokens = 4096
+      }
     }
   },
 )
@@ -175,7 +205,7 @@ const keyForm = ref({
   effective_at: '',
   expires_at: '',
 })
-const keyDateRange = ref<(number | undefined)[]>([])
+const keyDateRange = ref<number[]>([])
 
 const tierModalVisible = ref(false)
 const tierEditMode = ref(false)
@@ -221,10 +251,13 @@ const openCreateModel = () => {
     model_name: '',
     display_name: '',
     description: '',
-    tier: '2',
+    // 默认选第一个档位（已创建的档位才可选），无档位时为空
+    tier: tiers.value[0]?.tier_code || '',
     capabilities: [],
     price_per_1k_tokens: '0.000000',
     max_tokens: 131072,
+    max_input_tokens: 131072,
+    max_output_tokens: 4096,
     fallback_model_id: '',
     priority: 0,
     model_type: 'chat',
@@ -246,6 +279,8 @@ const openEditModel = (model: ModelRecord) => {
     capabilities: [...(model.capabilities || [])],
     price_per_1k_tokens: model.price_per_1k_tokens,
     max_tokens: model.max_tokens,
+    max_input_tokens: model.max_input_tokens,
+    max_output_tokens: model.max_output_tokens,
     fallback_model_id: model.fallback_model_id || '',
     priority: model.priority ?? 0,
     model_type: model.model_type || 'chat',
@@ -260,10 +295,13 @@ const submitModel = async () => {
   try {
     const payload = { ...modelForm.value }
     // embedding_dimension 由后端自动探测，前端不传该字段
-    delete (payload as any).embedding_dimension
-    // 无上下文概念的模型类型，强制 max_tokens=0，避免残留值干扰
+    delete (payload as Record<string, unknown>).embedding_dimension
+    // max_tokens（总窗口）由后端按输入+输出派生，前端不直接提交
+    delete (payload as Record<string, unknown>).max_tokens
+    // 无上下文概念的模型类型，强制 token 上限为 0，避免残留值干扰
     if (!hasContextField.value) {
-      payload.max_tokens = 0
+      payload.max_input_tokens = 0
+      payload.max_output_tokens = 0
     }
     if (modelEditMode.value) {
       await updateModel(editingModelId.value, payload)
@@ -458,7 +496,19 @@ onMounted(loadAll)
 
     <a-tabs v-model:active-key="activeTab" type="rounded">
       <a-tab-pane key="models" :title="t('admin.models.tabs.modelConfig')">
-        <div class="mb-3 flex justify-end">
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <a-select
+            v-model="filterTier"
+            allow-clear
+            allow-search
+            :placeholder="t('admin.models.filterTierPlaceholder')"
+            style="width: 240px"
+          >
+            <a-option value="">{{ t('admin.models.filterTierAll') }}</a-option>
+            <a-option v-for="tier in tiers" :key="tier.tier_code" :value="tier.tier_code">
+              {{ tier.tier_code }} - {{ tier.tier_name }}
+            </a-option>
+          </a-select>
           <a-button type="primary" @click="openCreateModel">{{ t('admin.models.actions.createModel') }}</a-button>
         </div>
         <a-spin :loading="loading" class="block">
@@ -473,16 +523,17 @@ onMounted(loadAll)
                   <th class="p-3">{{ t('admin.models.columns.tier') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.capabilities') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.pricePer1k') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.maxTokens') }}</th>
+                  <th class="p-3">{{ t('admin.models.columns.maxInputTokens') }}</th>
+                  <th class="p-3">{{ t('admin.models.columns.maxOutputTokens') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.status') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.actions') }}</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="!models.length">
-                  <td class="p-6 text-center text-gray-400" colspan="10">{{ t('admin.models.empty.models') }}</td>
+                <tr v-if="!filteredModels.length">
+                  <td class="p-6 text-center text-gray-400" colspan="11">{{ t('admin.models.empty.models') }}</td>
                 </tr>
-                <tr v-for="model in models" :key="model.id" class="border-t">
+                <tr v-for="model in filteredModels" :key="model.id" class="border-t">
                   <td class="p-3">{{ model.provider }}</td>
                   <td class="p-3">{{ model.model_name }}</td>
                   <td class="p-3">{{ model.display_name || '-' }}</td>
@@ -498,7 +549,8 @@ onMounted(loadAll)
                     <span v-if="!model.capabilities?.length" class="text-gray-400">-</span>
                   </td>
                   <td class="p-3">{{ model.price_per_1k_tokens }}</td>
-                  <td class="p-3">{{ CONTEXT_LESS_MODEL_TYPES.includes(model.model_type || '') ? '-' : model.max_tokens }}</td>
+                  <td class="p-3">{{ CONTEXT_LESS_MODEL_TYPES.includes(model.model_type || '') ? '-' : model.max_input_tokens }}</td>
+                  <td class="p-3">{{ CONTEXT_LESS_MODEL_TYPES.includes(model.model_type || '') ? '-' : model.max_output_tokens }}</td>
                   <td class="p-3">
                     <a-switch
                       :model-value="model.status === 'active'"
@@ -666,14 +718,14 @@ onMounted(loadAll)
         </a-form-item>
         <a-form-item
           v-if="hasContextField"
-          :label="t('admin.models.fields.maxTokens')"
-          field="max_tokens"
+          :label="t('admin.models.fields.maxInputTokens')"
+          field="max_input_tokens"
         >
           <a-input-number
-            v-model="modelForm.max_tokens"
+            v-model="modelForm.max_input_tokens"
             :min="0"
             :step="1024"
-            :placeholder="t('admin.models.modelModal.placeholders.maxTokens')"
+            :placeholder="t('admin.models.modelModal.placeholders.maxInputTokens')"
             class="w-full"
           />
           <div class="mt-2 flex flex-wrap gap-1.5">
@@ -681,9 +733,34 @@ onMounted(loadAll)
               v-for="preset in MAX_TOKENS_PRESETS"
               :key="preset.value"
               :checkable="true"
-              :checked="modelForm.max_tokens === preset.value"
+              :checked="modelForm.max_input_tokens === preset.value"
               size="small"
-              @click="modelForm.max_tokens = preset.value"
+              @click="modelForm.max_input_tokens = preset.value"
+            >
+              {{ preset.label }}
+            </a-tag>
+          </div>
+        </a-form-item>
+        <a-form-item
+          v-if="hasContextField"
+          :label="t('admin.models.fields.maxOutputTokens')"
+          field="max_output_tokens"
+        >
+          <a-input-number
+            v-model="modelForm.max_output_tokens"
+            :min="0"
+            :step="512"
+            :placeholder="t('admin.models.modelModal.placeholders.maxOutputTokens')"
+            class="w-full"
+          />
+          <div class="mt-2 flex flex-wrap gap-1.5">
+            <a-tag
+              v-for="preset in OUTPUT_TOKENS_PRESETS"
+              :key="preset.value"
+              :checkable="true"
+              :checked="modelForm.max_output_tokens === preset.value"
+              size="small"
+              @click="modelForm.max_output_tokens = preset.value"
             >
               {{ preset.label }}
             </a-tag>

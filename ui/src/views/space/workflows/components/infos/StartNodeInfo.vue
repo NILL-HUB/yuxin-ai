@@ -274,6 +274,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 #start-node-info {
   .arco-textarea {
     @apply !text-xs;

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AiDynamicBackground from '@/components/AiDynamicBackground.vue'
 import { AI_SURFACE_BACKGROUND_GRADIENT } from '@/config'
-import { OPEN_AGENT_NAME } from '@/config/openagent'
+import { YUXIN_AI_NAME } from '@/config/brand'
 import { useMarkdownRenderer } from '@/hooks/use-markdown-renderer'
 import { searchConversations } from '@/services/conversation-search'
 import { useGetRecentConversations, useDeleteConversation } from '@/hooks/use-conversation'
@@ -179,7 +180,7 @@ const truncateText = (text: string, maxLength: number = 20) => {
 
   const windowSize = Math.max(maxLength, keyword.length)
   let start = Math.max(0, keywordIndex - Math.floor((windowSize - keyword.length) / 2))
-  let end = Math.min(normalizedText.length, start + windowSize)
+  const end = Math.min(normalizedText.length, start + windowSize)
 
   if (end - start < windowSize) {
     start = Math.max(0, end - windowSize)
@@ -278,7 +279,7 @@ const getNonMessageMatchLabels = (conversation: SearchableConversation) => {
   }
 
   if (hasMatchedField(conversation, 'agent_name')) {
-    labels.push(t('conversationSearch.matchedLabels.agent', { name: OPEN_AGENT_NAME }))
+    labels.push(t('conversationSearch.matchedLabels.agent', { name: YUXIN_AI_NAME }))
   }
 
   return labels
@@ -298,17 +299,14 @@ const shouldShowMessageField = (conversation: SearchableConversation, field: 'hu
   return matchedFields.includes(field)
 }
 
-const truncateConversationName = (name: string, hasAgent: boolean) => {
-  // 如果有agent名称，对话名称最多保留30个字符，否则保留50个字符
-  const maxLength = hasAgent ? 30 : 50
-  if (name.length > maxLength) {
-    return name.substring(0, maxLength) + '...'
-  }
-  return name
-}
 
 const changeConversation = async (conversation: SearchableConversation) => {
   if (!conversation.id) return
+
+  if (conversation.invoke_from === 'schedule') {
+    Message.info(t('chat.schedules.conversationNotOpenable'))
+    return
+  }
 
   if (conversation.source_type === 'assistant_agent') {
     await router.push({
@@ -330,13 +328,7 @@ const changeConversation = async (conversation: SearchableConversation) => {
   }
 
   if (conversation.source_type === 'app_debugger' && 'app_id' in conversation && conversation.app_id) {
-    await router.push({
-      path: `/space/apps/${conversation.app_id}`,
-      query: {
-        conversation_id: conversation.id,
-        message_id: 'message_id' in conversation ? conversation.message_id : undefined,
-      },
-    })
+    Message.info(t('chat.schedules.conversationNotOpenable'))
   }
 }
 
@@ -367,7 +359,7 @@ watch(recentConversations, async () => {
 
 watch(searchQuery, () => {
   handleSearch()
-}, { debounce: 300 } as any)
+}, { debounce: 300 } as Record<string, unknown>)
 
 onMounted(() => {
   handleSearch()
@@ -469,6 +461,14 @@ onMounted(() => {
                   style="flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-weight: 600; color: #111827;"
                   v-html="highlightAndTruncateText(conversation.name, 20)"
                 />
+                <a-tag
+                  v-if="conversation.invoke_from === 'schedule'"
+                  size="small"
+                  color="orange"
+                  style="flex-shrink: 0; white-space: nowrap; margin-left: 4px;"
+                >
+                  {{ t('chat.schedules.shortLabel') }}
+                </a-tag>
                 <span
                   v-if="conversation.source_type === 'assistant_agent' && conversation.agent_name"
                   style="flex-shrink: 0; white-space: nowrap; margin-left: 4px; font-size: 0.75rem; padding: 4px 8px; border-radius: 4px; background-color: #ede9fe; color: #6d28d9;"

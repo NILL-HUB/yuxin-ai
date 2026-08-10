@@ -160,7 +160,7 @@ describe('admin apps service', () => {
 
     await deleteAdminApp('app-1')
 
-    expect(requestModule.del).toHaveBeenCalledWith('/admin/apps/app-1')
+    expect(requestModule.del).toHaveBeenCalledWith('/admin/apps/app-1', { body: undefined })
   })
 
   it('getAdminAppDraftConfig calls GET /admin/apps/:id/draft-app-config', async () => {

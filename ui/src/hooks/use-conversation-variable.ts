@@ -85,7 +85,7 @@ export const useDeleteConversationVariable = () => {
           Message.error(getErrorMessage(error, t('common.request.requestFailed')))
           throw error
         } finally {
-          callback && callback()
+          if (callback) callback()
         }
       },
     })
@@ -116,7 +116,7 @@ export const useDeleteAllConversationVariables = () => {
           throw error
         } finally {
           loading.value = false
-          callback && callback()
+          if (callback) callback()
         }
       },
     })

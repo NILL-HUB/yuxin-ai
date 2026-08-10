@@ -15,27 +15,6 @@ vi.mock('@/services/mcp', () => ({
   getPublicMcpProvider: mocks.getPublicMcpProvider,
 }))
 
-vi.mock('@/views/space/mcp/components/CreateOrUpdateMcpModal.vue', () => ({
-  default: defineComponent({
-    name: 'CreateOrUpdateMcpModal',
-    props: {
-      visible: {
-        type: Boolean,
-        default: false,
-      },
-      callback: {
-        type: Function,
-        default: undefined,
-      },
-      mcp_provider_id: {
-        type: String,
-        default: '',
-      },
-    },
-    template: '<div data-testid="create-mcp-modal" :data-visible="String(visible)"></div>',
-  }),
-}))
-
 const buttonStub = defineComponent({
   name: 'ArcoButtonStub',
   emits: ['click'],
@@ -186,7 +165,7 @@ describe('store mcp list', () => {
     })
   })
 
-  it('opens the local create modal and keeps the store page subtitle removed', async () => {
+  it('renders store mcp list without a create button or create modal', async () => {
     const wrapper = shallowMount(McpListView, {
       global: {
         stubs: globalStubs,
@@ -209,12 +188,6 @@ describe('store mcp list', () => {
       expect(wrapper.text()).toContain(category)
     })
 
-    const modal = wrapper.get('create-or-update-mcp-modal-stub')
-    expect(modal.attributes('visible')).toBe('false')
-
-    await wrapper.get('[data-testid="store-mcp-create-button"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.get('create-or-update-mcp-modal-stub').attributes('visible')).toBe('true')
+    expect(wrapper.find('[data-testid="store-mcp-create-button"]').exists()).toBe(false)
   })
 })

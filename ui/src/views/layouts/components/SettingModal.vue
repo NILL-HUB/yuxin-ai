@@ -261,7 +261,14 @@ const handleCopyAccountId = async () => {
   Message.success(t('settings.messages.copyAccountIdSuccess'))
 }
 
-const handleAvatarCustomRequest = (option: any) => {
+// 上传组件 custom-request 回调参数
+interface AvatarUploadRequestOption {
+  fileItem: { file?: File }
+  onSuccess: (response?: unknown) => void
+  onError: (err: Error) => void
+}
+
+const handleAvatarCustomRequest = (option: AvatarUploadRequestOption) => {
   const uploadTask = async () => {
     const { fileItem, onSuccess, onError } = option
 
@@ -273,7 +280,7 @@ const handleAvatarCustomRequest = (option: any) => {
       await handleUpdateAvatar(String(accountForm.value.avatar))
       await updateAccount()
     } catch (error) {
-      onError(error)
+      onError(error as Error)
     }
   }
 
@@ -464,7 +471,7 @@ const handleHistorySearch = async () => {
   await loadDeviceSecurityData()
 }
 
-const handleHistoryStatusChange = async (value: string | number | boolean) => {
+const handleHistoryStatusChange = async (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
   historyFilters.value.status = String(value || 'all')
   historyFilters.value.current_page = 1
   await loadDeviceSecurityData()

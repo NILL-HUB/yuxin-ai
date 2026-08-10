@@ -60,6 +60,7 @@ export type AdminRoutingLogRecord = {
   fallback_reason: string
   redaction_enabled: boolean
   retention_expires_at?: number | null
+  invoke_from?: string
   status: string
   created_at: number
 }

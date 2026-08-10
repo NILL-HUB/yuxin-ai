@@ -87,7 +87,7 @@ export interface AgentMessagePayload {
 }
 
 /** SSE 事件载荷 - orchestrator_routing */
-export interface OrchestratorRoutingPayload extends RoutingDecision {}
+export type OrchestratorRoutingPayload = RoutingDecision
 
 /** SSE 事件载荷 - orchestrator_reject */
 export interface OrchestratorRejectPayload {

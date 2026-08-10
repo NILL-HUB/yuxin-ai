@@ -113,6 +113,7 @@ import Spin from '@arco-design/web-vue/es/spin'
 import Steps from '@arco-design/web-vue/es/steps'
 import Switch from '@arco-design/web-vue/es/switch'
 import Table from '@arco-design/web-vue/es/table'
+import TimePicker from '@arco-design/web-vue/es/time-picker'
 import Tabs from '@arco-design/web-vue/es/tabs'
 import Tag from '@arco-design/web-vue/es/tag'
 import Textarea from '@arco-design/web-vue/es/textarea'
@@ -153,8 +154,9 @@ const arcoComponents = [
   Steps,
   Switch,
   Table,
-  Tabs,
   Tag,
+  TimePicker,
+  Tabs,
   Textarea,
   Tooltip,
   Trigger,

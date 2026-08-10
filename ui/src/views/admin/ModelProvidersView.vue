@@ -19,6 +19,7 @@ type ProviderRecord = {
   icon?: string
   background?: string
   default_base_url: string
+  is_full_url?: boolean
   supported_model_types: string[]
   model_count: number
   status: string
@@ -70,6 +71,7 @@ const form = ref({
   label: '',
   description: '',
   default_base_url: '',
+  is_full_url: false,
   supported_model_types: [] as string[],
   status: 'active',
 })
@@ -95,6 +97,7 @@ const resetForm = () => {
     label: '',
     description: '',
     default_base_url: '',
+    is_full_url: false,
     supported_model_types: [],
     status: 'active',
   }
@@ -115,6 +118,7 @@ const openEdit = (provider: ProviderRecord) => {
     label: provider.label || '',
     description: provider.description || '',
     default_base_url: provider.default_base_url || '',
+    is_full_url: Boolean(provider.is_full_url),
     supported_model_types: [...(provider.supported_model_types || [])],
     status: provider.status || 'active',
   }
@@ -259,7 +263,10 @@ onMounted(loadAll)
                   <span class="cursor-help underline decoration-dotted underline-offset-2">{{ provider.label || '-' }}</span>
                 </a-tooltip>
               </td>
-              <td class="p-3 font-mono text-xs">{{ provider.default_base_url || '-' }}</td>
+              <td class="p-3 font-mono text-xs">
+                <span class="break-all">{{ provider.default_base_url || '-' }}</span>
+                <a-tag v-if="provider.is_full_url" size="small" color="orange" class="ml-1">URL</a-tag>
+              </td>
               <td class="p-3">
                 <a-tag v-for="mt in provider.supported_model_types" :key="mt" size="small" color="arcoblue">{{ mt }}</a-tag>
                 <span v-if="!provider.supported_model_types?.length" class="text-gray-400">-</span>
@@ -299,7 +306,11 @@ onMounted(loadAll)
           <a-input v-model="form.label" :placeholder="t('admin.modelProviders.label')" />
         </a-form-item>
         <a-form-item :label="t('admin.modelProviders.defaultBaseUrl')" field="default_base_url">
-          <a-input v-model="form.default_base_url" placeholder="https://api.openai.com/v1" />
+          <a-input v-model="form.default_base_url" :placeholder="form.is_full_url ? 'https://opencode.ai/zen/go/v1/chat/completions' : 'https://api.openai.com/v1'" />
+          <div class="mt-2">
+            <a-switch v-model="form.is_full_url" size="small" />
+            <span class="ml-2 text-xs text-gray-500">{{ t('admin.modelProviders.fullUrlHint') }}</span>
+          </div>
         </a-form-item>
         <a-form-item :label="t('admin.modelProviders.description')" field="description">
           <a-textarea v-model="form.description" :placeholder="t('admin.modelProviders.description')" :auto-size="{ minRows: 2, maxRows: 4 }" />

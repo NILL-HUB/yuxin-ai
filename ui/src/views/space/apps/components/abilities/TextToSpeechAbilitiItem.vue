@@ -98,7 +98,7 @@ watch(
             </template>
             <template #extra>
                 <a-dropdown @select="
-                    async (value: string | number | boolean) => {
+                    async (value: string | number | Record<string, any> | undefined) => {
                         if (Boolean(value) !== textToSpeechForm.enable) {
                             const previousEnable = textToSpeechForm.enable
                             try {
@@ -206,6 +206,7 @@ watch(
 </template>
 
 <style>
+@reference "tailwindcss";
 .text-to-speech-ability-item {
   .arco-collapse-item-content-box {
     @apply p-0;

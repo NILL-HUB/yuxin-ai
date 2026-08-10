@@ -22,7 +22,7 @@ type FormInputField = {
   name: string
   type: string
   ref: string
-  content?: unknown
+  content?: string
 }
 
 type ConditionField = {
@@ -96,9 +96,12 @@ const logicalOperatorOptions = [
   { label: t('workflowEditor.logicOptions.or'), value: 'or' },
 ]
 
+type RefOption = { label: string; value: string }
+type RefOptionGroup = { isGroup: true; label: string; options: RefOption[] }
+
 // 节点可引用的变量选项
-const inputRefOptions = computed(() => {
-  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id)
+const inputRefOptions = computed<RefOptionGroup[]>(() => {
+  return getReferencedVariables(cloneDeep(nodes.value), cloneDeep(edges.value), props.node.id) as RefOptionGroup[]
 })
 
 // 添加输入字段
@@ -199,7 +202,7 @@ watch(
         return {
           name: input.name,
           type: input.value.type === 'literal' ? input.type : 'ref',
-          content: input.value.type === 'literal' ? input.value.content : '',
+          content: input.value.type === 'literal' ? String(input.value.content ?? '') : '',
           ref: input.value.type === 'ref' && refExists ? ref : '',
         }
       }),
@@ -388,6 +391,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
+@reference "tailwindcss";
 #if-else-node-info {
   .arco-textarea {
     @apply !text-xs;

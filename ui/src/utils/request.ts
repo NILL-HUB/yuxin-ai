@@ -311,7 +311,9 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
     }
 
     if (json.code === httpCode.notFound) {
-      await router.push({ name: 'errors-not-found' })
+      // 不自动跳转到 404 页面：API 级 404（如模型不可用、资源不存在）应由调用方处理。
+      // 页面级 404（路由不匹配）由 Vue Router catch-all 处理。
+      // 自动跳转会导致首页加载时某个 API 404 就把用户踢到错误页，严重影响体验。
       throw createRequestError({
         message: json.message || t('common.request.resourceNotFound'),
         code: json.code,
@@ -401,7 +403,7 @@ const handleStream = <TData>(
     const read = () => {
       reader
         .read()
-        .then((result: ReadableStreamReadResult<Uint8Array>) => {
+        .then(async (result: ReadableStreamReadResult<Uint8Array>) => {
           if (result.done) {
             try {
               emitEvent()
@@ -417,7 +419,9 @@ const handleStream = <TData>(
           buffer = lines.pop() || ''
 
           try {
-            lines.forEach((rawLine) => {
+            // 使用 for...of 而非 forEach，以便在每个完整事件后让出执行权
+            // 让 Vue 响应式系统有机会更新 DOM，实现真正的逐字流式渲染
+            for (const rawLine of lines) {
               const line = rawLine.trim()
               if (line.startsWith('event:')) {
                 event = line.slice(6).trim()
@@ -429,8 +433,10 @@ const handleStream = <TData>(
               // 每个事件以空行结束，只有event和data同时存在才视为完整事件
               if (line === '') {
                 emitEvent()
+                // 让出执行权，让 Vue 更新 DOM
+                await new Promise((r) => setTimeout(r, 0))
               }
-            })
+            }
           } catch (error: unknown) {
             reject(normalizeUnknownError(error, t('common.request.streamParseFailed')))
             return
@@ -452,6 +458,7 @@ export const ssePost = async <TData = unknown, TResponse = unknown>(
   url: string,
   fetchOptions: FetchOptionType,
   onData: (data: StreamEventPayload<TData>) => void,
+  timeoutMs = 0,
 ): Promise<TResponse | void> => {
   const options = buildRequestOptions(fetchOptions, 'POST')
   const { accessToken, clearCredential } = resolveCredentialContext(url)
@@ -470,6 +477,39 @@ export const ssePost = async <TData = unknown, TResponse = unknown>(
     method: 'POST',
   }
 
+  if (timeoutMs > 0) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    requestInit.signal = controller.signal
+    try {
+      return await doSseFetch<TData, TResponse>(
+        requestUrl,
+        requestInit,
+        normalizedBody,
+        onData,
+        clearCredential,
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  return await doSseFetch<TData, TResponse>(
+    requestUrl,
+    requestInit,
+    normalizedBody,
+    onData,
+    clearCredential,
+  )
+}
+
+const doSseFetch = async <TData, TResponse>(
+  requestUrl: string,
+  requestInit: RequestInit,
+  normalizedBody: BodyInit | null | undefined,
+  onData: (data: StreamEventPayload<TData>) => void,
+  clearCredential: () => void,
+): Promise<TResponse | void> => {
   if (normalizedBody !== undefined) {
     requestInit.body = normalizedBody
     if (normalizedBody instanceof FormData) {
@@ -633,6 +673,10 @@ export const post = <T>(url: string, options: FetchOptionType = {}) => {
 
 export const patch = <T>(url: string, options: FetchOptionType = {}) => {
   return request<T>(url, Object.assign({}, options, { method: 'PATCH' }))
+}
+
+export const put = <T>(url: string, options: FetchOptionType = {}) => {
+  return request<T>(url, Object.assign({}, options, { method: 'PUT' }))
 }
 
 export const del = <T>(url: string, options: FetchOptionType = {}) => {

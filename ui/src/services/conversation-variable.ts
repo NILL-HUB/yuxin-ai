@@ -28,7 +28,7 @@ export const batchSetConversationVariables = (
 
 // 删除指定会话的单个变量
 export const deleteConversationVariable = (conversation_id: string, name: string) =>
-  post<BaseResponse<any>>(
+  post<BaseResponse<Record<string, unknown>>>(
     `/conversations/${conversation_id}/variables/${encodeURIComponent(name)}/delete`,
   )
 

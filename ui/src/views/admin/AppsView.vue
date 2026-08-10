@@ -15,6 +15,7 @@ import {
 } from '@/services/admin-apps'
 import type { AgentMetadata } from '@/models/app'
 import AgentMetadataEditor from '@/components/admin/AgentMetadataEditor.vue'
+import RecycleBinDeleteModal from '@/components/admin/RecycleBinDeleteModal.vue'
 import { useAdminStore } from '@/stores/admin'
 import { getErrorMessage } from '@/utils/error'
 
@@ -120,8 +121,15 @@ const handleSearch = async (value: string) => {
 /**
  * 状态筛选变化后刷新列表，并回到第一页。
  */
-const handleStatusChange = async (value: string) => {
-  filters.value.status = value
+const handleStatusChange = async (
+  value:
+    | string
+    | number
+    | boolean
+    | Record<string, unknown>
+    | (string | number | boolean | Record<string, unknown>)[],
+) => {
+  filters.value.status = value as string
   filters.value.current_page = 1
   await loadApps()
 }
@@ -239,24 +247,33 @@ const submitCreate = async () => {
 }
 
 /**
- * 删除后台应用。
+ * 删除后台应用（进入回收站：打开确认弹窗，选择留存天数）。
  */
+const deleteTarget = ref<AdminAppRecord | null>(null)
+const deleteLoading = ref(false)
+
 const handleDelete = (app: AdminAppRecord) => {
-  Modal.warning({
-    title: t('admin.apps.deleteTitle'),
-    content: t('admin.apps.deleteContent', { name: app.name }),
-    hideCancel: false,
-    onOk: async () => {
-      try {
-        await deleteAdminApp(app.id)
-        Message.success(t('admin.apps.deleteSuccess'))
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.apps.deleteFailed')))
-      } finally {
-        void loadApps()
-      }
-    },
-  })
+  deleteTarget.value = app
+  deleteLoading.value = false
+}
+
+const handleDeleteVisibleChange = (visible: boolean) => {
+  if (!visible) deleteTarget.value = null
+}
+
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteAdminApp(deleteTarget.value.id, retentionDays)
+    Message.success(t('admin.apps.deleteSuccess'))
+    deleteTarget.value = null
+    await loadApps()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.apps.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 /**
@@ -324,39 +341,41 @@ const handleBatchOffline = () => {
 }
 
 /**
- * 批量删除选中的应用。
+ * 批量删除选中的应用（逐个进入回收站：打开确认弹窗，选择留存天数）。
  */
+const batchDeleteVisible = ref(false)
+const batchDeleting = ref(false)
+
 const handleBatchDelete = () => {
   if (selectedCount.value === 0) {
     Message.info(t('admin.apps.batch.noSelection'))
     return
   }
-  Modal.warning({
-    title: t('admin.apps.batch.deleteTitle'),
-    content: t('admin.apps.batch.deleteContent', { count: selectedCount.value }),
-    hideCancel: false,
-    onOk: async () => {
-      batchLoading.value = true
-      try {
-        const result = await batchDeleteAdminApps(Array.from(selectedIds.value))
-        const okCount = result.succeeded.length
-        const failCount = result.failed.length
-        if (failCount === 0) {
-          Message.success(t('admin.apps.batch.deleteSuccess', { count: okCount }))
-        } else {
-          Message.warning(
-            t('admin.apps.batch.partialSuccess', { ok: okCount, fail: failCount }),
-          )
-        }
-        clearSelection()
-        await loadApps()
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.apps.batch.deleteFailed')))
-      } finally {
-        batchLoading.value = false
-      }
-    },
-  })
+  batchDeleteVisible.value = true
+  batchDeleting.value = false
+}
+
+const confirmBatchDelete = async (retentionDays: number) => {
+  batchDeleting.value = true
+  try {
+    const result = await batchDeleteAdminApps(Array.from(selectedIds.value), retentionDays)
+    const okCount = result.succeeded.length
+    const failCount = result.failed.length
+    if (failCount === 0) {
+      Message.success(t('admin.apps.batch.deleteSuccess', { count: okCount }))
+    } else {
+      Message.warning(
+        t('admin.apps.batch.partialSuccess', { ok: okCount, fail: failCount }),
+      )
+    }
+    batchDeleteVisible.value = false
+    clearSelection()
+    await loadApps()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.apps.batch.deleteFailed')))
+  } finally {
+    batchDeleting.value = false
+  }
 }
 
 const formatTimestamp = (timestamp?: number) => {
@@ -521,8 +540,8 @@ onMounted(() => {
 
           <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
             <div class="flex gap-1">
-              <dt class="text-gray-400">{{ t('admin.apps.accountId') }}:</dt>
-              <dd class="text-gray-700">{{ app.account_id || '-' }}</dd>
+              <dt class="text-gray-400">{{ t('admin.apps.creator') }}:</dt>
+              <dd class="text-gray-700">{{ app.creator_name || '-' }}</dd>
             </div>
             <div class="flex gap-1">
               <dt class="text-gray-400">{{ t('admin.apps.createdAt') }}:</dt>
@@ -678,5 +697,32 @@ onMounted(() => {
     >
       <AgentMetadataEditor v-model="metadataForm" />
     </a-modal>
+
+    <!-- 删除应用确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="deleteTarget !== null"
+      :title="t('admin.apps.deleteTitle')"
+      :resource-name="deleteTarget?.name"
+      :loading="deleteLoading"
+      @update:visible="handleDeleteVisibleChange"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-slate-500">
+        {{ deleteTarget ? t('admin.apps.deleteContent', { name: deleteTarget.name }) : '' }}
+      </p>
+    </RecycleBinDeleteModal>
+
+    <!-- 批量删除应用确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="batchDeleteVisible"
+      :title="t('admin.apps.batch.deleteTitle')"
+      :loading="batchDeleting"
+      @update:visible="(v) => (batchDeleteVisible = v)"
+      @confirm="confirmBatchDelete"
+    >
+      <p class="text-sm text-slate-500">
+        {{ t('admin.apps.batch.deleteContent', { count: selectedCount }) }}
+      </p>
+    </RecycleBinDeleteModal>
   </section>
 </template>

@@ -15,6 +15,14 @@ type WorkflowSelection = {
   description: string
 }
 
+// 工作流分页列表项（admin/space 双上下文的最小公共结构）
+type WorkflowListItem = {
+  id: string
+  name: string
+  icon?: string
+  description?: string
+}
+
 // 1.定义自定义组件所需数据
 const { t } = useI18n()
 const props = defineProps({
@@ -32,7 +40,7 @@ const { isAdmin: isAdminContext } = useRealm()
 
 // 工作流列表状态（统一 admin/space 双上下文）
 const loading = ref(false)
-const apiWorkflows = ref<Record<string, any>[]>([])
+const apiWorkflows = ref<WorkflowListItem[]>([])
 const defaultPaginator = {
   current_page: 1,
   page_size: 20,
@@ -59,7 +67,7 @@ const loadWorkflows = async (
 
   try {
     loading.value = true
-    let list: Record<string, any>[] = []
+    let list: WorkflowListItem[] = []
     let respPaginator = defaultPaginator
 
     if (isAdminContext.value) {
@@ -148,8 +156,8 @@ const handleSelectWorkflow = (idx: number) => {
     activateWorkflows.value.push({
       id: workflow.id,
       name: workflow.name,
-      icon: workflow.icon,
-      description: workflow.description,
+      icon: workflow.icon ?? '',
+      description: workflow.description ?? '',
     })
   }
 }
@@ -393,6 +401,7 @@ watch(
 </template>
 
 <style>
+@reference "tailwindcss";
 .workflows-modal {
   .arco-modal-wrapper {
     @apply text-right;

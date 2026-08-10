@@ -26,6 +26,7 @@ const editForm = ref({
   model_config_id: '',
   enabled: true,
   fallback_tier: 'cheap',
+  billable: false,
 })
 
 const categoryFilter = ref('')
@@ -41,6 +42,7 @@ const categories = [
   { value: 'routing', label: t('admin.publicAIFeature.categories.routing') },
   { value: 'assistant', label: t('admin.publicAIFeature.categories.assistant') },
   { value: 'conversation', label: t('admin.publicAIFeature.categories.conversation') },
+  { value: 'chat', label: t('admin.publicAIFeature.categories.chat') },
   { value: 'general', label: t('admin.publicAIFeature.categories.general') },
 ]
 
@@ -54,6 +56,25 @@ function getModelLabel(modelId: string | null): string {
   if (!modelId) return ''
   const m = allModels.value.find(m => m.id === modelId)
   return m ? m.label : modelId
+}
+
+function formatLastCalled(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  // 相对时间：今天显示 HH:mm，昨天显示"昨天 HH:mm"，更早显示 YYYY-MM-DD HH:mm
+  const now = new Date()
+  const sameYear = d.getFullYear() === now.getFullYear()
+  const sameMonth = d.getMonth() === now.getMonth()
+  const pad = (n: number) => n.toString().padStart(2, '0')
+  const hh = pad(d.getHours())
+  const mm = pad(d.getMinutes())
+  if (sameYear && sameMonth) {
+    const dayDiff = now.getDate() - d.getDate()
+    if (dayDiff === 0) return `${hh}:${mm}`
+    if (dayDiff === 1) return `昨天 ${hh}:${mm}`
+  }
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hh}:${mm}`
 }
 
 async function loadFeatures() {
@@ -93,6 +114,7 @@ function startEdit(feature: PublicAIFeature) {
     model_config_id: feature.model_config_id || '',
     enabled: feature.enabled,
     fallback_tier: feature.fallback_tier,
+    billable: feature.billable,
   }
   // 按功能的 model_type 加载对应类型的可选模型，防止误选不匹配的类型
   loadEditModels(feature.model_type)
@@ -106,6 +128,7 @@ async function saveFeature() {
       model_config_id: editForm.value.model_config_id || undefined,
       enabled: editForm.value.enabled,
       fallback_tier: editForm.value.fallback_tier,
+      billable: editForm.value.billable,
     })
     Message.success(t('common.saveSuccess'))
     editingFeature.value = null
@@ -168,6 +191,12 @@ onMounted(() => {
               <span v-if="feature.model_config_id" class="ml-2 text-gray-800">{{ getModelLabel(feature.model_config_id) }}</span>
               <span v-else class="ml-2 text-gray-400">{{ t('admin.publicAIFeature.unbound') }}（{{ t('admin.publicAIFeature.useFallback') }}: {{ feature.fallback_tier }}）</span>
             </div>
+            <!-- 最后调用时间：帮助管理员识别未使用的配置 -->
+            <div class="text-xs text-gray-400 mt-1">
+              <span>{{ t('admin.publicAIFeature.lastCalledAt') }}:</span>
+              <span v-if="feature.last_called_at" class="ml-1">{{ formatLastCalled(feature.last_called_at) }}</span>
+              <span v-else class="ml-1 text-gray-300">{{ t('admin.publicAIFeature.neverCalled') }}</span>
+            </div>
           </div>
           <button class="text-blue-600 hover:underline text-sm ml-4 shrink-0"
                   @click="startEdit(feature)">
@@ -202,6 +231,23 @@ onMounted(() => {
               <option v-for="tier in fallbackTiers" :key="tier.value" :value="tier.value">{{ tier.label }}</option>
             </select>
             <p class="text-xs text-gray-400 mt-1">{{ t('admin.publicAIFeature.fallbackTierHint') }}</p>
+          </div>
+          <!-- 计费模式：系统承担 / 扣用户额度 -->
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ t('admin.publicAIFeature.billingMode') }}</label>
+            <div class="flex gap-3">
+              <label class="flex-1 flex items-center gap-2 border rounded px-3 py-2 cursor-pointer transition-colors"
+                     :class="editForm.billable ? 'border-gray-200 bg-white' : 'border-blue-400 bg-blue-50'">
+                <input type="radio" :value="false" v-model="editForm.billable" />
+                <span class="text-sm">{{ t('admin.publicAIFeature.systemBorne') }}</span>
+              </label>
+              <label class="flex-1 flex items-center gap-2 border rounded px-3 py-2 cursor-pointer transition-colors"
+                     :class="editForm.billable ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'">
+                <input type="radio" :value="true" v-model="editForm.billable" />
+                <span class="text-sm">{{ t('admin.publicAIFeature.billable') }}</span>
+              </label>
+            </div>
+            <p class="text-xs text-gray-400 mt-1">{{ t('admin.publicAIFeature.billingModeHint') }}</p>
           </div>
           <!-- 开关 -->
           <div>

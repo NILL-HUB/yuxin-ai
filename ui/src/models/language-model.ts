@@ -18,21 +18,21 @@ export type GetLanguageModelsResponse = BaseResponse<
       features: string[]
       context_windows: number
       max_output_tokens: number
-      attributes: Record<string, any>
-      metadata: Record<string, any>
+      attributes: Record<string, unknown>
+      metadata: Record<string, unknown>
       parameters: {
         name: string
         label: string
         type: string
         help: string
         required: boolean
-        default: any
+        default: unknown
         min: number
         max: number
         precision: number
         options: {
           label: string
-          value: any
+          value: unknown
         }[]
       }[]
     }[]
@@ -47,21 +47,21 @@ export type GetLanguageModelResponse = BaseResponse<{
   features: string[]
   context_windows: number
   max_output_tokens: number
-  attributes: Record<string, any>
-  metadata: Record<string, any>
+  attributes: Record<string, unknown>
+  metadata: Record<string, unknown>
   parameters: {
     name: string
     label: string
     type: string
     help: string
     required: boolean
-    default: any
+    default: unknown
     min: number
     max: number
     precision: number
     options: {
       label: string
-      value: any
+      value: unknown
     }[]
   }[]
 }>

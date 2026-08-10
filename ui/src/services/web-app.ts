@@ -15,14 +15,14 @@ export const getWebApp = (token: string) => {
 export const webAppChat = (
   token: string,
   req: WebAppChatRequest,
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/web-apps/${token}/chat`, { body: req }, onData)
 }
 
 // 停止与指定 WebApp 进行对话
 export const stopWebAppChat = (token: string, task_id: string) => {
-  return post<BaseResponse<any>>(`/web-apps/${token}/chat/${task_id}/stop`)
+  return post<BaseResponse<Record<string, unknown>>>(`/web-apps/${token}/chat/${task_id}/stop`)
 }
 
 // 获取指定应用的会话列表

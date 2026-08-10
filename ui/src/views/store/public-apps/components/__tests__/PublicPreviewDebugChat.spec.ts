@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import { defineComponent, ref } from 'vue'
+import { defineComponent } from 'vue'
 
 import PublicPreviewDebugChat from '@/views/store/public-apps/components/PublicPreviewDebugChat.vue'
 
@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   route: {
     params: { app_id: 'app-1' },
     query: {},
-  } as any,
+  } as Record<string, unknown>,
   queryRef: null as null | { value: string },
   getPublicAppA2aConversationMessages: vi.fn().mockResolvedValue({
     data: [],

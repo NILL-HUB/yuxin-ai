@@ -4,8 +4,15 @@ import { defineComponent, reactive } from 'vue'
 
 import HomeView from '@/views/pages/HomeView.vue'
 
+type MockRouteLike = {
+  path: string
+  fullPath: string
+  query: Record<string, unknown>
+  params: Record<string, unknown>
+}
+
 const mocks = vi.hoisted(() => ({
-  route: undefined as any,
+  route: undefined as MockRouteLike | undefined,
   routerReplace: vi.fn(),
   routerPush: vi.fn(),
   loadHomeIntent: vi.fn(),
@@ -19,9 +26,9 @@ const mocks = vi.hoisted(() => ({
   loadAssistantAgentMessages: vi.fn(),
   loadAssistantAgentConversations: vi.fn(),
   handleAudioToText: vi.fn(),
-  queryRef: undefined as any,
-  messagesRef: undefined as any,
-  conversationNameRef: undefined as any,
+  queryRef: undefined as { value: string } | undefined,
+  messagesRef: undefined as { value: unknown[] } | undefined,
+  conversationNameRef: undefined as { value: string } | undefined,
 }))
 
 vi.mock('vue-router', () => ({
@@ -168,9 +175,9 @@ vi.mock('@/hooks/use-conversation', async () => {
       name: mocks.conversationNameRef,
       loadConversationName: vi.fn(async (conversationId: string) => {
         if (conversationId === 'conversation-1') {
-          mocks.conversationNameRef.value = '历史会话 A'
+          mocks.conversationNameRef!.value = '历史会话 A'
         } else {
-          mocks.conversationNameRef.value = '历史会话 B'
+          mocks.conversationNameRef!.value = '历史会话 B'
         }
       }),
     }),
@@ -310,9 +317,9 @@ describe('HomeView deep thinking submit', () => {
   })
 
   it('renders the current conversation header when a conversation id is provided', async () => {
-    mocks.route.fullPath = '/home?conversation_id=conversation-1'
-    mocks.route.query = { conversation_id: 'conversation-1' }
-    mocks.messagesRef.value = [
+    mocks.route!.fullPath = '/home?conversation_id=conversation-1'
+    mocks.route!.query = { conversation_id: 'conversation-1' }
+    mocks.messagesRef!.value = [
       {
         id: 'message-1',
         render_id: 'message-1',
@@ -325,7 +332,7 @@ describe('HomeView deep thinking submit', () => {
         suggested_questions: [],
         created_at: 1717526400,
       },
-    ] as any
+    ] as unknown[]
 
     const wrapper = shallowMount(HomeView, {
       global: {
@@ -346,7 +353,7 @@ describe('HomeView deep thinking submit', () => {
     await flushPromises()
 
     expect(mocks.loadAssistantAgentMessages).toHaveBeenCalled()
-    expect(mocks.conversationNameRef.value).toBe('历史会话 A')
+    expect(mocks.conversationNameRef!.value).toBe('历史会话 A')
     expect(wrapper.text()).toContain('历史会话 A')
     expect(wrapper.text()).not.toContain('当前会话')
     expect(wrapper.text()).not.toContain('会话 ID')

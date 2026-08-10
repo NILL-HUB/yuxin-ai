@@ -44,16 +44,23 @@ const normalizeValue = (value: unknown): unknown => {
 const serializeValue = (value: unknown) => JSON.stringify(normalizeValue(value))
 
 const leftVersion = computed(
-  () => versions.value.find((version: any) => version.id === leftVersionId.value) || null,
+  () => versions.value.find((version: Record<string, unknown>) => version.id === leftVersionId.value) || null,
 )
 const rightVersion = computed(
-  () => versions.value.find((version: any) => version.id === rightVersionId.value) || null,
+  () => versions.value.find((version: Record<string, unknown>) => version.id === rightVersionId.value) || null,
 )
+
+const readConfig = (version: Record<string, unknown> | null): Record<string, unknown> => {
+  if (!version || typeof version.config !== 'object' || version.config === null) {
+    return {}
+  }
+  return version.config as Record<string, unknown>
+}
 
 const createSection = (
   key: string,
   label: string,
-  pickValue: (version: any) => unknown,
+  pickValue: (version: Record<string, unknown> | null) => unknown,
 ) => {
   const leftRaw = pickValue(leftVersion.value)
   const rightRaw = pickValue(rightVersion.value)
@@ -68,26 +75,26 @@ const createSection = (
 }
 
 const comparisonSections = computed(() => [
-  createSection('model_config', t('appStudio.versions.sectionLabels.modelConfig'), (version) => version?.config.model_config),
-  createSection('dialog_round', t('appStudio.versions.sectionLabels.dialogRound'), (version) => version?.config.dialog_round),
-  createSection('preset_prompt', t('appStudio.versions.sectionLabels.presetPrompt'), (version) => version?.config.preset_prompt),
-  createSection('tools', t('appStudio.versions.sectionLabels.tools'), (version) => version?.config.tools),
-  createSection('mcp_bindings', t('appStudio.versions.sectionLabels.mcpBindings'), (version) => version?.config.mcp_bindings),
-  createSection('agent_bindings', t('appStudio.versions.sectionLabels.agentBindings'), (version) => version?.config.agent_bindings),
-  createSection('workflows', t('appStudio.versions.sectionLabels.workflows'), (version) => version?.config.workflows),
-  createSection('knowledge_base_ids', t('appStudio.versions.sectionLabels.datasets'), (version) => version?.config.knowledge_base_ids),
-  createSection('retrieval_config', t('appStudio.versions.sectionLabels.retrievalConfig'), (version) => version?.config.retrieval_config),
+  createSection('model_config', t('appStudio.versions.sectionLabels.modelConfig'), (version) => readConfig(version).model_config),
+  createSection('dialog_round', t('appStudio.versions.sectionLabels.dialogRound'), (version) => readConfig(version).dialog_round),
+  createSection('preset_prompt', t('appStudio.versions.sectionLabels.presetPrompt'), (version) => readConfig(version).preset_prompt),
+  createSection('tools', t('appStudio.versions.sectionLabels.tools'), (version) => readConfig(version).tools),
+  createSection('mcp_bindings', t('appStudio.versions.sectionLabels.mcpBindings'), (version) => readConfig(version).mcp_bindings),
+  createSection('agent_bindings', t('appStudio.versions.sectionLabels.agentBindings'), (version) => readConfig(version).agent_bindings),
+  createSection('workflows', t('appStudio.versions.sectionLabels.workflows'), (version) => readConfig(version).workflows),
+  createSection('knowledge_base_ids', t('appStudio.versions.sectionLabels.datasets'), (version) => readConfig(version).knowledge_base_ids),
+  createSection('retrieval_config', t('appStudio.versions.sectionLabels.retrievalConfig'), (version) => readConfig(version).retrieval_config),
   createSection('opening', t('appStudio.versions.sectionLabels.opening'), (version) => ({
-    opening_statement: version?.config.opening_statement || '',
-    opening_questions: version?.config.opening_questions || [],
+    opening_statement: readConfig(version).opening_statement || '',
+    opening_questions: readConfig(version).opening_questions || [],
   })),
   createSection('experience', t('appStudio.versions.sectionLabels.experience'), (version) => ({
-    long_term_memory: version?.config.long_term_memory || {},
-    speech_to_text: version?.config.speech_to_text || {},
-    text_to_speech: version?.config.text_to_speech || {},
-    suggested_after_answer: version?.config.suggested_after_answer || {},
+    long_term_memory: readConfig(version).long_term_memory || {},
+    speech_to_text: readConfig(version).speech_to_text || {},
+    text_to_speech: readConfig(version).text_to_speech || {},
+    suggested_after_answer: readConfig(version).suggested_after_answer || {},
   })),
-  createSection('review_config', t('appStudio.versions.sectionLabels.reviewConfig'), (version) => version?.config.review_config),
+  createSection('review_config', t('appStudio.versions.sectionLabels.reviewConfig'), (version) => readConfig(version).review_config),
 ])
 
 const visibleSections = computed(() => {
@@ -102,7 +109,7 @@ const changedSectionCount = computed(
   () => comparisonSections.value.filter((section) => section.changed).length,
 )
 
-const getVersionTagColor = (version: Record<string, any> | null) => {
+const getVersionTagColor = (version: Record<string, unknown> | null) => {
   if (!version) {
     return 'gray'
   }
@@ -114,7 +121,7 @@ const getVersionTagColor = (version: Record<string, any> | null) => {
   return version.is_current_published ? 'green' : 'gray'
 }
 
-const getVersionTagLabel = (version: Record<string, any> | null) => {
+const getVersionTagLabel = (version: Record<string, unknown> | null) => {
   if (!version) {
     return t('appStudio.versions.unselectedVersion')
   }
@@ -128,7 +135,7 @@ const getVersionTagLabel = (version: Record<string, any> | null) => {
     : t('appStudio.versions.historicalVersion')
 }
 
-const formatCollectionSummary = (version: Record<string, any> | null) =>
+const formatCollectionSummary = (version: Record<string, unknown> | null) =>
   t('appStudio.versions.collectionSummary', {
     tools: getVersionCollectionCount(version, 'tools'),
     workflows: getVersionCollectionCount(version, 'workflows'),
@@ -138,10 +145,10 @@ const formatCollectionSummary = (version: Record<string, any> | null) =>
   })
 
 const getVersionCollectionCount = (
-  version: Record<string, any> | null,
+  version: Record<string, unknown> | null,
   key: 'tools' | 'mcp_bindings' | 'agent_bindings' | 'workflows' | 'datasets',
 ) => {
-  const value = version?.config?.[key]
+  const value = readConfig(version)[key]
   return Array.isArray(value) ? value.length : 0
 }
 
@@ -154,8 +161,8 @@ const setDefaultSelectedVersions = () => {
 
   leftVersionId.value = versions.value[0]?.id || ''
 
-  const currentPublishedVersion = versions.value.find((version: any) => version.is_current_published)
-  const fallbackRightVersion = versions.value.find((version: any) => version.id !== leftVersionId.value)
+  const currentPublishedVersion = versions.value.find((version: Record<string, unknown>) => version.is_current_published)
+  const fallbackRightVersion = versions.value.find((version: Record<string, unknown>) => version.id !== leftVersionId.value)
   rightVersionId.value =
     currentPublishedVersion?.id || fallbackRightVersion?.id || leftVersionId.value
 }

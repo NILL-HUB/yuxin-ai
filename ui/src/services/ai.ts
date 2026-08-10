@@ -4,7 +4,7 @@ import { type BaseResponse } from '@/models/base'
 // 优化预设prompt服务接口
 export const optimizePrompt = (
   prompt: string,
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/ai/optimize-prompt`, { body: { prompt } }, onData)
 }
@@ -17,7 +17,7 @@ export const generateSuggestedQuestions = (message_id: string) => {
 // Python 代码助手流式对话接口
 export const codeAssistantChat = (
   question: string,
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/ai/chat`, { body: { question } }, onData)
 }
@@ -25,7 +25,7 @@ export const codeAssistantChat = (
 // OpenAPI Schema 助手流式对话接口
 export const openapiSchemaAssistantChat = (
   question: string,
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/ai/openapi-schema-chat`, { body: { question } }, onData)
 }
@@ -33,7 +33,7 @@ export const openapiSchemaAssistantChat = (
 // MCP Schema 助手流式对话接口
 export const mcpSchemaAssistantChat = (
   question: string,
-  onData: (event_response: Record<string, any>) => void,
+  onData: (event_response: Record<string, unknown>) => void,
 ) => {
   return ssePost(`/ai/mcp-schema-chat`, { body: { question } }, onData)
 }

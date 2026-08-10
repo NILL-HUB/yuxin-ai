@@ -26,7 +26,7 @@ describe('useAdminStore', () => {
     expect(store.admin.username).toBe('admin')
     expect(store.admin.roles).toEqual(['super_admin'])
     expect(store.admin.permissions).toEqual(['admin:access', 'app:read', 'app:update'])
-    expect(storage.get('admin')).toEqual(store.admin)
+    expect(storage.get('admin', '')).toEqual(store.admin)
   })
 
   it('checks single any and all permissions', () => {
@@ -75,6 +75,6 @@ describe('useAdminStore', () => {
       roles: [],
       permissions: [],
     })
-    expect(storage.get('admin')).toBe('')
+    expect(storage.get('admin', '')).toBe('')
   })
 })

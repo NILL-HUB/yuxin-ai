@@ -7,9 +7,7 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   getPublicApps: vi.fn(),
   getAppTags: vi.fn(),
-  forkPublicApp: vi.fn(),
   getPublicWorkflows: vi.fn(),
-  forkPublicWorkflow: vi.fn(),
 }))
 
 vi.mock('vue-router', () => ({
@@ -21,12 +19,10 @@ vi.mock('vue-router', () => ({
 vi.mock('@/services/public-app', () => ({
   getPublicApps: mocks.getPublicApps,
   getAppTags: mocks.getAppTags,
-  forkPublicApp: mocks.forkPublicApp,
 }))
 
 vi.mock('@/services/public-workflow', () => ({
   getPublicWorkflows: mocks.getPublicWorkflows,
-  forkPublicWorkflow: mocks.forkPublicWorkflow,
 }))
 
 const slotStub = {
@@ -152,7 +148,7 @@ describe('store list navigation', () => {
     })
   })
 
-  it('renders fork actions without copy text', async () => {
+  it('does not render copy actions on cards', async () => {
     const appWrapper = shallowMount(PublicAppsListView, {
       global: {
         stubs: globalStubs,

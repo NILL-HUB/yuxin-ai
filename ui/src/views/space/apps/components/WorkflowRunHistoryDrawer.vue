@@ -18,6 +18,8 @@ const { loading, runs, paginator, loadRuns } = useGetWorkflowRuns()
 const replayVisible = ref(false)
 const replayRunId = ref('')
 
+type BadgeStatus = 'success' | 'processing' | 'warning' | 'normal' | 'danger'
+
 // 3.状态徽标颜色映射
 const statusColorMap: Record<WorkflowRunStatus, string> = {
   running: 'blue',
@@ -120,7 +122,7 @@ watch(
               />
               <a-badge
                 v-else
-                :status="statusColorMap[run.status] || 'gray'"
+                :status="(statusColorMap[run.status] || 'gray') as BadgeStatus"
                 :text="t(`appStudio.debug.executionHistory.status.${run.status}`)"
               />
               <!-- 触发源标签 -->

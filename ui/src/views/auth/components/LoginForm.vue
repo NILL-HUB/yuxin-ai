@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import IconOpenAgent from '@/components/icons/IconOpenAgent.vue'
+import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
 import {
     useDirectRegister,
     usePasswordLogin,
@@ -11,7 +11,7 @@ import { type LoginAuthorizationData } from '@/models/auth'
 import { adminLogin } from '@/services/admin-auth'
 import { resetPassword, sendResetCode } from '@/services/auth'
 import { useCredentialStore } from '@/stores/credential'
-import { getErrorCode, getErrorMessage, getErrorReasonCode, getErrorResponseData } from '@/utils/error'
+import { getErrorMessage, getErrorReasonCode, getErrorResponseData } from '@/utils/error'
 import { type ValidatedError, Message } from '@arco-design/web-vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -35,19 +35,6 @@ type RegisterFormState = {
   password: string
 }
 
-type PrepareRegisterResult =
-  | {
-      ok: true
-      message: string
-    }
-  | {
-      ok: false
-      message: string
-      reasonCode: string | null
-      requestCode: string | null
-      providers: SupportedOauthProvider[]
-    }
-
 const props = withDefaults(
   defineProps<{
     embedded?: boolean
@@ -69,13 +56,8 @@ const LOGIN_CHALLENGE_STORAGE_KEY = 'pending_login_challenge'
 const BACKEND_GENERIC_CREDENTIAL_ERROR_MESSAGE = '账号不存在或者密码错误'
 const BACKEND_LEGACY_ACCOUNT_NOT_FOUND_MESSAGE = '账号不存在'
 const BACKEND_PASSWORD_ERROR_MESSAGE = '密码错误'
-const REQUEST_VALIDATE_ERROR_CODE = 'validate_error'
-const REQUEST_FAIL_ERROR_CODE = 'fail'
 const REASON_INVALID_CREDENTIALS = 'INVALID_CREDENTIALS'
-const REASON_ACCOUNT_EXISTS = 'ACCOUNT_EXISTS'
 const REASON_OAUTH_ONLY_ACCOUNT = 'OAUTH_ONLY_ACCOUNT'
-const REASON_RATE_LIMITED = 'RATE_LIMITED'
-const REASON_SEND_PENDING = 'SEND_PENDING'
 const STRONG_PASSWORD_REGEX = /^(?=.*[a-zA-Z])(?=.*\d)[A-Za-z\d._@#$%*!?-]{6,32}$/
 const USERNAME_REGEX = /^[A-Za-z0-9]{3,32}$/
 const SHOW_THIRD_PARTY_LOGIN = false
@@ -151,11 +133,6 @@ const challengeCountdownText = computed(() => {
     ? t('common.actions.resendInSeconds', { count: challengeCountdown.value })
     : t('login.resendCode')
 })
-const registerCountdownText = computed(() => {
-  return registerCountdown.value > 0
-    ? t('common.actions.resendInSeconds', { count: registerCountdown.value })
-    : t('login.resendCode')
-})
 const hasOauthOnlyProviders = computed(() => oauthOnlyProviders.value.length > 0)
 const loginModeDescription = computed(() => t('login.loginSubtitle'))
 const challengeDescription = computed(() => {
@@ -166,7 +143,6 @@ const challengeDescription = computed(() => {
   return t('login.challengeDefaultHint', { email })
 })
 const registerEntryDescription = computed(() => t('login.registerEntryHint', { email: t('login.yourEmail') }))
-const registerDescription = computed(() => t('login.registerVerifyHint', { email: t('login.yourEmail') }))
 
 const getUserFriendlyErrorMessage = (error: unknown, fallback: string) => {
   const rawMessage = getErrorMessage(error, fallback).trim()
@@ -253,23 +229,6 @@ const clearChallengeCountdown = () => {
   challengeCountdown.value = 0
 }
 
-const startRegisterCountdown = () => {
-  if (registerTimer.value) {
-    window.clearInterval(registerTimer.value)
-  }
-  registerCountdown.value = 60
-  registerTimer.value = window.setInterval(() => {
-    registerCountdown.value -= 1
-    if (registerCountdown.value <= 0) {
-      if (registerTimer.value) {
-        window.clearInterval(registerTimer.value)
-        registerTimer.value = undefined
-      }
-      registerCountdown.value = 0
-    }
-  }, 1000)
-}
-
 const clearRegisterCountdown = () => {
   if (registerTimer.value) {
     window.clearInterval(registerTimer.value)
@@ -326,14 +285,6 @@ const enterRegisterView = (
     errorMessage.value = ''
   }
   authView.value = 'register'
-}
-
-const applyRegisterVerification = (email: string, password: string) => {
-  applyRegisterDraft(email, password)
-  errorMessage.value = ''
-  clearOauthOnlyProviders()
-  authView.value = 'registerVerify'
-  startRegisterCountdown()
 }
 
 const resetRegisterForm = () => {
@@ -396,7 +347,8 @@ const saveCredentials = (
   localStorage.removeItem(STORAGE_KEY)
 }
 
-const handleRememberChange = (checked: boolean) => {
+const handleRememberChange = (value: boolean | (string | number | boolean)[]) => {
+  const checked = value as boolean
   if (!checked) localStorage.removeItem(STORAGE_KEY)
 }
 
@@ -598,15 +550,6 @@ const handleStartRegister = async () => {
     }
     errorMessage.value = message
   }
-}
-
-const handleResendRegisterCode = async () => {
-  if (registerCountdown.value > 0) return
-  await handleStartRegister()
-}
-
-const handleVerifyRegisterAction = async () => {
-  await handleStartRegister()
 }
 
 const handleResetPassword = async () => {

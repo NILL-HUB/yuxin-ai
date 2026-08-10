@@ -139,7 +139,7 @@ describe('admin workflows service', () => {
 
     await deleteAdminWorkflow('wf-1')
 
-    expect(request.del).toHaveBeenCalledWith('/admin/workflows/wf-1')
+    expect(request.del).toHaveBeenCalledWith('/admin/workflows/wf-1', { body: undefined })
   })
 
   it('getAdminWorkflowDraftGraph calls GET /admin/workflows/:id/draft-graph', async () => {

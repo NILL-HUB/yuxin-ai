@@ -13,7 +13,7 @@ type ModelForm = {
   selectValue: string
   provider: string
   model: string
-  parameters: Record<string, unknown>
+  parameters: Record<string, string | number | boolean | undefined>
   dialog_round: number
 }
 
@@ -60,20 +60,36 @@ const modelOptions = computed(() => {
   })
 })
 
+// 将模型参数的 options（value 为 unknown）收窄为 a-select 可接受的选项
+const getParameterOptions = (
+  parameter: { options?: Array<{ label: string; value: unknown }> } | undefined,
+): Array<{ label: string; value: string | number | boolean }> =>
+  (parameter?.options ?? []).map((opt) => ({
+    label: opt.label,
+    value: opt.value as string | number | boolean,
+  }))
+
+const asSelectValue = (value: unknown): string | number | boolean | undefined =>
+  value as string | number | boolean | undefined
+const asNumberValue = (value: unknown): number | undefined =>
+  typeof value === 'number' ? value : undefined
+const asStringValue = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined
+
 // 2.定义选择模型处理器
-const changeModel = (value: string) => {
+const changeModel = (value: string | number | boolean | Record<string, unknown> | (string | number | boolean | Record<string, unknown>)[]) => {
   // 2.1 使用/拆分出提供商+模型名字
-  const [provider_name, model_name] = value.split('/')
+  const [provider_name, model_name] = (value as string).split('/')
 
   // 2.2 发起请求获取模型详情
   loadLanguageModel(provider_name, model_name).then(() => {
     // 2.3 重新赋值parameters
     form.value.parameters = language_model.value.parameters.reduce(
-      (acc: Record<string, unknown>, parameter: { name: string; default?: unknown }) => {
-        acc[parameter.name] = parameter.default ?? null
+      (acc, parameter) => {
+        acc[parameter.name] = (parameter.default ?? null) as string | number | boolean | undefined
         return acc
       },
-      {} as Record<string, unknown>,
+      {} as Record<string, string | number | boolean | undefined>,
     )
   })
 }
@@ -104,10 +120,10 @@ watch(
     form.value.selectValue = `${newValue?.provider}/${newValue.model}`
     form.value.provider = String(newValue?.provider || '')
     form.value.model = String(newValue?.model || '')
-    form.value.parameters = (newValue?.parameters || {}) as Record<string, unknown>
+    form.value.parameters = (newValue?.parameters || {}) as Record<string, string | number | boolean | undefined>
 
     // 2.请求语言模型详情API接口
-    newValue?.provider && loadLanguageModel(String(newValue?.provider), String(newValue?.model))
+    if (newValue?.provider) loadLanguageModel(String(newValue?.provider), String(newValue?.model))
   },
   { immediate: true },
 )
@@ -206,15 +222,15 @@ onMounted(() => {
             <template v-if="parameter?.options?.length > 0">
               <a-select
                 v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :default-value="asSelectValue(parameter.default)"
                 :placeholder="t('appStudio.modelConfig.parameterPlaceholder')"
-                :options="parameter.options"
+                :options="getParameterOptions(parameter)"
               />
             </template>
             <template v-else-if="parameter.type === 'boolean'">
               <a-select
                 v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :default-value="asSelectValue(parameter.default)"
                 :placeholder="t('appStudio.modelConfig.parameterPlaceholder')"
                 :options="[
                   { label: t('appStudio.modelConfig.booleanYes'), value: true },
@@ -224,8 +240,9 @@ onMounted(() => {
             </template>
             <template v-else-if="['int', 'float'].includes(parameter.type)">
               <a-slider
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="asNumberValue(form.parameters[parameter.name])"
+                @update:model-value="(value) => { form.parameters[parameter.name] = value as number }"
+                :default-value="parameter.default as number"
                 :min="parameter?.min"
                 :max="parameter?.max"
                 :step="parameter?.type === 'float' ? 0.1 : 1"
@@ -234,8 +251,9 @@ onMounted(() => {
             </template>
             <template v-else-if="parameter.type === 'string'">
               <a-input
-                v-model:model-value="form.parameters[parameter.name]"
-                :default-value="parameter.default"
+                :model-value="asStringValue(form.parameters[parameter.name])"
+                @update:model-value="(value) => { form.parameters[parameter.name] = value }"
+                :default-value="parameter.default as string"
                 :placeholder="t('appStudio.modelConfig.parameterInputPlaceholder')"
               />
             </template>

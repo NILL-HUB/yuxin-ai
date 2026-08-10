@@ -6,7 +6,6 @@ import { Message } from '@arco-design/web-vue'
 import {
   getPublicApps,
   getAppTags,
-  forkPublicApp,
   type PublicApp,
   type AppTag
 } from '@/services/public-app'
@@ -58,17 +57,6 @@ const loadTags = async () => {
     tags.value = res.data.tags
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('publicApps.list.loadTagsFailed')))
-  }
-}
-
-const handleFork = async (app: PublicApp) => {
-  try {
-    const res = await forkPublicApp(app.id)
-    Message.success(t('publicApps.list.forkSuccess', { name: res.data.name }))
-    await loadApps()
-    router.push({ name: 'space-apps-detail', params: { app_id: res.data.id } })
-  } catch (error: unknown) {
-    Message.error(getErrorMessage(error, t('publicApps.list.actionFailed')))
   }
 }
 
@@ -192,28 +180,12 @@ onMounted(() => {
                 <resource-card-description :text="app.description" />
               </button>
 
-              <!-- 发布者、发布时间和Fork按钮 -->
-              <div class="mt-3 flex items-center justify-between gap-3">
-                <div class="flex min-w-0 flex-1 items-center gap-1.5">
-                  <a-avatar :size="18" :image-url="app.creator_avatar" />
-                  <div class="min-w-0 flex-1 truncate text-xs text-gray-400">
-                    {{ app.creator_name }} · {{ t('publicApps.list.publishedAt', { time: formatTimestampShort(app.published_at) }) }}
-                  </div>
+              <!-- 发布者、发布时间 -->
+              <div class="mt-3 flex items-center gap-1.5">
+                <a-avatar :size="18" :image-url="app.creator_avatar" />
+                <div class="min-w-0 flex-1 truncate text-xs text-gray-400">
+                  {{ app.creator_name }} · {{ t('publicApps.list.publishedAt', { time: formatTimestampShort(app.published_at) }) }}
                 </div>
-                <a-tooltip :content="app.is_forked ? t('publicApps.list.addedToSpace') : t('publicApps.list.addToSpace')">
-                  <button
-                    type="button"
-                    class="flex h-8 w-8 items-center justify-center rounded-full transition-all duration-200 hover:scale-105"
-                    :class="app.is_forked ? 'bg-gray-100 cursor-not-allowed opacity-50' : 'bg-blue-50 hover:bg-blue-100'"
-                    :disabled="app.is_forked"
-                    @click.stop="handleFork(app)"
-                  >
-                    <icon-branch
-                      :size="16"
-                      :style="{ color: app.is_forked ? '#9ca3af' : '#3b82f6' }"
-                    />
-                  </button>
-                </a-tooltip>
               </div>
             </a-card>
           </a-col>

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import AdminWorkflowCard from '@/components/admin/AdminWorkflowCard.vue'
 import AdminWorkflowToolbar from '@/components/admin/AdminWorkflowToolbar.vue'
+import RecycleBinDeleteModal from '@/components/admin/RecycleBinDeleteModal.vue'
 import ImportWorkflowModal from '@/views/admin/workflows/ImportWorkflowModal.vue'
 import type { AdminWorkflowRecord, GetAdminWorkflowsRequest } from '@/models/admin-workflow'
 import {
@@ -212,24 +213,33 @@ const submitCreate = async () => {
 }
 
 /**
- * 删除后台工作流。
+ * 删除后台工作流（进入回收站：打开确认弹窗，选择留存天数）。
  */
+const deleteTarget = ref<AdminWorkflowRecord | null>(null)
+const deleteLoading = ref(false)
+
 const handleDelete = (workflow: AdminWorkflowRecord) => {
-  Modal.warning({
-    title: t('admin.workflowsAdmin.deleteTitle'),
-    content: t('admin.workflowsAdmin.deleteContent', { name: workflow.name }),
-    hideCancel: false,
-    onOk: async () => {
-      try {
-        await deleteAdminWorkflow(workflow.id)
-        Message.success(t('admin.workflowsAdmin.deleteSuccess'))
-      } catch (error) {
-        Message.error(getErrorMessage(error, t('admin.workflowsAdmin.deleteFailed')))
-      } finally {
-        void loadWorkflows()
-      }
-    },
-  })
+  deleteTarget.value = workflow
+  deleteLoading.value = false
+}
+
+const handleDeleteVisibleChange = (visible: boolean) => {
+  if (!visible) deleteTarget.value = null
+}
+
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteAdminWorkflow(deleteTarget.value.id, retentionDays)
+    Message.success(t('admin.workflowsAdmin.deleteSuccess'))
+    deleteTarget.value = null
+    await loadWorkflows()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 /**
@@ -554,5 +564,19 @@ onMounted(() => {
       api-mode="admin"
       :callback="loadWorkflows"
     />
+
+    <!-- 删除工作流确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="deleteTarget !== null"
+      :title="t('admin.workflowsAdmin.deleteTitle')"
+      :resource-name="deleteTarget?.name"
+      :loading="deleteLoading"
+      @update:visible="handleDeleteVisibleChange"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-slate-500">
+        {{ deleteTarget ? t('admin.workflowsAdmin.deleteContent', { name: deleteTarget.name }) : '' }}
+      </p>
+    </RecycleBinDeleteModal>
   </section>
 </template>

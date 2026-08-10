@@ -132,7 +132,7 @@ watch(
       <template #extra>
         <a-dropdown
           @select="
-            async (value: string | number | boolean) => {
+            async (value: string | number | Record<string, any> | undefined) => {
               if (Boolean(value) !== reviewConfigForm.enable) {
                 const previousEnable = reviewConfigForm.enable
                 try {
@@ -294,6 +294,7 @@ watch(
 </template>
 
 <style>
+@reference "tailwindcss";
 .review-config-ability-item {
   .arco-collapse-item-content-box {
     @apply p-0;

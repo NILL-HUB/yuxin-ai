@@ -205,13 +205,13 @@ describe('ConversationSearchView', () => {
  expect(wrapper.text()).not.toContain('这个回答也没有命中词')
  })
 
-  it('uses OpenAgent as the assistant match label', async () => {
+  it('uses 钰心AI as the assistant match label', async () => {
  vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
  data: [
  buildConversation({
  id: 'conversation-agent-name',
  name: '智能体名称命中',
- agent_name: 'OpenAgent',
+ agent_name: '钰心AI',
  human_message: '',
  ai_message: '',
  matched_fields: ['agent_name'],
@@ -220,11 +220,11 @@ describe('ConversationSearchView', () => {
  } as never)
 
  const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('OpenAgent')
+ await wrapper.get('[data-testid="conversation-search-input"]').setValue('钰心AI')
  await flushPromises()
 
-    expect(wrapper.text()).toContain('匹配来源：Agent · OpenAgent')
- expect(wrapper.text()).toContain('OpenAgent')
+    expect(wrapper.text()).toContain('匹配来源：Agent · 钰心AI')
+ expect(wrapper.text()).toContain('钰心AI')
   })
 
   it('truncates long conversation titles with ellipsis', async () => {
@@ -237,7 +237,7 @@ describe('ConversationSearchView', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    const vm = wrapper.vm as any
+    const vm = wrapper.vm as unknown as { truncateText: (text: string, maxLength?: number) => string }
     expect(vm.truncateText('12345678901234567890')).toBe('12345678901234567890')
     expect(vm.truncateText('123456789012345678901')).toBe('12345678901234567890...')
   })
@@ -269,31 +269,25 @@ describe('ConversationSearchView', () => {
  expect(wrapper.text()).toContain('删除会话')
  })
 
- it('navigates debugger conversations to the target app workspace', async () => {
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'debug-1',
- source_type: 'app_debugger',
- app_id: 'app-42',
- message_id: 'message-42',
- name: '调试会话',
- }),
- ],
- } as never)
+ it('blocks debugger conversations from being opened in user space', async () => {
+  vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+   data: [
+    buildConversation({
+     id: 'debug-1',
+     source_type: 'app_debugger',
+     app_id: 'app-42',
+     message_id: 'message-42',
+     name: '调试会话',
+    }),
+   ],
+  } as never)
 
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('调试')
- await flushPromises()
- await wrapper.get('[data-testid="conversation-card"]').trigger('click')
+  const wrapper = mountView()
+  await wrapper.get('[data-testid="conversation-search-input"]').setValue('调试')
+  await flushPromises()
+  await wrapper.get('[data-testid="conversation-card"]').trigger('click')
 
- expect(routerPush).toHaveBeenCalledWith({
- path: '/space/apps/app-42',
- query: {
- conversation_id: 'debug-1',
- message_id: 'message-42',
- },
- })
+  expect(routerPush).not.toHaveBeenCalled()
  })
 
  it('forwards wheel events from page blank area to conversation scroller', async () => {

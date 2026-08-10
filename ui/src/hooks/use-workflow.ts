@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type {
   CreateWorkflowRequest,
+  GetWorkflowResponse,
   GetWorkflowsWithPageResponse,
   UpdateDraftGraphRequest,
   UpdateWorkflowRequest,
@@ -141,7 +142,7 @@ export const useUpdateWorkflow = () => {
 export const useGetWorkflow = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const workflow = ref<Record<string, any>>({})
+  const workflow = ref<GetWorkflowResponse['data']>({} as GetWorkflowResponse['data'])
 
   // 2.定义或区间数据函数
   const loadWorkflow = async (workflow_id: string) => {
@@ -172,7 +173,7 @@ export const useDeleteWorkflow = () => {
           Message.success(resp.message)
         } finally {
           // 2.调用callback函数指定回调功能
-          callback && callback()
+          if (callback) callback()
         }
       },
     })
@@ -184,8 +185,8 @@ export const useDeleteWorkflow = () => {
 export const useGetDraftGraph = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
-  const nodes = ref<any[]>([])
-  const edges = ref<any[]>([])
+  const nodes = ref<Record<string, unknown>[]>([])
+  const edges = ref<Record<string, unknown>[]>([])
 
   // 2.定义加载数据函数
   const loadDraftGraph = async (workflow_id: string) => {
@@ -248,7 +249,7 @@ export const useUpdateDraftGraph = () => {
       // 3.调用api接口更新草稿图配置
       loading.value = true
       const resp = await updateDraftGraph(workflow_id, req)
-      is_notify && Message.success(resp.message)
+      if (is_notify) Message.success(resp.message)
     } finally {
       loading.value = false
     }
@@ -256,8 +257,8 @@ export const useUpdateDraftGraph = () => {
 
   // 3.定义图配置数据转请求数据函数
   const convertGraphToReq = (
-    nodes: Record<string, any>[],
-    edges: Record<string, any>[],
+    nodes: Record<string, unknown>[],
+    edges: Record<string, unknown>[],
   ): UpdateDraftGraphRequest => {
     return {
       nodes: nodes.map((node) => {
@@ -265,7 +266,7 @@ export const useUpdateDraftGraph = () => {
           id: node.id,
           node_type: node.type,
           position: node.position,
-          ...node.data,
+          ...(node.data as Record<string, unknown>),
         }
       }),
       edges: edges.map((edge) => {

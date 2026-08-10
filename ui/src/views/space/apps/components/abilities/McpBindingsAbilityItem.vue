@@ -59,7 +59,7 @@ const showMarketplacePickerModal = ref(false)
 const hasLocalMcpBindingChanges = computed(() => !isEqual(activateMcpBindings.value, originMcpBindings.value))
 
 const stripBindingForm = (binding: McpBindingForm): McpBinding => {
-  const { headers_text, tool_names_text, args_text, env_text, ...rest } = binding
+  const { headers_text: _headers_text, tool_names_text: _tool_names_text, args_text: _args_text, env_text: _env_text, ...rest } = binding
   return rest
 }
 
