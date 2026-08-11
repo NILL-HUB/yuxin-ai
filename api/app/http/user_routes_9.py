@@ -1049,23 +1049,6 @@ def register_routes(quart_app):
         )
         return a._ok(app_detail)
 
-    @quart_app.get("/public/apps/<string:app_id>/a2a/agent-card")
-    async def public_app_get_public_app_a2a_card(app_id):
-        from app.http import asgi_app as a
-
-        from internal.service.public_agent_a2a_service import PublicAgentA2AService
-
-        try:
-            a2a_service = a._get_service(PublicAgentA2AService)
-        except Exception:
-            a2a_service = None
-        if not a2a_service:
-            return a._json_resp(
-                {"error": "A2A service unavailable"}, code="fail", status=503
-            )
-        card = await a._to_thread(a2a_service.get_agent_card, app_id)
-        return a._ok(card)
-
     @quart_app.post("/public/apps/<string:app_id>/a2a/messages")
     async def public_app_send_public_app_a2a_message(app_id):
         from app.http import asgi_app as a
@@ -1106,25 +1089,6 @@ def register_routes(quart_app):
             conversation_id,
         )
         return a._ok(messages)
-
-    @quart_app.get("/public/apps/<string:app_id>/a2a/conversations/latest")
-    async def public_app_get_latest_public_app_a2a_conversation(app_id):
-        from app.http import asgi_app as a
-
-        from internal.service.public_agent_a2a_service import PublicAgentA2AService
-
-        try:
-            a2a_service = a._get_service(PublicAgentA2AService)
-        except Exception:
-            a2a_service = None
-        if not a2a_service:
-            return a._json_resp(
-                {"error": "A2A service unavailable"}, code="fail", status=503
-            )
-        conversation_id = await a._to_thread(
-            a2a_service.get_latest_public_app_conversation_id, app_id
-        )
-        return a._ok({"conversation_id": conversation_id})
 
     @quart_app.post("/apps/<uuid:app_id>/share-to-square")
     async def public_app_share_app_to_square(app_id):
@@ -1266,22 +1230,6 @@ def register_routes(quart_app):
             keyword=request.args.get("keyword") or "",
         )
         return a._ok(ShowcaseCasePageResp().dump(result))
-
-    @quart_app.get("/showcase/cases/<uuid:case_id>")
-    async def showcase_get_case(case_id):
-        from app.http import asgi_app as a
-
-        account, err = await a._resolve_account()
-        if err is not None:
-            return err
-
-        from internal.schema.showcase_schema import ShowcaseCaseResp
-        from internal.service.showcase_service import ShowcaseService
-
-        result = await a._to_thread(
-            a._get_service(ShowcaseService).get_case, case_id
-        )
-        return a._ok(ShowcaseCaseResp().dump(result))
 
     @quart_app.get("/admin/showcase/cases")
     async def showcase_admin_list_cases():

@@ -494,6 +494,13 @@ class FunctionCallAgent(BaseAgent):
                 latency=(time.perf_counter() - start_at),
             ))
 
+        try:
+            from internal.core.context_compression import compress_langchain_tool_messages
+
+            compress_langchain_tool_messages(messages, protect_recent=0)
+        except Exception:
+            logger.exception("context compression skipped for agent tool messages")
+
         return {
             "messages": messages,
             "pending_skill_prompts": pending_skill_prompts,

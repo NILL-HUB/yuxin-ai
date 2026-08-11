@@ -108,31 +108,36 @@ onMounted(loadSummary)
   height: 100%;
   overflow-y: auto;
   display: grid;
-  gap: 20px;
-  padding: 32px;
-  background: #f4f7fb;
-  color: #172033;
+  gap: 16px;
+  padding: 24px;
+  background: var(--aicss-bg-subtle);
+  color: var(--aicss-text);
 }
 
 .hero-card,
 .panel,
 .redeem-card {
-  padding: 24px;
-  border-radius: 22px;
-  background: #fff;
-  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.06);
+  padding: 22px;
+  border-radius: var(--aicss-radius-lg);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
+  box-shadow: var(--aicss-shadow-card);
 }
 
 .hero-card {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  background: linear-gradient(135deg, #101828, #3c5d92);
-  color: #fff;
+  gap: 20px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--aicss-accent) 12%, var(--aicss-surface)), var(--aicss-surface) 68%),
+    var(--aicss-surface);
+  color: var(--aicss-text);
 }
 
 .kicker {
   margin: 0 0 8px;
-  color: #a9c7ff;
+  color: var(--aicss-accent-text);
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -145,26 +150,34 @@ p {
 }
 
 h2 {
-  font-size: 32px;
+  font-size: 28px;
+  color: var(--aicss-text);
 }
 
 .hero-card p:not(.kicker) {
   margin-top: 8px;
-  color: #d8e4f7;
+  color: var(--aicss-muted);
 }
 
 .balance-card {
   display: grid;
   align-content: center;
   min-width: 180px;
-  padding: 20px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.12);
+  padding: 18px 20px;
+  border-radius: var(--aicss-radius);
+  border: 1px solid color-mix(in srgb, var(--aicss-accent) 22%, var(--aicss-border));
+  background: var(--aicss-accent-soft);
+  color: var(--aicss-text);
+}
+
+.balance-card span {
+  color: var(--aicss-muted);
 }
 
 .balance-card strong {
   margin-top: 8px;
-  font-size: 34px;
+  font-size: 30px;
+  color: var(--aicss-accent-text);
 }
 
 .redeem-card {
@@ -182,13 +195,14 @@ h2 {
 .panel strong {
   display: block;
   margin-top: 12px;
-  font-size: 24px;
+  font-size: 22px;
+  color: var(--aicss-text);
 }
 
 .panel p,
 .tx-row p {
   margin-top: 6px;
-  color: #667085;
+  color: var(--aicss-muted);
 }
 
 .tx-row {
@@ -196,6 +210,39 @@ h2 {
   justify-content: space-between;
   gap: 16px;
   padding: 14px 0;
-  border-top: 1px solid #edf2f7;
+  border-top: 1px solid var(--aicss-border);
+}
+
+.tx-row strong {
+  color: var(--aicss-text);
+}
+
+.tx-row > span {
+  color: var(--aicss-success);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .membership-page {
+    padding: 16px;
+  }
+
+  .hero-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .balance-card {
+    min-width: 0;
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .redeem-card {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

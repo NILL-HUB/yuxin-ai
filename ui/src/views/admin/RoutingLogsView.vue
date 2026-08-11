@@ -5,7 +5,6 @@ import { Message } from '@arco-design/web-vue'
 import { listAdminRoutingLogs } from '@/services/admin-routing-logs'
 import { createAdminRoutingQualityFeedback } from '@/services/admin-routing-quality'
 import type {
-  AdminRoutingLogListResponse,
   AdminRoutingLogRecord,
   AdminRoutingLogSummary,
 } from '@/models/admin-routing-log'
@@ -54,9 +53,8 @@ const loadRoutingLogs = async () => {
   loading.value = true
   try {
     const result = await listAdminRoutingLogs(filters.value)
-    const data = result as AdminRoutingLogListResponse
-    logs.value = data.list
-    summary.value = data.summary ?? summary.value
+    logs.value = result.list
+    summary.value = result.summary ?? summary.value
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.routingLogs.loadFailed')))
   } finally {

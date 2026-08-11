@@ -1,0 +1,287 @@
+/*
+ * 钰心AI × AICSS 设计令牌与基础工具类
+ *
+ * 设计思路来自 aicss.dev：偏中性的黑白灰表面 + 少量品牌强调色，
+ * 全部走 CSS 自定义属性，深浅色主题自适应，并兼容 H5。
+ */
+:root {
+  --aicss-bg: #ffffff;
+  --aicss-bg-subtle: #fafafa;
+  --aicss-surface: #ffffff;
+  --aicss-surface-2: #f4f5f7;
+  --aicss-surface-3: #eef0f3;
+  --aicss-border: #e6e8ec;
+  --aicss-border-strong: #d4d7dd;
+  --aicss-text: #17181c;
+  --aicss-text-2: #3f4149;
+  --aicss-muted: #7b7f89;
+  --aicss-subtle: #a1a5af;
+  --aicss-accent: #3b82f6;
+  --aicss-accent-soft: rgba(59, 130, 246, 0.1);
+  --aicss-accent-text: #1d4ed8;
+  --aicss-violet: #7c5cfc;
+  --aicss-violet-soft: rgba(124, 92, 252, 0.1);
+  --aicss-success: #15a06a;
+  --aicss-success-soft: rgba(21, 160, 106, 0.12);
+  --aicss-warning: #d97706;
+  --aicss-warning-soft: rgba(217, 119, 6, 0.12);
+  --aicss-danger: #dc2626;
+  --aicss-danger-soft: rgba(220, 38, 38, 0.1);
+  --aicss-radius-sm: 8px;
+  --aicss-radius: 12px;
+  --aicss-radius-lg: 16px;
+  --aicss-shadow-card:
+    0 1px 2px rgba(16, 24, 40, 0.04),
+    0 0 0 0.5px rgba(16, 24, 40, 0.06),
+    0 8px 24px rgba(16, 24, 40, 0.04);
+  --aicss-shadow-elevated:
+    0 2px 4px rgba(16, 24, 40, 0.05),
+    0 0 0 0.5px rgba(16, 24, 40, 0.08),
+    0 18px 44px rgba(16, 24, 40, 0.08);
+  --aicss-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --aicss-font: "Inter", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --aicss-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+[data-theme="dark"] {
+  --aicss-bg: #0b0d12;
+  --aicss-bg-subtle: #111318;
+  --aicss-surface: #17181d;
+  --aicss-surface-2: #1f2128;
+  --aicss-surface-3: #272a32;
+  --aicss-border: #2a2d35;
+  --aicss-border-strong: #363a44;
+  --aicss-text: #f2f4f8;
+  --aicss-text-2: #d7dbe2;
+  --aicss-muted: #9aa3b2;
+  --aicss-subtle: #6d7685;
+  --aicss-accent: #60a5fa;
+  --aicss-accent-soft: rgba(96, 165, 250, 0.14);
+  --aicss-accent-text: #93c5fd;
+  --aicss-violet: #a78bfa;
+  --aicss-violet-soft: rgba(167, 139, 250, 0.14);
+  --aicss-success: #34d399;
+  --aicss-success-soft: rgba(52, 211, 153, 0.14);
+  --aicss-warning: #fbbf24;
+  --aicss-warning-soft: rgba(251, 191, 36, 0.14);
+  --aicss-danger: #f87171;
+  --aicss-danger-soft: rgba(248, 113, 113, 0.14);
+  --aicss-shadow-card:
+    0 1px 2px rgba(0, 0, 0, 0.32),
+    0 0 0 0.5px rgba(255, 255, 255, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.22);
+  --aicss-shadow-elevated:
+    0 2px 4px rgba(0, 0, 0, 0.4),
+    0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    0 18px 44px rgba(0, 0, 0, 0.32);
+}
+
+.aicss-shimmer {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(
+    90deg,
+    var(--aicss-muted) 0%,
+    var(--aicss-muted) 30%,
+    color-mix(in srgb, var(--aicss-muted) 45%, transparent) 45%,
+    color-mix(in srgb, var(--aicss-muted) 45%, transparent) 55%,
+    var(--aicss-muted) 70%,
+    var(--aicss-muted) 100%
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: aicss-shine 2.25s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+
+@keyframes aicss-shine {
+  0%, 18% {
+    background-position: 100% 0;
+  }
+  82%, 100% {
+    background-position: 0% 0;
+  }
+}
+
+.aicss-surface-card {
+  background: var(--aicss-surface);
+  border: 1px solid var(--aicss-border);
+  border-radius: var(--aicss-radius);
+  box-shadow: var(--aicss-shadow-card);
+}
+
+.aicss-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 550;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color 0.18s var(--aicss-ease),
+    border-color 0.18s var(--aicss-ease),
+    color 0.18s var(--aicss-ease),
+    box-shadow 0.18s var(--aicss-ease),
+    transform 0.12s var(--aicss-ease);
+  user-select: none;
+}
+
+.aicss-btn:active {
+  transform: translateY(1px);
+}
+
+.aicss-btn--primary {
+  background: var(--aicss-accent);
+  color: #ffffff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--aicss-accent) 24%, transparent);
+}
+
+.aicss-btn--primary:hover {
+  background: color-mix(in srgb, var(--aicss-accent) 88%, #000000);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--aicss-accent) 32%, transparent);
+}
+
+.aicss-btn--secondary {
+  background: var(--aicss-surface);
+  border-color: var(--aicss-border-strong);
+  color: var(--aicss-text-2);
+}
+
+.aicss-btn--secondary:hover {
+  border-color: var(--aicss-text-2);
+  color: var(--aicss-text);
+}
+
+.aicss-btn--danger {
+  background: var(--aicss-danger);
+  color: #ffffff;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--aicss-danger) 22%, transparent);
+}
+
+.aicss-btn--danger:hover {
+  background: color-mix(in srgb, var(--aicss-danger) 88%, #000000);
+}
+
+.aicss-btn--ghost-danger {
+  background: var(--aicss-surface);
+  border-color: color-mix(in srgb, var(--aicss-danger) 36%, transparent);
+  color: var(--aicss-danger);
+}
+
+.aicss-btn--ghost-danger:hover {
+  background: var(--aicss-danger-soft);
+  border-color: color-mix(in srgb, var(--aicss-danger) 52%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aicss-shimmer,
+  .aicss-shimmer * {
+    animation: none !important;
+    -webkit-text-fill-color: var(--aicss-muted) !important;
+    color: var(--aicss-muted) !important;
+  }
+}
+
+/* 钰心 Admin 的统一表格与卡片风格（基于 AICSS 中性表面） */
+.admin-layout .arco-card,
+.admin-layout .arco-card-bordered {
+  border-color: var(--aicss-border) !important;
+  border-radius: var(--aicss-radius) !important;
+  background: var(--aicss-surface) !important;
+  box-shadow: var(--aicss-shadow-card) !important;
+}
+
+.admin-layout .arco-table {
+  background: transparent !important;
+  color: var(--aicss-text) !important;
+}
+
+.admin-layout .arco-table-th {
+  background: var(--aicss-bg-subtle) !important;
+  color: var(--aicss-muted) !important;
+  font-weight: 600 !important;
+  border-bottom: 1px solid var(--aicss-border) !important;
+}
+
+.admin-layout .arco-table-td {
+  border-bottom: 1px solid var(--aicss-border) !important;
+  color: var(--aicss-text-2) !important;
+}
+
+.admin-layout .arco-table-tr:hover .arco-table-td {
+  background: var(--aicss-surface-2) !important;
+}
+
+.admin-layout .arco-pagination-item {
+  border-color: var(--aicss-border) !important;
+  color: var(--aicss-text-2) !important;
+  background: var(--aicss-surface) !important;
+}
+
+.admin-layout .arco-pagination-item-active {
+  border-color: var(--aicss-accent) !important;
+  background: var(--aicss-accent-soft) !important;
+  color: var(--aicss-accent-text) !important;
+}
+
+.admin-layout .arco-input,
+.admin-layout .arco-select-view,
+.admin-layout .arco-textarea {
+  border-color: var(--aicss-border) !important;
+  background: var(--aicss-surface) !important;
+  color: var(--aicss-text) !important;
+}
+
+.admin-layout .arco-input:hover,
+.admin-layout .arco-select-view:hover {
+  border-color: var(--aicss-border-strong) !important;
+}
+
+/* 用户端公共内容区的统一卡片表面 */
+.layout-content .arco-card,
+.layout-content .arco-card-bordered {
+  border-color: var(--aicss-border) !important;
+  border-radius: var(--aicss-radius) !important;
+  background: var(--aicss-surface) !important;
+  box-shadow: var(--aicss-shadow-card) !important;
+}
+
+/* Markdown 表格：沿用 AICSS 中性表面，避免默认 GitHub 表格显得过时 */
+.markdown-body table {
+  border-radius: var(--aicss-radius);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
+  box-shadow: var(--aicss-shadow-card);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.markdown-body table th {
+  background: var(--aicss-bg-subtle);
+  color: var(--aicss-muted);
+  font-weight: 600;
+  border-color: var(--aicss-border);
+}
+
+.markdown-body table td {
+  color: var(--aicss-text-2);
+  border-color: var(--aicss-border);
+}
+
+.markdown-body table tr {
+  background: var(--aicss-surface);
+  border-top: 1px solid var(--aicss-border);
+}
+
+.markdown-body table tr:nth-child(2n) {
+  background: var(--aicss-bg-subtle);
+}
+
+.markdown-body table tr:hover {
+  background: var(--aicss-surface-2);
+}

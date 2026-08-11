@@ -52,6 +52,25 @@ def _normalize_int(value: Any, default: int = 1) -> int:
     return normalized if normalized > 0 else default
 
 
+def _derive_local_task_keywords(local_package: LocalSkillPackage) -> list[str]:
+    """从 catalog 技能包 tags / task_keywords / capabilities 推导检索关键词。"""
+    keywords: list[str] = []
+    for tag in local_package.tags or []:
+        normalized = _normalize_text(tag)
+        if normalized and normalized not in keywords:
+            keywords.append(normalized)
+    for raw in (local_package.manifest or {}).get("task_keywords") or []:
+        normalized = _normalize_text(raw)
+        if normalized and normalized not in keywords:
+            keywords.append(normalized)
+    for key, enabled in (local_package.capabilities or {}).items():
+        if enabled:
+            normalized = _normalize_text(key)
+            if normalized and normalized not in keywords:
+                keywords.append(normalized)
+    return keywords
+
+
 @inject
 @dataclass
 class SkillService(BaseService):
@@ -66,7 +85,7 @@ class SkillService(BaseService):
 
     def _has_skill_package_table(self) -> bool:
         try:
-            return inspect(self.db.engine).has_table(SkillPackage.__tablename__)
+            return inspect(self.db.sync_engine).has_table(SkillPackage.__tablename__)
         except Exception:
             return False
 
@@ -149,6 +168,7 @@ class SkillService(BaseService):
                     sync_status="pending",
                     sync_error="",
                     published_at=None,
+                    task_keywords=_derive_local_task_keywords(local_package),
                     updated_at=utc_now_naive(),
                 )
                 self.db.session.add(package)
@@ -169,6 +189,7 @@ class SkillService(BaseService):
                     current_version=local_package.version,
                     latest_source_version=local_package.version,
                     source_checksum=local_package.checksum,
+                    task_keywords=_derive_local_task_keywords(local_package),
                     updated_at=utc_now_naive(),
                 )
 

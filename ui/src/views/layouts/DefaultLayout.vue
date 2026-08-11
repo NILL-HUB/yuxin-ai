@@ -51,6 +51,17 @@ const { current_user, loadCurrentUser } = useGetCurrentUser()
 const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
 const sidebarWidth = computed(() => (sidebarCollapsed.value ? 80 : 240))
+const MOBILE_BREAKPOINT = 768
+const isMobileViewport = ref(false)
+
+const applyViewportMode = () => {
+  if (typeof window === 'undefined') return
+  const mobile = window.innerWidth <= MOBILE_BREAKPOINT
+  isMobileViewport.value = mobile
+  if (mobile && !sidebarCollapsed.value) {
+    sidebarCollapsed.value = true
+  }
+}
 
 const openLoginModal = (redirect = '') => {
   loginRedirectPath.value = redirect
@@ -161,6 +172,7 @@ const handleRecentConversationsHide = () => {
 
 const handleViewportResize = () => {
   void adjustRecentConversationsPopoverPosition()
+  applyViewportMode()
 }
 
 const clearAccountSettingsQuery = async () => {
@@ -212,6 +224,7 @@ const openSettingsFromRoute = () => {
 
 onMounted(() => {
   if (typeof window === 'undefined') return
+  applyViewportMode()
   window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired as EventListener)
   window.addEventListener('recent-conversations:show', handleRecentConversationsShow)
   window.addEventListener('recent-conversations:hide', handleRecentConversationsHide)
@@ -245,6 +258,7 @@ watch(settingModalVisible, async (visible) => {
     <!-- 侧边栏 - 固定定位，不随右侧滚动 -->
     <a-layout-sider
       class="bg-white border-r border-slate-100 shadow-sm shadow-slate-200/60 p-2 flex-shrink-0 overflow-hidden sidebar-sider"
+      :class="{ 'sidebar-sider--mobile': isMobileViewport }"
       :style="{
         width: `${sidebarWidth}px`,
         minWidth: `${sidebarWidth}px`,
@@ -254,7 +268,7 @@ watch(settingModalVisible, async (visible) => {
         top: 0,
         bottom: 0,
         height: '100vh',
-        zIndex: 10,
+        zIndex: isMobileViewport && !sidebarCollapsed ? 40 : 10,
       }"
     >
       <div
@@ -343,12 +357,17 @@ watch(settingModalVisible, async (visible) => {
         </div>
       </div>
     </a-layout-sider>
+    <div
+      v-if="isMobileViewport && !sidebarCollapsed"
+      class="sidebar-mobile-scrim"
+      @click="sidebarCollapsed = true"
+    />
     <!-- 右侧内容 -->
     <a-layout-content
       class="!bg-transparent layout-content overflow-hidden flex flex-col"
       :style="{
-        marginLeft: `${sidebarWidth}px`,
-        width: `calc(100vw - ${sidebarWidth}px)`,
+        marginLeft: isMobileViewport ? '0px' : `${sidebarWidth}px`,
+        width: isMobileViewport ? '100vw' : `calc(100vw - ${sidebarWidth}px)`,
         height: 'auto',
         flex: '1 1 0',
         minHeight: '0',
@@ -380,6 +399,19 @@ watch(settingModalVisible, async (visible) => {
 <style scoped>
 .sidebar-sider {
   transition: width 1000ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-sider--mobile {
+  box-shadow: 4px 0 24px rgba(15, 23, 42, 0.08);
+}
+
+.sidebar-mobile-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(15, 23, 42, 0.32);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
 }
 
 .layout-content {

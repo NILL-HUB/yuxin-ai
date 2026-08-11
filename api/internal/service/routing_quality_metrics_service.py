@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+from injector import inject
+
 from internal.model import RoutingLog, RoutingQualityFeedbackModel
 from pkg.sqlalchemy import SQLAlchemy
 
 
+@inject
 @dataclass
 class RoutingQualityMetricsService:
     db: SQLAlchemy | None = None
@@ -116,16 +119,46 @@ class RoutingQualityMetricsService:
         return [self._decision(log).get("intent") or "unknown"]
 
     def _agent_pools(self, log) -> list[str]:
-        return self._decision(log).get("agent_subset", {}).get(
+        decision_pools = self._decision(log).get("agent_subset", {}).get(
             "matched_agent_pools",
-            ["unknown"],
-        ) or ["unknown"]
+            [],
+        )
+        if decision_pools:
+            return decision_pools
+        pools = self._pool_names(
+            getattr(log, "agent_pool_hits", None) or [],
+            metadata_key="primary_pool",
+        )
+        return pools or ["unknown"]
 
     def _tool_pools(self, log) -> list[str]:
-        return self._decision(log).get("tool_subset", {}).get(
+        decision_pools = self._decision(log).get("tool_subset", {}).get(
             "matched_tool_pools",
-            ["unknown"],
-        ) or ["unknown"]
+            [],
+        )
+        if decision_pools:
+            return decision_pools
+        pools = self._pool_names(
+            getattr(log, "tool_pool_hits", None) or [],
+            metadata_key="tool_pool",
+        )
+        return pools or ["unknown"]
+
+    @staticmethod
+    def _pool_names(hits: list, *, metadata_key: str) -> list[str]:
+        pools: list[str] = []
+        for item in hits:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") or {}
+            pool = (
+                metadata.get(metadata_key)
+                or item.get("pool")
+                or item.get("source_type")
+            )
+            if pool and pool not in pools:
+                pools.append(str(pool))
+        return pools
 
     def _model_tier(self, log) -> list[str]:
         return [self._decision(log).get("recommended_model_tier") or "unknown"]

@@ -59,6 +59,7 @@ from .credit_service import CreditService
 from .faiss_service import FaissService
 from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
+from .routing_log_service import RoutingLogService
 from .conductor_service import ConductorService
 from .orchestration_feature_flag_service import OrchestrationFeatureFlagService
 from .result_synthesizer_service import ResultSynthesizerService
@@ -138,6 +139,7 @@ class AssistantAgentService(BaseService):
     result_synthesizer_service: ResultSynthesizerService | None = None
     retrieval_service: RetrievalService | None = None
     runtime_tool_mount_service: RuntimeToolMountService | None = None
+    routing_log_service: RoutingLogService | None = None
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -194,7 +196,7 @@ class AssistantAgentService(BaseService):
     ) -> Conversation:
         """解析并返回辅助Agent会话，必要时同步账号当前会话指针"""
         if conversation_id is None:
-            return account.assistant_agent_conversation
+            return self._get_or_create_assistant_agent_conversation(account)
 
         conversation = self.get(Conversation, conversation_id)
         if (
@@ -209,6 +211,56 @@ class AssistantAgentService(BaseService):
 
         if sync_active and account.assistant_agent_conversation_id != conversation.id:
             self.update(account, assistant_agent_conversation_id=conversation.id)
+
+        return conversation
+
+    def _get_or_create_assistant_agent_conversation(self, account: Account) -> Conversation:
+        """返回账号的辅助Agent会话；缺失时通过账号行锁串行创建。
+
+        并发首次访问同一账号时会各自创建会话并写回同一行 account，
+        直接依赖 UPDATE 互斥可能产生锁等待甚至超时。这里先对账号行加
+        FOR UPDATE 锁，再检查指针，能保证同一账号只创建一个会话、指针不被覆盖。
+        """
+        if not isinstance(account, Account):
+            # 兼容历史测试/调用方传入的会话占位对象
+            return account.assistant_agent_conversation
+
+        def _is_valid(candidate: Conversation | None) -> bool:
+            return bool(
+                candidate
+                and not candidate.is_deleted
+                and candidate.created_by == account.id
+                and candidate.invoke_from == InvokeFrom.ASSISTANT_AGENT.value
+            )
+
+        if account.assistant_agent_conversation_id:
+            existing = self.get(Conversation, account.assistant_agent_conversation_id)
+            if _is_valid(existing):
+                return existing
+
+        with self.db.auto_commit():
+            locked_account = (
+                self.db.session.query(Account)
+                .filter(Account.id == account.id)
+                .with_for_update()
+                .one_or_none()
+            )
+            target = locked_account or account
+            if target.assistant_agent_conversation_id:
+                existing = self.get(Conversation, target.assistant_agent_conversation_id)
+                if _is_valid(existing):
+                    return existing
+
+            assistant_agent_id = current_app.config.get("ASSISTANT_AGENT_ID")
+            conversation = Conversation(
+                app_id=assistant_agent_id,
+                name="New Conversation",
+                invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+                created_by=target.id,
+            )
+            self.db.session.add(conversation)
+            self.db.session.flush()
+            target.assistant_agent_conversation_id = conversation.id
 
         return conversation
 
@@ -743,7 +795,14 @@ class AssistantAgentService(BaseService):
         }
         non_mcp_descriptors = [
             d for d in mounted_tools
-            if d.source_type in ("api", "api_tool", "builtin", "builtin_tool", "knowledge")
+            if d.source_type in (
+                "api",
+                "api_tool",
+                "builtin",
+                "builtin_tool",
+                "knowledge",
+                "skill",
+            )
         ]
 
         extra_tools: list[BaseTool] = []
@@ -756,9 +815,11 @@ class AssistantAgentService(BaseService):
 
         # 2. 加载非 MCP 工具（builtin / api_tool / knowledge）
         for descriptor in non_mcp_descriptors:
-            tool = self._load_non_mcp_tool(descriptor, account_id=account_id)
-            if tool is not None:
-                extra_tools.append(tool)
+            loaded = self._load_non_mcp_tool(descriptor, account_id=account_id)
+            if isinstance(loaded, list):
+                extra_tools.extend(loaded)
+            elif loaded is not None:
+                extra_tools.append(loaded)
 
         if not extra_tools:
             logger.info(
@@ -787,12 +848,13 @@ class AssistantAgentService(BaseService):
         )
         return merged
 
-    def _load_non_mcp_tool(self, descriptor, *, account_id: str = "") -> BaseTool | None:
-        """根据 RuntimeToolDescriptor 加载 builtin/api_tool/knowledge 类型的 LangChain 工具。
+    def _load_non_mcp_tool(self, descriptor, *, account_id: str = "") -> BaseTool | list[BaseTool] | None:
+        """根据 RuntimeToolDescriptor 加载 builtin/api_tool/knowledge/skill 类型的 LangChain 工具。
 
         - builtin: 通过 ``builtin_provider_manager.get_tool(provider_name, tool_name)`` 加载
         - api: 查询 ApiTool 后通过 ``api_provider_manager.get_tool`` 加载
         - knowledge: 通过 ``RetrievalService.create_knowledge_retrieval_tool`` 加载
+        - skill: 通过 ``SkillToolFactory`` 展开技能包工具列表
         - 其他 source_type 返回 None
         """
         if descriptor is None or self.app_config_service is None:
@@ -849,6 +911,9 @@ class AssistantAgentService(BaseService):
                 )
                 return self.app_config_service.api_provider_manager.get_tool(tool_entity)
 
+            if source_type == "skill":
+                return self._load_skill_tools(descriptor, account_id=account_id)
+
             if source_type == "knowledge":
                 # knowledge 工具 ID 格式: "knowledge:{knowledge_base_id}"
                 if self.retrieval_service is None:
@@ -885,6 +950,57 @@ class AssistantAgentService(BaseService):
         except Exception:
             logger.warning("加载非 MCP 工具失败: %s", tool_id, exc_info=True)
             return None
+
+    def _load_skill_tools(self, descriptor, *, account_id: str = "") -> list[BaseTool]:
+        """把 skill 类型候选展开为 LangChain 工具列表。"""
+        from internal.core.skills import SkillScfClient, SkillToolFactory
+        from internal.model import SkillPackage, SkillPackageVersion
+
+        provider_id = (
+            getattr(descriptor, "provider_id", "")
+            or getattr(descriptor, "tool_id", "").split(":", 1)[-1]
+        )
+        if not provider_id:
+            return []
+        package = (
+            self.db.session.query(SkillPackage)
+            .filter(
+                SkillPackage.id == provider_id,
+                SkillPackage.enabled.is_(True),
+            )
+            .first()
+        )
+        if package is None:
+            return []
+        version = (
+            self.db.session.query(SkillPackageVersion)
+            .filter(
+                SkillPackageVersion.skill_package_id == package.id,
+                SkillPackageVersion.version == package.current_version,
+            )
+            .first()
+        )
+        if version is None:
+            return []
+        manifest = version.manifest or {}
+        package_payload = {
+            "source_key": package.source_key,
+            "skill_id": str(package.id),
+            "name": package.name,
+            "label": package.label,
+            "executor_type": package.executor_type,
+            "bundle": version.bundle or {},
+            "version": version.version,
+        }
+        try:
+            return SkillToolFactory(SkillScfClient()).build_tools(
+                package_payload,
+                manifest.get("tools") or [],
+                runtime_context={"account_id": account_id},
+            )
+        except Exception:
+            logger.warning("技能工具展开失败: source_key=%s", package.source_key, exc_info=True)
+            return []
 
     def _load_mcp_tools_by_provider_ids(
         self, account_id, provider_ids: set[str]
@@ -1027,7 +1143,7 @@ class AssistantAgentService(BaseService):
 
         if routing_decision is None and self.orchestrator_service is not None:
             try:
-                routing_decision = self.orchestrator_service.decide(
+                decision_result = self.orchestrator_service.decide(
                     req.query.data,
                     account_id=account.id,
                     conversation_id=conversation.id,
@@ -1035,7 +1151,11 @@ class AssistantAgentService(BaseService):
                     image_urls=req.image_urls.data,
                     enable_deep_thinking=bool(req.confirm_deep_thinking.data),
                     invoke_from=invoke_from or InvokeFrom.ASSISTANT_AGENT.value,
-                ).to_dict()
+                )
+                routing_log_id = getattr(decision_result, "routing_log_id", None)
+                routing_decision = decision_result.to_dict()
+                if routing_log_id:
+                    routing_decision["routing_log_id"] = str(routing_log_id)
             except Exception as exc:
                 logger.warning("辅助 Agent 调度决策失败，继续原流程: %s", exc)
 
@@ -1128,6 +1248,9 @@ class AssistantAgentService(BaseService):
                 collected_thoughts = getattr(message, '_collected_thoughts', None) or []
                 # 推理链已包含完整思考过程（thought=reasoning_content），
                 # 不再额外持久化 routing_decision 占位 thought，避免出现重复思考卡片
+                if isinstance(routing_decision, dict):
+                    message.routing_log_id = routing_decision.get("routing_log_id")
+                    message.routing_decision = routing_decision
                 self._persist_assistant_thoughts(
                     account, assistant_agent_id, conversation, message,
                     collected_thoughts, None, _chat_started_at,
@@ -1272,8 +1395,99 @@ class AssistantAgentService(BaseService):
                             self.update(msg, latency=correct_latency)
                 except Exception:
                     pass
+            self._update_routing_log_execution(
+                message, routing_decision, agent_thoughts, _chat_started_at,
+            )
         except Exception:
             logger.warning("持久化推理过程失败", exc_info=True)
+
+    def _update_routing_log_execution(
+        self,
+        message,
+        routing_decision,
+        agent_thoughts,
+        started_at: float = 0,
+    ) -> None:
+        """把消息执行结果写回路由日志，让管理端能看到真实执行状态与工具调用。"""
+        routing_log_id = (
+            (routing_decision or {}).get("routing_log_id")
+            or getattr(message, "routing_log_id", None)
+        )
+        if not routing_log_id:
+            return
+        try:
+            import time as _time
+
+            from internal.service.routing_log_service import RoutingLogService
+
+            log_service = self.routing_log_service or RoutingLogService(db=self.db)
+            msg = self.get(Message, message.id)
+            tool_names: list[str] = []
+            agent_names: list[str] = []
+            thought_list = (
+                list(agent_thoughts.values())
+                if isinstance(agent_thoughts, dict)
+                else (agent_thoughts or [])
+            )
+            for thought in thought_list:
+                if isinstance(thought, dict):
+                    tool = thought.get("tool") or ""
+                    agent = thought.get("agent") or thought.get("task_id") or ""
+                else:
+                    tool = getattr(thought, "tool", "") or ""
+                    agent = getattr(thought, "task_id", "") or ""
+                if tool and tool not in tool_names:
+                    tool_names.append(str(tool))
+                agent_key = str(agent) if agent else ""
+                if agent_key and agent_key not in agent_names:
+                    agent_names.append(agent_key)
+
+            base_decision = getattr(message, "routing_decision", None) or routing_decision or {}
+            decision = dict(base_decision)
+            decision["execution_status"] = "completed"
+            decision["answer_length"] = len((msg.answer or "") if msg else "")
+            decision["tool_calls"] = tool_names
+            decision["agent_executed"] = agent_names or decision.get("agent_subset", {}).get(
+                "selected_agents", []
+            )
+
+            latency_ms = (
+                int((_time.perf_counter() - started_at) * 1000)
+                if started_at
+                else int(float((msg.latency if msg else 0) or 0) * 1000)
+            )
+            cost_summary = {
+                "estimated_credits": float((msg.total_token_count if msg else 0) or 0),
+                "total_tokens": int((msg.total_token_count if msg else 0) or 0),
+                "answer_token_count": int((msg.answer_token_count if msg else 0) or 0),
+                "message_token_count": int((msg.message_token_count if msg else 0) or 0),
+                "total_price": float((msg.total_price if msg else 0) or 0),
+            }
+            model_selection = {
+                "model_tier": decision.get("recommended_model_tier", ""),
+                "cost_policy_allowed": bool(
+                    (decision.get("cost_policy") or {}).get("allowed", True)
+                ),
+                "cost_policy": decision.get("cost_policy") or {},
+                "execution_model": decision.get("recommended_model_tier", ""),
+                "execution_ok": bool(
+                    msg is not None and msg.status != MessageStatus.STOP.value
+                ),
+            }
+            log_service.finalize(
+                routing_log_id,
+                routing_decision=decision,
+                status="success" if msg is not None and msg.status != MessageStatus.STOP.value else "success",
+                latency_ms=latency_ms,
+                cost_summary=cost_summary,
+                model_selection=model_selection,
+                tool_pool_hits=tool_names or [],
+                agent_pool_hits=decision.get("agent_subset", {}).get(
+                    "selected_agents", []
+                ) if isinstance(decision.get("agent_subset"), dict) else agent_names,
+            )
+        except Exception:
+            logger.warning("更新路由日志执行结果失败", exc_info=True)
 
     def generate_introduction(self, account: Account) -> Generator[str, None, None]:
         """流式生成首页辅助Agent个性化介绍（支持缓存优化）"""

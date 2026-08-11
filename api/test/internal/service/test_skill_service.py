@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from internal.exception import ValidateErrorException
-from internal.service.skill_service import SkillService
+from internal.service.skill_service import SkillService, _derive_local_task_keywords
 
 
 @contextmanager
@@ -402,3 +402,15 @@ def test_sync_local_package_should_short_circuit_when_already_skipped():
 
     assert changed is False
     assert updates == []
+
+
+def test_derive_local_task_keywords_should_merge_tags_manifest_and_capabilities():
+    local_package = SimpleNamespace(
+        tags=["codex", "shell", "codex"],
+        manifest={"task_keywords": ["命令", "shell"]},
+        capabilities={"code": True, "network": False, "file_output": True},
+    )
+
+    keywords = _derive_local_task_keywords(local_package)
+
+    assert keywords == ["codex", "shell", "命令", "code", "file_output"]

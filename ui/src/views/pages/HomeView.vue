@@ -3,10 +3,8 @@ import AiDynamicBackground from '@/components/AiDynamicBackground.vue'
 import AiMessage from '@/components/AiMessage.vue'
 import BillingUsageIndicator from '@/components/BillingUsageIndicator.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
-import DeepThinkingProposalCard from '@/components/DeepThinkingProposalCard.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
 import ScheduleSuggestionCard, { type ScheduleSuggestion } from '@/components/ScheduleSuggestionCard.vue'
-import RoutingDecisionCard from '@/components/RoutingDecisionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
 import { AI_SURFACE_BACKGROUND_GRADIENT, QueueEvent } from '@/config'
@@ -60,7 +58,6 @@ import { isCredentialLoggedIn } from '@/utils/auth'
 import {
   applyChatStreamEvent,
   withChatRenderId,
-  type DeepThinkingProposal,
   type ToolConfirmationPrompt,
   type StreamMessage,
   type StreamState,
@@ -74,7 +71,6 @@ import {
 } from '@/views/shared/chat-metrics'
 import type { HomeIntentData } from '@/models/home'
 import type { BillingUsageEvent } from '@/models/billing-metering'
-import type { RoutingDecision } from '@/models/orchestration'
 import { calculateScrollDuration, smoothScroll } from '@/utils/scrollAnimation'
 import { YUXIN_AI_ASSISTANT_APP } from '@/config/brand'
 
@@ -149,13 +145,8 @@ const hoveredHumanMessageIndex = ref<number | null>(null)
 const HUMAN_NAV_BOTTOM_DISTANCE_THRESHOLD = 500
 const isStreamingResponse = ref(false)
 const billingEvents = ref<BillingUsageEvent[]>([])
-const deepThinkingProposal = ref<DeepThinkingProposal | null>(null)
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
 const scheduleSuggestion = ref<ScheduleSuggestion | null>(null)
-const routingDecision = ref<RoutingDecision | null>(null)
-const orchestratorReject = ref<{ reason: string; message: string } | null>(null)
-const lastHumanQuery = ref('')
-const lastHumanImageUrls = ref<string[]>([])
 const route = useRoute()
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -1134,8 +1125,6 @@ const handleSubmit = async () => {
   billingEvents.value = []
   toolConfirmationPrompt.value = null
   scheduleSuggestion.value = null
-  routingDecision.value = null
-  orchestratorReject.value = null
   stopAudioStream()
 
   // 5.4 往消息列表中添加基础人类消息
@@ -1177,8 +1166,6 @@ const handleSubmit = async () => {
   isStreamingResponse.value = true
   const humanQuery = query.value
   const humanImageUrls = image_urls.value
-  lastHumanQuery.value = humanQuery
-  lastHumanImageUrls.value = [...humanImageUrls]
   query.value = ''
   image_urls.value = []
 
@@ -1214,15 +1201,8 @@ const handleSubmit = async () => {
 
         if (streamResult.didUpdate) {
           billingEvents.value = streamResult.state.billingEvents
-          deepThinkingProposal.value = streamResult.state.deepThinkingProposal ?? null
           if (streamResult.state.toolConfirmationPrompt) {
             toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
-          }
-          if (streamResult.state.routingDecision && !routingDecision.value) {
-            routingDecision.value = streamResult.state.routingDecision
-          }
-          if (streamResult.state.orchestratorReject && !orchestratorReject.value) {
-            orchestratorReject.value = streamResult.state.orchestratorReject
           }
           scheduleScrollToBottom()
         }
@@ -1257,18 +1237,6 @@ const handleSubmit = async () => {
   }
 
   // 默认不自动播放音频，用户可手动点击播放按钮
-}
-
-const handleConfirmDeepThinking = async () => {
-  deepThinkingProposal.value = null
-  query.value = lastHumanQuery.value
-  image_urls.value = [...lastHumanImageUrls.value]
-  enableDeepThinking.value = true
-  await handleSubmit()
-}
-
-const handleCancelDeepThinking = () => {
-  deepThinkingProposal.value = null
 }
 
 const handleConfirmTool = async (id: string) => {
@@ -1752,25 +1720,6 @@ onUnmounted(() => {
       </div>
       <!-- 对话输入框 -->
       <div class="w-full flex flex-col flex-shrink-0 pb-2 pt-2 gap-3">
-        <div
-          v-if="routingDecision || orchestratorReject"
-          class="w-full max-w-[600px] mx-auto px-2 sm:px-4"
-        >
-          <RoutingDecisionCard
-            :decision="routingDecision"
-            :reject="orchestratorReject"
-          />
-        </div>
-        <div
-          v-if="deepThinkingProposal"
-          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
-        >
-          <DeepThinkingProposalCard
-            :proposal="deepThinkingProposal"
-            @confirm="handleConfirmDeepThinking"
-            @cancel="handleCancelDeepThinking"
-          />
-        </div>
         <div
           v-if="toolConfirmationPrompt"
           class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"

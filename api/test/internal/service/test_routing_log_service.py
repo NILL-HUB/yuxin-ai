@@ -91,6 +91,28 @@ def test_record_should_persist_routing_decision_candidates_filters_and_billing(m
     assert result.redaction_enabled is True
 
 
+def test_create_pending_should_carry_message_id(monkeypatch):
+    service = RoutingLogService(db=_fake_db(_SessionStub()))
+    created = []
+    monkeypatch.setattr(
+        service,
+        "create",
+        lambda model, **kwargs: created.append((model, kwargs))
+        or SimpleNamespace(id=uuid4(), **kwargs),
+    )
+
+    message_id = uuid4()
+    service.create_pending(
+        account_id=uuid4(),
+        user_query="帮我查询资料",
+        invoke_from="web",
+        message_id=message_id,
+    )
+
+    assert created[0][0] is RoutingLog
+    assert created[0][1]["message_id"] == message_id
+
+
 def test_page_should_return_serialized_logs_with_filters():
     log = SimpleNamespace(
         id=uuid4(),

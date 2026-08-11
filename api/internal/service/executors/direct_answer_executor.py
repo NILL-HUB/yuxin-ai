@@ -282,6 +282,12 @@ class DirectAnswerExecutor:
                 tool_messages = yield from self._execute_tool_calls(
                     executable_calls, message_id, conversation_id,
                 )
+                try:
+                    from internal.core.context_compression import compress_dict_messages
+
+                    tool_messages = compress_dict_messages(tool_messages, protect_recent=0)
+                except Exception:
+                    logger.warning("context compression skipped for direct answer tool messages", exc_info=True)
                 messages.extend(tool_messages)
 
             # 流结束后填充实例属性，供外层计费和持久化

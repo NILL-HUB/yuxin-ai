@@ -5,6 +5,8 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 import { Message } from '@arco-design/web-vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import { useI18n } from 'vue-i18n'
+import AiToolCallState from './ai-chat-ui/AiToolCallState.vue'
+import type { AiToolRow } from './ai-chat-ui/types'
 
 // 1.定义自定义组件所需数据
 const props = defineProps({
@@ -35,10 +37,6 @@ const effectiveActiveKeys = computed(() => {
   }
   return activeThoughtKeys.value
 })
-
-const handleCollapseChange = (keys: (string | number)[]) => {
-  activeThoughtKeys.value = keys
-}
 
 // 手动展开/收起整个卡片：展开时把所有思考项一起展开，方便查看完整推理
 const handleToggle = () => {
@@ -98,6 +96,84 @@ const thoughtItems = computed(() =>
   ),
 )
 
+const toolCallCards = computed(() => {
+  return thoughtItems.value.map((agentThought) => {
+    const event = String(agentThought.event)
+    const content = getThoughtContent(agentThought)
+    const latency = Number(agentThought.latency || 0)
+    const status: 'loading' | 'done' | 'error' = props.loading ? 'loading' : 'done'
+
+    const isAgentAction = event === QueueEvent.agentAction
+    const toolName = isAgentAction ? String(agentThought.tool || '') : ''
+
+    const rows: AiToolRow[] = []
+    const toolInput = agentThought.tool_input
+    if (isAgentAction && toolInput && typeof toolInput === 'object') {
+      const record = toolInput as Record<string, unknown>
+      const timeline = (record.timeline || {}) as Record<string, unknown>
+      const rawTodos = Array.isArray(timeline.todos) ? timeline.todos : Array.isArray(record.todos) ? record.todos : []
+      rows.push(
+        ...rawTodos
+          .map((todo, index) => {
+            if (todo && typeof todo === 'object') {
+              const item = todo as Record<string, unknown>
+              const label = String(
+                item.content ?? item.text ?? item.description ?? item.title ?? item.name ?? '',
+              ).trim()
+              return {
+                title: label,
+                url: '',
+                status: normalizeTodoStatus(String(item.status || '')),
+              } as AiToolRow
+            }
+            return { title: String(todo || ''), url: '', status: 'pending' } as AiToolRow
+          })
+          .filter((row) => row.title),
+      )
+    }
+
+    return {
+      key: String(getThoughtKey(agentThought)),
+      event,
+      content,
+      latency,
+      status,
+      isAgentAction,
+      toolName,
+      rows,
+      agentThought,
+    }
+  })
+})
+
+const normalizeTodoStatus = (status: string) => {
+  const normalized = status.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (['completed', 'complete', 'done', 'success', 'succeeded', 'finished'].includes(normalized)) {
+    return 'done'
+  }
+  if (['error', 'failed', 'fail', 'failure'].includes(normalized)) return 'error'
+  if (['in_progress', 'progress', 'running', 'working', 'doing', 'start'].includes(normalized)) {
+    return 'loading'
+  }
+  return 'pending'
+}
+
+const resolveToolCardTitle = (event: string, toolName: string) => {
+  if (event === QueueEvent.longTermMemoryRecall) return t('chat.thought.events.longTermMemoryRecall')
+  if (event === QueueEvent.datasetRetrieval) return t('chat.thought.events.datasetRetrieval')
+  if (event === QueueEvent.agentThought) return t('chat.thought.events.agentThought')
+  if (event === QueueEvent.agentAction) return toolName || t('chat.thought.events.agentAction')
+  return t('chat.thought.events.fallback')
+}
+
+const resolveToolCardKind = (event: string) => {
+  if (event === QueueEvent.longTermMemoryRecall || event === QueueEvent.datasetRetrieval) {
+    return 'web-search'
+  }
+  if (event === QueueEvent.agentAction) return 'tool'
+  return 'tool'
+}
+
 const getThoughtKey = (agentThought: Record<string, unknown>) => {
   if (typeof agentThought?.id === 'number') return agentThought.id
   return String(agentThought?.id ?? '')
@@ -114,11 +190,7 @@ const isLatestThought = (agentThought: Record<string, unknown>) => {
 }
 
 const containerClass = computed(() => {
-  const baseClass = 'flex flex-col rounded-2xl border border-gray-200 bg-white overflow-hidden transition-all duration-300'
-  if (isInlineVariant.value) {
-    return `${baseClass} max-w-full flex-shrink-0 ${visible.value ? 'w-[min(560px,100%)]' : 'w-[180px]'}`
-  }
-  return `${baseClass} max-w-full ${visible.value ? 'w-[min(560px,100%)]' : 'w-[180px]'}`
+  return 'agent-thought aicss-agent-thought max-w-full min-w-0 flex flex-col gap-2 transition-all duration-300'
 })
 
 const toggleTitle = computed(() => {
@@ -130,9 +202,7 @@ const toggleLabel = computed(() => {
 })
 
 const headerClass = computed(() => {
-  return `relative flex items-center h-10 px-4 cursor-pointer text-gray-700 whitespace-nowrap select-none bg-gray-100 transition-colors hover:bg-gray-200 ${
-    visible.value ? 'rounded-t-2xl border-b border-gray-200' : 'rounded-2xl'
-  }`
+  return 'agent-thought__header'
 })
 
 // 后端持久化时写入 thought 字段的占位文字（真实内容在 observation / answer）
@@ -346,155 +416,292 @@ onBeforeUnmount(() => {
 <template>
   <!-- 智能体推理步骤 -->
   <div v-if="thoughtItems.length > 0" ref="containerRef" :class="containerClass">
-    <div :class="headerClass" :title="toggleTitle" @click="handleToggle">
-      <!-- 左侧图标与标题 -->
-      <div class="flex items-center gap-2 font-medium text-gray-700 whitespace-nowrap">
-        <icon-list />
-        {{ toggleLabel }}
-      </div>
-      <!-- 右侧图标 -->
-      <div class="absolute right-4 top-1/2 -translate-y-1/2 flex items-center">
-        <template v-if="props.loading">
-          <icon-loading />
-        </template>
-        <template v-else>
-          <icon-up v-if="visible" />
-          <icon-down v-else />
-        </template>
-      </div>
-    </div>
-    <!-- 底部内容 -->
-    <a-collapse
-      v-if="visible"
-      class="agent-thought bg-transparent"
-      destroy-on-hide
-      :bordered="false"
-      :active-key="effectiveActiveKeys"
-      @change="handleCollapseChange"
+    <button
+      type="button"
+      :class="headerClass"
+      :title="toggleTitle"
+      :aria-expanded="visible"
+      @click="handleToggle"
     >
-      <a-collapse-item
-        v-for="agent_thought in thoughtItems"
-        :key="getThoughtKey(agent_thought)"
-        :class="['rounded-xl', { 'agent-thought-item--latest': isLatestThought(agent_thought) }]"
-        :data-thought-key="String(getThoughtKey(agent_thought))"
+      <span
+        class="agent-thought__dot"
+        :class="{ 'agent-thought__dot--streaming': props.loading || props.follow_latest_thought }"
+        aria-hidden="true"
+      />
+      <span
+        v-if="props.loading || props.follow_latest_thought"
+        class="agent-thought__label aicss-shimmer"
       >
-        <template #expand-icon>
-          <icon-file v-if="agent_thought.event === QueueEvent.longTermMemoryRecall" />
-          <icon-language v-else-if="agent_thought.event === QueueEvent.agentThought" />
-          <icon-storage v-else-if="agent_thought.event === QueueEvent.datasetRetrieval" />
-          <icon-tool v-else-if="agent_thought.event === QueueEvent.agentAction" />
-          <icon-message v-else-if="agent_thought.event === QueueEvent.agentMessage" />
-          <!-- 深度思考：脑图标（用 SVG 内联） -->
-          <svg
-            v-else-if="agent_thought.event === QueueEvent.deepThinking"
-            class="h-[14px] w-[14px] text-violet-500"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 4.44-1.66Z" />
-            <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-4.44-1.66Z" />
-          </svg>
-        </template>
-        <template #header>
-          <div
-            :class="[
-              'inline-block min-w-[6em] whitespace-nowrap font-semibold',
-              isLatestThought(agent_thought) ? 'text-gray-800' : 'text-gray-700',
-            ]"
-            :title="getThoughtTitleTooltip(String(agent_thought.event))"
-          >
-            {{ getThoughtTitle(String(agent_thought.event)) }}
-          </div>
-        </template>
-        <template #extra>
-          <div class="text-xs text-gray-400">{{ getThoughtLatency(agent_thought) }}</div>
-        </template>
-        <div class="flex items-start gap-2">
-          <div class="flex-1 text-xs text-gray-500 whitespace-pre-wrap break-words max-h-[240px] overflow-y-auto">
-            <template v-if="agent_thought.event === QueueEvent.agentAction && agent_thought.tool">
-              <div class="mb-1">
-                <span class="font-mono text-blue-600 font-semibold">{{ agent_thought.tool }}</span>
-                <span v-if="agent_thought.tool_input" class="text-gray-400 ml-1">
-                  ({{ formatToolInput(agent_thought.tool_input) }})
-                </span>
-              </div>
-            </template>
-            {{ getThoughtContent(agent_thought) || '-' }}
-          </div>
-          <div class="flex items-center gap-1 flex-shrink-0">
-            <icon-copy
-              class="text-gray-400 cursor-pointer hover:text-gray-700"
-              @click.stop="() => handleCopyThought(agent_thought)"
-            />
+        {{ t('chat.thought.thinking') }}
+      </span>
+      <span v-else class="agent-thought__label">
+        {{ toggleLabel }}
+        <span class="agent-thought__count">{{ thoughtItems.length }}</span>
+      </span>
+      <svg
+        class="agent-thought__chevron"
+        :class="{ 'agent-thought__chevron--open': visible }"
+        viewBox="0 0 24 24"
+        width="12"
+        height="12"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+      </svg>
+    </button>
+    <!-- 底部内容 -->
+    <div
+      v-if="visible"
+      class="agent-thought__cards"
+    >
+      <div
+        v-for="card in toolCallCards"
+        :key="card.key"
+        :class="['agent-thought-card', { 'agent-thought-item--latest': card.key === latestThoughtKey }]"
+        :data-thought-key="card.key"
+      >
+        <div class="agent-thought-card__main">
+          <ai-tool-call-state
+            :kind="resolveToolCardKind(card.event)"
+            :title="resolveToolCardTitle(card.event, card.toolName)"
+            :status="card.status"
+            :latency="card.latency"
+            :rows="card.rows"
+            :details="card.isAgentAction ? '' : card.content || undefined"
+          />
+        </div>
+        <div class="agent-thought-card__footer">
+          <div class="agent-thought-card__actions">
+            <button
+              type="button"
+              class="agent-thought-card__action"
+              :title="t('chat.thought.copy')"
+              @click.stop="() => handleCopyThought(card.agentThought)"
+            >
+              <icon-copy />
+            </button>
             <template v-if="canShowThoughtAudioAction">
-              <icon-loading
-                v-if="isThoughtLoading(String(getThoughtKey(agent_thought)))"
-                class="text-gray-400"
-              />
-              <icon-pause
-                v-else-if="isThoughtPlaying(String(getThoughtKey(agent_thought)))"
-                class="text-gray-400 cursor-pointer hover:text-gray-700"
+              <span
+                v-if="isThoughtLoading(card.key)"
+                class="agent-thought-card__action agent-thought-card__action--loading"
+              >
+                <icon-loading />
+              </span>
+              <button
+                v-else-if="isThoughtPlaying(card.key)"
+                type="button"
+                class="agent-thought-card__action"
+                :title="t('chat.thought.stopPlay')"
                 @click.stop="stopAudioStream"
-              />
-              <icon-play-circle
+              >
+                <icon-pause />
+              </button>
+              <button
                 v-else
-                class="text-gray-400 cursor-pointer hover:text-gray-700"
-                @click.stop="() => handlePlayThought(agent_thought)"
-              />
+                type="button"
+                class="agent-thought-card__action"
+                :title="t('chat.thought.play')"
+                @click.stop="() => handlePlayThought(card.agentThought)"
+              >
+                <icon-play-circle />
+              </button>
             </template>
           </div>
         </div>
-      </a-collapse-item>
-    </a-collapse>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.agent-thought :deep(.arco-collapse-item) {
-  border-bottom: 1px solid #f3f4f6;
+.agent-thought__header {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--aicss-muted);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--aicss-font);
+  transition: color 0.16s ease;
 }
 
-.agent-thought :deep(.arco-collapse-item:last-child) {
-  border-bottom: none;
+.agent-thought__header:hover {
+  color: var(--aicss-text-2);
 }
 
-.agent-thought :deep(.arco-collapse-item-header) {
-  margin: 0;
-  padding-top: 10px;
-  padding-bottom: 10px;
-  color: #374151;
-  transition: background-color 0.18s ease;
+.agent-thought__dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--aicss-subtle);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--aicss-accent) 36%, transparent);
+  transition:
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
-.agent-thought :deep(.arco-collapse-item-header-left) {
-  padding-right: 13px;
-  padding-left: 34px;
+.agent-thought__dot--streaming {
+  background: var(--aicss-accent);
+  animation: agent-thought-pulse 1.5s var(--aicss-ease) infinite;
 }
 
-.agent-thought :deep(.arco-collapse-item-header-right) {
-  padding-right: 34px;
-  padding-left: 13px;
+@keyframes agent-thought-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--aicss-accent) 36%, transparent);
+    transform: scale(0.9);
+  }
+  55% {
+    box-shadow: 0 0 0 6px transparent;
+    transform: scale(1);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    transform: scale(0.9);
+  }
 }
 
-.agent-thought :deep(.arco-collapse-item-header:hover) {
-  background: #f9fafb;
+.agent-thought__label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-thought :deep(.arco-collapse-item-active > .arco-collapse-item-header) {
-  background: #f9fafb;
+.agent-thought__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--aicss-surface-2);
+  color: var(--aicss-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
-.agent-thought :deep(.arco-collapse-item-content) {
-  padding-right: 13px;
-  padding-bottom: 12px;
-  padding-left: 34px;
+.agent-thought__chevron {
+  flex: none;
+  color: var(--aicss-subtle);
+  transform: rotate(-90deg);
+  transition: transform 0.24s var(--aicss-ease);
 }
 
-.agent-thought-item--latest :deep(.arco-collapse-item-header) {
-  background: #f9fafb;
+.agent-thought__chevron--open {
+  transform: rotate(0deg);
+}
+
+.agent-thought__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding-left: 14px;
+  position: relative;
+}
+
+.agent-thought__cards::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 3px;
+  width: 1px;
+  background: var(--aicss-border);
+}
+
+.agent-thought-card {
+  position: relative;
+  min-width: 0;
+}
+
+.agent-thought-card__main {
+  min-width: 0;
+}
+
+.agent-thought-card__footer {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 0;
+  margin-top: -2px;
+  padding: 0 6px;
+}
+
+.agent-thought-card__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.agent-thought-card:hover .agent-thought-card__actions,
+.agent-thought-card:focus-within .agent-thought-card__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-thought-card__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--aicss-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.agent-thought-card__action--loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--aicss-muted);
+}
+
+.agent-thought-card__action:hover {
+  color: var(--aicss-text-2);
+  background: var(--aicss-surface-2);
+}
+
+.agent-thought-card--latest {
+  border-radius: 10px;
+}
+
+@media (hover: none) {
+  .agent-thought-card__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-thought__dot--streaming {
+    animation: none;
+  }
 }
 </style>

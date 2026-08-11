@@ -38,6 +38,7 @@ services:
       # HTTP 单栈：Quart（uvicorn）承载全部 HTTP，Http 容器仅作依赖宿主
       SKILL_CATALOG_SYNC_ENABLED: 'true'
       MIGRATION_ENABLED: 'true'
+      SYSTEM_ACCESS_WORKSPACE: /app/api/storage/system_access_workspace
       # kkFileView 预览：其服务端下载文件时使用的内网可达基础地址
       KKFILEVIEW_FILE_HOST: http://llmops-nginx:80
       POSTGRES_HOST: llmops-db

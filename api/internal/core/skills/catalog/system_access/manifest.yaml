@@ -1,0 +1,95 @@
+source_key: system_access
+name: 系统访问
+label: 系统访问
+description: 提供类似 Codex 的沙箱系统访问能力：执行 Shell 命令、读写文件、列出目录，适合代码修改、文件生成和自动化任务。
+category: 开发
+tags:
+  - codex
+  - shell
+  - 文件
+  - 沙箱
+  - SCF
+icon: ""
+enabled: true
+version: 1
+executor_type: scf
+capabilities:
+  code: true
+  network: false
+  file_output: true
+tools:
+  - name: execute_shell
+    label: 执行命令
+    description: 在沙箱工作区内执行一条 shell 命令，返回 stdout、stderr 和退出码。
+    entrypoint: execute_shell
+    input_schema:
+      type: object
+      properties:
+        command:
+          type: string
+          description: 要执行的 shell 命令
+        cwd:
+          type: string
+          description: 工作目录，默认工作区根目录
+        timeout:
+          type: integer
+          description: 超时秒数，默认 30
+      required:
+        - command
+  - name: read_file
+    label: 读取文件
+    description: 读取工作区内文本文件内容，超过长度限制时截断并提示。
+    entrypoint: read_file
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: 工作区相对路径
+        max_chars:
+          type: integer
+          description: 最多返回字符数，默认 200000
+      required:
+        - path
+  - name: write_file
+    label: 写入文件
+    description: 在工作区内写入或覆盖文本文件，自动创建父目录。
+    entrypoint: write_file
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: 工作区相对路径
+        content:
+          type: string
+          description: 文件内容
+        overwrite:
+          type: boolean
+          description: 是否允许覆盖已存在文件，默认 true
+      required:
+        - path
+        - content
+  - name: list_directory
+    label: 列出目录
+    description: 列出工作区内目录或文件的名称、类型和大小。
+    entrypoint: list_directory
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: 工作区相对路径，默认根目录
+        recursive:
+          type: boolean
+          description: 是否递归列出，默认 false
+        max_entries:
+          type: integer
+          description: 最多返回条目数，默认 500
+  - name: get_workspace_info
+    label: 查看工作区
+    description: 返回沙箱工作区根路径与是否存在。
+    entrypoint: get_workspace_info
+    input_schema:
+      type: object
+      properties: {}

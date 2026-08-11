@@ -129,8 +129,8 @@ const deepThinkingButtonClass = computed(() => {
   return [
     actionButtonClass.value,
     props.deepThinkingEnabled
-      ? 'bg-violet-500/15 text-violet-700 ring-1 ring-violet-300 hover:bg-violet-500/20'
-      : 'text-gray-600 hover:bg-white/20 hover:text-violet-700',
+      ? 'bg-indigo-500/15 text-indigo-600 ring-1 ring-indigo-300/70 hover:bg-indigo-500/20'
+      : 'text-gray-600 hover:bg-white/20 hover:text-indigo-600',
   ]
 })
 
@@ -449,7 +449,7 @@ const handleBlur = (event: FocusEvent) => {
             :disabled="submitLoading"
             :class="[
               actionButtonClass,
-              'text-cyan-600 hover:bg-cyan-500/20 hover:text-cyan-700 disabled:opacity-50',
+              'text-indigo-600 hover:bg-indigo-500/15 hover:text-indigo-700 disabled:opacity-50',
             ]"
             :title="t('chat.composer.sendMessage')"
             :aria-label="t('chat.composer.sendMessage')"
@@ -474,23 +474,41 @@ const handleBlur = (event: FocusEvent) => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background:
-    linear-gradient(0deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.96)) padding-box,
-    linear-gradient(
-        135deg,
-        rgba(56, 189, 248, 0.36) 0%,
-        rgba(167, 139, 250, 0.3) 52%,
-        rgba(244, 114, 182, 0.36) 100%
-      )
-      border-box;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  border: 2px solid transparent;
+  background: var(--aicss-surface);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--aicss-border-strong);
+  position: relative;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.88),
-    inset 0 -1px 0 rgba(15, 23, 42, 0.04),
-    0 10px 28px rgba(14, 165, 233, 0.08);
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.03),
+    var(--aicss-shadow-card);
   transition: all 0.3s ease;
+}
+
+.chat-composer-shell::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--aicss-accent) 58%, transparent),
+    color-mix(in srgb, var(--aicss-violet) 44%, transparent),
+    transparent
+  );
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.chat-composer-shell > * {
+  position: relative;
+  z-index: 1;
 }
 
 .chat-composer-shell--compact {
@@ -504,26 +522,23 @@ const handleBlur = (event: FocusEvent) => {
 
 .chat-composer-shell:focus-within,
 .chat-composer-shell--focused {
-  background:
-    linear-gradient(0deg, rgba(255, 255, 255, 1), rgba(255, 255, 255, 1)) padding-box,
-    linear-gradient(135deg, #38bdf8 0%, #a78bfa 52%, #f472b6 100%) border-box;
+  background: var(--aicss-surface);
+  border-color: color-mix(in srgb, var(--aicss-accent) 55%, var(--aicss-border-strong));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.96),
     inset 0 -1px 0 rgba(15, 23, 42, 0.04),
-    0 0 0 4px rgba(125, 211, 252, 0.12),
-    0 14px 40px rgba(14, 165, 233, 0.1);
+    0 0 0 4px color-mix(in srgb, var(--aicss-accent) 10%, transparent),
+    var(--aicss-shadow-elevated);
 }
 
 .chat-composer-shell--drag-over {
-  background:
-    linear-gradient(0deg, rgba(255, 255, 255, 1), rgba(255, 255, 255, 1)) padding-box,
-    linear-gradient(135deg, rgba(14, 165, 233, 0.8) 0%, rgba(167, 139, 250, 0.5) 52%, rgba(244, 114, 182, 0.55) 100%)
-      border-box;
+  background: color-mix(in srgb, var(--aicss-accent-soft) 70%, var(--aicss-surface));
+  border-color: color-mix(in srgb, var(--aicss-accent) 62%, var(--aicss-border-strong));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.96),
     inset 0 -1px 0 rgba(15, 23, 42, 0.04),
-    0 0 0 4px rgba(14, 165, 233, 0.12),
-    0 18px 44px rgba(14, 165, 233, 0.14);
+    0 0 0 4px color-mix(in srgb, var(--aicss-accent) 12%, transparent),
+    var(--aicss-shadow-elevated);
 }
 
 .chat-composer-shell--breathing {
@@ -540,24 +555,24 @@ const handleBlur = (event: FocusEvent) => {
 }
 
 .chat-composer-clear-btn--active {
-  background: rgba(255, 255, 255, 0.4);
+  background: var(--aicss-surface-2);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  border-color: rgba(255, 255, 255, 0.6);
-  color: #4b5563;
+  border-color: var(--aicss-border);
+  color: var(--aicss-muted);
 }
 
 .chat-composer-clear-btn--active:hover {
-  background: rgba(255, 255, 255, 0.6);
-  color: #dc2626;
-  border-color: rgba(252, 165, 165, 0.65);
-  box-shadow: 0 8px 20px rgba(248, 113, 113, 0.16);
+  background: var(--aicss-danger-soft);
+  color: var(--aicss-danger);
+  border-color: color-mix(in srgb, var(--aicss-danger) 34%, var(--aicss-border));
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--aicss-danger) 12%, transparent);
 }
 
 .chat-composer-clear-btn--disabled {
-  background: rgba(255, 255, 255, 0.2);
-  border-color: rgba(255, 255, 255, 0.4);
-  color: #9ca3af;
+  background: var(--aicss-bg-subtle);
+  border-color: var(--aicss-border);
+  color: var(--aicss-subtle);
   cursor: not-allowed;
   opacity: 0.72;
 }
@@ -584,10 +599,10 @@ const handleBlur = (event: FocusEvent) => {
   margin: 0;
   border: 0;
   background: transparent;
-  color: #1f2937;
+  color: var(--aicss-text);
   resize: none;
   outline: none;
-  caret-color: #0ea5e9;
+  caret-color: var(--aicss-accent);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -609,7 +624,7 @@ const handleBlur = (event: FocusEvent) => {
 }
 
 .chat-composer-textarea::placeholder {
-  color: #9ca3af;
+  color: var(--aicss-subtle);
 }
 
 .chat-composer-textarea:focus {
@@ -626,20 +641,20 @@ const handleBlur = (event: FocusEvent) => {
 }
 
 .chat-composer-textarea::-webkit-scrollbar-thumb {
-  background: rgba(125, 211, 252, 0.3);
+  background: color-mix(in srgb, var(--aicss-accent) 26%, transparent);
   border-radius: 2px;
 }
 
 .chat-composer-textarea::-webkit-scrollbar-thumb:hover {
-  background: rgba(125, 211, 252, 0.5);
+  background: color-mix(in srgb, var(--aicss-accent) 42%, transparent);
 }
 
 .chat-composer-image {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(226, 232, 240, 0.85);
-  background: #f8fafc;
-  box-shadow: 0 6px 14px rgba(148, 163, 184, 0.14);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-bg-subtle);
+  box-shadow: var(--aicss-shadow-card);
 }
 
 .chat-composer-image-remove {
@@ -663,50 +678,26 @@ const handleBlur = (event: FocusEvent) => {
 
 @keyframes chat-composer-breathe {
   0% {
-    background:
-      linear-gradient(0deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.96)) padding-box,
-      linear-gradient(
-          135deg,
-          rgba(56, 189, 248, 0.36) 0%,
-          rgba(167, 139, 250, 0.3) 52%,
-          rgba(244, 114, 182, 0.36) 100%
-        )
-        border-box;
+    background: var(--aicss-surface);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.88),
       inset 0 -1px 0 rgba(15, 23, 42, 0.04),
-      0 10px 28px rgba(14, 165, 233, 0.08);
+      var(--aicss-shadow-card);
   }
   50% {
-    background:
-      linear-gradient(0deg, rgba(255, 255, 255, 1), rgba(255, 255, 255, 1)) padding-box,
-      linear-gradient(
-          135deg,
-          rgba(56, 189, 248, 0.54) 0%,
-          rgba(167, 139, 250, 0.42) 52%,
-          rgba(244, 114, 182, 0.5) 100%
-        )
-        border-box;
+    background: color-mix(in srgb, var(--aicss-accent-soft) 34%, var(--aicss-surface));
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.96),
       inset 0 -1px 0 rgba(15, 23, 42, 0.04),
-      0 0 0 5px rgba(125, 211, 252, 0.12),
-      0 14px 36px rgba(14, 165, 233, 0.1);
+      0 0 0 5px color-mix(in srgb, var(--aicss-accent) 8%, transparent),
+      var(--aicss-shadow-elevated);
   }
   100% {
-    background:
-      linear-gradient(0deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.96)) padding-box,
-      linear-gradient(
-          135deg,
-          rgba(56, 189, 248, 0.36) 0%,
-          rgba(167, 139, 250, 0.3) 52%,
-          rgba(244, 114, 182, 0.36) 100%
-        )
-        border-box;
+    background: var(--aicss-surface);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.88),
       inset 0 -1px 0 rgba(15, 23, 42, 0.04),
-      0 10px 28px rgba(14, 165, 233, 0.08);
+      var(--aicss-shadow-card);
   }
 }
 </style>

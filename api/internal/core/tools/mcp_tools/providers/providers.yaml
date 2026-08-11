@@ -304,3 +304,103 @@
   source_url: https://cloud.tencent.com/developer/mcp/server/10011
   created_at: 1779177600
   is_public: true
+- name: context7
+  label: Context7 文档检索 MCP
+  description: 官方托管的 Context7 MCP，适合检索最新代码文档与库知识，覆盖主流框架与语言。
+  icon: ""
+  background: "#E0E7FF"
+  category: coding
+  transport: streamable_http
+  command: ""
+  url: https://mcp.context7.com/mcp
+  headers: []
+  tool_names: []
+  args: []
+  env: {}
+  timeout_seconds: 30
+  source_type: catalog
+  source_key: "upstash/context7"
+  source_url: https://context7.com/docs/resources/all-clients
+  created_at: 1786508751
+  is_public: true
+- name: firecrawl
+  label: Firecrawl 网页抓取 MCP
+  description: 官方 Firecrawl MCP，适合网页抓取、站点爬取、搜索与结构化内容提取。
+  icon: ""
+  background: "#DCFCE7"
+  category: general
+  transport: streamable_http
+  command: ""
+  url: https://mcp.firecrawl.dev/v2/mcp
+  headers: []
+  tool_names: []
+  args: []
+  env: {}
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "firecrawl/firecrawl-mcp-server"
+  source_url: https://docs.firecrawl.dev/mcp-server/connect
+  created_at: 1786508751
+  is_public: true
+- name: exa
+  label: Exa 网络搜索 MCP
+  description: 官方 Exa MCP，适合高质量网络搜索、学术与代码检索。
+  icon: ""
+  background: "#FEF3C7"
+  category: general
+  transport: streamable_http
+  command: ""
+  url: https://mcp.exa.ai/mcp
+  headers: []
+  tool_names: []
+  args: []
+  env: {}
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "exa/exa-mcp"
+  source_url: https://exa.ai/docs/reference/exa-mcp
+  created_at: 1786508751
+  is_public: true
+- name: playwright-mcp
+  label: Playwright 浏览器 MCP
+  description: 官方 Playwright MCP，适合真实浏览器自动化、网页交互、截图与页面测试。
+  icon: ""
+  background: "#FEE2E2"
+  category: browser
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@playwright/mcp@latest"
+  env: {}
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "microsoft/playwright-mcp"
+  source_url: https://playwright.dev/mcp
+  created_at: 1786508751
+  is_public: true
+- name: filesystem-mcp
+  label: Filesystem 沙箱文件 MCP
+  description: 官方 Filesystem MCP，提供受限目录内的文件读写、搜索与目录操作能力。
+  icon: ""
+  background: "#E0F2FE"
+  category: general
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@modelcontextprotocol/server-filesystem"
+    - /app/api/storage
+  env: {}
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "modelcontextprotocol/servers"
+  source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
+  created_at: 1786508751
+  is_public: true

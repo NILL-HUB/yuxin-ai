@@ -100,13 +100,7 @@ const handleCardClick = async (conversation: RecentConversation) => {
       },
     })
   } else if (conversation.source_type === 'app_debugger' && conversation.app_id) {
-    await router.push({
-      path: `/space/apps/${conversation.app_id}`,
-      query: {
-        conversation_id: conversation.id,
-        message_id: conversation.message_id,
-      },
-    })
+    Message.info(t('chat.schedules.conversationNotOpenable'))
   }
   window.dispatchEvent(new CustomEvent('recent-conversations:hide'))
 }

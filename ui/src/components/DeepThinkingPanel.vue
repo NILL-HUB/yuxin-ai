@@ -123,15 +123,13 @@ watch(isFinished, (finished) => {
 .deep-thinking-panel {
   width: 100%;
   border-radius: 10px;
-  border: 1px solid rgba(139, 92, 246, 0.2);
-  background: linear-gradient(
-    135deg,
-    rgba(245, 243, 255, 0.9) 0%,
-    rgba(237, 233, 254, 0.7) 100%
-  );
-  backdrop-filter: blur(8px);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
+  box-shadow: var(--aicss-shadow-card);
   overflow: hidden;
-  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.08);
+  transition:
+    border-color 0.18s var(--aicss-ease),
+    box-shadow 0.18s var(--aicss-ease);
 }
 
 .deep-thinking-header {
@@ -146,13 +144,13 @@ watch(isFinished, (finished) => {
 }
 
 .deep-thinking-header:hover {
-  background-color: rgba(139, 92, 246, 0.06);
+  background-color: var(--aicss-surface-2);
 }
 
 .deep-thinking-label {
   font-size: 12px;
   font-weight: 500;
-  color: #6d28d9;
+  color: var(--aicss-accent-text);
 }
 
 /* 思考中脉冲动画圆点 */
@@ -161,7 +159,7 @@ watch(isFinished, (finished) => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: #8b5cf6;
+  background-color: var(--aicss-accent);
   flex-shrink: 0;
   animation: deep-thinking-breathe 1.2s ease-in-out infinite;
 }
@@ -170,12 +168,12 @@ watch(isFinished, (finished) => {
   0%, 100% {
     opacity: 1;
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--aicss-accent) 40%, transparent);
   }
   50% {
     opacity: 0.7;
     transform: scale(0.85);
-    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0);
+    box-shadow: 0 0 0 4px transparent;
   }
 }
 
@@ -183,7 +181,7 @@ watch(isFinished, (finished) => {
 .deep-thinking-content {
   padding: 0 12px 10px 12px;
   overflow-y: auto;
-  color: #4c1d95;
+  color: var(--aicss-text-2);
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   font-size: 11.5px;
   line-height: 1.65;

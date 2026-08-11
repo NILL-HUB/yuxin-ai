@@ -8,6 +8,7 @@ import { installArco } from '@/plugins/arco'
 
 import '@arco-design/web-vue/dist/arco.css'
 import '@/assets/styles/main.css'
+import '@/assets/styles/ai-chat-ui.css'
 
 const app = createApp(App)
 

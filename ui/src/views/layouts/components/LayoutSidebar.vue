@@ -299,7 +299,7 @@ const deleteRecentConversation = (conversation: RecentConversation) => {
       } else if (conversation.source_type === 'public_app' && conversation.app_id) {
         await router.replace({ path: `/store/public-apps/${conversation.app_id}/preview` })
       } else if (conversation.source_type === 'app_debugger' && conversation.app_id) {
-        await router.replace({ path: `/space/apps/${conversation.app_id}` })
+        await router.replace({ path: '/home' })
       }
     }
     await loadRecentConversations()

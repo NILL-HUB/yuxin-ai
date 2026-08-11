@@ -101,7 +101,7 @@ function animate() {
 </script>
 
 <template>
-  <div class="w-[700px] h-full relative overflow-hidden bg-[#fafeff] text-white flex items-center justify-center">
+  <div class="login-banner relative overflow-hidden bg-[#fafeff] text-white flex items-center justify-center">
     <!-- 交互粒子背景 -->
     <canvas id="particle-canvas" class="absolute inset-0 w-full h-full z-0" />
 
@@ -146,5 +146,25 @@ function animate() {
 }
 canvas {
   display: block;
+}
+
+.login-banner {
+  width: min(700px, 46vw);
+  height: 100%;
+}
+
+@media (max-width: 768px) {
+  .login-banner {
+    width: 100%;
+    height: 180px;
+  }
+
+  .login-banner h1 {
+    font-size: 24px;
+  }
+
+  .login-banner p {
+    font-size: 15px;
+  }
 }
 </style>

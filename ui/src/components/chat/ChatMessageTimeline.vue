@@ -102,17 +102,15 @@ defineExpose({ scrollToBottom })
           <ai-message
             :message_id="item.id"
             :enable_text_to_speech="props.textToSpeechEnable"
-            :agent_thoughts="item.agent_thoughts"
+            :agent_thoughts="item.agent_thoughts || []"
             :answer="item.answer"
             :answer_parts="item.answer_parts || []"
             :artifacts="item.artifacts || []"
             :app="props.app"
             :suggested_questions="item.suggested_questions || []"
             :loading="props.loading && item.id === props.messages[0]?.id"
-            :latency="item.latency"
-            :total_token_count="item.total_token_count"
-            :agent_thought_default_visible="false"
-            :agent_thought_follow_latest="false"
+            :latency="item.latency || 0"
+            :total_token_count="item.total_token_count || 0"
           />
         </div>
       </dynamic-scroller-item>

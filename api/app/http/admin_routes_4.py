@@ -13,6 +13,41 @@ from quart import request
 _registered = False
 
 
+async def _record_mutation_audit(
+    *,
+    action: str,
+    resource_type: str,
+    resource_id: str = "",
+    after_data: dict | None = None,
+) -> None:
+    """记录管理员关键写操作的审计日志（失败不影响主流程）。"""
+    try:
+        from app.http.admin_routes_6 import _get_operator_context
+        from app.http import asgi_app as a
+        from internal.service.audit_log_service import AuditLogService
+
+        operator_id, ip, user_agent = await _get_operator_context()
+        if not operator_id:
+            return
+        service = a._get_service(AuditLogService)
+        if service is None:
+            return
+        await a._to_thread(
+            service.record,
+            admin_user_id=operator_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            ip=ip,
+            user_agent=user_agent,
+            after_data=after_data or {},
+        )
+    except Exception:
+        from app.http import asgi_app as a
+
+        a.logger.warning("记录管理员审计日志失败: action=%s", action, exc_info=True)
+
+
 def register_routes(quart_app):
     global _registered
     if _registered:
@@ -56,6 +91,11 @@ def register_routes(quart_app):
         from internal.service.skill_service import SkillService
 
         await a._to_thread(a._get_service(SkillService).enable_skill_package, skill_id)
+        await _record_mutation_audit(
+            action="skill.enable",
+            resource_type="skill",
+            resource_id=str(skill_id),
+        )
         return a._ok_msg("启用技能包成功")
 
     @quart_app.post("/admin/skills/<uuid:skill_id>/disable")
@@ -67,6 +107,11 @@ def register_routes(quart_app):
         from internal.service.skill_service import SkillService
 
         await a._to_thread(a._get_service(SkillService).disable_skill_package, skill_id)
+        await _record_mutation_audit(
+            action="skill.disable",
+            resource_type="skill",
+            resource_id=str(skill_id),
+        )
         return a._ok_msg("停用技能包成功")
 
     @quart_app.post("/admin/skills/<uuid:skill_id>/sync")
@@ -78,6 +123,11 @@ def register_routes(quart_app):
         from internal.service.skill_service import SkillService
 
         await a._to_thread(a._get_service(SkillService).sync_skill_package, skill_id)
+        await _record_mutation_audit(
+            action="skill.sync",
+            resource_type="skill",
+            resource_id=str(skill_id),
+        )
         return a._ok_msg("同步技能包成功")
 
     @quart_app.post("/admin/skills/<uuid:skill_id>/rollback")
@@ -368,6 +418,11 @@ def register_routes(quart_app):
             config_json,
             overwrite=bool(data.get("overwrite", False)),
         )
+        await _record_mutation_audit(
+            action="mcp.import_mcp_json",
+            resource_type="mcp",
+            after_data={"count": len(result) if isinstance(result, list) else 0},
+        )
         return a._ok(result)
 
     @quart_app.post("/admin/mcp/preview-url")
@@ -430,6 +485,12 @@ def register_routes(quart_app):
             category=str(data.get("category") or "other"),
             icon=str(data.get("icon") or ""),
         )
+        await _record_mutation_audit(
+            action="mcp.import_url",
+            resource_type="mcp",
+            resource_id=str(provider.id),
+            after_data={"name": name, "url": url},
+        )
         return a._ok({"id": str(provider.id)})
 
     @quart_app.post("/admin/mcp/import-json")
@@ -453,6 +514,11 @@ def register_routes(quart_app):
             a._get_service(McpImportService).import_from_json,
             config_json,
             overwrite=bool(data.get("overwrite", False)),
+        )
+        await _record_mutation_audit(
+            action="mcp.import_json",
+            resource_type="mcp",
+            after_data={"count": len(result) if isinstance(result, list) else 0},
         )
         return a._ok(result)
 
@@ -498,6 +564,12 @@ def register_routes(quart_app):
             task_keywords=a._field(data.get("task_keywords") or []),
         )
         provider = await a._to_thread(a._get_service(McpService).create_mcp_provider, req)
+        await _record_mutation_audit(
+            action="mcp.create",
+            resource_type="mcp",
+            resource_id=str(provider.id),
+            after_data={"name": name, "transport": req.transport.data},
+        )
         return a._ok({"id": str(provider.id)})
 
     @quart_app.get("/admin/mcp/<uuid:provider_id>")
@@ -554,6 +626,12 @@ def register_routes(quart_app):
             task_keywords=a._field(data.get("task_keywords") or []),
         )
         await a._to_thread(a._get_service(McpService).update_mcp_provider_for_admin, provider_id, req)
+        await _record_mutation_audit(
+            action="mcp.update",
+            resource_type="mcp",
+            resource_id=str(provider_id),
+            after_data={"name": name},
+        )
         return a._ok_msg("更新MCP成功")
 
     @quart_app.post("/admin/mcp/<uuid:provider_id>/regenerate-icon")
@@ -576,6 +654,11 @@ def register_routes(quart_app):
         from internal.service.mcp_service import McpService
 
         await a._to_thread(a._get_service(McpService).publish_mcp_provider_for_admin, provider_id)
+        await _record_mutation_audit(
+            action="mcp.publish",
+            resource_type="mcp",
+            resource_id=str(provider_id),
+        )
         return a._ok_msg("发布MCP成功")
 
     @quart_app.post("/admin/mcp/<uuid:provider_id>/unpublish")
@@ -587,6 +670,11 @@ def register_routes(quart_app):
         from internal.service.mcp_service import McpService
 
         await a._to_thread(a._get_service(McpService).unpublish_mcp_provider_for_admin, provider_id)
+        await _record_mutation_audit(
+            action="mcp.unpublish",
+            resource_type="mcp",
+            resource_id=str(provider_id),
+        )
         return a._ok_msg("取消发布MCP成功")
 
     @quart_app.delete("/admin/mcp/<uuid:provider_id>")
@@ -604,5 +692,10 @@ def register_routes(quart_app):
             provider_id,
             retention_days=retention_days,
             deleted_by=None,
+        )
+        await _record_mutation_audit(
+            action="mcp.delete",
+            resource_type="mcp",
+            resource_id=str(provider_id),
         )
         return a._ok_msg("删除MCP成功")

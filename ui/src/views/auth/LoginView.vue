@@ -5,7 +5,7 @@ import LoginForm from './components/LoginForm.vue'
 
 <template>
   <!-- 页面容器 -->
-  <div class="flex h-screen bg-white">
+  <div class="flex h-screen bg-white login-page">
     <!-- 左侧banner -->
     <login-banner />
     <!-- 右侧表单 -->
@@ -16,4 +16,15 @@ import LoginForm from './components/LoginForm.vue'
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+@media (max-width: 768px) {
+  .login-page {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .login-page > :last-child {
+    padding: 24px 16px;
+  }
+}
+</style>

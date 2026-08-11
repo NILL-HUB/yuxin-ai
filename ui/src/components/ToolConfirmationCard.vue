@@ -14,7 +14,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const cancelButtonRef = ref<{ $el?: HTMLElement } | null>(null)
+const cancelButtonRef = ref<HTMLElement | { $el?: HTMLElement } | null>(null)
 
 const riskColor = computed(() => {
   switch (props.prompt.risk_level) {
@@ -56,7 +56,13 @@ const optionalMetaRows = computed(() => {
 })
 
 onMounted(() => {
-  cancelButtonRef.value?.$el?.focus()
+  const element = cancelButtonRef.value
+  if (!element) return
+  if (element instanceof HTMLElement) {
+    element.focus()
+    return
+  }
+  element.$el?.focus()
 })
 
 const handleConfirm = () => emit('confirm', props.prompt.id)
@@ -64,38 +70,179 @@ const handleCancel = () => emit('cancel', props.prompt.id)
 </script>
 
 <template>
-  <div class="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-gray-800 shadow-sm">
-    <div class="mb-3 flex items-center justify-between gap-2">
-      <span class="font-semibold text-orange-900">{{ t('toolConfirmation.title') }}</span>
-      <span class="flex items-center gap-1.5">
-        <span class="text-gray-500">{{ t('toolConfirmation.riskLevel') }}</span>
-        <a-tag :color="riskColor" size="small">{{ props.prompt.risk_level }}</a-tag>
+  <div
+    class="aicss-tool-confirm"
+    :class="`aicss-tool-confirm--${props.prompt.risk_level || 'low'}`"
+  >
+    <div class="aicss-tool-confirm__head">
+      <span class="aicss-tool-confirm__title">{{ t('toolConfirmation.title') }}</span>
+      <span class="aicss-tool-confirm__risk">
+        <span class="aicss-tool-confirm__risk-label">{{ t('toolConfirmation.riskLevel') }}</span>
+        <span class="aicss-tool-confirm__risk-value">{{ props.prompt.risk_level }}</span>
       </span>
     </div>
 
-    <div class="mb-1.5 break-all font-medium text-gray-900">{{ props.prompt.tool_name }}</div>
-    <div class="mb-3 text-gray-700">
-      <span class="font-semibold text-gray-900">{{ props.prompt.spent_credits }}</span>
-      <span class="ml-1">{{ t('billing.usage.unit') }}</span>
+    <div class="aicss-tool-confirm__tool">{{ props.prompt.tool_name }}</div>
+    <div class="aicss-tool-confirm__cost">
+      <span class="aicss-tool-confirm__cost-value">{{ props.prompt.spent_credits }}</span>
+      <span>{{ t('billing.usage.unit') }}</span>
     </div>
 
-    <dl v-if="optionalMetaRows.length > 0" class="mb-3 space-y-1.5">
-      <div v-for="row in optionalMetaRows" :key="row.label" class="flex gap-2 text-gray-700">
-        <dt class="w-24 shrink-0 text-gray-500">{{ row.label }}</dt>
-        <dd class="flex-1 break-words">{{ row.value }}</dd>
+    <dl v-if="optionalMetaRows.length > 0" class="aicss-tool-confirm__meta">
+      <div v-for="row in optionalMetaRows" :key="row.label" class="aicss-tool-confirm__meta-row">
+        <dt class="aicss-tool-confirm__meta-label">{{ row.label }}</dt>
+        <dd class="aicss-tool-confirm__meta-value">{{ row.value }}</dd>
       </div>
     </dl>
 
-    <div class="mb-1 text-gray-500">{{ t('toolConfirmation.toolInput') }}</div>
-    <pre class="mb-4 max-h-40 overflow-auto rounded-lg bg-white/70 p-3 text-xs text-gray-600">{{ props.prompt.tool_input }}</pre>
+    <div class="aicss-tool-confirm__input-label">{{ t('toolConfirmation.toolInput') }}</div>
+    <pre class="aicss-tool-confirm__input">{{ props.prompt.tool_input }}</pre>
 
-    <div class="flex justify-end gap-2">
-      <a-button ref="cancelButtonRef" data-test="tool-cancel" @click="handleCancel">
+    <div class="aicss-tool-confirm__actions">
+      <button ref="cancelButtonRef" type="button" class="aicss-btn aicss-btn--secondary" data-test="tool-cancel" @click="handleCancel">
         {{ t('toolConfirmation.cancel') }}
-      </a-button>
-      <a-button type="primary" status="danger" data-test="tool-confirm" @click="handleConfirm">
+      </button>
+      <button type="button" class="aicss-btn aicss-btn--danger" data-test="tool-confirm" @click="handleConfirm">
         {{ t('toolConfirmation.confirm') }}
-      </a-button>
+      </button>
     </div>
   </div>
 </template>
+
+<style scoped>
+.aicss-tool-confirm {
+  width: 100%;
+  max-width: 560px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--aicss-surface);
+  border: 1px solid var(--aicss-border);
+  box-shadow: var(--aicss-shadow-card);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--aicss-text);
+}
+
+.aicss-tool-confirm--high,
+.aicss-tool-confirm--sensitive {
+  border-color: color-mix(in srgb, var(--aicss-danger) 32%, var(--aicss-border));
+}
+
+.aicss-tool-confirm--medium {
+  border-color: color-mix(in srgb, var(--aicss-warning) 32%, var(--aicss-border));
+}
+
+.aicss-tool-confirm__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.aicss-tool-confirm__title {
+  font-weight: 650;
+  color: var(--aicss-text);
+}
+
+.aicss-tool-confirm__risk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.aicss-tool-confirm__risk-label {
+  color: var(--aicss-muted);
+}
+
+.aicss-tool-confirm__risk-value {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--aicss-surface-2);
+  border: 1px solid var(--aicss-border);
+  color: var(--aicss-text-2);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.aicss-tool-confirm--high .aicss-tool-confirm__risk-value,
+.aicss-tool-confirm--sensitive .aicss-tool-confirm__risk-value {
+  background: var(--aicss-danger-soft);
+  border-color: color-mix(in srgb, var(--aicss-danger) 26%, transparent);
+  color: var(--aicss-danger);
+}
+
+.aicss-tool-confirm--medium .aicss-tool-confirm__risk-value {
+  background: var(--aicss-warning-soft);
+  border-color: color-mix(in srgb, var(--aicss-warning) 26%, transparent);
+  color: var(--aicss-warning);
+}
+
+.aicss-tool-confirm__tool {
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: var(--aicss-text);
+  overflow-wrap: anywhere;
+}
+
+.aicss-tool-confirm__cost {
+  margin-bottom: 12px;
+  color: var(--aicss-muted);
+}
+
+.aicss-tool-confirm__cost-value {
+  font-weight: 650;
+  color: var(--aicss-accent-text);
+  margin-right: 2px;
+}
+
+.aicss-tool-confirm__meta {
+  margin: 0 0 12px;
+}
+
+.aicss-tool-confirm__meta-row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.aicss-tool-confirm__meta-label {
+  flex: none;
+  width: 96px;
+  color: var(--aicss-muted);
+}
+
+.aicss-tool-confirm__meta-value {
+  min-width: 0;
+  color: var(--aicss-text-2);
+  overflow-wrap: anywhere;
+}
+
+.aicss-tool-confirm__input-label {
+  margin-bottom: 6px;
+  color: var(--aicss-muted);
+}
+
+.aicss-tool-confirm__input {
+  margin: 0 0 14px;
+  max-height: 160px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--aicss-bg-subtle);
+  border: 1px solid var(--aicss-border);
+  color: var(--aicss-text-2);
+  font-family: var(--aicss-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.aicss-tool-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>

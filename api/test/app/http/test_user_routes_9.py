@@ -1032,17 +1032,11 @@ class TestPublicAppRoutes:
         assert resp.status_code == 200
         assert "tags" in payload["data"]
 
-    def test_get_public_app_a2a_card(self, monkeypatch):
-        _, _, a2a_service = self._setup(monkeypatch)
+    def test_public_app_a2a_card_route_is_not_registered(self, monkeypatch):
+        self._setup(monkeypatch)
 
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/public/apps/{uuid4()}/a2a/agent-card")
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["data"]["agentCard"]["name"] == "agent"
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/public/apps/<string:app_id>/a2a/agent-card" not in rules
 
     def test_send_public_app_a2a_message_sse(self, monkeypatch):
         _, _, a2a_service = self._setup(monkeypatch)
@@ -1075,19 +1069,11 @@ class TestPublicAppRoutes:
         assert resp.status_code == 200
         assert payload["data"][0]["id"] == "msg-1"
 
-    def test_get_latest_public_app_a2a_conversation(self, monkeypatch):
-        _, _, a2a_service = self._setup(monkeypatch)
+    def test_public_app_latest_conversation_route_is_not_registered(self, monkeypatch):
+        self._setup(monkeypatch)
 
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(
-                    f"/public/apps/{uuid4()}/a2a/conversations/latest"
-                )
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["data"]["conversation_id"] == "conv-1"
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/public/apps/<string:app_id>/a2a/conversations/latest" not in rules
 
     def test_share_app_to_square(self, monkeypatch):
         _, app_service, _ = self._setup(monkeypatch)
@@ -1309,18 +1295,11 @@ class TestShowcaseRoutes:
         assert len(payload["data"]["list"]) == 1
         assert service.calls[0][0] == "list"
 
-    def test_get_case(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-        case_id = uuid4()
+    def test_showcase_case_detail_route_is_not_registered(self, monkeypatch):
+        self._setup(monkeypatch)
 
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/showcase/cases/{case_id}?account_id={uuid4()}")
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["data"]["status"] == "approved"
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/showcase/cases/<uuid:case_id>" not in rules
 
     def test_admin_list_cases(self, monkeypatch):
         _, service = self._setup(monkeypatch)

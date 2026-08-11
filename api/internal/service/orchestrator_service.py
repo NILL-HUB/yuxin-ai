@@ -68,6 +68,8 @@ class OrchestratorService:
         ctx = self.request_context_builder.build(query, **context) if self.request_context_builder is not None else SimpleNamespace(
             query=query,
             routing_log_id=context.get("routing_log_id"),
+            conversation_id=context.get("conversation_id"),
+            message_id=context.get("message_id"),
             budget_allowed=bool(context.get("budget_allowed", True)),
             account_id=context.get("account_id"),
             budget_level=context.get("budget_level", "normal"),
@@ -85,6 +87,7 @@ class OrchestratorService:
                         account_id=ctx.account_id,
                         user_query=ctx.query,
                         invoke_from=context.get("invoke_from"),
+                        message_id=ctx.message_id,
                     )
                     routing_log_id = routing_log.id
                     routing_log_created = True
@@ -174,6 +177,7 @@ class OrchestratorService:
                     agent_subset = decision.agent_subset or {}
                     tool_subset = decision.tool_subset or {}
                     latency_ms = int((time.monotonic() - start_time) * 1000)
+                    cost_policy = decision.cost_policy or {}
                     self.routing_log_service.finalize(
                         routing_log_id,
                         routing_decision=decision.to_dict(),
@@ -183,6 +187,28 @@ class OrchestratorService:
                         filtered_out_tools=tool_subset.get("filtered_out_tools", []),
                         knowledge_hits=[],
                         billing_events=decision.billing_events or [],
+                        task_classification={
+                            "intent": decision.intent,
+                            "complexity": decision.complexity,
+                            "execution_mode": decision.execution_mode,
+                            "risk_level": decision.risk_level,
+                            "needs_tools": decision.needs_tools,
+                            "needs_agent": decision.needs_agent,
+                            "needs_multi_agent": decision.needs_multi_agent,
+                            "needs_deep_thinking": decision.needs_deep_thinking,
+                        },
+                        model_selection={
+                            "model_tier": decision.recommended_model_tier,
+                            "cost_policy_allowed": bool(cost_policy.get("allowed", True)),
+                            "cost_policy": cost_policy,
+                        },
+                        cost_summary={
+                            "estimated_credits": 0,
+                            "billing_events_count": len(decision.billing_events or []),
+                            "budget_level": ctx.budget_level,
+                            "balance_credits": ctx.balance_credits,
+                        },
+                        key_usage={},
                         status="success",
                         agent_pool_hits=agent_subset.get("selected_agents", []) if isinstance(agent_subset, dict) else [],
                         tool_pool_hits=tool_subset.get("selected_tools", []) if isinstance(tool_subset, dict) else [],
@@ -190,6 +216,8 @@ class OrchestratorService:
                     )
                 except Exception:
                     logger.warning("更新 routing_log 记录失败", exc_info=True)
+            if routing_log_id is not None:
+                decision.routing_log_id = str(routing_log_id)
             return decision
         except Exception as exc:
             logger.warning("调度决策失败，回退到原 Assistant Agent 流程: %s", exc)
@@ -207,7 +235,7 @@ class OrchestratorService:
                     )
                 except Exception:
                     logger.warning("更新 routing_log fallback 记录失败", exc_info=True)
-            return RoutingDecision(
+            fallback_decision = RoutingDecision(
                 intent="fallback",
                 complexity="unknown",
                 execution_mode=ExecutionMode.DIRECT_ANSWER.value,
@@ -230,6 +258,9 @@ class OrchestratorService:
                 task_plan_summary=self._safe_task_plan_summary(),
                 synthesis_summary=self._empty_synthesis_summary(),
             )
+            if routing_log_id is not None:
+                fallback_decision.routing_log_id = str(routing_log_id)
+            return fallback_decision
 
     def _feature_disabled_decision(self) -> RoutingDecision:
         return RoutingDecision(

@@ -112,6 +112,7 @@ describe('AiMessage.vue', () => {
 
   it('renders the deep agent timeline when deep step thoughts exist', () => {
     const wrapper = mountAiMessage({
+      show_technical_details: true,
       agent_thoughts: [
         {
           id: 'step-1',
@@ -140,6 +141,7 @@ describe('AiMessage.vue', () => {
     const wrapper = mountAiMessage({
       answer: '',
       answer_parts: [],
+      show_technical_details: true,
       agent_thoughts: [
         {
           id: 'artifact-1',
@@ -167,6 +169,7 @@ describe('AiMessage.vue', () => {
 
   it('falls back to the legacy deep thinking panel when only deep_thinking exists', () => {
     const wrapper = mountAiMessage({
+      show_technical_details: true,
       agent_thoughts: [
         {
           id: 'deep-1',
@@ -179,6 +182,33 @@ describe('AiMessage.vue', () => {
 
     expect(wrapper.find('.deep-thinking-panel').exists()).toBe(true)
     expect(wrapper.text()).toContain('先分析约束，再拆解步骤')
+  })
+
+  it('shows reasoning details and metrics by default on user-facing surfaces', () => {
+    const wrapper = mountAiMessage({
+      latency: 1.8,
+      total_token_count: 123,
+      agent_thoughts: [
+        {
+          id: 'step-1',
+          event: QueueEvent.deepStep,
+          thought: '内部推理步骤',
+          tool: 'write_todos',
+          tool_input: {
+            timeline: {
+              step_type: 'plan',
+              status: 'success',
+              title: '拆解任务',
+              detail: '内部推理步骤',
+            },
+          },
+        },
+      ],
+    })
+
+    expect(wrapper.find('.deep-agent-timeline').exists()).toBe(true)
+    expect(wrapper.text()).toContain('123')
+    expect(wrapper.text()).toContain('1.80')
   })
 
   it('renders image and artifact parts from the unified multimodal output protocol', async () => {

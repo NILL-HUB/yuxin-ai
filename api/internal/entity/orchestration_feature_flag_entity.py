@@ -105,7 +105,7 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             code="ENABLE_ROUTING_LOGS",
             name="Routing logs",
             description="Enable detailed routing log payload generation",
-            enabled=False,
+            enabled=True,
             risk_level="medium",
             fallback_behavior="skip_routing_log_payload",
         ),

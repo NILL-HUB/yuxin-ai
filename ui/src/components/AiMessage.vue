@@ -16,6 +16,8 @@ import AgentThought from './AgentThought.vue'
 import ChatImageGallery from './ChatImageGallery.vue'
 import DeepAgentTimeline from './DeepAgentTimeline.vue'
 import DeepThinkingPanel from './DeepThinkingPanel.vue'
+import AiThinkingState from './ai-chat-ui/AiThinkingState.vue'
+import AiStreamingText from './ai-chat-ui/AiStreamingText.vue'
 import { QueueEvent } from '@/config'
 import 'github-markdown-css'
 import 'highlight.js/styles/github.css'
@@ -72,6 +74,7 @@ const props = defineProps({
   always_show_actions: { type: Boolean, default: false, required: false },
   audio_stream_id: { type: String, default: '', required: false },
   invoke_from: { type: String, default: '', required: false },
+  show_technical_details: { type: Boolean, default: true, required: false },
 })
 const emits = defineEmits(['selectSuggestedQuestion'])
 const { t } = useI18n()
@@ -296,19 +299,19 @@ const handleMarkdownClick = async (event: MouseEvent) => {
       </div>
       <!-- 深度思考面板（在推理步骤之前单独展示） -->
       <deep-agent-timeline
-        v-if="deepTimelineThoughts.length > 0"
+        v-if="props.show_technical_details && deepTimelineThoughts.length > 0"
         :thoughts="deepTimelineThoughts"
         :loading="props.loading"
       />
       <deep-thinking-panel
-        v-else-if="legacyDeepThinkingThought"
+        v-else-if="props.show_technical_details && legacyDeepThinkingThought"
         :thought="String(legacyDeepThinkingThought.thought ?? '')"
         :latency="Number(legacyDeepThinkingThought.latency ?? 0)"
         :loading="props.loading"
       />
       <!-- 推理步骤 -->
       <agent-thought
-        v-if="props.show_agent_thought"
+        v-if="props.show_technical_details && props.show_agent_thought"
         :agent_thoughts="props.agent_thoughts"
         :loading="props.loading"
         :message_id="props.message_id"
@@ -320,28 +323,33 @@ const handleMarkdownClick = async (event: MouseEvent) => {
         <!-- 正在思考角标提示（仅无思考框时显示，避免与 AgentThought 重复） -->
         <div
           v-if="props.loading && !hasRenderableAnswer && !hasThoughtContent"
-          class="inline-flex items-center gap-1.5 self-start px-2.5 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-medium"
+          class="aicss-message-thinking self-start"
         >
-          <icon-loading class="text-[12px]" />
-          {{ t('chat.thought.thinking') }}
+          <ai-thinking-state :label="t('chat.thought.thinking')" compact />
         </div>
         <!-- AI消息（仅在无思考框且无答案时显示加载动画，避免与思考框重复） -->
         <div
           v-if="props.loading && !hasRenderableAnswer && !hasThoughtContent"
-          class="message-bubble-content glass-message-bubble px-4 py-3 rounded-2xl break-all transition-all duration-300"
+          class="message-bubble-content glass-message-bubble aicss-message-bubble aicss-message-bubble--loading"
         >
-          <dot-flashing />
+          <dot-flashing class="aicss-dot-flashing" />
         </div>
         <template v-else>
           <template v-for="part in renderedTextParts" :key="part.key">
             <div
               :class="[
-                'message-bubble-content glass-message-bubble markdown-body px-4 py-3 rounded-2xl break-all transition-all duration-300',
+                'message-bubble-content glass-message-bubble markdown-body aicss-message-bubble transition-all duration-300',
                 isCurrentPlaying ? 'ai-message-playing' : '',
               ]"
-              v-html="part.html"
               @click="handleMarkdownClick"
-            ></div>
+            >
+              <div class="aicss-message-bubble__body" v-html="part.html"></div>
+              <ai-streaming-text
+                v-if="props.loading && props.answer"
+                :text="props.answer"
+                :streaming="true"
+              />
+            </div>
           </template>
           <chat-image-gallery
             v-if="galleryImages.length > 0"
@@ -371,7 +379,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
         <!-- 消息展示与操作 -->
         <div class="flex items-center justify-between gap-3">
           <!-- 消息数据额外展示 -->
-          <a-space class="text-xs">
+          <a-space v-if="props.show_technical_details" class="text-xs">
             <template #split>
               <a-divider direction="vertical" class="m-0" />
             </template>
@@ -434,6 +442,67 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   overflow: hidden;
 }
 
+.aicss-message-bubble {
+  border-radius: 12px !important;
+  box-shadow: var(--aicss-shadow-card) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%) !important;
+  border: 1px solid var(--aicss-border-strong) !important;
+  padding: 18px 20px !important;
+  color: var(--aicss-text) !important;
+  overflow-wrap: anywhere !important;
+}
+
+.aicss-message-bubble--loading {
+  min-height: 44px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  padding: 14px 18px !important;
+}
+
+.aicss-message-bubble__body {
+  min-width: 0 !important;
+  color: var(--aicss-text) !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+
+.aicss-message-bubble__body :deep(p),
+.aicss-message-bubble__body :deep(ul),
+.aicss-message-bubble__body :deep(ol),
+.aicss-message-bubble__body :deep(pre),
+.aicss-message-bubble__body :deep(blockquote) {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.aicss-message-bubble__body :deep(pre) {
+  overflow-x: auto;
+}
+
+.aicss-message-bubble__body :deep(code) {
+  overflow-wrap: anywhere;
+}
+
+.aicss-message-thinking {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--aicss-accent-soft);
+  color: var(--aicss-accent-text);
+}
+
+.aicss-message-reasoning-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.aicss-dot-flashing {
+  --dot-color: var(--aicss-accent);
+}
+
 .message-bubble-content {
   width: fit-content;
   max-width: min(600px, 100%);
@@ -482,56 +551,32 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .glass-message-bubble::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 100%);
-  pointer-events: none;
+  content: none;
 }
 
 .glass-message-bubble:hover {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, rgba(240, 248, 255, 0.45) 100%);
-  border-color: rgba(255, 255, 255, 0.85);
-  box-shadow:
-    0 12px 40px rgba(186, 230, 253, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 1),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+  border-color: #b9c6dd;
+  box-shadow: var(--aicss-shadow-elevated);
 }
 
 .glass-suggestion-bubble {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(240, 248, 255, 0.4) 100%);
-  backdrop-filter: blur(25px);
-  -webkit-backdrop-filter: blur(25px);
-  border: 1.2px solid rgba(255, 255, 255, 0.65);
-  box-shadow:
-    0 6px 24px rgba(186, 230, 253, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.04);
+  background: var(--aicss-surface) !important;
+  border: 1px solid var(--aicss-border-strong) !important;
+  box-shadow: var(--aicss-shadow-card) !important;
+  padding: 10px 14px !important;
+  color: var(--aicss-text-2) !important;
   position: relative;
   overflow: hidden;
 }
 
 .glass-suggestion-bubble::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0) 100%);
-  pointer-events: none;
+  content: none;
 }
 
 .glass-suggestion-bubble:hover {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(240, 248, 255, 0.5) 100%);
-  border-color: rgba(255, 255, 255, 0.8);
-  box-shadow:
-    0 8px 32px rgba(186, 230, 253, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06);
+  border-color: #b9c6dd !important;
+  background: #f5f8ff !important;
+  box-shadow: var(--aicss-shadow-elevated) !important;
 }
 
 :deep(.markdown-body) {

@@ -76,3 +76,32 @@ def test_quality_metrics_should_calculate_aggregate_values():
     assert metrics["quality_by_agent_pool"]["research"]["avg_rating"] == 3
     assert metrics["quality_by_tool_pool"]["browser"]["count"] == 1
     assert metrics["quality_by_model"]["premium"]["avg_rating"] == 3
+
+
+def test_quality_metrics_should_derive_pool_hits_when_decision_subset_missing():
+    log = _routing_log(
+        routing_decision={
+            "intent": "qa",
+            "recommended_model_tier": "cheap",
+            "agent_subset": {},
+            "tool_subset": {},
+        },
+        agent_pool_hits=[
+            {"metadata": {"primary_pool": "research"}},
+            {"pool": "general"},
+        ],
+        tool_pool_hits=[
+            {"metadata": {"tool_pool": "builtin"}},
+            {"source_type": "knowledge"},
+        ],
+    )
+
+    metrics = RoutingQualityMetricsService().build_metrics(
+        routing_logs=[log],
+        feedback_items=[],
+    )
+
+    assert metrics["quality_by_agent_pool"]["research"]["count"] == 1
+    assert metrics["quality_by_agent_pool"]["general"]["count"] == 1
+    assert metrics["quality_by_tool_pool"]["builtin"]["count"] == 1
+    assert metrics["quality_by_tool_pool"]["knowledge"]["count"] == 1

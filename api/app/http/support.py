@@ -153,6 +153,12 @@ def _sse_response(generator):
                 return next(gen)
             except StopIteration:
                 return None
+            finally:
+                from internal.extension.database_extension import db
+
+                remove_session = getattr(db.session, "remove", None)
+                if callable(remove_session):
+                    remove_session()
 
     async def _stream():
         last_activity = time.monotonic()
@@ -285,7 +291,7 @@ async def _resolve_account(account_id_override: str | None = None):
             from internal.service.admin_user_service import AdminUserService
 
             admin = await _to_thread(
-                AdminUserService().get_current_admin_from_token, token
+                _get_service(AdminUserService).get_current_admin_from_token, token
             )
             if not admin:
                 return None, _err("unauthorized", "管理员凭证无效", 401)
@@ -335,6 +341,9 @@ _USER_API_BLOCKED_PREFIXES = (
     "/ai/chat",
     "/ai/openapi-schema-chat",
     "/ai/mcp-schema-chat",
+    "/api/async/chat/completion",
+    "/async/chat/completion",
+    "/upload-files/file",
 )
 
 # 资源管理接口的用户域版本已无 UI 消费；写操作与只读 GET 一律拒绝普通用户 JWT。
@@ -367,15 +376,21 @@ def _is_user_api_blocked(path: str, method: str = "GET") -> bool:
     ):
         return True
 
+    if normalized.startswith("/conversations/") and (
+        "/variables" in normalized or normalized.endswith("/is-pinned")
+    ):
+        return True
+    if normalized.startswith("/tool-confirmations") and not (
+        normalized.endswith("/confirm") or normalized.endswith("/cancel")
+    ):
+        return True
+
     write_method = str(method or "GET").upper()
     if write_method == "GET":
         return any(
             normalized == prefix or normalized.startswith(prefix + "/")
             for prefix in _USER_API_BLOCKED_READ_PREFIXES
         )
-    # /workflows/import 是 admin 导入复用的唯一写接口，保留
-    if normalized.startswith("/workflows/import"):
-        return False
     return any(
         normalized == prefix or normalized.startswith(prefix + "/")
         for prefix in _USER_API_BLOCKED_WRITE_PREFIXES
@@ -407,7 +422,14 @@ def _to_thread(fn, *args, **kwargs):
 
     def _run_in_context():
         with flask_app.app_context():
-            return request_context.run(fn, *args, **kwargs)
+            try:
+                return request_context.run(fn, *args, **kwargs)
+            finally:
+                from internal.extension.database_extension import db
+
+                remove_session = getattr(db.session, "remove", None)
+                if callable(remove_session):
+                    remove_session()
 
     return asyncio.to_thread(_run_in_context)
 

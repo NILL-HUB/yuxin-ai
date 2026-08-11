@@ -765,7 +765,7 @@ onUnmounted(() => {
       <div class="space-apps-debug-chat__surface h-full min-h-0 flex flex-col overflow-hidden">
         <!-- 路由决策信息 -->
         <div
-          v-if="routingDecision || orchestratorReject"
+          v-if="props.adminMode && (routingDecision || orchestratorReject)"
           class="flex-shrink-0 px-6 pt-4"
         >
           <RoutingDecisionCard
@@ -828,6 +828,7 @@ onUnmounted(() => {
                     :loading="item.id === message_id && debugChatLoading"
                     :latency="item.latency"
                     :total_token_count="item.total_token_count"
+                    :show_technical_details="props.adminMode"
                     :agent_thought_default_visible="false"
                     :agent_thought_follow_latest="false"
                     @select-suggested-question="handleSubmitQuestion"

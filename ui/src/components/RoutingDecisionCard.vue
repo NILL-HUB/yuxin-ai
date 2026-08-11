@@ -42,71 +42,158 @@ const summary = computed(() => {
     <!-- 路由决策信息 -->
     <div
       v-if="summary"
-      class="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-3 text-xs text-gray-700"
+      class="aicss-routing-card"
     >
-      <div class="mb-1 font-medium text-gray-900">路由决策</div>
-      <div class="flex flex-wrap gap-x-4 gap-y-1">
-        <span><span class="text-gray-500">意图：</span>{{ summary.intent }}</span>
-        <span><span class="text-gray-500">执行模式：</span>{{ summary.execution_mode }}</span>
-        <span><span class="text-gray-500">复杂度：</span>{{ summary.complexity }}</span>
-        <span><span class="text-gray-500">推荐档位：</span>{{ summary.recommended_model_tier }}</span>
-        <span><span class="text-gray-500">风险等级：</span>{{ summary.risk_level }}</span>
+      <div class="aicss-routing-card__title">路由决策</div>
+      <div class="aicss-routing-card__grid">
+        <span class="aicss-routing-card__item"><span class="aicss-routing-card__label">意图：</span>{{ summary.intent }}</span>
+        <span class="aicss-routing-card__item"><span class="aicss-routing-card__label">执行模式：</span>{{ summary.execution_mode }}</span>
+        <span class="aicss-routing-card__item"><span class="aicss-routing-card__label">复杂度：</span>{{ summary.complexity }}</span>
+        <span class="aicss-routing-card__item"><span class="aicss-routing-card__label">推荐档位：</span>{{ summary.recommended_model_tier }}</span>
+        <span class="aicss-routing-card__item"><span class="aicss-routing-card__label">风险等级：</span>{{ summary.risk_level }}</span>
         <span v-if="summary.needs_deep_thinking">
-          <span class="text-gray-500">深度思考：</span>是
+          <span class="aicss-routing-card__label">深度思考：</span>是
         </span>
         <span v-if="summary.cost_allowed !== null">
-          <span class="text-gray-500">成本策略：</span>
-          <a-tag :color="summary.cost_allowed ? 'green' : 'red'" size="small">
+          <span class="aicss-routing-card__label">成本策略：</span>
+          <span class="aicss-routing-card__pill" :class="summary.cost_allowed ? 'aicss-routing-card__pill--ok' : 'aicss-routing-card__pill--no'">
             {{ summary.cost_allowed ? '允许' : '拒绝' }}
-          </a-tag>
+          </span>
         </span>
         <span v-if="summary.max_agent_count !== null">
-          <span class="text-gray-500">最大Agent：</span>{{ summary.max_agent_count }}
+          <span class="aicss-routing-card__label">最大Agent：</span>{{ summary.max_agent_count }}
         </span>
         <span v-if="summary.max_tool_count !== null">
-          <span class="text-gray-500">最大工具：</span>{{ summary.max_tool_count }}
+          <span class="aicss-routing-card__label">最大工具：</span>{{ summary.max_tool_count }}
         </span>
       </div>
       <div
         v-if="summary.selected_agents.length > 0"
-        class="mt-1 flex flex-wrap items-center gap-1"
+        class="aicss-routing-card__tags"
       >
-        <span class="text-gray-500">选中Agent：</span>
-        <a-tag
+        <span class="aicss-routing-card__label">选中Agent：</span>
+        <span
           v-for="agent in summary.selected_agents"
           :key="agent"
-          size="small"
-          color="arcoblue"
+          class="aicss-routing-card__tag"
         >
           {{ agent }}
-        </a-tag>
+        </span>
       </div>
       <div
         v-if="summary.selected_tools.length > 0"
-        class="mt-1 flex flex-wrap items-center gap-1"
+        class="aicss-routing-card__tags"
       >
-        <span class="text-gray-500">选中工具：</span>
-        <a-tag
+        <span class="aicss-routing-card__label">选中工具：</span>
+        <span
           v-for="tool in summary.selected_tools"
           :key="tool"
-          size="small"
-          color="cyan"
+          class="aicss-routing-card__tag"
         >
           {{ tool }}
-        </a-tag>
+        </span>
       </div>
     </div>
 
     <!-- 编排拒绝提示 -->
     <div
       v-if="reject"
-      class="rounded-lg border border-red-200 bg-red-50/80 px-4 py-3 text-xs text-gray-700"
+      class="aicss-routing-card aicss-routing-card--reject"
     >
-      <div class="mb-1 font-medium text-red-900">编排拒绝</div>
-      <div v-if="reject.message" class="break-words text-gray-800">{{ reject.message }}</div>
-      <div v-if="reject.reason && reject.reason !== reject.message" class="mt-0.5 break-words text-gray-500">
+      <div class="aicss-routing-card__title">编排拒绝</div>
+      <div v-if="reject.message" class="aicss-routing-card__reject-message">{{ reject.message }}</div>
+      <div v-if="reject.reason && reject.reason !== reject.message" class="aicss-routing-card__reject-reason">
         {{ reject.reason }}
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.aicss-routing-card {
+  width: 100%;
+  max-width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--aicss-surface);
+  border: 1px solid var(--aicss-border);
+  box-shadow: var(--aicss-shadow-card);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--aicss-text-2);
+}
+
+.aicss-routing-card--reject {
+  border-color: color-mix(in srgb, var(--aicss-danger) 32%, var(--aicss-border));
+  background: color-mix(in srgb, var(--aicss-danger-soft) 48%, var(--aicss-surface));
+}
+
+.aicss-routing-card__title {
+  margin-bottom: 6px;
+  font-weight: 650;
+  color: var(--aicss-text);
+}
+
+.aicss-routing-card__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.aicss-routing-card__item {
+  color: var(--aicss-text-2);
+}
+
+.aicss-routing-card__label {
+  color: var(--aicss-muted);
+}
+
+.aicss-routing-card__pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.aicss-routing-card__pill--ok {
+  background: var(--aicss-success-soft);
+  color: var(--aicss-success);
+}
+
+.aicss-routing-card__pill--no {
+  background: var(--aicss-danger-soft);
+  color: var(--aicss-danger);
+}
+
+.aicss-routing-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.aicss-routing-card__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--aicss-accent-soft);
+  color: var(--aicss-accent-text);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.aicss-routing-card__reject-message {
+  color: var(--aicss-text);
+  overflow-wrap: anywhere;
+}
+
+.aicss-routing-card__reject-reason {
+  margin-top: 2px;
+  color: var(--aicss-muted);
+  overflow-wrap: anywhere;
+}
+</style>

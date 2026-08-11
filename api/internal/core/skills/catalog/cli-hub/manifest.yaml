@@ -1,0 +1,16 @@
+source_key: cli-hub
+name: CLI-Hub
+label: CLI-Hub
+description: 让 Agent 发现、安装并使用 CLI-Anything/CLI-Hub 生态里的 agent-native CLI，适合软件操作、数据清洗、文档转换和任务自动化。
+category: 工具
+tags:
+  - cli
+  - tools
+  - automation
+  - skill-md
+icon: ""
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

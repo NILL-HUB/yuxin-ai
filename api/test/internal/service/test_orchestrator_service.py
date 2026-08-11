@@ -1,9 +1,23 @@
+from types import SimpleNamespace
+
+import pytest
+
+from internal.entity.agent_pool_entity import BUILTIN_AGENT_SUB_POOLS, AgentSubPoolRegistry
 from internal.entity.orchestrator_entity import ExecutionMode, RoutingDecision, RiskLevel
 from internal.service.cost_policy_service import CostPolicyService
 from internal.service.orchestrator_service import OrchestratorService
 from internal.service.pool_intent_resolver_service import PoolIntentResolver
 from internal.service.task_classifier_service import TaskClassifierService
 from internal.service.task_planner_service import TaskPlannerService
+
+
+@pytest.fixture(autouse=True)
+def _reset_pool_cache():
+    from internal.entity.agent_pool_entity import refresh_cache
+
+    refresh_cache()
+    yield
+    refresh_cache()
 
 
 def test_simple_question_should_route_to_direct_answer():
@@ -170,7 +184,9 @@ def test_orchestrator_should_attach_agent_subset_for_matched_pools():
 
     service = OrchestratorService(
         task_classifier_service=TaskClassifierService(),
-        pool_intent_resolver=PoolIntentResolver(),
+        pool_intent_resolver=PoolIntentResolver(
+            registry=AgentSubPoolRegistry(pools=BUILTIN_AGENT_SUB_POOLS)
+        ),
         subset_builder=_SubsetBuilder(),
     )
 
@@ -180,6 +196,51 @@ def test_orchestrator_should_attach_agent_subset_for_matched_pools():
     assert decision.agent_subset["selected_agents"] == [
         {"agent_id": "coding-agent", "name": "编程 Agent"}
     ]
+
+
+def test_orchestrator_should_fill_routing_log_observability_fields():
+    from uuid import uuid4
+
+    class _Flags:
+        def is_enabled(self, code):
+            return True
+
+    class _RoutingLogService:
+        def __init__(self):
+            self.finalized = []
+            self.log_id = uuid4()
+
+        def create_pending(self, **kwargs):
+            return SimpleNamespace(id=self.log_id)
+
+        def finalize(self, routing_log_id, **fields):
+            self.finalized.append((routing_log_id, fields))
+
+    log_service = _RoutingLogService()
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        feature_flag_service=_Flags(),
+        routing_log_service=log_service,
+    )
+
+    decision = service.decide(
+        "帮我解释 Python list",
+        account_id=str(uuid4()),
+        invoke_from="web",
+        budget_level="normal",
+        balance_credits=1.0,
+    )
+
+    assert decision.execution_mode == ExecutionMode.DIRECT_ANSWER.value
+    assert log_service.finalized
+    routing_log_id, fields = log_service.finalized[0]
+    assert routing_log_id == log_service.log_id
+    assert fields["task_classification"]["intent"] == "general_qa"
+    assert fields["model_selection"]["model_tier"] == "1"
+    assert fields["cost_summary"]["budget_level"] == "normal"
+    assert fields["agent_pool_hits"] == []
+    assert fields["tool_pool_hits"] == []
+    assert fields["status"] == "success"
 
 
 def test_routing_decision_should_dump_stable_dict():

@@ -138,10 +138,23 @@ class TestAuthNegativePaths:
             ("GET", "/openapi/api-keys"),
             ("GET", "/platform/00000000-0000-0000-0000-000000000011/wechat-config"),
             ("GET", "/routing-logs/summary"),
+            ("GET", "/tool-confirmations"),
+            (
+                "GET",
+                "/conversations/00000000-0000-0000-0000-000000000011/variables",
+            ),
             ("POST", "/ai/optimize-prompt"),
             ("POST", "/ai/chat"),
             ("POST", "/ai/openapi-schema-chat"),
             ("POST", "/ai/mcp-schema-chat"),
+            ("POST", "/workflows/import"),
+            ("POST", "/api/async/chat/completion"),
+            ("POST", "/async/chat/completion"),
+            ("POST", "/upload-files/file"),
+            (
+                "POST",
+                "/conversations/00000000-0000-0000-0000-000000000011/is-pinned",
+            ),
         ],
     )
     def test_user_token_should_reject_non_consumed_user_api(self, monkeypatch, method, path):
@@ -160,11 +173,18 @@ class TestAuthNegativePaths:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
+                body = {}
+                if path in ("/api/async/chat/completion", "/async/chat/completion"):
+                    body = {
+                        "app_id": str(uuid4()),
+                        "account_id": str(HOME_ACCOUNT_ID),
+                        "query": "hello",
+                    }
                 if method == "POST":
                     resp = await client.post(
                         path,
                         headers={"Authorization": "Bearer user-token"},
-                        json={},
+                        json=body,
                     )
                 else:
                     resp = await client.get(

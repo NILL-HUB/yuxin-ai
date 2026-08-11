@@ -21,6 +21,7 @@ class RoutingLogService(BaseService):
         account_id,
         user_query: str | None = None,
         invoke_from: str | None = None,
+        message_id=None,
     ):
         """创建 pending 状态的 routing_log 记录，供编排过程中追加事件。
 
@@ -30,7 +31,7 @@ class RoutingLogService(BaseService):
         return self.create(
             RoutingLog,
             account_id=account_id,
-            message_id=None,
+            message_id=message_id,
             routing_decision={"status": "pending"},
             agent_candidates=[],
             filtered_out_agents=[],

@@ -18,9 +18,13 @@ describe('admin routing quality service', () => {
   })
 
   it('creates feedback', async () => {
-    vi.mocked(request.post).mockResolvedValue({ id: 'feedback-1' } as never)
+    vi.mocked(request.post).mockResolvedValue({
+      code: 'success',
+      message: 'ok',
+      data: { id: 'feedback-1' },
+    } as never)
 
-    await createAdminRoutingQualityFeedback({
+    const result = await createAdminRoutingQualityFeedback({
       routing_log_id: 'log-1',
       rating: 4,
       dimension_scores: { accuracy: 5 },
@@ -35,31 +39,47 @@ describe('admin routing quality service', () => {
         comment: 'useful',
       },
     })
+    expect(result).toEqual({ id: 'feedback-1' })
   })
 
   it('lists feedback', async () => {
-    vi.mocked(request.get).mockResolvedValue([] as never)
+    vi.mocked(request.get).mockResolvedValue({
+      code: 'success',
+      message: 'ok',
+      data: [{ id: 'feedback-1' }],
+    } as never)
 
-    await listAdminRoutingQualityFeedback({ routing_log_id: 'log-1' })
+    const result = await listAdminRoutingQualityFeedback({ routing_log_id: 'log-1' })
 
     expect(request.get).toHaveBeenCalledWith('/admin/routing-quality/feedback', {
       params: { routing_log_id: 'log-1' },
     })
+    expect(result).toEqual([{ id: 'feedback-1' }])
   })
 
   it('gets metrics', async () => {
-    vi.mocked(request.get).mockResolvedValue({ total_count: 0 } as never)
+    vi.mocked(request.get).mockResolvedValue({
+      code: 'success',
+      message: 'ok',
+      data: { total_count: 0 },
+    } as never)
 
-    await getAdminRoutingQualityMetrics()
+    const result = await getAdminRoutingQualityMetrics()
 
     expect(request.get).toHaveBeenCalledWith('/admin/routing-quality/metrics')
+    expect(result).toEqual({ total_count: 0 })
   })
 
   it('lists suggestions', async () => {
-    vi.mocked(request.get).mockResolvedValue([] as never)
+    vi.mocked(request.get).mockResolvedValue({
+      code: 'success',
+      message: 'ok',
+      data: [{ id: 'suggestion-1' }],
+    } as never)
 
-    await listAdminRoutingQualitySuggestions()
+    const result = await listAdminRoutingQualitySuggestions()
 
     expect(request.get).toHaveBeenCalledWith('/admin/routing-quality/suggestions')
+    expect(result).toEqual([{ id: 'suggestion-1' }])
   })
 })

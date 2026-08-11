@@ -90,7 +90,7 @@ def test_collect_skill_tools_returns_correct_format():
     metadata = candidate["metadata"]
     assert metadata["tool_pool"] == "skill"
     assert metadata["risk_level"] == "low"
-    assert metadata["permission_scope"] == "system"
+    assert metadata["permission_scope"] == "user"
     assert metadata["cost_level"] == "low"
     assert metadata["owner"] == "system"
     assert metadata["enabled"] is True

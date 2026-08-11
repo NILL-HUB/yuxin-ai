@@ -13,6 +13,7 @@ import type {
   CostStatsTimeseries,
 } from '@/models/admin-cost-stats'
 import { getErrorMessage } from '@/utils/error'
+import AiDataTable from '@/components/ai-chat-ui/AiDataTable.vue'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -72,6 +73,24 @@ const dimensionValueLabel = (value: string) => {
       return value
   }
 }
+
+const dimensionTableColumns = computed(() => [
+  { key: 'dimension', label: t('admin.costStats.dimension') },
+  { key: 'total_credits', label: t('admin.costStats.totalCreditsCol'), align: 'right' as const },
+  { key: 'request_count', label: t('admin.costStats.requestCount'), align: 'right' as const },
+  { key: 'avg_credits', label: t('admin.costStats.avgCredits'), align: 'right' as const },
+  { key: 'percentage', label: t('admin.costStats.percentage'), align: 'right' as const },
+])
+
+const dimensionTableRows = computed(() =>
+  (dimensionData.value?.items || []).map((item) => ({
+    dimension: dimensionValueLabel(item.name),
+    total_credits: item.total_credits,
+    request_count: item.request_count,
+    avg_credits: item.avg_credits,
+    percentage: `${item.percentage}%`,
+  })),
+)
 
 const granularityOptions = computed(() => [
   { value: 'day', label: t('admin.costStats.day') },
@@ -174,27 +193,41 @@ onMounted(() => {
           </a-option>
         </a-select>
       </div>
-      <table v-if="dimensionData?.items.length" class="w-full text-left text-sm">
-        <thead class="bg-gray-50 text-gray-500">
-          <tr>
-            <th class="p-3">{{ t('admin.costStats.dimension') }}</th>
-            <th class="p-3">{{ t('admin.costStats.totalCreditsCol') }}</th>
-            <th class="p-3">{{ t('admin.costStats.requestCount') }}</th>
-            <th class="p-3">{{ t('admin.costStats.avgCredits') }}</th>
-            <th class="p-3">{{ t('admin.costStats.percentage') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in dimensionData.items" :key="item.name" class="border-b">
-            <td class="p-3 font-medium">{{ dimensionValueLabel(item.name) }}</td>
-            <td class="p-3">{{ item.total_credits }}</td>
-            <td class="p-3">{{ item.request_count }}</td>
-            <td class="p-3">{{ item.avg_credits }}</td>
-            <td class="p-3">{{ item.percentage }}%</td>
-          </tr>
-        </tbody>
-      </table>
+      <ai-data-table
+        v-if="dimensionData?.items.length"
+        :columns="dimensionTableColumns"
+        :rows="dimensionTableRows"
+      />
       <p v-else class="py-8 text-center text-sm text-gray-400">{{ t('admin.costStats.noData') }}</p>
     </section>
   </div>
 </template>
+
+<style scoped>
+.space-y-6 :deep(> section) {
+  border-color: var(--aicss-border) !important;
+  border-radius: var(--aicss-radius) !important;
+  background: var(--aicss-surface) !important;
+  box-shadow: var(--aicss-shadow-card) !important;
+}
+
+.space-y-6 :deep(h1),
+.space-y-6 :deep(h2) {
+  color: var(--aicss-text) !important;
+}
+
+.space-y-6 :deep(p),
+.space-y-6 :deep(label) {
+  color: var(--aicss-muted) !important;
+}
+
+.space-y-6 :deep(strong) {
+  color: var(--aicss-text) !important;
+}
+
+@media (max-width: 640px) {
+  .space-y-6 :deep(> section) {
+    padding: 16px !important;
+  }
+}
+</style>

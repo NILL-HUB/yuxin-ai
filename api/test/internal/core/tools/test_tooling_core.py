@@ -489,6 +489,13 @@ def test_mcp_provider_manager_should_load_repo_catalog_urls(monkeypatch):
     assert manager.get_provider("bing-cn-mcp-server").provider_entity.url == "https://mcp.api-inference.modelscope.net/77c109fcdabb45/mcp"
     assert manager.get_provider("12306-mcp").provider_entity.url == "https://mcp.api-inference.modelscope.net/540c010e843a4e/mcp"
     assert manager.get_provider("fetch").provider_entity.url == "https://mcp.api-inference.modelscope.net/5db48a8cef5240/mcp"
+    assert manager.get_provider("context7").provider_entity.url == "https://mcp.context7.com/mcp"
+    assert manager.get_provider("firecrawl").provider_entity.url == "https://mcp.firecrawl.dev/v2/mcp"
+    assert manager.get_provider("exa").provider_entity.url == "https://mcp.exa.ai/mcp"
+    assert manager.get_provider("playwright-mcp").provider_entity.transport == "stdio"
+    assert manager.get_provider("playwright-mcp").provider_entity.command == "npx"
+    assert manager.get_provider("filesystem-mcp").provider_entity.transport == "stdio"
+    assert manager.get_provider("filesystem-mcp").provider_entity.args[-1] == "/app/api/storage"
 
 
 def test_builtin_provider_manager_should_skip_init_when_provider_map_not_empty(

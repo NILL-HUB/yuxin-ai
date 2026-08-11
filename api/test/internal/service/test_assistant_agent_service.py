@@ -15,7 +15,7 @@ from internal.entity.app_entity import DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException
-from internal.model import ApiTool, Message, Workflow
+from internal.model import Account, ApiTool, Message, Workflow
 from internal.service.app_config_service import AppConfigService
 from internal.service.assistant_agent_service import (
     AssistantAgentService,
@@ -50,6 +50,34 @@ class _QueryStub:
 
     def get(self, _primary_key):
         return None
+
+
+class _LockedAccountQuery:
+    def __init__(self, result):
+        self._result = result
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def with_for_update(self):
+        return self
+
+    def one_or_none(self):
+        return self._result
+
+
+class _AutoCommitContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _ConversationDraft:
+    def __init__(self, **kwargs):
+        self.id = uuid4()
+        self.__dict__.update(kwargs)
 
 
 class TestAssistantAgentService:
@@ -267,17 +295,175 @@ class TestAssistantAgentService:
         )
 
     def test_resolve_assistant_agent_conversation_should_return_active_when_id_absent(
-        self,
+        self, monkeypatch
     ):
         service = self._build_service()
         active_conversation = SimpleNamespace(id=uuid4())
-        account = SimpleNamespace(assistant_agent_conversation=active_conversation)
+        account = SimpleNamespace(
+            id=uuid4(),
+            assistant_agent_conversation=active_conversation,
+        )
+        monkeypatch.setattr(
+            service,
+            "_get_or_create_assistant_agent_conversation",
+            lambda target: active_conversation,
+        )
 
         result = service._resolve_assistant_agent_conversation(
             account=account, conversation_id=None
         )
 
         assert result is active_conversation
+
+    def test_get_or_create_assistant_agent_conversation_should_reuse_valid_pointer(
+        self, monkeypatch
+    ):
+        service = self._build_service()
+        account = Account(
+            id=uuid4(),
+            assistant_agent_conversation_id=uuid4(),
+        )
+        existing = SimpleNamespace(
+            id=account.assistant_agent_conversation_id,
+            is_deleted=False,
+            created_by=account.id,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+        )
+        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: existing)
+
+        result = service._get_or_create_assistant_agent_conversation(account)
+
+        assert result is existing
+
+    def test_get_or_create_assistant_agent_conversation_should_create_with_row_lock(
+        self, app, monkeypatch
+    ):
+        service = self._build_service()
+        account = Account(id=uuid4(), assistant_agent_conversation_id=None)
+        locked_account = Account(
+            id=account.id,
+            assistant_agent_conversation_id=None,
+        )
+        monkeypatch.setattr(
+            "internal.service.assistant_agent_service.Conversation",
+            _ConversationDraft,
+        )
+        added = []
+        session = SimpleNamespace(
+            query=lambda *_args, **_kwargs: _LockedAccountQuery(locked_account),
+            add=added.append,
+            flush=lambda: None,
+        )
+        service.db = SimpleNamespace(
+            session=session,
+            auto_commit=lambda: _AutoCommitContext(),
+        )
+        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: None)
+
+        with app.app_context():
+            app.config["ASSISTANT_AGENT_ID"] = str(uuid4())
+            result = service._get_or_create_assistant_agent_conversation(account)
+
+        assert result.id is not None
+        assert result.created_by == account.id
+        assert locked_account.assistant_agent_conversation_id == result.id
+        assert added == [result]
+
+    def test_get_or_create_assistant_agent_conversation_should_prefer_locked_pointer(
+        self, monkeypatch
+    ):
+        service = self._build_service()
+        account = Account(id=uuid4(), assistant_agent_conversation_id=None)
+        existing = SimpleNamespace(
+            id=uuid4(),
+            is_deleted=False,
+            created_by=account.id,
+            invoke_from=InvokeFrom.ASSISTANT_AGENT.value,
+        )
+        locked_account = Account(
+            id=account.id,
+            assistant_agent_conversation_id=existing.id,
+        )
+        added = []
+        session = SimpleNamespace(
+            query=lambda *_args, **_kwargs: _LockedAccountQuery(locked_account),
+            add=added.append,
+            flush=lambda: None,
+        )
+        service.db = SimpleNamespace(
+            session=session,
+            auto_commit=lambda: _AutoCommitContext(),
+        )
+        monkeypatch.setattr(service, "get", lambda *_args, **_kwargs: existing)
+
+        result = service._get_or_create_assistant_agent_conversation(account)
+
+        assert result is existing
+        assert added == []
+
+    def test_update_routing_log_execution_should_persist_actual_results(
+        self, monkeypatch
+    ):
+        service = self._build_service()
+        message = SimpleNamespace(
+            id=uuid4(),
+            answer="完成",
+            status="normal",
+            total_token_count=10,
+            answer_token_count=4,
+            message_token_count=6,
+            total_price=0.5,
+            latency=1.2,
+        )
+        finalized = []
+        service.routing_log_service = SimpleNamespace(
+            finalize=lambda routing_log_id, **fields: finalized.append(
+                (routing_log_id, fields)
+            )
+        )
+        monkeypatch.setattr(service, "get", lambda _model, _id: message)
+
+        service._update_routing_log_execution(
+            message,
+            {
+                "routing_log_id": str(uuid4()),
+                "recommended_model_tier": "cheap",
+                "cost_policy": {"allowed": True},
+                "agent_subset": {"selected_agents": [{"agent_id": "coding-agent"}]},
+            },
+            [SimpleNamespace(tool="search", task_id="coding-agent")],
+            started_at=0,
+        )
+
+        assert len(finalized) == 1
+        routing_log_id, fields = finalized[0]
+        assert fields["status"] == "success"
+        assert fields["cost_summary"]["total_tokens"] == 10
+        assert fields["model_selection"]["model_tier"] == "cheap"
+        assert fields["tool_pool_hits"] == ["search"]
+        assert fields["routing_decision"]["tool_calls"] == ["search"]
+        assert fields["routing_decision"]["answer_length"] == 2
+        assert fields["agent_pool_hits"] == [{"agent_id": "coding-agent"}]
+
+    def test_load_non_mcp_tool_should_dispatch_skill_source(self, monkeypatch):
+        service = self._build_service()
+        service.app_config_service = SimpleNamespace()
+        skill_tool = SimpleNamespace(name="skill__system_access__execute_shell")
+        monkeypatch.setattr(
+            service,
+            "_load_skill_tools",
+            lambda descriptor, account_id="": [skill_tool],
+        )
+        descriptor = SimpleNamespace(
+            source_type="skill",
+            tool_id="skill:abc",
+            provider_id="abc",
+            name="系统访问",
+        )
+
+        result = service._load_non_mcp_tool(descriptor, account_id="user-1")
+
+        assert result == [skill_tool]
 
     def test_resolve_assistant_agent_conversation_should_validate_and_sync(
         self, monkeypatch

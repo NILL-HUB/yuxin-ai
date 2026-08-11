@@ -13,12 +13,16 @@ describe('admin routing logs service', () => {
 
   it('lists routing logs with phase 7 filters', async () => {
     vi.mocked(request.get).mockResolvedValue({
-      list: [],
-      paginator: { total_record: 0 },
-      summary: { total_count: 0 },
+      code: 'success',
+      message: 'ok',
+      data: {
+        list: [],
+        paginator: { total_record: 0 },
+        summary: { total_count: 0 },
+      },
     } as never)
 
-    await listAdminRoutingLogs({
+    const result = await listAdminRoutingLogs({
       current_page: 1,
       page_size: 20,
       account_id: 'account-1',
@@ -48,6 +52,11 @@ describe('admin routing logs service', () => {
         start_at: '2026-01-01T00:00:00',
         end_at: '2026-01-02T00:00:00',
       },
+    })
+    expect(result).toEqual({
+      list: [],
+      paginator: { total_record: 0 },
+      summary: { total_count: 0 },
     })
   })
 })

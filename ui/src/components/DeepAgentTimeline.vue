@@ -447,10 +447,10 @@ const getTodoDotClass = (status: string) => {
 <style scoped>
 .deep-agent-timeline {
   width: 100%;
-  border-radius: 14px;
-  border: 1px solid rgba(226, 232, 240, 0.96);
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 10px 24px rgba(148, 163, 184, 0.08);
+  border-radius: 12px;
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
+  box-shadow: var(--aicss-shadow-card);
   overflow: hidden;
 }
 
@@ -467,17 +467,17 @@ const getTodoDotClass = (status: string) => {
 .deep-agent-timeline__title {
   font-size: 13px;
   font-weight: 700;
-  color: #1f2937;
+  color: var(--aicss-text);
 }
 
 .deep-agent-timeline__summary {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--aicss-muted);
 }
 
 .deep-agent-timeline__caret {
   font-size: 16px;
-  color: #6b7280;
+  color: var(--aicss-muted);
   transition: transform 0.2s ease;
 }
 
@@ -500,12 +500,12 @@ const getTodoDotClass = (status: string) => {
 .deep-agent-gallery__label {
   font-size: 13px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--aicss-text);
 }
 
 .deep-agent-gallery__count {
   font-size: 11px;
-  color: #64748b;
+  color: var(--aicss-muted);
 }
 
 .deep-agent-step {
@@ -549,7 +549,7 @@ const getTodoDotClass = (status: string) => {
 .deep-agent-step__name {
   font-size: 13px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--aicss-text);
 }
 
 .deep-agent-badge {
@@ -558,34 +558,34 @@ const getTodoDotClass = (status: string) => {
   padding: 2px 6px;
   border-radius: 999px;
   font-size: 11px;
-  color: #475569;
-  background: rgba(148, 163, 184, 0.14);
+  color: var(--aicss-muted);
+  background: var(--aicss-surface-2);
 }
 
 .deep-agent-badge--state {
-  background: rgba(251, 191, 36, 0.14);
-  color: #92400e;
+  background: var(--aicss-warning-soft);
+  color: var(--aicss-warning);
 }
 
 .deep-agent-badge--success {
-  background: rgba(16, 185, 129, 0.14);
-  color: #047857;
+  background: var(--aicss-success-soft);
+  color: var(--aicss-success);
 }
 
 .deep-agent-badge--danger {
-  background: rgba(244, 63, 94, 0.14);
-  color: #be123c;
+  background: var(--aicss-danger-soft);
+  color: var(--aicss-danger);
 }
 
 .deep-agent-step__latency {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--aicss-subtle);
 }
 
 .deep-agent-step__detail {
   margin-top: 6px;
   font-size: 12px;
-  color: #4b5563;
+  color: var(--aicss-text-2);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -600,21 +600,21 @@ const getTodoDotClass = (status: string) => {
 .deep-agent-step__preview-section {
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(248, 250, 252, 0.86);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-bg-subtle);
 }
 
 .deep-agent-step__preview-label {
   font-size: 11px;
   font-weight: 700;
-  color: #475569;
+  color: var(--aicss-text-2);
   margin-bottom: 6px;
 }
 
 .deep-agent-step__preview-section pre {
   margin: 0;
   font-size: 12px;
-  color: #334155;
+  color: var(--aicss-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -626,8 +626,8 @@ const getTodoDotClass = (status: string) => {
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
 }
 
 .deep-agent-todo-item {
@@ -659,7 +659,7 @@ const getTodoDotClass = (status: string) => {
   min-width: 0;
   font-size: 12px;
   line-height: 1.55;
-  color: #334155;
+  color: var(--aicss-text-2);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -667,19 +667,19 @@ const getTodoDotClass = (status: string) => {
 .deep-agent-step__technical {
   margin-top: 8px;
   font-size: 12px;
-  color: #475569;
+  color: var(--aicss-muted);
 }
 
 .deep-agent-step__technical summary {
   cursor: pointer;
-  color: #64748b;
+  color: var(--aicss-muted);
 }
 
 .deep-agent-step__technical pre {
   margin-top: 6px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.04);
+  background: var(--aicss-surface-2);
   white-space: pre-wrap;
   word-break: break-word;
 }

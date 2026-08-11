@@ -478,13 +478,13 @@ const handleLogout = async () => {
   transition: color 0.15s ease, background 0.15s ease;
 }
 
-.menu-item.router-link-active,
+.menu-item.router-link-exact-active,
 .menu-item:hover {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
 }
 
-.menu-item.router-link-active {
+.menu-item.router-link-exact-active {
   font-weight: 600;
 }
 

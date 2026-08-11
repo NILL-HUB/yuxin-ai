@@ -1,0 +1,10 @@
+# DeepSeek-V3.2 is text-only; exclude media from semantic extraction
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.mp4
+*.mov
+*.mp3
+*.wav

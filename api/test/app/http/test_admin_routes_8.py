@@ -1109,6 +1109,38 @@ class TestAdminCostStats:
         assert payload["data"]["total_credits"] == 100
         assert svc.calls[0][0] == "overview"
 
+    def test_overview_with_admin_token_uses_injector_service(self, monkeypatch):
+        from internal.service.admin_user_service import AdminUserService
+        from internal.service.cost_stats_service import CostStatsService
+
+        svc = _FakeCostStatsService()
+        account_id = uuid4()
+        fake_admin_service = SimpleNamespace(
+            get_current_admin_from_token=lambda token: {
+                "id": str(uuid4()),
+                "account_id": str(account_id),
+            }
+        )
+        monkeypatch.setattr(support, "_load_account", lambda _aid: SimpleNamespace(id=account_id))
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: {CostStatsService: svc, AdminUserService: fake_admin_service}.get(cls),
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(
+                    "/admin/cost-stats/overview",
+                    headers={"Authorization": "Bearer admin-token"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["total_credits"] == 100
+        assert svc.calls[0][0] == "overview"
+
     def test_by_dimension(self, monkeypatch):
         svc = self._setup(monkeypatch)
 

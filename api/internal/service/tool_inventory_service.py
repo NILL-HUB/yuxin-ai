@@ -457,7 +457,7 @@ class ToolCandidateCollector:
                 "tool_pool": "skill",
                 "capabilities": package.capabilities or [],
                 "risk_level": RiskLevel.LOW.value,
-                "permission_scope": "system",
+                "permission_scope": "user",
                 "cost_level": "low",
                 "owner": "system",
                 "enabled": package.enabled,
