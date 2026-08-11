@@ -1,6 +1,7 @@
 """DeepThinkingAgent — 深度思考智能体。"""
 from __future__ import annotations
 
+import asyncio
 from contextlib import nullcontext
 import logging
 import mimetypes
@@ -1424,111 +1425,142 @@ class DeepThinkingAgent(FunctionCallAgent):
             )
 
             backend = None
-            try:
-                deep_agent, backend, artifact_root, used_sandbox = self._build_deep_agent(
-                    task_id=task_id,
-                    route_decision=route_decision,
-                    timeline=timeline,
-                    state=state,
-                )
-            except Exception as e:
-                logger.warning("deepagents 子 Agent 构建失败，降级为普通模式: %s", e)
+            artifact_root = ""
+            used_sandbox = False
+            deep_answer = ""
+            artifacts: list[dict[str, Any]] = []
+            plain_only = not (
+                route_decision.need_sandbox
+                or route_decision.need_file_io
+                or route_decision.need_execute
+                or route_decision.need_subagent
+                or route_decision.need_artifact_output
+            )
+            structured_document_mode = self._should_use_structured_document_pipeline(query, route_decision)
+            skip_regular_deep_invoke = False
+            if plain_only:
                 timeline.publish_step(
                     step_id=uuid.uuid4(),
                     step_type="reflection",
-                    status="error",
-                    title="初始化深度执行失败",
-                    detail="深度执行初始化失败，已回退到普通流程",
-                    technical_detail=f"{type(e).__name__}: {e}",
+                    status="success",
+                    title="使用纯文本深度思考",
+                    detail="任务无需沙箱/文件/子任务，直接生成深度回答",
                 )
-                return {"messages": []}
-
-            deep_answer = ""
-            artifacts: list[dict[str, Any]] = []
-            structured_document_mode = self._should_use_structured_document_pipeline(query, route_decision)
-            skip_regular_deep_invoke = False
-            if structured_document_mode:
+                deep_answer = await self._invoke_plain_text_fallback(query)
+                skip_regular_deep_invoke = True
+            else:
                 try:
-                    deep_answer, artifacts = await self._generate_structured_document_artifact(
-                        backend=backend,
-                        artifact_root=artifact_root,
-                        query=query,
+                    deep_agent, backend, artifact_root, used_sandbox = self._build_deep_agent(
+                        task_id=task_id,
                         route_decision=route_decision,
                         timeline=timeline,
-                        task_id=task_id,
+                        state=state,
                     )
                 except Exception as e:
-                    if self._is_recoverable_model_request_error(e):
-                        logger.warning("结构化文档流水线请求被模型提供方拒绝，切换到纯文本兜底: %s", e)
-                        timeline.publish_step(
-                            step_id=uuid.uuid4(),
-                            step_type="reflection",
-                            status="warning",
-                            title="结构化文档请求被拒，切换纯文本兜底",
-                            detail="结构化文档请求返回 bad request，已切换到无工具的纯文本生成模式",
-                            technical_detail=f"{type(e).__name__}: {e}",
-                            tool="model_fallback",
-                            tool_input={
-                                "timeline": {
-                                    "phase": "structured_document_model_request_fallback",
-                                    "preview": "bad request -> plain text fallback",
-                                    "preview_kind": "summary",
-                                    "result_preview": "",
-                                    "result_kind": "text",
-                                    "error_kind": "model_request_bad_request",
-                                    "recovered": False,
-                                    "recoverable": True,
-                                    "output_empty": True,
-                                }
-                            },
+                    logger.warning("deepagents 子 Agent 构建失败，降级为普通模式: %s", e)
+                    timeline.publish_step(
+                        step_id=uuid.uuid4(),
+                        step_type="reflection",
+                        status="error",
+                        title="初始化深度执行失败",
+                        detail="深度执行初始化失败，已回退到普通流程",
+                        technical_detail=f"{type(e).__name__}: {e}",
+                    )
+                    return {"messages": []}
+                if structured_document_mode:
+                    try:
+                        deep_answer, artifacts = await self._generate_structured_document_artifact(
+                            backend=backend,
+                            artifact_root=artifact_root,
+                            query=query,
+                            route_decision=route_decision,
+                            timeline=timeline,
+                            task_id=task_id,
                         )
-                        deep_answer = await self._invoke_plain_text_fallback(query)
-                        if used_sandbox and route_decision.need_artifact_output and deep_answer:
-                            if self._recover_missing_artifact_from_deep_answer(
-                                backend=backend,
-                                artifact_root=artifact_root,
-                                query=query,
-                                deep_answer=deep_answer,
-                                timeline=timeline,
-                                allow_default_filename=True,
-                            ):
-                                artifacts = self._collect_artifacts(
+                    except Exception as e:
+                        if self._is_recoverable_model_request_error(e):
+                            logger.warning("结构化文档流水线请求被模型提供方拒绝，切换到纯文本兜底: %s", e)
+                            timeline.publish_step(
+                                step_id=uuid.uuid4(),
+                                step_type="reflection",
+                                status="warning",
+                                title="结构化文档请求被拒，切换纯文本兜底",
+                                detail="结构化文档请求返回 bad request，已切换到无工具的纯文本生成模式",
+                                technical_detail=f"{type(e).__name__}: {e}",
+                                tool="model_fallback",
+                                tool_input={
+                                    "timeline": {
+                                        "phase": "structured_document_model_request_fallback",
+                                        "preview": "bad request -> plain text fallback",
+                                        "preview_kind": "summary",
+                                        "result_preview": "",
+                                        "result_kind": "text",
+                                        "error_kind": "model_request_bad_request",
+                                        "recovered": False,
+                                        "recoverable": True,
+                                        "output_empty": True,
+                                    }
+                                },
+                            )
+                            deep_answer = await self._invoke_plain_text_fallback(query)
+                            if used_sandbox and route_decision.need_artifact_output and deep_answer:
+                                if self._recover_missing_artifact_from_deep_answer(
                                     backend=backend,
                                     artifact_root=artifact_root,
+                                    query=query,
+                                    deep_answer=deep_answer,
                                     timeline=timeline,
+                                    allow_default_filename=True,
+                                ):
+                                    artifacts = self._collect_artifacts(
+                                        backend=backend,
+                                        artifact_root=artifact_root,
+                                        timeline=timeline,
+                                    )
+                            if not deep_answer:
+                                logger.error("纯文本兜底未能生成有效内容")
+                                self.agent_queue_manager.publish_failure(
+                                    task_id,
+                                    e,
+                                    context="深度执行过程中出现错误",
                                 )
-                        if not deep_answer:
-                            logger.error("纯文本兜底未能生成有效内容")
-                            self.agent_queue_manager.publish_failure(
-                                task_id,
-                                e,
-                                context="深度执行过程中出现错误",
+                                raise
+                            structured_document_mode = False
+                            skip_regular_deep_invoke = True
+                        else:
+                            logger.warning("结构化文档流水线失败，回退到常规深度执行: %s", e)
+                            timeline.publish_step(
+                                step_id=uuid.uuid4(),
+                                step_type="reflection",
+                                status="warning",
+                                title="结构化文档流水线失败",
+                                detail="已回退到常规深度执行流程",
+                                technical_detail=f"{type(e).__name__}: {e}",
+                                tool="structured_document_pipeline",
                             )
-                            raise
-                        structured_document_mode = False
-                        skip_regular_deep_invoke = True
-                    else:
-                        logger.warning("结构化文档流水线失败，回退到常规深度执行: %s", e)
-                        timeline.publish_step(
-                            step_id=uuid.uuid4(),
-                            step_type="reflection",
-                            status="warning",
-                            title="结构化文档流水线失败",
-                            detail="已回退到常规深度执行流程",
-                            technical_detail=f"{type(e).__name__}: {e}",
-                            tool="structured_document_pipeline",
-                        )
-                        structured_document_mode = False
+                            structured_document_mode = False
 
             try:
                 if not structured_document_mode and not skip_regular_deep_invoke:
-                    result = await deep_agent.ainvoke({
-                        "messages": [HumanMessage(content=query)],
-                    })
+                    result = await asyncio.to_thread(
+                        deep_agent.invoke,
+                        {"messages": [HumanMessage(content=query)]},
+                    )
                     messages = result.get("messages", [])
-                    if messages:
-                        last = messages[-1]
-                        deep_answer = self._extract_llm_text(last)
+                    deep_answer = ""
+                    for message in reversed(messages or []):
+                        candidate = self._extract_llm_text(message)
+                        if candidate:
+                            deep_answer = candidate
+                            break
+                    if not deep_answer and messages:
+                        deep_answer = self._extract_llm_text(messages[-1])
+                    if not deep_answer:
+                        logger.warning("deepagents 未产出文本回答，尝试纯文本兜底")
+                        try:
+                            deep_answer = await self._invoke_plain_text_fallback(query)
+                        except Exception as fallback_exc:
+                            logger.warning("深度思考纯文本兜底失败: %s", fallback_exc)
 
                     if used_sandbox:
                         artifacts = self._collect_artifacts(

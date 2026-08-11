@@ -63,14 +63,18 @@ class IntentRecognitionService(BaseService):
 
             # 2. 使用trim_messages限制token
             model = LanguageModelService.get_feature_model("intent_recognition")
-            trimmed_messages = trim_messages(
-                messages=lc_messages,
-                max_tokens=self.MAX_TOKENS,
-                token_counter=model,
-                strategy="last",
-                start_on="human",
-                end_on="ai",
-            )
+            try:
+                trimmed_messages = trim_messages(
+                    messages=lc_messages,
+                    max_tokens=self.MAX_TOKENS,
+                    token_counter=model,
+                    strategy="last",
+                    start_on="human",
+                    end_on="ai",
+                )
+            except Exception as e:
+                logging.warning("intent trim_messages 失败，使用原始消息: %s", e)
+                trimmed_messages = lc_messages
 
             # 3. 构建prompt（系统提示词库可管理，YAML 兜底）
             from internal.service.system_prompt_library_service import SystemPromptLibraryService
@@ -82,9 +86,15 @@ class IntentRecognitionService(BaseService):
 
             # 4. 调用模型（走数据库配置 + compatible_api 分发）
             response = model.invoke(prompt_text)
+            response_text = getattr(response, "content", response)
+            if isinstance(response_text, list):
+                response_text = "\n".join(
+                    str(part.get("text", "") if isinstance(part, dict) else part)
+                    for part in response_text
+                )
 
             # 5. 解析响应
-            result = self._parse_response(response)
+            result = self._parse_response(str(response_text or ""))
 
             return result
 

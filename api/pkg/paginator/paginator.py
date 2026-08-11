@@ -35,19 +35,31 @@ class Paginator:
 
     def paginate(self, select) -> list[Any]:
         """对传入的查询进行分页"""
-        # 1.优先使用 Query.paginate，兼容多列查询结果；否则使用 db.paginate
+        # 1.优先使用 Query.paginate，兼容旧 Flask-SQLAlchemy 查询对象
         paginate_func = getattr(select, "paginate", None)
         if callable(paginate_func):
             p = paginate_func(page=self.current_page, per_page=self.page_size, error_out=False)
-        else:
-            p = self.db.paginate(select, page=self.current_page, per_page=self.page_size, error_out=False)
+            self.total_record = p.total
+            self.total_page = math.ceil(p.total / self.page_size)
+            return p.items
 
-        # 2.计算总页数+总条数
-        self.total_record = p.total
-        self.total_page = math.ceil(p.total / self.page_size)
+        # 2.兼容 SQLAlchemy Query / Select：原生 count + limit/offset 分页
+        from sqlalchemy import func, select as sa_select
 
-        # 3.返回分页后的数据
-        return p.items
+        session = self.db.session()
+        base_select = getattr(select, "statement", select)
+        count_stmt = sa_select(func.count()).select_from(
+            base_select.order_by(None).subquery()
+        )
+        total = session.scalar(count_stmt) or 0
+        self.total_record = total
+        self.total_page = math.ceil(total / self.page_size) if self.page_size else 0
+
+        offset = (self.current_page - 1) * self.page_size
+        page_stmt = base_select.limit(self.page_size).offset(offset)
+        if hasattr(select, "all"):
+            return list(select.limit(self.page_size).offset(offset).all())
+        return list(session.scalars(page_stmt).all())
 
 
 @dataclass

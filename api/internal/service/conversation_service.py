@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from dataclasses import dataclass
 from threading import RLock
 from typing import Any, ClassVar
@@ -222,6 +223,43 @@ class ConversationService(BaseService):
         return name
 
     @classmethod
+    def _parse_suggested_questions(cls, response) -> list[str]:
+        """从普通文本或对象响应中解析建议问题列表。"""
+        questions: list[str] = []
+        if response is None:
+            return questions
+
+        if isinstance(response, dict):
+            raw = response.get("questions") or response.get("content") or ""
+        elif isinstance(response, str):
+            raw = response
+        else:
+            raw = getattr(response, "content", "") or str(response)
+
+        if isinstance(raw, list):
+            questions = [str(item).strip() for item in raw if str(item).strip()]
+        elif isinstance(raw, str):
+            text = raw.strip()
+            text = re.sub(r"^```(?:json)?\s*", "", text)
+            text = re.sub(r"\s*```$", "", text)
+            match = re.search(r"\[.*\]", text, re.S)
+            if match:
+                try:
+                    parsed = json.loads(match.group(0))
+                    if isinstance(parsed, list):
+                        questions = [str(item).strip() for item in parsed if str(item).strip()]
+                except Exception:
+                    questions = []
+            if not questions:
+                questions = [
+                    line.strip().lstrip("-*").strip()
+                    for line in text.splitlines()
+                    if line.strip()
+                ]
+
+        return [question for question in questions if question][:3]
+
+    @classmethod
     def generate_suggested_questions(cls, histories: str) -> list[str]:
         """根据传递的历史信息生成最多不超过3个的建议问题"""
         # 1.创建prompt
@@ -238,7 +276,16 @@ class ConversationService(BaseService):
         chain = prompt | structured_llm
 
         # 4.调用链并获取建议问题列表
-        suggested_questions = chain.invoke({"histories": histories})
+        try:
+            suggested_questions = chain.invoke({"histories": histories})
+        except Exception as exc:
+            logging.warning("建议问题结构化输出失败，降级为文本解析: %s", exc)
+            try:
+                plain_response = (prompt | llm).invoke({"histories": histories})
+                return cls._parse_suggested_questions(plain_response)
+            except Exception as fallback_exc:
+                logging.exception("建议问题文本兜底失败: %s", fallback_exc)
+                return []
 
         # 5.提取建议问题列表
         questions = []
@@ -661,14 +708,14 @@ class ConversationService(BaseService):
         async 数据库未启用时降级到同步实现（asyncio.to_thread 线程池执行），
         保证在任何部署形态下都可用。
         """
-        factory = async_db.session_factory()
-        if factory is None:
+        session = async_db.session_factory()
+        if session is None:
             return await asyncio.to_thread(self.get_recent_conversations, account, limit)
 
         safe_limit = max(1, min(limit, 1000))
         message_scan_limit = max(80, safe_limit * 30)
 
-        async with factory() as session:
+        async with session as session:
             private_recent_messages = list(
                 (
                     await session.scalars(
@@ -845,8 +892,8 @@ class ConversationService(BaseService):
         async 数据库未启用时降级到同步实现（asyncio.to_thread 线程池执行），
         保证在任何部署形态下都可用。
         """
-        factory = async_db.session_factory()
-        if factory is None:
+        session = async_db.session_factory()
+        if session is None:
             return await asyncio.to_thread(
                 self.get_conversation_messages_with_page,
                 conversation_id,
@@ -857,7 +904,7 @@ class ConversationService(BaseService):
         current_page = max(1, req.current_page.data or 1)
         page_size = max(1, min(req.page_size.data or 20, 50))
 
-        async with factory() as session:
+        async with session as session:
             # 1.获取会话并校验权限
             conversation = await session.scalar(
                 select(Conversation).where(

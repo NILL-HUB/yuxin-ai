@@ -5,7 +5,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 from urllib.parse import urlparse
@@ -424,6 +424,120 @@ class DeepTimelineMiddleware(AgentMiddleware):
 
         try:
             result = handler(request)
+        except Exception as e:
+            status = "warning" if recoverable else "error"
+            error_kind = "protocol_error" if recoverable else "tool_error"
+            self.publish_step(
+                step_id=step_id,
+                step_type=step_type,
+                status=status,
+                title="写文件协议待修复" if recoverable else title,
+                detail="检测到可恢复的写文件协议，等待后续恢复" if recoverable else f"{title}失败",
+                technical_detail=f"{type(e).__name__}: {e}",
+                tool=tool_name,
+                tool_input={
+                    **tool_args,
+                    "timeline": self._build_tool_timeline_metadata(
+                        phase="warning" if recoverable else "error",
+                        preview=preview,
+                        preview_kind=preview_kind,
+                        result_kind=result_kind,
+                        error_kind=error_kind,
+                        recoverable=recoverable,
+                    ),
+                },
+                latency=time.perf_counter() - start_at,
+            )
+            raise
+
+        result_preview = self._extract_result_content(result)[:1200]
+        status = "error" if isinstance(result, ToolMessage) and getattr(result, "status", "") == "error" else "success"
+        error_kind = ""
+        if recoverable and status == "error":
+            status = "warning"
+            error_kind = "protocol_error"
+        if status == "success" and tool_name == "write_todos":
+            self._remember_todos(step_id=step_id, tool_args=tool_args)
+
+        publish_title = title
+        publish_detail = result_preview or preview or f"{title}完成"
+        if recoverable and status == "warning":
+            publish_title = "写文件协议待修复"
+            publish_detail = "检测到可恢复的写文件协议，等待后续恢复"
+
+        self.publish_step(
+            step_id=step_id,
+            step_type=step_type,
+            status=status,
+            title=publish_title,
+            detail=publish_detail,
+            technical_detail=result_preview,
+            tool=tool_name,
+            tool_input={
+                **tool_args,
+                "timeline": self._build_tool_timeline_metadata(
+                    phase="success" if status == "success" else "warning",
+                    preview=preview,
+                    preview_kind=preview_kind,
+                    result_preview=result_preview,
+                    result_kind=result_kind,
+                    error_kind=error_kind,
+                    recovered=False,
+                    recoverable=recoverable,
+                    output_empty=not bool(result_preview),
+                ),
+            },
+            latency=time.perf_counter() - start_at,
+        )
+
+        if status == "success" and self.tool_policy.is_image_result_tool(tool_name):
+            image_urls = self._extract_inline_image_urls(result_preview)
+            for image_index, image_url in enumerate(image_urls, start=1):
+                self.publish_artifact(
+                    artifact_id=uuid.uuid4(),
+                    artifact=self._build_image_artifact(image_url, index=image_index),
+                    group_id=str(step_id),
+                    group_name="生成图片",
+                )
+        return result
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        tool_name = str(request.tool_call.get("name", ""))
+        tool_args = dict(request.tool_call.get("args", {}) or {})
+        step_type, title = self._classify_tool(tool_name)
+        step_id = self._get_step_id(request.tool_call)
+        start_at = time.perf_counter()
+        preview = self._build_start_detail(tool_name, tool_args)
+        preview_kind = "command" if tool_name == "execute" else "protocol" if tool_name in {"write_file", "save_file"} else "summary"
+        result_kind = "stdout" if tool_name == "execute" else "output"
+        recoverable = tool_name in {"write_file", "save_file"}
+
+        self.publish_step(
+            step_id=step_id,
+            step_type=step_type,
+            status="start",
+            title=title,
+            detail=self._build_start_detail(tool_name, tool_args),
+            tool=tool_name,
+            tool_input={
+                **tool_args,
+                "timeline": self._build_tool_timeline_metadata(
+                    phase="start",
+                    preview=preview,
+                    preview_kind=preview_kind,
+                    result_kind=result_kind,
+                    recoverable=recoverable,
+                ),
+            },
+            latency=0,
+        )
+
+        try:
+            result = await handler(request)
         except Exception as e:
             status = "warning" if recoverable else "error"
             error_kind = "protocol_error" if recoverable else "tool_error"

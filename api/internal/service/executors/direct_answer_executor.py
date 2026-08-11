@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import uuid
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from internal.core.agent.entities.queue_entity import QueueEvent
@@ -166,7 +167,7 @@ class DirectAnswerExecutor:
                 else QueueEvent.AGENT_ACTION.value
             )
             thought_payload = {
-                "id": f"{message_id}:{tool_name}:{call_id}",
+                "id": str(uuid.uuid4()),
                 "event": event,
                 "thought": "",
                 "observation": result,
@@ -256,6 +257,24 @@ class DirectAnswerExecutor:
                 if not executable_calls or round_index >= self.MAX_TOOL_ROUNDS:
                     break
                 # 执行工具：yield 事件，并把工具结果消息追加进对话
+                for call in executable_calls:
+                    if not call.get("id"):
+                        call["id"] = f"call_{int(time.time() * 1000)}_{call.get('name', 'tool')}"
+                messages.append({
+                    "role": "assistant",
+                    "content": "".join(answer_parts) or None,
+                    "tool_calls": [
+                        {
+                            "id": call["id"],
+                            "type": "function",
+                            "function": {
+                                "name": call.get("name", ""),
+                                "arguments": call.get("arguments", "{}") or "{}",
+                            },
+                        }
+                        for call in executable_calls
+                    ],
+                })
                 tool_messages = yield from self._execute_tool_calls(
                     executable_calls, message_id, conversation_id,
                 )

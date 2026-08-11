@@ -179,14 +179,11 @@ class SQLAlchemy:
 
     @property
     def session(self):
-        """智能 session：async 上下文返回 AsyncSession，同步上下文返回同步 scoped session。
+        """兼容旧 Flask-SQLAlchemy 的同步 scoped session。
 
-        用法（async）：``async with db.session() as session:`` 或 ``session = db.session()``
-        用法（sync）：``db.session.query(...)`` / ``with db.session() as session:``
+        业务 service 大量使用 ``db.session.query(...)``，而 async_scoped_session
+        不提供 query()；统一返回同步会话，异步路径显式走 session_factory/async_session。
         """
-        if _in_async_context():
-            self._ensure_async()
-            return self._async_scoped
         self._ensure_sync()
         return self._sync_scoped
 

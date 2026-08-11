@@ -32,6 +32,9 @@ set_default_if_unset "CELERY_WORKER_AMOUNT" "4"
 set_default_if_unset "ASGI_WORKER_AMOUNT" "1"
 set_default_if_unset "MODE" "asgi"
 
+# 确保容器内始终可以从项目根目录导入 api 包
+export PYTHONPATH="/app/api${PYTHONPATH:+:$PYTHONPATH}"
+
 # 数据库连接池配置
 set_default_if_unset "SQLALCHEMY_POOL_SIZE" "30"
 set_default_if_unset "SQLALCHEMY_POOL_RECYCLE" "3600"
@@ -78,7 +81,7 @@ set_default_if_unset "LANGCHAIN_ENDPOINT" "https://api.smith.langchain.com"
 if [[ -n "${POSTGRES_HOST}" ]]; then
   set_default_if_unset "POSTGRES_PORT" "5432"
   if [[ -n "${POSTGRES_USER}" && -n "${POSTGRES_PASSWORD}" && -n "${POSTGRES_DB}" ]]; then
-    export SQLALCHEMY_DATABASE_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?client_encoding=utf8"
+    export SQLALCHEMY_DATABASE_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
   fi
 fi
 
@@ -114,7 +117,7 @@ check_required_env
 # 5.判断是否启用的迁移数据同步 如果是则将数据库迁移同步到数据库中
 if [[ "${MIGRATION_ENABLED}" == "true" ]]; then
   echo "Applying pending migrations (alembic)..."
-  alembic upgrade head
+  alembic -c internal/migration/alembic.ini upgrade head
 fi
 
 # 6.检测运行的模式(api/celery/celery-beat/asgi) 以执行不同的脚本

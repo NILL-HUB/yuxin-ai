@@ -141,7 +141,7 @@ class EmbeddingTableRouter:
             ks_table = self.get_knowledge_segment_table_name(dimension)
 
             try:
-                with db.engine.begin() as conn:
+                with db.sync_engine.begin() as conn:
                     # 1. user_memory_embedding_{dim}
                     conn.execute(text(f"""
                         CREATE TABLE IF NOT EXISTS {um_table} (

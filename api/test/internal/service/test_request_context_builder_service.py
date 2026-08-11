@@ -78,7 +78,7 @@ class TestRequestContextBuilderBalance:
     def test_should_query_credit_account_balance(self):
         db = MagicMock()
         credit_account = MagicMock()
-        credit_account.get_balance.return_value = 5000
+        credit_account.available_tokens = 5000
         db.session.query.return_value.filter_by.return_value.first.return_value = credit_account
         builder = RequestContextBuilder(db=db)
         ctx = builder.build("query", account_id="acc-123")
@@ -104,7 +104,7 @@ class TestRequestContextBuilderBalance:
     def test_budget_allowed_should_be_false_when_balance_below_threshold(self):
         db = MagicMock()
         credit_account = MagicMock()
-        credit_account.get_balance.return_value = 0
+        credit_account.available_tokens = 0
         db.session.query.return_value.filter_by.return_value.first.return_value = credit_account
         builder = RequestContextBuilder(db=db)
         ctx = builder.build("query", account_id="acc-123")

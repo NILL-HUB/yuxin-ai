@@ -1,7 +1,9 @@
 import base64
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import column, select as sa_select, table
 from test.context import TestApp
 
 from pkg.oauth.github_oauth import GithubOAuth
@@ -154,23 +156,23 @@ class TestOAuthProviders:
 
 class TestPaginatorPasswordResponseAndDB:
     def test_paginator_should_calculate_total_pages_and_items(self):
-        paginate_calls = []
-        db = SimpleNamespace(
-            paginate=lambda select, page, per_page, error_out: paginate_calls.append((select, page, per_page, error_out))
-            or SimpleNamespace(total=21, items=["a", "b"]),
-        )
+        items_table = table("items", column("id"))
+        select_stmt = sa_select(items_table)
+        session = MagicMock()
+        session.scalar.return_value = 21
+        session.scalars.return_value.all.return_value = ["a", "b"]
+        db = SimpleNamespace(session=lambda: session)
         req = SimpleNamespace(
             current_page=SimpleNamespace(data=2),
             page_size=SimpleNamespace(data=10),
         )
         paginator = Paginator(db=db, req=req)
 
-        items = paginator.paginate(select="query")
+        items = paginator.paginate(select=select_stmt)
 
         assert items == ["a", "b"]
         assert paginator.total_record == 21
         assert paginator.total_page == 3
-        assert paginate_calls == [("query", 2, 10, False)]
 
     def test_paginator_should_prefer_query_paginate_when_available(self):
         db_paginate_calls = []

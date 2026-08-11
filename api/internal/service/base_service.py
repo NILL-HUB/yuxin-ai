@@ -23,6 +23,9 @@ class BaseService:
     def update(self, model_instance: Any, **kwargs) -> Any:
         """根据传递的模型实例+键值对信息更新数据库记录"""
         with self.db.auto_commit():
+            # create 提交后会 remove 当前 scoped session，实例处于 detached 状态；
+            # 先重新 attach，否则 setattr 的变更不会在 flush 时落库。
+            self.db.session.add(model_instance)
             for field, value in kwargs.items():
                 if hasattr(model_instance, field):
                     setattr(model_instance, field, value)

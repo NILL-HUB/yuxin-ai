@@ -374,7 +374,8 @@ def register_routes(quart_app):
         req = SimpleNamespace(
             current_page=_field(_int_arg("current_page", 1), 1),
             page_size=_field(_int_arg("page_size", 20), 20),
-            created_at=_field(request.args.get("created_at"), None),
+            created_at=_field(_int_arg("created_at", None), None),
+            conversation_id=_field(request.args.get("conversation_id"), None),
         )
         messages, paginator = await _to_thread(
             _get_service(AssistantAgentService).get_conversation_messages_with_page,

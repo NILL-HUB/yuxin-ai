@@ -1411,7 +1411,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.ainvoke = AsyncMock(return_value={
+        mock_deep_agent.invoke = MagicMock(return_value={
             "messages": [
                 AIMessage(
                     content=(
@@ -1524,7 +1524,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.ainvoke = AsyncMock(return_value={
+        mock_deep_agent.invoke = MagicMock(return_value={
             "messages": [
                 AIMessage(
                     content=(
@@ -1935,7 +1935,7 @@ IPO招股说明书草案
             summary="需要沙箱执行",
         )
         mock_deep_agent = MagicMock()
-        mock_deep_agent.ainvoke = AsyncMock(side_effect=Exception(
+        mock_deep_agent.invoke = MagicMock(side_effect=Exception(
             "Error code: 400 - {'code': 400, 'msg': 'bad request'}"
         ))
 
@@ -1982,7 +1982,7 @@ IPO招股说明书草案
             )
         ))
 
-        mock_deep_agent.ainvoke.assert_called_once()
+        mock_deep_agent.invoke.assert_called_once()
         fallback_service.load_default_language_model.assert_called_once()
         fallback_llm.ainvoke.assert_called_once()
         backend.upload_files.assert_called_once()
@@ -2314,10 +2314,14 @@ IPO招股说明书草案
     @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_should_publish_timeout_failure(self, mock_route, mock_build_deep):
         """深度执行异常时应发布 timeout/error 终态，而不是静默继续。"""
-        mock_route.return_value = self._route()
+        mock_route.return_value = self._route(
+            need_sandbox=True,
+            need_execute=True,
+            summary="需要沙箱执行",
+        )
 
         class _FailingDeepAgent:
-            async def ainvoke(self, _payload):
+            def invoke(self, _payload):
                 raise TimeoutError("deep timeout")
 
         mock_build_deep.return_value = (_FailingDeepAgent(), SimpleNamespace(close=lambda: None), "/workspace/artifacts/test", False)
@@ -2335,7 +2339,11 @@ IPO招股说明书草案
     @patch.object(DeepThinkingAgent, "_decide_deep_route", new_callable=AsyncMock)
     def test_deep_agent_node_graceful_degradation(self, mock_route, mock_build_deep):
         """deepagents 初始化失败时，应优雅降级。"""
-        mock_route.return_value = self._route()
+        mock_route.return_value = self._route(
+            need_sandbox=True,
+            need_execute=True,
+            summary="需要沙箱执行",
+        )
         mock_build_deep.side_effect = ImportError("deepagents 未安装")
 
         agent = self._build_agent()
@@ -2382,7 +2390,11 @@ IPO招股说明书草案
         llm = _make_llm()
 
         structured_llm = MagicMock()
-        structured_llm.ainvoke = AsyncMock(return_value=self._route())
+        structured_llm.ainvoke = AsyncMock(return_value=self._route(
+            need_sandbox=True,
+            need_execute=True,
+            summary="需要沙箱执行",
+        ))
         llm.with_structured_output.return_value = structured_llm
 
         tool_llm = MagicMock()
@@ -2394,7 +2406,7 @@ IPO招股说明书草案
         agent.agent_queue_manager.publish = lambda tid, thought: published.append(thought)
 
         class _DeepAgent:
-            async def ainvoke(self, _payload):
+            def invoke(self, _payload):
                 llm.bind_tools(["weather"]).invoke("查询上海天气")
                 return {
                     "messages": [AIMessage(content="深度思考后的规划结果")],

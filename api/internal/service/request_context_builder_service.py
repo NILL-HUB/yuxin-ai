@@ -52,7 +52,7 @@ class RequestContextBuilder:
                 .filter_by(account_id=account_id)
                 .first()
             )
-            return float(credit_account.get_balance()) if credit_account else 0.0
+            return float(credit_account.available_tokens) if credit_account else 0.0
         except Exception:
             logger.warning("查询账户余额失败", exc_info=True)
             return 0.0

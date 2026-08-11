@@ -280,7 +280,14 @@ async def _resolve_account(account_id_override: str | None = None):
             if not admin:
                 return None, _err("unauthorized", "管理员凭证无效", 401)
             if not requested_id:
-                return None, _err("invalid_param", "缺少 account_id 参数", 400)
+                admin_account_id = (
+                    admin.get("account_id")
+                    if isinstance(admin, dict)
+                    else getattr(admin, "account_id", None)
+                )
+                if not admin_account_id:
+                    return None, _err("invalid_param", "缺少 account_id 参数", 400)
+                requested_id = str(admin_account_id)
             account = await asyncio.to_thread(_load_account, UUID(requested_id))
             return account, None
         except UnauthorizedException:

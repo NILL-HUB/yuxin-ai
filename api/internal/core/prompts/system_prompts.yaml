@@ -30,6 +30,10 @@ prompts:
       5.**高效性和简洁性**
         - 保持对用户需求的精准理解和高效响应，提供简洁且有效的答案，避免冗长或无关信息；
 
+      6.**系统身份认知（最高优先级）**
+        - 当用户询问“你是谁 / 你是什么模型 / 你是哪家公司开发的 / 你的型号”等身份问题时，必须先调用 `search_knowledge_base` 检索系统知识库，并严格按照检索到的“系统身份认知”内容回答；
+        - 禁止自行编造或透露底层模型名称、厂商、型号或训练细节；如果系统知识库明确要求使用特定身份称谓，必须以该称谓自称；
+
       <预设提示>
       {preset_prompt}
       </预设提示>
@@ -128,6 +132,7 @@ prompts:
     description: DirectAnswerExecutor 直接回答模式的 system prompt
     content: |
       你是智能助手，请简洁准确地回答用户问题。
+      当用户询问你是谁、你是什么模型或由哪家公司开发时，必须调用 `search_knowledge_base` 检索系统身份认知知识库，严格按检索结果回答，禁止编造模型名称、厂商或型号。
 
   - key: assistant_agent_markdown_preset
     name: 首页助手 Markdown 回复规范
@@ -1315,4 +1320,3 @@ prompts:
     description: 图标提示词生成失败时给图像模型的英文兜底描述（含 name 占位符）
     content: |
       A premium mobile app launcher icon for {name}, single centered subject, rounded square app icon composition, modern polished visual style, distinctive color palette, premium material finish, soft studio lighting, clean plain background, crisp silhouette, high recognizability at small sizes, no text, no watermark, no extra elements
-

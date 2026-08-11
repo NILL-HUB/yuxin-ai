@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -62,45 +64,70 @@ class ScheduleExecutionService(BaseService):
         from internal.schema.assistant_agent_schema import AssistantAgentChat
         from internal.service.assistant_agent_service import AssistantAgentService
 
-        account = self.db.session.query(Account).filter(Account.id == schedule_task.account_id).one_or_none()
-        if account is None:
-            raise NotFoundException("任务归属用户不存在")
+        def _execute() -> str:
+            account = self.db.session.query(Account).filter(Account.id == schedule_task.account_id).one_or_none()
+            if account is None:
+                raise NotFoundException("任务归属用户不存在")
 
-        # 定时任务使用独立会话执行，避免污染用户真实会话
-        conversation = self._create_schedule_conversation(account)
-        original_conversation_id = account.assistant_agent_conversation_id
-        try:
-            assistant_service = current_app.injector.get(AssistantAgentService)
-
-            # 构造请求对象（非流式场景：直接填充 form 字段）
-            req = AssistantAgentChat()
-            req.query.data = schedule_task.prompt
-            req.conversation_id.data = str(conversation.id)
-            req.image_urls.data = []
-            req.confirm_deep_thinking.data = False
-
-            for _event in assistant_service.chat(
-                req,
-                account,
-                invoke_from=InvokeFrom.SCHEDULE.value,
-            ):
-                pass
-
-            # 从独立会话最新 Message 读取最终答案
-            message = (
-                self.db.session.query(Message)
-                .filter(Message.conversation_id == conversation.id)
-                .order_by(Message.created_at.desc())
-                .first()
-            )
-            return (message.answer if message else "") or ""
-        finally:
-            # chat 内部 sync_active 会把账号助手会话指针切到定时会话，执行后恢复原指针，避免污染
+            # 定时任务使用独立会话执行，避免污染用户真实会话
+            conversation = self._create_schedule_conversation(account)
+            original_conversation_id = account.assistant_agent_conversation_id
             try:
-                if original_conversation_id is not None:
-                    self.update(account, assistant_agent_conversation_id=original_conversation_id)
-            except Exception:
-                logger.warning("恢复账号助手会话指针失败 account_id=%s", account.id, exc_info=True)
+                assistant_service = current_app.injector.get(AssistantAgentService)
+
+                # 构造请求对象（非流式场景：直接填充 form 字段）
+                req = AssistantAgentChat()
+                req.query.data = schedule_task.prompt
+                req.conversation_id.data = str(conversation.id)
+                req.image_urls.data = []
+                req.confirm_deep_thinking.data = False
+
+                for _event in assistant_service.chat(
+                    req,
+                    account,
+                    invoke_from=InvokeFrom.SCHEDULE.value,
+                ):
+                    pass
+
+                # 从独立会话最新 Message 读取最终答案
+                message = (
+                    self.db.session.query(Message)
+                    .filter(Message.conversation_id == conversation.id)
+                    .order_by(Message.created_at.desc())
+                    .first()
+                )
+                return (message.answer if message else "") or ""
+            finally:
+                # chat 内部 sync_active 会把账号助手会话指针切到定时会话，执行后恢复原指针，避免污染
+                try:
+                    if original_conversation_id is not None:
+                        self.update(account, assistant_agent_conversation_id=original_conversation_id)
+                except Exception:
+                    logger.warning("恢复账号助手会话指针失败 account_id=%s", account.id, exc_info=True)
+
+        result_holder: dict[str, object] = {}
+        error_holder: dict[str, BaseException] = {}
+
+        def _run_with_result() -> None:
+            try:
+                result_holder["value"] = _execute()
+            except BaseException as exc:
+                error_holder["error"] = exc
+
+        logger.warning("定时任务 chat 开始执行 schedule_task_id=%s", schedule_task.id)
+        worker = threading.Thread(target=_run_with_result, daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            if "value" in result_holder:
+                logger.warning("定时任务 chat 执行完成 schedule_task_id=%s", schedule_task.id)
+                return str(result_holder["value"])
+            if "error" in error_holder:
+                raise error_holder["error"]
+            time.sleep(0.5)
+
+        logger.warning("定时任务 chat 执行超时，强制结束 schedule_task_id=%s", schedule_task.id)
+        raise TimeoutError("定时任务执行超时")
 
     def _create_schedule_conversation(self, account: Account) -> Conversation:
         """创建定时任务专用会话（归属用户但独立于其真实会话，invoke_from=schedule 与正常对话区分）"""

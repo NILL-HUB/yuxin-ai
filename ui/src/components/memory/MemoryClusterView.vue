@@ -26,6 +26,16 @@ const CLUSTER_META: Array<{ value: string; color: string }> = [
   { value: 'secret', color: 'red' },
 ]
 
+// 前端展示分类对应的后端 memory_type 候选
+const CLUSTER_TYPE_GROUPS: Record<string, string[]> = {
+  profile: ['profile', 'identity', 'capability'],
+  preference: ['preference', 'habit'],
+  relationship: ['relationship'],
+  event: ['event', 'episode'],
+  project: ['project', 'goal'],
+  secret: ['secret', 'confidential'],
+}
+
 const typeLabel = (type: string) => {
   const key = `memory.memoryType.${type}`
   const translated = t(key)
@@ -50,7 +60,8 @@ const clusterMap = computed(() => {
 // 合并元信息和实际数据，保证 6 个区块都展示
 const displayClusters = computed(() => {
   return CLUSTER_META.map((meta) => {
-    const data = clusterMap.value[meta.value]
+    const candidates = CLUSTER_TYPE_GROUPS[meta.value] || [meta.value]
+    const data = candidates.map((key) => clusterMap.value[key]).find(Boolean)
     return {
       value: meta.value,
       color: meta.color,
@@ -71,7 +82,9 @@ const formatTime = (value: string) => {
 }
 
 const handleClick = (type: string) => {
-  emit('select-cluster', type)
+  const candidates = CLUSTER_TYPE_GROUPS[type] || [type]
+  const actualType = candidates.find((key) => clusterMap.value[key]) || type
+  emit('select-cluster', actualType)
 }
 </script>
 
