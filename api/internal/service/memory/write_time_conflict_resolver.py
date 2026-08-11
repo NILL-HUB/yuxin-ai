@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from injector import inject
@@ -216,7 +216,7 @@ class WriteTimeConflictResolver:
             return  # LLM 判定失败或无冲突
 
         # 3. 执行解决
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         resolved = False
 
         if conflict_type == ConflictType.SUPERSEDE:

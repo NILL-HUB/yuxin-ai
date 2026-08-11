@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -132,7 +132,7 @@ class TestE2EWriteFullPath:
         # 构造 MemoryEvent
         event = MemoryEvent(
             event_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source=EventSource.USER_MESSAGE,
             content="用户喜欢用 Python 编写数据处理脚本",
             context_messages=[],
@@ -160,7 +160,7 @@ class TestE2EWriteFullPath:
         """无依赖时写入应降级而不崩溃。"""
         event = MemoryEvent(
             event_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source=EventSource.USER_MESSAGE,
             content="测试内容",
             user_id=user_id,
@@ -187,7 +187,7 @@ class TestE2EWriteFullPath:
 
         event = MemoryEvent(
             event_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source=EventSource.USER_MESSAGE,
             content="metrics 测试",
             user_id=user_id,
@@ -272,7 +272,7 @@ class TestE2EDigest:
         cached_text = "用户偏好：Python 编程"
         cache_payload = json_module.dumps({
             "text": cached_text,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         })
         fake_redis.setex(f"memory:digest:{user_id}", 300, cache_payload)
 

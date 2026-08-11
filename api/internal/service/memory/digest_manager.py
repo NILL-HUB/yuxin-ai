@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from dataclasses import dataclass
 from injector import inject
@@ -139,7 +139,7 @@ class DigestManager:
             {
                 "text": digest_text,
                 "tokens": token_count,
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
             },
             ensure_ascii=False,
         )
@@ -631,7 +631,7 @@ class DigestManager:
             "memory_digest_template"
         )
         text = digest_template.format(
-            updated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+            updated_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M"),
             profile=profile,
             skills=skills,
             events=events,
@@ -713,7 +713,7 @@ class DigestManager:
             truncated_events = "\n".join(events.split("\n")[: max(1, int(len(events.split("\n")) * reduce_factor))])
             truncated_tasks = "\n".join(tasks.split("\n")[: max(1, int(len(tasks.split("\n")) * reduce_factor))])
             text = digest_template.format(
-                updated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+                updated_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M"),
                 profile=profile,
                 skills=skills,
                 events=truncated_events,
@@ -724,7 +724,7 @@ class DigestManager:
 
         # 最终兜底：仅保留画像
         return digest_template.format(
-            updated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+            updated_at=datetime.now(UTC).strftime("%Y-%m-%d %H:%M"),
             profile=profile,
             skills="",
             events="",

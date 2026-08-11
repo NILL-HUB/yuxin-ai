@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 from typing import Optional
 
@@ -99,7 +99,7 @@ class LedgerWriter:
         explicit_detection: Optional[ExplicitDetectionResult] = None,
     ) -> dict:
         """write_full_path 的原始实现。"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         driver = self._get_driver()
 
         # 显式陈述实体种子注入：将 subject 作为实体种子插入 entities 头部
@@ -318,7 +318,7 @@ class LedgerWriter:
         embedding: list[float],
     ) -> dict:
         """write_summary_path 的原始实现。"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         driver = self._get_driver()
 
         episode_node_id: Optional[str] = None
@@ -458,7 +458,7 @@ class LedgerWriter:
         entities: list[dict],
     ) -> dict:
         """write_stats_path 的原始实现。"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         driver = self._get_driver()
 
         updated_entities = 0
@@ -675,7 +675,7 @@ class LedgerWriter:
                 f"非法 relation_type: {relation_type!r}（仅允许字母数字下划线）"
             )
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         edge_id = str(uuid4())
 
         # relation_type 不能参数化，需拼接（已通过白名单校验防注入）
@@ -919,7 +919,7 @@ class LedgerWriter:
         if not content or not account_id:
             return None
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         memory_id = uuid4()
 
         # 合并 metadata，强制标记 source

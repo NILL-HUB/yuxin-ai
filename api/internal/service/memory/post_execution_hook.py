@@ -15,7 +15,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Thread
 from typing import Optional
 
@@ -306,8 +306,8 @@ class PostExecutionHook:
                 new_skill.user_id = user_id
                 new_skill.frequency = 1
                 new_skill.source_memories = [m.get("id", "") for m in memories]
-                new_skill.first_seen_at = datetime.utcnow()
-                new_skill.last_updated_at = datetime.utcnow()
+                new_skill.first_seen_at = datetime.now(UTC)
+                new_skill.last_updated_at = datetime.now(UTC)
                 new_skill.status = emergence._transition_status(new_skill)
                 emergence._persist_skill(new_skill)
                 logger.info(

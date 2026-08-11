@@ -25,7 +25,7 @@ import gzip
 import logging
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from internal.config.memory_settings import settings
@@ -91,7 +91,7 @@ class ColdStorageManager:
             return None
 
         # 构造对象键 {prefix}{user_id}/{year}/{month}/{memory_id}.json.gz
-        now = entry.archived_at or datetime.utcnow()
+        now = entry.archived_at or datetime.now(UTC)
         s3_key = (
             f"{self._config.s3_prefix}{entry.user_id}/"
             f"{now.year}/{now.month:02d}/{entry.node_id}.json.gz"
@@ -186,7 +186,7 @@ class ColdStorageManager:
         Returns:
             RebuildResult 重建结果
         """
-        started = datetime.utcnow()
+        started = datetime.now(UTC)
         result = RebuildResult(success=True)
 
         keys = self.list_user_archives(user_id)
@@ -207,7 +207,7 @@ class ColdStorageManager:
             except Exception:
                 result.errors.append(f"读取/恢复失败: {key}")
 
-        result.duration_s = (datetime.utcnow() - started).total_seconds()
+        result.duration_s = (datetime.now(UTC) - started).total_seconds()
         return result
 
     def rebuild_key_from_value(self, entry: ColdStorageEntry) -> Optional[str]:
@@ -307,7 +307,7 @@ class ColdStorageManager:
                         "node_id": str(entry.node_id),
                         "content": entry.content[:2000],
                         "weight": entry.weight,
-                        "now": datetime.utcnow().isoformat(),
+                        "now": datetime.now(UTC).isoformat(),
                         "user_id": entry.user_id,
                     },
                 ).consume()

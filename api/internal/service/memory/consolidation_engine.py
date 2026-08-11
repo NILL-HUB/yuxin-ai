@@ -25,7 +25,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 from uuid import uuid4
 
@@ -94,7 +94,7 @@ class ConsolidationEngine:
         """run_consolidation 的原始实现。"""
         report = ConsolidationReport(
             run_id=uuid4(),
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(UTC),
         )
 
         # 六阶段定义
@@ -129,7 +129,7 @@ class ConsolidationEngine:
                     "run_consolidation: %s", error_msg, exc_info=True
                 )
 
-        report.finished_at = datetime.utcnow()
+        report.finished_at = datetime.now(UTC)
         return report
 
     # =========================================================
@@ -444,7 +444,7 @@ class ConsolidationEngine:
 
     def _query_old_episodes(self, driver, user_id: str, age_days: int) -> list[dict]:
         """查询 HOT 层且年龄 >= age_days 的 Episode 节点。"""
-        cutoff = datetime.utcnow() - timedelta(days=age_days)
+        cutoff = datetime.now(UTC) - timedelta(days=age_days)
         cypher = """
         MATCH (e:Episode {user_id: $user_id})
         WHERE (e.storage_tier IS NULL OR e.storage_tier = 'hot')
@@ -610,7 +610,7 @@ class ConsolidationEngine:
         cluster: list[dict],
     ) -> None:
         """创建 SemanticMemory 节点 + IS_ABSTRACTION_OF 边。"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         semantic_id = str(uuid4())
 
         # 创建 SemanticMemory 节点
@@ -696,8 +696,8 @@ class ConsolidationEngine:
                         target_id=record.get("target_id"),
                         relation_type=record.get("relation_type", "RELATED"),
                         weight=float(record.get("weight", 1.0)),
-                        created_at=record.get("created_at") or datetime.utcnow(),
-                        last_accessed_at=record.get("last_accessed_at") or datetime.utcnow(),
+                        created_at=record.get("created_at") or datetime.now(UTC),
+                        last_accessed_at=record.get("last_accessed_at") or datetime.now(UTC),
                         access_count=int(record.get("access_count", 0)),
                         cooccurrence_count=int(record.get("cooccurrence_count", 0)),
                     )
@@ -802,7 +802,7 @@ class ConsolidationEngine:
 
     def _merge_nodes(self, driver, source_id: str, target_id: str) -> None:
         """合并节点：source 标记为 merged + 创建 MERGED_INTO 边。"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # 标记 source 为 merged
         cypher_mark = """

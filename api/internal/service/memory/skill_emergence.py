@@ -23,7 +23,7 @@ import hashlib
 import json
 import logging
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
 
@@ -173,8 +173,8 @@ class SkillEmergence:
                             new_skill.user_id = user_id
                             new_skill.frequency = frequency
                             new_skill.source_memories = memory_ids
-                            new_skill.first_seen_at = datetime.utcnow()
-                            new_skill.last_updated_at = datetime.utcnow()
+                            new_skill.first_seen_at = datetime.now(UTC)
+                            new_skill.last_updated_at = datetime.now(UTC)
                             new_skill.status = self._transition_status(new_skill)
                             self._persist_skill(new_skill)
                             results.append(new_skill)
@@ -217,7 +217,7 @@ class SkillEmergence:
                 {
                     "polarity": polarity,
                     "source": source,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 ensure_ascii=False,
             )
@@ -464,8 +464,8 @@ class SkillEmergence:
             new_freq = new_evidence.get("frequency", existing.frequency)
             existing.frequency = max(existing.frequency, new_freq)
             existing.use_count += 1
-            existing.last_used_at = datetime.utcnow()
-            existing.last_updated_at = datetime.utcnow()
+            existing.last_used_at = datetime.now(UTC)
+            existing.last_updated_at = datetime.now(UTC)
 
             # 重新计算 maturity
             existing.maturity = self._compute_maturity(existing)
@@ -547,7 +547,7 @@ class SkillEmergence:
         usage_factor = math.log1p(skill.use_count) / math.log(20)
 
         if skill.last_used_at is not None:
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             if isinstance(skill.last_used_at, datetime):
                 days_since = (now - skill.last_used_at).days
             else:
@@ -578,7 +578,7 @@ class SkillEmergence:
         # ACTIVE + last_used_at 距今 > stale_days → STALE
         if current == SkillStatus.ACTIVE and skill.last_used_at is not None:
             if isinstance(skill.last_used_at, datetime):
-                days_since = (datetime.utcnow() - skill.last_used_at).days
+                days_since = (datetime.now(UTC) - skill.last_used_at).days
                 if days_since > self._config.stale_days:
                     if SkillStatus.STALE in SKILL_TRANSITIONS.get(current, []):
                         return SkillStatus.STALE
@@ -586,7 +586,7 @@ class SkillEmergence:
         # STALE + 最近 24h 内使用 → ACTIVE
         if current == SkillStatus.STALE and skill.last_used_at is not None:
             if isinstance(skill.last_used_at, datetime):
-                hours_since = (datetime.utcnow() - skill.last_used_at).total_seconds() / 3600
+                hours_since = (datetime.now(UTC) - skill.last_used_at).total_seconds() / 3600
                 if hours_since < 24:
                     if SkillStatus.ACTIVE in SKILL_TRANSITIONS.get(current, []):
                         return SkillStatus.ACTIVE
@@ -762,7 +762,7 @@ class SkillEmergence:
             old_status = skill.status
             skill.maturity = self._compute_maturity(skill)
             skill.status = self._transition_status(skill)
-            skill.last_updated_at = datetime.utcnow()
+            skill.last_updated_at = datetime.now(UTC)
 
             if skill.status != old_status:
                 transitioned += 1
@@ -878,7 +878,7 @@ class SkillEmergence:
 
         try:
             key = f"skill:stats:{user_id}"
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(UTC).isoformat()
             pipe = redis_client.pipeline()
             pipe.hincrby(key, f"{skill_id}:use_count", 1)
             pipe.hset(key, f"{skill_id}:last_used_at", now)

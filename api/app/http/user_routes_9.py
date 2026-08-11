@@ -12,7 +12,7 @@
 """
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from quart import request
@@ -152,7 +152,7 @@ def register_routes(quart_app):
 
         event = MemoryEvent(
             event_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source=EventSource.USER_MESSAGE,
             content=content,
             context_messages=[],
@@ -169,7 +169,7 @@ def register_routes(quart_app):
             return a._ok({
                 "status": "skipped",
                 "memory_id": None,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "score": 0.0,
             })
         return a._ok(MemoryWriteResp().dump(result))

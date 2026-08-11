@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Callable, Optional
 from uuid import uuid4
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 class AuditEntry(BaseModel):
     """审计日志条目。"""
 
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     action: str
     user_id: str
     memory_id: Optional[str] = None

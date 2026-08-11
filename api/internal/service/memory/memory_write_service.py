@@ -26,7 +26,7 @@
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -104,7 +104,7 @@ class MemoryWriteService:
         content = f"User: {query}\nAssistant: {ai_response}"
         event = MemoryEvent(
             event_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source=EventSource.USER_MESSAGE,
             content=content,
             context_messages=[],
@@ -217,7 +217,7 @@ class MemoryWriteService:
                 return {
                     "status": "rejected",
                     "memory_id": None,
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "score": salience_total,
                 }
 
@@ -225,7 +225,7 @@ class MemoryWriteService:
                 return None
 
             result.setdefault("status", write_path.value)
-            result.setdefault("created_at", datetime.utcnow().isoformat())
+            result.setdefault("created_at", datetime.now(UTC).isoformat())
             result["score"] = salience_total if salience_total is not None else 1.0
             # 附加显式检测与冲突解决元数据
             result["explicit_detection"] = {

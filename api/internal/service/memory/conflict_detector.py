@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from uuid import uuid4
 
@@ -251,7 +251,7 @@ class ConflictDetector:
         - UPDATE (SUPERSEDE): 旧节点 t_invalidated_at + SUPERSEDED_BY 边
         - COMPLEMENT (REFINEMENT): 创建双向 COMPLEMENTARY 边
         """
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         a_id = conflict.entity_a
         b_id = conflict.entity_b
 
@@ -410,7 +410,7 @@ class ConflictDetector:
         confidence: float,
     ) -> None:
         """创建双向 COMPLEMENTARY 边（COMPLEMENT 解决）。"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         cypher = """
         MATCH (a {node_id: $a_id}), (b {node_id: $b_id})
         CREATE (a)-[:COMPLEMENTARY {

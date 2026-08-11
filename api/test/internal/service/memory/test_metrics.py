@@ -246,7 +246,7 @@ class TestComponentInstrumentation:
         """LedgerWriter 写入后 memory_write_total 增加。"""
         from types import SimpleNamespace
         from uuid import uuid4
-        from datetime import datetime
+        from datetime import UTC, datetime
         from internal.model.memory_models import EventSource, MemoryEvent
         from internal.service.memory.ledger_writer import LedgerWriter
 
@@ -255,7 +255,7 @@ class TestComponentInstrumentation:
 
         event = MemoryEvent(
             event_id=uuid4(),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             source=EventSource.USER_MESSAGE,
             content="测试写入内容",
             context_messages=[],

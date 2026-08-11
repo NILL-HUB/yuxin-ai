@@ -1,6 +1,6 @@
 """B1 HebbianDecay 单元测试。"""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -17,7 +17,7 @@ def _make_edge(
     access_count: int = 0,
 ) -> MemoryEdge:
     """构造测试用 MemoryEdge。"""
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     return MemoryEdge(
         source_id=uuid4(),
         target_id=uuid4(),
@@ -34,7 +34,7 @@ class TestHebbianDecayComputeWeight:
     def test_recent_edge_should_retain_high_weight(self):
         """刚刚访问的边权重应接近 base_weight。"""
         decay = HebbianDecay()
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         edge = _make_edge(weight=1.0, last_accessed_at=now)
 
         w = decay.compute_weight(edge, now=now)
@@ -44,7 +44,7 @@ class TestHebbianDecayComputeWeight:
     def test_old_edge_should_decay(self):
         """30 天未访问的边权重应明显衰减。"""
         decay = HebbianDecay()
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         edge = _make_edge(
             weight=1.0,
             last_accessed_at=now - timedelta(days=30),
@@ -57,7 +57,7 @@ class TestHebbianDecayComputeWeight:
     def test_cooccurrence_should_boost_weight(self):
         """共现计数高的边权重应有强化。"""
         decay = HebbianDecay()
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         edge_low = _make_edge(
             weight=0.5,
             last_accessed_at=now,
@@ -77,7 +77,7 @@ class TestHebbianDecayComputeWeight:
     def test_weight_should_be_non_negative(self):
         """权重不应为负。"""
         decay = HebbianDecay()
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         edge = _make_edge(
             weight=0.1,
             last_accessed_at=now - timedelta(days=365),

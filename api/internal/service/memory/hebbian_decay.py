@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from internal.config.memory_settings import settings
@@ -217,7 +217,7 @@ class HebbianDecay:
             logger.warning("batch_update_weights: Neo4j 不可用，跳过批量更新")
             return tier_counts
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # 分批处理
         for start_idx in range(0, len(edges), batch_size):

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from internal.config.memory_settings import settings
@@ -221,7 +221,7 @@ class MemoryRetriever:
                             content=node_data.get("content", ""),
                             score=activation * 0.8,
                             source="graph_spread",
-                            timestamp=node_data.get("timestamp", datetime.utcnow()),
+                            timestamp=node_data.get("timestamp", datetime.now(UTC)),
                         )
 
         if not all_candidates:
@@ -317,14 +317,14 @@ class MemoryRetriever:
                 node_id = str(record.get("node_id", ""))
                 content = record.get("content") or record.get("summary") or ""
                 bm25_score = float(record.get("score", 0.0))
-                created_at = record.get("created_at") or datetime.utcnow()
+                created_at = record.get("created_at") or datetime.now(UTC)
 
                 rr = RetrievalResult(
                     memory_id=node_id,
                     content=content,
                     score=bm25_score,
                     source="bm25",
-                    timestamp=created_at if isinstance(created_at, datetime) else datetime.utcnow(),
+                    timestamp=created_at if isinstance(created_at, datetime) else datetime.now(UTC),
                 )
                 rr.score_breakdown = RetrievalScore(keyword=bm25_score, total=bm25_score)
                 results.append(rr)
@@ -409,7 +409,7 @@ class MemoryRetriever:
                     content=content,
                     score=semantic_score,
                     source="semantic",
-                    timestamp=row.created_at or datetime.utcnow(),
+                    timestamp=row.created_at or datetime.now(UTC),
                 )
                 rr.score_breakdown = RetrievalScore(semantic=semantic_score, total=semantic_score)
                 results.append(rr)
@@ -632,9 +632,9 @@ class MemoryRetriever:
                 return None
 
             content = record.get("content") or record.get("summary") or ""
-            created_at = record.get("created_at") or datetime.utcnow()
+            created_at = record.get("created_at") or datetime.now(UTC)
             if not isinstance(created_at, datetime):
-                created_at = datetime.utcnow()
+                created_at = datetime.now(UTC)
 
             return {
                 "content": content,

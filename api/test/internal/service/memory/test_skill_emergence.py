@@ -1,6 +1,6 @@
 """E1 SkillEmergence 单元测试。"""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -33,7 +33,7 @@ class TestSkillEmergenceComputeMaturity:
             name="测试技能",
             frequency=5,
             use_count=3,
-            last_used_at=datetime.utcnow(),
+            last_used_at=datetime.now(UTC),
         )
         m = emergence._compute_maturity(skill)
         assert 0.0 <= m <= 1.0
@@ -45,7 +45,7 @@ class TestSkillEmergenceComputeMaturity:
             name="高频技能",
             frequency=100,
             use_count=50,
-            last_used_at=datetime.utcnow(),
+            last_used_at=datetime.now(UTC),
         )
         skill_low = Skill(
             skill_id="s2",
@@ -89,7 +89,7 @@ class TestSkillEmergenceTransitionStatus:
             skill_id="s1",
             name="测试",
             status=SkillStatus.ACTIVE,
-            last_used_at=datetime.utcnow() - timedelta(days=100),
+            last_used_at=datetime.now(UTC) - timedelta(days=100),
         )
         assert emergence._transition_status(skill) == SkillStatus.STALE
 
@@ -99,7 +99,7 @@ class TestSkillEmergenceTransitionStatus:
             skill_id="s1",
             name="测试",
             status=SkillStatus.STALE,
-            last_used_at=datetime.utcnow() - timedelta(hours=12),
+            last_used_at=datetime.now(UTC) - timedelta(hours=12),
         )
         assert emergence._transition_status(skill) == SkillStatus.ACTIVE
 

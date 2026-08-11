@@ -63,7 +63,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -228,7 +228,7 @@ class MemoryEvent(BaseModel):
     """
 
     event_id: UUID = Field(default_factory=uuid4, description="全局唯一事件标识")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="事件发生时间")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="事件发生时间")
     source: EventSource = EventSource.USER_MESSAGE
     content: str = Field(..., min_length=1, description="事件原始文本内容")
     context_messages: list[str] = Field(
@@ -270,8 +270,8 @@ class MemoryNode(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict, description="节点属性字典")
     embedding: Optional[list[float]] = Field(default=None, description="语义嵌入向量")
     tier: StorageTier = StorageTier.HOT
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
-    last_accessed: datetime = Field(default_factory=datetime.utcnow, description="最后访问时间")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="创建时间")
+    last_accessed: datetime = Field(default_factory=lambda: datetime.now(UTC), description="最后访问时间")
     access_count: int = Field(default=0, description="累计访问次数")
     is_active: bool = Field(default=True, description="节点是否活跃")
     user_id: str = Field(..., description="用户标识")
@@ -315,12 +315,12 @@ class MemoryEdge(BaseModel):
     relation_type: str = Field(..., min_length=1, description="关系类型")
     properties: dict[str, Any] = Field(default_factory=dict, description="边属性字典")
     weight: float = Field(default=1.0, ge=0.0, le=2.0, description="边权重（赫布学习累积）")
-    t_valid_at: datetime = Field(default_factory=datetime.utcnow, description="事实开始有效时间")
+    t_valid_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="事实开始有效时间")
     t_invalidated_at: Optional[datetime] = Field(default=None, description="事实失效时间")
-    t_transaction_start: datetime = Field(default_factory=datetime.utcnow, description="事务开始时间")
+    t_transaction_start: datetime = Field(default_factory=lambda: datetime.now(UTC), description="事务开始时间")
     t_transaction_end: Optional[datetime] = Field(default=None, description="事务结束时间")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="边创建时间")
-    last_accessed_at: datetime = Field(default_factory=datetime.utcnow, description="最后访问时间")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="边创建时间")
+    last_accessed_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="最后访问时间")
     access_count: int = Field(default=0, description="累计访问次数")
     cooccurrence_count: int = Field(default=0, description="共现计数")
     is_active: bool = Field(default=True, description="边是否活跃")
@@ -407,7 +407,7 @@ class RecentEventSummary(BaseModel):
     """近期事件摘要条目。"""
 
     content: str = Field(..., description="事件内容摘要")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="事件时间")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="事件时间")
     importance: float = Field(default=0.0, description="事件重要性 [0, 1]")
 
 
@@ -448,7 +448,7 @@ class MemoryDigest(BaseModel):
         default_factory=list, description="当前活跃任务"
     )
     total_tokens: int = Field(default=0, description="当前 token 总量")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="最后更新时间")
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="最后更新时间")
 
 
 # ============================================================
@@ -503,7 +503,7 @@ class RetrievalResult(BaseModel):
     content: str = Field(..., description="命中记忆的内容")
     score: float = Field(..., description="综合评分")
     source: str = Field(default="", description="命中来源通道")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="记忆时间戳")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="记忆时间戳")
     metadata: dict[str, Any] = Field(default_factory=dict, description="附加元数据")
     evidence_chain: list[EvidenceItem] = Field(
         default_factory=list, description="证据链"
@@ -593,7 +593,7 @@ class ColdStorageEntry(BaseModel):
     node_id: UUID = Field(..., description="关联的 TKG 节点 ID")
     user_id: str = Field(..., description="用户标识")
     s3_key: str = Field(default="", description="S3/COS 对象键")
-    archived_at: datetime = Field(default_factory=datetime.utcnow, description="归档时间")
+    archived_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="归档时间")
     support_count: int = Field(default=0, description="支持计数")
     weight: float = Field(default=0.0, description="归档时权重")
     content: str = Field(default="", description="记忆原始内容（冷存储回热与 Key 重建用）")
@@ -652,7 +652,7 @@ class ConsolidationReport(BaseModel):
     """
 
     run_id: UUID = Field(default_factory=uuid4, description="运行唯一标识")
-    started_at: datetime = Field(default_factory=datetime.utcnow, description="开始时间")
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="开始时间")
     finished_at: Optional[datetime] = Field(default=None, description="结束时间")
     phases: dict[str, dict] = Field(
         default_factory=dict, description="各阶段执行结果"
@@ -716,7 +716,7 @@ class TierTransition(BaseModel):
     to_tier: StorageTier = Field(..., description="新存储层级")
     reason: str = Field(..., description="变更原因")
     weight: float = Field(..., description="变更时权重")
-    at_time: datetime = Field(default_factory=datetime.utcnow, description="变更时间")
+    at_time: datetime = Field(default_factory=lambda: datetime.now(UTC), description="变更时间")
 
 
 class Skill(BaseModel):
@@ -745,8 +745,8 @@ class Skill(BaseModel):
     maturity: SkillMaturity = Field(default=SkillMaturity.EMERGING, description="成熟度等级")
     status: SkillStatus = Field(default=SkillStatus.EMERGING, description="生命周期状态")
     confidence: float = Field(default=0.0, description="技能置信度 [0, 1]")
-    last_seen: datetime = Field(default_factory=datetime.utcnow, description="最后触发时间")
-    first_seen: datetime = Field(default_factory=datetime.utcnow, description="首次触发时间")
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), description="最后触发时间")
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC), description="首次触发时间")
     examples: list[str] = Field(default_factory=list, description="技能示例列表")
 
 
@@ -754,7 +754,7 @@ class AuditEntry(BaseModel):
     """审计日志条目。"""
 
     entry_id: UUID = Field(default_factory=uuid4, description="审计条目唯一标识")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="审计时间")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="审计时间")
     actor: str = Field(..., description="操作者")
     action: str = Field(..., description="操作类型")
     target: str = Field(..., description="操作目标")
