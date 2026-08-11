@@ -32,6 +32,10 @@ def register_routes(quart_app):
     @quart_app.get("/builtin-tools")
     async def async_get_builtin_tools() -> Response:
         """async 获取全部内置工具信息。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.service import BuiltinToolService
 
         return _ok(await _to_thread(_get_service(BuiltinToolService).get_builtin_tools))
@@ -39,6 +43,10 @@ def register_routes(quart_app):
     @quart_app.get("/builtin-tools/<string:provider_name>/tools/<string:tool_name>")
     async def async_get_provider_tool(provider_name, tool_name) -> Response:
         """async 获取指定提供商+工具的信息。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.service import BuiltinToolService
 
         return _ok(
@@ -52,6 +60,10 @@ def register_routes(quart_app):
     @quart_app.get("/builtin-tools/<string:provider_name>/icon")
     async def async_get_provider_icon(provider_name) -> Response:
         """async 获取提供商图标（返回图片或跳转 URL）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.service import BuiltinToolService
 
         icon, mimetype, icon_url = await _to_thread(
@@ -64,6 +76,10 @@ def register_routes(quart_app):
     @quart_app.get("/builtin-tools/categories")
     async def async_get_categories() -> Response:
         """async 获取全部内置提供商分类。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.service import BuiltinToolService
 
         return _ok(await _to_thread(_get_service(BuiltinToolService).get_categories))
@@ -71,6 +87,10 @@ def register_routes(quart_app):
     @quart_app.get("/skills/categories")
     async def async_get_skill_categories() -> Response:
         """async 获取技能分类统计。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.schema.skill_schema import GetSkillsCategoriesResp
         from internal.service.skill_service import SkillService
 
@@ -83,6 +103,10 @@ def register_routes(quart_app):
     @quart_app.get("/skills")
     async def async_get_skills_with_page() -> Response:
         """async 获取技能包分页列表。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.schema.skill_schema import SkillPackageResp
         from internal.service.skill_service import SkillService
 
@@ -101,6 +125,10 @@ def register_routes(quart_app):
     @quart_app.get("/skills/<uuid:skill_id>")
     async def async_get_skill_package(skill_id) -> Response:
         """async 获取技能包详情。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.schema.skill_schema import SkillPackageResp
         from internal.service.skill_service import SkillService
 
@@ -112,6 +140,10 @@ def register_routes(quart_app):
     @quart_app.get("/skills/<uuid:skill_id>/icon")
     async def async_get_skill_package_icon(skill_id) -> Response:
         """async 获取技能包图标。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.service.skill_service import SkillService
 
         icon, mimetype, icon_url = await _to_thread(
@@ -124,6 +156,10 @@ def register_routes(quart_app):
     @quart_app.get("/skills/<uuid:skill_id>/versions")
     async def async_get_skill_package_versions(skill_id) -> Response:
         """async 获取技能包版本历史。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
         from internal.schema.skill_schema import SkillVersionResp
         from internal.service.skill_service import SkillService
 

@@ -139,7 +139,7 @@ onMounted(async () => {
           type="primary"
           @click="router.replace({ path: '/home', query: { login: '1', t: String(Date.now()) } })"
         >
-          返回首页登录
+          返回登录
         </a-button>
       </template>
     </div>

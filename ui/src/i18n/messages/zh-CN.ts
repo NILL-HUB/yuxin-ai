@@ -1479,6 +1479,7 @@ export default {
       modelTypes: {
         chat: '对话',
         image: '图像生成',
+        image_generation: '图像生成',
         embedding: '向量嵌入',
         rerank: '重排',
         audio: '音频',
@@ -2121,7 +2122,7 @@ export default {
   },
   layout: {
     sidebar: {
-      home: '主页',
+      newConversation: '新建会话',
       configCenter: '配置中心',
       adminConsole: '管理后台',
       personalSpace: '配置中心',
@@ -2136,14 +2137,16 @@ export default {
       search: '会话搜索',
       memory: '个人记忆',
       myKnowledge: '个人知识库',
+      studio: '创作工作室',
+      store: '应用与分身商店',
       showcase: '案例展示',
       schedules: '定时任务',
       membership: '会员中心',
-      store: '应用商店',
+      workspace: '工作空间',
+      services: '平台服务',
       recentConversations: '最近对话',
       noRecentConversations: '暂无最近对话',
       recentConversationsCount: '最近对话 ({count})',
-      searchHistory: '历史对话',
       collapse: '折叠',
       expand: '展开',
     },
@@ -2801,6 +2804,8 @@ export default {
       confidence: '置信度：{percent}%',
       cta: '你可以直接点击下方推荐操作继续：',
       fallback: '继续探索你的需求',
+      resumeTaskLabel: '继续上次任务',
+      startNewTaskLabel: '开启新任务',
     },
     conversation: {
       title: '当前会话',
@@ -2829,6 +2834,14 @@ export default {
       icpLabel: '桂ICP备',
       publicSecurityLabel: '桂公网安备',
       github: 'GitHub',
+    },
+  },
+  studio: {
+    placeholder: {
+      title: '用户共创分身',
+      description: '创作工作室正在建设中。之后你可以在这里把自己的技能、经验和做事方式沉淀成可被调用的分身，并与应用商店融合展示。',
+      store: '前往应用商店',
+      showcase: '查看案例展示',
     },
   },
   conversationSearch: {

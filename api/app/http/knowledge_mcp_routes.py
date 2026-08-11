@@ -595,56 +595,6 @@ def register_routes(quart_app):
         ]
         return _ok({"list": result})
 
-    @quart_app.get("/public/mcp-providers/categories")
-    async def async_get_mcp_categories() -> Response:
-        """async 获取 MCP 分类列表。"""
-        from internal.schema.mcp_schema import GetMcpCategoriesResp
-        from internal.service.mcp_service import McpService
-
-        return _ok(GetMcpCategoriesResp().dump({}))
-
-    @quart_app.get("/public/mcp-providers")
-    async def async_get_public_mcp_providers_with_page() -> Response:
-        """async 获取公共 MCP 广场列表（公开）。"""
-        from internal.schema.mcp_schema import McpProviderResp
-        from internal.service.mcp_service import McpService
-
-        raw_account_id = request.args.get("account_id") or ""
-        account = None
-        if raw_account_id:
-            account, err = await _resolve_account()
-            if err is not None:
-                return err
-
-        req = SimpleNamespace(
-            current_page=_field(_int_arg("current_page", 1), 1),
-            page_size=_field(_int_arg("page_size", 20), 20),
-            search_word=_field(request.args.get("search_word"), None),
-            category=_field(request.args.get("category"), None),
-        )
-        providers, paginator = await _to_thread(
-            _get_service(McpService).get_public_mcp_providers_with_page, req, account
-        )
-        resp = McpProviderResp(many=True)
-        return _ok({"list": resp.dump(providers), "paginator": asdict(paginator)})
-
-    @quart_app.get("/public/mcp-providers/<string:provider_key>")
-    async def async_get_public_mcp_provider(provider_key) -> Response:
-        """async 获取公共 MCP 详情（公开）。"""
-        from internal.schema.mcp_schema import McpProviderResp
-        from internal.service.mcp_service import McpService
-
-        raw_account_id = request.args.get("account_id") or ""
-        account = None
-        if raw_account_id:
-            account, err = await _resolve_account()
-            if err is not None:
-                return err
-        provider = await _to_thread(
-            _get_service(McpService).get_public_mcp_provider, provider_key, account
-        )
-        return _ok(McpProviderResp().dump(provider))
-
     @quart_app.get("/mcp-providers/categories")
     async def async_get_mcp_categories_for_space() -> Response:
         """async 获取个人空间 MCP 分类列表。"""

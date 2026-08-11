@@ -14,12 +14,14 @@ import {
 import type { McpCategory, McpProvider } from '@/models/mcp'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     hideCreate?: boolean
+    adminMode?: boolean
   }>(),
   {
     hideCreate: false,
+    adminMode: false,
   },
 )
 
@@ -101,7 +103,7 @@ const getCategoryButtonClass = (active: boolean) =>
 
 const loadCategories = async () => {
   try {
-    const res = await getPublicMcpCategories()
+    const res = await getPublicMcpCategories(props.adminMode)
     categories.value = res.data.categories || []
   } catch {
     categories.value = []
@@ -111,12 +113,15 @@ const loadCategories = async () => {
 const loadProviders = async () => {
   loading.value = true
   try {
-    const res = await getPublicMcpProvidersWithPage({
-      current_page: 1,
-      page_size: 50,
-      search_word: searchWord.value.trim(),
-      category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
-    })
+    const res = await getPublicMcpProvidersWithPage(
+      {
+        current_page: 1,
+        page_size: 50,
+        search_word: searchWord.value.trim(),
+        category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+      },
+      props.adminMode,
+    )
     providers.value = res.data.list || []
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('store.mcp.loadFailed')))
@@ -138,7 +143,7 @@ const loadProviderDetail = async (providerKey: string) => {
   detailLoading.value = true
   showDetailVisible.value = true
   try {
-    const res = await getPublicMcpProvider(providerKey)
+    const res = await getPublicMcpProvider(providerKey, props.adminMode)
     activeProvider.value = res.data
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('store.mcp.detailLoadFailed')))

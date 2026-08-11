@@ -115,7 +115,9 @@ class TestHomeIntentIntegration:
                         "created_at": message2.created_at.isoformat(),
                         "updated_at": message2.updated_at.isoformat(),
                     },
-                ]
+                ],
+                memory_context="",
+                conversation_context="",
             )
 
             # 验证缓存被写入

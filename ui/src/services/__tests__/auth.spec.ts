@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  logout,
   passwordLogin,
   prepareRegister,
   resendLoginChallenge,
@@ -10,14 +11,21 @@ import {
   verifyRegister,
 } from '@/services/auth'
 import * as request from '@/utils/request'
+import * as auth from '@/utils/auth'
 
 vi.mock('@/utils/request', () => ({
   post: vi.fn(),
 }))
 
+vi.mock('@/utils/auth', () => ({
+  getCredentialSessionId: vi.fn(),
+  getStoredCredential: vi.fn(),
+}))
+
 describe('auth service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(auth.getCredentialSessionId).mockReturnValue('')
     vi.mocked(request.post).mockResolvedValue({ data: {}, message: 'ok' } as never)
   })
 
@@ -83,6 +91,22 @@ describe('auth service', () => {
       body: {
         challenge_id: 'challenge-1',
       },
+    })
+  })
+
+  it('posts logout without a session id for legacy credentials', async () => {
+    await logout()
+
+    expect(request.post).toHaveBeenCalledWith('/auth/logout')
+  })
+
+  it('passes the current session id to logout so the device is revoked', async () => {
+    vi.mocked(auth.getCredentialSessionId).mockReturnValue('session-current')
+
+    await logout()
+
+    expect(request.post).toHaveBeenCalledWith('/auth/logout', {
+      params: { session_id: 'session-current' },
     })
   })
 })

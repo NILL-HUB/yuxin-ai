@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { markRaw, onMounted, ref, nextTick, provide, defineAsyncComponent, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ConnectionMode, Panel, useVueFlow, VueFlow, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { MiniMap } from '@vue-flow/minimap'
 import { Message } from '@arco-design/web-vue'
-import { getPublicWorkflowDetail } from '@/services/public-workflow'
+import { getAdminWorkflow } from '@/services/admin-workflows'
 import { getErrorMessage } from '@/utils/error'
 import StartNode from '@/views/space/workflows/components/nodes/StartNode.vue'
 import LlmNode from '@/views/space/workflows/components/nodes/LLMNode.vue'
@@ -20,7 +20,7 @@ import TextProcessorNode from '@/views/space/workflows/components/nodes/TextProc
 import VariableAssignerNode from '@/views/space/workflows/components/nodes/VariableAssignerNode.vue'
 import ParameterExtractorNode from '@/views/space/workflows/components/nodes/ParameterExtractorNode.vue'
 import IfElseNode from '@/views/space/workflows/components/nodes/IfElseNode.vue'
-import { getPublicWorkflowDraftGraph } from '@/services/public-workflow'
+import { getAdminWorkflowDraftGraph } from '@/services/admin-workflows'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
@@ -36,14 +36,12 @@ import IfElseNodeInfo from '@/views/space/workflows/components/infos/IfElseNodeI
 import HttpRequestNodeInfo from '@/views/space/workflows/components/infos/HttpRequestNodeInfo.vue'
 import DatasetRetrievalNodeInfo from '@/views/space/workflows/components/infos/DatasetRetrievalNodeInfo.vue'
 import ToolNodeInfo from '@/views/space/workflows/components/infos/ToolNodeInfo.vue'
-import { useWorkflowHeader } from '@/views/space/workflows/use-workflow-header'
 
 const CodeNodeInfo = defineAsyncComponent(
   () => import('@/views/space/workflows/components/infos/CodeNodeInfo.vue'),
 )
 
 const route = useRoute()
-const router = useRouter()
 const { t } = useI18n()
 const workflowId = ref<string>(String(route.params?.workflow_id ?? ''))
 const isPreviewMode = ref(true)
@@ -106,15 +104,7 @@ type SelectedNode = {
   data?: Record<string, unknown>
 }
 const workflow = ref<PreviewWorkflow | null>(null)
-const workflowForHeader = computed<Record<string, unknown>>(() => {
-  return workflow.value ?? {}
-})
-const { headerBackRoute } = useWorkflowHeader({
-  isPreviewMode,
-  workflowId,
-  workflow: workflowForHeader,
-  router,
-})
+const headerBackRoute = computed(() => ({ name: 'admin-workflows' }))
 const instance = ref<FlowInstance | null>(null)
 const zoomLevel = ref<number>(1)
 
@@ -164,12 +154,20 @@ const edges = ref<Edge[]>([])
 const loadWorkflow = async () => {
   try {
     loading.value = true
-    const res = await getPublicWorkflowDetail(workflowId.value)
-    workflow.value = res.data
-    workflowIconCandidates.value = getIconCandidates(res.data.icon)
+    const data = await getAdminWorkflow(workflowId.value)
+    workflow.value = {
+      id: data.id,
+      name: data.name,
+      icon: data.icon || '',
+      description: data.description || '',
+      account_name: data.creator_name || '',
+      account_avatar: '',
+      is_debug_passed: data.status === 'published',
+    }
+    workflowIconCandidates.value = getIconCandidates(data.icon || '')
     workflowIconIndex.value = 0
     workflowIconSrc.value = workflowIconCandidates.value[0] || ''
-    accountAvatarCandidates.value = getIconCandidates(res.data.account_avatar)
+    accountAvatarCandidates.value = getIconCandidates('')
     accountAvatarIndex.value = 0
     accountAvatarSrc.value = accountAvatarCandidates.value[0] || ''
   } catch (error: unknown) {
@@ -212,8 +210,7 @@ const onAccountAvatarError = () => {
 // 加载工作流图
 const loadDraftGraph = async () => {
   try {
-    const res = await getPublicWorkflowDraftGraph(workflowId.value)
-    const data = res.data
+    const data = await getAdminWorkflowDraftGraph(workflowId.value)
 
     // 清空现有数据
     nodes.value.splice(0, nodes.value.length)

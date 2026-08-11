@@ -401,7 +401,7 @@ const buildIntentIntroduction = (intentData: HomeIntentData) => {
   const intent = String(intentData.intent || '').trim()
   const confidence = Number(intentData.confidence || 0)
   const confidencePercent = Math.max(0, Math.min(100, Math.round(confidence * 100)))
-  return [
+  const sections = [
     `### Hi，${userDisplayName.value}`,
     '',
     t('home.intent.title'),
@@ -410,18 +410,36 @@ const buildIntentIntroduction = (intentData: HomeIntentData) => {
     `- ${t('home.intent.confidence', { percent: confidencePercent })}`,
     '',
     `**${t('home.intent.cta')}**`,
-  ].join('\n')
+  ]
+  const resumeQuestion = String(intentData.resume_question || '').trim()
+  if (intentData.should_ask_continue && resumeQuestion) {
+    sections.splice(3, 0, `> ${resumeQuestion}`)
+  }
+  return sections.join('\n')
 }
 
 const applyHomeIntentResult = (intentData: HomeIntentData) => {
   assistantIntroduction.value = buildIntentIntroduction(intentData)
-  const actions = Array.isArray(intentData.suggested_actions)
+  const intentActions = Array.isArray(intentData.suggested_actions)
     ? intentData.suggested_actions
         .map((item) => String(item?.label || '').trim())
         .filter((item) => item !== '')
-        .slice(0, 3)
     : []
-  opening_questions.value = actions.length > 0 ? actions : [...defaultOpeningQuestions.value]
+  let actions = intentActions
+  if (intentData.should_ask_continue) {
+    const resumeAction = intentActions.find((label) => label.includes(t('home.intent.resumeTaskLabel')))
+    actions = [
+      resumeAction || t('home.intent.resumeTaskLabel'),
+      t('home.intent.startNewTaskLabel'),
+      ...intentActions.filter(
+        (label) => label !== resumeAction && label !== t('home.intent.startNewTaskLabel'),
+      ),
+    ]
+  }
+  opening_questions.value = [...new Set(actions)].slice(0, 3)
+  if (opening_questions.value.length === 0) {
+    opening_questions.value = [...defaultOpeningQuestions.value]
+  }
   introductionLatency.value = 0
   introductionTotalTokenCount.value = estimateTokenCount(assistantIntroduction.value)
   homeIntentApplied.value = true
@@ -461,21 +479,20 @@ const initializeHomeAfterLogin = async () => {
   try {
     await loadAssistantAgentCapabilities()
   } catch {
-    // 能力接口失败时保持默认文本模式，不阻塞首页加载。
+    // 能力接口失败时保持默认文本模式，不阻塞新建会话加载。
   }
 
-  // 无论是否指定了 conversation_id，都应该加载消息
-  // 如果没有指定 conversation_id，则加载最新的会话消息
-  // 如果指定了 conversation_id，则加载该会话的消息
+  // 主页已由新建会话承担：未指定 conversation_id 时只展示开场白，
+  // 只有从最近对话进入时才恢复对应会话的消息。
   try {
-    await reloadAssistantMessages(true, selectedConversationId.value)
-
-    const latestConversationId = normalizeConversationId(messages.value[0]?.conversation_id)
-    if (!selectedConversationId.value && latestConversationId) {
-      selectedConversationId.value = latestConversationId
-      await syncRouteConversationId(latestConversationId)
+    if (selectedConversationId.value) {
+      await reloadAssistantMessages(true, selectedConversationId.value)
+      await loadSelectedConversationName(selectedConversationId.value)
+    } else {
+      messages.value = []
+      currentConversationName.value = ''
+      await loadSelectedConversationName('')
     }
-    await loadSelectedConversationName(selectedConversationId.value)
   } catch (error) {
     console.error('Failed to load initial messages:', error)
   }

@@ -11,6 +11,8 @@ const readHomeModel = () =>
 const orchestrationData: HomeIntentData = {
   intent: '编程任务',
   confidence: 0.9,
+  should_ask_continue: false,
+  resume_question: '',
   suggested_actions: [],
   is_default: false,
   task_plan_summary: {

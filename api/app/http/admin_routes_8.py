@@ -148,7 +148,15 @@ def _list_available_models(model_type):
     with a.flask_app.app_context():
         query = db.session.query(ModelPoolConfig).filter_by(status="active")
         if model_type:
-            query = query.filter_by(model_type=model_type)
+            # 兼容历史数据：功能的 model_type 与模型池类型存在别名差异时，
+            # 仍把可用的同族模型列出来，避免下拉框为空导致无法配置。
+            aliases = {
+                "image": {"image", "image_generation", "text_to_image"},
+                "audio": {"audio", "speech_to_text", "tts", "asr"},
+            }
+            model_types = {model_type}
+            model_types.update(aliases.get(model_type, set()))
+            query = query.filter(ModelPoolConfig.model_type.in_(list(model_types)))
         models = query.order_by(
             ModelPoolConfig.provider.asc(),
             ModelPoolConfig.model_name.asc(),
@@ -1017,3 +1025,348 @@ def register_routes(quart_app):
         upload_file = await a._to_thread(a._get_service(CosService).upload_file, file, True)
         image_url = await a._to_thread(a._get_service(CosService).get_file_url, upload_file.key)
         return a._ok({"image_url": image_url})
+
+    # ------------------------------------------------------------------
+    # admin store 只读镜像：让 admin 商店页走 admin 凭证，不依赖用户域接口
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/store/builtin-tools")
+    async def admin_store_builtin_tools():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import BuiltinToolService
+
+        result = await a._to_thread(a._get_service(BuiltinToolService).get_builtin_tools)
+        return a._ok(result)
+
+    @quart_app.get("/admin/store/builtin-tools/categories")
+    async def admin_store_builtin_tool_categories():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import BuiltinToolService
+
+        result = await a._to_thread(a._get_service(BuiltinToolService).get_categories)
+        return a._ok(result)
+
+    @quart_app.get("/admin/store/builtin-tools/<string:provider_name>/tools/<string:tool_name>")
+    async def admin_store_builtin_tool_detail(provider_name, tool_name):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import BuiltinToolService
+
+        result = await a._to_thread(
+            a._get_service(BuiltinToolService).get_provider_tool,
+            provider_name,
+            tool_name,
+        )
+        return a._ok(result)
+
+    @quart_app.get("/admin/store/builtin-tools/<string:provider_name>/icon")
+    async def admin_store_builtin_tool_icon(provider_name):
+        from app.http import asgi_app as a
+
+        from internal.service import BuiltinToolService
+
+        icon, mimetype, icon_url = await a._to_thread(
+            a._get_service(BuiltinToolService).get_provider_icon, provider_name
+        )
+        if icon_url:
+            return a.Response("", status=302, headers={"Location": icon_url})
+        return a.Response(icon or b"", mimetype=mimetype or "image/png")
+
+    @quart_app.get("/admin/store/skills/categories")
+    async def admin_store_skill_categories():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.skill_schema import GetSkillsCategoriesResp
+        from internal.service.skill_service import SkillService
+
+        return a._ok(
+            GetSkillsCategoriesResp().dump(
+                await a._to_thread(a._get_service(SkillService).get_skill_categories)
+            )
+        )
+
+    @quart_app.get("/admin/store/skills")
+    async def admin_store_skills_with_page():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.skill_schema import SkillPackageResp
+        from internal.service.skill_service import SkillService
+
+        req = a.SimpleNamespace(
+            current_page=a._field(a._int_arg("current_page", 1), 1),
+            page_size=a._field(a._int_arg("page_size", 20), 20),
+            search_word=a._field(request.args.get("search_word"), None),
+            category=a._field(request.args.get("category"), None),
+        )
+        skills, paginator = await a._to_thread(
+            a._get_service(SkillService).get_skill_packages_with_page, req
+        )
+        resp = SkillPackageResp(many=True)
+        return a._ok({"list": resp.dump(skills), "paginator": asdict(paginator)})
+
+    @quart_app.get("/admin/store/skills/<uuid:skill_id>")
+    async def admin_store_skill_detail(skill_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.skill_schema import SkillPackageResp
+        from internal.service.skill_service import SkillService
+
+        skill_package = await a._to_thread(
+            a._get_service(SkillService).get_skill_package, skill_id
+        )
+        return a._ok(SkillPackageResp().dump(skill_package))
+
+    @quart_app.get("/admin/store/skills/<uuid:skill_id>/icon")
+    async def admin_store_skill_icon(skill_id):
+        from app.http import asgi_app as a
+
+        from internal.service.skill_service import SkillService
+
+        icon, mimetype, icon_url = await a._to_thread(
+            a._get_service(SkillService).get_skill_package_icon, skill_id
+        )
+        if icon_url:
+            return a.Response("", status=302, headers={"Location": icon_url})
+        return a.Response(icon or b"", mimetype=mimetype or "application/octet-stream")
+
+    @quart_app.get("/admin/store/mcp-providers/categories")
+    async def admin_store_mcp_categories():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.mcp_schema import GetMcpCategoriesResp
+
+        return a._ok(GetMcpCategoriesResp().dump({}))
+
+    @quart_app.get("/admin/store/mcp-providers")
+    async def admin_store_mcp_providers_with_page():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.mcp_schema import McpProviderResp
+        from internal.service.mcp_service import McpService
+
+        req = a.SimpleNamespace(
+            current_page=a._field(a._int_arg("current_page", 1), 1),
+            page_size=a._field(a._int_arg("page_size", 20), 20),
+            search_word=a._field(request.args.get("search_word"), None),
+            category=a._field(request.args.get("category"), None),
+        )
+        providers, paginator = await a._to_thread(
+            a._get_service(McpService).get_public_mcp_providers_with_page, req, account
+        )
+        resp = McpProviderResp(many=True)
+        return a._ok({"list": resp.dump(providers), "paginator": asdict(paginator)})
+
+    @quart_app.get("/admin/store/mcp-providers/<string:provider_key>")
+    async def admin_store_mcp_provider(provider_key):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.mcp_schema import McpProviderResp
+        from internal.service.mcp_service import McpService
+
+        provider = await a._to_thread(
+            a._get_service(McpService).get_public_mcp_provider, provider_key, account
+        )
+        return a._ok(McpProviderResp().dump(provider))
+
+    # ------------------------------------------------------------------
+    # admin OpenAPI 密钥：让 admin 页面走 admin 凭证，不依赖用户域接口
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/openapi/api-keys")
+    async def admin_get_api_keys_with_page():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.schema.api_key_schema import GetApiKeysWithPageResp
+        from internal.service import ApiKeyService
+
+        req = a.SimpleNamespace(
+            current_page=a._field(a._int_arg("current_page", 1), 1),
+            page_size=a._field(a._int_arg("page_size", 20), 20),
+        )
+        api_keys, paginator = await a._to_thread(
+            a._get_service(ApiKeyService).get_api_keys_with_page, req, account
+        )
+        resp = GetApiKeysWithPageResp(many=True)
+        return a._ok({"list": resp.dump(api_keys), "paginator": asdict(paginator)})
+
+    @quart_app.post("/admin/openapi/api-keys")
+    async def admin_create_api_key():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import ApiKeyService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return a._json_resp(
+                code="validate_error",
+                message="名称不能为空",
+                data={"name": ["名称不能为空"]},
+                status=400,
+            )
+        req = a.SimpleNamespace(
+            name=a._field(name),
+            description=a._field(str(payload.get("description") or "")),
+        )
+        created_api_key = await a._to_thread(
+            a._get_service(ApiKeyService).create_api_key, req, account
+        )
+        api_key_value = (
+            created_api_key.get("api_key")
+            if isinstance(created_api_key, dict)
+            else getattr(created_api_key, "api_key", "")
+        )
+        return a._ok({"api_key": api_key_value})
+
+    @quart_app.post("/admin/openapi/api-keys/<uuid:api_key_id>")
+    async def admin_update_api_key(api_key_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import ApiKeyService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        req_data = {}
+        if payload.get("name"):
+            req_data["name"] = str(payload["name"])
+        if payload.get("description"):
+            req_data["description"] = str(payload["description"])
+        await a._to_thread(
+            a._get_service(ApiKeyService).update_api_key, api_key_id, account, **req_data
+        )
+        return a._ok_msg("更新API密钥成功")
+
+    @quart_app.post("/admin/openapi/api-keys/<uuid:api_key_id>/is-active")
+    async def admin_update_api_key_is_active(api_key_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import ApiKeyService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        req_data = {"is_active": bool(payload.get("is_active", True))}
+        await a._to_thread(
+            a._get_service(ApiKeyService).update_api_key, api_key_id, account, **req_data
+        )
+        return a._ok_msg("更新API密钥激活状态成功")
+
+    @quart_app.post("/admin/openapi/api-keys/<uuid:api_key_id>/delete")
+    async def admin_delete_api_key(api_key_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import ApiKeyService
+
+        await a._to_thread(
+            a._get_service(ApiKeyService).delete_api_key, api_key_id, account
+        )
+        return a._ok_msg("删除API密钥成功")
+
+    # ------------------------------------------------------------------
+    # admin 应用详情选择器自包含：语言模型 / 系统知识库
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/language-models")
+    async def admin_get_language_models():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.language_model_service import LanguageModelService
+
+        result = await a._to_thread(a._get_service(LanguageModelService).get_language_models)
+        return a._ok(result)
+
+    @quart_app.get("/admin/language-models/<string:provider_name>/<string:model_name>")
+    async def admin_get_language_model(provider_name, model_name):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.language_model_service import LanguageModelService
+
+        result = await a._to_thread(
+            a._get_service(LanguageModelService).get_language_model,
+            provider_name,
+            model_name,
+        )
+        return a._ok(result)
+
+    @quart_app.get("/admin/space/system-knowledge-bases")
+    async def admin_list_system_knowledge_bases():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.scoped_knowledge_service import UserContentKnowledgeService
+
+        user_content_service = a._get_service(UserContentKnowledgeService)
+        bases = await a._to_thread(user_content_service.list_readable_system_bases)
+        result = [
+            {
+                "id": str(base.id),
+                "name": base.name,
+                "description": base.description or "",
+                "knowledge_scope": base.knowledge_scope,
+            }
+            for base in bases
+        ]
+        return a._ok({"list": result})

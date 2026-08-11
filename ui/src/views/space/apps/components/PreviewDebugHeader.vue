@@ -23,10 +23,16 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  adminMode: {
+    type: Boolean,
+    default: false,
+  },
 })
 const { debug_conversation_summary, loadDebugConversationSummary } =
-  useGetDebugConversationSummary()
-const { loading, handleUpdateDebugConversationSummary } = useUpdateDebugConversationSummary()
+  useGetDebugConversationSummary({ admin: props.adminMode })
+const { loading, handleUpdateDebugConversationSummary } = useUpdateDebugConversationSummary({
+  admin: props.adminMode,
+})
 const summaryModalVisible = ref(false)
 const variableDrawerVisible = ref(false)
 const debugPanelVisible = ref(false)
@@ -168,6 +174,7 @@ const openSummaryModal = async () => {
     <WorkflowDebugPanel
       v-model:visible="debugPanelVisible"
       :app_id="props.app_id"
+      :admin-mode="props.adminMode"
     />
     <!-- 工作流执行历史抽屉 -->
     <WorkflowRunHistoryDrawer

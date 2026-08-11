@@ -105,13 +105,6 @@ const handleOffline = async (workflow: AdminWorkflowRecord) => {
   }
 }
 
-/**
- * 在新标签页中以用户视角预览公共工作流商店。
- */
-const handlePreviewStore = () => {
-  window.open('/store/workflows', '_blank')
-}
-
 onMounted(() => {
   void loadWorkflows()
 })
@@ -124,14 +117,6 @@ onMounted(() => {
         <h1 class="text-2xl font-semibold text-slate-900">{{ t('admin.storeOps.workflowsTitle') }}</h1>
         <p class="mt-1 text-sm text-slate-500">{{ t('admin.storeOps.workflowsDescription') }}</p>
       </div>
-      <a-tooltip :content="t('admin.storeOps.previewStoreTip')" position="bl">
-        <a-button @click="handlePreviewStore">
-          <template #icon>
-            <icon-eye />
-          </template>
-          {{ t('admin.storeOps.previewStore') }}
-        </a-button>
-      </a-tooltip>
     </header>
 
     <a-alert type="info" :show-icon="true">

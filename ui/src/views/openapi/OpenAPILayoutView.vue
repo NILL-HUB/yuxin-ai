@@ -9,6 +9,7 @@ const route = useRoute()
 const credentialStore = useCredentialStore()
 const create_api_key = ref(false)
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
+const openApiBase = computed(() => (route.path.startsWith('/admin') ? '/admin' : ''))
 
 const openLoginModal = () => {
   if (typeof window === 'undefined') return
@@ -47,14 +48,14 @@ const handleCreateApiKey = () => {
         <!-- 左侧导航 -->
         <div class="flex items-center gap-2">
           <router-link
-            to="/openapi"
+            :to="`${openApiBase}/openapi`"
             class="rounded-lg text-gray-700 px-3 h-8 leading-8 hover:bg-gray-200 transition-all"
             exact-active-class="bg-gray-100"
           >
             {{ $t('openapi.nav.quickStart') }}
           </router-link>
           <router-link
-            to="/openapi/api-keys"
+            :to="`${openApiBase}/openapi/api-keys`"
             class="rounded-lg text-gray-700 px-3 h-8 leading-8 hover:bg-gray-200 transition-all"
             active-class="bg-gray-100"
           >
@@ -63,7 +64,7 @@ const handleCreateApiKey = () => {
         </div>
         <!-- 右侧按钮 -->
         <a-button
-          v-if="route.path.startsWith('/openapi/api-keys')"
+          v-if="route.path.startsWith(`${openApiBase}/openapi/api-keys`)"
           type="primary"
           class="rounded-lg"
           @click="handleCreateApiKey"

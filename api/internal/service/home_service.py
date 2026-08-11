@@ -28,6 +28,8 @@ class HomeService(BaseService):
     intent_recognition_service: IntentRecognitionService
 
     RECENT_MESSAGES_LIMIT = 8
+    RECENT_MEMORIES_LIMIT = 10
+    RECENT_CONVERSATION_SUMMARIES_LIMIT = 5
     MIN_MESSAGES_FOR_INTENT = 1
 
     def get_user_intent(self, user: Account) -> dict[str, Any]:
@@ -45,11 +47,19 @@ class HomeService(BaseService):
                 )
                 return self.intent_recognition_service.DEFAULT_INTENT
 
-            # 3. 获取最后一条消息的时间戳与消息签名
-            last_message_timestamp = recent_messages[-1].get("created_at")
-            message_signature = self._build_message_signature(recent_messages)
+            # 3. 聚合用户记忆与会话摘要，作为“是否继续相关任务”的上下文
+            memory_context = self._get_recent_memory_context(user)
+            conversation_context = self._get_recent_conversation_context(user)
 
-            # 4. 检查缓存
+            # 4. 获取最后一条消息的时间戳与消息签名
+            last_message_timestamp = recent_messages[-1].get("created_at")
+            message_signature = self._build_message_signature(
+                recent_messages,
+                memory_context=memory_context,
+                conversation_context=conversation_context,
+            )
+
+            # 5. 检查缓存
             cached_intent = self.intent_recognition_service.get_cached_intent(user_id)
             if cached_intent:
                 cached_signature = cached_intent.get("message_signature")
@@ -73,9 +83,13 @@ class HomeService(BaseService):
                 )
                 self.intent_recognition_service.clear_cache(user_id)
 
-            # 5. 调用模型进行意图识别
+            # 6. 调用模型进行意图识别
             logging.info(f"Recognizing intent for user {user_id}")
-            intent_result = self.intent_recognition_service.recognize(recent_messages)
+            intent_result = self.intent_recognition_service.recognize(
+                recent_messages,
+                memory_context=memory_context,
+                conversation_context=conversation_context,
+            )
 
             pool_result = PoolIntentResolver().resolve(
                 recent_messages[-1].get("content", "")
@@ -109,11 +123,11 @@ class HomeService(BaseService):
                 "user_warnings": [],
             }
 
-            # 6. 添加消息版本信息到结果
+            # 7. 添加消息版本信息到结果
             intent_result["last_message_timestamp"] = last_message_timestamp
             intent_result["message_signature"] = message_signature
 
-            # 7. 缓存结果
+            # 8. 缓存结果
             self.intent_recognition_service.cache_intent(user_id, intent_result)
 
             return intent_result
@@ -187,8 +201,70 @@ class HomeService(BaseService):
             logging.error(f"Failed to get recent messages: {str(e)}")
             return []
 
+    def _get_recent_memory_context(self, user: Account) -> str:
+        """取最近活跃用户记忆，作为意图识别中“未完成任务/目标”的上下文。"""
+        try:
+            from internal.model import UserMemory
+
+            memories = (
+                self.db.session.query(UserMemory)
+                .filter(
+                    UserMemory.owner_account_id == user.id,
+                    UserMemory.status == "active",
+                    UserMemory.memory_type != "__settings__",
+                )
+                .order_by(desc(UserMemory.created_at))
+                .limit(self.RECENT_MEMORIES_LIMIT)
+                .all()
+            )
+            lines = []
+            for memory in memories:
+                content = str(memory.content or "").strip()
+                if not content:
+                    continue
+                memory_type = str(memory.memory_type or "episode")
+                lines.append(f"- [{memory_type}] {content}")
+            return "\n".join(lines)
+        except Exception:
+            logging.warning("加载最近用户记忆失败，跳过记忆上下文", exc_info=True)
+            return ""
+
+    def _get_recent_conversation_context(self, user: Account) -> str:
+        """取最近有摘要的会话，作为意图识别中“最近在做什么”的上下文。"""
+        try:
+            from internal.model import Conversation
+
+            conversations = (
+                self.db.session.query(Conversation)
+                .filter(
+                    Conversation.created_by == user.id,
+                    Conversation.is_deleted == False,
+                    Conversation.summary != "",
+                )
+                .order_by(desc(Conversation.updated_at))
+                .limit(self.RECENT_CONVERSATION_SUMMARIES_LIMIT)
+                .all()
+            )
+            lines = []
+            for conversation in conversations:
+                summary = str(conversation.summary or "").strip()
+                if not summary:
+                    continue
+                name = str(conversation.name or "").strip()
+                prefix = f"会话「{name}」" if name else "历史会话"
+                lines.append(f"- {prefix}: {summary}")
+            return "\n".join(lines)
+        except Exception:
+            logging.warning("加载最近会话摘要失败，跳过会话上下文", exc_info=True)
+            return ""
+
     @classmethod
-    def _build_message_signature(cls, messages: list[dict[str, Any]]) -> str:
+    def _build_message_signature(
+        cls,
+        messages: list[dict[str, Any]],
+        memory_context: str = "",
+        conversation_context: str = "",
+    ) -> str:
         """根据最近消息内容生成稳定签名，用于判断意图缓存是否仍然有效"""
         signature_items = [
             {
@@ -199,5 +275,7 @@ class HomeService(BaseService):
             }
             for message in messages
         ]
+        signature_items.append({"memory_context": memory_context})
+        signature_items.append({"conversation_context": conversation_context})
         payload = json.dumps(signature_items, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()

@@ -1,10 +1,13 @@
 import { get, post } from '@/utils/request'
+import { getCredentialSessionId, getStoredCredential } from '@/utils/auth'
 import { type BaseResponse } from '@/models/base'
 import {
   type GetAccountLoginHistoryResponse,
   type GetAccountSessionsResponse,
   type GetCurrentUserResponse,
 } from '@/models/account'
+
+const getCurrentSessionId = () => getCredentialSessionId(getStoredCredential())
 
 // 获取当前登录账号信息
 export const getCurrentUser = () => {
@@ -48,7 +51,13 @@ export const updateEmail = (email: string, code: string, current_password: strin
 
 // 获取当前账号的登录会话
 export const getAccountSessions = () => {
-  return get<GetAccountSessionsResponse>(`/account/sessions`)
+  const session_id = getCurrentSessionId()
+  if (!session_id) {
+    return get<GetAccountSessionsResponse>(`/account/sessions`)
+  }
+  return get<GetAccountSessionsResponse>(`/account/sessions`, {
+    params: { session_id },
+  })
 }
 
 // 获取当前账号最近的登录历史
@@ -58,19 +67,39 @@ export const getAccountLoginHistory = (params?: {
   current_page?: number
   page_size?: number
 }) => {
+  const session_id = getCurrentSessionId()
   return get<GetAccountLoginHistoryResponse>(`/account/login-history`, {
-    params,
+    params:
+      params || session_id
+        ? {
+            ...params,
+            ...(session_id ? { session_id } : {}),
+          }
+        : undefined,
   })
 }
 
 // 下线指定登录会话
 export const revokeAccountSession = (session_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/account/sessions/${session_id}/revoke`)
+  const current_session_id = getCurrentSessionId()
+  if (!current_session_id) {
+    return post<BaseResponse<Record<string, unknown>>>(`/account/sessions/${session_id}/revoke`)
+  }
+  return post<BaseResponse<Record<string, unknown>>>(
+    `/account/sessions/${session_id}/revoke`,
+    { params: { session_id: current_session_id } },
+  )
 }
 
 // 下线除当前设备外的其他会话
 export const revokeOtherAccountSessions = () => {
-  return post<BaseResponse<Record<string, unknown>>>(`/account/sessions/revoke-others`)
+  const session_id = getCurrentSessionId()
+  if (!session_id) {
+    return post<BaseResponse<Record<string, unknown>>>(`/account/sessions/revoke-others`)
+  }
+  return post<BaseResponse<Record<string, unknown>>>(`/account/sessions/revoke-others`, {
+    params: { session_id },
+  })
 }
 
 // 解绑当前第三方账号

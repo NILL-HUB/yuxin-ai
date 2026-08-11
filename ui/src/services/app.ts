@@ -57,14 +57,16 @@ export const updateDraftAppConfig = (app_id: string, req: UpdateDraftAppConfigRe
   return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}/draft-app-config`, { body: req })
 }
 
-// 获取应用的调试长记忆
-export const getDebugConversationSummary = (app_id: string) => {
-  return get<BaseResponse<{ summary: string }>>(`/apps/${app_id}/summary`)
+// 获取应用的调试长记忆（admin=true 时走 admin 域接口，以应用归属账号执行）
+export const getDebugConversationSummary = (app_id: string, admin = false) => {
+  const prefix = admin ? '/admin' : ''
+  return get<BaseResponse<{ summary: string }>>(`${prefix}/apps/${app_id}/summary`)
 }
 
 // 更新应用的调试长记忆
-export const updateDebugConversationSummary = (app_id: string, summary: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}/summary`, { body: { summary } })
+export const updateDebugConversationSummary = (app_id: string, summary: string, admin = false) => {
+  const prefix = admin ? '/admin' : ''
+  return post<BaseResponse<Record<string, unknown>>>(`${prefix}/apps/${app_id}/summary`, { body: { summary } })
 }
 
 // 应用调试对话，该接口为流式事件输出
@@ -75,9 +77,11 @@ export const debugChat = (
   conversation_id: string = '',
   onData: (event_response: Record<string, unknown>) => void,
   confirm_deep_thinking: boolean = false,
+  admin = false,
 ) => {
+  const prefix = admin ? '/admin' : ''
   return ssePost(
-    `/apps/${app_id}/conversations`,
+    `${prefix}/apps/${app_id}/conversations`,
     { body: { query, image_urls, conversation_id, confirm_deep_thinking } },
     onData,
   )
@@ -97,13 +101,16 @@ export const debugWorkflowApp = (
   app_id: string,
   inputs: Record<string, unknown>,
   onData: (event_response: { event: string; data: Record<string, unknown> }) => void,
+  admin = false,
 ) => {
-  return ssePost(`/apps/${app_id}/workflow/debug`, { body: inputs }, onData)
+  const prefix = admin ? '/admin' : ''
+  return ssePost(`${prefix}/apps/${app_id}/workflow/debug`, { body: inputs }, onData)
 }
 
 // 停止某次应用的调试会话
-export const stopDebugChat = (app_id: string, task_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}/conversations/tasks/${task_id}/stop`)
+export const stopDebugChat = (app_id: string, task_id: string, admin = false) => {
+  const prefix = admin ? '/admin' : ''
+  return post<BaseResponse<Record<string, unknown>>>(`${prefix}/apps/${app_id}/conversations/tasks/${task_id}/stop`)
 }
 
 // 停止某次提示词对比调试会话
@@ -115,16 +122,19 @@ export const stopPromptCompareChat = (app_id: string, task_id: string) => {
 export const getDebugConversationMessagesWithPage = (
   app_id: string,
   req?: GetDebugConversationMessagesWithPageRequest,
+  admin = false,
 ) => {
+  const prefix = admin ? '/admin' : ''
   return get<GetDebugConversationMessagesWithPageResponse>(
-    `/apps/${app_id}/conversations/messages`,
+    `${prefix}/apps/${app_id}/conversations/messages`,
     { params: req },
   )
 }
 
 // 清空应用的调试会话记录
-export const deleteDebugConversation = (app_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}/conversations/delete-debug-conversation`)
+export const deleteDebugConversation = (app_id: string, admin = false) => {
+  const prefix = admin ? '/admin' : ''
+  return post<BaseResponse<Record<string, unknown>>>(`${prefix}/apps/${app_id}/conversations/delete-debug-conversation`)
 }
 
 // 更新/发布应用的配置信息

@@ -17,6 +17,7 @@ PROJECT_STRUCTURE.md
 # Local Codex / browser artifacts
 .codex
 .playwright-mcp/
+.playwright-cli/
 private-domain-live-sop/
 
 # Local runtime secrets - 环境变量文件（包含敏感信息）
@@ -98,6 +99,7 @@ storage/
 api/internal/core/vector_store/index.faiss
 api/internal/core/vector_store/index.pkl
 api/internal/core/vector_store/
+graphify-out/
 
 # Agent / dogfood / screenshot artifacts
 .superpowers/

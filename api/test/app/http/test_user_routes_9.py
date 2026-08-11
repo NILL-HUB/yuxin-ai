@@ -1137,128 +1137,15 @@ class TestPublicAppRoutes:
         assert app_service.calls[0][0] == "fork"
 
 
-class _FakePublicWorkflowService:
-    def __init__(self):
-        self.calls = []
+class TestRemovedPublicWorkflowRoutes:
+    """公开工作流广场已从用户端下线，路由不应再注册。"""
 
-    def get_public_workflows_with_page(self, req, account):
-        self.calls.append(("list", account))
-        return [], _Paginator()
-
-    def get_public_workflow_detail(self, workflow_id, account):
-        self.calls.append(("detail", account))
-        return {"id": str(workflow_id), "name": "公共工作流"}
-
-    def get_public_workflow_draft_graph(self, workflow_id):
-        self.calls.append(("graph", workflow_id))
-        return {"nodes": [], "edges": []}
-
-    def share_workflow_to_square(self, workflow_id, tags, account):
-        self.calls.append(("share", tags))
-
-    def unshare_workflow_from_square(self, workflow_id, account):
-        self.calls.append(("unshare",))
-
-    def fork_public_workflow(self, workflow_id, account):
-        self.calls.append(("fork", workflow_id))
-        return SimpleNamespace(id=uuid4(), name="Fork工作流")
-
-
-class TestPublicWorkflowRoutes:
-    def _setup(self, monkeypatch):
-        account = SimpleNamespace(id=uuid4())
-        service = _FakePublicWorkflowService()
-
-        from internal.service.public_workflow_service import PublicWorkflowService
-
-        monkeypatch.setattr(support, "_load_account", lambda _aid: account)
-        monkeypatch.setattr(support, "_get_service", lambda cls: service)
-        return account, service
-
-    def test_get_public_workflows(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/public/workflows")
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["data"]["list"] == []
-        assert service.calls[0][0] == "list"
-
-    def test_get_public_workflow_detail(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-        workflow_id = uuid4()
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/public/workflows/{workflow_id}")
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["data"]["name"] == "公共工作流"
-
-    def test_get_public_workflow_draft_graph(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/public/workflows/{uuid4()}/draft-graph")
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert "nodes" in payload["data"]
-
-    def test_share_workflow_to_square(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-        workflow_id = uuid4()
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(
-                    f"/workflows/{workflow_id}/share-to-square?account_id={uuid4()}",
-                    json={"tags": ["效率"]},
-                )
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["message"] == "工作流已共享到广场"
-        assert service.calls[0][0] == "share"
-
-    def test_unshare_workflow_from_square(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(
-                    f"/workflows/{uuid4()}/unshare-from-square?account_id={uuid4()}"
-                )
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert payload["message"] == "工作流已从广场取消共享"
-        assert service.calls[0][0] == "unshare"
-
-    def test_fork_public_workflow(self, monkeypatch):
-        _, service = self._setup(monkeypatch)
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(
-                    f"/public/workflows/{uuid4()}/fork?account_id={uuid4()}"
-                )
-                return resp, await resp.json
-
-        resp, payload = _run_coro(_run())
-        assert resp.status_code == 200
-        assert "id" in payload["data"]
-        assert service.calls[0][0] == "fork"
+    def test_public_workflow_routes_are_not_registered(self):
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/public/workflows" not in rules
+        assert "/public/workflows/<uuid:workflow_id>" not in rules
+        assert "/public/workflows/<uuid:workflow_id>/draft-graph" not in rules
+        assert "/public/workflows/<uuid:workflow_id>/fork" not in rules
 
 
 class _FakeRoutingSummaryService:
@@ -1518,7 +1405,6 @@ class TestRegisterIdempotent:
             "/platform/<uuid:app_id>/wechat-config",
             "/wechat/<uuid:app_id>",
             "/public/apps",
-            "/public/workflows",
             "/routing-logs/summary",
             "/showcase/cases",
         ):

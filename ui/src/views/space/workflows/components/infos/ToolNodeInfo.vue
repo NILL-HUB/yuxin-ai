@@ -178,9 +178,13 @@ const loadApiToolProviders = async (init: boolean = false, search_word: string =
   }
 }
 
-const { builtin_tool, loadBuiltinTool } = useGetBuiltinTool()
-const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
-const { categories, loadCategories } = useGetCategories()
+const { builtin_tool, loadBuiltinTool } = useGetBuiltinTool({
+  admin: isAdminContext.value,
+})
+const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools({
+  admin: isAdminContext.value,
+})
+const { categories, loadCategories } = useGetCategories({ admin: isAdminContext.value })
 const { t } = useI18n()
 // tool_type 下拉选项（P2-3 扩展为 7 种），用 computed 以支持语言切换
 const TOOL_TYPE_OPTIONS = computed(() => [
@@ -381,6 +385,10 @@ const normalizeIconUrl = (icon: string = '') => {
   const basePath = apiUrl.pathname.replace(/\/+$/, '')
   let path = icon.startsWith('/') ? icon : `/${icon}`
 
+  if (isAdminContext.value && path.startsWith('/builtin-tools/')) {
+    path = `/admin/store${path}`
+  }
+
   // 本地开发常见：后端实际无 /api 前缀，但返回了 /api/xxx
   if (path.startsWith('/api/') && !basePath.startsWith('/api')) {
     path = path.replace(/^\/api/, '')
@@ -497,7 +505,7 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
         id: builtinToolProvider.name,
         name: builtinToolProvider.name,
         label: builtinToolProvider.label,
-        icon: `${apiPrefix}/builtin-tools/${builtinToolProvider.name}/icon`,
+        icon: `${apiPrefix}${isAdminContext.value ? '/admin/store' : ''}/builtin-tools/${builtinToolProvider.name}/icon`,
         description: builtinToolProvider.description,
       },
       tool: {
@@ -1154,7 +1162,7 @@ onMounted(() => {
                     <a-avatar
                       :size="20"
                       shape="circle"
-                      :image-url="`${apiPrefix}/builtin-tools/${builtin_tool.name}/icon`"
+                      :image-url="`${apiPrefix}${isAdminContext ? '/admin/store' : ''}/builtin-tools/${builtin_tool.name}/icon`"
                     />
                     <div class="text-gray-900">{{ tool.label }}</div>
                   </div>

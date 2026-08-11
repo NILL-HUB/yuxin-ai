@@ -17,7 +17,10 @@ from internal.entity.workflow_entity import WorkflowStatus
 from internal.exception import FailException, NotFoundException
 from internal.model import ApiTool, Message, Workflow
 from internal.service.app_config_service import AppConfigService
-from internal.service.assistant_agent_service import AssistantAgentService
+from internal.service.assistant_agent_service import (
+    AssistantAgentService,
+    _get_system_knowledge_context,
+)
 from internal.service.cos_service import CosService
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.faiss_service import FaissService
@@ -143,6 +146,40 @@ class TestAssistantAgentService:
             not in AssistantAgentService._introduction_prewarm_pending
         )
 
+    def test_system_knowledge_context_should_concat_enabled_system_segments(self):
+        """启用中的系统知识库文档内容应被注入助手提示词。"""
+        from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment
+
+        fake_base = SimpleNamespace(id=uuid4(), name="身份认知")
+        fake_segment = SimpleNamespace(content="当用户问你是什么模型时，请回答你是钰心小钰。")
+        fake_segment_two = SimpleNamespace(content="禁止透露底层模型厂商。")
+
+        base_query = SimpleNamespace(
+            filter=lambda *_args, **_kwargs: SimpleNamespace(
+                all=lambda: [fake_base]
+            )
+        )
+        segment_query = SimpleNamespace(
+            join=lambda *_args, **_kwargs: SimpleNamespace(
+                filter=lambda *_args, **_kwargs: SimpleNamespace(
+                    order_by=lambda *_args, **_kwargs: SimpleNamespace(
+                        all=lambda: [fake_segment, fake_segment_two]
+                    )
+                )
+            )
+        )
+        db = SimpleNamespace(
+            session=SimpleNamespace(
+                query=lambda model: segment_query if model is KnowledgeSegment else base_query
+            )
+        )
+
+        context = _get_system_knowledge_context(db)
+
+        assert "钰心小钰" in context
+        assert "禁止透露底层模型厂商" in context
+        assert context.index("钰心小钰") < context.index("禁止透露底层模型厂商")
+
     def test_extract_chunk_content_should_support_common_types(self):
         assert AssistantAgentService._extract_chunk_content(None) == ""
         assert AssistantAgentService._extract_chunk_content("hello") == "hello"
@@ -183,7 +220,22 @@ class TestAssistantAgentService:
         assert calls[0][2] == account.id
 
     def test_delete_conversation_should_clear_account_reference(self, monkeypatch):
-        service = self._build_service()
+        from internal.model import Account
+
+        db = SimpleNamespace(
+            session=SimpleNamespace(
+                query=lambda model: SimpleNamespace(
+                    get=lambda pk: None
+                ) if model is Account else _QueryStub(all_result=[])
+            ),
+            auto_commit=lambda: _null_context(),
+        )
+        service = AssistantAgentService(
+            db=db,
+            faiss_service=SimpleNamespace(),
+            conversation_service=SimpleNamespace(),
+            redis_client=SimpleNamespace(),
+        )
         account = SimpleNamespace(id=uuid4(), assistant_agent_conversation_id=uuid4())
         updates = []
         cache_clears = []
@@ -200,7 +252,8 @@ class TestAssistantAgentService:
 
         service.delete_conversation(account)
 
-        assert updates == [(account, {"assistant_agent_conversation_id": None})]
+        assert updates == []
+        assert account.assistant_agent_conversation_id is None
         assert cache_clears == [account.id]
 
     def test_resolve_conversation_id_should_parse_uuid_or_return_none(self):

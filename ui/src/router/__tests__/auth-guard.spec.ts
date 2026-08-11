@@ -52,14 +52,14 @@ describe('getAuthGuardRedirect', () => {
     ).toBeNull()
   })
 
-  it('allows anonymous users to access skills marketplace route', () => {
+  it('redirects anonymous users away from removed customer marketplace routes', () => {
     expect(
       getAuthGuardRedirect({
         path: '/store/skills',
         routeName: 'store-skills-list',
         isLoggedIn: false,
       }),
-    ).toBeNull()
+    ).toEqual({ path: '/home' })
   })
 
   it('allows anonymous users to access public store and search routes', () => {
@@ -182,7 +182,7 @@ describe('getAdminAuthGuardRedirect', () => {
         requiredRoles: ['super_admin'],
         adminRoles: ['viewer'],
       }),
-    ).toEqual({ path: '/errors/403' })
+    ).toEqual({ path: '/admin/errors/403' })
   })
 
   it('returns 403 when admin lacks required permission', () => {
@@ -194,7 +194,7 @@ describe('getAdminAuthGuardRedirect', () => {
         requiredPermissions: ['billing:manage'],
         adminPermissions: [],
       }),
-    ).toEqual({ path: '/errors/403' })
+    ).toEqual({ path: '/admin/errors/403' })
   })
 
   it('allows access when admin has required permission', () => {
@@ -218,7 +218,7 @@ describe('getAdminAuthGuardRedirect', () => {
         requiredPermissions: ['app:read', 'app:manage'],
         adminPermissions: ['app:read'],
       }),
-    ).toEqual({ path: '/errors/403' })
+    ).toEqual({ path: '/admin/errors/403' })
   })
 })
 

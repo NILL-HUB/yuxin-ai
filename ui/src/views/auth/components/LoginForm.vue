@@ -669,7 +669,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
     >
       <div class="mb-6">
         <div class="flex justify-center mb-4">
-          <icon-open-agent type="character" :size="248" />
+          <IconYuxinAI type="character" :size="248" />
         </div>
         <p class="text-sm text-slate-500 mt-2 text-center">
           {{

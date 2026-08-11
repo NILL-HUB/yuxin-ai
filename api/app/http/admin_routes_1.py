@@ -422,6 +422,161 @@ def register_routes(quart_app):
         )
         return a._ok_msg("停止提示词对比调试会话成功")
 
+    @quart_app.get("/admin/apps/<uuid:app_id>/summary")
+    async def admin_app_get_debug_summary(app_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.app_debug_service import AppDebugService
+
+        summary = await a._to_thread(
+            a._get_service(AppDebugService).get_debug_conversation_summary_for_admin,
+            app_id,
+        )
+        return a._ok({"summary": summary})
+
+    @quart_app.post("/admin/apps/<uuid:app_id>/summary")
+    async def admin_app_update_debug_summary(app_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.app_debug_service import AppDebugService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        summary = str(payload.get("summary") or "")
+        await a._to_thread(
+            a._get_service(AppDebugService).update_debug_conversation_summary_for_admin,
+            app_id,
+            summary,
+        )
+        return a._ok_msg("更新AI应用长期记忆成功")
+
+    @quart_app.post("/admin/apps/<uuid:app_id>/conversations/delete-debug-conversation")
+    async def admin_app_delete_debug_conversation(app_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.app_debug_service import AppDebugService
+
+        await a._to_thread(
+            a._get_service(AppDebugService).delete_debug_conversation_for_admin,
+            app_id,
+        )
+        return a._ok_msg("清空应用调试会话记录成功")
+
+    @quart_app.post("/admin/apps/<uuid:app_id>/conversations/tasks/<uuid:task_id>/stop")
+    async def admin_app_stop_debug_chat(app_id, task_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.app_debug_service import AppDebugService
+
+        await a._to_thread(
+            a._get_service(AppDebugService).stop_debug_chat_for_admin,
+            app_id,
+            task_id,
+        )
+        return a._ok_msg("停止应用调试会话成功")
+
+    @quart_app.get("/admin/apps/<uuid:app_id>/conversations/messages")
+    async def admin_app_get_debug_conversation_messages(app_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from dataclasses import asdict as _asdict
+        from internal.schema.app_schema import GetDebugConversationMessagesWithPageResp
+        from internal.service.app_debug_service import AppDebugService
+
+        req = a.SimpleNamespace(
+            current_page=a._field(a._int_arg("current_page", 1), 1),
+            page_size=a._field(a._int_arg("page_size", 20), 20),
+            created_at=a._field(a._int_arg("created_at", 0), 0),
+            conversation_id=a._field(request.args.get("conversation_id"), None),
+        )
+        messages, paginator = await a._to_thread(
+            a._get_service(AppDebugService).get_debug_conversation_messages_with_page_for_admin,
+            app_id,
+            req,
+        )
+        resp = GetDebugConversationMessagesWithPageResp(many=True)
+        return a._ok({"list": resp.dump(messages), "paginator": _asdict(paginator)})
+
+    @quart_app.post("/admin/apps/<uuid:app_id>/conversations")
+    async def admin_app_debug_chat(app_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.app_debug_service import AppDebugService
+        from pkg.response import Response as PkgResponse
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            return a._json_resp(
+                code="validate_error",
+                message="用户提问query不能为空",
+                data={"query": ["用户提问query不能为空"]},
+                status=400,
+            )
+        req = a.SimpleNamespace(
+            query=a._field(query),
+            conversation_id=a._field(str(payload.get("conversation_id") or "")),
+            image_urls=a._field(payload.get("image_urls") or []),
+            confirm_deep_thinking=a._field(bool(payload.get("confirm_deep_thinking", False))),
+        )
+        response = await a._to_thread(
+            a._get_service(AppDebugService).debug_chat_for_admin,
+            app_id,
+            req,
+        )
+        if a._is_sync_iterator(response):
+            return a._sse_response(response)
+        if isinstance(response, PkgResponse):
+            return a._ok(response.data)
+        return a._ok(response)
+
+    @quart_app.post("/admin/apps/<uuid:app_id>/workflow/debug")
+    async def admin_app_debug_workflow(app_id):
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import AppService, WorkflowAppService
+
+        owner = await a._to_thread(
+            a._get_service(AppService).get_app_owner_account_for_admin, app_id
+        )
+        inputs = (await request.get_json(force=True, silent=True)) or {}
+        response = await a._to_thread(
+            a._get_service(WorkflowAppService).execute_workflow_stream,
+            app_id,
+            inputs,
+            owner,
+        )
+        if a._is_sync_iterator(response):
+            return a._sse_response(response)
+        return a._ok(response)
+
     @quart_app.get("/admin/apps/<uuid:app_id>/analysis")
     async def admin_app_get_app_analysis(app_id):
         from app.http import asgi_app as a

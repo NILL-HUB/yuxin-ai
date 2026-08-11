@@ -22,6 +22,7 @@ const parsePositiveIntegerQuery = (value: unknown, fallbackValue: number): numbe
 export const useGetApiKeysWithPage = () => {
   // 1.定义hooks所需数据
   const route = useRoute()
+  const admin = route.path.startsWith('/admin')
   const loading = ref(false)
   const api_keys = ref<GetApiKeysWithPageResponse['data']['list']>([])
   const defaultPaginator = {
@@ -40,10 +41,13 @@ export const useGetApiKeysWithPage = () => {
 
     try {
       loading.value = true
-      const resp = await getApiKeysWithPage({
-        current_page: parsePositiveIntegerQuery(route.query?.current_page, 1),
-        page_size: parsePositiveIntegerQuery(route.query?.page_size, 20),
-      })
+      const resp = await getApiKeysWithPage(
+        {
+          current_page: parsePositiveIntegerQuery(route.query?.current_page, 1),
+          page_size: parsePositiveIntegerQuery(route.query?.page_size, 20),
+        },
+        admin,
+      )
       const data = resp.data
 
       paginator.value = data.paginator
@@ -57,6 +61,8 @@ export const useGetApiKeysWithPage = () => {
 }
 
 export const useDeleteApiKey = () => {
+  const route = useRoute()
+  const admin = route.path.startsWith('/admin')
   const handleDeleteApiKey = (api_key_id: string, callback?: () => void) => {
     Modal.warning({
       title: '要删除该API秘钥吗?',
@@ -66,7 +72,7 @@ export const useDeleteApiKey = () => {
       onOk: async () => {
         try {
           // 1.点击确定后向API接口发起请求
-          const resp = await deleteApiKey(api_key_id)
+          const resp = await deleteApiKey(api_key_id, admin)
           Message.success(resp.message)
         } finally {
           // 2.调用callback函数指定回调功能
@@ -82,12 +88,14 @@ export const useDeleteApiKey = () => {
 export const useUpdateApiKey = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const route = useRoute()
+  const admin = route.path.startsWith('/admin')
 
   // 2.定义更新处理器
   const handleUpdateApiKey = async (api_key_id: string, req: UpdateApiKeyRequest) => {
     try {
       loading.value = true
-      const resp = await updateApiKey(api_key_id, req)
+      const resp = await updateApiKey(api_key_id, req, admin)
       Message.success(resp.message)
     } finally {
       loading.value = false
@@ -100,6 +108,8 @@ export const useUpdateApiKey = () => {
 export const useUpdateApiKeyIsActive = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const route = useRoute()
+  const admin = route.path.startsWith('/admin')
 
   // 2.定义更新处理器
   const handleUpdateApiKeyIsActive = async (
@@ -109,7 +119,7 @@ export const useUpdateApiKeyIsActive = () => {
   ) => {
     try {
       loading.value = true
-      const resp = await updateApiKeyIsActive(api_key_id, is_active)
+      const resp = await updateApiKeyIsActive(api_key_id, is_active, admin)
       Message.success(resp.message)
     } finally {
       loading.value = false
@@ -123,12 +133,14 @@ export const useUpdateApiKeyIsActive = () => {
 export const useCreateApiKey = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const route = useRoute()
+  const admin = route.path.startsWith('/admin')
 
   // 2.定义更新处理器
   const handleCreateApiKey = async (req: CreateApiKeyRequest) => {
     try {
       loading.value = true
-      const resp = await createApiKey(req)
+      const resp = await createApiKey(req, admin)
       Message.success(resp.message || '创建API密钥成功')
       return String(resp.data?.api_key || '')
     } finally {

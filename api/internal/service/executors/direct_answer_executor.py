@@ -33,7 +33,7 @@ class DirectAnswerExecutor:
     # 工具调用最大轮数（首轮可能出工具，随后带工具结果再请求，最多再请求 2 次）
     MAX_TOOL_ROUNDS = 2
 
-    def __init__(self, language_model_service=None, credit_service=None, account_id=None, llm=None, tools=None):
+    def __init__(self, language_model_service=None, credit_service=None, account_id=None, llm=None, tools=None, system_prompt_override=None):
         self.language_model_service = language_model_service
         self.credit_service = credit_service
         self.account_id = account_id
@@ -41,6 +41,8 @@ class DirectAnswerExecutor:
         self._injected_llm = llm
         # 知识库检索等工具（BaseTool 列表），为空时行为与旧版一致
         self.tools = list(tools or [])
+        # 外层传入的系统提示词（首页助手路径会注入系统知识库身份认知内容）
+        self.system_prompt_override = system_prompt_override
         # 流式调用后填充，供外层做计费和持久化
         self.last_answer = ""
         self.last_token_usage = None
@@ -49,6 +51,8 @@ class DirectAnswerExecutor:
 
     def _resolve_system_prompt(self) -> str:
         """从系统提示词库读取可管理的 direct_answer system prompt，未配置时回退 YAML 内置默认。"""
+        if self.system_prompt_override:
+            return self.system_prompt_override
         try:
             return SystemPromptLibraryService().get_prompt_or_default("direct_answer_system_prompt")
         except Exception:

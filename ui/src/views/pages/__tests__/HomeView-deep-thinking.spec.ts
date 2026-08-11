@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({
   createRouter: vi.fn(() => ({
     beforeEach: vi.fn(),
+    afterEach: vi.fn(),
   })),
   createWebHistory: vi.fn(),
   useRoute: () => mocks.route,
@@ -258,6 +259,8 @@ describe('HomeView deep thinking submit', () => {
     mocks.loadHomeIntent.mockResolvedValue({
       intent: '继续探索你的需求',
       confidence: 0.8,
+      should_ask_continue: false,
+      resume_question: '',
       suggested_actions: [{ label: '继续聊', action: 'view_capabilities', icon: 'help' }],
       is_default: false,
     })

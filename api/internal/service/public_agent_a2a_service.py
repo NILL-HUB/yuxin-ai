@@ -46,6 +46,10 @@ class PublicAgentA2AService(BaseService):
     def convert_public_agent_route_to_tool(self, account_id: UUID) -> BaseTool:
         """将公共Agent路由能力转换成LangChain工具。"""
         flask_app = current_app._get_current_object() if has_app_context() else None
+        from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        tool_description = SystemPromptLibraryService().get_prompt_or_default(
+            "public_agent_route_tool_description"
+        )
         assistant_agent_id = ""
         if flask_app is not None:
             assistant_agent_id = str(flask_app.config.get("ASSISTANT_AGENT_ID", "")).strip()
@@ -55,7 +59,11 @@ class PublicAgentA2AService(BaseService):
 
             query: str = Field(description="需要委派给公共Agent处理的用户问题")
 
-        @tool("route_public_agents", args_schema=PublicAgentRouteInput)
+        @tool(
+            "route_public_agents",
+            args_schema=PublicAgentRouteInput,
+            description=tool_description or None,
+        )
         def route_public_agents(query: str) -> dict[str, Any]:
             """当用户明确要求使用某个已有智能体回答，或当前问题更适合交给已发布公共/垂直/Agent这样的细分具体问题处理时，优先调用该工具。它会先检索公开Agent，再筛选出真正相关的候选，最后按A2A协议依次调用，最多返回3个相关Agent的结果。对于“请使用xx智能体回答”“让xxAgent来回答”“帮我解决xx”“帮我解决xx等垂直问题”等这类请求，必须优先使用本工具，禁止改用 `create_app` 新建应用。"""
             if flask_app is not None and not is_active_app(flask_app):

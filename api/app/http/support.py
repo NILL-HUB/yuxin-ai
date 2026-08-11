@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -260,8 +261,17 @@ async def _resolve_account(account_id_override: str | None = None):
             if payload.get("realm") != "admin":
                 account_id = str(payload.get("sub") or "")
                 if account_id and account_id.lower() != "none":
+                    if _is_user_api_blocked(request.path, request.method):
+                        return None, _err("forbidden", "该接口仅管理员可用", 403)
                     if requested_id and requested_id != account_id:
                         return None, _err("forbidden", "无权访问该账号", 403)
+                    try:
+                        await _to_thread(
+                            _get_services()[2].validate_access_session,
+                            payload,
+                        )
+                    except UnauthorizedException:
+                        return None, _err("unauthorized", "登录会话已失效，请重新登录", 401)
                     account = await asyncio.to_thread(_load_account, UUID(account_id))
                     return account, None
         except UnauthorizedException:
@@ -304,7 +314,72 @@ async def _resolve_account(account_id_override: str | None = None):
         return account, None
     except Exception:
         logger.exception("async 端点加载 account 失败: account_id=%s", requested_id)
-        return None, _err("account_not_found", "账号不存在", 404)
+    return None, _err("account_not_found", "账号不存在", 404)
+
+
+# 用户端已收敛：这些接口不再被保留的用户界面消费，普通用户 JWT 一律拒绝。
+# admin 端有独立路径（/admin/*），不受影响；web-apps/public 走各自 token/公开通道。
+_USER_API_BLOCKED_PREFIXES = (
+    "/my/apps",
+    "/memory/write",
+    "/memory/retrieve",
+    "/memory/health",
+    "/analysis/",
+    "/tags",
+    "/language-models",
+    "/space/system-knowledge-bases",
+    "/openapi/api-keys",
+    "/platform/",
+    "/routing-logs/summary",
+    "/ai/optimize-prompt",
+    "/ai/chat",
+    "/ai/openapi-schema-chat",
+    "/ai/mcp-schema-chat",
+)
+
+# 资源管理接口的用户域版本已无 UI 消费；写操作与只读 GET 一律拒绝普通用户 JWT。
+_USER_API_BLOCKED_WRITE_PREFIXES = (
+    "/apps",
+    "/workflows",
+    "/api-tools",
+    "/mcp-providers",
+    "/skills",
+    "/builtin-tools",
+    "/public/apps",
+)
+
+_USER_API_BLOCKED_READ_PREFIXES = (
+    "/apps",
+    "/workflows",
+    "/api-tools",
+    "/mcp-providers",
+    "/skills",
+    "/builtin-tools",
+)
+
+
+def _is_user_api_blocked(path: str, method: str = "GET") -> bool:
+    """判断用户 JWT 是否禁止访问该路径。"""
+    normalized = str(path or "").strip()
+    if any(
+        normalized == prefix or normalized.startswith(prefix)
+        for prefix in _USER_API_BLOCKED_PREFIXES
+    ):
+        return True
+
+    write_method = str(method or "GET").upper()
+    if write_method == "GET":
+        return any(
+            normalized == prefix or normalized.startswith(prefix + "/")
+            for prefix in _USER_API_BLOCKED_READ_PREFIXES
+        )
+    # /workflows/import 是 admin 导入复用的唯一写接口，保留
+    if normalized.startswith("/workflows/import"):
+        return False
+    return any(
+        normalized == prefix or normalized.startswith(prefix + "/")
+        for prefix in _USER_API_BLOCKED_WRITE_PREFIXES
+    )
 
 
 def _field(raw, default=None):
@@ -325,12 +400,14 @@ def _to_thread(fn, *args, **kwargs):
     """把同步 service 调用移入线程池，避免阻塞 uvicorn 事件循环。
 
     统一在运行时容器上下文中执行：同步服务层依赖 current_app.extensions /
-    db.session 等容器能力，缺省会并发 500。
+    db.session 等容器能力，缺省会并发 500。同时显式复制当前 contextvars，
+    保证线程内仍能读取 internal.context.request / has_request_context。
     """
+    request_context = contextvars.copy_context()
 
     def _run_in_context():
         with flask_app.app_context():
-            return fn(*args, **kwargs)
+            return request_context.run(fn, *args, **kwargs)
 
     return asyncio.to_thread(_run_in_context)
 

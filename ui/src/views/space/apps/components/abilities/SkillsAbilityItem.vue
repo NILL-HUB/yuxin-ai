@@ -5,8 +5,10 @@ import { cloneDeep, isEqual } from 'lodash'
 import { apiPrefix } from '@/config'
 import { useMarkdownRenderer } from '@/hooks/use-markdown-renderer'
 import { useUpdateDraftAppConfig } from '@/hooks/use-app'
+import { useRealm } from '@/hooks/use-realm'
 import type { SkillBinding, SkillPackage } from '@/models/skill'
 import { getSkill } from '@/services/skill'
+import { getAdminSkill } from '@/services/admin-skills'
 import { useI18n } from 'vue-i18n'
 import { getStoreCategoryDisplayName } from '@/utils/store-display'
 import 'github-markdown-css'
@@ -44,6 +46,7 @@ const props = defineProps({
 
 const { t, locale } = useI18n()
 const emits = defineEmits(['update:skills'])
+const { isAdmin: isAdminContext } = useRealm()
 const { handleUpdateDraftAppConfig } = useUpdateDraftAppConfig()
 const skillsModalVisible = ref(false)
 const isSkillsInit = ref(false)
@@ -120,8 +123,12 @@ const openDetailModal = async (idx: number) => {
   skillDetailLoading.value = true
 
   try {
-    const res = await getSkill(binding.skill_id || binding.id)
-    skillDetail.value = res.data
+    if (isAdminContext.value) {
+      skillDetail.value = await getAdminSkill(binding.skill_id || binding.id)
+    } else {
+      const res = await getSkill(binding.skill_id || binding.id)
+      skillDetail.value = res.data
+    }
   } catch (error: unknown) {
     Message.error(error instanceof Error ? error.message : t('appStudio.abilities.skills.detailLoadFailed'))
     skillsModalVisible.value = false

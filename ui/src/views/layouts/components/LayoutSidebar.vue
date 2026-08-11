@@ -8,9 +8,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import IconHomeFull from '@/components/icons/IconHomeFull.vue'
-import IconHome from '@/components/icons/IconHome.vue'
 import IconApps from '@/components/icons/IconApps.vue'
+import { buildHomeNewConversationQuery } from '@/views/pages/home-new-conversation'
 
 interface Props {
   collapsed?: boolean
@@ -25,11 +24,110 @@ const { t } = useI18n()
 const credentialStore = useCredentialStore()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
 const selectedConversationId = computed(() => String(route.query.conversation_id || '').trim())
-const isHomeRootRoute = computed(() => route.path === '/home' && !selectedConversationId.value)
+const isNewConversationRoute = computed(() => route.path === '/home' && !selectedConversationId.value)
 const currentAppId = computed(() => {
   if (!route.path.startsWith('/space/apps/')) return ''
   return String(route.params?.app_id || '').trim()
 })
+type SidebarNavItem = {
+  key: string
+  label: string
+  to: string
+  icon: string
+  active: boolean
+}
+type SidebarNavSection = {
+  key: string
+  label: string
+  items: SidebarNavItem[]
+}
+const navSections = computed<SidebarNavSection[]>(() => [
+  {
+    key: 'workspace',
+    label: t('layout.sidebar.workspace'),
+    items: [
+      {
+        key: 'search',
+        label: t('layout.sidebar.search'),
+        to: '/search',
+        icon: 'icon-search',
+        active: route.path === '/search',
+      },
+      {
+        key: 'memory',
+        label: t('layout.sidebar.memory'),
+        to: '/memory',
+        icon: 'icon-bookmark',
+        active: route.path.startsWith('/memory'),
+      },
+      {
+        key: 'my-knowledge',
+        label: t('layout.sidebar.myKnowledge'),
+        to: '/my-knowledge',
+        icon: 'icon-book',
+        active: route.path.startsWith('/my-knowledge'),
+      },
+      {
+        key: 'external-data-sources',
+        label: t('externalDataSource.title'),
+        to: '/external-data-sources',
+        icon: 'icon-cloud',
+        active: route.path.startsWith('/external-data-sources'),
+      },
+    ],
+  },
+  {
+    key: 'services',
+    label: t('layout.sidebar.services'),
+    items: [
+      {
+        key: 'showcase',
+        label: t('layout.sidebar.showcase'),
+        to: '/showcase',
+        icon: 'icon-image',
+        active: route.path.startsWith('/showcase'),
+      },
+      {
+        key: 'schedules',
+        label: t('layout.sidebar.schedules'),
+        to: '/schedules',
+        icon: 'icon-schedule',
+        active: route.path.startsWith('/schedules'),
+      },
+      {
+        key: 'membership',
+        label: t('layout.sidebar.membership'),
+        to: '/membership',
+        icon: 'icon-user',
+        active: route.path.startsWith('/membership'),
+      },
+      {
+        key: 'studio',
+        label: t('layout.sidebar.studio'),
+        to: '/studio',
+        icon: 'icon-edit',
+        active: route.path.startsWith('/studio'),
+      },
+      {
+        key: 'store',
+        label: t('layout.sidebar.store'),
+        to: '/store/public-apps',
+        icon: 'icon-apps',
+        active: route.path.startsWith('/store'),
+      },
+    ],
+  },
+])
+
+const navItemClass = (item: SidebarNavItem) => {
+  const base = 'group relative flex h-9 items-center rounded-lg text-sm transition-all duration-200 flex-shrink-0'
+  const size = props.collapsed ? 'justify-center w-9' : 'gap-2.5 px-2.5'
+  const state = item.active
+    ? 'bg-blue-50 text-blue-700 shadow-sm shadow-blue-100'
+    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+  return `${base} ${size} ${state}`
+}
+
 const {
   loading: getRecentConversationsLoading,
   conversations: recentConversations,
@@ -138,13 +236,16 @@ const changeConversation = async (conversation: RecentConversation) => {
   }
 }
 
-const handleHomeNavigation = async () => {
+const handleNewConversationNavigation = async () => {
   if (!isLoggedIn.value) {
     await router.push('/home')
     return
   }
 
-  await router.push('/home')
+  await router.push({
+    path: '/home',
+    query: buildHomeNewConversationQuery(),
+  })
 }
 
 const isConversationActive = (conversation: RecentConversation) => {
@@ -278,101 +379,45 @@ onUnmounted(() => {
   <div class="flex flex-col h-full min-h-0 overflow-hidden">
     <!-- 导航菜单 -->
     <div
-      :class="`flex flex-col gap-0.5 mt-2 flex-shrink-0 ${props.collapsed ? 'items-center' : ''}`"
+      class="flex flex-col flex-shrink-0"
     >
       <button
         type="button"
-        data-testid="sidebar-home-new-conversation"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${isHomeRootRoute ? 'bg-gray-100' : ''}`"
-        :title="isHomeRootRoute ? t('layout.sidebar.home') : ''"
-        @click="handleHomeNavigation"
+        data-testid="sidebar-new-conversation"
+        :class="`group relative flex h-10 items-center rounded-xl transition-all duration-200 flex-shrink-0 shadow-sm ${props.collapsed ? 'justify-center w-9' : 'gap-2.5 px-2.5'} ${isNewConversationRoute ? 'bg-blue-600 text-white shadow-blue-200 ring-2 ring-blue-200' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-200'}`"
+        :title="t('layout.sidebar.newConversation')"
+        @click="handleNewConversationNavigation"
       >
-        <icon-home-full v-if="isHomeRootRoute" class="flex-shrink-0 w-4 h-4" />
-        <icon-home v-else class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">{{
-          $t('layout.sidebar.home')
-        }}</span>
+        <span class="grid h-6 w-6 place-items-center rounded-lg bg-white/15">
+          <icon-plus class="flex-shrink-0 w-4 h-4" />
+        </span>
+        <span v-if="!props.collapsed" class="truncate text-sm font-medium">
+          {{ $t('layout.sidebar.newConversation') }}
+        </span>
       </button>
-      <router-link
-        to="/search"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path === '/search' ? 'bg-gray-100' : ''}`"
-        :title="route.path === '/search' ? t('layout.sidebar.search') : ''"
-      >
-        <icon-search class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.search') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/memory"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/memory') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/memory') ? t('layout.sidebar.memory') : ''"
-      >
-        <icon-bookmark class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.memory') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/my-knowledge"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/my-knowledge') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/my-knowledge') ? t('layout.sidebar.myKnowledge') : ''"
-      >
-        <icon-book class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.myKnowledge') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/external-data-sources"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/external-data-sources') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/external-data-sources') ? t('externalDataSource.title') : ''"
-      >
-        <icon-cloud class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('externalDataSource.title') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/showcase"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/showcase') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/showcase') ? t('layout.sidebar.showcase') : ''"
-      >
-        <icon-image class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.showcase') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/schedules"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/schedules') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/schedules') ? t('layout.sidebar.schedules') : ''"
-      >
-        <icon-schedule class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.schedules') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/membership"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/membership') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/membership') ? t('layout.sidebar.membership') : ''"
-      >
-        <icon-user class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.membership') }}
-        </span>
-      </router-link>
-      <router-link
-        to="/store/public-apps"
-        :class="`flex items-center h-9 rounded-lg transition-all text-gray-700 hover:text-gray-900 hover:bg-gray-200 flex-shrink-0 ${props.collapsed ? 'justify-center w-9' : 'gap-2 px-2'} ${route.path.startsWith('/store') ? 'bg-gray-100' : ''}`"
-        :title="route.path.startsWith('/store') ? t('layout.sidebar.store') : ''"
-      >
-        <icon-apps class="flex-shrink-0 w-4 h-4" />
-        <span v-if="!props.collapsed" class="truncate text-sm">
-          {{ $t('layout.sidebar.store') }}
-        </span>
-      </router-link>
+
+      <template v-for="section in navSections" :key="section.key">
+        <div
+          v-if="!props.collapsed"
+          class="mt-3 px-2.5 text-[11px] font-semibold tracking-wide text-slate-400"
+        >
+          {{ section.label }}
+        </div>
+        <div :class="`flex flex-col gap-0.5 ${props.collapsed ? 'items-center mt-2' : 'mt-1'}`">
+          <router-link
+            v-for="item in section.items"
+            :key="item.key"
+            :to="item.to"
+            :class="navItemClass(item)"
+            :title="item.label"
+          >
+            <component :is="item.icon" class="flex-shrink-0 w-4 h-4" />
+            <span v-if="!props.collapsed" class="truncate text-sm">
+              {{ item.label }}
+            </span>
+          </router-link>
+        </div>
+      </template>
     </div>
 
     <!-- 最近对话区域 - 可滚动 -->
@@ -380,12 +425,13 @@ onUnmounted(() => {
       <!-- 侧边栏展开时显示完整列表 -->
       <div
         v-if="!props.collapsed"
-        class="mt-2 pt-2 flex items-center gap-2 px-2 mb-1 flex-shrink-0"
+        class="mt-4 pt-3 flex items-center gap-1.5 px-1 mb-1 flex-shrink-0 border-t border-slate-100"
       >
-        <div class="text-sm font-bold text-gray-700">
+        <icon-history class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+        <div class="text-xs font-semibold tracking-wide text-slate-400">
           {{ $t('layout.sidebar.recentConversations') }}
         </div>
-        <div class="flex-1 h-px bg-gray-200"></div>
+        <div class="flex-1 h-px bg-slate-100"></div>
       </div>
 
       <!-- 最近对话列表 - 只在展开时显示，固定高度可滚动 -->
@@ -394,7 +440,7 @@ onUnmounted(() => {
         class="flex-1 min-h-0 overflow-y-auto pr-1 recent-conversation-list"
         @scroll.passive="handleRecentConversationsScroll"
       >
-        <div v-if="recentConversations.length === 0" class="text-xs text-gray-400 px-2 py-1">
+        <div v-if="recentConversations.length === 0" class="text-xs text-slate-400 px-2 py-1">
           {{ $t('layout.sidebar.noRecentConversations') }}
         </div>
         <div v-else class="flex flex-col gap-0.5">
@@ -472,19 +518,7 @@ onUnmounted(() => {
           "
         >
           <div class="relative w-4 h-4 flex items-center justify-center flex-shrink-0">
-            <svg
-              class="w-4 h-4 flex-shrink-0"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+            <icon-history class="w-4 h-4 flex-shrink-0" />
             <!-- 数量徽章 - 只在 hover 时显示 -->
             <div
               v-if="recentConversations.length > 0"

@@ -16,6 +16,8 @@ describe('useGetHomeIntent', () => {
     const payload = {
       intent: '创建天气应用',
       confidence: 0.92,
+      should_ask_continue: true,
+      resume_question: '上次你在创建天气应用，要不要继续？',
       suggested_actions: [{ label: '创建应用', action: 'create_app', icon: 'plus' }],
       is_default: false,
     }

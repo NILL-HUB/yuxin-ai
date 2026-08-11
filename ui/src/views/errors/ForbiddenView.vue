@@ -28,7 +28,7 @@
             class="text-blue-500  cursor-pointer"
             @click="goHome"
           >
-            AI Agent首页
+            AI Agent新建会话
           </a>
         </div>
         <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.2s] text-xl font-bold text-gray-400 opacity-0">
@@ -41,7 +41,7 @@
           class="mt-4 animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.5s] rounded-full bg-blue-500 px-6 py-2 text-white opacity-0"
           @click="goHome"
         >
-          返回首页
+          返回新建会话
         </button>
       </div>
     </div>

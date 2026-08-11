@@ -6,6 +6,7 @@ import { useGetLanguageModels } from '@/hooks/use-language-model'
 import { cloneDeep } from 'lodash'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute } from 'vue-router'
 
 // 新版 KnowledgeBase 展示项结构（用于已选列表回显）
 type KnowledgeBaseItem = {
@@ -22,6 +23,8 @@ type RetrievalConfigForm = {
 
 // 1.定义自定义组件所需数据
 const { t } = useI18n()
+const route = useRoute()
+const isAdminContext = route.path.startsWith('/admin')
 const props = defineProps({
   app_id: { type: String, default: '', required: true },
   retrieval_config: {
@@ -60,13 +63,13 @@ const knowledgeBases = ref<KnowledgeBaseItem[]>([])
 
 /**
  * 加载对 Agent 可读的系统知识库列表（enabled=True）。
- * 调用用户端接口 /space/system-knowledge-bases，无需 admin 权限。
+ * admin 上下文走 /admin/space/system-knowledge-bases，否则走用户端接口。
  * admin 通过 enabled 开关控制系统知识库是否对 Agent 生效。
  */
 const loadKnowledgeBases = async () => {
   try {
     knowledgeBasesLoading.value = true
-    const response = await listReadableSystemKnowledgeBases()
+    const response = await listReadableSystemKnowledgeBases(isAdminContext)
     knowledgeBases.value = (response.data?.list || []).map((item) => ({
       id: item.id,
       name: item.name,

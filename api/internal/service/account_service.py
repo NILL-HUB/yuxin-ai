@@ -298,6 +298,11 @@ class AccountService(BaseService):
     def _log_session_storage_warning(cls, action: str, error: Exception) -> None:
         logging.warning("账号会话存储%s失败，已回退兼容模式: %s", action, error)
 
+    def _rollback_session(self) -> None:
+        rollback = getattr(self.db.session, "rollback", None)
+        if callable(rollback):
+            rollback()
+
     @classmethod
     def _build_legacy_session_id(cls, account_id: UUID | str) -> UUID:
         return uuid5(NAMESPACE_DNS, f"legacy-current-session:{account_id}")
@@ -368,6 +373,7 @@ class AccountService(BaseService):
         try:
             return list(self.get_account_sessions_by_account_id(account_id))
         except SQLAlchemyError as e:
+            self._rollback_session()
             self._log_session_storage_warning("读取列表", e)
             return []
 
@@ -629,6 +635,7 @@ class AccountService(BaseService):
         session: AccountSession | None = None,
         update_login_metadata: bool = True,
         skip_login_alert: bool = False,
+        revoke_previous_sessions: bool = False,
     ) -> dict[str, Any]:
         """为当前账号签发带会话标识的 JWT。"""
         self._ensure_account_enabled(account)
@@ -658,6 +665,8 @@ class AccountService(BaseService):
             except SQLAlchemyError as e:
                 self._log_session_storage_warning("刷新", e)
                 session = None
+            if session is not None and revoke_previous_sessions:
+                self.revoke_other_account_sessions(account, session.id)
 
         expire_at = int(expire_at_dt.replace(tzinfo=UTC).timestamp())
         payload = {
@@ -710,8 +719,14 @@ class AccountService(BaseService):
             return None
 
         try:
+            UUID(str(session_id))
+        except (TypeError, ValueError, AttributeError):
+            raise UnauthorizedException("登录会话标识非法，请重新登录")
+
+        try:
             account_session = self.get_account_session(session_id)
         except SQLAlchemyError as e:
+            self._rollback_session()
             self._log_session_storage_warning("校验", e)
             return None
 
@@ -748,6 +763,7 @@ class AccountService(BaseService):
                 user_agent=self._resolve_user_agent(),
             )
         except SQLAlchemyError as e:
+            self._rollback_session()
             self._log_session_storage_warning("更新活跃时间", e)
         return account_session
 
@@ -1019,7 +1035,7 @@ class AccountService(BaseService):
         client_ip = self._resolve_client_ip()
         if self._should_require_login_challenge(account, client_ip):
             return self._create_login_challenge(account, risk_reason="new_ip")
-        return self.issue_credential(account)
+        return self.issue_credential(account, revoke_previous_sessions=True)
 
     def resend_login_challenge(self, challenge_id: str) -> dict[str, Any]:
         """重发登录二次验证验证码。"""
@@ -1043,7 +1059,11 @@ class AccountService(BaseService):
         if not account:
             raise FailException("账号不存在")
 
-        return self.issue_credential(account, skip_login_alert=True)
+        return self.issue_credential(
+            account,
+            skip_login_alert=True,
+            revoke_previous_sessions=True,
+        )
 
     def _build_oauth_only_login_message(self, account: Account) -> str:
         """为仅支持第三方登录的账号构建提示文案。"""

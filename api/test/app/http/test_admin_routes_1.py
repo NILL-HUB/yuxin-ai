@@ -176,6 +176,9 @@ class TestAdminAppRoutesRegistered:
         assert "/admin/apps/<uuid:app_id>" in rules
         assert "/admin/apps/<uuid:app_id>/export" in rules
         assert "/admin/apps/tags" in rules
+        assert "/admin/apps/<uuid:app_id>/conversations/messages" in rules
+        assert "/admin/apps/<uuid:app_id>/conversations" in rules
+        assert "/admin/apps/<uuid:app_id>/summary" in rules
 
     def test_register_routes_idempotent(self):
         from app.http import admin_routes_1

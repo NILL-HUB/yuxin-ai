@@ -96,7 +96,7 @@ const getExecutorLabel = (executorType: string) => {
 
 const loadCategories = async () => {
   try {
-    const res = await getSkillCategories()
+    const res = await getSkillCategories(isAdminContext.value)
     categories.value = res.data.categories || []
   } catch {
     categories.value = []

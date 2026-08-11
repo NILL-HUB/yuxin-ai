@@ -158,8 +158,8 @@ export const generateKnowledgeBaseIconPreview = (name: string, description: stri
 
 // 列出对 Agent 可读的系统知识库（enabled=True），供 App 配置引用
 // 用户对系统知识库只读，仅能在 App 配置中引用，无法编辑/删除
-export const listReadableSystemKnowledgeBases = () => {
+export const listReadableSystemKnowledgeBases = (admin = false) => {
   return get<BaseResponse<{ list: Array<{ id: string; name: string; description: string; knowledge_scope: string }> }>>(
-    '/space/system-knowledge-bases',
+    `${admin ? '/admin' : ''}/space/system-knowledge-bases`,
   )
 }

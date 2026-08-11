@@ -12,5 +12,7 @@ class GetIntentResp(Schema):
     """获取意图识别结果响应"""
     intent = fields.String(dump_default="")
     confidence = fields.Float(dump_default=0.0)
+    should_ask_continue = fields.Boolean(dump_default=False)
+    resume_question = fields.String(dump_default="")
     suggested_actions = fields.List(fields.Nested(SuggestedActionSchema), dump_default=[])
     is_default = fields.Boolean(dump_default=False)

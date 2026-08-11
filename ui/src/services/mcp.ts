@@ -13,16 +13,20 @@ export const getMcpCategories = () => {
   return get<GetMcpCategoriesResponse>('/mcp-providers/categories')
 }
 
-export const getPublicMcpCategories = () => {
-  return get<GetMcpCategoriesResponse>('/public/mcp-providers/categories')
+const storePrefix = (admin: boolean) => (admin ? '/admin/store' : '')
+
+export const getPublicMcpCategories = (admin = false) => {
+  return get<GetMcpCategoriesResponse>(`${storePrefix(admin)}/mcp-providers/categories`)
 }
 
-export const getPublicMcpProvidersWithPage = (params: GetMcpProvidersWithPageRequest) => {
-  return get<GetMcpProvidersWithPageResponse>('/public/mcp-providers', { params })
+export const getPublicMcpProvidersWithPage = (params: GetMcpProvidersWithPageRequest, admin = false) => {
+  return get<GetMcpProvidersWithPageResponse>(`${storePrefix(admin)}/mcp-providers`, { params })
 }
 
-export const getPublicMcpProvider = (provider_key: string) => {
-  return get<GetMcpProviderResponse>(`/public/mcp-providers/${encodeURIComponent(provider_key)}`)
+export const getPublicMcpProvider = (provider_key: string, admin = false) => {
+  return get<GetMcpProviderResponse>(
+    `${storePrefix(admin)}/mcp-providers/${encodeURIComponent(provider_key)}`,
+  )
 }
 
 export const getMcpProvidersWithPage = (params: GetMcpProvidersWithPageRequest) => {

@@ -6,14 +6,16 @@ import type {
   GetSkillsWithPageResponse,
 } from '@/models/skill'
 
-export const getSkillCategories = () => {
-  return get<GetSkillsCategoriesResponse>('/skills/categories')
+const storePrefix = (admin: boolean) => (admin ? '/admin/store' : '')
+
+export const getSkillCategories = (admin = false) => {
+  return get<GetSkillsCategoriesResponse>(`${storePrefix(admin)}/skills/categories`)
 }
 
-export const getSkillsWithPage = (params: GetSkillsWithPageRequest) => {
-  return get<GetSkillsWithPageResponse>('/skills', { params })
+export const getSkillsWithPage = (params: GetSkillsWithPageRequest, admin = false) => {
+  return get<GetSkillsWithPageResponse>(`${storePrefix(admin)}/skills`, { params })
 }
 
-export const getSkill = (skill_id: string) => {
-  return get<GetSkillResponse>(`/skills/${skill_id}`)
+export const getSkill = (skill_id: string, admin = false) => {
+  return get<GetSkillResponse>(`${storePrefix(admin)}/skills/${skill_id}`)
 }

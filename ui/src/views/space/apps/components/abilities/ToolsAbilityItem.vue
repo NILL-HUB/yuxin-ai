@@ -178,9 +178,13 @@ const loadApiToolProviders = async (init: boolean = false, search_word: string =
     getApiToolProvidersLoading.value = false
   }
 }
-const { loading: getBuiltinToolLoading, builtin_tool, loadBuiltinTool } = useGetBuiltinTool()
-const { categories, loadCategories } = useGetCategories()
-const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
+const { loading: getBuiltinToolLoading, builtin_tool, loadBuiltinTool } = useGetBuiltinTool({
+  admin: isAdminContext.value,
+})
+const { categories, loadCategories } = useGetCategories({ admin: isAdminContext.value })
+const { builtin_tools, loadBuiltinTools } = useGetBuiltinTools({
+  admin: isAdminContext.value,
+})
 const toolInfoModalVisible = ref(false)
 const toolInfoNavType = ref('info')
 const toolInfo = ref<ToolInfoState>(defaultToolInfo)
@@ -215,6 +219,10 @@ const normalizeIconUrl = (icon: string = '') => {
   const basePath = apiUrl.pathname.replace(/\/+$/, '')
   let path = icon.startsWith('/') ? icon : `/${icon}`
 
+  if (isAdminContext.value && path.startsWith('/builtin-tools/')) {
+    path = `/admin/store${path}`
+  }
+
   // 本地开发常见：后端实际无 /api 前缀，但返回了 /api/xxx
   if (path.startsWith('/api/') && !basePath.startsWith('/api')) {
     path = path.replace(/^\/api/, '')
@@ -244,7 +252,7 @@ const handleShowToolInfoModal = async (idx: number) => {
       type: 'builtin_tool',
       provider: {
         id: builtin_tool.value.provider.name,
-        icon: `${apiPrefix}/builtin-tools/${builtin_tool.value.provider.name}/icon`,
+        icon: `${apiPrefix}${isAdminContext.value ? '/admin/store' : ''}/builtin-tools/${builtin_tool.value.provider.name}/icon`,
         name: builtin_tool.value.provider.name,
         label: builtin_tool.value.provider.label,
         description: builtin_tool.value.provider.description,
@@ -415,7 +423,7 @@ const handleSelectTool = async (provider_idx: number, tool_idx: number) => {
         id: builtinToolProvider.name,
         name: builtinToolProvider.name,
         label: builtinToolProvider.label,
-        icon: `${apiPrefix}/builtin-tools/${builtinToolProvider.name}/icon`,
+        icon: `${apiPrefix}${isAdminContext.value ? '/admin/store' : ''}/builtin-tools/${builtinToolProvider.name}/icon`,
         description: builtinToolProvider.description,
       },
       tool: {
@@ -825,7 +833,7 @@ onMounted(() => {
                     <a-avatar
                       :size="20"
                       shape="circle"
-                      :image-url="`${apiPrefix}/builtin-tools/${builtin_tool.name}/icon`"
+                      :image-url="`${apiPrefix}${isAdminContext ? '/admin/store' : ''}/builtin-tools/${builtin_tool.name}/icon`"
                     />
                     <div class="text-gray-900">{{ tool.label }}</div>
                   </div>

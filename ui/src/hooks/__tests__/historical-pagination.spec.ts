@@ -126,6 +126,7 @@ describe('historical chat pagination', () => {
         created_at: 0,
         conversation_id: 'conversation-1',
       },
+      false,
     )
     expect(appService.getDebugConversationMessagesWithPage).toHaveBeenNthCalledWith(
       2,
@@ -136,6 +137,7 @@ describe('historical chat pagination', () => {
         created_at: 200,
         conversation_id: 'conversation-1',
       },
+      false,
     )
     expect(messages.value.map((item) => item.id)).toEqual([
       'debug-latest-2',

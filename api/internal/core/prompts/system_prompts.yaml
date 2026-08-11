@@ -33,6 +33,7 @@ prompts:
       6.**系统身份认知（最高优先级）**
         - 当用户询问“你是谁 / 你是什么模型 / 你是哪家公司开发的 / 你的型号”等身份问题时，必须先调用 `search_knowledge_base` 检索系统知识库，并严格按照检索到的“系统身份认知”内容回答；
         - 禁止自行编造或透露底层模型名称、厂商、型号或训练细节；如果系统知识库明确要求使用特定身份称谓，必须以该称谓自称；
+        - 如果知识库检索工具不可用或检索无结果，必须如实说明无法确认身份，禁止用自己的训练知识猜测模型名称或厂商；
 
       <预设提示>
       {preset_prompt}
@@ -331,6 +332,12 @@ prompts:
       4. 只有当多个Agent分别覆盖用户请求中不同且必要的部分时，才允许多选。
       5. 如果没有足够相关的Agent，可以返回空列表。
       6. 输出时优先调用 select_public_agents 工具；若不能调用工具，则输出JSON对象，字段为 selected_app_ids 和 reason。
+
+  - key: public_agent_route_tool_description
+    name: 公共 Agent 路由工具描述
+    description: route_public_agents 工具的 LLM 可见描述（管理员可编辑覆盖）
+    content: |
+      当用户明确要求使用某个已有智能体回答，或当前问题更适合交给已发布公共/垂直/Agent这样的细分具体问题处理时，优先调用该工具。它会先检索公开Agent，再筛选出真正相关的候选，最后按A2A协议依次调用，最多返回3个相关Agent的结果。对于“请使用xx智能体回答”“让xxAgent来回答”“帮我解决xx”“帮我解决xx等垂直问题”等这类请求，必须优先使用本工具，禁止改用 `create_app` 新建应用。
 
   - key: conversation_summarizer_template
     name: 会话长期记忆摘要模板
@@ -822,17 +829,25 @@ prompts:
 
   - key: intent_recognition_prompt
     name: 用户意图识别提示词
-    description: 根据对话历史识别用户最可能想做的事情（含 messages 占位符）
+    description: 根据对话历史、用户记忆与最近会话摘要识别用户意图并判断是否建议继续任务（含 messages/memory_context/conversation_context 占位符）
     content: |
       你是一个用户意图识别专家。根据用户最近的对话历史，识别用户最可能想做的事情。
 
       用户最近的对话历史：
       {messages}
 
+      用户最近记忆（偏好/目标/事件/项目等）：
+      {memory_context}
+
+      最近会话摘要（用户最近在做什么）：
+      {conversation_context}
+
       请分析用户的意图，并返回以下JSON格式的结果：
       {{
         "intent": "用户想做的事情的简洁描述（一句话）",
         "confidence": 0.0-1.0之间的置信度,
+        "should_ask_continue": true或false（是否有明显未完成的近期任务/目标/项目值得询问用户是否继续）,
+        "resume_question": "当 should_ask_continue 为 true 时，给出向用户确认是否继续的一句话提问，例如『上次你在做xxx，要不要继续？』；否则为空字符串",
         "suggested_actions": [
           {{
             "label": "操作标签",
@@ -852,6 +867,12 @@ prompts:
       - view_examples: 查看示例
       - view_capabilities: 查看功能
 
+      判断规则：
+      1. 优先结合最近会话摘要和用户记忆，识别用户是否有未完成的任务、项目、目标或刚在进行的事项。
+      2. 如果存在明显可延续的事项，should_ask_continue 必须为 true，并把一句自然的询问放进 resume_question。
+      3. should_ask_continue 为 true 时，suggested_actions 第一条应为“继续上次任务”（action=resume_task），第二条可为“开启新任务”（action=view_capabilities）。
+      4. 如果只有一般闲聊或临时问答，should_ask_continue 为 false，resume_question 为空字符串。
+      5. 不要编造用户记忆或会话摘要中不存在的内容。
       请确保返回有效的JSON格式。
 
   - key: memory_write_time_conflict_resolver_prompt

@@ -159,7 +159,8 @@ watch(
           :app_type="appType"
           :workflow_id="String(draftAppConfigForm.workflow_id ?? '')"
           :long_term_memory="draftAppConfigForm.long_term_memory"
-          :debug_conversation_id="String(currentApp?.debug_conversation_id ?? '')" />
+          :debug_conversation_id="String(currentApp?.debug_conversation_id ?? '')"
+          :admin-mode="isAdminContext" />
         <!-- 对话窗口 -->
         <preview-debug-chat
           class="flex-1 min-h-0"
@@ -169,7 +170,8 @@ watch(
           :capabilities="draftAppConfigForm.capabilities"
           :text_to_speech="draftAppConfigForm.text_to_speech"
           :app="currentApp" 
-          :app_id="currentApp?.id" />
+          :app_id="currentApp?.id"
+          :admin-mode="isAdminContext" />
       </div>
     </div>
   </div>

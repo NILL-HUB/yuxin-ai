@@ -13,6 +13,14 @@ import type { SkillCategory, SkillPackage } from '@/models/skill'
 import { getSkillCategoryDisplayName } from '@/utils/store-display'
 
 const { t, locale } = useI18n()
+const props = withDefaults(
+  defineProps<{
+    adminMode?: boolean
+  }>(),
+  {
+    adminMode: false,
+  },
+)
 const loading = ref(false)
 const categories = ref<SkillCategory[]>([])
 const skills = ref<SkillPackage[]>([])
@@ -42,6 +50,10 @@ const normalizeIconUrl = (icon: string = '') => {
   const basePath = apiUrl.pathname.replace(/\/+$/, '')
   let path = icon.startsWith('/') ? icon : `/${icon}`
 
+  if (props.adminMode && path.startsWith('/skills/')) {
+    path = `/admin/store${path}`
+  }
+
   if (path.startsWith('/api/') && !basePath.startsWith('/api')) {
     path = path.replace(/^\/api/, '')
   }
@@ -58,7 +70,7 @@ const normalizeIconUrl = (icon: string = '') => {
 
 const loadCategories = async () => {
   try {
-    const res = await getSkillCategories()
+    const res = await getSkillCategories(props.adminMode)
     categories.value = res.data.categories || []
   } catch {
     categories.value = []
@@ -71,12 +83,15 @@ const loadSkills = async () => {
 
   loading.value = true
   try {
-    const res = await getSkillsWithPage({
-      current_page: page.value,
-      page_size: pageSize.value,
-      search_word: searchWord.value.trim(),
-      category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
-    })
+    const res = await getSkillsWithPage(
+      {
+        current_page: page.value,
+        page_size: pageSize.value,
+        search_word: searchWord.value.trim(),
+        category: selectedCategory.value === 'all' ? '' : selectedCategory.value,
+      },
+      props.adminMode,
+    )
     const list = res.data.list || []
     if (page.value === 1) {
       skills.value = list
@@ -121,7 +136,7 @@ const loadSkillDetail = async (skillId: string) => {
   detailLoading.value = true
   showDetailVisible.value = true
   try {
-    const res = await getSkill(skillId)
+    const res = await getSkill(skillId, props.adminMode)
     activeSkill.value = res.data
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('store.skills.detailLoadFailed')))

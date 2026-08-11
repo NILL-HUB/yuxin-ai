@@ -1,4 +1,5 @@
 import { post } from '@/utils/request'
+import { getCredentialSessionId, getStoredCredential } from '@/utils/auth'
 import { type BaseResponse } from '@/models/base'
 import {
   type PasswordLoginResponse,
@@ -37,7 +38,13 @@ export const verifyRegister = (username: string, email: string, password: string
 
 // 退出登录请求
 export const logout = () => {
-  return post<BaseResponse<Record<string, unknown>>>(`/auth/logout`)
+  const session_id = getCredentialSessionId(getStoredCredential())
+  if (!session_id) {
+    return post<BaseResponse<Record<string, unknown>>>(`/auth/logout`)
+  }
+  return post<BaseResponse<Record<string, unknown>>>(`/auth/logout`, {
+    params: { session_id },
+  })
 }
 
 // 发送密码重置验证码

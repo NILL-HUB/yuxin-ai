@@ -48,6 +48,16 @@ class TestAuthNegativePaths:
             lambda token: {"sub": str(HOME_ACCOUNT_ID), "jti": f"session:{token}"},
         )
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        monkeypatch.setattr(
+            support,
+            "_get_services",
+            lambda: (
+                None,
+                None,
+                SimpleNamespace(validate_access_session=lambda payload: None),
+                None,
+            ),
+        )
 
         def _get_user_intent(account):
             call_state["user"] = account
@@ -85,6 +95,89 @@ class TestAuthNegativePaths:
         assert payload["data"]["suggested_actions"][0]["action"] == "create_app"
         assert call_state["user"].id == account.id
         assert call_state["user"].is_authenticated is True
+
+    def test_user_token_should_reject_removed_user_api(self, monkeypatch):
+        """用户端已收敛的接口，普通用户 JWT 应直接返回 403。"""
+        account = SimpleNamespace(
+            id=HOME_ACCOUNT_ID,
+            is_authenticated=True,
+            name="tester",
+            email="tester@example.com",
+        )
+        monkeypatch.setattr(
+            JwtService,
+            "parse_token",
+            lambda token: {"sub": str(HOME_ACCOUNT_ID)},
+        )
+        monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/memory/write",
+                    headers={"Authorization": "Bearer user-token"},
+                    json={"content": "blocked"},
+                )
+                payload = await resp.json
+                return resp, payload
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 403
+        assert payload["code"] == "forbidden"
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("GET", "/apps"),
+            ("GET", "/workflows"),
+            ("GET", "/api-tools"),
+            ("GET", "/mcp-providers"),
+            ("GET", "/skills"),
+            ("GET", "/builtin-tools"),
+            ("GET", "/openapi/api-keys"),
+            ("GET", "/platform/00000000-0000-0000-0000-000000000011/wechat-config"),
+            ("GET", "/routing-logs/summary"),
+            ("POST", "/ai/optimize-prompt"),
+            ("POST", "/ai/chat"),
+            ("POST", "/ai/openapi-schema-chat"),
+            ("POST", "/ai/mcp-schema-chat"),
+        ],
+    )
+    def test_user_token_should_reject_non_consumed_user_api(self, monkeypatch, method, path):
+        account = SimpleNamespace(
+            id=HOME_ACCOUNT_ID,
+            is_authenticated=True,
+            name="tester",
+            email="tester@example.com",
+        )
+        monkeypatch.setattr(
+            JwtService,
+            "parse_token",
+            lambda token: {"sub": str(HOME_ACCOUNT_ID)},
+        )
+        monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                if method == "POST":
+                    resp = await client.post(
+                        path,
+                        headers={"Authorization": "Bearer user-token"},
+                        json={},
+                    )
+                else:
+                    resp = await client.get(
+                        path,
+                        headers={"Authorization": "Bearer user-token"},
+                    )
+                payload = await resp.json
+                return resp, payload
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 403
+        assert payload["code"] == "forbidden"
 
     def test_openapi_chat_should_reject_missing_authorization(self):
         async def _run():

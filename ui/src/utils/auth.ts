@@ -57,6 +57,34 @@ export const getCredentialAccessToken = (
   return accessToken
 }
 
+const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
+  const parts = token.split('.')
+  if (parts.length < 2) return null
+
+  const base64Url = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+  const base64 = base64Url.padEnd(Math.ceil(base64Url.length / 4) * 4, '=')
+
+  try {
+    const decoded = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((char) => `%${`00${char.charCodeAt(0).toString(16)}`.slice(-2)}`)
+        .join(''),
+    )
+    return JSON.parse(decoded) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+export const getCredentialSessionId = (credential?: CredentialLike | null): string => {
+  const accessToken = getCredentialAccessToken(credential)
+  if (!accessToken) return ''
+
+  const payload = decodeJwtPayload(accessToken)
+  return String(payload?.jti || '').trim()
+}
+
 export const isCredentialLoggedIn = (credential?: CredentialLike | null): boolean => {
   return Boolean(getCredentialAccessToken(credential))
 }

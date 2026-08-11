@@ -1014,31 +1014,11 @@ class TestAsgiSmallHandlers:
         assert resp.status_code == 200
         assert payload["data"]["message_count"] == 10
 
-    def test_tool_inventory_without_account(self, monkeypatch):
+    def test_tool_inventory_route_is_not_registered(self, monkeypatch):
         self._setup(monkeypatch)
 
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/tool-inventory")
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-
-        assert resp.status_code == 200
-        assert payload["data"]["candidates"] == []
-
-    def test_tool_inventory_with_account(self, monkeypatch):
-        self._setup(monkeypatch)
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/tool-inventory?account_id={uuid4()}")
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-
-        assert resp.status_code == 200
-        assert "candidates" in payload["data"]
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/tool-inventory" not in rules
 
     def test_get_language_models(self, monkeypatch):
         self._setup(monkeypatch)
@@ -1578,7 +1558,7 @@ class TestAsgiTagsNotificationsTools:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/builtin-tools")
+                resp = await client.get(f"/builtin-tools?account_id={uuid4()}")
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -1591,7 +1571,7 @@ class TestAsgiTagsNotificationsTools:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/builtin-tools/openai/icon")
+                resp = await client.get(f"/builtin-tools/openai/icon?account_id={uuid4()}")
                 return resp
 
         resp = asyncio.run(_run())
@@ -1824,7 +1804,7 @@ class TestAsgiSkillsApiTools:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/skills/categories")
+                resp = await client.get(f"/skills/categories?account_id={uuid4()}")
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -1837,7 +1817,7 @@ class TestAsgiSkillsApiTools:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/skills")
+                resp = await client.get(f"/skills?account_id={uuid4()}")
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -1850,7 +1830,7 @@ class TestAsgiSkillsApiTools:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/skills/{uuid4()}/icon")
+                resp = await client.get(f"/skills/{uuid4()}/icon?account_id={uuid4()}")
                 return resp
 
         resp = asyncio.run(_run())
@@ -2705,32 +2685,13 @@ class TestAsgiMcp:
         monkeypatch.setattr(support, "_get_service", lambda cls: services.get(cls))
         return account, mcp_service, import_service
 
-    def test_get_public_mcp_providers(self, monkeypatch):
-        _, mcp_service, _ = self._setup(monkeypatch)
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/public/mcp-providers")
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-
-        assert resp.status_code == 200
-        assert payload["data"]["list"] == []
-        assert mcp_service.calls[0][1] is None
-
-    def test_get_public_mcp_provider(self, monkeypatch):
+    def test_public_mcp_routes_are_not_registered(self, monkeypatch):
         self._setup(monkeypatch)
 
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/public/mcp-providers/github")
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-
-        assert resp.status_code == 200
-        assert payload["data"]["name"] == "公共MCP"
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/public/mcp-providers" not in rules
+        assert "/public/mcp-providers/categories" not in rules
+        assert "/public/mcp-providers/<string:provider_key>" not in rules
 
     def test_get_mcp_providers(self, monkeypatch):
         self._setup(monkeypatch)

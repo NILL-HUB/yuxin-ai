@@ -6,12 +6,14 @@ import { useGetBuiltinTools, useGetCategories } from '@/hooks/use-builtin-tool'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     hideCreate?: boolean
+    adminMode?: boolean
   }>(),
   {
     hideCreate: false,
+    adminMode: false,
   },
 )
 
@@ -40,8 +42,10 @@ type BuiltinToolItem = {
 }
 
 // 1.定义页面所需数据
-const { categories, loadCategories } = useGetCategories()
-const { loading: getBuiltinToolsLoading, builtin_tools, loadBuiltinTools } = useGetBuiltinTools()
+const { categories, loadCategories } = useGetCategories({ admin: props.adminMode })
+const { loading: getBuiltinToolsLoading, builtin_tools, loadBuiltinTools } = useGetBuiltinTools({
+  admin: props.adminMode,
+})
 const { t, locale } = useI18n()
 const category = ref<string>('all')
 const search_word = ref<string>('')
@@ -66,6 +70,9 @@ const getCategoryLabel = (value: string) => {
 const getTypeLabel = (value: string) => {
   return getStoreTypeDisplayName(value, locale.value as 'zh-CN' | 'en-US')
 }
+
+const toolIconUrl = (providerName: string) =>
+  `${apiPrefix}${props.adminMode ? '/admin/store' : ''}/builtin-tools/${providerName}/icon`
 
 // 2.页面DOM加载完毕时获取数据
 onMounted(() => {
@@ -130,7 +137,7 @@ onMounted(() => {
                   :style="{ backgroundColor: builtinTool.background }"
                 >
                   <img
-                    :src="`${apiPrefix}/builtin-tools/${builtinTool.name}/icon`"
+                    :src="toolIconUrl(builtinTool.name)"
                     :alt="builtinTool.name"
                     class="w-full h-full object-contain"
                   />
@@ -188,7 +195,7 @@ onMounted(() => {
               :style="{ backgroundColor: filterBuiltinTools[showIdx].background }"
             >
               <img
-                :src="`${apiPrefix}/builtin-tools/${filterBuiltinTools[showIdx].name}/icon`"
+                :src="toolIconUrl(filterBuiltinTools[showIdx].name)"
                 :alt="filterBuiltinTools[showIdx].name"
                 class="w-full h-full object-contain"
               />

@@ -452,6 +452,42 @@ class AppDebugService(BaseService):
         account = self.app_service.get_app_owner_account_for_admin(app_id)
         self.stop_prompt_compare_chat(app_id, task_id, account)
 
+    def get_debug_conversation_summary_for_admin(self, app_id: UUID) -> str:
+        """管理员获取应用调试长期记忆（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.get_debug_conversation_summary(app_id, account)
+
+    def update_debug_conversation_summary_for_admin(
+        self, app_id: UUID, summary: str
+    ) -> Conversation:
+        """管理员更新应用调试长期记忆（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.update_debug_conversation_summary(app_id, summary, account)
+
+    def delete_debug_conversation_for_admin(self, app_id: UUID) -> App:
+        """管理员清空应用调试会话（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.delete_debug_conversation(app_id, account)
+
+    def stop_debug_chat_for_admin(self, app_id: UUID, task_id: UUID) -> None:
+        """管理员停止应用调试会话（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        self.stop_debug_chat(app_id, task_id, account)
+
+    def get_debug_conversation_messages_with_page_for_admin(
+        self,
+        app_id: UUID,
+        req: GetDebugConversationMessagesWithPageReq,
+    ) -> tuple[list[Message], Paginator]:
+        """管理员获取应用调试会话消息（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.get_debug_conversation_messages_with_page(app_id, req, account)
+
+    def debug_chat_for_admin(self, app_id: UUID, req: DebugChatReq) -> Generator:
+        """管理员发起应用调试会话（不校验账号归属，以应用归属账号执行）"""
+        account = self.app_service.get_app_owner_account_for_admin(app_id)
+        return self.debug_chat(app_id, req, account)
+
     def get_debug_conversation_messages_with_page(
             self,
             app_id: UUID,

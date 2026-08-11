@@ -82,6 +82,10 @@ const props = defineProps({
     },
     required: false,
   },
+  adminMode: {
+    type: Boolean,
+    default: false,
+  },
 })
 const {
   query,
@@ -134,15 +138,17 @@ const accountStore = useAccountStore()
 const {
   loading: deleteDebugConversationLoading, //
   handleDeleteDebugConversation,
-} = useDeleteDebugConversation()
+} = useDeleteDebugConversation({ admin: props.adminMode })
 const {
   loading: getDebugConversationMessagesWithPageLoading,
   messages,
   paginator,
   loadDebugConversationMessages,
-} = useGetDebugConversationMessagesWithPage()
-const { loading: debugChatLoading, handleDebugChat } = useDebugChat()
-const { loading: stopDebugChatLoading, handleStopDebugChat } = useStopDebugChat()
+} = useGetDebugConversationMessagesWithPage({ admin: props.adminMode })
+const { loading: debugChatLoading, handleDebugChat } = useDebugChat({ admin: props.adminMode })
+const { loading: stopDebugChatLoading, handleStopDebugChat } = useStopDebugChat({
+  admin: props.adminMode,
+})
 const { suggested_questions, handleGenerateSuggestedQuestions } = useGenerateSuggestedQuestions()
 const { loading: audioToTextLoading, text, handleAudioToText } = useAudioToText()
 const { startAudioStream, stopAudioStream } = useAudioPlayer()

@@ -62,6 +62,7 @@ class _SessionStub:
         self._query_map = query_map
         self.deleted_entities = []
         self.added_entities = []
+        self.rolled_back = False
 
     def query(self, model):
         result = self._query_map.get(model, _QueryStub())
@@ -74,6 +75,9 @@ class _SessionStub:
 
     def add(self, entity):
         self.added_entities.append(entity)
+
+    def rollback(self):
+        self.rolled_back = True
 
 
 class _DBStub:
@@ -372,6 +376,43 @@ class TestAccountService:
         assert update_calls[0][1]["last_login_ip"] == "10.0.0.5"
         assert update_calls[1][0] is account
 
+    def test_issue_credential_should_revoke_previous_sessions_for_new_login(self, monkeypatch):
+        jwt_payload = {}
+        session = _SessionStub({})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(
+                generate_token=lambda payload: jwt_payload.update(payload) or "jwt-token"
+            ),
+        )
+        account = SimpleNamespace(id=uuid4())
+        new_session = SimpleNamespace(id=uuid4(), account_id=account.id)
+        revoke_calls = []
+
+        monkeypatch.setattr(
+            service,
+            "create_account_session",
+            lambda _account: new_session,
+        )
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: target)
+        monkeypatch.setattr(
+            service,
+            "revoke_other_account_sessions",
+            lambda target, current_session_id: revoke_calls.append(
+                (target, current_session_id)
+            ),
+        )
+
+        result = service.issue_credential(
+            account,
+            skip_login_alert=True,
+            revoke_previous_sessions=True,
+        )
+
+        assert result["access_token"] == "jwt-token"
+        assert jwt_payload["jti"] == str(new_session.id)
+        assert revoke_calls == [(account, new_session.id)]
+
     def test_issue_credential_should_send_login_alert_when_ip_unusual(self, monkeypatch):
         alert_calls = []
         service = _new_account_service(
@@ -456,19 +497,51 @@ class TestAccountService:
 
         service.get_account_session = _raise_session_error
 
-        assert service.validate_access_session({"sub": "account-id-1", "jti": "session-1"}) is None
+        assert service.validate_access_session(
+            {"sub": "account-id-1", "jti": str(uuid4())}
+        ) is None
 
     def test_validate_access_session_should_return_none_for_legacy_token(self):
         service = self._build_service()
 
         assert service.validate_access_session({"sub": "account-id-1"}) is None
 
+    def test_validate_access_session_should_reject_non_uuid_session_id(self):
+        service = self._build_service()
+
+        with pytest.raises(UnauthorizedException, match="会话标识非法"):
+            service.validate_access_session(
+                {"sub": "account-id-1", "jti": "verify-token"}
+            )
+
+    def test_validate_access_session_should_rollback_when_session_storage_unavailable(self):
+        session = _SessionStub({})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+
+        def _raise_session_error(_session_id):
+            raise SQLAlchemyError("account_session unavailable")
+
+        service.get_account_session = _raise_session_error
+
+        assert (
+            service.validate_access_session(
+                {"sub": "account-id-1", "jti": str(uuid4())}
+            )
+            is None
+        )
+        assert session.rolled_back is True
+
     def test_validate_access_session_should_raise_when_session_missing(self):
         service = self._build_service()
         service.get_account_session = lambda _session_id: None
 
         with pytest.raises(UnauthorizedException):
-            service.validate_access_session({"sub": "account-id-1", "jti": "session-1"})
+            service.validate_access_session(
+                {"sub": "account-id-1", "jti": str(uuid4())}
+            )
 
     def test_resolve_ip_location_should_return_local_network_label_without_remote_lookup(self, monkeypatch):
         service = self._build_service()
@@ -1018,7 +1091,7 @@ class TestAccountService:
         monkeypatch.setattr(
             service,
             "issue_credential",
-            lambda target_account: update_calls.append(target_account)
+            lambda target_account, **kwargs: update_calls.append(target_account)
             or {"access_token": "jwt-token", "expire_at": 123},
         )
 
@@ -1103,7 +1176,8 @@ class TestAccountService:
         monkeypatch.setattr(
             service,
             "issue_credential",
-            lambda target: issued.append(target) or {"access_token": "t", "expire_at": 1},
+            lambda target, **kwargs: issued.append(target)
+            or {"access_token": "t", "expire_at": 1},
         )
         account = SimpleNamespace(id=account_id)
 
@@ -1167,7 +1241,9 @@ class TestAccountService:
         result = service.verify_login_challenge(challenge_id, "123456")
 
         assert result == {"access_token": "jwt-token", "expire_at": 123}
-        assert issue_calls == [(account, {"skip_login_alert": True})]
+        assert issue_calls == [
+            (account, {"skip_login_alert": True, "revoke_previous_sessions": True})
+        ]
         assert service._login_challenge_key(challenge_id) in redis_stub.delete_calls
 
     def test_verify_login_challenge_should_raise_when_code_invalid(self, monkeypatch):

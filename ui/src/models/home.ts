@@ -33,6 +33,8 @@ export type HomeIntentSuggestedAction = {
 export type HomeIntentData = {
   intent: string
   confidence: number
+  should_ask_continue: boolean
+  resume_question: string
   suggested_actions: HomeIntentSuggestedAction[]
   is_default: boolean
   task_plan_summary: HomeTaskPlanSummary

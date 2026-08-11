@@ -23,6 +23,12 @@ const router = createRouter({
           component: () => import('@/views/pages/HomeView.vue'),
         },
         {
+          path: 'studio',
+          name: 'user-studio',
+          component: () => import('@/views/studio/StudioPlaceholderView.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
           path: 'schedules',
           name: 'user-schedules',
           component: () => import('@/views/space/schedules/ListView.vue'),
@@ -61,45 +67,9 @@ const router = createRouter({
           ],
         },
         {
-          path: 'store/tools',
-          name: 'store-tools-list',
-          component: () => import('@/views/store/tools/ListView.vue'),
-        },
-        {
-          path: 'store/skills',
-          name: 'store-skills-list',
-          component: () => import('@/views/store/skills/ListView.vue'),
-        },
-        {
-          path: 'store/mcp',
-          name: 'store-mcp-list',
-          component: () => import('@/views/store/mcp/ListView.vue'),
-        },
-        {
-          path: 'store/workflows',
-          name: 'store-workflows-list',
-          component: () => import('@/views/store/workflows/ListView.vue'),
-        },
-        {
-          path: 'store/workflows/:workflow_id/preview',
-          name: 'store-workflows-preview',
-          component: () => import('@/views/store/workflows/PreviewView.vue'),
-        },
-        {
           path: 'search',
           name: 'conversation-search',
           component: () => import('@/views/home/ConversationSearchView.vue'),
-        },
-        {
-          path: 'openapi',
-          component: () => import('@/views/openapi/OpenAPILayoutView.vue'),
-          children: [
-            {
-              path: '',
-              name: 'openapi-index',
-              component: () => import('@/views/openapi/IndexView.vue'),
-            },
-          ],
         },
         {
           path: 'memory',
@@ -235,6 +205,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['audit_log:read'], roles: ['super_admin'] },
             },
             {
+              path: 'errors/403',
+              name: 'admin-errors-forbidden',
+              component: () => import('@/views/admin/AdminForbiddenView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin' },
+            },
+            {
               path: 'recycle-bin',
               name: 'admin-recycle-bin',
               component: () => import('@/views/admin/AdminRecycleBinView.vue'),
@@ -316,6 +292,12 @@ const router = createRouter({
               path: 'store/workflows',
               name: 'admin-store-workflows',
               component: () => import('@/views/admin/StoreWorkflowsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
+            },
+            {
+              path: 'store/workflows/:workflow_id/preview',
+              name: 'admin-store-workflows-preview',
+              component: () => import('@/views/store/workflows/PreviewView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['workflow:read'] },
             },
             {
@@ -444,15 +426,9 @@ const PUBLIC_ROUTE_NAMES = new Set([
   'web-apps-index',
   'store-public-apps-list',
   'store-public-apps-preview',
-  'store-tools-list',
-  'store-skills-list',
-  'store-mcp-list',
-  'store-workflows-list',
-  'store-workflows-preview',
   'auth-login',
   'auth-authorize',
   'auth-forgot-password',
-  'openapi-index',
   'conversation-search',
   'errors-not-found',
   'errors-forbidden',
@@ -535,13 +511,13 @@ export const getAdminAuthGuardRedirect = ({
   if (requiredRoles && requiredRoles.length > 0) {
     const hasRole = requiredRoles.some((role) => adminRoles.includes(role))
     if (!hasRole) {
-      return { path: '/errors/403' as const }
+      return { path: '/admin/errors/403' as const }
     }
   }
   if (requiredPermissions && requiredPermissions.length > 0) {
     const hasAll = requiredPermissions.every((permission) => adminPermissions.includes(permission))
     if (!hasAll) {
-      return { path: '/errors/403' as const }
+      return { path: '/admin/errors/403' as const }
     }
   }
   return null
@@ -597,4 +573,13 @@ router.beforeEach(async (to) => {
     return redirect
   }
 })
+
+const DEFAULT_PAGE_TITLE = '钰心AI'
+const ADMIN_PAGE_TITLE = '钰心Admin'
+
+router.afterEach((to) => {
+  if (typeof document === 'undefined') return
+  document.title = to.path.startsWith('/admin') ? ADMIN_PAGE_TITLE : DEFAULT_PAGE_TITLE
+})
+
 export default router

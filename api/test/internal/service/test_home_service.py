@@ -129,7 +129,18 @@ class TestHomeService:
         self,
         service,
         mock_intent_service,
+        monkeypatch,
     ):
+        from internal.service.pool_intent_resolver_service import PoolIntentResolver
+
+        monkeypatch.setattr(
+            PoolIntentResolver,
+            "resolve",
+            lambda self, query, **kwargs: {
+                "matched_pools": ["coding"],
+                "pool_reasons": [{"pool": "coding", "reason": "keyword:前端"}],
+            },
+        )
         user = SimpleNamespace(id=uuid4())
         messages = [
             {
@@ -198,7 +209,9 @@ class TestHomeService:
         result = service.get_user_intent(user)
 
         assert result["intent"] == "用户想创建应用"
-        mock_intent_service.recognize.assert_called_once_with(messages)
+        mock_intent_service.recognize.assert_called_once_with(
+            messages, memory_context="", conversation_context=""
+        )
 
     def test_get_user_intent_cache_hit(self, service, mock_intent_service):
         """测试缓存命中"""
@@ -311,7 +324,9 @@ class TestHomeService:
         assert result["intent"] == "新识别意图"
         assert result["message_signature"] == service._build_message_signature(messages)
         mock_intent_service.clear_cache.assert_called_once_with(str(user.id))
-        mock_intent_service.recognize.assert_called_once_with(messages)
+        mock_intent_service.recognize.assert_called_once_with(
+            messages, memory_context="", conversation_context=""
+        )
         mock_intent_service.cache_intent.assert_called_once()
 
     def test_get_user_intent_cache_miss(self, service, mock_intent_service):
@@ -345,5 +360,7 @@ class TestHomeService:
 
         result = service.get_user_intent(user)
         assert result["intent"] == "用户想创建应用"
-        mock_intent_service.recognize.assert_called_once_with(messages)
+        mock_intent_service.recognize.assert_called_once_with(
+            messages, memory_context="", conversation_context=""
+        )
         mock_intent_service.cache_intent.assert_called_once()

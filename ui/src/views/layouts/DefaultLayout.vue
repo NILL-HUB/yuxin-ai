@@ -51,7 +51,6 @@ const { current_user, loadCurrentUser } = useGetCurrentUser()
 const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
 const sidebarWidth = computed(() => (sidebarCollapsed.value ? 80 : 240))
-const isSearchActive = computed(() => route.path === '/search')
 
 const openLoginModal = (redirect = '') => {
   loginRedirectPath.value = redirect
@@ -245,7 +244,7 @@ watch(settingModalVisible, async (visible) => {
   <div class="h-full w-full overflow-hidden flex">
     <!-- 侧边栏 - 固定定位，不随右侧滚动 -->
     <a-layout-sider
-      class="bg-gray-50 p-2 shadow-none flex-shrink-0 overflow-hidden sidebar-sider"
+      class="bg-white border-r border-slate-100 shadow-sm shadow-slate-200/60 p-2 flex-shrink-0 overflow-hidden sidebar-sider"
       :style="{
         width: `${sidebarWidth}px`,
         minWidth: `${sidebarWidth}px`,
@@ -259,7 +258,7 @@ watch(settingModalVisible, async (visible) => {
       }"
     >
       <div
-        class="bg-white rounded-lg px-2 py-1 flex flex-col min-h-0 overflow-hidden"
+        class="flex flex-col min-h-0 overflow-hidden px-3 py-2"
         style="height: calc(100vh - 16px)"
       >
         <!-- 顶部 Logo 和折叠按钮 -->
@@ -269,46 +268,19 @@ watch(settingModalVisible, async (visible) => {
             class="h-10 flex items-end justify-between w-full gap-0.5 pb-0"
           >
             <div class="flex items-center justify-start flex-1 min-w-0 overflow-hidden">
-              <icon-open-agent type="character" :size="130" class="flex-shrink-0" />
+              <IconYuxinAI type="character" :size="130" class="flex-shrink-0" />
             </div>
-            <!-- 搜索按钮 - 展开时在折叠按钮左侧 -->
-            <router-link
-              to="/search"
-              :class="`p-0.5 rounded-lg transition-colors flex-shrink-0 flex items-center justify-center h-7 w-7 ${isSearchActive ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : 'text-gray-600 hover:bg-gray-100'}`"
-              :title="isSearchActive ? t('layout.sidebar.searchHistory') : ''"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
-            </router-link>
             <button
               @click="sidebarCollapsed = !sidebarCollapsed"
               class="p-0.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 flex items-center justify-center h-7 w-7"
               :title="sidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')"
             >
-              <svg
-                class="w-4 h-4 text-gray-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M15 19l-7-7 7-7"
-                />
-              </svg>
+              <icon-left class="w-4 h-4 text-slate-600" />
             </button>
           </div>
           <div v-else class="flex flex-col items-center justify-center gap-0.5 py-0.5">
             <div class="flex items-center justify-center w-10 h-10 flex-shrink-0">
-              <icon-open-agent type="full" :size="32" class="flex-shrink-0" />
+              <IconYuxinAI type="full" :size="32" class="flex-shrink-0" />
             </div>
             <!-- 折叠时所有按钮在同一垂直线上 -->
             <button
@@ -316,40 +288,8 @@ watch(settingModalVisible, async (visible) => {
               class="p-0.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 flex items-center justify-center h-7 w-7"
               :title="sidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')"
             >
-              <svg
-                class="w-3.5 h-3.5 text-gray-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M9 5l7 7-7 7"
-                />
-              </svg>
+              <icon-right class="w-3.5 h-3.5 text-slate-600" />
             </button>
-            <!-- 搜索按钮 - 折叠时显示在折叠按钮下方，同一垂直线 -->
-            <router-link
-              to="/search"
-              :class="`flex items-center justify-center h-7 w-7 rounded-lg cursor-pointer transition-all duration-200 flex-shrink-0 ${isSearchActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:text-gray-700 hover:bg-gray-100'}`"
-              :title="isSearchActive ? t('layout.sidebar.searchHistory') : ''"
-            >
-              <svg
-                class="w-3.5 h-3.5 flex-shrink-0"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                />
-              </svg>
-            </router-link>
           </div>
         </div>
         <!-- 顶部间距 -->
@@ -357,7 +297,7 @@ watch(settingModalVisible, async (visible) => {
         <!-- 侧边栏导航 - 中间可滚动区域 -->
         <layout-sidebar class="flex-1 min-h-0 overflow-hidden" :collapsed="sidebarCollapsed" />
         <!-- 账号设置 - 固定在底部，不随滚动 -->
-        <div class="h-14 flex-shrink-0 flex items-center border-t border-gray-100">
+        <div class="h-14 flex-shrink-0 flex items-center border-t border-slate-100">
           <a-dropdown v-if="isLoggedIn" position="tl">
             <div
               class="flex items-center p-1.5 gap-2 transition-all cursor-pointer rounded-lg hover:bg-gray-100 w-full"

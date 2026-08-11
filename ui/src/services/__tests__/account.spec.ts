@@ -14,15 +14,22 @@ import {
   updatePassword,
 } from '@/services/account'
 import * as request from '@/utils/request'
+import * as auth from '@/utils/auth'
 
 vi.mock('@/utils/request', () => ({
   get: vi.fn(),
   post: vi.fn(),
 }))
 
+vi.mock('@/utils/auth', () => ({
+  getCredentialSessionId: vi.fn(),
+  getStoredCredential: vi.fn(),
+}))
+
 describe('account service', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(auth.getCredentialSessionId).mockReturnValue('')
     vi.mocked(request.get).mockResolvedValue({ data: {} } as never)
     vi.mocked(request.post).mockResolvedValue({ message: 'ok' } as never)
   })
@@ -80,6 +87,28 @@ describe('account service', () => {
     })
     expect(request.post).toHaveBeenNthCalledWith(1, '/account/sessions/session-1/revoke')
     expect(request.post).toHaveBeenNthCalledWith(2, '/account/sessions/revoke-others')
+  })
+
+  it('passes the current session id to session management endpoints', async () => {
+    vi.mocked(auth.getCredentialSessionId).mockReturnValue('session-current')
+
+    await getAccountSessions()
+    await getAccountLoginHistory({ status: 'active' })
+    await revokeAccountSession('session-1')
+    await revokeOtherAccountSessions()
+
+    expect(request.get).toHaveBeenNthCalledWith(1, '/account/sessions', {
+      params: { session_id: 'session-current' },
+    })
+    expect(request.get).toHaveBeenNthCalledWith(2, '/account/login-history', {
+      params: { status: 'active', session_id: 'session-current' },
+    })
+    expect(request.post).toHaveBeenNthCalledWith(1, '/account/sessions/session-1/revoke', {
+      params: { session_id: 'session-current' },
+    })
+    expect(request.post).toHaveBeenNthCalledWith(2, '/account/sessions/revoke-others', {
+      params: { session_id: 'session-current' },
+    })
   })
 
   it('posts provider unbind requests to the provider-specific endpoint', async () => {

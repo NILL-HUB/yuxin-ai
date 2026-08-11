@@ -59,48 +59,6 @@ def register_routes(quart_app):
         )
         return _ok(app_analysis)
 
-    @quart_app.get("/tool-inventory")
-    async def async_get_tool_inventory() -> Response:
-        """async 获取工具清单（candidates + 策略过滤结果）。"""
-        raw_account_id = request.args.get("account_id") or ""
-        if raw_account_id:
-            account, err = await _resolve_account()
-            if err is not None:
-                return err
-            account_id = account.id
-        else:
-            account_id = None
-
-        if account_id is None:
-            return _ok({"candidates": [], "filtered_out_tools": []})
-
-        from internal.service.tool_inventory_service import (
-            ToolCandidateCollector,
-            ToolPolicyFilter,
-            filter_candidates,
-            with_runtime_fields,
-        )
-
-        collector = _get_service(ToolCandidateCollector)
-        policy_filter = _get_service(ToolPolicyFilter)
-        candidates = await _to_thread(collector.collect, account_id)
-        result = await _to_thread(
-            policy_filter.filter,
-            candidates,
-            account_id=str(account_id),
-            agent_pool=request.args.get("agent_pool") or None,
-            budget_level=request.args.get("budget_level") or "medium",
-            allow_confirmation=request.args.get("allow_confirmation") == "true",
-        )
-        tool_pool = request.args.get("tool_pool") or ""
-        risk_level = request.args.get("risk_level") or ""
-        result["candidates"] = with_runtime_fields(
-            filter_candidates(
-                result["candidates"], tool_pool=tool_pool, risk_level=risk_level
-            )
-        )
-        return _ok(result)
-
     @quart_app.get("/language-models")
     async def async_get_language_models() -> Response:
         """async 获取全部语言模型提供商。"""

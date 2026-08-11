@@ -47,7 +47,12 @@ class IntentRecognitionService(BaseService):
     # 提示词统一从系统提示词库读取（system_prompts.yaml 默认值，管理员可编辑覆盖）
     PROMPT_TEMPLATE_KEY = "intent_recognition_prompt"
 
-    def recognize(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+    def recognize(
+        self,
+        messages: list[dict[str, str]],
+        memory_context: str = "",
+        conversation_context: str = "",
+    ) -> dict[str, Any]:
         """
         识别用户意图
 
@@ -82,7 +87,11 @@ class IntentRecognitionService(BaseService):
                 self.PROMPT_TEMPLATE_KEY
             )
             messages_text = self._format_messages(trimmed_messages)
-            prompt_text = prompt_template.format(messages=messages_text)
+            prompt_text = prompt_template.format(
+                messages=messages_text,
+                memory_context=memory_context,
+                conversation_context=conversation_context,
+            )
 
             # 4. 调用模型（走数据库配置 + compatible_api 分发）
             response = model.invoke(prompt_text)

@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('vue-router', () => ({
   createRouter: vi.fn(() => ({
     beforeEach: vi.fn(),
+    afterEach: vi.fn(),
   })),
   createWebHistory: vi.fn(),
   useRoute: () => mocks.route,
@@ -213,6 +214,8 @@ describe('HomeView sidebar new conversation request', () => {
     mocks.loadHomeIntent.mockResolvedValue({
       intent: '继续探索你的需求',
       confidence: 0.8,
+      should_ask_continue: false,
+      resume_question: '',
       suggested_actions: [{ label: '继续聊', action: 'view_capabilities', icon: 'help' }],
       is_default: false,
     })
@@ -222,7 +225,7 @@ describe('HomeView sidebar new conversation request', () => {
     mocks.handleDeleteAssistantAgentConversation.mockResolvedValue(undefined)
   })
 
-  it('does not reload intent or clear backend conversation when empty home is already loaded', async () => {
+  it('treats an empty home as a new conversation and does not restore latest messages', async () => {
     shallowMount(HomeView, {
       global: {
         stubs: {
@@ -240,7 +243,7 @@ describe('HomeView sidebar new conversation request', () => {
     })
     await flushPromises()
 
-    expect(mocks.loadAssistantAgentMessages).toHaveBeenCalledTimes(1)
+    expect(mocks.loadAssistantAgentMessages).not.toHaveBeenCalled()
     expect(mocks.loadHomeIntent).toHaveBeenCalledTimes(1)
     expect(mocks.handleDeleteAssistantAgentConversation).not.toHaveBeenCalled()
 
@@ -250,7 +253,7 @@ describe('HomeView sidebar new conversation request', () => {
     await flushPromises()
 
     expect(mocks.handleDeleteAssistantAgentConversation).not.toHaveBeenCalled()
-    expect(mocks.loadAssistantAgentMessages).toHaveBeenCalledTimes(1)
+    expect(mocks.loadAssistantAgentMessages).not.toHaveBeenCalled()
     expect(mocks.loadHomeIntent).toHaveBeenCalledTimes(1)
     expect(mocks.routerReplace).toHaveBeenCalledWith({
       path: '/home',

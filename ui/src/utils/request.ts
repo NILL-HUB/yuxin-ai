@@ -323,7 +323,6 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
     }
 
     if (json.code === httpCode.forbidden) {
-      await router.push({ name: 'errors-forbidden' })
       throw createRequestError({
         message: json.message || t('common.request.unauthorized'),
         code: json.code,

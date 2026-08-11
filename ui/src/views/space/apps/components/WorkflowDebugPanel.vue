@@ -30,12 +30,13 @@ type WorkflowExecState = {
 const props = defineProps({
   app_id: { type: String, required: true },
   visible: { type: Boolean, required: true, default: false },
+  adminMode: { type: Boolean, default: false },
 })
 const emits = defineEmits(['update:visible'])
 const { t } = useI18n()
 
 // 3.hook 与响应式状态
-const { loading, handleDebugWorkflowApp } = useDebugWorkflowApp()
+const { loading, handleDebugWorkflowApp } = useDebugWorkflowApp({ admin: props.adminMode })
 const workflowState = ref<WorkflowExecState>({
   status: 'idle',
   nodes: [],

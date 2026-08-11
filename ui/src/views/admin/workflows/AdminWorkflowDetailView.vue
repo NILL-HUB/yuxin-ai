@@ -376,6 +376,7 @@ const {
   workflowId,
   workflow,
   router,
+  isAdmin: isAdminContext,
 })
 
 // admin 上下文下回退到后台工作流列表
@@ -772,7 +773,7 @@ onBeforeUnmount(() => {
           </a-button>
           <!-- 预览模式：显示"添加到我的个人空间"按钮 -->
           <a-button
-            v-if="isPreviewMode"
+            v-if="isPreviewMode && !isAdminContext"
             type="primary"
             :loading="forkLoading"
             @click="handleAddToMySpace"

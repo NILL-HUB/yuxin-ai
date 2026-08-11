@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LayoutSidebar from '@/views/layouts/components/LayoutSidebar.vue'
+import { HOME_NEW_CONVERSATION_QUERY_KEY } from '@/views/pages/home-new-conversation'
 
 const mocks = vi.hoisted(() => ({
   loggedIn: true,
@@ -109,22 +110,35 @@ describe('LayoutSidebar home navigation', () => {
     mocks.allRecentConversations.splice(0, mocks.allRecentConversations.length)
   })
 
-  it('navigates to plain home when a logged-in user clicks Home', async () => {
+  it('uses the new conversation entry as the only primary home entry', async () => {
     const wrapper = mountSidebar()
     await flushPromises()
 
-    await wrapper.get('[data-testid="sidebar-home-new-conversation"]').trigger('click')
-
-    expect(mocks.routerPush).toHaveBeenCalledWith('/home')
+    expect(wrapper.find('[data-testid="sidebar-home-new-conversation"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sidebar-new-conversation"]').exists()).toBe(true)
   })
 
-  it('keeps anonymous Home clicks as plain home navigation', async () => {
+  it('starts a new conversation when a logged-in user clicks the primary entry', async () => {
+    const wrapper = mountSidebar()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="sidebar-new-conversation"]').trigger('click')
+
+    expect(mocks.routerPush).toHaveBeenCalledWith({
+      path: '/home',
+      query: expect.objectContaining({
+        [HOME_NEW_CONVERSATION_QUERY_KEY]: expect.any(String),
+      }),
+    })
+  })
+
+  it('keeps anonymous new-conversation clicks as plain home navigation', async () => {
     mocks.loggedIn = false
 
     const wrapper = mountSidebar()
     await flushPromises()
 
-    await wrapper.get('[data-testid="sidebar-home-new-conversation"]').trigger('click')
+    await wrapper.get('[data-testid="sidebar-new-conversation"]').trigger('click')
 
     expect(mocks.routerPush).toHaveBeenCalledWith('/home')
   })
@@ -169,15 +183,16 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).not.toContain('资源编排')
   })
 
-  it('shows exactly eight entries for regular users', async () => {
+  it('shows exactly nine entries for regular users', async () => {
     const wrapper = mountSidebar()
     await flushPromises()
 
-    const homeButton = wrapper.find('[data-testid="sidebar-home-new-conversation"]')
-    expect(homeButton.exists()).toBe(true)
+    const newConversationButton = wrapper.find('[data-testid="sidebar-new-conversation"]')
+    expect(newConversationButton.exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sidebar-home-new-conversation"]').exists()).toBe(false)
 
     const navLinks = wrapper.findAll('a[data-to]')
-    expect(navLinks).toHaveLength(8)
+    expect(navLinks).toHaveLength(9)
 
     const tos = navLinks.map((link) => link.attributes('data-to'))
     expect(tos).toContain('/search')
@@ -187,6 +202,7 @@ describe('LayoutSidebar home navigation', () => {
     expect(tos).toContain('/showcase')
     expect(tos).toContain('/schedules')
     expect(tos).toContain('/membership')
+    expect(tos).toContain('/studio')
     expect(tos).toContain('/store/public-apps')
 
     expect(wrapper.findAll('a[data-to="/store/workflows"]')).toHaveLength(0)

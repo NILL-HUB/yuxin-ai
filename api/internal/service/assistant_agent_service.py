@@ -79,6 +79,44 @@ def _get_markdown_preset_prompt() -> str:
     return SystemPromptLibraryService().get_prompt_or_default("assistant_agent_markdown_preset")
 
 
+def _get_system_knowledge_context(db) -> str:
+    """读取启用中的系统级知识库内容，注入助手提示词。
+
+    系统知识库（knowledge_scope='system'）中的身份认知等规则文档不应依赖
+    模型是否主动调用检索工具，否则“你是什么模型”类问题会退化为模型自述/幻觉。
+    """
+    try:
+        from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment
+
+        base_ids = [
+            base.id
+            for base in db.session.query(KnowledgeBase).filter(
+                KnowledgeBase.enabled.is_(True),
+                KnowledgeBase.knowledge_scope == "system",
+            ).all()
+            if str(base.name or "").strip() != "系统提示词库"
+        ]
+        if not base_ids:
+            return ""
+        rows = (
+            db.session.query(KnowledgeSegment)
+            .join(KnowledgeDocument, KnowledgeSegment.knowledge_document_id == KnowledgeDocument.id)
+            .filter(
+                KnowledgeDocument.knowledge_base_id.in_(base_ids),
+                KnowledgeDocument.status == "completed",
+                KnowledgeSegment.enabled.is_(True),
+                KnowledgeSegment.status == "completed",
+            )
+            .order_by(KnowledgeDocument.created_at.asc(), KnowledgeSegment.position.asc())
+            .all()
+        )
+        parts = [str(row.content or "").strip() for row in rows if str(row.content or "").strip()]
+        return "\n\n".join(parts)
+    except Exception:
+        logger.warning("读取系统知识库上下文失败，跳过", exc_info=True)
+        return ""
+
+
 
 @inject
 @dataclass
@@ -268,6 +306,7 @@ class AssistantAgentService(BaseService):
                 account_id=account.id,
                 llm=llm,
                 tools=tools or [],
+                system_prompt_override=self._build_assistant_system_prompt(),
             )
             # 真流式改造：直接 yield from executor.stream()，LLM 生成时即可逐 token yield
             # 绕过 coordinator.execute() 的同步收集，避免"等完整答案再假分块"的延迟
@@ -363,7 +402,7 @@ class AssistantAgentService(BaseService):
             agent_config = AgentConfig(
                 user_id=account.id,
                 invoke_from=invoke_from or InvokeFrom.ASSISTANT_AGENT.value,
-                preset_prompt=_get_markdown_preset_prompt(),
+                preset_prompt=self._build_assistant_system_prompt(),
                 enable_long_term_memory=True,
                 enable_deep_thinking=should_deep_think,
                 runtime_flask_app=current_app._get_current_object(),
@@ -453,6 +492,14 @@ class AssistantAgentService(BaseService):
                     message._collected_thoughts = executor.collected_thoughts
                 except Exception:
                     logger.warning("挂载 collected_thoughts 到 message 失败（finally）", exc_info=True)
+
+    def _build_assistant_system_prompt(self) -> str:
+        """组装首页助手提示词：Markdown 规范 + 启用中的系统知识库内容。"""
+        preset = _get_markdown_preset_prompt()
+        system_knowledge = _get_system_knowledge_context(self.db)
+        if not system_knowledge:
+            return preset
+        return f"{preset}\n\n## 系统知识库（必须遵守）\n{system_knowledge}".strip()
 
     def _write_memory_from_conversation(self, account, query, ai_response, conversation_id):
         """对话后自动写入记忆，无需用户确认。降级时跳过。
@@ -1564,7 +1611,28 @@ class AssistantAgentService(BaseService):
         """根据传递的账号，清空辅助Agent智能体会话消息列表"""
         # 清空会话时同时清除缓存
         self._clear_introduction_cache(account.id)
-        self.update(account, assistant_agent_conversation_id=None)
+        # account 可能来自其他线程的 scoped session，直接 update 会触发
+        # “already attached to session” 错误；在当前线程重新加载后再更新。
+        try:
+            from internal.model import Account
+            fresh_account = self.db.session.query(Account).get(account.id)
+            if fresh_account is not None:
+                self.update(fresh_account, assistant_agent_conversation_id=None)
+                return
+        except Exception:
+            logger.warning(
+                "清空辅助Agent会话时重新加载账号失败，回退直接置空 account 字段",
+                exc_info=True,
+            )
+        try:
+            account.assistant_agent_conversation_id = None
+            with self.db.auto_commit():
+                self.db.session.add(account)
+        except Exception:
+            logger.warning(
+                "清空辅助Agent会话时更新账号失败（忽略，不影响删除逻辑）",
+                exc_info=True,
+            )
 
     def _generate_introduction_cache_key(
         self, account_id: UUID, fingerprint: str

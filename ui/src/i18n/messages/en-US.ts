@@ -1477,6 +1477,7 @@ export default {
       modelTypes: {
         chat: 'Chat',
         image: 'Image Generation',
+        image_generation: 'Image Generation',
         embedding: 'Embedding',
         rerank: 'Rerank',
         audio: 'Audio',
@@ -2117,7 +2118,7 @@ export default {
   },
   layout: {
     sidebar: {
-      home: 'Home',
+      newConversation: 'New conversation',
       configCenter: 'Configuration Center',
       adminConsole: 'Admin Console',
       personalSpace: 'Configuration Center',
@@ -2132,14 +2133,16 @@ export default {
       search: 'Conversation Search',
       memory: 'My Memory',
       myKnowledge: 'My Knowledge',
+      studio: 'Creation Studio',
+      store: 'Apps & Persona Store',
       showcase: 'Showcase',
       schedules: 'Scheduled Tasks',
       membership: 'Membership',
-      store: 'App Store',
+      workspace: 'Workspace',
+      services: 'Services',
       recentConversations: 'Recent Conversations',
       noRecentConversations: 'No recent conversations',
       recentConversationsCount: 'Recent Conversations ({count})',
-      searchHistory: 'Conversation History',
       collapse: 'Collapse',
       expand: 'Expand',
     },
@@ -2808,6 +2811,8 @@ export default {
       confidence: 'Confidence: {percent}%',
       cta: 'You can continue by clicking the recommended actions below:',
       fallback: 'Keep exploring what you need',
+      resumeTaskLabel: 'Continue last task',
+      startNewTaskLabel: 'Start a new task',
     },
     conversation: {
       title: 'Current conversation',
@@ -2836,6 +2841,14 @@ export default {
       icpLabel: 'Guangxi ICP',
       publicSecurityLabel: 'Guangxi Public Security',
       github: 'GitHub',
+    },
+  },
+  studio: {
+    placeholder: {
+      title: 'User Co-created Personas',
+      description: 'The creation studio is under construction. Soon you will be able to turn your skills and experience into callable personas that merge with the app store.',
+      store: 'Go to App Store',
+      showcase: 'View Showcase',
     },
   },
   conversationSearch: {

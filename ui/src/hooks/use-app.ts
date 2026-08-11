@@ -341,17 +341,18 @@ export const useUpdateDraftAppConfig = () => {
   return { loading, handleUpdateDraftAppConfig }
 }
 
-export const useGetDebugConversationSummary = () => {
+export const useGetDebugConversationSummary = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
   const debug_conversation_summary = ref('')
+  const admin = Boolean(options?.admin)
 
   // 2.定义数据加载函数
   const loadDebugConversationSummary = async (app_id: string) => {
     try {
       // 2.1 调用API获取记忆
       loading.value = true
-      const resp = await getDebugConversationSummary(app_id)
+      const resp = await getDebugConversationSummary(app_id, admin)
       const data = resp.data
 
       debug_conversation_summary.value = data.summary
@@ -363,15 +364,16 @@ export const useGetDebugConversationSummary = () => {
   return { loading, debug_conversation_summary, loadDebugConversationSummary }
 }
 
-export const useUpdateDebugConversationSummary = () => {
+export const useUpdateDebugConversationSummary = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const admin = Boolean(options?.admin)
 
   // 2.定义更新处理器
   const handleUpdateDebugConversationSummary = async (app_id: string, summary: string) => {
     try {
       loading.value = true
-      const resp = await updateDebugConversationSummary(app_id, summary)
+      const resp = await updateDebugConversationSummary(app_id, summary, admin)
       Message.success(resp.message)
     } finally {
       loading.value = false
@@ -381,15 +383,16 @@ export const useUpdateDebugConversationSummary = () => {
   return { loading, handleUpdateDebugConversationSummary }
 }
 
-export const useDeleteDebugConversation = () => {
+export const useDeleteDebugConversation = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const admin = Boolean(options?.admin)
 
   // 2.定义删除调试会话处理器
   const handleDeleteDebugConversation = async (app_id: string) => {
     try {
       loading.value = true
-      const resp = await deleteDebugConversation(app_id)
+      const resp = await deleteDebugConversation(app_id, admin)
       Message.success(resp.message)
     } finally {
       loading.value = false
@@ -399,9 +402,10 @@ export const useDeleteDebugConversation = () => {
   return { loading, handleDeleteDebugConversation }
 }
 
-export const useGetDebugConversationMessagesWithPage = () => {
+export const useGetDebugConversationMessagesWithPage = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const admin = Boolean(options?.admin)
   type DebugConversationMessage = GetDebugConversationMessagesWithPageResponse['data']['list'][number] & {
     render_id: string
   }
@@ -432,12 +436,16 @@ export const useGetDebugConversationMessagesWithPage = () => {
     // 2.2 加载更多数据
     try {
       loading.value = true
-      const resp = await getDebugConversationMessagesWithPage(app_id, {
-        current_page: paginator.value.current_page,
-        page_size: paginator.value.page_size,
-        created_at: created_at.value,
-        conversation_id,
-      })
+      const resp = await getDebugConversationMessagesWithPage(
+        app_id,
+        {
+          current_page: paginator.value.current_page,
+          page_size: paginator.value.page_size,
+          created_at: created_at.value,
+          conversation_id,
+        },
+        admin,
+      )
       const data = resp.data
 
       // 2.3 更新分页器
@@ -467,9 +475,10 @@ export const useGetDebugConversationMessagesWithPage = () => {
   return { loading, messages, paginator, loadDebugConversationMessages }
 }
 
-export const useDebugChat = () => {
+export const useDebugChat = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const admin = Boolean(options?.admin)
 
   // 2.定义调试会话处理器
   const handleDebugChat = async (
@@ -482,7 +491,7 @@ export const useDebugChat = () => {
   ) => {
     try {
       loading.value = true
-      await debugChat(app_id, query, image_urls, conversation_id, onData, confirm_deep_thinking)
+      await debugChat(app_id, query, image_urls, conversation_id, onData, confirm_deep_thinking, admin)
     } finally {
       loading.value = false
     }
@@ -491,10 +500,11 @@ export const useDebugChat = () => {
   return { loading, handleDebugChat }
 }
 
-export const useDebugWorkflowApp = () => {
+export const useDebugWorkflowApp = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
   const error = ref('')
+  const admin = Boolean(options?.admin)
 
   // 2.定义工作流调试处理器
   const handleDebugWorkflowApp = async (
@@ -505,7 +515,7 @@ export const useDebugWorkflowApp = () => {
     try {
       loading.value = true
       error.value = ''
-      const resp = await debugWorkflowApp(app_id, inputs, onData)
+      const resp = await debugWorkflowApp(app_id, inputs, onData, admin)
       if (typeof resp === 'object' && resp !== null && 'message' in resp) {
         error.value = typeof resp.message === 'string' ? resp.message : '工作流调试失败'
       }
@@ -517,15 +527,16 @@ export const useDebugWorkflowApp = () => {
   return { loading, error, handleDebugWorkflowApp }
 }
 
-export const useStopDebugChat = () => {
+export const useStopDebugChat = (options?: { admin?: boolean }) => {
   // 1.定义hooks所需数据
   const loading = ref(false)
+  const admin = Boolean(options?.admin)
 
   // 2.定义停止调试会话处理器
   const handleStopDebugChat = async (app_id: string, task_id: string) => {
     try {
       loading.value = true
-      await stopDebugChat(app_id, task_id)
+      await stopDebugChat(app_id, task_id, admin)
     } finally {
       loading.value = false
     }

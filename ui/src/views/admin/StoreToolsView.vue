@@ -5,6 +5,6 @@ import StoreUnsupportedView from './StoreUnsupportedView.vue'
 
 <template>
   <StoreUnsupportedView>
-    <StoreToolsListView :hide-create="true" />
+    <StoreToolsListView :hide-create="true" :admin-mode="true" />
   </StoreUnsupportedView>
 </template>

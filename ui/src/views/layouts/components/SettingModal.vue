@@ -524,26 +524,15 @@ onBeforeUnmount(() => {
 <template>
   <a-modal
     :visible="visible"
-    hide-title
+    :title="t('settings.title')"
+    title-align="start"
     :footer="false"
     :width="980"
     modal-class="settings-modal"
     @cancel="handleCancel"
   >
-    <a-button
-      type="text"
-      class="!text-gray-700 absolute right-5 top-5"
-      size="small"
-      @click="handleCancel"
-    >
-      <template #icon>
-        <icon-close />
-      </template>
-    </a-button>
-
     <div class="flex h-[680px] max-h-[calc(100vh-160px)] overflow-hidden">
       <div class="w-[220px] h-full flex-shrink-0 border-r border-gray-100 pr-5">
-        <div class="text-xl font-bold text-gray-900 mb-5">{{ $t('settings.title') }}</div>
         <div class="flex flex-col gap-2">
           <button
             type="button"

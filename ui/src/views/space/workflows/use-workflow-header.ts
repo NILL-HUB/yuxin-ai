@@ -14,6 +14,7 @@ type UseWorkflowHeaderOptions = {
   workflowId: ReadonlyRef<string>
   workflow: ReadonlyRef<WorkflowRecord>
   router: Router
+  isAdmin?: ReadonlyRef<boolean>
 }
 
 const getWorkflowStatus = (workflow: WorkflowRecord): string => {
@@ -38,10 +39,13 @@ export const useWorkflowHeader = (options: UseWorkflowHeaderOptions) => {
   const forkLoading = ref(false)
   const t = i18n.global.t
   const locale = i18n.global.locale as unknown as Ref<string>
+  const isAdmin = Boolean(options.isAdmin?.value)
 
   const headerBackRoute = computed<RouteLocationRaw>(() => {
     return {
-      name: options.isPreviewMode.value ? 'store-workflows-list' : 'admin-workflows',
+      name: options.isPreviewMode.value
+        ? (isAdmin ? 'admin-workflows' : 'store-workflows-list')
+        : 'admin-workflows',
     }
   })
 
@@ -67,6 +71,7 @@ export const useWorkflowHeader = (options: UseWorkflowHeaderOptions) => {
   })
 
   const handleAddToMySpace = async () => {
+    if (isAdmin) return
     const currentWorkflowId = buildWorkflowId(options.workflowId.value)
     if (!currentWorkflowId) {
       Message.error(t('appStudio.shell.workflowIdMissing'))

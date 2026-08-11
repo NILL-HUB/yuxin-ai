@@ -141,7 +141,7 @@ const renderForm = () => {
         'a-button': buttonStub,
         'a-link': linkStub,
         'a-checkbox': checkboxStub,
-        'icon-open-agent': true,
+        'IconYuxinAI': true,
         'icon-user': true,
         'icon-lock': true,
         'icon-email': true,

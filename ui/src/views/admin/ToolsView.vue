@@ -563,7 +563,7 @@ onMounted(() => {
                   >
                     <span class="text-white font-semibold text-[12px] tracking-wide">{{ getBuiltinAvatarText(builtinTool) }}</span>
                     <img
-                      :src="`${apiPrefix}/builtin-tools/${builtinTool.name}/icon`"
+                      :src="`${apiPrefix}/admin/store/builtin-tools/${builtinTool.name}/icon`"
                       :alt="builtinTool.name"
                       class="absolute inset-0 w-full h-full object-contain"
                       @error="(e: Event) => (e.target as HTMLElement).style.display = 'none'"
@@ -628,7 +628,7 @@ onMounted(() => {
               >
                 <span class="text-white font-semibold text-[13px] tracking-wide">{{ getBuiltinAvatarText(filteredBuiltinTools[activeBuiltinIdx]) }}</span>
                 <img
-                  :src="`${apiPrefix}/builtin-tools/${filteredBuiltinTools[activeBuiltinIdx].name}/icon`"
+                  :src="`${apiPrefix}/admin/store/builtin-tools/${filteredBuiltinTools[activeBuiltinIdx].name}/icon`"
                   :alt="filteredBuiltinTools[activeBuiltinIdx].name"
                   class="absolute inset-0 w-full h-full object-contain"
                   @error="(e: Event) => (e.target as HTMLElement).style.display = 'none'"

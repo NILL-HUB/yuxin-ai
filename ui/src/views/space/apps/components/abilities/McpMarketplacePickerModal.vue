@@ -144,7 +144,7 @@ const getCategoryName = (category: string) => {
 
 const loadCategories = async () => {
   try {
-    const res = await getPublicMcpCategories()
+    const res = await getPublicMcpCategories(isAdminContext.value)
     categories.value = res.data.categories || []
   } catch {
     categories.value = []

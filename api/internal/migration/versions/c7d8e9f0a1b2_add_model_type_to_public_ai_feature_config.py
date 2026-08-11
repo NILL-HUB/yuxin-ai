@@ -36,10 +36,10 @@ def upgrade() -> None:
         ["model_type"],
     )
 
-    # 2. 更新 icon_image_generation 为 image 类型
+    # 2. 更新 icon_image_generation 为 image_generation 类型（与模型池 model_type 对齐）
     op.get_bind().execute(
         sa.text(
-            "UPDATE public_ai_feature_config SET model_type = 'image' "
+            "UPDATE public_ai_feature_config SET model_type = 'image_generation' "
             "WHERE feature_key = 'icon_image_generation'"
         )
     )
