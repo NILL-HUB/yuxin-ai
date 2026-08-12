@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { apiPrefix } from '@/config'
+import RecycleBinDeleteModal from '@/components/admin/RecycleBinDeleteModal.vue'
 import {
   activateStorageBackend,
   deleteStorageFiles,
@@ -240,9 +241,7 @@ const selectViewBackend = (backend: 'all' | 'local' | 'cos' | 'oss') => {
   loadFilteredFiles()
 }
 
-const handleViewBackendChange = (
-  value: string | number | boolean | Record<string, any> | (string | number | boolean | Record<string, any>)[],
-) => {
+const handleViewBackendChange = (value: unknown) => {
   if (typeof value === 'string' && (value === 'all' || BACKENDS.includes(value))) {
     selectViewBackend(value as 'all' | 'local' | 'cos' | 'oss')
   }
@@ -371,19 +370,31 @@ const closePreview = () => {
 const downloadFile = (file: StorageMigrationFile) => {
   const url = resolveFileUrl(file.url)
   if (!url) return
-  window.open(url, '_blank', 'noopener')
+  const separator = url.includes('?') ? '&' : '?'
+  const downloadUrl = `${url}${separator}download=${encodeURIComponent(file.name)}`
+  const anchor = document.createElement('a')
+  anchor.href = downloadUrl
+  anchor.download = file.name
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
 }
 
 const confirmDeleteFile = (file: StorageMigrationFile) => {
   deleteTarget.value = file
+  deletingFiles.value = false
 }
 
-const handleDeleteFile = async () => {
+const handleDeleteFileVisibleChange = (visible: boolean) => {
+  if (!visible) deleteTarget.value = null
+}
+
+const handleDeleteFile = async (retentionDays: number) => {
   const file = deleteTarget.value
   if (!file) return
   deletingFiles.value = true
   try {
-    const result = await deleteStorageFiles({ file_ids: [file.id] })
+    const result = await deleteStorageFiles({ file_ids: [file.id], retention_days: retentionDays })
     const data = result.data
     if (data.succeeded > 0) {
       Message.success(t('admin.storage.deleteSuccess'))
@@ -792,15 +803,14 @@ onMounted(() => {
       </template>
     </a-modal>
 
-    <!-- 删除文件确认弹窗 -->
-    <a-modal
+    <!-- 删除文件确认弹窗（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
       :visible="deleteTarget !== null"
       :title="t('admin.storage.deleteTitle')"
-      :confirm-loading="deletingFiles"
-      :ok-text="t('common.actions.delete')"
-      :cancel-text="t('common.actions.cancel')"
-      @ok="handleDeleteFile"
-      @cancel="deleteTarget = null"
+      :resource-name="deleteTarget?.name || ''"
+      :loading="deletingFiles"
+      @update:visible="handleDeleteFileVisibleChange"
+      @confirm="handleDeleteFile"
     >
       <p class="text-sm text-slate-500">
         {{ t('admin.storage.deleteConfirm', { name: deleteTarget?.name || '' }) }}
@@ -808,6 +818,6 @@ onMounted(() => {
       <p v-if="deleteTarget?.in_use" class="mt-2 text-xs text-red-500">
         {{ t('admin.storage.deleteInUseWarning') }}
       </p>
-    </a-modal>
+    </RecycleBinDeleteModal>
   </section>
 </template>

@@ -84,6 +84,7 @@ export type StorageMigrationResult = {
 
 export type DeleteStorageFilesRequest = {
   file_ids: string[]
+  retention_days?: number
   force?: boolean
 }
 
