@@ -35,7 +35,17 @@ def _utcnow_naive() -> datetime:
 class RecycleBinService:
     """系统资源回收站服务。"""
 
-    RESOURCE_TYPES = ("knowledge_base", "system_prompt", "app", "workflow", "skill", "mcp", "api_tool", "knowledge_document")
+    RESOURCE_TYPES = (
+        "knowledge_base",
+        "system_prompt",
+        "app",
+        "workflow",
+        "skill",
+        "mcp",
+        "api_tool",
+        "knowledge_document",
+        "upload_file",
+    )
     DEFAULT_RETENTION_DAYS = 30
     RETENTION_CHOICES = (7, 30, 90, 180)
 

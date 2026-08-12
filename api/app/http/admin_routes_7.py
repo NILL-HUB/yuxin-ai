@@ -600,13 +600,15 @@ def register_routes(quart_app):
                 data={"file_ids": ["file_ids 不能为空"]},
                 status=400,
             )
+        from app.http.admin_routes_6 import _get_operator_context
+        operator_id, ip, user_agent = await _get_operator_context()
         result = await a._to_thread(
             a._get_service(StorageMigrationService).delete_files,
             file_ids=file_ids,
             force=bool(payload.get("force", False)),
+            deleted_by=operator_id,
+            retention_days=payload.get("retention_days"),
         )
-        from app.http.admin_routes_6 import _get_operator_context
-        operator_id, ip, user_agent = await _get_operator_context()
         if operator_id:
             try:
                 await a._to_thread(

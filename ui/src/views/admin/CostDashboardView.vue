@@ -61,6 +61,7 @@ const dimensionOptions = computed(() => [
 ])
 
 const dimensionValueLabel = (value: string) => {
+  if (!value || value === 'unknown') return t('admin.costStats.unknown')
   if (dimension.value !== 'source') return value
   switch (value) {
     case 'schedule':

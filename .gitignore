@@ -96,6 +96,8 @@ temp/
 *.tmp
 api/celerybeat-schedule
 storage/
+!api/internal/service/storage/
+!api/internal/service/storage/*.py
 api/internal/core/vector_store/index.faiss
 api/internal/core/vector_store/index.pkl
 api/internal/core/vector_store/

@@ -476,6 +476,56 @@ def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
             logger.warning("回收站销毁知识库存储文件失败 key=%s", key, exc_info=True)
 
 
+def snapshot_upload_file(resource_id) -> dict[str, Any] | None:
+    """快照单个上传文件记录（底层对象在留存期内保留）。"""
+    upload_file = (
+        db.session.query(UploadFile)
+        .filter(UploadFile.id == resource_id)
+        .one_or_none()
+    )
+    if upload_file is None:
+        return None
+    return {"main": _row_to_dict(upload_file)}
+
+
+def physical_delete_upload_file(resource_id) -> None:
+    """删除上传文件记录，底层对象保留到留存期结束。"""
+    db.session.query(UploadFile).filter(
+        UploadFile.id == resource_id,
+    ).delete(synchronize_session=False)
+
+
+def restore_upload_file(snapshot: dict[str, Any]) -> bool:
+    """按快照重建上传文件记录。"""
+    main_data = snapshot.get("main") or {}
+    if not main_data.get("id"):
+        return False
+    if db.session.query(UploadFile).filter(
+        UploadFile.id == main_data["id"],
+    ).one_or_none() is not None:
+        return False
+    upload_file = UploadFile()
+    for col_name, value in main_data.items():
+        _apply_column_value(UploadFile, upload_file, col_name, value)
+    db.session.add(upload_file)
+    return True
+
+
+def purge_upload_file(snapshot: dict[str, Any]) -> None:
+    """留存期结束彻底销毁上传文件的底层存储对象。"""
+    main_data = snapshot.get("main") or {}
+    key = main_data.get("key")
+    if not key:
+        return
+    backend = (main_data.get("storage_backend") or "local").strip() or "local"
+    try:
+        from internal.service.storage.storage_migration_service import _delete_object
+        _delete_object(backend, key)
+        logger.info("回收站销毁上传文件 key=%s backend=%s", key, backend)
+    except Exception:
+        logger.warning("回收站销毁上传文件失败 key=%s", key, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # 统一分发入口
 # ---------------------------------------------------------------------------
@@ -486,6 +536,8 @@ def snapshot_resource(resource_type: str, resource_id, resource_key: str = "") -
         return snapshot_system_prompt(resource_key)
     if resource_type == "knowledge_document":
         return snapshot_knowledge_document(resource_id)
+    if resource_type == "upload_file":
+        return snapshot_upload_file(resource_id)
     return snapshot_generic(resource_type, resource_id)
 
 
@@ -496,6 +548,8 @@ def physical_delete_resource(resource_type: str, resource_id, resource_key: str 
         physical_delete_system_prompt(resource_key)
     elif resource_type == "knowledge_document":
         physical_delete_knowledge_document(resource_id)
+    elif resource_type == "upload_file":
+        physical_delete_upload_file(resource_id)
     else:
         physical_delete_generic(resource_type, resource_id)
 
@@ -507,6 +561,8 @@ def restore_resource(resource_type: str, snapshot: dict[str, Any]) -> bool:
         return restore_system_prompt(snapshot)
     if resource_type == "knowledge_document":
         return restore_knowledge_document(snapshot)
+    if resource_type == "upload_file":
+        return restore_upload_file(snapshot)
     return restore_generic(resource_type, snapshot)
 
 
@@ -517,6 +573,8 @@ def purge_resource(resource_type: str, snapshot: dict[str, Any]) -> None:
         purge_knowledge_document(snapshot)
     elif resource_type == "knowledge_base":
         purge_knowledge_base(snapshot)
+    elif resource_type == "upload_file":
+        purge_upload_file(snapshot)
     elif resource_type in ("app", "workflow", "skill", "mcp", "api_tool"):
         # 删除时已通过 physical_delete 清掉 DB 记录，预留文件清理扩展位
         pass
