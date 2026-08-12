@@ -440,7 +440,7 @@ class TestAssistantAgentService:
         assert fields["status"] == "success"
         assert fields["cost_summary"]["total_tokens"] == 10
         assert fields["model_selection"]["model_tier"] == "cheap"
-        assert fields["tool_pool_hits"] == ["search"]
+        assert fields["tool_pool_hits"] == [{"name": "search"}]
         assert fields["routing_decision"]["tool_calls"] == ["search"]
         assert fields["routing_decision"]["answer_length"] == 2
         assert fields["agent_pool_hits"] == [{"agent_id": "coding-agent"}]

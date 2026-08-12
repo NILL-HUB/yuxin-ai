@@ -1474,6 +1474,20 @@ class AssistantAgentService(BaseService):
                     msg is not None and msg.status != MessageStatus.STOP.value
                 ),
             }
+            tool_subset = decision.get("tool_subset") or {}
+            selected_tools = tool_subset.get("selected_tools") or []
+            tool_pool_hits = (
+                selected_tools
+                if selected_tools and isinstance(selected_tools[0], dict)
+                else [{"name": name} for name in tool_names]
+            )
+            agent_subset = decision.get("agent_subset") or {}
+            selected_agents = agent_subset.get("selected_agents") or []
+            agent_pool_hits = (
+                selected_agents
+                if selected_agents and isinstance(selected_agents[0], dict)
+                else [{"name": name} for name in agent_names]
+            )
             log_service.finalize(
                 routing_log_id,
                 routing_decision=decision,
@@ -1481,10 +1495,8 @@ class AssistantAgentService(BaseService):
                 latency_ms=latency_ms,
                 cost_summary=cost_summary,
                 model_selection=model_selection,
-                tool_pool_hits=tool_names or [],
-                agent_pool_hits=decision.get("agent_subset", {}).get(
-                    "selected_agents", []
-                ) if isinstance(decision.get("agent_subset"), dict) else agent_names,
+                tool_pool_hits=tool_pool_hits,
+                agent_pool_hits=agent_pool_hits,
             )
         except Exception:
             logger.warning("更新路由日志执行结果失败", exc_info=True)
