@@ -50,21 +50,35 @@ def _local_file_exists(key) -> bool:
     return _osp.isfile(_osp.join(storage_root, safe_key))
 
 
-def _build_file_items(files, runtime_storage_service):
+def _build_file_items(
+    files,
+    runtime_storage_service,
+    *,
+    dedupe_groups=None,
+    sources=None,
+    valid_ids=None,
+):
     """为迁移文件列表补充访问 URL 与 kkFileView 预览 URL。"""
     from internal.lib.helper import datetime_to_timestamp
 
+    dedupe_groups = dedupe_groups or {}
+    sources = sources or {}
+    valid_ids = valid_ids or set()
     items = []
     for file in files:
         url = None
         kkfileview_url = None
+        file_id = str(file.id)
+        group_key = (getattr(file, "hash", "") or "").strip() or (file.key or "")
+        group = dedupe_groups.get(group_key) or {}
+        source = sources.get(file_id) or {
+            "type": "unknown",
+            "label": "直接上传 / 未知",
+        }
         try:
             backend = (getattr(file, "storage_backend", "") or "").strip() or None
             url = runtime_storage_service.get_file_url(file.key, backend=backend)
-            file_missing = (
-                (backend or "local").lower() == "local"
-                and not _local_file_exists(getattr(file, "key", ""))
-            )
+            file_missing = file_id not in valid_ids
             if file_missing:
                 url = None
                 kkfileview_url = None
@@ -72,22 +86,36 @@ def _build_file_items(files, runtime_storage_service):
                 kkfileview_url = _build_kkfileview_url(url)
         except Exception:
             pass
+        in_use = False
+        try:
+            from app.http import asgi_app as a
+            from internal.service.storage.storage_migration_service import StorageMigrationService
+            in_use = a._get_service(StorageMigrationService)._is_file_in_use(file_id)
+        except Exception:
+            in_use = False
         resolved_backend = (
             (getattr(file, "storage_backend", "") or "").strip()
             or (_os.getenv("STORAGE_BACKEND") or "local").strip().lower()
         )
         items.append(
             {
-                "id": str(file.id),
+                "id": file_id,
                 "name": getattr(file, "name", ""),
                 "key": getattr(file, "key", ""),
                 "size": getattr(file, "size", 0),
                 "extension": getattr(file, "extension", ""),
                 "mime_type": getattr(file, "mime_type", ""),
+                "hash": getattr(file, "hash", ""),
                 "storage_backend": getattr(file, "storage_backend", None),
                 "resolved_backend": resolved_backend,
                 "url": url,
                 "kkfileview_url": kkfileview_url,
+                "source_type": source.get("type", "unknown"),
+                "source_label": source.get("label", "直接上传 / 未知"),
+                "duplicate_count": int(group.get("size") or 1),
+                "is_latest": bool(group.get("latest_id") == file_id),
+                "is_valid": file_id in valid_ids,
+                "in_use": in_use,
                 "created_at": datetime_to_timestamp(getattr(file, "created_at", None)),
             }
         )
@@ -486,8 +514,9 @@ def register_routes(quart_app):
             (request.args.get("source_backend") or "").strip()
             or await a._to_thread(a._get_service(StorageConfigService).get_active_backend)
         )
+        migration_service = a._get_service(StorageMigrationService)
         result = await a._to_thread(
-            a._get_service(StorageMigrationService).list_files,
+            migration_service.list_files,
             source_backend=source_backend,
             page=_int_arg("page", 1),
             page_size=_int_arg("page_size", 20),
@@ -495,9 +524,28 @@ def register_routes(quart_app):
             search_word=(request.args.get("search_word") or "").strip(),
         )
         extensions = await a._to_thread(
-            a._get_service(StorageMigrationService).list_extensions, source_backend
+            migration_service.list_extensions, source_backend
         )
-        items = _build_file_items(result["items"], a._get_service(RuntimeStorageProxy))
+        file_ids = [str(item.id) for item in result["items"]]
+        resolve_sources = getattr(migration_service, "resolve_file_sources", None)
+        list_valid_ids = getattr(migration_service, "list_valid_file_ids", None)
+        sources = (
+            await a._to_thread(resolve_sources, file_ids)
+            if resolve_sources is not None
+            else {}
+        )
+        valid_ids = (
+            await a._to_thread(list_valid_ids, result["items"])
+            if list_valid_ids is not None
+            else set()
+        )
+        items = _build_file_items(
+            result["items"],
+            a._get_service(RuntimeStorageProxy),
+            dedupe_groups=result.get("dedupe_groups") or {},
+            sources=sources,
+            valid_ids=valid_ids,
+        )
         payload = {
             "items": items,
             "total": result["total"],
@@ -506,6 +554,7 @@ def register_routes(quart_app):
             "total_pages": result["total_pages"],
             "total_record": result["total_record"],
             "extensions": extensions,
+            "summary": result.get("summary") or {},
         }
         resp = StorageMigrationListSchema()
         return a._ok(resp.dump(payload))
@@ -532,6 +581,47 @@ def register_routes(quart_app):
         )
         resp = StorageMigrationResultSchema()
         return a._ok(resp.dump(result))
+
+    @quart_app.post("/admin/storage/files/delete")
+    async def admin_storage_files_delete():
+        from app.http import asgi_app as a
+        from internal.service.audit_log_service import AuditLogService
+        from internal.service.storage.storage_migration_service import StorageMigrationService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        file_ids = payload.get("file_ids") or []
+        if not isinstance(file_ids, list):
+            file_ids = []
+        file_ids = [fid for fid in file_ids if str(fid).strip()]
+        if not file_ids:
+            return a._json_resp(
+                code="validate_error",
+                message="file_ids 不能为空",
+                data={"file_ids": ["file_ids 不能为空"]},
+                status=400,
+            )
+        result = await a._to_thread(
+            a._get_service(StorageMigrationService).delete_files,
+            file_ids=file_ids,
+            force=bool(payload.get("force", False)),
+        )
+        from app.http.admin_routes_6 import _get_operator_context
+        operator_id, ip, user_agent = await _get_operator_context()
+        if operator_id:
+            try:
+                await a._to_thread(
+                    a._get_service(AuditLogService).record,
+                    admin_user_id=operator_id,
+                    action="storage.file_delete",
+                    resource_type="storage_file",
+                    resource_id=",".join(str(fid) for fid in file_ids),
+                    ip=ip,
+                    user_agent=user_agent,
+                    after_data=result,
+                )
+            except Exception:
+                pass
+        return a._ok(result)
 
     # ------------------------------------------------------------------
     # admin_agent_pool_handler -> AdminAgentPoolService

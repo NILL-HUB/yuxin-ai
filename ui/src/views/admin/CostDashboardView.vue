@@ -102,7 +102,7 @@ const loadData = async () => {
   try {
     const [overviewResult, dimensionResult, timeseriesResult] = await Promise.all([
       getCostStatsOverview(filters.value),
-      getCostStatsByDimension({ ...filters.value, dimension: dimension.value, limit: 10 }),
+      getCostStatsByDimension({ ...filters.value, dimension: dimension.value, limit: 100 }),
       getCostStatsTimeseries({ ...filters.value, granularity: granularity.value }),
     ])
     overview.value = overviewResult

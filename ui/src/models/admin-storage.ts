@@ -25,10 +25,17 @@ export type StorageMigrationFile = {
   size: number
   extension: string
   mime_type: string
+  hash: string
   storage_backend: string | null
   resolved_backend: string | null
   url: string | null
   kkfileview_url: string | null
+  source_type: string
+  source_label: string
+  duplicate_count: number
+  is_latest: boolean
+  is_valid: boolean
+  in_use: boolean
   created_at: number | null
 }
 
@@ -50,6 +57,11 @@ export type StorageMigrationListData = {
   total_pages: number
   total_record: number
   extensions: string[]
+  summary: {
+    total: number
+    distinct_content: number
+    duplicate_records: number
+  }
 }
 
 // 迁移执行请求
@@ -70,8 +82,22 @@ export type StorageMigrationResult = {
   failures: Array<{ id: string; name: string; reason: string }>
 }
 
+export type DeleteStorageFilesRequest = {
+  file_ids: string[]
+  force?: boolean
+}
+
+export type StorageDeleteResult = {
+  total: number
+  succeeded: number
+  failed: number
+  in_use: Array<{ id: string; name: string; reason: string }>
+  failures: Array<{ id: string; name: string; reason: string }>
+}
+
 export type StorageOverviewResponse = BaseResponse<StorageOverviewData>
 export type StorageConfigListResponse = BaseResponse<{ items: StorageConfigItem[] }>
 export type StorageConfigItemResponse = BaseResponse<StorageConfigItem>
 export type StorageMigrationListResponse = BaseResponse<StorageMigrationListData>
 export type StorageMigrationResultResponse = BaseResponse<StorageMigrationResult>
+export type StorageDeleteResultResponse = BaseResponse<StorageDeleteResult>

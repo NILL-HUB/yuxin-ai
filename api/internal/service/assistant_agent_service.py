@@ -1087,6 +1087,10 @@ class AssistantAgentService(BaseService):
             # 兜底：language_model_service 未注入时走类方法获取默认模型
             model_resolution = None
             llm = LanguageModelService.get_chat_model_by_tier("3")
+        resolved_model_name = ""
+        if model_resolution is not None:
+            effective_model_config = getattr(model_resolution, "effective_model_config", None) or {}
+            resolved_model_name = str(effective_model_config.get("model", "") or "").strip()
 
         # 4.新建一条消息记录
         import time as _time
@@ -1233,13 +1237,19 @@ class AssistantAgentService(BaseService):
                 yield from self._stream_insufficient_balance()
                 # 补上 AGENT_END 事件和持久化，避免孤儿 Message
                 yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
-                self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision, _chat_started_at)
+                self._persist_assistant_thoughts(
+                    account, assistant_agent_id, conversation, message, {}, routing_decision,
+                    _chat_started_at, resolved_model_name=resolved_model_name,
+                )
                 return
             if execution_mode == "deep_thinking":
                 yield from self._stream_deep_thinking_proposal(routing_decision)
                 # 补上 AGENT_END 事件和持久化，避免孤儿 Message
                 yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
-                self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision, _chat_started_at)
+                self._persist_assistant_thoughts(
+                    account, assistant_agent_id, conversation, message, {}, routing_decision,
+                    _chat_started_at, resolved_model_name=resolved_model_name,
+                )
                 return
             if execution_mode == "direct_answer":
                 yield from self._stream_direct_answer(req, account, conversation, message, routing_decision, _chat_started_at, llm=llm, tools=tools)
@@ -1254,6 +1264,7 @@ class AssistantAgentService(BaseService):
                 self._persist_assistant_thoughts(
                     account, assistant_agent_id, conversation, message,
                     collected_thoughts, None, _chat_started_at,
+                    resolved_model_name=resolved_model_name,
                 )
                 return
             if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential"):
@@ -1272,7 +1283,10 @@ class AssistantAgentService(BaseService):
                     )
                 finally:
                     self._terminate_agent_if_running(message.id, account.id)
-                    self._persist_assistant_thoughts(account, assistant_agent_id, conversation, message, {}, routing_decision, _chat_started_at)
+                    self._persist_assistant_thoughts(
+                        account, assistant_agent_id, conversation, message, {}, routing_decision,
+                        _chat_started_at, resolved_model_name=resolved_model_name,
+                    )
                 return
 
         should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
@@ -1317,10 +1331,14 @@ class AssistantAgentService(BaseService):
             self._persist_assistant_thoughts(
                 account, assistant_agent_id, conversation, message,
                 collected_thoughts, routing_decision, _chat_started_at,
+                resolved_model_name=resolved_model_name,
             )
         return
 
-    def _persist_assistant_thoughts(self, account, assistant_agent_id, conversation, message, agent_thoughts, routing_decision, _chat_started_at: float = 0):
+    def _persist_assistant_thoughts(
+        self, account, assistant_agent_id, conversation, message, agent_thoughts,
+        routing_decision, _chat_started_at: float = 0, resolved_model_name: str = "",
+    ):
         """持久化消息与推理过程到数据库。"""
         try:
             # 若 agent_thoughts 为空，从 Message 表读取已持久化的 answer 构造伪 thought，
@@ -1397,6 +1415,7 @@ class AssistantAgentService(BaseService):
                     pass
             self._update_routing_log_execution(
                 message, routing_decision, agent_thoughts, _chat_started_at,
+                resolved_model_name=resolved_model_name,
             )
         except Exception:
             logger.warning("持久化推理过程失败", exc_info=True)
@@ -1407,6 +1426,7 @@ class AssistantAgentService(BaseService):
         routing_decision,
         agent_thoughts,
         started_at: float = 0,
+        resolved_model_name: str = "",
     ) -> None:
         """把消息执行结果写回路由日志，让管理端能看到真实执行状态与工具调用。"""
         routing_log_id = (
@@ -1465,11 +1485,13 @@ class AssistantAgentService(BaseService):
             }
             model_selection = {
                 "model_tier": decision.get("recommended_model_tier", ""),
+                "model_id": resolved_model_name,
+                "model_display_name": resolved_model_name,
                 "cost_policy_allowed": bool(
                     (decision.get("cost_policy") or {}).get("allowed", True)
                 ),
                 "cost_policy": decision.get("cost_policy") or {},
-                "execution_model": decision.get("recommended_model_tier", ""),
+                "execution_model": resolved_model_name or decision.get("recommended_model_tier", ""),
                 "execution_ok": bool(
                     msg is not None and msg.status != MessageStatus.STOP.value
                 ),

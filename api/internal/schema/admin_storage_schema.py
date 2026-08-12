@@ -70,10 +70,17 @@ class StorageMigrationFileSchema(Schema):
     size = fields.Integer()
     extension = fields.String()
     mime_type = fields.String()
+    hash = fields.String(dump_default="")
     storage_backend = fields.String(allow_none=True)
     resolved_backend = fields.String(allow_none=True)
     url = fields.String(allow_none=True)
     kkfileview_url = fields.String(allow_none=True)
+    source_type = fields.String(dump_default="unknown")
+    source_label = fields.String(dump_default="")
+    duplicate_count = fields.Integer(dump_default=1)
+    is_latest = fields.Boolean(dump_default=True)
+    is_valid = fields.Boolean(dump_default=True)
+    in_use = fields.Boolean(dump_default=False)
     created_at = fields.Integer(allow_none=True)
 
 
@@ -85,10 +92,19 @@ class StorageMigrationListSchema(Schema):
     total_pages = fields.Integer(dump_default=0)
     total_record = fields.Integer(dump_default=0)
     extensions = fields.List(fields.String(), dump_default=[])
+    summary = fields.Dict(dump_default={})
 
 
 class StorageMigrationResultSchema(Schema):
     total = fields.Integer(dump_default=0)
     succeeded = fields.Integer(dump_default=0)
     failed = fields.Integer(dump_default=0)
+    failures = fields.List(fields.Dict(), dump_default=[])
+
+
+class StorageDeleteResultSchema(Schema):
+    total = fields.Integer(dump_default=0)
+    succeeded = fields.Integer(dump_default=0)
+    failed = fields.Integer(dump_default=0)
+    in_use = fields.List(fields.Dict(), dump_default=[])
     failures = fields.List(fields.Dict(), dump_default=[])

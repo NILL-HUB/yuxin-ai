@@ -1,11 +1,13 @@
 import { get, post } from '@/utils/request'
 import type {
+  DeleteStorageFilesRequest,
   GetStorageMigrationFilesRequest,
   RunStorageMigrationRequest,
   StorageConfigItemResponse,
   StorageConfigListResponse,
   StorageMigrationListResponse,
   StorageMigrationResultResponse,
+  StorageDeleteResultResponse,
   StorageOverviewResponse,
 } from '@/models/admin-storage'
 
@@ -60,6 +62,17 @@ export const runStorageMigration = async (
   req: RunStorageMigrationRequest,
 ): Promise<StorageMigrationResultResponse> => {
   return post<StorageMigrationResultResponse>('/admin/storage/migration/run', {
+    body: JSON.stringify(req),
+  })
+}
+
+/**
+ * 删除文件记录与底层对象（兼容 local/cos/oss）。
+ */
+export const deleteStorageFiles = async (
+  req: DeleteStorageFilesRequest,
+): Promise<StorageDeleteResultResponse> => {
+  return post<StorageDeleteResultResponse>('/admin/storage/files/delete', {
     body: JSON.stringify(req),
   })
 }

@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { apiPrefix } from '@/config'
 import {
   activateStorageBackend,
+  deleteStorageFiles,
   getStorageOverview,
   listStorageMigrationFiles,
   runStorageMigration,
@@ -145,6 +146,13 @@ const extensionOptions = ref<string[]>([])
 const selectedKeys = ref<string[]>([])
 const deleteSource = ref(false)
 const migrationConfirm = ref<null | { mode: 'selected' | 'all'; count: number }>(null)
+const migrationSummary = ref<{ total: number; distinct_content: number; duplicate_records: number }>({
+  total: 0,
+  distinct_content: 0,
+  duplicate_records: 0,
+})
+const deleteTarget = ref<StorageMigrationFile | null>(null)
+const deletingFiles = ref(false)
 
 // 文件查看 / 迁移筛选互斥：
 // viewBackend 为查看模式（all/local/cos/oss，默认 all 查看全部存储）；
@@ -205,6 +213,7 @@ const loadMigrationFiles = async () => {
     })
     migrationFiles.value = result.data.items || []
     migrationTotal.value = result.data.total_record ?? result.data.total ?? 0
+    migrationSummary.value = result.data.summary || migrationSummary.value
     extensionOptions.value = result.data.extensions || []
     selectedKeys.value = selectedKeys.value.filter((id) =>
       (result.data.items || []).some((item) => item.id === id),
@@ -365,6 +374,35 @@ const downloadFile = (file: StorageMigrationFile) => {
   window.open(url, '_blank', 'noopener')
 }
 
+const confirmDeleteFile = (file: StorageMigrationFile) => {
+  deleteTarget.value = file
+}
+
+const handleDeleteFile = async () => {
+  const file = deleteTarget.value
+  if (!file) return
+  deletingFiles.value = true
+  try {
+    const result = await deleteStorageFiles({ file_ids: [file.id] })
+    const data = result.data
+    if (data.succeeded > 0) {
+      Message.success(t('admin.storage.deleteSuccess'))
+    }
+    if (data.failures?.length) {
+      Message.error(`${data.failures[0].name}: ${data.failures[0].reason}`)
+    }
+    if (data.in_use?.length) {
+      Message.warning(t('admin.storage.deleteInUse'))
+    }
+    deleteTarget.value = null
+    await Promise.all([loadOverview(), loadMigrationFiles()])
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.storage.deleteFailed')))
+  } finally {
+    deletingFiles.value = false
+  }
+}
+
 onMounted(() => {
   // 默认进入"查看全部存储文件"模式：迁移筛选置空
   void getStorageOverview().then((result) => {
@@ -518,6 +556,13 @@ onMounted(() => {
         </a-form-item>
       </div>
 
+      <!-- 文件去重统计 -->
+      <div v-if="migrationSummary.total" class="mt-4 flex flex-wrap gap-3">
+        <a-tag color="blue">{{ t('admin.storage.totalFiles', { count: migrationSummary.total }) }}</a-tag>
+        <a-tag color="green">{{ t('admin.storage.distinctFiles', { count: migrationSummary.distinct_content }) }}</a-tag>
+        <a-tag color="orange">{{ t('admin.storage.duplicateFiles', { count: migrationSummary.duplicate_records }) }}</a-tag>
+      </div>
+
       <!-- 迁移文件列表 -->
       <div class="mt-4 overflow-hidden rounded-lg border border-slate-200">
         <a-table
@@ -533,6 +578,13 @@ onMounted(() => {
             <a-table-column :title="t('admin.storage.migrateColName')" data-index="name" :width="260">
               <template #cell="{ record }">
                 <div class="max-w-[260px] truncate font-medium text-gray-800">{{ record.name }}</div>
+              </template>
+            </a-table-column>
+            <a-table-column :title="t('admin.storage.migrateColSource')" data-index="source_label" :width="220">
+              <template #cell="{ record }">
+                <a-tooltip :content="record.source_label">
+                  <span class="block max-w-[210px] truncate text-xs text-gray-500">{{ record.source_label }}</span>
+                </a-tooltip>
               </template>
             </a-table-column>
             <a-table-column :title="t('admin.storage.migrateColSize')" data-index="size" :width="110">
@@ -557,6 +609,16 @@ onMounted(() => {
                 <span class="text-xs text-gray-500">{{ formatTime(record.created_at) }}</span>
               </template>
             </a-table-column>
+            <a-table-column :title="t('admin.storage.migrateColStatus')" data-index="is_valid" :width="150">
+              <template #cell="{ record }">
+                <a-tag v-if="record.in_use" size="small" color="purple">{{ t('admin.storage.statusInUse') }}</a-tag>
+                <a-tag v-if="record.is_latest" size="small" color="green">{{ t('admin.storage.statusLatest') }}</a-tag>
+                <a-tag v-if="!record.is_valid" size="small" color="red">{{ t('admin.storage.statusMissing') }}</a-tag>
+                <a-tag v-if="record.duplicate_count > 1" size="small" color="orange">
+                  {{ t('admin.storage.duplicateGroup', { count: record.duplicate_count }) }}
+                </a-tag>
+              </template>
+            </a-table-column>
             <a-table-column :title="t('admin.storage.migrateColActions')" :width="120" fixed="right">
               <template #cell="{ record }">
                 <a-button v-if="record.kkfileview_url" size="mini" type="text" @click="openPreview(record)">
@@ -564,6 +626,15 @@ onMounted(() => {
                 </a-button>
                 <a-button v-if="record.url" size="mini" type="text" @click="downloadFile(record)">
                   {{ t('admin.storage.download') }}
+                </a-button>
+                <a-button
+                  v-if="canUpdate"
+                  size="mini"
+                  type="text"
+                  status="danger"
+                  @click="confirmDeleteFile(record)"
+                >
+                  {{ t('common.actions.delete') }}
                 </a-button>
                 <span v-if="!record.url && !record.kkfileview_url" class="text-xs text-gray-300">-</span>
               </template>
@@ -719,6 +790,24 @@ onMounted(() => {
         </div>
         <a-empty v-else :description="t('admin.storage.previewUnavailable')" class="py-16" />
       </template>
+    </a-modal>
+
+    <!-- 删除文件确认弹窗 -->
+    <a-modal
+      :visible="deleteTarget !== null"
+      :title="t('admin.storage.deleteTitle')"
+      :confirm-loading="deletingFiles"
+      :ok-text="t('common.actions.delete')"
+      :cancel-text="t('common.actions.cancel')"
+      @ok="handleDeleteFile"
+      @cancel="deleteTarget = null"
+    >
+      <p class="text-sm text-slate-500">
+        {{ t('admin.storage.deleteConfirm', { name: deleteTarget?.name || '' }) }}
+      </p>
+      <p v-if="deleteTarget?.in_use" class="mt-2 text-xs text-red-500">
+        {{ t('admin.storage.deleteInUseWarning') }}
+      </p>
     </a-modal>
   </section>
 </template>
