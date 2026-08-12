@@ -110,6 +110,11 @@ server {
         rewrite ^/kkfileview/(.*)\$ /\$1 break;
         proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
         include /etc/nginx/proxy.conf;
+        # kkFileView 模板把 bootstrap 放在 jQuery 之前，浏览器会报
+        # "Bootstrap's JavaScript requires jQuery"；这里把 jQuery 提前注入。
+        sub_filter_once on;
+        sub_filter_types text/html;
+        sub_filter '<script src="bootstrap/js/bootstrap.min.js"' '<script src="js/jquery-3.6.1.min.js"></script><script src="bootstrap/js/bootstrap.min.js"';
     }
     location ~ ^/(js|css|img|fonts|pdfjs|bootstrap)/ {
         proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
@@ -166,6 +171,11 @@ server {
         rewrite ^/kkfileview/(.*)\$ /\$1 break;
         proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;
         include /etc/nginx/proxy.conf;
+        # kkFileView 模板把 bootstrap 放在 jQuery 之前，浏览器会报
+        # "Bootstrap's JavaScript requires jQuery"；这里把 jQuery 提前注入。
+        sub_filter_once on;
+        sub_filter_types text/html;
+        sub_filter '<script src="bootstrap/js/bootstrap.min.js"' '<script src="js/jquery-3.6.1.min.js"></script><script src="bootstrap/js/bootstrap.min.js"';
     }
     location ~ ^/(js|css|img|fonts|pdfjs|bootstrap)/ {
         proxy_pass http://\$kkfileview_upstream_host:\$kkfileview_upstream_port;

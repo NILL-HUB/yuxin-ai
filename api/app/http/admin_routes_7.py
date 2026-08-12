@@ -37,6 +37,19 @@ def _build_kkfileview_url(url):
     return f"/kkfileview/onlinePreview?url={quote(encoded, safe='')}"
 
 
+def _local_file_exists(key) -> bool:
+    """本地存储后端下判断文件实体是否仍存在。"""
+    import os.path as _osp
+
+    from internal.service.storage.local_storage_service import _get_local_storage_root
+
+    storage_root = _osp.abspath(_get_local_storage_root())
+    safe_key = _osp.normpath(key or "").lstrip("/\\")
+    if ".." in safe_key.split(_osp.sep):
+        return False
+    return _osp.isfile(_osp.join(storage_root, safe_key))
+
+
 def _build_file_items(files, runtime_storage_service):
     """为迁移文件列表补充访问 URL 与 kkFileView 预览 URL。"""
     from internal.lib.helper import datetime_to_timestamp
@@ -48,7 +61,15 @@ def _build_file_items(files, runtime_storage_service):
         try:
             backend = (getattr(file, "storage_backend", "") or "").strip() or None
             url = runtime_storage_service.get_file_url(file.key, backend=backend)
-            kkfileview_url = _build_kkfileview_url(url)
+            file_missing = (
+                (backend or "local").lower() == "local"
+                and not _local_file_exists(getattr(file, "key", ""))
+            )
+            if file_missing:
+                url = None
+                kkfileview_url = None
+            else:
+                kkfileview_url = _build_kkfileview_url(url)
         except Exception:
             pass
         resolved_backend = (
