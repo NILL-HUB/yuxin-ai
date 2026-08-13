@@ -1,3 +1,3 @@
-from .workflow import Workflow, WorkflowToolAdapter
+from .workflow import WorkflowToolAdapter
 
-__all__ = ["Workflow", "WorkflowToolAdapter"]
+__all__ = ["WorkflowToolAdapter"]

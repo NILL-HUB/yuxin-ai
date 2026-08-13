@@ -8,7 +8,6 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import IconApps from '@/components/icons/IconApps.vue'
 import { buildHomeNewConversationQuery } from '@/views/pages/home-new-conversation'
 
 interface Props {

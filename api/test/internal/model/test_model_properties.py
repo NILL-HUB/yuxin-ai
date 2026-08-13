@@ -14,7 +14,6 @@ from internal.model import api_tool as api_tool_model
 from internal.model import app as app_model
 from internal.model import billing as billing_model
 from internal.model import conversation as conversation_model
-from internal.model import dataset as dataset_model
 from internal.model import platform as platform_model
 
 
@@ -409,20 +408,6 @@ class TestPlatformDatasetConversationAndApiModels:
         created = end_user.conversation
         assert isinstance(created, platform_model.Conversation)
         assert session_missing.added == [created]
-
-    def test_dataset_document_and_segment_properties_should_delegate_queries(self, monkeypatch):
-        base_id = uuid4()
-        doc_id = uuid4()
-        upload_file_id = uuid4()
-        base = dataset_model.Dataset(id=base_id)
-        document = dataset_model.Document(id=doc_id, knowledge_base_id=base_id, upload_file_id=upload_file_id)
-        segment = dataset_model.Segment(knowledge_base_id=base_id, knowledge_document_id=doc_id)
-
-        assert base.id == base_id
-        assert document.knowledge_base_id == base_id
-        assert document.upload_file_id == upload_file_id
-        assert segment.knowledge_base_id == base_id
-        assert segment.knowledge_document_id == doc_id
 
     def test_conversation_message_and_api_properties_should_delegate_queries(self, monkeypatch):
         conv = conversation_model.Conversation(id=uuid4())

@@ -119,19 +119,4 @@ class WorkflowToolAdapter(BaseTool):
         return {}
 
 
-class Workflow(WorkflowToolAdapter):
-    """[已废弃] 旧版基于 LangGraph 的工作流工具类。
 
-    已迁移为基于 GraphEngine 的 ``WorkflowToolAdapter``。保留此类名仅为
-    向后兼容（``from internal.core.workflow import Workflow`` 仍可用），
-    内部不再依赖 LangGraph，全部走 GraphEngine 执行。
-
-    .. deprecated::
-        请直接使用 ``WorkflowToolAdapter``。
-    """
-
-    def __init__(self, workflow_config: WorkflowConfig, **kwargs: Any) -> None:
-        logger.warning(
-            "internal.core.workflow.Workflow 已废弃，请改用 WorkflowToolAdapter（基于 GraphEngine）"
-        )
-        super().__init__(workflow_config, **kwargs)

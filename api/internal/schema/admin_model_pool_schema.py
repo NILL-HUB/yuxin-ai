@@ -8,8 +8,6 @@ from internal.schema import DictField, ListField
 MODEL_STATUSES = ["active", "disabled"]
 KEY_STATUSES = ["active", "disabled", "circuit_open"]
 # 档位改为数据库动态管理，不再硬编码 MODEL_TIERS
-# 保留旧常量用于向后兼容引用（如已迁移数据的校验回退），但运行时不使用
-LEGACY_MODEL_TIERS = ["cheap", "standard", "strong", "vision", "long_context"]
 BILLING_MODES = ["token", "request", "credit"]
 MODEL_TYPES = [
     "chat", "embedding", "multimodal",

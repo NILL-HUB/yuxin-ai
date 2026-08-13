@@ -4,7 +4,6 @@
 本测试覆盖 WorkflowToolAdapter 的公共 API：
 - _build_args_schema: 从 start 节点构建输入参数
 - _run / stream: 委托 GraphEngine 执行
-- Workflow 向后兼容（继承 WorkflowToolAdapter）
 """
 from types import SimpleNamespace
 from uuid import uuid4
@@ -13,7 +12,7 @@ import pytest
 from pydantic import BaseModel
 
 from internal.core.workflow.entities.node_entity import NodeType
-from internal.core.workflow.workflow import Workflow, WorkflowToolAdapter
+from internal.core.workflow.workflow import WorkflowToolAdapter
 
 
 def _start_node(node_id):
@@ -42,11 +41,6 @@ def test_workflow_tool_adapter_build_args_schema_should_build_required_and_optio
 
     assert set(fields.keys()) == {"query", "top_k"}
     assert fields["query"].is_required() is True
-
-
-def test_workflow_class_is_subclass_of_adapter():
-    """Workflow 应继承 WorkflowToolAdapter 以保持向后兼容。"""
-    assert issubclass(Workflow, WorkflowToolAdapter)
 
 
 def test_workflow_tool_adapter_init_should_set_name_and_description(monkeypatch):
@@ -159,29 +153,3 @@ def test_workflow_tool_adapter_extract_end_outputs_should_return_empty_when_no_e
 
     result = WorkflowToolAdapter._extract_end_outputs(adapter, _FakePool())
     assert result == {}
-
-
-def test_workflow_init_should_warn_deprecation(monkeypatch, caplog):
-    """Workflow.__init__ 应记录废弃警告。"""
-    class _DummySchema(BaseModel):
-        pass
-
-    monkeypatch.setattr(
-        "internal.core.workflow.workflow.WorkflowToolAdapter._build_args_schema",
-        classmethod(lambda cls, _cfg: _DummySchema),
-    )
-
-    config = SimpleNamespace(
-        name="wf_deprecated",
-        description="d",
-        nodes=[],
-        edges=[],
-        account_id=uuid4(),
-    )
-
-    import logging
-    with caplog.at_level(logging.WARNING, logger="internal.core.workflow.workflow"):
-        workflow = Workflow(workflow_config=config)
-
-    assert workflow.name == "wf_deprecated"
-    assert any("废弃" in record.message for record in caplog.records)
