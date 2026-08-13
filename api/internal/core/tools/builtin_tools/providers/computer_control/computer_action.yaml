@@ -1,0 +1,16 @@
+name: computer_action
+label: 计算机控制
+description: 在用户授权的主机执行屏幕、鼠标、键盘操作（移动/点击/滚动/输入/快捷键/截屏）；默认关闭，需配置 computer worker 且按高风险审批。
+params: []
+task_keywords:
+  - 计算机控制
+  - 帮我操作电脑
+  - 点击
+  - 打开软件
+  - 桌面操作
+  - 截屏
+  - computer control
+  - screenshot
+  - mouse
+  - keyboard
+  - desktop automation

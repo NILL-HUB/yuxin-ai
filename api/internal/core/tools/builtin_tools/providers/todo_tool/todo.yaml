@@ -1,0 +1,12 @@
+name: todo
+label: 任务清单
+description: 多步任务待办清单管理，Agent 可在多次调用间维护任务状态。
+params: []
+task_keywords:
+  - 待办
+  - 任务清单
+  - todo
+  - 步骤
+  - 计划
+  - 清单
+  - checklist

@@ -1,0 +1,13 @@
+name: vision_analyze
+label: 视觉分析
+description: 分析图片（URL/data URI），返回描述、OCR、物体检测等结果。
+params: []
+task_keywords:
+  - 看图
+  - 识别图片
+  - 图片分析
+  - 截图
+  - OCR
+  - 视觉
+  - vision
+  - 检查设计稿

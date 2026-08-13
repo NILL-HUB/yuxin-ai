@@ -1,0 +1,11 @@
+name: audio_transcribe
+label: 语音转文本
+description: 将语音音频（URL 或 data URI）转成文本。
+params: []
+task_keywords:
+  - 语音转文本
+  - 转写
+  - 语音识别
+  - STT
+  - ASR
+  - 会议记录

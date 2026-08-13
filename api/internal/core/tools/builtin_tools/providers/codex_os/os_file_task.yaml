@@ -1,0 +1,15 @@
+name: os_file_task
+label: 宿主文件操作
+description: 在宿主机安全目录内读取文件或应用 V4A 补丁修改文件，写操作需用户确认。
+params: []
+task_keywords:
+  - 读取文件
+  - 修改文件
+  - 编辑文件
+  - 补丁
+  - patch
+  - read_file
+  - write_file
+  - 代码修改
+  - 宿主机
+  - 文件操作

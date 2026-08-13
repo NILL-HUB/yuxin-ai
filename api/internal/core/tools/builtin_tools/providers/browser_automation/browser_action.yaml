@@ -1,0 +1,15 @@
+name: browser_action
+label: 浏览器自动化
+description: 在受控浏览器中打开网页、读取页面、点击元素、填写表单、滚动或返回；默认关闭，需配置 browser worker 且按高风险审批。
+params: []
+task_keywords:
+  - 打开网页
+  - 浏览器
+  - 网页操作
+  - 表单填写
+  - 页面截图
+  - browser
+  - navigate
+  - click
+  - type
+  - web automation

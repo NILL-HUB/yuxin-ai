@@ -1,0 +1,12 @@
+name: web_search
+label: 统一网页搜索
+description: 统一网页搜索工具，按 Tavily/SerpAPI/DuckDuckGo 自动选择可用提供商。
+params: []
+task_keywords:
+  - 搜索
+  - 查资料
+  - 搜索网页
+  - web search
+  - 时事
+  - 新闻
+  - 事实核实

@@ -1,0 +1,13 @@
+name: web_extract
+label: 网页内容提取
+description: 读取指定网页并返回可读正文文本，用于资料调研、内容总结、引用核实。
+params: []
+task_keywords:
+  - 网页
+  - 读取网页
+  - 提取内容
+  - web extract
+  - 抓取
+  - 正文
+  - 文章
+  - 网页内容

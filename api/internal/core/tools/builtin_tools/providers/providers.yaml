@@ -159,3 +159,59 @@
   background: "#F3F4F6"
   category: tool
   created_at: 1740800000
+- name: codex_os
+  label: Codex 系统自动化
+  description: 在宿主机操作系统上执行用户确认的系统自动化任务，例如清理磁盘垃圾、检查系统状态。
+  icon: ""
+  background: "#E8F3FF"
+  category: automation
+  created_at: 1786600000
+- name: browser_automation
+  label: 浏览器自动化
+  description: 在受控浏览器中打开网页、读取页面、点击元素、填写表单；默认关闭，需配置 browser worker。
+  icon: ""
+  background: "#F2F7F2"
+  category: automation
+  created_at: 1787200000
+- name: computer_control
+  label: 计算机控制
+  description: 在用户授权的主机执行屏幕、鼠标、键盘操作；默认关闭，需配置 computer worker。
+  icon: ""
+  background: "#F6F0F4"
+  category: automation
+  created_at: 1787300000
+- name: audio_tools
+  label: 语音工具
+  description: 文本转语音与语音转文本能力，供 Agent 朗读回复或理解语音输入。
+  icon: ""
+  background: "#F0F4FF"
+  category: audio
+  created_at: 1787000000
+- name: web_tools
+  label: 网页工具
+  description: 通用网页内容提取能力，供 Agent 调研、总结、引用核实。
+  icon: ""
+  background: "#F4F6F8"
+  category: search
+  created_at: 1787100000
+- name: code_execution_tool
+  label: 代码执行
+  description: 隔离沙箱代码执行能力，默认关闭，需管理员显式开启并配置沙箱凭证。
+  icon: ""
+  background: "#EEF7EE"
+  category: code
+  created_at: 1787200000
+- name: vision_tools
+  label: 视觉工具
+  description: 图片理解与视觉分析能力，供 Agent 识别截图、OCR、检查设计稿。
+  icon: ""
+  background: "#F6EEFF"
+  category: vision
+  created_at: 1787300000
+- name: todo_tool
+  label: 任务清单
+  description: 多步任务待办清单管理，帮助 Agent 跟踪执行进度。
+  icon: ""
+  background: "#FFF8E8"
+  category: tool
+  created_at: 1787400000

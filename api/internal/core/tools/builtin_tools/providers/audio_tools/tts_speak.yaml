@@ -1,0 +1,11 @@
+name: tts_speak
+label: 文本转语音
+description: 将文本合成为语音，返回可播放的音频 data URI。
+params: []
+task_keywords:
+  - 朗读
+  - 语音
+  - 文本转语音
+  - TTS
+  - 读出来
+  - 播报

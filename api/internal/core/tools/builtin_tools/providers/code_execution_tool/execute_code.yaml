@@ -1,0 +1,13 @@
+name: execute_code
+label: 沙箱代码执行
+description: 在隔离沙箱内执行 Shell/Python 命令，默认未启用，需管理员开启。
+params: []
+task_keywords:
+  - 执行代码
+  - 运行代码
+  - python
+  - shell
+  - 沙箱
+  - 计算
+  - execute_code
+  - 脚本

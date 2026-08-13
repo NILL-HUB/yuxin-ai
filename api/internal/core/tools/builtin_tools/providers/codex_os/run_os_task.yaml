@@ -1,0 +1,20 @@
+name: run_os_task
+label: 系统自动化
+description: 在宿主机操作系统上通过 Codex 执行用户确认的系统自动化任务，例如清理 C 盘垃圾、检查磁盘空间、整理临时文件。
+params: []
+task_keywords:
+  - 清理
+  - 垃圾
+  - 磁盘
+  - 系统
+  - 自动化
+  - 执行命令
+  - 操作系统
+  - C盘
+  - 临时文件
+  - codex
+  - openclaw
+  - cleanup
+  - disk
+  - system
+  - automation
