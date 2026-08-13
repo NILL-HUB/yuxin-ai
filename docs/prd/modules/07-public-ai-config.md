@@ -32,7 +32,7 @@
 |---|---|
 | 配置优先 | 所有公共 AI 调用必须经过 `get_feature_model(feature_key)`，禁止直连 `get_cheap_chat_model` |
 | 系统预设非编辑 | `feature_key` / `feature_name` / `category` / `description` 由系统预置，admin 不可改 |
-| 仅 3 字段可编辑 | `model_config_id`（下拉）/ `fallback_tier`（下拉）/ `enabled`（勾选）|
+| 仅 4 字段可编辑 | `model_config_id`（下拉）/ `fallback_tier`（下拉）/ `enabled`（勾选）/ `billable`（单选）|
 | 不支持增删 | 26 个 feature_key 由迁移脚本预置，admin 不能 create/delete，只能 edit |
 | 类型严格匹配 | `model_type` 决定下拉列表过滤范围，图像类只能选图像模型 |
 
@@ -161,9 +161,12 @@
 ```python
 def get_feature_model(self, feature_key: str):
     """三级取模型策略：配置模型 → fallback_tier 池 → 最便宜可用模型"""
-    # Level 1: 从 public_ai_feature_config 读取绑定的 model_config_id
     config = self._load_feature_config(feature_key)
-    if config and config.enabled and config.model_config_id:
+    # Level 0: enabled=false 时直接拒绝调用，功能不可用
+    if config and not config.enabled:
+        raise FeatureDisabled("公共 AI 功能已关闭")
+    # Level 1: 从 public_ai_feature_config 读取绑定的 model_config_id
+    if config and config.model_config_id:
         model = self._load_model_by_id(config.model_config_id)
         if model and model.status == 'active':
             return model
@@ -382,8 +385,9 @@ fallback_tier 池 (Level 2)
 | `model_config_id` | 下拉单选 | `model_config WHERE model_type=:type AND status='active'` |
 | `fallback_tier` | 下拉单选 | `cheap` / `standard` / `premium` |
 | `enabled` | 复选框 | true / false |
+| `billable` | 单选 | true=扣用户额度 / false=系统承担 |
 
-**只读字段**（不可编辑）：`feature_key` / `feature_name` / `category` / `description` / `model_type` / `billable`
+**只读字段**（不可编辑）：`feature_key` / `feature_name` / `category` / `description` / `model_type`
 
 ### 24.7.4 API 端点
 

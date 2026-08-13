@@ -33,3 +33,10 @@
 ## 说明
 
 项目已由 OpenAgent 更名为 **钰心AI**，全量品牌迁移已完成。旧 `openagent-app` / `openagent-workflow` 导入格式仅作为兼容入口保留。
+
+## 调研文档
+
+- [Hermes v0.20 与钰心AI 能力深度盘点](research/hermes-v0.20-capability-deep-dive.md)：逐子系统 + 源码落点 + 运行状态
+- [Hermes Agent v0.20 调研与能力对比](research/hermes-agent-v0-20-comparison.md)：开源结论、功能矩阵、移植进度
+- [Hermes v0.20 能力对齐报告](research/hermes-v0.20-alignment-report.md)：✅/◑/✗ 状态矩阵
+- [Hermes v0.20 端到端验证报告](research/hermes-v0.20-e2e-verification.md)：测试与真实环境 E2E 清单
