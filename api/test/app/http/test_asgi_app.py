@@ -2244,6 +2244,13 @@ class _FakeToolConfirmationService:
         self.calls.append(("cancel", confirmation_id))
         return SimpleNamespace(id=confirmation_id)
 
+    def get_confirmation(self, confirmation_id, account):
+        return getattr(self, "confirmation_detail", SimpleNamespace(
+            id=confirmation_id,
+            status="pending",
+            tool_name="search",
+        ))
+
 
 class TestAsgiExternalDataSourcesToolConfirmations:
     def _setup(self, monkeypatch):
@@ -2391,6 +2398,384 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
         assert resp.status_code == 200
         assert tcs.calls[0] == ("confirm", confirmation_id)
+
+    def test_tool_confirmation_confirm_with_visitor_id(self, monkeypatch):
+        _, _, _, tcs = self._setup(monkeypatch)
+        confirmation_id = uuid4()
+        visitor_id = uuid4()
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/tool-confirmations/{confirmation_id}/confirm?visitor_id={visitor_id}"
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert tcs.calls[0] == ("confirm", confirmation_id)
+
+    def test_tool_confirmation_cancel_with_visitor_id(self, monkeypatch):
+        _, _, _, tcs = self._setup(monkeypatch)
+        confirmation_id = uuid4()
+        visitor_id = uuid4()
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/tool-confirmations/{confirmation_id}/cancel?visitor_id={visitor_id}"
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert tcs.calls[0] == ("cancel", confirmation_id)
+
+    def test_tool_confirmation_redirect_writes_correction(self, monkeypatch):
+        from internal.service.tool_confirmation_service import ToolConfirmationService
+        import internal.core.agent.adapters.hermes.midturn_redirect as midturn
+
+        confirmation_id = uuid4()
+        confirmation = SimpleNamespace(
+            id=confirmation_id,
+            status="pending",
+            tool_name="run_os_task",
+        )
+        tcs = _FakeToolConfirmationService()
+        tcs.confirmation_detail = confirmation
+        monkeypatch.setattr(
+            support, "_get_service", lambda cls: tcs if cls is ToolConfirmationService else None
+        )
+        monkeypatch.setattr(midturn, "set_redirect", lambda _cid, _msg: True)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/tool-confirmations/{confirmation_id}/redirect?visitor_id={uuid4()}",
+                    json={"message": "只清理回收站"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["redirected"] is True
+
+    def test_subtask_snapshot_route(self, monkeypatch):
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        class _FakeRegistry:
+            def __init__(self, snapshot):
+                self._snapshot = snapshot
+
+            def snapshot(self, request_id):
+                return self._snapshot
+
+        snapshot = {
+            "request_id": "req-1",
+            "execution_mode": "multi_agent_parallel",
+            "original_query": "测试任务",
+            "task_count": 1,
+            "items": [],
+        }
+        registry = _FakeRegistry(snapshot)
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: registry if cls is SubtaskRegistryService else None,
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/subtasks/req-1?visitor_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["task_count"] == 1
+        assert payload["data"]["execution_mode"] == "multi_agent_parallel"
+
+    def test_subtask_snapshot_route_not_found(self, monkeypatch):
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        class _FakeRegistry:
+            def snapshot(self, request_id):
+                return None
+
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: _FakeRegistry() if cls is SubtaskRegistryService else None,
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/subtasks/missing?visitor_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 404
+        assert payload["code"] == "not_found"
+
+    def test_subtask_cancel_route(self, monkeypatch):
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        class _FakeRegistry:
+            def __init__(self):
+                self.cancelled = False
+
+            def snapshot(self, request_id):
+                return {"request_id": request_id, "items": []}
+
+            def cancel(self, request_id):
+                self.cancelled = True
+                return True
+
+        registry = _FakeRegistry()
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: registry if cls is SubtaskRegistryService else None,
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(f"/subtasks/req-1/cancel?visitor_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["cancelled"] is True
+        assert registry.cancelled is True
+
+    def test_subtask_cancel_route_not_found(self, monkeypatch):
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        class _FakeRegistry:
+            def snapshot(self, request_id):
+                return None
+
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: _FakeRegistry() if cls is SubtaskRegistryService else None,
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(f"/subtasks/missing/cancel?visitor_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 404
+        assert payload["code"] == "not_found"
+
+    def test_subtask_redirect_route(self, monkeypatch):
+        from internal.core.agent.adapters.hermes import midturn_redirect
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        class _FakeRegistry:
+            def snapshot(self, request_id):
+                return {"request_id": request_id, "items": []}
+
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: _FakeRegistry() if cls is SubtaskRegistryService else None,
+        )
+        monkeypatch.setattr(midturn_redirect, "set_request_redirect", lambda _rid, _msg: True)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/subtasks/req-1/redirect?visitor_id={uuid4()}",
+                    json={"message": "只清理回收站"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["redirected"] is True
+
+    def test_subtask_redirect_requires_message(self, monkeypatch):
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        class _FakeRegistry:
+            def snapshot(self, request_id):
+                return {"request_id": request_id, "items": []}
+
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: _FakeRegistry() if cls is SubtaskRegistryService else None,
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/subtasks/req-1/redirect?visitor_id={uuid4()}",
+                    json={},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_a2a_agent_card(self, monkeypatch):
+        from internal.service.a2a_gateway_service import A2AGatewayService
+
+        gateway = A2AGatewayService(
+            public_agent_a2a_service=SimpleNamespace(),
+            public_agent_registry_service=SimpleNamespace(
+                search_public_agents=lambda query="", limit=50: []
+            ),
+        )
+        monkeypatch.setattr(
+            support, "_get_service", lambda cls: gateway if cls is A2AGatewayService else None
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/.well-known/agent-card.json")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["name"] == "Yuxin AI Gateway"
+        assert payload["supportedInterfaces"][0]["protocolVersion"] == "1.0"
+
+    def test_a2a_message_send(self, monkeypatch):
+        from internal.service.a2a_gateway_service import A2AGatewayService
+
+        class _FakeRouter:
+            def route_public_agents(self, query, caller_account_id, limit=3):
+                return {
+                    "delegated_results": [
+                        {"agent_name": "数据分析", "answer": "分析完成"}
+                    ]
+                }
+
+        gateway = A2AGatewayService(
+            public_agent_a2a_service=_FakeRouter(),
+            public_agent_registry_service=SimpleNamespace(
+                search_public_agents=lambda query="", limit=50: []
+            ),
+        )
+        monkeypatch.setattr(
+            support, "_get_service", lambda cls: gateway if cls is A2AGatewayService else None
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/a2a",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": "req-1",
+                        "method": "message/send",
+                        "params": {
+                            "message": {
+                                "role": "ROLE_USER",
+                                "parts": [{"text": "分析数据", "mediaType": "text/plain"}],
+                            }
+                        },
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+        answer = payload["data"]["result"]["task"]["messages"][0]["parts"][0]["text"]
+        assert "分析完成" in answer
+
+    def test_a2a_message_stream(self, monkeypatch):
+        from internal.service.a2a_gateway_service import A2AGatewayService
+
+        class _FakeRouter:
+            def route_public_agents(self, query, caller_account_id, limit=3):
+                return {"delegated_results": [{"agent_name": "分析", "answer": "流式完成"}]}
+
+        gateway = A2AGatewayService(
+            public_agent_a2a_service=_FakeRouter(),
+            public_agent_registry_service=SimpleNamespace(
+                search_public_agents=lambda query="", limit=50: []
+            ),
+        )
+        monkeypatch.setattr(
+            support, "_get_service", lambda cls: gateway if cls is A2AGatewayService else None
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/a2a",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": "stream-1",
+                        "method": "message/stream",
+                        "params": {
+                            "message": {
+                                "role": "ROLE_USER",
+                                "parts": [{"text": "流式分析", "mediaType": "text/plain"}],
+                            }
+                        },
+                    },
+                )
+                return resp, await resp.get_data(as_text=True)
+
+        resp, text = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert "event: statusUpdate" in text
+        assert "event: message" in text
+        assert "TASK_STATE_COMPLETED" in text
+
+    def test_a2a_tasks_cancel(self, monkeypatch):
+        from internal.service.a2a_gateway_service import A2AGatewayService
+
+        class _FakeRouter:
+            def cancel_task(self, task_id):
+                return True
+
+        gateway = A2AGatewayService(
+            public_agent_a2a_service=_FakeRouter(),
+            public_agent_registry_service=SimpleNamespace(
+                search_public_agents=lambda query="", limit=50: []
+            ),
+        )
+        monkeypatch.setattr(
+            support, "_get_service", lambda cls: gateway if cls is A2AGatewayService else None
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/a2a",
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": "cancel-1",
+                        "method": "tasks/cancel",
+                        "params": {"id": "task-9"},
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["result"]["task"]["status"]["state"] == "TASK_STATE_CANCELED"
 
 
 class _FakeKnowledgeBaseService:

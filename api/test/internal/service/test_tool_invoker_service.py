@@ -150,3 +150,18 @@ def test_tool_invoker_should_return_standard_failure_when_executor_raises():
     assert result.error_message == "upstream timeout"
     assert result.audit_payload["status"] == "failure"
     assert result.audit_payload["failure_reason"] == "tool_execution_failed"
+
+
+def test_tool_invoker_truncates_large_string_output():
+    def executor(arguments, tool):
+        return "x" * 20000
+
+    result = ToolInvokerService().invoke(
+        mounted_tools=[_descriptor()],
+        request=_request(),
+        executors={"search_docs": executor},
+    )
+
+    assert result.success is True
+    assert "已截断" in result.output
+    assert len(result.output) < 20000

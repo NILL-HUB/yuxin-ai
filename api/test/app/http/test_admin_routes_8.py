@@ -33,8 +33,24 @@ class _Paginator:
 
 def _setup(monkeypatch, services):
     account = SimpleNamespace(id=uuid4())
+    admin_id = uuid4()
+
+    async def _resolve_admin_permission(permission_code):
+        return {
+            "id": str(admin_id),
+            "permissions": [
+                "orchestration_flag:read",
+                "orchestration_flag:update",
+            ],
+        }, None
+
     monkeypatch.setattr(support, "_load_account", lambda _aid: account)
     monkeypatch.setattr(support, "_get_service", lambda cls: services.get(cls))
+    monkeypatch.setattr(
+        support,
+        "_resolve_admin_permission",
+        _resolve_admin_permission,
+    )
     return account
 
 
@@ -1212,6 +1228,26 @@ class TestAdminOrchestrationFlag:
         assert payload["data"]["enabled"] is True
         assert svc.calls[0][0] == "update"
         assert svc.calls[0][1] == "flag_enable_xxx"
+
+    def test_update_requires_orchestration_flag_update_permission(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _denied(permission_code):
+            return None, support._err("forbidden", "无权限执行该操作", 403)
+
+        monkeypatch.setattr(support, "_resolve_admin_permission", _denied)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/orchestration-flags/flag_enable_xxx?account_id={uuid4()}",
+                    json={"enabled": True},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 403
+        assert payload["code"] == "forbidden"
 
 
 class TestAdminAuditLog:

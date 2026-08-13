@@ -1,4 +1,6 @@
 from contextlib import contextmanager
+import json
+import importlib
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -241,3 +243,31 @@ def test_cancel_should_record_audit_with_cancelled_decision():
     assert recorder.calls[0]["action"] == "cancel"
     assert recorder.calls[0]["decision"] == "cancelled"
     assert recorder.calls[0]["tool_name"] == "delete_user"
+
+
+def test_confirm_run_os_task_should_mark_confirmed_and_leave_apply_to_waiting_agent():
+    account_id = uuid4()
+    confirmation = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        status="pending",
+        tool_name="run_os_task",
+        risk_level="high",
+        tool_input={
+            "task": "清理 C 盘垃圾",
+            "approval_token": "token-123",
+        },
+        execution_summary="预览计划",
+    )
+    recorder = _AuditRecorder()
+    service = ToolConfirmationService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=confirmation)])),
+        tool_invocation_audit_service=recorder,
+    )
+
+    result = service.confirm(confirmation.id, SimpleNamespace(id=account_id))
+
+    assert result.status == "confirmed"
+    assert confirmation.status == "confirmed"
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0]["decision"] == "approved"

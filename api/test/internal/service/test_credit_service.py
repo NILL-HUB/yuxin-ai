@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 from internal.model.billing import CreditAccount, CreditTransaction
@@ -157,3 +158,22 @@ class TestCreditService:
         result = service.consume_for_message(uuid4(), uuid4(), token_count=0)
 
         assert result == {"skipped": True, "reason": "zero_token_usage"}
+
+    def test_consume_for_feature_should_skip_system_borne_features(self):
+        feature_config = SimpleNamespace(billable=False)
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=feature_config),
+        ])
+        service = CreditService(session=session)
+
+        result = service.consume_for_feature(
+            uuid4(),
+            "conductor",
+            token_count=1000,
+        )
+
+        assert result == {
+            "consumed": False,
+            "reason": "system_borne",
+            "token_count": 1000,
+        }

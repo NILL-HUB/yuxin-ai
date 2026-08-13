@@ -60,12 +60,31 @@ def _mock_provider_credentials(monkeypatch):
     )
     monkeypatch.setattr(
         LanguageModelService,
+        "is_feature_enabled",
+        classmethod(lambda cls, feature_key=None: True),
+    )
+    monkeypatch.setattr(
+        LanguageModelService,
         "get_feature_credentials",
         classmethod(lambda cls, feature_key=None: {}),
     )
 
 
 class TestIconGeneratorService:
+    def test_generate_icon_should_raise_when_icon_features_disabled(self, monkeypatch):
+        from internal.service.language_model_service import LanguageModelService
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "is_feature_enabled",
+            classmethod(lambda cls, feature_key=None: False),
+        )
+
+        service = _build_service()
+
+        with pytest.raises(FailException, match="图标生成功能已关闭"):
+            service.generate_icon("测试应用", "desc")
+
     def test_generate_icon_with_kolors_success(self, monkeypatch):
         mock_response = Mock()
         mock_response.json.return_value = {

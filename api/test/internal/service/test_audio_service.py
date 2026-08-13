@@ -28,6 +28,30 @@ class _DummyResponse:
         self.closed = True
 
 
+def test_split_sentences_chinese_and_english():
+    text = "你好世界。这是第二句！How are you? Fine thanks."
+    sentences = AudioService.split_sentences(text)
+    assert "你好世界。" in sentences
+    assert "这是第二句！" in sentences
+    assert "How are you?" in sentences
+    assert "Fine thanks." in sentences
+
+
+def test_split_sentences_caps_long_fragment():
+    long_text = "这是一段非常长的内容，" + "继续填充。" * 40
+    sentences = AudioService.split_sentences(long_text, max_length=60)
+    assert all(len(s) <= 60 for s in sentences)
+    assert len(sentences) > 1
+
+
+def test_text_to_audio_sentences_streams_per_sentence(monkeypatch):
+    service = _build_service()
+    service._create_tts_response = lambda text, voice: _DummyResponse(chunks=[b"audio"])
+    events = list(service.text_to_audio_sentences(None, "第一句。第二句！", object()))
+    assert any('event: tts_sentence' in event for event in events)
+    assert any('event: tts_end' in event for event in events)
+
+
 class _FakeSession:
     def __init__(self, handler):
         self._handler = handler
@@ -118,7 +142,140 @@ class TestAudioService:
         assert text == "hello world"
         assert captured["url"] == "https://api.example.com/v1/audio/transcriptions"
         assert captured["kwargs"]["data"]["model"] == "TeleAI/TeleSpeechASR"
+        assert "language" not in captured["kwargs"]["data"]
         assert captured["kwargs"]["timeout"] == 60
+
+    def test_audio_to_text_should_pass_language_hint(self, monkeypatch):
+        service = _build_service()
+        captured = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            @staticmethod
+            def json():
+                return {"text": "hello"}
+
+        def _fake_post(url, **kwargs):
+            captured["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+        audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
+
+        service.audio_to_text(audio, language="zh")
+
+        assert captured["kwargs"]["data"]["language"] == "zh"
+
+    def test_audio_to_text_should_use_gpt_transcribe_model_when_provider_requested(self, monkeypatch):
+        service = _build_service()
+        captured = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            @staticmethod
+            def json():
+                return {"text": "hello"}
+
+        def _fake_post(url, **kwargs):
+            captured["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+        audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
+
+        service.audio_to_text(audio, provider="gpt_transcribe")
+
+        assert captured["kwargs"]["data"]["model"] == "OpenAI/whisper-large-v3"
+
+    def test_audio_to_text_should_use_gpt_transcribe_model_when_env_enabled(self, monkeypatch):
+        monkeypatch.setenv("GPT_TRANSCRIBE_ENABLED", "1")
+        service = _build_service()
+        captured = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            @staticmethod
+            def json():
+                return {"text": "hello"}
+
+        def _fake_post(url, **kwargs):
+            captured["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+        audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
+
+        service.audio_to_text(audio)
+
+        assert captured["kwargs"]["data"]["model"] == "OpenAI/whisper-large-v3"
+
+    def test_audio_to_text_should_respect_explicit_model(self, monkeypatch):
+        service = _build_service()
+        captured = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            @staticmethod
+            def json():
+                return {"text": "hello"}
+
+        def _fake_post(url, **kwargs):
+            captured["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+        audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
+
+        service.audio_to_text(audio, provider="gpt_transcribe", model="custom/asr")
+
+        assert captured["kwargs"]["data"]["model"] == "custom/asr"
+
+    def test_audio_to_text_should_respect_gpt_transcribe_model_env(self, monkeypatch):
+        monkeypatch.setenv("GPT_TRANSCRIBE_MODEL", "custom/gpt-transcribe")
+        service = _build_service()
+        captured = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            @staticmethod
+            def json():
+                return {"text": "hello"}
+
+        def _fake_post(url, **kwargs):
+            captured["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+        audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
+
+        service.audio_to_text(audio, provider="gpt-transcribe")
+
+        assert captured["kwargs"]["data"]["model"] == "custom/gpt-transcribe"
 
     def test_audio_to_text_should_raise_when_audio_is_empty(self):
         service = _build_service()
@@ -655,6 +812,28 @@ class TestAudioService:
         assert captures["url"] == "https://api.example.com/v1/audio/speech"
         assert captures["kwargs"]["json"]["voice"] == "FunAudioLLM/CosyVoice2-0.5B:anna"
         assert captures["kwargs"]["stream"] is True
+        assert "language" not in captures["kwargs"]["json"]
+
+    def test_create_tts_response_should_pass_language_when_provided(self, monkeypatch):
+        service = _build_service()
+        captures = {}
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+        def _fake_post(url, **kwargs):
+            captures["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+
+        service._create_tts_response(input_text="hello", voice="anna", language="zh")
+
+        assert captures["kwargs"]["json"]["language"] == "zh"
 
     def test_create_tts_response_should_raise_fail_exception_on_unexpected_error(self, monkeypatch):
         service = _build_service()

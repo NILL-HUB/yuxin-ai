@@ -359,6 +359,40 @@ def test_function_call_agent_llm_node_should_stop_when_iteration_limit_reached(m
     ]
 
 
+def test_function_call_agent_injects_request_redirect_before_llm(monkeypatch):
+    monkeypatch.setattr(
+        "internal.core.agent.agents.function_call_agent.tiktoken.get_encoding",
+        lambda _name: _FakeEncoding(),
+    )
+    captured = {}
+
+    class _CaptureLLM(_NodeLLM):
+        async def astream(self, messages):
+            captured["messages"] = messages
+            yield AIMessage(content="ok")
+
+    monkeypatch.setattr(
+        "internal.core.agent.adapters.hermes.midturn_redirect.consume_request_redirect",
+        lambda request_id: "只清理回收站",
+    )
+    agent = _new_function_call_agent(_CaptureLLM(features=[]), _build_agent_config())
+
+    _run_llm_node(
+        agent,
+        {
+            "task_id": uuid4(),
+            "messages": [HumanMessage(content="q")],
+            "iteration_count": 0,
+            "pending_skill_prompts": [],
+        },
+    )
+
+    assert any(
+        isinstance(message, HumanMessage) and message.content == "只清理回收站"
+        for message in captured["messages"]
+    )
+
+
 def test_function_call_agent_llm_node_should_buffer_text_when_tool_call_arrives_later(monkeypatch):
     monkeypatch.setattr("internal.core.agent.agents.function_call_agent.tiktoken.get_encoding", lambda _name: _FakeEncoding())
     task_id = uuid4()
@@ -434,6 +468,296 @@ def test_function_call_agent_tools_node_and_conditions_should_cover_branches():
     assert FunctionCallAgent._tools_condition({"messages": [AIMessage(content="done")]}) == "__end__"
     assert FunctionCallAgent._preset_operation_condition({"messages": [AIMessage(content="stop")]}) == "__end__"
     assert FunctionCallAgent._preset_operation_condition({"messages": [HumanMessage(content="go")]}) == "long_term_memory_recall"
+
+
+def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch):
+    class _RunOsTool:
+        name = "run_os_task"
+
+        def __init__(self):
+            self.preview_calls = []
+            self.apply_calls = []
+
+        def invoke(self, args):
+            mode = args.get("mode", "preview")
+            if mode == "preview":
+                self.preview_calls.append(args)
+                return json.dumps({
+                    "ok": True,
+                    "approval_token": "token-123",
+                    "summary": "预览计划",
+                })
+            self.apply_calls.append(args)
+            return json.dumps({"ok": True, "summary": "执行完成"})
+
+    tool = _RunOsTool()
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(tools=[tool]),
+    )
+    confirmation_id = str(uuid4())
+    task_id = uuid4()
+    state = {
+        "task_id": task_id,
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "run_os_task",
+                        "args": {"task": "清理 C 盘垃圾"},
+                    }
+                ],
+            )
+        ],
+    }
+    monkeypatch.setattr(
+        agent,
+        "_create_tool_confirmation",
+        lambda *_args, **_kwargs: {"id": confirmation_id, "status": "pending"},
+    )
+    monkeypatch.setattr(
+        agent,
+        "_wait_for_confirmation",
+        lambda *_args, **_kwargs: "confirmed",
+    )
+    monkeypatch.setattr(agent, "_is_tool_authorized", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(agent, "_update_confirmation_summary", lambda *_args, **_kwargs: None)
+
+    result = agent._tools_node(state)
+
+    assert len(tool.preview_calls) == 1
+    assert tool.preview_calls[0]["mode"] == "preview"
+    assert tool.preview_calls[0]["task"] == "清理 C 盘垃圾"
+    assert tool.apply_calls == []
+    assert len(result["messages"]) == 1
+    assert "run_os_task" in result["authorized_tools"]
+    confirmation_events = [
+        thought
+        for _, thought in agent.agent_queue_manager.published
+        if thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
+    ]
+    assert confirmation_events[0].confirmation_id == confirmation_id
+    assert "请求授权在宿主机执行系统自动化任务" in confirmation_events[0].execution_summary
+    assert confirmation_events[0].confirmation_status == "pending"
+    action_event = agent.agent_queue_manager.published[-1][1]
+    assert action_event.event == QueueEvent.AGENT_ACTION
+    assert action_event.confirmation_id == confirmation_id
+    assert "approval_token" not in action_event.observation
+
+
+def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch):
+    class _RunOsTool:
+        name = "run_os_task"
+
+        def __init__(self):
+            self.calls = []
+
+        def invoke(self, args):
+            self.calls.append(args)
+            return json.dumps({"ok": True, "summary": "执行完成"})
+
+    tool = _RunOsTool()
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(tools=[tool]),
+    )
+    task_id = uuid4()
+    state = {
+        "task_id": task_id,
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "run_os_task",
+                        "args": {"task": "只读扫描"},
+                    }
+                ],
+            )
+        ],
+    }
+    monkeypatch.setattr(agent, "_smart_approval_allows", lambda _name, **_kwargs: True)
+    monkeypatch.setattr(agent, "_is_tool_authorized", lambda *_args, **_kwargs: False)
+
+    result = agent._tools_node(state)
+
+    assert len(tool.calls) == 1
+    assert "run_os_task" in result["authorized_tools"]
+    assert not [
+        thought
+        for _, thought in agent.agent_queue_manager.published
+        if thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
+    ]
+
+
+def test_function_call_agent_tools_node_should_not_readd_loaded_skill_prompt(monkeypatch):
+    class _SkillTool:
+        name = "skill_load_x"
+
+        def invoke(self, args):
+            return {
+                "skill_id": "skill-1",
+                "source_key": "skill-1",
+                "lease_id": "lease-1",
+                "name": "Skill",
+                "label": "Skill",
+                "description": "",
+                "category": "",
+                "executor_type": "",
+                "prompt": "完整技能全文",
+            }
+
+    tool = _SkillTool()
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(tools=[tool]),
+    )
+    monkeypatch.setattr(
+        agent,
+        "_is_prompt_only_skill_loader_tool",
+        lambda _name: True,
+    )
+    state = {
+        "task_id": uuid4(),
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "skill_load_x",
+                        "args": {},
+                    }
+                ],
+            )
+        ],
+        "loaded_skill_prompt_keys": ["skill-1"],
+    }
+
+    result = agent._tools_node(state)
+
+    assert result["pending_skill_prompts"] == []
+    assert "skill-1" in result["loaded_skill_prompt_keys"]
+
+
+def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatch):
+    class _RunOsTool:
+        name = "run_os_task"
+
+        def __init__(self):
+            self.preview_calls = []
+            self.apply_calls = []
+
+        def invoke(self, args):
+            if args.get("mode") == "preview":
+                self.preview_calls.append(args)
+                return json.dumps({"ok": True, "approval_token": "token-123", "summary": "预览"})
+            self.apply_calls.append(args)
+            return json.dumps({"ok": True, "summary": "不应执行"})
+
+    tool = _RunOsTool()
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(tools=[tool]),
+    )
+    confirmation_id = str(uuid4())
+    state = {
+        "task_id": uuid4(),
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"id": "call-1", "name": "run_os_task", "args": {"task": "清理"}}
+                ],
+            )
+        ],
+    }
+    monkeypatch.setattr(
+        agent,
+        "_create_tool_confirmation",
+        lambda *_args, **_kwargs: {"id": confirmation_id, "status": "pending"},
+    )
+    monkeypatch.setattr(
+        agent,
+        "_wait_for_confirmation",
+        lambda *_args, **_kwargs: "cancelled",
+    )
+    monkeypatch.setattr(agent, "_is_tool_authorized", lambda *_args, **_kwargs: False)
+
+    result = agent._tools_node(state)
+
+    assert tool.preview_calls == []
+    assert tool.apply_calls == []
+    assert "已被用户取消" in result["messages"][0].content
+    confirmation_events = [
+        thought
+        for _, thought in agent.agent_queue_manager.published
+        if thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
+    ]
+    assert confirmation_events[-1].confirmation_status == "cancelled"
+
+
+def test_function_call_agent_tools_node_should_skip_authorization_when_already_authorized(monkeypatch):
+    class _RunOsTool:
+        name = "run_os_task"
+
+        def __init__(self):
+            self.invocations = []
+
+        def invoke(self, args):
+            self.invocations.append(args)
+            return json.dumps({"ok": True, "summary": "执行完成"})
+
+    tool = _RunOsTool()
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(tools=[tool]),
+    )
+    state = {
+        "task_id": uuid4(),
+        "authorized_tools": ["run_os_task"],
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "run_os_task",
+                        "args": {"task": "只清理回收站", "mode": "apply"},
+                    }
+                ],
+            )
+        ],
+    }
+
+    result = agent._tools_node(state)
+
+    assert tool.invocations == [{"task": "只清理回收站", "mode": "apply"}]
+    assert not any(
+        thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
+        for _, thought in agent.agent_queue_manager.published
+    )
+    assert "run_os_task" in result["authorized_tools"]
+
+
+def test_user_visible_run_os_result_should_strip_markdown_and_token():
+    result = FunctionCallAgent._build_user_visible_tool_result(
+        "run_os_task",
+        json.dumps({
+            "ok": True,
+            "summary": "**可清理项**\n- 回收站 1.2GB\n```cache 0.8GB```",
+            "approval_token": "secret-token",
+        }),
+    )
+
+    assert "**" not in result
+    assert "- " not in result
+    assert "```" not in result
+    assert "approval_token" not in result
+    assert "回收站 1.2GB" in result
 
 
 def test_function_call_agent_tools_node_should_resolve_namespaced_aliases():

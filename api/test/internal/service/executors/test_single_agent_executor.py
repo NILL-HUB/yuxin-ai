@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+from internal.entity.cancel_token_entity import CancelToken
 from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.entity.execution_orchestration_entity import OrchestratedAgentResult
 from internal.entity.orchestrator_entity import ExecutionMode
@@ -50,6 +51,41 @@ def _patch_coord(results=None, side_effect=None):
 
 
 class TestSingleAgentExecutor:
+    def test_keepalive_sse_reports_long_task_progress(self):
+        conversation_id = str(uuid4())
+        message_id = str(uuid4())
+
+        sse = SingleAgentExecutor._keepalive_sse(conversation_id, message_id)
+
+        assert sse.startswith(f"event: {QueueEvent.AGENT_THOUGHT.value}")
+        payload = _parse_payload(sse)
+        assert "执行中" in payload["thought"]
+        assert payload["conversation_id"] == conversation_id
+        assert payload["message_id"] == message_id
+
+    def test_single_agent_executor_should_not_emit_routing_decision_to_user_stream(self):
+        executor = SingleAgentExecutor(agent_class=MagicMock(), llm=MagicMock())
+        manager = _patch_coord(results=[])
+
+        with manager.patcher_agent, manager.patcher_coord as mock_coord_cls:
+            mock_coord_cls.return_value = manager.coordinator
+            events = list(executor.execute(
+                query="测试查询",
+                conversation=_conv(),
+                message=_msg(),
+                execution_mode=ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
+                routing_decision={
+                    "intent": "tool_task",
+                    "execution_mode": "single_agent_with_tools",
+                    "recommended_model_tier": "2",
+                },
+            ))
+
+        assert not any(
+            event.startswith("event: orchestrator_routing")
+            for event in events
+        )
+
     def test_single_agent_executor_success(self):
         executor = SingleAgentExecutor(agent_class=MagicMock(), llm=MagicMock())
         results = [
@@ -194,3 +230,30 @@ class TestSingleAgentExecutor:
         assert len(messages) == 1
         payload = _parse_payload(messages[0])
         assert payload["answer"] == "工具答案"
+
+    def test_single_agent_executor_passes_subtask_registry_and_request_id(self):
+        registry = MagicMock()
+        cancel_token = CancelToken()
+        executor = SingleAgentExecutor(
+            agent_class=MagicMock(),
+            llm=MagicMock(),
+            subtask_registry=registry,
+            cancel_token=cancel_token,
+        )
+        manager = _patch_coord(results=[])
+        message = _msg()
+
+        with manager.patcher_agent, manager.patcher_coord as mock_coord_cls:
+            mock_coord_cls.return_value = manager.coordinator
+            list(executor.execute(
+                query="测试查询",
+                conversation=_conv(),
+                message=message,
+                execution_mode=ExecutionMode.SINGLE_AGENT.value,
+            ))
+
+        kwargs = mock_coord_cls.call_args.kwargs
+        assert kwargs["subtask_registry"] is registry
+        assert kwargs["cancel_token"] is cancel_token
+        assert kwargs["request_id"] == str(message.id)
+        registry.register_cancel_token.assert_called_once_with(str(message.id), cancel_token)

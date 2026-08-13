@@ -38,7 +38,7 @@ def test_default_feature_flags_should_use_safe_defaults():
 
     assert flags["ENABLE_ORCHESTRATOR"].enabled is True
     assert flags["ENABLE_MULTI_AGENT_EXECUTION"].enabled is True
-    assert flags["ENABLE_ROUTING_LOGS"].enabled is False
+    assert flags["ENABLE_ROUTING_LOGS"].enabled is True
 
 
 def test_unknown_feature_flag_should_return_disabled_default():

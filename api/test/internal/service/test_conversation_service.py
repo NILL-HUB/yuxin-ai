@@ -224,6 +224,36 @@ class TestConversationServiceSaveAgentThoughts:
 
         assert consume_calls == []
 
+    def test_should_not_persist_routing_decision_as_user_thought(self, monkeypatch):
+        conversation = SimpleNamespace(id=uuid4(), is_new=False, name="自定义", summary="")
+        message = SimpleNamespace(id=uuid4(), query="hello", answer="", invoke_from=InvokeFrom.ASSISTANT_AGENT.value)
+        service = _build_service(monkeypatch, conversation, message)
+        created = []
+        monkeypatch.setattr(
+            service,
+            "create",
+            lambda *_args, **_kwargs: created.append(_kwargs) or SimpleNamespace(),
+        )
+        monkeypatch.setattr(service, "_generate_summary_and_update", lambda **_kwargs: None)
+        monkeypatch.setattr(service, "_generate_conversation_name_and_update", lambda **_kwargs: None)
+
+        service.save_agent_thoughts(
+            account_id=uuid4(),
+            app_id=uuid4(),
+            app_config={"long_term_memory": {"enable": False}},
+            conversation_id=conversation.id,
+            message_id=message.id,
+            agent_thoughts=[_build_agent_message_thought(answer="这是回答")],
+            routing_decision={
+                "intent": "tool_task",
+                "execution_mode": "single_agent_with_tools",
+            },
+        )
+
+        assert created
+        assert all(item.get("tool") != "orchestrator" for item in created)
+        assert all(item.get("thought") != "Orchestrator routing decision" for item in created)
+
 
 class TestConversationServiceBasics:
     @pytest.fixture

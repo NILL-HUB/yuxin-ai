@@ -4,8 +4,11 @@ from uuid import uuid4
 import pytest
 from test.context import TestApp
 from internal.context import has_app_context
+from langchain_core.messages import HumanMessage
 
 from internal.exception import ValidateErrorException
+from internal.entity.cancel_token_entity import CancelToken
+from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.service.public_agent_a2a_service import PublicAgentA2AService
 
 
@@ -19,6 +22,91 @@ def _build_service(**kwargs) -> PublicAgentA2AService:
 
 
 class TestPublicAgentA2AService:
+    def test_cancel_task_returns_false_when_unknown(self):
+        service = _build_service()
+
+        assert service.cancel_task("missing-task") is False
+
+    def test_cancel_task_cancels_registered_token(self):
+        service = _build_service()
+        token = CancelToken()
+        service.register_cancel_token("task-1", token)
+
+        assert service.cancel_task("task-1") is True
+        assert token.is_cancelled() is True
+        assert service.cancel_task("task-1") is False
+
+    def test_stream_public_agent_events_breaks_on_cancel(self, monkeypatch):
+        service = _build_service()
+        app = SimpleNamespace(id=uuid4(), account_id=uuid4(), name="公共Agent")
+        conversation = SimpleNamespace(id=uuid4(), summary="", name="New Conversation")
+        message = SimpleNamespace(id=uuid4(), answer="", status="normal")
+        updates = []
+
+        fake_llm = SimpleNamespace(
+            convert_to_human_message=lambda query, *_args, **_kwargs: HumanMessage(content=query)
+        )
+        fake_agent = SimpleNamespace(
+            stream=lambda *_args, **_kwargs: iter(
+                [
+                    AgentThought(
+                        id=uuid4(),
+                        task_id=uuid4(),
+                        event=QueueEvent.AGENT_MESSAGE,
+                        answer="部分回答",
+                    )
+                ]
+            )
+        )
+        service.app_config_service = SimpleNamespace(
+            get_app_config=lambda _app: {"model_config": {"provider": "openai", "model": "gpt-4o"}}
+        )
+        service.language_model_service = SimpleNamespace(
+            resolve_runtime_language_model=lambda *_args, **_kwargs: SimpleNamespace(llm=fake_llm)
+        )
+        service.app_runtime_service = SimpleNamespace(
+            build_runtime_tools=lambda *_args, **_kwargs: [],
+            create_runtime_agent=lambda *_args, **_kwargs: fake_agent,
+        )
+        monkeypatch.setattr(
+            service,
+            "_resolve_public_conversation",
+            lambda _app, _context_id: conversation,
+        )
+        monkeypatch.setattr(
+            service,
+            "create",
+            lambda _model, **kwargs: message,
+        )
+        monkeypatch.setattr(
+            service,
+            "update",
+            lambda _obj, **kwargs: updates.append(kwargs),
+        )
+        monkeypatch.setattr(
+            service,
+            "_save_public_agent_thoughts",
+            lambda **_kwargs: None,
+        )
+
+        gen = service._stream_public_agent_events(
+            app=app,
+            query="请回答",
+            context_id="",
+            request_payload={},
+            flask_app=None,
+        )
+        first = next(gen)
+        assert "agent_message" in first
+
+        assert service.cancel_task(str(conversation.id)) is True
+        second = next(gen)
+        assert "agent_end" in second
+        assert any(item.get("status") == "stop" for item in updates)
+        assert any(item.get("answer") == "（响应已停止）" for item in updates)
+        with pytest.raises(StopIteration):
+            next(gen)
+
     def test_route_public_agents_should_search_and_delegate(self, monkeypatch):
         caller_account_id = uuid4()
         app_id = str(uuid4())

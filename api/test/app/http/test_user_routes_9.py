@@ -720,8 +720,8 @@ class _FakeAudioService:
     def __init__(self):
         self.calls = []
 
-    def audio_to_text(self, file):
-        self.calls.append(("to_text",))
+    def audio_to_text(self, file, language="", provider="", model=""):
+        self.calls.append(("to_text", language, provider, model))
         return "转写文本"
 
     def message_to_audio(self, message_id, account):
@@ -766,6 +766,27 @@ class TestAudioRoutes:
         assert resp.status_code == 200
         assert payload["data"]["text"] == "转写文本"
         assert service.calls[0][0] == "to_text"
+
+    def test_audio_to_text_passes_language_provider_model(self, monkeypatch):
+        _, service = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/audio/audio-to-text?account_id={uuid4()}",
+                    form={"language": "zh", "provider": "gpt_transcribe", "model": "custom/asr"},
+                    files={
+                        "file": FileStorage(
+                            stream=io.BytesIO(b"audio"), filename="a.webm"
+                        )
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = _run_coro(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["text"] == "转写文本"
+        assert service.calls[0] == ("to_text", "zh", "gpt_transcribe", "custom/asr")
 
     def test_audio_to_text_requires_file(self, monkeypatch):
         self._setup(monkeypatch)
@@ -972,6 +993,10 @@ class _FakePublicAgentA2AService:
         self.calls.append(("latest", app_id))
         return "conv-1"
 
+    def cancel_task(self, task_id):
+        self.calls.append(("cancel", task_id))
+        return True
+
 
 class TestPublicAppRoutes:
     def _setup(self, monkeypatch):
@@ -1068,6 +1093,21 @@ class TestPublicAppRoutes:
         resp, payload = _run_coro(_run())
         assert resp.status_code == 200
         assert payload["data"][0]["id"] == "msg-1"
+
+    def test_cancel_public_app_a2a_task(self, monkeypatch):
+        _, _, a2a_service = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/public/apps/{uuid4()}/a2a/tasks/task-1/cancel"
+                )
+                return resp, await resp.json
+
+        resp, payload = _run_coro(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["cancelled"] is True
+        assert a2a_service.calls[0] == ("cancel", "task-1")
 
     def test_public_app_latest_conversation_route_is_not_registered(self, monkeypatch):
         self._setup(monkeypatch)

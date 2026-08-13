@@ -79,6 +79,18 @@ def test_compress_langchain_tool_messages(monkeypatch):
     assert get_compression_stats()["compressions"] >= 1
 
 
+def test_truncate_long_plain_text_tool_result(monkeypatch):
+    monkeypatch.setenv("CONTEXT_COMPRESSION_ENABLED", "1")
+    content = "x" * 30000
+
+    result = compress_content(content, tool_name="read_file")
+
+    assert result.was_compressed is True
+    assert "已截断" in result.compressed_content
+    assert len(result.compressed_content) < 30000
+    assert "truncate" in result.transforms
+
+
 def test_compress_dict_messages(monkeypatch):
     monkeypatch.setenv("CONTEXT_COMPRESSION_ENABLED", "1")
     messages = [

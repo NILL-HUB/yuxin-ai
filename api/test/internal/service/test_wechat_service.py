@@ -54,3 +54,39 @@ class TestWechatServiceNoRequestContext:
                 body=b"",
                 query={"signature": "bad", "timestamp": "1", "nonce": "2", "echostr": "x"},
             )
+
+    def test_transcribe_wechat_voice_uses_builtin_recognition(self):
+        service = self._make_service(None)
+        service.im_voice_service = SimpleNamespace(
+            transcribe_wechat_voice=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("should not call im voice service")
+            )
+        )
+        msg = SimpleNamespace(
+            recognition="微信自带识别结果",
+            media_id="media-1",
+            format="amr",
+        )
+
+        assert service._transcribe_wechat_voice(None, msg) == "微信自带识别结果"
+
+    def test_transcribe_wechat_voice_delegates_to_im_voice_service(self):
+        calls = []
+        service = self._make_service(None)
+        service.im_voice_service = SimpleNamespace(
+            transcribe_wechat_voice=lambda *args, **kwargs: calls.append((args, kwargs))
+            or "转写文本"
+        )
+        msg = SimpleNamespace(
+            recognition="",
+            media_id="media-1",
+            format="amr",
+        )
+        wechat_config = SimpleNamespace(wechat_app_id="app-1")
+
+        result = service._transcribe_wechat_voice(wechat_config, msg)
+
+        assert result == "转写文本"
+        assert calls[0][0][0] is wechat_config
+        assert calls[0][0][1] == "media-1"
+        assert calls[0][1]["audio_format"] == "amr"

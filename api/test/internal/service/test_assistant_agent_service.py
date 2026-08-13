@@ -81,6 +81,11 @@ class _ConversationDraft:
 
 
 class TestAssistantAgentService:
+    def test_is_os_automation_request_should_detect_cleanup_intent(self):
+        assert AssistantAgentService._is_os_automation_request("帮我清理一下c盘的垃圾") is True
+        assert AssistantAgentService._is_os_automation_request("检查系统运行状态并汇报") is True
+        assert AssistantAgentService._is_os_automation_request("你好，今天天气怎么样") is False
+
     def _build_service(self):
         return AssistantAgentService(
             db=SimpleNamespace(
@@ -246,6 +251,62 @@ class TestAssistantAgentService:
 
         assert calls[0][0] == task_id
         assert calls[0][2] == account.id
+
+    def test_stop_chat_should_mark_empty_answer_as_interrupted(self, monkeypatch):
+        monkeypatch.setattr(
+            "internal.service.assistant_agent_service.AgentQueueManager.set_stop_flag",
+            lambda *_args, **_kwargs: None,
+        )
+        task_id = uuid4()
+        account = SimpleNamespace(id=uuid4())
+        commits = []
+        message = SimpleNamespace(created_by=account.id, answer="", status="normal")
+        service = SimpleNamespace(
+            get=lambda model, pk: message if pk == task_id else None,
+            db=SimpleNamespace(session=SimpleNamespace(commit=lambda: commits.append(True))),
+        )
+
+        AssistantAgentService.stop_chat(task_id, account, service=service)
+
+        assert message.answer == "（用户打断了上一条回复，请等待新的指令）"
+        assert message.status == "stop"
+        assert commits == [True]
+
+    def test_stop_chat_should_not_overwrite_existing_answer(self, monkeypatch):
+        monkeypatch.setattr(
+            "internal.service.assistant_agent_service.AgentQueueManager.set_stop_flag",
+            lambda *_args, **_kwargs: None,
+        )
+        task_id = uuid4()
+        account = SimpleNamespace(id=uuid4())
+        message = SimpleNamespace(created_by=account.id, answer="partial answer", status="normal")
+        service = SimpleNamespace(
+            get=lambda model, pk: message if pk == task_id else None,
+            db=SimpleNamespace(session=SimpleNamespace(commit=lambda: None)),
+        )
+
+        AssistantAgentService.stop_chat(task_id, account, service=service)
+
+        assert message.answer == "partial answer"
+        assert message.status == "stop"
+
+    def test_stop_chat_should_ignore_foreign_message(self, monkeypatch):
+        monkeypatch.setattr(
+            "internal.service.assistant_agent_service.AgentQueueManager.set_stop_flag",
+            lambda *_args, **_kwargs: None,
+        )
+        task_id = uuid4()
+        account = SimpleNamespace(id=uuid4())
+        message = SimpleNamespace(created_by=uuid4(), answer="", status="normal")
+        service = SimpleNamespace(
+            get=lambda model, pk: message if pk == task_id else None,
+            db=SimpleNamespace(session=SimpleNamespace(commit=lambda: None)),
+        )
+
+        AssistantAgentService.stop_chat(task_id, account, service=service)
+
+        assert message.answer == ""
+        assert message.status == "normal"
 
     def test_delete_conversation_should_clear_account_reference(self, monkeypatch):
         from internal.model import Account
@@ -1327,7 +1388,7 @@ class TestAssistantAgentService:
         assert save_payload["message_id"] == message_id
         assert save_payload["routing_decision"]["execution_mode"] == "single_agent"
 
-    def test_chat_should_record_routing_decision_without_changing_stream_events(
+    def test_chat_should_not_emit_routing_decision_into_user_stream(
         self, monkeypatch, app
     ):
         assistant_agent_id = uuid4()
@@ -1414,13 +1475,12 @@ class TestAssistantAgentService:
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert len(events) == 6
-        assert events[0].startswith("event: agent_thought")
-        assert events[1].startswith("event: billing_started")
-        assert events[2].startswith("event: agent_message")
-        assert events[3].startswith("event: billing_summary")
-        assert events[4].startswith("event: billing_final")
-        assert events[5].startswith("event: agent_end")
+        assert len(events) == 5
+        assert events[0].startswith("event: billing_started")
+        assert events[1].startswith("event: agent_message")
+        assert events[2].startswith("event: billing_summary")
+        assert events[3].startswith("event: billing_final")
+        assert events[4].startswith("event: agent_end")
         assert routing_calls[0][0] == req.query.data
         assert routing_calls[0][1]["account_id"] == account.id
         assert save_payload["routing_decision"] is None

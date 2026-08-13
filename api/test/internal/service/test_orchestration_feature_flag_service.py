@@ -40,6 +40,9 @@ class _SessionStub:
             return self._queries.pop(0)
         return _QueryStub()
 
+    def add(self, _value):
+        return None
+
 
 @contextmanager
 def _auto_commit():
@@ -79,12 +82,46 @@ def test_ensure_defaults_should_create_missing_flags_idempotently(monkeypatch):
     assert created[0][1]["code"] == "ENABLE_ORCHESTRATOR"
 
 
+def test_ensure_defaults_should_update_metadata_without_overriding_enabled():
+    flag = SimpleNamespace(
+        code="ENABLE_ORCHESTRATOR",
+        name="Old name",
+        description="Old description",
+        enabled=False,
+        risk_level="old",
+        fallback_behavior="old",
+        updated_by=None,
+    )
+    service = OrchestrationFeatureFlagService(
+        db=_fake_db(_SessionStub([_QueryStub(first_result=flag)])),
+    )
+
+    service.ensure_defaults()
+
+    assert flag.name == "Orchestrator"
+    assert flag.description == "Enable orchestration router for assistant intent handling"
+    assert flag.enabled is False
+    assert flag.risk_level == "medium"
+    assert flag.fallback_behavior == "direct_answer"
+
+
 def test_list_flags_should_return_known_flags():
     service = OrchestrationFeatureFlagService(
         db=_fake_db(_SessionStub([_QueryStub(all_result=[_flag()])]))
     )
 
-    assert service.list_flags()[0]["code"] == "ENABLE_ORCHESTRATOR"
+    codes = {flag["code"] for flag in service.list_flags()}
+    assert "ENABLE_ORCHESTRATOR" in codes
+
+
+def test_list_flags_should_backfill_conductor_and_other_missing_codes():
+    service = OrchestrationFeatureFlagService(db=_fake_db(_SessionStub()))
+
+    flags = service.list_flags()
+
+    codes = {flag["code"] for flag in flags}
+    assert "ENABLE_CONDUCTOR" in codes
+    assert len(codes) == len(ORCHESTRATION_FEATURE_FLAG_CODES)
 
 
 def test_is_enabled_should_return_false_for_unknown_code():
