@@ -1,0 +1,39 @@
+name: Desktop Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm install
+      - name: Build Web UI
+        working-directory: ui
+        run: npm run build
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm install
+      - name: Verify desktop sources
+        working-directory: desktop
+        run: |
+          node --check main.js
+          node --check preload.js
+          node --check bridge.js
+          node --test test/bridge.test.js
+      - name: Package Windows installer
+        working-directory: desktop
+        run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yuxin-ai-desktop-windows
+          path: desktop/dist/*.exe

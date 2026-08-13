@@ -1,0 +1,42 @@
+name: Mobile Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "mobile-v*"
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm install
+      - name: Build Web UI
+        working-directory: ui
+        run: npm run build
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm install
+      - name: Add and sync Android project
+        working-directory: mobile
+        run: |
+          npx cap add android
+          npx cap sync android
+      - name: Assemble debug APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yuxin-ai-mobile-android
+          path: mobile/android/app/build/outputs/apk/debug/*.apk

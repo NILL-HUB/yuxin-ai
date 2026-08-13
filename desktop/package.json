@@ -1,0 +1,30 @@
+{
+  "name": "yuxin-ai-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "钰心AI Windows 桌面端：Web UI + 本地 Worker（OS/回收站/浏览器/计算机/唤醒词）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "ai.yuxin.desktop",
+    "productName": "钰心AI",
+    "files": [
+      "main.js",
+      "preload.js",
+      "../ui/dist/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
