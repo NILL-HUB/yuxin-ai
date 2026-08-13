@@ -1,0 +1,9 @@
+# 本地 Worker 可选依赖（browser/computer worker 镜像使用）
+playwright==1.55.0
+pillow==11.1.0
+pyautogui==0.9.54
+
+# 桌面唤醒词（真机/桌面端启用，容器镜像默认不装）
+# sounddevice==0.5.2
+# numpy==2.2.3
+# openwakeword==0.5.1

@@ -138,6 +138,46 @@ services:
       llmops-redis:
         condition: service_healthy
 
+  llmops-browser-worker:
+    image: llmops-worker:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ../api
+      dockerfile: Dockerfile.worker
+    container_name: llmops-browser-worker
+    profiles: ["local-workers"]
+    restart: always
+    command: ["python", "scripts/browser_automation_worker.py"]
+    volumes:
+      - ../api:/app/api
+    env_file:
+      - ../api/.env
+    environment:
+      BROWSER_AUTOMATION_HOST: 0.0.0.0
+      BROWSER_AUTOMATION_PORT: 8766
+      BROWSER_AUTOMATION_TOKEN: ${BROWSER_AUTOMATION_TOKEN:-dev-browser-worker-token}
+    ports:
+      - "127.0.0.1:${BROWSER_AUTOMATION_PORT:-8766}:8766"
+
+  llmops-computer-worker:
+    image: llmops-worker:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ../api
+      dockerfile: Dockerfile.worker
+    container_name: llmops-computer-worker
+    profiles: ["local-workers"]
+    restart: always
+    command: ["python", "scripts/computer_control_worker.py"]
+    volumes:
+      - ../api:/app/api
+    env_file:
+      - ../api/.env
+    environment:
+      COMPUTER_CONTROL_HOST: 0.0.0.0
+      COMPUTER_CONTROL_PORT: 8767
+      COMPUTER_CONTROL_TOKEN: ${COMPUTER_CONTROL_TOKEN:-dev-computer-worker-token}
+    ports:
+      - "127.0.0.1:${COMPUTER_CONTROL_PORT:-8767}:8767"
+
   llmops-redis:
     image: redis:8-alpine
     restart: always

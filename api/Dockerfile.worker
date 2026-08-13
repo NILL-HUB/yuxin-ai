@@ -1,0 +1,31 @@
+# Worker 专用镜像：在 api 镜像基础上叠加浏览器/计算机控制可选依赖。
+# 用于 llmops-browser-worker / llmops-computer-worker；QQ worker 仍用轻量 api 镜像。
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+FROM ${PYTHON_IMAGE}
+
+SHELL ["/bin/bash", "-c"]
+WORKDIR /app/api
+
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org/debian-security|mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic1 curl tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-workers.txt ./
+RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install -r requirements-workers.txt -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    python -m playwright install --with-deps chromium && \
+    rm -rf /root/.cache
+
+COPY . .
+
+ENV NLTK_DATA=/app/api/internal/core/unstructured/nltk_data \
+    TZ=Asia/Shanghai \
+    BROWSER_AUTOMATION_HOST=0.0.0.0 \
+    COMPUTER_CONTROL_HOST=0.0.0.0
+
+RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone
+
+EXPOSE 8766 8767
+CMD ["python", "scripts/browser_automation_worker.py"]
