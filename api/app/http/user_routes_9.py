@@ -885,8 +885,16 @@ def register_routes(quart_app):
                 data={"file": ["转换音频文件不能为空"]},
                 status=400,
             )
+        form = await request.form
+        language = str(form.get("language") or "").strip()
+        provider = str(form.get("provider") or "").strip()
+        model = str(form.get("model") or "").strip()
         text = await a._to_thread(
-            a._get_service(AudioService).audio_to_text, file
+            a._get_service(AudioService).audio_to_text,
+            file,
+            language,
+            provider,
+            model,
         )
         return a._ok({"text": text})
 
@@ -936,6 +944,16 @@ def register_routes(quart_app):
                 status=400,
             )
         message_id = str(payload.get("message_id") or "")
+        sentence_stream = bool(payload.get("sentence_stream", False))
+        if sentence_stream:
+            response = await a._to_thread(
+                a._get_service(AudioService).text_to_audio_sentences,
+                message_id,
+                text,
+                account,
+            )
+            if a._is_sync_iterator(response):
+                return a._sse_response(response)
         response = await a._to_thread(
             a._get_service(AudioService).text_to_audio,
             message_id,
@@ -1089,6 +1107,23 @@ def register_routes(quart_app):
             conversation_id,
         )
         return a._ok(messages)
+
+    @quart_app.post("/public/apps/<string:app_id>/a2a/tasks/<string:task_id>/cancel")
+    async def public_app_cancel_public_app_a2a_task(app_id, task_id):
+        from app.http import asgi_app as a
+
+        from internal.service.public_agent_a2a_service import PublicAgentA2AService
+
+        try:
+            a2a_service = a._get_service(PublicAgentA2AService)
+        except Exception:
+            a2a_service = None
+        if not a2a_service:
+            return a._json_resp(
+                {"error": "A2A service unavailable"}, code="fail", status=503
+            )
+        cancelled = await a._to_thread(a2a_service.cancel_task, task_id)
+        return a._ok({"cancelled": cancelled})
 
     @quart_app.post("/apps/<uuid:app_id>/share-to-square")
     async def public_app_share_app_to_square(app_id):

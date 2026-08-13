@@ -56,6 +56,9 @@ _HEX_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
 _UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 _TIMESTAMP_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ][0-9:.Z+-]+\b")
 
+# 普通长文本工具结果的兜底硬裁剪阈值（JSON 数组/日志有各自的结构化压缩）。
+DEFAULT_MAX_TOOL_RESULT_CHARS = 12000
+
 
 @dataclass(slots=True)
 class CompressionResult:
@@ -355,6 +358,36 @@ def _looks_like_logs(content: str) -> bool:
     return matched / len(lines) >= 0.3
 
 
+def _truncate_content(content: str, *, max_chars: int = DEFAULT_MAX_TOOL_RESULT_CHARS) -> CompressionResult:
+    """保留头尾的硬裁剪，避免单个工具结果把上下文撑爆。"""
+    if len(content) <= max_chars:
+        return _passthrough(content)
+    head_size = int(max_chars * 0.7)
+    tail_size = max_chars - head_size
+    head = content[:head_size]
+    tail = content[-tail_size:] if tail_size > 0 else ""
+    marker = (
+        f"\n...[工具结果过长，已截断，原长度 {len(content)} 字符]...\n"
+    )
+    truncated = f"{head}{marker}{tail}"
+    original_tokens = _approx_tokens(content)
+    compressed_tokens = _approx_tokens(truncated)
+    return CompressionResult(
+        original_content=content,
+        compressed_content=truncated,
+        original_tokens=original_tokens,
+        compressed_tokens=compressed_tokens,
+        tokens_saved=max(original_tokens - compressed_tokens, 0),
+        savings_ratio=(
+            (original_tokens - compressed_tokens) / original_tokens
+            if original_tokens
+            else 0.0
+        ),
+        transforms=["truncate"],
+        was_compressed=True,
+    )
+
+
 def compress_content(
     content: str,
     *,
@@ -378,11 +411,13 @@ def compress_content(
             return _compress_json_array(content)
         if _looks_like_logs(content):
             return _compress_logs(content)
-        return _passthrough(content)
     except Exception as exc:
         logger.warning("context compression failed, using original content: %s", exc)
         _record(0, 0, was_compressed=False, error=True)
         return _passthrough(content, f"compression_error: {exc}")
+    if len(content) > DEFAULT_MAX_TOOL_RESULT_CHARS:
+        return _truncate_content(content)
+    return _passthrough(content)
 
 
 def _compress_tool_message(

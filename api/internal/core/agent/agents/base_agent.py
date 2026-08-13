@@ -141,6 +141,7 @@ class BaseAgent(Serializable, Runnable):
         input["history"] = input.get("history", [])
         input["iteration_count"] = input.get("iteration_count", 0)
         input["pending_skill_prompts"] = input.get("pending_skill_prompts", [])
+        input["authorized_tools"] = input.get("authorized_tools", [])
 
         # 3.创建子线程并执行；子线程不会继承 Flask app context，因此需要在运行时显式补上下文
         runtime_flask_app = getattr(self.agent_config, "runtime_flask_app", None)
@@ -199,6 +200,7 @@ class BaseAgent(Serializable, Runnable):
         input["history"] = input.get("history", [])
         input["iteration_count"] = input.get("iteration_count", 0)
         input["pending_skill_prompts"] = input.get("pending_skill_prompts", [])
+        input["authorized_tools"] = input.get("authorized_tools", [])
 
         # 3.先创建异步队列，确保后续节点 publish 的事件都能被异步消费捕获
         self._agent_queue_manager._get_or_create_async_queue(input["task_id"])

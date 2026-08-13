@@ -915,7 +915,7 @@ def register_routes(quart_app):
     async def admin_orchestration_flag_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        admin, err = await a._resolve_admin_permission("orchestration_flag:read")
         if err is not None:
             return err
 
@@ -931,7 +931,7 @@ def register_routes(quart_app):
     async def admin_orchestration_flag_update(code):
         from app.http import asgi_app as a
 
-        operator, err = await a._resolve_account()
+        admin, err = await a._resolve_admin_permission("orchestration_flag:update")
         if err is not None:
             return err
 
@@ -947,7 +947,7 @@ def register_routes(quart_app):
                 a._get_service(OrchestrationFeatureFlagService).update_flag,
                 code=code,
                 enabled=enabled,
-                operator_id=UUID(str(operator.id)),
+                operator_id=UUID(str(admin["id"])),
             )
         except ValueError as exc:
             return a._json_resp(code="fail", message=str(exc), status=400)
@@ -978,6 +978,29 @@ def register_routes(quart_app):
             page_size=_int_arg("page_size", 20),
         )
         return a._ok(AuditLogPageResp().dump(result))
+
+    # ------------------------------------------------------------------
+    # admin_approval_insights -> ApprovalInsightsService
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/approval-insights")
+    async def admin_approval_insights():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("tool_governance:read")
+        if err is not None:
+            return err
+
+        from internal.service.approval_insights_service import ApprovalInsightsService
+
+        try:
+            days = max(1, min(int(request.args.get("days", 90)), 365))
+        except (TypeError, ValueError):
+            days = 90
+        result = await a._to_thread(
+            a._get_service(ApprovalInsightsService).analyze_recent,
+            days=days,
+        )
+        return a._ok(result)
 
     # ------------------------------------------------------------------
     # admin_orchestration_release_handler -> OrchestrationReleaseCheckService

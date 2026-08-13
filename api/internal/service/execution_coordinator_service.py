@@ -40,13 +40,34 @@ class ExecutionCoordinatorService:
         cancel_token: CancelToken | None = None,
         event_logger=None,
         escalation_policy_service=None,
+        subtask_registry=None,
+        request_id: str = "",
     ):
         self.executor = executor
         self.cancel_token = cancel_token or CancelToken()
         self.event_logger = event_logger
         self.escalation_policy_service = escalation_policy_service
+        self.subtask_registry = subtask_registry
+        self.request_id = request_id
 
-    def execute(self, plan: TaskPlan, routing_log_id=None) -> list[OrchestratedAgentResult]:
+    def execute(
+        self,
+        plan: TaskPlan,
+        routing_log_id=None,
+        request_id: str = "",
+    ) -> list[OrchestratedAgentResult]:
+        effective_request_id = request_id or self.request_id or str(routing_log_id or "")
+        self.request_id = effective_request_id
+        if self.subtask_registry is not None and effective_request_id:
+            try:
+                self.subtask_registry.register_plan(
+                    request_id=effective_request_id,
+                    execution_mode=plan.execution_mode,
+                    original_query=plan.original_query,
+                    items=plan.items,
+                )
+            except Exception:
+                logger.warning("注册子任务计划失败", exc_info=True)
         results = self._run_plan(plan)
         self._emit_agent_completed(routing_log_id, results)
         return results
@@ -175,9 +196,35 @@ class ExecutionCoordinatorService:
         self, item: TaskPlanItem, execution_mode: str
     ) -> OrchestratedAgentResult:
         try:
-            return self._execute_item(item, execution_mode)
+            self._mark_running(item)
+            result = self._execute_item(item, execution_mode)
+            self._mark_completed(item, result)
+            return result
         except Exception:
-            return self._failure_result(item)
+            result = self._failure_result(item)
+            self._mark_completed(item, result)
+            return result
+
+    def _mark_running(self, item: TaskPlanItem) -> None:
+        if self.subtask_registry is None or not self.request_id:
+            return
+        try:
+            self.subtask_registry.mark_running(self.request_id, item.task_id)
+        except Exception:
+            logger.warning("标记子任务 running 失败", exc_info=True)
+
+    def _mark_completed(self, item: TaskPlanItem, result: OrchestratedAgentResult) -> None:
+        if self.subtask_registry is None or not self.request_id:
+            return
+        try:
+            self.subtask_registry.mark_completed(
+                self.request_id,
+                item.task_id,
+                answer_preview=result.answer,
+                errors=result.errors or None,
+            )
+        except Exception:
+            logger.warning("标记子任务 completed 失败", exc_info=True)
 
     def _execute_item(
         self, item: TaskPlanItem, execution_mode: str

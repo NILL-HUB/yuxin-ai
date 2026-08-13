@@ -323,6 +323,41 @@ async def _resolve_account(account_id_override: str | None = None):
     return None, _err("account_not_found", "账号不存在", 404)
 
 
+async def _resolve_admin_permission(permission_code: str):
+    """解析管理员 JWT 并校验指定权限点，返回 (admin_dict, None) 或 (None, error)。"""
+    from internal.exception import UnauthorizedException
+
+    auth_header = request.headers.get("Authorization") or ""
+    token = (
+        auth_header[7:].strip()
+        if auth_header.lower().startswith("bearer ")
+        else ""
+    )
+    if not token:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+
+    try:
+        from internal.service.admin_user_service import AdminUserService
+
+        admin = await _to_thread(
+            _get_service(AdminUserService).get_current_admin_from_token,
+            token,
+        )
+    except UnauthorizedException:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+    except Exception:
+        logger.exception("解析管理员权限失败")
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+
+    if not admin:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+
+    permissions = set(admin.get("permissions") or [])
+    if permission_code and permission_code not in permissions:
+        return None, _err("forbidden", "无权限执行该操作", 403)
+    return admin, None
+
+
 # 用户端已收敛：这些接口不再被保留的用户界面消费，普通用户 JWT 一律拒绝。
 # admin 端有独立路径（/admin/*），不受影响；web-apps/public 走各自 token/公开通道。
 _USER_API_BLOCKED_PREFIXES = (
@@ -381,7 +416,12 @@ def _is_user_api_blocked(path: str, method: str = "GET") -> bool:
     ):
         return True
     if normalized.startswith("/tool-confirmations") and not (
-        normalized.endswith("/confirm") or normalized.endswith("/cancel")
+        normalized.endswith("/confirm")
+        or normalized.endswith("/cancel")
+        or (
+            normalized.startswith("/tool-confirmations/")
+            and normalized.count("/") == 2
+        )
     ):
         return True
 

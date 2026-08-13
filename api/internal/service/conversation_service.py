@@ -197,14 +197,18 @@ class ConversationService(BaseService):
 
         # 5.调用链并获取会话信息，同时捕获 token 用量用于计费
         invoke_input = {"query": query}
-        if get_openai_callback is not None:
-            with get_openai_callback() as cb:
-                conversation_info = chain.invoke(invoke_input)
-            token_count = cb.total_tokens
-        else:
-            handler = _UsageTrackingHandler()
-            conversation_info = chain.invoke(invoke_input, config={"callbacks": [handler]})
-            token_count = handler.total_tokens
+        try:
+            if get_openai_callback is not None:
+                with get_openai_callback() as cb:
+                    conversation_info = chain.invoke(invoke_input)
+                token_count = cb.total_tokens
+            else:
+                handler = _UsageTrackingHandler()
+                conversation_info = chain.invoke(invoke_input, config={"callbacks": [handler]})
+                token_count = handler.total_tokens
+        except Exception:
+            logging.warning("生成会话名称失败，使用默认会话名", exc_info=True)
+            return "新的会话"
 
         # 6.计费（失败不影响主流程）
         if account_id is not None:
@@ -300,14 +304,14 @@ class ConversationService(BaseService):
         return questions
 
     def save_agent_thoughts(
-            self,
-            account_id: UUID,
-            app_id: UUID,
-            app_config: dict[str, Any],
-            conversation_id: UUID,
-            message_id: UUID,
-            agent_thoughts: list[AgentThought],
-            routing_decision: dict[str, Any] | None = None,
+        self,
+        account_id: UUID,
+        app_id: UUID,
+        app_config: dict[str, Any],
+        conversation_id: UUID,
+        message_id: UUID,
+        agent_thoughts: list[AgentThought],
+        routing_decision: dict[str, Any] | None = None,
     ):
         """存储智能体推理步骤消息"""
         # 1.定义变量存储推理位置及总耗时
@@ -317,21 +321,6 @@ class ConversationService(BaseService):
         # 2.在子线程中重新查询conversation以及message，确保对象会被子线程的会话管理到
         conversation = self.get(Conversation, conversation_id)
         message = self.get(Message, message_id)
-
-        if routing_decision:
-            agent_thoughts = [
-                AgentThought(
-                    id=uuid4(),
-                    task_id=uuid4(),
-                    event=QueueEvent.AGENT_THOUGHT,
-                    thought="Orchestrator routing decision",
-                    observation=json.dumps(routing_decision, ensure_ascii=False),
-                    tool="orchestrator",
-                    tool_input=routing_decision,
-                    # 使用 usage_summary 的总耗时，避免 latency=0 显示 "0.00s"
-                    latency=usage_summary.latency,
-                )
-            ] + agent_thoughts
 
         # 3.循环遍历所有的智能体推理过程执行存储操作
         for agent_thought in agent_thoughts:

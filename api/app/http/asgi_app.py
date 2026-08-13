@@ -149,6 +149,10 @@ async def _resolve_account(account_id_override: str | None = None):
     return await _support._resolve_account(account_id_override)
 
 
+async def _resolve_admin_permission(permission_code: str):
+    return await _support._resolve_admin_permission(permission_code)
+
+
 def _field(raw, default=None):
     return _support._field(raw, default)
 
@@ -187,6 +191,8 @@ from app.http.knowledge_mcp_routes import register_routes as _register_knowledge
 from app.http.schedule_assistant_routes import register_routes as _register_schedule_assistant_routes
 from app.http.skills_tools_routes import register_routes as _register_skills_tools_routes
 from app.http.workflow_routes import register_routes as _register_workflow_routes
+from app.http.a2a_routes import register_routes as _register_a2a_routes
+from app.http.im_voice_routes import register_routes as _register_im_voice_routes
 
 _register_admin_routes_1(quart_app)
 _register_admin_routes_2(quart_app)
@@ -207,6 +213,8 @@ _register_skills_tools_routes(quart_app)
 _register_workflow_routes(quart_app)
 _register_knowledge_mcp_routes(quart_app)
 _register_schedule_assistant_routes(quart_app)
+_register_a2a_routes(quart_app)
+_register_im_voice_routes(quart_app)
 
 
 # Socket.IO（ASGI 模式）：/socket.io/* 由 AsyncServer 处理，其余 HTTP 透传 quart_app。

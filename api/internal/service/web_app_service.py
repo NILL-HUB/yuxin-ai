@@ -1,5 +1,8 @@
 import json
 import logging
+import queue
+import threading
+from contextlib import nullcontext
 from typing import Generator, Any
 from uuid import UUID
 from internal.context import current_app
@@ -298,67 +301,14 @@ class WebAppService(BaseService):
             invoke_from=InvokeFrom.WEB_APP.value,
         )
 
-        # 13.定义字典存储推理过程，并调用智能体获取消息
-        # 获取完整长期记忆：包含 distant_summaries（远期分段摘要）和 summary（当前滚动摘要）
+        # 13.任务生命周期与 SSE 解耦：后台 worker 线程完整消费 Agent 流并负责落库，
+        #     SSE 生成器只负责转发事件。即使前端断线/刷新，任务仍在后台继续，
+        #     确认授权后结果也会写入数据库，供会话恢复时读取。
         long_term_memory = token_buffer_memory.get_distant_summary(conversation) or (conversation.summary or "")
-        agent_thoughts = {}
-        try:
-            for agent_thought in agent.stream({
-                "messages": [llm.convert_to_human_message(req.query.data, req.image_urls.data)],
-                "history": history,
-                "long_term_memory": long_term_memory,
-            }):
-                # 14.提取thought以及answer
-                event_id = str(agent_thought.id)
+        sse_queue: "queue.Queue[Any]" = queue.Queue()
+        _SENTINEL = object()
 
-                # 15.将数据填充到agent_thought，便于存储到数据库服务中
-                if agent_thought.event != QueueEvent.PING.value:
-                    # 16.除了agent_message数据为叠加，其他均为覆盖
-                    if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
-                        if event_id not in agent_thoughts:
-                            # 17.初始化智能体消息事件
-                            agent_thoughts[event_id] = agent_thought
-                        else:
-                            # 18.叠加智能体消息
-                            agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(update={
-                                "thought": agent_thoughts[event_id].thought + agent_thought.thought,
-                                # 消息相关数据
-                                "message": agent_thought.message,
-                                "message_token_count": agent_thought.message_token_count,
-                                "message_unit_price": agent_thought.message_unit_price,
-                                "message_price_unit": agent_thought.message_price_unit,
-                                # 答案相关数据
-                                "answer": agent_thoughts[event_id].answer + agent_thought.answer,
-                                "answer_token_count": agent_thought.answer_token_count,
-                                "answer_unit_price": agent_thought.answer_unit_price,
-                                "answer_price_unit": agent_thought.answer_price_unit,
-                                # Agent推理统计相关
-                                "total_token_count": agent_thought.total_token_count,
-                                "total_price": agent_thought.total_price,
-                                "latency": agent_thought.latency,
-                            })
-                    else:
-                        # 19.处理其他类型事件的消息
-                        agent_thoughts[event_id] = agent_thought
-                usage_summary = summarize_agent_thoughts(agent_thoughts.values())
-                data = {
-                    **agent_thought.model_dump(include={
-                        "event", "thought", "observation", "tool", "tool_input", "answer",
-                        "total_token_count", "total_price", "latency",
-                    }),
-                    "aggregate_total_token_count": usage_summary.total_token_count,
-                    "aggregate_total_price": usage_summary.total_price,
-                    "aggregate_latency": usage_summary.latency,
-                    "id": event_id,
-                    "conversation_id": str(conversation.id),
-                    "message_id": str(message.id),
-                    "task_id": str(agent_thought.task_id),
-                }
-                yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
-        finally:
-            # 20.将消息以及推理过程添加到数据库（同步方式）
-            # 无论 Agent 流正常完成还是异常终止，都尝试落库已收集的推理过程
-            # 避免异常时 message 记录留下 answer="" 的脏数据
+        def _persist_thoughts(agent_thoughts: dict[str, Any]) -> None:
             try:
                 self.conversation_service.save_agent_thoughts(
                     account_id=account.id,
@@ -366,11 +316,100 @@ class WebAppService(BaseService):
                     app_config=app_config,
                     conversation_id=conversation.id,
                     message_id=message.id,
-                    agent_thoughts=[agent_thought for agent_thought in agent_thoughts.values()],
+                    agent_thoughts=[thought for thought in agent_thoughts.values()],
                 )
             except Exception:
-                logger.warning("WebApp会话落库失败，conversation_id=%s message_id=%s",
-                               conversation.id, message.id, exc_info=True)
+                logger.warning(
+                    "WebApp会话落库失败，conversation_id=%s message_id=%s",
+                    conversation.id,
+                    message.id,
+                    exc_info=True,
+                )
+
+        def _agent_worker() -> None:
+            agent_thoughts: dict[str, Any] = {}
+            app_ctx = (
+                runtime_flask_app.app_context()
+                if runtime_flask_app is not None
+                else nullcontext()
+            )
+            with app_ctx:
+                try:
+                    for agent_thought in agent.stream({
+                        "messages": [llm.convert_to_human_message(req.query.data, req.image_urls.data)],
+                        "history": history,
+                        "long_term_memory": long_term_memory,
+                    }):
+                        event_id = str(agent_thought.id)
+                        if agent_thought.event != QueueEvent.PING.value:
+                            if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
+                                if event_id not in agent_thoughts:
+                                    agent_thoughts[event_id] = agent_thought
+                                else:
+                                    agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(update={
+                                        "thought": agent_thoughts[event_id].thought + agent_thought.thought,
+                                        "message": agent_thought.message,
+                                        "message_token_count": agent_thought.message_token_count,
+                                        "message_unit_price": agent_thought.message_unit_price,
+                                        "message_price_unit": agent_thought.message_price_unit,
+                                        "answer": agent_thoughts[event_id].answer + agent_thought.answer,
+                                        "answer_token_count": agent_thought.answer_token_count,
+                                        "answer_unit_price": agent_thought.answer_unit_price,
+                                        "answer_price_unit": agent_thought.answer_price_unit,
+                                        "total_token_count": agent_thought.total_token_count,
+                                        "total_price": agent_thought.total_price,
+                                        "latency": agent_thought.latency,
+                                    })
+                            else:
+                                agent_thoughts[event_id] = agent_thought
+                        usage_summary = summarize_agent_thoughts(agent_thoughts.values())
+                        data = {
+                            **agent_thought.model_dump(include={
+                                "event", "thought", "observation", "tool", "tool_input", "answer",
+                                "total_token_count", "total_price", "latency",
+                            }),
+                            "aggregate_total_token_count": usage_summary.total_token_count,
+                            "aggregate_total_price": usage_summary.total_price,
+                            "aggregate_latency": usage_summary.latency,
+                            "id": event_id,
+                            "conversation_id": str(conversation.id),
+                            "message_id": str(message.id),
+                            "task_id": str(agent_thought.task_id),
+                        }
+                        sse_queue.put(
+                            f"event: {agent_thought.event.value}\n"
+                            f"data:{json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                        )
+                except Exception:
+                    logger.exception(
+                        "WebApp Agent worker 异常，conversation_id=%s message_id=%s",
+                        conversation.id,
+                        message.id,
+                    )
+                finally:
+                    # 无论客户端是否断线，worker 都会在任务真正结束后落库。
+                    _persist_thoughts(agent_thoughts)
+                    sse_queue.put(_SENTINEL)
+
+        worker = threading.Thread(target=_agent_worker, daemon=True)
+        worker.start()
+
+        try:
+            while True:
+                try:
+                    item = sse_queue.get(timeout=15)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is _SENTINEL:
+                    break
+                if isinstance(item, str):
+                    yield item
+        finally:
+            # SSE 客户端断线时只停止转发，不关闭 worker 线程；
+            # worker 会继续完成 Agent 执行并持久化结果。
+            if worker.is_alive():
+                worker.join(timeout=1)
 
     def stop_web_app_chat(self, token: str, task_id: UUID, account: Account):
         """根据传递的token+task_id停止与指定WebApp对话"""

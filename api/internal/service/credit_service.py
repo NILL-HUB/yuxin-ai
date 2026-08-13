@@ -4,6 +4,7 @@ from uuid import UUID
 
 from internal.extension.database_extension import db
 from internal.model.billing import CreditAccount, CreditTransaction
+from internal.model.public_ai_feature_config import PublicAIFeatureConfig
 
 
 class CreditService:
@@ -98,6 +99,21 @@ class CreditService:
         """
         if token_count <= 0:
             return {"consumed": False, "reason": "no tokens", "token_count": 0}
+
+        try:
+            feature_config = (
+                self.session.query(PublicAIFeatureConfig)
+                .filter(PublicAIFeatureConfig.feature_key == feature_key)
+                .one_or_none()
+            )
+        except Exception:
+            feature_config = None
+        if feature_config is not None and not bool(feature_config.billable):
+            return {
+                "consumed": False,
+                "reason": "system_borne",
+                "token_count": token_count,
+            }
 
         # 生成合成 message_id 用于复用 consume_for_message 的逻辑
         import uuid

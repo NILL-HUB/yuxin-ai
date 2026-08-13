@@ -20,6 +20,7 @@ from internal.entity.orchestrator_entity import ExecutionMode
 from internal.exception import FailException, NotFoundException
 from internal.model import App, Account, Conversation, Message
 from internal.schema.app_schema import DebugChatReq, GetDebugConversationMessagesWithPageReq
+from internal.service.executors.multi_agent_executor import MultiAgentExecutor
 from internal.service.executors.single_agent_executor import SingleAgentExecutor
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
@@ -29,6 +30,7 @@ from .base_service import BaseService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
+from .subtask_registry_service import SubtaskRegistryService
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ class AppDebugService(BaseService):
     language_model_service: LanguageModelService
     conversation_service: ConversationService
     orchestrator_service: OrchestratorService | None = None
+    subtask_registry_service: SubtaskRegistryService | None = None
 
     ENABLE_ORCHESTRATOR_FOR_DEBUG = True
 
@@ -343,7 +346,12 @@ class AppDebugService(BaseService):
                     language_model_service=self.language_model_service,
                 )
                 agent_config = agent.agent_config
-                executor = SingleAgentExecutor(
+                executor_cls = (
+                    MultiAgentExecutor
+                    if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential")
+                    else SingleAgentExecutor
+                )
+                executor = executor_cls(
                     agent_class=agent_class,
                     agent_config=agent_config,
                     tools=tools,
@@ -352,6 +360,7 @@ class AppDebugService(BaseService):
                     query=req.query.data,
                     long_term_memory=debug_conversation.summary,
                     user_memory="",
+                    subtask_registry=self.subtask_registry_service,
                 )
                 yield from executor.execute(
                     query=req.query.data,

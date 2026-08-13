@@ -4,6 +4,7 @@ from uuid import UUID
 from injector import inject
 
 from internal.entity.orchestration_feature_flag_entity import (
+    ORCHESTRATION_FEATURE_FLAG_CODES,
     get_default_orchestration_feature_flags,
 )
 from internal.model import OrchestrationFeatureFlagModel
@@ -25,18 +26,30 @@ class OrchestrationFeatureFlagService(BaseService):
                     OrchestrationFeatureFlagModel,
                     **flag.to_dict(),
                 )
+            else:
+                if (
+                    existing.name != flag.name
+                    or existing.description != flag.description
+                    or existing.risk_level != flag.risk_level
+                    or existing.fallback_behavior != flag.fallback_behavior
+                ):
+                    self.update(
+                        existing,
+                        name=flag.name,
+                        description=flag.description,
+                        risk_level=flag.risk_level,
+                        fallback_behavior=flag.fallback_behavior,
+                    )
             result.append(self._serialize(existing))
         return result
 
     def list_flags(self) -> list[dict]:
-        flags = (
-            self.db.session.query(OrchestrationFeatureFlagModel)
-            .order_by(OrchestrationFeatureFlagModel.code.asc())
-            .all()
-        )
-        if not flags:
-            return self.ensure_defaults()
-        return [self._serialize(flag) for flag in flags]
+        flags = self.ensure_defaults()
+        flags = [
+            flag for flag in flags if flag["code"] in ORCHESTRATION_FEATURE_FLAG_CODES
+        ]
+        flags.sort(key=lambda flag: flag["code"])
+        return flags
 
     def is_enabled(self, code: str) -> bool:
         """查询开关是否启用。

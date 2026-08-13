@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Generator
@@ -13,6 +14,7 @@ from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 
 from internal.entity.app_entity import AppStatus
+from internal.entity.cancel_token_entity import CancelToken
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.lib.helper import build_input_parts, build_output_payload
@@ -31,6 +33,11 @@ from .language_model_service import LanguageModelService
 from .public_agent_registry_service import PublicAgentRegistryService
 
 
+logger = logging.getLogger(__name__)
+
+_PUBLIC_A2A_STOPPED_ANSWER = "（响应已停止）"
+
+
 @inject
 @dataclass
 class PublicAgentA2AService(BaseService):
@@ -42,6 +49,10 @@ class PublicAgentA2AService(BaseService):
     language_model_service: LanguageModelService
     public_agent_registry_service: PublicAgentRegistryService
     conversation_service: ConversationService | None = None
+
+    def __post_init__(self) -> None:
+        self._cancel_lock = threading.Lock()
+        self._cancel_tokens: dict[str, CancelToken] = {}
 
     def convert_public_agent_route_to_tool(self, account_id: UUID) -> BaseTool:
         """将公共Agent路由能力转换成LangChain工具。"""
@@ -674,52 +685,62 @@ class PublicAgentA2AService(BaseService):
         conversation_id = str(conversation.id)
         message_id = str(message.id)
         task_id = conversation_id
+        cancel_token = CancelToken()
+        self.register_cancel_token(task_id, cancel_token)
+        cancelled = False
         agent_thoughts: dict[str, Any] = {}
 
-        for agent_thought in agent.stream({
-            "messages": [llm.convert_to_human_message(query, [])],
-            "history": [],
-            "long_term_memory": conversation.summary,
-        }):
-            event_id = str(agent_thought.id)
+        try:
+            for agent_thought in agent.stream({
+                "messages": [llm.convert_to_human_message(query, [])],
+                "history": [],
+                "long_term_memory": conversation.summary,
+            }):
+                event_id = str(agent_thought.id)
 
-            if agent_thought.event != QueueEvent.PING.value:
-                if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
-                    if event_id not in agent_thoughts:
-                        agent_thoughts[event_id] = agent_thought
+                if agent_thought.event != QueueEvent.PING.value:
+                    if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
+                        if event_id not in agent_thoughts:
+                            agent_thoughts[event_id] = agent_thought
+                        else:
+                            agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(update={
+                                "thought": agent_thoughts[event_id].thought + agent_thought.thought,
+                                "message": agent_thought.message,
+                                "message_token_count": agent_thought.message_token_count,
+                                "message_unit_price": agent_thought.message_unit_price,
+                                "message_price_unit": agent_thought.message_price_unit,
+                                "answer": agent_thoughts[event_id].answer + agent_thought.answer,
+                                "answer_token_count": agent_thought.answer_token_count,
+                                "answer_unit_price": agent_thought.answer_unit_price,
+                                "answer_price_unit": agent_thought.answer_price_unit,
+                                "total_token_count": agent_thought.total_token_count,
+                                "total_price": agent_thought.total_price,
+                                "latency": agent_thought.latency,
+                            })
                     else:
-                        agent_thoughts[event_id] = agent_thoughts[event_id].model_copy(update={
-                            "thought": agent_thoughts[event_id].thought + agent_thought.thought,
-                            "message": agent_thought.message,
-                            "message_token_count": agent_thought.message_token_count,
-                            "message_unit_price": agent_thought.message_unit_price,
-                            "message_price_unit": agent_thought.message_price_unit,
-                            "answer": agent_thoughts[event_id].answer + agent_thought.answer,
-                            "answer_token_count": agent_thought.answer_token_count,
-                            "answer_unit_price": agent_thought.answer_unit_price,
-                            "answer_price_unit": agent_thought.answer_price_unit,
-                            "total_token_count": agent_thought.total_token_count,
-                            "total_price": agent_thought.total_price,
-                            "latency": agent_thought.latency,
-                        })
-                else:
-                    agent_thoughts[event_id] = agent_thought
+                        agent_thoughts[event_id] = agent_thought
 
-            usage_summary = summarize_agent_thoughts(agent_thoughts.values())
-            data = {
-                **agent_thought.model_dump(include={
-                    "event", "thought", "observation", "tool", "tool_input", "answer",
-                    "total_token_count", "total_price", "latency",
-                }),
-                "aggregate_total_token_count": usage_summary.total_token_count,
-                "aggregate_total_price": usage_summary.total_price,
-                "aggregate_latency": usage_summary.latency,
-                "id": event_id,
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "task_id": task_id,
-            }
-            yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data, ensure_ascii=False)}\n\n"
+                usage_summary = summarize_agent_thoughts(agent_thoughts.values())
+                data = {
+                    **agent_thought.model_dump(include={
+                        "event", "thought", "observation", "tool", "tool_input", "answer",
+                        "total_token_count", "total_price", "latency",
+                    }),
+                    "aggregate_total_token_count": usage_summary.total_token_count,
+                    "aggregate_total_price": usage_summary.total_price,
+                    "aggregate_latency": usage_summary.latency,
+                    "id": event_id,
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "task_id": task_id,
+                }
+                yield f"event: {agent_thought.event.value}\ndata:{json.dumps(data, ensure_ascii=False)}\n\n"
+                if cancel_token.is_cancelled():
+                    cancelled = True
+                    break
+        finally:
+            with self._cancel_lock:
+                self._cancel_tokens.pop(task_id, None)
 
         self._save_public_agent_thoughts(
             app=app,
@@ -727,6 +748,14 @@ class PublicAgentA2AService(BaseService):
             message=message,
             agent_thoughts=list(agent_thoughts.values()),
         )
+        if cancelled:
+            if not (message.answer or "").strip():
+                self.update(message, answer=_PUBLIC_A2A_STOPPED_ANSWER)
+            self.update(message, status=MessageStatus.STOP.value)
+            yield (
+                f"event: {QueueEvent.AGENT_END.value}\n"
+                f"data:{json.dumps({'id': str(message.id), 'conversation_id': conversation_id, 'message_id': message_id, 'task_id': task_id}, ensure_ascii=False)}\n\n"
+            )
 
         if conversation.name == "New Conversation" and self.conversation_service is not None:
             try:
@@ -736,6 +765,24 @@ class PublicAgentA2AService(BaseService):
                 logging.exception(
                     f"生成公开会话名称失败: conversation_id={conversation.id}, error={exc}"
                 )
+
+    def register_cancel_token(self, task_id: str, cancel_token: CancelToken) -> None:
+        """注册 A2A 任务取消令牌，供 tasks/cancel 与公共预览 stop 调用。"""
+        with self._cancel_lock:
+            self._cancel_tokens[str(task_id)] = cancel_token
+
+    def cancel_task(self, task_id: str) -> bool:
+        """取消正在运行的公共 A2A 任务，返回是否命中取消令牌。"""
+        with self._cancel_lock:
+            token = self._cancel_tokens.pop(str(task_id), None)
+        if token is None:
+            return False
+        try:
+            token.cancel()
+        except Exception:
+            logger.warning("取消公共 A2A 任务失败: %s", task_id, exc_info=True)
+            return False
+        return True
 
     def _invoke_public_agent(
         self,

@@ -23,6 +23,21 @@ def _get_service(cls):
     return _support._get_service(cls)
 
 
+async def _resolve_confirmation_actor():
+    """解析工具确认主体：匿名 WebApp 访客优先用 visitor_id，否则走账号。"""
+    raw_visitor_id = request.args.get("visitor_id") or ""
+    if raw_visitor_id:
+        try:
+            return SimpleNamespace(id=UUID(raw_visitor_id), is_authenticated=False), None
+        except (ValueError, TypeError):
+            return None, _json_resp(
+                code="invalid_param",
+                message="visitor_id 参数无效",
+                status=400,
+            )
+    return await _resolve_account()
+
+
 def register_routes(quart_app):
     global _registered
     if _registered:
@@ -240,7 +255,7 @@ def register_routes(quart_app):
     @quart_app.post("/tool-confirmations/<uuid:confirmation_id>/confirm")
     async def async_tool_confirmation_confirm(confirmation_id) -> Response:
         """async 确认工具执行。"""
-        account, err = await _resolve_account()
+        account, err = await _resolve_confirmation_actor()
         if err is not None:
             return err
 
@@ -257,7 +272,7 @@ def register_routes(quart_app):
     @quart_app.post("/tool-confirmations/<uuid:confirmation_id>/cancel")
     async def async_tool_confirmation_cancel(confirmation_id) -> Response:
         """async 取消工具执行。"""
-        account, err = await _resolve_account()
+        account, err = await _resolve_confirmation_actor()
         if err is not None:
             return err
 
@@ -270,6 +285,120 @@ def register_routes(quart_app):
             account,
         )
         return _ok(ToolConfirmationResp().dump(confirmation))
+
+    @quart_app.post("/tool-confirmations/<uuid:confirmation_id>/redirect")
+    async def async_tool_confirmation_redirect(confirmation_id) -> Response:
+        """async 执行中纠正：确认等待期把用户新消息注入当前轮。"""
+        account, err = await _resolve_confirmation_actor()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            return _json_resp(
+                code="validate_error",
+                message="redirect message 不能为空",
+                status=400,
+            )
+
+        from internal.core.agent.adapters.hermes.midturn_redirect import set_redirect
+        from internal.service.tool_confirmation_service import ToolConfirmationService
+
+        # 校验确认归属后再写纠正消息，避免任意 confirmation_id 被污染。
+        confirmation = await _to_thread(
+            _get_service(ToolConfirmationService).get_confirmation,
+            confirmation_id,
+            account,
+        )
+        if confirmation.status != "pending":
+            return _json_resp(
+                code="invalid_state",
+                message="该确认已结束，无法再发送纠正",
+                status=400,
+            )
+        ok = await _to_thread(set_redirect, str(confirmation_id), message)
+        if not ok:
+            return _json_resp(code="internal_error", message="纠正消息暂存失败", status=500)
+        return _ok({"redirected": True, "confirmation_id": str(confirmation_id)})
+
+    @quart_app.get("/subtasks/<string:request_id>")
+    async def async_subtask_snapshot(request_id) -> Response:
+        """async 查询一次 Agent 执行的子任务实时状态（Hermes /agents 对齐）。"""
+        account, err = await _resolve_confirmation_actor()
+        if err is not None:
+            return err
+
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        snapshot = await _to_thread(
+            _get_service(SubtaskRegistryService).snapshot,
+            str(request_id),
+        )
+        if snapshot is None:
+            return _json_resp(
+                code="not_found",
+                message="subtask run not found",
+                status=404,
+            )
+        return _ok(snapshot)
+
+    @quart_app.post("/subtasks/<string:request_id>/cancel")
+    async def async_subtask_cancel(request_id) -> Response:
+        """async 取消一次 Agent 执行（公共子代理生命周期 API）。"""
+        account, err = await _resolve_confirmation_actor()
+        if err is not None:
+            return err
+
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        registry = _get_service(SubtaskRegistryService)
+        snapshot = await _to_thread(registry.snapshot, str(request_id))
+        if snapshot is None:
+            return _json_resp(
+                code="not_found",
+                message="subtask run not found",
+                status=404,
+            )
+        cancelled = await _to_thread(registry.cancel, str(request_id))
+        return _ok({
+            "cancelled": cancelled,
+            "reason": "" if cancelled else "no_cancel_token_in_this_worker",
+        })
+
+    @quart_app.post("/subtasks/<string:request_id>/redirect")
+    async def async_subtask_redirect(request_id) -> Response:
+        """async 执行中纠正：向一次执行注入用户新指令（任意工具执行阶段）。"""
+        account, err = await _resolve_confirmation_actor()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            return _json_resp(
+                code="validate_error",
+                message="redirect message 不能为空",
+                status=400,
+            )
+
+        from internal.core.agent.adapters.hermes.midturn_redirect import (
+            set_request_redirect,
+        )
+        from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        registry = _get_service(SubtaskRegistryService)
+        snapshot = await _to_thread(registry.snapshot, str(request_id))
+        if snapshot is None:
+            return _json_resp(
+                code="not_found",
+                message="subtask run not found",
+                status=404,
+            )
+        ok = await _to_thread(set_request_redirect, str(request_id), message)
+        if not ok:
+            return _json_resp(code="internal_error", message="纠正消息暂存失败", status=500)
+        return _ok({"redirected": True, "request_id": str(request_id)})
 
     @quart_app.get("/space/knowledge-bases")
     async def async_get_knowledge_bases_with_page() -> Response:

@@ -852,6 +852,7 @@ class AppRuntimeService(BaseService):
             data = {
                 **agent_thought.model_dump(include={
                     "event", "thought", "observation", "tool", "tool_input", "answer",
+                    "confirmation_id", "confirmation_status", "execution_summary",
                     "total_token_count", "total_price", "latency",
                 }),
                 "aggregate_total_token_count": usage_summary.total_token_count,
@@ -936,6 +937,7 @@ class AppRuntimeService(BaseService):
             data = {
                 **agent_thought.model_dump(include={
                     "event", "thought", "observation", "tool", "tool_input", "answer",
+                    "confirmation_id", "confirmation_status", "execution_summary",
                     "total_token_count", "total_price", "latency",
                 }),
                 "aggregate_total_token_count": usage_summary.total_token_count,

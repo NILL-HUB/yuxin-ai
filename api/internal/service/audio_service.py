@@ -1,6 +1,8 @@
 import base64
 import json
 import logging
+import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from io import BytesIO
@@ -22,6 +24,10 @@ from ..entity.conversation_entity import InvokeFrom
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ASR_MODEL = "TeleAI/TeleSpeechASR"
+DEFAULT_GPT_TRANSCRIBE_MODEL = "OpenAI/whisper-large-v3"
+_GPT_TRANSCRIBE_PROVIDERS = frozenset({"gpt_transcribe"})
+
 @inject
 @dataclass
 class AudioService(BaseService):
@@ -30,8 +36,8 @@ class AudioService(BaseService):
     app_service: AppService
 
     @classmethod
-    def _resolve_siliconflow_credentials(cls) -> tuple[str, str]:
-        """从数据库查询 SiliconFlow 凭证（api_key + base_url）。
+    def _resolve_siliconflow_credentials(cls) -> tuple[str, str, str]:
+        """从数据库查询 SiliconFlow 凭证（api_key + base_url + model）。
 
         替代原来从环境变量 SILICONFLOW_API_KEY/SILICONFLOW_API_BASE 读取的方式，
         统一走 admin 数据库管理。
@@ -39,6 +45,7 @@ class AudioService(BaseService):
         creds = LanguageModelService.get_provider_credentials(provider="SiliconFlow")
         api_key = (creds.get("api_key") or "").strip()
         base_url = (creds.get("base_url") or "").strip()
+        model = (creds.get("model") or "").strip()
 
         missing_configs = []
         if api_key == "":
@@ -52,21 +59,64 @@ class AudioService(BaseService):
                 f"SiliconFlow 缺少: {', '.join(missing_configs)}），请在 admin 中配置"
             )
 
-        return api_key, base_url
+        return api_key, base_url, model
 
-    def audio_to_text(self, audio: FileStorage) -> str:
-        """将语音转换为文本（SiliconFlow ASR）."""
+    @staticmethod
+    def _env_flag(name: str) -> bool:
+        return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _resolve_asr_model(
+        provider: str = "",
+        model: str = "",
+        configured_model: str = "",
+    ) -> str:
+        """按 provider 解析 ASR 模型名。
+
+        显式 model 优先；provider 为 gpt_transcribe/gpt-transcribe 或环境变量
+        GPT_TRANSCRIBE_ENABLED 打开时使用 GPT_TRANSCRIBE_MODEL（默认
+        OpenAI/whisper-large-v3）；其余回落到凭证里配置的模型或默认模型。
+        """
+        normalized_model = str(model or "").strip()
+        if normalized_model:
+            return normalized_model
+        normalized_provider = str(provider or "").strip().lower().replace("-", "_")
+        if (
+            normalized_provider in _GPT_TRANSCRIBE_PROVIDERS
+            or AudioService._env_flag("GPT_TRANSCRIBE_ENABLED")
+        ):
+            return os.getenv("GPT_TRANSCRIBE_MODEL", "").strip() or DEFAULT_GPT_TRANSCRIBE_MODEL
+        return str(configured_model or "").strip() or DEFAULT_ASR_MODEL
+
+    def audio_to_text(
+        self,
+        audio: FileStorage,
+        language: str = "",
+        provider: str = "",
+        model: str = "",
+    ) -> str:
+        """将语音转换为文本（SiliconFlow ASR，可指定语言/provider/模型）."""
         if not audio or not (content := audio.stream.read()):
             raise FailException("音频文件无效或为空")
-        api_key, base_url = self._resolve_siliconflow_credentials()
+        api_key, base_url, configured_model = self._resolve_siliconflow_credentials()
         endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
+        payload = {
+            "model": self._resolve_asr_model(
+                provider=provider,
+                model=model,
+                configured_model=configured_model,
+            ),
+        }
+        normalized_language = str(language or "").strip()
+        if normalized_language:
+            payload["language"] = normalized_language
 
         try:
             resp = self._get_requests_session().post(
                 endpoint,
                 headers={"Authorization": f"Bearer {api_key}"},
                 files={"file": (getattr(audio, "filename", "audio.wav"), BytesIO(content))},
-                data={"model": "TeleAI/TeleSpeechASR"},
+                data=payload,
                 timeout=60
             )
             resp.raise_for_status()
@@ -169,13 +219,30 @@ class AudioService(BaseService):
             return "alex"
         return voice
 
-    def _create_tts_response(self, input_text: str, voice: str) -> requests.Response:
+    def _create_tts_response(
+        self,
+        input_text: str,
+        voice: str,
+        language: str = "",
+    ) -> requests.Response:
         """请求TTS服务并返回流式响应对象"""
-        api_key, base_url = self._resolve_siliconflow_credentials()
+        api_key, base_url, _ = self._resolve_siliconflow_credentials()
         endpoint = f"{base_url.rstrip('/')}/audio/speech"
 
         model = "FunAudioLLM/CosyVoice2-0.5B"
         full_voice = f"{model}:{voice}"
+        payload = {
+            "model": model,
+            "input": input_text,
+            "voice": full_voice,
+            "response_format": "mp3",
+            "stream": True,
+            "speed": 1.0,
+            "gain": 0,
+        }
+        normalized_language = str(language or "").strip()
+        if normalized_language:
+            payload["language"] = normalized_language
 
         try:
             response = self._get_requests_session().post(
@@ -184,15 +251,7 @@ class AudioService(BaseService):
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "model": model,
-                    "input": input_text,
-                    "voice": full_voice,
-                    "response_format": "mp3",
-                    "stream": True,
-                    "speed": 1.0,
-                    "gain": 0,
-                },
+                json=payload,
                 stream=True,
                 timeout=120,
             )
@@ -247,3 +306,91 @@ class AudioService(BaseService):
                 response.close()
 
         return tts()
+
+    @staticmethod
+    def split_sentences(text: str, max_length: int = 120) -> list[str]:
+        """把文本切成适合逐句 TTS 的句子列表。
+
+        优先按中文/英文句子边界切分；超长片段按标点或长度折行，避免
+        单句过长导致 TTS 延迟高或截断。
+        """
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not normalized:
+            return []
+        parts = re.split(r"(?<=[。！？!?；;])\s*", normalized)
+        sentences: list[str] = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if len(part) <= max_length:
+                sentences.append(part)
+                continue
+            # 超长片段：按逗号/顿号/空格切分后聚合成 <= max_length 的短句。
+            sub_parts = re.split(r"(?<=[，,、])\s*", part)
+            current = ""
+            for sub in sub_parts:
+                sub = sub.strip()
+                if not sub:
+                    continue
+                if current and len(current) + len(sub) + 1 > max_length:
+                    sentences.append(current)
+                    current = sub
+                else:
+                    current = f"{current} {sub}".strip()
+            if current:
+                sentences.append(current)
+        return sentences
+
+    def text_to_audio_sentences(
+        self,
+        message_id: Union[str, None],
+        text: str,
+        account: Account,
+    ) -> Generator:
+        """按句合成 TTS，逐句推送 `tts_sentence` 事件，实现“边说边生成”。"""
+        normalized_text = (text or "").strip()
+        if normalized_text == "":
+            raise FailException("文本内容不能为空")
+
+        normalized_message_id = str(message_id or "").strip()
+        voice = "alex"
+        conversation_id = ""
+        resolved_message_id = ""
+        if normalized_message_id != "":
+            message, conversation = self._get_valid_message(normalized_message_id, account)
+            voice = self._resolve_voice(message, conversation, account)
+            conversation_id = str(conversation.id)
+            resolved_message_id = str(message.id)
+
+        sentences = self.split_sentences(normalized_text)
+        if not sentences:
+            raise FailException("文本内容不能为空")
+
+        def stream() -> Generator:
+            try:
+                for index, sentence in enumerate(sentences):
+                    response = self._create_tts_response(sentence, voice)
+                    chunks: list[bytes] = []
+                    try:
+                        for chunk in response.iter_content(chunk_size=1024):
+                            if chunk:
+                                chunks.append(chunk)
+                        audio = base64.b64encode(b"".join(chunks)).decode("ascii")
+                        data = {
+                            "conversation_id": conversation_id,
+                            "message_id": resolved_message_id,
+                            "sentence_index": index,
+                            "sentence_count": len(sentences),
+                            "sentence": sentence,
+                            "audio": audio,
+                        }
+                        yield f"event: tts_sentence\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+                    finally:
+                        response.close()
+                yield f"event: tts_end\ndata: {json.dumps({'conversation_id': conversation_id, 'message_id': resolved_message_id})}\n\n"
+            except Exception as error:
+                logger.error("逐句语音输出失败: %(error)s", {"error": error}, exc_info=True)
+                yield f"event: tts_error\ndata: {json.dumps({'error': '逐句语音输出失败'})}\n\n"
+
+        return stream()

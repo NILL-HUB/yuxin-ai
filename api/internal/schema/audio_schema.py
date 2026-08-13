@@ -11,6 +11,9 @@ class AudioToTextReq(Form):
         FileSize(max_size=25 * 1024 * 1024, message="音频文件不能超过25MB"),
         FileAllowed(["webm", "wav"], message="请上传正确的音频文件"),
     ])
+    language = StringField("language")
+    provider = StringField("provider")
+    model = StringField("model")
 
 
 class MessageToAudioReq(Form):

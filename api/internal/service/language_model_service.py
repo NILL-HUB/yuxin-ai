@@ -11,7 +11,7 @@ import httpx
 from pydantic import PrivateAttr
 from internal.core.language_model import LanguageModelManager
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
-from internal.exception import NotFoundException, ValidateErrorException
+from internal.exception import FailException, NotFoundException, ValidateErrorException
 from internal.lib.helper import convert_model_to_dict
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -693,6 +693,7 @@ class LanguageModelService(BaseService):
 
         优先读取 public_ai_feature_config 表中该 feature_key 绑定的模型；
         未配置或模型不可用时，按 fallback_tier 自动降级到模型池中的对应档位模型。
+        功能记录存在且 enabled=false 时，直接抛出 FailException，调用方应自行降级或中止。
 
         Args:
             feature_key: 功能键，如 "icon_prompt"、"memory_consolidation"、"intent_recognition"
@@ -705,6 +706,8 @@ class LanguageModelService(BaseService):
             from internal.service.public_ai_feature_service import PublicAIFeatureService
 
             svc = injector.get(PublicAIFeatureService)
+            if not svc.is_feature_enabled(feature_key):
+                raise FailException(f"公共 AI 功能已关闭: {feature_key}")
 
             # 1. 优先使用功能绑定的模型
             model_config = svc.get_feature_model_config(feature_key)
@@ -722,6 +725,15 @@ class LanguageModelService(BaseService):
             if llm is not None:
                 svc.touch_last_called(feature_key)
             return llm
+
+    @classmethod
+    def is_feature_enabled(cls, feature_key: str) -> bool:
+        """检查公共 AI 功能是否启用；未配置记录视为启用。"""
+        with _ensure_app_context():
+            from app.http.module import injector
+            from internal.service.public_ai_feature_service import PublicAIFeatureService
+
+            return injector.get(PublicAIFeatureService).is_feature_enabled(feature_key)
 
     @classmethod
     def get_feature_credentials(cls, feature_key: str) -> dict[str, str]:

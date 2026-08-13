@@ -37,6 +37,14 @@ class IconGeneratorService(BaseService):
         Raises:
             FailException: 所有图标生成方式都失败时抛出
         """
+        from .language_model_service import LanguageModelService
+
+        if (
+            not LanguageModelService.is_feature_enabled("icon_image_generation")
+            or not LanguageModelService.is_feature_enabled("icon_prompt")
+        ):
+            raise FailException("图标生成功能已关闭，请先在公共 AI 配置中启用")
+
         errors = []
 
         # 0. 优先尝试公共 AI 配置或自动选择的 image_generation 模型

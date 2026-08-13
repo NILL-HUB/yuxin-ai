@@ -17,6 +17,7 @@ class TaskPlanItem:
     risk_level: str = "safe"
     agent_id: str = ""
     tools: list[str] = field(default_factory=list)
+    timeout_seconds: float = 0.0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskPlanItem":
@@ -31,6 +32,7 @@ class TaskPlanItem:
             risk_level=_risk_level(data.get("risk_level")),
             agent_id=_text(data.get("agent_id")),
             tools=_unique_text_list(data.get("tools")),
+            timeout_seconds=_non_negative_float(data.get("timeout_seconds")),
         )
 
     def to_summary(self) -> dict:
@@ -40,6 +42,7 @@ class TaskPlanItem:
             "agent_pool": self.agent_pool,
             "execution_order": self.execution_order,
             "risk_level": self.risk_level,
+            "timeout_seconds": self.timeout_seconds,
         }
 
 
@@ -124,6 +127,13 @@ def _non_negative_int(value: Any) -> int:
         return max(int(value), 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _non_negative_float(value: Any) -> float:
+    try:
+        return max(float(value), 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _confidence(value: Any) -> float:

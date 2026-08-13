@@ -20,10 +20,11 @@ class CostStatsService(BaseService):
     def _credits_col():
         # routing_log.cost_summary 实际写入的是 estimated_credits，
         # 老数据可能只有 total_credits，统一兼容两种键。
+        # 值可能是 "0" / "0.0" 等字符串，先转 NUMERIC 再转 INTEGER，避免 "0.0" 直接 CAST 失败。
         return cast(
             literal_column(
-                "COALESCE(NULLIF(cost_summary->>'estimated_credits', ''), "
-                "NULLIF(cost_summary->>'total_credits', ''), '0')"
+                "CAST(COALESCE(NULLIF(cost_summary->>'estimated_credits', ''), "
+                "NULLIF(cost_summary->>'total_credits', ''), '0') AS NUMERIC)"
             ),
             Integer,
         )

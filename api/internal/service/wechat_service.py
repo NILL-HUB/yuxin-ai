@@ -27,6 +27,7 @@ from .app_config_service import AppConfigService, call_config_loader
 from .app_runtime_service import AppRuntimeService
 from .base_service import BaseService
 from .conversation_service import ConversationService
+from .im_voice_service import ImVoiceService
 from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
 from .retrieval_service import RetrievalService
@@ -48,6 +49,7 @@ class WechatService(BaseService):
     app_runtime_service: AppRuntimeService | None = None
     skill_service: SkillService | None = None
     orchestrator_service: OrchestratorService | None = None
+    im_voice_service: ImVoiceService | None = None
 
     @staticmethod
     def _extract_builtin_tools_from_tool_subset(
@@ -136,13 +138,24 @@ class WechatService(BaseService):
             except InvalidSignatureException:
                 raise FailException("微信公众号服务器配置接入失败")
         else:
-            # 7.校验发送的消息类型，仅支持传递文本消息
-            if msg.type != "text":
-                reply = TextReply(content="抱歉，该Agent目前暂时只支持文本消息。", message=msg)
+            # 7.校验发送的消息类型，支持文本与语音笔记（语音先转写为文本再走 Agent）
+            if msg.type not in ("text", "voice"):
+                reply = TextReply(content="抱歉，该Agent目前暂时只支持文本和语音消息。", message=msg)
                 return reply.render()
 
-            # 8.获取消息内容与发送方账号(FromUserName/openid)，并查询wechat_end_user
-            content = msg.content
+            # 8.获取消息内容与发送方账号(FromUserName/openid)，语音消息先转写
+            if msg.type == "voice":
+                try:
+                    content = self._transcribe_wechat_voice(wechat_config, msg)
+                except Exception as exc:
+                    logger.warning("微信语音转写失败", exc_info=True)
+                    reply = TextReply(content=f"语音识别失败：{exc}", message=msg)
+                    return reply.render()
+                if not content:
+                    reply = TextReply(content="没有识别到语音内容，请重新发送。", message=msg)
+                    return reply.render()
+            else:
+                content = msg.content
             openid = msg.target
             wechat_end_user = self.db.session.query(WechatEndUser).filter(
                 WechatEndUser.openid == openid,
@@ -236,6 +249,22 @@ class WechatService(BaseService):
             # 22.响应提示信息
             reply = TextReply(content="思考中，请回复“1”获取结果。", message=msg)
             return reply.render()
+
+    def _transcribe_wechat_voice(self, wechat_config: Any, msg: Any) -> str:
+        """优先使用微信自带语音识别结果，否则下载媒体走平台 ASR。"""
+        recognition = str(getattr(msg, "recognition", "") or "").strip()
+        if recognition:
+            return recognition
+        service = self.im_voice_service
+        if service is None:
+            from app.http.module import injector
+
+            service = injector.get(ImVoiceService)
+        return service.transcribe_wechat_voice(
+            wechat_config,
+            str(getattr(msg, "media_id", "") or ""),
+            audio_format=str(getattr(msg, "format", "") or "amr"),
+        )
 
     def _thread_chat(
             self,

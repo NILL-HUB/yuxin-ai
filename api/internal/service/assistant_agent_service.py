@@ -68,6 +68,9 @@ from .runtime_tool_mount_service import RuntimeToolMountService
 from internal.entity.runtime_tool_entity import RuntimeToolDescriptor
 from .public_agent_a2a_service import PublicAgentA2AService
 from .public_agent_registry_service import PublicAgentRegistryService
+from .subtask_registry_service import SubtaskRegistryService
+
+_INTERRUPTED_ANSWER_MARKER = "（用户打断了上一条回复，请等待新的指令）"
 
 
 def _get_markdown_preset_prompt() -> str:
@@ -140,6 +143,7 @@ class AssistantAgentService(BaseService):
     retrieval_service: RetrievalService | None = None
     runtime_tool_mount_service: RuntimeToolMountService | None = None
     routing_log_service: RoutingLogService | None = None
+    subtask_registry_service: SubtaskRegistryService | None = None
     _introduction_prewarm_lock = Lock()
     _introduction_prewarm_pending = set()
     _active_cancel_tokens = {}
@@ -436,6 +440,7 @@ class AssistantAgentService(BaseService):
     def _stream_single_agent(
         self, req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
         distant_summary="", user_memory_text="", invoke_from: str | None = None,
+        cancel_token: CancelToken | None = None,
     ):
         """single_agent / deep_thinking 路径：经 ExecutionCoordinatorService 编排单 Agent。"""
         from internal.entity.billing_metering_entity import BillingEventType
@@ -475,6 +480,8 @@ class AssistantAgentService(BaseService):
                 query=req.query.data,
                 long_term_memory=distant_summary,
                 user_memory=user_memory_text,
+                subtask_registry=self.subtask_registry_service,
+                cancel_token=cancel_token,
             )
             billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
@@ -544,6 +551,112 @@ class AssistantAgentService(BaseService):
                     message._collected_thoughts = executor.collected_thoughts
                 except Exception:
                     logger.warning("挂载 collected_thoughts 到 message 失败（finally）", exc_info=True)
+
+    def _stream_multi_agent(
+        self, req, account, conversation, message, routing_decision, llm, tools, history,
+        distant_summary="", user_memory_text="", invoke_from: str | None = None,
+        cancel_token: CancelToken | None = None,
+    ):
+        """multi_agent 路径：经 MultiAgentExecutor 按 TaskPlan 执行多个子任务。"""
+        from internal.entity.billing_metering_entity import BillingEventType
+        from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.executors.multi_agent_executor import MultiAgentExecutor
+
+        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_started = billing_aggregator.started()
+        yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
+
+        collected_answer = ""
+        executor = None
+        try:
+            agent_config = AgentConfig(
+                user_id=account.id,
+                invoke_from=invoke_from or InvokeFrom.ASSISTANT_AGENT.value,
+                preset_prompt=self._build_assistant_system_prompt(),
+                enable_long_term_memory=True,
+                enable_deep_thinking=False,
+                runtime_flask_app=current_app._get_current_object(),
+                language_model_service=self.language_model_service,
+                tools=tools,
+            )
+            execution_mode = (
+                routing_decision.get("execution_mode")
+                if routing_decision
+                else "multi_agent_parallel"
+            )
+            executor = MultiAgentExecutor(
+                agent_class=FunctionCallAgent,
+                agent_config=agent_config,
+                tools=tools,
+                llm=llm,
+                history=history or [],
+                query=req.query.data,
+                long_term_memory=distant_summary,
+                user_memory=user_memory_text,
+                subtask_registry=self.subtask_registry_service,
+                cancel_token=cancel_token,
+            )
+            billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
+            for chunk in executor.execute(
+                query=req.query.data,
+                conversation=conversation,
+                message=message,
+                execution_mode=execution_mode,
+                routing_decision=routing_decision,
+            ):
+                if chunk.startswith(f"event: {QueueEvent.AGENT_MESSAGE.value}"):
+                    try:
+                        data_part = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(data_part)
+                        chunk_answer = payload.get("answer", "")
+                        if chunk_answer:
+                            collected_answer = collected_answer + chunk_answer if collected_answer else chunk_answer
+                    except Exception:
+                        pass
+                if chunk.startswith(billing_delta_prefix):
+                    try:
+                        data_part = chunk.split("data:", 1)[1].strip()
+                        payload = json.loads(data_part)
+                        meta = payload.get("metadata") or {}
+                        in_tok = int(meta.get("input_tokens", 0) or 0)
+                        out_tok = int(meta.get("output_tokens", 0) or 0)
+                        if in_tok or out_tok:
+                            billing_aggregator.model_tokens(
+                                "multi_agent",
+                                input_tokens=in_tok,
+                                output_tokens=out_tok,
+                                reason="agent_llm_invoke",
+                            )
+                    except Exception:
+                        pass
+                yield chunk
+
+            billing_aggregator.credit_service = self.credit_service
+            billing_aggregator.account_id = account.id
+            billing_summary = billing_aggregator.summary()
+            yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
+            billing_final = billing_aggregator.final()
+            yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
+
+            yield from self._write_memory_from_conversation(account, req.query.data, collected_answer, conversation.id)
+        except Exception as e:
+            logger.warning("多智能体经协调器执行失败: %s", e, exc_info=True)
+            billing_cancelled = billing_aggregator.cancelled(pending_phases=["多智能体执行"])
+            yield f"event: {BillingEventType.CANCELLED.value}\ndata:{json.dumps(billing_cancelled.to_sse())}\n\n"
+            yield f"event: {QueueEvent.AGENT_MESSAGE.value}\ndata:{json.dumps({'answer': '多智能体执行遇到问题，请稍后重试。', 'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
+        finally:
+            if collected_answer:
+                try:
+                    msg = self.get(Message, message.id)
+                    if msg is not None:
+                        self.update(msg, answer=collected_answer)
+                except Exception:
+                    logger.warning("持久化 multi_agent answer 到 Message.answer 失败（finally）", exc_info=True)
+            if executor is not None and executor.collected_thoughts:
+                try:
+                    message._collected_thoughts = executor.collected_thoughts
+                except Exception:
+                    logger.warning("挂载 multi_agent collected_thoughts 到 message 失败（finally）", exc_info=True)
 
     def _build_assistant_system_prompt(self) -> str:
         """组装首页助手提示词：Markdown 规范 + 启用中的系统知识库内容。"""
@@ -646,6 +759,108 @@ class AssistantAgentService(BaseService):
             tools.extend(
                 self.app_config_service.get_langchain_tools_by_mcp_bindings(assistant_mcp_bindings)
             )
+
+        # Codex OS 自动化：通过宿主机 worker 执行用户确认后的系统任务。
+        # 工具内部强制 preview → approval_token → apply，不能直接执行未确认操作。
+        if self.app_config_service is not None:
+            try:
+                for tool_name in ("run_os_task", "os_file_task"):
+                    os_tool_factory = (
+                        self.app_config_service.builtin_provider_manager.get_tool(
+                            "codex_os",
+                            tool_name,
+                        )
+                    )
+                    if os_tool_factory is not None:
+                        tools.append(os_tool_factory(requester=str(account_id)))
+            except Exception:
+                logger.warning("构建 Codex OS 自动化工具失败，不影响其他工具", exc_info=True)
+
+        # 语音工具：Agent 可朗读回复或转写语音输入。
+        if self.app_config_service is not None:
+            try:
+                for tool_name in ("tts_speak", "audio_transcribe"):
+                    audio_tool_factory = (
+                        self.app_config_service.builtin_provider_manager.get_tool(
+                            "audio_tools",
+                            tool_name,
+                        )
+                    )
+                    if audio_tool_factory is not None:
+                        tools.append(audio_tool_factory())
+            except Exception:
+                logger.warning("构建语音工具失败，不影响其他工具", exc_info=True)
+
+        # A2A 出站工具：Agent 可主动调用外部 A2A 对端。
+        try:
+            from internal.service.a2a_gateway_service import A2AGatewayService
+            from app.http.module import injector
+
+            gateway = injector.get(A2AGatewayService)
+            tools.append(gateway.create_outbound_send_tool())
+        except Exception:
+            logger.warning("构建 A2A 出站工具失败，不影响其他工具", exc_info=True)
+
+        # 网页工具：Agent 可搜索网页并读取正文用于调研/总结。
+        if self.app_config_service is not None:
+            try:
+                for tool_name in ("web_search", "web_extract"):
+                    web_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                        "web_tools",
+                        tool_name,
+                    )
+                    if web_tool_factory is not None:
+                        tools.append(web_tool_factory())
+            except Exception:
+                logger.warning("构建网页工具失败，不影响其他工具", exc_info=True)
+
+        # 沙箱代码执行工具：默认关闭，管理员开启且配置沙箱凭证后才挂载。
+        if self.app_config_service is not None:
+            try:
+                from internal.core.tools.builtin_tools.providers.code_execution_tool.execute_code import (
+                    _enabled as _code_exec_enabled,
+                )
+
+                if _code_exec_enabled():
+                    code_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                        "code_execution_tool",
+                        "execute_code",
+                    )
+                    if code_tool_factory is not None:
+                        tools.append(
+                            code_tool_factory(
+                                tool_registry={
+                                    getattr(tool, "name", str(tool)): tool
+                                    for tool in tools
+                                }
+                            )
+                        )
+            except Exception:
+                logger.warning("构建代码执行工具失败，不影响其他工具", exc_info=True)
+
+        # 视觉分析工具：复用公共 AI 的 vision_analyze 功能模型。
+        if self.app_config_service is not None:
+            try:
+                vision_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                    "vision_tools",
+                    "vision_analyze",
+                )
+                if vision_tool_factory is not None:
+                    tools.append(vision_tool_factory())
+            except Exception:
+                logger.warning("构建视觉分析工具失败，不影响其他工具", exc_info=True)
+
+        # 任务清单工具：Agent 在多步任务中维护待办。
+        if self.app_config_service is not None:
+            try:
+                todo_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                    "todo_tool",
+                    "todo",
+                )
+                if todo_tool_factory is not None:
+                    tools.append(todo_tool_factory())
+            except Exception:
+                logger.warning("构建任务清单工具失败，不影响其他工具", exc_info=True)
 
         # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
         # 同时挂载系统知识库（knowledge_scope='system'，admin 通过 enabled 开关控制），
@@ -1030,31 +1245,44 @@ class AssistantAgentService(BaseService):
             logger.warning("按 provider_id 加载 MCP 工具失败", exc_info=True)
             return []
 
-    def _emit_progress_sse(self, conversation, message, thought: str, started_at: float = 0) -> str:
-        """发送进度提示事件，让前端能看到后台正在做什么。
-
-        使用 agent_thought 事件，前端 AgentThought 组件会展示推理过程。
-        使用固定 id（message.id），前端 upsertThought 会更新同一个思考框（状态变更），
-        而非创建多个独立框。
-        latency 单位为秒（浮点），与 react_agent / function_call_agent / deep_thinking_agent
-        等执行器保持一致，前端 normalizeMessageMetrics 期望秒。
-        """
-        import time as _time
-        latency = round(_time.perf_counter() - started_at, 3) if started_at else 0
-        payload = {
-            "id": str(message.id),
-            "event": QueueEvent.AGENT_THOUGHT.value,
-            "thought": thought,
-            "observation": "",
-            "tool": "",
-            "tool_input": {},
-            "answer": "",
-            "conversation_id": str(conversation.id),
-            "message_id": str(message.id),
-            "latency": latency,
-            "total_token_count": 0,
-        }
-        return f"event: {QueueEvent.AGENT_THOUGHT.value}\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
+    @staticmethod
+    def _is_os_automation_request(query: str) -> bool:
+        """判断用户请求是否属于宿主机系统自动化任务。"""
+        text = str(query or "").strip().lower()
+        if not text:
+            return False
+        cleanup = (
+            "清理" in text
+            or "清除" in text
+            or "整理" in text
+            or "释放空间" in text
+        )
+        system_terms = (
+            "c盘" in text
+            or "磁盘" in text
+            or "垃圾" in text
+            or "临时文件" in text
+            or "缓存" in text
+            or "系统" in text
+            or "下载" in text
+            or "桌面" in text
+        )
+        if cleanup and system_terms:
+            return True
+        return any(
+            keyword in text
+            for keyword in (
+                "系统自动化",
+                "自动化任务",
+                "操作系统",
+                "检查系统",
+                "系统状态",
+                "执行系统",
+                "运行命令",
+                "清理c盘",
+                "清c盘",
+            )
+        )
 
     def chat(self, req: AssistantAgentChat, account: Account, invoke_from: str | None = None) -> Generator:
         """传递query与账号实现与辅助Agent进行会话
@@ -1112,13 +1340,30 @@ class AssistantAgentService(BaseService):
         self.register_cancel_token(message.id, cancel_token)
 
         routing_decision = None
+        os_automation_request = self._is_os_automation_request(req.query.data)
+        if os_automation_request:
+            # 系统自动化任务固定走带工具的单 Agent，避免模型/指挥官不支持结构化输出时
+            # 被降级成 direct_answer 而无法调用 run_os_task。
+            routing_decision = {
+                "intent": "tool_task",
+                "execution_mode": "single_agent_with_tools",
+                "complexity": "medium",
+                "needs_tools": True,
+                "needs_agent": True,
+                "needs_multi_agent": False,
+                "needs_deep_thinking": False,
+                "recommended_model_tier": "2",
+                "risk_level": "medium",
+                "reason": "os_automation_request",
+                "cost_policy": {"allowed": True},
+            }
         # 指挥官模式：ENABLE_CONDUCTOR 开关启用时，由 LLM 指挥官替代规则编排
         use_conductor = (
             self.conductor_service is not None
             and self.orchestration_feature_flag_service is not None
             and self.orchestration_feature_flag_service.is_enabled("ENABLE_CONDUCTOR")
         )
-        if use_conductor:
+        if routing_decision is None and use_conductor:
             try:
                 conductor_plan = self.conductor_service.plan(
                     req.query.data,
@@ -1135,15 +1380,16 @@ class AssistantAgentService(BaseService):
             except Exception as exc:
                 logger.warning("指挥官决策失败，直接走 direct_answer 路径: %s", exc)
                 # 直接走 direct_answer，跳过 orchestrator（避免又调一次 LLM 烧 token）
-                routing_decision = {
-                    "intent": "fallback",
-                    "execution_mode": "direct_answer",
-                    "complexity": "simple",
-                    "needs_tools": False,
-                    "needs_agent": False,
-                    "risk_level": "safe",
-                    "cost_policy": {"allowed": True},
-                }
+                if not os_automation_request:
+                    routing_decision = {
+                        "intent": "fallback",
+                        "execution_mode": "direct_answer",
+                        "complexity": "simple",
+                        "needs_tools": False,
+                        "needs_agent": False,
+                        "risk_level": "safe",
+                        "cost_policy": {"allowed": True},
+                    }
 
         if routing_decision is None and self.orchestrator_service is not None:
             try:
@@ -1172,26 +1418,6 @@ class AssistantAgentService(BaseService):
                 routing_decision.get("recommended_model_tier"),
                 routing_decision.get("risk_level"),
             )
-            # 发送指挥官决策内容到思考框（固定 id，前端更新同一个框）
-            mode_label = {
-                "direct_answer": "直接回答",
-                "single_agent": "单智能体执行",
-                "single_agent_with_tools": "调用工具执行",
-                "deep_thinking": "深度思考",
-                "multi_agent": "多智能体协作",
-                "multi_agent_parallel": "多智能体并行",
-            }.get(routing_decision.get("execution_mode", ""), routing_decision.get("execution_mode", ""))
-            decision_thought = (
-                f"指挥官决策\n"
-                f"执行模式：{mode_label}\n"
-                f"意图：{routing_decision.get('intent', '')}\n"
-                f"复杂度：{routing_decision.get('complexity', '')}\n"
-                f"原因：{routing_decision.get('reason', '')}"
-            )
-            yield self._emit_progress_sse(
-                conversation, message, decision_thought, _chat_started_at,
-            )
-
         # 记忆基座重复任务检测：同应用相似需求高频出现时建议创建定时任务
         try:
             from internal.service.task_dedup_service import TaskDedupService
@@ -1268,23 +1494,24 @@ class AssistantAgentService(BaseService):
                 )
                 return
             if execution_mode in ("multi_agent", "multi_agent_parallel", "multi_agent_sequential"):
-                # MultiAgent 执行路径已下线（_stream_multi_agent 方法已删除），
-                # 指挥官应输出 single_agent/direct_answer，此处仅作防御性降级。
-                logger.warning(
-                    "MultiAgent 执行路径已下线，降级为 single_agent: execution_mode=%s",
+                logger.info(
+                    "多智能体执行开始 execution_mode=%s agents=%s",
                     execution_mode,
+                    len((routing_decision.get("task_plan_summary") or {}).get("agents") or []),
                 )
-                routing_decision = {**routing_decision, "execution_mode": "single_agent"}
                 try:
-                    yield from self._stream_single_agent(
-                        req, account, conversation, message, routing_decision, llm, tools, history, False,
+                    yield from self._stream_multi_agent(
+                        req, account, conversation, message, routing_decision, llm, tools, history,
                         distant_summary=distant_summary,
                         invoke_from=invoke_from,
+                        cancel_token=cancel_token,
                     )
                 finally:
                     self._terminate_agent_if_running(message.id, account.id)
+                    collected_thoughts = getattr(message, "_collected_thoughts", None) or []
                     self._persist_assistant_thoughts(
-                        account, assistant_agent_id, conversation, message, {}, routing_decision,
+                        account, assistant_agent_id, conversation, message,
+                        collected_thoughts, routing_decision,
                         _chat_started_at, resolved_model_name=resolved_model_name,
                     )
                 return
@@ -1319,6 +1546,7 @@ class AssistantAgentService(BaseService):
                 req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
                 distant_summary=distant_summary,
                 invoke_from=invoke_from,
+                cancel_token=cancel_token,
             )
         finally:
             # 客户端断开（GeneratorExit）或正常结束时终止后台 agent 线程，避免空烧 token
@@ -1699,12 +1927,39 @@ class AssistantAgentService(BaseService):
         self._set_cached_introduction(account.id, fingerprint, cache_data, ttl=3600)
 
     @classmethod
-    def stop_chat(cls, task_id: UUID, account: Account) -> None:
+    def stop_chat(
+        cls,
+        task_id: UUID,
+        account: Account,
+        service: "AssistantAgentService | None" = None,
+    ) -> None:
         """根据传递的任务id+账号停止某次响应会话"""
         AgentQueueManager.set_stop_flag(
             task_id, InvokeFrom.ASSISTANT_AGENT.value, account.id
         )
         cls._cancel_active_token(task_id)
+        if service is None and has_app_context():
+            try:
+                from app.http.module import injector
+
+                service = injector.get(cls)
+            except Exception:
+                service = None
+        if service is not None:
+            try:
+                message = service.get(Message, task_id)
+                if message is not None and message.created_by == account.id:
+                    if not (message.answer or "").strip():
+                        message.answer = _INTERRUPTED_ANSWER_MARKER
+                    if message.status != MessageStatus.STOP.value:
+                        message.status = MessageStatus.STOP.value
+                    service.db.session.commit()
+            except Exception:
+                logger.warning(
+                    "stop_chat 写入打断上下文标记失败: task_id=%s",
+                    task_id,
+                    exc_info=True,
+                )
 
     @classmethod
     def register_cancel_token(cls, task_id: UUID, token: CancelToken) -> CancelToken:

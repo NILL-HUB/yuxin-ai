@@ -78,3 +78,4 @@ class AgentState(MessagesState):
     long_term_memory: str  # 长期记忆
     pending_skill_prompts: list[dict[str, Any]]  # 已按需加载、等待在本轮注入的 prompt-only skill 正文
     user_memory: str  # 用户长期记忆召回内容
+    authorized_tools: list[str] = Field(default_factory=list)  # 用户本轮已授权的高风险工具

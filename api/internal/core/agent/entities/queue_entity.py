@@ -29,8 +29,10 @@ class QueueEvent(str, Enum):
     # 与 QueueEvent.BILLING_* 同级，属于编排层事件，由 SingleAgentExecutor / MultiAgentExecutor 在入口发出
     ORCHESTRATOR_ROUTING = "orchestrator_routing"
     ORCHESTRATOR_REJECT = "orchestrator_reject"
+    TOOL_CONFIRMATION_REQUIRED = "tool_confirmation_required"
     # 子任务进度事件（多智能体 DAG 执行专用）
     SUBTASK_STARTED = "subtask_started"
+    SUBTASK_RUNNING = "subtask_running"
     SUBTASK_COMPLETED = "subtask_completed"
 
 
@@ -43,6 +45,9 @@ class AgentThought(BaseModel):
     event: QueueEvent
     thought: str = ""  # LLM推理内容
     observation: str = ""  # 观察内容
+    confirmation_id: str = ""  # 高风险工具确认记录ID
+    confirmation_status: str = ""  # 确认记录状态：pending/confirmed/cancelled
+    execution_summary: str = ""  # 预览计划或执行结果摘要
 
     # 工具相关的字段
     tool: str = ""  # 调用工具的名字

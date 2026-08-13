@@ -19,6 +19,10 @@ from internal.core.agent.entities.agent_entity import (
 from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.entities.tool_policy_entity import ToolPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
+from internal.core.agent.adapters.hermes.midturn_redirect import (
+    consume_redirect as _consume_redirect,
+    build_redirect_decision as _build_redirect_decision,
+)
 from internal.core.agent.usage_utils import normalize_usage_text
 from internal.exception import FailException
 from .base_agent import BaseAgent
@@ -31,6 +35,8 @@ class FunctionCallAgent(BaseAgent):
     """基于函数/工具调用的智能体"""
 
     _PROMPT_ONLY_SKILL_LOADER_PREFIX: ClassVar[str] = "skill_prompt__"
+    _CONFIRMATION_WAIT_SECONDS: ClassVar[int] = 600
+    _CONFIRMATION_POLL_INTERVAL_SECONDS: ClassVar[float] = 1.0
 
     def _build_agent(self) -> CompiledStateGraph:
         """构建LangGraph图结构编译程序"""
@@ -173,6 +179,28 @@ class FunctionCallAgent(BaseAgent):
         llm = self.llm
         pending_skill_prompts = self._deduplicate_pending_skill_prompts(state.get("pending_skill_prompts") or [])
         llm_messages = self._inject_pending_skill_prompts(state["messages"], pending_skill_prompts)
+        try:
+            from internal.core.agent.adapters.hermes.midturn_redirect import (
+                consume_request_redirect,
+            )
+
+            redirect_message = consume_request_redirect(str(state["task_id"]))
+            if redirect_message:
+                llm_messages = list(llm_messages) + [
+                    HumanMessage(content=redirect_message)
+                ]
+                self.agent_queue_manager.publish(
+                    state["task_id"],
+                    AgentThought(
+                        id=uuid.uuid4(),
+                        task_id=state["task_id"],
+                        event=QueueEvent.AGENT_ACTION.value,
+                        observation=f"已收到执行中纠正，将按新指令重新规划：{redirect_message}",
+                        latency=0,
+                    ),
+                )
+        except Exception:
+            logger.exception("注入 mid-turn redirect 失败")
 
         # 3.检测大语言模型实例是否有bind_tools方法，如果没有则不绑定，如果有还需要检测tools是否为空，不为空则绑定
         if (
@@ -364,10 +392,13 @@ class FunctionCallAgent(BaseAgent):
             for item in pending_skill_prompts
             if isinstance(item, dict)
         }
+        loaded_skill_prompt_keys = set(state.get("loaded_skill_prompt_keys") or [])
+        authorized_tools = list(state.get("authorized_tools") or [])
         for tool_call in tool_calls:
             # 4.创建智能体动作事件id并记录开始时间
             id = uuid.uuid4()
             start_at = time.perf_counter()
+            confirmation_id = ""
 
             try:
                 # 5.获取工具并调用工具
@@ -394,46 +425,166 @@ class FunctionCallAgent(BaseAgent):
                     continue
 
                 if tool_policy.is_high_risk_tool(tool_call["name"]):
-                    confirmation = self._create_tool_confirmation(
-                        state, tool_call, tool_policy,
+                    account_id = (
+                        getattr(self.agent_config, "user_id", None)
+                        or getattr(state, "user_id", None)
+                        or getattr(state, "account_id", None)
                     )
-                    if confirmation is not None:
-                        tool_result = (
-                            f"高风险工具 {tool_call['name']} 需要用户确认后才能执行。"
-                            f"确认ID: {confirmation.get('id', '')}"
+                    host_workflow_tool = tool_call["name"] in {
+                        "run_os_task",
+                        "os_file_task",
+                    }
+                    already_authorized = (
+                        tool_call["name"] in authorized_tools
+                        or (
+                            host_workflow_tool
+                            and self._is_tool_authorized(account_id, tool_call["name"])
+                        )
+                    )
+                    if not already_authorized and self._smart_approval_allows(
+                        tool_call["name"],
+                        tool_input=tool_call.get("args") or {},
+                    ):
+                        authorized_tools.append(tool_call["name"])
+                        already_authorized = True
+                    if not already_authorized:
+                        confirmation = self._create_tool_confirmation(
+                            state,
+                            tool_call,
+                            tool_policy,
+                        )
+                        if confirmation is None:
+                            # 确认机制创建失败时阻止执行，不允许高风险工具绕过确认直接执行
+                            tool_result = f"高风险工具 {tool_call['name']} 确认机制不可用，已阻止执行"
+                            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                                id=id,
+                                task_id=state["task_id"],
+                                event=QueueEvent.AGENT_ACTION.value,
+                                observation=tool_result,
+                                tool=tool_call["name"],
+                                tool_input=tool_call["args"],
+                                latency=(time.perf_counter() - start_at),
+                            ))
+                            messages.append(ToolMessage(
+                                tool_call_id=tool_call["id"],
+                                content=tool_result,
+                                name=tool_call["name"],
+                            ))
+                            continue
+                        confirmation_id = str(confirmation.get("id", ""))
+                        summary = self._build_confirmation_summary(
+                            tool_call["name"],
+                            tool_call["args"],
                         )
                         self.agent_queue_manager.publish(state["task_id"], AgentThought(
                             id=id,
                             task_id=state["task_id"],
-                            event="tool_confirmation_required",
-                            observation=tool_result,
+                            event=QueueEvent.TOOL_CONFIRMATION_REQUIRED.value,
+                            thought=(
+                                f"高风险工具 {tool_call['name']} 需要用户授权后才能执行。"
+                            ),
+                            observation=(
+                                f"高风险工具 {tool_call['name']} 需要用户授权后才能执行。"
+                                f"确认ID: {confirmation_id}。"
+                                "授权后 Agent 才会继续执行，并会在执行前给出可读计划。"
+                            ),
                             tool=tool_call["name"],
                             tool_input=tool_call["args"],
+                            confirmation_id=confirmation_id,
+                            confirmation_status="pending",
+                            execution_summary=summary,
                             latency=(time.perf_counter() - start_at),
                         ))
-                        messages.append(ToolMessage(
-                            tool_call_id=tool_call["id"],
-                            content=tool_result,
-                            name=tool_call["name"],
-                        ))
-                        continue
-                    # 确认机制创建失败时阻止执行，不允许高风险工具绕过确认直接执行
-                    tool_result = f"高风险工具 {tool_call['name']} 确认机制不可用，已阻止执行"
-                    self.agent_queue_manager.publish(state["task_id"], AgentThought(
-                        id=id,
-                        task_id=state["task_id"],
-                        event=QueueEvent.AGENT_ACTION.value,
-                        observation=tool_result,
-                        tool=tool_call["name"],
-                        tool_input=tool_call["args"],
-                        latency=(time.perf_counter() - start_at),
-                    ))
-                    messages.append(ToolMessage(
-                        tool_call_id=tool_call["id"],
-                        content=tool_result,
-                        name=tool_call["name"],
-                    ))
-                    continue
+                        decision = self._wait_for_confirmation(
+                            confirmation_id,
+                            account_id=account_id,
+                        )
+                        if decision == "cancelled":
+                            tool_result = (
+                                f"高风险工具 {tool_call['name']} 已被用户取消，未执行。"
+                            )
+                            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                                id=id,
+                                task_id=state["task_id"],
+                                event=QueueEvent.TOOL_CONFIRMATION_REQUIRED.value,
+                                thought="用户已取消工具执行。",
+                                observation=tool_result,
+                                tool=tool_call["name"],
+                                tool_input=tool_call["args"],
+                                confirmation_id=confirmation_id,
+                                confirmation_status="cancelled",
+                                execution_summary="用户已取消执行",
+                                latency=(time.perf_counter() - start_at),
+                            ))
+                            messages.append(ToolMessage(
+                                tool_call_id=tool_call["id"],
+                                content=tool_result,
+                                name=tool_call["name"],
+                            ))
+                            continue
+                        if decision == "timeout":
+                            self._update_confirmation_summary(
+                                confirmation_id,
+                                "等待用户确认超时，已按安全默认取消执行",
+                                status="cancelled",
+                            )
+                            tool_result = (
+                                f"高风险工具 {tool_call['name']} 等待用户确认超时，"
+                                "已按安全默认取消执行。"
+                            )
+                            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                                id=id,
+                                task_id=state["task_id"],
+                                event=QueueEvent.TOOL_CONFIRMATION_REQUIRED.value,
+                                thought="等待用户确认超时，已按安全默认取消。",
+                                observation=tool_result,
+                                tool=tool_call["name"],
+                                tool_input=tool_call["args"],
+                                confirmation_id=confirmation_id,
+                                confirmation_status="cancelled",
+                                execution_summary="等待用户确认超时，已按安全默认取消执行",
+                                latency=(time.perf_counter() - start_at),
+                            ))
+                            messages.append(ToolMessage(
+                                tool_call_id=tool_call["id"],
+                                content=tool_result,
+                                name=tool_call["name"],
+                            ))
+                            continue
+                        if decision.startswith("redirect:"):
+                            # mid-turn redirect：不执行原动作，把纠正消息注入当前轮。
+                            redirect_message = decision[len("redirect:"):]
+                            state["messages"] = list(state.get("messages") or []) + [
+                                HumanMessage(content=redirect_message)
+                            ]
+                            tool_result = (
+                                f"已收到用户执行中纠正，取消本次 {tool_call['name']} 执行，"
+                                "将按新指令重新规划。"
+                            )
+                            self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                                id=id,
+                                task_id=state["task_id"],
+                                event=QueueEvent.AGENT_ACTION.value,
+                                observation=tool_result,
+                                tool=tool_call["name"],
+                                tool_input=tool_call["args"],
+                                confirmation_id=confirmation_id,
+                                confirmation_status="cancelled",
+                                execution_summary=redirect_message,
+                                latency=(time.perf_counter() - start_at),
+                            ))
+                            messages.append(ToolMessage(
+                                tool_call_id=tool_call["id"],
+                                content=tool_result,
+                                name=tool_call["name"],
+                            ))
+                            continue
+                        authorized_tools.append(tool_call["name"])
+                        if host_workflow_tool:
+                            # 授权后先进入只读扫描，由 Agent 给出清理方案并反问用户，
+                            # 不在授权这一步直接执行删除/清理。
+                            tool_call["args"] = dict(tool_call.get("args") or {})
+                            tool_call["args"]["mode"] = "preview"
 
                 tool_result = tool.invoke(tool_call["args"])
             except LookupError as e:
@@ -455,15 +606,34 @@ class FunctionCallAgent(BaseAgent):
                 public_tool_result, prompt_lease = self._build_prompt_only_skill_loader_result(tool_result)
                 if prompt_lease:
                     prompt_key = self._prompt_only_skill_identity_key(prompt_lease)
-                    if prompt_key and prompt_key not in pending_prompt_keys:
+                    if (
+                        prompt_key
+                        and prompt_key not in pending_prompt_keys
+                        and prompt_key not in loaded_skill_prompt_keys
+                    ):
                         pending_skill_prompts.append(prompt_lease)
                         pending_prompt_keys.add(prompt_key)
+                        loaded_skill_prompt_keys.add(prompt_key)
 
             serialized_tool_result = (
                 public_tool_result
                 if isinstance(public_tool_result, str)
                 else json.dumps(public_tool_result, ensure_ascii=False, default=str)
             )
+            user_visible_tool_result = self._build_user_visible_tool_result(
+                tool_call["name"],
+                serialized_tool_result,
+            )
+
+            if tool_call["name"] == "run_os_task" and confirmation_id:
+                try:
+                    result_payload = json.loads(serialized_tool_result)
+                except Exception:
+                    result_payload = {}
+                summary = str(
+                    result_payload.get("summary") or serialized_tool_result or "执行完成"
+                )
+                self._update_confirmation_summary(confirmation_id, summary)
 
             # 7.将工具消息添加到消息列表中
             messages.append(ToolMessage(
@@ -488,9 +658,10 @@ class FunctionCallAgent(BaseAgent):
                 id=id,
                 task_id=state["task_id"],
                 event=event,
-                observation=serialized_tool_result,
+                observation=user_visible_tool_result,
                 tool=tool_call["name"],
                 tool_input=tool_call["args"],
+                confirmation_id=confirmation_id or "",
                 latency=(time.perf_counter() - start_at),
             ))
 
@@ -504,10 +675,134 @@ class FunctionCallAgent(BaseAgent):
         return {
             "messages": messages,
             "pending_skill_prompts": pending_skill_prompts,
+            "authorized_tools": authorized_tools,
+            "loaded_skill_prompt_keys": list(loaded_skill_prompt_keys),
         }
 
     @staticmethod
+    def _smart_approval_allows(
+        tool_name: str,
+        tool_input: dict[str, Any] | None = None,
+    ) -> bool:
+        """命中管理员智能审批策略时自动放行高风险工具（daemon 危险命令除外）。"""
+        try:
+            from app.http.app import injector
+            from internal.service.smart_approval_policy_service import (
+                SmartApprovalPolicyService,
+            )
+
+            return injector.get(SmartApprovalPolicyService).should_auto_approve(
+                tool_name,
+                tool_input=tool_input,
+            )
+        except Exception:
+            logger.exception("智能审批策略判断失败，按需确认处理")
+            return False
+
+    @staticmethod
+    def _build_confirmation_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
+        """生成用户可见的授权摘要，避免把原始 Markdown/JSON 直接铺到卡片上。"""
+        if tool_name == "run_os_task":
+            task = str((tool_input or {}).get("task", "") or "").strip()
+            if task:
+                return (
+                    f"请求授权在宿主机执行系统自动化任务：{task}。"
+                    "授权后我会先做只读扫描并整理方案，不会直接删除或修改文件。"
+                )
+            return (
+                "请求授权在宿主机执行系统自动化任务。"
+                "授权后我会先做只读扫描并整理方案，不会直接删除或修改文件。"
+            )
+        if tool_name == "os_file_task":
+            operation = str((tool_input or {}).get("op") or "patch")
+            if operation == "read":
+                return "请求授权在宿主机安全目录内读取文件，仅返回文件内容。"
+            return (
+                "请求授权在宿主机安全目录内应用 V4A 补丁修改文件。"
+                "授权后我会先校验补丁并展示影响，不会在未确认前直接修改文件。"
+            )
+        return f"请求授权调用高风险工具 {tool_name}，授权后 Agent 才会继续执行。"
+
+    @staticmethod
+    def _build_user_visible_tool_result(tool_name: str, serialized_result: str) -> str:
+        """工具结果只展示给用户可读摘要，避免把 approval_token/原始命令泄露到思考区。"""
+        if tool_name not in {"run_os_task", "os_file_task"}:
+            return serialized_result
+        try:
+            result = json.loads(serialized_result)
+        except Exception:
+            return serialized_result
+        if not isinstance(result, dict):
+            return serialized_result
+        summary = str(result.get("summary", "") or "")
+        if not summary:
+            return json.dumps(
+                {"ok": bool(result.get("ok")), "error": result.get("error", "")},
+                ensure_ascii=False,
+            )
+        return FunctionCallAgent._strip_markdown_artifacts(summary)
+
+    @staticmethod
+    def _strip_markdown_artifacts(text: str) -> str:
+        """把工具结果里的 Markdown 装饰符去掉，避免用户思考区出现 **/```/- 等噪音。"""
+        lines = []
+        for raw_line in str(text or "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            line = re.sub(r"^#{1,6}\s*", "", line)
+            line = re.sub(r"^[-*+]\s+", "", line)
+            line = re.sub(r"^\d+\.\s+", "", line)
+            line = line.replace("**", "").replace("`", "")
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _is_tool_authorized(
+        self,
+        account_id,
+        tool_name: str,
+        *,
+        max_age_seconds: int = 1800,
+    ) -> bool:
+        """检查当前账号近期是否已确认过该高风险工具授权。"""
+        if not account_id:
+            return False
+        try:
+            from datetime import UTC, datetime
+
+            from sqlalchemy import desc
+
+            from internal.extension.database_extension import db
+            from internal.model.tool_confirmation import ToolConfirmation
+
+            with db.sync_auto_commit() as session:
+                expire_all = getattr(session, "expire_all", None)
+                if callable(expire_all):
+                    expire_all()
+                confirmation = (
+                    session.query(ToolConfirmation)
+                    .filter_by(
+                        owner_account_id=account_id,
+                        tool_name=tool_name,
+                        status="confirmed",
+                    )
+                    .order_by(desc(ToolConfirmation.updated_at))
+                    .first()
+                )
+                if confirmation is None:
+                    return False
+                updated_at = confirmation.updated_at or confirmation.created_at
+                if updated_at is None:
+                    return True
+                now = datetime.now(UTC).replace(tzinfo=None)
+                age = now - updated_at
+                return age.total_seconds() <= max_age_seconds
+        except Exception:
+            logger.warning("检查工具授权状态失败: tool=%s", tool_name, exc_info=True)
+            return False
+
     def _create_tool_confirmation(
+        self,
         state: AgentState,
         tool_call: dict[str, Any],
         tool_policy: ToolPolicy,
@@ -516,25 +811,115 @@ class FunctionCallAgent(BaseAgent):
             from internal.extension.database_extension import db
             from internal.model.tool_confirmation import ToolConfirmation
 
-            session = db.sync_session()
             tool_name = tool_call.get("name", "")
             is_sensitive = tool_name in {"send_email", "send_sms"}
             risk_level = "sensitive" if is_sensitive else "high"
-            account_id = getattr(state, "user_id", None) or getattr(state, "account_id", None)
-            confirmation = ToolConfirmation(
-                owner_account_id=account_id,
-                tool_name=tool_name,
-                risk_level=risk_level,
-                tool_input=tool_call.get("args", {}),
-                status="pending",
-                spent_credits=0,
-                reason=f"Agent 调用高风险工具 {tool_name}，等待用户确认",
+            account_id = (
+                getattr(self.agent_config, "user_id", None)
+                or getattr(state, "user_id", None)
+                or getattr(state, "account_id", None)
             )
-            session.add(confirmation)
-            session.commit()
+            tool_input = dict(tool_call.get("args", {}) or {})
+            with db.sync_auto_commit() as session:
+                confirmation = ToolConfirmation(
+                    owner_account_id=account_id,
+                    tool_name=tool_name,
+                    risk_level=risk_level,
+                    tool_input=tool_input,
+                    status="pending",
+                    spent_credits=0,
+                    reason=f"Agent 调用高风险工具 {tool_name}，等待用户确认",
+                )
+                session.add(confirmation)
             return {"id": str(confirmation.id), "status": confirmation.status}
         except Exception:
+            logger.exception("创建高风险工具确认记录失败: tool=%s", tool_call.get("name", ""))
             return None
+
+    def _wait_for_confirmation(
+        self,
+        confirmation_id: str,
+        *,
+        account_id=None,
+        timeout_seconds: float | None = None,
+        poll_interval: float | None = None,
+    ) -> str:
+        """挂起等待用户在确认卡片上选择，超时按安全默认取消。
+
+        pending=等待中，confirmed=用户已确认，cancelled=用户已取消，
+        timeout=等待超时（调用方按安全默认处理）。
+        """
+        from internal.extension.database_extension import db
+        from internal.model.tool_confirmation import ToolConfirmation
+
+        deadline = time.monotonic() + (
+            timeout_seconds
+            if timeout_seconds is not None
+            else self._CONFIRMATION_WAIT_SECONDS
+        )
+        interval = (
+            poll_interval
+            if poll_interval is not None
+            else self._CONFIRMATION_POLL_INTERVAL_SECONDS
+        )
+        while True:
+            status = "pending"
+            try:
+                with db.sync_auto_commit() as session:
+                    # 会话配置了 expire_on_commit=False，同一 scoped session 复用时会
+                    # 命中旧身份映射；强制过期后再查询，才能读到用户刚提交的确认状态。
+                    expire_all = getattr(session, "expire_all", None)
+                    if callable(expire_all):
+                        expire_all()
+                    query = session.query(ToolConfirmation).filter_by(id=confirmation_id)
+                    if account_id is not None:
+                        query = query.filter_by(owner_account_id=account_id)
+                    confirmation = query.one_or_none()
+                    if confirmation is not None:
+                        status = str(confirmation.status or "pending")
+            except Exception:
+                logger.warning("等待工具确认时查询记录失败", exc_info=True)
+
+            if status != "pending":
+                return status
+            redirect_message = _consume_redirect(confirmation_id)
+            if redirect_message:
+                self._update_confirmation_summary(
+                    confirmation_id,
+                    "用户发送了执行中纠正，已取消本次工具执行并重新规划",
+                    status="cancelled",
+                )
+                return _build_redirect_decision(redirect_message)
+            if time.monotonic() >= deadline:
+                return "timeout"
+            time.sleep(interval)
+
+    def _update_confirmation_summary(
+        self,
+        confirmation_id: str,
+        summary: str,
+        *,
+        status: str = "",
+    ) -> None:
+        """把执行结果/超时状态写回确认记录，供轮询与审计使用。"""
+        try:
+            from internal.extension.database_extension import db
+            from internal.model.tool_confirmation import ToolConfirmation
+
+            with db.sync_auto_commit() as session:
+                confirmation = (
+                    session.query(ToolConfirmation)
+                    .filter_by(id=confirmation_id)
+                    .one_or_none()
+                )
+                if confirmation is None:
+                    return
+                if summary:
+                    confirmation.execution_summary = summary
+                if status:
+                    confirmation.status = status
+        except Exception:
+            logger.warning("回写工具确认结果失败: confirmation=%s", confirmation_id, exc_info=True)
 
     @staticmethod
     def _build_tool_not_found_result(tool_call_name: str, tools_by_name: dict[str, Any]) -> str:

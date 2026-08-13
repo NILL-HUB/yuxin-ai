@@ -102,6 +102,17 @@ def run_startup_sync_initialization() -> None:
         except Exception:
             logging.exception("启动时补齐公共 AI 功能配置失败")
 
+    # 启动时补齐并同步编排 Feature Flag 默认元数据
+    if os.getenv("MODE", "api") != "celery":
+        try:
+            from internal.service.orchestration_feature_flag_service import (
+                OrchestrationFeatureFlagService,
+            )
+
+            injector.get(OrchestrationFeatureFlagService).ensure_defaults()
+        except Exception:
+            logging.exception("启动时同步编排 Feature Flag 失败")
+
     # 启动时同步 prompt 模板 YAML→DB
     if os.getenv("MODE", "api") != "celery" and _is_truthy_env("PROMPT_SYNC_ENABLED", "1"):
         try:

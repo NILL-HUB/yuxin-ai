@@ -36,7 +36,6 @@ class SingleAgentExecutor:
     改造说明：
     - 通过 ``AgentTaskExecutor.event_emitter`` 回调把 ``AgentThought`` 实时推到队列
     - 在子线程中调用 ``coordinator.execute()``，主线程实时 ``yield`` SSE
-    - 入口处先把 ``routing_decision`` 作为 ``orchestrator_routing`` 事件下发，让前端可见编排决策
     - 任务完成后仍发主 thought / message 兼容旧协议，并补一个 ``agent_end`` 收尾事件
     """
 
@@ -50,6 +49,9 @@ class SingleAgentExecutor:
     user_memory: str = ""
     # 收集流式期间的 AgentThought 对象，供外层持久化（修复 reload 丢失根因）
     collected_thoughts: list = field(default_factory=list)
+    # 子任务实时状态注册表（Hermes /agents 实时状态对齐）
+    subtask_registry: object = None
+    cancel_token: object = None
 
     def execute(
         self,
@@ -63,10 +65,12 @@ class SingleAgentExecutor:
         conversation_id = str(conversation.id)
         message_id = str(message.id)
         try:
-            # 入口下发路由决策事件，让前端可见执行模式 / 模型档位 / 选中工具等
-            yield from self._emit_routing_decision_sse(routing_decision, conversation_id, message_id)
-
             plan = self._build_plan(query, execution_mode)
+            if self.subtask_registry is not None and self.cancel_token is not None:
+                try:
+                    self.subtask_registry.register_cancel_token(message_id, self.cancel_token)
+                except Exception:
+                    logger.debug("注册取消令牌失败", exc_info=True)
 
             # 通过线程 + queue.Queue 让 coordinator.execute() 在后台执行，
             # 主线程实时消费 agent.stream() 产出的 AgentThought 并 yield SSE
@@ -110,7 +114,12 @@ class SingleAgentExecutor:
                             user_memory=self.user_memory,
                             event_emitter=_event_emitter,
                         )
-                        coordinator = ExecutionCoordinatorService(executor=executor)
+                        coordinator = ExecutionCoordinatorService(
+                            executor=executor,
+                            cancel_token=self.cancel_token,
+                            subtask_registry=self.subtask_registry,
+                            request_id=message_id,
+                        )
                         results = coordinator.execute(plan)
                         sse_queue.put((_RESULT_MARKER, results))
                     except Exception as e:  # noqa: BLE001
@@ -123,7 +132,13 @@ class SingleAgentExecutor:
 
             results = None
             while True:
-                item = sse_queue.get()
+                try:
+                    item = sse_queue.get(timeout=15)
+                except queue.Empty:
+                    # 长任务（如 Codex OS 自动化 preview）执行期间持续输出心跳，
+                    # 避免 SSE 空闲超时把连接杀掉，也避免前端误以为流已中断。
+                    yield self._keepalive_sse(conversation_id, message_id)
+                    continue
                 if item is _SENTINEL:
                     break
                 if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) and item[0].startswith("__"):
@@ -187,6 +202,27 @@ class SingleAgentExecutor:
             # 补发 AGENT_END 事件，让前端能识别流结束
             yield self._agent_end_sse(conversation_id, message_id)
 
+    @staticmethod
+    def _keepalive_sse(conversation_id: str, message_id: str) -> str:
+        """长任务执行期间的进度心跳，让前端知道任务仍在运行。"""
+        payload = {
+            "id": message_id,
+            "event": QueueEvent.AGENT_THOUGHT.value,
+            "thought": "系统自动化任务执行中，请稍候，我会持续更新状态。",
+            "observation": "",
+            "tool": "",
+            "tool_input": {},
+            "answer": "",
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "latency": 0.0,
+            "total_token_count": 0,
+        }
+        return (
+            f"event: {QueueEvent.AGENT_THOUGHT.value}\n"
+            f"data:{json.dumps(payload, ensure_ascii=False)}\n\n"
+        )
+
     def _build_plan(self, query, execution_mode) -> TaskPlan:
         mode = execution_mode or ExecutionMode.SINGLE_AGENT.value
         item = TaskPlanItem(
@@ -201,42 +237,6 @@ class SingleAgentExecutor:
             execution_mode=mode,
             reason="single_agent_via_coordinator",
         )
-
-    @staticmethod
-    def _emit_routing_decision_sse(routing_decision, conversation_id, message_id):
-        """把 routing_decision 以 ``orchestrator_routing`` 事件下发，让前端展示编排决策。
-
-        兼容旧前端：如果 routing_decision 为空则不发；前端不识别该事件也会被忽略。
-        """
-        if not routing_decision:
-            return
-        # 如果 routing_decision 是对象（dataclass / pydantic），先转 dict
-        if isinstance(routing_decision, dict):
-            payload_data = dict(routing_decision)
-        else:
-            payload_data = getattr(routing_decision, "__dict__", None) or {}
-            if hasattr(routing_decision, "model_dump"):
-                try:
-                    payload_data = routing_decision.model_dump()
-                except Exception:
-                    payload_data = {}
-        payload = {
-            "id": message_id,
-            "conversation_id": conversation_id,
-            "message_id": message_id,
-            "routing": payload_data,
-            # 平铺几个关键字段方便前端直接读取
-            "execution_mode": payload_data.get("execution_mode", ""),
-            "intent": payload_data.get("intent", ""),
-            "complexity": payload_data.get("complexity", ""),
-            "recommended_model_tier": payload_data.get("recommended_model_tier", ""),
-            "risk_level": payload_data.get("risk_level", ""),
-            "needs_deep_thinking": payload_data.get("needs_deep_thinking", False),
-            "needs_tools": payload_data.get("needs_tools", False),
-            "needs_agent": payload_data.get("needs_agent", False),
-            "needs_multi_agent": payload_data.get("needs_multi_agent", False),
-        }
-        yield f"event: {QueueEvent.ORCHESTRATOR_ROUTING.value}\ndata:{json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
     @staticmethod
     def _pick_answer(results) -> str:
@@ -289,6 +289,9 @@ class SingleAgentExecutor:
             "observation": observation,
             "tool": tool_name,
             "tool_input": tool_input if isinstance(tool_input, dict) else {},
+            "confirmation_id": str(getattr(thought, "confirmation_id", "") or ""),
+            "confirmation_status": str(getattr(thought, "confirmation_status", "") or ""),
+            "execution_summary": str(getattr(thought, "execution_summary", "") or ""),
             "answer": answer,
             "conversation_id": conversation_id,
             "message_id": message_id,

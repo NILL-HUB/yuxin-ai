@@ -31,6 +31,7 @@ class TokenBufferMemory:
     DISTANT_SUMMARY_TOKENS: ClassVar[int] = 1000
     CONTEXT_TOKEN_RATIO: ClassVar[float] = 0.3
     DEFAULT_MODEL_MAX_TOKENS: ClassVar[int] = 8192
+    GUARANTEED_USER_MESSAGE_TAIL: ClassVar[int] = 3
 
     # 智能压缩开关：超预算时优先用 LLM 压缩早期消息，而非直接丢弃
     ENABLE_SMART_COMPRESSION: ClassVar[bool] = True
@@ -219,16 +220,25 @@ class TokenBufferMemory:
         messages: list[AnyMessage],
         max_tokens: int,
     ) -> tuple[list[AnyMessage], str]:
-        """智能压缩：超预算时用 LLM 压缩最早的消息，返回 (保留消息, 压缩摘要)。
+        """智能压缩：超预算时用 LLM 压缩最早的一部分消息，返回 (保留消息, 压缩摘要)。
 
-        LLM 不可用或压缩失败时返回 (原消息, "")，由调用方回退到原截断逻辑。
+        逐轮摊销：每轮只压缩最早约 1/3 的消息（至少 2 条），剩余消息留给后续轮次，
+        避免单轮一次压缩整个历史。LLM 不可用或压缩失败时返回 (原消息, "")，
+        由调用方回退到原截断逻辑。
         """
         try:
             from internal.core.memory.context_compressor import ContextCompressor
 
             compressor = ContextCompressor()
             token_counter = self._count_messages_tokens
-            return compressor.compress_messages(messages, max_tokens, token_counter)
+            batch = max(2, len(messages) // 3)
+            prefix, rest = messages[:batch], messages[batch:]
+            compressed_prefix, summary = compressor.compress_messages(
+                prefix, max_tokens, token_counter
+            )
+            if not compressed_prefix:
+                return list(rest), summary
+            return list(compressed_prefix) + list(rest), summary
         except Exception:
             logger.warning("智能压缩初始化失败，回退到原截断逻辑", exc_info=True)
             return messages, ""
@@ -236,11 +246,16 @@ class TokenBufferMemory:
     def _trim_recent_messages(self, messages: list[AnyMessage], max_tokens: int) -> list[AnyMessage]:
         if not messages:
             return []
+        protected = self._protected_user_suffix(
+            messages, self.GUARANTEED_USER_MESSAGE_TAIL
+        )
+        protected_tokens = self._count_messages_tokens(protected)
+        effective_max = max(max_tokens, protected_tokens)
         if self.model_instance is not None:
             try:
                 return trim_messages(
                     messages=messages,
-                    max_tokens=max_tokens,
+                    max_tokens=effective_max,
                     token_counter=self.model_instance,
                     strategy="last",
                     start_on="human",
@@ -248,14 +263,37 @@ class TokenBufferMemory:
                 )
             except NotImplementedError:
                 pass
-        return trim_messages(
+        trimmed = trim_messages(
             messages=messages,
-            max_tokens=max_tokens,
+            max_tokens=effective_max,
             token_counter=self._fallback_token_counter,
             strategy="last",
             start_on="human",
             end_on="ai",
         )
+        human_count = sum(
+            1 for message in trimmed if isinstance(message, HumanMessage)
+        )
+        if human_count < self.GUARANTEED_USER_MESSAGE_TAIL:
+            return protected
+        return trimmed
+
+    @classmethod
+    def _protected_user_suffix(
+        cls,
+        messages: list[AnyMessage],
+        count: int,
+    ) -> list[AnyMessage]:
+        """从尾部收集至少 N 条用户消息（含对应 AI 回复）作为不可裁剪尾巴。"""
+        protected: list[AnyMessage] = []
+        seen = 0
+        for message in reversed(messages):
+            protected.insert(0, message)
+            if isinstance(message, HumanMessage):
+                seen += 1
+                if seen >= count:
+                    break
+        return protected
 
     def _count_text_tokens(self, text: str) -> int:
         if not text:
@@ -286,5 +324,3 @@ class TokenBufferMemory:
         except Exception:
             char_limit = max_tokens * 4
             return text[:char_limit] if len(text) > char_limit else text
-
-

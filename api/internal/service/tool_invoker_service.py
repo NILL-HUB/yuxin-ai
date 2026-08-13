@@ -9,6 +9,7 @@ from internal.entity.runtime_tool_entity import (
     RuntimeToolDescriptor,
 )
 from internal.entity.tool_inventory_entity import RiskLevel
+from internal.core.context_compression.compressor import DEFAULT_MAX_TOOL_RESULT_CHARS
 from internal.security.prompt_injection_detector import PromptInjectionDetector
 from internal.service.runtime_tool_mount_service import RuntimeToolMountService
 from internal.service.tool_invocation_audit_service import ToolInvocationAuditService
@@ -86,6 +87,7 @@ class ToolInvokerService:
 
         try:
             output = executor(request.arguments, tool)
+            output = _truncate_tool_output(output)
         except Exception as exc:
             result = self._failure(
                 request=request,
@@ -292,3 +294,13 @@ def _flatten_tool_input(tool_input: Any) -> str:
         else:
             parts.append(str(value))
     return " ".join(parts)
+
+
+def _truncate_tool_output(output: Any) -> Any:
+    """工具输出主动裁剪：字符串超阈值时保留头尾并标记截断。"""
+    if not isinstance(output, str) or len(output) <= DEFAULT_MAX_TOOL_RESULT_CHARS:
+        return output
+    head_size = int(DEFAULT_MAX_TOOL_RESULT_CHARS * 0.7)
+    tail_size = DEFAULT_MAX_TOOL_RESULT_CHARS - head_size
+    marker = f"\n...[工具结果过长，已截断，原长度 {len(output)} 字符]...\n"
+    return output[:head_size] + marker + output[-tail_size:]
