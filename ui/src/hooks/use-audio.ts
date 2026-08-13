@@ -3,6 +3,13 @@ import { Message } from '@arco-design/web-vue'
 import { computed, ref } from 'vue'
 import { i18n } from '@/i18n'
 
+export const waitForRef = async (target: { value: boolean }, timeoutMs = 10000) => {
+  const startedAt = Date.now()
+  while (target.value && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+}
+
 export const useAudioToText = () => {
   // 1.定义自定义hooks所需数据
   const loading = ref(false)
@@ -54,10 +61,11 @@ export const useTextToAudio = () => {
     message_id: string = '',
     text: string,
     onData: (event_response: Record<string, unknown>) => void,
+    sentenceStream: boolean = false,
   ) => {
     try {
       pendingCount.value += 1
-      await textToAudio(message_id, text, onData)
+      await textToAudio(message_id, text, onData, sentenceStream)
     } finally {
       pendingCount.value = Math.max(0, pendingCount.value - 1)
     }
@@ -152,91 +160,158 @@ const mergeChunks = (chunks: Uint8Array[]) => {
   return merged
 }
 
-const collectAudioBuffer = async (sessionId: number, request: TtsRequestFn) => {
-  const chunks: Uint8Array[] = []
-  let hasStreamError = false
+const mediaSource = ref<MediaSource | null>(null)
+const sourceBuffer = ref<SourceBuffer | null>(null)
+let pendingChunks: Uint8Array[] = []
 
+const clearMediaSource = () => {
+  if (sourceBuffer.value) {
+    try {
+      sourceBuffer.value.abort()
+    } catch {
+      // 忽略已关闭的 SourceBuffer
+    }
+    sourceBuffer.value = null
+  }
+  if (mediaSource.value && mediaSource.value.readyState !== 'closed') {
+    try {
+      mediaSource.value.endOfStream()
+    } catch {
+      // 已结束或状态不允许时忽略
+    }
+  }
+  mediaSource.value = null
+  pendingChunks = []
+}
+
+const appendPendingChunks = () => {
+  const buffer = sourceBuffer.value
+  if (!buffer || pendingChunks.length === 0) return
+  const merged = mergeChunks(pendingChunks)
+  pendingChunks = []
+  try {
+    buffer.appendBuffer(merged as unknown as BufferSource)
+  } catch {
+    // 浏览器可能在 update 进行中拒绝追加，丢弃这一批并继续。
+  }
+}
+
+const playAudioStream = async (sessionId: number, request: TtsRequestFn) => {
+  if (sessionId !== playSessionId.value || typeof MediaSource === 'undefined') {
+    // 降级：回退到整段收集播放，保证兼容性。
+    const chunks: Uint8Array[] = []
+    let hasStreamError = false
+    try {
+      await request((event_response) => {
+        if (sessionId !== playSessionId.value) return
+        const event = event_response?.event
+        const data = event_response?.data as { audio?: string } | undefined
+        if (event === 'tts_error') hasStreamError = true
+        if (event !== 'tts_message' && event !== 'tts_sentence') return
+        const chunk = base64ToUint8Array(data?.audio || '')
+        if (chunk && chunk.byteLength > 0) chunks.push(chunk)
+      })
+    } catch {
+      return
+    }
+    if (sessionId !== playSessionId.value || hasStreamError || chunks.length === 0) {
+      return
+    }
+    const audio = audioElement.value
+    if (!audio) return
+    const blob = new Blob([mergeChunks(chunks) as unknown as BlobPart], { type: 'audio/mpeg' })
+    audio.src = URL.createObjectURL(blob)
+    audio.currentTime = 0
+    try {
+      await audio.play()
+    } catch {
+      if (sessionId === playSessionId.value) {
+        isPlaying.value = false
+        resetActiveState()
+      }
+    }
+    return
+  }
+
+  const audio = audioElement.value
+  if (!audio) return
+  const ms = new MediaSource()
+  mediaSource.value = ms
+  audio.src = URL.createObjectURL(ms)
+  audio.currentTime = 0
+
+  await new Promise<void>((resolve) => {
+    const onOpen = () => {
+      ms.removeEventListener('sourceopen', onOpen)
+      try {
+        sourceBuffer.value = ms.addSourceBuffer('audio/mpeg')
+      } catch {
+        sourceBuffer.value = null
+      }
+      resolve()
+    }
+    ms.addEventListener('sourceopen', onOpen)
+  })
+
+  let hasStreamError = false
   try {
     await request((event_response) => {
       if (sessionId !== playSessionId.value) return
-
       const event = event_response?.event
       const data = event_response?.data as { audio?: string } | undefined
-
       if (event === 'tts_error') {
         hasStreamError = true
         return
       }
-
-      if (event !== 'tts_message') return
+      if (event !== 'tts_message' && event !== 'tts_sentence') return
       const chunk = base64ToUint8Array(data?.audio || '')
-      if (chunk && chunk.byteLength > 0) {
-        chunks.push(chunk)
+      if (!chunk || chunk.byteLength === 0) return
+      if (!sourceBuffer.value) {
+        pendingChunks.push(chunk)
+        return
+      }
+      try {
+        sourceBuffer.value.appendBuffer(chunk as unknown as BufferSource)
+      } catch {
+        pendingChunks.push(chunk)
       }
     })
   } catch {
-    if (sessionId !== playSessionId.value) return null
-    return null
+    // 流中断时按已缓冲内容播放。
   }
 
-  if (sessionId !== playSessionId.value || hasStreamError || chunks.length === 0) {
-    return null
-  }
-
-  return mergeChunks(chunks)
-}
-
-const playAudioBuffer = async (audioBuffer: Uint8Array, sessionId: number) => {
   if (sessionId !== playSessionId.value) return
-
-  const audio = audioElement.value
-  if (!audio) return
-
-  const audioBlob = new Blob([audioBuffer as unknown as BlobPart], { type: 'audio/mpeg' })
-  const audioUrl = URL.createObjectURL(audioBlob)
-
-  if (sessionId !== playSessionId.value) {
-    URL.revokeObjectURL(audioUrl)
+  appendPendingChunks()
+  isAudioLoaded.value = true
+  try {
+    ms.endOfStream()
+  } catch {
+    // 已结束或没有数据时忽略。
+  }
+  if (hasStreamError && pendingChunks.length === 0) {
+    isPlaying.value = false
+    resetActiveState()
     return
   }
-
-  if (audio.src && audio.src.startsWith('blob:')) {
-    URL.revokeObjectURL(audio.src)
-  }
-
-  audio.src = audioUrl
-  audio.currentTime = 0
-
   try {
     await audio.play()
   } catch {
-    if (sessionId !== playSessionId.value) return
-    isPlaying.value = false
-    resetActiveState()
+    if (sessionId === playSessionId.value) {
+      isPlaying.value = false
+      resetActiveState()
+    }
   }
-}
-
-const consumeTtsStream = async (sessionId: number, request: TtsRequestFn) => {
-  const audioBuffer = await collectAudioBuffer(sessionId, request)
-
-  if (sessionId !== playSessionId.value) return
-  isAudioLoaded.value = true
-
-  if (!audioBuffer) {
-    isPlaying.value = false
-    resetActiveState()
-    return
-  }
-
-  await playAudioBuffer(audioBuffer, sessionId)
 }
 
 const fetchMessageAudioStream = async (messageId: string, sessionId: number) => {
-  await consumeTtsStream(sessionId, (onData) => handleMessageToAudio(messageId, onData))
+  await playAudioStream(sessionId, (onData) => handleMessageToAudio(messageId, onData))
 }
 
 const fetchThoughtAudioStream = async (messageId: string, text: string, sessionId: number) => {
-  await consumeTtsStream(sessionId, (onData) => handleTextToAudio(messageId, text, onData))
+  await playAudioStream(
+    sessionId,
+    (onData) => handleTextToAudio(messageId, text, onData, true),
+  )
 }
 
 const createAudioStream = async (
@@ -268,6 +343,7 @@ const createAudioStream = async (
 
 const stopAudioStream = () => {
   playSessionId.value += 1
+  clearMediaSource()
   clearAudioElement()
   isAudioLoaded.value = false
   isPlaying.value = false

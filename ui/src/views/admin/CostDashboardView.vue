@@ -28,6 +28,8 @@ const filters = ref({
 
 const dimension = ref('user')
 const granularity = ref('day')
+const dimensionPage = ref(1)
+const DIMENSION_PAGE_SIZE = 10
 
 const overviewCards = computed(() => [
   {
@@ -93,6 +95,11 @@ const dimensionTableRows = computed(() =>
   })),
 )
 
+const pagedDimensionTableRows = computed(() => {
+  const start = (Math.max(1, dimensionPage.value) - 1) * DIMENSION_PAGE_SIZE
+  return dimensionTableRows.value.slice(start, start + DIMENSION_PAGE_SIZE)
+})
+
 const granularityOptions = computed(() => [
   { value: 'day', label: t('admin.costStats.day') },
   { value: 'hour', label: t('admin.costStats.hour') },
@@ -100,6 +107,7 @@ const granularityOptions = computed(() => [
 
 const loadData = async () => {
   loading.value = true
+  dimensionPage.value = 1
   try {
     const [overviewResult, dimensionResult, timeseriesResult] = await Promise.all([
       getCostStatsOverview(filters.value),
@@ -197,9 +205,23 @@ onMounted(() => {
       <ai-data-table
         v-if="dimensionData?.items.length"
         :columns="dimensionTableColumns"
-        :rows="dimensionTableRows"
+        :rows="pagedDimensionTableRows"
       />
       <p v-else class="py-8 text-center text-sm text-gray-400">{{ t('admin.costStats.noData') }}</p>
+      <div
+        v-if="dimensionTableRows.length > DIMENSION_PAGE_SIZE"
+        class="flex items-center justify-between gap-3 pt-4"
+      >
+        <span class="text-xs text-gray-500">
+          {{ t('admin.costStats.totalItems', { total: dimensionTableRows.length }) }}
+        </span>
+        <a-pagination
+          :current="dimensionPage"
+          :page-size="DIMENSION_PAGE_SIZE"
+          :total="dimensionTableRows.length"
+          @change="(page: number) => (dimensionPage = page)"
+        />
+      </div>
     </section>
   </div>
 </template>

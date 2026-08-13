@@ -169,6 +169,7 @@ export const QueueEvent = {
   orchestratorRouting: 'orchestrator_routing',
   orchestratorReject: 'orchestrator_reject',
   subtaskStarted: 'subtask_started',
+  subtaskRunning: 'subtask_running',
   subtaskCompleted: 'subtask_completed',
   toolConfirmationRequired: 'tool_confirmation_required',
   scheduleSuggestion: 'schedule_suggestion',

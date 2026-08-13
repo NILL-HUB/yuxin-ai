@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import OrchestrationFlagsView from '@/views/admin/OrchestrationFlagsView.vue'
+import { useAdminStore } from '@/stores/admin'
 
 const mocks = vi.hoisted(() => ({
   listAdminOrchestrationFlags: vi.fn(),
@@ -56,9 +58,9 @@ const tableStub = {
 }
 
 const switchStub = {
-  props: ['modelValue', 'loading'],
+  props: ['modelValue', 'loading', 'disabled'],
   emits: ['change', 'update:modelValue'],
-  template: '<button type="button" class="arco-switch" @click="$emit(\'change\', !modelValue)"></button>',
+  template: '<button type="button" class="arco-switch" :disabled="disabled" @click="$emit(\'change\', !modelValue)"></button>',
 }
 
 const modalStub = {
@@ -67,7 +69,23 @@ const modalStub = {
   template: '<div v-if="visible" class="confirm-modal"><slot /><button type="button" class="modal-ok-btn" @click="$emit(\'ok\')">ok</button></div>',
 }
 
-const renderView = async () => {
+const renderView = async (
+  permissions: string[] = ['orchestration_flag:read', 'orchestration_flag:update'],
+) => {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const adminStore = useAdminStore()
+  adminStore.update({
+    id: 'admin-1',
+    username: 'admin',
+    email: '',
+    name: '',
+    avatar: '',
+    status: 'active',
+    roles: ['admin'],
+    permissions,
+  })
+
   mocks.listAdminOrchestrationFlags.mockResolvedValue([
     {
       code: 'ENABLE_ORCHESTRATOR',
@@ -134,5 +152,11 @@ describe('OrchestrationFlagsView', () => {
       'ENABLE_ORCHESTRATOR',
       { enabled: false },
     )
+  })
+
+  it('disables switch when update permission is missing', async () => {
+    const wrapper = await renderView(['orchestration_flag:read'])
+
+    expect(wrapper.find('.arco-switch').attributes('disabled')).toBeDefined()
   })
 })

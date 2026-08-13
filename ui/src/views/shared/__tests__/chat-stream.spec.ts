@@ -546,6 +546,68 @@ describe('chat-stream', () => {
     expect(message.answer).toBe('')
   })
 
+  it('tool_confirmation_required 应使用确认记录 ID 而非事件 ID', () => {
+    const message = createMessage()
+    const state = createState()
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.toolConfirmationRequired,
+        data: {
+          id: 'event-uuid',
+          confirmation_id: 'confirm-123',
+          tool: 'run_os_task',
+          tool_input: { task: '清理 C 盘垃圾' },
+          execution_summary: '预览计划',
+          confirmation_status: 'pending',
+        },
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.toolConfirmationPrompt?.id).toBe('confirm-123')
+    expect(result.state.toolConfirmationPrompt?.execution_summary).toBe('预览计划')
+    expect(result.state.toolConfirmationPrompt?.status).toBe('pending')
+    expect(message.agent_thoughts).toHaveLength(0)
+  })
+
+  it('run_os_task agent_action 应把执行结果回填到确认卡片', () => {
+    const message = createMessage()
+    let state = createState()
+    state = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.toolConfirmationRequired,
+        data: {
+          confirmation_id: 'confirm-123',
+          tool: 'run_os_task',
+          tool_input: { task: '清理 C 盘垃圾' },
+          execution_summary: '预览计划',
+          confirmation_status: 'pending',
+        },
+      },
+      state,
+    ).state
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.agentAction,
+        data: {
+          id: 'action-1',
+          tool: 'run_os_task',
+          tool_input: { task: '清理 C 盘垃圾', mode: 'apply' },
+          observation: '清理完成，释放 1.2GB',
+        },
+      },
+      state,
+    )
+
+    expect(result.state.toolConfirmationPrompt?.execution_summary).toBe('清理完成，释放 1.2GB')
+  })
+
   it('initializes subtasks and taskPlan on subtask_started event', () => {
     const message = createMessage()
     const state = createState()
@@ -569,6 +631,7 @@ describe('chat-stream', () => {
             agent_id: 'agent_search',
             tools: ['search'],
             risk_level: 'safe',
+            timeout_seconds: 30,
           },
           {
             task_id: 'subtask_b',
@@ -593,6 +656,7 @@ describe('chat-stream', () => {
       title: '搜索资料',
       status: 'pending',
       agent_id: 'agent_search',
+      timeout_seconds: 30,
     })
     expect(result.state.subtasks?.[1].status).toBe('pending')
     expect(result.state.taskPlan).toEqual({
@@ -603,6 +667,59 @@ describe('chat-stream', () => {
     })
     // subtask_started 不应该污染 agent_thoughts
     expect(message.agent_thoughts).toHaveLength(0)
+  })
+
+  it('updates subtask status to running on subtask_running event', () => {
+    const message = createMessage()
+    let state = createState()
+    const startedResult = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.subtaskStarted,
+        data: {
+          id: 'msg-1',
+          message_id: 'msg-1',
+          conversation_id: 'conv-1',
+          execution_mode: 'multi_agent_parallel',
+          aggregation_strategy: 'concat',
+          reason: 'complex_query',
+          task_count: 1,
+          items: [
+            {
+              task_id: 'subtask_a',
+              title: '搜索资料',
+              description: '',
+              depends_on: [],
+              execution_order: 0,
+              agent_id: 'agent_search',
+              tools: [],
+              risk_level: 'safe',
+            },
+          ],
+        },
+      },
+      state,
+    )
+    state = startedResult.state
+
+    const result = applyChatStreamEvent(
+      message,
+      {
+        event: QueueEvent.subtaskRunning,
+        data: {
+          id: 'msg-1',
+          task_id: 'subtask_a',
+          agent_id: 'agent_search',
+          status: 'running',
+          conversation_id: 'conv-1',
+          message_id: 'msg-1',
+        },
+      },
+      state,
+    )
+
+    expect(result.didUpdate).toBe(true)
+    expect(result.state.subtasks?.[0].status).toBe('running')
   })
 
   it('updates subtask status to completed on subtask_completed event', () => {
@@ -669,6 +786,7 @@ describe('chat-stream', () => {
       answer_preview: '搜索完成，找到 3 个相关文档',
       confidence: 0.92,
       errors: [],
+      timeout_seconds: 0,
     })
   })
 

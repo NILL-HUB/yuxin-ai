@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
+import { useAdminStore } from '@/stores/admin'
 import type {
   AdminOrchestrationFlag,
   AdminOrchestrationReleaseCheck,
@@ -14,6 +15,7 @@ import {
 import { getErrorMessage } from '@/utils/error'
 
 const { t } = useI18n()
+const adminStore = useAdminStore()
 const loading = ref(false)
 const flags = ref<AdminOrchestrationFlag[]>([])
 const releaseCheck = ref<AdminOrchestrationReleaseCheck | null>(null)
@@ -93,6 +95,7 @@ const groups = computed(() => {
 const activeKeys = ref<string[]>(['poolGovernance', 'other'])
 
 const enabledCount = computed(() => flags.value.filter((f) => f.enabled).length)
+const canUpdate = computed(() => adminStore.hasPermission('orchestration_flag:update'))
 
 const groupTitle = (key: string) =>
   key === 'poolGovernance'
@@ -323,6 +326,7 @@ onMounted(loadData)
               <a-switch
                 :model-value="record.enabled"
                 :loading="loading"
+                :disabled="loading || !canUpdate"
                 @change="(val: string | number | boolean) => openConfirm(record, !!val)"
               />
             </template>

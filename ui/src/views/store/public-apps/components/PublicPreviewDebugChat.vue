@@ -7,6 +7,7 @@ import { useAudioToText } from '@/hooks/use-audio'
 import { useChatImageUpload } from '@/hooks/use-chat-image-upload'
 import { useChatQueryInput } from '@/hooks/use-chat-query-input'
 import {
+  cancelPublicAppA2aTask,
   getPublicAppA2aConversationMessages,
   sendPublicAppA2aMessage,
 } from '@/services/public-app'
@@ -61,6 +62,8 @@ type PublicStreamMessage = StreamMessage & {
 
 const messages = ref<PublicStreamMessage[]>([])
 const loading = ref(false)
+const stopLoading = ref(false)
+const taskId = ref('')
 const image_urls = ref<string[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploadFileLoading = ref(false)
@@ -230,6 +233,7 @@ const handleSubmit = async () => {
         streamState.position = streamResult.state.position
         streamState.message_id = streamResult.state.message_id
         streamState.task_id = streamResult.state.task_id
+        taskId.value = streamResult.state.task_id
         streamState.conversation_id = streamResult.state.conversation_id
         if (streamResult.state.toolConfirmationPrompt) {
           toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
@@ -245,24 +249,51 @@ const handleSubmit = async () => {
     Message.error(error instanceof Error ? error.message : t('publicApps.debug.sendFailed'))
   } finally {
     loading.value = false
+    taskId.value = ''
+  }
+}
+
+const handleStop = async () => {
+  if (!taskId.value || !loading.value) return
+  stopLoading.value = true
+  try {
+    await cancelPublicAppA2aTask(String(route.params?.app_id), taskId.value)
+  } catch {
+    Message.error(t('publicApps.debug.stopFailed'))
+  } finally {
+    stopLoading.value = false
   }
 }
 
 const handleConfirmTool = async (id: string) => {
   try {
-    await postToolConfirmationConfirm(id)
+    const response = await postToolConfirmationConfirm(id)
+    const confirmation = response?.data
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = confirmation?.status || 'confirmed'
+      toolConfirmationPrompt.value.execution_summary = confirmation?.execution_summary || ''
+    }
   } catch {
     // 确认失败时不阻塞用户体验
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+      toolConfirmationPrompt.value.execution_summary = '确认失败，请重试'
+    }
   }
-  toolConfirmationPrompt.value = null
 }
 
 const handleCancelTool = async (id: string) => {
   try {
     await postToolConfirmationCancel(id)
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+    }
   } catch {
     // 取消失败时不阻塞用户体验
   }
+}
+
+const handleDismissToolConfirmation = () => {
   toolConfirmationPrompt.value = null
 }
 
@@ -348,7 +379,23 @@ watch(
             :prompt="toolConfirmationPrompt"
             @confirm="handleConfirmTool"
             @cancel="handleCancelTool"
+            @dismiss="handleDismissToolConfirmation"
           />
+        </div>
+        <div
+          v-if="loading && taskId"
+          class="h-[50px] flex items-center justify-center"
+        >
+          <a-button
+            :loading="stopLoading"
+            class="rounded-lg px-2"
+            @click="handleStop"
+          >
+            <template #icon>
+              <icon-poweroff />
+            </template>
+            {{ t('publicApps.debug.stopResponse') }}
+          </a-button>
         </div>
         <div class="px-6 pt-4">
           <chat-composer

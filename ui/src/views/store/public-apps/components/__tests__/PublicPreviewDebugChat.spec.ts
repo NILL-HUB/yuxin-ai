@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     data: [],
   }),
   sendPublicAppA2aMessage: vi.fn().mockResolvedValue(undefined),
+  cancelPublicAppA2aTask: vi.fn().mockResolvedValue({ data: { cancelled: true } }),
   triggerFileInput: vi.fn(),
   handleFileChange: vi.fn(),
   uploadImage: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock('@/hooks/use-audio', async () => {
 vi.mock('@/services/public-app', () => ({
   getPublicAppA2aConversationMessages: mocks.getPublicAppA2aConversationMessages,
   sendPublicAppA2aMessage: mocks.sendPublicAppA2aMessage,
+  cancelPublicAppA2aTask: mocks.cancelPublicAppA2aTask,
 }))
 
 vi.mock('@/services/upload-file', () => ({

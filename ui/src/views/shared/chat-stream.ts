@@ -34,6 +34,9 @@ type StreamEventData = {
   impact_scope?: string
   rollback_strategy?: string
   audit_hint?: string
+  confirmation_id?: string
+  confirmation_status?: string
+  execution_summary?: string
   candidate_id?: string
   content?: string
   confidence?: number
@@ -81,6 +84,7 @@ export type SubtaskPlanItem = {
   agent_id: string
   tools: string[]
   risk_level: string
+  timeout_seconds?: number
 }
 
 // 子任务执行进度跟踪（subtask_started 初始化，subtask_completed 更新）
@@ -92,6 +96,10 @@ export type SubtaskProgress = {
   answer_preview?: string
   confidence?: number
   errors?: string[]
+  timeout_seconds?: number
+  last_activity_at?: number
+  stall_warning?: boolean
+  timed_out?: boolean
 }
 
 // 多智能体结果合成元数据（agent_message 事件附加字段）
@@ -220,6 +228,11 @@ const normalizeToolInput = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>
 }
 
+const extractConfirmationId = (text: unknown): string => {
+  const match = String(text ?? '').match(/确认ID:\s*([0-9a-fA-F-]{36})/)
+  return match?.[1] ?? ''
+}
+
 const buildThought = (data: StreamEventData, position: number): ChatThought => {
   return {
     id: String(data.id ?? ''),
@@ -323,6 +336,9 @@ export const applyChatStreamEvent = (
     shouldRefreshOutputParts = true
   } else if (event === QueueEvent.agentAction) {
     upsertThought(thoughts, data, nextState, { appendThought: false })
+    if (nextState.toolConfirmationPrompt && data.tool === 'run_os_task' && data.observation) {
+      nextState.toolConfirmationPrompt.execution_summary = String(data.observation)
+    }
     const observation = String(data.observation ?? '')
     const existingUrls = mergeChatArtifacts([], message.artifacts)
       .map(artifact => String(artifact.url || '').trim())
@@ -392,6 +408,7 @@ export const applyChatStreamEvent = (
       title: String(item?.title ?? ''),
       status: 'pending' as const,
       agent_id: String(item?.agent_id ?? ''),
+      timeout_seconds: Number(item?.timeout_seconds ?? 0) || 0,
     }))
     nextState.subtasks = subtasks
     nextState.taskPlan = {
@@ -400,6 +417,20 @@ export const applyChatStreamEvent = (
       reason: String(data.reason ?? ''),
       task_count: Number(data.task_count ?? 0) || 0,
     }
+    return { state: nextState, didUpdate: true }
+  } else if (event === QueueEvent.subtaskRunning) {
+    // 单个子任务开始执行：更新对应 task 状态为 running
+    const taskId = String(data.task_id ?? '')
+    const currentSubtasks = nextState.subtasks ?? []
+    nextState.subtasks = currentSubtasks.map((subtask) => {
+      if (subtask.task_id !== taskId) {
+        return subtask
+      }
+      return {
+        ...subtask,
+        status: 'running' as const,
+      }
+    })
     return { state: nextState, didUpdate: true }
   } else if (event === QueueEvent.subtaskCompleted) {
     // 单个子任务完成：更新对应 task 状态
@@ -422,11 +453,13 @@ export const applyChatStreamEvent = (
     return { state: nextState, didUpdate: true }
   } else if (event === QueueEvent.toolConfirmationRequired) {
     nextState.toolConfirmationPrompt = {
-      id: String(data.id ?? ''),
+      id: String(data.confirmation_id ?? extractConfirmationId(data.observation) ?? ''),
       tool_name: String(data.tool ?? ''),
       risk_level: (String(data.risk_level ?? 'high') as ToolConfirmationPrompt['risk_level']),
       spent_credits: Number(data.spent_credits ?? 0),
       tool_input: normalizeToolInput(data.tool_input),
+      status: (String(data.confirmation_status ?? 'pending') as ToolConfirmationPrompt['status']),
+      execution_summary: String(data.execution_summary ?? ''),
       target_system: String(data.target_system ?? ''),
       target_environment: String(data.target_environment ?? ''),
       impact_scope: String(data.impact_scope ?? ''),

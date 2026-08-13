@@ -6,7 +6,7 @@ import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
 import { useGenerateSuggestedQuestions } from '@/hooks/use-ai'
 import { useChatImageUpload } from '@/hooks/use-chat-image-upload'
-import { useAudioPlayer, useAudioToText } from '@/hooks/use-audio'
+import { useAudioPlayer, useAudioToText, waitForRef } from '@/hooks/use-audio'
 import { useChatQueryInput } from '@/hooks/use-chat-query-input'
 import {
   useDeleteConversation,
@@ -20,7 +20,12 @@ import {
   useWebAppChat,
 } from '@/hooks/use-web-app'
 import { uploadImage } from '@/services/upload-file'
-import { postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import {
+  getToolConfirmation,
+  postToolConfirmationConfirm,
+  postToolConfirmationCancel,
+  postToolConfirmationRedirect,
+} from '@/services/tool-confirmation'
 import { useAccountStore } from '@/stores/account'
 import { Message } from '@arco-design/web-vue'
 import AudioRecorder from 'js-audio-recorder'
@@ -294,6 +299,20 @@ const handleSubmit = async () => {
 
   // 11.2 检测上次提问是否结束，如果没结束不能发起新提问
   if (webAppChatLoading.value) {
+    // 工具确认等待期允许执行中纠正：把新消息作为 redirect 注入当前轮。
+    const pendingConfirmation = toolConfirmationPrompt.value
+    if (pendingConfirmation && pendingConfirmation.status !== 'confirmed' && pendingConfirmation.status !== 'cancelled') {
+      try {
+        await postToolConfirmationRedirect(pendingConfirmation.id, query.value.trim())
+        pendingConfirmation.status = 'cancelled'
+        pendingConfirmation.execution_summary = '已收到纠正，正在重新规划...'
+        query.value = ''
+        Message.success('已收到纠正，Agent 将按新指令继续')
+      } catch {
+        Message.error('发送纠正失败，请重试')
+      }
+      return
+    }
     Message.warning('上一次提问还未结束，请稍等')
     return
   }
@@ -452,19 +471,63 @@ const handleStop = async () => {
 
 const handleConfirmTool = async (id: string) => {
   try {
-    await postToolConfirmationConfirm(id)
+    const response = await postToolConfirmationConfirm(id)
+    const confirmation = response?.data
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = confirmation?.status || 'confirmed'
+      toolConfirmationPrompt.value.execution_summary = confirmation?.execution_summary || ''
+    }
+    pollToolConfirmation(id)
   } catch {
     // 确认失败时不阻塞用户体验
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+      toolConfirmationPrompt.value.execution_summary = '确认失败，请重试'
+    }
   }
-  toolConfirmationPrompt.value = null
+}
+
+const pollToolConfirmation = (id: string) => {
+  let attempts = 0
+  const timer = window.setInterval(async () => {
+    attempts += 1
+    try {
+      const response = await getToolConfirmation(id)
+      const confirmation = response?.data
+      const previewSummary = (confirmation?.tool_input as Record<string, unknown> | undefined)?.preview_summary
+      const isStillPreviewSummary = Boolean(
+        previewSummary && confirmation?.execution_summary === String(previewSummary),
+      )
+      if (
+        toolConfirmationPrompt.value &&
+        confirmation?.execution_summary &&
+        !isStillPreviewSummary
+      ) {
+        toolConfirmationPrompt.value.execution_summary = confirmation.execution_summary
+        window.clearInterval(timer)
+        return
+      }
+    } catch {
+      // 轮询失败时继续等待，不阻塞
+    }
+    if (!toolConfirmationPrompt.value || attempts >= 90) {
+      window.clearInterval(timer)
+    }
+  }, 2000)
 }
 
 const handleCancelTool = async (id: string) => {
   try {
     await postToolConfirmationCancel(id)
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+    }
   } catch {
     // 取消失败时不阻塞用户体验
   }
+}
+
+const handleDismissToolConfirmation = () => {
   toolConfirmationPrompt.value = null
 }
 
@@ -479,6 +542,11 @@ const handleSubmitQuestion = async (question: string) => {
 
 // 16.开始录音处理器
 const handleStartRecord = async () => {
+  // barge-in：开始录音即打断当前语音播报和仍在运行的 Agent 响应。
+  stopAudioStream()
+  await handleStop()
+  await waitForRef(webAppChatLoading)
+
   // 10.1 创建AudioRecorder
   recorder = new AudioRecorder()
 
@@ -505,6 +573,8 @@ const handleStopRecord = async () => {
       await handleAudioToText(audioBlob.value)
       Message.success('语音转文本成功')
       query.value = text.value
+      await handleStop()
+      await waitForRef(webAppChatLoading)
     } catch {
       Message.error('录音失败，请检查麦克风权限后重试')
     } finally {
@@ -822,6 +892,7 @@ onUnmounted(() => {
             :prompt="toolConfirmationPrompt"
             @confirm="handleConfirmTool"
             @cancel="handleCancelTool"
+            @dismiss="handleDismissToolConfirmation"
           />
         </div>
         <!-- 顶部输入框 -->

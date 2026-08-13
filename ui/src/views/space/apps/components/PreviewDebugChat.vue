@@ -16,7 +16,7 @@ import {
   useGetDebugConversationMessagesWithPage,
   useStopDebugChat,
 } from '@/hooks/use-app'
-import { useAudioPlayer, useAudioToText } from '@/hooks/use-audio'
+import { useAudioPlayer, useAudioToText, waitForRef } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
 import { postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
 import type { RoutingDecision } from '@/models/orchestration'
@@ -634,19 +634,33 @@ const handleClearConversation = async () => {
 
 const handleConfirmTool = async (id: string) => {
   try {
-    await postToolConfirmationConfirm(id)
+    const response = await postToolConfirmationConfirm(id)
+    const confirmation = response?.data
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = confirmation?.status || 'confirmed'
+      toolConfirmationPrompt.value.execution_summary = confirmation?.execution_summary || ''
+    }
   } catch {
     // 确认失败时不阻塞用户体验
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+      toolConfirmationPrompt.value.execution_summary = '确认失败，请重试'
+    }
   }
-  toolConfirmationPrompt.value = null
 }
 
 const handleCancelTool = async (id: string) => {
   try {
     await postToolConfirmationCancel(id)
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+    }
   } catch {
     // 取消失败时不阻塞用户体验
   }
+}
+
+const handleDismissToolConfirmation = () => {
   toolConfirmationPrompt.value = null
 }
 
@@ -661,6 +675,11 @@ const handleSubmitQuestion = async (question: string) => {
 
 // 10.开始录音处理器
 const handleStartRecord = async () => {
+  // barge-in：开始录音即打断当前语音播报和仍在运行的 Agent 响应。
+  stopAudioStream()
+  await handleStop()
+  await waitForRef(debugChatLoading)
+
   // 10.1 创建AudioRecorder
   recorder = new AudioRecorder()
   const currentRecorder = recorder
@@ -689,6 +708,8 @@ const handleStopRecord = async () => {
       await handleAudioToText(audioBlob.value)
       Message.success(t('appStudio.debug.audioToTextSuccess'))
       query.value = text.value
+      await handleStop()
+      await waitForRef(debugChatLoading)
     } catch (error: unknown) {
       Message.error(getErrorMessage(error, t('appStudio.debug.recordingFailed')))
     } finally {
@@ -884,11 +905,12 @@ onUnmounted(() => {
             v-if="toolConfirmationPrompt"
             class="w-full max-w-[600px] mx-auto px-6 pb-2 flex justify-center"
           >
-            <ToolConfirmationCard
-              :prompt="toolConfirmationPrompt"
-              @confirm="handleConfirmTool"
-              @cancel="handleCancelTool"
-            />
+          <ToolConfirmationCard
+            :prompt="toolConfirmationPrompt"
+            @confirm="handleConfirmTool"
+            @cancel="handleCancelTool"
+            @dismiss="handleDismissToolConfirmation"
+          />
           </div>
           <!-- 顶部输入框 -->
           <div class="px-6">

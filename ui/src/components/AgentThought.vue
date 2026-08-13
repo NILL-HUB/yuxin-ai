@@ -80,20 +80,33 @@ const {
 } = useAudioPlayer()
 
 const thoughtItems = computed(() =>
-  props.agent_thoughts.filter((item: Record<string, unknown>) =>
-    [
-      QueueEvent.longTermMemoryRecall,
-      QueueEvent.agentThought,
-      QueueEvent.datasetRetrieval,
-      QueueEvent.agentAction,
-      // agent_message（"回复"卡片）与答案气泡内容重复，不再单独渲染卡片
-    ].includes(String(item.event)) &&
-    // 过滤无实际内容的思考条目，避免渲染只有标题+耗时的空卡片。
-    // agent_action 即使观察为空也可能携带工具信息，予以保留
-    (String(
-      item.thought ?? item.content ?? item.reasoning ?? item.answer ?? item.observation ?? item.result ?? item.output ?? '',
-    ).trim() !== '' || String(item.event) === QueueEvent.agentAction),
-  ),
+  props.agent_thoughts.filter((item: Record<string, unknown>) => {
+    const event = String(item.event ?? '')
+    const tool = String(item.tool ?? '')
+    const thought = String(item.thought ?? '')
+    // 路由决策/编排观测属于管理端日志数据，不进入用户可见的思考区。
+    if (
+      tool === 'orchestrator' ||
+      thought === 'Orchestrator routing decision' ||
+      thought === '指挥官决策'
+    ) {
+      return false
+    }
+    return (
+      [
+        QueueEvent.longTermMemoryRecall,
+        QueueEvent.agentThought,
+        QueueEvent.datasetRetrieval,
+        QueueEvent.agentAction,
+        // agent_message（"回复"卡片）与答案气泡内容重复，不再单独渲染卡片
+      ].includes(event) &&
+      // 过滤无实际内容的思考条目，避免渲染只有标题+耗时的空卡片。
+      // agent_action 即使观察为空也可能携带工具信息，予以保留
+      (String(
+        item.thought ?? item.content ?? item.reasoning ?? item.answer ?? item.observation ?? item.result ?? item.output ?? '',
+      ).trim() !== '' || event === QueueEvent.agentAction)
+    )
+  }),
 )
 
 const toolCallCards = computed(() => {

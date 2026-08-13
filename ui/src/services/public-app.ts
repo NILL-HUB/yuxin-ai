@@ -110,6 +110,12 @@ export function sendPublicAppA2aMessage(
   }>>(`/public/apps/${appId}/a2a/messages`, { body: req })
 }
 
+export function cancelPublicAppA2aTask(appId: string, taskId: string) {
+  return post<BaseResponse<{ cancelled: boolean }>>(
+    `/public/apps/${appId}/a2a/tasks/${taskId}/cancel`,
+  )
+}
+
 export function getPublicAppA2aConversationMessages(appId: string, conversationId: string) {
   return get<BaseResponse<Array<{
     id: string

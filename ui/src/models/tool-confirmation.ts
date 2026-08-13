@@ -9,6 +9,8 @@ export type ToolConfirmationPrompt = {
   impact_scope?: string
   rollback_strategy?: string
   audit_hint?: string
+  status?: 'pending' | 'confirmed' | 'cancelled'
+  execution_summary?: string
 }
 
 export type ToolConfirmation = {
@@ -19,6 +21,7 @@ export type ToolConfirmation = {
   status: 'pending' | 'confirmed' | 'cancelled'
   spent_credits: number
   reason: string
+  execution_summary?: string
   created_at: string
   updated_at: string
 }

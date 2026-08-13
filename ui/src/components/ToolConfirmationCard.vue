@@ -10,6 +10,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   confirm: [id: string]
   cancel: [id: string]
+  dismiss: []
 }>()
 
 const { t } = useI18n()
@@ -27,6 +28,36 @@ const riskColor = computed(() => {
     default:
       return 'gray'
   }
+})
+
+const isDone = computed(() =>
+  props.prompt.status === 'confirmed' || props.prompt.status === 'cancelled',
+)
+
+const inputRows = computed(() => {
+  const input = props.prompt.tool_input || {}
+  return Object.entries(input)
+    .filter(([key]) => !['approval_token', 'preview_summary'].includes(key))
+    .map(([key, value]) => ({
+      key,
+      value: formatInputValue(value),
+    }))
+})
+
+const formatInputValue = (value: unknown): string => {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+const statusLabel = computed(() => {
+  if (props.prompt.status === 'confirmed') return t('toolConfirmation.confirmed')
+  if (props.prompt.status === 'cancelled') return t('toolConfirmation.cancelled')
+  return t('toolConfirmation.pending')
 })
 
 const optionalMetaRows = computed(() => {
@@ -86,6 +117,7 @@ const handleCancel = () => emit('cancel', props.prompt.id)
     <div class="aicss-tool-confirm__cost">
       <span class="aicss-tool-confirm__cost-value">{{ props.prompt.spent_credits }}</span>
       <span>{{ t('billing.usage.unit') }}</span>
+      <span class="aicss-tool-confirm__status"> · {{ statusLabel }}</span>
     </div>
 
     <dl v-if="optionalMetaRows.length > 0" class="aicss-tool-confirm__meta">
@@ -95,15 +127,32 @@ const handleCancel = () => emit('cancel', props.prompt.id)
       </div>
     </dl>
 
-    <div class="aicss-tool-confirm__input-label">{{ t('toolConfirmation.toolInput') }}</div>
-    <pre class="aicss-tool-confirm__input">{{ props.prompt.tool_input }}</pre>
+    <div v-if="inputRows.length > 0" class="aicss-tool-confirm__input-label">
+      {{ t('toolConfirmation.toolInput') }}
+    </div>
+    <div v-if="inputRows.length > 0" class="aicss-tool-confirm__input-rows">
+      <div v-for="row in inputRows" :key="row.key" class="aicss-tool-confirm__input-row">
+        <span class="aicss-tool-confirm__input-key">{{ row.key }}</span>
+        <span class="aicss-tool-confirm__input-value">{{ row.value }}</span>
+      </div>
+    </div>
 
-    <div class="aicss-tool-confirm__actions">
+    <div v-if="props.prompt.execution_summary" class="aicss-tool-confirm__result">
+      <div class="aicss-tool-confirm__result-label">{{ t('toolConfirmation.executionResult') }}</div>
+      <pre class="aicss-tool-confirm__result-text">{{ props.prompt.execution_summary }}</pre>
+    </div>
+
+    <div v-if="!isDone" class="aicss-tool-confirm__actions">
       <button ref="cancelButtonRef" type="button" class="aicss-btn aicss-btn--secondary" data-test="tool-cancel" @click="handleCancel">
         {{ t('toolConfirmation.cancel') }}
       </button>
       <button type="button" class="aicss-btn aicss-btn--danger" data-test="tool-confirm" @click="handleConfirm">
-        {{ t('toolConfirmation.confirm') }}
+        {{ t('toolConfirmation.authorize') }}
+      </button>
+    </div>
+    <div v-else class="aicss-tool-confirm__actions">
+      <button type="button" class="aicss-btn aicss-btn--secondary" data-test="tool-dismiss" @click="emit('dismiss')">
+        {{ t('toolConfirmation.dismiss') }}
       </button>
     </div>
   </div>
@@ -197,6 +246,10 @@ const handleCancel = () => emit('cancel', props.prompt.id)
   margin-right: 2px;
 }
 
+.aicss-tool-confirm__status {
+  color: var(--aicss-muted);
+}
+
 .aicss-tool-confirm__meta {
   margin: 0 0 12px;
 }
@@ -238,6 +291,63 @@ const handleCancel = () => emit('cancel', props.prompt.id)
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.aicss-tool-confirm__input-rows {
+  margin: 0 0 14px;
+  border: 1px solid var(--aicss-border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.aicss-tool-confirm__input-row {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.aicss-tool-confirm__input-row + .aicss-tool-confirm__input-row {
+  border-top: 1px solid var(--aicss-border);
+}
+
+.aicss-tool-confirm__input-key {
+  flex: none;
+  width: 110px;
+  color: var(--aicss-muted);
+  overflow-wrap: anywhere;
+}
+
+.aicss-tool-confirm__input-value {
+  min-width: 0;
+  color: var(--aicss-text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.aicss-tool-confirm__result {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--aicss-success-soft, #e8ffea);
+  border: 1px solid var(--aicss-success, #00b42a);
+}
+
+.aicss-tool-confirm__result-label {
+  margin-bottom: 6px;
+  color: var(--aicss-text);
+  font-weight: 650;
+}
+
+.aicss-tool-confirm__result-text {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--aicss-text-2);
+  font-family: var(--aicss-mono);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .aicss-tool-confirm__actions {

@@ -61,4 +61,37 @@ describe("AgentThought AICSS render", () => {
     expect(wrapper.text()).toContain("????????????????????");
     expect(wrapper.text()).toContain("create_app");
   });
+
+  it("filters orchestrator routing observability from user thought cards", () => {
+    const wrapper = mountThought({
+      agent_thoughts: [
+        {
+          id: "routing-1",
+          event: QueueEvent.agentThought,
+          thought: "Orchestrator routing decision",
+          observation: JSON.stringify({
+            intent: "tool_task",
+            execution_mode: "single_agent_with_tools",
+            recommended_model_tier: "2",
+          }),
+          tool: "orchestrator",
+          tool_input: {
+            intent: "tool_task",
+          },
+          latency: 0,
+        },
+        {
+          id: "thought-1",
+          event: QueueEvent.agentThought,
+          thought: "先检查磁盘空间，再生成清理计划",
+          latency: 1.2,
+        },
+      ],
+    });
+
+    expect(wrapper.findAll(".agent-thought-card")).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("tool_task");
+    expect(wrapper.text()).not.toContain("Orchestrator routing decision");
+    expect(wrapper.text()).toContain("先检查磁盘空间，再生成清理计划");
+  });
 });

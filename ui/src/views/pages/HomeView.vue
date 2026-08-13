@@ -3,6 +3,8 @@ import AiDynamicBackground from '@/components/AiDynamicBackground.vue'
 import AiMessage from '@/components/AiMessage.vue'
 import BillingUsageIndicator from '@/components/BillingUsageIndicator.vue'
 import ChatComposer from '@/components/ChatComposer.vue'
+import DesktopDevicePanel from '@/components/DesktopDevicePanel.vue'
+import SubtaskProgressPanel from '@/components/SubtaskProgressPanel.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
 import ScheduleSuggestionCard, { type ScheduleSuggestion } from '@/components/ScheduleSuggestionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
@@ -21,9 +23,13 @@ import {
   useGetAssistantAgentMessagesWithPage,
   useStopAssistantAgentChat,
 } from '@/hooks/use-assistant-agent'
-import { useAudioToText, useAudioPlayer } from '@/hooks/use-audio'
+import { useAudioToText, useAudioPlayer, waitForRef } from '@/hooks/use-audio'
 import { uploadImage } from '@/services/upload-file'
-import { postToolConfirmationConfirm, postToolConfirmationCancel } from '@/services/tool-confirmation'
+import {
+  getToolConfirmation,
+  postToolConfirmationConfirm,
+  postToolConfirmationCancel,
+} from '@/services/tool-confirmation'
 import { createShowcaseCase } from '@/services/showcase'
 import { getErrorMessage } from '@/utils/error'
 import { useAccountStore } from '@/stores/account'
@@ -59,6 +65,7 @@ import {
   applyChatStreamEvent,
   withChatRenderId,
   type ToolConfirmationPrompt,
+  type SubtaskProgress,
   type StreamMessage,
   type StreamState,
 } from '@/views/shared/chat-stream'
@@ -147,6 +154,8 @@ const isStreamingResponse = ref(false)
 const billingEvents = ref<BillingUsageEvent[]>([])
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
 const scheduleSuggestion = ref<ScheduleSuggestion | null>(null)
+const subtaskProgress = ref<SubtaskProgress[] | null>(null)
+const subtaskTaskPlan = ref<StreamState['taskPlan'] | null>(null)
 const route = useRoute()
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -195,7 +204,8 @@ const defaultAssistantIntroduction = computed(() => {
   ].join('\n')
 })
 const assistantIntroduction = ref('')
-const { stopAudioStream } = useAudioPlayer()
+const { startAudioStream, stopAudioStream } = useAudioPlayer()
+const voiceMode = ref(false)
 const { loadHomeIntent } = useGetHomeIntent()
 const { suggested_questions, handleGenerateSuggestedQuestions } = useGenerateSuggestedQuestions()
 const {
@@ -1125,6 +1135,8 @@ const handleSubmit = async () => {
   billingEvents.value = []
   toolConfirmationPrompt.value = null
   scheduleSuggestion.value = null
+  subtaskProgress.value = null
+  subtaskTaskPlan.value = null
   stopAudioStream()
 
   // 5.4 往消息列表中添加基础人类消息
@@ -1182,6 +1194,13 @@ const handleSubmit = async () => {
         const streamResult = applyChatStreamEvent(currentMessage, event_response, streamState)
         streamState = streamResult.state
 
+        if (streamResult.state.subtasks !== undefined) {
+          subtaskProgress.value = streamResult.state.subtasks
+        }
+        if (streamResult.state.taskPlan !== undefined) {
+          subtaskTaskPlan.value = streamResult.state.taskPlan
+        }
+
         if (event_response?.event === QueueEvent.scheduleSuggestion) {
           scheduleSuggestion.value = event_response.data as ScheduleSuggestion
         }
@@ -1236,24 +1255,71 @@ const handleSubmit = async () => {
     }, 100)
   }
 
-  // 默认不自动播放音频，用户可手动点击播放按钮
+  // 连续语音模式：回复完成后自动朗读；用户正在说话时跳过，避免朗读被打断的回复
+  if (voiceMode.value && message_id.value && !isRecording.value) {
+    await startAudioStream(message_id.value)
+  }
 }
 
 const handleConfirmTool = async (id: string) => {
   try {
-    await postToolConfirmationConfirm(id)
+    const response = await postToolConfirmationConfirm(id)
+    const confirmation = response?.data
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = confirmation?.status || 'confirmed'
+      toolConfirmationPrompt.value.execution_summary = confirmation?.execution_summary || '任务执行中，请稍候...'
+    }
+    pollToolConfirmation(id)
   } catch {
     // 确认失败时不阻塞用户体验
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+      toolConfirmationPrompt.value.execution_summary = '确认失败，请重试'
+    }
   }
-  toolConfirmationPrompt.value = null
+}
+
+const pollToolConfirmation = (id: string) => {
+  let attempts = 0
+  const timer = window.setInterval(async () => {
+    attempts += 1
+    try {
+      const response = await getToolConfirmation(id)
+      const confirmation = response?.data
+      const previewSummary = (confirmation?.tool_input as Record<string, unknown> | undefined)?.preview_summary
+      const isStillPreviewSummary = Boolean(
+        previewSummary && confirmation?.execution_summary === String(previewSummary),
+      )
+      if (
+        toolConfirmationPrompt.value &&
+        confirmation?.execution_summary &&
+        !isStillPreviewSummary
+      ) {
+        toolConfirmationPrompt.value.execution_summary = confirmation.execution_summary
+        window.clearInterval(timer)
+        return
+      }
+    } catch {
+      // 轮询失败时继续等待，不阻塞
+    }
+    if (!toolConfirmationPrompt.value || attempts >= 90) {
+      window.clearInterval(timer)
+    }
+  }, 2000)
 }
 
 const handleCancelTool = async (id: string) => {
   try {
     await postToolConfirmationCancel(id)
+    if (toolConfirmationPrompt.value) {
+      toolConfirmationPrompt.value.status = 'cancelled'
+    }
   } catch {
     // 取消失败时不阻塞用户体验
   }
+}
+
+const handleDismissToolConfirmation = () => {
   toolConfirmationPrompt.value = null
 }
 
@@ -1377,6 +1443,14 @@ const handleTriggerFileInput = () => {
 const handleStartRecord = async () => {
   if (!ensureLogin()) return
 
+  // barge-in：开始录音即打断当前语音播报和仍在运行的 Agent 响应，
+  // 让下一轮模型从上下文中感知“上一条回复被用户打断”。
+  stopAudioStream()
+  if (task_id.value && assistantAgentChatLoading.value) {
+    await handleStopAssistantAgentChat(task_id.value)
+    await waitForRef(assistantAgentChatLoading)
+  }
+
   // 10.1 创建AudioRecorder
   recorder = new AudioRecorder()
 
@@ -1402,6 +1476,13 @@ const handleStopRecord = async () => {
       // 11.2 调用语音转文本处理器并将文本填充到query中
       await handleAudioToText(audioBlob.value)
       query.value = text.value
+      if (task_id.value && assistantAgentChatLoading.value) {
+        await handleStopAssistantAgentChat(task_id.value)
+        await waitForRef(assistantAgentChatLoading)
+      }
+      if (voiceMode.value && text.value.trim()) {
+        await handleSubmit()
+      }
     } catch {
       Message.error(t('home.messages.recordingFailed'))
     } finally {
@@ -1728,6 +1809,7 @@ onUnmounted(() => {
             :prompt="toolConfirmationPrompt"
             @confirm="handleConfirmTool"
             @cancel="handleCancelTool"
+            @dismiss="handleDismissToolConfirmation"
           />
         </div>
         <div
@@ -1745,7 +1827,29 @@ onUnmounted(() => {
         >
           <BillingUsageIndicator :events="billingEvents" />
         </div>
+        <div
+          v-if="subtaskProgress && subtaskProgress.length > 0"
+          class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
+        >
+          <SubtaskProgressPanel
+            :subtasks="subtaskProgress"
+            :task-plan="subtaskTaskPlan"
+          />
+        </div>
         <div class="w-full max-w-[600px] mx-auto px-2 sm:px-4">
+          <DesktopDevicePanel />
+          <div class="flex justify-end pb-2">
+            <a-button
+              size="mini"
+              :type="voiceMode ? 'primary' : 'text'"
+              @click="voiceMode = !voiceMode"
+            >
+              <template #icon>
+                <icon-microphone />
+              </template>
+              {{ voiceMode ? t('home.messages.voiceModeOn') : t('home.messages.voiceModeOff') }}
+            </a-button>
+          </div>
           <chat-composer
             v-model="query"
             v-model:deep-thinking-enabled="enableDeepThinking"
