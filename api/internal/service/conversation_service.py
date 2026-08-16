@@ -38,6 +38,8 @@ from internal.schema.conversation_schema import GetConversationMessagesWithPageR
 from internal.exception import NotFoundException
 from internal.service.system_prompt_library_service import SystemPromptLibraryService
 
+logger = logging.getLogger(__name__)
+
 
 @inject
 @dataclass
@@ -946,8 +948,15 @@ class ConversationService(BaseService):
         paginator.total_page = math.ceil(total / page_size) if total else 0
         return messages, paginator
 
-    def delete_conversation(self, conversation_id: UUID, account: Account) -> Conversation:
-        """根据传递的会话id+账号删除指定的会话记录"""
+    def delete_conversation(
+        self,
+        conversation_id: UUID,
+        account: Account,
+        *,
+        retention_days: int | None = None,
+        agent_id=None,
+    ) -> Conversation:
+        """根据传递的会话id+账号删除指定的会话记录（软删除 + 入回收站）"""
         # 1.获取会话记录并校验权限
         conversation = self.get_conversation(conversation_id, account)
 
@@ -965,6 +974,24 @@ class ConversationService(BaseService):
         # 3.更新会话的删除状态
         self.update(conversation, is_deleted=True)
         self._clear_cached_conversation_name(conversation_id)
+
+        # 4.进入平台回收站（软删除模式：数据保留，恢复时翻转 is_deleted；
+        #    留存期到期由回收站 purge 物理清理会话与消息）
+        try:
+            from internal.service.recycle_bin_service import RecycleBinService
+
+            RecycleBinService().delete_resource(
+                resource_type="conversation",
+                resource_id=conversation.id,
+                resource_key=str(conversation.id),
+                resource_name=conversation.name or "未命名会话",
+                deleted_by=str(account.id),
+                deleted_by_type="user",
+                retention_days=retention_days,
+                agent_id=agent_id,
+            )
+        except Exception:
+            logger.warning("会话入回收站失败 id=%s", conversation_id, exc_info=True)
 
         return conversation
 

@@ -117,12 +117,19 @@ def register_routes(quart_app):
 
     @quart_app.post("/apps/<uuid:app_id>/delete")
     async def async_delete_app(app_id) -> Response:
-        """async 删除应用。"""
+        """async 删除应用（进入回收站，可指定留存天数；agent 代删默认 7 天）。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
 
-        await _to_thread(_get_service(AppService).delete_app, app_id, account)
+        payload = await request.get_json(force=True, silent=True) or {}
+        await _to_thread(
+            _get_service(AppService).delete_app,
+            app_id,
+            account,
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
+        )
         return _ok_msg("删除Agent智能体应用成功")
 
     @quart_app.post("/apps/<uuid:app_id>/copy")

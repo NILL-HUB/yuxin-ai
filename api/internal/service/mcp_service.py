@@ -833,7 +833,7 @@ class McpService(BaseService):
             logging.exception("更新 MCP 后同步工具失败 provider=%s", provider.id)
         return provider
 
-    def delete_mcp_provider(self, provider_id: UUID, account: Account) -> McpProvider:
+    def delete_mcp_provider(self, provider_id: UUID, account: Account, *, retention_days: int | None = None, agent_id=None) -> McpProvider:
         provider = self._resolve_private_provider(provider_id, account)
         from internal.service.recycle_bin_service import RecycleBinService
         deleted = RecycleBinService().delete_resource(
@@ -842,7 +842,9 @@ class McpService(BaseService):
             resource_key=str(provider.id),
             resource_name=provider.label or provider.name,
             deleted_by=account.id,
-            deleted_by_type="user",
+            deleted_by_type="agent" if agent_id else "user",
+            retention_days=retention_days,
+            agent_id=agent_id,
         )
         if not deleted:
             raise NotFoundException("MCP 不存在")

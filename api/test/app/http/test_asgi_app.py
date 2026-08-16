@@ -9,6 +9,7 @@
 
 import asyncio
 import json
+import sys
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -18,6 +19,29 @@ import pytest
 
 from app.http import asgi_app
 from app.http import support
+
+# 路由模块（apps_routes/conversation_routes 等）在模块导入时通过
+# ``from app.http.support import _resolve_account`` 直接绑定原始函数对象；
+# 仅替换 support 模块属性对这些模块不生效，故保留原始引用用于统一替换。
+_ORIGINAL_RESOLVE_ACCOUNT = support._resolve_account
+
+
+def _mock_resolve_account(monkeypatch, account):
+    """模拟已认证用户：替换 support._resolve_account 直接返回该账号（C-1 加固后测试模拟登录的方式）。
+
+    同时替换所有仍绑定原始 ``_resolve_account`` 函数对象的模块属性
+    （例如 apps_routes/conversation_routes 等从 support 直接导入的模块），
+    使 monkeypatch 对路由处理函数真正生效。
+    """
+
+    async def _fake_resolve_account(account_id_override=None):
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_account", _fake_resolve_account)
+    for _mod in list(sys.modules.values()):
+        if getattr(_mod, "_resolve_account", None) is _ORIGINAL_RESOLVE_ACCOUNT:
+            monkeypatch.setattr(_mod, "_resolve_account", _fake_resolve_account)
+    return account
 
 
 class _FakeAppRuntimeService:
@@ -44,6 +68,7 @@ def _build_fakes(monkeypatch, runtime_service):
         lambda *a, **k: (account, draft_app_config, llm),
     )
     monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+    _mock_resolve_account(monkeypatch, account)
     monkeypatch.setattr(
         support,
         "_get_services",
@@ -212,6 +237,7 @@ class TestAsgiRecentConversations:
             {"id": str(uuid4()), "name": "会话A", "source_type": "app_debugger"},
         ])
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake_service)
         monkeypatch.setattr("app.http.conversation_routes.flask_app", SimpleNamespace(
             config={"ASSISTANT_AGENT_ID": "agent-1"},
@@ -305,6 +331,7 @@ class TestAsgiConversationMessages:
         conversation_id = uuid4()
         fake_service = _FakeMessageService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake_service)
 
         async def _run():
@@ -341,6 +368,7 @@ class TestAsgiConversationMessages:
 
         account = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_conversation_service",
@@ -369,7 +397,7 @@ class _FakeActionsService:
         self.searches = []
         self.raise_not_found = False
 
-    def delete_conversation(self, conversation_id, account):
+    def delete_conversation(self, conversation_id, account, *, retention_days=None, agent_id=None):
         self.deleted.append((conversation_id, account))
         if self.raise_not_found:
             from internal.exception import NotFoundException
@@ -404,6 +432,7 @@ class TestAsgiConversationActions:
         conversation_id = uuid4()
         fake = _FakeActionsService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -424,6 +453,7 @@ class TestAsgiConversationActions:
         fake = _FakeActionsService()
         fake.raise_not_found = True
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -443,6 +473,7 @@ class TestAsgiConversationActions:
         conversation_id = uuid4()
         fake = _FakeActionsService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -461,6 +492,7 @@ class TestAsgiConversationActions:
     def test_update_conversation_name_rejects_empty(self, monkeypatch):
         account = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: _FakeActionsService())
 
         async def _run():
@@ -481,6 +513,7 @@ class TestAsgiConversationActions:
         conversation_id = uuid4()
         fake = _FakeActionsService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -501,6 +534,7 @@ class TestAsgiConversationActions:
         conversation_id = uuid4()
         fake = _FakeActionsService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -519,6 +553,7 @@ class TestAsgiConversationActions:
         account = SimpleNamespace(id=uuid4())
         fake = _FakeActionsService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -543,6 +578,7 @@ class TestAsgiConversationActions:
         message_id = uuid4()
         fake = _FakeActionsService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: fake)
 
         async def _run():
@@ -591,6 +627,7 @@ class TestAsgiConversationVariables:
         conv_service = _FakeActionsService()
         var_service = _FakeVariableService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_conversation_service", lambda: conv_service)
         monkeypatch.setattr(support, "_get_service", lambda cls: var_service)
         return account, var_service
@@ -757,6 +794,7 @@ class TestAsgiAccount:
         account_service = _FakeAccountService()
         oauth_service = _FakeOAuthService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -963,6 +1001,7 @@ class TestAsgiSmallHandlers:
 
         account = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             HomeService: SimpleNamespace(
                 get_user_intent=lambda account: {"intent": "chat", "confidence": 0.9}
@@ -1105,7 +1144,7 @@ class _FakeAppService:
     def update_app(self, app_id, account, **kwargs):
         self.calls.append(("update", app_id, kwargs))
 
-    def delete_app(self, app_id, account):
+    def delete_app(self, app_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", app_id))
 
     def copy_app(self, app_id, account):
@@ -1185,6 +1224,7 @@ class TestAsgiApps:
         app_service = _FakeAppService()
         app_debug_service = _FakeAppDebugService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -1542,6 +1582,7 @@ class TestAsgiTagsNotificationsTools:
         notification_service = _FakeNotificationService()
         builtin_service = _FakeBuiltinToolService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -1771,7 +1812,7 @@ class _FakeApiToolService:
     def get_api_tool(self, provider_id, tool_name, account):
         return SimpleNamespace(provider_id=provider_id, tool_name=tool_name)
 
-    def delete_api_tool_provider(self, provider_id, account):
+    def delete_api_tool_provider(self, provider_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", provider_id))
 
     def regenerate_icon(self, provider_id, account):
@@ -1790,6 +1831,7 @@ class TestAsgiSkillsApiTools:
         skill_service = _FakeSkillService()
         api_tool_service = _FakeApiToolService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -1983,7 +2025,7 @@ class _FakeWorkflowService:
     def update_workflow(self, workflow_id, account, **kwargs):
         self.calls.append(("update", workflow_id))
 
-    def delete_workflow(self, workflow_id, account):
+    def delete_workflow(self, workflow_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", workflow_id))
 
     def update_draft_graph(self, workflow_id, draft_graph_dict, account):
@@ -2040,6 +2082,7 @@ class TestAsgiWorkflows:
         workflow_service = _FakeWorkflowService()
         run_service = _FakeWorkflowRunService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -2209,7 +2252,7 @@ class _FakeExternalDataSourceService:
         self.calls.append(("sync", data_source_id))
         return {"synced": 5}
 
-    def delete_data_source(self, data_source_id, account):
+    def delete_data_source(self, data_source_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", data_source_id))
 
 
@@ -2267,6 +2310,7 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         kbs = _FakeEDSKnowledgeBaseService()
         tcs = _FakeToolConfirmationService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             ExternalDataSourceService: edss,
             KnowledgeBaseService: kbs,
@@ -2805,7 +2849,7 @@ class _FakeKnowledgeBaseService:
     def update_user_content_base(self, knowledge_base_id, req, account):
         self.calls.append(("update", knowledge_base_id))
 
-    def delete_user_content_base(self, knowledge_base_id, account):
+    def delete_user_content_base(self, knowledge_base_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", knowledge_base_id))
 
     def hit_test(self, knowledge_base_id, req, account):
@@ -2821,7 +2865,7 @@ class _FakeKnowledgeBaseService:
     def get_document_detail(self, knowledge_base_id, document_id, account):
         return SimpleNamespace(id=document_id, name="文档A")
 
-    def delete_document(self, knowledge_base_id, document_id, account):
+    def delete_document(self, knowledge_base_id, document_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("doc_delete", document_id))
 
     def get_segments_with_page(self, knowledge_base_id, document_id, req, account):
@@ -2853,6 +2897,7 @@ class TestAsgiKnowledgeBases:
         account = SimpleNamespace(id=uuid4())
         kb_service = _FakeKnowledgeBaseService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support, "_get_service", lambda cls: kb_service if cls is KnowledgeBaseService else None
         )
@@ -3036,7 +3081,7 @@ class _FakeMcpService:
     def update_mcp_provider(self, provider_id, req, account):
         self.calls.append(("update", provider_id))
 
-    def delete_mcp_provider(self, provider_id, account):
+    def delete_mcp_provider(self, provider_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", provider_id))
 
     def publish_mcp_provider(self, provider_id, account):
@@ -3066,6 +3111,7 @@ class TestAsgiMcp:
         mcp_service = _FakeMcpService()
         import_service = _FakeMcpImportService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {McpService: mcp_service, McpImportService: import_service}
         monkeypatch.setattr(support, "_get_service", lambda cls: services.get(cls))
         return account, mcp_service, import_service
@@ -3222,7 +3268,7 @@ class _FakeScheduleTaskService:
         self.calls.append(("update", task_id))
         return self._task(task_id)
 
-    def delete_task(self, task_id, account):
+    def delete_task(self, task_id, account, *, retention_days=None, agent_id=None):
         self.calls.append(("delete", task_id))
 
     def get_task(self, task_id, account):
@@ -3285,6 +3331,7 @@ class TestAsgiScheduleTasks:
         parser = _FakeScheduleIntentParser()
         dedup_service = _FakeTaskDedupService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             ScheduleTaskService: task_service,
             ScheduleExecutionService: execution_service,
@@ -3492,6 +3539,7 @@ class TestAsgiAssistantAgentApiKey:
         api_key_service = _FakeApiKeyService()
         ai_service = _FakeAIService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             AssistantAgentService: assistant_service,
             ApiKeyService: api_key_service,
@@ -3736,6 +3784,7 @@ class TestAsgiAuthOAuthUpload:
         oauth_service = _FakeAuthOAuthService()
         cos_service = _FakeCosService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             AccountService: account_service,
             OAuthService: oauth_service,
@@ -4007,6 +4056,7 @@ class TestAsgiSseEndpoints:
 
         assistant_service = _SseAssistantService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             AppDebugService: debug_service,
             WorkflowAppService: workflow_service,
@@ -4369,6 +4419,7 @@ class TestAsgiMetricsWorkflowDebug:
 
         account = SimpleNamespace(id=uuid4())
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -4443,6 +4494,7 @@ class TestAsgiWebAppOpenApi:
         openapi_service = _FakeOpenApiService()
         my_app_service = _FakeMyAppService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         services = {
             AppDebugService: debug_service,
             WebAppService: webapp_service,

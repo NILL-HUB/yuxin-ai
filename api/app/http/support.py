@@ -361,6 +361,7 @@ async def _resolve_admin_permission(permission_code: str):
 # 用户端已收敛：这些接口不再被保留的用户界面消费，普通用户 JWT 一律拒绝。
 # admin 端有独立路径（/admin/*），不受影响；web-apps/public 走各自 token/公开通道。
 _USER_API_BLOCKED_PREFIXES = (
+    "/admin",
     "/my/apps",
     "/memory/write",
     "/memory/retrieve",

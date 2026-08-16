@@ -135,3 +135,104 @@ def test_purge_recycle_removes_expired_entries(tmp_path, monkeypatch):
     assert expired.exists() is False
     assert (tmp_path / ".yuxin_ai_recycle" / "kept.txt").exists() is True
     assert _list_recycle({"safe_root": str(tmp_path)})["count"] == 1
+
+
+def test_delete_records_device_info(tmp_path, monkeypatch):
+    """删除清单条目应记录设备信息（名称取系统用户名，IP 支持环境变量覆盖）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_NAME", "alice")
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_IP", "192.168.1.10")
+    target = tmp_path / "secret.txt"
+    target.write_text("s", encoding="utf-8")
+
+    deleted = _safe_delete(_delete_payload(tmp_path, [str(target)]))
+
+    assert deleted["ok"] is True
+    assert deleted["entries"][0]["device_info"] == {"ip": "192.168.1.10", "name": "alice"}
+
+
+def test_restore_same_device_has_no_mismatch_prompt(tmp_path, monkeypatch):
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_NAME", "alice")
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_IP", "192.168.1.10")
+    target = tmp_path / "same.txt"
+    target.write_text("s", encoding="utf-8")
+    deleted = _safe_delete(_delete_payload(tmp_path, [str(target)]))
+    entry = deleted["entries"][0]
+
+    restored = _restore_recycle(
+        {"safe_root": str(tmp_path), "entry_id": entry["entry_id"], "check_device": True}
+    )
+
+    assert restored["ok"] is True
+    assert target.read_text(encoding="utf-8") == "s"
+
+
+def test_restore_rejects_device_mismatch_and_confirms(tmp_path, monkeypatch):
+    """设备 A 删除、设备 B 恢复：check_device 时返回 device_mismatch，确认后可恢复。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_NAME", "alice")
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_IP", "192.168.1.10")
+    target = tmp_path / "secret.txt"
+    target.write_text("s", encoding="utf-8")
+    deleted = _safe_delete(_delete_payload(tmp_path, [str(target)]))
+    entry = deleted["entries"][0]
+
+    # 设备 B 恢复 → 拒绝并返回两侧设备信息
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_NAME", "bob")
+    monkeypatch.setenv("OS_AUTOMATION_DEVICE_IP", "192.168.1.20")
+    blocked = _restore_recycle(
+        {"safe_root": str(tmp_path), "entry_id": entry["entry_id"], "check_device": True}
+    )
+    assert blocked["ok"] is False
+    assert blocked["code"] == "device_mismatch"
+    assert blocked["recorded_device"] == {"ip": "192.168.1.10", "name": "alice"}
+    assert blocked["current_device"] == {"ip": "192.168.1.20", "name": "bob"}
+    assert target.exists() is False
+
+    # 用户确认后恢复成功
+    restored = _restore_recycle(
+        {
+            "safe_root": str(tmp_path),
+            "entry_id": entry["entry_id"],
+            "check_device": True,
+            "confirm_device_mismatch": True,
+        }
+    )
+    assert restored["ok"] is True
+    assert target.read_text(encoding="utf-8") == "s"
+
+
+def test_restore_to_custom_path(tmp_path, monkeypatch):
+    """自选路径恢复：恢复到用户指定目录，而非原路径。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    deleted = _safe_delete(_delete_payload(tmp_path, [str(target)]))
+    entry = deleted["entries"][0]
+
+    dest = tmp_path / "custom" / "a.txt"
+    restored = _restore_recycle(
+        {"safe_root": str(tmp_path), "entry_id": entry["entry_id"], "target_path": str(dest)}
+    )
+
+    assert restored["ok"] is True
+    assert restored["restored_to"] == str(dest)
+    assert dest.read_text(encoding="utf-8") == "a"
+    assert target.exists() is False
+
+
+def test_restore_custom_path_outside_root_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / "a.txt"
+    target.write_text("a", encoding="utf-8")
+    deleted = _safe_delete(_delete_payload(tmp_path, [str(target)]))
+    entry = deleted["entries"][0]
+
+    outside = tmp_path.parent / "outside.txt"
+    restored = _restore_recycle(
+        {"safe_root": str(tmp_path), "entry_id": entry["entry_id"], "target_path": str(outside)}
+    )
+
+    assert restored["ok"] is False
+    assert "超出允许目录" in restored["error"]

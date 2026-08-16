@@ -378,8 +378,8 @@ class KnowledgeBaseService(BaseService):
 
         return knowledge_base
 
-    def delete_user_content_base(self, knowledge_base_id: UUID, account: Account) -> KnowledgeBase:
-        """删除 user_content 知识库：进入回收站（默认留存 30 天），管理员可在回收站恢复。
+    def delete_user_content_base(self, knowledge_base_id: UUID, account: Account, *, retention_days: int | None = None, agent_id=None) -> KnowledgeBase:
+        """删除 user_content 知识库：进入回收站（默认留存 30 天），用户/管理员可在回收站恢复。
 
         用户删除后资源立即从当前账号视角消失，底层存储文件在留存期内保留，
         由回收站定时任务在留存期结束后统一销毁。
@@ -396,7 +396,9 @@ class KnowledgeBaseService(BaseService):
                 resource_key=str(knowledge_base.id),
                 resource_name=knowledge_base.name,
                 deleted_by=account.id,
-                deleted_by_type="user",
+                deleted_by_type="agent" if agent_id else "user",
+                retention_days=retention_days,
+                agent_id=agent_id,
             )
         except Exception as e:
             logging.exception(
@@ -548,8 +550,11 @@ class KnowledgeBaseService(BaseService):
             knowledge_base_id: UUID,
             document_id: UUID,
             account: Account,
+            *,
+            retention_days: int | None = None,
+            agent_id=None,
     ) -> KnowledgeDocument:
-        """删除知识库下指定文档：进入回收站（默认留存 30 天），管理员可在回收站恢复。"""
+        """删除知识库下指定文档：进入回收站（默认留存 30 天），用户/管理员可在回收站恢复。"""
         # 1.校验知识库归属
         self.get_user_content_base(knowledge_base_id, account)
 
@@ -568,7 +573,9 @@ class KnowledgeBaseService(BaseService):
                 resource_key=str(document.id),
                 resource_name=document.name,
                 deleted_by=account.id,
-                deleted_by_type="user",
+                deleted_by_type="agent" if agent_id else "user",
+                retention_days=retention_days,
+                agent_id=agent_id,
             )
         except Exception as e:
             logging.exception(

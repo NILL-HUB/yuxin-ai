@@ -45,7 +45,8 @@ DEFAULT_RECYCLE_RETENTION_DAYS = 30
 
 _approvals: dict[str, dict[str, Any]] = {}
 _approval_lock = threading.Lock()
-_recycle_lock = threading.Lock()
+# 可重入锁：_delete_into_recycle 持有锁后调用 _append_recycle_manifest（内部再次加锁）
+_recycle_lock = threading.RLock()
 
 
 def _env(key: str, default: str = "") -> str:
@@ -417,7 +418,10 @@ def _file_apply_patch(patch: str, root: str, working_dir: str) -> dict[str, Any]
             resolved = self._resolve(path)
             if not _is_path_within(self.root, resolved):
                 raise PermissionError(f"路径超出允许目录: {resolved}")
-            super().delete_file(resolved)
+            # 安全删除：移入本机回收站而非物理删除，保证可恢复
+            moved = _delete_into_recycle(resolved, self.root, reason="V4A Delete File")
+            if moved is None:
+                raise OSError(f"删除文件失败（移入回收站失败）: {resolved}")
 
         def move_file(self, path: str, new_path: str) -> None:
             resolved = self._resolve(path)
@@ -466,10 +470,12 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "error": "patch 不能为空"}
         if mode == "apply":
             if not _consume_approval(str(payload.get("approval_token") or "").strip()):
-                return {
-                    "ok": False,
-                    "error": "缺少有效 approval_token，请先执行 preview 并等待用户确认",
-                }
+                # 纯删除类补丁已走回收站（可恢复），允许 agent 全自动删除，无需确认
+                if not _patch_is_pure_delete(patch):
+                    return {
+                        "ok": False,
+                        "error": "缺少有效 approval_token，请先执行 preview 并等待用户确认",
+                    }
             result = _file_apply_patch(patch, working_dir, working_dir)
             return result
         if mode == "preview":
@@ -488,6 +494,71 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "mode 必须为 preview 或 apply"}
 
     return {"ok": False, "error": "op 必须为 read 或 patch"}
+
+
+def _patch_is_pure_delete(patch: str) -> bool:
+    """判断 V4A 补丁是否只包含删除文件操作（已移入回收站、可恢复，可免确认执行）。"""
+    try:
+        from internal.core.agent.adapters.hermes.v4a_patch import (
+            OperationType,
+            parse_v4a_patch,
+        )
+    except Exception:
+        return False
+    operations, parse_error = parse_v4a_patch(patch)
+    if parse_error or not operations:
+        return False
+    return all(op.operation == OperationType.DELETE for op in operations)
+
+
+def _detect_lan_ip() -> str:
+    """探测本机非回环 IPv4 地址（UDP connect 不真正发包）。
+
+    优先取默认路由出网 IP；失败时回退主机名解析的第一个非回环地址。
+    """
+    try:
+        import socket
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(1)
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        finally:
+            sock.close()
+    except Exception:
+        pass
+    try:
+        import socket
+
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if ip and not ip.startswith("127."):
+                return ip
+    except Exception:
+        pass
+    return ""
+
+
+def _device_info() -> dict[str, str]:
+    """返回当前设备信息：名称取系统用户名，IP 取本机出网地址。
+
+    支持 OS_AUTOMATION_DEVICE_IP / OS_AUTOMATION_DEVICE_NAME 环境变量覆盖
+    （容器 / 多网卡环境下自动探测可能不准确）。
+    """
+    name = _env("OS_AUTOMATION_DEVICE_NAME")
+    if not name:
+        try:
+            import getpass
+
+            name = getpass.getuser()
+        except Exception:
+            name = ""
+    if not name:
+        name = _env("USERNAME") or _env("USER") or ""
+    ip = _env("OS_AUTOMATION_DEVICE_IP") or _detect_lan_ip()
+    return {"ip": ip, "name": name}
 
 
 def _recycle_root(safe_root: str) -> Path:
@@ -569,22 +640,47 @@ def _safe_delete(payload: dict[str, Any]) -> dict[str, Any]:
         raw_path = str(raw or "").strip()
         if not raw_path:
             continue
-        try:
-            resolved = Path(raw_path).expanduser().resolve()
-        except OSError:
-            errors.append(f"无法解析路径: {raw_path}")
-            continue
-        if not _is_path_within(root, str(resolved)) or str(resolved).startswith(str(recycle) + os.sep):
-            errors.append(f"路径超出允许目录或位于回收站内: {raw_path}")
-            continue
-        if not resolved.exists():
-            errors.append(f"路径不存在: {raw_path}")
-            continue
-        try:
-            relative = resolved.relative_to(root_path)
-        except ValueError:
-            errors.append(f"路径不在安全根目录内: {raw_path}")
-            continue
+        entry = _delete_into_recycle(
+            raw_path,
+            root,
+            reason=reason,
+            task_id=task_id,
+            retention_days=retention_days,
+        )
+        if entry is None:
+            errors.append(f"无法删除: {raw_path}")
+        else:
+            entries.append(entry)
+    return {"ok": not errors, "entries": entries, "errors": errors, "recycle_root": str(recycle)}
+
+
+def _delete_into_recycle(
+    raw_path: str,
+    root: str,
+    *,
+    reason: str = "",
+    task_id: str = "",
+    retention_days: int = DEFAULT_RECYCLE_RETENTION_DAYS,
+) -> dict[str, Any] | None:
+    """把单个文件/目录移入本机回收站并追加清单，返回清单条目；失败返回 None。
+
+    供 os_recycle_bin delete 与 V4A Delete File 共用，保证删除可恢复。
+    """
+    root_path = Path(root)
+    recycle = _recycle_root(root)
+    try:
+        resolved = Path(raw_path).expanduser().resolve()
+    except OSError:
+        return None
+    if not _is_path_within(root, str(resolved)) or str(resolved).startswith(str(recycle) + os.sep):
+        return None
+    if not resolved.exists():
+        return None
+    try:
+        relative = resolved.relative_to(root_path)
+    except ValueError:
+        return None
+    with _recycle_lock:
         dest = recycle / relative
         dest.parent.mkdir(parents=True, exist_ok=True)
         entry_id = uuid.uuid4().hex
@@ -600,12 +696,12 @@ def _safe_delete(payload: dict[str, Any]) -> dict[str, Any]:
             "expire_at": time.time() + retention_days * 86400,
             "task_id": task_id,
             "reason": reason,
+            "device_info": _device_info(),
             "restored": False,
         }
         shutil.move(str(resolved), str(dest))
         _append_recycle_manifest(root, entry)
-        entries.append(entry)
-    return {"ok": not errors, "entries": entries, "errors": errors, "recycle_root": str(recycle)}
+    return entry
 
 
 def _list_recycle(payload: dict[str, Any]) -> dict[str, Any]:
@@ -632,12 +728,20 @@ def _restore_single_recycle_entry(
     entry: dict[str, Any],
     root: str,
     entries: list[dict[str, Any]],
+    *,
+    target_path: str = "",
 ) -> tuple[bool, dict[str, Any], str]:
-    """恢复单个回收站条目。返回 (ok, entry_or_error, restored_path)。"""
+    """恢复单个回收站条目。返回 (ok, entry_or_error, restored_path)。
+
+    target_path 非空时把文件恢复到自选目标路径（仍须位于安全根目录内）。
+    """
     moved_to = Path(str(entry["moved_to"]))
     if not moved_to.exists():
         return False, {"entry_id": entry.get("entry_id"), "error": f"回收站文件缺失: {moved_to}"}, ""
-    destination = Path(str(entry["original_path"])).expanduser().resolve()
+    if target_path.strip():
+        destination = Path(target_path.strip()).expanduser().resolve()
+    else:
+        destination = Path(str(entry["original_path"])).expanduser().resolve()
     if not _is_path_within(root, str(destination)):
         return False, {"entry_id": entry.get("entry_id"), "error": "恢复目标超出允许目录"}, ""
     if destination.exists():
@@ -656,6 +760,9 @@ def _restore_recycle(payload: dict[str, Any]) -> dict[str, Any]:
     entry_id = str(payload.get("entry_id") or "").strip()
     original_path = str(payload.get("path") or "").strip()
     task_id_filter = str(payload.get("task_id") or "").strip()
+    target_path = str(payload.get("target_path") or "").strip()
+    check_device = bool(payload.get("check_device"))
+    confirm_device_mismatch = bool(payload.get("confirm_device_mismatch"))
     entries = _read_recycle_manifest(root)
 
     if not entry_id and not original_path and task_id_filter:
@@ -690,7 +797,28 @@ def _restore_recycle(payload: dict[str, Any]) -> dict[str, Any]:
             break
     if target is None:
         return {"ok": False, "error": "回收站中未找到对应条目"}
-    ok, result, restored_path = _restore_single_recycle_entry(target, root, entries)
+    if check_device and not confirm_device_mismatch:
+        recorded = target.get("device_info") or {}
+        current = _device_info()
+        if (recorded.get("ip") or recorded.get("name")) and (
+            recorded.get("ip") != current.get("ip")
+            or recorded.get("name") != current.get("name")
+        ):
+            return {
+                "ok": False,
+                "code": "device_mismatch",
+                "error": "该文件并非在本机删除，恢复前请确认恢复方式",
+                "device_mismatch": True,
+                "recorded_device": recorded,
+                "current_device": current,
+                "entry_id": target.get("entry_id"),
+            }
+    ok, result, restored_path = _restore_single_recycle_entry(
+        target,
+        root,
+        entries,
+        target_path=target_path,
+    )
     if ok:
         _rewrite_recycle_manifest(root, entries)
         return {"ok": True, "entry": result, "restored_to": restored_path}

@@ -379,13 +379,31 @@ class ScheduleTaskService(BaseService):
         tasks = query.order_by(desc(ScheduleTask.created_at)).offset((page - 1) * page_size).limit(page_size).all()
         return tasks, total
 
-    def delete_task(self, task_id, account: Account | None, owner_type: str = "user") -> None:
+    def delete_task(
+        self,
+        task_id,
+        account: Account | None,
+        owner_type: str = "user",
+        *,
+        retention_days: int | None = None,
+        agent_id=None,
+    ) -> None:
         task = self.get_task(task_id, account, owner_type=owner_type)
-        with self.db.auto_commit():
-            self.db.session.query(ScheduleTaskRun).filter(
-                ScheduleTaskRun.schedule_task_id == task.id
-            ).delete(synchronize_session=False)
-            self.db.session.delete(task)
+        # 进入平台回收站：快照任务 + 运行记录，物理删除原表，留存期内可在回收站恢复
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        deleted = RecycleBinService().delete_resource(
+            resource_type="schedule_task",
+            resource_id=task.id,
+            resource_key=str(task.id),
+            resource_name=task.name,
+            deleted_by=str(account.id) if account is not None else None,
+            deleted_by_type="admin" if owner_type == "admin" else "user",
+            retention_days=retention_days,
+            agent_id=agent_id,
+        )
+        if not deleted:
+            raise NotFoundException("定时任务不存在")
 
     def list_runs(
         self, task_id, account: Account | None, page: int, page_size: int, owner_type: str = "user"

@@ -450,15 +450,20 @@ def register_routes(quart_app):
 
     @quart_app.post("/api-tools/<uuid:provider_id>/delete")
     async def async_delete_api_tool_provider(provider_id) -> Response:
-        """async 删除 API 工具提供者。"""
+        """async 删除 API 工具提供者（进入回收站，可指定留存天数；agent 代删默认 7 天）。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
 
         from internal.service import ApiToolService
 
+        payload = await request.get_json(force=True, silent=True) or {}
         await _to_thread(
-            _get_service(ApiToolService).delete_api_tool_provider, provider_id, account
+            _get_service(ApiToolService).delete_api_tool_provider,
+            provider_id,
+            account,
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
         )
         return _ok_msg("删除自定义API插件成功")
 

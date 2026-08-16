@@ -439,7 +439,10 @@ class ApiToolService(BaseService):
     def delete_api_tool_provider(
             self,
             provider_id: UUID,
-            account: Account
+            account: Account,
+            *,
+            retention_days: int | None = None,
+            agent_id=None
     ):
         """根据传递的provider_id删除对应工具提供商+工具的所有信息（进入回收站，默认留存 30 天）"""
         # 1.先查找数据 检测下provider_id对应的数据是否存在 权限是否正确
@@ -455,7 +458,9 @@ class ApiToolService(BaseService):
             resource_key=str(api_tool_provider.id),
             resource_name=api_tool_provider.name,
             deleted_by=account.id,
-            deleted_by_type="user",
+            deleted_by_type="agent" if agent_id else "user",
+            retention_days=retention_days,
+            agent_id=agent_id,
         )
         if not deleted:
             raise NotFoundException("该工具提供者不存在")

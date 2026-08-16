@@ -193,6 +193,7 @@ from app.http.skills_tools_routes import register_routes as _register_skills_too
 from app.http.workflow_routes import register_routes as _register_workflow_routes
 from app.http.a2a_routes import register_routes as _register_a2a_routes
 from app.http.im_voice_routes import register_routes as _register_im_voice_routes
+from app.http.user_recycle_bin_routes import register_routes as _register_user_recycle_bin_routes
 
 _register_admin_routes_1(quart_app)
 _register_admin_routes_2(quart_app)
@@ -215,6 +216,7 @@ _register_knowledge_mcp_routes(quart_app)
 _register_schedule_assistant_routes(quart_app)
 _register_a2a_routes(quart_app)
 _register_im_voice_routes(quart_app)
+_register_user_recycle_bin_routes(quart_app)
 
 
 # Socket.IO（ASGI 模式）：/socket.io/* 由 AsyncServer 处理，其余 HTTP 透传 quart_app。

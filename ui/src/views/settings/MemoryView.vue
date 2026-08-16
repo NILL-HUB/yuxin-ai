@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useAccountStore } from '@/stores/account'
 import { getErrorMessage } from '@/utils/error'
 import moment from 'moment'
+import RecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 import MemoryClusterView from '@/components/memory/MemoryClusterView.vue'
 import MemoryGraphView from '@/components/memory/MemoryGraphView.vue'
 import MemoryNodeDetail from '@/components/memory/MemoryNodeDetail.vue'
@@ -64,6 +65,10 @@ const editSaving = ref(false)
 const decayModalVisible = ref(false)
 const decayFactor = ref(0.5)
 const decaySaving = ref(false)
+
+// ============ 软删确认弹窗（进入回收站 + 选择留存天数） ============
+const softDeleteModalVisible = ref(false)
+const softDeleteSaving = ref(false)
 
 // 加载图谱聚类数据
 const loadGraph = async () => {
@@ -147,13 +152,20 @@ const handleEditSave = async () => {
   }
 }
 
-// 软删除
-const handleSoftDelete = async () => {
+// 软删除（弹出确认框，进入回收站 + 选择留存天数）
+const handleSoftDelete = () => {
   if (!selectedNodeId.value) return
+  softDeleteModalVisible.value = true
+}
+
+const confirmSoftDelete = async (retentionDays: number) => {
+  if (!selectedNodeId.value) return
+  softDeleteSaving.value = true
   try {
-    const resp = await softDeleteMemory(selectedNodeId.value)
+    const resp = await softDeleteMemory(selectedNodeId.value, retentionDays)
     if (resp.deleted) {
       Message.success(t('memory.graph.softDeleteSuccess'))
+      softDeleteModalVisible.value = false
       nodeDetail.value = null
       selectedNodeId.value = ''
       // 重新加载子图和图谱
@@ -166,6 +178,8 @@ const handleSoftDelete = async () => {
     }
   } catch (error) {
     Message.error(getErrorMessage(error, t('memory.graph.deleteFailed')))
+  } finally {
+    softDeleteSaving.value = false
   }
 }
 
@@ -481,5 +495,16 @@ onMounted(() => {
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- 软删确认（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="softDeleteModalVisible"
+      :title="t('memory.graph.softDeleteBtn')"
+      :resource-name="nodeDetail?.content"
+      :loading="softDeleteSaving"
+      :hint="t('userRecycleBin.deleteHint')"
+      @update:visible="(v) => !v && (softDeleteModalVisible = false)"
+      @confirm="confirmSoftDelete"
+    />
   </section>
 </template>

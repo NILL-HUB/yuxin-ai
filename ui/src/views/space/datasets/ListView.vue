@@ -1,22 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import moment from 'moment'
 import type { ValidatedError } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import {
   useCreateOrUpdateKnowledgeBase,
-  useDeleteKnowledgeBase,
   useGenerateKnowledgeBaseIconPreview,
   useGetKnowledgeBase,
   useGetKnowledgeBasesWithPage,
   useRegenerateKnowledgeBaseIcon,
 } from '@/hooks/use-knowledge-base'
+import { deleteKnowledgeBase } from '@/services/knowledge-base'
+import RecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 import { useUploadImage } from '@/hooks/use-upload-file'
 import { useAccountStore } from '@/stores/account'
 import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
 import { Message } from '@arco-design/web-vue'
 import { getUserAvatarUrl } from '@/utils/helper'
+import { getErrorMessage } from '@/utils/error'
 import type { GetKnowledgeBasesWithPageResponse } from '@/models/knowledge-base'
 
 // 数据集列表项：后端列表接口会返回相关应用计数，模型未声明该字段，这里局部扩展
@@ -48,7 +50,26 @@ const {
   showUpdateModal,
   updateShowUpdateModal,
 } = useCreateOrUpdateKnowledgeBase()
-const { handleDelete } = useDeleteKnowledgeBase()
+// 删除确认卡片：进入回收站 + 选择留存天数
+const deleteTarget = ref<{ id: string; name: string } | null>(null)
+const deleteLoading = ref(false)
+const handleDelete = (dataset: DatasetListItem) => {
+  deleteTarget.value = { id: String(dataset.id), name: String(dataset.name || '') }
+}
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteKnowledgeBase(deleteTarget.value.id, retentionDays)
+    Message.success(t('space.datasets.deleteSuccess'))
+    deleteTarget.value = null
+    await loadDatasets(true)
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('space.datasets.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
+}
 const { loading: regenerateIconLoading, handleRegenerateIcon } = useRegenerateKnowledgeBaseIcon()
 const {
   loading: generateIconPreviewLoading,
@@ -240,7 +261,7 @@ const handleCardClick = (datasetId: string) => {
                   <a-doption @click="() => handleUpdate(dataset.id)">{{ t('space.datasets.settings') }}</a-doption>
                   <a-doption
                     class="!text-red-500"
-                    @click="() => handleDelete(dataset.id, () => loadDatasets(true))"
+                    @click="() => handleDelete(dataset)"
                   >
                     {{ t('space.datasets.delete') }}
                   </a-doption>
@@ -366,6 +387,21 @@ const handleCardClick = (datasetId: string) => {
         </a-form>
       </div>
     </a-modal>
+
+    <!-- 删除知识库确认（进入回收站 + 选择留存天数） -->
+    <RecycleBinDeleteModal
+      :visible="deleteTarget !== null"
+      :title="t('space.datasets.delete')"
+      :resource-name="deleteTarget?.name"
+      :loading="deleteLoading"
+      :hint="t('userRecycleBin.deleteHint')"
+      @update:visible="(v) => !v && (deleteTarget = null)"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-slate-500">
+        {{ deleteTarget ? t('space.datasets.deleteContent', { name: deleteTarget.name }) : '' }}
+      </p>
+    </RecycleBinDeleteModal>
   </div>
 </template>
 

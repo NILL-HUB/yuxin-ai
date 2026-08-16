@@ -3,13 +3,16 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  useDeleteKnowledgeDocument,
   useGetKnowledgeBase,
   useGetKnowledgeDocumentsWithPage,
   useUploadKnowledgeDocument,
 } from '@/hooks/use-knowledge-base'
+import { deleteKnowledgeDocument } from '@/services/knowledge-base'
+import RecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 import HitTestingModal from '@/views/space/datasets/documents/components/HitTestingModal.vue'
 import { formatTimestampLong } from '@/utils/time-formatter'
+import { Message } from '@arco-design/web-vue'
+import { getErrorMessage } from '@/utils/error'
 
 type DocumentRecord = Record<string, unknown>
 
@@ -20,9 +23,30 @@ const hitModalVisible = ref(false)
 const searchInput = ref('')
 const { knowledgeBase: dataset, loadKnowledgeBase: loadDataset } = useGetKnowledgeBase()
 const { loading, documents, paginator, loadDocuments } = useGetKnowledgeDocumentsWithPage()
-const { handleDelete } = useDeleteKnowledgeDocument()
 const { loading: uploadLoading, handleUploadDocument } = useUploadKnowledgeDocument()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// 删除确认卡片：进入回收站 + 选择留存天数
+const deleteTarget = ref<{ id: string; name: string } | null>(null)
+const deleteLoading = ref(false)
+const handleDelete = (record: DocumentRecord) => {
+  deleteTarget.value = { id: String(record.id || ''), name: String(record.name || record.title || '') }
+}
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteKnowledgeDocument(datasetId.value, deleteTarget.value.id, retentionDays)
+    Message.success(t('space.datasets.documents.deleteSuccess'))
+    deleteTarget.value = null
+    await loadDocuments(datasetId.value, req.value)
+    await loadDataset(datasetId.value)
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('space.datasets.documents.deleteFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
+}
 
 // 触发隐藏的文件选择器
 const triggerFileInput = () => {
@@ -399,13 +423,7 @@ watch(
  type="text"
  size="mini"
  class="!text-red-600 hover:!text-red-700"
- @click="
- () =>
- handleDelete(datasetId, record.id, () => {
- void loadDocuments(datasetId, req)
- void loadDataset(datasetId)
- })
- "
+ @click="() => handleDelete(record)"
  >
  {{ t('common.actions.delete') }}
  </a-button>
@@ -436,6 +454,21 @@ watch(
  class="hidden"
  @change="handleFileChange"
  />
+
+ <!-- 删除文档确认（进入回收站 + 选择留存天数） -->
+ <RecycleBinDeleteModal
+   :visible="deleteTarget !== null"
+   :title="t('common.actions.delete')"
+   :resource-name="deleteTarget?.name"
+   :loading="deleteLoading"
+   :hint="t('userRecycleBin.deleteHint')"
+   @update:visible="(v) => !v && (deleteTarget = null)"
+   @confirm="confirmDelete"
+ >
+   <p class="text-sm text-slate-500">
+     {{ deleteTarget ? t('space.datasets.documents.deleteContent', { name: deleteTarget.name }) : '' }}
+   </p>
+ </RecycleBinDeleteModal>
  </div>
 </template>
 

@@ -128,17 +128,20 @@ def register_routes(quart_app):
 
     @quart_app.delete("/external-data-sources/<uuid:data_source_id>")
     async def async_external_data_source_delete(data_source_id) -> Response:
-        """async 删除外部数据源连接。"""
+        """async 删除外部数据源连接（进入回收站，可指定留存天数；agent 代删默认 7 天）。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
 
         from internal.service.external_data_source_service import ExternalDataSourceService
 
+        payload = await request.get_json(force=True, silent=True) or {}
         await _to_thread(
             _get_service(ExternalDataSourceService).delete_data_source,
             data_source_id,
             account,
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
         )
         return _ok({"deleted": True})
 
@@ -493,17 +496,20 @@ def register_routes(quart_app):
 
     @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/delete")
     async def async_delete_knowledge_base(knowledge_base_id) -> Response:
-        """async 删除知识库。"""
+        """async 删除知识库（进入回收站，可指定留存天数；agent 代删默认 7 天）。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
 
         from internal.service import KnowledgeBaseService
 
+        payload = await request.get_json(force=True, silent=True) or {}
         await _to_thread(
             _get_service(KnowledgeBaseService).delete_user_content_base,
             knowledge_base_id,
             account,
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
         )
         return _ok_msg("删除知识库成功")
 
@@ -599,18 +605,21 @@ def register_routes(quart_app):
 
     @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/delete")
     async def async_delete_document(knowledge_base_id, document_id) -> Response:
-        """async 删除文档。"""
+        """async 删除文档（进入回收站，可指定留存天数；agent 代删默认 7 天）。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
 
         from internal.service import KnowledgeBaseService
 
+        payload = await request.get_json(force=True, silent=True) or {}
         await _to_thread(
             _get_service(KnowledgeBaseService).delete_document,
             knowledge_base_id,
             document_id,
             account,
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
         )
         return _ok_msg("删除文档成功")
 
@@ -849,15 +858,20 @@ def register_routes(quart_app):
 
     @quart_app.post("/mcp-providers/<uuid:provider_id>/delete")
     async def async_delete_mcp_provider(provider_id) -> Response:
-        """async 删除 MCP。"""
+        """async 删除 MCP（进入回收站，可指定留存天数；agent 代删默认 7 天）。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
 
         from internal.service.mcp_service import McpService
 
+        payload = await request.get_json(force=True, silent=True) or {}
         await _to_thread(
-            _get_service(McpService).delete_mcp_provider, provider_id, account
+            _get_service(McpService).delete_mcp_provider,
+            provider_id,
+            account,
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
         )
         return _ok_msg("删除 MCP 成功")
 

@@ -83,12 +83,24 @@ class MemoryGovernor:
     # 软删除
     # =========================================================
 
-    def soft_delete_memory(self, memory_id: str, user_id: str) -> bool:
+    def soft_delete_memory(
+        self,
+        memory_id: str,
+        user_id: str,
+        *,
+        retention_days: int | None = None,
+        agent_id=None,
+    ) -> bool:
         """软删除记忆：设置 is_active=false，保留节点可恢复。
+
+        软删前先进入平台回收站（快照完整数据，用户可在回收站恢复/到期销毁）；
+        回收站入站失败不影响软删主流程（记忆仍可正常删除）。
 
         Args:
             memory_id: 记忆节点 ID
             user_id: 操作者用户 ID
+            retention_days: 回收站留存天数（用户指定，默认 30 天）
+            agent_id: agent 代理删除时的 agent 应用 ID
 
         Returns:
             True 成功，False 失败（权限校验失败或异常）
@@ -104,6 +116,9 @@ class MemoryGovernor:
                 logger.warning("soft_delete_memory: 权限校验失败 memory=%s user=%s", memory_id, user_id)
                 self._log_audit("SOFT_DELETE_MEMORY", user_id, memory_id=memory_id, success=False, reason="permission_denied")
                 return False
+
+            # 进入平台回收站（快照先于物理删除捕获）
+            self._enter_recycle_bin(memory_id, user_id, retention_days=retention_days, agent_id=agent_id)
 
             # Neo4j 软删除
             with driver.session() as session:
@@ -128,6 +143,55 @@ class MemoryGovernor:
             logger.error("soft_delete_memory: 执行失败 memory=%s", memory_id, exc_info=True)
             self._log_audit("SOFT_DELETE_MEMORY", user_id, memory_id=memory_id, success=False, reason="exception")
             return False
+
+    def _enter_recycle_bin(
+        self,
+        memory_id: str,
+        user_id: str,
+        *,
+        retention_days: int | None = None,
+        agent_id=None,
+    ) -> None:
+        """把记忆软删记录写入平台回收站（best-effort，失败仅告警）。
+
+        resource_name 取记忆内容前 50 字，便于回收站列表展示。
+        """
+        try:
+            from internal.model.knowledge import UserMemory
+            from internal.service.recycle_bin_service import RecycleBinService
+
+            db = self._get_db()
+            row = None
+            if db is not None:
+                # id 为 UUID 而 memory_id 可能为 Neo4j 节点 ID，分开查询避免类型比较异常
+                row = (
+                    db.session.query(UserMemory)
+                    .filter(UserMemory.embedding_node_id == str(memory_id))
+                    .one_or_none()
+                )
+                if row is None:
+                    row = (
+                        db.session.query(UserMemory)
+                        .filter(UserMemory.id == memory_id)
+                        .one_or_none()
+                    )
+            content = (row.content if row is not None and row.content else "") or ""
+            resource_name = content[:50] if content else f"记忆 {memory_id}"
+
+            RecycleBinService().delete_resource(
+                resource_type="memory",
+                resource_id=memory_id,
+                resource_key=str(memory_id),
+                resource_name=resource_name,
+                deleted_by=str(user_id),
+                deleted_by_type="user",
+                retention_days=retention_days,
+                agent_id=agent_id,
+            )
+        except Exception:
+            logger.warning(
+                "记忆入回收站失败 memory=%s user=%s（不影响软删）", memory_id, user_id, exc_info=True,
+            )
 
     # =========================================================
     # 彻底删除

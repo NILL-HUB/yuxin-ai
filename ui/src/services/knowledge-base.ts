@@ -58,9 +58,11 @@ export const updateKnowledgeBase = (
   })
 }
 
-// 删除用户端知识库
-export const deleteKnowledgeBase = (knowledge_base_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/space/knowledge-bases/${knowledge_base_id}/delete`)
+// 删除用户端知识库（进入回收站，可指定留存天数）
+export const deleteKnowledgeBase = (knowledge_base_id: string, retentionDays?: number) => {
+  return post<BaseResponse<Record<string, unknown>>>(`/space/knowledge-bases/${knowledge_base_id}/delete`, {
+    body: { retention_days: retentionDays },
+  })
 }
 
 // 获取用户端知识库详情
@@ -102,13 +104,15 @@ export const getKnowledgeDocument = (
   )
 }
 
-// 删除知识库下指定文档
+// 删除知识库下指定文档（进入回收站，可指定留存天数）
 export const deleteKnowledgeDocument = (
   knowledge_base_id: string,
   document_id: string,
+  retentionDays?: number,
 ) => {
   return post<BaseResponse<Record<string, unknown>>>(
     `/space/knowledge-bases/${knowledge_base_id}/documents/${document_id}/delete`,
+    { body: { retention_days: retentionDays } },
   )
 }
 

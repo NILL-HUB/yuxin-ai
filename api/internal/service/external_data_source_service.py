@@ -145,9 +145,30 @@ class ExternalDataSourceService(BaseService):
     def get_data_source(self, data_source_id, account: Account) -> ExternalDataSource:
         return self._get_owned_data_source(data_source_id, account)
 
-    def delete_data_source(self, data_source_id, account: Account) -> None:
+    def delete_data_source(
+        self,
+        data_source_id,
+        account: Account,
+        *,
+        retention_days: int | None = None,
+        agent_id=None,
+    ) -> None:
         data_source = self._get_owned_data_source(data_source_id, account)
-        self.db.session.delete(data_source)
+        # 进入平台回收站：快照（含授权配置），物理删除原表，留存期内可在回收站恢复
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        deleted = RecycleBinService().delete_resource(
+            resource_type="external_data_source",
+            resource_id=data_source.id,
+            resource_key=str(data_source.id),
+            resource_name=data_source.source_name,
+            deleted_by=str(account.id),
+            deleted_by_type="user",
+            retention_days=retention_days,
+            agent_id=agent_id,
+        )
+        if not deleted:
+            raise NotFoundException("外部数据源不存在")
 
     def _get_owned_data_source(self, data_source_id, account: Account) -> ExternalDataSource:
         data_source = (

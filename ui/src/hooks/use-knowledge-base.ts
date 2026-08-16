@@ -84,15 +84,15 @@ export const useGetKnowledgeBasesWithPage = () => {
 
 // 删除用户端知识库
 export const useDeleteKnowledgeBase = () => {
-  const handleDelete = (knowledge_base_id: string, callback?: () => void) => {
+  const handleDelete = (knowledge_base_id: string, retentionDays = 30, callback?: () => void) => {
     Modal.warning({
       title: '要删除知识库吗?',
       content:
-        '删除知识库后，关联该知识库的应用将无法再使用该知识库，所有的提示配置和文档都将被永久删除',
+        '删除知识库后，关联该知识库的应用将无法再使用该知识库；删除后进入回收站，留存期内可恢复。',
       hideCancel: false,
       onOk: async () => {
         try {
-          const resp = await deleteKnowledgeBase(knowledge_base_id)
+          const resp = await deleteKnowledgeBase(knowledge_base_id, retentionDays)
           Message.success(resp.message)
         } finally {
           if (callback) callback()
@@ -215,16 +215,17 @@ export const useDeleteKnowledgeDocument = () => {
   const handleDelete = (
     knowledge_base_id: string,
     document_id: string,
+    retentionDays = 30,
     callback?: () => void,
   ) => {
     Modal.warning({
       title: '要删除该文档吗?',
       content:
-        '删除文档后，知识库/向量数据库将无法检索到该文档，如需暂时关闭该文档的检索，可以选择禁用功能',
+        '删除文档后，知识库/向量数据库将无法检索到该文档；删除后进入回收站，留存期内可恢复。如需暂时关闭该文档的检索，可以选择禁用功能',
       hideCancel: false,
       onOk: async () => {
         try {
-          const resp = await deleteKnowledgeDocument(knowledge_base_id, document_id)
+          const resp = await deleteKnowledgeDocument(knowledge_base_id, document_id, retentionDays)
           Message.success(resp.message)
           if (callback) callback()
         } catch (error: unknown) {

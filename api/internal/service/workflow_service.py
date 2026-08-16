@@ -89,7 +89,7 @@ class WorkflowService(BaseService):
 
         return workflow
 
-    def delete_workflow(self, workflow_id: UUID, account: Account) -> Workflow:
+    def delete_workflow(self, workflow_id: UUID, account: Account, *, retention_days: int | None = None, agent_id=None) -> Workflow:
         """根据传递的工作流id+账号信息，删除指定的工作流（进入回收站，默认留存 30 天）"""
         # 1.获取工作流基础信息并校验权限
         workflow = self.get_workflow(workflow_id, account)
@@ -102,7 +102,9 @@ class WorkflowService(BaseService):
             resource_key=str(workflow.id),
             resource_name=workflow.name,
             deleted_by=account.id,
-            deleted_by_type="user",
+            deleted_by_type="agent" if agent_id else "user",
+            retention_days=retention_days,
+            agent_id=agent_id,
         )
         if not deleted:
             raise NotFoundException("该工作流不存在，请核实后重试")

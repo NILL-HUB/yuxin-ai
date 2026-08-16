@@ -594,9 +594,14 @@ def register_routes(quart_app):
 
         from internal.service.memory.memory_governor import MemoryGovernor
 
+        payload = await request.get_json(force=True, silent=True) or {}
         governor = a._get_service(MemoryGovernor)
         deleted = await a._to_thread(
-            governor.soft_delete_memory, memory_id, str(account.id)
+            governor.soft_delete_memory,
+            memory_id,
+            str(account.id),
+            retention_days=payload.get("retention_days"),
+            agent_id=payload.get("agent_id"),
         )
         return a._ok({"deleted": deleted})
 

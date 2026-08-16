@@ -23,14 +23,22 @@ from internal.model import (
     AppConfigVersion,
     ApiTool,
     ApiToolProvider,
+    Conversation,
+    ConversationVariable,
+    ExternalDataSource,
     KnowledgeBase,
     KnowledgeDocument,
     KnowledgeSegment,
     McpProvider,
     McpTool,
+    Message,
+    MessageAgentThought,
+    ScheduleTask,
+    ScheduleTaskRun,
     SkillPackage,
     SkillPackageVersion,
     UploadFile,
+    UserMemory,
     Workflow,
     WorkflowVersion,
 )
@@ -527,6 +535,420 @@ def purge_upload_file(snapshot: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# os_file：宿主机本机文件（由 OS automation worker 移入宿主机回收站）
+# ---------------------------------------------------------------------------
+def _worker_recycle_endpoint() -> str:
+    """解析 worker 回收站端点与令牌。"""
+    import os as _os
+
+    bridge_url = _os.getenv("DESKTOP_BRIDGE_URL", "").strip()
+    bridge_token = _os.getenv("DESKTOP_BRIDGE_TOKEN", "").strip()
+    if bridge_url and bridge_token:
+        return bridge_url.rstrip("/") + "/recycle", bridge_token
+    endpoint = _os.getenv("OS_AUTOMATION_URL", "").strip()
+    token = _os.getenv("OS_AUTOMATION_TOKEN", "").strip()
+    return endpoint.rstrip("/") + "/recycle" if endpoint else "", token
+
+
+def _call_worker_recycle(payload: dict[str, Any]) -> dict[str, Any]:
+    """调用宿主机 OS automation worker 的回收站接口（best-effort）。"""
+    import json as _json
+    import os as _os
+    import urllib.error
+    import urllib.request
+
+    endpoint, token = _worker_recycle_endpoint()
+    if not endpoint or not token:
+        return {"ok": False, "error": "OS_AUTOMATION_URL/TOKEN 或 DESKTOP_BRIDGE_URL/TOKEN 未配置"}
+    body = _json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            return _json.loads(raw)
+    except urllib.error.HTTPError as exc:
+        try:
+            error_payload = _json.loads(exc.read().decode("utf-8", errors="replace"))
+        except Exception:
+            error_payload = {"error": str(exc)}
+        return {"ok": False, "error": error_payload.get("error", str(exc))}
+    except Exception as exc:
+        return {"ok": False, "error": f"调用本机回收站失败: {exc}"}
+
+
+def restore_os_file(
+    snapshot: dict[str, Any],
+    *,
+    target_path: str = "",
+    check_device: bool = False,
+    confirm_device_mismatch: bool = False,
+) -> bool:
+    """恢复本机文件：调用 worker 把文件移回原处（或自选目标路径）。
+
+    check_device=True 时要求 worker 校验删除设备与当前设备是否一致：
+    不一致且未确认时抛 DeviceMismatchException（由路由转换为 device_mismatch 响应，
+    前端提示「这并非本机删除的文件」并提供两种恢复方式）。
+    """
+    from internal.exception import DeviceMismatchException, ValidateErrorException
+
+    entry_id = str((snapshot or {}).get("entry_id") or "").strip()
+    if not entry_id:
+        logger.warning("恢复本机文件失败：缺少 entry_id")
+        raise ValidateErrorException("恢复本机文件失败：缺少文件标识")
+    result = _call_worker_recycle(
+        {
+            "op": "restore",
+            "entry_id": entry_id,
+            "target_path": str(target_path or "").strip(),
+            "check_device": bool(check_device),
+            "confirm_device_mismatch": bool(confirm_device_mismatch),
+        }
+    )
+    if not result.get("ok"):
+        if result.get("code") == "device_mismatch":
+            raise DeviceMismatchException(
+                recorded_device=result.get("recorded_device") or {},
+                current_device=result.get("current_device") or {},
+                entry_id=entry_id,
+            )
+        error = result.get("error") or "恢复本机文件失败：worker 不可用"
+        logger.warning("恢复本机文件失败 entry_id=%s: %s", entry_id, error)
+        raise ValidateErrorException(f"恢复本机文件失败：{error}")
+    return True
+
+
+def purge_os_file(snapshot: dict[str, Any]) -> None:
+    """本机文件到期销毁：调用 worker 物理清理过期条目（best-effort）。"""
+    result = _call_worker_recycle({"op": "purge"})
+    if not result.get("ok"):
+        logger.warning("本机回收站 purge 调用失败: %s", result.get("error"))
+
+
+# ---------------------------------------------------------------------------
+# schedule_task：用户定时任务（物理删除，快照含运行记录）
+# ---------------------------------------------------------------------------
+def snapshot_schedule_task(resource_id) -> dict[str, Any] | None:
+    task = (
+        db.session.query(ScheduleTask)
+        .filter(ScheduleTask.id == resource_id)
+        .one_or_none()
+    )
+    if task is None:
+        return None
+    runs = (
+        db.session.query(ScheduleTaskRun)
+        .filter(ScheduleTaskRun.schedule_task_id == task.id)
+        .all()
+    )
+    return {"main": _row_to_dict(task), "runs": [_row_to_dict(r) for r in runs]}
+
+
+def physical_delete_schedule_task(resource_id) -> None:
+    db.session.query(ScheduleTaskRun).filter(
+        ScheduleTaskRun.schedule_task_id == resource_id,
+    ).delete(synchronize_session=False)
+    db.session.query(ScheduleTask).filter(
+        ScheduleTask.id == resource_id,
+    ).delete(synchronize_session=False)
+
+
+def restore_schedule_task(snapshot: dict[str, Any]) -> bool:
+    """按快照重建定时任务 + 运行记录（固定原主键）。"""
+    main_data = snapshot.get("main") or {}
+    if not main_data.get("id"):
+        return False
+    if db.session.query(ScheduleTask).filter(
+        ScheduleTask.id == main_data["id"],
+    ).one_or_none() is not None:
+        return False
+    task = ScheduleTask()
+    for col_name, value in main_data.items():
+        _apply_column_value(ScheduleTask, task, col_name, value)
+    db.session.add(task)
+    db.session.flush()
+    for run_data in snapshot.get("runs") or []:
+        run = ScheduleTaskRun()
+        for col_name, value in run_data.items():
+            _apply_column_value(ScheduleTaskRun, run, col_name, value)
+        db.session.add(run)
+    return True
+
+
+def purge_schedule_task(_snapshot: dict[str, Any]) -> None:
+    # 删除时已物理删除任务与运行记录，无残留
+    pass
+
+
+# ---------------------------------------------------------------------------
+# external_data_source：用户外部数据源（物理删除，含授权配置快照）
+# ---------------------------------------------------------------------------
+def snapshot_external_data_source(resource_id) -> dict[str, Any] | None:
+    data_source = (
+        db.session.query(ExternalDataSource)
+        .filter(ExternalDataSource.id == resource_id)
+        .one_or_none()
+    )
+    if data_source is None:
+        return None
+    return {"main": _row_to_dict(data_source)}
+
+
+def physical_delete_external_data_source(resource_id) -> None:
+    db.session.query(ExternalDataSource).filter(
+        ExternalDataSource.id == resource_id,
+    ).delete(synchronize_session=False)
+
+
+def restore_external_data_source(snapshot: dict[str, Any]) -> bool:
+    """按快照重建外部数据源记录（固定原主键）。"""
+    main_data = snapshot.get("main") or {}
+    if not main_data.get("id"):
+        return False
+    if db.session.query(ExternalDataSource).filter(
+        ExternalDataSource.id == main_data["id"],
+    ).one_or_none() is not None:
+        return False
+    data_source = ExternalDataSource()
+    for col_name, value in main_data.items():
+        _apply_column_value(ExternalDataSource, data_source, col_name, value)
+    db.session.add(data_source)
+    return True
+
+
+def purge_external_data_source(_snapshot: dict[str, Any]) -> None:
+    # 删除时已物理删除记录，无残留
+    pass
+
+
+# ---------------------------------------------------------------------------
+# conversation：用户会话（软删除模式）
+# 删除 = 标记 is_deleted（数据保留） + 入回收站；恢复 = 翻转 is_deleted；
+# 留存期到期 purge 时才物理删除消息/思考/变量/会话。
+# ---------------------------------------------------------------------------
+def snapshot_conversation(resource_id) -> dict[str, Any] | None:
+    conversation = (
+        db.session.query(Conversation)
+        .filter(Conversation.id == resource_id)
+        .one_or_none()
+    )
+    if conversation is None:
+        return None
+    return {"main": _row_to_dict(conversation)}
+
+
+def physical_delete_conversation(resource_id) -> None:
+    # 软删除模式：会话数据保留（service 删除时已标记 is_deleted），
+    # 恢复时翻转标记；到期销毁由 purge_conversation 物理清理。
+    pass
+
+
+def restore_conversation(snapshot: dict[str, Any]) -> bool:
+    """恢复会话：翻转 is_deleted（消息/变量数据删除时已保留，随会话一并恢复）。"""
+    main_data = snapshot.get("main") or {}
+    conversation_id = main_data.get("id")
+    if not conversation_id:
+        return False
+    conversation = (
+        db.session.query(Conversation)
+        .filter(Conversation.id == conversation_id)
+        .one_or_none()
+    )
+    if conversation is None:
+        return False  # 已到期销毁
+    if not conversation.is_deleted:
+        return False  # 已恢复
+    conversation.is_deleted = False
+    return True
+
+
+def purge_conversation(snapshot: dict[str, Any]) -> None:
+    """留存期结束彻底销毁会话：删除思考/消息/变量/会话记录。"""
+    main_data = snapshot.get("main") or {}
+    conversation_id = main_data.get("id")
+    if not conversation_id:
+        return
+    message_ids = db.session.query(Message.id).filter(
+        Message.conversation_id == conversation_id,
+    )
+    db.session.query(MessageAgentThought).filter(
+        MessageAgentThought.message_id.in_(message_ids),
+    ).delete(synchronize_session=False)
+    db.session.query(Message).filter(
+        Message.conversation_id == conversation_id,
+    ).delete(synchronize_session=False)
+    db.session.query(ConversationVariable).filter(
+        ConversationVariable.conversation_id == conversation_id,
+    ).delete(synchronize_session=False)
+    db.session.query(Conversation).filter(
+        Conversation.id == conversation_id,
+    ).delete(synchronize_session=False)
+
+
+# ---------------------------------------------------------------------------
+# memory：个人记忆（软删除模式，存于 Neo4j + pgvector user_memory 表）
+# 删除 = 软删标记 is_active=false（service 已执行）+ 入回收站；恢复 = 翻转
+# is_active；留存期到期 purge 时才物理清理（DETACH DELETE + 删除 user_memory 行）。
+# ---------------------------------------------------------------------------
+def _memory_driver():
+    """获取 Neo4j driver（不可用时返回 None，调用方需降级处理）。"""
+    try:
+        from internal.extension.neo4j_extension import get_driver
+        return get_driver()
+    except Exception:
+        return None
+
+
+def _memory_row(memory_id):
+    """按 memory_id 查找 user_memory 表记录（embedding_node_id 或 id 关联）。
+
+    id 为 UUID 而 memory_id 可能为 Neo4j 节点 ID，分开查询避免混合类型比较异常。
+    """
+    row = (
+        db.session.query(UserMemory)
+        .filter(UserMemory.embedding_node_id == str(memory_id))
+        .one_or_none()
+    )
+    if row is not None:
+        return row
+    return (
+        db.session.query(UserMemory)
+        .filter(UserMemory.id == memory_id)
+        .one_or_none()
+    )
+
+
+def _memory_neo4j_props(memory_id):
+    """读取 Neo4j 记忆节点属性（快照用于恢复时判断与展示）。"""
+    driver = _memory_driver()
+    if driver is None:
+        return None
+    try:
+        with driver.session() as session:
+            result = session.run(
+                """
+                MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity)
+                  AND (n.node_id = $memory_id OR n.id = $memory_id)
+                RETURN n AS node
+                """,
+                memory_id=str(memory_id),
+            ).single()
+            if result is None:
+                return None
+            node = result.get("node")
+            if node is None:
+                return None
+            props = {}
+            for key, value in dict(node).items():
+                if value is None:
+                    props[key] = None
+                elif hasattr(value, "isoformat"):
+                    props[key] = value.isoformat()
+                elif hasattr(value, "hex"):
+                    props[key] = str(value)
+                else:
+                    props[key] = value
+            return props
+    except Exception:
+        logger.warning("读取记忆节点属性失败 memory=%s", memory_id, exc_info=True)
+        return None
+
+
+def snapshot_memory(resource_id) -> dict[str, Any] | None:
+    row = _memory_row(resource_id)
+    if row is None:
+        return None
+    snapshot = {
+        "main": _row_to_dict(row),
+        "neo4j": _memory_neo4j_props(resource_id),
+    }
+    return snapshot
+
+
+def physical_delete_memory(_resource_id) -> None:
+    # 软删除模式：user_memory 行与 Neo4j 节点数据保留（service 已标记 is_active=false），
+    # 恢复时翻转；到期销毁由 purge_memory 物理清理。
+    pass
+
+
+def restore_memory(snapshot: dict[str, Any]) -> bool:
+    """恢复个人记忆：翻转 Neo4j 节点 is_active=true；重建 user_memory 行。"""
+    main_data = snapshot.get("main") or {}
+    memory_id = main_data.get("id") or main_data.get("embedding_node_id")
+    if not memory_id:
+        return False
+    restored = False
+
+    # 1. Neo4j 翻转 is_active
+    driver = _memory_driver()
+    if driver is not None:
+        try:
+            with driver.session() as session:
+                result = session.run(
+                    """
+                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity)
+                      AND (n.node_id = $memory_id OR n.id = $memory_id)
+                    SET n.is_active = true
+                    RETURN count(n) AS cnt
+                    """,
+                    memory_id=str(memory_id),
+                ).single()
+                if result is not None and (result.get("cnt") or 0) > 0:
+                    restored = True
+        except Exception:
+            logger.warning("恢复记忆节点失败 memory=%s", memory_id, exc_info=True)
+    else:
+        logger.warning("恢复记忆：Neo4j 不可用 memory=%s", memory_id)
+
+    # 2. 重建 user_memory 行（软删时行已被 service 删除）
+    if main_data.get("id") is not None:
+        row = db.session.query(UserMemory).filter(UserMemory.id == main_data["id"]).one_or_none()
+        if row is None:
+            row = UserMemory()
+            for col_name, value in main_data.items():
+                _apply_column_value(UserMemory, row, col_name, value)
+            db.session.add(row)
+            restored = True
+    return restored
+
+
+def purge_memory(snapshot: dict[str, Any]) -> None:
+    """留存期结束彻底销毁记忆：删除 user_memory 行 + Neo4j 节点 DETACH DELETE。"""
+    main_data = snapshot.get("main") or {}
+    memory_id = main_data.get("id") or main_data.get("embedding_node_id")
+    if not memory_id:
+        return
+    try:
+        row = _memory_row(memory_id)
+        if row is not None:
+            db.session.delete(row)
+    except Exception:
+        logger.warning("销毁记忆 user_memory 行失败 memory=%s", memory_id, exc_info=True)
+    driver = _memory_driver()
+    if driver is not None:
+        try:
+            with driver.session() as session:
+                session.run(
+                    """
+                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity)
+                      AND (n.node_id = $memory_id OR n.id = $memory_id)
+                    DETACH DELETE n
+                    """,
+                    memory_id=str(memory_id),
+                ).consume()
+            logger.info("回收站销毁记忆节点 memory=%s", memory_id)
+        except Exception:
+            logger.warning("销毁记忆节点失败 memory=%s", memory_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # 统一分发入口
 # ---------------------------------------------------------------------------
 def snapshot_resource(resource_type: str, resource_id, resource_key: str = "") -> dict[str, Any] | None:
@@ -538,6 +960,17 @@ def snapshot_resource(resource_type: str, resource_id, resource_key: str = "") -
         return snapshot_knowledge_document(resource_id)
     if resource_type == "upload_file":
         return snapshot_upload_file(resource_id)
+    if resource_type == "os_file":
+        # 本机文件记录不依赖 DB 快照（快照由 record_os_file_deletion 直接构造）
+        return {}
+    if resource_type == "schedule_task":
+        return snapshot_schedule_task(resource_id)
+    if resource_type == "external_data_source":
+        return snapshot_external_data_source(resource_id)
+    if resource_type == "conversation":
+        return snapshot_conversation(resource_id)
+    if resource_type == "memory":
+        return snapshot_memory(resource_id)
     return snapshot_generic(resource_type, resource_id)
 
 
@@ -550,11 +983,31 @@ def physical_delete_resource(resource_type: str, resource_id, resource_key: str 
         physical_delete_knowledge_document(resource_id)
     elif resource_type == "upload_file":
         physical_delete_upload_file(resource_id)
+    elif resource_type == "os_file":
+        # 本机文件已由 worker 移入宿主机回收站，无平台 DB 记录可删
+        pass
+    elif resource_type == "schedule_task":
+        physical_delete_schedule_task(resource_id)
+    elif resource_type == "external_data_source":
+        physical_delete_external_data_source(resource_id)
+    elif resource_type == "conversation":
+        # 软删除模式：数据保留（service 已标记 is_deleted），恢复时翻转
+        physical_delete_conversation(resource_id)
+    elif resource_type == "memory":
+        # 软删除模式：user_memory 行与 Neo4j 节点数据保留（service 已标记 is_active=false）
+        physical_delete_memory(resource_id)
     else:
         physical_delete_generic(resource_type, resource_id)
 
 
-def restore_resource(resource_type: str, snapshot: dict[str, Any]) -> bool:
+def restore_resource(
+    resource_type: str,
+    snapshot: dict[str, Any],
+    *,
+    target_path: str = "",
+    check_device: bool = False,
+    confirm_device_mismatch: bool = False,
+) -> bool:
     if resource_type == "knowledge_base":
         return restore_knowledge_base(snapshot)
     if resource_type == "system_prompt":
@@ -563,6 +1016,21 @@ def restore_resource(resource_type: str, snapshot: dict[str, Any]) -> bool:
         return restore_knowledge_document(snapshot)
     if resource_type == "upload_file":
         return restore_upload_file(snapshot)
+    if resource_type == "os_file":
+        return restore_os_file(
+            snapshot,
+            target_path=target_path,
+            check_device=check_device,
+            confirm_device_mismatch=confirm_device_mismatch,
+        )
+    if resource_type == "schedule_task":
+        return restore_schedule_task(snapshot)
+    if resource_type == "external_data_source":
+        return restore_external_data_source(snapshot)
+    if resource_type == "conversation":
+        return restore_conversation(snapshot)
+    if resource_type == "memory":
+        return restore_memory(snapshot)
     return restore_generic(resource_type, snapshot)
 
 
@@ -575,6 +1043,16 @@ def purge_resource(resource_type: str, snapshot: dict[str, Any]) -> None:
         purge_knowledge_base(snapshot)
     elif resource_type == "upload_file":
         purge_upload_file(snapshot)
+    elif resource_type == "os_file":
+        purge_os_file(snapshot)
+    elif resource_type == "schedule_task":
+        purge_schedule_task(snapshot)
+    elif resource_type == "external_data_source":
+        purge_external_data_source(snapshot)
+    elif resource_type == "conversation":
+        purge_conversation(snapshot)
+    elif resource_type == "memory":
+        purge_memory(snapshot)
     elif resource_type in ("app", "workflow", "skill", "mcp", "api_tool"):
         # 删除时已通过 physical_delete 清掉 DB 记录，预留文件清理扩展位
         pass

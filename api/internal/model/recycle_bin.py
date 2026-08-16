@@ -2,6 +2,8 @@
 
 所有 admin 可管理的系统资源删除时先进入回收站（软删除 + 快照），
 由定时任务在留存期到期后彻底物理销毁；回收站不可手动清空，仅管理员可查看/恢复。
+用户删除/agent 代删的资源按 deleted_by_type=user/agent 隔离到用户回收站，
+仅归属账号可查看/恢复；admin 删除的系统资源仅管理员可查看/恢复。
 """
 from datetime import datetime, timezone
 
@@ -46,7 +48,8 @@ class RecycleBin(Base):
     snapshot = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     # 操作管理员 ID（deleted_by_type=user 时为用户账号 ID）
     deleted_by = Column(String(64), nullable=True)
-    # 删除来源：admin=管理员删除 / user=用户侧删除（用户删除默认留存 30 天，仅管理员可见/恢复）
+    # 删除来源：admin=管理员删除 / user=用户侧删除 / agent=agent 代删
+    # user/agent 条目进入用户回收站（仅归属账号可见/恢复），admin 条目仅管理员可见/恢复
     deleted_by_type = Column(String(16), nullable=False, server_default=text("'admin'::character varying"))
     # 删除时间
     deleted_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"), default=_utcnow_naive)

@@ -31,6 +31,16 @@ class _Paginator:
     page_size: int = 20
 
 
+def _mock_resolve_account(monkeypatch, account):
+    """模拟已认证用户：替换 support._resolve_account 直接返回该账号（C-1 加固后测试模拟登录的方式）。"""
+
+    async def _fake_resolve_account(account_id_override=None):
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_account", _fake_resolve_account)
+    return account
+
+
 def _setup(monkeypatch, services):
     account = SimpleNamespace(id=uuid4())
     admin_id = uuid4()
@@ -51,6 +61,7 @@ def _setup(monkeypatch, services):
         "_resolve_admin_permission",
         _resolve_admin_permission,
     )
+    _mock_resolve_account(monkeypatch, account)
     return account
 
 

@@ -384,7 +384,7 @@ class AppService(BaseService):
 
         return app
 
-    def delete_app(self, app_id: UUID, account: Account):
+    def delete_app(self, app_id: UUID, account: Account, *, retention_days: int | None = None, agent_id=None):
         app = self.get_app(app_id, account)
         from internal.service.recycle_bin_service import RecycleBinService
         deleted = RecycleBinService().delete_resource(
@@ -393,7 +393,9 @@ class AppService(BaseService):
             resource_key=str(app.id),
             resource_name=app.name,
             deleted_by=account.id,
-            deleted_by_type="user",
+            deleted_by_type="agent" if agent_id else "user",
+            retention_days=retention_days,
+            agent_id=agent_id,
         )
         if not deleted:
             raise NotFoundException("该应用不存在，请核实后重试")

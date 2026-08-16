@@ -53,9 +53,11 @@ export const editMemory = (memoryId: string, newContent: string) =>
     body: { new_content: newContent },
   }).then((res) => res.data)
 
-// 软删除记忆
-export const softDeleteMemory = (memoryId: string) =>
-  post<BaseResponse<DeleteMemoryResp>>(`/memory/${memoryId}/soft-delete`).then((res) => res.data)
+// 软删除记忆（进入回收站，可指定留存天数）
+export const softDeleteMemory = (memoryId: string, retentionDays?: number) =>
+  post<BaseResponse<DeleteMemoryResp>>(`/memory/${memoryId}/soft-delete`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  }).then((res) => res.data)
 
 // 彻底删除记忆
 export const hardDeleteMemory = (memoryId: string) =>

@@ -1822,6 +1822,9 @@ class TestAppService:
                 self.answer_token_count = 5
                 self.answer_unit_price = 0.0
                 self.answer_price_unit = 0.0
+                self.confirmation_id = ""
+                self.confirmation_status = ""
+                self.execution_summary = ""
 
             def model_dump(self, include=None):
                 payload = {
@@ -1834,6 +1837,9 @@ class TestAppService:
                     "total_token_count": self.total_token_count,
                     "total_price": self.total_price,
                     "latency": self.latency,
+                    "confirmation_id": self.confirmation_id,
+                    "confirmation_status": self.confirmation_status,
+                    "execution_summary": self.execution_summary,
                 }
                 if include is None:
                     return payload

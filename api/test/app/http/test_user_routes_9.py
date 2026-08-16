@@ -210,7 +210,7 @@ class _FakeMemoryGovernor:
     def edit_memory(self, memory_id, user_id, new_content):
         return "new-memory-id"
 
-    def soft_delete_memory(self, memory_id, user_id):
+    def soft_delete_memory(self, memory_id, user_id, *, retention_days=None, agent_id=None):
         return True
 
     def hard_delete_memory(self, memory_id, user_id):

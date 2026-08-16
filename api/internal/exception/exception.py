@@ -55,3 +55,30 @@ class ForbiddenException(CustomException):
 class ValidateErrorException(CustomException):
     """数据验证异常"""
     code = HttpCode.VALIDATE_ERROR
+
+
+class DeviceMismatchException(ValidateErrorException):
+    """本机文件恢复时检测到删除设备与当前设备不一致。
+
+    recorded_device / current_device 供前端展示「这并非本机删除的文件」提示。
+    """
+
+    def __init__(
+        self,
+        message: str = "该文件并非在本机删除，恢复前请确认恢复方式",
+        *,
+        recorded_device: dict | None = None,
+        current_device: dict | None = None,
+        entry_id: str | None = None,
+    ):
+        super().__init__(
+            message,
+            {
+                "recorded_device": recorded_device or {},
+                "current_device": current_device or {},
+                "entry_id": entry_id or "",
+            },
+        )
+        self.recorded_device = recorded_device or {}
+        self.current_device = current_device or {}
+        self.entry_id = entry_id or ""

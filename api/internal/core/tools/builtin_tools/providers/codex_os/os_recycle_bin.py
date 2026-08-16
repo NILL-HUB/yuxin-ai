@@ -125,20 +125,64 @@ class OsRecycleBinTool(BaseTool):
     requester: str = ""
 
     def _run(self, **kwargs: Any) -> str:
+        op = _normalize_text(kwargs.get("op") or "").lower()
         payload = {
-            "op": _normalize_text(kwargs.get("op") or "").lower(),
+            "op": op,
             "paths": list(kwargs.get("paths") or []),
             "path": _normalize_text(kwargs.get("path")),
             "entry_id": _normalize_text(kwargs.get("entry_id")),
             "keyword": _normalize_text(kwargs.get("keyword")),
             "task_id": _normalize_text(kwargs.get("task_id")),
             "reason": _normalize_text(kwargs.get("reason")),
-            "retention_days": int(kwargs.get("retention_days") or 30),
+            "retention_days": int(kwargs.get("retention_days") or 7),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
         }
         result = _call_worker(payload)
+        self._sync_platform_recycle(op, payload, result)
         return json.dumps(result, ensure_ascii=False, default=str)
+
+    def _sync_platform_recycle(self, op: str, payload: dict[str, Any], result: dict[str, Any]) -> None:
+        """把本机回收站删除/恢复记录同步到平台回收站（用户端可见、可恢复）。
+
+        - delete 成功：为每条 entry 写入平台 recycle_bin（resource_type=os_file，
+          deleted_by_type=agent，deleted_by=requester，留存 7 天）
+        - restore 成功：把对应平台记录标记为已恢复
+
+        同步失败不影响 worker 侧结果（本机回收站仍可恢复），仅记录日志。
+        """
+        if not result.get("ok"):
+            return
+        requester = payload.get("requester") or ""
+        try:
+            from internal.service.recycle_bin_service import RecycleBinService
+
+            service = RecycleBinService()
+            if op == "delete":
+                entries = result.get("entries") or []
+                if entries and requester:
+                    service.record_os_file_deletion(
+                        entries=entries,
+                        deleted_by=requester,
+                        deleted_by_type="agent",
+                        task_id=payload.get("task_id") or "",
+                        reason=payload.get("reason") or "",
+                    )
+            elif op == "restore":
+                entry_id = payload.get("entry_id") or ""
+                restored_ids: list[str] = []
+                if entry_id:
+                    restored_ids = [entry_id]
+                else:
+                    restored_ids = [
+                        str(e.get("entry_id"))
+                        for e in (result.get("restored") or [])
+                        if e.get("entry_id")
+                    ]
+                if restored_ids:
+                    service.mark_os_file_restored(restored_ids)
+        except Exception:
+            logger.warning("同步本机文件删除到平台回收站失败", exc_info=True)
 
     async def _arun(self, **kwargs: Any) -> str:
         return self._run(**kwargs)

@@ -45,7 +45,7 @@ def test_os_recycle_bin_passes_payload(monkeypatch):
     assert captured["paths"] == ["C:/tmp/a.txt"]
     assert captured["task_id"] == "task-1"
     assert captured["reason"] == "清理缓存"
-    assert captured["retention_days"] == 30
+    assert captured["retention_days"] == 7
 
 
 def test_os_recycle_bin_uses_desktop_bridge(monkeypatch):

@@ -67,6 +67,13 @@ const navSections = computed<SidebarNavSection[]>(() => [
         active: route.path.startsWith('/my-knowledge'),
       },
       {
+        key: 'recycle-bin',
+        label: t('layout.sidebar.recycleBin'),
+        to: '/recycle-bin',
+        icon: 'icon-delete',
+        active: route.path.startsWith('/recycle-bin'),
+      },
+      {
         key: 'external-data-sources',
         label: t('externalDataSource.title'),
         to: '/external-data-sources',
