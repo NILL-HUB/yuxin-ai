@@ -343,6 +343,7 @@ def test_transcribe_platform_voice_unsupported_raises():
 
 
 def test_handle_line_webhook_transcribes_and_replies(monkeypatch):
+    monkeypatch.setenv("LINE_CHANNEL_SECRET", "line-secret")
     monkeypatch.setenv("LINE_CHANNEL_ACCESS_TOKEN", "line-token")
     get_calls = []
     post_calls = []
@@ -367,7 +368,8 @@ def test_handle_line_webhook_transcribes_and_replies(monkeypatch):
         b'{"events":[{"type":"message","replyToken":"reply-1",'
         b'"message":{"type":"audio","id":"line-msg-1"}}]}'
     )
-    replies = service.handle_line_webhook(raw)
+    expected_signature = hmac.new(b"line-secret", raw, hashlib.sha256).hexdigest()
+    replies = service.handle_line_webhook(raw, expected_signature)
 
     assert replies == ["识别文本"]
     assert any(url == "https://api-data.line.me/v2/bot/message/line-msg-1/content" for url, _ in get_calls)
@@ -390,6 +392,7 @@ def test_line_signature_verification(monkeypatch):
 
 
 def test_handle_whatsapp_webhook_transcribes_and_replies(monkeypatch):
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", "wa-secret")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "wa-token")
     get_calls = []
     post_calls = []
@@ -416,7 +419,8 @@ def test_handle_whatsapp_webhook_transcribes_and_replies(monkeypatch):
         b'{"entry":[{"changes":[{"value":{"metadata":{"phone_number_id":"pn-1"},'
         b'"messages":[{"type":"audio","id":"media-1","from":"user-1"}]}}]}]}'
     )
-    replies = service.handle_whatsapp_webhook(raw)
+    expected_signature = "sha256=" + hmac.new(b"wa-secret", raw, hashlib.sha256).hexdigest()
+    replies = service.handle_whatsapp_webhook(raw, expected_signature)
 
     assert replies == ["识别文本"]
     assert any(url.endswith("/v19.0/media-1") for url in get_calls)
@@ -436,6 +440,7 @@ def test_whatsapp_signature_verification():
 
 
 def test_handle_feishu_webhook_transcribes_and_replies(monkeypatch):
+    monkeypatch.setenv("FEISHU_ENCRYPT_KEY", "encrypt-key")
     monkeypatch.setenv("FEISHU_APP_ID", "feishu-app")
     monkeypatch.setenv("FEISHU_APP_SECRET", "feishu-secret")
     post_calls = []
@@ -475,7 +480,12 @@ def test_handle_feishu_webhook_transcribes_and_replies(monkeypatch):
         }
     ).encode("utf-8")
 
-    replies = service.handle_feishu_webhook(raw)
+    timestamp = "1700000000"
+    nonce = "nonce-1"
+    expected_signature = hashlib.sha256(
+        f"{timestamp}{nonce}encrypt-key{raw.decode('utf-8')}".encode("utf-8")
+    ).hexdigest()
+    replies = service.handle_feishu_webhook(raw, expected_signature, timestamp, nonce)
 
     assert replies == ["识别文本"]
     assert any(url.endswith("/om_msg/resources/fk1") for url, _ in get_calls)
@@ -485,6 +495,17 @@ def test_handle_feishu_webhook_transcribes_and_replies(monkeypatch):
         and kwargs["json"]["receive_id"] == "oc_1"
         for url, kwargs in post_calls
     )
+
+
+def test_feishu_webhook_rejects_missing_signature_config(monkeypatch):
+    """未配置任何校验凭据时，飞书 webhook 应直接拒绝（H-1 修复）。"""
+    monkeypatch.delenv("FEISHU_ENCRYPT_KEY", raising=False)
+    monkeypatch.delenv("FEISHU_VERIFICATION_TOKEN", raising=False)
+    service = _service()
+    raw = b'{"schema":"2.0","event":{}}'
+
+    with pytest.raises(FailException, match="webhook 端点已禁用"):
+        service.handle_feishu_webhook(raw, "sig", "1700000000", "nonce-1")
 
 
 def test_feishu_signature_verification(monkeypatch):
@@ -506,6 +527,7 @@ def test_feishu_signature_verification(monkeypatch):
 
 
 def test_handle_dingtalk_webhook_transcribes_and_replies(monkeypatch):
+    monkeypatch.setenv("DINGTALK_WEBHOOK_SECRET", "dingtalk-secret")
     monkeypatch.setenv("DINGTALK_APP_KEY", "key")
     monkeypatch.setenv("DINGTALK_APP_SECRET", "secret")
     post_calls = []
@@ -537,7 +559,11 @@ def test_handle_dingtalk_webhook_transcribes_and_replies(monkeypatch):
         }
     ).encode("utf-8")
 
-    replies = service.handle_dingtalk_webhook(raw)
+    timestamp = "1700000000"
+    string_to_sign = f"{timestamp}\ndingtalk-secret".encode("utf-8")
+    digest = hmac.new(b"dingtalk-secret", string_to_sign, hashlib.sha256).digest()
+    expected_sign = urllib.parse.quote_plus(base64.b64encode(digest))
+    replies = service.handle_dingtalk_webhook(raw, timestamp, expected_sign)
 
     assert replies == ["识别文本"]
     assert any(url.endswith("/v1.0/robot/messageFiles/download") for url, _ in get_calls)

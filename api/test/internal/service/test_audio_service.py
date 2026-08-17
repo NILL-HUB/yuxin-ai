@@ -44,6 +44,19 @@ def test_split_sentences_caps_long_fragment():
     assert len(sentences) > 1
 
 
+def test_sanitize_tts_text_strips_markdown_and_emoji():
+    raw = "## 🧹 清理计划\n\n- **临时文件**：已清理 1.2GB\n| 类型 | 状态 |\n| --- | --- |\n| 缓存 | 完成 |\n\n[详情](https://example.com)"
+    clean = AudioService.sanitize_tts_text(raw)
+    assert "🧹" not in clean
+    assert "##" not in clean
+    assert "**" not in clean
+    assert "|" not in clean
+    assert "https://" not in clean
+    assert "清理计划" in clean
+    assert "临时文件" in clean
+    assert "类型，状态" in clean
+
+
 def test_text_to_audio_sentences_streams_per_sentence(monkeypatch):
     service = _build_service()
     service._create_tts_response = lambda text, voice: _DummyResponse(chunks=[b"audio"])
@@ -85,7 +98,11 @@ def _mock_siliconflow_credentials(monkeypatch):
             return {
                 "api_key": "test-key",
                 "base_url": "https://api.example.com/v1",
-                "model": "TeleAI/TeleSpeechASR",
+                "model": (
+                    "TeleAI/TeleSpeechASR"
+                    if model_type == "asr"
+                    else "fnlp/MOSS-TTSD-v0.5"
+                ),
                 "provider": "SiliconFlow",
             }
         return {}
@@ -144,6 +161,49 @@ class TestAudioService:
         assert captured["kwargs"]["data"]["model"] == "TeleAI/TeleSpeechASR"
         assert "language" not in captured["kwargs"]["data"]
         assert captured["kwargs"]["timeout"] == 60
+
+    def test_audio_to_text_should_query_asr_model_type(self, monkeypatch):
+        from internal.service.language_model_service import LanguageModelService
+
+        service = _build_service()
+        captured = {}
+
+        def _fake_get_creds(cls, provider=None, model_type=None):
+            captured["provider"] = provider
+            captured["model_type"] = model_type
+            return {
+                "api_key": "test-key",
+                "base_url": "https://api.example.com/v1",
+                "model": "TeleAI/TeleSpeechASR",
+                "provider": "SiliconFlow",
+            }
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(_fake_get_creds),
+        )
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            @staticmethod
+            def json():
+                return {"text": "hello"}
+
+        def _fake_post(url, **kwargs):
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+        audio = FileStorage(stream=BytesIO(b"wav-data"), filename="voice.wav")
+
+        service.audio_to_text(audio)
+
+        assert captured == {"provider": "SiliconFlow", "model_type": "asr"}
 
     def test_audio_to_text_should_pass_language_hint(self, monkeypatch):
         service = _build_service()
@@ -794,6 +854,12 @@ class TestAudioService:
             def raise_for_status(self):
                 return None
 
+            def iter_content(self, chunk_size=1024):
+                yield b"audio-data"
+
+            def close(self):
+                return None
+
         response = _Response()
 
         def _fake_post(url, **kwargs):
@@ -808,11 +874,58 @@ class TestAudioService:
 
         result = service._create_tts_response(input_text="hello", voice="anna")
 
-        assert result is response
+        assert list(result.iter_content()) == [b"audio-data"]
         assert captures["url"] == "https://api.example.com/v1/audio/speech"
-        assert captures["kwargs"]["json"]["voice"] == "FunAudioLLM/CosyVoice2-0.5B:anna"
+        assert captures["kwargs"]["json"]["model"] == "fnlp/MOSS-TTSD-v0.5"
+        assert captures["kwargs"]["json"]["voice"] == "fnlp/MOSS-TTSD-v0.5:anna"
         assert captures["kwargs"]["stream"] is True
         assert "language" not in captures["kwargs"]["json"]
+        assert captures["kwargs"]["json"]["input"] == "hello"
+
+    def test_create_tts_response_should_fallback_to_default_model_when_tts_not_configured(self, monkeypatch):
+        from internal.service.language_model_service import LanguageModelService
+
+        service = _build_service()
+        captures = {}
+
+        def _fake_get_creds(cls, provider=None, model_type=None):
+            if model_type == "tts":
+                return {}
+            return {
+                "api_key": "test-key",
+                "base_url": "https://api.example.com/v1",
+                "model": "TeleAI/TeleSpeechASR",
+                "provider": "SiliconFlow",
+            }
+
+        monkeypatch.setattr(
+            LanguageModelService,
+            "get_provider_credentials",
+            classmethod(_fake_get_creds),
+        )
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size=1024):
+                yield b"audio-data"
+
+            def close(self):
+                return None
+
+        def _fake_post(url, **kwargs):
+            captures["kwargs"] = kwargs
+            return _Response()
+
+        monkeypatch.setattr(
+            "internal.service.audio_service.requests.Session",
+            lambda: _FakeSession(_fake_post),
+        )
+
+        service._create_tts_response(input_text="hello", voice="alex")
+
+        assert captures["kwargs"]["json"]["model"] == "fnlp/MOSS-TTSD-v0.5"
 
     def test_create_tts_response_should_pass_language_when_provided(self, monkeypatch):
         service = _build_service()
@@ -820,6 +933,12 @@ class TestAudioService:
 
         class _Response:
             def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size=1024):
+                yield b"audio-data"
+
+            def close(self):
                 return None
 
         def _fake_post(url, **kwargs):

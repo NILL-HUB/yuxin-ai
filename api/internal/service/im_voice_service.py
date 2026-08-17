@@ -614,7 +614,9 @@ class ImVoiceService:
         import os
 
         channel_secret = str(os.getenv("LINE_CHANNEL_SECRET", "")).strip()
-        if channel_secret and not self.verify_line_signature(raw_body, signature, channel_secret):
+        if not channel_secret:
+            raise FailException("LINE_CHANNEL_SECRET 未配置，webhook 端点已禁用")
+        if not self.verify_line_signature(raw_body, signature, channel_secret):
             raise FailException("LINE webhook 签名校验失败")
         try:
             body = json.loads(raw_body or b"{}")
@@ -663,7 +665,9 @@ class ImVoiceService:
         import os
 
         app_secret = str(os.getenv("WHATSAPP_APP_SECRET", "")).strip()
-        if app_secret and not self.verify_whatsapp_signature(raw_body, signature, app_secret):
+        if not app_secret:
+            raise FailException("WHATSAPP_APP_SECRET 未配置，webhook 端点已禁用")
+        if not self.verify_whatsapp_signature(raw_body, signature, app_secret):
             raise FailException("WhatsApp webhook 签名校验失败")
         try:
             body = json.loads(raw_body or b"{}")
@@ -750,6 +754,11 @@ class ImVoiceService:
         except ValueError:
             body = {}
         encrypt_key = str(os.getenv("FEISHU_ENCRYPT_KEY", "")).strip()
+        verification_token = str(os.getenv("FEISHU_VERIFICATION_TOKEN", "")).strip()
+        if not encrypt_key and not verification_token:
+            raise FailException(
+                "FEISHU_ENCRYPT_KEY / FEISHU_VERIFICATION_TOKEN 均未配置，webhook 端点已禁用"
+            )
         if encrypt_key and not self.verify_feishu_signature(
             raw_body,
             signature,
@@ -759,7 +768,6 @@ class ImVoiceService:
         ):
             raise FailException("飞书 webhook 签名校验失败")
 
-        verification_token = str(os.getenv("FEISHU_VERIFICATION_TOKEN", "")).strip()
         if verification_token:
             header = body.get("header") if isinstance(body.get("header"), dict) else {}
             incoming_token = str(header.get("token") or body.get("token") or "")
@@ -895,7 +903,9 @@ class ImVoiceService:
         import os
 
         secret = str(os.getenv("DINGTALK_WEBHOOK_SECRET", "")).strip()
-        if secret and not self.verify_dingtalk_signature(timestamp, sign, secret):
+        if not secret:
+            raise FailException("DINGTALK_WEBHOOK_SECRET 未配置，webhook 端点已禁用")
+        if not self.verify_dingtalk_signature(timestamp, sign, secret):
             raise FailException("钉钉 webhook 加签校验失败")
         try:
             body = json.loads(raw_body or b"{}")

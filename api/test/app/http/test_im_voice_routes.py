@@ -111,6 +111,29 @@ def test_whatsapp_webhook_route(monkeypatch):
 
 
 def test_feishu_webhook_url_verification(monkeypatch):
+    monkeypatch.setenv("FEISHU_VERIFICATION_TOKEN", "verify-token")
+    _setup(monkeypatch)
+
+    async def _run():
+        async with quart_app.test_client() as client:
+            resp = await client.post(
+                "/im/feishu/webhook",
+                json={
+                    "type": "url_verification",
+                    "challenge": "challenge-9",
+                    "header": {"token": "verify-token"},
+                },
+            )
+            return resp, await resp.get_json()
+
+    resp, payload = _run_coro(_run())
+    assert resp.status_code == 200
+    assert payload["challenge"] == "challenge-9"
+
+
+def test_feishu_webhook_url_verification_rejects_missing_token_config(monkeypatch):
+    """未配置 FEISHU_VERIFICATION_TOKEN 时 url_verification 应拒绝（H-1 修复）。"""
+    monkeypatch.delenv("FEISHU_VERIFICATION_TOKEN", raising=False)
     _setup(monkeypatch)
 
     async def _run():
@@ -119,11 +142,30 @@ def test_feishu_webhook_url_verification(monkeypatch):
                 "/im/feishu/webhook",
                 json={"type": "url_verification", "challenge": "challenge-9"},
             )
-            return resp, await resp.get_json()
+            return resp
 
-    resp, payload = _run_coro(_run())
-    assert resp.status_code == 200
-    assert payload["challenge"] == "challenge-9"
+    resp = _run_coro(_run())
+    assert resp.status_code == 401
+
+
+def test_feishu_webhook_url_verification_rejects_bad_token(monkeypatch):
+    monkeypatch.setenv("FEISHU_VERIFICATION_TOKEN", "verify-token")
+    _setup(monkeypatch)
+
+    async def _run():
+        async with quart_app.test_client() as client:
+            resp = await client.post(
+                "/im/feishu/webhook",
+                json={
+                    "type": "url_verification",
+                    "challenge": "challenge-9",
+                    "header": {"token": "wrong-token"},
+                },
+            )
+            return resp
+
+    resp = _run_coro(_run())
+    assert resp.status_code == 401
 
 
 def test_feishu_webhook_route(monkeypatch):

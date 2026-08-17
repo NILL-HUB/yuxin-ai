@@ -196,6 +196,25 @@ const appendPendingChunks = () => {
   }
 }
 
+const waitForPlaybackEnd = (audio: HTMLAudioElement, sessionId: number) => {
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      window.clearInterval(timer)
+      audio.removeEventListener('ended', finish)
+      audio.removeEventListener('error', finish)
+      resolve()
+    }
+    const timer = window.setInterval(() => {
+      if (sessionId !== playSessionId.value || audio.paused) finish()
+    }, 200)
+    audio.addEventListener('ended', finish)
+    audio.addEventListener('error', finish)
+  })
+}
+
 const playAudioStream = async (sessionId: number, request: TtsRequestFn) => {
   if (sessionId !== playSessionId.value || typeof MediaSource === 'undefined') {
     // 降级：回退到整段收集播放，保证兼容性。
@@ -224,6 +243,7 @@ const playAudioStream = async (sessionId: number, request: TtsRequestFn) => {
     audio.currentTime = 0
     try {
       await audio.play()
+      await waitForPlaybackEnd(audio, sessionId)
     } catch {
       if (sessionId === playSessionId.value) {
         isPlaying.value = false
@@ -295,6 +315,7 @@ const playAudioStream = async (sessionId: number, request: TtsRequestFn) => {
   }
   try {
     await audio.play()
+    await waitForPlaybackEnd(audio, sessionId)
   } catch {
     if (sessionId === playSessionId.value) {
       isPlaying.value = false

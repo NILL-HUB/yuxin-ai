@@ -72,6 +72,9 @@ def init_socketio_asgi(quart_app: Any, flask_config: Mapping[str, Any]) -> Any:
 
     from socketio import AsyncServer, ASGIApp
     from internal.extension.websocket_handlers import register_socketio_handlers
+    from internal.extension.realtime_voice_handlers import (
+        register_realtime_voice_handlers,
+    )
 
     cors_origins, cors_credentials = resolve_cors_settings(flask_config)
     redis_url = flask_config.get("REDIS_URL")
@@ -86,6 +89,7 @@ def init_socketio_asgi(quart_app: Any, flask_config: Mapping[str, Any]) -> Any:
     )
 
     register_socketio_handlers(_socketio)
+    register_realtime_voice_handlers(_socketio)
 
     _socketio_app = ASGIApp(_socketio, other_asgi_app=quart_app)
     logging.info("[SocketIO] AsyncServer 已挂载到 Quart（ASGI 模式）")

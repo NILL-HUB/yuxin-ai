@@ -26,7 +26,38 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ASR_MODEL = "TeleAI/TeleSpeechASR"
 DEFAULT_GPT_TRANSCRIBE_MODEL = "OpenAI/whisper-large-v3"
+DEFAULT_TTS_MODEL = "fnlp/MOSS-TTSD-v0.5"
 _GPT_TRANSCRIBE_PROVIDERS = frozenset({"gpt_transcribe"})
+_COSYVOICE_TTS_MODEL = "FunAudioLLM/CosyVoice2-0.5B"
+_MOSS_TTS_MODEL = "fnlp/MOSS-TTSD-v0.5"
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\u2600-\u27BF"
+    "\uFE0F"
+    "\u2B00-\u2BFF"
+    "]"
+)
+
+
+class _SynthesizedTtsResponse:
+    """把已完整合成的 TTS 音频包装成可迭代的响应对象。"""
+
+    def __init__(self, audio: bytes) -> None:
+        self._audio = audio
+        self._offset = 0
+        self.closed = False
+
+    def iter_content(self, chunk_size: int = 1024) -> Generator[bytes, None, None]:
+        while self._offset < len(self._audio):
+            chunk = self._audio[self._offset:self._offset + chunk_size]
+            self._offset += len(chunk)
+            yield chunk
+
+    def close(self) -> None:
+        self.closed = True
 
 @inject
 @dataclass
@@ -36,13 +67,17 @@ class AudioService(BaseService):
     app_service: AppService
 
     @classmethod
-    def _resolve_siliconflow_credentials(cls) -> tuple[str, str, str]:
+    def _resolve_siliconflow_credentials(cls, model_type: str | None = None) -> tuple[str, str, str]:
         """从数据库查询 SiliconFlow 凭证（api_key + base_url + model）。
 
         替代原来从环境变量 SILICONFLOW_API_KEY/SILICONFLOW_API_BASE 读取的方式，
-        统一走 admin 数据库管理。
+        统一走 admin 数据库管理。ASR 调用方应传入 model_type="asr"，避免取到
+        同 provider 下其他类型的模型。
         """
-        creds = LanguageModelService.get_provider_credentials(provider="SiliconFlow")
+        creds = LanguageModelService.get_provider_credentials(
+            provider="SiliconFlow",
+            model_type=model_type,
+        )
         api_key = (creds.get("api_key") or "").strip()
         base_url = (creds.get("base_url") or "").strip()
         model = (creds.get("model") or "").strip()
@@ -88,6 +123,69 @@ class AudioService(BaseService):
             return os.getenv("GPT_TRANSCRIBE_MODEL", "").strip() or DEFAULT_GPT_TRANSCRIBE_MODEL
         return str(configured_model or "").strip() or DEFAULT_ASR_MODEL
 
+    @staticmethod
+    def _resolve_tts_model() -> str:
+        """从数据库读取 SiliconFlow tts 模型，未配置时回退到默认模型。"""
+        try:
+            creds = LanguageModelService.get_provider_credentials(
+                provider="SiliconFlow",
+                model_type="tts",
+            )
+            model = (creds.get("model") or "").strip()
+        except Exception:
+            model = ""
+        return model or DEFAULT_TTS_MODEL
+
+    @staticmethod
+    def sanitize_tts_text(text: str) -> str:
+        """去掉 Markdown/Emoji/表格等不适合朗读的符号，转成纯文本。"""
+        if not text:
+            return ""
+        t = str(text)
+        t = re.sub(r"```.*?```", " ", t, flags=re.S)
+        t = re.sub(r"!\[[^\]]*\]\([^)]*\)", " ", t)
+        t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)
+        t = re.sub(r"<[^>]+>", " ", t)
+        t = re.sub(r"^#{1,6}\s*", "", t, flags=re.M)
+        t = re.sub(r"`([^`]*)`", r"\1", t)
+        t = re.sub(r"[*_~`]+", "", t)
+        t = re.sub(r"^\s*>\s?", "", t, flags=re.M)
+        lines: list[str] = []
+        for line in t.splitlines():
+            stripped = line.strip()
+            if re.fullmatch(r"\|?[\s:\-|]+\|?", stripped):
+                continue
+            if "|" in stripped:
+                cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+                line = "，".join(cell for cell in cells if cell)
+            lines.append(line)
+        t = "\n".join(lines)
+        t = re.sub(r"^\s*[-*+]\s+", "", t, flags=re.M)
+        t = re.sub(r"^\s*\d+[.、]\s+", "", t, flags=re.M)
+        t = _EMOJI_RE.sub(" ", t)
+        t = (
+            t.replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&nbsp;", " ")
+        )
+        t = re.sub(r"https?://\S+", " ", t)
+        t = re.sub(r"\s+", " ", t)
+        return t.strip()
+
+    @staticmethod
+    def _tts_candidates(configured_model: str, text_len: int) -> list[str]:
+        """按文本长度给出 TTS 模型候选，长文本优先 CosyVoice2，短文本优先 MOSS。"""
+        candidates: list[str] = []
+        if configured_model:
+            candidates.append(configured_model)
+        if configured_model == _COSYVOICE_TTS_MODEL and text_len < 6:
+            candidates.insert(0, _MOSS_TTS_MODEL)
+        for fallback in (_MOSS_TTS_MODEL, _COSYVOICE_TTS_MODEL):
+            if fallback not in candidates:
+                candidates.append(fallback)
+        return candidates
+
     def audio_to_text(
         self,
         audio: FileStorage,
@@ -98,7 +196,7 @@ class AudioService(BaseService):
         """将语音转换为文本（SiliconFlow ASR，可指定语言/provider/模型）."""
         if not audio or not (content := audio.stream.read()):
             raise FailException("音频文件无效或为空")
-        api_key, base_url, configured_model = self._resolve_siliconflow_credentials()
+        api_key, base_url, configured_model = self._resolve_siliconflow_credentials(model_type="asr")
         endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
         payload = {
             "model": self._resolve_asr_model(
@@ -225,60 +323,81 @@ class AudioService(BaseService):
         voice: str,
         language: str = "",
     ) -> requests.Response:
-        """请求TTS服务并返回流式响应对象"""
+        """合成 TTS 音频并返回可迭代响应。
+
+        先清洗 Markdown/Emoji，再按文本长度选择模型：长文本优先 CosyVoice2，
+        短文本优先 MOSS；返回空音频时自动切换到备用模型。
+        """
+        normalized_text = self.sanitize_tts_text(input_text)
+        if not normalized_text:
+            raise FailException("文本内容不能为空")
+
         api_key, base_url, _ = self._resolve_siliconflow_credentials()
         endpoint = f"{base_url.rstrip('/')}/audio/speech"
 
-        model = "FunAudioLLM/CosyVoice2-0.5B"
-        full_voice = f"{model}:{voice}"
-        payload = {
-            "model": model,
-            "input": input_text,
-            "voice": full_voice,
-            "response_format": "mp3",
-            "stream": True,
-            "speed": 1.0,
-            "gain": 0,
-        }
         normalized_language = str(language or "").strip()
-        if normalized_language:
-            payload["language"] = normalized_language
+        configured_model = self._resolve_tts_model()
+        last_error: Exception | None = None
 
-        try:
-            response = self._get_requests_session().post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                stream=True,
-                timeout=120,
-            )
-            response.raise_for_status()
-            return response
-        except requests.exceptions.HTTPError as error:
-            # 解析错误响应以提供更友好的错误信息
-            error_message = "文字转语音请求失败，请稍后重试"
+        for model in self._tts_candidates(configured_model, len(normalized_text)):
+            full_voice = f"{model}:{voice}"
+            payload = {
+                "model": model,
+                "input": normalized_text,
+                "voice": full_voice,
+                "response_format": "mp3",
+                "stream": True,
+                "speed": 1.0,
+                "gain": 0,
+            }
+            if normalized_language:
+                payload["language"] = normalized_language
+
             try:
-                error_data = error.response.json()
-                if error.response.status_code == 403:
-                    if "balance is insufficient" in error_data.get("message", ""):
-                        error_message = "TTS服务余额不足，请充值后继续使用"
-                    else:
-                        error_message = "TTS服务访问被拒绝，请检查API Key权限"
-                elif error.response.status_code == 429:
-                    error_message = "TTS服务请求过于频繁，请稍后重试"
-            except Exception:
-                pass
-            logger.error("文字转语音请求失败: %(error)s", {"error": error}, exc_info=True)
-            raise FailException(error_message)
-        except requests.exceptions.RequestException as error:
-            logger.error("文字转语音请求失败: %(error)s", {"error": error}, exc_info=True)
-            raise FailException("文字转语音请求失败，请稍后重试")
-        except Exception as error:
-            logger.error("文字转语音失败: %(error)s", {"error": error}, exc_info=True)
-            raise FailException("文字转语音失败，请稍后重试")
+                response = self._get_requests_session().post(
+                    endpoint,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    stream=True,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                chunks = list(response.iter_content(chunk_size=1024))
+                response.close()
+                audio = b"".join(chunk for chunk in chunks if chunk)
+                if audio:
+                    return _SynthesizedTtsResponse(audio)
+                last_error = FailException("TTS 返回空音频，请稍后重试")
+                logger.warning("TTS 返回空音频，尝试备用模型: model=%s", model)
+            except requests.exceptions.HTTPError as error:
+                # 解析错误响应以提供更友好的错误信息
+                error_message = "文字转语音请求失败，请稍后重试"
+                try:
+                    error_data = error.response.json()
+                    if error.response.status_code == 403:
+                        if "balance is insufficient" in error_data.get("message", ""):
+                            error_message = "TTS服务余额不足，请充值后继续使用"
+                        else:
+                            error_message = "TTS服务访问被拒绝，请检查API Key权限"
+                    elif error.response.status_code == 429:
+                        error_message = "TTS服务请求过于频繁，请稍后重试"
+                except Exception:
+                    pass
+                logger.error("文字转语音请求失败: %(error)s", {"error": error}, exc_info=True)
+                raise FailException(error_message)
+            except requests.exceptions.RequestException as error:
+                logger.error("文字转语音请求失败: %(error)s", {"error": error}, exc_info=True)
+                last_error = error
+            except Exception as error:
+                logger.error("文字转语音失败: %(error)s", {"error": error}, exc_info=True)
+                last_error = error
+
+        if isinstance(last_error, FailException):
+            raise last_error
+        raise FailException("文字转语音请求失败，请稍后重试")
 
     @staticmethod
     @lru_cache(maxsize=1)

@@ -60,7 +60,13 @@ def register_routes(quart_app):
             header = body.get("header") if isinstance(body.get("header"), dict) else {}
             incoming_token = str(header.get("token") or body.get("token") or "")
             expected_token = str(os.getenv("FEISHU_VERIFICATION_TOKEN", "") or "")
-            if expected_token and not hmac.compare_digest(incoming_token, expected_token):
+            if not expected_token:
+                return _json_resp(
+                    code="unauthorized",
+                    message="FEISHU_VERIFICATION_TOKEN 未配置，webhook 端点已禁用",
+                    status=401,
+                )
+            if not hmac.compare_digest(incoming_token, expected_token):
                 return _json_resp(
                     code="unauthorized",
                     message="invalid verification token",
