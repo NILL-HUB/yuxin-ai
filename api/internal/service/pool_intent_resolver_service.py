@@ -111,7 +111,8 @@ class PoolIntentResolver:
 
         import concurrent.futures
         llm = self.language_model_service.get_feature_model("pool_intent_resolution")
-        structured = llm.with_structured_output(PoolMatchResult)
+        from internal.lib.structured_output import with_structured_output_fallback
+        structured = with_structured_output_fallback(llm, PoolMatchResult)
         prompt = self._build_prompt(query, pool_descriptions, visible_pools)
 
         # LLM 子池匹配为优化项，10 秒未返回则放弃，避免阻塞主流程

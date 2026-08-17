@@ -189,7 +189,8 @@ class ConversationService(BaseService):
 
         # 2.通过动态模型注册表加载模型（带 API key 注入），避免硬编码静态配置导致 401
         llm = cls._load_summary_llm()
-        structured_llm = llm.with_structured_output(ConversationInfo)
+        from internal.lib.structured_output import with_structured_output_fallback
+        structured_llm = with_structured_output_fallback(llm, ConversationInfo)
 
         # 3.构建链应用
         chain = prompt | structured_llm
@@ -276,7 +277,8 @@ class ConversationService(BaseService):
 
         # 2.通过动态模型注册表加载模型，避免硬编码静态配置导致 401
         llm = cls._load_summary_llm()
-        structured_llm = llm.with_structured_output(SuggestedQuestions)
+        from internal.lib.structured_output import with_structured_output_fallback
+        structured_llm = with_structured_output_fallback(llm, SuggestedQuestions)
 
         # 3.构建链应用
         chain = prompt | structured_llm

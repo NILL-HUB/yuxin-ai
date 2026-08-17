@@ -1,5 +1,6 @@
 import logging
 import os
+import tiktoken
 from contextlib import contextmanager
 from dataclasses import dataclass
 from collections.abc import Callable
@@ -18,6 +19,36 @@ from .base_service import BaseService
 
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_num_tokens_from_messages(messages: Any) -> int:
+    """估算消息 token 数：优先 tiktoken cl100k_base，再退化为字符数/4。"""
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        num_tokens = 0
+        for message in messages:
+            content = getattr(message, "content", message)
+            num_tokens += 4
+            if isinstance(content, str):
+                num_tokens += len(encoding.encode(content))
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        num_tokens += len(encoding.encode(str(item.get("text", ""))))
+        return num_tokens + 2
+    except Exception:
+        total_chars = 0
+        for message in messages:
+            content = getattr(message, "content", message)
+            if isinstance(content, str):
+                total_chars += len(content)
+            elif isinstance(content, list):
+                total_chars += sum(
+                    len(str(item.get("text", "")))
+                    for item in content
+                    if isinstance(item, dict) and item.get("type") == "text"
+                )
+        return total_chars // 4
 
 
 @contextmanager
@@ -385,8 +416,14 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
     def get_num_tokens_from_messages(self, messages):
         token_counter = getattr(object.__getattribute__(self, "_primary_model"), "get_num_tokens_from_messages", None)
         if callable(token_counter):
-            return token_counter(messages)
-        return super().get_num_tokens_from_messages(messages)
+            try:
+                return token_counter(messages)
+            except (NotImplementedError, ImportError, AttributeError):
+                logger.warning(
+                    "模型 %s 不支持 get_num_tokens_from_messages，使用 tiktoken/字符估算兜底",
+                    self._requested_model_ref,
+                )
+        return _estimate_num_tokens_from_messages(messages)
 
     def __getattr__(self, name: str):
         try:

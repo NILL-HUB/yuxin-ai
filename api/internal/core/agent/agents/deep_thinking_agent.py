@@ -816,7 +816,8 @@ class DeepThinkingAgent(FunctionCallAgent):
         ).strip()
 
         try:
-            structured_llm = self.llm.with_structured_output(StructuredDocumentOutlinePlan)
+            from internal.lib.structured_output import with_structured_output_fallback
+            structured_llm = with_structured_output_fallback(self.llm, StructuredDocumentOutlinePlan)
             response = await structured_llm.ainvoke([
                 HumanMessage(content=outline_prompt),
             ])
@@ -910,7 +911,8 @@ class DeepThinkingAgent(FunctionCallAgent):
         )
 
         try:
-            structured_llm = self.llm.with_structured_output(StructuredDocumentOutlinePlan)
+            from internal.lib.structured_output import with_structured_output_fallback
+            structured_llm = with_structured_output_fallback(self.llm, StructuredDocumentOutlinePlan)
             response = await structured_llm.ainvoke([
                 HumanMessage(content=repair_prompt),
             ])
@@ -1692,7 +1694,8 @@ class DeepThinkingAgent(FunctionCallAgent):
             "deep_thinking_route_instruction"
         )
         try:
-            structured_llm = self.llm.with_structured_output(DeepRouteDecision)
+            from internal.lib.structured_output import with_structured_output_fallback
+            structured_llm = with_structured_output_fallback(self.llm, DeepRouteDecision)
             decision = await structured_llm.ainvoke([
                 HumanMessage(
                     content=(

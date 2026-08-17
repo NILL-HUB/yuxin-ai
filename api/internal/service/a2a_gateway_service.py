@@ -10,7 +10,7 @@ import logging
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from injector import inject
 
@@ -27,6 +27,8 @@ from internal.core.agent.adapters.hermes.a2a_protocol import (
     skills_from_agent_names,
     text_message,
 )
+from internal.service.public_agent_a2a_service import PublicAgentA2AService
+from internal.service.public_agent_registry_service import PublicAgentRegistryService
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +38,8 @@ logger = logging.getLogger(__name__)
 class A2AGatewayService:
     """A2A 入站网关。"""
 
-    public_agent_a2a_service: Any = None
-    public_agent_registry_service: Any = None
+    public_agent_a2a_service: Optional[PublicAgentA2AService] = None
+    public_agent_registry_service: Optional[PublicAgentRegistryService] = None
 
     def __post_init__(self) -> None:
         self._tasks: dict[str, dict[str, Any]] = {}

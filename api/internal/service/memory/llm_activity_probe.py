@@ -516,7 +516,9 @@ class LLMActivityProbe:
         LangChain with_structured_output().stream() 返回的是部分 pydantic 对象，
         最后一个 chunk 通常是完整对象。
         """
-        structured = llm.with_structured_output(response_model)
+        from internal.lib.structured_output import with_structured_output_fallback
+
+        structured = with_structured_output_fallback(llm, response_model)
         final_result = None
 
         for chunk in structured.stream(prompt):

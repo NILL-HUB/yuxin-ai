@@ -66,7 +66,7 @@ class MemoryEntityExtractor:
     """LLM 驱动的实体/关系抽取与摘要生成。
 
     无外部依赖注入，``LanguageModelService`` 通过类方法调用获取 LLM。
-    遵循项目同步调用模式，使用 ``with_structured_output()`` 实现结构化输出。
+    遵循项目同步调用模式，使用带兜底的结构化输出实现实体提取。
     """
 
     def _call_llm_structured_with_timeout(

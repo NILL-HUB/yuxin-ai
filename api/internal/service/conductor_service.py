@@ -294,7 +294,8 @@ class ConductorService:
     ) -> ConductorPlanModel:
         """调用指挥官 LLM，返回结构化计划。"""
         llm = self.language_model_service.get_feature_model("conductor")
-        structured_llm = llm.with_structured_output(ConductorPlanModel)
+        from internal.lib.structured_output import with_structured_output_fallback
+        structured_llm = with_structured_output_fallback(llm, ConductorPlanModel)
 
         agent_pools = _build_agent_pool_summary()
         models = _build_model_summary()

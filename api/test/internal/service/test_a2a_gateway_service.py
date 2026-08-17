@@ -1,6 +1,24 @@
 from internal.service.a2a_gateway_service import A2AGatewayService
 
 
+def test_a2a_gateway_service_can_be_resolved_by_injector():
+    """回归：字段曾标注为 Any，injector 报 Injecting Any is not supported。"""
+    from injector import Injector
+
+    from internal.service.public_agent_a2a_service import PublicAgentA2AService
+    from internal.service.public_agent_registry_service import PublicAgentRegistryService
+
+    injector = Injector()
+    injector.binder.bind(PublicAgentA2AService, to=_FakeRouter())
+    injector.binder.bind(PublicAgentRegistryService, to=_FakeRegistry())
+
+    gateway = injector.get(A2AGatewayService)
+
+    assert isinstance(gateway, A2AGatewayService)
+    assert isinstance(gateway.public_agent_a2a_service, _FakeRouter)
+    assert isinstance(gateway.public_agent_registry_service, _FakeRegistry)
+
+
 class _FakeRegistry:
     def search_public_agents(self, query, limit=50):
         return [{"name": "数据分析"}, {"name": "写作助手"}]
