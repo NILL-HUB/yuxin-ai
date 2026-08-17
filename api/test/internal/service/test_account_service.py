@@ -1081,6 +1081,7 @@ class TestAccountService:
             password="hashed-password",
             password_salt="salt",
             is_password_set=True,
+            password_version=2,
         )
         monkeypatch.setattr(service, "get_account_by_email", lambda _email: account)
         monkeypatch.setattr(
@@ -1120,6 +1121,7 @@ class TestAccountService:
             password="hashed-password",
             password_salt="salt",
             is_password_set=True,
+            password_version=2,
             last_login_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
             last_login_ip="10.0.0.4",
         )

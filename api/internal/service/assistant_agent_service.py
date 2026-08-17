@@ -52,6 +52,11 @@ from internal.exception import NotFoundException
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
 
+from .assistant_agent_resolver import (
+    resolve_assistant_agent_app_id,
+    try_resolve_assistant_agent_app_id,
+)
+
 from .base_service import BaseService
 from .app_config_service import AppConfigService
 from .conversation_service import ConversationService
@@ -255,7 +260,7 @@ class AssistantAgentService(BaseService):
                 if _is_valid(existing):
                     return existing
 
-            assistant_agent_id = current_app.config.get("ASSISTANT_AGENT_ID")
+            assistant_agent_id = resolve_assistant_agent_app_id(self.db)
             conversation = Conversation(
                 app_id=assistant_agent_id,
                 name="New Conversation",
@@ -760,11 +765,12 @@ class AssistantAgentService(BaseService):
                 self.app_config_service.get_langchain_tools_by_mcp_bindings(assistant_mcp_bindings)
             )
 
-        # Codex OS 自动化：通过宿主机 worker 执行用户确认后的系统任务。
-        # 工具内部强制 preview → approval_token → apply，不能直接执行未确认操作。
+        # Codex OS 自动化：通过宿主机 worker 执行系统任务。
+        # 删除类操作（os_recycle_bin / 纯删除补丁）已全部走本机回收站，可随时恢复，
+        # 因此 agent 可全自动执行而无需用户逐次确认；其余写操作仍走 preview → approval。
         if self.app_config_service is not None:
             try:
-                for tool_name in ("run_os_task", "os_file_task"):
+                for tool_name in ("run_os_task", "os_file_task", "os_recycle_bin"):
                     os_tool_factory = (
                         self.app_config_service.builtin_provider_manager.get_tool(
                             "codex_os",
@@ -992,7 +998,7 @@ class AssistantAgentService(BaseService):
                 selected_tools=selected_descriptors,
                 prebound_tools=prebound_descriptors,
                 account_id=account_id,
-                agent_id=str(current_app.config.get("ASSISTANT_AGENT_ID", "")),
+                agent_id=str(resolve_assistant_agent_app_id(self.db)),
                 request_id=message_id,
                 max_tool_count=20,
             )
@@ -1291,8 +1297,8 @@ class AssistantAgentService(BaseService):
             invoke_from: 调用来源标识（如定时任务传 InvokeFrom.SCHEDULE.value），
                 用于消息/会话与正常对话作区分；不传默认 assistant_agent。
         """
-        # 1.获取辅助Agent对应的id
-        assistant_agent_id = current_app.config.get("ASSISTANT_AGENT_ID")
+        # 1.获取辅助Agent对应的id（DB 按名称解析，避免依赖 env 占位配置）
+        assistant_agent_id = resolve_assistant_agent_app_id(self.db)
 
         # 2.获取当前会话信息（支持按conversation_id切换）
         conversation = self._resolve_assistant_agent_conversation(
@@ -2061,7 +2067,7 @@ class AssistantAgentService(BaseService):
         account: Account,
     ) -> list[dict]:
         """获取当前账号的辅助Agent最近会话列表"""
-        assistant_agent_id = current_app.config.get("ASSISTANT_AGENT_ID")
+        assistant_agent_id = try_resolve_assistant_agent_app_id(self.db)
         limit = req.limit.data or 20
         active_conversation_id = account.assistant_agent_conversation_id
 

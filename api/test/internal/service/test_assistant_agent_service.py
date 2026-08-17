@@ -2103,11 +2103,23 @@ class TestAssistantAgentService:
             def all(self):
                 return conversations
 
+        class _AppQuery:
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def order_by(self, *_args, **_kwargs):
+                return self
+
+            def first(self):
+                return None
+
         class _Session:
             def __init__(self):
                 self.calls = 0
 
             def query(self, _model):
+                if getattr(_model, "__name__", "") == "App":
+                    return _AppQuery()
                 self.calls += 1
                 if self.calls == 1:
                     return _MessageIdQuery()
