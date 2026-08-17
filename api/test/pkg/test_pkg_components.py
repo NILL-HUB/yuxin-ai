@@ -203,12 +203,14 @@ class TestPaginatorPasswordResponseAndDB:
         with pytest.raises(ValueError):
             validate_password("short")
 
+        # 使用低迭代次数加快测试（功能验证不依赖迭代参数）
+        test_iterations = 1_000
         salt = b"pepper-salt"
-        hashed = hash_password("abc12345", salt)
+        hashed = hash_password("abc12345", salt, iterations=test_iterations)
         hashed_base64 = base64.b64encode(hashed)
         salt_base64 = base64.b64encode(salt)
-        assert compare_password("abc12345", hashed_base64, salt_base64) is True
-        assert compare_password("wrong123", hashed_base64, salt_base64) is False
+        assert compare_password("abc12345", hashed_base64, salt_base64, iterations=test_iterations) is True
+        assert compare_password("wrong123", hashed_base64, salt_base64, iterations=test_iterations) is False
 
     def test_sqlalchemy_auto_commit_should_commit_and_rollback(self, monkeypatch):
         app = TestApp(__name__)

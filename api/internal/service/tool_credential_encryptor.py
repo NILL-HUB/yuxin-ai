@@ -23,22 +23,56 @@ from cryptography.fernet import Fernet, InvalidToken
 logger = logging.getLogger(__name__)
 
 
-def _load_fernet() -> Fernet:
-    """加载 Fernet 密钥，优先复用 MODEL_KEY_ENCRYPTION_KEY，避免引入新密钥。"""
-    raw_key = os.getenv("MODEL_KEY_ENCRYPTION_KEY", "").strip()
+def _is_placeholder_key(raw_key: str) -> bool:
+    """判断 Fernet 密钥是否未配置或为占位符。"""
     if not raw_key:
+        return True
+    lowered = raw_key.lower()
+    return (
+        lowered.startswith("your-")
+        or "-here" in lowered
+        or raw_key.startswith("<changeme")
+        or raw_key.startswith("placeholder-")
+    )
+
+
+def load_fernet_from_env(env_name: str, component_name: str) -> Fernet:
+    """加载 Fernet 密钥（供各凭证加密模块共享）。
+
+    规则：
+    - 密钥未配置或为占位符时：
+      - 生产环境（APP_ENV=production）直接抛错，阻止服务以弱/临时密钥启动（M-2）；
+      - 开发/测试环境生成临时内存密钥并 WARNING（保留重启后需重新加密的行为）。
+    - 非法密钥格式一律抛 ValueError。
+    """
+    raw_key = os.getenv(env_name, "").strip()
+    if _is_placeholder_key(raw_key):
+        is_production = str(os.getenv("APP_ENV") or "").strip().lower() == "production"
+        if is_production:
+            raise RuntimeError(
+                f"{env_name} 未配置（或为占位符），生产环境禁止使用临时/占位密钥加密凭证。"
+                "请配置有效 Fernet 密钥（生成方法: python -c "
+                '\"from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())\"）后重启服务。'
+            )
         raw_key = Fernet.generate_key().decode("utf-8")
         logger.warning(
-            "MODEL_KEY_ENCRYPTION_KEY 未配置，已生成临时内存密钥，"
-            "重启后无法解密历史工具凭证，请尽快配置该环境变量"
+            "%s: %s 未配置，已生成临时内存密钥，"
+            "重启后将无法解密历史凭证，请尽快配置该环境变量",
+            component_name,
+            env_name,
         )
     try:
         return Fernet(raw_key.encode("utf-8"))
     except (ValueError, TypeError) as exc:
         raise ValueError(
-            "MODEL_KEY_ENCRYPTION_KEY 不是合法的 Fernet 密钥，"
-            "请使用 Fernet.generate_key() 生成"
+            f"{env_name} 不是合法的 Fernet 密钥，请使用 Fernet.generate_key() 生成"
         ) from exc
+
+
+def _load_fernet() -> Fernet:
+    """加载 Fernet 密钥，优先复用 MODEL_KEY_ENCRYPTION_KEY，避免引入新密钥。"""
+    return load_fernet_from_env("MODEL_KEY_ENCRYPTION_KEY", "工具凭证")
 
 
 _FERNET = _load_fernet()
