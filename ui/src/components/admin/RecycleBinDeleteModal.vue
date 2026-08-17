@@ -5,7 +5,8 @@ import { useI18n } from 'vue-i18n'
 /**
  * 统一删除确认弹窗：提示资源将进入回收站，并选择留存（销毁）天数。
  *
- * 后端约定：管理员删除资源统一走回收站，留存天数仅允许 7/30/90/180（默认 30）。
+ * 后端约定：删除资源统一走回收站，留存天数仅允许 7/30/90/180（默认 30）。
+ * hint 可覆盖默认提示文案（用户端删除提示与管理员侧不同）。
  */
 const props = withDefaults(
   defineProps<{
@@ -13,11 +14,13 @@ const props = withDefaults(
     title?: string
     resourceName?: string
     loading?: boolean
+    hint?: string
   }>(),
   {
     title: '',
     resourceName: '',
     loading: false,
+    hint: '',
   },
 )
 
@@ -70,7 +73,7 @@ const handleOk = () => {
           </a-radio-group>
         </div>
         <p class="mt-2 text-xs text-slate-500">
-          {{ t('admin.recycleBin.deleteConfirmHint') }}
+          {{ hint || t('admin.recycleBin.deleteConfirmHint') }}
         </p>
         <p class="mt-1 text-xs text-amber-600">
           {{ t('admin.recycleBin.retentionHint') }}

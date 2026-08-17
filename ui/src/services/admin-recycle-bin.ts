@@ -5,7 +5,7 @@ import type {
   RecycleBinDetailResponse,
   RecycleBinPageData,
   RecycleBinPageResponse,
-} from '@/models/admin-recycle-bin'
+} from '@/models/recycle-bin'
 
 /**
  * 获取回收站条目列表，并解包接口返回的 data 字段。

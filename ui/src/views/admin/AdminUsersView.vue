@@ -51,7 +51,7 @@ const form = ref({
   name: '',
   password: '',
   status: 'active',
-  role_ids: [] as string[],
+  role_codes: [] as string[],
 })
 
 // 重置密码弹窗
@@ -68,16 +68,8 @@ const roleCodeToName = computed(() => {
   return map
 })
 
-const roleCodeToId = computed(() => {
-  const map: Record<string, string> = {}
-  roles.value.forEach((role) => {
-    map[role.code] = role.id
-  })
-  return map
-})
-
 const roleOptions = computed(() =>
-  roles.value.map((role) => ({ label: role.name, value: role.id })),
+  roles.value.map((role) => ({ label: role.name, value: role.code })),
 )
 
 const formatTime = (value: number | null | undefined) => {
@@ -158,7 +150,7 @@ const openCreate = () => {
     name: '',
     password: '',
     status: 'active',
-    role_ids: [],
+    role_codes: [],
   }
   modalVisible.value = true
 }
@@ -172,9 +164,7 @@ const openEdit = (admin: AdminUser) => {
     name: admin.name,
     password: '',
     status: admin.status,
-    role_ids: (admin.roles || [])
-      .map((code) => roleCodeToId.value[code])
-      .filter((id): id is string => !!id),
+    role_codes: admin.roles || [],
   }
   modalVisible.value = true
 }
@@ -195,7 +185,7 @@ const submit = async () => {
         name: form.value.name,
         email: form.value.email,
         status: form.value.status,
-        role_ids: form.value.role_ids,
+        role_codes: form.value.role_codes,
       })
       Message.success(t('admin.adminUsers.updated'))
     } else {
@@ -204,7 +194,7 @@ const submit = async () => {
         email: form.value.email,
         name: form.value.name,
         password: form.value.password,
-        role_ids: form.value.role_ids,
+        role_codes: form.value.role_codes,
       })
       Message.success(t('admin.adminUsers.created'))
     }
@@ -409,9 +399,9 @@ onMounted(async () => {
             <a-option value="pending">{{ t('admin.adminUsers.statusPending') }}</a-option>
           </a-select>
         </a-form-item>
-        <a-form-item :label="t('admin.adminUsers.role')" field="role_ids">
+        <a-form-item :label="t('admin.adminUsers.role')" field="role_codes">
           <a-select
-            v-model="form.role_ids"
+            v-model="form.role_codes"
             :options="roleOptions"
             multiple
             allow-search

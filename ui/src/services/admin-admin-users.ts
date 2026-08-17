@@ -43,14 +43,14 @@ export type CreateAdminUserPayload = {
   email?: string
   name: string
   password: string
-  role_ids?: string[]
+  role_codes?: string[]
 }
 
 export type UpdateAdminUserPayload = Partial<{
   name: string
   email: string
   status: string
-  role_ids: string[]
+  role_codes: string[]
 }>
 
 export const listAdminUsers = (params?: ListAdminUsersParams) =>

@@ -32,9 +32,11 @@ export const updateApp = (app_id: string, req: UpdateAppRequest) => {
   return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}`, { body: req })
 }
 
-// 删除指定应用
-export const deleteApp = (app_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}/delete`)
+// 删除指定应用（进入回收站，可指定留存天数）
+export const deleteApp = (app_id: string, retentionDays?: number) => {
+  return post<BaseResponse<Record<string, unknown>>>(`/apps/${app_id}/delete`, {
+    body: { retention_days: retentionDays },
+  })
 }
 
 // 拷贝指定的应用

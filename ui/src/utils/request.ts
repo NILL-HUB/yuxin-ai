@@ -199,8 +199,22 @@ const resolveApiUrl = (url: string) => {
   return `${apiPrefix}${url.startsWith('/') ? url : `/${url}`}`
 }
 
+// 与后端 support.py _USER_API_BLOCKED_PREFIXES 中"仅管理员可用"的 AI 辅助端点保持一致：
+// 这些端点仅由 admin 端编排界面调用，需携带 admin JWT 才能放行（用户 JWT 会被 403）。
+const ADMIN_AI_API_PATHS = [
+  '/ai/optimize-prompt',
+  '/ai/chat',
+  '/ai/openapi-schema-chat',
+  '/ai/mcp-schema-chat',
+]
+
 const isAdminApiRequest = (url: string) => {
-  return url === '/admin' || url.startsWith('/admin/') || url.startsWith('admin/')
+  return (
+    url === '/admin' ||
+    url.startsWith('/admin/') ||
+    url.startsWith('admin/') ||
+    ADMIN_AI_API_PATHS.includes(url)
+  )
 }
 
 const resolveCredentialContext = (

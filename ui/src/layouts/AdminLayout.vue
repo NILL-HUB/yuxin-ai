@@ -86,7 +86,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/tools', label: t('admin.adminLayout.menu.tools'), permission: 'tool:read' },
       { to: '/admin/mcp', label: t('admin.adminLayout.menu.mcp'), permission: 'mcp:read' },
       { to: '/admin/skills', label: t('admin.adminLayout.menu.skills'), permission: 'skill:read' },
-      { to: '/admin/schedules', label: t('admin.adminLayout.menu.schedules'), permission: 'admin:access' },
+      { to: '/admin/schedules', label: t('admin.adminLayout.menu.schedules'), permission: 'schedule_task:read' },
     ],
   },
   {
@@ -109,7 +109,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/sub-pool-definition', label: t('admin.adminLayout.menu.subPoolDef'), permission: 'agent_pool:read' },
       { to: '/admin/model-providers', label: t('admin.adminLayout.menu.modelProviders'), permission: 'model_provider:read' },
       { to: '/admin/models', label: t('admin.adminLayout.menu.models'), permission: 'model_pool:read' },
-      { to: '/admin/public-ai-features', label: t('admin.adminLayout.menu.publicAIFeatures'), permission: 'model_pool:read' },
+      { to: '/admin/public-ai-features', label: t('admin.adminLayout.menu.publicAIFeatures'), permission: 'public_ai_feature:read' },
     ],
   },
   {

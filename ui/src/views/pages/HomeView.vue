@@ -6,6 +6,7 @@ import ChatComposer from '@/components/ChatComposer.vue'
 import DesktopDevicePanel from '@/components/DesktopDevicePanel.vue'
 import SubtaskProgressPanel from '@/components/SubtaskProgressPanel.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
+import RealtimeVoiceDock from '@/components/RealtimeVoiceDock.vue'
 import ScheduleSuggestionCard, { type ScheduleSuggestion } from '@/components/ScheduleSuggestionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
@@ -68,6 +69,7 @@ import {
   type SubtaskProgress,
   type StreamMessage,
   type StreamState,
+  type StreamEventResponse,
 } from '@/views/shared/chat-stream'
 import {
   estimateTokenCount,
@@ -204,8 +206,11 @@ const defaultAssistantIntroduction = computed(() => {
   ].join('\n')
 })
 const assistantIntroduction = ref('')
-const { startAudioStream, stopAudioStream } = useAudioPlayer()
+const { startAudioStream, stopAudioStream, isPlaying } = useAudioPlayer()
 const voiceMode = ref(false)
+const voiceStreaming = ref(false)
+const voiceMessageStarted = ref(false)
+const voiceStreamState = ref<StreamState | null>(null)
 const { loadHomeIntent } = useGetHomeIntent()
 const { suggested_questions, handleGenerateSuggestedQuestions } = useGenerateSuggestedQuestions()
 const {
@@ -1107,6 +1112,11 @@ const handleSubmit = async () => {
     return
   }
 
+  if (voiceStreaming.value) {
+    Message.warning(t('home.messages.pendingQueryWarning'))
+    return
+  }
+
   if (!isAuthenticated.value) {
     pendingQueryAfterLogin.value = query.value
     handleShowLoginModal()
@@ -1255,8 +1265,8 @@ const handleSubmit = async () => {
     }, 100)
   }
 
-  // 连续语音模式：回复完成后自动朗读；用户正在说话时跳过，避免朗读被打断的回复
-  if (voiceMode.value && message_id.value && !isRecording.value) {
+  // 文本模式：回复完成后自动朗读；实时语音模式由语音会话自行朗读
+  if (!voiceMode.value && message_id.value && !isRecording.value) {
     await startAudioStream(message_id.value)
   }
 }
@@ -1490,6 +1500,134 @@ const handleStopRecord = async () => {
     }
   }
 }
+
+const handleVoiceError = () => {
+  Message.error(t('home.messages.recordingFailed'))
+}
+
+const handleVoiceTurnStart = async (text: string) => {
+  const queryText = String(text || '').trim()
+  if (!queryText || !voiceMode.value || voiceStreaming.value) return
+
+  voiceStreaming.value = true
+  voiceMessageStarted.value = true
+  isStreamingResponse.value = true
+  suggested_questions.value = []
+  message_id.value = ''
+  task_id.value = ''
+  billingEvents.value = []
+  toolConfirmationPrompt.value = null
+  scheduleSuggestion.value = null
+  subtaskProgress.value = null
+  subtaskTaskPlan.value = null
+  stopAudioStream()
+
+  messages.value.unshift(
+    withChatRenderId(
+      {
+        id: '',
+        conversation_id: '',
+        query: queryText,
+        image_urls: [],
+        input_parts: [],
+        answer: '',
+        answer_parts: [],
+        artifacts: [],
+        total_token_count: 0,
+        latency: 0,
+        agent_thoughts: [],
+        suggested_questions: [],
+        created_at: 0,
+      },
+      'home-assistant-message',
+    ),
+  )
+  voiceStreamState.value = {
+    position: 0,
+    message_id: '',
+    task_id: '',
+    conversation_id: selectedConversationId.value,
+    billingEvents: [],
+  }
+  await nextTick(() => {
+    startAutoScrollTicker()
+    startAutoScrollObserver()
+    scrollChatToBottom()
+  })
+}
+
+const handleVoiceStreamEvent = (payload: { event: string; data: Record<string, unknown> }) => {
+  if (!voiceStreaming.value || !voiceStreamState.value) return
+  const currentMessage = messages.value[0] as StreamMessage | undefined
+  if (!currentMessage) return
+
+  const streamResult = applyChatStreamEvent(
+    currentMessage,
+    { event: payload.event, data: payload.data } as StreamEventResponse,
+    voiceStreamState.value,
+  )
+  voiceStreamState.value = streamResult.state
+
+  if (streamResult.state.subtasks !== undefined) {
+    subtaskProgress.value = streamResult.state.subtasks
+  }
+  if (streamResult.state.taskPlan !== undefined) {
+    subtaskTaskPlan.value = streamResult.state.taskPlan
+  }
+
+  if (message_id.value === '' && streamResult.state.message_id) {
+    task_id.value = streamResult.state.task_id
+    message_id.value = streamResult.state.message_id
+
+    const latestConversationId = normalizeConversationId(streamResult.state.conversation_id)
+    if (latestConversationId) {
+      selectedConversationId.value = latestConversationId
+      void syncRouteConversationId(latestConversationId)
+      void loadSelectedConversationName(latestConversationId)
+      emitRecentConversationsRefresh()
+    }
+  }
+
+  if (streamResult.didUpdate) {
+    billingEvents.value = streamResult.state.billingEvents
+    if (streamResult.state.toolConfirmationPrompt) {
+      toolConfirmationPrompt.value = streamResult.state.toolConfirmationPrompt
+    }
+    scheduleScrollToBottom()
+  }
+}
+
+const handleVoiceTurnComplete = async () => {
+  const completedMessageId = message_id.value
+  voiceStreaming.value = false
+  voiceMessageStarted.value = false
+  isStreamingResponse.value = false
+  voiceStreamState.value = null
+  stopAutoScrollObserver()
+  stopAutoScrollTicker()
+  try {
+    if (completedMessageId && selectedConversationId.value) {
+      await reloadAssistantMessages(true, selectedConversationId.value)
+    }
+  } catch (error) {
+    console.error('Failed to refresh messages after voice turn:', error)
+  }
+  if (completedMessageId) {
+    await handleGenerateSuggestedQuestions(completedMessageId)
+  }
+}
+
+watch(voiceMode, (active) => {
+  if (!active) {
+    stopAudioStream()
+    if (voiceStreaming.value) {
+      voiceStreaming.value = false
+      voiceMessageStarted.value = false
+      isStreamingResponse.value = false
+      voiceStreamState.value = null
+    }
+  }
+})
 
 // 12.页面DOM加载完毕时初始化数据（仅首次挂载）
 onMounted(async () => {
@@ -1836,52 +1974,50 @@ onUnmounted(() => {
             :task-plan="subtaskTaskPlan"
           />
         </div>
-        <div class="w-full max-w-[600px] mx-auto px-2 sm:px-4">
+        <div class="w-full max-w-[860px] mx-auto px-2 sm:px-4">
           <DesktopDevicePanel />
-          <div class="flex justify-end pb-2">
-            <a-button
-              size="mini"
-              :type="voiceMode ? 'primary' : 'text'"
-              @click="voiceMode = !voiceMode"
-            >
-              <template #icon>
-                <icon-microphone />
-              </template>
-              {{ voiceMode ? t('home.messages.voiceModeOn') : t('home.messages.voiceModeOff') }}
-            </a-button>
+          <div class="grid gap-3 pb-2 sm:grid-cols-[minmax(0,1fr)_230px] sm:items-start">
+            <chat-composer
+              v-model="query"
+              v-model:deep-thinking-enabled="enableDeepThinking"
+              :textarea-ref-setter="setQueryTextareaRef"
+              :file-input-ref-setter="setFileInputRef"
+              :image-urls="image_urls"
+              :show-image-previews="true"
+              :show-upload-button="true"
+              :show-voice-button="!voiceMode"
+              :clear-disabled="deleteAssistantAgentConversationLoading || messages.length === 0"
+              :clear-loading="deleteAssistantAgentConversationLoading"
+              :upload-loading="uploadFileLoading"
+              :submit-loading="assistantAgentChatLoading"
+              :audio-to-text-loading="audioToTextLoading"
+              :is-recording="isRecording"
+              :is-input-breathing="isInputBreathing"
+              :show-deep-thinking-toggle="true"
+              :clear-title="t('home.messages.clearConversation')"
+              :placeholder="t('home.messages.sendPlaceholder')"
+              @clear="handleClearConversation"
+              @upload="handleTriggerFileInput"
+              @file-change="(event) => handleFileChange(event)"
+              @input="() => handleQueryInput()"
+              @keydown="(event) => handleQueryKeydown(event)"
+              @remove-image="
+                (index) => {
+                  image_urls.splice(index, 1)
+                }
+              "
+              @start-record="handleStartRecord"
+              @stop-record="handleStopRecord"
+              @submit="handleSubmit"
+            />
+            <RealtimeVoiceDock
+              v-model:active="voiceMode"
+              @error="handleVoiceError"
+              @turn-start="handleVoiceTurnStart"
+              @stream-event="handleVoiceStreamEvent"
+              @turn-complete="handleVoiceTurnComplete"
+            />
           </div>
-          <chat-composer
-            v-model="query"
-            v-model:deep-thinking-enabled="enableDeepThinking"
-            :textarea-ref-setter="setQueryTextareaRef"
-            :file-input-ref-setter="setFileInputRef"
-            :image-urls="image_urls"
-            :show-image-previews="true"
-            :show-upload-button="true"
-            :clear-disabled="deleteAssistantAgentConversationLoading || messages.length === 0"
-            :clear-loading="deleteAssistantAgentConversationLoading"
-            :upload-loading="uploadFileLoading"
-            :submit-loading="assistantAgentChatLoading"
-            :audio-to-text-loading="audioToTextLoading"
-            :is-recording="isRecording"
-            :is-input-breathing="isInputBreathing"
-            :show-deep-thinking-toggle="true"
-            :clear-title="t('home.messages.clearConversation')"
-            :placeholder="t('home.messages.sendPlaceholder')"
-            @clear="handleClearConversation"
-            @upload="handleTriggerFileInput"
-            @file-change="(event) => handleFileChange(event)"
-            @input="() => handleQueryInput()"
-            @keydown="(event) => handleQueryKeydown(event)"
-            @remove-image="
-              (index) => {
-                image_urls.splice(index, 1)
-              }
-            "
-            @start-record="handleStartRecord"
-            @stop-record="handleStopRecord"
-            @submit="handleSubmit"
-          />
         </div>
 
         <!-- 底部提示 -->

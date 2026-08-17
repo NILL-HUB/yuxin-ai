@@ -5,7 +5,6 @@ const patch = <T>(url: string, body?: Record<string, unknown>) =>
   request<T>(url, { method: 'PATCH', body })
 
 export interface Role {
-  id: string
   code: string
   name: string
   description: string
@@ -14,24 +13,24 @@ export interface Role {
 }
 
 export interface Permission {
-  id: string
   code: string
   name: string
   resource: string
   action: string
+  description?: string
 }
 
 export type CreateRolePayload = {
   code: string
   name: string
   description?: string
-  permission_ids?: string[]
+  permission_codes?: string[]
 }
 
 export type UpdateRolePayload = Partial<{
   name: string
   description: string
-  permission_ids: string[]
+  permission_codes: string[]
 }>
 
 export const listRoles = () => get<BaseResponse<Role[]>>('/admin/roles')
@@ -39,12 +38,12 @@ export const listRoles = () => get<BaseResponse<Role[]>>('/admin/roles')
 export const createRole = (data: CreateRolePayload) =>
   post<BaseResponse<Role>>('/admin/roles', { body: data })
 
-export const getRole = (id: string) => get<BaseResponse<Role>>(`/admin/roles/${id}`)
+export const getRole = (code: string) => get<BaseResponse<Role>>(`/admin/roles/${code}`)
 
-export const updateRole = (id: string, data: UpdateRolePayload) =>
-  patch<BaseResponse<Role>>(`/admin/roles/${id}`, data)
+export const updateRole = (code: string, data: UpdateRolePayload) =>
+  patch<BaseResponse<Role>>(`/admin/roles/${code}`, data)
 
-export const deleteRole = (id: string) =>
-  del<BaseResponse<Record<string, unknown>>>(`/admin/roles/${id}`)
+export const deleteRole = (code: string) =>
+  del<BaseResponse<Record<string, unknown>>>(`/admin/roles/${code}`)
 
 export const listPermissions = () => get<BaseResponse<Permission[]>>('/admin/permissions')

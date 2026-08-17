@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { listRecycleBin, restoreRecycleBinItem } from '@/services/admin-recycle-bin'
-import type { RecycleBinItem } from '@/models/admin-recycle-bin'
+import type { RecycleBinItem } from '@/models/recycle-bin'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
 
@@ -16,7 +16,7 @@ const items = ref<RecycleBinItem[]>([])
 const totalRecord = ref(0)
 const searchWord = ref('')
 const resourceTypeFilter = ref('')
-const deletedByTypeFilter = ref('')
+const deletedByTypeFilter = ref('admin')
 const currentPage = ref(1)
 const pageSize = ref(20)
 
@@ -30,6 +30,13 @@ const RESOURCE_TYPE_COLORS: Record<string, string> = {
   skill: 'magenta',
   mcp: 'orange',
   api_tool: 'orangered',
+  knowledge_document: 'lime',
+  upload_file: 'gold',
+  os_file: 'brown',
+  schedule_task: 'green',
+  external_data_source: 'purple',
+  conversation: 'cyan',
+  memory: 'magenta',
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -41,12 +48,14 @@ const STATUS_COLORS: Record<string, string> = {
 const SOURCE_COLORS: Record<string, string> = {
   admin: 'purple',
   user: 'blue',
+  agent: 'orange',
 }
 
 const sourceFilterOptions = computed(() => [
   { label: t('admin.recycleBin.sourceAll'), value: '' },
   { label: t('admin.recycleBin.deletedByTypes.admin'), value: 'admin' },
   { label: t('admin.recycleBin.deletedByTypes.user'), value: 'user' },
+  { label: t('admin.recycleBin.deletedByTypes.agent'), value: 'agent' },
 ])
 
 const resourceTypeOptions = computed(() => [
@@ -58,6 +67,13 @@ const resourceTypeOptions = computed(() => [
   { label: t('admin.recycleBin.resourceTypes.skill'), value: 'skill' },
   { label: t('admin.recycleBin.resourceTypes.mcp'), value: 'mcp' },
   { label: t('admin.recycleBin.resourceTypes.api_tool'), value: 'api_tool' },
+  { label: t('admin.recycleBin.resourceTypes.knowledge_document'), value: 'knowledge_document' },
+  { label: t('admin.recycleBin.resourceTypes.upload_file'), value: 'upload_file' },
+  { label: t('admin.recycleBin.resourceTypes.os_file'), value: 'os_file' },
+  { label: t('admin.recycleBin.resourceTypes.schedule_task'), value: 'schedule_task' },
+  { label: t('admin.recycleBin.resourceTypes.external_data_source'), value: 'external_data_source' },
+  { label: t('admin.recycleBin.resourceTypes.conversation'), value: 'conversation' },
+  { label: t('admin.recycleBin.resourceTypes.memory'), value: 'memory' },
 ])
 
 const hasActiveFilters = computed(() =>

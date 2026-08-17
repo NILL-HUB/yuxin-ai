@@ -45,8 +45,10 @@ export const updateMcpProvider = (provider_id: string, req: UpdateMcpProviderReq
   return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}`, { body: req })
 }
 
-export const deleteMcpProvider = (provider_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}/delete`)
+export const deleteMcpProvider = (provider_id: string, retentionDays?: number) => {
+  return post<BaseResponse<Record<string, unknown>>>(`/mcp-providers/${provider_id}/delete`, {
+    body: { retention_days: retentionDays },
+  })
 }
 
 export const publishMcpProvider = (provider_id: string) => {

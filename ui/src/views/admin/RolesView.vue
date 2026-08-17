@@ -20,23 +20,31 @@ const actionLoading = ref(false)
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
 
+const permissionByCode = computed(() => {
+  const map: Record<string, Permission> = {}
+  permissions.value.forEach((permission) => {
+    map[permission.code] = permission
+  })
+  return map
+})
+
+const permissionLabel = (code: string) => permissionByCode.value[code]?.name || code
+
 const modalVisible = ref(false)
 const editMode = ref(false)
-const editingId = ref('')
+const editingCode = ref('')
 const form = ref({
   code: '',
   name: '',
   description: '',
-  permission_ids: [] as string[],
+  permission_codes: [] as string[],
 })
 
-const permissionCodeToId = computed(() => {
-  const map: Record<string, string> = {}
-  permissions.value.forEach((permission) => {
-    map[permission.code] = permission.id
-  })
-  return map
-})
+const resourceLabel = (resource: string) => {
+  const key = `admin.roles.resources.${resource}`
+  const label = t(key)
+  return label === key ? resource : label
+}
 
 const permissionGroups = computed(() => {
   const groups: Record<string, Permission[]> = {}
@@ -45,7 +53,11 @@ const permissionGroups = computed(() => {
     if (!groups[key]) groups[key] = []
     groups[key].push(permission)
   })
-  return Object.entries(groups).map(([resource, items]) => ({ resource, items }))
+  return Object.entries(groups).map(([resource, items]) => ({
+    isGroup: true,
+    label: resourceLabel(resource),
+    options: items.map((item) => ({ value: item.code, label: item.name })),
+  }))
 })
 
 const loadRoles = async () => {
@@ -71,21 +83,19 @@ const loadPermissions = async () => {
 
 const openCreate = () => {
   editMode.value = false
-  editingId.value = ''
-  form.value = { code: '', name: '', description: '', permission_ids: [] }
+  editingCode.value = ''
+  form.value = { code: '', name: '', description: '', permission_codes: [] }
   modalVisible.value = true
 }
 
 const openEdit = (role: Role) => {
   editMode.value = true
-  editingId.value = role.id
+  editingCode.value = role.code
   form.value = {
     code: role.code,
     name: role.name,
     description: role.description || '',
-    permission_ids: (role.permissions || [])
-      .map((code) => permissionCodeToId.value[code])
-      .filter((id): id is string => !!id),
+    permission_codes: role.permissions || [],
   }
   modalVisible.value = true
 }
@@ -102,10 +112,10 @@ const submit = async () => {
   actionLoading.value = true
   try {
     if (editMode.value) {
-      await updateRole(editingId.value, {
+      await updateRole(editingCode.value, {
         name: form.value.name,
         description: form.value.description,
-        permission_ids: form.value.permission_ids,
+        permission_codes: form.value.permission_codes,
       })
       Message.success(t('admin.roles.updated'))
     } else {
@@ -113,7 +123,7 @@ const submit = async () => {
         code: form.value.code,
         name: form.value.name,
         description: form.value.description,
-        permission_ids: form.value.permission_ids,
+        permission_codes: form.value.permission_codes,
       })
       Message.success(t('admin.roles.created'))
     }
@@ -129,7 +139,7 @@ const submit = async () => {
 const handleDelete = async (role: Role) => {
   actionLoading.value = true
   try {
-    await deleteRole(role.id)
+    await deleteRole(role.code)
     Message.success(t('admin.roles.deleted'))
     await loadRoles()
   } catch (error) {
@@ -172,7 +182,7 @@ onMounted(async () => {
             <tr v-if="!roles.length">
               <td class="p-6 text-center text-gray-400" colspan="6">{{ t('admin.roles.empty') }}</td>
             </tr>
-            <tr v-for="role in roles" :key="role.id" class="border-t">
+            <tr v-for="role in roles" :key="role.code" class="border-t">
               <td class="p-3 font-mono">{{ role.code }}</td>
               <td class="p-3">{{ role.name || '-' }}</td>
               <td class="p-3 text-gray-500">{{ role.description || '-' }}</td>
@@ -216,17 +226,18 @@ onMounted(async () => {
         <a-form-item :label="t('admin.roles.descriptionLabel')" field="description">
           <a-textarea v-model="form.description" :placeholder="t('admin.roles.descriptionPlaceholder')" :auto-size="{ minRows: 2, maxRows: 4 }" allow-clear />
         </a-form-item>
-        <a-form-item :label="t('admin.roles.permissions')" field="permission_ids">
+        <a-form-item :label="t('admin.roles.permissions')" field="permission_codes">
           <a-select
-            v-model="form.permission_ids"
+            v-model="form.permission_codes"
             multiple
             allow-search
+            :options="permissionGroups"
             :placeholder="t('admin.roles.permissionPlaceholder')"
             :virtual-list-props="{ height: 240 }"
           >
-            <a-option-group v-for="group in permissionGroups" :key="group.resource" :label="group.resource">
-              <a-option v-for="item in group.items" :key="item.id" :value="item.id">{{ item.name }}</a-option>
-            </a-option-group>
+            <template #label="{ data }">
+              {{ permissionLabel(data.value) }}
+            </template>
           </a-select>
         </a-form-item>
       </a-form>

@@ -114,14 +114,14 @@ export const useGetApiToolProvidersWithPage = () => {
 }
 
 export const useDeleteApiToolProvider = () => {
-  const handleDelete = (provider_id: string, success_callback?: () => void) => {
+  const handleDelete = (provider_id: string, retentionDays = 30, success_callback?: () => void) => {
     Modal.warning({
       title: '删除这个工具?',
-      content: '删除工具是不可逆的。AI应用将无法再访问您的工具',
+      content: '删除后进入回收站，留存期内可恢复。AI应用将无法再访问您的工具',
       hideCancel: false,
       onOk: async () => {
         try {
-          const resp = await deleteApiToolProvider(provider_id)
+          const resp = await deleteApiToolProvider(provider_id, retentionDays)
           Message.success(resp.message)
         } finally {
           if (success_callback) success_callback()

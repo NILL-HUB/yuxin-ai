@@ -160,16 +160,20 @@ export const useGetWorkflow = () => {
 }
 
 export const useDeleteWorkflow = () => {
-  const handleDeleteWorkflow = (workflow_id: string, callback?: () => void) => {
+  const handleDeleteWorkflow = (
+    workflow_id: string,
+    retentionDays = 30,
+    callback?: () => void,
+  ) => {
     Modal.warning({
       title: '要删除该工作流吗?',
       content:
-        '删除工作流后，发布的WebApp、开放API以及关联的社交媒体平台均无法使用该工作流，如果需要暂停工作流，可使用取消发布功能。',
+        '删除工作流后，发布的WebApp、开放API以及关联的社交媒体平台均无法使用该工作流，如果需要暂停工作流，可使用取消发布功能。删除后进入回收站，留存期内可恢复。',
       hideCancel: false,
       onOk: async () => {
         try {
           // 1.点击确定后向API接口发起请求
-          const resp = await deleteWorkflow(workflow_id)
+          const resp = await deleteWorkflow(workflow_id, retentionDays)
           Message.success(resp.message)
         } finally {
           // 2.调用callback函数指定回调功能

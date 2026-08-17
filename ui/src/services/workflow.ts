@@ -31,9 +31,11 @@ export const getWorkflow = (workflow_id: string) => {
   return get<GetWorkflowResponse>(`/workflows/${workflow_id}`)
 }
 
-// 删除指定的工作流
-export const deleteWorkflow = (workflow_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/delete`)
+// 删除指定的工作流（进入回收站，可指定留存天数）
+export const deleteWorkflow = (workflow_id: string, retentionDays?: number) => {
+  return post<BaseResponse<Record<string, unknown>>>(`/workflows/${workflow_id}/delete`, {
+    body: { retention_days: retentionDays },
+  })
 }
 
 // 获取指定工作流的graph图草稿配置

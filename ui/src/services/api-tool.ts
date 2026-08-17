@@ -40,9 +40,11 @@ export const updateApiToolProvider = (provider_id: string, req: UpdateApiToolPro
   })
 }
 
-// 删除API工具提供者详情
-export const deleteApiToolProvider = (provider_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/api-tools/${provider_id}/delete`)
+// 删除API工具提供者详情（进入回收站，可指定留存天数）
+export const deleteApiToolProvider = (provider_id: string, retentionDays?: number) => {
+  return post<BaseResponse<Record<string, unknown>>>(`/api-tools/${provider_id}/delete`, {
+    body: { retention_days: retentionDays },
+  })
 }
 
 // 获取API工具提供者详情

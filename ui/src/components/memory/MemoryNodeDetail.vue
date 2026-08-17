@@ -113,18 +113,16 @@ const handleSelectRelated = (nodeId: string) => emit('select-related', nodeId)
             <template #icon><icon-minus-circle /></template>
             {{ t('memory.graph.decayBtn') }}
           </a-button>
-          <a-popconfirm :content="t('memory.graph.softDeleteConfirm')" @ok="handleSoftDelete">
-            <a-button size="small" status="warning">
-              <template #icon><icon-delete /></template>
-              {{ t('memory.graph.softDeleteBtn') }}
-            </a-button>
-          </a-popconfirm>
           <a-popconfirm :content="t('memory.graph.hardDeleteConfirm')" @ok="handleHardDelete">
             <a-button size="small" status="danger">
               <template #icon><icon-delete /></template>
               {{ t('memory.graph.hardDeleteBtn') }}
             </a-button>
           </a-popconfirm>
+          <a-button size="small" status="warning" @click="handleSoftDelete">
+            <template #icon><icon-delete /></template>
+            {{ t('memory.graph.softDeleteBtn') }}
+          </a-button>
         </div>
       </div>
     </a-spin>
