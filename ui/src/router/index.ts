@@ -83,12 +83,6 @@ const router = createRouter({
           component: () => import('@/views/external-data-sources/ListView.vue'),
         },
         {
-          path: 'showcase',
-          name: 'showcase',
-          component: () => import('@/views/showcase/ListView.vue'),
-          meta: { requiresAuth: true },
-        },
-        {
           path: 'my-knowledge',
           name: 'my-knowledge',
           component: () => import('@/views/space/datasets/ListView.vue'),
@@ -359,12 +353,6 @@ const router = createRouter({
               name: 'AdminModelProviders',
               component: () => import('@/views/admin/ModelProvidersView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['model_provider:read'] },
-            },
-            {
-              path: 'showcase',
-              name: 'admin-showcase',
-              component: () => import('@/views/admin/ShowcaseView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['showcase:read'] },
             },
             {
               path: 'openapi',

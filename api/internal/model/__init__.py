@@ -25,7 +25,6 @@ from .routing_quality import (
     RoutingOptimizationSuggestionModel,
     RoutingQualityFeedbackModel,
 )
-from .showcase_entity import ShowcaseCase
 from .public_ai_feature_config import PublicAIFeatureConfig
 from .prompt_template import PromptTemplate
 from .recycle_bin import RecycleBin
@@ -57,7 +56,6 @@ __all__ = [
     "ResourceVectorIndex",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",
     "PolicyChangeDraftModel",
-    "ShowcaseCase",
     "PromptTemplate",
     "RecycleBin",
 ]

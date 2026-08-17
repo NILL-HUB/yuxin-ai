@@ -87,13 +87,6 @@ const navSections = computed<SidebarNavSection[]>(() => [
     label: t('layout.sidebar.services'),
     items: [
       {
-        key: 'showcase',
-        label: t('layout.sidebar.showcase'),
-        to: '/showcase',
-        icon: 'icon-image',
-        active: route.path.startsWith('/showcase'),
-      },
-      {
         key: 'schedules',
         label: t('layout.sidebar.schedules'),
         to: '/schedules',

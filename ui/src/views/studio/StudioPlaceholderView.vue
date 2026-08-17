@@ -16,13 +16,6 @@
         >
           {{ t('studio.placeholder.store') }}
         </button>
-        <button
-          type="button"
-          class="rounded-lg border border-slate-200 px-5 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50"
-          @click="goShowcase"
-        >
-          {{ t('studio.placeholder.showcase') }}
-        </button>
       </div>
     </div>
   </div>
@@ -39,7 +32,4 @@ const goStore = () => {
   router.push('/store/public-apps')
 }
 
-const goShowcase = () => {
-  router.push('/showcase')
-}
 </script>

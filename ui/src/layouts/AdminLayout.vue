@@ -146,13 +146,6 @@ const menuGroups = computed(() => ([
     ],
   },
   {
-    title: t('admin.adminLayout.menu.showcase'),
-    icon: 'M12 2l3 7h7l-5.5 4 2 7-6.5-4-6.5 4 2-7L2 9h7z',
-    items: [
-      { to: '/admin/showcase', label: t('admin.adminLayout.menu.showcaseReview'), permission: 'showcase:read' },
-    ],
-  },
-  {
     title: 'OpenAPI',
     icon: 'M8 6l-6 6 6 6M16 6l6 6-6 6',
     items: [

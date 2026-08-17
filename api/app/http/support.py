@@ -580,7 +580,7 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     if _admin_match(segments, ("admin", "orchestration-flags")):
         return "orchestration_flag:read" if method == "GET" else "orchestration_flag:update"
 
-    # 开放 API 与案例展示。
+    # 开放 API。
     if _admin_match(segments, ("admin", "openapi")):
         if method == "GET":
             return "openapi:read"
@@ -589,13 +589,6 @@ def _admin_route_permission(method: str, path: str) -> str | None:
         if method == "POST" and len(segments) == 3:
             return "openapi:create"
         return "openapi:update"
-    if _admin_match(segments, ("admin", "showcase")):
-        if method == "GET":
-            return "showcase:read"
-        if "approve" in segments:
-            return "showcase:approve"
-        return "showcase:update"
-
     # 知识库与内容资源。
     if _admin_match(segments, ("admin", "system-knowledge")) or _admin_match(
         segments, ("admin", "space", "system-knowledge-bases")

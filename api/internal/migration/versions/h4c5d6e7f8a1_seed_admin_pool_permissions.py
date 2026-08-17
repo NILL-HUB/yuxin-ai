@@ -22,8 +22,6 @@ PERMISSIONS = [
     ("agent_pool:manage", "agent_pool", "manage", "管理智能体池"),
     ("tool_governance:read", "tool_governance", "read", "查看工具治理"),
     ("tool_governance:manage", "tool_governance", "manage", "管理工具治理"),
-    ("showcase:read", "showcase", "read", "查看案例展示"),
-    ("showcase:approve", "showcase", "approve", "审核案例展示"),
     ("routing_log:read", "routing_log", "read", "查看路由日志"),
     ("routing_log:update", "routing_log", "update", "管理路由日志"),
     ("openapi:read", "openapi", "read", "查看开放API"),

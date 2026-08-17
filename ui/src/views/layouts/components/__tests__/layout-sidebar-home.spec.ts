@@ -183,7 +183,7 @@ describe('LayoutSidebar home navigation', () => {
     expect(wrapper.text()).not.toContain('资源编排')
   })
 
-  it('shows exactly nine entries for regular users', async () => {
+  it('shows regular user entries without showcase', async () => {
     const wrapper = mountSidebar()
     await flushPromises()
 
@@ -199,7 +199,7 @@ describe('LayoutSidebar home navigation', () => {
     expect(tos).toContain('/memory')
     expect(tos).toContain('/my-knowledge')
     expect(tos).toContain('/external-data-sources')
-    expect(tos).toContain('/showcase')
+    expect(tos).not.toContain('/showcase')
     expect(tos).toContain('/schedules')
     expect(tos).toContain('/membership')
     expect(tos).toContain('/studio')
