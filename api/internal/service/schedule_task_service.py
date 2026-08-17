@@ -15,7 +15,7 @@ from internal.entity.schedule_task_entity import ScheduleTaskStatus
 from internal.exception import FailException, NotFoundException
 from internal.model import Account, ScheduleTask, ScheduleTaskRun
 from internal.service.base_service import BaseService
-from pkg.password import hash_password
+from pkg.password import PASSWORD_HASH_VERSION_CURRENT, hash_password
 from pkg.sqlalchemy import SQLAlchemy
 
 
@@ -250,6 +250,7 @@ class ScheduleTaskService(BaseService):
             name="平台系统",
             password=hashed,
             password_salt=encoded_salt,
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
         )
 
     def create_task(

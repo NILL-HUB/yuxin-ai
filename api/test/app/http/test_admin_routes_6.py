@@ -83,16 +83,16 @@ class _FakeAdminUserService:
         self.calls.append(("list", search, status, current_page, page_size))
         return self.page_result
 
-    def create_admin_user(self, *, email, name, password, role_ids, operator_id, ip, user_agent):
-        self.calls.append(("create", name, email, password, role_ids, operator_id))
+    def create_admin_user(self, *, email, name, password, role_codes, operator_id, ip, user_agent):
+        self.calls.append(("create", name, email, password, role_codes, operator_id))
         return dict(self.admin)
 
     def get_admin_user(self, admin_id):
         self.calls.append(("get", admin_id))
         return dict(self.admin)
 
-    def update_admin_user(self, admin_id, *, name, email, status, role_ids, operator_id, ip, user_agent):
-        self.calls.append(("update", admin_id, name, email, status, role_ids))
+    def update_admin_user(self, admin_id, *, name, email, status, role_codes, operator_id, ip, user_agent):
+        self.calls.append(("update", admin_id, name, email, status, role_codes))
         return dict(self.admin)
 
     def disable_admin_user(self, admin_id, *, operator_id, ip, user_agent):
@@ -285,7 +285,7 @@ class TestAdminUserRoutes:
                         "name": "新管理员",
                         "email": "new@example.com",
                         "password": "pass1234",
-                        "role_ids": ["role-1"],
+                        "role_codes": ["role-1"],
                     },
                 )
                 return resp, await resp.json
@@ -339,7 +339,7 @@ class TestAdminUserRoutes:
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.patch(
                     f"/admin/admin-users/{admin_id}",
-                    json={"name": "改名", "role_ids": ["role-2"]},
+                    json={"name": "改名", "role_codes": ["role-2"]},
                 )
                 return resp, await resp.json
 

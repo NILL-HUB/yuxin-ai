@@ -30,10 +30,25 @@ def _fake_app_dict(app_id=None):
     }
 
 
+def _mock_resolve_account(monkeypatch, account):
+    """模拟已认证用户：替换 support._resolve_account 直接返回该账号（C-1 加固后测试模拟登录的方式）。"""
+
+    async def _fake_resolve_account(account_id_override=None):
+        return account, None
+
+    async def _fake_resolve_admin_operator():
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_account", _fake_resolve_account)
+    monkeypatch.setattr(support, "_resolve_admin_operator", _fake_resolve_admin_operator)
+    return account
+
+
 def _setup(monkeypatch, services):
     account = SimpleNamespace(id=uuid4())
     monkeypatch.setattr(support, "_load_account", lambda _aid: account)
     monkeypatch.setattr(support, "_get_service", lambda cls: services.get(cls))
+    _mock_resolve_account(monkeypatch, account)
     return account
 
 

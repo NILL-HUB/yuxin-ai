@@ -134,9 +134,9 @@ class TestAdminRbacRoutes:
         service = SimpleNamespace(
             list_roles=lambda: [_role()],
             create_role=lambda **kw: _role(),
-            get_role=lambda role_id: _role(),
-            update_role=lambda role_id, **kw: _role(),
-            delete_role=lambda role_id, **kw: None,
+            get_role=lambda role_code: _role(),
+            update_role=lambda role_code, **kw: _role(),
+            delete_role=lambda role_code, **kw: None,
             list_permissions=lambda: [_permission()],
         )
         monkeypatch.setattr(support, "_get_service", lambda cls: service if cls is AdminRbacService else None)
@@ -163,7 +163,7 @@ class TestAdminRbacRoutes:
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
                     "/admin/roles",
-                    json={"code": "ops", "name": "运营", "permission_ids": []},
+                    json={"code": "ops", "name": "运营", "permission_codes": []},
                 )
                 return resp, await resp.json
 
@@ -190,7 +190,7 @@ class TestAdminRbacRoutes:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/admin/roles/{uuid4()}")
+                resp = await client.get("/admin/roles/operator")
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -203,7 +203,7 @@ class TestAdminRbacRoutes:
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.patch(
-                    f"/admin/roles/{uuid4()}", json={"name": "新名称"}
+                    "/admin/roles/operator", json={"name": "新名称"}
                 )
                 return resp, await resp.json
 
@@ -216,7 +216,7 @@ class TestAdminRbacRoutes:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.delete(f"/admin/roles/{uuid4()}")
+                resp = await client.delete("/admin/roles/operator")
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())

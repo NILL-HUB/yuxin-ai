@@ -13,6 +13,7 @@ from internal.entity.schedule_task_entity import ScheduleRunStatus
 from internal.exception import NotFoundException
 from internal.model import Account, Conversation, Message, ScheduleTask, ScheduleTaskRun
 from internal.service.base_service import BaseService
+from internal.service.assistant_agent_resolver import resolve_assistant_agent_app_id
 from pkg.sqlalchemy import SQLAlchemy
 
 
@@ -131,7 +132,7 @@ class ScheduleExecutionService(BaseService):
 
     def _create_schedule_conversation(self, account: Account) -> Conversation:
         """创建定时任务专用会话（归属用户但独立于其真实会话，invoke_from=schedule 与正常对话区分）"""
-        assistant_agent_id = current_app.config.get("ASSISTANT_AGENT_ID")
+        assistant_agent_id = resolve_assistant_agent_app_id(self.db)
         return self.create(
             Conversation,
             app_id=assistant_agent_id,

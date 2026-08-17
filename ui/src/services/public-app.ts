@@ -1,5 +1,5 @@
 /**
- * 公共应用广场API服务
+ * 公共应用商店API服务
  */
 import { get, post, ssePost } from '@/utils/request'
 import type { BaseResponse, BasePaginatorResponse } from '@/models/base'

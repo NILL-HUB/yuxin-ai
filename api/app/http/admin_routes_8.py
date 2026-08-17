@@ -17,7 +17,7 @@ Quart async 端点（挂载到 asgi_app.quart_app）：
 
 每个端点函数体内第一行 ``from app.http import asgi_app as a``，
 以规避模块导入阶段的循环依赖。管理员操作者上下文通过
-``a._resolve_account()`` 解析（account.id 作为操作者 ID）。
+``a._resolve_admin_operator()`` 解析（admin.id 作为操作者 ID）。
 """
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -252,7 +252,7 @@ def register_routes(quart_app):
     async def admin_prompt_template_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -271,7 +271,7 @@ def register_routes(quart_app):
     async def admin_prompt_template_get(prompt_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -298,7 +298,7 @@ def register_routes(quart_app):
     async def admin_prompt_template_update(prompt_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -338,7 +338,7 @@ def register_routes(quart_app):
     async def admin_prompt_template_reset(prompt_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -365,7 +365,7 @@ def register_routes(quart_app):
     async def admin_prompt_template_delete(prompt_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -399,7 +399,7 @@ def register_routes(quart_app):
     async def admin_builtin_tools():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -412,7 +412,7 @@ def register_routes(quart_app):
     async def admin_builtin_tool_categories():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -425,7 +425,7 @@ def register_routes(quart_app):
     async def admin_builtin_tool_detail(tool_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -440,7 +440,7 @@ def register_routes(quart_app):
     async def admin_builtin_tool_update(tool_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -464,7 +464,7 @@ def register_routes(quart_app):
     async def admin_public_ai_feature_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -496,7 +496,7 @@ def register_routes(quart_app):
     async def admin_public_ai_feature_models():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -508,7 +508,7 @@ def register_routes(quart_app):
     async def admin_public_ai_feature_get(feature_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -528,7 +528,7 @@ def register_routes(quart_app):
     async def admin_public_ai_feature_update(feature_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -551,7 +551,7 @@ def register_routes(quart_app):
     async def admin_app_assignment_list(account_id):
         from app.http import asgi_app as a
 
-        operator, err = await a._resolve_account()
+        operator, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -567,7 +567,7 @@ def register_routes(quart_app):
     async def admin_app_assignment_assign(account_id):
         from app.http import asgi_app as a
 
-        operator, err = await a._resolve_account()
+        operator, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -606,7 +606,7 @@ def register_routes(quart_app):
     async def admin_app_assignment_revoke(account_id, assignment_id):
         from app.http import asgi_app as a
 
-        operator, err = await a._resolve_account()
+        operator, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -630,7 +630,7 @@ def register_routes(quart_app):
     async def admin_routing_log_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -669,7 +669,7 @@ def register_routes(quart_app):
     async def admin_routing_log_retention_get():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -683,7 +683,7 @@ def register_routes(quart_app):
     async def admin_routing_log_retention_set():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -719,7 +719,7 @@ def register_routes(quart_app):
     async def admin_resource_entry_tools():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -739,7 +739,7 @@ def register_routes(quart_app):
     async def admin_resource_entry_mcp():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -762,7 +762,7 @@ def register_routes(quart_app):
     async def admin_resource_entry_skills():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -788,11 +788,11 @@ def register_routes(quart_app):
     async def admin_recycle_bin_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
-        from internal.schema.admin_recycle_bin_schema import RecycleBinListSchema
+        from internal.schema.recycle_bin_schema import RecycleBinListSchema
         from internal.service.recycle_bin_service import RecycleBinService
 
         result = await a._to_thread(
@@ -802,7 +802,9 @@ def register_routes(quart_app):
             resource_type=request.args.get("resource_type") or None,
             status=request.args.get("status") or "pending",
             search_word=request.args.get("search_word") or "",
-            deleted_by_type=request.args.get("deleted_by_type") or None,
+            # 隔离策略：admin 回收站默认只展示 admin 删除的系统资源，
+            # 与用户回收站（user/agent）互不混用；显式传参可覆盖
+            deleted_by_type=request.args.get("deleted_by_type") or "admin",
         )
         return a._ok(RecycleBinListSchema().dump(result))
 
@@ -810,12 +812,12 @@ def register_routes(quart_app):
     async def admin_recycle_bin_get(item_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
         from internal.exception import NotFoundException
-        from internal.schema.admin_recycle_bin_schema import RecycleBinDetailSchema
+        from internal.schema.recycle_bin_schema import RecycleBinDetailSchema
         from internal.service.recycle_bin_service import RecycleBinService
 
         try:
@@ -828,12 +830,12 @@ def register_routes(quart_app):
     async def admin_recycle_bin_restore(item_id):
         from app.http import asgi_app as a
 
-        operator, err = await a._resolve_account()
+        operator, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
         from internal.exception import NotFoundException, ValidateErrorException
-        from internal.schema.admin_recycle_bin_schema import RecycleBinDetailSchema
+        from internal.schema.recycle_bin_schema import RecycleBinDetailSchema
         from internal.service.recycle_bin_service import RecycleBinService
 
         try:
@@ -855,7 +857,7 @@ def register_routes(quart_app):
     async def admin_cost_stats_overview():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -873,7 +875,7 @@ def register_routes(quart_app):
     async def admin_cost_stats_by_dimension():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -893,7 +895,7 @@ def register_routes(quart_app):
     async def admin_cost_stats_timeseries():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -960,7 +962,7 @@ def register_routes(quart_app):
     async def admin_audit_log_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1009,7 +1011,7 @@ def register_routes(quart_app):
     async def admin_orchestration_release_check():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1030,7 +1032,7 @@ def register_routes(quart_app):
     async def admin_upload_file_image():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1056,7 +1058,7 @@ def register_routes(quart_app):
     async def admin_store_builtin_tools():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1069,7 +1071,7 @@ def register_routes(quart_app):
     async def admin_store_builtin_tool_categories():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1082,7 +1084,7 @@ def register_routes(quart_app):
     async def admin_store_builtin_tool_detail(provider_name, tool_name):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1112,7 +1114,7 @@ def register_routes(quart_app):
     async def admin_store_skill_categories():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1129,7 +1131,7 @@ def register_routes(quart_app):
     async def admin_store_skills_with_page():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1152,7 +1154,7 @@ def register_routes(quart_app):
     async def admin_store_skill_detail(skill_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1181,7 +1183,7 @@ def register_routes(quart_app):
     async def admin_store_mcp_categories():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1193,7 +1195,7 @@ def register_routes(quart_app):
     async def admin_store_mcp_providers_with_page():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1216,7 +1218,7 @@ def register_routes(quart_app):
     async def admin_store_mcp_provider(provider_key):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1235,7 +1237,7 @@ def register_routes(quart_app):
     async def admin_get_api_keys_with_page():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1256,7 +1258,7 @@ def register_routes(quart_app):
     async def admin_create_api_key():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1289,7 +1291,7 @@ def register_routes(quart_app):
     async def admin_update_api_key(api_key_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1310,7 +1312,7 @@ def register_routes(quart_app):
     async def admin_update_api_key_is_active(api_key_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1327,7 +1329,7 @@ def register_routes(quart_app):
     async def admin_delete_api_key(api_key_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1345,7 +1347,7 @@ def register_routes(quart_app):
     async def admin_get_language_models():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1358,7 +1360,7 @@ def register_routes(quart_app):
     async def admin_get_language_model(provider_name, model_name):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -1375,7 +1377,7 @@ def register_routes(quart_app):
     async def admin_list_system_knowledge_bases():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 

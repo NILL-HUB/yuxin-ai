@@ -56,16 +56,13 @@ def normalize_provider_base_url(base_url: str, is_full_url: bool = False) -> str
 
 
 def _load_fernet() -> Fernet:
-    raw_key = os.getenv("MODEL_KEY_ENCRYPTION_KEY", "").strip()
-    if not raw_key:
-        raw_key = Fernet.generate_key().decode("utf-8")
-        logger.warning(
-            "MODEL_KEY_ENCRYPTION_KEY 未配置，已生成临时内存密钥，重启后将无法解密历史 Key，请尽快配置该环境变量"
-        )
-    try:
-        return Fernet(raw_key.encode("utf-8"))
-    except (ValueError, TypeError) as exc:
-        raise ValueError("MODEL_KEY_ENCRYPTION_KEY 不是合法的 Fernet 密钥，请使用 Fernet.generate_key() 生成") from exc
+    """加载 Fernet 密钥（复用 MODEL_KEY_ENCRYPTION_KEY）。
+
+    未配置或为占位符时：生产环境直接抛错阻止启动，开发环境生成临时内存密钥并 WARNING。
+    """
+    from internal.service.tool_credential_encryptor import load_fernet_from_env
+
+    return load_fernet_from_env("MODEL_KEY_ENCRYPTION_KEY", "模型池凭证")
 
 
 _FERNET = _load_fernet()

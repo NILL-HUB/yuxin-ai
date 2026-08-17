@@ -220,6 +220,16 @@ class _FakeAdminMcpImportService:
         return {"imported": [{"name": "server-a"}], "skipped": [], "failed": []}
 
 
+def _mock_resolve_account(monkeypatch, account):
+    """模拟已认证用户：替换 support._resolve_account 直接返回该账号（C-1 加固后测试模拟登录的方式）。"""
+
+    async def _fake_resolve_account(account_id_override=None):
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_account", _fake_resolve_account)
+    return account
+
+
 def _setup(monkeypatch):
     from internal.service.mcp_import_service import McpImportService
     from internal.service.mcp_service import McpService
@@ -239,6 +249,7 @@ def _setup(monkeypatch):
         McpImportService: mcp_import_service,
     }
     monkeypatch.setattr(support, "_get_service", lambda cls: services.get(cls))
+    _mock_resolve_account(monkeypatch, account)
     return account, skill_service, skill_import_service, mcp_service, mcp_import_service
 
 

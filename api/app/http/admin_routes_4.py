@@ -61,7 +61,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/skills/<uuid:skill_id>")
     async def admin_get_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.skill_schema import SkillPackageResp
@@ -73,7 +73,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/skills/<uuid:skill_id>/versions")
     async def admin_get_skill_package_versions(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.skill_schema import SkillVersionResp
@@ -85,7 +85,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/<uuid:skill_id>/enable")
     async def admin_enable_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_service import SkillService
@@ -101,7 +101,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/<uuid:skill_id>/disable")
     async def admin_disable_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_service import SkillService
@@ -117,7 +117,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/<uuid:skill_id>/sync")
     async def admin_sync_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_service import SkillService
@@ -133,7 +133,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/<uuid:skill_id>/rollback")
     async def admin_rollback_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_service import SkillService
@@ -162,7 +162,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills")
     async def admin_create_skill_package():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.skill_schema import SkillPackageResp
@@ -213,7 +213,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/<uuid:skill_id>")
     async def admin_update_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.skill_schema import SkillPackageResp
@@ -254,7 +254,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/<uuid:skill_id>/delete")
     async def admin_delete_skill_package(skill_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_service import SkillService
@@ -272,7 +272,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/skills/catalog-packages")
     async def admin_list_catalog_packages():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.skill_schema import CatalogPackageResp
@@ -284,7 +284,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/import-catalog")
     async def admin_import_catalog_package():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.skill_schema import SkillPackageResp
@@ -305,7 +305,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/import-zip")
     async def admin_import_skill_zip():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_import_service import SkillImportService
@@ -336,7 +336,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/import-github")
     async def admin_import_skill_github():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_import_service import SkillImportService
@@ -360,7 +360,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/skills/import-json")
     async def admin_import_skill_json():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.skill_import_service import SkillImportService
@@ -388,7 +388,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/mcp/categories")
     async def admin_get_mcp_categories():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService
@@ -399,7 +399,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/import-mcp-json")
     async def admin_import_mcp_json():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_import_service import McpImportService
@@ -428,7 +428,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/preview-url")
     async def admin_preview_mcp_url():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_import_service import McpImportService
@@ -453,7 +453,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/import-url")
     async def admin_import_mcp_url():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_import_service import McpImportService
@@ -496,7 +496,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/import-json")
     async def admin_import_mcp_json_config():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_import_service import McpImportService
@@ -525,7 +525,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp")
     async def admin_create_mcp_provider():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService
@@ -575,7 +575,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/mcp/<uuid:provider_id>")
     async def admin_get_mcp_provider(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.mcp_schema import McpProviderResp
@@ -587,7 +587,7 @@ def register_routes(quart_app):
     @quart_app.patch("/admin/mcp/<uuid:provider_id>")
     async def admin_update_mcp_provider(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService
@@ -637,7 +637,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/<uuid:provider_id>/regenerate-icon")
     async def admin_regenerate_mcp_icon(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService
@@ -648,7 +648,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/<uuid:provider_id>/publish")
     async def admin_publish_mcp_provider(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService
@@ -664,7 +664,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/mcp/<uuid:provider_id>/unpublish")
     async def admin_unpublish_mcp_provider(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService
@@ -680,7 +680,7 @@ def register_routes(quart_app):
     @quart_app.delete("/admin/mcp/<uuid:provider_id>")
     async def admin_delete_mcp_provider(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.mcp_service import McpService

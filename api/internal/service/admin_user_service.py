@@ -1,19 +1,59 @@
 import base64
+import logging
 import math
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from internal.exception import FailException, NotFoundException, UnauthorizedException
+from internal.core.rbac import SUPER_ADMIN_ROLE_CODE, all_permission_codes
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.admin import AdminSession, AdminUser, AdminUserRole, Permission, Role, RolePermission
 from internal.service.audit_log_service import AuditLogService
 from internal.service.jwt_service import JwtService
-from pkg.password import compare_password, hash_password, validate_password
+from pkg.password import (
+    PASSWORD_HASH_VERSION_CURRENT,
+    compare_password,
+    hash_password,
+    password_iterations_for_version,
+    validate_password,
+)
+
+logger = logging.getLogger(__name__)
 
 # 平台系统账号用户名（辅助 Agent 等内部服务使用的系统账号，不参与用户/应用分配管理）
 SYSTEM_OWNER_ACCOUNT_USERNAME = "yuxin_ai"
+
+# 禁止作为超级管理员初始密码的弱口令集合（H-2 部署默认凭据加固）。
+# 命中任意一项时拒绝自动创建超级管理员，防止服务以弱密码上线。
+_WEAK_ADMIN_PASSWORDS = frozenset(
+    {
+        "admin",
+        "admin123",
+        "administrator",
+        "password",
+        "password123",
+        "root",
+        "root123",
+        "root123456",
+        "123456",
+        "12345678",
+        "123456789",
+        "1234567890",
+        "123123",
+        "666666",
+        "888888",
+        "abc123",
+        "qwerty",
+        "qwerty123",
+        "a123456",
+        "yuxin_ai123",
+        "Root123456",
+        "P@ssw0rd",
+        "P@ssw0rd123",
+    }
+)
 
 
 class AdminUserService:
@@ -80,6 +120,13 @@ class AdminUserService:
             validate_password(password)
         except ValueError:
             return {"created": False, "reason": "invalid_password"}
+        # H-2：拒绝弱口令作为初始密码，避免服务以默认凭据上线被扫描器直接接管
+        if password.lower() in _WEAK_ADMIN_PASSWORDS or password == "Root123456":
+            logger.warning(
+                "ADMIN_INITIAL_PASSWORD 命中弱口令黑名单，已跳过超级管理员自动创建。"
+                "请配置强密码后重新启动。"
+            )
+            return {"created": False, "reason": "weak_password"}
         existing_user = self.session.query(AdminUser).filter(AdminUser.username == username).one_or_none()
         if existing_user is not None:
             return {"created": False, "reason": "exists"}
@@ -101,6 +148,7 @@ class AdminUserService:
             name=name,
             password=base64.b64encode(password_hashed).decode(),
             password_salt=base64.b64encode(salt).decode(),
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
             status="active",
         )
         self.session.add(admin_user)
@@ -133,8 +181,17 @@ class AdminUserService:
             raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
         if not admin_user.is_active:
             raise FailException("管理员账号已被禁用")
-        if not compare_password(password, admin_user.password, admin_user.password_salt):
+        if not compare_password(
+            password,
+            admin_user.password,
+            admin_user.password_salt,
+            iterations=password_iterations_for_version(
+                getattr(admin_user, "password_version", 1)
+            ),
+        ):
             raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
+        # 登录成功后透明升级旧参数密码哈希
+        self._rehash_admin_password_if_outdated(admin_user, password)
         now = self._now()
         expires_at = now + timedelta(seconds=self.DEFAULT_TOKEN_EXPIRE_SECONDS)
         # 更新最后登录信息（IP/UA 由调用方传入，避免依赖 Flask request）
@@ -178,21 +235,42 @@ class AdminUserService:
         admin_session.revoked_at = self._now()
         self.session.commit()
 
+    def _rehash_admin_password_if_outdated(self, admin_user: AdminUser, password: str) -> None:
+        """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
+        if int(getattr(admin_user, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
+            return
+        salt = os.urandom(16)
+        admin_user.password = base64.b64encode(hash_password(password, salt)).decode()
+        admin_user.password_salt = base64.b64encode(salt).decode()
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
+        self.session.commit()
+
     def change_own_password(self, admin_user_id, *, current_password: str, new_password: str) -> dict[str, object]:
         admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_user_id).one_or_none()
         if admin_user is None or not admin_user.is_active:
             raise UnauthorizedException("管理员账号不存在或已被禁用")
-        if not admin_user.is_password_set or not compare_password(current_password, admin_user.password, admin_user.password_salt):
+        if not admin_user.is_password_set or not compare_password(
+            current_password,
+            admin_user.password,
+            admin_user.password_salt,
+            iterations=password_iterations_for_version(
+                getattr(admin_user, "password_version", 1)
+            ),
+        ):
             raise FailException("当前密码错误")
         try:
             validate_password(new_password)
         except ValueError:
             raise FailException("密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")
+        # H-2：禁止管理员将密码修改为弱口令
+        if new_password.lower() in _WEAK_ADMIN_PASSWORDS:
+            raise FailException("新密码为常见弱口令，请更换更复杂的密码")
         salt = os.urandom(16)
         hashed_password = base64.b64encode(hash_password(new_password, salt)).decode()
         encoded_salt = base64.b64encode(salt).decode()
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
         self.session.commit()
         return self._serialize_admin_user(admin_user)
 
@@ -258,7 +336,7 @@ class AdminUserService:
         name: str,
         password: str,
         username: str = "",
-        role_ids: list[str] | None = None,
+        role_codes: list[str] | None = None,
         operator_id=None,
         ip: str = "",
         user_agent: str = "",
@@ -279,7 +357,10 @@ class AdminUserService:
             validate_password(password)
         except ValueError:
             raise FailException("密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")
-        self._ensure_super_admin_assignment_allowed(role_ids or [])
+        # H-2：禁止将管理员密码设置为弱口令
+        if password.lower() in _WEAK_ADMIN_PASSWORDS:
+            raise FailException("密码为常见弱口令，请更换更复杂的密码")
+        self._ensure_super_admin_assignment_allowed(role_codes or [])
         salt = os.urandom(16)
         admin_user = AdminUser(
             account_id=None,
@@ -288,11 +369,12 @@ class AdminUserService:
             name=name,
             password=base64.b64encode(hash_password(password, salt)).decode(),
             password_salt=base64.b64encode(salt).decode(),
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
             status="active",
         )
         self.session.add(admin_user)
         self.session.flush()
-        self._replace_admin_user_roles(admin_user.id, role_ids or [])
+        self._replace_admin_user_roles(admin_user.id, role_codes or [])
         serialized = self._serialize_admin_user_with_roles(admin_user)
         self._emit_audit(
             operator_id=operator_id,
@@ -301,7 +383,7 @@ class AdminUserService:
             resource_id=str(admin_user.id),
             ip=ip,
             user_agent=user_agent,
-            after_data={"email": email, "name": name, "roles": [str(rid) for rid in role_ids or []]},
+            after_data={"email": email, "name": name, "roles": list(role_codes or [])},
         )
         self.session.commit()
         return serialized
@@ -313,7 +395,7 @@ class AdminUserService:
         name: str | None = None,
         email: str | None = None,
         status: str | None = None,
-        role_ids: list[str] | None = None,
+        role_codes: list[str] | None = None,
         operator_id=None,
         ip: str = "",
         user_agent: str = "",
@@ -328,9 +410,11 @@ class AdminUserService:
             "status": admin_user.status,
             "roles": before_roles,
         }
-        if role_ids is not None:
-            self._ensure_super_admin_assignment_allowed(role_ids, current_admin_user_id=admin_user.id)
-            target_roles = self._resolve_role_codes(role_ids)
+        if operator_id and str(operator_id) == str(admin_user.id) and role_codes is not None and not role_codes:
+            raise FailException("不能移除自己的全部角色")
+        if role_codes is not None:
+            self._ensure_super_admin_assignment_allowed(role_codes, current_admin_user_id=admin_user.id)
+            target_roles = list(role_codes)
         else:
             target_roles = before_roles
         target_status = status if status is not None else admin_user.status
@@ -352,8 +436,8 @@ class AdminUserService:
             admin_user.email = normalized_email
         if status is not None:
             admin_user.status = status
-        if role_ids is not None:
-            self._replace_admin_user_roles(admin_user.id, role_ids)
+        if role_codes is not None:
+            self._replace_admin_user_roles(admin_user.id, role_codes)
         serialized = self._serialize_admin_user_with_roles(admin_user)
         self._emit_audit(
             operator_id=operator_id,
@@ -367,7 +451,7 @@ class AdminUserService:
                 "name": serialized.get("name"),
                 "email": serialized.get("email"),
                 "status": serialized.get("status"),
-                "roles": [str(rid) for rid in role_ids] if role_ids is not None else before_data["roles"],
+                "roles": list(role_codes) if role_codes is not None else before_data["roles"],
             },
         )
         self.session.commit()
@@ -448,11 +532,15 @@ class AdminUserService:
             validate_password(password)
         except ValueError:
             raise FailException("密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")
+        # H-2：禁止将管理员密码重置为弱口令
+        if password.lower() in _WEAK_ADMIN_PASSWORDS:
+            raise FailException("密码为常见弱口令，请更换更复杂的密码")
         salt = os.urandom(16)
         hashed_password = base64.b64encode(hash_password(password, salt)).decode()
         encoded_salt = base64.b64encode(salt).decode()
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
         self._emit_audit(
             operator_id=operator_id,
             action="reset_password",
@@ -505,20 +593,23 @@ class AdminUserService:
         )
         return {"revoked_sessions": revoked_count}
 
-    def _resolve_role_codes(self, role_ids: list[str]) -> list[str]:
-        if not role_ids:
+    def _resolve_role_ids(self, role_codes: list[str]) -> list[str]:
+        if not role_codes:
             return []
-        normalized_role_ids = [str(role_id) for role_id in role_ids]
-        rows = self.session.query(Role.id, Role.code).filter(Role.id.in_(normalized_role_ids)).all()
-        role_codes: list[str] = []
+        normalized_codes = [str(code).strip() for code in role_codes]
+        if len(normalized_codes) != len(set(normalized_codes)):
+            raise FailException("角色编码不能重复")
+        rows = self.session.query(Role.id, Role.code).filter(Role.code.in_(normalized_codes)).all()
+        role_id_by_code = {}
         for row in rows:
             if isinstance(row, tuple):
-                role_code = row[1]
+                role_id_by_code[row[1]] = str(row[0])
             else:
-                role_code = getattr(row, "code", "")
-            if role_code:
-                role_codes.append(role_code)
-        return role_codes
+                role_id_by_code[getattr(row, "code", "")] = str(getattr(row, "id", ""))
+        missing = [code for code in normalized_codes if code not in role_id_by_code]
+        if missing:
+            raise FailException(f"角色编码不存在: {', '.join(missing)}")
+        return [role_id_by_code[code] for code in normalized_codes]
 
     def _get_active_super_admin_user(self, exclude_admin_user_id=None) -> AdminUser | None:
         query = (
@@ -531,9 +622,8 @@ class AdminUserService:
             query = query.filter(AdminUser.id != exclude_admin_user_id)
         return query.one_or_none()
 
-    def _ensure_super_admin_assignment_allowed(self, role_ids: list[str], current_admin_user_id=None) -> None:
-        role_codes = self._resolve_role_codes(role_ids)
-        if "super_admin" not in role_codes:
+    def _ensure_super_admin_assignment_allowed(self, role_codes: list[str], current_admin_user_id=None) -> None:
+        if SUPER_ADMIN_ROLE_CODE not in role_codes:
             return
         if self._get_active_super_admin_user(exclude_admin_user_id=current_admin_user_id) is not None:
             raise FailException("超级管理员账号已存在，不允许分配第二个超级管理员角色")
@@ -552,8 +642,9 @@ class AdminUserService:
         if self._get_active_super_admin_user(exclude_admin_user_id=admin_user_id) is None:
             raise FailException("至少保留一个超级管理员账号")
 
-    def _replace_admin_user_roles(self, admin_user_id, role_ids: list[str]) -> None:
+    def _replace_admin_user_roles(self, admin_user_id, role_codes: list[str]) -> None:
         self.session.query(AdminUserRole).filter(AdminUserRole.admin_user_id == admin_user_id).delete()
+        role_ids = self._resolve_role_ids(role_codes)
         for role_id in role_ids:
             self.session.add(AdminUserRole(admin_user_id=admin_user_id, role_id=role_id))
 
@@ -598,6 +689,8 @@ class AdminUserService:
     def _get_permission_codes(self, role_codes: list[str]) -> list[str]:
         if not role_codes:
             return []
+        if SUPER_ADMIN_ROLE_CODE in role_codes:
+            return list(all_permission_codes())
         rows = (
             self.session.query(Permission.code)
             .join(RolePermission, RolePermission.permission_id == Permission.id)

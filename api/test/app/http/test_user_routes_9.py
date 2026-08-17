@@ -25,6 +25,16 @@ from app.http.user_routes_9 import register_routes
 register_routes(asgi_app.quart_app)
 
 
+def _mock_resolve_account(monkeypatch, account):
+    """模拟已认证用户：替换 support._resolve_account 直接返回该账号（C-1 加固后测试模拟登录的方式）。"""
+
+    async def _fake_resolve_account(account_id_override=None):
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_account", _fake_resolve_account)
+    return account
+
+
 @dataclass
 class _Paginator:
     total_page: int = 1
@@ -118,6 +128,7 @@ class TestRedeemCodeRoutes:
         account = SimpleNamespace(id=uuid4())
         service = _FakeRedeemCodeService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -265,6 +276,7 @@ class TestMemoryRoutes:
         from internal.service.memory.retriever import MemoryRetriever
 
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -610,6 +622,7 @@ class TestAIRoutes:
         account = SimpleNamespace(id=uuid4())
         service = _FakeAIService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_service", lambda cls: service)
         return account, service
 
@@ -744,6 +757,7 @@ class TestAudioRoutes:
         account = SimpleNamespace(id=uuid4())
         service = _FakeAudioService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_service", lambda cls: service)
         return account, service
 
@@ -875,6 +889,7 @@ class TestPlatformWechatRoutes:
         from internal.service import PlatformService, WechatService
 
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -1008,6 +1023,7 @@ class TestPublicAppRoutes:
         from internal.service.public_app_service import PublicAppService
 
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(
             support,
             "_get_service",
@@ -1189,6 +1205,7 @@ class TestRoutingLogRoutes:
         )
 
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_service", lambda cls: service)
 
         async def _run():
@@ -1280,6 +1297,12 @@ class TestShowcaseRoutes:
         from internal.service.showcase_service import ShowcaseService
 
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+        _mock_resolve_account(monkeypatch, account)
+
+        async def _fake_resolve_admin_operator():
+            return SimpleNamespace(id="admin-1"), None
+
+        monkeypatch.setattr(support, "_resolve_admin_operator", _fake_resolve_admin_operator)
         monkeypatch.setattr(support, "_get_service", lambda cls: service)
         return account, service
 

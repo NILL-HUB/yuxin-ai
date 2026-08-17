@@ -5,11 +5,15 @@ from uuid import uuid4
 import pytest
 from test.context import TestApp
 
+from internal.core.rbac import all_permission_codes
 from internal.exception import FailException, UnauthorizedException
 from internal.model.account import Account, AccountSession
 from internal.model.admin import AdminSession, AdminUser, AdminUserRole, Role
 from internal.service.admin_user_service import AdminUserService
-from pkg.password import compare_password, hash_password
+from pkg.password import PBKDF2_ITERATIONS_V1, compare_password, hash_password
+
+# 测试用强密码（满足密码规则且不在弱口令黑名单）
+_STRONG_ADMIN_PASSWORD = "Str0ng#Adm1n_2026"
 
 
 class _QueryStub:
@@ -74,8 +78,10 @@ class _AuditLogServiceStub:
 
 
 def _hashed_password(password: str):
+    """生成存量 v1 参数（PBKDF2 10k 迭代）的密码哈希，模拟历史存量数据。"""
     salt = b"\x01" * 16
-    return base64.b64encode(hash_password(password, salt)).decode(), base64.b64encode(salt).decode()
+    hashed = hash_password(password, salt, iterations=PBKDF2_ITERATIONS_V1)
+    return base64.b64encode(hashed).decode(), base64.b64encode(salt).decode()
 
 
 class TestAdminUserService:
@@ -95,7 +101,7 @@ class TestAdminUserService:
     def test_initialize_super_admin_should_create_user_and_bind_super_admin_role(self, monkeypatch):
         monkeypatch.setenv("ADMIN_INITIAL_EMAIL", "")
         monkeypatch.setenv("ADMIN_INITIAL_USERNAME", "admin")
-        monkeypatch.setenv("ADMIN_INITIAL_PASSWORD", "Root123456")
+        monkeypatch.setenv("ADMIN_INITIAL_PASSWORD", _STRONG_ADMIN_PASSWORD)
         monkeypatch.setenv("ADMIN_INITIAL_NAME", "Root")
         super_admin_role = Role(id=uuid4(), code="super_admin", name="超级管理员", is_system=True)
         session = _SessionStub([
@@ -116,9 +122,12 @@ class TestAdminUserService:
         assert created_users[0].name == "Root"
         assert created_users[0].status == "active"
         assert created_users[0].account_id is None
-        assert created_users[0].password != "Root123456"
+        assert created_users[0].password != _STRONG_ADMIN_PASSWORD
         assert created_users[0].password_salt != ""
-        assert compare_password("Root123456", created_users[0].password, created_users[0].password_salt) is True
+        assert created_users[0].password_version == 2
+        assert compare_password(
+            _STRONG_ADMIN_PASSWORD, created_users[0].password, created_users[0].password_salt
+        ) is True
         assert len(created_bindings) == 1
         assert created_bindings[0].admin_user_id == created_users[0].id
         assert created_bindings[0].role_id == super_admin_role.id
@@ -128,7 +137,7 @@ class TestAdminUserService:
 
     def test_initialize_super_admin_should_skip_existing_user(self, monkeypatch):
         monkeypatch.setenv("ADMIN_INITIAL_EMAIL", "root@example.com")
-        monkeypatch.setenv("ADMIN_INITIAL_PASSWORD", "Root123456")
+        monkeypatch.setenv("ADMIN_INITIAL_PASSWORD", _STRONG_ADMIN_PASSWORD)
         existing_user = AdminUser(id=uuid4(), email="root@example.com", name="Root", status="active")
         session = _SessionStub([_QueryStub(one_or_none_result=existing_user)])
         service = AdminUserService(session=session)
@@ -154,14 +163,18 @@ class TestAdminUserService:
     def test_password_login_should_issue_admin_token_without_password_fields(self, monkeypatch):
         monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-with-32-bytes-min-123456")
         admin_user_id = uuid4()
-        password, salt = _hashed_password("Root123456")
+        # 当前参数（v2）生成的密码哈希，避免登录时触发旧参数重哈希影响 commits 断言
+        salt = b"\x01" * 16
+        password = base64.b64encode(hash_password("Root123456", salt)).decode()
+        salt_base64 = base64.b64encode(salt).decode()
         admin_user = AdminUser(
             id=admin_user_id,
             username="admin",
             email="",
             name="Root",
             password=password,
-            password_salt=salt,
+            password_salt=salt_base64,
+            password_version=2,
             status="active",
         )
         session = _SessionStub([
@@ -193,7 +206,7 @@ class TestAdminUserService:
         assert admin_user_serialized["account_id"] is None
         assert admin_user_serialized["last_login_at"] > 0
         assert admin_user_serialized["roles"] == ["super_admin"]
-        assert admin_user_serialized["permissions"] == ["account:read", "admin:access"]
+        assert admin_user_serialized["permissions"] == list(all_permission_codes())
         assert "password" not in result["admin_user"]
         assert "password_salt" not in result["admin_user"]
         assert len(created_sessions) == 1
@@ -296,7 +309,15 @@ class TestAdminUserService:
             )
 
         assert "当前密码错误" in str(exc_info.value)
-        assert compare_password("Root123456", admin_user.password, admin_user.password_salt) is True
+        assert (
+            compare_password(
+                "Root123456",
+                admin_user.password,
+                admin_user.password_salt,
+                iterations=PBKDF2_ITERATIONS_V1,
+            )
+            is True
+        )
         assert session.commits == 0
 
     def test_parse_admin_token_should_reject_expired_or_non_admin_token(self, monkeypatch):
@@ -324,7 +345,7 @@ class TestAdminUserService:
 
     def test_initialize_super_admin_should_skip_when_another_super_admin_exists(self, monkeypatch):
         monkeypatch.setenv("ADMIN_INITIAL_EMAIL", "root@example.com")
-        monkeypatch.setenv("ADMIN_INITIAL_PASSWORD", "Root123456")
+        monkeypatch.setenv("ADMIN_INITIAL_PASSWORD", _STRONG_ADMIN_PASSWORD)
         super_admin_role = Role(id=uuid4(), code="super_admin", name="超级管理员", is_system=True)
         existing_super_admin = AdminUser(id=uuid4(), email="exists@example.com", name="Root", status="active")
         session = _SessionStub([
@@ -341,11 +362,9 @@ class TestAdminUserService:
         assert session.commits == 0
 
     def test_create_admin_user_should_reject_second_super_admin_role(self):
-        super_admin_role_id = uuid4()
         existing_super_admin = AdminUser(id=uuid4(), email="root@example.com", name="Root", status="active")
         session = _SessionStub([
             _QueryStub(one_or_none_result=None),
-            _QueryStub(all_result=[(str(super_admin_role_id), "super_admin")]),
             _QueryStub(one_or_none_result=existing_super_admin),
         ])
         service = AdminUserService(session=session)
@@ -355,7 +374,7 @@ class TestAdminUserService:
                 email="new@example.com",
                 name="New Admin",
                 password="Admin123456",
-                role_ids=[str(super_admin_role_id)],
+                role_codes=["super_admin"],
             )
 
         assert "超级管理员账号已存在" in str(exc_info.value)
@@ -373,7 +392,7 @@ class TestAdminUserService:
         service = AdminUserService(session=session)
 
         with pytest.raises(FailException) as exc_info:
-            service.update_admin_user(super_admin_id, role_ids=[])
+            service.update_admin_user(super_admin_id, role_codes=[])
 
         assert "至少保留一个超级管理员" in str(exc_info.value)
         assert session.commits == 0
@@ -396,7 +415,6 @@ class TestAdminUserService:
 
     def test_create_admin_user_should_record_audit_log_before_commit(self):
         operator_id = uuid4()
-        role_id = str(uuid4())
         audit_log_service = _AuditLogServiceStub()
         session = _SessionStub([
             _QueryStub(one_or_none_result=None),
@@ -409,7 +427,7 @@ class TestAdminUserService:
             email="NEW@example.com",
             name="New Admin",
             password="Admin123456",
-            role_ids=[role_id],
+            role_codes=[],
             operator_id=operator_id,
             ip="127.0.0.1",
             user_agent="pytest",
@@ -425,19 +443,20 @@ class TestAdminUserService:
             "ip": "127.0.0.1",
             "user_agent": "pytest",
             "before_data": None,
-            "after_data": {"email": "new@example.com", "name": "New Admin", "roles": [role_id]},
+            "after_data": {"email": "new@example.com", "name": "New Admin", "roles": []},
         }]
 
     def test_update_admin_user_should_record_before_and_after_audit_data(self):
         operator_id = uuid4()
         admin_id = uuid4()
-        role_id = str(uuid4())
+        role_id = uuid4()
         admin_user = AdminUser(id=admin_id, email="admin@example.com", name="Old", status="active")
         audit_log_service = _AuditLogServiceStub()
         session = _SessionStub([
             _QueryStub(one_or_none_result=admin_user),
             _QueryStub(all_result=[("viewer",)]),
             _QueryStub(),
+            _QueryStub(all_result=[(str(role_id), "viewer")]),
             _QueryStub(all_result=[]),
         ])
         service = AdminUserService(session=session, audit_log_service=audit_log_service)
@@ -446,7 +465,7 @@ class TestAdminUserService:
             admin_id,
             name="New",
             status="disabled",
-            role_ids=[role_id],
+            role_codes=["viewer"],
             operator_id=operator_id,
             ip="127.0.0.1",
             user_agent="pytest",
@@ -463,7 +482,7 @@ class TestAdminUserService:
             "ip": "127.0.0.1",
             "user_agent": "pytest",
             "before_data": {"name": "Old", "email": "admin@example.com", "status": "active", "roles": ["viewer"]},
-            "after_data": {"name": "New", "email": "admin@example.com", "status": "disabled", "roles": [role_id]},
+            "after_data": {"name": "New", "email": "admin@example.com", "status": "disabled", "roles": ["viewer"]},
         }]
 
     def test_disable_admin_user_should_record_audit_log(self):
@@ -493,3 +512,10 @@ class TestAdminUserService:
             "before_data": {"status": "active"},
             "after_data": {"status": "disabled"},
         }]
+
+    def test_super_admin_permission_resolution_should_be_wildcard(self):
+        service = AdminUserService(session=_SessionStub())
+
+        permissions = service._get_permission_codes(["super_admin"])
+
+        assert permissions == list(all_permission_codes())

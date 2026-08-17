@@ -1293,7 +1293,10 @@ def register_routes(quart_app):
         from internal.schema.showcase_schema import ShowcaseCaseResp
         from internal.service.showcase_service import ShowcaseService
 
-        admin_id = request.headers.get("X-Admin-Id") or request.args.get("admin_id") or ""
+        admin, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        admin_id = str(admin.id)
         result = await a._to_thread(
             a._get_service(ShowcaseService).approve_case,
             case_id,
@@ -1310,7 +1313,10 @@ def register_routes(quart_app):
 
         payload = await request.get_json(force=True, silent=True) or {}
         reason = str(payload.get("reason") or "")
-        admin_id = request.headers.get("X-Admin-Id") or request.args.get("admin_id") or ""
+        admin, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        admin_id = str(admin.id)
         result = await a._to_thread(
             a._get_service(ShowcaseService).reject_case,
             case_id,
@@ -1326,7 +1332,10 @@ def register_routes(quart_app):
         from internal.schema.showcase_schema import ShowcaseCaseResp
         from internal.service.showcase_service import ShowcaseService
 
-        admin_id = request.headers.get("X-Admin-Id") or request.args.get("admin_id") or ""
+        admin, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        admin_id = str(admin.id)
         result = await a._to_thread(
             a._get_service(ShowcaseService).offline_case,
             case_id,

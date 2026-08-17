@@ -9,6 +9,16 @@ from app.http.admin_routes_3 import register_routes
 register_routes(asgi_app.quart_app)
 
 
+def _mock_resolve_account(monkeypatch, account):
+    """模拟已认证用户：替换 support._resolve_account 直接返回该账号（C-1 加固后测试模拟登录的方式）。"""
+
+    async def _fake_resolve_account(account_id_override=None):
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_account", _fake_resolve_account)
+    return account
+
+
 _PROVIDER = {
     "id": str(uuid4()),
     "name": "openai",
@@ -145,6 +155,7 @@ class TestAdminModelProviderRoutes:
             "_get_service",
             lambda cls: fake if cls is AdminModelProviderService else None,
         )
+        _mock_resolve_account(monkeypatch, account)
         return account, fake
 
     def test_list_providers(self, monkeypatch):
@@ -418,6 +429,7 @@ class TestAdminModelPoolRoutes:
             "_get_service",
             lambda cls: fake if cls is AdminModelPoolService else None,
         )
+        _mock_resolve_account(monkeypatch, account)
         return account, fake
 
     def test_list_models(self, monkeypatch):

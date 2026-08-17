@@ -18,14 +18,14 @@ class CreateAdminUserReq(Form):
     email = StringField("email", validators=[Optional(), Length(max=255)])
     name = StringField("name", validators=[DataRequired("名称不能为空"), Length(min=1, max=255)])
     password = StringField("password", validators=[DataRequired("密码不能为空"), regexp(regex=password_pattern, message="密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")])
-    role_ids = FieldList(StringField("role_id"), default=[])
+    role_codes = FieldList(StringField("role_code"), default=[])
 
 
 class UpdateAdminUserReq(Form):
     name = StringField("name", validators=[Optional(), Length(min=1, max=255)])
     email = StringField("email", validators=[Optional(), Length(max=255)])
     status = StringField("status", validators=[Optional(), AnyOf(["active", "disabled", "pending"])])
-    role_ids = FieldList(StringField("role_id"), default=[])
+    role_codes = FieldList(StringField("role_code"), default=[])
 
 
 class ResetAdminUserPasswordReq(Form):

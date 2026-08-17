@@ -17,7 +17,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from internal.exception import FailException, NotFoundException, UnauthorizedException
 from internal.extension.redis_extension import redis_client
 from internal.model import Account, AccountOAuth, AccountSession, AdminUser
-from pkg.password import compare_password, hash_password
+from pkg.password import (
+    PASSWORD_HASH_VERSION_CURRENT,
+    compare_password,
+    hash_password,
+    password_iterations_for_version,
+)
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .email_service import EmailService
@@ -596,14 +601,25 @@ class AccountService(BaseService):
         salt = secrets.token_bytes(16)
         base64_salt = base64.b64encode(salt).decode()
 
-        # 2.利用盐值和password进行加密
+        # 2.利用盐值和password进行加密（使用当前推荐迭代参数，写入 password_version=2）
         password_hashed = hash_password(password, salt)
         base64_password_hashed = base64.b64encode(password_hashed).decode()
 
         # 3.更新账号信息
-        self.update_account(account, password=base64_password_hashed, password_salt=base64_salt)
+        self.update_account(
+            account,
+            password=base64_password_hashed,
+            password_salt=base64_salt,
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
+        )
 
         return account
+
+    def _rehash_if_outdated(self, account: Account, password: str) -> None:
+        """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
+        if int(getattr(account, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
+            return
+        self.update_password(password, account)
 
     def change_password(self, account: Account, current_password: str, new_password: str) -> Account:
         """校验当前密码后更新密码；首次设置密码时允许不传当前密码。"""
@@ -617,6 +633,9 @@ class AccountService(BaseService):
                 current_password,
                 account.password,
                 account.password_salt,
+                iterations=password_iterations_for_version(
+                    getattr(account, "password_version", 1)
+                ),
             ):
                 raise FailException("当前密码错误")
 
@@ -1005,6 +1024,9 @@ class AccountService(BaseService):
                 current_password,
                 account.password,
                 account.password_salt,
+                iterations=password_iterations_for_version(
+                    getattr(account, "password_version", 1)
+                ),
             ):
                 raise FailException("当前密码错误")
 
@@ -1173,16 +1195,22 @@ class AccountService(BaseService):
                 reason_code=self.INVALID_CREDENTIALS_REASON_CODE,
             )
 
-        # 2.校验账号密码是否正确
+        # 2.校验账号密码是否正确（按哈希版本选择迭代次数，兼容存量 10k 迭代哈希）
         if not compare_password(
             password,
             account.password,
-            account.password_salt
+            account.password_salt,
+            iterations=password_iterations_for_version(
+                getattr(account, "password_version", 1)
+            ),
         ):
             raise FailException(
                 generic_error_message,
                 reason_code=self.INVALID_CREDENTIALS_REASON_CODE,
             )
+
+        # 2.1 登录成功后透明升级旧参数密码哈希
+        self._rehash_if_outdated(account, password)
 
         # 3.根据登录风险返回授权凭证或二次验证挑战
         return self.begin_login(account)

@@ -1,9 +1,9 @@
-from internal.context import current_app
 from sqlalchemy import (
     Column,
     UUID,
     String,
     DateTime,
+    Integer,
     text,
     PrimaryKeyConstraint,
     Index,
@@ -37,6 +37,8 @@ class Account(Base):
     avatar = Column(String(255), nullable=False, server_default=text("''::character varying"))
     password = Column(String(255), nullable=True, server_default=text("''::character varying"))
     password_salt = Column(String(255), nullable=True, server_default=text("''::character varying"))
+    # 密码哈希格式版本：1=PBKDF2 10k 迭代（历史），2=PBKDF2 600k 迭代（当前）
+    password_version = Column(Integer, nullable=False, server_default=text("'1'"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     disabled_at = Column(DateTime, nullable=True)
     disabled_by = Column(UUID, nullable=True)
@@ -65,8 +67,6 @@ class Account(Base):
     @property
     def assistant_agent_conversation(self) -> "Conversation":
         """只读属性，返回当前账号的辅助Agent会话"""
-        # 1.获取辅助Agent应用id
-        assistant_agent_id = current_app.config.get("ASSISTANT_AGENT_ID")
         conversation = db.session.query(Conversation).get(
             self.assistant_agent_conversation_id
         ) if self.assistant_agent_conversation_id else None
@@ -81,6 +81,10 @@ class Account(Base):
 
         # 2.判断会话信息是否存在，如果不存在则创建一个空会话
         if not self.assistant_agent_conversation_id or not conversation:
+            # 2.1 获取辅助Agent应用id（DB 按名称解析；失败回退 env，占位符时报错）
+            from internal.service.assistant_agent_resolver import resolve_assistant_agent_app_id
+
+            assistant_agent_id = resolve_assistant_agent_app_id(db)
             # 3.开启自动提交上下文
             with db.auto_commit():
                 # 4.创建辅助Agent会话

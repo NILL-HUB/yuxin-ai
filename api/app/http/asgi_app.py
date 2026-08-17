@@ -61,6 +61,24 @@ async def _bind_request_scope():
     set_request_scope(request_scope)
 
 
+@quart_app.before_request
+async def _enforce_admin_rbac():
+    """全局管理端 RBAC 门禁：所有 /admin/* 必须先过认证与权限映射。"""
+    path = request.path or ""
+    if not path.startswith("/admin/"):
+        return None
+    if path in _support._ADMIN_PUBLIC_PATHS:
+        return None
+    if path in _support._ADMIN_AUTH_ONLY_PATHS:
+        _, err = await _support._resolve_admin_permission(None)
+        return err
+    permission = _support._admin_route_permission(request.method or "GET", path)
+    if not permission:
+        return _support._err("forbidden", "无权限访问该管理接口", 403)
+    _, err = await _support._resolve_admin_permission(permission)
+    return err
+
+
 @quart_app.teardown_request
 async def _clear_request_scope(*_args):
     clear_request_scope()
@@ -151,6 +169,10 @@ async def _resolve_account(account_id_override: str | None = None):
 
 async def _resolve_admin_permission(permission_code: str):
     return await _support._resolve_admin_permission(permission_code)
+
+
+async def _resolve_admin_operator():
+    return await _support._resolve_admin_operator()
 
 
 def _field(raw, default=None):

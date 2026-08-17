@@ -405,7 +405,7 @@ const formatToolCount = (count: number) => {
                   </a-tag>
                 </div>
                 <div class="text-xs text-gray-500 truncate">
-                  {{ binding.source_scope === 'public' ? '应用广场' : '我的应用' }}
+                  {{ binding.source_scope === 'public' ? '应用商店' : '我的应用' }}
                   <template v-if="binding.is_public"> · 公开应用</template>
                   <template v-else> · 私有应用</template>
                 </div>

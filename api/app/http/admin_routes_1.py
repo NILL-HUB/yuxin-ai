@@ -22,7 +22,7 @@ def register_routes(quart_app):
     async def admin_app_list():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -43,7 +43,7 @@ def register_routes(quart_app):
     async def admin_app_get(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -58,7 +58,7 @@ def register_routes(quart_app):
     async def admin_app_update(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -80,7 +80,7 @@ def register_routes(quart_app):
     async def admin_app_offline(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -93,7 +93,7 @@ def register_routes(quart_app):
     async def admin_app_batch_offline():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -120,7 +120,7 @@ def register_routes(quart_app):
     async def admin_app_batch_delete():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -150,7 +150,7 @@ def register_routes(quart_app):
     async def admin_app_create():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -182,7 +182,7 @@ def register_routes(quart_app):
     async def admin_app_delete(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -202,7 +202,7 @@ def register_routes(quart_app):
     async def admin_app_get_draft_app_config(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -217,7 +217,7 @@ def register_routes(quart_app):
     async def admin_app_update_draft_app_config(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -235,7 +235,7 @@ def register_routes(quart_app):
     async def admin_app_get_published_config(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -250,7 +250,7 @@ def register_routes(quart_app):
     async def admin_app_regenerate_web_app_token(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -265,7 +265,7 @@ def register_routes(quart_app):
     async def admin_app_get_wechat_config(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -282,7 +282,7 @@ def register_routes(quart_app):
     async def admin_app_update_wechat_config(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -303,7 +303,7 @@ def register_routes(quart_app):
     async def admin_app_share_app_to_square(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -320,7 +320,7 @@ def register_routes(quart_app):
     async def admin_app_unshare_app_from_square(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -335,7 +335,7 @@ def register_routes(quart_app):
     async def admin_app_get_app_tags():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -365,7 +365,7 @@ def register_routes(quart_app):
     async def admin_app_prompt_compare_chat(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -409,7 +409,7 @@ def register_routes(quart_app):
     async def admin_app_stop_prompt_compare_chat(app_id, task_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -426,7 +426,7 @@ def register_routes(quart_app):
     async def admin_app_get_debug_summary(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -442,7 +442,7 @@ def register_routes(quart_app):
     async def admin_app_update_debug_summary(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -461,7 +461,7 @@ def register_routes(quart_app):
     async def admin_app_delete_debug_conversation(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -477,7 +477,7 @@ def register_routes(quart_app):
     async def admin_app_stop_debug_chat(app_id, task_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -494,7 +494,7 @@ def register_routes(quart_app):
     async def admin_app_get_debug_conversation_messages(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -520,7 +520,7 @@ def register_routes(quart_app):
     async def admin_app_debug_chat(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -557,7 +557,7 @@ def register_routes(quart_app):
     async def admin_app_debug_workflow(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -581,7 +581,7 @@ def register_routes(quart_app):
     async def admin_app_get_app_analysis(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -596,7 +596,7 @@ def register_routes(quart_app):
     async def admin_app_get_versions(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -613,7 +613,7 @@ def register_routes(quart_app):
     async def admin_app_import_app():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 
@@ -652,7 +652,7 @@ def register_routes(quart_app):
     async def admin_app_export_app(app_id):
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
 

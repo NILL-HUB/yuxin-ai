@@ -312,9 +312,19 @@ async def _resolve_account(account_id_override: str | None = None):
             logger.exception("async 端点解析管理员凭证失败")
             return None, _err("unauthorized", "登录凭证无效", 401)
 
-    # 3) 无 token：公开端点显式携带 account_id 时回退，否则拒绝
+    # 3) 无 token：仅允许公开只读端点显式携带 account_id 时回退，否则拒绝。
+    #    - 写操作一律拒绝：防止匿名攻击者仅凭目标 account_id 冒充任意账号执行
+    #      修改/创建/删除（C-1 认证绕过修复）。
+    #    - 读操作同样执行 _is_user_api_blocked 封锁检查：用户端已收敛的接口
+    #      （/apps、/workflows、/api-tools 等）即使带 account_id 也不放行。
+    #    - 真正的公开端点（/public/*、/web-apps/<token> 等）不依赖本回退，
+    #      它们显式使用 account=None 或 _resolve_webapp_actor，行为不受影响。
     if not requested_id:
         return None, _err("unauthorized", "未登录或登录已过期", 401)
+    if request.method != "GET":
+        return None, _err("unauthorized", "未登录或登录已过期", 401)
+    if _is_user_api_blocked(request.path, request.method):
+        return None, _err("forbidden", "该接口仅管理员可用", 403)
     try:
         account = await asyncio.to_thread(_load_account, UUID(requested_id))
         return account, None
@@ -323,7 +333,7 @@ async def _resolve_account(account_id_override: str | None = None):
     return None, _err("account_not_found", "账号不存在", 404)
 
 
-async def _resolve_admin_permission(permission_code: str):
+async def _resolve_admin_permission(permission_code: str | None = None):
     """解析管理员 JWT 并校验指定权限点，返回 (admin_dict, None) 或 (None, error)。"""
     from internal.exception import UnauthorizedException
 
@@ -356,6 +366,277 @@ async def _resolve_admin_permission(permission_code: str):
     if permission_code and permission_code not in permissions:
         return None, _err("forbidden", "无权限执行该操作", 403)
     return admin, None
+
+
+async def _resolve_admin_operator():
+    """解析当前管理员并把其 id 包装为操作者对象（供 admin 路由审计使用）。"""
+    admin, err = await _resolve_admin_permission(None)
+    if err is not None:
+        return None, err
+    return SimpleNamespace(id=admin.get("id")), None
+
+
+_ADMIN_PUBLIC_PATHS = frozenset({"/admin/auth/login"})
+_ADMIN_AUTH_ONLY_PATHS = frozenset(
+    {
+        "/admin/auth/me",
+        "/admin/auth/logout",
+        "/admin/auth/password",
+    }
+)
+
+
+def _admin_path_segments(path: str) -> list[str]:
+    return [segment for segment in str(path or "").split("/") if segment]
+
+
+def _admin_match(segments: list[str], prefix: tuple[str, ...]) -> bool:
+    return segments[: len(prefix)] == list(prefix)
+
+
+def _admin_route_permission(method: str, path: str) -> str | None:
+    """根据 HTTP 方法与路径返回所需权限 code；未登记的管理路径返回 None（fail closed）。"""
+    method = str(method or "GET").upper()
+    segments = _admin_path_segments(path)
+    if not segments or segments[0] != "admin":
+        return None
+
+    # 认证端点由 before_request 单独处理，不进入权限映射。
+    if _admin_match(segments, ("admin", "auth")):
+        return None
+
+    # 共享工具端点：上传图片等仅要求进入管理后台。
+    if _admin_match(segments, ("admin", "upload-files")):
+        return "admin:access"
+
+    # 商店只读浏览。
+    store_read_map = {
+        ("store", "public-apps"): "app:read",
+        ("store", "workflows"): "workflow:read",
+        ("store", "tools"): "tool:read",
+        ("store", "skills"): "skill:read",
+        ("store", "mcp"): "mcp:read",
+        ("store", "builtin-tools"): "builtin_tool:read",
+        ("store", "mcp-providers"): "mcp:read",
+    }
+    for prefix, permission in store_read_map.items():
+        if _admin_match(segments, ("admin", *prefix)):
+            return permission
+
+    # RBAC 管理。
+    if _admin_match(segments, ("admin", "roles")):
+        if method == "GET":
+            return "role:read"
+        if method == "POST":
+            return "role:create"
+        if method in {"PATCH", "PUT"}:
+            return "role:update"
+        if method == "DELETE":
+            return "role:delete"
+        return None
+    if _admin_match(segments, ("admin", "permissions")):
+        return "permission:read" if method == "GET" else None
+    if _admin_match(segments, ("admin", "admin-users")):
+        if method == "GET":
+            return "admin_user:read"
+        if method == "POST" and len(segments) == 2:
+            return "admin_user:create"
+        if method in {"PATCH", "PUT"}:
+            return "admin_user:update"
+        if "disable" in segments:
+            return "admin_user:disable"
+        if "enable" in segments or "reset-password" in segments or "sessions" in segments:
+            return "admin_user:disable"
+        return "admin_user:update"
+
+    # 用户管理与应用分配。
+    if _admin_match(segments, ("admin", "users")) and "app-assignments" in segments:
+        return "app_assignment:read" if method == "GET" else "app_assignment:update"
+    if _admin_match(segments, ("admin", "users")):
+        if method == "GET":
+            return "user:read"
+        if "disable" in segments:
+            return "user:disable"
+        if method in {"PATCH", "PUT", "DELETE"} or "enable" in segments or "sessions" in segments:
+            return "user:update"
+        return "user:update"
+
+    # 财务域。
+    if _admin_match(segments, ("admin", "plans")):
+        return "plan:read" if method == "GET" else "plan:update"
+    if _admin_match(segments, ("admin", "redeem-code-batches")) or _admin_match(
+        segments, ("admin", "redeem-codes")
+    ):
+        return "redeem_code:read" if method == "GET" else "redeem_code:update"
+    if _admin_match(segments, ("admin", "cost-stats")):
+        return "cost_stats:read"
+    if _admin_match(segments, ("admin", "cost-policies")):
+        return "model_pool:read" if method == "GET" else "model_pool:manage"
+
+    # 模型与供应商。
+    if _admin_match(segments, ("admin", "model-providers")):
+        if method == "GET":
+            return "model_provider:read"
+        if method == "POST" and len(segments) == 2:
+            return "model_provider:create"
+        if method in {"PATCH", "PUT"}:
+            return "model_provider:update"
+        if method == "DELETE":
+            return "model_provider:delete"
+        return "model_provider:update"
+    if _admin_match(segments, ("admin", "models")):
+        if method == "GET":
+            return "model_pool:read"
+        if method == "POST" and len(segments) == 2:
+            return "model_pool:create"
+        if method in {"PATCH", "PUT"}:
+            return "model_pool:update"
+        if method == "DELETE":
+            return "model_pool:delete"
+        return "model_pool:update"
+    if _admin_match(segments, ("admin", "model-keys")) or _admin_match(
+        segments, ("admin", "model-tiers")
+    ) or _admin_match(segments, ("admin", "language-models")):
+        return "model_pool:read" if method == "GET" else "model_pool:manage"
+
+    # 调度平台。
+    if _admin_match(segments, ("admin", "schedule-tasks")):
+        if method == "GET":
+            return "schedule_task:read"
+        if method == "POST" and len(segments) == 2:
+            return "schedule_task:create"
+        if method == "POST" and len(segments) == 3 and segments[2] in {
+            "parse",
+            "confirm",
+            "reject-suggestion",
+            "humanize",
+        }:
+            return "schedule_task:create"
+        if method in {"PATCH", "PUT"}:
+            return "schedule_task:update"
+        if method == "DELETE":
+            return "schedule_task:delete"
+        return "schedule_task:update"
+
+    # 存储。
+    if _admin_match(segments, ("admin", "storage")):
+        return "storage:read" if method == "GET" else "storage:update"
+
+    # 模型池治理之外的池治理。
+    if _admin_match(segments, ("admin", "agent-pool")) or _admin_match(
+        segments, ("admin", "sub-pool-definitions")
+    ):
+        return "agent_pool:read" if method == "GET" else "agent_pool:manage"
+    if _admin_match(segments, ("admin", "tool-governance")):
+        return "tool_governance:read" if method == "GET" else "tool_governance:manage"
+
+    # 提示词、内置工具、公开 AI 能力。
+    if _admin_match(segments, ("admin", "prompt-templates")):
+        if method == "GET":
+            return "prompt_template:read"
+        if method == "DELETE":
+            return "prompt_template:delete"
+        return "prompt_template:update"
+    if _admin_match(segments, ("admin", "builtin-tools")):
+        return "builtin_tool:read" if method == "GET" else "builtin_tool:update"
+    if _admin_match(segments, ("admin", "public-ai-features")):
+        return "public_ai_feature:read" if method == "GET" else "public_ai_feature:update"
+
+    # 路由质量：动作粒度权限。
+    if _admin_match(segments, ("admin", "routing-quality")):
+        if method == "POST" and _admin_match(segments, ("admin", "routing-quality", "feedback")):
+            return "routing_quality:feedback"
+        if method == "POST" and len(segments) >= 5:
+            action = segments[-1]
+            if action == "accept":
+                return "routing_quality:accept"
+            if action == "dismiss":
+                return "routing_quality:dismiss"
+            if action == "apply":
+                return "routing_quality:apply"
+            if action == "rollback":
+                return "routing_quality:rollback"
+        if method == "POST" and len(segments) >= 4 and "policy-changes" in segments:
+            return "routing_quality:rollback"
+        return "routing_quality:read"
+    if _admin_match(segments, ("admin", "routing-logs")):
+        return "routing_log:read" if method == "GET" else "routing_log:update"
+
+    # 回收站。
+    if _admin_match(segments, ("admin", "recycle-bin")):
+        if method == "GET":
+            return "recycle_bin:read"
+        if "restore" in segments:
+            return "recycle_bin:write"
+        return "recycle_bin:write"
+
+    # 可观测性与上线验收。
+    if _admin_match(segments, ("admin", "audit-logs")) or _admin_match(
+        segments, ("admin", "approval-insights")
+    ):
+        return "audit_log:read"
+    if _admin_match(segments, ("admin", "orchestration-release-check")):
+        return "orchestration_release:read"
+    if _admin_match(segments, ("admin", "orchestration-flags")):
+        return "orchestration_flag:read" if method == "GET" else "orchestration_flag:update"
+
+    # 开放 API 与案例展示。
+    if _admin_match(segments, ("admin", "openapi")):
+        if method == "GET":
+            return "openapi:read"
+        if "delete" in segments:
+            return "openapi:delete"
+        if method == "POST" and len(segments) == 3:
+            return "openapi:create"
+        return "openapi:update"
+    if _admin_match(segments, ("admin", "showcase")):
+        if method == "GET":
+            return "showcase:read"
+        if "approve" in segments:
+            return "showcase:approve"
+        return "showcase:update"
+
+    # 知识库与内容资源。
+    if _admin_match(segments, ("admin", "system-knowledge")) or _admin_match(
+        segments, ("admin", "space", "system-knowledge-bases")
+    ):
+        return "system_knowledge:read" if method == "GET" else "system_knowledge:write"
+
+    # 应用、工作流、技能、MCP、工具等通用资源：GET=read，POST 子路径=update。
+    generic_resources = {
+        ("apps",): ("app", "app:read", "app:create", "app:update", "app:delete"),
+        ("workflows",): ("workflow", "workflow:read", "workflow:create", "workflow:update", "workflow:delete"),
+        ("skills",): ("skill", "skill:read", "skill:create", "skill:update", "skill:delete"),
+        ("mcp",): ("mcp", "mcp:read", "mcp:create", "mcp:update", "mcp:delete"),
+        ("api-tools",): ("tool", "tool:read", "tool:create", "tool:update", "tool:delete"),
+        ("tools",): ("tool", "tool:read", "tool:create", "tool:update", "tool:delete"),
+    }
+    for prefix, (_resource, read_code, create_code, update_code, delete_code) in generic_resources.items():
+        if not _admin_match(segments, ("admin", *prefix)):
+            continue
+        if method == "GET":
+            return read_code
+        if method == "DELETE":
+            return delete_code
+        if method in {"PATCH", "PUT"}:
+            return update_code
+        if method == "POST":
+            if prefix == ("skills",) and len(segments) == 3 and segments[2].startswith("import"):
+                return "skill:create"
+            if prefix == ("mcp",) and len(segments) == 3 and segments[2].startswith("import"):
+                return "mcp:create"
+            if prefix == ("api-tools",) and len(segments) == 3 and segments[2].startswith("import"):
+                return "tool:create"
+            if prefix == ("workflows",) and len(segments) == 3 and segments[2] == "import":
+                return "workflow:create"
+            if len(segments) == len(prefix) + 1:
+                return create_code
+            if len(segments) > 2 and segments[-1] in {"delete"}:
+                return delete_code
+            return update_code
+        return None
+
+    return None
 
 
 # 用户端已收敛：这些接口不再被保留的用户界面消费，普通用户 JWT 一律拒绝。

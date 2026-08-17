@@ -20,7 +20,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/model-providers")
     async def admin_model_provider_list():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_provider_schema import AdminModelProviderPageResp
@@ -45,7 +45,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/model-providers/options")
     async def admin_model_provider_options():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_provider_schema import AdminModelProviderOptionsResp
@@ -60,7 +60,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/model-providers")
     async def admin_model_provider_create():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_provider_schema import AdminModelProviderResp
@@ -94,7 +94,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/model-providers/<uuid:provider_id>")
     async def admin_model_provider_get(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_provider_schema import AdminModelProviderResp
@@ -109,7 +109,7 @@ def register_routes(quart_app):
     @quart_app.patch("/admin/model-providers/<uuid:provider_id>")
     async def admin_model_provider_update(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_provider_schema import AdminModelProviderResp
@@ -145,7 +145,7 @@ def register_routes(quart_app):
     @quart_app.delete("/admin/model-providers/<uuid:provider_id>")
     async def admin_model_provider_delete(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.admin_model_provider_service import AdminModelProviderService
@@ -158,7 +158,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/model-providers/<uuid:provider_id>/status")
     async def admin_model_provider_status(provider_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_provider_schema import AdminModelProviderResp
@@ -184,7 +184,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/models")
     async def admin_model_pool_list():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelPageResp
@@ -213,7 +213,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/models")
     async def admin_model_pool_create():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelResp
@@ -229,7 +229,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/models/<uuid:model_id>")
     async def admin_model_pool_get(model_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelResp
@@ -244,7 +244,7 @@ def register_routes(quart_app):
     @quart_app.patch("/admin/models/<uuid:model_id>")
     async def admin_model_pool_update(model_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelResp
@@ -260,7 +260,7 @@ def register_routes(quart_app):
     @quart_app.delete("/admin/models/<uuid:model_id>")
     async def admin_model_pool_delete(model_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.admin_model_pool_service import AdminModelPoolService
@@ -273,7 +273,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/models/<uuid:model_id>/status")
     async def admin_model_pool_status(model_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelResp
@@ -297,7 +297,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/model-keys")
     async def admin_model_key_list():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelKeyPageResp
@@ -322,7 +322,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/model-keys")
     async def admin_model_key_create():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelKeyResp
@@ -338,7 +338,7 @@ def register_routes(quart_app):
     @quart_app.patch("/admin/model-keys/<uuid:key_id>")
     async def admin_model_key_update(key_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelKeyResp
@@ -354,7 +354,7 @@ def register_routes(quart_app):
     @quart_app.delete("/admin/model-keys/<uuid:key_id>")
     async def admin_model_key_delete(key_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.admin_model_pool_service import AdminModelPoolService
@@ -367,7 +367,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/model-keys/<uuid:key_id>/status")
     async def admin_model_key_status(key_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelKeyResp
@@ -391,7 +391,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/model-tiers")
     async def admin_model_tier_list():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelTierListResp
@@ -406,7 +406,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/model-tiers")
     async def admin_model_tier_create():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelTierResp
@@ -422,7 +422,7 @@ def register_routes(quart_app):
     @quart_app.put("/admin/model-tiers/<string:tier_code>")
     async def admin_model_tier_update(tier_code):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminModelTierResp
@@ -440,7 +440,7 @@ def register_routes(quart_app):
     @quart_app.delete("/admin/model-tiers/<string:tier_code>")
     async def admin_model_tier_delete(tier_code):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.service.admin_model_pool_service import AdminModelPoolService
@@ -453,7 +453,7 @@ def register_routes(quart_app):
     @quart_app.get("/admin/cost-policies")
     async def admin_cost_policy_list():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminCostPolicyListResp
@@ -468,7 +468,7 @@ def register_routes(quart_app):
     @quart_app.post("/admin/cost-policies")
     async def admin_cost_policy_create():
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminCostPolicyResp
@@ -484,7 +484,7 @@ def register_routes(quart_app):
     @quart_app.put("/admin/cost-policies/<uuid:policy_id>")
     async def admin_cost_policy_update(policy_id):
         from app.http import asgi_app as a
-        account, err = await a._resolve_account()
+        account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
         from internal.schema.admin_model_pool_schema import AdminCostPolicyResp

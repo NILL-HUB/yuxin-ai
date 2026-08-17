@@ -53,6 +53,22 @@ def _reset_socketio_state():
     socketio_extension.socketio = None
 
 
+@pytest.fixture(autouse=True)
+def _allow_admin_rbac_in_tests(monkeypatch):
+    """路由测试默认放行管理端 RBAC；专项鉴权测试可在用例内覆盖该替身。"""
+    from app.http import support
+
+    async def _fake_resolve_admin_permission(permission_code=None):
+        return {
+            "id": "00000000-0000-0000-0000-000000000000",
+            "roles": ["super_admin"],
+            "permissions": ["*"],
+        }, None
+
+    monkeypatch.setattr(support, "_resolve_admin_permission", _fake_resolve_admin_permission)
+    yield
+
+
 @pytest.fixture
 def app():
     """返回 Flask 应用，并开启测试模式。"""

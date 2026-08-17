@@ -65,6 +65,7 @@ from internal.service.credit_service import CreditService
 from internal.service.subtask_registry_service import SubtaskRegistryService
 from internal.service.smart_approval_policy_service import SmartApprovalPolicyService
 from internal.service.im_voice_service import ImVoiceService
+from internal.service.realtime_voice_service import RealtimeVoiceService
 
 # 记忆系统服务
 from internal.service.memory.entity_extractor import MemoryEntityExtractor
@@ -191,6 +192,7 @@ class ExtensionModule(Module):
 
         # 注册 IM 语音笔记统一转写入口（微信公众号语音 -> ASR）
         binder.bind(ImVoiceService, to=ImVoiceService, scope=singleton)
+        binder.bind(RealtimeVoiceService, to=RealtimeVoiceService, scope=singleton)
 
         # 注册 A2A v1.0 网关及其依赖（公共 Agent 路由）
         from internal.service.a2a_gateway_service import A2AGatewayService

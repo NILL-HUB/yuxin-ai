@@ -136,11 +136,10 @@ def register_routes(quart_app):
         except (TypeError, ValueError):
             return default
 
-    def _operator_context():
-        operator_id = request.headers.get("X-Admin-Id") or None
-        ip = request.headers.get("X-Forwarded-For") or ""
-        user_agent = request.headers.get("User-Agent") or ""
-        return operator_id, ip, user_agent
+    async def _operator_context():
+        from app.http.admin_routes_6 import _get_operator_context
+
+        return await _get_operator_context()
 
     # ------------------------------------------------------------------
     # admin_rbac_handler -> AdminRbacService
@@ -178,13 +177,13 @@ def register_routes(quart_app):
                 data={"name": ["角色名称不能为空"]},
                 status=400,
             )
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminRbacService).create_role,
             code=code,
             name=name,
             description=str(payload.get("description") or ""),
-            permission_ids=payload.get("permission_ids", []) or [],
+            permission_codes=payload.get("permission_codes", []) or [],
             operator_id=operator_id,
             ip=ip,
             user_agent=user_agent,
@@ -192,24 +191,24 @@ def register_routes(quart_app):
         resp = RoleResp()
         return a._ok(resp.dump(result))
 
-    @quart_app.get("/admin/roles/<uuid:role_id>")
-    async def admin_rbac_get_role(role_id):
+    @quart_app.get("/admin/roles/<string:role_code>")
+    async def admin_rbac_get_role(role_code):
         from app.http import asgi_app as a
         from internal.schema.admin_rbac_schema import RoleResp
         from internal.service.admin_rbac_service import AdminRbacService
 
-        result = await a._to_thread(a._get_service(AdminRbacService).get_role, role_id)
+        result = await a._to_thread(a._get_service(AdminRbacService).get_role, role_code)
         resp = RoleResp()
         return a._ok(resp.dump(result))
 
-    @quart_app.patch("/admin/roles/<uuid:role_id>")
-    async def admin_rbac_update_role(role_id):
+    @quart_app.patch("/admin/roles/<string:role_code>")
+    async def admin_rbac_update_role(role_code):
         from app.http import asgi_app as a
         from internal.schema.admin_rbac_schema import RoleResp
         from internal.service.admin_rbac_service import AdminRbacService
 
         payload = await request.get_json(force=True, silent=True) or {}
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         name = payload.get("name")
         if name is not None:
             name = str(name)
@@ -218,10 +217,10 @@ def register_routes(quart_app):
             description = str(description)
         result = await a._to_thread(
             a._get_service(AdminRbacService).update_role,
-            role_id,
+            role_code,
             name=name,
             description=description,
-            permission_ids=payload.get("permission_ids") if "permission_ids" in payload else None,
+            permission_codes=payload.get("permission_codes") if "permission_codes" in payload else None,
             operator_id=operator_id,
             ip=ip,
             user_agent=user_agent,
@@ -229,15 +228,15 @@ def register_routes(quart_app):
         resp = RoleResp()
         return a._ok(resp.dump(result))
 
-    @quart_app.delete("/admin/roles/<uuid:role_id>")
-    async def admin_rbac_delete_role(role_id):
+    @quart_app.delete("/admin/roles/<string:role_code>")
+    async def admin_rbac_delete_role(role_code):
         from app.http import asgi_app as a
         from internal.service.admin_rbac_service import AdminRbacService
 
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         await a._to_thread(
             a._get_service(AdminRbacService).delete_role,
-            role_id,
+            role_code,
             operator_id=operator_id,
             ip=ip,
             user_agent=user_agent,
@@ -292,7 +291,7 @@ def register_routes(quart_app):
         from internal.service.admin_customer_user_service import AdminCustomerUserService
 
         payload = await request.get_json(force=True, silent=True) or {}
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminCustomerUserService).disable_customer_user,
             account_id,
@@ -310,7 +309,7 @@ def register_routes(quart_app):
         from internal.schema.admin_customer_user_schema import AdminCustomerUserResp
         from internal.service.admin_customer_user_service import AdminCustomerUserService
 
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminCustomerUserService).enable_customer_user,
             account_id,
@@ -327,7 +326,7 @@ def register_routes(quart_app):
         from internal.schema.admin_customer_user_schema import RevokeCustomerUserSessionsResp
         from internal.service.admin_customer_user_service import AdminCustomerUserService
 
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminCustomerUserService).revoke_customer_user_sessions,
             account_id,
@@ -364,7 +363,7 @@ def register_routes(quart_app):
         from internal.service.admin_billing_plan_service import AdminBillingPlanService
 
         payload = await request.get_json(force=True, silent=True) or {}
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminBillingPlanService).create_plan,
             payload,
@@ -392,7 +391,7 @@ def register_routes(quart_app):
         from internal.service.admin_billing_plan_service import AdminBillingPlanService
 
         payload = await request.get_json(force=True, silent=True) or {}
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminBillingPlanService).update_plan,
             plan_id,
@@ -419,7 +418,7 @@ def register_routes(quart_app):
                 data={"status": ["status不能为空"]},
                 status=400,
             )
-        operator_id, ip, user_agent = _operator_context()
+        operator_id, ip, user_agent = await _operator_context()
         result = await a._to_thread(
             a._get_service(AdminBillingPlanService).set_plan_status,
             plan_id,
