@@ -25,9 +25,21 @@ SHOWCASE_PERMISSION_CODES = (
 
 
 def upgrade():
-    op.drop_table("showcase_case")
-
     conn = op.get_bind()
+
+    def _table_exists(table: str) -> bool:
+        row = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = :table"
+            ),
+            {"table": table},
+        ).fetchone()
+        return row is not None
+
+    if _table_exists("showcase_case"):
+        op.drop_table("showcase_case")
+
     for code in SHOWCASE_PERMISSION_CODES:
         permission_id = conn.execute(
             sa.text("SELECT id FROM permission WHERE code = :code"),
@@ -45,30 +57,42 @@ def upgrade():
 
 
 def downgrade():
-    op.create_table(
-        "showcase_case",
-        sa.Column("id", sa.UUID(), server_default=sa.text("uuid_generate_v4()"), nullable=False),
-        sa.Column("conversation_id", sa.UUID(), nullable=False),
-        sa.Column("account_id", sa.UUID(), nullable=False),
-        sa.Column("title", sa.String(length=200), server_default=sa.text("''::character varying"), nullable=False),
-        sa.Column("summary", sa.Text(), server_default=sa.text("''::text"), nullable=False),
-        sa.Column("query", sa.Text(), server_default=sa.text("''::text"), nullable=False),
-        sa.Column("answer", sa.Text(), server_default=sa.text("''::text"), nullable=False),
-        sa.Column("tags", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
-        sa.Column("rating", sa.Integer(), server_default=sa.text("5"), nullable=False),
-        sa.Column("status", sa.String(length=32), server_default=sa.text("'pending'::character varying"), nullable=False),
-        sa.Column("reject_reason", sa.Text(), server_default=sa.text("''::text"), nullable=False),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP(0)"), nullable=False),
-        sa.Column("approved_at", sa.DateTime(), nullable=True),
-        sa.Column("approved_by", sa.UUID(), nullable=True),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP(0)"), nullable=False),
-        sa.PrimaryKeyConstraint("id", name="pk_showcase_case_id"),
-    )
-    op.create_index("showcase_case_conversation_id_idx", "showcase_case", ["conversation_id"])
-    op.create_index("showcase_case_account_id_idx", "showcase_case", ["account_id"])
-    op.create_index("showcase_case_status_idx", "showcase_case", ["status"])
-
     conn = op.get_bind()
+
+    def _table_exists(table: str) -> bool:
+        row = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = :table"
+            ),
+            {"table": table},
+        ).fetchone()
+        return row is not None
+
+    if not _table_exists("showcase_case"):
+        op.create_table(
+            "showcase_case",
+            sa.Column("id", sa.UUID(), server_default=sa.text("uuid_generate_v4()"), nullable=False),
+            sa.Column("conversation_id", sa.UUID(), nullable=False),
+            sa.Column("account_id", sa.UUID(), nullable=False),
+            sa.Column("title", sa.String(length=200), server_default=sa.text("''::character varying"), nullable=False),
+            sa.Column("summary", sa.Text(), server_default=sa.text("''::text"), nullable=False),
+            sa.Column("query", sa.Text(), server_default=sa.text("''::text"), nullable=False),
+            sa.Column("answer", sa.Text(), server_default=sa.text("''::text"), nullable=False),
+            sa.Column("tags", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'::jsonb"), nullable=False),
+            sa.Column("rating", sa.Integer(), server_default=sa.text("5"), nullable=False),
+            sa.Column("status", sa.String(length=32), server_default=sa.text("'pending'::character varying"), nullable=False),
+            sa.Column("reject_reason", sa.Text(), server_default=sa.text("''::text"), nullable=False),
+            sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP(0)"), nullable=False),
+            sa.Column("approved_at", sa.DateTime(), nullable=True),
+            sa.Column("approved_by", sa.UUID(), nullable=True),
+            sa.Column("updated_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP(0)"), nullable=False),
+            sa.PrimaryKeyConstraint("id", name="pk_showcase_case_id"),
+        )
+        op.create_index("showcase_case_conversation_id_idx", "showcase_case", ["conversation_id"])
+        op.create_index("showcase_case_account_id_idx", "showcase_case", ["account_id"])
+        op.create_index("showcase_case_status_idx", "showcase_case", ["status"])
+
     for code, resource, action, name in (
         ("showcase:read", "showcase", "read", "查看案例展示"),
         ("showcase:approve", "showcase", "approve", "审核案例展示"),
