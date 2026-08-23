@@ -10,7 +10,13 @@ from internal.lib.helper import escape_like_pattern
 from internal.model.admin import AdminSession, AdminUser, AdminUserRole, Permission, Role, RolePermission
 from internal.service.audit_log_service import AuditLogService
 from internal.service.jwt_service import JwtService
-from pkg.password import compare_password, hash_password, validate_password
+from pkg.password import (
+    PASSWORD_HASH_VERSION_CURRENT,
+    compare_password,
+    hash_password,
+    password_iterations_for_version,
+    validate_password,
+)
 
 # 平台系统账号用户名（辅助 Agent 等内部服务使用的系统账号，不参与用户/应用分配管理）
 SYSTEM_OWNER_ACCOUNT_USERNAME = "yuxin_ai"
@@ -101,6 +107,7 @@ class AdminUserService:
             name=name,
             password=base64.b64encode(password_hashed).decode(),
             password_salt=base64.b64encode(salt).decode(),
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
             status="active",
         )
         self.session.add(admin_user)
@@ -121,7 +128,6 @@ class AdminUserService:
         登录 IP/UA 由调用方（Quart 端点）从请求中提取后传入，
         不直接依赖 Flask request（Quart 单栈下无 Flask request context）。
         """
-        generic_error_message = "账号不存在或者密码错误"
         identifier = self._normalize_identifier(identifier)
         normalized_email = self._normalize_email(identifier)
         admin_user = (
@@ -130,11 +136,21 @@ class AdminUserService:
             .one_or_none()
         )
         if admin_user is None or not admin_user.is_password_set:
-            raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
+            # 账号不存在（或未设置密码）时仍执行一次哈希比对，避免通过响应时间区分账号是否存在。
+            compare_password(password, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAA")
+            raise FailException("账号不存在", reason_code="ADMIN_ACCOUNT_NOT_FOUND")
         if not admin_user.is_active:
             raise FailException("管理员账号已被禁用")
-        if not compare_password(password, admin_user.password, admin_user.password_salt):
-            raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
+        if not compare_password(
+            password,
+            admin_user.password,
+            admin_user.password_salt,
+            iterations=password_iterations_for_version(
+                getattr(admin_user, "password_version", 1)
+            ),
+        ):
+            raise FailException("密码错误", reason_code="INVALID_ADMIN_PASSWORD")
+        self._rehash_admin_password_if_outdated(admin_user, password)
         now = self._now()
         expires_at = now + timedelta(seconds=self.DEFAULT_TOKEN_EXPIRE_SECONDS)
         # 更新最后登录信息（IP/UA 由调用方传入，避免依赖 Flask request）
@@ -182,7 +198,14 @@ class AdminUserService:
         admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_user_id).one_or_none()
         if admin_user is None or not admin_user.is_active:
             raise UnauthorizedException("管理员账号不存在或已被禁用")
-        if not admin_user.is_password_set or not compare_password(current_password, admin_user.password, admin_user.password_salt):
+        if not admin_user.is_password_set or not compare_password(
+            current_password,
+            admin_user.password,
+            admin_user.password_salt,
+            iterations=password_iterations_for_version(
+                getattr(admin_user, "password_version", 1)
+            ),
+        ):
             raise FailException("当前密码错误")
         try:
             validate_password(new_password)
@@ -193,8 +216,19 @@ class AdminUserService:
         encoded_salt = base64.b64encode(salt).decode()
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
         self.session.commit()
         return self._serialize_admin_user(admin_user)
+
+    def _rehash_admin_password_if_outdated(self, admin_user: AdminUser, password: str) -> None:
+        """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
+        if int(getattr(admin_user, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
+            return
+        salt = os.urandom(16)
+        admin_user.password = base64.b64encode(hash_password(password, salt)).decode()
+        admin_user.password_salt = base64.b64encode(salt).decode()
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
+        self.session.commit()
 
     def _resolve_admin_user_and_session(self, token: str) -> tuple[AdminUser, AdminSession]:
         payload = self.parse_admin_token(token)
@@ -288,6 +322,7 @@ class AdminUserService:
             name=name,
             password=base64.b64encode(hash_password(password, salt)).decode(),
             password_salt=base64.b64encode(salt).decode(),
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
             status="active",
         )
         self.session.add(admin_user)
@@ -453,6 +488,7 @@ class AdminUserService:
         encoded_salt = base64.b64encode(salt).decode()
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
         self._emit_audit(
             operator_id=operator_id,
             action="reset_password",

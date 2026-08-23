@@ -4,6 +4,7 @@ from sqlalchemy import (
     UUID,
     String,
     DateTime,
+    Integer,
     text,
     PrimaryKeyConstraint,
     Index,
@@ -37,6 +38,8 @@ class Account(Base):
     avatar = Column(String(255), nullable=False, server_default=text("''::character varying"))
     password = Column(String(255), nullable=True, server_default=text("''::character varying"))
     password_salt = Column(String(255), nullable=True, server_default=text("''::character varying"))
+    # 密码哈希格式版本：1=PBKDF2 10k 迭代（历史），2=PBKDF2 600k 迭代（当前）
+    password_version = Column(Integer, nullable=False, server_default=text("'1'"))
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     disabled_at = Column(DateTime, nullable=True)
     disabled_by = Column(UUID, nullable=True)
