@@ -169,7 +169,6 @@ class AdminUserService:
         登录 IP/UA 由调用方（Quart 端点）从请求中提取后传入，
         不直接依赖 Flask request（Quart 单栈下无 Flask request context）。
         """
-        generic_error_message = "账号不存在或者密码错误"
         identifier = self._normalize_identifier(identifier)
         normalized_email = self._normalize_email(identifier)
         admin_user = (
@@ -178,7 +177,9 @@ class AdminUserService:
             .one_or_none()
         )
         if admin_user is None or not admin_user.is_password_set:
-            raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
+            # 账号不存在（或未设置密码）时仍执行一次哈希比对，避免通过响应时间区分账号是否存在。
+            compare_password(password, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAA")
+            raise FailException("账号不存在", reason_code="ADMIN_ACCOUNT_NOT_FOUND")
         if not admin_user.is_active:
             raise FailException("管理员账号已被禁用")
         if not compare_password(
@@ -189,8 +190,7 @@ class AdminUserService:
                 getattr(admin_user, "password_version", 1)
             ),
         ):
-            raise FailException(generic_error_message, reason_code="INVALID_ADMIN_CREDENTIALS")
-        # 登录成功后透明升级旧参数密码哈希
+            raise FailException("密码错误", reason_code="INVALID_ADMIN_PASSWORD")
         self._rehash_admin_password_if_outdated(admin_user, password)
         now = self._now()
         expires_at = now + timedelta(seconds=self.DEFAULT_TOKEN_EXPIRE_SECONDS)
@@ -273,6 +273,16 @@ class AdminUserService:
         admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
         self.session.commit()
         return self._serialize_admin_user(admin_user)
+
+    def _rehash_admin_password_if_outdated(self, admin_user: AdminUser, password: str) -> None:
+        """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
+        if int(getattr(admin_user, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
+            return
+        salt = os.urandom(16)
+        admin_user.password = base64.b64encode(hash_password(password, salt)).decode()
+        admin_user.password_salt = base64.b64encode(salt).decode()
+        admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
+        self.session.commit()
 
     def _resolve_admin_user_and_session(self, token: str) -> tuple[AdminUser, AdminSession]:
         payload = self.parse_admin_token(token)

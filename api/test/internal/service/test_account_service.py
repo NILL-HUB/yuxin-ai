@@ -932,7 +932,7 @@ class TestAccountService:
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "pwd")
 
-        assert exc_info.value.data["reason_code"] == service.INVALID_CREDENTIALS_REASON_CODE
+        assert exc_info.value.data["reason_code"] == "ACCOUNT_NOT_FOUND"
 
     def test_password_login_should_raise_when_account_disabled(self, monkeypatch):
         service = self._build_service()
@@ -974,7 +974,7 @@ class TestAccountService:
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "bad-pwd")
 
-        assert exc_info.value.data["reason_code"] == service.INVALID_CREDENTIALS_REASON_CODE
+        assert exc_info.value.data["reason_code"] == "INVALID_PASSWORD"
 
     def test_password_login_should_raise_when_password_not_initialized(self, monkeypatch):
         service = self._build_service()
@@ -997,8 +997,8 @@ class TestAccountService:
             with pytest.raises(FailException) as exc_info:
                 service.password_login("demo@example.com", "new-pwd")
 
-        assert "账号不存在或者密码错误" in str(exc_info.value)
-        assert exc_info.value.data["reason_code"] == service.INVALID_CREDENTIALS_REASON_CODE
+        assert "账号不存在" in str(exc_info.value)
+        assert exc_info.value.data["reason_code"] == "ACCOUNT_NOT_FOUND"
 
     def test_prepare_register_should_raise_account_exists_reason_code_for_password_account(self, monkeypatch):
         service = self._build_service()
@@ -1284,7 +1284,7 @@ class TestAccountService:
             with pytest.raises(FailException) as exc_info:
                 service.password_login(email, "pwd")
 
-        assert "账号不存在或者密码错误" in str(exc_info.value)
+        assert "账号不存在" in str(exc_info.value)
         assert len(redis_stub.setex_calls) == 0
 
     def test_is_login_locked_should_fallback_to_false_when_redis_unavailable(self, monkeypatch):
@@ -1351,7 +1351,7 @@ class TestAccountService:
             with pytest.raises(FailException) as exc_info:
                 service.password_login(email, "wrong")
 
-        assert "账号不存在或者密码错误" in str(exc_info.value)
+        assert "密码错误" in str(exc_info.value)
 
     def test_send_reset_code_should_return_silently_when_email_not_registered(self, monkeypatch):
         service = self._build_service()

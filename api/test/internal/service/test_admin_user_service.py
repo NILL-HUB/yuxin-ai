@@ -236,7 +236,20 @@ class TestAdminUserService:
         with pytest.raises(FailException) as exc_info:
             service.password_login("root@example.com", "Wrong123456")
 
-        assert "账号不存在或者密码错误" in str(exc_info.value)
+        assert "密码错误" in str(exc_info.value)
+        assert session.added == []
+        assert session.commits == 0
+
+    def test_password_login_should_reject_unknown_account(self, monkeypatch):
+        monkeypatch.setenv("JWT_SECRET_KEY", "test-secret-key-with-32-bytes-min-123456")
+        session = _SessionStub([_QueryStub(one_or_none_result=None)])
+        service = AdminUserService(session=session)
+
+        with pytest.raises(FailException) as exc_info:
+            service.password_login("nobody@example.com", "Wrong123456")
+
+        assert "账号不存在" in str(exc_info.value)
+        assert "密码错误" not in str(exc_info.value)
         assert session.added == []
         assert session.commits == 0
 

@@ -1178,22 +1178,16 @@ class AccountService(BaseService):
     def password_login(self, identifier: str, password: str) -> dict[str, Any]:
         """根据传递的账号标识和密码登录账号"""
         normalized_identifier = (identifier or "").strip()
-        generic_error_message = "账号不存在或者密码错误"
-
         account = self.get_account_by_identifier(normalized_identifier)
         if not account:
-            raise FailException(
-                generic_error_message,
-                reason_code=self.INVALID_CREDENTIALS_REASON_CODE,
-            )
+            compare_password(password, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAA")
+            raise FailException("账号不存在", reason_code="ACCOUNT_NOT_FOUND")
 
         self._ensure_account_enabled(account)
 
         if not account.is_password_set:
-            raise FailException(
-                generic_error_message,
-                reason_code=self.INVALID_CREDENTIALS_REASON_CODE,
-            )
+            compare_password(password, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAA")
+            raise FailException("账号不存在", reason_code="ACCOUNT_NOT_FOUND")
 
         # 2.校验账号密码是否正确（按哈希版本选择迭代次数，兼容存量 10k 迭代哈希）
         if not compare_password(
@@ -1204,16 +1198,20 @@ class AccountService(BaseService):
                 getattr(account, "password_version", 1)
             ),
         ):
-            raise FailException(
-                generic_error_message,
-                reason_code=self.INVALID_CREDENTIALS_REASON_CODE,
-            )
+            raise FailException("密码错误", reason_code="INVALID_PASSWORD")
+        self._rehash_account_password_if_outdated(account, password)
 
         # 2.1 登录成功后透明升级旧参数密码哈希
         self._rehash_if_outdated(account, password)
 
         # 3.根据登录风险返回授权凭证或二次验证挑战
         return self.begin_login(account)
+
+    def _rehash_account_password_if_outdated(self, account: Account, password: str) -> None:
+        """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
+        if int(getattr(account, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
+            return
+        self.update_password(password, account)
 
     def send_reset_code(self, email: str) -> None:
         """发送密码重置验证码"""
