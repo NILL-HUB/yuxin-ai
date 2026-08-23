@@ -21,16 +21,44 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "account",
-        sa.Column("password_version", sa.Integer(), nullable=False, server_default="1"),
-    )
-    op.add_column(
-        "admin_user",
-        sa.Column("password_version", sa.Integer(), nullable=False, server_default="1"),
-    )
+    conn = op.get_bind()
+
+    def _has_column(table: str, column: str) -> bool:
+        row = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = :table AND column_name = :column"
+            ),
+            {"table": table, "column": column},
+        ).fetchone()
+        return row is not None
+
+    if not _has_column("account", "password_version"):
+        op.add_column(
+            "account",
+            sa.Column("password_version", sa.Integer(), nullable=False, server_default="1"),
+        )
+    if not _has_column("admin_user", "password_version"):
+        op.add_column(
+            "admin_user",
+            sa.Column("password_version", sa.Integer(), nullable=False, server_default="1"),
+        )
 
 
 def downgrade() -> None:
-    op.drop_column("admin_user", "password_version")
-    op.drop_column("account", "password_version")
+    conn = op.get_bind()
+
+    def _has_column(table: str, column: str) -> bool:
+        row = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = :table AND column_name = :column"
+            ),
+            {"table": table, "column": column},
+        ).fetchone()
+        return row is not None
+
+    if _has_column("admin_user", "password_version"):
+        op.drop_column("admin_user", "password_version")
+    if _has_column("account", "password_version"):
+        op.drop_column("account", "password_version")
