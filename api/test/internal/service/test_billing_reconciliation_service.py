@@ -318,3 +318,54 @@ def test_settle_recomputes_with_cache_split_and_moment():
         "cached_input_tokens": 0,
         "moment": None,
     }
+
+
+def test_margin_summary_groups_by_tier_and_cache_total():
+    events = [
+        BillingUsageEvent(
+            task_id="t1", model_id="m1", source_type="direct_answer",
+            input_tokens=300, cached_input_tokens=700, output_tokens=200,
+            billing_basis="provider_usage", estimated_credits=9, cost_credits=4,
+            price_tier="peak",
+        ),
+        BillingUsageEvent(
+            task_id="t2", model_id="m2", source_type="direct_answer",
+            input_tokens=100, cached_input_tokens=40, output_tokens=50,
+            billing_basis="provider_usage", estimated_credits=5, cost_credits=2,
+            price_tier="",
+        ),
+    ]
+    session = _SessionStub([_QueryStub(all_result=events)])
+    svc = BillingReconciliationService(session=session)
+
+    result = svc.margin_summary()
+
+    assert [b["tier"] for b in result["by_tier"]] == ["peak", "常规"]
+    peak = result["by_tier"][0]
+    assert peak["calls"] == 1
+    assert peak["actual_credits"] == 9
+    assert peak["cost_credits"] == 4
+    assert peak["margin_credits"] == 5
+    regular = result["by_tier"][1]
+    assert regular["tier"] == "常规"
+    assert regular["calls"] == 1
+    assert regular["actual_credits"] == 5
+    assert regular["cost_credits"] == 2
+    assert regular["margin_credits"] == 3
+    assert result["overall"] == {
+        "actual_credits": 14,
+        "cost_credits": 6,
+        "margin_credits": 8,
+    }
+    assert result["cached_input_tokens_total"] == 740
+
+
+def test_margin_summary_returns_empty_buckets_without_events():
+    session = _SessionStub([_QueryStub(all_result=[])])
+    svc = BillingReconciliationService(session=session)
+
+    result = svc.margin_summary()
+
+    assert result["by_tier"] == []
+    assert result["overall"] == {"actual_credits": 0, "cost_credits": 0, "margin_credits": 0}
+    assert result["cached_input_tokens_total"] == 0

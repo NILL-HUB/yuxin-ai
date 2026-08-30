@@ -44,6 +44,47 @@ class BillingReconciliationService:
         self.session.add(event)
         return event
 
+    def margin_summary(self) -> dict:
+        """按计费档位聚合 billing_usage_event 毛利概览。
+
+        usage event 的 estimated_credits 承载售价算力（sell_credits，落库时写入），
+        汇总时充当「实际算力」口径；''/flat 等档位归入「常规」。
+        """
+        rows = self.session.query(BillingUsageEvent).all()
+        buckets = {}
+        for r in rows:
+            tier = "常规" if str(r.price_tier or "") not in ("peak", "valley") else str(r.price_tier)
+            bucket = buckets.setdefault(
+                tier,
+                {
+                    "tier": tier,
+                    "calls": 0,
+                    "actual_credits": 0,
+                    "cost_credits": 0,
+                    "margin_credits": 0,
+                },
+            )
+            actual = max(int(r.estimated_credits or 0), 0)
+            cost = max(int(r.cost_credits or 0), 0)
+            bucket["calls"] += 1
+            bucket["actual_credits"] += actual
+            bucket["cost_credits"] += cost
+            bucket["margin_credits"] += actual - cost
+        by_tier = [buckets[k] for k in ("peak", "valley", "常规") if k in buckets]
+        total_actual = sum(b["actual_credits"] for b in by_tier)
+        total_cost = sum(b["cost_credits"] for b in by_tier)
+        return {
+            "overall": {
+                "actual_credits": total_actual,
+                "cost_credits": total_cost,
+                "margin_credits": total_actual - total_cost,
+            },
+            "by_tier": by_tier,
+            "cached_input_tokens_total": sum(
+                max(int(r.cached_input_tokens or 0), 0) for r in rows
+            ),
+        }
+
     def settle(self, *, task_id: str, account_id, events: list[dict]) -> dict:
         """结算一个任务：重算 → 退补 → 写对账行 → 判定告警。重复调用幂等。"""
         existing = self.session.query(BillingReconciliation).filter(
