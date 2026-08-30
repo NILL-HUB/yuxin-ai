@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Index,
@@ -41,6 +42,46 @@ class ModelPoolConfig(Base):
     tier = Column(String(64), nullable=False, server_default=text("'2'::character varying"))
     capabilities = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 输入/输出拆分价格（每 1k token）；为 0 时回退 price_per_1k_tokens，便于分档控成本
+    input_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    output_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 成本基准（每 1k token 人民币）：仅用于对账/毛利/告警，不参与用户扣费
+    input_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    output_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰谷计价开关：开启后按 peak_windows 分时段计费
+    peak_valley_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    # 缓存计价开关：开启后缓存命中 token 按缓存价计费
+    cache_pricing_enabled = Column(Boolean, nullable=False, server_default=text("false"))
+    # 缓存输入售价（每 1k token）
+    input_cached_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 缓存输入成本（每 1k token，人民币）
+    input_cached_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰档输入售价（每 1k token）
+    peak_input_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰档输出售价（每 1k token）
+    peak_output_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰档缓存输入售价（每 1k token）
+    peak_input_cached_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰档输入成本（每 1k token，人民币）
+    peak_input_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰档输出成本（每 1k token，人民币）
+    peak_output_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰档缓存输入成本（每 1k token，人民币）
+    peak_input_cached_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 谷档输入售价（每 1k token）
+    valley_input_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 谷档输出售价（每 1k token）
+    valley_output_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 谷档缓存输入售价（每 1k token）
+    valley_input_cached_price_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 谷档输入成本（每 1k token，人民币）
+    valley_input_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 谷档输出成本（每 1k token，人民币）
+    valley_output_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 谷档缓存输入成本（每 1k token，人民币）
+    valley_input_cached_cost_per_1k_tokens = Column(Numeric(12, 6), nullable=False, server_default=text("0.000000"))
+    # 峰谷窗口 JSON：如 [{"start":"08:00","end":"23:00"}]
+    peak_windows = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     # max_tokens: 历史兼容字段（总上下文窗口），新版本使用 max_input_tokens / max_output_tokens 拆分控制
     max_tokens = Column(Integer, nullable=False, server_default=text("0"))
     # 最大输入长度：送入模型的 prompt/context 上限，用于上下文裁剪与记忆预算
@@ -113,7 +154,6 @@ class ModelTierPolicy(Base):
     sort_order = Column(Integer, nullable=False, server_default=text("0"))
     allowed_models = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     default_model = Column(String(255), nullable=False, server_default=text("''::character varying"))
-    routing_rules = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     updated_at = Column(
         DateTime,
         nullable=False,
