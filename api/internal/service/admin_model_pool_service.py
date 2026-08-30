@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -113,6 +114,23 @@ class AdminModelPoolService:
             return Decimal(default)
 
     @staticmethod
+    def _bool(value) -> bool:
+        return str(value or "").lower() in ("true", "1", "yes", "on")
+
+    @staticmethod
+    def _peak_windows(value):
+        if isinstance(value, (list, dict)):
+            return value
+        text = str(value or "")
+        if not text.strip():
+            return []
+        try:
+            data = json.loads(text)
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
     def _parse_datetime(value) -> datetime | None:
         if value is None or value == "":
             return None
@@ -218,12 +236,33 @@ class AdminModelPoolService:
             tier=payload.get("tier") or "2",
             capabilities=payload.get("capabilities") or [],
             price_per_1k_tokens=self._decimal(payload.get("price_per_1k_tokens")),
+            input_price_per_1k_tokens=self._decimal(payload.get("input_price_per_1k_tokens")),
+            output_price_per_1k_tokens=self._decimal(payload.get("output_price_per_1k_tokens")),
+            input_cost_per_1k_tokens=self._decimal(payload.get("input_cost_per_1k_tokens")),
+            output_cost_per_1k_tokens=self._decimal(payload.get("output_cost_per_1k_tokens")),
             max_tokens=max_input_tokens + max_output_tokens,
             max_input_tokens=max_input_tokens,
             max_output_tokens=max_output_tokens,
             status=payload.get("status") or "active",
             model_type=model_type,
             compatible_api=payload.get("compatible_api") or "openai",
+            peak_valley_enabled=self._bool(payload.get("peak_valley_enabled")),
+            cache_pricing_enabled=self._bool(payload.get("cache_pricing_enabled")),
+            peak_windows=self._peak_windows(payload.get("peak_windows")),
+            input_cached_price_per_1k_tokens=self._decimal(payload.get("input_cached_price_per_1k_tokens")),
+            input_cached_cost_per_1k_tokens=self._decimal(payload.get("input_cached_cost_per_1k_tokens")),
+            peak_input_price_per_1k_tokens=self._decimal(payload.get("peak_input_price_per_1k_tokens")),
+            peak_output_price_per_1k_tokens=self._decimal(payload.get("peak_output_price_per_1k_tokens")),
+            peak_input_cached_price_per_1k_tokens=self._decimal(payload.get("peak_input_cached_price_per_1k_tokens")),
+            peak_input_cost_per_1k_tokens=self._decimal(payload.get("peak_input_cost_per_1k_tokens")),
+            peak_output_cost_per_1k_tokens=self._decimal(payload.get("peak_output_cost_per_1k_tokens")),
+            peak_input_cached_cost_per_1k_tokens=self._decimal(payload.get("peak_input_cached_cost_per_1k_tokens")),
+            valley_input_price_per_1k_tokens=self._decimal(payload.get("valley_input_price_per_1k_tokens")),
+            valley_output_price_per_1k_tokens=self._decimal(payload.get("valley_output_price_per_1k_tokens")),
+            valley_input_cached_price_per_1k_tokens=self._decimal(payload.get("valley_input_cached_price_per_1k_tokens")),
+            valley_input_cost_per_1k_tokens=self._decimal(payload.get("valley_input_cost_per_1k_tokens")),
+            valley_output_cost_per_1k_tokens=self._decimal(payload.get("valley_output_cost_per_1k_tokens")),
+            valley_input_cached_cost_per_1k_tokens=self._decimal(payload.get("valley_input_cached_cost_per_1k_tokens")),
             fallback_model_id=payload.get("fallback_model_id") or None,
             priority=int(payload.get("priority") or 0),
             embedding_dimension=embedding_dimension,
@@ -257,6 +296,48 @@ class AdminModelPoolService:
             model.capabilities = payload["capabilities"] or []
         if "price_per_1k_tokens" in payload:
             model.price_per_1k_tokens = self._decimal(payload.get("price_per_1k_tokens"))
+        if "input_price_per_1k_tokens" in payload:
+            model.input_price_per_1k_tokens = self._decimal(payload.get("input_price_per_1k_tokens"))
+        if "output_price_per_1k_tokens" in payload:
+            model.output_price_per_1k_tokens = self._decimal(payload.get("output_price_per_1k_tokens"))
+        if "input_cost_per_1k_tokens" in payload:
+            model.input_cost_per_1k_tokens = self._decimal(payload.get("input_cost_per_1k_tokens"))
+        if "output_cost_per_1k_tokens" in payload:
+            model.output_cost_per_1k_tokens = self._decimal(payload.get("output_cost_per_1k_tokens"))
+        if "peak_valley_enabled" in payload:
+            model.peak_valley_enabled = self._bool(payload.get("peak_valley_enabled"))
+        if "cache_pricing_enabled" in payload:
+            model.cache_pricing_enabled = self._bool(payload.get("cache_pricing_enabled"))
+        if "peak_windows" in payload:
+            model.peak_windows = self._peak_windows(payload.get("peak_windows"))
+        if "input_cached_price_per_1k_tokens" in payload:
+            model.input_cached_price_per_1k_tokens = self._decimal(payload.get("input_cached_price_per_1k_tokens"))
+        if "input_cached_cost_per_1k_tokens" in payload:
+            model.input_cached_cost_per_1k_tokens = self._decimal(payload.get("input_cached_cost_per_1k_tokens"))
+        if "peak_input_price_per_1k_tokens" in payload:
+            model.peak_input_price_per_1k_tokens = self._decimal(payload.get("peak_input_price_per_1k_tokens"))
+        if "peak_output_price_per_1k_tokens" in payload:
+            model.peak_output_price_per_1k_tokens = self._decimal(payload.get("peak_output_price_per_1k_tokens"))
+        if "peak_input_cached_price_per_1k_tokens" in payload:
+            model.peak_input_cached_price_per_1k_tokens = self._decimal(payload.get("peak_input_cached_price_per_1k_tokens"))
+        if "peak_input_cost_per_1k_tokens" in payload:
+            model.peak_input_cost_per_1k_tokens = self._decimal(payload.get("peak_input_cost_per_1k_tokens"))
+        if "peak_output_cost_per_1k_tokens" in payload:
+            model.peak_output_cost_per_1k_tokens = self._decimal(payload.get("peak_output_cost_per_1k_tokens"))
+        if "peak_input_cached_cost_per_1k_tokens" in payload:
+            model.peak_input_cached_cost_per_1k_tokens = self._decimal(payload.get("peak_input_cached_cost_per_1k_tokens"))
+        if "valley_input_price_per_1k_tokens" in payload:
+            model.valley_input_price_per_1k_tokens = self._decimal(payload.get("valley_input_price_per_1k_tokens"))
+        if "valley_output_price_per_1k_tokens" in payload:
+            model.valley_output_price_per_1k_tokens = self._decimal(payload.get("valley_output_price_per_1k_tokens"))
+        if "valley_input_cached_price_per_1k_tokens" in payload:
+            model.valley_input_cached_price_per_1k_tokens = self._decimal(payload.get("valley_input_cached_price_per_1k_tokens"))
+        if "valley_input_cost_per_1k_tokens" in payload:
+            model.valley_input_cost_per_1k_tokens = self._decimal(payload.get("valley_input_cost_per_1k_tokens"))
+        if "valley_output_cost_per_1k_tokens" in payload:
+            model.valley_output_cost_per_1k_tokens = self._decimal(payload.get("valley_output_cost_per_1k_tokens"))
+        if "valley_input_cached_cost_per_1k_tokens" in payload:
+            model.valley_input_cached_cost_per_1k_tokens = self._decimal(payload.get("valley_input_cached_cost_per_1k_tokens"))
         if "max_input_tokens" in payload:
             model.max_input_tokens = int(payload.get("max_input_tokens") or 0)
         if "max_output_tokens" in payload:
@@ -465,7 +546,6 @@ class AdminModelPoolService:
                     sort_order=sort_order,
                     allowed_models=[],
                     default_model="",
-                    routing_rules={},
                     created_at=now,
                     updated_at=now,
                 ))
@@ -487,7 +567,6 @@ class AdminModelPoolService:
             sort_order=int(payload.get("sort_order") or 0),
             allowed_models=payload.get("allowed_models") or [],
             default_model=payload.get("default_model") or "",
-            routing_rules=payload.get("routing_rules") or {},
             created_at=self._now(),
             updated_at=self._now(),
         )
@@ -507,8 +586,6 @@ class AdminModelPoolService:
             policy.allowed_models = payload["allowed_models"] or []
         if "default_model" in payload:
             policy.default_model = payload["default_model"] or ""
-        if "routing_rules" in payload:
-            policy.routing_rules = payload["routing_rules"] or {}
         policy.updated_at = self._now()
         self.session.commit()
         return self._serialize_tier_policy(policy)
@@ -776,6 +853,27 @@ class AdminModelPoolService:
             "tier": model.tier,
             "capabilities": list(model.capabilities or []),
             "price_per_1k_tokens": f"{Decimal(str(model.price_per_1k_tokens or 0)):.6f}",
+            "input_price_per_1k_tokens": f"{Decimal(str(model.input_price_per_1k_tokens or 0)):.6f}",
+            "output_price_per_1k_tokens": f"{Decimal(str(model.output_price_per_1k_tokens or 0)):.6f}",
+            "input_cost_per_1k_tokens": f"{Decimal(str(model.input_cost_per_1k_tokens or 0)):.6f}",
+            "output_cost_per_1k_tokens": f"{Decimal(str(model.output_cost_per_1k_tokens or 0)):.6f}",
+            "peak_valley_enabled": "true" if bool(model.peak_valley_enabled) else "false",
+            "cache_pricing_enabled": "true" if bool(model.cache_pricing_enabled) else "false",
+            "peak_windows": json.dumps(model.peak_windows or [], ensure_ascii=False),
+            "input_cached_price_per_1k_tokens": f"{Decimal(str(model.input_cached_price_per_1k_tokens or 0)):.6f}",
+            "input_cached_cost_per_1k_tokens": f"{Decimal(str(model.input_cached_cost_per_1k_tokens or 0)):.6f}",
+            "peak_input_price_per_1k_tokens": f"{Decimal(str(model.peak_input_price_per_1k_tokens or 0)):.6f}",
+            "peak_output_price_per_1k_tokens": f"{Decimal(str(model.peak_output_price_per_1k_tokens or 0)):.6f}",
+            "peak_input_cached_price_per_1k_tokens": f"{Decimal(str(model.peak_input_cached_price_per_1k_tokens or 0)):.6f}",
+            "peak_input_cost_per_1k_tokens": f"{Decimal(str(model.peak_input_cost_per_1k_tokens or 0)):.6f}",
+            "peak_output_cost_per_1k_tokens": f"{Decimal(str(model.peak_output_cost_per_1k_tokens or 0)):.6f}",
+            "peak_input_cached_cost_per_1k_tokens": f"{Decimal(str(model.peak_input_cached_cost_per_1k_tokens or 0)):.6f}",
+            "valley_input_price_per_1k_tokens": f"{Decimal(str(model.valley_input_price_per_1k_tokens or 0)):.6f}",
+            "valley_output_price_per_1k_tokens": f"{Decimal(str(model.valley_output_price_per_1k_tokens or 0)):.6f}",
+            "valley_input_cached_price_per_1k_tokens": f"{Decimal(str(model.valley_input_cached_price_per_1k_tokens or 0)):.6f}",
+            "valley_input_cost_per_1k_tokens": f"{Decimal(str(model.valley_input_cost_per_1k_tokens or 0)):.6f}",
+            "valley_output_cost_per_1k_tokens": f"{Decimal(str(model.valley_output_cost_per_1k_tokens or 0)):.6f}",
+            "valley_input_cached_cost_per_1k_tokens": f"{Decimal(str(model.valley_input_cached_cost_per_1k_tokens or 0)):.6f}",
             "max_tokens": int((model.max_input_tokens or 0) + (model.max_output_tokens or 0)),
             "max_input_tokens": int(model.max_input_tokens or 0),
             "max_output_tokens": int(model.max_output_tokens or 0),
@@ -816,7 +914,6 @@ class AdminModelPoolService:
             "sort_order": int(policy.sort_order or 0),
             "allowed_models": list(policy.allowed_models or []),
             "default_model": policy.default_model or "",
-            "routing_rules": dict(policy.routing_rules or {}),
             "created_at": self._timestamp(policy.created_at),
             "updated_at": self._timestamp(policy.updated_at),
         }
