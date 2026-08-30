@@ -8,7 +8,7 @@ from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from internal.exception import ConflictException, NotFoundException
+from internal.exception import ConflictException, FailException, NotFoundException
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.model_pool_entity import (
@@ -129,6 +129,42 @@ class AdminModelPoolService:
             return data if isinstance(data, list) else []
         except Exception:
             return []
+
+    def _billing_config(self, code: str, default: str) -> Decimal:
+        """读取全局计费配置（billing_config.code -> value_numeric），异常回落默认值。"""
+        try:
+            from internal.model.billing import BillingConfig
+            row = self.session.query(BillingConfig).filter(BillingConfig.code == code).one_or_none()
+            if row is not None and row.value_numeric:
+                return Decimal(str(row.value_numeric))
+        except Exception:
+            pass
+        return Decimal(default)
+
+    def _config_credits_per_yuan(self) -> Decimal:
+        return self._billing_config("credits_per_yuan", "100")
+
+    def _config_min_margin_ratio(self) -> Decimal:
+        return self._billing_config("min_margin_ratio", "0.1")
+
+    def _config_cap_ratio(self) -> Decimal:
+        return self._billing_config("official_price_cap_ratio", "1.1")
+
+    def _validate_pricing_payload(self, payload: dict, *, peak_valley_enabled: bool, cache_pricing_enabled: bool) -> None:
+        """双界校验（不亏损 / 不高于官方），任一错误抛出 FailException 拒绝保存。"""
+        from internal.core.billing.pricing_guard import validate_pricing_bounds
+
+        errors = validate_pricing_bounds(
+            payload,
+            credits_per_yuan=self._config_credits_per_yuan(),
+            min_margin_ratio=self._config_min_margin_ratio(),
+            peak_valley_enabled=peak_valley_enabled,
+            cache_pricing_enabled=cache_pricing_enabled,
+            official=None,
+            official_price_cap_ratio=self._config_cap_ratio(),
+        )
+        if errors:
+            raise FailException(message="；".join(errors))
 
     @staticmethod
     def _parse_datetime(value) -> datetime | None:
@@ -267,6 +303,11 @@ class AdminModelPoolService:
             priority=int(payload.get("priority") or 0),
             embedding_dimension=embedding_dimension,
         )
+        self._validate_pricing_payload(
+            payload,
+            peak_valley_enabled=self._bool(payload.get("peak_valley_enabled")),
+            cache_pricing_enabled=self._bool(payload.get("cache_pricing_enabled")),
+        )
         self.session.add(model)
         self.session.commit()
 
@@ -386,6 +427,19 @@ class AdminModelPoolService:
             )
 
         model.updated_at = self._now()
+        self._validate_pricing_payload(
+            payload,
+            peak_valley_enabled=(
+                self._bool(payload.get("peak_valley_enabled"))
+                if "peak_valley_enabled" in payload
+                else bool(model.peak_valley_enabled)
+            ),
+            cache_pricing_enabled=(
+                self._bool(payload.get("cache_pricing_enabled"))
+                if "cache_pricing_enabled" in payload
+                else bool(model.cache_pricing_enabled)
+            ),
+        )
         self.session.commit()
         # embedding 模型维度变更时失效 EmbeddingsService 和 EmbeddingTableRouter 缓存
         self._invalidate_embedding_caches()

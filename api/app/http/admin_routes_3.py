@@ -294,6 +294,64 @@ def register_routes(quart_app):
         resp = AdminModelResp()
         return a._ok(resp.dump(result))
 
+    @quart_app.post("/admin/model-pools/pricing-suggest")
+    async def admin_model_pool_pricing_suggest():
+        from app.http import asgi_app as a
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        import json as _json
+        from decimal import Decimal
+
+        from quart import Response
+
+        from internal.core.billing.pricing_guard import suggest_sell_prices
+        from internal.extension.database_extension import db
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        fields = payload.get("fields")
+        if not isinstance(fields, dict):
+            return a._json_resp(
+                code="validate_error",
+                message="fields 必填且须为对象",
+                data={"fields": ["fields 必填且须为对象"]},
+                status=400,
+            )
+        try:
+            margin_ratio = Decimal(str(payload.get("margin_ratio", 0.3)))
+        except Exception:
+            margin_ratio = Decimal("0.3")
+        credits_per_yuan = Decimal("100")
+        try:
+            from internal.model.billing import BillingConfig
+            row = (
+                db.session.query(BillingConfig)
+                .filter(BillingConfig.code == "credits_per_yuan")
+                .one_or_none()
+            )
+            if row is not None and row.value_numeric:
+                credits_per_yuan = Decimal(str(row.value_numeric))
+        except Exception:
+            pass
+        peak_valley_enabled = str(fields.get("peak_valley_enabled") or "").lower() in (
+            "true", "1", "yes", "on",
+        )
+        cache_pricing_enabled = str(fields.get("cache_pricing_enabled") or "").lower() in (
+            "true", "1", "yes", "on",
+        )
+        result = suggest_sell_prices(
+            fields,
+            margin_ratio=margin_ratio,
+            credits_per_yuan=credits_per_yuan,
+            peak_valley_enabled=peak_valley_enabled,
+            cache_pricing_enabled=cache_pricing_enabled,
+        )
+        return Response(
+            _json.dumps({"ok": True, "data": result}, ensure_ascii=False, default=str),
+            mimetype="application/json",
+            status=200,
+        )
+
     @quart_app.get("/admin/model-keys")
     async def admin_model_key_list():
         from app.http import asgi_app as a

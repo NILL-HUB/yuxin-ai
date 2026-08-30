@@ -464,6 +464,10 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     # 财务域。
     if _admin_match(segments, ("admin", "plans")):
         return "plan:read" if method == "GET" else "plan:update"
+    if _admin_match(segments, ("admin", "billing-config")):
+        return "plan:read" if method == "GET" else "plan:update"
+    if _admin_match(segments, ("admin", "billing-reconciliations")):
+        return "plan:read" if method == "GET" else "plan:update"
     if _admin_match(segments, ("admin", "redeem-code-batches")) or _admin_match(
         segments, ("admin", "redeem-codes")
     ):
@@ -498,6 +502,8 @@ def _admin_route_permission(method: str, path: str) -> str | None:
         segments, ("admin", "model-tiers")
     ) or _admin_match(segments, ("admin", "language-models")):
         return "model_pool:read" if method == "GET" else "model_pool:manage"
+    if _admin_match(segments, ("admin", "model-pools")):
+        return "model_pool:manage"
 
     # 调度平台。
     if _admin_match(segments, ("admin", "schedule-tasks")):
@@ -629,14 +635,32 @@ def _admin_route_permission(method: str, path: str) -> str | None:
             return update_code
         return None
 
+    # 分销管理。
+    if _admin_match(segments, ("admin", "distribution")):
+        return "distribution:view" if method == "GET" else "distribution:manage"
+    if _admin_match(segments, ("admin", "users")) and "superior" in segments:
+        return "distribution:manage"
+    # 订单管理。
+    if _admin_match(segments, ("admin", "orders")):
+        return "order:view" if method == "GET" else "order:manage"
+    # 提现审核。
+    if _admin_match(segments, ("admin", "withdrawals")):
+        return "withdraw:view" if method == "GET" else "withdraw:manage"
+    # 售后退款。
+    if _admin_match(segments, ("admin", "refunds")):
+        return "refund:view" if method == "GET" else "refund:manage"
+    # 支付配置。
+    if _admin_match(segments, ("admin", "payment-configs")):
+        return "payment_config:read" if method == "GET" else "payment_config:manage"
+
     return None
 
 
 # 用户端已收敛：这些接口不再被保留的用户界面消费，普通用户 JWT 一律拒绝。
 # admin 端有独立路径（/admin/*），不受影响；web-apps/public 走各自 token/公开通道。
+# “我的应用”及其应用商店添加（fork）链路为当前用户端产品能力，允许普通用户访问。
 _USER_API_BLOCKED_PREFIXES = (
     "/admin",
-    "/my/apps",
     "/memory/write",
     "/memory/retrieve",
     "/memory/health",
@@ -664,7 +688,6 @@ _USER_API_BLOCKED_WRITE_PREFIXES = (
     "/mcp-providers",
     "/skills",
     "/builtin-tools",
-    "/public/apps",
 )
 
 _USER_API_BLOCKED_READ_PREFIXES = (

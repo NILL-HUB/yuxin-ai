@@ -5,8 +5,13 @@ from uuid import uuid4
 import app.http.asgi_app as asgi_app
 from app.http import support
 from app.http.admin_routes_3 import register_routes
+from internal.model.model_pool_entity import ModelTierPolicy
 
 register_routes(asgi_app.quart_app)
+
+
+def test_model_tier_policy_dropped_routing_rules():
+    assert "routing_rules" not in ModelTierPolicy.__table__.columns.keys()
 
 
 def _mock_resolve_account(monkeypatch, account):
@@ -54,6 +59,10 @@ _MODEL = {
     "tier": "standard",
     "capabilities": ["chat"],
     "price_per_1k_tokens": "0.030000",
+    "input_price_per_1k_tokens": "0.030000",
+    "output_price_per_1k_tokens": "0.030000",
+    "input_cost_per_1k_tokens": "0.030000",
+    "output_cost_per_1k_tokens": "0.030000",
     "max_tokens": 128000,
     "max_input_tokens": 124000,
     "max_output_tokens": 4000,
@@ -84,7 +93,6 @@ _TIER = {
     "sort_order": 2,
     "allowed_models": ["gpt-4o"],
     "default_model": "gpt-4o",
-    "routing_rules": {},
     "created_at": 1893456000,
     "updated_at": 1893542400,
 }
@@ -489,6 +497,8 @@ class TestAdminModelPoolRoutes:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
         assert payload["data"]["id"] == str(model_id)
+        assert payload["data"]["input_cost_per_1k_tokens"] == "0.030000"
+        assert payload["data"]["output_cost_per_1k_tokens"] == "0.030000"
         assert fake.calls[0] == ("get_model", model_id)
 
     def test_update_model(self, monkeypatch):
@@ -550,6 +560,43 @@ class TestAdminModelPoolRoutes:
                 resp = await client.post(
                     f"/admin/models/{uuid4()}/status?account_id={uuid4()}",
                     json={},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_pricing_suggest(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/model-pools/pricing-suggest?account_id={uuid4()}",
+                    json={
+                        "fields": {
+                            "peak_valley_enabled": True,
+                            "peak_input_cost_per_1k_tokens": 0.003,
+                        },
+                        "margin_ratio": 0.3,
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["ok"] is True
+        assert payload["data"]["peak_input_price_per_1k_tokens"] == "0.390000"
+
+    def test_pricing_suggest_missing_fields(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/model-pools/pricing-suggest?account_id={uuid4()}",
+                    json={"margin_ratio": 0.3},
                 )
                 return resp, await resp.json
 
