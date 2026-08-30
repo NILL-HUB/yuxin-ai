@@ -23,6 +23,14 @@ class BillingUsageAggregator:
     feature_key: str = "assistant_agent"
     # 累计原始 token 数，用于 final() 调用 consume_for_feature(token_count=...)
     total_tokens: int = 0
+    # 可选注入：定价引擎。注入后 model_tokens 按模型售价（plan_usage.sell_credits）计价；
+    # 未注入时回退全局汇率（credits_per_1k_tokens），与旧逻辑 1:1 兼容
+    pricing_engine: Any = None
+    # 原始 usage 事件缓冲（估算口径），final() 对账回调时落库并结算
+    usage_event_buf: list[dict] = field(default_factory=list)
+    # SSE 流式请求无请求级提交点，final() 末尾显式提交账单写入；
+    # 单元测试（fake service/fake session）置 False 跳过真实 commit
+    _should_commit: bool = True
 
     def started(self) -> BillingUsageDelta:
         return self._record(
@@ -61,18 +69,51 @@ class BillingUsageAggregator:
         self,
         source_name: str,
         *,
+        model_id: str,
         input_tokens: int,
         output_tokens: int,
         reason: str,
+        cached_input_tokens: int = 0,
+        moment=None,
     ) -> BillingUsageDelta:
-        total_tokens = max(input_tokens, 0) + max(output_tokens, 0)
-        delta_credits = int(total_tokens * self.credits_per_1k_tokens / 1000)
+        sell_credits = 0
+        if self.pricing_engine is not None:
+            plan = self.pricing_engine.plan_usage(
+                model_id,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                moment=moment,
+            )
+            sell_credits = plan.sell_credits
+        else:
+            total_tokens = max(input_tokens, 0) + max(output_tokens, 0)
+            sell_credits = int(total_tokens * self.credits_per_1k_tokens / 1000)
+        self.usage_event_buf.append(
+            {
+                "model_id": model_id,
+                "source_type": source_name,
+                "input_tokens": max(input_tokens - max(int(cached_input_tokens or 0), 0), 0),
+                "cached_input_tokens": max(int(cached_input_tokens or 0), 0),
+                "output_tokens": max(output_tokens, 0),
+                "estimated_credits": sell_credits,
+                "billing_basis": "provider_usage",
+                "is_estimated": False,
+                "price_tier": getattr(plan, "price_tier", None) if self.pricing_engine is not None else None,
+                "moment": moment,
+            }
+        )
         return self.delta(
             "model",
             source_name,
-            delta_credits,
+            sell_credits,
             reason=reason,
-            metadata={"input_tokens": input_tokens, "output_tokens": output_tokens},
+            metadata={
+                "model_id": model_id,
+                "input_tokens": max(input_tokens - max(int(cached_input_tokens or 0), 0), 0),
+                "cached_input_tokens": max(int(cached_input_tokens or 0), 0),
+                "output_tokens": max(output_tokens, 0),
+            },
         )
 
     def summary(self) -> BillingUsageDelta:
@@ -100,7 +141,7 @@ class BillingUsageAggregator:
         self.events.append(event)
         return event
 
-    def final(self) -> BillingUsageDelta:
+    def final(self, reconciliation_service: Any = None) -> BillingUsageDelta:
         event = self._record(
             BillingEventType.FINAL.value,
             "summary",
@@ -125,6 +166,54 @@ class BillingUsageAggregator:
             except Exception:
                 logger.warning(
                     "BillingUsageAggregator 扣费失败 task_id=%s", self.task_id, exc_info=True
+                )
+
+        # P2：对账回调——把事件落库并结算（幂等）
+        if (
+            reconciliation_service is not None
+            and self.account_id is not None
+            and self.usage_event_buf
+        ):
+            try:
+                for ev in self.usage_event_buf:
+                    reconciliation_service.persist_event(
+                        task_id=self.task_id,
+                        model_id=ev["model_id"],
+                        source_type=ev["source_type"],
+                        input_tokens=ev["input_tokens"],
+                        output_tokens=ev["output_tokens"],
+                        billing_basis=ev["billing_basis"],
+                        estimated_credits=ev["estimated_credits"],
+                        is_estimated=ev["is_estimated"],
+                    )
+                reconciliation_service.settle(
+                    task_id=self.task_id,
+                    account_id=self.account_id,
+                    events=self.usage_event_buf,
+                )
+            except Exception:
+                logger.warning(
+                    "BillingUsageAggregator 对账失败 task_id=%s", self.task_id, exc_info=True
+                )
+
+        # SSE 流式请求没有统一的请求级提交点：消息持久化（save_agent_thoughts）
+        # 走独立 auto_commit，而账单行属于本聚合器的会话，若不显式提交会随
+        # 请求结束被静默回滚（实测扣费/对账全部丢失）。此处显式提交，且在
+        # 非流式/测试路径（fake service 无真实 Session）自动跳过。
+        if self._should_commit:
+            try:
+                session = None
+                for svc in (self.credit_service, reconciliation_service):
+                    if svc is None:
+                        continue
+                    session = getattr(svc, "session", None)
+                    if session is not None and hasattr(session, "commit"):
+                        break
+                if session is not None:
+                    session.commit()
+            except Exception:
+                logger.warning(
+                    "BillingUsageAggregator 提交失败 task_id=%s", self.task_id, exc_info=True
                 )
         return event
 
