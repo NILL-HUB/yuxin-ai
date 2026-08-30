@@ -340,8 +340,10 @@ class AssistantAgentService(BaseService):
         """
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.billing_reconciliation_service import BillingReconciliationService
         from internal.service.executors.direct_answer_executor import DirectAnswerExecutor
         from internal.service.system_prompt_library_service import SystemPromptLibraryService
+        from internal.core.billing.pricing_engine import PricingEngine
         import time
 
         # 首次使用时把硬编码提示词 seed 到系统提示词库（幂等，管理员编辑不会被覆盖）
@@ -350,7 +352,16 @@ class AssistantAgentService(BaseService):
         except Exception:
             logger.warning("系统提示词库 seed 失败，回退内置默认提示词", exc_info=True)
 
-        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        # 直接回答模式经聚合器 final() 唯一计费点（其 collected_thoughts 的
+        # total_token_count 恒为 0，消息路径不会重复扣费）：
+        # feature_key 用 billable=true 的 direct_answer（assistant_agent 为系统承担，
+        # 若不改用 direct_answer，该模式永远不扣费）
+        billing_aggregator = BillingUsageAggregator(
+            task_id=str(message.id),
+            pricing_engine=PricingEngine(),
+            feature_key="direct_answer",
+        )
+        reconciliation_service = BillingReconciliationService()
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
@@ -386,11 +397,22 @@ class AssistantAgentService(BaseService):
             token_usage = executor.last_token_usage
 
             if token_usage:
+                # model_id 取 executor 返回的模型标识（token_usage/model 字段或 LLM 实例），
+                # 缺乏模型标识时传空串让定价引擎走全局汇率兜底
+                model_id = str(
+                    token_usage.get("model")
+                    or getattr(llm, "model_name", "")
+                    or getattr(llm, "model", "")
+                    or ""
+                )
+                moment = datetime.now(UTC)
                 billing_delta = billing_aggregator.model_tokens(
                     "direct_answer",
+                    model_id=model_id,
                     input_tokens=token_usage.get("prompt_tokens", 0),
                     output_tokens=token_usage.get("completion_tokens", 0),
                     reason="direct_answer_llm_invoke",
+                    moment=moment,
                 )
                 yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"
 
@@ -406,7 +428,7 @@ class AssistantAgentService(BaseService):
             # 外层 aggregator 在 final() 时根据累计的 total_tokens 触发实际扣费（问题6修复）
             billing_aggregator.credit_service = self.credit_service
             billing_aggregator.account_id = account.id
-            billing_final = billing_aggregator.final()
+            billing_final = billing_aggregator.final(reconciliation_service=reconciliation_service)
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
 
             # 发送 AGENT_END 事件，让前端能识别流结束，携带真实总耗时
@@ -442,6 +464,28 @@ class AssistantAgentService(BaseService):
                 except Exception:
                     logger.warning("挂载 direct_answer collected_thoughts 到 message 失败（finally）", exc_info=True)
 
+    def _build_plan_repairer(self):
+        """构造执行失败后的计划修复器，失败时交给 Conductor 重新规划。"""
+        if self.conductor_service is None:
+            return None
+
+        def _repair(original_query: str, failures: list[dict]):
+            try:
+                repaired = self.conductor_service.repair_plan(
+                    original_query,
+                    failures,
+                )
+                task_plan = self.conductor_service.to_task_plan(
+                    repaired,
+                    original_query,
+                )
+                return task_plan if task_plan.items else None
+            except Exception:
+                logger.warning("Conductor replan 失败，保留原结果", exc_info=True)
+                return None
+
+        return _repair
+
     def _stream_single_agent(
         self, req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
         distant_summary="", user_memory_text="", invoke_from: str | None = None,
@@ -450,10 +494,12 @@ class AssistantAgentService(BaseService):
         """single_agent / deep_thinking 路径：经 ExecutionCoordinatorService 编排单 Agent。"""
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.billing_reconciliation_service import BillingReconciliationService
         from internal.service.executors.single_agent_executor import SingleAgentExecutor
         from internal.entity.orchestrator_entity import ExecutionMode
 
         billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        reconciliation_service = BillingReconciliationService()
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
@@ -487,6 +533,7 @@ class AssistantAgentService(BaseService):
                 user_memory=user_memory_text,
                 subtask_registry=self.subtask_registry_service,
                 cancel_token=cancel_token,
+                plan_repairer=self._build_plan_repairer(),
             )
             billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
@@ -516,11 +563,23 @@ class AssistantAgentService(BaseService):
                         in_tok = int(meta.get("input_tokens", 0) or 0)
                         out_tok = int(meta.get("output_tokens", 0) or 0)
                         if in_tok or out_tok:
+                            # model_id 取 executor 返回的模型标识（billing 元数据），
+                            # 缺乏模型标识时传空串让定价引擎走全局汇率兜底
+                            model_id = str(
+                                meta.get("model_id")
+                                or meta.get("model")
+                                or getattr(llm, "model_name", "")
+                                or getattr(llm, "model", "")
+                                or ""
+                            )
+                            moment = datetime.now(UTC)
                             billing_aggregator.model_tokens(
                                 "single_agent",
+                                model_id=model_id,
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
                                 reason="agent_llm_invoke",
+                                moment=moment,
                             )
                     except Exception:
                         pass
@@ -531,9 +590,8 @@ class AssistantAgentService(BaseService):
             billing_aggregator.account_id = account.id
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
-            billing_final = billing_aggregator.final()
+            billing_final = billing_aggregator.final(reconciliation_service=reconciliation_service)
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
-
             yield from self._write_memory_from_conversation(account, req.query.data, collected_answer, conversation.id)
         except Exception as e:
             logger.warning("单智能体经协调器执行失败: %s", e, exc_info=True)
@@ -565,9 +623,15 @@ class AssistantAgentService(BaseService):
         """multi_agent 路径：经 MultiAgentExecutor 按 TaskPlan 执行多个子任务。"""
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
+        from internal.service.billing_reconciliation_service import BillingReconciliationService
         from internal.service.executors.multi_agent_executor import MultiAgentExecutor
+        from internal.core.billing.pricing_engine import PricingEngine
 
-        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_aggregator = BillingUsageAggregator(
+            task_id=str(message.id),
+            pricing_engine=PricingEngine(),
+        )
+        reconciliation_service = BillingReconciliationService()
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
 
@@ -600,6 +664,7 @@ class AssistantAgentService(BaseService):
                 user_memory=user_memory_text,
                 subtask_registry=self.subtask_registry_service,
                 cancel_token=cancel_token,
+                plan_repairer=self._build_plan_repairer(),
             )
             billing_delta_prefix = f"event: {BillingEventType.DELTA.value}"
             for chunk in executor.execute(
@@ -626,11 +691,23 @@ class AssistantAgentService(BaseService):
                         in_tok = int(meta.get("input_tokens", 0) or 0)
                         out_tok = int(meta.get("output_tokens", 0) or 0)
                         if in_tok or out_tok:
+                            # model_id 取 executor 返回的模型标识（billing 元数据），
+                            # 缺乏模型标识时传空串让定价引擎走全局汇率兜底
+                            model_id = str(
+                                meta.get("model_id")
+                                or meta.get("model")
+                                or getattr(llm, "model_name", "")
+                                or getattr(llm, "model", "")
+                                or ""
+                            )
+                            moment = datetime.now(UTC)
                             billing_aggregator.model_tokens(
                                 "multi_agent",
+                                model_id=model_id,
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
                                 reason="agent_llm_invoke",
+                                moment=moment,
                             )
                     except Exception:
                         pass
@@ -640,9 +717,8 @@ class AssistantAgentService(BaseService):
             billing_aggregator.account_id = account.id
             billing_summary = billing_aggregator.summary()
             yield f"event: {BillingEventType.SUMMARY.value}\ndata:{json.dumps(billing_summary.to_sse())}\n\n"
-            billing_final = billing_aggregator.final()
+            billing_final = billing_aggregator.final(reconciliation_service=reconciliation_service)
             yield f"event: {BillingEventType.FINAL.value}\ndata:{json.dumps(billing_final.to_sse())}\n\n"
-
             yield from self._write_memory_from_conversation(account, req.query.data, collected_answer, conversation.id)
         except Exception as e:
             logger.warning("多智能体经协调器执行失败: %s", e, exc_info=True)
@@ -734,7 +810,11 @@ class AssistantAgentService(BaseService):
         # 保持 generator 兼容性，不再 yield 任何 SSE 事件
         yield from ()
 
-    def _build_assistant_runtime_tools(self, account_id: UUID) -> list[BaseTool]:
+    def _build_assistant_runtime_tools(
+        self,
+        account_id: UUID,
+        invoke_from: str | None = None,
+    ) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用、全局 MCP 绑定和用户知识库检索。"""
         search_public_agents_tool = (
             self.public_agent_registry_service.convert_public_agent_search_to_tool()
@@ -746,12 +826,10 @@ class AssistantAgentService(BaseService):
             tools.append(
                 self.public_agent_a2a_service.convert_public_agent_route_to_tool(account_id)
             )
-        tools.extend(
-            [
-                search_public_agents_tool,
-                self.convert_create_app_to_tool(account_id),
-            ]
-        )
+        tools.append(search_public_agents_tool)
+        # 定时任务执行属于调度场景：不挂载“创建应用”工具，避免自动建应用/生成图标
+        if invoke_from != InvokeFrom.SCHEDULE.value:
+            tools.append(self.convert_create_app_to_tool(account_id))
 
         if self.app_config_service is not None:
             assistant_mcp_bindings = (
@@ -1448,7 +1526,7 @@ class AssistantAgentService(BaseService):
         distant_summary = context.get("distant_summary", "")
 
         # 6.构建首页助手运行时工具
-        prebound_tools = self._build_assistant_runtime_tools(account.id)
+        prebound_tools = self._build_assistant_runtime_tools(account.id, invoke_from=invoke_from)
 
         # 6.0 工具池治理挂载：读取 orchestrator 决策的 tool_subset，与固有工具合并
         tools = self._mount_runtime_tools(

@@ -51,6 +51,9 @@ class _QueryStub:
     def get(self, _primary_key):
         return None
 
+    def first(self):
+        return None
+
 
 class _LockedAccountQuery:
     def __init__(self, result):
@@ -909,7 +912,8 @@ class TestAssistantAgentService:
             convert_public_agent_route_to_tool=lambda _account_id: f"route:{_account_id}"
         )
         service.app_config_service = SimpleNamespace(
-            get_langchain_tools_by_mcp_bindings=lambda bindings: captured.update({"bindings": bindings}) or ["mcp-tool"]
+            get_langchain_tools_by_mcp_bindings=lambda bindings: captured.update({"bindings": bindings}) or ["mcp-tool"],
+            builtin_provider_manager=SimpleNamespace(get_tool=lambda *_a, **_k: None),
         )
         monkeypatch.setattr(
             service,
@@ -933,17 +937,47 @@ class TestAssistantAgentService:
         with flask_app.app_context():
             tools = service._build_assistant_runtime_tools(account_id)
 
-        assert tools == [
+        assert [getattr(tool, "name", str(tool)) for tool in tools] == [
             f"route:{account_id}",
             "search-tool",
             f"create:{account_id}",
             "mcp-tool",
+            "a2a_send_message",
             "skill-detail-tool",
             "memory-add-tool",
             "memory-replace-tool",
             "memory-remove-tool",
         ]
-        assert captured["bindings"] == expected_bindings
+
+    def test_build_assistant_runtime_tools_should_skip_create_app_for_schedule(self, monkeypatch):
+        """定时执行场景不挂载 create_app 工具，避免自动建应用/生成图标。"""
+        from internal.entity.conversation_entity import InvokeFrom
+
+        service = self._build_service()
+        account_id = uuid4()
+        create_app_calls = []
+        service.public_agent_registry_service = SimpleNamespace(
+            convert_public_agent_search_to_tool=lambda: "search-tool"
+        )
+        service.public_agent_a2a_service = SimpleNamespace(
+            convert_public_agent_route_to_tool=lambda _account_id: f"route:{_account_id}"
+        )
+        service.app_config_service = SimpleNamespace(
+            get_langchain_tools_by_mcp_bindings=lambda bindings: []
+        )
+        monkeypatch.setattr(
+            service,
+            "convert_create_app_to_tool",
+            lambda _account_id: create_app_calls.append(account_id) or "create-app-tool",
+        )
+
+        tools = service._build_assistant_runtime_tools(
+            account_id,
+            invoke_from=InvokeFrom.SCHEDULE.value,
+        )
+
+        assert create_app_calls == []
+        assert not any(str(getattr(tool, "name", tool)).startswith("create-app") for tool in tools)
 
     def test_get_conversation_messages_with_page_should_delegate_query_and_paginate(
         self, monkeypatch
@@ -1367,10 +1401,11 @@ class TestAssistantAgentService:
         assert create_calls[0][1]["query"] == req.query.data
         assert create_calls[0][1]["image_urls"] == req.image_urls.data
         assert llm_capture["build_context_args"][1] == req.query.data
-        assert executor_capture["kwargs"]["agent_config"].tools == [
+        assert [getattr(tool, "name", str(tool)) for tool in executor_capture["kwargs"]["agent_config"].tools] == [
             "public-agent-route-tool",
             "faiss-tool",
             "create-app-tool",
+            "a2a_send_message",
             "skill-detail-tool",
             "memory-add-tool",
             "memory-replace-tool",
@@ -1484,6 +1519,100 @@ class TestAssistantAgentService:
         assert routing_calls[0][0] == req.query.data
         assert routing_calls[0][1]["account_id"] == account.id
         assert save_payload["routing_decision"] is None
+
+    def test_stream_direct_answer_should_pass_moment_into_metering(self, monkeypatch):
+        captured = {}
+
+        class _Sse:
+            def to_sse(self):
+                return {}
+
+        class _FakeSystemPromptLibraryService:
+            def ensure_seed_prompts(self):
+                return None
+
+        class _FakeReconciliationService:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+        class _FakeAggregator:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def started(self):
+                return _Sse()
+
+            def model_tokens(self, *_args, **kwargs):
+                captured["model_tokens"] = kwargs
+                return _Sse()
+
+            def summary(self):
+                return _Sse()
+
+            def final(self, reconciliation_service=None):
+                return _Sse()
+
+            def cancelled(self, **_kwargs):
+                return _Sse()
+
+        class _FakeExecutor:
+            def __init__(self, **_kwargs):
+                self.last_answer = "答案"
+                self.last_token_usage = {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "model": "m1",
+                }
+                self.collected_thoughts = []
+
+            def stream(self, *_args, **_kwargs):
+                return iter([])
+
+        def _empty_memory(*_args, **_kwargs):
+            yield
+
+        monkeypatch.setattr(
+            "internal.service.billing_metering_service.BillingUsageAggregator",
+            _FakeAggregator,
+        )
+        monkeypatch.setattr(
+            "internal.service.billing_reconciliation_service.BillingReconciliationService",
+            _FakeReconciliationService,
+        )
+        monkeypatch.setattr(
+            "internal.service.executors.direct_answer_executor.DirectAnswerExecutor",
+            _FakeExecutor,
+        )
+        monkeypatch.setattr(
+            "internal.service.system_prompt_library_service.SystemPromptLibraryService",
+            _FakeSystemPromptLibraryService,
+        )
+
+        service = self._build_service()
+        monkeypatch.setattr(service, "_build_assistant_system_prompt", lambda: "")
+        monkeypatch.setattr(service, "_write_memory_from_conversation", _empty_memory)
+        monkeypatch.setattr(service, "get", lambda *_a, **_k: None)
+
+        req = SimpleNamespace(query=SimpleNamespace(data="你好"))
+        account = SimpleNamespace(id=uuid4())
+        conversation = SimpleNamespace(id=uuid4())
+        message = SimpleNamespace(id=uuid4())
+
+        list(
+            service._stream_direct_answer(
+                req,
+                account,
+                conversation,
+                message,
+                routing_decision=None,
+                _chat_started_at=0,
+                llm=None,
+                tools=[],
+            )
+        )
+
+        assert "model_tokens" in captured
+        assert captured["model_tokens"]["moment"] is not None
 
     def test_chat_should_yield_deep_thinking_proposal_when_mode_is_deep_thinking(
         self, monkeypatch, app
@@ -1735,10 +1864,11 @@ class TestAssistantAgentService:
             "entrypoint": "assistant_agent",
         }
         assert executor_capture["kwargs"]["llm"] is llm
-        assert executor_capture["kwargs"]["agent_config"].tools == [
+        assert [getattr(tool, "name", str(tool)) for tool in executor_capture["kwargs"]["agent_config"].tools] == [
             "public-agent-route-tool",
             "faiss-tool",
             "create-app-tool",
+            "a2a_send_message",
             "skill-detail-tool",
             "memory-add-tool",
             "memory-replace-tool",
@@ -1938,10 +2068,11 @@ class TestAssistantAgentService:
         with app.app_context():
             list(service.chat(req, account))
 
-        assert executor_capture["kwargs"]["agent_config"].tools == [
+        assert [getattr(tool, "name", str(tool)) for tool in executor_capture["kwargs"]["agent_config"].tools] == [
             "public-agent-route-tool",
             "registry-search-tool",
             "create-app-tool",
+            "a2a_send_message",
             "skill-detail-tool",
             "memory-add-tool",
             "memory-replace-tool",
