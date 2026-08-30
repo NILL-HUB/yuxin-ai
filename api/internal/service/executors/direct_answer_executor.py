@@ -5,7 +5,7 @@ import uuid
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from internal.core.agent.entities.queue_entity import QueueEvent
-from internal.core.agent.usage_utils import charge_for_feature
+from internal.core.agent.usage_utils import _extract_cached, charge_for_feature
 from internal.service.language_model_service import LanguageModelService
 from internal.service.memory.llm_activity_probe import LLMActivityProbe
 from internal.service.system_prompt_library_service import SystemPromptLibraryService
@@ -93,6 +93,11 @@ class DirectAnswerExecutor:
         ):
             if chunk is None:
                 continue
+            # include_usage 开启后，末尾 usage chunk 的 choices 为空数组，
+            # usage 在 chunk 顶层（OpenAI 协议）,需先于此捕获，避免被空 choices 跳过
+            top_usage = getattr(chunk, "usage", None)
+            if top_usage is not None:
+                final_usage = top_usage
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
@@ -134,6 +139,9 @@ class DirectAnswerExecutor:
             "model": model_name,
             "messages": messages,
             "stream": True,
+            # 开启 usage 回传：OpenAI 兼容协议（SiliconFlow/opencode 等）在流末尾
+            # 附 usage chunk，direct_answer 计费依赖它，缺省则流式无 usage 导致扣费 0
+            "stream_options": {"include_usage": True},
         }
         if tool_schemas:
             kwargs["tools"] = tool_schemas
@@ -473,11 +481,13 @@ class DirectAnswerExecutor:
                 "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
                 "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
                 "total_tokens": usage.get("total_tokens", 0),
+                "cached_tokens": max(int((usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)), 0),
             }
         return {
             "prompt_tokens": getattr(usage, "prompt_tokens", 0) or getattr(usage, "input_tokens", 0) or 0,
             "completion_tokens": getattr(usage, "completion_tokens", 0) or getattr(usage, "output_tokens", 0) or 0,
             "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+            "cached_tokens": _extract_cached(usage),
         }
 
     @staticmethod
@@ -485,9 +495,21 @@ class DirectAnswerExecutor:
         metadata = getattr(response, "response_metadata", None) or {}
         usage = metadata.get("token_usage") or metadata.get("usage") or {}
         if not usage:
+            # 原生 OpenAI SDK 的 Usage 对象（include_usage 顶层 usage）：
+            # response_metadata 不存在，直接读对象属性
+            prompt = getattr(response, "prompt_tokens", None) or getattr(response, "input_tokens", None)
+            completion = getattr(response, "completion_tokens", None) or getattr(response, "output_tokens", None)
+            if prompt is not None or completion is not None:
+                return {
+                    "prompt_tokens": int(prompt or 0),
+                    "completion_tokens": int(completion or 0),
+                    "total_tokens": int(getattr(response, "total_tokens", 0) or 0),
+                    "cached_tokens": _extract_cached(response),
+                }
             return None
         return {
             "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
             "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
             "total_tokens": usage.get("total_tokens", 0),
+            "cached_tokens": _extract_cached(usage),
         }

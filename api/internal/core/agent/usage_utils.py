@@ -203,6 +203,22 @@ def track_language_model_usage(model: Any):
         tracker.restore()
 
 
+def _extract_cached(usage) -> int:
+    """从 usage（对象或 dict）中提取缓存命中 token 数，缺失返回 0。
+
+    解析顺序：prompt_tokens_details.cached_tokens → prompt_cache_hit_tokens。
+    """
+    try:
+        details = usage.get("prompt_tokens_details") if isinstance(usage, dict) else getattr(usage, "prompt_tokens_details", None)
+        details = details or {}
+        cached = details.get("cached_tokens") if isinstance(details, dict) else getattr(details, "cached_tokens", None)
+        if cached is None:
+            cached = usage.get("prompt_cache_hit_tokens") if isinstance(usage, dict) else getattr(usage, "prompt_cache_hit_tokens", None)
+        return max(int(cached or 0), 0)
+    except Exception:
+        return 0
+
+
 def extract_token_usage(response) -> dict | None:
     """从 LangChain LLM response 对象提取 token usage。
 
@@ -212,7 +228,7 @@ def extract_token_usage(response) -> dict | None:
     - response.response_metadata.usage
 
     Returns:
-        {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+        {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int, "cached_tokens": int}
         或 None（无法提取时）
     """
     # 1. 尝试 response_metadata.token_usage（OpenAI 兼容格式）
@@ -223,6 +239,7 @@ def extract_token_usage(response) -> dict | None:
             "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
             "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
             "total_tokens": usage.get("total_tokens", 0),
+            "cached_tokens": _extract_cached(usage),
         }
 
     # 2. 尝试 usage_metadata（LangChain v0.2+ AIMessage）
@@ -232,6 +249,7 @@ def extract_token_usage(response) -> dict | None:
             "prompt_tokens": usage_meta.get("input_tokens", 0),
             "completion_tokens": usage_meta.get("output_tokens", 0),
             "total_tokens": usage_meta.get("total_tokens", 0),
+            "cached_tokens": _extract_cached(usage_meta),
         }
 
     return None
