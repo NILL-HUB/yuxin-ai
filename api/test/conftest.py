@@ -93,6 +93,27 @@ CREATE TABLE model_pool_config (
     tier VARCHAR(64) NOT NULL DEFAULT 'standard',
     capabilities TEXT NOT NULL DEFAULT '[]',
     price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    input_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    output_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    input_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    output_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_valley_enabled BOOLEAN NOT NULL DEFAULT 0,
+    cache_pricing_enabled BOOLEAN NOT NULL DEFAULT 0,
+    input_cached_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    input_cached_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_input_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_output_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_input_cached_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_input_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_output_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_input_cached_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    valley_input_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    valley_output_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    valley_input_cached_price_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    valley_input_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    valley_output_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    valley_input_cached_cost_per_1k_tokens NUMERIC NOT NULL DEFAULT 0,
+    peak_windows TEXT NOT NULL DEFAULT '[]',
     max_tokens INTEGER NOT NULL DEFAULT 0,
     max_input_tokens INTEGER NOT NULL DEFAULT 0,
     max_output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -150,8 +171,44 @@ CREATE TABLE model_tier_policy (
     sort_order INTEGER NOT NULL DEFAULT 0,
     allowed_models TEXT NOT NULL DEFAULT '[]',
     default_model VARCHAR(255) NOT NULL DEFAULT '',
-    routing_rules TEXT NOT NULL DEFAULT '{}',
     updated_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL
+)
+"""
+
+_BILLING_USAGE_EVENT_DDL = """
+CREATE TABLE billing_usage_event (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    task_id VARCHAR(128) NOT NULL DEFAULT '',
+    model_id VARCHAR(64),
+    source_type VARCHAR(64) NOT NULL DEFAULT '',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    price_tier VARCHAR(16) NOT NULL DEFAULT '',
+    moment DATETIME,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    billing_basis VARCHAR(64) NOT NULL DEFAULT '',
+    is_estimated BOOLEAN NOT NULL DEFAULT FALSE,
+    estimated_credits INTEGER NOT NULL DEFAULT 0,
+    actual_credits INTEGER NOT NULL DEFAULT 0,
+    cost_credits INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL
+)
+"""
+
+_BILLING_RECONCILIATION_DDL = """
+CREATE TABLE billing_reconciliation (
+    id VARCHAR(36) NOT NULL PRIMARY KEY,
+    task_id VARCHAR(128) NOT NULL UNIQUE,
+    account_id VARCHAR(36) NOT NULL,
+    estimated_credits INTEGER NOT NULL DEFAULT 0,
+    actual_credits INTEGER NOT NULL DEFAULT 0,
+    diff_credits INTEGER NOT NULL DEFAULT 0,
+    cost_credits INTEGER NOT NULL DEFAULT 0,
+    cost_amount NUMERIC NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'settled',
+    alert_flags TEXT NOT NULL DEFAULT '[]',
+    settled_at DATETIME NOT NULL,
     created_at DATETIME NOT NULL
 )
 """
@@ -170,6 +227,8 @@ def model_pool_db(monkeypatch):
         conn.exec_driver_sql(_MODEL_KEY_CONFIG_DDL)
         conn.exec_driver_sql(_MODEL_PROVIDER_CONFIG_DDL)
         conn.exec_driver_sql(_MODEL_TIER_POLICY_DDL)
+        conn.exec_driver_sql(_BILLING_USAGE_EVENT_DDL)
+        conn.exec_driver_sql(_BILLING_RECONCILIATION_DDL)
         conn.commit()
 
     session_factory = sessionmaker(bind=engine, autoflush=False)
