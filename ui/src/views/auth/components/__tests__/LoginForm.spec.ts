@@ -17,6 +17,12 @@ const mocks = vi.hoisted(() => ({
   resetPassword: vi.fn(),
   verifyLoginChallenge: vi.fn(),
   resendLoginChallenge: vi.fn(),
+  getLoginMethods: vi.fn(),
+  sendCode: vi.fn(),
+  phoneCodeLogin: vi.fn(),
+  emailCodeLogin: vi.fn(),
+  phoneRegisterRequest: vi.fn(),
+  phoneRegisterVerify: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
   messageWarning: vi.fn(),
@@ -61,6 +67,12 @@ vi.mock('@/services/auth', () => ({
   resetPassword: mocks.resetPassword,
   verifyLoginChallenge: mocks.verifyLoginChallenge,
   resendLoginChallenge: mocks.resendLoginChallenge,
+  getLoginMethods: mocks.getLoginMethods,
+  sendCode: mocks.sendCode,
+  phoneCodeLogin: mocks.phoneCodeLogin,
+  emailCodeLogin: mocks.emailCodeLogin,
+  phoneRegisterRequest: mocks.phoneRegisterRequest,
+  phoneRegisterVerify: mocks.phoneRegisterVerify,
 }))
 
 vi.mock('@/hooks/use-oauth', async () => {
@@ -126,6 +138,39 @@ const checkboxStub = {
   `,
 }
 
+const tabKeyByTitle: Record<string, string> = {
+  密码登录: 'password',
+  手机验证码: 'phone',
+  邮箱验证码: 'email',
+  账号密码: 'direct',
+}
+
+const tabsStub = {
+  props: ['activeKey'],
+  emits: ['change', 'update:activeKey'],
+  template: `
+    <div class="tabs-stub" data-testid="tabs" @click="onTabClick">
+      <slot />
+    </div>
+  `,
+  methods: {
+    onTabClick(event: MouseEvent) {
+      const target = (event.target as HTMLElement).closest('.tab-pane-stub')
+      if (!target) return
+      const title = target.getAttribute('data-title') || ''
+      const key = tabKeyByTitle[title]
+      if (!key) return
+      this.$emit('change', key)
+      this.$emit('update:activeKey', key)
+    },
+  },
+}
+
+const tabPaneStub = {
+  props: ['title'],
+  template: '<button type="button" class="tab-pane-stub" :data-title="title">{{ title }}</button>',
+}
+
 const renderForm = () => {
   return mount(LoginForm, {
     props: {
@@ -141,6 +186,8 @@ const renderForm = () => {
         'a-button': buttonStub,
         'a-link': linkStub,
         'a-checkbox': checkboxStub,
+        'a-tabs': tabsStub,
+        'a-tab-pane': tabPaneStub,
         'IconYuxinAI': true,
         'icon-user': true,
         'icon-lock': true,
@@ -148,6 +195,7 @@ const renderForm = () => {
         'icon-safe': true,
         'icon-left': true,
         'icon-github': true,
+        'icon-phone': true,
       },
     },
   })
@@ -190,6 +238,17 @@ describe('LoginForm auto register flow', () => {
     mocks.directRegister.mockReset()
     mocks.prepareRegister.mockReset()
     mocks.sendResetCode.mockReset()
+    mocks.getLoginMethods.mockResolvedValue({
+      data: { email_enabled: true, phone_enabled: true, challenge_enabled: true },
+      message: 'ok',
+    })
+    mocks.sendCode.mockResolvedValue({ message: '验证码已发送', data: {} })
+    mocks.phoneCodeLogin.mockReset()
+    mocks.emailCodeLogin.mockReset()
+    mocks.phoneRegisterRequest.mockReset()
+    mocks.phoneRegisterVerify.mockReset()
+    mocks.verifyLoginChallenge.mockReset()
+    mocks.resendLoginChallenge.mockReset()
   })
 
   it('emits success after embedded admin login so the login modal closes immediately', async () => {
@@ -354,5 +413,370 @@ describe('LoginForm auto register flow', () => {
     expect(mocks.messageSuccess).toHaveBeenCalledWith('如果该邮箱已注册，验证码已发送，请查收')
     expect(wrapper.text()).toContain('输入验证码并设置新密码')
     expect(wrapper.find('input[placeholder="请输入6位验证码"]').exists()).toBe(true)
+  })
+})
+
+describe('LoginForm login tabs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    sessionStorage.clear()
+
+    mocks.routeQuery = {}
+    mocks.getLoginMethods.mockResolvedValue({
+      data: { email_enabled: true, phone_enabled: true, challenge_enabled: true },
+      message: 'ok',
+    })
+    mocks.sendCode.mockResolvedValue({ message: '验证码已发送', data: {} })
+    mocks.phoneCodeLogin.mockReset()
+    mocks.emailCodeLogin.mockReset()
+  })
+
+  it('renders login tabs per login-methods and hides phone/email tabs when disabled', async () => {
+    mocks.getLoginMethods.mockResolvedValue({
+      data: { email_enabled: false, phone_enabled: false, challenge_enabled: true },
+      message: 'ok',
+    })
+
+    const wrapper = renderForm()
+    await flushPromises()
+
+    expect(wrapper.find('input[placeholder="用户名或邮箱"]').exists()).toBe(true)
+    expect(wrapper.findAll('.tab-pane-stub').some((el) => el.attributes('data-title')?.includes('手机'))).toBe(false)
+    expect(wrapper.findAll('.tab-pane-stub').some((el) => el.attributes('data-title')?.includes('邮箱'))).toBe(false)
+  })
+
+  it('submits phone code login with the phone and code payload', async () => {
+    mocks.phoneCodeLogin.mockResolvedValue({
+      data: { access_token: 'phone-token', expire_at: 9999999999 },
+    })
+
+    const wrapper = renderForm()
+    await flushPromises()
+
+    const phoneTabTitle = wrapper.findAll('.tab-pane-stub').find((el) => el.attributes('data-title')?.includes('手机'))
+    expect(phoneTabTitle).toBeTruthy()
+    await phoneTabTitle!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('input[placeholder="请输入手机号"]').setValue('13800138000')
+    await wrapper.get('input[placeholder="请输入6位验证码"]').setValue('123456')
+
+    const loginButton = findButtonContainingText(wrapper, '手机号登录')
+    expect(loginButton).toBeTruthy()
+    await loginButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.phoneCodeLogin).toHaveBeenCalledWith('13800138000', '123456')
+    expect(wrapper.emitted('success')).toHaveLength(1)
+  })
+
+  it('sends a phone_login code via sendCode with scene and phone', async () => {
+    const wrapper = renderForm()
+    await flushPromises()
+
+    const phoneTabTitle = wrapper.findAll('.tab-pane-stub').find((el) => el.attributes('data-title')?.includes('手机'))
+    await phoneTabTitle!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('input[placeholder="请输入手机号"]').setValue('13800138000')
+
+    const getCodeButton = wrapper.findAll('button').find((button) => button.text().includes('发送验证码'))
+    expect(getCodeButton).toBeTruthy()
+    await getCodeButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.sendCode).toHaveBeenCalledWith({
+      scene: 'phone_login',
+      phone: '13800138000',
+    })
+    expect(mocks.messageSuccess).toHaveBeenCalled()
+  })
+
+  it('sends an email_login code via sendCode with scene and email', async () => {
+    const wrapper = renderForm()
+    await flushPromises()
+
+    const emailTabTitle = wrapper.findAll('.tab-pane-stub').find((el) => el.attributes('data-title')?.includes('邮箱'))
+    expect(emailTabTitle).toBeTruthy()
+    await emailTabTitle!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('input[placeholder="请输入邮箱地址"]').setValue('a@example.com')
+
+    const getCodeButton = wrapper.findAll('button').find((button) => button.text().includes('发送验证码'))
+    expect(getCodeButton).toBeTruthy()
+    await getCodeButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.sendCode).toHaveBeenCalledWith({
+      scene: 'email_login',
+      email: 'a@example.com',
+    })
+  })
+
+  it('submits email code login with the email and code payload', async () => {
+    mocks.emailCodeLogin.mockResolvedValue({
+      data: { access_token: 'email-token', expire_at: 9999999999 },
+    })
+
+    const wrapper = renderForm()
+    await flushPromises()
+
+    const emailTabTitle = wrapper.findAll('.tab-pane-stub').find((el) => el.attributes('data-title')?.includes('邮箱'))
+    expect(emailTabTitle).toBeTruthy()
+    await emailTabTitle!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('input[placeholder="请输入邮箱地址"]').setValue('b@example.com')
+    await wrapper.get('input[placeholder="请输入6位验证码"]').setValue('654321')
+
+    const loginButton = findButtonContainingText(wrapper, '邮箱登录')
+    expect(loginButton).toBeTruthy()
+    await loginButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.emailCodeLogin).toHaveBeenCalledWith('b@example.com', '654321')
+    expect(wrapper.emitted('success')).toHaveLength(1)
+  })
+})
+
+describe('LoginForm phone registration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    sessionStorage.clear()
+
+    mocks.routeQuery = {}
+    mocks.getLoginMethods.mockResolvedValue({
+      data: { email_enabled: true, phone_enabled: true, challenge_enabled: true },
+      message: 'ok',
+    })
+    mocks.sendCode.mockResolvedValue({ message: '验证码已发送', data: {} })
+    mocks.phoneRegisterRequest.mockReset()
+    mocks.phoneRegisterVerify.mockReset()
+  })
+
+  it('requests a phone register code and verifies with username and password', async () => {
+    mocks.phoneRegisterRequest.mockResolvedValue({ message: '验证码已发送', data: {} })
+    mocks.phoneRegisterVerify.mockResolvedValue({
+      data: { access_token: 'phone-reg-token', expire_at: 9999999999 },
+    })
+
+    const wrapper = renderForm()
+    await flushPromises()
+
+    const registerEntry = findButtonContainingText(wrapper, '用户名/邮箱注册')
+    await registerEntry!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('设置用户名并使用邮箱验证')
+
+    const phoneRegisterTab = wrapper.findAll('.tab-pane-stub').find((el) => el.attributes('data-title')?.includes('手机验证码'))
+    expect(phoneRegisterTab).toBeTruthy()
+    await phoneRegisterTab!.trigger('click')
+    await flushPromises()
+
+    await wrapper.get('input[placeholder="请输入手机号"]').setValue('13800138000')
+    await wrapper.get('input[placeholder="用户名(选填，字母或数字)"]').setValue('PhoneUser')
+    await wrapper.get('input[placeholder="设置密码(选填，字母+数字，6-32位)"]').setValue('Abcd1234')
+
+    const getCodeButton = wrapper.findAll('button').find((button) => button.text().includes('发送验证码'))
+    await getCodeButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.phoneRegisterRequest).toHaveBeenCalledWith('13800138000')
+
+    await wrapper.get('input[placeholder="请输入6位验证码"]').setValue('654321')
+
+    const registerButton = findButtonContainingText(wrapper, '手机号注册')
+    await registerButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.phoneRegisterVerify).toHaveBeenCalledWith('13800138000', '654321', {
+      username: 'PhoneUser',
+      password: 'Abcd1234',
+    })
+    expect(wrapper.emitted('success')).toHaveLength(1)
+  })
+})
+
+describe('LoginForm challenge flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    sessionStorage.clear()
+
+    mocks.routeQuery = {}
+    mocks.getLoginMethods.mockResolvedValue({
+      data: { email_enabled: true, phone_enabled: true, challenge_enabled: true },
+      message: 'ok',
+    })
+    mocks.sendCode.mockResolvedValue({ message: '验证码已发送', data: {} })
+    mocks.passwordLogin.mockReset()
+    mocks.verifyLoginChallenge.mockReset()
+  })
+
+  const submitPasswordLogin = async (wrapper: ReturnType<typeof mount>) => {
+    await wrapper.get('input[placeholder="用户名或邮箱"]').setValue('user@example.com')
+    await wrapper.get('input[placeholder="账号密码"]').setValue('Abcd1234')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+  }
+
+  it('sends code automatically for a single-channel challenge', async () => {
+    mocks.passwordLogin.mockResolvedValue({
+      data: {
+        challenge_required: true,
+        challenge_id: 'challenge-1',
+        channels: [{ type: 'email', masked: 'u***@example.com' }],
+        risk_reason: 'new_ip',
+      },
+    })
+
+    const wrapper = renderForm()
+    await submitPasswordLogin(wrapper)
+
+    expect(mocks.sendCode).toHaveBeenCalledWith({
+      scene: 'login_challenge',
+      challenge_id: 'challenge-1',
+      channel: 'email',
+    })
+    expect(wrapper.text()).toContain('验证码已发送至 u***@example.com')
+  })
+
+  it('shows channel cards for a multi-channel challenge and sends code only after selection', async () => {
+    mocks.passwordLogin.mockResolvedValue({
+      data: {
+        challenge_required: true,
+        challenge_id: 'challenge-2',
+        channels: [
+          { type: 'email', masked: 'a***@example.com' },
+          { type: 'phone', masked: '138****8000' },
+        ],
+        risk_reason: 'new_ip',
+      },
+    })
+
+    const wrapper = renderForm()
+    await submitPasswordLogin(wrapper)
+
+    expect(wrapper.find('[data-testid="challenge-channel-select"]').exists()).toBe(true)
+    expect(mocks.sendCode).not.toHaveBeenCalled()
+
+    const phoneCard = wrapper
+      .findAll('[data-testid="challenge-channel-select"] button')
+      .find((button) => button.text().includes('138****8000'))
+    expect(phoneCard).toBeTruthy()
+    await phoneCard!.trigger('click')
+
+    expect(mocks.sendCode).not.toHaveBeenCalled()
+
+    const getCodeButton = wrapper.findAll('button').find((button) => button.text().includes('获取验证码'))
+    expect(getCodeButton).toBeTruthy()
+    await getCodeButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.sendCode).toHaveBeenCalledWith({
+      scene: 'login_challenge',
+      challenge_id: 'challenge-2',
+      channel: 'phone',
+    })
+  })
+
+  it('submits verify with the selected channel and finalizes login', async () => {
+    mocks.passwordLogin.mockResolvedValue({
+      data: {
+        challenge_required: true,
+        challenge_id: 'challenge-3',
+        channels: [{ type: 'phone', masked: '138****8000' }],
+        risk_reason: 'new_ip',
+      },
+    })
+    mocks.verifyLoginChallenge.mockResolvedValue({
+      data: { access_token: 'challenge-token', expire_at: 9999999999 },
+    })
+
+    const wrapper = renderForm()
+    await submitPasswordLogin(wrapper)
+
+    expect(mocks.sendCode).toHaveBeenCalledWith({
+      scene: 'login_challenge',
+      challenge_id: 'challenge-3',
+      channel: 'phone',
+    })
+
+    await wrapper.get('input[placeholder="请输入6位验证码"]').setValue('123456')
+    const verifyButton = findButtonContainingText(wrapper, '完成登录验证')
+    await verifyButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.verifyLoginChallenge).toHaveBeenCalledWith('challenge-3', '123456', 'phone')
+    expect(wrapper.emitted('success')).toHaveLength(1)
+  })
+
+  it('falls back to masked_email for legacy challenge responses', async () => {
+    mocks.passwordLogin.mockResolvedValue({
+      data: {
+        challenge_required: true,
+        challenge_id: 'challenge-legacy',
+        masked_email: 'legacy***@example.com',
+        risk_reason: 'new_ip',
+      },
+    })
+
+    const wrapper = renderForm()
+    await submitPasswordLogin(wrapper)
+
+    expect(mocks.sendCode).toHaveBeenCalledWith({
+      scene: 'login_challenge',
+      challenge_id: 'challenge-legacy',
+      channel: 'email',
+    })
+    expect(wrapper.text()).toContain('验证码已发送至 legacy***@example.com')
+  })
+
+  it('resends a challenge code via resendLoginChallenge and updates the masked target', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.passwordLogin.mockResolvedValue({
+        data: {
+          challenge_required: true,
+          challenge_id: 'challenge-resend',
+          channels: [{ type: 'email', masked: 'u***@example.com' }],
+          risk_reason: 'new_ip',
+        },
+      })
+      mocks.resendLoginChallenge.mockResolvedValue({
+        message: 'ok',
+        data: { challenge_id: 'challenge-resend', channel: 'email', masked: 'n***@example.com' },
+      })
+
+      const wrapper = renderForm()
+      await wrapper.get('input[placeholder="用户名或邮箱"]').setValue('user@example.com')
+      await wrapper.get('input[placeholder="账号密码"]').setValue('Abcd1234')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+
+      expect(mocks.sendCode).toHaveBeenCalledWith({
+        scene: 'login_challenge',
+        challenge_id: 'challenge-resend',
+        channel: 'email',
+      })
+
+      await vi.advanceTimersByTimeAsync(60000)
+      await flushPromises()
+
+      const resendButton = wrapper.findAll('button').find((button) => button.text().includes('重发验证码'))
+      expect(resendButton).toBeTruthy()
+      await resendButton!.trigger('click')
+      await flushPromises()
+
+      expect(mocks.resendLoginChallenge).toHaveBeenCalledWith('challenge-resend', 'email')
+      expect(wrapper.text()).toContain('验证码已发送至 n***@example.com')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
