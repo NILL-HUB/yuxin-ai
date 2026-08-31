@@ -553,6 +553,10 @@ class TestAdminRoutes8Registered:
         assert "/admin/audit-logs" in rules
         assert "/admin/orchestration-release-check" in rules
         assert "/admin/upload-files/image" in rules
+        assert "/admin/mail-config" in rules
+        assert "/admin/mail-config/test" in rules
+        assert "/admin/sms-config" in rules
+        assert "/admin/sms-config/test" in rules
 
     def test_register_routes_idempotent(self):
         admin_routes_8.register_routes(asgi_app.quart_app)
@@ -1483,3 +1487,137 @@ class _FakeMailConfigService:
         if self._test_error is not None:
             raise self._test_error
         return {"ok": True, "detail": {"server": "smtp.qq.com", "recipients": 1}}
+
+
+class TestAdminSmsConfig:
+    def _setup(self, monkeypatch, *, svc=None):
+        from internal.service.sms_service import SmsService
+
+        svc = svc or _FakeSmsConfigService()
+        _setup(
+            monkeypatch,
+            {SmsService: svc},
+        )
+
+        async def _resolve_admin_permission(permission_code):
+            return {
+                "id": str(uuid4()),
+                "permissions": ["system_config:manage"],
+            }, None
+
+        monkeypatch.setattr(support, "_resolve_admin_permission", _resolve_admin_permission)
+        return svc
+
+    def test_get(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/admin/sms-config?account_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["configs"]["provider"] == "aliyun"
+        assert svc.calls[0] == ("get",)
+
+    def test_put(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/sms-config?account_id={uuid4()}",
+                    json={"configs": {"provider": "aliyun", "access_key": "AKID"}},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["configs"]["provider"] == "aliyun"
+        assert svc.calls[0] == ("update", {"provider": "aliyun", "access_key": "AKID"})
+
+    def test_put_validate_error(self, monkeypatch):
+        svc = _FakeSmsConfigService(update_error=ValueError("provider 仅支持 aliyun/tencent"))
+        self._setup(monkeypatch, svc=svc)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/sms-config?account_id={uuid4()}",
+                    json={"configs": {"provider": "aws"}},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_post_test(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/sms-config/test?account_id={uuid4()}",
+                    json={"to": "13800138000"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["ok"] is True
+        assert svc.calls[0] == ("test", "13800138000")
+
+    def test_post_test_failure(self, monkeypatch):
+        svc = _FakeSmsConfigService(test_error=RuntimeError("阿里云短信失败: isv.ERROR"))
+        self._setup(monkeypatch, svc=svc)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/sms-config/test?account_id={uuid4()}",
+                    json={"to": "13800138000"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["ok"] is False
+        assert "isv.ERROR" in payload["data"]["detail"]
+
+
+class _FakeSmsConfigService:
+    def __init__(self, *, update_error=None, test_error=None):
+        self.calls = []
+        self._update_error = update_error
+        self._test_error = test_error
+
+    def get_config(self):
+        self.calls.append(("get",))
+        return {
+            "provider": "aliyun",
+            "access_key": "AKID",
+            "access_secret": "SECRET",
+            "sign_name": "平台",
+            "region": "cn-hangzhou",
+            "sdk_app_id": "",
+            "verify_code_template": "SMS_1",
+        }
+
+    def update_config(self, payload):
+        self.calls.append(("update", payload))
+        if self._update_error is not None:
+            raise self._update_error
+        cfg = self.get_config()
+        cfg.update(payload or {})
+        return cfg
+
+    def send_test(self, *, recipient):
+        self.calls.append(("test", recipient))
+        if self._test_error is not None:
+            raise self._test_error
+        return {"ok": True, "provider": "aliyun", "code": "OK"}

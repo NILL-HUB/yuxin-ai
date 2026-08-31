@@ -1449,3 +1449,57 @@ def register_routes(quart_app):
         except Exception as exc:
             return a._ok({"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
         return a._ok(result)
+
+    # ------------------------------------------------------------------
+    # admin 短信发送配置（sms_config 单行 JSONB）：读取 / 更新 / 测试发送
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/sms-config")
+    async def admin_sms_config_get():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        from internal.service.sms_service import SmsService
+
+        cfg = await a._to_thread(a._get_service(SmsService).get_config)
+        return a._ok({"configs": cfg})
+
+    @quart_app.put("/admin/sms-config")
+    async def admin_sms_config_put():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        from internal.service.sms_service import SmsService
+
+        try:
+            cfg = await a._to_thread(
+                a._get_service(SmsService).update_config,
+                payload.get("configs") or {},
+            )
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
+        return a._ok({"configs": cfg})
+
+    @quart_app.post("/admin/sms-config/test")
+    async def admin_sms_config_test():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        to = str(payload.get("to") or "").strip()
+        from internal.service.sms_service import SmsService
+
+        try:
+            result = await a._to_thread(a._get_service(SmsService).send_test, recipient=to)
+        except Exception as exc:
+            return a._ok({"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
+        return a._ok(result)
