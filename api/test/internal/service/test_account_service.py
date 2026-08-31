@@ -76,6 +76,9 @@ class _SessionStub:
     def add(self, entity):
         self.added_entities.append(entity)
 
+    def flush(self):
+        pass
+
     def rollback(self):
         self.rolled_back = True
 
@@ -1631,3 +1634,295 @@ class TestAccountService:
         assert service._mask_email("zhangsan@qq.com") == "zh***an@qq.com"
         assert service._mask_email("ab@qq.com") == "ab***@qq.com"
         assert service._mask_email("not-an-email") == "not-an-email"
+
+    def test_normalize_and_is_valid_phone(self):
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+
+        assert service.normalize_phone("+8613800138000") == "13800138000"
+        assert service.is_valid_phone("13800138000") is True
+        assert service.is_valid_phone("+8613800138000") is True
+        assert service.is_valid_phone("12300138000") is False
+
+    def test_phone_code_login_should_verify_and_issue_credential(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        account = Account(id=uuid4(), phone="13800138000", phone_verified_at=None)
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=account)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(PHONE_LOGIN_SCENE="phone_login"),
+        )
+        monkeypatch.setattr(service, "_verify_phone_code", lambda phone, code: None)
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+        monkeypatch.setattr(
+            service,
+            "_complete_login",
+            lambda target, challenge_policy="auto": {"access_token": "jwt", "expire_at": 123},
+        )
+
+        result = service.phone_code_login("13800138000", "123456")
+
+        assert result["access_token"] == "jwt"
+        assert update_calls and "phone_verified_at" in update_calls[0]
+        assert update_calls[0]["phone_verified_at"] is not None
+
+    def test_phone_code_login_should_raise_when_account_missing(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=_DBStub(_SessionStub({Account: _QueryStub(one_or_none_result=None)})),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(PHONE_LOGIN_SCENE="phone_login"),
+        )
+        monkeypatch.setattr(service, "_verify_phone_code", lambda phone, code: None)
+
+        with pytest.raises(FailException, match="该手机号未注册"):
+            service.phone_code_login("13800138000", "123456")
+
+    def test_phone_code_login_should_raise_when_channel_disabled(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": False, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(PHONE_LOGIN_SCENE="phone_login"),
+        )
+        with pytest.raises(FailException, match="手机号通道未开启"):
+            service.phone_code_login("13800138000", "123456")
+
+    def test_email_code_login_should_verify_and_issue_credential(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        account = Account(id=uuid4(), email="demo@example.com", email_verified_at=None)
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=account)})
+        verify_calls = []
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                EMAIL_LOGIN_SCENE="email_login",
+                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+            ),
+        )
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+        monkeypatch.setattr(
+            service,
+            "_complete_login",
+            lambda target, challenge_policy="auto": {"access_token": "jwt", "expire_at": 123},
+        )
+
+        result = service.email_code_login("demo@example.com", "123456")
+
+        assert result["access_token"] == "jwt"
+        assert verify_calls == [("email_login", "123456", "demo@example.com")]
+        assert update_calls and "email_verified_at" in update_calls[0]
+        assert update_calls[0]["email_verified_at"] is not None
+
+    def test_email_code_login_should_raise_when_account_missing(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=_DBStub(_SessionStub({Account: _QueryStub(one_or_none_result=None)})),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                EMAIL_LOGIN_SCENE="email_login",
+                verify_code=lambda scene, code, contact=None: True,
+            ),
+        )
+
+        with pytest.raises(FailException, match="该邮箱未注册"):
+            service.email_code_login("demo@example.com", "123456")
+
+    def test_phone_register_should_create_account_with_auto_username(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_REGISTER_SCENE="phone_register",
+                verify_code=lambda scene, code, contact=None: True,
+            ),
+        )
+        monkeypatch.setattr(service, "_set_password", lambda account, password: None)
+        monkeypatch.setattr(
+            service,
+            "_complete_login",
+            lambda target, challenge_policy="auto": {"access_token": "jwt", "expire_at": 123},
+        )
+
+        result = service.phone_register(phone="13800138000", code="123456")
+
+        assert result["access_token"] == "jwt"
+        assert len(session.added_entities) == 1
+        account = session.added_entities[0]
+        assert account.username.startswith("user_8000_")
+        assert account.phone == "13800138000"
+        assert account.phone_verified_at is not None
+
+    def test_phone_register_should_set_password_when_provided(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_REGISTER_SCENE="phone_register",
+                verify_code=lambda scene, code, contact=None: True,
+            ),
+        )
+        set_password_calls = []
+        monkeypatch.setattr(service, "_set_password", lambda account, password: set_password_calls.append(password))
+        monkeypatch.setattr(
+            service,
+            "_complete_login",
+            lambda target, challenge_policy="auto": {"access_token": "jwt", "expire_at": 123},
+        )
+
+        result = service.phone_register(phone="13800138000", code="123456", username="AtlasPhone", password="Abcd_1234")
+
+        assert result["access_token"] == "jwt"
+        assert set_password_calls == ["Abcd_1234"]
+        assert session.added_entities[0].username == "AtlasPhone"
+
+    def test_phone_register_should_raise_when_phone_exists(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        existing = Account(id=uuid4(), phone="13800138000")
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=existing)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_REGISTER_SCENE="phone_register",
+                verify_code=lambda scene, code, contact=None: True,
+            ),
+        )
+
+        with pytest.raises(FailException, match="该手机号已注册"):
+            service.phone_register(phone="13800138000", code="123456")
+
+    def test_password_login_should_fall_back_to_phone_when_identifier_is_phone(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        account = Account(id=uuid4(), email="", phone="13800138000", password="hashed", password_salt="salt", status="active", password_version=2)
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=account)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "get_account_by_identifier", lambda identifier: None)
+        monkeypatch.setattr(service, "get_account_by_phone", lambda phone: account)
+        monkeypatch.setattr("internal.service.account_service.compare_password", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(service, "begin_login", lambda target: {"access_token": "jwt", "expire_at": 123})
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+
+        result = service.password_login("13800138000", "good-pwd")
+
+        assert result["access_token"] == "jwt"
+        assert update_calls and "phone_verified_at" in update_calls[0]
+        assert update_calls[0]["phone_verified_at"] is not None
+
+    def test_password_login_should_write_email_verified_when_matched_by_email(self, monkeypatch):
+        account = Account(
+            id=uuid4(),
+            email="demo@example.com",
+            email_verified_at=None,
+            phone="",
+            password="hashed",
+            password_salt="salt",
+            status="active",
+            password_version=2,
+        )
+        session = _SessionStub({Account: _QueryStub(one_or_none_result=account)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "get_account_by_identifier", lambda identifier: account)
+        monkeypatch.setattr("internal.service.account_service.compare_password", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(service, "begin_login", lambda target: {"access_token": "jwt", "expire_at": 123})
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+
+        result = service.password_login("demo@example.com", "good-pwd")
+
+        assert result["access_token"] == "jwt"
+        assert update_calls and "email_verified_at" in update_calls[0]
+        assert update_calls[0]["email_verified_at"] is not None
+
+    def test_password_login_should_not_query_phone_when_channel_disabled(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": False, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=_DBStub(_SessionStub({})),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "get_account_by_identifier", lambda identifier: None)
+        monkeypatch.setattr(
+            service,
+            "get_account_by_phone",
+            lambda phone: (_ for _ in ()).throw(AssertionError("should not query phone when disabled")),
+        )
+
+        with pytest.raises(FailException, match="账号不存在"):
+            service.password_login("13800138000", "pwd")

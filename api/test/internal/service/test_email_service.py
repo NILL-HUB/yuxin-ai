@@ -434,3 +434,127 @@ class TestEmailService:
         assert expire_calls == [
             ("password_reset:verify_attempt:demo@example.com", expected_attempt_ttl)
         ]
+
+    def test_send_code_should_route_phone_through_sms_and_store_code(self, monkeypatch):
+        setex_calls = []
+        sent_sms = []
+
+        class _FakeSmsService:
+            def send_verification_code(self, phone, code):
+                sent_sms.append((phone, code))
+
+        class _FakeAuthSwitches:
+            @staticmethod
+            def get_auth_switches():
+                return {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True}
+
+        redis_stub = SimpleNamespace(
+            setex=lambda key, ttl, value: setex_calls.append((key, ttl, value)),
+        )
+        monkeypatch.setattr("internal.service.email_service.redis_client", redis_stub)
+        monkeypatch.setattr(
+            "internal.service.email_service._sms_service",
+            lambda: _FakeSmsService(),
+        )
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+        monkeypatch.setattr(service, "generate_verification_code", lambda length=6: "123456")
+        monkeypatch.setattr(service, "_get_auth_switches", _FakeAuthSwitches.get_auth_switches)
+
+        result = service.send_code(EmailService.PHONE_LOGIN_SCENE, phone="13800138000")
+
+        assert result == ""
+        assert sent_sms == [("13800138000", "123456")]
+        assert setex_calls == [
+            ("phone_login:13800138000", timedelta(seconds=EmailService.CODE_TTL_SECONDS), "123456")
+        ]
+
+    def test_send_code_should_route_email_through_send_verification_code(self, monkeypatch):
+        calls = []
+
+        class _FakeAuthSwitches:
+            @staticmethod
+            def get_auth_switches():
+                return {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True}
+
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+        monkeypatch.setattr(service, "_get_auth_switches", _FakeAuthSwitches.get_auth_switches)
+        monkeypatch.setattr(
+            service,
+            "send_verification_code",
+            lambda email, scene="password_reset": calls.append((email, scene)) or "",
+        )
+
+        result = service.send_code(EmailService.EMAIL_LOGIN_SCENE, email="demo@example.com")
+
+        assert result == ""
+        assert calls == [("demo@example.com", EmailService.EMAIL_LOGIN_SCENE)]
+
+    def test_send_code_should_raise_when_phone_channel_disabled(self, monkeypatch):
+        class _FakeAuthSwitches:
+            @staticmethod
+            def get_auth_switches():
+                return {"AUTH_PHONE_ENABLED": False, "AUTH_EMAIL_ENABLED": True}
+
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+        monkeypatch.setattr(service, "_get_auth_switches", _FakeAuthSwitches.get_auth_switches)
+
+        with pytest.raises(FailException, match="手机号通道未开启"):
+            service.send_code(EmailService.PHONE_LOGIN_SCENE, phone="13800138000")
+
+    def test_send_code_should_raise_when_email_channel_disabled(self, monkeypatch):
+        class _FakeAuthSwitches:
+            @staticmethod
+            def get_auth_switches():
+                return {"AUTH_PHONE_ENABLED": False, "AUTH_EMAIL_ENABLED": False}
+
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+        monkeypatch.setattr(service, "_get_auth_switches", _FakeAuthSwitches.get_auth_switches)
+
+        with pytest.raises(FailException, match="邮箱通道未开启"):
+            service.send_code(EmailService.EMAIL_LOGIN_SCENE, email="demo@example.com")
+
+    def test_send_code_should_raise_when_both_contacts_missing(self, monkeypatch):
+        class _FakeAuthSwitches:
+            @staticmethod
+            def get_auth_switches():
+                return {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True}
+
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+        monkeypatch.setattr(service, "_get_auth_switches", _FakeAuthSwitches.get_auth_switches)
+
+        with pytest.raises(FailException, match="至少提供一个"):
+            service.send_code(EmailService.PHONE_LOGIN_SCENE)
+
+    def test_normalize_phone_should_strip_plus86_prefix(self):
+        assert EmailService.normalize_phone("+8613800138000") == "13800138000"
+        assert EmailService.normalize_phone(" 13800138000 ") == "13800138000"
+
+    def test_is_valid_phone_should_accept_only_mainland_mobile(self):
+        assert EmailService.is_valid_phone("13800138000") is True
+        assert EmailService.is_valid_phone("+8613800138000") is True
+        assert EmailService.is_valid_phone("12300138000") is False
+        assert EmailService.is_valid_phone("2380013800") is False
+        assert EmailService.is_valid_phone("") is False
+
+    def test_verify_code_should_use_contact_as_target_key(self, monkeypatch):
+        delete_calls = []
+        redis_stub = SimpleNamespace(
+            exists=lambda _key: False,
+            get=lambda _key: b"112233",
+            incr=lambda _key: 1,
+            ttl=lambda _key: 120,
+            expire=lambda *_args: None,
+            setex=lambda *_args: None,
+            delete=lambda key: delete_calls.append(key),
+        )
+        monkeypatch.setattr("internal.service.email_service.redis_client", redis_stub)
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+
+        is_valid = service.verify_code("", "112233", scene=EmailService.PHONE_LOGIN_SCENE, contact="13800138000")
+
+        assert is_valid is True
+        assert delete_calls == [
+            "phone_login:13800138000",
+            "phone_login:verify_attempt:13800138000",
+            "phone_login:verify_lock:13800138000",
+        ]

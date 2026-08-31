@@ -441,6 +441,169 @@ def register_routes(quart_app):
         )
         return _ok_msg("验证码已发送到您的邮箱,请查收")
 
+    @quart_app.post("/auth/send-code")
+    async def async_send_code() -> Response:
+        """async 统一验证码发送入口（邮箱/手机号通道）。"""
+        from internal.service.email_service import EmailService
+
+        allowed_scenes = {
+            "login_challenge",
+            "phone_register",
+            "phone_login",
+            "phone_bind",
+            "email_login",
+            "email_verify",
+            "password_reset",
+            "change_email",
+            "register",
+        }
+        payload = await request.get_json(force=True, silent=True) or {}
+        scene = str(payload.get("scene") or "").strip()
+        if scene not in allowed_scenes:
+            return _json_resp(
+                code="validate_error",
+                message="scene 不合法",
+                data={"scene": [f"scene 仅支持 {'/'.join(sorted(allowed_scenes))}"]},
+                status=400,
+            )
+        email = str(payload.get("email") or "").strip()
+        phone = str(payload.get("phone") or "").strip()
+        if phone:
+            phone = _get_service(AccountService).normalize_phone(phone)
+            if not _get_service(AccountService).is_valid_phone(phone):
+                return _json_resp(
+                    code="validate_error",
+                    message="手机号格式不正确",
+                    data={"phone": ["手机号格式不正确"]},
+                    status=400,
+                )
+        if not email and not phone:
+            return _json_resp(
+                code="validate_error",
+                message="email/phone 至少提供一个",
+                data={"email": ["email/phone 至少提供一个"]},
+                status=400,
+            )
+        await _to_thread(
+            _get_service(EmailService).send_code,
+            scene,
+            email=email or None,
+            phone=phone or None,
+        )
+        return _ok_msg("验证码已发送")
+
+    @quart_app.post("/auth/phone-code-login")
+    async def async_phone_code_login() -> Response:
+        """async 手机号验证码登录。"""
+        from internal.schema.auth_schema import PasswordLoginResp
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        code = str(payload.get("code") or "")
+        if not phone or not code:
+            return _json_resp(
+                code="validate_error",
+                message="手机号与验证码不能为空",
+                data={"phone": ["手机号与验证码不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        credential = await _to_thread(
+            _get_service(AccountService).phone_code_login, phone, code
+        )
+        return _ok(PasswordLoginResp().dump(credential))
+
+    @quart_app.post("/auth/email-code-login")
+    async def async_email_code_login() -> Response:
+        """async 邮箱验证码登录。"""
+        from internal.schema.auth_schema import PasswordLoginResp
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        email = str(payload.get("email") or "").strip()
+        code = str(payload.get("code") or "")
+        if not email or not code:
+            return _json_resp(
+                code="validate_error",
+                message="邮箱与验证码不能为空",
+                data={"email": ["邮箱与验证码不能为空"]},
+                status=400,
+            )
+        credential = await _to_thread(
+            _get_service(AccountService).email_code_login, email, code
+        )
+        return _ok(PasswordLoginResp().dump(credential))
+
+    @quart_app.post("/auth/register/phone-prepare")
+    async def async_phone_register_prepare() -> Response:
+        """async 手机号注册：发送注册验证码。"""
+        from internal.service.email_service import EmailService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        if not phone:
+            return _json_resp(
+                code="validate_error",
+                message="手机号不能为空",
+                data={"phone": ["手机号不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        await _to_thread(
+            _get_service(EmailService).send_code,
+            EmailService.PHONE_REGISTER_SCENE,
+            email=None,
+            phone=phone,
+        )
+        return _ok_msg("验证码已发送")
+
+    @quart_app.post("/auth/register/phone-verify")
+    async def async_phone_register_verify() -> Response:
+        """async 手机号注册：校验验证码并创建账号。"""
+        from internal.schema.auth_schema import PasswordLoginResp
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        code = str(payload.get("code") or "")
+        username = str(payload.get("username") or "").strip()
+        password = str(payload.get("password") or "")
+        if not phone or not code:
+            return _json_resp(
+                code="validate_error",
+                message="手机号与验证码不能为空",
+                data={"phone": ["手机号与验证码不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        credential = await _to_thread(
+            _get_service(AccountService).phone_register,
+            phone=phone,
+            code=code,
+            username=username,
+            password=password,
+        )
+        return _ok(PasswordLoginResp().dump(credential))
+
     @quart_app.get("/oauth/<string:provider_name>")
     async def async_oauth_provider(provider_name) -> Response:
         """async OAuth 授权入口（返回重定向地址）。"""
