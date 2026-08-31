@@ -76,8 +76,8 @@ updated_at / created_at
 
 ### 4.2 邮件发送配置（mail_config）
 - 服务 `mail_config_service`：`get_config()/update_config(payload)/send_test(to)`。
-- 邮件发送改造：`email_service` 发送前先读 DB mail_config（`smtp_host` 非空时用 DB 配置动态构建 SMTP `smtplib.SMTP/SMTP_SSL`）；DB 未配置才回退 `MAIL_*` env；两者皆空 → 抛"邮件发送未配置"（错误信息含引导文案）。
-- 动态构建的 SMTP 发送器与现有 `mail_extension`（env 初始化）并存：DB 优先，env 兜底。
+- 邮件发送改造：**邮件配置唯一来源为 DB（mail_config 表）**。`email_service`/`email_task` 发送时读取 DB 配置动态构建 SMTP；`smtp_host` 为空 → 抛"邮件发送未配置，请联系管理员在系统配置-邮件发送中填写"。
+- **清理旧配置**：删除 `config.py` 中 `MAIL_SERVER/MAIL_PORT/MAIL_USE_TLS/MAIL_USE_SSL/MAIL_USERNAME/MAIL_PASSWORD/MAIL_DEFAULT_SENDER/MAIL_TIMEOUT` 的 env 读取、`api/.env.example` 中 `MAIL_*` 示例与 `mail_extension` 的 env 初始化路径（无其他调用方引用这些 env），避免双源不一致；`mail_extension` 保留为纯 SMTP 封装工具（实例化参数全部来自 DB 配置）。
 - `send_test`: 向指定地址发一封测试邮件（标题【系统测试】邮件通道配置验证），返回成功/失败详情（SMTP 报错原文脱敏）。
 - 校验表单：host 必填（配置时）、port 1-65535、use_tls 与 use_ssl 互斥（tls 优先）、username/password 可选（匿名 SMTP）、default_sender 必须是合法邮箱。
 
@@ -203,4 +203,4 @@ updated_at / created_at
 - 阿里云/腾讯云签名实现复杂：两适配器独立且以测试覆盖请求构造；签名失败报供应商原文（脱敏）。
 - 无通道跳过验证的安全权衡：与决策一致——跳过时强制记安全日志（含 ip/ua），后续可扩展"跳过次数阈值"或"跳过需密码"策略。
 - 手机号唯一性：partial unique index；绑定冲突提示"该手机号已绑定其他账户"。
-- 既有邮箱功能兼容：email_service 既有场景/接口签名不变（新入口为追加），`MAIL_*` env 用户升级无感（DB 未配置走 env）。
+- 既有邮箱功能兼容：升级后需在后台"系统配置-邮件发送"完成 SMTP 配置方可用邮件验证码（旧 `MAIL_*` env 不再读取）；配置保存即时生效，无需重启。
