@@ -36,12 +36,16 @@ def register_routes(quart_app):
             return err
 
         from internal.schema.account_schema import GetCurrentUserResp
+        from internal.lib.mask_utils import mask_phone
 
         account_service = _get_service(AccountService)
         data = {
             "id": account.id,
             "name": account.name,
             "email": account.email,
+            "email_verified": account.email_verified_at is not None,
+            "phone": mask_phone(account.phone),
+            "phone_verified": account.phone_verified_at is not None,
             "avatar": account.avatar,
             "last_login_at": account.last_login_at,
             "last_login_ip": account.last_login_ip,

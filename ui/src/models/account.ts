@@ -40,6 +40,9 @@ export type GetCurrentUserResponse = BaseResponse<{
   id: string
   name: string
   email: string
+  email_verified: boolean
+  phone: string
+  phone_verified: boolean
   avatar: string
   last_login_ip: string
   last_login_location: string

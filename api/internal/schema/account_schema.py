@@ -18,6 +18,9 @@ class GetCurrentUserResp(Schema):
     id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
     email = fields.String(dump_default="")
+    email_verified = fields.Boolean(dump_default=False)
+    phone = fields.String(dump_default="")
+    phone_verified = fields.Boolean(dump_default=False)
     avatar = fields.String(dump_default="")
     last_login_at = fields.Integer(dump_default=0)
     last_login_ip = fields.String(dump_default="")
@@ -44,6 +47,9 @@ class GetCurrentUserResp(Schema):
                 "id": data.get("id"),
                 "name": data.get("name", ""),
                 "email": data.get("email", ""),
+                "email_verified": bool(data.get("email_verified", False)),
+                "phone": data.get("phone", ""),
+                "phone_verified": bool(data.get("phone_verified", False)),
                 "avatar": data.get("avatar", ""),
                 "last_login_at": _timestamp(data.get("last_login_at")),
                 "last_login_ip": data.get("last_login_ip", ""),
@@ -57,6 +63,9 @@ class GetCurrentUserResp(Schema):
             "id": data.id,
             "name": data.name,
             "email": data.email,
+            "email_verified": data.email_verified_at is not None,
+            "phone": getattr(data, "phone", ""),
+            "phone_verified": data.phone_verified_at is not None,
             "avatar": data.avatar,
             "last_login_at": _timestamp(data.last_login_at),
             "last_login_ip": data.last_login_ip,

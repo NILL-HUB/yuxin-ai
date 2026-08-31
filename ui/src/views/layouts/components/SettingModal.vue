@@ -15,6 +15,11 @@ import {
   useUpdateEmail,
   useUpdateName,
   useUpdatePassword,
+  useSendBindPhoneCode,
+  useBindPhone,
+  useUnbindPhone,
+  useSendVerifyEmailCode,
+  useVerifyEmail,
 } from '@/hooks/use-account'
 import { useUploadImage } from '@/hooks/use-upload-file'
 import { useProvider } from '@/hooks/use-oauth'
@@ -64,6 +69,15 @@ const { handleUpdatePassword } = useUpdatePassword()
 const { loading: sendEmailCodeLoading, handleSendChangeEmailCode } = useSendChangeEmailCode()
 const { loading: updateEmailLoading, handleUpdateEmail } = useUpdateEmail()
 const { handleUnbindOAuth } = useUnbindOAuth()
+const { loading: sendBindPhoneCodeLoading, handleSendBindPhoneCode: requestSendBindPhoneCode } =
+  useSendBindPhoneCode()
+const { loading: bindPhoneLoading, handleBindPhone } = useBindPhone()
+const { loading: unbindPhoneLoading, handleUnbindPhone } = useUnbindPhone()
+const {
+  loading: sendVerifyEmailCodeLoading,
+  handleSendVerifyEmailCode: requestSendVerifyEmailCode,
+} = useSendVerifyEmailCode()
+const { loading: verifyEmailLoading, handleVerifyEmail } = useVerifyEmail()
 const { loading: revokeOthersLoading, handleRevokeOtherAccountSessions } =
   useRevokeOtherAccountSessions()
 const { handleRevokeAccountSession } = useRevokeAccountSession()
@@ -72,6 +86,9 @@ const { redirect_url, handleProvider } = useProvider()
 
 const updateName = ref(false)
 const updateEmailMode = ref(false)
+const verifyEmailMode = ref(false)
+const phoneBindMode = ref(false)
+const phoneUnbindMode = ref(false)
 const selectedTab = ref<SettingsTabKey>('profile')
 const bindingLoadingProvider = ref('')
 const unbindLoadingProvider = ref('')
@@ -118,9 +135,20 @@ const createEmailForm = () => ({
   current_password: '',
 })
 
+const createVerifyEmailForm = () => ({
+  code: '',
+})
+
+const createPhoneForm = () => ({
+  phone: '',
+  code: '',
+})
+
 const accountForm = ref(createAccountForm())
 const securityForm = ref(createSecurityForm())
 const emailForm = ref(createEmailForm())
+const verifyEmailForm = ref(createVerifyEmailForm())
+const phoneForm = ref(createPhoneForm())
 
 const historyStatusOptions = computed(() => [
   { label: t('settings.history.statusAll'), value: 'all' },
@@ -180,6 +208,8 @@ const emailCodeButtonText = computed(() =>
 )
 
 const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+
+const validatePhone = (phone: string) => /^1[3-9]\d{9}$/.test(phone)
 
 const formatIpLocation = (ip?: string, location?: string, emptyText?: string) => {
   const normalizedIp = (ip || '').trim()
@@ -241,9 +271,14 @@ const loadDeviceSecurityData = async () => {
 const resetForms = () => {
   updateName.value = false
   updateEmailMode.value = false
+  verifyEmailMode.value = false
+  phoneBindMode.value = false
+  phoneUnbindMode.value = false
   accountForm.value = createAccountForm()
   securityForm.value = createSecurityForm()
   emailForm.value = createEmailForm()
+  verifyEmailForm.value = createVerifyEmailForm()
+  phoneForm.value = createPhoneForm()
   historyFilters.value = {
     status: 'all',
     search: '',
@@ -355,6 +390,120 @@ const handleSaveEmail = async () => {
   await updateAccount()
   updateEmailMode.value = false
   emailForm.value = createEmailForm()
+  clearEmailCodeCountdown()
+}
+
+const handleStartVerifyEmail = () => {
+  verifyEmailMode.value = true
+  verifyEmailForm.value = createVerifyEmailForm()
+}
+
+const handleCancelVerifyEmail = () => {
+  verifyEmailMode.value = false
+  verifyEmailForm.value = createVerifyEmailForm()
+}
+
+const handleSendVerifyEmailCode = async () => {
+  await requestSendVerifyEmailCode()
+  startEmailCodeCountdown()
+}
+
+const handleConfirmVerifyEmail = async () => {
+  const code = verifyEmailForm.value.code.trim()
+  if (!code) {
+    Message.error(t('settings.messages.enterCode'))
+    return
+  }
+
+  await handleVerifyEmail(code)
+  await updateAccount()
+  verifyEmailMode.value = false
+  verifyEmailForm.value = createVerifyEmailForm()
+  clearEmailCodeCountdown()
+}
+
+const handleStartBindPhone = () => {
+  phoneBindMode.value = true
+  phoneUnbindMode.value = false
+  phoneForm.value = createPhoneForm()
+  phoneForm.value.phone = accountStore.account.phone
+}
+
+const handleCancelBindPhone = () => {
+  phoneBindMode.value = false
+  phoneUnbindMode.value = false
+  phoneForm.value = createPhoneForm()
+}
+
+const handleSendBindPhoneCode = async () => {
+  const phone = phoneForm.value.phone.trim()
+  if (!phone) {
+    Message.error(t('settings.messages.enterPhone'))
+    return
+  }
+
+  if (!validatePhone(phone)) {
+    Message.error(t('settings.messages.invalidPhone'))
+    return
+  }
+
+  await requestSendBindPhoneCode(phone)
+  startEmailCodeCountdown()
+}
+
+const handleConfirmBindPhone = async () => {
+  const phone = phoneForm.value.phone.trim()
+  const code = phoneForm.value.code.trim()
+  if (!phone) {
+    Message.error(t('settings.messages.enterPhone'))
+    return
+  }
+
+  if (!validatePhone(phone)) {
+    Message.error(t('settings.messages.invalidPhone'))
+    return
+  }
+
+  if (!code) {
+    Message.error(t('settings.messages.enterCode'))
+    return
+  }
+
+  await handleBindPhone(phone, code)
+  await updateAccount()
+  phoneBindMode.value = false
+  phoneUnbindMode.value = false
+  phoneForm.value = createPhoneForm()
+  clearEmailCodeCountdown()
+}
+
+const handleStartUnbindPhone = () => {
+  phoneUnbindMode.value = true
+  phoneBindMode.value = false
+  phoneForm.value = createPhoneForm()
+}
+
+const handleCancelUnbindPhone = () => {
+  phoneUnbindMode.value = false
+  phoneForm.value = createPhoneForm()
+}
+
+const handleConfirmUnbindPhone = async () => {
+  const code = phoneForm.value.code.trim()
+  if (!code) {
+    Message.error(t('settings.messages.enterCode'))
+    return
+  }
+
+  if (!window.confirm(t('settings.security.phoneUnbindConfirm'))) {
+    return
+  }
+
+  await handleUnbindPhone(code)
+  await updateAccount()
+  phoneUnbindMode.value = false
+  phoneBindMode.value = false
+  phoneForm.value = createPhoneForm()
   clearEmailCodeCountdown()
 }
 
@@ -848,6 +997,162 @@ onBeforeUnmount(() => {
                   : $t('settings.security.submitUpdatePassword')
               }}
             </a-button>
+          </div>
+
+          <div class="mt-8 rounded-xl border border-gray-100 bg-white px-4 py-4">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <div class="text-base font-semibold text-gray-900">
+                  {{ $t('settings.security.emailStatus') }}
+                </div>
+                <div class="flex items-center gap-2 mt-1">
+                  <div class="text-sm text-gray-500">{{ accountStore.account.email }}</div>
+                  <a-tag :color="accountStore.account.email_verified ? 'green' : 'orange'">
+                    {{
+                      accountStore.account.email_verified
+                        ? $t('settings.security.emailVerified')
+                        : $t('settings.security.emailUnverified')
+                    }}
+                  </a-tag>
+                </div>
+              </div>
+              <a-button
+                v-if="!accountStore.account.email_verified && !verifyEmailMode"
+                type="primary"
+                class="rounded-lg flex-shrink-0"
+                @click="handleStartVerifyEmail"
+              >
+                {{ $t('settings.security.verifyEmail') }}
+              </a-button>
+            </div>
+
+            <div
+              v-if="verifyEmailMode"
+              class="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-4 flex flex-col gap-3"
+            >
+              <div class="flex items-center gap-2">
+                <a-input
+                  v-model="verifyEmailForm.code"
+                  :placeholder="t('settings.security.verifyEmailCodePlaceholder')"
+                />
+                <a-button
+                  class="rounded-lg flex-shrink-0"
+                  :loading="sendVerifyEmailCodeLoading"
+                  :disabled="emailCodeCountdown > 0"
+                  @click="handleSendVerifyEmailCode"
+                >
+                  {{ emailCodeButtonText }}
+                </a-button>
+              </div>
+              <div class="flex items-center gap-2">
+                <a-button class="rounded-lg" @click="handleCancelVerifyEmail">
+                  {{ $t('common.actions.cancel') }}
+                </a-button>
+                <a-button
+                  type="primary"
+                  class="rounded-lg"
+                  :loading="verifyEmailLoading"
+                  @click="handleConfirmVerifyEmail"
+                >
+                  {{ $t('settings.security.confirmVerifyEmail') }}
+                </a-button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-5 rounded-xl border border-gray-100 bg-white px-4 py-4">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <div class="text-base font-semibold text-gray-900">
+                  {{ $t('settings.security.phoneStatus') }}
+                </div>
+                <div class="flex items-center gap-2 mt-1">
+                  <div class="text-sm text-gray-500">
+                    {{
+                      accountStore.account.phone_verified
+                        ? accountStore.account.phone
+                        : $t('settings.security.phoneUnbound')
+                    }}
+                  </div>
+                  <a-tag :color="accountStore.account.phone_verified ? 'green' : 'gray'">
+                    {{
+                      accountStore.account.phone_verified
+                        ? $t('settings.security.phoneVerified')
+                        : $t('settings.security.phoneUnbound')
+                    }}
+                  </a-tag>
+                </div>
+                <div class="text-xs text-gray-500 mt-2">
+                  {{ $t('settings.security.phoneHint') }}
+                </div>
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <a-button
+                  v-if="!accountStore.account.phone_verified && !phoneBindMode"
+                  type="primary"
+                  class="rounded-lg"
+                  @click="handleStartBindPhone"
+                >
+                  {{ $t('settings.security.bindPhone') }}
+                </a-button>
+                <template v-else-if="accountStore.account.phone_verified">
+                  <a-button class="rounded-lg" @click="handleStartBindPhone">
+                    {{ $t('settings.security.rebindPhone') }}
+                  </a-button>
+                  <a-button
+                    v-if="!phoneUnbindMode"
+                    status="danger"
+                    class="rounded-lg"
+                    :loading="unbindPhoneLoading"
+                    @click="handleStartUnbindPhone"
+                  >
+                    {{ $t('settings.security.unbindPhone') }}
+                  </a-button>
+                </template>
+              </div>
+            </div>
+
+            <div
+              v-if="phoneBindMode || phoneUnbindMode"
+              class="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-4 flex flex-col gap-3"
+            >
+              <a-input
+                v-if="phoneBindMode"
+                v-model="phoneForm.phone"
+                :placeholder="t('settings.security.phonePlaceholder')"
+              />
+              <div class="flex items-center gap-2">
+                <a-input
+                  v-model="phoneForm.code"
+                  :placeholder="t('settings.security.verifyEmailCodePlaceholder')"
+                />
+                <a-button
+                  class="rounded-lg flex-shrink-0"
+                  :loading="sendBindPhoneCodeLoading"
+                  :disabled="emailCodeCountdown > 0"
+                  @click="handleSendBindPhoneCode"
+                >
+                  {{ emailCodeButtonText }}
+                </a-button>
+              </div>
+              <div class="flex items-center gap-2">
+                <a-button class="rounded-lg" @click="handleCancelBindPhone">
+                  {{ $t('common.actions.cancel') }}
+                </a-button>
+                <a-button
+                  type="primary"
+                  class="rounded-lg"
+                  :loading="phoneUnbindMode ? unbindPhoneLoading : bindPhoneLoading"
+                  @click="phoneUnbindMode ? handleConfirmUnbindPhone() : handleConfirmBindPhone()"
+                >
+                  {{
+                    phoneUnbindMode
+                      ? $t('settings.security.unbindPhone')
+                      : $t('settings.security.confirmBindPhone')
+                  }}
+                </a-button>
+              </div>
+            </div>
           </div>
         </template>
 

@@ -767,3 +767,116 @@ class TestVerifyEmailRoutes(_SecurityBase):
 
         assert resp.status_code == 400
         assert payload["code"] == "validate_error"
+
+
+class TestGetCurrentUserProfile:
+    def _setup(self, monkeypatch, account_service, account):
+        async def _resolve_account():
+            return account, None
+
+        def _get_service(cls):
+            if cls is AccountService:
+                return account_service
+            raise AssertionError(f"unexpected service {cls}")
+
+        monkeypatch.setattr(account_auth_routes, "_get_service", _get_service)
+        monkeypatch.setattr(account_auth_routes, "_resolve_account", _resolve_account)
+
+    def _get(self):
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/account")
+                return resp, await resp.json
+
+        return asyncio.run(_run())
+
+    def test_profile_should_include_masked_phone_and_verification_flags(self, monkeypatch):
+        account = SimpleNamespace(
+            id="account-1",
+            name="tester",
+            email="tester@example.com",
+            email_verified_at=None,
+            phone="13800138000",
+            phone_verified_at=None,
+            avatar="",
+            last_login_at=1704067200,
+            last_login_ip="1.2.3.4",
+            last_login_location="",
+            created_at=1704067200,
+            is_password_set=True,
+            oauth_bindings=[],
+        )
+        account_service = _fake_account_service(
+            resolve_ip_location=lambda ip: "上海",
+            get_account_oauth_bindings=lambda account: [],
+        )
+        self._setup(monkeypatch, account_service, account)
+
+        resp, payload = self._get()
+
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        data = payload["data"]
+        assert data["email"] == "tester@example.com"
+        assert data["phone"] == "138****8000"
+        assert data["email_verified"] is False
+        assert data["phone_verified"] is False
+
+    def test_profile_should_report_verified_when_timestamps_present(self, monkeypatch):
+        account = SimpleNamespace(
+            id="account-1",
+            name="tester",
+            email="tester@example.com",
+            email_verified_at=1704067200,
+            phone="13800138000",
+            phone_verified_at=1704067200,
+            avatar="",
+            last_login_at=1704067200,
+            last_login_ip="",
+            last_login_location="",
+            created_at=1704067200,
+            is_password_set=True,
+            oauth_bindings=[],
+        )
+        account_service = _fake_account_service(
+            resolve_ip_location=lambda ip: "",
+            get_account_oauth_bindings=lambda account: [],
+        )
+        self._setup(monkeypatch, account_service, account)
+
+        resp, payload = self._get()
+
+        assert resp.status_code == 200
+        data = payload["data"]
+        assert data["email_verified"] is True
+        assert data["phone_verified"] is True
+        assert data["phone"] == "138****8000"
+
+    def test_profile_should_mask_empty_phone_as_empty_string(self, monkeypatch):
+        account = SimpleNamespace(
+            id="account-1",
+            name="tester",
+            email="tester@example.com",
+            email_verified_at=None,
+            phone="",
+            phone_verified_at=None,
+            avatar="",
+            last_login_at=1704067200,
+            last_login_ip="",
+            last_login_location="",
+            created_at=1704067200,
+            is_password_set=True,
+            oauth_bindings=[],
+        )
+        account_service = _fake_account_service(
+            resolve_ip_location=lambda ip: "",
+            get_account_oauth_bindings=lambda account: [],
+        )
+        self._setup(monkeypatch, account_service, account)
+
+        resp, payload = self._get()
+
+        assert resp.status_code == 200
+        data = payload["data"]
+        assert data["phone"] == ""
+        assert data["phone_verified"] is False

@@ -12,6 +12,13 @@ import {
   updatePassword,
   unbindOAuth,
 } from '@/services/account'
+import {
+  bindPhone,
+  sendBindPhoneCode,
+  sendVerifyEmailCode,
+  unbindPhone,
+  verifyEmail,
+} from '@/services/account-security'
 import { Message } from '@arco-design/web-vue'
 import type {
   GetAccountSessionsResponse,
@@ -220,4 +227,84 @@ export const useUnbindOAuth = () => {
   }
 
   return { loading, handleUnbindOAuth }
+}
+
+export const useSendBindPhoneCode = () => {
+  const loading = ref(false)
+
+  const handleSendBindPhoneCode = async (phone: string) => {
+    try {
+      loading.value = true
+      const resp = await sendBindPhoneCode(phone)
+      Message.success(resp.message)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, handleSendBindPhoneCode }
+}
+
+export const useBindPhone = () => {
+  const loading = ref(false)
+
+  const handleBindPhone = async (phone: string, code: string) => {
+    try {
+      loading.value = true
+      const resp = await bindPhone(phone, code)
+      Message.success(resp.message)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, handleBindPhone }
+}
+
+export const useUnbindPhone = () => {
+  const loading = ref(false)
+
+  const handleUnbindPhone = async (code: string) => {
+    try {
+      loading.value = true
+      const resp = await unbindPhone(code)
+      Message.success(resp.message)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, handleUnbindPhone }
+}
+
+export const useSendVerifyEmailCode = () => {
+  const loading = ref(false)
+
+  const handleSendVerifyEmailCode = async () => {
+    try {
+      loading.value = true
+      const resp = await sendVerifyEmailCode()
+      Message.success(resp.message)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, handleSendVerifyEmailCode }
+}
+
+export const useVerifyEmail = () => {
+  const loading = ref(false)
+
+  const handleVerifyEmail = async (code: string) => {
+    try {
+      loading.value = true
+      const resp = await verifyEmail(code)
+      Message.success(resp.message)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, handleVerifyEmail }
 }
