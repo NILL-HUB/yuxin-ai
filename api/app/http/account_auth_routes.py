@@ -243,6 +243,12 @@ def register_routes(quart_app):
         )
         return _ok_msg("解绑第三方账号成功")
 
+    @quart_app.get("/auth/login-methods")
+    async def async_login_methods() -> Response:
+        """获取当前启用的登录方式开关。"""
+        payload = await _to_thread(_get_service(AccountService).login_methods)
+        return _ok(payload)
+
     @quart_app.post("/auth/password-login")
     async def async_password_login() -> Response:
         """async 账号密码登录。"""
@@ -300,7 +306,10 @@ def register_routes(quart_app):
                 status=400,
             )
         credential = await _to_thread(
-            _get_service(AccountService).direct_register, username, password
+            _get_service(AccountService).direct_register,
+            username,
+            password,
+            str(payload.get("invite_code") or "").strip(),
         )
         return _ok(PasswordLoginResp().dump(credential))
 
@@ -325,9 +334,20 @@ def register_routes(quart_app):
             email,
             password,
             code,
-            username=str(payload.get("username") or "").strip() or None,
+            str(payload.get("username") or "").strip() or None,
+            str(payload.get("invite_code") or "").strip(),
         )
         return _ok(PasswordLoginResp().dump(credential))
+
+    @quart_app.get("/auth/register/invite-info")
+    async def async_register_invite_info() -> Response:
+        """校验邀请码有效性并返回注册必填状态（扫码/分享链接预填用）。"""
+        from internal.schema.distribution_schema import InviteInfoResp
+        from internal.service.distribution_service import DistributionService
+
+        code = str(request.args.get("code") or "").strip()
+        result = await _to_thread(_get_service(DistributionService).invite_info, code)
+        return _ok(InviteInfoResp().dump(result))
 
     @quart_app.post("/auth/logout")
     async def async_auth_logout() -> Response:

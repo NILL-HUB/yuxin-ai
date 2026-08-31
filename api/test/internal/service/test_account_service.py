@@ -254,6 +254,11 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(verify_register_code=lambda email, code: email == "tester@example.com" and code == "123456"),
         )
+        service.distribution_service = SimpleNamespace(
+            is_enabled=lambda: False,
+            ensure_referral_code=lambda _account_id: None,
+            bind_superior=lambda *_args, **_kwargs: None,
+        )
         monkeypatch.setattr(service, "create_account", lambda **kwargs: created_accounts.append(kwargs) or Account(id=uuid4(), **kwargs))
         monkeypatch.setattr(service, "update_password", lambda password, account: updated_passwords.append((password, account)) or account)
         monkeypatch.setattr(service, "begin_login", lambda account: {"access_token": f"token-{account.username}"})
@@ -296,6 +301,7 @@ class TestAccountService:
             "update_account",
             lambda target, **kwargs: updates.append((target, kwargs)) or target,
         )
+        monkeypatch.setattr(service, "get_account_sessions_by_account_id", lambda _account_id: [])
 
         result = service.update_password("pass-123", account)
 
@@ -304,6 +310,54 @@ class TestAccountService:
         payload = updates[0][1]
         assert payload["password_salt"] == base64.b64encode(b"\x01" * 16).decode()
         assert payload["password"] == base64.b64encode(b"\x02" * 32).decode()
+
+    def test_update_password_should_revoke_all_sessions_and_mark_changed_at(self, monkeypatch):
+        service = self._build_service()
+        account = SimpleNamespace(id=uuid4())
+        old_session = SimpleNamespace(id=uuid4(), revoked_at=None)
+        expired_session = SimpleNamespace(id=uuid4(), revoked_at=None)
+        revoked_session = SimpleNamespace(id=uuid4(), revoked_at=datetime.now(UTC))
+        monkeypatch.setattr(
+            service,
+            "get_account_sessions_by_account_id",
+            lambda _account_id: [old_session, expired_session, revoked_session],
+        )
+        session_updates = []
+        monkeypatch.setattr(
+            service,
+            "update",
+            lambda target, **kwargs: session_updates.append((target, kwargs)) or target,
+        )
+        monkeypatch.setattr(
+            service,
+            "update_account",
+            lambda target, **kwargs: target,
+        )
+
+        service.update_password("New_123456", account)
+
+        updated_ids = [target.id for target, _kwargs in session_updates]
+        assert old_session.id in updated_ids
+        assert expired_session.id in updated_ids
+        assert revoked_session.id not in updated_ids
+
+    def test_validate_access_session_should_reject_session_before_password_change(self, monkeypatch):
+        service = self._build_service()
+        account_id = uuid4()
+        changed_at = datetime.now(UTC).replace(tzinfo=None)
+        old_session = SimpleNamespace(
+            id=uuid4(),
+            account_id=account_id,
+            revoked_at=None,
+            expires_at=changed_at + timedelta(days=1),
+            created_at=changed_at - timedelta(hours=1),
+        )
+        monkeypatch.setattr(service, "get_account_session", lambda _sid: old_session)
+        monkeypatch.setattr(service, "get_account", lambda _aid: SimpleNamespace(password_changed_at=changed_at))
+        monkeypatch.setattr(service, "touch_account_session", lambda _session: None)
+
+        with pytest.raises(UnauthorizedException, match="密码已变更"):
+            service.validate_access_session({"sub": str(account_id), "jti": str(old_session.id)})
 
     def test_change_password_should_require_current_password_for_existing_password(self):
         service = self._build_service()
@@ -1144,7 +1198,7 @@ class TestAccountService:
         assert result["challenge_required"] is True
         assert result["challenge_type"] == "email_code"
         assert result["risk_reason"] == "new_ip"
-        assert result["masked_email"].startswith("de")
+        assert result["masked_email"] == "de***mo@example.com"
         assert email_calls == ["demo@example.com"]
         assert service._login_challenge_key(result["challenge_id"]) in redis_stub.values
         assert len(redis_stub.delete_calls) == 0
@@ -1210,7 +1264,7 @@ class TestAccountService:
             "challenge_required": True,
             "challenge_id": challenge_id,
             "challenge_type": "email_code",
-            "masked_email": "de**@example.com",
+            "masked_email": "de***mo@example.com",
             "risk_reason": "new_ip",
         }
         assert email_calls == ["demo@example.com"]
@@ -1542,3 +1596,38 @@ class TestAccountService:
         service.reset_password("demo@example.com", "123456", "new-pass")
 
         assert update_password_calls == [("new-pass", account)]
+
+    def test_login_methods_should_read_auth_switches(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": False,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+
+        result = service.login_methods()
+
+        assert result == {
+            "email_enabled": True,
+            "phone_enabled": False,
+            "challenge_enabled": True,
+        }
+
+    def test_mask_email_should_delegate_to_mask_utils(self):
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+
+        assert service._mask_email("zhangsan@qq.com") == "zh***an@qq.com"
+        assert service._mask_email("ab@qq.com") == "ab***@qq.com"
+        assert service._mask_email("not-an-email") == "not-an-email"

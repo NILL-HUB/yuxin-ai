@@ -36,6 +36,7 @@ class AccountService(BaseService):
     db: SQLAlchemy
     jwt_service: JwtService
     email_service: EmailService
+    distribution_service = None
     SUPPORTED_OAUTH_PROVIDERS = ("github", "google")
     INVALID_CREDENTIALS_REASON_CODE = "INVALID_CREDENTIALS"
     ACCOUNT_EXISTS_REASON_CODE = "ACCOUNT_EXISTS"
@@ -106,19 +107,9 @@ class AccountService(BaseService):
 
     @classmethod
     def _mask_email(cls, email: str) -> str:
-        normalized_email = (email or "").strip()
-        if "@" not in normalized_email:
-            return normalized_email
+        from internal.lib.mask_utils import mask_email
 
-        local_part, domain = normalized_email.split("@", 1)
-        if len(local_part) <= 1:
-            masked_local_part = "*"
-        elif len(local_part) == 2:
-            masked_local_part = f"{local_part[0]}*"
-        else:
-            masked_local_part = f"{local_part[:2]}{'*' * max(len(local_part) - 2, 1)}"
-
-        return f"{masked_local_part}@{domain}"
+        return mask_email(email)
 
     @classmethod
     def _resolve_client_ip(cls) -> str:
@@ -506,6 +497,16 @@ class AccountService(BaseService):
         """根据id获取指定的账号模型"""
         return self.get(Account, account_id)
 
+    def login_methods(self) -> dict[str, bool]:
+        from internal.service.auth_switch_service import get_auth_switches
+
+        sw = get_auth_switches()
+        return {
+            "email_enabled": sw["AUTH_EMAIL_ENABLED"],
+            "phone_enabled": sw["AUTH_PHONE_ENABLED"],
+            "challenge_enabled": sw["AUTH_LOGIN_CHALLENGE_ENABLED"],
+        }
+
     def get_account_oauth_by_provider_name_and_openid(
             self,
             provider_name: str,
@@ -611,9 +612,29 @@ class AccountService(BaseService):
             password=base64_password_hashed,
             password_salt=base64_salt,
             password_version=PASSWORD_HASH_VERSION_CURRENT,
+            password_changed_at=self._now(),
         )
+        # 密码变更后立即吊销该账号全部旧登录会话，旧 token 失效
+        try:
+            for account_session in self.get_account_sessions_by_account_id(account.id):
+                if account_session.revoked_at is None:
+                    self.update(account_session, revoked_at=self._now())
+        except Exception:
+            logging.warning("密码更新后吊销旧会话失败 account_id=%s", account.id, exc_info=True)
 
         return account
+
+    def _rehash_account_password(self, password: str, account: Account) -> None:
+        """登录成功后透明升级旧参数哈希：不视为密码变更，不吊销现有会话。"""
+        salt = secrets.token_bytes(16)
+        base64_salt = base64.b64encode(salt).decode()
+        password_hashed = hash_password(password, salt)
+        self.update_account(
+            account,
+            password=base64.b64encode(password_hashed).decode(),
+            password_salt=base64_salt,
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
+        )
 
     def _rehash_if_outdated(self, account: Account, password: str) -> None:
         """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
@@ -758,6 +779,21 @@ class AccountService(BaseService):
         expires_at = getattr(account_session, "expires_at", None)
         if expires_at and expires_at < self._now():
             raise UnauthorizedException("登录会话已过期,请重新登录")
+
+        # 密码变更后，变更前创建的会话一律失效（即使未被显式吊销）
+        try:
+            account = self.get_account(account_session.account_id)
+            password_changed_at = getattr(account, "password_changed_at", None)
+            session_created_at = getattr(account_session, "created_at", None)
+            if (
+                password_changed_at is not None
+                and session_created_at is not None
+                and session_created_at < password_changed_at
+            ):
+                raise UnauthorizedException("密码已变更，请重新登录")
+        except SQLAlchemyError:
+            self._rollback_session()
+            raise
 
         self.touch_account_session(account_session)
         return account_session
@@ -1142,13 +1178,40 @@ class AccountService(BaseService):
             raise FailException("用户名已存在，请更换后重试", reason_code=self.ACCOUNT_EXISTS_REASON_CODE)
         return normalized_email, normalized_username
 
+    def _get_distribution_service(self):
+        if self.distribution_service is None:
+            from internal.service.distribution_service import DistributionService
+
+            self.distribution_service = DistributionService(session=self.db.session)
+        return self.distribution_service
+
+    def _validate_invite_code(self, invite_code: str):
+        """分销开启时校验邀请码；关闭时可空。返回解析到的邀请人 Account 或 None。"""
+        code = (invite_code or "").strip()
+        distribution = self._get_distribution_service()
+        if not code:
+            if distribution.is_enabled():
+                raise FailException("注册需要填写邀请码")
+            return None
+        inviter = distribution.resolve_inviter_by_code(code)
+        if inviter is None:
+            raise FailException("邀请码无效或邀请人不可用")
+        return inviter
+
+    def _bind_inviter_and_code(self, account: Account, inviter, invite_code: str) -> None:
+        distribution = self._get_distribution_service()
+        distribution.ensure_referral_code(account.id)
+        if inviter is not None:
+            distribution.bind_superior(account.id, inviter.id, source="register")
+
     def prepare_register(self, email: str, password: str, username: str = "") -> None:
         """为未注册邮箱发送注册验证码。"""
         normalized_email, _ = self._ensure_register_account_available(email, username)
         self.email_service.send_register_code(normalized_email)
 
-    def direct_register(self, username: str, password: str) -> dict[str, Any]:
+    def direct_register(self, username: str, password: str, invite_code: str = "") -> dict[str, Any]:
         """直接注册（无需邮箱验证码）。"""
+        inviter = self._validate_invite_code(invite_code)
         normalized_username = self._validate_username(username)
         if self.get_account_by_username(normalized_username):
             raise FailException("用户名已存在，请更换后重试", reason_code=self.ACCOUNT_EXISTS_REASON_CODE)
@@ -1156,11 +1219,13 @@ class AccountService(BaseService):
             username=normalized_username,
             name=normalized_username,
         )
+        self._bind_inviter_and_code(account, inviter, invite_code)
         self.update_password(password, account)
         return self.begin_login(account)
 
-    def register_by_email_code(self, email: str, password: str, code: str, username: str = "") -> dict[str, Any]:
+    def register_by_email_code(self, email: str, password: str, code: str, username: str = "", invite_code: str = "") -> dict[str, Any]:
         """校验注册验证码后创建账号并直接登录。"""
+        inviter = self._validate_invite_code(invite_code)
         normalized_email, normalized_username = self._ensure_register_account_available(email, username)
 
         if not self.email_service.verify_register_code(normalized_email, code):
@@ -1172,6 +1237,7 @@ class AccountService(BaseService):
             username=normalized_username,
             name=display_name,
         )
+        self._bind_inviter_and_code(account, inviter, invite_code)
         self.update_password(password, account)
         return self.begin_login(account)
 
@@ -1211,7 +1277,7 @@ class AccountService(BaseService):
         """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
         if int(getattr(account, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
             return
-        self.update_password(password, account)
+        self._rehash_account_password(password, account)
 
     def send_reset_code(self, email: str) -> None:
         """发送密码重置验证码"""
