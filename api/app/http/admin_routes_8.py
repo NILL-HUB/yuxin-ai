@@ -944,6 +944,24 @@ def register_routes(quart_app):
 
         payload = await request.get_json(force=True, silent=True) or {}
         enabled = bool(payload.get("enabled", False))
+
+        from internal.service.auth_switch_service import (
+            AUTH_CODES,
+            validate_auth_switch_combination,
+        )
+
+        if code in AUTH_CODES:
+            flags = await a._to_thread(
+                a._get_service(OrchestrationFeatureFlagService).list_flags
+            )
+            switches = {flag["code"]: bool(flag["enabled"]) for flag in flags}
+            switches[code] = enabled
+            err = validate_auth_switch_combination(switches)
+            if err is not None:
+                return a._json_resp(
+                    code="validate_error", message=err, data={"code": [err]}, status=400
+                )
+
         try:
             result = await a._to_thread(
                 a._get_service(OrchestrationFeatureFlagService).update_flag,

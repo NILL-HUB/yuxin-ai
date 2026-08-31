@@ -475,6 +475,44 @@ class _FakeOrchestrationFeatureFlagService:
         }
 
 
+class _StatefulAuthFlagService(_FakeOrchestrationFeatureFlagService):
+    def __init__(self):
+        super().__init__()
+        self.state = {
+            "AUTH_EMAIL_ENABLED": False,
+            "AUTH_PHONE_ENABLED": False,
+            "AUTH_LOGIN_CHALLENGE_ENABLED": False,
+        }
+
+    def list_flags(self):
+        self.calls.append(("list",))
+        return [
+            {
+                "code": code,
+                "name": code,
+                "description": "desc",
+                "enabled": enabled,
+                "risk_level": "low",
+                "fallback_behavior": "off",
+                "updated_by": str(uuid4()),
+            }
+            for code, enabled in self.state.items()
+        ]
+
+    def update_flag(self, *, code, enabled=False, operator_id=None):
+        self.calls.append(("update", code, enabled, operator_id))
+        self.state[code] = enabled
+        return {
+            "code": code,
+            "name": code,
+            "description": "desc",
+            "enabled": enabled,
+            "risk_level": "low",
+            "fallback_behavior": "off",
+            "updated_by": str(operator_id),
+        }
+
+
 class _FakeAuditLogService:
     def __init__(self):
         self.calls = []
@@ -1263,6 +1301,54 @@ class TestAdminOrchestrationFlag:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 403
         assert payload["code"] == "forbidden"
+
+    def test_update_auth_challenge_rejected_when_all_channels_off(self, monkeypatch):
+        from internal.service.orchestration_feature_flag_service import (
+            OrchestrationFeatureFlagService,
+        )
+
+        svc = _StatefulAuthFlagService()
+        _setup(monkeypatch, {OrchestrationFeatureFlagService: svc})
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/orchestration-flags/AUTH_LOGIN_CHALLENGE_ENABLED?account_id={uuid4()}",
+                    json={"enabled": True},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+        assert "至少启用邮箱或手机号通道之一" in payload["message"]
+        assert payload["data"] == {"code": [payload["message"]]}
+
+    def test_update_auth_challenge_succeeds_after_channel_enabled(self, monkeypatch):
+        from internal.service.orchestration_feature_flag_service import (
+            OrchestrationFeatureFlagService,
+        )
+
+        svc = _StatefulAuthFlagService()
+        _setup(monkeypatch, {OrchestrationFeatureFlagService: svc})
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/orchestration-flags/AUTH_EMAIL_ENABLED?account_id={uuid4()}",
+                    json={"enabled": True},
+                )
+                assert resp.status_code == 200
+                resp = await client.post(
+                    f"/admin/orchestration-flags/AUTH_LOGIN_CHALLENGE_ENABLED?account_id={uuid4()}",
+                    json={"enabled": True},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["enabled"] is True
+        assert len([c for c in svc.calls if c[0] == "update"]) == 2
 
 
 class TestAdminAuditLog:
