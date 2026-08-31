@@ -300,10 +300,7 @@ def register_routes(quart_app):
         account, err = await a._resolve_admin_operator()
         if err is not None:
             return err
-        import json as _json
         from decimal import Decimal
-
-        from quart import Response
 
         from internal.core.billing.pricing_guard import suggest_sell_prices
         from internal.extension.database_extension import db
@@ -346,11 +343,7 @@ def register_routes(quart_app):
             peak_valley_enabled=peak_valley_enabled,
             cache_pricing_enabled=cache_pricing_enabled,
         )
-        return Response(
-            _json.dumps({"ok": True, "data": result}, ensure_ascii=False, default=str),
-            mimetype="application/json",
-            status=200,
-        )
+        return a._ok(result)
 
     @quart_app.get("/admin/model-keys")
     async def admin_model_key_list():

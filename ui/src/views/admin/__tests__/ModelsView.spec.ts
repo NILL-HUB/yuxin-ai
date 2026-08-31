@@ -318,11 +318,8 @@ describe('ModelsView', () => {
 
   it('applies pricing suggestions from the auto pricing assistant', async () => {
     mocks.suggestSellPrices.mockResolvedValue({
-      ok: true,
-      data: {
-        peak_input_price_per_1k_tokens: '1.250000',
-        valley_input_price_per_1k_tokens: '0.800000',
-      },
+      peak_input_price_per_1k_tokens: '1.250000',
+      valley_input_price_per_1k_tokens: '0.800000',
     })
     const wrapper = await renderView()
 

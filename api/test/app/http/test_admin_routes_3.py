@@ -586,7 +586,7 @@ class TestAdminModelPoolRoutes:
 
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
-        assert payload["ok"] is True
+        assert payload["code"] == "success"
         assert payload["data"]["peak_input_price_per_1k_tokens"] == "0.390000"
 
     def test_pricing_suggest_missing_fields(self, monkeypatch):

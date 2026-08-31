@@ -109,17 +109,17 @@ onMounted(() => {
     </section>
 
     <section class="panel mt-4">
-      <h3 class="panel-title">按档位汇总</h3>
+      <h3 class="panel-title">{{ t('admin.reconcile.tierSummary.title') }}</h3>
       <a-table :data="tierSummary" :pagination="false" size="small" row-key="tier">
         <template #columns>
-          <a-table-column title="档位" data-index="tier" />
-          <a-table-column title="调用次数" data-index="calls" align="right" />
-          <a-table-column title="实际算力" data-index="actual_credits" align="right" />
-          <a-table-column title="成本算力" data-index="cost_credits" align="right" />
-          <a-table-column title="毛利" data-index="margin_credits" align="right" />
+          <a-table-column :title="t('admin.reconcile.tierSummary.tierColumn')" data-index="tier" />
+          <a-table-column :title="t('admin.reconcile.tierSummary.callsColumn')" data-index="calls" align="right" />
+          <a-table-column :title="t('admin.reconcile.tierSummary.actualColumn')" data-index="actual_credits" align="right" />
+          <a-table-column :title="t('admin.reconcile.tierSummary.costColumn')" data-index="cost_credits" align="right" />
+          <a-table-column :title="t('admin.reconcile.tierSummary.marginColumn')" data-index="margin_credits" align="right" />
         </template>
       </a-table>
-      <p class="empty-text">缓存命中输入 Token 合计：{{ cachedInputTokensTotal }}</p>
+      <p class="empty-text">{{ t('admin.reconcile.tierSummary.cachedTotal', { total: cachedInputTokensTotal }) }}</p>
     </section>
 
     <section class="panel mt-4">

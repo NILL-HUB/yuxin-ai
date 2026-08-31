@@ -319,9 +319,9 @@ const openPricingSuggest = async () => {
       },
       0.3,
     )
-    if (resp?.data) {
+    if (resp) {
       const formRecord = modelForm.value as Record<string, unknown>
-      Object.entries(resp.data).forEach(([key, value]) => {
+      Object.entries(resp).forEach(([key, value]) => {
         if (key in formRecord) {
           formRecord[key] = value
         }
