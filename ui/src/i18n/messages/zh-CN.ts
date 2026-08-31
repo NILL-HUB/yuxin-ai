@@ -1252,6 +1252,8 @@ export default {
       updateFailed: '更新功能开关失败',
       poolGovernanceGroup: '池治理开关',
       poolGovernanceGroupDesc: '控制工具池治理的渐进式启用阶段',
+      businessGroup: '业务开关',
+      challengeNeedsChannel: '新IP验证需至少启用邮箱或手机号通道之一',
       distributionGroup: '功能开关',
       distributionGroupDesc: '统一管理需要启停的业务功能，后续新增的功能开关均在此列表中统一管理',
       otherGroup: '其他编排开关',

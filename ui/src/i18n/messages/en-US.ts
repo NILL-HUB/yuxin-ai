@@ -1250,6 +1250,8 @@ export default {
       updateFailed: 'Failed to update feature flag',
       poolGovernanceGroup: 'Pool governance',
       poolGovernanceGroupDesc: 'Controls the progressive rollout stages of tool pool governance',
+      businessGroup: 'Business Flags',
+      challengeNeedsChannel: 'Challenge verification requires at least one channel (email or phone) enabled',
       distributionGroup: 'Feature Flags',
       distributionGroupDesc: 'Centrally manage feature toggles; newly added feature switches are consolidated into this list',
       otherGroup: 'Other orchestration flags',

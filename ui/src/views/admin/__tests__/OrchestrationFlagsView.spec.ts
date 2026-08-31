@@ -44,6 +44,8 @@ vi.mock('vue-i18n', () => ({
         'admin.orchestrationFlags.updateFailed': 'Update failed',
         'admin.orchestrationFlags.poolGovernanceGroup': 'Pool governance',
         'admin.orchestrationFlags.poolGovernanceGroupDesc': 'Pool governance desc',
+        'admin.orchestrationFlags.businessGroup': 'Business flags',
+        'admin.orchestrationFlags.challengeNeedsChannel': 'Challenge needs channel',
         'admin.orchestrationFlags.otherGroup': 'Other flags',
         'admin.orchestrationFlags.priorityHint': 'Priority hint',
       })[key] ?? key,
@@ -54,7 +56,7 @@ vi.mock('vue-i18n', () => ({
 // Stub Arco table/switch to render slot content for text assertions
 const tableStub = {
   props: ['columns', 'data', 'pagination', 'rowKey', 'bordered', 'size'],
-  template: `<table><tbody><tr v-for="row in data" :key="row.code"><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.description }}</td><td>{{ row.risk_level }}</td><td>{{ row.fallback_behavior }}</td><td><slot name="enabled" :record="row" /></td></tr></tbody></table>`,
+  template: `<table><tbody><tr v-for="row in data" :key="row.code" :data-code="row.code"><td>{{ row.code }}</td><td>{{ row.name }}</td><td>{{ row.description }}</td><td>{{ row.risk_level }}</td><td>{{ row.fallback_behavior }}</td><td><slot name="enabled" :record="row" /></td></tr></tbody></table>`,
 }
 
 const switchStub = {
@@ -69,8 +71,44 @@ const modalStub = {
   template: '<div v-if="visible" class="confirm-modal"><slot /><button type="button" class="modal-ok-btn" @click="$emit(\'ok\')">ok</button></div>',
 }
 
+const defaultFlags = [
+  {
+    code: 'AUTH_EMAIL_ENABLED',
+    name: 'Email channel',
+    description: 'Email verification channel',
+    enabled: false,
+    risk_level: 'low',
+    fallback_behavior: 'disabled',
+  },
+  {
+    code: 'AUTH_PHONE_ENABLED',
+    name: 'Phone channel',
+    description: 'Phone verification channel',
+    enabled: false,
+    risk_level: 'low',
+    fallback_behavior: 'disabled',
+  },
+  {
+    code: 'AUTH_LOGIN_CHALLENGE_ENABLED',
+    name: 'Login challenge',
+    description: 'New IP verification challenge',
+    enabled: false,
+    risk_level: 'medium',
+    fallback_behavior: 'disabled',
+  },
+  {
+    code: 'ENABLE_ORCHESTRATOR',
+    name: 'Orchestrator',
+    description: 'Enable orchestration router',
+    enabled: true,
+    risk_level: 'medium',
+    fallback_behavior: 'direct_answer',
+  },
+]
+
 const renderView = async (
   permissions: string[] = ['orchestration_flag:read', 'orchestration_flag:update'],
+  flags: typeof defaultFlags = defaultFlags,
 ) => {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -86,16 +124,7 @@ const renderView = async (
     permissions,
   })
 
-  mocks.listAdminOrchestrationFlags.mockResolvedValue([
-    {
-      code: 'ENABLE_ORCHESTRATOR',
-      name: 'Orchestrator',
-      description: 'Enable orchestration router',
-      enabled: true,
-      risk_level: 'medium',
-      fallback_behavior: 'direct_answer',
-    },
-  ])
+  mocks.listAdminOrchestrationFlags.mockResolvedValue(flags)
   mocks.getAdminOrchestrationReleaseCheck.mockResolvedValue({
     test_status: {},
     migration_status: {},
@@ -144,7 +173,8 @@ describe('OrchestrationFlagsView', () => {
   it('updates flag enabled state', async () => {
     const wrapper = await renderView()
 
-    await wrapper.find('.arco-switch').trigger('click')
+    const flagRow = wrapper.find('tr[data-code="ENABLE_ORCHESTRATOR"]')
+    await flagRow.find('.arco-switch').trigger('click')
     await wrapper.find('.modal-ok-btn').trigger('click')
     await flushPromises()
 
@@ -157,6 +187,46 @@ describe('OrchestrationFlagsView', () => {
   it('disables switch when update permission is missing', async () => {
     const wrapper = await renderView(['orchestration_flag:read'])
 
-    expect(wrapper.find('.arco-switch').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('tr[data-code="ENABLE_ORCHESTRATOR"] .arco-switch').attributes('disabled')).toBeDefined()
+  })
+
+  it('renders auth flags in a leading business group', async () => {
+    const wrapper = await renderView()
+
+    const groupHeaders = wrapper.findAll('.group-header-title').map((node) => node.text())
+    expect(groupHeaders[0]).toBe('Business flags')
+
+    const bodyText = wrapper.find('.flags-collapse').text()
+    expect(bodyText).toContain('AUTH_EMAIL_ENABLED')
+    expect(bodyText).toContain('AUTH_PHONE_ENABLED')
+    expect(bodyText).toContain('AUTH_LOGIN_CHALLENGE_ENABLED')
+  })
+
+  it('shows challenge dependency hint when enabling challenge with no channel enabled', async () => {
+    const wrapper = await renderView()
+
+    expect(wrapper.find('.confirm-warning').exists()).toBe(false)
+
+    const challengeRow = wrapper.find('tr[data-code="AUTH_LOGIN_CHALLENGE_ENABLED"]')
+    await challengeRow.find('.arco-switch').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.confirm-modal').text()).toContain('Challenge needs channel')
+  })
+
+  it('hides challenge dependency hint when a channel is enabled', async () => {
+    const flags = defaultFlags.map((flag) =>
+      flag.code === 'AUTH_EMAIL_ENABLED' ? { ...flag, enabled: true } : flag,
+    )
+    const wrapper = await renderView(
+      ['orchestration_flag:read', 'orchestration_flag:update'],
+      flags,
+    )
+
+    const challengeRow = wrapper.find('tr[data-code="AUTH_LOGIN_CHALLENGE_ENABLED"]')
+    await challengeRow.find('.arco-switch').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.confirm-modal').text()).not.toContain('Challenge needs channel')
   })
 })
