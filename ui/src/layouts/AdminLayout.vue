@@ -134,15 +134,29 @@ const menuGroups = computed(() => ([
     icon: 'M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12',
     items: [
       { to: '/admin/storage', label: t('admin.adminLayout.menu.storage'), permission: 'storage:read' },
+      { to: '/admin/payment-config', label: t('admin.adminLayout.menu.paymentConfig'), permission: 'payment_config:read' },
+      { to: '/admin/mail-config', label: t('admin.adminLayout.menu.mailConfig'), permission: 'system_config:manage' },
+      { to: '/admin/sms-config', label: t('admin.adminLayout.menu.smsConfig'), permission: 'system_config:manage' },
     ],
   },
   {
     title: t('admin.adminLayout.menu.billingOps'),
     icon: 'M2 5h20v14H2zM2 10h20M6 15h4',
     items: [
+      { to: '/admin/plans', label: t('admin.adminLayout.menu.plans'), permission: 'plan:read' },
       { to: '/admin/billing', label: t('admin.adminLayout.menu.billing'), permissions: ['plan:read', 'redeem_code:read'] },
       { to: '/admin/cost-stats', label: t('admin.adminLayout.menu.costStats'), permissions: ['cost_stats:read'] },
       { to: '/admin/cost-strategy', label: t('admin.adminLayout.menu.costStrategy'), permission: 'model_pool:read' },
+    ],
+  },
+  {
+    title: t('admin.adminLayout.menu.commerceOps'),
+    icon: 'M3 3h3v3H3zM18 3h3v3h-3zM3 18h3v3H3zM18 18h3v3h-3zM12 7v10M7 12h10',
+    items: [
+      { to: '/admin/distribution', label: t('admin.adminLayout.menu.distribution'), permission: 'distribution:view' },
+      { to: '/admin/orders', label: t('admin.adminLayout.menu.orders'), permission: 'order:view' },
+      { to: '/admin/refunds', label: t('admin.adminLayout.menu.refunds'), permission: 'refund:view' },
+      { to: '/admin/withdrawals', label: t('admin.adminLayout.menu.withdrawals'), permission: 'withdraw:view' },
     ],
   },
   {
