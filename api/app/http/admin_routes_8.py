@@ -1395,3 +1395,57 @@ def register_routes(quart_app):
             for base in bases
         ]
         return a._ok({"list": result})
+
+    # ------------------------------------------------------------------
+    # admin 邮件发送配置（mail_config 单行 JSONB）：读取 / 更新 / 测试发送
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/mail-config")
+    async def admin_mail_config_get():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        from internal.service.mail_config_service import MailConfigService
+
+        cfg = await a._to_thread(a._get_service(MailConfigService).get_config)
+        return a._ok({"configs": cfg})
+
+    @quart_app.put("/admin/mail-config")
+    async def admin_mail_config_put():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        from internal.service.mail_config_service import MailConfigService
+
+        try:
+            cfg = await a._to_thread(
+                a._get_service(MailConfigService).update_config,
+                payload.get("configs") or {},
+            )
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
+        return a._ok({"configs": cfg})
+
+    @quart_app.post("/admin/mail-config/test")
+    async def admin_mail_config_test():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        to = str(payload.get("to") or "").strip()
+        from internal.service.mail_config_service import MailConfigService
+
+        try:
+            result = await a._to_thread(a._get_service(MailConfigService).send_test, recipient=to)
+        except Exception as exc:
+            return a._ok({"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
+        return a._ok(result)

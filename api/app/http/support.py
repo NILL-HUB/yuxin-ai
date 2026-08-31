@@ -652,6 +652,9 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     # 支付配置。
     if _admin_match(segments, ("admin", "payment-configs")):
         return "payment_config:read" if method == "GET" else "payment_config:manage"
+    # 邮件发送配置（系统配置域）。
+    if _admin_match(segments, ("admin", "mail-config")):
+        return "system_config:manage"
 
     return None
 

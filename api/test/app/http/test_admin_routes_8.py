@@ -1347,3 +1347,139 @@ class TestAdminUploadFile:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 400
         assert payload["code"] == "validate_error"
+
+
+class TestAdminMailConfig:
+    def _setup(self, monkeypatch, *, svc=None):
+        from internal.service.mail_config_service import MailConfigService
+
+        svc = svc or _FakeMailConfigService()
+        _setup(
+            monkeypatch,
+            {MailConfigService: svc},
+        )
+
+        async def _resolve_admin_permission(permission_code):
+            return {
+                "id": str(uuid4()),
+                "permissions": ["system_config:manage"],
+            }, None
+
+        monkeypatch.setattr(support, "_resolve_admin_permission", _resolve_admin_permission)
+        return svc
+
+    def test_get(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/admin/mail-config?account_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["configs"]["smtp_host"] == "smtp.qq.com"
+        assert svc.calls[0] == ("get",)
+
+    def test_put(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/mail-config?account_id={uuid4()}",
+                    json={"configs": {"smtp_host": "smtp.qq.com", "use_tls": True}},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["configs"]["smtp_host"] == "smtp.qq.com"
+        assert svc.calls[0] == ("update", {"smtp_host": "smtp.qq.com", "use_tls": True})
+
+    def test_put_validate_error(self, monkeypatch):
+        svc = _FakeMailConfigService(update_error=ValueError("smtp_host 不能为空"))
+        self._setup(monkeypatch, svc=svc)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put(
+                    f"/admin/mail-config?account_id={uuid4()}",
+                    json={"configs": {}},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_post_test(self, monkeypatch):
+        svc = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/mail-config/test?account_id={uuid4()}",
+                    json={"to": "ops@x.com"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["ok"] is True
+        assert svc.calls[0] == ("test", "ops@x.com")
+
+    def test_post_test_smtp_failure(self, monkeypatch):
+        svc = _FakeMailConfigService(test_error=RuntimeError("smtp down"))
+        self._setup(monkeypatch, svc=svc)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/mail-config/test?account_id={uuid4()}",
+                    json={"to": "ops@x.com"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["ok"] is False
+        assert "smtp down" in payload["data"]["detail"]
+
+
+class _FakeMailConfigService:
+    def __init__(self, *, update_error=None, test_error=None):
+        self.calls = []
+        self._update_error = update_error
+        self._test_error = test_error
+
+    def get_config(self):
+        self.calls.append(("get",))
+        return {
+            "smtp_host": "smtp.qq.com",
+            "smtp_port": "587",
+            "use_tls": True,
+            "use_ssl": False,
+            "username": "noreply@x.com",
+            "password": "authcode",
+            "default_sender": "noreply@x.com",
+            "from_name": "平台",
+            "timeout": "30",
+        }
+
+    def update_config(self, payload):
+        self.calls.append(("update", payload))
+        if self._update_error is not None:
+            raise self._update_error
+        cfg = self.get_config()
+        cfg.update(payload or {})
+        return cfg
+
+    def send_test(self, *, recipient):
+        self.calls.append(("test", recipient))
+        if self._test_error is not None:
+            raise self._test_error
+        return {"ok": True, "detail": {"server": "smtp.qq.com", "recipients": 1}}
