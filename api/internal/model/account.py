@@ -34,11 +34,16 @@ class Account(Base):
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))
     username = Column(String(64), nullable=False, server_default=text("''::character varying"))
     email = Column(String(255), nullable=False, server_default=text("''::character varying"))
+    email_verified_at = Column(DateTime, nullable=True)
+    phone = Column(String(32), nullable=False, server_default=text("''::character varying"))
+    phone_verified_at = Column(DateTime, nullable=True)
     avatar = Column(String(255), nullable=False, server_default=text("''::character varying"))
     password = Column(String(255), nullable=True, server_default=text("''::character varying"))
     password_salt = Column(String(255), nullable=True, server_default=text("''::character varying"))
     # 密码哈希格式版本：1=PBKDF2 10k 迭代（历史），2=PBKDF2 600k 迭代（当前）
     password_version = Column(Integer, nullable=False, server_default=text("'1'"))
+    # 密码最近变更时间：用于密码修改后立即使旧登录会话失效
+    password_changed_at = Column(DateTime, nullable=True)
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     disabled_at = Column(DateTime, nullable=True)
     disabled_by = Column(UUID, nullable=True)
