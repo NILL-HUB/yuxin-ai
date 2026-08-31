@@ -51,7 +51,8 @@ class Http:
         # 3.初始化扩展
         db.init_app(conf)
         self.extensions["sqlalchemy"] = db
-        mail.init_app(conf)
+        # Mail 为纯构造参数注入，不再从 app config 读取 SMTP 配置；
+        # 仅挂载单例供 extensions["mail"] 兼容访问（发送配置来自 mail_config 表）。
         self.extensions["mail"] = mail
         logging_extension.init_app(self)
         redis_extension.init_app(self)

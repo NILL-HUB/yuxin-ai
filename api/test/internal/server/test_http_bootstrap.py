@@ -74,7 +74,9 @@ def test_http_init_should_wire_extensions(monkeypatch):
     assert app.config["CELERY"] == {"broker_url": "redis://example"}
     assert db.init_calls == [conf]
     assert migrate.init_calls == []  # flask_migrate 已解耦，容器不再挂载
-    assert mail.init_calls == [conf]
+    # Mail 为纯构造参数注入，不再从 app config 初始化（发送配置来自 mail_config 表）
+    assert mail.init_calls == []
+    assert app.extensions["mail"] is mail
     assert [name for name, _ in ext_calls] == ["logging", "redis"]
 
 

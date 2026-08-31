@@ -54,11 +54,7 @@ set_default_if_unset "CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP" "true"
 # HuggingFace 离线模式
 set_default_if_unset "TRANSFORMERS_OFFLINE" "0"
 
-# 邮件服务默认配置（非敏感）
-set_default_if_unset "MAIL_SERVER" "smtp.qq.com"
-set_default_if_unset "MAIL_PORT" "587"
-set_default_if_unset "MAIL_USE_TLS" "True"
-set_default_if_unset "MAIL_USE_SSL" "False"
+# 邮件服务配置（非敏感）：SMTP 参数已改为数据库持久化（mail_config 表），不再通过 env 注入
 
 # 腾讯云 COS 配置（非敏感）
 set_default_if_unset "COS_REGION" "ap-beijing"

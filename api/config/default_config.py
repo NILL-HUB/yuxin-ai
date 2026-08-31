@@ -49,14 +49,4 @@ DEFAULT_CONFIG = {
     "IMAGE_REQUEST_POLICY": "strict",
     "VISION_FALLBACK_PROVIDER": "",
     "VISION_FALLBACK_MODEL": "",
-
-    # SMTP 邮件服务默认配置
-    "MAIL_SERVER": "smtp.gmail.com",
-    "MAIL_PORT": 587,
-    "MAIL_USE_TLS": "True",
-    "MAIL_USE_SSL": "False",
-    "MAIL_USERNAME": "",
-    "MAIL_PASSWORD": "",
-    "MAIL_DEFAULT_SENDER": "",
- "MAIL_TIMEOUT": 10,
 }

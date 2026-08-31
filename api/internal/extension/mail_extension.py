@@ -29,34 +29,43 @@ class Message:
 
 
 class Mail:
-    """纯 SMTP 邮件客户端（API 兼容 flask_mail.Mail 常用子集）。"""
+    """纯 SMTP 邮件客户端（API 兼容 flask_mail.Mail 常用子集）。
 
-    def __init__(self):
-        self._config: dict = {}
-        self.server: Optional[str] = None
+    构造参数与 SMTP 发送配置完全解耦：由调用方从数据库配置（mail_config）显式传入。
+    """
 
-    def init_app(self, config) -> None:
-        """从配置对象读取 SMTP 参数。"""
+    def __init__(
+        self,
+        *,
+        server=None,
+        port: int = 587,
+        use_tls: bool = True,
+        use_ssl: bool = False,
+        username=None,
+        password=None,
+        default_sender=None,
+        timeout: int = 10,
+    ):
         self._config = {
-            "server": getattr(config, "MAIL_SERVER", None),
-            "port": int(getattr(config, "MAIL_PORT", 587) or 587),
-            "use_tls": bool(getattr(config, "MAIL_USE_TLS", True)),
-            "use_ssl": bool(getattr(config, "MAIL_USE_SSL", False)),
-            "username": getattr(config, "MAIL_USERNAME", None),
-            "password": getattr(config, "MAIL_PASSWORD", None),
-            "default_sender": getattr(config, "MAIL_DEFAULT_SENDER", None),
-            "timeout": int(getattr(config, "MAIL_TIMEOUT", 10) or 10),
+            "server": server,
+            "port": int(port or 587),
+            "use_tls": bool(use_tls),
+            "use_ssl": bool(use_ssl),
+            "username": username,
+            "password": password,
+            "default_sender": default_sender,
+            "timeout": int(timeout or 10),
         }
-        self.server = self._config.get("server")
+        self.server = server
 
     def send(self, message: Message) -> None:
         """同步发送邮件（由调用方决定线程模型）。"""
         cfg = self._config
         sender = message.sender or cfg.get("default_sender")
         if not sender:
-            raise RuntimeError("邮件缺少发送者地址（sender / MAIL_DEFAULT_SENDER）")
+            raise RuntimeError("邮件缺少发送者地址（default_sender）")
         if not cfg.get("server"):
-            raise RuntimeError("邮件服务器未配置（MAIL_SERVER）")
+            raise RuntimeError("邮件服务器未配置（server）")
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = message.subject
