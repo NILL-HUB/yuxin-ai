@@ -1112,16 +1112,27 @@ class TestAccountService:
     def test_verify_login_challenge_should_raise_when_account_disabled(self, monkeypatch):
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
-        service = self._build_service()
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                verify_code=lambda *args, **kwargs: True,
+            ),
+        )
         account_id = uuid4()
         challenge_id = "challenge-1"
         redis_stub.setex(
             service._login_challenge_key(challenge_id),
             300,
-            json.dumps({"account_id": str(account_id), "email": "demo@example.com", "risk_reason": "new_ip"}),
+            json.dumps({
+                "account_id": str(account_id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": None,
+                "risk_reason": "new_ip",
+            }),
         )
-        service.email_service.verify_login_challenge_code = lambda _email, _code: True
-        monkeypatch.setattr(service, "get_account", lambda _account_id: SimpleNamespace(id=account_id, is_disabled=True))
+        monkeypatch.setattr(service, "get_account", lambda _account_id: SimpleNamespace(id=account_id, email="demo@example.com", is_disabled=True))
 
         with pytest.raises(FailException) as exc_info:
             service.verify_login_challenge(challenge_id, "123456")
@@ -1165,16 +1176,30 @@ class TestAccountService:
     def test_password_login_should_return_login_challenge_when_ip_changes(self, monkeypatch):
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": False,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
         email_calls = []
         service = _new_account_service(
             db=SimpleNamespace(session=SimpleNamespace()),
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
-            email_service=SimpleNamespace(send_login_challenge_code=lambda email: email_calls.append(email)),
+            email_service=SimpleNamespace(
+                send_code=lambda scene, email=None, phone=None: email_calls.append((scene, email, phone)) or ""
+            ),
         )
         monkeypatch.setattr(service, "_ensure_account_not_admin_bound", lambda account: None)
         account = SimpleNamespace(
             id=uuid4(),
             email="demo@example.com",
+            email_verified_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
             password="hashed-password",
             password_salt="salt",
             is_password_set=True,
@@ -1199,10 +1224,13 @@ class TestAccountService:
             result = service.password_login("demo@example.com", "good-pwd")
 
         assert result["challenge_required"] is True
-        assert result["challenge_type"] == "email_code"
+        assert result["challenge_type"] == "verification_code"
         assert result["risk_reason"] == "new_ip"
-        assert result["masked_email"] == "de***mo@example.com"
-        assert email_calls == ["demo@example.com"]
+        assert result["channels"] == [
+            {"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}
+        ]
+        assert "masked_email" not in result
+        assert email_calls == []
         assert service._login_challenge_key(result["challenge_id"]) in redis_stub.values
         assert len(redis_stub.delete_calls) == 0
 
@@ -1224,6 +1252,17 @@ class TestAccountService:
     def test_begin_login_should_allow_regular_account(self, monkeypatch):
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": False,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
         account_id = uuid4()
         session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
         service = _new_account_service(
@@ -1245,49 +1284,554 @@ class TestAccountService:
         assert result["access_token"] == "t"
         assert issued == [account]
 
-    def test_resend_login_challenge_should_reuse_pending_challenge(self, monkeypatch):
+    def test_begin_login_should_skip_challenge_when_switch_disabled(self, monkeypatch):
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
-        email_calls = []
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": False,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": False,
+            },
+        )
+        account_id = uuid4()
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        issued = []
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda target, **kwargs: issued.append(target)
+            or {"access_token": "t", "expire_at": 1},
+        )
+        account = SimpleNamespace(
+            id=account_id,
+            email="demo@example.com",
+            email_verified_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
+            last_login_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
+            last_login_ip="10.0.0.4",
+        )
+        monkeypatch.setattr(service, "_should_require_login_challenge", lambda *args, **kwargs: True)
+
+        app = TestApp(__name__)
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
+            result = service.begin_login(account)
+
+        assert result["access_token"] == "t"
+        assert issued == [account]
+
+    def test_begin_login_should_skip_challenge_and_log_when_no_verified_channel(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": True,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        warning_calls = []
+        monkeypatch.setattr(
+            "internal.service.account_service.current_app",
+            SimpleNamespace(logger=SimpleNamespace(warning=lambda *args, **kwargs: warning_calls.append(args))),
+        )
+        account_id = uuid4()
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "_should_require_login_challenge", lambda *args, **kwargs: True)
+        issued = []
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda target, **kwargs: issued.append(target)
+            or {"access_token": "t", "expire_at": 1},
+        )
+        account = SimpleNamespace(
+            id=account_id,
+            email="demo@example.com",
+            email_verified_at=None,
+            phone="",
+            phone_verified_at=None,
+            last_login_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
+            last_login_ip="10.0.0.4",
+        )
+
+        app = TestApp(__name__)
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
+            result = service.begin_login(account)
+
+        assert result["access_token"] == "t"
+        assert issued == [account]
+        assert len(warning_calls) == 1
+        assert "challenge_skipped_no_channel" in warning_calls[0][0]
+        assert str(warning_calls[0][1]) == str(account_id)
+        assert "10.0.0.8" in warning_calls[0]
+
+    def test_begin_login_should_return_multi_channels_when_both_verified(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": True,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        now = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+        account_id = uuid4()
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "_should_require_login_challenge", lambda *args, **kwargs: True)
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should require challenge first")),
+        )
+        account = SimpleNamespace(
+            id=account_id,
+            email="demo@example.com",
+            email_verified_at=now,
+            phone="13800138000",
+            phone_verified_at=now,
+            last_login_at=now,
+            last_login_ip="10.0.0.4",
+        )
+
+        app = TestApp(__name__)
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
+            result = service.begin_login(account)
+
+        assert result["challenge_required"] is True
+        assert result["challenge_type"] == "verification_code"
+        assert result["channels"] == [
+            {"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"},
+            {"type": "phone", "masked": "138****8000", "phone": "13800138000"},
+        ]
+
+    def test_begin_login_should_return_single_masked_channel(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": True,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        now = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+        account_id = uuid4()
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "_should_require_login_challenge", lambda *args, **kwargs: True)
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("should require challenge first")),
+        )
+        account = SimpleNamespace(
+            id=account_id,
+            email="",
+            email_verified_at=None,
+            phone="13800138000",
+            phone_verified_at=now,
+            last_login_at=now,
+            last_login_ip="10.0.0.4",
+        )
+
+        app = TestApp(__name__)
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
+            result = service.begin_login(account)
+
+        assert result["challenge_required"] is True
+        assert result["channels"] == [
+            {"type": "phone", "masked": "138****8000", "phone": "13800138000"}
+        ]
+
+    def test_begin_login_should_skip_challenge_when_phone_unverified(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": True,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        warning_calls = []
+        monkeypatch.setattr(
+            "internal.service.account_service.current_app",
+            SimpleNamespace(logger=SimpleNamespace(warning=lambda *args, **kwargs: warning_calls.append(args))),
+        )
+        account_id = uuid4()
+        session = _SessionStub({AdminUser: _QueryStub(one_or_none_result=None)})
+        service = _new_account_service(
+            db=_DBStub(session),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        monkeypatch.setattr(service, "_should_require_login_challenge", lambda *args, **kwargs: True)
+        issued = []
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda target, **kwargs: issued.append(target)
+            or {"access_token": "t", "expire_at": 1},
+        )
+        now = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+        account = SimpleNamespace(
+            id=account_id,
+            email="",
+            email_verified_at=None,
+            phone="13800138000",
+            phone_verified_at=None,
+            last_login_at=now,
+            last_login_ip="10.0.0.4",
+        )
+
+        app = TestApp(__name__)
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "10.0.0.8"}):
+            result = service.begin_login(account)
+
+        assert result["access_token"] == "t"
+        assert issued == [account]
+        assert len(warning_calls) == 1
+        assert "challenge_skipped_no_channel" in warning_calls[0][0]
+
+    def test_send_login_challenge_code_should_send_email_and_write_target(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": False,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        send_calls = []
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com", phone="")
         service = _new_account_service(
             db=SimpleNamespace(session=SimpleNamespace()),
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
-            email_service=SimpleNamespace(send_login_challenge_code=lambda email: email_calls.append(email)),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                send_code=lambda scene, email=None, phone=None: send_calls.append((scene, email, phone)) or "",
+            ),
         )
-        challenge_id = "challenge-1"
+        challenge_id = "challenge-send-email"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": None,
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
+
+        result = service.send_login_challenge_code(challenge_id, channel="email")
+
+        assert result == {
+            "challenge_id": challenge_id,
+            "channel": "email",
+            "masked": "de***mo@example.com",
+        }
+        assert send_calls == [("login_challenge", "demo@example.com", None)]
+        stored = json.loads(redis_stub.values[service._login_challenge_key(challenge_id)])
+        assert stored["target"] == "demo@example.com"
+
+    def test_send_login_challenge_code_should_send_phone_and_write_target(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {
+                "AUTH_EMAIL_ENABLED": True,
+                "AUTH_PHONE_ENABLED": True,
+                "AUTH_LOGIN_CHALLENGE_ENABLED": True,
+            },
+        )
+        send_calls = []
+        account = SimpleNamespace(id=uuid4(), email="", phone="13800138000")
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                send_code=lambda scene, email=None, phone=None: send_calls.append((scene, email, phone)) or "",
+            ),
+        )
+        challenge_id = "challenge-send-phone"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "phone", "masked": "138****8000", "phone": "13800138000"}],
+                "target": None,
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
+
+        result = service.send_login_challenge_code(challenge_id, channel="phone")
+
+        assert result == {
+            "challenge_id": challenge_id,
+            "channel": "phone",
+            "masked": "138****8000",
+        }
+        assert send_calls == [("login_challenge", None, "13800138000")]
+        stored = json.loads(redis_stub.values[service._login_challenge_key(challenge_id)])
+        assert stored["target"] == "13800138000"
+
+    def test_send_login_challenge_code_should_raise_when_channel_invalid(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com", phone="")
+        service = self._build_service()
+        challenge_id = "challenge-send-invalid"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": None,
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
+
+        with pytest.raises(FailException, match="验证通道无效"):
+            service.send_login_challenge_code(challenge_id, channel="sms")
+
+    def test_verify_login_challenge_should_use_phone_channel(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        verify_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                verify_code=lambda email, code, scene="password_reset", contact=None: verify_calls.append(
+                    (email, code, scene, contact)
+                )
+                or (contact == "13800138000" and code == "123456"),
+            ),
+        )
+        account = SimpleNamespace(id=uuid4(), email="", phone="13800138000")
+        challenge_id = "challenge-phone-verify"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "phone", "masked": "138****8000", "phone": "13800138000"}],
+                "target": "13800138000",
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda account_id: account if str(account_id) == str(account.id) else None)
+        issue_calls = []
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda target, **kwargs: issue_calls.append((target, kwargs)) or {"access_token": "jwt-token", "expire_at": 123},
+        )
+
+        result = service.verify_login_challenge(challenge_id, "123456", channel="phone")
+
+        assert result == {"access_token": "jwt-token", "expire_at": 123}
+        assert verify_calls == [("login_challenge", "123456", "login_challenge", "13800138000")]
+        assert issue_calls == [
+            (account, {"skip_login_alert": True, "revoke_previous_sessions": True})
+        ]
+        assert service._login_challenge_key(challenge_id) in redis_stub.delete_calls
+
+    def test_verify_login_challenge_should_default_to_first_channel(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        verify_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                verify_code=lambda email, code, scene="password_reset", contact=None: verify_calls.append(
+                    (email, code, scene, contact)
+                )
+                or True,
+            ),
+        )
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com", phone="")
+        challenge_id = "challenge-default-channel"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": "demo@example.com",
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
+        monkeypatch.setattr(
+            service,
+            "issue_credential",
+            lambda target, **kwargs: {"access_token": "jwt-token", "expire_at": 123},
+        )
+
+        result = service.verify_login_challenge(challenge_id, "123456")
+
+        assert result == {"access_token": "jwt-token", "expire_at": 123}
+        assert verify_calls == [("login_challenge", "123456", "login_challenge", "demo@example.com")]
+
+    def test_load_login_challenge_should_reject_legacy_payload_without_channels(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        service = self._build_service()
+        challenge_id = "challenge-legacy"
         redis_stub.setex(
             service._login_challenge_key(challenge_id),
             timedelta(minutes=10),
             json.dumps({"account_id": str(uuid4()), "email": "demo@example.com", "risk_reason": "new_ip"}),
         )
 
-        result = service.resend_login_challenge(challenge_id)
+        with pytest.raises(FailException, match="登录验证已失效"):
+            service._load_login_challenge(challenge_id)
 
-        assert result == {
-            "challenge_required": True,
-            "challenge_id": challenge_id,
-            "challenge_type": "email_code",
-            "masked_email": "de***mo@example.com",
-            "risk_reason": "new_ip",
-        }
-        assert email_calls == ["demo@example.com"]
+        assert service._login_challenge_key(challenge_id) in redis_stub.delete_calls
 
-    def test_verify_login_challenge_should_issue_credential_and_clear_pending_challenge(self, monkeypatch):
+    def test_resend_login_challenge_should_reuse_pending_challenge(self, monkeypatch):
         redis_stub = _RedisStub()
         monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        email_calls = []
+        account = SimpleNamespace(
+            id=uuid4(),
+            email="demo@example.com",
+            phone="",
+            email_verified_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
+            phone_verified_at=None,
+        )
         service = _new_account_service(
             db=SimpleNamespace(session=SimpleNamespace()),
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
-                verify_login_challenge_code=lambda email, code: email == "demo@example.com" and code == "123456"
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                send_code=lambda scene, email=None, phone=None: email_calls.append((scene, email, phone)) or "",
             ),
         )
-        account = SimpleNamespace(id=uuid4(), email="demo@example.com")
+        challenge_id = "challenge-1"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": None,
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
+
+        result = service.resend_login_challenge(challenge_id, channel="email")
+
+        assert result == {
+            "challenge_id": challenge_id,
+            "channel": "email",
+            "masked": "de***mo@example.com",
+        }
+        assert email_calls == [("login_challenge", "demo@example.com", None)]
+
+    def test_resend_login_challenge_should_raise_when_channel_missing(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com", phone="")
+        service = self._build_service()
+        challenge_id = "challenge-1"
+        redis_stub.setex(
+            service._login_challenge_key(challenge_id),
+            timedelta(minutes=10),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": None,
+                "risk_reason": "new_ip",
+            }),
+        )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
+
+        with pytest.raises(FailException, match="验证通道无效"):
+            service.resend_login_challenge(challenge_id, channel="")
+
+    def test_verify_login_challenge_should_issue_credential_and_clear_pending_challenge(self, monkeypatch):
+        redis_stub = _RedisStub()
+        monkeypatch.setattr("internal.service.account_service.redis_client", redis_stub)
+        verify_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                verify_code=lambda email, code, scene="password_reset", contact=None: verify_calls.append(
+                    (email, code, scene, contact)
+                )
+                or (contact == "demo@example.com" and code == "123456"),
+            ),
+        )
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com", phone="")
         challenge_id = "challenge-2"
         redis_stub.setex(
             service._login_challenge_key(challenge_id),
             timedelta(minutes=10),
-            json.dumps({"account_id": str(account.id), "email": account.email, "risk_reason": "new_ip"}),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": "demo@example.com",
+                "risk_reason": "new_ip",
+            }),
         )
         monkeypatch.setattr(service, "get_account", lambda account_id: account if str(account_id) == str(account.id) else None)
         issue_calls = []
@@ -1300,6 +1844,7 @@ class TestAccountService:
         result = service.verify_login_challenge(challenge_id, "123456")
 
         assert result == {"access_token": "jwt-token", "expire_at": 123}
+        assert verify_calls == [("login_challenge", "123456", "login_challenge", "demo@example.com")]
         assert issue_calls == [
             (account, {"skip_login_alert": True, "revoke_previous_sessions": True})
         ]
@@ -1311,14 +1856,24 @@ class TestAccountService:
         service = _new_account_service(
             db=SimpleNamespace(session=SimpleNamespace()),
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
-            email_service=SimpleNamespace(verify_login_challenge_code=lambda *_args, **_kwargs: False),
+            email_service=SimpleNamespace(
+                LOGIN_CHALLENGE_SCENE="login_challenge",
+                verify_code=lambda *args, **kwargs: False,
+            ),
         )
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com", phone="")
         challenge_id = "challenge-3"
         redis_stub.setex(
             service._login_challenge_key(challenge_id),
             timedelta(minutes=10),
-            json.dumps({"account_id": str(uuid4()), "email": "demo@example.com", "risk_reason": "new_ip"}),
+            json.dumps({
+                "account_id": str(account.id),
+                "channels": [{"type": "email", "masked": "de***mo@example.com", "email": "demo@example.com"}],
+                "target": "demo@example.com",
+                "risk_reason": "new_ip",
+            }),
         )
+        monkeypatch.setattr(service, "get_account", lambda _account_id: account)
 
         with pytest.raises(FailException, match="验证码错误或已过期"):
             service.verify_login_challenge(challenge_id, "000000")

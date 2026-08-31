@@ -202,6 +202,187 @@ class TestSendCode:
         assert resp.status_code == 400
         assert payload["code"] == "validate_error"
 
+    def test_send_code_should_forward_login_challenge_with_channel(self, monkeypatch):
+        calls = []
+        account_service = _fake_account_service(
+            normalize_phone=lambda phone: phone,
+            is_valid_phone=lambda phone: True,
+            send_login_challenge_code=lambda challenge_id, channel: calls.append((challenge_id, channel))
+            or {"challenge_id": challenge_id, "channel": channel, "masked": "de***mo@example.com"},
+        )
+        email_service = _fake_account_service()
+        self._setup(monkeypatch, account_service, email_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/send-code",
+                    json={"scene": "login_challenge", "challenge_id": "c-1", "channel": "email"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"] == {
+            "challenge_id": "c-1",
+            "channel": "email",
+            "masked": "de***mo@example.com",
+        }
+        assert calls == [("c-1", "email")]
+
+    def test_send_code_should_reject_login_challenge_without_channel(self, monkeypatch):
+        account_service = _fake_account_service(
+            normalize_phone=lambda phone: phone,
+            is_valid_phone=lambda phone: True,
+        )
+        email_service = _fake_account_service()
+        self._setup(monkeypatch, account_service, email_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/send-code",
+                    json={"scene": "login_challenge", "challenge_id": "c-1"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+        assert "channel" in payload["message"]
+
+
+class TestLoginChallenge:
+    def _setup(self, monkeypatch, account_service):
+        def _get_service(cls):
+            if cls is AccountService:
+                return account_service
+            raise AssertionError(f"unexpected service {cls}")
+
+        monkeypatch.setattr(support, "_get_service", _get_service)
+
+    def test_verify_should_pass_channel_through(self, monkeypatch):
+        verify_calls = []
+        account_service = _fake_account_service(
+            verify_login_challenge=lambda challenge_id, code, channel="": verify_calls.append(
+                (challenge_id, code, channel)
+            )
+            or {"access_token": "jwt-token", "expire_at": 1893456000, "challenge_required": False},
+        )
+        self._setup(monkeypatch, account_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/login-challenge/verify",
+                    json={"challenge_id": "c-1", "code": "123456", "channel": "phone"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["access_token"] == "jwt-token"
+        assert verify_calls == [("c-1", "123456", "phone")]
+
+    def test_verify_should_allow_channel_optional(self, monkeypatch):
+        verify_calls = []
+        account_service = _fake_account_service(
+            verify_login_challenge=lambda challenge_id, code, channel="": verify_calls.append(
+                (challenge_id, code, channel)
+            )
+            or {"access_token": "jwt-token", "expire_at": 1893456000, "challenge_required": False},
+        )
+        self._setup(monkeypatch, account_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/login-challenge/verify",
+                    json={"challenge_id": "c-1", "code": "123456"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert verify_calls == [("c-1", "123456", "")]
+
+    def test_verify_should_require_fields(self, monkeypatch):
+        account_service = _fake_account_service(verify_login_challenge=lambda **kwargs: {})
+        self._setup(monkeypatch, account_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/login-challenge/verify",
+                    json={"challenge_id": "c-1"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_resend_should_require_channel(self, monkeypatch):
+        account_service = _fake_account_service(
+            resend_login_challenge=lambda challenge_id, channel="": {
+                "challenge_id": challenge_id,
+                "channel": channel,
+                "masked": "138****8000",
+            },
+        )
+        self._setup(monkeypatch, account_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/login-challenge/resend",
+                    json={"challenge_id": "c-1"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+        assert "channel" in payload["message"]
+
+    def test_resend_should_return_masked_result(self, monkeypatch):
+        resend_calls = []
+        account_service = _fake_account_service(
+            resend_login_challenge=lambda challenge_id, channel="": resend_calls.append(
+                (challenge_id, channel)
+            )
+            or {"challenge_id": challenge_id, "channel": channel, "masked": "138****8000"},
+        )
+        self._setup(monkeypatch, account_service)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/auth/login-challenge/resend",
+                    json={"challenge_id": "c-1", "channel": "phone"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"] == {
+            "challenge_id": "c-1",
+            "channel": "phone",
+            "masked": "138****8000",
+        }
+        assert resend_calls == [("c-1", "phone")]
+
 
 class TestPhoneCodeLogin:
     def _setup(self, monkeypatch, account_service):

@@ -519,6 +519,7 @@ def register_routes(quart_app):
         payload = await request.get_json(force=True, silent=True) or {}
         challenge_id = str(payload.get("challenge_id") or "")
         code = str(payload.get("code") or "")
+        channel = str(payload.get("channel") or "").strip()
         if not challenge_id or not code:
             return _json_resp(
                 code="validate_error",
@@ -527,7 +528,10 @@ def register_routes(quart_app):
                 status=400,
             )
         credential = await _to_thread(
-            _get_service(AccountService).verify_login_challenge, challenge_id, code
+            _get_service(AccountService).verify_login_challenge,
+            challenge_id,
+            code,
+            channel=channel,
         )
         return _ok(PasswordLoginResp().dump(credential))
 
@@ -536,17 +540,20 @@ def register_routes(quart_app):
         """async 重发异常登录的二次验证码。"""
         payload = await request.get_json(force=True, silent=True) or {}
         challenge_id = str(payload.get("challenge_id") or "")
-        if not challenge_id:
+        channel = str(payload.get("channel") or "").strip()
+        if not challenge_id or not channel:
             return _json_resp(
                 code="validate_error",
-                message="challenge_id 不能为空",
-                data={"challenge_id": ["challenge_id 不能为空"]},
+                message="challenge_id 与 channel 不能为空",
+                data={"challenge_id": ["challenge_id 与 channel 不能为空"]},
                 status=400,
             )
-        await _to_thread(
-            _get_service(AccountService).resend_login_challenge, challenge_id
+        result = await _to_thread(
+            _get_service(AccountService).resend_login_challenge,
+            challenge_id,
+            channel=channel,
         )
-        return _ok_msg("验证码已发送到您的邮箱,请查收")
+        return _ok(result)
 
     @quart_app.post("/auth/send-code")
     async def async_send_code() -> Response:
@@ -575,6 +582,22 @@ def register_routes(quart_app):
             )
         email = str(payload.get("email") or "").strip()
         phone = str(payload.get("phone") or "").strip()
+        if scene == "login_challenge":
+            challenge_id = str(payload.get("challenge_id") or "").strip()
+            channel = str(payload.get("channel") or "").strip()
+            if not challenge_id or not channel:
+                return _json_resp(
+                    code="validate_error",
+                    message="challenge_id 与 channel 不能为空",
+                    data={"challenge_id": ["challenge_id 与 channel 不能为空"]},
+                    status=400,
+                )
+            result = await _to_thread(
+                _get_service(AccountService).send_login_challenge_code,
+                challenge_id,
+                channel=channel,
+            )
+            return _ok(result)
         if phone:
             phone = _get_service(AccountService).normalize_phone(phone)
             if not _get_service(AccountService).is_valid_phone(phone):

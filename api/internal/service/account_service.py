@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
 
-from internal.context import has_request_context, request
+from internal.context import current_app, has_request_context, request
 from injector import inject
 import requests
 from sqlalchemy.exc import SQLAlchemyError
@@ -405,14 +405,28 @@ class AccountService(BaseService):
 
         return bool(last_login_ip and last_login_ip != normalized_ip)
 
-    def _build_login_challenge_response(self, challenge_id: str, email: str, risk_reason: str) -> dict[str, Any]:
-        return {
-            "challenge_required": True,
-            "challenge_id": challenge_id,
-            "challenge_type": "email_code",
-            "masked_email": self._mask_email(email),
-            "risk_reason": risk_reason,
-        }
+    def _collect_challenge_channels(self, account: Account) -> list[dict[str, Any]]:
+        """收集账号可用的挑战验证通道（邮箱/手机号均要求已验证）。"""
+        from internal.lib.mask_utils import mask_email, mask_phone
+        from internal.service.auth_switch_service import get_auth_switches
+
+        switches = get_auth_switches()
+        channels: list[dict[str, Any]] = []
+        email = self._normalize_email(getattr(account, "email", "") or "")
+        if (
+            switches.get("AUTH_EMAIL_ENABLED")
+            and email
+            and getattr(account, "email_verified_at", None)
+        ):
+            channels.append({"type": "email", "masked": mask_email(email), "email": email})
+        phone = self.normalize_phone(getattr(account, "phone", "") or "")
+        if (
+            switches.get("AUTH_PHONE_ENABLED")
+            and phone
+            and getattr(account, "phone_verified_at", None)
+        ):
+            channels.append({"type": "phone", "masked": mask_phone(phone), "phone": phone})
+        return channels
 
     def _load_login_challenge(self, challenge_id: str) -> dict[str, Any]:
         raw_payload = redis_client.get(self._login_challenge_key(challenge_id))
@@ -425,18 +439,32 @@ class AccountService(BaseService):
             redis_client.delete(self._login_challenge_key(challenge_id))
             raise FailException("登录验证已失效，请重新登录")
 
-        if not isinstance(payload, dict) or not payload.get("account_id") or not payload.get("email"):
+        channels = payload.get("channels") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or not payload.get("account_id")
+            or not isinstance(channels, list)
+            or not channels
+        ):
             redis_client.delete(self._login_challenge_key(challenge_id))
             raise FailException("登录验证已失效，请重新登录")
 
         return payload
 
-    def _create_login_challenge(self, account: Account, *, risk_reason: str = "new_ip") -> dict[str, Any]:
+    def _create_login_challenge(
+        self,
+        account: Account,
+        *,
+        risk_reason: str = "new_ip",
+        channels: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         challenge_id = str(uuid4())
         challenge_key = self._login_challenge_key(challenge_id)
+        channel_list = channels or []
         payload = {
             "account_id": str(account.id),
-            "email": self._normalize_email(account.email),
+            "channels": channel_list,
+            "target": None,
             "risk_reason": risk_reason,
             "created_at": int(self._now().replace(tzinfo=UTC).timestamp()),
         }
@@ -447,13 +475,13 @@ class AccountService(BaseService):
             json.dumps(payload),
         )
 
-        try:
-            self.email_service.send_login_challenge_code(payload["email"])
-        except Exception:
-            redis_client.delete(challenge_key)
-            raise
-
-        return self._build_login_challenge_response(challenge_id, payload["email"], risk_reason)
+        return {
+            "challenge_required": True,
+            "challenge_id": challenge_id,
+            "challenge_type": "verification_code",
+            "channels": channel_list,
+            "risk_reason": risk_reason,
+        }
 
     def _is_login_locked(self, email: str, client_ip: str) -> bool:
         try:
@@ -1109,37 +1137,136 @@ class AccountService(BaseService):
         if bound is not None:
             raise FailException("该账号已绑定管理员身份，请前往管理端登录")
 
+    def _log_challenge_skipped(self, account: Account, client_ip: str, user_agent: str = "") -> None:
+        """记录无可用通道跳过异地登录挑战的安全日志（结构化字段）。"""
+        current_app.logger.warning(
+            "auth_security event=challenge_skipped_no_channel account_id=%s ip=%s user_agent=%s",
+            account.id,
+            client_ip,
+            user_agent or self._resolve_user_agent(),
+        )
+
     def begin_login(self, account: Account) -> dict[str, Any]:
         """根据登录风险返回授权凭证或二次验证挑战。"""
         self._ensure_account_enabled(account)
         self._ensure_account_not_admin_bound(account)
         client_ip = self._resolve_client_ip()
-        if self._should_require_login_challenge(account, client_ip):
-            return self._create_login_challenge(account, risk_reason="new_ip")
-        return self.issue_credential(account, revoke_previous_sessions=True)
 
-    def resend_login_challenge(self, challenge_id: str) -> dict[str, Any]:
-        """重发登录二次验证验证码。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        switches = get_auth_switches()
+        if not switches.get("AUTH_LOGIN_CHALLENGE_ENABLED"):
+            return self._complete_login(account, challenge_policy="skip")
+        if not self._should_require_login_challenge(account, client_ip):
+            return self.issue_credential(account, revoke_previous_sessions=True)
+
+        channels = self._collect_challenge_channels(account)
+        if not channels:
+            self._log_challenge_skipped(account, client_ip)
+            return self._complete_login(account, challenge_policy="skip")
+        return self._create_login_challenge(account, risk_reason="new_ip", channels=channels)
+
+    def send_login_challenge_code(self, challenge_id: str, *, channel: str) -> dict[str, Any]:
+        """按指定通道发送登录挑战验证码，并将实际目标写入 challenge payload。"""
         payload = self._load_login_challenge(challenge_id)
-        self.email_service.send_login_challenge_code(payload["email"])
-        return self._build_login_challenge_response(
-            challenge_id,
-            payload["email"],
-            str(payload.get("risk_reason") or "new_ip"),
-        )
+        channels = payload.get("channels") or []
+        channel_info = next((c for c in channels if c.get("type") == channel), None)
+        if channel_info is None:
+            raise FailException("验证通道无效，请刷新后重试")
 
-    def verify_login_challenge(self, challenge_id: str, code: str) -> dict[str, Any]:
-        """完成登录二次验证并签发正式凭证。"""
-        payload = self._load_login_challenge(challenge_id)
+        from internal.service.auth_switch_service import get_auth_switches
 
-        if not self.email_service.verify_login_challenge_code(payload["email"], code):
-            raise FailException("验证码错误或已过期")
-
-        redis_client.delete(self._login_challenge_key(challenge_id))
+        switches = get_auth_switches()
         account = self.get_account(payload["account_id"])
         if not account:
             raise FailException("账号不存在")
 
+        if channel == "phone":
+            if not switches.get("AUTH_PHONE_ENABLED"):
+                raise FailException("手机号通道未开启")
+            phone = self.normalize_phone(
+                channel_info.get("phone") or getattr(account, "phone", "") or ""
+            )
+            if not phone:
+                raise FailException("验证通道无效，请刷新后重试")
+            self.email_service.send_code(
+                self.email_service.LOGIN_CHALLENGE_SCENE,
+                phone=phone,
+            )
+            payload["target"] = phone
+        elif channel == "email":
+            if not switches.get("AUTH_EMAIL_ENABLED"):
+                raise FailException("邮箱通道未开启")
+            email = self._normalize_email(
+                channel_info.get("email") or getattr(account, "email", "") or ""
+            )
+            if not email:
+                raise FailException("验证通道无效，请刷新后重试")
+            self.email_service.send_code(
+                self.email_service.LOGIN_CHALLENGE_SCENE,
+                email=email,
+            )
+            payload["target"] = email
+        else:
+            raise FailException("验证通道无效，请刷新后重试")
+
+        redis_client.setex(
+            self._login_challenge_key(challenge_id),
+            timedelta(seconds=self.LOGIN_CHALLENGE_TTL_SECONDS),
+            json.dumps(payload),
+        )
+
+        return {
+            "challenge_id": challenge_id,
+            "channel": channel,
+            "masked": channel_info.get("masked", ""),
+        }
+
+    def resend_login_challenge(self, challenge_id: str, *, channel: str) -> dict[str, Any]:
+        """重发登录二次验证验证码（channel 必填）。"""
+        return self.send_login_challenge_code(challenge_id, channel=channel)
+
+    def verify_login_challenge(
+        self,
+        challenge_id: str,
+        code: str,
+        *,
+        channel: str = "",
+    ) -> dict[str, Any]:
+        """完成登录二次验证并签发正式凭证。"""
+        payload = self._load_login_challenge(challenge_id)
+        channels = payload.get("channels") or []
+        resolved_channel = channel or (channels[0].get("type") if channels else "")
+        if resolved_channel not in ("email", "phone"):
+            raise FailException("验证通道无效，请刷新后重试")
+
+        account = self.get_account(payload["account_id"])
+        if not account:
+            raise FailException("账号不存在")
+
+        target = payload.get("target")
+        if resolved_channel == "phone":
+            contact = self.normalize_phone(
+                target if self.is_valid_phone(target) else getattr(account, "phone", "") or ""
+            )
+        else:
+            contact = (
+                target
+                if target and "@" in target
+                else self._normalize_email(getattr(account, "email", "") or "")
+            )
+        if not contact:
+            raise FailException("验证通道无效，请刷新后重试")
+
+        if not self.email_service.verify_code(
+            self.email_service.LOGIN_CHALLENGE_SCENE,
+            code,
+            scene=self.email_service.LOGIN_CHALLENGE_SCENE,
+            contact=contact,
+        ):
+            raise FailException("验证码错误或已过期")
+
+        redis_client.delete(self._login_challenge_key(challenge_id))
         return self.issue_credential(
             account,
             skip_login_alert=True,
