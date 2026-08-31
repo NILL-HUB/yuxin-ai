@@ -1,3 +1,4 @@
+import logging
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -236,3 +237,135 @@ def test_plan_usage_legacy_behavior_unchanged_when_flags_off():
     assert plan.sell_credits == 5
     assert plan.billing_basis == "model_price"
     assert plan.price_tier is None
+
+
+# ---------------------------------------------------------------------------
+# 查询失败可观测性 + 事务隔离（真实 SQLAlchemy 行为模拟）
+# ---------------------------------------------------------------------------
+
+
+class _ReRaiseNestedCM:
+    """模拟真实 SQLAlchemy SAVEPOINT：异常时回滚并 re-raise（而非吞掉）。"""
+
+    def __init__(self, session):
+        self.session = session
+
+    def __enter__(self):
+        return self.session
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.session.rollbacks += 1
+        return False
+
+
+class _TieredRecorderSession:
+    """按查询目标分类的假 session：可分别让 model / billing_config 查询失败。"""
+
+    def __init__(self, model=None, fail_model=False, fail_config=False):
+        self.model = model
+        self.fail_model = fail_model
+        self.fail_config = fail_config
+        self.rollbacks = 0
+        self.filter_conditions = []
+
+    def query(self, cls):
+        return _TieredQuery(self, cls)
+
+    def begin_nested(self):
+        return _ReRaiseNestedCM(self)
+
+
+class _TieredQuery:
+    def __init__(self, session, cls):
+        self.session = session
+        self.cls = cls
+
+    def filter(self, condition):
+        self.session.filter_conditions.append(str(condition))
+        return self
+
+    def one_or_none(self):
+        if self.cls.__name__ == "ModelPoolConfig" and self.session.fail_model:
+            raise RuntimeError("model query failed (simulated, stale pool)")
+        if self.cls.__name__ == "BillingConfig" and self.session.fail_config:
+            raise RuntimeError("billing_config query failed (simulated)")
+        return self.session.model
+
+
+class _FailedTxSession:
+    """模拟外层事务已 failed（InFailedSqlTransaction/PendingRollbackError）。"""
+
+    def __init__(self):
+        self.filter_conditions = []
+        self.rollbacks = 0
+
+    def query(self, cls):
+        return _FailedTxQuery(self)
+
+    def begin_nested(self):
+        raise RuntimeError("PendingRollbackError: transaction already failed")
+
+
+class _FailedTxQuery:
+    def __init__(self, session):
+        self.session = session
+
+    def filter(self, condition):
+        self.session.filter_conditions.append(str(condition))
+        return self
+
+    def one_or_none(self):
+        return None
+
+
+def test_model_query_error_re_raises_logs_warning_and_falls_back(caplog):
+    # 查询抛异常且 savepoint 异常 re-raise（真实 SQLAlchemy 语义）：
+    # 已修复代码须记 WARN、回滚 savepoint、走全局汇率兜底且不抛异常
+    session = _TieredRecorderSession(model=None, fail_model=True)
+    engine = PricingEngine(
+        session=session,
+        configs={"credits_per_1k_tokens": 1, "credits_per_yuan": 100},
+    )
+    with caplog.at_level(logging.WARNING):
+        plan = engine.plan_usage("deepseek-v4-flash", input_tokens=2000, output_tokens=0)
+
+    assert plan.billing_basis == "global_rate"
+    assert plan.sell_credits == 2
+    assert session.rollbacks == 1
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("pricing_engine query_failed kind=model" in m for m in messages)
+    assert any("pricing_engine fallback_to_global_rate" in m and "reason=model_not_found" in m for m in messages)
+
+
+def test_config_query_error_isolates_savepoint_and_logs(caplog):
+    # BillingConfig 查询失败只回滚自己的 savepoint，不污染外层事务：
+    # 模型价格计费不受影响，且日志可见
+    session = _TieredRecorderSession(model=_model(), fail_config=True)
+    engine = PricingEngine(session=session)  # configs 未注入 → _config 走 DB 查询
+    with caplog.at_level(logging.WARNING):
+        plan = engine.plan_usage("deepseek-v4-flash", input_tokens=1000, output_tokens=0)
+
+    assert plan.billing_basis == "model_price"
+    assert plan.sell_credits == 2  # ceil(1000*1.2/1000)
+    assert session.rollbacks >= 1
+    assert any("pricing_engine query_failed kind=billing_config" in r.getMessage() for r in caplog.records)
+    # savepoint 回滚后外层事务仍可用：再次调用不抛异常
+    plan2 = engine.plan_usage("deepseek-v4-flash", input_tokens=500, output_tokens=0)
+    assert plan2.sell_credits == 1
+
+
+def test_plan_usage_survives_failed_transaction_with_logs(caplog):
+    # 外层事务已失败时 begin_nested 抛异常：修复后须兜底返回而不是把异常
+    # 抛给调用方；且 savepoint_begin_failed 日志可见
+    session = _FailedTxSession()
+    engine = PricingEngine(
+        session=session,
+        configs={"credits_per_1k_tokens": 1, "credits_per_yuan": 100},
+    )
+    with caplog.at_level(logging.WARNING):
+        plan = engine.plan_usage("deepseek-v4-flash", input_tokens=1000, output_tokens=0)
+
+    assert plan.billing_basis == "global_rate"
+    assert plan.sell_credits == 1
+    assert any("pricing_engine savepoint_begin_failed" in r.getMessage() for r in caplog.records)

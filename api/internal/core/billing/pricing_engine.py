@@ -6,6 +6,7 @@
 
 模型未配置单价时回退全局汇率（credits_per_1k_tokens）作为兜底售价。
 """
+import logging
 import math
 import uuid
 from dataclasses import dataclass
@@ -17,6 +18,8 @@ from zoneinfo import ZoneInfo
 from internal.extension.database_extension import db
 from internal.model.billing import BillingConfig
 from internal.model.model_pool_entity import ModelPoolConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -129,6 +132,12 @@ class PricingEngine:
 
         if model is None:
             fallback.sell_credits = self._ceil_credits(input_tokens + output_tokens, credits_per_1k)
+            logger.warning(
+                "pricing_engine fallback_to_global_rate model_id=%s reason=%s billing_basis=%s "
+                "price_tier=%s input_tokens=%d output_tokens=%d cached_input_tokens=%d",
+                model_id or "", "model_not_found", fallback.billing_basis,
+                tier, input_tokens, output_tokens, cached_input_tokens,
+            )
             return fallback
 
         def _col_sell(name_peak, name_valley, name_flat):
@@ -150,6 +159,12 @@ class PricingEngine:
         if sell_in <= 0 and sell_out <= 0:
             # 无任何售价配置 → 全局汇率兜底
             fallback.sell_credits = self._ceil_credits(input_tokens + cached_input_tokens + output_tokens, credits_per_1k)
+            logger.warning(
+                "pricing_engine fallback_to_global_rate model_id=%s reason=%s billing_basis=%s "
+                "price_tier=%s input_tokens=%d output_tokens=%d cached_input_tokens=%d",
+                model_id or "", "no_model_price", fallback.billing_basis,
+                tier, input_tokens, output_tokens, cached_input_tokens,
+            )
             return fallback
 
         sell = math.ceil((input_tokens * sell_in + cached_input_tokens * sell_cached + output_tokens * sell_out) / 1000)
@@ -189,11 +204,14 @@ class PricingEngine:
         try:
             session = self._resolve_session()
         except Exception:
+            logger.warning("pricing_engine config_session_unavailable code=%s", code, exc_info=True)
             return default
-        try:
-            row = session.query(BillingConfig).filter(BillingConfig.code == code).one_or_none()
-        except Exception:
-            row = None
+        row = self._query_within_savepoint(
+            session,
+            lambda: session.query(BillingConfig).filter(BillingConfig.code == code).one_or_none(),
+            kind="billing_config",
+            key=code,
+        )
         if row is not None and row.value_numeric:
             return float(row.value_numeric)
         return default
@@ -205,21 +223,26 @@ class PricingEngine:
         try:
             session = self._resolve_session()
         except Exception:
+            logger.warning("pricing_engine config_session_unavailable code=%s", code, exc_info=True)
             return default
-        try:
-            row = session.query(BillingConfig).filter(BillingConfig.code == code).one_or_none()
-        except Exception:
-            row = None
+        row = self._query_within_savepoint(
+            session,
+            lambda: session.query(BillingConfig).filter(BillingConfig.code == code).one_or_none(),
+            kind="billing_config",
+            key=code,
+        )
         if row is not None:
             try:
                 text = row.value_text
             except Exception:
+                logger.warning("pricing_engine config_row_read_failed code=%s field=value_text", code, exc_info=True)
                 text = None
             if text:
                 return str(text)
             try:
                 numeric = row.value_numeric
             except Exception:
+                logger.warning("pricing_engine config_row_read_failed code=%s field=value_numeric", code, exc_info=True)
                 numeric = None
             if numeric:
                 return str(numeric)
@@ -231,6 +254,7 @@ class PricingEngine:
         try:
             session = self._resolve_session()
         except Exception:
+            logger.warning("pricing_engine model_session_unavailable model_id=%s", model_id, exc_info=True)
             return None
         # ModelPoolConfig.id 为 UUID 主键；非 UUID 的 model_id（如模型名 deepseek-v4-flash）
         # 直接按 model_name 匹配，避免 Postgres 对 UUID 列做类型转换报错中止当前事务。
@@ -239,29 +263,67 @@ class PricingEngine:
         try:
             pool_id = uuid.UUID(str(model_id))
         except (TypeError, ValueError, AttributeError):
-            return self._query_model(session, ModelPoolConfig.model_name == str(model_id))
-        return self._query_model(session, ModelPoolConfig.id == pool_id)
+            return self._query_model(session, ModelPoolConfig.model_name == str(model_id), model_id=model_id)
+        return self._query_model(session, ModelPoolConfig.id == pool_id, model_id=model_id)
 
     @staticmethod
-    def _query_model(session, condition):
-        """在 SAVEPOINT 内执行模型查询。
+    def _query_within_savepoint(session, query_fn, *, kind: str, key: str):
+        """在 SAVEPOINT 内执行一次计价查询。
 
         任何语句错误只回滚 savepoint，绝不毒化外层事务——否则后续扣费/对账
-        会因 InFailedSqlTransaction 全部静默失败。测试用假 session 无
-        begin_nested 时退回直接查询。
+        会因 InFailedSqlTransaction 全部静默失败。每次失败都记 WARN（含 kind/
+        key/异常摘要），让兜底可观测。savepoint 建立本身失败（如外层事务已
+        failed 时 begin_nested 抛 PendingRollbackError）同样兜底返回 None，
+        不让 plan_usage 直接抛异常崩掉。测试用假 session 无 begin_nested 时
+        退回直接查询（异常同样被记录并吞为 None）。
         """
         try:
             nested_cm = session.begin_nested()
         except AttributeError:
             try:
-                return session.query(ModelPoolConfig).filter(condition).one_or_none()
-            except Exception:
+                return query_fn()
+            except Exception as exc:
+                logger.warning(
+                    "pricing_engine query_failed kind=%s key=%s error_type=%s",
+                    kind, key, type(exc).__name__,
+                    exc_info=True,
+                )
+                return None
+        except Exception as exc:
+            logger.warning(
+                "pricing_engine savepoint_begin_failed kind=%s key=%s error_type=%s",
+                kind, key, type(exc).__name__,
+                exc_info=True,
+            )
+            try:
+                return query_fn()
+            except Exception as inner_exc:
+                logger.warning(
+                    "pricing_engine query_failed kind=%s key=%s error_type=%s",
+                    kind, key, type(inner_exc).__name__,
+                    exc_info=True,
+                )
                 return None
         try:
             with nested_cm:
-                return session.query(ModelPoolConfig).filter(condition).one_or_none()
-        except Exception:
+                return query_fn()
+        except Exception as exc:
+            logger.warning(
+                "pricing_engine query_failed kind=%s key=%s error_type=%s",
+                kind, key, type(exc).__name__,
+                exc_info=True,
+            )
             return None
+
+    @staticmethod
+    def _query_model(session, condition, *, model_id: str | None = None):
+        """在 SAVEPOINT 内执行模型查询；失败记 WARN 并返回 None（调用方走全局汇率兜底）。"""
+        return PricingEngine._query_within_savepoint(
+            session,
+            lambda: session.query(ModelPoolConfig).filter(condition).one_or_none(),
+            kind="model",
+            key=model_id or str(condition),
+        )
 
     @staticmethod
     def _decimal_float(value: Any) -> float:
