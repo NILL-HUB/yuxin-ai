@@ -95,7 +95,7 @@ updated_at / created_at
 
 现有 `email_service`（SMTP + Redis + 频率限制）扩展为 `verification_service` 语义（保留 email_service 兼容名与既有场景）：
 
-- 新增场景常量：`phone_register` / `phone_login`（可并入 `login`，通道判定） / `phone_bind` / `phone_unbind` / `email_login`。
+- 新增场景常量：`email_login` / `email_verify`（验证已填邮箱）/ `phone_login` / `phone_register` / `phone_bind` / `phone_unbind`（既有 `password_reset` / `change_email` / `login_challenge` / `register` 保留）。
 - 新增统一发送入口 `send_code(scene, *, email=None, phone=None)`：
   - 据 `email/phone` 参数路由到 `email_service.send_verification_code` 或 `sms_service.send_verification_code`；
   - 通道启用校验：email 场景需 `AUTH_EMAIL_ENABLED`，phone 场景需 `AUTH_PHONE_ENABLED`，未启用抛引导错误。
@@ -109,7 +109,7 @@ updated_at / created_at
 ### 4.6 登录/注册扩展
 
 **登录**：
-- `POST /auth/password-login`：identifier 解析扩展——先走现有（@→邮箱；否则 username），**username 不存在且串目为手机号且 `AUTH_PHONE_ENABLED`** → 按 phone 查。前端用 tab 显式区分，避免歧义。
+- `POST /auth/password-login`：identifier 解析扩展——先走现有（@→邮箱；否则 username），**username 不存在且串目为手机号且 `AUTH_PHONE_ENABLED`** → 按 phone 查。前端用 tab 显式区分，避免歧义。**登录成功顺带验证**：经邮箱匹配登录 → 写 `email_verified_at`（空则填）；经手机号匹配登录 → 写 `phone_verified_at`。密码登录即证明持有该标识，无需再走验证码。
 - `POST /auth/phone-code-login`（`AUTH_PHONE_ENABLED` 才允许）：`{phone, code}` → `verify_code('phone_login', phone)` → 按 phone 查账户：存在则**直接登录**（验证码强验证，跳过 IP 挑战，`risk_reason=None`，签发凭证，更新 last_login）；不存在 → 明确错误"该手机号未注册，请先注册"。注册态手机号登录：注册页手机验证码流程（见下）。
 - `POST /auth/email-code-login`（`AUTH_EMAIL_ENABLED` 才允许）：`{email, code}` → 验证码校验 → 按 email 查账户（存在登录 / 不存在引导注册）。邮箱验证码登录成功后写 `email_verified_at`。
 
@@ -125,10 +125,10 @@ updated_at / created_at
 触发判定保持现有 `_should_require_login_challenge`（新 IP 且历史会话无此 IP），但在 `begin_login` 处叠加开关与通道过滤：
 
 1. `AUTH_LOGIN_CHALLENGE_ENABLED=false` → 不触发（直接登录）。
-2. 收集该账户可用通道：
-   - email：`AUTH_EMAIL_ENABLED=true` 且 `account.email != ''`（优先已 `email_verified_at`，未验证的也允许——挑战本身即验证）。
-   - phone：`AUTH_PHONE_ENABLED=true` 且 `account.phone != ''`（需 `phone_verified_at` 非空，未验证不算可用——防白绑）。**决策：phone 需已验证才可用；email 无需已验证（历史上邮箱注册或密码登录即为弱验证）**。
-3. 无可用通道 → **跳过挑战**：直接签发凭证 + 安全日志 `challenge_skipped_no_channel(account_id, ip)`；不弹窗。
+2. 收集该账户可用通道（**邮箱与手机号均要求已验证**）：
+   - email：`AUTH_EMAIL_ENABLED=true` 且 `account.email != ''` 且 `email_verified_at` 非空。
+   - phone：`AUTH_PHONE_ENABLED=true` 且 `account.phone != ''` 且 `phone_verified_at` 非空。
+3. 无可用通道 → **跳过挑战**：直接签发凭证 + 安全日志 `challenge_skipped_no_channel(account_id, ip)`；不弹窗。（未验证但已填邮箱/手机号的账户同样跳过，登录后引导到安全设置完成验证/绑定。）
 4. 单通道 → challenge 响应返回 `{challenge_id, channels:[{type:'email'|'phone', masked:'a***@x.com'|'138****8888'}]}`；前端弹窗显示脱敏目标 + "发送验证码"按钮（`send-code scene=login_challenge target=...`）。
 5. 双通道 → 同上但 channels 含两项；前端先选择通道再发码。
 6. `verify_login_challenge`：`{challenge_id, target(email|phone), code}` → 对应通道 `verify_code` → 删除 challenge → 签发凭证；`resend` 同 target 语义。
@@ -139,6 +139,7 @@ updated_at / created_at
 - `POST /account/security/send-bind-phone-code`：已登录用户，发起绑定/换绑，发 `phone_bind` 码（60s 冷却复用）；若已绑定手机号 → 需先验证旧号或密码（**决策：二次校验用当前密码或邮箱/手机验证码，与改邮箱流程对齐**）。
 - `POST /account/security/bind-phone`：`{phone, code}` → 校验 → 写 `phone` + `phone_verified_at`（覆盖旧号视为换绑）。
 - `POST /account/security/verify-email-code` / `bind-email`：现有改邮箱流程保留，补 `email_verified_at` 写入。
+- `POST /account/security/send-verify-email-code` / `POST /account/security/verify-email`（新增）：对当前已填但未验证的邮箱发 `email_verify` 码并验证，写入 `email_verified_at`（供"填了邮箱从未验证"的账户补通道，避免长期处于挑战跳过状态）。
 - `POST /account/security/unbind-phone`：`{code}`（发到当前手机号）→ 解绑；**约束**：解绑后账户仍须有至少一个登录通道（email 非空或 password 已设），否则拒绝（"请先设置邮箱或密码再解绑手机号"）。
 - 前端用户中心"安全设置"卡片：显示脱敏邮箱/手机号 + 绑定状态徽标（已验证/未验证）+ 绑定/换绑/解绑操作。
 
@@ -173,6 +174,7 @@ updated_at / created_at
 | POST /account/security/send-bind-phone-code | 发绑手机码 | AUTH_PHONE_ENABLED |
 | POST /account/security/bind-phone | 绑定/换绑 | 同上 |
 | POST /account/security/unbind-phone | 解绑（需保留至少一通道） | 同上 |
+| POST /account/security/send-verify-email-code / verify-email | 验证已填邮箱（补通道） | AUTH_EMAIL_ENABLED |
 | POST /auth/password-login | 变更：identifier 支持手机号兜底 | AUTH_PHONE_ENABLED |
 
 ## 7. 测试策略
@@ -182,7 +184,7 @@ updated_at / created_at
 - 短信：aliyun/tencent 适配器签名请求（mock httpx 断言请求参数/签名头）、未配置报错、测试发送。
 - 验证码：phone/email 场景路由、各自防爆破计数（隔离）、TTL。
 - 登录/注册：手机验证码登录（存在/不存在）、邮箱验证码登录、手机注册、identifier 手机号兜底、无密码账户仅验证码登录。
-- 挑战：开关关不触发；无通道跳过+日志；单通道脱敏；双通道选择；target 校验；verify/resend。
+- 挑战：开关关不触发；无通道跳过+日志；**已填邮箱/手机号但未验证视为无通道→跳过**；邮箱+密码登录顺带写 `email_verified_at` 后再挑战走邮箱码；单通道脱敏；双通道选择；target 校验；verify/resend。
 - 绑定：绑定、换绑（旧通道二次校验）、解绑约束（最后通道拒绝）；脱敏函数单测。
 - 前端：登录 tabs 按开关渲染、挑战弹窗选择、绑定表单、配置页测试发送结果展示（vitest + mock）。
 - E2E：NILL（有邮箱）新 IP 挑战→邮箱码；新建纯用户名账户（无通道）新 IP 登录直接放行；手机注册→登录→绑定完整链路。
