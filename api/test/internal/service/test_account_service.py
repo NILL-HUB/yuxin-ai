@@ -1926,3 +1926,259 @@ class TestAccountService:
 
         with pytest.raises(FailException, match="账号不存在"):
             service.password_login("13800138000", "pwd")
+
+
+class TestSendBindPhoneCode:
+    def test_send_bind_phone_code_should_raise_when_channel_disabled(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": False, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(PHONE_BIND_SCENE="phone_bind"),
+        )
+
+        with pytest.raises(FailException, match="手机号通道未开启"):
+            service.send_bind_phone_code(SimpleNamespace(id=uuid4()), phone="13800138000")
+
+    def test_send_bind_phone_code_should_raise_when_phone_invalid(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(PHONE_BIND_SCENE="phone_bind"),
+        )
+
+        with pytest.raises(FailException, match="手机号格式不正确"):
+            service.send_bind_phone_code(SimpleNamespace(id=uuid4()), phone="12345")
+
+    def test_send_bind_phone_code_should_raise_when_phone_bound_by_other(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=_DBStub(_SessionStub({Account: _QueryStub(one_or_none_result=SimpleNamespace(id=uuid4()))})),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(PHONE_BIND_SCENE="phone_bind"),
+        )
+
+        with pytest.raises(FailException, match="该手机号已绑定其他账户"):
+            service.send_bind_phone_code(SimpleNamespace(id=uuid4()), phone="13800138000")
+
+    def test_send_bind_phone_code_should_allow_same_account_rebind(self, monkeypatch):
+        account_id = uuid4()
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        send_calls = []
+        service = _new_account_service(
+            db=_DBStub(_SessionStub({Account: _QueryStub(one_or_none_result=SimpleNamespace(id=account_id))})),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_BIND_SCENE="phone_bind",
+                send_code=lambda scene, email=None, phone=None: send_calls.append((scene, phone)) or "",
+            ),
+        )
+
+        result = service.send_bind_phone_code(SimpleNamespace(id=account_id), phone="+8613800138000")
+
+        assert result == ""
+        assert send_calls == [("phone_bind", "13800138000")]
+
+
+class TestBindPhone:
+    def test_bind_phone_should_update_phone_when_code_valid(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+        verify_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_BIND_SCENE="phone_bind",
+                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+            ),
+        )
+        monkeypatch.setattr(service, "get_account_by_phone", lambda phone: None)
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+
+        service.bind_phone(account, phone="+8613800138000", code="123456")
+
+        assert verify_calls == [("phone_bind", "123456", "13800138000")]
+        assert len(update_calls) == 1
+        assert update_calls[0]["phone"] == "13800138000"
+        assert update_calls[0]["phone_verified_at"] is not None
+
+    def test_bind_phone_should_raise_when_code_invalid(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_BIND_SCENE="phone_bind",
+                verify_code=lambda scene, code, contact=None: (_ for _ in ()).throw(
+                    FailException("验证码错误或已过期")
+                ),
+            ),
+        )
+
+        with pytest.raises(FailException, match="验证码错误或已过期"):
+            service.bind_phone(account, phone="13800138000", code="000000")
+
+    def test_bind_phone_should_raise_when_phone_bound_by_other(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4())
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_BIND_SCENE="phone_bind",
+                verify_code=lambda scene, code, contact=None: True,
+            ),
+        )
+        monkeypatch.setattr(
+            service,
+            "get_account_by_phone",
+            lambda phone: SimpleNamespace(id=uuid4()),
+        )
+
+        with pytest.raises(FailException, match="该手机号已绑定其他账户"):
+            service.bind_phone(account, phone="13800138000", code="123456")
+
+
+class TestUnbindPhone:
+    def test_unbind_phone_should_raise_when_no_phone(self, monkeypatch):
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+        )
+        account = SimpleNamespace(id=uuid4(), phone="", is_password_set=True)
+
+        with pytest.raises(FailException, match="当前未绑定手机号"):
+            service.unbind_phone(account, code="123456")
+
+    def test_unbind_phone_should_raise_when_last_channel(self, monkeypatch):
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_BIND_SCENE="phone_bind",
+                verify_code=lambda scene, code, contact=None: True,
+            ),
+        )
+        account = SimpleNamespace(id=uuid4(), phone="13800138000", email="", is_password_set=False)
+
+        with pytest.raises(FailException, match="请先设置邮箱或密码再解绑手机号"):
+            service.unbind_phone(account, code="123456")
+
+    def test_unbind_phone_should_clear_phone_when_code_valid(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4(), phone="13800138000", email="demo@example.com", is_password_set=False)
+        verify_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                PHONE_BIND_SCENE="phone_bind",
+                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+            ),
+        )
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+
+        service.unbind_phone(account, code="123456")
+
+        assert verify_calls == [("phone_bind", "123456", "13800138000")]
+        assert update_calls == [{"phone": "", "phone_verified_at": None}]
+
+
+class TestSendVerifyEmailCode:
+    def test_send_verify_email_code_should_raise_when_email_missing(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(EMAIL_VERIFY_SCENE="email_verify"),
+        )
+
+        with pytest.raises(FailException, match="尚未填写邮箱"):
+            service.send_verify_email_code(SimpleNamespace(id=uuid4(), email=""))
+
+    def test_send_verify_email_code_should_send_to_account_email(self, monkeypatch):
+        from internal.service import auth_switch_service
+
+        monkeypatch.setattr(
+            auth_switch_service,
+            "get_auth_switches",
+            lambda **kwargs: {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True},
+        )
+        send_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                EMAIL_VERIFY_SCENE="email_verify",
+                send_code=lambda scene, email=None, phone=None: send_calls.append((scene, email)) or "",
+            ),
+        )
+        account = SimpleNamespace(id=uuid4(), email="Demo@Example.com")
+
+        result = service.send_verify_email_code(account)
+
+        assert result == ""
+        assert send_calls == [("email_verify", "demo@example.com")]
+
+
+class TestVerifyEmail:
+    def test_verify_email_should_update_verified_at_when_code_valid(self, monkeypatch):
+        account = SimpleNamespace(id=uuid4(), email="demo@example.com")
+        verify_calls = []
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(
+                EMAIL_VERIFY_SCENE="email_verify",
+                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+            ),
+        )
+        update_calls = []
+        monkeypatch.setattr(service, "update", lambda target, **kwargs: update_calls.append(kwargs) or target)
+
+        service.verify_email(account, code="123456")
+
+        assert verify_calls == [("email_verify", "123456", "demo@example.com")]
+        assert len(update_calls) == 1
+        assert update_calls[0]["email_verified_at"] is not None
+
+    def test_verify_email_should_raise_when_email_missing(self, monkeypatch):
+        service = _new_account_service(
+            db=SimpleNamespace(session=SimpleNamespace()),
+            jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
+            email_service=SimpleNamespace(EMAIL_VERIFY_SCENE="email_verify"),
+        )
+
+        with pytest.raises(FailException, match="尚未填写邮箱"):
+            service.verify_email(SimpleNamespace(id=uuid4(), email=""), code="123456")

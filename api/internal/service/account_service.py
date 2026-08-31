@@ -1335,6 +1335,63 @@ class AccountService(BaseService):
     def _verify_phone_code(self, phone: str, code: str) -> None:
         self.email_service.verify_code(self.email_service.PHONE_LOGIN_SCENE, code, contact=phone)
 
+    def send_bind_phone_code(self, account: Account, *, phone: str) -> str:
+        """向待绑定手机号发送绑定验证码。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_PHONE_ENABLED"]:
+            raise FailException("手机号通道未开启，请联系管理员")
+        normalized_phone = self.normalize_phone(phone)
+        if not self.is_valid_phone(normalized_phone):
+            raise FailException("手机号格式不正确")
+        existing_account = self.get_account_by_phone(normalized_phone)
+        if existing_account and str(existing_account.id) != str(account.id):
+            raise FailException("该手机号已绑定其他账户")
+        return self.email_service.send_code(self.email_service.PHONE_BIND_SCENE, phone=normalized_phone)
+
+    def bind_phone(self, account: Account, *, phone: str, code: str) -> None:
+        """校验验证码后为当前账号绑定手机号。"""
+        normalized_phone = self.normalize_phone(phone)
+        self.email_service.verify_code(self.email_service.PHONE_BIND_SCENE, code, contact=normalized_phone)
+        existing_account = self.get_account_by_phone(normalized_phone)
+        if existing_account and str(existing_account.id) != str(account.id):
+            raise FailException("该手机号已绑定其他账户")
+        self.update(account, phone=normalized_phone, phone_verified_at=self._now())
+
+    def unbind_phone(self, account: Account, *, code: str) -> None:
+        """校验验证码后解绑当前账号手机号。"""
+        current_phone = self.normalize_phone(getattr(account, "phone", "") or "")
+        if not current_phone:
+            raise FailException("当前未绑定手机号")
+        self.email_service.verify_code(self.email_service.PHONE_BIND_SCENE, code, contact=current_phone)
+        if not getattr(account, "email", "") and not account.is_password_set:
+            raise FailException("请先设置邮箱或密码再解绑手机号")
+        self.update(account, phone="", phone_verified_at=None)
+
+    def send_verify_email_code(self, account: Account) -> str:
+        """向当前账号邮箱发送验证码。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_EMAIL_ENABLED"]:
+            raise FailException("邮箱通道未开启，请联系管理员")
+        if not getattr(account, "email", ""):
+            raise FailException("尚未填写邮箱，请先在安全设置中绑定邮箱")
+        return self.email_service.send_code(
+            self.email_service.EMAIL_VERIFY_SCENE,
+            email=self._normalize_email(account.email),
+        )
+
+    def verify_email(self, account: Account, *, code: str) -> None:
+        """校验验证码后将当前账号邮箱标记为已验证。"""
+        if not getattr(account, "email", ""):
+            raise FailException("尚未填写邮箱，请先在安全设置中绑定邮箱")
+        self.email_service.verify_code(
+            self.email_service.EMAIL_VERIFY_SCENE,
+            code,
+            contact=self._normalize_email(account.email),
+        )
+        self.update(account, email_verified_at=self._now())
+
     def phone_code_login(self, phone: str, code: str) -> dict[str, Any]:
         """手机号+验证码登录。验证码登录视为强验证，不触发新 IP 二次验证。"""
         from internal.service.auth_switch_service import get_auth_switches
