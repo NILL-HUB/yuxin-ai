@@ -190,16 +190,17 @@ describe('OrchestrationFlagsView', () => {
     expect(wrapper.find('tr[data-code="ENABLE_ORCHESTRATOR"] .arco-switch').attributes('disabled')).toBeDefined()
   })
 
-  it('renders auth flags in a leading business group', async () => {
+  it('renders auth flags in the feature flags group', async () => {
     const wrapper = await renderView()
 
     const groupHeaders = wrapper.findAll('.group-header-title').map((node) => node.text())
-    expect(groupHeaders[0]).toBe('Business flags')
+    expect(groupHeaders).not.toContain('Business flags')
 
     const bodyText = wrapper.find('.flags-collapse').text()
     expect(bodyText).toContain('AUTH_EMAIL_ENABLED')
     expect(bodyText).toContain('AUTH_PHONE_ENABLED')
     expect(bodyText).toContain('AUTH_LOGIN_CHALLENGE_ENABLED')
+    expect(bodyText).toContain('ENABLE_ORCHESTRATOR')
   })
 
   it('shows challenge dependency hint when enabling challenge with no channel enabled', async () => {

@@ -21,8 +21,8 @@ const flags = ref<AdminOrchestrationFlag[]>([])
 const releaseCheck = ref<AdminOrchestrationReleaseCheck | null>(null)
 
 const POOL_GOVERNANCE_PREFIX = 'ENABLE_POOL_GOVERNANCE_'
-const FEATURE_FLAG_CODES: string[] = ['ENABLE_DISTRIBUTION']
-const AUTH_FLAG_CODES: string[] = [
+const FEATURE_FLAG_CODES: string[] = [
+  'ENABLE_DISTRIBUTION',
   'AUTH_EMAIL_ENABLED',
   'AUTH_PHONE_ENABLED',
   'AUTH_LOGIN_CHALLENGE_ENABLED',
@@ -87,24 +87,16 @@ const featureFlags = computed(() =>
   flags.value.filter((f) => FEATURE_FLAG_CODES.includes(f.code)),
 )
 
-const authFlags = computed(() =>
-  flags.value.filter((f) => AUTH_FLAG_CODES.includes(f.code)),
-)
-
 const otherFlags = computed(() =>
   flags.value.filter(
     (f) =>
       !f.code.startsWith(POOL_GOVERNANCE_PREFIX) &&
-      !FEATURE_FLAG_CODES.includes(f.code) &&
-      !AUTH_FLAG_CODES.includes(f.code),
+      !FEATURE_FLAG_CODES.includes(f.code),
   ),
 )
 
 const groups = computed(() => {
   const result: { key: string; flags: AdminOrchestrationFlag[] }[] = []
-  if (authFlags.value.length > 0) {
-    result.push({ key: 'business', flags: authFlags.value })
-  }
   if (poolGovernanceFlags.value.length > 0) {
     result.push({ key: 'poolGovernance', flags: poolGovernanceFlags.value })
   }
@@ -117,13 +109,12 @@ const groups = computed(() => {
   return result
 })
 
-const activeKeys = ref<string[]>(['business', 'poolGovernance', 'other', 'feature'])
+const activeKeys = ref<string[]>(['poolGovernance', 'other', 'feature'])
 
 const enabledCount = computed(() => flags.value.filter((f) => f.enabled).length)
 const canUpdate = computed(() => adminStore.hasPermission('orchestration_flag:update'))
 
 const groupTitle = (key: string) => {
-  if (key === 'business') return t('admin.orchestrationFlags.businessGroup')
   if (key === 'poolGovernance') return t('admin.orchestrationFlags.poolGovernanceGroup')
   if (key === 'feature') return t('admin.orchestrationFlags.distributionGroup')
   return t('admin.orchestrationFlags.otherGroup')
