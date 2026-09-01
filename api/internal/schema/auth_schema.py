@@ -2,7 +2,7 @@ from wtforms import Form
 from wtforms import StringField
 from wtforms.validators import DataRequired, Email, Length, Optional, regexp
 from pkg.password import password_pattern
-from marshmallow import Schema, fields
+from marshmallow import Schema, fields, pre_dump
 
 USERNAME_PATTERN = r"^[A-Za-z0-9]{3,32}$"
 PASSWORD_RULE_MESSAGE = "密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位"
@@ -37,8 +37,16 @@ class PasswordLoginResp(Schema):
     challenge_required = fields.Boolean()
     challenge_id = fields.String(allow_none=True)
     challenge_type = fields.String(allow_none=True)
+    channels = fields.List(fields.Dict(), dump_default=[], allow_none=True)
     masked_email = fields.String(allow_none=True)
     risk_reason = fields.String(allow_none=True)
+
+    @pre_dump
+    def _ensure_challenge_fields(self, data, **kwargs):
+        if isinstance(data, dict):
+            if "channels" not in data:
+                data = {**data, "channels": []}
+        return data
 
 class PrepareRegisterReq(Form):
     """准备注册请求结构"""
