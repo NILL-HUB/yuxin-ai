@@ -89,6 +89,12 @@ const router = createRouter({
           meta: { requiresAuth: true },
         },
         {
+          path: 'my-apps',
+          name: 'my-apps',
+          component: () => import('@/views/space/my-apps/ListView.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
           path: 'recycle-bin',
           name: 'user-recycle-bin',
           component: () => import('@/views/space/recycle-bin/ListView.vue'),
@@ -173,6 +179,60 @@ const router = createRouter({
               name: 'admin-billing',
               component: () => import('@/views/admin/BillingView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['plan:read', 'redeem_code:read'] },
+            },
+            {
+              path: 'billing-reconciliations',
+              name: 'admin-billing-reconciliations',
+              component: () => import('@/views/admin/BillingReconciliationView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['plan:read'] },
+            },
+            {
+              path: 'plans',
+              name: 'admin-plans',
+              component: () => import('@/views/admin/PlanManageView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['plan:read'] },
+            },
+            {
+              path: 'distribution',
+              name: 'admin-distribution',
+              component: () => import('@/views/admin/AdminDistributionView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['distribution:view'] },
+            },
+            {
+              path: 'orders',
+              name: 'admin-orders',
+              component: () => import('@/views/admin/AdminOrdersView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['order:view'] },
+            },
+            {
+              path: 'refunds',
+              name: 'admin-refunds',
+              component: () => import('@/views/admin/AdminRefundsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['refund:view'] },
+            },
+            {
+              path: 'withdrawals',
+              name: 'admin-withdrawals',
+              component: () => import('@/views/admin/AdminWithdrawalsView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['withdraw:view'] },
+            },
+            {
+              path: 'payment-config',
+              name: 'admin-payment-config',
+              component: () => import('@/views/admin/AdminPaymentConfigView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['payment_config:read'] },
+            },
+            {
+              path: 'mail-config',
+              name: 'admin-mail-config',
+              component: () => import('@/views/admin/AdminMailConfigView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
+            },
+            {
+              path: 'sms-config',
+              name: 'admin-sms-config',
+              component: () => import('@/views/admin/AdminSmsConfigView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
             },
             {
               path: 'cost-stats',

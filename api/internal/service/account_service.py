@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
 
-from internal.context import has_request_context, request
+from internal.context import current_app, has_request_context, request
 from injector import inject
 import requests
 from sqlalchemy.exc import SQLAlchemyError
@@ -36,6 +36,7 @@ class AccountService(BaseService):
     db: SQLAlchemy
     jwt_service: JwtService
     email_service: EmailService
+    distribution_service = None
     SUPPORTED_OAUTH_PROVIDERS = ("github", "google")
     INVALID_CREDENTIALS_REASON_CODE = "INVALID_CREDENTIALS"
     ACCOUNT_EXISTS_REASON_CODE = "ACCOUNT_EXISTS"
@@ -49,6 +50,7 @@ class AccountService(BaseService):
     LOGIN_HISTORY_LIMIT = 20
     LOGIN_CHALLENGE_TTL_SECONDS = 10 * 60
     USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9]{3,32}$")
+    PHONE_PATTERN = re.compile(r"1[3-9]\d{9}")
     IP_LOCATION_CACHE_TTL_SECONDS = 24 * 60 * 60
     IP_LOCATION_LOOKUP_TIMEOUT_SECONDS = 3
 
@@ -81,6 +83,19 @@ class AccountService(BaseService):
         return (email or "").strip().lower()
 
     @classmethod
+    def normalize_phone(cls, phone: str) -> str:
+        """归一化手机号：去除 +86 前缀并去除空白。"""
+        normalized = (phone or "").strip()
+        if normalized.startswith("+86"):
+            normalized = normalized[3:].strip()
+        return normalized
+
+    @classmethod
+    def is_valid_phone(cls, phone: str) -> bool:
+        """校验中国大陆手机号格式（11 位，1[3-9] 开头）。"""
+        return cls.PHONE_PATTERN.fullmatch(cls.normalize_phone(phone)) is not None
+
+    @classmethod
     def _normalize_username(cls, username: str) -> str:
         return (username or "").strip()
 
@@ -106,19 +121,9 @@ class AccountService(BaseService):
 
     @classmethod
     def _mask_email(cls, email: str) -> str:
-        normalized_email = (email or "").strip()
-        if "@" not in normalized_email:
-            return normalized_email
+        from internal.lib.mask_utils import mask_email
 
-        local_part, domain = normalized_email.split("@", 1)
-        if len(local_part) <= 1:
-            masked_local_part = "*"
-        elif len(local_part) == 2:
-            masked_local_part = f"{local_part[0]}*"
-        else:
-            masked_local_part = f"{local_part[:2]}{'*' * max(len(local_part) - 2, 1)}"
-
-        return f"{masked_local_part}@{domain}"
+        return mask_email(email)
 
     @classmethod
     def _resolve_client_ip(cls) -> str:
@@ -400,14 +405,28 @@ class AccountService(BaseService):
 
         return bool(last_login_ip and last_login_ip != normalized_ip)
 
-    def _build_login_challenge_response(self, challenge_id: str, email: str, risk_reason: str) -> dict[str, Any]:
-        return {
-            "challenge_required": True,
-            "challenge_id": challenge_id,
-            "challenge_type": "email_code",
-            "masked_email": self._mask_email(email),
-            "risk_reason": risk_reason,
-        }
+    def _collect_challenge_channels(self, account: Account) -> list[dict[str, Any]]:
+        """收集账号可用的挑战验证通道（邮箱/手机号均要求已验证）。"""
+        from internal.lib.mask_utils import mask_email, mask_phone
+        from internal.service.auth_switch_service import get_auth_switches
+
+        switches = get_auth_switches()
+        channels: list[dict[str, Any]] = []
+        email = self._normalize_email(getattr(account, "email", "") or "")
+        if (
+            switches.get("AUTH_EMAIL_ENABLED")
+            and email
+            and getattr(account, "email_verified_at", None)
+        ):
+            channels.append({"type": "email", "masked": mask_email(email), "email": email})
+        phone = self.normalize_phone(getattr(account, "phone", "") or "")
+        if (
+            switches.get("AUTH_PHONE_ENABLED")
+            and phone
+            and getattr(account, "phone_verified_at", None)
+        ):
+            channels.append({"type": "phone", "masked": mask_phone(phone), "phone": phone})
+        return channels
 
     def _load_login_challenge(self, challenge_id: str) -> dict[str, Any]:
         raw_payload = redis_client.get(self._login_challenge_key(challenge_id))
@@ -420,18 +439,32 @@ class AccountService(BaseService):
             redis_client.delete(self._login_challenge_key(challenge_id))
             raise FailException("登录验证已失效，请重新登录")
 
-        if not isinstance(payload, dict) or not payload.get("account_id") or not payload.get("email"):
+        channels = payload.get("channels") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or not payload.get("account_id")
+            or not isinstance(channels, list)
+            or not channels
+        ):
             redis_client.delete(self._login_challenge_key(challenge_id))
             raise FailException("登录验证已失效，请重新登录")
 
         return payload
 
-    def _create_login_challenge(self, account: Account, *, risk_reason: str = "new_ip") -> dict[str, Any]:
+    def _create_login_challenge(
+        self,
+        account: Account,
+        *,
+        risk_reason: str = "new_ip",
+        channels: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         challenge_id = str(uuid4())
         challenge_key = self._login_challenge_key(challenge_id)
+        channel_list = channels or []
         payload = {
             "account_id": str(account.id),
-            "email": self._normalize_email(account.email),
+            "channels": channel_list,
+            "target": None,
             "risk_reason": risk_reason,
             "created_at": int(self._now().replace(tzinfo=UTC).timestamp()),
         }
@@ -442,13 +475,13 @@ class AccountService(BaseService):
             json.dumps(payload),
         )
 
-        try:
-            self.email_service.send_login_challenge_code(payload["email"])
-        except Exception:
-            redis_client.delete(challenge_key)
-            raise
-
-        return self._build_login_challenge_response(challenge_id, payload["email"], risk_reason)
+        return {
+            "challenge_required": True,
+            "challenge_id": challenge_id,
+            "challenge_type": "verification_code",
+            "channels": channel_list,
+            "risk_reason": risk_reason,
+        }
 
     def _is_login_locked(self, email: str, client_ip: str) -> bool:
         try:
@@ -506,6 +539,16 @@ class AccountService(BaseService):
         """根据id获取指定的账号模型"""
         return self.get(Account, account_id)
 
+    def login_methods(self) -> dict[str, bool]:
+        from internal.service.auth_switch_service import get_auth_switches
+
+        sw = get_auth_switches()
+        return {
+            "email_enabled": sw["AUTH_EMAIL_ENABLED"],
+            "phone_enabled": sw["AUTH_PHONE_ENABLED"],
+            "challenge_enabled": sw["AUTH_LOGIN_CHALLENGE_ENABLED"],
+        }
+
     def get_account_oauth_by_provider_name_and_openid(
             self,
             provider_name: str,
@@ -548,6 +591,15 @@ class AccountService(BaseService):
             return None
         return self.db.session.query(Account).filter(
             Account.username == normalized_username,
+        ).one_or_none()
+
+    def get_account_by_phone(self, phone: str) -> Account:
+        """根据手机号查询账号信息。"""
+        normalized_phone = self.normalize_phone(phone)
+        if not normalized_phone:
+            return None
+        return self.db.session.query(Account).filter(
+            Account.phone == normalized_phone,
         ).one_or_none()
 
     def get_account_by_identifier(self, identifier: str) -> Account:
@@ -611,9 +663,29 @@ class AccountService(BaseService):
             password=base64_password_hashed,
             password_salt=base64_salt,
             password_version=PASSWORD_HASH_VERSION_CURRENT,
+            password_changed_at=self._now(),
         )
+        # 密码变更后立即吊销该账号全部旧登录会话，旧 token 失效
+        try:
+            for account_session in self.get_account_sessions_by_account_id(account.id):
+                if account_session.revoked_at is None:
+                    self.update(account_session, revoked_at=self._now())
+        except Exception:
+            logging.warning("密码更新后吊销旧会话失败 account_id=%s", account.id, exc_info=True)
 
         return account
+
+    def _rehash_account_password(self, password: str, account: Account) -> None:
+        """登录成功后透明升级旧参数哈希：不视为密码变更，不吊销现有会话。"""
+        salt = secrets.token_bytes(16)
+        base64_salt = base64.b64encode(salt).decode()
+        password_hashed = hash_password(password, salt)
+        self.update_account(
+            account,
+            password=base64.b64encode(password_hashed).decode(),
+            password_salt=base64_salt,
+            password_version=PASSWORD_HASH_VERSION_CURRENT,
+        )
 
     def _rehash_if_outdated(self, account: Account, password: str) -> None:
         """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
@@ -758,6 +830,21 @@ class AccountService(BaseService):
         expires_at = getattr(account_session, "expires_at", None)
         if expires_at and expires_at < self._now():
             raise UnauthorizedException("登录会话已过期,请重新登录")
+
+        # 密码变更后，变更前创建的会话一律失效（即使未被显式吊销）
+        try:
+            account = self.get_account(account_session.account_id)
+            password_changed_at = getattr(account, "password_changed_at", None)
+            session_created_at = getattr(account_session, "created_at", None)
+            if (
+                password_changed_at is not None
+                and session_created_at is not None
+                and session_created_at < password_changed_at
+            ):
+                raise UnauthorizedException("密码已变更，请重新登录")
+        except SQLAlchemyError:
+            self._rollback_session()
+            raise
 
         self.touch_account_session(account_session)
         return account_session
@@ -1050,37 +1137,136 @@ class AccountService(BaseService):
         if bound is not None:
             raise FailException("该账号已绑定管理员身份，请前往管理端登录")
 
+    def _log_challenge_skipped(self, account: Account, client_ip: str, user_agent: str = "") -> None:
+        """记录无可用通道跳过异地登录挑战的安全日志（结构化字段）。"""
+        current_app.logger.warning(
+            "auth_security event=challenge_skipped_no_channel account_id=%s ip=%s user_agent=%s",
+            account.id,
+            client_ip,
+            user_agent or self._resolve_user_agent(),
+        )
+
     def begin_login(self, account: Account) -> dict[str, Any]:
         """根据登录风险返回授权凭证或二次验证挑战。"""
         self._ensure_account_enabled(account)
         self._ensure_account_not_admin_bound(account)
         client_ip = self._resolve_client_ip()
-        if self._should_require_login_challenge(account, client_ip):
-            return self._create_login_challenge(account, risk_reason="new_ip")
-        return self.issue_credential(account, revoke_previous_sessions=True)
 
-    def resend_login_challenge(self, challenge_id: str) -> dict[str, Any]:
-        """重发登录二次验证验证码。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        switches = get_auth_switches()
+        if not switches.get("AUTH_LOGIN_CHALLENGE_ENABLED"):
+            return self._complete_login(account, challenge_policy="skip")
+        if not self._should_require_login_challenge(account, client_ip):
+            return self.issue_credential(account, revoke_previous_sessions=True)
+
+        channels = self._collect_challenge_channels(account)
+        if not channels:
+            self._log_challenge_skipped(account, client_ip)
+            return self._complete_login(account, challenge_policy="skip")
+        return self._create_login_challenge(account, risk_reason="new_ip", channels=channels)
+
+    def send_login_challenge_code(self, challenge_id: str, *, channel: str) -> dict[str, Any]:
+        """按指定通道发送登录挑战验证码，并将实际目标写入 challenge payload。"""
         payload = self._load_login_challenge(challenge_id)
-        self.email_service.send_login_challenge_code(payload["email"])
-        return self._build_login_challenge_response(
-            challenge_id,
-            payload["email"],
-            str(payload.get("risk_reason") or "new_ip"),
-        )
+        channels = payload.get("channels") or []
+        channel_info = next((c for c in channels if c.get("type") == channel), None)
+        if channel_info is None:
+            raise FailException("验证通道无效，请刷新后重试")
 
-    def verify_login_challenge(self, challenge_id: str, code: str) -> dict[str, Any]:
-        """完成登录二次验证并签发正式凭证。"""
-        payload = self._load_login_challenge(challenge_id)
+        from internal.service.auth_switch_service import get_auth_switches
 
-        if not self.email_service.verify_login_challenge_code(payload["email"], code):
-            raise FailException("验证码错误或已过期")
-
-        redis_client.delete(self._login_challenge_key(challenge_id))
+        switches = get_auth_switches()
         account = self.get_account(payload["account_id"])
         if not account:
             raise FailException("账号不存在")
 
+        if channel == "phone":
+            if not switches.get("AUTH_PHONE_ENABLED"):
+                raise FailException("手机号通道未开启")
+            phone = self.normalize_phone(
+                channel_info.get("phone") or getattr(account, "phone", "") or ""
+            )
+            if not phone:
+                raise FailException("验证通道无效，请刷新后重试")
+            self.email_service.send_code(
+                self.email_service.LOGIN_CHALLENGE_SCENE,
+                phone=phone,
+            )
+            payload["target"] = phone
+        elif channel == "email":
+            if not switches.get("AUTH_EMAIL_ENABLED"):
+                raise FailException("邮箱通道未开启")
+            email = self._normalize_email(
+                channel_info.get("email") or getattr(account, "email", "") or ""
+            )
+            if not email:
+                raise FailException("验证通道无效，请刷新后重试")
+            self.email_service.send_code(
+                self.email_service.LOGIN_CHALLENGE_SCENE,
+                email=email,
+            )
+            payload["target"] = email
+        else:
+            raise FailException("验证通道无效，请刷新后重试")
+
+        redis_client.setex(
+            self._login_challenge_key(challenge_id),
+            timedelta(seconds=self.LOGIN_CHALLENGE_TTL_SECONDS),
+            json.dumps(payload),
+        )
+
+        return {
+            "challenge_id": challenge_id,
+            "channel": channel,
+            "masked": channel_info.get("masked", ""),
+        }
+
+    def resend_login_challenge(self, challenge_id: str, *, channel: str) -> dict[str, Any]:
+        """重发登录二次验证验证码（channel 必填）。"""
+        return self.send_login_challenge_code(challenge_id, channel=channel)
+
+    def verify_login_challenge(
+        self,
+        challenge_id: str,
+        code: str,
+        *,
+        channel: str = "",
+    ) -> dict[str, Any]:
+        """完成登录二次验证并签发正式凭证。"""
+        payload = self._load_login_challenge(challenge_id)
+        channels = payload.get("channels") or []
+        resolved_channel = channel or (channels[0].get("type") if channels else "")
+        if resolved_channel not in ("email", "phone"):
+            raise FailException("验证通道无效，请刷新后重试")
+
+        account = self.get_account(payload["account_id"])
+        if not account:
+            raise FailException("账号不存在")
+
+        target = payload.get("target")
+        if resolved_channel == "phone":
+            contact = self.normalize_phone(
+                target if self.is_valid_phone(target) else getattr(account, "phone", "") or ""
+            )
+        else:
+            contact = (
+                target
+                if target and "@" in target
+                else self._normalize_email(getattr(account, "email", "") or "")
+            )
+        if not contact:
+            raise FailException("验证通道无效，请刷新后重试")
+
+        if not self.email_service.verify_code(
+            self.email_service.LOGIN_CHALLENGE_SCENE,
+            code,
+            scene=self.email_service.LOGIN_CHALLENGE_SCENE,
+            contact=contact,
+        ):
+            raise FailException("验证码错误或已过期")
+
+        redis_client.delete(self._login_challenge_key(challenge_id))
         return self.issue_credential(
             account,
             skip_login_alert=True,
@@ -1142,13 +1328,40 @@ class AccountService(BaseService):
             raise FailException("用户名已存在，请更换后重试", reason_code=self.ACCOUNT_EXISTS_REASON_CODE)
         return normalized_email, normalized_username
 
+    def _get_distribution_service(self):
+        if self.distribution_service is None:
+            from internal.service.distribution_service import DistributionService
+
+            self.distribution_service = DistributionService(session=self.db.session)
+        return self.distribution_service
+
+    def _validate_invite_code(self, invite_code: str):
+        """分销开启时校验邀请码；关闭时可空。返回解析到的邀请人 Account 或 None。"""
+        code = (invite_code or "").strip()
+        distribution = self._get_distribution_service()
+        if not code:
+            if distribution.is_enabled():
+                raise FailException("注册需要填写邀请码")
+            return None
+        inviter = distribution.resolve_inviter_by_code(code)
+        if inviter is None:
+            raise FailException("邀请码无效或邀请人不可用")
+        return inviter
+
+    def _bind_inviter_and_code(self, account: Account, inviter, invite_code: str) -> None:
+        distribution = self._get_distribution_service()
+        distribution.ensure_referral_code(account.id)
+        if inviter is not None:
+            distribution.bind_superior(account.id, inviter.id, source="register")
+
     def prepare_register(self, email: str, password: str, username: str = "") -> None:
         """为未注册邮箱发送注册验证码。"""
         normalized_email, _ = self._ensure_register_account_available(email, username)
         self.email_service.send_register_code(normalized_email)
 
-    def direct_register(self, username: str, password: str) -> dict[str, Any]:
+    def direct_register(self, username: str, password: str, invite_code: str = "") -> dict[str, Any]:
         """直接注册（无需邮箱验证码）。"""
+        inviter = self._validate_invite_code(invite_code)
         normalized_username = self._validate_username(username)
         if self.get_account_by_username(normalized_username):
             raise FailException("用户名已存在，请更换后重试", reason_code=self.ACCOUNT_EXISTS_REASON_CODE)
@@ -1156,11 +1369,13 @@ class AccountService(BaseService):
             username=normalized_username,
             name=normalized_username,
         )
+        self._bind_inviter_and_code(account, inviter, invite_code)
         self.update_password(password, account)
         return self.begin_login(account)
 
-    def register_by_email_code(self, email: str, password: str, code: str, username: str = "") -> dict[str, Any]:
+    def register_by_email_code(self, email: str, password: str, code: str, username: str = "", invite_code: str = "") -> dict[str, Any]:
         """校验注册验证码后创建账号并直接登录。"""
+        inviter = self._validate_invite_code(invite_code)
         normalized_email, normalized_username = self._ensure_register_account_available(email, username)
 
         if not self.email_service.verify_register_code(normalized_email, code):
@@ -1172,6 +1387,7 @@ class AccountService(BaseService):
             username=normalized_username,
             name=display_name,
         )
+        self._bind_inviter_and_code(account, inviter, invite_code)
         self.update_password(password, account)
         return self.begin_login(account)
 
@@ -1179,6 +1395,11 @@ class AccountService(BaseService):
         """根据传递的账号标识和密码登录账号"""
         normalized_identifier = (identifier or "").strip()
         account = self.get_account_by_identifier(normalized_identifier)
+        if not account and self.PHONE_PATTERN.fullmatch(self.normalize_phone(normalized_identifier)):
+            from internal.service.auth_switch_service import get_auth_switches
+
+            if get_auth_switches()["AUTH_PHONE_ENABLED"]:
+                account = self.get_account_by_phone(normalized_identifier)
         if not account:
             compare_password(password, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAA")
             raise FailException("账号不存在", reason_code="ACCOUNT_NOT_FOUND")
@@ -1204,6 +1425,19 @@ class AccountService(BaseService):
         # 2.1 登录成功后透明升级旧参数密码哈希
         self._rehash_if_outdated(account, password)
 
+        # 2.2 密码校验通过即证明持有该登录标识，顺带写入对应验证态（写入失败不阻断登录）
+        now = self._now()
+        try:
+            account_phone = self.normalize_phone(getattr(account, "phone", "") or "")
+            if account_phone and self.PHONE_PATTERN.fullmatch(self.normalize_phone(normalized_identifier)):
+                if not getattr(account, "phone_verified_at", None):
+                    self.update(account, phone_verified_at=now)
+            elif self._normalize_email(getattr(account, "email", "") or "") == self._normalize_email(normalized_identifier):
+                if not getattr(account, "email_verified_at", None):
+                    self.update(account, email_verified_at=now)
+        except Exception as e:
+            logging.warning("密码登录后写入验证态失败，已跳过: %s", e)
+
         # 3.根据登录风险返回授权凭证或二次验证挑战
         return self.begin_login(account)
 
@@ -1211,7 +1445,143 @@ class AccountService(BaseService):
         """登录成功后透明升级旧参数哈希：若密码版本低于当前版本则重新哈希并原地升级。"""
         if int(getattr(account, "password_version", 1) or 1) >= PASSWORD_HASH_VERSION_CURRENT:
             return
+        self._rehash_account_password(password, account)
+
+    def _set_password(self, account: Account, password: str) -> None:
+        """为账号设置密码（复用 update_password 的盐值与哈希逻辑）。"""
         self.update_password(password, account)
+
+    def _complete_login(self, account: Account, challenge_policy: str = "auto") -> dict[str, Any]:
+        """统一登录签发：验证码登录视为强验证，跳过新 IP 挑战；密码登录保持自动判定。"""
+        self._ensure_account_enabled(account)
+        self._ensure_account_not_admin_bound(account)
+        if challenge_policy == "skip":
+            return self.issue_credential(account, revoke_previous_sessions=True)
+        return self.begin_login(account)
+
+    def _verify_phone_code(self, phone: str, code: str) -> None:
+        self.email_service.verify_code(self.email_service.PHONE_LOGIN_SCENE, code, contact=phone)
+
+    def send_bind_phone_code(self, account: Account, *, phone: str) -> str:
+        """向待绑定手机号发送绑定验证码。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_PHONE_ENABLED"]:
+            raise FailException("手机号通道未开启，请联系管理员")
+        normalized_phone = self.normalize_phone(phone)
+        if not self.is_valid_phone(normalized_phone):
+            raise FailException("手机号格式不正确")
+        existing_account = self.get_account_by_phone(normalized_phone)
+        if existing_account and str(existing_account.id) != str(account.id):
+            raise FailException("该手机号已绑定其他账户")
+        return self.email_service.send_code(self.email_service.PHONE_BIND_SCENE, phone=normalized_phone)
+
+    def bind_phone(self, account: Account, *, phone: str, code: str) -> None:
+        """校验验证码后为当前账号绑定手机号。"""
+        normalized_phone = self.normalize_phone(phone)
+        self.email_service.verify_code(self.email_service.PHONE_BIND_SCENE, code, contact=normalized_phone)
+        existing_account = self.get_account_by_phone(normalized_phone)
+        if existing_account and str(existing_account.id) != str(account.id):
+            raise FailException("该手机号已绑定其他账户")
+        self.update(account, phone=normalized_phone, phone_verified_at=self._now())
+
+    def unbind_phone(self, account: Account, *, code: str) -> None:
+        """校验验证码后解绑当前账号手机号。"""
+        current_phone = self.normalize_phone(getattr(account, "phone", "") or "")
+        if not current_phone:
+            raise FailException("当前未绑定手机号")
+        self.email_service.verify_code(self.email_service.PHONE_BIND_SCENE, code, contact=current_phone)
+        if not getattr(account, "email", "") and not account.is_password_set:
+            raise FailException("请先设置邮箱或密码再解绑手机号")
+        self.update(account, phone="", phone_verified_at=None)
+
+    def send_verify_email_code(self, account: Account) -> str:
+        """向当前账号邮箱发送验证码。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_EMAIL_ENABLED"]:
+            raise FailException("邮箱通道未开启，请联系管理员")
+        if not getattr(account, "email", ""):
+            raise FailException("尚未填写邮箱，请先在安全设置中绑定邮箱")
+        return self.email_service.send_code(
+            self.email_service.EMAIL_VERIFY_SCENE,
+            email=self._normalize_email(account.email),
+        )
+
+    def verify_email(self, account: Account, *, code: str) -> None:
+        """校验验证码后将当前账号邮箱标记为已验证。"""
+        if not getattr(account, "email", ""):
+            raise FailException("尚未填写邮箱，请先在安全设置中绑定邮箱")
+        self.email_service.verify_code(
+            self.email_service.EMAIL_VERIFY_SCENE,
+            code,
+            contact=self._normalize_email(account.email),
+        )
+        self.update(account, email_verified_at=self._now())
+
+    def phone_code_login(self, phone: str, code: str) -> dict[str, Any]:
+        """手机号+验证码登录。验证码登录视为强验证，不触发新 IP 二次验证。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_PHONE_ENABLED"]:
+            raise FailException("手机号通道未开启")
+        self._verify_phone_code(phone, code)
+        account = self.get_account_by_phone(phone)
+        if account is None:
+            raise FailException("该手机号未注册，请先注册")
+        self._ensure_account_enabled(account)
+        if not account.phone_verified_at:
+            self.update(account, phone_verified_at=self._now())
+        return self._complete_login(account, challenge_policy="skip")
+
+    def email_code_login(self, email: str, code: str) -> dict[str, Any]:
+        """邮箱+验证码登录。验证码登录视为强验证，不触发新 IP 二次验证。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_EMAIL_ENABLED"]:
+            raise FailException("邮箱通道未开启")
+        if not self.email_service.verify_code(self.email_service.EMAIL_LOGIN_SCENE, code, contact=email):
+            raise FailException("验证码错误或已过期")
+        normalized_email = self._normalize_email(email)
+        account = self.get_account_by_email(normalized_email)
+        if account is None:
+            raise FailException("该邮箱未注册，请先注册")
+        self._ensure_account_enabled(account)
+        if not account.email_verified_at:
+            self.update(account, email_verified_at=self._now())
+        return self._complete_login(account, challenge_policy="skip")
+
+    def phone_register(
+        self,
+        *,
+        phone: str,
+        code: str,
+        username: str = "",
+        password: str = "",
+    ) -> dict[str, Any]:
+        """手机号验证码注册：username 空时自动生成，password 非空则一并设置。"""
+        from internal.service.auth_switch_service import get_auth_switches
+
+        if not get_auth_switches()["AUTH_PHONE_ENABLED"]:
+            raise FailException("手机号通道未开启")
+        if not self.email_service.verify_code(self.email_service.PHONE_REGISTER_SCENE, code, contact=phone):
+            raise FailException("验证码错误或已过期")
+        if self.get_account_by_phone(phone):
+            raise FailException("该手机号已注册，请直接登录")
+        normalized_username = self._validate_username(username)
+        auto_username = normalized_username or f"user_{phone[-4:]}_{uuid4().hex[:6]}"
+        account = Account(
+            username=auto_username,
+            name=auto_username,
+            email="",
+            phone=self.normalize_phone(phone),
+            phone_verified_at=self._now(),
+        )
+        if password:
+            self._set_password(account, password)
+        self.db.session.add(account)
+        self.db.session.flush()
+        return self._complete_login(account, challenge_policy="skip")
 
     def send_reset_code(self, email: str) -> None:
         """发送密码重置验证码"""

@@ -13,6 +13,13 @@ import {
   updateName,
   updatePassword,
 } from '@/services/account'
+import {
+  bindPhone,
+  sendBindPhoneCode,
+  sendVerifyEmailCode,
+  unbindPhone,
+  verifyEmail,
+} from '@/services/account-security'
 import * as request from '@/utils/request'
 import * as auth from '@/utils/auth'
 
@@ -115,5 +122,36 @@ describe('account service', () => {
     await unbindOAuth('github')
 
     expect(request.post).toHaveBeenCalledWith('/account/oauth/github/unbind')
+  })
+
+  it('posts phone bind and unbind requests to the security endpoints', async () => {
+    await sendBindPhoneCode('13800138000')
+    await bindPhone('13800138000', '123456')
+    await unbindPhone('123456')
+
+    expect(request.post).toHaveBeenNthCalledWith(
+      1,
+      '/account/security/send-bind-phone-code',
+      { body: { phone: '13800138000' } },
+    )
+    expect(request.post).toHaveBeenNthCalledWith(2, '/account/security/bind-phone', {
+      body: { phone: '13800138000', code: '123456' },
+    })
+    expect(request.post).toHaveBeenNthCalledWith(3, '/account/security/unbind-phone', {
+      body: { code: '123456' },
+    })
+  })
+
+  it('posts email verification requests to the security endpoints', async () => {
+    await sendVerifyEmailCode()
+    await verifyEmail('123456')
+
+    expect(request.post).toHaveBeenNthCalledWith(
+      1,
+      '/account/security/send-verify-email-code',
+    )
+    expect(request.post).toHaveBeenNthCalledWith(2, '/account/security/verify-email', {
+      body: { code: '123456' },
+    })
   })
 })

@@ -36,12 +36,16 @@ def register_routes(quart_app):
             return err
 
         from internal.schema.account_schema import GetCurrentUserResp
+        from internal.lib.mask_utils import mask_phone
 
         account_service = _get_service(AccountService)
         data = {
             "id": account.id,
             "name": account.name,
             "email": account.email,
+            "email_verified": account.email_verified_at is not None,
+            "phone": mask_phone(account.phone),
+            "phone_verified": account.phone_verified_at is not None,
             "avatar": account.avatar,
             "last_login_at": account.last_login_at,
             "last_login_ip": account.last_login_ip,
@@ -243,6 +247,119 @@ def register_routes(quart_app):
         )
         return _ok_msg("解绑第三方账号成功")
 
+    @quart_app.post("/account/security/send-bind-phone-code")
+    async def async_send_bind_phone_code() -> Response:
+        """async 发送绑定手机号验证码。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        if not phone:
+            return _json_resp(
+                code="validate_error",
+                message="手机号不能为空",
+                data={"phone": ["手机号不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        await _to_thread(
+            _get_service(AccountService).send_bind_phone_code, account, phone=phone
+        )
+        return _ok_msg("验证码已发送")
+
+    @quart_app.post("/account/security/bind-phone")
+    async def async_bind_phone() -> Response:
+        """async 绑定手机号。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        code = str(payload.get("code") or "")
+        if not phone or not code:
+            return _json_resp(
+                code="validate_error",
+                message="手机号与验证码不能为空",
+                data={"phone": ["手机号与验证码不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        await _to_thread(
+            _get_service(AccountService).bind_phone, account, phone=phone, code=code
+        )
+        return _ok_msg("手机号绑定成功")
+
+    @quart_app.post("/account/security/unbind-phone")
+    async def async_unbind_phone() -> Response:
+        """async 解绑手机号。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        code = str(payload.get("code") or "")
+        if not code:
+            return _json_resp(
+                code="validate_error",
+                message="验证码不能为空",
+                data={"code": ["验证码不能为空"]},
+                status=400,
+            )
+        await _to_thread(_get_service(AccountService).unbind_phone, account, code=code)
+        return _ok_msg("手机号解绑成功")
+
+    @quart_app.post("/account/security/send-verify-email-code")
+    async def async_send_verify_email_code() -> Response:
+        """async 发送邮箱验证码。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        await _to_thread(_get_service(AccountService).send_verify_email_code, account)
+        return _ok_msg("验证码已发送")
+
+    @quart_app.post("/account/security/verify-email")
+    async def async_verify_email() -> Response:
+        """async 验证邮箱。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        code = str(payload.get("code") or "")
+        if not code:
+            return _json_resp(
+                code="validate_error",
+                message="验证码不能为空",
+                data={"code": ["验证码不能为空"]},
+                status=400,
+            )
+        await _to_thread(_get_service(AccountService).verify_email, account, code=code)
+        return _ok_msg("邮箱验证成功")
+
+    @quart_app.get("/auth/login-methods")
+    async def async_login_methods() -> Response:
+        """获取当前启用的登录方式开关。"""
+        payload = await _to_thread(_get_service(AccountService).login_methods)
+        return _ok(payload)
+
     @quart_app.post("/auth/password-login")
     async def async_password_login() -> Response:
         """async 账号密码登录。"""
@@ -300,7 +417,10 @@ def register_routes(quart_app):
                 status=400,
             )
         credential = await _to_thread(
-            _get_service(AccountService).direct_register, username, password
+            _get_service(AccountService).direct_register,
+            username,
+            password,
+            str(payload.get("invite_code") or "").strip(),
         )
         return _ok(PasswordLoginResp().dump(credential))
 
@@ -325,9 +445,20 @@ def register_routes(quart_app):
             email,
             password,
             code,
-            username=str(payload.get("username") or "").strip() or None,
+            str(payload.get("username") or "").strip() or None,
+            str(payload.get("invite_code") or "").strip(),
         )
         return _ok(PasswordLoginResp().dump(credential))
+
+    @quart_app.get("/auth/register/invite-info")
+    async def async_register_invite_info() -> Response:
+        """校验邀请码有效性并返回注册必填状态（扫码/分享链接预填用）。"""
+        from internal.schema.distribution_schema import InviteInfoResp
+        from internal.service.distribution_service import DistributionService
+
+        code = str(request.args.get("code") or "").strip()
+        result = await _to_thread(_get_service(DistributionService).invite_info, code)
+        return _ok(InviteInfoResp().dump(result))
 
     @quart_app.post("/auth/logout")
     async def async_auth_logout() -> Response:
@@ -392,6 +523,7 @@ def register_routes(quart_app):
         payload = await request.get_json(force=True, silent=True) or {}
         challenge_id = str(payload.get("challenge_id") or "")
         code = str(payload.get("code") or "")
+        channel = str(payload.get("channel") or "").strip()
         if not challenge_id or not code:
             return _json_resp(
                 code="validate_error",
@@ -400,7 +532,10 @@ def register_routes(quart_app):
                 status=400,
             )
         credential = await _to_thread(
-            _get_service(AccountService).verify_login_challenge, challenge_id, code
+            _get_service(AccountService).verify_login_challenge,
+            challenge_id,
+            code,
+            channel=channel,
         )
         return _ok(PasswordLoginResp().dump(credential))
 
@@ -409,17 +544,199 @@ def register_routes(quart_app):
         """async 重发异常登录的二次验证码。"""
         payload = await request.get_json(force=True, silent=True) or {}
         challenge_id = str(payload.get("challenge_id") or "")
-        if not challenge_id:
+        channel = str(payload.get("channel") or "").strip()
+        if not challenge_id or not channel:
             return _json_resp(
                 code="validate_error",
-                message="challenge_id 不能为空",
-                data={"challenge_id": ["challenge_id 不能为空"]},
+                message="challenge_id 与 channel 不能为空",
+                data={"challenge_id": ["challenge_id 与 channel 不能为空"]},
+                status=400,
+            )
+        result = await _to_thread(
+            _get_service(AccountService).resend_login_challenge,
+            challenge_id,
+            channel=channel,
+        )
+        return _ok(result)
+
+    @quart_app.post("/auth/send-code")
+    async def async_send_code() -> Response:
+        """async 统一验证码发送入口（邮箱/手机号通道）。"""
+        from internal.service.email_service import EmailService
+
+        allowed_scenes = {
+            "login_challenge",
+            "phone_register",
+            "phone_login",
+            "phone_bind",
+            "email_login",
+            "email_verify",
+            "password_reset",
+            "change_email",
+            "register",
+        }
+        payload = await request.get_json(force=True, silent=True) or {}
+        scene = str(payload.get("scene") or "").strip()
+        if scene not in allowed_scenes:
+            return _json_resp(
+                code="validate_error",
+                message="scene 不合法",
+                data={"scene": [f"scene 仅支持 {'/'.join(sorted(allowed_scenes))}"]},
+                status=400,
+            )
+        email = str(payload.get("email") or "").strip()
+        phone = str(payload.get("phone") or "").strip()
+        if scene == "login_challenge":
+            challenge_id = str(payload.get("challenge_id") or "").strip()
+            channel = str(payload.get("channel") or "").strip()
+            if not challenge_id or not channel:
+                return _json_resp(
+                    code="validate_error",
+                    message="challenge_id 与 channel 不能为空",
+                    data={"challenge_id": ["challenge_id 与 channel 不能为空"]},
+                    status=400,
+                )
+            result = await _to_thread(
+                _get_service(AccountService).send_login_challenge_code,
+                challenge_id,
+                channel=channel,
+            )
+            return _ok(result)
+        if phone:
+            phone = _get_service(AccountService).normalize_phone(phone)
+            if not _get_service(AccountService).is_valid_phone(phone):
+                return _json_resp(
+                    code="validate_error",
+                    message="手机号格式不正确",
+                    data={"phone": ["手机号格式不正确"]},
+                    status=400,
+                )
+        if not email and not phone:
+            return _json_resp(
+                code="validate_error",
+                message="email/phone 至少提供一个",
+                data={"email": ["email/phone 至少提供一个"]},
                 status=400,
             )
         await _to_thread(
-            _get_service(AccountService).resend_login_challenge, challenge_id
+            _get_service(EmailService).send_code,
+            scene,
+            email=email or None,
+            phone=phone or None,
         )
-        return _ok_msg("验证码已发送到您的邮箱,请查收")
+        return _ok_msg("验证码已发送")
+
+    @quart_app.post("/auth/phone-code-login")
+    async def async_phone_code_login() -> Response:
+        """async 手机号验证码登录。"""
+        from internal.schema.auth_schema import PasswordLoginResp
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        code = str(payload.get("code") or "")
+        if not phone or not code:
+            return _json_resp(
+                code="validate_error",
+                message="手机号与验证码不能为空",
+                data={"phone": ["手机号与验证码不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        credential = await _to_thread(
+            _get_service(AccountService).phone_code_login, phone, code
+        )
+        return _ok(PasswordLoginResp().dump(credential))
+
+    @quart_app.post("/auth/email-code-login")
+    async def async_email_code_login() -> Response:
+        """async 邮箱验证码登录。"""
+        from internal.schema.auth_schema import PasswordLoginResp
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        email = str(payload.get("email") or "").strip()
+        code = str(payload.get("code") or "")
+        if not email or not code:
+            return _json_resp(
+                code="validate_error",
+                message="邮箱与验证码不能为空",
+                data={"email": ["邮箱与验证码不能为空"]},
+                status=400,
+            )
+        credential = await _to_thread(
+            _get_service(AccountService).email_code_login, email, code
+        )
+        return _ok(PasswordLoginResp().dump(credential))
+
+    @quart_app.post("/auth/register/phone-prepare")
+    async def async_phone_register_prepare() -> Response:
+        """async 手机号注册：发送注册验证码。"""
+        from internal.service.email_service import EmailService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        if not phone:
+            return _json_resp(
+                code="validate_error",
+                message="手机号不能为空",
+                data={"phone": ["手机号不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        await _to_thread(
+            _get_service(EmailService).send_code,
+            EmailService.PHONE_REGISTER_SCENE,
+            email=None,
+            phone=phone,
+        )
+        return _ok_msg("验证码已发送")
+
+    @quart_app.post("/auth/register/phone-verify")
+    async def async_phone_register_verify() -> Response:
+        """async 手机号注册：校验验证码并创建账号。"""
+        from internal.schema.auth_schema import PasswordLoginResp
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        phone = str(payload.get("phone") or "").strip()
+        code = str(payload.get("code") or "")
+        username = str(payload.get("username") or "").strip()
+        password = str(payload.get("password") or "")
+        if not phone or not code:
+            return _json_resp(
+                code="validate_error",
+                message="手机号与验证码不能为空",
+                data={"phone": ["手机号与验证码不能为空"]},
+                status=400,
+            )
+        phone = _get_service(AccountService).normalize_phone(phone)
+        if not _get_service(AccountService).is_valid_phone(phone):
+            return _json_resp(
+                code="validate_error",
+                message="手机号格式不正确",
+                data={"phone": ["手机号格式不正确"]},
+                status=400,
+            )
+        credential = await _to_thread(
+            _get_service(AccountService).phone_register,
+            phone=phone,
+            code=code,
+            username=username,
+            password=password,
+        )
+        return _ok(PasswordLoginResp().dump(credential))
 
     @quart_app.get("/oauth/<string:provider_name>")
     async def async_oauth_provider(provider_name) -> Response:

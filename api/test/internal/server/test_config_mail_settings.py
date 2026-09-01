@@ -3,12 +3,29 @@ import pytest
 from config import Config
 
 
-def test_config_should_include_mail_timeout_in_seconds(monkeypatch):
+def test_config_should_not_read_mail_env_settings(monkeypatch):
+    """邮件发送配置已改为数据库持久化（mail_config），Config 不再暴露 MAIL_* 属性。"""
+    monkeypatch.setenv("MAIL_SERVER", "smtp.qq.com")
+    monkeypatch.setenv("MAIL_PORT", "587")
+    monkeypatch.setenv("MAIL_USE_TLS", "true")
+    monkeypatch.setenv("MAIL_USERNAME", "noreply@example.com")
+    monkeypatch.setenv("MAIL_PASSWORD", "secret")
+    monkeypatch.setenv("MAIL_DEFAULT_SENDER", "noreply@example.com")
     monkeypatch.setenv("MAIL_TIMEOUT", "10")
 
     conf = Config()
 
-    assert conf.MAIL_TIMEOUT == 10
+    for attr in (
+        "MAIL_SERVER",
+        "MAIL_PORT",
+        "MAIL_USE_TLS",
+        "MAIL_USE_SSL",
+        "MAIL_USERNAME",
+        "MAIL_PASSWORD",
+        "MAIL_DEFAULT_SENDER",
+        "MAIL_TIMEOUT",
+    ):
+        assert not hasattr(conf, attr), f"Config 不应再包含 {attr}"
 
 
 @pytest.mark.parametrize(
@@ -28,11 +45,11 @@ def test_config_should_include_mail_timeout_in_seconds(monkeypatch):
     ],
 )
 def test_config_should_parse_boolean_env_values_robustly(monkeypatch, value, expected):
-    monkeypatch.setenv("MAIL_USE_TLS", value)
+    monkeypatch.setenv("WTF_CSRF_ENABLED", value)
 
     conf = Config()
 
-    assert conf.MAIL_USE_TLS is expected
+    assert conf.WTF_CSRF_ENABLED is expected
 
 
 def test_config_should_build_redis_urls_without_empty_credentials(monkeypatch):

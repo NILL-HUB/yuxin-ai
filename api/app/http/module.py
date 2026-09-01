@@ -4,7 +4,6 @@ from internal.extension.redis_extension import redis_client
 from pkg.sqlalchemy import SQLAlchemy
 from redis import Redis
 from injector import Injector
-from internal.extension.mail_extension import mail, Mail
 from internal.core.language_model import LanguageModelManager
 from internal.core.tools.builtin_tools.providers import BuiltinProviderManager
 from internal.core.tools.api_tools.providers import ApiProviderManager
@@ -88,7 +87,6 @@ class ExtensionModule(Module):
     def configure(self, binder: Binder) -> None:
         binder.bind(SQLAlchemy, to=db, scope=singleton)
         binder.bind(Redis, to=redis_client, scope=singleton)
-        binder.bind(Mail, to=mail, scope=singleton)
 
         # 注册核心管理器类为单例
         binder.bind(LanguageModelManager, to=LanguageModelManager, scope=singleton)

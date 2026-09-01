@@ -12,6 +12,13 @@ from internal.extension.redis_extension import redis_client
 from internal.task.email_task import send_verification_email_task
 
 
+def _sms_service():
+    """短信发送服务工厂：延迟导入，避免模块导入阶段初始化 httpx 客户端。"""
+    from internal.service.sms_service import SmsService
+
+    return SmsService()
+
+
 @inject
 @dataclass
 class EmailService:
@@ -21,6 +28,11 @@ class EmailService:
     CHANGE_EMAIL_SCENE = "change_email"
     LOGIN_CHALLENGE_SCENE = "login_challenge"
     REGISTER_SCENE = "register"
+    PHONE_REGISTER_SCENE = "phone_register"
+    PHONE_LOGIN_SCENE = "phone_login"
+    PHONE_BIND_SCENE = "phone_bind"
+    EMAIL_LOGIN_SCENE = "email_login"
+    EMAIL_VERIFY_SCENE = "email_verify"
     CODE_TTL_SECONDS = 5 * 60
     SEND_COOLDOWN_SECONDS = 60
     SEND_WINDOW_SECONDS = 60 * 60
@@ -231,9 +243,50 @@ GitHub：https://github.com/NILL-HUB/yuxin-ai
 
         return subject, text_body, html_body
 
+    @staticmethod
+    def normalize_phone(phone: str) -> str:
+        """归一化手机号：去除 +86 前缀并去除空白。"""
+        normalized = (phone or "").strip()
+        if normalized.startswith("+86"):
+            normalized = normalized[3:].strip()
+        return normalized
+
+    @classmethod
+    def is_valid_phone(cls, phone: str) -> bool:
+        """校验中国大陆手机号格式（11 位，1[3-9] 开头）。"""
+        import re
+
+        normalized = cls.normalize_phone(phone)
+        return re.fullmatch(r"1[3-9]\d{9}", normalized) is not None
+
+    def send_code(self, scene: str, *, email: str | None = None, phone: str | None = None) -> str:
+        """统一发码入口：按 email/phone 路由；通道开关校验在路由层完成。"""
+        switches = self._get_auth_switches()
+        if phone:
+            if not switches["AUTH_PHONE_ENABLED"]:
+                raise FailException("手机号通道未开启，请联系管理员")
+
+            code = self.generate_verification_code()
+            _sms_service().send_verification_code(phone, code)
+            redis_client.setex(
+                self._code_key(phone, scene),
+                timedelta(seconds=self.CODE_TTL_SECONDS),
+                code,
+            )
+            return ""
+        if email:
+            if not switches["AUTH_EMAIL_ENABLED"]:
+                raise FailException("邮箱通道未开启，请联系管理员")
+            return self.send_verification_code(email, scene=scene)
+        raise FailException("email/phone 至少提供一个")
+
+    def _get_auth_switches(self) -> dict[str, bool]:
+        from internal.service.auth_switch_service import get_auth_switches
+
+        return get_auth_switches()
+
     def send_verification_code(self, email: str, scene: str = PASSWORD_RESET_SCENE) -> str:
         """发送验证码到指定邮箱"""
-        # 1.发送频率限制（邮箱+IP 双维度冷却与窗口计数）
         client_ip = self._resolve_client_ip()
         send_cooldown_key = self._send_cooldown_key(email, scene)
         if redis_client.exists(send_cooldown_key):
@@ -387,11 +440,18 @@ GitHub：https://github.com/NILL-HUB/yuxin-ai
             current_app.logger.error(f"发送登录安全提醒邮件失败: {str(e)}")
             raise FailException("邮件发送失败,请稍后重试")
 
-    def verify_code(self, email: str, code: str, scene: str = PASSWORD_RESET_SCENE) -> bool:
-        """验证验证码是否正确"""
-        code_key = self._code_key(email, scene)
-        verify_attempt_key = self._verify_attempt_key(email, scene)
-        verify_lock_key = self._verify_lock_key(email, scene)
+    def verify_code(
+        self,
+        email: str,
+        code: str,
+        scene: str = PASSWORD_RESET_SCENE,
+        contact: str | None = None,
+    ) -> bool:
+        """验证验证码是否正确。contact 兼容邮箱或手机号；缺省时沿用 email 参数。"""
+        target = contact if contact is not None else email
+        code_key = self._code_key(target, scene)
+        verify_attempt_key = self._verify_attempt_key(target, scene)
+        verify_lock_key = self._verify_lock_key(target, scene)
 
         if redis_client.exists(verify_lock_key):
             raise FailException("验证码错误次数过多，请15分钟后再试")

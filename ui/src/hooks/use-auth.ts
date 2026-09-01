@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import {
   directRegister,
+  getRegisterInviteInfo,
   logout,
   passwordLogin,
   prepareRegister,
@@ -9,7 +10,7 @@ import {
   verifyRegister,
 } from '@/services/auth'
 import { Message } from '@arco-design/web-vue'
-import { type LoginAuthorizationData } from '@/models/auth'
+import { type LoginAuthorizationData, type RegisterInviteInfo } from '@/models/auth'
 
 export const useLogout = () => {
   // 1.定义hooks所需数据
@@ -51,10 +52,13 @@ export const usePasswordLogin = () => {
 export const usePrepareRegister = () => {
   const loading = ref(false)
 
-  const handlePrepareRegister = async (username: string, email: string, password: string) => {
+  const handlePrepareRegister = async (username: string, email: string, password: string, inviteCode?: string) => {
     try {
       loading.value = true
-      const resp = await prepareRegister(username, email, password)
+      const code = (inviteCode || '').trim()
+      const resp = code
+        ? await prepareRegister(username, email, password, code)
+        : await prepareRegister(username, email, password)
       return resp
     } finally {
       loading.value = false
@@ -68,10 +72,13 @@ export const useDirectRegister = () => {
   const loading = ref(false)
   const authorization = ref<LoginAuthorizationData>({})
 
-  const handleDirectRegister = async (username: string, password: string) => {
+  const handleDirectRegister = async (username: string, password: string, inviteCode?: string) => {
     try {
       loading.value = true
-      const resp = await directRegister(username, password)
+      const code = (inviteCode || '').trim()
+      const resp = code
+        ? await directRegister(username, password, code)
+        : await directRegister(username, password)
       authorization.value = resp.data
     } finally {
       loading.value = false
@@ -85,10 +92,19 @@ export const useVerifyRegister = () => {
   const loading = ref(false)
   const authorization = ref<LoginAuthorizationData>({})
 
-  const handleVerifyRegister = async (username: string, email: string, password: string, code: string) => {
+  const handleVerifyRegister = async (
+    username: string,
+    email: string,
+    password: string,
+    code: string,
+    inviteCode?: string,
+  ) => {
     try {
       loading.value = true
-      const resp = await verifyRegister(username, email, password, code)
+      const invite = (inviteCode || '').trim()
+      const resp = invite
+        ? await verifyRegister(username, email, password, code, invite)
+        : await verifyRegister(username, email, password, code)
       authorization.value = resp.data
     } finally {
       loading.value = false
@@ -98,14 +114,32 @@ export const useVerifyRegister = () => {
   return { loading, authorization, handleVerifyRegister }
 }
 
+export const useRegisterInviteInfo = () => {
+  const loading = ref(false)
+  const info = ref<RegisterInviteInfo | null>(null)
+
+  const handleQueryInviteInfo = async (code: string) => {
+    try {
+      loading.value = true
+      const resp = await getRegisterInviteInfo(code)
+      info.value = resp.data
+      return resp.data
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, info, handleQueryInviteInfo }
+}
+
 export const useVerifyLoginChallenge = () => {
   const loading = ref(false)
   const authorization = ref<LoginAuthorizationData>({})
 
-  const handleVerifyLoginChallenge = async (challenge_id: string, code: string) => {
+  const handleVerifyLoginChallenge = async (challenge_id: string, code: string, channel = '') => {
     try {
       loading.value = true
-      const resp = await verifyLoginChallenge(challenge_id, code)
+      const resp = await verifyLoginChallenge(challenge_id, code, channel)
       authorization.value = resp.data
     } finally {
       loading.value = false
@@ -118,10 +152,10 @@ export const useVerifyLoginChallenge = () => {
 export const useResendLoginChallenge = () => {
   const loading = ref(false)
 
-  const handleResendLoginChallenge = async (challenge_id: string) => {
+  const handleResendLoginChallenge = async (challenge_id: string, channel = '') => {
     try {
       loading.value = true
-      const resp = await resendLoginChallenge(challenge_id)
+      const resp = await resendLoginChallenge(challenge_id, channel)
       Message.success(resp.message)
     } finally {
       loading.value = false

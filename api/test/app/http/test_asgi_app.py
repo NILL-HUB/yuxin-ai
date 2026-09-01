@@ -3738,11 +3738,11 @@ class _FakeAuthAccountService:
     def reset_password(self, email, code, new_password):
         return None
 
-    def verify_login_challenge(self, challenge_id, code):
+    def verify_login_challenge(self, challenge_id, code, *, channel=""):
         return {"access_token": "jwt-token", "expire_at": 1893456000, "challenge_required": False}
 
-    def resend_login_challenge(self, challenge_id):
-        return None
+    def resend_login_challenge(self, challenge_id, *, channel):
+        return {"challenge_id": challenge_id, "channel": channel, "masked": "de***mo@example.com"}
 
 
 class _FakeAuthOAuthService:

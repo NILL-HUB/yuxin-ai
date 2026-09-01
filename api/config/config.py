@@ -76,6 +76,7 @@ class Config:
         self.OAUTH_ALLOWED_ORIGINS = _get_list_env("OAUTH_ALLOWED_ORIGINS")
         self.WEB_APP_VISITOR_COOKIE_SECURE = _get_bool_env("WEB_APP_VISITOR_COOKIE_SECURE")
         self.WEB_APP_VISITOR_COOKIE_SECRET = _get_env("WEB_APP_VISITOR_COOKIE_SECRET")
+        self.ALLOW_MOCK_PAYMENT = _get_bool_env("ALLOW_MOCK_PAYMENT")
 
         # SQLAlchemy数据库配置
         self.SQLALCHEMY_DATABASE_URI = _get_env("SQLALCHEMY_DATABASE_URI")
@@ -204,13 +205,3 @@ class Config:
         self.OSS_ENDPOINT = _get_env("OSS_ENDPOINT")
         self.OSS_BUCKET = _get_env("OSS_BUCKET")
         self.OSS_DOMAIN = _get_env("OSS_DOMAIN")
-
-        # SMTP 邮件服务配置
-        self.MAIL_SERVER = _get_env("MAIL_SERVER")
-        self.MAIL_PORT = int(_get_env("MAIL_PORT")) if _get_env("MAIL_PORT") else 587
-        self.MAIL_USE_TLS = _get_bool_env("MAIL_USE_TLS")
-        self.MAIL_USE_SSL = _get_bool_env("MAIL_USE_SSL")
-        self.MAIL_USERNAME = _get_env("MAIL_USERNAME")
-        self.MAIL_PASSWORD = _get_env("MAIL_PASSWORD")
-        self.MAIL_DEFAULT_SENDER = _get_env("MAIL_DEFAULT_SENDER")
-        self.MAIL_TIMEOUT = int(_get_env("MAIL_TIMEOUT"))

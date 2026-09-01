@@ -21,6 +21,12 @@ const flags = ref<AdminOrchestrationFlag[]>([])
 const releaseCheck = ref<AdminOrchestrationReleaseCheck | null>(null)
 
 const POOL_GOVERNANCE_PREFIX = 'ENABLE_POOL_GOVERNANCE_'
+const FEATURE_FLAG_CODES: string[] = [
+  'ENABLE_DISTRIBUTION',
+  'AUTH_EMAIL_ENABLED',
+  'AUTH_PHONE_ENABLED',
+  'AUTH_LOGIN_CHALLENGE_ENABLED',
+]
 const POOL_GOVERNANCE_STAGE_ORDER: string[] = [
   'ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY',
   'ENABLE_POOL_GOVERNANCE_BLOCK_SENSITIVE',
@@ -77,8 +83,16 @@ const poolGovernanceFlags = computed(() =>
     ),
 )
 
+const featureFlags = computed(() =>
+  flags.value.filter((f) => FEATURE_FLAG_CODES.includes(f.code)),
+)
+
 const otherFlags = computed(() =>
-  flags.value.filter((f) => !f.code.startsWith(POOL_GOVERNANCE_PREFIX)),
+  flags.value.filter(
+    (f) =>
+      !f.code.startsWith(POOL_GOVERNANCE_PREFIX) &&
+      !FEATURE_FLAG_CODES.includes(f.code),
+  ),
 )
 
 const groups = computed(() => {
@@ -89,18 +103,22 @@ const groups = computed(() => {
   if (otherFlags.value.length > 0) {
     result.push({ key: 'other', flags: otherFlags.value })
   }
+  if (featureFlags.value.length > 0) {
+    result.push({ key: 'feature', flags: featureFlags.value })
+  }
   return result
 })
 
-const activeKeys = ref<string[]>(['poolGovernance', 'other'])
+const activeKeys = ref<string[]>(['poolGovernance', 'other', 'feature'])
 
 const enabledCount = computed(() => flags.value.filter((f) => f.enabled).length)
 const canUpdate = computed(() => adminStore.hasPermission('orchestration_flag:update'))
 
-const groupTitle = (key: string) =>
-  key === 'poolGovernance'
-    ? t('admin.orchestrationFlags.poolGovernanceGroup')
-    : t('admin.orchestrationFlags.otherGroup')
+const groupTitle = (key: string) => {
+  if (key === 'poolGovernance') return t('admin.orchestrationFlags.poolGovernanceGroup')
+  if (key === 'feature') return t('admin.orchestrationFlags.distributionGroup')
+  return t('admin.orchestrationFlags.otherGroup')
+}
 
 const riskColor = (level: string) => {
   switch (level) {
@@ -158,6 +176,14 @@ const confirmActionText = computed(() =>
 const confirmActionColor = computed(() =>
   confirmNextVal.value ? '#00b42a' : '#f53f3f',
 )
+
+const challengeNeedsChannel = computed(() => {
+  if (!confirmFlag.value || !confirmNextVal.value) return false
+  if (confirmFlag.value.code !== 'AUTH_LOGIN_CHALLENGE_ENABLED') return false
+  const email = flags.value.find((f) => f.code === 'AUTH_EMAIL_ENABLED')
+  const phone = flags.value.find((f) => f.code === 'AUTH_PHONE_ENABLED')
+  return !(email?.enabled || phone?.enabled)
+})
 
 const openConfirm = (flag: AdminOrchestrationFlag, nextVal: boolean) => {
   confirmFlag.value = flag
@@ -281,6 +307,12 @@ onMounted(loadData)
               >
                 {{ t('admin.orchestrationFlags.poolGovernanceGroupDesc') }}
               </span>
+              <span
+                v-if="group.key === 'feature'"
+                class="group-header-desc"
+              >
+                {{ t('admin.orchestrationFlags.distributionGroupDesc') }}
+              </span>
             </div>
           </template>
 
@@ -367,6 +399,9 @@ onMounted(loadData)
         <div class="confirm-effect">
           <p class="confirm-effect-tip">{{ confirmTipText }}</p>
           <p class="confirm-effect-text">{{ confirmEffectText }}</p>
+        </div>
+        <div v-if="challengeNeedsChannel" class="confirm-warning">
+          {{ t('admin.orchestrationFlags.challengeNeedsChannel') }}
         </div>
       </div>
     </a-modal>
@@ -621,6 +656,16 @@ onMounted(loadData)
   font-size: 13px;
   line-height: 1.6;
   color: #1d2129;
+}
+
+.confirm-warning {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #ffece8;
+  border: 1px solid #fbaca3;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #f53f3f;
 }
 
 @media (max-width: 768px) {

@@ -292,7 +292,9 @@ def test_password_login_req_should_validate_email_and_require_password(form_requ
 
 def test_password_login_resp_should_dump_tokens():
     payload = PasswordLoginResp().dump({"access_token": "token", "expire_at": 123})
-    assert payload == {"access_token": "token", "expire_at": 123}
+    assert payload["access_token"] == "token"
+    assert payload["expire_at"] == 123
+    assert payload["channels"] == []
 
 
 def test_password_login_resp_should_dump_challenge_payload():
@@ -309,9 +311,40 @@ def test_password_login_resp_should_dump_challenge_payload():
         "challenge_required": True,
         "challenge_id": "challenge-1",
         "challenge_type": "email_code",
+        "channels": [],
         "masked_email": "de***@example.com",
         "risk_reason": "new_ip",
     }
+
+
+def test_password_login_resp_should_dump_channels_when_present():
+    payload = PasswordLoginResp().dump(
+        {
+            "challenge_required": True,
+            "challenge_id": "challenge-1",
+            "challenge_type": "verification_code",
+            "channels": [
+                {"type": "email", "masked": "de***@example.com"},
+                {"type": "phone", "masked": "138****1234"},
+            ],
+            "risk_reason": "new_ip",
+        }
+    )
+    assert payload == {
+        "challenge_required": True,
+        "challenge_id": "challenge-1",
+        "challenge_type": "verification_code",
+        "channels": [
+            {"type": "email", "masked": "de***@example.com"},
+            {"type": "phone", "masked": "138****1234"},
+        ],
+        "risk_reason": "new_ip",
+    }
+
+
+def test_password_login_resp_should_default_channels_to_empty_list():
+    payload = PasswordLoginResp().dump({"access_token": "token"})
+    assert payload["channels"] == []
 
 
 def test_authorize_req_should_require_code(form_request):
