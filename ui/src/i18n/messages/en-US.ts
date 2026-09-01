@@ -1298,7 +1298,7 @@ export default {
         ENABLE_TOOL_POOL_RETRIEVAL: 'Use governed tool pool retrieval for tool candidates',
         ENABLE_COST_MODEL_ROUTING: 'Use cost policy to select model tier and budget hints',
         ENABLE_MODEL_ASSIGNMENT_POLICY: 'Enable model tier assignment based on routing decision and context',
-        ENABLE_MULTI_AGENT_EXECUTION: 'Allow multi-agent planning in routing decisions; execution layer currently downgrades to single_agent',
+        ENABLE_MULTI_AGENT_EXECUTION: 'Allow multi-agent planning in routing decisions; execution layer runs parallel/sequential sub-agents from the TaskPlan',
         ENABLE_RESULT_SYNTHESIZER: 'Generate detailed task planning metadata; result synthesis execution is not wired',
         ENABLE_ROUTING_LOGS: 'Generate detailed routing logs (hits, cost, fallback info)',
         ENABLE_AUTO_DEEP_THINKING: 'LLM intent detection auto-triggers deep thinking (disable to fall back to keywords + manual switch)',

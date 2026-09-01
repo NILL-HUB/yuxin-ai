@@ -19,6 +19,8 @@ ORCHESTRATION_FEATURE_FLAG_CODES = [
     "ENABLE_POOL_GOVERNANCE_BLOCK_ALL",
     # 指挥官决策层开关（默认关闭，启用后由 LLM 指挥官替代规则编排）
     "ENABLE_CONDUCTOR",
+    # 分销系统开关（默认关闭；开启=注册邀请码必填+佣金结算）
+    "ENABLE_DISTRIBUTION",
 ]
 
 
@@ -88,7 +90,7 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
         OrchestrationFeatureFlag(
             code="ENABLE_MULTI_AGENT_EXECUTION",
             name="Multi-agent routing planning",
-            description="Allow multi-agent planning in routing decisions; execution layer currently downgrades to single_agent",
+            description="Allow multi-agent planning in routing decisions; execution layer runs parallel/sequential sub-agents from the TaskPlan",
             enabled=True,
             risk_level="high",
             fallback_behavior="single_or_direct",
@@ -148,6 +150,14 @@ def get_default_orchestration_feature_flags() -> list[OrchestrationFeatureFlag]:
             enabled=False,
             risk_level="medium",
             fallback_behavior="orchestrator",
+        ),
+        OrchestrationFeatureFlag(
+            code="ENABLE_DISTRIBUTION",
+            name="Distribution system",
+            description="Enable referral registration requirement and commission settlement; disabled = invite code optional and no new commissions",
+            enabled=False,
+            risk_level="medium",
+            fallback_behavior="no_commission",
         ),
     ]
 

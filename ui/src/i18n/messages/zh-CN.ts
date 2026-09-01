@@ -1300,7 +1300,7 @@ export default {
         ENABLE_TOOL_POOL_RETRIEVAL: '使用受治理的工具池检索候选工具',
         ENABLE_COST_MODEL_ROUTING: '使用成本策略选择模型层级和预算',
         ENABLE_MODEL_ASSIGNMENT_POLICY: '根据路由决策和上下文分配模型层级',
-        ENABLE_MULTI_AGENT_EXECUTION: '路由决策层允许多 Agent 规划；执行端当前统一降级为单 Agent',
+        ENABLE_MULTI_AGENT_EXECUTION: '路由决策层允许多 Agent 规划；执行端按 TaskPlan 并行/串行执行多个子任务',
         ENABLE_RESULT_SYNTHESIZER: '生成详细任务计划元数据；结果合成执行尚未接入',
         ENABLE_ROUTING_LOGS: '生成详细调度日志（含命中、成本、降级信息）',
         ENABLE_AUTO_DEEP_THINKING: '由 LLM 识别意图并自动触发深度思考（关闭后回退到关键词+手动开关）',
