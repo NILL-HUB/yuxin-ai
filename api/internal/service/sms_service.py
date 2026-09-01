@@ -67,6 +67,7 @@ class SmsService:
             raise ValueError("开启短信需完整填写 access_key/access_secret/sign_name/验证码模板")
         row = self._row()
         row.configs = cfg
+        self.session.commit()
         return cfg
 
     def is_configured(self) -> bool:

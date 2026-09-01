@@ -6,6 +6,7 @@ class _FakeSession:
 
     def __init__(self):
         self.row = None
+        self.commits = 0
 
     def query(self, model):
         return _FakeQuery(self)
@@ -16,6 +17,9 @@ class _FakeSession:
 
     def flush(self):
         pass
+
+    def commit(self):
+        self.commits += 1
 
 
 class _FakeQuery:
@@ -36,7 +40,8 @@ def _fake_session_factory():
 def test_mail_config_update_and_get_roundtrip():
     from internal.service.mail_config_service import MailConfigService
 
-    svc = MailConfigService(session=_fake_session_factory())
+    session = _fake_session_factory()
+    svc = MailConfigService(session=session)
     payload = {
         "smtp_host": "smtp.qq.com",
         "smtp_port": "587",
@@ -54,6 +59,7 @@ def test_mail_config_update_and_get_roundtrip():
     assert cfg["use_ssl"] is False
     assert cfg["from_name"] == "平台"
     assert cfg["timeout"] == "30"
+    assert session.commits >= 1
 
 
 def test_mail_config_update_bool_normalization():

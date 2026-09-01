@@ -161,7 +161,7 @@ describe('AdminMailConfigView', () => {
     expect(mocks.saveMailConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         smtp_host: 'smtp.qq.com',
-        smtp_port: '587',
+        smtp_port: 587,
         use_tls: true,
         use_ssl: false,
       }),

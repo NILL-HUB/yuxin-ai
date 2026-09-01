@@ -60,6 +60,7 @@ class MailConfigService:
             raise ValueError("smtp_host 不能为空")
         row = self._row()
         row.configs = cfg
+        self.session.commit()
         return cfg
 
     def send_test(self, *, recipient: str) -> dict:

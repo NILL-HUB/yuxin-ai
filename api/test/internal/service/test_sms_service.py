@@ -11,6 +11,7 @@ class _FakeSession:
 
     def __init__(self):
         self.row = None
+        self.commits = 0
 
     def query(self, model):
         return _FakeQuery(self)
@@ -21,6 +22,9 @@ class _FakeSession:
 
     def flush(self):
         pass
+
+    def commit(self):
+        self.commits += 1
 
 
 class _FakeQuery:
