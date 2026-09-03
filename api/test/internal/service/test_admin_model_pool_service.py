@@ -1,10 +1,12 @@
-from decimal import Decimal
 import json
+from decimal import Decimal
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import text
 
-from internal.model.model_pool_entity import ModelKeyConfig
+from internal.exception import FailException
+from internal.model.model_pool_entity import ModelKeyConfig, ModelPoolConfig
 from internal.model.model_provider_entity import ModelProviderConfig
 from internal.service.admin_model_pool_service import AdminModelPoolService, _decrypt_key_value
 
@@ -170,3 +172,112 @@ class TestAdminModelPoolPeakValleyPricing:
         assert json.loads(updated["peak_windows"]) == [
             {"days": "0-6", "start": "09:00", "end": "18:00"}
         ]
+
+    def test_create_model_rejects_invalid_peak_windows_without_commit(self, model_pool_db):
+        _ensure_new_pricing_columns(model_pool_db)
+        _seed_provider(model_pool_db)
+        service = AdminModelPoolService(session=model_pool_db.session)
+        with pytest.raises(FailException) as exc:
+            service.create_model({
+                "provider": "openai",
+                "model_name": "pv-overlap",
+                "peak_valley_enabled": "true",
+                "peak_windows": json.dumps([
+                    {"days": "1-5", "start": "09:00", "end": "12:00"},
+                    {"days": "1,3,5", "start": "10:00", "end": "14:00"},
+                ]),
+            })
+        assert "时段重叠" in str(exc.value)
+        count = model_pool_db.session.query(ModelPoolConfig).filter(
+            ModelPoolConfig.model_name == "pv-overlap"
+        ).count()
+        assert count == 0
+
+    def test_create_model_rejects_invalid_time_format_peak_window(self, model_pool_db):
+        _ensure_new_pricing_columns(model_pool_db)
+        _seed_provider(model_pool_db)
+        service = AdminModelPoolService(session=model_pool_db.session)
+        with pytest.raises(FailException) as exc:
+            service.create_model({
+                "provider": "openai",
+                "model_name": "pv-badtime",
+                "peak_valley_enabled": "true",
+                "peak_windows": json.dumps([
+                    {"days": "0-6", "start": "9:00", "end": "18:00"},
+                ]),
+            })
+        assert "start 时间格式非法" in str(exc.value)
+        count = model_pool_db.session.query(ModelPoolConfig).filter(
+            ModelPoolConfig.model_name == "pv-badtime"
+        ).count()
+        assert count == 0
+
+    def test_create_model_with_valid_peak_windows_when_disabled_or_enabled(self, model_pool_db):
+        _ensure_new_pricing_columns(model_pool_db)
+        _seed_provider(model_pool_db)
+        service = AdminModelPoolService(session=model_pool_db.session)
+        created = service.create_model({
+            "provider": "openai",
+            "model_name": "pv-valid",
+            "peak_valley_enabled": "true",
+            "peak_windows": json.dumps([
+                {"days": "1-5", "start": "08:00", "end": "24:00"},
+                {"days": "6,0", "start": "10:00", "end": "22:00"},
+            ]),
+        })
+        assert json.loads(created["peak_windows"]) == [
+            {"days": "1-5", "start": "08:00", "end": "24:00"},
+            {"days": "6,0", "start": "10:00", "end": "22:00"},
+        ]
+
+    def test_update_model_rejects_invalid_peak_windows_without_commit(self, model_pool_db):
+        _ensure_new_pricing_columns(model_pool_db)
+        _seed_provider(model_pool_db)
+        service = AdminModelPoolService(session=model_pool_db.session)
+        created = service.create_model({
+            "provider": "openai",
+            "model_name": "pv-upd",
+            "peak_valley_enabled": "true",
+            "peak_windows": json.dumps([
+                {"days": "1-5", "start": "09:00", "end": "18:00"},
+            ]),
+        })
+        model_id = UUID(created["id"])
+        with pytest.raises(FailException) as exc:
+            service.update_model(model_id, {
+                "peak_valley_enabled": "true",
+                "peak_windows": json.dumps([
+                    {"days": "0-6", "start": "00:00", "end": "00:00"},
+                ]),
+            })
+        assert "恒空" in str(exc.value)
+        model_pool_db.session.rollback()
+        raw = model_pool_db.session.query(ModelPoolConfig).filter(
+            ModelPoolConfig.id == model_id
+        ).one()
+        assert raw.peak_windows == [
+            {"days": "1-5", "start": "09:00", "end": "18:00"}
+        ]
+
+    def test_update_model_valid_windows_even_when_same_overlap_disabled(self, model_pool_db):
+        _ensure_new_pricing_columns(model_pool_db)
+        _seed_provider(model_pool_db)
+        service = AdminModelPoolService(session=model_pool_db.session)
+        created = service.create_model({
+            "provider": "openai",
+            "model_name": "pv-upd2",
+            "peak_valley_enabled": "false",
+            "peak_windows": json.dumps([
+                {"days": "1-5", "start": "09:00", "end": "18:00"},
+            ]),
+        })
+        model_id = UUID(created["id"])
+        updated = service.update_model(model_id, {
+            "peak_valley_enabled": "false",
+            "peak_windows": json.dumps([
+                {"days": "1-5", "start": "09:00", "end": "12:00"},
+                {"days": "1-5", "start": "10:00", "end": "14:00"},
+            ]),
+        })
+        assert updated["peak_valley_enabled"] == "false"
+        assert len(json.loads(updated["peak_windows"])) == 2

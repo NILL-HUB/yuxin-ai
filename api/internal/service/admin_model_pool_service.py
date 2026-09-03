@@ -130,6 +130,20 @@ class AdminModelPoolService:
         except Exception:
             return []
 
+    def _validate_peak_windows(self, windows: list, *, peak_valley_enabled: bool) -> None:
+        """峰谷开启时校验窗口合法性；有错误抛 FailException 拒绝保存。
+
+        仅校验非空列表里的元素：非法 JSON 解析得到 []、或开了峰谷但暂未配窗口
+        均不报错（引擎此时无窗口命中，全部按常规价计费）。
+        """
+        if not peak_valley_enabled or not windows:
+            return
+        from internal.core.billing.pricing_guard import validate_peak_windows
+
+        errors = validate_peak_windows(windows)
+        if errors:
+            raise FailException(message="；".join(errors))
+
     def _billing_config(self, code: str, default: str) -> Decimal:
         """读取全局计费配置（billing_config.code -> value_numeric），异常回落默认值。"""
         try:
@@ -303,6 +317,10 @@ class AdminModelPoolService:
             priority=int(payload.get("priority") or 0),
             embedding_dimension=embedding_dimension,
         )
+        self._validate_peak_windows(
+            model.peak_windows,
+            peak_valley_enabled=bool(model.peak_valley_enabled),
+        )
         self._validate_pricing_payload(
             payload,
             peak_valley_enabled=self._bool(payload.get("peak_valley_enabled")),
@@ -427,6 +445,10 @@ class AdminModelPoolService:
             )
 
         model.updated_at = self._now()
+        self._validate_peak_windows(
+            model.peak_windows,
+            peak_valley_enabled=bool(model.peak_valley_enabled),
+        )
         self._validate_pricing_payload(
             payload,
             peak_valley_enabled=(

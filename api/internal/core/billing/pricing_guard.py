@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Any
 
@@ -104,6 +105,126 @@ def validate_pricing_bounds(
                         f"{tier_label} {dim_label}：售价折算 {rmb_per_1k_sel} 元/1k "
                         f"高于官方价×{cap}，用户会觉得贵"
                     )
+    return errors
+
+
+_HHMM_RE = re.compile(r"^(?P<h>\d{2}):(?P<m>\d{2})$")
+_DAY_TOKEN_RE = re.compile(r"^\d{1,2}$|^\d{1,2}-\d{1,2}$")
+
+
+def _parse_time_text(text: str) -> tuple[int, int] | None:
+    """HH:MM 字符串解析为 (hour, minute)；end 允许 24:00（次日 00:00）。非法返回 None。"""
+    m = _HHMM_RE.match(text)
+    if not m:
+        return None
+    hour = int(m.group("h"))
+    minute = int(m.group("m"))
+    if hour == 24:
+        return (24, 0) if minute == 0 else None
+    if hour <= 23 and minute <= 59:
+        return (hour, minute)
+    return None
+
+
+def _windows_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+    """两个窗口在同一星期几上的时间区间是否重叠（跨午夜窗口拆两段）。
+    a_start > a_end 表示 a 跨午夜，等价 [a_start, 24:00) ∪ [00:00, a_end]。
+    端点相接不算重叠：引擎含端点命中，若前一窗口 end 与后一窗口 start 相同，
+    交叠仅为一个瞬时点，不构成重复计费区间，故按不相交处理。
+    """
+    a_segs = [(a_start, a_end)] if a_start <= a_end else [(a_start, 24 * 60), (0, a_end)]
+    b_segs = [(b_start, b_end)] if b_start <= b_end else [(b_start, 24 * 60), (0, b_end)]
+    for al, ar in a_segs:
+        for bl, br in b_segs:
+            if max(al, bl) < min(ar, br):
+                return True
+    return False
+
+
+def validate_peak_windows(windows: list) -> list[str]:
+    """校验峰谷时段窗口列表，返回中文错误列表；空列表=通过。
+
+    校验项：
+    - windows 必须是 list，元素必须是 dict 且含非空字符串 days/start/end；
+    - start/end 必须是 HH:MM（00:00-23:59，end 允许 24:00），且不能两者同为 00:00（区间恒空）；
+    - days 支持逗号分隔的单数字 0-6 或区间 a-b（0<=a<=b<=6）；
+    - 同一星期数上的两个窗口若时间区间重叠则报"时段重叠"。
+    第 N 行按 windows 下标从 1 起计（列表元素即为一行）。
+    """
+    errors: list[str] = []
+    if not isinstance(windows, list):
+        return ["峰谷时段窗口必须是一个数组"]
+
+    def _parse_days(text: str) -> set[int] | None:
+        text = str(text or "").strip()
+        if not text:
+            return None
+        out: set[int] = set()
+        for part in text.split(","):
+            part = part.strip()
+            if not _DAY_TOKEN_RE.match(part):
+                return None
+            if "-" in part:
+                a, b = part.split("-")
+                if a > b:
+                    return None
+                a, b = int(a), int(b)
+                if a > 6 or b > 6:
+                    return None
+                out.update(range(a, b + 1))
+            else:
+                day = int(part)
+                if day > 6:
+                    return None
+                out.add(day)
+        return out
+
+    parsed: list[tuple[int, set[int], int, int]] = []
+    for idx, win in enumerate(windows, start=1):
+        if not isinstance(win, dict):
+            errors.append(f"峰谷时段第 {idx} 行：窗口必须是对象且包含 days/start/end 字段")
+            continue
+        days_text = win.get("days")
+        start_text = win.get("start")
+        end_text = win.get("end")
+        if not days_text or not start_text or not end_text:
+            errors.append(f"峰谷时段第 {idx} 行：days/start/end 字段不能为空")
+            continue
+        days_text = str(days_text).strip()
+        start_text = str(start_text).strip()
+        end_text = str(end_text).strip()
+        if not (days_text and start_text and end_text):
+            errors.append(f"峰谷时段第 {idx} 行：days/start/end 字段不能为空")
+            continue
+        parsed_start = _parse_time_text(start_text)
+        parsed_end = _parse_time_text(end_text)
+        if parsed_start is None:
+            errors.append(f"峰谷时段第 {idx} 行：start 时间格式非法（应为 HH:MM）")
+        if parsed_end is None:
+            errors.append(f"峰谷时段第 {idx} 行：end 时间格式非法（应为 HH:MM，允许 24:00）")
+        if parsed_start is not None and parsed_end is not None and parsed_start == (0, 0) and parsed_end == (0, 0):
+            errors.append(f"峰谷时段第 {idx} 行：start 与 end 同为 00:00，时段恒空")
+        days_set = _parse_days(days_text)
+        if days_set is None:
+            errors.append(f"峰谷时段第 {idx} 行：days 格式非法（应为 0-6 数字或 a-b 区间，逗号分隔）")
+        if parsed_start is not None and parsed_end is not None and days_set is not None:
+            parsed.append(
+                (
+                    idx,
+                    days_set,
+                    parsed_start[0] * 60 + parsed_start[1],
+                    parsed_end[0] * 60 + parsed_end[1],
+                )
+            )
+
+    for i in range(len(parsed)):
+        for j in range(i + 1, len(parsed)):
+            i_idx, i_days, i_s, i_e = parsed[i]
+            j_idx, j_days, j_s, j_e = parsed[j]
+            if not (i_days & j_days):
+                continue
+            if _windows_overlap(i_s, i_e, j_s, j_e):
+                errors.append(f"峰谷时段第 {i_idx} 行与第 {j_idx} 行时段重叠")
     return errors
 
 
