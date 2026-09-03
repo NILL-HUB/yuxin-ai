@@ -236,6 +236,53 @@ class LanguageModelManager(BaseModel):
         context_window = model_config.max_input_tokens or model_config.max_tokens or 4096
         max_output_tokens = model_config.max_output_tokens or 4096
 
+        fallback_price = float(model_config.price_per_1k_tokens or 0)
+        peak_valley_enabled = bool(getattr(model_config, "peak_valley_enabled", False))
+        cache_pricing_enabled = bool(getattr(model_config, "cache_pricing_enabled", False))
+        peak_windows = getattr(model_config, "peak_windows", None) or []
+
+        def _flat_price(attr: str) -> float:
+            """flat 售价：拆分价缺失/为 0 时回退 price_per_1k_tokens（保持旧语义）。"""
+            value = float(getattr(model_config, attr, None) or 0)
+            return value or fallback_price
+
+        def _flat_cost(attr: str) -> float:
+            return float(getattr(model_config, attr, None) or 0)
+
+        def _tier_price(tier: str, attr: str) -> float:
+            return float(getattr(model_config, f"{tier}_{attr}", None) or 0)
+
+        def _tier_cost(tier: str, attr: str) -> float:
+            return float(getattr(model_config, f"{tier}_{attr}", None) or 0)
+
+        def _tier_pricing(tier: str) -> dict[str, float]:
+            return {
+                "input": _tier_price(tier, "input_price_per_1k_tokens"),
+                "output": _tier_price(tier, "output_price_per_1k_tokens"),
+                "input_cached": _tier_price(tier, "input_cached_price_per_1k_tokens"),
+                "input_cost": _tier_cost(tier, "input_cost_per_1k_tokens"),
+                "output_cost": _tier_cost(tier, "output_cost_per_1k_tokens"),
+                "input_cached_cost": _tier_cost(tier, "input_cached_cost_per_1k_tokens"),
+            }
+
+        # 完整定价对象：保留 input/output/unit 键保持向后兼容
+        # （AgentThought total_price 等仍消费 pricing.input/output），
+        # 并新增 cached/成本/峰谷开关/峰谷窗口/峰谷各档售价与成本，供展示层消费。
+        pricing = {
+            "input": _flat_price("input_price_per_1k_tokens"),
+            "output": _flat_price("output_price_per_1k_tokens"),
+            "input_cached": _flat_price("input_cached_price_per_1k_tokens"),
+            "input_cost": _flat_cost("input_cost_per_1k_tokens"),
+            "output_cost": _flat_cost("output_cost_per_1k_tokens"),
+            "input_cached_cost": _flat_cost("input_cached_cost_per_1k_tokens"),
+            "peak_valley_enabled": peak_valley_enabled,
+            "cache_pricing_enabled": cache_pricing_enabled,
+            "peak_windows": peak_windows,
+            "peak": _tier_pricing("peak"),
+            "valley": _tier_pricing("valley"),
+            "unit": 0.001,
+        }
+
         return ModelEntity(
             model=model_config.model_name,
             label=model_config.display_name or model_config.model_name,
@@ -250,11 +297,7 @@ class LanguageModelManager(BaseModel):
             },
             parameters=[],
             metadata={
-                "pricing": {
-                    "input": float(model_config.price_per_1k_tokens or 0),
-                    "output": float(model_config.price_per_1k_tokens or 0),
-                    "unit": 0.001,
-                },
+                "pricing": pricing,
                 "model_type": model_config.model_type,
                 "compatible_api": model_config.compatible_api,
                 "tier": model_config.tier,

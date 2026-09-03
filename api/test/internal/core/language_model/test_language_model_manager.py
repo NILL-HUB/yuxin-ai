@@ -1,11 +1,14 @@
 # api/test/internal/core/language_model/test_language_model_manager.py
 import time
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from internal.exception import NotFoundException
+from internal.core.language_model.entities.provider_entity import ProviderEntity
 from internal.core.language_model.language_model_manager import LanguageModelManager
+from internal.model.model_pool_entity import ModelPoolConfig
 
 
 class TestLanguageModelManager:
@@ -117,3 +120,155 @@ class TestLanguageModelManager:
             providers = manager.get_providers()
             assert len(providers) == 1
             assert providers[0].name == "openai"
+
+
+class TestBuildModelEntityPricingMetadata:
+    def _manager(self):
+        return LanguageModelManager()
+
+    def _config(self):
+        config = MagicMock()
+        config.model_name = "deepseek-chat"
+        config.display_name = ""
+        config.model_type = "chat"
+        config.capabilities = []
+        config.max_input_tokens = 8000
+        config.max_tokens = 0
+        config.max_output_tokens = 2000
+        config.price_per_1k_tokens = 0
+        config.input_price_per_1k_tokens = Decimal("0.002")
+        config.output_price_per_1k_tokens = Decimal("0.008")
+        config.input_cached_price_per_1k_tokens = Decimal("0.0005")
+        config.input_cost_per_1k_tokens = Decimal("0.0009")
+        config.output_cost_per_1k_tokens = Decimal("0.0036")
+        config.input_cached_cost_per_1k_tokens = Decimal("0.0002")
+        config.peak_valley_enabled = True
+        config.cache_pricing_enabled = True
+        config.peak_input_price_per_1k_tokens = Decimal("0.003")
+        config.peak_output_price_per_1k_tokens = Decimal("0.012")
+        config.peak_input_cached_price_per_1k_tokens = Decimal("0.0008")
+        config.peak_input_cost_per_1k_tokens = Decimal("0.001")
+        config.peak_output_cost_per_1k_tokens = Decimal("0.004")
+        config.peak_input_cached_cost_per_1k_tokens = Decimal("0.00025")
+        config.valley_input_price_per_1k_tokens = Decimal("0.001")
+        config.valley_output_price_per_1k_tokens = Decimal("0.004")
+        config.valley_input_cached_price_per_1k_tokens = Decimal("0.0002")
+        config.valley_input_cost_per_1k_tokens = Decimal("0.0005")
+        config.valley_output_cost_per_1k_tokens = Decimal("0.002")
+        config.valley_input_cached_cost_per_1k_tokens = Decimal("0.0001")
+        config.peak_windows = [{"days": "0-6", "start": "09:00", "end": "23:00"}]
+        config.compatible_api = "openai"
+        config.tier = "2"
+        config.priority = 10
+        config.fallback_model_id = None
+        return config
+
+    def test_build_model_entity_pricing_contains_peak_valley_cost_windows(self):
+        manager = self._manager()
+        entity = manager._build_model_entity(self._config(), ProviderEntity(name="p"))
+        pricing = entity.metadata["pricing"]
+
+        assert pricing["peak_valley_enabled"] is True
+        assert pricing["cache_pricing_enabled"] is True
+        assert pricing["peak_windows"] == [{"days": "0-6", "start": "09:00", "end": "23:00"}]
+
+        assert pricing["peak"] == {
+            "input": 0.003,
+            "output": 0.012,
+            "input_cached": 0.0008,
+            "input_cost": 0.001,
+            "output_cost": 0.004,
+            "input_cached_cost": 0.00025,
+        }
+        assert pricing["valley"] == {
+            "input": 0.001,
+            "output": 0.004,
+            "input_cached": 0.0002,
+            "input_cost": 0.0005,
+            "output_cost": 0.002,
+            "input_cached_cost": 0.0001,
+        }
+
+    def test_build_model_entity_pricing_keeps_flat_and_legacy_keys(self):
+        manager = self._manager()
+        entity = manager._build_model_entity(self._config(), ProviderEntity(name="p"))
+        pricing = entity.metadata["pricing"]
+
+        assert pricing["input"] == 0.002
+        assert pricing["output"] == 0.008
+        assert pricing["input_cached"] == 0.0005
+        assert pricing["input_cost"] == 0.0009
+        assert pricing["output_cost"] == 0.0036
+        assert pricing["input_cached_cost"] == 0.0002
+        assert pricing["unit"] == 0.001
+
+        assert set(pricing) >= {"input", "output", "unit", "input_cached", "input_cost", "output_cost", "input_cached_cost", "peak_valley_enabled", "cache_pricing_enabled", "peak_windows", "peak", "valley"}
+        assert isinstance(pricing["input"], float)
+        assert isinstance(pricing["input_cost"], float)
+        assert isinstance(pricing["peak"]["output"], float)
+
+    def test_build_model_entity_pricing_zero_split_falls_back_to_legacy_price(self):
+        config = self._config()
+        config.input_price_per_1k_tokens = Decimal("0")
+        config.output_price_per_1k_tokens = Decimal("0")
+        config.price_per_1k_tokens = Decimal("0.02")
+
+        manager = self._manager()
+        entity = manager._build_model_entity(config, ProviderEntity(name="p"))
+        pricing = entity.metadata["pricing"]
+
+        assert pricing["input"] == 0.02
+        assert pricing["output"] == 0.02
+
+    def test_build_model_entity_pricing_disabled_tiers_use_zero(self):
+        config = self._config()
+        config.peak_valley_enabled = False
+        config.cache_pricing_enabled = False
+
+        manager = self._manager()
+        entity = manager._build_model_entity(config, ProviderEntity(name="p"))
+        pricing = entity.metadata["pricing"]
+
+        assert pricing["peak_valley_enabled"] is False
+        assert pricing["cache_pricing_enabled"] is False
+        assert pricing["peak_windows"] == [{"days": "0-6", "start": "09:00", "end": "23:00"}]
+
+    def test_build_model_entity_pricing_missing_attrs_default_to_zero(self):
+        config = ModelPoolConfig(
+            model_name="bare",
+            display_name="",
+            model_type="chat",
+            capabilities=[],
+            max_input_tokens=0,
+            max_tokens=0,
+            max_output_tokens=0,
+            price_per_1k_tokens=None,
+        )
+
+        manager = self._manager()
+        entity = manager._build_model_entity(config, ProviderEntity(name="p"))
+        pricing = entity.metadata["pricing"]
+
+        assert pricing["input"] == 0.0
+        assert pricing["output"] == 0.0
+        assert pricing["input_cached"] == 0.0
+        assert pricing["input_cost"] == 0.0
+        assert pricing["output_cost"] == 0.0
+        assert pricing["input_cached_cost"] == 0.0
+        assert pricing["peak_windows"] == []
+        assert pricing["peak"] == {
+            "input": 0.0,
+            "output": 0.0,
+            "input_cached": 0.0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "input_cached_cost": 0.0,
+        }
+        assert pricing["valley"] == {
+            "input": 0.0,
+            "output": 0.0,
+            "input_cached": 0.0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "input_cached_cost": 0.0,
+        }
