@@ -589,6 +589,65 @@ class TestAdminModelPoolRoutes:
         assert payload["code"] == "success"
         assert payload["data"]["peak_input_price_per_1k_tokens"] == "0.390000"
 
+    def test_pricing_suggest_new_structure(self, monkeypatch):
+        """新结构：suggestions/applied/warnings 与旧顶层键并存，official 可传入。"""
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/model-pools/pricing-suggest?account_id={uuid4()}",
+                    json={
+                        "fields": {
+                            "peak_valley_enabled": True,
+                            "cache_pricing_enabled": False,
+                            "peak_input_cost_per_1k_tokens": 0.003,
+                        },
+                        "margin_ratio": 0.3,
+                        "official": {"peak_input": 0.1},
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        data = payload["data"]
+        assert data["suggestions"] == {
+            "peak_input_price_per_1k_tokens": "0.390000",
+        }
+        assert data["applied"] is False
+        assert data["warnings"] == []
+        assert data["peak_input_price_per_1k_tokens"] == "0.390000"
+
+    def test_pricing_suggest_new_structure_with_warnings(self, monkeypatch):
+        """新前端预览：min_margin_ratio 下界过低/官方价上限冲突时 warnings 非空。"""
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/model-pools/pricing-suggest?account_id={uuid4()}",
+                    json={
+                        "fields": {
+                            "peak_valley_enabled": False,
+                            "cache_pricing_enabled": False,
+                            "input_cost_per_1k_tokens": 0.02,
+                        },
+                        "margin_ratio": 0.3,
+                        "official": {"input": 0.005},
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        data = payload["data"]
+        assert data["suggestions"]["input_price_per_1k_tokens"] == "2.600000"
+        assert data["applied"] is False
+        assert any("官方" in w and "贵" in w for w in data["warnings"])
+
     def test_pricing_suggest_missing_fields(self, monkeypatch):
         self._setup(monkeypatch)
 

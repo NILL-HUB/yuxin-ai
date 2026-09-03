@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from internal.core.billing.pricing_guard import (
+    build_pricing_preview,
     cost_key_for,
     price_key_for,
     suggest_sell_prices,
@@ -157,3 +158,77 @@ def test_validate_peak_windows_allows_non_overlapping_windows():
         {"days": "1-5", "start": "08:00", "end": "12:00"},
         {"days": "1-5", "start": "12:00", "end": "18:00"},
     ]) == []
+
+
+def test_build_pricing_preview_returns_suggestions_structure():
+    out = build_pricing_preview(
+        {
+            "peak_valley_enabled": True,
+            "cache_pricing_enabled": True,
+            "peak_input_cost_per_1k_tokens": Decimal("0.003"),
+            "peak_input_cached_cost_per_1k_tokens": Decimal("0.001"),
+            "valley_output_cost_per_1k_tokens": Decimal("0.004"),
+        },
+        margin_ratio=Decimal("0.3"),
+        credits_per_yuan=Decimal("100"),
+        peak_valley_enabled=True,
+        cache_pricing_enabled=True,
+    )
+    assert out["applied"] is False
+    assert out["suggestions"] == {
+        "peak_input_price_per_1k_tokens": "0.390000",
+        "peak_input_cached_price_per_1k_tokens": "0.130000",
+        "valley_output_price_per_1k_tokens": "0.520000",
+    }
+    assert out["warnings"] == []
+
+
+def test_build_pricing_preview_warns_when_suggestion_still_loses_money():
+    out = build_pricing_preview(
+        {
+            "peak_valley_enabled": True,
+            "peak_output_cost_per_1k_tokens": Decimal("0.009"),
+        },
+        margin_ratio=Decimal("0.3"),
+        credits_per_yuan=Decimal("100"),
+        min_margin_ratio=Decimal("0.9"),
+        peak_valley_enabled=True,
+        cache_pricing_enabled=False,
+    )
+    assert out["suggestions"]["peak_output_price_per_1k_tokens"] == "1.170000"
+    assert any("峰档" in w and "输出" in w and "亏损" in w for w in out["warnings"])
+
+
+def test_build_pricing_preview_empty_when_no_costs():
+    out = build_pricing_preview(
+        {
+            "peak_valley_enabled": True,
+            "input_price_per_1k_tokens": Decimal("1"),
+        },
+        margin_ratio=Decimal("0.3"),
+        credits_per_yuan=Decimal("100"),
+        peak_valley_enabled=True,
+        cache_pricing_enabled=False,
+    )
+    assert out["suggestions"] == {}
+    assert out["warnings"] == []
+    assert out["applied"] is False
+
+
+def test_build_pricing_preview_cap_warning_with_official():
+    out = build_pricing_preview(
+        {
+            "peak_valley_enabled": False,
+            "cache_pricing_enabled": False,
+            "input_cost_per_1k_tokens": Decimal("0.02"),
+        },
+        margin_ratio=Decimal("0.3"),
+        credits_per_yuan=Decimal("100"),
+        min_margin_ratio=Decimal("0.1"),
+        peak_valley_enabled=False,
+        cache_pricing_enabled=False,
+        official={"input": Decimal("0.005")},
+        official_price_cap_ratio=Decimal("1.1"),
+    )
+    assert out["suggestions"]["input_price_per_1k_tokens"] == "2.600000"
+    assert any("官方" in w and "贵" in w for w in out["warnings"])

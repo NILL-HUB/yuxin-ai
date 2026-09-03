@@ -251,3 +251,47 @@ def suggest_sell_prices(
             sell = cost_rmb * (Decimal("1") + margin) * cpy
             out[price_key_for(tier, dim)] = f"{sell:.6f}"
     return out
+
+
+def build_pricing_preview(
+    fields: dict[str, Any], *,
+    margin_ratio,
+    credits_per_yuan,
+    peak_valley_enabled: bool,
+    cache_pricing_enabled: bool,
+    official: dict | None = None,
+    official_price_cap_ratio=None,
+    min_margin_ratio=None,
+) -> dict[str, Any]:
+    """基于表单字段的自动定价预览：返回建议售价 + 应用后的双界告警。
+
+    - suggestions: dict（键→建议售价字符串），只含已有成本（>0）的维度；
+    - applied: 恒为 False，纯计算预览、不落库；
+    - warnings: 把建议值合并回 fields 后 validate_pricing_bounds 的错误列表，
+      用于提示哪些维度建议价仍可能越界/亏损（仅提示不抛异常）。
+    """
+    suggestions = suggest_sell_prices(
+        fields,
+        margin_ratio=margin_ratio,
+        credits_per_yuan=credits_per_yuan,
+        peak_valley_enabled=peak_valley_enabled,
+        cache_pricing_enabled=cache_pricing_enabled,
+    )
+    warnings: list[str] = []
+    if suggestions:
+        merged = dict(fields)
+        merged.update(suggestions)
+        warnings = validate_pricing_bounds(
+            merged,
+            credits_per_yuan=credits_per_yuan,
+            min_margin_ratio=min_margin_ratio,
+            peak_valley_enabled=peak_valley_enabled,
+            cache_pricing_enabled=cache_pricing_enabled,
+            official=official,
+            official_price_cap_ratio=official_price_cap_ratio,
+        )
+    return {
+        "suggestions": suggestions,
+        "applied": False,
+        "warnings": warnings,
+    }

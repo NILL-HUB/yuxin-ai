@@ -302,7 +302,7 @@ def register_routes(quart_app):
             return err
         from decimal import Decimal
 
-        from internal.core.billing.pricing_guard import suggest_sell_prices
+        from internal.core.billing.pricing_guard import build_pricing_preview
         from internal.extension.database_extension import db
 
         payload = await request.get_json(force=True, silent=True) or {}
@@ -318,32 +318,54 @@ def register_routes(quart_app):
             margin_ratio = Decimal(str(payload.get("margin_ratio", 0.3)))
         except Exception:
             margin_ratio = Decimal("0.3")
-        credits_per_yuan = Decimal("100")
-        try:
-            from internal.model.billing import BillingConfig
-            row = (
-                db.session.query(BillingConfig)
-                .filter(BillingConfig.code == "credits_per_yuan")
-                .one_or_none()
-            )
-            if row is not None and row.value_numeric:
-                credits_per_yuan = Decimal(str(row.value_numeric))
-        except Exception:
-            pass
+
+        def _config_value(code: str, default: str) -> Decimal:
+            try:
+                from internal.model.billing import BillingConfig
+                row = (
+                    db.session.query(BillingConfig)
+                    .filter(BillingConfig.code == code)
+                    .one_or_none()
+                )
+                if row is not None and row.value_numeric:
+                    return Decimal(str(row.value_numeric))
+            except Exception:
+                pass
+            return Decimal(default)
+
+        credits_per_yuan = _config_value("credits_per_yuan", "100")
+        min_margin_ratio = _config_value("min_margin_ratio", "0.1")
+        official_price_cap_ratio = _config_value("official_price_cap_ratio", "1.1")
+
         peak_valley_enabled = str(fields.get("peak_valley_enabled") or "").lower() in (
             "true", "1", "yes", "on",
         )
         cache_pricing_enabled = str(fields.get("cache_pricing_enabled") or "").lower() in (
             "true", "1", "yes", "on",
         )
-        result = suggest_sell_prices(
+        # 请求体可选携带官方价（dict：键为 input/output/input_cached 或 peak_input/...）
+        official = payload.get("official")
+        if not isinstance(official, dict):
+            official = None
+        preview = build_pricing_preview(
             fields,
             margin_ratio=margin_ratio,
             credits_per_yuan=credits_per_yuan,
             peak_valley_enabled=peak_valley_enabled,
             cache_pricing_enabled=cache_pricing_enabled,
+            official=official,
+            official_price_cap_ratio=official_price_cap_ratio,
+            min_margin_ratio=min_margin_ratio,
         )
-        return a._ok(result)
+        # 顶层同时保留旧结构（suggestions 键展开放到 data 顶层），
+        # 使旧前端按 Object.entries 回填仍可用；新前端消费 suggestions/warnings/applied。
+        data = {
+            "suggestions": preview["suggestions"],
+            "applied": preview["applied"],
+            "warnings": preview["warnings"],
+        }
+        data.update(preview["suggestions"])
+        return a._ok(data)
 
     @quart_app.get("/admin/model-keys")
     async def admin_model_key_list():
