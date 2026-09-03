@@ -63,6 +63,7 @@ type ModelRecord = {
   valley_input_cached_cost_per_1k_tokens?: string
   created_at?: number
   updated_at?: number
+  [key: string]: unknown
 }
 
 type ModelKeyRecord = {
@@ -288,28 +289,243 @@ const stringifyPriceField = (value: unknown): string =>
 const pricingSuggestLoading = ref(false)
 const pricingErrors = ref<string[]>([])
 
-const onPricingModeChange = () => {
-  if (modelForm.value.peak_valley_enabled) {
-    applyProviderDefaultWindows()
-  }
+// 峰谷窗口编辑器行
+type PeakWindowRow = {
+  days: number[]
+  start: string
+  end: string
 }
+// 星期选项：0=周日 ~ 6=周六，value 与后端 days 字段的 0-6 序号一致
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: '周日' },
+  { value: 1, label: '周一' },
+  { value: 2, label: '周二' },
+  { value: 3, label: '周三' },
+  { value: 4, label: '周四' },
+  { value: 5, label: '周五' },
+  { value: 6, label: '周六' },
+]
+const WEEKDAY_DAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+const windowsParseError = ref(false)
+const peakWindowsDirty = ref(false)
+
+const parseDays = (days?: unknown): number[] => {
+  if (typeof days === 'number') return [days]
+  if (typeof days !== 'string' || !days.trim()) return []
+  const daysStr = days.trim()
+  if (/^\d(-\d)?$/.test(daysStr)) {
+    const [from, to] = daysStr.split('-').map(Number)
+    if (to === undefined) return [from]
+    const out: number[] = []
+    for (let i = from; i <= to; i += 1) out.push(i % 7)
+    return out
+  }
+  return daysStr.split(',').map(Number).filter((n) => !Number.isNaN(n) && n >= 0 && n <= 6)
+}
+
+// modelForm.peak_windows 为 JSON 字符串，此处解析为编辑器行；解析失败回退空数组并提示
+const peakWindowRows = computed<PeakWindowRow[]>({
+  get() {
+    const raw = modelForm.value.peak_windows
+    if (typeof raw !== 'string' || !raw.trim()) return []
+    try {
+      const arr = JSON.parse(raw)
+      if (!Array.isArray(arr)) return []
+      return arr.map((item: Record<string, unknown>) => ({
+        days: parseDays(item?.days),
+        start: String(item?.start ?? ''),
+        end: String(item?.end ?? ''),
+      }))
+    } catch {
+      return []
+    }
+  },
+  set(rows: PeakWindowRow[]) {
+    modelForm.value.peak_windows = JSON.stringify(rows.map((row) => ({ days: row.days.join(','), start: row.start, end: row.end })))
+  },
+})
+const setPeakWindows = (rows: PeakWindowRow[]) => {
+  windowsParseError.value = false
+  peakWindowRows.value = rows
+  peakWindowsDirty.value = true
+}
+const addPeakWindow = () => {
+  setPeakWindows([...peakWindowRows.value, { days: [1, 2, 3, 4, 5], start: '09:00', end: '12:00' }])
+}
+const removePeakWindow = (index: number) => {
+  const rows = peakWindowRows.value.filter((_, i) => i !== index)
+  setPeakWindows(rows)
+}
+
+// 仅当未配置任何窗口时才按供应商默认填充，绝不覆盖用户已配置的窗口
 const applyProviderDefaultWindows = () => {
+  if (peakWindowRows.value.length > 0) return
   const provider = String(modelForm.value.provider || '').toLowerCase()
   if (provider === 'siliconflow') {
     // 低谷 02:00-08:00 → 峰窗口为每日两段
-    modelForm.value.peak_windows = JSON.stringify([
-      { days: '0-6', start: '00:00', end: '02:00' },
-      { days: '0-6', start: '08:00', end: '24:00' },
+    setPeakWindows([
+      { days: [0, 1, 2, 3, 4, 5, 6], start: '00:00', end: '02:00' },
+      { days: [0, 1, 2, 3, 4, 5, 6], start: '08:00', end: '24:00' },
     ])
   } else {
-    modelForm.value.peak_windows = JSON.stringify([
-      { days: '0-4', start: '09:00', end: '12:00' },
-      { days: '0-4', start: '14:00', end: '18:00' },
+    setPeakWindows([
+      { days: [0, 1, 2, 3, 4], start: '09:00', end: '12:00' },
+      { days: [0, 1, 2, 3, 4], start: '14:00', end: '18:00' },
     ])
   }
 }
+const handlePeakValleyEnabled = () => {
+  // 校验非法 JSON：一旦打开谷峰开关且表单里遗留非法 JSON，提示并按空处理
+  const raw = modelForm.value.peak_windows
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (!Array.isArray(parsed)) {
+        windowsParseError.value = true
+        peakWindowRows.value = []
+        return
+      }
+    } catch {
+      windowsParseError.value = true
+      modelForm.value.peak_windows = '[]'
+      peakWindowRows.value = []
+      return
+    }
+  }
+  if (peakWindowRows.value.length === 0) {
+    applyProviderDefaultWindows()
+  }
+}
+// 值变化时按需初始化窗口（幂等：仅在从常规切到峰谷的一次转变时触发，绝不覆盖已有窗口）
+watch(() => modelForm.value.peak_valley_enabled, (enabled) => {
+  if (enabled) {
+    handlePeakValleyEnabled()
+  }
+})
+const validatePeakWindows = (): boolean => {
+  if (!modelForm.value.peak_valley_enabled) return true
+  const rows = peakWindowRows.value
+  if (rows.length === 0) return true
+  const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/
+  const midNightRe = /^24:00$/
+  const weekdays = new Set([0, 1, 2, 3, 4, 5, 6])
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    const rowWeekdays = Array.isArray(row.days) ? row.days : []
+    if (rowWeekdays.length === 0) {
+      Message.warning(t('admin.models.pricingMode.windowsRowError', { index: i + 1, reason: t('admin.models.pricingMode.windowsReasonDays') }))
+      return false
+    }
+    if (rowWeekdays.some((d) => !weekdays.has(Number(d)))) {
+      Message.warning(t('admin.models.pricingMode.windowsRowError', { index: i + 1, reason: t('admin.models.pricingMode.windowsReasonDays') }))
+      return false
+    }
+    const endIsMidnight = midNightRe.test(row.end)
+    const startValid = typeof row.start === 'string' && timeRe.test(row.start)
+    const endValid = typeof row.end === 'string' && (endIsMidnight || timeRe.test(row.end))
+    if (!startValid) {
+      Message.warning(t('admin.models.pricingMode.windowsRowError', { index: i + 1, reason: t('admin.models.pricingMode.windowsReasonStart') }))
+      return false
+    }
+    if (!endValid) {
+      Message.warning(t('admin.models.pricingMode.windowsRowError', { index: i + 1, reason: t('admin.models.pricingMode.windowsReasonEnd') }))
+      return false
+    }
+    if (!endIsMidnight && row.end <= row.start) {
+      Message.warning(t('admin.models.pricingMode.windowsRowError', { index: i + 1, reason: t('admin.models.pricingMode.windowsReasonOrder') }))
+      return false
+    }
+  }
+  return true
+}
+const parsePeakWindowsWarnings = (): string[] => {
+  const raw = modelForm.value.peak_windows
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  try {
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return ['unparseable']
+    const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/
+    return arr.some((item: Record<string, unknown>) => {
+      const days = parseDays(item?.days)
+      const start = String(item?.start ?? '')
+      const end = String(item?.end ?? '')
+      const startValid = timeRe.test(start)
+      const endValid = /^24:00$/.test(end) || timeRe.test(end)
+      return !startValid || !endValid || days.length === 0
+    })
+      ? ['invalid-row']
+      : []
+  } catch {
+    return ['unparseable']
+  }
+}
+const peakWindowsWarnings = computed<string[]>(() => {
+  if (!modelForm.value.peak_valley_enabled) return []
+  if (windowsParseError.value) return ['unparseable']
+  if (peakWindowsDirty.value) return []
+  return parsePeakWindowsWarnings()
+})
+
+// 自动定价建议预览
+type SuggestRow = {
+  key: string
+  label: string
+  current: string
+  suggested: string
+}
+const priceKeyDefs: { key: string; item: string; dimension: string; cache: boolean }[] = [
+  { key: 'peak_input_price_per_1k_tokens', item: 'peak', dimension: 'input', cache: false },
+  { key: 'peak_output_price_per_1k_tokens', item: 'peak', dimension: 'output', cache: false },
+  { key: 'peak_input_cached_price_per_1k_tokens', item: 'peak', dimension: 'input', cache: true },
+  { key: 'valley_input_price_per_1k_tokens', item: 'valley', dimension: 'input', cache: false },
+  { key: 'valley_output_price_per_1k_tokens', item: 'valley', dimension: 'output', cache: false },
+  { key: 'valley_input_cached_price_per_1k_tokens', item: 'valley', dimension: 'input', cache: true },
+  { key: 'input_cached_price_per_1k_tokens', item: 'regular', dimension: 'input', cache: true },
+  { key: 'input_price_per_1k_tokens', item: 'regular', dimension: 'input', cache: false },
+  { key: 'output_price_per_1k_tokens', item: 'regular', dimension: 'output', cache: false },
+]
+const peakTag = computed(() => t('admin.models.pricingMode.tag.peak'))
+const valleyTag = computed(() => t('admin.models.pricingMode.tag.valley'))
+const cacheTag = computed(() => t('admin.models.pricingMode.tag.cache'))
+const labelForPriceKey = (key: string): string => {
+  const def = priceKeyDefs.find((d) => d.key === key)
+  if (!def) return key
+  const tag = def.item === 'peak' ? peakTag.value : def.item === 'valley' ? valleyTag.value : ''
+  const dim = def.cache
+    ? t('admin.models.pricingMode.dim.inputCached')
+    : def.dimension === 'input'
+      ? t('admin.models.pricingMode.dim.input')
+      : t('admin.models.pricingMode.dim.output')
+  return tag ? `${tag} · ${dim}` : dim
+}
+const formatSuggestPrice = (value: unknown): string => {
+  const n = Number(value ?? '')
+  if (value === null || value === undefined || value === '' || Number.isNaN(n)) return '—'
+  return n.toFixed(6)
+}
+const currentPriceOf = (key: string): string => {
+  const modelValue = (modelForm.value as Record<string, unknown>)[key]
+  const n = Number(modelValue ?? '')
+  return !Number.isNaN(n) && n > 0 ? n.toFixed(6) : '—'
+}
+const suggestRows = ref<SuggestRow[]>([])
+const suggestWarnings = ref<string[]>([])
+const pricingPreviewVisible = ref(false)
+const pricingPreviewLoading = ref(false)
+const fallbackSuggestRecord = ref<Record<string, string>>({})
+
+const buildSuggestPreview = (key: string, value: unknown) => {
+  const def = priceKeyDefs.find((d) => d.key === key)
+  if (!def) return
+  suggestRows.value.push({
+    key,
+    label: labelForPriceKey(key),
+    current: currentPriceOf(key),
+    suggested: formatSuggestPrice(value),
+  })
+}
 const openPricingSuggest = async () => {
-  pricingSuggestLoading.value = true
+  pricingPreviewLoading.value = true
   try {
     const resp = await suggestSellPrices(
       {
@@ -320,19 +536,55 @@ const openPricingSuggest = async () => {
       0.3,
     )
     if (resp) {
-      const formRecord = modelForm.value as Record<string, unknown>
-      Object.entries(resp).forEach(([key, value]) => {
-        if (key in formRecord) {
-          formRecord[key] = value
-        }
-      })
-      Message.success('自动定价建议已应用')
+      suggestWarnings.value = Array.isArray(resp.warnings) ? resp.warnings.map((w) => String(w)) : []
+      // 新结构优先取 resp.suggestions；为空则回退到顶层展开的旧结构
+      const inner = resp.suggestions && typeof resp.suggestions === 'object' && !Array.isArray(resp.suggestions)
+        ? (resp.suggestions as Record<string, unknown>)
+        : {}
+      const source = Object.keys(inner).length > 0
+        ? inner
+        : Object.fromEntries(Object.entries(resp).filter(([key]) => key !== 'suggestions' && key !== 'applied' && key !== 'warnings'))
+      fallbackSuggestRecord.value = Object.fromEntries(
+        Object.keys(source).map((key) => [key, String(source[key] ?? '')]),
+      )
+      suggestRows.value = []
+      Object.entries(source).forEach(([key, value]) => buildSuggestPreview(key, value))
+      pricingPreviewVisible.value = true
     }
   } catch (error) {
-    Message.error(getErrorMessage(error, '获取定价建议失败'))
+    Message.error(getErrorMessage(error, t('admin.models.messages.getPricingSuggestFailed')))
   } finally {
-    pricingSuggestLoading.value = false
+    pricingPreviewLoading.value = false
   }
+}
+const cancelPricingSuggest = () => {
+  pricingPreviewVisible.value = false
+  suggestRows.value = []
+  suggestWarnings.value = []
+}
+const applyPricingSuggest = () => {
+  const formRecord = modelForm.value as Record<string, unknown>
+  Object.entries(fallbackSuggestRecord.value).forEach(([key, value]) => {
+    if (key in formRecord) {
+      formRecord[key] = value
+    }
+  })
+  pricingPreviewVisible.value = false
+  Message.success(t('admin.models.messages.pricingSuggestApplied'))
+}
+// 列表「定价」列：峰谷开启且有峰/谷售价时展示峰谷摘要
+const peakValleySummaryOf = (model: ModelRecord): { peak: string; valley: string } | null => {
+  if (!toBool(model.peak_valley_enabled)) return null
+  const peak = [
+    formatPrice(model.peak_input_price_per_1k_tokens),
+    formatPrice(model.peak_output_price_per_1k_tokens),
+  ].join('/')
+  const valley = [
+    formatPrice(model.valley_input_price_per_1k_tokens),
+    formatPrice(model.valley_output_price_per_1k_tokens),
+  ].join('/')
+  if (peak === '0.000000/0.000000' && valley === '0.000000/0.000000') return null
+  return { peak, valley }
 }
 // 当前模型类型是否需要上下文长度配置
 const hasContextField = computed(() => !CONTEXT_LESS_MODEL_TYPES.includes(modelForm.value.model_type))
@@ -494,6 +746,7 @@ const openEditModel = (model: ModelRecord) => {
 }
 
 const submitModel = async () => {
+  if (!validatePeakWindows()) return
   actionLoading.value = true
   pricingErrors.value = []
   try {
@@ -767,9 +1020,26 @@ onMounted(() => {
                   <td class="p-3">{{ getTierLabel(model.tier) }}</td>
                   <td class="p-3">
                     <div class="flex flex-col gap-0.5 text-xs">
-                      <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
-                      <code class="font-mono text-gray-700">{{ formatPrice(model.input_price_per_1k_tokens) }} / {{ formatPrice(model.output_price_per_1k_tokens) }}</code>
-                      <a-tag v-if="toBool(model.peak_valley_enabled)" size="small" color="purple">峰谷</a-tag>
+                      <template v-if="peakValleySummaryOf(model)">
+                        <span class="flex items-center gap-1">
+                          <a-tag size="small" color="purple">{{ t('admin.models.pricingMode.tag.peak') }}</a-tag>
+                          <code class="font-mono text-purple-700">{{ peakValleySummaryOf(model)?.peak }}</code>
+                        </span>
+                        <span class="flex items-center gap-1">
+                          <a-tag size="small" color="gray">{{ t('admin.models.pricingMode.tag.valley') }}</a-tag>
+                          <code class="font-mono text-gray-500">{{ peakValleySummaryOf(model)?.valley }}</code>
+                        </span>
+                        <span class="flex items-center gap-1">
+                          <a-tag v-if="toBool(model.cache_pricing_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.cache') }}</a-tag>
+                          <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
+                        </span>
+                      </template>
+                      <template v-else>
+                        <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
+                        <code class="font-mono text-gray-700">{{ formatPrice(model.input_price_per_1k_tokens) }} / {{ formatPrice(model.output_price_per_1k_tokens) }}</code>
+                        <a-tag v-if="toBool(model.peak_valley_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.peakValley') }}</a-tag>
+                        <a-tag v-if="toBool(model.cache_pricing_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.cache') }}</a-tag>
+                      </template>
                       <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
                       <code class="font-mono text-amber-600">{{ formatPrice(model.input_cost_per_1k_tokens) }} / {{ formatPrice(model.output_cost_per_1k_tokens) }}</code>
                     </div>
@@ -977,94 +1247,129 @@ onMounted(() => {
           </a-tooltip>
         </a-alert>
         <div class="form-group">
-          <h4 class="form-group-title">定价模式</h4>
-          <p class="form-group-desc">开启「谷峰定价」可按峰谷时段分别设置售价与成本；开启「缓存命中/未命中拆分」后可单独为缓存命中输入计价。</p>
-          <a-form-item label="计价方式" field="peak_valley_enabled">
-            <a-radio-group v-model="modelForm.peak_valley_enabled" @change="onPricingModeChange">
-              <a-radio :value="false">常规（单档单价）</a-radio>
-              <a-radio :value="true">谷峰定价（分时段）</a-radio>
+          <h4 class="form-group-title">{{ t('admin.models.pricingMode.title') }}</h4>
+          <p class="form-group-desc">{{ t('admin.models.pricingMode.desc') }}</p>
+          <a-form-item :label="t('admin.models.pricingMode.radioLabel')" field="peak_valley_enabled">
+            <a-radio-group v-model="modelForm.peak_valley_enabled">
+              <a-radio :value="false">{{ t('admin.models.pricingMode.radio.regular') }}</a-radio>
+              <a-radio :value="true">{{ t('admin.models.pricingMode.radio.peakValley') }}</a-radio>
             </a-radio-group>
           </a-form-item>
-          <a-form-item label="缓存命中/未命中拆分" tooltip="开启后输入按缓存命中与未命中两档分别计价" field="cache_pricing_enabled">
+          <a-form-item :label="t('admin.models.pricingMode.cacheSplit')" :tooltip="t('admin.models.pricingMode.cacheSplitTooltip')" field="cache_pricing_enabled">
             <a-switch v-model="modelForm.cache_pricing_enabled" class="cache-split-switch" />
           </a-form-item>
 
           <template v-if="modelForm.peak_valley_enabled">
-            <a-form-item label="峰谷时段（北京时间，JSON）" field="peak_windows">
-              <a-textarea
-                v-model="modelForm.peak_windows"
-                name="peak_windows"
-                :rows="2"
-                placeholder='[{"days":"0-6","start":"09:00","end":"18:00"}]'
-              />
-              <div class="mt-2">
-                <a-button size="small" @click="applyProviderDefaultWindows()">按供应商默认时段填充</a-button>
+            <a-alert v-if="peakWindowsWarnings.length" type="warning" show-icon class="mb-3">
+              {{ t('admin.models.pricingMode.windowsParseError') }}
+            </a-alert>
+            <a-form-item :label="t('admin.models.pricingMode.windowsLabel')" field="peak_windows">
+              <div class="w-full rounded border border-dashed border-gray-300 p-3">
+                <p class="mb-2 text-xs text-gray-500">{{ t('admin.models.pricingMode.peakWindowsTip') }}</p>
+                <div v-if="peakWindowRows.length === 0" class="py-3 text-center text-xs text-gray-400">
+                  {{ t('admin.models.pricingMode.emptyWindows') }}
+                </div>
+                <div v-else class="space-y-2">
+                  <div v-for="(row, index) in peakWindowRows" :key="index" class="window-row flex flex-wrap items-center gap-2">
+                    <span class="w-16 shrink-0 text-xs text-gray-500">{{ t('admin.models.pricingMode.daysLabel') }}</span>
+                    <div class="w-48">
+                      <a-select
+                        v-model="row.days"
+                        multiple
+                        :placeholder="t('admin.models.pricingMode.daysPlaceholder')"
+                        size="small"
+                        class="w-full"
+                      >
+                        <a-option v-for="day in WEEKDAY_OPTIONS" :key="day.value" :value="day.value">{{ t(`admin.models.pricingMode.weekdays.${day.value}`) }}</a-option>
+                      </a-select>
+                    </div>
+                    <span class="text-xs text-gray-500">{{ t('admin.models.pricingMode.startLabel') }}</span>
+                    <div class="w-28">
+                      <a-time-picker v-model="row.start" format="HH:mm" size="small" class="w-full" />
+                    </div>
+                    <span class="text-xs text-gray-500">{{ t('admin.models.pricingMode.endLabel') }}</span>
+                    <div class="w-28">
+                      <a-time-picker v-model="row.end" format="HH:mm" size="small" class="w-full" />
+                    </div>
+                    <a-button type="text" size="small" status="danger" @click="removePeakWindow(index)">
+                      {{ t('admin.models.pricingMode.removeWindow') }}
+                    </a-button>
+                  </div>
+                </div>
+                <div class="mt-2">
+                  <a-button size="small" type="outline" @click="addPeakWindow">
+                    {{ t('admin.models.pricingMode.addWindow') }}
+                  </a-button>
+                  <a-button size="small" class="ml-2" @click="applyProviderDefaultWindows">
+                    {{ t('admin.models.pricingMode.providerDefaults') }}
+                  </a-button>
+                </div>
               </div>
             </a-form-item>
             <div class="grid gap-4 md:grid-cols-2">
               <div>
-                <h5 class="form-subgroup-title">峰档售价</h5>
-                <a-form-item label="输入（未命中）" field="peak_input_price_per_1k_tokens">
-                  <a-input-number v-model="modelForm.peak_input_price_per_1k_tokens" name="peak_input_price_per_1k_tokens" :min="0" :precision="6" placeholder="峰-输入售价" class="w-full" />
+                <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.peakSell') }}</h5>
+                <a-form-item :label="t('admin.models.pricingMode.dim.input')" field="peak_input_price_per_1k_tokens">
+                  <a-input-number v-model="modelForm.peak_input_price_per_1k_tokens" name="peak_input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakInputPricePlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item label="输出" field="peak_output_price_per_1k_tokens">
-                  <a-input-number v-model="modelForm.peak_output_price_per_1k_tokens" name="peak_output_price_per_1k_tokens" :min="0" :precision="6" placeholder="峰-输出售价" class="w-full" />
+                <a-form-item :label="t('admin.models.pricingMode.dim.output')" field="peak_output_price_per_1k_tokens">
+                  <a-input-number v-model="modelForm.peak_output_price_per_1k_tokens" name="peak_output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputPricePlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item v-if="modelForm.cache_pricing_enabled" label="输入（缓存命中）" field="peak_input_cached_price_per_1k_tokens">
-                  <a-input-number v-model="modelForm.peak_input_cached_price_per_1k_tokens" name="peak_input_cached_price_per_1k_tokens" :min="0" :precision="6" placeholder="峰-缓存命中售价" class="w-full" />
+                <a-form-item v-if="modelForm.cache_pricing_enabled" :label="t('admin.models.pricingMode.dim.inputCached')" field="peak_input_cached_price_per_1k_tokens">
+                  <a-input-number v-model="modelForm.peak_input_cached_price_per_1k_tokens" name="peak_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedPricePlaceholder')" class="w-full" />
                 </a-form-item>
               </div>
               <div>
-                <h5 class="form-subgroup-title">峰档成本</h5>
-                <a-form-item label="输入（未命中）" field="peak_input_cost_per_1k_tokens">
-                  <a-input-number v-model="modelForm.peak_input_cost_per_1k_tokens" name="peak_input_cost_per_1k_tokens" :min="0" :precision="6" placeholder="峰-输入成本" class="w-full" />
+                <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.peakCost') }}</h5>
+                <a-form-item :label="t('admin.models.pricingMode.dim.input')" field="peak_input_cost_per_1k_tokens">
+                  <a-input-number v-model="modelForm.peak_input_cost_per_1k_tokens" name="peak_input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakInputCostPlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item label="输出" field="peak_output_cost_per_1k_tokens">
-                  <a-input-number v-model="modelForm.peak_output_cost_per_1k_tokens" name="peak_output_cost_per_1k_tokens" :min="0" :precision="6" placeholder="峰-输出成本" class="w-full" />
+                <a-form-item :label="t('admin.models.pricingMode.dim.output')" field="peak_output_cost_per_1k_tokens">
+                  <a-input-number v-model="modelForm.peak_output_cost_per_1k_tokens" name="peak_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputCostPlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item v-if="modelForm.cache_pricing_enabled" label="输入（缓存命中）" field="peak_input_cached_cost_per_1k_tokens">
-                  <a-input-number v-model="modelForm.peak_input_cached_cost_per_1k_tokens" name="peak_input_cached_cost_per_1k_tokens" :min="0" :precision="6" placeholder="峰-缓存命中成本" class="w-full" />
+                <a-form-item v-if="modelForm.cache_pricing_enabled" :label="t('admin.models.pricingMode.dim.inputCached')" field="peak_input_cached_cost_per_1k_tokens">
+                  <a-input-number v-model="modelForm.peak_input_cached_cost_per_1k_tokens" name="peak_input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedCostPlaceholder')" class="w-full" />
                 </a-form-item>
               </div>
             </div>
             <div class="grid gap-4 md:grid-cols-2">
               <div>
-                <h5 class="form-subgroup-title">谷档售价</h5>
-                <a-form-item label="输入（未命中）" field="valley_input_price_per_1k_tokens">
-                  <a-input-number v-model="modelForm.valley_input_price_per_1k_tokens" name="valley_input_price_per_1k_tokens" :min="0" :precision="6" placeholder="谷-输入售价" class="w-full" />
+                <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.valleySell') }}</h5>
+                <a-form-item :label="t('admin.models.pricingMode.dim.input')" field="valley_input_price_per_1k_tokens">
+                  <a-input-number v-model="modelForm.valley_input_price_per_1k_tokens" name="valley_input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyInputPricePlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item label="输出" field="valley_output_price_per_1k_tokens">
-                  <a-input-number v-model="modelForm.valley_output_price_per_1k_tokens" name="valley_output_price_per_1k_tokens" :min="0" :precision="6" placeholder="谷-输出售价" class="w-full" />
+                <a-form-item :label="t('admin.models.pricingMode.dim.output')" field="valley_output_price_per_1k_tokens">
+                  <a-input-number v-model="modelForm.valley_output_price_per_1k_tokens" name="valley_output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputPricePlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item v-if="modelForm.cache_pricing_enabled" label="输入（缓存命中）" field="valley_input_cached_price_per_1k_tokens">
-                  <a-input-number v-model="modelForm.valley_input_cached_price_per_1k_tokens" name="valley_input_cached_price_per_1k_tokens" :min="0" :precision="6" placeholder="谷-缓存命中售价" class="w-full" />
+                <a-form-item v-if="modelForm.cache_pricing_enabled" :label="t('admin.models.pricingMode.dim.inputCached')" field="valley_input_cached_price_per_1k_tokens">
+                  <a-input-number v-model="modelForm.valley_input_cached_price_per_1k_tokens" name="valley_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedPricePlaceholder')" class="w-full" />
                 </a-form-item>
               </div>
               <div>
-                <h5 class="form-subgroup-title">谷档成本</h5>
-                <a-form-item label="输入（未命中）" field="valley_input_cost_per_1k_tokens">
-                  <a-input-number v-model="modelForm.valley_input_cost_per_1k_tokens" name="valley_input_cost_per_1k_tokens" :min="0" :precision="6" placeholder="谷-输入成本" class="w-full" />
+                <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.valleyCost') }}</h5>
+                <a-form-item :label="t('admin.models.pricingMode.dim.input')" field="valley_input_cost_per_1k_tokens">
+                  <a-input-number v-model="modelForm.valley_input_cost_per_1k_tokens" name="valley_input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyInputCostPlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item label="输出" field="valley_output_cost_per_1k_tokens">
-                  <a-input-number v-model="modelForm.valley_output_cost_per_1k_tokens" name="valley_output_cost_per_1k_tokens" :min="0" :precision="6" placeholder="谷-输出成本" class="w-full" />
+                <a-form-item :label="t('admin.models.pricingMode.dim.output')" field="valley_output_cost_per_1k_tokens">
+                  <a-input-number v-model="modelForm.valley_output_cost_per_1k_tokens" name="valley_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputCostPlaceholder')" class="w-full" />
                 </a-form-item>
-                <a-form-item v-if="modelForm.cache_pricing_enabled" label="输入（缓存命中）" field="valley_input_cached_cost_per_1k_tokens">
-                  <a-input-number v-model="modelForm.valley_input_cached_cost_per_1k_tokens" name="valley_input_cached_cost_per_1k_tokens" :min="0" :precision="6" placeholder="谷-缓存命中成本" class="w-full" />
+                <a-form-item v-if="modelForm.cache_pricing_enabled" :label="t('admin.models.pricingMode.dim.inputCached')" field="valley_input_cached_cost_per_1k_tokens">
+                  <a-input-number v-model="modelForm.valley_input_cached_cost_per_1k_tokens" name="valley_input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedCostPlaceholder')" class="w-full" />
                 </a-form-item>
               </div>
             </div>
           </template>
 
           <template v-if="!modelForm.peak_valley_enabled && modelForm.cache_pricing_enabled">
-            <a-form-item label="输入售价（缓存命中）" field="input_cached_price_per_1k_tokens">
-              <a-input-number v-model="modelForm.input_cached_price_per_1k_tokens" name="input_cached_price_per_1k_tokens" :min="0" :precision="6" placeholder="缓存命中-输入售价" class="w-full" />
+            <a-form-item :label="t('admin.models.pricingMode.cachedInputPriceLabel')" field="input_cached_price_per_1k_tokens">
+              <a-input-number v-model="modelForm.input_cached_price_per_1k_tokens" name="input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.cachedInputPricePlaceholder')" class="w-full" />
             </a-form-item>
-            <a-form-item label="输入成本（缓存命中）" field="input_cached_cost_per_1k_tokens">
-              <a-input-number v-model="modelForm.input_cached_cost_per_1k_tokens" name="input_cached_cost_per_1k_tokens" :min="0" :precision="6" placeholder="缓存命中-输入成本" class="w-full" />
+            <a-form-item :label="t('admin.models.pricingMode.cachedInputCostLabel')" field="input_cached_cost_per_1k_tokens">
+              <a-input-number v-model="modelForm.input_cached_cost_per_1k_tokens" name="input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.cachedInputCostPlaceholder')" class="w-full" />
             </a-form-item>
           </template>
 
-          <a-button type="outline" :loading="pricingSuggestLoading" @click="openPricingSuggest()">自动定价助手</a-button>
+          <a-button type="outline" :loading="pricingPreviewLoading" @click="openPricingSuggest">{{ t('admin.models.pricingMode.applySuggest') }}</a-button>
         </div>
         <div class="form-group">
           <h4 class="form-group-title">{{ t('admin.models.groups.fallback') }}</h4>
@@ -1143,6 +1448,49 @@ onMounted(() => {
           <a-input-number v-model="modelForm.priority" :min="0" :step="1" />
         </a-form-item>
       </a-form>
+    </a-modal>
+
+    <a-modal
+      v-model:visible="pricingPreviewVisible"
+      :title="t('admin.models.pricingMode.previewTitle')"
+      :ok-loading="pricingPreviewLoading"
+      :mask-closable="false"
+      hide-cancel
+    >
+      <a-alert v-if="suggestWarnings.length" type="warning" show-icon class="mb-3">
+        <div class="space-y-1">
+          <p v-for="(warning, index) in suggestWarnings" :key="index" class="text-xs">{{ warning }}</p>
+        </div>
+      </a-alert>
+      <a-spin :loading="pricingPreviewLoading" class="block">
+        <div class="overflow-hidden rounded border">
+          <table class="w-full text-left text-sm">
+            <thead class="bg-gray-50 text-gray-500">
+              <tr>
+                <th class="p-2">{{ t('admin.models.pricingMode.suggestItem') }}</th>
+                <th class="p-2">{{ t('admin.models.pricingMode.suggestCurrent') }}</th>
+                <th class="p-2">{{ t('admin.models.pricingMode.suggestSuggested') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in suggestRows" :key="row.key" class="border-t">
+                <td class="p-2 text-xs">{{ row.label }}</td>
+                <td class="p-2 font-mono text-xs text-gray-400">{{ row.current }}</td>
+                <td class="p-2 font-mono text-xs font-medium text-green-600">{{ row.suggested }}</td>
+              </tr>
+              <tr v-if="!suggestRows.length">
+                <td class="p-3 text-center text-xs text-gray-400" colspan="3">{{ t('admin.models.pricingMode.suggestEmpty') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </a-spin>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <a-button :disabled="pricingPreviewLoading" @click="cancelPricingSuggest">{{ t('admin.models.pricingMode.cancelBtn') }}</a-button>
+          <a-button type="primary" :loading="pricingPreviewLoading" @click="applyPricingSuggest">{{ t('admin.models.pricingMode.applyBtn') }}</a-button>
+        </div>
+      </template>
     </a-modal>
 
     <a-modal
