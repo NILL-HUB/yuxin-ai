@@ -1085,8 +1085,8 @@ onMounted(() => {
           <a-button type="primary" @click="openCreateModel">{{ t('admin.models.actions.createModel') }}</a-button>
         </div>
         <a-spin :loading="loading" class="block">
-          <div class="overflow-hidden rounded-lg border bg-white">
-            <table class="w-full text-left text-sm">
+          <div class="overflow-x-auto rounded-lg border bg-white">
+            <table class="w-full min-w-[1280px] text-left text-sm">
               <thead class="bg-gray-50 text-gray-500">
                 <tr>
                   <th class="p-3">{{ t('admin.models.columns.provider') }}</th>
@@ -1094,7 +1094,11 @@ onMounted(() => {
                   <th class="p-3">{{ t('admin.models.columns.displayName') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.description') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.tier') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.pricing') }}</th>
+                  <th class="p-3">
+                    <a-tooltip :content="t('admin.models.columns.priceUnitHint')" position="bottom" mini>
+                      <span class="cursor-help">{{ t('admin.models.columns.pricing') }}</span>
+                    </a-tooltip>
+                  </th>
                   <th class="p-3">{{ t('admin.models.columns.margin') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.capabilities') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.maxInputTokens') }}</th>
@@ -1124,33 +1128,24 @@ onMounted(() => {
                         <div
                           v-for="line in pricingBlockOf(model).lines"
                           :key="line.label"
-                          class="flex flex-wrap items-center gap-1.5"
+                          class="flex items-center gap-1 whitespace-nowrap"
                         >
                           <a-tag
                             size="small"
                             :color="line.tone === 'peak' ? 'purple' : line.tone === 'valley' ? 'gray' : 'arcoblue'"
                           >{{ line.label }}</a-tag>
-                          <span class="flex items-center gap-0.5">
-                            <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
-                            <code class="font-mono text-gray-700">{{ line.sell }}</code>
-                          </span>
-                          <span class="flex items-center gap-0.5">
-                            <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
-                            <code class="font-mono text-amber-600">{{ line.cost }}</code>
-                          </span>
+                          <span class="text-gray-400">{{ t('admin.models.columns.sellAbbr') }}</span>
+                          <code class="font-mono text-gray-700">{{ line.sell }}</code>
+                          <span class="text-gray-400">{{ t('admin.models.columns.costAbbr') }}</span>
+                          <code class="font-mono text-amber-600">{{ line.cost }}</code>
                         </div>
-                        <div v-if="pricingBlockOf(model).cached" class="flex flex-wrap items-center gap-1.5">
+                        <div v-if="pricingBlockOf(model).cached" class="flex items-center gap-1 whitespace-nowrap">
                           <a-tag size="small" color="cyan">{{ t('admin.models.columns.cacheHit') }}</a-tag>
-                          <span class="flex items-center gap-0.5">
-                            <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
-                            <code class="font-mono text-gray-700">{{ pricingBlockOf(model).cached!.sell }}</code>
-                          </span>
-                          <span class="flex items-center gap-0.5">
-                            <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
-                            <code class="font-mono text-amber-600">{{ pricingBlockOf(model).cached!.cost }}</code>
-                          </span>
+                          <span class="text-gray-400">{{ t('admin.models.columns.sellAbbr') }}</span>
+                          <code class="font-mono text-gray-700">{{ pricingBlockOf(model).cached!.sell }}</code>
+                          <span class="text-gray-400">{{ t('admin.models.columns.costAbbr') }}</span>
+                          <code class="font-mono text-amber-600">{{ pricingBlockOf(model).cached!.cost }}</code>
                         </div>
-                        <div class="text-[10px] text-gray-400">{{ t('admin.models.columns.priceUnitHint') }}</div>
                       </template>
                       <span v-else class="text-gray-400">-</span>
                     </div>
@@ -1450,7 +1445,7 @@ onMounted(() => {
                 <a-input-number v-model="modelForm.peak_output_cost_per_1k_tokens" name="peak_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputCostPlaceholder')" class="w-full" />
               </div>
             </div>
-            <div v-if="modelForm.cache_pricing_enabled" class="pricing-grid">
+            <div v-if="modelForm.cache_pricing_enabled" class="pricing-grid-2">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputPriceLabel') }}</div>
                 <a-input-number v-model="modelForm.peak_input_cached_price_per_1k_tokens" name="peak_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedPricePlaceholder')" class="w-full" />
@@ -1479,7 +1474,7 @@ onMounted(() => {
                 <a-input-number v-model="modelForm.valley_output_cost_per_1k_tokens" name="valley_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputCostPlaceholder')" class="w-full" />
               </div>
             </div>
-            <div v-if="modelForm.cache_pricing_enabled" class="pricing-grid">
+            <div v-if="modelForm.cache_pricing_enabled" class="pricing-grid-2">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputPriceLabel') }}</div>
                 <a-input-number v-model="modelForm.valley_input_cached_price_per_1k_tokens" name="valley_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedPricePlaceholder')" class="w-full" />
@@ -1740,16 +1735,28 @@ onMounted(() => {
   margin-bottom: 8px;
 }
 
+.pricing-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
 .pricing-grid:last-child {
   margin-bottom: 0;
+}
+
+.pricing-cell {
+  min-width: 0;
 }
 
 .pricing-cell-label {
   margin-bottom: 2px;
   font-size: 12px;
-  line-height: 20px;
+  line-height: 18px;
   color: #86909c;
-  white-space: nowrap;
+  overflow-wrap: break-word;
+  word-break: break-all;
 }
 
 @media (max-width: 768px) {
