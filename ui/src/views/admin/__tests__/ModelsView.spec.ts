@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ModelsView from '@/views/admin/ModelsView.vue'
-import { createModel } from '@/services/admin-model-pool'
+import { createModel, updateModel } from '@/services/admin-model-pool'
 
 const mocks = vi.hoisted(() => ({
   listModels: vi.fn(),
@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   suggestSellPrices: vi.fn(),
   messageError: vi.fn(),
   messageSuccess: vi.fn(),
+  updateModel: vi.fn(),
 }))
 
 vi.mock('@/services/admin-model-pool', () => ({
@@ -20,7 +21,7 @@ vi.mock('@/services/admin-model-pool', () => ({
   listModelKeys: mocks.listModelKeys,
   listTierPolicies: mocks.listTierPolicies,
   createModel: vi.fn(),
-  updateModel: vi.fn(),
+  updateModel: mocks.updateModel,
   deleteModel: vi.fn(),
   setModelStatus: vi.fn(),
   createModelKey: vi.fn(),
@@ -239,18 +240,19 @@ describe('ModelsView', () => {
     await buttonByText(wrapper, '新建模型').trigger('click')
     await nextTick()
 
-    const priceInputs = wrapper.findAll('input').filter((node) => node.attributes('placeholder') === '0.000000（留 0 则使用单价）')
-    const costInputs = wrapper.findAll('input').filter((node) => node.attributes('placeholder') === '0.000000（元/1k）')
+    const priceInputs = wrapper.findAll('input').filter((node) => node.attributes('placeholder') === '0（留空则回退单价）')
+    const costInputs = wrapper.findAll('input').filter((node) => node.attributes('placeholder') === '0（元/M）')
     expect(priceInputs).toHaveLength(2)
     expect(costInputs).toHaveLength(2)
 
-    await priceInputs[0].setValue('1.2')
-    await priceInputs[1].setValue('4.8')
-    await costInputs[0].setValue('0.009')
-    await costInputs[1].setValue('0.036')
+    // 表单为 /M 口径：售价 1200/4800（算力/M），成本 9/36（元/M）
+    await priceInputs[0].setValue('1200')
+    await priceInputs[1].setValue('4800')
+    await costInputs[0].setValue('9')
+    await costInputs[1].setValue('36')
     await nextTick()
 
-    // sell = 1.2*3 + 4.8 = 8.4; cost = (0.009*3 + 0.036) * 100 = 6.3; margin ≈ +2.1
+    // sell(/1k) = 1.2*3 + 4.8 = 8.4；cost 折算算力(/1k) = (0.009*3 + 0.036) * 100 = 6.3；margin ≈ +2.1
     expect(wrapper.text()).toContain('参考毛利：+2 算力（+33%）')
   })
 
@@ -274,10 +276,11 @@ describe('ModelsView', () => {
     await buttonByText(wrapper, '编辑').trigger('click')
     await nextTick()
 
-    const costInputs = wrapper.findAll('input').filter((node) => node.attributes('placeholder') === '0.000000（元/1k）')
+    const costInputs = wrapper.findAll('input').filter((node) => node.attributes('placeholder') === '0（元/M）')
     expect(costInputs).toHaveLength(2)
-    expect((costInputs[0].element as HTMLInputElement).value).toBe('0.009000')
-    expect((costInputs[1].element as HTMLInputElement).value).toBe('0.036000')
+    // 回填值已从 /1k 换算为 /M：0.009 → 9，0.036 → 36
+    expect((costInputs[0].element as HTMLInputElement).value).toBe('9')
+    expect((costInputs[1].element as HTMLInputElement).value).toBe('36')
   })
 
   it('toggling peak-valley shows peak/valley price groups and hides them when off', async () => {
@@ -438,19 +441,21 @@ describe('ModelsView', () => {
       0.3,
     )
     expect(wrapper.text()).toContain('自动定价建议预览')
-    expect(wrapper.text()).toContain('1.250000')
+    // 后端建议为 /1k（1.25/0.8）→ 预览按 /M 展示（1250/800）
+    expect(wrapper.text()).toContain('1250')
+    expect(wrapper.text()).toContain('800')
     expect(wrapper.text()).toContain('重叠')
 
-    // 未应用前，表单字段保持原值
+    // 未应用前，表单字段保持原值（新建默认 /M 口径 '0'）
     const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
-    expect(state.peak_input_price_per_1k_tokens).toBe('0.000000')
-    expect(state.valley_input_price_per_1k_tokens).toBe('0.000000')
+    expect(state.peak_input_price_per_1k_tokens).toBe('0')
+    expect(state.valley_input_price_per_1k_tokens).toBe('0')
 
     await buttonByText(wrapper, '应用并填入表单').trigger('click')
     await nextTick()
 
-    expect(state.peak_input_price_per_1k_tokens).toBe('1.250000')
-    expect(state.valley_input_price_per_1k_tokens).toBe('0.800000')
+    expect(state.peak_input_price_per_1k_tokens).toBe('1250')
+    expect(state.valley_input_price_per_1k_tokens).toBe('800')
     expect(mocks.messageSuccess).toHaveBeenCalled()
     expect(wrapper.text()).not.toContain('自动定价建议预览')
   })
@@ -473,12 +478,12 @@ describe('ModelsView', () => {
     await flushPromises()
 
     const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
-    expect(state.peak_input_price_per_1k_tokens).toBe('0.000000')
+    expect(state.peak_input_price_per_1k_tokens).toBe('0')
 
     await buttonByText(wrapper, '取消').trigger('click')
     await nextTick()
 
-    expect(state.peak_input_price_per_1k_tokens).toBe('0.000000')
+    expect(state.peak_input_price_per_1k_tokens).toBe('0')
     expect(wrapper.text()).not.toContain('自动定价建议预览')
     expect(mocks.messageSuccess).not.toHaveBeenCalled()
   })
@@ -500,13 +505,14 @@ describe('ModelsView', () => {
     await buttonByText(wrapper, '自动定价助手').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('0.660000')
+    // 后端 /1k 建议 0.66 → 预览 /M 显示 660
+    expect(wrapper.text()).toContain('660')
 
     await buttonByText(wrapper, '应用并填入表单').trigger('click')
     await nextTick()
 
     const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
-    expect(state.valley_input_price_per_1k_tokens).toBe('0.660000')
+    expect(state.valley_input_price_per_1k_tokens).toBe('660')
   })
 
   it('shows a peak/valley sell summary in the pricing column when peak-valley is enabled', async () => {
@@ -527,10 +533,11 @@ describe('ModelsView', () => {
     const row = wrapper.find('tbody tr')
     expect(row.text()).toContain('峰')
     expect(row.text()).toContain('谷')
-    expect(row.text()).toContain('0.390000')
-    expect(row.text()).toContain('0.900000')
-    expect(row.text()).toContain('0.200000')
-    expect(row.text()).toContain('0.500000')
+    // 列表 /M 口径展示：0.39/0.9/0.2/0.5（/1k） → 390/900/200/500
+    expect(row.text()).toContain('390')
+    expect(row.text()).toContain('900')
+    expect(row.text()).toContain('200')
+    expect(row.text()).toContain('500')
     expect(row.text()).toContain('缓存')
   })
 
@@ -550,5 +557,114 @@ describe('ModelsView', () => {
     expect(mocks.messageError).toHaveBeenCalled()
     expect(wrapper.text()).toContain('亏损风险')
     expect(wrapper.text()).toContain('官方定价')
+  })
+
+  it('backfills pricing fields in /M when editing a model', async () => {
+    const wrapper = await renderView()
+
+    await buttonByText(wrapper, '编辑').trigger('click')
+    await nextTick()
+
+    const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
+    // record /1k 值 ×1000 回填为 /M
+    expect(state.input_price_per_1k_tokens).toBe('1200')
+    expect(state.output_price_per_1k_tokens).toBe('4800')
+    expect(state.input_cost_per_1k_tokens).toBe('9')
+    expect(state.output_cost_per_1k_tokens).toBe('36')
+    expect(state.price_per_1k_tokens).toBe('0')
+  })
+
+  it('divides /M inputs back to /1k in the submit payload', async () => {
+    mocks.updateModel.mockResolvedValue({})
+    const wrapper = await renderView()
+
+    await buttonByText(wrapper, '编辑').trigger('click')
+    await nextTick()
+
+    const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
+    // 用户改售价为 1200（算力/M）
+    state.input_price_per_1k_tokens = '1200'
+    await nextTick()
+
+    await wrapper.find('.modal-ok').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateModel).toHaveBeenCalledTimes(1)
+    const payload = mocks.updateModel.mock.calls[0][1] as Record<string, unknown>
+    // payload 内价格字段应 ÷1000 回 /1k 六位小数
+    expect(payload.input_price_per_1k_tokens).toBe('1.200000')
+    expect(payload.output_price_per_1k_tokens).toBe('4.800000')
+    expect(payload.input_cost_per_1k_tokens).toBe('0.009000')
+    expect(payload.output_cost_per_1k_tokens).toBe('0.036000')
+    expect(payload.price_per_1k_tokens).toBe('0.000000')
+  })
+
+  it('applies pricing suggestions into the form in /M', async () => {
+    mocks.suggestSellPrices.mockResolvedValue({
+      suggestions: { peak_input_price_per_1k_tokens: '3.000000', peak_output_price_per_1k_tokens: '9.000000' },
+      applied: false,
+      warnings: [],
+    })
+    const wrapper = await renderView()
+
+    await buttonByText(wrapper, '编辑').trigger('click')
+    await nextTick()
+    await wrapper.find('.price-mode-switch input').setValue(true)
+    await nextTick()
+
+    await buttonByText(wrapper, '自动定价助手').trigger('click')
+    await flushPromises()
+    await buttonByText(wrapper, '应用并填入表单').trigger('click')
+    await nextTick()
+
+    const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
+    // 后端 /1k 建议 ×1000 写入表单（/M）
+    expect(state.peak_input_price_per_1k_tokens).toBe('3000')
+    expect(state.peak_output_price_per_1k_tokens).toBe('9000')
+  })
+
+  it('shows peak/valley cost fields for a peak/valley-enabled model so cost base is not blank', async () => {
+    const pvCostRecord = [
+      {
+        ...modelRecords[0],
+        peak_valley_enabled: true,
+        cache_pricing_enabled: false,
+        peak_windows: JSON.stringify([{ days: '0-4', start: '09:00', end: '12:00' }]),
+        peak_input_price_per_1k_tokens: '1.200000',
+        peak_output_price_per_1k_tokens: '4.800000',
+        peak_input_cost_per_1k_tokens: '0.500000',
+        peak_output_cost_per_1k_tokens: '2.000000',
+        valley_input_price_per_1k_tokens: '0.800000',
+        valley_output_price_per_1k_tokens: '3.200000',
+        valley_input_cost_per_1k_tokens: '0.400000',
+        valley_output_cost_per_1k_tokens: '1.600000',
+      },
+    ]
+    const wrapper = await renderView(pvCostRecord)
+
+    await buttonByText(wrapper, '编辑').trigger('click')
+    await nextTick()
+
+    const state = (wrapper.vm as unknown as { modelForm: Record<string, string> }).modelForm
+    // 峰/谷成本回填为 /M（0.5/2.0 元/1k → 500/2000 元/M）
+    expect(state.peak_input_cost_per_1k_tokens).toBe('500')
+    expect(state.peak_output_cost_per_1k_tokens).toBe('2000')
+    expect(state.valley_input_cost_per_1k_tokens).toBe('400')
+    expect(state.valley_output_cost_per_1k_tokens).toBe('1600')
+    // 峰档售价回填为 /M
+    expect(state.peak_input_price_per_1k_tokens).toBe('1200')
+    expect(state.peak_output_price_per_1k_tokens).toBe('4800')
+
+    // 弹窗内渲染出峰/谷成本标签与具体值，顶部成本基准不再全 0
+    const peakCostGroup = wrapper.findAll('h5').find((node) => node.text().includes('峰档成本'))
+    expect(peakCostGroup).toBeTruthy()
+    expect(peakCostGroup?.text()).toContain('峰档成本')
+    expect(wrapper.find('input[name="peak_input_cost_per_1k_tokens"]').exists()).toBe(true)
+    expect(wrapper.find('input[name="peak_output_cost_per_1k_tokens"]').exists()).toBe(true)
+    expect((wrapper.find('input[name="peak_input_cost_per_1k_tokens"]').element as HTMLInputElement).value).toBe('500')
+
+    // marginPreview 峰谷感知：不再因 flat 列为 0 而显示空白。
+    // 峰档 /M：sell(1200*3+4800)/1000=8.4 算力/1k；cost 折算算力=(500*3+2000)/1000*100=350 → margin≈-341.6
+    expect(wrapper.text()).toContain('参考毛利：-342 算力（-98%）')
   })
 })

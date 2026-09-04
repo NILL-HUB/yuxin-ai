@@ -21,6 +21,7 @@ import { listProviderOptions } from '@/services/admin-model-providers'
 import { getBillingConfig } from '@/services/admin-billing'
 import { suggestSellPrices } from '@/services/admin-pricing-suggest'
 import { getErrorMessage } from '@/utils/error'
+import { perKToPerM, perMToPerK } from '@/utils/pricing-unit'
 
 type ModelRecord = {
   id: string
@@ -180,28 +181,28 @@ const modelForm = ref({
   description: '',
   tier: '2',
   capabilities: [] as string[],
-  price_per_1k_tokens: '0.000000',
-  input_price_per_1k_tokens: '0.000000',
-  output_price_per_1k_tokens: '0.000000',
-  input_cost_per_1k_tokens: '0.000000',
-  output_cost_per_1k_tokens: '0.000000',
+  price_per_1k_tokens: '0',
+  input_price_per_1k_tokens: '0',
+  output_price_per_1k_tokens: '0',
+  input_cost_per_1k_tokens: '0',
+  output_cost_per_1k_tokens: '0',
   peak_valley_enabled: false,
   cache_pricing_enabled: false,
   peak_windows: '[]',
-  input_cached_price_per_1k_tokens: '0.000000',
-  input_cached_cost_per_1k_tokens: '0.000000',
-  peak_input_price_per_1k_tokens: '0.000000',
-  peak_input_cost_per_1k_tokens: '0.000000',
-  peak_output_price_per_1k_tokens: '0.000000',
-  peak_output_cost_per_1k_tokens: '0.000000',
-  peak_input_cached_price_per_1k_tokens: '0.000000',
-  peak_input_cached_cost_per_1k_tokens: '0.000000',
-  valley_input_price_per_1k_tokens: '0.000000',
-  valley_input_cost_per_1k_tokens: '0.000000',
-  valley_output_price_per_1k_tokens: '0.000000',
-  valley_output_cost_per_1k_tokens: '0.000000',
-  valley_input_cached_price_per_1k_tokens: '0.000000',
-  valley_input_cached_cost_per_1k_tokens: '0.000000',
+  input_cached_price_per_1k_tokens: '0',
+  input_cached_cost_per_1k_tokens: '0',
+  peak_input_price_per_1k_tokens: '0',
+  peak_input_cost_per_1k_tokens: '0',
+  peak_output_price_per_1k_tokens: '0',
+  peak_output_cost_per_1k_tokens: '0',
+  peak_input_cached_price_per_1k_tokens: '0',
+  peak_input_cached_cost_per_1k_tokens: '0',
+  valley_input_price_per_1k_tokens: '0',
+  valley_input_cost_per_1k_tokens: '0',
+  valley_output_price_per_1k_tokens: '0',
+  valley_output_cost_per_1k_tokens: '0',
+  valley_input_cached_price_per_1k_tokens: '0',
+  valley_input_cached_cost_per_1k_tokens: '0',
   max_tokens: 0,
   max_input_tokens: 0,
   max_output_tokens: 0,
@@ -232,21 +233,42 @@ const loadBillingPerYuan = async () => {
   }
 }
 
-// 毛利预览：按 3:1 输入/输出比估算，仅编辑辅助，不落库
+// 表单字段口径为 /M tokens（显示层），毛利预览需换算回 /1k 后套用历史公式：
+//   cost 折算算力 = cost(元/1k) × credits_per_yuan（1 元 = 100 算力）
+//   而 /1k = 界面 /M ÷ 1000，故 sell(算力/1k)=M/1000，cost 折算算力=(M/1000)×credits_per_yuan
+const PRICING_INPUT_DIM_KEYS = ['input', 'output'] as const
+type PricingInputDim = typeof PRICING_INPUT_DIM_KEYS[number]
+// 读取表单某维度的"当前档"售价/成本（/M 口径）：启用峰谷时取峰档（保守毛利），否则取 flat
+const formPricingDimOf = (form: typeof modelForm.value, kind: 'price' | 'cost', dim: PricingInputDim): number => {
+  const suffix = kind === 'price' ? 'price' : 'cost'
+  if (form.peak_valley_enabled) {
+    const peak = Number((form as unknown as Record<string, string>)[`peak_${dim}_${suffix}_per_1k_tokens`] || 0)
+    const valley = Number((form as unknown as Record<string, string>)[`valley_${dim}_${suffix}_per_1k_tokens`] || 0)
+    return peak > 0 ? peak : valley
+  }
+  return Number((form as unknown as Record<string, string>)[`${dim}_${suffix}_per_1k_tokens`] || 0)
+}
+const MARGIN_RATIO = 3
+// 毛利预览：按 3:1 输入/输出比估算，仅编辑辅助，不落库（输入/输出均为 /M，公式内部换算回 /1k）
 const marginPreview = computed(() => {
-  const sellIn = Number(modelForm.value.input_price_per_1k_tokens || 0)
-  const sellOut = Number(modelForm.value.output_price_per_1k_tokens || 0)
-  const costIn = Number(modelForm.value.input_cost_per_1k_tokens || 0)
-  const costOut = Number(modelForm.value.output_cost_per_1k_tokens || 0)
+  const f = modelForm.value
+  const sellIn = formPricingDimOf(f, 'price', 'input')
+  const sellOut = formPricingDimOf(f, 'price', 'output')
+  const costIn = formPricingDimOf(f, 'cost', 'input')
+  const costOut = formPricingDimOf(f, 'cost', 'output')
   if (!sellIn && !sellOut) return null
-  const sell = sellIn * 3 + sellOut
-  const cost = (costIn * 3 + costOut) * (billingPerYuan.value || 100)
-  return sell - cost
+  const sellPerK = (sellIn * MARGIN_RATIO + sellOut) / 1000
+  const costPerK = (costIn * MARGIN_RATIO + costOut) / 1000
+  const costEquivalent = costPerK * (billingPerYuan.value || 100)
+  return sellPerK - costEquivalent
 })
 const marginPercent = computed(() => {
-  const cost = (Number(modelForm.value.input_cost_per_1k_tokens || 0) * 3 + Number(modelForm.value.output_cost_per_1k_tokens || 0)) * (billingPerYuan.value || 100)
-  if (cost <= 0) return 0
-  return ((marginPreview.value || 0) / cost) * 100
+  const f = modelForm.value
+  const costIn = formPricingDimOf(f, 'cost', 'input')
+  const costOut = formPricingDimOf(f, 'cost', 'output')
+  const costEquivalent = ((costIn * MARGIN_RATIO + costOut) / 1000) * (billingPerYuan.value || 100)
+  if (costEquivalent <= 0) return 0
+  return ((marginPreview.value || 0) / costEquivalent) * 100
 })
 const formatSigned = (value: number) => {
   const n = Math.round(Number(value) || 0)
@@ -266,11 +288,28 @@ const splitSellPriceActive = computed(() => {
   return candidates.some((v) => Number(v || 0) > 0)
 })
 
-const formatPrice = (value?: string) => (Number(value || 0)).toFixed(6)
+// 读取模型某维度的"当前档"售价/成本：启用峰谷时取峰档（保守毛利），否则取 flat
+const pricingDimOf = (record: ModelRecord, kind: 'price' | 'cost', dim: 'input' | 'output' | 'inputCached') => {
+  const pv = toBool(record.peak_valley_enabled)
+  const cache = toBool(record.cache_pricing_enabled)
+  const suffix = kind === 'price' ? 'price_per_1k_tokens' : 'cost_per_1k_tokens'
+  if (pv) {
+    const peak = Number((record as unknown as Record<string, string>)[`peak_${dim === 'inputCached' ? 'input_cached' : dim}_${suffix}`] || 0)
+    const valley = Number((record as unknown as Record<string, string>)[`valley_${dim === 'inputCached' ? 'input_cached' : dim}_${suffix}`] || 0)
+    return { peak, valley }
+  }
+  const flat = Number((record as unknown as Record<string, string>)[`${dim === 'inputCached' ? 'input_cached' : dim}_${suffix}`] || 0)
+  return { peak: flat, valley: flat }
+}
+
 const marginOf = (record: ModelRecord) => {
   const perYuan = billingPerYuan.value || 100
-  const cost = (Number(record.input_cost_per_1k_tokens || 0) * 3 + Number(record.output_cost_per_1k_tokens || 0)) * perYuan
-  const sell = Number(record.input_price_per_1k_tokens || 0) * 3 + Number(record.output_price_per_1k_tokens || 0)
+  const { peak: costIn } = pricingDimOf(record, 'cost', 'input')
+  const { peak: costOut } = pricingDimOf(record, 'cost', 'output')
+  const { peak: sellIn } = pricingDimOf(record, 'price', 'input')
+  const { peak: sellOut } = pricingDimOf(record, 'price', 'output')
+  const cost = (costIn * 3 + costOut) * perYuan
+  const sell = sellIn * 3 + sellOut
   return sell - cost
 }
 // 谷峰/缓存拆分定价字段（提交时统一转为字符串）
@@ -289,6 +328,14 @@ const PRICING_FIELD_KEYS = [
   'valley_output_cost_per_1k_tokens',
   'valley_input_cached_price_per_1k_tokens',
   'valley_input_cached_cost_per_1k_tokens',
+] as const
+// 常规 flat 4 个价格字段（含兜底单价），与峰谷/缓存字段一同做 /M→/1k 换算后提交
+const FLAT_PRICE_FIELD_KEYS = [
+  'price_per_1k_tokens',
+  'input_price_per_1k_tokens',
+  'output_price_per_1k_tokens',
+  'input_cost_per_1k_tokens',
+  'output_cost_per_1k_tokens',
 ] as const
 
 // 后端开关以字符串（'true'/'false'）返回，需做宽松布尔解析
@@ -514,12 +561,12 @@ const labelForPriceKey = (key: string): string => {
 const formatSuggestPrice = (value: unknown): string => {
   const n = Number(value ?? '')
   if (value === null || value === undefined || value === '' || Number.isNaN(n)) return '—'
-  return n.toFixed(6)
+  return perKToPerM(n)
 }
 const currentPriceOf = (key: string): string => {
   const modelValue = (modelForm.value as Record<string, unknown>)[key]
   const n = Number(modelValue ?? '')
-  return !Number.isNaN(n) && n > 0 ? n.toFixed(6) : '—'
+  return !Number.isNaN(n) && n > 0 ? String(n) : '—'
 }
 const suggestRows = ref<SuggestRow[]>([])
 const suggestWarnings = ref<string[]>([])
@@ -540,9 +587,14 @@ const buildSuggestPreview = (key: string, value: unknown) => {
 const openPricingSuggest = async () => {
   pricingPreviewLoading.value = true
   try {
+    // 表单为 /M 口径，后端建议引擎按 /1k 计算：先换算回 /1k 提交
+    const perKForm = { ...modelForm.value } as Record<string, unknown>
+    ;[...PRICING_FIELD_KEYS, ...FLAT_PRICE_FIELD_KEYS].forEach((key) => {
+      perKForm[key] = perMToPerK(perKForm[key])
+    })
     const resp = await suggestSellPrices(
       {
-        ...modelForm.value,
+        ...perKForm,
         peak_valley_enabled: modelForm.value.peak_valley_enabled,
         cache_pricing_enabled: modelForm.value.cache_pricing_enabled,
       },
@@ -557,8 +609,11 @@ const openPricingSuggest = async () => {
       const source = Object.keys(inner).length > 0
         ? inner
         : Object.fromEntries(Object.entries(resp).filter(([key]) => key !== 'suggestions' && key !== 'applied' && key !== 'warnings'))
+      // 后端建议为 /1k 口径：预览按 /M 展示，应用时以 /M 写入表单
       fallbackSuggestRecord.value = Object.fromEntries(
-        Object.keys(source).map((key) => [key, String(source[key] ?? '')]),
+        Object.keys(source)
+          .filter((key) => (key in modelForm.value))
+          .map((key) => [key, perKToPerM(source[key])]),
       )
       suggestRows.value = []
       Object.entries(source).forEach(([key, value]) => buildSuggestPreview(key, value))
@@ -585,18 +640,18 @@ const applyPricingSuggest = () => {
   pricingPreviewVisible.value = false
   Message.success(t('admin.models.messages.pricingSuggestApplied'))
 }
-// 列表「定价」列：峰谷开启且有峰/谷售价时展示峰谷摘要
+// 列表「定价」列：峰谷开启且有峰/谷售价时展示峰谷摘要（/M 口径）
 const peakValleySummaryOf = (model: ModelRecord): { peak: string; valley: string } | null => {
   if (!toBool(model.peak_valley_enabled)) return null
   const peak = [
-    formatPrice(model.peak_input_price_per_1k_tokens),
-    formatPrice(model.peak_output_price_per_1k_tokens),
+    perKToPerM(model.peak_input_price_per_1k_tokens),
+    perKToPerM(model.peak_output_price_per_1k_tokens),
   ].join('/')
   const valley = [
-    formatPrice(model.valley_input_price_per_1k_tokens),
-    formatPrice(model.valley_output_price_per_1k_tokens),
+    perKToPerM(model.valley_input_price_per_1k_tokens),
+    perKToPerM(model.valley_output_price_per_1k_tokens),
   ].join('/')
-  if (peak === '0.000000/0.000000' && valley === '0.000000/0.000000') return null
+  if (peak === '0/0' && valley === '0/0') return null
   return { peak, valley }
 }
 // 当前模型类型是否需要上下文长度配置
@@ -679,28 +734,28 @@ const openCreateModel = () => {
     // 默认选第一个档位（已创建的档位才可选），无档位时为空
     tier: tiers.value[0]?.tier_code || '',
     capabilities: [],
-    price_per_1k_tokens: '0.000000',
-    input_price_per_1k_tokens: '0.000000',
-    output_price_per_1k_tokens: '0.000000',
-    input_cost_per_1k_tokens: '0.000000',
-    output_cost_per_1k_tokens: '0.000000',
+    price_per_1k_tokens: '0',
+    input_price_per_1k_tokens: '0',
+    output_price_per_1k_tokens: '0',
+    input_cost_per_1k_tokens: '0',
+    output_cost_per_1k_tokens: '0',
     peak_valley_enabled: false,
     cache_pricing_enabled: false,
     peak_windows: '[]',
-    input_cached_price_per_1k_tokens: '0.000000',
-    input_cached_cost_per_1k_tokens: '0.000000',
-    peak_input_price_per_1k_tokens: '0.000000',
-    peak_input_cost_per_1k_tokens: '0.000000',
-    peak_output_price_per_1k_tokens: '0.000000',
-    peak_output_cost_per_1k_tokens: '0.000000',
-    peak_input_cached_price_per_1k_tokens: '0.000000',
-    peak_input_cached_cost_per_1k_tokens: '0.000000',
-    valley_input_price_per_1k_tokens: '0.000000',
-    valley_input_cost_per_1k_tokens: '0.000000',
-    valley_output_price_per_1k_tokens: '0.000000',
-    valley_output_cost_per_1k_tokens: '0.000000',
-    valley_input_cached_price_per_1k_tokens: '0.000000',
-    valley_input_cached_cost_per_1k_tokens: '0.000000',
+    input_cached_price_per_1k_tokens: '0',
+    input_cached_cost_per_1k_tokens: '0',
+    peak_input_price_per_1k_tokens: '0',
+    peak_input_cost_per_1k_tokens: '0',
+    peak_output_price_per_1k_tokens: '0',
+    peak_output_cost_per_1k_tokens: '0',
+    peak_input_cached_price_per_1k_tokens: '0',
+    peak_input_cached_cost_per_1k_tokens: '0',
+    valley_input_price_per_1k_tokens: '0',
+    valley_input_cost_per_1k_tokens: '0',
+    valley_output_price_per_1k_tokens: '0',
+    valley_output_cost_per_1k_tokens: '0',
+    valley_input_cached_price_per_1k_tokens: '0',
+    valley_input_cached_cost_per_1k_tokens: '0',
     max_tokens: 131072,
     max_input_tokens: 131072,
     max_output_tokens: 4096,
@@ -724,28 +779,28 @@ const openEditModel = (model: ModelRecord) => {
     description: model.description || '',
     tier: model.tier,
     capabilities: [...(model.capabilities || [])],
-    price_per_1k_tokens: model.price_per_1k_tokens,
-    input_price_per_1k_tokens: model.input_price_per_1k_tokens || '0.000000',
-    output_price_per_1k_tokens: model.output_price_per_1k_tokens || '0.000000',
-    input_cost_per_1k_tokens: model.input_cost_per_1k_tokens || '0.000000',
-    output_cost_per_1k_tokens: model.output_cost_per_1k_tokens || '0.000000',
+    price_per_1k_tokens: perKToPerM(model.price_per_1k_tokens),
+    input_price_per_1k_tokens: perKToPerM(model.input_price_per_1k_tokens),
+    output_price_per_1k_tokens: perKToPerM(model.output_price_per_1k_tokens),
+    input_cost_per_1k_tokens: perKToPerM(model.input_cost_per_1k_tokens),
+    output_cost_per_1k_tokens: perKToPerM(model.output_cost_per_1k_tokens),
     peak_valley_enabled: toBool(model.peak_valley_enabled),
     cache_pricing_enabled: toBool(model.cache_pricing_enabled),
     peak_windows: model.peak_windows || '[]',
-    input_cached_price_per_1k_tokens: model.input_cached_price_per_1k_tokens || '0.000000',
-    input_cached_cost_per_1k_tokens: model.input_cached_cost_per_1k_tokens || '0.000000',
-    peak_input_price_per_1k_tokens: model.peak_input_price_per_1k_tokens || '0.000000',
-    peak_input_cost_per_1k_tokens: model.peak_input_cost_per_1k_tokens || '0.000000',
-    peak_output_price_per_1k_tokens: model.peak_output_price_per_1k_tokens || '0.000000',
-    peak_output_cost_per_1k_tokens: model.peak_output_cost_per_1k_tokens || '0.000000',
-    peak_input_cached_price_per_1k_tokens: model.peak_input_cached_price_per_1k_tokens || '0.000000',
-    peak_input_cached_cost_per_1k_tokens: model.peak_input_cached_cost_per_1k_tokens || '0.000000',
-    valley_input_price_per_1k_tokens: model.valley_input_price_per_1k_tokens || '0.000000',
-    valley_input_cost_per_1k_tokens: model.valley_input_cost_per_1k_tokens || '0.000000',
-    valley_output_price_per_1k_tokens: model.valley_output_price_per_1k_tokens || '0.000000',
-    valley_output_cost_per_1k_tokens: model.valley_output_cost_per_1k_tokens || '0.000000',
-    valley_input_cached_price_per_1k_tokens: model.valley_input_cached_price_per_1k_tokens || '0.000000',
-    valley_input_cached_cost_per_1k_tokens: model.valley_input_cached_cost_per_1k_tokens || '0.000000',
+    input_cached_price_per_1k_tokens: perKToPerM(model.input_cached_price_per_1k_tokens),
+    input_cached_cost_per_1k_tokens: perKToPerM(model.input_cached_cost_per_1k_tokens),
+    peak_input_price_per_1k_tokens: perKToPerM(model.peak_input_price_per_1k_tokens),
+    peak_input_cost_per_1k_tokens: perKToPerM(model.peak_input_cost_per_1k_tokens),
+    peak_output_price_per_1k_tokens: perKToPerM(model.peak_output_price_per_1k_tokens),
+    peak_output_cost_per_1k_tokens: perKToPerM(model.peak_output_cost_per_1k_tokens),
+    peak_input_cached_price_per_1k_tokens: perKToPerM(model.peak_input_cached_price_per_1k_tokens),
+    peak_input_cached_cost_per_1k_tokens: perKToPerM(model.peak_input_cached_cost_per_1k_tokens),
+    valley_input_price_per_1k_tokens: perKToPerM(model.valley_input_price_per_1k_tokens),
+    valley_input_cost_per_1k_tokens: perKToPerM(model.valley_input_cost_per_1k_tokens),
+    valley_output_price_per_1k_tokens: perKToPerM(model.valley_output_price_per_1k_tokens),
+    valley_output_cost_per_1k_tokens: perKToPerM(model.valley_output_cost_per_1k_tokens),
+    valley_input_cached_price_per_1k_tokens: perKToPerM(model.valley_input_cached_price_per_1k_tokens),
+    valley_input_cached_cost_per_1k_tokens: perKToPerM(model.valley_input_cached_cost_per_1k_tokens),
     max_tokens: model.max_tokens,
     max_input_tokens: model.max_input_tokens,
     max_output_tokens: model.max_output_tokens,
@@ -773,9 +828,9 @@ const submitModel = async () => {
       payload.max_input_tokens = 0
       payload.max_output_tokens = 0
     }
-    // 谷峰/缓存定价字段统一转为字符串数字；开关转 'true'/'false'
-    PRICING_FIELD_KEYS.forEach((key) => {
-      payload[key] = stringifyPriceField(payload[key])
+    // 表单内价格口径为 /M tokens：提交前统一 ÷1000 换算回 /1k，再转为字符串数字；开关转 'true'/'false'
+    ;[...PRICING_FIELD_KEYS, ...FLAT_PRICE_FIELD_KEYS].forEach((key) => {
+      payload[key] = stringifyPriceField(perMToPerK(payload[key]))
     })
     payload.peak_valley_enabled = modelForm.value.peak_valley_enabled ? 'true' : 'false'
     payload.cache_pricing_enabled = modelForm.value.cache_pricing_enabled ? 'true' : 'false'
@@ -1048,12 +1103,12 @@ onMounted(() => {
                       </template>
                       <template v-else>
                         <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
-                        <code class="font-mono text-gray-700">{{ formatPrice(model.input_price_per_1k_tokens) }} / {{ formatPrice(model.output_price_per_1k_tokens) }}</code>
+                        <code class="font-mono text-gray-700">{{ perKToPerM(model.input_price_per_1k_tokens) }} / {{ perKToPerM(model.output_price_per_1k_tokens) }}</code>
                         <a-tag v-if="toBool(model.peak_valley_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.peakValley') }}</a-tag>
                         <a-tag v-if="toBool(model.cache_pricing_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.cache') }}</a-tag>
                       </template>
                       <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
-                      <code class="font-mono text-amber-600">{{ formatPrice(model.input_cost_per_1k_tokens) }} / {{ formatPrice(model.output_cost_per_1k_tokens) }}</code>
+                      <code class="font-mono text-amber-600">{{ perKToPerM(model.input_cost_per_1k_tokens) }} / {{ perKToPerM(model.output_cost_per_1k_tokens) }}</code>
                     </div>
                   </td>
                   <td class="p-3 text-right">
