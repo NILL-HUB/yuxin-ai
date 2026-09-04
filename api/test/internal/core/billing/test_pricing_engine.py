@@ -48,9 +48,12 @@ def _engine(model=None, credits_per_1k=1, credits_per_yuan=100):
 def test_plan_usage_sell_and_cost_and_margin():
     engine = _engine(model=_model())
     plan = engine.plan_usage("model-1", input_tokens=1500, output_tokens=500)
-    assert plan.sell_credits == 5  # ceil(1.5*1.2 + 0.5*4.8) = ceil(4.2) = 5
-    assert plan.cost_credits == 4  # ceil((1.5*0.009 + 0.5*0.036)*100) = ceil(3.15) = 4
-    assert plan.margin_credits == 1
+    # 售价=人民币元/1k（in 1.2 / out 4.8）：金额 = 1500×1.2 + 500×4.8 = 4200 元
+    # 扣费算力 = ceil(4200/1000×100) = ceil(420) = 420
+    assert plan.sell_credits == 420
+    # 成本金额 = 1500×0.009 + 500×0.036 = 31.5 元 → ceil(31.5/1000×100) = ceil(3.15) = 4
+    assert plan.cost_credits == 4
+    assert plan.margin_credits == 416
     assert plan.billing_basis == "model_price"
 
 
@@ -147,7 +150,7 @@ def test_non_uuid_model_id_should_query_by_model_name():
     assert "model_name" in session.filter_conditions[0]
     assert "model_pool_config.id" not in session.filter_conditions[0]
     assert plan.billing_basis == "model_price"
-    assert plan.sell_credits == 2  # ceil(1000*1.2/1000)
+    assert plan.sell_credits == 120  # ceil(1000×1.2/1000×100) = ceil(120) = 120
 
 
 def test_uuid_model_id_should_query_by_pool_config_id():
@@ -205,8 +208,9 @@ def test_plan_usage_peak_valley_selects_tier_by_moment():
     )
     plan_p = engine.plan_usage("m", input_tokens=1000, output_tokens=0, moment=peak)
     plan_v = engine.plan_usage("m", input_tokens=1000, output_tokens=0, moment=valley)
-    assert plan_p.sell_credits == 2  # ceil(1000*2.0/1000)
-    assert plan_v.sell_credits == 1
+    # 售价=元/1k：1000×2.0/1000×100 = 200；谷档 1000×1.0/1000×100 = 100
+    assert plan_p.sell_credits == 200
+    assert plan_v.sell_credits == 100
     assert plan_p.price_tier == "peak"
     assert plan_v.price_tier == "valley"
 
@@ -222,7 +226,8 @@ def test_plan_usage_cache_split_prices_cached_input_lower():
         configs={"credits_per_1k_tokens": 1, "credits_per_yuan": 100},
     )
     plan = engine.plan_usage("m", input_tokens=1000, output_tokens=0, cached_input_tokens=1000)
-    assert plan.sell_credits == 1  # ceil(1000*0.1/1000)
+    # 全部 1000 token 命中缓存：1000×0.1 元/1k = 100 元 → ceil(100/1000×100) = 10
+    assert plan.sell_credits == 10
     assert plan.cached_input_tokens == 1000
 
 
@@ -234,7 +239,7 @@ def test_plan_usage_legacy_behavior_unchanged_when_flags_off():
         configs={"credits_per_1k_tokens": 1, "credits_per_yuan": 100},
     )
     plan = engine.plan_usage("model-1", input_tokens=1500, output_tokens=500)
-    assert plan.sell_credits == 5
+    assert plan.sell_credits == 420
     assert plan.billing_basis == "model_price"
     assert plan.price_tier is None
 
@@ -347,12 +352,12 @@ def test_config_query_error_isolates_savepoint_and_logs(caplog):
         plan = engine.plan_usage("deepseek-v4-flash", input_tokens=1000, output_tokens=0)
 
     assert plan.billing_basis == "model_price"
-    assert plan.sell_credits == 2  # ceil(1000*1.2/1000)
+    assert plan.sell_credits == 120  # ceil(1000×1.2/1000×100) = ceil(120) = 120
     assert session.rollbacks >= 1
     assert any("pricing_engine query_failed kind=billing_config" in r.getMessage() for r in caplog.records)
     # savepoint 回滚后外层事务仍可用：再次调用不抛异常
     plan2 = engine.plan_usage("deepseek-v4-flash", input_tokens=500, output_tokens=0)
-    assert plan2.sell_credits == 1
+    assert plan2.sell_credits == 60  # ceil(500×1.2/1000×100) = ceil(60) = 60
 
 
 def test_plan_usage_survives_failed_transaction_with_logs(caplog):

@@ -51,7 +51,7 @@ class CreditService:
         return self.pricing_engine
 
     def _compute_units(self, token_count: int, *, model_id=None, input_tokens=None, output_tokens=None, cached_input_tokens=None) -> tuple[int, str, dict]:
-        """经定价引擎计算本次消费算力（售价口径）。
+        """经定价引擎计算本次消费算力（扣费结果=售价金额×credits_per_yuan）。
 
         有模型明细时按引擎计价（input×sell_in + output×sell_out + cached×sell_cached）；
         无模型明细（tiktoken 估算入口）时回退全局汇率，与旧行为 1:1 兼容。

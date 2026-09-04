@@ -587,7 +587,8 @@ class TestAdminModelPoolRoutes:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
         assert payload["code"] == "success"
-        assert payload["data"]["peak_input_price_per_1k_tokens"] == "0.390000"
+        # 售价元/1k = 成本 0.003 × 1.3 = 0.0039（不再 × credits_per_yuan）
+        assert payload["data"]["peak_input_price_per_1k_tokens"] == "0.003900"
 
     def test_pricing_suggest_new_structure(self, monkeypatch):
         """新结构：suggestions/applied/warnings 与旧顶层键并存，official 可传入。"""
@@ -614,11 +615,11 @@ class TestAdminModelPoolRoutes:
         assert payload["code"] == "success"
         data = payload["data"]
         assert data["suggestions"] == {
-            "peak_input_price_per_1k_tokens": "0.390000",
+            "peak_input_price_per_1k_tokens": "0.003900",
         }
         assert data["applied"] is False
         assert data["warnings"] == []
-        assert data["peak_input_price_per_1k_tokens"] == "0.390000"
+        assert data["peak_input_price_per_1k_tokens"] == "0.003900"
 
     def test_pricing_suggest_new_structure_with_warnings(self, monkeypatch):
         """新前端预览：min_margin_ratio 下界过低/官方价上限冲突时 warnings 非空。"""
@@ -644,7 +645,7 @@ class TestAdminModelPoolRoutes:
         assert resp.status_code == 200
         assert payload["code"] == "success"
         data = payload["data"]
-        assert data["suggestions"]["input_price_per_1k_tokens"] == "2.600000"
+        assert data["suggestions"]["input_price_per_1k_tokens"] == "0.026000"
         assert data["applied"] is False
         assert any("官方" in w and "贵" in w for w in data["warnings"])
 

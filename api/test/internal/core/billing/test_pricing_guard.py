@@ -33,7 +33,8 @@ def test_suggest_sell_prices_scales_cost_by_margin_with_exchange_rate():
         credits_per_yuan=Decimal("100"),
         peak_valley_enabled=True, cache_pricing_enabled=False,
     )
-    assert out["peak_input_price_per_1k_tokens"] == "0.390000"
+    # 售价元/1k = 成本元/1k × 1.3 = 0.0039；credits_per_yuan 不再参与
+    assert out["peak_input_price_per_1k_tokens"] == "0.003900"
 
 
 def test_validate_allows_profitable_and_cap_ok():
@@ -47,7 +48,7 @@ def test_validate_allows_profitable_and_cap_ok():
         min_margin_ratio=Decimal("0.1"),
         peak_valley_enabled=True,
         cache_pricing_enabled=False,
-        official={"valley_output": Decimal("0.011")},
+        official={"valley_output": Decimal("3.0")},
         official_price_cap_ratio=Decimal("1.1"),
     )
     assert errors == []
@@ -176,9 +177,9 @@ def test_build_pricing_preview_returns_suggestions_structure():
     )
     assert out["applied"] is False
     assert out["suggestions"] == {
-        "peak_input_price_per_1k_tokens": "0.390000",
-        "peak_input_cached_price_per_1k_tokens": "0.130000",
-        "valley_output_price_per_1k_tokens": "0.520000",
+        "peak_input_price_per_1k_tokens": "0.003900",
+        "peak_input_cached_price_per_1k_tokens": "0.001300",
+        "valley_output_price_per_1k_tokens": "0.005200",
     }
     assert out["warnings"] == []
 
@@ -195,7 +196,7 @@ def test_build_pricing_preview_warns_when_suggestion_still_loses_money():
         peak_valley_enabled=True,
         cache_pricing_enabled=False,
     )
-    assert out["suggestions"]["peak_output_price_per_1k_tokens"] == "1.170000"
+    assert out["suggestions"]["peak_output_price_per_1k_tokens"] == "0.011700"
     assert any("峰档" in w and "输出" in w and "亏损" in w for w in out["warnings"])
 
 
@@ -230,5 +231,5 @@ def test_build_pricing_preview_cap_warning_with_official():
         official={"input": Decimal("0.005")},
         official_price_cap_ratio=Decimal("1.1"),
     )
-    assert out["suggestions"]["input_price_per_1k_tokens"] == "2.600000"
+    assert out["suggestions"]["input_price_per_1k_tokens"] == "0.026000"
     assert any("官方" in w and "贵" in w for w in out["warnings"])

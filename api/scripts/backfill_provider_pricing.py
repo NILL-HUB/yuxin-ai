@@ -89,12 +89,12 @@ def run(apply: bool) -> None:
                 setattr(row, f"{tier}_input_cost_per_1k_tokens", c["input"])
                 setattr(row, f"{tier}_output_cost_per_1k_tokens", c["output"])
                 setattr(row, f"{tier}_input_cached_cost_per_1k_tokens", c["cached"])
-                # 建议售价（算力/1k）= 成本(元/1k) × (1+毛利率) × credits_per_yuan(=100)
-                sell = float(c["input"]) * (1 + 0.3) * 100
+                # 建议售价（元/1k）= 成本(元/1k) × (1+毛利率)（与成本同单位，直出元/1k）
+                sell = float(c["input"]) * (1 + 0.3)
                 setattr(row, f"{tier}_input_price_per_1k_tokens", f"{sell:.6f}")
-                sell = float(c["output"]) * (1 + 0.3) * 100
+                sell = float(c["output"]) * (1 + 0.3)
                 setattr(row, f"{tier}_output_price_per_1k_tokens", f"{sell:.6f}")
-                sell = float(c["cached"]) * (1 + 0.3) * 100
+                sell = float(c["cached"]) * (1 + 0.3)
                 setattr(row, f"{tier}_input_cached_price_per_1k_tokens", f"{sell:.6f}")
             s.flush()
             print(f"  APPLIED cost+windows+sell for {provider}/{model_name}")
