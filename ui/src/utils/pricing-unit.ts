@@ -1,5 +1,5 @@
 // 界面统一以「/M tokens」口径录入与展示，而 DB/后端字段固定存「/1k tokens」
-// （字段名 *_per_1k_tokens，成本=人民币元/1k，售价=算力/1k）。
+// （字段名 *_per_1k_tokens，成本=人民币元/1k，售价=人民币元/1k）。
 // 换算关系：X_M = X_k × 1000；X_k = X_M ÷ 1000。
 
 const PER_K_TO_PER_M_SCALE = 1000

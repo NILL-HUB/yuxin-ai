@@ -18,7 +18,6 @@ import {
   updateTierPolicy,
 } from '@/services/admin-model-pool'
 import { listProviderOptions } from '@/services/admin-model-providers'
-import { getBillingConfig } from '@/services/admin-billing'
 import { suggestSellPrices } from '@/services/admin-pricing-suggest'
 import { getErrorMessage } from '@/utils/error'
 import { perKToPerM, perMToPerK } from '@/utils/pricing-unit'
@@ -223,20 +222,7 @@ const filteredModelTypeOptions = computed(() => {
   return supported && supported.length > 0 ? supported : ALL_MODEL_TYPES
 })
 
-// 汇率锚（成本→算力折算），用于毛利预览与表格参考毛利
-const billingPerYuan = ref(100)
-const loadBillingPerYuan = async () => {
-  try {
-    const config = await getBillingConfig('credits_per_yuan')
-    billingPerYuan.value = config?.value_numeric ?? 100
-  } catch {
-    billingPerYuan.value = 100
-  }
-}
-
-// 表单字段口径为 /M tokens（显示层），毛利预览需换算回 /1k 后套用历史公式：
-//   cost 折算算力 = cost(元/1k) × credits_per_yuan（1 元 = 100 算力）
-//   而 /1k = 界面 /M ÷ 1000，故 sell(算力/1k)=M/1000，cost 折算算力=(M/1000)×credits_per_yuan
+// 表单字段口径为 /M tokens（显示层），售价与成本同为「元/M」，毛利预览无需任何汇率折算
 const PRICING_INPUT_DIM_KEYS = ['input', 'output'] as const
 type PricingInputDim = typeof PRICING_INPUT_DIM_KEYS[number]
 // 读取表单某维度的"当前档"售价/成本（/M 口径）：启用峰谷时取峰档（保守毛利），否则取 flat
@@ -250,7 +236,7 @@ const formPricingDimOf = (form: typeof modelForm.value, kind: 'price' | 'cost', 
   return Number((form as unknown as Record<string, string>)[`${dim}_${suffix}_per_1k_tokens`] || 0)
 }
 const MARGIN_RATIO = 3
-// 毛利预览：按 3:1 输入/输出比估算，仅编辑辅助，不落库（输入/输出均为 /M，公式内部换算回 /1k）
+// 毛利预览：参考用量 3:1（3000 输入 + 1000 输出），售价与成本同为 /M 元，同单位直减（元）
 const marginPreview = computed(() => {
   const f = modelForm.value
   const sellIn = formPricingDimOf(f, 'price', 'input')
@@ -258,18 +244,17 @@ const marginPreview = computed(() => {
   const costIn = formPricingDimOf(f, 'cost', 'input')
   const costOut = formPricingDimOf(f, 'cost', 'output')
   if (!sellIn && !sellOut) return null
-  const sellPerK = (sellIn * MARGIN_RATIO + sellOut) / 1000
-  const costPerK = (costIn * MARGIN_RATIO + costOut) / 1000
-  const costEquivalent = costPerK * (billingPerYuan.value || 100)
-  return sellPerK - costEquivalent
+  const sell = sellIn * MARGIN_RATIO + sellOut
+  const cost = costIn * MARGIN_RATIO + costOut
+  return sell - cost
 })
 const marginPercent = computed(() => {
   const f = modelForm.value
   const costIn = formPricingDimOf(f, 'cost', 'input')
   const costOut = formPricingDimOf(f, 'cost', 'output')
-  const costEquivalent = ((costIn * MARGIN_RATIO + costOut) / 1000) * (billingPerYuan.value || 100)
-  if (costEquivalent <= 0) return 0
-  return ((marginPreview.value || 0) / costEquivalent) * 100
+  const cost = costIn * MARGIN_RATIO + costOut
+  if (cost <= 0) return 0
+  return ((marginPreview.value || 0) / cost) * 100
 })
 const formatSigned = (value: number) => {
   const n = Math.round(Number(value) || 0)
@@ -304,14 +289,14 @@ const pricingDimOf = (record: ModelRecord, kind: 'price' | 'cost', dim: 'input' 
 }
 
 const marginOf = (record: ModelRecord) => {
-  const perYuan = billingPerYuan.value || 100
   const { peak: costIn } = pricingDimOf(record, 'cost', 'input')
   const { peak: costOut } = pricingDimOf(record, 'cost', 'output')
   const { peak: sellIn } = pricingDimOf(record, 'price', 'input')
   const { peak: sellOut } = pricingDimOf(record, 'price', 'output')
-  // 参考用量 3:1（3000 输入 + 1000 输出），先算该 4k 用量的毛利（算力），再 ×250 折算为每 M token
-  const cost = (costIn * 3 + costOut) * perYuan
+  // 参考用量 3:1（3000 输入 + 1000 输出），售价与成本同为元/1k，同单位直减即为该 4k 用量的毛利（元）
+  // 已按 perKToPerM ×1000 折算为「元/M」数量级展示（元/M 毛利 = (sellIn*3+sellOut - costIn*3-costOut) × 250）
   const sell = sellIn * 3 + sellOut
+  const cost = costIn * 3 + costOut
   return (sell - cost) * 250
 }
 // 谷峰/缓存拆分定价字段（提交时统一转为字符串）
@@ -677,7 +662,7 @@ const pricingBlockOf = (model: ModelRecord): { lines: PricingLine[]; cached: { s
   }
   return { lines, cached }
 }
-// 毛利（元/1k → 算力/M 已换算）：列表毛利标签直接用 marginOf
+// 列表毛利标签：售价与成本同为元/1k，同单位直减后折算为 /M（marginOf 返回元/M）
 const peakValleySummaryOf = (model: ModelRecord): { peak: string; valley: string } | null => {
   const { lines } = pricingBlockOf(model)
   if (!toBool(model.peak_valley_enabled)) return null
@@ -1037,7 +1022,6 @@ const removeTier = async (tier: TierPolicy) => {
 
 onMounted(() => {
   loadAll()
-  loadBillingPerYuan()
 })
 </script>
 

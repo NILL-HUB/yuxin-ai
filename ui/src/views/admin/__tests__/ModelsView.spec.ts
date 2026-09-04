@@ -245,15 +245,15 @@ describe('ModelsView', () => {
     expect(priceInputs).toHaveLength(2)
     expect(costInputs).toHaveLength(2)
 
-    // 表单为 /M 口径：售价 1200/4800（算力/M），成本 9/36（元/M）
+    // 表单为 /M 口径：售价 1200/4800（元/M），成本 9/36（元/M）
     await priceInputs[0].setValue('1200')
     await priceInputs[1].setValue('4800')
     await costInputs[0].setValue('9')
     await costInputs[1].setValue('36')
     await nextTick()
 
-    // sell(/1k) = 1.2*3 + 4.8 = 8.4；cost 折算算力(/1k) = (0.009*3 + 0.036) * 100 = 6.3；margin ≈ +2.1
-    expect(wrapper.text()).toContain('参考毛利：+2 算力（+33%）')
+    // 售价与成本同为 /M 元，同单位直减：sell = 1200*3 + 4800 = 8400；cost = 9*3 + 36 = 63；margin ≈ +8337 元（+13233%）
+    expect(wrapper.text()).toContain('参考毛利：+8337 元（+13233%）')
   })
 
   it('renders positive margin as green tag and negative margin as red tag in the table', async () => {
@@ -589,7 +589,7 @@ describe('ModelsView', () => {
     await nextTick()
 
     const state = (wrapper.vm as unknown as { modelForm: Record<string, number> }).modelForm
-    // 用户改售价为 1200（算力/M）
+    // 用户改售价为 1200（元/M）
     state.input_price_per_1k_tokens = 1200
     await nextTick()
 
@@ -675,8 +675,8 @@ describe('ModelsView', () => {
     expect((wrapper.find('input[name="valley_output_cost_per_1k_tokens"]').element as HTMLInputElement).value).toBe('1600')
 
     // marginPreview 峰谷感知：不再因 flat 列为 0 而显示空白。
-    // 峰档 /M：sell(1200*3+4800)/1000=8.4 算力/1k；cost 折算算力=(500*3+2000)/1000*100=350 → margin≈-341.6
-    expect(wrapper.text()).toContain('参考毛利：-342 算力（-98%）')
+    // 峰档 /M：sell(1200*3+4800)=8400 元；cost(500*3+2000)=3500 元 → margin=+4900 元（+140%）
+    expect(wrapper.text()).toContain('参考毛利：+4900 元（+140%）')
 
     // 峰谷模型下顶部 flat 售价/成本 group 隐藏（不再出现误导性空框），并展示谷峰提示
     const flatPriceInputs = wrapper.findAll('input[name="input_price_per_1k_tokens"]')
@@ -719,7 +719,7 @@ describe('ModelsView', () => {
     expect((wrapper.find('input[name="valley_input_cached_price_per_1k_tokens"]').element as HTMLInputElement).value).toBe('100')
     expect((wrapper.find('input[name="valley_input_cost_per_1k_tokens"]').element as HTMLInputElement).value).toBe('1.5')
     // 标签含单位标注
-    expect(wrapper.text()).toContain('输入售价（算力/M）')
+    expect(wrapper.text()).toContain('输入售价（元/M）')
     expect(wrapper.text()).toContain('输入成本（元/M）')
   })
 })
