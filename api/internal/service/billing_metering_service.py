@@ -149,20 +149,43 @@ class BillingUsageAggregator:
             0,
             "billing_final",
         )
-        # 实际扣费：如果注入了 credit_service 和 account_id，则调用 CreditService
-        # consume_for_feature 签名为 (account_id, feature_key, *, token_count)，
-        # 因此使用累计的 total_tokens 而非 total_credits
+        # 实际扣费：如果注入了 credit_service 和 account_id，则调用 CreditService。
+        # 优先按 usage 明细逐条精确计价（model_id+input/output/cached，消除对 1:1
+        # 全局汇率的依赖）；无明细可查时回退旧行为（累计 token_count × 全局汇率）。
         if (
             self.credit_service is not None
             and self.account_id is not None
-            and self.total_tokens > 0
         ):
             try:
-                self.credit_service.consume_for_feature(
-                    account_id=self.account_id,
-                    feature_key=self.feature_key,
-                    token_count=self.total_tokens,
-                )
+                detailed = [
+                    ev for ev in self.usage_event_buf
+                    if (ev.get("input_tokens") or 0) + (ev.get("output_tokens") or 0) > 0
+                ]
+                if detailed:
+                    for idx, ev in enumerate(detailed):
+                        ev_total = (
+                            int(ev.get("input_tokens") or 0)
+                            + int(ev.get("cached_input_tokens") or 0)
+                            + int(ev.get("output_tokens") or 0)
+                        )
+                        if ev_total <= 0:
+                            continue
+                        self.credit_service.consume_for_feature(
+                            account_id=self.account_id,
+                            feature_key=self.feature_key,
+                            token_count=ev_total,
+                            idempotency_key=f"{self.task_id}:{ev.get('model_id') or ''}:{ev.get('source_type') or ''}:{idx}",
+                            model_id=ev.get("model_id") or None,
+                            input_tokens=int(ev.get("input_tokens") or 0),
+                            output_tokens=int(ev.get("output_tokens") or 0),
+                            cached_input_tokens=int(ev.get("cached_input_tokens") or 0),
+                        )
+                elif self.total_tokens > 0:
+                    self.credit_service.consume_for_feature(
+                        account_id=self.account_id,
+                        feature_key=self.feature_key,
+                        token_count=self.total_tokens,
+                    )
             except Exception:
                 logger.warning(
                     "BillingUsageAggregator 扣费失败 task_id=%s", self.task_id, exc_info=True
@@ -195,8 +218,18 @@ class BillingUsageAggregator:
                     events=self.usage_event_buf,
                 )
             except Exception:
-                logger.warning(
-                    "BillingUsageAggregator 对账失败 task_id=%s", self.task_id, exc_info=True
+                # B3：对账失败不再静默。预扣（final 前半段）已按真实模型价完成，
+                # 此处失败只会导致"多退少补"未执行，用户余额停留在预扣值。
+                # 提升为 error 级结构化日志，便于运维巡检与告警接入。
+                logger.error(
+                    "billing_reconciliation_failed task_id=%s account_id=%s "
+                    "events=%d phase=settle error_type=%s error=%s",
+                    self.task_id,
+                    self.account_id,
+                    len(self.usage_event_buf),
+                    type(exc).__name__,
+                    str(exc)[:300],
+                    exc_info=True,
                 )
 
         # SSE 流式请求没有统一的请求级提交点：消息持久化（save_agent_thoughts）

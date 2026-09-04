@@ -497,8 +497,12 @@ class AssistantAgentService(BaseService):
         from internal.service.billing_reconciliation_service import BillingReconciliationService
         from internal.service.executors.single_agent_executor import SingleAgentExecutor
         from internal.entity.orchestrator_entity import ExecutionMode
+        from internal.core.billing.pricing_engine import PricingEngine
 
-        billing_aggregator = BillingUsageAggregator(task_id=str(message.id))
+        billing_aggregator = BillingUsageAggregator(
+            task_id=str(message.id),
+            pricing_engine=PricingEngine(),
+        )
         reconciliation_service = BillingReconciliationService()
         billing_started = billing_aggregator.started()
         yield f"event: {BillingEventType.STARTED.value}\ndata:{json.dumps(billing_started.to_sse())}\n\n"
@@ -553,8 +557,8 @@ class AssistantAgentService(BaseService):
                             collected_answer = collected_answer + chunk_answer if collected_answer else chunk_answer
                     except Exception:
                         pass
-                # 截获 executor 发出的 billing delta 事件，累计到外层 aggregator
-                # executor 内部不再创建独立 aggregator（问题7修复），由外层统一累计
+                # 截获 executor 发出的 billing delta 事件，累计到外层 aggregator，
+                # 并用外层按真实模型价计算的 delta 替换 1:1 展示值下发给前端（B5）。
                 if chunk.startswith(billing_delta_prefix):
                     try:
                         data_part = chunk.split("data:", 1)[1].strip()
@@ -562,6 +566,7 @@ class AssistantAgentService(BaseService):
                         meta = payload.get("metadata") or {}
                         in_tok = int(meta.get("input_tokens", 0) or 0)
                         out_tok = int(meta.get("output_tokens", 0) or 0)
+                        cached_tok = int(meta.get("cached_input_tokens", 0) or 0)
                         if in_tok or out_tok:
                             # model_id 取 executor 返回的模型标识（billing 元数据），
                             # 缺乏模型标识时传空串让定价引擎走全局汇率兜底
@@ -573,14 +578,17 @@ class AssistantAgentService(BaseService):
                                 or ""
                             )
                             moment = datetime.now(UTC)
-                            billing_aggregator.model_tokens(
+                            real_delta = billing_aggregator.model_tokens(
                                 "single_agent",
                                 model_id=model_id,
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
+                                cached_input_tokens=cached_tok,
                                 reason="agent_llm_invoke",
                                 moment=moment,
                             )
+                            yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(real_delta.to_sse())}\n\n"
+                            continue
                     except Exception:
                         pass
                 yield chunk
@@ -690,6 +698,7 @@ class AssistantAgentService(BaseService):
                         meta = payload.get("metadata") or {}
                         in_tok = int(meta.get("input_tokens", 0) or 0)
                         out_tok = int(meta.get("output_tokens", 0) or 0)
+                        cached_tok = int(meta.get("cached_input_tokens", 0) or 0)
                         if in_tok or out_tok:
                             # model_id 取 executor 返回的模型标识（billing 元数据），
                             # 缺乏模型标识时传空串让定价引擎走全局汇率兜底
@@ -701,14 +710,17 @@ class AssistantAgentService(BaseService):
                                 or ""
                             )
                             moment = datetime.now(UTC)
-                            billing_aggregator.model_tokens(
+                            real_delta = billing_aggregator.model_tokens(
                                 "multi_agent",
                                 model_id=model_id,
                                 input_tokens=in_tok,
                                 output_tokens=out_tok,
+                                cached_input_tokens=cached_tok,
                                 reason="agent_llm_invoke",
                                 moment=moment,
                             )
+                            yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(real_delta.to_sse())}\n\n"
+                            continue
                     except Exception:
                         pass
                 yield chunk

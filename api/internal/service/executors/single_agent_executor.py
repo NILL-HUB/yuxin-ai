@@ -15,7 +15,10 @@ from internal.entity.execution_orchestration_entity import (
 )
 from internal.entity.orchestrator_entity import ExecutionMode
 from internal.service.agent_task_executor import AgentTaskExecutor
-from internal.service.execution_coordinator_service import ExecutionCoordinatorService
+from internal.service.execution_coordinator_service import (
+    ExecutionCoordinatorService,
+    resolve_escalation_policy_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,7 @@ class SingleAgentExecutor:
     # 子任务实时状态注册表（Hermes /agents 实时状态对齐）
     subtask_registry: object = None
     cancel_token: object = None
+    plan_repairer: object = None
 
     def execute(
         self,
@@ -119,6 +123,8 @@ class SingleAgentExecutor:
                             cancel_token=self.cancel_token,
                             subtask_registry=self.subtask_registry,
                             request_id=message_id,
+                            plan_repairer=self.plan_repairer,
+                            escalation_policy_service=resolve_escalation_policy_service(),
                         )
                         results = coordinator.execute(plan)
                         sse_queue.put((_RESULT_MARKER, results))
@@ -166,6 +172,7 @@ class SingleAgentExecutor:
                         )
                         input_tokens = token_usage.get("prompt_tokens", 0) or 0
                         output_tokens = token_usage.get("completion_tokens", 0) or 0
+                        cached_input_tokens = token_usage.get("cached_input_tokens", 0) or 0
                         total_tokens = max(input_tokens, 0) + max(output_tokens, 0)
                         delta_credits = int(total_tokens / 1000)
                         billing_delta = BillingUsageDelta(
@@ -179,6 +186,10 @@ class SingleAgentExecutor:
                             metadata={
                                 "input_tokens": input_tokens,
                                 "output_tokens": output_tokens,
+                                "cached_input_tokens": cached_input_tokens,
+                                "model_id": token_usage.get("model")
+                                or (result.metadata or {}).get("model")
+                                or "",
                             },
                         )
                         yield f"event: {BillingEventType.DELTA.value}\ndata:{json.dumps(billing_delta.to_sse())}\n\n"

@@ -260,11 +260,20 @@ def test_final_should_pass_feature_key_and_token_count_to_consume():
     aggregator.final()
 
     assert aggregator.total_tokens == 1500
-    credit_service.consume_for_feature.assert_called_once_with(
-        account_id="account-1",
-        feature_key="direct_answer",
-        token_count=1500,
-    )
+    # B2：final 改为按 usage 明细逐条精确扣费（model_id+input/output 透传），
+    # 消除对 1:1 全局汇率的依赖；每条事件一个幂等 key（task:model:source:序号）。
+    assert credit_service.consume_for_feature.call_count == 2
+    first_call = credit_service.consume_for_feature.call_args_list[0].kwargs
+    assert first_call["account_id"] == "account-1"
+    assert first_call["feature_key"] == "direct_answer"
+    assert first_call["token_count"] == 1000
+    assert first_call["model_id"] == "m1"
+    assert first_call["input_tokens"] == 500
+    assert first_call["output_tokens"] == 500
+    assert first_call["idempotency_key"] == "task-1:m1:direct_answer:0"
+    second_call = credit_service.consume_for_feature.call_args_list[1].kwargs
+    assert second_call["token_count"] == 500
+    assert second_call["idempotency_key"] == "task-1:m1:direct_answer:1"
 
 
 def test_final_should_commit_when_real_session_present():
@@ -313,3 +322,41 @@ def test_final_should_not_commit_without_real_session():
             settle=lambda **kw: None,
         )
     )
+
+
+def test_final_precharges_at_real_model_price_when_engine_injected():
+    # B2：注入 pricing_engine 后 final 应把每条 usage 明细按模型精确计价预扣，
+    # 透传 model_id/input/output 到 credit_service，而非笼统按 1:1 全局汇率。
+    credit_service = MagicMock()
+    pricing_engine = MagicMock()
+    pricing_engine.plan_usage.return_value = SimpleNamespace(
+        sell_credits=9, price_tier="peak", billing_basis="model_price"
+    )
+    aggregator = BillingUsageAggregator(
+        task_id="task-1",
+        credit_service=credit_service,
+        pricing_engine=pricing_engine,
+        _should_commit=False,
+    )
+    aggregator.account_id = "account-1"
+    aggregator.model_tokens(
+        "direct_answer",
+        model_id="m1",
+        input_tokens=1000,
+        cached_input_tokens=700,
+        output_tokens=300,
+        reason="r",
+    )
+
+    aggregator.final()
+
+    call = credit_service.consume_for_feature.call_args_list[0].kwargs
+    assert call["account_id"] == "account-1"
+    assert call["model_id"] == "m1"
+    # 未命中 300 + 缓存 700 + 输出 300 = 1300（usage_event_buf 拆分口径）
+    assert call["input_tokens"] == 300
+    assert call["cached_input_tokens"] == 700
+    assert call["output_tokens"] == 300
+    assert call["token_count"] == 1300
+    assert call["idempotency_key"] == "task-1:m1:direct_answer:0"
+    pricing_engine.plan_usage.assert_called_once()

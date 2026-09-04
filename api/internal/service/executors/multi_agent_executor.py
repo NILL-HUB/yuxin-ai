@@ -18,7 +18,10 @@ from internal.context import current_app, has_app_context
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
 from internal.service.agent_task_executor import AgentTaskExecutor
-from internal.service.execution_coordinator_service import ExecutionCoordinatorService
+from internal.service.execution_coordinator_service import (
+    ExecutionCoordinatorService,
+    resolve_escalation_policy_service,
+)
 from internal.service.executors.single_agent_executor import SingleAgentExecutor
 
 logger = logging.getLogger(__name__)
@@ -49,6 +52,7 @@ class MultiAgentExecutor:
     subtask_registry: object = None
     cancel_token: object = None
     collected_thoughts: list = field(default_factory=list)
+    plan_repairer: object = None
 
     def execute(
         self,
@@ -112,6 +116,8 @@ class MultiAgentExecutor:
                             cancel_token=self.cancel_token,
                             subtask_registry=self.subtask_registry,
                             request_id=message_id,
+                            plan_repairer=self.plan_repairer,
+                            escalation_policy_service=resolve_escalation_policy_service(),
                         )
                         results = coordinator.execute(plan, request_id=message_id)
                         sse_queue.put((_RESULT_MARKER, results))
@@ -194,10 +200,16 @@ class MultiAgentExecutor:
                     required_capabilities=list(agent.get("required_capabilities") or []),
                     depends_on=list(agent.get("depends_on") or []),
                     execution_order=int(agent.get("execution_order") or index),
+                    model_tier=str(agent.get("model_tier") or ""),
+                    model_id_hint=str(agent.get("model_id_hint") or ""),
+                    complexity=str(agent.get("complexity") or "simple"),
+                    balance_credits=float(agent.get("balance_credits") or 0),
                     risk_level=str(agent.get("risk_level") or "safe"),
                     agent_id=str(agent.get("agent_id") or task_id),
                     tools=list(agent.get("tools") or []),
                     timeout_seconds=float(agent.get("timeout_seconds") or 0),
+                    retry_count=int(agent.get("retry_count") or 0),
+                    retry_interval=float(agent.get("retry_interval") or 0),
                 )
             )
 
@@ -230,24 +242,43 @@ class MultiAgentExecutor:
         return strategy if strategy in {"concat", "summarize", "best_of"} else "concat"
 
     def _aggregate(self, results, strategy: str):
-        valid = [result for result in results if getattr(result, "answer", "")]
-        if strategy == "best_of" and valid:
-            best = max(valid, key=lambda result: float(result.confidence or 0))
-            return best.answer, {
-                "summary": best.answer,
-                "confidence": float(best.confidence or 0),
-                "visible_sources": list(getattr(best, "sources", []) or []),
-                "user_warnings": list(getattr(best, "warnings", []) or []),
-            }
+        try:
+            from internal.service.result_synthesizer_service import ResultSynthesizerService
 
-        answers = [str(result.answer or "").strip() for result in valid if str(result.answer or "").strip()]
+            synthesis = ResultSynthesizerService().synthesize(
+                results,
+                original_query=self.query,
+                errors=[
+                    error
+                    for result in results
+                    for error in list(getattr(result, "errors", []) or [])
+                ],
+                cost_summary={},
+                aggregation_strategy=strategy,
+                llm=self.llm,
+            )
+        except Exception:
+            logger.warning("ResultSynthesizerService 合成失败，回退拼接", exc_info=True)
+            return self._concat_fallback(results)
+        return synthesis["final_answer"], {
+            "summary": synthesis.get("summary", ""),
+            "confidence": float(synthesis.get("confidence", 0) or 0),
+            "visible_sources": list(synthesis.get("visible_sources", []) or []),
+            "user_warnings": list(synthesis.get("user_warnings", []) or []),
+        }
+
+    @staticmethod
+    def _concat_fallback(results) -> tuple[str, dict]:
+        answers = [
+            str(result.answer or "").strip()
+            for result in results
+            if str(result.answer or "").strip()
+        ]
         summary = "\n\n".join(answers)
-        if strategy == "summarize":
-            summary = self._llm_summarize(answers) or summary
         sources: list[str] = []
         warnings: list[str] = []
         confidence_values: list[float] = []
-        for result in valid:
+        for result in results:
             for source in list(getattr(result, "sources", []) or []):
                 if source not in sources:
                     sources.append(str(source))
@@ -267,39 +298,6 @@ class MultiAgentExecutor:
             "user_warnings": warnings,
         }
 
-    def _llm_summarize(self, answers: list[str]) -> str:
-        """用 LLM 综合各子任务答案；失败或不可用时回退拼接。"""
-        if self.llm is None or not answers:
-            return ""
-        invoke = getattr(self.llm, "invoke", None)
-        if not callable(invoke):
-            return ""
-        try:
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            payload = "\n\n".join(
-                f"[子任务 {index + 1}]\n{text}"
-                for index, text in enumerate(answers)
-            )
-            response = invoke(
-                [
-                    SystemMessage(
-                        content=(
-                            "你是多智能体结果汇总器。请综合以下各子任务的答案，"
-                            "输出一份连贯、去重、保留关键事实与来源线索的最终结论。"
-                        )
-                    ),
-                    HumanMessage(content=payload),
-                ]
-            )
-            content = getattr(response, "content", "")
-            if content is None:
-                content = str(response)
-            return str(content).strip()
-        except Exception as exc:
-            logger.warning("LLM 结果合成失败，回退拼接: %s", exc, exc_info=True)
-            return ""
-
     @staticmethod
     def _subtask_plan_sse(plan: TaskPlan, conversation_id: str, message_id: str) -> str:
         items = [
@@ -313,6 +311,8 @@ class MultiAgentExecutor:
                 "tools": list(item.tools),
                 "risk_level": item.risk_level,
                 "timeout_seconds": item.timeout_seconds,
+                "retry_count": item.retry_count,
+                "retry_interval": item.retry_interval,
             }
             for item in plan.items
         ]
@@ -394,6 +394,7 @@ class MultiAgentExecutor:
 
         input_tokens = int(token_usage.get("prompt_tokens") or 0)
         output_tokens = int(token_usage.get("completion_tokens") or 0)
+        cached_input_tokens = int(token_usage.get("cached_input_tokens") or 0)
         total_tokens = max(input_tokens, 0) + max(output_tokens, 0)
         if total_tokens <= 0:
             return ""
@@ -409,6 +410,10 @@ class MultiAgentExecutor:
             metadata={
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "model_id": token_usage.get("model")
+                or (result.metadata or {}).get("model")
+                or "",
                 "task_id": result.task_id,
             },
         )
@@ -471,7 +476,20 @@ class _SubtaskTaskExecutor:
         self.conversation_id = conversation_id
         self.message_id = message_id
 
-    def execute(self, item: TaskPlanItem) -> dict:
+    def _resolve_llm_for_item(self, item: TaskPlanItem):
+        """子任务独立配模：item.model_tier 非空且非默认档时按档位实例化；失败/缺失回退 host.llm。"""
+        tier = getattr(item, "model_tier", "") or ""
+        if not tier or tier == "1":
+            return self.host.llm
+        try:
+            from internal.service.language_model_service import LanguageModelService
+
+            return LanguageModelService.get_chat_model_by_tier(tier)
+        except Exception:
+            logger.warning("子任务按档位实例化失败 tier=%s，回退 host llm", tier, exc_info=True)
+            return self.host.llm
+
+    def execute(self, item: TaskPlanItem, context: dict | None = None) -> dict:
         try:
             self.sse_queue.put(
                 MultiAgentExecutor._subtask_running_sse(
@@ -497,14 +515,18 @@ class _SubtaskTaskExecutor:
                 agent_class=self.host.agent_class,
                 agent_config=self.host.agent_config,
                 tools=self.host.tools or [],
-                llm=self.host.llm,
+                llm=self._resolve_llm_for_item(item),
                 history=self.host.history or [],
                 query=item.description or self.host.query,
                 long_term_memory=self.host.long_term_memory,
                 user_memory=self.host.user_memory,
                 event_emitter=_event_emitter_with_activity,
             )
-            result = task_executor.execute(item)
+            if getattr(item, "model_id_hint", ""):
+                if context is None:
+                    context = {}
+                context["model_id_hint"] = item.model_id_hint
+            result = task_executor.execute(item, context=context)
             if self.host.subtask_registry is not None:
                 try:
                     self.host.subtask_registry.mark_activity(
