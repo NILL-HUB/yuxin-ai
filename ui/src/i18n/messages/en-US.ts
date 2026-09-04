@@ -1598,7 +1598,8 @@ export default {
         marginPreview: 'Est. margin: {margin} credits ({percent}%)',
         marginTooltip: 'Estimated with a 3:1 input/output ratio as an editing aid; real margin = actual token usage × exchange anchor',
         fallback: 'Fallback price (optional)',
-        fallbackDesc: 'Sets a single unit price as fallback when input/output prices are not configured',
+        fallbackDesc: 'Only used when both input/output sell prices are 0, as a billing fallback; it does not apply once split sell prices are set',
+        fallbackInactiveAlert: 'Input/output sell prices are set, so this fallback price is not used for billing (only dimensions missing a sell price fall back to it)',
       },
       pricingMode: {
         title: 'Pricing Mode',

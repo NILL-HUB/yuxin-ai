@@ -252,6 +252,19 @@ const formatSigned = (value: number) => {
   const n = Math.round(Number(value) || 0)
   return n > 0 ? `+${n}` : `${n}`
 }
+// 拆分售价是否已配置：任一档任一维度 >0 即认为拆售价生效，兜底单价不参与计费
+const splitSellPriceActive = computed(() => {
+  const f = modelForm.value
+  const candidates = [
+    f.input_price_per_1k_tokens,
+    f.output_price_per_1k_tokens,
+    f.peak_input_price_per_1k_tokens,
+    f.peak_output_price_per_1k_tokens,
+    f.valley_input_price_per_1k_tokens,
+    f.valley_output_price_per_1k_tokens,
+  ]
+  return candidates.some((v) => Number(v || 0) > 0)
+})
 
 const formatPrice = (value?: string) => (Number(value || 0)).toFixed(6)
 const marginOf = (record: ModelRecord) => {
@@ -996,7 +1009,6 @@ onMounted(() => {
                   <th class="p-3">{{ t('admin.models.columns.pricing') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.margin') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.capabilities') }}</th>
-                  <th class="p-3">{{ t('admin.models.columns.pricePer1k') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.maxInputTokens') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.maxOutputTokens') }}</th>
                   <th class="p-3">{{ t('admin.models.columns.status') }}</th>
@@ -1005,7 +1017,7 @@ onMounted(() => {
               </thead>
               <tbody>
                 <tr v-if="!filteredModels.length">
-                  <td class="p-6 text-center text-gray-400" colspan="13">{{ t('admin.models.empty.models') }}</td>
+                  <td class="p-6 text-center text-gray-400" colspan="12">{{ t('admin.models.empty.models') }}</td>
                 </tr>
                 <tr v-for="model in filteredModels" :key="model.id" class="border-t">
                   <td class="p-3">{{ model.provider }}</td>
@@ -1051,7 +1063,6 @@ onMounted(() => {
                     <a-tag v-for="cap in model.capabilities" :key="cap" size="small" color="arcoblue">{{ cap }}</a-tag>
                     <span v-if="!model.capabilities?.length" class="text-gray-400">-</span>
                   </td>
-                  <td class="p-3">{{ model.price_per_1k_tokens }}</td>
                   <td class="p-3">{{ CONTEXT_LESS_MODEL_TYPES.includes(model.model_type || '') ? '-' : model.max_input_tokens }}</td>
                   <td class="p-3">{{ CONTEXT_LESS_MODEL_TYPES.includes(model.model_type || '') ? '-' : model.max_output_tokens }}</td>
                   <td class="p-3">
@@ -1374,6 +1385,7 @@ onMounted(() => {
         <div class="form-group">
           <h4 class="form-group-title">{{ t('admin.models.groups.fallback') }}</h4>
           <p class="form-group-desc">{{ t('admin.models.groups.fallbackDesc') }}</p>
+          <a-alert v-if="splitSellPriceActive" type="info" show-icon class="mb-2">{{ t('admin.models.groups.fallbackInactiveAlert') }}</a-alert>
           <a-form-item :label="t('admin.models.fields.pricePer1k')" field="price_per_1k_tokens">
             <a-input v-model="modelForm.price_per_1k_tokens" :placeholder="t('admin.models.modelModal.placeholders.price')" />
           </a-form-item>

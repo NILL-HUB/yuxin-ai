@@ -1600,7 +1600,8 @@ export default {
         marginPreview: '参考毛利：{margin} 算力（{percent}%）',
         marginTooltip: '按 3:1 输入/输出比估算，仅为编辑辅助；真实毛利 = 实际 token 用量 × 汇率锚',
         fallback: '兜底单价（可选）',
-        fallbackDesc: '未分别配置输入/输出售价时，可设置单一单价作为兜底',
+        fallbackDesc: '仅当「输入/输出售价」均为 0 时生效，作为计费兜底；已设置拆分售价时此值不参与计费',
+        fallbackInactiveAlert: '已设置输入/输出售价，此兜底单价不参与计费（售价缺失的维度才会回退到它）',
       },
       pricingMode: {
         title: '定价模式',
