@@ -308,9 +308,10 @@ const marginOf = (record: ModelRecord) => {
   const { peak: costOut } = pricingDimOf(record, 'cost', 'output')
   const { peak: sellIn } = pricingDimOf(record, 'price', 'input')
   const { peak: sellOut } = pricingDimOf(record, 'price', 'output')
+  // 参考用量 3:1（3000 输入 + 1000 输出），先算该 4k 用量的毛利（算力），再 ×250 折算为每 M token
   const cost = (costIn * 3 + costOut) * perYuan
   const sell = sellIn * 3 + sellOut
-  return sell - cost
+  return (sell - cost) * 250
 }
 // 谷峰/缓存拆分定价字段（提交时统一转为字符串）
 const PRICING_FIELD_KEYS = [
@@ -640,18 +641,47 @@ const applyPricingSuggest = () => {
   pricingPreviewVisible.value = false
   Message.success(t('admin.models.messages.pricingSuggestApplied'))
 }
-// 列表「定价」列：峰谷开启且有峰/谷售价时展示峰谷摘要（/M 口径）
+// 列表「定价」列展示结构：峰谷 / 普通两态，均含售价+成本，缓存单独行（/M 口径）
+type PricingLine = { label: string; sell: string; cost: string; tone: 'peak' | 'valley' | 'flat' }
+const num = (v?: string): number => Number(v || 0)
+const fmtM = (v?: string): string => perKToPerM(v)
+const pricingBlockOf = (model: ModelRecord): { lines: PricingLine[]; cached: { sell: string; cost: string } | null } => {
+  const lines: PricingLine[] = []
+  let cached: { sell: string; cost: string } | null = null
+  const cacheOn = toBool(model.cache_pricing_enabled)
+  if (toBool(model.peak_valley_enabled)) {
+    const peakSell = fmtM(model.peak_input_price_per_1k_tokens) + '/' + fmtM(model.peak_output_price_per_1k_tokens)
+    const peakCost = fmtM(model.peak_input_cost_per_1k_tokens) + '/' + fmtM(model.peak_output_cost_per_1k_tokens)
+    const valleySell = fmtM(model.valley_input_price_per_1k_tokens) + '/' + fmtM(model.valley_output_price_per_1k_tokens)
+    const valleyCost = fmtM(model.valley_input_cost_per_1k_tokens) + '/' + fmtM(model.valley_output_cost_per_1k_tokens)
+    if (peakSell !== '0/0' || peakCost !== '0/0') lines.push({ label: '峰', sell: peakSell, cost: peakCost, tone: 'peak' })
+    if (valleySell !== '0/0' || valleyCost !== '0/0') lines.push({ label: '谷', sell: valleySell, cost: valleyCost, tone: 'valley' })
+    if (cacheOn) {
+      cached = {
+        sell: fmtM(model.peak_input_cached_price_per_1k_tokens) + '/' + fmtM(model.valley_input_cached_price_per_1k_tokens),
+        cost: fmtM(model.peak_input_cached_cost_per_1k_tokens) + '/' + fmtM(model.valley_input_cached_cost_per_1k_tokens),
+      }
+    }
+    return { lines, cached }
+  }
+  // 普通模式
+  const sell = fmtM(model.input_price_per_1k_tokens) + '/' + fmtM(model.output_price_per_1k_tokens)
+  const cost = fmtM(model.input_cost_per_1k_tokens) + '/' + fmtM(model.output_cost_per_1k_tokens)
+  if (num(model.input_price_per_1k_tokens) || num(model.output_price_per_1k_tokens) || num(model.input_cost_per_1k_tokens) || num(model.output_cost_per_1k_tokens)) {
+    lines.push({ label: '常规', sell, cost, tone: 'flat' })
+  }
+  if (cacheOn) {
+    cached = { sell: fmtM(model.input_cached_price_per_1k_tokens), cost: fmtM(model.input_cached_cost_per_1k_tokens) }
+  }
+  return { lines, cached }
+}
+// 毛利（元/1k → 算力/M 已换算）：列表毛利标签直接用 marginOf
 const peakValleySummaryOf = (model: ModelRecord): { peak: string; valley: string } | null => {
+  const { lines } = pricingBlockOf(model)
   if (!toBool(model.peak_valley_enabled)) return null
-  const peak = [
-    perKToPerM(model.peak_input_price_per_1k_tokens),
-    perKToPerM(model.peak_output_price_per_1k_tokens),
-  ].join('/')
-  const valley = [
-    perKToPerM(model.valley_input_price_per_1k_tokens),
-    perKToPerM(model.valley_output_price_per_1k_tokens),
-  ].join('/')
-  if (peak === '0/0' && valley === '0/0') return null
+  const peak = lines.find((l) => l.tone === 'peak')?.sell || ''
+  const valley = lines.find((l) => l.tone === 'valley')?.sell || ''
+  if (!peak && !valley) return null
   return { peak, valley }
 }
 // 当前模型类型是否需要上下文长度配置
@@ -1086,33 +1116,46 @@ onMounted(() => {
                   </td>
                   <td class="p-3">{{ getTierLabel(model.tier) }}</td>
                   <td class="p-3">
-                    <div class="flex flex-col gap-0.5 text-xs">
-                      <template v-if="peakValleySummaryOf(model)">
-                        <span class="flex items-center gap-1">
-                          <a-tag size="small" color="purple">{{ t('admin.models.pricingMode.tag.peak') }}</a-tag>
-                          <code class="font-mono text-purple-700">{{ peakValleySummaryOf(model)?.peak }}</code>
-                        </span>
-                        <span class="flex items-center gap-1">
-                          <a-tag size="small" color="gray">{{ t('admin.models.pricingMode.tag.valley') }}</a-tag>
-                          <code class="font-mono text-gray-500">{{ peakValleySummaryOf(model)?.valley }}</code>
-                        </span>
-                        <span class="flex items-center gap-1">
-                          <a-tag v-if="toBool(model.cache_pricing_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.cache') }}</a-tag>
-                          <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
-                        </span>
+                    <div class="flex flex-col gap-1 text-xs">
+                      <template v-if="pricingBlockOf(model).lines.length || pricingBlockOf(model).cached">
+                        <div
+                          v-for="line in pricingBlockOf(model).lines"
+                          :key="line.label"
+                          class="flex flex-wrap items-center gap-1.5"
+                        >
+                          <a-tag
+                            size="small"
+                            :color="line.tone === 'peak' ? 'purple' : line.tone === 'valley' ? 'gray' : 'arcoblue'"
+                          >{{ line.label }}</a-tag>
+                          <span class="flex items-center gap-0.5">
+                            <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
+                            <code class="font-mono text-gray-700">{{ line.sell }}</code>
+                          </span>
+                          <span class="flex items-center gap-0.5">
+                            <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
+                            <code class="font-mono text-amber-600">{{ line.cost }}</code>
+                          </span>
+                        </div>
+                        <div v-if="pricingBlockOf(model).cached" class="flex flex-wrap items-center gap-1.5">
+                          <a-tag size="small" color="cyan">{{ t('admin.models.columns.cacheHit') }}</a-tag>
+                          <span class="flex items-center gap-0.5">
+                            <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
+                            <code class="font-mono text-gray-700">{{ pricingBlockOf(model).cached!.sell }}</code>
+                          </span>
+                          <span class="flex items-center gap-0.5">
+                            <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
+                            <code class="font-mono text-amber-600">{{ pricingBlockOf(model).cached!.cost }}</code>
+                          </span>
+                        </div>
+                        <div class="text-[10px] text-gray-400">{{ t('admin.models.columns.priceUnitHint') }}</div>
                       </template>
-                      <template v-else>
-                        <span class="text-gray-400">{{ t('admin.models.columns.sellLabel') }}</span>
-                        <code class="font-mono text-gray-700">{{ perKToPerM(model.input_price_per_1k_tokens) }} / {{ perKToPerM(model.output_price_per_1k_tokens) }}</code>
-                        <a-tag v-if="toBool(model.peak_valley_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.peakValley') }}</a-tag>
-                        <a-tag v-if="toBool(model.cache_pricing_enabled)" size="small" color="purple">{{ t('admin.models.pricingMode.tag.cache') }}</a-tag>
-                      </template>
-                      <span class="text-gray-400">{{ t('admin.models.columns.costLabel') }}</span>
-                      <code class="font-mono text-amber-600">{{ perKToPerM(model.input_cost_per_1k_tokens) }} / {{ perKToPerM(model.output_cost_per_1k_tokens) }}</code>
+                      <span v-else class="text-gray-400">-</span>
                     </div>
                   </td>
                   <td class="p-3 text-right">
-                    <a-tag :color="marginOf(model) >= 0 ? 'green' : 'red'">{{ marginOf(model) >= 0 ? '+' : '' }}{{ marginOf(model).toFixed(1) }}</a-tag>
+                    <a-tooltip :content="t('admin.models.columns.marginHint')" position="left">
+                      <a-tag :color="marginOf(model) >= 0 ? 'green' : 'red'">{{ marginOf(model) >= 0 ? '+' : '' }}{{ marginOf(model).toFixed(0) }}</a-tag>
+                    </a-tooltip>
                   </td>
                   <td class="p-3">
                     <a-tag v-for="cap in model.capabilities" :key="cap" size="small" color="arcoblue">{{ cap }}</a-tag>
@@ -1283,7 +1326,7 @@ onMounted(() => {
         <a-form-item :label="t('admin.models.columns.capabilities')" field="capabilities">
           <a-input-tag v-model="modelForm.capabilities" :placeholder="t('admin.models.modelModal.placeholders.capabilities')" allow-clear />
         </a-form-item>
-        <div class="form-group">
+        <div v-if="!modelForm.peak_valley_enabled" class="form-group">
           <h4 class="form-group-title">{{ t('admin.models.groups.sellPrice') }}</h4>
           <p class="form-group-desc">{{ t('admin.models.groups.sellPriceDesc') }}</p>
           <div class="grid gap-4 md:grid-cols-2">
@@ -1295,7 +1338,7 @@ onMounted(() => {
             </a-form-item>
           </div>
         </div>
-        <div class="form-group">
+        <div v-if="!modelForm.peak_valley_enabled" class="form-group">
           <h4 class="form-group-title">{{ t('admin.models.groups.costBase') }}</h4>
           <p class="form-group-desc">{{ t('admin.models.groups.costBaseDesc') }}</p>
           <div class="grid gap-4 md:grid-cols-2">
@@ -1307,6 +1350,9 @@ onMounted(() => {
             </a-form-item>
           </div>
         </div>
+        <a-alert v-if="modelForm.peak_valley_enabled" type="info" show-icon class="mb-2">
+          {{ t('admin.models.groups.peakValleyInlineHint') }}
+        </a-alert>
         <a-alert v-if="marginPreview !== null" :type="marginPreview >= 0 ? 'success' : 'warning'" show-icon>
           <a-tooltip :content="t('admin.models.groups.marginTooltip')">
             <span>{{ t('admin.models.groups.marginPreview', { margin: formatSigned(marginPreview), percent: formatSigned(marginPercent) }) }}</span>
@@ -1437,7 +1483,7 @@ onMounted(() => {
 
           <a-button type="outline" :loading="pricingPreviewLoading" @click="openPricingSuggest">{{ t('admin.models.pricingMode.applySuggest') }}</a-button>
         </div>
-        <div class="form-group">
+        <div v-if="!modelForm.peak_valley_enabled" class="form-group">
           <h4 class="form-group-title">{{ t('admin.models.groups.fallback') }}</h4>
           <p class="form-group-desc">{{ t('admin.models.groups.fallbackDesc') }}</p>
           <a-alert v-if="splitSellPriceActive" type="info" show-icon class="mb-2">{{ t('admin.models.groups.fallbackInactiveAlert') }}</a-alert>

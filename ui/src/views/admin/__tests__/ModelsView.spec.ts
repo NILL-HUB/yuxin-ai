@@ -666,5 +666,10 @@ describe('ModelsView', () => {
     // marginPreview 峰谷感知：不再因 flat 列为 0 而显示空白。
     // 峰档 /M：sell(1200*3+4800)/1000=8.4 算力/1k；cost 折算算力=(500*3+2000)/1000*100=350 → margin≈-341.6
     expect(wrapper.text()).toContain('参考毛利：-342 算力（-98%）')
+
+    // 峰谷模型下顶部 flat 售价/成本 group 隐藏（不再出现误导性空框），并展示谷峰提示
+    const flatPriceInputs = wrapper.findAll('input[name="input_price_per_1k_tokens"]')
+    expect(flatPriceInputs.length).toBe(0)
+    expect(wrapper.text()).toContain('该模型已启用谷峰定价')
   })
 })

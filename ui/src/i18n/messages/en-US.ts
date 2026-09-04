@@ -1552,7 +1552,10 @@ export default {
         pricing: 'Sell / Cost (/M)',
         sellLabel: 'Sell',
         costLabel: 'Cost',
+        cacheHit: 'Cache hit',
+        priceUnitHint: 'Sell: credits/M · Cost: CNY/M (input/output)',
         margin: 'Ref. margin',
+        marginHint: 'Ref. margin (credits/M token, input:output=3:1 estimate; peak tier for peak/valley models)',
         maxTokens: 'Max tokens',
         maxInputTokens: 'Max input length',
         maxOutputTokens: 'Max output length',
@@ -1600,6 +1603,7 @@ export default {
         fallback: 'Fallback price (optional)',
         fallbackDesc: 'Only used when both input/output sell prices are 0, as a billing fallback; it does not apply once split sell prices are set',
         fallbackInactiveAlert: 'Input/output sell prices are set, so this fallback price is not used for billing (only dimensions missing a sell price fall back to it)',
+        peakValleyInlineHint: 'This model uses peak/valley pricing: set sell price and cost per peak/valley tier below (sell: credits/M, cost: CNY/M).',
       },
       pricingMode: {
         title: 'Pricing Mode',

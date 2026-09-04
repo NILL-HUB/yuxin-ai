@@ -1554,7 +1554,10 @@ export default {
         pricing: '售价 / 成本（/M）',
         sellLabel: '售价',
         costLabel: '成本',
+        cacheHit: '缓存命中',
+        priceUnitHint: '售价:算力/M · 成本:元/M（输入/输出）',
         margin: '参考毛利',
+        marginHint: '参考毛利（算力/M token，按输入:输出=3:1 估算；峰谷模型按峰档计）',
         maxTokens: '最大Tokens',
         maxInputTokens: '最大输入长度',
         maxOutputTokens: '最大输出长度',
@@ -1602,6 +1605,7 @@ export default {
         fallback: '兜底单价（可选）',
         fallbackDesc: '仅当「输入/输出售价」均为 0 时生效，作为计费兜底；已设置拆分售价时此值不参与计费',
         fallbackInactiveAlert: '已设置输入/输出售价，此兜底单价不参与计费（售价缺失的维度才会回退到它）',
+        peakValleyInlineHint: '该模型已启用谷峰定价：售价与成本按下方「峰档/谷档」分别设置（单位：售价 算力/M，成本 元/M）。',
       },
       pricingMode: {
         title: '定价模式',
