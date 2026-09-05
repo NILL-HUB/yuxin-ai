@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useAccountStore } from '@/stores/account'
@@ -101,6 +101,19 @@ const historyFilters = ref({
   search: '',
   current_page: 1,
   page_size: 5,
+})
+
+// 移动端响应式：<=768px 时弹窗占满屏宽，左侧 Tab 栏改为顶部横向滚动
+const isMobile = ref(false)
+const updateIsMobile = () => {
+  isMobile.value = window.innerWidth <= 768
+}
+onMounted(() => {
+  updateIsMobile()
+  window.addEventListener('resize', updateIsMobile)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateIsMobile)
 })
 
 const normalizeTab = (tab?: string): SettingsTabKey => {
@@ -676,20 +689,20 @@ onBeforeUnmount(() => {
     :title="t('settings.title')"
     title-align="start"
     :footer="false"
-    :width="980"
+    :width="isMobile ? '100%' : 980"
     modal-class="settings-modal"
     @cancel="handleCancel"
   >
-    <div class="flex h-[680px] max-h-[calc(100vh-160px)] overflow-hidden">
-      <div class="w-[220px] h-full flex-shrink-0 border-r border-gray-100 pr-5">
-        <div class="flex flex-col gap-2">
+    <div class="flex flex-col md:flex-row h-[680px] max-h-[calc(100vh-160px)] overflow-hidden">
+      <div class="w-full md:w-[220px] h-auto md:h-full md:shrink-0 border-r-0 md:border-r border-border-c pr-0 md:pr-5 mb-3 md:mb-0">
+        <div class="flex md:flex-col gap-2 overflow-x-auto md:overflow-x-visible">
           <button
             type="button"
             :class="[
-              'text-left rounded-lg px-4 h-10 transition-colors',
+              'text-left rounded-lg px-4 h-10 transition-colors whitespace-nowrap shrink-0',
               selectedTab === 'profile'
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100',
+                ? 'bg-brand-soft text-brand-text'
+                : 'text-text-2 hover:bg-surface-2',
             ]"
             @click="selectedTab = 'profile'"
           >
@@ -698,10 +711,10 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :class="[
-              'text-left rounded-lg px-4 h-10 transition-colors',
+              'text-left rounded-lg px-4 h-10 transition-colors whitespace-nowrap shrink-0',
               selectedTab === 'security'
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100',
+                ? 'bg-brand-soft text-brand-text'
+                : 'text-text-2 hover:bg-surface-2',
             ]"
             @click="selectedTab = 'security'"
           >
@@ -710,10 +723,10 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :class="[
-              'text-left rounded-lg px-4 h-10 transition-colors',
+              'text-left rounded-lg px-4 h-10 transition-colors whitespace-nowrap shrink-0',
               selectedTab === 'bindings'
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100',
+                ? 'bg-brand-soft text-brand-text'
+                : 'text-text-2 hover:bg-surface-2',
             ]"
             @click="selectedTab = 'bindings'"
           >
@@ -722,10 +735,10 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :class="[
-              'text-left rounded-lg px-4 h-10 transition-colors',
+              'text-left rounded-lg px-4 h-10 transition-colors whitespace-nowrap shrink-0',
               selectedTab === 'devices'
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100',
+                ? 'bg-brand-soft text-brand-text'
+                : 'text-text-2 hover:bg-surface-2',
             ]"
             @click="selectedTab = 'devices'"
           >
@@ -734,10 +747,10 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :class="[
-              'text-left rounded-lg px-4 h-10 transition-colors',
+              'text-left rounded-lg px-4 h-10 transition-colors whitespace-nowrap shrink-0',
               selectedTab === 'language'
-                ? 'bg-blue-50 text-blue-700'
-                : 'text-gray-700 hover:bg-gray-100',
+                ? 'bg-brand-soft text-brand-text'
+                : 'text-text-2 hover:bg-surface-2',
             ]"
             @click="selectedTab = 'language'"
           >
@@ -746,10 +759,10 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="settings-modal-content flex-1 h-full overflow-y-auto px-8">
+      <div class="settings-modal-content flex-1 h-full overflow-y-auto px-4 md:px-8">
         <template v-if="selectedTab === 'profile'">
-          <div class="text-xl font-bold text-gray-900 mb-2">{{ $t('settings.profile.title') }}</div>
-          <div class="text-sm text-gray-500 mb-6">{{ $t('settings.profile.description') }}</div>
+          <div class="text-xl font-bold text-text mb-2">{{ $t('settings.profile.title') }}</div>
+          <div class="text-sm text-muted mb-6">{{ $t('settings.profile.description') }}</div>
 
           <a-form :model="{}" layout="vertical">
             <a-form-item field="avatar">
@@ -800,7 +813,7 @@ onBeforeUnmount(() => {
               </div>
               <div v-else class="flex items-center gap-1">
                 <div>{{ accountStore.account.name }}</div>
-                <a-button size="mini" type="text" class="!text-gray-700" @click="updateName = true">
+                <a-button size="mini" type="text" class="!text-text-2" @click="updateName = true">
                   <template #icon>
                     <icon-edit />
                   </template>
@@ -812,13 +825,13 @@ onBeforeUnmount(() => {
               <div class="w-full flex flex-col gap-3">
                 <div v-if="!updateEmailMode" class="flex items-center gap-2">
                   <a-input readonly v-model="accountForm.email" />
-                  <a-button class="rounded-lg flex-shrink-0" @click="handleStartUpdateEmail">
+                  <a-button class="rounded-lg shrink-0" @click="handleStartUpdateEmail">
                     {{ $t('settings.profile.changeEmail') }}
                   </a-button>
                 </div>
                 <div
                   v-else
-                  class="rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-4 flex flex-col gap-3"
+                  class="rounded-xl border border-brand-soft bg-brand-soft/50 px-4 py-4 flex flex-col gap-3"
                 >
                   <a-input
                     v-model="emailForm.email"
@@ -835,7 +848,7 @@ onBeforeUnmount(() => {
                       :placeholder="t('settings.profile.codePlaceholder')"
                     />
                     <a-button
-                      class="rounded-lg flex-shrink-0"
+                      class="rounded-lg shrink-0"
                       :loading="sendEmailCodeLoading"
                       :disabled="emailCodeCountdown > 0"
                       @click="handleSendEmailCode"
@@ -856,7 +869,7 @@ onBeforeUnmount(() => {
                       {{ $t('settings.profile.confirmChangeEmail') }}
                     </a-button>
                   </div>
-                  <div class="text-xs text-gray-500">
+                  <div class="text-xs text-muted">
                     {{
                       needsPasswordSetup
                         ? $t('settings.profile.emailHintWithoutPassword')
@@ -869,14 +882,14 @@ onBeforeUnmount(() => {
           </a-form>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-            <div class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
-              <div class="text-sm text-gray-500 mb-1">{{ $t('settings.profile.accountId') }}</div>
+            <div class="rounded-xl border border-border-c bg-surface-2 px-4 py-4">
+              <div class="text-sm text-muted mb-1">{{ $t('settings.profile.accountId') }}</div>
               <div class="flex items-center gap-2">
-                <div class="text-sm text-gray-900 break-all">{{ accountStore.account.id }}</div>
+                <div class="text-sm text-text break-all">{{ accountStore.account.id }}</div>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-gray-700"
+                  class="!text-text-2"
                   @click="handleCopyAccountId"
                 >
                   <template #icon>
@@ -886,11 +899,11 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
-              <div class="text-sm text-gray-500 mb-1">
+            <div class="rounded-xl border border-border-c bg-surface-2 px-4 py-4">
+              <div class="text-sm text-muted mb-1">
                 {{ $t('settings.profile.registeredAt') }}
               </div>
-              <div class="text-sm text-gray-900">
+              <div class="text-sm text-text">
                 {{
                   formatTimestampLong(accountStore.account.created_at) ||
                   $t('common.status.noRecord')
@@ -898,9 +911,9 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
-              <div class="text-sm text-gray-500 mb-1">{{ $t('settings.profile.lastLoginAt') }}</div>
-              <div class="text-sm text-gray-900">
+            <div class="rounded-xl border border-border-c bg-surface-2 px-4 py-4">
+              <div class="text-sm text-muted mb-1">{{ $t('settings.profile.lastLoginAt') }}</div>
+              <div class="text-sm text-text">
                 {{
                   formatTimestampLong(accountStore.account.last_login_at) ||
                   $t('common.status.noRecord')
@@ -908,9 +921,9 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4">
-              <div class="text-sm text-gray-500 mb-1">{{ $t('settings.profile.lastLoginIp') }}</div>
-              <div class="text-sm text-gray-900">
+            <div class="rounded-xl border border-border-c bg-surface-2 px-4 py-4">
+              <div class="text-sm text-muted mb-1">{{ $t('settings.profile.lastLoginIp') }}</div>
+              <div class="text-sm text-text">
                 {{
                   formatIpLocation(
                     accountStore.account.last_login_ip,
@@ -924,23 +937,23 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="selectedTab === 'security'">
-          <div class="text-xl font-bold text-gray-900 mb-2">
+          <div class="text-xl font-bold text-text mb-2">
             {{ $t('settings.security.title') }}
           </div>
-          <div class="text-sm text-gray-500 mb-6">{{ $t('settings.security.description') }}</div>
+          <div class="text-sm text-muted mb-6">{{ $t('settings.security.description') }}</div>
 
-          <div class="rounded-xl border border-gray-100 bg-gray-50 px-4 py-4 mb-5">
-            <div class="text-sm text-gray-500 mb-1">
+          <div class="rounded-xl border border-border-c bg-surface-2 px-4 py-4 mb-5">
+            <div class="text-sm text-muted mb-1">
               {{ $t('settings.security.passwordStatus') }}
             </div>
-            <div class="text-sm text-gray-900">
+            <div class="text-sm text-text">
               {{
                 needsPasswordSetup
                   ? $t('settings.security.passwordUnset')
                   : $t('settings.security.passwordSet')
               }}
             </div>
-            <div class="text-xs text-gray-500 mt-2">
+            <div class="text-xs text-muted mt-2">
               {{
                 needsPasswordSetup
                   ? $t('settings.security.passwordAdviceWithout')
@@ -999,14 +1012,14 @@ onBeforeUnmount(() => {
             </a-button>
           </div>
 
-          <div class="mt-8 rounded-xl border border-gray-100 bg-white px-4 py-4">
-            <div class="flex items-center justify-between gap-4">
+          <div class="mt-8 rounded-xl border border-border-c bg-surface px-4 py-4">
+            <div class="flex items-center justify-between gap-4 flex-wrap">
               <div>
-                <div class="text-base font-semibold text-gray-900">
+                <div class="text-base font-semibold text-text">
                   {{ $t('settings.security.emailStatus') }}
                 </div>
-                <div class="flex items-center gap-2 mt-1">
-                  <div class="text-sm text-gray-500">{{ accountStore.account.email }}</div>
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                  <div class="text-sm text-muted">{{ accountStore.account.email }}</div>
                   <a-tag :color="accountStore.account.email_verified ? 'green' : 'orange'">
                     {{
                       accountStore.account.email_verified
@@ -1019,7 +1032,7 @@ onBeforeUnmount(() => {
               <a-button
                 v-if="!accountStore.account.email_verified && !verifyEmailMode"
                 type="primary"
-                class="rounded-lg flex-shrink-0"
+                class="rounded-lg shrink-0"
                 @click="handleStartVerifyEmail"
               >
                 {{ $t('settings.security.verifyEmail') }}
@@ -1028,7 +1041,7 @@ onBeforeUnmount(() => {
 
             <div
               v-if="verifyEmailMode"
-              class="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-4 flex flex-col gap-3"
+              class="mt-4 rounded-xl border border-brand-soft bg-brand-soft/50 px-4 py-4 flex flex-col gap-3"
             >
               <div class="flex items-center gap-2">
                 <a-input
@@ -1036,7 +1049,7 @@ onBeforeUnmount(() => {
                   :placeholder="t('settings.security.verifyEmailCodePlaceholder')"
                 />
                 <a-button
-                  class="rounded-lg flex-shrink-0"
+                  class="rounded-lg shrink-0"
                   :loading="sendVerifyEmailCodeLoading"
                   :disabled="emailCodeCountdown > 0"
                   @click="handleSendVerifyEmailCode"
@@ -1060,14 +1073,14 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="mt-5 rounded-xl border border-gray-100 bg-white px-4 py-4">
-            <div class="flex items-center justify-between gap-4">
+          <div class="mt-5 rounded-xl border border-border-c bg-surface px-4 py-4">
+            <div class="flex items-center justify-between gap-4 flex-wrap">
               <div>
-                <div class="text-base font-semibold text-gray-900">
+                <div class="text-base font-semibold text-text">
                   {{ $t('settings.security.phoneStatus') }}
                 </div>
-                <div class="flex items-center gap-2 mt-1">
-                  <div class="text-sm text-gray-500">
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                  <div class="text-sm text-muted">
                     {{
                       accountStore.account.phone_verified
                         ? accountStore.account.phone
@@ -1082,11 +1095,11 @@ onBeforeUnmount(() => {
                     }}
                   </a-tag>
                 </div>
-                <div class="text-xs text-gray-500 mt-2">
+                <div class="text-xs text-muted mt-2">
                   {{ $t('settings.security.phoneHint') }}
                 </div>
               </div>
-              <div class="flex items-center gap-2 flex-shrink-0">
+              <div class="flex items-center gap-2 shrink-0">
                 <a-button
                   v-if="!accountStore.account.phone_verified && !phoneBindMode"
                   type="primary"
@@ -1114,7 +1127,7 @@ onBeforeUnmount(() => {
 
             <div
               v-if="phoneBindMode || phoneUnbindMode"
-              class="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 px-4 py-4 flex flex-col gap-3"
+              class="mt-4 rounded-xl border border-brand-soft bg-brand-soft/50 px-4 py-4 flex flex-col gap-3"
             >
               <a-input
                 v-if="phoneBindMode"
@@ -1127,7 +1140,7 @@ onBeforeUnmount(() => {
                   :placeholder="t('settings.security.verifyEmailCodePlaceholder')"
                 />
                 <a-button
-                  class="rounded-lg flex-shrink-0"
+                  class="rounded-lg shrink-0"
                   :loading="sendBindPhoneCodeLoading"
                   :disabled="emailCodeCountdown > 0"
                   @click="handleSendBindPhoneCode"
@@ -1157,23 +1170,23 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="selectedTab === 'bindings'">
-          <div class="text-xl font-bold text-gray-900 mb-2">
+          <div class="text-xl font-bold text-text mb-2">
             {{ $t('settings.bindings.title') }}
           </div>
-          <div class="text-sm text-gray-500 mb-6">{{ $t('settings.bindings.description') }}</div>
+          <div class="text-sm text-muted mb-6">{{ $t('settings.bindings.description') }}</div>
 
           <div class="flex flex-col gap-4">
             <div
               v-for="binding in oauthBindings"
               :key="binding.provider"
-              class="rounded-xl border border-gray-100 bg-white px-4 py-4"
+              class="rounded-xl border border-border-c bg-surface px-4 py-4"
             >
-              <div class="flex items-center justify-between gap-4">
+              <div class="flex items-center justify-between gap-4 flex-wrap">
                 <div>
-                  <div class="text-base font-semibold text-gray-900">
+                  <div class="text-base font-semibold text-text">
                     {{ providerLabels[binding.provider] || binding.provider }}
                   </div>
-                  <div class="text-sm text-gray-500 mt-1">
+                  <div class="text-sm text-muted mt-1">
                     {{
                       binding.bound
                         ? $t('settings.bindings.boundAt', {
@@ -1225,10 +1238,10 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="selectedTab === 'language'">
-          <div class="text-xl font-bold text-gray-900 mb-2">
+          <div class="text-xl font-bold text-text mb-2">
             {{ $t('settings.language.title') }}
           </div>
-          <div class="text-sm text-gray-500 mb-6">
+          <div class="text-sm text-muted mb-6">
             {{ $t('settings.language.description') }}
           </div>
 
@@ -1240,8 +1253,8 @@ onBeforeUnmount(() => {
               class="rounded-xl border px-4 py-4 text-left transition-colors"
               :class="
                 currentLocale === option.value
-                  ? 'border-blue-200 bg-blue-50 text-blue-900'
-                  : 'border-gray-200 bg-white text-gray-900 hover:border-gray-300 hover:bg-gray-50'
+                  ? 'border-brand-soft bg-brand-soft text-brand-text'
+                  : 'border-border-c bg-surface text-text hover:border-border-strong hover:bg-surface-2'
               "
               @click="handleLocaleChange(option.value)"
             >
@@ -1255,7 +1268,7 @@ onBeforeUnmount(() => {
                         {{ $t('settings.language.defaultTag') }}
                       </a-tag>
                     </div>
-                    <div class="text-xs text-gray-500">{{ option.code }}</div>
+                    <div class="text-xs text-muted">{{ option.code }}</div>
                   </div>
                 </div>
               </div>
@@ -1264,12 +1277,12 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else>
-          <div class="flex items-start justify-between gap-4 mb-6">
+          <div class="flex items-start justify-between gap-4 mb-6 flex-wrap">
             <div>
-              <div class="text-xl font-bold text-gray-900 mb-2">
+              <div class="text-xl font-bold text-text mb-2">
                 {{ $t('settings.devices.title') }}
               </div>
-              <div class="text-sm text-gray-500">{{ $t('settings.devices.description') }}</div>
+              <div class="text-sm text-muted">{{ $t('settings.devices.description') }}</div>
             </div>
             <div class="flex items-center gap-2">
               <a-button
@@ -1301,7 +1314,7 @@ onBeforeUnmount(() => {
 
           <div
             v-if="currentLegacySession"
-            class="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900 mb-5"
+            class="rounded-xl border border-brand-soft bg-brand-soft px-4 py-3 text-sm text-brand-text mb-5"
           >
             {{ $t('settings.devices.currentLegacyWarning') }}
           </div>
@@ -1326,13 +1339,13 @@ onBeforeUnmount(() => {
             }}
           </div>
 
-          <div class="text-base font-semibold text-gray-900 mb-3">
+          <div class="text-base font-semibold text-text mb-3">
             {{ $t('settings.devices.onlineDevices') }}
           </div>
 
           <div
             v-if="!accountSessions.length"
-            class="rounded-xl border border-dashed border-gray-200 px-6 py-10 text-center text-sm text-gray-500"
+            class="rounded-xl border border-dashed border-border-c px-6 py-10 text-center text-sm text-muted"
           >
             {{ devicePanelError || $t('settings.devices.noManageableDevices') }}
           </div>
@@ -1341,12 +1354,12 @@ onBeforeUnmount(() => {
             <div
               v-for="session in accountSessions"
               :key="session.id"
-              class="rounded-xl border border-gray-100 bg-white px-4 py-4"
+              class="rounded-xl border border-border-c bg-surface px-4 py-4"
             >
-              <div class="flex items-start justify-between gap-4">
+              <div class="flex items-start justify-between gap-4 flex-wrap">
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <div class="text-base font-semibold text-gray-900">
+                    <div class="text-base font-semibold text-text">
                       {{ session.device_name || $t('common.status.unknownDevice') }}
                     </div>
                     <a-tag :color="session.current ? 'arcoblue' : 'gray'">
@@ -1360,10 +1373,10 @@ onBeforeUnmount(() => {
                       $t('common.status.legacy')
                     }}</a-tag>
                   </div>
-                  <div class="text-sm text-gray-500 mt-1">
+                  <div class="text-sm text-muted mt-1">
                     {{ formatIpLocation(session.ip, session.location) }}
                   </div>
-                  <div class="text-xs text-gray-500 mt-2 break-all">
+                  <div class="text-xs text-muted mt-2 break-all">
                     {{ session.user_agent || $t('common.status.unknown') }}
                   </div>
                 </div>
@@ -1371,7 +1384,7 @@ onBeforeUnmount(() => {
                 <a-button
                   v-if="!session.current"
                   status="danger"
-                  class="rounded-lg flex-shrink-0"
+                  class="rounded-lg shrink-0"
                   :loading="revokingSessionId === session.id"
                   @click="handleRevokeSessionItem(session)"
                 >
@@ -1383,20 +1396,20 @@ onBeforeUnmount(() => {
                 <div
                   v-for="meta in buildSessionMetaItems(session, t)"
                   :key="meta.label"
-                  class="rounded-lg bg-gray-50 px-3 py-3"
+                  class="rounded-lg bg-surface-2 px-3 py-3"
                 >
-                  <div class="text-xs text-gray-500 mb-1">{{ meta.label }}</div>
-                  <div class="text-sm text-gray-900">{{ meta.value }}</div>
+                  <div class="text-xs text-muted mb-1">{{ meta.label }}</div>
+                  <div class="text-sm text-text">{{ meta.value }}</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="text-base font-semibold text-gray-900 mt-8 mb-3">
+          <div class="text-base font-semibold text-text mt-8 mb-3">
             {{ $t('settings.devices.recentLoginHistory') }}
           </div>
 
-          <div class="flex flex-col md:flex-row gap-3 mb-4">
+          <div class="flex flex-col md:flex-row gap-3 mb-4 flex-wrap">
             <a-input-search
               v-model="historyFilters.search"
               allow-clear
@@ -1414,7 +1427,7 @@ onBeforeUnmount(() => {
 
           <div
             v-if="!loginHistory.length"
-            class="rounded-xl border border-dashed border-gray-200 px-6 py-10 text-center text-sm text-gray-500"
+            class="rounded-xl border border-dashed border-border-c px-6 py-10 text-center text-sm text-muted"
           >
             {{ devicePanelError || $t('settings.devices.noLoginHistory') }}
           </div>
@@ -1423,12 +1436,12 @@ onBeforeUnmount(() => {
             <div
               v-for="history in loginHistory"
               :key="history.id"
-              class="rounded-xl border border-gray-100 bg-white px-4 py-4"
+              class="rounded-xl border border-border-c bg-surface px-4 py-4"
             >
-              <div class="flex items-start justify-between gap-4">
+              <div class="flex items-start justify-between gap-4 flex-wrap">
                 <div class="min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <div class="text-base font-semibold text-gray-900">
+                    <div class="text-base font-semibold text-text">
                       {{ history.device_name || $t('common.status.unknownDevice') }}
                     </div>
                     <a-tag v-if="history.current" color="arcoblue">
@@ -1444,15 +1457,15 @@ onBeforeUnmount(() => {
                       {{ $t('settings.devices.newIpTag') }}
                     </a-tag>
                   </div>
-                  <div class="text-sm text-gray-500 mt-1">
+                  <div class="text-sm text-muted mt-1">
                     {{ formatIpLocation(history.ip, history.location) }}
                   </div>
-                  <div class="text-xs text-gray-500 mt-2 break-all">
+                  <div class="text-xs text-muted mt-2 break-all">
                     {{ history.user_agent || $t('common.status.unknown') }}
                   </div>
                 </div>
 
-                <div class="text-right text-xs text-gray-500 flex-shrink-0">
+                <div class="text-right text-xs text-muted shrink-0">
                   <div>
                     {{
                       $t('settings.devices.loginAt', {

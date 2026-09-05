@@ -123,6 +123,7 @@ export type StreamMessage = {
 
 export type RenderableStreamMessage = StreamMessage & {
   render_id: string
+  query?: string
 }
 
 export type StreamState = {

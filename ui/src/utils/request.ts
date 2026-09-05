@@ -295,7 +295,25 @@ const baseFetch = async <T>(url: string, fetchOptions: FetchOptionType): Promise
 
   try {
     const response = await globalThis.fetch(requestUrl, requestInit)
-    const json: unknown = await response.json()
+
+    // 优先按文本读取，避免后端返回 HTML（如未注册路由/网关 502 页面）时
+    // response.json() 抛出 "Unexpected token '<'" 之类难以排查的底层错误。
+    const rawText = await response.text()
+    let json: unknown
+    try {
+      json = rawText ? JSON.parse(rawText) : null
+    } catch {
+      throw createRequestError({
+        message:
+          t('common.request.responseNotJson', {
+            status: response.status,
+            contentType: response.headers.get('Content-Type') || '',
+          }) || t('common.request.responseFormatError'),
+        status: response.status,
+        response: { body: rawText.slice(0, 500) },
+        cause: new SyntaxError(rawText.slice(0, 200)),
+      })
+    }
 
     if (!isApiResponse(json)) {
       throw createRequestError({

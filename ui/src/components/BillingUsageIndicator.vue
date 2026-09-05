@@ -17,14 +17,14 @@ const totalCredits = computed(() => displayEvent.value?.total_credits ?? 0)
 </script>
 
 <template>
-  <div class="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">
+  <div class="inline-flex items-center gap-2 rounded-full bg-surface-2 px-3 py-1 text-xs text-text">
     <span v-if="isCancelled" class="text-orange-600">
       {{ t('billing.usage.cancelled') }}
     </span>
     <span v-else-if="finalEvent">{{ t('billing.realtime.final') }}</span>
     <span v-else-if="summaryEvent">中间汇总</span>
     <span v-else>{{ t('billing.usage.occurred') }}</span>
-    <span class="font-semibold text-gray-900">{{ totalCredits }}</span>
+    <span class="font-semibold text-text">{{ totalCredits }}</span>
     <span>{{ t('billing.usage.unit') }}</span>
   </div>
 </template>

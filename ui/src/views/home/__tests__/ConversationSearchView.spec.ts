@@ -3,315 +3,237 @@ import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ConversationSearchView from '../ConversationSearchView.vue'
-import * as conversationHooks from '@/hooks/use-conversation'
 import * as conversationSearchService from '@/services/conversation-search'
+import * as conversationHooks from '@/hooks/use-conversation'
 
 const routerPush = vi.fn()
 
+vi.mock('vue-router', () => ({
+  useRouter: () => ({
+    push: routerPush,
+  }),
+}))
+
 vi.mock('@/services/conversation-search', () => ({
- searchConversations: vi.fn(),
- deleteConversation: vi.fn(),
+  searchConversations: vi.fn(),
 }))
 
 vi.mock('@/hooks/use-conversation', () => ({
- useGetRecentConversations: vi.fn(),
- useDeleteConversation: vi.fn(),
-}))
-
-vi.mock('@/components/AiDynamicBackground.vue', () => ({
- default: { name: 'AiDynamicBackground', template: '<div />' },
+  useGetRecentConversations: vi.fn(),
+  useDeleteConversation: vi.fn(),
+  useUpdateConversationName: vi.fn(),
 }))
 
 vi.mock('@/views/layouts/components/UpdateConversationNameModal.vue', () => ({
- default: { name: 'UpdateConversationNameModal', template: '<div />' },
+  default: { name: 'UpdateConversationNameModal', template: '<div data-testid="rename-modal" />' },
 }))
 
-vi.mock('vue-router', () => ({
- useRouter: () => ({
- push: routerPush,
- }),
+vi.mock('@/components/recycle-bin/UserRecycleBinDeleteModal.vue', () => ({
+  default: {
+    name: 'UserRecycleBinDeleteModal',
+    props: ['visible', 'title', 'resourceName', 'loading', 'hint'],
+    emits: ['update:visible', 'confirm'],
+    template:
+      '<div data-testid="delete-modal" :data-visible="visible"><button data-testid="delete-confirm" @click="$emit(\'confirm\', 30)" /></div>',
+  },
 }))
 
-const dropdownStub = {
- props: ['popupVisible'],
- template: '<div><slot /> <div v-if="popupVisible"><slot name="content" /></div></div>',
-}
-
-const buttonStub = {
- emits: ['click'],
- template: '<button type="button" @click.stop="$emit(\'click\', $event)"><slot /><slot name="icon" /></button>',
-}
-
-const optionStub = {
- emits: ['click'],
- template: '<button type="button" @click.stop="$emit(\'click\', $event)"><slot /><slot name="icon" /></button>',
-}
+const iconStubs = Object.fromEntries(
+  ['search', 'history', 'message', 'right', 'schedule', 'edit', 'delete'].map(name => [
+    `icon-${name}`,
+    { template: '<span class="icon-stub" />' },
+  ]),
+)
 
 const buildConversation = (overrides: Record<string, unknown> = {}) => ({
- id: 'conversation-1',
- name: '最近对话',
- app_name: '助手应用',
- agent_name: '',
- human_message: '你好，帮我写个测试',
- ai_message: '可以，先从核心路径开始。',
- matched_fields: [],
- source_type: 'assistant_agent',
- app_id: 'app-1',
- message_id: 'message-1',
- is_active: true,
- latest_message_at:1710835200,
- created_at:1710835200,
- ...overrides,
+  id: 'conversation-1',
+  name: '竞品分析',
+  source_type: 'assistant_agent',
+  invoke_from: '',
+  app_id: '',
+  app_name: '',
+  agent_name: '',
+  message_id: '',
+  is_active: true,
+  latest_message_at: 1785302400,
+  created_at: 1785302400,
+  human_message: '帮我分析竞品的定价策略',
+  ai_message: '',
+  matched_fields: ['name', 'human_message'],
+  ...overrides,
 })
 
 const mountView = () => {
- return mount(ConversationSearchView, {
- global: {
- stubs: {
- 'a-dropdown': dropdownStub,
- 'a-button': buttonStub,
- 'a-doption': optionStub,
- 'icon-more': true,
- 'icon-edit': true,
- 'icon-delete': true,
- },
- },
- })
+  return mount(ConversationSearchView, {
+    global: { stubs: iconStubs },
+  })
 }
 
-describe('ConversationSearchView', () => {
- beforeEach(() => {
- vi.clearAllMocks()
- vi.mocked(conversationHooks.useGetRecentConversations).mockReturnValue({
- loading: ref(false),
- conversations: ref([]),
- loadRecentConversations: vi.fn(),
- } as never)
- vi.mocked(conversationHooks.useDeleteConversation).mockReturnValue({
- handleDeleteConversation: vi.fn(),
- } as never)
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [],
- } as never)
- })
-
- it('renders recent conversations when the search box is empty', async () => {
- const loadRecentConversations = vi.fn()
- vi.mocked(conversationHooks.useGetRecentConversations).mockReturnValue({
- loading: ref(false),
- conversations: ref([buildConversation()]),
- loadRecentConversations,
- } as never)
-
- const wrapper = mountView()
- await flushPromises()
-
- expect(loadRecentConversations).toHaveBeenCalledWith(20)
- expect(wrapper.text()).toContain('最近对话')
- expect(wrapper.text()).toContain('助手应用')
- expect(wrapper.text()).toContain('你好，帮我写个测试')
- expect(wrapper.text()).toContain('可以，先从核心路径开始。')
- })
-
- it('searches and renders matched conversations from the API', async () => {
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'conversation-2',
- name: 'Python 编程教程',
- app_name: '搜索结果应用',
- human_message: '如何学习 Python',
- ai_message: 'Python 入门建议先写小项目',
- matched_fields: ['name', 'human_message', 'ai_message'],
- }),
- ],
- } as never)
-
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('Python')
- await flushPromises()
-
- expect(conversationSearchService.searchConversations).toHaveBeenLastCalledWith('Python',100)
- expect(wrapper.text()).toContain('Python 编程教程')
- expect(wrapper.text()).toContain('搜索结果应用')
- const cardClasses = wrapper.get('[data-testid="conversation-card"]').classes()
- expect(cardClasses).toContain('min-h-[108px]')
- expect(cardClasses).not.toContain('h-[144px]')
- })
-
- it('highlights matched keywords in title and message preview', async () => {
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'conversation-highlight',
- name: 'Python 编程教程',
- human_message: '如何学习 Python',
- ai_message: '建议先掌握 Python 基础语法',
- matched_fields: ['name', 'human_message', 'ai_message'],
- }),
- ],
- } as never)
-
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('Python')
- await flushPromises()
-
- const highlightedNodes = wrapper.findAll('.gradient-highlight')
- expect(highlightedNodes.length).toBeGreaterThan(0)
- expect(wrapper.html()).toContain('<span class="gradient-highlight">Python</span>')
- })
-
- it('still highlights keyword when match is in second line of message', async () => {
-  vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'conversation-multiline',
- name: '多行命中测试',
- human_message: '第一行没有关键词\n第二行包含 **Python** 关键词',
- ai_message: '回答第一行\n回答第二行也有 `Python`',
- matched_fields: ['human_message', 'ai_message'],
- }),
- ],
- } as never)
-
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('Python')
- await flushPromises()
-
- expect(wrapper.html()).toContain('<span class="gradient-highlight">Python</span>')
- expect(wrapper.html()).toContain('<strong>')
- expect(wrapper.html()).toContain('<code>')
- })
-
- it('explains title-only matches instead of showing unrelated message preview', async () => {
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'conversation-title-only',
- name: 'Python 编程教程',
- human_message: '这个问题没有命中词',
- ai_message: '这个回答也没有命中词',
- matched_fields: ['name'],
- }),
- ],
- } as never)
-
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('Python')
- await flushPromises()
-
-    expect(wrapper.text()).toContain('匹配来源：标题')
- expect(wrapper.text()).not.toContain('这个问题没有命中词')
- expect(wrapper.text()).not.toContain('这个回答也没有命中词')
- })
-
-  it('uses 钰心AI as the assistant match label', async () => {
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'conversation-agent-name',
- name: '智能体名称命中',
- agent_name: '钰心AI',
- human_message: '',
- ai_message: '',
- matched_fields: ['agent_name'],
- }),
- ],
- } as never)
-
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('钰心AI')
- await flushPromises()
-
-    expect(wrapper.text()).toContain('匹配来源：Agent · 钰心AI')
- expect(wrapper.text()).toContain('钰心AI')
-  })
-
-  it('truncates long conversation titles with ellipsis', async () => {
+describe('ConversationSearchView（对齐 search.html 原型 · 真实接口）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
     vi.mocked(conversationHooks.useGetRecentConversations).mockReturnValue({
       loading: ref(false),
-      conversations: ref([buildConversation({ name: '1234567890123456789012345' })]),
-      loadRecentConversations: vi.fn(),
+      conversations: ref([]),
+      loadRecentConversations: vi.fn().mockResolvedValue(undefined),
+    } as never)
+    vi.mocked(conversationHooks.useDeleteConversation).mockReturnValue({
+      deleteTarget: ref(null),
+      deleteLoading: ref(false),
+      handleDeleteConversation: vi.fn(),
+      confirmDeleteConversation: vi.fn(),
+    } as never)
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [],
+    } as never)
+    routerPush.mockClear()
+  })
+
+  it('挂载时加载最近会话并在空关键词下展示', async () => {
+    const loadRecentConversations = vi.fn().mockResolvedValue(undefined)
+    const recent = ref([buildConversation()])
+    vi.mocked(conversationHooks.useGetRecentConversations).mockReturnValue({
+      loading: ref(false),
+      conversations: recent,
+      loadRecentConversations,
     } as never)
 
     const wrapper = mountView()
     await flushPromises()
 
-    const vm = wrapper.vm as unknown as { truncateText: (text: string, maxLength?: number) => string }
-    expect(vm.truncateText('12345678901234567890')).toBe('12345678901234567890')
-    expect(vm.truncateText('123456789012345678901')).toBe('12345678901234567890...')
+    expect(loadRecentConversations).toHaveBeenCalledWith(20)
+    expect(wrapper.text()).toContain('最近对话')
+    expect(wrapper.text()).toContain('竞品分析')
   })
 
-  it('shows menu items only after clicking the more icon', async () => {
- vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
- data: [
- buildConversation({
- id: 'conversation-menu',
- name: '菜单交互测试',
- }),
- ],
- } as never)
+  it('输入关键词后调用真实搜索接口并高亮命中', async () => {
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [buildConversation({ name: '竞品分析', matched_fields: ['name', 'human_message'] })],
+    } as never)
 
- const wrapper = mountView()
- await wrapper.get('[data-testid="conversation-search-input"]').setValue('菜单')
- await flushPromises()
+    const wrapper = mountView()
+    await flushPromises()
 
- const card = wrapper.get('[data-testid="conversation-card"]')
- await card.trigger('mouseenter')
+    await wrapper.get('[data-testid="conversation-search-input"]').setValue('竞品')
+    await vi.waitFor(() => {
+      expect(conversationSearchService.searchConversations).toHaveBeenCalled()
+    })
+    await flushPromises()
 
- expect(wrapper.text()).not.toContain('重命名')
- expect(wrapper.text()).not.toContain('删除会话')
+    expect(wrapper.text()).toContain('找到 1 个相关对话')
+    expect(wrapper.text()).toContain('竞品分析')
+    expect(wrapper.findAll('mark.search-hit').length).toBeGreaterThan(0)
+  })
 
- await card.get('button').trigger('click')
- await flushPromises()
+  it('搜索无结果时展示空状态文案', async () => {
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [],
+    } as never)
 
- expect(wrapper.text()).toContain('重命名')
- expect(wrapper.text()).toContain('删除会话')
- })
+    const wrapper = mountView()
+    await flushPromises()
 
- it('blocks debugger conversations from being opened in user space', async () => {
-  vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
-   data: [
-    buildConversation({
-     id: 'debug-1',
-     source_type: 'app_debugger',
-     app_id: 'app-42',
-     message_id: 'message-42',
-     name: '调试会话',
-    }),
-   ],
-  } as never)
+    await wrapper.get('[data-testid="conversation-search-input"]').setValue('zzz不存在')
+    await vi.waitFor(() => {
+      expect(conversationSearchService.searchConversations).toHaveBeenCalled()
+    })
+    await flushPromises()
 
-  const wrapper = mountView()
-  await wrapper.get('[data-testid="conversation-search-input"]').setValue('调试')
-  await flushPromises()
-  await wrapper.get('[data-testid="conversation-card"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="conversation-card"]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('没有找到相关对话')
+  })
 
-  expect(routerPush).not.toHaveBeenCalled()
- })
+  it('标题命中展示匹配来源：标题', async () => {
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [buildConversation({
+        name: '竞品监测计划',
+        human_message: '定期整理市场新闻',
+        ai_message: '',
+        matched_fields: ['name'],
+      })],
+    } as never)
 
- it('forwards wheel events from page blank area to conversation scroller', async () => {
- vi.mocked(conversationHooks.useGetRecentConversations).mockReturnValue({
- loading: ref(false),
- conversations: ref([
- buildConversation({ id: 'conversation-1' }),
- buildConversation({ id: 'conversation-2', name: '第二个会话' }),
- ]),
- loadRecentConversations: vi.fn(),
- } as never)
+    const wrapper = mountView()
+    await flushPromises()
 
- const wrapper = mountView()
- await flushPromises()
+    await wrapper.get('[data-testid="conversation-search-input"]').setValue('竞品')
+    await vi.waitFor(() => {
+      expect(conversationSearchService.searchConversations).toHaveBeenCalled()
+    })
+    await flushPromises()
 
- const page = wrapper.get('[data-testid="conversation-search-page"]')
- const scroller = wrapper.get('[data-testid="conversation-search-scroll-area"]').element as HTMLElement
+    expect(wrapper.text()).toContain('匹配来源：标题')
+  })
 
- Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value:1200 })
- Object.defineProperty(scroller, 'clientHeight', { configurable: true, value:400 })
- Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value:100 })
+  it('点击删除按钮调用删除 hook 打开确认弹窗', async () => {
+    const deleteTarget = ref<{ id: string; name: string } | null>(null)
+    const handleDeleteConversation = vi.fn((_id: string, _cb: unknown, name: string) => {
+      deleteTarget.value = { id: 'conversation-1', name }
+    })
+    vi.mocked(conversationHooks.useDeleteConversation).mockReturnValue({
+      deleteTarget,
+      deleteLoading: ref(false),
+      handleDeleteConversation,
+      confirmDeleteConversation: vi.fn(),
+    } as never)
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [buildConversation()],
+    } as never)
 
- await page.trigger('wheel', { deltaX:0, deltaY:120 })
+    const wrapper = mountView()
+    await flushPromises()
 
- expect(scroller.scrollTop).toBe(220)
- })
+    await wrapper.get('[data-testid="conversation-search-input"]').setValue('竞品')
+    await vi.waitFor(() => {
+      expect(conversationSearchService.searchConversations).toHaveBeenCalled()
+    })
+    await flushPromises()
+
+    const card = wrapper.get('[data-testid="conversation-card"]')
+    const deleteBtn = card.findAll('button').find(btn => btn.attributes('aria-label') === '删除会话')
+    expect(deleteBtn).toBeTruthy()
+    await deleteBtn!.trigger('click')
+    await flushPromises()
+
+    expect(handleDeleteConversation).toHaveBeenCalled()
+    expect(wrapper.get('[data-testid="delete-modal"]').attributes('data-visible')).toBe('true')
+  })
+
+  it('点击 assistant_agent 会话卡片跳转首页会话', async () => {
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [buildConversation({ source_type: 'assistant_agent' })],
+    } as never)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="conversation-search-input"]').setValue('竞品')
+    await vi.waitFor(() => {
+      expect(conversationSearchService.searchConversations).toHaveBeenCalled()
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="conversation-card"]').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/home', query: { conversation_id: 'conversation-1' } }),
+    )
+  })
+
+  it('定时任务会话点击不跳转', async () => {
+    vi.mocked(conversationSearchService.searchConversations).mockResolvedValue({
+      data: [buildConversation({ source_type: 'schedule', invoke_from: 'schedule' })],
+    } as never)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-testid="conversation-search-input"]').setValue('竞品')
+    await vi.waitFor(() => {
+      expect(conversationSearchService.searchConversations).toHaveBeenCalled()
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="conversation-card"]').trigger('click')
+    expect(routerPush).not.toHaveBeenCalled()
+  })
 })

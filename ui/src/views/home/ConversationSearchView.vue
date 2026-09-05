@@ -1,725 +1,677 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import { Message } from '@arco-design/web-vue'
-import { useI18n } from 'vue-i18n'
+/**
+ * 会话搜索 — 对齐画布原型 search.html 的独立翻新页。
+ *
+ * 数据源：真实接口。
+ * - 关键词搜索：/conversations/search（searchConversations）
+ * - 空关键词：最近会话 /conversations/recent（useGetRecentConversations）
+ * - 重命名：/conversations/:id/name（UpdateConversationNameModal）
+ * - 删除：/conversations/:id/delete（useDeleteConversation + 回收站留存规则）
+ *
+ * 视觉结构保留原型：粉调大圆角卡片、衬线标题、粉色关键词高亮、
+ * hover 操作、定时/应用/Agent 徽标、空态。
+ */
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import AiDynamicBackground from '@/components/AiDynamicBackground.vue'
-import { AI_SURFACE_BACKGROUND_GRADIENT } from '@/config'
-import { YUXIN_AI_NAME } from '@/config/brand'
-import { useMarkdownRenderer } from '@/hooks/use-markdown-renderer'
-import { searchConversations } from '@/services/conversation-search'
-import { useGetRecentConversations, useDeleteConversation } from '@/hooks/use-conversation'
+import { useI18n } from 'vue-i18n'
 import UpdateConversationNameModal from '@/views/layouts/components/UpdateConversationNameModal.vue'
-import type { SearchConversation, SearchMatchField } from '@/services/conversation-search'
+import UserRecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
+import { searchConversations, type SearchConversation } from '@/services/conversation-search'
+import { useGetRecentConversations, useDeleteConversation } from '@/hooks/use-conversation'
 import type { RecentConversation } from '@/models/conversation'
-import 'github-markdown-css'
-import 'highlight.js/styles/github.css'
 
-type SearchableConversation = RecentConversation | SearchConversation
+/** 模板视图对象：将接口 snake_case 项映射为模板需要的形状 */
+type ViewConversation = {
+  id: string
+  name: string
+  appName?: string
+  agentName?: string
+  isSchedule?: boolean
+  matchedFields: string[]
+  question?: string
+  answer?: string
+  updatedAt: string
+  /** 真实跳转所需原信息 */
+  sourceType?: string
+  invokeFrom?: string
+  appId?: string
+  messageId?: string
+  /** 真实接口搜索结果的原始标记 */
+  matchFields: string[]
+}
 
 const router = useRouter()
-const { t, locale } = useI18n()
-const pageRef = ref<HTMLElement | null>(null)
-const scrollAreaRef = ref<HTMLElement | null>(null)
-const { renderMarkdown } = useMarkdownRenderer()
+const { t } = useI18n()
 
-// State
 const searchQuery = ref('')
-const conversations = ref<SearchConversation[]>([])
 const loading = ref(false)
+const searchResults = ref<ViewConversation[]>([])
+const recentConversationsView = ref<ViewConversation[]>([])
+
 const updateConversationNameVisible = ref(false)
 const updateConversationNameId = ref('')
 const updateConversationName = ref('')
-const hoveredMenuId = ref<string | null>(null)
-const openMenuId = ref<string | null>(null)
 
-// 最近对话
+// 删除弹窗
+const deleteVisible = ref(false)
+const deleteName = ref('')
+const deleteLoading = ref(false)
+const pendingDelete = ref<ViewConversation | null>(null)
+
 const {
+  loading: recentLoading,
   conversations: recentConversations,
-  loadRecentConversations: loadRecentConversationsHook,
+  loadRecentConversations: loadRecent,
 } = useGetRecentConversations()
 
-const { handleDeleteConversation } = useDeleteConversation()
+const {
+  deleteTarget: hookDeleteTarget,
+  deleteLoading: hookDeleteLoading,
+  handleDeleteConversation,
+  confirmDeleteConversation,
+} = useDeleteConversation()
 
-// 关闭菜单
-const closeMenu = () => {
-  openMenuId.value = null
-}
+watch(
+  hookDeleteTarget,
+  (v) => {
+    deleteVisible.value = v !== null
+    if (v) {
+      deleteName.value = v.name
+      pendingDelete.value = {
+        id: v.id,
+        name: v.name,
+        matchedFields: [],
+        matchFields: [],
+        updatedAt: '',
+        sourceType: 'assistant_agent',
+      }
+    } else {
+      pendingDelete.value = null
+    }
+  },
+  { immediate: true },
+)
 
-const handleCardMouseEnter = (conversationId: string) => {
-  hoveredMenuId.value = conversationId
-}
-
-const handleCardMouseLeave = (conversationId: string) => {
-  if (hoveredMenuId.value === conversationId) {
-    hoveredMenuId.value = null
-  }
-}
-
-const isMenuIconVisible = (conversationId: string) => {
-  return hoveredMenuId.value === conversationId || openMenuId.value === conversationId
-}
-
-const toggleConversationMenu = (conversationId: string) => {
-  openMenuId.value = openMenuId.value === conversationId ? null : conversationId
-}
-
-// Computed
-const filteredConversations = computed(() => {
-  // 如果有搜索结果，显示搜索结果
-  if (conversations.value.length > 0) {
-    return conversations.value
-  }
-  // 如果没有搜索结果但有最近对话，显示最近对话作为卡片
-  if (searchQuery.value.trim() === '' && recentConversations.value && recentConversations.value.length > 0) {
-    return recentConversations.value as SearchConversation[]
-  }
-  return []
+watch(hookDeleteLoading, (v) => {
+  deleteLoading.value = v
 })
 
-// Methods
-const handleSearch = async () => {
-  // 如果搜索查询为空，不调用搜索
-  if (!searchQuery.value.trim()) {
-    conversations.value = []
+/** 接口会话 → 视图对象 */
+const mapToView = (item: SearchConversation | RecentConversation): ViewConversation => {
+  const sourceType = item.source_type
+  const isSchedule = sourceType === 'schedule' || item.invoke_from === 'schedule'
+  const fields: string[] = []
+  const src = item as SearchConversation
+  if (Array.isArray(src.matched_fields)) {
+    src.matched_fields.forEach((f) => {
+      fields.push(f === 'human_message' ? 'message' : f === 'app_name' ? 'app' : f === 'agent_name' ? 'agent' : f)
+    })
+  }
+  const v: ViewConversation = {
+    id: item.id,
+    name: item.name,
+    appName: item.app_name || undefined,
+    agentName: item.agent_name || undefined,
+    isSchedule,
+    matchedFields: fields,
+    matchFields: fields,
+    question: src.human_message || undefined,
+    answer: src.ai_message || undefined,
+    updatedAt: formatShortDate(item.latest_message_at ?? item.created_at),
+    sourceType,
+    invokeFrom: item.invoke_from,
+    appId: item.app_id || undefined,
+    messageId: (item as SearchConversation).message_id || undefined,
+  }
+  return v
+}
+
+/** 仅保留时间部分（yyyy-mm-dd），给卡片标题右侧/正文展示 */
+const formatShortDate = (ts: number | undefined) => {
+  if (!ts) return ''
+  const ms = ts < 10000000000 ? ts * 1000 : ts
+  const d = new Date(ms)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${mm}-${dd}`
+}
+
+const listForView = (list: RecentConversation[]) => list.map(mapToView)
+
+// 最近会话 hook 数据变化 → 视图列表
+watch(
+  () => recentConversations.value.length,
+  () => {
+    recentConversationsView.value = listForView(recentConversations.value)
+  },
+  { immediate: true },
+)
+
+const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase())
+
+/** 展示列表：有关键词时展示搜索结果；否则展示最近会话 */
+const filteredConversations = computed<ViewConversation[]>(() => {
+  const q = normalizedQuery.value
+  if (q) {
+    return searchResults.value
+  }
+  return recentConversationsView.value
+})
+
+const hasResult = computed(() => filteredConversations.value.length > 0)
+
+/** 输入防抖搜索真实接口 */
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, (q) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  const keyword = q.trim()
+  if (!keyword) {
+    searchResults.value = []
     return
   }
-
   loading.value = true
-  try {
-    const response = await searchConversations(searchQuery.value, 100)
-    conversations.value = response.data || []
-  } catch (error) {
-    console.error('Search failed:', error)
-  } finally {
-    loading.value = false
-  }
-}
+  searchTimer = setTimeout(async () => {
+    try {
+      const resp = await searchConversations(keyword, 100)
+      const data = resp.data || []
+      searchResults.value = data.map(mapToView)
+    } catch {
+      searchResults.value = []
+    } finally {
+      loading.value = false
+    }
+  }, 300)
+})
 
-// 打开编辑名称模态窗
-const openUpdateNameModal = (conversation: SearchConversation) => {
-  updateConversationNameId.value = conversation.id
-  updateConversationName.value = conversation.name
-  updateConversationNameVisible.value = true
-  openMenuId.value = null
-}
-
-// 编辑名称成功回调
-const updateConversationNameSuccess = (conversation_id: string, name: string) => {
-  const conv = conversations.value.find(c => c.id === conversation_id)
-  if (conv) {
-    conv.name = name
-  }
-}
-
-// 删除对话
-const deleteRecentConversation = (conversation: SearchConversation) => {
-  openMenuId.value = null
-  handleDeleteConversation(conversation.id, async () => {
-    conversations.value = conversations.value.filter(c => c.id !== conversation.id)
-  })
-}
-
-const formatDate = (timestamp: number) => {
-  // 如果时间戳是秒级别（小于 10000000000），转换为毫秒
-  const ms = timestamp < 10000000000 ? timestamp * 1000 : timestamp
-  const date = new Date(ms)
-  const resolvedLocale = locale.value === 'en-US' ? 'en-US' : 'zh-CN'
-  return new Intl.DateTimeFormat(resolvedLocale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
-}
-
-const escapeHtml = (text: string) => {
-  return String(text)
+// ---------- 高亮 ----------
+const escapeHtml = (text: string) =>
+  String(text || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
-}
 
-const escapeRegExp = (text: string) => {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const highlightText = (text: string) => {
-  const safeText = escapeHtml(text || '')
+  const safeText = escapeHtml(text)
   const keyword = searchQuery.value.trim()
   if (!keyword) return safeText
-
-  const safeKeyword = escapeRegExp(keyword)
-  const regex = new RegExp(`(${safeKeyword})`, 'gi')
-  return safeText.replace(regex, '<span class="gradient-highlight">$1</span>')
+  const regex = new RegExp(`(${escapeRegExp(keyword)})`, 'gi')
+  return safeText.replace(regex, '<mark class="search-hit">$1</mark>')
 }
 
-const truncateText = (text: string, maxLength: number = 20) => {
-  if (!text) return ''
+const highlightTitle = (name: string) => {
+  const keyword = normalizedQuery.value
+  if (!keyword) return escapeHtml(name)
+  const index = name.toLowerCase().indexOf(keyword)
+  if (index === -1) return escapeHtml(name)
+  const start = Math.max(0, index - 8)
+  const prefix = start > 0 ? '…' : ''
+  const clipped = name.slice(start, index + name.length)
+  return `${prefix}${highlightText(clipped)}`
+}
 
-  const normalizedText = String(text).replace(/\s+/g, ' ').trim()
-  if (!normalizedText) return ''
-
-  const keyword = searchQuery.value.trim().toLowerCase()
+const snippetAround = (text: string, maxLen = 60) => {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  const keyword = normalizedQuery.value
   if (!keyword) {
-    return normalizedText.length > maxLength
-      ? normalizedText.substring(0, maxLength) + '...'
-      : normalizedText
+    return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}…` : normalized
   }
-
-  const keywordIndex = normalizedText.toLowerCase().indexOf(keyword)
-  if (keywordIndex === -1) {
-    return normalizedText.length > maxLength
-      ? normalizedText.substring(0, maxLength) + '...'
-      : normalizedText
+  const index = normalized.toLowerCase().indexOf(keyword)
+  if (index === -1) {
+    return normalized.length > maxLen ? `${normalized.slice(0, maxLen)}…` : normalized
   }
-
-  const windowSize = Math.max(maxLength, keyword.length)
-  let start = Math.max(0, keywordIndex - Math.floor((windowSize - keyword.length) / 2))
-  const end = Math.min(normalizedText.length, start + windowSize)
-
-  if (end - start < windowSize) {
-    start = Math.max(0, end - windowSize)
-  }
-
-  const snippet = normalizedText.substring(start, end)
-  return `${start > 0 ? '...' : ''}${snippet}${end < normalizedText.length ? '...' : ''}`
+  let start = Math.max(0, index - Math.floor((maxLen - keyword.length) / 2))
+  const end = Math.min(normalized.length, start + maxLen)
+  if (end - start < maxLen) start = Math.max(0, end - maxLen)
+  const prefix = start > 0 ? '…' : ''
+  const suffix = end < normalized.length ? '…' : ''
+  return `${prefix}${highlightText(normalized.slice(start, end))}${suffix}`
 }
 
-const highlightAndTruncateText = (text: string, maxLength: number = 20) => {
- return highlightText(truncateText(text, maxLength))
+const hasMessageMatch = (fields: string[]) =>
+  fields.includes('message') || fields.includes('human_message') || fields.includes('ai_message')
+
+const matchedMessage = (conv: ViewConversation) => {
+  if (hasMessageMatch(conv.matchFields)) return true
+  const q = normalizedQuery.value
+  return !!(q && (conv.question?.toLowerCase().includes(q) || conv.answer?.toLowerCase().includes(q)))
 }
 
-const highlightRenderedHtml = (html: string) => {
-  const keyword = searchQuery.value.trim()
-  if (!keyword || !html || typeof document === 'undefined') return html
-
-  const template = document.createElement('template')
-  template.innerHTML = html
-  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT)
-  const textNodes: Text[] = []
-
-  let currentNode = walker.nextNode()
-  while (currentNode) {
-    textNodes.push(currentNode as Text)
-    currentNode = walker.nextNode()
-  }
-
-  const regex = new RegExp(escapeRegExp(keyword), 'gi')
-  for (const textNode of textNodes) {
-    const textContent = textNode.textContent || ''
-    const parentElement = textNode.parentElement
-
-    if (!parentElement || !textContent.trim()) continue
-    if (parentElement.closest('.md-code-copy-btn')) continue
-
-    regex.lastIndex = 0
-    if (!regex.test(textContent)) continue
-
-    const fragment = document.createDocumentFragment()
-    let lastIndex = 0
-    regex.lastIndex = 0
-
-    let match: RegExpExecArray | null
-    while ((match = regex.exec(textContent))) {
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(textContent.slice(lastIndex, match.index)))
-      }
-
-      const highlightNode = document.createElement('span')
-      highlightNode.className = 'gradient-highlight'
-      highlightNode.textContent = match[0]
-      fragment.appendChild(highlightNode)
-
-      lastIndex = match.index + match[0].length
-    }
-
-    if (lastIndex < textContent.length) {
-      fragment.appendChild(document.createTextNode(textContent.slice(lastIndex)))
-    }
-
-    textNode.parentNode?.replaceChild(fragment, textNode)
-  }
-
-  return template.innerHTML
-}
-
-const renderMessagePreview = (conversation: SearchableConversation, field: 'human_message' | 'ai_message') => {
-  const content = String(conversation[field] || '')
-  if (!content) return ''
-
-  return highlightRenderedHtml(renderMarkdown(content))
-}
-
-const getMatchedFields = (conversation: SearchableConversation): SearchMatchField[] => {
-  if ('matched_fields' in conversation && Array.isArray(conversation.matched_fields)) {
-    return conversation.matched_fields
-  }
-
-  return []
-}
-
-const hasMatchedField = (conversation: SearchableConversation, field: SearchMatchField) => {
-  return getMatchedFields(conversation).includes(field)
-}
-
-const getNonMessageMatchLabels = (conversation: SearchableConversation) => {
+const matchLabels = (conv: ViewConversation): string[] => {
   const labels: string[] = []
-
-  if (hasMatchedField(conversation, 'name')) {
+  const fields = conv.matchFields
+  if (fields.includes('name') || fields.includes('title')) {
     labels.push(t('conversationSearch.matchedLabels.title'))
   }
-
-  if (hasMatchedField(conversation, 'app_name')) {
-    labels.push(t('conversationSearch.matchedLabels.app'))
+  if (fields.includes('app')) labels.push(t('conversationSearch.matchedLabels.app'))
+  if (fields.includes('agent')) {
+    labels.push(t('conversationSearch.matchedLabels.agent', { name: conv.agentName || '' }))
   }
-
-  if (hasMatchedField(conversation, 'agent_name')) {
-    labels.push(t('conversationSearch.matchedLabels.agent', { name: YUXIN_AI_NAME }))
-  }
-
   return labels
 }
 
-const hasMessageKeywordMatch = (conversation: SearchableConversation) => {
-  return hasMatchedField(conversation, 'human_message') || hasMatchedField(conversation, 'ai_message')
-}
+const hasOtherMatches = (conv: ViewConversation) =>
+  !matchedMessage(conv) && matchLabels(conv).length > 0
 
-const shouldShowMessageField = (conversation: SearchableConversation, field: 'human_message' | 'ai_message') => {
-  if (!conversation[field]) return false
-  if (!searchQuery.value.trim()) return true
-
-  const matchedFields = getMatchedFields(conversation)
-  if (matchedFields.length === 0) return true
-
-  return matchedFields.includes(field)
-}
-
-
-const changeConversation = async (conversation: SearchableConversation) => {
-  if (!conversation.id) return
-
-  if (conversation.invoke_from === 'schedule') {
-    Message.info(t('chat.schedules.conversationNotOpenable'))
+// ---------- 跳转 ----------
+const openConversation = (conv: ViewConversation) => {
+  if (!conv.id) return
+  if (conv.invokeFrom === 'schedule' || conv.isSchedule || conv.sourceType === 'schedule') {
+    // 定时任务会话不可从普通会话页打开
     return
   }
-
-  if (conversation.source_type === 'assistant_agent') {
-    await router.push({
-      path: '/home',
-      query: { conversation_id: conversation.id },
+  if (conv.sourceType === 'assistant_agent') {
+    void router.push({ path: '/home', query: { conversation_id: conv.id } })
+    return
+  }
+  if (conv.sourceType === 'public_app' && conv.appId) {
+    void router.push({
+      path: `/store/public-apps/${conv.appId}/preview`,
+      query: { conversation_id: conv.id, message_id: conv.messageId || undefined },
     })
     return
   }
-
-  if (conversation.source_type === 'public_app' && 'app_id' in conversation && conversation.app_id) {
-    await router.push({
-      path: `/store/public-apps/${conversation.app_id}/preview`,
-      query: {
-        conversation_id: conversation.id,
-        message_id: 'message_id' in conversation ? conversation.message_id : undefined,
-      },
-    })
+  if (conv.sourceType === 'app_debugger') {
+    // 调试会话在用户空间不可打开
     return
   }
-
-  if (conversation.source_type === 'app_debugger' && 'app_id' in conversation && conversation.app_id) {
-    Message.info(t('chat.schedules.conversationNotOpenable'))
-  }
+  void router.push({ path: '/home', query: { conversation_id: conv.id } })
 }
 
-const canScrollWithDelta = (element: HTMLElement, deltaY: number) => {
- if (deltaY ===0) return false
- if (element.scrollHeight <= element.clientHeight) return false
- if (deltaY <0) return element.scrollTop >0
- return element.scrollTop + element.clientHeight < element.scrollHeight
+// ---------- 重命名 ----------
+const openRename = (conv: ViewConversation) => {
+  updateConversationNameId.value = conv.id
+  updateConversationName.value = conv.name
+  updateConversationNameVisible.value = true
 }
 
-const handlePageWheel = (event: WheelEvent) => {
- const pageElement = pageRef.value
- const scrollElement = scrollAreaRef.value
-
- if (!pageElement || !scrollElement) return
- if (event.target !== pageElement) return
- if (!canScrollWithDelta(scrollElement, event.deltaY)) return
-
- event.preventDefault()
- scrollElement.scrollTop += event.deltaY
+const onRenameSaved = (id: string, name: string) => {
+  const list = normalizedQuery.value ? searchResults.value : recentConversationsView.value
+  const conv = list.find(c => c.id === id)
+  if (conv) conv.name = name
 }
 
-watch(recentConversations, async () => {
-  console.log('recentConversations changed:', recentConversations.value.length)
-  await nextTick()
-  console.log('After nextTick')
-}, { deep: true })
+// ---------- 删除（走回收站 hook） ----------
+const requestDelete = (conv: ViewConversation) => {
+  handleDeleteConversation(conv.id, async () => {
+    searchResults.value = searchResults.value.filter(c => c.id !== conv.id)
+    recentConversationsView.value = recentConversationsView.value.filter(c => c.id !== conv.id)
+  }, conv.name)
+}
 
-watch(searchQuery, () => {
-  handleSearch()
-}, { debounce: 300 } as Record<string, unknown>)
-
+// ---------- 初始化 ----------
 onMounted(() => {
-  handleSearch()
-  loadRecentConversationsHook(20)
+  void loadRecent(20)
 })
 </script>
 
 <template>
-  <div
-    key="background-container"
-    ref="pageRef"
-    data-testid="conversation-search-page"
-    class="relative w-full h-screen overflow-hidden flex flex-col"
-    :style="{ background: AI_SURFACE_BACKGROUND_GRADIENT }"
-    @click="closeMenu"
-    @wheel="handlePageWheel"
-  >
-    <!-- AI 动态背景层 - 使用 key 防止重新渲染 -->
-    <div key="background" class="absolute inset-0 z-0 pointer-events-none">
-      <AiDynamicBackground
-        className=""
-        intensity="high"
-        :showParticles="true"
-        :showGrid="true"
-      />
-    </div>
+  <div class="search-page relative w-full overflow-y-auto">
+    <div class="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
+      <!-- 页头 -->
+      <header>
+        <h1 class="search-title text-2xl font-bold leading-tight sm:text-3xl">
+          {{ t('conversationSearch.title') }}
+        </h1>
+        <p class="mt-2 text-sm text-muted">在对话记录中搜索，快速找回历史问答</p>
+      </header>
 
-    <!-- Main Content -->
-    <div class="relative z-10 w-full max-w-[600px] h-full mx-auto px-3 sm:px-4 md:px-0 flex flex-col overflow-hidden">
-      <!-- Header and Search - Fixed -->
-      <div class="flex-shrink-0 px-4 sm:px-6 pt-6 pb-4">
-        <!-- Header -->
-        <div class="mb-8 text-center">
-          <h1 class="text-4xl font-bold text-gray-900 mb-2">{{ t('conversationSearch.title') }}</h1>
-        </div>
-
-        <!-- Search Box -->
-        <div class="mb-4">
-          <div class="relative">
-            <input
-              v-model="searchQuery"
-              data-testid="conversation-search-input"
-              type="text"
-              :placeholder="t('conversationSearch.placeholder')"
-              class="w-full px-6 py-3 rounded-full border-2 border-gray-300 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all text-gray-900 placeholder-gray-500"
-            />
-            <svg class="absolute right-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-        </div>
-      </div>
-
-      <!-- Scrollable Content Area -->
-      <div
-        ref="scrollAreaRef"
-        data-testid="conversation-search-scroll-area"
-        class="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 scrollbar-hide"
-        @scroll="closeMenu"
-      >
-        <!-- Loading State -->
-        <div v-if="loading" class="flex items-center justify-center py-12">
-          <div class="text-center">
-            <div class="inline-block animate-spin mb-4">
-              <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </div>
-            <p class="text-gray-500">{{ t('conversationSearch.loading') }}</p>
-          </div>
-        </div>
-
-        <!-- Empty State -->
-        <div v-else-if="filteredConversations.length === 0" class="flex items-center justify-center py-12">
-          <p class="text-gray-500 text-lg">{{ t('conversationSearch.empty') }}</p>
-        </div>
-
-        <!-- Conversations List -->
-        <div v-else class="space-y-3 pb-8">
-          <div
-            v-for="conversation in filteredConversations"
-            :key="conversation.id"
-            data-testid="conversation-card"
-            :class="[
-              'px-3 py-2.5 min-h-[108px] overflow-hidden rounded-lg border transition-all bg-white cursor-pointer flex flex-col',
-              conversation.source_type === 'assistant_agent'
-                ? 'border-purple-200 hover:border-purple-400 hover:shadow-md'
-                : 'border-gray-200 hover:border-blue-400 hover:shadow-md'
-            ]"
-            style="position: relative;"
-            @click="changeConversation(conversation)"
-            @mouseenter="handleCardMouseEnter(conversation.id)"
-            @mouseleave="handleCardMouseLeave(conversation.id)"
+      <!-- 搜索框 -->
+      <section class="mt-6" aria-label="搜索">
+        <div class="relative">
+          <icon-search
+            class="pointer-events-none absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-muted"
+          />
+          <input
+            v-model="searchQuery"
+            data-testid="conversation-search-input"
+            type="search"
+            :placeholder="t('conversationSearch.placeholder')"
+            class="search-input search-serif w-full rounded-full border border-border-strong bg-card py-3.5 pl-14 pr-16 text-base text-text shadow-[var(--aicss-shadow-card)] outline-hidden transition placeholder:text-muted focus:border-brand focus:ring-2 focus:ring-brand-soft"
+          />
+          <kbd
+            class="pointer-events-none absolute right-5 top-1/2 -translate-y-1/2 rounded-full bg-surface-2 px-2.5 py-1 font-mono text-xs text-muted"
           >
-            <!-- 标题行 - 强制单行 -->
-            <div class="mb-0.5 relative h-6 overflow-hidden">
-              <div style="display: flex; align-items: center; height: 100%; white-space: nowrap; overflow: hidden; padding-right: 80px;">
-                <h3
-                  style="flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-weight: 600; color: #111827;"
-                  v-html="highlightAndTruncateText(conversation.name, 20)"
-                />
-                <a-tag
-                  v-if="conversation.invoke_from === 'schedule'"
-                  size="small"
-                  color="orange"
-                  style="flex-shrink: 0; white-space: nowrap; margin-left: 4px;"
-                >
-                  {{ t('chat.schedules.shortLabel') }}
-                </a-tag>
-                <span
-                  v-if="conversation.source_type === 'assistant_agent' && conversation.agent_name"
-                  style="flex-shrink: 0; white-space: nowrap; margin-left: 4px; font-size: 0.75rem; padding: 4px 8px; border-radius: 4px; background-color: #ede9fe; color: #6d28d9;"
-                  v-html="highlightText(conversation.agent_name)"
-                />
-              </div>
-              <!-- 日期和菜单容器 - 固定宽度防止抖动 -->
-              <div style="position: absolute; right: 0; top: 0; width: 80px; height: 24px; display: flex; align-items: center; justify-content: flex-end;">
-                <!-- 日期 - 不hover时显示 -->
-                <div v-show="!isMenuIconVisible(conversation.id)" style="font-size: 0.75rem; color: #6b7280; white-space: nowrap;">
-                  {{ formatDate(conversation.latest_message_at) }}
-                </div>
-                <!-- 菜单按钮 - hover时显示 -->
-                <div v-show="conversation.source_type !== 'public_app' && isMenuIconVisible(conversation.id)" style="display: flex;">
-                  <a-dropdown :popup-visible="openMenuId === conversation.id" position="br" @click.stop @mousedown.stop>
-                    <a-button
-                      size="small"
-                      type="text"
-                      class="!text-gray-600 !bg-transparent !p-1"
-                      @click.stop="toggleConversationMenu(conversation.id)"
-                      @mousedown.stop
-                    >
-                      <template #icon>
-                        <icon-more class="text-lg" />
-                      </template>
-                    </a-button>
-                    <template #content>
-                      <a-doption @click.stop="() => { openUpdateNameModal(conversation); openMenuId = null }">
-                        <template #icon>
-                          <icon-edit />
-                        </template>
-                        {{ t('common.actions.rename') }}
-                      </a-doption>
-                      <a-doption
-                        class="text-red-700"
-                        @click.stop="() => { deleteRecentConversation(conversation); openMenuId = null }"
-                      >
-                        <template #icon>
-                          <icon-delete />
-                        </template>
-                        {{ t('common.actions.deleteConversation') }}
-                      </a-doption>
-                    </template>
-                  </a-dropdown>
-                </div>
-              </div>
-            </div>
-            <!-- 应用标签 -->
-            <div v-if="conversation.app_name" class="mb-0.5">
-                <span
-                  class="text-xs px-2 py-1 rounded bg-blue-100 text-blue-700 whitespace-nowrap inline-block"
-                  v-html="highlightText(conversation.app_name)"
-                />
-            </div>
+            ⌘K
+          </kbd>
+        </div>
+      </section>
 
-            <div
-              v-if="searchQuery.trim() && !hasMessageKeywordMatch(conversation) && getNonMessageMatchLabels(conversation).length > 0"
-              class="mb-0.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1"
-            >
-              {{ t('conversationSearch.keywordMatch', { labels: getNonMessageMatchLabels(conversation).join(' / ') }) }}
-            </div>
-
-            <!-- 消息预览 -->
-            <div
-              v-if="shouldShowMessageField(conversation, 'human_message') || shouldShowMessageField(conversation, 'ai_message')"
-              class="space-y-0.5 min-h-0 overflow-hidden"
-            >
-              <div v-if="shouldShowMessageField(conversation, 'human_message')" class="search-message-row">
-                <span class="search-message-prefix">{{ t('conversationSearch.questionPrefix') }}</span>
-                <div
-                  class="search-markdown-preview markdown-body"
-                  v-html="renderMessagePreview(conversation, 'human_message')"
-                />
-              </div>
-              <div v-if="shouldShowMessageField(conversation, 'ai_message')" class="search-message-row">
-                <span class="search-message-prefix">{{ t('conversationSearch.answerPrefix') }}</span>
-                <div
-                  class="search-markdown-preview markdown-body"
-                  v-html="renderMessagePreview(conversation, 'ai_message')"
-                />
-              </div>
+      <!-- 结果区 -->
+      <section class="mt-9" aria-label="搜索结果">
+        <!-- 加载状态 -->
+        <div v-if="loading" class="space-y-3">
+          <div
+            v-for="i in 3"
+            :key="`skeleton-${i}`"
+            class="flex animate-pulse items-start gap-4 rounded-[var(--aicss-radius)] border border-border-c bg-card p-4"
+          >
+            <div class="h-11 w-11 rounded-[var(--aicss-radius)] bg-surface-2"></div>
+            <div class="flex-1 space-y-2">
+              <div class="h-4 w-1/3 rounded bg-surface-2"></div>
+              <div class="h-3 w-2/3 rounded bg-surface-2"></div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- 无关键词：最近会话 -->
+        <div v-else-if="normalizedQuery === ''">
+          <div class="mb-4 flex items-center gap-2">
+            <icon-history class="h-4 w-4 text-brand" />
+            <h2 class="search-subtitle text-lg font-bold">最近对话</h2>
+          </div>
+
+          <div v-if="recentLoading && recentConversationsView.length === 0" class="space-y-3">
+            <div
+              v-for="i in 4"
+              :key="`recent-skeleton-${i}`"
+              class="flex animate-pulse items-start gap-4 rounded-[var(--aicss-radius)] border border-border-c bg-card p-4"
+            >
+              <div class="h-11 w-11 rounded-[var(--aicss-radius)] bg-surface-2"></div>
+              <div class="flex-1 space-y-2">
+                <div class="h-4 w-1/3 rounded bg-surface-2"></div>
+                <div class="h-3 w-1/2 rounded bg-surface-2"></div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="filteredConversations.length === 0" class="mt-2 text-center">
+            <p class="text-sm text-muted">暂无最近对话，开始一段新对话吧</p>
+          </div>
+
+          <div v-else class="space-y-3">
+            <a
+              v-for="conv in filteredConversations"
+              :key="conv.id"
+              data-testid="conversation-card"
+              class="group flex cursor-pointer items-start gap-4 rounded-[var(--aicss-radius)] border border-border-c bg-card p-4 shadow-[var(--aicss-shadow-card)] transition hover:-translate-y-0.5 hover:border-brand-soft hover:shadow-[var(--aicss-shadow-elevated)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-soft"
+              @click.prevent="openConversation(conv)"
+            >
+              <div
+                class="search-avatar flex h-12 w-12 shrink-0 items-center justify-center rounded-[var(--aicss-radius)] bg-linear-to-br from-brand to-brand-soft text-white shadow-[var(--aicss-shadow-card)]"
+              >
+                <icon-message class="h-5 w-5" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-3">
+                  <h3
+                    class="truncate text-base font-bold text-text transition group-hover:text-brand-text"
+                    v-html="highlightTitle(conv.name)"
+                  />
+                  <time class="shrink-0 font-mono text-xs text-muted">{{ conv.updatedAt }}</time>
+                </div>
+                <p
+                  v-if="conv.question"
+                  class="mt-1.5 truncate text-sm text-muted"
+                  v-html="`<span class='search-q'>问：</span>${snippetAround(conv.question, 40)}`"
+                />
+                <p
+                  v-else-if="conv.answer"
+                  class="mt-1.5 truncate text-sm text-muted"
+                  v-html="`<span class='search-q'>答：</span>${snippetAround(conv.answer, 40)}`"
+                />
+              </div>
+            </a>
+          </div>
+        </div>
+
+        <!-- 有关键词：搜索结果 -->
+        <div v-else-if="hasResult" class="space-y-3">
+          <div class="mb-4 text-xs text-muted">
+            找到 {{ filteredConversations.length }} 个相关对话
+          </div>
+          <article
+            v-for="conv in filteredConversations"
+            :key="conv.id"
+            data-testid="conversation-card"
+            class="search-hit-card group relative cursor-pointer rounded-[var(--aicss-radius)] border border-border-c bg-card p-4 shadow-[var(--aicss-shadow-card)] transition hover:-translate-y-0.5 hover:border-brand-soft hover:shadow-[var(--aicss-shadow-elevated)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand-soft"
+            tabindex="0"
+            role="link"
+            @click="openConversation(conv)"
+            @keydown.enter="openConversation(conv)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <h3
+                class="search-result-title search-serif min-w-0 truncate text-base font-bold text-text"
+                v-html="highlightTitle(conv.name)"
+              />
+              <div class="flex shrink-0 items-center gap-2">
+                <div class="search-row-actions flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="search-icon-btn flex h-8 w-8 items-center justify-center rounded-full text-muted transition hover:bg-surface-2 hover:text-text"
+                    :aria-label="t('common.actions.rename')"
+                    :title="t('common.actions.rename')"
+                    @click.stop="openRename(conv)"
+                  >
+                    <icon-edit class="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    class="search-icon-btn flex h-8 w-8 items-center justify-center rounded-full text-muted transition hover:bg-surface-2 hover:text-text"
+                    :aria-label="t('common.actions.deleteConversation')"
+                    :title="t('common.actions.deleteConversation')"
+                    @click.stop="requestDelete(conv)"
+                  >
+                    <icon-delete class="h-4 w-4" />
+                  </button>
+                </div>
+                <icon-right class="search-open-icon h-4 w-4 text-muted" />
+              </div>
+            </div>
+
+            <time class="mt-1 block font-mono text-xs text-muted">{{ conv.updatedAt }}</time>
+
+            <div v-if="matchedMessage(conv)" class="search-snippet mt-2.5 space-y-1 text-sm leading-relaxed">
+              <p
+                v-if="conv.question"
+                class="line-clamp-2 text-muted"
+                v-html="`<span class='search-q'>问：</span>${snippetAround(conv.question)}`"
+              />
+              <p
+                v-if="conv.answer"
+                class="line-clamp-2 text-muted"
+                v-html="`<span class='search-q'>答：</span>${snippetAround(conv.answer)}`"
+              />
+            </div>
+
+            <div v-if="hasOtherMatches(conv)" class="search-source mt-2 text-xs text-muted">
+              匹配来源：{{ matchLabels(conv).join(' / ') }}
+            </div>
+
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <span
+                v-if="conv.appName"
+                class="inline-flex items-center rounded-full bg-brand-soft px-2.5 py-0.5 text-xs font-medium text-brand-text"
+                v-html="highlightText(conv.appName)"
+              />
+              <span
+                v-if="conv.agentName"
+                class="inline-flex items-center rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-text-2"
+                v-html="highlightText(conv.agentName)"
+              />
+              <span
+                v-if="conv.isSchedule"
+                class="inline-flex items-center gap-1 rounded-full bg-brand px-2.5 py-0.5 text-xs font-medium text-white"
+              >
+                <icon-schedule class="h-3 w-3" />
+                定时
+              </span>
+            </div>
+          </article>
+        </div>
+
+        <!-- 空状态 -->
+        <div
+          v-else
+          class="mt-4 flex flex-col items-center rounded-[var(--aicss-radius)] border-2 border-dashed border-brand-soft bg-surface-2/40 px-6 py-12 text-center"
+        >
+          <div
+            class="flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand-text"
+          >
+            <icon-search class="h-5 w-5" />
+          </div>
+          <p class="search-serif mt-4 text-lg font-bold text-text">
+            {{ t('conversationSearch.noResultsTitle') }}
+          </p>
+          <p class="mt-1 text-sm text-muted">换个关键词试试</p>
+        </div>
+      </section>
+
+      <!-- 页脚 -->
+      <footer
+        class="mt-12 flex flex-col items-center justify-between gap-3 border-t border-border-c pb-2 pt-6 text-xs text-muted sm:flex-row"
+      >
+        <p>钰心AI · 用心对话，智慧陪伴</p>
+      </footer>
     </div>
 
-    <!-- Edit Name Modal -->
+    <!-- 重命名弹窗 -->
     <update-conversation-name-modal
       v-model:visible="updateConversationNameVisible"
       :conversation_id="updateConversationNameId"
       :conversation_name="updateConversationName"
-      @saved="updateConversationNameSuccess"
+      @saved="onRenameSaved"
+    />
+
+    <!-- 删除确认弹窗（回收站联动文案） -->
+    <user-recycle-bin-delete-modal
+      :visible="deleteVisible"
+      :title="t('common.actions.deleteConversation')"
+      :resource-name="deleteName"
+      :loading="deleteLoading"
+      :hint="t('userRecycleBin.deleteHint')"
+      @update:visible="v => (deleteVisible = v)"
+      @confirm="confirmDeleteConversation"
     />
   </div>
 </template>
 
 <style scoped>
-/* 防止背景闪动 */
-:deep(.absolute.inset-0.z-0.pointer-events-none) {
-  will-change: auto;
-  transform: translateZ(0);
-  backface-visibility: hidden;
+.search-page {
+  height: 100%;
+  background: var(--aicss-bg);
 }
 
-:deep(mark) {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.3), rgba(139, 92, 246, 0.3));
-  padding: 0 2px;
-  border-radius: 2px;
-  font-weight: 600;
-  color: inherit;
+/* 滚动条微调（保持轻量、不抢视觉） */
+.search-page::-webkit-scrollbar {
+  width: 6px;
 }
-
-/* 渐变色文字高亮 */
-:deep(.gradient-highlight) {
-  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  font-weight: 600;
+.search-page::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--aicss-border-strong);
 }
-
-/* 隐藏所有滚条 */
-html, body {
-  overflow: hidden;
-}
-
-/* 隐藏滚条 - 适用于 scrollbar-hide 类 */
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
-}
-
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-
-/* Arco Design 菜单项样式 */
-:deep(.arco-dropdown-option) {
-  padding: 8px 12px !important;
-  font-size: 14px !important;
-  transition: all 0.2s ease !important;
-}
-
-:deep(.arco-dropdown-option:hover) {
-  background-color: #f5f5f5 !important;
-}
-
-:deep(.arco-dropdown-divider) {
-  margin: 4px 0 !important;
-}
-
-/* 对话名称截断样式 */
-h3 {
-  min-width: 0;
-  flex-shrink: 1;
-}
-
-:deep(.search-message-row) {
-  display: flex;
-  gap: 4px;
-  align-items: flex-start;
-  min-height: 0;
-}
-
-:deep(.search-message-prefix) {
-  flex-shrink: 0;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: #4b5563;
-  line-height: 1.3;
-}
-
-:deep(.search-markdown-preview.markdown-body) {
-  flex: 1;
-  min-width: 0;
-  max-height: 2.05rem;
-  overflow: hidden;
-  padding: 0;
+.search-page::-webkit-scrollbar-track {
   background: transparent;
-  color: #374151;
-  font-size: 0.75rem;
-  line-height: 1.3;
+}
+
+/* 页面大标题：衬线体 + 收紧字距（对应原型 font-serif） */
+.search-title {
+  font-family: var(--aicss-font-serif, Georgia, 'Songti SC', serif);
+  letter-spacing: -0.02em;
+  color: var(--aicss-text);
+}
+
+.search-subtitle {
+  font-family: var(--aicss-font-serif, Georgia, 'Songti SC', serif);
+  letter-spacing: -0.02em;
+  color: var(--aicss-text);
+}
+
+/* 组件内所有希望呈现衬线的元素统一走该工具类 */
+.search-serif {
+  font-family: Georgia, 'Songti SC', 'SimSun', serif;
+  letter-spacing: -0.01em;
+}
+
+/* 搜索框：粉调胶囊 */
+.search-input {
+  color: var(--aicss-text);
+  background: var(--aicss-card);
+}
+.search-input::placeholder {
+  color: var(--aicss-muted);
+}
+.search-input:focus {
+  border-color: var(--aicss-accent);
+  box-shadow: 0 0 0 3px var(--aicss-accent-soft);
+}
+
+/* 结果标题（衬线大标题行内保留高亮 mark） */
+.search-result-title {
+  color: var(--aicss-text);
+}
+
+/* 关键词高亮：粉底胶囊式 */
+:deep(.search-hit) {
+  background: var(--aicss-accent-soft);
+  color: var(--aicss-brand-text, var(--aicss-accent-text));
+  border-radius: 6px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+/* 问/答前缀 */
+:deep(.search-q) {
+  font-weight: 600;
+  color: var(--aicss-text-2);
+}
+
+/* 搜索源 meta */
+.search-source {
+  color: var(--aicss-muted);
+}
+
+/* 图标块（粉调渐变底） */
+.search-avatar {
+  background: linear-gradient(135deg, var(--aicss-accent) 0%, var(--aicss-accent-text) 100%);
+  color: #fff;
+}
+
+/* 结果卡 hover 动作行 */
+.search-row-actions {
+  opacity: 0;
+  transition: opacity 0.18s var(--aicss-ease);
+}
+.search-hit-card:hover .search-row-actions,
+.search-hit-card:focus-within .search-row-actions {
+  opacity: 1;
+}
+
+.search-icon-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.search-icon-btn:hover {
+  background: var(--aicss-surface-2);
+}
+.search-icon-btn[aria-label*='删除']:hover,
+.search-icon-btn[title*='删除']:hover {
+  color: var(--aicss-destructive, var(--aicss-accent-text));
+}
+
+/* 进入会话箭头：hover 显示 */
+.search-open-icon {
+  opacity: 0;
+  transition: opacity 0.18s var(--aicss-ease);
+}
+.search-hit-card:hover .search-open-icon {
+  opacity: 1;
+}
+
+/* 消息摘录 2 行裁剪 */
+.search-snippet :deep(p) {
+  margin: 0;
+}
+.search-snippet :deep(.line-clamp-2) {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-  white-space: normal;
-  word-break: break-word;
-}
-
-:deep(.search-markdown-preview.markdown-body > :first-child) {
-  margin-top: 0;
-}
-
-:deep(.search-markdown-preview.markdown-body > :last-child) {
-  margin-bottom: 0;
-}
-
-:deep(.search-markdown-preview.markdown-body p),
-:deep(.search-markdown-preview.markdown-body ul),
-:deep(.search-markdown-preview.markdown-body ol),
-:deep(.search-markdown-preview.markdown-body li),
-:deep(.search-markdown-preview.markdown-body h1),
-:deep(.search-markdown-preview.markdown-body h2),
-:deep(.search-markdown-preview.markdown-body h3),
-:deep(.search-markdown-preview.markdown-body h4),
-:deep(.search-markdown-preview.markdown-body h5),
-:deep(.search-markdown-preview.markdown-body h6),
-:deep(.search-markdown-preview.markdown-body pre),
-:deep(.search-markdown-preview.markdown-body blockquote),
-:deep(.search-markdown-preview.markdown-body code),
-:deep(.search-markdown-preview.markdown-body table),
-:deep(.search-markdown-preview.markdown-body thead),
-:deep(.search-markdown-preview.markdown-body tbody),
-:deep(.search-markdown-preview.markdown-body tr),
-:deep(.search-markdown-preview.markdown-body th),
-:deep(.search-markdown-preview.markdown-body td) {
-  display: inline;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  font-size: inherit !important;
-  line-height: inherit !important;
-  background: transparent;
-}
-
-:deep(.search-markdown-preview.markdown-body h1),
-:deep(.search-markdown-preview.markdown-body h2),
-:deep(.search-markdown-preview.markdown-body h3),
-:deep(.search-markdown-preview.markdown-body h4),
-:deep(.search-markdown-preview.markdown-body h5),
-:deep(.search-markdown-preview.markdown-body h6) {
-  font-weight: 600;
-}
-
-:deep(.search-markdown-preview .md-code-block) {
-  display: inline;
-  margin: 0;
-  border: 0;
-  background: transparent;
-}
-
-:deep(.search-markdown-preview .md-code-header) {
-  display: none;
-}
-
-:deep(.search-markdown-preview.markdown-body pre) {
-  white-space: pre-wrap;
-}
-
-:deep(.arco-dropdown-divider) {
-  margin: 4px 0 !important;
+  overflow: hidden;
 }
 </style>

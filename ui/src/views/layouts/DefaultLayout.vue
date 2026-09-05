@@ -7,6 +7,8 @@ import { useLogout } from '@/hooks/use-auth'
 import LayoutSidebar from './components/LayoutSidebar.vue'
 import RecentConversationsGlobalPopover from './components/RecentConversationsGlobalPopover.vue'
 import { useGetCurrentUser } from '@/hooks/use-account'
+import { getMembershipSummary } from '@/services/billing'
+import { type MembershipSummary } from '@/models/billing'
 import { useCredentialStore } from '@/stores/credential'
 import { useAccountStore } from '@/stores/account'
 import LoginModal from '@/views/auth/components/LoginModal.vue'
@@ -14,6 +16,7 @@ import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
 
 import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
+import ThemeSwitch from '@/components/ThemeSwitch.vue'
 import { useRoute } from 'vue-router'
 import { getUserAvatarUrl } from '@/utils/helper'
 import type { RecentConversation } from '@/models/conversation'
@@ -50,7 +53,36 @@ const { handleLogout: handleLogoutHook } = useLogout()
 const { current_user, loadCurrentUser } = useGetCurrentUser()
 const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
-const sidebarWidth = computed(() => (sidebarCollapsed.value ? 80 : 240))
+const membershipSummary = ref<MembershipSummary | null>(null)
+const isMember = computed(() => membershipSummary.value?.membership?.status === 'active')
+
+// tier：'basic' 试用/普通会员（徽章盾图标），'advanced' 付费进阶会员（宝石图标）
+const memberLevel = computed<{ label: string; tier: 'basic' | 'advanced' } | null>(() => {
+  const plan = membershipSummary.value?.membership?.plan
+  if (!plan?.code) return null
+  const code = plan.code.toUpperCase()
+  if (/^(FREE|TRIAL|TRY|EXPERIENCE)/.test(code)) {
+    return { label: t('layout.account.memberLevel.trial'), tier: 'basic' }
+  }
+  if (code.includes('PRO')) {
+    return { label: t('layout.account.memberLevel.pro'), tier: 'advanced' }
+  }
+  if (/^(VIP|ADV|ELITE|ULTRA|PREMIUM|SUPER|GOLD)/.test(code)) {
+    return { label: t('layout.account.memberLevel.advanced'), tier: 'advanced' }
+  }
+  return { label: t('layout.account.memberLevel.member'), tier: 'basic' }
+})
+const creditBalance = computed(() => membershipSummary.value?.credit_account?.balance ?? 0)
+const formatCredit = (value: number) => Number(value || 0).toLocaleString()
+
+const loadMembershipBadge = async () => {
+  try {
+    membershipSummary.value = await getMembershipSummary()
+  } catch {
+    membershipSummary.value = null
+  }
+}
+const sidebarWidth = computed(() => (sidebarCollapsed.value ? 80 : 272))
 const MOBILE_BREAKPOINT = 768
 const isMobileViewport = ref(false)
 
@@ -75,6 +107,7 @@ const goHomeAndOpenLogin = () => {
 const handleLoginSuccess = async () => {
   await loadCurrentUser()
   accountStore.update(current_user.value)
+  loadMembershipBadge()
 
   const redirectPath = loginRedirectPath.value
   loginRedirectPath.value = ''
@@ -102,10 +135,12 @@ watch(
   async (loggedIn) => {
     if (!loggedIn) {
       accountStore.clear()
+      membershipSummary.value = null
       return
     }
     await loadCurrentUser()
     accountStore.update(current_user.value)
+    loadMembershipBadge()
   },
   { immediate: true },
 )
@@ -257,7 +292,7 @@ watch(settingModalVisible, async (visible) => {
   <div class="h-full w-full overflow-hidden flex">
     <!-- 侧边栏 - 固定定位，不随右侧滚动 -->
     <a-layout-sider
-      class="bg-white border-r border-slate-100 shadow-sm shadow-slate-200/60 p-2 flex-shrink-0 overflow-hidden sidebar-sider"
+      class="bg-surface border-r border-border-c p-2 shrink-0 overflow-hidden sidebar-sider"
       :class="{ 'sidebar-sider--mobile': isMobileViewport }"
       :style="{
         width: `${sidebarWidth}px`,
@@ -268,71 +303,125 @@ watch(settingModalVisible, async (visible) => {
         top: 0,
         bottom: 0,
         height: '100vh',
-        zIndex: isMobileViewport && !sidebarCollapsed ? 40 : 10,
+        transform: isMobileViewport && sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)',
+        zIndex: isMobileViewport ? (sidebarCollapsed ? 5 : 40) : 10,
       }"
     >
       <div
         class="flex flex-col min-h-0 overflow-hidden px-3 py-2"
         style="height: calc(100vh - 16px)"
       >
-        <!-- 顶部 Logo 和折叠按钮 -->
-        <div class="flex-shrink-0 flex items-center justify-center">
+        <!-- 顶部 Logo 区 -->
+        <div class="shrink-0 flex items-center justify-center">
+          <!-- 展开态：Logo + 主题切换（横向） -->
           <div
             v-if="!sidebarCollapsed"
-            class="h-10 flex items-end justify-between w-full gap-0.5 pb-0"
+            class="h-10 flex items-center justify-between w-full gap-1.5 pb-0"
           >
-            <div class="flex items-center justify-start flex-1 min-w-0 overflow-hidden">
-              <IconYuxinAI type="character" :size="130" class="flex-shrink-0" />
+            <div class="flex items-center justify-start flex-1 min-w-0 overflow-hidden pl-1">
+              <IconYuxinAI type="character" :size="130" class="shrink-0" />
             </div>
-            <button
-              @click="sidebarCollapsed = !sidebarCollapsed"
-              class="p-0.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 flex items-center justify-center h-7 w-7"
-              :title="sidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')"
-            >
-              <icon-left class="w-4 h-4 text-slate-600" />
-            </button>
+            <ThemeSwitch class="!h-7 !w-7 !text-[13px]" />
           </div>
-          <div v-else class="flex flex-col items-center justify-center gap-0.5 py-0.5">
-            <div class="flex items-center justify-center w-10 h-10 flex-shrink-0">
-              <IconYuxinAI type="full" :size="32" class="flex-shrink-0" />
+          <!-- 收起态：Logo + 主题切换（垂直线性、居中） -->
+          <div v-else class="flex flex-col items-center justify-center gap-2 py-1">
+            <div class="flex items-center justify-center w-10 h-10 shrink-0">
+              <IconYuxinAI type="full" :size="32" class="shrink-0" />
             </div>
-            <!-- 折叠时所有按钮在同一垂直线上 -->
-            <button
-              @click="sidebarCollapsed = !sidebarCollapsed"
-              class="p-0.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 flex items-center justify-center h-7 w-7"
-              :title="sidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')"
-            >
-              <icon-right class="w-3.5 h-3.5 text-slate-600" />
-            </button>
+            <ThemeSwitch class="!h-7 !w-7 !text-[13px]" />
           </div>
         </div>
         <!-- 顶部间距 -->
-        <div class="mb-3 flex-shrink-0"></div>
+        <div class="mb-3 shrink-0"></div>
         <!-- 侧边栏导航 - 中间可滚动区域 -->
         <layout-sidebar class="flex-1 min-h-0 overflow-hidden" :collapsed="sidebarCollapsed" />
         <!-- 账号设置 - 固定在底部，不随滚动 -->
-        <div class="h-14 flex-shrink-0 flex items-center border-t border-slate-100">
-          <a-dropdown v-if="isLoggedIn" position="tl">
+        <div class="shrink-0 border-t border-border-c px-3 py-3">
+          <a-dropdown v-if="isLoggedIn" position="tl" trigger="click">
+            <!-- 账号区：对齐原型（头像方块 + 用户名/会员·算力 单列 + 菜单箭头） -->
             <div
-              class="flex items-center p-1.5 gap-2 transition-all cursor-pointer rounded-lg hover:bg-gray-100 w-full"
+              class="flex w-full cursor-pointer items-center gap-2.5 rounded-[var(--aicss-radius)] transition-colors hover:bg-surface-2"
+              :class="sidebarCollapsed ? 'justify-center px-1 py-1' : 'px-2 py-2'"
             >
-              <!-- 头像 -->
-              <a-avatar
-                :size="32"
-                class="flex-shrink-0 text-sm bg-blue-700"
-                :image-url="
-                  getUserAvatarUrl(accountStore.account.avatar, accountStore.account.name)
-                "
+              <!-- 头像：粉底圆角方块 -->
+              <span
+                class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[var(--aicss-radius)] bg-linear-to-br from-brand to-brand-text text-white shadow-[var(--aicss-shadow-card)]"
               >
-                {{ accountStore.account.name[0] }}
-              </a-avatar>
-              <!-- 个人信息 - 使用 v-show 保持 DOM 结构 -->
-              <div v-show="!sidebarCollapsed" class="flex flex-col min-w-0 flex-1">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-sm text-gray-900 truncate">{{ accountStore.account.name }}</span>
-                </div>
-                <div class="text-xs text-gray-500 truncate">{{ accountStore.account.email }}</div>
+                <img
+                  v-if="getUserAvatarUrl(accountStore.account.avatar, accountStore.account.name)"
+                  :src="getUserAvatarUrl(accountStore.account.avatar, accountStore.account.name)"
+                  :alt="accountStore.account.name"
+                  class="h-full w-full object-cover"
+                />
+                <icon-user v-else class="h-5 w-5" />
+              </span>
+
+              <!-- 文本（折叠态隐藏） -->
+              <div v-show="!sidebarCollapsed" class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium text-text">{{ accountStore.account.name }}</p>
+                <!-- 会员等级（独立一行）：试用/普通会员用「√ 徽章盾」，付费/高级会员用「宝石」 -->
+                <p
+                  v-if="isMember"
+                  class="mt-0.5 flex items-center gap-1 whitespace-nowrap text-xs text-muted"
+                >
+                  <!-- √ 徽章盾（试用 / 普通会员） -->
+                  <svg
+                    v-if="memberLevel?.tier === 'basic'"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="h-3.5 w-3.5 shrink-0 text-brand-text"
+                    aria-hidden="true"
+                  >
+                    <path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z" />
+                    <path d="m9 12 2 2 4-4" />
+                  </svg>
+                  <!-- 宝石（Pro / 高级会员） -->
+                  <svg
+                    v-else
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="h-3.5 w-3.5 shrink-0 text-brand-text"
+                    aria-hidden="true"
+                  >
+                    <path d="M6 3h12l4 6-10 13L2 9Z" />
+                    <path d="M11 3 8 9l4 13 4-13-3-6" />
+                    <path d="M2 9h20" />
+                  </svg>
+                  <span class="truncate font-medium text-brand-text">{{ memberLevel?.label }}</span>
+                </p>
+                <!-- 算力值（独立一行）· 图标与会员中心「算力值」一致（闪电） -->
+                <p class="mt-0.5 flex items-center gap-1 whitespace-nowrap text-xs text-muted">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    class="h-3.5 w-3.5 shrink-0 text-amber-500"
+                    aria-hidden="true"
+                  >
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  <span class="truncate">{{ formatCredit(creditBalance) }}</span>
+                </p>
               </div>
+
+              <!-- 菜单箭头（折叠态隐藏） -->
+              <span
+                v-show="!sidebarCollapsed"
+                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-surface-2 hover:text-text"
+              >
+                <icon-right class="h-4 w-4" />
+              </span>
             </div>
             <template #content>
               <a-doption @click="settingModalVisible = true">
@@ -350,18 +439,41 @@ watch(settingModalVisible, async (visible) => {
             </template>
           </a-dropdown>
           <div v-show="!isLoggedIn" class="p-1.5 w-full">
-            <a-button long class="rounded-lg" @click="goHomeAndOpenLogin">
+            <a-button long class="rounded-[var(--aicss-radius)]" @click="goHomeAndOpenLogin">
               {{ $t('layout.account.login') }}
             </a-button>
           </div>
         </div>
       </div>
     </a-layout-sider>
+    <!-- 侧栏折叠/展开把手：贴侧栏右缘、垂直居中（桌面端） -->
+    <button
+      v-if="!isMobileViewport"
+      type="button"
+      class="sidebar-collapse-handle"
+      :class="{ 'is-collapsed': sidebarCollapsed }"
+      :style="{ '--sidebar-edge': `${sidebarWidth}px` }"
+      :title="sidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')"
+      :aria-label="sidebarCollapsed ? t('layout.sidebar.expand') : t('layout.sidebar.collapse')"
+      @click="sidebarCollapsed = !sidebarCollapsed"
+    >
+      <icon-left v-if="!sidebarCollapsed" class="h-3.5 w-3.5" style="position: relative; z-index: 1" />
+      <icon-right v-else class="h-3.5 w-3.5" style="position: relative; z-index: 1" />
+    </button>
     <div
       v-if="isMobileViewport && !sidebarCollapsed"
       class="sidebar-mobile-scrim"
       @click="sidebarCollapsed = true"
     />
+    <!-- 移动端浮动菜单按钮（唤出侧栏抽屉） -->
+    <button
+      v-if="isMobileViewport && sidebarCollapsed"
+      class="mobile-menu-fab"
+      aria-label="打开导航菜单"
+      @click="sidebarCollapsed = false"
+    >
+      <icon-list class="h-5 w-5" />
+    </button>
     <!-- 右侧内容 -->
     <a-layout-content
       class="!bg-transparent layout-content overflow-hidden flex flex-col"
@@ -398,18 +510,108 @@ watch(settingModalVisible, async (visible) => {
 
 <style scoped>
 .sidebar-sider {
-  transition: width 1000ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    width 1000ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 侧栏折叠/展开把手：左端骑住侧栏右缘边线，与侧栏融为一体 */
+.sidebar-collapse-handle {
+  position: fixed;
+  top: 50%;
+  left: calc(var(--sidebar-edge, 272px) - 1px);
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  height: 44px;
+  width: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 var(--aicss-radius) var(--aicss-radius) 0;
+  border: 1px solid var(--aicss-border);
+  border-left: none;
+  /* 不透明白底与侧栏同色，盖住被把手覆盖的那一段侧栏边线 */
+  background: var(--aicss-surface);
+  color: var(--aicss-muted);
+  cursor: pointer;
+  box-shadow: 2px 0 8px rgba(233, 30, 99, 0.08);
+  transition:
+    color 0.18s var(--aicss-ease),
+    border-color 0.18s var(--aicss-ease),
+    box-shadow 0.18s var(--aicss-ease);
+  padding: 0;
+}
+.sidebar-collapse-handle::before {
+  /* 悬停渐显层：从透明渐变到浅粉，箭头使用深粉保持对比 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 0 var(--aicss-radius) var(--aicss-radius) 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--aicss-accent) 14%, transparent) 35%,
+    color-mix(in srgb, var(--aicss-accent) 30%, white) 100%
+  );
+  opacity: 0;
+  transition: opacity 0.18s var(--aicss-ease);
+  pointer-events: none;
+}
+.sidebar-collapse-handle:hover::before {
+  opacity: 1;
+}
+.sidebar-collapse-handle:hover {
+  border-color: color-mix(in srgb, var(--aicss-accent) 40%, white);
+  color: var(--aicss-accent-text);
+  box-shadow: 2px 0 10px color-mix(in srgb, var(--aicss-accent) 20%, transparent);
+}
+.sidebar-collapse-handle:focus-visible {
+  outline: 2px solid var(--aicss-accent-soft);
+  outline-offset: 2px;
+}
+
+/* 移动端浮动菜单按钮 */
+.mobile-menu-fab {
+  position: fixed;
+  left: 12px;
+  bottom: 24px;
+  z-index: 25;
+  display: flex;
+  height: 44px;
+  width: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--aicss-radius);
+  background: var(--aicss-accent);
+  color: #fff;
+  box-shadow: var(--aicss-shadow-elevated);
+  border: none;
+  cursor: pointer;
+  transition:
+    background-color 0.18s var(--aicss-ease),
+    transform 0.18s var(--aicss-ease);
+}
+.mobile-menu-fab:hover {
+  background: var(--aicss-accent-text);
+}
+.mobile-menu-fab:active {
+  transform: scale(0.94);
+}
+.mobile-menu-fab:focus-visible {
+  outline: 2px solid var(--aicss-ring, var(--aicss-accent));
+  outline-offset: 2px;
 }
 
 .sidebar-sider--mobile {
-  box-shadow: 4px 0 24px rgba(15, 23, 42, 0.08);
+  box-shadow: 4px 0 24px rgba(233, 30, 99, 0.08);
 }
 
 .sidebar-mobile-scrim {
   position: fixed;
   inset: 0;
   z-index: 30;
-  background: rgba(15, 23, 42, 0.32);
+  background: rgba(233, 30, 99, 0.2);
   -webkit-backdrop-filter: blur(2px);
   backdrop-filter: blur(2px);
 }

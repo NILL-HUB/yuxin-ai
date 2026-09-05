@@ -19,10 +19,6 @@ export async function searchConversations(query: string, limit: number = 50) {
   })
 }
 
-export async function deleteConversation(conversationId: string) {
-  return post(`/conversations/${conversationId}/delete`)
-}
-
 export async function updateConversationName(conversationId: string, name: string) {
   return post(`/conversations/${conversationId}/name`, {
     body: { name },

@@ -13,7 +13,7 @@ import {
   updateConversationIsPinned,
   updateConversationName,
 } from '@/services/conversation'
-import { Message, Modal } from '@arco-design/web-vue'
+import { Message } from '@arco-design/web-vue'
 export const useGetConversationMessagesWithPage = () => {
   // 1.定义hooks所需数据
   const loading = ref(false)
@@ -81,23 +81,33 @@ export const useGetConversationMessagesWithPage = () => {
 }
 
 export const useDeleteConversation = () => {
-  const handleDeleteConversation = (conversation_id: string, success_callback?: () => void) => {
-    Modal.warning({
-      title: '要删除该会话么?',
-      content: '删除会话信息后，删除会话后，该会话下的所有聊天记录将被永远删除，无法找回。',
-      hideCancel: false,
-      onOk: async () => {
-        // 1.点击确定后向API接口发起请求
-        const resp = await deleteConversation(conversation_id)
-        Message.success(resp.message)
+  const deleteTarget = ref<{ id: string; name: string; callback?: () => void } | null>(null)
+  const deleteLoading = ref(false)
 
-        // 2.调用callback函数指定回调功能
-        if (success_callback) success_callback()
-      },
-    })
+  const handleDeleteConversation = (conversation_id: string, success_callback?: () => void, name = '') => {
+    deleteTarget.value = { id: conversation_id, name, callback: success_callback }
   }
 
-  return { handleDeleteConversation }
+  const confirmDeleteConversation = async (retentionDays: number) => {
+    const target = deleteTarget.value
+    if (!target) return
+    deleteLoading.value = true
+    try {
+      const resp = await deleteConversation(target.id, retentionDays)
+      Message.success(resp.message)
+      deleteTarget.value = null
+      if (target.callback) target.callback()
+    } finally {
+      deleteLoading.value = false
+    }
+  }
+
+  return {
+    deleteTarget,
+    deleteLoading,
+    handleDeleteConversation,
+    confirmDeleteConversation,
+  }
 }
 
 export const useDeleteMessage = () => {

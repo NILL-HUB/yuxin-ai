@@ -59,6 +59,8 @@ export const syncExternalDataSource = (id: string) => {
   )
 }
 
-export const deleteExternalDataSource = (id: string) => {
-  return del<BaseResponse<null>>(`/external-data-sources/${id}`)
+export const deleteExternalDataSource = (id: string, retentionDays?: number) => {
+  return del<BaseResponse<null>>(`/external-data-sources/${id}`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
 }

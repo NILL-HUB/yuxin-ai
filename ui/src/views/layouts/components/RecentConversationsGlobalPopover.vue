@@ -126,27 +126,27 @@ onUnmounted(() => {
   <!-- 全屏 Popover - 不受侧边栏限制 -->
   <div
     id="recent-conversations-popover"
-    class="w-80 max-h-[calc(100vh-24px)] bg-white rounded-lg shadow-2xl border border-gray-200 z-[9999] overflow-hidden flex flex-col"
+    class="w-80 max-h-[calc(100vh-24px)] bg-surface rounded-lg shadow-2xl border border-border-c z-[9999] overflow-hidden flex flex-col"
     @mouseenter="handleMouseEnter"
     @mouseleave="handleMouseLeave"
   >
     <!-- 标题栏 -->
-    <div class="px-4 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0">
+    <div class="px-4 py-3 border-b border-border-c bg-surface-2 shrink-0">
       <div class="flex items-center justify-between">
-        <div class="text-sm font-bold text-gray-700">最近对话</div>
-        <div class="text-xs text-gray-500">{{ conversations.length }} 条</div>
+        <div class="text-sm font-bold text-text-2">最近对话</div>
+        <div class="text-xs text-muted">{{ conversations.length }} 条</div>
       </div>
     </div>
 
     <!-- 加载状态 -->
-    <div v-if="loading" class="p-4 flex-shrink-0">
+    <div v-if="loading" class="p-4 shrink-0">
       <a-skeleton :loading="true" animation>
         <a-skeleton-line :rows="3" :line-height="20" :line-spacing="12" />
       </a-skeleton>
     </div>
 
     <!-- 空状态 -->
-    <div v-else-if="conversations.length === 0" class="p-4 text-center text-sm text-gray-400 flex-shrink-0">
+    <div v-else-if="conversations.length === 0" class="p-4 text-center text-sm text-muted shrink-0">
       暂无最近对话
     </div>
 
@@ -155,37 +155,37 @@ onUnmounted(() => {
       <div
         v-for="conversation in displayConversations"
         :key="conversation.id"
-        class="px-4 py-3 border-b border-gray-100 last:border-b-0 hover:bg-blue-50 cursor-pointer transition-colors duration-150"
+        class="px-4 py-3 border-b border-border-c last:border-b-0 hover:bg-brand-soft cursor-pointer transition-colors duration-150"
         @click="handleCardClick(conversation)"
       >
         <!-- 对话头部 -->
         <div class="flex items-start gap-2 mb-2">
-          <div class="flex-shrink-0 mt-0.5">
+          <div class="shrink-0 mt-0.5">
             <icon-schedule
               v-if="conversation.invoke_from === 'schedule'"
               class="w-4 h-4 text-orange-400"
             />
             <icon-message
               v-else-if="conversation.source_type === 'assistant_agent'"
-              class="w-4 h-4 text-gray-400"
+              class="w-4 h-4 text-muted"
             />
-            <icon-apps v-else class="w-4 h-4 text-gray-400" />
+            <icon-apps v-else class="w-4 h-4 text-muted" />
           </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-1.5">
-              <div class="font-medium text-sm text-gray-900 truncate">
+              <div class="font-medium text-sm text-text truncate">
                 {{ conversation.name }}
               </div>
               <a-tag
                 v-if="conversation.invoke_from === 'schedule'"
                 size="small"
                 color="orange"
-                class="flex-shrink-0 !mr-0"
+                class="shrink-0 !mr-0"
               >
                 {{ t('chat.schedules.shortLabel') }}
               </a-tag>
             </div>
-            <div class="text-xs text-gray-500 mt-0.5">
+            <div class="text-xs text-muted mt-0.5">
               {{ getConversationSourceLabel(conversation) }}
             </div>
           </div>
@@ -195,22 +195,22 @@ onUnmounted(() => {
         <div class="ml-6 space-y-1">
           <!-- 用户消息 -->
           <div v-if="conversation.human_message" class="flex gap-1.5">
-            <span class="text-xs font-medium text-gray-500 flex-shrink-0">用户:</span>
-            <div class="text-xs text-gray-600 line-clamp-1 flex-1">
+            <span class="text-xs font-medium text-muted shrink-0">用户:</span>
+            <div class="text-xs text-text-2 line-clamp-1 flex-1">
               {{ getHumanMessagePreview(conversation) }}
             </div>
           </div>
           <!-- AI消息 -->
           <div v-if="conversation.ai_message" class="flex gap-1.5">
-            <span class="text-xs font-medium text-gray-500 flex-shrink-0">AI:</span>
-            <div class="text-xs text-gray-600 line-clamp-1 flex-1">
+            <span class="text-xs font-medium text-muted shrink-0">AI:</span>
+            <div class="text-xs text-text-2 line-clamp-1 flex-1">
               {{ getAiMessagePreview(conversation) }}
             </div>
           </div>
         </div>
 
         <!-- 时间戳 -->
-        <div class="ml-6 text-xs text-gray-400 mt-1.5">
+        <div class="ml-6 text-xs text-muted mt-1.5">
           {{ formatRelativeTime(conversation.latest_message_at) }}
         </div>
       </div>
@@ -218,10 +218,10 @@ onUnmounted(() => {
 
     <!-- 查看全部按钮 - 固定在底部 -->
     <div
-      class="px-4 py-3 text-center border-t border-gray-200 bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors duration-150 flex-shrink-0"
+      class="px-4 py-3 text-center border-t border-border-c bg-surface-2 hover:bg-border-c cursor-pointer transition-colors duration-150 shrink-0"
       @click="goToConversationHistory"
     >
-      <div class="text-sm text-blue-600 font-medium">查看全部对话</div>
+      <div class="text-sm text-brand-text font-medium">查看全部对话</div>
     </div>
   </div>
 </template>
@@ -237,11 +237,11 @@ div::-webkit-scrollbar-track {
 }
 
 div::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: var(--aicss-border);
   border-radius: 3px;
 }
 
 div::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: var(--aicss-subtle);
 }
 </style>

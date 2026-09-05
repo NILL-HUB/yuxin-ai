@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { deleteConversation, searchConversations, updateConversationName } from '@/services/conversation-search'
+import { searchConversations, updateConversationName } from '@/services/conversation-search'
 import * as request from '@/utils/request'
 
 vi.mock('@/utils/request', () => ({
@@ -24,12 +24,6 @@ describe('conversation-search service', () => {
         limit: 50,
       },
     })
-  })
-
-  it('posts conversation delete requests to the expected endpoint', async () => {
-    await deleteConversation('conversation-1')
-
-    expect(request.post).toHaveBeenCalledWith('/conversations/conversation-1/delete')
   })
 
   it('posts rename requests with the new conversation name', async () => {

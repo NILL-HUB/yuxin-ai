@@ -4,6 +4,7 @@ import { useDeleteConversation, useGetRecentConversations } from '@/hooks/use-co
 import { useCredentialStore } from '@/stores/credential'
 import { isCredentialLoggedIn } from '@/utils/auth'
 import UpdateConversationNameModal from '@/views/layouts/components/UpdateConversationNameModal.vue'
+import UserRecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -67,18 +68,18 @@ const navSections = computed<SidebarNavSection[]>(() => [
         active: route.path.startsWith('/my-knowledge'),
       },
       {
+        key: 'my-apps',
+        label: t('layout.sidebar.myApps'),
+        to: '/my-apps',
+        icon: 'icon-apps',
+        active: route.path.startsWith('/my-apps'),
+      },
+      {
         key: 'recycle-bin',
         label: t('layout.sidebar.recycleBin'),
         to: '/recycle-bin',
         icon: 'icon-delete',
         active: route.path.startsWith('/recycle-bin'),
-      },
-      {
-        key: 'external-data-sources',
-        label: t('externalDataSource.title'),
-        to: '/external-data-sources',
-        icon: 'icon-cloud',
-        active: route.path.startsWith('/external-data-sources'),
       },
     ],
   },
@@ -119,11 +120,11 @@ const navSections = computed<SidebarNavSection[]>(() => [
 ])
 
 const navItemClass = (item: SidebarNavItem) => {
-  const base = 'group relative flex h-9 items-center rounded-lg text-sm transition-all duration-200 flex-shrink-0'
+  const base = 'group relative flex h-9 items-center rounded-[var(--aicss-radius)] text-sm transition-all duration-200 shrink-0'
   const size = props.collapsed ? 'justify-center w-9' : 'gap-2.5 px-2.5'
   const state = item.active
-    ? 'bg-blue-50 text-blue-700 shadow-sm shadow-blue-100'
-    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+    ? 'bg-brand-soft text-brand-text'
+    : 'text-muted hover:bg-surface-2 hover:text-text'
   return `${base} ${size} ${state}`
 }
 
@@ -132,7 +133,12 @@ const {
   conversations: recentConversations,
   loadRecentConversations: loadRecentConversationsHook,
 } = useGetRecentConversations()
-const { handleDeleteConversation } = useDeleteConversation()
+const {
+  deleteTarget: conversationDeleteTarget,
+  deleteLoading: conversationDeleteLoading,
+  handleDeleteConversation,
+  confirmDeleteConversation,
+} = useDeleteConversation()
 const updateConversationNameVisible = ref(false)
 const updateConversationNameId = ref('')
 const updateConversationName = ref('')
@@ -287,22 +293,26 @@ const updateConversationNameSuccess = (conversation_id: string, name: string) =>
 
 // 6.定义删除会话函数
 const deleteRecentConversation = (conversation: RecentConversation) => {
-  handleDeleteConversation(conversation.id, async () => {
-    recentConversations.value = recentConversations.value.filter(
-      (item) => item.id !== conversation.id,
-    )
+  handleDeleteConversation(
+    conversation.id,
+    async () => {
+      recentConversations.value = recentConversations.value.filter(
+        (item) => item.id !== conversation.id,
+      )
 
-    if (selectedConversationId.value === conversation.id) {
-      if (conversation.source_type === 'assistant_agent') {
-        await router.replace({ path: '/home' })
-      } else if (conversation.source_type === 'public_app' && conversation.app_id) {
-        await router.replace({ path: `/store/public-apps/${conversation.app_id}/preview` })
-      } else if (conversation.source_type === 'app_debugger' && conversation.app_id) {
-        await router.replace({ path: '/home' })
+      if (selectedConversationId.value === conversation.id) {
+        if (conversation.source_type === 'assistant_agent') {
+          await router.replace({ path: '/home' })
+        } else if (conversation.source_type === 'public_app' && conversation.app_id) {
+          await router.replace({ path: `/store/public-apps/${conversation.app_id}/preview` })
+        } else if (conversation.source_type === 'app_debugger' && conversation.app_id) {
+          await router.replace({ path: '/home' })
+        }
       }
-    }
-    await loadRecentConversations()
-  })
+      await loadRecentConversations()
+    },
+    conversation.name,
+  )
 }
 
 const handleRecentConversationsRefresh = () => {
@@ -318,6 +328,13 @@ const handleRecentConversationsScroll = (event: Event) => {
     return
   }
   void loadMoreRecentConversations()
+}
+
+/** 统一滚动容器：仅展开态下滚到底时加载更多最近对话 */
+const onSidebarScroll = (event: Event) => {
+  if (props.collapsed) return
+  if (!isLoggedIn.value) return
+  handleRecentConversationsScroll(event)
 }
 
 // 处理最近对话按钮 hover
@@ -375,20 +392,26 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full min-h-0 overflow-hidden">
-    <!-- 导航菜单 -->
+  <!-- 整个侧边栏内容（菜单 + 最近对话）统一放进一个滚动容器，
+       展开与收起状态均支持下滑查看全部内容，不与底部账号卡互相挤压 -->
+  <div
+    class="sidebar-scroll h-full min-h-0 w-full overflow-y-auto"
+    :class="{ 'px-1': props.collapsed }"
+    @scroll.passive="onSidebarScroll"
+  >
+    <!-- 新建对话按钮 -->
     <div
-      class="flex flex-col flex-shrink-0"
+      :class="`flex flex-col shrink-0 ${props.collapsed ? 'items-center' : ''}`"
     >
       <button
         type="button"
         data-testid="sidebar-new-conversation"
-        :class="`group relative flex h-10 items-center rounded-xl transition-all duration-200 flex-shrink-0 shadow-sm ${props.collapsed ? 'justify-center w-9' : 'gap-2.5 px-2.5'} ${isNewConversationRoute ? 'bg-blue-600 text-white shadow-blue-200 ring-2 ring-blue-200' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-blue-200'}`"
+        :class="`group relative flex h-10 items-center rounded-[var(--aicss-radius)] transition-all duration-200 shrink-0 shadow-[var(--aicss-shadow-card)] ${props.collapsed ? 'justify-center w-9' : 'gap-2.5 px-2.5'} ${isNewConversationRoute ? 'bg-brand text-white ring-2 ring-brand-soft' : 'bg-brand text-white hover:bg-brand-hover'}`"
         :title="t('layout.sidebar.newConversation')"
         @click="handleNewConversationNavigation"
       >
-        <span class="grid h-6 w-6 place-items-center rounded-lg bg-white/15">
-          <icon-plus class="flex-shrink-0 w-4 h-4" />
+        <span class="grid h-6 w-6 place-items-center rounded-[var(--aicss-radius)] bg-white/15">
+          <icon-plus class="shrink-0 w-4 h-4" />
         </span>
         <span v-if="!props.collapsed" class="truncate text-sm font-medium">
           {{ $t('layout.sidebar.newConversation') }}
@@ -398,7 +421,7 @@ onUnmounted(() => {
       <template v-for="section in navSections" :key="section.key">
         <div
           v-if="!props.collapsed"
-          class="mt-3 px-2.5 text-[11px] font-semibold tracking-wide text-slate-400"
+          class="mt-3 px-2.5 text-[11px] font-semibold tracking-wide text-subtle"
         >
           {{ section.label }}
         </div>
@@ -410,7 +433,7 @@ onUnmounted(() => {
             :class="navItemClass(item)"
             :title="item.label"
           >
-            <component :is="item.icon" class="flex-shrink-0 w-4 h-4" />
+            <component :is="item.icon" class="shrink-0 w-4 h-4" />
             <span v-if="!props.collapsed" class="truncate text-sm">
               {{ item.label }}
             </span>
@@ -419,52 +442,44 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <!-- 最近对话区域 - 可滚动 -->
-    <div v-if="isLoggedIn" class="flex flex-col flex-1 min-h-0 overflow-hidden">
-      <!-- 侧边栏展开时显示完整列表 -->
-      <div
-        v-if="!props.collapsed"
-        class="mt-4 pt-3 flex items-center gap-1.5 px-1 mb-1 flex-shrink-0 border-t border-slate-100"
-      >
-        <icon-history class="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-        <div class="text-xs font-semibold tracking-wide text-slate-400">
-          {{ $t('layout.sidebar.recentConversations') }}
+    <!-- 最近对话区域 -->
+    <div v-if="isLoggedIn" class="flex flex-col">
+      <!-- 展开态：标题 + 列表 -->
+      <template v-if="!props.collapsed">
+        <div class="mt-4 pt-3 flex items-center gap-1.5 px-1 mb-1 shrink-0 border-t border-border-c">
+          <icon-history class="w-3.5 h-3.5 text-subtle shrink-0" />
+          <div class="text-xs font-semibold tracking-wide text-subtle">
+            {{ $t('layout.sidebar.recentConversations') }}
+          </div>
+          <div class="flex-1 h-px bg-surface-2"></div>
         </div>
-        <div class="flex-1 h-px bg-slate-100"></div>
-      </div>
 
-      <!-- 最近对话列表 - 只在展开时显示，固定高度可滚动 -->
-      <div
-        v-if="!props.collapsed"
-        class="flex-1 min-h-0 overflow-y-auto pr-1 recent-conversation-list"
-        @scroll.passive="handleRecentConversationsScroll"
-      >
-        <div v-if="recentConversations.length === 0" class="text-xs text-slate-400 px-2 py-1">
+        <div v-if="recentConversations.length === 0" class="text-xs text-subtle px-2 py-1">
           {{ $t('layout.sidebar.noRecentConversations') }}
         </div>
-        <div v-else class="flex flex-col gap-0.5">
+        <div v-else class="flex flex-col gap-0.5 pb-2">
           <div
             v-for="conversation in recentConversations"
             :key="conversation.id"
-            :class="`group flex items-center gap-1 h-8 leading-8 pl-2 pr-1 text-gray-700 rounded-lg cursor-pointer ${isConversationActive(conversation) ? 'bg-blue-50 !text-blue-700' : ''} hover:bg-blue-50 hover:text-blue-700`"
+            :class="`group flex items-center gap-1 h-8 leading-8 pl-2 pr-1 text-text-2 rounded-[var(--aicss-radius)] cursor-pointer ${isConversationActive(conversation) ? 'bg-brand-soft !text-brand-text' : ''} hover:bg-brand-soft hover:text-brand-text`"
             @click="() => changeConversation(conversation)"
           >
             <div class="flex-1 min-w-0 flex items-center gap-1.5">
               <icon-schedule
                 v-if="conversation.invoke_from === 'schedule'"
-                class="text-orange-400 group-hover:text-current flex-shrink-0"
+                class="text-orange-400 group-hover:text-current shrink-0"
               />
               <icon-message
                 v-else-if="conversation.source_type === 'assistant_agent'"
-                class="text-gray-400 group-hover:text-current flex-shrink-0"
+                class="text-subtle group-hover:text-current shrink-0"
               />
-              <icon-apps v-else class="text-gray-400 group-hover:text-current flex-shrink-0" />
+              <icon-apps v-else class="text-subtle group-hover:text-current shrink-0" />
               <div class="flex-1 line-clamp-1 break-all">{{ conversation.name }}</div>
               <a-tag
                 v-if="conversation.invoke_from === 'schedule'"
                 size="small"
                 color="orange"
-                class="flex-shrink-0 !mr-0"
+                class="shrink-0 !mr-0"
               >
                 {{ t('chat.schedules.shortLabel') }}
               </a-tag>
@@ -500,28 +515,28 @@ onUnmounted(() => {
             </a-dropdown>
           </div>
         </div>
-      </div>
+      </template>
 
-      <!-- 侧边栏收缩时显示按钮组 - 最近对话按钮与搜索按钮和折叠按钮保持相同间距 -->
+      <!-- 收起态：最近对话按钮（仅图标） -->
       <div
-        v-if="props.collapsed"
-        class="flex flex-col gap-0.5 items-center px-2 flex-shrink-0 mt-2"
+        v-else
+        class="flex flex-col gap-0.5 items-center px-2 shrink-0 mt-3"
       >
         <!-- 最近对话按钮 -->
         <div
-          class="flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer transition-all duration-200 text-blue-600 hover:text-blue-700 hover:bg-blue-50 group flex-shrink-0"
+          class="flex items-center justify-center w-7 h-7 rounded-[var(--aicss-radius)] cursor-pointer transition-all duration-200 text-brand-text hover:text-brand-text hover:bg-brand-soft group shrink-0"
           @mouseenter="handleRecentConversationsHover"
           @mouseleave="handleRecentConversationsLeave"
           :title="
             t('layout.sidebar.recentConversationsCount', { count: recentConversations.length })
           "
         >
-          <div class="relative w-4 h-4 flex items-center justify-center flex-shrink-0">
-            <icon-history class="w-4 h-4 flex-shrink-0" />
+          <div class="relative w-4 h-4 flex items-center justify-center shrink-0">
+            <icon-history class="w-4 h-4 shrink-0" />
             <!-- 数量徽章 - 只在 hover 时显示 -->
             <div
               v-if="recentConversations.length > 0"
-              class="absolute -top-2 -right-2 min-w-5 h-5 bg-blue-200 text-blue-700 text-xs rounded-full flex items-center justify-center font-bold px-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex-shrink-0"
+              class="absolute -top-2 -right-2 min-w-5 h-5 bg-brand-soft text-brand-text text-xs rounded-full flex items-center justify-center font-bold px-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 shrink-0"
             >
               {{ recentConversations.length }}
             </div>
@@ -536,16 +551,26 @@ onUnmounted(() => {
       :conversation_name="updateConversationName"
       @saved="updateConversationNameSuccess"
     />
+    <user-recycle-bin-delete-modal
+      :visible="conversationDeleteTarget !== null"
+      :title="t('common.actions.deleteConversation')"
+      :resource-name="conversationDeleteTarget?.name"
+      :loading="conversationDeleteLoading"
+      :hint="t('userRecycleBin.deleteHint')"
+      @update:visible="(v) => !v && (conversationDeleteTarget = null)"
+      @confirm="confirmDeleteConversation"
+    />
   </div>
 </template>
 
 <style scoped>
-.recent-conversation-list {
+/* 导航滚动区：隐藏滚动条 */
+.sidebar-scroll {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
 
-.recent-conversation-list::-webkit-scrollbar {
+.sidebar-scroll::-webkit-scrollbar {
   width: 0;
   height: 0;
 }

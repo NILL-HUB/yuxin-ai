@@ -198,7 +198,9 @@ describe('LayoutSidebar home navigation', () => {
     expect(tos).toContain('/search')
     expect(tos).toContain('/memory')
     expect(tos).toContain('/my-knowledge')
-    expect(tos).toContain('/external-data-sources')
+    expect(tos).toContain('/my-apps')
+    expect(tos).toContain('/recycle-bin')
+    expect(tos).not.toContain('/external-data-sources')
     expect(tos).not.toContain('/showcase')
     expect(tos).toContain('/schedules')
     expect(tos).toContain('/membership')
@@ -233,7 +235,7 @@ describe('LayoutSidebar home navigation', () => {
 
     expect(mocks.loadRecentConversations).toHaveBeenCalledWith(20)
 
-    const list = wrapper.get('.recent-conversation-list')
+    const list = wrapper.get('.sidebar-scroll')
     Object.defineProperty(list.element, 'scrollTop', {
       value: 200,
       writable: true,

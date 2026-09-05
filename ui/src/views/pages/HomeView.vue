@@ -31,7 +31,6 @@ import {
   postToolConfirmationConfirm,
   postToolConfirmationCancel,
 } from '@/services/tool-confirmation'
-import { getErrorMessage } from '@/utils/error'
 import { useAccountStore } from '@/stores/account'
 import { useCredentialStore } from '@/stores/credential'
 import storage from '@/utils/storage'
@@ -205,7 +204,7 @@ const defaultAssistantIntroduction = computed(() => {
   ].join('\n')
 })
 const assistantIntroduction = ref('')
-const { startAudioStream, stopAudioStream, isPlaying } = useAudioPlayer()
+const { startAudioStream, stopAudioStream, isPlaying: _isPlaying } = useAudioPlayer()
 const voiceMode = ref(false)
 const voiceStreaming = ref(false)
 const voiceMessageStarted = ref(false)
@@ -1665,10 +1664,10 @@ onUnmounted(() => {
         class="home-chat-thread flex-1 min-h-0 flex flex-col w-full max-w-[760px] mx-auto px-4 sm:px-6"
       >
         <div
-          class="mb-4 flex min-h-[64px] items-center justify-center rounded-2xl border border-white/60 bg-white/35 px-4 py-3 backdrop-blur-md shadow-sm shadow-blue-500/5"
+          class="mb-4 flex min-h-[64px] items-center justify-center rounded-2xl border border-border-c/60 bg-surface/60 px-4 py-3 backdrop-blur-md shadow-[var(--aicss-shadow-card)]"
         >
           <div class="min-w-0 text-center">
-            <div class="truncate text-base font-semibold text-gray-700">
+            <div class="truncate text-base font-semibold text-text">
               {{
                 getConversationNameLoading
                   ? t('home.conversation.loading')
@@ -1715,7 +1714,7 @@ onUnmounted(() => {
               :loading="item.id === message_id && assistantAgentChatLoading"
               :latency="item.latency"
               :total_token_count="item.total_token_count"
-              message_class="glass-message-bubble bg-white/40 backdrop-blur-md border border-white/60 text-gray-700 px-4 py-3 rounded-2xl break-all w-fit max-w-full shadow-lg shadow-blue-500/5"
+              message_class="glass-message-bubble bg-surface/50 backdrop-blur-md border border-border-c/60 text-text px-4 py-3 rounded-2xl break-all w-fit max-w-full shadow-lg shadow-[var(--aicss-shadow-card)]"
               agent_thought_variant="inline"
               :agent_thought_default_visible="item.id === message_id && isStreamingResponse"
               :agent_thought_follow_latest="item.id === message_id && isStreamingResponse"
@@ -1727,7 +1726,7 @@ onUnmounted(() => {
             >
               <button
                 type="button"
-                class="flex h-8 w-8 items-center justify-center rounded-full text-lg text-gray-400 transition-all hover:bg-gray-100 hover:text-gray-600 hover:scale-110"
+                class="flex h-8 w-8 items-center justify-center rounded-full text-lg text-subtle transition-all hover:bg-surface-2 hover:text-muted hover:scale-110"
                 title="反馈"
                 @click="handleThumbsDown()"
               >
@@ -1739,7 +1738,7 @@ onUnmounted(() => {
 
           <button
             v-if="showScrollToBottomButton"
-            class="fixed bottom-28 z-40 w-11 h-11 rounded-full bg-white/95 backdrop-blur-md border border-gray-300/85 text-gray-600 shadow-lg shadow-gray-300/35 hover:bg-white transition-all duration-300 flex items-center justify-center"
+            class="fixed bottom-28 z-40 w-11 h-11 rounded-full bg-surface/95 backdrop-blur-md border border-border-c/85 text-muted shadow-lg shadow-[var(--aicss-shadow-card)] hover:bg-surface transition-all duration-300 flex items-center justify-center"
             :style="
               scrollToBottomButtonCenterX !== null
                 ? { left: `${scrollToBottomButtonCenterX}px`, transform: 'translateX(-50%)' }
@@ -1771,7 +1770,7 @@ onUnmounted(() => {
                 class="pointer-events-none absolute right-full top-1/2 mr-4 hidden -translate-y-1/2 md:block"
               >
                 <div
-                  class="human-nav-preview-bubble max-w-[320px] px-4 py-2.5 text-sm text-slate-700"
+                  class="human-nav-preview-bubble max-w-[320px] px-4 py-2.5 text-sm text-text-2"
                 >
                   {{ navItem.previewText }}
                 </div>
@@ -1787,7 +1786,7 @@ onUnmounted(() => {
                   :class="
                     index === currentHumanMessageIndex
                       ? 'human-nav-active-dot h-4 w-4 rounded-full'
-                      : 'h-2.5 w-2.5 rounded-full bg-slate-400/75 group-hover:scale-110 group-hover:bg-slate-500/80'
+                      : 'h-2.5 w-2.5 rounded-full bg-subtle/75 group-hover:scale-110 group-hover:bg-muted/80'
                   "
                 />
               </button>
@@ -1818,15 +1817,15 @@ onUnmounted(() => {
         class="home-chat-empty-state flex-1 min-h-0 flex flex-col w-full max-w-[760px] mx-auto p-6 pt-8 gap-2 items-center justify-start overflow-y-auto scrollbar-w-none"
       >
         <div class="mb-9 w-full max-w-[600px]">
-          <div class="text-[40px] font-bold text-gray-700 mt-[52px] mb-4">
+          <div class="text-[40px] font-bold text-text mt-[52px] mb-4">
             Hi，{{ userDisplayName }}
           </div>
-          <div class="text-[30px] font-bold text-gray-700 mb-2">
+          <div class="text-[30px] font-bold text-text mb-2">
             {{ t('home.hero.titlePrefix') }}
-            <span class="text-blue-700">{{ t('home.hero.titleAccent') }}</span>
+            <span class="text-brand-text">{{ t('home.hero.titleAccent') }}</span>
             {{ t('home.hero.titleSuffix') }}
           </div>
-          <div class="text-base text-gray-700">
+          <div class="text-base text-text">
             {{ t('home.hero.description') }}
           </div>
         </div>
@@ -1847,13 +1846,13 @@ onUnmounted(() => {
             :show_agent_thought="false"
             :always_show_actions="true"
             :suggested_questions="opening_questions"
-            message_class="glass-message-bubble bg-white/50 backdrop-blur-xl border border-white/80 text-gray-700 px-4 py-3 rounded-2xl break-all w-fit max-w-full shadow-xl shadow-cyan-200/30"
+            message_class="glass-message-bubble bg-surface/50 backdrop-blur-xl border border-border-c/80 text-text px-4 py-3 rounded-2xl break-all w-fit max-w-full shadow-xl shadow-[var(--aicss-shadow-card)]"
             @select-suggested-question="handleSubmitQuestion"
           />
         </div>
       </div>
       <!-- 对话输入框 -->
-      <div class="w-full flex flex-col flex-shrink-0 pb-2 pt-2 gap-3">
+      <div class="w-full flex flex-col shrink-0 pb-2 pt-2 gap-3">
         <div
           v-if="toolConfirmationPrompt"
           class="w-full max-w-[600px] mx-auto px-2 sm:px-4 flex justify-center"
@@ -1938,7 +1937,7 @@ onUnmounted(() => {
         <!-- 底部提示 -->
         <div class="w-full max-w-[600px] mx-auto px-2 sm:px-4">
           <div
-            class="flex items-center justify-center gap-2 text-xs text-[#d0d7e0] pb-2 px-2 min-w-0"
+            class="flex items-center justify-center gap-2 text-xs text-subtle pb-2 px-2 min-w-0"
           >
             <span class="whitespace-nowrap">{{ t('home.messages.disclaimer') }}</span>
             <span class="whitespace-nowrap">© 2026 钰心AI</span>
@@ -2005,24 +2004,24 @@ onUnmounted(() => {
 .human-nav-preview-bubble {
   width: fit-content;
   max-width: 320px;
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 250, 252, 0.96);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  border: 1px solid rgba(226, 232, 240, 0.95);
+  border: 1px solid rgba(246, 215, 228, 0.95);
   border-radius: 18px;
-  box-shadow: 0 12px 28px rgba(148, 163, 184, 0.18);
+  box-shadow: 0 12px 28px rgba(233, 30, 99, 0.12);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .human-nav-active-dot {
-  background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #f472b6 100%);
+  background: linear-gradient(135deg, #ff9ec5 0%, #e91e63 50%, #ad1457 100%);
   background-size: 200% 200%;
   border: 1px solid rgba(255, 255, 255, 0.86);
   box-shadow:
     0 0 0 3px rgba(255, 255, 255, 0.28),
-    0 10px 22px rgba(99, 102, 241, 0.28);
+    0 10px 22px rgba(233, 30, 99, 0.28);
   animation: human-nav-active-shift 3s ease-in-out infinite;
 }
 

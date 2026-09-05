@@ -54,8 +54,8 @@ watch(
     @cancel="hideModal"
   >
     <div class="flex items-center justify-between">
-      <div class="text-lg font-bold text-gray-700">重命名会话</div>
-      <a-button type="text" class="!text-gray-700" size="small" @click="hideModal">
+      <div class="text-lg font-bold text-text-2">重命名会话</div>
+      <a-button type="text" class="!text-text-2" size="small" @click="hideModal">
         <template #icon>
           <icon-close />
         </template>

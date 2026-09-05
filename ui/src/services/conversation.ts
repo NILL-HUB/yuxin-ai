@@ -17,10 +17,12 @@ export const getConversationMessages = (
   )
 }
 
-// 删除特定的会话
-export const deleteConversation = (conversation_id: string) => {
-  return post<BaseResponse<Record<string, unknown>>>(`/conversations/${conversation_id}/delete`)
-}
+  // 删除特定的会话（进入回收站，可指定留存天数）
+  export const deleteConversation = (conversation_id: string, retentionDays?: number) => {
+    return post<BaseResponse<Record<string, unknown>>>(`/conversations/${conversation_id}/delete`, {
+      body: retentionDays ? { retention_days: retentionDays } : undefined,
+    })
+  }
 
 // 删除特定会话下的指定消息
 export const deleteMessage = (conversation_id: string, message_id: string) => {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Message, Modal } from '@arco-design/web-vue'
+import { Message } from '@arco-design/web-vue'
 import { useCredentialStore } from '@/stores/credential'
 import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
@@ -16,6 +16,7 @@ import {
   syncExternalDataSource,
 } from '@/services/external-data-source'
 import type { ExternalDataSource } from '@/services/external-data-source'
+import UserRecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 
 const route = useRoute()
 const credentialStore = useCredentialStore()
@@ -278,24 +279,24 @@ const handleSync = async (record: ExternalDataSource) => {
   }
 }
 
+const deleteTarget = ref<ExternalDataSource | null>(null)
+const deleteLoading = ref(false)
 const handleDelete = (record: ExternalDataSource) => {
-  Modal.warning({
-    title: t('externalDataSource.confirmDelete'),
-    content: t('externalDataSource.confirmDeleteDescription'),
-    hideCancel: false,
-    okText: t('externalDataSource.delete'),
-    cancelText: t('common.actions.cancel'),
-    okButtonProps: { status: 'danger' },
-    onOk: async () => {
-      try {
-        await deleteExternalDataSource(record.id)
-        Message.success(t('externalDataSource.delete'))
-        await loadDataSources()
-      } catch (error: unknown) {
-        Message.error(getErrorMessage(error, t('externalDataSource.syncFailed')))
-      }
-    },
-  })
+  deleteTarget.value = record
+}
+const confirmDelete = async (retentionDays: number) => {
+  if (!deleteTarget.value) return
+  deleteLoading.value = true
+  try {
+    await deleteExternalDataSource(deleteTarget.value.id, retentionDays)
+    Message.success(t('externalDataSource.delete'))
+    deleteTarget.value = null
+    await loadDataSources()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('externalDataSource.syncFailed')))
+  } finally {
+    deleteLoading.value = false
+  }
 }
 
 watch(
@@ -315,17 +316,17 @@ watch(
   <div class="h-[calc(100vh-160px)] overflow-scroll scrollbar-w-none">
     <div
       v-if="!isLoggedIn"
-      class="flex flex-col items-center justify-center h-full bg-white rounded-lg border border-gray-200"
+      class="flex flex-col items-center justify-center h-full bg-surface rounded-lg border border-border-c"
     >
-      <div class="w-24 h-24 mb-6 bg-gray-100 rounded-full flex items-center justify-center">
-        <icon-user class="text-5xl text-gray-400" />
+      <div class="w-24 h-24 mb-6 bg-surface-2 rounded-full flex items-center justify-center">
+        <icon-user class="text-5xl text-muted" />
       </div>
-      <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ t('externalDataSource.loginRequiredTitle') }}</h3>
-      <p class="text-gray-500 mb-6 text-center max-w-md">{{ t('externalDataSource.loginRequiredDescription') }}</p>
+      <h3 class="text-lg font-semibold text-text mb-2">{{ t('externalDataSource.loginRequiredTitle') }}</h3>
+      <p class="text-muted mb-6 text-center max-w-md">{{ t('externalDataSource.loginRequiredDescription') }}</p>
       <a-button
         type="primary"
         size="large"
-        class="!rounded-lg !bg-gray-900 hover:!bg-gray-800"
+        class="!rounded-lg"
         @click="openLoginModal"
       >
         {{ t('common.actions.login') }}
@@ -334,19 +335,19 @@ watch(
 
     <div
       v-else-if="!loading && dataSources.length === 0"
-      class="flex flex-col items-center justify-center h-full bg-white rounded-lg border border-gray-200"
+      class="flex flex-col items-center justify-center h-full bg-surface rounded-lg border border-border-c"
     >
-      <div class="w-24 h-24 mb-6 bg-gray-100 rounded-full flex items-center justify-center">
-        <icon-storage class="text-5xl text-gray-400" />
+      <div class="w-24 h-24 mb-6 bg-surface-2 rounded-full flex items-center justify-center">
+        <icon-storage class="text-5xl text-muted" />
       </div>
-      <h3 class="text-lg font-semibold text-gray-900 mb-2">{{ t('externalDataSource.title') }}</h3>
-      <p class="text-gray-500 mb-6 text-center max-w-md">
+      <h3 class="text-lg font-semibold text-text mb-2">{{ t('externalDataSource.title') }}</h3>
+      <p class="text-muted mb-6 text-center max-w-md">
         {{ t('externalDataSource.noData') }}
       </p>
       <a-button
         type="primary"
         size="large"
-        class="!rounded-lg !bg-gray-900 hover:!bg-gray-800"
+        class="!rounded-lg"
         @click="openCreateModal"
       >
         <template #icon><icon-plus /></template>
@@ -355,35 +356,36 @@ watch(
     </div>
 
     <div v-else>
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-semibold text-gray-900">{{ t('externalDataSource.title') }}</h2>
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <h2 class="text-xl font-semibold text-text">{{ t('externalDataSource.title') }}</h2>
         <a-button
           type="primary"
-          class="!rounded-lg !bg-gray-900 hover:!bg-gray-800"
+          class="!rounded-lg"
           @click="openCreateModal"
         >
           <template #icon><icon-plus /></template>
           {{ t('externalDataSource.create') }}
         </a-button>
       </div>
-      <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div class="bg-surface rounded-lg border border-border-c overflow-hidden">
         <a-table
           :loading="loading"
           :bordered="false"
           :data="dataSources"
           :hoverable="true"
           :pagination="false"
+          :scroll="{ x: 900 }"
           row-key="id"
         >
           <template #columns>
             <a-table-column
               :title="t('externalDataSource.sourceName')"
               data-index="source_name"
-              header-cell-class="!bg-gray-50 !text-gray-900 !font-semibold !border-b !border-gray-200"
+              header-cell-class="!bg-surface-2 !text-text !font-semibold !border-b !border-border-c"
               cell-class="!py-4"
             >
               <template #cell="{ record }">
-                <div class="text-sm font-medium text-gray-900" :title="record.source_name">
+                <div class="text-sm font-medium text-text" :title="record.source_name">
                   {{ record.source_name }}
                 </div>
               </template>
@@ -392,7 +394,7 @@ watch(
               :title="t('externalDataSource.sourceType')"
               data-index="source_type"
               :width="140"
-              header-cell-class="!bg-gray-50 !text-gray-900 !font-semibold !border-b !border-gray-200"
+              header-cell-class="!bg-surface-2 !text-text !font-semibold !border-b !border-border-c"
               cell-class="!py-4"
             >
               <template #cell="{ record }">
@@ -405,7 +407,7 @@ watch(
               :title="t('externalDataSource.authorizationStatus')"
               data-index="authorization_status"
               :width="120"
-              header-cell-class="!bg-gray-50 !text-gray-900 !font-semibold !border-b !border-gray-200"
+              header-cell-class="!bg-surface-2 !text-text !font-semibold !border-b !border-border-c"
               cell-class="!py-4"
             >
               <template #cell="{ record }">
@@ -421,7 +423,7 @@ watch(
               :title="t('externalDataSource.syncStatus')"
               data-index="sync_status"
               :width="120"
-              header-cell-class="!bg-gray-50 !text-gray-900 !font-semibold !border-b !border-gray-200"
+              header-cell-class="!bg-surface-2 !text-text !font-semibold !border-b !border-border-c"
               cell-class="!py-4"
             >
               <template #cell="{ record }">
@@ -434,12 +436,12 @@ watch(
               :title="t('externalDataSource.lastSyncedAt')"
               data-index="last_synced_at"
               :width="180"
-              header-cell-class="!bg-gray-50 !text-gray-900 !font-semibold !border-b !border-gray-200"
+              header-cell-class="!bg-surface-2 !text-text !font-semibold !border-b !border-border-c"
               cell-class="!py-4"
             >
               <template #cell="{ record }">
-                <div class="flex items-center gap-2 text-gray-600 text-sm whitespace-nowrap">
-                  <icon-clock-circle class="text-gray-400 flex-shrink-0" :size="16" />
+                <div class="flex items-center gap-2 text-text-2 text-sm whitespace-nowrap">
+                  <icon-clock-circle class="text-muted shrink-0" :size="16" />
                   <span>{{ formatLastSyncedAt(record.last_synced_at) }}</span>
                 </div>
               </template>
@@ -447,7 +449,7 @@ watch(
             <a-table-column
               :title="t('externalDataSource.operations')"
               data-index="operator"
-              header-cell-class="!bg-gray-50 !text-gray-900 !font-semibold !border-b !border-gray-200"
+              header-cell-class="!bg-surface-2 !text-text !font-semibold !border-b !border-border-c"
               cell-class="!py-4"
               :width="220"
             >
@@ -516,11 +518,25 @@ watch(
         </a-form-item>
       </a-form>
     </a-modal>
+    <!-- 删除外部数据源确认（进入回收站 + 选择销毁时间） -->
+    <user-recycle-bin-delete-modal
+      :visible="deleteTarget !== null"
+      :title="t('externalDataSource.confirmDelete')"
+      :resource-name="deleteTarget?.source_name"
+      :loading="deleteLoading"
+      :hint="t('userRecycleBin.deleteHint')"
+      @update:visible="(v) => !v && (deleteTarget = null)"
+      @confirm="confirmDelete"
+    >
+      <p class="text-sm text-muted">
+        {{ t('externalDataSource.confirmDeleteDescription') }}
+      </p>
+    </user-recycle-bin-delete-modal>
   </div>
 </template>
 
 <style scoped>
 :deep(.arco-table-tr:hover) {
-  background-color: rgb(249 250 251) !important;
+  background-color: var(--aicss-surface-2) !important;
 }
 </style>
