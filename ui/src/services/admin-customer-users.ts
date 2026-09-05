@@ -1,10 +1,11 @@
-import { get, post } from '@/utils/request'
+import { get, post, put } from '@/utils/request'
 import {
   type CustomerUserDetailResponse,
   type CustomerUserListRequest,
   type CustomerUserListResponse,
   type CustomerUserResponse,
   type RevokeCustomerUserSessionsResponse,
+  type SetCustomerUserSuperiorResponse,
 } from '@/models/admin-customer-user'
 
 export const listCustomerUsers = async (params: CustomerUserListRequest) => {
@@ -29,5 +30,12 @@ export const enableCustomerUser = async (id: string) => {
 
 export const revokeCustomerUserSessions = async (id: string) => {
   const response = await post<RevokeCustomerUserSessionsResponse>(`/admin/users/${id}/sessions/revoke`)
+  return response.data
+}
+
+export const setCustomerUserSuperior = async (id: string, inviterId: string | null) => {
+  const response = await put<SetCustomerUserSuperiorResponse>(`/admin/users/${id}/superior`, {
+    body: { inviter_id: inviterId },
+  })
   return response.data
 }

@@ -5,10 +5,12 @@ export const redeemCode = (code: string) => {
   return post('/redeem-codes/redeem', { body: { code } })
 }
 
-export const getMembershipSummary = () => {
-  return get<MembershipSummaryResponse['data']>('/membership/summary')
+export const getMembershipSummary = async () => {
+  const response = await get<MembershipSummaryResponse>('/membership/summary')
+  return response.data
 }
 
-export const getRedeemRecords = () => {
-  return get<RedeemRecordListResponse['data']>('/membership/redeem-records')
+export const getRedeemRecords = async () => {
+  const response = await get<RedeemRecordListResponse>('/membership/redeem-records')
+  return response.data
 }

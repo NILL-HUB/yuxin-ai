@@ -17,8 +17,15 @@ export type Plan = {
   code: string
   name: string
   description: string
+  plan_type: 'balance' | 'membership' | 'credits'
   duration_days: number
   grant_token_credits: number
+  auto_renew_threshold_percent: number
+  auto_renew_threshold_days: number
+  purchase_limit: number
+  purchase_limit_period: 'none' | 'all' | 'day' | 'week' | 'month'
+  quota_refresh_period: 'none' | 'cycle'
+  auto_renew_default?: boolean
   price: string
   status: BillingStatus
   sort_order: number
@@ -41,7 +48,9 @@ export type PlanListRequest = {
 export type RedeemCodeBatch = {
   id: string
   name: string
+  description?: string
   plan_id: string
+  plan_name?: string | null
   quantity: number
   status?: string
   expires_at: number | null
@@ -62,6 +71,7 @@ export type RedeemCodeRecord = {
   id: string
   batch_id: string | null
   plan_id: string
+  plan_name?: string | null
   code_mask: string
   status: RedeemCodeStatus
   redeemed_by: string | null
@@ -73,6 +83,7 @@ export type RedeemCodeRecord = {
 
 export type GenerateRedeemCodesRequest = {
   name: string
+  description?: string
   plan_id: string
   quantity: number
   expires_at?: number
@@ -119,10 +130,21 @@ export type CreditTransaction = {
   created_at: number | null
 }
 
+export type RecentTaskConsume = {
+  id: string
+  amount: number
+  transaction_type: string
+  source: string
+  source_id: string | null
+  message: string | null
+  created_at: number | null
+}
+
 export type MembershipSummary = {
   membership: Membership | null
   credit_account: CreditAccount
   recent_transactions: CreditTransaction[]
+  recent_tasks?: RecentTaskConsume[]
 }
 
 export type RedeemRecord = {
@@ -143,5 +165,18 @@ export type PlanResponse = BaseResponse<Plan>
 export type RedeemCodeBatchListResponse = BasePaginatorResponse<RedeemCodeBatch>
 export type RedeemCodeListResponse = BasePaginatorResponse<RedeemCodeRecord>
 export type GenerateRedeemCodesResponse = BaseResponse<{ batch: RedeemCodeBatch; codes: GeneratedRedeemCode[] }>
+export type BillingConfig = {
+  code: string
+  value_numeric: number
+  description?: string
+}
+export type BillingConfigPayload = {
+  code?: string
+  value_numeric: number
+  description?: string
+}
+export type BillingConfigResponse = BaseResponse<BillingConfig>
+
+export type PlainCodeResponse = BaseResponse<{ id: string; code_mask: string; plain_code: string }>
 export type MembershipSummaryResponse = BaseResponse<MembershipSummary>
 export type RedeemRecordListResponse = BaseResponse<RedeemRecordList>

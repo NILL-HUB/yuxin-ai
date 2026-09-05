@@ -15,6 +15,9 @@ export type CustomerUser = {
   last_login_at: number | null
   last_login_ip: string
   created_at: number | null
+  superior_id?: string | null
+  superior_name?: string | null
+  superior_email?: string | null
 }
 
 export type CustomerUserSession = {
@@ -43,3 +46,4 @@ export type CustomerUserListResponse = BasePaginatorResponse<CustomerUser>
 export type CustomerUserResponse = BaseResponse<CustomerUser>
 export type CustomerUserDetailResponse = BaseResponse<CustomerUserDetail>
 export type RevokeCustomerUserSessionsResponse = BaseResponse<{ revoked_sessions: number }>
+export type SetCustomerUserSuperiorResponse = BaseResponse<{ inviter_id?: string; unbound?: boolean }>
