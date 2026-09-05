@@ -252,8 +252,9 @@ describe('ModelsView', () => {
     await costInputs[1].setValue('36')
     await nextTick()
 
-    // 售价与成本同为 /M 元，同单位直减：sell = 1200*3 + 4800 = 8400；cost = 9*3 + 36 = 63；margin ≈ +8337 元（+13233%）
-    expect(wrapper.text()).toContain('参考毛利：+8337 元（+13233%）')
+    // 售价与成本同为 /M 元：sell = 1200*3 + 4800 = 8400；cost = 9*3 + 36 = 63；毛利 8337 元
+    // 毛利率 = 8337 ÷ 8400 ≈ 99.25% → 显示 +99
+    expect(wrapper.text()).toContain('参考毛利率：+99%')
   })
 
   it('renders positive margin as green tag and negative margin as red tag in the table', async () => {
@@ -675,8 +676,9 @@ describe('ModelsView', () => {
     expect((wrapper.find('input[name="valley_output_cost_per_1k_tokens"]').element as HTMLInputElement).value).toBe('1600')
 
     // marginPreview 峰谷感知：不再因 flat 列为 0 而显示空白。
-    // 峰档 /M：sell(1200*3+4800)=8400 元；cost(500*3+2000)=3500 元 → margin=+4900 元（+140%）
-    expect(wrapper.text()).toContain('参考毛利：+4900 元（+140%）')
+    // 峰档 /M：sell(1200*3+4800)=8400 元；cost(500*3+2000)=3500 元 → 毛利 4900 元
+    // 毛利率 = 4900 ÷ 8400 ≈ 58.33% → 显示 +58
+    expect(wrapper.text()).toContain('参考毛利率：+58%')
 
     // 峰谷模型下顶部 flat 售价/成本 group 隐藏（不再出现误导性空框），并展示谷峰提示
     const flatPriceInputs = wrapper.findAll('input[name="input_price_per_1k_tokens"]')

@@ -250,11 +250,12 @@ const marginPreview = computed(() => {
 })
 const marginPercent = computed(() => {
   const f = modelForm.value
-  const costIn = formPricingDimOf(f, 'cost', 'input')
-  const costOut = formPricingDimOf(f, 'cost', 'output')
-  const cost = costIn * MARGIN_RATIO + costOut
-  if (cost <= 0) return 0
-  return ((marginPreview.value || 0) / cost) * 100
+  const sellIn = formPricingDimOf(f, 'price', 'input')
+  const sellOut = formPricingDimOf(f, 'price', 'output')
+  const sell = sellIn * MARGIN_RATIO + sellOut
+  if (sell <= 0) return 0
+  const margin = marginPreview.value || 0
+  return (margin / sell) * 100
 })
 const formatSigned = (value: number) => {
   const n = Math.round(Number(value) || 0)
@@ -288,16 +289,16 @@ const pricingDimOf = (record: ModelRecord, kind: 'price' | 'cost', dim: 'input' 
   return { peak: flat, valley: flat }
 }
 
+// 参考毛利率：取峰档售价/成本（保守口径），参考用量 3:1 权重；返回（利润 ÷ 售价 × 100）的百分数
 const marginOf = (record: ModelRecord) => {
   const { peak: costIn } = pricingDimOf(record, 'cost', 'input')
   const { peak: costOut } = pricingDimOf(record, 'cost', 'output')
   const { peak: sellIn } = pricingDimOf(record, 'price', 'input')
   const { peak: sellOut } = pricingDimOf(record, 'price', 'output')
-  // 参考用量 3:1（3000 输入 + 1000 输出），售价与成本同为元/1k，同单位直减即为该 4k 用量的毛利（元）
-  // 已按 perKToPerM ×1000 折算为「元/M」数量级展示（元/M 毛利 = (sellIn*3+sellOut - costIn*3-costOut) × 250）
   const sell = sellIn * 3 + sellOut
   const cost = costIn * 3 + costOut
-  return (sell - cost) * 250
+  if (sell <= 0) return cost > 0 ? -100 : 0
+  return ((sell - cost) / sell) * 100
 }
 // 谷峰/缓存拆分定价字段（提交时统一转为字符串）
 const PRICING_FIELD_KEYS = [
@@ -1136,7 +1137,7 @@ onMounted(() => {
                   </td>
                   <td class="p-3 text-right">
                     <a-tooltip :content="t('admin.models.columns.marginHint')" position="left">
-                      <a-tag :color="marginOf(model) >= 0 ? 'green' : 'red'">{{ marginOf(model) >= 0 ? '+' : '' }}{{ marginOf(model).toFixed(0) }}</a-tag>
+                      <a-tag :color="marginOf(model) >= 0 ? 'green' : 'red'">{{ marginOf(model) >= 0 ? '+' : '' }}{{ marginOf(model).toFixed(0) }}%</a-tag>
                     </a-tooltip>
                   </td>
                   <td class="p-3">
@@ -1345,9 +1346,9 @@ onMounted(() => {
         <a-alert v-if="modelForm.peak_valley_enabled" type="info" show-icon class="mb-2">
           {{ t('admin.models.groups.peakValleyInlineHint') }}
         </a-alert>
-        <a-alert v-if="marginPreview !== null" :type="marginPreview >= 0 ? 'success' : 'warning'" show-icon>
-          <a-tooltip :content="t('admin.models.groups.marginTooltip')">
-            <span>{{ t('admin.models.groups.marginPreview', { margin: formatSigned(marginPreview), percent: formatSigned(marginPercent) }) }}</span>
+        <a-alert v-if="marginPreview !== null" :type="marginPercent >= 0 ? 'success' : 'warning'" show-icon>
+          <a-tooltip :content="t('admin.models.groups.marginTooltip', { margin: formatSigned(marginPreview) })">
+            <span class="font-medium">{{ t('admin.models.groups.marginPreview', { percent: formatSigned(marginPercent) }) }}</span>
           </a-tooltip>
         </a-alert>
         <div class="form-group">
