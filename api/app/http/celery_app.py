@@ -54,6 +54,7 @@ TASK_MODULES = [
     "internal.task.consolidation_tasks",
     "internal.task.knowledge_indexing_tasks",
     "internal.task.recycle_bin_tasks",
+    "internal.task.auto_renewal_tasks",
 ]
 
 
@@ -68,6 +69,7 @@ import internal.task.schedule_tasks as _task_schedule  # noqa: F401,E402
 import internal.task.consolidation_tasks as _task_consolidation  # noqa: F401,E402
 import internal.task.knowledge_indexing_tasks as _task_knowledge  # noqa: F401,E402
 import internal.task.recycle_bin_tasks as _task_recycle  # noqa: F401,E402
+import internal.task.auto_renewal_tasks as _task_auto_renewal  # noqa: F401,E402
 
 # 补充记忆系统定时任务（每日巩固/权重扫描/技能治理/统计合并），与 Config 内置 4 项合并
 from celery.schedules import crontab  # noqa: E402
@@ -83,6 +85,11 @@ beat_schedule.update(
         "skill-stats-flush": {
             "task": "internal.task.consolidation_tasks.run_skill_stats_flush",
             "schedule": crontab(minute=0),  # 每小时整点执行（基因3）
+            "args": [],
+        },
+        "auto-renewal-scan": {
+            "task": "internal.task.auto_renewal_tasks.run_auto_renewal_scan",
+            "schedule": crontab(minute=30),  # 每小时 30 分兜底扫描
             "args": [],
         },
     }

@@ -205,6 +205,8 @@ from app.http.admin_routes_8 import register_routes as _register_admin_routes_8
 from app.http.user_routes_9 import register_routes as _register_user_routes_9
 
 from app.http.account_auth_routes import register_routes as _register_account_auth_routes
+from app.http.commerce_routes import register_routes as _register_commerce_routes
+from app.http.admin_commerce_routes import register_routes as _register_admin_commerce_routes
 from app.http.apps_routes import register_routes as _register_apps_routes
 from app.http.chat_routes import register_routes as _register_chat_routes
 from app.http.conversation_routes import register_routes as _register_conversation_routes
@@ -230,6 +232,8 @@ _register_user_routes_9(quart_app)
 _register_chat_routes(quart_app)
 _register_conversation_routes(quart_app)
 _register_account_auth_routes(quart_app)
+_register_commerce_routes(quart_app)
+_register_admin_commerce_routes(quart_app)
 _register_home_misc_routes(quart_app)
 _register_apps_routes(quart_app)
 _register_skills_tools_routes(quart_app)

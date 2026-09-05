@@ -19,6 +19,17 @@ from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, Rol
 from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTransaction, RedeemCodeBatch, RedeemCode
 from .routing_log import RoutingLog
 from .orchestration_feature_flag import OrchestrationFeatureFlagModel
+from .distribution import (
+    AutoRenewal,
+    BalanceAccount,
+    BalanceTransaction,
+    DistributionRelation,
+    PaymentProviderConfig,
+    PurchaseOrder,
+    ReferralCode,
+    ReturnRequest,
+    WithdrawalRequest,
+)
 from .resource_vector_index import ResourceVectorIndex
 from .routing_quality import (
     PolicyChangeDraftModel,
@@ -52,6 +63,8 @@ __all__ = [
     "SkillPackage", "SkillPackageVersion",
     "AdminUser", "AdminSession", "Role", "Permission", "AdminUserRole", "RolePermission", "AuditLog",
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
+    "ReferralCode", "DistributionRelation", "BalanceAccount", "BalanceTransaction", "WithdrawalRequest",
+    "PaymentProviderConfig", "PurchaseOrder", "ReturnRequest", "AutoRenewal",
     "RoutingLog", "OrchestrationFeatureFlagModel",
     "ResourceVectorIndex",
     "RoutingQualityFeedbackModel", "RoutingOptimizationSuggestionModel",

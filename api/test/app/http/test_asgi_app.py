@@ -1021,7 +1021,7 @@ class TestAsgiSmallHandlers:
                 get_language_model=lambda p, m: {"provider_name": p, "model": m},
                 get_language_model_icon=lambda p: (b"icon-bytes", "image/png"),
             ),
-            MyAppService: SimpleNamespace(list_my_apps=lambda aid: []),
+            MyAppService: SimpleNamespace(list_my_apps=lambda aid: {"list": []}),
         }
         monkeypatch.setattr(support, "_get_service", lambda cls: services[cls])
         return account, services
@@ -3240,6 +3240,9 @@ class _FakeScheduleTaskService:
             id=task_id or uuid4(),
             name="定时任务",
             prompt="需求",
+            app_id=uuid4(),
+            task_type="assistant_chat",
+            input_params={},
             cron_expression="0 8 * * *",
             description="",
             enabled=True,
@@ -3723,10 +3726,10 @@ class _FakeAuthAccountService:
     def prepare_register(self, email, password, username=None):
         return None
 
-    def direct_register(self, username, password):
+    def direct_register(self, username, password, invite_code=""):
         return {"access_token": "jwt-token", "expire_at": 1893456000, "challenge_required": False}
 
-    def register_by_email_code(self, email, password, code, username=None):
+    def register_by_email_code(self, email, password, code, username=None, invite_code=""):
         return {"access_token": "jwt-token", "expire_at": 1893456000, "challenge_required": False}
 
     def revoke_account_session(self, account, session_id, current_session_id=None, allow_current=False):
@@ -3999,7 +4002,7 @@ class _FakeSseAppDebugService:
             yield f"event: message\ndata:{marker}-2\n\n"
         return gen()
 
-    def debug_chat(self, app_id, req, account):
+    def debug_chat(self, app_id, req, account, *, skip_owner_check=False):
         self.calls.append(("debug_chat", req.query.data))
         return self._gen("debug")
 
