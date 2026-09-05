@@ -1,13 +1,12 @@
 """双界校验 + 自动定价建议（谷峰/缓存定价的盈亏平衡保障）。
 
 约定：
-- 售价列口径 = 算力/1k token；成本列口径 = 人民币元/1k token。
-- 成本折算算力/1k = cost_rmb_per_1k × credits_per_yuan；
-- 售价折算人民币/1k = sell_credits_per_1k / credits_per_yuan。
+- 售价列口径 = 人民币元/1k token；成本列口径 = 人民币元/1k token（同单位）。
+- 用户端扣费算力由计价引擎按 售价金额 × credits_per_yuan 折算，本模块不涉及。
 
 校验维度：
-- 下界（不亏损）：售价算力/1k ≥ 成本折算算力/1k × (1 + min_margin_ratio)；
-- 上界（不高于官方）：售价人民币/1k ≤ official × official_price_cap_ratio。
+- 下界（不亏损）：售价 ≥ 成本 × (1 + min_margin_ratio)；
+- 上界（不高于官方）：售价 ≤ official × official_price_cap_ratio。
 """
 from __future__ import annotations
 
@@ -67,7 +66,7 @@ def _official_value(official, tier, dim):
 
 def validate_pricing_bounds(
     fields: dict[str, Any], *,
-    credits_per_yuan,
+    credits_per_yuan=None,
     min_margin_ratio,
     peak_valley_enabled: bool,
     cache_pricing_enabled: bool,
@@ -78,10 +77,10 @@ def validate_pricing_bounds(
 
     fields 键示例：peak_input_price_per_1k_tokens / peak_output_cost_per_1k_tokens /
     valley_input_cached_price_per_1k_tokens / input_price_per_1k_tokens ...
+    售价/成本列口径均为 人民币元/1k（同单位直比），credits_per_yuan 仅作兼容形参保留。
     成本未填（<=0）的维度跳过校验。
     """
     errors: list[str] = []
-    cpy = _d(credits_per_yuan, Decimal("100")) or Decimal("100")
     margin = _d(min_margin_ratio, Decimal("0.1")) or Decimal("0.1")
     cap = _d(official_price_cap_ratio, Decimal("1.1")) or Decimal("1.1")
 
@@ -91,18 +90,16 @@ def validate_pricing_bounds(
             cost_rmb = _d(fields.get(cost_key_for(tier, dim)))
             if cost_rmb <= 0:
                 continue
-            cost_credits_per_1k = cost_rmb * cpy
-            if sell < cost_credits_per_1k * (Decimal("1") + margin):
+            if sell < cost_rmb * (Decimal("1") + margin):
                 errors.append(
-                    f"{tier_label} {dim_label}：售价 {sell} 低于成本折算 "
-                    f"{cost_credits_per_1k}×{Decimal('1') + margin}，将亏损"
+                    f"{tier_label} {dim_label}：售价 {sell} 元/1k 低于成本 "
+                    f"{cost_rmb}×{Decimal('1') + margin}，将亏损"
                 )
             official_value = _official_value(official, tier, dim)
             if official_value is not None:
-                rmb_per_1k_sel = sell / cpy
-                if rmb_per_1k_sel > _d(official_value) * cap:
+                if sell > _d(official_value) * cap:
                     errors.append(
-                        f"{tier_label} {dim_label}：售价折算 {rmb_per_1k_sel} 元/1k "
+                        f"{tier_label} {dim_label}：售价 {sell} 元/1k "
                         f"高于官方价×{cap}，用户会觉得贵"
                     )
     return errors
@@ -231,16 +228,16 @@ def validate_peak_windows(windows: list) -> list[str]:
 def suggest_sell_prices(
     fields: dict[str, Any], *,
     margin_ratio,
-    credits_per_yuan,
+    credits_per_yuan=None,
     peak_valley_enabled: bool,
     cache_pricing_enabled: bool,
 ) -> dict[str, str]:
-    """为每个 档位×维度 生成建议售价（算力/1k），6 位小数。
+    """为每个 档位×维度 生成建议售价（元/1k），6 位小数。
 
-    售价算力/1k = cost_rmb_per_1k × (1 + margin_ratio) × credits_per_yuan。
+    售价元/1k = cost_rmb_per_1k × (1 + margin_ratio)（售价与成本同为人民币元）。
+    credits_per_yuan 仅作兼容形参保留（历史调用方传入，不再参与计算）。
     未填成本（<=0）的维度不产出建议。
     """
-    cpy = _d(credits_per_yuan, Decimal("100")) or Decimal("100")
     margin = _d(margin_ratio, Decimal("0.3")) or Decimal("0.3")
     out: dict[str, str] = {}
     for tier, _label in _tier_pairs(peak_valley_enabled):
@@ -248,7 +245,7 @@ def suggest_sell_prices(
             cost_rmb = _d(fields.get(cost_key_for(tier, dim)))
             if cost_rmb <= 0:
                 continue
-            sell = cost_rmb * (Decimal("1") + margin) * cpy
+            sell = cost_rmb * (Decimal("1") + margin)
             out[price_key_for(tier, dim)] = f"{sell:.6f}"
     return out
 

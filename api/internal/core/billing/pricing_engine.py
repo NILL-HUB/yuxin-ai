@@ -1,10 +1,11 @@
 """定价引擎：系统内唯一计价入口。
 
-售价算力 = input_tokens × 售价(input/1k) + output_tokens × 售价(output/1k)
-成本算力 = (input_tokens × 成本(input/1k) + output_tokens × 成本(output/1k)) × credits_per_yuan
-毛利算力 = 售价算力 − 成本算力
+售价/成本列口径均为 人民币元 / 1k token（后台按真实金额配置）：
+扣费算力 = Σ tokens × 售价(元/1k) ÷ 1000 × credits_per_yuan（向上取整）
+成本算力 = Σ tokens × 成本(元/1k) ÷ 1000 × credits_per_yuan
+毛利算力 = 扣费算力 − 成本算力
 
-模型未配置单价时回退全局汇率（credits_per_1k_tokens）作为兜底售价。
+模型未配置售价时回退全局汇率（credits_per_1k_tokens）作为兜底。
 """
 import logging
 import math
@@ -30,6 +31,7 @@ class BillingPlan:
     billing_basis: str
     input_tokens: int = 0
     output_tokens: int = 0
+    # 以下 *_per_1k 均为 人民币元/1k 口径（售价与成本同单位）
     sell_input_per_1k: float = 0.0
     sell_output_per_1k: float = 0.0
     cost_input_per_1k: float = 0.0
@@ -147,6 +149,7 @@ class PricingEngine:
                 return self._decimal_float(getattr(model, name_valley, 0) or 0)
             return self._decimal_float(getattr(model, name_flat, 0) or 0)
 
+        # 售价列口径 = 人民币元/1k（与成本列一致）；扣费算力 = 元 × credits_per_yuan
         sell_in = _col_sell("peak_input_price_per_1k_tokens", "valley_input_price_per_1k_tokens", "input_price_per_1k_tokens")
         sell_out = _col_sell("peak_output_price_per_1k_tokens", "valley_output_price_per_1k_tokens", "output_price_per_1k_tokens")
         sell_cached = _col_sell("peak_input_cached_price_per_1k_tokens", "valley_input_cached_price_per_1k_tokens", "input_cached_price_per_1k_tokens")
@@ -167,7 +170,11 @@ class PricingEngine:
             )
             return fallback
 
-        sell = math.ceil((input_tokens * sell_in + cached_input_tokens * sell_cached + output_tokens * sell_out) / 1000)
+        # 售价金额(元) = Σ tokens × 元/1k ÷ 1000；扣费算力 = ceil(金额 × credits_per_yuan)
+        # ceil 放在汇率折算之后一次性执行（与成本侧 cost=ceil(cost_rmb×cpy) 对称），
+        # 避免逐维向上取整导致毛利系统性虚增。
+        sell_rmb = (input_tokens * sell_in + cached_input_tokens * sell_cached + output_tokens * sell_out) / 1000
+        sell = math.ceil(sell_rmb * credits_per_yuan)
 
         cost_in = _col_sell("peak_input_cost_per_1k_tokens", "valley_input_cost_per_1k_tokens", "input_cost_per_1k_tokens")
         cost_out = _col_sell("peak_output_cost_per_1k_tokens", "valley_output_cost_per_1k_tokens", "output_cost_per_1k_tokens")
