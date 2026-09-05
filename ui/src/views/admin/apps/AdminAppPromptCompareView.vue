@@ -430,7 +430,7 @@ onMounted(async () => {
             <textarea
               v-model="query"
               rows="4"
-              class="w-full resize-none border-0 bg-transparent text-gray-700 outline-none"
+              class="w-full resize-none border-0 bg-transparent text-gray-700 outline-hidden"
               :placeholder="t('appStudio.promptCompare.queryPlaceholder')"
               @keydown.enter.exact.prevent="handleSubmit"
             />

@@ -696,7 +696,7 @@ onBeforeUnmount(() => {
   <div class="w-full h-full flex flex-col overflow-hidden relative">
     <!-- 顶部Header -->
     <div
-      class="h-[77px] flex-shrink-0 bg-white p-4 flex items-center justify-between relative border-b"
+      class="h-[77px] shrink-0 bg-white p-4 flex items-center justify-between relative border-b"
     >
       <!-- 左侧工作流信息 -->
       <div class="flex items-center gap-2">
@@ -895,7 +895,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('start')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-blue-700 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-blue-700 rounded-lg shrink-0">
                             <icon-home />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.start.title') }}</div>
@@ -911,7 +911,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('llm')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-sky-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-sky-500 rounded-lg shrink-0">
                             <icon-language />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.llm.title') }}</div>
@@ -927,7 +927,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('tool')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-orange-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-orange-500 rounded-lg shrink-0">
                             <icon-tool />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.tool.title') }}</div>
@@ -943,7 +943,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('dataset_retrieval')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-violet-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-violet-500 rounded-lg shrink-0">
                             <icon-storage />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.datasetRetrieval.title') }}</div>
@@ -959,7 +959,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('template_transform')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-emerald-400 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-emerald-400 rounded-lg shrink-0">
                             <icon-branch />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.templateTransform.title') }}</div>
@@ -975,7 +975,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('http_request')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-rose-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-rose-500 rounded-lg shrink-0">
                             <icon-link />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.httpRequest.title') }}</div>
@@ -991,7 +991,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('code')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-cyan-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-cyan-500 rounded-lg shrink-0">
                             <icon-code />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.code.title') }}</div>
@@ -1007,7 +1007,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('text_processor')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-teal-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-teal-500 rounded-lg shrink-0">
                             <icon-branch />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.textProcessor.title') }}</div>
@@ -1023,7 +1023,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('variable_assigner')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-lime-600 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-lime-600 rounded-lg shrink-0">
                             <icon-branch />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.variableAssigner.title') }}</div>
@@ -1039,7 +1039,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('parameter_extractor')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-indigo-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-indigo-500 rounded-lg shrink-0">
                             <icon-branch />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.parameterExtractor.title') }}</div>
@@ -1055,7 +1055,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('if_else')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-amber-500 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-amber-500 rounded-lg shrink-0">
                             <icon-branch />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.ifElse.title') }}</div>
@@ -1071,7 +1071,7 @@ onBeforeUnmount(() => {
                         @click="() => addNode('end')"
                       >
                         <div class="flex items-center gap-2">
-                          <a-avatar shape="square" :size="24" class="bg-red-700 rounded-lg flex-shrink-0">
+                          <a-avatar shape="square" :size="24" class="bg-red-700 rounded-lg shrink-0">
                             <icon-filter />
                           </a-avatar>
                           <div class="text-gray-700 font-semibold text-sm">{{ t('workflowEditor.nodePalette.end.title') }}</div>
