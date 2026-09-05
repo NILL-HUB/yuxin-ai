@@ -25,9 +25,11 @@ export const writeMemory = (data: MemoryWriteReq) =>
 export const retrieveMemory = (data: MemoryRetrieveReq) =>
   post<BaseResponse<MemoryRetrieveResp>>('/memory/retrieve', { body: data }).then((res) => res.data)
 
-// 获取记忆 Digest
-export const getMemoryDigest = (userId: string) =>
-  get<BaseResponse<MemoryDigestResp>>(`/memory/digest/${userId}`).then((res) => res.data)
+// 获取记忆 Digest（默认走缓存；refresh=true 时强制重新生成，仅在用户主动刷新时使用）
+export const getMemoryDigest = (userId: string, refresh = false) =>
+  get<BaseResponse<MemoryDigestResp>>(`/memory/digest/${userId}`, {
+    params: refresh ? { refresh: 'true' } : {},
+  }).then((res) => res.data)
 
 // 触发巩固（同步模式）
 export const triggerConsolidation = (userId: string) =>

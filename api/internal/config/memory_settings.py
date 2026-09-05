@@ -158,9 +158,13 @@ class RetrievalConfig(BaseModel):
 
 
 class DigestConfig(BaseModel):
-    """记忆摘要（Digest）渲染与缓存配置。"""
+    """记忆摘要（Digest）渲染与缓存配置。
 
-    cache_ttl_seconds: int = 300
+    TTL 作为兜底上限（默认 1 天）：内容变更由 DigestManager.invalidate
+    主动失效缓存驱动重建，未变更时缓存长期复用，避免重复消耗 token。
+    """
+
+    cache_ttl_seconds: int = 86400
     cache_key_prefix: str = "memory:digest:"
     max_tokens: int = 2000
     # 是否强制 token 预算截断（False=用户体验优先，不截断显式陈述）

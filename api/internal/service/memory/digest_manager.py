@@ -9,8 +9,10 @@ System 1 快速路径与对话 system prompt 注入的数据源。
     偏好/厌恶/习惯/身份/目标/能力 六组展示，无 token 预算硬限制（用户体验优先）。
 
 缓存策略:
-    - Redis 缓存键: ``memory:digest:{user_id}``，TTL=300s
+    - Redis 缓存键: ``memory:digest:{user_id}``，TTL 默认 86400s（1 天兜底）
     - 缓存命中直接返回，miss 则从 Neo4j 重建
+    - 变更驱动失效：记忆写入/编辑/删除/降权/巩固完成后调用 ``invalidate``
+      主动删除缓存，未变更时长期复用，避免重复消耗 token 重建
 
 降级策略:
     - Redis 不可用时直接走 Neo4j 重建
@@ -92,6 +94,24 @@ class DigestManager:
                 "get_digest: 重建 Digest 失败 user=%s", user_id, exc_info=True
             )
             return ""
+
+    def invalidate(self, user_id: str) -> None:
+        """主动失效用户 Digest 缓存（内容变更后调用，下次读取时重建）。
+
+        与长 TTL 兜底配合实现「变更驱动重建」：
+        - 记忆写入 / 编辑 / 删除 / 降权 / 巩固完成后调用本方法，
+          确保下次打开摘要页时读到的是最新内容；
+        - 未发生变更时缓存长期有效，避免每次打开页面都消耗 token 重建。
+
+        Args:
+            user_id: 用户标识
+        """
+        try:
+            self.redis_client.delete(self._cache_key(user_id))
+        except Exception:
+            logger.warning(
+                "invalidate: Redis 缓存删除失败 user=%s", user_id, exc_info=True
+            )
 
     def update_digest(self, user_id: str) -> str:
         """从 Neo4j 查 4 部分 → 渲染 → 写 Redis。

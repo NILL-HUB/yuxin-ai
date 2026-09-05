@@ -60,6 +60,9 @@ def run_daily_consolidation(self, user_ids: list[str] | None = None):
                     "success": report.is_success,
                     "items": report.total_items_processed,
                 }
+                # 巩固落库变更 → 失效 Digest 缓存（内容变更驱动重建）
+                if report.is_success and report.total_items_processed > 0:
+                    _invalidate_digest_cache(str(uid))
             except Exception as exc:
                 logger.warning(
                     "run_daily_consolidation: 用户 %s 巩固失败: %s",
@@ -105,6 +108,9 @@ def run_weight_scan(self, user_id: str):
 
         # 仅返回阶段 3（TIER）结果
         phase_key = ConsolidationPhase.TIER.value
+        # 权重扫描可能触发 tier 变更 → 失效 Digest 缓存
+        if report.is_success and report.total_items_processed > 0:
+            _invalidate_digest_cache(str(user_id))
         return report.phases.get(phase_key, {})
     except Exception as exc:
         logger.error(
@@ -229,6 +235,24 @@ def run_skill_stats_flush(self, user_ids: list[str] | None = None):
             "run_skill_stats_flush: 整体异常，触发重试: %s", exc, exc_info=True
         )
         raise self.retry(exc=exc)
+
+
+def _invalidate_digest_cache(user_id: str) -> None:
+    """主动失效用户 Digest 缓存（内容变更后调用，避免陈旧摘要长期滞留）。
+
+    直接构造 DigestManager（redis 已由 extension 初始化），删除缓存键；
+    Redis 不可用时静默降级，不影响巩固主流程。
+    """
+    try:
+        from internal.extension.redis_extension import redis_client
+        from internal.service.memory.digest_manager import DigestManager
+
+        DigestManager(redis_client=redis_client).invalidate(user_id)
+    except Exception:
+        logger.warning(
+            "invalidate_digest_cache: 失效 Digest 缓存失败 user=%s", user_id,
+            exc_info=True,
+        )
 
 
 def _query_active_users() -> list[str]:

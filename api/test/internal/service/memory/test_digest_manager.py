@@ -62,3 +62,39 @@ class TestDigestManager:
         result = manager.update_digest(str(uuid4()))
 
         assert isinstance(result, str)
+
+    def test_invalidate_should_delete_digest_cache_key(self):
+        """invalidate 应删除对应用户的 Digest 缓存键。"""
+        import json
+
+        user_id = str(uuid4())
+        deleted_keys = []
+
+        class _FakeRedis:
+            def get(self, _key):
+                payload = json.dumps({"text": "cached", "updated_at": "2026-07-09T12:00:00"})
+                return payload.encode("utf-8")
+
+            def setex(self, _key, _ttl, _val):
+                pass
+
+            def delete(self, key):
+                deleted_keys.append(key)
+                return 1
+
+        manager = DigestManager(redis_client=_FakeRedis())
+
+        # 先命中缓存，再失效
+        assert manager.get_digest(user_id) == "cached"
+        manager.invalidate(user_id)
+
+        assert deleted_keys == [manager._cache_key(user_id)]
+
+    def test_invalidate_should_not_raise_when_redis_delete_fails(self):
+        """Redis delete 异常时 invalidate 应静默降级，不抛错。"""
+        class _FakeRedis:
+            def delete(self, _key):
+                raise ConnectionError("redis down")
+
+        manager = DigestManager(redis_client=_FakeRedis())
+        manager.invalidate(str(uuid4()))  # 不应抛异常

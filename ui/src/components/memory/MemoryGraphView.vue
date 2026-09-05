@@ -18,14 +18,21 @@ const { t } = useI18n()
 const chartContainer = ref<HTMLDivElement | null>(null)
 let chartInstance: echarts.ECharts | null = null
 
-// memory_type 对应的颜色
+// memory_type 对应的颜色（粉色主题系深浅变化，替代原彩虹色）
 const TYPE_COLORS: Record<string, string> = {
-  profile: '#409EFF',
-  preference: '#67C23A',
-  relationship: '#9C27B0',
-  event: '#E6A23C',
-  project: '#00BCD4',
-  secret: '#F56C6C',
+  profile: '#e91e63',
+  preference: '#ec407a',
+  relationship: '#d81b60',
+  event: '#f06292',
+  project: '#ff5c8d',
+  secret: '#c2185b',
+  entity: '#ad1457',
+  episode: '#f48fb1',
+  habit: '#ec407a',
+  goal: '#d81b60',
+  identity: '#e91e63',
+  capability: '#ff80ab',
+  confidential: '#c2185b',
 }
 
 const typeLabel = (type: string) => {
@@ -51,13 +58,17 @@ const buildChartOption = () => {
     name: truncateContent(node.content),
     symbolSize: Math.max(20, Math.min(60, 20 + (node.weight || 0) * 40)),
     itemStyle: {
-      color: TYPE_COLORS[node.memory_type] || '#909399',
+      color: TYPE_COLORS[node.memory_type] || '#f8bbd0',
+      shadowBlur: 6,
+      shadowColor: 'rgba(233, 30, 99, 0.25)',
+      borderColor: '#fff',
+      borderWidth: node.weight && node.weight > 0.7 ? 2 : 1,
     },
     label: {
       show: true,
       position: 'bottom',
       fontSize: 10,
-      color: '#666',
+      color: '#a64b74',
       width: 80,
       overflow: 'truncate',
     },
@@ -69,23 +80,28 @@ const buildChartOption = () => {
     target: edge.target,
     value: edge.type,
     lineStyle: {
-      width: Math.max(1, (edge.weight || 0) * 3),
-      opacity: 0.6,
+      color: '#c2185b',
+      width: Math.max(1.5, (edge.weight || 0) * 3.5),
+      opacity: 0.55,
+      curveness: 0.1,
     },
   }))
 
   return {
     tooltip: {
       trigger: 'item',
+      backgroundColor: 'rgba(49, 0, 21, 0.92)',
+      borderWidth: 0,
+      textStyle: { color: '#fff', fontSize: 12 },
       formatter: (params: Record<string, unknown>) => {
         if (params.dataType === 'node') {
           const rawData = (params.data as { rawData?: MemoryNode } | undefined)?.rawData
           if (rawData) {
             const node = rawData as MemoryNode
             return `<div style="max-width:300px">
-              <div style="font-weight:600;margin-bottom:4px">${typeLabel(node.memory_type)}</div>
-              <div style="color:#666">${node.content}</div>
-              <div style="color:#999;font-size:12px;margin-top:4px">
+              <div style="font-weight:600;margin-bottom:4px;color:#ff9ec5">${typeLabel(node.memory_type)}</div>
+              <div style="color:#ffe0ec">${node.content}</div>
+              <div style="color:#f8bbd0;font-size:12px;margin-top:4px">
                 weight: ${node.weight?.toFixed(2) ?? '-'} | tier: ${node.tier ?? '-'}
               </div>
             </div>`
@@ -182,23 +198,24 @@ defineExpose({
 </script>
 
 <template>
-  <div class="relative h-[500px] w-full rounded-lg border bg-white">
+  <div class="graph-shell relative h-[460px] w-full overflow-hidden border bg-[var(--aicss-bg-subtle)]">
     <div
       v-if="loading"
-      class="absolute inset-0 z-10 flex items-center justify-center bg-white/70"
+      class="absolute inset-0 z-10 flex items-center justify-center"
+      style="background: rgba(255, 245, 249, 0.6)"
     >
       <a-spin :loading="true" />
     </div>
     <div
       v-if="!loading && (!subgraph || !subgraph.nodes || subgraph.nodes.length === 0)"
-      class="absolute inset-0 flex flex-col items-center justify-center text-gray-400"
+      class="absolute inset-0 flex flex-col items-center justify-center text-[var(--aicss-muted)]"
     >
-      <icon-bookmark class="mb-3 text-5xl" />
+      <icon-bookmark class="mb-3 text-5xl text-[var(--aicss-subtle)]" />
       <p>{{ t('memory.graph.emptySubgraph') }}</p>
     </div>
     <div
       v-if="subgraph?.truncated"
-      class="absolute right-3 top-3 z-10 rounded bg-amber-50 px-2 py-1 text-xs text-amber-600"
+      class="absolute right-3 top-3 z-10 rounded-full bg-[rgba(230,162,60,0.15)] px-3 py-1 text-xs text-[#b3741a]"
     >
       {{ t('memory.graph.truncated') }}
     </div>
