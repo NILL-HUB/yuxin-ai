@@ -5,16 +5,18 @@
 const PER_K_TO_PER_M_SCALE = 1000
 
 // /1k → /M：×1000。非法/空输入返回 '0'，尾随 0 去尾后尽可能紧凑（如 '0.003000' → '3'）
-export const perKToPerM = (value: string | number): string => {
+export const perKToPerM = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '0'
   const n = Number(value)
-  if (value === null || value === undefined || value === '' || !Number.isFinite(n)) return '0'
+  if (!Number.isFinite(n)) return '0'
   return trimZeros((n * PER_K_TO_PER_M_SCALE).toFixed(6))
 }
 
 // /M → /1k：÷1000，保留 6 位小数。非法/空输入返回 '0.000000'
-export const perMToPerK = (value: string | number): string => {
+export const perMToPerK = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '0.000000'
   const n = Number(value)
-  if (value === null || value === undefined || value === '' || !Number.isFinite(n)) return '0.000000'
+  if (!Number.isFinite(n)) return '0.000000'
   return (n / PER_K_TO_PER_M_SCALE).toFixed(6)
 }
 

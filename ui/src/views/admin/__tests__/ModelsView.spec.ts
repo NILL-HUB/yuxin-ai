@@ -92,8 +92,8 @@ const radioGroupStub = {
   methods: {
     onToggle(e: Event) {
       const v = (e.target as HTMLInputElement).checked
-      this.$emit('update:modelValue', v)
-      this.$emit('change', v)
+      ;(this as unknown as { $emit: (n: string, v: boolean) => void }).$emit('update:modelValue', v)
+      ;(this as unknown as { $emit: (n: string, v: boolean) => void }).$emit('change', v)
     },
   },
 }
@@ -181,7 +181,7 @@ const defaultProviderOptions = [
   { id: 'p1', name: 'openai', label: 'OpenAI', description: '', default_base_url: '', supported_model_types: ['chat'] },
 ]
 
-const renderView = async (models = modelRecords, providerOptions = defaultProviderOptions) => {
+const renderView = async (models: Record<string, unknown>[] = modelRecords as Record<string, unknown>[], providerOptions = defaultProviderOptions) => {
   mocks.listModels.mockResolvedValue({ data: { list: models } })
   mocks.listModelKeys.mockResolvedValue({ data: { list: [] } })
   mocks.listTierPolicies.mockResolvedValue({ data: { list: [] } })
