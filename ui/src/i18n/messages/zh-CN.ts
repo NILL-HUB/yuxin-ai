@@ -1558,7 +1558,7 @@ export default {
         sellAbbr: '售',
         costAbbr: '成',
         cacheHit: '缓存命中',
-        priceUnitHint: '售价:元/M · 成本:元/M（输入/输出）',
+        priceUnitHint: '售价:¥/M · 成本:¥/M（输入/输出）',
         margin: '毛利率',
         marginHint: '参考毛利率（利润 ÷ 售价；峰谷模型按峰档、输入:输出=3:1 估算）',
         maxTokens: '最大Tokens',

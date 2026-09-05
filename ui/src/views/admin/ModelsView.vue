@@ -1120,16 +1120,16 @@ onMounted(() => {
                             :color="line.tone === 'peak' ? 'purple' : line.tone === 'valley' ? 'gray' : 'arcoblue'"
                           >{{ line.label }}</a-tag>
                           <span class="text-gray-400">{{ t('admin.models.columns.sellAbbr') }}</span>
-                          <code class="font-mono text-gray-700">{{ line.sell }}</code>
+                          <code class="font-mono text-gray-700">¥{{ line.sell }}</code>
                           <span class="text-gray-400">{{ t('admin.models.columns.costAbbr') }}</span>
-                          <code class="font-mono text-amber-600">{{ line.cost }}</code>
+                          <code class="font-mono text-amber-600">¥{{ line.cost }}</code>
                         </div>
                         <div v-if="pricingBlockOf(model).cached" class="flex items-center gap-1 whitespace-nowrap">
                           <a-tag size="small" color="cyan">{{ t('admin.models.columns.cacheHit') }}</a-tag>
                           <span class="text-gray-400">{{ t('admin.models.columns.sellAbbr') }}</span>
-                          <code class="font-mono text-gray-700">{{ pricingBlockOf(model).cached!.sell }}</code>
+                          <code class="font-mono text-gray-700">¥{{ pricingBlockOf(model).cached!.sell }}</code>
                           <span class="text-gray-400">{{ t('admin.models.columns.costAbbr') }}</span>
-                          <code class="font-mono text-amber-600">{{ pricingBlockOf(model).cached!.cost }}</code>
+                          <code class="font-mono text-amber-600">¥{{ pricingBlockOf(model).cached!.cost }}</code>
                         </div>
                       </template>
                       <span v-else class="text-gray-400">-</span>
@@ -1315,30 +1315,42 @@ onMounted(() => {
           <div class="pricing-grid">
             <div class="pricing-cell">
               <div class="pricing-cell-label">{{ t('admin.models.fields.inputPrice') }}</div>
-              <a-input-number v-model="modelForm.input_price_per_1k_tokens" name="input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.inputPrice')" class="w-full" />
+              <a-input-number v-model="modelForm.input_price_per_1k_tokens" name="input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.inputPrice')" class="w-full">
+                <template #prefix><span class="text-gray-400">¥</span></template>
+              </a-input-number>
             </div>
             <div class="pricing-cell">
               <div class="pricing-cell-label">{{ t('admin.models.fields.inputCost') }}</div>
-              <a-input-number v-model="modelForm.input_cost_per_1k_tokens" name="input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.inputCost')" class="w-full" />
+              <a-input-number v-model="modelForm.input_cost_per_1k_tokens" name="input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.inputCost')" class="w-full">
+                <template #prefix><span class="text-gray-400">¥</span></template>
+              </a-input-number>
             </div>
             <div class="pricing-cell">
               <div class="pricing-cell-label">{{ t('admin.models.fields.outputPrice') }}</div>
-              <a-input-number v-model="modelForm.output_price_per_1k_tokens" name="output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.outputPrice')" class="w-full" />
+              <a-input-number v-model="modelForm.output_price_per_1k_tokens" name="output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.outputPrice')" class="w-full">
+                <template #prefix><span class="text-gray-400">¥</span></template>
+              </a-input-number>
             </div>
             <div class="pricing-cell">
               <div class="pricing-cell-label">{{ t('admin.models.fields.outputCost') }}</div>
-              <a-input-number v-model="modelForm.output_cost_per_1k_tokens" name="output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.outputCost')" class="w-full" />
+              <a-input-number v-model="modelForm.output_cost_per_1k_tokens" name="output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.outputCost')" class="w-full">
+                <template #prefix><span class="text-gray-400">¥</span></template>
+              </a-input-number>
             </div>
           </div>
           <template v-if="modelForm.cache_pricing_enabled">
             <div class="pricing-grid">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputPriceLabel') }}</div>
-                <a-input-number v-model="modelForm.input_cached_price_per_1k_tokens" name="input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.cachedInputPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.input_cached_price_per_1k_tokens" name="input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.cachedInputPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputCostLabel') }}</div>
-                <a-input-number v-model="modelForm.input_cached_cost_per_1k_tokens" name="input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.cachedInputCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.input_cached_cost_per_1k_tokens" name="input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.cachedInputCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
             </div>
           </template>
@@ -1415,58 +1427,82 @@ onMounted(() => {
             <div class="pricing-grid">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.inputPrice') }}</div>
-                <a-input-number v-model="modelForm.peak_input_price_per_1k_tokens" name="peak_input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakInputPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.peak_input_price_per_1k_tokens" name="peak_input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakInputPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.inputCost') }}</div>
-                <a-input-number v-model="modelForm.peak_input_cost_per_1k_tokens" name="peak_input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakInputCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.peak_input_cost_per_1k_tokens" name="peak_input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakInputCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.outputPrice') }}</div>
-                <a-input-number v-model="modelForm.peak_output_price_per_1k_tokens" name="peak_output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.peak_output_price_per_1k_tokens" name="peak_output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.outputCost') }}</div>
-                <a-input-number v-model="modelForm.peak_output_cost_per_1k_tokens" name="peak_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.peak_output_cost_per_1k_tokens" name="peak_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakOutputCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
             </div>
             <div v-if="modelForm.cache_pricing_enabled" class="pricing-grid-2">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputPriceLabel') }}</div>
-                <a-input-number v-model="modelForm.peak_input_cached_price_per_1k_tokens" name="peak_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.peak_input_cached_price_per_1k_tokens" name="peak_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputCostLabel') }}</div>
-                <a-input-number v-model="modelForm.peak_input_cached_cost_per_1k_tokens" name="peak_input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.peak_input_cached_cost_per_1k_tokens" name="peak_input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.peakCachedCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
             </div>
             <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.valleyTitle') }}</h5>
             <div class="pricing-grid">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.inputPrice') }}</div>
-                <a-input-number v-model="modelForm.valley_input_price_per_1k_tokens" name="valley_input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyInputPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.valley_input_price_per_1k_tokens" name="valley_input_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyInputPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.inputCost') }}</div>
-                <a-input-number v-model="modelForm.valley_input_cost_per_1k_tokens" name="valley_input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyInputCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.valley_input_cost_per_1k_tokens" name="valley_input_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyInputCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.outputPrice') }}</div>
-                <a-input-number v-model="modelForm.valley_output_price_per_1k_tokens" name="valley_output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.valley_output_price_per_1k_tokens" name="valley_output_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.outputCost') }}</div>
-                <a-input-number v-model="modelForm.valley_output_cost_per_1k_tokens" name="valley_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.valley_output_cost_per_1k_tokens" name="valley_output_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyOutputCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
             </div>
             <div v-if="modelForm.cache_pricing_enabled" class="pricing-grid-2">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputPriceLabel') }}</div>
-                <a-input-number v-model="modelForm.valley_input_cached_price_per_1k_tokens" name="valley_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedPricePlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.valley_input_cached_price_per_1k_tokens" name="valley_input_cached_price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedPricePlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.pricingMode.cachedInputCostLabel') }}</div>
-                <a-input-number v-model="modelForm.valley_input_cached_cost_per_1k_tokens" name="valley_input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedCostPlaceholder')" class="w-full" />
+                <a-input-number v-model="modelForm.valley_input_cached_cost_per_1k_tokens" name="valley_input_cached_cost_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.pricingMode.valleyCachedCostPlaceholder')" class="w-full">
+                  <template #prefix><span class="text-gray-400">¥</span></template>
+                </a-input-number>
               </div>
             </div>
           </template>
@@ -1477,7 +1513,9 @@ onMounted(() => {
           <p class="form-group-desc">{{ t('admin.models.groups.fallbackDesc') }}</p>
           <a-alert v-if="splitSellPriceActive" type="info" show-icon class="mb-2">{{ t('admin.models.groups.fallbackInactiveAlert') }}</a-alert>
           <a-form-item :label="t('admin.models.fields.pricePer1k')" field="price_per_1k_tokens">
-            <a-input-number v-model="modelForm.price_per_1k_tokens" name="price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.price')" class="w-full" />
+            <a-input-number v-model="modelForm.price_per_1k_tokens" name="price_per_1k_tokens" :min="0" :precision="6" :placeholder="t('admin.models.modelModal.placeholders.price')" class="w-full">
+              <template #prefix><span class="text-gray-400">¥</span></template>
+            </a-input-number>
           </a-form-item>
         </div>
         <a-form-item
@@ -1577,8 +1615,8 @@ onMounted(() => {
             <tbody>
               <tr v-for="row in suggestRows" :key="row.key" class="border-t">
                 <td class="p-2 text-xs">{{ row.label }}</td>
-                <td class="p-2 font-mono text-xs text-gray-400">{{ row.current }}</td>
-                <td class="p-2 font-mono text-xs font-medium text-green-600">{{ row.suggested }}</td>
+                <td class="p-2 font-mono text-xs text-gray-400">{{ row.current === '—' ? row.current : `¥${row.current}` }}</td>
+                <td class="p-2 font-mono text-xs font-medium text-green-600">{{ row.suggested === '—' ? row.suggested : `¥${row.suggested}` }}</td>
               </tr>
               <tr v-if="!suggestRows.length">
                 <td class="p-3 text-center text-xs text-gray-400" colspan="3">{{ t('admin.models.pricingMode.suggestEmpty') }}</td>

@@ -1556,7 +1556,7 @@ export default {
         sellAbbr: 'S',
         costAbbr: 'C',
         cacheHit: 'Cache hit',
-        priceUnitHint: 'Sell: CNY/M · Cost: CNY/M (input/output)',
+        priceUnitHint: 'Sell: ¥/M · Cost: ¥/M (input/output)',
         margin: 'Margin',
         marginHint: 'Ref. gross margin rate (profit ÷ sell price, peak tier for peak/valley models; 3:1 input/output weighting)',
         maxTokens: 'Max tokens',
