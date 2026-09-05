@@ -45,7 +45,7 @@ def register_routes(quart_app):
         from internal.service.my_app_service import MyAppService
 
         apps = await _to_thread(_get_service(MyAppService).list_my_apps, account.id)
-        return _ok(MyAppListResp().dump({"list": apps}))
+        return _ok(MyAppListResp().dump(apps))
 
     @quart_app.get("/apps")
     async def async_get_apps_with_page() -> Response:
@@ -563,7 +563,11 @@ def register_routes(quart_app):
             confirm_deep_thinking=_field(bool(payload.get("confirm_deep_thinking", False))),
         )
         response = await _to_thread(
-            _get_service(AppDebugService).debug_chat, app_id, req, account
+            _get_service(AppDebugService).debug_chat,
+            app_id,
+            req,
+            account,
+            skip_owner_check=True,
         )
         if _is_sync_iterator(response):
             return _sse_response(response)
