@@ -93,6 +93,9 @@ def register_routes(quart_app):
                 cron_expression,
                 description=str(body.get("description") or ""),
                 cron_humanized=str(body.get("cron_humanized") or ""),
+                app_id=body.get("app_id") or None,
+                task_type=body.get("task_type") or None,
+                input_params=body.get("input_params") or None,
             )
         except Exception as exc:
             return _json_resp(
@@ -165,6 +168,9 @@ def register_routes(quart_app):
             prompt,
             cron_expression,
             cron_humanized=str(body.get("cron_humanized") or ""),
+            app_id=body.get("app_id") or None,
+            task_type=body.get("task_type") or None,
+            input_params=body.get("input_params") or None,
         )
         if fingerprint:
             await _to_thread(
@@ -244,7 +250,7 @@ def register_routes(quart_app):
 
         body = await request.get_json(force=True, silent=True) or {}
         try:
-            task = await _to_thread(
+            await _to_thread(
                 _get_service(ScheduleTaskService).update_task,
                 task_id,
                 account,
@@ -254,6 +260,9 @@ def register_routes(quart_app):
                 description=body.get("description"),
                 enabled=body.get("enabled"),
                 cron_humanized=body.get("cron_humanized"),
+                app_id=body.get("app_id"),
+                task_type=body.get("task_type"),
+                input_params=body.get("input_params"),
             )
         except Exception as exc:
             return _json_resp(
@@ -262,6 +271,10 @@ def register_routes(quart_app):
                 data={"cron_expression": [str(exc)]},
                 status=400,
             )
+        # update_task 返回的实例在 auto_commit 后已脱离 session，重新查询以安全序列化
+        task = await _to_thread(
+            _get_service(ScheduleTaskService).get_task, task_id, account
+        )
         return _ok(ScheduleTaskResp.pre_dump_process(task))
 
     @quart_app.delete("/schedule-tasks/<uuid:task_id>")
@@ -295,8 +308,13 @@ def register_routes(quart_app):
 
         body = await request.get_json(force=True, silent=True) or {}
         enabled = bool(body.get("enabled", True))
-        task = await _to_thread(
+        await _to_thread(
             _get_service(ScheduleTaskService).update_task, task_id, account, enabled=enabled
+        )
+        # update_task 返回的实例在 auto_commit 后已脱离 session（commit 会使部分字段过期），
+        # 重新查询一次以拿到可安全序列化的实例。
+        task = await _to_thread(
+            _get_service(ScheduleTaskService).get_task, task_id, account
         )
         return _ok(ScheduleTaskResp.pre_dump_process(task))
 

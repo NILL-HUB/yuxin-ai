@@ -12,6 +12,9 @@ class ScheduleTaskResp(Schema):
     id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
     prompt = fields.String(dump_default="")
+    app_id = fields.UUID(dump_default=None, allow_none=True)
+    task_type = fields.String(dump_default="assistant_chat")
+    input_params = fields.Raw(dump_default={})
     trigger_type = fields.String(dump_default="cron")
     cron_expression = fields.String(dump_default="")
     cron_humanized = fields.String(dump_default="")
@@ -33,6 +36,9 @@ class ScheduleTaskResp(Schema):
             "id": data.id,
             "name": data.name,
             "prompt": data.prompt,
+            "app_id": data.app_id,
+            "task_type": data.task_type or "assistant_chat",
+            "input_params": data.input_params or {},
             "trigger_type": data.trigger_type or "cron",
             "cron_expression": data.cron_expression,
             "cron_humanized": data.cron_humanized,

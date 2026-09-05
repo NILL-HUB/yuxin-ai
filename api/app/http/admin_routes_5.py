@@ -102,6 +102,9 @@ def register_routes(quart_app):
                 owner_type="admin",
                 trigger_type=trigger_type,
                 interval_config=interval_config,
+                app_id=body.get("app_id") or None,
+                task_type=body.get("task_type") or None,
+                input_params=body.get("input_params") or None,
             )
         except Exception as exc:
             return a._json_resp(
@@ -158,6 +161,9 @@ def register_routes(quart_app):
             cron_expression,
             cron_humanized=cron_humanized,
             owner_type="admin",
+            app_id=body.get("app_id") or None,
+            task_type=body.get("task_type") or None,
+            input_params=body.get("input_params") or None,
         )
         if fingerprint:
             await a._to_thread(
@@ -220,7 +226,7 @@ def register_routes(quart_app):
 
         body = await request.get_json(force=True, silent=True) or {}
         try:
-            task = await a._to_thread(
+            await a._to_thread(
                 a._get_service(ScheduleTaskService).update_task,
                 task_id,
                 None,
@@ -233,6 +239,9 @@ def register_routes(quart_app):
                 owner_type="admin",
                 trigger_type=body.get("trigger_type"),
                 interval_config=body.get("interval_config"),
+                app_id=body.get("app_id"),
+                task_type=body.get("task_type"),
+                input_params=body.get("input_params"),
             )
         except Exception as exc:
             return a._json_resp(
@@ -241,17 +250,29 @@ def register_routes(quart_app):
             )
         from internal.schema.schedule_task_schema import ScheduleTaskResp
 
+        # update_task 返回的实例在 auto_commit 后已脱离 session，重新查询以安全序列化
+        task = await a._to_thread(
+            a._get_service(ScheduleTaskService).get_task,
+            task_id,
+            None,
+            owner_type="admin",
+        )
         return a._ok(ScheduleTaskResp.pre_dump_process(task))
 
     @quart_app.delete("/admin/schedule-tasks/<uuid:task_id>")
     async def admin_schedule_task_delete(task_id):
         from app.http import asgi_app as a
 
+        admin, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+        payload = await request.get_json(force=True, silent=True) or {}
         await a._to_thread(
             a._get_service(ScheduleTaskService).delete_task,
             task_id,
-            None,
+            admin,
             owner_type="admin",
+            retention_days=payload.get("retention_days"),
         )
         return a._ok_msg("定时任务已删除")
 
@@ -261,7 +282,7 @@ def register_routes(quart_app):
 
         body = await request.get_json(force=True, silent=True) or {}
         enabled = bool(body.get("enabled", True))
-        task = await a._to_thread(
+        await a._to_thread(
             a._get_service(ScheduleTaskService).update_task,
             task_id,
             None,
@@ -270,6 +291,13 @@ def register_routes(quart_app):
         )
         from internal.schema.schedule_task_schema import ScheduleTaskResp
 
+        # update_task 返回的实例在 auto_commit 后已脱离 session，重新查询以安全序列化
+        task = await a._to_thread(
+            a._get_service(ScheduleTaskService).get_task,
+            task_id,
+            None,
+            owner_type="admin",
+        )
         return a._ok(ScheduleTaskResp.pre_dump_process(task))
 
     @quart_app.post("/admin/schedule-tasks/<uuid:task_id>/run-now")
@@ -375,6 +403,7 @@ def register_routes(quart_app):
             a._get_service(AdminRedeemCodeService).generate_codes,
             {
                 "name": name,
+                "description": (payload.get("description") or "").strip(),
                 "plan_id": parsed_plan_id,
                 "quantity": int(quantity or 1),
                 "expires_at": expires_at,
@@ -433,6 +462,25 @@ def register_routes(quart_app):
         from internal.schema.admin_redeem_code_schema import RedeemCodeResp
 
         resp = RedeemCodeResp()
+        return a._ok(resp.dump(result))
+
+    @quart_app.get("/admin/redeem-codes/<uuid:code_id>/plain")
+    async def admin_redeem_code_view_plain(code_id):
+        from app.http import asgi_app as a
+
+        operator_id = None
+        ip = request.headers.get("X-Forwarded-For", "")
+        user_agent = request.headers.get("User-Agent", "")
+        result = await a._to_thread(
+            a._get_service(AdminRedeemCodeService).view_plain_code,
+            code_id,
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        from internal.schema.admin_redeem_code_schema import PlainCodeResp
+
+        resp = PlainCodeResp()
         return a._ok(resp.dump(result))
 
     @quart_app.post("/admin/redeem-code-batches/<uuid:batch_id>/disable")

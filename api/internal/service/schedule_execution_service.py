@@ -48,7 +48,10 @@ class ScheduleExecutionService(BaseService):
         try:
             run = self._create_run(schedule_task)
             try:
-                answer = self._run_assistant_chat(schedule_task)
+                if schedule_task.task_type == "app_execution" and schedule_task.app_id:
+                    answer = self._run_bound_app(schedule_task)
+                else:
+                    answer = self._run_assistant_chat(schedule_task)
                 self._finish_run(run, schedule_task, success=True, summary=answer[:_SUMMARY_MAX_LENGTH])
             except Exception as exc:
                 logger.exception("定时任务执行失败 schedule_task_id=%s", schedule_task.id)
@@ -59,6 +62,45 @@ class ScheduleExecutionService(BaseService):
                 self.redis_client.delete(lock_key)
             except Exception:
                 logger.warning("释放定时任务执行锁失败 key=%s", lock_key, exc_info=True)
+
+    def _run_bound_app(self, schedule_task: ScheduleTask) -> str:
+        """以任务归属用户身份按绑定应用执行，返回最终回答文本。"""
+        import json
+
+        from internal.schema.app_schema import DebugChatReq
+        from internal.service.app_debug_service import AppDebugService
+
+        # 绑定应用执行时以应用归属账号运行（admin 创建的任务归属 platform，
+        # 需切换到应用真正所属账号，避免越权）。
+        from internal.model import App
+
+        bound_app = self.db.session.query(App).filter(App.id == schedule_task.app_id).one_or_none()
+        if bound_app is None:
+            raise NotFoundException("绑定的应用不存在")
+        account = self.db.session.query(Account).filter(Account.id == bound_app.account_id).one_or_none()
+        if account is None:
+            raise NotFoundException("应用归属账号不存在")
+
+        req = DebugChatReq()
+        req.query.data = schedule_task.prompt
+        req.conversation_id.data = ""
+        req.image_urls.data = []
+
+        app_debug_service = current_app.injector.get(AppDebugService)
+        answer_parts = []
+        for event in app_debug_service.debug_chat(schedule_task.app_id, req, account):
+            try:
+                if isinstance(event, str):
+                    if "event: agent_message" not in event:
+                        continue
+                    data_part = event.split("data:", 1)[1] if "data:" in event else ""
+                    payload = json.loads(data_part)
+                    content = payload.get("answer") or payload.get("message") or ""
+                    if content:
+                        answer_parts.append(str(content))
+            except Exception:
+                continue
+        return "".join(answer_parts) or ""
 
     def _run_assistant_chat(self, schedule_task: ScheduleTask) -> str:
         """以任务归属用户身份走 AssistantAgentService.chat 完整编排链，返回最终回答。"""

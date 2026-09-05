@@ -25,6 +25,12 @@ class ScheduleTask(Base):
     owner_type = Column(String(16), nullable=False, server_default=text("'user'::character varying"))
     name = Column(String(128), nullable=False)
     prompt = Column(Text, nullable=False)
+    # 绑定的应用（可空）：空=通用助手任务，非空=按应用执行
+    app_id = Column(UUID, ForeignKey("app.id"), nullable=True)
+    # 任务类型：app_execution=绑定应用执行 / assistant_chat=通用助手对话
+    task_type = Column(String(32), nullable=False, server_default=text("'assistant_chat'::character varying"))
+    # 绑定应用时的输入参数（如 query、参数集合）
+    input_params = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     trigger_type = Column(String(16), nullable=False, server_default=text("'cron'::character varying"))
     cron_expression = Column(String(64), nullable=False)
     cron_humanized = Column(String(255), nullable=False, server_default=text("''::character varying"))

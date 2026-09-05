@@ -32,6 +32,11 @@ TRIGGER_TYPE_CRON = "cron"
 TRIGGER_TYPE_INTERVAL = "interval"
 TRIGGER_TYPES = (TRIGGER_TYPE_CRON, TRIGGER_TYPE_INTERVAL)
 
+# 任务类型：绑定应用执行 / 通用助手对话
+TASK_TYPE_APP_EXECUTION = "app_execution"
+TASK_TYPE_ASSISTANT_CHAT = "assistant_chat"
+TASK_TYPES = (TASK_TYPE_APP_EXECUTION, TASK_TYPE_ASSISTANT_CHAT)
+
 # 间隔单位
 INTERVAL_UNIT_MONTH = "month"
 INTERVAL_UNIT_WEEK = "week"
@@ -264,6 +269,9 @@ class ScheduleTaskService(BaseService):
         owner_type: str = "user",
         trigger_type: str = TRIGGER_TYPE_CRON,
         interval_config: dict | None = None,
+        app_id=None,
+        task_type: str | None = None,
+        input_params: dict | None = None,
     ) -> ScheduleTask:
         trigger_type = trigger_type or TRIGGER_TYPE_CRON
         if trigger_type not in TRIGGER_TYPES:
@@ -281,12 +289,24 @@ class ScheduleTaskService(BaseService):
             account_id = self._get_platform_account().id
         else:
             account_id = account.id if account is not None else None
+        normalized_app_id = None
+        normalized_task_type = TASK_TYPE_ASSISTANT_CHAT
+        if app_id:
+            normalized_app_id = self._validate_bound_app(app_id, account_id, owner_type)
+            normalized_task_type = task_type or TASK_TYPE_APP_EXECUTION
+        elif task_type:
+            normalized_task_type = task_type if task_type in TASK_TYPES else TASK_TYPE_ASSISTANT_CHAT
+        if normalized_task_type not in TASK_TYPES:
+            normalized_task_type = TASK_TYPE_ASSISTANT_CHAT
         return self.create(
             ScheduleTask,
             account_id=account_id,
             owner_type=owner_type,
             name=name,
             prompt=prompt,
+            app_id=normalized_app_id,
+            task_type=normalized_task_type,
+            input_params=input_params or {},
             trigger_type=trigger_type,
             cron_expression=cron_expression,
             cron_humanized=humanized,
@@ -316,6 +336,9 @@ class ScheduleTaskService(BaseService):
         owner_type: str = "user",
         trigger_type=None,
         interval_config=None,
+        app_id=None,
+        task_type=None,
+        input_params=None,
     ) -> ScheduleTask:
         task = self.get_task(task_id, account, owner_type=owner_type)
         updates = {}
@@ -325,6 +348,13 @@ class ScheduleTaskService(BaseService):
             updates["prompt"] = prompt
         if description is not None:
             updates["description"] = description
+        if app_id is not None:
+            updates["app_id"] = self._validate_bound_app(app_id, task.account_id, owner_type)
+            updates["task_type"] = TASK_TYPE_APP_EXECUTION
+        if task_type is not None and task_type in TASK_TYPES:
+            updates["task_type"] = task_type
+        if input_params is not None:
+            updates["input_params"] = input_params
         if enabled is not None:
             updates["enabled"] = enabled
             updates["status"] = ScheduleTaskStatus.ACTIVE.value if enabled else ScheduleTaskStatus.PAUSED.value
@@ -354,6 +384,22 @@ class ScheduleTaskService(BaseService):
         if not updates:
             return task
         return self.update(task, **updates)
+
+    def _validate_bound_app(self, app_id, account_id, owner_type: str):
+        """校验定时任务绑定的应用：仅允许绑定归属账号（或平台）下的应用。"""
+        from internal.model import App
+
+        if owner_type == "admin":
+            app = self.db.session.query(App).filter(App.id == app_id).one_or_none()
+        else:
+            app = (
+                self.db.session.query(App)
+                .filter(App.id == app_id, App.account_id == account_id)
+                .one_or_none()
+            )
+        if app is None:
+            raise FailException("绑定的应用不存在或不属于当前账号")
+        return app.id
 
     def get_task(self, task_id, account: Account | None, owner_type: str = "user") -> ScheduleTask:
         task = self.get(ScheduleTask, task_id)
