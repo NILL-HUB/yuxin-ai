@@ -468,6 +468,40 @@ class TestEmailService:
             ("phone_login:13800138000", timedelta(seconds=EmailService.CODE_TTL_SECONDS), "123456")
         ]
 
+    def test_send_code_should_fallback_write_redis_when_sms_unconfigured(self, monkeypatch):
+        setex_calls = []
+        sent_sms = []
+
+        class _FakeSmsService:
+            def send_verification_code(self, phone, code):
+                sent_sms.append((phone, code))
+                raise RuntimeError("短信发送未配置，请联系管理员配置短信通道")
+
+        class _FakeAuthSwitches:
+            @staticmethod
+            def get_auth_switches():
+                return {"AUTH_PHONE_ENABLED": True, "AUTH_EMAIL_ENABLED": True}
+
+        redis_stub = SimpleNamespace(
+            setex=lambda key, ttl, value: setex_calls.append((key, ttl, value)),
+        )
+        monkeypatch.setattr("internal.service.email_service.redis_client", redis_stub)
+        monkeypatch.setattr(
+            "internal.service.email_service._sms_service",
+            lambda: _FakeSmsService(),
+        )
+        service = EmailService(mail=SimpleNamespace(send=lambda _msg: None))
+        monkeypatch.setattr(service, "generate_verification_code", lambda length=6: "654321")
+        monkeypatch.setattr(service, "_get_auth_switches", _FakeAuthSwitches.get_auth_switches)
+
+        result = service.send_code(EmailService.PHONE_LOGIN_SCENE, phone="13800138000")
+
+        assert result == ""
+        assert sent_sms == [("13800138000", "654321")]
+        assert setex_calls == [
+            ("phone_login:13800138000", timedelta(seconds=EmailService.CODE_TTL_SECONDS), "654321")
+        ]
+
     def test_send_code_should_route_email_through_send_verification_code(self, monkeypatch):
         calls = []
 

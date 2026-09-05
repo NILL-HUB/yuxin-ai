@@ -1460,7 +1460,9 @@ class AccountService(BaseService):
         return self.begin_login(account)
 
     def _verify_phone_code(self, phone: str, code: str) -> None:
-        self.email_service.verify_code(self.email_service.PHONE_LOGIN_SCENE, code, contact=phone)
+        self.email_service.verify_code(
+            "", code, scene=self.email_service.PHONE_LOGIN_SCENE, contact=phone
+        )
 
     def send_bind_phone_code(self, account: Account, *, phone: str) -> str:
         """向待绑定手机号发送绑定验证码。"""
@@ -1479,7 +1481,9 @@ class AccountService(BaseService):
     def bind_phone(self, account: Account, *, phone: str, code: str) -> None:
         """校验验证码后为当前账号绑定手机号。"""
         normalized_phone = self.normalize_phone(phone)
-        self.email_service.verify_code(self.email_service.PHONE_BIND_SCENE, code, contact=normalized_phone)
+        self.email_service.verify_code(
+            "", code, scene=self.email_service.PHONE_BIND_SCENE, contact=normalized_phone
+        )
         existing_account = self.get_account_by_phone(normalized_phone)
         if existing_account and str(existing_account.id) != str(account.id):
             raise FailException("该手机号已绑定其他账户")
@@ -1490,7 +1494,9 @@ class AccountService(BaseService):
         current_phone = self.normalize_phone(getattr(account, "phone", "") or "")
         if not current_phone:
             raise FailException("当前未绑定手机号")
-        self.email_service.verify_code(self.email_service.PHONE_BIND_SCENE, code, contact=current_phone)
+        self.email_service.verify_code(
+            "", code, scene=self.email_service.PHONE_BIND_SCENE, contact=current_phone
+        )
         if not getattr(account, "email", "") and not account.is_password_set:
             raise FailException("请先设置邮箱或密码再解绑手机号")
         self.update(account, phone="", phone_verified_at=None)
@@ -1513,8 +1519,9 @@ class AccountService(BaseService):
         if not getattr(account, "email", ""):
             raise FailException("尚未填写邮箱，请先在安全设置中绑定邮箱")
         self.email_service.verify_code(
-            self.email_service.EMAIL_VERIFY_SCENE,
+            "",
             code,
+            scene=self.email_service.EMAIL_VERIFY_SCENE,
             contact=self._normalize_email(account.email),
         )
         self.update(account, email_verified_at=self._now())
@@ -1540,7 +1547,9 @@ class AccountService(BaseService):
 
         if not get_auth_switches()["AUTH_EMAIL_ENABLED"]:
             raise FailException("邮箱通道未开启")
-        if not self.email_service.verify_code(self.email_service.EMAIL_LOGIN_SCENE, code, contact=email):
+        if not self.email_service.verify_code(
+            "", code, scene=self.email_service.EMAIL_LOGIN_SCENE, contact=email
+        ):
             raise FailException("验证码错误或已过期")
         normalized_email = self._normalize_email(email)
         account = self.get_account_by_email(normalized_email)
@@ -1564,7 +1573,9 @@ class AccountService(BaseService):
 
         if not get_auth_switches()["AUTH_PHONE_ENABLED"]:
             raise FailException("手机号通道未开启")
-        if not self.email_service.verify_code(self.email_service.PHONE_REGISTER_SCENE, code, contact=phone):
+        if not self.email_service.verify_code(
+            "", code, scene=self.email_service.PHONE_REGISTER_SCENE, contact=phone
+        ):
             raise FailException("验证码错误或已过期")
         if self.get_account_by_phone(phone):
             raise FailException("该手机号已注册，请直接登录")

@@ -2281,7 +2281,10 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 EMAIL_LOGIN_SCENE="email_login",
-                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+                verify_code=lambda email, code, scene="", contact=None: verify_calls.append(
+                    (scene, code, contact)
+                )
+                or True,
             ),
         )
         update_calls = []
@@ -2312,7 +2315,7 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 EMAIL_LOGIN_SCENE="email_login",
-                verify_code=lambda scene, code, contact=None: True,
+                verify_code=lambda email, code, scene="", contact=None: True,
             ),
         )
 
@@ -2333,7 +2336,7 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_REGISTER_SCENE="phone_register",
-                verify_code=lambda scene, code, contact=None: True,
+                verify_code=lambda email, code, scene="", contact=None: True,
             ),
         )
         monkeypatch.setattr(service, "_set_password", lambda account, password: None)
@@ -2366,7 +2369,7 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_REGISTER_SCENE="phone_register",
-                verify_code=lambda scene, code, contact=None: True,
+                verify_code=lambda email, code, scene="", contact=None: True,
             ),
         )
         set_password_calls = []
@@ -2398,7 +2401,7 @@ class TestAccountService:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_REGISTER_SCENE="phone_register",
-                verify_code=lambda scene, code, contact=None: True,
+                verify_code=lambda email, code, scene="", contact=None: True,
             ),
         )
 
@@ -2569,7 +2572,8 @@ class TestBindPhone:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_BIND_SCENE="phone_bind",
-                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+                verify_code=lambda email, code, scene="", contact=None: verify_calls.append((scene, code, contact))
+                or True,
             ),
         )
         monkeypatch.setattr(service, "get_account_by_phone", lambda phone: None)
@@ -2590,7 +2594,7 @@ class TestBindPhone:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_BIND_SCENE="phone_bind",
-                verify_code=lambda scene, code, contact=None: (_ for _ in ()).throw(
+                verify_code=lambda email, code, scene="", contact=None: (_ for _ in ()).throw(
                     FailException("验证码错误或已过期")
                 ),
             ),
@@ -2606,7 +2610,7 @@ class TestBindPhone:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_BIND_SCENE="phone_bind",
-                verify_code=lambda scene, code, contact=None: True,
+                verify_code=lambda email, code, scene="", contact=None: True,
             ),
         )
         monkeypatch.setattr(
@@ -2636,7 +2640,7 @@ class TestUnbindPhone:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_BIND_SCENE="phone_bind",
-                verify_code=lambda scene, code, contact=None: True,
+                verify_code=lambda email, code, scene="", contact=None: True,
             ),
         )
         account = SimpleNamespace(id=uuid4(), phone="13800138000", email="", is_password_set=False)
@@ -2652,7 +2656,8 @@ class TestUnbindPhone:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 PHONE_BIND_SCENE="phone_bind",
-                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+                verify_code=lambda email, code, scene="", contact=None: verify_calls.append((scene, code, contact))
+                or True,
             ),
         )
         update_calls = []
@@ -2716,7 +2721,8 @@ class TestVerifyEmail:
             jwt_service=SimpleNamespace(generate_token=lambda _payload: "jwt-token"),
             email_service=SimpleNamespace(
                 EMAIL_VERIFY_SCENE="email_verify",
-                verify_code=lambda scene, code, contact=None: verify_calls.append((scene, code, contact)) or True,
+                verify_code=lambda email, code, scene="", contact=None: verify_calls.append((scene, code, contact))
+                or True,
             ),
         )
         update_calls = []

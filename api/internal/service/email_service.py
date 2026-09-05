@@ -267,7 +267,14 @@ GitHub：https://github.com/NILL-HUB/yuxin-ai
                 raise FailException("手机号通道未开启，请联系管理员")
 
             code = self.generate_verification_code()
-            _sms_service().send_verification_code(phone, code)
+            try:
+                _sms_service().send_verification_code(phone, code)
+            except RuntimeError:
+                current_app.logger.warning(
+                    "sms_unconfigured scene=%s phone=%s fallback_write_redis",
+                    scene,
+                    phone,
+                )
             redis_client.setex(
                 self._code_key(phone, scene),
                 timedelta(seconds=self.CODE_TTL_SECONDS),

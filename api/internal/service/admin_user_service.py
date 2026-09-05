@@ -271,6 +271,8 @@ class AdminUserService:
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
         admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
+        admin_user.password_changed_at = self._now()
+        self._revoke_all_admin_sessions(admin_user.id)
         self.session.commit()
         return self._serialize_admin_user(admin_user)
 
@@ -292,6 +294,14 @@ class AdminUserService:
         admin_session = self.session.query(AdminSession).filter(AdminSession.id == payload["session_id"]).one_or_none()
         if admin_session is None or admin_session.admin_user_id != admin_user.id or not admin_session.is_active:
             raise UnauthorizedException("管理员登录会话已失效，请重新登录")
+        password_changed_at = getattr(admin_user, "password_changed_at", None)
+        session_created_at = getattr(admin_session, "created_at", None)
+        if (
+            password_changed_at is not None
+            and session_created_at is not None
+            and session_created_at < password_changed_at
+        ):
+            raise UnauthorizedException("密码已变更，请重新登录")
         # 刷新管理员会话活跃时间（5分钟节流）
         self.touch_admin_session(admin_session)
         return admin_user, admin_session
@@ -551,6 +561,8 @@ class AdminUserService:
         admin_user.password = hashed_password
         admin_user.password_salt = encoded_salt
         admin_user.password_version = PASSWORD_HASH_VERSION_CURRENT
+        admin_user.password_changed_at = self._now()
+        self._revoke_all_admin_sessions(admin_user.id)
         self._emit_audit(
             operator_id=operator_id,
             action="reset_password",
@@ -563,6 +575,14 @@ class AdminUserService:
         )
         self.session.commit()
         return self._serialize_admin_user_with_roles(admin_user)
+
+    def _revoke_all_admin_sessions(self, admin_user_id: UUID) -> None:
+        """改密后吊销管理员全部旧会话（含超级管理员自身）。"""
+        now = self._now()
+        sessions = self.session.query(AdminSession).filter(AdminSession.admin_user_id == admin_user_id).all()
+        for session in sessions:
+            if session.revoked_at is None:
+                session.revoked_at = now
 
     def revoke_admin_sessions(
         self,
