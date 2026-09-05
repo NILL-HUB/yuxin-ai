@@ -20,6 +20,8 @@ def _make_model(db, **overrides):
         tier=overrides.pop("tier", "standard"),
         capabilities=overrides.pop("capabilities", ["chat"]),
         price_per_1k_tokens=overrides.pop("price_per_1k_tokens", Decimal("0.03")),
+        input_cost_per_1k_tokens=overrides.pop("input_cost_per_1k_tokens", Decimal("0")),
+        output_cost_per_1k_tokens=overrides.pop("output_cost_per_1k_tokens", Decimal("0")),
         max_tokens=overrides.pop("max_tokens", 128000),
         max_input_tokens=overrides.pop("max_input_tokens", 128000),
         max_output_tokens=overrides.pop("max_output_tokens", 0),
@@ -86,6 +88,37 @@ class TestRuntimeModelPoolService:
 
         assert head is None
         assert candidates == []
+
+    def test_select_model_with_fallback_sorts_by_cost_within_tier(self, model_pool_db):
+        _make_model(
+            model_pool_db, provider="openai", model_name="expensive-model", priority=1,
+            input_cost_per_1k_tokens=Decimal("1"), output_cost_per_1k_tokens=Decimal("2"),
+        )
+        _make_model(
+            model_pool_db, provider="deepseek", model_name="cheap-model", priority=1,
+            input_cost_per_1k_tokens=Decimal("0.5"), output_cost_per_1k_tokens=Decimal("0.5"),
+        )
+
+        service = _service(model_pool_db)
+        head, candidates = service.select_model_with_fallback("standard")
+
+        assert head.model_name == "cheap-model"
+        assert [c.model_name for c in candidates] == ["expensive-model"]
+
+    def test_select_model_with_fallback_priority_wins_over_cost(self, model_pool_db):
+        _make_model(
+            model_pool_db, provider="openai", model_name="cheap-low-priority", priority=1,
+            input_cost_per_1k_tokens=Decimal("0.1"), output_cost_per_1k_tokens=Decimal("0.1"),
+        )
+        _make_model(
+            model_pool_db, provider="deepseek", model_name="expensive-high-priority", priority=2,
+            input_cost_per_1k_tokens=Decimal("5"), output_cost_per_1k_tokens=Decimal("5"),
+        )
+
+        service = _service(model_pool_db)
+        head, candidates = service.select_model_with_fallback("standard")
+
+        assert head.model_name == "expensive-high-priority"
 
     def test_get_keys_for_model_should_filter_active_unexpired_and_with_quota(self, model_pool_db):
         model = _make_model(model_pool_db, provider="openai", model_name="m", priority=10)

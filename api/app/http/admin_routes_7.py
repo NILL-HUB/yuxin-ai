@@ -374,6 +374,36 @@ def register_routes(quart_app):
         resp = AdminPlanResp()
         return a._ok(resp.dump(result))
 
+    @quart_app.get("/admin/billing-config")
+    async def admin_billing_config_get():
+        from app.http import asgi_app as a
+        from internal.schema.admin_billing_config_schema import BillingConfigResp
+        from internal.service.admin_billing_config_service import AdminBillingConfigService
+
+        code = request.args.get("code") or None
+        result = await a._to_thread(a._get_service(AdminBillingConfigService).get_config, code)
+        resp = BillingConfigResp()
+        return a._ok(resp.dump(result))
+
+    @quart_app.put("/admin/billing-config")
+    async def admin_billing_config_upsert():
+        from app.http import asgi_app as a
+        from internal.schema.admin_billing_config_schema import BillingConfigResp
+        from internal.service.admin_billing_config_service import AdminBillingConfigService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        operator_id, ip, user_agent = await _operator_context()
+        result = await a._to_thread(
+            a._get_service(AdminBillingConfigService).upsert_config,
+            payload,
+            code=payload.get("code") or None,
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = BillingConfigResp()
+        return a._ok(resp.dump(result))
+
     @quart_app.get("/admin/plans/<uuid:plan_id>")
     async def admin_plan_get(plan_id):
         from app.http import asgi_app as a
@@ -423,6 +453,23 @@ def register_routes(quart_app):
             a._get_service(AdminBillingPlanService).set_plan_status,
             plan_id,
             str(status_raw),
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = AdminPlanResp()
+        return a._ok(resp.dump(result))
+
+    @quart_app.delete("/admin/plans/<uuid:plan_id>")
+    async def admin_plan_delete(plan_id):
+        from app.http import asgi_app as a
+        from internal.schema.admin_billing_plan_schema import AdminPlanResp
+        from internal.service.admin_billing_plan_service import AdminBillingPlanService
+
+        operator_id, ip, user_agent = await _operator_context()
+        result = await a._to_thread(
+            a._get_service(AdminBillingPlanService).delete_plan,
+            plan_id,
             operator_id=operator_id,
             ip=ip,
             user_agent=user_agent,
@@ -790,5 +837,40 @@ def register_routes(quart_app):
         enabled = str(payload.get("enabled", "true")).lower() == "true"
         result = await a._to_thread(
             a._get_service(AdminSubPoolService).set_enabled, def_id, enabled
+        )
+        return a._ok(result)
+
+    # ------------------------------------------------------------------
+    # admin_billing_reconciliation -> AdminBillingReconciliationService
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/billing-reconciliations")
+    async def admin_billing_reconciliations_list():
+        from app.http import asgi_app as a
+        from internal.schema.admin_billing_reconciliation_schema import AdminReconciliationResp
+        from internal.service.admin_billing_reconciliation_service import (
+            AdminBillingReconciliationService,
+        )
+
+        current_page = max(int(request.args.get("current_page", 1) or 1), 1)
+        page_size = max(int(request.args.get("page_size", 20) or 20), 1)
+        alert = request.args.get("alert") or None
+        result = await a._to_thread(
+            a._get_service(AdminBillingReconciliationService).list_reconciliations,
+            alert=alert,
+            current_page=current_page,
+            page_size=page_size,
+        )
+        resp = AdminReconciliationResp(many=True)
+        return a._ok({"list": resp.dump(result["list"]), "paginator": result["paginator"]})
+
+    @quart_app.get("/admin/billing-reconciliations/margin")
+    async def admin_billing_reconciliations_margin():
+        from app.http import asgi_app as a
+        from internal.service.admin_billing_reconciliation_service import (
+            AdminBillingReconciliationService,
+        )
+
+        result = await a._to_thread(
+            a._get_service(AdminBillingReconciliationService).model_margin_summary
         )
         return a._ok(result)

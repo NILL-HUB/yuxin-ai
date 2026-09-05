@@ -38,6 +38,16 @@ class RuntimeModelPoolService:
             ModelPoolConfig.created_at.asc(),
         ).all()
 
+    @staticmethod
+    def _cost_reference(model: ModelPoolConfig) -> float:
+        """同档成本参考：按 3:1 输入输出均衡权重，成本值取自成本基准（元/1k）。
+        返回越小越省；两个成本都未配置时返回很大值（排最后，仍可用但非优先）。"""
+        in_cost = float(getattr(model, "input_cost_per_1k_tokens", 0) or 0)
+        out_cost = float(getattr(model, "output_cost_per_1k_tokens", 0) or 0)
+        if in_cost <= 0 and out_cost <= 0:
+            return float("inf")
+        return in_cost * 3 + out_cost
+
     def _get_tier_policy(self, tier: str) -> ModelTierPolicy | None:
         """查询档位策略配置（包含 default_model 和 allowed_models 白名单）。"""
         return self._session().query(ModelTierPolicy).filter(ModelTierPolicy.tier_code == tier).one_or_none()
@@ -50,6 +60,8 @@ class RuntimeModelPoolService:
         models = self.get_active_models(tier, model_type)
         if not models:
             return None, []
+        # 同 priority 组内按成本参考值升序（省模型优先）；priority 仍为第一键
+        models.sort(key=lambda m: (0 - int(m.priority or 0), self._cost_reference(m), m.created_at or self._now()))
 
         # 读取档位策略配置
         policy = self._get_tier_policy(tier)
