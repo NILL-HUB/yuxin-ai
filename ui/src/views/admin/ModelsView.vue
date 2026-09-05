@@ -118,7 +118,7 @@ const MAX_TOKENS_PRESETS = [
   { value: 1572864, label: '1.5M' },
   { value: 2000000, label: '2M' },
 ]
-// 最大输出长度预设值（通常远小于输入窗口）
+// 最大输出长度预设值（支持长输出模型，最大 1M）
 const OUTPUT_TOKENS_PRESETS = [
   { value: 512, label: '512' },
   { value: 1024, label: '1K' },
@@ -128,6 +128,10 @@ const OUTPUT_TOKENS_PRESETS = [
   { value: 16384, label: '16K' },
   { value: 32768, label: '32K' },
   { value: 65536, label: '64K' },
+  { value: 131072, label: '128K' },
+  { value: 262144, label: '256K' },
+  { value: 524288, label: '512K' },
+  { value: 1048576, label: '1M' },
 ]
 // embedding 模型维度由后端自动探测（调用 API 探测实际维度），前端无需配置
 
@@ -1380,15 +1384,34 @@ onMounted(() => {
             <a-alert v-if="peakWindowsWarnings.length" type="warning" show-icon class="mb-3">
               {{ t('admin.models.pricingMode.windowsParseError') }}
             </a-alert>
-            <a-form-item :label="t('admin.models.pricingMode.windowsLabel')" field="peak_windows">
+            <a-form-item field="peak_windows">
+              <template #label>
+                <span class="flex items-center gap-1.5">
+                  {{ t('admin.models.pricingMode.windowsLabel') }}
+                  <a-tag size="small" color="purple">{{ t('admin.models.pricingMode.peakTagLabel') }}</a-tag>
+                  <span class="text-xs font-normal text-gray-400">{{ t('admin.models.pricingMode.windowsLabelHint') }}</span>
+                </span>
+              </template>
               <div class="w-full rounded border border-dashed border-gray-300 p-3">
+                <div class="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  <span class="flex items-center gap-1.5">
+                    <span class="inline-block h-2.5 w-2.5 rounded-full bg-purple-500"></span>
+                    {{ t('admin.models.pricingMode.peakLegend') }}
+                  </span>
+                  <span class="flex items-center gap-1.5">
+                    <span class="inline-block h-2.5 w-2.5 rounded-full bg-gray-300"></span>
+                    {{ t('admin.models.pricingMode.valleyLegend') }}
+                  </span>
+                </div>
                 <p class="mb-2 text-xs text-gray-500">{{ t('admin.models.pricingMode.peakWindowsTip') }}</p>
-                <div v-if="peakWindowRows.length === 0" class="py-3 text-center text-xs text-gray-400">
+                <div v-if="peakWindowRows.length === 0" class="rounded border border-dashed border-purple-200 bg-purple-50 py-3 text-center text-xs text-gray-500">
+                  <a-tag size="small" color="purple" class="mr-1">{{ t('admin.models.pricingMode.peakTagLabel') }}</a-tag>
                   {{ t('admin.models.pricingMode.emptyWindows') }}
                 </div>
                 <div v-else class="space-y-2">
-                  <div v-for="(row, index) in peakWindowRows" :key="index" class="window-row flex flex-wrap items-center gap-2">
-                    <span class="w-16 shrink-0 text-xs text-gray-500">{{ t('admin.models.pricingMode.daysLabel') }}</span>
+                  <div v-for="(row, index) in peakWindowRows" :key="index" class="window-row flex flex-wrap items-center gap-2 rounded border border-purple-100 bg-purple-50/40 px-2 py-1.5">
+                    <a-tag size="small" color="purple" class="shrink-0">{{ t('admin.models.pricingMode.peakTagLabel') }}</a-tag>
+                    <span class="text-xs text-gray-500">{{ t('admin.models.pricingMode.daysLabel') }}</span>
                     <div class="w-48">
                       <a-select
                         v-model="row.days"
@@ -1423,7 +1446,10 @@ onMounted(() => {
                 </div>
               </div>
             </a-form-item>
-            <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.peakTitle') }}</h5>
+            <h5 class="form-subgroup-title flex items-center gap-1.5">
+              <a-tag size="small" color="purple">{{ t('admin.models.pricingMode.peakTagLabel') }}</a-tag>
+              {{ t('admin.models.pricingMode.peakTitle') }}
+            </h5>
             <div class="pricing-grid">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.inputPrice') }}</div>
@@ -1464,7 +1490,10 @@ onMounted(() => {
                 </a-input-number>
               </div>
             </div>
-            <h5 class="form-subgroup-title">{{ t('admin.models.pricingMode.valleyTitle') }}</h5>
+            <h5 class="form-subgroup-title flex items-center gap-1.5">
+              <a-tag size="small">{{ t('admin.models.pricingMode.valleyTagLabel') }}</a-tag>
+              {{ t('admin.models.pricingMode.valleyTitle') }}
+            </h5>
             <div class="pricing-grid">
               <div class="pricing-cell">
                 <div class="pricing-cell-label">{{ t('admin.models.fields.inputPrice') }}</div>
