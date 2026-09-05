@@ -69,6 +69,20 @@ class _FakeRedis:
         self.store[key] = value if isinstance(value, bytes) else str(value).encode("utf-8")
 
 
+class _PersistRedis(_FakeRedis):
+    def rpush(self, key, value):
+        self.store.setdefault(key, []).append(value)
+
+    def expire(self, key, ttl):
+        self.store[f"ttl:{key}"] = ttl
+
+    def lpop(self, key):
+        values = self.store.get(key)
+        if values:
+            return values.pop(0)
+        return None
+
+
 class _FakeInjector:
     def __init__(self, redis_client):
         self.redis_client = redis_client
@@ -122,6 +136,51 @@ def test_agent_queue_manager_publish_and_publish_error_should_enqueue_and_stop(m
 
     manager.publish_error(task_id, RuntimeError("boom"))
     assert stop_calls == [task_id]
+
+
+def test_agent_queue_manager_should_persist_events_to_redis(monkeypatch):
+    redis_client = _PersistRedis()
+    monkeypatch.setattr("app.http.module.injector", _FakeInjector(redis_client))
+
+    manager = AgentQueueManager(user_id=uuid4(), invoke_from=InvokeFrom.WEB_APP)
+    task_id = uuid4()
+    manager.publish(
+        task_id,
+        AgentThought(id=uuid4(), task_id=task_id, event=QueueEvent.AGENT_MESSAGE, answer="ok"),
+    )
+
+    key = manager._event_stream_key(task_id)
+    assert key in redis_client.store
+    assert len(redis_client.store[key]) == 1
+    assert redis_client.store[f"ttl:{key}"] == manager._EVENT_TTL_SECONDS
+
+
+def test_agent_queue_manager_should_consume_from_redis_when_enabled(monkeypatch):
+    monkeypatch.setenv("AGENT_QUEUE_REDIS_CONSUME", "1")
+    redis_client = _PersistRedis()
+    monkeypatch.setattr("app.http.module.injector", _FakeInjector(redis_client))
+
+    manager = AgentQueueManager(user_id=uuid4(), invoke_from=InvokeFrom.WEB_APP)
+    task_id = uuid4()
+    first = AgentThought(
+        id=uuid4(),
+        task_id=task_id,
+        event=QueueEvent.AGENT_MESSAGE,
+        answer="ok",
+    )
+    manager.publish(task_id, first)
+    manager.publish(
+        task_id,
+        AgentThought(id=uuid4(), task_id=task_id, event=QueueEvent.AGENT_END),
+    )
+
+    items = list(manager.listen(task_id))
+
+    assert [item.event for item in items] == [
+        QueueEvent.AGENT_MESSAGE,
+        QueueEvent.AGENT_END,
+    ]
+    assert items[0].answer == "ok"
 
 
 def test_agent_queue_manager_publish_failure_should_classify_timeout(monkeypatch):

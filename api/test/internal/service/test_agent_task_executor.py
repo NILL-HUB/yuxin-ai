@@ -155,3 +155,63 @@ def test_execute_keeps_full_tools_when_item_has_no_tools():
 
     called_config = agent_class.call_args.kwargs["agent_config"]
     assert called_config is agent_config
+
+
+def test_execute_injects_upstream_results_into_query():
+    agent = MagicMock()
+    agent.stream.return_value = iter([])
+    agent_class = MagicMock(return_value=agent)
+    llm = MagicMock()
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+        query="备用查询",
+    )
+    item = TaskPlanItem(task_id="task-5", title="下游", description="基于上游写报告")
+    executor.execute(
+        item,
+        context={
+            "upstream_results": {
+                "task-4": {
+                    "answer": "上游分析结果",
+                }
+            }
+        },
+    )
+
+    query = llm.convert_to_human_message.call_args.args[0]
+    assert "上游分析结果" in query
+    assert "基于上游写报告" in query
+
+
+def test_token_usage_uses_agent_thought_tokens():
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+
+    thought = MagicMock()
+    thought.answer = "最终答案"
+    thought.event = "agent_message"
+    thought.total_token_count = 120
+    thought.total_price = 0.001
+    thought.latency = 1.0
+
+    agent = MagicMock()
+    agent.stream.return_value = iter([thought])
+    agent_class = MagicMock(return_value=agent)
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+    )
+
+    item = TaskPlanItem(task_id="task-6", title="标题", description="描述")
+    result = executor.execute(item)
+
+    assert result["metadata"]["token_usage"]["total_tokens"] == 120
+    assert result["metadata"]["token_usage"]["prompt_tokens"] == 120
+    assert result["metadata"]["token_usage"]["completion_tokens"] == 0

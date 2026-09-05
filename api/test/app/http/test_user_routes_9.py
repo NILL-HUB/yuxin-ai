@@ -216,6 +216,10 @@ class _FakeDigestManager:
     def update_digest(self, user_id):
         return "重建后的记忆摘要"
 
+    def invalidate(self, user_id):
+        """内容变更后主动失效缓存（测试记录调用即可）。"""
+        return None
+
 
 class _FakeMemoryGovernor:
     def edit_memory(self, memory_id, user_id, new_content):

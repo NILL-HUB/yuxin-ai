@@ -52,7 +52,7 @@ def _routing_decision():
 def _fake_task_executor(mock_class, answers):
     fake = MagicMock()
 
-    def _execute(item):
+    def _execute(item, context=None):
         answer = answers.get(item.task_id, "")
         return {
             "agent_id": item.task_id,
@@ -239,7 +239,7 @@ class TestMultiAgentExecutor:
         )
         message = _msg()
 
-        def _failing_execute(item):
+        def _failing_execute(item, context=None):
             if item.task_id == "t2":
                 return {
                     "agent_id": item.task_id,
@@ -289,3 +289,78 @@ class TestMultiAgentExecutor:
         snapshot = registry.snapshot(str(message.id))
         status_by_id = {item["task_id"]: item["status"] for item in snapshot["items"]}
         assert status_by_id == {"t1": "completed", "t2": "failed"}
+
+    def test_subtask_executor_resolves_model_by_tier(self, monkeypatch):
+        from internal.entity.execution_orchestration_entity import TaskPlanItem
+        from internal.service.executors.multi_agent_executor import _SubtaskTaskExecutor
+
+        resolved = []
+        monkeypatch.setattr(
+            "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
+            lambda tier: resolved.append(tier) or ("llm-" + str(tier)),
+        )
+
+        host = SimpleNamespace(
+            agent_class=object,
+            agent_config={},
+            tools=[],
+            history=[],
+            llm="host-llm",
+            long_term_memory=None,
+            user_memory=None,
+            subtask_registry=None,
+            query="q",
+        )
+        executor = _SubtaskTaskExecutor(
+            host=host,
+            event_emitter=None,
+            sse_queue=object(),
+            conversation_id="c1",
+            message_id="m1",
+        )
+
+        item = TaskPlanItem(task_id="t1", title="t", model_tier="3")
+        assert executor._resolve_llm_for_item(item) == "llm-3"
+        assert resolved == ["3"]
+
+        default_item = TaskPlanItem(task_id="t2", title="t", model_tier="1")
+        assert executor._resolve_llm_for_item(default_item) == "host-llm"
+
+        no_tier_item = TaskPlanItem(task_id="t3", title="t", model_tier="")
+        assert executor._resolve_llm_for_item(no_tier_item) == "host-llm"
+
+        assert resolved == ["3"]
+
+    def test_resolve_llm_falls_back_to_host_on_tier_error(self, monkeypatch):
+        from internal.entity.execution_orchestration_entity import TaskPlanItem
+        from internal.service.executors.multi_agent_executor import _SubtaskTaskExecutor
+
+        def _boom(tier):
+            raise RuntimeError("no model in pool")
+
+        monkeypatch.setattr(
+            "internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier",
+            classmethod(lambda cls, tier: _boom(tier)),
+        )
+
+        host = SimpleNamespace(
+            agent_class=object,
+            agent_config={},
+            tools=[],
+            history=[],
+            llm="host-llm",
+            long_term_memory=None,
+            user_memory=None,
+            subtask_registry=None,
+            query="q",
+        )
+        executor = _SubtaskTaskExecutor(
+            host=host,
+            event_emitter=None,
+            sse_queue=object(),
+            conversation_id="c1",
+            message_id="m1",
+        )
+
+        item = TaskPlanItem(task_id="t1", title="t", model_tier="3")
+        assert executor._resolve_llm_for_item(item) == "host-llm"

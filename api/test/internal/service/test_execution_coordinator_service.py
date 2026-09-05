@@ -5,13 +5,14 @@ from internal.entity.execution_orchestration_entity import (
 )
 from internal.service.execution_coordinator_service import ExecutionCoordinatorService
 from internal.service.cost_policy_service import EscalationPolicyService
+from internal.service.subtask_registry_service import SubtaskRegistryService
 
 
 class FailingExecutor:
     def __init__(self, failing_task_ids=None):
         self.failing_task_ids = set(failing_task_ids or [])
 
-    def execute(self, item):
+    def execute(self, item, context=None):
         if item.task_id in self.failing_task_ids:
             raise RuntimeError(f"boom:{item.task_id}")
         return {
@@ -26,7 +27,7 @@ class FakeExecutor:
     def __init__(self):
         self.calls = []
 
-    def execute(self, item):
+    def execute(self, item, context=None):
         self.calls.append(item.task_id)
         return {
             "agent_id": f"agent-{item.agent_pool}",
@@ -176,7 +177,7 @@ def test_cancel_token_should_break_mid_execution_when_cancelled_between_items():
             self.cancel_token = cancel_token
             self.calls = []
 
-        def execute(self, item):
+        def execute(self, item, context=None):
             self.calls.append(item.task_id)
             if item.task_id == "task-1":
                 self.cancel_token.cancel()
@@ -218,7 +219,7 @@ def test_parallel_execution_should_run_items_concurrently():
     completed = []
 
     class _BarrierExecutor:
-        def execute(self, item):
+        def execute(self, item, context=None):
             barrier.wait()
             completed.append(item.task_id)
             return {
@@ -242,7 +243,7 @@ def test_sequential_execution_should_respect_depends_on_ordering():
     calls = []
 
     class _RecordingExecutor:
-        def execute(self, item):
+        def execute(self, item, context=None):
             calls.append(item.task_id)
             return {
                 "agent_id": f"agent-{item.agent_pool}",
@@ -280,9 +281,279 @@ def test_parallel_execution_should_sort_results_deterministically():
     assert [result.task_id for result in results] == ["task-1", "task-2", "task-3"]
 
 
+def test_parallel_execution_should_skip_tasks_whose_dependency_failed():
+    executor = FailingExecutor({"task-1"})
+    coordinator = ExecutionCoordinatorService(executor=executor)
+    plan = _plan(
+        "multi_agent_parallel",
+        [
+            _item("task-1", order=0),
+            _item("task-2", order=1, depends_on=["task-1"]),
+            _item("task-3", order=2),
+        ],
+    )
+
+    results = coordinator.execute(plan)
+
+    by_id = {result.task_id: result for result in results}
+    assert by_id["task-1"].errors == ["agent_execution_failed"]
+    assert by_id["task-2"].errors == ["dependency_failed"]
+    assert by_id["task-3"].answer == "answer:task-3"
+
+
+def test_sequential_execution_should_skip_tasks_whose_dependency_failed():
+    executor = FailingExecutor({"task-1"})
+    coordinator = ExecutionCoordinatorService(executor=executor)
+    plan = _plan(
+        "multi_agent_sequential",
+        [
+            _item("task-1", order=0),
+            _item("task-2", order=1, depends_on=["task-1"]),
+            _item("task-3", order=2),
+        ],
+    )
+
+    results = coordinator.execute(plan)
+
+    by_id = {result.task_id: result for result in results}
+    assert by_id["task-1"].errors == ["agent_execution_failed"]
+    assert by_id["task-2"].errors == ["dependency_failed"]
+    assert by_id["task-3"].answer == "answer:task-3"
+
+
+def test_sequential_execution_should_pass_upstream_output_to_downstream():
+    calls = []
+
+    class _ContextExecutor:
+        def execute(self, item, context=None):
+            calls.append((item.task_id, context or {}))
+            return {
+                "agent_id": f"agent-{item.agent_pool}",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    coordinator = ExecutionCoordinatorService(executor=_ContextExecutor())
+    plan = _plan(
+        "multi_agent_sequential",
+        [
+            _item("task-1", order=0),
+            _item("task-2", order=1, depends_on=["task-1"]),
+        ],
+    )
+
+    coordinator.execute(plan)
+
+    by_id = {task_id: context for task_id, context in calls}
+    assert by_id["task-1"] == {}
+    assert by_id["task-2"]["upstream_results"]["task-1"]["answer"] == "answer:task-1"
+
+
+def test_parallel_execution_should_pass_upstream_output_between_waves():
+    calls = []
+
+    class _ContextExecutor:
+        def execute(self, item, context=None):
+            calls.append((item.task_id, context or {}))
+            return {
+                "agent_id": f"agent-{item.agent_pool}",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    coordinator = ExecutionCoordinatorService(executor=_ContextExecutor())
+    plan = _plan(
+        "multi_agent_parallel",
+        [
+            _item("task-1", order=0),
+            _item("task-2", order=1, depends_on=["task-1"]),
+        ],
+    )
+
+    coordinator.execute(plan)
+
+    by_id = {task_id: context for task_id, context in calls}
+    assert by_id["task-1"] == {}
+    assert by_id["task-2"]["upstream_results"]["task-1"]["answer"] == "answer:task-1"
+
+
+def test_execution_coordinator_should_retry_failed_task_when_configured():
+    calls = []
+
+    class _RetryExecutor:
+        def execute(self, item, context=None):
+            calls.append(item.task_id)
+            if len(calls) == 1:
+                raise RuntimeError("first attempt failed")
+            return {
+                "agent_id": "agent",
+                "task_id": item.task_id,
+                "answer": "retry-success",
+                "confidence": 0.8,
+            }
+
+    item = _item("task-1")
+    item.retry_count = 1
+    coordinator = ExecutionCoordinatorService(executor=_RetryExecutor())
+
+    results = coordinator.execute(_plan("single_agent", [item]))
+
+    assert len(calls) == 2
+    assert results[0].answer == "retry-success"
+
+
+def test_execution_coordinator_should_mark_retried_failure_when_exhausted():
+    class _AlwaysFailingExecutor:
+        def execute(self, item, context=None):
+            raise RuntimeError("always fails")
+
+    item = _item("task-1")
+    item.retry_count = 1
+    coordinator = ExecutionCoordinatorService(executor=_AlwaysFailingExecutor())
+
+    results = coordinator.execute(_plan("single_agent", [item]))
+
+    assert results[0].errors == ["agent_execution_failed"]
+    assert "retried:1" in results[0].warnings
+
+
+def test_execution_coordinator_should_timeout_slow_task():
+    import time
+
+    class _SlowExecutor:
+        def execute(self, item, context=None):
+            time.sleep(0.2)
+            return {
+                "agent_id": "agent",
+                "task_id": item.task_id,
+                "answer": "too-late",
+                "confidence": 0.8,
+            }
+
+    item = _item("task-1")
+    item.timeout_seconds = 0.05
+    coordinator = ExecutionCoordinatorService(executor=_SlowExecutor())
+
+    results = coordinator.execute(_plan("single_agent", [item]))
+
+    assert results[0].errors == ["agent_execution_timeout"]
+    assert results[0].warnings == ["fallback:task_timeout"]
+
+
+def test_execution_coordinator_should_not_timeout_fast_task():
+    executor = FakeExecutor()
+    item = _item("task-1")
+    item.timeout_seconds = 5.0
+    coordinator = ExecutionCoordinatorService(executor=executor)
+
+    results = coordinator.execute(_plan("single_agent", [item]))
+
+    assert results[0].answer == "answer:task-1"
+
+
+def test_execution_coordinator_should_resume_from_snapshot():
+    registry = SubtaskRegistryService(_force_memory=True)
+    plan = _plan(
+        "multi_agent_sequential",
+        [
+            _item("task-1", order=0),
+            _item("task-2", order=1, depends_on=["task-1"]),
+        ],
+    )
+    registry.register_plan(
+        request_id="req-1",
+        execution_mode="multi_agent_sequential",
+        original_query="query",
+        items=plan.items,
+    )
+    registry.mark_completed(
+        "req-1",
+        "task-1",
+        answer_preview="done",
+    )
+
+    calls = []
+
+    class _RecordingExecutor:
+        def execute(self, item, context=None):
+            calls.append(item.task_id)
+            return {
+                "agent_id": f"agent-{item.agent_pool}",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    coordinator = ExecutionCoordinatorService(
+        executor=_RecordingExecutor(),
+        subtask_registry=registry,
+    )
+
+    results = coordinator.execute(plan, request_id="req-1", resume=True)
+
+    assert calls == ["task-2"]
+    assert [result.task_id for result in results] == ["task-1", "task-2"]
+    assert results[0].warnings == ["resumed:completed"]
+
+
+def test_execution_coordinator_should_repair_plan_when_failures_exist():
+    calls = []
+
+    class _Executor:
+        def execute(self, item, context=None):
+            calls.append(item.task_id)
+            if item.task_id == "task-1":
+                raise RuntimeError("original failed")
+            return {
+                "agent_id": "agent",
+                "task_id": item.task_id,
+                "answer": f"answer:{item.title}",
+                "confidence": 0.8,
+            }
+
+    def _repairer(original_query, failures):
+        return _plan(
+            "single_agent",
+            [_item("repaired-task")],
+        )
+
+    coordinator = ExecutionCoordinatorService(
+        executor=_Executor(),
+        plan_repairer=_repairer,
+    )
+    plan = _plan("single_agent", [_item("task-1")])
+
+    results = coordinator.execute(plan)
+
+    assert calls == ["task-1", "repaired-task"]
+    assert results[0].answer == "answer:repaired-task"
+
+
+def test_execution_coordinator_should_keep_original_results_when_repairer_returns_none():
+    calls = []
+
+    class _FailingExecutor:
+        def execute(self, item, context=None):
+            calls.append(item.task_id)
+            raise RuntimeError("failed")
+
+    coordinator = ExecutionCoordinatorService(
+        executor=_FailingExecutor(),
+        plan_repairer=lambda original_query, failures: None,
+    )
+    plan = _plan("single_agent", [_item("task-1")])
+
+    results = coordinator.execute(plan)
+
+    assert calls == ["task-1"]
+    assert results[0].errors == ["agent_execution_failed"]
+
+
 def _metadata_executor(tier="standard", total_tokens=0):
     class _Executor:
-        def execute(self, item):
+        def execute(self, item, context=None):
             return {
                 "agent_id": "a",
                 "task_id": item.task_id,
@@ -363,3 +634,74 @@ def test_no_escalation_service():
     assert len(results) == 1
     assert results[0].answer == "answer:task-1"
     assert not any(w.startswith("escalation:") for w in results[0].warnings)
+
+
+def _patch_billing_config_enabled(monkeypatch, row):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from internal.extension import database_extension
+
+    session = MagicMock()
+    session.query.return_value.filter.return_value.one_or_none.return_value = row
+    monkeypatch.setattr(database_extension, "db", SimpleNamespace(session=session))
+
+
+def test_resolve_escalation_policy_service_injects_when_enabled(monkeypatch):
+    from types import SimpleNamespace
+
+    from internal.service.cost_policy_service import EscalationPolicyService
+    from internal.service.execution_coordinator_service import (
+        resolve_escalation_policy_service,
+    )
+
+    _patch_billing_config_enabled(
+        monkeypatch,
+        SimpleNamespace(code="escalation_enabled", value_numeric=1),
+    )
+
+    svc = resolve_escalation_policy_service()
+
+    assert svc is not None
+    assert isinstance(svc, EscalationPolicyService)
+
+
+def test_resolve_escalation_policy_service_none_when_unconfigured(monkeypatch):
+    from internal.service.execution_coordinator_service import (
+        resolve_escalation_policy_service,
+    )
+
+    _patch_billing_config_enabled(monkeypatch, None)
+
+    assert resolve_escalation_policy_service() is None
+
+
+def test_resolve_escalation_policy_service_none_when_query_fails(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from internal.extension import database_extension
+    from internal.service.execution_coordinator_service import (
+        resolve_escalation_policy_service,
+    )
+
+    session = MagicMock()
+    session.query.side_effect = RuntimeError("db unavailable")
+    monkeypatch.setattr(database_extension, "db", SimpleNamespace(session=session))
+
+    assert resolve_escalation_policy_service() is None
+
+
+def test_resolve_escalation_policy_service_none_when_disabled(monkeypatch):
+    from types import SimpleNamespace
+
+    from internal.service.execution_coordinator_service import (
+        resolve_escalation_policy_service,
+    )
+
+    _patch_billing_config_enabled(
+        monkeypatch,
+        SimpleNamespace(code="escalation_enabled", value_numeric=0),
+    )
+
+    assert resolve_escalation_policy_service() is None

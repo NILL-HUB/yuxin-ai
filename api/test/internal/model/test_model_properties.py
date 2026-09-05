@@ -202,7 +202,8 @@ class TestBillingModel:
         )
         credit_account = billing_model.CreditAccount(
             account_id=account_id,
-            balance=100000,
+            permanent_credit=100000,
+            quota_credit=0,
             total_granted=120000,
             total_consumed=20000,
         )

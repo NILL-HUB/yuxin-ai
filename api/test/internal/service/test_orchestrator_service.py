@@ -243,6 +243,50 @@ def test_orchestrator_should_fill_routing_log_observability_fields():
     assert fields["status"] == "success"
 
 
+def test_orchestrator_should_delegate_to_conductor_when_enabled():
+    class _Flags:
+        def is_enabled(self, code):
+            return code in {"ENABLE_ORCHESTRATOR", "ENABLE_CONDUCTOR"}
+
+    class _Conductor:
+        def __init__(self):
+            self.called = False
+
+        def decide(self, query, **kwargs):
+            self.called = True
+            return {
+                "intent": "analysis",
+                "complexity": "medium",
+                "execution_mode": ExecutionMode.SINGLE_AGENT.value,
+                "needs_tools": True,
+                "needs_agent": True,
+                "needs_multi_agent": False,
+                "needs_deep_thinking": False,
+                "recommended_model_tier": "2",
+                "risk_level": RiskLevel.SAFE.value,
+                "reason": "conductor",
+                "agent_subset": {"selected_agents": []},
+                "tool_subset": {"selected_tools": []},
+                "cost_policy": {"allowed": True},
+                "billing_events": [],
+                "task_plan_summary": None,
+                "synthesis_summary": None,
+            }
+
+    conductor = _Conductor()
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        feature_flag_service=_Flags(),
+        conductor_service=conductor,
+    )
+
+    decision = service.decide("分析市场")
+
+    assert conductor.called is True
+    assert decision.execution_mode == ExecutionMode.SINGLE_AGENT.value
+    assert decision.reason == "conductor"
+
+
 def test_routing_decision_should_dump_stable_dict():
     decision = RoutingDecision(
         intent="general_qa",

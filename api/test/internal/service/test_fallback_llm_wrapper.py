@@ -40,6 +40,10 @@ def _make_model(db, **overrides):
         status=overrides.pop("status", "active"),
         fallback_model_id=None,
         priority=overrides.pop("priority", 0),
+        input_price_per_1k_tokens=overrides.pop("input_price_per_1k_tokens", Decimal("0.000000")),
+        output_price_per_1k_tokens=overrides.pop("output_price_per_1k_tokens", Decimal("0.000000")),
+        input_cost_per_1k_tokens=overrides.pop("input_cost_per_1k_tokens", Decimal("0.000000")),
+        output_cost_per_1k_tokens=overrides.pop("output_cost_per_1k_tokens", Decimal("0.000000")),
     )
     db.session.add(model)
     db.session.commit()
@@ -174,3 +178,17 @@ class TestFallbackLLMWrapper:
         assert config["api_key"] == "sk-secret-123456"
         assert config["provider"] == "openai"
         assert config["model"] == "gpt-4o"
+
+    def test_estimate_credits_returns_positive_for_real_usage(self, model_pool_db):
+        model = _make_model(
+            model_pool_db,
+            input_price_per_1k_tokens=Decimal("1.200000"),
+            output_price_per_1k_tokens=Decimal("4.800000"),
+            input_cost_per_1k_tokens=Decimal("0.009000"),
+            output_cost_per_1k_tokens=Decimal("0.036000"),
+        )
+        wrapper = _wrapper(model_pool_db, _FakeLLM(result="default"))
+
+        credits = wrapper._estimate_credits(model.id, input_tokens=1000, output_tokens=500)
+
+        assert credits > 0

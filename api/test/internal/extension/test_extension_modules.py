@@ -174,9 +174,9 @@ def test_socketio_extension_should_align_cors_settings_with_http_defaults(monkey
             self.kwargs = kwargs
             asgi_calls.append(kwargs)
 
-        def on(self, event):
-            def deco(handler):
-                return handler
+        def on(self, event, handler=None, **kwargs):
+            def deco(h):
+                return h
 
             return deco
 
@@ -225,9 +225,9 @@ def test_socketio_extension_should_keep_default_socketio_path_for_edge_prefix_re
             self.kwargs = kwargs
             asgi_calls.append(kwargs)
 
-        def on(self, event):
-            def deco(handler):
-                return handler
+        def on(self, event, handler=None, **kwargs):
+            def deco(h):
+                return h
 
             return deco
 

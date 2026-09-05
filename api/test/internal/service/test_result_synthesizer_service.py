@@ -87,3 +87,34 @@ def test_result_synthesizer_should_return_fallback_when_no_valid_result():
     assert final["visible_sources"] == []
     assert final["user_warnings"] == ["fallback:no_valid_agent_result"]
     assert "internal_notes" in final
+
+
+def test_result_synthesizer_should_use_llm_for_summarize_strategy():
+    class _FakeLLM:
+        def invoke(self, messages):
+            return type("Response", (), {"content": "综合结论"})()
+
+    final = ResultSynthesizerService().synthesize(
+        [
+            _result(answer="第一项。"),
+            _result(agent_id="agent-2", task_id="task-2", answer="第二项。"),
+        ],
+        original_query="总结",
+        aggregation_strategy="summarize",
+        llm=_FakeLLM(),
+    )
+
+    assert final["final_answer"] == "综合结论"
+
+
+def test_result_synthesizer_should_pick_best_for_best_of_strategy():
+    final = ResultSynthesizerService().synthesize(
+        [
+            _result(answer="低置信结果。", confidence=0.3),
+            _result(agent_id="agent-2", task_id="task-2", answer="高置信结果。", confidence=0.9),
+        ],
+        aggregation_strategy="best_of",
+    )
+
+    assert final["final_answer"] == "高置信结果。"
+    assert final["confidence"] == 0.9

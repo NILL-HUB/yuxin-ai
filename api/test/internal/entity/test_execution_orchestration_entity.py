@@ -55,6 +55,9 @@ def test_task_plan_should_dump_summary_without_internal_details():
                 "agent_pool": "research",
                 "execution_order": 0,
                 "risk_level": "safe",
+                "timeout_seconds": 0.0,
+                "retry_count": 0,
+                "retry_interval": 0.0,
             }
         ],
     }
@@ -89,3 +92,30 @@ def test_agent_result_should_normalize_confidence_and_hide_internal_metadata():
         "errors": [],
         "cost": {"credits": 3},
     }
+
+
+def test_task_plan_item_carries_model_tier_and_hint():
+    item = TaskPlanItem.from_dict(
+        {
+            "task_id": "t1",
+            "title": "调研",
+            "model_tier": "3",
+            "model_id_hint": "model-x",
+            "complexity": "complex",
+            "balance_credits": 500,
+        }
+    )
+
+    assert item.model_tier == "3"
+    assert item.model_id_hint == "model-x"
+    assert item.complexity == "complex"
+    assert item.balance_credits == 500
+
+
+def test_task_plan_item_defaults_model_tier_complexity_credits():
+    item = TaskPlanItem.from_dict({"task_id": "t1", "title": "调研"})
+
+    assert item.model_tier == "1"
+    assert item.model_id_hint == ""
+    assert item.complexity == "simple"
+    assert item.balance_credits == 0.0

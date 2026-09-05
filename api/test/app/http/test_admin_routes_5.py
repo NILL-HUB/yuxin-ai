@@ -36,6 +36,9 @@ class _FakeScheduleTaskService:
             id=task_id or uuid4(),
             name="定时任务",
             prompt="需求",
+            app_id=None,
+            task_type="assistant_chat",
+            input_params={},
             cron_expression="0 8 * * *",
             description="",
             enabled=True,
@@ -64,7 +67,7 @@ class _FakeScheduleTaskService:
         self.calls.append(("update", task_id))
         return self._task(task_id)
 
-    def delete_task(self, task_id, account, owner_type="user"):
+    def delete_task(self, task_id, account, owner_type="user", **kwargs):
         self.calls.append(("delete", task_id))
 
     def get_task(self, task_id, account, owner_type="user"):
@@ -344,7 +347,9 @@ class _FakeAdminRedeemCodeService:
             "batch": {
                 "id": str(uuid4()),
                 "name": payload["name"],
+                "description": payload.get("description", ""),
                 "plan_id": str(payload["plan_id"]),
+                "plan_name": "Pro",
                 "quantity": payload.get("quantity", 1),
                 "status": "active",
                 "expires_at": None,
@@ -369,6 +374,7 @@ class _FakeAdminRedeemCodeService:
             "id": str(code_id),
             "batch_id": str(uuid4()),
             "plan_id": str(uuid4()),
+            "plan_name": "Pro",
             "code_mask": "OA-***",
             "status": "disabled",
             "redeemed_by": None,
@@ -377,6 +383,10 @@ class _FakeAdminRedeemCodeService:
             "disabled_at": 1710000000,
             "created_at": 1710000000,
         }
+
+    def view_plain_code(self, code_id, *, operator_id=None, ip="", user_agent=""):
+        self.calls.append(("view_plain", code_id))
+        return {"id": str(code_id), "code_mask": "OA-***", "plain_code": "OA-XXXX"}
 
     def disable_batch(self, batch_id, *, operator_id=None, ip="", user_agent=""):
         self.calls.append(("disable_batch", batch_id))
@@ -465,6 +475,20 @@ class TestAdminRedeemCode:
         assert payload["data"]["id"] == str(code_id)
         assert payload["data"]["status"] == "disabled"
         assert service.calls[0] == ("disable", code_id)
+
+    def test_view_plain(self, monkeypatch):
+        service = self._setup(monkeypatch)
+        code_id = uuid4()
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/admin/redeem-codes/{code_id}/plain")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["plain_code"] == "OA-XXXX"
+        assert service.calls[0] == ("view_plain", code_id)
 
     def test_disable_batch(self, monkeypatch):
         service = self._setup(monkeypatch)

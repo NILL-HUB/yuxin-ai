@@ -334,6 +334,7 @@ class TestAdminBillingPlanRoutes:
             create_plan=lambda payload, **kw: _plan(),
             update_plan=lambda plan_id, payload, **kw: _plan(),
             set_plan_status=lambda plan_id, status, **kw: _plan(),
+            delete_plan=lambda plan_id, **kw: _plan(),
         )
         monkeypatch.setattr(
             support, "_get_service", lambda cls: service if cls is AdminBillingPlanService else None
@@ -418,6 +419,103 @@ class TestAdminBillingPlanRoutes:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 400
         assert payload["code"] == "validate_error"
+
+    def test_delete(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.delete(f"/admin/plans/{uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+
+
+class TestAdminBillingConfigRoutes:
+    def _setup(self, monkeypatch):
+        from internal.service.admin_billing_config_service import AdminBillingConfigService
+
+        service = SimpleNamespace(
+            get_config=lambda code=None: {"code": code or "credits_per_1k_tokens", "value_numeric": 1, "description": ""},
+            upsert_config=lambda payload, **kw: {
+                "code": kw.get("code") or "credits_per_1k_tokens",
+                "value_numeric": int(payload.get("value_numeric") or 1),
+                "description": payload.get("description") or "",
+            },
+        )
+        monkeypatch.setattr(
+            support, "_get_service", lambda cls: service if cls is AdminBillingConfigService else None
+        )
+        return service
+
+    def test_get(self, monkeypatch):
+        service = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/admin/billing-config")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["value_numeric"] == 1
+
+    def test_get_credits_per_yuan(self, monkeypatch):
+        from internal.service.admin_billing_config_service import AdminBillingConfigService
+
+        service = SimpleNamespace(
+            get_config=lambda code=None: {"code": code or "credits_per_1k_tokens", "value_numeric": 100, "description": ""},
+            upsert_config=lambda payload, **kw: {"code": kw.get("code") or "credits_per_1k_tokens", "value_numeric": int(payload.get("value_numeric") or 1), "description": payload.get("description") or ""},
+        )
+        monkeypatch.setattr(support, "_get_service", lambda cls: service if cls is AdminBillingConfigService else None)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/admin/billing-config?code=credits_per_yuan")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["value_numeric"] == 100
+
+    def test_upsert(self, monkeypatch):
+        service = self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put("/admin/billing-config", json={"value_numeric": "2"})
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["value_numeric"] == 2
+
+    def test_upsert_reject_invalid(self, monkeypatch):
+        from internal.exception import FailException
+
+        def _fail(payload, **kw):
+            raise FailException("invalid")
+
+        service = SimpleNamespace(
+            get_config=lambda: {"code": "credits_per_1k_tokens", "value_numeric": 1, "description": ""},
+            upsert_config=_fail,
+        )
+        monkeypatch.setattr(
+            support,
+            "_get_service",
+            lambda cls: service if cls.__name__ == "AdminBillingConfigService" else None,
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.put("/admin/billing-config", json={"value_numeric": "abc"})
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert payload["code"] == "fail"
 
 
 class TestAdminStorageRoutes:
@@ -789,6 +887,28 @@ class TestAdminSubPoolRoutes:
                     f"/admin/sub-pool-definitions/{uuid4()}/status",
                     json={"enabled": "false"},
                 )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+
+
+class TestAdminReconciliationRoutes:
+    def _setup(self, monkeypatch):
+        service = SimpleNamespace(
+            list_reconciliations=lambda **kw: {"list": [], "paginator": {"total_record": 0, "total_page": 0, "current_page": 1, "page_size": 20}},
+            model_margin_summary=lambda **kw: {"list": [], "total_margin": 0, "total_actual": 0},
+        )
+        monkeypatch.setattr(support, "_get_service", lambda cls: service if cls.__name__ == "AdminBillingReconciliationService" else None)
+        return service
+
+    def test_model_margin(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/admin/billing-reconciliations/margin?group_by=model")
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
