@@ -9,6 +9,7 @@ from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.billing import Plan, RedeemCode, RedeemCodeBatch
 from internal.service.audit_log_service import AuditLogService
+from internal.service.tool_credential_encryptor import load_fernet_from_env
 
 
 class AdminRedeemCodeService:
@@ -39,6 +40,23 @@ class AdminRedeemCodeService:
     def generate_plain_code() -> str:
         return "OA-" + secrets.token_urlsafe(18).replace("_", "A").replace("-", "B")[:24].upper()
 
+    @classmethod
+    def encrypt_plain_code(cls, plain_code: str) -> str:
+        fernet = load_fernet_from_env("MODEL_KEY_ENCRYPTION_KEY", "卡密明文加密")
+        return fernet.encrypt(plain_code.encode("utf-8")).decode("utf-8")
+
+    @classmethod
+    def decrypt_plain_code(cls, encrypted: str) -> str:
+        from cryptography.fernet import InvalidToken
+
+        if not encrypted:
+            return ""
+        try:
+            fernet = load_fernet_from_env("MODEL_KEY_ENCRYPTION_KEY", "卡密明文加密")
+            return fernet.decrypt(encrypted.encode("utf-8")).decode("utf-8")
+        except (InvalidToken, ValueError, TypeError):
+            return ""
+
     def generate_codes(self, payload: dict, *, operator_id=None, ip: str = "", user_agent: str = "") -> dict:
         plan = self._get_plan_or_raise(payload["plan_id"])
         if not plan.is_active:
@@ -48,6 +66,7 @@ class AdminRedeemCodeService:
             raise FailException("单批最多生成 1000 张卡密")
         batch = RedeemCodeBatch(
             name=payload["name"],
+            description=(payload.get("description") or "").strip(),
             plan_id=plan.id,
             quantity=quantity,
             expires_at=payload.get("expires_at"),
@@ -63,6 +82,7 @@ class AdminRedeemCodeService:
                 plan_id=plan.id,
                 code_hash=self.hash_code(plain_code),
                 code_mask=self.mask_code(plain_code),
+                code_encrypted=self.encrypt_plain_code(plain_code),
                 status="unused",
                 expires_at=batch.expires_at,
             )
@@ -79,7 +99,7 @@ class AdminRedeemCodeService:
             after_data={"name": batch.name, "plan_id": str(plan.id), "quantity": quantity},
         )
         self.session.commit()
-        return {"batch": self._serialize_batch(batch), "codes": codes}
+        return {"batch": self._serialize_batch(batch, plan_name=plan.name), "codes": codes}
 
     def list_batches(self, *, keyword: str = "", current_page: int = 1, page_size: int = 20) -> dict:
         current_page = max(int(current_page or 1), 1)
@@ -90,8 +110,9 @@ class AdminRedeemCodeService:
             query = query.filter(RedeemCodeBatch.name.ilike(f"%{escape_like_pattern(keyword)}%"))
         total = query.count()
         batches = query.order_by(RedeemCodeBatch.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
+        plan_names = self._plan_name_map([batch.plan_id for batch in batches])
         return {
-            "list": [self._serialize_batch(batch) for batch in batches],
+            "list": [self._serialize_batch(batch, plan_name=plan_names.get(batch.plan_id)) for batch in batches],
             "paginator": {
                 "total_record": total,
                 "total_page": math.ceil(total / page_size) if total else 0,
@@ -116,8 +137,9 @@ class AdminRedeemCodeService:
             query = query.filter(RedeemCode.status == status)
         total = query.count()
         codes = query.order_by(RedeemCode.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
+        plan_names = self._plan_name_map([code.plan_id for code in codes])
         return {
-            "list": [self._serialize_code(code) for code in codes],
+            "list": [self._serialize_code(code, plan_name=plan_names.get(code.plan_id)) for code in codes],
             "paginator": {
                 "total_record": total,
                 "total_page": math.ceil(total / page_size) if total else 0,
@@ -125,6 +147,40 @@ class AdminRedeemCodeService:
                 "page_size": page_size,
             },
         }
+
+    def view_plain_code(self, code_id: UUID, *, operator_id=None, ip: str = "", user_agent: str = "") -> dict:
+        """查看未使用卡密的完整明文（密文落库，此处解密还原）。"""
+        redeem_code = self._get_code_or_raise(code_id)
+        status = redeem_code.status
+        if status == "unused" and redeem_code.expires_at is not None and redeem_code.expires_at < self._now():
+            status = "expired"
+        if status not in ("unused", "expired"):
+            raise FailException("仅未使用的卡密可查看全文")
+        plain_code = self.decrypt_plain_code(redeem_code.code_encrypted or "")
+        if not plain_code:
+            raise FailException("无法还原卡密明文（加密密钥可能已变更），可先禁用该卡密")
+        self._emit_audit(
+            operator_id=operator_id,
+            action="view_plain",
+            resource_type="redeem_code",
+            resource_id=str(redeem_code.id),
+            ip=ip,
+            user_agent=user_agent,
+            before_data=None,
+            after_data={"code_mask": redeem_code.code_mask},
+        )
+        return {
+            "id": str(redeem_code.id),
+            "code_mask": redeem_code.code_mask,
+            "plain_code": plain_code,
+        }
+
+    def _plan_name_map(self, plan_ids: list[UUID]) -> dict:
+        ids = {plan_id for plan_id in plan_ids if plan_id}
+        if not ids:
+            return {}
+        rows = self.session.query(Plan.id, Plan.name).filter(Plan.id.in_(ids)).all()
+        return {plan_id: name for plan_id, name in rows}
 
     def disable_code(self, code_id: UUID, *, operator_id=None, ip: str = "", user_agent: str = "") -> dict:
         redeem_code = self._get_code_or_raise(code_id)
@@ -194,11 +250,13 @@ class AdminRedeemCodeService:
             after_data=after_data,
         )
 
-    def _serialize_batch(self, batch: RedeemCodeBatch) -> dict:
+    def _serialize_batch(self, batch: RedeemCodeBatch, *, plan_name: str | None = None) -> dict:
         return {
             "id": str(batch.id),
             "name": batch.name,
+            "description": batch.description or "",
             "plan_id": str(batch.plan_id),
+            "plan_name": plan_name,
             "quantity": int(batch.quantity or 0),
             "status": batch.status,
             "expires_at": self._timestamp(batch.expires_at),
@@ -207,7 +265,7 @@ class AdminRedeemCodeService:
             "created_at": self._timestamp(batch.created_at),
         }
 
-    def _serialize_code(self, redeem_code: RedeemCode) -> dict:
+    def _serialize_code(self, redeem_code: RedeemCode, *, plan_name: str | None = None) -> dict:
         status = redeem_code.status
         if status == "unused" and redeem_code.expires_at is not None and redeem_code.expires_at < self._now():
             status = "expired"
@@ -215,6 +273,7 @@ class AdminRedeemCodeService:
             "id": str(redeem_code.id),
             "batch_id": str(redeem_code.batch_id) if redeem_code.batch_id else None,
             "plan_id": str(redeem_code.plan_id),
+            "plan_name": plan_name,
             "code_mask": redeem_code.code_mask,
             "status": status,
             "redeemed_by": str(redeem_code.redeemed_by) if redeem_code.redeemed_by else None,

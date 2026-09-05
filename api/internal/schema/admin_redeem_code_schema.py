@@ -6,6 +6,7 @@ from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Option
 
 class GenerateRedeemCodesReq(Form):
     name = StringField("name", validators=[InputRequired(), Length(max=255)])
+    description = StringField("description", default="", validators=[Optional(), Length(max=500)])
     plan_id = StringField("plan_id", validators=[InputRequired(), Length(max=64)])
     quantity = IntegerField("quantity", validators=[InputRequired(), NumberRange(min=1, max=1000)])
     expires_at = IntegerField("expires_at", validators=[Optional(), NumberRange(min=1)])
@@ -28,7 +29,9 @@ class GetRedeemCodesReq(Form):
 class RedeemCodeBatchResp(Schema):
     id = fields.String()
     name = fields.String()
+    description = fields.String()
     plan_id = fields.String()
+    plan_name = fields.String(allow_none=True)
     quantity = fields.Integer()
     status = fields.String()
     expires_at = fields.Integer(allow_none=True)
@@ -41,6 +44,7 @@ class RedeemCodeResp(Schema):
     id = fields.String()
     batch_id = fields.String(allow_none=True)
     plan_id = fields.String()
+    plan_name = fields.String(allow_none=True)
     code_mask = fields.String()
     status = fields.String()
     redeemed_by = fields.String(allow_none=True)
@@ -48,6 +52,12 @@ class RedeemCodeResp(Schema):
     expires_at = fields.Integer(allow_none=True)
     disabled_at = fields.Integer(allow_none=True)
     created_at = fields.Integer(allow_none=True)
+
+
+class PlainCodeResp(Schema):
+    id = fields.String()
+    code_mask = fields.String()
+    plain_code = fields.String()
 
 
 class GeneratedRedeemCodeResp(Schema):

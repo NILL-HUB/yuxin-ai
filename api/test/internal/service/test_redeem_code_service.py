@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -32,6 +33,9 @@ class _QueryStub:
         return self
 
     def one_or_none(self):
+        return self._one_or_none_result
+
+    def first(self):
         return self._one_or_none_result
 
     def all(self):
@@ -181,7 +185,7 @@ class TestRedeemCodeService:
             source_id=redeem_code.id,
             description="卡密兑换赠送算力值",
         )
-        credit_account = CreditAccount(account_id=account_id, balance=100, total_granted=100, total_consumed=0)
+        credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=100, total_consumed=0)
         session = _SessionStub([
             _QueryStub(one_or_none_result=redeem_code),
             _QueryStub(one_or_none_result=batch),
@@ -195,7 +199,7 @@ class TestRedeemCodeService:
         with pytest.raises(FailException, match="该卡密已被兑换"):
             service.redeem(account_id, VALID_CODE)
 
-        assert credit_account.balance == 100
+        assert credit_account.quota_credit == 100
         assert not any(isinstance(item, CreditTransaction) for item in session.added)
         assert session.commits == 0
 
@@ -232,7 +236,7 @@ class TestRedeemCodeService:
             started_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
             expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
         )
-        credit_account = CreditAccount(account_id=account_id, balance=50, total_granted=50, total_consumed=0)
+        credit_account = CreditAccount(account_id=account_id, quota_credit=50, permanent_credit=0, total_granted=50, total_consumed=0)
         service = RedeemCodeService(session=_SessionStub([
             _QueryStub(one_or_none_result=redeem_code),
             _QueryStub(one_or_none_result=batch),
@@ -246,7 +250,7 @@ class TestRedeemCodeService:
         result = service.redeem(account_id, plain_code)
 
         assert existing_membership.expires_at > before_expires_at + timedelta(days=29)
-        assert credit_account.balance == 150
+        assert credit_account.quota_credit == 150
         assert result["credit_account"]["balance"] == 150
 
     @pytest.mark.parametrize(
@@ -372,7 +376,7 @@ class TestRedeemCodeService:
             started_at=datetime(2030, 1, 1, 0, 0, 0),
             expires_at=datetime(2030, 2, 1, 0, 0, 0),
         )
-        credit_account = CreditAccount(account_id=account_id, balance=100, total_granted=120, total_consumed=20)
+        credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=120, total_consumed=20)
         service = RedeemCodeService(session=_SessionStub([
             _QueryStub(one_or_none_result=membership),
             _QueryStub(one_or_none_result=plan),
@@ -385,3 +389,200 @@ class TestRedeemCodeService:
         assert result["membership"]["plan"]["code"] == "pro"
         assert result["credit_account"]["balance"] == 100
         assert result["recent_transactions"] == []
+        assert result["recent_tasks"] == []
+
+    def test_get_membership_summary_should_build_recent_tasks_with_message_query(self):
+        account_id = uuid4()
+        plan = _plan()
+        membership = Membership(
+            account_id=account_id,
+            plan_id=plan.id,
+            status="active",
+            started_at=datetime(2030, 1, 1, 0, 0, 0),
+            expires_at=datetime(2030, 2, 1, 0, 0, 0),
+        )
+        credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=120, total_consumed=20)
+        message_id = uuid4()
+        consume_tx = CreditTransaction(
+            id=uuid4(),
+            account_id=account_id,
+            amount=-5,
+            balance_after=95,
+            transaction_type="consume",
+            source="message",
+            source_id=message_id,
+            description="模型调用消耗算力值：4200 token，扣减 5（1000 token=1 算力）",
+        )
+        message = SimpleNamespace(query="帮我写一份会员营销方案")
+        service = RedeemCodeService(session=_SessionStub([
+            _QueryStub(one_or_none_result=membership),
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(one_or_none_result=credit_account),
+            _QueryStub(all_result=[consume_tx]),
+            _QueryStub(one_or_none_result=message),
+        ]))
+
+        result = service.get_membership_summary(account_id)
+
+        assert result["recent_tasks"][0]["amount"] == -5
+        assert result["recent_tasks"][0]["message"] == "帮我写一份会员营销方案"
+        assert result["recent_tasks"][0]["source_id"] == str(message_id)
+
+    def test_get_membership_summary_should_fallback_to_recent_message_when_source_id_missing(self):
+        account_id = uuid4()
+        plan = _plan()
+        membership = Membership(
+            account_id=account_id,
+            plan_id=plan.id,
+            status="active",
+            started_at=datetime(2030, 1, 1, 0, 0, 0),
+            expires_at=datetime(2030, 2, 1, 0, 0, 0),
+        )
+        credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=120, total_consumed=20)
+        consume_tx = CreditTransaction(
+            id=uuid4(),
+            account_id=account_id,
+            amount=-5,
+            balance_after=95,
+            transaction_type="consume",
+            source="message",
+            source_id=uuid4(),
+            description="模型调用消耗算力值：4200 token，扣减 5（1000 token=1 算力）",
+            created_at=datetime(2030, 1, 15, 10, 30, 0),
+        )
+        nearby_message = SimpleNamespace(query="请帮我分析这份报表")
+        # 查询队列：精确 id 匹配（None）→ 时间窗回退匹配（message）
+        service = RedeemCodeService(session=_SessionStub([
+            _QueryStub(one_or_none_result=membership),
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(one_or_none_result=credit_account),
+            _QueryStub(all_result=[consume_tx]),
+            _QueryStub(one_or_none_result=None),
+            _QueryStub(one_or_none_result=nearby_message),
+        ]))
+
+        result = service.get_membership_summary(account_id)
+
+        assert result["recent_tasks"][0]["message"] == "请帮我分析这份报表"
+
+
+class _BalanceServiceStub:
+    def __init__(self):
+        self.calls = []
+        self.existing = {}
+
+    def find_transaction(self, account_id, source, source_id, amount_type):
+        return self.existing.get((str(account_id), source, source_id, amount_type))
+
+    def credit(self, account_id, amount, *, source, source_id, amount_type, rate=None, description=""):
+        self.calls.append({
+            "account_id": account_id,
+            "amount": amount,
+            "source": source,
+            "source_id": source_id,
+            "amount_type": amount_type,
+        })
+        return SimpleNamespace(amount=amount, balance_after=amount)
+
+
+class _DistributionStub:
+    def __init__(self):
+        self.settles = []
+
+    def settle_commission_for_redeem(self, account_id, plan, source_id):
+        self.settles.append({"account_id": account_id, "plan_type": plan.plan_type, "source_id": source_id})
+
+
+class TestRedeemPlanType:
+    def test_redeem_balance_card_should_recharge_balance_without_membership_or_commission(self):
+        account_id = uuid4()
+        plan = _plan(plan_type="balance", price="100.00", grant_token_credits=0)
+        batch = _batch(plan_id=plan.id)
+        redeem_code = _code(VALID_CODE, batch_id=batch.id, plan_id=plan.id)
+        balance_stub = _BalanceServiceStub()
+        distribution_stub = _DistributionStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=redeem_code),
+            _QueryStub(one_or_none_result=batch),
+            _QueryStub(one_or_none_result=plan),
+        ])
+        service = RedeemCodeService(session=session, balance_service=balance_stub, distribution_service=distribution_stub)
+
+        result = service.redeem(account_id, VALID_CODE)
+
+        assert len(balance_stub.calls) == 1
+        assert balance_stub.calls[0]["amount_type"] == "recharge"
+        assert float(balance_stub.calls[0]["amount"]) == 100.00
+        assert balance_stub.calls[0]["source"] == "redeem_code"
+        assert result["membership"] is None
+        assert result["credit_account"]["balance"] == 0
+        assert distribution_stub.settles == []
+        assert not any(isinstance(item, Membership) for item in session.added)
+        assert redeem_code.status == "used"
+
+    def test_redeem_credits_package_should_grant_permanent_credit_and_settle_commission(self):
+        account_id = uuid4()
+        plan = _plan(plan_type="credits", grant_token_credits=11000)
+        batch = _batch(plan_id=plan.id)
+        redeem_code = _code(VALID_CODE, batch_id=batch.id, plan_id=plan.id)
+        distribution_stub = _DistributionStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=redeem_code),
+            _QueryStub(one_or_none_result=batch),
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(one_or_none_result=None),   # redeem_grant 已存在校验
+            _QueryStub(one_or_none_result=None),   # credit account
+        ])
+        service = RedeemCodeService(session=session, distribution_service=distribution_stub)
+
+        result = service.redeem(account_id, VALID_CODE)
+
+        credit_account = next(item for item in session.added if isinstance(item, CreditAccount))
+        assert credit_account.permanent_credit == 11000
+        assert credit_account.quota_credit == 0
+        assert result["credit_account"]["balance"] == 11000
+        assert result["membership"] is None
+        assert len(distribution_stub.settles) == 1
+        assert distribution_stub.settles[0]["plan_type"] == "credits"
+
+    def test_redeem_membership_should_grant_quota_and_settle_commission(self):
+        account_id = uuid4()
+        plan = _plan(plan_type="membership", grant_token_credits=100)
+        batch = _batch(plan_id=plan.id)
+        redeem_code = _code(VALID_CODE, batch_id=batch.id, plan_id=plan.id)
+        distribution_stub = _DistributionStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=redeem_code),
+            _QueryStub(one_or_none_result=batch),
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(one_or_none_result=None),   # redeem_grant 已存在校验
+            _QueryStub(one_or_none_result=None),   # 当前会员
+            _QueryStub(one_or_none_result=None),   # credit account
+        ])
+        service = RedeemCodeService(session=session, distribution_service=distribution_stub)
+
+        service.redeem(account_id, VALID_CODE)
+
+        credit_account = next(item for item in session.added if isinstance(item, CreditAccount))
+        assert credit_account.quota_credit == 100
+        assert len(distribution_stub.settles) == 1
+        assert distribution_stub.settles[0]["plan_type"] == "membership"
+
+    def test_redeem_balance_card_should_reject_when_already_redeemed(self):
+        account_id = uuid4()
+        plan = _plan(plan_type="balance", price="100.00")
+        batch = _batch(plan_id=plan.id)
+        redeem_code = _code(VALID_CODE, batch_id=batch.id, plan_id=plan.id)
+        balance_stub = _BalanceServiceStub()
+        balance_stub.existing[(str(account_id), "redeem_code", redeem_code.id, "recharge")] = SimpleNamespace(id=uuid4())
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=redeem_code),
+            _QueryStub(one_or_none_result=batch),
+            _QueryStub(one_or_none_result=plan),
+        ])
+        service = RedeemCodeService(session=session, balance_service=balance_stub)
+
+        with pytest.raises(FailException, match="该卡密已被兑换"):
+            service.redeem(account_id, VALID_CODE)
+
+        assert session.commits == 0

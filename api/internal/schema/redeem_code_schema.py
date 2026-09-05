@@ -31,6 +31,9 @@ class CreditAccountResp(Schema):
     balance = fields.Integer()
     total_granted = fields.Integer()
     total_consumed = fields.Integer()
+    quota_granted = fields.Integer(allow_none=True)
+    quota_cycle_days = fields.Integer(allow_none=True)
+    quota_reset_at = fields.Integer(allow_none=True)
 
 
 class RedeemedCodeResp(Schema):
@@ -50,6 +53,16 @@ class CreditTransactionResp(Schema):
     created_at = fields.Integer(allow_none=True)
 
 
+class RecentTaskResp(Schema):
+    id = fields.String()
+    amount = fields.Integer()
+    transaction_type = fields.String()
+    source = fields.String()
+    source_id = fields.String(allow_none=True)
+    message = fields.String(allow_none=True)
+    created_at = fields.Integer(allow_none=True)
+
+
 class RedeemCodeResp(Schema):
     plan = fields.Nested(PlanResp)
     membership = fields.Nested(MembershipResp)
@@ -60,7 +73,8 @@ class RedeemCodeResp(Schema):
 class MembershipSummaryResp(Schema):
     membership = fields.Nested(MembershipResp, allow_none=True)
     credit_account = fields.Nested(CreditAccountResp)
-    recent_transactions = fields.List(fields.Nested(CreditTransactionResp))
+    recent_transactions = fields.List(fields.Nested(CreditTransactionResp), dump_default=[])
+    recent_tasks = fields.List(fields.Nested(RecentTaskResp), dump_default=[])
 
 
 class RedeemRecordResp(Schema):

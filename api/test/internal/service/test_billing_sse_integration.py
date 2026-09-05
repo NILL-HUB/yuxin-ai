@@ -55,6 +55,7 @@ class TestBillingSseIntegration:
 
         delta1 = aggregator.model_tokens(
             source_name="assistant_agent",
+            model_id="assistant_agent",
             input_tokens=100,
             output_tokens=50,
             reason="agent_message",
@@ -64,6 +65,7 @@ class TestBillingSseIntegration:
 
         delta2 = aggregator.model_tokens(
             source_name="assistant_agent",
+            model_id="assistant_agent",
             input_tokens=200,
             output_tokens=100,
             reason="agent_action",

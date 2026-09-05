@@ -4,8 +4,9 @@ from uuid import uuid4
 
 import pytest
 
-from internal.exception import NotFoundException
+from internal.exception import FailException, NotFoundException
 from internal.model.billing import Plan, PlanEntitlement
+from internal.model.distribution import AutoRenewal, PurchaseOrder
 from internal.service.admin_billing_plan_service import AdminBillingPlanService
 
 
@@ -122,7 +123,7 @@ class TestAdminBillingPlanService:
 
         assert query.offset_value == 10
         assert query.limit_value == 10
-        assert len(query.filters) == 2
+        assert len(query.filters) == 3
         assert result["list"][0]["code"] == "pro"
         assert result["list"][0]["grant_token_credits"] == 100000
         assert result["list"][0]["price"] == "99.00"
@@ -214,6 +215,60 @@ class TestAdminBillingPlanService:
         assert session.commits == 1
         assert audit_log_service.records[0]["action"] == "update"
 
+    def test_create_plan_should_persist_plan_type_and_renew_threshold(self):
+        session = _SessionStub()
+        service = AdminBillingPlanService(session=session)
+        result = service.create_plan(
+            {
+                "code": "cr60",
+                "name": "Credits 60",
+                "plan_type": "credits",
+                "grant_token_credits": 6000,
+                "auto_renew_threshold_percent": 10,
+                "auto_renew_threshold_days": 3,
+                "price": "60.00",
+                "status": "active",
+                "sort_order": 1,
+            },
+        )
+        assert session.added[0].plan_type == "credits"
+        assert session.added[0].auto_renew_threshold_percent == 10
+        assert session.added[0].auto_renew_threshold_days == 3
+        assert result["plan_type"] == "credits"
+        assert result["auto_renew_threshold_percent"] == 10
+        assert result["auto_renew_threshold_days"] == 3
+
+    def test_create_plan_should_persist_auto_renew_default(self):
+        session = _SessionStub()
+        service = AdminBillingPlanService(session=session)
+        result = service.create_plan(
+            {
+                "code": "pro30a",
+                "name": "普通会员（自动续费版）",
+                "plan_type": "membership",
+                "duration_days": 30,
+                "grant_token_credits": 50000,
+                "auto_renew_default": True,
+                "price": "88.00",
+                "status": "active",
+                "sort_order": 3,
+            },
+        )
+        assert session.added[0].auto_renew_default is True
+        assert result["auto_renew_default"] is True
+
+    def test_update_plan_should_only_apply_auto_renew_default_when_provided(self):
+        plan = _plan(status="active")
+        plan.auto_renew_default = True
+        session = _SessionStub([_QueryStub(one_or_none_result=plan)])
+        service = AdminBillingPlanService(session=session)
+
+        result = service.update_plan(plan.id, {"name": "Pro Renamed"})
+
+        assert plan.auto_renew_default is True
+        assert result["name"] == "Pro Renamed"
+        assert result["auto_renew_default"] is True
+
     def test_set_plan_status_should_update_status_and_record_audit(self):
         operator_id = uuid4()
         plan = _plan(status="active")
@@ -234,3 +289,81 @@ class TestAdminBillingPlanService:
 
         with pytest.raises(NotFoundException):
             service.get_plan(uuid4())
+
+    def test_delete_plan_should_soft_delete_when_no_dependencies(self):
+        operator_id = uuid4()
+        plan = _plan(status="active")
+        audit_log_service = _AuditLogServiceStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(count_result=0),
+            _QueryStub(count_result=0),
+            _QueryStub(count_result=0),
+        ])
+        service = AdminBillingPlanService(session=session, audit_log_service=audit_log_service)
+
+        result = service.delete_plan(plan.id, operator_id=operator_id, ip="127.0.0.1", user_agent="pytest")
+
+        assert plan.deleted_at is not None
+        assert plan.status == "archived"
+        assert session.commits == 1
+        assert audit_log_service.records[0]["action"] == "delete"
+        assert result["code"] == "pro"
+
+    def test_delete_plan_should_block_when_paid_orders_exist(self):
+        plan = _plan()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(count_result=1),
+        ])
+        service = AdminBillingPlanService(session=session)
+
+        with pytest.raises(FailException):
+            service.delete_plan(plan.id)
+
+        assert plan.deleted_at is None
+
+    def test_delete_plan_should_block_when_active_auto_renewal_exists(self):
+        plan = _plan()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=plan),
+            _QueryStub(count_result=0),
+            _QueryStub(count_result=1),
+        ])
+        service = AdminBillingPlanService(session=session)
+
+        with pytest.raises(FailException):
+            service.delete_plan(plan.id)
+
+        assert plan.deleted_at is None
+
+    def test_get_plan_should_raise_not_found_for_soft_deleted_plan(self):
+        plan = _plan(deleted_at=datetime(2030, 1, 3, 0, 0, 0))
+        service = AdminBillingPlanService(session=_SessionStub([_QueryStub(one_or_none_result=None)]))
+
+        with pytest.raises(NotFoundException):
+            service.get_plan(plan.id)
+
+
+class TestFixMojibakeText:
+    def test_should_restore_single_encoded_mojibake(self):
+        assert AdminBillingPlanService._fix_mojibake_text("å¥½") == "好"
+        assert AdminBillingPlanService._fix_mojibake_text("æµ\u008bè¯\u0095å\u0088\u00a0é\u0099¤å¥\u0097é¤\u0090") == "测试删除套餐"
+
+    def test_should_restore_double_encoded_mojibake(self):
+        assert AdminBillingPlanService._fix_mojibake_text("Ã¥Â¥Â½") == "好"
+        assert AdminBillingPlanService._fix_mojibake_text(
+            "Ã¦ÂµÂ\u008bÃ¨Â¯Â\u0095Ã¥Â\u0088Â\u00a0Ã©Â\u0099Â¤Ã¥Â¥Â\u0097Ã©Â¤Â\u0090"
+        ) == "测试删除套餐"
+
+    def test_should_return_normal_chinese_unchanged(self):
+        assert AdminBillingPlanService._fix_mojibake_text("免费体验会员") == "免费体验会员"
+        assert AdminBillingPlanService._fix_mojibake_text("PRO 月卡会员") == "PRO 月卡会员"
+
+    def test_should_return_plain_ascii_unchanged(self):
+        assert AdminBillingPlanService._fix_mojibake_text("PRO30") == "PRO30"
+
+    def test_should_return_empty_for_none_or_empty(self):
+        assert AdminBillingPlanService._fix_mojibake_text(None) == ""
+        assert AdminBillingPlanService._fix_mojibake_text("") == ""
+        assert AdminBillingPlanService._fix_mojibake_text("  ") == "  "

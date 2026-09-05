@@ -111,6 +111,9 @@ class TestAdminCustomerUserService:
             "last_login_ip": "127.0.0.1",
             "created_at": 1861920000,
             "is_online": False,
+            "superior_id": None,
+            "superior_name": "",
+            "superior_email": "",
         }]
         assert result["paginator"] == {
             "total_record": 1,
@@ -135,6 +138,7 @@ class TestAdminCustomerUserService:
         )
         service = AdminCustomerUserService(session=_SessionStub([
             _QueryStub(one_or_none_result=account),
+            _QueryStub(),
             _QueryStub(),
             _QueryStub(),
             _QueryStub(all_result=[account_session]),

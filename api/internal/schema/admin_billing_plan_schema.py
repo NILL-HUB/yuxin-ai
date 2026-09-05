@@ -1,6 +1,7 @@
 from wtforms import Form
 from marshmallow import Schema, fields
 from wtforms import FieldList, FormField, IntegerField, StringField
+from wtforms.fields import BooleanField
 from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Optional
 
 
@@ -21,8 +22,15 @@ class UpsertAdminPlanReq(Form):
     code = StringField("code", validators=[Optional(), Length(max=128)])
     name = StringField("name", validators=[Optional(), Length(max=255)])
     description = StringField("description", default="", validators=[Optional(), Length(max=1024)])
+    plan_type = StringField("plan_type", default="membership", validators=[Optional(), AnyOf(["balance", "membership", "credits"])])
     duration_days = IntegerField("duration_days", validators=[Optional(), NumberRange(min=1, max=3650)])
     grant_token_credits = IntegerField("grant_token_credits", validators=[Optional(), NumberRange(min=0, max=10_000_000_000)])
+    auto_renew_threshold_percent = IntegerField("auto_renew_threshold_percent", default=5, validators=[Optional(), NumberRange(min=0, max=100)])
+    auto_renew_threshold_days = IntegerField("auto_renew_threshold_days", default=1, validators=[Optional(), NumberRange(min=0, max=3650)])
+    purchase_limit = IntegerField("purchase_limit", default=0, validators=[Optional(), NumberRange(min=0, max=1_000_000_000)])
+    purchase_limit_period = StringField("purchase_limit_period", default="none", validators=[Optional(), AnyOf(["none", "all", "day", "week", "month"])])
+    quota_refresh_period = StringField("quota_refresh_period", default="none", validators=[Optional(), AnyOf(["none", "cycle"])])
+    auto_renew_default = BooleanField("auto_renew_default", default=False)
     price = StringField("price", default="0.00", validators=[Optional(), Length(max=32)])
     status = StringField("status", default="active", validators=[Optional(), AnyOf(["active", "disabled"])])
     sort_order = IntegerField("sort_order", default=0, validators=[Optional(), NumberRange(min=0, max=999999)])
@@ -46,8 +54,15 @@ class AdminPlanResp(Schema):
     code = fields.String()
     name = fields.String()
     description = fields.String()
+    plan_type = fields.String()
     duration_days = fields.Integer()
     grant_token_credits = fields.Integer()
+    auto_renew_threshold_percent = fields.Integer()
+    auto_renew_threshold_days = fields.Integer()
+    purchase_limit = fields.Integer()
+    purchase_limit_period = fields.String()
+    quota_refresh_period = fields.String()
+    auto_renew_default = fields.Boolean()
     price = fields.String()
     status = fields.String()
     sort_order = fields.Integer()

@@ -7,6 +7,7 @@ from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.account import Account, AccountSession
 from internal.model.admin import AdminUser
+from internal.model.distribution import DistributionRelation
 from internal.service.audit_log_service import AuditLogService
 
 
@@ -75,8 +76,9 @@ class AdminCustomerUserService:
             query = query.filter(Account.status == status)
         total = query.count()
         accounts = query.order_by(Account.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
+        superior_map = self._superior_map([account.id for account in accounts])
         return {
-            "list": [self._serialize_account(account) for account in accounts],
+            "list": [self._serialize_account(account, superior_map.get(str(account.id))) for account in accounts],
             "paginator": {
                 "total_record": total,
                 "total_page": math.ceil(total / page_size) if total else 0,
@@ -87,7 +89,7 @@ class AdminCustomerUserService:
 
     def get_customer_user(self, account_id: UUID) -> dict[str, object]:
         account = self._get_account_or_raise(account_id)
-        result = self._serialize_account(account)
+        result = self._serialize_account(account, self._superior_map([account.id]).get(str(account.id)))
         result["sessions"] = [
             self._serialize_session(account_session)
             for account_session in self._list_sessions(account.id)
@@ -242,7 +244,28 @@ class AdminCustomerUserService:
         )
         return count > 0
 
-    def _serialize_account(self, account: Account) -> dict[str, object]:
+    def _superior_map(self, account_ids) -> dict:
+        ids = {str(account_id) for account_id in account_ids if account_id}
+        if not ids:
+            return {}
+        relations = (
+            self.session.query(DistributionRelation)
+            .filter(DistributionRelation.invitee_account_id.in_([UUID(account_id) for account_id in ids]))
+            .all()
+        )
+        inviter_ids = {relation.inviter_account_id for relation in relations}
+        inviters = {}
+        if inviter_ids:
+            rows = self.session.query(Account).filter(Account.id.in_(inviter_ids)).all()
+            inviters = {str(row.id): row for row in rows}
+        result = {}
+        for relation in relations:
+            inviter = inviters.get(str(relation.inviter_account_id))
+            if inviter is not None:
+                result[str(relation.invitee_account_id)] = inviter
+        return result
+
+    def _serialize_account(self, account: Account, superior: Account | None = None) -> dict[str, object]:
         return {
             "id": str(account.id),
             "email": account.email,
@@ -257,6 +280,9 @@ class AdminCustomerUserService:
             "created_at": self._timestamp(account.created_at),
             # 新增：在线状态字段，供前端展示在线/离线标识
             "is_online": self._is_customer_user_online(account.id),
+            "superior_id": str(superior.id) if superior else None,
+            "superior_name": (superior.name or superior.username or "") if superior else "",
+            "superior_email": (superior.email or "") if superior else "",
         }
 
     def _serialize_session(self, account_session: AccountSession) -> dict[str, object]:

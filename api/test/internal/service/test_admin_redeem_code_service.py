@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from cryptography.fernet import Fernet
 
 from internal.exception import FailException, NotFoundException
 from internal.model.billing import Plan, RedeemCode, RedeemCodeBatch
@@ -248,3 +249,71 @@ class TestAdminRedeemCodeService:
 
         with pytest.raises(NotFoundException):
             service.disable_batch(uuid4())
+
+
+class TestRedeemCodePlaintext:
+    def test_generate_should_store_encrypted_plaintext_and_batch_purpose(self, monkeypatch):
+        monkeypatch.setenv("MODEL_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+        plan = _plan()
+        audit_log_service = _AuditLogServiceStub()
+        session = _SessionStub([_QueryStub(one_or_none_result=plan)])
+        service = AdminRedeemCodeService(session=session, audit_log_service=audit_log_service)
+
+        result = service.generate_codes(
+            {"name": "Growth Batch", "description": "B站推广", "plan_id": plan.id, "quantity": 3}
+        )
+
+        batch = next(item for item in session.added if isinstance(item, RedeemCodeBatch))
+        assert batch.description == "B站推广"
+        stored_codes = [item for item in session.added if isinstance(item, RedeemCode)]
+        assert all(stored.code_encrypted for stored in stored_codes)
+        plain_by_mask = {code["code_mask"]: code["plain_code"] for code in result["codes"]}
+        for stored in stored_codes:
+            assert AdminRedeemCodeService.decrypt_plain_code(stored.code_encrypted) == plain_by_mask[stored.code_mask]
+
+    def test_view_plain_should_return_plaintext_for_unused_code(self, monkeypatch):
+        monkeypatch.setenv("MODEL_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+        plain = "OA-TEST1234567890ABCDEF"
+        redeem_code = _code(
+            status="unused",
+            code_mask="OA-T****CDEF",
+            code_encrypted=AdminRedeemCodeService.encrypt_plain_code(plain),
+        )
+        audit_log_service = _AuditLogServiceStub()
+        session = _SessionStub([_QueryStub(one_or_none_result=redeem_code)])
+        service = AdminRedeemCodeService(session=session, audit_log_service=audit_log_service)
+
+        result = service.view_plain_code(redeem_code.id, operator_id=uuid4(), ip="127.0.0.1", user_agent="pytest")
+
+        assert result["plain_code"] == plain
+        assert audit_log_service.records[0]["action"] == "view_plain"
+
+    def test_view_plain_should_allow_for_expired_but_unused_code(self, monkeypatch):
+        monkeypatch.setenv("MODEL_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+        plain = "OA-EXPIRED1234567890AB"
+        redeem_code = _code(
+            status="unused",
+            expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5),
+            code_encrypted=AdminRedeemCodeService.encrypt_plain_code(plain),
+        )
+        service = AdminRedeemCodeService(session=_SessionStub([_QueryStub(one_or_none_result=redeem_code)]))
+
+        result = service.view_plain_code(redeem_code.id)
+
+        assert result["plain_code"] == plain
+
+    def test_view_plain_should_reject_used_code(self, monkeypatch):
+        monkeypatch.setenv("MODEL_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+        redeem_code = _code(status="used", code_encrypted="encrypted")
+        service = AdminRedeemCodeService(session=_SessionStub([_QueryStub(one_or_none_result=redeem_code)]))
+
+        with pytest.raises(FailException, match="未使用"):
+            service.view_plain_code(redeem_code.id)
+
+    def test_view_plain_should_reject_when_no_encrypted_copy(self, monkeypatch):
+        monkeypatch.setenv("MODEL_KEY_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+        redeem_code = _code(status="unused", code_encrypted=None)
+        service = AdminRedeemCodeService(session=_SessionStub([_QueryStub(one_or_none_result=redeem_code)]))
+
+        with pytest.raises(FailException, match="无法还原"):
+            service.view_plain_code(redeem_code.id)
