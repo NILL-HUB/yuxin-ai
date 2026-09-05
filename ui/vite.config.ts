@@ -82,6 +82,12 @@ export default defineConfig({
   server: {
     port: 5173,
     host: '0.0.0.0',
+    watch: {
+      // Docker Desktop / WSL2 等绑定挂载下 inotify 事件可能不传播，
+      // 通过 VITE_POLL_WATCH=true 开启轮询监听，保证 HMR 可靠（见 docker/docker-compose.ui-dev.yaml）
+      usePolling: process.env.VITE_POLL_WATCH === 'true',
+      interval: 300,
+    },
     proxy: {
       // 开发环境代理 API 请求到后端
       '/api': {

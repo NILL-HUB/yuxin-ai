@@ -53,6 +53,11 @@ services:
       MINIO_ENDPOINT: http://llmops-minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      # 浏览器自动化 / 电脑控制 worker（Docker 网络内使用服务名互通）
+      BROWSER_AUTOMATION_URL: http://llmops-browser-worker:8766
+      BROWSER_AUTOMATION_TOKEN: ${BROWSER_AUTOMATION_TOKEN:-dev-browser-worker-token}
+      COMPUTER_CONTROL_URL: http://llmops-computer-worker:8767
+      COMPUTER_CONTROL_TOKEN: ${COMPUTER_CONTROL_TOKEN:-dev-computer-worker-token}
     ports:
       - "127.0.0.1:${API_PORT:-5001}:5001"
     healthcheck:
@@ -166,7 +171,7 @@ services:
     container_name: llmops-computer-worker
     profiles: ["local-workers"]
     restart: always
-    command: ["python", "scripts/computer_control_worker.py"]
+    command: ["sh", "-c", "xvfb-run -a python scripts/computer_control_worker.py"]
     volumes:
       - ../api:/app/api
     env_file:

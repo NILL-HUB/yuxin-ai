@@ -124,6 +124,9 @@ server {
     location / {
         proxy_pass http://\$ui_upstream_host:\$ui_upstream_port;
         include /etc/nginx/proxy.conf;
+        # 开发期 UI 由 Vite 提供，HMR 依赖 WebSocket 升级；生产静态服务下无副作用
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
     }
 }
 EOF
@@ -185,6 +188,9 @@ server {
     location / {
         proxy_pass http://\$ui_upstream_host:\$ui_upstream_port;
         include /etc/nginx/proxy.conf;
+        # 开发期 UI 由 Vite 提供，HMR 依赖 WebSocket 升级；生产静态服务下无副作用
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
     }
 }
 EOF

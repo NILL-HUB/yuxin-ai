@@ -1,0 +1,49 @@
+# =============================================================================
+# 前端「开发模式」覆盖文件（配合 docker-compose.yaml 使用）
+#
+# 用途：开发阶段把 llmops-ui 换成 Vite 开发服务器，源码直接挂载进容器，
+#       保存代码即 HMR 热更新，**无需**每次 rebuild UI 镜像。
+#       `container_name` 与端口保持不变，外层 llmops-nginx 无需任何改动。
+#
+# 启动开发模式（首次会构建 dev 镜像，约 1~3 分钟，之后秒级启动）：
+#   docker compose -f docker/docker-compose.yaml -f docker/docker-compose.ui-dev.yaml up -d --build llmops-ui
+#   （或直接运行 docker/ui-dev.ps1 / docker/ui-dev.sh）
+#
+# 访问：
+#   直连 Vite（HMR 最完整）   http://localhost:3000
+#   外层 Nginx 统一入口        http://localhost:80（代理 + WebSocket 已支持）
+#
+# 切回生产模式（编译产物塞进镜像，体积小）：
+#   docker compose -f docker/docker-compose.yaml build llmops-ui
+#   docker compose -f docker/docker-compose.yaml up -d llmops-ui
+#   （或直接运行 docker/ui-prod.ps1 / docker/ui-prod.sh）
+#
+# 依赖变更（新增 npm 包）后需要重建 dev 镜像：
+#   docker compose -f docker/docker-compose.yaml -f docker/docker-compose.ui-dev.yaml build llmops-ui
+# =============================================================================
+services:
+  llmops-ui:
+    image: llmops-ui-dev:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ..
+      dockerfile: ui/Dockerfile.dev
+    container_name: llmops-ui
+    restart: always
+    ports:
+      - "127.0.0.1:${UI_PORT:-3000}:3000"
+    environment:
+      # 直连 Vite 时 /api 请求经 vite 代理转发到后端容器（vite.config.ts 读取）
+      VITE_PROXY_TARGET: http://llmops-api:5001
+      # 绑定挂载下 inotify 事件可能不传播，强制轮询保证 HMR 稳定
+      VITE_POLL_WATCH: 'true'
+    volumes:
+      # 只挂载源码/配置文件，node_modules 留在镜像内，
+      # 避免 Windows 宿主 node_modules 与 Linux 容器平台二进制不兼容。
+      - ../ui/src:/app/web/src
+      - ../ui/index.html:/app/web/index.html
+      - ../ui/public:/app/web/public
+      - ../ui/vite.config.ts:/app/web/vite.config.ts
+      - ../ui/package.json:/app/web/package.json
+      - ../ui/tsconfig.json:/app/web/tsconfig.json
+      - ../ui/tsconfig.app.json:/app/web/tsconfig.app.json
+      - ../ui/tsconfig.node.json:/app/web/tsconfig.node.json
