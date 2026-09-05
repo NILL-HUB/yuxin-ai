@@ -129,7 +129,9 @@ const OUTPUT_TOKENS_PRESETS = [
   { value: 32768, label: '32K' },
   { value: 65536, label: '64K' },
   { value: 131072, label: '128K' },
+  { value: 200000, label: '200K' },
   { value: 262144, label: '256K' },
+  { value: 393216, label: '384K' },
   { value: 524288, label: '512K' },
   { value: 1048576, label: '1M' },
 ]
@@ -400,6 +402,19 @@ const setPeakWindows = (rows: PeakWindowRow[]) => {
   windowsParseError.value = false
   peakWindowRows.value = rows
   peakWindowsDirty.value = true
+}
+const updatePeakWindowRow = (index: number, patch: Partial<PeakWindowRow>) => {
+  const rows = peakWindowRows.value.map((row, i) => (i === index ? { ...row, ...patch } : row))
+  setPeakWindows(rows)
+}
+const onPeakWindowDaysChange = (index: number, value: unknown) => {
+  updatePeakWindowRow(index, { days: Array.isArray(value) ? value.map(Number) : [] })
+}
+const onPeakWindowStartChange = (index: number, value: unknown) => {
+  updatePeakWindowRow(index, { start: String(value ?? '') })
+}
+const onPeakWindowEndChange = (index: number, value: unknown) => {
+  updatePeakWindowRow(index, { end: String(value ?? '') })
 }
 const addPeakWindow = () => {
   setPeakWindows([...peakWindowRows.value, { days: [1, 2, 3, 4, 5], start: '09:00', end: '12:00' }])
@@ -1414,22 +1429,23 @@ onMounted(() => {
                     <span class="text-xs text-gray-500">{{ t('admin.models.pricingMode.daysLabel') }}</span>
                     <div class="w-48">
                       <a-select
-                        v-model="row.days"
+                        :model-value="row.days"
                         multiple
                         :placeholder="t('admin.models.pricingMode.daysPlaceholder')"
                         size="small"
                         class="w-full"
+                        @change="(value: unknown) => onPeakWindowDaysChange(index, value)"
                       >
                         <a-option v-for="day in WEEKDAY_OPTIONS" :key="day.value" :value="day.value">{{ t(`admin.models.pricingMode.weekdays.${day.value}`) }}</a-option>
                       </a-select>
                     </div>
                     <span class="text-xs text-gray-500">{{ t('admin.models.pricingMode.startLabel') }}</span>
                     <div class="w-28">
-                      <a-time-picker v-model="row.start" format="HH:mm" size="small" class="w-full" />
+                      <a-time-picker :model-value="row.start" format="HH:mm" size="small" class="w-full" @change="(value: unknown) => onPeakWindowStartChange(index, value)" />
                     </div>
                     <span class="text-xs text-gray-500">{{ t('admin.models.pricingMode.endLabel') }}</span>
                     <div class="w-28">
-                      <a-time-picker v-model="row.end" format="HH:mm" size="small" class="w-full" />
+                      <a-time-picker :model-value="row.end" format="HH:mm" size="small" class="w-full" @change="(value: unknown) => onPeakWindowEndChange(index, value)" />
                     </div>
                     <a-button type="text" size="small" status="danger" @click="removePeakWindow(index)">
                       {{ t('admin.models.pricingMode.removeWindow') }}

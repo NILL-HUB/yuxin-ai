@@ -107,14 +107,54 @@ const spanSlotStub = {
   template: '<span><slot /></span>',
 }
 
+const optionStub = {
+  props: ['value', 'disabled'],
+  template: '<option :value="value" :disabled="disabled"><slot /></option>',
+}
+
+const selectStub = {
+  props: ['modelValue', 'multiple', 'placeholder', 'size'],
+  emits: ['change', 'update:modelValue'],
+  template: `
+    <select
+      class="arco-select"
+      :multiple="multiple"
+      @change="onChange"
+    >
+      <slot />
+    </select>
+  `,
+  methods: {
+    onChange(e: Event) {
+      const self = this as unknown as { $emit: (n: string, v: unknown) => void }
+      const el = e.target as HTMLSelectElement
+      const values = Array.from(el.selectedOptions).map((opt) => {
+        const raw = opt.value
+        return Number.isNaN(Number(raw)) ? raw : Number(raw)
+      })
+      const isMultiple = el.multiple
+      self.$emit('update:modelValue', isMultiple ? values : values[0])
+      self.$emit('change', isMultiple ? values : values[0])
+    },
+  },
+}
+
 const divSlotStub = {
   template: '<div><slot /></div>',
 }
 
 const timePickerStub = {
   props: ['modelValue', 'format', 'size'],
-  emits: ['update:modelValue'],
-  template: '<input :name="`time:${modelValue}`" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+  emits: ['update:modelValue', 'change'],
+  template: '<input :name="`time:${modelValue}`" :value="modelValue" @input="onInput" />',
+  methods: {
+    onInput(e: Event) {
+      const self = this as unknown as { $emit: (n: string, v: unknown) => void }
+      const value = (e.target as HTMLInputElement).value
+      self.$emit('update:modelValue', value)
+      self.$emit('change', value)
+    },
+  },
 }
 
 const tagStub = {
@@ -199,8 +239,8 @@ const renderView = async (models: Record<string, unknown>[] = modelRecords as Re
         'a-button': buttonStub,
         'a-radio-group': radioGroupStub,
         'a-radio': radioStub,
-        'a-select': divSlotStub,
-        'a-option': spanSlotStub,
+        'a-select': selectStub,
+        'a-option': optionStub,
         'a-time-picker': timePickerStub,
         'a-tabs': divSlotStub,
         'a-tab-pane': divSlotStub,
@@ -402,6 +442,51 @@ describe('ModelsView', () => {
     await nextTick()
     windows = JSON.parse(state.peak_windows) as { days: string; start: string; end: string }[]
     expect(windows).toHaveLength(3)
+  })
+
+  it('syncs inline weekday changes back to the peak_windows JSON', async () => {
+    const wrapper = await renderView()
+
+    await buttonByText(wrapper, '新建模型').trigger('click')
+    await nextTick()
+    await wrapper.find('.price-mode-switch input').setValue(true)
+    await nextTick()
+
+    const state = (wrapper.vm as unknown as { modelForm: { peak_windows: string } }).modelForm
+    const firstRow = wrapper.findAll('.window-row')[0]
+    const select = firstRow.find('select.arco-select')
+    expect(select.exists()).toBe(true)
+
+    // 原生 select：把第一个 option（周日）选上并触发 change
+    const selectedOptions = firstRow.findAll('option').map((o) => o.element as HTMLOptionElement)
+    expect(selectedOptions.length).toBeGreaterThan(0)
+    selectedOptions.forEach((opt, idx) => {
+      opt.selected = idx === 0
+    })
+    await select.trigger('change')
+    await nextTick()
+
+    const windows = JSON.parse(state.peak_windows) as { days: string }[]
+    expect(windows[0].days.split(',')).toContain('0')
+  })
+
+  it('syncs inline time edits back to the peak_windows JSON', async () => {
+    const wrapper = await renderView()
+
+    await buttonByText(wrapper, '新建模型').trigger('click')
+    await nextTick()
+    await wrapper.find('.price-mode-switch input').setValue(true)
+    await nextTick()
+
+    const state = (wrapper.vm as unknown as { modelForm: { peak_windows: string } }).modelForm
+    // 第一个窗口的 start time-picker：模型用 @change 更新
+    const timeInputs = wrapper.findAll('input[name^="time:"]')
+    expect(timeInputs.length).toBeGreaterThan(0)
+    await timeInputs[0].setValue('07:30')
+    await nextTick()
+
+    const windows = JSON.parse(state.peak_windows) as { start: string }[]
+    expect(windows[0].start).toBe('07:30')
   })
 
   it('shows a parse warning and treats unparseable windows as empty', async () => {
