@@ -21,15 +21,23 @@ const draftAppConfigForm = computed(() => props.app?.draft_app_config || {})
 <template>
   <div class="flex h-full min-h-0 w-full flex-col overflow-hidden bg-surface-2">
     <div class="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-      <div class="min-h-0 flex-1 overflow-hidden bg-surface lg:border-r lg:border-border-c">
-        <app-store-overview :app="props.app" />
+      <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface lg:border-r lg:border-border-c">
+        <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border-c px-4">
+          <icon-info-circle class="text-base text-muted" />
+          <div class="text-sm font-medium text-text-2">
+            {{ t('publicApps.preview.overview') }}
+          </div>
+        </div>
+        <div class="min-h-0 flex-1 overflow-hidden">
+          <app-store-overview :app="props.app" />
+        </div>
       </div>
 
       <div class="flex min-h-0 flex-col overflow-hidden border-t border-border-c bg-surface lg:w-[420px] lg:shrink-0 lg:border-t-0">
         <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border-c px-4">
           <icon-message class="text-base text-muted" />
-          <div class="text-sm font-medium text-text-2">
-            {{ t('publicApps.preview.previewAndDebug') }}
+          <div class="truncate text-sm font-medium text-text-2">
+            {{ t('publicApps.preview.chatWithApp', { name: props.app?.name || '' }) }}
           </div>
         </div>
         <div class="min-h-0 flex-1 overflow-hidden">

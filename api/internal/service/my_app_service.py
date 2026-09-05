@@ -104,6 +104,8 @@ class MyAppService:
             "assigned_at": self._timestamp(assignment.assigned_at),
             "source": source,
             "status": app.status,
+            # 管理端分配的应用：用户只可对话使用，不可编辑/调试
+            "can_edit": False,
         }
 
     def _serialize_forked_app(self, app: App) -> dict[str, object]:
@@ -115,5 +117,8 @@ class MyAppService:
             "description": app.description,
             "assigned_at": self._timestamp(app.created_at),
             "source": "forked",
-            "status": app.status,
+            # 商店添加（fork）的应用对用户而言是“已添加、可直接使用”，
+            # 不呈现为可编辑的草稿；自建分身体系落地后 can_edit 才可能为 True。
+            "status": AppStatus.PUBLISHED.value,
+            "can_edit": False,
         }

@@ -96,6 +96,25 @@ class TestMyAppService:
 
         assert result == {"list": []}
 
+    def test_list_my_apps_should_expose_forked_apps_as_usable_not_editable(self):
+        """商店添加（fork）的应用对用户呈现为“已添加、可直接使用”，且不可编辑。"""
+        account_id = uuid4()
+        forked = _app(
+            name="OCR Reader",
+            account_id=account_id,
+            status=AppStatus.DRAFT.value,  # DB 层 fork 副本是 draft
+            original_app_id=uuid4(),
+        )
+        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])]))
+
+        result = service.list_my_apps(account_id)
+
+        assert len(result["list"]) == 1
+        item = result["list"][0]
+        assert item["source"] == "forked"
+        assert item["status"] == AppStatus.PUBLISHED.value
+        assert item["can_edit"] is False
+
     def test_get_assigned_app_should_return_app_for_active_assignment(self):
         account_id = uuid4()
         app = _app()

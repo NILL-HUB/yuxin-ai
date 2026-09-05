@@ -44,13 +44,13 @@ type MockApp = MyApp & { accent?: string }
 const mockApps: MockApp[] = [
   { id: 'app-1', name: '智能写作助手', description: '辅助撰写文案、润色与多平台内容创作，让每一段文字都恰到好处。', source: 'forked', status: 'published', assignment_id: 'a1', assigned_at: null, accent: 'linear-gradient(135deg,#e91e63,#f9a8d4)' },
   { id: 'app-2', name: '数据分析师', description: '连接表格与数据库，自动产出数据洞察与可视化报告。', source: 'assigned', status: 'published', assignment_id: 'a2', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#c2185b,#ff9ec5)' },
-  { id: 'app-3', name: '会议纪要官', description: '会议记录自动整理为结构化纪要，一键提炼待办与决策。', source: 'forked', status: 'draft', assignment_id: 'a3', assigned_at: null, accent: 'linear-gradient(135deg,#d63384,#ff6ba8)' },
+  { id: 'app-3', name: '会议纪要官', description: '会议记录自动整理为结构化纪要，一键提炼待办与决策。', source: 'forked', status: 'published', assignment_id: 'a3', assigned_at: null, accent: 'linear-gradient(135deg,#d63384,#ff6ba8)' },
   { id: 'app-4', name: '周报生成器', description: '每周工作周报自动生成，汇总项目进展与风险。', source: 'assigned', status: 'published', assignment_id: 'a4', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#e91e63,#f06292)' },
   { id: 'app-5', name: '客户智能客服', description: '基于知识库的常见问题自动应答，7×24 小时在线。', source: 'forked', status: 'published', assignment_id: 'a5', assigned_at: null, accent: 'linear-gradient(135deg,#ad1457,#ff80ab)' },
-  { id: 'app-6', name: 'PPT 工坊', description: '一句话生成演示文稿大纲与排版，快速交付汇报材料。', source: 'assigned', status: 'draft', assignment_id: 'a6', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#d81b60,#f8bbd0)' },
+  { id: 'app-6', name: 'PPT 工坊', description: '一句话生成演示文稿大纲与排版，快速交付汇报材料。', source: 'assigned', status: 'published', assignment_id: 'a6', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#d81b60,#f8bbd0)' },
   { id: 'app-7', name: '简历优化师', description: '针对目标岗位重写简历亮点，附面试可能追问点。', source: 'forked', status: 'published', assignment_id: 'a7', assigned_at: null, accent: 'linear-gradient(135deg,#c2185b,#f48fb1)' },
   { id: 'app-8', name: '翻译同传官', description: '中英日韩多语互译，支持术语库与正式语气切换。', source: 'assigned', status: 'published', assignment_id: 'a8', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#e91e63,#f06292)' },
-  { id: 'app-9', name: '小红书灵感机', description: '爆款选题拆解、标题与正文生成，一键成图发文。', source: 'forked', status: 'draft', assignment_id: 'a9', assigned_at: null, accent: 'linear-gradient(135deg,#880e4f,#ff9ec5)' },
+  { id: 'app-9', name: '小红书灵感机', description: '爆款选题拆解、标题与正文生成，一键成图发文。', source: 'forked', status: 'published', assignment_id: 'a9', assigned_at: null, accent: 'linear-gradient(135deg,#880e4f,#ff9ec5)' },
 ]
 
 /** mock 数据首字图标取色 */

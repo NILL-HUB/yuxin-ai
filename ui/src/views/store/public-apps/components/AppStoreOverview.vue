@@ -17,7 +17,6 @@ const modelName = computed(() => String(config.value.model_config?.model || '').
 const description = computed(() => String(props.app?.description || '').trim())
 const openingStatement = computed(() => String(config.value.opening_statement || '').trim())
 const openingQuestions = computed(() => (config.value.opening_questions || []).filter(Boolean))
-const presetPrompt = computed(() => String(config.value.preset_prompt || '').trim())
 
 const tools = computed(() => config.value.tools || [])
 const mcpBindings = computed(() => config.value.mcp_bindings || [])
@@ -25,21 +24,6 @@ const skills = computed(() => config.value.skills || [])
 const agentBindings = computed(() => config.value.agent_bindings || [])
 const workflows = computed(() => config.value.workflows || [])
 const knowledgeBases = computed(() => config.value.knowledge_bases || [])
-
-const _memoryEnabled = computed(() => Boolean(config.value.long_term_memory?.enable))
-const _speechToTextEnabled = computed(() => Boolean(config.value.speech_to_text?.enable))
-const _textToSpeechEnabled = computed(() => Boolean(config.value.text_to_speech?.enable))
-
-const normalizeIconUrl = (icon: string = '') => {
-  if (!icon) return ''
-  if (icon.startsWith('data:') || /^https?:\/\//.test(icon)) return icon
-  const origin = globalThis.location?.origin ?? 'http://localhost'
-  let path = icon.startsWith('/') ? icon : `/${icon}`
-  if (path.startsWith('/api/')) {
-    path = path.replace(/^\/api/, '')
-  }
-  return `${origin}${path}`
-}
 
 const abilityItems = computed(() => {
   const items: Array<{ key: string; label: string; count: number }> = [
@@ -116,38 +100,6 @@ const abilityItems = computed(() => {
             <span class="min-w-0 truncate text-sm text-text-2">{{ item.label }}</span>
             <a-tag size="small" class="ml-2 shrink-0">{{ item.count }}</a-tag>
           </div>
-        </div>
-
-        <div v-if="tools.length > 0" class="mt-4">
-          <div class="mb-2 text-xs font-medium text-muted">
-            {{ t('appStudio.abilities.tools.title') }}
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <div
-              v-for="(tool, index) in tools"
-              :key="index"
-              class="flex items-center gap-2 rounded-md bg-surface-2 px-2.5 py-1.5"
-            >
-              <img
-                v-if="tool.provider?.icon"
-                :src="normalizeIconUrl(tool.provider.icon)"
-                class="h-4 w-4 rounded object-cover"
-                alt=""
-              />
-              <span class="text-xs text-text-2">
-                {{ tool.tool?.label || tool.tool?.name || tool.tool_id || 'Tool' }}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="presetPrompt" class="rounded-lg border border-border-c bg-surface p-4">
-        <div class="mb-2 text-sm font-semibold text-text">
-          {{ t('appStudio.presetPrompt.title') }}
-        </div>
-        <div class="max-h-52 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-text-2">
-          {{ presetPrompt }}
         </div>
       </div>
     </div>
