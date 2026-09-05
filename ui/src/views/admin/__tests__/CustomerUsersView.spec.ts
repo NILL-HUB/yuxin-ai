@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h, inject, onMounted, provide, ref } from 'vue'
 import CustomerUsersView from '@/views/admin/CustomerUsersView.vue'
+import { useAdminStore } from '@/stores/admin'
 
 const mocks = vi.hoisted(() => ({
   listCustomerUsers: vi.fn(),
@@ -135,8 +137,21 @@ const renderView = async () => {
     list: [{ id: 'assignment-1', app_id: 'app-1', account_id: 'user-1', assigned_by: 'admin-1', status: 'active', assigned_at: 1893456000, revoked_at: null, app: { id: 'app-1', name: '合同审查助手', icon: '', description: '', status: 'published', is_public: false } }],
   })
   mocks.listAdminApps.mockResolvedValue({ list: [{ id: 'app-2', name: 'App 2', icon: '', description: '', status: 'published', is_public: false }] })
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAdminStore(pinia).update({
+    id: 'admin-1',
+    username: 'admin',
+    email: 'admin@example.com',
+    name: 'Admin',
+    avatar: '',
+    status: 'active',
+    roles: ['operator'],
+    permissions: ['customer:read', 'customer:update', 'distribution:manage'],
+  })
   const wrapper = mount(CustomerUsersView, {
     global: {
+      plugins: [pinia],
       stubs: {
         'a-input': inputStub,
         'a-select': selectStub,

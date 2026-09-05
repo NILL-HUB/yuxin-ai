@@ -9,14 +9,14 @@ const { t } = useI18n()
 
 const form = reactive<MailConfigPayload>({
   smtp_host: '',
-  smtp_port: '587',
+  smtp_port: 587,
   use_tls: true,
   use_ssl: false,
   username: '',
   password: '',
   default_sender: '',
   from_name: '',
-  timeout: '30',
+  timeout: 30,
 })
 
 const loading = ref(false)
@@ -39,7 +39,11 @@ const loadConfig = async () => {
   loading.value = true
   try {
     const configs = await getMailConfig()
-    Object.assign(form, configs)
+    Object.assign(form, {
+      ...configs,
+      smtp_port: configs.smtp_port ? Number(configs.smtp_port) : 587,
+      timeout: configs.timeout ? Number(configs.timeout) : 30,
+    })
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.messageConfig.mail.loadFailed')))
   } finally {

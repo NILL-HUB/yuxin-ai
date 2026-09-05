@@ -3,14 +3,14 @@ import type { BaseResponse } from '@/models/base'
 
 export interface MailConfigPayload {
   smtp_host: string
-  smtp_port: string
+  smtp_port: number
   use_tls: boolean
   use_ssl: boolean
   username: string
   password: string
   default_sender: string
   from_name: string
-  timeout: string
+  timeout: number
 }
 
 export interface SmsConfigPayload {

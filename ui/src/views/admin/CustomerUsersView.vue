@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import {
   disableCustomerUser,
   enableCustomerUser,
   listCustomerUsers,
   revokeCustomerUserSessions,
+  setCustomerUserSuperior,
 } from '@/services/admin-customer-users'
 import { assignAppsToUser, listUserAppAssignments, revokeUserAppAssignment } from '@/services/admin-app-assignments'
 import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
 import { type AppAssignment } from '@/models/app-assignment'
 import { getErrorMessage } from '@/utils/error'
 import { type CustomerUser } from '@/models/admin-customer-user'
+import { useAdminStore } from '@/stores/admin'
 
 const { t } = useI18n()
+const adminStore = useAdminStore()
+const canManageDistribution = computed(() => adminStore.hasPermission('distribution:manage'))
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -27,6 +31,12 @@ const selectedAssignmentUser = ref<CustomerUser | null>(null)
 const assignments = ref<AppAssignment[]>([])
 const assignmentAppIds = ref<string[]>([])
 const availableApps = ref<AdminAppRecord[]>([])
+
+// 上级绑定抽屉
+const selectedSuperiorUser = ref<CustomerUser | null>(null)
+const superiorInviterId = ref('')
+const superiorLoading = ref(false)
+const superiorOptions = ref<{ label: string; value: string }[]>([])
 
 const statusOptions = computed(() => [
   { label: t('admin.customerUsers.allStatus'), value: '' },
@@ -43,10 +53,11 @@ const formatTime = (value: number | null) => {
 
 const columns = computed(() => [
   { title: t('admin.customerUsers.user'), slotName: 'user' },
+  { title: t('admin.customerUsers.superiorCol'), slotName: 'superior' },
   { title: t('admin.customerUsers.status'), slotName: 'status' },
   { title: t('admin.customerUsers.onlineStatus'), slotName: 'online_status' },
   { title: t('admin.customerUsers.lastLogin'), slotName: 'last_login' },
-  { title: t('admin.customerUsers.actions'), slotName: 'actions', width: 280 },
+  { title: t('admin.customerUsers.actions'), slotName: 'actions', width: 360 },
 ])
 
 const appOptions = computed(() =>
@@ -180,6 +191,123 @@ const handleRevokeAssignment = async (assignment: AppAssignment) => {
   }
 }
 
+const openSuperior = (user: CustomerUser) => {
+  selectedSuperiorUser.value = user
+  superiorInviterId.value = ''
+  superiorOptions.value = [
+    {
+      label: `${user.name || user.email || user.id}${user.email && user.name ? ` · ${user.email}` : ''}`,
+      value: user.id,
+    },
+  ]
+}
+
+const onSuperiorSearch = async (keyword: string) => {
+  try {
+    const response = await listCustomerUsers({ keyword, status: '', current_page: 1, page_size: 20 })
+    superiorOptions.value = (response.list || []).map((user) => ({
+      label: `${user.name || user.email || user.id}${user.email && user.name ? ` · ${user.email}` : ''}`,
+      value: user.id,
+    }))
+  } catch {
+    superiorOptions.value = []
+  }
+}
+
+const copyUserId = async (id: string) => {
+  try {
+    await navigator.clipboard.writeText(id)
+    Message.success(t('admin.customerUsers.idCopied'))
+  } catch {
+    Message.error(t('admin.customerUsers.copyFailed'))
+  }
+}
+
+const closeSuperior = () => {
+  selectedSuperiorUser.value = null
+  superiorInviterId.value = ''
+}
+
+const superiorOptionLabel = (id: string) => {
+  const option = superiorOptions.value.find((item) => item.value === id)
+  return option?.label || id
+}
+
+const doBindSuperior = async (user: CustomerUser, inviterId: string) => {
+  superiorLoading.value = true
+  try {
+    await setCustomerUserSuperior(user.id, inviterId)
+    Message.success(t('admin.customerUsers.superiorBound'))
+    closeSuperior()
+    await loadUsers()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.customerUsers.superiorBindFailed')))
+  } finally {
+    superiorLoading.value = false
+  }
+}
+
+const handleBindSuperior = async () => {
+  if (!selectedSuperiorUser.value) return
+  const inviterId = superiorInviterId.value.trim()
+  if (!inviterId) {
+    Message.error(t('admin.customerUsers.superiorInviterRequired'))
+    return
+  }
+  const user = selectedSuperiorUser.value
+  const newName = superiorOptionLabel(inviterId)
+  if (user.superior_id) {
+    Modal.confirm({
+      title: t('admin.customerUsers.replaceSuperiorTitle'),
+      content: t('admin.customerUsers.replaceSuperiorDesc', {
+        old: user.superior_name || user.superior_email || t('admin.customerUsers.noSuperiorText'),
+        name: newName,
+      }),
+      okText: t('admin.customerUsers.superiorBind'),
+      cancelText: t('common.actions.cancel'),
+      onOk: () => doBindSuperior(user, inviterId),
+    })
+  } else {
+    await doBindSuperior(user, inviterId)
+  }
+}
+
+const doUnbindSuperior = async (user: CustomerUser) => {
+  superiorLoading.value = true
+  try {
+    const result = await setCustomerUserSuperior(user.id, null)
+    if (result?.unbound) {
+      Message.success(t('admin.customerUsers.superiorUnbound'))
+    } else {
+      Message.success(t('admin.customerUsers.superiorUnbound'))
+    }
+    closeSuperior()
+    await loadUsers()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.customerUsers.superiorUnbindFailed')))
+  } finally {
+    superiorLoading.value = false
+  }
+}
+
+const handleUnbindSuperior = async () => {
+  if (!selectedSuperiorUser.value) return
+  const user = selectedSuperiorUser.value
+  if (user.superior_id) {
+    Modal.confirm({
+      title: t('admin.customerUsers.unbindSuperiorTitle'),
+      content: t('admin.customerUsers.unbindSuperiorDesc', {
+        name: user.superior_name || user.superior_email || t('admin.customerUsers.noSuperiorText'),
+      }),
+      okText: t('admin.customerUsers.superiorUnbind'),
+      cancelText: t('common.actions.cancel'),
+      onOk: () => doUnbindSuperior(user),
+    })
+  } else {
+    await doUnbindSuperior(user)
+  }
+}
+
 onMounted(async () => {
   await loadUsers()
   await loadAvailableApps()
@@ -222,13 +350,30 @@ onMounted(async () => {
         <a-table-column v-for="col of columns" :key="col.slotName" :title="col.title" :width="col.width">
           <template #cell="{ record }">
             <template v-if="col.slotName === 'user'">
-              <div class="flex items-center gap-2">
+              <div class="flex items-start gap-2">
                 <a-avatar :size="32">{{ (record.name || record.email || '?').charAt(0).toUpperCase() }}</a-avatar>
-                <div class="flex flex-col">
+                <div class="cell-stack">
                   <span class="font-medium text-gray-900">{{ record.name || '-' }}</span>
-                  <span class="text-xs text-gray-500">{{ record.email }}</span>
+                  <span v-if="record.email" class="cell-sub">{{ record.email }}</span>
+                  <div class="cell-id-row">
+                    <code class="cell-id">{{ record.id }}</code>
+                    <a-button size="mini" type="text" @click="copyUserId(record.id)">{{ t('admin.customerUsers.copyId') }}</a-button>
+                  </div>
                 </div>
               </div>
+            </template>
+            <template v-if="col.slotName === 'superior'">
+              <template v-if="record.superior_id">
+                <div class="cell-stack">
+                  <span>{{ record.superior_name || record.superior_email || '-' }}</span>
+                  <span v-if="record.superior_email && record.superior_name" class="cell-sub">{{ record.superior_email }}</span>
+                  <div class="cell-id-row">
+                    <code class="cell-id">{{ record.superior_id }}</code>
+                    <a-button size="mini" type="text" @click="record.superior_id && copyUserId(record.superior_id)">{{ t('admin.customerUsers.copyId') }}</a-button>
+                  </div>
+                </div>
+              </template>
+              <span v-else class="text-gray-400">-</span>
             </template>
             <template v-else-if="col.slotName === 'status'">
               <a-tag v-if="record.status === 'active'" size="small" color="green">{{ t('admin.customerUsers.pillActive') }}</a-tag>
@@ -267,6 +412,7 @@ onMounted(async () => {
                   @click="handleRevokeSessions(record)"
                 >{{ t('admin.customerUsers.revokeSessions') }}</a-button>
                 <a-button size="mini" type="primary" :loading="actionLoading" @click="openAssignments(record)">{{ t('admin.customerUsers.assignApp') }}</a-button>
+                <a-button v-if="canManageDistribution" size="mini" :loading="actionLoading" @click="openSuperior(record)">{{ t('admin.customerUsers.superior') }}</a-button>
               </a-space>
             </template>
           </template>
@@ -342,5 +488,69 @@ onMounted(async () => {
         </div>
       </div>
     </a-drawer>
+
+    <!-- 上级绑定抽屉 -->
+    <a-drawer
+      :visible="!!selectedSuperiorUser"
+      :width="520"
+      :title="t('admin.customerUsers.superiorTitle', { name: selectedSuperiorUser?.name || selectedSuperiorUser?.email || '' })"
+      @cancel="closeSuperior"
+    >
+      <div class="space-y-4">
+        <div class="rounded-lg border bg-gray-50 p-4">
+          <div class="text-sm font-medium text-gray-700 mb-2">{{ t('admin.customerUsers.superiorDesc') }}</div>
+          <div v-if="selectedSuperiorUser?.superior_id" class="rounded-lg border border-amber-200 bg-amber-50 p-3 mb-3">
+            <div class="text-xs text-amber-700 font-medium mb-1">{{ t('admin.customerUsers.currentSuperior') }}</div>
+            <div class="text-sm text-gray-800">
+              {{ selectedSuperiorUser.superior_name || selectedSuperiorUser.superior_email || '-' }}
+              <span v-if="selectedSuperiorUser.superior_email && selectedSuperiorUser.superior_name" class="text-gray-500"> · {{ selectedSuperiorUser.superior_email }}</span>
+            </div>
+            <code class="text-xs text-gray-400">{{ selectedSuperiorUser.superior_id }}</code>
+          </div>
+          <div class="flex gap-2">
+            <a-select
+              v-model="superiorInviterId"
+              :options="superiorOptions"
+              allow-search
+              allow-clear
+              :filter-option="false"
+              :placeholder="t('admin.customerUsers.superiorSelectPlaceholder')"
+              class="flex-1"
+              @search="onSuperiorSearch"
+            />
+          </div>
+          <div class="mt-3 flex gap-2">
+            <a-button type="primary" :loading="superiorLoading" @click="handleBindSuperior">{{ t('admin.customerUsers.superiorBind') }}</a-button>
+            <a-button status="warning" :loading="superiorLoading" @click="handleUnbindSuperior">{{ t('admin.customerUsers.superiorUnbind') }}</a-button>
+          </div>
+        </div>
+      </div>
+    </a-drawer>
   </section>
 </template>
+
+<style scoped>
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cell-sub {
+  color: #667085;
+  font-size: 12px;
+}
+
+.cell-id-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cell-id {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 11px;
+  color: #98a2b3;
+}
+</style>
