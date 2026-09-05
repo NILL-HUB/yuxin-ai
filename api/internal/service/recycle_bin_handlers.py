@@ -454,34 +454,32 @@ def restore_knowledge_document(snapshot: dict[str, Any]) -> bool:
 
 
 def purge_knowledge_document(snapshot: dict[str, Any]) -> None:
-    """留存期结束彻底销毁：删除底层存储对象（local 物理文件 / COS、OSS 对象）。"""
+    """留存期结束彻底销毁：删除底层存储对象（local 物理文件 / COS、OSS 对象）。
+
+    删除失败向上抛异常：由 ``purge_expired`` 捕获后保持 pending 待重试，
+    避免"状态已销毁但实际文件仍在"。
+    """
     upload_file_data = snapshot.get("upload_file") or {}
     key = upload_file_data.get("key")
     if not key:
         return
     backend = (upload_file_data.get("storage_backend") or "local").strip() or "local"
-    try:
-        from internal.service.storage.storage_migration_service import _delete_object
-        _delete_object(backend, key)
-        logger.info("回收站销毁文档存储文件 key=%s backend=%s", key, backend)
-    except Exception:
-        logger.warning("回收站销毁文档存储文件失败 key=%s", key, exc_info=True)
+    from internal.service.storage.storage_migration_service import _delete_object
+    _delete_object(backend, key)
+    logger.info("回收站销毁文档存储文件 key=%s backend=%s", key, backend)
 
 
 def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
-    """留存期结束彻底销毁知识库关联的底层存储对象。"""
+    """留存期结束彻底销毁知识库关联的底层存储对象（失败向上抛）。"""
+    from internal.service.storage.storage_migration_service import _delete_object
     for doc_data in snapshot.get("documents") or []:
         upload_file_data = doc_data.get("_upload_file") or {}
         key = upload_file_data.get("key")
         if not key:
             continue
         backend = (upload_file_data.get("storage_backend") or "local").strip() or "local"
-        try:
-            from internal.service.storage.storage_migration_service import _delete_object
-            _delete_object(backend, key)
-            logger.info("回收站销毁知识库存储文件 key=%s backend=%s", key, backend)
-        except Exception:
-            logger.warning("回收站销毁知识库存储文件失败 key=%s", key, exc_info=True)
+        _delete_object(backend, key)
+        logger.info("回收站销毁知识库存储文件 key=%s backend=%s", key, backend)
 
 
 def snapshot_upload_file(resource_id) -> dict[str, Any] | None:
@@ -520,18 +518,15 @@ def restore_upload_file(snapshot: dict[str, Any]) -> bool:
 
 
 def purge_upload_file(snapshot: dict[str, Any]) -> None:
-    """留存期结束彻底销毁上传文件的底层存储对象。"""
+    """留存期结束彻底销毁上传文件的底层存储对象（失败向上抛）。"""
     main_data = snapshot.get("main") or {}
     key = main_data.get("key")
     if not key:
         return
     backend = (main_data.get("storage_backend") or "local").strip() or "local"
-    try:
-        from internal.service.storage.storage_migration_service import _delete_object
-        _delete_object(backend, key)
-        logger.info("回收站销毁上传文件 key=%s backend=%s", key, backend)
-    except Exception:
-        logger.warning("回收站销毁上传文件失败 key=%s", key, exc_info=True)
+    from internal.service.storage.storage_migration_service import _delete_object
+    _delete_object(backend, key)
+    logger.info("回收站销毁上传文件 key=%s backend=%s", key, backend)
 
 
 # ---------------------------------------------------------------------------
@@ -626,10 +621,29 @@ def restore_os_file(
 
 
 def purge_os_file(snapshot: dict[str, Any]) -> None:
-    """本机文件到期销毁：调用 worker 物理清理过期条目（best-effort）。"""
-    result = _call_worker_recycle({"op": "purge"})
+    """本机文件到期销毁：调用 worker 精确清理当前条目（失败向上抛）。
+
+    worker 不可达 / 清理失败时抛异常，由 ``purge_expired`` 捕获后保持
+    ``pending`` 待重试，避免"状态已销毁但文件仍在"。
+    """
+    entry_id = str((snapshot or {}).get("entry_id") or "").strip()
+    if not entry_id:
+        # 无 entry_id 的 os_file 条目说明快照不完整，拒绝标记销毁
+        raise RuntimeError("os_file 快照缺少 entry_id，无法精确销毁")
+    recycle_root = str((snapshot or {}).get("recycle_root") or "").strip()
+    result = _call_worker_recycle(
+        {
+            "op": "purge",
+            "entry_id": entry_id,
+            "safe_root": recycle_root or None,
+        }
+    )
     if not result.get("ok"):
-        logger.warning("本机回收站 purge 调用失败: %s", result.get("error"))
+        raise RuntimeError(f"本机回收站 purge 失败: {result.get('error')}")
+    logger.info(
+        "回收站销毁本机文件 entry_id=%s original_path=%s",
+        entry_id, (snapshot or {}).get("original_path") or "",
+    )
 
 
 # ---------------------------------------------------------------------------

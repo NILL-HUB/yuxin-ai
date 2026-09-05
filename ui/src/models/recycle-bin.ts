@@ -15,7 +15,7 @@ export type RecycleBinItem = {
   expire_at: number | null
   status: string
   remark: string
-  // 本机文件（os_file）删除时的设备信息（IP + 系统用户名）
+  // 本地文件（os_file）删除时的设备信息（IP + 系统用户名）
   device_info?: { ip: string; name: string } | null
 }
 

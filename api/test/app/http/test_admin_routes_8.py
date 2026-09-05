@@ -891,6 +891,143 @@ class TestAdminPublicAIFeature:
         assert resp.status_code == 200
         assert payload["data"]["feature_key"] == "feature_routing"
 
+    def test_batch_bind_preview(self, monkeypatch):
+        """批量绑定预览：调用模块 helper 并返回受影响功能清单。"""
+        self._setup(monkeypatch)
+        captured = {}
+        expected_model = {"id": str(uuid4()), "provider": "deepseek", "model_name": "deepseek-chat", "model_type": "chat", "tier": "2"}
+        expected_items = [
+            {
+                "feature_key": "feature_routing",
+                "feature_name": "路由",
+                "feature_category": "routing",
+                "model_type": "chat",
+                "model_config_id": str(uuid4()),
+                "fallback_tier": "2",
+                "enabled": True,
+            }
+        ]
+        monkeypatch.setattr(
+            admin_routes_8,
+            "_preview_batch_bind_feature_model",
+            lambda model_type, model_config_id: (
+                captured.update(model_type=model_type, model_config_id=model_config_id)
+                or {"updated": 1, "skipped": 0, "items": expected_items, "model": expected_model}
+            ),
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/public-ai-features/batch-bind/preview?account_id={}".format(uuid4()),
+                    json={"model_type": "chat", "model_config_id": expected_model["id"]},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["updated"] == 1
+        assert payload["data"]["model"]["model_type"] == "chat"
+        assert captured["model_type"] == "chat"
+        assert captured["model_config_id"] == expected_model["id"]
+
+    def test_batch_bind(self, monkeypatch):
+        """批量绑定：调用模块 helper 并返回执行统计。"""
+        self._setup(monkeypatch)
+        captured = {}
+        model_id = str(uuid4())
+        expected_items = [
+            {
+                "feature_key": "feature_routing",
+                "feature_name": "路由",
+                "feature_category": "routing",
+                "model_type": "chat",
+                "model_config_id": model_id,
+                "fallback_tier": "2",
+                "enabled": True,
+            }
+        ]
+        monkeypatch.setattr(
+            admin_routes_8,
+            "_batch_bind_feature_model",
+            lambda model_type, model_config_id, fallback_tier: (
+                captured.update(model_type=model_type, model_config_id=model_config_id, fallback_tier=fallback_tier)
+                or {
+                    "updated": 1,
+                    "skipped": 0,
+                    "items": expected_items,
+                    "model": {"id": model_id, "provider": "deepseek", "model_name": "deepseek-chat", "model_type": "chat", "tier": "2"},
+                }
+            ),
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/public-ai-features/batch-bind?account_id={}".format(uuid4()),
+                    json={"model_type": "chat", "model_config_id": model_id, "fallback_tier": "2"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["data"]["updated"] == 1
+        assert captured["model_type"] == "chat"
+        assert captured["model_config_id"] == model_id
+        assert captured["fallback_tier"] == "2"
+
+    def test_batch_bind_missing_model_id(self, monkeypatch):
+        """缺少 model_config_id 时返回参数错误。"""
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/public-ai-features/batch-bind?account_id={}".format(uuid4()),
+                    json={"model_type": "chat"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_batch_bind_model_not_found(self, monkeypatch):
+        """目标模型不存在时返回 400。"""
+        self._setup(monkeypatch)
+
+        def _boom(*_a, **_k):
+            from internal.exception import FailException
+
+            raise FailException("模型配置不存在: x")
+
+        monkeypatch.setattr(admin_routes_8, "_batch_bind_feature_model", _boom)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/public-ai-features/batch-bind?account_id={}".format(uuid4()),
+                    json={"model_type": "chat", "model_config_id": "x"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "fail"
+
+    def test_model_type_compatible(self):
+        """模型池类型与功能类型兼容判定（含历史别名同族）。"""
+        compatible = admin_routes_8._is_model_type_compatible
+        assert compatible("chat", "chat") is True
+        assert compatible("image", "image_generation") is True
+        assert compatible("image", "text_to_image") is True
+        assert compatible("image_generation", "image") is True
+        assert compatible("audio", "speech_to_text") is True
+        assert compatible("chat", "image") is False
+        assert compatible("embedding", "chat") is False
+        assert compatible("chat", "") is False
+        assert compatible("chat", None) is False
+
 
 class TestAdminAppAssignment:
     def _setup(self, monkeypatch):
@@ -1306,9 +1443,12 @@ class TestAdminOrchestrationFlag:
         from internal.service.orchestration_feature_flag_service import (
             OrchestrationFeatureFlagService,
         )
+        from internal.service import auth_switch_service
 
         svc = _StatefulAuthFlagService()
         _setup(monkeypatch, {OrchestrationFeatureFlagService: svc})
+        state = {"AUTH_EMAIL_ENABLED": False, "AUTH_PHONE_ENABLED": False, "AUTH_LOGIN_CHALLENGE_ENABLED": False}
+        monkeypatch.setattr(auth_switch_service, "get_auth_switches", lambda session=None: dict(state))
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
@@ -1328,9 +1468,12 @@ class TestAdminOrchestrationFlag:
         from internal.service.orchestration_feature_flag_service import (
             OrchestrationFeatureFlagService,
         )
+        from internal.service import auth_switch_service
 
         svc = _StatefulAuthFlagService()
         _setup(monkeypatch, {OrchestrationFeatureFlagService: svc})
+        state = {"AUTH_EMAIL_ENABLED": False, "AUTH_PHONE_ENABLED": False, "AUTH_LOGIN_CHALLENGE_ENABLED": False}
+        monkeypatch.setattr(auth_switch_service, "get_auth_switches", lambda session=None: dict(state))
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
@@ -1339,6 +1482,7 @@ class TestAdminOrchestrationFlag:
                     json={"enabled": True},
                 )
                 assert resp.status_code == 200
+                state["AUTH_EMAIL_ENABLED"] = True
                 resp = await client.post(
                     f"/admin/orchestration-flags/AUTH_LOGIN_CHALLENGE_ENABLED?account_id={uuid4()}",
                     json={"enabled": True},

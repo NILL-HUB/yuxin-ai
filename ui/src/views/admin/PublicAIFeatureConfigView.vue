@@ -6,8 +6,11 @@ import {
   listPublicAIFeatures,
   updatePublicAIFeature,
   listAvailableModels,
+  previewBatchBind,
+  batchBind,
   type PublicAIFeature,
   type AvailableModel,
+  type BatchBindResult,
 } from '@/services/admin-public-ai-feature'
 import { getErrorMessage } from '@/utils/error'
 
@@ -146,6 +149,113 @@ function cancelEdit() {
   editingKey.value = null
 }
 
+// ---------------------------------------------------------------------------
+// 一键配置：按模型类型批量绑定目标模型（受影响功能清单预览后执行）
+// ---------------------------------------------------------------------------
+// 可选的批量配置目标类型：预置功能以 chat/image_generation 为主，
+// 额外提供别名族（image/embedding/rerank/audio）供模型池兼容。
+const BATCH_TYPE_OPTIONS = [
+  'chat',
+  'image_generation',
+  'image',
+  'embedding',
+  'rerank',
+  'audio',
+]
+
+const batchModalVisible = ref(false)
+const batchSubmitting = ref(false)
+const batchPreview = ref<BatchBindResult | null>(null)
+const batchPreviewing = ref(false)
+const batchForm = ref({
+  model_type: 'chat',
+  model_config_id: '',
+  fallback_tier: 'cheap',
+})
+// 弹层内目标模型下拉的可选列表（按所选 model_type 过滤，来自模型池）
+const batchModels = ref<AvailableModel[]>([])
+
+function modelTypeLabel(type: string): string {
+  const key = `admin.publicAIFeature.modelTypes.${type}`
+  const label = t(key)
+  return label === key ? type : label
+}
+
+function tierLabel(tier: string): string {
+  const key = `admin.publicAIFeature.tiers.${tier}`
+  const label = t(key)
+  return label === key ? tier : label
+}
+
+function openBatchModal() {
+  batchModalVisible.value = true
+  batchPreview.value = null
+  batchForm.value = { model_type: 'chat', model_config_id: '', fallback_tier: 'cheap' }
+  batchModels.value = []
+  // 默认加载 chat 类型可选模型
+  loadBatchModels('chat')
+}
+
+async function loadBatchModels(modelType: string) {
+  try {
+    const res = await listAvailableModels(modelType || undefined)
+    batchModels.value = res.items
+  } catch (e) {
+    Message.error(getErrorMessage(e, t('common.loadFailed')))
+  }
+}
+
+async function handleBatchTypeChange(type: string) {
+  batchForm.value.model_config_id = ''
+  batchPreview.value = null
+  await loadBatchModels(type)
+}
+
+async function handleBatchModelChange() {
+  batchPreview.value = null
+}
+
+async function loadBatchPreview() {
+  if (!batchForm.value.model_config_id) {
+    Message.warning(t('admin.publicAIFeature.batchModelRequired'))
+    return
+  }
+  batchPreviewing.value = true
+  try {
+    batchPreview.value = await previewBatchBind({
+      model_type: batchForm.value.model_type,
+      model_config_id: batchForm.value.model_config_id,
+    })
+  } catch (e) {
+    Message.error(getErrorMessage(e, t('admin.publicAIFeature.batchPreviewFailed')))
+  } finally {
+    batchPreviewing.value = false
+  }
+}
+
+async function confirmBatchBind() {
+  if (!batchForm.value.model_config_id) {
+    Message.warning(t('admin.publicAIFeature.batchModelRequired'))
+    return
+  }
+  batchSubmitting.value = true
+  try {
+    const result = await batchBind({
+      model_type: batchForm.value.model_type,
+      model_config_id: batchForm.value.model_config_id,
+      fallback_tier: batchForm.value.fallback_tier,
+    })
+    batchModalVisible.value = false
+    batchPreview.value = null
+    Message.success(t('admin.publicAIFeature.batchSuccess', { count: result.updated }))
+    await loadFeatures()
+  } catch (e) {
+    Message.error(getErrorMessage(e, t('admin.publicAIFeature.batchFailed')))
+  } finally {
+    batchSubmitting.value = false
+  }
+}
+
 onMounted(() => {
   loadFeatures()
   loadAllModels()
@@ -156,9 +266,17 @@ onMounted(() => {
   <div class="p-6">
     <div class="flex items-center justify-between mb-4">
       <h1 class="text-2xl font-bold">{{ t('admin.publicAIFeature.title') }}</h1>
-      <select v-model="categoryFilter" class="border rounded px-3 py-2 text-sm">
-        <option v-for="c in categories" :key="c.value" :value="c.value">{{ c.label }}</option>
-      </select>
+      <div class="flex items-center gap-2">
+        <button
+          class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+          @click="openBatchModal"
+        >
+          {{ t('admin.publicAIFeature.batchBindBtn') }}
+        </button>
+        <select v-model="categoryFilter" class="border rounded px-3 py-2 text-sm">
+          <option v-for="c in categories" :key="c.value" :value="c.value">{{ c.label }}</option>
+        </select>
+      </div>
     </div>
 
     <p class="text-gray-600 mb-6 text-sm">{{ t('admin.publicAIFeature.description') }}</p>
@@ -207,7 +325,7 @@ onMounted(() => {
     </div>
 
     <!-- 编辑弹层 -->
-    <div v-if="editingKey" class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50" @click.self="cancelEdit">
+    <div v-if="editingKey" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="cancelEdit">
       <div class="bg-white rounded-lg p-6 w-[480px]">
         <h2 class="text-xl font-bold mb-4">{{ t('admin.publicAIFeature.edit') }}</h2>
         <div class="space-y-4">
@@ -263,6 +381,103 @@ onMounted(() => {
           <button class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                   :disabled="saving" @click="saveFeature">
             {{ saving ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 一键配置弹层：按模型类型批量绑定目标模型 -->
+    <div v-if="batchModalVisible" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="batchModalVisible = false">
+      <div class="bg-white rounded-lg p-6 w-[620px] max-h-[85vh] overflow-y-auto">
+        <h2 class="text-xl font-bold mb-1">{{ t('admin.publicAIFeature.batchBindBtn') }}</h2>
+        <p class="text-sm text-gray-500 mb-4">{{ t('admin.publicAIFeature.batchBindDesc') }}</p>
+
+        <div class="space-y-4">
+          <!-- 模型类型 -->
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ t('admin.publicAIFeature.modelTypeLabel') }}</label>
+            <select
+              v-model="batchForm.model_type"
+              class="w-full border rounded px-3 py-2"
+              @change="handleBatchTypeChange(batchForm.model_type)"
+            >
+              <option v-for="type in BATCH_TYPE_OPTIONS" :key="type" :value="type">{{ modelTypeLabel(type) }}</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">{{ t('admin.publicAIFeature.batchTypeHint') }}</p>
+          </div>
+          <!-- 目标模型（模型池按类型过滤） -->
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ t('admin.publicAIFeature.batchTargetModel') }}</label>
+            <select
+              v-model="batchForm.model_config_id"
+              class="w-full border rounded px-3 py-2"
+              @change="handleBatchModelChange"
+            >
+              <option value="">{{ t('admin.publicAIFeature.batchModelPlaceholder') }}</option>
+              <option v-for="m in batchModels" :key="m.id" :value="m.id">{{ m.label }}</option>
+            </select>
+            <div class="flex items-center gap-2 mt-2">
+              <button
+                class="px-3 py-1.5 text-sm border border-blue-600 text-blue-600 rounded hover:bg-blue-50 disabled:opacity-50"
+                :disabled="batchPreviewing || !batchForm.model_config_id"
+                @click="loadBatchPreview"
+              >
+                {{ batchPreviewing ? t('admin.publicAIFeature.batchPreviewing') : t('admin.publicAIFeature.batchPreviewBtn') }}
+              </button>
+            </div>
+          </div>
+          <!-- 回退档位（可选一并调整） -->
+          <div>
+            <label class="block text-sm font-medium mb-1">{{ t('admin.publicAIFeature.fallbackTier') }}</label>
+            <select v-model="batchForm.fallback_tier" class="w-full border rounded px-3 py-2">
+              <option v-for="tier in fallbackTiers" :key="tier.value" :value="tier.value">{{ tier.label }}</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">{{ t('admin.publicAIFeature.batchTierHint') }}</p>
+          </div>
+
+          <!-- 受影响功能清单预览 -->
+          <div v-if="batchPreview" class="border rounded-lg bg-gray-50 p-3">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium">{{ t('admin.publicAIFeature.batchAffectedTitle', { count: batchPreview.items.length }) }}</span>
+              <span v-if="batchPreview.skipped > 0" class="text-xs text-gray-400">
+                {{ t('admin.publicAIFeature.batchSkipped', { count: batchPreview.skipped }) }}
+              </span>
+            </div>
+            <div class="max-h-48 overflow-y-auto border rounded bg-white">
+              <table class="w-full text-xs">
+                <thead class="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th class="text-left px-2 py-1.5 font-medium text-gray-500">{{ t('admin.publicAIFeature.columns.name') }}</th>
+                    <th class="text-left px-2 py-1.5 font-medium text-gray-500">{{ t('admin.publicAIFeature.featureKeyLabel') }}</th>
+                    <th class="text-left px-2 py-1.5 font-medium text-gray-500">{{ t('admin.publicAIFeature.fallbackTier') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="item in batchPreview.items" :key="item.feature_key" class="border-t border-gray-100">
+                    <td class="px-2 py-1.5">{{ item.feature_name }}</td>
+                    <td class="px-2 py-1.5 font-mono text-gray-400">{{ item.feature_key }}</td>
+                    <td class="px-2 py-1.5">{{ tierLabel(item.fallback_tier) }}</td>
+                  </tr>
+                  <tr v-if="batchPreview.items.length === 0">
+                    <td colspan="3" class="px-2 py-3 text-center text-gray-400">{{ t('admin.publicAIFeature.batchNoAffected') }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-if="batchPreview.model" class="text-xs text-gray-400 mt-2">
+              {{ t('admin.publicAIFeature.batchTargetSummary', { model: batchPreview.model.provider + ' / ' + batchPreview.model.model_name }) }}
+            </p>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-3 mt-6">
+          <button class="px-4 py-2 border rounded hover:bg-gray-50" @click="batchModalVisible = false">{{ t('common.cancel') }}</button>
+          <button
+            class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            :disabled="batchSubmitting || !batchForm.model_config_id"
+            @click="confirmBatchBind"
+          >
+            {{ batchSubmitting ? t('common.saving') : t('admin.publicAIFeature.batchBindBtn') }}
           </button>
         </div>
       </div>

@@ -32,7 +32,7 @@ class RecycleBinItemSchema(Schema):
     expire_at = fields.Integer(allow_none=True)
     status = fields.String()
     remark = fields.String()
-    # 本机文件（os_file）删除时的设备信息（IP + 系统用户名），用于跨设备恢复提示
+    # 本地文件（os_file）删除时的设备信息（IP + 系统用户名），用于跨设备恢复提示
     device_info = fields.Dict(allow_none=True)
 
     @pre_dump

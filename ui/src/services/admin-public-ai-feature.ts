@@ -1,5 +1,5 @@
 // ui/src/services/admin-public-ai-feature.ts
-import { get, patch } from '@/utils/request'
+import { get, patch, post } from '@/utils/request'
 
 export interface PublicAIFeature {
   feature_key: string
@@ -71,5 +71,48 @@ export async function listAvailableModels(modelType?: string): Promise<Available
     params.model_type = modelType
   }
   const res = await get<Envelope<AvailableModelsResponse>>('/admin/public-ai-features/models', { params })
+  return res.data
+}
+
+export interface BatchBindResultItem {
+  feature_key: string
+  feature_name: string
+  feature_category: string
+  model_type: string
+  model_config_id: string | null
+  fallback_tier: string
+  enabled: boolean
+}
+
+export interface BatchBindModelInfo {
+  id: string
+  provider: string
+  model_name: string
+  model_type: string
+  tier: string
+}
+
+export interface BatchBindResult {
+  updated: number
+  skipped: number
+  items: BatchBindResultItem[]
+  model: BatchBindModelInfo
+}
+
+export type BatchBindPayload = {
+  model_type?: string
+  model_config_id: string
+  fallback_tier?: string
+}
+
+/** 预览一键配置：返回将受影响的功能清单（不写库）。 */
+export async function previewBatchBind(payload: BatchBindPayload): Promise<BatchBindResult> {
+  const res = await post<Envelope<BatchBindResult>>('/admin/public-ai-features/batch-bind/preview', { body: payload })
+  return res.data
+}
+
+/** 一键配置：把某模型类型下所有启用的功能批量绑定到目标模型。 */
+export async function batchBind(payload: BatchBindPayload): Promise<BatchBindResult> {
+  const res = await post<Envelope<BatchBindResult>>('/admin/public-ai-features/batch-bind', { body: payload })
   return res.data
 }

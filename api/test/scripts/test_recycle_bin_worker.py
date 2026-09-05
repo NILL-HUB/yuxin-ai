@@ -137,6 +137,33 @@ def test_purge_recycle_removes_expired_entries(tmp_path, monkeypatch):
     assert _list_recycle({"safe_root": str(tmp_path)})["count"] == 1
 
 
+def test_purge_recycle_precise_by_entry_id(tmp_path, monkeypatch):
+    """平台回收站到期销毁应能按 entry_id 精确清理，不影响其他条目（含未到期）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    first = tmp_path / "a.txt"
+    second = tmp_path / "b.txt"
+    first.write_text("a", encoding="utf-8")
+    second.write_text("b", encoding="utf-8")
+
+    deleted = _safe_delete(_delete_payload(tmp_path, [str(first), str(second)], retention_days=30))
+    entries = _read_recycle_manifest(str(tmp_path))
+    target_entry = next(e for e in entries if e["original_path"] == str(first))
+
+    purged = _purge_recycle(
+        {"safe_root": str(tmp_path), "entry_id": target_entry["entry_id"]}
+    )
+
+    assert purged["ok"] is True
+    assert len(purged["purged"]) == 1
+    assert purged["purged"][0]["original_path"] == str(first)
+    assert first.exists() is False
+    # 未指定条目的文件仍在（即使未到期也保留）
+    assert second.exists() is False
+    recycle_file = list((tmp_path / ".yuxin_ai_recycle").rglob("b.txt"))
+    assert len(recycle_file) == 1
+    assert _list_recycle({"safe_root": str(tmp_path)})["count"] == 1
+
+
 def test_delete_records_device_info(tmp_path, monkeypatch):
     """删除清单条目应记录设备信息（名称取系统用户名，IP 支持环境变量覆盖）。"""
     monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))

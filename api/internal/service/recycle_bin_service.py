@@ -261,6 +261,16 @@ class RecycleBinService:
         if str(item.deleted_by) != str(account_id):
             raise ForbiddenException("无权限操作该回收站条目")
 
+    def _check_expire_deadline(self, item: RecycleBin) -> None:
+        """已到留存期截止（expire_at <= now）的 pending 条目禁止恢复。
+
+        即使 celery 定时任务尚未将其标记为 expired，到期即视为不可恢复，
+        避免"状态显示已到期但仍可恢复"的语义错位。
+        """
+        if item.status == "pending" and item.expire_at is not None:
+            if item.expire_at <= _utcnow_naive():
+                raise ValidateErrorException("该条目已到留存期，即将销毁，不能恢复")
+
     def restore_item(self, item_id: int, admin_user_id=None, operator_type: str = "admin") -> RecycleBin:
         """恢复回收站条目（按快照重建原表记录）。
 
@@ -270,6 +280,7 @@ class RecycleBinService:
         item = self.get_item(item_id)
         if item.status != "pending":
             raise ValidateErrorException("该条目已恢复或已销毁，不能重复恢复")
+        self._check_expire_deadline(item)
         ok = restore_resource(item.resource_type, item.snapshot)
         if not ok:
             raise ValidateErrorException("恢复失败：目标资源已存在或系统提示词库不存在")
@@ -349,6 +360,7 @@ class RecycleBinService:
         self._check_user_owned(item, account_id)
         if item.status != "pending":
             raise ValidateErrorException("该条目已恢复或已销毁，不能重复恢复")
+        self._check_expire_deadline(item)
         if item.resource_type == "os_file":
             ok = restore_resource(
                 item.resource_type,
@@ -453,10 +465,41 @@ class RecycleBinService:
             logger.info("本机文件回收站记录已标记恢复 count=%s", len(rows))
         return len(rows)
 
+    def cleanup_expired_records(
+        self,
+        *,
+        account_id=None,
+        resource_type: str | None = None,
+        deleted_by_type: str | None = None,
+    ) -> int:
+        """物理移除已销毁（expired）的回收站记录，终止无限堆积。
+
+        仅清理 ``status == "expired"`` 的记录行——对应底层文件/存储对象已在
+        过期销毁阶段物理清除，删除记录不会造成数据丢失，也不影响可恢复条目。
+        ``account_id`` 非空时仅清理该账号归属的条目（用户端回收站）。
+        """
+        query = db.session.query(RecycleBin).filter(RecycleBin.status == "expired")
+        if account_id is not None:
+            query = query.filter(
+                RecycleBin.deleted_by == str(account_id),
+                RecycleBin.deleted_by_type.in_(("user", "agent")),
+                RecycleBin.resource_type.in_(self.USER_VISIBLE_RESOURCE_TYPES),
+            )
+        if resource_type:
+            query = query.filter(RecycleBin.resource_type == resource_type)
+        if deleted_by_type:
+            query = query.filter(RecycleBin.deleted_by_type == deleted_by_type)
+        count = query.delete(synchronize_session=False)
+        if count:
+            db.session.commit()
+        logger.info("回收站已清理已销毁记录 count=%s account=%s", count, account_id)
+        return count
+
     def purge_expired(self) -> dict:
         """扫描到期条目并彻底销毁（celery 定时任务调用）。
 
-        只标记 expired，不做物理清理——资源记录在入站时已物理删除。
+        逐个调用 ``purge_resource`` 做物理清尾（存储文件/向量/DB 残留）；
+        成功才标记 ``expired``，失败保持 ``pending`` 并记录失败原因，待下次重试。
         """
         now = _utcnow_naive()
         expired = (

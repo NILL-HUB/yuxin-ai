@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { listRecycleBin, restoreRecycleBinItem } from '@/services/admin-recycle-bin'
+import { listRecycleBin, restoreRecycleBinItem, cleanupExpiredRecycleBin } from '@/services/admin-recycle-bin'
 import type { RecycleBinItem } from '@/models/recycle-bin'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
@@ -12,15 +12,18 @@ const adminStore = useAdminStore()
 
 const loading = ref(false)
 const restoringId = ref<number | null>(null)
+const cleaning = ref(false)
 const items = ref<RecycleBinItem[]>([])
 const totalRecord = ref(0)
 const searchWord = ref('')
 const resourceTypeFilter = ref('')
 const deletedByTypeFilter = ref('admin')
+const statusFilter = ref('pending')
 const currentPage = ref(1)
 const pageSize = ref(20)
 
 const canRestore = computed(() => adminStore.hasPermission('recycle_bin:write'))
+const canCleanExpired = computed(() => adminStore.hasPermission('recycle_bin:write'))
 
 const RESOURCE_TYPE_COLORS: Record<string, string> = {
   knowledge_base: 'arcoblue',
@@ -58,6 +61,13 @@ const sourceFilterOptions = computed(() => [
   { label: t('admin.recycleBin.deletedByTypes.agent'), value: 'agent' },
 ])
 
+const statusFilterOptions = computed(() => [
+  { label: t('admin.recycleBin.statusFilter.all'), value: '' },
+  { label: t('admin.recycleBin.statusFilter.pending'), value: 'pending' },
+  { label: t('admin.recycleBin.statusFilter.expired'), value: 'expired' },
+  { label: t('admin.recycleBin.statusFilter.restored'), value: 'restored' },
+])
+
 const resourceTypeOptions = computed(() => [
   { label: t('admin.recycleBin.filterAll'), value: '' },
   { label: t('admin.recycleBin.resourceTypes.knowledge_base'), value: 'knowledge_base' },
@@ -79,7 +89,8 @@ const resourceTypeOptions = computed(() => [
 const hasActiveFilters = computed(() =>
   Boolean(searchWord.value.trim()) ||
   Boolean(resourceTypeFilter.value) ||
-  Boolean(deletedByTypeFilter.value),
+  Boolean(deletedByTypeFilter.value) ||
+  Boolean(statusFilter.value),
 )
 const emptyDescription = computed(() =>
   hasActiveFilters.value
@@ -100,10 +111,15 @@ const getSourceLabel = (source: string) => {
 }
 
 /**
- * 状态列展示：待销毁(pending) 改为相对时间"X天后销毁"，
- * 其余状态沿用固定标签。
+ * 是否已到留存期（剩余天数为 0 及以下）。已到期待销毁，不可恢复。
  */
+const isExpired = (record: RecycleBinItem) =>
+  record.status === 'pending' &&
+  !!record.expire_at &&
+  record.expire_at * 1000 - Date.now() <= 0
+
 const getStatusLabel = (record: RecycleBinItem) => {
+  if (isExpired(record)) return t('admin.recycleBin.destroyNow')
   if (record.status === 'pending' && record.expire_at) {
     const remainDays = Math.ceil((record.expire_at * 1000 - Date.now()) / 86400000)
     if (remainDays <= 0) return t('admin.recycleBin.destroyNow')
@@ -115,8 +131,9 @@ const getStatusLabel = (record: RecycleBinItem) => {
 }
 
 const getStatusColor = (record: RecycleBinItem) => {
+  if (isExpired(record)) return 'red'
   if (record.status === 'pending' && record.expire_at) {
-    return record.expire_at * 1000 - Date.now() <= 0 ? 'red' : STATUS_COLORS.pending
+    return STATUS_COLORS.pending
   }
   return STATUS_COLORS[record.status] || 'gray'
 }
@@ -140,7 +157,7 @@ const loadList = async () => {
       page_size: pageSize.value,
       resource_type: resourceTypeFilter.value || undefined,
       deleted_by_type: deletedByTypeFilter.value || undefined,
-      status: 'pending',
+      status: statusFilter.value || undefined,
       search_word: searchWord.value.trim(),
     })
     items.value = result.items || []
@@ -188,6 +205,29 @@ const openRestoreModal = (item: RecycleBinItem) => {
   restoreTarget.value = item
 }
 
+const cleanModalVisible = ref(false)
+const openCleanModal = () => {
+  cleanModalVisible.value = true
+}
+
+const handleCleanExpired = async () => {
+  cleaning.value = true
+  try {
+    const count = await cleanupExpiredRecycleBin()
+    cleanModalVisible.value = false
+    if (count > 0) {
+      Message.success(t('admin.recycleBin.cleanExpiredSuccess', { count }))
+    } else {
+      Message.info(t('admin.recycleBin.cleanExpiredEmpty'))
+    }
+    await loadList()
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.recycleBin.cleanExpiredFailed')))
+  } finally {
+    cleaning.value = false
+  }
+}
+
 onMounted(() => {
   void loadList()
 })
@@ -218,6 +258,12 @@ onMounted(() => {
           allow-clear
           @change="handleSearch"
         />
+        <a-select
+          v-model="statusFilter"
+          class="w-36"
+          :options="statusFilterOptions"
+          @change="handleSearch"
+        />
         <a-input
           v-model="searchWord"
           class="w-full sm:w-[240px]"
@@ -231,6 +277,9 @@ onMounted(() => {
         </a-button>
         <a-button :loading="loading" @click="loadList">
           {{ t('common.actions.refresh') }}
+        </a-button>
+        <a-button v-if="canCleanExpired" type="danger" status="danger" :loading="cleaning" @click="openCleanModal">
+          {{ t('admin.recycleBin.cleanExpiredBtn') }}
         </a-button>
       </div>
     </section>
@@ -295,7 +344,7 @@ onMounted(() => {
         <a-table-column :title="t('admin.recycleBin.columns.actions')" :width="100" fixed="right">
           <template #cell="{ record }">
             <a-button
-              v-if="canRestore && record.status === 'pending'"
+              v-if="canRestore && record.status === 'pending' && !isExpired(record)"
               size="mini"
               type="outline"
               :loading="restoringId === record.id"
@@ -353,6 +402,19 @@ onMounted(() => {
           </a-tag>
         </div>
       </div>
+    </a-modal>
+
+    <!-- 清理已销毁记录确认弹窗 -->
+    <a-modal
+      :visible="cleanModalVisible"
+      :title="t('admin.recycleBin.cleanExpiredBtn')"
+      :confirm-loading="cleaning"
+      :ok-text="t('admin.recycleBin.cleanExpiredBtn')"
+      :cancel-text="t('common.actions.cancel')"
+      @ok="handleCleanExpired"
+      @cancel="cleanModalVisible = false"
+    >
+      <p class="text-sm text-slate-500">{{ t('admin.recycleBin.cleanExpiredConfirm') }}</p>
     </a-modal>
   </section>
 </template>

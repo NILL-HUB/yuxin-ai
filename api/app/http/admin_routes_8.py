@@ -219,6 +219,155 @@ def _update_public_ai_feature(feature_key, payload):
         return record
 
 
+# 模型池类型别名映射：功能的 model_type 与模型池类型存在历史别名差异，
+# 用于批量绑定/预览时把"可选模型"与"目标功能"按同族对齐，防止类型错配。
+_MODEL_TYPE_ALIASES = {
+    "image": {"image", "image_generation", "text_to_image"},
+    "audio": {"audio", "speech_to_text", "tts", "asr"},
+}
+
+
+def _is_model_type_compatible(feature_type: str, model_type: str) -> bool:
+    """判断目标模型的 model_type 是否可用于该功能类型（含别名同族判定）。"""
+    normalized_feature_type = (feature_type or "chat").strip().lower()
+    normalized_model_type = (model_type or "").strip().lower()
+    if not normalized_model_type:
+        return False
+    if normalized_model_type == normalized_feature_type:
+        return True
+    family = _MODEL_TYPE_ALIASES.get(normalized_feature_type)
+    if family is not None:
+        return normalized_model_type in family
+    family = _MODEL_TYPE_ALIASES.get(normalized_model_type)
+    if family is not None:
+        return normalized_feature_type in family
+    return False
+
+
+def _resolve_target_model(model_config_id: str) -> dict:
+    """解析目标模型配置并返回字段快照（不存在/非 active 时抛 FailException）。
+
+    返回 dict 而非 ORM 实例：调用方可能在退出 app_context 后继续使用其字段，
+    避免 DetachedInstanceError / session 关闭导致的运行时 500。
+    """
+    from app.http import asgi_app as a
+    from internal.exception import FailException
+    from internal.extension.database_extension import db
+    from internal.model.model_pool_entity import ModelPoolConfig
+
+    with a.flask_app.app_context():
+        model = db.session.query(ModelPoolConfig).filter_by(id=model_config_id).first()
+        if model is None:
+            raise FailException(f"模型配置不存在: {model_config_id}")
+        if model.status != "active":
+            raise FailException(f"模型未启用，无法批量绑定: {model.provider}/{model.model_name}")
+        return {
+            "id": str(model.id),
+            "provider": model.provider,
+            "model_name": model.model_name,
+            "model_type": model.model_type,
+            "tier": model.tier,
+            "status": model.status,
+        }
+
+
+def _batch_bind_feature_model(_model_type, model_config_id, fallback_tier=""):
+    """把某模型类型下所有启用的公共 AI 功能批量绑定到目标模型。
+
+    返回统计与受影响功能明细：
+        {"updated": int, "skipped": int, "items": [{feature_key, feature_name, ...}]}
+    类型错配的功能会跳过并计入 skipped；目标模型不存在/未启用时抛 FailException。
+    """
+    from app.http import asgi_app as a
+    from internal.extension.database_extension import db
+    from internal.model import PublicAIFeatureConfig
+
+    model = _resolve_target_model(model_config_id)
+    target_model_type = model["model_type"]
+    updated = 0
+    skipped = 0
+    items = []
+    with a.flask_app.app_context():
+        records = (
+            db.session.query(PublicAIFeatureConfig)
+            .filter(PublicAIFeatureConfig.enabled.is_(True))
+            .order_by(
+                PublicAIFeatureConfig.feature_category.asc(),
+                PublicAIFeatureConfig.feature_key.asc(),
+            )
+            .all()
+        )
+        for record in records:
+            if not _is_model_type_compatible(record.model_type, target_model_type):
+                skipped += 1
+                continue
+            changed = False
+            if record.model_config_id != model_config_id:
+                record.model_config_id = model_config_id
+                changed = True
+            if fallback_tier and record.fallback_tier != fallback_tier:
+                record.fallback_tier = fallback_tier
+                changed = True
+            items.append(
+                {
+                    "feature_key": record.feature_key,
+                    "feature_name": record.feature_name,
+                    "feature_category": record.feature_category,
+                    "model_type": record.model_type,
+                    "model_config_id": str(record.model_config_id) if record.model_config_id else None,
+                    "fallback_tier": record.fallback_tier,
+                    "enabled": record.enabled,
+                }
+            )
+            if changed:
+                updated += 1
+        db.session.commit()
+    return {"updated": updated, "skipped": skipped, "items": items, "model": model}
+
+
+def _preview_batch_bind_feature_model(_model_type, model_config_id):
+    """预览批量绑定将影响的功能（不做任何写操作）。
+
+    返回与 ``_batch_bind_feature_model`` 相同结构，updated/skipped 为预估结果。
+    """
+    from app.http import asgi_app as a
+    from internal.extension.database_extension import db
+    from internal.model import PublicAIFeatureConfig
+
+    model = _resolve_target_model(model_config_id)
+    target_model_type = model["model_type"]
+    updated = 0
+    skipped = 0
+    items = []
+    with a.flask_app.app_context():
+        records = (
+            db.session.query(PublicAIFeatureConfig)
+            .filter(PublicAIFeatureConfig.enabled.is_(True))
+            .order_by(
+                PublicAIFeatureConfig.feature_category.asc(),
+                PublicAIFeatureConfig.feature_key.asc(),
+            )
+            .all()
+        )
+        for record in records:
+            if not _is_model_type_compatible(record.model_type, target_model_type):
+                skipped += 1
+                continue
+            updated += 1
+            items.append(
+                {
+                    "feature_key": record.feature_key,
+                    "feature_name": record.feature_name,
+                    "feature_category": record.feature_category,
+                    "model_type": record.model_type,
+                    "model_config_id": str(record.model_config_id) if record.model_config_id else None,
+                    "fallback_tier": record.fallback_tier,
+                    "enabled": record.enabled,
+                }
+            )
+    return {"updated": updated, "skipped": skipped, "items": items, "model": model}
+
+
 def register_routes(quart_app):
     """把批次 8 的 Admin 端点注册到 quart_app（幂等，重复调用直接返回）。"""
     global _registered
@@ -544,6 +693,57 @@ def register_routes(quart_app):
             return a._json_resp(code="fail", message=str(exc), status=400)
         return a._ok(PublicAIFeatureItemSchema().dump(record))
 
+    @quart_app.post("/admin/public-ai-features/batch-bind/preview")
+    async def admin_public_ai_feature_batch_bind_preview():
+        """预览批量绑定：返回将受影响的功能清单（不写库）。"""
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.exception import FailException
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        model_config_id = str(payload.get("model_config_id") or "").strip()
+        if not model_config_id:
+            return a._json_resp(code="validate_error", message="model_config_id 不能为空", status=400)
+        try:
+            result = await a._to_thread(
+                _preview_batch_bind_feature_model,
+                str(payload.get("model_type") or "").strip() or None,
+                model_config_id,
+            )
+        except FailException as exc:
+            return a._json_resp(code="fail", message=str(exc), status=400)
+        return a._ok(result)
+
+    @quart_app.post("/admin/public-ai-features/batch-bind")
+    async def admin_public_ai_feature_batch_bind():
+        """一键配置：把某模型类型下所有启用的公共 AI 功能批量绑定到目标模型。"""
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.exception import FailException
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        model_config_id = str(payload.get("model_config_id") or "").strip()
+        if not model_config_id:
+            return a._json_resp(code="validate_error", message="model_config_id 不能为空", status=400)
+        try:
+            result = await a._to_thread(
+                _batch_bind_feature_model,
+                str(payload.get("model_type") or "").strip() or None,
+                model_config_id,
+                str(payload.get("fallback_tier") or "").strip(),
+            )
+        except FailException as exc:
+            return a._json_resp(code="fail", message=str(exc), status=400)
+        return a._ok(result)
+
     # ------------------------------------------------------------------
     # admin_app_assignment_handler -> AdminAppAssignmentService
     # ------------------------------------------------------------------
@@ -800,7 +1000,8 @@ def register_routes(quart_app):
             page=_int_arg("page", 1),
             page_size=_int_arg("page_size", 20),
             resource_type=request.args.get("resource_type") or None,
-            status=request.args.get("status") or "pending",
+            # 空串/缺省表示全部状态；显式传 pending/expired/restored 过滤
+            status=(request.args.get("status") or "").strip() or None,
             search_word=request.args.get("search_word") or "",
             # 隔离策略：admin 回收站默认只展示 admin 删除的系统资源，
             # 与用户回收站（user/agent）互不混用；显式传参可覆盖
@@ -825,6 +1026,29 @@ def register_routes(quart_app):
         except NotFoundException as exc:
             return a._json_resp(code="not_found", message=str(exc), status=404)
         return a._ok(RecycleBinDetailSchema().dump(item))
+
+    @quart_app.delete("/admin/recycle-bin/expired")
+    async def admin_recycle_bin_cleanup_expired():
+        """一键清理所有已销毁（expired）的回收站记录，终止无限堆积。"""
+        from app.http import asgi_app as a
+
+        operator, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from quart import request
+
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        payload = {}
+        raw_body = await request.get_json(silent=True)
+        if isinstance(raw_body, dict):
+            payload = raw_body
+        count = await a._to_thread(
+            a._get_service(RecycleBinService).cleanup_expired_records,
+            deleted_by_type=payload.get("deleted_by_type") or None,
+        )
+        return a._ok({"cleaned": count})
 
     @quart_app.post("/admin/recycle-bin/<int:item_id>/restore")
     async def admin_recycle_bin_restore(item_id):
@@ -951,10 +1175,9 @@ def register_routes(quart_app):
         )
 
         if code in AUTH_CODES:
-            flags = await a._to_thread(
-                a._get_service(OrchestrationFeatureFlagService).list_flags
-            )
-            switches = {flag["code"]: bool(flag["enabled"]) for flag in flags}
+            from internal.service.auth_switch_service import get_auth_switches
+
+            switches = await a._to_thread(get_auth_switches)
             switches[code] = enabled
             err = validate_auth_switch_combination(switches)
             if err is not None:

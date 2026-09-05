@@ -1,8 +1,7 @@
-import { get, post } from '@/utils/request'
+import { del, get, post } from '@/utils/request'
 import type { BaseResponse } from '@/models/base'
 import type {
   GetRecycleBinRequest,
-  RecycleBinDetailResponse,
   RecycleBinPageData,
   RecycleBinPageResponse,
 } from '@/models/recycle-bin'
@@ -22,4 +21,12 @@ export const listRecycleBin = async (
  */
 export const restoreRecycleBinItem = async (id: number): Promise<void> => {
   await post<BaseResponse<unknown>>(`/admin/recycle-bin/${id}/restore`)
+}
+
+/**
+ * 一键清理所有已销毁（expired）的回收站记录，终止无限堆积。
+ */
+export const cleanupExpiredRecycleBin = async (): Promise<number> => {
+  const response = await del<BaseResponse<{ cleaned: number }>>('/admin/recycle-bin/expired')
+  return response.data?.cleaned ?? 0
 }

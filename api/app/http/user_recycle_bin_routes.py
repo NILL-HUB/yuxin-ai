@@ -50,7 +50,8 @@ def register_routes(quart_app):
             page=_int_arg("page", 1),
             page_size=_int_arg("page_size", 20),
             resource_type=request.args.get("resource_type") or None,
-            status=request.args.get("status") or "pending",
+            # 空串/缺省表示全部状态；显式传 pending/expired/restored 过滤
+            status=(request.args.get("status") or "").strip() or None,
             search_word=request.args.get("search_word") or "",
             deleted_by_type=request.args.get("deleted_by_type") or None,
         )
@@ -74,6 +75,23 @@ def register_routes(quart_app):
         except (NotFoundException, ForbiddenException) as exc:
             return a._json_resp(code="not_found", message=str(exc), status=404)
         return a._ok(RecycleBinDetailSchema().dump(item))
+
+    @quart_app.delete("/space/recycle-bin/expired")
+    async def user_recycle_bin_cleanup_expired():
+        """一键清理当前账号已销毁（expired）的回收站记录，终止无限堆积。"""
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        count = await a._to_thread(
+            a._get_service(RecycleBinService).cleanup_expired_records,
+            account_id=account.id,
+        )
+        return a._ok({"cleaned": count})
 
     @quart_app.post("/space/recycle-bin/<int:item_id>/restore")
     async def user_recycle_bin_restore(item_id):
