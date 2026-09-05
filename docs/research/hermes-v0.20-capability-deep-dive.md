@@ -363,7 +363,7 @@
 | 首页助手（多轮、推荐问题、图片上传、语音输入、流式 SSE） | ✅ | `api/internal/service/assistant_agent_service.py`、`ui/src/views/pages/HomeView.vue` |
 | 首页介绍缓存/预热 | ✅ | `_schedule_introduction_prewarm`、Redis 1h TTL |
 | 应用工作台（草稿/发布/版本/对比/调试） | ✅ | `api/internal/service/app_config_service.py`、`app_debug_service.py`、`ui/src/views/space/apps/*` |
-| 可视化工作流 | ✅ | `api/internal/service/dag_engine_service.py`、`workflow_service.py`、Vue Flow |
+| 可视化工作流 | ✅ | `api/internal/core/workflow/graph_engine.py`、`workflow_service.py`、Vue Flow |
 | 商店（App/Tool/MCP/Skill/Workflow） | ✅ | `ui/src/views/store/*`、`ui/src/views/admin/Store*` |
 | OpenAPI 交付 + API Key | ✅ | `api/internal/service/openapi_service.py`、`api_key_service.py`、`ui/src/views/openapi/*` |
 | WebApp 免登录入口（token + visitor_id） | ✅ | `api/internal/service/web_app_service.py`、`ui/src/utils/visitor.ts` |
@@ -490,7 +490,7 @@
 
 ### 2.9 工作流
 
-- `dag_engine_service.py` + `workflow_service.py` + `workflow_run_service.py`：DAG 执行、运行记录、
+- `graph_engine.py` + `workflow_service.py` + `workflow_run_service.py`：DAG 执行、运行记录、
   节点执行记录、回放。
 - 节点：Start、End、LLM、Tool、DatasetRetrieval、Code、HttpRequest、IfElse、TemplateTransform、
   TextProcessor、VariableAssigner、ParameterExtractor。

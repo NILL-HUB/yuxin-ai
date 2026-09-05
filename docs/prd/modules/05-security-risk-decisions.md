@@ -37,6 +37,14 @@
 - 需要管理员授权。
 - 必要时需要二次确认。
 
+**实现锚点（与上述要求一致，已真实落地）**：
+
+- 高风险/危险工具登记表：`api/internal/core/agent/entities/tool_policy_entity.py` 的 `ToolPolicy`，`_DEFAULT_HIGH_RISK_TOOL_NAMES` 含 `send_email` / `send_sms` / `execute_sql` / `deploy_application` / `delete_resource` / `modify_billing` / `transfer_funds` / `run_os_task` / `os_file_task` / `execute_code` / `browser_action` / `computer_action`；`_DEFAULT_DANGEROUS_TOOL_NAMES` 含 `drop_table` / `format_disk` / `execute_shell`（危险工具始终拒绝，危险/高风险名单经 `_normalize_tool_name` 规范化后匹配，注入改写无法绕过）。
+- 确认记录模型与读写：`api/internal/model/tool_confirmation.py`（`ToolConfirmation`，pending/confirmed/cancelled 状态）+ `ToolConfirmationService`（`api/internal/service/tool_confirmation_service.py`）落库确认记录并联动 `ToolInvocationAuditService` 审计。
+- 确认阻塞机制：`function_call_agent.py` 的 `_create_tool_confirmation` 创建 pending 确认，`_wait_for_confirmation` 挂起等待用户确认卡片选择，超时按安全默认取消；未确认前不执行，确认机制创建失败时阻止执行。
+- Prompt 注入检测：`api/internal/security/prompt_injection_detector.py`（`PromptInjectionDetector`，含系统指令覆写/角色扮演/分隔符绕过/编码绕过/越狱等模式），由 `ToolInvokerService._security_error` 在调用前检测，高严重度注入返回 `prompt_injection_detected` 拒绝执行。
+- 管理端 RBAC 边界：见 `docs/rbac.md` 与 `api/internal/core/rbac.py`（`PERMISSION_CATALOG` / `DEFAULT_ROLES`），所有 `/admin/*` 请求经 RBAC 门禁，未登记路径默认拒绝（fail closed）。
+
 
 
 ## 21. 关键风险与应对
@@ -58,17 +66,36 @@
 
 每个阶段都必须通过开关控制。
 
-建议开关：
+### 22.1 编排 Feature Flag
+
+真实开关以代码实现为准，编排域开关统一持久化在 `orchestration_feature_flag` 表，单一事实源见 `api/internal/entity/orchestration_feature_flag_entity.py` 的 `ORCHESTRATION_FEATURE_FLAG_CODES`（14 个编排开关）与 `get_default_orchestration_feature_flags()`（含各开关默认值、风险等级、回退行为）。核心编排开关：
 
 | 开关 | 作用 |
 | --- | --- |
-| ENABLE_ORCHESTRATOR | 是否启用 Orchestrator |
-| ENABLE_AGENT_METADATA_ROUTING | 是否启用元数据路由 |
-| ENABLE_TOOL_POOL_RETRIEVAL | 是否启用动态工具池检索 |
-| ENABLE_COST_MODEL_ROUTING | 是否启用成本模型路由 |
-| ENABLE_MULTI_AGENT_EXECUTION | 是否启用多 Agent 执行 |
-| ENABLE_RESULT_SYNTHESIZER | 是否启用显式汇总器 |
-| ENABLE_ROUTING_LOGS | 是否启用路由日志 |
+| ENABLE_ORCHESTRATOR | 是否启用 Orchestrator 路由（回退 `direct_answer`） |
+| ENABLE_AGENT_METADATA_ROUTING | 是否启用 Agent 元数据路由（回退 `skip_agent_subset`） |
+| ENABLE_TOOL_POOL_RETRIEVAL | 是否启用受治理的工具池检索（回退 `skip_tool_subset`） |
+| ENABLE_COST_MODEL_ROUTING | 是否启用成本模型路由（回退 `safe_cheap_policy`） |
+| ENABLE_MODEL_ASSIGNMENT_POLICY | 是否启用模型档位分配（回退 `default_tier`） |
+| ENABLE_MULTI_AGENT_EXECUTION | 是否允许多 Agent 计划与执行（回退 `single_or_direct`） |
+| ENABLE_RESULT_SYNTHESIZER | 是否启用结果汇总器（默认关闭，回退 `empty_summary`） |
+| ENABLE_ROUTING_LOGS | 是否生成路由日志载荷（回退 `skip_routing_log_payload`） |
+| ENABLE_AUTO_DEEP_THINKING | 是否用 LLM 意图识别自动触发深度思考（回退关键词+手动开关） |
+| ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY | 池治理阶段一：仅观测不阻断（默认开启） |
+| ENABLE_POOL_GOVERNANCE_BLOCK_SENSITIVE | 池治理阶段二：阻断 sensitive/dangerous 工具（默认关闭） |
+| ENABLE_POOL_GOVERNANCE_BLOCK_ALL | 池治理阶段三：全量治理过滤（默认关闭） |
+| ENABLE_CONDUCTOR | 是否由 LLM 指挥官替代规则编排（默认关闭，失败回退旧链路） |
+| ENABLE_DISTRIBUTION | 分销系统开关（默认关闭；开启=注册邀请码必填+佣金结算） |
+
+### 22.2 业务开关（AUTH_*，附加展示）
+
+认证通道开关复用 `orchestration_feature_flag` 表存储，读取与组合校验逻辑见 `api/internal/service/auth_switch_service.py`（`AUTH_CODES` + `DEFAULTS`）。`OrchestrationFeatureFlagService.list_flags()` 会把 `AUTH_CODES` 中的开关一并附加到列表（代码见 `api/internal/service/orchestration_feature_flag_service.py`），因此后台「编排控制」列表中可见：
+
+| 开关 | 作用 |
+| --- | --- |
+| AUTH_EMAIL_ENABLED | 邮箱登录注册通道（默认开启） |
+| AUTH_PHONE_ENABLED | 手机号登录注册通道（默认关闭） |
+| AUTH_LOGIN_CHALLENGE_ENABLED | 新 IP 登录二次验证（默认开启；需至少一个通道开启） |
 
 回滚原则：
 
@@ -150,7 +177,7 @@
 32. 创作门槛分层：L0 模板填充式是第一阶段主力路径（目标 80% 创作者），必须做到 5 分钟内完成创作并提交；L1 对话式/L2 可视化编排/L3 代码级为后续演进。
 33. 质量筛选以数据驱动为主、人工审核为辅：自动合规审核覆盖 100% 发布，质量分决定曝光等级联动，人工审核只覆盖高曝光（boosted）和被举报内容，预计人工审核量 < 5%。
 34. 分身调用计费：创作者在平台指导区间内定价，平台第一阶段抽成 20%，创作者获得 80%；防刷机制包括创作者自调不计收益、新账号调用不计收益、短时重复去重、异常互调检测。
-35. 用户创作入口独立为创作工作室 `/studio`，与配置中心 `/space/*` 完全分离，不共享路由和组件。
+35. 用户创作入口独立为创作工作室 `/studio`，与配置中心 `/space/*` 完全分离，不共享路由和组件。**（愿景设计，未实现）**：当前前端仅有 `ui/src/views/studio/StudioPlaceholderView.vue` 占位页（仅展示提示并引导跳转 `/store/public-apps`），尚未实现真正的创作工作室；与 04-social-creator.md 的共创分身体系同属远期路线（见 execution-roadmap.md P3 远期清单）。
 36. 分身发布后进入 `user_persona` Agent 子池，参与动态归集；池治理对分身有只读展示权，`exposure_level` 由资源运营管理，`risk_level` 由池治理管理，两者独立。
 37. 脑启发记忆系统（第 16 章）作为第 11.3.1 节"用户长期记忆库"的引擎层，两者是前后端关系：11.3.1 定义用户交互层（候选→确认→保存），第 16 章定义引擎层（评分→写入→巩固→检索）。
 38. 记忆系统引入 Neo4j（TKG）+ PostgreSQL pgvector（向量）+ MinIO（归档）+ Celery（定时巩固），与现有 PostgreSQL + Redis 共存，不替换现有知识库存储。

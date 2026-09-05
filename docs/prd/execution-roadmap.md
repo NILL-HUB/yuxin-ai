@@ -67,7 +67,7 @@
 
 ### 差异 5：ResultSynthesizerService 多 Agent 路径被绕过（✅ 已修复）
 
-多 Agent 路径已接入 `ResultSynthesizerService`，`synthesis_meta` 嵌入 SSE 推送。
+多 Agent 路径已接入 `ResultSynthesizerService`，`synthesis_meta` 嵌入 SSE 推送；`concat / summarize / best_of` 策略由服务统一处理（2026-08-26 复核）。
 
 ### 差异 6：user_memory.scope 字段未生效（✅ 已修复）
 
@@ -90,7 +90,12 @@
 | **删除死代码 KnowledgeRetrievalOrchestrator** | `knowledge_retrieval_orchestrator.py` | ✅ 已删除 |
 | **后端 Tier 命名统一** | `task_classifier_service.py` | ✅ 代码已正确使用 `standard`，无需修改 |
 | **修复 UserMemory.scope 硬编码** | `scoped_knowledge_service.py` + migration | ✅ scope 参数+过滤+memory_candidate 字段 |
-| **接入 ResultSynthesizer 到多 Agent 路径** | `multi_agent_executor.py` | ✅ 已注入，synthesis_meta 嵌入 SSE |
+| **接入 ResultSynthesizer 到多 Agent 路径** | `multi_agent_executor.py` | ✅ 已接入 `ResultSynthesizerService`，synthesis_meta 嵌入 SSE |
+| **OrchestratorService 委托 Conductor** | `orchestrator_service.py`、`orchestrator_entity.py` | ✅ `ENABLE_CONDUCTOR` 开启时由 Conductor 决策，失败回退旧链路 |
+| **ExecutionCoordinator Resume** | `execution_coordinator_service.py` | ✅ 支持基于 SubtaskRegistry 快照恢复未完成任务 |
+| **Replan 能力** | `execution_coordinator_service.py`、`conductor_service.py`、`assistant_agent_service.py` | ✅ 首页助手执行器已接入 replan |
+| **SSE 事件契约测试** | `test_sse_contracts.py` | ✅ subtask/agent_message 事件载荷已固定 |
+| **AgentQueueManager Redis 事件通道** | `agent_queue_manager.py` | ✅ 发布/消费均支持 Redis，`AGENT_QUEUE_REDIS_CONSUME=1` 启用 |
 
 ### P2（已完成）
 
@@ -103,7 +108,7 @@
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
-| **多 Agent DAG 重写** | `dag_entity.py`, `dag_engine_service.py`, `agent_instance_pool.py`, `multi_agent_executor.py`, `execution_coordinator_service.py`, `task_decomposer.py`, `test_dag_engine.py`, 共 7 个新/改文件 | ⏳ 第一阶段完成（实体+引擎+池+Executor重构+TaskDecomposer增强+DAG测试 37 passed） |
+| **多 Agent DAG 重写** | 已废弃 DAGEngine，统一为 `TaskPlan + ExecutionCoordinatorService` | ✅ 2026-08-26 删除 `dag_entity.py` / `dag_engine_service.py` / `agent_instance_pool.py` / `test_dag_engine.py` |
 
 ### P3（远期待实施）
 
@@ -229,6 +234,7 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | 修复 UserMemory.scope | P5 | ✅ 完成 | scope 参数+过滤+字段 |
 | 接入 ToolConfirmationCard | P5 | ✅ 已完成 | 4 个聊天页面 |
 | Prompt 注入防护加固 | P5 | ✅ 已完成 | PromptInjectionDetector |
+| 遗留标记分类 | P5 | ✅ 已完成 | TODO/FIXME/HACK 0 处；兼容标记分类保留 |
 
 ---
 

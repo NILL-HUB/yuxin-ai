@@ -4,6 +4,8 @@
 >
 > **主文档**: [architecture-design.md](../architecture-design.md)
 > **相关模块**: [02-knowledge-base.md](./02-knowledge-base.md) | [03-orchestration-infra.md](./03-orchestration-infra.md)
+>
+> **定位说明**：编排主导权已由旧 Orchestrator 串行链路移交至 Conductor（指挥官）+ ExecutionCoordinatorService（见 [03-orchestration-infra.md](./03-orchestration-infra.md)）。本文档描述的 Agent 池/工具池组件（候选收集、策略过滤、排序、跨池子集构建、运行时挂载）是**被 Conductor / Orchestrator / ExecutionCoordinatorService 消费的候选收集与排序层**，不再包含主入口侧的路由/意图决策职责。池组件自身按确定性策略运行，不承担 LLM 编排决策。
 
 ---
 
@@ -11,34 +13,36 @@
 
 ### 8.1 为什么需要动态子集
 
-如果主入口模型直接面对完整 Agent 池和完整工具池，会产生四类系统性问题：
+编排决策层（Conductor/Orchestrator）或执行器为本次任务选定执行 Agent 时，如果直接面对完整 Agent 池和完整工具池，会产生四类系统性问题：
 
 1. **上下文噪声**：大量无关 Agent/工具描述会降低模型选择准确率。
 2. **权限风险**：普通用户或低权限 Agent 可能通过 Prompt 注入触发敏感工具。
 3. **成本风险**：简单任务可能误选强模型 Agent 或高成本工具。
 4. **运维风险**：工具和 Agent 数量增长后，路由不可解释、不可调优。
 
-因此目标架构必须把“完整池”变成“本次任务可见子集”。模型只在受控子集中做选择，而不是直接访问全量池。
+因此目标架构必须把“完整池”变成“本次任务可见子集”。编排层与执行器只在受控子集中做选择，而不是直接访问全量池。
+
+> **实现备注**：真实实现中，动态子集归集由 `agent_pool_service.py` 承载——`AgentCandidateCollector`（候选收集）、`AgentPolicyFilter`（策略过滤）、`AgentRanker`（排序）、`CrossPoolAgentSubsetBuilder`（跨子池子集构建）均已实现；候选来源**已纳入 forked（含 draft 状态）Apps**（`agent_pool_service.py` `collect()`，`allow_draft=True`）。`AgentSubPoolRegistry` / `AgentInventory` / `AgentRouter` 等规划组件未作为独立实现存在——真实链路以"子池定义（`sub_pool_definition`）+ 候选收集/过滤/排序/裁剪"为骨架。
 
 ### 8.2 Agent 多子池归集流程
 
 ```text
-TaskContext
-  -> PoolIntentResolver
-  -> AgentSubPoolRegistry
-  -> AgentInventory
+Conductor / Orchestrator / ExecutionCoordinatorService（编排决策层）
+  -> TaskContext（含 task_id / required_capabilities / agent_pool / model_tier 等）
   -> AgentCandidateCollector
   -> AgentPolicyFilter
   -> AgentRanker
   -> CrossPoolAgentSubsetBuilder
-  -> AgentRouter
+  -> 选定 Agent 交执行器（SingleAgentExecutor / MultiAgentExecutor）
 ```
 
-#### 8.2.1 AgentSubPoolRegistry
+> **编排层与池层边界**：流程起点是编排决策层的输出（如 `ConductorPlan` / `RoutingDecision` / `TaskPlan` 中的子任务），而非主入口内嵌的 `PoolIntentResolver → AgentSubPoolRegistry → AgentInventory` 串行。`agent_pool_service.py` 暴露给编排层的入口为 `CrossPoolAgentSubsetBuilder.build/build_subset`，内部完成候选收集 → 过滤 → 排序 → 裁剪。`PoolIntentResolver` 的实时调用仅残留在 `home_service.py`（`/home` 意图摘要路径，见 [03-orchestration-infra.md](./03-orchestration-infra.md) 13.6），不属于主入口调度主链路。
 
-AgentSubPoolRegistry 管理多个 Agent 子池，而不是把所有 Agent 放进一个无差别大池。
+#### 8.2.1 Agent 子池注册与管理
 
-示例子池：
+编排层按子池元数据（`sub_pool_definition` 表，`primary_pool`/`secondary_pools`）与任务信号选取子池范围，而不是先经独立 `AgentSubPoolRegistry` 归集再路由。
+
+管理多个 Agent 子池，而不是把所有 Agent 放进一个无差别大池。示例子池：
 
 | 子池 | 示例 Agent | 适用任务 |
 | --- | --- | --- |
@@ -49,15 +53,16 @@ AgentSubPoolRegistry 管理多个 Agent 子池，而不是把所有 Agent 放进
 | customer_service | 客服 Agent、工单 Agent、FAQ Agent | 用户支持、售后、知识问答 |
 | internal_admin | 运维 Agent、审计 Agent、系统管理 Agent | 管理员内部维护，不对普通用户自动开放 |
 
-PoolIntentResolver 根据任务识别相关子池。一个需求可以命中多个子池，例如“P 图 + 写代码”同时命中 office 和 coding。
+子池命中由编排层（Conductor 的 `agent_pool` 字段 / 旧链路 `PoolIntentResolver` 的输出）或 `AgentCandidateCollector.collect_by_pools` 的任务信号决定。一个需求可以命中多个子池，例如"P 图 + 写代码"同时命中 office 和 coding。
 
 #### 8.2.2 AgentInventory
 
-AgentInventory 从相关子池读取可治理 Agent，来源包括：
+AgentInventory 负责从相关子池读取可治理 Agent 清单（作为候选收集的数据视图），来源包括：
 
 - public App。
 - assigned App。
 - 管理员配置中心创建的 App。
+- forked（含 draft 状态）App。
 - 内置轻量 Agent。
 - 内置强推理 Agent。
 - 深度思考 Agent。
@@ -72,7 +77,7 @@ AgentCandidateCollector 负责按任务在相关 Agent 子池内分别召回候�
 召回信号包括：
 
 - query 语义相似度。
-- TaskClassifier 输出的 intent。
+- 编排层（Conductor / 旧链路 TaskClassifier）输出的 intent。
 - required_capabilities。
 - task_types。
 - complexity。
@@ -80,6 +85,8 @@ AgentCandidateCollector 负责按任务在相关 Agent 子池内分别召回候�
 - 用户已分配应用。
 - public 应用。
 - 管理员指定默认 Agent。
+
+> **实现备注**：`AgentCandidateCollector.collect()`（`agent_pool_service.py`）真实实现按 `public + assigned + own + forked` 四类来源收集，`forked` 来源调用 `_append_app_candidate(..., allow_draft=True)` 允许 draft 状态 App 进入候选。另提供 `collect_raw()`（不匹配、不排序的原始收集）与 `collect_by_pools()`（按子池元数据收集）供上层使用。
 
 输出示例：
 
@@ -112,7 +119,7 @@ AgentPolicyFilter 负责做硬过滤。
 | 维度 | 说明 |
 | --- | --- |
 | 用户权限 | 普通用户只能使用 public 或 assigned Agent |
-| Agent 状态 | disabled、deleted、draft 不进入候选 |
+| Agent 状态 | disabled、deleted 不进入候选（forked 来源的 draft App 允许进入候选） |
 | 风险等级 | 高风险 Agent 不对普通用户自动开放 |
 | 成本策略 | 超预算 Agent 被过滤或降级 |
 | 输入能力 | 不支持图片/文件/长上下文的 Agent 不能处理对应任务 |
@@ -166,6 +173,8 @@ score = capability_score * 0.35
 
 CrossPoolAgentSubsetBuilder 输出本次任务允许使用的跨子池 Agent 子集。
 
+> **实现备注**：`CrossPoolAgentSubsetBuilder`（`agent_pool_service.py`）对外入口为 `build(account_id, *, primary_pool=None)` 与 `build_subset(...)` / `build_subset_from_candidates(...)`，供 Conductor / Orchestrator / 执行器在拿到编排决策后调用，产出结果再送入 ExecutionCoordinatorService 分派执行。
+
 ```json
 {
   "task_id": "task-1",
@@ -203,16 +212,16 @@ CrossPoolAgentSubsetBuilder 输出本次任务允许使用的跨子池 Agent 子
 ### 8.4 工具多子池归集流程
 
 ```text
-TaskContext + SelectedAgent
-  -> PoolIntentResolver
-  -> ToolSubPoolRegistry
-  -> ToolInventory
-  -> ToolCandidateCollector
+编排决策层（Conductor / Orchestrator / 执行器）
+  + TaskContext + SelectedAgent
+  -> ToolCandidateCollector（tool_selector_service / tool_inventory_service）
   -> ToolPolicyFilter
   -> ToolRanker
   -> CrossPoolToolSubsetBuilder
   -> RuntimeToolMountService
 ```
+
+> **实现备注**：真实实现中，工具候选侧由 `tool_selector_service.py`（ToolCandidateCollector）与 `tool_inventory_service.py` 承载，治理过滤由 [10.5.2](#1052-工具治理打通) 的 `RuntimeToolGovernanceGate` + `ToolPolicyFilter` 注入 `AppService._build_runtime_tools_for_config`；`ToolSubPoolRegistry` / `AgentRouter` 等规划组件未作为独立类存在。旧文档列出的 `PoolIntentResolver → ToolSubPoolRegistry → ToolInventory` 串行已不再是主链路。
 
 #### 8.4.1 ToolSubPoolRegistry
 
@@ -392,11 +401,13 @@ BudgetAndRiskPolicy
 - 结果是否满足任务要求。
 - 是否需要 fallback 或升级模型。
 
-这意味着调度系统不是“把工具交给 Agent 后就结束”，而是必须闭环控制：
+这意味着调度系统不是"把工具交给 Agent 后就结束"，而是必须闭环控制（执行闭环由 [ExecutionCoordinatorService](./03-orchestration-infra.md) 承担）：
 
 ```text
-规划 -> 约束 -> 执行 -> 校验 -> 汇总 -> 记录
+编排规划 -> 约束 -> 执行 -> 校验 -> 汇总 -> 记录
 ```
+
+其中"校验"包含 ExecutionCoordinatorService 的执行快照（`subtask_registry.snapshot`）、失败子任务收集与 `plan_repairer` 修复（Conductor `repair_plan`），"汇总"由 ResultSynthesizer 承担。
 
 
 
@@ -462,19 +473,21 @@ Agent 池第一阶段复用现有 App：
 
 质量评分和推荐权重第一阶段也先由管理员手动维护。后续当路由日志、用户反馈、成功率、失败率、耗时和成本数据积累足够后，再逐步引入自动评分或半自动建议。
 
-### 9.4 Agent 路由策略
+### 9.4 Agent 路由/选择策略
 
-AgentRouter 需要综合：
+> **现状说明**：本文档早期版本设想的独立 `AgentRouter` 模块已被替代。真实链路中，Agent 的最终选定由编排决策层完成：Conductor（指挥官，`ENABLE_CONDUCTOR` 开启时）通过单次 LLM `ConductorPlan` 输出每个子任务的 `agent_pool` / `required_capabilities` / `model_tier` 等字段；旧 Orchestrator 链路则基于规则决策；两者产出的子任务约束再交给本文第 8 章的池层组件做候选收集/过滤/排序/裁剪。因此"路由策略"实际由两层协作完成，需要综合的信号包括：
 
 - 用户问题语义。
-- 任务类型。
-- 复杂度。
+- 编排层给出的任务类型（intent）。
+- 复杂度（ConductorPlan.complexity / 旧链路 TaskClassifier 输出）。
 - Agent 能力标签。
 - Agent 模型档位。
 - Agent 成本等级。
 - 用户权限。
 - 历史成功率。
 - 近期健康状态。
+
+确定性排序公式见 8.2.5 `AgentRanker`，硬过滤见 8.2.4 `AgentPolicyFilter`。需要说明：真实实现中 `AgentRanker`/`AgentPolicyFilter` 与早期设计同构但并入 `agent_pool_service.py` 统一管理（见 8.2），并非独立分散的服务文件。
 
 
 

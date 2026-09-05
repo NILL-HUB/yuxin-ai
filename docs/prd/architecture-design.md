@@ -166,19 +166,22 @@
 
 ### 4.2 当前主要缺口
 
-| 缺口 | 说明 | 影响 |
-| --- | --- | --- |
-| 缺少 Agent 池元数据 | App 主要依赖名称和描述 | 路由质量不稳定 |
-| 缺少共享工具池动态检索 | 工具主要按 AppConfig 预绑定 | 工具复用差、配置重复、上下文膨胀 |
-| 缺少成本感知模型路由 | 没有模型档位、价格、预算策略 | 成本不可控 |
-| 缺少显式结果汇总器 | 结果主要由 LLM 工具调用后自然整合 | 多 Agent 结果质量不稳定 |
-| 缺少调度日志 | agent_thoughts 不是完整调度审计 | 难以调试路由和成本 |
-| 工具权限粒度不足 | MCP 有 public/private，但缺少风险、权限、审批 | 动态工具池上线风险高 |
-| 长期记忆提取能力严重不足 | long_term_memory_service.py 的 MemoryCandidateExtractor 硬编码只识别"中文"语言偏好 | 无法记住用户画像，每次对话像第一次见面 |
-| 知识库 RAG 检索链路缺失 | knowledge_base_service.py 仅有 CRUD，未见向量索引构建/chunking/embedding/相似度召回 | 用户上传文档后 AI 无法检索使用 |
-| 上下文管理过于基础 | token_buffer_memory.py 用 trim_messages(strategy="last", max_tokens=2000) 直接截断早期消息 | 长对话丢失关键信息 |
-| 缺少日常生活类工具 | 20 个内置工具全偏信息查询/内容生成，无邮件/日历/社交媒体/支付/任务管理 | 无法覆盖工作+生活+社交全场景 |
-| 缺少社交社区能力 | 无会话分享/导出、无用户主页、无内容流、无关注关系 | 无法支撑社交社区产品形态 |
+> **阅读提示**：下表是 v5.2 改造起点的缺口盘点（历史分析）。多数条目已由后续模块落地：
+> 记忆系统已整体迁移至 `internal/service/memory/`（LedgerWriter/SalienceScorer/ConsolidationEngine/DigestManager/MemoryRetriever/MemoryGovernor/PolicyRouter，旧 `long_term_memory_service.py` 与 memory_candidate 表已删除）；知识库双层检索已落地（`RetrievalService` + `dataset→knowledge_base` 演进）；上下文管理已升级为 TokenBufferMemory 三层混合 + LLM 智能压缩；编排已由 Conductor 一体化决策取代（见 §25）。未实现条目以 ⏳ 标注。
+
+| 缺口 | 说明 | 影响 | 现状 |
+| --- | --- | --- | --- |
+| 缺少 Agent 池元数据 | App 主要依赖名称和描述 | 路由质量不稳定 | ✅ Agent 池治理（agent_pool_service）已落地 |
+| 缺少共享工具池动态检索 | 工具主要按 AppConfig 预绑定 | 工具复用差、配置重复、上下文膨胀 | ✅ 工具池 + 治理（extensibility-design）已落地 |
+| 缺少成本感知模型路由 | 没有模型档位、价格、预算策略 | 成本不可控 | ✅ 模型池成本路由 + billing 引擎已落地 |
+| 缺少显式结果汇总器 | 结果主要由 LLM 工具调用后自然整合 | 多 Agent 结果质量不稳定 | ✅ ResultSynthesizerService 已接入 |
+| 缺少调度日志 | agent_thoughts 不是完整调度审计 | 难以调试路由和成本 | ✅ routing_log/quality 可观测已落地 |
+| 工具权限粒度不足 | MCP 有 public/private，但缺少风险、权限、审批 | 动态工具池上线风险高 | ✅ ToolPolicy + 高风险确认 + 智能审批已落地 |
+| 长期记忆提取能力严重不足 | 旧 MemoryCandidateExtractor 硬编码 | 无法记住用户画像 | ✅ 记忆系统全面落地（System1/2 + Ledger + 技能涌现） |
+| 知识库 RAG 检索链路缺失 | knowledge_base_service 仅有 CRUD | 上传文档后 AI 无法检索 | ✅ 双层知识库检索已落地 |
+| 上下文管理过于基础 | trim_messages(strategy="last") 直接截断 | 长对话丢失关键信息 | ✅ TokenBufferMemory 三层混合 + LLM 智能压缩 |
+| 缺少日常生活类工具 | 20 个内置工具偏查询/生成 | 无法覆盖全场景 | ⏳ 部分（邮件/回收站/OS 自动化已加） |
+| 缺少社交社区能力 | 无会话分享/主页/内容流 | 无法支撑社交形态 | ⏳ 愿景设计（见 modules/04） |
 
 
 
@@ -710,7 +713,7 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 
 > 内容已拆分至子文档，本节为标题索引。
 
-本章为整体内容，包含 7 个 Feature Flag 开关（ENABLE_ORCHESTRATOR / ENABLE_AGENT_METADATA_ROUTING / ENABLE_TOOL_POOL_RETRIEVAL / ENABLE_COST_MODEL_ROUTING / ENABLE_MULTI_AGENT_EXECUTION / ENABLE_RESULT_SYNTHESIZER / ENABLE_ROUTING_LOGS）及回滚原则。
+本章为整体内容，包含全部编排 Feature Flag（单一事实源 `api/internal/entity/orchestration_feature_flag_entity.py` 的 `ORCHESTRATION_FEATURE_FLAG_CODES`，含 `ENABLE_CONDUCTOR` / `ENABLE_MULTI_AGENT_EXECUTION` 等 14 项）+ 业务开关（`auth_switch_service.AUTH_CODES`，`list_flags` 会附加展示）及回滚原则。详见 [modules/05-security-risk-decisions.md](./modules/05-security-risk-decisions.md)。
 
 ## 23. 成功指标
 

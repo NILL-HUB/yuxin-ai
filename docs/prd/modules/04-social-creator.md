@@ -1,5 +1,13 @@
 # 社交社区与创作者经济
 
+> **状态：愿景设计（未实现）**
+> 本文档是产品愿景设计（v4.0），对应功能**尚未在代码中实现**：
+> - 后端无社交社区/内容流/关注关系/创作者收益表与服务；
+> - 前端 `/studio` 仅指向占位页 `ui/src/views/studio/StudioPlaceholderView.vue`；
+> - 分发/佣金体系（分销关系、余额、提现、订单）已实现于 `api/internal/service/distribution_service.py` 等（对应 `docs/api/commerce-distribution-api.md`），但"社交社区 + 用户共创分身"整体仍为远期规划。
+>
+> 若按本文档开发，需先建立数据模型与路由；现有代码状态请以 [modules/03-orchestration-infra.md](./03-orchestration-infra.md) 与 [execution-roadmap](../execution-roadmap.md) 为准。
+>
 > 本文档为主架构文档的子模块，包含社交社区架构设计（v4.0）和用户共创分身与创作者经济的完整内容。
 >
 > **主文档**: [architecture-design.md](../architecture-design.md)

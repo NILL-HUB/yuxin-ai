@@ -1,6 +1,8 @@
 # 工作流编排 + 应用编排 全量开发路线图
 
-> **状态**：待确认
+> **归档状态**：✅ 已全部落地，2026-09-05 归档至 docs/archive/。规划目标（工作流高级节点、执行引擎统一为 TaskPlan + ExecutionCoordinatorService、admin 独立编排、版本历史等）均已实现；请勿据此文档判断系统现状，导航以 docs/README.md 为准。
+>
+> **历史状态**：待确认
 > **创建日期**：2026-07-04
 > **基于**：架构设计文档 + 业界调研（Dify/Coze/n8n/FastGPT）+ 现状 Gap 分析
 
@@ -16,7 +18,7 @@
 ## 二、现状摘要
 
 ### 已具备（可复用）
-- 后端：12 种工作流节点 + LangGraph StateGraph 引擎 + OrchestratorService + DAGEngine
+- 后端：12 种工作流节点 + LangGraph StateGraph 引擎 + OrchestratorService + ExecutionCoordinatorService
 - 后端：AppConfig 14 字段 + AppConfigVersion 版本管理 + 24 个用户端 API + 8 个 admin API
 - 前端：Vue Flow 画布 + 12 节点组件 + 14 个 AbilityItem 组件
 - 画布 P0 bug 已修复（布局容器尺寸冲突）
@@ -159,7 +161,7 @@
 
 | 风险 | 缓解 |
 |------|------|
-| 两套图执行引擎并存（LangGraph + DAGEngine） | 计划 B 统一为 GraphEngine，废弃 LangGraph 路径 |
+| 图执行引擎统一 | Agent 多智能体统一为 TaskPlan + ExecutionCoordinatorService；工作流统一为 GraphEngine，废弃 LangGraph 路径 |
 | admin/space 复用边界模糊 | 计划 A/C 独立化 admin 组件，用 route.meta.realm 强类型判定 |
 | app_service.py 拆分风险 | 计划 C 先拆分再加新功能，保留原接口签名 |
 | 引擎重写影响现有工作流 | 计划 B 提供 graph 迁移脚本，旧 graph 自动转换 |

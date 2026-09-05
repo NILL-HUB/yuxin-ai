@@ -1,0 +1,12 @@
+id,severity,category,status,evidence,action
+OC-01,P0,ResultSynthesizer未接入主链路,completed,multi_agent_executor.py 已调用 ResultSynthesizerService,接入服务并保留 concat/summarize/best_of
+OC-02,P0,多Agent DAG重写是半成品,completed,DAGEngine及相关测试已删除,统一为 TaskPlan + ExecutionCoordinatorService
+OC-03,P1,Conductor与旧Orchestrator双路径并存,partially-completed,OrchestratorService 已支持委托 Conductor,ENABLE_CONDUCTOR 灰度后删除旧规则链路
+OC-04,P1,三套图执行模型并存,completed,GraphEngine/LangGraph/TaskPlan 边界已明确,DAGEngine 已删除
+OC-05,P1,TaskPlan缺少数据依赖契约,completed,upstream_results 已注入下游任务,补充上游结果传递
+OC-06,P1,执行层缺少timeout/retry/resume,completed,timeout/retry 已实现；ExecutionCoordinatorService 支持 resume 快照,基于 SubtaskRegistry 快照恢复未完成任务
+OC-07,P2,线程+内存队列非生产级执行通道,completed,AgentQueueManager 已支持 Redis 事件日志读写,AGENT_QUEUE_REDIS_CONSUME=1 时消费端走 Redis
+OC-08,P2,兼容/胶水/遗留标记,completed,已完成分类：TODO/FIXME/HACK 0 处；260 处为有意兼容标记,保留兼容并补充说明
+OC-09,P2,前端构建通过但SSE协议风险存在,completed,构建通过；新增 SSE 事件契约测试,test_sse_contracts.py 覆盖 subtask/agent_message 载荷
+OC-10,P3,task_decomposer pyc残留,blocked,文件系统删除命令被环境策略拦截,清理生成缓存
+OC-11,P1,执行失败后 replan,completed,ExecutionCoordinatorService.plan_repairer 与 ConductorService.repair_plan 已接入首页助手执行器,生产入口接线已完成

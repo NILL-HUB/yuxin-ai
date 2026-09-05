@@ -11,7 +11,7 @@
 
 ### 24.1.1 问题定义
 
-钰心AI 平台存在 40+ 个系统级 AI 调用点，分散在记忆系统、对话路由、助手引导、内容生成等链路。原设计存在三个核心问题：
+钰心AI 平台存在 40+ 个系统级 AI 调用点（实际落地后 `get_feature_model()` 生产调用遍布 39 个文件 85+ 处），分散在记忆系统、对话路由、助手引导、内容生成等链路。原设计存在三个核心问题：
 
 1. **模型选择硬编码**：每个调用点独立调用 `get_cheap_chat_model()`，无法按需切换模型，admin 无法介入
 2. **成本归属混乱**：用户直接受益的 AI 能力（如直接回答、代码助手）与系统基础设施能力（如记忆检测、路由判断）共用同一成本中心，无法准确计费
@@ -186,13 +186,13 @@ def get_feature_model(self, feature_key: str):
 
 | 步骤 | 位置 | 过滤逻辑 |
 |---|---|---|
-| Admin UI 下拉 | `AdminPublicAIFeatureHandler.list_models_for_feature` | `WHERE model_type = :type AND status = 'active'` |
+| Admin UI 下拉 | `admin_routes_8.py` 中 `/admin/public-ai-features/models` 路由对应的模块级 DB helper | `WHERE model_type = :type AND status = 'active'` |
 | 后端 fallback | `_pick_cheapest_by_tier` | `WHERE tier = :tier AND model_type = :type` |
 | 图像生成调用 | `icon_generator_service._generate_with_configured_model` | 二次校验 `model.model_type == 'image'` |
 
 **强制约束**：`icon_image_generation` 的 `model_type` 为 `image`，其余 25 个为 `chat`。任何路径都不允许 chat 模型生成图像或 image 模型做对话。
 
-### 24.4.3 40+ 调用点改造
+### 24.4.3 全量调用点改造
 
 所有公共 AI 调用点统一改造：
 
@@ -203,8 +203,10 @@ llm = get_cheap_chat_model()
 
 # 改造后
 from internal.service import LanguageModelService
-llm = LanguageModelService().get_feature_model('memory_explicit_detector')
+llm = LanguageModelService().get_feature_model('memory_explicit_detection')
 ```
+
+改造规模：`get_feature_model()` 生产调用点遍布 39 个文件 85+ 处（截至 2026-08 复核，覆盖运行代码；另有对应测试文件），主要分布在记忆写读链路（explicit_detector / salience_scorer / entity_extractor / entity_resolution / write_time_conflict_resolver / consolidation_engine / conflict_detector / funnel_compressor / policy_router / digest_manager / skill_emergence / llm_activity_probe）、对话/路由（direct_answer / conductor / task_classifier / pool_intent_resolver / intent_recognition / tool_selector / rerank / tag_assignment / schedule_intent_parser）、助手（assistant_agent / ai_service / conversation / app_service）与图像生成（icon_generator）等。
 
 涉及服务：`MemoryWriteService` / `ConsolidationEngine` / `DigestManager` / `PolicyRouter` / `DirectAnswerExecutor` / `RerankService` / `TagAssignmentService` / `AssistantAgentService` / `ConversationService` / `AIService` / `IconGeneratorService` 等。
 
@@ -402,7 +404,7 @@ fallback_tier 池 (Level 2)
 
 ### 24.7.5 权限
 
-`AdminPublicAIFeatureHandler` 注册到 `super_admin` 角色的 `public_ai_feature:read` / `public_ai_feature:edit` 权限（DEFAULT_PERMISSIONS 中预置）。
+公共 AI 配置管理接口受 `public_ai_feature:read` / `public_ai_feature:update` 权限点保护（`super_admin` 默认全量授权，权限目录见 `api/internal/core/rbac.py` 的 `PERMISSION_CATALOG`）；端点实现位于 `api/app/http/admin_routes_8.py`，依赖注入见 `api/app/http/module.py`。
 
 ---
 
@@ -432,12 +434,11 @@ Orchestrator 的 4 个路由 AI 调用点（complexity_judge / intent_router / a
 
 - [x] `public_ai_feature_config` 表 + 26 条 seed 已通过 Alembic 迁移落库
 - [x] `LanguageModelService.get_feature_model()` 方法实现并暴露
-- [x] 40+ 公共 AI 调用点改造完成，全部使用 `get_feature_model()`
+- [x] `get_feature_model()` 改造完成：生产调用遍布 39 个文件 85+ 处，全部使用 `get_feature_model()`
 - [x] `IconGeneratorService` 改造为配置优先 + image 类型过滤
 - [x] `CreditService.consume_for_feature()` 实现
 - [x] 8 个 billable 服务的计费集成完成
-- [x] Admin 后台「池治理 → 公共 AI 配置」菜单可用
-- [x] `AdminPublicAIFeatureHandler` 注册到 `handler/__init__.py` 和 `router.py`
+- [x] 后台管理页面（「池治理 → 公共 AI 配置」）可用：路由注册在 `api/app/http/admin_routes_8.py`（`/admin/public-ai-features` 系列端点），依赖经 `api/app/http/module.py` DI 注册 `PublicAIFeatureService`；权限点 `public_ai_feature:read` / `public_ai_feature:update` 见 `api/internal/core/rbac.py` 的 `PERMISSION_CATALOG`
 - [x] model_type 过滤在 UI 下拉 + 后端 fallback 两层生效
 - [x] 11 个 memory_* feature_key 绑定高推理模型，fallback_tier=cheap（2026-07-22 修正：原设计误用固定短超时切断推理模型思考导致降级，已改为探针式活性检测机制，详见 §24.6.1）
 

@@ -1,13 +1,15 @@
-# 模型路由、Orchestrator、结果汇总与可观测性
+# 模型路由、编排执行、结果汇总与可观测性
 
-> 本文档为主架构文档的子模块，包含模型路由/模型池/Key 池/成本控制、Orchestrator 执行模式、ResultSynthesizer 设计和可观测性与审计的完整内容。
+> 本文档为主架构文档的子模块，包含模型路由/模型池与提供商体系/成本控制、编排执行（Conductor + ExecutionCoordinatorService）、ResultSynthesizer 设计和可观测性与审计的完整内容。
 >
 > **主文档**: [architecture-design.md](../architecture-design.md)
 > **相关模块**: [01-agent-tool-pool.md](./01-agent-tool-pool.md) | [02-knowledge-base.md](./02-knowledge-base.md)
+>
+> **定位与现状**：本模块的编排主导权已由旧 Orchestrator 串行决策移交至 **Conductor（指挥官）+ ExecutionCoordinatorService（执行编排）** 主导的现状。OrchestratorService 仍保留为旧链路（规则决策），并在 `ENABLE_CONDUCTOR` 开启时委托 Conductor、失败回退旧链路（见 [architecture-design.md](../architecture-design.md) 与 [execution-roadmap.md](../execution-roadmap.md) 2026-08-26 记录）。早期叙事中的 DAGEngine（`dag_entity` / `dag_engine_service` / `agent_instance_pool` / `test_dag_engine`）已删除，统一为 `TaskPlan + ExecutionCoordinatorService`。模型 Key 管理已并入**模型池/提供商体系**（`RuntimeModelPoolService` 管理模型池与 Key 池），独立 `ModelPoolService`/`KeyPoolService` 空壳已物理删除。
 
 ---
 
-## 12. 模型路由、模型池、Key 池与成本控制
+## 12. 模型路由、模型池、提供商体系与成本控制
 
 ### 12.1 模型档位
 
@@ -19,34 +21,37 @@
 | vision | 图片理解 | 有图片输入或视觉任务时使用 |
 | long_context | 长文档任务 | 长上下文场景使用 |
 
-### 12.1.1 模型池与 Key 池
+### 12.1.1 模型池与提供商体系
 
-后台需要统一模型池和 Key 池管理，否则多个 Agent 难以稳定流转。
+后台需要统一模型池与提供商体系，否则多个 Agent 难以稳定流转。
 
-模型池需要管理：
+> **现状说明**：模型 Key 管理已并入模型池/提供商体系。独立空壳 `ModelPoolService` / `KeyPoolService` 已删除；真实实体为 `ModelPoolConfig` / `ModelKeyConfig` / `ModelTierPolicy`（`internal/model/model_pool_entity.py`）+ `ModelProviderConfig`（`model_provider_entity.py`），运行服务为 `RuntimeModelPoolService`（`internal/service/runtime_model_pool_service.py`），提供按档位/类型选择模型、按模型轮询 Key、Key 失败熔断计数等能力。Admin 侧由 `admin_model_pool_service.py` / `admin_model_provider_service.py` 管理。
 
-- 供应商。
+模型池管理：
+
+- 供应商（provider）。
 - 模型名称。
-- 模型档位。
+- 模型档位（tier）。
+- 模型类型（model_type，含上下文无关/长上下文等分类）。
 - 支持模态。
 - 上下文长度。
 - 输入 / 输出价格。
 - 速率限制。
 - 健康状态。
-- 默认 fallback 模型。
+- 优先级与默认 fallback。
 
-Key 池需要管理：
+Key 池管理（并入模型池体系，`ModelKeyConfig`）：
 
 - 供应商 Key。
-- Key 归属租户或系统。
+- Key 归属模型或供应商（`model_id` 为空时归属 provider）。
 - 可用额度。
 - 并发限制。
 - 失败次数。
 - 熔断状态。
-- 轮询和权重。
+- 轮询和权重（按优先级/权重轮询选取，`select_key`）。
 - 到期时间。
 
-管理员需要可以为每个 Agent 手动配置底座模型，也可以选择“跟随系统策略”。系统策略负责在 Key 不可用、限流、余额不足或模型故障时自动切换。
+运行时模型选择链路：`ModelGatewayService`（`internal/service/model_gateway_service.py`）依据编排决策（`RoutingDecision`）与上下文解析模型档位；`RuntimeModelPoolService.select_model_with_fallback` 在模型池内按 tier + 成本参考 + 优先级选取并支持 fallback；`RuntimeModelPoolService.select_key` 为选定模型选取可用 Key 并维护失败计数。管理员可为每个 Agent 配置底座模型，也可以选择"跟随系统策略"。系统策略负责在 Key 不可用、限流、余额不足或模型故障时自动切换。
 
 ### 12.2 复杂度判断
 
@@ -226,15 +231,21 @@ cheap -> standard -> strong
 
 
 
-## 13. 指挥官执行模式
+## 13. 编排执行：Conductor + ExecutionCoordinatorService
 
-> **v5.2 变更**：原 Orchestrator 多模块串行（TaskClassifier → TaskPlanner → PoolIntentResolver → ExecutionModeSelector）已被指挥官 `ConductorService` 替代。执行模式选择不再是独立模块的输出，而是指挥官 `ConductorPlan.execution_mode` 字段。
+> **现状说明（取代原 v5.2 注记）**：原 Orchestrator 多模块串行（TaskClassifier → TaskPlanner → PoolIntentResolver → ExecutionModeSelector）已被 ConductorService 替代。现状链路为：
+> - 编排决策：`ENABLE_CONDUCTOR` 开启时，`assistant_agent_service.py` / `orchestrator_service.py` 委托 **ConductorService.plan()** 单次 LLM `structured_output` 输出 `ConductorPlan`；OrchestratorService 在 Conductor 决策异常时回退旧规则链路（`orchestrator_service.py` 日志"Conductor 决策失败，回退旧 Orchestrator"）。
+> - 执行编排：`ConductorPlan` 经 `to_task_plan()` 转为 `TaskPlan`，由 **ExecutionCoordinatorService** 按并行/波次/串行分派执行；执行失败经 `repair_plan()` 修复（`_build_plan_repairer`，见 `assistant_agent_service.py`）。
+> - 执行器真实现位于 `internal/service/executors/`：`single_agent_executor.py` / `multi_agent_executor.py` / `direct_answer_executor.py`，其中 `agent_task_executor.py` 的 `AgentTaskExecutor` 负责具体子任务执行，并在 `_resolve_query` 中把上游子任务结果（`upstream_results`）拼进 query。
+> - DAGEngine 时代遗留（`dag_entity` / `dag_engine_service` / `agent_instance_pool` / `test_dag_engine`）已于 2026-08-26 删除，统一为 `TaskPlan + ExecutionCoordinatorService`。
 
 ### 13.1 执行模式
 
+编排决策层输出 `execution_mode`（Conductor 侧为 `ConductorPlan.execution_mode`；旧链路为 `RoutingDecision.execution_mode`）：
+
 | 模式 | 说明 | 适用场景 | 计费方式 |
 | --- | --- | --- | --- |
-| direct_answer | 指挥官直接回答 | 简单问答 | 系统承担，不扣用户额度 |
+| direct_answer | 直接回答 | 简单问答 | 系统承担，不扣用户额度 |
 | single_agent | 单 Agent 执行 | 明确垂直任务 | 用户承担 |
 | single_agent_with_tools | 单 Agent + 工具 | 需要查询/操作 | 用户承担 |
 | multi_agent_parallel | 多 Agent 并行 | 多角度分析 | 用户承担 |
@@ -254,11 +265,26 @@ cheap -> standard -> strong
 
 ### 13.3 复杂路径
 
-指挥官判定需要 Agent 时，输出 `agents[]` 子任务列表，进入：
+指挥官判定需要 Agent 时，输出 `agents[]` 子任务列表，`to_task_plan()` 转为 `TaskPlan` 后进入：
 
 ```text
-ConductorService -> AgentCandidateCollector -> ToolCandidateCollector -> ExecutionCoordinator -> ResultSynthesizer
+ConductorService.plan
+  -> ConductorPlanValidator.validate（失败回退 single_agent）
+  -> ExecutionCoordinatorService.execute(plan)
+      -> 按 TaskPlan 执行模式分派
+          -> AgentCandidateCollector（Agent 池候选收集，见 01 模块 8.2）
+          -> ToolCandidateCollector / RuntimeToolMountService（工具候选与挂载，见 01 模块 8.4/10.5）
+          -> AgentTaskExecutor（子任务执行，上游结果拼接进 query）
+          -> 失败子任务 -> ConductorService.repair_plan 修复（可选，经 plan_repairer 注入）
+  -> ResultSynthesizer 汇总
 ```
+
+**执行失败与修复**：`ExecutionCoordinatorService.execute()` 支持：
+- `resume=True` 时读取子任务快照（`subtask_registry.snapshot(request_id)`，由 `SubtaskRegistryService` 注册计划），跳过已完成子任务、标记 `resumed:completed` / `resumed:failed`。
+- 注入的 `plan_repairer`（`Callable[[str, list[dict]], TaskPlan | None]`）在存在失败子任务时基于失败信息调用 `ConductorService.repair_plan`（把失败反馈拼入 query 重新 `plan()`），再以 `_run_plan` 重跑修复后的计划；修复器返回空则保留原结果。
+- 升级/降级策略由 `cost_policy_service.EscalationPolicyService` 承担（读取 `billing_config` 的 `escalation_enabled`，经 `resolve_escalation_policy_service()` 注入）。
+
+**子任务上下文**：`ExecutionCoordinatorService._build_upstream_context` 为每个子任务构建上游结果上下文；`AgentTaskExecutor._resolve_query` 在存在 `upstream_results` 时，将上游子任务输出拼接到 `item.description`（或原始 query）之后，实现串行链路的信息传递。
 
 ### 13.4 硬约束校验与回退
 
@@ -271,6 +297,24 @@ ConductorService -> AgentCandidateCollector -> ToolCandidateCollector -> Executi
 | agent 数量限制 | ≤ MAX_AGENTS_PER_PLAN |
 | model_tier 合法 | 必须是 1/2/3 之一 |
 | 并行依赖约束 | multi_agent_parallel 模式下 depends_on 必须为空 |
+
+### 13.5 Feature Flag 与编排切换
+
+编排链路受 `orchestration_feature_flag_service` 控制（开关定义见 [architecture-design.md §22](../architecture-design.md#22-feature-flag-与回滚策略)）。与本节直接相关的开关：
+
+| 开关 | 作用 |
+| --- | --- |
+| ENABLE_ORCHESTRATOR | 是否启用编排路由（默认开，关闭时直接回退 `direct_answer`） |
+| ENABLE_CONDUCTOR | 是否启用 Conductor（LLM 指挥官）替代规则编排（默认关，fallback=orchestrator 旧链路） |
+| ENABLE_MULTI_AGENT_EXECUTION | 是否允许多 Agent 规划（执行层按 TaskPlan 跑并行/串行子 Agent） |
+| ENABLE_AUTO_DEEP_THINKING | 是否由 LLM 意图检测自动触发 deep thinking |
+| ENABLE_RESULT_SYNTHESIZER | 任务计划明细开关（结果合成执行未接线，见实体描述） |
+
+> 注：Feature Flag 的真实实体见 [orchestration_feature_flag_entity.py](../../../api/internal/entity/orchestration_feature_flag_entity.py)，共 14 个编排开关 + `list_flags` 附加的 3 个 `AUTH_*` 认证开关（`auth_switch_service.AUTH_CODES`），详见 [architecture-design.md §22](../architecture-design.md#22-feature-flag-与回滚策略)。
+
+### 13.6 Orchestrator 旧链路的保留形态
+
+`OrchestratorService` 仍保留为旧规则链路（`ENABLE_CONDUCTOR` 关闭时的默认路径），其 `decide()` 内部：先做 `task_classifier_service.classify()`（规则分类）→ 意图识别/成本策略/执行模式选择等规则决策；`ENABLE_CONDUCTOR` 开启时在分类前委托 `conductor_service.decide()` 输出 `RoutingDecision`，异常时回退到分类链路。`PoolIntentResolver`（`pool_intent_resolver_service.py`）不再位于主入口调度主链路，仅被 `home_service.py`（`/home` 意图摘要路径，`PoolIntentResolver().resolve(...)`）等轻量场景引用。
 
 
 
