@@ -227,12 +227,12 @@ defineExpose({
           >
             <icon-exclamation-circle-fill
               v-if="error.severity === 8"
-              class="text-red-500 flex-shrink-0 mt-0.5"
+              class="text-red-500 shrink-0 mt-0.5"
               :size="14"
             />
             <icon-info-circle-fill
               v-else
-              class="text-orange-500 flex-shrink-0 mt-0.5"
+              class="text-orange-500 shrink-0 mt-0.5"
               :size="14"
             />
             <span class="text-gray-700">

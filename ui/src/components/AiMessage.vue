@@ -275,12 +275,12 @@ const handleMarkdownClick = async (event: MouseEvent) => {
     <a-avatar
       v-if="avatarText"
       :size="36"
-      class="flex-shrink-0 text-sm bg-blue-700"
+      class="shrink-0 text-sm bg-brand"
     >
       {{ avatarText }}
     </a-avatar>
-    <a-avatar v-else-if="props.app?.icon" :size="36" shape="circle" class="flex-shrink-0" :image-url="props.app?.icon" />
-    <a-avatar v-else :size="36" shape="circle" class="flex-shrink-0 bg-blue-700">
+    <a-avatar v-else-if="props.app?.icon" :size="36" shape="circle" class="shrink-0" :image-url="props.app?.icon" />
+    <a-avatar v-else :size="36" shape="circle" class="shrink-0 bg-brand">
       <icon-apps />
     </a-avatar>
     <!-- 右侧名称与消息 -->
@@ -397,11 +397,11 @@ const handleMarkdownClick = async (event: MouseEvent) => {
             />
             <template v-if="shouldRenderAudioAction">
               <template v-if="isCurrentLoading">
-                <icon-loading class="text-blue-700" />
+                <icon-loading class="text-brand-text" />
               </template>
               <template v-else-if="isCurrentPlaying">
                 <icon-pause
-                  class="text-blue-700 cursor-pointer hover:text-blue-700"
+                  class="text-brand-text cursor-pointer hover:text-brand-text"
                   @click="handleStopAudio"
                 />
               </template>
@@ -429,15 +429,15 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 
 <style scoped>
 .glass-message-bubble {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.35) 100%);
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.55) 0%, rgba(255, 240, 246, 0.4) 100%);
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
   border: 1.5px solid rgba(255, 255, 255, 0.7);
   box-shadow:
-    0 8px 32px rgba(186, 230, 253, 0.2),
+    0 8px 32px rgba(233, 30, 99, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.9),
     inset 0 -1px 0 rgba(0, 0, 0, 0.06);
-  color: #1f2937;
+  color: var(--aicss-text);
   position: relative;
   overflow: hidden;
 }
@@ -445,7 +445,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 .aicss-message-bubble {
   border-radius: 12px !important;
   box-shadow: var(--aicss-shadow-card) !important;
-  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%) !important;
+  background: linear-gradient(180deg, #ffffff 0%, #fff5f9 100%) !important;
   border: 1px solid var(--aicss-border-strong) !important;
   padding: 18px 20px !important;
   color: var(--aicss-text) !important;
@@ -555,7 +555,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .glass-message-bubble:hover {
-  border-color: #b9c6dd;
+  border-color: #eeb9cd;
   box-shadow: var(--aicss-shadow-elevated);
 }
 
@@ -574,8 +574,8 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .glass-suggestion-bubble:hover {
-  border-color: #b9c6dd !important;
-  background: #f5f8ff !important;
+  border-color: #eeb9cd !important;
+  background: var(--aicss-surface-2) !important;
   box-shadow: var(--aicss-shadow-elevated) !important;
 }
 
@@ -652,7 +652,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .ai-message-playing {
-  border-color: rgba(186, 230, 253, 0.9) !important;
+  border-color: rgba(233, 30, 99, 0.9) !important;
   animation: ai-message-breathing 1.2s ease-in-out infinite;
 }
 
@@ -660,19 +660,19 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   0%,
   100% {
     box-shadow:
-      0 8px 32px rgba(186, 230, 253, 0.2),
+      0 8px 32px rgba(233, 30, 99, 0.2),
       inset 0 1px 0 rgba(255, 255, 255, 0.9),
       inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-      0 0 0 0 rgba(186, 230, 253, 0.4);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.35) 100%);
+      0 0 0 0 rgba(233, 30, 99, 0.4);
+    background: linear-gradient(135deg, rgba(255, 250, 252, 0.55) 0%, rgba(255, 240, 246, 0.4) 100%);
   }
   50% {
     box-shadow:
-      0 12px 40px rgba(186, 230, 253, 0.35),
+      0 12px 40px rgba(233, 30, 99, 0.35),
       inset 0 1px 0 rgba(255, 255, 255, 0.9),
       inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-      0 0 0 12px rgba(186, 230, 253, 0.15);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(240, 248, 255, 0.5) 100%);
+      0 0 0 12px rgba(233, 30, 99, 0.15);
+    background: linear-gradient(135deg, rgba(255, 250, 252, 0.7) 0%, rgba(255, 240, 246, 0.55) 100%);
   }
 }
 

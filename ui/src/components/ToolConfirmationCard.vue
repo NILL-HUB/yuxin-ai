@@ -17,7 +17,7 @@ const { t } = useI18n()
 
 const cancelButtonRef = ref<HTMLElement | { $el?: HTMLElement } | null>(null)
 
-const riskColor = computed(() => {
+const _riskColor = computed(() => {
   switch (props.prompt.risk_level) {
     case 'medium':
       return 'gold'

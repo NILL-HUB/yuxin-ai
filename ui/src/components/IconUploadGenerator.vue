@@ -94,7 +94,7 @@ const handleGenerate = async () => {
 
 <template>
   <!-- 使用 Arco Space 组件实现完全居中 -->
-  <a-space direction="vertical" :size="24" class="w-full bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl p-8 border border-gray-200">
+  <a-space direction="vertical" :size="24" class="w-full bg-linear-to-br from-gray-50 to-gray-100 rounded-2xl p-8 border border-gray-200">
     <!-- 图标预览区域 - 当有图标时显示 -->
     <div v-if="localFileList.length > 0" class="flex justify-center items-center w-full">
       <div class="relative">
@@ -196,7 +196,7 @@ const handleGenerate = async () => {
 }
 
 :deep(.arco-upload-picture-card:hover) {
-  @apply border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 shadow-xl;
+  @apply border-blue-500 bg-linear-to-br from-blue-50 to-blue-100 shadow-xl;
   transform: translateY(-4px);
 }
 

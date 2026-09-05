@@ -11,6 +11,10 @@ import type { AgentNotification as AgentNotificationType } from '@/models/agent-
 import { useI18n } from 'vue-i18n'
 import arcoEnUS from '@arco-design/web-vue/es/locale/lang/en-us'
 import arcoZhCN from '@arco-design/web-vue/es/locale/lang/zh-cn'
+import { useTheme } from '@/theme'
+
+// 初始化主题系统（响应式应用 data-theme / arco-theme）
+useTheme()
 
 // 获取通知组件的引用
 const documentNotificationRef = ref<InstanceType<typeof DocumentIndexNotification>>()

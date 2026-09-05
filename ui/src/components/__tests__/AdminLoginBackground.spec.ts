@@ -14,5 +14,6 @@ describe('AdminLoginBackground', () => {
     expect(firstParticleStyle).toContain('--particle-scale')
     expect(firstParticleStyle).toContain('opacity: 0.14;')
     expect(firstParticleStyle).toContain('transform: scale(0.88);')
+    expect(wrapper.find('.background-network').exists()).toBe(true)
   })
 })

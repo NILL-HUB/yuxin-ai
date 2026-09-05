@@ -1,4 +1,5 @@
 <template>
+  <div class="errors-barbie-wrap relative min-h-screen overflow-hidden" style="background: radial-gradient(circle at 15% 18%, rgba(233, 30, 99, 0.12), transparent 42%), radial-gradient(circle at 85% 80%, rgba(255, 158, 197, 0.22), transparent 46%), linear-gradient(180deg, var(--aicss-bg) 0%, var(--aicss-bg-subtle) 100%)">
   <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full max-w-5xl px-4">
     <div class="flex items-center">
       <div class="relative w-1/2">
@@ -21,24 +22,24 @@
       </div>
 
       <div class="w-1/2 pl-8 space-y-4">
-        <div class="animate-[slideUp_0.5s_ease-out_forwards] text-3xl font-bold text-blue-500 opacity-0">OOPS!</div>
-        <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.1s] text-sm text-blue-400 opacity-0">
+        <div class="animate-[slideUp_0.5s_ease-out_forwards] text-3xl font-bold text-brand-text opacity-0">OOPS!</div>
+        <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.1s] text-sm text-brand-text opacity-0">
           前往
           <a
-            class="text-blue-500  cursor-pointer"
+            class="text-brand-text cursor-pointer"
             @click="goHome"
           >
             AI Agent新建会话
           </a>
         </div>
-        <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.2s] text-xl font-bold text-gray-400 opacity-0">
+        <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.2s] text-xl font-bold text-text-2 opacity-0">
           {{ message }}
         </div>
-        <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.3s] text-sm text-gray-400 opacity-0">
+        <div class="animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.3s] text-sm text-muted opacity-0">
           请检查您的地址是否正确，或者返回新建会话
         </div>
         <button
-          class="mt-4 animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.5s] rounded-full bg-blue-500 px-6 py-2 text-white opacity-0"
+          class="mt-4 animate-[slideUp_0.5s_ease-out_forwards] [animation-delay:0.5s] rounded-full bg-brand px-6 py-2 text-white opacity-0 hover:bg-brand-hover"
           @click="goHome"
         >
           返回新建会话
@@ -46,6 +47,7 @@
       </div>
     </div>
   </div>
+</div>
 </template>
 
 <script setup lang="ts">

@@ -1230,7 +1230,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
     :class="
       props.embedded
         ? 'w-full'
-        : 'w-full h-full flex items-center justify-center bg-slate-50 px-4 py-8'
+        : 'w-full h-full flex items-center justify-center bg-surface-2 px-4 py-8'
     "
   >
     <div
@@ -1238,14 +1238,14 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         'w-full max-w-[460px] mx-auto',
         props.embedded
           ? 'p-6'
-          : 'p-10 border border-slate-200 shadow-[0_16px_48px_rgba(15,23,42,0.08)]',
+          : 'p-10 border border-border-c shadow-[0_16px_48px_rgba(233,30,99,0.08)]',
       ]"
     >
       <div class="mb-6">
         <div class="flex justify-center mb-4">
           <IconYuxinAI type="character" :size="248" />
         </div>
-        <p class="text-sm text-slate-500 mt-2 text-center">
+        <p class="text-sm text-muted mt-2 text-center">
           {{
             authView === 'login'
               ? loginModeDescription
@@ -1273,9 +1273,9 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       <div
         v-if="SHOW_THIRD_PARTY_LOGIN && (authView === 'login' || authView === 'register') && hasOauthOnlyProviders"
         data-testid="oauth-only-suggestions"
-        class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 mb-4"
+        class="rounded-xl border border-border-c bg-surface-2 px-4 py-3 mb-4"
       >
-        <p class="text-sm text-slate-700 mb-3">
+        <p class="text-sm text-text-2 mb-3">
           {{ $t('login.oauthOnlyHint') }}
         </p>
         <div class="grid grid-cols-2 gap-2">
@@ -1357,7 +1357,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
           >
             <a-input v-model="loginForm.identifier" size="large" allow-clear :placeholder="$t('login.identifierPlaceholder')">
               <template #prefix>
-                <icon-user class="text-slate-400" />
+                <icon-user class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1371,14 +1371,14 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
           >
             <a-input-password v-model="loginForm.password" size="large" :placeholder="$t('login.passwordPlaceholder')">
               <template #prefix>
-                <icon-lock class="text-slate-400" />
+                <icon-lock class="text-muted" />
               </template>
             </a-input-password>
           </a-form-item>
 
-          <div class="flex items-center justify-between text-sm text-slate-600 mb-4">
+          <div class="flex items-center justify-between text-sm text-text-2 mb-4">
             <a-checkbox v-model="rememberPassword" @change="handleRememberChange">{{ $t('login.rememberPassword') }}</a-checkbox>
-            <a-link class="!text-slate-500 hover:!text-slate-700" @click="openForgotPassword">
+            <a-link class="!text-muted hover:!text-text-2" @click="openForgotPassword">
               {{ $t('login.forgotPassword') }}
             </a-link>
           </div>
@@ -1410,7 +1410,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.phonePlaceholder')"
             >
               <template #prefix>
-                <icon-phone class="text-slate-400" />
+                <icon-phone class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1424,13 +1424,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handlePhoneCodeLogin"
             >
               <template #prefix>
-                <icon-safe class="text-slate-400" />
+                <icon-safe class="text-muted" />
               </template>
               <template #suffix>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-slate-500"
+                  class="!text-muted"
                   :loading="sendingPhoneLoginCode"
                   :disabled="phoneLoginCountdown > 0"
                   @click="handleSendPhoneLoginCode"
@@ -1468,7 +1468,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.emailLoginPlaceholder')"
             >
               <template #prefix>
-                <icon-email class="text-slate-400" />
+                <icon-email class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1481,13 +1481,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleEmailCodeLogin"
             >
               <template #prefix>
-                <icon-safe class="text-slate-400" />
+                <icon-safe class="text-muted" />
               </template>
               <template #suffix>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-slate-500"
+                  class="!text-muted"
                   :loading="sendingEmailLoginCode"
                   :disabled="emailLoginCountdown > 0"
                   @click="handleSendEmailLoginCode"
@@ -1511,8 +1511,8 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </a-form>
 
         <div class="text-center mt-4">
-          <span class="text-sm text-slate-500">{{ $t('login.noAccount') }}</span>
-          <a-link class="!text-slate-600 hover:!text-slate-800" @click="openRegister">
+          <span class="text-sm text-muted">{{ $t('login.noAccount') }}</span>
+          <a-link class="!text-text-2 hover:!text-text" @click="openRegister">
             {{ $t('login.registerEntry') }}
           </a-link>
         </div>
@@ -1573,7 +1573,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       </div>
 
       <div v-else-if="authView === 'register'">
-        <div class="rounded-xl bg-sky-50 border border-sky-100 px-4 py-3 text-sm text-sky-900 mb-4">
+        <div class="rounded-xl bg-brand-soft border border-border-c px-4 py-3 text-sm text-brand-text mb-4">
           {{ registerEntryDescription }}
         </div>
 
@@ -1593,7 +1593,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleStartRegister"
             >
               <template #prefix>
-                <icon-user class="text-slate-400" />
+                <icon-user class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1606,7 +1606,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleStartRegister"
             >
               <template #prefix>
-                <icon-lock class="text-slate-400" />
+                <icon-lock class="text-muted" />
               </template>
             </a-input-password>
           </a-form-item>
@@ -1619,7 +1619,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.inviteCodePlaceholder')"
               @keyup.enter="handleStartRegister"
             />
-            <div v-if="inviteCodeLocked" class="mt-1 text-xs text-sky-600">
+            <div v-if="inviteCodeLocked" class="mt-1 text-xs text-brand-text">
               <span v-if="registerInviteInfoLoading">{{ $t('common.loading') }}</span>
               <template v-else>
                 <span>{{ $t('login.inviteCodeLockedHint') }}</span>
@@ -1641,7 +1641,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </div>
 
         <div v-else-if="registerTab === 'email'">
-          <div class="rounded-xl bg-sky-50 border border-sky-100 px-4 py-3 text-sm text-sky-900 mb-4">
+          <div class="rounded-xl bg-brand-soft border border-border-c px-4 py-3 text-sm text-brand-text mb-4">
             {{ registerVerifyDescription }}
           </div>
 
@@ -1654,7 +1654,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleStartEmailRegister"
             >
               <template #prefix>
-                <icon-email class="text-slate-400" />
+                <icon-email class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1666,7 +1666,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.registerPasswordPlaceholder')"
             >
               <template #prefix>
-                <icon-lock class="text-slate-400" />
+                <icon-lock class="text-muted" />
               </template>
             </a-input-password>
           </a-form-item>
@@ -1689,13 +1689,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleVerifyEmailRegister"
             >
               <template #prefix>
-                <icon-safe class="text-slate-400" />
+                <icon-safe class="text-muted" />
               </template>
               <template #suffix>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-slate-500"
+                  class="!text-muted"
                   :loading="sendingRegisterCode"
                   :disabled="registerCountdown > 0"
                   @click="handleStartEmailRegister"
@@ -1727,7 +1727,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.phonePlaceholder')"
             >
               <template #prefix>
-                <icon-phone class="text-slate-400" />
+                <icon-phone class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1740,7 +1740,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.phoneRegisterUsernamePlaceholder')"
             >
               <template #prefix>
-                <icon-user class="text-slate-400" />
+                <icon-user class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1752,7 +1752,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.phoneRegisterPasswordPlaceholder')"
             >
               <template #prefix>
-                <icon-lock class="text-slate-400" />
+                <icon-lock class="text-muted" />
               </template>
             </a-input-password>
           </a-form-item>
@@ -1766,13 +1766,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handlePhoneRegisterVerify"
             >
               <template #prefix>
-                <icon-safe class="text-slate-400" />
+                <icon-safe class="text-muted" />
               </template>
               <template #suffix>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-slate-500"
+                  class="!text-muted"
                   :loading="sendingPhoneRegisterCode"
                   :disabled="phoneRegisterCountdown > 0"
                   @click="handleSendPhoneRegisterCode"
@@ -1796,8 +1796,8 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </div>
 
         <div class="text-center mt-4">
-          <span class="text-sm text-slate-500">{{ $t('login.haveAccount') }}</span>
-          <a-link class="!text-slate-600 hover:!text-slate-800" @click="backToLogin">
+          <span class="text-sm text-muted">{{ $t('login.haveAccount') }}</span>
+          <a-link class="!text-text-2 hover:!text-text" @click="backToLogin">
             {{ $t('login.backToLogin') }}
           </a-link>
         </div>
@@ -1821,15 +1821,15 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
             :class="{ 'challenge-channel-card--active': loginChallenge.selected_channel === channel.type }"
             @click="handleSelectChallengeChannel(channel.type)"
           >
-            <span class="text-sm font-medium text-slate-800">
+            <span class="text-sm font-medium text-text">
               {{ channel.type === 'phone' ? $t('login.phoneChannel') : $t('login.emailChannel') }}
             </span>
-            <span class="text-xs text-slate-500">{{ channel.masked || '—' }}</span>
+            <span class="text-xs text-muted">{{ channel.masked || '—' }}</span>
           </button>
         </div>
 
         <div v-if="loginChallenge.channels.length > 0">
-          <div v-if="challengeVerificationHint" class="text-sm text-slate-500 mb-3">
+          <div v-if="challengeVerificationHint" class="text-sm text-muted mb-3">
             {{ challengeVerificationHint }}
           </div>
 
@@ -1843,13 +1843,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleVerifyChallenge"
             >
               <template #prefix>
-                <icon-safe class="text-slate-400" />
+                <icon-safe class="text-muted" />
               </template>
               <template #suffix>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-slate-500"
+                  class="!text-muted"
                   :loading="sendingChallengeCode"
                   :disabled="
                     challengeCountdown > 0 ||
@@ -1876,7 +1876,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </div>
 
         <div class="text-center mt-4">
-          <a-link class="!text-slate-500 hover:!text-slate-700" @click="backToLogin">
+          <a-link class="!text-muted hover:!text-text-2" @click="backToLogin">
             <icon-left />
             {{ $t('login.backToLogin') }}
           </a-link>
@@ -1894,7 +1894,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleSendCode"
             >
               <template #prefix>
-                <icon-email class="text-slate-400" />
+                <icon-email class="text-muted" />
               </template>
             </a-input>
           </a-form-item>
@@ -1920,13 +1920,13 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleResetPassword"
             >
               <template #prefix>
-                <icon-safe class="text-slate-400" />
+                <icon-safe class="text-muted" />
               </template>
               <template #suffix>
                 <a-button
                   type="text"
                   size="mini"
-                  class="!text-slate-500"
+                  class="!text-muted"
                   :disabled="countdown > 0"
                   @click="handleResendCode"
                 >
@@ -1943,7 +1943,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               :placeholder="$t('login.newPasswordPlaceholder')"
             >
               <template #prefix>
-                <icon-lock class="text-slate-400" />
+                <icon-lock class="text-muted" />
               </template>
             </a-input-password>
           </a-form-item>
@@ -1956,7 +1956,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
               @keyup.enter="handleResetPassword"
             >
               <template #prefix>
-                <icon-lock class="text-slate-400" />
+                <icon-lock class="text-muted" />
               </template>
             </a-input-password>
           </a-form-item>
@@ -1974,7 +1974,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </div>
 
         <div class="text-center mt-4">
-          <a-link class="!text-slate-500 hover:!text-slate-700" @click="handleForgotBack">
+          <a-link class="!text-muted hover:!text-text-2" @click="handleForgotBack">
             <icon-left />
             {{ forgotStep === 1 ? $t('login.backToLogin') : $t('login.backToPrevious') }}
           </a-link>
@@ -1987,19 +1987,19 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 <style scoped>
 .login-input :deep(.arco-input-wrapper) {
   border-radius: 10px;
-  background: #f8fafc;
-  border-color: #e2e8f0;
+  background: var(--aicss-surface-2);
+  border-color: var(--aicss-border);
 }
 
 .login-input :deep(.arco-input-wrapper:hover) {
-  border-color: #cbd5e1;
-  background: #fff;
+  border-color: var(--aicss-border-strong);
+  background: var(--aicss-surface);
 }
 
 .login-input :deep(.arco-input-wrapper.arco-input-focus) {
-  border-color: #3b82f6;
-  background: #fff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+  border-color: var(--aicss-accent);
+  background: var(--aicss-surface);
+  box-shadow: 0 0 0 2px var(--aicss-accent-soft);
 }
 
 .login-submit-btn {
@@ -2010,14 +2010,14 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 .oauth-btn {
   border-radius: 10px;
   height: 42px;
-  border-color: #e2e8f0;
-  color: #334155;
-  background: #fff;
+  border-color: var(--aicss-border);
+  color: var(--aicss-text-2);
+  background: var(--aicss-surface);
 }
 
 .oauth-btn:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
+  border-color: var(--aicss-border-strong);
+  background: var(--aicss-surface-2);
 }
 
 .auth-tabs {
@@ -2026,7 +2026,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 
 .auth-tabs :deep(.arco-tabs-header-title) {
   font-size: 14px;
-  color: #64748b;
+  color: var(--aicss-muted);
 }
 
 .challenge-channel-card {
@@ -2035,20 +2035,20 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
   gap: 4px;
   padding: 12px;
   border-radius: 10px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .challenge-channel-card:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
+  border-color: var(--aicss-border-strong);
+  background: var(--aicss-surface-2);
 }
 
 .challenge-channel-card--active {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+  border-color: var(--aicss-accent);
+  box-shadow: 0 0 0 2px var(--aicss-accent-soft);
 }
 </style>

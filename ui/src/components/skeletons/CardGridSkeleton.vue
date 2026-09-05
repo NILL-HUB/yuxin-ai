@@ -9,7 +9,7 @@ const props = defineProps({
     <a-col v-for="idx in props.count" :key="idx" :span="6">
       <div class="rounded-lg border border-gray-200 bg-white p-4">
         <div class="flex items-center gap-3 mb-4">
-          <div class="skeleton-shimmer h-10 w-10 rounded-lg flex-shrink-0" />
+          <div class="skeleton-shimmer h-10 w-10 rounded-lg shrink-0" />
           <div class="flex-1 flex flex-col gap-2">
             <div class="skeleton-shimmer h-4 w-28 rounded" />
             <div class="skeleton-shimmer h-3 w-24 rounded" />

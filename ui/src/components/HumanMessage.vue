@@ -36,7 +36,7 @@ const handleCopyHumanMessage = async () => {
       <div class="flex min-w-0 max-w-full flex-col items-end gap-2">
         <!-- 账号昵称 -->
         <div class="flex items-center gap-2">
-          <div class="text-gray-700 font-bold text-right text-sm">{{ props.account?.name }}</div>
+          <div class="text-text font-bold text-right text-sm">{{ props.account?.name }}</div>
           <a-tag
             v-if="props.invoke_from === 'schedule'"
             size="small"
@@ -56,29 +56,29 @@ const handleCopyHumanMessage = async () => {
           </div>
           <div class="flex items-center justify-end pr-1">
             <icon-copy
-              class="text-gray-400 cursor-pointer hover:text-gray-700 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto"
+              class="text-subtle cursor-pointer hover:text-muted opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto"
               @click="handleCopyHumanMessage"
             />
           </div>
         </div>
       </div>
       <!-- 右侧头像 -->
-      <a-avatar :size="36" shape="circle" class="flex-shrink-0" :image-url="getUserAvatarUrl(props.account?.avatar, props.account?.name)" />
+      <a-avatar :size="36" shape="circle" class="shrink-0" :image-url="getUserAvatarUrl(props.account?.avatar, props.account?.name)" />
     </div>
   </div>
 </template>
 
 <style scoped>
 .glass-message-bubble {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.45) 0%, rgba(240, 248, 255, 0.35) 100%);
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.55) 0%, rgba(255, 240, 246, 0.4) 100%);
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
   border: 1.5px solid rgba(255, 255, 255, 0.7);
   box-shadow:
-    0 8px 32px rgba(186, 230, 253, 0.2),
+    0 8px 32px rgba(233, 30, 99, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.9),
     inset 0 -1px 0 rgba(0, 0, 0, 0.06);
-  color: #1f2937;
+  color: var(--aicss-text);
   position: relative;
   overflow: hidden;
 }
@@ -102,10 +102,10 @@ const handleCopyHumanMessage = async () => {
 }
 
 .glass-message-bubble:hover {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, rgba(240, 248, 255, 0.45) 100%);
-  border-color: rgba(255, 255, 255, 0.85);
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.65) 0%, rgba(255, 240, 246, 0.5) 100%);
+  border-color: rgba(238, 185, 205, 0.85);
   box-shadow:
-    0 12px 40px rgba(186, 230, 253, 0.3),
+    0 12px 40px rgba(233, 30, 99, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 1),
     inset 0 -1px 0 rgba(0, 0, 0, 0.08);
 }

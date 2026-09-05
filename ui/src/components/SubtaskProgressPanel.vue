@@ -37,7 +37,7 @@ const { t } = useI18n()
       >
         <div class="flex items-center gap-2 min-w-0">
           <span
-            class="h-2 w-2 flex-shrink-0 rounded-full"
+            class="h-2 w-2 shrink-0 rounded-full"
             :class="{
               'bg-gray-300': subtask.status === 'pending',
               'bg-cyan-500 animate-pulse': subtask.status === 'running',
@@ -48,7 +48,7 @@ const { t } = useI18n()
           <span class="min-w-0 flex-1 truncate text-xs text-gray-700">
             {{ subtask.title }}
           </span>
-          <span class="flex-shrink-0 text-xs text-gray-500">
+          <span class="shrink-0 text-xs text-gray-500">
             {{ t(`home.orchestration.subtaskStatus.${subtask.status}`) }}
           </span>
         </div>

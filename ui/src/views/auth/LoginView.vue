@@ -5,7 +5,7 @@ import LoginForm from './components/LoginForm.vue'
 
 <template>
   <!-- 页面容器 -->
-  <div class="flex h-screen bg-white login-page">
+  <div class="flex h-screen bg-surface login-page">
     <!-- 左侧banner -->
     <login-banner />
     <!-- 右侧表单 -->

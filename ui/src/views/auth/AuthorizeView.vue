@@ -130,7 +130,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="w-full min-h-screen flex items-center justify-center bg-white">
+  <div class="w-full min-h-screen flex items-center justify-center bg-surface">
     <div class="flex flex-col items-center gap-4">
       <a-spin v-if="!authorizeError" tip="第三方授权登录中..."></a-spin>
       <template v-else>

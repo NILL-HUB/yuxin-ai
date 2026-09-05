@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import InteractiveParticleCanvas from '@/components/InteractiveParticleCanvas.vue'
+
 interface ParticleSpec {
   left: number
   top: number
@@ -42,6 +44,13 @@ const particles: ParticleSpec[] = [
     <div class="background-beam beam-right"></div>
     <div class="background-halo halo-main"></div>
     <div class="background-halo halo-side"></div>
+    <interactive-particle-canvas
+      class="background-network"
+      :particle-count="88"
+      :link-distance="110"
+      particle-color="#7ba0ff"
+      mouse-link-color="#67e8ff"
+    />
 
     <span
       v-for="(particle, index) in particles"
@@ -70,6 +79,10 @@ const particles: ParticleSpec[] = [
   inset: 0;
   overflow: hidden;
   pointer-events: none;
+}
+
+.background-network {
+  z-index: 1;
 }
 
 .background-base {

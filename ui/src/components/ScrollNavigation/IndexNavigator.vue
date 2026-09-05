@@ -49,7 +49,7 @@ const handleAfterEnter = (el: Element) => {
         :class="[
           'w-10 h-10 rounded-full font-semibold text-sm transition-all duration-300 flex items-center justify-center',
           currentIndex === index
-            ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-lg shadow-blue-500/30'
+            ? 'bg-linear-to-r from-blue-600 to-cyan-600 text-white shadow-lg shadow-blue-500/30'
             : 'bg-white/40 backdrop-blur-md border border-white/60 text-gray-700 hover:bg-white/50 hover:border-white/80 hover:shadow-lg hover:shadow-blue-500/10',
         ]"
         :aria-label="t('chat.navigation.jumpToItem', { index: index + 1 })"

@@ -2,6 +2,27 @@
 
 @import "tailwindcss";
 
+/* 主题语义色：@theme inline 将工具类（bg-surface/text-brand 等）接到
+   运行时 CSS 变量（src/theme/theme.css 按 data-theme 切换） */
+@theme inline {
+  --color-bg: var(--tw-bg);
+  --color-surface: var(--tw-surface);
+  --color-surface-2: var(--tw-surface-2);
+  --color-brand: var(--tw-brand);
+  --color-brand-hover: var(--tw-brand-hover);
+  --color-brand-soft: var(--tw-brand-soft);
+  --color-brand-text: var(--tw-brand-text);
+  --color-accent: var(--tw-accent);
+  --color-border-c: var(--tw-border);
+  --color-border-strong: var(--tw-border-strong);
+  --color-text: var(--tw-text);
+  --color-text-2: var(--tw-text-2);
+  --color-muted: var(--tw-muted);
+  --color-subtle: var(--tw-subtle);
+  --color-card: var(--tw-card);
+  --radius-theme: var(--tw-radius);
+}
+
 @layer base {
   .scrollbar-w-none {
     scrollbar-width: none;

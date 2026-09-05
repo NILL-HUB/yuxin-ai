@@ -129,8 +129,8 @@ const deepThinkingButtonClass = computed(() => {
   return [
     actionButtonClass.value,
     props.deepThinkingEnabled
-      ? 'bg-indigo-500/15 text-indigo-600 ring-1 ring-indigo-300/70 hover:bg-indigo-500/20'
-      : 'text-gray-600 hover:bg-white/20 hover:text-indigo-600',
+      ? 'bg-brand-soft text-brand-text ring-1 ring-[#f0bcd2]/70 hover:bg-brand-soft/80'
+      : 'text-muted hover:bg-brand-soft hover:text-brand-text',
   ]
 })
 
@@ -289,7 +289,7 @@ const handleBlur = (event: FocusEvent) => {
           :aria-label="t('chat.composer.uploadImage')"
           :class="[
             actionButtonClass,
-            'text-gray-600 hover:bg-white/20 hover:text-gray-800 disabled:opacity-60',
+            'text-muted hover:bg-white/20 hover:text-text disabled:opacity-60',
           ]"
           @click.stop="handleUpload"
         >
@@ -356,7 +356,7 @@ const handleBlur = (event: FocusEvent) => {
           <button
             v-if="showVoiceButton && !audioToTextLoading && !isRecording"
             type="button"
-            :class="[actionButtonClass, 'text-gray-600 hover:bg-white/20 hover:text-gray-800']"
+            :class="[actionButtonClass, 'text-muted hover:bg-white/20 hover:text-text']"
             :title="t('chat.composer.startRecord')"
             @click.stop="$emit('start-record')"
           >
@@ -395,7 +395,7 @@ const handleBlur = (event: FocusEvent) => {
             v-else-if="showVoiceButton"
             type="button"
             disabled
-            :class="[actionButtonClass, 'cursor-wait text-cyan-500/80']"
+            :class="[actionButtonClass, 'cursor-wait text-muted']"
             :title="t('chat.composer.transcribing')"
           >
             <svg
@@ -449,7 +449,7 @@ const handleBlur = (event: FocusEvent) => {
             :disabled="submitLoading"
             :class="[
               actionButtonClass,
-              'text-indigo-600 hover:bg-indigo-500/15 hover:text-indigo-700 disabled:opacity-50',
+              'text-brand-text hover:bg-brand-soft hover:text-brand-text disabled:opacity-50',
             ]"
             :title="t('chat.composer.sendMessage')"
             :aria-label="t('chat.composer.sendMessage')"

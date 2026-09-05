@@ -1,0 +1,254 @@
+/* ============================================================
+   钰心AI 模块化主题系统 — 主题 Token
+   ============================================================
+   结构说明：
+   - 每个主题一个 data-theme 作用域（默认 :root 为 fallback）
+   - 三层 token 并联：
+     ① --tw-*      : Tailwind v4 语义色（@theme inline 引用，运行时切换）
+     ② --arcoblue-*: Arco Design Vue 主色（RGB 三元组格式，引用链 --primary-N）
+     ③ --aicss-*   : 项目自有设计令牌（ai-chat-ui.css 同族覆盖）
+   - 新增主题：复制一份 [data-theme="xxx"] 块并替换色值即可，
+     再在 src/theme/index.ts 注册 themeId，一键接入。
+   ============================================================ */
+
+/* ---------- Barbie 主题（浅色 · 默认） ---------- */
+:root,
+[data-theme="barbie"] {
+  /* Tailwind 语义色 */
+  --tw-bg: #fff5f9;
+  --tw-surface: #fffafc;
+  --tw-surface-2: #fff0f6;
+  --tw-brand: #e91e63;
+  --tw-brand-hover: #d81b60;
+  --tw-brand-soft: #fce4ec;
+  --tw-brand-text: #c2185b;
+  --tw-accent: #ff9ec5;
+  --tw-border: #f8d8e6;
+  --tw-border-strong: #f0bcd2;
+  --tw-text: #310015;
+  --tw-text-2: #5a1f3a;
+  --tw-muted: #a64b74;
+  --tw-subtle: #c988a6;
+  --tw-card: #fffafc;
+  --tw-radius: 1.8rem;
+
+  /* Arco Design Vue 主色（RGB 三元组，非 hex）
+     覆盖 --arcoblue-6 即联动 --primary-6 全链 */
+  --arcoblue-1: 252, 233, 240;
+  --arcoblue-2: 248, 214, 228;
+  --arcoblue-3: 244, 181, 209;
+  --arcoblue-4: 240, 149, 189;
+  --arcoblue-5: 236, 116, 166;
+  --arcoblue-6: 233, 30, 99;
+  --arcoblue-7: 208, 24, 87;
+  --arcoblue-8: 184, 20, 77;
+  --arcoblue-9: 161, 15, 66;
+  --arcoblue-10: 138, 12, 56;
+
+  /* AICSS 设计令牌覆盖（联动 ChatComposer/AgentThought 等全部组件） */
+  --aicss-bg: #fff5f9;
+  --aicss-bg-subtle: #fff0f6;
+  --aicss-surface: #fffafc;
+  --aicss-surface-2: #fdf2f6;
+  --aicss-surface-3: #fbe8f0;
+  --aicss-border: #f6d7e4;
+  --aicss-border-strong: #eeb9cd;
+  --aicss-text: #310015;
+  --aicss-text-2: #5a1f3a;
+  --aicss-muted: #a64b74;
+  --aicss-subtle: #c988a6;
+  --aicss-accent: #e91e63;
+  --aicss-accent-soft: rgba(233, 30, 99, 0.1);
+  --aicss-accent-text: #c2185b;
+  --aicss-violet: #d63384;
+  --aicss-violet-soft: rgba(214, 51, 132, 0.1);
+  --aicss-radius-sm: 1.1rem;
+  --aicss-radius: 1.5rem;
+  --aicss-radius-lg: 1.8rem;
+  --aicss-shadow-card:
+    0 2px 8px rgba(233, 30, 99, 0.06),
+    0 0 0 0.5px rgba(233, 30, 99, 0.08),
+    0 10px 28px rgba(233, 30, 99, 0.08);
+  --aicss-shadow-elevated:
+    0 4px 10px rgba(233, 30, 99, 0.08),
+    0 0 0 0.5px rgba(233, 30, 99, 0.1),
+    0 20px 48px rgba(233, 30, 99, 0.12);
+}
+
+/* ---------- Barbie 暗色主题（预留） ---------- */
+[data-theme="barbie-dark"] {
+  --tw-bg: #1a000e;
+  --tw-surface: #2d001a;
+  --tw-surface-2: #3d0021;
+  --tw-brand: #ff007f;
+  --tw-brand-hover: #ff4081;
+  --tw-brand-soft: #4a0026;
+  --tw-brand-text: #ff80ab;
+  --tw-accent: #ff4081;
+  --tw-border: #4a0026;
+  --tw-border-strong: #5d0231;
+  --tw-text: #ffd1e8;
+  --tw-text-2: #ffb0d4;
+  --tw-muted: #f06292;
+  --tw-subtle: #c2557f;
+  --tw-card: #2d001a;
+  --tw-radius: 1.8rem;
+
+  --arcoblue-1: 58, 0, 30;
+  --arcoblue-2: 74, 0, 38;
+  --arcoblue-3: 94, 0, 49;
+  --arcoblue-4: 117, 0, 61;
+  --arcoblue-5: 142, 0, 74;
+  --arcoblue-6: 255, 0, 127;
+  --arcoblue-7: 255, 45, 148;
+  --arcoblue-8: 255, 90, 168;
+  --arcoblue-9: 255, 130, 186;
+  --arcoblue-10: 255, 170, 204;
+
+  --aicss-bg: #1a000e;
+  --aicss-bg-subtle: #240013;
+  --aicss-surface: #2d001a;
+  --aicss-surface-2: #38001f;
+  --aicss-surface-3: #420026;
+  --aicss-border: #4a0026;
+  --aicss-border-strong: #5d0231;
+  --aicss-text: #ffd1e8;
+  --aicss-text-2: #ffb0d4;
+  --aicss-muted: #f06292;
+  --aicss-subtle: #c2557f;
+  --aicss-accent: #ff007f;
+  --aicss-accent-soft: rgba(255, 0, 127, 0.14);
+  --aicss-accent-text: #ff80ab;
+  --aicss-violet: #ff6ba8;
+  --aicss-violet-soft: rgba(255, 107, 168, 0.14);
+  --aicss-radius-sm: 1.1rem;
+  --aicss-radius: 1.5rem;
+  --aicss-radius-lg: 1.8rem;
+  --aicss-shadow-card:
+    0 2px 8px rgba(0, 0, 0, 0.32),
+    0 0 0 0.5px rgba(255, 255, 255, 0.08),
+    0 10px 28px rgba(0, 0, 0, 0.24);
+  --aicss-shadow-elevated:
+    0 4px 10px rgba(0, 0, 0, 0.4),
+    0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    0 20px 48px rgba(0, 0, 0, 0.32);
+}
+
+/* ---------- Arco 暗色属性与 data-theme 同步 ---------- */
+[data-theme="barbie-dark"] body,
+body[data-theme="barbie-dark"] {
+  color-scheme: dark;
+}
+
+/* ============================================================
+   全局 Arco 组件主题联动（不限作用域，用户端全页面生效）
+   随 --aicss-* 变量自动跟随主题，无需逐组件覆盖
+   ============================================================ */
+
+/* 表格 */
+.arco-table {
+  background: transparent !important;
+  color: var(--aicss-text) !important;
+}
+
+.arco-table-th {
+  background: var(--aicss-bg-subtle) !important;
+  color: var(--aicss-muted) !important;
+  font-weight: 600 !important;
+  border-bottom: 1px solid var(--aicss-border) !important;
+}
+
+.arco-table-td {
+  border-bottom: 1px solid var(--aicss-border) !important;
+  color: var(--aicss-text-2) !important;
+}
+
+.arco-table-tr:hover .arco-table-td {
+  background: var(--aicss-surface-2) !important;
+}
+
+/* 分页 */
+.arco-pagination-item {
+  border-color: var(--aicss-border) !important;
+  color: var(--aicss-text-2) !important;
+  background: var(--aicss-surface) !important;
+  border-radius: var(--aicss-radius-sm) !important;
+}
+
+.arco-pagination-item-active {
+  border-color: var(--aicss-accent) !important;
+  background: var(--aicss-accent-soft) !important;
+  color: var(--aicss-accent-text) !important;
+}
+
+/* 输入类 */
+.arco-input,
+.arco-select-view,
+.arco-textarea {
+  border-color: var(--aicss-border) !important;
+  background: var(--aicss-surface) !important;
+  color: var(--aicss-text) !important;
+}
+
+.arco-input:hover,
+.arco-select-view:hover,
+.arco-textarea:hover {
+  border-color: var(--aicss-border-strong) !important;
+}
+
+/* 弹窗 / 抽屉（浅色卡片表面 + 粉调圆角） */
+.arco-modal {
+  border-radius: var(--aicss-radius-lg) !important;
+}
+
+.arco-modal-header {
+  border-bottom: 1px solid var(--aicss-border) !important;
+}
+
+.arco-modal-content {
+  color: var(--aicss-text) !important;
+}
+
+.arco-drawer {
+  background: var(--aicss-surface) !important;
+  color: var(--aicss-text) !important;
+}
+
+/* 弹窗窄屏降级：Arco Modal 在 <480px 自动占满屏宽 */
+@media (max-width: 480px) {
+  .arco-modal {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px) !important;
+    margin: 12px auto;
+  }
+}
+
+/* 卡片 */
+.arco-card {
+  border-color: var(--aicss-border) !important;
+  border-radius: var(--aicss-radius) !important;
+  background: var(--aicss-surface) !important;
+  box-shadow: var(--aicss-shadow-card) !important;
+  color: var(--aicss-text) !important;
+}
+
+/* 空状态与提示 */
+.arco-empty-description {
+  color: var(--aicss-muted) !important;
+}
+
+/* 开关 / 单选框 / 复选框的文案色 */
+.arco-switch,
+.arco-radio,
+.arco-checkbox {
+  color: var(--aicss-text) !important;
+}
+
+/* 抽屉窄屏降级 */
+@media (max-width: 640px) {
+  .arco-drawer {
+    width: 100% !important;
+    max-width: 100vw !important;
+  }
+}
+

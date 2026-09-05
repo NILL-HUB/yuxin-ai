@@ -131,7 +131,7 @@ defineExpose({
         <!-- 主要内容 -->
         <div class="p-5 flex items-start gap-3">
           <!-- 左侧图标 - 绿色成功风格 -->
-          <div class="flex-shrink-0 mt-1">
+          <div class="shrink-0 mt-1">
             <div class="w-3 h-3 rounded-full bg-green-500"></div>
           </div>
 
@@ -147,7 +147,7 @@ defineExpose({
 
           <!-- 右侧关闭按钮 -->
           <button
-            class="flex-shrink-0 text-gray-300 hover:text-gray-500 transition-colors mt-0.5"
+            class="shrink-0 text-gray-300 hover:text-gray-500 transition-colors mt-0.5"
             :aria-label="isEnglish ? 'Close notification' : '关闭通知'"
             @click.stop="handleCloseNotification(notification.id)"
           >

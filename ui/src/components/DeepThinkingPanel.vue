@@ -76,7 +76,7 @@ watch(isFinished, (finished) => {
         <!-- 思考完成对勾 -->
         <svg
           v-else
-          class="h-3.5 w-3.5 text-violet-500 flex-shrink-0"
+          class="h-3.5 w-3.5 text-violet-500 shrink-0"
           viewBox="0 0 20 20"
           fill="currentColor"
         >
@@ -90,7 +90,7 @@ watch(isFinished, (finished) => {
       </div>
 
       <!-- 右：latency + 折叠箭头 -->
-      <div class="flex items-center gap-1.5 flex-shrink-0 ml-2">
+      <div class="flex items-center gap-1.5 shrink-0 ml-2">
         <span v-if="isFinished" class="text-[10px] text-violet-400/80">
           {{ latency.toFixed(1) }}s
         </span>

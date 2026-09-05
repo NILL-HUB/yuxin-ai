@@ -31,7 +31,7 @@ const activeThoughtKeys = ref<(string | number)[]>([])
 // 保证推理过程逐 token 实时可见；用户手动折叠/展开后恢复正常交互。
 // 不依赖 syncLatestThought 的 watch 时序，避免流式早期 follow 状态
 // 尚未建立（item.id === message_id 未匹配）时卡片保持折叠。
-const effectiveActiveKeys = computed(() => {
+const _effectiveActiveKeys = computed(() => {
   if (props.loading || props.follow_latest_thought) {
     return thoughtItems.value.map((item) => getThoughtKey(item))
   }
@@ -51,7 +51,7 @@ const handleToggle = () => {
 // 一次到位、不闪烁，用户想看推理时可手动展开。
 watch(
   [() => props.loading, () => props.follow_latest_thought],
-  ([loading, follow], [prevLoading, prevFollow]) => {
+  ([loading, follow], [prevLoading, _prevFollow]) => {
     if (loading || follow) {
       visible.value = true
       activeThoughtKeys.value = thoughtItems.value.map((item) => getThoughtKey(item))
@@ -127,7 +127,7 @@ const toolCallCards = computed(() => {
       const rawTodos = Array.isArray(timeline.todos) ? timeline.todos : Array.isArray(record.todos) ? record.todos : []
       rows.push(
         ...rawTodos
-          .map((todo, index) => {
+          .map((todo, _index) => {
             if (todo && typeof todo === 'object') {
               const item = todo as Record<string, unknown>
               const label = String(
@@ -196,9 +196,9 @@ const latestThoughtKey = computed(() => {
   if (thoughtItems.value.length === 0) return ''
   return String(getThoughtKey(thoughtItems.value[thoughtItems.value.length - 1]))
 })
-const isInlineVariant = computed(() => props.variant === 'inline')
+const _isInlineVariant = computed(() => props.variant === 'inline')
 
-const isLatestThought = (agentThought: Record<string, unknown>) => {
+const _isLatestThought = (agentThought: Record<string, unknown>) => {
   return String(getThoughtKey(agentThought)) === latestThoughtKey.value
 }
 
@@ -258,7 +258,7 @@ const getThoughtContent = (agentThought: Record<string, unknown>) => {
   return String(agentThought?.observation || agentThought?.result || agentThought?.output || '').trim()
 }
 
-const formatToolInput = (toolInput: unknown) => {
+const _formatToolInput = (toolInput: unknown) => {
   if (!toolInput) return ''
   if (typeof toolInput === 'string') {
     try {
@@ -275,13 +275,13 @@ const formatToolInput = (toolInput: unknown) => {
   }
 }
 
-const getThoughtLatency = (agentThought: Record<string, unknown>) => {
+const _getThoughtLatency = (agentThought: Record<string, unknown>) => {
   const raw = Number(agentThought?.latency)
   if (!Number.isFinite(raw) || raw <= 0) return '0.00s'
   return `${raw.toFixed(2)}s`
 }
 
-const getThoughtTitle = (event: string) => {
+const _getThoughtTitle = (event: string) => {
   if (event === QueueEvent.longTermMemoryRecall) return t('chat.thought.events.longTermMemoryRecall')
   if (event === QueueEvent.agentThought) return t('chat.thought.events.agentThought')
   if (event === QueueEvent.datasetRetrieval) return t('chat.thought.events.datasetRetrieval')
@@ -291,7 +291,7 @@ const getThoughtTitle = (event: string) => {
   return t('chat.thought.events.fallback')
 }
 
-const getThoughtTitleTooltip = (event: string) => {
+const _getThoughtTitleTooltip = (event: string) => {
   if (event === QueueEvent.longTermMemoryRecall) return t('chat.thought.events.longTermMemoryRecall')
   if (event === QueueEvent.agentThought) return t('chat.thought.events.agentThought')
   if (event === QueueEvent.datasetRetrieval) return t('chat.thought.events.datasetRetrieval')
