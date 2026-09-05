@@ -279,7 +279,8 @@ class AppConfigService(BaseService):
     def get_draft_app_config(self, app: App, persist_changes: bool = True) -> dict[str, Any]:
         """根据传递的应用获取该应用的草稿配置"""
         # 1.提取应用的草稿配置
-        draft_app_config = app.draft_app_config
+        draft_app_config = self._load_draft_app_config(app)
+        config_snapshot = self._snapshot_app_config(draft_app_config)
         cache_key = self._build_runtime_config_cache_key(
             "draft",
             app_config=draft_app_config,
@@ -360,17 +361,52 @@ class AppConfigService(BaseService):
             mcp_tool_snapshots,
             skills,
             agent_bindings,
-            draft_app_config,
+            config_snapshot,
             knowledge_bases,
         )
         if not persist_changes:
             self._set_runtime_config_cache(cache_key, result)
         return result
 
+    def _load_draft_app_config(self, app: App) -> AppConfigVersion:
+        """加载应用的草稿配置，避免复用跨会话脱离的配置实例。"""
+        if getattr(app, "draft_app_config_id", None) is not None:
+            draft_app_config = self.get(AppConfigVersion, app.draft_app_config_id)
+            if draft_app_config is not None:
+                return draft_app_config
+        return app.draft_app_config
+
+    @staticmethod
+    def _snapshot_app_config(app_config: Union[AppConfig, AppConfigVersion]) -> dict[str, Any]:
+        """把配置 ORM 实例的标量字段物化为普通数据，避免跨 SSE 线程访问脱离实例。"""
+        return {
+            "id": str(app_config.id),
+            "dialog_round": app_config.dialog_round,
+            "preset_prompt": app_config.preset_prompt,
+            "mcp_bindings": getattr(app_config, "mcp_bindings", []),
+            "mcp_tool_snapshots": getattr(app_config, "mcp_tool_snapshots", []),
+            "skills": getattr(app_config, "skills", []),
+            "agent_bindings": getattr(app_config, "agent_bindings", []),
+            "workflows": app_config.workflows,
+            "knowledge_base_ids": getattr(app_config, "knowledge_base_ids", []),
+            "embedding_model_id": str(getattr(app_config, "embedding_model_id", "") or "") or "",
+            "retrieval_config": app_config.retrieval_config,
+            "long_term_memory": app_config.long_term_memory,
+            "opening_statement": app_config.opening_statement,
+            "opening_questions": app_config.opening_questions,
+            "speech_to_text": app_config.speech_to_text,
+            "text_to_speech": app_config.text_to_speech,
+            "suggested_after_answer": app_config.suggested_after_answer,
+            "review_config": app_config.review_config,
+            "updated_at": app_config.updated_at,
+            "created_at": app_config.created_at,
+        }
+
     def get_app_config(self, app: App, persist_changes: bool = True) -> dict[str, Any]:
         """根据传递的应用获取该应用的运行配置"""
         # 1.提取应用的草稿配置
         app_config = app.app_config
+        config_snapshot = self._snapshot_app_config(app_config)
         cache_key = self._build_runtime_config_cache_key(
             "published",
             app_config=app_config,
@@ -451,7 +487,7 @@ class AppConfigService(BaseService):
             mcp_tool_snapshots,
             skills,
             agent_bindings,
-            app_config,
+            config_snapshot,
             knowledge_bases,
         )
         if not persist_changes:
@@ -465,6 +501,7 @@ class AppConfigService(BaseService):
         current_app_id: UUID | None = None,
     ) -> dict[str, Any]:
         """根据传递的版本配置，返回用于前端展示的完整配置结构。"""
+        config_snapshot = self._snapshot_app_config(app_config_version)
         cache_key = self._build_runtime_config_cache_key(
             "version_display",
             app_config=app_config_version,
@@ -503,7 +540,7 @@ class AppConfigService(BaseService):
             mcp_tool_snapshots,
             skills,
             agent_bindings,
-            app_config_version,
+            config_snapshot,
             knowledge_bases,
         )
         self._set_runtime_config_cache(cache_key, result)
@@ -614,15 +651,15 @@ class AppConfigService(BaseService):
             mcp_tool_snapshots: list[dict],
             skills: list[dict],
             agent_bindings: list[dict],
-            app_config: Union[AppConfig, AppConfigVersion],
+            app_config: dict[str, Any],
             knowledge_bases: list[dict] | None = None,
     ) -> dict[str, Any]:
-        """根据传递的插件列表、工作流列表、知识库列表以及应用配置创建字典信息"""
+        """根据传递的插件列表、工作流列表、知识库列表以及配置快照创建字典信息"""
         return {
-            "id": str(app_config.id),
+            "id": app_config["id"],
             "model_config": model_config,
-            "dialog_round": app_config.dialog_round,
-            "preset_prompt": app_config.preset_prompt,
+            "dialog_round": app_config["dialog_round"],
+            "preset_prompt": app_config["preset_prompt"],
             "tools": tools,
             "mcp_bindings": mcp_bindings,
             "mcp_tool_snapshots": mcp_tool_snapshots,
@@ -635,17 +672,17 @@ class AppConfigService(BaseService):
             ],
             "knowledge_bases": knowledge_bases or [],
             # App 级别绑定的 embedding 模型 ID（用于按维度路由向量存储）
-            "embedding_model_id": str(getattr(app_config, "embedding_model_id", "") or "") or "",
-            "retrieval_config": app_config.retrieval_config,
-            "long_term_memory": app_config.long_term_memory,
-            "opening_statement": app_config.opening_statement,
-            "opening_questions": app_config.opening_questions,
-            "speech_to_text": app_config.speech_to_text,
-            "text_to_speech": app_config.text_to_speech,
-            "suggested_after_answer": app_config.suggested_after_answer,
-            "review_config": app_config.review_config,
-            "updated_at": datetime_to_timestamp(app_config.updated_at),
-            "created_at": datetime_to_timestamp(app_config.created_at),
+            "embedding_model_id": app_config["embedding_model_id"],
+            "retrieval_config": app_config["retrieval_config"],
+            "long_term_memory": app_config["long_term_memory"],
+            "opening_statement": app_config["opening_statement"],
+            "opening_questions": app_config["opening_questions"],
+            "speech_to_text": app_config["speech_to_text"],
+            "text_to_speech": app_config["text_to_speech"],
+            "suggested_after_answer": app_config["suggested_after_answer"],
+            "review_config": app_config["review_config"],
+            "updated_at": datetime_to_timestamp(app_config["updated_at"]),
+            "created_at": datetime_to_timestamp(app_config["created_at"]),
         }
 
     def _process_and_validate_tools(self, origin_tools: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -654,6 +691,24 @@ class AppConfigService(BaseService):
         validate_tools = []
         tools = []
         for tool in origin_tools:
+            # 兼容历史发布配置里的展示格式（provider.id/tool.name）
+            tool = {
+                **tool,
+                "provider_id": str(
+                    tool.get("provider_id")
+                    or tool.get("provider", {}).get("id")
+                    or ""
+                ).strip(),
+                "tool_id": str(
+                    tool.get("tool_id")
+                    or tool.get("tool", {}).get("id")
+                    or tool.get("tool", {}).get("name")
+                    or ""
+                ).strip(),
+                "params": tool.get("params")
+                if tool.get("params") is not None
+                else tool.get("tool", {}).get("params", {}),
+            }
             if tool["type"] == "builtin_tool":
                 # 2.查询内置工具提供者，并检测是否存在
                 provider = self.builtin_provider_manager.get_provider(tool["provider_id"])
@@ -1090,6 +1145,3 @@ class AppConfigService(BaseService):
             })
 
         return workflows, validate_workflows
-
-
-

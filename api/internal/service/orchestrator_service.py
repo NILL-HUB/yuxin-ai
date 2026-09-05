@@ -23,6 +23,7 @@ from .agent_pool_aggregate_service import AgentPoolService
 from .tool_inventory_service import CrossPoolToolSubsetBuilder
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
+from .conductor_service import ConductorService
 
 
 class OrchestratorService:
@@ -45,6 +46,7 @@ class OrchestratorService:
         routing_observability_service: RoutingObservabilityService | None = None,
         agent_pool_service: AgentPoolService | None = None,
         tool_selector_service: ToolSelectorService | None = None,
+        conductor_service: ConductorService | None = None,
     ):
         self.task_classifier_service = task_classifier_service
         self.pool_intent_resolver = pool_intent_resolver
@@ -62,6 +64,7 @@ class OrchestratorService:
         self.execution_mode_selector = execution_mode_selector
         self.routing_observability_service = routing_observability_service
         self.tool_selector_service = tool_selector_service
+        self.conductor_service = conductor_service
 
     def decide(self, query: str, **context) -> RoutingDecision:
         start_time = time.monotonic()
@@ -98,6 +101,31 @@ class OrchestratorService:
             self._emit("routing_started", routing_log_id, {"query": ctx.query})
             if not self._flag_enabled("ENABLE_ORCHESTRATOR", default=True):
                 return self._feature_disabled_decision()
+            if self._flag_enabled("ENABLE_CONDUCTOR", default=False) and self.conductor_service is not None:
+                try:
+                    decision_data = self.conductor_service.decide(
+                        ctx.query,
+                        account_id=ctx.account_id,
+                        budget_level=ctx.budget_level,
+                        balance_credits=ctx.balance_credits,
+                        image_url_count=len(ctx.image_urls),
+                        deep_thinking_requested=ctx.deep_thinking_requested,
+                    )
+                    decision = RoutingDecision.from_dict(decision_data)
+                    decision.routing_log_id = str(routing_log_id) if routing_log_id else None
+                    self._emit(
+                        "conductor_decision",
+                        routing_log_id,
+                        {
+                            "intent": decision.intent,
+                            "complexity": decision.complexity,
+                            "execution_mode": decision.execution_mode,
+                        },
+                    )
+                    self._record_observability(routing_log_id, decision, ctx, start_time)
+                    return decision
+                except Exception as exc:
+                    logger.warning("Conductor 决策失败，回退旧 Orchestrator: %s", exc, exc_info=True)
             decision = self.task_classifier_service.classify(query, budget_allowed=budget_allowed)
             # ENABLE_AUTO_DEEP_THINKING 关闭时，不自动触发深度思考（用户手动请求仍生效）
             if not self._flag_enabled("ENABLE_AUTO_DEEP_THINKING", default=True):

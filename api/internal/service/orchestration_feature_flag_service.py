@@ -48,6 +48,12 @@ class OrchestrationFeatureFlagService(BaseService):
         flags = [
             flag for flag in flags if flag["code"] in ORCHESTRATION_FEATURE_FLAG_CODES
         ]
+        from internal.service.auth_switch_service import AUTH_CODES
+
+        for code in AUTH_CODES:
+            flag = self._find_by_code(code)
+            if flag is not None:
+                flags.append(self._serialize(flag))
         flags.sort(key=lambda flag: flag["code"])
         return flags
 

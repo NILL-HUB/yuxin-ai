@@ -62,7 +62,7 @@ def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
     bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
     bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
     if bridge_url and bridge_token:
-        endpoint = bridge_url.rstrip("/") + "/browser"
+        endpoint = bridge_url.rstrip("/")
         token = bridge_token
     else:
         endpoint = _normalize_text(os.getenv("BROWSER_AUTOMATION_URL"))
@@ -72,7 +72,7 @@ def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
             "ok": False,
             "error": "DESKTOP_BRIDGE_URL/TOKEN 或 BROWSER_AUTOMATION_URL/TOKEN 未配置，浏览器自动化默认关闭",
         }
-    url = endpoint
+    url = endpoint.rstrip("/") + "/browser"
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request = urllib.request.Request(
         url,

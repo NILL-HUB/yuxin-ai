@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 import queue
 import os
 import time
@@ -12,6 +14,11 @@ from internal.core.agent.failure_utils import build_failure_observation, classif
 from internal.entity.conversation_entity import InvokeFrom
 
 
+logger = logging.getLogger(__name__)
+
+_QUEUE_WAIT = object()
+
+
 class AgentQueueManager:
     """智能体队列管理器"""
     user_id: UUID
@@ -21,6 +28,7 @@ class AgentQueueManager:
     _async_queues: dict[str, asyncio.Queue]
     _terminal_events: dict[str, set[str]]
     _DEFAULT_LISTEN_TIMEOUT_SECONDS: int = 86400
+    _EVENT_TTL_SECONDS: int = 86400
 
     def __init__(
             self,
@@ -39,6 +47,80 @@ class AgentQueueManager:
         from app.http.module import injector
         self.redis_client = injector.get(Redis)
 
+    def _next_event(self, task_id: UUID):
+        """读取下一个事件；内存或 Redis 模式都返回统一语义。"""
+        if self._redis_consume_enabled():
+            status, item = self._read_persisted_event(task_id)
+            if status == "empty":
+                return _QUEUE_WAIT
+            if status == "stop":
+                return None
+            if status == "event":
+                return item
+            if status == "error":
+                logger.warning("Redis 事件读取失败，回退内存队列", exc_info=True)
+        try:
+            item = self.queue(task_id).get(timeout=1)
+            return item
+        except queue.Empty:
+            return _QUEUE_WAIT
+
+    def _emit_heartbeats(
+        self,
+        task_id: UUID,
+        start_time: float,
+        last_ping_time: int,
+        listen_timeout: int,
+    ) -> int:
+        elapsed_time = time.time() - start_time
+        if elapsed_time // 10 > last_ping_time:
+            self.publish(task_id, AgentThought(
+                id=uuid.uuid4(),
+                task_id=task_id,
+                event=QueueEvent.PING.value,
+            ))
+            last_ping_time = int(elapsed_time // 10)
+        if elapsed_time >= listen_timeout:
+            self.publish(task_id, AgentThought(
+                id=uuid.uuid4(),
+                task_id=task_id,
+                event=QueueEvent.TIMEOUT.value,
+            ))
+        if self._is_stopped(task_id):
+            self.publish(task_id, AgentThought(
+                id=uuid.uuid4(),
+                task_id=task_id,
+                event=QueueEvent.STOP.value,
+            ))
+        return last_ping_time
+
+    @classmethod
+    def _redis_consume_enabled(cls) -> bool:
+        return str(os.getenv("AGENT_QUEUE_REDIS_CONSUME", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
+    def _read_persisted_event(self, task_id: UUID) -> tuple[str, object | None]:
+        """从 Redis 事件日志读取下一条事件。"""
+        try:
+            key = self._event_stream_key(task_id)
+            raw = self.redis_client.lpop(key)
+            if raw is None:
+                return "empty", None
+            data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+            if data.get("__stop__"):
+                return "stop", None
+            if data.get("event"):
+                data["event"] = QueueEvent(str(data["event"]))
+            if not isinstance(data.get("message"), list):
+                data["message"] = []
+            return "event", AgentThought.model_validate(data)
+        except Exception as exc:
+            logger.warning("Redis 事件读取失败: %s", exc)
+            return "error", None
+
     def listen(self, task_id: UUID) -> Generator:
         """监听队列返回的生成式数据"""
         # 1.定义基础数据记录超时时间、开始时间、最后一次ping通时间
@@ -48,42 +130,18 @@ class AgentQueueManager:
 
         # 2.创建循环队列执行死循环读取数据，直到超时或者数据读取完毕
         while True:
-            try:
-                # 3.从队列中提取数据并检测数据是否存在，如果存在则使用yield关键字返回 item为agent_thought
-                item = self.queue(task_id).get(timeout=1)
-                if item is None:
-                    break
-                yield item
-            except queue.Empty:
+            item = self._next_event(task_id)
+            last_ping_time = self._emit_heartbeats(
+                task_id,
+                start_time,
+                last_ping_time,
+                listen_timeout,
+            )
+            if item is _QUEUE_WAIT:
                 continue
-            finally:
-                # 4.计算获取数据的总耗时
-                elapsed_time = time.time() - start_time
-
-                # 5.每10秒发起一个ping请求
-                if elapsed_time // 10 > last_ping_time:
-                    self.publish(task_id, AgentThought(
-                        id=uuid.uuid4(),
-                        task_id=task_id,
-                        event=QueueEvent.PING.value,
-                    ))
-                    last_ping_time = elapsed_time // 10
-
-                # 6.判断总耗时是否超时，如果超时则往队列中添加超时事件
-                if elapsed_time >= listen_timeout:
-                    self.publish(task_id, AgentThought(
-                        id=uuid.uuid4(),
-                        task_id=task_id,
-                        event=QueueEvent.TIMEOUT.value,
-                    ))
-
-                # 7.检测是否停止，如果已经停止则添加停止事件
-                if self._is_stopped(task_id):
-                    self.publish(task_id, AgentThought(
-                        id=uuid.uuid4(),
-                        task_id=task_id,
-                        event=QueueEvent.STOP.value,
-                    ))
+            if item is None:
+                break
+            yield item
 
     async def alisten(self, task_id: UUID) -> AsyncGenerator:
         """async 监听队列，供异步 Agent 执行流消费事件（与 listen 语义一致）。
@@ -94,7 +152,7 @@ class AgentQueueManager:
         """
         # 1.定义基础数据记录超时时间、开始时间、最后一次ping通时间
         listen_timeout = self._read_listen_timeout_seconds()
-        start_time = time.monotonic()
+        start_time = time.time()
         last_ping_time = 0
 
         # 2.获取（或创建）该任务的异步队列
@@ -102,42 +160,24 @@ class AgentQueueManager:
 
         # 3.创建循环队列执行死循环读取数据，直到超时或者数据读取完毕
         while True:
-            try:
-                # 4.从异步队列提取数据，检测数据是否存在，如果存在则yield返回
-                item = await asyncio.wait_for(async_q.get(), timeout=1)
-                if item is None:
-                    break
-                yield item
-            except asyncio.TimeoutError:
-                pass
-            finally:
-                # 5.计算获取数据的总耗时
-                elapsed_time = time.monotonic() - start_time
-
-                # 6.每10秒发起一个ping请求
-                if elapsed_time // 10 > last_ping_time:
-                    self.publish(task_id, AgentThought(
-                        id=uuid.uuid4(),
-                        task_id=task_id,
-                        event=QueueEvent.PING.value,
-                    ))
-                    last_ping_time = elapsed_time // 10
-
-                # 7.判断总耗时是否超时，如果超时则往队列中添加超时事件
-                if elapsed_time >= listen_timeout:
-                    self.publish(task_id, AgentThought(
-                        id=uuid.uuid4(),
-                        task_id=task_id,
-                        event=QueueEvent.TIMEOUT.value,
-                    ))
-
-                # 8.检测是否停止，如果已经停止则添加停止事件
-                if self._is_stopped(task_id):
-                    self.publish(task_id, AgentThought(
-                        id=uuid.uuid4(),
-                        task_id=task_id,
-                        event=QueueEvent.STOP.value,
-                    ))
+            if self._redis_consume_enabled():
+                item = self._next_event(task_id)
+            else:
+                try:
+                    item = await asyncio.wait_for(async_q.get(), timeout=1)
+                except asyncio.TimeoutError:
+                    item = _QUEUE_WAIT
+            last_ping_time = self._emit_heartbeats(
+                task_id,
+                start_time,
+                last_ping_time,
+                listen_timeout,
+            )
+            if item is _QUEUE_WAIT:
+                continue
+            if item is None:
+                break
+            yield item
 
     def _get_or_create_async_queue(self, task_id: UUID) -> asyncio.Queue:
         """获取（或创建）任务对应的异步队列。"""
@@ -246,6 +286,36 @@ class AgentQueueManager:
                     async_q.put_nowait(None)
                 except RuntimeError:
                     pass
+
+        # 3.事件日志持久化：Redis 可用时追加事件，供跨进程/恢复场景使用
+        self._persist_event(task_id, agent_thought)
+
+    def _persist_event(self, task_id: UUID, agent_thought: AgentThought) -> None:
+        """把事件追加到 Redis 流式日志；Redis 不可用时静默跳过。"""
+        try:
+            key = self._event_stream_key(task_id)
+            payload = json.dumps(
+                agent_thought.model_dump(mode="json"),
+                ensure_ascii=False,
+            )
+            self.redis_client.rpush(key, payload)
+            self.redis_client.expire(key, self._EVENT_TTL_SECONDS)
+            event_value = str(
+                getattr(agent_thought.event, "value", agent_thought.event) or ""
+            )
+            if event_value in {
+                QueueEvent.STOP.value,
+                QueueEvent.ERROR.value,
+                QueueEvent.TIMEOUT.value,
+                QueueEvent.AGENT_END.value,
+            }:
+                self.redis_client.rpush(key, json.dumps({"__stop__": True}))
+        except Exception:
+            pass
+
+    @classmethod
+    def _event_stream_key(cls, task_id: UUID) -> str:
+        return f"agent:queue:{task_id}:events"
 
     def queue(self, task_id: UUID) -> Queue:
         """根据传递的task_id获取对应的任务队列信息"""

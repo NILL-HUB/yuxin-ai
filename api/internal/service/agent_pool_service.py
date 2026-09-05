@@ -88,6 +88,17 @@ class AgentCandidateCollector:
         for row in own_rows:
             app, pool_config = self._unpack_app_row(row)
             self._append_app_candidate(candidates, seen_app_ids, app, "own", pool_config)
+        # 从应用商店添加（fork）的应用：草稿态也可作为 Agent 候选（按草稿配置可执行）
+        forked_apps = (
+            self.session.query(App)
+            .filter(App.account_id == account_id, App.original_app_id.isnot(None))
+            .order_by(App.created_at.desc())
+            .all()
+        )
+        for app in forked_apps:
+            self._append_app_candidate(
+                candidates, seen_app_ids, app, "forked", None, allow_draft=True
+            )
         serialized = [self._serialize_candidate(candidate) for candidate in candidates]
         serialized.extend(self._builtin_candidates())
         return serialized
@@ -233,10 +244,11 @@ class AgentCandidateCollector:
         app: App | None,
         source_scope: str,
         pool_config: AgentPoolConfig | None = None,
+        allow_draft: bool = False,
     ) -> None:
         if app is None or app.id in seen_app_ids:
             return
-        if app.status != AppStatus.PUBLISHED.value:
+        if not allow_draft and app.status != AppStatus.PUBLISHED.value:
             return
         metadata = app.normalized_agent_metadata
         if metadata.get("enabled") is False:

@@ -172,6 +172,12 @@ def register_routes(quart_app):
                 "created_at": datetime.now(UTC).isoformat(),
                 "score": 0.0,
             })
+        # 真实写入成功 → 失效 Digest 缓存（内容变更驱动重建，避免无效重复生成）
+        if result.get("status") not in ("rejected", "skipped"):
+            from internal.service.memory.digest_manager import DigestManager
+
+            digest_manager = a._get_service(DigestManager)
+            await a._to_thread(digest_manager.invalidate, str(account.id))
         return a._ok(MemoryWriteResp().dump(result))
 
     @quart_app.get("/memory/health")
@@ -357,6 +363,12 @@ def register_routes(quart_app):
                 "errors": report.errors,
                 "task_id": None,
             })
+            if report.is_success and report.total_items_processed > 0:
+                # 巩固落库变更 → 失效 Digest 缓存
+                from internal.service.memory.digest_manager import DigestManager
+
+                digest_manager = a._get_service(DigestManager)
+                await a._to_thread(digest_manager.invalidate, user_id)
         except Exception as exc:
             resp_data = ConsolidationResp().dump({
                 "user_id": user_id,
@@ -582,6 +594,11 @@ def register_routes(quart_app):
         )
         if new_id is None:
             return a._ok({"success": False, "error": "编辑失败（权限或依赖问题）"})
+        # 内容变更 → 失效 Digest 缓存
+        from internal.service.memory.digest_manager import DigestManager
+
+        digest_manager = a._get_service(DigestManager)
+        await a._to_thread(digest_manager.invalidate, str(account.id))
         return a._ok({"success": True, "new_memory_id": new_id})
 
     @quart_app.post("/memory/<string:memory_id>/soft-delete")
@@ -603,6 +620,12 @@ def register_routes(quart_app):
             retention_days=payload.get("retention_days"),
             agent_id=payload.get("agent_id"),
         )
+        if deleted:
+            # 内容变更 → 失效 Digest 缓存
+            from internal.service.memory.digest_manager import DigestManager
+
+            digest_manager = a._get_service(DigestManager)
+            await a._to_thread(digest_manager.invalidate, str(account.id))
         return a._ok({"deleted": deleted})
 
     @quart_app.post("/memory/<string:memory_id>/hard-delete")
@@ -619,6 +642,12 @@ def register_routes(quart_app):
         deleted = await a._to_thread(
             governor.hard_delete_memory, memory_id, str(account.id)
         )
+        if deleted:
+            # 内容变更 → 失效 Digest 缓存
+            from internal.service.memory.digest_manager import DigestManager
+
+            digest_manager = a._get_service(DigestManager)
+            await a._to_thread(digest_manager.invalidate, str(account.id))
         return a._ok({"deleted": deleted})
 
     @quart_app.post("/memory/<string:memory_id>/decay")
@@ -642,6 +671,12 @@ def register_routes(quart_app):
         new_weight = await a._to_thread(
             decay.manual_decay, memory_id, decay_factor
         )
+        if new_weight is not None:
+            # 权重变更影响近期事件排序 → 失效 Digest 缓存
+            from internal.service.memory.digest_manager import DigestManager
+
+            digest_manager = a._get_service(DigestManager)
+            await a._to_thread(digest_manager.invalidate, str(account.id))
         return a._ok({"memory_id": memory_id, "new_weight": new_weight})
 
     @quart_app.get("/memory/skills/<string:user_id>")
@@ -1034,13 +1069,29 @@ def register_routes(quart_app):
     # =====================================================
     # public_app_handler
     # =====================================================
+    async def _resolve_public_app_visitor():
+        """公开商店接口：有登录态时附带账号（用于 is_forked 状态），无登录态保持匿名。"""
+        from app.http import asgi_app as a
+
+        auth_header = request.headers.get("Authorization") or ""
+        token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+        if not token:
+            return None
+        try:
+            account, err = await a._resolve_account()
+            if err is None:
+                return account
+        except Exception:
+            return None
+        return None
+
     @quart_app.get("/public/apps")
     async def public_app_get_public_apps_with_page():
         from app.http import asgi_app as a
 
         from internal.service.public_app_service import PublicAppService
 
-        account = None
+        account = await _resolve_public_app_visitor()
         req = a.SimpleNamespace(
             current_page=a._field(_int_arg("current_page", 1), 1),
             page_size=a._field(_int_arg("page_size", 20), 20),
@@ -1066,7 +1117,7 @@ def register_routes(quart_app):
 
         from internal.service.public_app_service import PublicAppService
 
-        account = None
+        account = await _resolve_public_app_visitor()
         app_detail = await a._to_thread(
             a._get_service(PublicAppService).get_public_app_detail, app_id, account
         )

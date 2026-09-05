@@ -1,6 +1,7 @@
 import logging
 
 from injector import inject
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from internal.entity.execution_orchestration_entity import (
     OrchestratedAgentResult,
@@ -182,6 +183,8 @@ class ResultSynthesizerService:
         routing_log_id=None,
         retrieval_context: list[dict] | None = None,
         user_id: str = "",
+        aggregation_strategy: str = "concat",
+        llm: object | None = None,
     ) -> dict:
         self._emit("synthesis_started", routing_log_id, {"result_count": len(results)})
         internal_notes = self._build_internal_notes(
@@ -252,13 +255,20 @@ class ResultSynthesizerService:
             merged, conflict_result, valid_results,
             context_sections=context_sections,
         )
+        final_answer, confidence = self._apply_aggregation_strategy(
+            aggregation_strategy,
+            llm,
+            original_query,
+            valid_results,
+            composed,
+        )
         all_warnings = self._unique(
             [*self._warnings_from(normalized_results), *quality_warnings, *conflicts]
         )
         synthesis = {
-            "final_answer": composed["final_answer"],
+            "final_answer": final_answer,
             "summary": self._build_summary(valid_results, original_query),
-            "confidence": composed["confidence"],
+            "confidence": confidence,
             "visible_sources": merged.get("merged_sources", []),
             "user_warnings": all_warnings,
             "internal_notes": internal_notes,
@@ -272,6 +282,62 @@ class ResultSynthesizerService:
             },
         )
         return synthesis
+
+    @staticmethod
+    def _apply_aggregation_strategy(
+        strategy: str,
+        llm: object | None,
+        original_query: str,
+        results: list[OrchestratedAgentResult],
+        composed: dict,
+    ) -> tuple[str, float]:
+        if strategy == "best_of" and results:
+            best = max(results, key=lambda result: float(result.confidence or 0))
+            return best.answer or "", float(best.confidence or 0)
+        if strategy == "summarize" and llm and len(results) > 1:
+            summarized = ResultSynthesizerService._summarize_with_llm(
+                llm,
+                original_query,
+                results,
+            )
+            if summarized:
+                return summarized, composed.get("confidence", 0.0)
+        return composed.get("final_answer", ""), composed.get("confidence", 0.0)
+
+    @staticmethod
+    def _summarize_with_llm(
+        llm: object,
+        original_query: str,
+        results: list[OrchestratedAgentResult],
+    ) -> str:
+        try:
+            payload = "\n\n".join(
+                f"[子任务 {index + 1}]\n{result.answer}"
+                for index, result in enumerate(results)
+                if (result.answer or "").strip()
+            )
+            invoke = getattr(llm, "invoke", None)
+            if not callable(invoke) or not payload:
+                return ""
+            response = invoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "你是多智能体结果汇总器。请综合以下各子任务的答案，"
+                            "输出一份连贯、去重、保留关键事实与来源线索的最终结论。"
+                            f"用户原始请求：{original_query}"
+                        )
+                    ),
+                    HumanMessage(content=payload),
+                ]
+            )
+            content = getattr(response, "content", "")
+            if content is None:
+                content = str(response)
+            return str(content).strip()
+        except Exception:
+            logger.warning("LLM 结果汇总失败，回退拼接", exc_info=True)
+            return ""
 
     def _emit(self, event_type: str, routing_log_id, detail: dict) -> None:
         if self.event_logger is None or routing_log_id is None:

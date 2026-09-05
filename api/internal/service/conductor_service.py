@@ -31,9 +31,13 @@ from internal.entity.conductor_entity import (
     EscalationDecision,
     MAX_AGENTS_PER_PLAN,
 )
+from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
 from internal.service.language_model_service import LanguageModelService
 from internal.service.prompt_sync_service import PromptSyncService
 from internal.service.resource_vector_index_service import ResourceVectorIndexService
+from internal.service.cost_policy_service import CostPolicyService
+from internal.service.tool_inventory_service import CrossPoolToolSubsetBuilder
+from internal.service.tool_selector_service import ToolSelectorService
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +74,18 @@ class ConductorAgentTaskModel(BaseModel):
     expected_output: str = Field(
         default="",
         description="期望输出说明，供 Agent 参考",
+    )
+    retry_count: int = Field(
+        default=0,
+        ge=0,
+        le=5,
+        description="失败重试次数，0 表示不重试",
+    )
+    retry_interval: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=60.0,
+        description="重试间隔秒数",
     )
 
 
@@ -239,6 +255,9 @@ class ConductorService:
     入口方法 plan() 接收用户请求和上下文，返回结构化的 ConductorPlan。
     """
     language_model_service: LanguageModelService
+    tool_subset_builder: CrossPoolToolSubsetBuilder | None = None
+    tool_selector_service: ToolSelectorService | None = None
+    cost_policy_service: CostPolicyService | None = None
 
     # ── 主入口 ──────────────────────────────────────────────────
 
@@ -281,6 +300,57 @@ class ConductorService:
         except Exception as exc:
             logger.exception("指挥官决策失败，回退到 single_agent: %s", exc)
             return self._fallback_plan(query, f"exception: {exc}")
+
+    def repair_plan(
+        self,
+        original_query: str,
+        failures: list[dict],
+    ) -> ConductorPlan:
+        """基于失败反馈重新规划任务。"""
+        feedback = "\n".join(
+            f"- {item.get('task_id', '')}: {', '.join(item.get('errors', []) or [])}"
+            for item in failures
+        )
+        revised_query = (
+            f"{original_query}\n\n"
+            "以下是上一次执行失败的信息，请重新规划任务：\n"
+            f"{feedback}"
+        )
+        return self.plan(revised_query)
+
+    def to_task_plan(
+        self,
+        plan: ConductorPlan,
+        original_query: str = "",
+    ) -> TaskPlan:
+        """把 ConductorPlan 转成可执行的 TaskPlan。"""
+        execution_mode = self._MODE_MAP.get(
+            plan.execution_mode,
+            ConductorMode.SINGLE_AGENT.value,
+        )
+        items = [
+            TaskPlanItem(
+                task_id=agent.task_id,
+                title=agent.title,
+                description=agent.description,
+                agent_pool=agent.agent_pool,
+                required_capabilities=list(agent.required_capabilities),
+                depends_on=list(agent.depends_on),
+                execution_order=index,
+                risk_level=agent.risk_level,
+                agent_id=agent.task_id,
+                retry_count=agent.retry_count,
+                retry_interval=agent.retry_interval,
+            )
+            for index, agent in enumerate(plan.agents)
+        ]
+        return TaskPlan(
+            original_query=original_query or plan.intent,
+            items=items,
+            execution_mode=execution_mode,
+            reason=plan.reason,
+            aggregation_strategy=plan.aggregation_strategy,
+        )
 
     # ── LLM 调用 ───────────────────────────────────────────────
 
@@ -389,6 +459,8 @@ class ConductorService:
                 depends_on=list(a.depends_on),
                 risk_level=a.risk_level,
                 expected_output=a.expected_output,
+                retry_count=a.retry_count,
+                retry_interval=a.retry_interval,
             )
             for a in model.agents
         ]
@@ -538,6 +610,112 @@ class ConductorService:
             "task_plan_summary": task_plan_summary,
             "synthesis_summary": None,
         }
+
+    def decide(
+        self,
+        query: str,
+        *,
+        account_id=None,
+        budget_level: str = "normal",
+        balance_credits: float = float("inf"),
+        image_url_count: int = 0,
+        deep_thinking_requested: bool = False,
+    ) -> dict:
+        """生成可直接消费的 RoutingDecision，补齐工具子集与成本策略。"""
+        plan = self.plan(
+            query,
+            budget_level=budget_level,
+            balance_credits=balance_credits,
+            image_url_count=image_url_count,
+        )
+        decision = self.to_routing_decision_dict(plan)
+        decision["tool_subset"] = self._build_tool_subset(account_id, query)
+        decision["cost_policy"] = self._build_cost_policy(
+            plan,
+            budget_level=budget_level,
+            balance_credits=balance_credits,
+            deep_thinking_requested=deep_thinking_requested,
+        )
+        return decision
+
+    def _build_tool_subset(self, account_id, query: str) -> dict:
+        if self.tool_subset_builder is None:
+            return {
+                "selected_tools": [],
+                "backup_tools": [],
+                "filtered_out_tools": [],
+                "selection_reason": "no_tool_subset_builder",
+            }
+        candidates = []
+        if account_id is not None:
+            try:
+                collected = self.tool_subset_builder.build(account_id)
+                candidates = (
+                    collected.get("candidates", [])
+                    if isinstance(collected, dict)
+                    else []
+                )
+            except Exception:
+                logger.warning("Conductor 工具候选收集失败", exc_info=True)
+        if query and self.tool_selector_service is not None and candidates:
+            try:
+                selected = self.tool_selector_service.select_tools(
+                    query,
+                    candidates=candidates,
+                    max_tools=5,
+                )
+                if selected:
+                    return self._merge_tool_selection(candidates, selected)
+            except Exception:
+                logger.warning("Conductor 工具选择失败，回退默认排序", exc_info=True)
+        return self.tool_subset_builder.build_ranked_subset(candidates)
+
+    def _merge_tool_selection(self, candidates, selected) -> dict:
+        ranked = self.tool_subset_builder.build_ranked_subset(candidates)
+        all_tools = ranked.get("selected_tools", []) + ranked.get("backup_tools", [])
+        selected_keys = {
+            (
+                str(item.get("source_type", "")),
+                str(item.get("provider_id", "")),
+                str(item.get("tool_name", "")),
+            )
+            for item in selected
+        }
+        matched = []
+        other = []
+        for tool in all_tools:
+            key = (
+                str(tool.get("source_type", "")),
+                str(tool.get("provider_id", "")),
+                str(tool.get("name", "")),
+            )
+            (matched if key in selected_keys else other).append(tool)
+        top = matched[:5]
+        top.extend(other[: max(0, 5 - len(top))])
+        return {
+            "selected_tools": top,
+            "backup_tools": all_tools[5:],
+            "filtered_out_tools": ranked.get("filtered_out_tools", []),
+            "selection_reason": "conductor_tool_selection",
+            "matched_count": len(matched),
+        }
+
+    def _build_cost_policy(
+        self,
+        plan: ConductorPlan,
+        *,
+        budget_level: str,
+        balance_credits: float,
+        deep_thinking_requested: bool,
+    ) -> dict:
+        if self.cost_policy_service is None:
+            return {"allowed": True, "reason": "no_cost_policy_service"}
+        return self.cost_policy_service.build_policy(
+            task_complexity=plan.complexity,
+            budget_level=budget_level,
+            balance_credits=balance_credits,
+            deep_thinking_requested=deep_thinking_requested,
+        )
 
     def handle_escalation(
         self,

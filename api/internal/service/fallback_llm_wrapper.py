@@ -5,6 +5,7 @@ from typing import Any
 
 from injector import inject
 
+from internal.core.billing.pricing_engine import PricingEngine
 from internal.service.language_model_service import LanguageModelService
 from internal.service.runtime_model_pool_service import RuntimeModelPoolService
 
@@ -60,9 +61,22 @@ class FallbackLLMWrapper:
         default_llm = self.language_model_service.load_default_language_model()
         yield from self._stream_llm(default_llm, messages, **kwargs)
 
+    def _estimate_credits(self, model_id: Any, input_tokens: int, output_tokens: int) -> float:
+        try:
+            engine = PricingEngine(session=self.runtime_model_pool_service._session())
+            plan = engine.plan_usage(model_id, input_tokens=input_tokens, output_tokens=output_tokens)
+            return float(plan.cost_credits)
+        except Exception:
+            return 0.0
+
     @staticmethod
-    def _estimate_credits(_result: Any) -> float:
-        return 0.0
+    def _extract_usage(result: Any) -> tuple[int, int]:
+        if result is None:
+            return 0, 0
+        usage = getattr(result, "usage_metadata", None) or {}
+        if not isinstance(usage, dict):
+            return 0, 0
+        return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
 
     def invoke_with_fallback(self, tier: str, messages: Any, **kwargs) -> Any:
         primary, candidates = self.runtime_model_pool_service.select_model_with_fallback(tier)
@@ -75,7 +89,10 @@ class FallbackLLMWrapper:
                 try:
                     llm = self._build_llm(model, key)
                     result = self._invoke_llm(llm, messages, **kwargs)
-                    self.runtime_model_pool_service.record_key_success(key.id, self._estimate_credits(result))
+                    input_tokens, output_tokens = self._extract_usage(result)
+                    self.runtime_model_pool_service.record_key_success(
+                        key.id, self._estimate_credits(model.id, input_tokens, output_tokens)
+                    )
                     return result
                 except Exception as exc:
                     logger.warning(
@@ -104,10 +121,15 @@ class FallbackLLMWrapper:
                 yielded_any_chunk = False
                 try:
                     llm = self._build_llm(model, key)
+                    last_chunk = None
                     for chunk in self._stream_llm(llm, messages, **kwargs):
                         yielded_any_chunk = True
+                        last_chunk = chunk
                         yield chunk
-                    self.runtime_model_pool_service.record_key_success(key.id, self._estimate_credits(None))
+                    input_tokens, output_tokens = self._extract_usage(last_chunk)
+                    self.runtime_model_pool_service.record_key_success(
+                        key.id, self._estimate_credits(model.id, input_tokens, output_tokens)
+                    )
                     return
                 except Exception as exc:
                     if yielded_any_chunk:

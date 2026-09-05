@@ -826,9 +826,14 @@ def _restore_recycle(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _purge_recycle(payload: dict[str, Any]) -> dict[str, Any]:
-    """物理清理已过留存期的回收站条目，并同步清单。"""
+    """物理清理已过留存期的回收站条目，并同步清单。
+
+    支持指定 ``entry_id`` 精确清理单条（平台回收站到期销毁时携带）；
+    未指定时批量清理所有已过期条目。
+    """
     root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
     now = time.time()
+    entry_id = str(payload.get("entry_id") or "").strip()
     entries = _read_recycle_manifest(root)
     remaining: list[dict[str, Any]] = []
     purged: list[dict[str, Any]] = []
@@ -837,8 +842,12 @@ def _purge_recycle(payload: dict[str, Any]) -> dict[str, Any]:
         if entry.get("restored"):
             remaining.append(entry)
             continue
+        if entry_id and str(entry.get("entry_id") or "") != entry_id:
+            # 精确清理模式：仅处理目标条目，其余原样保留
+            remaining.append(entry)
+            continue
         expire_at = float(entry.get("expire_at") or 0)
-        if expire_at > now:
+        if not entry_id and expire_at > now:
             remaining.append(entry)
             continue
         moved_to = Path(str(entry.get("moved_to") or ""))

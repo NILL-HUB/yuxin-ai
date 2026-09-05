@@ -3,6 +3,7 @@ import uuid
 from typing import Callable, Optional
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
+from internal.core.agent.usage_utils import summarize_agent_thoughts
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class AgentTaskExecutor:
         # 用于把推理/工具调用/记忆召回等中间事件实时推给前端
         self.event_emitter = event_emitter
 
-    def execute(self, item) -> dict:
+    def execute(self, item, context: dict | None = None) -> dict:
         try:
             agent_config = self._resolve_agent_config(item)
             agent = self.agent_class(llm=self.llm, agent_config=agent_config)
@@ -47,16 +48,23 @@ class AgentTaskExecutor:
             collected_answer = ""
             tool_calls: list[dict] = []
             agent_thoughts: list[dict] = []
+            thought_objects: list = []
             total_token_count = 0
             total_price = 0.0
             latency = 0.0
 
             for thought in agent.stream({
-                "messages": [self.llm.convert_to_human_message(item.description or self.query, [])],
+                "messages": [
+                    self.llm.convert_to_human_message(
+                        self._resolve_query(item, context),
+                        [],
+                    )
+                ],
                 "history": self.history,
                 "long_term_memory": self.long_term_memory,
                 "user_memory": self.user_memory,
             }):
+                thought_objects.append(thought)
                 event_name = getattr(thought, "event", "") or ""
                 if hasattr(event_name, "value"):
                     event_name = event_name.value
@@ -117,6 +125,14 @@ class AgentTaskExecutor:
                 if event_name == QueueEvent.AGENT_MESSAGE.value and answer:
                     collected_answer = collected_answer + answer if collected_answer else answer
 
+            usage_summary = summarize_agent_thoughts(thought_objects)
+            prompt_tokens = int(getattr(usage_summary, "total_token_count", 0) or 0)
+            tokens = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": 0,
+                "total_tokens": prompt_tokens,
+            }
+
             return {
                 "agent_id": item.task_id,
                 "task_id": item.task_id,
@@ -133,11 +149,7 @@ class AgentTaskExecutor:
                 "metadata": {
                     "title": item.title,
                     "agent_thoughts": agent_thoughts,
-                    "token_usage": {
-                        "total_tokens": total_token_count,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                    },
+                    "token_usage": tokens,
                     "latency": latency,
                 },
             }
@@ -151,6 +163,24 @@ class AgentTaskExecutor:
                 "warnings": [],
                 "confidence": 0,
             }
+
+    def _resolve_query(self, item, context: dict | None = None) -> str:
+        base_query = item.description or self.query
+        upstream = (context or {}).get("upstream_results") or {}
+        if not upstream:
+            return base_query
+        sections = []
+        for task_id, result in upstream.items():
+            answer = (result or {}).get("answer", "")
+            if answer:
+                sections.append(f"[子任务 {task_id}]\n{answer}")
+        if not sections:
+            return base_query
+        return (
+            f"{base_query}\n\n"
+            "以下是本次任务依赖的上游子任务输出，请基于这些输出继续完成：\n"
+            + "\n\n".join(sections)
+        )
 
     def _resolve_agent_config(self, item):
         agent_config = self.agent_config

@@ -14,10 +14,16 @@ class TaskPlanItem:
     required_capabilities: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
     execution_order: int = 0
+    model_tier: str = ""
+    model_id_hint: str = ""
+    complexity: str = "simple"
+    balance_credits: float = 0.0
     risk_level: str = "safe"
     agent_id: str = ""
     tools: list[str] = field(default_factory=list)
     timeout_seconds: float = 0.0
+    retry_count: int = 0
+    retry_interval: float = 0.0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskPlanItem":
@@ -29,10 +35,16 @@ class TaskPlanItem:
             required_capabilities=_unique_text_list(data.get("required_capabilities")),
             depends_on=_unique_text_list(data.get("depends_on")),
             execution_order=_non_negative_int(data.get("execution_order")),
+            model_tier=_text(data.get("model_tier")) or "1",
+            model_id_hint=_text(data.get("model_id_hint")),
+            complexity=_text(data.get("complexity")) or "simple",
+            balance_credits=_non_negative_float(data.get("balance_credits")),
             risk_level=_risk_level(data.get("risk_level")),
             agent_id=_text(data.get("agent_id")),
             tools=_unique_text_list(data.get("tools")),
             timeout_seconds=_non_negative_float(data.get("timeout_seconds")),
+            retry_count=_non_negative_int(data.get("retry_count")),
+            retry_interval=_non_negative_float(data.get("retry_interval")),
         )
 
     def to_summary(self) -> dict:
@@ -43,6 +55,8 @@ class TaskPlanItem:
             "execution_order": self.execution_order,
             "risk_level": self.risk_level,
             "timeout_seconds": self.timeout_seconds,
+            "retry_count": self.retry_count,
+            "retry_interval": self.retry_interval,
         }
 
 

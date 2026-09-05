@@ -175,13 +175,30 @@ class AppDebugService(BaseService):
             })
         return result
 
-    def debug_chat(self, app_id: UUID, req: DebugChatReq, account: Account) -> Generator:
+    def debug_chat(
+        self,
+        app_id: UUID,
+        req: DebugChatReq,
+        account: Account,
+        *,
+        skip_owner_check: bool = False,
+    ) -> Generator:
         """根据传递的应用id+提问query向特定的应用发起会话调试"""
         # 1.获取应用信息并校验权限
-        app = self.app_service.get_app(app_id, account)
+        if skip_owner_check:
+            app = self.app_service.get(App, app_id)
+            if app is None:
+                raise NotFoundException("该应用不存在，请核实后重试")
+        else:
+            app = self.app_service.get_app(app_id, account)
 
         # 2.获取应用的最新草稿配置信息
-        draft_app_config = self.app_service.get_draft_app_config(app_id, account, persist_changes=False)
+        draft_app_config = self.app_service.get_draft_app_config(
+            app_id,
+            account,
+            persist_changes=False,
+            skip_owner_check=skip_owner_check,
+        )
 
         # 3.获取当前应用的调试会话信息（支持按conversation_id切换）
         debug_conversation_id = UUID(req.conversation_id.data) if req.conversation_id.data else None
@@ -253,6 +270,10 @@ class AppDebugService(BaseService):
             if not routing_decision.get("cost_policy", {}).get("allowed", True):
                 reject_payload = {
                     "reason": "insufficient_balance",
+                    "message": str(
+                        (routing_decision.get("cost_policy") or {}).get("reason")
+                        or "余额不足，请先充值"
+                    ),
                     "cost_policy": routing_decision.get("cost_policy"),
                     "message_id": str(message.id),
                     "conversation_id": str(debug_conversation.id),

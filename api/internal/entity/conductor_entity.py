@@ -79,6 +79,8 @@ class ConductorAgentTask:
     depends_on: list[str] = field(default_factory=list)  # 依赖的 task_id
     risk_level: str = ConductorRiskLevel.SAFE.value
     expected_output: str = ""                 # 期望输出说明（供 Agent 参考）
+    retry_count: int = 0                      # 失败重试次数
+    retry_interval: float = 0.0               # 重试间隔（秒）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -93,6 +95,8 @@ class ConductorAgentTask:
             "depends_on": list(self.depends_on),
             "risk_level": self.risk_level,
             "expected_output": self.expected_output,
+            "retry_count": self.retry_count,
+            "retry_interval": self.retry_interval,
         }
 
 

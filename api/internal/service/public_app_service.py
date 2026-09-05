@@ -60,11 +60,36 @@ class PublicAppService(BaseService):
             return sort_tags_by_priority(list(app.tags))
         return TagAssignmentService.auto_assign_tags(app.name, app.description)
 
+    @staticmethod
+    def _normalize_tool_reference(tool: dict) -> dict:
+        """兼容工具两种存储格式：raw（provider_id/tool_id）与 display（provider.id/tool.name）。"""
+        provider_id = str(
+            tool.get("provider_id")
+            or tool.get("provider", {}).get("id")
+            or ""
+        ).strip()
+        tool_id = str(
+            tool.get("tool_id")
+            or tool.get("tool", {}).get("id")
+            or tool.get("tool", {}).get("name")
+            or ""
+        ).strip()
+        params = tool.get("params")
+        if params is None:
+            params = tool.get("tool", {}).get("params", {})
+        return {
+            **tool,
+            "provider_id": provider_id,
+            "tool_id": tool_id,
+            "params": params or {},
+        }
+
     def _enrich_tools(self, tools: list[dict]) -> list[dict]:
         """填充工具的完整信息（provider 和 tool 的 label、icon 等）"""
         enriched_tools = []
 
         for tool in tools:
+            tool = self._normalize_tool_reference(tool)
             if tool["type"] == "builtin_tool":
                 # 获取内置工具提供者
                 provider = self.builtin_provider_manager.get_provider(tool.get("provider_id", ""))
@@ -428,7 +453,10 @@ class PublicAppService(BaseService):
             "model_config": app_config.model_config,
             "dialog_round": app_config.dialog_round,
             "preset_prompt": app_config.preset_prompt,
-            "tools": app_config.tools,
+            "tools": [
+                self._normalize_tool_reference(tool)
+                for tool in (app_config.tools or [])
+            ],
             "mcp_bindings": getattr(app_config, "mcp_bindings", []),
             "workflows": app_config.workflows,
             # 直接复制 knowledge_base_ids 到草稿配置

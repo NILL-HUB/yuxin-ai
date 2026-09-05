@@ -8,6 +8,8 @@ class MyAppResp(Schema):
     icon = fields.String()
     description = fields.String()
     assigned_at = fields.Integer(allow_none=True)
+    source = fields.String(dump_default="assigned")
+    status = fields.String(dump_default="")
 
 
 class MyAppListResp(Schema):

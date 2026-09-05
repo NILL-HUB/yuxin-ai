@@ -718,9 +718,16 @@ class AppService(BaseService):
         app_id: UUID,
         account: Account,
         persist_changes: bool = True,
+        *,
+        skip_owner_check: bool = False,
     ) -> dict[str, Any]:
         """根据传递的应用id，获取指定的应用草稿配置信息"""
-        app = self.get_app(app_id, account)
+        if not skip_owner_check:
+            app = self.get_app(app_id, account)
+        else:
+            app = self.get(App, app_id)
+            if app is None:
+                raise NotFoundException("该应用不存在，请核实后重试")
         draft_app_config = self.app_config_service.get_draft_app_config(app)
         # 显式补齐 workflow_id 字段，确保前端始终能拿到该字段（即使为 None）
         draft_app_config.setdefault("workflow_id", getattr(getattr(app, "draft_app_config", None), "workflow_id", None))

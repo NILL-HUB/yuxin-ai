@@ -119,6 +119,16 @@ def _run_actions(actions: list[dict[str, Any]]) -> dict[str, Any]:
             "ok": False,
             "error": "计算机控制 worker 未安装 pyautogui，请先安装 pyautogui 与 pillow",
         }
+    except SystemExit as exc:
+        return {
+            "ok": False,
+            "error": f"计算机控制 worker 初始化失败（可能缺少 tkinter/X 依赖）: {exc}",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"计算机控制 worker 初始化失败: {exc}",
+        }
     pyautogui.FAILSAFE = True
     results: list[dict[str, Any]] = []
     screenshot_base64 = ""

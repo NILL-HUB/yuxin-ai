@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from internal.entity.base_entity import SerializableMixin
 
@@ -58,6 +59,27 @@ class RoutingDecision(SerializableMixin):
         if self.execution_mode == ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value:
             self.needs_tools = True
             self.needs_agent = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RoutingDecision":
+        return cls(
+            intent=str(data.get("intent") or ""),
+            complexity=str(data.get("complexity") or "simple"),
+            execution_mode=str(data.get("execution_mode") or ExecutionMode.SINGLE_AGENT.value),
+            needs_tools=bool(data.get("needs_tools")),
+            needs_agent=bool(data.get("needs_agent")),
+            needs_multi_agent=bool(data.get("needs_multi_agent")),
+            needs_deep_thinking=bool(data.get("needs_deep_thinking")),
+            recommended_model_tier=str(data.get("recommended_model_tier") or "1"),
+            risk_level=str(data.get("risk_level") or RiskLevel.SAFE.value),
+            reason=str(data.get("reason") or ""),
+            agent_subset=data.get("agent_subset"),
+            tool_subset=data.get("tool_subset"),
+            cost_policy=data.get("cost_policy"),
+            billing_events=data.get("billing_events") or [],
+            task_plan_summary=data.get("task_plan_summary"),
+            synthesis_summary=data.get("synthesis_summary"),
+        )
 
 
 @dataclass
