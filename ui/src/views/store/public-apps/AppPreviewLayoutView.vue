@@ -1,15 +1,29 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
-import { getPublicAppDetail, type PublicApp } from '@/services/public-app'
+import { forkPublicApp, getPublicAppDetail, type PublicApp } from '@/services/public-app'
 import { getErrorMessage } from '@/utils/error'
+import { isCredentialLoggedIn } from '@/utils/auth'
+import { AUTH_REQUIRED_EVENT } from '@/utils/request'
+import { useCredentialStore } from '@/stores/credential'
 import { formatTimestampShort } from '@/utils/time-formatter'
 
 const route = useRoute()
+const credentialStore = useCredentialStore()
 const { t } = useI18n()
 const loading = ref(false)
+const forking = ref(false)
+const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
+const openLoginModal = () => {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(
+    new CustomEvent(AUTH_REQUIRED_EVENT, {
+      detail: { redirect: route.fullPath },
+    }),
+  )
+}
 const normalizeIconUrl = (icon: string = '') => {
   if (!icon) return ''
   if (icon.startsWith('data:') || /^https?:\/\//.test(icon)) return icon
@@ -99,6 +113,24 @@ const loadApp = async () => {
     loading.value = false
   }
 }
+
+const handleFork = async () => {
+  if (!isLoggedIn.value) {
+    openLoginModal()
+    return
+  }
+  if (app.value.is_forked || forking.value) return
+  forking.value = true
+  try {
+    await forkPublicApp(app.value.id)
+    app.value.is_forked = true
+    Message.success(t('publicApps.preview.addToSpaceSuccess', { name: app.value.name }))
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('publicApps.preview.actionFailed')))
+  } finally {
+    forking.value = false
+  }
+}
 
 watch(
   () => app.value.icon,
@@ -138,7 +170,7 @@ watch(
   <div class="flex flex-1 min-h-0 w-full flex-col overflow-hidden">
     <!-- 顶部导航 -->
     <div
-      class="h-[77px] flex-shrink-0 bg-gray-50 p-4 flex items-center justify-between relative border-b"
+      class="h-[77px] shrink-0 bg-surface-2 p-4 flex items-center justify-between relative border-b border-border-c"
     >
       <!-- 左侧应用信息 -->
       <div class="flex items-center gap-2">
@@ -153,7 +185,7 @@ watch(
         <!-- 应用容器 -->
         <div class="flex items-center gap-3">
           <!-- 应用图标 -->
-          <div class="h-10 w-10 overflow-hidden rounded-lg bg-gray-100 flex items-center justify-center">
+          <div class="h-10 w-10 overflow-hidden rounded-lg bg-surface-2 flex items-center justify-center">
               <img
                 v-if="appIconSrc"
                 :src="appIconSrc"
@@ -167,8 +199,8 @@ watch(
           <div class="flex flex-col justify-between h-[40px]">
             <a-skeleton-line v-if="loading" :widths="[100]" />
             <div v-else class="flex items-center gap-2">
-              <div class="text-gray-700 font-bold">{{ app.name }}</div>
-              <a-tag color="orange" size="small">{{ t('publicApps.preview.previewMode') }}</a-tag>
+              <div class="text-text-2 font-bold">{{ app.name }}</div>
+              <a-tag color="arcoblue" size="small">{{ t('publicApps.preview.usageOnly') }}</a-tag>
             </div>
             <div v-if="loading" class="flex items-center gap-2">
               <a-skeleton-line :widths="[60]" :line-height="18" />
@@ -176,7 +208,7 @@ watch(
               <a-skeleton-line :widths="[60]" :line-height="18" />
             </div>
             <div v-else class="flex items-center gap-2">
-              <div class="h-5 w-5 overflow-hidden rounded-full bg-gray-100 flex items-center justify-center">
+              <div class="h-5 w-5 overflow-hidden rounded-full bg-surface-2 flex items-center justify-center">
                 <img
                   v-if="creatorAvatarSrc"
                   :src="creatorAvatarSrc"
@@ -186,16 +218,28 @@ watch(
                 />
                 <icon-user v-else />
               </div>
-              <div class="flex items-center h-[18px] text-xs text-gray-500">
+              <div class="flex items-center h-[18px] text-xs text-muted">
                 {{ app.creator_name }}
               </div>
-              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-gray-200 text-gray-500">
+              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-surface-2 text-muted">
                 {{ t('publicApps.preview.publishedAt', { time: formatTimestampShort(app.published_at) }) }}
               </a-tag>
             </div>
           </div>
         </div>
       </div>
+
+      <!-- 添加到我的应用 -->
+      <a-button
+        v-if="isLoggedIn"
+        type="primary"
+        size="small"
+        :loading="forking"
+        :disabled="Boolean(app.is_forked)"
+        @click="handleFork"
+      >
+        {{ app.is_forked ? t('publicApps.preview.addedToSpace') : t('publicApps.preview.addToMySpace') }}
+      </a-button>
     </div>
     <!-- 底部内容区 -->
     <div class="flex min-h-0 flex-1 overflow-hidden">

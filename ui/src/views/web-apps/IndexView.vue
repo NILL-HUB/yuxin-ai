@@ -4,6 +4,7 @@ import ChatComposer from '@/components/ChatComposer.vue'
 import ToolConfirmationCard from '@/components/ToolConfirmationCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
+import UserRecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 import { useGenerateSuggestedQuestions } from '@/hooks/use-ai'
 import { useChatImageUpload } from '@/hooks/use-chat-image-upload'
 import { useAudioPlayer, useAudioToText, waitForRef } from '@/hooks/use-audio'
@@ -100,7 +101,12 @@ const {
   unpinned_conversations,
   loadWebAppConversations,
 } = useGetAppConversations()
-const { handleDeleteConversation } = useDeleteConversation()
+const {
+  deleteTarget: conversationDeleteTarget,
+  deleteLoading: conversationDeleteLoading,
+  handleDeleteConversation,
+  confirmDeleteConversation,
+} = useDeleteConversation()
 const {
   loading: getConversationMessagesWithPageLoading,
   messages,
@@ -244,14 +250,18 @@ const deleteConversation = async (idx: number, origin_is_pinned: boolean) => {
     : unpinned_conversations.value[idx]
 
   // 6.2 调用hooks发起请求
-  handleDeleteConversation(conversation.id, () => {
-    // 6.3 执行成功调用回调，删除回话
-    if (origin_is_pinned) {
-      pinned_conversations.value.splice(idx, 1)
-    } else {
-      unpinned_conversations.value.splice(idx, 1)
-    }
-  })
+  handleDeleteConversation(
+    conversation.id,
+    () => {
+      // 6.3 执行成功调用回调，删除回话
+      if (origin_is_pinned) {
+        pinned_conversations.value.splice(idx, 1)
+      } else {
+        unpinned_conversations.value.splice(idx, 1)
+      }
+    },
+    conversation.name,
+  )
 }
 
 // 8.定义新增会话处理器
@@ -632,15 +642,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex min-h-screen h-full flex-col lg:flex-row">
+  <div
+    class="flex min-h-screen h-full flex-col lg:flex-row"
+    style="background: radial-gradient(circle at 82% 12%, rgba(255, 158, 197, 0.22), transparent 30%), radial-gradient(circle at 12% 88%, rgba(233, 30, 99, 0.1), transparent 34%), linear-gradient(180deg, var(--aicss-bg-subtle) 0%, var(--aicss-bg) 100%)"
+  >
     <!-- 左侧会话记录 -->
     <div
-      class="w-full lg:w-[240px] lg:flex-shrink-0 border-b lg:border-b-0 lg:border-r border-gray-200 p-4 flex flex-col bg-white"
+      class="w-full lg:w-[240px] lg:shrink-0 border-b lg:border-b-0 lg:border-r border-border-c p-4 flex flex-col bg-surface/70 backdrop-blur"
     >
       <!-- 顶部应用信息 -->
-      <div class="flex items-center gap-3 mb-8 flex-shrink-0">
-        <a-avatar :size="32" shape="square" :image-url="web_app?.icon" class="flex-shrink-0" />
-        <div class="flex-1 text-base font-semibold line-clamp-1 break-all text-gray-700">
+      <div class="flex items-center gap-3 mb-8 shrink-0">
+        <a-avatar :size="32" shape="square" :image-url="web_app?.icon" class="shrink-0" />
+        <div class="flex-1 text-base font-semibold line-clamp-1 break-all text-text-2">
           <a-skeleton :loading="getWebAppLoading" animation>
             <a-skeleton-line :rows="1" :line-height="32" :line-spacing="4" />
           </a-skeleton>
@@ -648,7 +661,7 @@ onUnmounted(() => {
         </div>
       </div>
       <!-- 新增会话 -->
-      <a-button type="primary" long class="rounded-lg mb-6 flex-shrink-0" @click="addConversation">
+      <a-button type="primary" long class="rounded-lg mb-6 shrink-0" @click="addConversation">
         <template #icon>
           <icon-edit />
         </template>
@@ -658,7 +671,7 @@ onUnmounted(() => {
       <div class="flex-1 overflow-scroll scrollbar-w-none">
         <!-- 置顶会话 -->
         <div class="mb-4">
-          <div class="text-gray-700 font-semibold mb-2">置顶会话</div>
+          <div class="text-text-2 font-semibold mb-2">置顶会话</div>
           <!-- 空白骨架屏 -->
           <a-skeleton :loading="getWebAppConversationsLoading" animation>
             <a-skeleton-line :rows="2" :line-height="32" :line-spacing="4" />
@@ -673,9 +686,9 @@ onUnmounted(() => {
               @click="() => changeConversation(conversation.id)"
               @keydown.enter.prevent="() => changeConversation(conversation.id)"
               @keydown.space.prevent="() => changeConversation(conversation.id)"
-              :class="`group flex items-center gap-1 h-8 leading-8 pl-3 pr-1 text-gray-700 rounded-lg cursor-pointer ${selectedConversation === conversation.id ? 'bg-blue-50 !text-blue-700' : ''} hover:bg-blue-50 hover:text-blue-700`"
+              :class="`group flex items-center gap-1 h-8 leading-8 pl-3 pr-1 text-text-2 rounded-lg cursor-pointer ${selectedConversation === conversation.id ? 'bg-brand-soft !text-brand-text' : ''} hover:bg-brand-soft hover:text-brand-text`"
             >
-              <icon-message class="flex-shrink-0" />
+              <icon-message class="shrink-0" />
               <div class="flex-1 line-clamp-1 break-all">{{ conversation.name }}</div>
               <a-dropdown position="br">
                 <a-button
@@ -690,7 +703,7 @@ onUnmounted(() => {
                 <template #content>
                   <a-doption @click="() => changeIsPinned(idx, true)">取消置顶</a-doption>
                   <a-doption @click="() => updateName(idx, true)">重命名</a-doption>
-                  <a-doption class="text-red-700" @click="() => deleteConversation(idx, true)">
+                  <a-doption class="text-[color:var(--aicss-danger)]" @click="() => deleteConversation(idx, true)">
                     删除
                   </a-doption>
                 </template>
@@ -707,7 +720,7 @@ onUnmounted(() => {
         </div>
         <!-- 对话列表 -->
         <div class="mb-4">
-          <div class="text-gray-700 font-semibold mb-2">对话列表</div>
+          <div class="text-text-2 font-semibold mb-2">对话列表</div>
           <!-- 空白骨架屏 -->
           <a-skeleton :loading="getWebAppConversationsLoading" animation>
             <a-skeleton-line :rows="2" :line-height="32" :line-spacing="4" />
@@ -718,12 +731,12 @@ onUnmounted(() => {
               v-if="newConversation"
               role="button"
               tabindex="0"
-              :class="`group flex items-center gap-1 h-8 leading-8 pl-3 pr-1 text-gray-700 rounded-lg cursor-pointer ${selectedConversation === 'new_conversation' ? 'bg-blue-50 !text-blue-700' : ''} hover:bg-blue-50 hover:text-blue-700`"
+              :class="`group flex items-center gap-1 h-8 leading-8 pl-3 pr-1 text-text-2 rounded-lg cursor-pointer ${selectedConversation === 'new_conversation' ? 'bg-brand-soft !text-brand-text' : ''} hover:bg-brand-soft hover:text-brand-text`"
               @click="() => changeConversation('new_conversation')"
               @keydown.enter.prevent="() => changeConversation('new_conversation')"
               @keydown.space.prevent="() => changeConversation('new_conversation')"
             >
-              <icon-message class="flex-shrink-0" />
+              <icon-message class="shrink-0" />
               <div class="flex-1 line-clamp-1 break-all">{{ newConversation.name }}</div>
             </div>
             <div
@@ -734,9 +747,9 @@ onUnmounted(() => {
               @click="() => changeConversation(conversation.id)"
               @keydown.enter.prevent="() => changeConversation(conversation.id)"
               @keydown.space.prevent="() => changeConversation(conversation.id)"
-              :class="`group flex items-center gap-1 h-8 leading-8 pl-3 pr-1 text-gray-700 rounded-lg cursor-pointer ${selectedConversation === conversation.id ? 'bg-blue-50 !text-blue-700' : ''} hover:bg-blue-50 hover:text-blue-700`"
+              :class="`group flex items-center gap-1 h-8 leading-8 pl-3 pr-1 text-text-2 rounded-lg cursor-pointer ${selectedConversation === conversation.id ? 'bg-brand-soft !text-brand-text' : ''} hover:bg-brand-soft hover:text-brand-text`"
             >
-              <icon-message class="flex-shrink-0" />
+              <icon-message class="shrink-0" />
               <div class="flex-1 line-clamp-1 break-all">{{ conversation.name }}</div>
               <a-dropdown position="br">
                 <a-button
@@ -751,7 +764,7 @@ onUnmounted(() => {
                 <template #content>
                   <a-doption @click="() => changeIsPinned(idx, false)">置顶会话</a-doption>
                   <a-doption @click="() => updateName(idx, false)"> 重命名</a-doption>
-                  <a-doption class="text-red-700" @click="() => deleteConversation(idx, false)">
+                  <a-doption class="text-[color:var(--aicss-danger)]" @click="() => deleteConversation(idx, false)">
                     删除
                   </a-doption>
                 </template>
@@ -775,9 +788,11 @@ onUnmounted(() => {
       </div>
     </div>
     <!-- 右侧对话窗口 -->
-    <div class="flex-1 min-h-screen bg-white flex flex-col min-h-0">
+    <div class="flex-1 min-h-screen flex flex-col min-h-0">
       <!-- 顶部会话名称 -->
-      <div class="h-16 leading-[64px] text-base font-semibold px-6 border-b">
+      <div
+        class="h-16 leading-[64px] text-base font-semibold px-6 border-b border-border-c bg-surface/60 backdrop-blur text-text-2"
+      >
         {{ conversation?.name }}
       </div>
       <div
@@ -860,12 +875,12 @@ onUnmounted(() => {
         <!-- 应用图标与名称 -->
         <div class="flex flex-col items-center gap-2">
           <a-avatar :size="48" shape="square" class="rounded-lg" :image-url="web_app?.icon" />
-          <div class="text-lg text-gray-700">{{ web_app?.name }}</div>
+          <div class="text-lg text-text-2">{{ web_app?.name }}</div>
         </div>
         <!-- 对话开场白 -->
         <div
           v-if="web_app?.app_config?.opening_statement"
-          class="bg-gray-100 w-full px-4 py-3 rounded-lg text-gray-700"
+          class="bg-surface-2 w-full px-4 py-3 rounded-lg text-text-2"
         >
           {{ web_app?.app_config?.opening_statement }}
         </div>
@@ -875,7 +890,7 @@ onUnmounted(() => {
             v-for="(opening_question, idx) in openingQuestions"
             :key="idx"
             type="button"
-            class="px-4 py-1.5 border rounded-lg text-gray-700 hover:bg-gray-50"
+            class="px-4 py-1.5 border border-border-c rounded-lg text-text-2 hover:bg-brand-soft hover:text-brand-text"
             @click="async () => await handleSubmitQuestion(opening_question)"
           >
             {{ opening_question }}
@@ -883,7 +898,7 @@ onUnmounted(() => {
         </div>
       </div>
       <!-- 对话输入框 -->
-      <div class="w-full max-w-[600px] mx-auto flex flex-col flex-shrink-0">
+      <div class="w-full max-w-[600px] mx-auto flex flex-col shrink-0">
         <div
           v-if="toolConfirmationPrompt"
           class="w-full px-4 sm:px-6 pb-2 flex justify-center"
@@ -930,7 +945,7 @@ onUnmounted(() => {
           />
         </div>
         <!-- 底部提示信息 -->
-        <div class="text-center text-gray-500 text-xs py-4">
+        <div class="text-center text-muted text-xs py-4">
           内容由AI生成，无法确保真实准确，仅供参考
         </div>
       </div>
@@ -940,6 +955,14 @@ onUnmounted(() => {
       v-model:visible="updateConversationNameModalVisible"
       v-model:conversation_id="updateConversationNameId"
       :success_callback="successUpdateNameCallback"
+    />
+    <user-recycle-bin-delete-modal
+      :visible="conversationDeleteTarget !== null"
+      :resource-name="conversationDeleteTarget?.name"
+      :loading="conversationDeleteLoading"
+      :hint="$t('userRecycleBin.deleteHint')"
+      @update:visible="(v) => !v && (conversationDeleteTarget = null)"
+      @confirm="confirmDeleteConversation"
     />
   </div>
 </template>

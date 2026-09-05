@@ -87,25 +87,25 @@ watch(
     >
       <!-- 顶部标题 -->
       <div class="flex items-center justify-between">
-        <div class="text-lg font-bold text-gray-700">{{ t('space.datasets.documents.hitTesting.title') }}</div>
-        <a-button type="text" class="!text-gray-700" size="small" @click="hideHitTestingModal">
+        <div class="text-lg font-bold text-text-2">{{ t('space.datasets.documents.hitTesting.title') }}</div>
+        <a-button type="text" class="!text-text-2" size="small" @click="hideHitTestingModal">
           <template #icon>
             <icon-close />
           </template>
         </a-button>
       </div>
       <!-- 副标题 -->
-      <div class="text-gray-500">{{ t('space.datasets.documents.hitTesting.description') }}</div>
+      <div class="text-muted">{{ t('space.datasets.documents.hitTesting.description') }}</div>
       <!-- 中间内容区 -->
       <div class="pt-6">
         <div class="w-full flex justify-between gap-2">
           <!-- 左侧输入框 -->
           <div class="flex flex-col w-1/2">
             <!-- 顶部输入框 -->
-            <div class="border border-blue-700 bg-blue-100 rounded-lg flex flex-col mb-6">
+            <div class="border border-border-strong bg-brand-soft rounded-lg flex flex-col mb-6">
               <!-- 输入框标题 -->
               <div class="flex items-center justify-between px-4 py-1.5">
-                <div class="font-bold text-gray-900">{{ t('space.datasets.documents.hitTesting.sourceText') }}</div>
+                <div class="font-bold text-text">{{ t('space.datasets.documents.hitTesting.sourceText') }}</div>
                 <a-button
                   size="small"
                   class="rounded-lg px-2"
@@ -124,18 +124,18 @@ watch(
                 </a-button>
               </div>
               <!-- 输入框容器 -->
-              <div class="bg-white rounded-lg p-2">
+              <div class="bg-surface rounded-lg p-2">
                 <!-- 输入框 -->
                 <a-textarea
                   v-model:model-value="hitTestingForm.query"
                   :placeholder="t('space.datasets.documents.hitTesting.queryPlaceholder')"
                   :max-length="200"
                   :auto-size="{ minRows: 6, maxRows: 6 }"
-                  class="!bg-white !border-0 mb-1"
+                  class="!bg-surface !border-0 mb-1"
                 />
                 <!-- 字符限制以及召回按钮 -->
                 <div class="flex items-center justify-between">
-                  <a-tag size="small" class="rounded text-gray-700">
+                  <a-tag size="small" class="rounded text-text-2">
                     {{ hitTestingForm.query.length }}/200
                   </a-tag>
                   <a-button
@@ -158,7 +158,7 @@ watch(
               <!-- 有数据的状态 -->
               <a-row v-if="hitTestingSegments.length > 0" :gutter="[16, 16]">
                 <a-col v-for="segment in hitTestingSegments" :key="segment.id" :span="12">
-                  <div class="p-4 bg-gray-50 rounded-lg cursor-pointer">
+                  <div class="p-4 bg-surface-2 rounded-lg cursor-pointer">
                     <!-- 顶部得分部分 -->
                     <div
                       v-if="hitTestingForm.retrieval_strategy === 'semantic'"
@@ -166,16 +166,16 @@ watch(
                     >
                       <icon-pushpin />
                       <a-progress :stroke-width="6" :show-text="false" :percent="segment.score" />
-                      <div class="text-gray-700 text-xs">{{ segment.score.toFixed(2) }}</div>
+                      <div class="text-text-2 text-xs">{{ segment.score.toFixed(2) }}</div>
                     </div>
                     <!-- 中间内容部分 -->
-                    <div class="text-gray-500 line-clamp-4 h-[88px] break-all">
+                    <div class="text-muted line-clamp-4 h-[88px] break-all">
                       {{ segment.content }}
                     </div>
                     <!-- 文档归属信息 -->
                     <a-divider class="my-2" />
-                    <div class="flex items-center gap-2 text-gray-500 text-xs">
-                      <icon-file class="flex-shrink-0" />
+                    <div class="flex items-center gap-2 text-muted text-xs">
+                      <icon-file class="shrink-0" />
                       <div class="line-clamp-1">{{ segment.document.name }}</div>
                     </div>
                   </div>
@@ -197,10 +197,10 @@ watch(
     >
       <!-- 顶部标题 -->
       <div class="flex items-center justify-between">
-        <div class="text-lg font-bold text-gray-700">{{ t('space.datasets.documents.hitTesting.retrievalSettings') }}</div>
+        <div class="text-lg font-bold text-text-2">{{ t('space.datasets.documents.hitTesting.retrievalSettings') }}</div>
         <a-button
           type="text"
-          class="!text-gray-700"
+          class="!text-text-2"
           size="small"
           @click="hideRetrievalSettingModal"
         >

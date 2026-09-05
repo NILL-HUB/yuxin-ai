@@ -156,7 +156,7 @@ onMounted(() => {
         <a-row :gutter="[20, 20]">
           <a-col v-for="workflow in workflows" :key="workflow.id" :span="6">
             <a-card hoverable class="h-full rounded-lg flex flex-col" :body-style="{ padding: '16px' }">
-              <button type="button" class="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg flex-1" @click="handlePreview(workflow)">
+              <button type="button" class="w-full text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg flex-1" @click="handlePreview(workflow)">
                 <!-- 顶部工作流名称和标签 -->
                 <div class="flex items-center gap-3 mb-3">
                   <a-avatar :size="40" shape="square" :image-url="workflow.icon" />

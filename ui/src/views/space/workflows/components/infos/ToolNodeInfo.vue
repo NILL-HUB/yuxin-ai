@@ -752,7 +752,7 @@ onMounted(() => {
   >    <!-- 只读模式提示横幅 -->
     <div v-if="isReadonly" class="mb-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
       <div class="flex items-center gap-2 text-orange-700">
-        <icon-lock class="flex-shrink-0" />
+        <icon-lock class="shrink-0" />
         <span class="text-sm font-medium">{{ t('workflowEditor.previewMode') }}</span>
       </div>
     </div>
@@ -762,7 +762,7 @@ onMounted(() => {
     <div class="flex items-center justify-between gap-3 mb-2">
       <!-- 左侧标题 -->
       <div class="flex items-center gap-1 flex-1">
-        <a-avatar :size="30" shape="square" class="bg-orange-500 rounded-lg flex-shrink-0">
+        <a-avatar :size="30" shape="square" class="bg-orange-500 rounded-lg shrink-0">
           <icon-tool />
         </a-avatar>
         <a-input
@@ -775,7 +775,7 @@ onMounted(() => {
       <a-button
         type="text"
         size="mini"
-        class="!text-gray700 flex-shrink-0"
+        class="!text-gray700 shrink-0"
         @click="() => emits('update:visible', false)"
       >
         <template #icon>
@@ -834,7 +834,7 @@ onMounted(() => {
               <a-avatar
                 :size="36"
                 shape="square"
-                class="rounded flex-shrink-0"
+                class="rounded shrink-0"
                 :image-url="normalizeIconUrl(form?.tool?.provider?.icon)"
               />
               <!-- 名称与描述信息 -->
@@ -852,7 +852,7 @@ onMounted(() => {
               v-if="!isReadonly"
               size="mini"
               type="text"
-              class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
+              class="hidden group-hover:block shrink-0 ml-2 !text-red-700 rounded"
               @click="() => removeBindTool()"
             >
               <template #icon>
@@ -963,13 +963,13 @@ onMounted(() => {
         </div>
         <!-- 循环遍历字段列表 -->
         <div v-for="(input, idx) in form?.inputs" :key="idx" class="flex items-center gap-1">
-          <div class="w-[30%] flex-shrink-0">
+          <div class="w-[30%] shrink-0">
             <div class="flex items-center gap-1 text-xs text-gray-500">
               <div class="">{{ input.name }}</div>
               <div class="text-gray-500 bg-gray-200 px-1 py-0.5 rounded">{{ input.type }}</div>
             </div>
           </div>
-          <div class="w-[25%] flex-shrink-0">
+          <div class="w-[25%] shrink-0">
             <a-select
               size="mini"
               v-model="input.value_type"
@@ -980,7 +980,7 @@ onMounted(() => {
               ]"
             />
           </div>
-          <div class="w-[45%] flex-shrink-0 flex items-center gap-1">
+          <div class="w-[45%] shrink-0 flex items-center gap-1">
             <a-input
               v-if="input.value_type !== 'ref'"
               size="mini"
@@ -1023,12 +1023,12 @@ onMounted(() => {
         </div>
         <!-- 循环遍历字段列表 -->
         <div v-for="(param, idx) in form?.params" :key="idx" class="flex items-center gap-1">
-          <div class="w-[20%] flex-shrink-0">
+          <div class="w-[20%] shrink-0">
             <div class="flex items-center gap-1 text-xs text-gray-500">
               <div class="">{{ param.key }}</div>
             </div>
           </div>
-          <div class="w-[80%] flex-shrink-0">
+          <div class="w-[80%] shrink-0">
             <a-input
               size="mini"
               :model-value="String(param.value ?? '')"
@@ -1069,7 +1069,7 @@ onMounted(() => {
       <div class="flex w-full h-full">
         <!-- 左侧导航菜单 -->
         <div
-          class="flex flex-col flex-shrink-0 bg-gray-50 w-[200px] h-full px-3 py-4 overflow-scroll scrollbar-w-none"
+          class="flex flex-col shrink-0 bg-gray-50 w-[200px] h-full px-3 py-4 overflow-scroll scrollbar-w-none"
         >
           <!-- 标题 -->
           <div class="text-gray-900 font-bold text-lg mb-4">{{ t('workflowEditor.toolNode.modalTitle') }}</div>
@@ -1169,7 +1169,7 @@ onMounted(() => {
                   <!-- 添加按钮 -->
                   <a-button
                     size="mini"
-                    class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
+                    class="hidden group-hover:block rounded px-1.5 shrink-0"
                     @click="() => handleSelectTool(Number(builtin_tool_idx), Number(tool_idx))"
                   >
                     <template #icon>
@@ -1220,7 +1220,7 @@ onMounted(() => {
                     <!-- 添加按钮 -->
                     <a-button
                       size="mini"
-                      class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
+                      class="hidden group-hover:block rounded px-1.5 shrink-0"
                       @click="() => handleSelectTool(Number(api_tool_provider_idx), tool_idx)"
                     >
                       <template #icon>

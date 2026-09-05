@@ -9,6 +9,10 @@ vi.mock('@/services/schedule-task', () => ({
   rejectScheduleSuggestion: vi.fn(),
 }))
 
+vi.mock('@/services/app', () => ({
+  getAppsWithPage: vi.fn().mockResolvedValue({ data: { list: [] } }),
+}))
+
 vi.mock('vue-router', () => ({
   useRoute: () => ({ path: '/', meta: {} }),
 }))
@@ -29,6 +33,9 @@ const intervalTask = {
   id: 'task-interval-1',
   name: '间隔测试',
   prompt: '测试',
+  app_id: null,
+  task_type: 'assistant_chat' as const,
+  input_params: {},
   trigger_type: 'interval' as const,
   cron_expression: '0 0 0 * * *',
   cron_humanized: '',

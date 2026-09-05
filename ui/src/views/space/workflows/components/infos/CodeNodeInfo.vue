@@ -276,7 +276,7 @@ onBeforeUnmount(() => {
     class="absolute top-0 right-0 bottom-0 w-[400px] border-l z-50 bg-white overflow-scroll scrollbar-w-none p-3">    <!-- 只读模式提示横幅 -->
     <div v-if="isReadonly" class="mb-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
       <div class="flex items-center gap-2 text-orange-700">
-        <icon-lock class="flex-shrink-0" />
+        <icon-lock class="shrink-0" />
         <span class="text-sm font-medium">{{ t('workflowEditor.previewMode') }}</span>
       </div>
     </div>
@@ -286,14 +286,14 @@ onBeforeUnmount(() => {
     <div class="flex items-center justify-between gap-3 mb-2">
       <!-- 左侧标题 -->
       <div class="flex items-center gap-1 flex-1">
-        <a-avatar :size="30" shape="square" class="bg-cyan-500 rounded-lg flex-shrink-0">
+        <a-avatar :size="30" shape="square" class="bg-cyan-500 rounded-lg shrink-0">
           <icon-code />
         </a-avatar>
         <a-input v-model:model-value="form.title" :disabled="isReadonly" :placeholder="t('workflowEditor.titlePlaceholder')"
           class="!bg-white text-gray-700 font-semibold px-2" />
       </div>
       <!-- 右侧关闭按钮 -->
-      <a-button type="text" size="mini" class="!text-gray700 flex-shrink-0"
+      <a-button type="text" size="mini" class="!text-gray700 shrink-0"
         @click="() => emits('update:visible', false)">
         <template #icon>
           <icon-close />
@@ -334,10 +334,10 @@ onBeforeUnmount(() => {
         </div>
         <!-- 循环遍历字段列表 -->
         <div v-for="(input, idx) in form?.inputs" :key="idx" class="flex items-center gap-1">
-          <div class="w-[20%] flex-shrink-0">
+          <div class="w-[20%] shrink-0">
             <a-input v-model="input.name" size="mini" :placeholder="t('workflowEditor.parameterName')" class="!px-2" />
           </div>
-          <div class="w-[25%] flex-shrink-0">
+          <div class="w-[25%] shrink-0">
             <a-select size="mini" v-model="input.type" class="px-2" :options="[
               { label: t('workflowEditor.variableTypes.ref'), value: 'ref' },
               { label: t('workflowEditor.variableTypes.string'), value: 'string' },
@@ -346,13 +346,13 @@ onBeforeUnmount(() => {
               { label: t('workflowEditor.variableTypes.boolean'), value: 'boolean' },
             ]" />
           </div>
-          <div class="w-[47%] flex-shrink-0 flex items-center gap-1">
+          <div class="w-[47%] shrink-0 flex items-center gap-1">
             <a-input v-if="input.type !== 'ref'" size="mini" v-model="input.content" :placeholder="t('workflowEditor.parameterValue')" />
             <a-select v-else :placeholder="t('workflowEditor.selectReference')" size="mini" tag-nowrap v-model="input.ref"
               :options="inputRefOptions" />
           </div>
           <div class="w-[8%] text-right">
-            <icon-minus-circle v-if="!isReadonly" class="text-gray-500 hover:text-gray-700 cursor-pointer flex-shrink-0"
+            <icon-minus-circle v-if="!isReadonly" class="text-gray-500 hover:text-gray-700 cursor-pointer shrink-0"
               @click="() => removeFormInputField(idx as number)" />
           </div>
         </div>
@@ -448,10 +448,10 @@ onBeforeUnmount(() => {
         </div>
         <!-- 循环遍历字段列表 -->
         <div v-for="(output, idx) in form?.outputs" :key="idx" class="flex items-center gap-1">
-          <div class="w-[46%] flex-shrink-0">
+          <div class="w-[46%] shrink-0">
             <a-input v-model="output.name" size="mini" :placeholder="t('workflowEditor.parameterName')" class="!px-2" />
           </div>
-          <div class="w-[46%] flex-shrink-0">
+          <div class="w-[46%] shrink-0">
             <a-select size="mini" v-model="output.type" class="px-2" :options="[
               { label: t('workflowEditor.variableTypes.string'), value: 'string' },
               { label: t('workflowEditor.variableTypes.int'), value: 'int' },
@@ -460,7 +460,7 @@ onBeforeUnmount(() => {
             ]" />
           </div>
           <div class="w-[8%] text-right">
-            <icon-minus-circle class="text-gray-500 hover:text-gray-700 cursor-pointer flex-shrink-0"
+            <icon-minus-circle class="text-gray-500 hover:text-gray-700 cursor-pointer shrink-0"
               @click="() => removeFormOutputField(idx as number)" />
           </div>
         </div>

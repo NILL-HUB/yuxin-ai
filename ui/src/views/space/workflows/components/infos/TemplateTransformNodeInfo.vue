@@ -197,7 +197,7 @@ onBeforeUnmount(() => {
   >    <!-- 只读模式提示横幅 -->
     <div v-if="isReadonly" class="mb-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
       <div class="flex items-center gap-2 text-orange-700">
-        <icon-lock class="flex-shrink-0" />
+        <icon-lock class="shrink-0" />
         <span class="text-sm font-medium">{{ t('workflowEditor.previewMode') }}</span>
       </div>
     </div>
@@ -207,7 +207,7 @@ onBeforeUnmount(() => {
     <div class="flex items-center justify-between gap-3 mb-2">
       <!-- 左侧标题 -->
       <div class="flex items-center gap-1 flex-1">
-        <a-avatar :size="30" shape="square" class="bg-emerald-400 rounded-lg flex-shrink-0">
+        <a-avatar :size="30" shape="square" class="bg-emerald-400 rounded-lg shrink-0">
           <icon-branch />
         </a-avatar>
         <a-input
@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
       <a-button
         type="text"
         size="mini"
-        class="!text-gray700 flex-shrink-0"
+        class="!text-gray700 shrink-0"
         @click="() => emits('update:visible', false)"
       >
         <template #icon>
@@ -272,10 +272,10 @@ onBeforeUnmount(() => {
         </div>
         <!-- 循环遍历字段列表 -->
         <div v-for="(input, idx) in form?.inputs" :key="idx" class="flex items-center gap-1">
-          <div class="w-[20%] flex-shrink-0">
+          <div class="w-[20%] shrink-0">
             <a-input v-model="input.name" size="mini" :placeholder="t('workflowEditor.parameterName')" class="!px-2" />
           </div>
-          <div class="w-[25%] flex-shrink-0">
+          <div class="w-[25%] shrink-0">
             <a-select
               size="mini"
               v-model="input.type"
@@ -289,7 +289,7 @@ onBeforeUnmount(() => {
               ]"
             />
           </div>
-          <div class="w-[47%] flex-shrink-0 flex items-center gap-1">
+          <div class="w-[47%] shrink-0 flex items-center gap-1">
             <a-input
               v-if="input.type !== 'ref'"
               size="mini"
@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="w-[8%] text-right">
             <icon-minus-circle
-              v-if="!isReadonly" class="text-gray-500 hover:text-gray-700 cursor-pointer flex-shrink-0"
+              v-if="!isReadonly" class="text-gray-500 hover:text-gray-700 cursor-pointer shrink-0"
               @click="() => removeFormInputField(idx)"
             />
           </div>

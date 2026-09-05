@@ -1,7 +1,21 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { app_id: 'app-1' } }),
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
+vi.mock('@/services/public-app', () => ({
+  forkPublicApp: vi.fn(),
+  getPublicAppDetail: vi.fn(),
+}))
+
+vi.mock('@/utils/auth', () => ({
+  isCredentialLoggedIn: () => false,
+}))
 
 describe('AppPreviewLayoutView', () => {
   it('uses a flex-1 container for routed content', () => {

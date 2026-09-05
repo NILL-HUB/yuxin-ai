@@ -12,6 +12,7 @@ describe('AppPreviewDetailView', () => {
 
     expect(source).not.toContain('100vh-77px')
     expect(source).not.toContain('100vh-141px')
-    expect(source).toContain('grid-cols-[minmax(0,13fr)_minmax(0,12fr)]')
+    expect(source).toContain('lg:flex-row')
+    expect(source).toContain('lg:w-[420px]')
   })
 })

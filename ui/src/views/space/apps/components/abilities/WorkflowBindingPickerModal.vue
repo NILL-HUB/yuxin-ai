@@ -174,14 +174,14 @@ watch(
             <a-avatar
               :size="28"
               shape="square"
-              class="flex-shrink-0 rounded"
+              class="shrink-0 rounded"
               :image-url="workflow.icon"
             />
             <div class="flex flex-col min-w-0 flex-1">
               <div class="text-sm text-gray-700 line-clamp-1">{{ workflow.name }}</div>
               <div class="text-xs text-gray-500 line-clamp-1">{{ workflow.description }}</div>
             </div>
-            <icon-check v-if="props.selected_workflow_id === workflow.id" class="text-blue-700 flex-shrink-0" />
+            <icon-check v-if="props.selected_workflow_id === workflow.id" class="text-blue-700 shrink-0" />
           </div>
           <a-empty
             v-if="workflows.length === 0"

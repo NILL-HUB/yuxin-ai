@@ -354,23 +354,23 @@ watch(
       >
         <div class="flex flex-col items-center gap-2">
           <a-avatar :size="48" shape="square" class="rounded-lg" :image-url="props.app?.icon" />
-          <div class="text-lg text-gray-700">{{ props.app?.name }}</div>
+          <div class="text-lg text-text-2">{{ props.app?.name }}</div>
         </div>
-        <div v-if="props.opening_statement" class="bg-gray-100 w-full px-4 py-3 rounded-lg text-gray-700">
+        <div v-if="props.opening_statement" class="bg-surface-2 w-full px-4 py-3 rounded-lg text-text-2">
           {{ props.opening_statement }}
         </div>
         <div class="flex flex-col items-start gap-2 w-full">
           <div
             v-for="(opening_question, idx) in props.opening_questions.filter((item) => item.trim() !== '')"
             :key="idx"
-            class="w-fit max-w-full px-4 py-1.5 border rounded-lg text-gray-700 cursor-pointer hover:bg-gray-50 break-words"
+            class="w-fit max-w-full px-4 py-1.5 border border-border-c rounded-lg text-text-2 cursor-pointer hover:bg-brand-soft hover:text-brand-text break-words"
             @click="async () => await handleSubmitQuestion(opening_question)"
           >
             {{ opening_question }}
           </div>
         </div>
       </div>
-      <div class="w-full flex flex-col flex-shrink-0 border-t bg-white">
+      <div class="w-full flex flex-col shrink-0 border-t border-border-c bg-surface/70 backdrop-blur">
         <div
           v-if="toolConfirmationPrompt"
           class="w-full max-w-[600px] mx-auto px-6 pb-2 flex justify-center"
@@ -428,7 +428,7 @@ watch(
             @submit="handleSubmit"
           />
         </div>
-        <div class="text-center text-gray-500 text-xs py-4">
+        <div class="text-center text-muted text-xs py-4">
           {{ t('chat.messages.aiGeneratedDisclaimer') }}
         </div>
       </div>

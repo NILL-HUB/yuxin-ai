@@ -530,7 +530,7 @@ onMounted(() => {
             <a-avatar
               :size="36"
               shape="square"
-              class="rounded flex-shrink-0"
+              class="rounded shrink-0"
               :image-url="normalizeIconUrl(tool.provider.icon)"
             />
             <!-- 名称与描述信息 -->
@@ -544,7 +544,7 @@ onMounted(() => {
             </div>
           </div>
           <!-- 右侧按钮 -->
-          <div class="hidden group-hover:flex items-center gap-1 flex-shrink-0 ml-2">
+          <div class="hidden group-hover:flex items-center gap-1 shrink-0 ml-2">
             <a-button
               :loading="getApiToolLoading || getBuiltinToolLoading"
               size="mini"
@@ -739,7 +739,7 @@ onMounted(() => {
       <div class="flex w-full h-full flex-col md:flex-row">
         <!-- 左侧导航菜单 -->
         <div
-          class="flex flex-col flex-shrink-0 bg-gray-50 w-full md:w-56 lg:w-64 h-full px-3 py-4 overflow-auto scrollbar-w-none"
+          class="flex flex-col shrink-0 bg-gray-50 w-full md:w-56 lg:w-64 h-full px-3 py-4 overflow-auto scrollbar-w-none"
         >
           <!-- 标题 -->
           <div class="text-gray-900 font-bold text-lg mb-4">{{ t('appStudio.abilities.tools.addTitle') }}</div>
@@ -840,7 +840,7 @@ onMounted(() => {
                   <!-- 添加按钮 -->
                   <a-button
                     size="mini"
-                    class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
+                    class="hidden group-hover:block rounded px-1.5 shrink-0"
                     @click="async () => await handleSelectTool(Number(builtin_tool_idx), Number(tool_idx))"
                   >
                     <template #icon>
@@ -895,7 +895,7 @@ onMounted(() => {
                     <!-- 添加按钮 -->
                     <a-button
                       size="mini"
-                      class="hidden group-hover:block rounded px-1.5 flex-shrink-0"
+                      class="hidden group-hover:block rounded px-1.5 shrink-0"
                       @click="
                         async () => await handleSelectTool(Number(api_tool_provider_idx), Number(tool_idx))
                       "

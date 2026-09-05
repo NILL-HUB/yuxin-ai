@@ -510,7 +510,7 @@ const getListItemIcon = (item: VersionListItem) => {
             <a-avatar
               :size="36"
               shape="square"
-              class="rounded-lg flex-shrink-0"
+              class="rounded-lg shrink-0"
               :image-url="getListItemIcon(item)"
             >
               <icon-apps v-if="sectionKey !== 'datasets'" />

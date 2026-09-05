@@ -31,7 +31,7 @@ const operatorLabels = computed<Record<string, string>>(() => ({
   >
     <!-- 顶部节点标题 -->
     <div class="flex items-center gap-2 min-w-0">
-      <a-avatar shape="square" :size="24" class="bg-amber-500 rounded-lg flex-shrink-0">
+      <a-avatar shape="square" :size="24" class="bg-amber-500 rounded-lg shrink-0">
         <icon-branch :size="16" />
       </a-avatar>
       <div class="text-gray-700 font-semibold break-words line-clamp-2">{{ props.data?.title }}</div>
@@ -52,7 +52,7 @@ const operatorLabels = computed<Record<string, string>>(() => ({
           <!-- 变量名和类型 -->
           <div class="flex items-center gap-2">
             <div class="text-gray-700 break-words">{{ input.name }}</div>
-            <div class="text-gray-500 bg-gray-200 px-1 py-0.5 rounded flex-shrink-0 text-[10px]">{{ input.type }}</div>
+            <div class="text-gray-500 bg-gray-200 px-1 py-0.5 rounded shrink-0 text-[10px]">{{ input.type }}</div>
           </div>
           <!-- 变量值 -->
           <div class="w-full min-w-0">

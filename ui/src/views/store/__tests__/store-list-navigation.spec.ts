@@ -7,18 +7,40 @@ const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
   getPublicApps: vi.fn(),
   getAppTags: vi.fn(),
+  forkPublicApp: vi.fn(),
   getPublicWorkflows: vi.fn(),
 }))
 
-vi.mock('vue-router', () => ({
-  useRouter: () => ({
-    push: mocks.routerPush,
-  }),
-}))
+vi.mock('vue-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-router')>()
+  return {
+    ...actual,
+    useRoute: () => ({
+      fullPath: '/store/public-apps',
+    }),
+    useRouter: () => ({
+      push: mocks.routerPush,
+    }),
+  }
+})
 
 vi.mock('@/services/public-app', () => ({
   getPublicApps: mocks.getPublicApps,
   getAppTags: mocks.getAppTags,
+  forkPublicApp: mocks.forkPublicApp,
+}))
+
+vi.mock('@/utils/auth', () => ({
+  isCredentialLoggedIn: () => false,
+}))
+
+vi.mock('@/stores/credential', () => ({
+  useCredentialStore: () => ({
+    credential: {
+      access_token: '',
+      expire_at: 0,
+    },
+  }),
 }))
 
 vi.mock('@/services/public-workflow', () => ({
@@ -27,6 +49,10 @@ vi.mock('@/services/public-workflow', () => ({
 
 const slotStub = {
   template: '<div><slot /></div>',
+}
+
+const buttonStub = {
+  template: '<button @click="$emit(\'click\', $event)"><slot /></button>',
 }
 
 const globalStubs = {
@@ -38,9 +64,7 @@ const globalStubs = {
   'a-tag': slotStub,
   'a-tooltip': slotStub,
   'a-space': slotStub,
-  'a-button': {
-    template: '<button><slot /></button>',
-  },
+  'a-button': buttonStub,
   'a-card': slotStub,
   'a-col': slotStub,
   'a-empty': slotStub,
@@ -166,5 +190,32 @@ describe('store list navigation', () => {
     await flushPromises()
     expect(workflowWrapper.text()).not.toContain('复制')
     expect(workflowWrapper.text()).not.toContain('已复制')
+  })
+
+  it('opens the global login modal instead of navigating to the legacy auth page', async () => {
+    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+    const wrapper = shallowMount(PublicAppsListView, {
+      global: {
+        stubs: globalStubs,
+      },
+    })
+    await flushPromises()
+
+    const loginButton = wrapper.findAll('button').find((button) => button.text().includes('登录后添加'))
+    expect(loginButton).toBeTruthy()
+
+    await loginButton!.trigger('click')
+
+    const authRequiredEvents = dispatchSpy.mock.calls
+      .map((call) => call[0] as Event)
+      .filter((event) => event.type === 'llmops:auth-required') as CustomEvent<{
+      redirect: string
+    }>[]
+
+    expect(authRequiredEvents.length).toBeGreaterThan(0)
+    expect(authRequiredEvents.at(-1)?.detail).toEqual({ redirect: '/store/public-apps' })
+    expect(mocks.routerPush).not.toHaveBeenCalledWith({ name: 'auth-login' })
+
+    dispatchSpy.mockRestore()
   })
 })

@@ -25,6 +25,8 @@ export type AssignAppsResponse = BaseResponse<{ assigned: number; reactivated: n
 export type MyApp = AssignedApp & {
   assignment_id: string
   assigned_at: number | null
+  source: 'assigned' | 'forked'
+  status?: string
 }
 export type MyAppListResponse = BaseResponse<{ list: MyApp[] }>
 export type MyAppChatRequest = {

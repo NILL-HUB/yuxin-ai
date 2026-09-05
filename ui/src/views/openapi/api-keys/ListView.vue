@@ -191,7 +191,7 @@ watch(
             <template #cell="{ record }">
               <div class="flex items-center gap-3">
                 <div
-                  class="flex-shrink-0 w-8 h-8 bg-blue-500 rounded flex items-center justify-center"
+                  class="shrink-0 w-8 h-8 bg-blue-500 rounded flex items-center justify-center"
                 >
                   <icon-safe class="text-white text-sm" />
                 </div>
@@ -237,7 +237,7 @@ watch(
           >
             <template #cell="{ record }">
               <div class="flex items-center gap-2 text-gray-600 text-sm whitespace-nowrap">
-                <icon-clock-circle class="text-gray-400 flex-shrink-0" :size="16" />
+                <icon-clock-circle class="text-gray-400 shrink-0" :size="16" />
                 <span>{{ formatTimestampDate(record.created_at) }}</span>
               </div>
             </template>

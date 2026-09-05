@@ -16,7 +16,7 @@ const { t } = useI18n()
   >
     <!-- 顶部节点标题 -->
     <div class="flex items-center gap-2 min-w-0">
-      <a-avatar shape="square" :size="24" class="bg-blue-700 rounded-lg flex-shrink-0">
+      <a-avatar shape="square" :size="24" class="bg-blue-700 rounded-lg shrink-0">
         <icon-home :size="16" />
       </a-avatar>
       <div class="text-gray-700 font-semibold break-words line-clamp-2">{{ props.data?.title }}</div>
@@ -36,8 +36,8 @@ const { t } = useI18n()
           class="flex items-center gap-1 text-xs bg-white px-2 py-1 rounded"
         >
           <div class="text-gray-700 break-words">{{ input.name }}</div>
-          <div v-if="input.required" class="flex-shrink-0 text-red-700">*</div>
-          <div class="text-gray-500 bg-gray-200 px-1 py-0.5 rounded flex-shrink-0 text-[10px]">{{ input.type }}</div>
+          <div v-if="input.required" class="shrink-0 text-red-700">*</div>
+          <div class="text-gray-500 bg-gray-200 px-1 py-0.5 rounded shrink-0 text-[10px]">{{ input.type }}</div>
         </div>
         <div v-if="!props.data?.inputs?.length" class="text-gray-500 text-xs px-0.5">-</div>
       </div>

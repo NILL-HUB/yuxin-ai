@@ -190,7 +190,7 @@ watch(
       <!-- 提示 -->
       <div v-if="!api_key_id" class="mb-5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
         <div class="flex items-start gap-2">
-          <icon-info-circle class="text-amber-600 text-base flex-shrink-0 mt-0.5" />
+          <icon-info-circle class="text-amber-600 text-base shrink-0 mt-0.5" />
           <div class="flex-1 text-sm text-amber-900">
             {{ t('openapi.apiKeys.noteDescription') }}
           </div>

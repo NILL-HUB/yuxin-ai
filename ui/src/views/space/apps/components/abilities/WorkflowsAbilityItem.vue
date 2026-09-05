@@ -253,7 +253,7 @@ watch(
             <a-avatar
               :size="36"
               shape="square"
-              class="rounded flex-shrink-0"
+              class="rounded shrink-0"
               :image-url="workflow.icon"
             />
             <!-- 名称与描述信息 -->
@@ -270,7 +270,7 @@ watch(
           <a-button
             size="mini"
             type="text"
-            class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
+            class="hidden group-hover:block shrink-0 ml-2 !text-red-700 rounded"
             @click="
               async () => {
                 // 1.清除props中指定的数据
@@ -343,7 +343,7 @@ watch(
               <a-avatar
                 :size="24"
                 shape="square"
-                class="flex-shrink-0 rounded"
+                class="shrink-0 rounded"
                 :image-url="workflow.icon"
               />
               <div class="line-clamp-1 text-gray-500 flex-1">{{ workflow.name }}</div>

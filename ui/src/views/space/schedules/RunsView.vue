@@ -112,28 +112,28 @@ onMounted(() => {
 <template>
   <div class="schedule-runs-page mx-auto w-full max-w-4xl p-6">
     <!-- 顶栏 -->
-    <div class="mb-5 flex items-center gap-3">
+    <div class="mb-5 flex items-center gap-3 flex-wrap">
       <a-button class="rounded-lg" @click="goBack">{{ t('space.schedules.back') }}</a-button>
-      <h1 class="truncate text-lg font-semibold text-gray-900">{{ taskName }}</h1>
-      <a-tag color="arcoblue" size="small" class="flex-shrink-0">{{ cronExpression }}</a-tag>
-      <span class="ml-auto flex-shrink-0 text-xs text-gray-500">
+      <h1 class="truncate text-lg font-semibold text-text">{{ taskName }}</h1>
+      <a-tag color="arcoblue" size="small" class="shrink-0">{{ cronExpression }}</a-tag>
+      <span class="ml-auto shrink-0 text-xs text-muted">
         {{ t('space.schedules.totalRuns', { count: total }) }}
       </span>
     </div>
 
     <!-- 统计 -->
-    <div class="mb-5 grid grid-cols-3 gap-3">
-      <div class="rounded-lg border border-gray-200 bg-white p-4">
-        <div class="text-xs text-gray-500">{{ t('space.schedules.runsSuccess') }}</div>
+    <div class="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div class="rounded-lg border border-border-c bg-surface p-4">
+        <div class="text-xs text-muted">{{ t('space.schedules.runsSuccess') }}</div>
         <div class="mt-1 text-2xl font-semibold text-green-600">{{ successCount }}</div>
       </div>
-      <div class="rounded-lg border border-gray-200 bg-white p-4">
-        <div class="text-xs text-gray-500">{{ t('space.schedules.runsFailed') }}</div>
+      <div class="rounded-lg border border-border-c bg-surface p-4">
+        <div class="text-xs text-muted">{{ t('space.schedules.runsFailed') }}</div>
         <div class="mt-1 text-2xl font-semibold text-red-600">{{ failedCount }}</div>
       </div>
-      <div class="rounded-lg border border-gray-200 bg-white p-4">
-        <div class="text-xs text-gray-500">{{ t('space.schedules.runsRunning') }}</div>
-        <div class="mt-1 text-2xl font-semibold text-arcoblue-600">{{ runningCount }}</div>
+      <div class="rounded-lg border border-border-c bg-surface p-4">
+        <div class="text-xs text-muted">{{ t('space.schedules.runsRunning') }}</div>
+        <div class="mt-1 text-2xl font-semibold text-brand-text">{{ runningCount }}</div>
       </div>
     </div>
 
@@ -142,28 +142,28 @@ onMounted(() => {
       <a-empty
         v-if="!loading && runs.length === 0"
         :description="t('space.schedules.runsEmpty')"
-        class="rounded-lg border border-gray-200 bg-white py-16"
+        class="rounded-lg border border-border-c bg-surface py-16"
       />
       <div v-else class="space-y-3">
         <div
           v-for="run in runs"
           :key="run.id"
-          class="rounded-lg border border-gray-200 bg-white p-4"
+          class="rounded-lg border border-border-c bg-surface p-4"
         >
-          <div class="mb-2 flex items-center justify-between gap-2">
+          <div class="mb-2 flex items-center justify-between gap-2 flex-wrap">
             <div class="flex items-center gap-2">
               <a-tag :color="statusColor(run.status)" size="small">
                 {{ statusText(run.status) }}
               </a-tag>
               <a-tag size="small" color="gray">{{ triggerText(run.trigger_source) }}</a-tag>
             </div>
-            <div class="flex-shrink-0 text-xs text-gray-500">
+            <div class="shrink-0 text-xs text-muted">
               {{ formatTimestampLong(run.started_at) }}
               <span class="mx-1">·</span>
               {{ t('space.schedules.runDuration') }} {{ durationText(run) }}
             </div>
           </div>
-          <div class="mb-3 line-clamp-2 whitespace-pre-wrap break-all text-sm text-gray-700">
+          <div class="mb-3 line-clamp-2 whitespace-pre-wrap break-all text-sm text-text-2">
             {{ run.result_summary || run.error_message || t('space.schedules.noReport') }}
           </div>
           <a-button size="mini" class="rounded-lg" @click="openReport(run)">
@@ -191,14 +191,14 @@ onMounted(() => {
       @cancel="reportVisible = false"
     >
       <div v-if="currentRun" class="flex flex-col gap-4">
-        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+        <div class="rounded-lg border border-border-c bg-surface-2 p-3 text-sm">
           <div class="mb-1 flex items-center gap-2">
             <a-tag :color="statusColor(currentRun.status)" size="small">
               {{ statusText(currentRun.status) }}
             </a-tag>
             <a-tag size="small" color="gray">{{ triggerText(currentRun.trigger_source) }}</a-tag>
           </div>
-          <div class="mt-2 space-y-1 text-xs text-gray-600">
+          <div class="mt-2 space-y-1 text-xs text-text-2">
             <div>
               {{ t('space.schedules.runAt') }}：{{ formatTimestampLong(currentRun.started_at) }}
             </div>
@@ -213,11 +213,11 @@ onMounted(() => {
         </div>
 
         <div>
-          <div class="mb-2 text-sm font-semibold text-gray-800">
+          <div class="mb-2 text-sm font-semibold text-text-2">
             {{ t('space.schedules.reportContent') }}
           </div>
           <div
-            class="max-h-[420px] overflow-auto whitespace-pre-wrap break-all rounded-lg border border-gray-200 bg-white p-4 text-sm leading-relaxed text-gray-800"
+            class="max-h-[420px] overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border-c bg-surface p-4 text-sm leading-relaxed text-text-2"
           >
             {{ currentRun.result_summary || t('space.schedules.noReport') }}
           </div>

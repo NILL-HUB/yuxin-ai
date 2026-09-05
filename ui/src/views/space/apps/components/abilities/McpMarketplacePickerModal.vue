@@ -261,7 +261,7 @@ onMounted(async () => {
   >
     <div class="flex w-full h-full flex-col md:flex-row">
       <div
-        class="flex flex-col flex-shrink-0 bg-gray-50 w-full md:w-56 lg:w-64 h-full px-3 py-4 overflow-auto scrollbar-w-none"
+        class="flex flex-col shrink-0 bg-gray-50 w-full md:w-56 lg:w-64 h-full px-3 py-4 overflow-auto scrollbar-w-none"
       >
         <div class="text-gray-900 font-bold text-lg mb-2">{{ t('appStudio.abilities.mcp.addTitle') }}</div>
         <div class="text-xs text-gray-500 mb-4">{{ t('appStudio.abilities.mcp.addDescription') }}</div>
@@ -367,7 +367,7 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                <div class="flex flex-col items-end gap-2 shrink-0">
                   <a-button
                     type="primary"
                     size="small"

@@ -192,7 +192,7 @@ onMounted(() => {
             :key="parameter.name"
             class="flex items-center gap-2 h-8 mb-4"
           >
-            <div class="flex items-center gap-2 text-gray-500 w-[120px] flex-shrink-0">
+            <div class="flex items-center gap-2 text-gray-500 w-[120px] shrink-0">
               <div class="text-xs">{{ parameter?.label }}</div>
               <a-tooltip :content="parameter?.help">
                 <icon-question-circle />

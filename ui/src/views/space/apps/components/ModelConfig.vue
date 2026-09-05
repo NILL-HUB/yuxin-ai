@@ -208,7 +208,7 @@ onMounted(() => {
             class="flex items-center gap-2 h-8 mb-4"
           >
             <!-- 字段标签 -->
-            <div class="flex items-center gap-2 text-gray-500 w-[120px] flex-shrink-0">
+            <div class="flex items-center gap-2 text-gray-500 w-[120px] shrink-0">
               <div class="text-xs">
                 {{ getModelParameterDisplayLabel(parameter.name, String(parameter?.label || ''), t) }}
               </div>
@@ -263,7 +263,7 @@ onMounted(() => {
         <div class="text-gray-700 mb-2">{{ t('appStudio.modelConfig.ioSettingsTitle') }}</div>
         <div class="flex items-center gap-2 h-8">
           <!-- 字段标签 -->
-          <div class="flex items-center gap-2 text-gray-500 w-[120px] flex-shrink-0">
+          <div class="flex items-center gap-2 text-gray-500 w-[120px] shrink-0">
             <div class="text-xs">{{ t('appStudio.modelConfig.dialogRoundsLabel') }}</div>
             <a-tooltip :content="t('appStudio.modelConfig.dialogRoundsHelp')">
               <icon-question-circle />

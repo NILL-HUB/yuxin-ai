@@ -116,9 +116,9 @@ onMounted(() => {
   <!-- 调整边距+隐藏 -->
   <div class="px-6 pt-6 flex flex-col overflow-hidden h-full">
     <!-- 固定顶部 -->
-    <div class="sticky top-0 z-20 bg-gray-50">
+    <div class="sticky top-0 z-20 bg-surface-2">
       <!-- 顶部回退按钮+文档详情 -->
-      <div class="flex items-center w-full gap-2 mb-6">
+      <div class="flex items-center w-full gap-2 flex-wrap mb-6">
         <!-- 左侧回退按钮 -->
         <router-link
           :to="{
@@ -129,32 +129,32 @@ onMounted(() => {
             },
           }"
         >
-          <a-button size="mini" type="text" class="!text-gray-700">
+          <a-button size="mini" type="text" class="!text-text-2">
             <template #icon>
               <icon-left />
             </template>
           </a-button>
         </router-link>
         <!-- 右侧文档信息 -->
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 min-w-0">
           <!-- 文档的图标 -->
-          <a-avatar :size="40" shape="square" class="rounded-lg bg-blue-700">
+          <a-avatar :size="40" shape="square" class="rounded-lg bg-brand shrink-0">
             <icon-file />
           </a-avatar>
           <!-- 知识库信息 -->
-          <div class="flex flex-col justify-between h-[40px]">
+          <div class="flex flex-col justify-between min-w-0">
             <a-skeleton-line v-if="!document?.name" :widths="[100]" />
-            <div v-else class="text-gray-700">{{ t('space.datasets.documents.segments.documentPrefix') }} {{ document.name }}</div>
+            <div v-else class="text-text-2 truncate">{{ t('space.datasets.documents.segments.documentPrefix') }} {{ document.name }}</div>
             <div v-if="!document?.name" class="flex items-center gap-2">
               <a-skeleton-line :widths="[60]" :line-height="18" />
               <a-skeleton-line :widths="[60]" :line-height="18" />
               <a-skeleton-line :widths="[60]" :line-height="18" />
             </div>
-            <div v-else class="flex items-center gap-2">
-              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-gray-200 text-gray-500">
+            <div v-else class="flex flex-wrap items-center gap-2">
+              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-surface-2 text-muted">
                 {{ t('space.datasets.documents.segments.segmentCount', { count: document.segment_count }) }}
               </a-tag>
-              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-gray-200 text-gray-500">
+              <a-tag size="small" class="rounded h-[18px] leading-[18px] bg-surface-2 text-muted">
                 {{ t('space.datasets.documents.segments.lastEdited', { time: formatTimestampShort(document.updated_at) }) }}
               </a-tag>
             </div>
@@ -162,12 +162,12 @@ onMounted(() => {
         </div>
       </div>
       <!-- 中间检索以及功能按钮 -->
-      <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
         <!-- 左侧搜索框 -->
         <a-input-search
           :default-value="route.query?.search_word || ''"
           :placeholder="t('space.datasets.documents.segments.searchPlaceholder')"
-          class="w-[240px] bg-white rounded-lg border-gray-200"
+          class="w-full sm:w-[240px] bg-surface border-border-c"
           @search="
             (value: string) => {
               router.push({
@@ -188,21 +188,29 @@ onMounted(() => {
       <!-- 片段列表 -->
       <a-row :gutter="[20, 20]">
         <!-- 有数据的UI状态 -->
-        <a-col v-for="segment in segments" :key="segment.id" :span="6">
+        <a-col
+          v-for="segment in segments"
+          :key="segment.id"
+          :xs="24"
+          :sm="12"
+          :lg="8"
+          :xl="6"
+          :xxl="6"
+        >
           <a-card hoverable class="rounded-lg">
             <!-- 顶部片段位置及状态 -->
             <div class="flex items-center justify-between mb-2">
-              <a-tag size="small" class="rounded-md text-gray-500">
+              <a-tag size="small" class="rounded-md text-muted">
                 #{{ segment.position.toString().padStart(3, '0') }}
               </a-tag>
               <div class="flex items-center">
-                <div class="flex items-center gap-1 text-xs text-gray-700">
+                <div class="flex items-center gap-1 text-xs text-text-2">
                   {{ segment.enabled ? t('space.datasets.documents.statuses.enabled') : t('space.datasets.documents.statuses.disabled') }}
                   <div
                     v-if="segment.enabled"
                     class="w-2 h-2 bg-green-500 border border-green-700 rounded-sm"
                   ></div>
-                  <div v-else class="w-2 h-2 bg-gray-500 border border-gray-700 rounded-sm"></div>
+                  <div v-else class="w-2 h-2 bg-muted border border-subtle rounded-sm"></div>
                 </div>
                 <a-divider direction="vertical" />
                 <a-switch
@@ -223,16 +231,16 @@ onMounted(() => {
               </div>
             </div>
             <!-- 中间片段内容 -->
-            <div class="leading-[18px] text-gray-700 h-[72px] line-clamp-4 mb-2 break-all">
+            <div class="leading-[18px] text-text-2 h-[72px] line-clamp-4 mb-2 break-all">
               {{ segment.content }}
             </div>
             <!-- 底部扩展信息 -->
             <div class="flex items-center gap-3">
-              <div class="flex items-center gap-1 text-xs text-gray-500">
+              <div class="flex items-center gap-1 text-xs text-muted">
                 <icon-bookmark />
                 {{ segment.character_count }} {{ t('space.datasets.documents.columns.characterCount') }}
               </div>
-              <div class="flex items-center gap-1 text-xs text-gray-500">
+              <div class="flex items-center gap-1 text-xs text-muted">
                 <icon-pushpin />
                 {{ segment.hit_count }} {{ t('space.datasets.documents.columns.hitCount') }}
               </div>
@@ -262,12 +270,12 @@ onMounted(() => {
         <a-col v-if="loading" :span="24" align="center">
           <a-space class="my-4">
             <a-spin />
-            <div class="text-gray-400">{{ t('space.datasets.documents.segments.loading') }}</div>
+            <div class="text-muted">{{ t('space.datasets.documents.segments.loading') }}</div>
           </a-space>
         </a-col>
         <!-- 数据加载完成 -->
         <a-col v-else-if="paginator.current_page > paginator.total_page" :span="24" align="center">
-          <div class="text-gray-400 my-4">{{ t('space.datasets.documents.segments.loadedAll') }}</div>
+          <div class="text-muted my-4">{{ t('space.datasets.documents.segments.loadedAll') }}</div>
         </a-col>
       </a-row>
     </a-spin>
@@ -289,7 +297,7 @@ onMounted(() => {
         show-word-limit
         :max-length="5000"
       />
-      <div class="mt-2 text-xs text-gray-400">
+      <div class="mt-2 text-xs text-muted">
         {{ t('space.datasets.documents.segments.editHint') }}
       </div>
     </a-modal>

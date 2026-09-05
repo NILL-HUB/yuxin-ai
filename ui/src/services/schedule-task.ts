@@ -14,6 +14,9 @@ export type ScheduleTaskItem = {
   id: string
   name: string
   prompt: string
+  app_id: string | null
+  task_type: 'app_execution' | 'assistant_chat'
+  input_params: Record<string, unknown>
   trigger_type: 'cron' | 'interval'
   cron_expression: string
   cron_humanized: string
@@ -67,17 +70,23 @@ export const createScheduleTask = (
     description?: string
     trigger_type?: 'cron' | 'interval'
     interval_config?: IntervalConfig | Record<string, never>
+    app_id?: string | null
+    task_type?: 'app_execution' | 'assistant_chat'
+    input_params?: Record<string, unknown>
   },
   admin = false,
 ) => post<BaseResponse<ScheduleTaskItem>>(scheduleTaskBasePath(admin), { body })
 
 export const updateScheduleTask = (
   id: string,
-  body: Partial<{ name: string; prompt: string; cron_expression: string; cron_humanized: string; description: string; enabled: boolean; trigger_type: 'cron' | 'interval'; interval_config: IntervalConfig | Record<string, never> }>,
+  body: Partial<{ name: string; prompt: string; cron_expression: string; cron_humanized: string; description: string; enabled: boolean; trigger_type: 'cron' | 'interval'; interval_config: IntervalConfig | Record<string, never>; app_id: string | null; task_type: 'app_execution' | 'assistant_chat'; input_params: Record<string, unknown> }>,
   admin = false,
 ) => put<BaseResponse<ScheduleTaskItem>>(`${scheduleTaskBasePath(admin)}/${id}`, { body })
 
-export const deleteScheduleTask = (id: string, admin = false) => del<BaseResponse<{ id: string }>>(`${scheduleTaskBasePath(admin)}/${id}`)
+export const deleteScheduleTask = (id: string, admin = false, retentionDays?: number) =>
+  del<BaseResponse<{ id: string }>>(`${scheduleTaskBasePath(admin)}/${id}`, {
+    body: retentionDays ? { retention_days: retentionDays } : undefined,
+  })
 
 export const enableScheduleTask = (id: string, enabled: boolean, admin = false) =>
   post<BaseResponse<ScheduleTaskItem>>(`${scheduleTaskBasePath(admin)}/${id}/enable`, { body: { enabled } })

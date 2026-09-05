@@ -238,14 +238,14 @@ onBeforeUnmount(() => {
     <!-- 只读模式提示横幅 -->
     <div v-if="isReadonly" class="mb-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
       <div class="flex items-center gap-2 text-orange-700">
-        <icon-lock class="flex-shrink-0" />
+        <icon-lock class="shrink-0" />
         <span class="text-sm font-medium">{{ t('workflowEditor.previewMode') }}</span>
       </div>
     </div>
 
     <div class="flex items-center justify-between gap-3 mb-2">
       <div class="flex items-center gap-1 flex-1">
-        <a-avatar :size="30" shape="square" class="bg-amber-500 rounded-lg flex-shrink-0">
+        <a-avatar :size="30" shape="square" class="bg-amber-500 rounded-lg shrink-0">
           <icon-branch />
         </a-avatar>
         <a-input
@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
       <a-button
         type="text"
         size="mini"
-        class="!text-gray700 flex-shrink-0"
+        class="!text-gray700 shrink-0"
         @click="() => emits('update:visible', false)"
       >
         <template #icon>
@@ -289,10 +289,10 @@ onBeforeUnmount(() => {
           :key="idx"
           class="flex items-center gap-1"
         >
-          <div class="w-[30%] flex-shrink-0">
+          <div class="w-[30%] shrink-0">
             <a-input v-model="input.name" size="mini" :placeholder="t('workflowEditor.parameterName')" class="!px-2" />
           </div>
-          <div class="w-[24%] flex-shrink-0">
+          <div class="w-[24%] shrink-0">
             <a-select
               size="mini"
               v-model="input.type"
@@ -306,7 +306,7 @@ onBeforeUnmount(() => {
               ]"
             />
           </div>
-          <div class="w-[38%] flex-shrink-0">
+          <div class="w-[38%] shrink-0">
             <a-input
               v-if="input.type !== 'ref'"
               size="mini"
@@ -322,7 +322,7 @@ onBeforeUnmount(() => {
               :options="inputRefOptions"
             />
           </div>
-          <div class="w-[8%] flex-shrink-0">
+          <div class="w-[8%] shrink-0">
             <a-button v-if="!isReadonly" type="text" size="mini" status="danger" @click="removeFormInputField(idx)">
               <icon-delete />
             </a-button>

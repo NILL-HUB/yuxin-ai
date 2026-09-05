@@ -44,7 +44,7 @@ const CodeNodeInfo = defineAsyncComponent(
 const route = useRoute()
 const { t } = useI18n()
 const workflowId = ref<string>(String(route.params?.workflow_id ?? ''))
-const isPreviewMode = ref(true)
+const _isPreviewMode = ref(true)
 const loading = ref(false)
 const normalizeIconUrl = (icon: string = '') => {
   if (!icon) return ''
@@ -307,7 +307,7 @@ onMounted(async () => {
 <template>
   <div class="min-h-screen flex flex-col h-full overflow-hidden relative">
     <!-- 顶部Header -->
-    <div class="h-[77px] flex-shrink-0 bg-white p-4 flex items-center justify-between relative border-b">
+    <div class="h-[77px] shrink-0 bg-white p-4 flex items-center justify-between relative border-b">
       <!-- 左侧工作流信息 -->
       <div class="flex items-center gap-2">
         <!-- 回退按钮 -->

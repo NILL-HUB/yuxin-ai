@@ -86,7 +86,7 @@ const handleUnbind = () => {
         <a-avatar
           :size="36"
           shape="square"
-          class="rounded flex-shrink-0"
+          class="rounded shrink-0"
           :image-url="props.workflow_detail.icon"
         />
         <div class="flex flex-col flex-1 min-w-0 gap-1 h-9">
@@ -101,7 +101,7 @@ const handleUnbind = () => {
       <a-button
         size="mini"
         type="text"
-        class="opacity-0 group-hover:opacity-100 flex-shrink-0 ml-2 !text-red-700 rounded"
+        class="opacity-0 group-hover:opacity-100 shrink-0 ml-2 !text-red-700 rounded"
         :loading="loading"
         @click="handleUnbind"
       >
@@ -114,7 +114,7 @@ const handleUnbind = () => {
       class="flex items-center justify-between bg-white p-3 rounded-lg group"
     >
       <div class="flex items-center gap-2 min-w-0 flex-1">
-        <a-avatar :size="36" shape="square" class="rounded flex-shrink-0 bg-gray-100">
+        <a-avatar :size="36" shape="square" class="rounded shrink-0 bg-gray-100">
           <icon-mind-mapping />
         </a-avatar>
         <div class="flex flex-col flex-1 min-w-0 gap-1 h-9">
@@ -129,7 +129,7 @@ const handleUnbind = () => {
       <a-button
         size="mini"
         type="text"
-        class="opacity-0 group-hover:opacity-100 flex-shrink-0 ml-2 !text-red-700 rounded"
+        class="opacity-0 group-hover:opacity-100 shrink-0 ml-2 !text-red-700 rounded"
         :loading="loading"
         @click="handleUnbind"
       >

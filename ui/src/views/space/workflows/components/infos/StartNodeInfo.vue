@@ -126,7 +126,7 @@ onBeforeUnmount(() => {
     <!-- 只读模式提示横幅 -->
     <div v-if="isReadonly" class="mb-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
       <div class="flex items-center gap-2 text-orange-700">
-        <icon-lock class="flex-shrink-0" />
+        <icon-lock class="shrink-0" />
         <span class="text-sm font-medium">{{ t('workflowEditor.previewMode') }}</span>
       </div>
     </div>
@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
     <div class="flex items-center justify-between gap-3 mb-2">
       <!-- 左侧标题 -->
       <div class="flex items-center gap-1 flex-1">
-        <a-avatar :size="30" shape="square" class="bg-blue-700 rounded-lg flex-shrink-0">
+        <a-avatar :size="30" shape="square" class="bg-blue-700 rounded-lg shrink-0">
           <icon-home />
         </a-avatar>
         <a-input
@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
       <a-button
         type="text"
         size="mini"
-        class="!text-gray700 flex-shrink-0"
+        class="!text-gray700 shrink-0"
         @click="() => emits('update:visible', false)"
       >
         <template #icon>
@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
                   v-if="!isReadonly"
                   size="mini"
                   type="text"
-                  class="!text-gray-700 flex-shrink-0"
+                  class="!text-gray-700 shrink-0"
                   @click="() => removeFormInputField(idx)"
                 >
                   <template #icon>

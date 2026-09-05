@@ -210,7 +210,7 @@ onMounted(async () => {
   >
     <div class="flex w-full h-full flex-col md:flex-row">
       <div
-        class="flex flex-col flex-shrink-0 bg-gray-50 w-full md:w-56 lg:w-64 h-full px-3 py-4 overflow-auto scrollbar-w-none"
+        class="flex flex-col shrink-0 bg-gray-50 w-full md:w-56 lg:w-64 h-full px-3 py-4 overflow-auto scrollbar-w-none"
       >
         <div class="text-gray-900 font-bold text-lg mb-2">{{ t('appStudio.abilities.skills.addTitle') }}</div>
         <div class="text-xs text-gray-500 mb-4">{{ t('appStudio.abilities.skills.addDescription') }}</div>
@@ -259,7 +259,7 @@ onMounted(async () => {
                 :class="`flex items-start justify-between gap-3 px-3 py-3 rounded-lg border cursor-pointer hover:bg-blue-50 hover:border-blue-700 ${isSelectedSkill(skill) ? 'bg-blue-50 border-blue-700' : 'bg-white border-gray-200'}`"
               >
                 <div class="flex items-start gap-3 min-w-0 flex-1">
-                  <a-avatar :size="40" shape="square" class="bg-gray-100 flex-shrink-0">
+                  <a-avatar :size="40" shape="square" class="bg-gray-100 shrink-0">
                     <img
                       v-if="skill.icon"
                       :src="normalizeIconUrl(skill.icon)"
@@ -288,7 +288,7 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <div class="flex flex-col items-end gap-2 flex-shrink-0">
+                <div class="flex flex-col items-end gap-2 shrink-0">
                   <a-button
                     type="primary"
                     size="small"

@@ -399,7 +399,7 @@ watch(
           <div class="flex flex-col gap-1 min-w-0 flex-1">
             <div class="flex items-center gap-2 min-w-0">
               <div class="text-gray-700 font-bold truncate">{{ binding.name }}</div>
-              <div class="flex items-center gap-1 flex-shrink-0">
+              <div class="flex items-center gap-1 shrink-0">
                 <a-tag size="small" :color="getBindingStatus(binding).color">
                   {{ getBindingStatus(binding).label }}
                 </a-tag>
@@ -422,7 +422,7 @@ watch(
         <a-button
           size="mini"
           type="text"
-          class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
+          class="hidden group-hover:block shrink-0 ml-2 !text-red-700 rounded"
           @click.stop="handleDeleteBinding(idx)"
         >
           <template #icon>

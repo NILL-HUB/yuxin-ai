@@ -51,14 +51,14 @@ const openSummaryModal = async () => {
 <template>
   <div class="">
     <!-- 预览与调试头组件 -->
-    <div class="flex items-center justify-between border-b h-[64px] px-4">
-      <div class="text-lg text-gray-700">{{ t('appStudio.debug.title') }}</div>
+    <div class="flex items-center justify-between border-b border-border-c h-[64px] px-4">
+      <div class="text-lg text-text-2">{{ t('appStudio.debug.title') }}</div>
       <div class="flex items-center gap-2">
         <a-button
           :disabled="!props.long_term_memory?.enable"
           size="mini"
           type="text"
-          class="rounded-lg px-1 !text-blue-700"
+          class="rounded-lg px-1 !text-brand-text"
           @click="openSummaryModal"
         >
           <template #icon>
@@ -70,7 +70,7 @@ const openSummaryModal = async () => {
           :disabled="!props.debug_conversation_id"
           size="mini"
           type="text"
-          class="rounded-lg px-1 !text-blue-700"
+          class="rounded-lg px-1 !text-brand-text"
           @click="variableDrawerVisible = true"
         >
           <template #icon>
@@ -82,7 +82,7 @@ const openSummaryModal = async () => {
           v-if="props.app_type === 'workflow'"
           size="mini"
           type="text"
-          class="rounded-lg px-1 !text-blue-700"
+          class="rounded-lg px-1 !text-brand-text"
           @click="debugPanelVisible = true"
         >
           <template #icon>
@@ -95,7 +95,7 @@ const openSummaryModal = async () => {
           :disabled="!props.workflow_id"
           size="mini"
           type="text"
-          class="rounded-lg px-1 !text-blue-700"
+          class="rounded-lg px-1 !text-brand-text"
           @click="runHistoryVisible = true"
         >
           <template #icon>
@@ -115,12 +115,12 @@ const openSummaryModal = async () => {
     >
       <!-- 顶部标题 -->
       <div class="flex items-center justify-between">
-        <div class="text-lg font-bold text-gray-700">
+        <div class="text-lg font-bold text-text-2">
           {{ t('appStudio.debug.longTermMemory') }}
         </div>
         <a-button
           type="text"
-          class="!text-gray-700"
+          class="!text-text-2"
           size="small"
           @click="summaryModalVisible = false"
         >

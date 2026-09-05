@@ -142,7 +142,7 @@ watch(
               <div class="flex items-center gap-2">
                 <div class="">{{ input.name }}</div>
                 <div v-if="input.required" class="text-red-700">*</div>
-                <div class="text-xs text-gray-500 bg-gray-200 px-1 py-0.5 rounded flex-shrink-0">
+                <div class="text-xs text-gray-500 bg-gray-200 px-1 py-0.5 rounded shrink-0">
                   {{ input.type }}
                 </div>
               </div>

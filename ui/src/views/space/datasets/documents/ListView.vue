@@ -127,7 +127,7 @@ const getProcessingStatusClass = (status: string) => {
  if (normalizedStatus === 'completed') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
  if (normalizedStatus === 'error') return 'bg-red-50 text-red-700 border-red-200'
  if (['waiting', 'pending', 'queued'].includes(normalizedStatus)) {
- return 'bg-slate-100 text-slate-600 border-slate-200'
+ return 'bg-surface-2 text-text-2 border-border-c'
  }
  return 'bg-amber-50 text-amber-700 border-amber-200'
 }
@@ -138,8 +138,8 @@ const getAvailabilityLabel = (record: DocumentRecord) => {
 }
 
 const getAvailabilityClass = (record: DocumentRecord) => {
-  if (record.status !== 'completed') return 'bg-slate-100 text-slate-500 border-slate-200'
-  return 'bg-sky-50 text-sky-700 border-sky-200'
+  if (record.status !== 'completed') return 'bg-surface-2 text-muted border-border-c'
+  return 'bg-brand-soft text-brand-text border-border-c'
 }
 
 const handleSearch = async (value: string) => {
@@ -198,16 +198,16 @@ watch(
 </script>
 
 <template>
- <div class="scrollbar-w-none h-full min-h-0 overflow-y-auto bg-slate-50 px-6 py-6 pb-10">
+ <div class="scrollbar-w-none h-full min-h-0 overflow-y-auto bg-surface-2 px-6 py-6 pb-10">
  <div
- class="flex min-h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+ class="flex min-h-full flex-col overflow-hidden rounded-2xl border border-border-c bg-surface shadow-sm"
  >
- <div class="border-b border-slate-200 px-5 py-4">
+ <div class="border-b border-border-c px-5 py-4">
  <div class="flex flex-col gap-2">
- <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+ <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between flex-wrap">
  <div class="flex min-w-0 items-start gap-3">
  <router-link :to="{ name: 'my-knowledge' }">
- <a-button size="mini" type="text" class="mt-1 !text-slate-600">
+ <a-button size="mini" type="text" class="mt-1 !text-text-2">
  <template #icon>
  <icon-left />
  </template>
@@ -216,14 +216,14 @@ watch(
  <a-avatar :size="52" shape="square" class="rounded-xl" :image-url="dataset.icon" />
  <div class="min-w-0 flex-1 space-y-2">
  <a-skeleton-line v-if="!dataset?.name" :widths="[160]" />
- <div v-else class="line-clamp-1 text-xl font-semibold tracking-tight text-slate-900">
+ <div v-else class="line-clamp-1 text-xl font-semibold tracking-tight text-text">
  {{ dataset.name }}
  </div>
  <div class="flex flex-wrap items-center gap-2">
- <a-tag class="!m-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-slate-600">
+ <a-tag class="!m-0 rounded-full border border-border-c bg-surface-2 px-2.5 py-0.5 text-text-2">
  {{ dataset.character_count ||0 }} {{ t('space.datasets.documents.columns.characterCount') }}
  </a-tag>
- <a-tag class="!m-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-slate-600">
+ <a-tag class="!m-0 rounded-full border border-border-c bg-surface-2 px-2.5 py-0.5 text-text-2">
  {{ dataset.document_count ||0 }} {{ t('space.datasets.documents.columns.documentCount') }}
  </a-tag>
  </div>
@@ -242,23 +242,23 @@ watch(
  </template>
  {{ t('space.datasets.documents.addFile') }}
  </a-button>
- <a-button class="rounded-xl border-slate-200 bg-white px-4 !text-slate-700" @click="hitModalVisible = true">
+ <a-button class="rounded-xl border-border-c bg-surface px-4 !text-text-2" @click="hitModalVisible = true">
  {{ t('space.datasets.documents.recallTest') }}
  </a-button>
  </div>
  <div
- class="relative h-8 w-[220px] max-w-full self-end rounded-xl border border-slate-300 bg-white transition focus-within:border-sky-400 focus-within:shadow-sm hover:border-slate-400"
+ class="relative h-8 w-[220px] max-w-full self-end rounded-xl border border-border-strong bg-surface transition focus-within:border-brand focus-within:shadow-sm hover:border-border-strong"
  >
   <input
   v-model="searchInput"
   type="text"
  :placeholder="t('space.datasets.documents.searchPlaceholder')"
-  class="h-full w-full border-0 bg-transparent pl-3 pr-9 text-sm text-slate-700 outline-none placeholder:text-slate-400"
+  class="h-full w-full border-0 bg-transparent pl-3 pr-9 text-sm text-text-2 outline-hidden placeholder:text-muted"
   @keydown.enter="handleSearch(searchInput)"
   />
   <button
   type="button"
-  class="absolute right-1.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-sky-600"
+  class="absolute right-1.5 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-muted transition hover:bg-surface-2 hover:text-brand-text"
   @click="handleSearch(searchInput)"
   >
  <svg
@@ -297,6 +297,7 @@ watch(
  :loading="loading"
  :data="sortedDocuments"
  :bordered="{ wrapper: false }"
+ :scroll="{ x: 1000 }"
  @page-change="handlePageChange"
  @page-size-change="handlePageSizeChange"
  >
@@ -306,11 +307,11 @@ watch(
  data-index="position"
  align="center"
  :width="80"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
  <template #cell="{ rowIndex }">
- <div class="font-mono text-sm font-semibold text-slate-500">
+ <div class="font-mono text-sm font-semibold text-muted">
  {{ getDisplayIndex(rowIndex) }}
  </div>
  </template>
@@ -320,8 +321,8 @@ watch(
  data-index="name"
  align="center"
  :width="320"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
   <template #cell="{ record }">
  <div class="mx-auto min-w-0 max-w-[240px] text-center">
@@ -333,7 +334,7 @@ watch(
  document_id: record.id as string,
  },
  }"
- class="block truncate font-medium text-slate-800 transition hover:text-sky-700"
+ class="block truncate font-medium text-text-2 transition hover:text-brand-text"
   >
   {{ record.name }}
   </router-link>
@@ -345,8 +346,8 @@ watch(
  data-index="character_count"
  align="center"
  :width="110"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
  <template #cell="{ record }">
  {{ (record.character_count /1000).toFixed(1) }}k
@@ -357,8 +358,8 @@ watch(
  data-index="status"
  align="center"
  :width="140"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
  <template #cell="{ record }">
  <a-tooltip v-if="record.status === 'error' && record.error" :content="record.error">
@@ -383,8 +384,8 @@ watch(
  data-index="enabled"
  align="center"
  :width="130"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
  <template #cell="{ record }">
  <div
@@ -400,11 +401,11 @@ watch(
  data-index="created_at"
  align="center"
  :width="180"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
  <template #cell="{ record }">
- <div class="text-center text-sm text-slate-600">
+ <div class="text-center text-sm text-text-2">
  {{ formatTimestampLong(record.created_at) }}
  </div>
  </template>
@@ -414,8 +415,8 @@ watch(
  data-index="operator"
  align="center"
  :width="120"
- header-cell-class="!bg-slate-100 text-slate-700"
- cell-class="bg-transparent text-slate-700"
+ header-cell-class="!bg-surface-2 !text-text"
+ cell-class="bg-transparent text-text-2"
  >
  <template #cell="{ record }">
  <div class="flex items-center justify-center">
@@ -465,7 +466,7 @@ watch(
    @update:visible="(v) => !v && (deleteTarget = null)"
    @confirm="confirmDelete"
  >
-   <p class="text-sm text-slate-500">
+   <p class="text-sm text-muted">
      {{ deleteTarget ? t('space.datasets.documents.deleteContent', { name: deleteTarget.name }) : '' }}
    </p>
  </RecycleBinDeleteModal>

@@ -1,20 +1,26 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
   getPublicApps,
   getAppTags,
+  forkPublicApp,
   type PublicApp,
   type AppTag
 } from '@/services/public-app'
 import { getErrorMessage } from '@/utils/error'
+import { isCredentialLoggedIn } from '@/utils/auth'
+import { AUTH_REQUIRED_EVENT } from '@/utils/request'
+import { useCredentialStore } from '@/stores/credential'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
 import { getPublicAppTagDisplayName } from '@/utils/public-app-tag-display'
 
+const route = useRoute()
 const router = useRouter()
+const credentialStore = useCredentialStore()
 const { t, locale } = useI18n()
 const loading = ref(false)
 const apps = ref<PublicApp[]>([])
@@ -24,6 +30,37 @@ const searchWord = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const hasMore = ref(true)
+const forkingAppId = ref('')
+
+const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
+
+const openLoginModal = () => {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(
+    new CustomEvent(AUTH_REQUIRED_EVENT, {
+      detail: { redirect: route.fullPath },
+    }),
+  )
+}
+
+const handleFork = async (app: PublicApp, event: Event) => {
+  event.stopPropagation()
+  if (!isLoggedIn.value) {
+    openLoginModal()
+    return
+  }
+  if (app.is_forked || forkingAppId.value) return
+  forkingAppId.value = app.id
+  try {
+    await forkPublicApp(app.id)
+    app.is_forked = true
+    Message.success(t('publicApps.list.forkSuccess', { name: app.name }))
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('publicApps.list.actionFailed')))
+  } finally {
+    forkingAppId.value = ''
+  }
+}
 
 const loadApps = async () => {
   if (loading.value) return
@@ -125,23 +162,23 @@ onMounted(() => {
     <div class="p-6 flex flex-col h-full">
       <div class="flex items-center justify-between mb-6">
         <div class="flex items-center gap-2">
-          <a-avatar :size="32" class="bg-blue-700">
+          <a-avatar :size="32" class="bg-brand">
             <icon-apps :size="18" />
           </a-avatar>
-          <div class="text-lg font-medium text-gray-900">{{ t('publicApps.list.title') }}</div>
+          <div class="text-lg font-medium text-text">{{ t('publicApps.list.title') }}</div>
         </div>
       </div>
 
       <div class="flex flex-col gap-4 mb-6">
         <div class="flex items-center gap-2 overflow-x-auto scrollbar-hide pb-1">
-          <span class="text-sm text-gray-500 mr-1 whitespace-nowrap">
+          <span class="text-sm text-muted mr-1 whitespace-nowrap">
             {{ t('publicApps.list.tags') }}
           </span>
           <a
             v-for="tag in tags"
             :key="tag.id"
-            class="rounded-lg px-3 h-8 leading-8 hover:bg-gray-200 transition-all cursor-pointer whitespace-nowrap text-sm"
-            :class="selectedTags.includes(tag.id) ? 'bg-blue-100 text-blue-700 font-medium' : 'bg-gray-100 text-gray-700'"
+            class="rounded-lg px-3 h-8 leading-8 hover:bg-border-strong transition-all cursor-pointer whitespace-nowrap text-sm"
+            :class="selectedTags.includes(tag.id) ? 'bg-brand-soft text-brand-text font-medium' : 'bg-surface-2 text-text-2'"
             @click="toggleTag(tag.id)"
           >
             {{ getTagName(tag.id) }}
@@ -150,21 +187,21 @@ onMounted(() => {
         <a-input-search
           v-model="searchWord"
           :placeholder="t('publicApps.list.searchPlaceholder')"
-          class="w-full sm:w-[240px] bg-white rounded-lg border-gray-300"
+          class="w-full sm:w-[240px] bg-surface rounded-lg border-border-c"
           @search="handleSearch"
         />
       </div>
 
       <div class="flex-1 overflow-y-auto overflow-x-hidden scrollbar-hide" @scroll="handleScroll">
         <a-row :gutter="[20, 20]">
-          <a-col v-for="app in apps" :key="app.id" :span="6">
+          <a-col v-for="app in apps" :key="app.id" :xs="24" :sm="12" :md="8" :lg="6">
             <a-card hoverable class="h-full rounded-lg flex flex-col" :body-style="{ padding: '16px' }">
-              <button type="button" class="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg flex-1" @click="handlePreview(app)">
+              <button type="button" class="w-full flex-1 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-brand rounded-lg" @click="handlePreview(app)">
                 <!-- 顶部应用名称和标签 -->
                 <div class="flex items-center gap-3 mb-3">
                   <a-avatar :size="40" shape="square" :image-url="app.icon" />
                   <div class="flex-1 min-w-0">
-                    <div class="text-base font-bold text-gray-900 truncate">{{ app.name }}</div>
+                    <div class="text-base font-bold text-text truncate">{{ app.name }}</div>
                     <div class="flex items-center gap-1 flex-wrap">
                       <a-tag v-for="tag in getDisplayTags(app.tags)" :key="tag" size="small">
                         {{ getTagName(tag) }}
@@ -180,12 +217,26 @@ onMounted(() => {
                 <resource-card-description :text="app.description" />
               </button>
 
-              <!-- 发布者、发布时间 -->
-              <div class="mt-3 flex items-center gap-1.5">
+              <!-- 发布者与操作 -->
+              <div class="mt-3 flex items-center gap-2 border-t border-border-c pt-3">
                 <a-avatar :size="18" :image-url="app.creator_avatar" />
-                <div class="min-w-0 flex-1 truncate text-xs text-gray-400">
+                <div class="min-w-0 flex-1 truncate text-xs text-muted">
                   {{ app.creator_name }} · {{ t('publicApps.list.publishedAt', { time: formatTimestampShort(app.published_at) }) }}
                 </div>
+                <a-button
+                  size="mini"
+                  :loading="forkingAppId === app.id"
+                  :disabled="Boolean(app.is_forked)"
+                  @click.stop="handleFork(app, $event)"
+                >
+                  {{
+                    app.is_forked
+                      ? t('publicApps.list.addedToSpace')
+                      : isLoggedIn
+                        ? t('publicApps.list.addToSpace')
+                        : t('publicApps.list.loginToAdd')
+                  }}
+                </a-button>
               </div>
             </a-card>
           </a-col>
@@ -198,9 +249,9 @@ onMounted(() => {
         <div v-if="apps.length > 0" class="py-4 text-center">
           <a-space v-if="loading">
             <a-spin />
-            <div class="text-gray-400">{{ t('publicApps.list.loading') }}</div>
+            <div class="text-muted">{{ t('publicApps.list.loading') }}</div>
           </a-space>
-          <div v-else-if="!hasMore" class="text-gray-400">{{ t('publicApps.list.loadedAll') }}</div>
+          <div v-else-if="!hasMore" class="text-muted">{{ t('publicApps.list.loadedAll') }}</div>
         </div>
       </div>
     </div>

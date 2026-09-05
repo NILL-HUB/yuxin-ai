@@ -787,7 +787,7 @@ onUnmounted(() => {
         <!-- 路由决策信息 -->
         <div
           v-if="props.adminMode && (routingDecision || orchestratorReject)"
-          class="flex-shrink-0 px-6 pt-4"
+          class="shrink-0 px-6 pt-4"
         >
           <RoutingDecisionCard
             :decision="routingDecision"
@@ -876,12 +876,12 @@ onUnmounted(() => {
           <!-- 应用图标与名称 -->
           <div class="flex flex-col items-center gap-2">
             <a-avatar :size="48" shape="square" class="rounded-lg" :image-url="props.app?.icon" />
-            <div class="text-lg text-gray-700">{{ props.app?.name }}</div>
+            <div class="text-lg text-text-2">{{ props.app?.name }}</div>
           </div>
           <!-- 对话开场白 -->
           <div
             v-if="props.opening_statement"
-            class="bg-gray-100 w-full px-4 py-3 rounded-lg text-gray-700"
+            class="bg-surface-2 w-full px-4 py-3 rounded-lg text-text-2"
           >
             {{ props.opening_statement }}
           </div>
@@ -892,7 +892,7 @@ onUnmounted(() => {
                 (item) => item.trim() !== '',
               )"
               :key="idx"
-              class="w-fit max-w-full px-4 py-1.5 border rounded-lg text-gray-700 cursor-pointer hover:bg-gray-50 break-words"
+              class="w-fit max-w-full px-4 py-1.5 border border-border-c rounded-lg text-text-2 cursor-pointer hover:bg-brand-soft hover:text-brand-text break-words"
               @click="async () => await handleSubmitQuestion(opening_question)"
             >
               {{ opening_question }}
@@ -900,7 +900,7 @@ onUnmounted(() => {
           </div>
         </div>
         <!-- 对话输入框 -->
-        <div class="w-full flex flex-col flex-shrink-0">
+        <div class="w-full flex flex-col shrink-0">
           <div
             v-if="toolConfirmationPrompt"
             class="w-full max-w-[600px] mx-auto px-6 pb-2 flex justify-center"
@@ -948,7 +948,7 @@ onUnmounted(() => {
             />
           </div>
           <!-- 底部提示信息 -->
-          <div class="text-center text-gray-500 text-xs py-4">
+          <div class="text-center text-muted text-xs py-4">
             {{ t('chat.messages.aiGeneratedDisclaimer') }}
           </div>
         </div>
@@ -961,9 +961,9 @@ onUnmounted(() => {
 <style scoped>
 .space-apps-debug-chat {
   background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.82), transparent 32%),
-    radial-gradient(circle at 82% 12%, rgba(224, 242, 254, 0.66), transparent 26%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(250, 252, 255, 0.8) 52%, rgba(245, 249, 255, 0.86) 100%);
+    radial-gradient(circle at top left, rgba(255, 250, 252, 0.82), transparent 32%),
+    radial-gradient(circle at 82% 12%, rgba(255, 158, 197, 0.28), transparent 26%),
+    linear-gradient(180deg, rgba(255, 250, 252, 0.88) 0%, rgba(255, 240, 246, 0.8) 52%, rgba(253, 242, 246, 0.86) 100%);
 }
 
 .space-apps-debug-chat__ambient {
@@ -972,8 +972,8 @@ onUnmounted(() => {
 
 .space-apps-debug-chat__veil {
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0.2) 34%, rgba(255, 255, 255, 0.06) 60%, rgba(255, 255, 255, 0.18) 100%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0.08) 100%);
+    radial-gradient(circle at 50% 0%, rgba(255, 250, 252, 0.68) 0%, rgba(233, 30, 99, 0.05) 34%, rgba(233, 30, 99, 0.02) 60%, rgba(255, 250, 252, 0.18) 100%),
+    linear-gradient(180deg, rgba(255, 250, 252, 0.28) 0%, rgba(255, 250, 252, 0.08) 100%);
 }
 
 .space-apps-debug-chat__surface {
@@ -982,70 +982,70 @@ onUnmounted(() => {
 }
 
 :deep(.space-apps-debug-chat .glass-message-bubble) {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.74) 0%, rgba(247, 251, 255, 0.62) 100%) !important;
-  border-color: rgba(255, 255, 255, 0.9) !important;
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.74) 0%, rgba(255, 240, 246, 0.62) 100%) !important;
+  border-color: rgba(255, 250, 252, 0.9) !important;
   box-shadow:
-    0 10px 28px rgba(148, 163, 184, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.4) !important;
+    0 10px 28px rgba(233, 30, 99, 0.08),
+    inset 0 1px 0 rgba(255, 250, 252, 0.95),
+    inset 0 -1px 0 rgba(255, 250, 252, 0.4) !important;
   backdrop-filter: blur(18px) saturate(1.08) !important;
   -webkit-backdrop-filter: blur(18px) saturate(1.08) !important;
 }
 
 :deep(.space-apps-debug-chat .glass-message-bubble:hover) {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.82) 0%, rgba(243, 248, 255, 0.72) 100%) !important;
-  border-color: rgba(255, 255, 255, 0.96) !important;
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.82) 0%, rgba(255, 240, 246, 0.72) 100%) !important;
+  border-color: rgba(255, 250, 252, 0.96) !important;
   box-shadow:
-    0 14px 36px rgba(148, 163, 184, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 1),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.5) !important;
+    0 14px 36px rgba(233, 30, 99, 0.1),
+    inset 0 1px 0 rgba(255, 250, 252, 1),
+    inset 0 -1px 0 rgba(255, 250, 252, 0.5) !important;
 }
 
 :deep(.space-apps-debug-chat .glass-suggestion-bubble) {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(247, 251, 255, 0.58) 100%) !important;
-  border-color: rgba(255, 255, 255, 0.84) !important;
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.72) 0%, rgba(255, 240, 246, 0.58) 100%) !important;
+  border-color: rgba(255, 250, 252, 0.84) !important;
   box-shadow:
-    0 8px 24px rgba(148, 163, 184, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.32) !important;
+    0 8px 24px rgba(233, 30, 99, 0.06),
+    inset 0 1px 0 rgba(255, 250, 252, 0.9),
+    inset 0 -1px 0 rgba(255, 250, 252, 0.32) !important;
   backdrop-filter: blur(16px) saturate(1.04) !important;
   -webkit-backdrop-filter: blur(16px) saturate(1.04) !important;
 }
 
 :deep(.space-apps-debug-chat .glass-suggestion-bubble:hover) {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.86) 0%, rgba(244, 249, 255, 0.7) 100%) !important;
-  border-color: rgba(255, 255, 255, 0.94) !important;
+  background: linear-gradient(135deg, rgba(255, 250, 252, 0.86) 0%, rgba(255, 240, 246, 0.7) 100%) !important;
+  border-color: rgba(255, 250, 252, 0.94) !important;
 }
 
 :deep(.space-apps-debug-chat .deep-agent-timeline) {
-  background: rgba(255, 255, 255, 0.98) !important;
-  border-color: rgba(226, 232, 240, 0.96) !important;
-  box-shadow: 0 10px 24px rgba(148, 163, 184, 0.08) !important;
+  background: rgba(255, 250, 252, 0.98) !important;
+  border-color: rgba(238, 185, 205, 0.96) !important;
+  box-shadow: 0 10px 24px rgba(233, 30, 99, 0.06) !important;
 }
 
 :deep(.space-apps-debug-chat .deep-agent-step__dot),
 :deep(.space-apps-debug-chat .deep-agent-todo__dot) {
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.95) !important;
+  box-shadow: 0 0 0 4px rgba(255, 250, 252, 0.95) !important;
 }
 
 :deep(.space-apps-debug-chat .deep-agent-todo-list) {
-  background: rgba(255, 255, 255, 0.7) !important;
-  border-color: rgba(226, 232, 240, 0.9) !important;
+  background: rgba(255, 250, 252, 0.7) !important;
+  border-color: rgba(238, 185, 205, 0.9) !important;
 }
 
 :deep(.space-apps-debug-chat .deep-agent-artifact) {
-  background: rgba(255, 255, 255, 0.9) !important;
-  border-color: rgba(191, 219, 254, 0.24) !important;
-  box-shadow: 0 8px 24px rgba(148, 163, 184, 0.08) !important;
+  background: rgba(255, 250, 252, 0.9) !important;
+  border-color: rgba(233, 30, 99, 0.18) !important;
+  box-shadow: 0 8px 24px rgba(233, 30, 99, 0.06) !important;
 }
 
 :deep(.space-apps-debug-chat .deep-agent-step__technical pre) {
-  background: rgba(248, 250, 252, 0.86) !important;
+  background: rgba(253, 242, 246, 0.86) !important;
 }
 
 :deep(.space-apps-debug-chat .message-artifact-card) {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.86)) !important;
-  border-color: rgba(226, 232, 240, 0.95) !important;
-  box-shadow: 0 10px 28px rgba(148, 163, 184, 0.08) !important;
+  background: linear-gradient(180deg, rgba(255, 250, 252, 0.92), rgba(253, 242, 246, 0.86)) !important;
+  border-color: rgba(238, 185, 205, 0.95) !important;
+  box-shadow: 0 10px 28px rgba(233, 30, 99, 0.06) !important;
 }
 </style>

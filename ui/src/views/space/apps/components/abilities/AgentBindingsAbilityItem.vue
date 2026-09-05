@@ -178,7 +178,7 @@ watch(
         class="flex items-start justify-between gap-3 bg-white p-3 rounded-lg group min-w-0 w-full"
       >
         <div class="flex items-start gap-3 min-w-0 flex-1">
-          <a-avatar :size="36" shape="square" class="rounded flex-shrink-0 bg-gray-100">
+          <a-avatar :size="36" shape="square" class="rounded shrink-0 bg-gray-100">
             <img
               v-if="binding.icon"
               :src="normalizeIconUrl(binding.icon)"
@@ -209,7 +209,7 @@ watch(
         <a-button
           size="mini"
           type="text"
-          class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
+          class="hidden group-hover:block shrink-0 ml-2 !text-red-700 rounded"
           @click.stop="handleDeleteBinding(idx)"
         >
           <template #icon>

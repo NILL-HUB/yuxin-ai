@@ -219,7 +219,7 @@ watch(
         @click="openDetailModal(idx)"
       >
         <div class="flex items-start gap-3 min-w-0 flex-1">
-          <a-avatar :size="36" shape="square" class="rounded flex-shrink-0 bg-gray-100">
+          <a-avatar :size="36" shape="square" class="rounded shrink-0 bg-gray-100">
             <img
               v-if="skill.icon"
               :src="normalizeIconUrl(skill.icon)"
@@ -249,7 +249,7 @@ watch(
         <a-button
           size="mini"
           type="text"
-          class="hidden group-hover:block flex-shrink-0 ml-2 !text-red-700 rounded"
+          class="hidden group-hover:block shrink-0 ml-2 !text-red-700 rounded"
           @click.stop="handleDeleteSkill(idx)"
         >
           <template #icon>
