@@ -34,24 +34,11 @@ DELETE_COMMANDS: dict[str, str] = {
     "unlink": "unlink（Unix 物理删除）",
 }
 
-# 非删除命令（列入防止误伤；当前无实际误伤，保留为空集合占位）
-_NON_DELETE_COMMANDS: frozenset[str] = frozenset(
-    {"Get-RemoveItem", "remove-itemproperty"}
-)
-
 # 删除命令名集合（DELETE_COMMANDS 的键）
+# 命中依赖"命令名出现在行首/命令边界处"的精确前缀匹配：`Get-RemoveItem`、
+# `Remove-ItemProperty` 等撞词 cmdlet 无法命中（其 token 不以删除命令名开头），
+# 故无需额外的非删除命令黑名单。
 _DELETE_COMMAND_NAMES: frozenset[str] = frozenset(DELETE_COMMANDS)
-
-
-def _extract_command_tokens(line: str) -> list[str]:
-    """从一行中提取首命令 token（处理管道、变量赋值等）。
-
-    简单启发式：切分后跳过常见 PS 前缀，返回候选命令名。
-    """
-    tokens = line.strip().split()
-    if not tokens:
-        return []
-    return tokens
 
 
 def _token_command_name(token: str) -> str:

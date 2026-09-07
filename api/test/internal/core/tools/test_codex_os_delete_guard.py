@@ -62,3 +62,29 @@ class TestFindDeleteCommand:
         assert "erase" in DELETE_COMMANDS
         assert "ri" in DELETE_COMMANDS
         assert "unlink" in DELETE_COMMANDS
+
+
+class TestNoFalsePositive:
+    """防误报回归红线：行首/注释/非执行语义中的删除字样一律不命中。
+
+    保守启发式语义：只有"命令名出现在行首或命令边界"才算命中；
+    这些场景全部落在执行语义之外，历史上曾回归风险高，锁死不许误报。
+    """
+
+    def test_comment_text_with_delete_words_is_ignored(self):
+        assert find_delete_command("# rm -rf /") is None
+        assert find_delete_command("# Remove-Item x") is None
+        assert find_delete_command("rem del file.txt") is None
+        assert find_delete_command("# 不要执行 rm -rf /") is None
+
+    def test_non_delete_statement_containing_command_words(self):
+        assert find_delete_command("Write-Output \"rm -rf /\"") is None
+        assert find_delete_command("echo del file.txt") is None
+        assert find_delete_command("Get-Help Remove-Item") is None
+
+    def test_delete_word_as_argument_value_has_no_command_boundary(self):
+        assert find_delete_command("Get-Content notes.txt -Path \"del\"") is None
+        assert find_delete_command("Write-Output 'rm'") is None
+
+    def test_parameter_zone_only_collision_is_not_a_hit(self):
+        assert find_delete_command("Get-ChildItem -Filter 'rm *'") is None
