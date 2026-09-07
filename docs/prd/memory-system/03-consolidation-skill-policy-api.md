@@ -11,6 +11,36 @@
 > - **完全替代旧系统**：旧代码删除，不做向后兼容。
 
 ---
+
+> **v5.3 实现更新（2026-09）— Community 层与 Profile 落库**
+>
+> - **Community 归纳阶段（阶段 1b）已实现**：ConsolidationEngine 在执行链
+>   EXTRACT → **COMMUNITY** → RESOLVE → TIER → MERGE → SKILL → REPORT 中新增
+>   Community 阶段，委托 `CommunityInductionEngine`（memory/community_induction.py）
+>   收集跨批次 SemanticMemory/Entity → 轻量聚类 → LLM 主题抽取 → 幂等持久化
+>   `(:Community)` + `TOPIC_OF`/`MEMBER_OF` 边 → 生命周期治理
+>   （candidate 超期演化 EVOLVED_INTO / active→stale→deprecated）。
+> - **Profile 画像落库已实现**：`ProfileGraphService`（memory/profile_graph.py）
+>   将显式陈述 Episode 提升为 `(:User)/(:Trait)/(:Preference)` 节点与
+>   `HAS_TRAIT/HAS_PREFERENCE/HAS_EXPLICIT_MEMORY` 边。PolicyRouter 的 profile
+>   视图声明（User/Trait/Preference）由此获得真实数据源；Digest `_fetch_profile`
+>   优先读落库节点（首次访问自动同步），为空才回退实时 Episode 扫描。
+> - **检索接入**：System 2 深度搜索在 TKG 粗召回/向量精召回后新增
+>   Community 主题级召回（communityFullText），主题命中后经图扩展沿
+>   TOPIC_OF/MEMBER_OF 拉起成员证据。
+> - **治理覆盖**：admin 删用户级联清理覆盖 `:Community`/独占 `:Skill`/
+>   `:User/:Trait/:Preference`；MemoryGovernor 软删/硬删/owner 校验白名单补
+>   `:Community`。
+> - **Schema 增量**：neo4j_init.cypher 新增 community_node_id_unique、
+>   community_key_user_unique、communityFullText 全文索引及 Community 检索索引。
+> - **配置增量**（settings.consolidation）：community_age_days=14、
+>   community_min_evidence=2、community_similarity_threshold=0.62、
+>   community_merge_threshold=0.78、community_recall_top_k=4、
+>   community_governance_enabled=True、profile_enabled=True、
+>   profile_promote_min_episodes=2。
+
+---
+
 7. 巩固引擎
 灵感来源：睡眠记忆巩固理论 — 睡眠期间海马体将日间经验转移到新皮层进行长期存储。
 

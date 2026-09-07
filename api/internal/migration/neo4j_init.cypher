@@ -9,6 +9,8 @@ CREATE CONSTRAINT episode_node_id_unique IF NOT EXISTS FOR (n:Episode) REQUIRE n
 CREATE CONSTRAINT entity_node_id_unique IF NOT EXISTS FOR (n:Entity) REQUIRE n.node_id IS UNIQUE;
 CREATE CONSTRAINT entity_name_user_unique IF NOT EXISTS FOR (n:Entity) REQUIRE (n.name, n.user_id) IS UNIQUE;
 CREATE CONSTRAINT memorynode_id_unique IF NOT EXISTS FOR (n:MemoryNode) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT community_node_id_unique IF NOT EXISTS FOR (n:Community) REQUIRE n.node_id IS UNIQUE;
+CREATE CONSTRAINT community_key_user_unique IF NOT EXISTS FOR (n:Community) REQUIRE (n.key, n.user_id) IS UNIQUE;
 
 // ==================== 索引 ====================
 
@@ -21,11 +23,16 @@ CREATE INDEX entity_tier_idx IF NOT EXISTS FOR (n:Entity) ON (n.tier);
 CREATE INDEX memorynode_user_id_idx IF NOT EXISTS FOR (n:MemoryNode) ON (n.user_id);
 CREATE INDEX memorynode_storage_tier_idx IF NOT EXISTS FOR (n:MemoryNode) ON (n.storage_tier);
 CREATE INDEX memorynode_is_active_idx IF NOT EXISTS FOR (n:MemoryNode) ON (n.is_active);
+CREATE INDEX community_user_id_idx IF NOT EXISTS FOR (n:Community) ON (n.user_id);
+CREATE INDEX community_tier_idx IF NOT EXISTS FOR (n:Community) ON (n.tier);
+CREATE INDEX community_is_active_idx IF NOT EXISTS FOR (n:Community) ON (n.is_active);
+CREATE INDEX community_created_at_idx IF NOT EXISTS FOR (n:Community) ON (n.created_at);
 
 // ==================== 全文索引 ====================
 
 CREATE FULLTEXT INDEX memoryFullText IF NOT EXISTS FOR (n:MemoryNode) ON EACH [n.content];
 CREATE FULLTEXT INDEX entityFullText IF NOT EXISTS FOR (n:Entity) ON EACH [n.name, n.summary];
+CREATE FULLTEXT INDEX communityFullText IF NOT EXISTS FOR (n:Community) ON EACH [n.title, n.summary, n.key];
 
 // ==================== 验证 ====================
 // SHOW CONSTRAINTS;

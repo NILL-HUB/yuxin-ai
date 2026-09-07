@@ -1,10 +1,11 @@
-"""六阶段巩固引擎（ConsolidationEngine）。
+"""七阶段巩固引擎（ConsolidationEngine）。
 
-实现六阶段巩固流程，作为后台定时任务执行记忆整理。灵感来自睡眠记忆巩固
+实现多阶段巩固流程，作为后台定时任务执行记忆整理。灵感来自睡眠记忆巩固
 理论——睡眠期间海马体将日间经验转移到新皮层进行长期存储。
 
-六阶段:
+阶段:
     - Phase 1 EXTRACT:  7 天以上 Episode → LLM 提取共性 → SemanticMemory + IS_ABSTRACTION_OF
+    - Phase 1b COMMUNITY: 跨批次语义/实体簇 → LLM 归纳 → Community 主题（P5 新皮层）
     - Phase 2 RESOLVE:  委托 ConflictDetector.detect
     - Phase 3 TIER:     HebbianDecay.batch_update_weights + tier 降级
     - Phase 4 MERGE:    相似度 > 0.9 的节点合并（MERGED_INTO 边）
@@ -100,6 +101,7 @@ class ConsolidationEngine:
         # 六阶段定义
         phases = [
             (ConsolidationPhase.EXTRACT.value, self._phase1_episodic_to_semantic),
+            (ConsolidationPhase.COMMUNITY.value, self._phase_community_induction),
             (ConsolidationPhase.RESOLVE.value, self._phase2_conflict_detection),
             (ConsolidationPhase.TIER.value, self._phase3_weight_scan),
             (ConsolidationPhase.MERGE.value, self._phase4_redundancy_merge),
@@ -204,6 +206,41 @@ class ConsolidationEngine:
                 logger.warning("_phase1: 创建 SemanticMemory 失败", exc_info=True)
 
         return {"count": count, "semantics_created": semantics_created}
+
+    # =========================================================
+    # Phase 1b: 语义/实体 → Community 主题（P5 新皮层）
+    # =========================================================
+
+    def _phase_community_induction(self, user_id: str) -> dict:
+        """阶段 1b：跨批次高层主题归纳 → Community 节点。
+
+        委托 CommunityInductionEngine.run_induction 执行。Community 是
+        脑启发记忆分层（Episode→Semantic→Community→Policy）中的新皮层
+        层，通过跨会话/跨批次的语义与实体簇 LLM 归纳形成慢速高层主题。
+
+        Returns:
+            ``{"candidates", "created", "merged", "evolved", "deprecated", "errors"}``
+        """
+        try:
+            from internal.service.memory.community_induction import (
+                CommunityInductionEngine,
+            )
+
+            engine = CommunityInductionEngine(
+                neo4j_driver=self._driver or self._get_driver(),
+                config=self._config,
+            )
+            return engine.run_induction(user_id)
+        except Exception:
+            logger.warning("_phase_community_induction: Community 归纳失败", exc_info=True)
+            return {
+                "candidates": 0,
+                "created": 0,
+                "merged": 0,
+                "evolved": 0,
+                "deprecated": 0,
+                "errors": ["community_induction_failed"],
+            }
 
     # =========================================================
     # Phase 2: 冲突检测

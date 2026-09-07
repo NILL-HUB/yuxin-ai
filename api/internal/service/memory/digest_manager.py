@@ -127,16 +127,17 @@ class DigestManager:
         skills = self._fetch_skills(user_id)
         events = self._fetch_recent_episodes(user_id)
         tasks = self._fetch_tasks(user_id)
+        themes = self._fetch_themes(user_id)
 
         # 2. 渲染 Digest
-        digest_text = self._render_digest(profile, skills, events, tasks)
+        digest_text = self._render_digest(profile, skills, events, tasks, themes)
 
         # 3. Token 计数与截断（enforce_token_limit=False 时不截断，用户体验优先）
         token_count = self._count_tokens(digest_text)
         max_tokens = settings.digest.max_tokens
         if settings.digest.enforce_token_limit and token_count > max_tokens:
             digest_text = self._truncate_digest(
-                digest_text, profile, skills, events, tasks, max_tokens
+                digest_text, profile, skills, events, tasks, themes, max_tokens
             )
             token_count = self._count_tokens(digest_text)
 
@@ -181,11 +182,33 @@ class DigestManager:
     # =========================================================
 
     def _fetch_profile(self, user_id: str) -> str:
-        """查用户画像（显式陈述分组 + Entity 节点 type='person'/'profile'）。
+        """查用户画像（Profile 落库节点优先，回退显式陈述分组 + Entity 画像）。
 
-        优先渲染显式陈述分组（偏好/厌恶/习惯/身份/目标/能力），再补充 Entity 画像。
+        Profile 落库（User/Trait/Preference）由 ProfileGraphService 维护；
+        首次访问时先同步一次显式陈述 Episode，落库成功且非空则直接返回
+        落库渲染结果，避免每次重建 Digest 都实时扫描 Episode。
+
         无数据返回 "暂无用户画像数据"。
         """
+        # 1. Profile 落库读取（User/Trait/Preference，缺失时先同步）
+        if settings.consolidation.profile_enabled:
+            try:
+                from internal.service.memory.profile_graph import ProfileGraphService
+
+                profile_service = ProfileGraphService(neo4j_driver=self._get_driver())
+                stored = profile_service.get_profile_text(user_id)
+                if stored:
+                    return stored
+                sync_result = profile_service.sync_from_explicit_episodes(user_id)
+                if sync_result.get("traits") or sync_result.get("preferences"):
+                    stored = profile_service.get_profile_text(user_id)
+                    if stored:
+                        return stored
+            except Exception:
+                logger.warning(
+                    "_fetch_profile: Profile 落库读取失败，回退扫描", exc_info=True
+                )
+
         parts = []
 
         # 1. 显式陈述分组渲染（记忆写入优化 §5.8）
@@ -629,6 +652,51 @@ class DigestManager:
             logger.warning("_fetch_tasks: 查询失败", exc_info=True)
             return "暂无待办任务"
 
+    def _fetch_themes(self, user_id: str) -> str:
+        """查长期主题（Community 节点，P5 新皮层层）。
+
+        Community 由巩固阶段的 Community 归纳产生，代表跨会话/跨批次的高层
+        主题概念。按 maturity 排序取前 N 条，无数据返回空字符串。
+        """
+        driver = self._get_driver()
+        if driver is None:
+            return ""
+
+        try:
+            cypher = """
+            MATCH (c:Community {user_id: $user_id})
+            WHERE c.is_active <> false
+              AND (c.status IS NULL OR c.status IN ['candidate', 'active'])
+            RETURN c.title AS title, c.summary AS summary
+            ORDER BY coalesce(c.maturity, 0.0) DESC, c.updated_at DESC
+            LIMIT $limit
+            """
+            with driver.session() as session:
+                result = session.run(
+                    cypher,
+                    {"user_id": user_id, "limit": 5},
+                )
+                records = list(result)
+
+            if not records:
+                return ""
+
+            lines = []
+            for record in records:
+                title = record.get("title", "")
+                summary = record.get("summary", "")
+                if not title:
+                    continue
+                if summary:
+                    lines.append(f"- {title}: {summary[:100]}")
+                else:
+                    lines.append(f"- {title}")
+
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("_fetch_themes: 查询失败", exc_info=True)
+            return ""
+
     # =========================================================
     # 渲染
     # =========================================================
@@ -639,6 +707,7 @@ class DigestManager:
         skills: str,
         events: str,
         tasks: str,
+        themes: str = "",
     ) -> str:
         """渲染 Digest 为结构化文本。
 
@@ -656,6 +725,7 @@ class DigestManager:
             skills=skills,
             events=events,
             tasks=tasks,
+            themes=themes,
         )
 
         # 可选：调用 LLM 精炼（探针检测到死机或异常时使用模板结果）
@@ -720,7 +790,8 @@ class DigestManager:
         skills: str,
         events: str,
         tasks: str,
-        max_tokens: int,
+        themes: str = "",
+        max_tokens: int = 2000,
     ) -> str:
         """超过 max_tokens 时按段截断（优先保留画像与技能）。"""
         from internal.service.system_prompt_library_service import SystemPromptLibraryService
@@ -738,6 +809,7 @@ class DigestManager:
                 skills=skills,
                 events=truncated_events,
                 tasks=truncated_tasks,
+                themes=themes,
             )
             if self._count_tokens(text) <= max_tokens:
                 return text
@@ -749,6 +821,7 @@ class DigestManager:
             skills="",
             events="",
             tasks="",
+            themes="",
         )
 
     def _get_driver(self):

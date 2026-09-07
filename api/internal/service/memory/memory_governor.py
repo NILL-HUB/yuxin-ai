@@ -124,7 +124,7 @@ class MemoryGovernor:
             with driver.session() as session:
                 session.run(
                     """
-                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity) AND (n.node_id = $memory_id OR n.id = $memory_id)
+                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity OR n:Community) AND (n.node_id = $memory_id OR n.id = $memory_id)
                     SET n.is_active = false,
                         n.deleted_at = datetime()
                     """,
@@ -223,7 +223,7 @@ class MemoryGovernor:
             with driver.session() as session:
                 session.run(
                     """
-                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity) AND (n.node_id = $memory_id OR n.id = $memory_id)
+                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity OR n:Community) AND (n.node_id = $memory_id OR n.id = $memory_id)
                     DETACH DELETE n
                     """,
                     memory_id=memory_id,
@@ -302,9 +302,9 @@ class MemoryGovernor:
                     new_content=new_content,
                 ).consume()
 
-            # pgvector 更新：删除旧向量行，写入新向量行
+            # pgvector 联动：删除旧投影行（向量分表 CASCADE），
+            # 新投影行由写入方（MemoryWriteService）按 embedding_node_id 补写
             self._delete_pgvector_row(memory_id)
-            # 新向量行的写入由 MemoryWriteService 负责，这里不重复
 
             # Redis 清理缓存
             self._clear_user_cache(user_id)
@@ -411,7 +411,7 @@ class MemoryGovernor:
             with driver.session() as session:
                 result = session.run(
                     """
-                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity) AND (n.node_id = $memory_id OR n.id = $memory_id)
+                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity OR n:Community) AND (n.node_id = $memory_id OR n.id = $memory_id)
                     RETURN n.user_id AS owner
                     """,
                     memory_id=memory_id,
@@ -425,17 +425,42 @@ class MemoryGovernor:
             return False
 
     def _delete_pgvector_row(self, memory_id: str) -> None:
-        """从 user_memory 表删除对应向量行。"""
+        """删除与记忆节点对应的 user_memory 投影行与向量分表行。
+
+        键值互补联动：治理层收到的 memory_id 是「图节点 id」（Neo4j 键）。
+        系统路径投影行的 user_memory.id 是独立 uuid、embedding_node_id 才是
+        图节点 id；agent_curated 路径两者相同。因此按 embedding_node_id 匹配
+        优先，回退按 id 匹配，确保图删则投影行删（向量分表 CASCADE 联动）。
+
+        Args:
+            memory_id: 图节点 id（= user_memory.embedding_node_id）
+        """
         db = self._get_db()
         if db is None:
             return
         try:
             from internal.model.knowledge import UserMemory
 
-            db.session.query(UserMemory).filter(UserMemory.id == memory_id).delete()
-            db.session.commit()
+            # 优先按 embedding_node_id 匹配（图节点 id），回退按主键 id 匹配
+            target = (
+                db.session.query(UserMemory)
+                .filter(UserMemory.embedding_node_id == str(memory_id))
+                .first()
+            )
+            if target is None:
+                target = (
+                    db.session.query(UserMemory)
+                    .filter(UserMemory.id == memory_id)
+                    .first()
+                )
+            if target is not None:
+                db.session.delete(target)
+                db.session.commit()
         except Exception:
-            logger.warning("_delete_pgvector_row: 删除失败 memory=%s", memory_id, exc_info=True)
+            logger.warning(
+                "_delete_pgvector_row: 删除失败 memory=%s", memory_id, exc_info=True
+            )
+            db.session.rollback()
 
     def _delete_all_pgvector_rows(self, user_id: str) -> int:
         """删除用户全部 pgvector 向量行，返回删除行数。"""

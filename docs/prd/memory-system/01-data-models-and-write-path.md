@@ -150,6 +150,27 @@ class MemoryNode(BaseModel):
     is_active: bool = Field(default=True)
 ```
 
+> **Community 实现状态（2026-09）**：`:Community` 节点已由巩固引擎阶段 1b
+> （ConsolidationEngine → CommunityInductionEngine）实际落库。与设计差异：
+> - 实际节点**不带** `:MemoryNode` 标签（该标签的 `id` 全局唯一约束被 Episode 占用），
+>   单独持有 `node_id`/`id` 同值 + `key`（(key, user_id) 唯一）。
+> - 节点属性：`key/title/summary/user_id/status(candidate|active|stale|deprecated)/
+>   maturity/evidence_count/member_count/created_at/updated_at/last_active_at/
+>   evolution_of/source`。
+> - 边类型：`(c:Community)-[:TOPIC_OF]->(:SemanticMemory)`、
+>   `(c:Community)-[:MEMBER_OF]->(:Entity)`、`(old)-[:EVOLVED_INTO]->(new)`。
+> - 已建约束/索引：`community_node_id_unique`、`community_key_user_unique`、
+>   `communityFullText` 全文索引（title/summary/key）。
+>
+> **Profile 画像节点（2026-09 新增）**：PolicyRouter 的 profile 视图此前声明
+> `User/Trait/Preference` 但从未落库。现由 `ProfileGraphService`（memory/profile_graph.py）
+> 实现：
+> - `(:User {id})`（id 唯一，供治理按 `u.id` 定位）
+> - `(:Trait {key,user_id})` / `(:Preference {key,user_id})`（(key,user_id) 幂等 MERGE）
+> - 边：`HAS_TRAIT` / `HAS_PREFERENCE` / `HAS_EXPLICIT_MEMORY`
+> - 数据来源：显式陈述 Episode（explicit_category/polarity）→ 提升为持久画像节点；
+>   Digest 的 `_fetch_profile` 优先读落库节点，空时先同步一次，仍空才回退实时扫描。
+
 ### 1.4 MemoryEdge -- TKG 边
 
 TKG 中的关系边，采用四时间戳的双时间模型（Bi-Temporal Model），支持事实矛盾追踪与历史可追溯。

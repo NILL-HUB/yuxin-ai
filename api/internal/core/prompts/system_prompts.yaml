@@ -83,6 +83,10 @@ prompts:
       {long_term_memory}
       </长期记忆>
 
+      <用户长期记忆>
+      {user_memory}
+      </用户长期记忆>
+
   - key: react_agent_system_prompt_template
     name: ReACT 智能体身份模板
     description: ReACTAgent 身份与工具调用 JSON 规范模板
@@ -924,9 +928,27 @@ prompts:
       请提取这些记忆的共性语义，用一句话描述一个通用模式或概念。
       只返回语义描述文本，不要添加额外说明。
 
+  - key: memory_community_induction_prompt
+    name: Community 主题归纳提示词
+    description: 从语义记忆/实体证据簇中归纳高层主题（含 evidence 占位符，返回 JSON）
+    content: |
+      你是长期记忆中的主题归纳器。以下是一组证据（来自语义记忆或实体），它们可能属于同一个长期主题（例如用户的某个持续关注领域、反复出现的行为模式、稳定的人际关系主题）。
+
+      证据:
+      {evidence}
+
+      请判断这些证据是否构成一个可长期跟踪的高层主题。若是，返回 JSON（只返回 JSON，不要其他内容）：
+      {{
+        "key": "主题唯一 key（小写英文+连字符，如 career-backend-go 或 健康管理；无英文时可用简短中文，去掉空格）",
+        "title": "主题短标题（不超过 20 字）",
+        "summary": "主题一句话摘要（不超过 120 字，概括证据的共性）",
+        "theme_keywords": ["关键词1", "关键词2", "关键词3"]
+      }}
+      若证据过于零散、不足以构成长期主题，返回 {{"key": "", "title": "", "summary": "", "theme_keywords": []}}。
+
   - key: memory_digest_template
     name: 记忆摘要渲染模板
-    description: 用户记忆摘要视图渲染模板（含 updated_at/profile/skills/events/tasks 占位符）
+    description: 用户记忆摘要视图渲染模板（含 updated_at/profile/skills/events/tasks/themes 占位符）
     content: |
       【用户记忆摘要】
       更新时间: {updated_at}
@@ -936,6 +958,9 @@ prompts:
 
       == 已习得技能 ==
       {skills}
+
+      == 长期主题 ==
+      {themes}
 
       == 近期事件 ==
       {events}

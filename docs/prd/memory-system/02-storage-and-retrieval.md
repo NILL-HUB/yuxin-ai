@@ -515,6 +515,14 @@ class ColdStorageEntry(BaseModel):
 > - 旧的 Weaviate `UserMemory` collection 检索路径已删除，向量检索统一走 PostgreSQL pgvector（`user_memory.embedding` 列）。
 > - 从 Weaviate 单路向量检索，升级为 TKG 图遍历（Neo4j BM25）+ pgvector 向量相似度的混合检索 + SpreadActivation 图扩展。
 
+> **主题召回注记（v5.3, 2026-09）**：上述 6.1 流程图在真实实现中于 ① TKG 粗召回 与
+> ③ 图扩展 之间插入了 **Community 主题级召回**（`_community_recall`）：
+> - 使用 `communityFullText` 全文索引在 `(:Community)` 上按查询主题粗召回；
+> - 命中主题以 `source="community_theme"` 纳入候选；
+> - 主题成员（SemanticMemory/Entity）由随后的 SpreadActivation 沿
+>   `TOPIC_OF`/`MEMBER_OF` 边拉起，形成「主题→成员」间接证据链；
+> - Community 节点不带 `:MemoryNode` 标签，不参与 memoryFullText 召回，无重复。
+
 ```python
 from __future__ import annotations
 import math

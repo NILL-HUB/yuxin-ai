@@ -203,6 +203,23 @@ class ConsolidationConfig(BaseModel):
     # 巩固所用 LLM
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.0
+    # ── Community 归纳（P5 新皮层层）──
+    # 语义记忆转化为 Community 主题的最小年龄（天）
+    community_age_days: int = 14
+    # 归纳为一个 Community 主题所需的最少语义/实体证据数
+    community_min_evidence: int = 2
+    # 语义记忆间主题相似度阈值（pgvector/BM25 粗筛用）
+    community_similarity_threshold: float = 0.62
+    # 主题演化合并的相似度阈值（已存在的 Community 与候选主题）
+    community_merge_threshold: float = 0.78
+    # 主题级召回注入深度搜索的最大条数
+    community_recall_top_k: int = 4
+    # 治理开关：衰减 + 生命周期转移
+    community_governance_enabled: bool = True
+    # ── Profile 画像落库（User/Trait/Preference）──
+    profile_enabled: bool = True
+    # 某条画像证据被引用（Episode 边）达到该数量后提升为持久 Trait/Preference
+    profile_promote_min_episodes: int = 2
 
 
 class SkillConfig(BaseModel):

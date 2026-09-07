@@ -40,7 +40,7 @@
 | 内嗅皮层 | Vector Store | 提供语义嵌入空间的内容寻址能力 |
 | 新皮层 | TKG Community Subgraph | 慢速整合跨 episode 共性模式，形成高层概念 |
 | 前额叶 | Policy Layer | 执行控制与决策路由，不直接操作存储 |
-| 睡眠 SWRs | Consolidation Engine | 非交互时段离线整理：冲突消解、权重衰减、冗余合并 |
+| 睡眠 SWRs | Consolidation Engine | 非交互时段离线整理：冲突消解、权重衰减、冗余合并、语义→Community 主题归纳（阶段 1b） |
 
 ### 16.3 最小闭包抽象：(Ledger, Views, Policy)
 
@@ -135,7 +135,9 @@ System 1 依赖预计算的 Views（Digest + Skills），确保大多数请求�
 | P2.5: 技能池 | SkillEmergence + Digest 集成 | 技能自动涌现 + 增量更新 |
 | P3: 巩固引擎 | ConsolidationEngine + Celery | 非交互时段自动整理记忆 |
 | P4: Policy 完善 | Router + Governor + 监控 | 完整策略控制 + 四层度量 |
-| P5: 进阶优化 | 社区子图 + Key 重建 + Latent Injection | 生产级性能和可靠性 |
+| P5: 社区子图（已实现） | ConsolidationEngine 阶段 1b Community 归纳 + Digest/Retriever 集成 | Community 主题节点与 TOPIC_OF/MEMBER_OF 边落库，Digest 长期主题、System 2 主题级召回可用 |
+| P5: Profile 画像落库（已实现） | ProfileGraphService（User/Trait/Preference）+ Digest 集成 | 显式陈述 Episode 提升为持久画像节点，PolicyRouter profile 视图数据源就绪 |
+| P5 余项: 进阶优化 | Key 重建 + Latent Injection | 生产级性能和可靠性（后续迭代） |
 
 ### 16.15 与知识库系统的集成关系
 
@@ -404,3 +406,81 @@ v5.2 修复了 3 个设计与实现之间的断裂点：
 - **MEMORY.md / USER.md 文件格式**：钰心AI 已有结构化的 Pydantic 数据模型
 - **Honcho 辩证用户建模**：v5.1 已将其降级为可插拔后端之一，非默认路径
 - **agentskills.io 开放标准**：与 钰心AI 的多租户平台架构不匹配，暂不兼容
+
+### 16.20 记忆读回闭环（对话时注入，v5.3 已接通）
+
+> **状态**：已实现并接入首页助手对话链路（2026-09-05）。
+
+此前 Digest / MemoryRetriever 仅通过 REST（`/memory/retrieve`、`/memory/digest`）触达，
+未进入对话链路，导致记忆"只写不读"。v5.3 打通读回闭环：
+
+- **接入点**：`AssistantAgentService.chat` 在构建三层上下文（recent_messages +
+  distant_summary）后，调用 `_retrieve_user_memory_for_chat` 检索用户长期记忆，
+  结果作为 `user_memory_text` 注入两个执行路径（single_agent / multi_agent /
+  deep_thinking）的 `<用户长期记忆>` 提示词区段。
+- **检索路径**：System 1 优先读 Redis 缓存的 Memory Digest（快路径）；未命中或
+  不足时走 System 2（MemoryRetriever：Neo4j BM25 + pgvector + 图扩展），命中内容
+  拼接注入。
+- **降级策略**：记忆引擎关闭（`memory_engine_enabled=false`）、Neo4j/pgvector/
+  Redis 不可用或检索超时（默认 1.2s）均静默返回空串——记忆读回是增强项，
+  绝不阻塞或拖慢主回复流。
+- **模板占位**：`agent_system_prompt_template` / `react_agent_system_prompt_template`
+  原有 `<用户长期记忆>` 占位；`deep_thinking_system_prompt` 已补充该占位，
+  `DeepThinkingAgent` 同步从 state 读取 `user_memory` 注入。
+
+### 16.21 双库一致性：键值互补收敛（v5.3 落地）
+
+> **状态**：已实现（2026-09-06）。Neo4j（TKG 键/结构权威）与 PostgreSQL pgvector
+> （向量/内容投影）是**互补**关系而非冗余双写：每条可召回记忆 = 一个 Neo4j 节点
+> + 一条 PG `user_memory` 投影行（`embedding_node_id == node_id`），同生同灭。
+
+**收敛前的不一致根因（历史欠账，已清理）**：
+
+| 缺陷 | 后果 | 处置 |
+| --- | --- | --- |
+| FULL/SUMMARY 路径 Neo4j 不可用时仍用随机 uuid 写 PG 投影 | A 类悬空投影（`embedding_node_id` 指向不存在图节点） | `--apply` 清理 9 条孤儿 |
+| agent_curated 注释称"向量由后台任务异步补充"，但全库无此任务 | C 类纯 DB 孤儿行（有行无图节点无向量） | 同步落向量，注释已修正 |
+| `_delete_pgvector_row` 只按 `UserMemory.id` 删，系统路径 id≠node_id | 图节点删除后 PG 行残留 | 改按 `embedding_node_id` 优先匹配 |
+| WriteTimeConflictResolver 只标记图节点失效、不碰 PG | 被取代/废弃记忆仍被向量召回 | 失效时联动投影行置非 active |
+
+**收敛后写入契约（第 1~3 步，代码与测试已落地）**：
+
+1. **先图后 PG**：Episode/MemoryNode 图节点创建成功后才写 PG 投影行；
+   图不可用/失败时不落投影（`vector_id=None` + `write_compensated=true`），
+   绝不用随机 id 兜底。
+2. **投影行幂等 upsert**：`LedgerWriter._upsert_vector` 先按
+   `embedding_node_id` 查已有投影行——命中则复用其 id 并更新内容，
+   未命中则新建（agent_curated 传 `forced_memory_id` 保证
+   `user_memory.id == 图节点 node_id`）。
+3. **同一投影行至多一条向量**：写当前维度分表前清理其它维度残留。
+4. **agent_curated 同步落向量**：先建图节点（`:Episode:MemoryNode`）→
+   生成 embedding → 走统一 `_upsert_vector` 单次提交。
+5. **失效/删除联动**：MemoryGovernor 软删/硬删/编辑按
+   `embedding_node_id` 优先匹配删除投影行（向量分表 CASCADE）；
+   WriteTimeConflictResolver 的 supersede/deprecated 同步把投影行
+   置为 `status='deprecated'`，向量召回（`WHERE um.status='active'`）
+   不再命中已失效记忆。
+
+**对账守护（第 4 步 + 自愈式重建）**：两个脚本配合，覆盖 A/B/C 三类不一致：
+
+- `api/internal/migration/memory_reconcile.py`（dry-run 默认，`--apply` 清理）：
+  识别 A 类（投影悬空）/ C 类（纯 DB 孤儿）孤儿并删除。
+- `api/internal/migration/memory_self_heal.py`（dry-run 默认，`--repair` 重建，
+  `--purge-ghosts` 清幽灵）：B 类**自愈**——扫描「active + 有 content +
+  user_id 存在」的 Episode 节点，凡 PG 无投影行的，从图属性重建投影行 +
+  用系统默认 embedding 模型重算向量。**幽灵用户**（图节点归属的 account 已从
+  PG 删除）既无法建投影（外键）也无恢复意义，`--purge-ghosts` 直接
+  `DETACH DELETE` 其记忆类图节点（Episode/Entity/SemanticMemory，均带
+  `:MemoryNode`；`:Skill` 按全局 id MERGE 可能被共享，不做自动删除），
+  并把清理统计写入 `audit_log`（action=`ghost_memory_cleanup`,
+  resource_type=`memory`，admin_user_id=NULL 系统任务）——Admin 后台
+  `audit_log:read` 可直接观测，不留人工处理项。
+
+**自愈式对账的意义**：对账不再需要人工甄别"删还是补"——A/C 类自动清理，
+B 类自动从图重建（图是键权威，投影行是派生物化视图，可随时推倒重建），
+用户已消亡的记忆类节点自动清理并在审计留痕。
+
+首次实测：清理 9 条 A/C 孤儿后，自愈重建 22 个 B 类节点（9 个 user_message
+episode + 13 个 agent_curated），随后 `--purge-ghosts` 清理 6 个幽灵账号的
+8 个图节点并写审计。收敛后 PG user_memory 198 行全部有 embedding_node_id
+与向量，A/B/C 三类归零、幽灵归零。此后脚本可挂每日定时任务持续守护不变式。

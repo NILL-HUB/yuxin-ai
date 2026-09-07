@@ -1,12 +1,18 @@
 """混合检索器（MemoryRetriever）。
 
-融合语义/关键词/图三通道，实现 System 1（Digest 缓存快速路径）与
-System 2（TKG 粗召回 + 向量精召回 + 图扩展 + 混合评分 + 早停）的双路架构。
+融合语义/关键词/图/主题多通道，实现 System 1（Digest 缓存快速路径）与
+System 2（TKG 粗召回 + 向量精召回 + Community 主题召回 + 图扩展 +
+混合评分 + 早停）的双路架构。
 
 双路架构:
     - System 1: Digest 缓存命中时直接返回，不触发深度搜索
-    - System 2: TKG BM25 粗召回 → pgvector 向量精召回 → SpreadActivation 图扩展
-                → 混合评分 → 时间衰减 → 早停截断
+    - System 2: TKG BM25 粗召回 → pgvector 向量精召回 → Community 主题召回
+                → SpreadActivation 图扩展 → 混合评分 → 时间衰减 → 早停截断
+
+Community 主题召回（P5 新皮层）:
+    巩固阶段的 Community 归纳产出高层主题节点；检索时经 communityFullText
+    命中主题，主题本身作为候选、其成员（语义/实体）由图扩展沿
+    TOPIC_OF/MEMBER_OF 边拉起，形成「主题→成员」间接证据链。
 
 降级策略:
     - Neo4j 不可用时 TKG 召回返回空列表
@@ -128,8 +134,9 @@ class MemoryRetriever:
     def _system1_fast_path(self, query: str, user_id: str) -> Optional[str]:
         """检查 Digest 缓存是否足够，足够则直接返回。
 
-        本任务简化实现：若 digest_manager 可用，则返回 Digest 文本作为
-        快速路径结果。由 B8 集成后注入真实 DigestManager。
+        若 digest_manager 可用，则返回 Digest 文本作为快速路径结果。
+        对话链路（AssistantAgentService._retrieve_user_memory_for_chat）
+        与 REST /memory/retrieve 均会优先走本快速路径。
 
         Args:
             query: 查询文本
@@ -162,14 +169,15 @@ class MemoryRetriever:
         user_id: str,
         options: RetrievalOptions,
     ) -> list[RetrievalResult]:
-        """TKG 粗召回 + 向量精召回 + 图扩展 + 混合评分 + 早停。
+        """TKG 粗召回 + 向量精召回 + 主题召回 + 图扩展 + 混合评分 + 早停。
 
         步骤:
             ① TKG BM25 粗召回 → all_candidates dict
             ② 向量精召回 → 合并候选（同 id 取最大分，标记 hybrid）
-            ③ 图扩展 → 新增节点加入候选
-            ④ 混合评分 + 时间衰减 → 最终 score
-            ⑤ 排序 + 早停截断
+            ③ Community 主题级召回 → 匹配主题并入候选作为图扩展起点
+            ④ 图扩展 → 新增节点加入候选
+            ⑤ 混合评分 + 时间衰减 → 最终 score
+            ⑥ 排序 + 早停截断
         """
         top_k = options.top_k
         recall_k = top_k * 2
@@ -207,7 +215,14 @@ class MemoryRetriever:
                 else:
                     all_candidates[mem_id] = result
 
-        # ③ 图扩展
+        # ③ Community 主题级召回（P5 新皮层）：命中主题时一并纳入候选，
+        #     后续图扩展从主题沿 TOPIC_OF/MEMBER_OF 拉起其成员作为间接证据。
+        community_results = self._community_recall(query, user_id, recall_k)
+        for result in community_results:
+            if result.memory_id not in all_candidates:
+                all_candidates[result.memory_id] = result
+
+        # ④ 图扩展
         if all_candidates:
             start_ids = list(all_candidates.keys())[:5]
             spread_results = self._graph_spread(start_ids, top_k=options.top_k)
@@ -227,7 +242,7 @@ class MemoryRetriever:
         if not all_candidates:
             return []
 
-        # ④ 混合评分 + 时间衰减
+        # ⑤ 混合评分 + 时间衰减
         query_text = query
         scored: list[RetrievalResult] = []
         for result in all_candidates.values():
@@ -253,7 +268,7 @@ class MemoryRetriever:
             )
             scored.append(scored_result)
 
-        # ⑤ 排序 + 早停截断
+        # ⑥ 排序 + 早停截断
         scored.sort(key=lambda x: x.score, reverse=True)
         scored = self._apply_early_stop(scored, top_k)
 
@@ -446,6 +461,85 @@ class MemoryRetriever:
             logger.warning("_graph_spread: 图扩展失败", exc_info=True)
             return []
 
+    def _community_recall(
+        self,
+        query: str,
+        user_id: str,
+        top_k: int = 10,
+    ) -> list[RetrievalResult]:
+        """Community 主题级召回（P5 新皮层枢纽）。
+
+        用 communityFullText 全文索引在 Community 节点上做主题级粗召回，
+        命中主题时把主题本身（source="community_theme"）返回为候选；
+        其成员（语义/实体）由后续 SpreadActivation 沿 TOPIC_OF/MEMBER_OF
+        边拉取，形成「主题→成员」的间接证据链。
+
+        Args:
+            query: 查询文本
+            user_id: 用户标识
+            top_k: 返回数量上限
+
+        Returns:
+            RetrievalResult 列表，source="community_theme"
+        """
+        driver = self._driver or self._get_driver()
+        if driver is None:
+            return []
+
+        try:
+            cypher = """
+            CALL db.index.fulltext.queryNodes("communityFullText", $query)
+            YIELD node, score
+            WHERE node.user_id = $user_id
+              AND node.is_active <> false
+              AND (node.status IS NULL OR node.status IN ['candidate', 'active'])
+            WITH node, score
+            ORDER BY score DESC
+            LIMIT $top_k
+            RETURN node.node_id AS node_id,
+                   node.title AS title,
+                   node.summary AS summary,
+                   node.created_at AS created_at,
+                   score
+            """
+            with driver.session() as session:
+                result = session.run(
+                    cypher,
+                    {"query": query, "user_id": user_id, "top_k": top_k},
+                )
+                records = list(result)
+
+            results: list[RetrievalResult] = []
+            for record in records:
+                node_id = str(record.get("node_id", ""))
+                title = record.get("title") or ""
+                summary = record.get("summary") or ""
+                content = f"{title}: {summary}" if title else (summary or "")
+                if not content:
+                    continue
+                score = float(record.get("score", 0.0))
+                created_at = record.get("created_at") or datetime.now(UTC)
+                if not isinstance(created_at, datetime):
+                    created_at = datetime.now(UTC)
+
+                rr = RetrievalResult(
+                    memory_id=node_id,
+                    content=content,
+                    score=score * 0.9,
+                    source="community_theme",
+                    timestamp=created_at,
+                    metadata={"theme_title": title},
+                )
+                rr.score_breakdown = RetrievalScore(
+                    keyword=score, graph=score * 0.1, total=score * 0.9
+                )
+                results.append(rr)
+
+            return results
+        except Exception:
+            logger.warning("_community_recall: Community 主题召回失败", exc_info=True)
+            return []
+
     # =========================================================
     # 评分与早停
     # =========================================================
@@ -492,6 +586,10 @@ class MemoryRetriever:
             semantic = 0.0
             keyword = 0.0
             graph = result.score
+        elif source == "community_theme":
+            semantic = 0.0
+            keyword = breakdown.keyword or result.score
+            graph = breakdown.graph or 0.0
         else:
             semantic = breakdown.semantic or 0.0
             keyword = breakdown.keyword or 0.0

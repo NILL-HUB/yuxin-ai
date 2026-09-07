@@ -173,6 +173,7 @@ class ConsolidationPhase(str, Enum):
     """巩固引擎执行阶段。"""
 
     EXTRACT = "extract"    # 提取：情景→语义
+    COMMUNITY = "community"  # 归纳：语义/实体簇→Community 高层主题（P5 新皮层层）
     RESOLVE = "resolve"    # 冲突解决
     MERGE = "merge"        # 冗余合并
     TIER = "tier"          # 层级迁移
@@ -634,6 +635,23 @@ class ConsolidationConfig(BaseModel):
     # LLM 调用
     llm_model: str = Field(default="gpt-4o-mini", description="巩固 LLM 模型")
     llm_temperature: float = Field(default=0.0, description="巩固 LLM 温度")
+    # ── Community 归纳（阶段 1b，P5 新皮层；与 settings.consolidation 同步）──
+    community_age_days: int = Field(default=14, description="Community 归纳最低年龄（天）")
+    community_min_evidence: int = Field(default=2, description="归纳所需最少证据数")
+    community_similarity_threshold: float = Field(
+        default=0.62, description="候选簇相似度阈值"
+    )
+    community_merge_threshold: float = Field(
+        default=0.78, description="主题演化合并相似度阈值"
+    )
+    community_recall_top_k: int = Field(default=4, description="主题级召回条数上限")
+    community_governance_enabled: bool = Field(
+        default=True, description="Community 生命周期治理开关"
+    )
+    profile_enabled: bool = Field(default=True, description="Profile 画像落库开关")
+    profile_promote_min_episodes: int = Field(
+        default=2, description="画像提升为持久态所需 Episode 数"
+    )
 
 
 class ConsolidationReport(BaseModel):
