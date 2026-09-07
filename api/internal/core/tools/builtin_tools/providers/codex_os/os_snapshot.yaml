@@ -1,0 +1,16 @@
+name: os_snapshot
+label: 本机文件回滚
+description: 回滚宿主机文件的写前快照：rollback_file 单文件恢复/rollback_turn 按用户消息轮次批量恢复/list_snapshots 查看历史快照；改错文件时从这里回滚。
+params: []
+task_keywords:
+  - 回滚
+  - 撤销修改
+  - 恢复文件
+  - 快照
+  - 改错了
+  - 写坏了
+  - 还原
+  - 上一版
+  - rollback
+  - snapshot
+  - 文件恢复
