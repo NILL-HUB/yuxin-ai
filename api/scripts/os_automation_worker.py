@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 import threading
 import time
 import traceback
@@ -129,8 +130,19 @@ def _file_safe_read(path: str, root: str) -> dict[str, Any]:
     }
 
 
-def _file_apply_patch(patch: str, root: str, working_dir: str) -> dict[str, Any]:
-    """在宿主机执行 V4A 补丁，并验证所有目标路径都落在允许目录内。"""
+def _file_apply_patch(
+    patch: str,
+    root: str,
+    working_dir: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """在宿主机执行 V4A 补丁，并验证所有目标路径都落在允许目录内。
+
+    dry_run=True（preview）时把补丁整体模拟到临时副本目录上：ADD/UPDATE/
+    DELETE/MOVE 全部操作逻辑复用 apply_v4a_operations，但读到的永远是副本
+    状态、写的也是副本，delete 只是从副本移除（绝不真移入回收站）。返回结构
+    与 apply 一致并附 dry_run 标记，真实文件不会被触碰。
+    """
     try:
         from internal.core.agent.adapters.hermes.v4a_patch import (
             FileTextOps,
@@ -150,6 +162,9 @@ def _file_apply_patch(patch: str, root: str, working_dir: str) -> dict[str, Any]
             continue
         if not _is_path_within(root, candidate):
             return {"ok": False, "error": f"路径超出允许目录: {candidate}"}
+
+    if dry_run:
+        return _file_dry_run_patch(operations, root, working_dir)
 
     class _RootedFileOps(FileTextOps):
         def __init__(self, root: str, workdir: str) -> None:
@@ -207,8 +222,119 @@ def _file_apply_patch(patch: str, root: str, working_dir: str) -> dict[str, Any]
     return {"ok": not errors, "results": results, "errors": errors}
 
 
+def _file_dry_run_patch(
+    operations: list[Any],
+    root: str,
+    working_dir: str,
+) -> dict[str, Any]:
+    """在临时副本目录上模拟整个 V4A 补丁，验证可应用性且不触碰真实文件。
+
+    把补丁涉及的源文件用 shutil.copy2 复制进临时副本树，然后对副本运行
+    与真实 apply 完全相同的逻辑：UPDATE 读副本内容、ADD/UPDATE/MOVE 写副本、
+    DELETE 删除副本。delete 不调用 _delete_into_recycle，因此回收站清单与
+    真实文件均保持不变；临时副本在函数返回后自动清理。
+    """
+    try:
+        from internal.core.agent.adapters.hermes.v4a_patch import (
+            FileTextOps,
+            apply_v4a_operations,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"补丁执行器不可用: {exc}"}
+
+    mirror_root = Path(root)
+    operations = list(operations)
+    try:
+        relevant = {
+            str(Path(op.file_path).expanduser())
+            for op in operations
+            if op.operation in {"add", "update", "delete", "move"}
+            and op.file_path
+        }
+        relevant.update(
+            str(Path(op.new_path).expanduser())
+            for op in operations
+            if op.operation == "move" and op.new_path
+        )
+    except OSError:
+        relevant = set()
+    relevant = {p for p in relevant if _is_path_within(root, p)}
+
+    with tempfile.TemporaryDirectory(prefix="os_worker_dry_run_") as scratch:
+        scratch_path = Path(scratch)
+
+        def mirrored(real_path: str) -> str:
+            rel = Path(real_path).expanduser()
+            if not rel.is_absolute():
+                rel = mirror_root / rel
+            try:
+                relative = rel.relative_to(mirror_root)
+            except ValueError:
+                relative = Path(rel.name)
+            return str(scratch_path / relative)
+
+        for real_path in sorted(relevant):
+            source = Path(real_path)
+            if not source.is_file():
+                continue
+            copy_target = Path(mirrored(str(source)))
+            try:
+                copy_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(source), str(copy_target))
+            except OSError:
+                continue
+
+        class _SandboxFileOps(FileTextOps):
+            def __init__(self, mirror: str, workdir: str) -> None:
+                self.mirror = mirror
+                self.workdir = workdir
+
+            def _remap(self, path: str) -> str:
+                expanded = str(Path(path).expanduser())
+                if not Path(expanded).is_absolute():
+                    expanded = str(Path(self.workdir) / expanded)
+                return mirrored(expanded)
+
+            def read_text(self, path: str) -> str | None:
+                return super().read_text(self._remap(path))
+
+            def write_text(self, path: str, content: str) -> None:
+                super().write_text(self._remap(path), content)
+
+            def delete_file(self, path: str) -> None:
+                target = Path(self._remap(path))
+                if target.is_file():
+                    target.unlink()
+
+            def move_file(self, path: str, new_path: str) -> None:
+                super().move_file(self._remap(path), self._remap(new_path))
+
+            def exists(self, path: str) -> bool:
+                return Path(self._remap(path)).is_file()
+
+        results: list[str] = []
+        try:
+            results = apply_v4a_operations(operations, _SandboxFileOps(str(scratch), working_dir))
+        except PermissionError as exc:
+            return {"ok": False, "error": str(exc), "results": results, "dry_run": True}
+        except Exception as exc:
+            return {"ok": False, "error": f"补丁应用失败: {exc}", "dry_run": True}
+
+    errors = [r for r in results if r.startswith("ERROR:")]
+    return {
+        "ok": not errors,
+        "results": results,
+        "errors": errors,
+        "dry_run": True,
+    }
+
+
 def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
-    """执行文件操作：read 只读；patch 需先 preview 换取 approval_token。"""
+    """执行文件操作：read/search 只读；patch 先 preview 换取 approval_token。
+
+    preview 为真只读（dry-run）：在临时副本上模拟补丁校验可应用性与影响，
+    用户确认前不修改/删除任何真实文件，也不写回收站清单；apply 才真落盘。
+    """
     op = str(payload.get("op") or "").strip().lower()
     root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
     working_dir = str(payload.get("working_dir") or "").strip()
@@ -239,8 +365,11 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             result = _file_apply_patch(patch, working_dir, working_dir)
             return result
         if mode == "preview":
-            # 不落地：先做路径与格式校验，再发放一次性 approval_token。
-            validation = _file_apply_patch(patch, working_dir, working_dir)
+            # 真只读：在临时副本上模拟补丁，只做路径/格式/可应用性校验并返回
+            # 影响结果；不修改真实文件、不删除文件、不移入回收站（B1 回归）。
+            validation = _file_apply_patch(
+                patch, working_dir, working_dir, dry_run=True
+            )
             if not validation.get("ok"):
                 return validation
             token = _create_approval("file_patch")
