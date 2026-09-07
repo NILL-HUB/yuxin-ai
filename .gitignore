@@ -121,3 +121,7 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+
+# Data backups & one-off temp scripts (privacy/credentials)
+api/internal/migration/orphan_memory_backup_*.sql
+api/scripts/_tmp_*.py
