@@ -444,6 +444,41 @@ class WriteTimeConflictResolver:
                 },
             ).consume()
 
+        # 3. 键值互补联动：PG 投影行同步置为 non-active（向量召回不再命中）
+        self._deactivate_projection_row(old_node_id)
+
+    def _deactivate_projection_row(self, node_id: str) -> None:
+        """将图节点对应的 PG 投影行状态置为非 active。
+
+        键值互补不变式：图节点被标记失效（superseded/deprecated/t_invalidated）
+        时，其 user_memory 投影行必须同步置为非 active，否则 _vector_recall
+        （WHERE um.status='active'）仍会召回已被取代/废弃的记忆。
+
+        Args:
+            node_id: 图节点 id（= user_memory.embedding_node_id）
+        """
+        try:
+            from internal.context import current_app
+
+            db = current_app.extensions.get("database")
+            if db is None:
+                return
+            from sqlalchemy import text as _text
+
+            db.session.execute(
+                _text(
+                    "UPDATE user_memory SET status = 'deprecated', "
+                    "updated_at = CURRENT_TIMESTAMP(0) "
+                    "WHERE embedding_node_id = :node_id AND status = 'active'"
+                ),
+                {"node_id": node_id},
+            )
+            db.session.commit()
+        except Exception:
+            logger.warning(
+                "_deactivate_projection_row: 更新投影行失败 node=%s", node_id, exc_info=True
+            )
+
     def _mark_deprecated(
         self,
         driver,
@@ -469,6 +504,9 @@ class WriteTimeConflictResolver:
                     "now": now.isoformat(),
                 },
             ).consume()
+
+        # 键值互补联动：PG 投影行同步置为非 active
+        self._deactivate_projection_row(node_id)
 
     # ----------------------------------------------------------
     # 降级检查

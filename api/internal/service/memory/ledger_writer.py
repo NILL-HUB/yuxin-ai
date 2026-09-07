@@ -24,6 +24,7 @@ import re
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 from typing import Optional
+import json
 
 from dataclasses import dataclass
 from injector import inject
@@ -37,6 +38,15 @@ from internal.service.memory.metrics import MetricsCollector, observe_latency
 
 
 logger = logging.getLogger(__name__)
+
+
+def _json_dumps(payload: dict) -> str:
+    """将 payload 序列化为 JSON 字符串（供 metadata_ jsonb 列写入）。"""
+    try:
+        return json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        logger.warning("_json_dumps: payload 序列化失败，使用空对象", exc_info=True)
+        return "{}"
 
 
 # 关系类型白名单：只允许字母数字下划线，防 Cypher 注入
@@ -251,34 +261,49 @@ class LedgerWriter:
                 episode_node_id = episode_node_id or None
 
         # 4. 写入 pgvector 向量（携带 explicit_* 属性）
-        vector_payload = {
-            "content": event.content,
-            "event_type": "episode",
-            "tier": "hot",
-            "timestamp": now.isoformat(),
-            "user_id": event.user_id,
-            "node_id": episode_node_id,
-            "session_id": event.session_id,
-            "source": event.source.value if event.source else None,
-            "event_id": str(event.event_id),
-        }
-        if explicit_detection and explicit_detection.is_explicit:
-            vector_payload["explicit_category"] = (
-                explicit_detection.category.value if explicit_detection.category else None
+        #    键值互补不变式：仅当 Episode 图节点创建成功后才写投影行。
+        #    图写入失败/不可用时跳过向量写入（vector_id=None + 补偿标记），
+        #    绝不用随机 id 兜底——那正是 A 类悬空投影孤儿的根源。
+        vector_id = None
+        if episode_node_id:
+            vector_payload = {
+                "content": event.content,
+                "event_type": "episode",
+                "tier": "hot",
+                "timestamp": now.isoformat(),
+                "user_id": event.user_id,
+                "node_id": episode_node_id,
+                "session_id": event.session_id,
+                "source": event.source.value if event.source else None,
+                "event_id": str(event.event_id),
+                "created_from": "memory_system",
+            }
+            if explicit_detection and explicit_detection.is_explicit:
+                vector_payload["explicit_category"] = (
+                    explicit_detection.category.value if explicit_detection.category else None
+                )
+                vector_payload["explicit_polarity"] = explicit_detection.polarity.value
+                vector_payload["explicit_subject"] = explicit_detection.subject
+            vector_id = self._upsert_vector(
+                point_id=episode_node_id,
+                vector=embedding,
+                payload=vector_payload,
             )
-            vector_payload["explicit_polarity"] = explicit_detection.polarity.value
-            vector_payload["explicit_subject"] = explicit_detection.subject
-        vector_id = self._upsert_vector(
-            point_id=episode_node_id or str(uuid4()),
-            vector=embedding,
-            payload=vector_payload,
-        )
+        else:
+            # 图写入失败或 Neo4j 不可用：记补偿标记，供对账/B 类补齐
+            logger.warning(
+                "write_full_path: Episode 图节点未创建（Neo4j 不可用或异常），"
+                "跳过 pgvector 投影写入 event_id=%s 待补偿",
+                event.event_id,
+            )
+            vector_id = None
 
         result = {
             "episode_node_id": episode_node_id,
             "entity_count": entity_count,
             "edge_count": edge_count,
             "vector_id": vector_id,
+            "write_compensated": episode_node_id is None,
         }
         if driver is None:
             result["error"] = "neo4j_unavailable"
@@ -409,27 +434,40 @@ class LedgerWriter:
                 )
 
         # 3. 写入 pgvector 向量（warm 标记）
-        vector_id = self._upsert_vector(
-            point_id=episode_node_id or str(uuid4()),
-            vector=embedding,
-            payload={
-                "content": summary,
-                "event_type": "episode_summary",
-                "tier": "warm",
-                "timestamp": now.isoformat(),
-                "user_id": event.user_id,
-                "node_id": episode_node_id,
-                "session_id": event.session_id,
-                "source": event.source.value if event.source else None,
-                "event_id": str(event.event_id),
-            },
-        )
+        #    键值互补不变式：仅当 Episode 图节点创建成功后才写投影行。
+        vector_id = None
+        if episode_node_id:
+            vector_id = self._upsert_vector(
+                point_id=episode_node_id,
+                vector=embedding,
+                payload={
+                    "content": summary,
+                    "event_type": "episode_summary",
+                    "tier": "warm",
+                    "timestamp": now.isoformat(),
+                    "user_id": event.user_id,
+                    "node_id": episode_node_id,
+                    "session_id": event.session_id,
+                    "source": event.source.value if event.source else None,
+                    "event_id": str(event.event_id),
+                    "created_from": "memory_system",
+                },
+            )
+        else:
+            # 图写入失败或 Neo4j 不可用：记补偿标记，供对账/B 类补齐
+            logger.warning(
+                "write_summary_path: Episode 图节点未创建（Neo4j 不可用或异常），"
+                "跳过 pgvector 投影写入 event_id=%s 待补偿",
+                event.event_id,
+            )
+            vector_id = None
 
         result = {
             "episode_node_id": episode_node_id,
             "entity_count": entity_count,
             "edge_count": edge_count,
             "vector_id": vector_id,
+            "write_compensated": episode_node_id is None,
         }
         if driver is None:
             result["error"] = "neo4j_unavailable"
@@ -768,6 +806,7 @@ class LedgerWriter:
         point_id: str,
         vector: list[float],
         payload: dict,
+        forced_memory_id: Optional[str] = None,
     ) -> Optional[str]:
         """将向量写入维度分表，元数据写入 user_memory 表。
 
@@ -777,10 +816,18 @@ class LedgerWriter:
 
         维度来源：系统默认 embedding 模型（priority 最高的 active 模型）。
 
+        键值互补不变式：
+            - point_id 必须等于 Neo4j 图节点的 node_id（非空）
+            - 投影行按 embedding_node_id 幂等 upsert（同一 node_id 至多一行）
+            - 先查已有投影行：命中则复用其 id 并更新；未命中则新建
+              （agent_curated 传 forced_memory_id 以保持 id == 图节点 node_id）
+
         Args:
             point_id: 与 Neo4j 节点关联的 ID（写入 embedding_node_id）
             vector: 嵌入向量（维度由系统默认 embedding 模型决定）
             payload: 元数据字典，含 ``content`` / ``event_type`` / ``user_id`` 等
+            forced_memory_id: 可选，强制新建行使用该 id（agent_curated 用，
+                保证 user_memory.id == 图节点 node_id）
 
         Returns:
             成功写入的 user_memory.id（字符串），失败时返回 None。
@@ -812,6 +859,13 @@ class LedgerWriter:
             )
             return None
 
+        if not point_id:
+            logger.warning(
+                "_upsert_vector: point_id 为空（图节点未创建），跳过 pgvector 写入，"
+                "避免产生悬空投影行"
+            )
+            return None
+
         # 解析系统默认维度并确保维度表已创建
         from internal.service.embedding_table_router import EmbeddingTableRouter
         router = EmbeddingTableRouter.get_instance()
@@ -824,48 +878,162 @@ class LedgerWriter:
             return None
         table_name = router.get_user_memory_table_name(dimension)
 
-        memory_id = uuid4()
-        user_memory = UserMemory(
-            id=memory_id,
-            owner_account_id=owner_account_id,
-            memory_type=payload.get("event_type", "episode"),
-            content=content,
-            embedding_node_id=point_id,
-            scope="user_memory",
-            created_from="memory_system",
-            metadata_=payload,
-        )
+        # 键值互补不变式：embedding_node_id == Neo4j 节点 node_id，
+        # 每条投影行与图节点同生同灭。先按 point_id 查已存在的投影行，
+        # 命中则复用其 user_memory.id（幂等 upsert），否则新建。
+        from sqlalchemy import text as _text
+
+        existing_memory_id = None
+        try:
+            existing = self.db.session.execute(
+                _text(
+                    "SELECT id FROM user_memory "
+                    "WHERE embedding_node_id = :node_id LIMIT 1"
+                ),
+                {"node_id": point_id},
+            ).first()
+            if existing is not None:
+                existing_memory_id = str(existing[0])
+        except Exception:
+            logger.warning(
+                "_upsert_vector: 查询已有投影行失败 point_id=%s", point_id, exc_info=True
+            )
+
+        # 兼容旧版 agent_curated 半条：id == node_id 但 embedding_node_id 为空。
+        # 按 embedding_node_id 查不到时，若给了 forced_memory_id 再按主键 id 查，
+        # 命中则复用该行并补齐 embedding_node_id。
+        if existing_memory_id is None and forced_memory_id:
+            try:
+                existing = self.db.session.execute(
+                    _text(
+                        "SELECT id FROM user_memory "
+                        "WHERE id = :mid AND created_from = 'agent_curated' LIMIT 1"
+                    ),
+                    {"mid": forced_memory_id},
+                ).first()
+                if existing is not None:
+                    existing_memory_id = str(existing[0])
+            except Exception:
+                logger.warning(
+                    "_upsert_vector: 按 id 回退查询投影行失败 point_id=%s",
+                    point_id,
+                    exc_info=True,
+                )
+
+        memory_id = existing_memory_id or forced_memory_id or str(uuid4())
 
         try:
-            # 1. 写入元数据到 user_memory 表（不含 embedding）
-            self.db.session.add(user_memory)
+            if existing_memory_id is not None:
+                # 复用已存在的 user_memory 行：更新元数据与内容，投影与图保持一致。
+                # 兼容旧版 agent_curated 半条（id==node_id 但 embedding_node_id 空）：
+                # 同时补齐 embedding_node_id。
+                self.db.session.execute(
+                    _text(
+                        "UPDATE user_memory SET "
+                        "  content = :content,"
+                        "  memory_type = :memory_type,"
+                        "  metadata = :metadata,"
+                        "  embedding_node_id = :node_id,"
+                        "  status = 'active',"
+                        "  updated_at = CURRENT_TIMESTAMP(0) "
+                        "WHERE id = :memory_id"
+                    ),
+                    {
+                        "content": content,
+                        "memory_type": payload.get("event_type", "episode"),
+                        "metadata": _json_dumps(payload),
+                        "memory_id": memory_id,
+                        "node_id": point_id,
+                    },
+                )
+            else:
+                user_memory = UserMemory(
+                    id=memory_id,
+                    owner_account_id=owner_account_id,
+                    memory_type=payload.get("event_type", "episode"),
+                    content=content,
+                    embedding_node_id=point_id,
+                    scope="user_memory",
+                    created_from=payload.get(
+                        "created_from", "memory_system"
+                    ),
+                    metadata_=payload,
+                )
+                self.db.session.add(user_memory)
             self.db.session.flush()
 
-            # 2. 写入向量到维度分表
-            from sqlalchemy import text as _text
+            # 旧维度分表残留清理：同一 node_id 若曾在其它维度建过向量行，
+            # 先清掉再写当前维度，保证「一个投影行最多一条向量」。
+            self._delete_stale_vector_rows(memory_id, exclude_table=table_name)
+
+            # 写入向量到维度分表
             self.db.session.execute(
                 _text(f"""
                     INSERT INTO {table_name} (memory_id, owner_account_id, embedding, embedding_node_id)
                     VALUES (:memory_id, :owner_id, :embedding, :node_id)
                     ON CONFLICT (memory_id) DO UPDATE SET
                         embedding = EXCLUDED.embedding,
+                        embedding_node_id = EXCLUDED.embedding_node_id,
                         updated_at = CURRENT_TIMESTAMP(0)
                 """),
                 {
-                    "memory_id": str(memory_id),
+                    "memory_id": memory_id,
                     "owner_id": str(owner_account_id),
                     "embedding": vector,
                     "node_id": point_id,
                 },
             )
             self.db.session.commit()
-            return str(memory_id)
+            return memory_id
         except Exception:
             logger.warning(
                 "_upsert_vector: pgvector 写入失败 point_id=%s", point_id, exc_info=True
             )
             self.db.session.rollback()
             return None
+
+    def _delete_stale_vector_rows(self, memory_id: str, exclude_table: str) -> None:
+        """清理同一 memory_id 在其它维度分表的残留向量行。
+
+        键值互补不变式要求「一个投影行最多一条向量」。模型配置变更导致
+        写入维度切换时，旧维度分表可能残留向量行；这里在写入当前维度前
+        先清理，避免同一投影行命中多个维度表。
+
+        Args:
+            memory_id: user_memory.id（字符串）
+            exclude_table: 本次要写入的目标分表（不清理）
+        """
+        try:
+            from sqlalchemy import text as _text
+
+            # 遍历所有 user_memory_embedding_% 维度分表（排除当前目标表）
+            tables = self.db.session.execute(
+                _text(
+                    "SELECT tablename FROM pg_tables "
+                    "WHERE schemaname = 'public' "
+                    "AND tablename LIKE 'user_memory_embedding_%'"
+                )
+            ).all()
+            for (table,) in tables:
+                if table == exclude_table:
+                    continue
+                try:
+                    self.db.session.execute(
+                        _text(
+                            f"DELETE FROM {table} WHERE memory_id = :memory_id"
+                        ),
+                        {"memory_id": memory_id},
+                    )
+                except Exception:
+                    logger.warning(
+                        "_delete_stale_vector_rows: 清理 %s 失败 memory_id=%s",
+                        table, memory_id, exc_info=True,
+                    )
+        except Exception:
+            logger.warning(
+                "_delete_stale_vector_rows: 清理残留失败 memory_id=%s",
+                memory_id, exc_info=True,
+            )
 
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None 触发降级。
@@ -904,8 +1072,10 @@ class LedgerWriter:
         - 系统路径：对话后自动提取记忆，source="system"
         - Agent 路径：Agent 调用 memory_add 工具主动记录，source="agent_curated"
 
-        写入 UserMemory 表（pgvector）+ Neo4j Episode 节点，
-        metadata_ 中标记 source="agent_curated" 以区分来源。
+        键值互补写入契约（与系统路径一致）：
+            1. 先创建 Neo4j Episode 节点（node_id = user_memory.id，:Episode 键的权威）
+            2. 图节点创建成功后再写入 PG 投影行（embedding_node_id = node_id）
+            3. 同步生成向量并写入维度分表（消除“后台补向量”从未落地的历史欠账）
 
         Args:
             account_id: 用户账号 ID
@@ -926,31 +1096,17 @@ class LedgerWriter:
         curated_metadata = dict(metadata or {})
         curated_metadata["source"] = "agent_curated"
         curated_metadata["curated_at"] = now.isoformat()
+        curated_metadata["event_type"] = memory_type
+        curated_metadata["user_id"] = str(account_id)
+        curated_metadata["memory_type"] = memory_type
 
-        # 1. 写入 UserMemory 表（不含 embedding，由后台任务异步补充）
-        try:
-            user_memory = UserMemory(
-                id=memory_id,
-                owner_account_id=account_id,
-                memory_type=memory_type,
-                content=content,
-                scope="user_memory",
-                created_from="agent_curated",
-                metadata_=curated_metadata,
-            )
-            self.db.session.add(user_memory)
-            self.db.session.commit()
-        except Exception:
-            logger.warning("write_agent_curated: UserMemory 写入失败", exc_info=True)
-            self.db.session.rollback()
-            return None
-
-        # 2. 写入 Neo4j Episode 节点（标记 source="agent_curated"）
+        # 1. 写入 Neo4j Episode 节点（source="agent_curated"，键的权威）
         driver = self._get_driver()
+        node_created = False
         if driver is not None:
             try:
                 cypher = """
-                CREATE (e:Episode {
+                CREATE (e:Episode:MemoryNode {
                     node_id: $node_id,
                     user_id: $user_id,
                     content: $content,
@@ -969,11 +1125,66 @@ class LedgerWriter:
                         "content": content,
                         "memory_type": memory_type,
                     })
+                node_created = True
             except Exception:
                 logger.warning(
-                    "write_agent_curated: Neo4j 写入失败（UserMemory 已写入）",
+                    "write_agent_curated: Neo4j 写入失败",
                     exc_info=True,
                 )
+                node_created = False
+
+        if not node_created:
+            # 键值互补不变式：图节点未创建成功则不写 PG 投影行，避免 C 类纯 DB 孤儿
+            logger.warning(
+                "write_agent_curated: Neo4j 不可用/写入失败，跳过 PG 写入 account=%s "
+                "（不再产生纯 DB 孤儿行）",
+                account_id,
+            )
+            return None
+
+        # 2. 生成向量 + 写入 PG 投影行（embedding_node_id = node_id）+ 向量分表
+        #    统一走 _upsert_vector 的幂等 upsert（按 embedding_node_id 查重），
+        #    单次 commit，保证「投影行与向量同生同灭」。
+        curated_metadata["content"] = content
+        curated_metadata["created_from"] = "agent_curated"
+        curated_metadata["event_type"] = memory_type
+        curated_metadata["memory_type"] = memory_type
+        curated_metadata["user_id"] = str(account_id)
+        curated_metadata["node_id"] = str(memory_id)
+
+        try:
+            from internal.service.embeddings_service import EmbeddingsService
+            from app.http.app import injector
+
+            embeddings_service = injector.get(EmbeddingsService)
+            embedding = embeddings_service.embeddings.embed_query(content)
+        except Exception:
+            logger.warning(
+                "write_agent_curated: 向量生成失败，图节点已建、投影待对账补齐 account=%s",
+                account_id,
+                exc_info=True,
+            )
+            return None
+
+        if not embedding:
+            logger.warning(
+                "write_agent_curated: 向量为空，图节点已建、投影待对账补齐 account=%s",
+                account_id,
+            )
+            return None
+
+        vector_memory_id = self._upsert_vector(
+            point_id=str(memory_id),
+            vector=embedding,
+            payload=curated_metadata,
+            forced_memory_id=str(memory_id),
+        )
+        if vector_memory_id is None:
+            logger.warning(
+                "write_agent_curated: 投影/向量写入失败（图节点已建，待对账）account=%s",
+                account_id,
+            )
+            return None
 
         logger.info(
             "write_agent_curated: account=%s memory_id=%s type=%s",
