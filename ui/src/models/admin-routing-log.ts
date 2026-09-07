@@ -80,3 +80,44 @@ export type AdminRoutingLogListResponse = {
   paginator: Record<string, unknown>
   summary: AdminRoutingLogSummary
 }
+
+export type RoutingLogStatsOverview = {
+  total_count: number
+  success_count: number
+  fallback_count: number
+  success_rate: number
+  fallback_rate: number
+  total_credits: number
+  avg_latency_ms: number
+  agent_pool_hit_rate: number
+  tool_pool_hit_rate: number
+  by_status: Record<string, { count: number; credits: number }>
+}
+
+export type RoutingLogTrendPoint = {
+  timestamp: number
+  request_count: number
+  success_count: number
+  fallback_count: number
+  total_credits: number
+  avg_latency_ms: number
+}
+
+export type RoutingLogTrendResponse = {
+  granularity: 'day' | 'hour'
+  points: RoutingLogTrendPoint[]
+}
+
+export type RoutingLogDistributionItem = {
+  name: string
+  count: number
+  credits: number
+  avg_latency_ms: number
+  percentage: number
+}
+
+export type RoutingLogDistributionResponse = {
+  dimension: string
+  items: RoutingLogDistributionItem[]
+  total_count: number
+}

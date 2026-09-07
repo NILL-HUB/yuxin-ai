@@ -1,8 +1,9 @@
-from dataclasses import dataclass
-from datetime import datetime
+﻿from dataclasses import dataclass
+from datetime import datetime, UTC
 from uuid import UUID
 
 from injector import inject
+from sqlalchemy import func, cast, Integer, literal_column, case
 
 from internal.lib.helper import datetime_to_timestamp
 from internal.model import RoutingLog
@@ -156,6 +157,292 @@ class RoutingLogService(BaseService):
             },
             "summary": self._build_summary(serialized_list, total_record),
         }
+
+    # ------------------------------------------------------------------
+    # 观测中心聚合接口：stats_overview / trend / distribution
+    # 与 page() 的「当前页窗口统计」不同，这里全部基于 SQL 全量聚合，
+    # 支持 start_at/end_at（秒级时间戳，naive UTC）时间窗过滤。
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_window(start_at, end_at):
+        """把秒级时间戳/字符串/datetime 统一成 naive UTC datetime。"""
+        if start_at is None or start_at == "" or start_at == 0:
+            start_at = None
+        else:
+            if isinstance(start_at, datetime):
+                dt = start_at
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(UTC).replace(tzinfo=None)
+            else:
+                try:
+                    dt = datetime.fromtimestamp(int(start_at), tz=UTC).replace(tzinfo=None)
+                except (TypeError, ValueError, OSError):
+                    start_at = None
+                    dt = None
+            if dt is not None:
+                start_at = dt
+        if end_at is None or end_at == "" or end_at == 0:
+            end_at = None
+        else:
+            if isinstance(end_at, datetime):
+                dt = end_at
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(UTC).replace(tzinfo=None)
+            else:
+                try:
+                    dt = datetime.fromtimestamp(int(end_at), tz=UTC).replace(tzinfo=None)
+                except (TypeError, ValueError, OSError):
+                    end_at = None
+                    dt = None
+            if dt is not None:
+                end_at = dt
+        return start_at, end_at
+
+    @staticmethod
+    def _credits_sql_expr():
+        # cost_summary 实际写入 estimated_credits，老数据兼容 total_credits。
+        return literal_column(
+            "CAST(COALESCE(NULLIF(cost_summary->>'estimated_credits', ''), "
+            "NULLIF(cost_summary->>'total_credits', ''), '0') AS NUMERIC)"
+        )
+
+    @staticmethod
+    def _windowed(query, start_at, end_at):
+        start_at, end_at = RoutingLogService._normalize_window(start_at, end_at)
+        if start_at is not None:
+            query = query.filter(RoutingLog.created_at >= start_at)
+        if end_at is not None:
+            query = query.filter(RoutingLog.created_at <= end_at)
+        return query
+
+    @staticmethod
+    def _normalize_dimension_value(value):
+        """把空串/None 统一成 unknown，避免图表出现空维度名。"""
+        if value is None or str(value).strip() == "":
+            return "unknown"
+        return str(value)
+
+    def stats_overview(
+        self,
+        *,
+        start_at=None,
+        end_at=None,
+        status: str | None = None,
+        invoke_from: str | None = None,
+    ) -> dict:
+        """全量窗口聚合（SQL 级）：成功率/回退率/积分/延迟/命中率。"""
+        credits_col = cast(self._credits_sql_expr(), Integer)
+
+        agg = self.db.session.query(
+            func.count().label("total_count"),
+            func.coalesce(
+                func.sum(func.cast(case(
+                    (RoutingLog.status == "success", 1),
+                    else_=0,
+                ), Integer)),
+                0,
+            ).label("success_count"),
+            func.coalesce(
+                func.sum(func.cast(case(
+                    (RoutingLog.status == "fallback", 1),
+                    else_=0,
+                ), Integer)),
+                0,
+            ).label("fallback_count"),
+            func.coalesce(func.sum(credits_col), 0).label("total_credits"),
+            func.coalesce(func.avg(RoutingLog.latency_ms), 0).label("avg_latency_ms"),
+            func.coalesce(func.avg(func.cast(case(
+                (func.jsonb_array_length(RoutingLog.agent_pool_hits) > 0, 1),
+                else_=0,
+            ), Integer)), 0).label("agent_pool_hit_rate"),
+            func.coalesce(func.avg(func.cast(case(
+                (func.jsonb_array_length(RoutingLog.tool_pool_hits) > 0, 1),
+                else_=0,
+            ), Integer)), 0).label("tool_pool_hit_rate"),
+        )
+        agg = self._windowed(agg, start_at, end_at)
+        if status:
+            agg = agg.filter(RoutingLog.status == status)
+        if invoke_from:
+            agg = agg.filter(RoutingLog.invoke_from == invoke_from)
+        row = agg.first()
+
+        total_count = int(row.total_count or 0)
+        total_credits = int(row.total_credits or 0)
+        avg_latency_ms = round(float(row.avg_latency_ms or 0), 2)
+        agent_pool_hit_rate = round(float(row.agent_pool_hit_rate or 0), 4)
+        tool_pool_hit_rate = round(float(row.tool_pool_hit_rate or 0), 4)
+        success_count = int(row.success_count or 0)
+        fallback_count = int(row.fallback_count or 0)
+
+        status_rows = self.db.session.query(
+            RoutingLog.status,
+            func.count().label("count"),
+            func.coalesce(func.sum(credits_col), 0).label("credits"),
+        ).select_from(RoutingLog)
+        status_rows = self._windowed(status_rows, start_at, end_at)
+        if status:
+            status_rows = status_rows.filter(RoutingLog.status == status)
+        if invoke_from:
+            status_rows = status_rows.filter(RoutingLog.invoke_from == invoke_from)
+        status_rows = status_rows.group_by(RoutingLog.status).all()
+
+        by_status = {}
+        for s in status_rows:
+            key = self._normalize_dimension_value(s.status)
+            by_status[key] = {
+                "count": int(s.count or 0),
+                "credits": int(s.credits or 0),
+            }
+
+        return {
+            "total_count": total_count,
+            "success_count": success_count,
+            "fallback_count": fallback_count,
+            "success_rate": round(success_count / total_count, 4) if total_count else 0.0,
+            "fallback_rate": round(fallback_count / total_count, 4) if total_count else 0.0,
+            "total_credits": total_credits,
+            "avg_latency_ms": avg_latency_ms,
+            "agent_pool_hit_rate": agent_pool_hit_rate,
+            "tool_pool_hit_rate": tool_pool_hit_rate,
+            "by_status": by_status,
+        }
+
+    def trend(
+        self,
+        *,
+        start_at=None,
+        end_at=None,
+        granularity: str = "day",
+        status: str | None = None,
+        invoke_from: str | None = None,
+    ) -> dict:
+        """按 day/hour 聚合时间序列：请求量 / success / fallback / credits / avg_latency。"""
+        trunc = "day" if granularity != "hour" else "hour"
+        credits_col = cast(self._credits_sql_expr(), Integer)
+        ts_col = func.date_trunc(trunc, RoutingLog.created_at).label("ts")
+
+        query = self.db.session.query(
+            ts_col,
+            func.count().label("request_count"),
+            func.coalesce(
+                func.sum(func.cast(case(
+                    (RoutingLog.status == "success", 1),
+                    else_=0,
+                ), Integer)),
+                0,
+            ).label("success_count"),
+            func.coalesce(
+                func.sum(func.cast(case(
+                    (RoutingLog.status == "fallback", 1),
+                    else_=0,
+                ), Integer)),
+                0,
+            ).label("fallback_count"),
+            func.coalesce(func.sum(credits_col), 0).label("total_credits"),
+            func.coalesce(func.avg(RoutingLog.latency_ms), 0).label("avg_latency_ms"),
+        ).select_from(RoutingLog)
+        query = self._windowed(query, start_at, end_at)
+        if status:
+            query = query.filter(RoutingLog.status == status)
+        if invoke_from:
+            query = query.filter(RoutingLog.invoke_from == invoke_from)
+        query = query.group_by(ts_col).order_by(ts_col)
+
+        rows = query.all()
+        points = []
+        for r in rows:
+            ts_val = r.ts
+            if ts_val and ts_val.tzinfo is None:
+                ts_val = ts_val.replace(tzinfo=UTC)
+            points.append({
+                "timestamp": int(ts_val.timestamp()) if ts_val else 0,
+                "request_count": int(r.request_count or 0),
+                "success_count": int(r.success_count or 0),
+                "fallback_count": int(r.fallback_count or 0),
+                "total_credits": int(r.total_credits or 0),
+                "avg_latency_ms": round(float(r.avg_latency_ms or 0), 2),
+            })
+
+        return {"granularity": trunc, "points": points}
+
+    def distribution(
+        self,
+        *,
+        start_at=None,
+        end_at=None,
+        dimension: str = "execution_mode",
+        limit: int = 20,
+    ) -> dict:
+        """按维度做分布聚合（SQL 级，JSONB #>> 取值，空值归 unknown）。"""
+        credits_col = cast(self._credits_sql_expr(), Integer)
+        dimension_expr = self._dimension_expression(dimension)
+
+        query = self.db.session.query(
+            dimension_expr.label("name"),
+            func.count().label("count"),
+            func.coalesce(func.sum(credits_col), 0).label("credits"),
+            func.coalesce(func.avg(RoutingLog.latency_ms), 0).label("avg_latency_ms"),
+        ).select_from(RoutingLog)
+        query = self._windowed(query, start_at, end_at)
+        query = query.group_by(dimension_expr).order_by(func.count().desc())
+        rows = query.limit(limit).all()
+
+        total_rows = self.db.session.query(func.count().label("total")).select_from(RoutingLog)
+        total_rows = self._windowed(total_rows, start_at, end_at)
+        grand_total = int(total_rows.first().total or 0)
+
+        items = []
+        for r in rows:
+            count = int(r.count or 0)
+            credits = int(r.credits or 0)
+            items.append({
+                "name": self._normalize_dimension_value(r.name),
+                "count": count,
+                "credits": credits,
+                "avg_latency_ms": round(float(r.avg_latency_ms or 0), 2),
+                "percentage": round(count / grand_total * 100, 2) if grand_total else 0.0,
+            })
+
+        return {
+            "dimension": dimension,
+            "items": items,
+            "total_count": grand_total,
+        }
+
+    def _dimension_expression(self, dimension: str):
+        """构造 JSONB #>> 取值表达式（与 cost-stats 风格一致）。"""
+        if dimension == "status":
+            return self._normalize_dimension_value(RoutingLog.status).label("name")
+        if dimension == "invoke_from":
+            return self._normalize_dimension_value(RoutingLog.invoke_from).label("name")
+        if dimension == "execution_mode":
+            return self._dimension_value_expr("routing_decision->>'execution_mode'").label("name")
+        if dimension == "intent":
+            return self._dimension_value_expr("routing_decision->>'intent'").label("name")
+        if dimension == "model_tier":
+            return self._dimension_value_expr(
+                "routing_decision->>'recommended_model_tier'"
+            ).label("name")
+        if dimension == "complexity":
+            return self._dimension_value_expr(
+                "COALESCE(task_classification->>'complexity', "
+                "routing_decision->>'complexity')"
+            ).label("name")
+        if dimension == "model":
+            return self._dimension_value_expr(
+                "COALESCE(NULLIF(model_selection->>'model_display_name', ''), "
+                "NULLIF(model_selection->>'execution_model', ''), "
+                "NULLIF(model_selection->>'model_id', ''), "
+                "NULLIF(model_selection->>'model_tier', ''))"
+            ).label("name")
+        # fallback 到 account_id
+        return self._dimension_value_expr("routing_log.account_id::text").label("name")
+
+    @staticmethod
+    def _dimension_value_expr(expr: str):
+        return literal_column(f"COALESCE(NULLIF(({expr})::text, ''), 'unknown')")
 
     def _filtered_query(
         self,

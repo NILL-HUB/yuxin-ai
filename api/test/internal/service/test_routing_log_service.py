@@ -172,3 +172,171 @@ def test_page_should_return_serialized_logs_with_filters():
     assert result["list"][0]["latency_ms"] == 1200
     assert result["list"][0]["fallback_reason"] == "quota_exhausted"
     assert result["list"][0]["redaction_enabled"] is True
+
+
+class _ChainQueryStub:
+    """支持 filter/group_by/order_by/limit/offset/select_from 链式的查询 stub。"""
+
+    def __init__(self, *, first_result=None, all_result=None, scalar_result=None, count_result=None):
+        self._first_result = first_result
+        self._all_result = all_result
+        self._scalar_result = scalar_result
+        self._count_result = count_result
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def with_entities(self, *_args, **_kwargs):
+        return self
+
+    def group_by(self, *_args, **_kwargs):
+        return self
+
+    def order_by(self, *_args, **_kwargs):
+        return self
+
+    def offset(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def select_from(self, *_args, **_kwargs):
+        return self
+
+    def first(self):
+        return self._first_result
+
+    def all(self):
+        return self._all_result if self._all_result is not None else []
+
+    def scalar(self):
+        return self._scalar_result
+
+    def count(self):
+        return self._count_result if self._count_result is not None else 0
+
+
+def _row(**kwargs):
+    return SimpleNamespace(**kwargs)
+
+
+def test_normalize_window_accepts_timestamps_strings_and_datetimes():
+    from datetime import UTC, datetime
+
+    service = RoutingLogService(db=None)
+
+    start_dt, end_dt = service._normalize_window(0, "")
+    assert start_dt is None
+    assert end_dt is None
+
+    start_dt, end_dt = service._normalize_window("1700000000", "bad-value")
+    assert end_dt is None
+    assert start_dt is not None
+    assert start_dt.tzinfo is None
+    assert int(start_dt.replace(tzinfo=UTC).timestamp()) == 1700000000
+
+    raw = datetime(2026, 5, 1, tzinfo=UTC)
+    start_dt, end_dt = service._normalize_window(raw, None)
+    assert start_dt == raw.astimezone(UTC).replace(tzinfo=None)
+    assert end_dt is None
+
+
+def test_normalize_dimension_value_folds_empty_to_unknown():
+    service = RoutingLogService(db=None)
+    assert service._normalize_dimension_value("") == "unknown"
+    assert service._normalize_dimension_value(None) == "unknown"
+    assert service._normalize_dimension_value("  ") == "unknown"
+    assert service._normalize_dimension_value("success") == "success"
+
+
+def test_stats_overview_assembles_aggregates_and_status_breakdown():
+    session = SimpleNamespace(
+        query=lambda *_a, **_k: _ChainQueryStub(first_result=_row(
+            total_count=10,
+            success_count=8,
+            fallback_count=1,
+            total_credits=120,
+            avg_latency_ms=300.0,
+            agent_pool_hit_rate=0.5,
+            tool_pool_hit_rate=0.4,
+        ))
+    )
+    # 第二个 query（status_rows）来自 status query .group_by().all()
+    calls = []
+
+    def fake_query(*_a, **_k):
+        calls.append(len(calls))
+        if len(calls) == 1:
+            return _ChainQueryStub(first_result=_row(
+                total_count=10,
+                success_count=8,
+                fallback_count=1,
+                total_credits=120,
+                avg_latency_ms=300.0,
+                agent_pool_hit_rate=0.5,
+                tool_pool_hit_rate=0.4,
+            ))
+        return _ChainQueryStub(all_result=[
+            _row(status="success", count=8, credits=100),
+            _row(status="fallback", count=1, credits=20),
+        ])
+
+    service = RoutingLogService(db=SimpleNamespace(session=SimpleNamespace(query=fake_query)))
+
+    result = service.stats_overview(start_at=None, end_at=None)
+    assert result["total_count"] == 10
+    assert result["success_count"] == 8
+    assert result["fallback_count"] == 1
+    assert result["success_rate"] == 0.8
+    assert result["fallback_rate"] == 0.1
+    assert result["total_credits"] == 120
+    assert result["by_status"]["success"]["count"] == 8
+    assert result["by_status"]["success"]["credits"] == 100
+    assert "unknown" not in result["by_status"]
+
+
+def test_distribution_assembles_items_with_percentage():
+    def fake_query(*_a, **_k):
+        calls.append(len(calls))
+        if len(calls) == 1:
+            return _ChainQueryStub(all_result=[
+                _row(name="deep_thinking", count=6, credits=60, avg_latency_ms=800.0),
+                _row(name="single_agent", count=3, credits=9, avg_latency_ms=100.0),
+            ])
+        return _ChainQueryStub(first_result=_row(total=10))
+
+    calls = []
+    service = RoutingLogService(db=SimpleNamespace(session=SimpleNamespace(query=fake_query)))
+
+    result = service.distribution(dimension="execution_mode", start_at=None, end_at=None)
+    assert result["dimension"] == "execution_mode"
+    assert result["total_count"] == 10
+    assert len(result["items"]) == 2
+    assert result["items"][0]["name"] == "deep_thinking"
+    assert result["items"][0]["count"] == 6
+    assert result["items"][0]["percentage"] == 60.0
+    assert result["items"][1]["percentage"] == 30.0
+
+
+def test_trend_returns_points_with_utc_timestamps():
+    from datetime import datetime, UTC
+
+    ts = datetime(2026, 6, 1, tzinfo=UTC).replace(tzinfo=None)
+    service = RoutingLogService(db=SimpleNamespace(session=SimpleNamespace(
+        query=lambda *_a, **_k: _ChainQueryStub(all_result=[
+            _row(ts=ts, request_count=5, success_count=4, fallback_count=1,
+                 total_credits=40, avg_latency_ms=250.0),
+        ])
+    )))
+
+    result = service.trend(granularity="day", start_at=None, end_at=None)
+    assert result["granularity"] == "day"
+    assert len(result["points"]) == 1
+    point = result["points"][0]
+    assert point["request_count"] == 5
+    assert point["success_count"] == 4
+    assert point["fallback_count"] == 1
+    assert point["total_credits"] == 40
+    assert point["avg_latency_ms"] == 250.0
+    assert point["timestamp"] == int(ts.replace(tzinfo=UTC).timestamp())

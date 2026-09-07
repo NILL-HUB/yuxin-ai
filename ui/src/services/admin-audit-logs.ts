@@ -41,3 +41,26 @@ export type ListAuditLogsParams = {
 
 export const listAuditLogs = (params?: ListAuditLogsParams) =>
   get<BaseResponse<AuditLogListData>>('/admin/audit-logs', { params })
+
+export type AuditLogOverviewParams = {
+  action?: string
+  resource_type?: string
+  start_time?: number
+  end_time?: number
+}
+
+export type AuditLogDistributionItem = {
+  name: string
+  count: number
+}
+
+export type AuditLogOverviewData = {
+  total: number
+  by_action: AuditLogDistributionItem[]
+  by_resource_type: AuditLogDistributionItem[]
+  trend: Array<{ timestamp: number; count: number }>
+  top_admins: AuditLogDistributionItem[]
+}
+
+export const getAuditLogOverview = (params?: AuditLogOverviewParams) =>
+  get<BaseResponse<AuditLogOverviewData>>('/admin/audit-logs/overview', { params })

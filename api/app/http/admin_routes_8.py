@@ -865,6 +865,64 @@ def register_routes(quart_app):
         )
         return a._ok(RoutingLogPageResp().dump(result))
 
+    @quart_app.get("/admin/routing-logs/stats")
+    async def admin_routing_log_stats():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.service.routing_log_service import RoutingLogService
+
+        result = await a._to_thread(
+            a._get_service(RoutingLogService).stats_overview,
+            start_at=request.args.get("start_at") or None,
+            end_at=request.args.get("end_at") or None,
+            status=request.args.get("status") or None,
+            invoke_from=request.args.get("invoke_from") or None,
+        )
+        return a._ok(result)
+
+    @quart_app.get("/admin/routing-logs/trend")
+    async def admin_routing_log_trend():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.service.routing_log_service import RoutingLogService
+
+        result = await a._to_thread(
+            a._get_service(RoutingLogService).trend,
+            start_at=request.args.get("start_at") or None,
+            end_at=request.args.get("end_at") or None,
+            granularity=request.args.get("granularity") or "day",
+            status=request.args.get("status") or None,
+            invoke_from=request.args.get("invoke_from") or None,
+        )
+        return a._ok(result)
+
+    @quart_app.get("/admin/routing-logs/distribution")
+    async def admin_routing_log_distribution():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.service.routing_log_service import RoutingLogService
+
+        result = await a._to_thread(
+            a._get_service(RoutingLogService).distribution,
+            start_at=request.args.get("start_at") or None,
+            end_at=request.args.get("end_at") or None,
+            dimension=request.args.get("dimension") or "execution_mode",
+            limit=_int_arg("limit", 20),
+        )
+        return a._ok(result)
+
     @quart_app.get("/admin/routing-logs/retention")
     async def admin_routing_log_retention_get():
         from app.http import asgi_app as a
@@ -1008,6 +1066,25 @@ def register_routes(quart_app):
             deleted_by_type=request.args.get("deleted_by_type") or "admin",
         )
         return a._ok(RecycleBinListSchema().dump(result))
+
+    @quart_app.get("/admin/recycle-bin/overview")
+    async def admin_recycle_bin_overview():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        result = await a._to_thread(
+            a._get_service(RecycleBinService).overview,
+            resource_type=request.args.get("resource_type") or None,
+            status=(request.args.get("status") or "").strip() or None,
+            search_word=request.args.get("search_word") or "",
+            deleted_by_type=request.args.get("deleted_by_type") or "admin",
+        )
+        return a._ok(result)
 
     @quart_app.get("/admin/recycle-bin/<int:item_id>")
     async def admin_recycle_bin_get(item_id):
@@ -1221,6 +1298,25 @@ def register_routes(quart_app):
             page_size=_int_arg("page_size", 20),
         )
         return a._ok(AuditLogPageResp().dump(result))
+
+    @quart_app.get("/admin/audit-logs/overview")
+    async def admin_audit_log_overview():
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
+        from internal.service.audit_log_service import AuditLogService
+
+        result = await a._to_thread(
+            a._get_service(AuditLogService).overview,
+            action=request.args.get("action") or "",
+            resource_type=request.args.get("resource_type") or "",
+            start_time=_int_arg("start_time", 0) or None,
+            end_time=_int_arg("end_time", 0) or None,
+        )
+        return a._ok(result)
 
     # ------------------------------------------------------------------
     # admin_approval_insights -> ApprovalInsightsService

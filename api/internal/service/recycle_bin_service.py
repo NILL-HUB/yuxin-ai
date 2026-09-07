@@ -191,6 +191,78 @@ class RecycleBinService:
             "total_record": total,
         }
 
+    def overview(
+        self,
+        *,
+        resource_type: str | None = None,
+        status: str | None = None,
+        search_word: str = "",
+        deleted_by_type: str | None = None,
+    ) -> dict:
+        """回收站观测概览：总量/状态分布/类型分布/来源分布（SQL 级聚合）。"""
+        from sqlalchemy import func
+
+        query = db.session.query(RecycleBin)
+        if resource_type:
+            query = query.filter(RecycleBin.resource_type == resource_type)
+        if deleted_by_type:
+            query = query.filter(RecycleBin.deleted_by_type == deleted_by_type)
+        if status:
+            query = query.filter(RecycleBin.status == status)
+        if search_word:
+            query = query.filter(RecycleBin.resource_name.ilike(f"%{search_word}%"))
+
+        total = query.count()
+
+        status_rows = (
+            query.with_entities(RecycleBin.status, func.count().label("count"))
+            .group_by(RecycleBin.status)
+            .order_by(func.count().desc())
+            .all()
+        )
+        type_rows = (
+            query.with_entities(RecycleBin.resource_type, func.count().label("count"))
+            .group_by(RecycleBin.resource_type)
+            .order_by(func.count().desc())
+            .limit(15)
+            .all()
+        )
+        source_rows = (
+            query.with_entities(RecycleBin.deleted_by_type, func.count().label("count"))
+            .group_by(RecycleBin.deleted_by_type)
+            .order_by(func.count().desc())
+            .all()
+        )
+        pending_count = db.session.query(func.count()).select_from(RecycleBin).filter(
+            RecycleBin.status == "pending"
+        )
+        if deleted_by_type:
+            pending_count = pending_count.filter(
+                RecycleBin.deleted_by_type == deleted_by_type
+            )
+        if resource_type:
+            pending_count = pending_count.filter(
+                RecycleBin.resource_type == resource_type
+            )
+        pending_total = pending_count.scalar() or 0
+
+        return {
+            "total": total,
+            "pending_total": int(pending_total),
+            "by_status": [
+                {"name": row.status or "unknown", "count": int(row.count or 0)}
+                for row in status_rows
+            ],
+            "by_resource_type": [
+                {"name": row.resource_type or "unknown", "count": int(row.count or 0)}
+                for row in type_rows
+            ],
+            "by_deleted_by_type": [
+                {"name": row.deleted_by_type or "unknown", "count": int(row.count or 0)}
+                for row in source_rows
+            ],
+        }
+
     def _attach_deleted_by_names(self, items: list[RecycleBin]) -> None:
         """把删除人 ID 批量解析为账号名（admin=管理员账号，user/agent=用户账号）。
 

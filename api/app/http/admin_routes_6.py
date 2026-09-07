@@ -22,6 +22,19 @@ def _int_arg(name, default):
         return default
 
 
+def _datetime_arg(name, default=None):
+    """把秒级时间戳 query 参数解析为 naive UTC datetime（供 service 层时间窗过滤）。"""
+    value = _int_arg(name, 0)
+    if not value:
+        return default
+    from datetime import UTC, datetime
+
+    try:
+        return datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None)
+    except (ValueError, OSError):
+        return default
+
+
 def _extract_bearer_token():
     auth_header = request.headers.get("Authorization", "")
     if " " not in auth_header:
@@ -395,7 +408,9 @@ def register_routes(quart_app):
         )
 
         metrics = await a._to_thread(
-            a._get_service(RoutingQualityMetricsService).build_metrics
+            a._get_service(RoutingQualityMetricsService).build_metrics,
+            start_at=_datetime_arg("start_at"),
+            end_at=_datetime_arg("end_at"),
         )
         return a._ok(RoutingQualityMetricsResp().dump(metrics))
 

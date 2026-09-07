@@ -8,6 +8,126 @@ class AuditLogService:
     def __init__(self, session=None):
         self.session = session or db.session
 
+    def overview(
+        self,
+        *,
+        action: str = "",
+        resource_type: str = "",
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> dict:
+        """审计日志观测概览：总量/操作分布/资源分布/按日趋势（SQL 级聚合）。"""
+        from datetime import UTC, datetime
+
+        from sqlalchemy import func
+
+        def apply_window(query):
+            if start_time:
+                try:
+                    query = query.filter(
+                        AuditLog.created_at
+                        >= datetime.fromtimestamp(int(start_time), tz=UTC).replace(tzinfo=None)
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if end_time:
+                try:
+                    query = query.filter(
+                        AuditLog.created_at
+                        <= datetime.fromtimestamp(int(end_time), tz=UTC).replace(tzinfo=None)
+                    )
+                except (ValueError, TypeError):
+                    pass
+            return query
+
+        def base_query(extra_filters=True):
+            query = self.session.query(AuditLog)
+            if extra_filters:
+                if action:
+                    query = query.filter(AuditLog.action == action)
+                if resource_type:
+                    query = query.filter(AuditLog.resource_type == resource_type)
+            return apply_window(query)
+
+        total = base_query().count()
+
+        action_rows = (
+            base_query()
+            .with_entities(AuditLog.action, func.count().label("count"))
+            .group_by(AuditLog.action)
+            .order_by(func.count().desc())
+            .limit(15)
+            .all()
+        )
+        resource_rows = (
+            base_query()
+            .with_entities(AuditLog.resource_type, func.count().label("count"))
+            .group_by(AuditLog.resource_type)
+            .order_by(func.count().desc())
+            .limit(15)
+            .all()
+        )
+        ts_col = func.date_trunc("day", AuditLog.created_at)
+        trend_rows = (
+            base_query(extra_filters=False)
+            .with_entities(ts_col.label("ts"), func.count().label("count"))
+            .group_by(ts_col)
+            .order_by(ts_col)
+            .all()
+        )
+        admin_rows = (
+            base_query(extra_filters=False)
+            .with_entities(
+                AuditLog.admin_user_id,
+                func.count().label("count"),
+            )
+            .filter(AuditLog.admin_user_id.isnot(None))
+            .group_by(AuditLog.admin_user_id)
+            .order_by(func.count().desc())
+            .limit(10)
+            .all()
+        )
+
+        admin_ids = [row.admin_user_id for row in admin_rows]
+        admin_name_map = {}
+        if admin_ids:
+            from internal.model.admin import AdminUser
+
+            name_rows = (
+                self.session.query(AdminUser.id, AdminUser.username, AdminUser.name)
+                .filter(AdminUser.id.in_(admin_ids))
+                .all()
+            )
+            admin_name_map = {row[0]: (row[1] or row[2] or "") for row in name_rows}
+
+        return {
+            "total": total,
+            "by_action": [
+                {"name": row.action or "unknown", "count": int(row.count or 0)}
+                for row in action_rows
+            ],
+            "by_resource_type": [
+                {"name": row.resource_type or "unknown", "count": int(row.count or 0)}
+                for row in resource_rows
+            ],
+            "trend": [
+                {
+                    "timestamp": int(row.ts.replace(tzinfo=UTC).timestamp())
+                    if row.ts and row.ts.tzinfo is None
+                    else (int(row.ts.timestamp()) if row.ts else 0),
+                    "count": int(row.count or 0),
+                }
+                for row in trend_rows
+            ],
+            "top_admins": [
+                {
+                    "name": admin_name_map.get(str(row.admin_user_id), str(row.admin_user_id)),
+                    "count": int(row.count or 0),
+                }
+                for row in admin_rows
+            ],
+        }
+
     def record(
         self,
         *,
