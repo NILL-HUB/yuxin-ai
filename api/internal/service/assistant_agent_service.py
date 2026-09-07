@@ -933,12 +933,12 @@ class AssistantAgentService(BaseService):
                 self.app_config_service.get_langchain_tools_by_mcp_bindings(assistant_mcp_bindings)
             )
 
-        # Codex OS 自动化：通过宿主机 worker 执行系统任务。
+        # 本机 OS 文件操作：通过宿主机 worker（/file、/recycle 端点）执行，纯 Python，不依赖外部 CLI。
         # 删除类操作（os_recycle_bin / 纯删除补丁）已全部走本机回收站，可随时恢复，
         # 因此 agent 可全自动执行而无需用户逐次确认；其余写操作仍走 preview → approval。
         if self.app_config_service is not None:
             try:
-                for tool_name in ("run_os_task", "os_file_task", "os_recycle_bin"):
+                for tool_name in ("os_file_task", "os_recycle_bin"):
                     os_tool_factory = (
                         self.app_config_service.builtin_provider_manager.get_tool(
                             "codex_os",
@@ -948,7 +948,7 @@ class AssistantAgentService(BaseService):
                     if os_tool_factory is not None:
                         tools.append(os_tool_factory(requester=str(account_id)))
             except Exception:
-                logger.warning("构建 Codex OS 自动化工具失败，不影响其他工具", exc_info=True)
+                logger.warning("构建本机 OS 文件操作工具失败，不影响其他工具", exc_info=True)
 
         # 语音工具：Agent 可朗读回复或转写语音输入。
         if self.app_config_service is not None:
