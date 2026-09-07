@@ -583,27 +583,18 @@ def test_function_call_agent_tools_node_and_conditions_should_cover_branches():
     assert FunctionCallAgent._preset_operation_condition({"messages": [HumanMessage(content="go")]}) == "long_term_memory_recall"
 
 
-def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch):
-    class _FileTool:
-        name = "os_file_task"
+def test_function_call_agent_tools_node_should_authorize_high_risk_tool_then_execute(monkeypatch):
+    class _EmailTool:
+        name = "send_email"
 
         def __init__(self):
-            self.preview_calls = []
-            self.apply_calls = []
+            self.invocations = []
 
         def invoke(self, args):
-            mode = args.get("mode", "preview")
-            if mode == "preview":
-                self.preview_calls.append(args)
-                return json.dumps({
-                    "ok": True,
-                    "approval_token": "token-123",
-                    "summary": "预览计划",
-                })
-            self.apply_calls.append(args)
-            return json.dumps({"ok": True, "summary": "执行完成"})
+            self.invocations.append(args)
+            return json.dumps({"ok": True, "summary": "已发送"})
 
-    tool = _FileTool()
+    tool = _EmailTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
@@ -618,8 +609,8 @@ def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "os_file_task",
-                        "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n"},
+                        "name": "send_email",
+                        "args": {"to": "a@b.c", "subject": "hi"},
                     }
                 ],
             )
@@ -640,38 +631,33 @@ def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch
 
     result = agent._tools_node(state)
 
-    assert len(tool.preview_calls) == 1
-    assert tool.preview_calls[0]["mode"] == "preview"
-    assert tool.preview_calls[0]["op"] == "patch"
-    assert tool.apply_calls == []
-    assert len(result["messages"]) == 1
-    assert "os_file_task" in result["authorized_tools"]
+    assert len(tool.invocations) == 1
+    assert tool.invocations[0] == {"to": "a@b.c", "subject": "hi"}
+    assert "send_email" in result["authorized_tools"]
     confirmation_events = [
         thought
         for _, thought in agent.agent_queue_manager.published
         if thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
     ]
     assert confirmation_events[0].confirmation_id == confirmation_id
-    assert "宿主机安全目录内" in confirmation_events[0].execution_summary
     assert confirmation_events[0].confirmation_status == "pending"
     action_event = agent.agent_queue_manager.published[-1][1]
     assert action_event.event == QueueEvent.AGENT_ACTION
     assert action_event.confirmation_id == confirmation_id
-    assert "approval_token" not in action_event.observation
 
 
 def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch):
-    class _FileTool:
-        name = "os_file_task"
+    class _EmailTool:
+        name = "send_email"
 
         def __init__(self):
             self.calls = []
 
         def invoke(self, args):
             self.calls.append(args)
-            return json.dumps({"ok": True, "summary": "执行完成"})
+            return json.dumps({"ok": True, "summary": "已发送"})
 
-    tool = _FileTool()
+    tool = _EmailTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
@@ -685,8 +671,8 @@ def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "os_file_task",
-                        "args": {"op": "read", "path": "C:/tmp/a.txt"},
+                        "name": "send_email",
+                        "args": {"to": "a@b.c", "subject": "hi"},
                     }
                 ],
             )
@@ -698,7 +684,7 @@ def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch
     result = agent._tools_node(state)
 
     assert len(tool.calls) == 1
-    assert "os_file_task" in result["authorized_tools"]
+    assert "send_email" in result["authorized_tools"]
     assert not [
         thought
         for _, thought in agent.agent_queue_manager.published
@@ -757,21 +743,17 @@ def test_function_call_agent_tools_node_should_not_readd_loaded_skill_prompt(mon
 
 
 def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatch):
-    class _FileTool:
-        name = "os_file_task"
+    class _EmailTool:
+        name = "send_email"
 
         def __init__(self):
-            self.preview_calls = []
-            self.apply_calls = []
+            self.invocations = []
 
         def invoke(self, args):
-            if args.get("mode") == "preview":
-                self.preview_calls.append(args)
-                return json.dumps({"ok": True, "approval_token": "token-123", "summary": "预览"})
-            self.apply_calls.append(args)
+            self.invocations.append(args)
             return json.dumps({"ok": True, "summary": "不应执行"})
 
-    tool = _FileTool()
+    tool = _EmailTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
@@ -783,7 +765,7 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
             AIMessage(
                 content="",
                 tool_calls=[
-                    {"id": "call-1", "name": "os_file_task", "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n"}}
+                    {"id": "call-1", "name": "send_email", "args": {"to": "a@b.c", "subject": "hi"}}
                 ],
             )
         ],
@@ -802,8 +784,7 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
 
     result = agent._tools_node(state)
 
-    assert tool.preview_calls == []
-    assert tool.apply_calls == []
+    assert tool.invocations == []
     assert "已被用户取消" in result["messages"][0].content
     confirmation_events = [
         thought
@@ -814,32 +795,32 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
 
 
 def test_function_call_agent_tools_node_should_skip_authorization_when_already_authorized(monkeypatch):
-    class _FileTool:
-        name = "os_file_task"
+    class _EmailTool:
+        name = "send_email"
 
         def __init__(self):
             self.invocations = []
 
         def invoke(self, args):
             self.invocations.append(args)
-            return json.dumps({"ok": True, "summary": "执行完成"})
+            return json.dumps({"ok": True, "summary": "已发送"})
 
-    tool = _FileTool()
+    tool = _EmailTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
     )
     state = {
         "task_id": uuid4(),
-        "authorized_tools": ["os_file_task"],
+        "authorized_tools": ["send_email"],
         "messages": [
             AIMessage(
                 content="",
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "os_file_task",
-                        "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "apply"},
+                        "name": "send_email",
+                        "args": {"to": "a@b.c", "subject": "hi"},
                     }
                 ],
             )
@@ -848,12 +829,12 @@ def test_function_call_agent_tools_node_should_skip_authorization_when_already_a
 
     result = agent._tools_node(state)
 
-    assert tool.invocations == [{"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "apply"}]
+    assert tool.invocations == [{"to": "a@b.c", "subject": "hi"}]
     assert not any(
         thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
         for _, thought in agent.agent_queue_manager.published
     )
-    assert "os_file_task" in result["authorized_tools"]
+    assert "send_email" in result["authorized_tools"]
 
 
 def test_user_visible_os_file_result_should_strip_markdown_and_token():
@@ -992,6 +973,55 @@ def test_function_call_agent_tools_node_should_use_configured_tool_policy():
     assert isinstance(failure_error, RuntimeError)
     first_event = agent.agent_queue_manager.published[0][1]
     assert first_event.event == QueueEvent.DATASET_RETRIEVAL
+
+
+def test_function_call_agent_tools_node_os_file_task_executes_without_confirmation(monkeypatch):
+    """os_file_task 移出高风险名单：patch apply 直接执行，不再触发确认卡。
+
+    兜底由写前快照承担（worker 侧），Agent 无需再走 preview→approval 两段式。
+    """
+    class _FileTool:
+        name = "os_file_task"
+
+        def __init__(self):
+            self.invocations = []
+
+        def invoke(self, args):
+            self.invocations.append(args)
+            return json.dumps({"ok": True, "summary": "已修改"})
+
+    tool = _FileTool()
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(tools=[tool]),
+    )
+    state = {
+        "task_id": uuid4(),
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "os_file_task",
+                        "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "apply"},
+                    }
+                ],
+            )
+        ],
+    }
+
+    result = agent._tools_node(state)
+
+    assert tool.invocations == [
+        {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "apply"}
+    ]
+    assert not [
+        thought
+        for _, thought in agent.agent_queue_manager.published
+        if thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
+    ]
+    assert "os_file_task" not in result.get("authorized_tools", [])
 
 
 def test_function_call_agent_tools_node_should_inject_session_context_for_os_tools(monkeypatch):

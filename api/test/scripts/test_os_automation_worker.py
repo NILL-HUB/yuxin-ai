@@ -69,7 +69,10 @@ def test_file_read_blocks_outside_safe_root(tmp_path, monkeypatch):
     assert "超出允许目录" in result["error"]
 
 
-def test_file_patch_preview_then_apply(tmp_path):
+def test_file_patch_preview_then_apply(tmp_path, monkeypatch):
+    """preview 只读校验后可选择 dry-run 预检查；apply 直接执行无需 approval_token。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
     target = tmp_path / "code.py"
     target.write_text("def old():\n    pass\n", encoding="utf-8")
     patch = (
@@ -89,22 +92,23 @@ def test_file_patch_preview_then_apply(tmp_path):
     )
 
     assert preview["ok"] is True
-    token = preview["approval_token"]
-    assert token
+    assert preview["validation"]["dry_run"] is True
+    # preview 不落盘
+    assert target.read_text(encoding="utf-8") == "def old():\n    pass\n"
 
     applied = _file_operation(
         {
             "op": "patch",
             "mode": "apply",
             "patch": patch,
-            "approval_token": token,
             "working_dir": str(tmp_path),
         }
     )
 
     assert applied["ok"] is True
     assert target.read_text(encoding="utf-8") == "def new():\n    pass\n"
-    assert token not in _approvals
+    # apply 前自动生成写前快照（回滚兜底）
+    assert applied.get("snapshot_batch_id")
 
 
 def test_file_patch_preview_does_not_modify_files(tmp_path, monkeypatch):
@@ -254,7 +258,7 @@ def test_file_patch_dry_run_rejects_parent_traversal(tmp_path):
 
 
 def test_file_patch_apply_pure_delete_still_moves_to_recycle(tmp_path, monkeypatch):
-    """纯删除豁免保留：apply DELETE 不需要 token 且真实移入回收站（preview 则不动）。"""
+    """apply DELETE 全自动执行：无需 token，真实移入回收站（preview 则不动）。"""
     monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
     target = tmp_path / "victim.txt"
     target.write_text("doomed", encoding="utf-8")
@@ -291,18 +295,34 @@ def test_file_patch_apply_pure_delete_still_moves_to_recycle(tmp_path, monkeypat
     assert any(recycle_dir.rglob("victim.txt"))
 
 
-def test_file_patch_apply_requires_token(tmp_path):
+def test_file_patch_apply_without_token_executes_directly(tmp_path, monkeypatch):
+    """apply 不再要求 approval_token：直接执行成功，且写前自动生成快照。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    target = tmp_path / "code.py"
+    target.write_text("def old():\n    pass\n", encoding="utf-8")
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {target}\n@@\n"
+        "-def old():\n+def new():\n     pass\n"
+        "*** End Patch\n"
+    )
+
     result = _file_operation(
         {
             "op": "patch",
             "mode": "apply",
-            "patch": "*** Begin Patch\n*** Add File: x\n+x\n*** End Patch\n",
+            "patch": patch,
             "working_dir": str(tmp_path),
         }
     )
 
-    assert result["ok"] is False
-    assert "approval_token" in result["error"]
+    assert result["ok"] is True
+    assert target.read_text(encoding="utf-8") == "def new():\n    pass\n"
+    # apply 直接执行，且写前自动生成快照（改错可回滚）
+    assert result.get("snapshot_batch_id")
+    entries = _read_snapshot_manifest(str(tmp_path))
+    assert any(e["path"] == str(target) for e in entries)
 
 
 def test_file_patch_blocks_path_escape(tmp_path, monkeypatch):
@@ -576,22 +596,12 @@ def test_patch_snapshot_and_rollback_use_safe_root_when_working_dir_is_subdir(tm
         "*** End Patch\n"
     )
 
-    # SAFE_ROOT=tmp_path、working_dir=project 子目录，apply 需带有效 approval_token。
-    preview = _file_operation(
-        {
-            "op": "patch",
-            "mode": "preview",
-            "patch": patch,
-            "working_dir": str(project),
-        }
-    )
-    assert preview["ok"] is True
+    # SAFE_ROOT=tmp_path、working_dir=project 子目录；apply 直接执行无需 token。
     applied = _file_operation(
         {
             "op": "patch",
             "mode": "apply",
             "patch": patch,
-            "approval_token": preview["approval_token"],
             "working_dir": str(project),
             "session_id": "sess-root",
             "conversation_turn": "turn-root",

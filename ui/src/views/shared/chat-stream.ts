@@ -337,6 +337,7 @@ export const applyChatStreamEvent = (
     shouldRefreshOutputParts = true
   } else if (event === QueueEvent.agentAction) {
     upsertThought(thoughts, data, nextState, { appendThought: false })
+    // os_file_task 已移出高风险名单（写前快照兜底、免确认），此分支仅为历史确认卡片回填保留
     if (nextState.toolConfirmationPrompt && data.tool === 'os_file_task' && data.observation) {
       nextState.toolConfirmationPrompt.execution_summary = String(data.observation)
     }

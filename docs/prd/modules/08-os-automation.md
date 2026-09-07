@@ -1,41 +1,49 @@
-# 宿主机 Codex OS 自动化
+# 宿主机 OS 自动化
+
+> 更新日期：2026-09-08（批次 3：os_file_task 移出高风险名单，修改本机文件免确认，靠快照回滚兜底）
 
 ## 目标
 
-让用户在钰心AI 用户端自然语言提出系统自动化任务（例如“帮我清理 C 盘垃圾”），
-由平台 Agent 调用宿主机 Codex，在真实操作系统上先预览、再经用户确认后执行。
+让用户在钰心AI 用户端自然语言提出本机文件操作任务（例如“读一下 C 盘的项目代码”“改一下配置并重启后回滚”），
+由平台 Agent 调用宿主机自研 worker，在真实操作系统安全目录内执行读取、搜索、V4A 补丁修改、
+回收站删除/恢复与写前快照回滚——纯 Python，不依赖外部 CLI。
 
 ## 架构
 
 ```text
 用户端 / 首页助手
-  → AssistantAgentService.run_os_task（内置工具）
-  → API 容器（OS_AUTOMATION_URL / OS_AUTOMATION_TOKEN）
-  → 宿主机 OS automation worker（api/scripts/os_automation_worker.py）
-  → Codex CLI（宿主机真实系统）
+  → AssistantAgentService 挂载 os_file_task / os_recycle_bin / os_snapshot（内置工具）
+  → API 容器（OS_AUTOMATION_URL / OS_AUTOMATION_TOKEN，或 DESKTOP_BRIDGE_URL/TOKEN）
+  → 宿主机 os_automation_worker.py（api/scripts/os_automation_worker.py，HTTP 8765）
+     ├─ /file      → read / search / V4A patch（preview 只读 dry-run；apply 写前快照）
+     ├─ /recycle   → delete（移入回收站）/ list / restore / purge
+     └─ /snapshot  → rollback_file / rollback_turn / list_snapshots
 ```
 
-平台容器运行在 Docker 内，默认不直接接触宿主机 C 盘。因此需要宿主机侧
-常驻一个轻量 HTTP worker，只做“受保护地调用 Codex”这一件事。
+平台容器运行在 Docker 内，默认不直接接触宿主机磁盘。宿主机侧常驻轻量 HTTP worker，
+以 `Bearer <OS_AUTOMATION_TOKEN>` 鉴权，所有文件操作限制在安全根目录内
+（`OS_AUTOMATION_SAFE_ROOT`，缺省当前用户主目录）。
 
 ## 安全模型
 
-1. worker 仅接受 `Authorization: Bearer <OS_AUTOMATION_TOKEN>`。
-2. 每次任务先 `preview`：Codex 生成影响计划和命令，worker 返回一次性
-   `approval_token`。
-3. `apply` 必须携带同一个 `approval_token`，且 token 5 分钟内有效、成功后作废。
-4. `preview` 使用 Codex `danger-full-access` 但提示词强制只读；Windows 的
-   Codex CLI 不支持 read-only 沙箱，因此真正的执行门禁由 approval_token 承担。
-5. `apply` 使用 `--dangerously-bypass-approvals-and-sandbox`，因为平台侧
-   已经完成“预览 + 用户确认”。
-6. **删除只进回收站（硬阻断）**：Agent 在本机的任何删除动作必须走
-   `os_recycle_bin` 工具（delete 移入回收站、可恢复）。`run_os_task`
-   客户端在 apply 前用 `delete_guard.find_delete_command` 做本地快速拦截；
-   worker `/run` 处理器在调用 Codex 执行前再次拦截（无论请求来自哪个客户端），
-   凡任务文本含 `del`/`rm`/`Remove-Item`/`rmdir`/`rd`/`ri`/`erase`/`unlink`
-   等物理删除命令即返回 `{"ok": false, "blocked": "delete_command", ...}`，
-   不发放 approval_token、不执行 Codex。apply 提示词同时显式禁止终端删除命令。
-   V4A 文件补丁的 Delete File 与 `os_recycle_bin` 删除均已走回收站，不受影响。
+1. worker 仅接受 `Authorization: Bearer <OS_AUTOMATION_TOKEN>` 的请求，缺省监听回环地址。
+2. `/file` 的 V4A 补丁：
+   - `mode=preview`：只读 dry-run——在临时副本上模拟补丁，校验路径/格式/可应用性，
+     不修改真实文件、不删除文件、不移入回收站。响应仍携带 `approval_token` 仅为兼容旧客户端结构。
+   - `mode=apply`：直接执行（**无需逐次人工确认**）。每次真实写文件前自动捕获写前快照
+     （fail-closed：快照失败拒绝本次写）；删除类操作移入本机回收站（可恢复）。
+3. **回滚兜底取代人工确认**：
+   - 改错 → `os_snapshot` `rollback_file`（单文件）或 `rollback_turn`（按用户消息轮批量恢复）。
+   - 误删 → `os_recycle_bin` `list` + `restore`。
+   - 快照全存宿主机本机隐藏目录（`<safe_root>/.yuxin_ai_snapshots`），默认留存 7 天后 GC 清理。
+4. `os_file_task` 已移出 `ToolPolicy._DEFAULT_HIGH_RISK_TOOL_NAMES`：Agent 修改本机文件不再弹
+   高风险确认窗口（由快照+回收站自愈闭环兜底）。其余高风险工具（send_email/execute_code/
+   browser_action/computer_action 等）仍走原确认链路。
+5. **动作审计不放开**：os_file_task/os_recycle_bin/os_snapshot 的每次调用仍以
+   AgentThought（AGENT_ACTION 事件，含谁/哪台设备/工具入参/结果）全程记录，
+   与高风险名单解耦（名单只决定是否弹确认，不决定是否审计）。
+6. 越界防护：任何路径先经 `_is_path_within`/`_resolve_safe_root` resolve 判定，dry-run 与
+   apply 口径一致，含 `..` 段的越界路径一律拒绝。
 
 ## 环境变量
 
@@ -44,15 +52,16 @@
 ```dotenv
 OS_AUTOMATION_URL=http://host.docker.internal:8765
 OS_AUTOMATION_TOKEN=replace-with-strong-token
-CODEX_CLI_PATH=C:\Users\Administrator\AppData\Local\OpenAI\Codex\bin\8e8bf206e63ac436\codex.exe
+OS_AUTOMATION_SAFE_ROOT=C:\Users\Administrator
+OS_AUTOMATION_SNAPSHOT_RETENTION_DAYS=7
+OS_AUTOMATION_SNAPSHOT_MAX_BYTES=52428800
 ```
 
 宿主机 worker 启动：
 
 ```powershell
 $env:OS_AUTOMATION_TOKEN="replace-with-strong-token"
-$env:CODEX_CLI_PATH="C:\...\codex.exe"
-python api/scripts/os_automation_worker.py --host 0.0.0.0 --port 8765
+python api/scripts/os_automation_worker.py --host 127.0.0.1 --port 8765
 ```
 
 健康检查：
@@ -63,16 +72,15 @@ curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/health
 
 ## 平台工具
 
-内置工具 `codex_os.run_os_task` 已预挂载到首页助手：
+内置 `codex_os` provider 下三个工具已预挂载到首页助手（`assistant_agent_service`）：
 
-- 参数 `task`：自然语言任务描述。
-- 参数 `mode`：`preview` / `apply`。
-- 参数 `approval_token`：`preview` 返回，`apply` 必须携带。
-- 参数 `working_dir`：宿主机工作目录，默认用户主目录。
-- 参数 `requester`：由平台自动注入账号 ID，用于审计。
-
-工具名 `run_os_task` 被加入 `ToolPolicy.high_risk_tool_names`，Agent 调用时
-会进入现有高风险工具确认链路，避免无提示执行。
+- `os_file_task`：op=`read`（支持分页）/ `search`（ripgrep）/ `patch`（V4A）。
+  `patch` 默认 `mode=apply` 直接修改（写前自动快照）；`mode=preview` 只读 dry-run 预检查。
+  `approval_token` 为历史兼容字段，apply 已不校验。`requester`/`session_id`/`conversation_turn`
+  由平台注入，`conversation_turn` 随写前快照写入 manifest，供 `rollback_turn` 按消息轮回滚。
+- `os_recycle_bin`：op=`delete`（移入回收站，不物理删除）/ `list` / `restore` / `purge`。
+  删除天然免确认（可恢复）。
+- `os_snapshot`：op=`rollback_file` / `rollback_turn` / `list_snapshots`，管理写前快照并回滚。
 
 ## 验证
 
@@ -80,16 +88,12 @@ curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/health
 
 ```bash
 python -m pytest test/scripts/test_os_automation_worker.py \
-  test/internal/core/tools/test_codex_os_tool.py -q
+  test/internal/core/tools/test_os_file_task_tool.py \
+  test/internal/core/tools/test_os_snapshot_tool.py \
+  test/internal/core/tools/test_os_recycle_bin_tool.py \
+  test/internal/core/agent/test_tool_confirmation_integration.py \
+  test/internal/core/agent/test_function_call_and_react_agent.py -q --no-cov
 ```
 
-真实全链路 E2E（需要本机 Codex CLI）：
-
-```powershell
-$env:OS_AUTOMATION_TOKEN="dev-os-automation-token-2026"
-$env:CODEX_CLI_PATH="$env:LOCALAPPDATA\OpenAI\Codex\bin\8e8bf206e63ac436\codex.exe"
-python api/scripts/test_os_automation_e2e.py
-```
-
-E2E 会验证：worker 健康检查 → Codex preview 返回计划与 approval_token →
-apply 在临时目录真实创建文件并校验内容。
+覆盖：preview 只读不落盘、apply 直接执行且写前自动快照、路径越界拒绝、回收站删除可恢复、
+单文件/按轮批量回滚、GC 清理、os_file_task 免确认（不再弹确认卡）。

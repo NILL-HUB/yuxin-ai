@@ -24,7 +24,6 @@ _DEFAULT_HIGH_RISK_TOOL_NAMES = (
     "delete_resource",
     "modify_billing",
     "transfer_funds",
-    "os_file_task",
     "execute_code",
     "browser_action",
     "computer_action",

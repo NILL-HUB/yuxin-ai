@@ -39,7 +39,7 @@
 
 **实现锚点（与上述要求一致，已真实落地）**：
 
-- 高风险/危险工具登记表：`api/internal/core/agent/entities/tool_policy_entity.py` 的 `ToolPolicy`，`_DEFAULT_HIGH_RISK_TOOL_NAMES` 含 `send_email` / `send_sms` / `execute_sql` / `deploy_application` / `delete_resource` / `modify_billing` / `transfer_funds` / `run_os_task` / `os_file_task` / `execute_code` / `browser_action` / `computer_action`；`_DEFAULT_DANGEROUS_TOOL_NAMES` 含 `drop_table` / `format_disk` / `execute_shell`（危险工具始终拒绝，危险/高风险名单经 `_normalize_tool_name` 规范化后匹配，注入改写无法绕过）。
+- 高风险/危险工具登记表：`api/internal/core/agent/entities/tool_policy_entity.py` 的 `ToolPolicy`，`_DEFAULT_HIGH_RISK_TOOL_NAMES` 含 `send_email` / `send_sms` / `execute_sql` / `deploy_application` / `delete_resource` / `modify_billing` / `transfer_funds` / `execute_code` / `browser_action` / `computer_action`（`run_os_task` 已随 Codex 链路清理删除；`os_file_task` 因写前快照+回收站兜底移出名单、修改本机文件免确认）；`_DEFAULT_DANGEROUS_TOOL_NAMES` 含 `drop_table` / `format_disk` / `execute_shell`（危险工具始终拒绝，危险/高风险名单经 `_normalize_tool_name` 规范化后匹配，注入改写无法绕过）。
 - 确认记录模型与读写：`api/internal/model/tool_confirmation.py`（`ToolConfirmation`，pending/confirmed/cancelled 状态）+ `ToolConfirmationService`（`api/internal/service/tool_confirmation_service.py`）落库确认记录并联动 `ToolInvocationAuditService` 审计。
 - 确认阻塞机制：`function_call_agent.py` 的 `_create_tool_confirmation` 创建 pending 确认，`_wait_for_confirmation` 挂起等待用户确认卡片选择，超时按安全默认取消；未确认前不执行，确认机制创建失败时阻止执行。
 - Prompt 注入检测：`api/internal/security/prompt_injection_detector.py`（`PromptInjectionDetector`，含系统指令覆写/角色扮演/分隔符绕过/编码绕过/越狱等模式），由 `ToolInvokerService._security_error` 在调用前检测，高严重度注入返回 `prompt_injection_detected` 拒绝执行。

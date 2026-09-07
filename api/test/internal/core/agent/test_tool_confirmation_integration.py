@@ -26,10 +26,14 @@ class TestToolConfirmationIntegration:
     def test_queue_event_should_include_tool_confirmation_required(self):
         assert QueueEvent.TOOL_CONFIRMATION_REQUIRED.value == "tool_confirmation_required"
 
-    def test_os_file_task_is_high_risk(self):
+    def test_os_file_task_is_not_high_risk(self):
+        """os_file_task 移出高风险名单：写前快照兜底，修改本机文件不再弹确认。"""
         policy = ToolPolicy()
-        assert policy.is_high_risk_tool("os_file_task") is True
+        assert policy.is_high_risk_tool("os_file_task") is False
         assert policy.is_high_risk_tool("run_os_task") is False
+        # 其余高风险工具不受影响
+        assert policy.is_high_risk_tool("send_email") is True
+        assert policy.is_high_risk_tool("execute_code") is True
 
     def test_os_file_task_confirmation_summary_is_human_readable(self):
         patch_summary = FunctionCallAgent._build_confirmation_summary(
@@ -93,8 +97,8 @@ class TestToolConfirmationIntegration:
         agent = SimpleNamespace(agent_config=SimpleNamespace(user_id=user_id))
         state = SimpleNamespace(user_id=None, account_id=None)
         tool_call = {
-            "name": "os_file_task",
-            "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "preview"},
+            "name": "send_email",
+            "args": {"to": "a@b.c", "subject": "hi"},
             "id": "call-1",
         }
 
@@ -107,7 +111,7 @@ class TestToolConfirmationIntegration:
 
         assert result is not None
         assert captured["confirmation"].owner_account_id == user_id
-        assert captured["confirmation"].tool_name == "os_file_task"
+        assert captured["confirmation"].tool_name == "send_email"
 
     def test_wait_for_confirmation_should_resume_after_user_confirms(self, monkeypatch):
         account_id = uuid4()
