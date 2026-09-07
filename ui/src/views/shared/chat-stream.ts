@@ -337,7 +337,7 @@ export const applyChatStreamEvent = (
     shouldRefreshOutputParts = true
   } else if (event === QueueEvent.agentAction) {
     upsertThought(thoughts, data, nextState, { appendThought: false })
-    if (nextState.toolConfirmationPrompt && data.tool === 'run_os_task' && data.observation) {
+    if (nextState.toolConfirmationPrompt && data.tool === 'os_file_task' && data.observation) {
       nextState.toolConfirmationPrompt.execution_summary = String(data.observation)
     }
     const observation = String(data.observation ?? '')

@@ -160,8 +160,8 @@
   category: tool
   created_at: 1740800000
 - name: codex_os
-  label: Codex 系统自动化
-  description: 在宿主机操作系统上执行用户确认的系统自动化任务，例如清理磁盘垃圾、检查系统状态。
+  label: 本机文件操作
+  description: 在宿主机执行本机文件操作（读/搜/V4A 补丁）与回收站删除/恢复，纯 Python 实现，不依赖外部 CLI。
   icon: ""
   background: "#E8F3FF"
   category: automation

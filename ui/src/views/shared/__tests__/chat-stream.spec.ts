@@ -557,7 +557,7 @@ describe('chat-stream', () => {
         data: {
           id: 'event-uuid',
           confirmation_id: 'confirm-123',
-          tool: 'run_os_task',
+          tool: 'os_file_task',
           tool_input: { task: '清理 C 盘垃圾' },
           execution_summary: '预览计划',
           confirmation_status: 'pending',
@@ -573,7 +573,7 @@ describe('chat-stream', () => {
     expect(message.agent_thoughts).toHaveLength(0)
   })
 
-  it('run_os_task agent_action 应把执行结果回填到确认卡片', () => {
+  it('os_file_task agent_action 应把执行结果回填到确认卡片', () => {
     const message = createMessage()
     let state = createState()
     state = applyChatStreamEvent(
@@ -582,7 +582,7 @@ describe('chat-stream', () => {
         event: QueueEvent.toolConfirmationRequired,
         data: {
           confirmation_id: 'confirm-123',
-          tool: 'run_os_task',
+          tool: 'os_file_task',
           tool_input: { task: '清理 C 盘垃圾' },
           execution_summary: '预览计划',
           confirmation_status: 'pending',
@@ -597,7 +597,7 @@ describe('chat-stream', () => {
         event: QueueEvent.agentAction,
         data: {
           id: 'action-1',
-          tool: 'run_os_task',
+          tool: 'os_file_task',
           tool_input: { task: '清理 C 盘垃圾', mode: 'apply' },
           observation: '清理完成，释放 1.2GB',
         },

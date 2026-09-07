@@ -506,10 +506,7 @@ class FunctionCallAgent(BaseAgent):
                         or getattr(state, "user_id", None)
                         or getattr(state, "account_id", None)
                     )
-                    host_workflow_tool = tool_call["name"] in {
-                        "run_os_task",
-                        "os_file_task",
-                    }
+                    host_workflow_tool = tool_call["name"] == "os_file_task"
                     already_authorized = (
                         tool_call["name"] in authorized_tools
                         or (
@@ -726,16 +723,6 @@ class FunctionCallAgent(BaseAgent):
                 serialized_tool_result,
             )
 
-            if tool_call["name"] == "run_os_task" and confirmation_id:
-                try:
-                    result_payload = json.loads(serialized_tool_result)
-                except Exception:
-                    result_payload = {}
-                summary = str(
-                    result_payload.get("summary") or serialized_tool_result or "执行完成"
-                )
-                self._update_confirmation_summary(confirmation_id, summary)
-
             # 7.将工具消息添加到消息列表中
             messages.append(ToolMessage(
                 tool_call_id=tool_call["id"],
@@ -803,17 +790,6 @@ class FunctionCallAgent(BaseAgent):
     @staticmethod
     def _build_confirmation_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
         """生成用户可见的授权摘要，避免把原始 Markdown/JSON 直接铺到卡片上。"""
-        if tool_name == "run_os_task":
-            task = str((tool_input or {}).get("task", "") or "").strip()
-            if task:
-                return (
-                    f"请求授权在宿主机执行系统自动化任务：{task}。"
-                    "授权后我会先做只读扫描并整理方案，不会直接删除或修改文件。"
-                )
-            return (
-                "请求授权在宿主机执行系统自动化任务。"
-                "授权后我会先做只读扫描并整理方案，不会直接删除或修改文件。"
-            )
         if tool_name == "os_file_task":
             operation = str((tool_input or {}).get("op") or "patch")
             if operation == "read":
@@ -827,7 +803,7 @@ class FunctionCallAgent(BaseAgent):
     @staticmethod
     def _build_user_visible_tool_result(tool_name: str, serialized_result: str) -> str:
         """工具结果只展示给用户可读摘要，避免把 approval_token/原始命令泄露到思考区。"""
-        if tool_name not in {"run_os_task", "os_file_task"}:
+        if tool_name not in {"os_file_task"}:
             return serialized_result
         try:
             result = json.loads(serialized_result)

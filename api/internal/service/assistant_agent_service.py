@@ -1529,7 +1529,7 @@ class AssistantAgentService(BaseService):
         os_automation_request = self._is_os_automation_request(req.query.data)
         if os_automation_request:
             # 系统自动化任务固定走带工具的单 Agent，避免模型/指挥官不支持结构化输出时
-            # 被降级成 direct_answer 而无法调用 run_os_task。
+            # 被降级成 direct_answer 而无法调用 os_file_task / os_recycle_bin。
             routing_decision = {
                 "intent": "tool_task",
                 "execution_mode": "single_agent_with_tools",
