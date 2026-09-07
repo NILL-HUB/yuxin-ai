@@ -353,3 +353,91 @@ def test_cleanup_expired_records_scopes_by_account(monkeypatch):
     assert "recycle_bin.deleted_by_type IN" in joined_text
     for resource_type in RecycleBinService.USER_VISIBLE_RESOURCE_TYPES:
         assert resource_type in joined_text
+
+
+def test_overview_aggregates_status_type_and_source(monkeypatch):
+    """overview 应返回状态/类型/来源分布与 pending 计数。"""
+    from types import SimpleNamespace as _NS
+
+    class _ChainQuery:
+        """主列表 query stub：count() 返回 5，随后分组 all() 按序返回状态/类型/来源。"""
+
+        def __init__(self, group_sets, scalar_value=None, filters=None):
+            self.group_sets = list(group_sets)
+            self.scalar_value = scalar_value
+            self.filters = filters or []
+            self.group_calls = 0
+
+        def filter(self, *args):
+            self.filters.extend(args)
+            return self
+
+        def with_entities(self, *_a):
+            return self
+
+        def group_by(self, *_a):
+            return self
+
+        def order_by(self, *_a):
+            return self
+
+        def select_from(self, *_a):
+            return self
+
+        def limit(self, *_a):
+            return self
+
+        def count(self):
+            return 5
+
+        def all(self):
+            result = self.group_sets[self.group_calls % len(self.group_sets)]
+            self.group_calls += 1
+            return result
+
+        def scalar(self):
+            return self.scalar_value
+
+    class _Session:
+        def query(self, *_a):
+            # 第 1 次：主列表 query（count + 三组分布）
+            return _ChainQuery(
+                group_sets=[
+                    [_NS(name="pending", count=3), _NS(name="expired", count=1), _NS(name="restored", count=1)],
+                    [_NS(name="app", count=4), _NS(name="workflow", count=1)],
+                    [_NS(name="admin", count=5)],
+                ]
+            )
+            # 第 2 次（pending_count）由新对象承担——见 query_index
+
+    class _PendingSession:
+        def __init__(self):
+            self.calls = 0
+
+        def query(self, *_a):
+            self.calls += 1
+            if self.calls == 1:
+                return _ChainQuery(
+                    group_sets=[
+                        [_NS(name="pending", count=3), _NS(name="expired", count=1), _NS(name="restored", count=1)],
+                        [_NS(name="app", count=4), _NS(name="workflow", count=1)],
+                        [_NS(name="admin", count=5)],
+                    ]
+                )
+            return _ChainQuery(group_sets=[], scalar_value=3)
+
+    session = _PendingSession()
+    monkeypatch.setattr(recycle_bin_service, "db", _NS(session=session))
+
+    result = RecycleBinService().overview()
+
+    assert result["total"] == 5
+    assert result["pending_total"] == 3
+    assert result["by_status"] == [
+        {"name": "pending", "count": 3},
+        {"name": "expired", "count": 1},
+        {"name": "restored", "count": 1},
+    ]
+    assert result["by_resource_type"][0] == {"name": "app", "count": 4}
+    assert result["by_deleted_by_type"] == [{"name": "admin", "count": 5}]
+
