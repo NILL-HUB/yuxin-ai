@@ -34,11 +34,34 @@ def _ensure_runtime() -> None:
 
 
 class AppContextTask(Task):
-    """任务基类：执行前确保运行时容器可用（保留类名兼容注册引用）。"""
+    """任务基类：执行前确保运行时容器可用（保留类名兼容注册引用）。
+
+    生命周期管理：
+    - ``__call__``：任务开始前确保运行时容器（current_app/injector）可用。
+    - ``after_return``：任务结束后（无论成功/失败/异常）统一 ``db.session.remove()``，
+      释放当前 worker 线程的 scoped session 及其 DB 连接。
+
+    为什么必须有 after_return：
+      业务代码大量使用线程级 ``scoped_session``（db.session），只读查询后若不
+      commit/remove，连接会以「idle in transaction」状态长期占住连接池；worker
+      线程常驻复用，一条连接可被一个任务滞留到 pool_recycle(1h)。这是 celery
+      容器连接数持续上涨、最终占满连接池并阻塞 DDL 的根因。
+    """
 
     def __call__(self, *args, **kwargs):
         _ensure_runtime()
         return self.run(*args, **kwargs)
+
+    def after_return(self, status, retval, task_id, args, kwargs, einfo):
+        """任务收尾：无论成功失败都归还数据库连接（best-effort，绝不抛异常）。"""
+        try:
+            from internal.extension.database_extension import db
+
+            remove = getattr(db.session, "remove", None)
+            if callable(remove):
+                remove()
+        except Exception:
+            logger.warning("AppContextTask.after_return: db.session.remove() 失败", exc_info=True)
 
 
 def _build_config() -> dict:
@@ -90,6 +113,11 @@ beat_schedule.update(
         "auto-renewal-scan": {
             "task": "internal.task.auto_renewal_tasks.run_auto_renewal_scan",
             "schedule": crontab(minute=30),  # 每小时 30 分兜底扫描
+            "args": [],
+        },
+        "schedule-stale-run-cleanup": {
+            "task": "internal.task.schedule_tasks.cleanup_stale_runs",
+            "schedule": crontab(minute="*/15"),  # 每 15 分钟清理僵尸 running 记录
             "args": [],
         },
     }

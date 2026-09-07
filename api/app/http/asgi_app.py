@@ -82,6 +82,18 @@ async def _enforce_admin_rbac():
 @quart_app.teardown_request
 async def _clear_request_scope(*_args):
     clear_request_scope()
+    # 兜底清理主线程（async 事件循环线程）可能开启的同步 db.session：
+    # 若某 async 路由直接使用 db.session 读库后未显式 commit/rollback，
+    # 这里 remove() 会结束残留事务并归还连接，避免 idle in transaction 累积。
+    # 注：to_thread 线程池内的 session 由 support._to_thread 的 finally remove 负责。
+    try:
+        from internal.extension.database_extension import db
+
+        remove_session = getattr(db.session, "remove", None)
+        if callable(remove_session):
+            remove_session()
+    except Exception:
+        pass
 
 
 @quart_app.errorhandler(CustomException)

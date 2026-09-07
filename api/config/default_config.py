@@ -39,6 +39,13 @@ DEFAULT_CONFIG = {
     "CELERY_TASK_IGNORE_RESULT": "False",
     "CELERY_RESULT_EXPIRES": 3600,
     "CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP": "True",
+    # Redis broker visibility timeout（秒）：acks_late 长任务需大于最长任务时长，
+    # 否则正常执行超时未 ack 会被 broker 误重投；默认 24h
+    "CELERY_BROKER_VISIBILITY_TIMEOUT": 86400,
+    # worker 处理该任务数后重启子进程（进程级防泄漏保险丝，非并发限制）；默认 0 = 不限制
+    "CELERY_WORKER_MAX_TASKS_PER_CHILD": 2000,
+    # worker 预取倍数（1 = 每次只取一个任务，减少长事务堆积）；默认 4
+    "CELERY_WORKER_PREFETCH_MULTIPLIER": 4,
 
     # 辅助Agent智能体应用id
     "ASSISTANT_AGENT_ID": "6774fcef-b594-8008-b30c-a05b8190afe6",

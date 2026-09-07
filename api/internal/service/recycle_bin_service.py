@@ -522,8 +522,9 @@ class RecycleBinService:
                 failed += 1
                 item.remark = "销毁失败"
                 logger.exception("回收站到期销毁失败 id=%s type=%s", item.id, item.resource_type)
-        if expired:
-            db.session.commit()
+        # 无论是否有到期条目都结束事务：空列表时 query 已开启只读事务，
+        # 若不 commit，连接会以 idle in transaction 滞留（celery 长连接泄漏源之一）。
+        db.session.commit()
         return {"purged": purged, "failed": failed, "total": len(expired)}
 
 

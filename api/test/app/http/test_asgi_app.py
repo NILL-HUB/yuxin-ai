@@ -790,6 +790,10 @@ class TestAsgiAccount:
             last_login_ip="1.2.3.4",
             is_password_set=True,
             created_at=1710000000,
+            email_verified_at=None,
+            phone="",
+            phone_verified_at=None,
+            password="",
         )
         account_service = _FakeAccountService()
         oauth_service = _FakeOAuthService()

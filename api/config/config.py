@@ -146,6 +146,20 @@ class Config:
             "task_ignore_result": _get_bool_env("CELERY_TASK_IGNORE_RESULT"),
             "result_expires": int(_get_env("CELERY_RESULT_EXPIRES")),
             "broker_connection_retry_on_startup": _get_bool_env("CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP"),
+            # schedule_task_execute 已开启 acks_late；Redis broker 默认 visibility
+            # 1h 会把正常执行超 1h 的长任务误判为未 ack 而重投。visibility_timeout
+            # 加大到覆盖最长任务（默认 24h），崩溃重投由 reject_on_worker_lost 负责
+            # （worker 进程消失时立即 requeue，不等 visibility 超时）。
+            "broker_transport_options": {
+                "visibility_timeout": int(_get_env("CELERY_BROKER_VISIBILITY_TIMEOUT")),
+            },
+            # 进程级最终保险丝：worker 处理大量任务后重启子进程，防进程级
+            # 内存/连接泄漏。注意这是「防泄漏」不是「并发限制」——并发由业务层
+            # 治理（schedule 每用户同时运行上限）；长任务以「个」计，不会因此
+            # 被误杀。连接泄漏主治理是 AppContextTask.after_return 的
+            # db.session.remove()。
+            "worker_max_tasks_per_child": int(_get_env("CELERY_WORKER_MAX_TASKS_PER_CHILD")),
+            "worker_prefetch_multiplier": int(_get_env("CELERY_WORKER_PREFETCH_MULTIPLIER")),
             "task_default_queue": "celery",
             "task_queues": (
                 Queue("celery"),
