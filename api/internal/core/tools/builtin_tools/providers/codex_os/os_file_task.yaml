@@ -1,6 +1,6 @@
 name: os_file_task
 label: 宿主文件操作
-description: 在宿主机安全目录内读取（支持分页）/搜索（ripgrep）/应用 V4A 补丁修改文件，写操作需用户确认。
+description: 在宿主机安全目录内读取（支持分页）/搜索（ripgrep）/应用 V4A 补丁修改文件，写前自动快照可经 os_snapshot 回滚，无需逐次确认。
 params:
   - name: session_id
     type: string

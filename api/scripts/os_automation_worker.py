@@ -6,8 +6,9 @@
 
 安全模型：
 - 仅接受 Authorization: Bearer <OS_AUTOMATION_TOKEN> 的请求。
-- /file 的 patch apply 需携带 preview 返回的一次性 approval_token；纯删除类补丁
-  已走回收站（可恢复），无需确认。
+- /file 的 patch apply 直接执行（不要求用户逐次确认）：每次真实写文件前自动
+  捕获写前快照，Agent 可经 /snapshot 端点或 os_snapshot 工具一键回滚；删除类
+  补丁移入本机回收站（可恢复）。mode=preview 仍可做只读 dry-run 校验。
 - 每次真实写文件（UPDATE/DELETE/MOVE）前先做内容快照（写前快照，fail-closed），
   Agent 可通过 /snapshot 端点或 os_snapshot 工具一键回滚。快照全存本机隐藏目录，
   默认留存 7 天后由 GC 清理。
@@ -99,19 +100,6 @@ def _create_approval(task: str) -> str:
             "created_at": time.time(),
         }
     return token
-
-
-def _consume_approval(approval_token: str) -> bool:
-    """校验并消费一次性 approval_token，成功后作废。"""
-    with _approval_lock:
-        approval = _approvals.get(approval_token or "")
-        if approval is None:
-            return False
-        if time.time() - approval["created_at"] > APPROVAL_TTL_SECONDS:
-            _approvals.pop(approval_token, None)
-            return False
-        _approvals.pop(approval_token, None)
-        return True
 
 
 def _resolve_safe_root(requested_root: str) -> str:
@@ -511,10 +499,13 @@ def _file_dry_run_patch(
 
 
 def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
-    """执行文件操作：read/search 只读；patch 先 preview 换取 approval_token。
+    """执行文件操作：read/search 只读；patch 分 preview 与 apply。
 
-    preview 为真只读（dry-run）：在临时副本上模拟补丁校验可应用性与影响，
-    用户确认前不修改/删除任何真实文件，也不写回收站清单；apply 才真落盘。
+    preview 为只读 dry-run：在临时副本上模拟补丁校验可应用性与影响范围，
+    不修改/删除任何真实文件、不写回收站清单（可用于变更前的预检查）。
+    apply 直接执行真实修改——每次写文件前自动捕获写前快照（快照失败拒绝
+    本次写），删除类操作移入本机回收站；改错可经 /snapshot 或 os_snapshot
+    回滚，因此不再要求 approval_token 逐次确认。
     """
     op = str(payload.get("op") or "").strip().lower()
     root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
@@ -547,17 +538,11 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
         if not patch:
             return {"ok": False, "error": "patch 不能为空"}
         if mode == "apply":
-            if not _consume_approval(str(payload.get("approval_token") or "").strip()):
-                # 纯删除类补丁已走回收站（可恢复），允许 agent 全自动删除，无需确认
-                if not _patch_is_pure_delete(patch):
-                    return {
-                        "ok": False,
-                        "error": "缺少有效 approval_token，请先执行 preview 并等待用户确认",
-                    }
-            # root（安全根）作为路径校验与快照存储的基点，working_dir 仅作
-            # 操作基准：两者都归一 resolve 后，root 总为 working_dir 的祖先，
-            # 快照目录落在 <root>/.yuxin_ai_snapshots，与回滚侧 _resolve_safe_root
-            # 读取 manifest 的基点一致。
+            # 写前快照已兜底（改错可回滚、删除入回收站可恢复）：apply 直接执行，
+            # 不再要求用户逐次确认/approval_token。root（安全根）作为路径校验与
+            # 快照存储的基点，working_dir 仅作操作基准：两者都归一 resolve 后，
+            # root 总为 working_dir 的祖先，快照目录落在 <root>/.yuxin_ai_snapshots，
+            # 与回滚侧 _resolve_safe_root 读取 manifest 的基点一致。
             result = _file_apply_patch(
                 patch,
                 root,
@@ -570,8 +555,9 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             )
             return result
         if mode == "preview":
-            # 真只读：在临时副本上模拟补丁，只做路径/格式/可应用性校验并返回
+            # 只读 dry-run：在临时副本上模拟补丁，只做路径/格式/可应用性校验并返回
             # 影响结果；不修改真实文件、不删除文件、不移入回收站（B1 回归）。
+            # 仍签发 approval_token 仅为兼容旧客户端响应结构；apply 已不校验它。
             validation = _file_apply_patch(
                 patch, root, working_dir, dry_run=True
             )
@@ -588,21 +574,6 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "mode 必须为 preview 或 apply"}
 
     return {"ok": False, "error": "op 必须为 read、search 或 patch"}
-
-
-def _patch_is_pure_delete(patch: str) -> bool:
-    """判断 V4A 补丁是否只包含删除文件操作（已移入回收站、可恢复，可免确认执行）。"""
-    try:
-        from internal.core.agent.adapters.hermes.v4a_patch import (
-            OperationType,
-            parse_v4a_patch,
-        )
-    except Exception:
-        return False
-    operations, parse_error = parse_v4a_patch(patch)
-    if parse_error or not operations:
-        return False
-    return all(op.operation == OperationType.DELETE for op in operations)
 
 
 def _detect_lan_ip() -> str:

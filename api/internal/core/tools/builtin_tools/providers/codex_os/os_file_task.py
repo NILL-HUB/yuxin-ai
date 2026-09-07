@@ -1,8 +1,9 @@
 """宿主机文件操作工具。
 
 通过 OS automation worker 在宿主机安全目录内执行文件读取与 V4A 补丁。
-写操作遵循平台高风险工具确认链路：先 preview 校验并换取一次性
-approval_token，用户确认后 apply 才真正修改文件。
+写操作无需逐次人工确认：worker 每次真实写文件前自动捕获写前快照（删除类
+操作移入本机回收站），改错可经 os_snapshot 一键回滚；mode=preview 仍可做
+只读 dry-run 预检查补丁可应用性与影响范围。
 """
 
 from __future__ import annotations
@@ -36,12 +37,12 @@ class OsFileTaskInput(BaseModel):
         description="V4A 补丁内容；op=patch 时必填，格式见系统提示",
     )
     mode: Literal["preview", "apply"] = Field(
-        "preview",
-        description="preview=只校验并返回影响计划与 approval_token；apply=用户确认后执行",
+        "apply",
+        description="preview=只读 dry-run 校验补丁可应用性与影响（不落盘）；apply=直接执行修改（默认，写前自动快照，可经 os_snapshot 回滚）",
     )
     approval_token: str = Field(
         "",
-        description="preview 返回的一次性审批令牌；mode=apply 时必须携带",
+        description="历史兼容字段：apply 已无需审批令牌（写前快照兜底），可省略；preview 响应仍返回 token 仅为旧客户端兼容",
     )
     working_dir: str = Field(
         "",
@@ -119,12 +120,13 @@ class OsFileTaskTool(BaseTool):
     description: str = (
         "在宿主机操作系统上读取/搜索文件，或应用 V4A 补丁修改文件。"
         "read 模式直接返回文件内容（可带 offset/limit 分页）；search 模式在目录内"
-        "用 ripgrep 搜索文件内容并返回命中的行；patch 模式必须先 preview 校验并获得 "
-        "approval_token，向用户展示将修改哪些文件后，用户确认才能用 "
-        "mode=apply 执行。补丁格式：*** Begin Patch / *** Add File: 路径 / "
-        "+内容行 / *** Update File: 路径 / @@ 上下文 / -删除行 / +新增行 / "
-        "*** Delete File: 路径 / *** Move File: 旧路径 -> 新路径 / *** End Patch。"
-        "不要替用户决定修改范围；修改前必须展示影响并等待确认。"
+        "用 ripgrep 搜索文件内容并返回命中的行；patch 模式默认 mode=apply 直接执行"
+        "修改——worker 会在写前自动为受影响文件捕获快照、删除类操作移入回收站，"
+        "改错可用 os_snapshot 工具回滚，无需逐次用户确认；如需先预检查，可用 "
+        "mode=preview 做只读 dry-run 校验（不落盘）。补丁格式：*** Begin Patch / "
+        "*** Add File: 路径 / +内容行 / *** Update File: 路径 / @@ 上下文 / "
+        "-删除行 / +新增行 / *** Delete File: 路径 / *** Move File: 旧路径 -> 新路径 "
+        "/ *** End Patch。"
     )
     args_schema: type[BaseModel] = OsFileTaskInput
     requester: str = ""
@@ -136,7 +138,7 @@ class OsFileTaskTool(BaseTool):
             "op": _normalize_text(kwargs.get("op") or "read").lower(),
             "path": _normalize_text(kwargs.get("path")),
             "patch": str(kwargs.get("patch") or ""),
-            "mode": _normalize_text(kwargs.get("mode") or "preview").lower(),
+            "mode": _normalize_text(kwargs.get("mode") or "apply").lower(),
             "approval_token": _normalize_text(kwargs.get("approval_token")),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
