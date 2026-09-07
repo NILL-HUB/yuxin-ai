@@ -188,6 +188,52 @@ def test_file_apply_patch_dry_run_rejects_escaping_path(tmp_path):
     assert outside.exists() is False
 
 
+def test_file_patch_dry_run_rejects_parent_traversal(tmp_path):
+    """dry-run 与 apply 口径一致：含 .. 段的越界路径在 preview 阶段即被拒绝。
+
+    镜像复制/映射若用词法 relative_to 归一化，会把 root/../sibling/... 错当
+    树内路径：UPDATE 静默读越界文件进副本、MOVE 假报“源不存在”，而真实
+    apply 一律 resolve 后拒绝。此处要求 dry-run 对 UPDATE/DELETE/MOVE 的
+    越界源路径全部返回 ok:False，绝不复制越界内容进副本。
+    """
+    sibling = tmp_path / "sibling"
+    sibling.mkdir()
+    victim = sibling / "victim.txt"
+    victim.write_text("OLD outside\n", encoding="utf-8")
+
+    traversal = f"{tmp_path / 'root'}/../sibling/victim.txt"
+    update_patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {traversal}\n@@\n"
+        "-OLD outside\n+NEW outside\n"
+        "*** End Patch\n"
+    )
+    update_dry = _file_apply_patch(update_patch, str(tmp_path / "root"), str(tmp_path / "root"), dry_run=True)
+    assert update_dry["ok"] is False
+    assert "超出允许目录" in update_dry["error"]
+
+    delete_patch = (
+        "*** Begin Patch\n"
+        f"*** Delete File: {traversal}\n"
+        "*** End Patch\n"
+    )
+    delete_dry = _file_apply_patch(delete_patch, str(tmp_path / "root"), str(tmp_path / "root"), dry_run=True)
+    assert delete_dry["ok"] is False
+    assert "超出允许目录" in delete_dry["error"]
+
+    move_patch = (
+        "*** Begin Patch\n"
+        f"*** Move File: {traversal} -> {tmp_path / 'root' / 'moved.txt'}\n"
+        "*** End Patch\n"
+    )
+    move_dry = _file_apply_patch(move_patch, str(tmp_path / "root"), str(tmp_path / "root"), dry_run=True)
+    assert move_dry["ok"] is False
+    assert "超出允许目录" in move_dry["error"]
+
+    assert victim.read_text(encoding="utf-8") == "OLD outside\n"
+    assert not (tmp_path / "root" / "moved.txt").exists()
+
+
 def test_file_patch_apply_pure_delete_still_moves_to_recycle(tmp_path, monkeypatch):
     """纯删除豁免保留：apply DELETE 不需要 token 且真实移入回收站（preview 则不动）。"""
     monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))

@@ -104,6 +104,19 @@ def _is_path_within(root: str, candidate: str) -> bool:
     return resolved == root or resolved.startswith(root + os.sep)
 
 
+def _normalize_op_path(workdir: str, path: str) -> str:
+    """V4A 补丁操作路径的规范形态（真实 apply 与 dry-run 共用）。
+
+    与 _RootedFileOps 的语义一致：只展开 ~、相对路径拼接到 working_dir，
+    不做 resolve —— 保留 .. 段，由后续 _is_path_within 统一 resolve 判定，
+    保证真实 apply 与临时副本镜像对同一路径得到同一越界结论。
+    """
+    expanded = str(Path(path).expanduser())
+    if not Path(expanded).is_absolute():
+        expanded = str(Path(workdir) / expanded)
+    return expanded
+
+
 def _file_safe_read(path: str, root: str) -> dict[str, Any]:
     if not _is_path_within(root, path):
         return {"ok": False, "error": "路径超出允许目录", "path": path}
@@ -157,11 +170,11 @@ def _file_apply_patch(
         return {"ok": False, "error": parse_error}
 
     for op in operations:
-        candidate = op.file_path if op.operation != "move" else op.new_path or ""
-        if not candidate:
-            continue
-        if not _is_path_within(root, candidate):
-            return {"ok": False, "error": f"路径超出允许目录: {candidate}"}
+        for candidate in (op.file_path, op.new_path if op.operation == "move" else None):
+            if not candidate:
+                continue
+            if not _is_path_within(root, _normalize_op_path(working_dir, candidate)):
+                return {"ok": False, "error": f"路径超出允许目录: {candidate}"}
 
     if dry_run:
         return _file_dry_run_patch(operations, root, working_dir)
@@ -172,10 +185,7 @@ def _file_apply_patch(
             self.workdir = workdir
 
         def _resolve(self, path: str) -> str:
-            expanded = str(Path(path).expanduser())
-            if not Path(expanded).is_absolute():
-                expanded = str(Path(self.workdir) / expanded)
-            return expanded
+            return _normalize_op_path(self.workdir, path)
 
         def read_text(self, path: str) -> str | None:
             resolved = self._resolve(path)
@@ -244,40 +254,30 @@ def _file_dry_run_patch(
 
     mirror_root = Path(root)
     operations = list(operations)
-    try:
-        relevant = {
-            str(Path(op.file_path).expanduser())
-            for op in operations
-            if op.operation in {"add", "update", "delete", "move"}
-            and op.file_path
-        }
-        relevant.update(
-            str(Path(op.new_path).expanduser())
-            for op in operations
-            if op.operation == "move" and op.new_path
-        )
-    except OSError:
-        relevant = set()
-    relevant = {p for p in relevant if _is_path_within(root, p)}
+    normalized: list[tuple[str, str]] = []
+    for op in operations:
+        for field in ("file_path", "new_path") if op.operation == "move" else ("file_path",):
+            value = str(getattr(op, field) or "").strip()
+            if not value:
+                continue
+            resolved = str(Path(_normalize_op_path(working_dir, value)).expanduser().resolve())
+            if not _is_path_within(root, resolved):
+                return {"ok": False, "error": f"路径超出允许目录: {value}", "dry_run": True}
+            normalized.append((value, resolved))
 
     with tempfile.TemporaryDirectory(prefix="os_worker_dry_run_") as scratch:
         scratch_path = Path(scratch)
 
         def mirrored(real_path: str) -> str:
-            rel = Path(real_path).expanduser()
-            if not rel.is_absolute():
-                rel = mirror_root / rel
-            try:
-                relative = rel.relative_to(mirror_root)
-            except ValueError:
-                relative = Path(rel.name)
+            resolved = str(Path(real_path).expanduser().resolve())
+            relative = Path(resolved).relative_to(mirror_root)
             return str(scratch_path / relative)
 
-        for real_path in sorted(relevant):
-            source = Path(real_path)
+        for value, resolved in sorted(normalized, key=lambda item: item[1]):
+            source = Path(resolved)
             if not source.is_file():
                 continue
-            copy_target = Path(mirrored(str(source)))
+            copy_target = Path(mirrored(resolved))
             try:
                 copy_target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(source), str(copy_target))
@@ -285,18 +285,23 @@ def _file_dry_run_patch(
                 continue
 
         class _SandboxFileOps(FileTextOps):
-            def __init__(self, mirror: str, workdir: str) -> None:
+            def __init__(self, mirror: str, workdir: str, mirror_root: Path) -> None:
                 self.mirror = mirror
                 self.workdir = workdir
+                self.mirror_root = mirror_root
 
             def _remap(self, path: str) -> str:
-                expanded = str(Path(path).expanduser())
-                if not Path(expanded).is_absolute():
-                    expanded = str(Path(self.workdir) / expanded)
-                return mirrored(expanded)
+                resolved = str(Path(_normalize_op_path(self.workdir, path)).expanduser().resolve())
+                if not _is_path_within(str(self.mirror_root), resolved):
+                    raise PermissionError(f"路径超出允许目录: {path}")
+                relative = Path(resolved).relative_to(self.mirror_root)
+                return str(Path(self.mirror) / relative)
 
             def read_text(self, path: str) -> str | None:
-                return super().read_text(self._remap(path))
+                try:
+                    return super().read_text(self._remap(path))
+                except PermissionError:
+                    return None
 
             def write_text(self, path: str, content: str) -> None:
                 super().write_text(self._remap(path), content)
@@ -310,11 +315,16 @@ def _file_dry_run_patch(
                 super().move_file(self._remap(path), self._remap(new_path))
 
             def exists(self, path: str) -> bool:
-                return Path(self._remap(path)).is_file()
+                try:
+                    return Path(self._remap(path)).is_file()
+                except PermissionError:
+                    return False
 
         results: list[str] = []
         try:
-            results = apply_v4a_operations(operations, _SandboxFileOps(str(scratch), working_dir))
+            results = apply_v4a_operations(
+                operations, _SandboxFileOps(str(scratch), working_dir, mirror_root)
+            )
         except PermissionError as exc:
             return {"ok": False, "error": str(exc), "results": results, "dry_run": True}
         except Exception as exc:
