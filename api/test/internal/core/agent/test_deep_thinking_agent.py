@@ -488,10 +488,11 @@ class TestAgentConfig:
         assert config.enable_deep_thinking is True
 
     def test_deep_thinking_prompt_has_required_placeholders(self):
-        """深度思考系统提示词应包含 {preset_prompt} 和 {long_term_memory} 占位符。"""
+        """深度思考系统提示词应包含 {preset_prompt} / {long_term_memory} / {user_memory} 占位符。"""
         system_prompt = get_agent_system_prompt_template("deep_thinking_system_prompt")
         assert "{preset_prompt}" in system_prompt
         assert "{long_term_memory}" in system_prompt
+        assert "{user_memory}" in system_prompt
 
     def test_deep_thinking_prompt_format(self):
         """深度思考系统提示词 format() 应正常工作。"""
@@ -499,9 +500,11 @@ class TestAgentConfig:
         filled = system_prompt.format(
             preset_prompt="你是助手",
             long_term_memory="用户喜欢简洁",
+            user_memory="用户偏好 Python",
         )
         assert "你是助手" in filled
         assert "用户喜欢简洁" in filled
+        assert "用户偏好 Python" in filled
 
 
 # ============================================================

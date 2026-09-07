@@ -128,7 +128,11 @@ def _is_sync_iterator(obj):
 
 
 SSE_HEARTBEAT_INTERVAL = 15.0  # 单帧静默超过该时长输出心跳注释帧，维持连接活性
-SSE_ACTIVITY_TIMEOUT = 60.0    # 连续无帧产出超过该时长判定生成器失活（探针式超时）
+SSE_ACTIVITY_TIMEOUT = 60.0    # 兼容保留：keep-alive 已同步刷新 last_activity，该值不再触发误杀
+# 单帧(单次 next)可执行的最长时间。Agent 图内单节点（如 deep_agent 内部长 LLM 调用/
+# 深度思考）可能持续数十秒~分钟级，期间只发 keep-alive；超过该上限仍无实质事件产出，
+# 判定生成器线程异常卡死（非慢执行），终止流避免永久挂起。
+SSE_MAX_FRAME_SECONDS = 1800.0
 
 
 def _sse_response(generator):
@@ -139,9 +143,11 @@ def _sse_response(generator):
 
     活性保障（复用 LLMActivityProbe 的活性探针思路）：
     - 心跳帧：单帧执行超过 SSE_HEARTBEAT_INTERVAL 时输出 ": keep-alive" 注释帧，
-      避免 nginx send_timeout（默认 60s）在 LLM 长静默期切断浏览器连接；
-    - 活性探针：连续无帧产出超过 SSE_ACTIVITY_TIMEOUT 判定生成器失活，
-      输出错误帧并关闭生成器；
+      避免 nginx send_timeout（默认 60s）在 LLM 长静默期切断浏览器连接；keep-alive
+      同步刷新 last_activity——Agent 图单节点（deep_agent 内部长 LLM 调用）可慢至分钟级，
+      期间持续心跳不被误判失活；
+    - 单帧卡死兜底：单次 next() 超过 SSE_MAX_FRAME_SECONDS（默认 30min）判定线程死锁，
+      终止流避免永久挂起；
     - 断连协作：客户端断开（CancelledError）时调用 generator.close()，
       触发生成器 finally 落库，避免孤儿线程继续运行。
     """
@@ -168,6 +174,7 @@ def _sse_response(generator):
                 frame_task = asyncio.create_task(
                     asyncio.to_thread(_next_in_context, generator)
                 )
+                frame_started_at = time.monotonic()
                 try:
                     while True:
                         done, _ = await asyncio.wait(
@@ -175,14 +182,22 @@ def _sse_response(generator):
                         )
                         if done:
                             break
-                        # 静默期：先输出心跳帧保持连接活性
+                        # 静默期：输出心跳帧保持连接活性。注意 frame_task 仍在运行
+                        # （生成器单帧执行中，如 deep_agent 内部长 LLM 调用），keep-alive
+                        # 本身就是"生成器线程仍存活"的证明——必须同步刷新 last_activity，
+                        # 否则单帧耗时超过 60s（原 SSE_ACTIVITY_TIMEOUT 逻辑）会被误判为
+                        # "生成器失活"而掐断整条 SSE 流（历史缺陷：深度思考最终长文丢失）。
+                        last_activity = time.monotonic()
                         yield ": keep-alive\n\n"
-                        if time.monotonic() - last_activity >= SSE_ACTIVITY_TIMEOUT:
+                        # 单帧异常卡死兜底：正常慢执行（LLM 长调用）会有产出上限，
+                        # 超过 SSE_MAX_FRAME_SECONDS 仍无实质帧则判定生成器线程死锁，
+                        # 终止流避免永久挂起（正常执行远小于该值，不会误杀）。
+                        if time.monotonic() - frame_started_at >= SSE_MAX_FRAME_SECONDS:
                             payload = {
                                 "event": "error",
                                 "data": {
-                                    "code": "stream_idle_timeout",
-                                    "message": "生成器长时间无响应，已终止",
+                                    "code": "stream_frame_timeout",
+                                    "message": "生成器单帧执行超时，已终止",
                                 },
                             }
                             yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
@@ -455,8 +470,13 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     if _admin_match(segments, ("admin", "users")):
         if method == "GET":
             return "user:read"
+        if len(segments) == 2 and method == "POST":
+            # 集合级 POST /admin/users → 创建用户
+            return "user:create"
         if "disable" in segments:
             return "user:disable"
+        if "delete" in segments:
+            return "user:delete"
         if method in {"PATCH", "PUT", "DELETE"} or "enable" in segments or "sessions" in segments:
             return "user:update"
         return "user:update"

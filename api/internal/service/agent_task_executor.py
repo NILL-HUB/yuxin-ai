@@ -41,6 +41,44 @@ class AgentTaskExecutor:
         self.event_emitter = event_emitter
 
     def execute(self, item, context: dict | None = None) -> dict:
+        """执行单个 Agent 任务（带一次安全续跑）。
+
+        续跑语义（断点续传-编排层）：Agent 执行中断且**未产生任何工具调用与可见
+        回答**时（失败点只可能是纯 LLM 推理阶段，无工具副作用），用同一份完整
+        上下文（history + query + 记忆）自动重放一次。LLM 调用级的重连/换模型已由
+        RuntimeFallbackLanguageModelProxy 负责；本层兜底「模型池全故障后短暂恢复」
+        等极端场景。一旦执行过程中已调用过工具，则不再重放（避免副作用重复）。
+        """
+        result = self._run_once(item, context)
+        if self._is_replayable_failure(result):
+            logger.warning(
+                "Agent 执行无副作用失败（无工具调用/无可见输出），继承上下文续跑一次 task_id=%s",
+                item.task_id,
+            )
+            result = self._run_once(item, context)
+        return result
+
+    @staticmethod
+    def _is_replayable_failure(result: dict) -> bool:
+        """判断是否可安全续跑：LLM/Agent 执行终态失败且未调用工具（无副作用）。
+
+        判定依据：
+        - 执行过程中出现过 ERROR/TIMEOUT/STOP 终态事件（metadata.terminal_failure）；
+        - 未调用过任何工具（tool_calls 为空）——避免工具副作用重复；
+        - errors 为空（errors 代表代码/构造级失败，重放也会同样失败）。
+        """
+        if not result:
+            return False
+        errors = result.get("errors") or []
+        if errors:
+            return False
+        tool_calls = result.get("tool_calls") or []
+        if tool_calls:
+            return False
+        metadata = result.get("metadata") or {}
+        return bool(metadata.get("terminal_failure"))
+
+    def _run_once(self, item, context: dict | None = None) -> dict:
         try:
             agent_config = self._resolve_agent_config(item)
             agent = self.agent_class(llm=self.llm, agent_config=agent_config)
@@ -52,6 +90,8 @@ class AgentTaskExecutor:
             total_token_count = 0
             total_price = 0.0
             latency = 0.0
+            total_cached_tokens = 0
+            saw_terminal_failure = False
 
             for thought in agent.stream({
                 "messages": [
@@ -89,6 +129,9 @@ class AgentTaskExecutor:
                 total_price_val = getattr(thought, "total_price", 0.0)
                 if isinstance(total_price_val, (int, float)) and total_price_val > total_price:
                     total_price = float(total_price_val)
+                cached_val = getattr(thought, "cached_token_count", 0)
+                if isinstance(cached_val, (int, float)) and cached_val > 0:
+                    total_cached_tokens += int(cached_val)
                 latency_val = getattr(thought, "latency", 0.0)
                 if isinstance(latency_val, (int, float)) and latency_val > 0:
                     latency += float(latency_val)
@@ -108,6 +151,15 @@ class AgentTaskExecutor:
                     })
                 except Exception:
                     logger.debug("agent_thought 序列化失败", exc_info=True)
+
+                # 检测 LLM/Agent 执行终态失败（ERROR/TIMEOUT/STOP）：
+                # 失败被 base_agent 吸收为终态事件而非异常，这里记录信号供安全续跑判定
+                if event_name in (
+                    QueueEvent.ERROR.value,
+                    QueueEvent.TIMEOUT.value,
+                    QueueEvent.STOP.value,
+                ):
+                    saw_terminal_failure = True
 
                 # 收集工具调用事件（AGENT_ACTION / DATASET_RETRIEVAL）
                 if event_name in (
@@ -131,6 +183,7 @@ class AgentTaskExecutor:
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": 0,
                 "total_tokens": prompt_tokens,
+                "cached_input_tokens": total_cached_tokens,
             }
 
             return {
@@ -151,6 +204,7 @@ class AgentTaskExecutor:
                     "agent_thoughts": agent_thoughts,
                     "token_usage": tokens,
                     "latency": latency,
+                    "terminal_failure": saw_terminal_failure,
                 },
             }
         except Exception as e:

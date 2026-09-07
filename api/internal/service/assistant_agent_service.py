@@ -490,6 +490,7 @@ class AssistantAgentService(BaseService):
         self, req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
         distant_summary="", user_memory_text="", invoke_from: str | None = None,
         cancel_token: CancelToken | None = None,
+        checkpoint_thread_id: str = "",
     ):
         """single_agent / deep_thinking 路径：经 ExecutionCoordinatorService 编排单 Agent。"""
         from internal.entity.billing_metering_entity import BillingEventType
@@ -511,7 +512,7 @@ class AssistantAgentService(BaseService):
         executor = None  # 确保初始化，finally 能安全访问
         try:
             agent_class = A2ADeepThinkingAgent if should_deep_think else FunctionCallAgent
-            agent_config = AgentConfig(
+            agent_config_kwargs = dict(
                 user_id=account.id,
                 invoke_from=invoke_from or InvokeFrom.ASSISTANT_AGENT.value,
                 preset_prompt=self._build_assistant_system_prompt(),
@@ -521,6 +522,13 @@ class AssistantAgentService(BaseService):
                 language_model_service=self.language_model_service,
                 tools=tools,
             )
+            # 进程级 checkpoint：调用方（如定时任务/后台执行）传入稳定 thread_id
+            # 时启用 LangGraph checkpoint 持久化，崩溃后同 thread 续跑
+            checkpoint_thread_id = (checkpoint_thread_id or "").strip()
+            if checkpoint_thread_id:
+                agent_config_kwargs["enable_checkpoint"] = True
+                agent_config_kwargs["checkpoint_thread_id"] = checkpoint_thread_id
+            agent_config = AgentConfig(**agent_config_kwargs)
             execution_mode = (
                 ExecutionMode.DEEP_THINKING.value
                 if should_deep_think
@@ -758,6 +766,76 @@ class AssistantAgentService(BaseService):
         if not system_knowledge:
             return preset
         return f"{preset}\n\n## 系统知识库（必须遵守）\n{system_knowledge}".strip()
+
+    def _retrieve_user_memory_for_chat(
+        self,
+        *,
+        account_id,
+        query: str,
+        conversation_id: str,
+        max_wait_seconds: float = 1.2,
+        max_tokens: int = 1500,
+    ) -> str:
+        """对话时召回用户长期记忆（记忆读回闭环）。
+
+        设计约束：
+        - 记忆读回是"增强项"，绝不允许拖慢或阻断对话：用守护线程 + 超时，
+          超时/引擎关闭/依赖不可用一律返回空串（fail-open）。
+        - System 1 走 Redis 缓存的 Memory Digest（快）；System 2 走
+          MemoryRetriever（Neo4j BM25 + pgvector + 图扩展）。
+        - 返回文本限制在 max_tokens 量级，避免挤占上下文窗口。
+        """
+        from internal.config.memory_settings import settings as memory_settings
+
+        if not memory_settings.memory_engine_enabled:
+            return ""
+        if not query or not str(query).strip():
+            return ""
+
+        result_box: dict = {"text": ""}
+
+        def _do_retrieve() -> None:
+            try:
+                from app.http import asgi_app as a
+                from app.http.app import app as _flask_app
+                from internal.service.memory.digest_manager import DigestManager
+                from internal.service.memory.retriever import MemoryRetriever
+
+                char_budget = max(int(max_tokens) * 4, 500)
+                with _flask_app.app_context():
+                    digest_manager = a._get_service(DigestManager)
+                    retriever = MemoryRetriever(digest_manager=digest_manager)
+                    user_id = str(account_id)
+                    # System 1: Digest 快速路径（Redis 缓存，几乎无延迟）
+                    digest_text = retriever._system1_fast_path(query, user_id)
+                    if digest_text:
+                        result_box["text"] = digest_text[:char_budget]
+                        return
+                    # System 2: 深度检索（限时内完成则用，否则丢弃）
+                    from internal.model.memory_models import RetrievalOptions
+
+                    options = RetrievalOptions(top_k=5, budget_tokens=0)
+                    results = retriever.retrieve(query, user_id, options)
+                    if not results:
+                        return
+                    # 组装为可注入文本：拼接 top 命中（保留命中原文）
+                    lines: list[str] = []
+                    for item in results[:5]:
+                        content = str(getattr(item, "content", "") or "").strip()
+                        if content:
+                            lines.append(content[:600])
+                    if lines:
+                        joined = "\n".join(lines)
+                        result_box["text"] = joined[:char_budget]
+            except Exception:
+                logger.warning("对话记忆召回失败，静默降级（不影响主流程）", exc_info=True)
+
+        import threading as _threading
+
+        worker = _threading.Thread(target=_do_retrieve, daemon=True)
+        worker.start()
+        worker.join(timeout=max_wait_seconds)
+        return result_box.get("text", "")
 
     def _write_memory_from_conversation(self, account, query, ai_response, conversation_id):
         """对话后自动写入记忆，无需用户确认。降级时跳过。
@@ -1380,7 +1458,8 @@ class AssistantAgentService(BaseService):
             )
         )
 
-    def chat(self, req: AssistantAgentChat, account: Account, invoke_from: str | None = None) -> Generator:
+    def chat(self, req: AssistantAgentChat, account: Account, invoke_from: str | None = None,
+             checkpoint_thread_id: str = "") -> Generator:
         """传递query与账号实现与辅助Agent进行会话
 
         Args:
@@ -1397,6 +1476,17 @@ class AssistantAgentService(BaseService):
             sync_active=True,
             allowed_invoke_from=invoke_from,
         )
+
+        # 进程级 checkpoint 的 thread_id 默认策略：调用方未显式指定时，
+        # 若开启 AGENT_CHECKPOINT_BY_CONVERSATION=1 则以会话维度启用——
+        # 同一会话（conversation）内的执行共享一条 checkpoint 链，崩溃后
+        # 同会话重发请求可从断点续跑（LangGraph 节点边界，不重放已完成工具）。
+        # 默认关闭：保持现有行为不变（不产生额外 Redis checkpoint 写入）。
+        import os as _os
+
+        if not (checkpoint_thread_id or "").strip():
+            if _os.getenv("AGENT_CHECKPOINT_BY_CONVERSATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+                checkpoint_thread_id = f"conv:{conversation.id}"
 
         # 3.在落库前解析运行时模型能力，避免带图请求被静默降级
         if self.language_model_service is not None:
@@ -1489,13 +1579,17 @@ class AssistantAgentService(BaseService):
 
         if routing_decision is None and self.orchestrator_service is not None:
             try:
+                # 深度思考是否启用完全交给入口指挥官（orchestrator/conductor）按请求本身
+                # 的复杂度/意图决策，不再把用户手动开关（confirm_deep_thinking）作为输入——
+                # 用户开了开关可能忘记关，导致简单问题也走深度思考烧钱。指挥官只依据
+                # query 分类（ENABLE_AUTO_DEEP_THINKING 控制自动深度思考判定）。
                 decision_result = self.orchestrator_service.decide(
                     req.query.data,
                     account_id=account.id,
                     conversation_id=conversation.id,
                     message_id=message.id,
                     image_urls=req.image_urls.data,
-                    enable_deep_thinking=bool(req.confirm_deep_thinking.data),
+                    enable_deep_thinking=False,
                     invoke_from=invoke_from or InvokeFrom.ASSISTANT_AGENT.value,
                 )
                 routing_log_id = getattr(decision_result, "routing_log_id", None)
@@ -1537,6 +1631,15 @@ class AssistantAgentService(BaseService):
         history = context["recent_messages"]
         distant_summary = context.get("distant_summary", "")
 
+        # 5.1 记忆读回闭环：对话时召回用户长期记忆（Digest/记忆检索）注入 Agent。
+        # 采用"尽力而为、绝不阻塞"策略：限时检索 + fail-open；记忆引擎关闭、
+        # Neo4j/向量库不可用、检索超时均静默降级为空，不影响主回复流。
+        user_memory_text = self._retrieve_user_memory_for_chat(
+            account_id=account.id,
+            query=req.query.data,
+            conversation_id=str(conversation.id),
+        )
+
         # 6.构建首页助手运行时工具
         prebound_tools = self._build_assistant_runtime_tools(account.id, invoke_from=invoke_from)
 
@@ -1549,23 +1652,15 @@ class AssistantAgentService(BaseService):
         )
 
         # 7.构建辅助Agent专用智能体。根据路由决策的 execution_mode 选择执行路径：
-        # 二阶段流程：confirm_deep_thinking=True 表示用户已确认，直接执行深度思考；
-        # 否则阶段1判定，若需要深度思考则返回 deep_thinking_proposal 事件等待用户确认。
+        # 深度思考是否启用完全由入口指挥官决策（见上方 decide 调用）：指挥官判定
+        # execution_mode=deep_thinking 时自动执行深度思考（用户无需手动开关，避免
+        # 开了不关导致简单问题也烧钱）；用户请求里的 confirm_deep_thinking 字段仅
+        # 作为历史兼容保留（旧前端可能仍传），不再改变执行路径。
         execution_mode = routing_decision.get("execution_mode") if routing_decision else None
-        is_confirm_phase = bool(req.confirm_deep_thinking.data)
 
-        if not is_confirm_phase and routing_decision is not None:
+        if routing_decision is not None:
             if not routing_decision.get("cost_policy", {}).get("allowed", True):
                 yield from self._stream_insufficient_balance()
-                # 补上 AGENT_END 事件和持久化，避免孤儿 Message
-                yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
-                self._persist_assistant_thoughts(
-                    account, assistant_agent_id, conversation, message, {}, routing_decision,
-                    _chat_started_at, resolved_model_name=resolved_model_name,
-                )
-                return
-            if execution_mode == "deep_thinking":
-                yield from self._stream_deep_thinking_proposal(routing_decision)
                 # 补上 AGENT_END 事件和持久化，避免孤儿 Message
                 yield f"event: {QueueEvent.AGENT_END.value}\ndata:{json.dumps({'id': str(message.id), 'conversation_id': str(conversation.id), 'message_id': str(message.id)}, ensure_ascii=False)}\n\n"
                 self._persist_assistant_thoughts(
@@ -1612,7 +1707,10 @@ class AssistantAgentService(BaseService):
                     )
                 return
 
-        should_deep_think = is_confirm_phase or execution_mode == "deep_thinking"
+        # 深度思考执行判定：仅当指挥官决策 execution_mode=deep_thinking 时启用。
+        # 不再读取用户开关 confirm_deep_thinking（该字段已从 decide 输入移除，
+        # 此处也忽略，用户无法再强制/绕过指挥官决策）。
+        should_deep_think = execution_mode == "deep_thinking"
 
         # 统一执行入口：single_agent / single_agent_with_tools / deep_thinking(已确认) /
         # reject_or_confirm / 路由决策缺失，全部经 ExecutionCoordinatorService 编排。
@@ -1641,8 +1739,10 @@ class AssistantAgentService(BaseService):
             yield from self._stream_single_agent(
                 req, account, conversation, message, routing_decision, llm, tools, history, should_deep_think,
                 distant_summary=distant_summary,
+                user_memory_text=user_memory_text,
                 invoke_from=invoke_from,
                 cancel_token=cancel_token,
+                checkpoint_thread_id=checkpoint_thread_id,
             )
         finally:
             # 客户端断开（GeneratorExit）或正常结束时终止后台 agent 线程，避免空烧 token

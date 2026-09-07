@@ -102,19 +102,21 @@ class _FakeAsyncAgent(BaseAgent):
         return _CURRENT_FAKE_GRAPH
 
 
-def _make_agent(*, enable_checkpoint: bool = False) -> tuple[_FakeAsyncAgent, _FakeRedis]:
+def _make_agent(*, enable_checkpoint: bool = False, config_overrides: dict | None = None) -> tuple[_FakeAsyncAgent, _FakeRedis]:
     redis_client = _FakeRedis()
     _fake_http_module.injector = _FakeInjector(redis_client)
 
     user_id = uuid4()
     fake_graph = _FakeAsyncGraph(None)
+    config_kwargs = dict(
+        user_id=user_id,
+        invoke_from=InvokeFrom.DEBUGGER.value,
+        enable_checkpoint=enable_checkpoint,
+    )
+    config_kwargs.update(config_overrides or {})
     agent = _FakeAsyncAgent(
         llm=MagicMock(spec=BaseLanguageModel),
-        agent_config=AgentConfig(
-            user_id=user_id,
-            invoke_from=InvokeFrom.DEBUGGER.value,
-            enable_checkpoint=enable_checkpoint,
-        ),
+        agent_config=AgentConfig(**config_kwargs),
         fake_graph=fake_graph,
     )
     fake_graph.queue_manager = agent.agent_queue_manager
@@ -218,6 +220,22 @@ def test_resolve_checkpoint_config_should_fill_thread_id_when_enabled():
     explicit = {"configurable": {"thread_id": "thread-abc"}}
     resolved2 = agent._resolve_checkpoint_config(explicit)
     assert resolved2["configurable"]["thread_id"] == "thread-abc"
+
+
+def test_resolve_checkpoint_config_should_prefer_stable_checkpoint_thread_id():
+    """agent_config.checkpoint_thread_id 优先于随机生成（进程级续跑的关键）。"""
+    agent, _ = _make_agent(
+        enable_checkpoint=True,
+        config_overrides={"checkpoint_thread_id": "conv-123"},
+    )
+    resolved = agent._resolve_checkpoint_config(None)
+    assert resolved is not None
+    assert resolved["configurable"]["thread_id"] == "conv-123"
+
+    # 显式传入的 thread_id 仍最高优先
+    explicit = {"configurable": {"thread_id": "explicit-id"}}
+    resolved2 = agent._resolve_checkpoint_config(explicit)
+    assert resolved2["configurable"]["thread_id"] == "explicit-id"
 
 
 def test_resolve_checkpoint_config_should_pass_through_when_disabled():

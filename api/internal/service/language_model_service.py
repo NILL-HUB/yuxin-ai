@@ -109,6 +109,19 @@ def _normalize_model_ref(model_config: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
+def _runtime_retry_attempts() -> int:
+    """单模型/Key 的运行时重连次数（环境变量 RUNTIME_FALLBACK_RETRY_ATTEMPTS 可配，默认 5）。"""
+    raw = os.getenv("RUNTIME_FALLBACK_RETRY_ATTEMPTS", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
+    return 5
+
+
 def _extract_status_code(exc: Exception) -> int | None:
     """尽量提取运行时错误的状态码。"""
     status_code = getattr(exc, "status_code", None)
@@ -244,12 +257,23 @@ def _build_soft_timeout_model(model: Any, timeout_seconds: float) -> Any:
 
 
 class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
-    """给文本模型调用加一层运行时兜底代理。"""
+    """给文本模型调用加一层运行时兜底代理。
+
+    故障转移顺序（同档同类型优先）：
+    1. 当前模型/Key 重连 ``_retry_attempts`` 次（默认 5）；
+    2. 仍失败时按调用方注入的 ``_candidate_loader`` 懒加载模型池中的
+       「同档位、同类型」候选模型（RuntimeFallbackLanguageModelProxy）逐一尝试；
+    3. 候选均失败或未注入候选时，回退到默认兜底模型（``_fallback_loader``）。
+    """
 
     _model: Any = PrivateAttr()
     _primary_model: Any = PrivateAttr()
     _fallback_loader: Callable[[], BaseLanguageModel] = PrivateAttr()
     _fallback_model: BaseLanguageModel | None = PrivateAttr(default=None)
+    _candidate_loader: Callable[[], list[Any]] | None = PrivateAttr(default=None)
+    _candidate_models: list[Any] = PrivateAttr(default_factory=list)
+    _candidate_cursor: int = PrivateAttr(default=0)
+    _retry_attempts: int = PrivateAttr(default=1)
     _requested_model_config: dict[str, Any] = PrivateAttr(default_factory=dict)
     _requested_model_ref: dict[str, str] = PrivateAttr(default_factory=dict)
     _runtime_fallback_enabled: bool = PrivateAttr(default=False)
@@ -264,6 +288,8 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
         runtime_fallback_enabled: bool,
         features_source: list[Any] | None = None,
         metadata_source: dict[str, Any] | None = None,
+        candidate_loader: Callable[[], list[Any]] | None = None,
+        retry_attempts: int = 1,
     ) -> "RuntimeFallbackLanguageModelProxy":
         instance = cls(
             features=list(getattr(model, "features", None) or features_source or []),
@@ -280,6 +306,14 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
         object.__setattr__(instance, "_primary_model", primary_model)
         object.__setattr__(instance, "_fallback_loader", fallback_loader)
         object.__setattr__(instance, "_fallback_model", None)
+        object.__setattr__(instance, "_candidate_loader", candidate_loader)
+        object.__setattr__(instance, "_candidate_models", [])
+        object.__setattr__(instance, "_candidate_cursor", 0)
+        object.__setattr__(
+            instance,
+            "_retry_attempts",
+            retry_attempts if isinstance(retry_attempts, int) and retry_attempts > 0 else 1,
+        )
         object.__setattr__(instance, "_requested_model_config", deepcopy(requested_model_config or {}))
         object.__setattr__(instance, "_requested_model_ref", _normalize_model_ref(requested_model_config))
         object.__setattr__(instance, "_runtime_fallback_enabled", runtime_fallback_enabled)
@@ -290,6 +324,24 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
         if self._fallback_model is None:
             object.__setattr__(self, "_fallback_model", self._fallback_loader())
         return self._fallback_model
+
+    def _load_candidates(self) -> list[Any]:
+        """懒加载并缓存同档候选模型实例列表（供本轮调用后续传）。
+
+        候选 loader 返回「模型实体」列表（如 ModelPoolConfig），由 language_model_service
+        在注入 loader 时负责将其转换为可调用的 LLM 实例。
+        """
+        if self._candidate_models:
+            return self._candidate_models
+        if self._candidate_loader is None:
+            return []
+        try:
+            loaded = list(self._candidate_loader() or [])
+        except Exception:
+            logger.warning("加载同档候选模型失败，跳过候选轮换", exc_info=True)
+            loaded = []
+        object.__setattr__(self, "_candidate_models", loaded)
+        return loaded
 
     def _can_fallback(self, input_value: Any, exc: Exception) -> bool:
         if not self._runtime_fallback_enabled:
@@ -314,61 +366,124 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
             runtime_fallback_enabled=self._runtime_fallback_enabled,
             features_source=list(self.features or []),
             metadata_source=dict(self.metadata or {}),
+            candidate_loader=self._candidate_loader,
+            retry_attempts=self._retry_attempts,
         )
 
     def _call_method_with_fallback(self, method_name: str, *args, **kwargs):
         input_value = args[0] if args else kwargs.get("input")
-        try:
-            method = getattr(object.__getattribute__(self, "_primary_model"), method_name)
-            return method(*args, **kwargs)
-        except Exception as exc:
-            if not self._can_fallback(input_value, exc):
-                raise
-            logger.warning(
-                "LLM 运行时%s失败，切换到默认模型兜底: requested=%s error=%s",
-                method_name,
-                self._requested_model_ref,
-                exc,
-            )
-            fallback_method = getattr(self._get_fallback_model(), method_name)
-            return fallback_method(*args, **kwargs)
+        # 1) 当前模型/Key 按预算重连
+        attempt = 0
+        while attempt < self._retry_attempts:
+            attempt += 1
+            try:
+                method = getattr(object.__getattribute__(self, "_primary_model"), method_name)
+                return method(*args, **kwargs)
+            except Exception as exc:
+                if not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "LLM 运行时%s失败（第 %d/%d 次重连），尝试同档候选/默认兜底: requested=%s error=%s",
+                    method_name,
+                    attempt,
+                    self._retry_attempts,
+                    self._requested_model_ref,
+                    exc,
+                )
+        # 2) 同档同类型候选模型轮换（每个候选各按其自身重试预算执行）
+        for candidate in self._load_candidates():
+            try:
+                candidate_method = getattr(candidate, method_name)
+                return candidate_method(*args, **kwargs)
+            except Exception as exc:
+                if not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "同档候选模型调用%s失败，尝试下一个候选/默认兜底: requested=%s error=%s",
+                    method_name,
+                    getattr(candidate, "_requested_model_ref", self._requested_model_ref),
+                    exc,
+                )
+        # 3) 候选耗尽后回退默认模型
+        fallback_method = getattr(self._get_fallback_model(), method_name)
+        return fallback_method(*args, **kwargs)
 
     async def _acall_method_with_fallback(self, method_name: str, *args, **kwargs):
         input_value = args[0] if args else kwargs.get("input")
-        try:
-            method = getattr(object.__getattribute__(self, "_primary_model"), method_name)
-            return await method(*args, **kwargs)
-        except Exception as exc:
-            if not self._can_fallback(input_value, exc):
-                raise
-            logger.warning(
-                "LLM 运行时%s失败，切换到默认模型兜底: requested=%s error=%s",
-                method_name,
-                self._requested_model_ref,
-                exc,
-            )
-            fallback_method = getattr(self._get_fallback_model(), method_name)
-            return await fallback_method(*args, **kwargs)
+        # 1) 当前模型/Key 按预算重连
+        attempt = 0
+        while attempt < self._retry_attempts:
+            attempt += 1
+            try:
+                method = getattr(object.__getattribute__(self, "_primary_model"), method_name)
+                return await method(*args, **kwargs)
+            except Exception as exc:
+                if not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "LLM 运行时%s失败（第 %d/%d 次重连），尝试同档候选/默认兜底: requested=%s error=%s",
+                    method_name,
+                    attempt,
+                    self._retry_attempts,
+                    self._requested_model_ref,
+                    exc,
+                )
+        # 2) 同档同类型候选模型轮换（每个候选各按其自身重试预算执行）
+        for candidate in self._load_candidates():
+            try:
+                candidate_method = getattr(candidate, method_name)
+                return await candidate_method(*args, **kwargs)
+            except Exception as exc:
+                if not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "同档候选模型调用%s失败，尝试下一个候选/默认兜底: requested=%s error=%s",
+                    method_name,
+                    getattr(candidate, "_requested_model_ref", self._requested_model_ref),
+                    exc,
+                )
+        # 3) 候选耗尽后回退默认模型
+        fallback_method = getattr(self._get_fallback_model(), method_name)
+        return await fallback_method(*args, **kwargs)
 
     def invoke(self, *args, **kwargs):
         return self._call_method_with_fallback("invoke", *args, **kwargs)
 
     def stream(self, *args, **kwargs):
         input_value = args[0] if args else kwargs.get("input")
-        yielded_any_chunk = False
-        try:
-            for chunk in object.__getattribute__(self, "_primary_model").stream(*args, **kwargs):
-                yielded_any_chunk = True
-                yield chunk
-        except Exception as exc:
-            if yielded_any_chunk or not self._can_fallback(input_value, exc):
-                raise
-            logger.warning(
-                "LLM 运行时stream失败，切换到默认模型兜底: requested=%s error=%s",
-                self._requested_model_ref,
-                exc,
-            )
-            yield from self._get_fallback_model().stream(*args, **kwargs)
+        # 1) 当前模型/Key 按预算重连（仅在完全未产出 chunk 时切换，避免重复推送）
+        for _attempt in range(self._retry_attempts):
+            yielded_any_chunk = False
+            try:
+                for chunk in object.__getattribute__(self, "_primary_model").stream(*args, **kwargs):
+                    yielded_any_chunk = True
+                    yield chunk
+                return
+            except Exception as exc:
+                if yielded_any_chunk or not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "LLM 运行时stream失败（第 %d/%d 次重连），尝试同档候选/默认兜底: requested=%s error=%s",
+                    _attempt + 1,
+                    self._retry_attempts,
+                    self._requested_model_ref,
+                    exc,
+                )
+        # 2) 同档同类型候选模型轮换
+        for candidate in self._load_candidates():
+            try:
+                yield from candidate.stream(*args, **kwargs)
+                return
+            except Exception as exc:
+                if not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "同档候选模型调用stream失败，尝试下一个候选/默认兜底: requested=%s error=%s",
+                    getattr(candidate, "_requested_model_ref", self._requested_model_ref),
+                    exc,
+                )
+        # 3) 候选耗尽后回退默认模型
+        yield from self._get_fallback_model().stream(*args, **kwargs)
 
     def generate_prompt(self, *args, **kwargs):
         return self._call_method_with_fallback("generate_prompt", *args, **kwargs)
@@ -382,21 +497,41 @@ class RuntimeFallbackLanguageModelProxy(BaseLanguageModel):
     async def astream(self, *args, **kwargs):
         """async 流式调用（带运行时兜底）。"""
         input_value = args[0] if args else kwargs.get("input")
-        yielded_any_chunk = False
-        try:
-            async for chunk in object.__getattribute__(self, "_primary_model").astream(*args, **kwargs):
-                yielded_any_chunk = True
-                yield chunk
-        except Exception as exc:
-            if yielded_any_chunk or not self._can_fallback(input_value, exc):
-                raise
-            logger.warning(
-                "LLM 运行时astream失败，切换到默认模型兜底: requested=%s error=%s",
-                self._requested_model_ref,
-                exc,
-            )
-            async for chunk in self._get_fallback_model().astream(*args, **kwargs):
-                yield chunk
+        # 1) 当前模型/Key 按预算重连（仅在完全未产出 chunk 时切换，避免重复推送）
+        for _attempt in range(self._retry_attempts):
+            yielded_any_chunk = False
+            try:
+                async for chunk in object.__getattribute__(self, "_primary_model").astream(*args, **kwargs):
+                    yielded_any_chunk = True
+                    yield chunk
+                return
+            except Exception as exc:
+                if yielded_any_chunk or not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "LLM 运行时astream失败（第 %d/%d 次重连），尝试同档候选/默认兜底: requested=%s error=%s",
+                    _attempt + 1,
+                    self._retry_attempts,
+                    self._requested_model_ref,
+                    exc,
+                )
+        # 2) 同档同类型候选模型轮换
+        for candidate in self._load_candidates():
+            try:
+                async for chunk in candidate.astream(*args, **kwargs):
+                    yield chunk
+                return
+            except Exception as exc:
+                if not self._can_fallback(input_value, exc):
+                    raise
+                logger.warning(
+                    "同档候选模型调用astream失败，尝试下一个候选/默认兜底: requested=%s error=%s",
+                    getattr(candidate, "_requested_model_ref", self._requested_model_ref),
+                    exc,
+                )
+        # 3) 候选耗尽后回退默认模型
+        async for chunk in self._get_fallback_model().astream(*args, **kwargs):
+            yield chunk
 
     async def abatch(self, *args, **kwargs):
         return await self._acall_method_with_fallback("abatch", *args, **kwargs)
@@ -1384,11 +1519,22 @@ class LanguageModelService(BaseService):
         self,
         llm: BaseLanguageModel,
         model_config: dict[str, Any],
+        tier: str | None = None,
     ) -> BaseLanguageModel:
-        """为非默认文本模型添加运行时兜底代理。"""
+        """为非默认文本模型添加运行时兜底代理。
+
+        开启 runtime fallback 后，代理在单模型/Key 重连 ``retry_attempts`` 次失败时，
+        会按 ``candidate_loader`` 从模型池挑选「同档位、同类型（chat）」候选模型
+        逐一替换，候选全部失败后才回退默认兜底模型。
+        """
         requested_model_ref = _normalize_model_ref(model_config)
         if requested_model_ref == _normalize_model_ref(self.get_default_model_config()):
             return llm
+
+        candidate_loader = self._build_pool_candidate_loader(
+            model_config=model_config,
+            tier=tier,
+        )
 
         # 如果已经是 RuntimeFallbackLanguageModelProxy（_instantiate_language_model 已包装），
         # 只更新运行时兜底相关字段，避免再次 from_model 导致 _build_soft_timeout_model
@@ -1398,6 +1544,11 @@ class LanguageModelService(BaseService):
             object.__setattr__(llm, "_requested_model_config", deepcopy(model_config or {}))
             object.__setattr__(llm, "_requested_model_ref", _normalize_model_ref(model_config))
             object.__setattr__(llm, "_runtime_fallback_enabled", True)
+            object.__setattr__(llm, "_retry_attempts", _runtime_retry_attempts())
+            if candidate_loader is not None:
+                object.__setattr__(llm, "_candidate_loader", candidate_loader)
+                object.__setattr__(llm, "_candidate_models", [])
+                object.__setattr__(llm, "_candidate_cursor", 0)
             return llm
 
         return RuntimeFallbackLanguageModelProxy.from_model(
@@ -1407,7 +1558,155 @@ class LanguageModelService(BaseService):
             runtime_fallback_enabled=True,
             features_source=list(getattr(llm, "features", []) or []),
             metadata_source=dict(getattr(llm, "metadata", {}) or {}),
+            candidate_loader=candidate_loader,
+            retry_attempts=_runtime_retry_attempts(),
         )
+
+    def _build_pool_candidate_loader(
+        self,
+        model_config: dict[str, Any],
+        tier: str | None = None,
+    ) -> Callable[[], list[Any]] | None:
+        """构造「同档位、同类型」候选模型的懒加载器（供代理故障转移轮换）。
+
+        复用的基础设施：
+        - RuntimeModelPoolService.select_model_with_fallback / get_active_models：
+          同档位同类型、按 priority+成本排序挑选候选；
+        - 候选实例经本方法（_wrap_runtime_fallback_model）递归包装，保证候选自身
+          也具备「重连→再换同档候选→默认兜底」的完整故障转移能力。
+
+        返回的 loader 每次调用实时从模型池解析（读取最新状态），返回可调用的 LLM
+        实例列表（已排除当前正在使用的 provider+model）。模型池不可用时返回 None
+        （代理退化为「单跳默认模型」的原行为）。
+        """
+        if not self._runtime_fallback_candidate_enabled():
+            return None
+        try:
+            from internal.service.runtime_model_pool_service import RuntimeModelPoolService
+
+            pool_service = RuntimeModelPoolService(db=self.db, language_model_manager=self.language_model_manager)
+        except Exception:
+            logger.warning("构造模型池候选加载器失败，退化为默认模型兜底", exc_info=True)
+            return None
+
+        requested_ref = _normalize_model_ref(model_config)
+        # 解析当前模型在模型池中的真实档位（保证「同档」精确匹配）；
+        # 查不到时回退到显式 tier 或默认兜底档位
+        effective_tier = tier
+        model_type = "chat"
+        if not effective_tier:
+            effective_tier = self._lookup_pool_tier(requested_ref, pool_service)
+        if not effective_tier:
+            effective_tier = "2"
+
+        def _loader() -> list[Any]:
+            try:
+                primary, candidates = pool_service.select_model_with_fallback(effective_tier, model_type)
+            except Exception:
+                logger.warning("模型池候选解析失败，跳过同档轮换 tier=%s", effective_tier, exc_info=True)
+                return []
+            chain = []
+            if primary is not None:
+                chain.append(primary)
+            chain.extend(candidates or [])
+
+            # 同 provider 优先：故障转移时先换「同一提供商」的其他型号（尽量贴近
+            # 原 provider 的上下文缓存命名空间，同模型前缀可继续命中自动缓存）；
+            # 同 provider 全部失败后才轮到跨 provider 候选。
+            current_provider = requested_ref["provider"]
+            current_model = requested_ref["model"]
+
+            def _same_provider(m: Any) -> bool:
+                return str(getattr(m, "provider", "")) == current_provider
+
+            # Python sort 稳定：仅以「是否同 provider」为键分组，组内保留
+            # select_model_with_fallback 原有的 priority+成本 相对顺序。
+            chain.sort(key=lambda m: 0 if _same_provider(m) else 1)
+
+            loaded: list[Any] = []
+            for pool_model in chain:
+                if str(getattr(pool_model, "provider", "")) == current_provider and str(
+                    getattr(pool_model, "model_name", "")
+                ) == current_model:
+                    # 跳过当前正在使用的模型本身
+                    continue
+                try:
+                    candidate_llm = self._resolve_pool_model_as_llm(pool_model)
+                except Exception:
+                    logger.warning(
+                        "实例化同档候选模型失败 provider=%s model=%s",
+                        getattr(pool_model, "provider", ""),
+                        getattr(pool_model, "model_name", ""),
+                        exc_info=True,
+                    )
+                    continue
+                if candidate_llm is not None:
+                    loaded.append(candidate_llm)
+                if len(loaded) >= 3:
+                    break
+            return loaded
+
+        return _loader
+
+    def _lookup_pool_tier(self, requested_ref: dict[str, str], pool_service: Any) -> str | None:
+        """按 provider+model 反查当前模型在模型池中的档位（同档匹配精度）。"""
+        try:
+            from internal.model.model_pool_entity import ModelPoolConfig
+
+            pool_model = (
+                self.db.session.query(ModelPoolConfig)
+                .filter(
+                    ModelPoolConfig.provider == requested_ref["provider"],
+                    ModelPoolConfig.model_name == requested_ref["model"],
+                    ModelPoolConfig.status == "active",
+                )
+                .first()
+            )
+            if pool_model is not None and getattr(pool_model, "tier", None):
+                return str(pool_model.tier)
+        except Exception:
+            logger.debug("反查当前模型档位失败，使用默认档位", exc_info=True)
+        return None
+
+    def _runtime_fallback_candidate_enabled(self) -> bool:
+        """是否启用「同档候选轮换」：默认开启，可用环境变量关闭。"""
+        flag = os.getenv("RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES", "").strip()
+        if flag:
+            return flag.lower() not in ("0", "false", "off", "no")
+        return True
+
+    def _resolve_pool_model_as_llm(self, pool_model: Any) -> Any | None:
+        """把模型池实体（ModelPoolConfig）实例化为 LLM，并递归套运行时兜底代理。
+
+        复用 _try_resolve_pool_llm 的实例化路径（provider/key/base_url 解析），
+        使候选与主模型具备一致的运行参数与故障转移能力。
+        """
+        from internal.model.model_pool_entity import ModelPoolConfig
+
+        if not isinstance(pool_model, ModelPoolConfig):
+            return None
+        try:
+            key_overrides = self._try_load_key_overrides_for_config(
+                {"provider": pool_model.provider, "model": pool_model.model_name}
+            )
+            model_config: dict[str, Any] = {
+                "provider": pool_model.provider,
+                "model": pool_model.model_name,
+            }
+            llm = self._instantiate_model(
+                model_config,
+                attribute_overrides=key_overrides,
+                use_async_class=False,
+            )
+            return self._wrap_runtime_fallback_model(llm, model_config)
+        except Exception:
+            logger.warning(
+                "实例化同档候选失败 provider=%s model=%s",
+                getattr(pool_model, "provider", ""),
+                getattr(pool_model, "model_name", ""),
+                exc_info=True,
+            )
+            return None
 
     def get_language_model_icon(self, provider_name: str) -> tuple[bytes, str]:
         """根据传递的提供者名字获取提供商对应的图标信息

@@ -46,6 +46,10 @@ services:
       # Redis 连接使用 Docker 服务名
       REDIS_HOST: llmops-redis
       REDIS_PORT: 6379
+      # 进程级 checkpoint：以会话维度启用 LangGraph Redis 断点续传 + 工具执行登记表
+      # （依赖 redis:8 内置 RediSearch FT.* 模块）。固化在此处（environment 优先于
+      # env_file），即使 api/.env 丢失或未配置该键也能稳定生效。
+      AGENT_CHECKPOINT_BY_CONVERSATION: '1'
       # Neo4j 连接（记忆系统 TKG）
       NEO4J_URI: bolt://llmops-neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
@@ -97,6 +101,8 @@ services:
       # Redis 连接使用 Docker 服务名
       REDIS_HOST: llmops-redis
       REDIS_PORT: 6379
+      # 进程级 checkpoint：会话维度启用（与 llmops-api 一致）
+      AGENT_CHECKPOINT_BY_CONVERSATION: '1'
       # Neo4j 连接（记忆系统 TKG）
       NEO4J_URI: bolt://llmops-neo4j:7687
       NEO4J_USER: ${NEO4J_USER:-neo4j}
@@ -191,7 +197,10 @@ services:
       - ../api/.env
     volumes:
       - ./volumes/redis/data:/data
-    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\""]
+    # redis:8-alpine 镜像自带 ReJSON/RediSearch 模块 .so（/usr/local/lib/redis/modules/），
+    # 但默认精简 redis.conf 不加载；langgraph-checkpoint-redis 依赖 JSON.SET/FT.CREATE，
+    # 因此显式加载 rejson + redisearch 两个模块（进程级 checkpoint 的前提）。
+    command: ["sh", "-c", "redis-server --requirepass \"$$REDIS_PASSWORD\" --loadmodule /usr/local/lib/redis/modules/rejson.so --loadmodule /usr/local/lib/redis/modules/redisearch.so"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --raw ping | grep -q PONG"]
       interval: 5s

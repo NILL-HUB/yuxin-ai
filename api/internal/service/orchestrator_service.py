@@ -112,6 +112,37 @@ class OrchestratorService:
                         deep_thinking_requested=ctx.deep_thinking_requested,
                     )
                     decision = RoutingDecision.from_dict(decision_data)
+                    # 深度思考增强：Conductor 本身不输出 deep_thinking 模式，但复杂/分析类
+                    # 任务（命中 DEEP_THINKING 意图分类，受 ENABLE_AUTO_DEEP_THINKING 开关约束）
+                    # 仍应走深度思考。只用关键词层判定（零 LLM 成本——conductor 已做过
+                    # 一次 LLM 决策，避免重复分类），命中时把 single/multi agent 类模式
+                    # 升级为 DEEP_THINKING——让深度思考始终由入口指挥官（含 conductor）
+                    # 按请求复杂度决策，而非用户手动开关。
+                    if self._flag_enabled("ENABLE_AUTO_DEEP_THINKING", default=True):
+                        try:
+                            keyword_decision = self.task_classifier_service._classify_with_keywords(
+                                self.task_classifier_service._normalize(ctx.query)
+                            )
+                            needs_deep = bool(
+                                getattr(keyword_decision, "needs_deep_thinking", False)
+                            )
+                        except Exception:
+                            logger.warning("Conductor 深度思考增强分类失败，跳过", exc_info=True)
+                            needs_deep = False
+                        if needs_deep and decision.execution_mode in {
+                            ExecutionMode.SINGLE_AGENT.value,
+                            ExecutionMode.SINGLE_AGENT_WITH_TOOLS.value,
+                            ExecutionMode.MULTI_AGENT.value,
+                            ExecutionMode.MULTI_AGENT_PARALLEL.value,
+                            ExecutionMode.MULTI_AGENT_SEQUENTIAL.value,
+                        }:
+                            logger.info(
+                                "Conductor 决策升级为深度思考 intent=%s mode=%s→%s",
+                                decision.intent,
+                                decision.execution_mode,
+                                ExecutionMode.DEEP_THINKING.value,
+                            )
+                            decision.execution_mode = ExecutionMode.DEEP_THINKING.value
                     decision.routing_log_id = str(routing_log_id) if routing_log_id else None
                     self._emit(
                         "conductor_decision",

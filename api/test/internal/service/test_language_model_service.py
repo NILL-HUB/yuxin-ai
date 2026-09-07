@@ -8,7 +8,11 @@ from pydantic import BaseModel
 
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
-from internal.service.language_model_service import LanguageModelService, _build_soft_timeout_model
+from internal.service.language_model_service import (
+    LanguageModelService,
+    RuntimeFallbackLanguageModelProxy,
+    _build_soft_timeout_model,
+)
 from langchain_openai import ChatOpenAI
 
 
@@ -835,3 +839,135 @@ class TestLanguageModelService:
             llm.invoke("hello")
 
         assert fallback_calls == []
+
+
+class TestRuntimeFallbackCandidateRotation:
+    """同档同类型候选模型轮换：重连耗尽后先换候选，候选全失败才回退默认。"""
+
+    @staticmethod
+    def _build_proxy(
+        *,
+        fail_primary: bool = True,
+        candidate_fail: bool = False,
+        fallback_value: str = "fallback-result",
+        primary_value: str = "primary-result",
+        retry_attempts: int = 5,
+        candidate_count: int = 1,
+    ):
+        primary = _RuntimeFallbackFakeLLM(
+            model="model-a",
+            return_value=primary_value,
+            fail_invoke_error=_RetryableRuntimeError("upstream 500") if fail_primary else None,
+        )
+        candidates = []
+        for i in range(candidate_count):
+            candidates.append(
+                _RuntimeFallbackFakeLLM(
+                    model=f"candidate-{i}",
+                    return_value=f"candidate-result-{i}",
+                    fail_invoke_error=_RetryableRuntimeError("candidate down") if candidate_fail else None,
+                )
+            )
+        fallback = _RuntimeFallbackFakeLLM(model="default-model", return_value=fallback_value)
+        proxy = RuntimeFallbackLanguageModelProxy.from_model(
+            primary,
+            fallback_loader=lambda: fallback,
+            requested_model_config={"provider": "p", "model": "model-a"},
+            runtime_fallback_enabled=True,
+            retry_attempts=retry_attempts,
+        )
+        # 注入「已实例化」的候选（loader 直接返回现成实例）
+        object.__setattr__(proxy, "_candidate_loader", lambda: candidates)
+        object.__setattr__(proxy, "_candidate_models", [])
+        return proxy, primary, candidates, fallback
+
+    def test_primary_fails_retry_then_candidate_succeeds(self):
+        proxy, primary, candidates, fallback = self._build_proxy()
+        result = proxy.invoke("hello")
+        assert result == "candidate-result-0"
+        # 主模型被 _build_soft_timeout_model 克隆后实际调用的是 _primary_model
+        actual_primary = object.__getattribute__(proxy, "_primary_model")
+        # 主模型应被重连 retry_attempts 次
+        assert len(actual_primary.invoke_inputs) == 5
+        # 候选被调用，默认兜底未被调用
+        assert len(candidates[0].invoke_inputs) == 1
+        assert len(fallback.invoke_inputs) == 0
+
+    def test_primary_and_candidates_all_fail_then_fallback(self):
+        proxy, primary, candidates, fallback = self._build_proxy(
+            candidate_fail=True,
+            candidate_count=2,
+        )
+        result = proxy.invoke("hello")
+        assert result == "fallback-result"
+        actual_primary = object.__getattribute__(proxy, "_primary_model")
+        assert len(actual_primary.invoke_inputs) == 5
+        # 两个候选各被尝试一次
+        assert len(candidates[0].invoke_inputs) == 1
+        assert len(candidates[1].invoke_inputs) == 1
+        assert len(fallback.invoke_inputs) == 1
+
+    def test_primary_succeeds_without_any_fallback(self):
+        proxy, primary, candidates, fallback = self._build_proxy(fail_primary=False)
+        result = proxy.invoke("hello")
+        assert result == "primary-result"
+        actual_primary = object.__getattribute__(proxy, "_primary_model")
+        assert len(actual_primary.invoke_inputs) == 1
+        assert len(candidates[0].invoke_inputs) == 0
+        assert len(fallback.invoke_inputs) == 0
+
+    def test_stream_retries_then_candidate_succeeds(self):
+        primary = _RuntimeFallbackFakeLLM(
+            model="model-a",
+            stream_chunks=["chunk-primary"],
+            fail_stream_error=_RetryableRuntimeError("upstream 500"),
+        )
+        candidate = _RuntimeFallbackFakeLLM(model="candidate-0", stream_chunks=["chunk-candidate"])
+        fallback = _RuntimeFallbackFakeLLM(model="default-model", stream_chunks=["chunk-fallback"])
+        proxy = RuntimeFallbackLanguageModelProxy.from_model(
+            primary,
+            fallback_loader=lambda: fallback,
+            requested_model_config={"provider": "p", "model": "model-a"},
+            runtime_fallback_enabled=True,
+            retry_attempts=5,
+        )
+        object.__setattr__(proxy, "_candidate_loader", lambda: [candidate])
+        object.__setattr__(proxy, "_candidate_models", [])
+
+        chunks = list(proxy.stream("hello"))
+        assert chunks == ["chunk-candidate"]
+        actual_primary = object.__getattribute__(proxy, "_primary_model")
+        assert len(actual_primary.stream_inputs) == 5
+        assert len(candidate.stream_inputs) == 1
+        assert len(fallback.stream_inputs) == 0
+
+    def test_stream_yielded_chunk_then_failure_does_not_switch_model(self):
+        """已产出 chunk 后失败不应切换模型（避免重复计费/重复推送）。"""
+        primary = _RuntimeFallbackFakeLLM(model="model-a", stream_chunks=["partial-ok"])
+        # 让流产出第一个 chunk 后在第二次迭代抛错：通过自定义流式行为模拟
+        class _FailingAfterChunk:
+            def __init__(self):
+                self.model = "model-a"
+                self.yielded = False
+
+            def stream(self, _input_value, *args, **kwargs):
+                yield "partial-ok"
+                raise _RetryableRuntimeError("mid-stream disconnect")
+
+        primary_failing = _FailingAfterChunk()
+        candidate = _RuntimeFallbackFakeLLM(model="candidate-0", stream_chunks=["candidate-ok"])
+        fallback = _RuntimeFallbackFakeLLM(model="default-model", stream_chunks=["fallback-ok"])
+        proxy = RuntimeFallbackLanguageModelProxy.from_model(
+            primary_failing,
+            fallback_loader=lambda: fallback,
+            requested_model_config={"provider": "p", "model": "model-a"},
+            runtime_fallback_enabled=True,
+            retry_attempts=5,
+        )
+        object.__setattr__(proxy, "_candidate_loader", lambda: [candidate])
+        object.__setattr__(proxy, "_candidate_models", [])
+
+        with pytest.raises(_RetryableRuntimeError):
+            list(proxy.stream("hello"))
+        assert len(candidate.stream_inputs) == 0
+        assert len(fallback.stream_inputs) == 0

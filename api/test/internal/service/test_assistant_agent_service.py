@@ -1614,9 +1614,10 @@ class TestAssistantAgentService:
         assert "model_tokens" in captured
         assert captured["model_tokens"]["moment"] is not None
 
-    def test_chat_should_yield_deep_thinking_proposal_when_mode_is_deep_thinking(
+    def test_chat_should_execute_deep_thinking_when_commander_decides(
         self, monkeypatch, app
     ):
+        """指挥官判定 deep_thinking 时自动执行深度思考（不再发 proposal 等用户确认）。"""
         assistant_agent_id = uuid4()
         app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
         conversation = SimpleNamespace(id=uuid4(), summary="")
@@ -1670,15 +1671,31 @@ class TestAssistantAgentService:
                     "combined_token_count": 0,
                 }
 
+        executor_capture = {}
+
+        class _FakeSingleAgentExecutor:
+            collected_thoughts = []
+
+            def __init__(self, **kwargs):
+                executor_capture["kwargs"] = kwargs
+
+            def execute(self, **_kwargs):
+                return iter([])
+
         monkeypatch.setattr("internal.service.assistant_agent_service.AgentConfig", lambda **kwargs: SimpleNamespace(**kwargs))
         monkeypatch.setattr("internal.service.language_model_service.LanguageModelService.get_chat_model_by_tier", classmethod(lambda cls, tier: _FakeLLM()))
         monkeypatch.setattr("internal.service.assistant_agent_service.TokenBufferMemory", _FakeTokenBufferMemory)
+        monkeypatch.setattr(
+            "internal.service.executors.single_agent_executor.SingleAgentExecutor",
+            _FakeSingleAgentExecutor,
+        )
 
         with app.app_context():
             events = list(service.chat(req, account))
 
-        assert any("deep_thinking_proposal" in e for e in events)
-        assert all("agent_message" not in e for e in events)
+        # 指挥官判定 deep_thinking → 直接执行深度思考（A2ADeepThinkingAgent）
+        assert all("deep_thinking_proposal" not in e for e in events)
+        assert executor_capture["kwargs"]["agent_config"].enable_deep_thinking is True
 
     def test_chat_should_stream_insufficient_balance_when_cost_policy_not_allowed(
         self, monkeypatch, app
@@ -1876,9 +1893,10 @@ class TestAssistantAgentService:
         ]
         assert save_payload["agent_thoughts"] == []
 
-    def test_chat_should_use_a2a_deep_thinking_agent_when_enabled(
+    def test_chat_should_not_force_deep_thinking_by_user_toggle_when_no_commander(
         self, monkeypatch, app
     ):
+        """用户开关 confirm_deep_thinking 不再强制深度思考（无指挥官时回退普通单 agent）。"""
         assistant_agent_id = uuid4()
         app.config["ASSISTANT_AGENT_ID"] = assistant_agent_id
         conversation = SimpleNamespace(id=uuid4(), summary="历史摘要")
@@ -1963,7 +1981,8 @@ class TestAssistantAgentService:
         with app.app_context():
             list(service.chat(req, account))
 
-        assert executor_capture["kwargs"]["agent_config"].enable_deep_thinking is True
+        # 用户开关不再生效：无指挥官决策时回退普通 single_agent（enable_deep_thinking=False）
+        assert executor_capture["kwargs"]["agent_config"].enable_deep_thinking is False
         assert executor_capture["kwargs"]["agent_config"].runtime_flask_app is not None
         assert executor_capture["kwargs"]["agent_config"].invoke_from == InvokeFrom.ASSISTANT_AGENT.value
 

@@ -86,8 +86,9 @@ class DeepThinkingAgent(FunctionCallAgent):
         graph.add_edge("tools", "llm")
         agent_config = getattr(self, "agent_config", None)
         if agent_config is not None and getattr(agent_config, "enable_checkpoint", False):
-            from internal.core.agent.checkpointer import get_async_checkpointer
-            checkpointer = get_async_checkpointer()
+            from internal.core.agent.checkpointer import get_sync_checkpointer
+
+            checkpointer = get_sync_checkpointer()
             if checkpointer is not None:
                 return graph.compile(checkpointer=checkpointer)
         return graph.compile()
@@ -1973,11 +1974,14 @@ class DeepThinkingAgent(FunctionCallAgent):
         # 长期记忆注入：从 AgentState 读取（与 FunctionCallAgent 一致），
         # 避免深度思考子 Agent 丢失用户长期记忆
         long_term_memory = ""
+        user_memory = ""
         if state is not None:
             long_term_memory = str(state.get("long_term_memory", "") or "")
+            user_memory = str(state.get("user_memory", "") or "")
         system_prompt = get_agent_system_prompt_template("deep_thinking_system_prompt").format(
             preset_prompt=self.agent_config.preset_prompt,
             long_term_memory=long_term_memory,
+            user_memory=user_memory,
         )
         from internal.service.system_prompt_library_service import SystemPromptLibraryService
         constraints_template = SystemPromptLibraryService().get_prompt_or_default(

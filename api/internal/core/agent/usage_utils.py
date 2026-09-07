@@ -279,6 +279,7 @@ def extract_token_usage_from_stream(chunks: list) -> dict | None:
             "prompt_tokens": usage_meta.get("input_tokens", 0),
             "completion_tokens": usage_meta.get("output_tokens", 0),
             "total_tokens": usage_meta.get("total_tokens", 0),
+            "cached_tokens": _extract_cached(usage_meta),
         }
 
     # 2. 检查 response_metadata.token_usage
@@ -289,6 +290,7 @@ def extract_token_usage_from_stream(chunks: list) -> dict | None:
             "prompt_tokens": usage.get("prompt_tokens", usage.get("input_tokens", 0)),
             "completion_tokens": usage.get("completion_tokens", usage.get("output_tokens", 0)),
             "total_tokens": usage.get("total_tokens", 0),
+            "cached_tokens": _extract_cached(usage),
         }
 
     return None

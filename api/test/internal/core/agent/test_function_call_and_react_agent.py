@@ -255,6 +255,107 @@ def test_function_call_agent_long_term_memory_recall_should_validate_history_sha
     assert isinstance(skip_result["messages"][1], SystemMessage)
 
 
+class _UsageChunk:
+    """流式 chunk，携带真实 usage（含 provider 缓存命中数）。"""
+
+    def __init__(self, content: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0):
+        self.content = content
+        self.tool_calls = []
+        self.usage_metadata = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "prompt_tokens_details": {"cached_tokens": cached_tokens},
+        }
+
+    def __add__(self, other):
+        merged = _UsageChunk(
+            f"{self.content}{other.content}",
+            0,
+            0,
+        )
+        merged.usage_metadata = other.usage_metadata or self.usage_metadata
+        return merged
+
+
+class _PricingLLM(BaseLanguageModel):
+    """带 get_pricing 的假 LLM，用于 _calculate_usage 计价。"""
+
+    def __init__(self, input_price=0.001, output_price=0.002, unit=1000.0):
+        super().__init__()
+        self._pricing = (input_price, output_price, unit)
+
+    def get_pricing(self):
+        return self._pricing
+
+    def generate_prompt(self, *args, **kwargs):
+        return LLMResult(generations=[])
+
+    async def agenerate_prompt(self, *args, **kwargs):
+        return LLMResult(generations=[])
+
+    def invoke(self, input, config=None, **kwargs):
+        return input
+
+
+def test_calculate_usage_should_prefer_real_usage_and_apply_cached_price():
+    """真实 usage 可用时优先使用（含 cached），缓存命中部分不计输入价。"""
+    agent = FunctionCallAgent.model_construct(
+        llm=_PricingLLM(),
+        agent_config=_build_agent_config(),
+    )
+    agent._agent_queue_manager = _FakeQueueManager()
+
+    state = {"messages": [HumanMessage(content="history")]}
+    gathered = _UsageChunk("answer text", input_tokens=1000, output_tokens=50, cached_tokens=800)
+
+    (
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        total_tokens,
+        total_price,
+        unit,
+        input_price,
+        output_price,
+    ) = agent._calculate_usage(state, gathered)
+
+    assert input_tokens == 1000
+    assert output_tokens == 50
+    assert cached_tokens == 800
+    assert total_tokens == 1050
+    # 缓存 800 不计输入价：((1000-800)*0.001 + 50*0.002) * 1000 = (0.2 + 0.1) * 1000
+    assert total_price == pytest.approx(300.0)
+    assert unit == 1000.0
+
+
+def test_calculate_usage_should_fallback_to_tiktoken_when_no_real_usage():
+    """无真实 usage 时退回 tiktoken 估算（cached=0）。"""
+    agent = FunctionCallAgent.model_construct(
+        llm=_PricingLLM(),
+        agent_config=_build_agent_config(),
+    )
+    agent._agent_queue_manager = _FakeQueueManager()
+
+    state = {"messages": [HumanMessage(content="q")]}
+    gathered = _Chunk(content="answer")
+
+    (
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        total_tokens,
+        total_price,
+        unit,
+        input_price,
+        output_price,
+    ) = agent._calculate_usage(state, gathered)
+
+    assert cached_tokens == 0
+    assert total_tokens == input_tokens + output_tokens
+    assert input_tokens > 0
+
+
 def test_function_call_agent_llm_node_should_handle_message_and_thought_and_error(monkeypatch):
     monkeypatch.setattr("internal.core.agent.agents.function_call_agent.tiktoken.get_encoding", lambda _name: _FakeEncoding())
     task_id = uuid4()

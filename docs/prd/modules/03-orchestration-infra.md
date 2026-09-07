@@ -53,6 +53,68 @@ Key 池管理（并入模型池体系，`ModelKeyConfig`）：
 
 运行时模型选择链路：`ModelGatewayService`（`internal/service/model_gateway_service.py`）依据编排决策（`RoutingDecision`）与上下文解析模型档位；`RuntimeModelPoolService.select_model_with_fallback` 在模型池内按 tier + 成本参考 + 优先级选取并支持 fallback；`RuntimeModelPoolService.select_key` 为选定模型选取可用 Key 并维护失败计数。管理员可为每个 Agent 配置底座模型，也可以选择"跟随系统策略"。系统策略负责在 Key 不可用、限流、余额不足或模型故障时自动切换。
 
+#### 12.1.1.1 运行时模型故障转移（实例层，断点续传-模型层）
+
+> **现状说明（同步于可靠性改造）**：实例层故障转移统一由 `RuntimeFallbackLanguageModelProxy`（`internal/service/language_model_service.py`）承载。所有入口的 LLM（单 Agent、多 Agent 子任务、direct_answer、编排决策/直答、工作流 LLM 节点、首页助手定时任务）均由 `resolve_runtime_language_model` / `load_language_model` 解析并套代理，因此下述能力对全部 LLM 调用生效，无需各调用方自行处理。
+
+故障转移顺序（生产级语义）：
+
+1. **当前模型/Key 重连**：单次调用失败（可重试错误：5xx / 429 / 超时 / 连接错误）时，在当前模型 + Key 上重连 `RUNTIME_FALLBACK_RETRY_ATTEMPTS` 次（默认 **5**），仍失败才进入下一步。
+2. **同档位、同类型候选轮换**：通过候选加载器从模型池解析「同档位（tier）+ 同类型（chat）」的候选模型（复用 `RuntimeModelPoolService.select_model_with_fallback` 的 priority + 成本排序，最多 3 个，自动排除当前 provider+model），逐一实例化并尝试。每个候选自身也是 `RuntimeFallbackLanguageModelProxy`，具备同等的「重连 → 再换候选 → 默认兜底」能力。
+3. **默认模型兜底**：候选耗尽或模型池不可用时，回退 `load_default_language_model` 的默认模型。
+
+**同 provider 优先（缓存保持）**：候选 loader 内按「是否与当前模型同 provider」稳定分组排序（`chain.sort(key=同provider)`），组内保留原有 priority+成本相对序。故障转移先换同一提供商的其他型号（如 DeepSeek → DeepSeek 另一型号），尽量贴近原 provider 的上下文缓存命名空间——同 provider 的自动缓存（DeepSeek/OpenAI 兼容网关按前缀命中）可在续跑时继续命中；同 provider 全部失败后才轮到跨 provider 候选（跨 provider 换模型缓存命名空间必然变化，命中丢失无可避免）。
+
+关键语义与保护：
+
+- **流式中断保护**：流式调用一旦已产出 chunk 后失败（用户已看到部分输出），**不再切换模型重发**（避免重复计费与重复推送），直接中断并抛出错误；仅在完全未产出任何 chunk 时切换模型。
+- **图片输入保护**：含图片输入时 `_contains_image_input` 判定后不切换（避免把多模态请求打到不支持视觉的候选）。
+- **非可重试错误直抛**：400 / 401 / 权限拒绝等 `_NON_RETRYABLE` 错误不重试、不切换，直接抛出。
+- **可配置开关**：候选轮换默认开启，可用 `RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES=0` 关闭（退化为单跳默认模型的原行为）；重连次数可用 `RUNTIME_FALLBACK_RETRY_ATTEMPTS` 调整。
+
+**缓存命中与计费（v2）**：同模型重试/续跑时，LLM 输入前缀不变（重试原样透传 args、不重放），provider 自动缓存可命中。Agent 主链路 token 统计已从「tiktoken 估算」升级为「优先读取 LLM 返回的真实 usage（含 `prompt_cache_hit_tokens` / `cached_tokens`）」：`_calculate_usage` 提取真实 cached 后，`AgentThought.cached_token_count` → `AgentTaskExecutor.metadata.token_usage.cached_input_tokens` → executor billing delta → `billing_aggregator.model_tokens` 透传，最终由 `PricingEngine.plan_usage` 在模型池行级 `cache_pricing_enabled=True` 时按 `input_cached_price_per_1k_tokens` 缓存价计费——缓存命中真实省钱。
+
+> **说明**：这是「单次调用内自动恢复 + 上下文续跑」的模型层断点续传。上游 LLM API 端点故障时，用户侧无感知，Agent 编排不会因单次模型 5xx 中断。
+
+#### 12.1.1.2 进程级 checkpoint（LangGraph Redis 断点续传）
+
+> **现状说明（同步于可靠性改造）**：进程级 checkpoint 由 LangGraph `checkpointer` + Redis 承载，把 Agent 图的**节点边界状态**持久化到 Redis。worker/进程崩溃后，以同一 `thread_id` 重新执行即可从最后稳定 checkpoint 继续（pending 节点续跑），已执行完的工具轮/LLM 轮不重放。
+
+关键组件：
+
+- **LoopAwareAsyncRedisSaver（checkpointer 工厂）**：`internal/core/agent/checkpointer.py` 提供 `get_async_checkpointer()` / `get_sync_checkpointer()`（等价，统一走 AsyncRedisSaver）。`LoopAwareAsyncRedisSaver` **继承** `langgraph.checkpoint.redis.aio.AsyncRedisSaver`（天然是 BaseCheckpointSaver，可通过 `graph.compile` 类型校验），并在每次 checkpoint 读写前检测当前事件循环：若与上次绑定的 loop 不同（base_agent 同步链路每请求在子线程内 `asyncio.run` 新建事件循环），先断开旧连接池再 `asetup()` 重建——解决 AsyncRedisSaver 跨事件循环复用的 "Event loop is closed" 问题（已用真实 Redis 8 验证崩溃后续跑）。同步 `get_tuple`（供 `has_pending_checkpoint`）内部用独立 `asyncio.run` 查询。Redis 不可用 / 缺 RediSearch 模块时返回 None，编译退化为无 checkpoint（Agent 照常执行）。
+- **编译挂载**：`FunctionCallAgent` / `DeepThinkingAgent` 的 `_build_agent` 在 `enable_checkpoint=True` 时 `graph.compile(checkpointer=get_async_checkpointer())`。
+- **稳定 thread_id**：`AgentConfig` 新增 `checkpoint_thread_id` 字段。`base_agent._resolve_checkpoint_config` 优先级：调用方显式 config > `agent_config.checkpoint_thread_id` > 随机。稳定 thread_id（如会话维度 `conv:{conversation_id}`）是崩溃后定位 checkpoint 线程的关键。
+- **续跑检测与入口**：`BaseAgent.has_pending_checkpoint()` 检查该 thread 的 checkpoint 是否存在 `pending_writes`（崩溃/异常中断的标记）；`BaseAgent.resume()` 以 `ainvoke(None)` 驱动 LangGraph 继续执行 pending 节点——不追加新输入，不重放已提交节点，事件流与 `stream` 一致。
+- **会话链路透传**：`AssistantAgentService.chat(..., checkpoint_thread_id="")` 支持显式启用；环境变量 `AGENT_CHECKPOINT_BY_CONVERSATION=1` 开启时默认以会话维度（`conv:{conversation_id}`）启用。**Docker 生产已默认开启**（compose environment 固化）；本地/其他部署默认关闭（不产生额外 Redis checkpoint 写入）。
+
+恢复语义与边界：
+
+- checkpoint 在图节点**完成后**保存。进程在单步执行中途（如 LLM 流式中）崩溃，最后一步未写入，只能从上一个稳定 checkpoint 恢复——意味着崩溃点所在步骤会重放一次（该步若含不可幂等工具副作用，存在重复风险，需配合工具确认机制与编排层"无副作用才自动重放"策略）。
+- 多智能体路径（每个子任务独立 agent）暂不启用（thread_id 冲突），checkpoint 能力限定 single_agent 主链路。
+
+> **部署前提与启用状态**：进程级 checkpoint 依赖 Redis 的 **RediSearch（FT.\* 命令）与 RedisJSON（JSON.SET/GET，langgraph-checkpoint-redis 主写入路径）**。仓库 Docker 部署用 `redis:8-alpine`（容器内实测 Redis 8.8.0）。**注意**：Redis 8 的镜像自带 `rejson.so` / `redisearch.so` 等模块文件（`/usr/local/lib/redis/modules/`），但默认精简 `redis.conf` **不会加载**——必须在启动命令显式 `--loadmodule`，否则 langgraph checkpoint 初始化报 `unknown command 'JSON.SET'`（RediSearch/ReJSON 缺失）。`docker/docker-compose.yaml` 的 `llmops-redis` 已把 `rejson.so` + `redisearch.so` 两个 `--loadmodule` 固化进启动 command（2026-09 生产实测：加载后 `asetup` 建索引、checkpoint 写入/读取均通过）。启用方式：`docker/docker-compose.yaml` 的 `llmops-api` / `llmops-celery` 已在 `environment` 固化 `AGENT_CHECKPOINT_BY_CONVERSATION: '1'`（environment 优先于 env_file，即使 `api/.env` 丢失或未配置该键也能稳定生效）。未部署模块或显式关闭时功能自动降级，不影响既有执行。
+
+#### 12.1.1.3 工具执行登记表（崩溃恢复不重复副作用）
+
+> **现状说明（同步于可靠性改造）**：工具执行登记表（`internal/core/agent/tool_execution_registry.py`）解决 checkpoint 恢复时「tools_node 重放导致已执行工具被再次调用」的副作用重复问题。LangGraph checkpoint 在节点**完成后**保存，进程在 `tools_node` 内部执行工具时崩溃（副作用已发生但节点未完成），恢复后 tools_node 会被重放——若不做防护，已执行的工具会再次被调用。
+
+登记语义（命名空间 = 稳定 thread_id，跨崩溃稳定）：
+
+| 登记状态 | 含义 | 恢复时 tools_node 行为 |
+| --- | --- | --- |
+| `done`（含结果） | 工具崩溃前已执行完 | **不重放执行**，直接重放登记的结果（ToolMessage 用登记结果构造） |
+| `running` | 工具已发起但结果未知（崩溃残留） | **不盲目执行**；把状态标记 `unknown`，构造「结果未知，请先核实再决策」的 ToolMessage，由 LLM 用只读/核实工具确认实际结果后决定：已生效则继续、未生效再重试 |
+| 无记录 | 未执行过 | 正常执行：先登记 `running`，执行成功登记 `done + 结果` |
+
+实现要点：
+
+- `tools_node`（`function_call_agent.py`）在每个 tool_call 处理开头查询登记表（`_lookup_registered_tool_result` / `_is_crash_interrupted_tool`），命中后跳过授权/确认/执行全流程直接产出 ToolMessage 并 `continue`。
+- 工具真正 `invoke` 前 `mark_running`，成功后 `mark_done`（best-effort，Redis 异常不阻断执行）。
+- 仅在启用进程级 checkpoint（`enable_checkpoint` + `checkpoint_thread_id`）时生效；登记表 key 带 24h TTL 自动过期，崩溃场景保留供恢复、正常场景自动清理。
+
+> **协作链路**：登记表让「崩溃点重放的 tools_node」变为**安全幂等**——已完成的工具不重跑、结果保留；结果未知的工具交还给 LLM 核实决策（而不是假设失败盲目重试，也不是静默跳过），在安全与交互体验间取得平衡。
+
 ### 12.2 复杂度判断
 
 > **v5.2 变更**：原 `TaskClassifier` 模块已被指挥官 `ConductorService` 替代。复杂度判断不再是独立模块的输出，而是指挥官单次 LLM `structured_output` 输出的 `ConductorPlan.complexity` 字段。下表的判断规则现在作为指挥官 prompt 的参考规则，由 LLM 在推理时应用。
@@ -253,6 +315,15 @@ cheap -> standard -> strong
 | deep_thinking | 深度思考执行 | 复杂产物、长任务 | 用户承担 |
 | reject_or_confirm | 拒绝或请求确认 | 高风险任务 | 不计费 |
 
+> **深度思考的触发权（2026-09 同步）**：深度思考**只由入口指挥官决策**，用户不再有手动开关。
+> - `assistant_agent_service.chat()` 调用 `orchestrator.decide()` 时固定传 `enable_deep_thinking=False`——用户请求体里的 `confirm_deep_thinking`（旧前端/旧开关遗留）不再作为输入，也不能强制/绕过指挥官决策。
+> - 执行判定 `should_deep_think = (execution_mode == "deep_thinking")`：仅当指挥官（传统规则路径的 `TaskClassifier` 命中深度思考关键词/意图，受 `ENABLE_AUTO_DEEP_THINKING` 开关约束；或 Conductor 决策后由 orchestrator 的关键词增强升级）判定为 `deep_thinking` 才执行。
+> - 原「deep_thinking_proposal 二阶段确认」不再下发（`_stream_deep_thinking_proposal` 不再被 chat 调用）——指挥官判定后直接自动执行，避免用户在开/关之间误操作（开了不关会让简单问题也走深度思考烧钱）。
+> - 前端已彻底删除深度思考手动开关（2026-09）：`ChatComposer` 的 `showDeepThinkingToggle`/`deepThinkingEnabled` props 与灯泡按钮 UI 已移除，HomeView/WebApp 预览/应用调试等所有聊天入口不再暴露 toggle，也不向请求体传 `confirm_deep_thinking`（web-app/assistant-agent/app 调试的 model、service、hook 均已清理该字段）；前端仅保留对指挥官决策后的 `deep_thinking` 过程事件做展示。
+> - Conductor（LLM 指挥官）本身不输出 `deep_thinking` 模式，orchestrator 在 conductor 决策后对其 single/multi agent 类结果做**关键词层深度思考增强**（复用 `TaskClassifier._classify_with_keywords`，零 LLM 成本），命中且 `ENABLE_AUTO_DEEP_THINKING` 开启时升级为 `deep_thinking`。
+
+> **SSE 长任务活性保障（2026-09 修复）**：`support.py` 的 `_sse_response` 心跳帧（`: keep-alive`）现在同步刷新 `last_activity`——历史缺陷：Agent 图单节点（如 deep_agent 内部长 LLM 调用）单帧耗时超过原 `SSE_ACTIVITY_TIMEOUT`（60s）会被误判"生成器失活"掐断整条 SSE 流，导致深度思考最终长文丢失。现改为单帧上限 `SSE_MAX_FRAME_SECONDS`（默认 1800s，仅兜底线程死锁）。同时 `conversation_service.save_agent_thoughts` 修复两个落库缺陷：(a) message 已被删除/查询为 None 时安全早退（不再 AttributeError 拖垮整条持久化链）；(b) 分块流式/空 answer 的 token 统计 AGENT_MESSAGE 事件不再逐条覆盖 `message.answer`——仅当 answer 尚未写入时用事件内容兜底，保证外层聚合的完整长文正确落库。
+
 ### 13.2 快速路径（direct_answer）
 
 指挥官判定为简单问题时，直接在 `ConductorPlan.direct_answer` 字段中给出完整回复，不经 Agent 执行：
@@ -285,6 +356,32 @@ ConductorService.plan
 - 升级/降级策略由 `cost_policy_service.EscalationPolicyService` 承担（读取 `billing_config` 的 `escalation_enabled`，经 `resolve_escalation_policy_service()` 注入）。
 
 **子任务上下文**：`ExecutionCoordinatorService._build_upstream_context` 为每个子任务构建上游结果上下文；`AgentTaskExecutor._resolve_query` 在存在 `upstream_results` 时，将上游子任务输出拼接到 `item.description`（或原始 query）之后，实现串行链路的信息传递。
+
+#### 13.3.1 定时任务执行可靠性（长任务治理）
+
+> **现状说明（同步于可靠性改造）**：首页助手/应用的定时任务（ScheduleTask）由 Celery 驱动：`internal.task.schedule_tasks.run_scheduled_tasks`（celery-beat 每分钟扫描）与 `schedule_task_execute`（真正执行，独立任务）解耦；`ScheduleExecutionService.execute_task`（`internal/service/schedule_execution_service.py`）以任务归属用户身份走完整编排链。
+
+可靠性机制（全部已落地）：
+
+| 机制 | 实现 | 说明 |
+| --- | --- | --- |
+| 扫描/执行解耦 | `run_scheduled_tasks` 只扫描+`advance_next_run`+`.delay()` 投递，立即返回 | 长任务（数小时/跨天）不阻塞每分钟扫描 tick |
+| 无硬超时 | `_run_assistant_chat` 直接同步迭代 chat 生成器直至自然完成 | 移除旧 90s daemon 线程超时（该机制会误杀长任务且线程空转） |
+| 每用户并发上限 | `_account_under_concurrency_limit` 统计该账号 running 且 6h 窗口内的 run 数，上限 `_MAX_CONCURRENT_RUNS_PER_ACCOUNT=10` | 非 Celery 全局计数（后者会误伤其他用户长任务）；僵尸 running 不计额度 |
+| Redis 执行锁（token 化） | `SET NX EX` 带随机 token，TTL 8h | 防同一任务重入；释放用 Lua 脚本按 token 比对（防误删他人锁） |
+| 锁续租 watchdog | `execute_task` 内 daemon 线程每 60s `expire` 重置 TTL | 真实长任务超 8h 锁不过期，不会被下个 tick 重入 |
+| 僵尸清理周期任务 | `cleanup_stale_runs`（celery-beat 每 15 分钟）把超过 8h（`SCHEDULE_STALE_RUN_HOURS` 可配）仍 running 的 run 标记 failed | 回收 worker 崩溃/重启留下的僵尸记录，避免永久占用并发额度 |
+| acks_late + reject_on_worker_lost | `schedule_task_execute` 装饰器开启 | worker 执行中途崩溃时 broker 重新投递；`execute_task` 幂等（Redis 锁），不会并行。配套 `broker_transport_options.visibility_timeout=86400`（`CELERY_BROKER_VISIBILITY_TIMEOUT`），防止正常长任务超 1h 被 broker 误重投 |
+| 连续失败自动停用 | `_maybe_disable_after_consecutive_failures`：最近连续 5 次 run 全 failed → `enabled=False, status=paused` | 避免任务永久失败烧资源 |
+| 进程级 checkpoint（可选） | LangGraph 同步 RedisSaver + `checkpoint_thread_id`（`AGENT_CHECKPOINT_BY_CONVERSATION=1` / 显式传入开启） | 进程崩溃后同会话重发从节点边界续跑；需 Redis 带 RediSearch 模块，默认关闭 |
+
+**中断场景行为**：
+
+- Agent 执行抛业务异常（LLM/工具失败冒泡）→ run 落 `failed` + error_message，ws 通知用户；连续失败 5 次自动停用；失败重跑靠下个 cron tick（next_run 已推进）。
+- worker 崩溃/被 kill → acks_late 让 broker 重投；Redis 锁 8h TTL 独立兜底防重入；僵尸 run 由 15 分钟周期任务标记 failed。
+- LLM API 端点故障/5xx → 实例层 `RuntimeFallbackLanguageModelProxy` 重连 5 次 → 同档候选轮换 → 默认模型兜底（见 §12.1.1.1），对定时任务同样生效，任务不中断。
+- **编排层安全续跑（AgentTaskExecutor）**：Agent 执行中出现 ERROR/TIMEOUT/STOP 终态失败事件（metadata.terminal_failure）且**未调用任何工具**（tool_calls 为空，无副作用）时，`AgentTaskExecutor.execute` 用同一份完整上下文（history + query + 记忆，`state["messages"]` 累积含全部历史）自动续跑一次——覆盖「LLM 调用在模型池全部故障后短暂恢复」等 proxy 耗尽候选的极端场景。一旦执行中已调用过工具（存在副作用）则不续跑，避免副作用重复执行。
+- **进程崩溃（worker 被杀/滚动更新）**：若启用进程级 checkpoint（见 §12.1.1.2），Redis 中的节点边界状态保留；恢复进程以同一 thread_id（会话维度）执行时，`has_pending_checkpoint()` 判定存在 pending 节点，`resume()` 从断点续跑（不重放已提交工具/LLM 轮）。未启用时，同会话重发请求会作为全新执行处理（消息追加、从头规划）。
 
 ### 13.4 硬约束校验与回退
 

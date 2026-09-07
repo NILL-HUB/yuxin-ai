@@ -215,3 +215,103 @@ def test_token_usage_uses_agent_thought_tokens():
     assert result["metadata"]["token_usage"]["total_tokens"] == 120
     assert result["metadata"]["token_usage"]["prompt_tokens"] == 120
     assert result["metadata"]["token_usage"]["completion_tokens"] == 0
+
+
+def _make_thought(answer: str = "", event: str = "agent_message", tool_name: str = "", token_count: int = 0, observation: str = ""):
+    thought = MagicMock()
+    thought.answer = answer
+    thought.event = event
+    thought.total_token_count = token_count
+    thought.total_price = 0.0
+    thought.latency = 0.0
+    thought.thought = ""
+    thought.observation = observation
+    thought.tool = tool_name
+    thought.tool_input = {}
+    thought.id = None
+    return thought
+
+
+def test_execute_replays_once_when_llm_failure_no_side_effect():
+    """LLM 中断（无 answer、无工具调用）时继承上下文续跑一次。"""
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+
+    # 第一次执行：LLM 中断（ERROR 终态事件后流结束，无 answer）
+    error_thought = _make_thought(event="error", answer="")
+    # 第二次执行：成功产出答案
+    ok_thought = _make_thought(answer="恢复后的答案", event="agent_message")
+
+    agent = MagicMock()
+    agent.stream.side_effect = [iter([error_thought]), iter([ok_thought])]
+    agent_class = MagicMock(return_value=agent)
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+        history=[MagicMock()],
+    )
+
+    item = TaskPlanItem(task_id="task-replay", title="标题", description="描述")
+    result = executor.execute(item)
+
+    assert agent_class.call_count == 2
+    assert result["answer"] == "恢复后的答案"
+    # 两次执行的输入上下文一致（继承全部上下文续跑）
+    first_input = agent.stream.call_args_list[0].args[0]
+    second_input = agent.stream.call_args_list[1].args[0]
+    assert first_input["history"] == second_input["history"]
+
+
+def test_execute_does_not_replay_when_tool_called():
+    """已调用过工具（有副作用）时不续跑。"""
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+
+    # 已调用工具 search 但最终失败（无 answer）
+    tool_thought = _make_thought(event="agent_action", tool_name="search", observation="tool result")
+    error_thought = _make_thought(event="error", answer="")
+    agent = MagicMock()
+    agent.stream.return_value = iter([tool_thought, error_thought])
+    agent_class = MagicMock(return_value=agent)
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+    )
+
+    item = TaskPlanItem(task_id="task-tool", title="标题", description="描述")
+    result = executor.execute(item)
+
+    # 只执行一次（不续跑，避免工具副作用重复）
+    assert agent_class.call_count == 1
+    # 工具调用已被记录（证明存在副作用信号，故不续跑）
+    assert result["tool_calls"] and result["tool_calls"][0]["name"] == "search"
+
+
+def test_execute_does_not_replay_on_success():
+    """正常成功（有 answer）不续跑。"""
+    llm = MagicMock()
+    llm.convert_to_human_message.return_value = MagicMock(name="human_message")
+
+    ok_thought = _make_thought(answer="正常答案", event="agent_message")
+    agent = MagicMock()
+    agent.stream.return_value = iter([ok_thought])
+    agent_class = MagicMock(return_value=agent)
+
+    executor = AgentTaskExecutor(
+        agent_class=agent_class,
+        agent_config=None,
+        tools=[],
+        llm=llm,
+    )
+
+    item = TaskPlanItem(task_id="task-ok", title="标题", description="描述")
+    result = executor.execute(item)
+
+    assert agent_class.call_count == 1
+    assert result["answer"] == "正常答案"

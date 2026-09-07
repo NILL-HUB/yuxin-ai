@@ -54,6 +54,12 @@ class AgentConfig(BaseModel):
     # 启用后需通过 astream/ainvoke 并携带 thread_id（跨请求恢复对话状态）
     enable_checkpoint: bool = False
 
+    # 进程级 checkpoint 的稳定线程标识（thread_id）。
+    # 为空时由 _resolve_checkpoint_config 生成随机 thread_id（仅单请求内有效）；
+    # 传入稳定标识（如 conversation_id）后，崩溃/重启后以同一 thread_id 重新
+    # ainvoke 即从最后 checkpoint 续跑（进程级断点续传）。
+    checkpoint_thread_id: str = ""
+
     # 运行时 Flask application，用于线程内补充 app context（如附件持久化）
     runtime_flask_app: Any = None
 

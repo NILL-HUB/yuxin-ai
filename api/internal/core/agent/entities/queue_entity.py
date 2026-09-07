@@ -56,6 +56,7 @@ class AgentThought(BaseModel):
     # 消息相关的数据
     message: list[dict] = Field(default_factory=dict)  # 推理使用的消息列表
     message_token_count: int = 0  # 消息花费的token数
+    cached_token_count: int = 0  # 输入中命中 provider 上下文缓存的 token 数（用于缓存价计费）
     message_unit_price: float = 0  # 单价
     message_price_unit: float = 0  # 价格单位
 

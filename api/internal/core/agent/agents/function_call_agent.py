@@ -59,8 +59,9 @@ class FunctionCallAgent(BaseAgent):
         # 4.编译应用并返回（兼容 object.__new__ 构造的测试实例：agent_config 可能不存在）
         agent_config = getattr(self, "agent_config", None)
         if agent_config is not None and getattr(agent_config, "enable_checkpoint", False):
-            from internal.core.agent.checkpointer import get_async_checkpointer
-            checkpointer = get_async_checkpointer()
+            from internal.core.agent.checkpointer import get_sync_checkpointer
+
+            checkpointer = get_sync_checkpointer()
             if checkpointer is not None:
                 agent = graph.compile(checkpointer=checkpointer)
                 return agent
@@ -270,9 +271,16 @@ class FunctionCallAgent(BaseAgent):
             }
 
         # 8.计算LLM的输入+输出的token总数
-        input_token_count, output_token_count, total_token_count, total_price, unit, input_price, output_price = (
-            self._calculate_usage(state, gathered, messages=llm_messages)
-        )
+        (
+            input_token_count,
+            output_token_count,
+            cached_token_count,
+            total_token_count,
+            total_price,
+            unit,
+            input_price,
+            output_price,
+        ) = self._calculate_usage(state, gathered, messages=llm_messages)
 
         # 11.如果类型为推理则添加智能体推理事件
         final_tool_calls = getattr(gathered, "tool_calls", []) or []
@@ -286,6 +294,7 @@ class FunctionCallAgent(BaseAgent):
                 # 消息相关字段
                 message=messages_to_dict(state["messages"]),
                 message_token_count=input_token_count,  # 消息花费的token数
+                cached_token_count=cached_token_count,  # 命中缓存的token数（缓存价计费）
                 message_unit_price=input_price,  # 单价
                 message_price_unit=unit,  # 价格单位
                 # 答案相关字段
@@ -327,6 +336,7 @@ class FunctionCallAgent(BaseAgent):
                 # 消息相关字段
                 message=messages_to_dict(state["messages"]),
                 message_token_count=input_token_count,  # 消息花费的token数
+                cached_token_count=cached_token_count,  # 命中缓存的token数（缓存价计费）
                 message_unit_price=input_price,  # 单价
                 message_price_unit=unit,  # 价格单位
                 # 答案相关字段
@@ -399,6 +409,72 @@ class FunctionCallAgent(BaseAgent):
             id = uuid.uuid4()
             start_at = time.perf_counter()
             confirmation_id = ""
+
+            # 4.0 崩溃恢复重放/核实（进程级 checkpoint 登记表）：
+            # - 已登记 done（崩溃前执行完）：不重放执行，直接重放登记的结果；
+            # - 登记 running（崩溃在工具执行中）：工具副作用可能已发生且结果未知，
+            #   不盲目重放；构造「结果未知」ToolMessage 让 LLM 核实后决策。
+            # 仅在启用 checkpoint 时启用（登记表命名空间 = 稳定 thread_id）。
+            replayed_registered_result = self._lookup_registered_tool_result(tool_call)
+            if replayed_registered_result is not None:
+                messages.append(ToolMessage(
+                    tool_call_id=tool_call["id"],
+                    content=replayed_registered_result,
+                    name=tool_call["name"],
+                ))
+                self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                    id=id,
+                    task_id=state["task_id"],
+                    event=(
+                        QueueEvent.DATASET_RETRIEVAL.value
+                        if tool_call["name"] in {
+                            getattr(tool_policy, "dataset_retrieval_tool_name", "dataset_retrieval"),
+                            "search_knowledge_base",
+                            "recall_dataset",
+                        }
+                        else QueueEvent.AGENT_ACTION.value
+                    ),
+                    observation=self._build_user_visible_tool_result(
+                        tool_call["name"],
+                        replayed_registered_result,
+                    ),
+                    tool=tool_call["name"],
+                    tool_input=tool_call["args"],
+                    latency=(time.perf_counter() - start_at),
+                ))
+                continue
+
+            if self._is_crash_interrupted_tool(tool_call):
+                unknown_result = (
+                    f"工具 {tool_call['name']} 的调用在此前执行中被进程中断，"
+                    "无法确认是否已生效（结果未知）。"
+                    "请先用只读/核实类工具确认该操作的实际结果："
+                    "若已生效且结果完整，请基于该结果继续，不要再重复执行本工具；"
+                    "若确认未生效或结果不完整，再重新执行本工具。"
+                )
+                from internal.core.agent.tool_execution_registry import mark_unknown
+
+                mark_unknown(
+                    self._registry_redis_client(),
+                    self._tool_registry_thread_id(),
+                    str(tool_call.get("id", "")),
+                    tool_call["name"],
+                )
+                messages.append(ToolMessage(
+                    tool_call_id=tool_call["id"],
+                    content=unknown_result,
+                    name=tool_call["name"],
+                ))
+                self.agent_queue_manager.publish(state["task_id"], AgentThought(
+                    id=id,
+                    task_id=state["task_id"],
+                    event=QueueEvent.AGENT_ACTION.value,
+                    observation=unknown_result,
+                    tool=tool_call["name"],
+                    tool_input=tool_call["args"],
+                    latency=(time.perf_counter() - start_at),
+                ))
+                continue
 
             try:
                 # 5.获取工具并调用工具
@@ -586,7 +662,32 @@ class FunctionCallAgent(BaseAgent):
                             tool_call["args"] = dict(tool_call.get("args") or {})
                             tool_call["args"]["mode"] = "preview"
 
+                # 登记工具执行开始（running）：进程在此之后崩溃时，恢复流程能识别
+                # 「工具已发起但结果未知」，由 LLM 核实后决策，而非盲目重放。
+                if self._tool_registry_thread_id():
+                    from internal.core.agent.tool_execution_registry import mark_running
+
+                    mark_running(
+                        self._registry_redis_client(),
+                        self._tool_registry_thread_id(),
+                        str(tool_call.get("id", "")),
+                        tool_call["name"],
+                        tool_call.get("args"),
+                    )
+
                 tool_result = tool.invoke(tool_call["args"])
+
+                # 工具执行成功：登记 done + 结果。崩溃恢复时重放此结果（不重复执行）。
+                if self._tool_registry_thread_id():
+                    from internal.core.agent.tool_execution_registry import mark_done
+
+                    mark_done(
+                        self._registry_redis_client(),
+                        self._tool_registry_thread_id(),
+                        str(tool_call.get("id", "")),
+                        tool_call["name"],
+                        tool_result,
+                    )
             except LookupError as e:
                 tool_result = str(e)
             except Exception as e:
@@ -756,6 +857,70 @@ class FunctionCallAgent(BaseAgent):
             line = line.replace("**", "").replace("`", "")
             lines.append(line)
         return "\n".join(lines)
+
+    def _tool_registry_thread_id(self) -> str:
+        """返回工具登记表命名空间：稳定 thread_id（checkpoint 维度，跨崩溃稳定）。
+
+        仅当启用了进程级 checkpoint（enable_checkpoint + checkpoint_thread_id）时
+        返回 thread_id，否则返回空串（登记表不启用）。
+        """
+        agent_config = getattr(self, "agent_config", None)
+        if agent_config is None:
+            return ""
+        if not getattr(agent_config, "enable_checkpoint", False):
+            return ""
+        return (getattr(agent_config, "checkpoint_thread_id", "") or "").strip()
+
+    def _registry_redis_client(self):
+        """返回登记表用的 redis client（与队列管理器共享，线程安全）。"""
+        manager = getattr(self, "_agent_queue_manager", None)
+        if manager is None:
+            return None
+        return getattr(manager, "redis_client", None)
+
+    def _lookup_registered_tool_result(self, tool_call) -> str | None:
+        """查询登记表：tool_call 是否已在崩溃前执行完。
+
+        Returns:
+            - 已登记 done：返回登记的结果字符串（调用方应跳过执行直接重放）；
+            - 未登记 / 登记 running / 查询失败：返回 None（调用方按正常流程执行）。
+        """
+        thread_id = self._tool_registry_thread_id()
+        if not thread_id:
+            return None
+        try:
+            from internal.core.agent.tool_execution_registry import get_status
+
+            record = get_status(
+                self._registry_redis_client(),
+                thread_id,
+                str(tool_call.get("id", "")),
+            )
+            if not record:
+                return None
+            if record.get("status") == "done" and "result" in record:
+                return str(record.get("result"))
+        except Exception:
+            logger.warning("查询工具登记表失败，按未登记处理 tool=%s", tool_call.get("name"), exc_info=True)
+        return None
+
+    def _is_crash_interrupted_tool(self, tool_call) -> bool:
+        """该 tool_call 是否为崩溃残留（登记 running，即工具已发起但结果未知）。"""
+        thread_id = self._tool_registry_thread_id()
+        if not thread_id:
+            return False
+        try:
+            from internal.core.agent.tool_execution_registry import get_status
+
+            record = get_status(
+                self._registry_redis_client(),
+                thread_id,
+                str(tool_call.get("id", "")),
+            )
+            return bool(record and record.get("status") == "running")
+        except Exception:
+            logger.warning("查询工具崩溃残留状态失败 tool=%s", tool_call.get("name"), exc_info=True)
+            return False
 
     def _is_tool_authorized(
         self,
@@ -1133,15 +1298,47 @@ class FunctionCallAgent(BaseAgent):
         gathered,
         *,
         messages: list[Any] | None = None,
-    ) -> tuple[int, int, int, float, float, float, float]:
-        """计算输入输出token以及价格"""
-        encoding = tiktoken.get_encoding("cl100k_base")
-        input_token_count = len(encoding.encode(normalize_usage_text(state["messages"])))
-        output_token_count = len(encoding.encode(normalize_usage_text(gathered)))
+    ) -> tuple[int, int, int, int, float, float, float, float]:
+        """计算输入输出token、缓存命中token以及价格。
+
+        优先使用 LLM 返回的真实 usage（含 provider 上下文缓存命中 cached_tokens，
+        命中缓存时按缓存价计费，同模型重试/续跑命中缓存能真实省钱）；
+        提取不到真实 usage 时退回 tiktoken 估算（估算无缓存概念，cached=0）。
+        """
         input_price, output_price, unit = self.llm.get_pricing()
+        cached_token_count = 0
+        input_token_count = 0
+        output_token_count = 0
+        try:
+            from internal.core.agent.usage_utils import extract_token_usage_from_stream
+
+            usage = extract_token_usage_from_stream([gathered])
+            if usage:
+                input_token_count = int(usage.get("prompt_tokens") or 0)
+                output_token_count = int(usage.get("completion_tokens") or 0)
+                cached_token_count = int(usage.get("cached_tokens") or 0)
+        except Exception:
+            logger.debug("提取真实 usage 失败，退回 tiktoken 估算", exc_info=True)
+
+        if input_token_count <= 0 and output_token_count <= 0:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            input_token_count = len(encoding.encode(normalize_usage_text(state["messages"])))
+            output_token_count = len(encoding.encode(normalize_usage_text(gathered)))
+            cached_token_count = 0
         total_token_count = input_token_count + output_token_count
-        total_price = (input_token_count * input_price + output_token_count * output_price) * unit
-        return input_token_count, output_token_count, total_token_count, total_price, unit, input_price, output_price
+        total_price = (
+            (input_token_count - cached_token_count) * input_price + output_token_count * output_price
+        ) * unit
+        return (
+            input_token_count,
+            output_token_count,
+            cached_token_count,
+            total_token_count,
+            total_price,
+            unit,
+            input_price,
+            output_price,
+        )
 
     def _apply_output_review(self, content: str) -> str:
         """按输出审核规则处理文本"""

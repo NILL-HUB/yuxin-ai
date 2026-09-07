@@ -50,17 +50,23 @@ class BaseAgent(Serializable, Runnable):
     def _resolve_checkpoint_config(self, config: Optional[RunnableConfig] = None) -> Optional[RunnableConfig]:
         """确保启用了 checkpointer 时 config 携带 thread_id。
 
-        调用方传入 thread_id（跨请求恢复）时原样透传；未传时生成随机
-        thread_id 保证图可正常执行（单请求内不跨请求恢复）。
+        优先级：
+        1. 调用方显式传入的 thread_id（跨请求恢复）——原样透传；
+        2. agent_config.checkpoint_thread_id（进程级 checkpoint 的稳定线程标识，
+           如 conversation_id）——崩溃后以同一 thread_id 续跑的关键；
+        3. 兜底生成随机 thread_id 保证图可正常执行（单请求内不跨请求恢复）。
         未启用 checkpointer 时原样返回。
         """
         if not getattr(self.agent_config, "enable_checkpoint", False):
             return config
         if config is not None and (config.get("configurable") or {}).get("thread_id"):
             return config
+        stable_thread_id = (
+            getattr(self.agent_config, "checkpoint_thread_id", "") or ""
+        ).strip()
         effective = dict(config or {})
         configurable = dict(effective.get("configurable") or {})
-        configurable["thread_id"] = str(uuid.uuid4())
+        configurable["thread_id"] = stable_thread_id or str(uuid.uuid4())
         effective["configurable"] = configurable
         return effective
 
@@ -229,6 +235,97 @@ class BaseAgent(Serializable, Runnable):
                 error,
                 context="智能体执行异常",
             )
+
+    def has_pending_checkpoint(self) -> bool:
+        """该 agent 的稳定 thread（checkpoint_thread_id）是否存在未完成的 checkpoint。
+
+        进程崩溃会留下「checkpoint 已保存、但图有 pending 节点未执行完」的中间态。
+        恢复方据此判断：同会话重发请求时应「从断点续跑」而不是追加新输入重新开始。
+        未启用 checkpoint / 无稳定 thread_id / 无法查询时返回 False（退化为全新执行）。
+        """
+        if not getattr(self.agent_config, "enable_checkpoint", False):
+            return False
+        thread_id = (
+            getattr(self.agent_config, "checkpoint_thread_id", "") or ""
+        ).strip()
+        if not thread_id:
+            return False
+        checkpointer = getattr(self._agent, "checkpointer", None)
+        if checkpointer is None:
+            return False
+        try:
+            snapshot = checkpointer.get_tuple(
+                {"configurable": {"thread_id": thread_id}}
+            )
+            if snapshot is None:
+                return False
+            # 进程崩溃/异常终止会留下 pending_writes（含 __error__ 或待写节点数据）；
+            # 它非空说明图有未完成的执行。正常跑完的 checkpoint 无 pending_writes。
+            pending_writes = getattr(snapshot, "pending_writes", None) or []
+            return len(pending_writes) > 0
+        except Exception:
+            logging.warning(
+                "查询 checkpoint 待续跑状态失败 thread_id=%s", thread_id, exc_info=True
+            )
+            return False
+
+    def resume(
+        self,
+        config: Optional[RunnableConfig] = None,
+        **kwargs: Optional[Any],
+    ) -> Iterator[AgentThought]:
+        """从断点续跑：驱动 LangGraph 继续执行上次中断后 pending 的节点。
+
+        与 ``stream`` 的区别：不注入新输入（``ainvoke(None)``），LangGraph 从
+        checkpoint 记录的最后稳定状态继续执行尚未完成的节点——已执行完的
+        工具/LLM 轮不会重放，用户可见内容不会重复。仅当
+        :meth:`has_pending_checkpoint` 为 True 时调用才有意义。
+
+        事件流与 ``stream`` 一致（经 AgentQueueManager 桥接），调用方无需区分
+        普通执行与续跑执行。
+        """
+        if not self._agent:
+            raise FailException("智能体未成功构建，请核实后尝试")
+
+        input: AgentState = {
+            "task_id": uuid.uuid4(),
+            "history": [],
+            "iteration_count": 0,
+            "pending_skill_prompts": [],
+            "authorized_tools": [],
+            "messages": [],
+        }
+        runtime_flask_app = getattr(self.agent_config, "runtime_flask_app", None)
+
+        def _resume_agent() -> None:
+            app_context = nullcontext()
+            if runtime_flask_app is not None and not is_active_app(runtime_flask_app):
+                app_context = runtime_flask_app.app_context()
+            with app_context:
+                try:
+                    # ainvoke(None)：不追加新输入，续跑 checkpoint 中 pending 的节点
+                    asyncio.run(self._agent.ainvoke(None, self._resolve_checkpoint_config(config)))
+                except Exception as error:
+                    logging.exception("智能体续跑线程发生异常: %s", error)
+                    self._agent_queue_manager.publish_failure(
+                        input["task_id"],
+                        error,
+                        context="智能体续跑异常",
+                    )
+
+        thread = Thread(target=_resume_agent)
+        thread.start()
+
+        try:
+            yield from self._agent_queue_manager.listen(input["task_id"])
+        finally:
+            is_alive = getattr(thread, "is_alive", None)
+            if callable(is_alive) and is_alive():
+                join = getattr(thread, "join", None)
+                if callable(join):
+                    join(timeout=10)
+                if callable(is_alive) and is_alive():
+                    logging.warning("Agent 续跑子线程在 join(10s) 后仍在运行")
 
     async def ainvoke(self, input: AgentState, config: Optional[RunnableConfig] = None) -> AgentResult:
         """异步块内容响应，一次性生成完整内容后返回（与 invoke 语义一致）。"""

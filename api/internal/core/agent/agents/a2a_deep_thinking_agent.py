@@ -97,6 +97,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
         (
             input_token_count,
             output_token_count,
+            cached_token_count,
             total_token_count,
             total_price,
             unit,
@@ -114,6 +115,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
                     thought=json.dumps(final_tool_calls, ensure_ascii=False, default=str),
                     message=messages_to_dict(state["messages"]),
                     message_token_count=input_token_count,
+                    cached_token_count=cached_token_count,
                     message_unit_price=input_price,
                     message_price_unit=unit,
                     answer="",
@@ -154,6 +156,7 @@ class A2ADeepThinkingAgent(DeepThinkingAgent):
                     thought="",
                     message=messages_to_dict(state["messages"]),
                     message_token_count=input_token_count,
+                    cached_token_count=cached_token_count,
                     message_unit_price=input_price,
                     message_price_unit=unit,
                     answer="",

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import tiktoken
 import pytest
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.agent.usage_utils import (
+    extract_token_usage,
+    extract_token_usage_from_stream,
     normalize_usage_text,
     summarize_agent_thoughts,
     track_language_model_usage,
@@ -120,3 +124,43 @@ def test_track_language_model_usage_should_ignore_inline_base64_image_payload_in
 
     assert tracker.total_token_count == expected_input_token_count + expected_output_token_count
     assert tracker.total_token_count < len(_ENCODING.encode(str(model_input)))
+
+
+class _ChunkWithUsage:
+    """模拟携带 usage_metadata 的 AIMessageChunk（OpenAI/DeepSeek 自动缓存）。"""
+
+    def __init__(self, usage_meta: dict, response_meta: dict | None = None):
+        self.usage_metadata = dict(usage_meta)
+        self.response_metadata = dict(response_meta or {})
+
+
+def test_extract_token_usage_from_stream_should_include_cached_tokens():
+    chunk = _ChunkWithUsage(
+        {
+            "input_tokens": 1000,
+            "output_tokens": 50,
+            "total_tokens": 1050,
+            "prompt_tokens_details": {"cached_tokens": 800},
+        }
+    )
+    result = extract_token_usage_from_stream([chunk])
+    assert result is not None
+    assert result["prompt_tokens"] == 1000
+    assert result["cached_tokens"] == 800
+
+
+def test_extract_token_usage_should_read_prompt_cache_hit_tokens():
+    """DeepSeek/硅基流动返回 prompt_cache_hit_tokens 时同样识别。"""
+    response = SimpleNamespace(
+        response_metadata={
+            "token_usage": {
+                "prompt_tokens": 900,
+                "completion_tokens": 30,
+                "total_tokens": 930,
+                "prompt_cache_hit_tokens": 700,
+            }
+        }
+    )
+    result = extract_token_usage(response)
+    assert result is not None
+    assert result["cached_tokens"] == 700
