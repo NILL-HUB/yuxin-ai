@@ -7,6 +7,7 @@ import pytest
 
 from scripts.os_automation_worker import (
     _approvals,
+    _build_codex_command,
     _build_prompt,
     _create_approval,
     _file_operation,
@@ -425,3 +426,57 @@ class TestRunHandlerGuardWiring:
 
         assert sent["status"] == 200
         assert sent["payload"]["ok"] is True
+
+
+class TestSandboxIsolation:
+    """Codex 沙箱强制隔离：preview→read-only、apply→workspace-write、禁止 bypass。
+
+    明文护栏（_guard_delete_in_task + 提示词）在 Task 3/4 已锁住"任务明文含删除
+    命令"，但模型自主生成的删除命令不在任务明文中。Task 5 把防线下沉到 OS 层：
+    沙箱是 Codex 调用本机 OS 机制（Windows AppContainer）强制的，模型想删都删不掉。
+    """
+
+    def test_preview_uses_read_only_sandbox(self):
+        """preview 必须用 read-only 沙箱（OS 层禁止任何写/删命令）。"""
+        cmd = _build_codex_command("codex.exe", "preview", ".", 30)
+
+        assert "--sandbox" in cmd
+        idx = cmd.index("--sandbox")
+        assert cmd[idx + 1] == "read-only"
+
+    def test_apply_uses_workspace_write_sandbox(self):
+        """apply 必须用 workspace-write 沙箱（只能写 -C 工作区，无法删工作区外文件）。"""
+        cmd = _build_codex_command("codex.exe", "apply", ".", 30)
+
+        assert "--sandbox" in cmd
+        idx = cmd.index("--sandbox")
+        assert cmd[idx + 1] == "workspace-write"
+
+    def test_apply_does_not_bypass_sandbox(self):
+        """apply 绝不再用 --dangerously-bypass-approvals-and-sandbox。"""
+        cmd = _build_codex_command("codex.exe", "apply", ".", 30)
+
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+
+    def test_preview_does_not_bypass_sandbox(self):
+        """preview 同样不得携带 bypass 逃生口。"""
+        cmd = _build_codex_command("codex.exe", "preview", ".", 30)
+
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+
+    def test_apply_prompt_mentions_workspace_write_sandbox(self):
+        """apply 提示词须告知 Codex 运行在 workspace-write 沙箱（只能改工作区）。"""
+        prompt = _build_prompt("清理 C 盘临时文件", "apply")
+
+        assert "workspace-write" in prompt
+        assert "工作区" in prompt
+        assert "回收站" in prompt
+        assert "os_recycle_bin" in prompt
+
+    def test_preview_prompt_mentions_read_only_sandbox(self):
+        """preview 提示词须告知 Codex 运行在 read-only 沙箱（写/删会被 OS 拒绝）。"""
+        prompt = _build_prompt("清理 C 盘临时文件", "preview")
+
+        assert "read-only" in prompt
+        assert "read_only" in prompt or "只读" in prompt
+

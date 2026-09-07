@@ -89,6 +89,10 @@ def _codex_version(codex_path: str) -> str:
 def _build_codex_command(codex_path: str, mode: str, working_dir: str, timeout: int) -> list[str]:
     command = [
         codex_path,
+        # -a never 与 --sandbox 正交：审批只决定"越界/升级是否停下来问人"，
+        # 不决定"沙箱内能否写"。workspace-write 下写工作区无需审批（官方
+        # sandbox 文档：--ask-for-approval never 可与所有 sandbox 模式组合），
+        # 越界写/删被 OS 拒绝并直接失败返回，正好符合无人值守预期。
         "-a",
         "never",
         "exec",
@@ -101,12 +105,17 @@ def _build_codex_command(codex_path: str, mode: str, working_dir: str, timeout: 
         working_dir,
     ]
     if mode == "preview":
-        # Windows Codex CLI 不支持 read-only 沙箱，preview 用 danger-full-access，
-        # 但通过提示词严格限制只读；若模型尝试写命令，仍会走 Codex 审批/失败。
-        command.extend(["--sandbox", "danger-full-access"])
+        # 只读预览：用 Codex read-only 沙箱。写/删命令在 OS 层被沙箱拒绝，
+        # 模型想删都删不掉（旧版"Windows 不支持 read-only 沙箱"已过时——
+        # 实测 Codex 0.150.0-alpha.8 的 Windows 沙箱走 AppContainer restricted
+        # token + capability SID，read-only/workspace-write 均已支持）。
+        command.extend(["--sandbox", "read-only"])
     else:
-        # 平台侧 preview + approval_token 已构成用户确认链，apply 阶段让 Codex 真正执行。
-        command.append("--dangerously-bypass-approvals-and-sandbox")
+        # apply：用户已确认执行（preview 一次性 approval_token），但运行在
+        # workspace-write 沙箱内——只能写 -C 指定的工作区，删除/写工作区外
+        # 文件会被 OS 拒绝；真实删除只经 os_recycle_bin 工具移入回收站。
+        # 工作区内的删除由明文护栏（_guard_delete_in_task + 提示词）兜底。
+        command.extend(["--sandbox", "workspace-write"])
     return command
 
 
@@ -114,14 +123,18 @@ def _build_prompt(task: str, mode: str) -> str:
     if mode == "preview":
         return (
             f"{task}\n\n"
-            "[模式] 只读预览。只允许执行只读检查命令（如查询磁盘空间、列出临时文件），"
+            "[模式] 只读预览。本次会话运行在 Codex read-only 沙箱（OS 层强制），"
+            "任何写文件/删除/修改命令都会被操作系统直接拒绝——不要尝试写或删除，"
+            "只允许执行只读检查命令（如查询磁盘空间、列出临时文件），"
             "最多执行 2 个只读命令，禁止递归扫描整个临时目录/下载目录。"
             "禁止执行任何会修改文件系统、注册表、服务、进程或网络的命令。"
             "输出简短的清理/操作计划、预计影响和具体命令，不要执行修改。"
         )
     return (
         f"{task}\n\n"
-        "[模式] 用户已确认执行。请执行完成该任务所需的最小命令集合，"
+        "[模式] 用户已确认执行。本次会话运行在 Codex workspace-write 沙箱："
+        "只能修改/写入当前工作区（-C 指定的目录）；删除或写入工作区外的任何文件"
+        "都会被操作系统拒绝。请执行完成该任务所需的最小命令集合，"
         "并汇报实际执行命令、输出、退出码和结果。不要做超出任务范围的修改。"
         "禁止用终端命令删除任何文件/目录（del、rm、Remove-Item、rmdir、rd、"
         "unlink 等删除命令都会被硬阻断）。如需删除，必须调用 os_recycle_bin "
