@@ -14,7 +14,7 @@ from injector import inject
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from internal.entity.assistant_agent_entity import ASSISTANT_AGENT_DISPLAY_NAME
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import selectinload
 from internal.entity.conversation_entity import (
     ConversationInfo,
@@ -326,6 +326,22 @@ class ConversationService(BaseService):
         conversation = self.get(Conversation, conversation_id)
         message = self.get(Message, message_id)
 
+        # 2.1 防御：会话/消息已被删除或查询失败（并发清理/回收站/跨线程会话隔离）时不抛异常。
+        # 历史缺陷：message 为 None 时下方 message.id 直接 AttributeError，导致整条持久化链路
+        # （含已创建的部分 thoughts、answer 回写、计费）全部失败，且异常吞掉后调用方无法感知。
+        # 此处安全早退——消息都不存在了，推理步骤也没有挂载对象，跳过落库并保留调用方流程。
+        if conversation is None:
+            logging.warning(
+                "save_agent_thoughts 跳过：会话不存在或已被删除 conversation_id=%s", conversation_id,
+            )
+            return
+        if message is None:
+            logging.warning(
+                "save_agent_thoughts 跳过：消息不存在或已被删除 message_id=%s conversation_id=%s",
+                message_id, conversation_id,
+            )
+            return
+
         # 3.循环遍历所有的智能体推理过程执行存储操作
         for agent_thought in agent_thoughts:
             # 4.存储长期记忆召回、推理、消息、动作、知识库检索等步骤
@@ -375,25 +391,41 @@ class ConversationService(BaseService):
 
             # 7.检测事件是否为Agent_message
             if agent_thought.event == QueueEvent.AGENT_MESSAGE.value:
+                # 7.1 message.answer 权威来源在外层（_stream_single_agent / direct_answer 的
+                # collected_answer 已按分块累加出完整长文并写入）。这里的 AGENT_MESSAGE
+                # 是单条分块或空 answer 的 token 统计事件，逐条覆盖会互相抹除导致
+                # 落库残缺/为空（历史缺陷：deep agent 输出 2000+ 字，落库只剩 4 字）。
+                # 因此仅当 message.answer 尚未被外层写入（为空）时才用本事件内容兜底回填。
+                has_answer_payload = bool(
+                    agent_thought.answer is not None
+                    and str(agent_thought.answer) != ""
+                )
+                current_answer = str(getattr(message, "answer", "") or "")
+                effective_answer = agent_thought.answer if has_answer_payload else None
+                answer_will_override = (
+                    has_answer_payload and not current_answer
+                )
                 # 8.更新消息信息
                 logging.info(f"Updating message {message_id} with answer: {agent_thought.answer}")
-                self.update(
-                    message,
-                    # 消息相关字段
-                    message=agent_thought.message,
-                    message_token_count=agent_thought.message_token_count,
-                    message_unit_price=agent_thought.message_unit_price,
-                    message_price_unit=agent_thought.message_price_unit,
-                    # 答案相关字段
-                    answer=agent_thought.answer,
-                    answer_token_count=agent_thought.answer_token_count,
-                    answer_unit_price=agent_thought.answer_unit_price,
-                    answer_price_unit=agent_thought.answer_price_unit,
-                    # Agent推理统计相关
-                    total_token_count=usage_summary.total_token_count,
-                    total_price=usage_summary.total_price,
-                    latency=usage_summary.latency,
-                )
+                update_kwargs: dict[str, Any] = {
+                    "message_token_count": agent_thought.message_token_count,
+                    "message_unit_price": agent_thought.message_unit_price,
+                    "message_price_unit": agent_thought.message_price_unit,
+                    "answer_token_count": agent_thought.answer_token_count,
+                    "answer_unit_price": agent_thought.answer_unit_price,
+                    "answer_price_unit": agent_thought.answer_price_unit,
+                    "total_token_count": usage_summary.total_token_count,
+                    "total_price": usage_summary.total_price,
+                    "latency": usage_summary.latency,
+                }
+                # 消息上下文（messages JSON）有值时随事件更新（与历史行为一致）
+                if getattr(agent_thought, "message", None):
+                    update_kwargs["message"] = agent_thought.message
+                if answer_will_override:
+                    # 仅当 message.answer 尚未被外层写入（为空）时用本事件内容兜底回填，
+                    # 避免分块/统计事件覆盖外层已聚合写入的完整长文
+                    update_kwargs["answer"] = effective_answer
+                self.update(message, **update_kwargs)
 
                 # 9.检测是否开启长期记忆
                 if (app_config.get("long_term_memory") or {}).get("enable", False):
@@ -1089,8 +1121,45 @@ class ConversationService(BaseService):
 
         query_lower = query.strip().lower()
 
-        # 2.查询当前账号的消息
-        messages = (
+        # 2a. DB 侧 ILIKE 预过滤命中消息（配合 message.query/answer 的
+        # pg_trgm GIN 索引，中缀检索无需把全量消息载入内存）。
+        # 通配符 %/_ 做转义，避免用户输入被误当 SQL 模式。
+        escaped_like = (
+            query_lower.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        like_pattern = f"%{escaped_like}%"
+        hit_messages = (
+            self.db.session.query(Message)
+            .filter(
+                Message.created_by == account.id,
+                Message.invoke_from.in_(
+                    [
+                        InvokeFrom.ASSISTANT_AGENT.value,
+                        InvokeFrom.DEBUGGER.value,
+                        InvokeFrom.SCHEDULE.value,
+                    ]
+                ),
+                Message.status.in_([MessageStatus.STOP.value, MessageStatus.NORMAL.value]),
+                Message.answer != "",
+                ~Message.is_deleted,
+                or_(
+                    Message.query.ilike(like_pattern, escape="\\"),
+                    Message.answer.ilike(like_pattern, escape="\\"),
+                ),
+            )
+            .order_by(desc(Message.created_at))
+            .limit(safe_limit * 20)
+            .all()
+        )
+
+        # 2b. 每会话"最新一条"用于预览时间戳/排序（按命中会话或最近 N 条）。
+        # 仅需在 hit_messages 涉及的会话范围内补充其最新消息；无命中时回退最近消息。
+        hit_conversation_ids = {
+            getattr(m, "conversation_id", None)
+            for m in hit_messages
+            if getattr(m, "conversation_id", None) is not None
+        }
+        latest_messages = (
             self.db.session.query(Message)
             .filter(
                 Message.created_by == account.id,
@@ -1106,17 +1175,20 @@ class ConversationService(BaseService):
                 ~Message.is_deleted,
             )
             .order_by(desc(Message.created_at))
+            .limit(max(safe_limit * 3, 60))
             .all()
         )
+
         # 3.收集每个会话的最新消息以及真正命中的消息片段
         latest_message_by_conversation: dict[UUID, Message] = {}
         matched_message_by_conversation: dict[UUID, dict[str, Any]] = {}
-        for message in messages:
+        # 命中消息优先补充进 latest 字典（保证命中会话一定出现在结果里）
+        for message in hit_messages:
             conversation_id = getattr(message, "conversation_id", None)
             if conversation_id is None:
                 continue
             if conversation_id not in latest_message_by_conversation:
-                latest_message_by_conversation[message.conversation_id] = message
+                latest_message_by_conversation[conversation_id] = message
 
             matched_fields = []
             if self._search_contains(message.query, query_lower):
@@ -1135,6 +1207,13 @@ class ConversationService(BaseService):
                 "ai_message": self._extract_search_snippet(message.answer, query_lower)
                 if "ai_message" in matched_fields else "",
             }
+        # 用最近消息填充 latest（仅补尚未收录的会话，保持原 preview 语义）
+        for message in latest_messages:
+            conversation_id = getattr(message, "conversation_id", None)
+            if conversation_id is None:
+                continue
+            if conversation_id not in latest_message_by_conversation:
+                latest_message_by_conversation[conversation_id] = message
 
         # 4.查询账号会话，统一判断标题/应用/助手/消息命中
         conversations = (

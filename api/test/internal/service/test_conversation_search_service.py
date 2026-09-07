@@ -34,10 +34,12 @@ class _QueryStub:
 class _SessionQueue:
     def __init__(self, query_results):
         self._query_results = list(query_results)
+        self._calls = []
 
     def query(self, _model):
+        self._calls.append(str(getattr(_model, "__name__", _model)))
         if not self._query_results:
-            raise AssertionError("unexpected query call")
+            raise AssertionError(f"unexpected query call, calls so far: {self._calls}")
         return _QueryStub(self._query_results.pop(0))
 
 
@@ -144,6 +146,7 @@ class TestConversationSearchService:
         )
         service = _build_service(
             [message],
+            [message],
             [conversation],
             [debug_app],
         )
@@ -174,6 +177,7 @@ class TestConversationSearchService:
         )
         assistant_app = _app(app_id=ASSISTANT_AGENT_ID, name="辅助Agent")
         service = _build_service(
+            [],
             [],
             [conversation],
             [assistant_app],
@@ -210,6 +214,7 @@ class TestConversationSearchService:
         )
         assistant_app = _app(app_id=ASSISTANT_AGENT_ID, name="辅助Agent")
         service = _build_service(
+            [latest_message],
             [latest_message],
             [conversation],
             [assistant_app],
@@ -269,6 +274,7 @@ class TestConversationSearchService:
         )
         assistant_app = _app(app_id=ASSISTANT_AGENT_ID, name="辅助Agent")
         service = _build_service(
+            [first_message, second_message],
             [first_message, second_message],
             [conversation],
             [assistant_app],
