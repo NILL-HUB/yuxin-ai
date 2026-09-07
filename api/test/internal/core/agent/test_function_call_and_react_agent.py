@@ -572,8 +572,8 @@ def test_function_call_agent_tools_node_and_conditions_should_cover_branches():
 
 
 def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch):
-    class _RunOsTool:
-        name = "run_os_task"
+    class _FileTool:
+        name = "os_file_task"
 
         def __init__(self):
             self.preview_calls = []
@@ -591,7 +591,7 @@ def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch
             self.apply_calls.append(args)
             return json.dumps({"ok": True, "summary": "执行完成"})
 
-    tool = _RunOsTool()
+    tool = _FileTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
@@ -606,8 +606,8 @@ def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "run_os_task",
-                        "args": {"task": "清理 C 盘垃圾"},
+                        "name": "os_file_task",
+                        "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n"},
                     }
                 ],
             )
@@ -630,17 +630,17 @@ def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch
 
     assert len(tool.preview_calls) == 1
     assert tool.preview_calls[0]["mode"] == "preview"
-    assert tool.preview_calls[0]["task"] == "清理 C 盘垃圾"
+    assert tool.preview_calls[0]["op"] == "patch"
     assert tool.apply_calls == []
     assert len(result["messages"]) == 1
-    assert "run_os_task" in result["authorized_tools"]
+    assert "os_file_task" in result["authorized_tools"]
     confirmation_events = [
         thought
         for _, thought in agent.agent_queue_manager.published
         if thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
     ]
     assert confirmation_events[0].confirmation_id == confirmation_id
-    assert "请求授权在宿主机执行系统自动化任务" in confirmation_events[0].execution_summary
+    assert "宿主机安全目录内" in confirmation_events[0].execution_summary
     assert confirmation_events[0].confirmation_status == "pending"
     action_event = agent.agent_queue_manager.published[-1][1]
     assert action_event.event == QueueEvent.AGENT_ACTION
@@ -649,8 +649,8 @@ def test_function_call_agent_tools_node_should_authorize_before_scan(monkeypatch
 
 
 def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch):
-    class _RunOsTool:
-        name = "run_os_task"
+    class _FileTool:
+        name = "os_file_task"
 
         def __init__(self):
             self.calls = []
@@ -659,7 +659,7 @@ def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch
             self.calls.append(args)
             return json.dumps({"ok": True, "summary": "执行完成"})
 
-    tool = _RunOsTool()
+    tool = _FileTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
@@ -673,8 +673,8 @@ def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "run_os_task",
-                        "args": {"task": "只读扫描"},
+                        "name": "os_file_task",
+                        "args": {"op": "read", "path": "C:/tmp/a.txt"},
                     }
                 ],
             )
@@ -686,7 +686,7 @@ def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch
     result = agent._tools_node(state)
 
     assert len(tool.calls) == 1
-    assert "run_os_task" in result["authorized_tools"]
+    assert "os_file_task" in result["authorized_tools"]
     assert not [
         thought
         for _, thought in agent.agent_queue_manager.published
@@ -745,8 +745,8 @@ def test_function_call_agent_tools_node_should_not_readd_loaded_skill_prompt(mon
 
 
 def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatch):
-    class _RunOsTool:
-        name = "run_os_task"
+    class _FileTool:
+        name = "os_file_task"
 
         def __init__(self):
             self.preview_calls = []
@@ -759,7 +759,7 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
             self.apply_calls.append(args)
             return json.dumps({"ok": True, "summary": "不应执行"})
 
-    tool = _RunOsTool()
+    tool = _FileTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
@@ -771,7 +771,7 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
             AIMessage(
                 content="",
                 tool_calls=[
-                    {"id": "call-1", "name": "run_os_task", "args": {"task": "清理"}}
+                    {"id": "call-1", "name": "os_file_task", "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n"}}
                 ],
             )
         ],
@@ -802,8 +802,8 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
 
 
 def test_function_call_agent_tools_node_should_skip_authorization_when_already_authorized(monkeypatch):
-    class _RunOsTool:
-        name = "run_os_task"
+    class _FileTool:
+        name = "os_file_task"
 
         def __init__(self):
             self.invocations = []
@@ -812,22 +812,22 @@ def test_function_call_agent_tools_node_should_skip_authorization_when_already_a
             self.invocations.append(args)
             return json.dumps({"ok": True, "summary": "执行完成"})
 
-    tool = _RunOsTool()
+    tool = _FileTool()
     agent = _new_function_call_agent(
         _NodeLLM(features=[]),
         _build_agent_config(tools=[tool]),
     )
     state = {
         "task_id": uuid4(),
-        "authorized_tools": ["run_os_task"],
+        "authorized_tools": ["os_file_task"],
         "messages": [
             AIMessage(
                 content="",
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "name": "run_os_task",
-                        "args": {"task": "只清理回收站", "mode": "apply"},
+                        "name": "os_file_task",
+                        "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "apply"},
                     }
                 ],
             )
@@ -836,17 +836,17 @@ def test_function_call_agent_tools_node_should_skip_authorization_when_already_a
 
     result = agent._tools_node(state)
 
-    assert tool.invocations == [{"task": "只清理回收站", "mode": "apply"}]
+    assert tool.invocations == [{"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "apply"}]
     assert not any(
         thought.event == QueueEvent.TOOL_CONFIRMATION_REQUIRED
         for _, thought in agent.agent_queue_manager.published
     )
-    assert "run_os_task" in result["authorized_tools"]
+    assert "os_file_task" in result["authorized_tools"]
 
 
-def test_user_visible_run_os_result_should_strip_markdown_and_token():
+def test_user_visible_os_file_result_should_strip_markdown_and_token():
     result = FunctionCallAgent._build_user_visible_tool_result(
-        "run_os_task",
+        "os_file_task",
         json.dumps({
             "ok": True,
             "summary": "**可清理项**\n- 回收站 1.2GB\n```cache 0.8GB```",

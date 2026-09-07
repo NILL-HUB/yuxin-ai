@@ -29,7 +29,7 @@ class TestToolConfirmationIntegration:
     def test_os_file_task_is_high_risk(self):
         policy = ToolPolicy()
         assert policy.is_high_risk_tool("os_file_task") is True
-        assert policy.is_high_risk_tool("run_os_task") is True
+        assert policy.is_high_risk_tool("run_os_task") is False
 
     def test_os_file_task_confirmation_summary_is_human_readable(self):
         patch_summary = FunctionCallAgent._build_confirmation_summary(
@@ -93,8 +93,8 @@ class TestToolConfirmationIntegration:
         agent = SimpleNamespace(agent_config=SimpleNamespace(user_id=user_id))
         state = SimpleNamespace(user_id=None, account_id=None)
         tool_call = {
-            "name": "run_os_task",
-            "args": {"task": "清理 C 盘垃圾", "mode": "preview"},
+            "name": "os_file_task",
+            "args": {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n", "mode": "preview"},
             "id": "call-1",
         }
 
@@ -107,7 +107,7 @@ class TestToolConfirmationIntegration:
 
         assert result is not None
         assert captured["confirmation"].owner_account_id == user_id
-        assert captured["confirmation"].tool_name == "run_os_task"
+        assert captured["confirmation"].tool_name == "os_file_task"
 
     def test_wait_for_confirmation_should_resume_after_user_confirms(self, monkeypatch):
         account_id = uuid4()
