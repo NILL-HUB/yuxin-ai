@@ -1,4 +1,4 @@
-import { get, post, put } from '@/utils/request'
+import { get, patch, post, put } from '@/utils/request'
 import {
   type CustomerUserDetailResponse,
   type CustomerUserListRequest,
@@ -20,6 +20,30 @@ export const getCustomerUser = async (id: string) => {
 
 export const disableCustomerUser = async (id: string, reason: string) => {
   const response = await post<CustomerUserResponse>(`/admin/users/${id}/disable`, { body: { reason } })
+  return response.data
+}
+
+export const createCustomerUser = async (payload: {
+  email: string
+  name: string
+  password?: string
+  username?: string
+  phone?: string
+}) => {
+  const response = await post<CustomerUserResponse>('/admin/users', { body: payload })
+  return response.data
+}
+
+export const updateCustomerUser = async (
+  id: string,
+  payload: { name?: string; email?: string; phone?: string; password?: string },
+) => {
+  const response = await patch<CustomerUserResponse>(`/admin/users/${id}`, { body: payload })
+  return response.data
+}
+
+export const deleteCustomerUser = async (id: string, reason: string) => {
+  const response = await post<CustomerUserResponse>(`/admin/users/${id}/delete`, { body: { reason } })
   return response.data
 }
 

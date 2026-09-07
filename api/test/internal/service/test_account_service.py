@@ -1000,6 +1000,7 @@ class TestAccountService:
             password_salt="salt",
             is_password_set=True,
             is_disabled=True,
+            is_deleted=False,
         )
         monkeypatch.setattr(service, "get_account_by_email", lambda _email: account)
         monkeypatch.setattr("internal.service.account_service.compare_password", lambda *_args, **_kwargs: True)
@@ -1010,6 +1011,28 @@ class TestAccountService:
                 service.password_login("demo@example.com", "pwd")
 
         assert str(exc_info.value) == "账号已被禁用"
+
+    def test_password_login_should_raise_when_account_deleted(self, monkeypatch):
+        """已删除（注销）账号禁止登录。"""
+        service = self._build_service()
+        monkeypatch.setattr("internal.service.account_service.redis_client", _RedisStub())
+        account = SimpleNamespace(
+            id=uuid4(),
+            password="hashed",
+            password_salt="salt",
+            is_password_set=True,
+            is_disabled=False,
+            is_deleted=True,
+        )
+        monkeypatch.setattr(service, "get_account_by_email", lambda _email: account)
+        monkeypatch.setattr("internal.service.account_service.compare_password", lambda *_args, **_kwargs: True)
+
+        app = TestApp(__name__)
+        with app.test_request_context("/", environ_base={"REMOTE_ADDR": "127.0.0.1"}):
+            with pytest.raises(FailException) as exc_info:
+                service.password_login("demo@example.com", "pwd")
+
+        assert str(exc_info.value) == "账号已删除，无法登录"
 
     def test_password_login_should_raise_when_password_invalid(self, monkeypatch):
         service = self._build_service()

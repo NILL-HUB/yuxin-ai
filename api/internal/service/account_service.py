@@ -1124,6 +1124,8 @@ class AccountService(BaseService):
 
     @staticmethod
     def _ensure_account_enabled(account: Account) -> None:
+        if getattr(account, "is_deleted", False):
+            raise FailException("账号已删除，无法登录")
         if getattr(account, "is_disabled", False):
             raise FailException("账号已被禁用")
 

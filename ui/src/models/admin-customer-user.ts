@@ -1,6 +1,6 @@
 import { type BasePaginatorResponse, type BaseResponse } from '@/models/base'
 
-export type CustomerUserStatus = 'active' | 'disabled'
+export type CustomerUserStatus = 'active' | 'disabled' | 'deleted'
 
 export type CustomerUser = {
   id: string
@@ -12,6 +12,9 @@ export type CustomerUser = {
   disabled_at: number | null
   disabled_by: string | null
   disabled_reason: string
+  deleted_at: number | null
+  deleted_by: string | null
+  deleted_reason: string
   last_login_at: number | null
   last_login_ip: string
   created_at: number | null

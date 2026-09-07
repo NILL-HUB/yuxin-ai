@@ -272,6 +272,44 @@ def register_routes(quart_app):
         resp = AdminCustomerUserPageResp()
         return a._ok(resp.dump(result))
 
+    @quart_app.post("/admin/users")
+    async def admin_customer_user_create():
+        from app.http import asgi_app as a
+        from internal.schema.admin_customer_user_schema import AdminCustomerUserResp
+        from internal.service.admin_customer_user_service import AdminCustomerUserService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        email = str(payload.get("email") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if not email:
+            return a._json_resp(
+                code="validate_error",
+                message="邮箱不能为空",
+                data={"email": ["邮箱不能为空"]},
+                status=400,
+            )
+        if not name:
+            return a._json_resp(
+                code="validate_error",
+                message="名称不能为空",
+                data={"name": ["名称不能为空"]},
+                status=400,
+            )
+        operator_id, ip, user_agent = await _operator_context()
+        result = await a._to_thread(
+            a._get_service(AdminCustomerUserService).create_customer_user,
+            email=email,
+            name=name,
+            password=str(payload.get("password") or ""),
+            username=str(payload.get("username") or "").strip(),
+            phone=str(payload.get("phone") or "").strip(),
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = AdminCustomerUserResp()
+        return a._ok(resp.dump(result))
+
     @quart_app.get("/admin/users/<uuid:account_id>")
     async def admin_customer_user_get(account_id):
         from app.http import asgi_app as a
@@ -280,6 +318,47 @@ def register_routes(quart_app):
 
         result = await a._to_thread(
             a._get_service(AdminCustomerUserService).get_customer_user, account_id
+        )
+        resp = AdminCustomerUserResp()
+        return a._ok(resp.dump(result))
+
+    @quart_app.patch("/admin/users/<uuid:account_id>")
+    async def admin_customer_user_update(account_id):
+        from app.http import asgi_app as a
+        from internal.schema.admin_customer_user_schema import AdminCustomerUserResp
+        from internal.service.admin_customer_user_service import AdminCustomerUserService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        operator_id, ip, user_agent = await _operator_context()
+        result = await a._to_thread(
+            a._get_service(AdminCustomerUserService).update_customer_user,
+            account_id,
+            name=str(payload["name"]) if payload.get("name") is not None else None,
+            email=str(payload["email"]) if payload.get("email") is not None else None,
+            phone=str(payload["phone"]) if payload.get("phone") is not None else None,
+            password=str(payload["password"]) if payload.get("password") is not None else None,
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = AdminCustomerUserResp()
+        return a._ok(resp.dump(result))
+
+    @quart_app.post("/admin/users/<uuid:account_id>/delete")
+    async def admin_customer_user_delete(account_id):
+        from app.http import asgi_app as a
+        from internal.schema.admin_customer_user_schema import AdminCustomerUserResp
+        from internal.service.admin_customer_user_service import AdminCustomerUserService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        operator_id, ip, user_agent = await _operator_context()
+        result = await a._to_thread(
+            a._get_service(AdminCustomerUserService).delete_customer_user,
+            account_id,
+            reason=str(payload.get("reason") or ""),
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
         )
         resp = AdminCustomerUserResp()
         return a._ok(resp.dump(result))

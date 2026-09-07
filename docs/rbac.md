@@ -63,6 +63,21 @@ UUID 只存在于数据库内部；角色与权限的 API 响应、角色标签�
 - 系统角色不可修改、不可删除；已分配给管理员的自定义角色不可删除。
 - 系统始终保留至少一个有效超级管理员。
 
+客户用户管理（`account` 表，admin 对普通用户的完整 CRUD）：
+
+- 端点：`GET/POST /admin/users`（列表/创建）、`GET/PATCH /admin/users/<id>`（详情/更新）、
+  `POST /admin/users/<id>/disable|enable|delete`（禁用/启用/删除）、
+  `POST /admin/users/<id>/sessions/revoke`（踢下线）。
+- 权限：`user:read` / `user:create` / `user:update` / `user:disable` / `user:delete`。
+- 状态机：`active`（正常）→ `disabled`（停用，可逆，保留数据，可 `enable` 恢复）；
+  `active|disabled` → `deleted`（删除/注销，不可逆，禁止登录）。
+- 删除（`deleted`）与停用（`disabled`）的区别：停用可随时恢复且保留全部数据；
+  删除是注销语义——吊销全部会话、清理记忆数据（PG `user_memory` + Neo4j 记忆节点）、
+  停用名下定时任务、账号不可再登录。`account` 行本身保留（被多表外键引用，
+  物理删除不可行且需留存审计），通过 `status='deleted'` + `deleted_at/deleted_by/deleted_reason`
+  标记。删除为管理员操作（`user:delete`），操作写入审计日志。
+- 管理员绑定的账号不允许在客户用户管理中操作（防误禁管理员）。
+
 ## 5. 安全约束
 
 - 超级管理员角色拥有通配权限，不需要随新权限逐个补绑。

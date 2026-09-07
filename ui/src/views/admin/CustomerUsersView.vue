@@ -1,30 +1,51 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Message, Modal } from '@arco-design/web-vue'
 import {
+  createCustomerUser,
+  deleteCustomerUser,
   disableCustomerUser,
   enableCustomerUser,
   listCustomerUsers,
   revokeCustomerUserSessions,
   setCustomerUserSuperior,
+  updateCustomerUser,
 } from '@/services/admin-customer-users'
 import { assignAppsToUser, listUserAppAssignments, revokeUserAppAssignment } from '@/services/admin-app-assignments'
 import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
 import { type AppAssignment } from '@/models/app-assignment'
 import { getErrorMessage } from '@/utils/error'
-import { type CustomerUser } from '@/models/admin-customer-user'
+import { type CustomerUser, type CustomerUserStatus } from '@/models/admin-customer-user'
 import { useAdminStore } from '@/stores/admin'
 
 const { t } = useI18n()
 const adminStore = useAdminStore()
 const canManageDistribution = computed(() => adminStore.hasPermission('distribution:manage'))
+const canCreateUser = computed(() => adminStore.hasPermission('user:create'))
+const canUpdateUser = computed(() => adminStore.hasPermission('user:update'))
+const canDeleteUser = computed(() => adminStore.hasPermission('user:delete'))
 
 const loading = ref(false)
 const actionLoading = ref(false)
+const saving = ref(false)
 const users = ref<CustomerUser[]>([])
 const total = ref(0)
-const filters = ref({ keyword: '', status: '' as '' | 'active' | 'disabled', current_page: 1, page_size: 20 })
+const filters = ref({ keyword: '', status: '' as '' | CustomerUserStatus, current_page: 1, page_size: 20 })
+
+// 新建/编辑用户弹窗
+const showCreateModal = ref(false)
+const editingUser = ref<CustomerUser | null>(null)
+const form = ref({
+  email: '',
+  name: '',
+  password: '',
+  username: '',
+  phone: '',
+})
+
+// 删除确认
+const deleteReason = ref('')
 
 // 应用分配弹窗
 const selectedAssignmentUser = ref<CustomerUser | null>(null)
@@ -42,6 +63,7 @@ const statusOptions = computed(() => [
   { label: t('admin.customerUsers.allStatus'), value: '' },
   { label: t('admin.customerUsers.statusActive'), value: 'active' },
   { label: t('admin.customerUsers.statusDisabled'), value: 'disabled' },
+  { label: t('admin.customerUsers.statusDeleted'), value: 'deleted' },
 ])
 
 const activeCount = computed(() => users.value.filter((user) => user.status === 'active').length)
@@ -57,7 +79,7 @@ const columns = computed(() => [
   { title: t('admin.customerUsers.status'), slotName: 'status' },
   { title: t('admin.customerUsers.onlineStatus'), slotName: 'online_status' },
   { title: t('admin.customerUsers.lastLogin'), slotName: 'last_login' },
-  { title: t('admin.customerUsers.actions'), slotName: 'actions', width: 360 },
+  { title: t('admin.customerUsers.actions'), slotName: 'actions', width: 480 },
 ])
 
 const appOptions = computed(() =>
@@ -223,6 +245,132 @@ const copyUserId = async (id: string) => {
   }
 }
 
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const openCreate = () => {
+  editingUser.value = null
+  form.value = { email: '', name: '', password: '', username: '', phone: '' }
+  showCreateModal.value = true
+}
+
+const openEdit = (user: CustomerUser) => {
+  editingUser.value = user
+  form.value = {
+    email: user.email || '',
+    name: user.name || '',
+    password: '',
+    username: '',
+    phone: '',
+  }
+  showCreateModal.value = true
+}
+
+const closeUserModal = () => {
+  showCreateModal.value = false
+  editingUser.value = null
+}
+
+const validateUserForm = () => {
+  const email = form.value.email.trim()
+  const name = form.value.name.trim()
+  if (!email) {
+    Message.error(t('admin.customerUsers.emailRequired'))
+    return null
+  }
+  if (!emailPattern.test(email)) {
+    Message.error(t('admin.customerUsers.emailInvalid'))
+    return null
+  }
+  if (!name) {
+    Message.error(t('admin.customerUsers.nameRequired'))
+    return null
+  }
+  return { email, name }
+}
+
+const handleSaveCreate = async () => {
+  const validated = validateUserForm()
+  if (!validated) return false
+  saving.value = true
+  try {
+    await createCustomerUser({
+      email: validated.email,
+      name: validated.name,
+      password: form.value.password || undefined,
+      username: form.value.username.trim() || undefined,
+      phone: form.value.phone.trim() || undefined,
+    })
+    Message.success(t('admin.customerUsers.userCreated'))
+    closeUserModal()
+    await loadUsers()
+    return true
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.customerUsers.createFailed')))
+    return false
+  } finally {
+    saving.value = false
+  }
+}
+
+const handleSaveEdit = async () => {
+  if (!editingUser.value) return false
+  const validated = validateUserForm()
+  if (!validated) return false
+  saving.value = true
+  try {
+    await updateCustomerUser(editingUser.value.id, {
+      email: validated.email,
+      name: validated.name,
+      phone: form.value.phone.trim() || undefined,
+      password: form.value.password || undefined,
+    })
+    Message.success(t('admin.customerUsers.userUpdated'))
+    closeUserModal()
+    await loadUsers()
+    return true
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.customerUsers.updateFailed')))
+    return false
+  } finally {
+    saving.value = false
+  }
+}
+
+const handleDelete = (user: CustomerUser) => {
+  deleteReason.value = ''
+  Modal.confirm({
+    title: t('admin.customerUsers.deleteTitle'),
+    content: () => h('div', { class: 'space-y-3' }, [
+      h('p', t('admin.customerUsers.deleteDesc', { name: user.name || user.email || user.id })),
+      h('div', [
+        h('div', { class: 'text-xs text-gray-500 mb-1' }, t('admin.customerUsers.deleteReason')),
+        h('input', {
+          value: deleteReason.value,
+          class: 'delete-reason-input',
+          placeholder: t('admin.customerUsers.deleteReasonPlaceholder'),
+          onInput: (event: Event) => {
+            deleteReason.value = (event.target as HTMLInputElement).value
+          },
+        }),
+      ]),
+    ]),
+    okText: t('admin.customerUsers.deleteUser'),
+    okButtonProps: { status: 'danger' },
+    cancelText: t('admin.customerUsers.cancel'),
+    onBeforeOk: async () => {
+      try {
+        await deleteCustomerUser(user.id, deleteReason.value.trim())
+        Message.success(t('admin.customerUsers.userDeleted'))
+        await loadUsers()
+        return true
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.customerUsers.deleteFailed')))
+        return false
+      }
+    },
+  })
+}
+
 const closeSuperior = () => {
   selectedSuperiorUser.value = null
   superiorInviterId.value = ''
@@ -322,9 +470,12 @@ onMounted(async () => {
         <h1 class="text-2xl font-semibold text-gray-900">{{ t('admin.customerUsers.title') }}</h1>
         <p class="mt-1 text-sm text-gray-500">{{ t('admin.customerUsers.description') }}</p>
       </div>
-      <div class="flex items-center gap-2 rounded-lg border bg-white px-4 py-2">
-        <span class="text-sm text-gray-500">{{ t('admin.customerUsers.activeUsersLabel') }}</span>
-        <span class="text-xl font-semibold text-green-600">{{ activeCount }}</span>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 rounded-lg border bg-white px-4 py-2">
+          <span class="text-sm text-gray-500">{{ t('admin.customerUsers.activeUsersLabel') }}</span>
+          <span class="text-xl font-semibold text-green-600">{{ activeCount }}</span>
+        </div>
+        <a-button v-if="canCreateUser" type="primary" @click="openCreate">{{ t('admin.customerUsers.createUser') }}</a-button>
       </div>
     </header>
 
@@ -377,8 +528,10 @@ onMounted(async () => {
             </template>
             <template v-else-if="col.slotName === 'status'">
               <a-tag v-if="record.status === 'active'" size="small" color="green">{{ t('admin.customerUsers.pillActive') }}</a-tag>
-              <a-tag v-else size="small" color="red">{{ t('admin.customerUsers.pillDisabled') }}</a-tag>
+              <a-tag v-else-if="record.status === 'disabled'" size="small" color="red">{{ t('admin.customerUsers.pillDisabled') }}</a-tag>
+              <a-tag v-else size="small" color="gray">{{ t('admin.customerUsers.pillDeleted') }}</a-tag>
               <div v-if="record.disabled_reason" class="text-xs text-gray-400 mt-1">{{ record.disabled_reason }}</div>
+              <div v-if="record.deleted_reason" class="text-xs text-gray-400 mt-1">{{ record.deleted_reason }}</div>
             </template>
             <template v-else-if="col.slotName === 'online_status'">
               <a-tag v-if="record.is_online" size="small" color="green">{{ t('admin.customerUsers.online') }}</a-tag>
@@ -389,7 +542,17 @@ onMounted(async () => {
               <div v-if="record.last_login_ip" class="text-xs text-gray-400">{{ record.last_login_ip }}</div>
             </template>
             <template v-else-if="col.slotName === 'actions'">
-              <a-space wrap>
+              <template v-if="record.status === 'deleted'">
+                <a-space wrap>
+                  <a-button size="mini" @click="copyUserId(record.id)">{{ t('admin.customerUsers.copyId') }}</a-button>
+                </a-space>
+              </template>
+              <a-space v-else wrap>
+                <a-button
+                  v-if="canUpdateUser"
+                  size="mini"
+                  @click="openEdit(record)"
+                >{{ t('admin.customerUsers.editUser') }}</a-button>
                 <a-button
                   v-if="record.status === 'active'"
                   size="mini"
@@ -413,6 +576,12 @@ onMounted(async () => {
                 >{{ t('admin.customerUsers.revokeSessions') }}</a-button>
                 <a-button size="mini" type="primary" :loading="actionLoading" @click="openAssignments(record)">{{ t('admin.customerUsers.assignApp') }}</a-button>
                 <a-button v-if="canManageDistribution" size="mini" :loading="actionLoading" @click="openSuperior(record)">{{ t('admin.customerUsers.superior') }}</a-button>
+                <a-button
+                  v-if="canDeleteUser"
+                  size="mini"
+                  status="danger"
+                  @click="handleDelete(record)"
+                >{{ t('admin.customerUsers.deleteUser') }}</a-button>
               </a-space>
             </template>
           </template>
@@ -526,6 +695,40 @@ onMounted(async () => {
         </div>
       </div>
     </a-drawer>
+
+    <!-- 新建/编辑用户弹窗 -->
+    <a-modal
+      v-model:visible="showCreateModal"
+      :title="editingUser ? t('admin.customerUsers.editTitle', { name: editingUser.name || editingUser.email || editingUser.id }) : t('admin.customerUsers.createTitle')"
+      :ok-text="t('admin.customerUsers.save')"
+      :cancel-text="t('admin.customerUsers.cancel')"
+      :ok-loading="saving"
+      :mask-closable="false"
+      @before-ok="editingUser ? handleSaveEdit() : handleSaveCreate()"
+      @cancel="closeUserModal"
+    >
+      <a-form :model="form" layout="vertical">
+        <a-form-item :label="t('admin.customerUsers.email')" field="email" :required="true">
+          <a-input v-model="form.email" :placeholder="t('admin.customerUsers.email')" allow-clear />
+        </a-form-item>
+        <a-form-item :label="t('admin.customerUsers.name')" field="name" :required="true">
+          <a-input v-model="form.name" :placeholder="t('admin.customerUsers.name')" allow-clear />
+        </a-form-item>
+        <a-form-item :label="t('admin.customerUsers.password')" field="password">
+          <a-input
+            v-model="form.password"
+            type="password"
+            :placeholder="t('admin.customerUsers.passwordPlaceholder')"
+          />
+        </a-form-item>
+        <a-form-item v-if="!editingUser" :label="t('admin.customerUsers.username')" field="username">
+          <a-input v-model="form.username" :placeholder="t('admin.customerUsers.usernamePlaceholder')" allow-clear />
+        </a-form-item>
+        <a-form-item :label="t('admin.customerUsers.phone')" field="phone">
+          <a-input v-model="form.phone" :placeholder="t('admin.customerUsers.phonePlaceholder')" allow-clear />
+        </a-form-item>
+      </a-form>
+    </a-modal>
   </section>
 </template>
 
@@ -552,5 +755,27 @@ onMounted(async () => {
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 11px;
   color: #98a2b3;
+}
+
+.delete-reason-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #1d2129;
+  background-color: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  outline: none;
+  transition: border-color 0.1s ease;
+}
+
+.delete-reason-input::placeholder {
+  color: #c9cdd4;
+}
+
+.delete-reason-input:focus {
+  border-color: #165dff;
 }
 </style>

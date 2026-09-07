@@ -250,6 +250,9 @@ class TestAdminCustomerUserRoutes:
             disable_customer_user=lambda account_id, **kw: _customer_user(),
             enable_customer_user=lambda account_id, **kw: _customer_user(),
             revoke_customer_user_sessions=lambda account_id, **kw: {"revoked_sessions": 2},
+            create_customer_user=lambda **kw: _customer_user(),
+            update_customer_user=lambda account_id, **kw: _customer_user(),
+            delete_customer_user=lambda account_id, **kw: _customer_user(),
         )
         monkeypatch.setattr(
             support, "_get_service", lambda cls: service if cls is AdminCustomerUserService else None
@@ -319,6 +322,64 @@ class TestAdminCustomerUserRoutes:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
         assert payload["data"]["revoked_sessions"] == 2
+
+    def test_create_user(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/users",
+                    json={"email": "new@example.com", "name": "新用户", "password": "Passw0rd!"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+
+    def test_create_user_missing_email(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/admin/users", json={"name": "无邮箱"}
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_update_user(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.patch(
+                    f"/admin/users/{uuid4()}",
+                    json={"name": "新名字", "email": "new@example.com"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+
+    def test_delete_user(self, monkeypatch):
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/admin/users/{uuid4()}/delete", json={"reason": "注销"}
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
 
 
 class TestAdminBillingPlanRoutes:

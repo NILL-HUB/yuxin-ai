@@ -48,6 +48,10 @@ class Account(Base):
     disabled_at = Column(DateTime, nullable=True)
     disabled_by = Column(UUID, nullable=True)
     disabled_reason = Column(String(1024), nullable=False, server_default=text("''::character varying"))
+    # 账号删除（注销，不可逆）：status='deleted' 时由管理员删除触发，禁止登录
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(UUID, nullable=True)
+    deleted_reason = Column(String(1024), nullable=False, server_default=text("''::character varying"))
     assistant_agent_conversation_id = Column(UUID, nullable=True)  # 辅助智能体会话id
     last_login_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
     last_login_ip = Column(String(255), nullable=False, server_default=text("''::character varying"))
@@ -68,6 +72,10 @@ class Account(Base):
     @property
     def is_disabled(self) -> bool:
         return self.status == "disabled"
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.status == "deleted"
 
     @property
     def assistant_agent_conversation(self) -> "Conversation":
