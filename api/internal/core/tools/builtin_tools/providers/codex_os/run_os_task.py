@@ -16,6 +16,10 @@ from typing import Any, Literal
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from internal.core.tools.builtin_tools.providers.codex_os.delete_guard import (
+    find_delete_command,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,14 +103,39 @@ class RunOsTaskTool(BaseTool):
         "并反问用户希望清理的具体范围（例如回收站、临时文件、缓存目录）。"
         "只有用户在下一条消息中明确指定清理范围后，才能用同一个 approval_token "
         "以 mode=apply 执行；不要替用户自行决定清理范围。"
+        "重要：删除文件/目录必须调用 os_recycle_bin 工具（移入回收站，可恢复），"
+        "禁止在任务描述中使用 del/rm/Remove-Item 等终端删除命令（会被拒绝执行）。"
     )
     args_schema: type[BaseModel] = RunOsTaskInput
     requester: str = ""
 
     def _run(self, **kwargs: Any) -> str:
+        mode = _normalize_text(kwargs.get("mode") or "preview").lower()
+        task_text = _normalize_text(kwargs.get("task"))
+
+        # 删除出口护栏：apply 阶段任务包含物理删除命令 → 本地拒绝并引导回收站
+        if mode == "apply" and task_text:
+            delete_match = find_delete_command(task_text)
+            if delete_match is not None:
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "error": (
+                            "任务包含物理删除命令（"
+                            f"{delete_match.reason}"
+                            "）。为保证可恢复，Agent 的删除必须走 os_recycle_bin "
+                            "工具（先 list 确认，再 delete 移入回收站），"
+                            "禁止用终端命令删除文件。"
+                        ),
+                        "blocked": "delete_command",
+                        "detail": delete_match.command,
+                    },
+                    ensure_ascii=False,
+                )
+
         payload = {
-            "task": _normalize_text(kwargs.get("task")),
-            "mode": _normalize_text(kwargs.get("mode") or "preview").lower(),
+            "task": task_text,
+            "mode": mode,
             "approval_token": _normalize_text(kwargs.get("approval_token")),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "timeout": int(kwargs.get("timeout") or 180),
