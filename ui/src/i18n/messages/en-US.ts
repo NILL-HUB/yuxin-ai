@@ -4387,8 +4387,6 @@ export default {
       startRecord: 'Start recording',
       stopRecord: 'Stop recording',
       transcribing: 'Transcribing',
-      enableDeepThinking: 'Enable deep thinking',
-      disableDeepThinking: 'Disable deep thinking',
       sendMessage: 'Send message',
     },
     messages: {

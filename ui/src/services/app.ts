@@ -78,13 +78,12 @@ export const debugChat = (
   image_urls: string[],
   conversation_id: string = '',
   onData: (event_response: Record<string, unknown>) => void,
-  confirm_deep_thinking: boolean = false,
   admin = false,
 ) => {
   const prefix = admin ? '/admin' : ''
   return ssePost(
     `${prefix}/apps/${app_id}/conversations`,
-    { body: { query, image_urls, conversation_id, confirm_deep_thinking } },
+    { body: { query, image_urls, conversation_id } },
     onData,
   )
 }

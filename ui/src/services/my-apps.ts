@@ -15,7 +15,6 @@ export const chatWithMyApp = (
       query: req.query,
       image_urls: req.image_urls || [],
       conversation_id: req.conversation_id || '',
-      ...(req.confirm_deep_thinking === undefined ? {} : { confirm_deep_thinking: req.confirm_deep_thinking }),
     },
   }, onData)
 }

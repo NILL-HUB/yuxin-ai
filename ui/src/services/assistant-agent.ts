@@ -14,12 +14,11 @@ export const assistantAgentChat = (
   image_urls: string[] = [],
   conversation_id: string = '',
   onData: (event_response: Record<string, unknown>) => void,
-  confirm_deep_thinking: boolean = false,
 ) => {
   return ssePost(
     `/assistant-agent/chat`,
     {
-      body: { query, image_urls, conversation_id, confirm_deep_thinking },
+      body: { query, image_urls, conversation_id },
       headers: {
         'Accept-Language': getAppLocale(),
         'X-App-Locale': getAppLocale(),

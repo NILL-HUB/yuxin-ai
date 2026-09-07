@@ -66,7 +66,6 @@ type ScrollerLike = {
 }
 const newConversation = ref<ConversationSummary | null>(null)
 const selectedConversation = ref('')
-const enableDeepThinking = ref(false)
 const image_urls = ref<string[]>([])
 const WEB_APP_QUERY_DRAFT_STORAGE_KEY_PREFIX = 'draft:web-apps:query'
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -376,7 +375,6 @@ const handleSubmit = async () => {
       selectedConversation.value === 'new_conversation' ? '' : selectedConversation.value,
     query: humanQuery,
     image_urls: humanImageUrls,
-    confirm_deep_thinking: enableDeepThinking.value,
   }
   let chatSucceeded = false
   try {
@@ -914,14 +912,12 @@ onUnmounted(() => {
         <div class="px-4 sm:px-6">
           <chat-composer
             v-model="query"
-            v-model:deep-thinking-enabled="enableDeepThinking"
             :textarea-ref-setter="setQueryTextareaRef"
             :file-input-ref-setter="setFileInputRef"
             :image-urls="image_urls"
             :show-image-previews="true"
             :show-upload-button="true"
             :show-voice-button="can_speech_to_text"
-            :show-deep-thinking-toggle="true"
             :upload-loading="uploadFileLoading"
             :submit-loading="webAppChatLoading"
             :audio-to-text-loading="audioToTextLoading"

@@ -70,42 +70,4 @@ describe('ChatComposer.vue', () => {
     })
     expect(((emitted?.[0]?.[0] as Event).target as { files?: File[] }).files?.[0]).toBe(file)
   })
-
-  it('does not render deep thinking toggle by default', () => {
-    const wrapper = mount(ChatComposer, {
-      props: {
-        modelValue: '',
-      },
-    })
-
-    expect(wrapper.find('[title="开启深度思考"]').exists()).toBe(false)
-    expect(wrapper.find('[title="关闭深度思考"]').exists()).toBe(false)
-  })
-
-  it('renders deep thinking toggle and emits state changes when enabled', async () => {
-    const wrapper = mount(ChatComposer, {
-      props: {
-        modelValue: '',
-        showDeepThinkingToggle: true,
-        deepThinkingEnabled: false,
-      },
-    })
-
-    const toggle = wrapper.get('[title="开启深度思考"]')
-    await toggle.trigger('click')
-
-    expect(wrapper.emitted('update:deepThinkingEnabled')).toEqual([[true]])
-  })
-
-  it('reflects the active deep thinking state', () => {
-    const wrapper = mount(ChatComposer, {
-      props: {
-        modelValue: '',
-        showDeepThinkingToggle: true,
-        deepThinkingEnabled: true,
-      },
-    })
-
-    expect(wrapper.get('[title="关闭深度思考"]').attributes('aria-pressed')).toBe('true')
-  })
 })

@@ -223,25 +223,17 @@ const chatComposerStub = defineComponent({
   name: 'ChatComposer',
   props: {
     modelValue: { type: String, default: '' },
-    deepThinkingEnabled: { type: Boolean, default: false },
     showUploadButton: { type: Boolean, default: false },
     showImagePreviews: { type: Boolean, default: false },
     uploadDisabled: { type: Boolean, default: false },
   },
-  emits: ['update:modelValue', 'update:deepThinkingEnabled', 'submit'],
+  emits: ['update:modelValue', 'submit'],
   template: `
     <div>
       <textarea
         :value="modelValue"
         @input="$emit('update:modelValue', $event.target.value)"
       />
-      <button
-        type="button"
-        aria-label="切换深度思考"
-        @click="$emit('update:deepThinkingEnabled', !deepThinkingEnabled)"
-      >
-        深度思考
-      </button>
       <button type="button" aria-label="发送消息" @click="$emit('submit')">发送消息</button>
     </div>
   `,
@@ -281,7 +273,7 @@ describe('HomeView deep thinking submit', () => {
     }
   })
 
-  it('passes enable_deep_thinking to assistant agent chat when toggle is enabled', async () => {
+  it('does not expose deep-thinking user toggle; chat requests are commander-decided', async () => {
     const wrapper = shallowMount(HomeView, {
       global: {
         stubs: {
@@ -306,16 +298,15 @@ describe('HomeView deep thinking submit', () => {
     expect(composer.props('uploadDisabled')).toBe(false)
 
     await wrapper.find('textarea').setValue('帮我整理需求')
-    await wrapper.find('button[aria-label="切换深度思考"]').trigger('click')
     await wrapper.find('button[aria-label="发送消息"]').trigger('click')
     await flushPromises()
 
+    // 请求不携带任何用户深度思考开关：是否深度思考由入口指挥官自动决策
     expect(mocks.handleAssistantAgentChat).toHaveBeenCalledWith(
       '帮我整理需求',
       [],
       '',
       expect.any(Function),
-      true,
     )
   })
 

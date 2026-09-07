@@ -4372,8 +4372,6 @@ export default {
       startRecord: '开始录音',
       stopRecord: '停止录音',
       transcribing: '正在转写',
-      enableDeepThinking: '开启深度思考',
-      disableDeepThinking: '关闭深度思考',
       sendMessage: '发送消息',
     },
     messages: {

@@ -487,11 +487,10 @@ export const useDebugChat = (options?: { admin?: boolean }) => {
     image_urls: string[] = [],
     conversation_id: string = '',
     onData: (event_response: Record<string, unknown>) => void,
-    confirm_deep_thinking: boolean = false,
   ) => {
     try {
       loading.value = true
-      await debugChat(app_id, query, image_urls, conversation_id, onData, confirm_deep_thinking, admin)
+      await debugChat(app_id, query, image_urls, conversation_id, onData, admin)
     } finally {
       loading.value = false
     }

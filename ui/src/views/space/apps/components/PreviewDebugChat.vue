@@ -130,7 +130,6 @@ const isStreamingResponse = ref(false)
 const isRouteMessageFocusActive = ref(false)
 const routeMessageFocusRequestId = ref(0)
 const selectedConversationId = ref(String(route.query.conversation_id || '').trim())
-const enableDeepThinking = ref(false)
 const routingDecision = ref<RoutingDecision | null>(null)
 const orchestratorReject = ref<{ reason: string; message: string } | null>(null)
 const toolConfirmationPrompt = ref<ToolConfirmationPrompt | null>(null)
@@ -587,7 +586,6 @@ const handleSubmit = async () => {
           scheduleScrollToBottom()
         }
       },
-      enableDeepThinking.value,
     )
   } finally {
     isStreamingResponse.value = false
@@ -917,13 +915,11 @@ onUnmounted(() => {
             <chat-composer
               v-model="query"
               size="compact"
-              v-model:deep-thinking-enabled="enableDeepThinking"
               :textarea-ref-setter="setQueryTextareaRef"
               :file-input-ref-setter="setFileInputRef"
               :image-urls="image_urls"
               :show-image-previews="true"
               :show-upload-button="true"
-              :show-deep-thinking-toggle="true"
               :clear-disabled="deleteDebugConversationLoading || messages.length === 0"
               :clear-loading="deleteDebugConversationLoading"
               :upload-loading="uploadFileLoading"

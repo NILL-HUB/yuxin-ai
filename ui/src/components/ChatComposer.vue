@@ -23,7 +23,6 @@ const props = defineProps({
   uploadDisabled: { type: Boolean, default: false },
   uploadDisabledTitle: { type: String, default: '' },
   showVoiceButton: { type: Boolean, default: true },
-  showDeepThinkingToggle: { type: Boolean, default: false },
   clearTitle: { type: String, default: '' },
   clearDisabled: { type: Boolean, default: false },
   clearLoading: { type: Boolean, default: false },
@@ -32,12 +31,10 @@ const props = defineProps({
   audioToTextLoading: { type: Boolean, default: false },
   isRecording: { type: Boolean, default: false },
   isInputBreathing: { type: Boolean, default: false },
-  deepThinkingEnabled: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
   'update:modelValue',
-  'update:deepThinkingEnabled',
   'clear',
   'upload',
   'remove-image',
@@ -123,15 +120,6 @@ const trailingActionsClass = computed(() => {
 
 const previewSizeClass = computed(() => {
   return isCompact.value ? 'h-9 w-9 rounded-lg' : 'h-10 w-10 rounded-lg'
-})
-
-const deepThinkingButtonClass = computed(() => {
-  return [
-    actionButtonClass.value,
-    props.deepThinkingEnabled
-      ? 'bg-brand-soft text-brand-text ring-1 ring-[#f0bcd2]/70 hover:bg-brand-soft/80'
-      : 'text-muted hover:bg-brand-soft hover:text-brand-text',
-  ]
 })
 
 const assignTextareaRef = (element: unknown) => {
@@ -418,29 +406,6 @@ const handleBlur = (event: FocusEvent) => {
                 stroke-width="2"
                 stroke-linecap="round"
               />
-            </svg>
-          </button>
-
-          <button
-            v-if="showDeepThinkingToggle"
-            type="button"
-            :class="deepThinkingButtonClass"
-            :title="deepThinkingEnabled ? t('chat.composer.disableDeepThinking') : t('chat.composer.enableDeepThinking')"
-            :aria-pressed="deepThinkingEnabled"
-            @click.stop="$emit('update:deepThinkingEnabled', !deepThinkingEnabled)"
-          >
-            <svg
-              :class="isCompact ? 'h-4 w-4' : 'h-5 w-5'"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M9.5 4.5c-2.5 0-4.5 2-4.5 4.5 0 1.7.9 3.2 2.3 4 .1 2 1.8 3.5 3.7 3.5h1c1.9 0 3.6-1.5 3.7-3.5 1.4-.8 2.3-2.3 2.3-4 0-2.5-2-4.5-4.5-4.5h-4z" />
-              <path d="M10 18h4" />
-              <path d="M11 21h2" />
             </svg>
           </button>
 

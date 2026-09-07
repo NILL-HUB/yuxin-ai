@@ -90,7 +90,6 @@ defineOptions({
 const homePageRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 const image_urls = ref<string[]>([])
-const enableDeepThinking = ref(false)
 const HOME_QUERY_DRAFT_STORAGE_KEY = 'draft:home:query'
 const HOME_INTRO_AUDIO_PLAYED_KEY = 'home:intro:audio:played' // localStorage key for tracking audio play status
 const INPUT_BREATHE_TIMEOUT_MS = 1200
@@ -1234,7 +1233,6 @@ const handleSubmit = async () => {
           scheduleScrollToBottom()
         }
       },
-      enableDeepThinking.value,
     )
   } finally {
     isStreamingResponse.value = false
@@ -1893,7 +1891,6 @@ onUnmounted(() => {
           <div class="grid gap-3 pb-2 sm:grid-cols-[minmax(0,1fr)_230px] sm:items-start">
             <chat-composer
               v-model="query"
-              v-model:deep-thinking-enabled="enableDeepThinking"
               :textarea-ref-setter="setQueryTextareaRef"
               :file-input-ref-setter="setFileInputRef"
               :image-urls="image_urls"
@@ -1907,7 +1904,6 @@ onUnmounted(() => {
               :audio-to-text-loading="audioToTextLoading"
               :is-recording="isRecording"
               :is-input-breathing="isInputBreathing"
-              :show-deep-thinking-toggle="true"
               :clear-title="t('home.messages.clearConversation')"
               :placeholder="t('home.messages.sendPlaceholder')"
               @clear="handleClearConversation"
