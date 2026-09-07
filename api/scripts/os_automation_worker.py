@@ -1,26 +1,23 @@
-"""宿主机 Codex OS 自动化 worker。
+"""宿主机 OS 自动化 worker。
 
 运行在真实 Windows/Linux 主机上，通过受保护的本机 HTTP 接口接收平台请求，
-再调用 Codex CLI 在宿主机执行系统自动化任务。
+执行纯 Python 文件操作（读/搜/V4A 补丁）与回收站删除/恢复/清理，不依赖外部 CLI。
 
 安全模型：
 - 仅接受 Authorization: Bearer <OS_AUTOMATION_TOKEN> 的请求。
-- preview 模式使用 Codex read-only 沙箱，不执行修改性命令。
-- apply 模式必须携带 preview 返回的一次性 approval_token。
+- /file 的 patch apply 需携带 preview 返回的一次性 approval_token；纯删除类补丁
+  已走回收站（可恢复），无需确认。
 - 默认只监听本机回环地址；如部署在容器可访问的地址，必须配置强 token。
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
 import hmac
 import json
 import logging
 import os
 import shutil
-import subprocess
-import tempfile
 import threading
 import time
 import traceback
@@ -34,11 +31,8 @@ logger = logging.getLogger("os_automation_worker")
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
-DEFAULT_TIMEOUT = 180
-MAX_TIMEOUT = 600
 APPROVAL_TTL_SECONDS = 1800
 DEFAULT_SAFE_ROOT = ""
-_OUTPUT_RUN_ID_LENGTH = 32
 RECYCLE_DIR_NAME = ".yuxin_ai_recycle"
 MANIFEST_FILENAME = "manifest.jsonl"
 DEFAULT_RECYCLE_RETENTION_DAYS = 30
@@ -51,286 +45,6 @@ _recycle_lock = threading.RLock()
 
 def _env(key: str, default: str = "") -> str:
     return str(os.environ.get(key, default) or "").strip()
-
-
-def _find_codex_path() -> str:
-    """定位 Codex CLI，优先使用 CODEX_CLI_PATH 环境变量。"""
-    explicit = _env("CODEX_CLI_PATH")
-    if explicit:
-        candidate = Path(explicit).expanduser().resolve()
-        if candidate.is_file():
-            return str(candidate)
-
-    candidates: list[str] = []
-    local_app_data = Path(os.environ.get("LOCALAPPDATA", "")) / "OpenAI" / "Codex" / "bin"
-    if local_app_data.is_dir():
-        for path in sorted(glob.glob(str(local_app_data / "*" / "codex.exe")), reverse=True):
-            candidates.append(path)
-    which = shutil.which("codex")
-    if which:
-        candidates.append(which)
-    return candidates[0] if candidates else ""
-
-
-def _codex_version(codex_path: str) -> str:
-    try:
-        completed = subprocess.run(
-            [codex_path, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        return (completed.stdout or completed.stderr or "").strip().splitlines()[-1]
-    except Exception:
-        return ""
-
-
-def _build_codex_command(codex_path: str, mode: str, working_dir: str, timeout: int) -> list[str]:
-    command = [
-        codex_path,
-        # -a never 与 --sandbox 正交：审批只决定"越界/升级是否停下来问人"，
-        # 不决定"沙箱内能否写"。workspace-write 下写工作区无需审批（官方
-        # sandbox 文档：--ask-for-approval never 可与所有 sandbox 模式组合），
-        # 越界写/删被 OS 拒绝并直接失败返回，正好符合无人值守预期。
-        "-a",
-        "never",
-        "exec",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--json",
-        "--color",
-        "never",
-        "-C",
-        working_dir,
-    ]
-    if mode == "preview":
-        # 只读预览：用 Codex read-only 沙箱。写/删命令在 OS 层被沙箱拒绝，
-        # 模型想删都删不掉（旧版"Windows 不支持 read-only 沙箱"已过时——
-        # 实测 Codex 0.150.0-alpha.8 的 Windows 沙箱走 AppContainer restricted
-        # token + capability SID，read-only/workspace-write 均已支持）。
-        command.extend(["--sandbox", "read-only"])
-    else:
-        # apply：用户已确认执行（preview 一次性 approval_token），但运行在
-        # workspace-write 沙箱内——只能写 -C 指定的工作区，删除/写工作区外
-        # 文件会被 OS 拒绝；真实删除只经 os_recycle_bin 工具移入回收站。
-        # 工作区内的删除由明文护栏（_guard_delete_in_task + 提示词）兜底。
-        command.extend(["--sandbox", "workspace-write"])
-    return command
-
-
-def _build_prompt(task: str, mode: str) -> str:
-    if mode == "preview":
-        return (
-            f"{task}\n\n"
-            "[模式] 只读预览。本次会话运行在 Codex read-only 沙箱（OS 层强制），"
-            "任何写文件/删除/修改命令都会被操作系统直接拒绝——不要尝试写或删除，"
-            "只允许执行只读检查命令（如查询磁盘空间、列出临时文件），"
-            "最多执行 2 个只读命令，禁止递归扫描整个临时目录/下载目录。"
-            "禁止执行任何会修改文件系统、注册表、服务、进程或网络的命令。"
-            "输出简短的清理/操作计划、预计影响和具体命令，不要执行修改。"
-        )
-    return (
-        f"{task}\n\n"
-        "[模式] 用户已确认执行。本次会话运行在 Codex workspace-write 沙箱："
-        "只能修改/写入当前工作区（-C 指定的目录）；删除或写入工作区外的任何文件"
-        "都会被操作系统拒绝。请执行完成该任务所需的最小命令集合，"
-        "并汇报实际执行命令、输出、退出码和结果。不要做超出任务范围的修改。"
-        "禁止用终端命令删除任何文件/目录（del、rm、Remove-Item、rmdir、rd、"
-        "unlink 等删除命令都会被硬阻断）。如需删除，必须调用 os_recycle_bin "
-        "工具（delete 移入回收站，可恢复）；任务中的删除类操作一律走回收站通道。"
-    )
-
-
-def _guard_delete_in_task(task: str, mode: str) -> dict[str, Any] | None:
-    """/run 处理器删除护栏（最终防线）：apply 任务含物理删除命令时拒绝执行。
-
-    无论请求来自哪个客户端（可能绕过 run_os_task 的本地拦截直接 POST /run），
-    worker 都在调用 Codex 执行前拦截含终端物理删除命令的任务，禁止绕过
-    回收站删除本机文件。preview 为只读预览，不在此层阻断。
-    """
-    task_text = str(task or "").strip()
-    if mode != "apply" or not task_text:
-        return None
-    try:
-        from internal.core.tools.builtin_tools.providers.codex_os.delete_guard import (
-            find_delete_command,
-        )
-    except Exception:
-        return None
-    delete_match = find_delete_command(task_text)
-    if delete_match is None:
-        return None
-    return {
-        "ok": False,
-        "blocked": "delete_command",
-        "error": (
-            "任务包含物理删除命令，禁止绕过回收站删除本机文件。"
-            "Agent 删除必须使用 os_recycle_bin 工具（delete 移入回收站，可恢复）。"
-        ),
-        "detail": delete_match.command,
-    }
-
-
-def _parse_codex_jsonl(stdout: str, stderr: str) -> tuple[list[dict[str, Any]], list[str], str]:
-    commands: list[dict[str, Any]] = []
-    messages: list[str] = []
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") != "item.completed":
-            continue
-        item = event.get("item") or {}
-        item_type = item.get("type")
-        if item_type == "command_execution":
-            commands.append(
-                {
-                    "command": item.get("command", ""),
-                    "status": item.get("status", ""),
-                    "exit_code": item.get("exit_code"),
-                    "output": item.get("aggregated_output", ""),
-                }
-            )
-        elif item_type == "agent_message":
-            text = str(item.get("text", "") or "").strip()
-            if text:
-                messages.append(text)
-
-    summary = messages[-1] if messages else "Codex 已完成任务，未返回文本消息。"
-    return commands, messages, summary
-
-
-def _run_outputs_dir() -> Path:
-    root = Path(
-        os.getenv("OS_AUTOMATION_OUTPUT_DIR")
-        or (Path(tempfile.gettempdir()) / "yuxin-os-automation-outputs")
-    )
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def _spill_run_output(
-    *,
-    stdout: str,
-    stderr: str,
-    messages: list[str],
-    commands: list[dict[str, Any]],
-) -> str:
-    """保存一次 Codex 执行的完整输出，返回可回读的 run_id。"""
-    run_id = uuid.uuid4().hex
-    payload = {
-        "run_id": run_id,
-        "stdout": stdout or "",
-        "stderr": stderr or "",
-        "messages": messages or [],
-        "commands": commands or [],
-        "created_at": time.time(),
-    }
-    path = _run_outputs_dir() / f"{run_id}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return run_id
-
-
-def _read_run_output(run_id: str) -> dict[str, Any] | None:
-    normalized = str(run_id or "").strip()
-    if (
-        len(normalized) != _OUTPUT_RUN_ID_LENGTH
-        or not all(character in "0123456789abcdef" for character in normalized.lower())
-    ):
-        return None
-    path = _run_outputs_dir() / f"{normalized}.json"
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        logger.warning("读取 run output 失败: %s", normalized, exc_info=True)
-        return None
-
-
-def _run_codex_task(
-    *,
-    task: str,
-    mode: str,
-    working_dir: str,
-    timeout: int,
-    approval_token: str = "",
-) -> dict[str, Any]:
-    codex_path = _find_codex_path()
-    if not codex_path:
-        return {"ok": False, "error": "未找到 Codex CLI，请配置 CODEX_CLI_PATH"}
-
-    if mode == "apply":
-        with _approval_lock:
-            approval = _approvals.get(approval_token or "")
-            if approval is None:
-                return {"ok": False, "error": "缺少有效 approval_token，请先执行 preview 并等待用户确认"}
-            if time.time() - approval["created_at"] > APPROVAL_TTL_SECONDS:
-                _approvals.pop(approval_token, None)
-                return {"ok": False, "error": "approval_token 已过期，请重新预览"}
-
-    started = time.monotonic()
-    command = _build_codex_command(codex_path, mode, working_dir, timeout)
-    prompt = _build_prompt(task, mode)
-    try:
-        completed = subprocess.run(
-            [*command, prompt],
-            capture_output=True,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except subprocess.TimeoutExpired as exc:
-        run_id = _spill_run_output(
-            stdout=str(exc.stdout or ""),
-            stderr=str(exc.stderr or ""),
-            messages=[],
-            commands=[],
-        )
-        return {
-            "ok": False,
-            "error": f"Codex 执行超时（{timeout}s）",
-            "stdout": str(exc.stdout or ""),
-            "stderr": str(exc.stderr or ""),
-            "run_id": run_id,
-            "readback_available": True,
-        }
-    except Exception as exc:
-        return {"ok": False, "error": f"启动 Codex 失败: {exc}"}
-
-    commands, messages, summary = _parse_codex_jsonl(completed.stdout or "", completed.stderr or "")
-    ok = bool(commands or messages)
-    run_id = _spill_run_output(
-        stdout=completed.stdout or "",
-        stderr=completed.stderr or "",
-        messages=messages,
-        commands=commands,
-    )
-    if mode == "apply" and ok:
-        with _approval_lock:
-            _approvals.pop(approval_token, None)
-
-    return {
-        "ok": ok,
-        "mode": mode,
-        "summary": summary,
-        "messages": messages,
-        "commands": commands,
-        "stdout": completed.stdout or "",
-        "stderr": completed.stderr or "",
-        "process_exit_code": completed.returncode,
-        "duration_ms": int((time.monotonic() - started) * 1000),
-        "run_id": run_id,
-        "readback_available": True,
-    }
 
 
 def _create_approval(task: str) -> str:
@@ -951,21 +665,12 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path.startswith("/output/"):
-            if not self._authorized():
-                self._send_json(401, {"ok": False, "error": "unauthorized"})
-                return
-            run_id = parsed.path[len("/output/"):].strip()
-            run_output = _read_run_output(run_id)
-            if run_output is None:
-                self._send_json(404, {"ok": False, "error": "run_output_not_found"})
-                return
-            self._send_json(200, {"ok": True, "run": run_output})
-            return
         if parsed.path != "/health":
             self._send_json(404, {"ok": False, "error": "not_found"})
             return
-        codex_path = _find_codex_path()
+        if not self._authorized():
+            self._send_json(401, {"ok": False, "error": "unauthorized"})
+            return
         self._send_json(
             200,
             {
@@ -973,15 +678,13 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
                 "status": "ready",
                 "os": os.name,
                 "pid": os.getpid(),
-                "codex_path": codex_path or "",
-                "codex_version": _codex_version(codex_path) if codex_path else "",
                 "token_configured": bool(_env("OS_AUTOMATION_TOKEN")),
             },
         )
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/run", "/file", "/recycle"}:
+        if parsed.path not in {"/file", "/recycle"}:
             self._send_json(404, {"ok": False, "error": "not_found"})
             return
         if not self._authorized():
@@ -1003,43 +706,6 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
                 result = _recycle_operation(payload)
                 self._send_json(200, result)
                 return
-
-            task = str(payload.get("task") or "").strip()
-            mode = str(payload.get("mode") or "preview").strip().lower()
-            working_dir = str(payload.get("working_dir") or "").strip()
-            timeout = int(payload.get("timeout") or DEFAULT_TIMEOUT)
-            timeout = max(1, min(timeout, MAX_TIMEOUT))
-            approval_token = str(payload.get("approval_token") or "").strip()
-
-            if not task:
-                self._send_json(400, {"ok": False, "error": "task 不能为空"})
-                return
-            if mode not in {"preview", "apply"}:
-                self._send_json(400, {"ok": False, "error": "mode 必须为 preview 或 apply"})
-                return
-            if not working_dir:
-                working_dir = str(Path.home())
-
-            if mode == "apply":
-                guard_result = _guard_delete_in_task(task, mode)
-                if guard_result is not None:
-                    self._send_json(200, guard_result)
-                    return
-
-            if mode == "preview":
-                approval_token = _create_approval(task)
-
-            result = _run_codex_task(
-                task=task,
-                mode=mode,
-                working_dir=working_dir,
-                timeout=timeout,
-                approval_token=approval_token,
-            )
-            if mode == "preview" and result.get("ok"):
-                result["approval_token"] = approval_token
-                result["approval_expires_in_seconds"] = APPROVAL_TTL_SECONDS
-            self._send_json(200, result)
         except Exception as exc:
             logger.exception("OS 自动化任务执行异常")
             self._send_json(
@@ -1049,33 +715,18 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="YuxinAI Codex OS automation worker")
+    parser = argparse.ArgumentParser(description="YuxinAI OS automation worker")
     parser.add_argument("--host", default=_env("OS_AUTOMATION_HOST", DEFAULT_HOST))
     parser.add_argument("--port", type=int, default=int(_env("OS_AUTOMATION_PORT", DEFAULT_PORT)))
-    parser.add_argument("--check", action="store_true", help="检查 Codex 是否可用并退出")
     args = parser.parse_args()
 
     if not _env("OS_AUTOMATION_TOKEN"):
         print("OS_AUTOMATION_TOKEN 未配置，拒绝启动", file=__import__("sys").stderr)
         return 2
 
-    codex_path = _find_codex_path()
-    if args.check:
-        if not codex_path:
-            print("Codex CLI 未找到", file=__import__("sys").stderr)
-            return 1
-        print(f"codex={codex_path}")
-        print(f"version={_codex_version(codex_path)}")
-        return 0
-
-    if not codex_path:
-        print("Codex CLI 未找到，请设置 CODEX_CLI_PATH", file=__import__("sys").stderr)
-        return 1
-
     server = ThreadingHTTPServer((args.host, args.port), OsAutomationHandler)
     print(
-        f"OS automation worker listening on http://{args.host}:{args.port} "
-        f"codex={codex_path}",
+        f"OS automation worker listening on http://{args.host}:{args.port}",
         flush=True,
     )
     try:
