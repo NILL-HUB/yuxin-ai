@@ -160,7 +160,7 @@ def _normalize_op_path(workdir: str, path: str) -> str:
     return expanded
 
 
-def _file_safe_read(path: str, root: str) -> dict[str, Any]:
+def _file_safe_read(path: str, root: str, offset: int = 0, limit: int = 0) -> dict[str, Any]:
     if not _is_path_within(root, path):
         return {"ok": False, "error": "路径超出允许目录", "path": path}
     target = Path(path)
@@ -175,6 +175,42 @@ def _file_safe_read(path: str, root: str) -> dict[str, Any]:
             return {"ok": False, "error": f"读取失败: {exc}", "path": path}
     except OSError as exc:
         return {"ok": False, "error": f"读取失败: {exc}", "path": path}
+
+    # 分页：offset 为行号（0 基线），limit>0 时只返回该窗口的若干行。
+    try:
+        offset = max(int(offset or 0), 0)
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = max(int(limit or 0), 0)
+    except (TypeError, ValueError):
+        limit = 0
+    if offset > 0 or limit > 0:
+        lines = content.splitlines()
+        if offset >= len(lines):
+            return {
+                "ok": True,
+                "path": str(target),
+                "content": "",
+                "truncated": False,
+                "total_chars": len(content),
+                "total_lines": len(lines),
+                "offset": offset,
+                "limit": limit,
+            }
+        window = lines[offset : offset + limit if limit else offset + 200]
+        return {
+            "ok": True,
+            "path": str(target),
+            "content": "\n".join(window),
+            "truncated": len(window) < len(lines) - offset,
+            "total_chars": len(content),
+            "total_lines": len(lines),
+            "offset": offset,
+            "limit": limit,
+            "read_lines": len(window),
+        }
+
     max_chars = int(_env("OS_AUTOMATION_FILE_READ_MAX_CHARS", "100000"))
     truncated = len(content) > max_chars
     return {
@@ -184,6 +220,55 @@ def _file_safe_read(path: str, root: str) -> dict[str, Any]:
         "truncated": truncated,
         "total_chars": len(content),
     }
+
+
+def _file_search(pattern: str, root: str, working_dir: str, path: str = "") -> dict[str, Any]:
+    """在允许目录内递归搜索文件与内容（对齐 Hermes search_files 的 rg 语义）。"""
+    scope = working_dir or root
+    if path:
+        candidate = str(Path(path).expanduser())
+        if not Path(candidate).is_absolute():
+            candidate = str(Path(scope) / candidate)
+        if not _is_path_within(scope, candidate):
+            return {"ok": False, "error": f"路径超出允许目录: {candidate}"}
+        if Path(candidate).is_file():
+            scope = str(Path(candidate).parent)
+        else:
+            scope = candidate
+    if not _is_path_within(root, scope):
+        return {"ok": False, "error": "搜索范围超出允许目录"}
+    if not pattern:
+        return {"ok": False, "error": "pattern 不能为空"}
+
+    try:
+        import subprocess
+
+        cmd = ["rg", "--no-heading", "--line-number", "--color", "never"]
+        if _env("OS_AUTOMATION_SEARCH_MAX_RESULTS", "100"):
+            try:
+                cmd += ["-m", str(max(int(_env("OS_AUTOMATION_SEARCH_MAX_RESULTS", "100")), 1))]
+            except ValueError:
+                pass
+        cmd += [pattern, scope, "-g", "!.git/**", "-g", "!node_modules/**", "-g", "!__pycache__/**"]
+        result = subprocess.run(cmd, capture_output=True, timeout=30)
+        output = result.stdout.decode("utf-8", errors="replace")
+        lines = [line for line in output.splitlines() if line.strip()]
+        return {
+            "ok": True,
+            "pattern": pattern,
+            "scope": scope,
+            "count": len(lines),
+            "matches": lines,
+        }
+    except FileNotFoundError:
+        return {
+            "ok": False,
+            "error": "宿主环境未安装 ripgrep（rg），请先安装后启用 search_files",
+        }
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "搜索超时（30 秒）"}
+    except Exception as exc:
+        return {"ok": False, "error": f"搜索失败: {exc}"}
 
 
 def _file_apply_patch(
@@ -442,7 +527,18 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
         path = str(payload.get("path") or "").strip()
         if not path:
             return {"ok": False, "error": "path 不能为空"}
-        result = _file_safe_read(path, working_dir)
+        result = _file_safe_read(
+            path,
+            working_dir,
+            offset=payload.get("offset", 0),
+            limit=payload.get("limit", 0),
+        )
+        return result
+
+    if op == "search":
+        pattern = str(payload.get("pattern") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        result = _file_search(pattern, root, working_dir, path=path)
         return result
 
     if op == "patch":
@@ -458,9 +554,13 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
                         "ok": False,
                         "error": "缺少有效 approval_token，请先执行 preview 并等待用户确认",
                     }
+            # root（安全根）作为路径校验与快照存储的基点，working_dir 仅作
+            # 操作基准：两者都归一 resolve 后，root 总为 working_dir 的祖先，
+            # 快照目录落在 <root>/.yuxin_ai_snapshots，与回滚侧 _resolve_safe_root
+            # 读取 manifest 的基点一致。
             result = _file_apply_patch(
                 patch,
-                working_dir,
+                root,
                 working_dir,
                 snapshot_meta={
                     "source": "os_file_task",
@@ -473,7 +573,7 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             # 真只读：在临时副本上模拟补丁，只做路径/格式/可应用性校验并返回
             # 影响结果；不修改真实文件、不删除文件、不移入回收站（B1 回归）。
             validation = _file_apply_patch(
-                patch, working_dir, working_dir, dry_run=True
+                patch, root, working_dir, dry_run=True
             )
             if not validation.get("ok"):
                 return validation
@@ -487,7 +587,7 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             }
         return {"ok": False, "error": "mode 必须为 preview 或 apply"}
 
-    return {"ok": False, "error": "op 必须为 read 或 patch"}
+    return {"ok": False, "error": "op 必须为 read、search 或 patch"}
 
 
 def _patch_is_pure_delete(patch: str) -> bool:

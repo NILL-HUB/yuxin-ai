@@ -305,7 +305,9 @@ def test_file_patch_apply_requires_token(tmp_path):
     assert "approval_token" in result["error"]
 
 
-def test_file_patch_blocks_path_escape(tmp_path):
+def test_file_patch_blocks_path_escape(tmp_path, monkeypatch):
+    """越界 ADD 路径必须被拒绝；SAFE_ROOT 显式限定在 tmp_path 内。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
     patch = (
         "*** Begin Patch\n"
         f"*** Add File: {tmp_path.parent / 'evil.txt'}\n+evil\n"
@@ -550,5 +552,64 @@ def test_oversized_file_snapshot_skipped_with_warning(tmp_path, monkeypatch):
     assert result.get("warnings"), "应返回超限 warning"
     assert any("超大文件快照" in w for w in result["warnings"])
     assert _read_snapshot_manifest(str(tmp_path)) == []
+
+
+def test_patch_snapshot_and_rollback_use_safe_root_when_working_dir_is_subdir(tmp_path, monkeypatch):
+    """快照基点统一回归：safe_root 与 working_dir 不同时，快照写与回滚读都落在 safe_root。
+
+    working_dir 为 <safe_root>/project 子目录，_file_operation 的 patch apply 曾把
+    working_dir 当 root 传给 _file_apply_patch，导致快照 manifest 写到
+    <working_dir>/.yuxin_ai_snapshots，而 rollback_file 用 _resolve_safe_root 读
+    <safe_root>/.yuxin_ai_snapshots——基点错位，回滚永远找不到快照。修复后两处一致。
+    """
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "code.py"
+    original = "def old():\n    pass\n"
+    target.write_text(original, encoding="utf-8")
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {target}\n@@\n"
+        "-def old():\n+def new():\n     pass\n"
+        "*** End Patch\n"
+    )
+
+    # SAFE_ROOT=tmp_path、working_dir=project 子目录，apply 需带有效 approval_token。
+    preview = _file_operation(
+        {
+            "op": "patch",
+            "mode": "preview",
+            "patch": patch,
+            "working_dir": str(project),
+        }
+    )
+    assert preview["ok"] is True
+    applied = _file_operation(
+        {
+            "op": "patch",
+            "mode": "apply",
+            "patch": patch,
+            "approval_token": preview["approval_token"],
+            "working_dir": str(project),
+            "session_id": "sess-root",
+            "conversation_turn": "turn-root",
+        }
+    )
+    assert applied["ok"] is True
+    assert applied.get("snapshot_batch_id")
+    assert target.read_text(encoding="utf-8") == "def new():\n    pass\n"
+
+    # 快照 manifest 必须落在 safe_root 级，而不是 working_dir 子目录
+    safe_entries = _read_snapshot_manifest(str(tmp_path))
+    assert len(safe_entries) == 1
+    assert safe_entries[0]["session_id"] == "sess-root"
+    assert safe_entries[0]["conversation_turn"] == "turn-root"
+    assert not (project / ".yuxin_ai_snapshots").exists()
+
+    rb = _rollback_file({"path": str(target), "working_dir": str(project)})
+    assert rb["ok"] is True
+    assert target.read_text(encoding="utf-8") == original
 
 
