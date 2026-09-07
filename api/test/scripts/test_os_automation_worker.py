@@ -1,4 +1,6 @@
+import io
 import json
+from http.server import BaseHTTPRequestHandler
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +10,7 @@ from scripts.os_automation_worker import (
     _build_prompt,
     _create_approval,
     _file_operation,
+    _guard_delete_in_task,
     _read_run_output,
     _resolve_safe_root,
     _parse_codex_jsonl,
@@ -254,3 +257,171 @@ def test_read_run_output_rejects_invalid_run_id(tmp_path, monkeypatch):
 
     assert _read_run_output("../etc/passwd") is None
     assert _read_run_output("not-a-uuid") is None
+
+
+class TestGuardDeleteInTask:
+    """worker /run 删除护栏纯函数：仅 apply + 含终端删除命令时返回阻断结果。"""
+
+    def test_apply_with_remove_item_returns_blocked(self):
+        result = _guard_delete_in_task(
+            "清理过期文件\nRemove-Item C:\\tmp\\a.txt", "apply"
+        )
+
+        assert result is not None
+        assert result["ok"] is False
+        assert result["blocked"] == "delete_command"
+        assert "回收站" in result["error"]
+        assert "os_recycle_bin" in result["error"]
+        assert "Remove-Item" in result["detail"]
+
+    def test_apply_with_rm_returns_blocked(self):
+        result = _guard_delete_in_task(
+            "清理构建缓存\nrm -rf /home/user/tmp", "apply"
+        )
+
+        assert result is not None
+        assert result["blocked"] == "delete_command"
+        assert "rm -rf" in result["detail"]
+
+    def test_apply_with_del_returns_blocked(self):
+        result = _guard_delete_in_task(
+            "清理下载目录\n del /f /q C:\\temp\\x.txt", "apply"
+        )
+
+        assert result is not None
+        assert result["blocked"] == "delete_command"
+
+    def test_preview_with_delete_command_returns_none(self):
+        assert _guard_delete_in_task("删除文件：del a.txt", "preview") is None
+
+    def test_apply_safe_task_returns_none(self):
+        assert _guard_delete_in_task("列出 C:\\temp 的文件", "apply") is None
+
+    def test_empty_task_returns_none(self):
+        assert _guard_delete_in_task("", "apply") is None
+
+
+class TestApplyPromptDeleteConstraint:
+    def test_apply_prompt_forbids_terminal_delete(self):
+        prompt = _build_prompt("清理 C 盘临时文件", "apply")
+
+        assert "回收站" in prompt
+        assert "os_recycle_bin" in prompt
+        assert "Remove-Item" in prompt
+        assert "禁止" in prompt
+
+    def test_apply_prompt_mentions_delete_command_names(self):
+        prompt = _build_prompt("清理 C 盘临时文件", "apply")
+
+        for name in ("del", "rm", "rmdir", "rd", "unlink"):
+            assert name in prompt
+
+
+class TestRunHandlerGuardWiring:
+    """do_POST /run 的 apply 删除护栏接线（handler 级、不依赖真实 socket）。
+
+    do_POST 依赖 BaseHTTPRequestHandler 的 socket 流，无法直接实例化，
+    因此用 __new__ 构造最小 handler：伪造 headers/rfile/wfile，
+    并把 _guard_delete_in_task 打桩为固定返回 dict，验证：
+    1) apply 命中时 _send_json 收到 (200, blocked payload)；
+    2) 命中时不会继续走到 _run_codex_task。
+    """
+
+    @staticmethod
+    def _build_handler() -> BaseHTTPRequestHandler:
+        import scripts.os_automation_worker as mod
+
+        handler = BaseHTTPRequestHandler.__new__(mod.OsAutomationHandler)
+        handler.client_address = ("127.0.0.1", 0)
+        handler.server = SimpleNamespace()
+        handler.command = "POST"
+        handler.path = "/run"
+        handler.request_version = "HTTP/1.1"
+        handler.headers = {"Content-Length": "0"}
+        handler.rfile = io.BytesIO(b"")
+        handler.wfile = io.BytesIO()
+        handler.close_connection = True
+        handler.sent = {}
+        return handler
+
+    @staticmethod
+    def _body(task: str) -> bytes:
+        payload = {
+            "task": task,
+            "mode": "apply",
+            "approval_token": "x",
+            "working_dir": "",
+            "timeout": 30,
+        }
+        return json.dumps(payload).encode("utf-8")
+
+    def test_apply_guard_blocked_sends_200_blocked_and_skips_run(
+        self, monkeypatch
+    ):
+        import scripts.os_automation_worker as mod
+
+        sent = {}
+
+        def _fake_send_json(self, status, payload):
+            sent["status"] = status
+            sent["payload"] = payload
+
+        def _fake_authorized(self):
+            return True
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("命中删除护栏后不应继续执行 _run_codex_task")
+
+        body = self._body("清理过期文件\nRemove-Item C:\\tmp\\a.txt")
+
+        monkeypatch.setattr(mod, "_guard_delete_in_task", lambda *_a, **_k: {
+            "ok": False,
+            "blocked": "delete_command",
+            "error": "任务包含物理删除命令，禁止绕过回收站删除本机文件。"
+            "Agent 删除必须使用 os_recycle_bin 工具（delete 移入回收站，可恢复）。",
+            "detail": "Remove-Item C:\\tmp\\a.txt",
+        })
+        monkeypatch.setattr(mod.OsAutomationHandler, "_send_json", _fake_send_json)
+        monkeypatch.setattr(mod.OsAutomationHandler, "_authorized", _fake_authorized)
+        monkeypatch.setattr(mod, "_run_codex_task", _boom)
+
+        handler = self._build_handler()
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        assert sent["status"] == 200
+        assert sent["payload"]["ok"] is False
+        assert sent["payload"]["blocked"] == "delete_command"
+
+    def test_apply_guard_clear_path_reaches_run(self, monkeypatch):
+        import scripts.os_automation_worker as mod
+
+        sent = {}
+
+        def _fake_send_json(self, status, payload):
+            sent["status"] = status
+            sent["payload"] = payload
+
+        def _fake_authorized(self):
+            return True
+
+        def _fake_run_codex_task(**kwargs):
+            return {"ok": True, "mode": kwargs["mode"], "summary": "ok"}
+
+        body = self._body("列出 C:\\temp 的文件")
+
+        monkeypatch.setattr(mod, "_guard_delete_in_task", lambda *_a, **_k: None)
+        monkeypatch.setattr(mod.OsAutomationHandler, "_send_json", _fake_send_json)
+        monkeypatch.setattr(mod.OsAutomationHandler, "_authorized", _fake_authorized)
+        monkeypatch.setattr(mod, "_run_codex_task", _fake_run_codex_task)
+
+        handler = self._build_handler()
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+
+        assert sent["status"] == 200
+        assert sent["payload"]["ok"] is True

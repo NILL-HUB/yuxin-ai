@@ -28,6 +28,14 @@
    Codex CLI 不支持 read-only 沙箱，因此真正的执行门禁由 approval_token 承担。
 5. `apply` 使用 `--dangerously-bypass-approvals-and-sandbox`，因为平台侧
    已经完成“预览 + 用户确认”。
+6. **删除只进回收站（硬阻断）**：Agent 在本机的任何删除动作必须走
+   `os_recycle_bin` 工具（delete 移入回收站、可恢复）。`run_os_task`
+   客户端在 apply 前用 `delete_guard.find_delete_command` 做本地快速拦截；
+   worker `/run` 处理器在调用 Codex 执行前再次拦截（无论请求来自哪个客户端），
+   凡任务文本含 `del`/`rm`/`Remove-Item`/`rmdir`/`rd`/`ri`/`erase`/`unlink`
+   等物理删除命令即返回 `{"ok": false, "blocked": "delete_command", ...}`，
+   不发放 approval_token、不执行 Codex。apply 提示词同时显式禁止终端删除命令。
+   V4A 文件补丁的 Delete File 与 `os_recycle_bin` 删除均已走回收站，不受影响。
 
 ## 环境变量
 

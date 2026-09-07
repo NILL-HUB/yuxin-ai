@@ -123,7 +123,40 @@ def _build_prompt(task: str, mode: str) -> str:
         f"{task}\n\n"
         "[模式] 用户已确认执行。请执行完成该任务所需的最小命令集合，"
         "并汇报实际执行命令、输出、退出码和结果。不要做超出任务范围的修改。"
+        "禁止用终端命令删除任何文件/目录（del、rm、Remove-Item、rmdir、rd、"
+        "unlink 等删除命令都会被硬阻断）。如需删除，必须调用 os_recycle_bin "
+        "工具（delete 移入回收站，可恢复）；任务中的删除类操作一律走回收站通道。"
     )
+
+
+def _guard_delete_in_task(task: str, mode: str) -> dict[str, Any] | None:
+    """/run 处理器删除护栏（最终防线）：apply 任务含物理删除命令时拒绝执行。
+
+    无论请求来自哪个客户端（可能绕过 run_os_task 的本地拦截直接 POST /run），
+    worker 都在调用 Codex 执行前拦截含终端物理删除命令的任务，禁止绕过
+    回收站删除本机文件。preview 为只读预览，不在此层阻断。
+    """
+    task_text = str(task or "").strip()
+    if mode != "apply" or not task_text:
+        return None
+    try:
+        from internal.core.tools.builtin_tools.providers.codex_os.delete_guard import (
+            find_delete_command,
+        )
+    except Exception:
+        return None
+    delete_match = find_delete_command(task_text)
+    if delete_match is None:
+        return None
+    return {
+        "ok": False,
+        "blocked": "delete_command",
+        "error": (
+            "任务包含物理删除命令，禁止绕过回收站删除本机文件。"
+            "Agent 删除必须使用 os_recycle_bin 工具（delete 移入回收站，可恢复）。"
+        ),
+        "detail": delete_match.command,
+    }
 
 
 def _parse_codex_jsonl(stdout: str, stderr: str) -> tuple[list[dict[str, Any]], list[str], str]:
@@ -973,6 +1006,12 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
                 return
             if not working_dir:
                 working_dir = str(Path.home())
+
+            if mode == "apply":
+                guard_result = _guard_delete_in_task(task, mode)
+                if guard_result is not None:
+                    self._send_json(200, guard_result)
+                    return
 
             if mode == "preview":
                 approval_token = _create_approval(task)
