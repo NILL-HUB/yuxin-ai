@@ -398,18 +398,6 @@ def test_overview_aggregates_status_type_and_source(monkeypatch):
         def scalar(self):
             return self.scalar_value
 
-    class _Session:
-        def query(self, *_a):
-            # 第 1 次：主列表 query（count + 三组分布）
-            return _ChainQuery(
-                group_sets=[
-                    [_NS(name="pending", count=3), _NS(name="expired", count=1), _NS(name="restored", count=1)],
-                    [_NS(name="app", count=4), _NS(name="workflow", count=1)],
-                    [_NS(name="admin", count=5)],
-                ]
-            )
-            # 第 2 次（pending_count）由新对象承担——见 query_index
-
     class _PendingSession:
         def __init__(self):
             self.calls = 0
@@ -419,9 +407,9 @@ def test_overview_aggregates_status_type_and_source(monkeypatch):
             if self.calls == 1:
                 return _ChainQuery(
                     group_sets=[
-                        [_NS(name="pending", count=3), _NS(name="expired", count=1), _NS(name="restored", count=1)],
-                        [_NS(name="app", count=4), _NS(name="workflow", count=1)],
-                        [_NS(name="admin", count=5)],
+                        [_NS(status="pending", count=3), _NS(status="expired", count=1), _NS(status="restored", count=1)],
+                        [_NS(resource_type="app", count=4), _NS(resource_type="workflow", count=1)],
+                        [_NS(deleted_by_type="admin", count=5)],
                     ]
                 )
             return _ChainQuery(group_sets=[], scalar_value=3)
