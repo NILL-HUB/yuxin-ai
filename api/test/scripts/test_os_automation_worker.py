@@ -1,3 +1,7 @@
+import json
+import time
+from pathlib import Path
+
 import pytest
 
 from scripts.os_automation_worker import (
@@ -5,8 +9,23 @@ from scripts.os_automation_worker import (
     _create_approval,
     _file_apply_patch,
     _file_operation,
+    _gc_snapshots,
+    _list_snapshots,
+    _read_snapshot_manifest,
     _resolve_safe_root,
+    _rollback_file,
+    _rollback_turn,
+    _snapshot_root,
 )
+
+
+def _update_patch(path, old_line, new_line):
+    return (
+        "*** Begin Patch\n"
+        f"*** Update File: {path}\n@@\n"
+        f"-{old_line}\n+{new_line}\n"
+        "*** End Patch\n"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -309,4 +328,227 @@ def test_file_patch_blocks_path_escape(tmp_path):
 def test_resolve_safe_root_defaults_to_home(tmp_path, monkeypatch):
     monkeypatch.delenv("OS_AUTOMATION_SAFE_ROOT", raising=False)
     assert _resolve_safe_root("") == str(__import__("pathlib").Path.home())
+
+
+def _snapshot_dir_of(tmp_path):
+    return _snapshot_root(str(tmp_path))
+
+
+def _apply_patch(tmp_path, target, old_line, new_line):
+    patch = _update_patch(target, old_line, new_line)
+    return _file_apply_patch(
+        patch,
+        str(tmp_path),
+        str(tmp_path),
+        snapshot_meta={
+            "source": "os_file_task",
+            "session_id": "sess-1",
+            "conversation_turn": "turn-1",
+        },
+    )
+
+
+def test_snapshot_before_update_patch(tmp_path, monkeypatch):
+    """UPDATE patch 前自动捕获原内容：manifest 有条目且 .snap 内容=原内容。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    target = tmp_path / "code.py"
+    original = "def old():\n    pass\n"
+    target.write_bytes(original.encode("utf-8"))
+    original_bytes = target.read_bytes()
+
+    result = _apply_patch(tmp_path, target, "def old():", "def new():")
+
+    assert result["ok"] is True
+    assert target.read_text(encoding="utf-8") == "def new():\n    pass\n"
+
+    entries = _read_snapshot_manifest(str(tmp_path))
+    matches = [e for e in entries if str(e.get("path")) == str(target)]
+    assert len(matches) == 1
+    entry = matches[0]
+    assert entry["conversation_turn"] == "turn-1"
+    assert entry["taken_before"] == "patch"
+    snap_file = _snapshot_dir_of(tmp_path) / "files" / f"{entry['content_sha256']}.snap"
+    assert snap_file.is_file()
+    assert snap_file.read_bytes() == original_bytes
+    assert entry["rolled_back"] is False
+
+
+def test_rollback_file_restores_content(tmp_path, monkeypatch):
+    """patch 修改后 rollback_file(path) 恢复原内容；再 rollback 报无可用快照。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    target = tmp_path / "code.py"
+    target.write_text("def old():\n    pass\n", encoding="utf-8")
+
+    _apply_patch(tmp_path, target, "def old():", "def new():")
+    assert target.read_text(encoding="utf-8") == "def new():\n    pass\n"
+
+    rb = _rollback_file({"path": str(target), "working_dir": str(tmp_path)})
+    assert rb["ok"] is True
+    assert target.read_text(encoding="utf-8") == "def old():\n    pass\n"
+    entries = _read_snapshot_manifest(str(tmp_path))
+    assert any(
+        e.get("rolled_back") and str(e.get("path")) == str(target) for e in entries
+    )
+
+    rb2 = _rollback_file({"path": str(target), "working_dir": str(tmp_path)})
+    assert rb2["ok"] is False
+    assert "无可用快照" in rb2["error"]
+
+
+def test_rollback_turn_restores_all_files(tmp_path, monkeypatch):
+    """同一 turn 内 patch 两个文件后 rollback_turn 同时恢复两者。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("aaa old\n", encoding="utf-8")
+    b.write_text("bbb old\n", encoding="utf-8")
+
+    patch = (
+        "*** Begin Patch\n"
+        f"*** Update File: {a}\n@@\n-aaa old\n+aaa new\n"
+        f"*** Update File: {b}\n@@\n-bbb old\n+bbb new\n"
+        "*** End Patch\n"
+    )
+    result = _file_apply_patch(
+        patch,
+        str(tmp_path),
+        str(tmp_path),
+        snapshot_meta={"conversation_turn": "turn-x"},
+    )
+    assert result["ok"] is True
+    assert a.read_text(encoding="utf-8") == "aaa new\n"
+    assert b.read_text(encoding="utf-8") == "bbb new\n"
+
+    rb = _rollback_turn({"conversation_turn": "turn-x", "working_dir": str(tmp_path)})
+    assert rb["ok"] is True
+    assert rb["count"] == 2
+    assert a.read_text(encoding="utf-8") == "aaa old\n"
+    assert b.read_text(encoding="utf-8") == "bbb old\n"
+
+
+def test_rollback_file_specific_snapshot_id(tmp_path, monkeypatch):
+    """多次 patch 后可精确回滚到指定 snapshot_id 的历史版本。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    target = tmp_path / "code.py"
+    target.write_text("v0\n", encoding="utf-8")
+
+    _apply_patch(tmp_path, target, "v0", "v1")
+    _apply_patch(tmp_path, target, "v1", "v2")
+    assert target.read_text(encoding="utf-8") == "v2\n"
+
+    entries = [e for e in _read_snapshot_manifest(str(tmp_path)) if str(e.get("path")) == str(target)]
+    assert len(entries) == 2
+    first_id = entries[0]["snapshot_id"]
+
+    rb = _rollback_file(
+        {"path": str(target), "snapshot_id": first_id, "working_dir": str(tmp_path)}
+    )
+    assert rb["ok"] is True
+    assert target.read_text(encoding="utf-8") == "v0\n"
+
+
+def test_list_snapshots_returns_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    target = tmp_path / "code.py"
+    target.write_text("old\n", encoding="utf-8")
+    _apply_patch(tmp_path, target, "old", "new")
+
+    listing = _list_snapshots({"working_dir": str(tmp_path)})
+    assert listing["ok"] is True
+    assert listing["count"] == 1
+    entry = listing["entries"][0]
+    assert entry["path"] == str(target)
+    assert entry["conversation_turn"] == "turn-1"
+    assert entry["rolled_back"] is False
+    # 元数据不返回内容
+    assert "content" not in entry
+
+
+def test_snapshot_before_delete_and_rollback(tmp_path, monkeypatch):
+    """DELETE 前快照源文件，回滚后文件恢复到原路径原内容。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    target = tmp_path / "victim.txt"
+    original = "doomed content\n"
+    target.write_text(original, encoding="utf-8")
+    delete_patch = (
+        "*** Begin Patch\n"
+        f"*** Delete File: {target}\n"
+        "*** End Patch\n"
+    )
+
+    result = _file_apply_patch(
+        delete_patch,
+        str(tmp_path),
+        str(tmp_path),
+        snapshot_meta={"conversation_turn": "turn-del"},
+    )
+    assert result["ok"] is True
+    assert target.exists() is False
+
+    rb = _rollback_file({"path": str(target), "working_dir": str(tmp_path)})
+    assert rb["ok"] is True
+    assert target.exists() is True
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_gc_snapshots_purges_expired(tmp_path, monkeypatch):
+    """把条目 created_at 改旧后触发 GC，条目与 .snap 文件都被清理。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    monkeypatch.setenv("OS_AUTOMATION_SNAPSHOT_RETENTION_DAYS", "7")
+    target = tmp_path / "code.py"
+    target.write_text("old\n", encoding="utf-8")
+    _apply_patch(tmp_path, target, "old", "new")
+
+    entries = _read_snapshot_manifest(str(tmp_path))
+    assert entries
+    snap_file = _snapshot_dir_of(tmp_path) / "files" / f"{entries[0]['content_sha256']}.snap"
+    assert snap_file.is_file()
+
+    # 改写 created_at 为 8 天前
+    manifest_path = _snapshot_dir_of(tmp_path) / "manifest.jsonl"
+    old_ts = time.time() - 8 * 86400
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        lines = handle.readlines()
+    rewritten = []
+    for line in lines:
+        obj = json.loads(line)
+        obj["created_at"] = old_ts
+        rewritten.append(json.dumps(obj, ensure_ascii=False))
+    manifest_path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    result = _gc_snapshots(str(tmp_path))
+    assert result["ok"] is True
+    assert len(result["purged"]) == 1
+    assert _read_snapshot_manifest(str(tmp_path)) == []
+    assert snap_file.exists() is False
+
+
+def test_oversized_file_snapshot_skipped_with_warning(tmp_path, monkeypatch):
+    """超过 OS_AUTOMATION_SNAPSHOT_MAX_BYTES 的文件跳过内容快照但 patch 不被阻断。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    monkeypatch.setenv("OS_AUTOMATION_SNAPSHOT_MAX_BYTES", "10")
+    target = tmp_path / "big.txt"
+    target.write_text("0123456789abcdef", encoding="utf-8")
+
+    patch = _update_patch(target, "0123456789abcdef", "fedcba9876543210")
+    result = _file_apply_patch(
+        patch,
+        str(tmp_path),
+        str(tmp_path),
+        snapshot_meta={"conversation_turn": "turn-big"},
+    )
+    assert result["ok"] is True
+    assert target.read_text(encoding="utf-8") == "fedcba9876543210"
+    assert result.get("warnings"), "应返回超限 warning"
+    assert any("超大文件快照" in w for w in result["warnings"])
+    assert _read_snapshot_manifest(str(tmp_path)) == []
+
 

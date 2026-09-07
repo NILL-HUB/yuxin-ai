@@ -1,18 +1,23 @@
 """宿主机 OS 自动化 worker。
 
 运行在真实 Windows/Linux 主机上，通过受保护的本机 HTTP 接口接收平台请求，
-执行纯 Python 文件操作（读/搜/V4A 补丁）与回收站删除/恢复/清理，不依赖外部 CLI。
+执行纯 Python 文件操作（读/搜/V4A 补丁）、回收站删除/恢复/清理，与文件
+写前快照/回滚，不依赖外部 CLI。
 
 安全模型：
 - 仅接受 Authorization: Bearer <OS_AUTOMATION_TOKEN> 的请求。
 - /file 的 patch apply 需携带 preview 返回的一次性 approval_token；纯删除类补丁
   已走回收站（可恢复），无需确认。
+- 每次真实写文件（UPDATE/DELETE/MOVE）前先做内容快照（写前快照，fail-closed），
+  Agent 可通过 /snapshot 端点或 os_snapshot 工具一键回滚。快照全存本机隐藏目录，
+  默认留存 7 天后由 GC 清理。
 - 默认只监听本机回环地址；如部署在容器可访问的地址，必须配置强 token。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import hmac
 import json
 import logging
@@ -35,13 +40,51 @@ DEFAULT_PORT = 8765
 APPROVAL_TTL_SECONDS = 1800
 DEFAULT_SAFE_ROOT = ""
 RECYCLE_DIR_NAME = ".yuxin_ai_recycle"
+SNAPSHOT_DIR_NAME = ".yuxin_ai_snapshots"
+SNAPSHOT_FILES_DIR_NAME = "files"
 MANIFEST_FILENAME = "manifest.jsonl"
 DEFAULT_RECYCLE_RETENTION_DAYS = 30
+DEFAULT_SNAPSHOT_RETENTION_DAYS = 7
+DEFAULT_SNAPSHOT_MAX_BYTES = 50 * 1024 * 1024
 
 _approvals: dict[str, dict[str, Any]] = {}
 _approval_lock = threading.Lock()
 # 可重入锁：_delete_into_recycle 持有锁后调用 _append_recycle_manifest（内部再次加锁）
 _recycle_lock = threading.RLock()
+# 快照全局锁：保护快照 manifest 的追加/重写与快照文件写（内容寻址，幂等可重入）
+_snapshot_lock = threading.RLock()
+# 每路径锁：进程内按 resolved path 互斥“快照→写”与“回滚→写回”，避免并发写同一文件。
+# 与 Hermes file_state 思路一致：快照与写落在同一临界区。
+_file_locks: dict[str, threading.RLock] = {}
+_file_locks_guard = threading.Lock()
+
+
+def _file_path_lock(resolved_path: str) -> threading.RLock:
+    """返回按规范化路径共享的可重入锁（进程内，防止并发写同一文件）。"""
+    with _file_locks_guard:
+        return _file_locks.setdefault(resolved_path, threading.RLock())
+
+
+class _locked_paths:
+    """按规范化路径排序获取一组可重入路径锁，退出上下文时逆序释放。
+
+    用于把“写前快照 → 真实写”与“回滚读/写回”放进同一临界区，保证并发请求
+    不会交错修改同一文件（借鉴 Hermes file_state 的每文件锁思路）。
+    """
+
+    def __init__(self, paths: list[str]) -> None:
+        unique = sorted({p for p in paths if p})
+        self._locks = [_file_path_lock(p) for p in unique]
+
+    def __enter__(self) -> "_locked_paths":
+        for lock in self._locks:
+            lock.acquire()
+        return self
+
+    def __exit__(self, *_exc: Any) -> bool:
+        for lock in reversed(self._locks):
+            lock.release()
+        return False
 
 
 def _env(key: str, default: str = "") -> str:
@@ -148,6 +191,7 @@ def _file_apply_patch(
     root: str,
     working_dir: str,
     dry_run: bool = False,
+    snapshot_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """在宿主机执行 V4A 补丁，并验证所有目标路径都落在允许目录内。
 
@@ -155,6 +199,10 @@ def _file_apply_patch(
     DELETE/MOVE 全部操作逻辑复用 apply_v4a_operations，但读到的永远是副本
     状态、写的也是副本，delete 只是从副本移除（绝不真移入回收站）。返回结构
     与 apply 一致并附 dry_run 标记，真实文件不会被触碰。
+
+    真实 apply 前对补丁将修改/删除/移动的已存在文件做写前快照（fail-closed：
+    快照失败则拒绝本次 patch，保证“没有快照就没有修改”）。快照上下文
+    （session_id/conversation_turn/source）经 snapshot_meta 传入。
     """
     try:
         from internal.core.agent.adapters.hermes.v4a_patch import (
@@ -179,57 +227,95 @@ def _file_apply_patch(
     if dry_run:
         return _file_dry_run_patch(operations, root, working_dir)
 
-    class _RootedFileOps(FileTextOps):
-        def __init__(self, root: str, workdir: str) -> None:
-            self.root = root
-            self.workdir = workdir
-
-        def _resolve(self, path: str) -> str:
-            return _normalize_op_path(self.workdir, path)
-
-        def read_text(self, path: str) -> str | None:
-            resolved = self._resolve(path)
-            if not _is_path_within(self.root, resolved):
-                return None
-            return super().read_text(resolved)
-
-        def write_text(self, path: str, content: str) -> None:
-            resolved = self._resolve(path)
-            if not _is_path_within(self.root, resolved):
-                raise PermissionError(f"路径超出允许目录: {resolved}")
-            super().write_text(resolved, content)
-
-        def delete_file(self, path: str) -> None:
-            resolved = self._resolve(path)
-            if not _is_path_within(self.root, resolved):
-                raise PermissionError(f"路径超出允许目录: {resolved}")
-            # 安全删除：移入本机回收站而非物理删除，保证可恢复
-            moved = _delete_into_recycle(resolved, self.root, reason="V4A Delete File")
-            if moved is None:
-                raise OSError(f"删除文件失败（移入回收站失败）: {resolved}")
-
-        def move_file(self, path: str, new_path: str) -> None:
-            resolved = self._resolve(path)
-            resolved_new = self._resolve(new_path)
-            if not _is_path_within(self.root, resolved) or not _is_path_within(
-                self.root, resolved_new
-            ):
-                raise PermissionError(f"路径超出允许目录: {resolved} -> {resolved_new}")
-            super().move_file(resolved, resolved_new)
-
-        def exists(self, path: str) -> bool:
-            resolved = self._resolve(path)
-            return super().exists(resolved)
-
-    results: list[str] = []
+    # 写前快照：对本次 patch 将触碰的已存在文件先捕获内容，失败则拒绝本次写。
+    # 锁顺序：先取路径锁（快照与写落在同一临界区），manifest 追加只在各自函数
+    # 内短持 _snapshot_lock；回滚路径同样先取路径锁，避免与写交错/死锁。
+    meta = snapshot_meta or {}
     try:
-        results = apply_v4a_operations(operations, _RootedFileOps(root, working_dir))
-    except PermissionError as exc:
-        return {"ok": False, "error": str(exc), "results": results}
-    except Exception as exc:
-        return {"ok": False, "error": f"补丁应用失败: {exc}"}
-    errors = [r for r in results if r.startswith("ERROR:")]
-    return {"ok": not errors, "results": results, "errors": errors}
+        touched = [
+            str(Path(_normalize_op_path(working_dir, raw)).expanduser().resolve())
+            for op in operations
+            for raw in (op.file_path, op.new_path if op.operation == "move" else None)
+            if raw
+        ]
+    except OSError:
+        touched = []
+    with _locked_paths(touched):
+        try:
+            _snap_entries, snap_skipped = _snapshot_entries_before_patch(
+                operations,
+                root,
+                working_dir,
+                source=str(meta.get("source") or "os_file_task"),
+                session_id=str(meta.get("session_id") or ""),
+                conversation_turn=str(meta.get("conversation_turn") or ""),
+            )
+        except OSError as exc:
+            return {"ok": False, "error": f"写前快照失败，已拒绝本次修改: {exc}"}
+
+        class _RootedFileOps(FileTextOps):
+            def __init__(self, root: str, workdir: str) -> None:
+                self.root = root
+                self.workdir = workdir
+
+            def _resolve(self, path: str) -> str:
+                return _normalize_op_path(self.workdir, path)
+
+            def read_text(self, path: str) -> str | None:
+                resolved = self._resolve(path)
+                if not _is_path_within(self.root, resolved):
+                    return None
+                return super().read_text(resolved)
+
+            def write_text(self, path: str, content: str) -> None:
+                resolved = self._resolve(path)
+                if not _is_path_within(self.root, resolved):
+                    raise PermissionError(f"路径超出允许目录: {resolved}")
+                super().write_text(resolved, content)
+
+            def delete_file(self, path: str) -> None:
+                resolved = self._resolve(path)
+                if not _is_path_within(self.root, resolved):
+                    raise PermissionError(f"路径超出允许目录: {resolved}")
+                # 安全删除：移入本机回收站而非物理删除，保证可恢复
+                moved = _delete_into_recycle(resolved, self.root, reason="V4A Delete File")
+                if moved is None:
+                    raise OSError(f"删除文件失败（移入回收站失败）: {resolved}")
+
+            def move_file(self, path: str, new_path: str) -> None:
+                resolved = self._resolve(path)
+                resolved_new = self._resolve(new_path)
+                if not _is_path_within(self.root, resolved) or not _is_path_within(
+                    self.root, resolved_new
+                ):
+                    raise PermissionError(f"路径超出允许目录: {resolved} -> {resolved_new}")
+                super().move_file(resolved, resolved_new)
+
+            def exists(self, path: str) -> bool:
+                resolved = self._resolve(path)
+                return super().exists(resolved)
+
+        warnings: list[str] = []
+        for skipped in snap_skipped:
+            if skipped.get("reason") == "too_large":
+                warnings.append(
+                    f"跳过超大文件快照（{skipped.get('size')} 字节，上限 "
+                    f"{skipped.get('max_bytes')}）: {skipped.get('path')}"
+                )
+        results: list[str] = []
+        try:
+            results = apply_v4a_operations(operations, _RootedFileOps(root, working_dir))
+        except PermissionError as exc:
+            return {"ok": False, "error": str(exc), "results": results, "warnings": warnings}
+        except Exception as exc:
+            return {"ok": False, "error": f"补丁应用失败: {exc}", "warnings": warnings}
+        errors = [r for r in results if r.startswith("ERROR:")]
+        response: dict[str, Any] = {"ok": not errors, "results": results, "errors": errors}
+        if warnings:
+            response["warnings"] = warnings
+        if _snap_entries:
+            response["snapshot_batch_id"] = _snap_entries[0].get("batch_id")
+        return response
 
 
 def _file_dry_run_patch(
@@ -372,7 +458,16 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
                         "ok": False,
                         "error": "缺少有效 approval_token，请先执行 preview 并等待用户确认",
                     }
-            result = _file_apply_patch(patch, working_dir, working_dir)
+            result = _file_apply_patch(
+                patch,
+                working_dir,
+                working_dir,
+                snapshot_meta={
+                    "source": "os_file_task",
+                    "session_id": str(payload.get("session_id") or "").strip(),
+                    "conversation_turn": str(payload.get("conversation_turn") or "").strip(),
+                },
+            )
             return result
         if mode == "preview":
             # 真只读：在临时副本上模拟补丁，只做路径/格式/可应用性校验并返回
@@ -778,6 +873,585 @@ def _recycle_operation(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": "op 必须为 delete/list/restore/purge"}
 
 
+def _snapshot_root(safe_root: str) -> Path:
+    """快照根目录：OS_AUTOMATION_SNAPSHOT_DIR 覆盖，缺省 <safe_root>/.yuxin_ai_snapshots。"""
+    override = _env("OS_AUTOMATION_SNAPSHOT_DIR")
+    if override:
+        try:
+            return Path(override).expanduser().resolve()
+        except OSError:
+            return Path(override).expanduser()
+    return Path(safe_root) / SNAPSHOT_DIR_NAME
+
+
+def _snapshot_manifest_path(safe_root: str) -> Path:
+    root = _snapshot_root(safe_root)
+    root.mkdir(parents=True, exist_ok=True)
+    return root / MANIFEST_FILENAME
+
+
+def _read_snapshot_manifest(safe_root: str) -> list[dict[str, Any]]:
+    manifest_path = _snapshot_manifest_path(safe_root)
+    if not manifest_path.is_file():
+        return []
+    entries: list[dict[str, Any]] = []
+    try:
+        for line in manifest_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    return entries
+
+
+def _append_snapshot_manifest(safe_root: str, entry: dict[str, Any]) -> None:
+    manifest_path = _snapshot_manifest_path(safe_root)
+    with _snapshot_lock:
+        with manifest_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _rewrite_snapshot_manifest(safe_root: str, entries: list[dict[str, Any]]) -> None:
+    manifest_path = _snapshot_manifest_path(safe_root)
+    with _snapshot_lock:
+        manifest_path.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+
+
+def _snapshot_max_bytes() -> int:
+    try:
+        return max(int(_env("OS_AUTOMATION_SNAPSHOT_MAX_BYTES", str(DEFAULT_SNAPSHOT_MAX_BYTES))), 0)
+    except ValueError:
+        return DEFAULT_SNAPSHOT_MAX_BYTES
+
+
+def _file_sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _capture_single_file_snapshot(
+    resolved_path: str,
+    safe_root: str,
+    *,
+    source: str,
+    session_id: str,
+    conversation_turn: str,
+    batch_id: str,
+    taken_before: str,
+    move_target: str = "",
+) -> dict[str, Any]:
+    """对单个已存在文件捕获内容快照并追加 manifest，返回条目。
+
+    fail-closed：快照写入失败（磁盘满/权限等）抛 OSError，由调用方拒绝本次写操作；
+    文件体积超过 OS_AUTOMATION_SNAPSHOT_MAX_BYTES 时跳过快照，返回带 skipped 标记
+    的条目（不阻断写，由调用方转成 warning）。
+    """
+    target = Path(resolved_path)
+    if not target.is_file():
+        return {"skipped": True, "reason": "missing", "path": resolved_path}
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise OSError(f"快照读取文件状态失败: {resolved_path}: {exc}") from exc
+    max_bytes = _snapshot_max_bytes()
+    if max_bytes > 0 and size > max_bytes:
+        logger.warning(
+            "跳过超大文件快照（%d 字节 > 上限 %d）: %s", size, max_bytes, resolved_path
+        )
+        return {
+            "skipped": True,
+            "reason": "too_large",
+            "size": size,
+            "max_bytes": max_bytes,
+            "path": resolved_path,
+        }
+
+    try:
+        content_sha256 = _file_sha256_path(target)
+    except OSError as exc:
+        raise OSError(f"快照计算文件哈希失败: {resolved_path}: {exc}") from exc
+
+    root = Path(safe_root)
+    snapshot_files_dir = _snapshot_root(safe_root) / SNAPSHOT_FILES_DIR_NAME
+    snap_file = snapshot_files_dir / f"{content_sha256}.snap"
+    if not snap_file.is_file():
+        try:
+            snapshot_files_dir.mkdir(parents=True, exist_ok=True)
+            with snap_file.open("xb") as handle:
+                handle.write(target.read_bytes())
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise OSError(f"快照内容写入失败: {snap_file}: {exc}") from exc
+
+    try:
+        relative = target.relative_to(root)
+        relative_path = str(relative)
+    except ValueError:
+        relative_path = str(target)
+    try:
+        stat = target.stat()
+        mode = "file"
+        size = stat.st_size
+    except OSError:
+        mode = "file"
+        size = 0
+    now = time.time()
+    entry = {
+        "snapshot_id": f"{content_sha256[:16]}-{int(now * 1000)}",
+        "path": str(target),
+        "relative_path": relative_path,
+        "content_sha256": content_sha256,
+        "mode": mode,
+        "source": source,
+        "session_id": session_id,
+        "conversation_turn": conversation_turn,
+        "batch_id": batch_id,
+        "taken_before": taken_before,
+        "created_at": now,
+        "size": size,
+        "rolled_back": False,
+    }
+    if move_target:
+        entry["move_target"] = move_target
+    _append_snapshot_manifest(safe_root, entry)
+    return entry
+
+
+def _match_snapshot_path(entry: dict[str, Any], target: str) -> bool:
+    """manifest 条目与回滚目标路径匹配（绝对路径或相对路径任一命中）。"""
+    if not entry.get("path") or not target:
+        return False
+    target = str(Path(target).expanduser())
+    if not Path(target).is_absolute():
+        target = str(Path(target).expanduser().resolve())
+    candidate = str(Path(str(entry["path"])).expanduser())
+    if not Path(candidate).is_absolute():
+        try:
+            candidate = str(Path(candidate).resolve())
+        except OSError:
+            pass
+    return candidate == target or str(entry.get("relative_path") or "") == target
+
+
+def _normalize_resolved_path(path: str, working_dir: str) -> str:
+    """把用户输入路径规范成绝对路径（相对路径拼 working_dir 再 resolve）。"""
+    expanded = str(Path(path).expanduser())
+    if not Path(expanded).is_absolute():
+        expanded = str(Path(working_dir) / expanded)
+    try:
+        return str(Path(expanded).resolve())
+    except OSError:
+        return expanded
+
+
+def _snapshot_entries_before_patch(
+    patch_operations: list[Any],
+    root: str,
+    working_dir: str,
+    *,
+    source: str,
+    session_id: str,
+    conversation_turn: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """apply 前对补丁将修改/删除/移动的已存在文件批量快照。
+
+    返回 (快照条目, 跳过条目)。ADD 新文件无需回滚（本批不做 ADD 撤销语义）；
+    UPDATE/DELETE/MOVE 的源文件只要存在就快照其当前内容。全部写操作共享同一
+    batch_id，供按 batch 审计/回滚。
+    """
+    try:
+        from internal.core.agent.adapters.hermes.v4a_patch import OperationType
+    except Exception:
+        OperationType = None
+
+    entries: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    batch_id = uuid.uuid4().hex
+    # 同一补丁内对同一文件的多次操作只保留最早一份快照（apply 前状态）。
+    seen: set[str] = set()
+    for op in patch_operations:
+        op_type = getattr(op, "operation", None)
+        if OperationType is not None and op_type == OperationType.ADD:
+            continue
+        raw_path = str(getattr(op, "file_path", "") or "").strip()
+        if not raw_path:
+            continue
+        resolved = _normalize_resolved_path(raw_path, working_dir)
+        if not _is_path_within(root, resolved):
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        move_target = ""
+        if OperationType is not None and op_type == OperationType.MOVE:
+            raw_new = str(getattr(op, "new_path", "") or "").strip()
+            if raw_new:
+                move_target = _normalize_resolved_path(raw_new, working_dir)
+        captured = _capture_single_file_snapshot(
+            resolved,
+            root,
+            source=source,
+            session_id=session_id,
+            conversation_turn=conversation_turn,
+            batch_id=batch_id,
+            taken_before="patch",
+            move_target=move_target,
+        )
+        if captured.get("skipped"):
+            skipped.append(captured)
+        else:
+            entries.append(captured)
+    return entries, skipped
+
+
+def _snapshot_file_content(safe_root: str, content_sha256: str) -> bytes | None:
+    """按内容哈希读取 .snap 文件内容；缺失返回 None。"""
+    snap_file = _snapshot_root(safe_root) / SNAPSHOT_FILES_DIR_NAME / f"{content_sha256}.snap"
+    try:
+        return snap_file.read_bytes()
+    except OSError:
+        return None
+
+
+def _do_rollback_entry(
+    entry: dict[str, Any],
+    safe_root: str,
+    *,
+    guard_source: str = "os_snapshot",
+) -> tuple[bool, dict[str, Any], str]:
+    """回滚单条快照条目：把快照内容写回原路径（MOVE 时额外收回目标副本）。
+
+    返回 (ok, result/error_dict, restored_path)。回滚前若原路径当前有内容，先对当前
+    内容再做一次快照（rollback_guard），防止回滚本身出错导致二次丢失。
+    """
+    path = str(entry.get("path") or "").strip()
+    if not path:
+        return False, {"snapshot_id": entry.get("snapshot_id"), "error": "快照条目缺少 path"}, ""
+    if not _is_path_within(safe_root, path):
+        return False, {"snapshot_id": entry.get("snapshot_id"), "error": "回滚目标超出允许目录"}, ""
+    content_sha256 = str(entry.get("content_sha256") or "").strip()
+    if not content_sha256:
+        return False, {"snapshot_id": entry.get("snapshot_id"), "error": "快照条目缺少 content_sha256"}, ""
+    content = _snapshot_file_content(safe_root, content_sha256)
+    if content is None:
+        return False, {
+            "snapshot_id": entry.get("snapshot_id"),
+            "error": f"快照内容缺失: files/{content_sha256}.snap",
+        }, ""
+
+    target = Path(path)
+    guard_batch = uuid.uuid4().hex
+    # 回滚前 guard：目标当前存在则保留一份当前内容快照（防回滚出错二次丢失）。
+    if target.is_file():
+        try:
+            _capture_single_file_snapshot(
+                str(target),
+                safe_root,
+                source=guard_source,
+                session_id=str(entry.get("session_id") or ""),
+                conversation_turn=str(entry.get("conversation_turn") or ""),
+                batch_id=guard_batch,
+                taken_before="rollback_guard",
+            )
+        except OSError as exc:
+            return False, {
+                "snapshot_id": entry.get("snapshot_id"),
+                "error": f"回滚前保护性快照失败，已中止回滚: {exc}",
+            }, ""
+
+    # MOVE 撤销：若目标副本仍停留在 move 落点且未被二次修改，收回以避免双副本。
+    move_target = str(entry.get("move_target") or "").strip()
+    if move_target:
+        moved = Path(move_target)
+        if moved.is_file() and _is_path_within(safe_root, str(moved)):
+            try:
+                if _file_sha256_path(moved) == content_sha256:
+                    moved.unlink()
+            except OSError:
+                pass
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as handle:
+            handle.write(content)
+    except OSError as exc:
+        return False, {"snapshot_id": entry.get("snapshot_id"), "error": f"回滚写回失败: {exc}"}, ""
+    return True, entry, str(target)
+
+
+def _rollback_file(payload: dict[str, Any]) -> dict[str, Any]:
+    """按路径回滚单文件（可选 snapshot_id 精确回滚到指定版本）。"""
+    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    working_dir = str(payload.get("working_dir") or "").strip() or root
+    working_dir = _resolve_safe_root(working_dir)
+    path = str(payload.get("path") or "").strip()
+    snapshot_id = str(payload.get("snapshot_id") or "").strip()
+    if not path:
+        return {"ok": False, "error": "path 不能为空"}
+    resolved = _normalize_resolved_path(path, working_dir)
+    if not _is_path_within(root, resolved):
+        return {"ok": False, "error": "路径超出允许目录"}
+
+    # 先取目标路径锁，再短持快照 manifest 锁：与 apply（路径锁外层）保持同一
+    # 锁顺序，避免死锁；manifest 读写 + 内容写回落在同一临界区。
+    with _file_path_lock(resolved):
+        with _snapshot_lock:
+            entries = _read_snapshot_manifest(root)
+            candidates = [e for e in entries if _match_snapshot_path(e, resolved)]
+            target_entry = None
+            if snapshot_id:
+                for e in candidates:
+                    if str(e.get("snapshot_id") or "") == snapshot_id and not e.get("rolled_back"):
+                        target_entry = e
+                        break
+                if target_entry is None:
+                    return {"ok": False, "error": f"未找到可回滚快照 snapshot_id={snapshot_id}"}
+            else:
+                # 默认取该文件最新一次未回滚“写前快照”（排除回滚 guard：guard 是
+                # 回滚动作自身的副产物，不参与“内容已一致后无限回滚”的默认语义，
+                # 仍可通过显式 snapshot_id 精确回滚）。
+                active = [
+                    e
+                    for e in candidates
+                    if not e.get("rolled_back")
+                    and str(e.get("taken_before") or "") != "rollback_guard"
+                ]
+                if not active:
+                    return {"ok": False, "error": "该文件无可用快照（可能已全部回滚）"}
+                target_entry = max(active, key=lambda e: float(e.get("created_at") or 0))
+            target_id = str(target_entry.get("snapshot_id") or "")
+
+            ok, result, restored_path = _do_rollback_entry(target_entry, root)
+            if not ok:
+                return {"ok": False, **result}
+            # _do_rollback_entry 可能追加 rollback_guard 条目，重读后按 id 标记回滚，
+            # 避免用陈旧列表重写时把 guard 快照丢回滚掉。
+            fresh = _read_snapshot_manifest(root)
+            for e in fresh:
+                if str(e.get("snapshot_id") or "") == target_id and not e.get("rolled_back"):
+                    e["rolled_back"] = True
+                    e["rolled_back_at"] = time.time()
+                    break
+            _rewrite_snapshot_manifest(root, fresh)
+    return {
+        "ok": True,
+        "restored": restored_path,
+        "snapshot_id": target_id,
+        "content_sha256": target_entry.get("content_sha256"),
+    }
+
+
+def _rollback_turn(payload: dict[str, Any]) -> dict[str, Any]:
+    """按 conversation_turn 批量回滚该 turn 涉及的全部文件。
+
+    语义 = 回到用户消息发出前：取该 turn 内各文件最早的快照（即该 turn 第一个
+    写操作发生前的状态）逐一写回。逐文件持路径锁再短持 manifest 锁，锁序与
+    _rollback_file / apply 一致。
+    """
+    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    turn = str(payload.get("conversation_turn") or "").strip()
+    if not turn:
+        return {"ok": False, "error": "conversation_turn 不能为空"}
+
+    with _snapshot_lock:
+        entries = _read_snapshot_manifest(root)
+        turn_entries = [e for e in entries if str(e.get("conversation_turn") or "") == turn]
+        if not turn_entries:
+            return {"ok": False, "error": f"未找到 conversation_turn={turn} 的快照"}
+        # 每个文件取该 turn 内最早的“写前快照”作为恢复目标（排除 rollback_guard）。
+        by_path: dict[str, dict[str, Any]] = {}
+        for e in turn_entries:
+            p = str(e.get("path") or "")
+            if not p:
+                continue
+            if str(e.get("taken_before") or "") == "rollback_guard":
+                continue
+            if p not in by_path or float(e.get("created_at") or 0) < float(
+                by_path[p].get("created_at") or 0
+            ):
+                by_path[p] = e
+        if not by_path:
+            return {"ok": False, "error": f"conversation_turn={turn} 无可用快照"}
+
+    restored: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for _path, entry in by_path.items():
+        resolved = str(entry.get("path") or "")
+        if not _is_path_within(root, resolved):
+            errors.append({"path": resolved, "error": "路径超出允许目录"})
+            continue
+        with _file_path_lock(resolved):
+            with _snapshot_lock:
+                entries = _read_snapshot_manifest(root)
+                target_entry = None
+                for e in entries:
+                    if (
+                        str(e.get("snapshot_id") or "") == str(entry.get("snapshot_id") or "")
+                        and not e.get("rolled_back")
+                    ):
+                        target_entry = e
+                        break
+                if target_entry is None:
+                    errors.append(
+                        {
+                            "path": resolved,
+                            "snapshot_id": entry.get("snapshot_id"),
+                            "error": "该文件该 turn 快照已回滚或不存在",
+                        }
+                    )
+                    continue
+                ok, result, restored_path = _do_rollback_entry(target_entry, root)
+                if ok:
+                    # _do_rollback_entry 可能追加 rollback_guard 条目，重读后按 id
+                    # 标记回滚，避免陈旧列表重写丢掉 guard 快照。
+                    fresh = _read_snapshot_manifest(root)
+                    for e in fresh:
+                        if (
+                            str(e.get("snapshot_id") or "") == str(target_entry.get("snapshot_id") or "")
+                            and not e.get("rolled_back")
+                        ):
+                            e["rolled_back"] = True
+                            e["rolled_back_at"] = time.time()
+                            break
+                    _rewrite_snapshot_manifest(root, fresh)
+                    restored.append(
+                        {
+                            "path": restored_path,
+                            "snapshot_id": target_entry.get("snapshot_id"),
+                            "content_sha256": target_entry.get("content_sha256"),
+                        }
+                    )
+                else:
+                    errors.append(result)
+    return {
+        "ok": not errors or bool(restored),
+        "restored": restored,
+        "errors": errors,
+        "count": len(restored),
+    }
+
+
+def _list_snapshots(payload: dict[str, Any]) -> dict[str, Any]:
+    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    working_dir = str(payload.get("working_dir") or "").strip() or root
+    working_dir = _resolve_safe_root(working_dir)
+    path = str(payload.get("path") or "").strip()
+    turn = str(payload.get("conversation_turn") or "").strip()
+    try:
+        limit = max(int(payload.get("limit") or 0), 0)
+    except (TypeError, ValueError):
+        limit = 0
+    entries = _read_snapshot_manifest(root)
+    if path:
+        resolved = _normalize_resolved_path(path, working_dir)
+        entries = [e for e in entries if _match_snapshot_path(e, resolved)]
+    if turn:
+        entries = [e for e in entries if str(e.get("conversation_turn") or "") == turn]
+    entries = sorted(entries, key=lambda e: float(e.get("created_at") or 0), reverse=True)
+    if limit > 0:
+        entries = entries[:limit]
+    metadata = []
+    for e in entries:
+        metadata.append(
+            {
+                "snapshot_id": e.get("snapshot_id"),
+                "path": e.get("path"),
+                "relative_path": e.get("relative_path"),
+                "content_sha256": e.get("content_sha256"),
+                "mode": e.get("mode"),
+                "source": e.get("source"),
+                "session_id": e.get("session_id"),
+                "conversation_turn": e.get("conversation_turn"),
+                "batch_id": e.get("batch_id"),
+                "taken_before": e.get("taken_before"),
+                "created_at": e.get("created_at"),
+                "size": e.get("size"),
+                "rolled_back": bool(e.get("rolled_back")),
+            }
+        )
+    return {"ok": True, "entries": metadata, "count": len(metadata)}
+
+
+def _snapshot_retention_seconds() -> int:
+    try:
+        return max(int(_env("OS_AUTOMATION_SNAPSHOT_RETENTION_DAYS", str(DEFAULT_SNAPSHOT_RETENTION_DAYS))), 1) * 86400
+    except ValueError:
+        return DEFAULT_SNAPSHOT_RETENTION_DAYS * 86400
+
+
+def _gc_snapshots(safe_root: str) -> dict[str, Any]:
+    """清理超过留存期的快照条目与对应 .snap 文件。
+
+    内容寻址：.snap 被清理前检查是否仍被其它（未过期）条目引用，是则保留。
+    """
+    with _snapshot_lock:
+        entries = _read_snapshot_manifest(safe_root)
+        if not entries:
+            return {"ok": True, "purged": [], "removed_files": []}
+        now = time.time()
+        retention = _snapshot_retention_seconds()
+        remaining: list[dict[str, Any]] = []
+        purged: list[dict[str, Any]] = []
+        expired_shas: set[str] = set()
+        for e in entries:
+            created_at = float(e.get("created_at") or 0)
+            if created_at and now - created_at > retention:
+                purged.append(e)
+                sha = str(e.get("content_sha256") or "")
+                if sha:
+                    expired_shas.add(sha)
+            else:
+                remaining.append(e)
+        if not purged:
+            return {"ok": True, "purged": [], "removed_files": []}
+
+        live_shas = {str(e.get("content_sha256") or "") for e in remaining if e.get("content_sha256")}
+        removed_files: list[str] = []
+        files_dir = _snapshot_root(safe_root) / SNAPSHOT_FILES_DIR_NAME
+        for sha in expired_shas:
+            if sha in live_shas:
+                continue
+            snap_file = files_dir / f"{sha}.snap"
+            try:
+                if snap_file.is_file():
+                    snap_file.unlink()
+                    removed_files.append(str(snap_file))
+            except OSError as exc:
+                logger.warning("清理快照文件失败: %s: %s", snap_file, exc)
+        _rewrite_snapshot_manifest(safe_root, remaining)
+    return {"ok": True, "purged": purged, "removed_files": removed_files}
+
+
+def _snapshot_operation(payload: dict[str, Any]) -> dict[str, Any]:
+    """/snapshot 端点调度：rollback_file / rollback_turn / list_snapshots。"""
+    root = _resolve_safe_root(str(payload.get("safe_root") or "").strip())
+    op = str(payload.get("op") or "").strip().lower()
+    if op in {"rollback_file", "rollback_turn"}:
+        try:
+            _gc_snapshots(root)
+        except Exception as exc:
+            logger.warning("快照 GC 失败（不影响回滚）: %s", exc)
+    if op == "rollback_file":
+        return _rollback_file(payload)
+    if op == "rollback_turn":
+        return _rollback_turn(payload)
+    if op == "list_snapshots":
+        return _list_snapshots(payload)
+    return {"ok": False, "error": "op 必须为 rollback_file/rollback_turn/list_snapshots"}
+
+
 class OsAutomationHandler(BaseHTTPRequestHandler):
     server_version = "YuxinOSAutomation/0.1"
 
@@ -823,7 +1497,7 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in {"/file", "/recycle"}:
+        if parsed.path not in {"/file", "/recycle", "/snapshot"}:
             self._send_json(404, {"ok": False, "error": "not_found"})
             return
         if not self._authorized():
@@ -845,12 +1519,24 @@ class OsAutomationHandler(BaseHTTPRequestHandler):
                 result = _recycle_operation(payload)
                 self._send_json(200, result)
                 return
+            if parsed.path == "/snapshot":
+                result = _snapshot_operation(payload)
+                self._send_json(200, result)
+                return
         except Exception as exc:
             logger.exception("OS 自动化任务执行异常")
             self._send_json(
                 500,
                 {"ok": False, "error": str(exc), "traceback": traceback.format_exc()},
             )
+
+
+def _gc_snapshots_on_startup() -> None:
+    """worker 启动时惰性清理过期快照（失败仅记录日志，不阻断启动）。"""
+    try:
+        _gc_snapshots(_resolve_safe_root(""))
+    except Exception as exc:
+        logger.warning("启动时快照 GC 失败: %s", exc)
 
 
 def main() -> int:
@@ -863,6 +1549,7 @@ def main() -> int:
         print("OS_AUTOMATION_TOKEN 未配置，拒绝启动", file=__import__("sys").stderr)
         return 2
 
+    _gc_snapshots_on_startup()
     server = ThreadingHTTPServer((args.host, args.port), OsAutomationHandler)
     print(
         f"OS automation worker listening on http://{args.host}:{args.port}",
