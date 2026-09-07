@@ -672,6 +672,14 @@ class FunctionCallAgent(BaseAgent):
                         tool_call.get("args"),
                     )
 
+                # 向支持会话元数据的 OS 文件工具补齐会话上下文（与 requester 同为实例绑定）：
+                # 工具类通常在会话边界之外预构建（只带 requester），conversation_turn 只在
+                # agent 执行时可见；这里在 invoke 前把轮次/会话标识绑到工具实例，
+                # os_file_task/os_snapshot 的 _run 据此把 conversation_turn 写入 worker
+                # 快照 manifest，rollback_turn 才能按用户消息轮批量回滚。
+                if tool_call["name"] in {"os_file_task", "os_snapshot"}:
+                    self._bind_tool_session_context(tool, state)
+
                 tool_result = tool.invoke(tool_call["args"])
 
                 # 工具执行成功：登记 done + 结果。崩溃恢复时重放此结果（不重复执行）。
@@ -1102,6 +1110,78 @@ class FunctionCallAgent(BaseAgent):
                 return tool
 
         return None
+
+    def _resolve_tool_session_context(self, state: AgentState) -> tuple[str, str]:
+        """从 Agent 执行上下文解析 platform 会话元数据（session_id, conversation_turn）。
+
+        优先级（从请求局部到进程级配置）：
+        1. state 内显式携带的 conversation_id / conversation_turn（后续编排层可直接注入）
+        2. agent_config.checkpoint_thread_id：进程级 checkpoint 的稳定线程标识，
+           由入口（如 assistant_agent_service）以 ``conv:<conversation_id>`` 形式传入
+        3. agent_config.runtime_context：编排层携带的 conversation_id/message_id
+
+        conversation_turn = 平台消息轮次边界，语义对齐“该用户消息发出前”，
+        用于 worker 侧 rollback_turn 按轮批量回滚。
+        """
+        conversation_id = (
+            str(state.get("conversation_id") or "")
+            or str(getattr(self.agent_config, "conversation_id", "") or "")
+            or ""
+        )
+        conversation_turn = str(state.get("conversation_turn") or "").strip()
+        if not conversation_turn:
+            conversation_turn = str(
+                getattr(self.agent_config, "conversation_turn", "") or ""
+            ).strip()
+        checkpoint_thread_id = (
+            getattr(self.agent_config, "checkpoint_thread_id", "") or ""
+        ).strip()
+        if not conversation_id and checkpoint_thread_id.startswith("conv:"):
+            conversation_id = checkpoint_thread_id[len("conv:") :]
+        runtime_context = getattr(self.agent_config, "runtime_context", None) or {}
+        if isinstance(runtime_context, dict):
+            if not conversation_id:
+                conversation_id = str(runtime_context.get("conversation_id") or "")
+            if not conversation_turn:
+                conversation_turn = str(runtime_context.get("conversation_turn") or "")
+        if not conversation_turn:
+            message_id = str(
+                state.get("message_id") or runtime_context.get("message_id") or ""
+            )
+            if conversation_id and message_id:
+                conversation_turn = f"{conversation_id}:{message_id}"
+        return conversation_id, conversation_turn
+
+    def _bind_tool_session_context(self, tool: Any, state: AgentState) -> None:
+        """把平台会话上下文绑到工具实例（仅当工具尚未绑定时补齐）。
+
+        与 requester 同机制（LangChain BaseTool 的 pydantic 字段）：
+        仅对支持 session_id/conversation_turn 的工具字段赋值，且尊重构建期已绑定值，
+        不改写模型产生的 tool_call args。
+        """
+        if getattr(tool, "conversation_turn", "") not in ("", None):
+            return
+        try:
+            from pydantic import BaseModel as _PydanticBaseModel
+
+            if not isinstance(tool, _PydanticBaseModel):
+                return
+        except Exception:
+            return
+        session_id, conversation_turn = self._resolve_tool_session_context(state)
+        if not conversation_turn:
+            return
+        try:
+            if getattr(tool, "session_id", "") in ("", None):
+                tool.session_id = session_id
+            if getattr(tool, "conversation_turn", "") in ("", None):
+                tool.conversation_turn = conversation_turn
+        except Exception:
+            logger.debug(
+                "绑定 OS 工具会话上下文失败 tool=%s",
+                getattr(tool, "name", ""),
+                exc_info=True,
+            )
 
     @staticmethod
     def _normalize_tool_alias(tool_name: str | None) -> str:

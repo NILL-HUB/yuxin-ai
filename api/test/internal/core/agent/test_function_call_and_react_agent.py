@@ -13,6 +13,7 @@ from internal.core.agent.entities.agent_entity import DATASET_RETRIEVAL_TOOL_NAM
 from internal.core.agent.entities.tool_policy_entity import KNOWLEDGE_RETRIEVAL_TOOL_NAME, ToolPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
+from internal.core.tools.builtin_tools.providers.codex_os.os_file_task import OsFileTaskTool
 from internal.entity.conversation_entity import InvokeFrom
 from internal.exception import FailException
 
@@ -101,6 +102,17 @@ class _FakeQueueManager:
 
     def publish_failure(self, task_id, error, context=""):
         self.failures.append((task_id, error, context))
+
+
+class _FakeResponse:
+    def read(self):
+        return b'{"ok":true,"content":"","results":[],"errors":[]}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
 
 
 def _build_agent_config(**overrides):
@@ -980,6 +992,86 @@ def test_function_call_agent_tools_node_should_use_configured_tool_policy():
     assert isinstance(failure_error, RuntimeError)
     first_event = agent.agent_queue_manager.published[0][1]
     assert first_event.event == QueueEvent.DATASET_RETRIEVAL
+
+
+def test_function_call_agent_tools_node_should_inject_session_context_for_os_tools(monkeypatch):
+    """OS 文件工具缺省 conversation_turn 时，agent 执行节点在 invoke 前绑定会话上下文。
+
+    覆盖缺陷 2 的链路缺口：工具在会话边界外预构建（只绑 requester/空轮次），
+    而模型调用的 args 通常不带 conversation_turn——必须在执行节点补齐工具实例，
+    os_file_task/os_snapshot 的 _run 才把轮次 ID 写进 payload，worker 快照
+    manifest 才能按用户消息轮分组（rollback_turn 依赖）。
+    """
+    captured = {}
+
+    def _fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data)
+        return _FakeResponse()
+
+    import importlib as _importlib
+
+    module = _importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.codex_os.os_file_task"
+    )
+    monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
+    tool = OsFileTaskTool(requester="user-1")
+    config = _build_agent_config(
+        tools=[tool],
+        # os_file_task 移出高风险名单，直接执行到达 invoke
+        tool_policy=ToolPolicy(high_risk_tool_names=("send_email",)),
+    )
+    agent = _new_function_call_agent(_NodeLLM(features=[]), config)
+    task_id = uuid4()
+    ai_message = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call-1",
+                "name": "os_file_task",
+                "args": {"op": "read", "path": "C:/notes.txt"},
+            }
+        ],
+    )
+
+    agent._tools_node(
+        {
+            "task_id": task_id,
+            "messages": [ai_message],
+            "conversation_id": "conv-abc",
+            "message_id": "msg-1",
+        }
+    )
+
+    assert captured["body"]["session_id"] == "conv-abc"
+    assert captured["body"]["conversation_turn"] == "conv-abc:msg-1"
+    # 注入是工具实例绑定，不改写模型产生的 tool_call args（不污染持久化消息）
+    assert ai_message.tool_calls[0]["args"] == {"op": "read", "path": "C:/notes.txt"}
+
+
+def test_function_call_agent_resolve_tool_session_context_prefers_state():
+    """解析顺序：state 显式值优先，其次 checkpoint_thread_id / runtime_context。"""
+    agent = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(checkpoint_thread_id="conv:conv-abc"),
+    )
+    session_id, turn = agent._resolve_tool_session_context(
+        {
+            "conversation_id": "state-conv",
+            "conversation_turn": "state-conv:msg-9",
+            "message_id": "msg-9",
+        }
+    )
+    assert session_id == "state-conv"
+    assert turn == "state-conv:msg-9"
+
+    # checkpoint_thread_id 未启用 conv: 前缀时产生会话 ID，但无轮次不合成
+    agent2 = _new_function_call_agent(
+        _NodeLLM(features=[]),
+        _build_agent_config(checkpoint_thread_id=""),
+    )
+    session_id2, turn2 = agent2._resolve_tool_session_context({})
+    assert session_id2 == ""
+    assert turn2 == ""
 
 
 def test_function_call_agent_tools_node_should_refeed_available_tools_when_12306_alias_mismatches():

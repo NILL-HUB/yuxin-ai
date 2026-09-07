@@ -54,6 +54,10 @@ class OsSnapshotInput(BaseModel):
         "",
         description="宿主机工作目录；留空表示安全根目录（默认用户主目录）",
     )
+    session_id: str = Field(
+        "",
+        description="平台会话 ID（conversation_id），便于按会话过滤快照/回滚",
+    )
     requester: str = Field(
         "",
         description="调用方账号 ID，用于审计",
@@ -115,6 +119,8 @@ class OsSnapshotTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsSnapshotInput
     requester: str = ""
+    session_id: str = ""
+    conversation_turn: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         op = _normalize_text(kwargs.get("op") or "").lower()
@@ -122,7 +128,10 @@ class OsSnapshotTool(BaseTool):
             "op": op,
             "path": _normalize_text(kwargs.get("path")),
             "snapshot_id": _normalize_text(kwargs.get("snapshot_id")),
-            "conversation_turn": _normalize_text(kwargs.get("conversation_turn")),
+            "conversation_turn": _normalize_text(
+                kwargs.get("conversation_turn") or self.conversation_turn
+            ),
+            "session_id": _normalize_text(kwargs.get("session_id") or self.session_id),
             "limit": int(kwargs.get("limit") or 0),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
@@ -136,4 +145,8 @@ class OsSnapshotTool(BaseTool):
 
 def os_snapshot(**kwargs: Any) -> BaseTool:
     """工厂函数：返回本机文件快照回滚工具。"""
-    return OsSnapshotTool(requester=_normalize_text(kwargs.get("requester")))
+    return OsSnapshotTool(
+        requester=_normalize_text(kwargs.get("requester")),
+        session_id=_normalize_text(kwargs.get("session_id")),
+        conversation_turn=_normalize_text(kwargs.get("conversation_turn")),
+    )

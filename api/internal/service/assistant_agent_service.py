@@ -904,8 +904,17 @@ class AssistantAgentService(BaseService):
         self,
         account_id: UUID,
         invoke_from: str | None = None,
+        *,
+        session_id: str = "",
+        conversation_turn: str = "",
     ) -> list[BaseTool]:
-        """构建首页助手运行时工具，包括公共 Agent、创建应用、全局 MCP 绑定和用户知识库检索。"""
+        """构建首页助手运行时工具，包括公共 Agent、创建应用、全局 MCP 绑定和用户知识库检索。
+
+        session_id / conversation_turn：平台会话维度的上下文。会话边界每次请求都不同，
+        预构建工具只能绑定「随请求创建」的实例，故在此透传给 os_file_task/os_snapshot
+        等工具（与 requester 同一注入点）；conversation_turn 还会在 agent 执行节点按轮次
+        回填（_tools_node），确保写前快照 manifest 带轮次 ID。
+        """
         search_public_agents_tool = (
             self.public_agent_registry_service.convert_public_agent_search_to_tool()
             if self.public_agent_registry_service
@@ -947,7 +956,13 @@ class AssistantAgentService(BaseService):
                         )
                     )
                     if os_tool_factory is not None:
-                        tools.append(os_tool_factory(requester=str(account_id)))
+                        tools.append(
+                            os_tool_factory(
+                                requester=str(account_id),
+                                session_id=session_id,
+                                conversation_turn=conversation_turn,
+                            )
+                        )
             except Exception:
                 logger.warning("构建本机 OS 文件操作工具失败，不影响其他工具", exc_info=True)
 
@@ -1642,7 +1657,15 @@ class AssistantAgentService(BaseService):
         )
 
         # 6.构建首页助手运行时工具
-        prebound_tools = self._build_assistant_runtime_tools(account.id, invoke_from=invoke_from)
+        # 平台会话维度上下文随请求绑定：session_id=conversation_id，
+        # conversation_turn=该用户消息轮次边界（conversation_id:message_id），
+        # 供 os_file_task/os_snapshot 写前快照标记与 rollback_turn 按轮回滚。
+        prebound_tools = self._build_assistant_runtime_tools(
+            account.id,
+            invoke_from=invoke_from,
+            session_id=str(conversation.id),
+            conversation_turn=f"{conversation.id}:{message.id}",
+        )
 
         # 6.0 工具池治理挂载：读取 orchestrator 决策的 tool_subset，与固有工具合并
         tools = self._mount_runtime_tools(

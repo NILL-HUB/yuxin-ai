@@ -1,7 +1,15 @@
 name: os_file_task
 label: 宿主文件操作
-description: 在宿主机安全目录内读取文件或应用 V4A 补丁修改文件，写操作需用户确认。
-params: []
+description: 在宿主机安全目录内读取（支持分页）/搜索（ripgrep）/应用 V4A 补丁修改文件，写操作需用户确认。
+params:
+  - name: session_id
+    type: string
+    label: 平台会话ID
+    description: 平台会话 ID（conversation_id），随写前快照记录，便于按会话追溯/回滚
+  - name: conversation_turn
+    type: string
+    label: 用户消息轮次ID
+    description: 平台消息轮次边界 ID，写前快照据此分组；os_snapshot rollback_turn 用同一 ID 批量回滚该轮修改
 task_keywords:
   - 读取文件
   - 修改文件
@@ -13,3 +21,7 @@ task_keywords:
   - 代码修改
   - 宿主机
   - 文件操作
+  - 搜索文件
+  - search_files
+  - 分页读取
+  - ripgrep

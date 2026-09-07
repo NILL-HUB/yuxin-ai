@@ -131,3 +131,42 @@ def test_os_snapshot_passes_rollback_turn_payload(monkeypatch):
     assert captured["op"] == "rollback_turn"
     assert captured["conversation_turn"] == "turn-42"
     assert captured["requester"] == "account-1"
+
+
+def test_os_snapshot_falls_back_to_bound_conversation_turn(monkeypatch):
+    """工具实例绑定的 conversation_turn 作为缺省值：Agent 按轮回滚无需模型自填。"""
+    captured = {}
+
+    def fake_call_worker(payload):
+        captured.update(payload)
+        return {"ok": True, "restored": [], "errors": [], "count": 0}
+
+    monkeypatch.setattr(module, "_call_worker", fake_call_worker)
+
+    tool = OsSnapshotTool(
+        requester="account-1",
+        session_id="conv-9",
+        conversation_turn="conv-9:msg-1",
+    )
+    result = json.loads(tool._run(op="rollback_turn"))
+
+    assert result["ok"] is True
+    assert captured["conversation_turn"] == "conv-9:msg-1"
+    assert captured["session_id"] == "conv-9"
+    assert captured["requester"] == "account-1"
+
+
+def test_os_snapshot_factory_binds_session_context(monkeypatch):
+    """工厂透传：os_snapshot(session_id=..., conversation_turn=...) 绑定到工具实例。"""
+    from internal.core.tools.builtin_tools.providers.codex_os.os_snapshot import (
+        os_snapshot,
+    )
+
+    tool = os_snapshot(
+        requester="account-1",
+        session_id="conv-9",
+        conversation_turn="conv-9:msg-1",
+    )
+    assert tool.requester == "account-1"
+    assert tool.session_id == "conv-9"
+    assert tool.conversation_turn == "conv-9:msg-1"

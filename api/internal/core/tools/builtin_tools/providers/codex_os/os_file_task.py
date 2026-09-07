@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 class OsFileTaskInput(BaseModel):
     """宿主机文件操作输入。"""
 
-    op: Literal["read", "patch"] = Field(
+    op: Literal["read", "search", "patch"] = Field(
         ...,
-        description="read=读取文件内容；patch=应用 V4A 补丁修改文件",
+        description="read=读取文件内容（支持分页）；search=在目录内用 ripgrep 搜索文件内容；patch=应用 V4A 补丁修改文件",
     )
     path: str = Field(
         "",
-        description="目标文件路径；op=read 时必填，op=patch 时可省略（路径写在补丁内）",
+        description="目标文件/目录路径；op=read 时必填，op=patch 时可省略（路径写在补丁内），op=search 时可选（限定搜索范围）",
     )
     patch: str = Field(
         "",
@@ -50,6 +50,28 @@ class OsFileTaskInput(BaseModel):
     requester: str = Field(
         "",
         description="调用方账号 ID，用于审计",
+    )
+    session_id: str = Field(
+        "",
+        description="平台会话 ID（conversation_id），随写前快照写入 manifest 便于按会话追溯/回滚",
+    )
+    conversation_turn: str = Field(
+        "",
+        description="平台消息轮次 ID（用户消息边界），写前快照据此分组；os_snapshot rollback_turn 用同一 ID 批量回滚该轮全部修改",
+    )
+    pattern: str = Field(
+        "",
+        description="op=search 时的搜索关键词（正则），如 'TODO\\|FIXME'",
+    )
+    offset: int = Field(
+        0,
+        ge=0,
+        description="op=read 时的起始行号（0 基线），配合 limit 分页读取大文件",
+    )
+    limit: int = Field(
+        0,
+        ge=0,
+        description="op=read 时读取的最大行数；0 表示走默认字符上限，配合 offset 使用",
     )
 
 
@@ -95,8 +117,9 @@ class OsFileTaskTool(BaseTool):
 
     name: str = "os_file_task"
     description: str = (
-        "在宿主机操作系统上读取文件或应用 V4A 补丁修改文件。"
-        "read 模式直接返回文件内容；patch 模式必须先 preview 校验并获得 "
+        "在宿主机操作系统上读取/搜索文件，或应用 V4A 补丁修改文件。"
+        "read 模式直接返回文件内容（可带 offset/limit 分页）；search 模式在目录内"
+        "用 ripgrep 搜索文件内容并返回命中的行；patch 模式必须先 preview 校验并获得 "
         "approval_token，向用户展示将修改哪些文件后，用户确认才能用 "
         "mode=apply 执行。补丁格式：*** Begin Patch / *** Add File: 路径 / "
         "+内容行 / *** Update File: 路径 / @@ 上下文 / -删除行 / +新增行 / "
@@ -105,6 +128,8 @@ class OsFileTaskTool(BaseTool):
     )
     args_schema: type[BaseModel] = OsFileTaskInput
     requester: str = ""
+    session_id: str = ""
+    conversation_turn: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         payload = {
@@ -115,6 +140,13 @@ class OsFileTaskTool(BaseTool):
             "approval_token": _normalize_text(kwargs.get("approval_token")),
             "working_dir": _normalize_text(kwargs.get("working_dir")),
             "requester": _normalize_text(kwargs.get("requester") or self.requester),
+            "session_id": _normalize_text(kwargs.get("session_id") or self.session_id),
+            "conversation_turn": _normalize_text(
+                kwargs.get("conversation_turn") or self.conversation_turn
+            ),
+            "pattern": _normalize_text(kwargs.get("pattern")),
+            "offset": int(kwargs.get("offset") or 0),
+            "limit": int(kwargs.get("limit") or 0),
         }
         result = _call_worker(payload)
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -125,4 +157,8 @@ class OsFileTaskTool(BaseTool):
 
 def os_file_task(**kwargs: Any) -> BaseTool:
     """工厂函数：返回宿主机文件操作 LangChain 工具。"""
-    return OsFileTaskTool(requester=_normalize_text(kwargs.get("requester")))
+    return OsFileTaskTool(
+        requester=_normalize_text(kwargs.get("requester")),
+        session_id=_normalize_text(kwargs.get("session_id")),
+        conversation_turn=_normalize_text(kwargs.get("conversation_turn")),
+    )

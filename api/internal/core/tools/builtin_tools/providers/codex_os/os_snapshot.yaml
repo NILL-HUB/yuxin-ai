@@ -1,7 +1,15 @@
 name: os_snapshot
 label: 本机文件回滚
 description: 回滚宿主机文件的写前快照：rollback_file 单文件恢复/rollback_turn 按用户消息轮次批量恢复/list_snapshots 查看历史快照；改错文件时从这里回滚。
-params: []
+params:
+  - name: session_id
+    type: string
+    label: 平台会话ID
+    description: 平台会话 ID（conversation_id），回滚按会话维度过滤/追溯
+  - name: conversation_turn
+    type: string
+    label: 用户消息轮次ID
+    description: rollback_turn 时指定该轮用户消息期间修改的全部文件（工具侧默认注入当前轮次）
 task_keywords:
   - 回滚
   - 撤销修改
