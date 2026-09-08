@@ -42,19 +42,21 @@
 | 工具 | 状态 | 落地 | 说明 |
 | --- | --- | --- | --- |
 | 宿主机系统自动化 | ✅ | `run_os_task` + `os_automation_worker.py` | preview → approval_token → apply |
-| 宿主文件读/补丁 | ✅ | `os_file_task` + worker `/file` | 安全根目录、V4A 补丁、一次性 token |
-| 网页提取 | ✅ | `web_tools/web_extract` | SSRF 防护 + 大小限制 |
+| 宿主文件读/补丁/搜索 | ✅ | `os_file_task` + worker `/file` | 安全根目录、V4A 补丁、一次性 token；`read` 支持 offset/limit 分页，`search` 走 ripgrep（对齐 Hermes `read_file/search_files`） |
+| 网页提取 | ✅ | `web_tools/web_extract` | 对齐 Hermes：最多 5 个 URL 批量提取、内联 base64 图片转 `[IMAGE: alt]` 占位、超长页面 head+tail 截断并附 footer、SSRF 防护 + 大小限制 |
 | 文本转语音/语音转文本 | ✅ | `audio_tools` | data URI 返回、URL 转写 |
-| 网页搜索 | ✅ | `web_tools/web_search` | 统一入口：Tavily → SerpAPI → DuckDuckGo 自动降级，已挂载首页助手 |
+| 网页搜索 | ✅ | `web_tools/web_search` | 对齐 Hermes 多 provider 插件式：Tavily → Exa → SerpAPI → Brave → DuckDuckGo 自动降级，零结果结构化探测，已挂载首页助手 |
 | 视觉分析 | ✅ | `vision_tools/vision_analyze` | 复用平台视觉模型，支持 URL/data URI，带 SSRF 防护，已挂载首页助手 |
+| 视频分析 | ✅ 新增 | `vision_tools/video_analyze` | 对齐 Hermes `video_analyze`：下载视频→抽 3 个关键帧（ffmpeg/imageio-ffmpeg）→逐帧视觉分析汇总；无抽帧后端时明确报错 |
 | 代码执行 | ✅ | `code_execution_tool/execute_code` | 复用 Baidu CFC/E2B 沙箱；支持 tool_calls 预取已挂载平台工具并以 `TOOL_RESULTS_JSON` 注入沙箱；默认关闭且按高风险工具确认 |
-| 任务清单 | ✅ | `todo_tool/todo` | create/list/update/complete/delete，Redis 优先、内存兜底，已挂载首页助手 |
+| 任务清单 | ✅ | `todo_tool/todo` | 保留 create/list/update/complete/delete，新增 Hermes `todos` 批量数组 + `merge` 语义（替换/按 id 更新），Redis 优先、内存兜底，已挂载首页助手 |
+| X 消息搜索 | ✅ 新增 | `x_search/x_search` | 对齐 Hermes `x_search`：xAI Responses API 内置 X Search 工具，支持 handles 限定/排除、日期范围校验、引用（citations）与 degraded 标记；需 `XAI_API_KEY` |
 
 ## 四、平台能力
 
 | 能力 | 状态 | 落地 | 说明 |
 | --- | --- | --- | --- |
-| 确认后续跑/断点续传 | ✅ | `web_app_service.py` 生命周期解耦 + visitor_id + 轮询 | 前端断线不丢任务结果 |
+| 确认后续跑/断点续传 | ✅ | `web_app_service.py` 生命周期解耦 + 账号会话 + 轮询（2026-09-08 起：WebApp 改强制登录，visitor_id 通道移除，改为登录态账号会话） | 前端断线不丢任务结果 |
 | HMAC 签名出站 webhook | ✅ | `outbound_webhook.py` + 确认/取消事件 | 事件信封、重试、幂等 ID |
 | 管理端审批洞察 | ✅ | `/admin/approval-insights` | dry-run |
 
@@ -122,6 +124,30 @@
 | 子代理委派 | ✅ | Redis 化 registry、超时/stall 元数据、`/subtasks` 查询/取消/redirect、execute_code RPC 桥、SSE 实时事件 |
 
 不适配项均有明确产品理由（Web 形态 / Hermes 私有协议），不属于代码缺口。
+
+## 九、工具/Skills/MCP 复刻（2026-09-08，v0.20.5）
+
+基于本地 Hermes v0.20.5 克隆（`%TEMP%\hermes-agent`）实施第三轮对齐，策略：**同名即覆盖、按能力对齐保留 worker 形态、Skills 全量对齐、分阶段推进**。
+
+### 9.1 工具
+- **覆盖升级（同名）**：`web_tools`（search 多 provider 降级 + extract 批量/截断/base64 占位）、`todo_tool`（todos+merge）、`vision_analyze`、`execute_code` 均按 Hermes 完整语义重写。
+- **新增**：`video_analyze`（视频抽帧逐帧分析）、`x_search`（xAI X 搜索）。
+- **运行时对齐（保留 worker）**：`os_file_task` 补 `search`（ripgrep）与 `read` 分页；`browser_automation` worker 补 `press`/`get_images`/`console`。
+- **跳过并记录**：terminal/computer_use/homeassistant/desktop/react_to_message/focus_pane/open_preview/kanban/cronjob/delegate/clarify/memory/skills_*/discord/yuanbao/feishu_*/project/process 等——平台已有对应机制或不适用多租户 Web 形态。
+- 测试：本次覆盖/新增工具相关 41 个用例全部通过。
+
+### 9.2 Skills
+- 新增一次性转换脚本 `scripts/port_hermes_skills.py`：Hermes 14 大类 **71 个 SKILL.md** 全部转为平台 skill 包（`executor_type=prompt`），catalog 同名（如 `pdf`）用 Hermes 版覆盖。
+- 转换后平台 skill catalog 共 **124 个包**；映射表见 `docs/research/hermes-skills-port-mapping.md`。
+- 补充平台适配提示（apple/smart-home/email 类保留正文并标注不适配指令），不硬删。
+
+### 9.3 MCP
+- Hermes 本体是 MCP client、不携带内置 server 集；本次按社区活跃度向 catalog 补 8 个官方/主流 server：GitHub、Notion、Memory、Sequential Thinking、Brave Search、Serper（stdio/npx 型，需凭证或 npx 环境）。
+- 转换后 MCP catalog 共 **27 项**（原 19 + 8），`McpProviderManager` 全部加载成功。
+
+### 9.4 遗留
+- 新工具/新 MCP/skills 入库走既有启动同步（`BuiltinToolSyncService.sync_yaml_to_db` / `SkillService.ensure_local_catalog_synced`），需重启 API 容器生效。
+- xAI/Brave/Serper 等凭证型工具与 stdio MCP 需配置对应凭证后按 `check_fn` 放行。
 
 ## 来源
 

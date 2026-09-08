@@ -366,7 +366,7 @@
 | 可视化工作流 | ✅ | `api/internal/core/workflow/graph_engine.py`、`workflow_service.py`、Vue Flow |
 | 商店（App/Tool/MCP/Skill/Workflow） | ✅ | `ui/src/views/store/*`、`ui/src/views/admin/Store*` |
 | OpenAPI 交付 + API Key | ✅ | `api/internal/service/openapi_service.py`、`api_key_service.py`、`ui/src/views/openapi/*` |
-| WebApp 免登录入口（token + visitor_id） | ✅ | `api/internal/service/web_app_service.py`、`ui/src/utils/visitor.ts` |
+| WebApp 入口（token 标识保留，但已改强制登录） | ✗ 免登已下线（2026-09-08：visitor_id 移除、后端强制 `_resolve_account`，visitor.ts 已删） | `api/internal/service/web_app_service.py` |
 | 微信公众号接入 | ✅ | `api/internal/service/wechat_service.py`、`api/internal/model/platform.py` |
 | 桌面端 / TUI / CLI | ✗ | 平台是 Web，没有桌面/TUI/CLI |
 
@@ -502,7 +502,7 @@
 - App 能力绑定（`ui/src/views/space/apps/components/abilities/*`）：Tools、MCP、Skills、
   AgentBindings、Workflow、Datasets、Opening、SpeechToText、TextToSpeech、LongTermMemory、
   SuggestedAfterAnswer、ReviewConfig。
-- 管理端 App 详情：调试、分析、版本对比、提示词对比、发布/下架、WebApp token、微信配置、商店上下架。
+- 管理端 App 详情：调试、分析、版本对比、提示词对比、发布/下架、WebApp token（入口需登录，2026-09-08 起后端强制 `_resolve_account`）、微信配置、商店上下架。
 
 ### 2.11 计费与会员
 
@@ -545,7 +545,7 @@
 - `tool_confirmation.py` 模型 + `tool_confirmation_service.py`：创建/确认/取消/redirect。
 - `/tool-confirmations` CRUD、`/confirm`、`/cancel`、`/redirect`（`knowledge_mcp_routes.py`）。
 - 前端：`ToolConfirmationCard.vue` 人话化授权摘要、`IndexView/HomeView` 确认后轮询续跑。
-- 匿名访客：`visitor.ts` + WebApp `visitor_id` 绑定，修复“确认失败/会话中断”。
+- 匿名访客：`visitor.ts` + WebApp `visitor_id` 绑定，修复“确认失败/会话中断”。（已于 2026-09-08 下线：WebApp 改强制登录，visitor 通道移除、visitor.ts 已删。）
 - HMAC 出站 webhook：`outbound_webhook.py`，确认/取消事件推送，重试 + 幂等 ID。
 - 审批洞察：`approval_mining.py` + `approval_insights_service.py` + `/admin/approval-insights`。
 

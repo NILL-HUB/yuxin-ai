@@ -344,7 +344,7 @@ Hermes v0.20 已开源（MIT，正式版，活跃维护），但它与钰心AI �
 | Agent 侧文件工具 | `tools/file_tools.py` 思想 | `api/internal/core/tools/builtin_tools/providers/codex_os/os_file_task.py` | `os_file_task`，读取/补丁，接入高风险确认 |
 | 首页助手挂载 | — | `api/internal/service/assistant_agent_service.py` | `run_os_task` + `os_file_task` 自动挂载 |
 | 授权摘要人话化 | — | `api/internal/core/agent/agents/function_call_agent.py` | `os_file_task` 确认文案区分读取/补丁，授权后强制 preview |
-| 匿名访客确认链路 | Hermes 跨表面确认思想 | `api/app/http/knowledge_mcp_routes.py` + `ui/src/utils/visitor.ts` + `ui/src/services/tool-confirmation.ts` + `ui/src/services/web-app.ts` | WebApp 访客用稳定 `visitor_id` 绑定对话与确认，修复“确认失败/会话中断”断点 |
+| 匿名访客确认链路 | Hermes 跨表面确认思想 | `api/app/http/knowledge_mcp_routes.py` + `ui/src/utils/visitor.ts` + `ui/src/services/tool-confirmation.ts` + `ui/src/services/web-app.ts` | 已下线（2026-09-08）：WebApp 改强制登录，visitor 通道移除、visitor.ts 已删；WebApp 访客改走登录态账号会话，确认链路基于登录用户绑定 |
 | WebApp 任务生命周期解耦 | 断点续传思想 | `api/internal/service/web_app_service.py` | Agent 后台 worker 完整执行并落库，SSE 只转发；前端断线不丢结果 |
 | 确认后结果轮询 | — | `ui/src/views/web-apps/IndexView.vue` | 与 HomeView 对齐：确认后轮询执行摘要，断线后仍能拿到后台结果 |
 | HMAC 签名出站 webhook | `agent/outbound_webhooks.py` + `hermes_cli/webhook.py` | `api/internal/core/agent/adapters/hermes/outbound_webhook.py` + `api/internal/service/tool_confirmation_service.py` | 事件信封 + HMAC 签名 + 重试；工具确认/取消时经 `OUTBOUND_WEBHOOK_URL/SECRET` 推送 |
@@ -355,7 +355,7 @@ Hermes v0.20 已开源（MIT，正式版，活跃维护），但它与钰心AI �
 
 ### 11.2 待落地（按依赖顺序）
 
-1. **确认后续跑闭环（P0，基本完成）**：匿名访客身份、确认接口、WebApp 任务生命周期解耦（后台 worker 继续执行并落库）、确认后轮询执行摘要均已落地；剩余是前端主动“恢复同一轮 SSE”的体验增强。
+1. **确认后续跑闭环（P0，基本完成）**：确认接口、WebApp 任务生命周期解耦（后台 worker 继续执行并落库）、确认后轮询执行摘要均已落地；匿名访客身份机制已下线（2026-09-08：WebApp 改强制登录，visitor 通道移除），剩余“恢复同一轮 SSE”的体验增强改为在登录态账号会话下完成。
 2. **工具自恢复接入**：把 V4A 诊断输出接进 Agent 提示，`os_file_task` 失败时自动尝试已应用/空白修复。
 3. **审批策略服务化（已完成）**：`approval_mining` dry-run + `SmartApprovalPolicyService` 运行时自动放行
    （`tool_governance_policy.require_confirmation=false`），危险工具永不自动放行。
