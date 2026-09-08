@@ -27,6 +27,12 @@ if os.path.isdir(os.path.join(_API_ROOT, "scripts")) and _API_ROOT not in sys.pa
     sys.path.insert(0, _API_ROOT)
 
 
+# 接受并透传 --host/--port 的服务（其 worker main 的 argparse 声明了这两个参数）。
+# wake_word_worker 的 argparse 只接受 --keyword/--endpoint/--token/--engine/--check，
+# 向其注入 --host/--port 会以误导性 usage 崩溃，故不在白名单内。
+_SERVICE_SUPPORTS_HOST_PORT = frozenset(("os", "browser", "computer"))
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="yuxin-worker", description="YuxinAI desktop worker")
     parser.add_argument(
@@ -34,8 +40,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("os", "browser", "computer", "wake"),
         help="要启动的 worker 服务",
     )
-    parser.add_argument("--host", default="", help="监听地址（默认取各 worker 环境变量/常量）")
-    parser.add_argument("--port", type=int, default=0, help="监听端口（默认取各 worker 环境变量/常量）")
+    # 默认 None（而非 ""/0），仅当调用方显式提供 --host/--port 时才注入到 worker argv，
+    # 避免把"未指定"误判为显式值、造成重复/多余参数注入。
+    parser.add_argument("--host", default=None, help="监听地址（默认取各 worker 环境变量/常量）")
+    parser.add_argument("--port", type=int, default=None, help="监听端口（默认取各 worker 环境变量/常量）")
     return parser.parse_args(argv)
 
 
@@ -52,21 +60,36 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     module_name, entry_name = _module_and_entry(args.service)
     # 各 worker 的 main() 自行 argparse --host/--port（取各自环境变量默认值）。
-    # 这里注入 argv，让 worker 的 argparse 只看到自己的参数。
+    # 这里按服务白名单注入 argv，让 worker 的 argparse 只看到自己支持的参数：
+    # 仅显式传入的 --host/--port 会注入，未指定则保持 worker 自身默认值，
+    # wake 等不接收 host/port 的服务绝不注入。
+    worker_argv: list[str] = []
+    if args.service in _SERVICE_SUPPORTS_HOST_PORT:
+        if args.host:
+            worker_argv += ["--host", args.host]
+        if args.port:
+            worker_argv += ["--port", str(args.port)]
+    # 替换 sys.argv 后调用 worker main，使 worker 内 argparse 解析到正确参数
     module = importlib.import_module(module_name)
     entry = getattr(module, entry_name)
-
-    worker_argv = []
-    if args.host:
-        worker_argv += ["--host", args.host]
-    if args.port:
-        worker_argv += ["--port", str(args.port)]
-    # 替换 sys.argv 后调用 worker main，使 worker 内 argparse 解析到正确参数
     old_argv = sys.argv
     sys.argv = [sys.argv[0], *worker_argv]
     try:
         result = entry()
         return int(result or 0)
+    except SystemExit as exc:
+        # worker main 内部 raise SystemExit（如 argparse 拒绝、配置缺失）时，
+        # 打印含 service 名的清晰错误，避免 Electron 只看到裸 usage；
+        # 0 为正常退出，直接透传不打印。
+        code = exc.code if exc.code is not None else 0
+        if code:
+            print(
+                f"yuxin-worker {args.service} 启动失败: {exc}",
+                file=sys.stderr,
+            )
+        raise
+    except KeyboardInterrupt:
+        return 130
     finally:
         sys.argv = old_argv
 
