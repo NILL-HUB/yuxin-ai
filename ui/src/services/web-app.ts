@@ -5,7 +5,6 @@ import type {
   WebAppChatRequest,
 } from '@/models/web-app'
 import type { BaseResponse } from '@/models/base'
-import { getOrCreateVisitorId } from '@/utils/visitor'
 
 // 根据标识获取指定 WebApp 基础信息
 export const getWebApp = (token: string) => {
@@ -18,11 +17,7 @@ export const webAppChat = (
   req: WebAppChatRequest,
   onData: (event_response: Record<string, unknown>) => void,
 ) => {
-  const visitorId = getOrCreateVisitorId()
-  const url = visitorId
-    ? `/web-apps/${token}/chat?visitor_id=${encodeURIComponent(visitorId)}`
-    : `/web-apps/${token}/chat`
-  return ssePost(url, { body: req }, onData)
+  return ssePost(`/web-apps/${token}/chat`, { body: req }, onData)
 }
 
 // 停止与指定 WebApp 进行对话

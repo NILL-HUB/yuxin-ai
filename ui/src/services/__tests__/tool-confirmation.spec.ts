@@ -15,23 +15,19 @@ describe('tool confirmation service', () => {
     vi.clearAllMocks()
   })
 
-  it('appends stable visitor id to confirm URL', async () => {
+  it('posts confirm URL without visitor param', async () => {
     vi.mocked(request.post).mockResolvedValue({ data: {} } as never)
 
-    await postToolConfirmationConfirm('conf-1', 'visitor-123')
+    await postToolConfirmationConfirm('conf-1')
 
-    expect(request.post).toHaveBeenCalledWith(
-      '/tool-confirmations/conf-1/confirm?visitor_id=visitor-123',
-    )
+    expect(request.post).toHaveBeenCalledWith('/tool-confirmations/conf-1/confirm')
   })
 
-  it('appends stable visitor id to cancel URL', async () => {
+  it('posts cancel URL without visitor param', async () => {
     vi.mocked(request.post).mockResolvedValue({ data: {} } as never)
 
-    await postToolConfirmationCancel('conf-2', 'visitor-456')
+    await postToolConfirmationCancel('conf-2')
 
-    expect(request.post).toHaveBeenCalledWith(
-      '/tool-confirmations/conf-2/cancel?visitor_id=visitor-456',
-    )
+    expect(request.post).toHaveBeenCalledWith('/tool-confirmations/conf-2/cancel')
   })
 })

@@ -1,7 +1,6 @@
 import { type BaseResponse } from '@/models/base'
 import { type ToolConfirmation } from '@/models/tool-confirmation'
 import { get, post } from '@/utils/request'
-import { getOrCreateVisitorId } from '@/utils/visitor'
 
 export const getToolConfirmations = (status?: string) => {
   const params = status ? { status } : undefined
@@ -12,26 +11,18 @@ export const getToolConfirmation = (id: string) => {
   return get<BaseResponse<ToolConfirmation>>(`/tool-confirmations/${id}`)
 }
 
-const withVisitorParam = (url: string, visitorId?: string) => {
-  const id = visitorId ?? getOrCreateVisitorId()
-  if (!id) return url
-  const separator = url.includes('?') ? '&' : '?'
-  return `${url}${separator}visitor_id=${encodeURIComponent(id)}`
+export const postToolConfirmationConfirm = (id: string) => {
+  return post<BaseResponse<ToolConfirmation>>(`/tool-confirmations/${id}/confirm`)
 }
 
-export const postToolConfirmationConfirm = (id: string, visitorId?: string) => {
-  return post<BaseResponse<ToolConfirmation>>(withVisitorParam(`/tool-confirmations/${id}/confirm`, visitorId))
+export const postToolConfirmationCancel = (id: string) => {
+  return post<BaseResponse<ToolConfirmation>>(`/tool-confirmations/${id}/cancel`)
 }
 
-export const postToolConfirmationCancel = (id: string, visitorId?: string) => {
-  return post<BaseResponse<ToolConfirmation>>(withVisitorParam(`/tool-confirmations/${id}/cancel`, visitorId))
-}
-
-export const postToolConfirmationRedirect = (id: string, message: string, visitorId?: string) => {
-  return post<BaseResponse<{ redirected: boolean }>>(
-    withVisitorParam(`/tool-confirmations/${id}/redirect`, visitorId),
-    { body: { message } },
-  )
+export const postToolConfirmationRedirect = (id: string, message: string) => {
+  return post<BaseResponse<{ redirected: boolean }>>(`/tool-confirmations/${id}/redirect`, {
+    body: { message },
+  })
 }
 
 export const pollPendingConfirmations = (
