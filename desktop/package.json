@@ -23,8 +23,13 @@
       "preload.js",
       "server-config.js",
       "credential-store.js",
-      "bridge.js",
-      "../ui/dist/**/*"
+      "bridge.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../ui/dist",
+        "to": "ui-dist"
+      }
     ],
     "win": {
       "target": "nsis"

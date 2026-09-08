@@ -194,8 +194,17 @@ function createWindow() {
   if (devUrl) {
     mainWindow.loadURL(devUrl)
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'ui', 'dist', 'index.html'))
+    mainWindow.loadFile(resolveUiIndex())
   }
+}
+
+// 打包模式 UI 经 extraResources 落到 resources/ui-dist；开发模式回退源码 ui/dist。
+function resolveUiIndex() {
+  const packaged = path.join(process.resourcesPath || '', 'ui-dist', 'index.html')
+  if (fs.existsSync(packaged)) {
+    return packaged
+  }
+  return path.join(__dirname, '..', 'ui', 'dist', 'index.html')
 }
 
 app.whenReady().then(() => {
