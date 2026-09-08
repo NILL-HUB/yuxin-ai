@@ -33,9 +33,11 @@ Electron 主进程（desktop/main.js，唯一入口）
 ├─ 凭证 credential-store.js
 │     safeStorage（Windows DPAPI）加密存取 access_token（userData/credential.bin）
 │     与 Web UI localStorage 双向同步
-└─ BrowserWindow（loadFile ui-dist/index.html；dev 模式连 Vite）
-      renderer = 完整 Web UI（ui/dist，extraResources 携带）
+└─ BrowserWindow（loadFile resources/ui-dist/index.html；dev 模式连 Vite）
+      renderer = 完整 Web UI（extraResources 携带的桌面版产物 ui-dist）
       API base = window.__DESKTOP_CONFIG__.apiBase（非 file:// origin）
+      CORS：file:// 页面（Origin: null）请求远程 API 由主进程
+            session.webRequest.onHeadersReceived 对配置的 apiOrigin 放宽 CORS 头
 ```
 
 ## 关键实现
@@ -64,6 +66,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 ### 4. UI 侧（Vue 复用）
 
 - `window.__DESKTOP_CONFIG__` 仅在 preload 存在时注入，Web 部署完全无感。
+- 桌面版产物用相对路径（`base: './'` + `dist-desktop/`，`vite build --mode desktop`）——`loadFile` 的 `file://` 协议下 `/assets/*` 绝对路径会解析到磁盘根而白屏；Web 构建（`vite build`，`dist/`）保持绝对路径不变。
 - `DesktopDevicePanel.vue`：worker 状态/版本/pid、回收站可恢复列表+恢复、唤醒词开关、开机自启开关、检查更新按钮；`desktopApi` 桥经 contextBridge 暴露。
 
 ## 环境变量与配置
@@ -78,17 +81,17 @@ Electron 主进程（desktop/main.js，唯一入口）
 
 ## 构建与分发
 
-- UI 先构建：`cd ui && npm run build`（产物 `ui/dist`）。
+- UI 桌面版构建：`cd ui && npm run build:desktop`（`vite build --mode desktop`，`base:'./'`，产物 `ui/dist-desktop/`）；Web 部署仍用 `npm run build`（绝对路径 `dist/`），两者互不覆盖。
 - Worker exe（已装 PyInstaller 时）：`cd api/scripts/pyinstaller && pyinstaller --clean --noconfirm worker.spec`。
-- NSIS 安装包：`cd desktop && npm run dist`（electron-builder；`extraResources` 携带 `ui-dist` 与 `yuxin-worker.exe`；产物在 `desktop/dist-nsis/`）。
+- NSIS 安装包：`cd desktop && npm run dist`（自动先跑 `build:ui`；electron-builder 输出固定 `desktop/dist-nsis/`；`extraResources` 携带 `ui-dist` 与 `yuxin-worker.exe`）。
 - 打包环境变量（NSIS 资源下载失败时）：`ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`。
 - 签名：`signAndEditExecutable: false`，正式发布需代码签名证书；publish.url 为占位。
 
 ## 验证
 
-- 桌面单元测试：`cd desktop && node --test test/`（server-config 缓存回退、credential-store 加解密）。
+- 桌面单元测试：`cd desktop && node --test test/*.test.js`（server-config 缓存回退、credential-store 加解密、bridge）。
 - UI 测试：`cd ui && npx vitest run`（含 desktop-credential-sync、DesktopDevicePanel、config desktop override）。
-- 冒烟：开发模式 `cd desktop && npm start`（需 ui/dist）；NSIS 安装后启动 → 托盘 → 登录/登出/重启保持登录态。
+- 冒烟：开发模式 `cd desktop && npm start`；桌面版产物（相对路径）需经 Electron 加载验证——`file://` 下资源/API 正常（CORS 头经主进程注入）；NSIS 安装后启动 → 托盘 → 登录/登出/重启保持登录态。
 
 ## 首版范围与后续
 
