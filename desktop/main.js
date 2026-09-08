@@ -112,11 +112,15 @@ app.whenReady().then(() => {
 
   bridgeServer = createBridge({
     token: tokens.bridge,
+    filePort: process.env.OS_AUTOMATION_PORT || '8765',
+    fileToken: tokens.os,
     recyclePort: process.env.OS_AUTOMATION_PORT || '8765',
-    browserPort: process.env.BROWSER_AUTOMATION_PORT || '8766',
-    computerPort: process.env.COMPUTER_CONTROL_PORT || '8767',
     recycleToken: tokens.os,
+    snapshotPort: process.env.OS_AUTOMATION_PORT || '8765',
+    snapshotToken: tokens.os,
+    browserPort: process.env.BROWSER_AUTOMATION_PORT || '8766',
     browserToken: tokens.browser,
+    computerPort: process.env.COMPUTER_CONTROL_PORT || '8767',
     computerToken: tokens.computer,
   })
   bridgeServer.listen(Number(process.env.DESKTOP_BRIDGE_PORT || 9876), '127.0.0.1', () => {

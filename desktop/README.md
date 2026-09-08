@@ -48,9 +48,11 @@ playwright install chromium
 桌面壳还启动一个统一本地能力桥（`bridge.js`，默认 `127.0.0.1:9876`）：
 
 ```text
-POST /recycle  -> OS worker 8765/recycle
-POST /browser  -> Browser worker 8766/browser
-POST /control  -> Computer worker 8767/control
+POST /file      -> OS worker 8765/file
+POST /recycle   -> OS worker 8765/recycle
+POST /snapshot  -> OS worker 8765/snapshot
+POST /browser   -> Browser worker 8766/browser
+POST /control   -> Computer worker 8767/control
 ```
 
 桥使用 `DESKTOP_BRIDGE_TOKEN` 鉴权，平台 API 只需配置一个 `DESKTOP_BRIDGE_URL`

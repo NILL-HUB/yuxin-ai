@@ -3,10 +3,20 @@ const http = require('http')
 function createBridge(options = {}) {
   const bridgeToken = options.token || process.env.DESKTOP_BRIDGE_TOKEN || ''
   const targets = options.targets || {
+    '/file': {
+      port: Number(options.filePort || process.env.OS_AUTOMATION_PORT || 8765),
+      token: options.fileToken || process.env.OS_AUTOMATION_TOKEN || '',
+      path: '/file',
+    },
     '/recycle': {
       port: Number(options.recyclePort || process.env.OS_AUTOMATION_PORT || 8765),
       token: options.recycleToken || process.env.OS_AUTOMATION_TOKEN || '',
       path: '/recycle',
+    },
+    '/snapshot': {
+      port: Number(options.snapshotPort || process.env.OS_AUTOMATION_PORT || 8765),
+      token: options.snapshotToken || process.env.OS_AUTOMATION_TOKEN || '',
+      path: '/snapshot',
     },
     '/browser': {
       port: Number(options.browserPort || process.env.BROWSER_AUTOMATION_PORT || 8766),

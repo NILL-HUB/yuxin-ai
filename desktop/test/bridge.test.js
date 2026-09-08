@@ -1,5 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert')
+const http = require('http')
 const { createBridge } = require('../bridge')
 
 function listen(server) {
@@ -55,6 +56,73 @@ test('bridge returns 502 when worker unavailable', async () => {
     assert.equal(result.status, 502)
     assert.match(result.body.error, /不可用/)
   } finally {
+    server.close()
+  }
+})
+
+async function stubWorker(body, handler) {
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf-8')
+      handler({
+        path: req.url,
+        authorization: req.headers.authorization || '',
+        body: raw ? JSON.parse(raw) : {},
+      })
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, echo: { path: req.url, body: raw } }))
+    })
+  })
+  const port = await listen(server)
+  return { server, port }
+}
+
+test('bridge forwards /file to os worker /file with worker token', async () => {
+  let seen = null
+  const { server, port } = await stubWorker('{}', (call) => {
+    seen = call
+  })
+  const bridge = createBridge({
+    token: 'secret',
+    filePort: port,
+    fileToken: 'os-token',
+  })
+  const bridgePort = await listen(bridge)
+  try {
+    const result = await request(bridgePort, '/file', 'secret')
+    assert.equal(result.status, 200)
+    assert.ok(seen, '请求应被转发到 worker')
+    assert.equal(seen.path, '/file')
+    assert.equal(seen.authorization, 'Bearer os-token')
+    assert.deepEqual(seen.body, {})
+  } finally {
+    bridge.close()
+    server.close()
+  }
+})
+
+test('bridge forwards /snapshot to os worker /snapshot with worker token', async () => {
+  let seen = null
+  const { server, port } = await stubWorker('{}', (call) => {
+    seen = call
+  })
+  const bridge = createBridge({
+    token: 'secret',
+    snapshotPort: port,
+    snapshotToken: 'os-token',
+  })
+  const bridgePort = await listen(bridge)
+  try {
+    const result = await request(bridgePort, '/snapshot', 'secret')
+    assert.equal(result.status, 200)
+    assert.ok(seen, '请求应被转发到 worker')
+    assert.equal(seen.path, '/snapshot')
+    assert.equal(seen.authorization, 'Bearer os-token')
+    assert.deepEqual(seen.body, {})
+  } finally {
+    bridge.close()
     server.close()
   }
 })

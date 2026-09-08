@@ -3,7 +3,8 @@
 通过 OS automation worker 在宿主机安全目录内执行文件读取与 V4A 补丁。
 写操作无需逐次人工确认：worker 每次真实写文件前自动捕获写前快照（删除类
 操作移入本机回收站），改错可经 os_snapshot 一键回滚；mode=preview 仍可做
-只读 dry-run 预检查补丁可应用性与影响范围。
+只读 dry-run 预检查补丁可应用性与影响范围。走统一桌面桥时请求经
+DESKTOP_BRIDGE_URL/TOKEN 转发到 worker /file。
 """
 
 from __future__ import annotations
@@ -81,14 +82,21 @@ def _normalize_text(value: Any) -> str:
 
 
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    endpoint = _normalize_text(os.getenv("OS_AUTOMATION_URL"))
-    token = _normalize_text(os.getenv("OS_AUTOMATION_TOKEN"))
+    bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
+    bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
+    if bridge_url and bridge_token:
+        endpoint = bridge_url.rstrip("/") + "/file"
+        token = bridge_token
+    else:
+        # OS_AUTOMATION_URL 指向 worker 根地址，需补 /file 路径
+        endpoint = _normalize_text(os.getenv("OS_AUTOMATION_URL"))
+        token = _normalize_text(os.getenv("OS_AUTOMATION_TOKEN"))
     if not endpoint or not token:
         return {
             "ok": False,
-            "error": "OS_AUTOMATION_URL / OS_AUTOMATION_TOKEN 未配置，无法调用宿主机文件操作",
+            "error": "DESKTOP_BRIDGE_URL/TOKEN 或 OS_AUTOMATION_URL/TOKEN 未配置，无法调用宿主机文件操作",
         }
-    url = endpoint.rstrip("/") + "/file"
+    url = endpoint if bridge_url and bridge_token else endpoint.rstrip("/") + "/file"
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request = urllib.request.Request(
         url,
