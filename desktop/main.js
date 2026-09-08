@@ -1,13 +1,20 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron')
 const { spawn } = require('child_process')
 const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs')
 const { createBridge } = require('./bridge')
+const { loadServerConfig, DEFAULT_ENTRY_ORIGIN } = require('./server-config')
+const { createCredentialStore } = require('./credential-store')
 
 let mainWindow = null
 let workers = new Map()
 let bridgeServer = null
+
+let credentialStore = null
+let desktopRuntimeConfig = null
+let desktopConfigCache = null
+let serverConfigCachePath = null
 
 function randomToken() {
   return crypto.randomBytes(24).toString('hex')
@@ -28,24 +35,46 @@ function workerScript(name) {
   return scripts[name]
 }
 
-function startWorker(name, env) {
+function workerCommand(name) {
+  const resourcesDir = process.resourcesPath || ''
+  const bundledCandidates = [
+    path.join(resourcesDir, 'yuxin-worker', 'yuxin-worker.exe'),
+    path.join(resourcesDir, 'yuxin-worker.exe'),
+  ]
+  for (const exePath of bundledCandidates) {
+    if (exePath && fs.existsSync(exePath)) {
+      return { cmd: exePath, args: [name] }
+    }
+  }
   const script = workerScript(name)
-  if (!fs.existsSync(script)) {
-    console.warn(`[desktop] worker 脚本不存在: ${script}`)
+  if (script && fs.existsSync(script)) {
+    return { cmd: pythonBin(), args: [script] }
+  }
+  return null
+}
+
+function startWorker(name, env) {
+  const command = workerCommand(name)
+  if (!command) {
+    console.warn(`[desktop] worker 命令不可用: ${name}（无打包 exe，脚本 ${workerScript(name)} 也不存在）`)
     return
   }
-  const child = spawn(pythonBin(), [script], {
+  const child = spawn(command.cmd, command.args, {
     env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stdout.on('data', (chunk) => console.log(`[${name}] ${String(chunk).trim()}`))
   child.stderr.on('data', (chunk) => console.error(`[${name}] ${String(chunk).trim()}`))
+  child.on('error', (err) => {
+    console.error(`[desktop] ${name} worker spawn failed: ${err.message}`)
+    workers.delete(name)
+  })
   child.on('exit', (code) => {
     console.log(`[desktop] ${name} worker exited: ${code}`)
     workers.delete(name)
   })
   workers.set(name, child)
-  console.log(`[desktop] started ${name} worker (pid=${child.pid})`)
+  console.log(`[desktop] started ${name} worker (cmd=${command.cmd} pid=${child.pid})`)
 }
 
 function stopWorker(name) {
@@ -66,6 +95,78 @@ async function callLocalWorker(baseUrl, token, payload) {
     body: JSON.stringify(payload),
   })
   return response.json()
+}
+
+function toDesktopConfig(serverCfg) {
+  const serverCfgSafe = serverCfg || {}
+  const origin = String(serverCfgSafe.api_origin || '').replace(/\/+$/, '')
+  const prefixRaw = String(serverCfgSafe.api_prefix || '/api')
+  const prefix = (prefixRaw.startsWith('/') ? prefixRaw : `/${prefixRaw}`).replace(/\/+$/, '') || '/api'
+  return {
+    apiBase: `${origin}${prefix}`,
+    apiOrigin: origin,
+    socketUrl: origin,
+    socketPath: `${prefix}/socket.io`,
+    appName: serverCfgSafe.app_name || '钰心AI',
+  }
+}
+
+function readDiskConfigCache() {
+  if (!serverConfigCachePath || !fs.existsSync(serverConfigCachePath)) return null
+  try {
+    const raw = JSON.parse(fs.readFileSync(serverConfigCachePath, 'utf-8'))
+    if (raw && raw.api_origin) return raw
+  } catch {
+    // 缓存损坏忽略
+  }
+  return null
+}
+
+function applyServerConfig(serverCfg) {
+  desktopRuntimeConfig = serverCfg
+  desktopConfigCache = toDesktopConfig(serverCfg)
+}
+
+function broadcastConfig(config) {
+  // contextBridge 注入的 window.__DESKTOP_CONFIG__ 是只读拷贝，主进程无法直写；
+  // 已打开页面如需热更新，可订阅该事件或再次调用 yuxinDesktop.getDesktopConfig()。
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('desktop:config-changed', config)
+  }
+}
+
+async function refreshServerConfig() {
+  if (!serverConfigCachePath || serverConfigRefreshing) return
+  serverConfigRefreshing = true
+  try {
+    const cfg = await loadServerConfig({
+      entryOrigin: DEFAULT_ENTRY_ORIGIN,
+      cachePath: serverConfigCachePath,
+    })
+    const next = toDesktopConfig(cfg)
+    const prev = desktopConfigCache
+    applyServerConfig(cfg)
+    if (!prev || JSON.stringify(prev) !== JSON.stringify(next)) {
+      broadcastConfig(next)
+    }
+  } catch (err) {
+    console.warn(`[desktop] refresh server config failed: ${err.message}`)
+  } finally {
+    serverConfigRefreshing = false
+  }
+}
+
+function syncConfig() {
+  if (!desktopConfigCache) {
+    const serverCfg = readDiskConfigCache() || {
+      api_origin: DEFAULT_ENTRY_ORIGIN,
+      api_prefix: '/api',
+      app_name: '钰心AI',
+    }
+    applyServerConfig(serverCfg)
+    void refreshServerConfig()
+  }
+  return desktopConfigCache
 }
 
 function createWindow() {
@@ -89,6 +190,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  credentialStore = createCredentialStore({
+    filePath: path.join(app.getPath('userData'), 'credential.bin'),
+    safeStorage: safeStorage.isEncryptionAvailable() ? safeStorage : null,
+  })
+  serverConfigCachePath = path.join(app.getPath('userData'), 'server-config.json')
+
   const tokens = {
     os: randomToken(),
     browser: randomToken(),
@@ -126,6 +233,39 @@ app.whenReady().then(() => {
   bridgeServer.listen(Number(process.env.DESKTOP_BRIDGE_PORT || 9876), '127.0.0.1', () => {
     console.log('[desktop] local capability bridge listening on 127.0.0.1:9876')
   })
+
+  ipcMain.on('desktop:get-config-sync', (event) => {
+    event.returnValue = syncConfig()
+  })
+  ipcMain.handle('desktop:get-config', async () => {
+    const cached = syncConfig()
+    if (!desktopRuntimeConfig || desktopRuntimeConfig.api_origin === DEFAULT_ENTRY_ORIGIN) {
+      await refreshServerConfig()
+    }
+    return desktopConfigCache || cached
+  })
+  ipcMain.handle('desktop:get-credential', () => (credentialStore ? credentialStore.load() : null))
+  ipcMain.handle('desktop:set-credential', (_event, token) => {
+    if (credentialStore && typeof token === 'string' && token) credentialStore.save(token)
+    return true
+  })
+  ipcMain.handle('desktop:clear-credential', () => {
+    if (credentialStore) credentialStore.clear()
+    return true
+  })
+  ipcMain.handle('desktop:worker-versions', () => {
+    const result = {}
+    for (const [name, child] of workers.entries()) {
+      result[name] = { running: Boolean(child && !child.killed), pid: child.pid, version: null }
+    }
+    return result
+  })
+  ipcMain.handle('desktop:set-launch-at-login', (_event, enabled) => {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled) })
+    return true
+  })
+  ipcMain.handle('desktop:get-launch-at-login', () => app.getLoginItemSettings().openAtLogin)
+  ipcMain.handle('desktop:check-for-updates', () => ({ ok: false, reason: 'not_configured' }))
 
   ipcMain.handle('workers:status', () => {
     const result = {}
