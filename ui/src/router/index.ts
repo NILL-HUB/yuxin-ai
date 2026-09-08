@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
 import auth from '@/utils/auth'
 import { getStoredAdminCredential, isAdminCredentialLoggedIn } from '@/utils/admin-auth'
 import { useAdminStore } from '@/stores/admin'
@@ -6,8 +6,16 @@ import DefaultLayout from '@/views/layouts/DefaultLayout.vue'
 import BlankLayout from '@/views/layouts/BlankLayout.vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
 
+// 桌面端（Electron 内嵌，经 window.__DESKTOP_CONFIG__ 标记）以自定义协议/hash 加载，
+// history 路由在 file:// 或自定义协议下无法依赖服务器 rewrite，改用 hash history。
+const isDesktop =
+  typeof window !== 'undefined' &&
+  Boolean((window as unknown as { __DESKTOP_CONFIG__?: unknown }).__DESKTOP_CONFIG__)
+
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: isDesktop
+    ? createWebHashHistory(import.meta.env.BASE_URL)
+    : createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
