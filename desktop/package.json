@@ -21,6 +21,9 @@
     "files": [
       "main.js",
       "preload.js",
+      "server-config.js",
+      "credential-store.js",
+      "bridge.js",
       "../ui/dist/**/*"
     ],
     "win": {

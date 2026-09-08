@@ -6,10 +6,15 @@ function createCredentialStore({ filePath, safeStorage } = {}) {
   const target = filePath || ''
 
   function save(accessToken) {
-    if (!accessToken || !storage || !target) return
-    const encrypted = storage.encryptString(String(accessToken))
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(target, encrypted)
+    if (!accessToken || !storage || !target) return false
+    try {
+      const encrypted = storage.encryptString(String(accessToken))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, encrypted)
+      return true
+    } catch {
+      return false
+    }
   }
 
   function load() {

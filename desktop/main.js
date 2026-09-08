@@ -15,6 +15,7 @@ let credentialStore = null
 let desktopRuntimeConfig = null
 let desktopConfigCache = null
 let serverConfigCachePath = null
+let serverConfigRefreshing = false
 
 function randomToken() {
   return crypto.randomBytes(24).toString('hex')
@@ -128,8 +129,9 @@ function applyServerConfig(serverCfg) {
 }
 
 function broadcastConfig(config) {
-  // contextBridge 注入的 window.__DESKTOP_CONFIG__ 是只读拷贝，主进程无法直写；
-  // 已打开页面如需热更新，可订阅该事件或再次调用 yuxinDesktop.getDesktopConfig()。
+  // contextBridge 注入的 window.__DESKTOP_CONFIG__ 是启动时只读快照，主进程无法直写；
+  // 运行中刷新到的新配置通过该事件下发，renderer 用 preload 暴露的
+  // onDesktopConfigChanged(callback) 订阅（返回取消函数）。
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('desktop:config-changed', config)
   }
@@ -148,6 +150,13 @@ async function refreshServerConfig() {
     applyServerConfig(cfg)
     if (!prev || JSON.stringify(prev) !== JSON.stringify(next)) {
       broadcastConfig(next)
+      const changedOrigin = prev && prev.apiOrigin !== next.apiOrigin
+      if (changedOrigin) {
+        console.warn(
+          `[desktop] server config updated: api_origin changed from ${prev.apiOrigin} to ${next.apiOrigin}; ` +
+            'renderer 已订阅 desktop:config-changed，若未热生效请重启应用',
+        )
+      }
     }
   } catch (err) {
     console.warn(`[desktop] refresh server config failed: ${err.message}`)
@@ -246,8 +255,10 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('desktop:get-credential', () => (credentialStore ? credentialStore.load() : null))
   ipcMain.handle('desktop:set-credential', (_event, token) => {
-    if (credentialStore && typeof token === 'string' && token) credentialStore.save(token)
-    return true
+    if (credentialStore && typeof token === 'string' && token) {
+      return credentialStore.save(token)
+    }
+    return false
   })
   ipcMain.handle('desktop:clear-credential', () => {
     if (credentialStore) credentialStore.clear()

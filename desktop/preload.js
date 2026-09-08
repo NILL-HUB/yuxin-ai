@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld('yuxinDesktop', {
   wakeEnable: () => ipcRenderer.invoke('wake:enable'),
   wakeDisable: () => ipcRenderer.invoke('wake:disable'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  onDesktopConfigChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, config) => callback(config)
+    ipcRenderer.on('desktop:config-changed', listener)
+    return () => ipcRenderer.removeListener('desktop:config-changed', listener)
+  },
   getDesktopConfig: () => ipcRenderer.invoke('desktop:get-config'),
   getCredential: () => ipcRenderer.invoke('desktop:get-credential'),
   setCredential: (token) => ipcRenderer.invoke('desktop:set-credential', token),

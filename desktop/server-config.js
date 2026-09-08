@@ -2,11 +2,19 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const DEFAULT_ENTRY_ORIGIN = 'https://openllm.cloud'
+const FETCH_TIMEOUT_MS = 8000
 
 async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath, fetchImpl } = {}) {
   const fetchFn = fetchImpl || globalThis.fetch
   try {
-    const resp = await fetchFn(`${entryOrigin}/api/desktop-config`)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    let resp
+    try {
+      resp = await fetchFn(`${entryOrigin}/api/desktop-config`, { signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
     if (resp.ok) {
       const json = await resp.json()
       const data = json?.data
@@ -24,7 +32,7 @@ async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath,
       }
     }
   } catch {
-    // 网络失败走缓存/默认
+    // 网络失败/超时走缓存/默认
   }
   if (cachePath && fs.existsSync(cachePath)) {
     try {
