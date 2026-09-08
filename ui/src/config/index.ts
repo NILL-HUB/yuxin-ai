@@ -73,9 +73,38 @@ const buildEndpointResolution = (apiUrl: URL): EndpointResolution => {
   }
 }
 
+type DesktopRuntimeConfig = {
+  apiBase?: string
+  socketUrl?: string
+  socketPath?: string
+}
+
+const resolveDesktopOverride = (): DesktopRuntimeConfig | null => {
+  if (typeof window === 'undefined') return null
+  const cfg = (window as unknown as { __DESKTOP_CONFIG__?: DesktopRuntimeConfig }).__DESKTOP_CONFIG__
+  if (!cfg?.apiBase) return null
+  return cfg
+}
+
 export function resolveEndpointResolution(
   loc: RuntimeLocation = globalThis.location,
 ): EndpointResolution {
+  const desktop = resolveDesktopOverride()
+  if (desktop?.apiBase) {
+    let apiUrl: URL
+    try {
+      apiUrl = new URL(desktop.apiBase)
+    } catch {
+      apiUrl = new URL(desktop.apiBase, 'https://invalid.invalid')
+    }
+    const socketPath = desktop.socketPath || '/api/socket.io'
+    const socketUrl = desktop.socketUrl || apiUrl.origin
+    return {
+      apiBaseUrl: desktop.apiBase,
+      socketEndpoint: { url: socketUrl, path: socketPath },
+    }
+  }
+
   const envPrefix = String(import.meta.env.VITE_API_PREFIX || '').trim()
   const resolvedConfiguredUrl = resolveConfiguredApiUrl(envPrefix, loc)
   if (resolvedConfiguredUrl) {
