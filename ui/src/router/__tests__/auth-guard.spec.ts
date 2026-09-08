@@ -14,14 +14,14 @@ describe('getAuthGuardRedirect', () => {
     expect(shouldEvaluateUserAuth('/home')).toBe(true)
   })
 
-  it('allows public routes for anonymous users', () => {
+  it('redirects anonymous users away from /home (now requires login)', () => {
     expect(
       getAuthGuardRedirect({
         path: '/home',
         routeName: 'pages-home',
         isLoggedIn: false,
       }),
-    ).toBeNull()
+    ).toEqual({ path: '/auth/login', query: { redirect: '/home' } })
   })
 
   it('allows anonymous users to access admin login after admin guard passes', () => {
@@ -59,10 +59,10 @@ describe('getAuthGuardRedirect', () => {
         routeName: 'store-skills-list',
         isLoggedIn: false,
       }),
-    ).toEqual({ path: '/home' })
+    ).toEqual({ path: '/auth/login', query: { redirect: '/store/skills' } })
   })
 
-  it('allows anonymous users to access public store and search routes', () => {
+  it('allows anonymous users to access public store routes but not search', () => {
     expect(
       getAuthGuardRedirect({
         path: '/store/public-apps',
@@ -77,17 +77,17 @@ describe('getAuthGuardRedirect', () => {
         routeName: 'conversation-search',
         isLoggedIn: false,
       }),
-    ).toBeNull()
+    ).toEqual({ path: '/auth/login', query: { redirect: '/search' } })
   })
 
-  it('redirects anonymous users away from private user routes', () => {
+  it('redirects anonymous users away from private user routes to login', () => {
     expect(
       getAuthGuardRedirect({
         path: '/schedules',
         routeName: 'user-schedules',
         isLoggedIn: false,
       }),
-    ).toEqual({ path: '/home' })
+    ).toEqual({ path: '/auth/login', query: { redirect: '/schedules' } })
 
     expect(
       getAuthGuardRedirect({
@@ -95,7 +95,7 @@ describe('getAuthGuardRedirect', () => {
         routeName: 'my-knowledge',
         isLoggedIn: false,
       }),
-    ).toEqual({ path: '/home' })
+    ).toEqual({ path: '/auth/login', query: { redirect: '/my-knowledge' } })
   })
 
   it('redirects anonymous users away from unnamed private routes by default', () => {
@@ -105,7 +105,7 @@ describe('getAuthGuardRedirect', () => {
         routeName: '',
         isLoggedIn: false,
       }),
-    ).toEqual({ path: '/home' })
+    ).toEqual({ path: '/auth/login', query: { redirect: '/some/private/page' } })
   })
 
   it('allows authenticated users to access private routes', () => {
