@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification } = require('electron')
 const { spawn } = require('child_process')
 const crypto = require('crypto')
 const path = require('path')
@@ -6,10 +6,14 @@ const fs = require('fs')
 const { createBridge } = require('./bridge')
 const { loadServerConfig, DEFAULT_ENTRY_ORIGIN } = require('./server-config')
 const { createCredentialStore } = require('./credential-store')
+const { createTray } = require('./tray')
+const { setupUpdater, checkForUpdates, autoUpdater } = require('./updater')
 
 let mainWindow = null
 let workers = new Map()
 let bridgeServer = null
+let tray = null
+let isQuitting = false
 
 let credentialStore = null
 let desktopRuntimeConfig = null
@@ -34,6 +38,31 @@ function workerScript(name) {
     wake: path.join(apiDir, 'scripts', 'wake_word_worker.py'),
   }
   return scripts[name]
+}
+
+function notify(title, body) {
+  try {
+    if (Notification.isSupported()) {
+      new Notification({ title, body }).show()
+    }
+  } catch (err) {
+    console.warn(`[desktop] notification failed: ${err.message}`)
+  }
+}
+
+function showMainWindow() {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function workerStatusSnapshot() {
+  const result = {}
+  for (const [name, child] of workers.entries()) {
+    result[name] = Boolean(child && !child.killed)
+  }
+  return result
 }
 
 function workerCommand(name) {
@@ -73,6 +102,9 @@ function startWorker(name, env) {
   child.on('exit', (code) => {
     console.log(`[desktop] ${name} worker exited: ${code}`)
     workers.delete(name)
+    if (!isQuitting) {
+      notify(`${name} worker 已退出`, code ? `异常退出（code ${code}），功能可能不可用` : '已停止运行')
+    }
   })
   workers.set(name, child)
   console.log(`[desktop] started ${name} worker (cmd=${command.cmd} pid=${child.pid})`)
@@ -190,6 +222,15 @@ function createWindow() {
       sandbox: true,
     },
   })
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      mainWindow.hide()
+    }
+  })
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
   const devUrl = process.env.VITE_DEV_SERVER_URL
   if (devUrl) {
     mainWindow.loadURL(devUrl)
@@ -285,7 +326,13 @@ app.whenReady().then(() => {
     return true
   })
   ipcMain.handle('desktop:get-launch-at-login', () => app.getLoginItemSettings().openAtLogin)
-  ipcMain.handle('desktop:check-for-updates', () => ({ ok: false, reason: 'not_configured' }))
+  ipcMain.handle('desktop:check-for-updates', () => {
+    if (!autoUpdater) {
+      return { ok: false, reason: 'updater_disabled' }
+    }
+    checkForUpdates()
+    return { ok: true }
+  })
 
   ipcMain.handle('workers:status', () => {
     const result = {}
@@ -336,11 +383,44 @@ app.whenReady().then(() => {
     }
   })
 
+  tray = createTray({
+    onShow: showMainWindow,
+    onQuit: () => {
+      isQuitting = true
+      app.quit()
+    },
+    getStatus: workerStatusSnapshot,
+  })
+
+  setupUpdater({
+    onStatus: (status) => {
+      if (status === 'available') notify('钰心AI 有更新可用', '正在后台下载，完成后将提示安装')
+      if (status === 'downloaded') notify('钰心AI 更新已就绪', '重启应用即可完成更新')
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('desktop:update-status', status)
+      }
+    },
+    onError: (err) => {
+      console.warn(`[desktop] updater error: ${err && err.message}`)
+    },
+  })
+
   createWindow()
 })
 
 app.on('window-all-closed', () => {
+  // 关闭到托盘：窗口全关仍驻留（worker 与桥继续服务），托盘"退出"才真正退出
+  if (process.platform !== 'darwin') {
+    // 不 quit；仅当无托盘（如初始化异常）时兜底退出
+    if (!tray) {
+      isQuitting = true
+      app.quit()
+    }
+  }
+})
+
+app.on('before-quit', () => {
+  isQuitting = true
   for (const name of [...workers.keys()]) stopWorker(name)
   if (bridgeServer) bridgeServer.close()
-  if (process.platform !== 'darwin') app.quit()
 })
