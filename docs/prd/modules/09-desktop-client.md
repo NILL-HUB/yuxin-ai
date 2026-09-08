@@ -22,6 +22,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 ├─ worker-host（main.js 内）
 │     spawn 单一 worker exe（PyInstaller: yuxin-worker.exe，super 入口）
 │     按子命令起 os(8765)/browser(8766)/computer(8767)；wake 按需启动
+│     端口动态化：启动前探测可用端口，被占用（如与 Docker 容器映射冲突）自动顺延并互斥分配；
 │     开发模式（无 exe）回退 python scripts/<worker>.py；退出通知 + 崩溃不自动拉起
 ├─ 本地能力桥（bridge.js，127.0.0.1:9876）
 │     /file /recycle /snapshot → os worker；/browser → browser；/control → computer
@@ -75,7 +76,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 | --- | --- | --- |
 | `DESKTOP_ENTRY_ORIGIN`（`server-config.js` 内常量） | `https://openllm.cloud` | 内置入口域名，用于首次拉取 desktop-config |
 | `DESKTOP_PYTHON` | `python` | 开发模式 worker 解释器 |
-| `OS_AUTOMATION_PORT` / `BROWSER_AUTOMATION_PORT` / `COMPUTER_CONTROL_PORT` | 8765 / 8766 / 8767 | worker 监听端口（dev 覆盖用） |
+| `OS_AUTOMATION_PORT` / `BROWSER_AUTOMATION_PORT` / `COMPUTER_CONTROL_PORT` | 8765 / 8766 / 8767 | worker 监听端口（dev 覆盖用）；被占用时自动顺延到空闲端口，bridge 同步使用实际端口 |
 | `DESKTOP_BRIDGE_PORT` | 9876 | 本地能力桥端口 |
 | `VITE_DEV_SERVER_URL` | — | dev 模式连 Vite dev server |
 

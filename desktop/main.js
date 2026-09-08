@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session, Menu, screen } = require('electron')
 const { spawn, execSync } = require('child_process')
+const net = require('net')
 const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs')
@@ -61,6 +62,30 @@ function workerStatusSnapshot() {
     result[name] = Boolean(child && !child.killed)
   }
   return result
+}
+
+// 为 worker 探测一个空闲端口：优先使用 preferred，被占用则向上顺延。
+// 桌面端与 Docker 容器可能同用 8765-8767（docker-compose 映射），
+// 顺延可避免绑定失败（WinError 10013）导致 worker 异常退出。
+// exclude 用于串行分配时跳过已被其它 worker 拿到的端口，避免撞端口。
+async function probePort(preferred, maxAttempts = 50, exclude = new Set()) {
+  for (let offset = 0; offset < maxAttempts; offset += 1) {
+    const candidate = preferred + offset
+    if (exclude.has(candidate)) continue
+    try {
+      const server = net.createServer()
+      const ok = await new Promise((resolve) => {
+        server.once('error', () => resolve(false))
+        server.listen(candidate, '127.0.0.1', () => {
+          server.close(() => resolve(true))
+        })
+      })
+      if (ok) return candidate
+    } catch {
+      // 继续尝试下一个
+    }
+  }
+  return preferred
 }
 
 function workerCommand(name) {
@@ -303,7 +328,7 @@ function resolveUiIndex() {
   return path.join(__dirname, '..', 'ui', 'dist', 'index.html')
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // 移除默认应用菜单栏（File/Edit/View...），呈现原生客户端外观
   Menu.setApplicationMenu(null)
 
@@ -340,31 +365,51 @@ app.whenReady().then(() => {
     wake: randomToken(),
     bridge: randomToken(),
   }
+
+  // 解析 worker 端口：优先环境变量，其次默认值；被占用则自动顺延，
+  // 避免与 Docker 容器映射（8766/8767）等冲突导致 worker 绑定失败。
+  // 串行探测并互相排除已分配端口，避免两个 worker 顺延到同一端口。
+  const preferOsPort = Number(process.env.OS_AUTOMATION_PORT || 8765)
+  const preferBrowserPort = Number(process.env.BROWSER_AUTOMATION_PORT || 8766)
+  const preferComputerPort = Number(process.env.COMPUTER_CONTROL_PORT || 8767)
+  const osPort = await probePort(preferOsPort)
+  const browserPort = await probePort(preferBrowserPort, 50, new Set([osPort]))
+  const computerPort = await probePort(preferComputerPort, 50, new Set([osPort, browserPort]))
+  if (osPort !== preferOsPort) {
+    console.log(`[desktop] os worker 端口 ${preferOsPort} 被占用，改用 ${osPort}`)
+  }
+  if (browserPort !== preferBrowserPort) {
+    console.log(`[desktop] browser worker 端口 ${preferBrowserPort} 被占用，改用 ${browserPort}`)
+  }
+  if (computerPort !== preferComputerPort) {
+    console.log(`[desktop] computer worker 端口 ${preferComputerPort} 被占用，改用 ${computerPort}`)
+  }
+
   startWorker('os', {
     OS_AUTOMATION_TOKEN: tokens.os,
-    OS_AUTOMATION_PORT: process.env.OS_AUTOMATION_PORT || '8765',
+    OS_AUTOMATION_PORT: String(osPort),
     OS_AUTOMATION_SAFE_ROOT: process.env.OS_AUTOMATION_SAFE_ROOT || '',
   })
   startWorker('browser', {
     BROWSER_AUTOMATION_TOKEN: tokens.browser,
-    BROWSER_AUTOMATION_PORT: process.env.BROWSER_AUTOMATION_PORT || '8766',
+    BROWSER_AUTOMATION_PORT: String(browserPort),
   })
   startWorker('computer', {
     COMPUTER_CONTROL_TOKEN: tokens.computer,
-    COMPUTER_CONTROL_PORT: process.env.COMPUTER_CONTROL_PORT || '8767',
+    COMPUTER_CONTROL_PORT: String(computerPort),
   })
 
   bridgeServer = createBridge({
     token: tokens.bridge,
-    filePort: process.env.OS_AUTOMATION_PORT || '8765',
+    filePort: osPort,
     fileToken: tokens.os,
-    recyclePort: process.env.OS_AUTOMATION_PORT || '8765',
+    recyclePort: osPort,
     recycleToken: tokens.os,
-    snapshotPort: process.env.OS_AUTOMATION_PORT || '8765',
+    snapshotPort: osPort,
     snapshotToken: tokens.os,
-    browserPort: process.env.BROWSER_AUTOMATION_PORT || '8766',
+    browserPort,
     browserToken: tokens.browser,
-    computerPort: process.env.COMPUTER_CONTROL_PORT || '8767',
+    computerPort,
     computerToken: tokens.computer,
   })
   bridgeServer.listen(Number(process.env.DESKTOP_BRIDGE_PORT || 9876), '127.0.0.1', () => {
