@@ -626,7 +626,6 @@ def test_function_call_agent_tools_node_should_authorize_high_risk_tool_then_exe
         "_wait_for_confirmation",
         lambda *_args, **_kwargs: "confirmed",
     )
-    monkeypatch.setattr(agent, "_is_tool_authorized", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(agent, "_update_confirmation_summary", lambda *_args, **_kwargs: None)
 
     result = agent._tools_node(state)
@@ -679,7 +678,6 @@ def test_function_call_agent_tools_node_smart_approval_auto_approves(monkeypatch
         ],
     }
     monkeypatch.setattr(agent, "_smart_approval_allows", lambda _name, **_kwargs: True)
-    monkeypatch.setattr(agent, "_is_tool_authorized", lambda *_args, **_kwargs: False)
 
     result = agent._tools_node(state)
 
@@ -780,7 +778,6 @@ def test_function_call_agent_tools_node_should_stop_when_user_cancels(monkeypatc
         "_wait_for_confirmation",
         lambda *_args, **_kwargs: "cancelled",
     )
-    monkeypatch.setattr(agent, "_is_tool_authorized", lambda *_args, **_kwargs: False)
 
     result = agent._tools_node(state)
 

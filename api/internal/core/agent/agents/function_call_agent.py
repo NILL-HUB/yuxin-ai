@@ -506,14 +506,7 @@ class FunctionCallAgent(BaseAgent):
                         or getattr(state, "user_id", None)
                         or getattr(state, "account_id", None)
                     )
-                    host_workflow_tool = tool_call["name"] == "os_file_task"
-                    already_authorized = (
-                        tool_call["name"] in authorized_tools
-                        or (
-                            host_workflow_tool
-                            and self._is_tool_authorized(account_id, tool_call["name"])
-                        )
-                    )
+                    already_authorized = tool_call["name"] in authorized_tools
                     if not already_authorized and self._smart_approval_allows(
                         tool_call["name"],
                         tool_input=tool_call.get("args") or {},
@@ -653,11 +646,6 @@ class FunctionCallAgent(BaseAgent):
                             ))
                             continue
                         authorized_tools.append(tool_call["name"])
-                        if host_workflow_tool:
-                            # 授权后先进入只读扫描，由 Agent 给出清理方案并反问用户，
-                            # 不在授权这一步直接执行删除/清理。
-                            tool_call["args"] = dict(tool_call.get("args") or {})
-                            tool_call["args"]["mode"] = "preview"
 
                 # 登记工具执行开始（running）：进程在此之后崩溃时，恢复流程能识别
                 # 「工具已发起但结果未知」，由 LLM 核实后决策，而非盲目重放。
@@ -798,14 +786,6 @@ class FunctionCallAgent(BaseAgent):
     @staticmethod
     def _build_confirmation_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
         """生成用户可见的授权摘要，避免把原始 Markdown/JSON 直接铺到卡片上。"""
-        if tool_name == "os_file_task":
-            operation = str((tool_input or {}).get("op") or "patch")
-            if operation == "read":
-                return "请求授权在宿主机安全目录内读取文件，仅返回文件内容。"
-            return (
-                "请求授权在宿主机安全目录内应用 V4A 补丁修改文件。"
-                "授权后我会先校验补丁并展示影响，不会在未确认前直接修改文件。"
-            )
         return f"请求授权调用高风险工具 {tool_name}，授权后 Agent 才会继续执行。"
 
     @staticmethod
@@ -904,50 +884,6 @@ class FunctionCallAgent(BaseAgent):
             return bool(record and record.get("status") == "running")
         except Exception:
             logger.warning("查询工具崩溃残留状态失败 tool=%s", tool_call.get("name"), exc_info=True)
-            return False
-
-    def _is_tool_authorized(
-        self,
-        account_id,
-        tool_name: str,
-        *,
-        max_age_seconds: int = 1800,
-    ) -> bool:
-        """检查当前账号近期是否已确认过该高风险工具授权。"""
-        if not account_id:
-            return False
-        try:
-            from datetime import UTC, datetime
-
-            from sqlalchemy import desc
-
-            from internal.extension.database_extension import db
-            from internal.model.tool_confirmation import ToolConfirmation
-
-            with db.sync_auto_commit() as session:
-                expire_all = getattr(session, "expire_all", None)
-                if callable(expire_all):
-                    expire_all()
-                confirmation = (
-                    session.query(ToolConfirmation)
-                    .filter_by(
-                        owner_account_id=account_id,
-                        tool_name=tool_name,
-                        status="confirmed",
-                    )
-                    .order_by(desc(ToolConfirmation.updated_at))
-                    .first()
-                )
-                if confirmation is None:
-                    return False
-                updated_at = confirmation.updated_at or confirmation.created_at
-                if updated_at is None:
-                    return True
-                now = datetime.now(UTC).replace(tzinfo=None)
-                age = now - updated_at
-                return age.total_seconds() <= max_age_seconds
-        except Exception:
-            logger.warning("检查工具授权状态失败: tool=%s", tool_name, exc_info=True)
             return False
 
     def _create_tool_confirmation(

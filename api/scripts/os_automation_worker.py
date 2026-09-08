@@ -12,7 +12,8 @@
 - 每次真实写文件（UPDATE/DELETE/MOVE）前先做内容快照（写前快照，fail-closed），
   Agent 可通过 /snapshot 端点或 os_snapshot 工具一键回滚。快照全存本机隐藏目录，
   默认留存 7 天后由 GC 清理。
-- 默认只监听本机回环地址；如部署在容器可访问的地址，必须配置强 token。
+- 默认只监听本机回环地址（127.0.0.1）；若需容器/跨机访问，显式以
+  `--host 0.0.0.0` 或 `OS_AUTOMATION_HOST` 覆盖，并必须配置强 token。
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("os_automation_worker")
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 APPROVAL_TTL_SECONDS = 1800
 DEFAULT_SAFE_ROOT = ""

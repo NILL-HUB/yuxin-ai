@@ -945,7 +945,7 @@ class AssistantAgentService(BaseService):
         # 本机 OS 文件操作：通过宿主机 worker（/file、/recycle、/snapshot 端点）执行，纯 Python，不依赖外部 CLI。
         # 删除类操作（os_recycle_bin / 纯删除补丁）已全部走本机回收站，可随时恢复；
         # 写操作（os_file_task）写前自动快照，改错可用 os_snapshot 回滚。因此 agent
-        # 可全自动执行而无需用户逐次确认；其余写操作仍走 preview → approval。
+        # 可全自动执行而无需用户逐次确认（os_file_task 不在高风险名单内，不再弹确认）。
         if self.app_config_service is not None:
             try:
                 for tool_name in ("os_file_task", "os_recycle_bin", "os_snapshot"):

@@ -35,19 +35,6 @@ class TestToolConfirmationIntegration:
         assert policy.is_high_risk_tool("send_email") is True
         assert policy.is_high_risk_tool("execute_code") is True
 
-    def test_os_file_task_confirmation_summary_is_human_readable(self):
-        patch_summary = FunctionCallAgent._build_confirmation_summary(
-            "os_file_task",
-            {"op": "patch", "patch": "*** Begin Patch\n*** End Patch\n"},
-        )
-        read_summary = FunctionCallAgent._build_confirmation_summary(
-            "os_file_task",
-            {"op": "read", "path": "C:/tmp/a.txt"},
-        )
-        assert "V4A 补丁" in patch_summary
-        assert "读取文件" in read_summary
-        assert "approval_token" not in patch_summary + read_summary
-
     def test_wait_for_confirmation_returns_redirect_when_correction_sent(self, monkeypatch):
         account_id = uuid4()
         confirmation_id = uuid4()
