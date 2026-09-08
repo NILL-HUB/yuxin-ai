@@ -34,10 +34,15 @@
       {
         "from": "../ui/dist",
         "to": "ui-dist"
+      },
+      {
+        "from": "../api/scripts/pyinstaller/dist/yuxin-worker.exe",
+        "to": "yuxin-worker/yuxin-worker.exe"
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signAndEditExecutable": false
     },
     "publish": {
       "provider": "generic",

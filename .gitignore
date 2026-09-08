@@ -121,6 +121,9 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+desktop/dist-nsis/
+desktop/dist-verify/
+desktop/release/
 
 # Data backups & one-off temp scripts (privacy/credentials)
 api/internal/migration/orphan_memory_backup_*.sql
