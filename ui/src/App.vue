@@ -2,6 +2,7 @@
 import { computed, ref, watch, onMounted, onUnmounted, type Ref } from 'vue'
 import DocumentIndexNotification from '@/components/DocumentIndexNotification.vue'
 import AgentNotification from '@/components/AgentNotification.vue'
+import DesktopTitleBar from '@/components/DesktopTitleBar.vue'
 import { useDocumentIndexNotificationWebSocket } from '@/hooks/use-document-index-notification-websocket'
 import { useDocumentIndexNotificationPolling } from '@/hooks/use-document-index-notification-polling'
 import { useAgentNotificationWebSocket } from '@/hooks/use-agent-notification-websocket'
@@ -15,6 +16,13 @@ import { useTheme } from '@/theme'
 
 // 初始化主题系统（响应式应用 data-theme / arco-theme）
 useTheme()
+
+// 桌面环境（Electron）：窗口采用 titleBarStyle:hidden，自绘标题栏占 44px。
+// Web 部署无标题栏，CSS 变量归零，布局不受影响。
+const isDesktop =
+  typeof window !== 'undefined' &&
+  Boolean((window as unknown as { __DESKTOP_CONFIG__?: unknown }).__DESKTOP_CONFIG__)
+const titlebarHeight = computed(() => (isDesktop ? '44px' : '0px'))
 
 // 获取通知组件的引用
 const documentNotificationRef = ref<InstanceType<typeof DocumentIndexNotification>>()
@@ -163,16 +171,21 @@ onUnmounted(() => {
 
 <template>
   <a-config-provider :locale="arcoLocale">
-    <div class="h-full w-full flex flex-col">
+    <div
+      class="h-full w-full flex flex-col"
+      :style="{ '--desktop-titlebar-h': titlebarHeight }"
+    >
       <!-- 文档索引完成通知组件 -->
       <document-index-notification ref="documentNotificationRef" />
 
       <!-- Agent 构建完成通知组件 -->
       <agent-notification ref="agentNotificationRef" />
 
-      <!-- 路由视图 -->
+      <!-- 路由视图（桌面端各页面自行用 calc 扣除标题栏高度） -->
       <router-view />
     </div>
+    <!-- 桌面自绘标题栏：fixed 悬浮于窗口顶部（仅 Electron 环境渲染） -->
+    <desktop-title-bar v-if="isDesktop" />
   </a-config-provider>
 </template>
 

@@ -36,3 +36,18 @@ contextBridge.exposeInMainWorld('yuxinDesktop', {
   getLaunchAtLogin: () => ipcRenderer.invoke('desktop:get-launch-at-login'),
   checkForUpdates: () => ipcRenderer.invoke('desktop:check-for-updates'),
 })
+
+// 自绘标题栏窗口控制（titleBarStyle:hidden + titleBarOverlay 方案）
+contextBridge.exposeInMainWorld('windowControls', {
+  minimize: () => ipcRenderer.send('window:minimize'),
+  toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
+  close: () => ipcRenderer.send('window:close'),
+  isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  getOverlayState: () => ipcRenderer.invoke('window:get-overlay-state'),
+  onMaximizedChanged: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const listener = (_event, isMaximized) => callback(isMaximized)
+    ipcRenderer.on('window:maximized-changed', listener)
+    return () => ipcRenderer.removeListener('window:maximized-changed', listener)
+  },
+})

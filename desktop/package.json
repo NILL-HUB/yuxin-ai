@@ -32,7 +32,8 @@
       "credential-store.js",
       "bridge.js",
       "tray.js",
-      "updater.js"
+      "updater.js",
+      "window-state.js"
     ],
     "extraResources": [
       {

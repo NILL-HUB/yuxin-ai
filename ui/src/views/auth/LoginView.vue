@@ -4,7 +4,7 @@ import LoginForm from './components/LoginForm.vue'
 </script>
 
 <template>
-  <!-- 页面容器 -->
+  <!-- 页面容器（标题栏毛玻璃悬浮其上，视觉保持全屏沉浸） -->
   <div class="flex h-screen bg-surface login-page">
     <!-- 左侧banner -->
     <login-banner />

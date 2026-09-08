@@ -1,5 +1,5 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session } = require('electron')
-const { spawn } = require('child_process')
+const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session, Menu, screen } = require('electron')
+const { spawn, execSync } = require('child_process')
 const crypto = require('crypto')
 const path = require('path')
 const fs = require('fs')
@@ -8,6 +8,7 @@ const { loadServerConfig, DEFAULT_ENTRY_ORIGIN } = require('./server-config')
 const { createCredentialStore } = require('./credential-store')
 const { createTray } = require('./tray')
 const { setupUpdater, checkForUpdates, autoUpdater } = require('./updater')
+const { computeWindowOptions, loadState, saveState } = require('./window-state')
 
 let mainWindow = null
 let workers = new Map()
@@ -20,6 +21,7 @@ let desktopRuntimeConfig = null
 let desktopConfigCache = null
 let serverConfigCachePath = null
 let serverConfigRefreshing = false
+let windowStateFilePath = null
 
 function randomToken() {
   return crypto.randomBytes(24).toString('hex')
@@ -29,15 +31,11 @@ function pythonBin() {
   return process.env.DESKTOP_PYTHON || 'python'
 }
 
-function workerScript(name) {
+function workerScript() {
+  // dev 模式（无打包 exe）统一走 worker_super：与打包版同一入口，
+  // 保证宿主存活看门狗（YUXIN_HOST_PID）在开发环境同样生效。
   const apiDir = path.resolve(__dirname, '..', 'api')
-  const scripts = {
-    os: path.join(apiDir, 'scripts', 'os_automation_worker.py'),
-    browser: path.join(apiDir, 'scripts', 'browser_automation_worker.py'),
-    computer: path.join(apiDir, 'scripts', 'computer_control_worker.py'),
-    wake: path.join(apiDir, 'scripts', 'wake_word_worker.py'),
-  }
-  return scripts[name]
+  return path.join(apiDir, 'scripts', 'worker_super.py')
 }
 
 function notify(title, body) {
@@ -76,9 +74,9 @@ function workerCommand(name) {
       return { cmd: exePath, args: [name] }
     }
   }
-  const script = workerScript(name)
+  const script = workerScript()
   if (script && fs.existsSync(script)) {
-    return { cmd: pythonBin(), args: [script] }
+    return { cmd: pythonBin(), args: [script, name] }
   }
   return null
 }
@@ -90,7 +88,13 @@ function startWorker(name, env) {
     return
   }
   const child = spawn(command.cmd, command.args, {
-    env: { ...process.env, ...env },
+    env: {
+      ...process.env,
+      ...env,
+      // 宿主存活看门狗：worker 周期性检测 Electron 主进程 PID，
+      // 主进程退出（正常/被杀/崩溃）即自杀，避免进程树残留。
+      YUXIN_HOST_PID: String(process.pid),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stdout.on('data', (chunk) => console.log(`[${name}] ${String(chunk).trim()}`))
@@ -112,10 +116,20 @@ function startWorker(name, env) {
 
 function stopWorker(name) {
   const child = workers.get(name)
-  if (child) {
-    child.kill()
-    workers.delete(name)
+  if (!child) return
+  workers.delete(name)
+  // Windows 下 worker 为 PyInstaller onefile：spawn 出来的是引导进程，
+  // 它会再派生真正的服务进程。child.kill() 只杀引导进程，服务进程会变孤儿
+  // 残留并继续占用端口 → 用 taskkill /T 杀整棵进程树。
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' })
+      return
+    } catch {
+      // taskkill 失败（进程已退出等）时回退 child.kill()
+    }
   }
+  child.kill()
 }
 
 async function callLocalWorker(baseUrl, token, payload) {
@@ -217,11 +231,32 @@ function syncConfig() {
   return desktopConfigCache
 }
 
+function broadcastWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('window:maximized-changed', mainWindow.isMaximized())
+    }
+  }
+}
+
 function createWindow() {
+  const savedState = loadState(windowStateFilePath)
+  const options = computeWindowOptions(savedState, screen.getAllDisplays())
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
+    ...options,
+    minWidth: 940,
+    minHeight: 620,
     title: '钰心AI',
+    show: false,
+    // 原生窗口外观：去掉系统标题栏改用自绘标题栏（拖拽区在 renderer），
+    // Windows 保留系统 min/max/close 按钮作为 titleBarOverlay（Hermes 同款方案）。
+    titleBarStyle: 'hidden',
+    ...(process.platform === 'win32'
+      ? { titleBarOverlay: { color: '#00000000', symbolColor: '#4b5563', height: 44 } }
+      : {}),
+    backgroundColor: '#f7f7f7',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -229,10 +264,23 @@ function createWindow() {
       sandbox: true,
     },
   })
+
+  if (savedState && savedState.isMaximized) {
+    mainWindow.maximize()
+  }
+
+  mainWindow.on('ready-to-show', () => {
+    mainWindow.show()
+  })
+  mainWindow.on('maximize', broadcastWindowState)
+  mainWindow.on('unmaximize', broadcastWindowState)
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault()
+      saveState(windowStateFilePath, mainWindow)
       mainWindow.hide()
+    } else {
+      saveState(windowStateFilePath, mainWindow)
     }
   })
   mainWindow.on('closed', () => {
@@ -256,11 +304,15 @@ function resolveUiIndex() {
 }
 
 app.whenReady().then(() => {
+  // 移除默认应用菜单栏（File/Edit/View...），呈现原生客户端外观
+  Menu.setApplicationMenu(null)
+
   credentialStore = createCredentialStore({
     filePath: path.join(app.getPath('userData'), 'credential.bin'),
     safeStorage: safeStorage.isEncryptionAvailable() ? safeStorage : null,
   })
   serverConfigCachePath = path.join(app.getPath('userData'), 'server-config.json')
+  windowStateFilePath = path.join(app.getPath('userData'), 'window-state.json')
 
   // renderer 以 file:// 加载（Origin: null），对配置的 API origin 放宽 CORS，
   // 使登录/业务请求不被浏览器同源策略拦截。
@@ -429,6 +481,31 @@ app.whenReady().then(() => {
     onError: (err) => {
       console.warn(`[desktop] updater error: ${err && err.message}`)
     },
+  })
+
+  // 自绘标题栏的窗口控制：从 event.sender 反查窗口，不收窗口 id 参数（安全）
+  ipcMain.on('window:minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+  ipcMain.on('window:toggle-maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return
+    if (win.isMaximized()) {
+      win.unmaximize()
+    } else {
+      win.maximize()
+    }
+  })
+  ipcMain.on('window:close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+  })
+  ipcMain.handle('window:is-maximized', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    return Boolean(win && win.isMaximized())
+  })
+  ipcMain.handle('window:get-overlay-state', () => {
+    // 暴露给 renderer：是否启用了 windowControlsOverlay（决定标题栏右侧预留宽度）
+    return { overlay: process.platform === 'win32' }
   })
 
   createWindow()

@@ -118,6 +118,7 @@ const menuGroups = computed(() => ([
     items: [
       { to: '/admin/routing-logs', label: t('admin.adminLayout.menu.routingLogs'), permission: 'routing_log:read' },
       { to: '/admin/routing-quality', label: t('admin.adminLayout.menu.routingQuality'), permission: 'routing_quality:read' },
+      { to: '/admin/routing-quality/suggestions', label: t('admin.adminLayout.menu.routingQualitySuggestions'), permission: 'routing_quality:read' },
       { to: '/admin/audit-logs', label: t('admin.adminLayout.menu.auditLogs'), permission: 'audit_log:read' },
       { to: '/admin/recycle-bin', label: t('admin.adminLayout.menu.recycleBin'), permission: 'recycle_bin:read' },
     ],
@@ -293,7 +294,8 @@ const handleLogout = async () => {
 
 <style scoped>
 .admin-layout {
-  height: 100vh;
+  height: calc(100vh - var(--desktop-titlebar-h, 0px));
+  margin-top: var(--desktop-titlebar-h, 0px);
   display: grid;
   grid-template-columns: 252px 1fr;
   background: #f4f7fb;
@@ -517,7 +519,7 @@ const handleLogout = async () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: calc(100vh - var(--desktop-titlebar-h, 0px));
   overflow: hidden;
 }
 

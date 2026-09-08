@@ -260,7 +260,13 @@ watch(settingModalVisible, async (visible) => {
 </script>
 
 <template>
-  <div class="h-full w-full overflow-hidden flex">
+  <div
+    class="h-full w-full overflow-hidden flex"
+    :style="{
+      paddingTop: 'var(--desktop-titlebar-h, 0px)',
+      boxSizing: 'border-box',
+    }"
+  >
     <!-- 侧边栏 - 固定定位，不随右侧滚动 -->
     <a-layout-sider
       class="bg-surface border-r border-border-c p-2 shrink-0 overflow-hidden sidebar-sider"
@@ -271,16 +277,16 @@ watch(settingModalVisible, async (visible) => {
         maxWidth: `${sidebarWidth}px`,
         position: 'fixed',
         left: 0,
-        top: 0,
+        top: 'var(--desktop-titlebar-h, 0px)',
         bottom: 0,
-        height: '100vh',
+        height: 'calc(100vh - var(--desktop-titlebar-h, 0px))',
         transform: isMobileViewport && sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)',
         zIndex: isMobileViewport ? (sidebarCollapsed ? 5 : 40) : 10,
       }"
     >
       <div
         class="flex flex-col min-h-0 overflow-hidden px-3 py-2"
-        style="height: calc(100vh - 16px)"
+        style="height: calc(100vh - 16px - var(--desktop-titlebar-h, 0px))"
       >
         <!-- 顶部 Logo 区 -->
         <div class="shrink-0 flex items-center justify-center">

@@ -96,4 +96,5 @@ Electron 主进程（desktop/main.js，唯一入口）
 ## 首版范围与后续
 
 - 已交付（2026-09-08）：单 exe worker 托管、服务器地址注入、托盘/通知/自启/更新框架、safeStorage 凭证同步、设备面板完善、NSIS 打包验证（`钰心AI Setup 0.1.0.exe`）。
-- 后续增强（不在首版）：UI 自绘标题栏（titleBarStyle 原生化）、更新服务器就绪后的正式自动更新验证、子项目 B 远程中枢（设备注册/手机下发任务）。
+- 已交付（2026-09-09，窗口原生化，对标 Hermes）：移除默认应用菜单栏（`Menu.setApplicationMenu(null)`）；`titleBarStyle:'hidden'` + Windows `titleBarOverlay`（系统原生 min/max/close 叠加层，renderer 经 `navigator.windowControlsOverlay` 读取按钮区宽度避让）；自绘标题栏组件 `DesktopTitleBar.vue`（拖拽区 + 双击最大化 + 品牌名，fixed 毛玻璃悬浮，仅桌面环境渲染）；窗口位置/尺寸/最大化状态持久化（`window-state.js`）；布局以 CSS 变量 `--desktop-titlebar-h` 适配（Web 为 0，零影响）；worker 宿主存活看门狗修复（`GetExitCodeProcess` 探活替代 Windows 下不可用的 `os.kill(pid,0)`，宿主退出即自杀，含 PyInstaller onefile 双层进程）。
+- 后续增强（不在首版）：更新服务器就绪后的正式自动更新验证、子项目 B 远程中枢（设备注册/手机下发任务）。
