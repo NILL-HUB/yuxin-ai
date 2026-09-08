@@ -755,6 +755,8 @@ def _delete_into_recycle(
             "original_path": str(resolved),
             "relative_path": str(relative),
             "moved_to": str(dest),
+            "recycle_root": str(recycle),
+            "safe_root": root,
             "size": _path_size(resolved),
             "is_dir": resolved.is_dir(),
             "deleted_at": time.time(),

@@ -1,6 +1,7 @@
 import os
 
 from scripts.os_automation_worker import (
+    _file_operation,
     _list_recycle,
     _purge_recycle,
     _read_recycle_manifest,
@@ -28,6 +29,8 @@ def test_safe_delete_moves_to_recycle_and_restores(tmp_path, monkeypatch):
     entry = deleted["entries"][0]
     assert entry["original_path"] == str(target)
     assert entry["task_id"] == "task-1"
+    assert entry["recycle_root"] == str(tmp_path / ".yuxin_ai_recycle")
+    assert entry["safe_root"] == str(tmp_path)
     assert target.exists() is False
     assert os.path.exists(entry["moved_to"]) is True
 
@@ -162,6 +165,66 @@ def test_purge_recycle_precise_by_entry_id(tmp_path, monkeypatch):
     recycle_file = list((tmp_path / ".yuxin_ai_recycle").rglob("b.txt"))
     assert len(recycle_file) == 1
     assert _list_recycle({"safe_root": str(tmp_path)})["count"] == 1
+
+
+def test_purge_by_recorded_safe_root_clears_subdir_file(tmp_path, monkeypatch):
+    """端到端 delete→记录→purge：purge 必须用记录里的 safe_root 作为清单基点。
+
+    场景 = working_dir 为 <safe_root>/project 子目录的 V4A Delete：文件移入
+    <safe_root>/.yuxin_ai_recycle（manifest 在 safe_root 级）。平台到期销毁时
+    若误把 recycle_root（回收站目录本身）当 safe_root 传给 worker，会在
+    <recycle_root>/.yuxin_ai_recycle 下找清单而定位失败（潜伏 bug 回归）；
+    修复后 purge 携带删除时记录的 safe_root，能精确清掉本机回收站文件。
+    """
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    victim = project / "victim.txt"
+    victim.write_text("doomed", encoding="utf-8")
+    delete_patch = (
+        "*** Begin Patch\n"
+        f"*** Delete File: {victim}\n"
+        "*** End Patch\n"
+    )
+
+    applied = _file_operation(
+        {
+            "op": "patch",
+            "mode": "apply",
+            "patch": delete_patch,
+            "working_dir": str(project),
+        }
+    )
+    assert applied["ok"] is True
+    assert victim.exists() is False
+
+    entries = _read_recycle_manifest(str(tmp_path))
+    assert len(entries) == 1
+    entry = entries[0]
+    # manifest 落在 safe_root 级；entry 记录真实回收站根与清单基点
+    assert entry["original_path"] == str(victim)
+    assert entry["recycle_root"] == str(tmp_path / ".yuxin_ai_recycle")
+    assert entry["safe_root"] == str(tmp_path)
+    assert not (project / ".yuxin_ai_recycle").exists()
+
+    # 回归：把 recycle_root 当 safe_root 传给 purge 找不到清单（条目仍在）
+    wrong_root = _purge_recycle(
+        {"safe_root": entry["recycle_root"], "entry_id": entry["entry_id"]}
+    )
+    assert wrong_root["ok"] is True
+    assert wrong_root["purged"] == []
+    assert (tmp_path / ".yuxin_ai_recycle" / "project" / "victim.txt").exists()
+
+    # 修复路径：传记录中的原始 safe_root → 精确清理成功
+    purged = _purge_recycle(
+        {"safe_root": entry["safe_root"], "entry_id": entry["entry_id"]}
+    )
+    assert purged["ok"] is True
+    assert len(purged["purged"]) == 1
+    assert purged["purged"][0]["entry_id"] == entry["entry_id"]
+    assert not (tmp_path / ".yuxin_ai_recycle" / "project" / "victim.txt").exists()
+    assert _list_recycle({"safe_root": str(tmp_path)})["count"] == 0
 
 
 def test_delete_records_device_info(tmp_path, monkeypatch):

@@ -491,6 +491,7 @@ class RecycleBinService:
                     "original_path": original_path,
                     "moved_to": entry.get("moved_to"),
                     "recycle_root": entry.get("recycle_root"),
+                    "safe_root": entry.get("safe_root"),
                     "device_info": entry.get("device_info") or {},
                     "task_id": task_id,
                     "reason": reason,

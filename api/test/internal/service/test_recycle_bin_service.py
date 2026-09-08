@@ -429,3 +429,57 @@ def test_overview_aggregates_status_type_and_source(monkeypatch):
     assert result["by_resource_type"][0] == {"name": "app", "count": 4}
     assert result["by_deleted_by_type"] == [{"name": "admin", "count": 5}]
 
+
+# ---------------------------------------------------------------------------
+# os_file：agent 本机文件删除记录（snapshot 须携带 safe_root/recycle_root 供 purge）
+# ---------------------------------------------------------------------------
+def test_record_os_file_deletion_stores_safe_root_and_recycle_root(monkeypatch):
+    """平台快照记录 worker entry 的 recycle_root 与 safe_root（purge 按 safe_root 定位清单）。"""
+    created = []
+
+    class _Session:
+        def add(self, obj):
+            created.append(obj)
+
+        def commit(self):
+            pass
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(recycle_bin_service, "db", SimpleNamespace(session=_Session()))
+
+    service = RecycleBinService()
+    service.record_os_file_deletion(
+        entries=[
+            {
+                "entry_id": "entry-win-1",
+                "original_path": r"C:\Users\Administrator\recycle-test\report.txt",
+                "moved_to": r"C:\Users\Administrator\.yuxin_ai_recycle\recycle-test\report.txt",
+                "recycle_root": r"C:\Users\Administrator\.yuxin_ai_recycle",
+                "safe_root": r"C:\Users\Administrator",
+                "device_info": {"ip": "192.168.1.1", "name": "Host"},
+            },
+            {
+                "entry_id": "entry-posix-1",
+                "original_path": "/home/nill/reports/summary.md",
+                "moved_to": "/home/nill/.yuxin_ai_recycle/reports/summary.md",
+                "recycle_root": "/home/nill/.yuxin_ai_recycle",
+                "safe_root": "/home/nill",
+                "device_info": {"ip": "192.168.1.2", "name": "Host2"},
+            },
+        ],
+        deleted_by="acc-1",
+        deleted_by_type="agent",
+    )
+
+    assert len(created) == 2
+    assert created[0].deleted_by == "acc-1"
+    assert created[0].deleted_by_type == "agent"
+    assert created[0].retention_days == 7
+    assert created[0].status == "pending"
+    # 快照须携带删除时记录的 recycle_root 与 safe_root（purge 按 safe_root 定位清单）
+    assert created[0].snapshot["recycle_root"] == r"C:\Users\Administrator\.yuxin_ai_recycle"
+    assert created[0].snapshot["safe_root"] == r"C:\Users\Administrator"
+    assert created[1].snapshot["safe_root"] == "/home/nill"
+

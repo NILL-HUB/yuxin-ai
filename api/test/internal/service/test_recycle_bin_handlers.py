@@ -67,6 +67,52 @@ def test_restore_os_file_raises_validate_error_on_worker_failure(monkeypatch):
     assert "回收站中未找到对应条目" in str(exc_info.value)
 
 
+def test_purge_os_file_passes_recorded_safe_root_not_recycle_root(monkeypatch):
+    """purge 必须传删除时记录的 safe_root（清单基点），不得把 recycle_root 当 safe_root。
+
+    回归：把 recycle_root（<safe_root>/.yuxin_ai_recycle）当 safe_root 会让 worker
+    在回收站目录下再套一层 .yuxin_ai_recycle 找 manifest 而定位失败（潜伏 bug）。
+    """
+    captured = {}
+    monkeypatch.setattr(
+        handlers,
+        "_call_worker_recycle",
+        lambda payload: captured.update(payload) or {"ok": True, "purged": []},
+    )
+    snapshot = {
+        "entry_id": "entry-1",
+        "original_path": "C:/Users/u/project/a.txt",
+        "moved_to": "C:/Users/u/.yuxin_ai_recycle/project/a.txt",
+        "recycle_root": "C:/Users/u/.yuxin_ai_recycle",
+        "safe_root": "C:/Users/u",
+    }
+
+    handlers.purge_os_file(snapshot)
+
+    assert captured["op"] == "purge"
+    assert captured["entry_id"] == "entry-1"
+    assert captured["safe_root"] == "C:/Users/u"
+    assert captured["safe_root"] != captured.get("recycle_root")
+
+
+def test_purge_os_file_raises_when_entry_id_missing():
+    with pytest.raises(RuntimeError) as exc_info:
+        handlers.purge_os_file({"original_path": "C:/tmp/a.txt"})
+    assert "缺少 entry_id" in str(exc_info.value)
+
+
+def test_purge_os_file_raises_on_worker_failure(monkeypatch):
+    monkeypatch.setattr(
+        handlers,
+        "_call_worker_recycle",
+        lambda payload: {"ok": False, "error": "worker 不可达"},
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        handlers.purge_os_file({"entry_id": "entry-1"})
+    assert "purge 失败" in str(exc_info.value)
+
+
 # ---------------------------------------------------------------------------
 # 新增资源类型：分发入口路由正确性（无 DB 依赖）
 # ---------------------------------------------------------------------------
