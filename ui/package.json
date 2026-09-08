@@ -6,6 +6,7 @@
   "scripts": {
     "serve": "vite",
     "build": "vite build",
+    "build:desktop": "vite build --mode desktop",
     "build:strict": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "test:unit": "vitest run",

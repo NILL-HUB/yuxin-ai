@@ -124,6 +124,7 @@ build/
 desktop/dist-nsis/
 desktop/dist-verify/
 desktop/release/
+ui/dist-desktop/
 
 # Data backups & one-off temp scripts (privacy/credentials)
 api/internal/migration/orphan_memory_backup_*.sql

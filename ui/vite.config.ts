@@ -3,11 +3,19 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const env = loadEnv(process.env.NODE_ENV || 'development', process.cwd(), '')
-const appTitle = env.VITE_TITLE?.trim() || '钰心AI'
+const appTitle = (process.env.VITE_TITLE || '').trim() || '钰心AI'
+
+// 桌面端（Electron loadFile / Capacitor）以 file:// / 自定义协议加载产物，
+// 绝对路径 base（'/'）会让 /assets/* 解析到磁盘根目录而全部 404 → 白屏。
+// 桌面构建（--mode desktop，见 .env.desktop）使用相对 base './' + 独立 outDir，避免覆盖 Web 的 ui/dist。
 
 // https://vitejs.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const isDesktopBuild = env.VITE_DESKTOP_BUILD === '1'
+
+  return {
+  base: isDesktopBuild ? './' : '/',
   plugins: [
     vue(),
     {
@@ -23,6 +31,7 @@ export default defineConfig({
     },
   },
   build: {
+    outDir: isDesktopBuild ? 'dist-desktop' : 'dist',
     modulePreload: {
       resolveDependencies(_filename, dependencies) {
         return dependencies.filter((dependency) => !dependency.includes('vendor-monaco'))
@@ -98,4 +107,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session } = require('electron')
 const { spawn } = require('child_process')
 const crypto = require('crypto')
 const path = require('path')
@@ -144,6 +144,13 @@ function toDesktopConfig(serverCfg) {
   }
 }
 
+function resolveCorsOrigin() {
+  // renderer 加载自 file://（Origin: null），请求远程 API 属跨域；
+  // 浏览器 CORS 会把响应拦掉。此处对已配置的 API origin 放宽 CORS 响应头。
+  const cache = desktopConfigCache || (readDiskConfigCache() ? toDesktopConfig(readDiskConfigCache()) : null)
+  return cache ? cache.apiOrigin : null
+}
+
 function readDiskConfigCache() {
   if (!serverConfigCachePath || !fs.existsSync(serverConfigCachePath)) return null
   try {
@@ -254,6 +261,25 @@ app.whenReady().then(() => {
     safeStorage: safeStorage.isEncryptionAvailable() ? safeStorage : null,
   })
   serverConfigCachePath = path.join(app.getPath('userData'), 'server-config.json')
+
+  // renderer 以 file:// 加载（Origin: null），对配置的 API origin 放宽 CORS，
+  // 使登录/业务请求不被浏览器同源策略拦截。
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const apiOrigin = resolveCorsOrigin()
+    const requestUrl = details.url || ''
+    const matchesApi = apiOrigin && requestUrl.toLowerCase().startsWith(apiOrigin.toLowerCase())
+    const responseHeaders = { ...details.responseHeaders }
+    if (matchesApi) {
+      responseHeaders['Access-Control-Allow-Origin'] = ['*']
+      responseHeaders['Access-Control-Allow-Credentials'] = ['true']
+      responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization, X-Account-Id']
+      responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, PATCH, DELETE, OPTIONS']
+    }
+    if (details.method === 'OPTIONS' && matchesApi) {
+      return callback({ responseHeaders, statusLine: 'HTTP/1.1 204 No Content', statusCode: 204 })
+    }
+    callback({ responseHeaders })
+  })
 
   const tokens = {
     os: randomToken(),
