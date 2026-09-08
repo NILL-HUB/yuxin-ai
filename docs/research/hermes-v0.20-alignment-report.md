@@ -90,8 +90,8 @@
 | 会话导出/checkpoint 恢复 | ✗ | Hermes 支持 html/md 导出与 checkpoint；钰心AI 无 |
 | 入站 webhook 事件触发 | ◑ | LINE/WhatsApp/飞书/钉钉 IM 入站事件已接；Hermes 的 GitHub/API 触发自动化待接 |
 | 浏览器自动化 | ◑ | `browser_action` 工具 + `scripts/browser_automation_worker.py`（Playwright，SSRF 防护），默认关闭且按高风险审批 |
-| 计算机控制 | ◑ | `computer_action` 工具 + `scripts/computer_control_worker.py`（pyautogui，键鼠/截屏/滚动/快捷键），默认关闭且按高风险审批；桌面端集成待封装 |
-| Windows 桌面端 | ◑ | `desktop/` Electron 壳（main/preload/package/README）托管本地 workers 与 IPC；构建发布待验证 | 复用 Web UI，内嵌 OS/回收站/浏览器/计算机/唤醒词 worker |
+| 计算机控制 | ◑ | `computer_action` 工具 + `scripts/computer_control_worker.py`（pyautogui，键鼠/截屏/滚动/快捷键），默认关闭且按高风险审批；桌面端经 yuxin-worker.exe（worker_super computer 子命令）托管，桥经 127.0.0.1:9876 |
+| Windows 桌面端 | ✅ | `desktop/` Electron 客户端（main/preload/tray/updater/server-config/credential-store + NSIS 打包）托管本地 workers 与 IPC | 复用 Web UI（ui-dist 内嵌），内嵌 OS/回收站/浏览器/计算机/唤醒词 worker；safeStorage 凭证 + 托盘/自启/更新框架（2026-09-08 首版已打包验证） |
 | 工具自恢复提示 | ✅ | V4A 诊断作为工具结果返回 Agent，`assistant_agent_markdown_preset` 第 12 条指导模型按 no-op/空白差异/零结果/落盘校验诊断修正，不再盲目重试 |
 | 审批策略运行时化 | ✅ | approval mining dry-run + `SmartApprovalPolicyService` 运行时自动放行 |
 | Docker/podman daemon 危险命令审批门 | ✅ | `contains_dangerous_container_command` + `_smart_approval_allows(tool_input=...)`；特权/宿主网络/根目录挂载等危险容器操作即使免确认也强制确认 |

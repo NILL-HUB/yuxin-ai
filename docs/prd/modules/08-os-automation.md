@@ -1,6 +1,8 @@
 # 宿主机 OS 自动化
 
 > 更新日期：2026-09-08（批次 4：os_file_task 免确认写删 + 敏感路径读黑名单兜底）
+>
+> **宿主壳关联**：本文描述的 `os_automation_worker.py`（及 browser/computer/wake worker）由桌面客户端托管与分发——Windows 桌面端以单一 `yuxin-worker.exe`（PyInstaller + worker_super 子命令入口）随安装包携带，Electron 主进程 spawn 启动（开发模式回退 python 脚本）。桌面壳架构见 [09-desktop-client.md](./09-desktop-client.md)。
 
 ## 目标
 

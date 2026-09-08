@@ -19,6 +19,7 @@
 - [文件存储与对象存储](prd/modules/06-file-storage.md)
 - [公共 AI 资源配置](prd/modules/07-public-ai-config.md)
 - [OS 自动化与设备 Agent](prd/modules/08-os-automation.md)
+- [Windows 桌面客户端（设备 Agent 宿主壳）](prd/modules/09-desktop-client.md)
 
 ## 记忆系统
 

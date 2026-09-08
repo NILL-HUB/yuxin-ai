@@ -36,6 +36,7 @@
 | Ch 24 | 公共 AI 资源配置板块 | [modules/07-public-ai-config.md](./modules/07-public-ai-config.md) |
 | Ch 25 | 指挥官架构与 Prompt 模板管理（v5.2 新增） | 本文 §25 |
 | Ch 26-27 | 已确认决策、总结 | [modules/05-security-risk-decisions.md](./modules/05-security-risk-decisions.md) |
+| 设备 Agent（桌面客户端） | Electron 桌面壳、worker exe、凭证/托盘/更新 | [modules/09-desktop-client.md](./modules/09-desktop-client.md) |
 
 ### 记忆系统子文档
 
