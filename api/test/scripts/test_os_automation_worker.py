@@ -9,6 +9,7 @@ from scripts.os_automation_worker import (
     _create_approval,
     _file_apply_patch,
     _file_operation,
+    _file_search,
     _gc_snapshots,
     _list_snapshots,
     _read_snapshot_manifest,
@@ -621,5 +622,159 @@ def test_patch_snapshot_and_rollback_use_safe_root_when_working_dir_is_subdir(tm
     rb = _rollback_file({"path": str(target), "working_dir": str(project)})
     assert rb["ok"] is True
     assert target.read_text(encoding="utf-8") == original
+
+
+# ---------------------------------------------------------------------------
+# 敏感路径读黑名单：read/search 命中敏感路径（凭据/密钥/浏览器数据）直接拒绝
+# ---------------------------------------------------------------------------
+def test_file_read_rejects_sensitive_env_file(tmp_path, monkeypatch):
+    """读取 .env 密钥文件必须被拒绝（免确认放开写删后读敏感面由黑名单兜底）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    target = tmp_path / ".env"
+    target.write_text("OPENAI_API_KEY=sk-xxx\n", encoding="utf-8")
+
+    result = _file_operation(
+        {
+            "op": "read",
+            "path": str(target),
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is False
+    assert "敏感" in result["error"]
+    assert ".env" in result["error"]
+
+
+def test_file_read_rejects_env_example_allowed(tmp_path, monkeypatch):
+    """.env.example 属公开模板，不拦；真 .env 仍拒。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    example = tmp_path / ".env.example"
+    example.write_text("OPENAI_API_KEY=your-key\n", encoding="utf-8")
+
+    ok = _file_operation(
+        {"op": "read", "path": str(example), "working_dir": str(tmp_path)}
+    )
+    assert ok["ok"] is True
+
+    env = tmp_path / ".env"
+    env.write_text("OPENAI_API_KEY=sk-xxx\n", encoding="utf-8")
+    blocked = _file_operation(
+        {"op": "read", "path": str(env), "working_dir": str(tmp_path)}
+    )
+    assert blocked["ok"] is False
+
+
+def test_file_read_rejects_ssh_key_path(tmp_path, monkeypatch):
+    """读取 ~/.ssh/id_rsa 形态路径必须被拒（按路径段+文件名双重命中）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    key = ssh_dir / "id_rsa"
+    key.write_text("PRIVATE KEY MATERIAL\n", encoding="utf-8")
+
+    result = _file_operation(
+        {
+            "op": "read",
+            "path": str(key),
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is False
+    assert "敏感" in result["error"]
+
+
+def test_file_read_rejects_browser_credential_path(tmp_path, monkeypatch):
+    """读取浏览器凭据目录（user data/login data）必须被拒。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    profile = tmp_path / "Chrome" / "User Data" / "Default"
+    profile.mkdir(parents=True)
+    cred = profile / "Login Data"
+    cred.write_text("sqlite-binary", encoding="utf-8")
+
+    result = _file_operation(
+        {
+            "op": "read",
+            "path": str(cred),
+            "working_dir": str(tmp_path),
+        }
+    )
+
+    assert result["ok"] is False
+    assert "敏感" in result["error"]
+
+
+def test_file_read_rejects_recycle_and_snapshot_managed_dirs(tmp_path, monkeypatch):
+    """回收站/快照自管目录不可读：防止绕过恢复链路直接读被删/历史内容。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    recycle = tmp_path / ".yuxin_ai_recycle"
+    recycle.mkdir()
+    victim = recycle / "notes.txt"
+    victim.write_text("old content", encoding="utf-8")
+
+    blocked = _file_operation(
+        {"op": "read", "path": str(victim), "working_dir": str(tmp_path)}
+    )
+    assert blocked["ok"] is False
+    assert "敏感" in blocked["error"]
+
+
+def test_file_read_normal_file_unaffected_by_blacklist(tmp_path, monkeypatch):
+    """非敏感普通源码/配置读取不受影响。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    normal = tmp_path / "project" / "config.py"
+    normal.parent.mkdir()
+    normal.write_text("API_HOST = 'localhost'\n", encoding="utf-8")
+
+    result = _file_operation(
+        {"op": "read", "path": str(normal), "working_dir": str(tmp_path)}
+    )
+
+    assert result["ok"] is True
+    assert "API_HOST" in result["content"]
+
+
+def test_file_search_rejects_sensitive_scope(tmp_path, monkeypatch):
+    """search 搜索目标自身位于敏感目录时直接拒绝（无需 rg 也可回归）。"""
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    key = ssh_dir / "id_rsa"
+    key.write_text("PRIVATE KEY\n", encoding="utf-8")
+
+    by_file = _file_search("KEY", str(tmp_path), str(tmp_path), path=str(key))
+    assert by_file["ok"] is False
+    assert "敏感" in by_file["error"]
+
+    by_dir = _file_search("KEY", str(tmp_path), str(tmp_path), path=str(ssh_dir))
+    assert by_dir["ok"] is False
+    assert "敏感" in by_dir["error"]
+
+
+def test_file_search_adds_sensitive_exclusion_globs(tmp_path, monkeypatch):
+    """search 的 rg 命令必须携带敏感排除 glob（.ssh/.env 等不参与内容搜索）。"""
+    import subprocess
+
+    monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
+    called = {}
+
+    class _FakeCompleted:
+        stdout = b""
+
+    def _fake_run(cmd, capture_output, timeout):
+        called["cmd"] = cmd
+        return _FakeCompleted()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = _file_operation({"op": "search", "pattern": "TODO", "working_dir": str(tmp_path)})
+
+    assert result["ok"] is True
+    cmd = called["cmd"]
+    joined = " ".join(cmd)
+    assert "!**/.ssh/**" in joined
+    assert "!**/.env" in joined
+    assert "!**/id_rsa" in joined
 
 

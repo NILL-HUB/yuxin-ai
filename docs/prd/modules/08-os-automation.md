@@ -1,6 +1,6 @@
 # 宿主机 OS 自动化
 
-> 更新日期：2026-09-08（批次 3：os_file_task 移出高风险名单，修改本机文件免确认，靠快照回滚兜底）
+> 更新日期：2026-09-08（批次 4：os_file_task 免确认写删 + 敏感路径读黑名单兜底）
 
 ## 目标
 
@@ -44,6 +44,12 @@
    与高风险名单解耦（名单只决定是否弹确认，不决定是否审计）。
 6. 越界防护：任何路径先经 `_is_path_within`/`_resolve_safe_root` resolve 判定，dry-run 与
    apply 口径一致，含 `..` 段的越界路径一律拒绝。
+7. **敏感读取黑名单**：写/删免确认放开后，读取面由 worker 读黑名单兜底——
+   `/file` read/search 命中敏感路径（`~/.ssh` 私钥、`.env*` 密钥文件（`.env.example`
+   除外）、`id_rsa`/`*.pem`/`*.pfx` 私钥类文件、浏览器凭据目录
+   `User Data`/`Login Data`/`logins.json`/`key4.db`、`.aws`/`.kube`/`.gnupg`/`.npm`
+   等凭据目录、`.yuxin_ai_recycle`/`.yuxin_ai_snapshots` 自管目录）直接拒绝且不读取内容；
+   search 还会以 rg 排除 glob 跳过敏感目录与文件，敏感路径不进搜索结果。
 
 ## 环境变量
 

@@ -1,6 +1,6 @@
 # 多租户 Web 场景下的"真实桌面 / 云沙箱"双层执行路由方案
 
-> 更新日期：2026-09-08（批次 4：run_os_task/Codex 链路已整体移除，通道 A 本地文件执行引擎改写为 os_file_task + os_recycle_bin + os_snapshot 纯 Python 链路，§4.1.3 由"待实施决策"更新为"已落地现状"）
+> 更新日期：2026-09-08（批次 5：§4.1.3 权限放开边界同步——写/删已放开靠快照回收站兜底，敏感读取由 worker 读黑名单拒绝）
 > 定位：研究方案（设计稿），主体未实现（多通道路由、桌面桥远程化、cua-driver 后端均为愿景设计）；其中 §4.1.3 删除出口统一已随自研链路落地。背景调研见 `docs/research/hermes-v0.20-capability-deep-dive.md`、
 > `docs/research/hermes-v0.20-saas-evaluation.md`、`docs/prd/modules/08-os-automation.md`。
 
@@ -161,7 +161,12 @@ computer worker 增加 `cua-driver` 后端（`cua-driver mcp` stdio 客户端）
 2. 删除文件的唯一出口是 `os_recycle_bin`（worker `/recycle` → `.yuxin_ai_recycle`，可恢复）；修改的唯一出口是 `os_file_task`（V4A apply 写前快照，`.yuxin_ai_snapshots`，可回滚）。
 3. 兜底闭环：误删 → `os_recycle_bin list` + `restore`；改错 → `os_snapshot rollback_file` / `rollback_turn`。快照与回收站均存宿主机本机，默认留存 7 天。
 
-> 权限放开边界：回收站只兜底"删错了"，兜不了"读走了"——删除类动作审批可放开，但**敏感文件读取、系统变更（注册表/装软件/锁屏等）仍保留审批**。
+> 权限放开边界（现状，2026-09-08）：回收站只兜底"删错了"，兜不了"读走了"。写/删动作已放开
+> （靠快照+回收站自愈闭环兜底），但**读取面由 worker 敏感路径黑名单兜底**：`os_file_task`
+> read/search 命中敏感路径（`~/.ssh` 私钥、`.env` 密钥文件、浏览器凭据目录
+> `User Data`/`Login Data`/`logins.json`、`.aws`/`.kube`/`.gnupg` 等凭据目录、`.yuxin_ai_recycle`
+> `.yuxin_ai_snapshots` 自管目录）直接拒绝，不返回任何内容；search 用 rg 排除 glob 跳过敏感
+> 目录/文件。系统级变更类动作（注册表/装软件/锁屏等，cua-driver/computer 通道）仍保留审批。
 
 ### 4.2 通道 B：云沙箱（阶段 1）
 
@@ -192,7 +197,7 @@ computer worker 增加 `cua-driver` 后端（`cua-driver mcp` stdio 客户端）
 | --- | --- |
 | 传输 | WS/TLS + device_token 鉴权 + 动作幂等 ID |
 | 设备 | 登录即注册（本地场景免配对）、在线心跳、可吊销、远程任务默认电脑端确认 |
-| 动作 | 现有 `ToolPolicyEntity` 分级 + `tool_confirmation` 审批；删除/修改类动作由删除出口统一（§4.1.3，自研链路天然回收站 + 快照回滚）兜底，审批已放开；敏感读取、系统变更保留审批；cua-driver 动作中 `capture` 免费、其余审批；硬屏蔽危险组合键（如 `win+l` 锁屏） |
+| 动作 | 现有 `ToolPolicyEntity` 分级 + `tool_confirmation` 审批；删除/修改类动作由删除出口统一（§4.1.3，自研链路天然回收站 + 快照回滚）兜底，审批已放开；敏感读取由 worker 读黑名单拒绝（`os_file_task` read/search 命中 `~/.ssh`/`.env`/浏览器凭据等直接拒），系统级变更（cua-driver 中除 `capture` 外的动作、注册表/装软件/锁屏类）保留审批；硬屏蔽危险组合键（如 `win+l` 锁屏） |
 | 环境 | 默认倾向云沙箱；真实桌面需用户显式意图 |
 | 审计 | 全动作审计（谁/哪台设备/什么操作/结果） |
 

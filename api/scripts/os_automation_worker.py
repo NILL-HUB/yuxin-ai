@@ -149,9 +149,110 @@ def _normalize_op_path(workdir: str, path: str) -> str:
     return expanded
 
 
+# ---------------------------------------------------------------------------
+# 敏感路径读黑名单：os_file_task 免确认放开写删后，读取面由本黑名单兜底。
+# 命中敏感路径（凭据/密钥/浏览器数据/回收站快照）的 read/search 直接拒绝，
+# 借鉴 Hermes file_safety 思路：路径段/文件名命中即不可读，不读取任何内容。
+# ---------------------------------------------------------------------------
+# 路径任意层级命中即视为敏感的目录段（小写、含 .yuxin_ai 自管目录）
+_SENSITIVE_READ_DIR_SEGMENTS: frozenset[str] = frozenset(
+    {
+        ".ssh",
+        ".aws",
+        ".azure",
+        ".gcloud",
+        ".gnupg",
+        ".kube",
+        ".docker",
+        ".npm",
+        ".m2",
+        ".gradle",
+        ".mozilla",
+        "firefox",
+        "google-chrome",
+        "chromium",
+        "microsoft-edge",
+        "bravesoftware",
+        "user data",
+        "keychain",
+        "vault",
+        ".yuxin_ai_recycle",
+        ".yuxin_ai_snapshots",
+        "system volume information",
+        "$recycle.bin",
+    }
+)
+# 文件名（小写）命中即视为敏感：SSH/私钥、.env 密钥文件、浏览器凭据库等
+_SENSITIVE_READ_FILE_NAMES: frozenset[str] = frozenset(
+    {
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "id_25519",
+        "private_key.pem",
+        "key.pem",
+        "credentials",
+        "credentials.json",
+        "serviceaccount.json",
+        "service-account.json",
+        ".netrc",
+        "_netrc",
+        "logins.json",
+        "key4.db",
+        "cert9.db",
+        "login data",
+        "cookies",
+        "web data",
+    }
+)
+
+
+def _sensitive_read_hit(raw_path: str) -> str:
+    """判定路径是否命中敏感读黑名单；未命中返回空字符串，命中返回说明。"""
+    try:
+        resolved = str(Path(raw_path).expanduser().resolve())
+    except OSError:
+        resolved = raw_path
+    parts = [part for part in resolved.split(os.sep) if part]
+    lowered = [part.lower() for part in parts]
+    for part in lowered:
+        if part in _SENSITIVE_READ_DIR_SEGMENTS:
+            return f"路径命中敏感目录（{part}），凭据/密钥/系统数据不可读取"
+    if not lowered:
+        return ""
+    filename = lowered[-1]
+    if filename in _SENSITIVE_READ_FILE_NAMES:
+        return f"路径命中敏感文件（{filename}），凭据/密钥/系统数据不可读取"
+    if filename.startswith(".env") and not filename.startswith(".env.example") and not filename.startswith(".env.sample"):
+        return "路径命中敏感文件（.env*），环境变量/密钥不可读取"
+    if filename.endswith(".pem") or filename.endswith(".pfx") or filename.endswith(".p12"):
+        return f"路径命中敏感文件（{filename}），私钥/证书密钥不可读取"
+    return ""
+
+
+def _sensitive_search_globs() -> list[str]:
+    """rg 排除 glob：搜索内容时跳过敏感目录段与敏感文件名。"""
+    globs: list[str] = []
+    for segment in _SENSITIVE_READ_DIR_SEGMENTS:
+        if segment in (".yuxin_ai_recycle", ".yuxin_ai_snapshots"):
+            globs.append(f"!**/{segment}/**")
+        else:
+            globs.append(f"!**/{segment}/**")
+            globs.append(f"!**/{segment}")
+    for name in _SENSITIVE_READ_FILE_NAMES:
+        globs.append(f"!**/{name}")
+    globs.append("!**/.env")
+    globs.append("!**/.env.*")
+    return globs
+
+
 def _file_safe_read(path: str, root: str, offset: int = 0, limit: int = 0) -> dict[str, Any]:
     if not _is_path_within(root, path):
         return {"ok": False, "error": "路径超出允许目录", "path": path}
+    sensitive = _sensitive_read_hit(path)
+    if sensitive:
+        return {"ok": False, "error": f"{sensitive}（读取已拒绝）", "path": path}
     target = Path(path)
     if not target.is_file():
         return {"ok": False, "error": "文件不存在", "path": path}
@@ -212,7 +313,11 @@ def _file_safe_read(path: str, root: str, offset: int = 0, limit: int = 0) -> di
 
 
 def _file_search(pattern: str, root: str, working_dir: str, path: str = "") -> dict[str, Any]:
-    """在允许目录内递归搜索文件与内容（对齐 Hermes search_files 的 rg 语义）。"""
+    """在允许目录内递归搜索文件与内容（对齐 Hermes search_files 的 rg 语义）。
+
+    敏感路径不参与搜索：搜索目标自身命中黑名单时直接拒绝；普通目录内搜索时
+    用 rg 排除 glob 跳过敏感目录段与敏感文件名（.ssh/.env/浏览器凭据等）。
+    """
     scope = working_dir or root
     if path:
         candidate = str(Path(path).expanduser())
@@ -220,10 +325,17 @@ def _file_search(pattern: str, root: str, working_dir: str, path: str = "") -> d
             candidate = str(Path(scope) / candidate)
         if not _is_path_within(scope, candidate):
             return {"ok": False, "error": f"路径超出允许目录: {candidate}"}
+        sensitive = _sensitive_read_hit(candidate)
+        if sensitive:
+            return {"ok": False, "error": f"{sensitive}（搜索已拒绝）", "path": candidate}
         if Path(candidate).is_file():
             scope = str(Path(candidate).parent)
         else:
             scope = candidate
+    else:
+        sensitive = _sensitive_read_hit(scope)
+        if sensitive:
+            return {"ok": False, "error": f"{sensitive}（搜索已拒绝）", "path": scope}
     if not _is_path_within(root, scope):
         return {"ok": False, "error": "搜索范围超出允许目录"}
     if not pattern:
@@ -239,6 +351,7 @@ def _file_search(pattern: str, root: str, working_dir: str, path: str = "") -> d
             except ValueError:
                 pass
         cmd += [pattern, scope, "-g", "!.git/**", "-g", "!node_modules/**", "-g", "!__pycache__/**"]
+        cmd += _sensitive_search_globs()
         result = subprocess.run(cmd, capture_output=True, timeout=30)
         output = result.stdout.decode("utf-8", errors="replace")
         lines = [line for line in output.splitlines() if line.strip()]
