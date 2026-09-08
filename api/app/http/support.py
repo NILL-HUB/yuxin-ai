@@ -741,6 +741,7 @@ def _is_user_api_blocked(path: str, method: str = "GET") -> bool:
     if normalized.startswith("/tool-confirmations") and not (
         normalized.endswith("/confirm")
         or normalized.endswith("/cancel")
+        or normalized.endswith("/redirect")
         or (
             normalized.startswith("/tool-confirmations/")
             and normalized.count("/") == 2

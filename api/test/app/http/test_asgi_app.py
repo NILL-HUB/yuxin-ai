@@ -44,6 +44,35 @@ def _mock_resolve_account(monkeypatch, account):
     return account
 
 
+def _mock_user_jwt_auth(monkeypatch, account):
+    """模拟已登录用户的 Bearer JWT：保留 _resolve_account 真实凭证解析流程。
+
+    与 _mock_resolve_account 不同，本 helper 不替换鉴权函数，而是仅替换
+    JWT 解析 / 账号加载 / 会话校验依赖，使携带
+    ``Authorization: Bearer <token>`` 的请求真正走 _resolve_account 的
+    “用户 JWT”分支（对应 WebApp 强制登录后的请求形态）。
+    """
+    from internal.service import JwtService
+
+    monkeypatch.setattr(
+        JwtService,
+        "parse_token",
+        lambda token: {"sub": str(account.id), "jti": "session:%s" % token},
+    )
+    monkeypatch.setattr(support, "_load_account", lambda _aid: account)
+    monkeypatch.setattr(
+        support,
+        "_get_services",
+        lambda: (
+            None,
+            None,
+            SimpleNamespace(validate_access_session=lambda payload: None),
+            None,
+        ),
+    )
+    return account
+
+
 class _FakeAppRuntimeService:
     def __init__(self, frames, raise_on_call=False):
         self._frames = frames
@@ -2301,6 +2330,13 @@ class _FakeToolConfirmationService:
 
 class TestAsgiExternalDataSourcesToolConfirmations:
     def _setup(self, monkeypatch):
+        """默认鉴权方式：直接替换 _resolve_account（文件既有 mock 登录惯例）。"""
+        account, edss, kbs, tcs = self._setup_services(monkeypatch)
+        _mock_resolve_account(monkeypatch, account)
+        return account, edss, kbs, tcs
+
+    def _setup_services(self, monkeypatch):
+        """仅挂载 service 替身，不做任何鉴权 mock；由用例自选登录模拟方式。"""
         from internal.service.external_data_source_service import (
             ExternalDataSourceService,
         )
@@ -2314,7 +2350,6 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         kbs = _FakeEDSKnowledgeBaseService()
         tcs = _FakeToolConfirmationService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
-        _mock_resolve_account(monkeypatch, account)
         services = {
             ExternalDataSourceService: edss,
             KnowledgeBaseService: kbs,
@@ -2448,14 +2483,15 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         assert tcs.calls[0] == ("confirm", confirmation_id)
 
     def test_tool_confirmation_confirm_with_visitor_id(self, monkeypatch):
-        _, _, _, tcs = self._setup(monkeypatch)
+        account, _, _, tcs = self._setup_services(monkeypatch)
+        _mock_user_jwt_auth(monkeypatch, account)
         confirmation_id = uuid4()
-        visitor_id = uuid4()
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    f"/tool-confirmations/{confirmation_id}/confirm?visitor_id={visitor_id}"
+                    f"/tool-confirmations/{confirmation_id}/confirm",
+                    headers={"Authorization": "Bearer tool-jwt"},
                 )
                 return resp, await resp.json
 
@@ -2464,15 +2500,16 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         assert resp.status_code == 200
         assert tcs.calls[0] == ("confirm", confirmation_id)
 
-    def test_tool_confirmation_cancel_with_visitor_id(self, monkeypatch):
-        _, _, _, tcs = self._setup(monkeypatch)
+    def test_tool_confirmation_cancel_with_jwt(self, monkeypatch):
+        account, _, _, tcs = self._setup_services(monkeypatch)
+        _mock_user_jwt_auth(monkeypatch, account)
         confirmation_id = uuid4()
-        visitor_id = uuid4()
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    f"/tool-confirmations/{confirmation_id}/cancel?visitor_id={visitor_id}"
+                    f"/tool-confirmations/{confirmation_id}/cancel",
+                    headers={"Authorization": "Bearer tool-jwt"},
                 )
                 return resp, await resp.json
 
@@ -2485,6 +2522,7 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         from internal.service.tool_confirmation_service import ToolConfirmationService
         import internal.core.agent.adapters.hermes.midturn_redirect as midturn
 
+        account = SimpleNamespace(id=uuid4())
         confirmation_id = uuid4()
         confirmation = SimpleNamespace(
             id=confirmation_id,
@@ -2497,11 +2535,13 @@ class TestAsgiExternalDataSourcesToolConfirmations:
             support, "_get_service", lambda cls: tcs if cls is ToolConfirmationService else None
         )
         monkeypatch.setattr(midturn, "set_redirect", lambda _cid, _msg: True)
+        _mock_user_jwt_auth(monkeypatch, account)
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    f"/tool-confirmations/{confirmation_id}/redirect?visitor_id={uuid4()}",
+                    f"/tool-confirmations/{confirmation_id}/redirect",
+                    headers={"Authorization": "Bearer tool-jwt"},
                     json={"message": "只清理回收站"},
                 )
                 return resp, await resp.json
@@ -2513,6 +2553,9 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
     def test_subtask_snapshot_route(self, monkeypatch):
         from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        account = SimpleNamespace(id=uuid4())
+        _mock_user_jwt_auth(monkeypatch, account)
 
         class _FakeRegistry:
             def __init__(self, snapshot):
@@ -2537,7 +2580,10 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/subtasks/req-1?visitor_id={uuid4()}")
+                resp = await client.get(
+                    "/subtasks/req-1",
+                    headers={"Authorization": "Bearer subtask-jwt"},
+                )
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -2548,6 +2594,9 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
     def test_subtask_snapshot_route_not_found(self, monkeypatch):
         from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        account = SimpleNamespace(id=uuid4())
+        _mock_user_jwt_auth(monkeypatch, account)
 
         class _FakeRegistry:
             def snapshot(self, request_id):
@@ -2561,7 +2610,10 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/subtasks/missing?visitor_id={uuid4()}")
+                resp = await client.get(
+                    "/subtasks/missing",
+                    headers={"Authorization": "Bearer subtask-jwt"},
+                )
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -2571,6 +2623,9 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
     def test_subtask_cancel_route(self, monkeypatch):
         from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        account = SimpleNamespace(id=uuid4())
+        _mock_user_jwt_auth(monkeypatch, account)
 
         class _FakeRegistry:
             def __init__(self):
@@ -2592,7 +2647,10 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(f"/subtasks/req-1/cancel?visitor_id={uuid4()}")
+                resp = await client.post(
+                    "/subtasks/req-1/cancel",
+                    headers={"Authorization": "Bearer subtask-jwt"},
+                )
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -2603,6 +2661,9 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
     def test_subtask_cancel_route_not_found(self, monkeypatch):
         from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        account = SimpleNamespace(id=uuid4())
+        _mock_user_jwt_auth(monkeypatch, account)
 
         class _FakeRegistry:
             def snapshot(self, request_id):
@@ -2616,7 +2677,10 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(f"/subtasks/missing/cancel?visitor_id={uuid4()}")
+                resp = await client.post(
+                    "/subtasks/missing/cancel",
+                    headers={"Authorization": "Bearer subtask-jwt"},
+                )
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -2627,6 +2691,9 @@ class TestAsgiExternalDataSourcesToolConfirmations:
     def test_subtask_redirect_route(self, monkeypatch):
         from internal.core.agent.adapters.hermes import midturn_redirect
         from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        account = SimpleNamespace(id=uuid4())
+        _mock_user_jwt_auth(monkeypatch, account)
 
         class _FakeRegistry:
             def snapshot(self, request_id):
@@ -2642,7 +2709,8 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    f"/subtasks/req-1/redirect?visitor_id={uuid4()}",
+                    "/subtasks/req-1/redirect",
+                    headers={"Authorization": "Bearer subtask-jwt"},
                     json={"message": "只清理回收站"},
                 )
                 return resp, await resp.json
@@ -2654,6 +2722,9 @@ class TestAsgiExternalDataSourcesToolConfirmations:
 
     def test_subtask_redirect_requires_message(self, monkeypatch):
         from internal.service.subtask_registry_service import SubtaskRegistryService
+
+        account = SimpleNamespace(id=uuid4())
+        _mock_user_jwt_auth(monkeypatch, account)
 
         class _FakeRegistry:
             def snapshot(self, request_id):
@@ -2668,7 +2739,8 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    f"/subtasks/req-1/redirect?visitor_id={uuid4()}",
+                    "/subtasks/req-1/redirect",
+                    headers={"Authorization": "Bearer subtask-jwt"},
                     json={},
                 )
                 return resp, await resp.json
@@ -4491,6 +4563,13 @@ class _FakeMyAppService:
 
 class TestAsgiWebAppOpenApi:
     def _setup(self, monkeypatch):
+        """默认鉴权方式：直接替换 _resolve_account（文件既有 mock 登录惯例）。"""
+        account, webapp_service, my_app_service = self._setup_services(monkeypatch)
+        _mock_resolve_account(monkeypatch, account)
+        return account, webapp_service, my_app_service
+
+    def _setup_services(self, monkeypatch):
+        """仅挂载 service 替身，不做任何鉴权 mock；由用例自选登录模拟方式。"""
         from internal.service import OpenAPIService, WebAppService
         from internal.service.app_debug_service import AppDebugService
         from internal.service.my_app_service import MyAppService
@@ -4501,7 +4580,6 @@ class TestAsgiWebAppOpenApi:
         openapi_service = _FakeOpenApiService()
         my_app_service = _FakeMyAppService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
-        _mock_resolve_account(monkeypatch, account)
         services = {
             AppDebugService: debug_service,
             WebAppService: webapp_service,
@@ -4512,11 +4590,15 @@ class TestAsgiWebAppOpenApi:
         return account, webapp_service, my_app_service
 
     def test_get_web_app(self, monkeypatch):
-        self._setup(monkeypatch)
+        account, _, _ = self._setup_services(monkeypatch)
+        _mock_user_jwt_auth(monkeypatch, account)
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get("/web-apps/token-abc")
+                resp = await client.get(
+                    "/web-apps/token-abc",
+                    headers={"Authorization": "Bearer webapp-jwt"},
+                )
                 return resp, await resp.json
 
         resp, payload = asyncio.run(_run())
@@ -4524,13 +4606,26 @@ class TestAsgiWebAppOpenApi:
         assert resp.status_code == 200
         assert payload["data"]["name"] == "WebApp"
 
+    def test_get_web_app_requires_login(self):
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/web-apps/token-abc")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 401
+        assert payload["code"] == "unauthorized"
+
     def test_web_app_chat_sse(self, monkeypatch):
-        _, webapp_service, _ = self._setup(monkeypatch)
+        account, webapp_service, _ = self._setup_services(monkeypatch)
+        _mock_user_jwt_auth(monkeypatch, account)
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    "/web-apps/token-abc/chat?visitor_id=%s" % uuid4(),
+                    "/web-apps/token-abc/chat",
+                    headers={"Authorization": "Bearer webapp-jwt"},
                     json={"query": "你好"},
                 )
                 body = await resp.get_data(as_text=True)
@@ -4544,12 +4639,14 @@ class TestAsgiWebAppOpenApi:
         assert webapp_service.calls[0] == ("chat", "token-abc", "你好")
 
     def test_stop_web_app_chat(self, monkeypatch):
-        _, webapp_service, _ = self._setup(monkeypatch)
+        account, webapp_service, _ = self._setup_services(monkeypatch)
+        _mock_user_jwt_auth(monkeypatch, account)
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
-                    f"/web-apps/token-abc/chat/{uuid4()}/stop"
+                    f"/web-apps/token-abc/chat/{uuid4()}/stop",
+                    headers={"Authorization": "Bearer webapp-jwt"},
                 )
                 return resp, await resp.json
 
@@ -4559,12 +4656,14 @@ class TestAsgiWebAppOpenApi:
         assert webapp_service.calls[0][0] == "stop"
 
     def test_get_web_app_conversations(self, monkeypatch):
-        _, webapp_service, _ = self._setup(monkeypatch)
+        account, webapp_service, _ = self._setup_services(monkeypatch)
+        _mock_user_jwt_auth(monkeypatch, account)
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.get(
-                    "/web-apps/token-abc/conversations?is_pinned=true"
+                    "/web-apps/token-abc/conversations?is_pinned=true",
+                    headers={"Authorization": "Bearer webapp-jwt"},
                 )
                 return resp, await resp.json
 
