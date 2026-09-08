@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => ({
   routeQuery: {} as Record<string, string>,
 }))
 
+vi.mock('@/utils/login-redirect', () => ({
+  resolveLoginRedirect: (redirectPath: string | null | undefined, fallback: string) =>
+    (redirectPath && redirectPath.startsWith('/') ? redirectPath : fallback) as string,
+}))
+
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: mocks.routeQuery }),
   useRouter: () => ({

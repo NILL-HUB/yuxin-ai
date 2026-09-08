@@ -5,10 +5,15 @@ import WorkflowsListView from '@/views/store/workflows/ListView.vue'
 
 const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
+  redirectToLogin: vi.fn(),
   getPublicApps: vi.fn(),
   getAppTags: vi.fn(),
   forkPublicApp: vi.fn(),
   getPublicWorkflows: vi.fn(),
+}))
+
+vi.mock('@/utils/login-redirect', () => ({
+  redirectToLogin: mocks.redirectToLogin,
 }))
 
 vi.mock('vue-router', async (importOriginal) => {
@@ -192,8 +197,7 @@ describe('store list navigation', () => {
     expect(workflowWrapper.text()).not.toContain('已复制')
   })
 
-  it('opens the global login modal instead of navigating to the legacy auth page', async () => {
-    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+  it('redirects to the unified login page when clicking fork while logged out', async () => {
     const wrapper = shallowMount(PublicAppsListView, {
       global: {
         stubs: globalStubs,
@@ -206,16 +210,7 @@ describe('store list navigation', () => {
 
     await loginButton!.trigger('click')
 
-    const authRequiredEvents = dispatchSpy.mock.calls
-      .map((call) => call[0] as Event)
-      .filter((event) => event.type === 'llmops:auth-required') as CustomEvent<{
-      redirect: string
-    }>[]
-
-    expect(authRequiredEvents.length).toBeGreaterThan(0)
-    expect(authRequiredEvents.at(-1)?.detail).toEqual({ redirect: '/store/public-apps' })
-    expect(mocks.routerPush).not.toHaveBeenCalledWith({ name: 'auth-login' })
-
-    dispatchSpy.mockRestore()
+    expect(mocks.redirectToLogin).toHaveBeenCalled()
+    expect(mocks.routerPush).not.toHaveBeenCalledWith({ name: 'store-public-apps-preview' })
   })
 })

@@ -50,9 +50,8 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import 'github-markdown-css'
 import FilingIcon from '@/assets/images/FilingIcon.png'
-import LoginModal from '@/views/auth/components/LoginModal.vue'
 import { useGetCurrentUser } from '@/hooks/use-account'
-import { resolveHomeLoginNavigation } from '@/views/pages/home-login-flow'
+import { redirectToLogin } from '@/utils/login-redirect'
 import {
   HOME_NEW_CONVERSATION_QUERY_KEY,
   hasHomeNewConversationQuery,
@@ -159,13 +158,10 @@ const route = useRoute()
 const router = useRouter()
 const { t, locale } = useI18n()
 const isHomeRoute = computed(() => route.path === '/home')
-const hasLoginQueryFlag = computed(() => String(route.query.login || '') === '1')
 const introductionAbortController = ref<AbortController | null>(null)
 const accountStore = useAccountStore()
 const credentialStore = useCredentialStore()
 const { current_user, loadCurrentUser } = useGetCurrentUser()
-const loginModalVisible = ref(false)
-const pendingQueryAfterLogin = ref('')
 const selectedConversationId = ref(String(route.query.conversation_id || '').trim())
 const isHandlingNewConversationRequest = ref(false)
 const hasCompletedInitialHomeLoad = ref(false)
@@ -463,7 +459,7 @@ const tryLoadHomeIntent = async () => {
 }
 
 const handleShowLoginModal = () => {
-  loginModalVisible.value = true
+  redirectToLogin()
 }
 
 const ensureLogin = () => {
@@ -504,53 +500,6 @@ const initializeHomeAfterLogin = async () => {
     await loadAssistantIntroduction()
   }
 }
-
-const handleLoginSuccess = async () => {
-  const redirectTarget = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-  const navigationDecision = resolveHomeLoginNavigation({
-    redirectTarget,
-    hasLoginQueryFlag: hasLoginQueryFlag.value,
-    hasRouteRedirectParam: Boolean(route.query.redirect),
-    hasRouteTimestampParam: Boolean(route.query.t),
-    selectedConversationId: selectedConversationId.value,
-  })
-
-  if (navigationDecision.type === 'redirect') {
-    await router.replace(navigationDecision.target)
-    return
-  }
-
-  if (navigationDecision.type === 'replace-home') {
-    await router.replace({
-      path: '/home',
-      query: navigationDecision.query,
-    })
-  }
-
-  await initializeHomeAfterLogin()
-  await nextTick(() => {
-    scrollChatToBottom()
-    adjustQueryTextareaHeight()
-  })
-
-  const pendingQuery = pendingQueryAfterLogin.value.trim()
-  pendingQueryAfterLogin.value = ''
-  if (!pendingQuery) return
-
-  query.value = pendingQuery
-  await nextTick(() => adjustQueryTextareaHeight())
-  await handleSubmit()
-}
-
-watch(
-  () => [isAuthenticated.value, hasLoginQueryFlag.value, route.fullPath],
-  ([loggedIn, hasLoginFlag]) => {
-    if (!loggedIn && hasLoginFlag) {
-      loginModalVisible.value = true
-    }
-  },
-  { immediate: true },
-)
 
 watch(isAuthenticated, (loggedIn) => {
   if (loggedIn) return
@@ -786,7 +735,7 @@ const startNewAssistantConversation = async (
 const handleHomeNewConversationRequest = async () => {
   if (!isHomeRoute.value || !hasHomeNewConversationQuery(route.query)) return false
   if (!isAuthenticated.value) {
-    handleShowLoginModal()
+    redirectToLogin()
     return true
   }
 
@@ -1115,7 +1064,6 @@ const handleSubmit = async () => {
   }
 
   if (!isAuthenticated.value) {
-    pendingQueryAfterLogin.value = query.value
     handleShowLoginModal()
     return
   }
@@ -1351,7 +1299,6 @@ const handleThumbsDown = () => {
 const handleSubmitQuestion = async (question: string) => {
   if (!isAuthenticated.value) {
     query.value = question
-    pendingQueryAfterLogin.value = question
     handleShowLoginModal()
     return
   }
@@ -1980,7 +1927,6 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-    <login-modal v-model:visible="loginModalVisible" @success="handleLoginSuccess" />
   </div>
 </template>
 

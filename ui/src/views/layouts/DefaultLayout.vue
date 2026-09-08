@@ -11,9 +11,8 @@ import { getMembershipSummary } from '@/services/billing'
 import { type MembershipSummary } from '@/models/billing'
 import { useCredentialStore } from '@/stores/credential'
 import { useAccountStore } from '@/stores/account'
-import LoginModal from '@/views/auth/components/LoginModal.vue'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
+import { redirectToLogin } from '@/utils/login-redirect'
 
 import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
@@ -30,8 +29,6 @@ const settingModalVisible = ref(false)
 const settingModalInitialTab = ref<'profile' | 'security' | 'bindings' | 'devices' | 'language'>(
   'profile',
 )
-const loginModalVisible = ref(false)
-const loginRedirectPath = ref('')
 const sidebarCollapsed = ref(false)
 const popoverVisible = ref(false)
 type RecentConversationsPopoverData = {
@@ -95,25 +92,8 @@ const applyViewportMode = () => {
   }
 }
 
-const openLoginModal = (redirect = '') => {
-  loginRedirectPath.value = redirect
-  loginModalVisible.value = true
-}
-
 const goHomeAndOpenLogin = () => {
-  openLoginModal(router.currentRoute.value.fullPath)
-}
-
-const handleLoginSuccess = async () => {
-  await loadCurrentUser()
-  accountStore.update(current_user.value)
-  loadMembershipBadge()
-
-  const redirectPath = loginRedirectPath.value
-  loginRedirectPath.value = ''
-  if (redirectPath && redirectPath !== router.currentRoute.value.fullPath) {
-    await router.replace(redirectPath)
-  }
+  redirectToLogin()
 }
 
 // 2.退出登录按钮
@@ -125,8 +105,8 @@ const handleLogout = async () => {
   credentialStore.clear()
   accountStore.clear()
 
-  // 2.3 回到首页
-  await router.replace({ path: '/home' })
+  // 2.3 跳转统一登录页
+  await router.replace({ path: '/auth/login' })
 }
 
 // 3.登录后拉取当前账号信息
@@ -144,13 +124,6 @@ watch(
   },
   { immediate: true },
 )
-
-const handleAuthRequired = (event: Event) => {
-  if (isLoggedIn.value) return
-  const customEvent = event as CustomEvent<{ redirect?: string }>
-  const redirectPath = customEvent.detail?.redirect || router.currentRoute.value.fullPath
-  openLoginModal(redirectPath)
-}
 
 const clamp = (value: number, min: number, max: number) => {
   if (max < min) return min
@@ -260,7 +233,6 @@ const openSettingsFromRoute = () => {
 onMounted(() => {
   if (typeof window === 'undefined') return
   applyViewportMode()
-  window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired as EventListener)
   window.addEventListener('recent-conversations:show', handleRecentConversationsShow)
   window.addEventListener('recent-conversations:hide', handleRecentConversationsHide)
   window.addEventListener('resize', handleViewportResize)
@@ -269,7 +241,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (typeof window === 'undefined') return
-  window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired as EventListener)
   window.removeEventListener('recent-conversations:show', handleRecentConversationsShow)
   window.removeEventListener('recent-conversations:hide', handleRecentConversationsHide)
   window.removeEventListener('resize', handleViewportResize)
@@ -491,7 +462,6 @@ watch(settingModalVisible, async (visible) => {
         </keep-alive>
       </router-view>
     </a-layout-content>
-    <login-modal v-model:visible="loginModalVisible" @success="handleLoginSuccess" />
     <!-- 设置模态窗 -->
     <setting-modal v-model:visible="settingModalVisible" :initial-tab="settingModalInitialTab" />
     <!-- 最近对话全局 Popover -->

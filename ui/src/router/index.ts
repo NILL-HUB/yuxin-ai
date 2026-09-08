@@ -475,17 +475,17 @@ const router = createRouter({
   ],
 })
 
+// 仅保留真正面向游客公开的路由（登录/回调/错误页 + 对外分享页）。
+// 其余用户端页面（含 /home 新建会话、会话搜索、WebApp）一律要求登录，
+// 未登录访问统一重定向到 /auth/login?redirect=<原路径>。
 const PUBLIC_ROUTE_NAMES = new Set([
-  'pages-home',
-  'web-apps-index',
-  'store-public-apps-list',
-  'store-public-apps-preview',
   'auth-login',
   'auth-authorize',
   'auth-forgot-password',
-  'conversation-search',
   'errors-not-found',
   'errors-forbidden',
+  'store-public-apps-list',
+  'store-public-apps-preview',
   'admin-login',
 ])
 
@@ -506,7 +506,8 @@ export const getAuthGuardRedirect = ({
     return null
   }
 
-  return { path: '/home' as const }
+  // 未登录访问需登录页面 → 跳统一登录页，登录成功后回跳原路径
+  return { path: '/auth/login' as const, query: { redirect: path } }
 }
 
 export const shouldEvaluateUserAuth = (path: string): boolean => {

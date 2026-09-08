@@ -8,8 +8,8 @@ import {
 } from '@/hooks/use-api-key'
 import { Message } from '@arco-design/web-vue'
 import { useCredentialStore } from '@/stores/credential'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
+import { redirectToLogin } from '@/utils/login-redirect'
 import { getStoredAdminCredential, isAdminCredentialLoggedIn } from '@/utils/admin-auth'
 import { getErrorMessage } from '@/utils/error'
 import CreateOrUpdateApiKeyModal from './components/CreateOrUpdateApiKeyModal.vue'
@@ -45,13 +45,8 @@ const isLoggedIn = computed(() =>
 )
 
 const openLoginModal = () => {
-  if (typeof window === 'undefined') return
   if (isAdminContext.value) return
-  window.dispatchEvent(
-    new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { redirect: route.fullPath },
-    }),
-  )
+  redirectToLogin()
 }
 
 const loadApiKeysSafely = async (init: boolean = false) => {

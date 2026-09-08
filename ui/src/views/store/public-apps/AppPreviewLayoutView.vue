@@ -6,7 +6,7 @@ import { Message } from '@arco-design/web-vue'
 import { forkPublicApp, getPublicAppDetail, type PublicApp } from '@/services/public-app'
 import { getErrorMessage } from '@/utils/error'
 import { isCredentialLoggedIn } from '@/utils/auth'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
+import { redirectToLogin } from '@/utils/login-redirect'
 import { useCredentialStore } from '@/stores/credential'
 import { formatTimestampShort } from '@/utils/time-formatter'
 
@@ -18,11 +18,7 @@ const forking = ref(false)
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
 const openLoginModal = () => {
   if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { redirect: route.fullPath },
-    }),
-  )
+  redirectToLogin()
 }
 const normalizeIconUrl = (icon: string = '') => {
   if (!icon) return ''

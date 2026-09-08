@@ -24,6 +24,7 @@ import {
 } from '@/services/auth'
 import { useCredentialStore } from '@/stores/credential'
 import { getErrorMessage, getErrorReasonCode, getErrorResponseData } from '@/utils/error'
+import { resolveLoginRedirect } from '@/utils/login-redirect'
 import { type ValidatedError, Message } from '@arco-design/web-vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -704,7 +705,8 @@ const finalizeLoginSuccess = async (credential: LoginAuthorizationData) => {
 
   if (props.redirectAfterLogin) {
     Message.success(t('login.loginSuccessRedirecting'))
-    await router.replace({ path: '/home' })
+    const redirectQuery = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    await router.replace(resolveLoginRedirect(redirectQuery, '/home'))
     return
   }
 

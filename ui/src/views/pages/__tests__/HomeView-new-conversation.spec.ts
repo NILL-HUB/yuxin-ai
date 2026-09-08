@@ -234,7 +234,6 @@ describe('HomeView sidebar new conversation request', () => {
           ChatComposer: componentStub,
           HumanMessage: componentStub,
           ChatConversationSkeleton: componentStub,
-          LoginModal: componentStub,
           'a-button': componentStub,
           'icon-down': componentStub,
           'icon-poweroff': componentStub,

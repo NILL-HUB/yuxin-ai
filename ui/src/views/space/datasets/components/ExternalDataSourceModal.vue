@@ -11,9 +11,8 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useCredentialStore } from '@/stores/credential'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
-import { useRoute } from 'vue-router'
+import { redirectToLogin } from '@/utils/login-redirect'
 
 const props = defineProps<{
   visible: boolean
@@ -22,7 +21,6 @@ const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
 }>()
 
-const route = useRoute()
 const credentialStore = useCredentialStore()
 const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
@@ -200,12 +198,7 @@ const confirmUnbind = async () => {
 }
 
 const openLoginModal = () => {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { redirect: route.fullPath },
-    }),
-  )
+  redirectToLogin()
 }
 
 const closeModal = () => {

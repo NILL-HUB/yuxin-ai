@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import {
   getPublicApps,
@@ -12,13 +12,12 @@ import {
 } from '@/services/public-app'
 import { getErrorMessage } from '@/utils/error'
 import { isCredentialLoggedIn } from '@/utils/auth'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
+import { redirectToLogin } from '@/utils/login-redirect'
 import { useCredentialStore } from '@/stores/credential'
 import { formatTimestampShort } from '@/utils/time-formatter'
 import ResourceCardDescription from '@/components/ResourceCardDescription.vue'
 import { getPublicAppTagDisplayName } from '@/utils/public-app-tag-display'
 
-const route = useRoute()
 const router = useRouter()
 const credentialStore = useCredentialStore()
 const { t, locale } = useI18n()
@@ -35,12 +34,7 @@ const forkingAppId = ref('')
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
 
 const openLoginModal = () => {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { redirect: route.fullPath },
-    }),
-  )
+  redirectToLogin()
 }
 
 const handleFork = async (app: PublicApp, event: Event) => {

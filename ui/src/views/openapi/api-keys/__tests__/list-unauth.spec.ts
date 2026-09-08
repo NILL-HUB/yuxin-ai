@@ -4,9 +4,14 @@ import ApiKeysListView from '@/views/openapi/api-keys/ListView.vue'
 
 const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
+  redirectToLogin: vi.fn(),
   loadApiKeys: vi.fn(),
   handleUpdateApiKeyIsActive: vi.fn(),
   handleDeleteApiKey: vi.fn(),
+}))
+
+vi.mock('@/utils/login-redirect', () => ({
+  redirectToLogin: mocks.redirectToLogin,
 }))
 
 vi.mock('vue-router', async (importOriginal) => {
@@ -95,9 +100,7 @@ describe('openapi api-keys unauthenticated state', () => {
     expect(mocks.loadApiKeys).not.toHaveBeenCalled()
   })
 
-  it('dispatches auth-required event when clicking login button', async () => {
-    const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
-
+  it('redirects to the unified login page when clicking the login button', async () => {
     const wrapper = shallowMount(ApiKeysListView, {
       props: {
         create_api_key: false,
@@ -123,15 +126,6 @@ describe('openapi api-keys unauthenticated state', () => {
     await flushPromises()
     await wrapper.find('button').trigger('click')
 
-    const authRequiredEvents = dispatchSpy.mock.calls
-      .map((call) => call[0] as Event)
-      .filter((event) => event.type === 'llmops:auth-required') as CustomEvent<{
-      redirect: string
-    }>[]
-
-    expect(authRequiredEvents.length).toBeGreaterThan(0)
-    expect(authRequiredEvents.at(-1)?.detail).toEqual({ redirect: '/openapi/api-keys' })
-
-    dispatchSpy.mockRestore()
+    expect(mocks.redirectToLogin).toHaveBeenCalled()
   })
 })

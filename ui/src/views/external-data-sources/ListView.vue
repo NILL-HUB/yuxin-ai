@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
 import { useCredentialStore } from '@/stores/credential'
-import { AUTH_REQUIRED_EVENT } from '@/utils/request'
 import { isCredentialLoggedIn } from '@/utils/auth'
+import { redirectToLogin } from '@/utils/login-redirect'
 import { getErrorMessage } from '@/utils/error'
 import { useI18n } from 'vue-i18n'
 import moment from 'moment'
@@ -18,7 +17,6 @@ import {
 import type { ExternalDataSource } from '@/services/external-data-source'
 import UserRecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 
-const route = useRoute()
 const credentialStore = useCredentialStore()
 const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
@@ -116,12 +114,7 @@ const handleCreate = async () => {
 }
 
 const openLoginModal = () => {
-  if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { redirect: route.fullPath },
-    }),
-  )
+  redirectToLogin()
 }
 
 const loadDataSources = async () => {
