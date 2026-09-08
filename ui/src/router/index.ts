@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router
 import auth from '@/utils/auth'
 import { getStoredAdminCredential, isAdminCredentialLoggedIn } from '@/utils/admin-auth'
 import { useAdminStore } from '@/stores/admin'
+import { restoreCredentialFromDesktop } from '@/utils/desktop-credential-sync'
 import DefaultLayout from '@/views/layouts/DefaultLayout.vue'
 import BlankLayout from '@/views/layouts/BlankLayout.vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
@@ -589,6 +590,10 @@ export const getAdminAuthGuardRedirect = ({
 router.beforeEach(async (to) => {
   const adminStore = useAdminStore()
   const path = to.fullPath
+
+  // 桌面端启动回填：localStorage 无凭证但主进程 safeStorage 存有 token 时，
+  // 在首次路由守卫内恢复登录态（仅第一次导航 await，后续导航该 Promise 已 resolve，近乎零开销）。
+  await restoreCredentialFromDesktop()
 
   // 已登录的管理员：每次导航前刷新资料/权限快照，保证新增权限
   // （如 storage:read）与角色调整即时生效，无需重新登录。
