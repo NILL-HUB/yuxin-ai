@@ -24,17 +24,7 @@ def _get_service(cls):
 
 
 async def _resolve_confirmation_actor():
-    """解析工具确认主体：匿名 WebApp 访客优先用 visitor_id，否则走账号。"""
-    raw_visitor_id = request.args.get("visitor_id") or ""
-    if raw_visitor_id:
-        try:
-            return SimpleNamespace(id=UUID(raw_visitor_id), is_authenticated=False), None
-        except (ValueError, TypeError):
-            return None, _json_resp(
-                code="invalid_param",
-                message="visitor_id 参数无效",
-                status=400,
-            )
+    """解析工具确认主体：统一要求登录（WebApp 游客通道已下线）。"""
     return await _resolve_account()
 
 

@@ -15,7 +15,6 @@ from app.http.support import (
     _ok,
     _ok_msg,
     _resolve_account,
-    _resolve_webapp_actor,
     _sse_response,
     _to_thread,
 )
@@ -575,35 +574,23 @@ def register_routes(quart_app):
 
     @quart_app.get("/web-apps/<string:token>")
     async def async_get_web_app(token) -> Response:
-        """async 根据 token 获取 WebApp 基础信息。"""
+        """async 根据 token 获取 WebApp 基础信息（需登录）。"""
         from internal.service import WebAppService
 
-        account = None
-        raw_account_id = request.args.get("account_id") or ""
-        if raw_account_id:
-            account, err = await _resolve_account()
-            if err is not None:
-                return err
-        actor, _ = _resolve_webapp_actor()
-        if account is not None:
-            actor = account
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
         resp = await _to_thread(_get_service(WebAppService).get_web_app_info, token)
         return _ok(resp)
 
     @quart_app.post("/web-apps/<string:token>/chat")
     async def async_web_app_chat(token) -> Response:
-        """async WebApp 对话（SSE 流式）。"""
+        """async WebApp 对话（SSE 流式，需登录）。"""
         from internal.service import WebAppService
 
-        account = None
-        raw_account_id = request.args.get("account_id") or ""
-        if raw_account_id:
-            account, err = await _resolve_account()
-            if err is not None:
-                return err
-        actor, _ = _resolve_webapp_actor()
-        if account is not None:
-            actor = account
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
 
         payload = await request.get_json(force=True, silent=True) or {}
         query = str(payload.get("query") or "").strip()
@@ -621,7 +608,7 @@ def register_routes(quart_app):
             confirm_deep_thinking=_field(bool(payload.get("confirm_deep_thinking", False))),
         )
         response = await _to_thread(
-            _get_service(WebAppService).web_app_chat, token, req, actor
+            _get_service(WebAppService).web_app_chat, token, req, account
         )
         if _is_sync_iterator(response):
             return _sse_response(response)
@@ -629,22 +616,26 @@ def register_routes(quart_app):
 
     @quart_app.post("/web-apps/<string:token>/chat/<uuid:task_id>/stop")
     async def async_stop_web_app_chat(token, task_id) -> Response:
-        """async 停止 WebApp 对话。"""
+        """async 停止 WebApp 对话（需登录）。"""
         from internal.service import WebAppService
 
-        actor, _ = _resolve_webapp_actor()
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
         await _to_thread(
-            _get_service(WebAppService).stop_web_app_chat, token, task_id, actor
+            _get_service(WebAppService).stop_web_app_chat, token, task_id, account
         )
         return _ok_msg("停止WebApp会话成功")
 
     @quart_app.get("/web-apps/<string:token>/conversations")
     async def async_get_web_app_conversations(token) -> Response:
-        """async 获取 WebApp 会话列表。"""
+        """async 获取 WebApp 会话列表（需登录）。"""
         from internal.schema.web_app_schema import GetConversationsResp
         from internal.service import WebAppService
 
-        actor, _ = _resolve_webapp_actor()
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
 
         is_pinned_raw = request.args.get("is_pinned")
         is_pinned = is_pinned_raw in ("true", "1") if is_pinned_raw else None
@@ -652,7 +643,7 @@ def register_routes(quart_app):
             _get_service(WebAppService).get_conversations,
             token,
             is_pinned,
-            actor,
+            account,
             _int_arg("current_page", 1),
             _int_arg("page_size", 20),
         )

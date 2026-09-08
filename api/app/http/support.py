@@ -332,8 +332,11 @@ async def _resolve_account(account_id_override: str | None = None):
     #      修改/创建/删除（C-1 认证绕过修复）。
     #    - 读操作同样执行 _is_user_api_blocked 封锁检查：用户端已收敛的接口
     #      （/apps、/workflows、/api-tools 等）即使带 account_id 也不放行。
-    #    - 真正的公开端点（/public/*、/web-apps/<token> 等）不依赖本回退，
-    #      它们显式使用 account=None 或 _resolve_webapp_actor，行为不受影响。
+    #    - 真正的公开端点（/public/* 等）不依赖本回退，显式使用 account=None。
+    #    - WebApp（/web-apps/*）已改为强制登录：无 token 一律 401，不接受
+    #      account_id 免登回退（防匿名者凭 account_id 拼装访问）。
+    if request.path.startswith("/web-apps/"):
+        return None, _err("unauthorized", "未登录或登录已过期", 401)
     if not requested_id:
         return None, _err("unauthorized", "未登录或登录已过期", 401)
     if request.method != "GET":
@@ -799,14 +802,5 @@ def _to_thread(fn, *args, **kwargs):
 
 
 def _resolve_webapp_actor():
-    """解析 WebApp 会话主体：已登录用户优先，否则用 visitor_id（简化）。"""
-    raw_account_id = request.args.get("account_id") or ""
-    if raw_account_id:
-        return None, None
-    raw_visitor_id = request.args.get("visitor_id") or ""
-    if raw_visitor_id:
-        try:
-            return SimpleNamespace(id=UUID(raw_visitor_id), is_authenticated=False), None
-        except (ValueError, TypeError):
-            pass
-    return SimpleNamespace(id=uuid4(), is_authenticated=False), None
+    """（已废弃）WebApp 已改为强制登录，统一走 _resolve_account；此函数保留为兼容转发占位。"""
+    return None, None
