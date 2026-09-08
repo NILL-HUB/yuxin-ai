@@ -51,7 +51,6 @@ vi.mock('vue-i18n', () => ({
         'memory.graph.pageTitle': '记忆图谱',
         'memory.graph.pageDescription': '以图谱方式查看和管理你的记忆',
         'memory.graph.graphTab': '记忆图谱',
-        'memory.graph.consolidateBtn': '执行巩固',
         'memory.graph.selectClusterHint': '点击上方分类查看记忆子图',
         'memory.graph.totalNodes': `共 ${params?.count ?? 0} 条记忆`,
         'memory.graph.lastUpdated': '最近更新',
@@ -119,6 +118,7 @@ const renderView = async (graphData: unknown = null) => {
         MemoryClusterView: true,
         MemoryGraphView: true,
         MemoryNodeDetail: true,
+        RecycleBinDeleteModal: true,
       },
     },
   })
@@ -139,7 +139,7 @@ describe('MemoryView', () => {
 
   it('renders the consolidate button', async () => {
     const wrapper = await renderView()
-    expect(wrapper.text()).toContain('执行巩固')
+    expect(wrapper.text()).toContain('巩固记忆')
   })
 
   it('triggers consolidation on button click', async () => {
