@@ -87,11 +87,6 @@ const router = createRouter({
           meta: { requiresAuth: true },
         },
         {
-          path: 'external-data-sources',
-          name: 'user-external-data-sources-list',
-          component: () => import('@/views/external-data-sources/ListView.vue'),
-        },
-        {
           path: 'my-knowledge',
           name: 'my-knowledge',
           component: () => import('@/views/space/datasets/ListView.vue'),
