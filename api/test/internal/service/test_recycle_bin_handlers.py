@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -293,3 +294,56 @@ def test_restore_memory_rebuilds_user_memory_row_when_missing(monkeypatch):
 
 def test_restore_memory_returns_false_without_id():
     assert handlers.restore_memory({"main": {}}) is False
+
+
+def test_delete_documents_by_source_removes_matching_docs_and_segments(monkeypatch):
+    """按 source_type + source_id 清理，且必须经 injector 取向量服务。"""
+    from internal.service import recycle_bin_handlers as handlers
+
+    doc = SimpleNamespace(id=uuid4(), upload_file_id=None)
+    segment = SimpleNamespace(id=uuid4())
+    removed = {"vector": [], "deleted_models": []}
+
+    class _Query:
+        def __init__(self, result):
+            self._result = result
+
+        def filter(self, *_a, **_k):
+            return self
+
+        def all(self):
+            return self._result if isinstance(self._result, list) else []
+
+        def one_or_none(self):
+            return self._result
+
+        def delete(self, **_k):
+            removed["deleted_models"].append(self._result)
+            return 1
+
+    class _Session:
+        def query(self, model, *_a, **_k):
+            name = getattr(model, "__name__", str(model))
+            if name == "KnowledgeDocument":
+                return _Query([doc])
+            if name == "KnowledgeSegment":
+                return _Query([segment])
+            return _Query(None)
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(handlers, "db", SimpleNamespace(session=_Session()))
+
+    class _Vector:
+        def remove_segment(self, seg):
+            removed["vector"].append(seg.id)
+
+    monkeypatch.setattr(
+        handlers, "_get_knowledge_vector_service", lambda: _Vector(), raising=False
+    )
+
+    count = handlers._delete_documents_by_source("lark", "ds-1")
+
+    assert count == 1
+    assert removed["vector"] == [segment.id]

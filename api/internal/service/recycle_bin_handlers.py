@@ -719,7 +719,68 @@ def snapshot_external_data_source(resource_id) -> dict[str, Any] | None:
     return {"main": _row_to_dict(data_source)}
 
 
+def _get_knowledge_vector_service():
+    """经 DI 容器获取向量服务（避免无参构造失败被静默吞掉）。"""
+    from app.http.module import injector
+    from internal.service.knowledge_vector_service import KnowledgeVectorService
+
+    return injector.get(KnowledgeVectorService)
+
+
+def _delete_documents_by_source(source_type: str, source_id: str) -> int:
+    """按 source_type + source_id 清理同步产物：向量 + 分段 + 文档 + 上传文件。
+
+    复用已有索引 knowledge_document_source_idx；仅清理该数据源自身产物。
+    """
+    documents = (
+        db.session.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.source_type == source_type,
+            KnowledgeDocument.source_id == str(source_id),
+        )
+        .all()
+    )
+    vector_service = None
+    try:
+        vector_service = _get_knowledge_vector_service()
+    except Exception as exc:
+        logger.warning("获取向量服务失败，跳过向量清理: %s", exc)
+
+    for doc in documents:
+        segments = (
+            db.session.query(KnowledgeSegment)
+            .filter(KnowledgeSegment.knowledge_document_id == doc.id)
+            .all()
+        )
+        if vector_service is not None:
+            for segment in segments:
+                try:
+                    vector_service.remove_segment(segment)
+                except Exception as exc:
+                    logger.warning("清理外部数据源向量失败 segment=%s: %s", segment.id, exc)
+        db.session.query(KnowledgeSegment).filter(
+            KnowledgeSegment.knowledge_document_id == doc.id,
+        ).delete(synchronize_session=False)
+        upload_file_id = getattr(doc, "upload_file_id", None)
+        db.session.query(KnowledgeDocument).filter(
+            KnowledgeDocument.id == doc.id,
+        ).delete(synchronize_session=False)
+        if upload_file_id is not None:
+            db.session.query(UploadFile).filter(
+                UploadFile.id == upload_file_id,
+            ).delete(synchronize_session=False)
+    return len(documents)
+
+
 def physical_delete_external_data_source(resource_id) -> None:
+    data_source = (
+        db.session.query(ExternalDataSource)
+        .filter(ExternalDataSource.id == resource_id)
+        .one_or_none()
+    )
+    if data_source is not None:
+        # 先清同步产物（文档/分段/向量/上传文件），再删主记录，避免孤儿数据
+        _delete_documents_by_source(data_source.source_type, str(data_source.id))
     db.session.query(ExternalDataSource).filter(
         ExternalDataSource.id == resource_id,
     ).delete(synchronize_session=False)
