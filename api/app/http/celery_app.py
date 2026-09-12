@@ -78,6 +78,7 @@ TASK_MODULES = [
     "internal.task.knowledge_indexing_tasks",
     "internal.task.recycle_bin_tasks",
     "internal.task.auto_renewal_tasks",
+    "internal.task.external_data_source_tasks",
 ]
 
 
@@ -93,6 +94,7 @@ import internal.task.consolidation_tasks as _task_consolidation  # noqa: F401,E4
 import internal.task.knowledge_indexing_tasks as _task_knowledge  # noqa: F401,E402
 import internal.task.recycle_bin_tasks as _task_recycle  # noqa: F401,E402
 import internal.task.auto_renewal_tasks as _task_auto_renewal  # noqa: F401,E402
+import internal.task.external_data_source_tasks as _task_external_ds  # noqa: F401,E402
 
 # 补充记忆系统定时任务（每日巩固/权重扫描/技能治理/统计合并），与 Config 内置 4 项合并
 from celery.schedules import crontab  # noqa: E402
@@ -120,6 +122,11 @@ beat_schedule.update(
             "schedule": crontab(minute="*/15"),  # 每 15 分钟清理僵尸 running 记录
             "args": [],
         },
+        "external-data-source-auto-sync": {
+            "task": "internal.task.external_data_source_tasks.run_external_data_source_auto_sync",
+            "schedule": crontab(hour="*/6", minute=15),  # 每 6 小时 15 分同步一次
+            "args": [],
+        },
     }
 )
 celery_app.conf.beat_schedule = beat_schedule
@@ -129,6 +136,7 @@ task_routes = dict(getattr(celery_app.conf, "task_routes", {}) or {})
 task_routes.update(
     {
         "internal.task.recycle_bin_tasks.*": {"queue": "consolidation"},
+        "internal.task.external_data_source_tasks.*": {"queue": "consolidation"},
     }
 )
 celery_app.conf.task_routes = task_routes
