@@ -129,8 +129,6 @@ const auditActionLabel = (action: string) => {
     delete: t('admin.auditLogs.actionDelete'),
     reset_password: t('admin.auditLogs.actionResetPassword'),
     revoke_sessions: t('admin.auditLogs.actionRevokeSessions'),
-    assign: t('admin.auditLogs.actionAssign'),
-    revoke: t('admin.auditLogs.actionRevoke'),
   }
   return labels[action] || action
 }
