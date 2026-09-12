@@ -34,6 +34,15 @@ def register_routes(quart_app):
         return
     _registered = True
 
+    def _masked_data_source(row) -> dict:
+        """序列化单条数据源并对 config 脱敏，避免密钥回传前端。"""
+        from internal.schema.external_data_source_schema import ExternalDataSourceResp
+        from internal.service.external_data_source_credentials import mask_config
+
+        payload = ExternalDataSourceResp().dump(row)
+        payload["config"] = mask_config(getattr(row, "config", None))
+        return payload
+
     @quart_app.get("/external-data-sources")
     async def async_external_data_source_list() -> Response:
         """async 获取外部数据源列表。"""
@@ -41,7 +50,6 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
-        from internal.schema.external_data_source_schema import ExternalDataSourceListResp
         from internal.service.external_data_source_service import ExternalDataSourceService
 
         data_sources = await _to_thread(
@@ -49,11 +57,8 @@ def register_routes(quart_app):
             account=account,
             status=request.args.get("status") or "",
         )
-        return _ok(
-            ExternalDataSourceListResp().dump(
-                {"items": data_sources, "total": len(data_sources)}
-            )
-        )
+        items = [_masked_data_source(row) for row in data_sources]
+        return _ok({"items": items, "total": len(items)})
 
     @quart_app.post("/external-data-sources")
     async def async_external_data_source_create() -> Response:
@@ -62,7 +67,6 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
-        from internal.schema.external_data_source_schema import ExternalDataSourceResp
         from internal.service.external_data_source_service import ExternalDataSourceService
         from internal.service.knowledge_base_service import KnowledgeBaseService
 
@@ -97,7 +101,7 @@ def register_routes(quart_app):
             source_name=source_name,
             config=payload.get("config") or {},
         )
-        return _ok(ExternalDataSourceResp().dump(data_source))
+        return _ok(_masked_data_source(data_source))
 
     @quart_app.get("/external-data-sources/<uuid:data_source_id>")
     async def async_external_data_source_get(data_source_id) -> Response:
@@ -106,7 +110,6 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
-        from internal.schema.external_data_source_schema import ExternalDataSourceResp
         from internal.service.external_data_source_service import ExternalDataSourceService
 
         data_source = await _to_thread(
@@ -114,7 +117,7 @@ def register_routes(quart_app):
             data_source_id,
             account,
         )
-        return _ok(ExternalDataSourceResp().dump(data_source))
+        return _ok(_masked_data_source(data_source))
 
     @quart_app.delete("/external-data-sources/<uuid:data_source_id>")
     async def async_external_data_source_delete(data_source_id) -> Response:
@@ -142,7 +145,6 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
-        from internal.schema.external_data_source_schema import ExternalDataSourceResp
         from internal.service.external_data_source_service import ExternalDataSourceService
 
         payload = await request.get_json(force=True, silent=True) or {}
@@ -152,7 +154,7 @@ def register_routes(quart_app):
             account,
             payload.get("auth_config") or {},
         )
-        return _ok(ExternalDataSourceResp().dump(data_source))
+        return _ok(_masked_data_source(data_source))
 
     @quart_app.post("/external-data-sources/<uuid:data_source_id>/sync")
     async def async_external_data_source_sync(data_source_id) -> Response:
