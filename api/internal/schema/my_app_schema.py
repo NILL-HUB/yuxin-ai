@@ -10,6 +10,7 @@ class MyAppResp(Schema):
     assigned_at = fields.Integer(allow_none=True)
     source = fields.String(dump_default="assigned")
     status = fields.String(dump_default="")
+    can_edit = fields.Boolean(dump_default=False)
 
 
 class MyAppListResp(Schema):

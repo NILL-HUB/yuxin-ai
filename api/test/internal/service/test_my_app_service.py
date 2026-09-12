@@ -141,3 +141,25 @@ class TestMyAppService:
 
         with pytest.raises(FailException):
             service.get_assigned_app(account_id, app.id)
+
+
+def test_my_app_resp_schema_should_expose_can_edit():
+    """MyAppResp 必须声明 can_edit，否则 marshmallow dump 会丢弃 service 已返回的该字段。"""
+    from internal.schema.my_app_schema import MyAppResp
+
+    dumped = MyAppResp().dump(
+        {
+            "id": "app-1",
+            "assignment_id": "asg-1",
+            "name": "Contract AI",
+            "icon": "",
+            "description": "desc",
+            "assigned_at": 1893456000,
+            "source": "assigned",
+            "status": "published",
+            "can_edit": False,
+        }
+    )
+
+    assert "can_edit" in dumped
+    assert dumped["can_edit"] is False
