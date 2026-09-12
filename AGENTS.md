@@ -31,6 +31,17 @@
 - 若某任务涉及删除或大改一篇文档的定位（如 roadmap 已完成需归档），在 commit message 中说明"docs: archive ..."，将过期规划移到 `docs/archive/` 而不是让它们继续出现在导航里误导 Agent。
 - 完成涉及架构的改动后，运行 `python -m graphify update .` 保持知识图谱最新（见下节）。
 
+## 前端 i18n 规范（强制规则）
+
+前端所有面向用户的文案（按钮、导航、提示语、表单字段、空状态、错误提示、管理后台文案等）**必须**走 i18n，**禁止硬编码**中文字符串或英文字符串到组件/页面中。规范要点：
+
+- **只能用 i18n 键引用**：组件内通过 `t('admin.customerUsers.editUser')` 一类语义化键取值（或 `useI18n()`），不得出现 `"编辑"`、`'Edit'` 这类直接写在模板/脚本里的展示文案。例外仅限：非展示性字符串（key、id、URL、单位缩写等）与纯视觉占位（如 `<a-tag>` 的 color 枚举）。
+- **字典按板块模块化组织**：i18n 字典位于 `ui/src/i18n/messages/<locale>/`（`<locale>` 为 `zh-CN`/`en-US`），按顶层板块一文件（`common.ts`、`layout.ts`、`admin/` 等），`admin/` 目录内再按子模块拆文件（`admin/customerUsers.ts`、`admin/adminUsers.ts`）。**禁止**回退为单文件巨型字典（`messages/zh-CN.ts` / `en-US.ts` 已废弃）；新增板块时新建对应模块文件，并在目录 `index.ts` 中注册聚合。
+- **结构必须镜像且同步增改**：`zh-CN/` 与 `en-US/` 目录结构必须一致（同路径必有同文件）。新增/修改文案时，**同时**在 zh-CN 与 en-US 的对应板块文件各改一处，不允许只改一侧；删除/重命名键同理两侧同步。
+- **保持 zh/en 键集合一致**：新增文案后运行 `npx vitest run src/i18n/__tests__/parity.spec.ts` 校验。该测试递归断言 zh-CN 与 en-US 叶子键集合完全一致，缺键会直接失败并报出缺失路径；**提交前必须通过**。
+- **不硬编码语境文案的归属**：一个语义单位（如删除确认标题、表单 label + placeholder）归入其所属页面的板块命名空间下（如用户管理页文案统一放 `admin.customerUsers.*`），复用高频通用词放 `common.*`，不要为凑数随意铺散或复制整段键。
+- **消息插值用 i18n 语法**：含动态值的文案在字典里写成 `删除用户：{name}`，代码侧用 `t('...', { name })`，不要用字符串拼接代替。
+
 ## graphify
 
 本项目在 `graphify-out/` 中维护一个知识图谱，包含 god nodes、社区结构和跨文件关系。
