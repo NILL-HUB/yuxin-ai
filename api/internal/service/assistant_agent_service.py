@@ -778,64 +778,18 @@ class AssistantAgentService(BaseService):
     ) -> str:
         """对话时召回用户长期记忆（记忆读回闭环）。
 
-        设计约束：
-        - 记忆读回是"增强项"，绝不允许拖慢或阻断对话：用守护线程 + 超时，
-          超时/引擎关闭/依赖不可用一律返回空串（fail-open）。
-        - System 1 走 Redis 缓存的 Memory Digest（快）；System 2 走
-          MemoryRetriever（Neo4j BM25 + pgvector + 图扩展）。
-        - 返回文本限制在 max_tokens 量级，避免挤占上下文窗口。
+        具体策略见 ``internal.service.memory.user_memory_recall``，该方法仅为
+        兼容既有调用点/测试的薄委托。
         """
-        from internal.config.memory_settings import settings as memory_settings
+        from internal.service.memory.user_memory_recall import recall_user_memory_for_chat
 
-        if not memory_settings.memory_engine_enabled:
-            return ""
-        if not query or not str(query).strip():
-            return ""
-
-        result_box: dict = {"text": ""}
-
-        def _do_retrieve() -> None:
-            try:
-                from app.http import asgi_app as a
-                from app.http.app import app as _flask_app
-                from internal.service.memory.digest_manager import DigestManager
-                from internal.service.memory.retriever import MemoryRetriever
-
-                char_budget = max(int(max_tokens) * 4, 500)
-                with _flask_app.app_context():
-                    digest_manager = a._get_service(DigestManager)
-                    retriever = MemoryRetriever(digest_manager=digest_manager)
-                    user_id = str(account_id)
-                    # System 1: Digest 快速路径（Redis 缓存，几乎无延迟）
-                    digest_text = retriever._system1_fast_path(query, user_id)
-                    if digest_text:
-                        result_box["text"] = digest_text[:char_budget]
-                        return
-                    # System 2: 深度检索（限时内完成则用，否则丢弃）
-                    from internal.model.memory_models import RetrievalOptions
-
-                    options = RetrievalOptions(top_k=5, budget_tokens=0)
-                    results = retriever.retrieve(query, user_id, options)
-                    if not results:
-                        return
-                    # 组装为可注入文本：拼接 top 命中（保留命中原文）
-                    lines: list[str] = []
-                    for item in results[:5]:
-                        content = str(getattr(item, "content", "") or "").strip()
-                        if content:
-                            lines.append(content[:600])
-                    if lines:
-                        joined = "\n".join(lines)
-                        result_box["text"] = joined[:char_budget]
-            except Exception:
-                logger.warning("对话记忆召回失败，静默降级（不影响主流程）", exc_info=True)
-
-        import threading as _threading
-
-        worker = _threading.Thread(target=_do_retrieve, daemon=True)
-        worker.start()
-        worker.join(timeout=max_wait_seconds)
-        return result_box.get("text", "")
+        return recall_user_memory_for_chat(
+            account_id=account_id,
+            query=query,
+            conversation_id=conversation_id,
+            max_wait_seconds=max_wait_seconds,
+            max_tokens=max_tokens,
+        )
 
     def _write_memory_from_conversation(self, account, query, ai_response, conversation_id):
         """对话后自动写入记忆，无需用户确认。降级时跳过。

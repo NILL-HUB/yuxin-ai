@@ -1889,6 +1889,60 @@ class TestAppService:
         assert save_calls[0]["message_id"] == message.id
         assert len(save_calls[0]["agent_thoughts"]) == 1
 
+    def test_debug_chat_should_inject_recalled_user_memory(self, monkeypatch):
+        """应用调试对话必须把用户长期记忆注入 Agent（与应用工具/上下文并列）。"""
+        service = _build_service()
+        debug_service = _new_app_debug_service(app_service=service)
+        account = SimpleNamespace(id=uuid4())
+        app_id = uuid4()
+        conversation = SimpleNamespace(id=uuid4(), summary="会话摘要")
+        app = SimpleNamespace(id=app_id, debug_conversation=conversation)
+        req = SimpleNamespace(
+            query=SimpleNamespace(data="帮我写周报"),
+            image_urls=SimpleNamespace(data=[]),
+            conversation_id=SimpleNamespace(data=""),
+            confirm_deep_thinking=SimpleNamespace(data=False),
+        )
+        draft_config = {
+            "model_config": {"provider": "openai", "model": "gpt-4o-mini"},
+            "dialog_round": 3,
+            "tools": [],
+            "knowledge_base_ids": [],
+            "workflows": [],
+            "retrieval_config": {},
+            "preset_prompt": "prompt",
+            "long_term_memory": {"enable": True},
+            "review_config": {"enable": False},
+        }
+        captured: dict = {}
+
+        monkeypatch.setattr(service, "get_app", lambda *_args, **_kwargs: app)
+        monkeypatch.setattr(service, "get_draft_app_config", lambda *_args, **_kwargs: draft_config)
+        monkeypatch.setattr(debug_service, "create", lambda *_args, **_kwargs: SimpleNamespace(id=uuid4()))
+        debug_service.language_model_service = SimpleNamespace(
+            load_language_model=lambda _config: SimpleNamespace(features=["tool_call"])
+        )
+        monkeypatch.setattr(
+            "internal.service.app_debug_service.TokenBufferMemory",
+            lambda **_kwargs: SimpleNamespace(get_history_prompt_messages=lambda **_args: []),
+        )
+        monkeypatch.setattr(
+            "internal.service.app_debug_service.recall_user_memory_for_chat",
+            lambda **_kwargs: "用户偏好简洁回答",
+        )
+
+        def _capture_stream(**kwargs):
+            captured.update(kwargs)
+            return iter([])
+
+        monkeypatch.setattr(debug_service.app_runtime_service, "stream_agent_events", _capture_stream)
+        debug_service.conversation_service = SimpleNamespace(save_agent_thoughts=lambda **kwargs: None)
+
+        list(debug_service.debug_chat(app_id, req, account))
+
+        assert captured["user_memory"] == "用户偏好简洁回答"
+        assert captured["long_term_memory"] == "会话摘要"
+
     def test_debug_chat_should_attach_dataset_workflow_tools_and_merge_agent_messages(self, monkeypatch):
         service = _build_service()
         debug_service = _new_app_debug_service(app_service=service)

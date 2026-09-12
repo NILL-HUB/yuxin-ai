@@ -29,6 +29,7 @@ from .app_service import AppService
 from .base_service import BaseService
 from .conversation_service import ConversationService
 from .language_model_service import LanguageModelService
+from .memory.user_memory_recall import recall_user_memory_for_chat
 from .orchestrator_service import OrchestratorService
 from .subtask_registry_service import SubtaskRegistryService
 
@@ -302,6 +303,14 @@ class AppDebugService(BaseService):
             message_limit=draft_app_config["dialog_round"],
         )
 
+        # 6.0 记忆读回闭环：与应用工具插件/配置上下文并列，向 Agent 注入用户长期记忆。
+        #     与应用调试/我的应用共用同一召回策略（fail-open，绝不阻断对话）。
+        user_memory_text = recall_user_memory_for_chat(
+            account_id=account.id,
+            query=req.query.data,
+            conversation_id=str(debug_conversation.id),
+        )
+
         agent_thoughts = {}
         runtime_flask_app = current_app._get_current_object() if has_app_context() else None
 
@@ -380,7 +389,7 @@ class AppDebugService(BaseService):
                     history=history,
                     query=req.query.data,
                     long_term_memory=debug_conversation.summary,
-                    user_memory="",
+                    user_memory=user_memory_text,
                     subtask_registry=self.subtask_registry_service,
                 )
                 yield from executor.execute(
@@ -405,6 +414,7 @@ class AppDebugService(BaseService):
                     agent_thoughts=agent_thoughts,
                     enable_deep_thinking=bool(req.confirm_deep_thinking.data),
                     flask_app=runtime_flask_app,
+                    user_memory=user_memory_text,
                 )
         finally:
             # 17.将消息以及推理过程添加到数据库

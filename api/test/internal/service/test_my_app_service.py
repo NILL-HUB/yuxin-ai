@@ -96,13 +96,13 @@ class TestMyAppService:
 
         assert result == {"list": []}
 
-    def test_list_my_apps_should_expose_forked_apps_as_usable_not_editable(self):
-        """商店添加（fork）的应用对用户呈现为“已添加、可直接使用”，且不可编辑。"""
+    def test_list_my_apps_should_expose_published_forked_apps(self):
+        """商店添加（fork）且已发布的副本对用户可见，且不可编辑。"""
         account_id = uuid4()
         forked = _app(
             name="OCR Reader",
             account_id=account_id,
-            status=AppStatus.DRAFT.value,  # DB 层 fork 副本是 draft
+            status=AppStatus.PUBLISHED.value,
             original_app_id=uuid4(),
         )
         service = MyAppService(session=_SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])]))
@@ -114,6 +114,53 @@ class TestMyAppService:
         assert item["source"] == "forked"
         assert item["status"] == AppStatus.PUBLISHED.value
         assert item["can_edit"] is False
+
+    def test_list_my_apps_should_skip_draft_forked_apps(self):
+        """草稿态 fork 副本不具备上架资格，不得出现在“我的应用”。"""
+        account_id = uuid4()
+        forked = _app(
+            name="Draft Fork",
+            account_id=account_id,
+            status=AppStatus.DRAFT.value,
+            original_app_id=uuid4(),
+        )
+        session = _SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])])
+        service = MyAppService(session=session)
+
+        result = service.list_my_apps(account_id)
+
+        assert result == {"list": []}
+
+    def test_list_my_apps_should_skip_offline_forked_apps(self):
+        """下架态 fork 副本同样不得出现。"""
+        account_id = uuid4()
+        forked = _app(
+            name="Offline Fork",
+            account_id=account_id,
+            status="offline",
+            original_app_id=uuid4(),
+        )
+        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])]))
+
+        result = service.list_my_apps(account_id)
+
+        assert result == {"list": []}
+
+    def test_list_my_apps_should_filter_forked_query_by_published_status(self):
+        """fork 查询应在 DB 层按 published 过滤（而非取回后再筛）。"""
+        account_id = uuid4()
+        forked_query = _QueryStub(all_result=[])
+        session = _SessionStub([_QueryStub(all_result=[]), forked_query])
+        service = MyAppService(session=session)
+
+        service.list_my_apps(account_id)
+
+        filter_args = forked_query.filters[0][0]
+        assert any(
+            getattr(expr, "right", None) is not None
+            and getattr(getattr(expr, "right", None), "value", None) == AppStatus.PUBLISHED.value
+            for expr in filter_args
+        ), "fork 查询必须包含 status == published 过滤条件"
 
     def test_get_assigned_app_should_return_app_for_active_assignment(self):
         account_id = uuid4()

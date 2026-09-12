@@ -805,6 +805,7 @@ class AppRuntimeService(BaseService):
         agent_thoughts: dict[str, Any] | None = None,
         enable_deep_thinking: bool = False,
         flask_app: Any | None = None,
+        user_memory: str = "",
     ) -> Generator[str, None, None]:
         """统一流式执行应用Agent并输出事件"""
         tools = self.build_runtime_tools(app_id, account, draft_app_config, flask_app=flask_app)
@@ -823,6 +824,7 @@ class AppRuntimeService(BaseService):
             "messages": [llm.convert_to_human_message(query, image_urls)],
             "history": history,
             "long_term_memory": long_term_memory,
+            "user_memory": user_memory,
         }):
             event_id = str(agent_thought.id)
 
@@ -880,6 +882,7 @@ class AppRuntimeService(BaseService):
         agent_thoughts: dict[str, Any] | None = None,
         enable_deep_thinking: bool = False,
         flask_app: Any | None = None,
+        user_memory: str = "",
     ) -> AsyncGenerator[str, None]:
         """统一流式执行应用Agent并输出事件（async 版，供 ASGI/Quart 链路使用）。
 
@@ -908,6 +911,7 @@ class AppRuntimeService(BaseService):
             "messages": [llm.convert_to_human_message(query, image_urls)],
             "history": history,
             "long_term_memory": long_term_memory,
+            "user_memory": user_memory,
         }):
             event_id = str(agent_thought.id)
 

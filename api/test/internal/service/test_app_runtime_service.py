@@ -284,3 +284,25 @@ class TestAppRuntimeServiceStreamAgentEventsAsync:
         last_payload = json.loads(frames[0].split("data:", 1)[1].strip())
         assert last_payload["answer"] == "tail"
         assert agent_thoughts[str(event_id)].answer == "prior tail"
+
+    def test_should_forward_user_memory_into_agent_state(self, monkeypatch):
+        """用户长期记忆必须随应用工具/上下文一并注入 AgentState.user_memory。"""
+        agent = _FakeAsyncAgent([_thought(QueueEvent.AGENT_END)])
+        service = self._make_service(monkeypatch, agent)
+        llm = SimpleNamespace(convert_to_human_message=lambda query, image_urls: {"role": "user", "content": query})
+
+        asyncio.run(_collect_stream_async(
+            service,
+            app_id=uuid4(),
+            account=SimpleNamespace(id=uuid4()),
+            draft_app_config={},
+            llm=llm,
+            query="hello",
+            image_urls=[],
+            history=[],
+            long_term_memory="会话摘要",
+            user_memory="用户偏好简洁回答",
+        ))
+
+        assert agent.input["user_memory"] == "用户偏好简洁回答"
+        assert agent.input["long_term_memory"] == "会话摘要"
