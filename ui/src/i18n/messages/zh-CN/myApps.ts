@@ -9,6 +9,7 @@ export default  {
     noDescription: '暂无描述',
     chatEmpty: '发送一条消息开始对话',
     inputPlaceholder: '输入消息，Enter 发送',
+    clearSession: '清空会话',
     send: '发送',
     sectionTitle: '全部应用',
     countSuffix: '共 {count} 个',

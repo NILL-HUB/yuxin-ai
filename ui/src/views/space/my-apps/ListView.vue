@@ -2,23 +2,19 @@
 /**
  * 我的应用 — 视觉对齐画布原型 my-apps.html。
  *
- * 数据来源：真实接口 listMyApps（管理员分配 + 商店添加）。
- * - 列表视图：粉调大圆角应用卡片网格 + 搜索过滤，点击「打开」进入内嵌对话
- * - 对话视图：真实流式聊天（chatWithMyApp），外观对齐原型胶囊气泡
- * - 来源徽标：分叉（商店添加）/ 分配（管理员分配）
+ * 数据来源：真实接口 listMyApps（管理员分配 + 商店添加双来源）。
+ * 可见性：仅展示 `status === published` 的应用（草稿不具备上架资格）。
+ * - 列表视图：粉调大圆角应用卡片网格 + 搜索过滤，点击「打开」进入对话
+ * - 对话视图：直接复用现成 agent 聊天框（MyAppChatPanel），
+ *   后端 agent = 用户长期记忆 + 该应用的工具插件/知识库/上下文
  */
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { listMyApps, chatWithMyApp } from '@/services/my-apps'
+import { listMyApps } from '@/services/my-apps'
 import type { MyApp } from '@/models/app-assignment'
 import { getErrorMessage } from '@/utils/error'
-import {
-  applyChatStreamEvent,
-  type RenderableStreamMessage,
-  type StreamState,
-} from '@/views/shared/chat-stream'
-import { withChatRenderId } from '@/views/shared/chat-stream'
+import MyAppChatPanel from './components/MyAppChatPanel.vue'
 
 const { t } = useI18n()
 
@@ -26,17 +22,6 @@ const apps = ref<MyApp[]>([])
 const loading = ref(false)
 const searchKeyword = ref('')
 const activeApp = ref<MyApp | null>(null)
-const messages = ref<RenderableStreamMessage[]>([])
-const query = ref('')
-const sending = ref(false)
-const streamState = ref<StreamState>({
-  position: 0,
-  message_id: '',
-  task_id: '',
-  conversation_id: '',
-  billingEvents: [],
-})
-const bottomAnchorRef = ref<HTMLElement | null>(null)
 
 /** 无图标时的图标底色：统一使用主题色渐变 */
 const accentOf = () => 'linear-gradient(135deg, var(--aicss-accent), var(--aicss-accent-text))'
@@ -77,68 +62,10 @@ const isForked = (app: MyApp) => app.source === 'forked'
 
 const openApp = (app: MyApp) => {
   activeApp.value = app
-  messages.value = []
-  streamState.value = {
-    position: 0,
-    message_id: '',
-    task_id: '',
-    conversation_id: '',
-    billingEvents: [],
-  }
-  query.value = ''
 }
 
 const backToList = () => {
   activeApp.value = null
-  messages.value = []
-}
-
-const send = async () => {
-  const text = query.value.trim()
-  if (!text || !activeApp.value || sending.value) return
-
-  const humanMessage = withChatRenderId(
-    {
-      id: '',
-      conversation_id: streamState.value.conversation_id,
-      answer: '',
-      answer_parts: [],
-      artifacts: [],
-      latency: 0,
-      total_token_count: 0,
-      agent_thoughts: [],
-      query: text,
-      image_urls: [],
-    },
-    'my-app',
-  )
-  messages.value.push(humanMessage)
-  query.value = ''
-  sending.value = true
-
-  try {
-    await chatWithMyApp(activeApp.value.id, {
-      query: text,
-      image_urls: [],
-      conversation_id: streamState.value.conversation_id || '',
-    }, (event_response) => {
-      const current = messages.value[messages.value.length - 1]
-      if (!current) return
-      const result = applyChatStreamEvent(current, event_response, streamState.value)
-      streamState.value = result.state
-      if (result.didUpdate) {
-        void nextTick(() => scrollToBottom())
-      }
-    })
-  } catch (error: unknown) {
-    Message.error(getErrorMessage(error, t('myApps.sendFailed')))
-  } finally {
-    sending.value = false
-  }
-}
-
-const scrollToBottom = () => {
-  bottomAnchorRef.value?.scrollIntoView({ behavior: 'smooth' })
 }
 
 onMounted(loadApps)
@@ -279,7 +206,7 @@ onMounted(loadApps)
       </footer>
     </div>
 
-    <!-- ===== 对话视图 ===== -->
+    <!-- ===== 对话视图（复用现成 agent 聊天框） ===== -->
     <div v-else class="flex h-full min-h-0 flex-col">
       <!-- 顶栏：返回 + 应用名 + 来源徽标 -->
       <div class="flex shrink-0 items-center gap-3 border-b border-border-c bg-surface px-4 py-2.5">
@@ -312,62 +239,12 @@ onMounted(loadApps)
         </div>
       </div>
 
-      <!-- 消息流 -->
-      <div class="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-        <div v-if="messages.length === 0" class="flex h-full items-center justify-center">
-          <div class="text-center">
-            <icon-message class="mx-auto h-10 w-10 text-brand-soft" />
-            <p class="mt-3 text-sm text-muted">{{ t('myApps.chatEmpty') }}</p>
-          </div>
-        </div>
-        <div v-else class="mx-auto w-full max-w-2xl space-y-5">
-          <div v-for="item in messages" :key="item.render_id">
-            <!-- 用户消息 -->
-            <div v-if="item.query" class="flex justify-end">
-              <p
-                class="max-w-[78%] whitespace-pre-wrap rounded-[var(--aicss-radius)] bg-brand px-4 py-2.5 text-sm leading-relaxed text-white shadow-[var(--aicss-shadow-card)]"
-              >
-                {{ item.query }}
-              </p>
-            </div>
-            <!-- AI 回复 -->
-            <div v-if="item.answer" class="mt-2.5 flex justify-start gap-2.5">
-              <span
-                class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[var(--aicss-radius)] text-white"
-                :style="{ background: accentOf() }"
-              >
-                <img v-if="activeApp.icon" :src="activeApp.icon" :alt="activeApp.name" class="h-full w-full object-cover" />
-                <span v-else class="my-app-letter text-sm font-semibold">{{ firstChar(activeApp.name) }}</span>
-              </span>
-              <div class="min-w-0 max-w-[85%] rounded-[var(--aicss-radius)] border border-border-c bg-card px-4 py-2.5 text-sm leading-relaxed text-text shadow-[var(--aicss-shadow-card)]">
-                <p class="whitespace-pre-wrap">{{ item.answer }}</p>
-                <p class="mt-2 text-xs text-muted">{{ activeApp.name }} · {{ sourceLabel(activeApp) }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div ref="bottomAnchorRef" class="h-px w-full" />
-      </div>
-
-      <!-- 底部输入 -->
-      <div class="flex shrink-0 items-center gap-2 border-t border-border-c bg-card px-4 py-3">
-        <a-textarea
-          v-model="query"
-          :auto-size="{ minRows: 1, maxRows: 4 }"
-          :placeholder="t('myApps.inputPlaceholder')"
-          class="my-apps-input"
-          @keydown.enter.exact.prevent="send"
-        />
-        <button
-          type="button"
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--aicss-radius)] bg-brand text-white shadow-[var(--aicss-shadow-card)] transition hover:-translate-y-0.5 hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-          :disabled="sending || !query.trim()"
-          :aria-label="t('myApps.send')"
-          @click="send"
-        >
-          <icon-send class="h-4 w-4" />
-        </button>
-      </div>
+      <my-app-chat-panel
+        :key="activeApp.id"
+        class="flex-1 min-h-0"
+        :app="activeApp"
+        :source-label="sourceLabel(activeApp)"
+      />
     </div>
   </div>
 </template>

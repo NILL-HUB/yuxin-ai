@@ -9,6 +9,7 @@ export default  {
     noDescription: 'No description',
     chatEmpty: 'Send a message to start the conversation',
     inputPlaceholder: 'Type a message, Enter to send',
+    clearSession: 'Clear conversation',
     send: 'Send',
     sectionTitle: 'All apps',
     countSuffix: '{count} total',
