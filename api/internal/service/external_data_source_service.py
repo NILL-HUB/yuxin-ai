@@ -12,6 +12,10 @@ from internal.entity.knowledge_entity import (
 from internal.exception import NotFoundException
 from internal.model import Account, ExternalDataSource, KnowledgeBase, KnowledgeDocument, KnowledgeSegment
 from internal.service.external_data_source_connector_factory import ConnectorFactory
+from internal.service.external_data_source_credentials import (
+    decrypt_config,
+    encrypt_config,
+)
 from internal.service.knowledge_vector_service import KnowledgeVectorService
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -23,7 +27,7 @@ class MockExternalConnector:
     def __init__(self, documents: list[dict[str, str]] | None = None):
         self.documents = documents or []
 
-    def sync(self, data_source: ExternalDataSource) -> list[dict[str, str]]:
+    def sync(self, data_source: ExternalDataSource, config: dict | None = None) -> list[dict[str, str]]:
         return self.documents
 
 
@@ -56,7 +60,7 @@ class ExternalDataSourceService(BaseService):
             source_name=source_name,
             authorization_status=ExternalAuthorizationStatus.PENDING.value,
             sync_status=ExternalSyncStatus.IDLE.value,
-            config={**config, "operation_context": OperationContext.USER.value},
+            config=encrypt_config({**config, "operation_context": OperationContext.USER.value}),
         )
 
     def authorize_data_source(
@@ -66,8 +70,17 @@ class ExternalDataSourceService(BaseService):
         auth_config: dict,
     ) -> ExternalDataSource:
         data_source = self._get_owned_data_source(data_source_id, account)
+        # 把本次提交的凭证合并进 config 并加密落库，避免「先创建后授权」时凭证丢失
+        merged = {**(data_source.config or {}), **(auth_config or {})}
+        data_source.config = encrypt_config(merged)
         connector = self.connector_factory.get_connector(data_source.source_type)
-        data_source.authorization_status = connector.authorize(data_source, auth_config)
+        data_source.authorization_status = connector.authorize(
+            data_source,
+            auth_config or {},
+            config=decrypt_config(data_source.config),
+        )
+        self.db.session.add(data_source)
+        self.db.session.commit()
         return data_source
 
     def manual_sync(self, data_source_id, account: Account) -> dict[str, object]:
@@ -77,7 +90,7 @@ class ExternalDataSourceService(BaseService):
         connector = self.connector or self.connector_factory.get_connector(data_source.source_type)
         data_source.sync_status = ExternalSyncStatus.SYNCING.value
         try:
-            documents = connector.sync(data_source)
+            documents = connector.sync(data_source, config=decrypt_config(data_source.config))
         except Exception as exc:
             data_source.sync_status = ExternalSyncStatus.FAILED.value
             data_source.last_error = str(exc)

@@ -26,11 +26,19 @@ class _QueryStub:
 class _SessionStub:
     def __init__(self, queries=None):
         self._queries = list(queries or [])
+        self.added = []
+        self.commits = 0
 
     def query(self, *_args, **_kwargs):
         if self._queries:
             return self._queries.pop(0)
         return _QueryStub()
+
+    def add(self, value):
+        self.added.append(value)
+
+    def commit(self):
+        self.commits += 1
 
 
 @contextmanager
@@ -123,7 +131,7 @@ def test_manual_sync_should_write_documents_and_update_status(monkeypatch):
 
 
 class _FailingExternalConnector:
-    def sync(self, data_source):
+    def sync(self, data_source, config=None):
         raise RuntimeError("connector unavailable")
 
 
@@ -232,3 +240,86 @@ def test_manual_sync_should_persist_operation_context_in_document_and_segment_me
     assert doc_kwargs["metadata_"]["operation_context"] == "user"
     seg_kwargs = next(kwargs for model, kwargs in created if model is KnowledgeSegment)
     assert seg_kwargs["metadata_"]["operation_context"] == "user"
+
+
+def test_create_connection_should_encrypt_sensitive_config(monkeypatch):
+    account_id = uuid4()
+    service = ExternalDataSourceService(db=_fake_db(_SessionStub()))
+    created = []
+    monkeypatch.setattr(
+        service,
+        "create",
+        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+    )
+
+    service.create_connection(
+        account=SimpleNamespace(id=account_id),
+        knowledge_base=SimpleNamespace(id=uuid4(), owner_account_id=account_id, knowledge_scope="user_content"),
+        source_type="lark",
+        source_name="Lark",
+        config={"app_id": "cli_x", "app_secret": "plain-secret"},
+    )
+
+    config = created[0][1]["config"]
+    assert config["app_id"] == "cli_x"
+    assert config["app_secret"] != "plain-secret"
+    assert config["app_secret"].startswith("gAAAAA")
+
+
+def test_authorize_should_persist_auth_config_encrypted(monkeypatch):
+    account_id = uuid4()
+    data_source = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        source_type="lark",
+        authorization_status="pending",
+        config={},
+    )
+    service = ExternalDataSourceService(db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])))
+
+    class _Connector:
+        def authorize(self, ds, auth_config, config=None):
+            assert config is not None, "连接器必须收到解密后的配置"
+            return "granted"
+
+    monkeypatch.setattr(service.connector_factory, "get_connector", lambda _t: _Connector())
+
+    service.authorize_data_source(data_source.id, SimpleNamespace(id=account_id), {"app_secret": "new-secret"})
+
+    assert data_source.authorization_status == "granted"
+    assert data_source.config["app_secret"] != "new-secret"
+    assert data_source.config["app_secret"].startswith("gAAAAA")
+
+
+def test_manual_sync_should_pass_decrypted_config_to_connector(monkeypatch):
+    account_id = uuid4()
+    from internal.service.external_data_source_credentials import encrypt_config
+
+    data_source = SimpleNamespace(
+        id=uuid4(),
+        owner_account_id=account_id,
+        knowledge_base_id=uuid4(),
+        source_type="mock",
+        source_name="Mock",
+        sync_status="idle",
+        authorization_status="granted",
+        sync_cursor="",
+        last_error="",
+        config=encrypt_config({"app_secret": "plain-secret"}),
+    )
+    seen = {}
+
+    class _Connector:
+        def sync(self, ds, config=None):
+            seen["secret"] = (config or {}).get("app_secret")
+            return []
+
+    service = ExternalDataSourceService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])),
+        connector=_Connector(),
+    )
+    monkeypatch.setattr(service, "_get_knowledge_base", lambda _id: None)
+
+    service.manual_sync(data_source.id, SimpleNamespace(id=account_id))
+
+    assert seen["secret"] == "plain-secret"
