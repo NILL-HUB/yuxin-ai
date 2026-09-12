@@ -2,17 +2,17 @@
 /**
  * 我的应用 — 视觉对齐画布原型 my-apps.html。
  *
- * 数据说明：当前以本地 mock 数据演示前端效果（原型优先）；
- * 视觉验收通过后，将 loadApps 恢复为真实接口 listMyApps 即可。
+ * 数据来源：真实接口 listMyApps（管理员分配 + 商店添加）。
  * - 列表视图：粉调大圆角应用卡片网格 + 搜索过滤，点击「打开」进入内嵌对话
- * - 对话视图：保留真实流式聊天（chatWithMyApp），外观对齐原型胶囊气泡
- * - 来源徽标：分叉（商店添加）/ 分配（管理员分配）；状态徽标：已发布 / 草稿
+ * - 对话视图：真实流式聊天（chatWithMyApp），外观对齐原型胶囊气泡
+ * - 来源徽标：分叉（商店添加）/ 分配（管理员分配）
  */
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { chatWithMyApp } from '@/services/my-apps'
+import { listMyApps, chatWithMyApp } from '@/services/my-apps'
 import type { MyApp } from '@/models/app-assignment'
+import { getErrorMessage } from '@/utils/error'
 import {
   applyChatStreamEvent,
   type RenderableStreamMessage,
@@ -38,33 +38,23 @@ const streamState = ref<StreamState>({
 })
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 
-/** 本地 Mock 数据（后续替换为真实接口 listMyApps） */
-type MockApp = MyApp & { accent?: string }
-
-const mockApps: MockApp[] = [
-  { id: 'app-1', name: '智能写作助手', description: '辅助撰写文案、润色与多平台内容创作，让每一段文字都恰到好处。', source: 'forked', status: 'published', assignment_id: 'a1', assigned_at: null, accent: 'linear-gradient(135deg,#e91e63,#f9a8d4)' },
-  { id: 'app-2', name: '数据分析师', description: '连接表格与数据库，自动产出数据洞察与可视化报告。', source: 'assigned', status: 'published', assignment_id: 'a2', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#c2185b,#ff9ec5)' },
-  { id: 'app-3', name: '会议纪要官', description: '会议记录自动整理为结构化纪要，一键提炼待办与决策。', source: 'forked', status: 'published', assignment_id: 'a3', assigned_at: null, accent: 'linear-gradient(135deg,#d63384,#ff6ba8)' },
-  { id: 'app-4', name: '周报生成器', description: '每周工作周报自动生成，汇总项目进展与风险。', source: 'assigned', status: 'published', assignment_id: 'a4', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#e91e63,#f06292)' },
-  { id: 'app-5', name: '客户智能客服', description: '基于知识库的常见问题自动应答，7×24 小时在线。', source: 'forked', status: 'published', assignment_id: 'a5', assigned_at: null, accent: 'linear-gradient(135deg,#ad1457,#ff80ab)' },
-  { id: 'app-6', name: 'PPT 工坊', description: '一句话生成演示文稿大纲与排版，快速交付汇报材料。', source: 'assigned', status: 'published', assignment_id: 'a6', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#d81b60,#f8bbd0)' },
-  { id: 'app-7', name: '简历优化师', description: '针对目标岗位重写简历亮点，附面试可能追问点。', source: 'forked', status: 'published', assignment_id: 'a7', assigned_at: null, accent: 'linear-gradient(135deg,#c2185b,#f48fb1)' },
-  { id: 'app-8', name: '翻译同传官', description: '中英日韩多语互译，支持术语库与正式语气切换。', source: 'assigned', status: 'published', assignment_id: 'a8', assigned_at: 1785302400, accent: 'linear-gradient(135deg,#e91e63,#f06292)' },
-  { id: 'app-9', name: '小红书灵感机', description: '爆款选题拆解、标题与正文生成，一键成图发文。', source: 'forked', status: 'published', assignment_id: 'a9', assigned_at: null, accent: 'linear-gradient(135deg,#880e4f,#ff9ec5)' },
-]
-
-/** mock 数据首字图标取色 */
-const accentOf = (app: MyApp) => (app as MockApp).accent || 'linear-gradient(135deg,var(--aicss-accent),var(--aicss-accent-text))'
+/** 无图标时的图标底色：统一使用主题色渐变 */
+const accentOf = () => 'linear-gradient(135deg, var(--aicss-accent), var(--aicss-accent-text))'
 
 /** 无图标时取应用名首字展示 */
 const firstChar = (name: string) => (name || '?').trim().charAt(0).toUpperCase()
 
 const loadApps = async () => {
-  // mock：先给 400ms 加载态，模拟真实请求观感
   loading.value = true
-  await new Promise((resolve) => setTimeout(resolve, 400))
-  apps.value = mockApps.map((a) => ({ ...a }))
-  loading.value = false
+  try {
+    const res = await listMyApps()
+    apps.value = res.data?.list || []
+  } catch (error: unknown) {
+    apps.value = []
+    Message.error(getErrorMessage(error, t('myApps.loadFailed')))
+  } finally {
+    loading.value = false
+  }
 }
 
 /** 按名称/描述本地过滤 */
@@ -84,9 +74,6 @@ const sourceLabel = (app: MyApp) => {
 
 /** 原型：分叉 = 商店添加；分配 = 管理员分配 */
 const isForked = (app: MyApp) => app.source === 'forked'
-
-/** 原型：状态徽标 — 非 published 视为草稿 */
-const isDraft = (app: MyApp) => !!app.status && app.status !== 'published'
 
 const openApp = (app: MyApp) => {
   activeApp.value = app
@@ -186,8 +173,8 @@ onMounted(loadApps)
       <!-- 卡片网格 -->
       <section aria-labelledby="my-apps-heading" class="mt-10">
         <div class="flex items-baseline justify-between gap-4">
-          <h2 id="my-apps-heading" class="my-apps-subtitle text-xl font-semibold">全部应用</h2>
-          <span class="text-sm text-muted">共 {{ filteredApps.length }} 个</span>
+          <h2 id="my-apps-heading" class="my-apps-subtitle text-xl font-semibold">{{ t('myApps.sectionTitle') }}</h2>
+          <span class="text-sm text-muted">{{ t('myApps.countSuffix', { count: filteredApps.length }) }}</span>
         </div>
 
         <div v-if="loading" class="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -235,7 +222,7 @@ onMounted(loadApps)
             <div class="flex items-start justify-between gap-4">
               <div
                 class="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-[var(--aicss-radius)] text-white shadow-[var(--aicss-shadow-card)]"
-                :style="{ background: accentOf(app) }"
+                :style="{ background: accentOf() }"
               >
                 <img
                   v-if="app.icon"
@@ -263,18 +250,10 @@ onMounted(loadApps)
             <!-- 状态徽标 -->
             <div class="mt-4">
               <span
-                v-if="isDraft(app)"
-                class="my-badge-draft inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-              >
-                <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
-                {{ t('myApps.draft') }}
-              </span>
-              <span
-                v-else
                 class="my-badge-published inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
               >
                 <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
-                已发布
+                {{ t('myApps.published') }}
               </span>
             </div>
 
@@ -283,11 +262,11 @@ onMounted(loadApps)
               class="mt-auto flex items-center justify-between gap-3 border-t border-border-c pt-5"
               style="margin-top: auto"
             >
-              <span class="text-xs text-muted">点击进入对话</span>
+              <span class="text-xs text-muted">{{ t('myApps.enterChatHint') }}</span>
               <span
                 class="my-app-open inline-flex items-center gap-1.5 rounded-[var(--aicss-radius)] px-3.5 py-2 text-sm font-medium transition-colors"
               >
-                打开<icon-right class="h-3.5 w-3.5" />
+                {{ t('myApps.open') }}<icon-right class="h-3.5 w-3.5" />
               </span>
             </div>
           </article>
@@ -296,7 +275,7 @@ onMounted(loadApps)
 
       <!-- 页脚 -->
       <footer class="mt-12 border-t border-border-c pt-6">
-        <p class="text-xs text-muted">© 2026 钰见我 · 用心对话，随心创作</p>
+        <p class="text-xs text-muted">{{ t('myApps.footer') }}</p>
       </footer>
     </div>
 
@@ -307,15 +286,15 @@ onMounted(loadApps)
         <button
           type="button"
           class="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--aicss-radius)] text-muted transition hover:bg-surface-2 hover:text-text"
-          aria-label="返回应用列表"
-          title="返回应用列表"
+          :aria-label="t('myApps.backToList')"
+          :title="t('myApps.backToList')"
           @click="backToList"
         >
           <icon-left class="h-4 w-4" />
         </button>
         <div
           class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[var(--aicss-radius)] text-white"
-          :style="{ background: accentOf(activeApp) }"
+          :style="{ background: accentOf() }"
         >
           <img v-if="activeApp.icon" :src="activeApp.icon" :alt="activeApp.name" class="h-full w-full object-cover" />
           <span v-else class="my-app-letter text-sm font-semibold">{{ firstChar(activeApp.name) }}</span>
@@ -355,7 +334,7 @@ onMounted(loadApps)
             <div v-if="item.answer" class="mt-2.5 flex justify-start gap-2.5">
               <span
                 class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[var(--aicss-radius)] text-white"
-                :style="{ background: accentOf(activeApp) }"
+                :style="{ background: accentOf() }"
               >
                 <img v-if="activeApp.icon" :src="activeApp.icon" :alt="activeApp.name" class="h-full w-full object-cover" />
                 <span v-else class="my-app-letter text-sm font-semibold">{{ firstChar(activeApp.name) }}</span>
@@ -458,10 +437,6 @@ onMounted(loadApps)
 .my-badge-published {
   background: var(--aicss-accent-soft);
   color: var(--aicss-brand-text, var(--aicss-accent-text));
-}
-.my-badge-draft {
-  background: var(--aicss-surface-2);
-  color: var(--aicss-muted);
 }
 
 /* 打开按钮：hover 时反白为主粉 */
