@@ -30,8 +30,13 @@ export type CreateExternalDataSourceRequest = {
   config: Record<string, unknown>
 }
 
+export type ExternalDataSourceList = {
+  items: Array<ExternalDataSource>
+  total: number
+}
+
 export const getExternalDataSources = (status?: string) => {
-  return get<BaseResponse<Array<ExternalDataSource>>>(`/external-data-sources`, {
+  return get<BaseResponse<ExternalDataSourceList>>(`/external-data-sources`, {
     params: status ? { status } : undefined,
   })
 }
