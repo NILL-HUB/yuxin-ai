@@ -340,3 +340,101 @@ class TestAIService:
         assert events[0].startswith("event: message")
         assert "server" in events[0]
         assert "https://a.com" in events[1]
+
+
+class TestAIServiceBilling:
+    """公共 AI 功能计费：account_id 必须被传入并触发 charge_for_feature。
+
+    历史缺陷：四个 classmethod 内部固定 _get_account_id() 返回 None，
+    导致 prompt 优化/代码助手/schema 助手永不扣费（静默失效）。
+    """
+
+    def _patch_chain(self, monkeypatch):
+        class _FakePipe:
+            def __or__(self, _other):
+                return self
+
+            def stream(self, _payload, **_kwargs):
+                return iter(["chunk-1"])
+
+        monkeypatch.setattr(
+            "internal.service.ai_service.ChatPromptTemplate.from_messages",
+            lambda _messages: _FakePipe(),
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.SystemPromptLibraryService.get_prompt_or_default",
+            lambda _self, _prompt_key: "system prompt",
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LanguageModelService.get_feature_model",
+            lambda _feature_key: object(),
+        )
+        monkeypatch.setattr(
+            "internal.service.ai_service.LLMActivityProbe.monitor_stream",
+            lambda stream_factory, **kwargs: stream_factory(),
+        )
+        monkeypatch.setattr("internal.service.ai_service.get_openai_callback", None)
+        monkeypatch.setattr("internal.service.ai_service.StrOutputParser", lambda: object())
+
+    def _capture_billing(self, monkeypatch):
+        captured = {}
+
+        def _fake_charge(credit_service, account_id, feature_key, token_count):
+            captured["account_id"] = account_id
+            captured["feature_key"] = feature_key
+            captured["token_count"] = token_count
+            return True
+
+        monkeypatch.setattr(
+            "internal.service.ai_service.charge_for_feature", _fake_charge
+        )
+
+        # token 计数需 > 0 才会进入计费分支：替换 handler 类模拟 42 tokens
+        class _FakeUsageHandler:
+            def __init__(self):
+                self.total_tokens = 42
+
+        monkeypatch.setattr(
+            "internal.service.ai_service._UsageTrackingHandler", _FakeUsageHandler
+        )
+        return captured
+
+    def test_optimize_prompt_charges_with_passed_account_id(self, monkeypatch):
+        self._patch_chain(monkeypatch)
+        captured = self._capture_billing(monkeypatch)
+        account_id = uuid4()
+
+        list(AIService.optimize_prompt("make it better", account_id))
+
+        assert captured["account_id"] == account_id
+        assert captured["feature_key"] == "prompt_optimization"
+
+    def test_code_assistant_charges_with_passed_account_id(self, monkeypatch):
+        self._patch_chain(monkeypatch)
+        captured = self._capture_billing(monkeypatch)
+        account_id = uuid4()
+
+        list(AIService.code_assistant_chat("生成代码", account_id))
+
+        assert captured["account_id"] == account_id
+        assert captured["feature_key"] == "code_assistant"
+
+    def test_openapi_schema_charges_with_passed_account_id(self, monkeypatch):
+        self._patch_chain(monkeypatch)
+        captured = self._capture_billing(monkeypatch)
+        account_id = uuid4()
+
+        list(AIService.openapi_schema_assistant_chat("schema", account_id))
+
+        assert captured["account_id"] == account_id
+        assert captured["feature_key"] == "schema_assistant"
+
+    def test_mcp_schema_charges_with_passed_account_id(self, monkeypatch):
+        self._patch_chain(monkeypatch)
+        captured = self._capture_billing(monkeypatch)
+        account_id = uuid4()
+
+        list(AIService.mcp_schema_assistant_chat("schema", account_id))
+
+        assert captured["account_id"] == account_id
+        assert captured["feature_key"] == "schema_assistant"

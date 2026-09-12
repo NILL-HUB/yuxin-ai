@@ -94,7 +94,7 @@ class AIService(BaseService):
         return suggested_questions
 
     @classmethod
-    def optimize_prompt(cls, prompt: str) -> Generator[str, None, None]:
+    def optimize_prompt(cls, prompt: str, account_id: UUID | None = None) -> Generator[str, None, None]:
         """根据传递的prompt进行优化生成"""
         # 1.构建优化prompt的提示词模板
         prompt_template = ChatPromptTemplate.from_messages([
@@ -111,7 +111,7 @@ class AIService(BaseService):
         # 4.调用链并流式事件返回，同时捕获 token 用量用于计费
         # 用活跃探针替代固定超时：模型持续产出 token 时不干扰，
         # 仅在 60s 无 chunk 产出（死机）时终止
-        account_id = cls._get_account_id()
+        account_id = account_id or cls._get_account_id()
         stream_input = {"prompt": prompt}
         if get_openai_callback is not None:
             with get_openai_callback() as cb:
@@ -137,7 +137,7 @@ class AIService(BaseService):
             charge_for_feature(cls._get_credit_service(), account_id, "prompt_optimization", token_count)
 
     @classmethod
-    def code_assistant_chat(cls, question: str) -> Generator[str, None, None]:
+    def code_assistant_chat(cls, question: str, account_id: UUID | None = None) -> Generator[str, None, None]:
         """代码助手聊天 - 流式输出"""
         # 1.构建提示词模板
         prompt_template = ChatPromptTemplate.from_messages([
@@ -154,7 +154,7 @@ class AIService(BaseService):
         # 4.流式调用并返回，同时捕获 token 用量用于计费
         # 用活跃探针替代固定超时：模型持续产出 token 时不干扰，
         # 仅在 60s 无 chunk 产出（死机）时终止
-        account_id = cls._get_account_id()
+        account_id = account_id or cls._get_account_id()
         stream_input = {"question": question}
         if get_openai_callback is not None:
             with get_openai_callback() as cb:
@@ -184,7 +184,7 @@ class AIService(BaseService):
             charge_for_feature(cls._get_credit_service(), account_id, "code_assistant", token_count)
 
     @classmethod
-    def openapi_schema_assistant_chat(cls, question: str) -> Generator[str, None, None]:
+    def openapi_schema_assistant_chat(cls, question: str, account_id: UUID | None = None) -> Generator[str, None, None]:
         """OpenAPI Schema 助手聊天 - 流式输出"""
         system_prompt = SystemPromptLibraryService().get_prompt_or_default("ai_openapi_schema_assistant").replace("{", "{{").replace("}", "}}")
 
@@ -203,7 +203,7 @@ class AIService(BaseService):
         # 4.流式调用并返回，同时捕获 token 用量用于计费
         # 用活跃探针替代固定超时：模型持续产出 token 时不干扰，
         # 仅在 60s 无 chunk 产出（死机）时终止
-        account_id = cls._get_account_id()
+        account_id = account_id or cls._get_account_id()
         stream_input = {"question": question}
         if get_openai_callback is not None:
             with get_openai_callback() as cb:
@@ -233,7 +233,7 @@ class AIService(BaseService):
             charge_for_feature(cls._get_credit_service(), account_id, "schema_assistant", token_count)
 
     @classmethod
-    def mcp_schema_assistant_chat(cls, question: str) -> Generator[str, None, None]:
+    def mcp_schema_assistant_chat(cls, question: str, account_id: UUID | None = None) -> Generator[str, None, None]:
         """MCP Schema 助手聊天 - 流式输出"""
         system_prompt = SystemPromptLibraryService().get_prompt_or_default("ai_mcp_schema_assistant").replace("{", "{{").replace("}", "}}")
 
@@ -249,7 +249,7 @@ class AIService(BaseService):
         # 流式调用并返回，同时捕获 token 用量用于计费
         # 用活跃探针替代固定超时：模型持续产出 token 时不干扰，
         # 仅在 60s 无 chunk 产出（死机）时终止
-        account_id = cls._get_account_id()
+        account_id = account_id or cls._get_account_id()
         stream_input = {"question": question}
         if get_openai_callback is not None:
             with get_openai_callback() as cb:

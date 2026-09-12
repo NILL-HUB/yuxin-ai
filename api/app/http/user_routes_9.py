@@ -107,6 +107,24 @@ def register_routes(quart_app):
         )
         return a._ok(MembershipSummaryResp().dump(result))
 
+    @quart_app.get("/membership/credit-transactions")
+    async def membership_credit_transactions():
+        from app.http import asgi_app as a
+        from internal.schema.redeem_code_schema import CreditTransactionListResp
+        from internal.service.redeem_code_service import RedeemCodeService
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        result = await a._to_thread(
+            a._get_service(RedeemCodeService).list_credit_transactions,
+            account.id,
+            page=_int_arg("page", 1),
+            page_size=_int_arg("page_size", 20),
+        )
+        return a._ok(CreditTransactionListResp().dump(result))
+
     @quart_app.get("/membership/redeem-records")
     async def redeem_code_records():
         from app.http import asgi_app as a
@@ -792,7 +810,7 @@ def register_routes(quart_app):
                 status=400,
             )
         response = await a._to_thread(
-            a._get_service(AIService).optimize_prompt, prompt
+            a._get_service(AIService).optimize_prompt, prompt, account.id
         )
         if a._is_sync_iterator(response):
             return a._sse_response(response)
@@ -845,7 +863,7 @@ def register_routes(quart_app):
                 status=400,
             )
         response = await a._to_thread(
-            a._get_service(AIService).code_assistant_chat, question
+            a._get_service(AIService).code_assistant_chat, question, account.id
         )
         if a._is_sync_iterator(response):
             return a._sse_response(response)
@@ -871,7 +889,7 @@ def register_routes(quart_app):
                 status=400,
             )
         response = await a._to_thread(
-            a._get_service(AIService).openapi_schema_assistant_chat, question
+            a._get_service(AIService).openapi_schema_assistant_chat, question, account.id
         )
         if a._is_sync_iterator(response):
             return a._sse_response(response)
@@ -897,7 +915,7 @@ def register_routes(quart_app):
                 status=400,
             )
         response = await a._to_thread(
-            a._get_service(AIService).mcp_schema_assistant_chat, question
+            a._get_service(AIService).mcp_schema_assistant_chat, question, account.id
         )
         if a._is_sync_iterator(response):
             return a._sse_response(response)

@@ -600,24 +600,24 @@ class _FakeAIService:
             yield f"event: message\ndata:{marker}-2\n\n"
         return gen()
 
-    def optimize_prompt(self, prompt):
-        self.calls.append(("optimize", prompt))
+    def optimize_prompt(self, prompt, account_id=None):
+        self.calls.append(("optimize", prompt, account_id))
         return self._gen("opt")
 
     def generate_suggested_questions_from_message_id(self, message_id, account):
         self.calls.append(("suggested", message_id))
         return ["问题1", "问题2"]
 
-    def code_assistant_chat(self, question):
-        self.calls.append(("code", question))
+    def code_assistant_chat(self, question, account_id=None):
+        self.calls.append(("code", question, account_id))
         return self._gen("code")
 
-    def openapi_schema_assistant_chat(self, question):
-        self.calls.append(("openapi", question))
+    def openapi_schema_assistant_chat(self, question, account_id=None):
+        self.calls.append(("openapi", question, account_id))
         return self._gen("openapi")
 
-    def mcp_schema_assistant_chat(self, question):
-        self.calls.append(("mcp", question))
+    def mcp_schema_assistant_chat(self, question, account_id=None):
+        self.calls.append(("mcp", question, account_id))
         return self._gen("mcp")
 
 
@@ -647,6 +647,8 @@ class TestAIRoutes:
         assert resp.mimetype == "text/event-stream"
         assert "opt-1" in body
         assert service.calls[0][0] == "optimize"
+        # 计费链路：路由必须把当前账号 id 传入 service（否则 charge_for_feature 静默失效）
+        assert service.calls[0][2] is not None
 
     def test_optimize_prompt_requires_prompt(self, monkeypatch):
         self._setup(monkeypatch)
