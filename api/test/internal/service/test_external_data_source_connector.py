@@ -415,3 +415,27 @@ class TestGithubConnector:
 
         with pytest.raises(ExternalConnectorError):
             connector.sync(data_source)
+
+
+def test_connectors_prefer_explicit_config_over_data_source_config():
+    """传入显式 config 时，应优先使用它（而非 data_source.config）。"""
+    with tempfile.TemporaryDirectory() as folder:
+        data_source = SimpleNamespace(config={"folder_path": "/nonexistent-should-be-ignored"})
+
+        # 显式传入有效目录，sync 应使用它而非 data_source.config
+        connector = LocalFolderConnector()
+        documents = connector.sync(data_source, config={"folder_path": folder})
+
+        assert isinstance(documents, list)
+
+
+def test_github_authorize_accepts_personal_access_token_alias():
+    """前端提交 personal_access_token 时也应授权成功（与 sync 字段名对齐）。"""
+    connector = GithubConnector()
+    data_source = SimpleNamespace(config={})
+
+    result = connector.authorize(
+        data_source, {"personal_access_token": "ghp_test", "repo": "owner/repo"}
+    )
+
+    assert result == ExternalAuthorizationStatus.GRANTED.value

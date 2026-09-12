@@ -22,11 +22,17 @@ class BaseConnector(ABC):
         self,
         data_source: ExternalDataSource,
         auth_config: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> str:
         ...
 
     @abstractmethod
-    def sync(self, data_source: ExternalDataSource) -> list[dict[str, str]]:
+    def sync(
+        self,
+        data_source: ExternalDataSource,
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
+        """config 为空时回退读取 data_source.config（保持既有调用兼容）。"""
         ...
 
     @staticmethod

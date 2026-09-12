@@ -33,16 +33,22 @@ class LarkConnector(BaseConnector):
         self,
         data_source: ExternalDataSource,
         auth_config: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> str:
-        app_id = auth_config.get("app_id") or data_source.config.get("app_id", "")
-        app_secret = auth_config.get("app_secret") or data_source.config.get("app_secret", "")
+        resolved = config if config is not None else (data_source.config or {})
+        app_id = auth_config.get("app_id") or resolved.get("app_id", "")
+        app_secret = auth_config.get("app_secret") or resolved.get("app_secret", "")
         if not app_id or not app_secret:
             raise ValueError("飞书连接需要 app_id 和 app_secret")
         return ExternalAuthorizationStatus.GRANTED.value
 
-    def sync(self, data_source: ExternalDataSource) -> list[dict[str, str]]:
+    def sync(
+        self,
+        data_source: ExternalDataSource,
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
         """拉取飞书文件夹下的 docx 文档并返回统一文档结构"""
-        config = data_source.config or {}
+        config = config if config is not None else (data_source.config or {})
         app_id = config.get("app_id", "")
         app_secret = config.get("app_secret", "")
         # 凭证缺失时降级返回空列表 + warning，避免开发环境报错

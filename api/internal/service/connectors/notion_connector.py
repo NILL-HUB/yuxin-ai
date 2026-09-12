@@ -45,18 +45,24 @@ class NotionConnector(BaseConnector):
         self,
         data_source: ExternalDataSource,
         auth_config: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> str:
+        resolved = config if config is not None else (data_source.config or {})
         integration_token = (
             auth_config.get("integration_token")
-            or data_source.config.get("integration_token", "")
+            or resolved.get("integration_token", "")
         )
         if not integration_token:
             raise ValueError("Notion 连接需要 integration_token")
         return ExternalAuthorizationStatus.GRANTED.value
 
-    def sync(self, data_source: ExternalDataSource) -> list[dict[str, str]]:
+    def sync(
+        self,
+        data_source: ExternalDataSource,
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
         """拉取 Notion 数据库页面或单页内容并返回统一文档结构"""
-        config = data_source.config or {}
+        config = config if config is not None else (data_source.config or {})
         integration_token = config.get("integration_token", "")
         # 凭证缺失时降级返回空列表 + warning，避免开发环境报错
         if not integration_token:

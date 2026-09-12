@@ -36,18 +36,30 @@ class GithubConnector(BaseConnector):
         self,
         data_source: ExternalDataSource,
         auth_config: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> str:
-        token = auth_config.get("token") or data_source.config.get("token", "")
-        repo = auth_config.get("repo") or data_source.config.get("repo", "")
+        resolved = config if config is not None else (data_source.config or {})
+        # 兼容 token / personal_access_token 两种字段名（与 sync 保持一致）
+        token = (
+            auth_config.get("token")
+            or auth_config.get("personal_access_token")
+            or resolved.get("token", "")
+            or resolved.get("personal_access_token", "")
+        )
+        repo = auth_config.get("repo") or resolved.get("repo", "")
         if not token or not repo:
             raise ValueError("GitHub 连接需要 token 和 repo（owner/repo 格式）")
         if "/" not in repo:
             raise ValueError("repo 需为 owner/repo 格式")
         return ExternalAuthorizationStatus.GRANTED.value
 
-    def sync(self, data_source: ExternalDataSource) -> list[dict[str, str]]:
+    def sync(
+        self,
+        data_source: ExternalDataSource,
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
         """拉取 GitHub 仓库 README 与 docs 目录 markdown 文件"""
-        config = data_source.config or {}
+        config = config if config is not None else (data_source.config or {})
         # 兼容 token 与 personal_access_token 两种字段名
         token = config.get("token", "") or config.get("personal_access_token", "")
         repo = config.get("repo", "")

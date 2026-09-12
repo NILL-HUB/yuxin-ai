@@ -39,16 +39,23 @@ class LocalFolderConnector(BaseConnector):
         self,
         data_source: ExternalDataSource,
         auth_config: dict[str, Any],
+        config: dict[str, Any] | None = None,
     ) -> str:
+        resolved = config if config is not None else (data_source.config or {})
         folder_path = self._resolve_folder(
-            auth_config.get("folder_path") or data_source.config.get("folder_path", "")
+            auth_config.get("folder_path") or resolved.get("folder_path", "")
         )
         if not folder_path or not os.path.isdir(folder_path):
             raise ValueError("文件夹路径无效或不存在")
         return ExternalAuthorizationStatus.GRANTED.value
 
-    def sync(self, data_source: ExternalDataSource) -> list[dict[str, str]]:
-        folder_path = self._resolve_folder(data_source.config.get("folder_path", ""))
+    def sync(
+        self,
+        data_source: ExternalDataSource,
+        config: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
+        resolved = config if config is not None else (data_source.config or {})
+        folder_path = self._resolve_folder(resolved.get("folder_path", ""))
         if not folder_path or not os.path.isdir(folder_path):
             raise ValueError("文件夹路径无效或不存在")
         documents: list[dict[str, str]] = []
