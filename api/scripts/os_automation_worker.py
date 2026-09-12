@@ -41,8 +41,8 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 APPROVAL_TTL_SECONDS = 1800
 DEFAULT_SAFE_ROOT = ""
-RECYCLE_DIR_NAME = ".yuxin_ai_recycle"
-SNAPSHOT_DIR_NAME = ".yuxin_ai_snapshots"
+RECYCLE_DIR_NAME = ".yujianwo_recycle"
+SNAPSHOT_DIR_NAME = ".yujianwo_snapshots"
 SNAPSHOT_FILES_DIR_NAME = "files"
 MANIFEST_FILENAME = "manifest.jsonl"
 DEFAULT_RECYCLE_RETENTION_DAYS = 30
@@ -154,7 +154,7 @@ def _normalize_op_path(workdir: str, path: str) -> str:
 # 命中敏感路径（凭据/密钥/浏览器数据/回收站快照）的 read/search 直接拒绝，
 # 借鉴 Hermes file_safety 思路：路径段/文件名命中即不可读，不读取任何内容。
 # ---------------------------------------------------------------------------
-# 路径任意层级命中即视为敏感的目录段（小写、含 .yuxin_ai 自管目录）
+# 路径任意层级命中即视为敏感的目录段（小写、含 .yujianwo 自管目录）
 _SENSITIVE_READ_DIR_SEGMENTS: frozenset[str] = frozenset(
     {
         ".ssh",
@@ -176,8 +176,8 @@ _SENSITIVE_READ_DIR_SEGMENTS: frozenset[str] = frozenset(
         "user data",
         "keychain",
         "vault",
-        ".yuxin_ai_recycle",
-        ".yuxin_ai_snapshots",
+        ".yujianwo_recycle",
+        ".yujianwo_snapshots",
         "system volume information",
         "$recycle.bin",
     }
@@ -235,7 +235,7 @@ def _sensitive_search_globs() -> list[str]:
     """rg 排除 glob：搜索内容时跳过敏感目录段与敏感文件名。"""
     globs: list[str] = []
     for segment in _SENSITIVE_READ_DIR_SEGMENTS:
-        if segment in (".yuxin_ai_recycle", ".yuxin_ai_snapshots"):
+        if segment in (".yujianwo_recycle", ".yujianwo_snapshots"):
             globs.append(f"!**/{segment}/**")
         else:
             globs.append(f"!**/{segment}/**")
@@ -655,7 +655,7 @@ def _file_operation(payload: dict[str, Any]) -> dict[str, Any]:
             # 写前快照已兜底（改错可回滚、删除入回收站可恢复）：apply 直接执行，
             # 不再要求用户逐次确认/approval_token。root（安全根）作为路径校验与
             # 快照存储的基点，working_dir 仅作操作基准：两者都归一 resolve 后，
-            # root 总为 working_dir 的祖先，快照目录落在 <root>/.yuxin_ai_snapshots，
+            # root 总为 working_dir 的祖先，快照目录落在 <root>/.yujianwo_snapshots，
             # 与回滚侧 _resolve_safe_root 读取 manifest 的基点一致。
             result = _file_apply_patch(
                 patch,
@@ -1061,7 +1061,7 @@ def _recycle_operation(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _snapshot_root(safe_root: str) -> Path:
-    """快照根目录：OS_AUTOMATION_SNAPSHOT_DIR 覆盖，缺省 <safe_root>/.yuxin_ai_snapshots。"""
+    """快照根目录：OS_AUTOMATION_SNAPSHOT_DIR 覆盖，缺省 <safe_root>/.yujianwo_snapshots。"""
     override = _env("OS_AUTOMATION_SNAPSHOT_DIR")
     if override:
         try:
@@ -1640,7 +1640,7 @@ def _snapshot_operation(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class OsAutomationHandler(BaseHTTPRequestHandler):
-    server_version = "YuxinOSAutomation/0.1"
+    server_version = "YujianwoOSAutomation/0.1"
 
     def log_message(self, _format: str, *args: Any) -> None:
         logger.info("%s - %s", self.address_string(), _format % args)
@@ -1727,7 +1727,7 @@ def _gc_snapshots_on_startup() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="YuxinAI OS automation worker")
+    parser = argparse.ArgumentParser(description="Yujianwo OS automation worker")
     parser.add_argument("--host", default=_env("OS_AUTOMATION_HOST", DEFAULT_HOST))
     parser.add_argument("--port", type=int, default=int(_env("OS_AUTOMATION_PORT", DEFAULT_PORT)))
     args = parser.parse_args()

@@ -182,7 +182,7 @@ class TestEmailService:
 
         assert len(sent_messages) == 1
         assert sent_messages[0].recipients == ["demo@example.com"]
-        assert sent_messages[0].subject == "【钰心AI】检测到新 IP 登录"
+        assert sent_messages[0].subject == "【钰见我】检测到新 IP 登录"
         assert "10.0.0.5" in sent_messages[0].body
 
     def test_verify_change_email_code_should_delegate_to_change_email_scene(self, monkeypatch):

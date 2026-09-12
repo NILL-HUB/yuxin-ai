@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.getenv(
     "SQLALCHEMY_DATABASE_URI",
-    "postgresql://yuxin_ai:yuxin_ai@localhost:5432/yuxin_ai",
+    "postgresql://yujianwo:yujianwo@localhost:5432/yujianwo",
 )
 
 

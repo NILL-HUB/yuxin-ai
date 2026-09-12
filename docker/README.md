@@ -1,6 +1,6 @@
 # Docker 部署配置说明
 
-> 钰心AI Docker 部署文档。
+> 钰见我 Docker 部署文档。
 > 项目已完成整体重构：HTTP 层全部迁移到 Quart ASGI（uvicorn），记忆系统使用 Neo4j + MinIO（TKG 时序知识图谱 + 对象存储），旧组件（Weaviate、Flask/gunicorn、`docker/.env` 基础设施配置）已移除。本文档以当前 `docker-compose.yaml` 实际配置为准。
 
 ## ⚠️ 安全提示

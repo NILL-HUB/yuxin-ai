@@ -18,7 +18,7 @@ from typing import Any
 
 logger = logging.getLogger("wake_word_worker")
 
-DEFAULT_KEYWORD = "hey yuxin"
+DEFAULT_KEYWORD = "hey yujianwo"
 CHUNK_SECONDS = 0.5
 SAMPLE_RATE = 16000
 

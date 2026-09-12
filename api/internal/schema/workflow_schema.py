@@ -162,7 +162,7 @@ class ImportWorkflowReq(Form):
 
     支持两种 body 格式：
     1. 信封格式（推荐）：{"json_data": {...}, "overwrite_name": false}
-    2. 直接格式：直接 POST 导出的工作流 JSON（format=yuxin-ai-workflow），
+    2. 直接格式：直接 POST 导出的工作流 JSON（format=yujianwo-workflow），
        此时 overwrite_name 从查询参数 ?overwrite_name=true 读取。
     """
     json_data = DictField("json_data", default=None)

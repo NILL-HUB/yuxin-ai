@@ -2505,9 +2505,9 @@ class TestAppService:
             "category": "general",
         }
 
-    # ---------------- 应用导出 / 导入（format=yuxin-ai-app） ----------------
+    # ---------------- 应用导出 / 导入（format=yujianwo-app） ----------------
 
-    def test_export_app_should_build_yuxin_ai_app_payload(self, monkeypatch):
+    def test_export_app_should_build_yujianwo_app_payload(self, monkeypatch):
         draft_config = SimpleNamespace(
             model_config={"provider": "openai", "model": "gpt-4o-mini"},
             dialog_round=4,
@@ -2558,7 +2558,7 @@ class TestAppService:
 
         payload = service.export_app(uuid4(), SimpleNamespace(id=app.account_id))
 
-        assert payload["format"] == "yuxin-ai-app"
+        assert payload["format"] == "yujianwo-app"
         assert payload["version"] == "1.0"
         assert payload["app"]["name"] == "测试应用"
         assert payload["app"]["tags"] == ["t1"]
@@ -2595,7 +2595,7 @@ class TestAppService:
         )
 
         payload = {
-            "format": "yuxin-ai-app",
+            "format": "yujianwo-app",
             "version": "1.0",
             "app": {
                 "name": "导入应用",

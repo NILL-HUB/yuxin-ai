@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 钰心AI Docker 容器启动脚本
+# 钰见我 Docker 容器启动脚本
 # 注意：所有敏感信息（API Keys、密钥等）必须通过 api/.env 或 docker-compose environment 提供
 # 本脚本仅设置非敏感的默认配置
 

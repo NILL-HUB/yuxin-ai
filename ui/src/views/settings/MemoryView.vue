@@ -639,7 +639,7 @@ watch(
 
 <style scoped>
 /* ============================================================
-   记忆空间 · 粉色翻新（对齐 yuxin-barbie-redesign/pages/memory.html）
+   记忆空间 · 粉色翻新（对齐 yujianwo-barbie-redesign/pages/memory.html）
    全部走 aicss 变量；主按钮粉渐变；卡片浅粉底粉边框
    ============================================================ */
 .mem-page {

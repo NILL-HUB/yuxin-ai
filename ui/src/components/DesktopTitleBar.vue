@@ -18,7 +18,7 @@ const isDesktop = computed(() => Boolean(bridge))
 const isMaximized = ref(false)
 const overlayEnabled = ref(false)
 const overlayWidth = ref(0)
-const appName = ref('钰心AI')
+const appName = ref('钰见我')
 
 const resolveAppName = () => {
   if (typeof window === 'undefined') return

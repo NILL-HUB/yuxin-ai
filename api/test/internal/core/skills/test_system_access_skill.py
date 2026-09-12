@@ -21,13 +21,13 @@ def test_system_access_skill_should_write_read_and_list_files(monkeypatch, tmp_p
     monkeypatch.setenv("SYSTEM_ACCESS_WORKSPACE", str(tmp_path))
 
     write_result = module.write_file(
-        {"path": "notes/hello.txt", "content": "hello yuxin", "overwrite": True}
+        {"path": "notes/hello.txt", "content": "hello yujianwo", "overwrite": True}
     )
     assert write_result["ok"] is True
 
     read_result = module.read_file({"path": "notes/hello.txt"})
     assert read_result["ok"] is True
-    assert read_result["content"] == "hello yuxin"
+    assert read_result["content"] == "hello yujianwo"
 
     listing = module.list_directory({"path": ".", "recursive": True})
     assert listing["ok"] is True

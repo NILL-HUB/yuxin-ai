@@ -526,7 +526,7 @@ onMounted(() => {
       <footer
         class="mt-12 flex flex-col items-center justify-between gap-3 border-t border-border-c pb-2 pt-6 text-xs text-muted sm:flex-row"
       >
-        <p>钰心AI · 用心对话，智慧陪伴</p>
+        <p>钰见我 · 用心对话，智慧陪伴</p>
       </footer>
     </div>
 

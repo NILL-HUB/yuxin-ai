@@ -191,7 +191,7 @@ class TestConversationSearchService:
         result = results[0]
         assert result["name"] == "天气查询系统"
         assert result["source_type"] == "assistant_agent"
-        assert result["agent_name"] == "钰心AI"
+        assert result["agent_name"] == "小钰"
         assert result["human_message"] == ""
         assert result["ai_message"] == ""
         assert result["matched_fields"] == ["name"]

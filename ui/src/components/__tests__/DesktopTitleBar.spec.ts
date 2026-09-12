@@ -38,7 +38,7 @@ describe('DesktopTitleBar', () => {
     const wrapper = mount(DesktopTitleBar, { global: { plugins: [makeI18n()] } })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[data-desktop-titlebar]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('钰心AI')
+    expect(wrapper.text()).toContain('钰见我')
   })
 
   it('minimize/close call bridge methods', async () => {

@@ -631,9 +631,9 @@ def purge_os_file(snapshot: dict[str, Any]) -> None:
         # 无 entry_id 的 os_file 条目说明快照不完整，拒绝标记销毁
         raise RuntimeError("os_file 快照缺少 entry_id，无法精确销毁")
     # safe_root 为删除时记录的回收站清单基点（manifest 所在根）：worker 的
-    # purge 需要以它为根读 <safe_root>/.yuxin_ai_recycle/manifest.jsonl。
-    # 不能把 recycle_root（<safe_root>/.yuxin_ai_recycle 本身）当 safe_root 传，
-    # 否则 worker 会在回收站目录下再套一层 .yuxin_ai_recycle 找清单而定位失败。
+    # purge 需要以它为根读 <safe_root>/.yujianwo_recycle/manifest.jsonl。
+    # 不能把 recycle_root（<safe_root>/.yujianwo_recycle 本身）当 safe_root 传，
+    # 否则 worker 会在回收站目录下再套一层 .yujianwo_recycle 找清单而定位失败。
     safe_root = str((snapshot or {}).get("safe_root") or "").strip()
     result = _call_worker_recycle(
         {

@@ -29,7 +29,7 @@ export const THEME_OPTIONS: ThemeOption[] = [
   { id: 'barbie-dark', label: '芭比暗夜' },
 ]
 
-const THEME_STORAGE_KEY = 'yuxin-theme'
+const THEME_STORAGE_KEY = 'yujianwo-theme'
 
 function isThemeId(value: unknown): value is ThemeId {
   return typeof value === 'string' && THEME_OPTIONS.some((option) => option.id === value)

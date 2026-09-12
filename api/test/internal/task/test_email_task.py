@@ -84,7 +84,7 @@ def test_send_verification_email_task_should_send_via_db_config_and_store_code(m
     cfg, recipients, subject, body, html = send_calls[0]
     assert cfg["smtp_host"] == "smtp.qq.com"
     assert recipients == ["demo@example.com"]
-    assert subject == "【钰心AI】密码重置验证码"
+    assert subject == "【钰见我】密码重置验证码"
     assert "123456" in body
     assert "123456" in html
     assert setex_calls == [

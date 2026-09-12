@@ -44,10 +44,10 @@ describe('AiMessage.vue', () => {
     mount(AiMessage, {
       props: {
         app: {
-          name: '钰心AI',
-          avatar_text: '钰心AI',
+          name: '钰见我',
+          avatar_text: '钰见我',
         },
-        answer: '欢迎使用 钰心AI',
+        answer: '欢迎使用 钰见我',
         agent_thoughts: [],
         ...props,
       },
@@ -75,11 +75,11 @@ describe('AiMessage.vue', () => {
       },
     })
 
-  it('renders the 钰心AI full-text avatar when avatar_text is provided', () => {
+  it('renders the 钰见我 full-text avatar when avatar_text is provided', () => {
     const wrapper = mountAiMessage()
 
-    expect(wrapper.find('.avatar-stub').text()).toBe('钰心AI')
-    expect(wrapper.text()).toContain('钰心AI')
+    expect(wrapper.find('.avatar-stub').text()).toBe('钰见我')
+    expect(wrapper.text()).toContain('钰见我')
     expect(wrapper.find('.avatar-stub').attributes('data-image-url')).toBeUndefined()
   })
 

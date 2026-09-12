@@ -593,7 +593,7 @@ class LanguageModelService(BaseService):
     ENTRYPOINT_PUBLIC_A2A = "public_a2a"
 
     def get_language_models(self) -> list[dict[str, Any]]:
-        """获取 钰心AI 项目中的所有模型列表信息
+        """获取 钰见我 项目中的所有模型列表信息
 
         从动态 model_pool_config 表中读取模型，
         使 AppConfig 选模型时能看到管理端配置的全部模型。

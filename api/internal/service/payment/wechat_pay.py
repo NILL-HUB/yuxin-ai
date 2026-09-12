@@ -25,7 +25,7 @@ from internal.exception import FailException
 from internal.service.payment.protocol import PaymentChannelNotConfigured, PaymentGatewayProtocol
 
 WECHAT_API_BASE = "https://api.mch.weixin.qq.com"
-USER_AGENT = "yuxin-ai-payment/1.0"
+USER_AGENT = "yujianwo-payment/1.0"
 
 
 def _load_private_key(pem: str):

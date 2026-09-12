@@ -1,5 +1,5 @@
 /*
- * 钰心AI × AICSS 设计令牌与基础工具类
+ * 钰见我 × AICSS 设计令牌与基础工具类
  *
  * 设计思路来自 aicss.dev：偏中性的黑白灰表面 + 少量品牌强调色，
  * 全部走 CSS 自定义属性，深浅色主题自适应，并兼容 H5。
@@ -187,7 +187,7 @@
   }
 }
 
-/* 钰心 Admin 的统一表格与卡片风格（基于 AICSS 中性表面） */
+/* 钰见我 Admin 的统一表格与卡片风格（基于 AICSS 中性表面） */
 .admin-layout .arco-card,
 .admin-layout .arco-card-bordered {
   border-color: var(--aicss-border) !important;

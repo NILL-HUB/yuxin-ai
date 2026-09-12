@@ -91,7 +91,7 @@ class Neo4jConfig(BaseModel):
 
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
-    password: str = "yuxin_ai"
+    password: str = "yujianwo"
 
 
 class LLMConfig(BaseModel):
@@ -273,7 +273,7 @@ class FunnelConfig(BaseModel):
 class ColdStorageConfig(BaseModel):
     """冷存储（Cold Storage）配置。"""
 
-    s3_bucket: str = "yuxin-ai-cold-memory"
+    s3_bucket: str = "yujianwo-cold-memory"
     s3_prefix: str = "cold-memories/"
     aws_region: str = "us-east-1"
     # 转入冷存储的权重阈值

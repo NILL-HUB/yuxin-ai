@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
-  appId: 'ai.yuxin.mobile',
-  appName: '钰心AI',
+  appId: 'ai.yujianwo.mobile',
+  appName: '钰见我',
   webDir: '../ui/dist',
   server: {
     androidScheme: 'https',

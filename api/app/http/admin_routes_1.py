@@ -630,7 +630,7 @@ def register_routes(quart_app):
         if isinstance(body.get("json_data"), dict):
             json_data = body["json_data"]
             overwrite_name = bool(body.get("overwrite_name", False))
-        elif body.get("format") in {"openagent-app", "yuxin-ai-app"}:
+        elif body.get("format") in {"openagent-app", "yujianwo-app"}:
             json_data = body
             overwrite_name = request.args.get("overwrite_name", "").lower() in ("true", "1", "yes")
         else:

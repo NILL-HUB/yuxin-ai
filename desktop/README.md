@@ -1,4 +1,4 @@
-# 钰心AI Windows 桌面端
+# 钰见我 Windows 桌面端
 
 Electron 壳复用现有 Vue3 Web UI，并托管本机能力 Worker：
 

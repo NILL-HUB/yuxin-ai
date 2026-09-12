@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 def _env_database_uri() -> str:
     return os.getenv(
         "SQLALCHEMY_DATABASE_URI",
-        "postgresql://yuxin_ai:yuxin_ai@localhost:5432/yuxin_ai",
+        "postgresql://yujianwo:yujianwo@localhost:5432/yujianwo",
     )
 
 

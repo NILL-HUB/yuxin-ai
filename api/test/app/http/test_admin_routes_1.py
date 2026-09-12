@@ -112,7 +112,7 @@ class _FakeAppService:
 
     def export_app_for_admin(self, app_id):
         self.calls.append(("export", app_id))
-        return {"format": "yuxin-ai-app", "name": "应用"}
+        return {"format": "yujianwo-app", "name": "应用"}
 
     def get_published_config_for_admin(self, app_id):
         self.calls.append(("published_get", app_id))
@@ -512,7 +512,7 @@ class TestAdminAppConfig:
 
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 200
-        assert payload["data"]["format"] == "yuxin-ai-app"
+        assert payload["data"]["format"] == "yujianwo-app"
         assert app_svc.calls[0][0] == "export"
 
 

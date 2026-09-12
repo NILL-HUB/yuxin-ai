@@ -1834,7 +1834,7 @@ IPO招股说明书草案
         uploaded_fragments = backend.upload_files.call_args.args[0]
         assert len(uploaded_fragments) == 6
         assert uploaded_fragments[0][0].endswith("00_front_matter.txt")
-        assert all(path.startswith("/tmp/yuxin_ai_doc_build/") for path, _ in uploaded_fragments)
+        assert all(path.startswith("/tmp/yujianwo_doc_build/") for path, _ in uploaded_fragments)
         assert all(path.endswith(".txt") for path, _ in uploaded_fragments)
         assert any("行程总览" in path for path, _ in uploaded_fragments)
         assert any("每日安排" in path for path, _ in uploaded_fragments)
@@ -2777,8 +2777,8 @@ IPO招股说明书草案
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda tid, thought: published.append(thought))
 
         backend = MagicMock()
-        backend._yuxin_ai_artifact_markers = [
-            "/home/user/artifacts/.yuxin_ai_artifact_marker_task-1",
+        backend._yujianwo_artifact_markers = [
+            "/home/user/artifacts/.yujianwo_artifact_marker_task-1",
         ]
         backend.execute.side_effect = [
             SimpleNamespace(exit_code=0, output=""),
@@ -2819,7 +2819,7 @@ IPO招股说明书草案
         fallback_scan_command = backend.execute.call_args_list[1].args[0]
         assert "/home/user/artifacts" in fallback_scan_command
         assert "-maxdepth 1" in fallback_scan_command
-        assert ".yuxin_ai_artifact_marker_task-1" in fallback_scan_command
+        assert ".yujianwo_artifact_marker_task-1" in fallback_scan_command
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
 
     def test_collect_artifacts_scans_mnt_data_top_level_when_model_uses_code_interpreter_path(self):
@@ -2829,8 +2829,8 @@ IPO招股说明书草案
         timeline = DeepTimelineMiddleware(task_id=uuid4(), publisher=lambda tid, thought: published.append(thought))
 
         backend = MagicMock()
-        backend._yuxin_ai_artifact_markers = [
-            "/mnt/data/.yuxin_ai_artifact_marker_task-1",
+        backend._yujianwo_artifact_markers = [
+            "/mnt/data/.yujianwo_artifact_marker_task-1",
         ]
         backend.execute.side_effect = [
             SimpleNamespace(exit_code=0, output=""),
@@ -2870,7 +2870,7 @@ IPO招股说明书草案
         fallback_scan_command = backend.execute.call_args_list[1].args[0]
         assert "/mnt/data" in fallback_scan_command
         assert "-maxdepth 1" in fallback_scan_command
-        assert ".yuxin_ai_artifact_marker_task-1" in fallback_scan_command
+        assert ".yujianwo_artifact_marker_task-1" in fallback_scan_command
         assert any(event.event == QueueEvent.DEEP_ARTIFACT_CREATED for event in published)
 
     def test_sanitize_deep_answer_removes_fake_download_link_and_local_path(self):

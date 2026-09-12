@@ -1,8 +1,8 @@
 {
-  "name": "yuxin-ai-mobile",
+  "name": "yujianwo-mobile",
   "version": "0.1.0",
   "private": true,
-  "description": "钰心AI 手机 App（Capacitor 封装 Web UI）",
+  "description": "钰见我 手机 App（Capacitor 封装 Web UI）",
   "scripts": {
     "sync": "cap sync",
     "android": "cap open android",

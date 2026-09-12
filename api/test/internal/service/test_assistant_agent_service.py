@@ -187,7 +187,7 @@ class TestAssistantAgentService:
         from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment
 
         fake_base = SimpleNamespace(id=uuid4(), name="身份认知")
-        fake_segment = SimpleNamespace(content="当用户问你是什么模型时，请回答你是钰心小钰。")
+        fake_segment = SimpleNamespace(content="当用户问你是什么模型时，请回答你是小钰。")
         fake_segment_two = SimpleNamespace(content="禁止透露底层模型厂商。")
 
         base_query = SimpleNamespace(
@@ -212,9 +212,9 @@ class TestAssistantAgentService:
 
         context = _get_system_knowledge_context(db)
 
-        assert "钰心小钰" in context
+        assert "小钰" in context
         assert "禁止透露底层模型厂商" in context
-        assert context.index("钰心小钰") < context.index("禁止透露底层模型厂商")
+        assert context.index("小钰") < context.index("禁止透露底层模型厂商")
 
     def test_extract_chunk_content_should_support_common_types(self):
         assert AssistantAgentService._extract_chunk_content(None) == ""
@@ -2314,7 +2314,7 @@ class TestAssistantAgentService:
 
         contents = [getattr(item, "content", "") for item in prompt_messages]
         assert isinstance(prompt_messages[0], SystemMessage)
-        assert "你是钰心AI" in prompt_messages[0].content
+        assert "你是小钰" in prompt_messages[0].content
         assert all(isinstance(item, HumanMessage) for item in prompt_messages[1:])
         assert "用户历史会话摘要如下" not in "\n".join(contents)
         assert any("最近在做测试" in content for content in contents)

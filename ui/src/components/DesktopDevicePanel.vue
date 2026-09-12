@@ -17,7 +17,7 @@ type DesktopApi = {
   wakeEnable: () => Promise<boolean>
   wakeDisable: () => Promise<boolean>
 }
-const desktopApi = (window as unknown as { yuxinDesktop?: DesktopApi }).yuxinDesktop
+const desktopApi = (window as unknown as { yujianwoDesktop?: DesktopApi }).yujianwoDesktop
 
 const available = computed(() => Boolean(desktopApi))
 const workers = ref<Record<string, WorkerInfo>>({})

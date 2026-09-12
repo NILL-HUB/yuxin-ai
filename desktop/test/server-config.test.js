@@ -17,13 +17,13 @@ test('loads remote config and caches it', async () => {
       ok: true,
       json: async () => ({
         code: 'success',
-        data: { app_name: '钰心AI', api_origin: 'https://cloud.example.com', api_prefix: '/api' },
+        data: { app_name: '钰见我', api_origin: 'https://cloud.example.com', api_prefix: '/api' },
       }),
     }),
   })
   assert.equal(cfg.api_origin, 'https://cloud.example.com')
   assert.equal(cfg.api_prefix, '/api')
-  assert.equal(cfg.app_name, '钰心AI')
+  assert.equal(cfg.app_name, '钰见我')
   assert.ok(fs.existsSync(cachePath))
 })
 

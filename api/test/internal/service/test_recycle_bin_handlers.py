@@ -70,8 +70,8 @@ def test_restore_os_file_raises_validate_error_on_worker_failure(monkeypatch):
 def test_purge_os_file_passes_recorded_safe_root_not_recycle_root(monkeypatch):
     """purge 必须传删除时记录的 safe_root（清单基点），不得把 recycle_root 当 safe_root。
 
-    回归：把 recycle_root（<safe_root>/.yuxin_ai_recycle）当 safe_root 会让 worker
-    在回收站目录下再套一层 .yuxin_ai_recycle 找 manifest 而定位失败（潜伏 bug）。
+    回归：把 recycle_root（<safe_root>/.yujianwo_recycle）当 safe_root 会让 worker
+    在回收站目录下再套一层 .yujianwo_recycle 找 manifest 而定位失败（潜伏 bug）。
     """
     captured = {}
     monkeypatch.setattr(
@@ -82,8 +82,8 @@ def test_purge_os_file_passes_recorded_safe_root_not_recycle_root(monkeypatch):
     snapshot = {
         "entry_id": "entry-1",
         "original_path": "C:/Users/u/project/a.txt",
-        "moved_to": "C:/Users/u/.yuxin_ai_recycle/project/a.txt",
-        "recycle_root": "C:/Users/u/.yuxin_ai_recycle",
+        "moved_to": "C:/Users/u/.yujianwo_recycle/project/a.txt",
+        "recycle_root": "C:/Users/u/.yujianwo_recycle",
         "safe_root": "C:/Users/u",
     }
 

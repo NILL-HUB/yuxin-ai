@@ -63,7 +63,7 @@ describe('ChatMessageTimeline', () => {
           avatar: '',
         },
         app: {
-          name: '钰心AI',
+          name: '钰见我',
           icon: '',
         },
         loading: false,

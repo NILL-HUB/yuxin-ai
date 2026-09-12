@@ -4,7 +4,7 @@ const path = require('node:path')
 function createTray({ onShow, onQuit, getStatus }) {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon.png'))
   const tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
-  tray.setToolTip('钰心AI')
+  tray.setToolTip('钰见我')
 
   const buildMenu = () => {
     const status = (getStatus && getStatus()) || {}
@@ -13,7 +13,7 @@ function createTray({ onShow, onQuit, getStatus }) {
       ? `本机服务：${runningNames.join('/')} 运行中`
       : '本机服务：未运行'
     return Menu.buildFromTemplate([
-      { label: '显示钰心AI', click: onShow },
+      { label: '显示钰见我', click: onShow },
       { type: 'separator' },
       { label, enabled: false },
       { type: 'separator' },

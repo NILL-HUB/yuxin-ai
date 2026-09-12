@@ -1932,7 +1932,7 @@ class DeepThinkingAgent(FunctionCallAgent):
                 )
                 setattr(
                     backend,
-                    "_yuxin_ai_artifact_markers",
+                    "_yujianwo_artifact_markers",
                     self._prepare_artifact_markers(backend=backend, artifact_root=artifact_root),
                 )
                 used_sandbox = True
@@ -2064,7 +2064,7 @@ class DeepThinkingAgent(FunctionCallAgent):
             fallback_roots = SandboxPolicy.build_fallback_artifact_roots(artifact_root)
             marker_paths_by_root = {
                 os.path.dirname(path): path
-                for path in (getattr(backend, "_yuxin_ai_artifact_markers", None) or [])
+                for path in (getattr(backend, "_yujianwo_artifact_markers", None) or [])
                 if path
             }
             if fallback_roots and marker_paths_by_root:

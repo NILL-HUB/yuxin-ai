@@ -191,7 +191,7 @@ onMounted(() => {
         <div>
           <p class="schedule-kicker text-xs font-medium uppercase tracking-wider text-brand">Schedules</p>
           <h1 class="schedule-title mt-1.5 text-3xl font-semibold sm:text-4xl">{{ t('space.schedules.title') }}</h1>
-          <p class="mt-2 max-w-xl text-sm leading-relaxed text-muted">让钰心AI 在固定时间自动整理资讯、生成报表，并把结果准时送到你手中。</p>
+          <p class="mt-2 max-w-xl text-sm leading-relaxed text-muted">让钰见我 在固定时间自动整理资讯、生成报表，并把结果准时送到你手中。</p>
         </div>
         <button
           type="button"
@@ -419,7 +419,7 @@ onMounted(() => {
 
       <!-- 页脚 -->
       <footer class="mt-8 border-t border-border-c pt-6">
-        <p class="text-center text-xs text-muted">© 2026 钰心AI · 让每一次自动执行都准时发生</p>
+        <p class="text-center text-xs text-muted">© 2026 钰见我 · 让每一次自动执行都准时发生</p>
       </footer>
     </div>
 

@@ -1,4 +1,4 @@
-# 钰心AI 手机 App
+# 钰见我 手机 App
 
 基于 Capacitor 封装现有 Vue3 Web UI，目标平台 Android / iOS（后续）。
 

@@ -296,7 +296,7 @@ onMounted(loadApps)
 
       <!-- 页脚 -->
       <footer class="mt-12 border-t border-border-c pt-6">
-        <p class="text-xs text-muted">© 2026 钰心AI · 用心对话，随心创作</p>
+        <p class="text-xs text-muted">© 2026 钰见我 · 用心对话，随心创作</p>
       </footer>
     </div>
 

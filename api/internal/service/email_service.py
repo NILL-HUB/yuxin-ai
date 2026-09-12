@@ -83,27 +83,27 @@ class EmailService:
         """根据业务场景返回邮件标题、动作文案和安全提示。"""
         if scene == cls.CHANGE_EMAIL_SCENE:
             return (
-                "【钰心AI】邮箱换绑验证码",
+                "【钰见我】邮箱换绑验证码",
                 "邮箱换绑",
                 "如果这不是您本人的操作，请忽略此邮件，原邮箱仍然可以正常使用。",
             )
 
         if scene == cls.LOGIN_CHALLENGE_SCENE:
             return (
-                "【钰心AI】异常登录验证验证码",
+                "【钰见我】异常登录验证验证码",
                 "异常登录验证",
                 "如果这不是您本人的操作，请立即修改密码，并在设置中心下线其他登录设备。",
             )
 
         if scene == cls.REGISTER_SCENE:
             return (
-                "【钰心AI】注册验证码",
+                "【钰见我】注册验证码",
                 "注册",
                 "如果这不是您本人的操作，请忽略此邮件，系统不会在未完成验证码校验前创建账号。",
             )
 
         return (
-            "【钰心AI】密码重置验证码",
+            "【钰见我】密码重置验证码",
             "密码重置",
             "如果这不是您本人的操作，请忽略此邮件，您的账户仍然是安全的。",
         )
@@ -147,7 +147,7 @@ class EmailService:
                                 🔐 {action_label}验证
                             </h1>
                             <p style="margin: 10px 0 0 0; color: rgba(255,255,255,0.9); font-size: 14px;">
-                                钰心AI AI Agent 平台
+                                钰见我 AI Agent 平台
                             </p>
                         </td>
                     </tr>
@@ -185,7 +185,7 @@ class EmailService:
                     <tr>
                         <td style="background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef;">
                             <p style="margin: 0 0 15px 0; color: #666666; font-size: 14px; font-weight: 600;">
-                                钰心AI - 端到端 AI Agent 平台
+                                钰见我 - 端到端 AI Agent 平台
                             </p>
                             <p style="margin: 0 0 20px 0; color: #999999; font-size: 13px; line-height: 1.6;">
                                 多模型 AI Agent 开发与管理平台
@@ -199,7 +199,7 @@ class EmailService:
                                     </td>
                                     <td style="padding: 0 10px; color: #dee2e6;">|</td>
                                     <td style="padding: 0 10px;">
-                                        <a href="https://github.com/NILL-HUB/yuxin-ai" style="display: inline-block; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 500;">
+                                        <a href="https://github.com/NILL-HUB/yujianwo" style="display: inline-block; color: #667eea; text-decoration: none; font-size: 13px; font-weight: 500;">
                                             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
                                                 <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
                                             </svg>
@@ -209,7 +209,7 @@ class EmailService:
                                 </tr>
                             </table>
                             <p style="margin: 20px 0 0 0; color: #adb5bd; font-size: 12px;">
-                                © 2026 钰心AI. All rights reserved.
+                                © 2026 钰见我. All rights reserved.
                             </p>
                         </td>
                     </tr>
@@ -236,9 +236,9 @@ class EmailService:
 {safety_notice}
 
 ---
-钰心AI AI Agent 平台
+钰见我 AI Agent 平台
 官网：http://www.openllm.cloud
-GitHub：https://github.com/NILL-HUB/yuxin-ai
+GitHub：https://github.com/NILL-HUB/yujianwo
         """.strip()
 
         return subject, text_body, html_body
@@ -375,7 +375,7 @@ GitHub：https://github.com/NILL-HUB/yuxin-ai
     ) -> None:
         """发送新 IP 登录提醒邮件。"""
         login_time = login_at.strftime("%Y-%m-%d %H:%M:%S UTC")
-        subject = "【钰心AI】检测到新 IP 登录"
+        subject = "【钰见我】检测到新 IP 登录"
         text_body = f"""
 您好，{account_name}：
 
@@ -388,7 +388,7 @@ GitHub：https://github.com/NILL-HUB/yuxin-ai
 如果这是您本人的操作，则无需处理。
 如果这不是您本人的操作，请尽快修改密码，并在设置中心下线其他登录设备。
 
-钰心AI AI Agent 平台
+钰见我 AI Agent 平台
         """.strip()
         html_body = f"""
 <!DOCTYPE html>

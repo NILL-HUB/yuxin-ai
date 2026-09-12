@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 钰心AI Docker quick start script
+# 钰见我 Docker quick start script
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

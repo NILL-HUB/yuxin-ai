@@ -235,7 +235,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: '钰心AI',
+          name: '钰见我',
           icon: '',
         },
         suggested_after_answer: { enable: true },
@@ -281,7 +281,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: '钰心AI',
+          name: '钰见我',
           icon: '',
         },
         suggested_after_answer: { enable: true },
@@ -466,7 +466,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: '钰心AI',
+          name: '钰见我',
           icon: '',
         },
         suggested_after_answer: { enable: true },
@@ -573,7 +573,7 @@ describe('PreviewDebugChat', () => {
       },
       props: {
         app: {
-          name: '钰心AI',
+          name: '钰见我',
           icon: '',
         },
         suggested_after_answer: { enable: true },

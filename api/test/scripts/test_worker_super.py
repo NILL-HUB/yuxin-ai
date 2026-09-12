@@ -27,7 +27,7 @@ def _stub_worker(monkeypatch, main, argv=None):
     """替换 worker 模块解析与 sys.argv，返回假 entry。"""
     monkeypatch.setattr(worker_super, "_module_and_entry", lambda service: (None, "main"))
     monkeypatch.setattr(worker_super, "importlib", _FakeImportlib(main))
-    original = ["yuxin-worker.exe"] if argv is None else list(argv)
+    original = ["yujianwo-worker.exe"] if argv is None else list(argv)
     monkeypatch.setattr(sys, "argv", original)
     return original
 
@@ -61,7 +61,7 @@ class TestArgvInjection:
 
         _stub_worker(monkeypatch, fake_main)
         assert worker_super.main(["os", "--host", "0.0.0.0", "--port", "8899"]) == 0
-        assert seen["argv"] == ["yuxin-worker.exe", "--host", "0.0.0.0", "--port", "8899"]
+        assert seen["argv"] == ["yujianwo-worker.exe", "--host", "0.0.0.0", "--port", "8899"]
 
     def test_wake_never_receives_host_port(self, monkeypatch):
         seen = {}
@@ -72,7 +72,7 @@ class TestArgvInjection:
 
         _stub_worker(monkeypatch, fake_main)
         assert worker_super.main(["wake", "--host", "0.0.0.0", "--port", "8899"]) == 0
-        assert seen["argv"] == ["yuxin-worker.exe"]
+        assert seen["argv"] == ["yujianwo-worker.exe"]
 
     def test_default_injects_nothing(self, monkeypatch):
         seen = {}
@@ -83,7 +83,7 @@ class TestArgvInjection:
 
         _stub_worker(monkeypatch, fake_main)
         assert worker_super.main(["os"]) == 0
-        assert seen["argv"] == ["yuxin-worker.exe"]
+        assert seen["argv"] == ["yujianwo-worker.exe"]
 
     def test_restores_sys_argv_on_exit(self, monkeypatch):
         original = _stub_worker(
@@ -103,7 +103,7 @@ class TestExitCodeWrapping:
         with pytest.raises(SystemExit) as excinfo:
             worker_super.main(["os"])
         assert excinfo.value.code == 2
-        assert "yuxin-worker os 启动失败" in capsys.readouterr().err
+        assert "yujianwo-worker os 启动失败" in capsys.readouterr().err
 
     def test_system_exit_zero_passthrough_without_message(self, monkeypatch, capsys):
         _stub_worker(monkeypatch, lambda: (_ for _ in ()).throw(SystemExit(0)))
@@ -114,7 +114,7 @@ class TestExitCodeWrapping:
 
 
 class TestHostWatchdog:
-    """宿主存活看门狗：注入 YUXIN_HOST_PID 后，worker 应检测宿主并自杀。"""
+    """宿主存活看门狗：注入 YUJIANWO_HOST_PID 后，worker 应检测宿主并自杀。"""
 
     def test_parse_host_pid_from_env(self, monkeypatch):
         monkeypatch.setenv(worker_super.HOST_PID_ENV, "12345")
@@ -157,4 +157,4 @@ class TestHostWatchdog:
         with pytest.raises(SystemExit) as excinfo:
             worker_super._run_with_host_watchdog(host_pid, boom, "os")
         assert excinfo.value.code == 3
-        assert "yuxin-worker os 启动失败" in capsys.readouterr().err
+        assert "yujianwo-worker os 启动失败" in capsys.readouterr().err

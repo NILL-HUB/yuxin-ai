@@ -14,15 +14,15 @@ describe('desktop credential sync', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
-    Object.defineProperty(window, 'yuxinDesktop', { value: bridge, configurable: true })
+    Object.defineProperty(window, 'yujianwoDesktop', { value: bridge, configurable: true })
   })
 
   afterEach(() => {
-    Object.defineProperty(window, 'yuxinDesktop', { value: undefined, configurable: true })
+    Object.defineProperty(window, 'yujianwoDesktop', { value: undefined, configurable: true })
   })
 
-  it('does nothing in web runtime without yuxinDesktop', async () => {
-    Object.defineProperty(window, 'yuxinDesktop', { value: undefined, configurable: true })
+  it('does nothing in web runtime without yujianwoDesktop', async () => {
+    Object.defineProperty(window, 'yujianwoDesktop', { value: undefined, configurable: true })
 
     storage.set(CREDENTIAL_STORAGE_KEY, { access_token: 'web-token', expire_at: 0 })
     await restoreCredentialFromDesktop()

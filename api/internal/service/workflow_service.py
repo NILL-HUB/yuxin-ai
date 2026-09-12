@@ -782,7 +782,7 @@ class WorkflowService(BaseService):
     # ------------------------------------------------------------------
     # 工作流导入导出（阶段 6）
     # ------------------------------------------------------------------
-    EXPORT_FORMAT = "yuxin-ai-workflow"
+    EXPORT_FORMAT = "yujianwo-workflow"
     LEGACY_EXPORT_FORMATS = frozenset({"openagent-workflow"})
     EXPORT_VERSION = "1.0"
 
@@ -795,7 +795,7 @@ class WorkflowService(BaseService):
 
         返回结构：
             {
-                "format": "yuxin-ai-workflow",
+                "format": "yujianwo-workflow",
                 "version": "1.0",
                 "exported_at": "2026-07-27T...",
                 "workflow": {

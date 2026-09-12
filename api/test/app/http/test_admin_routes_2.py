@@ -145,7 +145,7 @@ class _FakeWorkflowService:
 
     def export_workflow_for_admin(self, workflow_id, *, include_versions=False):
         self.calls.append(("export", workflow_id, include_versions))
-        return {"format": "yuxin-ai-workflow", "name": "工作流A"}
+        return {"format": "yujianwo-workflow", "name": "工作流A"}
 
 
 class TestAdminWorkflowRoutes:
@@ -450,7 +450,7 @@ class TestAdminWorkflowRoutes:
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
                     "/admin/workflows/import",
-                    json={"json_data": {"name": "wf", "format": "yuxin-ai-workflow"}, "overwrite_name": True},
+                    json={"json_data": {"name": "wf", "format": "yujianwo-workflow"}, "overwrite_name": True},
                 )
                 return resp, await resp.json
 
@@ -488,7 +488,7 @@ class TestAdminWorkflowRoutes:
         resp, payload = asyncio.run(_run())
 
         assert resp.status_code == 200
-        assert payload["data"]["format"] == "yuxin-ai-workflow"
+        assert payload["data"]["format"] == "yujianwo-workflow"
         assert wf_service.calls[0] == ("export", workflow_id, True)
 
 

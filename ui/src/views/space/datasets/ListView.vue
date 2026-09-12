@@ -583,7 +583,7 @@ const handleCardClick = (datasetId: string) => {
 
 <style scoped>
 /* ============================================================
-   知识库列表 · 粉色翻新（对齐 yuxin-barbie-redesign/pages/knowledge.html）
+   知识库列表 · 粉色翻新（对齐 yujianwo-barbie-redesign/pages/knowledge.html）
    语义色统一走 aicss 变量；粉色强调用 tw 主题变量（barbie 主题下为粉系）
    ============================================================ */
 .kb-page {

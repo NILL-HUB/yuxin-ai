@@ -1222,7 +1222,7 @@ class _FakeAppService:
         return SimpleNamespace(id=uuid4())
 
     def export_app(self, app_id, account):
-        return {"format": "yuxin-ai-app"}
+        return {"format": "yujianwo-app"}
 
 
 class _FakeAppDebugService:
@@ -1528,7 +1528,7 @@ class TestAsgiApps:
         resp, payload = asyncio.run(_run())
 
         assert resp.status_code == 200
-        assert payload["data"]["format"] == "yuxin-ai-app"
+        assert payload["data"]["format"] == "yujianwo-app"
 
 
 class _FakeTagService:
@@ -2087,7 +2087,7 @@ class _FakeWorkflowService:
         return SimpleNamespace(id=uuid4(), name="导入的工作流")
 
     def export_workflow(self, workflow_id, include_versions):
-        return {"format": "yuxin-ai-workflow", "name": "工作流A"}
+        return {"format": "yujianwo-workflow", "name": "工作流A"}
 
 
 class _FakeWorkflowRunService:
@@ -2259,7 +2259,7 @@ class TestAsgiWorkflows:
         resp, payload = asyncio.run(_run())
 
         assert resp.status_code == 200
-        assert payload["data"]["format"] == "yuxin-ai-workflow"
+        assert payload["data"]["format"] == "yujianwo-workflow"
 
 
 class _FakeExternalDataSourceService:
@@ -2771,7 +2771,7 @@ class TestAsgiExternalDataSourcesToolConfirmations:
         resp, payload = asyncio.run(_run())
 
         assert resp.status_code == 200
-        assert payload["name"] == "Yuxin AI Gateway"
+        assert payload["name"] == "Yujianwo AI Gateway"
         assert payload["supportedInterfaces"][0]["protocolVersion"] == "1.0"
 
     def test_a2a_message_send(self, monkeypatch):

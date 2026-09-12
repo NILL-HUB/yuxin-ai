@@ -1,7 +1,7 @@
 """Self-contained context compressor adapted from Headroom's core design.
 
 Headroom's production compressors are Rust-backed and its dependency tree
-conflicts with yuxin-ai's locked requirements. This module keeps the core
+conflicts with yujianwo's locked requirements. This module keeps the core
 design (content routing + structural JSON compression + log collapse +
 protected messages + fail-open) in pure Python, with no external dependency.
 """

@@ -40,7 +40,7 @@ const SwitchStub = {
 describe('DesktopDevicePanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    Object.defineProperty(window, 'yuxinDesktop', { value: api, configurable: true })
+    Object.defineProperty(window, 'yujianwoDesktop', { value: api, configurable: true })
   })
 
   it('renders workers, recycle items and wake toggle', async () => {
@@ -109,7 +109,7 @@ describe('DesktopDevicePanel', () => {
   })
 
   it('hides itself when desktop api is missing', async () => {
-    Object.defineProperty(window, 'yuxinDesktop', { value: undefined, configurable: true })
+    Object.defineProperty(window, 'yujianwoDesktop', { value: undefined, configurable: true })
     const wrapper = shallowMount(DesktopDevicePanel)
     await flushPromises()
 

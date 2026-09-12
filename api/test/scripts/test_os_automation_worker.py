@@ -160,7 +160,7 @@ def test_file_patch_preview_does_not_modify_files(tmp_path, monkeypatch):
     # 关键断言：preview 一个 DELETE 后，文件仍在（不得移入回收站）
     assert delete_target.exists() is True
     assert delete_target.read_text(encoding="utf-8") == "doomed"
-    recycle_dir = tmp_path / ".yuxin_ai_recycle"
+    recycle_dir = tmp_path / ".yujianwo_recycle"
     assert not recycle_dir.exists() or not any(recycle_dir.rglob("victim.txt"))
 
 
@@ -192,7 +192,7 @@ def test_file_apply_patch_dry_run_is_read_only(tmp_path):
     assert not (tmp_path / "created.txt").exists()
     assert moved_src.exists() is True
     assert not (tmp_path / "sub" / "b.txt").exists()
-    recycle_dir = tmp_path / ".yuxin_ai_recycle"
+    recycle_dir = tmp_path / ".yujianwo_recycle"
     assert not recycle_dir.exists() or not any(recycle_dir.rglob("junk.txt"))
 
 
@@ -292,7 +292,7 @@ def test_file_patch_apply_pure_delete_still_moves_to_recycle(tmp_path, monkeypat
 
     assert applied["ok"] is True
     assert target.exists() is False
-    recycle_dir = tmp_path / ".yuxin_ai_recycle"
+    recycle_dir = tmp_path / ".yujianwo_recycle"
     assert any(recycle_dir.rglob("victim.txt"))
 
 
@@ -580,8 +580,8 @@ def test_patch_snapshot_and_rollback_use_safe_root_when_working_dir_is_subdir(tm
 
     working_dir 为 <safe_root>/project 子目录，_file_operation 的 patch apply 曾把
     working_dir 当 root 传给 _file_apply_patch，导致快照 manifest 写到
-    <working_dir>/.yuxin_ai_snapshots，而 rollback_file 用 _resolve_safe_root 读
-    <safe_root>/.yuxin_ai_snapshots——基点错位，回滚永远找不到快照。修复后两处一致。
+    <working_dir>/.yujianwo_snapshots，而 rollback_file 用 _resolve_safe_root 读
+    <safe_root>/.yujianwo_snapshots——基点错位，回滚永远找不到快照。修复后两处一致。
     """
     monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
     monkeypatch.delenv("OS_AUTOMATION_SNAPSHOT_DIR", raising=False)
@@ -617,7 +617,7 @@ def test_patch_snapshot_and_rollback_use_safe_root_when_working_dir_is_subdir(tm
     assert len(safe_entries) == 1
     assert safe_entries[0]["session_id"] == "sess-root"
     assert safe_entries[0]["conversation_turn"] == "turn-root"
-    assert not (project / ".yuxin_ai_snapshots").exists()
+    assert not (project / ".yujianwo_snapshots").exists()
 
     rb = _rollback_file({"path": str(target), "working_dir": str(project)})
     assert rb["ok"] is True
@@ -708,7 +708,7 @@ def test_file_read_rejects_browser_credential_path(tmp_path, monkeypatch):
 def test_file_read_rejects_recycle_and_snapshot_managed_dirs(tmp_path, monkeypatch):
     """回收站/快照自管目录不可读：防止绕过恢复链路直接读被删/历史内容。"""
     monkeypatch.setenv("OS_AUTOMATION_SAFE_ROOT", str(tmp_path))
-    recycle = tmp_path / ".yuxin_ai_recycle"
+    recycle = tmp_path / ".yujianwo_recycle"
     recycle.mkdir()
     victim = recycle / "notes.txt"
     victim.write_text("old content", encoding="utf-8")

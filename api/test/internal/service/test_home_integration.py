@@ -208,5 +208,5 @@ class TestHomeIntentIntegration:
 
         # 验证返回默认意图
         assert result["is_default"] is True
-        assert "欢迎来到 钰心AI" in result["intent"]
+        assert "欢迎来到 钰见我" in result["intent"]
         assert "haohao" not in result["intent"]

@@ -3,7 +3,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const appTitle = (process.env.VITE_TITLE || '').trim() || '钰心AI'
+const appTitle = (process.env.VITE_TITLE || '').trim() || '钰见我'
 
 // 桌面端（Electron loadFile / Capacitor）以 file:// / 自定义协议加载产物，
 // 绝对路径 base（'/'）会让 /assets/* 解析到磁盘根目录而全部 404 → 白屏。

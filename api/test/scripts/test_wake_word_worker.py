@@ -11,14 +11,14 @@ def test_resolve_config_uses_defaults(monkeypatch):
 
     config = _resolve_config(args)
 
-    assert config["keyword"] == "hey yuxin"
+    assert config["keyword"] == "hey yujianwo"
     assert config["endpoint"] == ""
     assert config["engine"] == "openwakeword"
 
 
 def test_resolve_config_prefers_explicit_args():
     args = argparse.Namespace(
-        keyword="hello yuxin",
+        keyword="hello yujianwo",
         endpoint="http://127.0.0.1:9999/wake",
         token="t",
         engine="porcupine",
@@ -26,7 +26,7 @@ def test_resolve_config_prefers_explicit_args():
 
     config = _resolve_config(args)
 
-    assert config["keyword"] == "hello yuxin"
+    assert config["keyword"] == "hello yujianwo"
     assert config["endpoint"] == "http://127.0.0.1:9999/wake"
     assert config["token"] == "t"
     assert config["engine"] == "porcupine"

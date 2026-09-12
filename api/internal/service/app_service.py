@@ -522,10 +522,10 @@ class AppService(BaseService):
         return new_app
 
     # ------------------------------------------------------------------ #
-    #  应用导出 / 导入（format=yuxin-ai-app，兼容旧版 openagent-app）       #
+    #  应用导出 / 导入（format=yujianwo-app，兼容旧版 openagent-app）       #
     # ------------------------------------------------------------------ #
 
-    EXPORT_FORMAT = "yuxin-ai-app"
+    EXPORT_FORMAT = "yujianwo-app"
     LEGACY_EXPORT_FORMATS = frozenset({"openagent-app"})
     EXPORT_VERSION = "1.0"
 
@@ -558,12 +558,12 @@ class AppService(BaseService):
     ]
 
     def export_app_for_admin(self, app_id: UUID) -> dict[str, Any]:
-        """管理员导出应用为 JSON（format=yuxin-ai-app），不校验账号归属。"""
+        """管理员导出应用为 JSON（format=yujianwo-app），不校验账号归属。"""
         app = self._get_app_for_admin(app_id)
         return self._build_app_export(app)
 
     def export_app(self, app_id: UUID, account: Account) -> dict[str, Any]:
-        """用户导出应用为 JSON（format=yuxin-ai-app）。"""
+        """用户导出应用为 JSON（format=yujianwo-app）。"""
         app = self.get_app(app_id, account)
         return self._build_app_export(app)
 

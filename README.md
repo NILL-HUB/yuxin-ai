@@ -1,8 +1,8 @@
-# 钰心 AI（YuxinAI）
+# 钰见我（Yujianwo）
 
-钰心 AI（钰心AI）是一个「设备级 Agent + 合伙人共创生态」平台：基于 **Quart + LangChain / LangGraph** 的后端，搭配 **Vue 3** 工作台，提供可视化工作流编排、设备工具、技能（Skills）、数字分身与 OpenAPI 交付能力。
+钰见我（钰见我）是一个「设备级 Agent + 合伙人共创生态」平台：基于 **Quart + LangChain / LangGraph** 的后端，搭配 **Vue 3** 工作台，提供可视化工作流编排、设备工具、技能（Skills）、数字分身与 OpenAPI 交付能力。
 
-[访问官网](https://openllm.cloud) · [API 文档](https://s.apifox.cn/c76bd530-fd50-429c-94cc-f0e41c2675d1/api-305434417) · [GitHub](https://github.com/NILL-HUB/yuxin-ai) · [深入问答（DeepWiki）](https://deepwiki.com/NILL-HUB/yuxin-ai)
+[访问官网](https://openllm.cloud) · [API 文档](https://s.apifox.cn/c76bd530-fd50-429c-94cc-f0e41c2675d1/api-305434417) · [GitHub](https://github.com/NILL-HUB/yujianwo) · [深入问答（DeepWiki）](https://deepwiki.com/NILL-HUB/yujianwo)
 
 ![Python 3.11](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)
 ![Quart ASGI](https://img.shields.io/badge/quart-asgi-20B2AA?logo=python&logoColor=white)
@@ -12,7 +12,7 @@
 ![Neo4j](https://img.shields.io/badge/neo4j-tkg%20graph-008CC1?logo=neo4j&logoColor=white)
 ![MinIO](https://img.shields.io/badge/minio-object%20storage-F8583D?logo=minio&logoColor=white)
 
-> 本项目由 [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yuxin-ai) 赞助支持。
+> 本项目由 [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yujianwo) 赞助支持。
 
 ## 目录
 
@@ -30,11 +30,11 @@
 
 ## 项目简介
 
-![钰心AI 产品总览](https://github.com/user-attachments/assets/0f8f7517-1622-46ea-9554-fb13af4841a1)
+![钰见我 产品总览](https://github.com/user-attachments/assets/0f8f7517-1622-46ea-9554-fb13af4841a1)
 
-> 当前定位：钰心AI 正在向「设备 Agent + 合伙人共创生态」转型。以下内容描述的是当前实现底座，后续会随新架构逐步演进。
+> 当前定位：钰见我 正在向「设备 Agent + 合伙人共创生态」转型。以下内容描述的是当前实现底座，后续会随新架构逐步演进。
 
-钰心AI 是结合设备级 Agent 控制、技能（Skill）封装、数字分身与合伙人收益生态的平台。仓库目前包含：Quart 后端、Celery 异步任务与定时调度、Vue 3 前端工作台、可视化工作流编排、工具治理、模型路由、技能、记忆、计费，以及基于 OpenAPI 的对外交付能力。
+钰见我 是结合设备级 Agent 控制、技能（Skill）封装、数字分身与合伙人收益生态的平台。仓库目前包含：Quart 后端、Celery 异步任务与定时调度、Vue 3 前端工作台、可视化工作流编排、工具治理、模型路由、技能、记忆、计费，以及基于 OpenAPI 的对外交付能力。
 
 当前代码库已覆盖的核心能力：
 
@@ -65,10 +65,10 @@
 
 ### 供应商生态
 
-![Atlas Cloud](ui/public/atlas-cloudXyuxin-ai.jpg)
+![Atlas Cloud](ui/public/atlas-cloudXyujianwo.jpg)
 
 - Atlas Cloud 现已作为 OpenAI 兼容提供商接入，可通过 `ATLASCLOUD_API_KEY` 与 `ATLASCLOUD_API_BASE` 使用。
-- 官方网站：[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yuxin-ai)
+- 官方网站：[Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yujianwo)
 - 接入文档：[https://www.atlascloud.ai/docs](https://www.atlascloud.ai/docs)
 
 ## 快速开始
@@ -84,8 +84,8 @@
 1. 克隆仓库：
 
    ```bash
-   git clone https://github.com/NILL-HUB/yuxin-ai.git
-   cd yuxin-ai
+   git clone https://github.com/NILL-HUB/yujianwo.git
+   cd yujianwo
    ```
 
 2. 创建运行时环境文件：
@@ -176,13 +176,13 @@ npm run test:unit -- --run
 
 ### 1. 首页助手体验
 
-![钰心AI 首页助手](https://github.com/user-attachments/assets/7ebb7827-838b-4bd2-b522-9f544f32416a)
+![钰见我 首页助手](https://github.com/user-attachments/assets/7ebb7827-838b-4bd2-b522-9f544f32416a)
 
 首页作为默认的 AI 助手入口，通过 A2A 将用户问题路由到应用广场中最相关的已发布公共 Agent，也可以把自然语言需求转成新的 AI Agent / 应用创建流程。同一入口还支持多轮对话、推荐问题、图片上传和语音输入。
 
 ### 2. 应用工作台与深度思考
 
-![钰心AI 应用工作台](https://github.com/user-attachments/assets/2dd4dc3e-f216-4c8d-96e4-7a2f81e138ae)
+![钰见我 应用工作台](https://github.com/user-attachments/assets/2dd4dc3e-f216-4c8d-96e4-7a2f81e138ae)
 
 应用工作台是 AI 应用的主工作区：左侧负责模型、提示词和能力绑定，右侧负责调试对话、执行轨迹与结果检查。截图中的 Deep Research 对应代码中的深度思考模式 `enable_deep_thinking`。
 
@@ -196,19 +196,19 @@ npm run test:unit -- --run
 
 ### 3. 可视化工作流编辑器
 
-![钰心AI 工作流编辑器](https://github.com/user-attachments/assets/23b510e2-1232-4f52-9262-812a7523ae21)
+![钰见我 工作流编辑器](https://github.com/user-attachments/assets/23b510e2-1232-4f52-9262-812a7523ae21)
 
 工作流支持通过节点方式编排，包括 LLM、工具调用、数据集检索、代码执行、HTTP 请求、模板转换、文本处理、变量赋值、参数提取、条件分支、开始节点和结束节点。
 
 ### 4. 数据集与检索
 
-![钰心AI 数据集管理](https://github.com/user-attachments/assets/6f000681-db56-461a-bac9-a2dd5d6cd009)
+![钰见我 数据集管理](https://github.com/user-attachments/assets/6f000681-db56-461a-bac9-a2dd5d6cd009)
 
 创建数据集、上传文档、查看文档切片，并将检索能力接入工作流或 AI 应用，实现知识增强行为。
 
 ### 5. OpenAPI 交付
 
-![钰心AI OpenAPI](https://github.com/user-attachments/assets/40769d35-89e1-4b76-9686-a431a77a42c7)
+![钰见我 OpenAPI](https://github.com/user-attachments/assets/40769d35-89e1-4b76-9686-a431a77a42c7)
 
 应用发布后，可以通过 `POST /api/openapi/chat` 进行标准调用或流式调用，并支持多轮对话所需的会话标识。
 
@@ -246,12 +246,12 @@ npm run test:unit -- --run
 
 ## 联系方式
 
-- 项目地址：[https://github.com/NILL-HUB/yuxin-ai](https://github.com/NILL-HUB/yuxin-ai)
+- 项目地址：[https://github.com/NILL-HUB/yujianwo](https://github.com/NILL-HUB/yujianwo)
 - 官网：[https://openllm.cloud](https://openllm.cloud)
 - API 文档：[https://s.apifox.cn/c76bd530-fd50-429c-94cc-f0e41c2675d1/api-305434417](https://s.apifox.cn/c76bd530-fd50-429c-94cc-f0e41c2675d1/api-305434417)
-- DeepWiki：[https://deepwiki.com/NILL-HUB/yuxin-ai](https://deepwiki.com/NILL-HUB/yuxin-ai)
+- DeepWiki：[https://deepwiki.com/NILL-HUB/yujianwo](https://deepwiki.com/NILL-HUB/yujianwo)
 
 ## 鸣谢
 
-- 感谢 [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yuxin-ai) 为钰心AI 提供支持。
+- 感谢 [Atlas Cloud](https://www.atlascloud.ai/?utm_source=github&utm_medium=link&utm_campaign=yujianwo) 为钰见我 提供支持。
 - 感谢 Rui Yang 与 Haoyu Wang（Johns Hopkins University）以负责任披露的方式报告了内置工具图标 URL 构造中的 Host Header 污染（Host Header poisoning）问题，帮助项目进一步提升安全性。

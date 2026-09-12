@@ -1,12 +1,12 @@
-"""YuxinAI 桌面 worker 统一入口（单一 exe）。
+"""Yujianwo 桌面 worker 统一入口（单一 exe）。
 
-PyInstaller 打包为 yuxin-worker.exe 后，Electron 主进程通过子命令启动
+PyInstaller 打包为 yujianwo-worker.exe 后，Electron 主进程通过子命令启动
 对应服务，避免为每个 worker 单独打包：
 
-    yuxin-worker.exe os       --port 8765
-    yuxin-worker.exe browser  --port 8766
-    yuxin-worker.exe computer --port 8767
-    yuxin-worker.exe wake
+    yujianwo-worker.exe os       --port 8765
+    yujianwo-worker.exe browser  --port 8766
+    yujianwo-worker.exe computer --port 8767
+    yujianwo-worker.exe wake
 
 开发模式（无 exe）下等效于 python scripts/<worker>.py。
 """
@@ -36,7 +36,7 @@ _SERVICE_SUPPORTS_HOST_PORT = frozenset(("os", "browser", "computer"))
 
 # Electron 主进程启动 worker 时注入自身 PID；worker 周期性检测该宿主是否存活，
 # 宿主退出（正常退出/被杀/崩溃）即自杀，避免 worker 进程树散落残留。
-HOST_PID_ENV = "YUXIN_HOST_PID"
+HOST_PID_ENV = "YUJIANWO_HOST_PID"
 _WATCHDOG_INTERVAL_SECONDS = 3.0
 
 
@@ -96,7 +96,7 @@ def _start_host_watchdog(host_pid: int) -> None:
                 alive = _host_alive(host_pid)
             except Exception as exc:  # noqa: BLE001 - watchdog 线程异常不能静默死亡
                 print(
-                    f"yuxin-worker: host watchdog probe error: {exc!r}",
+                    f"yujianwo-worker: host watchdog probe error: {exc!r}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -105,7 +105,7 @@ def _start_host_watchdog(host_pid: int) -> None:
                 # 宿主已退出：主动终止当前服务进程。os._exit 跳过清理直接退出，
                 # 与 SystemExit/KeyboardInterrupt 不同，可被任意阻塞的 serve_forever 中断。
                 print(
-                    f"yuxin-worker: host process {host_pid} exited, shutting down",
+                    f"yujianwo-worker: host process {host_pid} exited, shutting down",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -114,7 +114,7 @@ def _start_host_watchdog(host_pid: int) -> None:
     thread = threading.Thread(target=_watch, name="host-watchdog", daemon=True)
     thread.start()
     print(
-        f"yuxin-worker: host watchdog armed for pid {host_pid}",
+        f"yujianwo-worker: host watchdog armed for pid {host_pid}",
         file=sys.stderr,
         flush=True,
     )
@@ -133,7 +133,7 @@ def _run_with_host_watchdog(host_pid: int, entry: Any, service: str) -> int:
         code = exc.code if exc.code is not None else 0
         if code:
             print(
-                f"yuxin-worker {service} 启动失败: {exc}",
+                f"yujianwo-worker {service} 启动失败: {exc}",
                 file=sys.stderr,
             )
         raise
@@ -142,7 +142,7 @@ def _run_with_host_watchdog(host_pid: int, entry: Any, service: str) -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="yuxin-worker", description="YuxinAI desktop worker")
+    parser = argparse.ArgumentParser(prog="yujianwo-worker", description="Yujianwo desktop worker")
     parser.add_argument(
         "service",
         choices=("os", "browser", "computer", "wake"),
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             code = exc.code if exc.code is not None else 0
             if code:
                 print(
-                    f"yuxin-worker {args.service} 启动失败: {exc}",
+                    f"yujianwo-worker {args.service} 启动失败: {exc}",
                     file=sys.stderr,
                 )
             raise

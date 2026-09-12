@@ -23,7 +23,7 @@ from pkg.password import (
 logger = logging.getLogger(__name__)
 
 # 平台系统账号用户名（辅助 Agent 等内部服务使用的系统账号，不参与用户/应用分配管理）
-SYSTEM_OWNER_ACCOUNT_USERNAME = "yuxin_ai"
+SYSTEM_OWNER_ACCOUNT_USERNAME = "yujianwo"
 
 # 禁止作为超级管理员初始密码的弱口令集合（H-2 部署默认凭据加固）。
 # 命中任意一项时拒绝自动创建超级管理员，防止服务以弱密码上线。
@@ -48,7 +48,7 @@ _WEAK_ADMIN_PASSWORDS = frozenset(
         "qwerty",
         "qwerty123",
         "a123456",
-        "yuxin_ai123",
+        "yujianwo123",
         "Root123456",
         "P@ssw0rd",
         "P@ssw0rd123",
