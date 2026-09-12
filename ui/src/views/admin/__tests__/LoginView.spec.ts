@@ -35,7 +35,7 @@ const renderView = () => {
           name: 'AdminLoginBackground',
           template: '<div class="admin-login-background-stub" />',
         },
-        IconYuxinAI: true,
+        IconYujianwo: true,
         'icon-user': true,
         'icon-lock': true,
         'icon-eye': true,

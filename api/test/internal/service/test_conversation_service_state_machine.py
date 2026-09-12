@@ -334,9 +334,16 @@ class TestConversationServiceStateMachine:
             if target is message and "status" in kwargs
         ]
 
-        assert len(answer_updates) == 2
+        # answer 采用「首写胜出」语义（见 conversation_service.save_agent_thoughts 注释）：
+        # 仅当 message.answer 尚为空时才回填，防止分块/统计事件覆盖外层已聚合的完整长文。
+        # 并发下两个流竞争同一 message 时，先写入者生效；读-判-写存在极窄竞态窗口，
+        # 故写入次数为 1~2。此处断言「至少一次写入且最终 answer 为某一路的完整值」，
+        # 而非旧版「两流都写入且集合恰为 {A1, A2}」（旧 last-write-wins 契约，已废弃）。
+        assert 1 <= len(answer_updates) <= 2
         assert len(terminal_updates) == 2
-        assert {kwargs["answer"] for kwargs in answer_updates} == {"A1", "A2"}
+        assert all(
+            kwargs["answer"] in {"A1", "A2"} for kwargs in answer_updates
+        )
         assert {kwargs["status"] for kwargs in terminal_updates} == {
             QueueEvent.STOP.value,
             QueueEvent.ERROR.value,

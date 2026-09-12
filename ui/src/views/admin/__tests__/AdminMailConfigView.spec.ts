@@ -108,7 +108,7 @@ const renderView = async () => {
     username: 'noreply@x.com',
     password: '',
     default_sender: 'noreply@x.com',
-    from_name: 'Yuxin',
+    from_name: 'Yujianwo',
     timeout: '30',
   })
   mocks.saveMailConfig.mockImplementation(async (configs: Record<string, unknown>) => ({ ...configs }))

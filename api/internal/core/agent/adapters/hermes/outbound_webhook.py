@@ -69,7 +69,7 @@ def _build_headers(
     signature, timestamp = sign_payload(payload, secret)
     return {
         "Content-Type": "application/json; charset=utf-8",
-        "User-Agent": "YuxinAI-Webhook/1.0",
+        "User-Agent": "Yujianwo-Webhook/1.0",
         "X-Webhook-Signature": signature,
         "X-Webhook-Timestamp": timestamp,
         "X-Webhook-Event-Id": event_id,

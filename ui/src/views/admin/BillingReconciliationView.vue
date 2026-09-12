@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import type { BillingReconciliation, MarginSummary, MarginSummaryItem } from '@/models/billing-reconciliation'
 import { getMarginSummary, listReconciliations } from '@/services/admin-billing-reconciliation'
 import { getErrorMessage } from '@/utils/error'
+import { semanticLabel } from '@/utils/semantic-labels'
 
 const { t } = useI18n()
 
@@ -112,7 +113,11 @@ onMounted(() => {
       <h3 class="panel-title">{{ t('admin.reconcile.tierSummary.title') }}</h3>
       <a-table :data="tierSummary" :pagination="false" size="small" row-key="tier">
         <template #columns>
-          <a-table-column :title="t('admin.reconcile.tierSummary.tierColumn')" data-index="tier" />
+          <a-table-column :title="t('admin.reconcile.tierSummary.tierColumn')" data-index="tier">
+            <template #cell="{ record }">
+              {{ semanticLabel('model_tier', record.tier, record.tier) }}
+            </template>
+          </a-table-column>
           <a-table-column :title="t('admin.reconcile.tierSummary.callsColumn')" data-index="calls" align="right" />
           <a-table-column :title="t('admin.reconcile.tierSummary.actualColumn')" data-index="actual_credits" align="right" />
           <a-table-column :title="t('admin.reconcile.tierSummary.costColumn')" data-index="cost_credits" align="right" />

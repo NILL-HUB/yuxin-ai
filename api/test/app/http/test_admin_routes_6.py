@@ -443,8 +443,8 @@ class _FakeRoutingQualityMetricsService:
     def __init__(self):
         self.calls = []
 
-    def build_metrics(self):
-        self.calls.append(("build_metrics",))
+    def build_metrics(self, *, start_at=None, end_at=None):
+        self.calls.append(("build_metrics", start_at, end_at))
         return {
             "total_count": 10,
             "feedback_count": 2,
@@ -483,6 +483,10 @@ class _FakeRoutingOptimizationSuggestionService:
 
     def generate_suggestions(self, metrics):
         self.calls.append(("generate_suggestions", metrics))
+        return [dict(self.suggestion)]
+
+    def sync_open_suggestions(self, metrics):
+        self.calls.append(("sync_open_suggestions", metrics))
         return [dict(self.suggestion)]
 
     def accept_suggestion(self, suggestion_id, admin_user_id):
@@ -637,7 +641,7 @@ class TestAdminRoutingQualityRoutes:
 
         assert resp.status_code == 200
         assert len(payload["data"]) == 1
-        assert services[RoutingOptimizationSuggestionService].calls[0][0] == "generate_suggestions"
+        assert services[RoutingOptimizationSuggestionService].calls[0][0] == "sync_open_suggestions"
 
     def test_suggestions_with_status(self, monkeypatch):
         services = self._setup(monkeypatch)

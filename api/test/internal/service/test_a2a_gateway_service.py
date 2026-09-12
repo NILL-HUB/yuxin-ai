@@ -51,7 +51,7 @@ def test_agent_card_lists_public_agents():
         public_agent_registry_service=_FakeRegistry(),
     )
     card = gateway.get_agent_card(base_url="http://localhost")
-    assert card["name"] == "Yuxin AI Gateway"
+    assert card["name"] == "Yujianwo AI Gateway"
     assert card["supportedInterfaces"][0]["url"].endswith("/a2a")
     assert any(skill["id"] == "agent.数据分析" for skill in card["skills"])
 

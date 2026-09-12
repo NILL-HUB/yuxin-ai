@@ -43,6 +43,22 @@ const summary = {
     agent_pool_hit_rate: 0.9,
     tool_pool_hit_rate: 0.8,
   },
+  routingStats: {
+    total_count: 42,
+    success_count: 38,
+    fallback_count: 2,
+    success_rate: 0.9,
+    fallback_rate: 0.05,
+    total_credits: 120,
+    avg_latency_ms: 850,
+    agent_pool_hit_rate: 0.9,
+    tool_pool_hit_rate: 0.8,
+    by_status: { success: { count: 38, credits: 100 } },
+  },
+  routingTrend: [
+    { timestamp: 1893456000, request_count: 5, success_count: 4, fallback_count: 1, total_credits: 10, avg_latency_ms: 500 },
+    { timestamp: 1893542400, request_count: 8, success_count: 7, fallback_count: 1, total_credits: 20, avg_latency_ms: 600 },
+  ],
   recentRoutingLogs: [
     {
       id: 'route-1',
@@ -72,6 +88,7 @@ const mountDashboard = () => {
         RouterLink: { props: ['to'], template: '<a :href="String(to)"><slot /></a>' },
         'a-button': { template: '<button type="button"><slot /></button>' },
         'a-tag': { props: ['color'], template: '<span><slot /></span>' },
+        'a-tooltip': { props: ['content'], template: '<span><slot /></span>' },
       },
     },
   })
@@ -140,7 +157,7 @@ describe('AdminDashboardView', () => {
     expect(wrapper.text()).toContain('Skills')
     expect(wrapper.text()).toContain('hello')
     expect(wrapper.text()).toContain('创建')
-    expect(wrapper.text()).toContain('workflow')
+    expect(wrapper.text()).toContain('工作流')
     expect(wrapper.html()).toContain('/admin/workflows')
     expect(wrapper.html()).toContain('/admin/cost-stats')
   })

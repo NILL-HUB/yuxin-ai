@@ -13,6 +13,7 @@ import type {
   CostStatsTimeseries,
 } from '@/models/admin-cost-stats'
 import { getErrorMessage } from '@/utils/error'
+import { semanticLabel } from '@/utils/semantic-labels'
 import AiDataTable from '@/components/ai-chat-ui/AiDataTable.vue'
 
 const { t } = useI18n()
@@ -64,17 +65,17 @@ const dimensionOptions = computed(() => [
 
 const dimensionValueLabel = (value: string) => {
   if (!value || value === 'unknown') return t('admin.costStats.unknown')
-  if (dimension.value !== 'source') return value
-  switch (value) {
-    case 'schedule':
-      return t('admin.costStats.sourceSchedule')
-    case 'assistant_agent':
-      return t('admin.costStats.sourceAssistantAgent')
-    case 'debugger':
-      return t('admin.costStats.sourceDebugger')
-    default:
-      return value
+  if (dimension.value === 'status') {
+    return semanticLabel('routing_status', value, value)
   }
+  if (dimension.value === 'source') {
+    return semanticLabel('invoke_from', value, value)
+  }
+  if (dimension.value === 'agent_pool' || dimension.value === 'model') {
+    // 池名/模型名为英文标记，保留原值；悬停说明由外层 tooltip 提供
+    return value
+  }
+  return value
 }
 
 const dimensionTableColumns = computed(() => [

@@ -13,6 +13,7 @@ import {
   updateToolPolicy,
 } from '@/services/admin-tool-governance'
 import { getErrorMessage } from '@/utils/error'
+import { semanticLabel } from '@/utils/semantic-labels'
 import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
 
 type ToolPolicy = {
@@ -395,10 +396,25 @@ onMounted(loadAll)
                     <p class="text-xs text-gray-400">{{ record.tool_id }}</p>
                   </template>
                 </a-table-column>
-                <a-table-column :title="$t('admin.toolGovernance.field.sourceType')" data-index="source_type" :width="110" />
+                <a-table-column :title="$t('admin.toolGovernance.field.sourceType')" :width="110">
+                  <template #cell="{ record }">
+                    <a-tooltip
+                      :content="record.source_type"
+                      :disabled="semanticLabel('source_type', record.source_type, record.source_type) === record.source_type"
+                      position="top"
+                      mini
+                    >
+                      <span class="cursor-help">
+                        {{ semanticLabel('source_type', record.source_type, record.source_type) }}
+                      </span>
+                    </a-tooltip>
+                  </template>
+                </a-table-column>
                 <a-table-column :title="$t('admin.toolGovernance.field.riskLevel')" data-index="risk_level" :width="110">
                   <template #cell="{ record }">
-                    <a-tag :color="riskColor(record.risk_level)" size="small">{{ record.risk_level }}</a-tag>
+                    <a-tag :color="riskColor(record.risk_level)" size="small">
+                      {{ semanticLabel('risk_level', record.risk_level, record.risk_level) }}
+                    </a-tag>
                   </template>
                 </a-table-column>
                 <a-table-column :title="$t('admin.toolGovernance.field.visibility')" data-index="visibility" :width="100" />
@@ -474,9 +490,30 @@ onMounted(loadAll)
                 <tr v-for="log in audits" :key="log.id" class="border-t">
                   <td class="p-3">{{ log.tool_name || '-' }}</td>
                   <td class="p-3 font-mono text-xs">{{ log.tool_id }}</td>
-                  <td class="p-3 font-mono text-xs">{{ log.account_id || '-' }}</td>
+                  <td class="p-3 font-mono text-xs">
+                    <a-tooltip
+                      v-if="log.account_id && /^[0-9a-f-]{20,}$/i.test(log.account_id)"
+                      :content="log.account_id"
+                      position="top"
+                      mini
+                    >
+                      <span class="cursor-help">{{ log.account_id.slice(0, 8) }}…</span>
+                    </a-tooltip>
+                    <span v-else>{{ log.account_id || '-' }}</span>
+                  </td>
                   <td class="p-3">
-                    <a-tag :color="statusColor(log.invocation_status)" size="small">{{ log.invocation_status }}</a-tag>
+                    <a-tag :color="statusColor(log.invocation_status)" size="small">
+                      <a-tooltip
+                        :content="log.invocation_status"
+                        :disabled="semanticLabel('invocation_status', log.invocation_status, log.invocation_status) === log.invocation_status"
+                        position="top"
+                        mini
+                      >
+                        <span class="cursor-help">
+                          {{ semanticLabel('invocation_status', log.invocation_status, log.invocation_status) }}
+                        </span>
+                      </a-tooltip>
+                    </a-tag>
                   </td>
                   <td class="p-3">{{ log.duration_ms ?? '-' }}</td>
                   <td class="p-3 text-gray-500">{{ log.error_message || '-' }}</td>

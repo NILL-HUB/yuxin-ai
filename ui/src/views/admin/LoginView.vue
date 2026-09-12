@@ -6,7 +6,7 @@ import { Message } from '@arco-design/web-vue'
 import { adminLogin } from '@/services/admin-auth'
 import { getErrorMessage } from '@/utils/error'
 import AdminLoginBackground from '@/components/admin/AdminLoginBackground.vue'
-import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
+import IconYujianwo from '@/components/icons/IconYujianwo.vue'
 
 defineOptions({ name: 'AdminLoginView' })
 
@@ -77,8 +77,8 @@ onMounted(() => {
       <div class="stage-grid">
         <section class="brand-panel">
           <div class="brand-mark">
-            <IconYuxinAI class="hero-logo" />
-            <span class="brand-name">钰心AI</span>
+            <IconYujianwo class="hero-logo" />
+            <span class="brand-name">钰见我</span>
           </div>
 
           <p class="hero-eyebrow">{{ t('login.heroEyebrow') }}</p>

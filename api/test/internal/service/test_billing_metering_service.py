@@ -260,20 +260,17 @@ def test_final_should_pass_feature_key_and_token_count_to_consume():
     aggregator.final()
 
     assert aggregator.total_tokens == 1500
-    # B2：final 改为按 usage 明细逐条精确扣费（model_id+input/output 透传），
-    # 消除对 1:1 全局汇率的依赖；每条事件一个幂等 key（task:model:source:序号）。
-    assert credit_service.consume_for_feature.call_count == 2
+    # 2026-09：同任务同模型的多笔调用先合并 token 再一次精确计费（一次 ceil），
+    # 避免每笔独立 ceil 把不足 1 算力的小调用重复进位造成系统性多收。
+    assert credit_service.consume_for_feature.call_count == 1
     first_call = credit_service.consume_for_feature.call_args_list[0].kwargs
     assert first_call["account_id"] == "account-1"
     assert first_call["feature_key"] == "direct_answer"
-    assert first_call["token_count"] == 1000
+    assert first_call["token_count"] == 1500
     assert first_call["model_id"] == "m1"
-    assert first_call["input_tokens"] == 500
-    assert first_call["output_tokens"] == 500
-    assert first_call["idempotency_key"] == "task-1:m1:direct_answer:0"
-    second_call = credit_service.consume_for_feature.call_args_list[1].kwargs
-    assert second_call["token_count"] == 500
-    assert second_call["idempotency_key"] == "task-1:m1:direct_answer:1"
+    assert first_call["input_tokens"] == 750
+    assert first_call["output_tokens"] == 750
+    assert first_call["idempotency_key"] == "task-1:m1:merged"
 
 
 def test_final_should_commit_when_real_session_present():
@@ -358,5 +355,5 @@ def test_final_precharges_at_real_model_price_when_engine_injected():
     assert call["cached_input_tokens"] == 700
     assert call["output_tokens"] == 300
     assert call["token_count"] == 1300
-    assert call["idempotency_key"] == "task-1:m1:direct_answer:0"
+    assert call["idempotency_key"] == "task-1:m1:merged"
     pricing_engine.plan_usage.assert_called_once()

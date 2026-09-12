@@ -2,7 +2,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { listRecycleBin, restoreRecycleBinItem, cleanupExpiredRecycleBin } from '@/services/admin-recycle-bin'
+import {
+  cleanupExpiredRecycleBin,
+  getRecycleBinOverview,
+  listRecycleBin,
+  restoreRecycleBinItem,
+  type RecycleBinOverviewData,
+} from '@/services/admin-recycle-bin'
 import type { RecycleBinItem } from '@/models/recycle-bin'
 import { getErrorMessage } from '@/utils/error'
 import { useAdminStore } from '@/stores/admin'
@@ -11,10 +17,18 @@ const { t } = useI18n()
 const adminStore = useAdminStore()
 
 const loading = ref(false)
+const overviewLoading = ref(false)
 const restoringId = ref<number | null>(null)
 const cleaning = ref(false)
 const items = ref<RecycleBinItem[]>([])
 const totalRecord = ref(0)
+const overview = ref<RecycleBinOverviewData>({
+  total: 0,
+  pending_total: 0,
+  by_status: [],
+  by_resource_type: [],
+  by_deleted_by_type: [],
+})
 const searchWord = ref('')
 const resourceTypeFilter = ref('')
 const deletedByTypeFilter = ref('admin')
@@ -169,9 +183,29 @@ const loadList = async () => {
   }
 }
 
+const loadOverview = async () => {
+  overviewLoading.value = true
+  try {
+    overview.value = await getRecycleBinOverview({
+      resource_type: resourceTypeFilter.value || undefined,
+      deleted_by_type: deletedByTypeFilter.value || undefined,
+      status: statusFilter.value || undefined,
+      search_word: searchWord.value.trim(),
+    })
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('admin.recycleBin.overviewLoadFailed')))
+  } finally {
+    overviewLoading.value = false
+  }
+}
+
+const reloadAll = async () => {
+  await Promise.all([loadList(), loadOverview()])
+}
+
 const handleSearch = () => {
   currentPage.value = 1
-  void loadList()
+  void reloadAll()
 }
 
 const handlePageChange = (page: number) => {
@@ -184,6 +218,86 @@ const handlePageSizeChange = (size: number) => {
   currentPage.value = 1
   void loadList()
 }
+
+const statusBarColor = (status: string) => {
+  const colors: Record<string, string> = {
+    pending: 'bg-amber-400',
+    restored: 'bg-emerald-500',
+    expired: 'bg-slate-300',
+  }
+  return colors[status] || 'bg-slate-300'
+}
+
+const typeBarColor = (type: string) => {
+  const colors: Record<string, string> = {
+    knowledge_base: 'bg-sky-500',
+    system_prompt: 'bg-purple-500',
+    app: 'bg-emerald-500',
+    workflow: 'bg-cyan-500',
+    skill: 'bg-fuchsia-500',
+    mcp: 'bg-orange-500',
+    api_tool: 'bg-orange-400',
+    knowledge_document: 'bg-lime-500',
+    upload_file: 'bg-amber-400',
+    os_file: 'bg-stone-500',
+    schedule_task: 'bg-teal-500',
+    external_data_source: 'bg-indigo-500',
+    conversation: 'bg-cyan-400',
+    memory: 'bg-pink-500',
+  }
+  return colors[type] || 'bg-slate-300'
+}
+
+const statusDistribution = computed(() => {
+  const rows = overview.value.by_status || []
+  const max = Math.max(1, ...rows.map((row) => row.count))
+  return rows.map((row) => ({
+    ...row,
+    percentage: Math.round((row.count / max) * 100),
+    color: statusBarColor(row.name),
+    label: t(`admin.recycleBin.statuses.${row.name}`) !== `admin.recycleBin.statuses.${row.name}` ? t(`admin.recycleBin.statuses.${row.name}`) : row.name,
+  }))
+})
+
+const typeDistribution = computed(() => {
+  const rows = (overview.value.by_resource_type || []).slice(0, 8)
+  const max = Math.max(1, ...rows.map((row) => row.count))
+  return rows.map((row) => ({
+    ...row,
+    percentage: Math.round((row.count / max) * 100),
+    color: typeBarColor(row.name),
+    label: getTypeLabel(row.name),
+  }))
+})
+
+const sourceDistribution = computed(() => {
+  const rows = overview.value.by_deleted_by_type || []
+  const max = Math.max(1, ...rows.map((row) => row.count))
+  return rows.map((row) => ({
+    ...row,
+    percentage: Math.round((row.count / max) * 100),
+    label: getSourceLabel(row.name),
+  }))
+})
+
+const kpiCards = computed(() => [
+  {
+    key: 'pending',
+    label: t('admin.recycleBin.pendingTotal'),
+    hint: t('admin.recycleBin.pendingTotalHint'),
+    value: overview.value.pending_total,
+    color: 'text-amber-600',
+    icon: 'bg-amber-50',
+  },
+  {
+    key: 'total',
+    label: t('admin.recycleBin.totalCount'),
+    hint: t('admin.recycleBin.totalCountHint'),
+    value: overview.value.total,
+    color: 'text-slate-900',
+    icon: 'bg-sky-50',
+  },
+])
 
 const handleRestore = async (item: RecycleBinItem) => {
   restoringId.value = item.id
@@ -220,7 +334,7 @@ const handleCleanExpired = async () => {
     } else {
       Message.info(t('admin.recycleBin.cleanExpiredEmpty'))
     }
-    await loadList()
+    await reloadAll()
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.recycleBin.cleanExpiredFailed')))
   } finally {
@@ -229,7 +343,7 @@ const handleCleanExpired = async () => {
 }
 
 onMounted(() => {
-  void loadList()
+  void reloadAll()
 })
 </script>
 
@@ -242,6 +356,106 @@ onMounted(() => {
       </div>
       <a-alert type="info" :title="t('admin.recycleBin.cannotEmpty')" class="max-w-md" />
     </header>
+
+    <section class="space-y-4">
+      <div class="flex items-end justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-900">{{ t('admin.recycleBin.overview') }}</h2>
+          <p class="mt-1 text-sm text-slate-500">{{ t('admin.recycleBin.overviewDescription') }}</p>
+        </div>
+        <a-button type="outline" size="small" :loading="overviewLoading" @click="loadOverview">
+          {{ t('common.actions.refresh') }}
+        </a-button>
+      </div>
+
+      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <article
+          v-for="card in kpiCards"
+          :key="card.key"
+          class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
+        >
+          <div class="flex items-center gap-2">
+            <span class="flex h-8 w-8 items-center justify-center rounded-lg" :class="card.icon">
+              <svg v-if="card.key === 'pending'" class="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 8v4l3 3" /><circle cx="12" cy="12" r="9" />
+              </svg>
+              <svg v-else class="h-4 w-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+              </svg>
+            </span>
+            <p class="text-sm font-medium text-slate-500">{{ card.label }}</p>
+            <a-tooltip :content="card.hint" position="top">
+              <svg class="h-3.5 w-3.5 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" />
+              </svg>
+            </a-tooltip>
+          </div>
+          <div v-if="overviewLoading" class="mt-3 h-8 w-20 animate-pulse rounded bg-slate-100" aria-hidden="true" />
+          <strong v-else class="mt-3 block text-3xl font-semibold tracking-tight" :class="card.color">
+            {{ Number(card.value).toLocaleString() }}
+          </strong>
+        </article>
+
+        <article class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:col-span-2 xl:col-span-1">
+          <h3 class="text-sm font-semibold text-slate-700">{{ t('admin.recycleBin.trendTitle') }}</h3>
+          <p class="mt-0.5 text-xs text-slate-400">{{ t('admin.recycleBin.trendDescription') }}</p>
+          <div v-if="!overviewLoading && statusDistribution.length" class="mt-3 space-y-2.5">
+            <div v-for="row in statusDistribution" :key="row.name" class="space-y-1">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-500">{{ row.label }}</span>
+                <span class="font-medium text-slate-700">{{ row.count }}</span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div class="h-full rounded-full transition-all" :class="row.color" :style="{ width: `${row.percentage}%` }" />
+              </div>
+            </div>
+          </div>
+          <p v-else-if="!overviewLoading" class="mt-6 text-center text-xs text-slate-400">
+            {{ t('admin.recycleBin.noData') }}
+          </p>
+        </article>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-2">
+        <article class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 class="text-sm font-semibold text-slate-700">{{ t('admin.recycleBin.distributionTypeTitle') }}</h3>
+          <p class="mt-0.5 text-xs text-slate-400">{{ t('admin.recycleBin.distributionTypeDescription') }}</p>
+          <div v-if="!overviewLoading && typeDistribution.length" class="mt-3 space-y-2.5">
+            <div v-for="row in typeDistribution" :key="row.name" class="space-y-1">
+              <div class="flex items-center justify-between text-xs">
+                <span class="truncate text-slate-500">{{ row.label }}</span>
+                <span class="font-medium text-slate-700">{{ row.count }}</span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div class="h-full rounded-full transition-all" :class="row.color" :style="{ width: `${row.percentage}%` }" />
+              </div>
+            </div>
+          </div>
+          <p v-else-if="!overviewLoading" class="mt-6 text-center text-xs text-slate-400">
+            {{ t('admin.recycleBin.noData') }}
+          </p>
+        </article>
+
+        <article class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 class="text-sm font-semibold text-slate-700">{{ t('admin.recycleBin.distributionSourceTitle') }}</h3>
+          <p class="mt-0.5 text-xs text-slate-400">{{ t('admin.recycleBin.distributionSourceDescription') }}</p>
+          <div v-if="!overviewLoading && sourceDistribution.length" class="mt-3 space-y-2.5">
+            <div v-for="row in sourceDistribution" :key="row.name" class="space-y-1">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-500">{{ row.label }}</span>
+                <span class="font-medium text-slate-700">{{ row.count }}</span>
+              </div>
+              <div class="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div class="h-full rounded-full bg-slate-400 transition-all" :style="{ width: `${row.percentage}%` }" />
+              </div>
+            </div>
+          </div>
+          <p v-else-if="!overviewLoading" class="mt-6 text-center text-xs text-slate-400">
+            {{ t('admin.recycleBin.noData') }}
+          </p>
+        </article>
+      </div>
+    </section>
 
     <section class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2">
@@ -278,7 +492,7 @@ onMounted(() => {
         <a-button :loading="loading" @click="loadList">
           {{ t('common.actions.refresh') }}
         </a-button>
-        <a-button v-if="canCleanExpired" type="danger" status="danger" :loading="cleaning" @click="openCleanModal">
+        <a-button v-if="canCleanExpired" status="danger" :loading="cleaning" @click="openCleanModal">
           {{ t('admin.recycleBin.cleanExpiredBtn') }}
         </a-button>
       </div>

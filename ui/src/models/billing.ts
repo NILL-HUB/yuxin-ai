@@ -122,12 +122,15 @@ export type CreditAccount = {
 export type CreditTransaction = {
   id: string
   amount: number
-  balance_after: number
+  balance_after?: number
   transaction_type: string
   source: string
   source_id: string | null
   description: string
   created_at: number | null
+  ref_id?: string | null
+  tx_count?: number | null
+  task_message?: string | null
 }
 
 export type RecentTaskConsume = {
@@ -180,3 +183,11 @@ export type BillingConfigResponse = BaseResponse<BillingConfig>
 export type PlainCodeResponse = BaseResponse<{ id: string; code_mask: string; plain_code: string }>
 export type MembershipSummaryResponse = BaseResponse<MembershipSummary>
 export type RedeemRecordListResponse = BaseResponse<RedeemRecordList>
+export type CreditTransactionList = {
+  list: CreditTransaction[]
+  total: number
+  total_consumed: number
+  page: number
+  page_size: number
+}
+export type CreditTransactionListResponse = BaseResponse<CreditTransactionList>

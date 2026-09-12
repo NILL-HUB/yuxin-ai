@@ -7,7 +7,12 @@ import { listAdminMcpProviders } from '@/services/admin-mcp'
 import { listAdminApiTools } from '@/services/admin-tools'
 import { listAdminSkills } from '@/services/admin-skills'
 import { getStorageOverview } from '@/services/admin-storage'
-import { listAdminRoutingLogs } from '@/services/admin-routing-logs'
+import {
+  getRoutingLogStats,
+  getRoutingLogTrend,
+  listAdminRoutingLogs,
+  type RoutingLogStatsOverview,
+} from '@/services/admin-routing-logs'
 import { listAuditLogs, type AuditLog, type AuditLogListData } from '@/services/admin-audit-logs'
 import { listRecycleBin } from '@/services/admin-recycle-bin'
 import { getCostStatsOverview } from '@/services/admin-cost-stats'
@@ -25,6 +30,15 @@ export type AdminDashboardSummary = {
   skills: { total: number; enabled: number }
   storage: { active_backend: string; files: number; size: number }
   routing: AdminRoutingLogSummary
+  routingStats: RoutingLogStatsOverview
+  routingTrend: Array<{
+    timestamp: number
+    request_count: number
+    success_count: number
+    fallback_count: number
+    total_credits: number
+    avg_latency_ms: number
+  }>
   recentRoutingLogs: AdminRoutingLogRecord[]
   audits: AuditLog[]
   recycleBin: number
@@ -60,6 +74,19 @@ const createEmptySummary = (): AdminDashboardSummary => ({
     agent_pool_hit_rate: 0,
     tool_pool_hit_rate: 0,
   },
+  routingStats: {
+    total_count: 0,
+    success_count: 0,
+    fallback_count: 0,
+    success_rate: 0,
+    fallback_rate: 0,
+    total_credits: 0,
+    avg_latency_ms: 0,
+    agent_pool_hit_rate: 0,
+    tool_pool_hit_rate: 0,
+    by_status: {},
+  },
+  routingTrend: [],
   recentRoutingLogs: [],
   audits: [],
   recycleBin: 0,
@@ -106,6 +133,8 @@ export const getAdminDashboardSummary = async (
     skills,
     storage,
     routingResponse,
+    routingStats,
+    routingTrend,
     auditResponse,
     recycleBin,
     costs,
@@ -137,8 +166,20 @@ export const getAdminDashboardSummary = async (
     guarded('skill:read', () => listAdminSkills({ current_page: 1, page_size: 100 })),
     guarded('storage:read', () => getStorageOverview()),
     guarded('routing_log:read', () => listAdminRoutingLogs({ current_page: 1, page_size: 6 })),
+    guarded('routing_log:read', () =>
+      getRoutingLogStats({ start_at: String(sevenDaysAgo), end_at: String(now) }),
+    ),
+    guarded('routing_log:read', () =>
+      getRoutingLogTrend({
+        start_at: String(sevenDaysAgo),
+        end_at: String(now),
+        granularity: 'day',
+      }),
+    ),
     guarded('audit_log:read', () => listAuditLogs({ current_page: 1, page_size: 6 })),
-    guarded('recycle_bin:read', () => listRecycleBin({ page: 1, page_size: 1 })),
+    guarded('recycle_bin:read', () =>
+      listRecycleBin({ page: 1, page_size: 1, status: 'pending' }),
+    ),
     guarded('cost_stats:read', () =>
       getCostStatsOverview({
         start_at: String(sevenDaysAgo),
@@ -200,6 +241,8 @@ export const getAdminDashboardSummary = async (
     size: storageValues.reduce((total, item) => total + Number(item.size ?? 0), 0),
   }
   summary.routing = routingData?.summary ?? summary.routing
+  summary.routingStats = routingStats ?? summary.routingStats
+  summary.routingTrend = routingTrend?.points ?? []
   summary.recentRoutingLogs = routingData?.list ?? []
   summary.audits = auditData?.list ?? []
   summary.recycleBin = recycleBin?.total_record ?? recycleBin?.total ?? 0

@@ -12,6 +12,8 @@ import {
   type Suggestion,
 } from '@/services/admin-routing-quality-suggestion'
 import { getErrorMessage } from '@/utils/error'
+import { isUuidLike, semanticLabel, truncateId } from '@/utils/semantic-labels'
+import PolicyChangePreviewModal from './PolicyChangePreviewModal.vue'
 
 const { t } = useI18n()
 const loading = ref(false)
@@ -64,9 +66,21 @@ const statusLabel = (status: string) => {
   return KNOWN_STATUSES.includes(status) ? t(`policyChange.${status}`) : status
 }
 
-const formatJson = (value: Record<string, unknown> | undefined) => {
-  if (!value) return ''
-  return JSON.stringify(value, null, 2)
+const severityLabel = (severity: string) => semanticLabel('severity', severity, severity)
+
+const targetTypeLabel = (targetType: string) =>
+  semanticLabel('target_type', targetType, targetType)
+
+const suggestionTypeLabel = (suggestionType: string) =>
+  semanticLabel('suggestion_type', suggestionType, suggestionType)
+
+const reasonLabel = (record: Suggestion) =>
+  semanticLabel('suggestion_reason', record.suggestion_type, record.reason)
+
+const displayTargetId = (id: string) => {
+  if (!id) return '-'
+  if (isUuidLike(id)) return truncateId(id)
+  return id
 }
 
 const loadSuggestions = async () => {
@@ -179,7 +193,14 @@ onMounted(loadSuggestions)
             cell-class="!py-4"
           >
             <template #cell="{ record }">
-              <span class="text-sm text-gray-700">{{ record.target_type }}</span>
+              <a-tooltip
+                :content="record.target_type"
+                :disabled="targetTypeLabel(record.target_type) === record.target_type"
+                position="top"
+                mini
+              >
+                <span class="text-sm text-gray-700">{{ targetTypeLabel(record.target_type) }}</span>
+              </a-tooltip>
             </template>
           </a-table-column>
           <a-table-column
@@ -190,7 +211,14 @@ onMounted(loadSuggestions)
             cell-class="!py-4"
           >
             <template #cell="{ record }">
-              <span class="text-sm text-gray-700 font-mono">{{ record.target_id }}</span>
+              <a-tooltip
+                :content="record.target_id"
+                :disabled="record.target_id === displayTargetId(record.target_id)"
+                position="top"
+                mini
+              >
+                <span class="font-mono text-sm text-gray-700">{{ displayTargetId(record.target_id) }}</span>
+              </a-tooltip>
             </template>
           </a-table-column>
           <a-table-column
@@ -201,7 +229,14 @@ onMounted(loadSuggestions)
             cell-class="!py-4"
           >
             <template #cell="{ record }">
-              <span class="text-sm text-gray-700">{{ record.suggestion_type }}</span>
+              <a-tooltip
+                :content="record.suggestion_type"
+                :disabled="suggestionTypeLabel(record.suggestion_type) === record.suggestion_type"
+                position="top"
+                mini
+              >
+                <span class="text-sm text-gray-700">{{ suggestionTypeLabel(record.suggestion_type) }}</span>
+              </a-tooltip>
             </template>
           </a-table-column>
           <a-table-column
@@ -212,7 +247,7 @@ onMounted(loadSuggestions)
             cell-class="!py-4"
           >
             <template #cell="{ record }">
-              <a-tag :color="severityColor(record.severity)" size="small">{{ record.severity }}</a-tag>
+              <a-tag :color="severityColor(record.severity)" size="small">{{ severityLabel(record.severity) }}</a-tag>
             </template>
           </a-table-column>
           <a-table-column
@@ -233,7 +268,13 @@ onMounted(loadSuggestions)
             cell-class="!py-4"
           >
             <template #cell="{ record }">
-              <span class="text-sm text-gray-600">{{ record.reason }}</span>
+              <a-tooltip
+                :content="record.reason"
+                :disabled="reasonLabel(record) === record.reason"
+                position="top"
+              >
+                <span class="text-sm text-gray-600">{{ reasonLabel(record) }}</span>
+              </a-tooltip>
             </template>
           </a-table-column>
           <a-table-column
@@ -278,33 +319,11 @@ onMounted(loadSuggestions)
       </a-table>
     </div>
 
-    <a-modal
+    <PolicyChangePreviewModal
       v-model:visible="previewVisible"
-      :title="t('policyChange.preview')"
-      :footer="false"
-      :width="720"
-    >
-      <a-spin :loading="previewLoading" class="block">
-        <div v-if="previewData" class="space-y-4">
-          <div>
-            <p class="text-sm font-semibold text-gray-700 mb-1">{{ t('policyChange.beforeConfig') }}</p>
-            <pre class="bg-gray-50 rounded p-3 text-xs overflow-auto max-h-60">{{ formatJson(previewData.before_config) }}</pre>
-          </div>
-          <div>
-            <p class="text-sm font-semibold text-gray-700 mb-1">{{ t('policyChange.afterConfig') }}</p>
-            <pre class="bg-gray-50 rounded p-3 text-xs overflow-auto max-h-60">{{ formatJson(previewData.after_config) }}</pre>
-          </div>
-          <div>
-            <p class="text-sm font-semibold text-gray-700 mb-1">{{ t('policyChange.diff') }}</p>
-            <pre class="bg-gray-50 rounded p-3 text-xs overflow-auto max-h-60">{{ formatJson(previewData.diff) }}</pre>
-          </div>
-          <div>
-            <p class="text-sm font-semibold text-gray-700 mb-1">{{ t('policyChange.impact') }}</p>
-            <pre class="bg-gray-50 rounded p-3 text-xs overflow-auto max-h-60">{{ formatJson(previewData.impact) }}</pre>
-          </div>
-        </div>
-      </a-spin>
-    </a-modal>
+      :loading="previewLoading"
+      :data="previewData"
+    />
 
     <a-modal
       v-model:visible="dismissVisible"

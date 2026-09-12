@@ -38,6 +38,7 @@ export type AdminRoutingQualityGroup = {
 }
 
 export type AdminRoutingOptimizationSuggestion = {
+  id?: string | null
   target_type: string
   target_id: string
   suggestion_type: string
@@ -45,4 +46,8 @@ export type AdminRoutingOptimizationSuggestion = {
   reason: string
   evidence: Record<string, unknown>
   status: string
+  dismiss_reason?: string
+  applied_by?: string
+  applied_at?: string
+  policy_change_draft_id?: string
 }

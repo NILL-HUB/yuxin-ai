@@ -98,7 +98,7 @@ class AuditLogService:
                 .filter(AdminUser.id.in_(admin_ids))
                 .all()
             )
-            admin_name_map = {row[0]: (row[1] or row[2] or "") for row in name_rows}
+            admin_name_map = {str(row[0]): (row[1] or row[2] or "") for row in name_rows}
 
         return {
             "total": total,

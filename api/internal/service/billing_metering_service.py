@@ -150,8 +150,9 @@ class BillingUsageAggregator:
             "billing_final",
         )
         # 实际扣费：如果注入了 credit_service 和 account_id，则调用 CreditService。
-        # 优先按 usage 明细逐条精确计价（model_id+input/output/cached，消除对 1:1
-        # 全局汇率的依赖）；无明细可查时回退旧行为（累计 token_count × 全局汇率）。
+        # 计价口径（2026-09 修复）：同任务同模型的多笔调用先合并 token，再按
+        # 模型单价一次精确计价（一次 ceil），避免每笔独立 ceil 把不足 1 算力的
+        # 小调用重复进位造成系统性多收。
         if (
             self.credit_service is not None
             and self.account_id is not None
@@ -162,11 +163,27 @@ class BillingUsageAggregator:
                     if (ev.get("input_tokens") or 0) + (ev.get("output_tokens") or 0) > 0
                 ]
                 if detailed:
-                    for idx, ev in enumerate(detailed):
+                    # 按 model_id 合并 token（同模型多次调用归并为一次计费）
+                    merged: dict[str, dict] = {}
+                    for ev in detailed:
+                        model_id = ev.get("model_id") or ""
+                        group = merged.setdefault(model_id, {
+                            "input_tokens": 0,
+                            "output_tokens": 0,
+                            "cached_input_tokens": 0,
+                            "moment": None,
+                        })
+                        group["input_tokens"] += max(int(ev.get("input_tokens") or 0), 0)
+                        group["output_tokens"] += max(int(ev.get("output_tokens") or 0), 0)
+                        group["cached_input_tokens"] += max(int(ev.get("cached_input_tokens") or 0), 0)
+                        moment = ev.get("moment")
+                        if group["moment"] is None or (moment is not None and moment > group["moment"]):
+                            group["moment"] = moment
+                    for model_id, group in merged.items():
                         ev_total = (
-                            int(ev.get("input_tokens") or 0)
-                            + int(ev.get("cached_input_tokens") or 0)
-                            + int(ev.get("output_tokens") or 0)
+                            group["input_tokens"]
+                            + group["cached_input_tokens"]
+                            + group["output_tokens"]
                         )
                         if ev_total <= 0:
                             continue
@@ -174,11 +191,11 @@ class BillingUsageAggregator:
                             account_id=self.account_id,
                             feature_key=self.feature_key,
                             token_count=ev_total,
-                            idempotency_key=f"{self.task_id}:{ev.get('model_id') or ''}:{ev.get('source_type') or ''}:{idx}",
-                            model_id=ev.get("model_id") or None,
-                            input_tokens=int(ev.get("input_tokens") or 0),
-                            output_tokens=int(ev.get("output_tokens") or 0),
-                            cached_input_tokens=int(ev.get("cached_input_tokens") or 0),
+                            idempotency_key=f"{self.task_id}:{model_id}:merged",
+                            model_id=model_id or None,
+                            input_tokens=group["input_tokens"],
+                            output_tokens=group["output_tokens"],
+                            cached_input_tokens=group["cached_input_tokens"],
                         )
                 elif self.total_tokens > 0:
                     self.credit_service.consume_for_feature(

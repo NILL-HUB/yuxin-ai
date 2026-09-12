@@ -430,6 +430,128 @@ def test_overview_aggregates_status_type_and_source(monkeypatch):
     assert result["by_deleted_by_type"] == [{"name": "admin", "count": 5}]
 
 
+def test_user_overview_scopes_to_account_and_user_visible_types(monkeypatch):
+    """user_overview 必须按账号隔离且只统计用户可见资源类型。"""
+    from types import SimpleNamespace as _NS
+
+    class _ChainQuery:
+        def __init__(self, group_sets, scalar_value=None, filters=None):
+            self.group_sets = list(group_sets)
+            self.scalar_value = scalar_value
+            self.filters = filters or []
+            self.group_calls = 0
+
+        def filter(self, *args):
+            self.filters.extend(args)
+            return self
+
+        def with_entities(self, *_a):
+            return self
+
+        def group_by(self, *_a):
+            return self
+
+        def order_by(self, *_a):
+            return self
+
+        def select_from(self, *_a):
+            return self
+
+        def limit(self, *_a):
+            return self
+
+        def count(self):
+            return 6
+
+        def all(self):
+            result = self.group_sets[self.group_calls % len(self.group_sets)]
+            self.group_calls += 1
+            return result
+
+        def scalar(self):
+            return self.scalar_value
+
+    class _Session:
+        def __init__(self):
+            self.calls = 0
+
+        def query(self, *_a):
+            self.calls += 1
+            if self.calls == 1:
+                return _ChainQuery(
+                    group_sets=[
+                        [_NS(status="pending", count=4), _NS(status="expired", count=2)],
+                        [_NS(resource_type="knowledge_document", count=3), _NS(resource_type="os_file", count=2)],
+                        [_NS(deleted_by_type="user", count=4), _NS(deleted_by_type="agent", count=2)],
+                    ]
+                )
+            return _ChainQuery(group_sets=[], scalar_value=4)
+
+    session = _Session()
+    monkeypatch.setattr(recycle_bin_service, "db", _NS(session=session))
+
+    result = RecycleBinService().user_overview(account_id="acc-1")
+
+    assert result["total"] == 6
+    assert result["pending_total"] == 4
+    assert result["by_status"] == [
+        {"name": "pending", "count": 4},
+        {"name": "expired", "count": 2},
+    ]
+    assert result["by_resource_type"][0] == {"name": "knowledge_document", "count": 3}
+    assert result["by_deleted_by_type"] == [
+        {"name": "user", "count": 4},
+        {"name": "agent", "count": 2},
+    ]
+
+
+def test_record_os_file_deletion_uses_basename_across_path_separators(monkeypatch):
+    """record_os_file_deletion 的 resource_name 必须是文件名（兼容 Windows 反斜杠路径）。"""
+    from internal.model import RecycleBin
+
+    created = []
+
+    class _Session:
+        def add(self, obj):
+            created.append(obj)
+
+        def commit(self):
+            pass
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(recycle_bin_service, "db", SimpleNamespace(session=_Session()))
+
+    service = RecycleBinService()
+    service.record_os_file_deletion(
+        entries=[
+            {
+                "entry_id": "entry-win-1",
+                "original_path": r"C:\Users\Administrator\recycle-test\report.txt",
+                "moved_to": r"C:\Users\Administrator\.yujianwo_recycle\recycle-test\report.txt",
+                "device_info": {"ip": "192.168.1.1", "name": "Host"},
+            },
+            {
+                "entry_id": "entry-posix-1",
+                "original_path": "/home/nill/reports/summary.md",
+                "moved_to": "/home/nill/.yujianwo_recycle/reports/summary.md",
+                "device_info": {"ip": "192.168.1.2", "name": "Host2"},
+            },
+        ],
+        deleted_by="acc-1",
+        deleted_by_type="agent",
+    )
+
+    assert len(created) == 2
+    assert created[0].resource_name == "report.txt"
+    assert created[1].resource_name == "summary.md"
+    assert created[0].deleted_by == "acc-1"
+    assert created[0].deleted_by_type == "agent"
+    assert created[0].retention_days == 7
+    assert created[0].status == "pending"
+
+
 # ---------------------------------------------------------------------------
 # os_file：agent 本机文件删除记录（snapshot 须携带 safe_root/recycle_root 供 purge）
 # ---------------------------------------------------------------------------
@@ -455,16 +577,16 @@ def test_record_os_file_deletion_stores_safe_root_and_recycle_root(monkeypatch):
             {
                 "entry_id": "entry-win-1",
                 "original_path": r"C:\Users\Administrator\recycle-test\report.txt",
-                "moved_to": r"C:\Users\Administrator\.yuxin_ai_recycle\recycle-test\report.txt",
-                "recycle_root": r"C:\Users\Administrator\.yuxin_ai_recycle",
+                "moved_to": r"C:\Users\Administrator\.yujianwo_recycle\recycle-test\report.txt",
+                "recycle_root": r"C:\Users\Administrator\.yujianwo_recycle",
                 "safe_root": r"C:\Users\Administrator",
                 "device_info": {"ip": "192.168.1.1", "name": "Host"},
             },
             {
                 "entry_id": "entry-posix-1",
                 "original_path": "/home/nill/reports/summary.md",
-                "moved_to": "/home/nill/.yuxin_ai_recycle/reports/summary.md",
-                "recycle_root": "/home/nill/.yuxin_ai_recycle",
+                "moved_to": "/home/nill/.yujianwo_recycle/reports/summary.md",
+                "recycle_root": "/home/nill/.yujianwo_recycle",
                 "safe_root": "/home/nill",
                 "device_info": {"ip": "192.168.1.2", "name": "Host2"},
             },
@@ -479,7 +601,7 @@ def test_record_os_file_deletion_stores_safe_root_and_recycle_root(monkeypatch):
     assert created[0].retention_days == 7
     assert created[0].status == "pending"
     # 快照须携带删除时记录的 recycle_root 与 safe_root（purge 按 safe_root 定位清单）
-    assert created[0].snapshot["recycle_root"] == r"C:\Users\Administrator\.yuxin_ai_recycle"
+    assert created[0].snapshot["recycle_root"] == r"C:\Users\Administrator\.yujianwo_recycle"
     assert created[0].snapshot["safe_root"] == r"C:\Users\Administrator"
     assert created[1].snapshot["safe_root"] == "/home/nill"
 

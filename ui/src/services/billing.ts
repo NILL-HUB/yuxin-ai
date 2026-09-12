@@ -1,5 +1,9 @@
 import { get, post } from '@/utils/request'
-import { type MembershipSummaryResponse, type RedeemRecordListResponse } from '@/models/billing'
+import {
+  type CreditTransactionListResponse,
+  type MembershipSummaryResponse,
+  type RedeemRecordListResponse,
+} from '@/models/billing'
 
 export const redeemCode = (code: string) => {
   return post('/redeem-codes/redeem', { body: { code } })
@@ -7,6 +11,16 @@ export const redeemCode = (code: string) => {
 
 export const getMembershipSummary = async () => {
   const response = await get<MembershipSummaryResponse>('/membership/summary')
+  return response.data
+}
+
+export const getCreditTransactions = async (params?: {
+  page?: number
+  page_size?: number
+}) => {
+  const response = await get<CreditTransactionListResponse>('/membership/credit-transactions', {
+    params,
+  })
   return response.data
 }
 

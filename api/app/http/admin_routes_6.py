@@ -438,7 +438,7 @@ def register_routes(quart_app):
                 a._get_service(RoutingQualityMetricsService).build_metrics
             )
             suggestions = await a._to_thread(
-                a._get_service(RoutingOptimizationSuggestionService).generate_suggestions,
+                a._get_service(RoutingOptimizationSuggestionService).sync_open_suggestions,
                 metrics,
             )
         return a._ok(RoutingOptimizationSuggestionResp(many=True).dump(suggestions))

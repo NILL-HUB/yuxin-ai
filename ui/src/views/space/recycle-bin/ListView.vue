@@ -5,13 +5,15 @@
  * 数据源：真实接口 /space/recycle-bin（列表、恢复、跨设备恢复、清理、分页）。
  * 视觉结构沿用已确认的模拟数据版本，仅将数据层替换为接口。
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import {
   cleanupExpiredUserRecycleBin,
+  getUserRecycleBinOverview,
   listUserRecycleBin,
   restoreUserRecycleBinItem,
+  type UserRecycleBinOverviewData,
 } from '@/services/user-recycle-bin'
 import type { RecycleBinItem } from '@/models/recycle-bin'
 import { getErrorCode, getErrorMessage, getErrorResponseData } from '@/utils/error'
@@ -19,10 +21,18 @@ import { getErrorCode, getErrorMessage, getErrorResponseData } from '@/utils/err
 const { t } = useI18n()
 
 const loading = ref(false)
+const overviewLoading = ref(false)
 const restoringId = ref<number | null>(null)
 const cleaning = ref(false)
 const items = ref<RecycleBinItem[]>([])
 const totalRecord = ref(0)
+const overview = ref<UserRecycleBinOverviewData>({
+  total: 0,
+  pending_total: 0,
+  by_status: [],
+  by_resource_type: [],
+  by_deleted_by_type: [],
+})
 const searchWord = ref('')
 const resourceTypeFilter = ref('')
 const deletedByTypeFilter = ref('')
@@ -109,7 +119,7 @@ const loadList = async () => {
 
 const handleSearch = () => {
   currentPage.value = 1
-  void loadList()
+  void reloadAll()
 }
 
 const handlePageChange = (page: number) => {
@@ -122,6 +132,97 @@ const handlePageSizeChange = (size: number) => {
   currentPage.value = 1
   void loadList()
 }
+
+const loadOverview = async () => {
+  overviewLoading.value = true
+  try {
+    overview.value = await getUserRecycleBinOverview({
+      resource_type: resourceTypeFilter.value || undefined,
+      deleted_by_type: deletedByTypeFilter.value || undefined,
+      status: statusFilter.value || undefined,
+      search_word: searchWord.value.trim(),
+    })
+  } catch (error) {
+    Message.error(getErrorMessage(error, t('userRecycleBin.overviewLoadFailed')))
+  } finally {
+    overviewLoading.value = false
+  }
+}
+
+const reloadAll = async () => {
+  await Promise.all([loadList(), loadOverview()])
+}
+
+const statusBarClass = (status: string) => {
+  const classes: Record<string, string> = {
+    pending: 'bar-accent',
+    restored: 'bar-soft',
+    expired: 'bar-neutral',
+  }
+  return classes[status] || 'bar-neutral'
+}
+
+const typeBarClass = (type: string) => {
+  const classes: Record<string, string> = {
+    knowledge_base: 'bar-brand',
+    knowledge_document: 'bar-brand',
+    os_file: 'bar-neutral',
+    schedule_task: 'bar-accent',
+    external_data_source: 'bar-soft',
+    conversation: 'bar-accent',
+    memory: 'bar-soft',
+  }
+  return classes[type] || 'bar-neutral'
+}
+
+const statusDistribution = computed(() => {
+  const rows = overview.value.by_status || []
+  const max = Math.max(1, ...rows.map((row) => row.count))
+  return rows.map((row) => ({
+    ...row,
+    percentage: Math.round((row.count / max) * 100),
+    colorClass: statusBarClass(row.name),
+    label: getStatusText({ status: row.name } as RecycleBinItem),
+  }))
+})
+
+const typeDistribution = computed(() => {
+  const rows = (overview.value.by_resource_type || []).slice(0, 8)
+  const max = Math.max(1, ...rows.map((row) => row.count))
+  return rows.map((row) => ({
+    ...row,
+    percentage: Math.round((row.count / max) * 100),
+    colorClass: typeBarClass(row.name),
+    label: getTypeLabel(row.name),
+  }))
+})
+
+const sourceDistribution = computed(() => {
+  const rows = overview.value.by_deleted_by_type || []
+  const max = Math.max(1, ...rows.map((row) => row.count))
+  return rows.map((row) => ({
+    ...row,
+    percentage: Math.round((row.count / max) * 100),
+    label: getSourceLabel(row.name),
+  }))
+})
+
+const kpiCards = computed(() => [
+  {
+    key: 'pending',
+    label: t('userRecycleBin.pendingTotal'),
+    hint: t('userRecycleBin.pendingTotalHint'),
+    value: overview.value.pending_total,
+    accentClass: 'text-brand',
+  },
+  {
+    key: 'total',
+    label: t('userRecycleBin.totalCount'),
+    hint: t('userRecycleBin.totalCountHint'),
+    value: overview.value.total,
+    accentClass: 'text-text',
+  },
+])
 
 const restoreTarget = ref<RecycleBinItem | null>(null)
 const openRestoreModal = (item: RecycleBinItem) => {
@@ -201,7 +302,7 @@ const handleCleanExpired = async () => {
     } else {
       Message.info(t('userRecycleBin.cleanExpiredEmpty'))
     }
-    await loadList()
+    await reloadAll()
   } catch (error) {
     Message.error(getErrorMessage(error, t('userRecycleBin.cleanExpiredFailed')))
   } finally {
@@ -210,7 +311,7 @@ const handleCleanExpired = async () => {
 }
 
 onMounted(() => {
-  void loadList()
+  void reloadAll()
 })
 </script>
 
@@ -244,6 +345,113 @@ onMounted(() => {
         <icon-info-circle class="mt-0.5 h-4 w-4 shrink-0 text-brand" />
         <p>{{ t('userRecycleBin.cannotEmpty') }}</p>
       </div>
+
+      <!-- 回收站概览 -->
+      <section aria-label="回收站概览" class="mt-6 space-y-4">
+        <div class="flex items-end justify-between gap-4">
+          <div>
+            <h2 class="recycle-title text-xl font-semibold">{{ t('userRecycleBin.overview') }}</h2>
+            <p class="mt-1 text-sm text-muted">{{ t('userRecycleBin.overviewDescription') }}</p>
+          </div>
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-[var(--aicss-radius)] border border-border-c bg-surface px-3 py-1.5 text-xs font-medium text-text-2 transition hover:border-[var(--aicss-border-strong)]"
+            :disabled="overviewLoading"
+            @click="loadOverview"
+          >
+            <icon-refresh class="h-3.5 w-3.5" />
+            刷新
+          </button>
+        </div>
+
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article
+            v-for="card in kpiCards"
+            :key="card.key"
+            class="rounded-[var(--aicss-radius-lg)] border border-border-c bg-surface p-4 shadow-[var(--aicss-shadow-card)]"
+          >
+            <div class="flex items-center gap-2">
+              <span class="flex h-8 w-8 items-center justify-center rounded-[var(--aicss-radius)] bg-surface-2 text-brand">
+                <svg v-if="card.key === 'pending'" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 8v4l3 3" /><circle cx="12" cy="12" r="9" />
+                </svg>
+                <svg v-else class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </span>
+              <p class="text-sm font-medium text-text-2">{{ card.label }}</p>
+              <a-tooltip :content="card.hint" position="top">
+                <svg class="h-3.5 w-3.5 text-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" />
+                </svg>
+              </a-tooltip>
+            </div>
+            <div v-if="overviewLoading" class="mt-3 h-8 w-20 animate-pulse rounded bg-surface-2" aria-hidden="true" />
+            <strong v-else class="mt-3 block text-3xl font-semibold tracking-tight" :class="card.accentClass">
+              {{ Number(card.value).toLocaleString() }}
+            </strong>
+          </article>
+
+          <article class="rounded-[var(--aicss-radius-lg)] border border-border-c bg-surface p-4 shadow-[var(--aicss-shadow-card)] md:col-span-2 xl:col-span-1">
+            <h3 class="text-sm font-semibold text-text">{{ t('userRecycleBin.statusDistribution') }}</h3>
+            <p class="mt-0.5 text-xs text-muted">{{ t('userRecycleBin.statusDistributionDesc') }}</p>
+            <div v-if="!overviewLoading && statusDistribution.length" class="mt-3 space-y-2.5">
+              <div v-for="row in statusDistribution" :key="row.name" class="space-y-1">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-text-2">{{ row.label }}</span>
+                  <span class="font-medium text-text">{{ row.count }}</span>
+                </div>
+                <div class="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div class="h-full rounded-full transition-all" :class="row.colorClass" :style="{ width: `${row.percentage}%` }" />
+                </div>
+              </div>
+            </div>
+            <p v-else-if="!overviewLoading" class="mt-6 text-center text-xs text-muted">
+              {{ t('userRecycleBin.noData') }}
+            </p>
+          </article>
+        </div>
+
+        <div class="grid gap-4 lg:grid-cols-2">
+          <article class="rounded-[var(--aicss-radius-lg)] border border-border-c bg-surface p-4 shadow-[var(--aicss-shadow-card)]">
+            <h3 class="text-sm font-semibold text-text">{{ t('userRecycleBin.typeDistribution') }}</h3>
+            <p class="mt-0.5 text-xs text-muted">{{ t('userRecycleBin.typeDistributionDesc') }}</p>
+            <div v-if="!overviewLoading && typeDistribution.length" class="mt-3 space-y-2.5">
+              <div v-for="row in typeDistribution" :key="row.name" class="space-y-1">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="truncate text-text-2">{{ row.label }}</span>
+                  <span class="font-medium text-text">{{ row.count }}</span>
+                </div>
+                <div class="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div class="h-full rounded-full transition-all" :class="row.colorClass" :style="{ width: `${row.percentage}%` }" />
+                </div>
+              </div>
+            </div>
+            <p v-else-if="!overviewLoading" class="mt-6 text-center text-xs text-muted">
+              {{ t('userRecycleBin.noData') }}
+            </p>
+          </article>
+
+          <article class="rounded-[var(--aicss-radius-lg)] border border-border-c bg-surface p-4 shadow-[var(--aicss-shadow-card)]">
+            <h3 class="text-sm font-semibold text-text">{{ t('userRecycleBin.sourceDistribution') }}</h3>
+            <p class="mt-0.5 text-xs text-muted">{{ t('userRecycleBin.sourceDistributionDesc') }}</p>
+            <div v-if="!overviewLoading && sourceDistribution.length" class="mt-3 space-y-2.5">
+              <div v-for="row in sourceDistribution" :key="row.name" class="space-y-1">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-text-2">{{ row.label }}</span>
+                  <span class="font-medium text-text">{{ row.count }}</span>
+                </div>
+                <div class="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div class="h-full rounded-full bg-muted transition-all" :style="{ width: `${row.percentage}%` }" />
+                </div>
+              </div>
+            </div>
+            <p v-else-if="!overviewLoading" class="mt-6 text-center text-xs text-muted">
+              {{ t('userRecycleBin.noData') }}
+            </p>
+          </article>
+        </div>
+      </section>
 
       <!-- 筛选工具栏 -->
       <div class="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -561,5 +769,19 @@ onMounted(() => {
 }
 .restore-mock:hover {
   background: var(--aicss-accent-text);
+}
+
+/* 概览分布条配色 */
+.bar-brand {
+  background: var(--aicss-brand-text, var(--aicss-accent-text));
+}
+.bar-accent {
+  background: var(--aicss-accent);
+}
+.bar-soft {
+  background: var(--aicss-accent-soft);
+}
+.bar-neutral {
+  background: var(--aicss-muted);
 }
 </style>

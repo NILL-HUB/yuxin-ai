@@ -13,7 +13,7 @@ export const createAdminRoutingQualityFeedback = async (
   const response = await post<BaseResponse<AdminRoutingQualityFeedback>>(
     '/admin/routing-quality/feedback',
     {
-    body: data,
+      body: data,
     },
   )
   return response.data
@@ -28,15 +28,21 @@ export const listAdminRoutingQualityFeedback = async (params?: {
   const response = await get<BaseResponse<AdminRoutingQualityFeedback[]>>(
     '/admin/routing-quality/feedback',
     {
-    params,
+      params,
     },
   )
   return response.data
 }
 
-export const getAdminRoutingQualityMetrics = async (): Promise<AdminRoutingQualityMetrics> => {
+export const getAdminRoutingQualityMetrics = async (params?: {
+  start_at?: string
+  end_at?: string
+}): Promise<AdminRoutingQualityMetrics> => {
   const response = await get<BaseResponse<AdminRoutingQualityMetrics>>(
     '/admin/routing-quality/metrics',
+    {
+      params,
+    },
   )
   return response.data
 }

@@ -18,6 +18,8 @@ export const listAdminRoutingLogs = async (
   return response.data
 }
 
+export type { RoutingLogStatsOverview } from '@/models/admin-routing-log'
+
 export type RoutingLogStatsParams = {
   start_at?: string
   end_at?: string

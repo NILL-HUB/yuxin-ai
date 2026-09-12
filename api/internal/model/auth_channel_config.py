@@ -47,3 +47,20 @@ class SmsConfig(Base):
         server_onupdate=text("CURRENT_TIMESTAMP(0)"),
         default=_utcnow_naive,
     )
+
+
+class DesktopClientConfig(Base):
+    """桌面客户端连接配置：单行记录，configs 存桌面端 API 地址等配置项。"""
+    __tablename__ = "desktop_client_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 配置项（JSON）：api_origin（桌面端连接地址，空=与当前服务器同源）
+    configs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    created_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(0)"),
+        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
+        default=_utcnow_naive,
+    )

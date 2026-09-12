@@ -320,6 +320,38 @@ def test_settle_recomputes_with_cache_split_and_moment():
     }
 
 
+def test_settle_merges_same_model_events_before_ceil():
+    """同任务同模型的多笔小调用应先合并 token 再一次 ceil，避免逐笔进位多收。"""
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+    credit_stub, adjust_calls = _credit_stub()
+    # 真实定价引擎（无模型配置 → 全局汇率兜底 1000 token=1 算力）
+    from internal.core.billing.pricing_engine import PricingEngine
+
+    svc = BillingReconciliationService(
+        session=session,
+        pricing_engine=PricingEngine(configs={"credits_per_1k_tokens": 1}),
+        credit_service=credit_stub,
+    )
+
+    result = svc.settle(
+        task_id="task-merge",
+        account_id=ACCOUNT_ID,
+        events=[
+            # 两笔各 400 token：逐笔 ceil(0.4)=1 → 预扣 2
+            {"model_id": "m1", "input_tokens": 400, "output_tokens": 0,
+             "estimated_credits": 1, "billing_basis": "provider_usage"},
+            {"model_id": "m1", "input_tokens": 400, "output_tokens": 0,
+             "estimated_credits": 1, "billing_basis": "provider_usage"},
+        ],
+    )
+    # 合并后 800 token → ceil(0.8)=1；逐条 estimated 合计=2 → diff=-1 退还
+    assert result["estimated_credits"] == 2
+    assert result["actual_credits"] == 1
+    assert result["diff_credits"] == -1
+    assert len(adjust_calls) == 1
+    assert adjust_calls[0]["diff_credits"] == -1
+
+
 def test_margin_summary_groups_by_tier_and_cache_total():
     events = [
         BillingUsageEvent(

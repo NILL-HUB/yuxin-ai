@@ -37,3 +37,28 @@ export const cleanupExpiredUserRecycleBin = async (): Promise<number> => {
   const response = await del<BaseResponse<{ cleaned: number }>>('/space/recycle-bin/expired')
   return response.data?.cleaned ?? 0
 }
+
+export type UserRecycleBinOverviewData = {
+  total: number
+  pending_total: number
+  by_status: Array<{ name: string; count: number }>
+  by_resource_type: Array<{ name: string; count: number }>
+  by_deleted_by_type: Array<{ name: string; count: number }>
+}
+
+export type GetUserRecycleBinOverviewRequest = {
+  resource_type?: string
+  status?: string
+  search_word?: string
+  deleted_by_type?: string
+}
+
+export const getUserRecycleBinOverview = async (
+  req: GetUserRecycleBinOverviewRequest = {},
+): Promise<UserRecycleBinOverviewData> => {
+  const response = await get<BaseResponse<UserRecycleBinOverviewData>>(
+    '/space/recycle-bin/overview',
+    { params: req },
+  )
+  return response.data
+}

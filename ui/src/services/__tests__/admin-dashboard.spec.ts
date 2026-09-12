@@ -209,6 +209,11 @@ describe('admin dashboard service', () => {
     expect(result.recentRoutingLogs).toHaveLength(1)
     expect(result.audits).toHaveLength(1)
     expect(result.recycleBin).toBe(3)
+    expect(mocks.listRecycleBin).toHaveBeenCalledWith({
+      page: 1,
+      page_size: 1,
+      status: 'pending',
+    })
     expect(result.costs).toEqual({
       total_credits: 500,
       total_requests: 100,

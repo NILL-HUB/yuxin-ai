@@ -1840,3 +1840,39 @@ def register_routes(quart_app):
         except Exception as exc:
             return a._ok({"ok": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"})
         return a._ok(result)
+
+    # ------------------------------------------------------------------
+    # admin 桌面客户端连接配置（desktop_client_config 单行 JSONB）：读取 / 更新
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/desktop-client-config")
+    async def admin_desktop_client_config_get():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        from internal.service.desktop_client_config_service import DesktopClientConfigService
+
+        cfg = await a._to_thread(a._get_service(DesktopClientConfigService).get_config)
+        return a._ok({"configs": cfg})
+
+    @quart_app.put("/admin/desktop-client-config")
+    async def admin_desktop_client_config_put():
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("system_config:manage")
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        from internal.service.desktop_client_config_service import DesktopClientConfigService
+
+        try:
+            cfg = await a._to_thread(
+                a._get_service(DesktopClientConfigService).update_config,
+                payload.get("configs") or {},
+            )
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), data={"configs": [str(exc)]}, status=400)
+        return a._ok({"configs": cfg})

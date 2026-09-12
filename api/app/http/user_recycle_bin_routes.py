@@ -57,6 +57,28 @@ def register_routes(quart_app):
         )
         return a._ok(RecycleBinListSchema().dump(result))
 
+    @quart_app.get("/space/recycle-bin/overview")
+    async def user_recycle_bin_overview():
+        from quart import request
+
+        from app.http import asgi_app as a
+
+        account, err = await a._resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.recycle_bin_service import RecycleBinService
+
+        result = await a._to_thread(
+            a._get_service(RecycleBinService).user_overview,
+            account_id=account.id,
+            resource_type=request.args.get("resource_type") or None,
+            status=(request.args.get("status") or "").strip() or None,
+            search_word=request.args.get("search_word") or "",
+            deleted_by_type=request.args.get("deleted_by_type") or None,
+        )
+        return a._ok(result)
+
     @quart_app.get("/space/recycle-bin/<int:item_id>")
     async def user_recycle_bin_get(item_id):
         from app.http import asgi_app as a

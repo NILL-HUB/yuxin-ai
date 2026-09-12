@@ -68,7 +68,7 @@ def build_agent_card(
         "url": url,
         "version": "1.0.0",
         "provider": {
-            "organization": os.getenv("A2A_PROVIDER_ORG", "Yuxin AI"),
+            "organization": os.getenv("A2A_PROVIDER_ORG", "Yujianwo AI"),
             "url": os.getenv("A2A_PROVIDER_URL", "") or url,
         },
         "supportedInterfaces": [iface],
@@ -103,7 +103,7 @@ def skills_from_agent_names(agent_names: list[str]) -> list[dict]:
         {
             "id": f"agent.{name}",
             "name": name,
-            "description": f"Yuxin AI public agent: {name}",
+            "description": f"Yujianwo AI public agent: {name}",
             "tags": [name],
         }
         for name in agent_names[:50]

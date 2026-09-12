@@ -244,6 +244,12 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
             },
             {
+              path: 'desktop-client-config',
+              name: 'admin-desktop-client-config',
+              component: () => import('@/views/admin/AdminDesktopClientConfigView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
+            },
+            {
               path: 'cost-stats',
               name: 'admin-cost-stats',
               component: () => import('@/views/admin/CostDashboardView.vue'),
@@ -642,8 +648,8 @@ router.beforeEach(async (to) => {
   }
 })
 
-const DEFAULT_PAGE_TITLE = '钰心AI'
-const ADMIN_PAGE_TITLE = '钰心Admin'
+const DEFAULT_PAGE_TITLE = '钰见我'
+const ADMIN_PAGE_TITLE = '钰见我Admin'
 
 router.afterEach((to) => {
   if (typeof document === 'undefined') return

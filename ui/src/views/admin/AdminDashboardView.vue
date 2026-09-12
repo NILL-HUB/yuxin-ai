@@ -7,6 +7,7 @@ import type { AdminDashboardSummary } from '@/services/admin-dashboard'
 import { getAdminDashboardSummary } from '@/services/admin-dashboard'
 import { getErrorMessage } from '@/utils/error'
 import { formatTimestampShort } from '@/utils/time-formatter'
+import { semanticLabel } from '@/utils/semantic-labels'
 
 const { t } = useI18n()
 const adminStore = useAdminStore()
@@ -32,6 +33,19 @@ const summary = ref<AdminDashboardSummary>({
     agent_pool_hit_rate: 0,
     tool_pool_hit_rate: 0,
   },
+  routingStats: {
+    total_count: 0,
+    success_count: 0,
+    fallback_count: 0,
+    success_rate: 0,
+    fallback_rate: 0,
+    total_credits: 0,
+    avg_latency_ms: 0,
+    agent_pool_hit_rate: 0,
+    tool_pool_hit_rate: 0,
+    by_status: {},
+  },
+  routingTrend: [],
   recentRoutingLogs: [],
   audits: [],
   recycleBin: 0,
@@ -53,6 +67,58 @@ const formatSize = (size: number) => {
   const rounded = index === 0 ? Math.round(value) : Math.round(value * 10) / 10
   return `${rounded} ${units[index]}`
 }
+
+const TREND_W = 640
+const TREND_H = 160
+const TREND_PAD_X = 8
+const TREND_PAD_Y = 16
+
+const buildTrendPolyline = (values: number[]) => {
+  if (!values.length) return ''
+  const max = Math.max(...values)
+  const min = Math.min(...values)
+  const span = max - min || 1
+  const stepX = (TREND_W - TREND_PAD_X * 2) / Math.max(values.length - 1, 1)
+  return values
+    .map((value, index) => {
+      const x = TREND_PAD_X + index * stepX
+      const y = TREND_H - TREND_PAD_Y - ((value - min) / span) * (TREND_H - TREND_PAD_Y * 2)
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+}
+
+const trendRequestsLine = computed(() => {
+  return buildTrendPolyline(summary.value.routingTrend.map((point) => point.request_count))
+})
+
+const trendFallbackLine = computed(() => {
+  return buildTrendPolyline(summary.value.routingTrend.map((point) => point.fallback_count))
+})
+
+const trendLabels = computed(() => {
+  const format = (timestamp: number) => {
+    const date = new Date(timestamp * 1000)
+    return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  }
+  const points = summary.value.routingTrend
+  if (!points.length) return []
+  const stepX = (TREND_W - TREND_PAD_X * 2) / Math.max(points.length - 1, 1)
+  return points.map((point, index) => ({
+    x: TREND_PAD_X + index * stepX,
+    label: format(point.timestamp),
+  }))
+})
+
+const routingTrendPeak = computed(() => {
+  const points = summary.value.routingTrend
+  if (!points.length) return 0
+  return Math.max(...points.map((point) => point.request_count))
+})
+
+const routingTrendTotal = computed(() => {
+  return summary.value.routingTrend.reduce((total, point) => total + point.request_count, 0)
+})
 
 const auditActionLabel = (action: string) => {
   const labels: Record<string, string> = {
@@ -313,36 +379,42 @@ onMounted(() => {
             {{ t('admin.dashboard.quickAction') }}
           </router-link>
         </div>
-        <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div class="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3">
           <div>
             <p class="text-xs text-slate-500">{{ t('admin.dashboard.totalRequests') }}</p>
             <strong class="mt-1 block text-xl text-slate-900">{{
-              formatNumber(summary.routing.total_count)
+              formatNumber(summary.routingStats.total_count)
             }}</strong>
           </div>
           <div>
-            <p class="text-xs text-slate-500">{{ t('admin.dashboard.successRequests') }}</p>
+            <p class="text-xs text-slate-500">{{ t('admin.dashboard.successRate') }}</p>
             <strong class="mt-1 block text-xl text-green-600">{{
-              formatNumber(summary.routing.success_count)
-            }}</strong>
+              (summary.routingStats.success_rate * 100).toFixed(1)
+            }}%</strong>
           </div>
           <div>
-            <p class="text-xs text-slate-500">{{ t('admin.dashboard.fallbackRequests') }}</p>
+            <p class="text-xs text-slate-500">{{ t('admin.dashboard.fallbackRate') }}</p>
             <strong class="mt-1 block text-xl text-amber-600">{{
-              formatNumber(summary.routing.fallback_count)
-            }}</strong>
+              (summary.routingStats.fallback_rate * 100).toFixed(1)
+            }}%</strong>
           </div>
           <div>
             <p class="text-xs text-slate-500">{{ t('admin.dashboard.avgLatency') }}</p>
             <strong class="mt-1 block text-xl text-slate-900"
-              >{{ formatNumber(summary.routing.avg_latency_ms) }} ms</strong
+              >{{ formatNumber(summary.routingStats.avg_latency_ms) }} ms</strong
             >
           </div>
           <div>
             <p class="text-xs text-slate-500">{{ t('admin.dashboard.totalCredits') }}</p>
             <strong class="mt-1 block text-xl text-slate-900">{{
-              formatNumber(summary.routing.total_credits)
+              formatNumber(summary.routingStats.total_credits)
             }}</strong>
+          </div>
+          <div>
+            <p class="text-xs text-slate-500">{{ t('admin.dashboard.agentPoolHitRate') }}</p>
+            <strong class="mt-1 block text-xl text-slate-900">{{
+              (summary.routingStats.agent_pool_hit_rate * 100).toFixed(1)
+            }}%</strong>
           </div>
         </div>
       </article>
@@ -426,6 +498,84 @@ onMounted(() => {
       </article>
     </section>
 
+    <section
+      v-if="summary.routingTrend.length"
+      class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm"
+    >
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-900">
+            {{ t('admin.dashboard.routingTrendTitle') }}
+          </h2>
+          <p class="mt-1 text-sm text-slate-500">{{ t('admin.dashboard.routingTrendDescription') }}</p>
+        </div>
+        <div class="flex items-center gap-5 text-xs text-slate-500">
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block h-2 w-2 rounded-full bg-sky-500" />
+            {{ t('admin.dashboard.trendRequests') }}
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="inline-block h-2 w-2 rounded-full bg-amber-500" />
+            {{ t('admin.dashboard.trendFallback') }}
+          </span>
+        </div>
+      </div>
+      <div class="mt-3 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div class="min-w-0">
+          <svg
+            viewBox="0 0 640 160"
+            class="h-40 w-full text-slate-200"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <line x1="8" y1="16" x2="632" y2="16" stroke="currentColor" stroke-width="1" />
+            <line x1="8" y1="80" x2="632" y2="80" stroke="currentColor" stroke-width="1" />
+            <line x1="8" y1="144" x2="632" y2="144" stroke="currentColor" stroke-width="1" />
+            <polyline
+              :points="trendRequestsLine"
+              fill="none"
+              stroke="#0ea5e9"
+              stroke-width="2.5"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+            />
+            <polyline
+              :points="trendFallbackLine"
+              fill="none"
+              stroke="#f59e0b"
+              stroke-width="2.5"
+              stroke-linejoin="round"
+              stroke-linecap="round"
+            />
+          </svg>
+          <div class="relative h-4 text-[10px] text-slate-400">
+            <span
+              v-for="label in trendLabels"
+              :key="label.x"
+              class="absolute -translate-x-1/2"
+              :style="{ left: `${(label.x / TREND_W) * 100}%` }"
+            >
+              {{ label.label }}
+            </span>
+          </div>
+        </div>
+        <dl class="grid grid-cols-2 gap-3 lg:grid-cols-1">
+          <div class="rounded-lg bg-slate-50 px-4 py-3">
+            <dt class="text-xs text-slate-500">{{ t('admin.dashboard.totalRequests') }}</dt>
+            <dd class="mt-1 text-lg font-semibold text-slate-900">
+              {{ formatNumber(routingTrendTotal) }}
+            </dd>
+          </div>
+          <div class="rounded-lg bg-slate-50 px-4 py-3">
+            <dt class="text-xs text-slate-500">{{ t('admin.dashboard.trendPeak') }}</dt>
+            <dd class="mt-1 text-lg font-semibold text-slate-900">
+              {{ formatNumber(routingTrendPeak) }}
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
     <section class="grid gap-4 xl:grid-cols-2">
       <article class="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div class="flex items-start justify-between gap-4">
@@ -451,14 +601,14 @@ onMounted(() => {
           >
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-slate-800">
-                {{ auditActionLabel(log.action) }} · {{ log.resource_type || '-' }}
+                {{ auditActionLabel(log.action) }} · {{ semanticLabel('resource_type', String(log.resource_type ?? ''), '-') }}
               </p>
               <p class="mt-1 truncate text-xs text-slate-400">
                 {{ log.admin_user_name || log.account_name || '-' }} ·
                 {{ formatTimestampShort(log.created_at) }}
               </p>
             </div>
-            <a-tag size="small" color="arcoblue">{{ log.resource_type || '-' }}</a-tag>
+            <a-tag size="small" color="arcoblue">{{ semanticLabel('resource_type', String(log.resource_type ?? ''), '-') }}</a-tag>
           </li>
         </ul>
         <p v-else class="py-8 text-center text-sm text-slate-400">
@@ -493,11 +643,13 @@ onMounted(() => {
                 {{ log.user_query || log.id }}
               </p>
               <p class="mt-1 truncate text-xs text-slate-400">
-                {{ log.routing_decision?.execution_mode || '-' }} ·
+                {{ semanticLabel('execution_mode', String(log.routing_decision?.execution_mode ?? ''), '-') }} ·
                 {{ formatTimestampShort(log.created_at) }}
               </p>
             </div>
-            <a-tag size="small" :color="routingStatusColor(log.status)">{{ log.status }}</a-tag>
+            <a-tag size="small" :color="routingStatusColor(log.status)">
+              {{ semanticLabel('routing_status', String(log.status ?? ''), log.status || '-') }}
+            </a-tag>
           </li>
         </ul>
         <p v-else class="py-8 text-center text-sm text-slate-400">

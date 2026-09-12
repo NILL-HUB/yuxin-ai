@@ -138,6 +138,7 @@ const menuGroups = computed(() => ([
       { to: '/admin/payment-config', label: t('admin.adminLayout.menu.paymentConfig'), permission: 'payment_config:read' },
       { to: '/admin/mail-config', label: t('admin.adminLayout.menu.mailConfig'), permission: 'system_config:manage' },
       { to: '/admin/sms-config', label: t('admin.adminLayout.menu.smsConfig'), permission: 'system_config:manage' },
+      { to: '/admin/desktop-client-config', label: t('admin.adminLayout.menu.desktopClientConfig'), permission: 'system_config:manage' },
     ],
   },
   {
@@ -213,7 +214,7 @@ const handleLogout = async () => {
       <div class="sidebar-header">
         <router-link class="admin-brand" to="/admin">
           <span class="brand-mark">OA</span>
-          <span class="brand-text">钰心Admin</span>
+          <span class="brand-text">钰见我Admin</span>
         </router-link>
         <button class="collapse-btn" :title="collapsed ? t('admin.adminLayout.expandSidebar') : t('admin.adminLayout.collapseSidebar')" @click="toggleSidebar">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

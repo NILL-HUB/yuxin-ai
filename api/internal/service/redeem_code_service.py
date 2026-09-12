@@ -2,6 +2,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from internal.exception import FailException, NotFoundException
@@ -122,28 +123,23 @@ class RedeemCodeService:
         plan = self._get_plan_or_raise(membership.plan_id) if membership else None
         credit_account = self._get_credit_account(account_id)
         transactions = self._list_recent_transactions(account_id)
-        task_rows = self._build_recent_tasks(account_id, transactions)
-        query_by_transaction = {
-            task["id"]: task["message"]
-            for task in task_rows
-            if task.get("message")
-        }
+        consume_window = self._list_recent_consume_window(account_id)
+        task_rows = self._build_recent_tasks(account_id, consume_window)
         return {
             "membership": self._serialize_membership(membership, plan) if membership else None,
             "credit_account": self._serialize_credit_account(credit_account) if credit_account else self._empty_credit_account(account_id),
             "recent_transactions": [
-                self._serialize_transaction(transaction, query_by_transaction.get(str(transaction.id)))
-                for transaction in transactions
+                self._serialize_transaction(transaction) for transaction in transactions
             ],
             "recent_tasks": task_rows,
         }
 
     def _build_recent_tasks(self, account_id: UUID, transactions: list[CreditTransaction]) -> list[dict]:
-        """最近任务消耗：一次用户提问（message）对应一条算力消费。
+        """最近任务消耗：按「用户消息」边界把扣费聚合成任务行。
 
-        优先按 source_id 精确关联消息取用户问题原文；部分历史数据因
-        消息重建导致 id 对不上，此时按“扣费时间相近的同账号最近提问”
-        回退匹配，保证列表始终能呈现真实问题。仍找不到则退化为通用说明。
+        一次用户提问（message）执行期间产生的多笔模型调用扣费归并为一条任务：
+        amount=该任务合计、message=用户问题原文。归属规则与流水接口一致——
+        消费归属到“不晚于其发生时间的最近一条用户提问”，保证与「算力流水」卡片口径统一。
         """
         consume_transactions = [
             transaction
@@ -151,43 +147,35 @@ class RedeemCodeService:
             if transaction.transaction_type == "consume"
             or int(transaction.amount or 0) < 0
         ]
-        tasks: list[dict] = []
-        for transaction in consume_transactions[:10]:
-            query = None
-            if transaction.source == "message" and transaction.source_id is not None:
-                message = (
-                    self.session.query(Message)
-                    .filter(Message.id == transaction.source_id)
-                    .one_or_none()
-                )
-                if message is None and transaction.created_at is not None:
-                    # 回退匹配：扣费前后 3 分钟内该账号最近一次用户提问
-                    window_start = transaction.created_at - timedelta(minutes=3)
-                    window_end = transaction.created_at + timedelta(minutes=3)
-                    message = (
-                        self.session.query(Message)
-                        .filter(
-                            Message.created_by == account_id,
-                            Message.created_at >= window_start,
-                            Message.created_at <= window_end,
-                            Message.is_deleted.is_(False),
-                        )
-                        .order_by(Message.created_at.desc())
-                        .first()
-                    )
-                if message is not None:
-                    query = (message.query or "").strip() or None
-            tasks.append(
-                {
-                    "id": str(transaction.id),
-                    "amount": int(transaction.amount or 0),
-                    "transaction_type": transaction.transaction_type,
-                    "source": transaction.source,
-                    "source_id": str(transaction.source_id) if transaction.source_id else None,
-                    "message": query,
-                    "created_at": self._timestamp(transaction.created_at),
-                }
+        if not consume_transactions:
+            return []
+        messages = (
+            self.session.query(Message)
+            .filter(
+                Message.created_by == account_id,
+                Message.is_deleted.is_(False),
             )
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        anchors = [(message.created_at, message) for message in messages]
+        rows = self._build_task_flow_rows(consume_transactions, anchors)
+        # 仅保留消费任务行（负净额/含消费类型的聚合行），按最近时间降序
+        consume_rows = [
+            row for row in rows if row["transaction_type"] == "consume" and row["amount"] < 0
+        ]
+        consume_rows.sort(key=lambda row: row["_sort_at"], reverse=True)
+        tasks: list[dict] = []
+        for row in consume_rows[:6]:
+            tasks.append({
+                "id": row.get("id") or "",
+                "amount": int(row["amount"] or 0),
+                "transaction_type": "consume",
+                "source": row.get("source", ""),
+                "source_id": row.get("source_id"),
+                "message": row.get("task_message") or row.get("description") or None,
+                "created_at": self._timestamp(row["_sort_at"]),
+            })
         return tasks
 
     def list_redeem_records(self, account_id: UUID) -> dict:
@@ -339,6 +327,147 @@ class RedeemCodeService:
             .order_by(CreditTransaction.created_at.desc())
             .all()
         )[:10]
+
+    def _list_recent_consume_window(self, account_id: UUID) -> list[CreditTransaction]:
+        """拉取足够覆盖“最近几次任务”的消费流水（上限 500 条）。
+
+        一次用户任务可能产生大量模型调用级扣费，仅取最近 10 条会被单次
+        长任务占满，导致「最近任务消耗」看不到真实的多任务分布。
+        """
+        return (
+            self.session.query(CreditTransaction)
+            .filter(
+                CreditTransaction.account_id == account_id,
+                CreditTransaction.transaction_type == "consume",
+            )
+            .order_by(CreditTransaction.created_at.desc())
+            .all()
+        )[:500]
+
+    def list_credit_transactions(
+        self,
+        account_id: UUID,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict:
+        """分页返回算力流水（任务级聚合）与累计消耗。
+
+        消费按「用户消息」切分为任务：同一条用户消息执行期间产生的
+        多笔模型调用扣费聚合成一行（避免“一次任务被拆成几十笔 -1/-2”），
+        行文案用用户消息原文；充值/到账（redeem_grant/order_grant）各自成行。
+        """
+        page = max(int(page or 1), 1)
+        page_size = min(max(int(page_size or 20), 1), 100)
+        transactions = (
+            self.session.query(CreditTransaction)
+            .filter(CreditTransaction.account_id == account_id)
+            .order_by(CreditTransaction.created_at.asc())
+            .all()
+        )
+        messages = (
+            self.session.query(Message)
+            .filter(
+                Message.created_by == account_id,
+                Message.is_deleted.is_(False),
+            )
+            .order_by(Message.created_at.asc())
+            .all()
+        )
+        # 消息时间锚点（升序），用于把消费归属到“不晚于扣费时间的最近一次用户提问”。
+        anchors = [(message.created_at, message) for message in messages]
+        rows = self._build_task_flow_rows(transactions, anchors)
+        rows.sort(key=lambda row: row["_sort_at"], reverse=True)
+        total = len(rows)
+        total_consumed_row = (
+            self.session.query(func.coalesce(func.sum(-CreditTransaction.amount), 0))
+            .filter(
+                CreditTransaction.account_id == account_id,
+                CreditTransaction.amount < 0,
+            )
+            .scalar()
+        )
+        items = rows[(page - 1) * page_size : page * page_size]
+        return {
+            "list": [
+                {
+                    "id": row.get("id"),
+                    "amount": row["amount"],
+                    "balance_after": 0,
+                    "transaction_type": row["transaction_type"],
+                    "source": row.get("source", ""),
+                    "source_id": row.get("source_id"),
+                    "description": row["description"],
+                    "created_at": self._timestamp(row["_sort_at"]),
+                    "ref_id": row.get("ref_id"),
+                    "tx_count": row.get("tx_count"),
+                    "task_message": row.get("task_message"),
+                }
+                for row in items
+            ],
+            "total": int(total),
+            "total_consumed": int(total_consumed_row or 0),
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def _build_task_flow_rows(
+        self,
+        transactions: list[CreditTransaction],
+        anchors: list[tuple],
+    ) -> list[dict]:
+        """把消费按用户消息边界聚合成任务行，充值/到账各自成行。"""
+        rows: list[dict] = []
+        pending: dict = {}  # message_id -> task dict（聚合中）
+        for transaction in transactions:
+            amount = int(transaction.amount or 0)
+            if amount >= 0 or transaction.transaction_type != "consume":
+                # 充值/到账/调整等正向或非消费行：各自成行，保留原始时间
+                rows.append({
+                    "id": str(transaction.id),
+                    "amount": amount,
+                    "transaction_type": transaction.transaction_type,
+                    "source": transaction.source,
+                    "source_id": str(transaction.source_id) if transaction.source_id else None,
+                    "description": transaction.description or "",
+                    "_sort_at": transaction.created_at,
+                    "tx_count": None,
+                })
+                continue
+            # 消费行：归属到不晚于扣费时间的最近一条用户消息
+            owner = None
+            for msg_at, message in anchors:
+                if msg_at <= transaction.created_at:
+                    owner = message
+                else:
+                    break
+            task = pending.get(str(owner.id)) if owner is not None else None
+            if task is None:
+                task = {
+                    "id": str(transaction.id),
+                    "amount": 0,
+                    "transaction_type": "consume",
+                    "source": transaction.source,
+                    "source_id": str(transaction.source_id) if transaction.source_id else None,
+                    "description": (owner.query or "").strip() or "算力任务消耗"
+                    if owner is not None
+                    else (transaction.description or "算力任务消耗"),
+                    "_sort_at": transaction.created_at,
+                    "_last_at": transaction.created_at,
+                    "tx_count": 0,
+                    "task_message": (owner.query or "").strip() if owner is not None else None,
+                    "_key": str(owner.id) if owner is not None else None,
+                }
+                if owner is not None:
+                    pending[str(owner.id)] = task
+                else:
+                    rows.append(task)
+                    continue
+            task["amount"] += amount
+            task["tx_count"] = int(task.get("tx_count") or 0) + 1
+            task["_last_at"] = max(task["_last_at"], transaction.created_at)
+            task["_sort_at"] = task["_last_at"]
+        consumed_keys = set(pending.keys())
+        return [row for row in rows if row.get("_key") not in consumed_keys] + list(pending.values())
 
     def _serialize_plan(self, plan: Plan) -> dict:
         return {

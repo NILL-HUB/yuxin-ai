@@ -45,12 +45,15 @@ class RedeemedCodeResp(Schema):
 class CreditTransactionResp(Schema):
     id = fields.String()
     amount = fields.Integer()
-    balance_after = fields.Integer()
+    balance_after = fields.Integer(allow_none=True)
     transaction_type = fields.String()
     source = fields.String()
     source_id = fields.String(allow_none=True)
     description = fields.String()
     created_at = fields.Integer(allow_none=True)
+    ref_id = fields.String(allow_none=True)
+    tx_count = fields.Integer(allow_none=True)
+    task_message = fields.String(allow_none=True)
 
 
 class RecentTaskResp(Schema):
@@ -88,3 +91,11 @@ class RedeemRecordResp(Schema):
 
 class RedeemRecordListResp(Schema):
     list = fields.List(fields.Nested(RedeemRecordResp))
+
+
+class CreditTransactionListResp(Schema):
+    list = fields.List(fields.Nested(CreditTransactionResp), dump_default=[])
+    total = fields.Integer()
+    total_consumed = fields.Integer()
+    page = fields.Integer()
+    page_size = fields.Integer()

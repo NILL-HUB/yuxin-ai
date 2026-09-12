@@ -1,7 +1,7 @@
 """A2A v1.0 网关服务。
 
 把 A2A JSON-RPC 请求接到现有公共 Agent 路由（`PublicAgentA2AService`），
-让外部 A2A 对端可以“发现”钰心AI 的公共 Agent 并委派消息。
+让外部 A2A 对端可以“发现”钰见我 的公共 Agent 并委派消息。
 """
 
 from __future__ import annotations
@@ -71,9 +71,9 @@ class A2AGatewayService:
             except Exception:
                 logger.warning("读取公共 Agent 列表用于 A2A Agent Card 失败", exc_info=True)
         return build_agent_card(
-            name="Yuxin AI Gateway",
+            name="Yujianwo AI Gateway",
             url=base_url.rstrip("/") + "/a2a",
-            description="Yuxin AI public agent routing gateway (A2A v1.0)",
+            description="Yujianwo AI public agent routing gateway (A2A v1.0)",
             skills=skills_from_agent_names(agent_names),
         )
 

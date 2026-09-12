@@ -382,6 +382,7 @@ class TestRedeemCodeService:
             _QueryStub(one_or_none_result=plan),
             _QueryStub(one_or_none_result=credit_account),
             _QueryStub(all_result=[]),
+            _QueryStub(all_result=[]),
         ]))
 
         result = service.get_membership_summary(account_id)
@@ -403,6 +404,7 @@ class TestRedeemCodeService:
         )
         credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=120, total_consumed=20)
         message_id = uuid4()
+        tx_time = datetime(2030, 1, 15, 10, 30, 0)
         consume_tx = CreditTransaction(
             id=uuid4(),
             account_id=account_id,
@@ -412,14 +414,21 @@ class TestRedeemCodeService:
             source="message",
             source_id=message_id,
             description="模型调用消耗算力值：4200 token，扣减 5（1000 token=1 算力）",
+            created_at=tx_time,
         )
-        message = SimpleNamespace(query="帮我写一份会员营销方案")
+        message = SimpleNamespace(
+            id=message_id,
+            created_at=tx_time - timedelta(seconds=1),
+            query="帮我写一份会员营销方案",
+            is_deleted=False,
+        )
         service = RedeemCodeService(session=_SessionStub([
             _QueryStub(one_or_none_result=membership),
             _QueryStub(one_or_none_result=plan),
             _QueryStub(one_or_none_result=credit_account),
             _QueryStub(all_result=[consume_tx]),
-            _QueryStub(one_or_none_result=message),
+            _QueryStub(all_result=[consume_tx]),
+            _QueryStub(all_result=[message]),
         ]))
 
         result = service.get_membership_summary(account_id)
@@ -439,6 +448,7 @@ class TestRedeemCodeService:
             expires_at=datetime(2030, 2, 1, 0, 0, 0),
         )
         credit_account = CreditAccount(account_id=account_id, quota_credit=100, permanent_credit=0, total_granted=120, total_consumed=20)
+        tx_time = datetime(2030, 1, 15, 10, 30, 0)
         consume_tx = CreditTransaction(
             id=uuid4(),
             account_id=account_id,
@@ -448,17 +458,22 @@ class TestRedeemCodeService:
             source="message",
             source_id=uuid4(),
             description="模型调用消耗算力值：4200 token，扣减 5（1000 token=1 算力）",
-            created_at=datetime(2030, 1, 15, 10, 30, 0),
+            created_at=tx_time,
         )
-        nearby_message = SimpleNamespace(query="请帮我分析这份报表")
-        # 查询队列：精确 id 匹配（None）→ 时间窗回退匹配（message）
+        # source_id 无法精确命中消息时，聚合归属到“不晚于扣费时间的最近消息”
+        nearby_message = SimpleNamespace(
+            id=uuid4(),
+            created_at=tx_time - timedelta(seconds=30),
+            query="请帮我分析这份报表",
+            is_deleted=False,
+        )
         service = RedeemCodeService(session=_SessionStub([
             _QueryStub(one_or_none_result=membership),
             _QueryStub(one_or_none_result=plan),
             _QueryStub(one_or_none_result=credit_account),
             _QueryStub(all_result=[consume_tx]),
-            _QueryStub(one_or_none_result=None),
-            _QueryStub(one_or_none_result=nearby_message),
+            _QueryStub(all_result=[consume_tx]),
+            _QueryStub(all_result=[nearby_message]),
         ]))
 
         result = service.get_membership_summary(account_id)

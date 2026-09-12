@@ -41,6 +41,83 @@ class RoutingOptimizationSuggestionService:
         suggestions.extend(self._tool_health_suggestions(metrics))
         return suggestions
 
+    def sync_open_suggestions(self, metrics: dict) -> list[dict]:
+        """把当前指标实时算出的建议落库并返回可操作的 open 建议列表。
+
+        保证 open 状态建议与最新指标一致：
+        - 已存在的 open 建议（同类型+目标）刷新 reason/evidence；
+        - 不存在的插入新记录；
+        - 返回的每一条都带 id，可直接走 accept/dismiss/preview/apply。
+        """
+        generated = self.generate_suggestions(metrics)
+        existing = {
+            self._fingerprint(s)
+            for s in self.db.session.query(RoutingOptimizationSuggestionModel)
+            .filter(RoutingOptimizationSuggestionModel.status == "open")
+            .all()
+        }
+        result: list[dict] = []
+        for suggestion in generated:
+            fingerprint = self._fingerprint(suggestion)
+            if fingerprint in existing:
+                model = self._find_open(
+                    suggestion["suggestion_type"],
+                    suggestion["target_type"],
+                    suggestion["target_id"],
+                )
+                if model is not None:
+                    model.reason = suggestion["reason"]
+                    model.evidence = suggestion["evidence"]
+                    self.db.session.add(model)
+                    result.append(self._model_to_dict(model))
+                    continue
+            model = RoutingOptimizationSuggestionModel(
+                target_type=suggestion["target_type"],
+                target_id=suggestion["target_id"],
+                suggestion_type=suggestion["suggestion_type"],
+                severity=suggestion["severity"],
+                reason=suggestion["reason"],
+                evidence=suggestion["evidence"],
+                status="open",
+            )
+            self.db.session.add(model)
+            self.db.session.flush()
+            result.append(self._model_to_dict(model))
+        self.db.session.commit()
+        return result
+
+    @staticmethod
+    def _fingerprint(suggestion) -> str:
+        if hasattr(suggestion, "suggestion_type"):
+            return "|".join([
+                suggestion.suggestion_type,
+                suggestion.target_type,
+                suggestion.target_id,
+            ])
+        return "|".join([
+            suggestion["suggestion_type"],
+            suggestion["target_type"],
+            suggestion["target_id"],
+        ])
+
+    def _find_open(
+        self,
+        suggestion_type: str,
+        target_type: str,
+        target_id: str,
+    ) -> RoutingOptimizationSuggestionModel | None:
+        return (
+            self.db.session.query(RoutingOptimizationSuggestionModel)
+            .filter(
+                RoutingOptimizationSuggestionModel.status == "open",
+                RoutingOptimizationSuggestionModel.suggestion_type == suggestion_type,
+                RoutingOptimizationSuggestionModel.target_type == target_type,
+                RoutingOptimizationSuggestionModel.target_id == target_id,
+            )
+            .order_by(RoutingOptimizationSuggestionModel.created_at.desc())
+            .first()
+        )
+
     def accept_suggestion(self, suggestion_id: UUID, admin_user_id: UUID) -> dict:
         suggestion = self._get_suggestion(suggestion_id)
         if suggestion.status not in ("open", "accepted"):

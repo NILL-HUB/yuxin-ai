@@ -86,7 +86,12 @@ class BillingReconciliationService:
         }
 
     def settle(self, *, task_id: str, account_id, events: list[dict]) -> dict:
-        """结算一个任务：重算 → 退补 → 写对账行 → 判定告警。重复调用幂等。"""
+        """结算一个任务：重算 → 退补 → 写对账行 → 判定告警。重复调用幂等。
+
+        计价口径（2026-09 修复）：同一任务内同一模型的多笔调用先合并
+        token 再统一向上取整（一次 ceil），避免每笔独立 ceil 造成
+        “单次调用不足 1 算力也收 1、多次调用重复进位”的系统性多收。
+        """
         existing = self.session.query(BillingReconciliation).filter(
             BillingReconciliation.task_id == task_id
         ).one_or_none()
@@ -98,20 +103,39 @@ class BillingReconciliationService:
             return {"task_id": task_id, "skipped": True, "reason": "no_events"}
 
         total_estimated = 0
+        # 先按 model_id 分组合并 token，再对每组一次 plan_usage（一次 ceil）。
+        # 同一任务内多次模型调用（agent 多轮/工具循环）若逐笔 ceil，会把不足
+        # 1 算力的小调用重复进位，系统性多收；合并后一次 ceil 才是应收口径。
+        # 峰谷计价：组内取最晚 moment 透传，同一任务通常落在同一计价时段。
+        merged: dict[str, dict] = {}
+        for ev in events:
+            total_estimated += max(int(ev.get("estimated_credits") or 0), 0)
+            model_id = ev.get("model_id") or ""
+            moment = ev.get("moment") or None
+            group = merged.setdefault(model_id, {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_input_tokens": 0,
+                "moment": None,
+            })
+            group["input_tokens"] += max(int(ev.get("input_tokens") or 0), 0)
+            group["output_tokens"] += max(int(ev.get("output_tokens") or 0), 0)
+            group["cached_input_tokens"] += max(int(ev.get("cached_input_tokens") or 0), 0)
+            if group["moment"] is None or (moment is not None and moment > group["moment"]):
+                group["moment"] = moment
+
         total_actual = 0
         total_cost = 0
         total_cost_amount = Decimal("0.000000")
-        for ev in events:
-            total_estimated += max(int(ev.get("estimated_credits") or 0), 0)
-            input_tokens = max(int(ev.get("input_tokens") or 0), 0)
-            output_tokens = max(int(ev.get("output_tokens") or 0), 0)
-            model_id = ev.get("model_id") or ""
+        for model_id, group in merged.items():
+            input_tokens = group["input_tokens"]
+            output_tokens = group["output_tokens"]
             plan = self.pricing_engine.plan_usage(
                 model_id,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
-                cached_input_tokens=ev.get("cached_input_tokens", 0),
-                moment=ev.get("moment") or None,
+                cached_input_tokens=group["cached_input_tokens"],
+                moment=group["moment"],
             )
             total_actual += plan.sell_credits
             total_cost += plan.cost_credits

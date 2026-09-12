@@ -13,7 +13,7 @@ from internal.core.agent.adapters.hermes.a2a_protocol import (
 
 def test_agent_card_shape():
     card = build_agent_card(
-        name="Yuxin Gateway",
+        name="Yujianwo Gateway",
         url="http://localhost/a2a",
         description="test",
         skills=[{"id": "agent.x", "name": "x", "description": "x", "tags": ["x"]}],
