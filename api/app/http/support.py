@@ -467,9 +467,7 @@ def _admin_route_permission(method: str, path: str) -> str | None:
             return "admin_user:disable"
         return "admin_user:update"
 
-    # 用户管理与应用分配。
-    if _admin_match(segments, ("admin", "users")) and "app-assignments" in segments:
-        return "app_assignment:read" if method == "GET" else "app_assignment:update"
+    # 用户管理。
     if _admin_match(segments, ("admin", "users")):
         if method == "GET":
             return "user:read"
