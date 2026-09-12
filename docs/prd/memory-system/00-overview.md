@@ -409,15 +409,24 @@ v5.2 修复了 3 个设计与实现之间的断裂点：
 
 ### 16.20 记忆读回闭环（对话时注入，v5.3 已接通）
 
-> **状态**：已实现并接入首页助手对话链路（2026-09-05）。
+> **状态**：已实现并接入首页助手对话链路（2026-09-05）；已扩展到应用对话链路
+> （「我的应用」+ 应用调试，2026-09-12）。
 
 此前 Digest / MemoryRetriever 仅通过 REST（`/memory/retrieve`、`/memory/digest`）触达，
 未进入对话链路，导致记忆"只写不读"。v5.3 打通读回闭环：
 
-- **接入点**：`AssistantAgentService.chat` 在构建三层上下文（recent_messages +
-  distant_summary）后，调用 `_retrieve_user_memory_for_chat` 检索用户长期记忆，
+- **接入点（首页助手）**：`AssistantAgentService.chat` 在构建三层上下文（recent_messages +
+  distant_summary）后，调用 `recall_user_memory_for_chat` 检索用户长期记忆，
   结果作为 `user_memory_text` 注入两个执行路径（single_agent / multi_agent /
   deep_thinking）的 `<用户长期记忆>` 提示词区段。
+- **接入点（应用对话，2026-09-12 扩展）**：`AppDebugService.debug_chat` 在取出短期
+  history 后同样调用 `recall_user_memory_for_chat`，把 `user_memory` 与应用自身的
+  工具插件 / MCP / 技能 / 工作流 / 知识库（即"应用上下文"）**并列**注入；两条执行
+  路径（Orchestrator 执行器与 `stream_agent_events` 回退）均已生效。这样「我的应用」
+  里的 agent = 用户长期记忆 + 该应用的工具与上下文。
+- **共享实现**：召回策略集中在 `internal/service/memory/user_memory_recall.py`
+  的 `recall_user_memory_for_chat`（`AssistantAgentService._retrieve_user_memory_for_chat`
+  为其薄委托），所有对话入口复用同一套 System 1 / System 2 策略与 fail-open 语义。
 - **检索路径**：System 1 优先读 Redis 缓存的 Memory Digest（快路径）；未命中或
   不足时走 System 2（MemoryRetriever：Neo4j BM25 + pgvector + 图扩展），命中内容
   拼接注入。
