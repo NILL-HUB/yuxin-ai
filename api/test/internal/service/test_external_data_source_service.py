@@ -323,3 +323,40 @@ def test_manual_sync_should_pass_decrypted_config_to_connector(monkeypatch):
     service.manual_sync(data_source.id, SimpleNamespace(id=account_id))
 
     assert seen["secret"] == "plain-secret"
+
+
+def test_auto_sync_all_isolates_failures(monkeypatch):
+    owner_id = uuid4()
+    granted = SimpleNamespace(id=uuid4(), owner_account_id=owner_id, authorization_status="granted", sync_status="idle")
+
+    # Account 查询返回 owner，避免被 auto_sync_all 跳过
+    session = _SessionStub([_QueryStub(one_or_none_result=SimpleNamespace(id=owner_id))])
+    service = ExternalDataSourceService(db=_fake_db(session))
+    monkeypatch.setattr(service, "_list_auto_sync_candidates", lambda: [granted])
+    monkeypatch.setattr(
+        service,
+        "manual_sync",
+        lambda ds_id, account, **kw: {"sync_status": "success", "document_count": 1, "segment_count": 2},
+    )
+
+    result = service.auto_sync_all()
+
+    assert result == {"scanned": 1, "synced": 1, "failed": 0}
+
+
+def test_auto_sync_all_counts_failures_without_raising(monkeypatch):
+    owner_id = uuid4()
+    broken = SimpleNamespace(id=uuid4(), owner_account_id=owner_id, authorization_status="granted", sync_status="idle")
+
+    session = _SessionStub([_QueryStub(one_or_none_result=SimpleNamespace(id=owner_id))])
+    service = ExternalDataSourceService(db=_fake_db(session))
+    monkeypatch.setattr(service, "_list_auto_sync_candidates", lambda: [broken])
+
+    def _boom(ds_id, account, **kw):
+        raise RuntimeError("connector down")
+
+    monkeypatch.setattr(service, "manual_sync", _boom)
+
+    result = service.auto_sync_all()
+
+    assert result == {"scanned": 1, "synced": 0, "failed": 1}

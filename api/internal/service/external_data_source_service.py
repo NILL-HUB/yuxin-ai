@@ -183,6 +183,47 @@ class ExternalDataSourceService(BaseService):
         if not deleted:
             raise NotFoundException("外部数据源不存在")
 
+    def _list_auto_sync_candidates(self) -> list[ExternalDataSource]:
+        """自动同步候选：已授权且当前不在同步中的全部数据源（跨账号）。"""
+        return (
+            self.db.session.query(ExternalDataSource)
+            .filter(
+                ExternalDataSource.authorization_status == ExternalAuthorizationStatus.GRANTED.value,
+                ExternalDataSource.sync_status != ExternalSyncStatus.SYNCING.value,
+            )
+            .all()
+        )
+
+    def auto_sync_all(self) -> dict[str, int]:
+        """定时任务入口：逐个同步候选数据源，单条失败不影响其他。
+
+        Returns:
+            ``{"scanned": int, "synced": int, "failed": int}``
+        """
+        candidates = self._list_auto_sync_candidates()
+        synced = 0
+        failed = 0
+        for data_source in candidates:
+            owner = (
+                self.db.session.query(Account)
+                .filter(Account.id == data_source.owner_account_id)
+                .one_or_none()
+            )
+            if owner is None:
+                continue
+            try:
+                result = self.manual_sync(data_source.id, owner)
+                if result.get("sync_status") == ExternalSyncStatus.SUCCESS.value:
+                    synced += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+                logger.warning(
+                    "外部数据源自动同步失败 data_source_id=%s", data_source.id, exc_info=True
+                )
+        return {"scanned": len(candidates), "synced": synced, "failed": failed}
+
     def _get_owned_data_source(self, data_source_id, account: Account) -> ExternalDataSource:
         data_source = (
             self.db.session.query(ExternalDataSource)
