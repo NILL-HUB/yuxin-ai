@@ -1,0 +1,22 @@
+export default  {
+      title: 'Dataset management',
+      description: 'Review admin datasets and ownership information',
+      searchPlaceholder: 'Search by dataset name, description, or owner',
+      emptyTitle: 'No datasets',
+      empty: 'No dataset resources yet',
+      emptyFiltered: 'No datasets match the current filters',
+      loading: 'Loading datasets',
+      noDescription: 'No description',
+      owner: 'Owner',
+      documentCount: 'Documents',
+      characterCount: 'Characters',
+      relatedAppCount: 'Related apps',
+      updatedAt: 'Last updated',
+      detail: 'View details',
+      total: '{count} datasets in total',
+      loadFailed: 'Failed to load datasets',
+      manageHint:
+        'Creating or deleting a dataset involves file upload and segmentation setup. Please use the dataset management page.',
+      manageEntry: 'Open dataset management',
+      manage: 'Manage',
+    }

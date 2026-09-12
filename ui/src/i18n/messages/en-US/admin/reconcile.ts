@@ -1,0 +1,40 @@
+export default  {
+      title: 'Reconciliation & Margin Dashboard',
+      description:
+        'Settle tasks after completion across estimated / actual / cost credit flows, auto top-up or refund, and flag ratio deviation, absolute difference, and negative-margin risks.',
+      loadFailed: 'Failed to load reconciliation data',
+      stats: {
+        totalActual: 'Actual Credits (Sell)',
+        totalCost: 'Cost Credits',
+        margin: 'Total Margin',
+        alertCount: 'Alert Rows',
+      },
+      marginByModel: 'Margin by Model',
+      tierSummary: {
+        title: 'Tier Summary',
+        tierColumn: 'Tier',
+        callsColumn: 'Calls',
+        actualColumn: 'Actual Credits',
+        costColumn: 'Cost Credits',
+        marginColumn: 'Margin',
+        cachedTotal: 'Total cached-input tokens: {total}',
+      },
+      settleRecords: 'Reconciliation Records',
+      columns: {
+        model: 'Model',
+        calls: 'Calls',
+        actual: 'Actual',
+        cost: 'Cost',
+        margin: 'Margin',
+        taskId: 'Task ID',
+        estimated: 'Estimated',
+        diff: 'Diff',
+        alerts: 'Alerts',
+      },
+      alertFlags: {
+        ratio_deviation: 'Ratio deviation',
+        negative_margin: 'Negative margin',
+      },
+      emptyMargin: 'No margin data yet',
+      emptyRecords: 'No reconciliation records yet',
+    }

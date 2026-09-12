@@ -1,0 +1,40 @@
+export default  {
+      title: '对账与毛利看板',
+      description:
+        '任务结束后按估算/真实/成本三口径实时对账，自动多退少补，并对偏差率、绝对差与亏本风险给出告警。',
+      loadFailed: '加载对账数据失败',
+      stats: {
+        totalActual: '实际算力（售价）',
+        totalCost: '成本算力',
+        margin: '总毛利',
+        alertCount: '告警行数',
+      },
+      marginByModel: '模型毛利汇总',
+      tierSummary: {
+        title: '按档位汇总',
+        tierColumn: '档位',
+        callsColumn: '调用次数',
+        actualColumn: '实际算力',
+        costColumn: '成本算力',
+        marginColumn: '毛利',
+        cachedTotal: '缓存命中输入 Token 合计：{total}',
+      },
+      settleRecords: '对账记录',
+      columns: {
+        model: '模型',
+        calls: '调用次数',
+        actual: '实际',
+        cost: '成本',
+        margin: '毛利',
+        taskId: '任务 ID',
+        estimated: '预估',
+        diff: '差额',
+        alerts: '告警',
+      },
+      alertFlags: {
+        ratio_deviation: '偏差超限',
+        negative_margin: '亏本',
+      },
+      emptyMargin: '暂无毛利数据',
+      emptyRecords: '暂无对账记录',
+    }
