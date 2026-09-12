@@ -404,3 +404,134 @@
   source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
   created_at: 1786508751
   is_public: true
+- name: github-mcp
+  label: GitHub MCP
+  description: 官方 GitHub MCP，提供仓库管理、Issue/PR 操作、代码搜索、文件读写等 GitHub 能力。
+  icon: ""
+  background: "#1F2937"
+  category: coding
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@modelcontextprotocol/server-github"
+  env:
+    GITHUB_PERSONAL_ACCESS_TOKEN: ""
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "github/github-mcp-server"
+  source_url: https://github.com/github/github-mcp-server
+  created_at: 1789000001
+  is_public: true
+- name: notion-mcp
+  label: Notion MCP
+  description: 官方 Notion MCP，提供 Notion 页面、数据库、块与搜索操作能力。
+  icon: ""
+  background: "#F5F5F4"
+  category: productivity
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@modelcontextprotocol/server-notion"
+  env:
+    NOTION_TOKEN: ""
+    NOTION_ROOT_PAGE_ID: ""
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "modelcontextprotocol/servers"
+  source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/notion
+  created_at: 1789000002
+  is_public: true
+- name: memory-mcp
+  label: Memory 记忆 MCP
+  description: 官方 Memory MCP，提供基于知识图谱的跨会话记忆存储与检索能力。
+  icon: ""
+  background: "#FEF3C7"
+  category: general
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@modelcontextprotocol/server-memory"
+  env: {}
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "modelcontextprotocol/servers"
+  source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/memory
+  created_at: 1789000003
+  is_public: true
+- name: sequential-thinking-mcp
+  label: 顺序思考 MCP
+  description: 官方 Sequential Thinking MCP，以结构化的顺序推理步骤辅助复杂问题的渐进式深入思考。
+  icon: ""
+  background: "#EDE9FE"
+  category: general
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@modelcontextprotocol/server-sequential-thinking"
+  env: {}
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "modelcontextprotocol/servers"
+  source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking
+  created_at: 1789000004
+  is_public: true
+- name: brave-search-mcp
+  label: Brave 搜索 MCP
+  description: 官方 Brave Search MCP，通过 Brave Search API 提供网络搜索能力（需要 BRAVE_API_KEY）。
+  icon: ""
+  background: "#FBD38D"
+  category: search
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - "@modelcontextprotocol/server-brave-search"
+  env:
+    BRAVE_API_KEY: ""
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "modelcontextprotocol/servers"
+  source_url: https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search
+  created_at: 1789000005
+  is_public: true
+- name: serper-mcp
+  label: Serper 搜索 MCP
+  description: 社区 Serper 搜索 MCP，通过 Serper.dev 提供 Google 搜索结果（需要 SERPER_API_KEY）。
+  icon: ""
+  background: "#FECACA"
+  category: search
+  transport: stdio
+  command: npx
+  url: ""
+  headers: []
+  tool_names: []
+  args:
+    - -y
+    - mcp-server-serper
+  env:
+    SERPER_API_KEY: ""
+  timeout_seconds: 60
+  source_type: catalog
+  source_key: "serper/mcp-server-serper"
+  source_url: https://github.com/serper/mcp-server-serper
+  created_at: 1789000006
+  is_public: true

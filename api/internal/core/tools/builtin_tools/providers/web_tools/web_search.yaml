@@ -1,6 +1,6 @@
 name: web_search
 label: 统一网页搜索
-description: 统一网页搜索工具，按 Tavily/SerpAPI/DuckDuckGo 自动选择可用提供商。
+description: 统一网页搜索工具，按 Tavily/Exa/SerpAPI/Brave/DuckDuckGo 多提供商自动降级选择。
 params: []
 task_keywords:
   - 搜索
@@ -10,3 +10,5 @@ task_keywords:
   - 时事
   - 新闻
   - 事实核实
+  - 调研
+  - site搜索

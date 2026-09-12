@@ -1,6 +1,6 @@
 name: todo
 label: 任务清单
-description: 多步任务待办清单管理，Agent 可在多次调用间维护任务状态。
+description: 多步任务待办清单管理，支持 todos 批量写入（merge 语义）与 create/list/update/complete/delete 逐项操作，Agent 可在多次调用间维护任务状态。
 params: []
 task_keywords:
   - 待办
@@ -10,3 +10,5 @@ task_keywords:
   - 计划
   - 清单
   - checklist
+  - 任务管理
+  - 批量待办

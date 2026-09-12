@@ -215,3 +215,10 @@
   background: "#FFF8E8"
   category: tool
   created_at: 1787400000
+- name: x_search
+  label: X 消息搜索
+  description: 搜索 X（Twitter）公开帖子、账号与话题，使用 xAI 的 X Search 工具。
+  icon: ""
+  background: "#F1F5F9"
+  category: search
+  created_at: 1789000000

@@ -24,21 +24,23 @@ logger = logging.getLogger(__name__)
 class BrowserActionInput(BaseModel):
     """浏览器操作输入。"""
 
-    action: Literal["navigate", "snapshot", "click", "type", "scroll", "back"] = Field(
+    action: Literal[
+        "navigate", "snapshot", "click", "type", "scroll", "back", "press", "get_images", "console"
+    ] = Field(
         "navigate",
-        description="浏览器操作：navigate=打开页面，snapshot=读取页面文本，click=点击元素，type=填充输入，scroll=滚动到元素，back=返回",
+        description="浏览器操作：navigate=打开页面，snapshot=读取页面文本，click=点击元素，type=填充输入，scroll=滚动到元素，back=返回，press=按键（Enter/Escape 等），get_images=列出页面图片，console=读取页面控制台日志",
     )
     url: str = Field(
         "",
-        description="目标 URL（仅 http/https）；navigate/snapshot 必填",
+        description="目标 URL（仅 http/https）；navigate/snapshot/console 必填",
     )
     selector: str = Field(
         "",
-        description="CSS 选择器；click/type/scroll 必填",
+        description="CSS 选择器；click/type/scroll 必填，press 可选",
     )
     text: str = Field(
         "",
-        description="type 操作要填入的文本",
+        description="type 操作要填入的文本，或 press 操作的按键名（如 Enter/Escape/ArrowDown）",
     )
     wait_ms: int = Field(
         0,
@@ -103,9 +105,9 @@ class BrowserActionTool(BaseTool):
 
     name: str = "browser_action"
     description: str = (
-        "在受控浏览器中打开网页、读取页面内容、点击元素、填写表单、滚动或返回。"
-        "用于需要动态渲染、登录后页面、表单操作的网页任务。该工具默认关闭，"
-        "需要平台配置 BROWSER_AUTOMATION_URL / BROWSER_AUTOMATION_TOKEN 且按高风险审批。"
+        "在受控浏览器中打开网页、读取页面内容、点击元素、填写表单、滚动、返回、"
+        "按键、列出图片或读取控制台日志。用于需要动态渲染、登录后页面、表单操作的网页任务。"
+        "该工具默认关闭，需要平台配置 BROWSER_AUTOMATION_URL / BROWSER_AUTOMATION_TOKEN 且按高风险审批。"
     )
     args_schema: type[BaseModel] = BrowserActionInput
 
