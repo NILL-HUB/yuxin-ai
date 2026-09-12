@@ -9,6 +9,7 @@ import MembershipView from '@/views/membership/MembershipView.vue'
 const mocks = vi.hoisted(() => ({
   getMembershipSummary: vi.fn(),
   getRedeemRecords: vi.fn(),
+  getCreditTransactions: vi.fn(),
   getBalanceProfile: vi.fn(),
   listWithdrawals: vi.fn(),
   listOrders: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/services/billing', () => ({
   getMembershipSummary: mocks.getMembershipSummary,
   getRedeemRecords: mocks.getRedeemRecords,
+  getCreditTransactions: mocks.getCreditTransactions,
   redeemCode: vi.fn(),
 }))
 
@@ -75,6 +77,16 @@ const summary = {
 const renderView = async () => {
   mocks.getMembershipSummary.mockResolvedValue(summary)
   mocks.getRedeemRecords.mockResolvedValue({ list: [] })
+  mocks.getCreditTransactions.mockResolvedValue({
+    list: [
+      { id: 't1', amount: -35, description: '请帮我介绍一下杭州这座城市的特色和文化', transaction_type: 'consume', created_at: 1789000000, tx_count: 10, task_message: '请帮我介绍一下杭州这座城市的特色和文化' },
+      { id: 't2', amount: 150000, description: '卡密兑换赠送算力值', transaction_type: 'redeem_grant', created_at: 1789000000 },
+    ],
+    total: 12,
+    total_consumed: 5,
+    page: 1,
+    page_size: 10,
+  })
   mocks.getBalanceProfile.mockResolvedValue({
     balance: 128, recharge_balance: 500, commission_balance: 86.4,
     total_withdrawn: 300, total_purchased: 1256.8,
@@ -84,7 +96,7 @@ const renderView = async () => {
   mocks.listOrders.mockResolvedValue({ list: [] })
   mocks.listAutoRenewals.mockResolvedValue({ list: [] })
   mocks.getMyDistribution.mockResolvedValue({
-    referral_code: 'YXINV-8888', share_url: 'https://ai.yuxin.cn/i/YXINV-8888',
+    referral_code: 'YXINV-8888', share_url: 'https://ai.yujianwo.cn/i/YXINV-8888',
     superior: null, subordinate_count: 8, high_rate_locked: true, commission_rate: '30',
   })
   mocks.listPlans.mockResolvedValue({ list: [], paginator: { total_record: 0 } })
@@ -147,5 +159,55 @@ describe('MembershipView (真实接口)', () => {
     const wrapper = await renderView()
     expect(wrapper.html()).toContain('YXINV-8888')
     expect(wrapper.text()).toContain('30%')
+  })
+
+  it('算力流水卡片展示累计消耗角标与分页明细', async () => {
+    const wrapper = await renderView()
+    const text = wrapper.text()
+    expect(text).toContain('算力流水')
+    expect(text).toContain('累计消耗 5 算力')
+    expect(text).toContain('卡密兑换赠送算力值')
+    expect(text).toContain('1 / 2 · 共 12 条')
+  })
+
+  it('消费流水按任务聚合：展示用户消息、聚合笔数与任务合计', async () => {
+    const wrapper = await renderView()
+    const text = wrapper.text()
+    // 用户消息原文作为任务内容
+    expect(text).toContain('请帮我介绍一下杭州这座城市的特色和文化')
+    // 聚合笔数 meta
+    expect(text).toContain('10 次模型调用')
+    // 任务级合计 -35（不再逐笔展示 -1/-2 碎片）
+    expect(text).toContain('-35')
+    expect(text).not.toContain('扣减 5（1000 token')
+  })
+
+  it('算力流水翻页触发下一页请求', async () => {
+    mocks.getCreditTransactions.mockResolvedValueOnce({
+      list: [
+        { id: 't2', amount: 150000, description: '卡密兑换赠送算力值', transaction_type: 'redeem_grant', created_at: 1789000000 },
+      ],
+      total: 12,
+      total_consumed: 2058,
+      page: 1,
+      page_size: 10,
+    })
+    mocks.getCreditTransactions.mockResolvedValueOnce({
+      list: [
+        { id: 't10', amount: -3, description: '模型对话算力消耗', transaction_type: 'consume', created_at: 1789000100, tx_count: 1 },
+      ],
+      total: 12,
+      total_consumed: 2058,
+      page: 2,
+      page_size: 10,
+    })
+    const wrapper = await renderView()
+    expect(wrapper.text()).toContain('累计消耗 2,058 算力')
+    const nextBtn = wrapper.find('.pager-btn:last-of-type')
+    expect(nextBtn.exists()).toBe(true)
+    await nextBtn.trigger('click')
+    await flushPromises()
+    expect(mocks.getCreditTransactions).toHaveBeenCalledWith({ page: 2, page_size: 10 })
+    expect(wrapper.text()).toContain('模型对话算力消耗')
   })
 })

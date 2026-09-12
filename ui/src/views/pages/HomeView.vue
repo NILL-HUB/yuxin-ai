@@ -10,7 +10,7 @@ import RealtimeVoiceDock from '@/components/RealtimeVoiceDock.vue'
 import ScheduleSuggestionCard, { type ScheduleSuggestion } from '@/components/ScheduleSuggestionCard.vue'
 import HumanMessage from '@/components/HumanMessage.vue'
 import ChatConversationSkeleton from '@/components/skeletons/ChatConversationSkeleton.vue'
-import { AI_SURFACE_BACKGROUND_GRADIENT, QueueEvent } from '@/config'
+import { QueueEvent } from '@/config'
 import { useGenerateSuggestedQuestions } from '@/hooks/use-ai'
 import { useGetHomeIntent } from '@/hooks/use-home'
 import { useChatImageUpload } from '@/hooks/use-chat-image-upload'
@@ -78,7 +78,7 @@ import {
 import type { HomeIntentData } from '@/models/home'
 import type { BillingUsageEvent } from '@/models/billing-metering'
 import { calculateScrollDuration, smoothScroll } from '@/utils/scrollAnimation'
-import { YUXIN_AI_ASSISTANT_APP } from '@/config/brand'
+import { ASSISTANT_APP } from '@/config/brand'
 
 // 定义组件名称以支持 keep-alive
 defineOptions({
@@ -1586,9 +1586,8 @@ onUnmounted(() => {
 <template>
   <div
     ref="homePageRef"
-    class="relative flex h-full min-h-0 w-full flex-col overflow-hidden"
+    class="home-page relative flex h-full min-h-0 w-full flex-col overflow-hidden"
     @wheel="handleHomePageWheel"
-    :style="{ background: AI_SURFACE_BACKGROUND_GRADIENT }"
   >
     <!-- AI 动态背景层 -->
     <div class="absolute inset-0 z-0 pointer-events-none">
@@ -1648,7 +1647,7 @@ onUnmounted(() => {
               :answer="item.answer"
               :answer_parts="item.answer_parts || []"
               :artifacts="item.artifacts || []"
-              :app="YUXIN_AI_ASSISTANT_APP"
+              :app="ASSISTANT_APP"
               :suggested_questions="
                 item.suggested_questions && item.suggested_questions.length > 0
                   ? item.suggested_questions
@@ -1782,7 +1781,7 @@ onUnmounted(() => {
             :enable_text_to_speech="true"
             :agent_thoughts="[]"
             :answer="assistantIntroduction"
-            :app="YUXIN_AI_ASSISTANT_APP"
+            :app="ASSISTANT_APP"
             :loading="
               generateAssistantAgentIntroductionLoading && assistantIntroduction.trim() === ''
             "
@@ -1883,7 +1882,7 @@ onUnmounted(() => {
             class="flex items-center justify-center gap-2 text-xs text-subtle pb-2 px-2 min-w-0"
           >
             <span class="whitespace-nowrap">{{ t('home.messages.disclaimer') }}</span>
-            <span class="whitespace-nowrap">© 2026 钰心AI</span>
+            <span class="whitespace-nowrap">© 2026 钰见我</span>
             <a
               href="https://beian.miit.gov.cn"
               target="_blank"
@@ -1906,7 +1905,7 @@ onUnmounted(() => {
               <span>{{ t('home.footer.publicSecurityLabel') }}45010202000868号</span>
             </a>
             <a
-              href="https://github.com/NILL-HUB/yuxin-ai"
+              href="https://github.com/NILL-HUB/yujianwo"
               target="_blank"
               rel="noopener noreferrer"
               class="inline-flex items-center justify-center leading-none hover:opacity-80 transition-opacity"
@@ -1931,11 +1930,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.home-page {
+  background: var(--aicss-bg);
+}
+
 /* 玻璃样式 */
 .glass-message-bubble {
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--aicss-surface) 45%, transparent);
 }
 
 .home-chat-thread :deep(.glass-message-bubble),
@@ -1946,24 +1949,29 @@ onUnmounted(() => {
 .human-nav-preview-bubble {
   width: fit-content;
   max-width: 320px;
-  background: rgba(255, 250, 252, 0.96);
+  background: color-mix(in srgb, var(--aicss-surface) 96%, transparent);
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
-  border: 1px solid rgba(246, 215, 228, 0.95);
+  border: 1px solid var(--aicss-border);
   border-radius: 18px;
-  box-shadow: 0 12px 28px rgba(233, 30, 99, 0.12);
+  box-shadow: var(--aicss-shadow-card);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .human-nav-active-dot {
-  background: linear-gradient(135deg, #ff9ec5 0%, #e91e63 50%, #ad1457 100%);
+  background: linear-gradient(
+    135deg,
+    var(--aicss-accent-text) 0%,
+    var(--aicss-accent) 50%,
+    var(--aicss-violet) 100%
+  );
   background-size: 200% 200%;
-  border: 1px solid rgba(255, 255, 255, 0.86);
+  border: 1px solid color-mix(in srgb, var(--aicss-surface) 86%, transparent);
   box-shadow:
-    0 0 0 3px rgba(255, 255, 255, 0.28),
-    0 10px 22px rgba(233, 30, 99, 0.28);
+    0 0 0 3px color-mix(in srgb, var(--aicss-surface) 28%, transparent),
+    0 10px 22px var(--aicss-accent-soft);
   animation: human-nav-active-shift 3s ease-in-out infinite;
 }
 
@@ -1980,34 +1988,5 @@ onUnmounted(() => {
     background-position: 0% 50%;
     transform: scale(1);
   }
-}
-
-/* 原生玻璃卡片 */
-.native-glass-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(240, 249, 255, 0.6) 100%);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.6),
-    0 8px 32px rgba(0, 0, 0, 0.08);
-}
-
-/* 原生玻璃按钮 */
-.native-glass-button {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(240, 249, 255, 0.4) 100%);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
-  transition: all 0.3s ease;
-}
-
-.native-glass-button:hover {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(240, 249, 255, 0.6) 100%);
-  border-color: rgba(125, 211, 252, 0.6);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
-    0 4px 12px rgba(125, 211, 252, 0.15);
 }
 </style>

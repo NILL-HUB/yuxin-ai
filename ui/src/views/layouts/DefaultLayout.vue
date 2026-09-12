@@ -14,7 +14,7 @@ import { useAccountStore } from '@/stores/account'
 import { isCredentialLoggedIn } from '@/utils/auth'
 import { redirectToLogin } from '@/utils/login-redirect'
 
-import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
+import IconYujianwo from '@/components/icons/IconYujianwo.vue'
 import ThemeSwitch from '@/components/ThemeSwitch.vue'
 import { useRoute } from 'vue-router'
 import { getUserAvatarUrl } from '@/utils/helper'
@@ -296,14 +296,14 @@ watch(settingModalVisible, async (visible) => {
             class="h-10 flex items-center justify-between w-full gap-1.5 pb-0"
           >
             <div class="flex items-center justify-start flex-1 min-w-0 overflow-hidden pl-1">
-              <IconYuxinAI type="character" :size="130" class="shrink-0" />
+              <IconYujianwo type="character" :size="130" class="shrink-0" />
             </div>
             <ThemeSwitch class="!h-7 !w-7 !text-[13px]" />
           </div>
           <!-- 收起态：Logo + 主题切换（垂直线性、居中） -->
           <div v-else class="flex flex-col items-center justify-center gap-2 py-1">
             <div class="flex items-center justify-center w-10 h-10 shrink-0">
-              <IconYuxinAI type="full" :size="32" class="shrink-0" />
+              <IconYujianwo type="full" :size="32" class="shrink-0" />
             </div>
             <ThemeSwitch class="!h-7 !w-7 !text-[13px]" />
           </div>

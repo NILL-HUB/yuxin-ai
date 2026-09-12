@@ -429,14 +429,18 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 
 <style scoped>
 .glass-message-bubble {
-  background: linear-gradient(135deg, rgba(255, 250, 252, 0.55) 0%, rgba(255, 240, 246, 0.4) 100%);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--aicss-surface) 72%, transparent) 0%,
+    color-mix(in srgb, var(--aicss-surface-2) 58%, transparent) 100%
+  );
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
-  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  border: 1.5px solid color-mix(in srgb, var(--aicss-surface) 70%, transparent);
   box-shadow:
-    0 8px 32px rgba(233, 30, 99, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.06);
+    0 8px 32px var(--aicss-accent-soft),
+    inset 0 1px 0 color-mix(in srgb, var(--aicss-surface) 88%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--aicss-bg) 24%, transparent);
   color: var(--aicss-text);
   position: relative;
   overflow: hidden;
@@ -445,7 +449,11 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 .aicss-message-bubble {
   border-radius: 12px !important;
   box-shadow: var(--aicss-shadow-card) !important;
-  background: linear-gradient(180deg, #ffffff 0%, #fff5f9 100%) !important;
+  background: linear-gradient(
+    180deg,
+    var(--aicss-surface) 0%,
+    var(--aicss-surface-2) 100%
+  ) !important;
   border: 1px solid var(--aicss-border-strong) !important;
   padding: 18px 20px !important;
   color: var(--aicss-text) !important;
@@ -516,15 +524,15 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   gap: 6px;
   padding: 14px 16px;
   border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94));
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid var(--aicss-border);
+  background: var(--aicss-surface);
+  box-shadow: var(--aicss-shadow-card);
 }
 
 .message-artifact-card__name {
   font-size: 14px;
   font-weight: 700;
-  color: #0f172a;
+  color: var(--aicss-text);
   word-break: break-all;
 }
 
@@ -533,12 +541,12 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   flex-wrap: wrap;
   gap: 8px;
   font-size: 12px;
-  color: #64748b;
+  color: var(--aicss-muted);
 }
 
 .message-artifact-card__link {
   font-size: 13px;
-  color: #1d4ed8;
+  color: var(--aicss-accent-text);
   text-decoration: none;
 }
 
@@ -555,7 +563,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .glass-message-bubble:hover {
-  border-color: #eeb9cd;
+  border-color: var(--aicss-border-strong);
   box-shadow: var(--aicss-shadow-elevated);
 }
 
@@ -574,7 +582,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .glass-suggestion-bubble:hover {
-  border-color: #eeb9cd !important;
+  border-color: var(--aicss-border-strong) !important;
   background: var(--aicss-surface-2) !important;
   box-shadow: var(--aicss-shadow-elevated) !important;
 }
@@ -593,7 +601,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   max-width: 100%;
   min-width: 0;
   margin: 0 0 12px 0;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--aicss-border);
   border-radius: 10px;
   overflow-x: auto;
 }
@@ -605,8 +613,8 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   gap: 8px;
   min-width: 0;
   padding: 6px 10px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--aicss-surface-2);
+  border-bottom: 1px solid var(--aicss-border);
 }
 
 :deep(.markdown-body .md-code-lang) {
@@ -614,7 +622,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #6b7280;
+  color: var(--aicss-muted);
   font-size: 12px;
   line-height: 16px;
 }
@@ -623,18 +631,18 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: #374151;
+  color: var(--aicss-text-2);
   font-size: 12px;
   line-height: 16px;
   cursor: pointer;
 }
 
 :deep(.markdown-body .md-code-copy-btn:hover) {
-  color: #111827;
+  color: var(--aicss-text);
 }
 
 :deep(.markdown-body .md-code-copy-btn:disabled) {
-  color: #9ca3af;
+  color: var(--aicss-subtle);
   cursor: default;
 }
 
@@ -652,7 +660,7 @@ const handleMarkdownClick = async (event: MouseEvent) => {
 }
 
 .ai-message-playing {
-  border-color: rgba(233, 30, 99, 0.9) !important;
+  border-color: var(--aicss-accent) !important;
   animation: ai-message-breathing 1.2s ease-in-out infinite;
 }
 
@@ -660,19 +668,27 @@ const handleMarkdownClick = async (event: MouseEvent) => {
   0%,
   100% {
     box-shadow:
-      0 8px 32px rgba(233, 30, 99, 0.2),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.06),
-      0 0 0 0 rgba(233, 30, 99, 0.4);
-    background: linear-gradient(135deg, rgba(255, 250, 252, 0.55) 0%, rgba(255, 240, 246, 0.4) 100%);
+      0 8px 32px var(--aicss-accent-soft),
+      inset 0 1px 0 color-mix(in srgb, var(--aicss-surface) 88%, transparent),
+      inset 0 -1px 0 color-mix(in srgb, var(--aicss-bg) 24%, transparent),
+      0 0 0 0 var(--aicss-accent-soft);
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--aicss-surface) 72%, transparent) 0%,
+      color-mix(in srgb, var(--aicss-surface-2) 58%, transparent) 100%
+    );
   }
   50% {
     box-shadow:
-      0 12px 40px rgba(233, 30, 99, 0.35),
-      inset 0 1px 0 rgba(255, 255, 255, 0.9),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-      0 0 0 12px rgba(233, 30, 99, 0.15);
-    background: linear-gradient(135deg, rgba(255, 250, 252, 0.7) 0%, rgba(255, 240, 246, 0.55) 100%);
+      0 12px 40px var(--aicss-accent-soft),
+      inset 0 1px 0 color-mix(in srgb, var(--aicss-surface) 88%, transparent),
+      inset 0 -1px 0 color-mix(in srgb, var(--aicss-bg) 28%, transparent),
+      0 0 0 12px var(--aicss-accent-soft);
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--aicss-surface) 88%, transparent) 0%,
+      color-mix(in srgb, var(--aicss-surface-2) 72%, transparent) 100%
+    );
   }
 }
 

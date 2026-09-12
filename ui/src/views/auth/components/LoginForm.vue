@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import IconYuxinAI from '@/components/icons/IconYuxinAI.vue'
+import { YUJIANWO_BRAND_NAME } from '@/config/brand'
 import {
     useDirectRegister,
     usePasswordLogin,
@@ -1229,25 +1229,18 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 
 <template>
   <div
-    :class="
-      props.embedded
-        ? 'w-full'
-        : 'w-full h-full flex items-center justify-center bg-surface-2 px-4 py-8'
-    "
+    :class="[
+      'auth-shell',
+      props.embedded ? 'auth-shell--embedded' : 'auth-shell--page',
+    ]"
   >
-    <div
-      :class="[
-        'w-full max-w-[460px] mx-auto',
-        props.embedded
-          ? 'p-6'
-          : 'p-10 border border-border-c shadow-[0_16px_48px_rgba(233,30,99,0.08)]',
-      ]"
-    >
-      <div class="mb-6">
-        <div class="flex justify-center mb-4">
-          <IconYuxinAI type="character" :size="248" />
+    <div :class="['auth-card', props.embedded ? 'auth-card--embedded' : 'auth-card--page']">
+      <div class="auth-head">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">{{ YUJIANWO_BRAND_NAME }}</span>
         </div>
-        <p class="text-sm text-muted mt-2 text-center">
+        <p class="auth-subtitle">
           {{
             authView === 'login'
               ? loginModeDescription
@@ -1266,9 +1259,10 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 
       <div
         v-if="authView !== 'forgot' && errorMessage"
-        class="text-sm text-red-600 bg-red-50 rounded-xl px-3 py-2 mb-4"
+        class="auth-error"
       >
-        {{ errorMessage }}
+        <span class="auth-error-dot" aria-hidden="true"></span>
+        <span>{{ errorMessage }}</span>
       </div>
 
       <!-- 第三方登录入口暂时隐藏；后续如需恢复 OAuth-only 提示，将 SHOW_THIRD_PARTY_LOGIN 改为 true 并确认 OAuth 配置可用。 -->
@@ -1575,7 +1569,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       </div>
 
       <div v-else-if="authView === 'register'">
-        <div class="rounded-xl bg-brand-soft border border-border-c px-4 py-3 text-sm text-brand-text mb-4">
+        <div class="auth-hint">
           {{ registerEntryDescription }}
         </div>
 
@@ -1643,7 +1637,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
         </div>
 
         <div v-else-if="registerTab === 'email'">
-          <div class="rounded-xl bg-brand-soft border border-border-c px-4 py-3 text-sm text-brand-text mb-4">
+          <div class="auth-hint">
             {{ registerVerifyDescription }}
           </div>
 
@@ -1806,7 +1800,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       </div>
 
       <div v-else-if="authView === 'challenge'">
-        <div class="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-sm text-amber-900 mb-4">
+        <div class="auth-hint auth-hint--warn">
           {{ challengeDescription }}
         </div>
 
@@ -1987,8 +1981,112 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 </template>
 
 <style scoped>
+.auth-shell--page {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+}
+
+.auth-shell--embedded {
+  width: 100%;
+}
+
+.auth-card--page {
+  width: 100%;
+  max-width: 420px;
+  padding: 44px 40px;
+  border-radius: var(--aicss-radius-lg);
+  background: var(--aicss-surface);
+  border: 1px solid var(--aicss-border);
+  box-shadow: var(--aicss-shadow-elevated);
+}
+
+.auth-card--embedded {
+  width: 100%;
+}
+
+.auth-head {
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+.brand-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: conic-gradient(
+    from 140deg,
+    var(--aicss-accent),
+    var(--aicss-violet),
+    var(--aicss-accent)
+  );
+  box-shadow: 0 0 18px var(--aicss-accent-soft);
+}
+
+.brand-name {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--aicss-text);
+}
+
+.auth-subtitle {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--aicss-muted);
+}
+
+.auth-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  border-radius: var(--aicss-radius-sm);
+  background: var(--aicss-danger-soft);
+  color: var(--aicss-danger);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.auth-error-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.auth-hint {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border-radius: var(--aicss-radius-sm);
+  background: var(--aicss-accent-soft);
+  color: var(--aicss-accent-text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.auth-hint--warn {
+  background: var(--aicss-warning-soft);
+  color: var(--aicss-warning);
+}
+
 .login-input :deep(.arco-input-wrapper) {
-  border-radius: 10px;
+  border-radius: var(--aicss-radius-sm);
   background: var(--aicss-surface-2);
   border-color: var(--aicss-border);
 }
@@ -2005,12 +2103,23 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 }
 
 .login-submit-btn {
-  border-radius: 10px;
+  border-radius: var(--aicss-radius-sm);
   height: 42px;
 }
 
+.login-submit-btn.arco-btn-primary {
+  background: var(--aicss-accent);
+  border-color: var(--aicss-accent);
+  color: #fff;
+}
+
+.login-submit-btn.arco-btn-primary:hover {
+  background: var(--aicss-accent-text);
+  border-color: var(--aicss-accent-text);
+}
+
 .oauth-btn {
-  border-radius: 10px;
+  border-radius: var(--aicss-radius-sm);
   height: 42px;
   border-color: var(--aicss-border);
   color: var(--aicss-text-2);
@@ -2036,7 +2145,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
   flex-direction: column;
   gap: 4px;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: var(--aicss-radius-sm);
   border: 1px solid var(--aicss-border);
   background: var(--aicss-surface);
   text-align: left;

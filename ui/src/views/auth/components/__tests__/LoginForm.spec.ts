@@ -193,7 +193,7 @@ const renderForm = () => {
         'a-checkbox': checkboxStub,
         'a-tabs': tabsStub,
         'a-tab-pane': tabPaneStub,
-        'IconYuxinAI': true,
+        'IconYujianwo': true,
         'icon-user': true,
         'icon-lock': true,
         'icon-email': true,

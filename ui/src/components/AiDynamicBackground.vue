@@ -65,59 +65,27 @@ const INTENSITY_CONFIG = {
 const auroraStreams = [
   {
     id: 'stream-a',
-    className:
-      '-left-[22%] top-[0%] h-[18rem] w-[145%] sm:h-[22rem] lg:h-[28rem]',
+    className: '-left-[22%] top-[0%] h-[18rem] w-[145%] sm:h-[22rem] lg:h-[28rem]',
     motionClass: 'stream-flow-a',
-    style: {
-      background:
-        'linear-gradient(100deg, rgba(255,255,255,0) 8%, rgba(165,243,252,0.65) 24%, rgba(230,204,255,0.56) 40%, rgba(245,208,254,0.52) 58%, rgba(255,255,255,0.08) 74%, rgba(255,255,255,0) 88%)',
-      WebkitMaskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.96) 0%, rgba(0,0,0,0.84) 46%, rgba(0,0,0,0.2) 72%, transparent 100%)',
-      maskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.96) 0%, rgba(0,0,0,0.84) 46%, rgba(0,0,0,0.2) 72%, transparent 100%)',
-    },
+    toneClass: 'aurora-stream--a',
   },
   {
     id: 'stream-b',
-    className:
-      '-right-[20%] top-[18%] h-[17rem] w-[138%] sm:h-[21rem] lg:h-[26rem]',
+    className: '-right-[20%] top-[18%] h-[17rem] w-[138%] sm:h-[21rem] lg:h-[26rem]',
     motionClass: 'stream-flow-b',
-    style: {
-      background:
-        'linear-gradient(105deg, rgba(255,255,255,0) 10%, rgba(245,208,254,0.62) 26%, rgba(230,204,255,0.58) 42%, rgba(196,181,253,0.42) 58%, rgba(255,255,255,0.06) 74%, rgba(255,255,255,0) 88%)',
-      WebkitMaskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.98) 0%, rgba(0,0,0,0.82) 50%, rgba(0,0,0,0.18) 76%, transparent 100%)',
-      maskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.98) 0%, rgba(0,0,0,0.82) 50%, rgba(0,0,0,0.18) 76%, transparent 100%)',
-    },
+    toneClass: 'aurora-stream--b',
   },
   {
     id: 'stream-c',
-    className:
-      '-left-[10%] bottom-[2%] h-[15rem] w-[126%] sm:h-[18rem] lg:h-[22rem]',
+    className: '-left-[10%] bottom-[2%] h-[15rem] w-[126%] sm:h-[18rem] lg:h-[22rem]',
     motionClass: 'stream-flow-c',
-    style: {
-      background:
-        'linear-gradient(95deg, rgba(255,255,255,0) 8%, rgba(220,198,224,0.38) 24%, rgba(165,243,252,0.5) 40%, rgba(240,230,250,0.58) 58%, rgba(186,230,253,0.26) 74%, rgba(255,255,255,0) 88%)',
-      WebkitMaskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.8) 50%, rgba(0,0,0,0.16) 78%, transparent 100%)',
-      maskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.8) 50%, rgba(0,0,0,0.16) 78%, transparent 100%)',
-    },
+    toneClass: 'aurora-stream--c',
   },
   {
     id: 'stream-d',
-    className:
-      'left-[-12%] top-[36%] h-[13rem] w-[118%] sm:h-[16rem] lg:h-[20rem]',
+    className: 'left-[-12%] top-[36%] h-[13rem] w-[118%] sm:h-[16rem] lg:h-[20rem]',
     motionClass: 'stream-flow-d',
-    style: {
-      background:
-        'linear-gradient(90deg, rgba(255,255,255,0) 12%, rgba(230,204,255,0.28) 28%, rgba(255,255,255,0.14) 44%, rgba(245,208,254,0.34) 58%, rgba(196,181,253,0.26) 74%, rgba(255,255,255,0) 90%)',
-      WebkitMaskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.72) 48%, rgba(0,0,0,0.14) 78%, transparent 100%)',
-      maskImage:
-        'radial-gradient(ellipse at center, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.72) 48%, rgba(0,0,0,0.14) 78%, transparent 100%)',
-    },
+    toneClass: 'aurora-stream--d',
   },
 ]
 
@@ -127,16 +95,39 @@ const beams = [
   { id: 'beam-c', className: 'beam-c top-[74%]' },
 ]
 
-const particlePalette = [
-  '186, 230, 253',
-  '196, 181, 253',
-  '165, 243, 252',
-  '167, 243, 230',
-  '230, 204, 255',
-  '245, 208, 254',
-  '220, 198, 224',
-  '240, 230, 250',
-]
+// 兜底调色板（SSR / 取色失败时使用），RGB 三元组字符串
+const FALLBACK_PALETTE = ['233, 30, 99', '214, 51, 132', '255, 158, 197', '201, 136, 166']
+
+const hexToRgbTriplet = (value: string): string | null => {
+  const normalized = value.trim().replace('#', '')
+  const full =
+    normalized.length === 3
+      ? normalized
+          .split('')
+          .map((char) => char + char)
+          .join('')
+      : normalized
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null
+  const int = Number.parseInt(full, 16)
+  const r = (int >> 16) & 255
+  const g = (int >> 8) & 255
+  const b = int & 255
+  return `${r}, ${g}, ${b}`
+}
+
+const readThemeVar = (name: string, fallback: string) => {
+  if (typeof window === 'undefined') return fallback
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name)
+  return hexToRgbTriplet(raw) || fallback
+}
+
+/** 从主题令牌推导粒子调色板，随浅/深主题自动切换 */
+const resolveThemePalette = (): string[] => {
+  const accent = readThemeVar('--aicss-accent', FALLBACK_PALETTE[0])
+  const violet = readThemeVar('--aicss-violet', FALLBACK_PALETTE[1])
+  const subtle = readThemeVar('--aicss-subtle', FALLBACK_PALETTE[3])
+  return [accent, violet, accent, subtle, violet]
+}
 
 const rootRef = ref<HTMLDivElement | null>(null)
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -160,8 +151,10 @@ let viewportWidth = 0
 let viewportHeight = 0
 let devicePixelRatioValue = 1
 let lastFrameTime = 0
+let themeObserver: MutationObserver | null = null
 
 const initParticles = (width: number, height: number) => {
+  const palette = resolveThemePalette()
   particles = Array.from({ length: intensityConfig.value.particleCount }, () => {
     const speed = intensityConfig.value.particleSpeed
     const baseDirectionX = (Math.random() - 0.5) * speed
@@ -175,7 +168,7 @@ const initParticles = (width: number, height: number) => {
       radius: Math.random() * 1.6 + 0.7,
       alpha: Math.random() * 0.18 + 0.1,
       pulse: Math.random() * Math.PI * 2,
-      color: particlePalette[Math.floor(Math.random() * particlePalette.length)],
+      color: palette[Math.floor(Math.random() * palette.length)],
     }
   })
 }
@@ -231,7 +224,6 @@ const renderParticles = (timestamp: number) => {
 
   ctx.clearRect(0, 0, viewportWidth, viewportHeight)
   ctx.save()
-  ctx.globalCompositeOperation = 'screen'
 
   particles.forEach((particle) => {
     particle.x += particle.vx * deltaSeconds
@@ -243,8 +235,8 @@ const renderParticles = (timestamp: number) => {
     if (particle.y > viewportHeight + 24) particle.y = -24
 
     const pulseAlpha =
-      (particle.alpha + (Math.sin(timestamp * 0.00045 + particle.pulse) + 1) * 0.05)
-      * intensityConfig.value.particleAlpha
+      (particle.alpha + (Math.sin(timestamp * 0.00045 + particle.pulse) + 1) * 0.05) *
+      intensityConfig.value.particleAlpha
 
     const glow = ctx.createRadialGradient(
       particle.x,
@@ -291,6 +283,22 @@ onMounted(async () => {
     window.addEventListener('resize', syncCanvasSize)
   }
 
+  // 监听主题切换，让粒子调色板随之更新
+  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+    themeObserver = new MutationObserver(() => {
+      if (particles.length > 0) {
+        const palette = resolveThemePalette()
+        particles.forEach((particle) => {
+          particle.color = palette[Math.floor(Math.random() * palette.length)]
+        })
+      }
+    })
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+  }
+
   startAnimation()
 })
 
@@ -317,6 +325,8 @@ watch(
 onUnmounted(() => {
   stopAnimation()
   resizeObserver?.disconnect()
+  themeObserver?.disconnect()
+  themeObserver = null
   if (!resizeObserver) {
     window.removeEventListener('resize', syncCanvasSize)
   }
@@ -327,15 +337,13 @@ onUnmounted(() => {
   <div
     ref="rootRef"
     :class="[
-      'ai-dynamic-background absolute inset-0 isolate overflow-hidden rounded-[inherit] bg-[#fafbfc] pointer-events-none',
+      'ai-dynamic-background absolute inset-0 isolate overflow-hidden rounded-[inherit] bg-[var(--aicss-bg)] pointer-events-none',
       className,
     ]"
     :style="backgroundStyle"
     aria-hidden="true"
   >
-    <div
-      class="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(250,251,252,0.94)_36%,rgba(248,250,252,0.96)_100%)]"
-    />
+    <div class="ai-veil-top absolute inset-0" />
 
     <div class="aurora-base absolute inset-[-12%]" />
 
@@ -343,8 +351,12 @@ onUnmounted(() => {
       <div
         v-for="stream in auroraStreams"
         :key="stream.id"
-        :class="['aurora-stream absolute rounded-[999px]', stream.className, stream.motionClass]"
-        :style="stream.style"
+        :class="[
+          'aurora-stream absolute rounded-[999px]',
+          stream.className,
+          stream.motionClass,
+          stream.toneClass,
+        ]"
       />
     </div>
 
@@ -369,9 +381,7 @@ onUnmounted(() => {
 
     <div class="noise-layer absolute inset-0" />
 
-    <div
-      class="absolute inset-0 bg-[radial-gradient(circle_at_50%_14%,rgba(255,255,255,0.82)_0%,rgba(255,255,255,0.14)_34%,rgba(255,255,255,0)_62%),linear-gradient(180deg,rgba(255,255,255,0.32)_0%,rgba(255,255,255,0)_36%,rgba(255,255,255,0.26)_100%)]"
-    />
+    <div class="ai-veil-final absolute inset-0" />
   </div>
 </template>
 
@@ -379,41 +389,133 @@ onUnmounted(() => {
 .ai-dynamic-background {
   contain: layout paint style;
   transform: translateZ(0);
+  background: var(--aicss-bg);
+}
+
+.ai-veil-top {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--aicss-surface) 78%, transparent) 0%,
+    color-mix(in srgb, var(--aicss-bg) 66%, transparent) 36%,
+    color-mix(in srgb, var(--aicss-surface) 72%, transparent) 100%
+  );
 }
 
 .aurora-base {
   opacity: var(--aurora-opacity);
   background:
-    radial-gradient(circle at 16% 18%, rgba(165, 243, 252, 0.46), transparent 28%),
-    radial-gradient(circle at 84% 16%, rgba(230, 204, 255, 0.42), transparent 26%),
-    radial-gradient(circle at 58% 74%, rgba(245, 208, 254, 0.42), transparent 28%),
-    linear-gradient(120deg, rgba(250, 251, 252, 1) 0%, rgba(245, 250, 253, 0.99) 24%, rgba(240, 248, 255, 0.97) 42%, rgba(250, 242, 255, 0.97) 62%, rgba(245, 240, 250, 0.98) 80%, rgba(250, 251, 252, 1) 100%);
+    radial-gradient(
+      circle at 16% 18%,
+      color-mix(in srgb, var(--aicss-accent) 22%, transparent),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 84% 16%,
+      color-mix(in srgb, var(--aicss-violet) 20%, transparent),
+      transparent 26%
+    ),
+    radial-gradient(
+      circle at 58% 74%,
+      color-mix(in srgb, var(--aicss-accent) 16%, transparent),
+      transparent 28%
+    ),
+    linear-gradient(
+      120deg,
+      var(--aicss-bg) 0%,
+      var(--aicss-surface-2) 26%,
+      var(--aicss-surface-3) 46%,
+      var(--aicss-surface-2) 68%,
+      var(--aicss-bg) 100%
+    );
   background-size: 160% 160%;
   animation: aurora-pan 20s ease-in-out infinite alternate;
 }
 
 .aurora-stream {
   filter: blur(var(--blob-blur));
-  mix-blend-mode: screen;
   opacity: calc(var(--aurora-opacity) * 0.9);
   will-change: transform, opacity;
   transform-origin: center;
 }
 
+.aurora-stream--a {
+  background: linear-gradient(
+    100deg,
+    transparent 8%,
+    color-mix(in srgb, var(--aicss-accent) 30%, transparent) 24%,
+    color-mix(in srgb, var(--aicss-violet) 26%, transparent) 40%,
+    color-mix(in srgb, var(--aicss-accent) 24%, transparent) 58%,
+    transparent 88%
+  );
+}
+
+.aurora-stream--b {
+  background: linear-gradient(
+    105deg,
+    transparent 10%,
+    color-mix(in srgb, var(--aicss-violet) 28%, transparent) 26%,
+    color-mix(in srgb, var(--aicss-accent) 24%, transparent) 42%,
+    color-mix(in srgb, var(--aicss-accent-text) 20%, transparent) 58%,
+    transparent 88%
+  );
+}
+
+.aurora-stream--c {
+  background: linear-gradient(
+    95deg,
+    transparent 8%,
+    color-mix(in srgb, var(--aicss-subtle) 22%, transparent) 24%,
+    color-mix(in srgb, var(--aicss-accent) 24%, transparent) 40%,
+    color-mix(in srgb, var(--aicss-violet) 26%, transparent) 58%,
+    transparent 88%
+  );
+}
+
+.aurora-stream--d {
+  background: linear-gradient(
+    90deg,
+    transparent 12%,
+    color-mix(in srgb, var(--aicss-violet) 20%, transparent) 28%,
+    color-mix(in srgb, var(--aicss-surface) 16%, transparent) 44%,
+    color-mix(in srgb, var(--aicss-accent) 22%, transparent) 58%,
+    transparent 90%
+  );
+}
+
 .soft-glow-layer {
   opacity: var(--glow-opacity);
   background:
-    radial-gradient(circle at 50% 16%, rgba(255, 255, 255, 0.92), transparent 34%),
-    radial-gradient(circle at 30% 58%, rgba(230, 204, 255, 0.3), transparent 24%),
-    radial-gradient(circle at 72% 54%, rgba(245, 208, 254, 0.24), transparent 24%);
+    radial-gradient(
+      circle at 50% 16%,
+      color-mix(in srgb, var(--aicss-surface) 62%, transparent),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 30% 58%,
+      color-mix(in srgb, var(--aicss-violet) 18%, transparent),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 72% 54%,
+      color-mix(in srgb, var(--aicss-accent) 16%, transparent),
+      transparent 24%
+    );
   animation: glow-breathe 14s ease-in-out infinite;
 }
 
 .grid-layer {
   opacity: var(--grid-opacity);
   background-image:
-    linear-gradient(to right, rgba(165, 200, 220, 0.16) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(165, 200, 220, 0.12) 1px, transparent 1px);
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--aicss-border-strong) 60%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--aicss-border-strong) 44%, transparent) 1px,
+      transparent 1px
+    );
   background-size: 84px 84px;
   background-position: center center;
   -webkit-mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.9) 10%, transparent 78%);
@@ -424,7 +526,12 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   inset: -18%;
-  background: linear-gradient(110deg, transparent 40%, rgba(186, 230, 253, 0.16) 50%, transparent 60%);
+  background: linear-gradient(
+    110deg,
+    transparent 40%,
+    color-mix(in srgb, var(--aicss-accent) 14%, transparent) 50%,
+    transparent 60%
+  );
   opacity: 0.7;
   transform: translate3d(-14%, 0, 0);
   animation: grid-scan 20s linear infinite;
@@ -443,9 +550,9 @@ onUnmounted(() => {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(230, 204, 255, 0.16) 22%,
-    rgba(245, 208, 254, 0.32) 50%,
-    rgba(230, 204, 255, 0.16) 78%,
+    color-mix(in srgb, var(--aicss-accent) 18%, transparent) 22%,
+    color-mix(in srgb, var(--aicss-violet) 28%, transparent) 50%,
+    color-mix(in srgb, var(--aicss-accent) 18%, transparent) 78%,
     transparent 100%
   );
   filter: blur(0.4px);
@@ -470,15 +577,30 @@ onUnmounted(() => {
 .noise-layer {
   opacity: var(--noise-opacity);
   background-image:
-    radial-gradient(rgba(165, 200, 220, 0.16) 0.55px, transparent 0.7px),
-    radial-gradient(rgba(255, 255, 255, 0.96) 0.4px, transparent 0.55px);
+    radial-gradient(color-mix(in srgb, var(--aicss-muted) 18%, transparent) 0.55px, transparent 0.7px),
+    radial-gradient(color-mix(in srgb, var(--aicss-surface) 88%, transparent) 0.4px, transparent 0.55px);
   background-size: 14px 14px, 18px 18px;
   background-position: 0 0, 8px 10px;
   mix-blend-mode: soft-light;
 }
 
 .particle-layer {
-  mix-blend-mode: screen;
+  mix-blend-mode: normal;
+}
+
+.ai-veil-final {
+  background:
+    radial-gradient(
+      circle at 50% 14%,
+      color-mix(in srgb, var(--aicss-surface) 52%, transparent) 0%,
+      transparent 62%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--aicss-bg) 24%, transparent) 0%,
+      transparent 36%,
+      color-mix(in srgb, var(--aicss-bg) 20%, transparent) 100%
+    );
 }
 
 .stream-flow-a {

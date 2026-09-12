@@ -11,6 +11,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import {
+  getCreditTransactions,
   getMembershipSummary,
   getRedeemRecords,
   redeemCode,
@@ -196,15 +197,18 @@ const redeemRows = computed(() =>
 )
 
 const creditFlows = computed(() =>
-  (summary.value?.recent_transactions || []).map((f) => {
-    // 消费描述：后端已把 token 算式替换为用户问题（问题过长用 title 全文展示）
+  (creditTransactions.value || []).map((f) => {
     const isConsume = f.transaction_type === 'consume' || Number(f.amount) < 0
     const raw = f.description || ''
-    const looksTokenMath = /token|算力值|1k token|余额不足/i.test(raw)
-    const desc = isConsume && (!raw || looksTokenMath) ? '模型对话算力消耗' : raw
+    // 后端已按用户消息聚合任务：消费行文案=用户提问/任务描述，不再是 token 算式碎片
+    const desc = isConsume && (!raw || /token|1k token|余额不足/i.test(raw)) ? '模型对话算力消耗' : raw
+    const txCount = Number(f.tx_count || 0)
     return {
       desc,
+      refId: f.ref_id || f.source_id || '',
       type: transactionTypeLabel(f.transaction_type),
+      // 消费任务行给出聚合笔数提示（如 1 次任务内含 158 次模型调用）
+      typeMeta: isConsume && txCount > 1 ? `${txCount} 次模型调用` : '',
       time: formatTime(f.created_at),
       amount: flowAmount(f),
       positive: Number(f.amount) >= 0,
@@ -212,6 +216,37 @@ const creditFlows = computed(() =>
     }
   }),
 )
+
+// 算力流水分页：全量展示每次扣费/到账，头部角标给出累计消耗便于对比
+const creditTransactions = ref<CreditTransaction[]>([])
+const creditTxLoading = ref(false)
+const creditTxPage = ref(1)
+const creditTxPageSize = ref(10)
+const creditTxTotal = ref(0)
+const creditTxConsumed = ref(0)
+
+const loadCreditTransactions = async (page = creditTxPage.value) => {
+  creditTxLoading.value = true
+  try {
+    const res = await getCreditTransactions({
+      page,
+      page_size: creditTxPageSize.value,
+    })
+    creditTransactions.value = res.list || []
+    creditTxTotal.value = res.total || 0
+    creditTxConsumed.value = res.total_consumed || 0
+    creditTxPage.value = page
+  } catch {
+    /* 静默：流水加载失败不阻塞页面 */
+  } finally {
+    creditTxLoading.value = false
+  }
+}
+
+const creditFlowPageCount = computed(() =>
+  Math.max(Math.ceil(creditTxTotal.value / creditTxPageSize.value), 1),
+)
+const creditFlowTotalConsumed = computed(() => formatNum(creditTxConsumed.value))
 
 const commissionRate = computed(() => distribution.value?.commission_rate || '0')
 const highRateLocked = computed(() => distribution.value?.high_rate_locked || profile.value?.high_rate_locked || false)
@@ -265,6 +300,7 @@ const loadAll = async () => {
   } finally {
     loading.value = false
   }
+  void loadCreditTransactions(1)
   void reloadSecondary()
 }
 
@@ -997,18 +1033,30 @@ onMounted(loadAll)
 
       <!-- ===== 算力流水表 ===== -->
       <section class="card">
-        <div class="head-only">
-          <h2 class="serif card-title">算力流水</h2>
-          <p class="card-sub">消费扣减与充值到账明细（仅显示算力值）</p>
+        <div class="head-only head-with-badge">
+          <div>
+            <h2 class="serif card-title">算力流水</h2>
+            <p class="card-sub">消费扣减与充值到账明细（仅显示算力值）</p>
+          </div>
+          <span v-if="creditTxConsumed" class="badge badge-soft">累计消耗 {{ creditFlowTotalConsumed }} 算力</span>
         </div>
         <div class="table-wrap">
           <table class="table credit-flow-table">
             <thead>
-              <tr><th>说明</th><th>类型</th><th>时间</th><th class="right">算力值</th></tr>
+              <tr><th>任务内容</th><th>类型</th><th>时间</th><th class="right">算力值</th></tr>
             </thead>
             <tbody>
-              <tr v-for="f in creditFlows" :key="f.time + f.desc">
-                <td class="flow-desc" :title="f.desc">{{ f.desc }}</td>
+              <tr v-if="creditTxLoading" class="row-loading">
+                <td colspan="4" class="muted center">加载中…</td>
+              </tr>
+              <tr v-else-if="!creditFlows.length">
+                <td colspan="4" class="muted center">暂无流水</td>
+              </tr>
+              <tr v-for="f in creditFlows" :key="f.refId || f.desc + f.time">
+                <td class="flow-desc" :title="f.desc">
+                  <span class="flow-title">{{ f.desc }}</span>
+                  <span v-if="f.typeMeta" class="flow-meta">{{ f.typeMeta }}</span>
+                </td>
                 <td><span class="pill" :class="f.positive ? 'pill-soft' : 'pill-muted'">{{ f.type }}</span></td>
                 <td class="muted nowrap">{{ f.time }}</td>
                 <td class="right mono" :class="f.positive ? 'accent' : 'muted'">{{ f.amount }}</td>
@@ -1016,11 +1064,30 @@ onMounted(loadAll)
             </tbody>
           </table>
         </div>
+        <div v-if="creditTxTotal > creditTxPageSize" class="pager-row">
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="creditTxPage <= 1 || creditTxLoading"
+            @click="loadCreditTransactions(creditTxPage - 1)"
+          >
+            上一页
+          </button>
+          <span class="pager-info">{{ creditTxPage }} / {{ creditFlowPageCount }} · 共 {{ formatNum(creditTxTotal) }} 条</span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="creditTxPage >= creditFlowPageCount || creditTxLoading"
+            @click="loadCreditTransactions(creditTxPage + 1)"
+          >
+            下一页
+          </button>
+        </div>
       </section>
 
       <!-- ===== 页脚 ===== -->
       <footer class="page-foot">
-        <p>钰心AI © 2026 · 保留所有权利</p>
+        <p>钰见我 © 2026 · 保留所有权利</p>
         <div><a href="#">隐私政策</a><a href="#">服务条款</a></div>
       </footer>
     </div>
@@ -1566,6 +1633,31 @@ svg { flex-shrink: 0; }
   border-top: 1px solid var(--aicss-border);
 }
 .pager-info { font-size: 12px; color: var(--aicss-muted); font-variant-numeric: tabular-nums; }
+.pager-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--aicss-border);
+}
+.pager-row .pager-info { white-space: nowrap; }
+.pager-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--aicss-text);
+  background: var(--aicss-surface);
+  border: 1px solid var(--aicss-border);
+  border-radius: var(--aicss-radius);
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.18s ease;
+}
+.pager-btn:hover:not(:disabled) { background: var(--aicss-bg-subtle); }
+.pager-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* 当前套餐一体卡 */
 .plan-card { display: flex; flex-direction: column; }
@@ -1647,12 +1739,28 @@ svg { flex-shrink: 0; }
 .table td.small { font-size: 12px; }
 .credit-flow-table { min-width: 720px; }
 .credit-flow-table .flow-desc {
-  max-width: 300px;
+  max-width: 320px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.credit-flow-table .flow-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.credit-flow-table .flow-meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--aicss-muted);
+}
 .nowrap { white-space: nowrap; }
+.center { text-align: center; }
+.row-loading { opacity: 0.7; }
+.row-loading td { text-align: center; }
 
 /* 续费列表 */
 .renew-list { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }

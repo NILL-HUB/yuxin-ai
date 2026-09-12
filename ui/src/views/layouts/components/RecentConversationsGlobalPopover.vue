@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
-import { YUXIN_AI_NAME } from '@/config/brand'
+import { XIAOYU_NAME } from '@/config/brand'
 import type { RecentConversation } from '@/models/conversation'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -53,7 +53,7 @@ const getConversationSourceLabel = (conversation: RecentConversation) => {
     return t('chat.schedules.task')
   }
   if (conversation.source_type === 'assistant_agent') {
-    return conversation.agent_name || YUXIN_AI_NAME
+    return conversation.agent_name || XIAOYU_NAME
   }
   return conversation.app_name || '应用'
 }
