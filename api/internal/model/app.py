@@ -190,35 +190,6 @@ class App(Base):
         return config
 
 
-class AppAssignment(Base):
-    __tablename__ = "app_assignment"
-    __table_args__ = (
-        PrimaryKeyConstraint("id", name="pk_app_assignment_id"),
-        Index("app_assignment_app_account_unique_idx", "app_id", "account_id", unique=True),
-        Index("app_assignment_account_status_idx", "account_id", "status"),
-        Index("app_assignment_app_status_idx", "app_id", "status"),
-    )
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
-    app_id = Column(UUID(as_uuid=True), ForeignKey("app.id"), nullable=False)
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
-    assigned_by = Column(UUID(as_uuid=True), ForeignKey("admin_user.id"), nullable=True)
-    status = Column(String(32), nullable=False, server_default=text("'active'::character varying"))
-    assigned_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
-    revoked_at = Column(DateTime, nullable=True)
-    updated_at = Column(
-        DateTime,
-        nullable=False,
-        server_default=text("CURRENT_TIMESTAMP(0)"),
-        server_onupdate=text("CURRENT_TIMESTAMP(0)"),
-        default=_utcnow_naive,
-    )
-    created_at = Column(DateTime, nullable=False, default=_utcnow_naive, server_default=text("CURRENT_TIMESTAMP(0)"))
-
-    app = relationship("App", foreign_keys=[app_id], lazy="joined")
-    account = relationship("Account", foreign_keys=[account_id], lazy="joined")
-
-
 class AppConfig(Base):
     """应用配置模型"""
     __tablename__ = "app_config"

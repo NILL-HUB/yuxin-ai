@@ -2,7 +2,7 @@ from .account import Account, AccountOAuth, AccountSession
 from .api_key import ApiKey
 from .api_tool import ApiTool, ApiToolProvider
 from .builtin_tool import BuiltinTool, BuiltinToolProvider
-from .app import App, AppAssignment, AppConfig, AppConfigVersion
+from .app import App, AppConfig, AppConfigVersion
 from .conversation import Conversation, Message, MessageAgentThought
 from .conversation_variable import ConversationVariable
 from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, ExternalDataSource
@@ -49,7 +49,7 @@ __all__ = [
     "DesktopDevice",
     "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "ExternalDataSource",
     "ToolConfirmation",
-    "App", "AppAssignment", "AppConfig", "AppConfigVersion",
+    "App", "AppConfig", "AppConfigVersion",
     "ApiTool", "ApiToolProvider",
     "BuiltinTool", "BuiltinToolProvider",
     "UploadFile",
