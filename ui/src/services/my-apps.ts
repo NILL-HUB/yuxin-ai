@@ -2,7 +2,7 @@ import { get, ssePost } from '@/utils/request'
 import { type MyAppChatRequest, type MyAppListResponse } from '@/models/app-assignment'
 
 export const listMyApps = () => {
-  return get<MyAppListResponse['data']>('/my/apps')
+  return get<MyAppListResponse>('/my/apps')
 }
 
 export const chatWithMyApp = (
