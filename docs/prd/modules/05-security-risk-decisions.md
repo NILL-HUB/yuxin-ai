@@ -210,7 +210,7 @@
 
 ## 27. 总结
 
-本 PRD 建议将 钰见我 的演进方向定义为"面向钰字辈合伙人的线上生态赋能系统"（早期技术底座表述为"通用 Agent 调度平台"，见 [architecture-design.md §1](../architecture-design.md)）。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、AppAssignment、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、脑启发记忆引擎（时序知识图谱+巩固引擎+技能涌现）、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
+本 PRD 建议将 钰见我 的演进方向定义为"面向钰字辈合伙人的线上生态赋能系统"（早期技术底座表述为"通用 Agent 调度平台"，见 [architecture-design.md §1](../architecture-design.md)）。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、脑启发记忆引擎（时序知识图谱+巩固引擎+技能涌现）、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
 
 当前路径已经完成：
 

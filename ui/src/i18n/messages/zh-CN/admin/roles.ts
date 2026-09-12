@@ -15,7 +15,6 @@ export default  {
         user: '用户',
         plan: '套餐',
         redeem_code: '卡密',
-        app_assignment: '应用分配',
         setting: '系统设置',
         schedule_task: '定时任务',
         prompt_template: '提示词模板',

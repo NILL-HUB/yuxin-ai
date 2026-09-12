@@ -498,7 +498,7 @@
 
 ### 2.10 应用与能力绑定
 
-- `app.py` 模型：App、AppAssignment、AppConfig、AppConfigVersion。
+- `app.py` 模型：App、AppConfig、AppConfigVersion（`AppAssignment` 已随「管理员分配应用」下线一并移除）。
 - App 能力绑定（`ui/src/views/space/apps/components/abilities/*`）：Tools、MCP、Skills、
   AgentBindings、Workflow、Datasets、Opening、SpeechToText、TextToSpeech、LongTermMemory、
   SuggestedAfterAnswer、ReviewConfig。

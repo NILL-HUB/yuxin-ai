@@ -15,7 +15,6 @@ export default  {
         user: 'Users',
         plan: 'Plans',
         redeem_code: 'Redeem Codes',
-        app_assignment: 'App Assignments',
         setting: 'Settings',
         schedule_task: 'Schedule Tasks',
         prompt_template: 'Prompt Templates',

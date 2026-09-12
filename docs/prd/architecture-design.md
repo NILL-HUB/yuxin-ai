@@ -200,8 +200,7 @@
 | 深度思考 Agent | `A2ADeepThinkingAgent`、`DeepThinkingAgent` | 可作为复杂任务执行路径 |
 | SSE 事件 | `agent_message`、`agent_action`、`deep_step` 等 | 可扩展为调度过程可观测事件 |
 | 配置中心 | `/space/*` | 管理员配置 Agent、工具、知识库、工作流 |
-| 我的 AI | `/my-ai`、`/my/apps` | 普通用户显式使用已分配应用；`GET /my/apps` 仅返回 `status=published` 的应用（分配/商店两来源都严格过滤，草稿不上架） |
-| 后台应用分配 | `AppAssignment`、`AdminAppAssignmentService` | 可作为可用 Agent 权限来源 |
+| 我的 AI | `/my-ai`、`/my/apps` | 普通用户显式使用本人从应用商店添加（fork）的应用；`GET /my/apps` 仅返回 `status=published` 的应用（草稿不上架）。管理员分配应用功能已下线 |
 | 后台 RBAC | `AdminRbacService` | 可作为管理员权限基础 |
 
 ### 4.2 当前主要缺口

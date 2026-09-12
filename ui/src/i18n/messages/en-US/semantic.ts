@@ -73,7 +73,6 @@ export default  {
       customer_user: 'Customer user',
       role: 'Role',
       app: 'App',
-      app_assignment: 'App assignment',
       workflow: 'Workflow',
       tool: 'Tool',
       api_tool: 'API tool',

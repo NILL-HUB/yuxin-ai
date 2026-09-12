@@ -73,7 +73,6 @@ export default  {
       customer_user: '客户用户',
       role: '角色',
       app: '应用',
-      app_assignment: '应用分配',
       workflow: '工作流',
       tool: '工具',
       api_tool: 'API 工具',
