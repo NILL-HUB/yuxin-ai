@@ -1,7 +1,7 @@
 """Admin 管理端点 Quart 异步端点（app.http.admin_routes_8）单元测试。
 
 批次 8 覆盖：prompt_template / builtin_tool / public_ai_feature /
-app_assignment / routing_log / resource_entry / recycle_bin /
+routing_log / resource_entry / recycle_bin /
 cost_stats / orchestration_flag / audit_log / orchestration_release /
 upload_file。
 """
@@ -126,19 +126,6 @@ def _feature_record(feature_key):
         updated_at=datetime(2026, 8, 8, 8, 0, 0),
         created_at=datetime(2026, 8, 8, 8, 0, 0),
     )
-
-
-def _app_assignment_dict():
-    return {
-        "id": str(uuid4()),
-        "app_id": str(uuid4()),
-        "account_id": str(uuid4()),
-        "assigned_by": str(uuid4()),
-        "status": "active",
-        "assigned_at": 1710000000,
-        "revoked_at": None,
-        "app": None,
-    }
 
 
 def _routing_log_dict():
@@ -299,23 +286,6 @@ class _FakePublicAIFeatureService:
         if feature_key == "feature_missing":
             return None
         return _feature_record(feature_key)
-
-
-class _FakeAdminAppAssignmentService:
-    def __init__(self):
-        self.calls = []
-
-    def list_assignments(self, account_id):
-        self.calls.append(("list", account_id))
-        return {"list": [_app_assignment_dict()]}
-
-    def assign_apps(self, account_id, app_ids, *, operator_id=None, ip="", user_agent=""):
-        self.calls.append(("assign", account_id, app_ids, operator_id, ip, user_agent))
-        return {"assigned": 1, "reactivated": 0, "skipped": 0, "list": []}
-
-    def revoke_assignment(self, account_id, assignment_id, *, operator_id=None, ip="", user_agent=""):
-        self.calls.append(("revoke", account_id, assignment_id, operator_id, ip, user_agent))
-        return _app_assignment_dict()
 
 
 class _FakeRoutingLogService:
@@ -583,7 +553,6 @@ class TestAdminRoutes8Registered:
         assert "/admin/prompt-templates" in rules
         assert "/admin/builtin-tools" in rules
         assert "/admin/public-ai-features/models" in rules
-        assert "/admin/users/<uuid:account_id>/app-assignments" in rules
         assert "/admin/routing-logs/retention" in rules
         assert "/admin/recycle-bin" in rules
         assert "/admin/cost-stats/overview" in rules
@@ -1027,82 +996,6 @@ class TestAdminPublicAIFeature:
         assert compatible("embedding", "chat") is False
         assert compatible("chat", "") is False
         assert compatible("chat", None) is False
-
-
-class TestAdminAppAssignment:
-    def _setup(self, monkeypatch):
-        from internal.service.admin_app_assignment_service import AdminAppAssignmentService
-
-        svc = _FakeAdminAppAssignmentService()
-        _setup(monkeypatch, {AdminAppAssignmentService: svc})
-        return svc
-
-    def test_list(self, monkeypatch):
-        svc = self._setup(monkeypatch)
-        account_id = uuid4()
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.get(f"/admin/users/{account_id}/app-assignments?account_id={uuid4()}")
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-        assert resp.status_code == 200
-        assert len(payload["data"]["list"]) == 1
-        assert svc.calls[0][0] == "list"
-        assert svc.calls[0][1] == account_id
-
-    def test_assign(self, monkeypatch):
-        svc = self._setup(monkeypatch)
-        account_id = uuid4()
-        app_id = uuid4()
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(
-                    f"/admin/users/{account_id}/app-assignments?account_id={uuid4()}",
-                    json={"app_ids": [str(app_id)]},
-                )
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-        assert resp.status_code == 200
-        assert payload["data"]["assigned"] == 1
-        assert svc.calls[0][0] == "assign"
-        assert svc.calls[0][2] == [app_id]
-
-    def test_assign_empty(self, monkeypatch):
-        self._setup(monkeypatch)
-        account_id = uuid4()
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(
-                    f"/admin/users/{account_id}/app-assignments?account_id={uuid4()}",
-                    json={"app_ids": []},
-                )
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-        assert resp.status_code == 400
-        assert payload["code"] == "validate_error"
-
-    def test_revoke(self, monkeypatch):
-        svc = self._setup(monkeypatch)
-        account_id = uuid4()
-        assignment_id = uuid4()
-
-        async def _run():
-            async with asgi_app.quart_app.test_client() as client:
-                resp = await client.post(
-                    f"/admin/users/{account_id}/app-assignments/{assignment_id}/revoke?account_id={uuid4()}",
-                )
-                return resp, await resp.json
-
-        resp, payload = asyncio.run(_run())
-        assert resp.status_code == 200
-        assert svc.calls[0][0] == "revoke"
-        assert svc.calls[0][2] == assignment_id
 
 
 class TestAdminRoutingLog:

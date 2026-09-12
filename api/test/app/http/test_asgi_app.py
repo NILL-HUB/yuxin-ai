@@ -4554,8 +4554,8 @@ class _FakeMyAppService:
     def __init__(self):
         self.calls = []
 
-    def get_assigned_app(self, account_id, app_id):
-        self.calls.append(("assigned", account_id, app_id))
+    def get_user_app(self, account_id, app_id):
+        self.calls.append(("user", account_id, app_id))
 
     def list_my_apps(self, account_id):
         return []
@@ -4723,5 +4723,5 @@ class TestAsgiWebAppOpenApi:
 
         assert resp.status_code == 200
         assert resp.mimetype == "text/event-stream"
-        assert my_app_service.calls[0][0] == "assigned"
+        assert my_app_service.calls[0][0] == "user"
 

@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from internal.entity.agent_entity import DEFAULT_AGENT_METADATA
-from internal.model.app import App, AppAssignment
+from internal.model.app import App
 from internal.service.agent_pool_service import (
     AgentCandidateCollector,
     AgentPolicyFilter,
@@ -134,7 +134,6 @@ def test_candidate_carries_routing_metadata_when_pool_config_exists():
         session=_SessionStub([
             # public_rows: (app, pool_config) 元组 + 裸 app（降级为 (app, None)）
             _QueryStub(all_result=[(app_with_config, pool_config), app_without_config]),
-            _QueryStub(all_result=[]),  # assignments
             _QueryStub(all_result=[]),  # own_rows
         ])
     )

@@ -5,7 +5,6 @@ Quart async 端点（挂载到 asgi_app.quart_app）：
 - admin_prompt_template_handler      -> PromptSyncService / SystemPromptLibraryService
 - admin_builtin_tool_handler        -> BuiltinToolService（get_tool/update_tool 走模块级 DB helper）
 - admin_public_ai_feature_handler   -> PublicAIFeatureService（models/update 走模块级 DB helper）
-- admin_app_assignment_handler      -> AdminAppAssignmentService
 - admin_routing_log_handler         -> RoutingLogService / RoutingLogRetentionService
 - admin_resource_entry_handler      -> AdminToolGovernanceService / McpService / SkillService
 - admin_recycle_bin_handler         -> RecycleBinService

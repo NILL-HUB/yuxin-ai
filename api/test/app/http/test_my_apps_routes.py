@@ -1,4 +1,4 @@
-"""GET /my/apps 路由测试：验证普通用户可访问且响应含 can_edit。"""
+"""GET /my/apps 路由测试：验证普通用户可访问、响应含 can_edit 且不再暴露 assignment_id。"""
 
 import asyncio
 from types import SimpleNamespace
@@ -20,12 +20,11 @@ class _FakeMyAppService:
             "list": [
                 {
                     "id": "app-1",
-                    "assignment_id": "asg-1",
                     "name": "Contract AI",
                     "icon": "",
                     "description": "desc",
-                    "assigned_at": 1893456000,
-                    "source": "assigned",
+                    "created_at": 1893456000,
+                    "source": "forked",
                     "status": "published",
                     "can_edit": False,
                 }
@@ -55,4 +54,7 @@ def test_list_my_apps_returns_can_edit(monkeypatch):
     items = payload["data"]["list"]
     assert len(items) == 1
     assert items[0]["can_edit"] is False
+    assert "assignment_id" not in items[0]
+    assert items[0]["created_at"] == 1893456000
     assert service.calls == [str(account.id)]
+

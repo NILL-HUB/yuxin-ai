@@ -7,7 +7,7 @@ from internal.entity.agent_entity import normalize_agent_metadata
 from internal.entity.app_entity import AppStatus
 from internal.extension.database_extension import db
 from internal.model.agent_pool_entity import AgentPoolConfig
-from internal.model.app import App, AppAssignment
+from internal.model.app import App
 
 
 # AgentPoolConfig 不存在时的降级默认值，保证无配置记录的 App 也能被收集
@@ -69,15 +69,6 @@ class AgentCandidateCollector:
         for row in public_rows:
             app, pool_config = self._unpack_app_row(row)
             self._append_app_candidate(candidates, seen_app_ids, app, "public", pool_config)
-        assignments = (
-            self.session.query(AppAssignment)
-            .filter(AppAssignment.account_id == account_id, AppAssignment.status == "active")
-            .order_by(AppAssignment.assigned_at.desc())
-            .all()
-        )
-        for assignment in assignments:
-            app = getattr(assignment, "app", None)
-            self._append_app_candidate(candidates, seen_app_ids, app, "assigned", None)
         own_rows = (
             self.session.query(App, AgentPoolConfig)
             .outerjoin(AgentPoolConfig, AgentPoolConfig.app_id == App.id)
@@ -352,7 +343,7 @@ class AgentPolicyFilter:
     ) -> str | None:
         if app.status != AppStatus.PUBLISHED.value:
             return "app_not_published"
-        if candidate.get("source_scope") not in {"public", "assigned", "own"}:
+        if candidate.get("source_scope") not in {"public", "own"}:
             return "app_not_authorized"
         if metadata.get("primary_pool") == "internal_admin":
             return "pool_not_visible"

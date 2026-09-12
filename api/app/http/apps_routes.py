@@ -545,7 +545,7 @@ def register_routes(quart_app):
         from internal.service.app_debug_service import AppDebugService
         from internal.service.my_app_service import MyAppService
 
-        await _to_thread(_get_service(MyAppService).get_assigned_app, account.id, app_id)
+        await _to_thread(_get_service(MyAppService).get_user_app, account.id, app_id)
         payload = await request.get_json(force=True, silent=True) or {}
         query = str(payload.get("query") or "").strip()
         if not query:

@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from internal.entity.agent_entity import DEFAULT_AGENT_METADATA, normalize_agent_metadata
 from internal.entity.agent_pool_entity import AgentSubPoolRegistry
-from internal.model.app import App, AppAssignment
+from internal.model.app import App
 from internal.service.agent_pool_service import (
     AgentCandidateCollector,
     AgentPolicyFilter,
@@ -71,19 +71,6 @@ def _app(**kwargs):
     }
     defaults.update(kwargs)
     return App(**defaults)
-
-
-def _assignment(app):
-    assignment = AppAssignment(
-        id=uuid4(),
-        app_id=app.id,
-        account_id=uuid4(),
-        assigned_by=uuid4(),
-        status="active",
-        assigned_at=datetime(2030, 1, 1, 0, 0, 0),
-    )
-    assignment.app = app
-    return assignment
 
 
 def test_default_agent_metadata_should_be_stable_when_app_missing_metadata():
@@ -179,16 +166,14 @@ def test_agent_sub_pool_registry_should_fallback_unknown_pool_to_general():
     assert registry.normalize_pool_name("unknown_pool") == "general"
 
 
-def test_candidate_collector_should_merge_public_and_assigned_apps_without_duplicates():
+def test_candidate_collector_should_merge_public_and_own_apps_without_duplicates():
     account_id = uuid4()
-    public_app = _app(name="公开客服", is_public=True)
-    assigned_app = _app(name="分配客服", is_public=False)
-    duplicate_assignment = _assignment(public_app)
-    assigned_assignment = _assignment(assigned_app)
+    public_app = _app(name="公开客服", is_public=True, account_id=account_id)
+    own_app = _app(name="我的客服", account_id=account_id, is_public=False)
     collector = AgentCandidateCollector(
         session=_SessionStub([
             _QueryStub(all_result=[public_app]),
-            _QueryStub(all_result=[duplicate_assignment, assigned_assignment]),
+            _QueryStub(all_result=[public_app, own_app]),
         ])
     )
 
@@ -197,10 +182,10 @@ def test_candidate_collector_should_merge_public_and_assigned_apps_without_dupli
     app_candidates = [candidate for candidate in result if candidate["source_type"] == "app"]
     assert [candidate["id"] for candidate in app_candidates] == [
         str(public_app.id),
-        str(assigned_app.id),
+        str(own_app.id),
     ]
     assert app_candidates[0]["source_scope"] == "public"
-    assert app_candidates[1]["source_scope"] == "assigned"
+    assert app_candidates[1]["source_scope"] == "own"
     assert app_candidates[0]["metadata"]["primary_pool"] == "customer_support"
 
 
@@ -209,7 +194,6 @@ def test_candidate_collector_should_include_own_apps_and_builtin_agents():
     own_app = _app(name="我的编程 Agent", account_id=account_id, is_public=False)
     collector = AgentCandidateCollector(
         session=_SessionStub([
-            _QueryStub(all_result=[]),
             _QueryStub(all_result=[]),
             _QueryStub(all_result=[own_app]),
         ])

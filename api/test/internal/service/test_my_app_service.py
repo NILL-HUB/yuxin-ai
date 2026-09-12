@@ -5,7 +5,7 @@ import pytest
 
 from internal.entity.app_entity import AppStatus
 from internal.exception import FailException, NotFoundException
-from internal.model.app import App, AppAssignment
+from internal.model.app import App
 from internal.service.my_app_service import MyAppService
 
 
@@ -45,9 +45,9 @@ def _app(**kwargs):
     defaults = {
         "id": uuid4(),
         "account_id": uuid4(),
-        "name": "Assigned AI",
+        "name": "Forked AI",
         "icon": "🤖",
-        "description": "AI app assigned to customer",
+        "description": "AI app added from store",
         "status": AppStatus.PUBLISHED.value,
         "is_public": False,
         "published_at": datetime(2030, 1, 1, 0, 0, 0),
@@ -56,48 +56,8 @@ def _app(**kwargs):
     return App(**defaults)
 
 
-def _assignment(**kwargs):
-    defaults = {
-        "id": uuid4(),
-        "app_id": uuid4(),
-        "account_id": uuid4(),
-        "assigned_by": uuid4(),
-        "status": "active",
-        "assigned_at": datetime(2030, 1, 1, 0, 0, 0),
-        "revoked_at": None,
-    }
-    defaults.update(kwargs)
-    return AppAssignment(**defaults)
-
-
 class TestMyAppService:
-    def test_list_my_apps_should_return_active_published_assignments(self):
-        account_id = uuid4()
-        app = _app(name="Contract AI")
-        assignment = _assignment(app_id=app.id, account_id=account_id, status="active")
-        assignment.app = app
-        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[assignment])]))
-
-        result = service.list_my_apps(account_id)
-
-        assert result["list"][0]["id"] == str(app.id)
-        assert result["list"][0]["assignment_id"] == str(assignment.id)
-        assert result["list"][0]["name"] == "Contract AI"
-        assert result["list"][0]["assigned_at"] == 1893456000
-
-    def test_list_my_apps_should_skip_unpublished_apps(self):
-        account_id = uuid4()
-        app = _app(status=AppStatus.DRAFT.value)
-        assignment = _assignment(app_id=app.id, account_id=account_id, status="active")
-        assignment.app = app
-        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[assignment])]))
-
-        result = service.list_my_apps(account_id)
-
-        assert result == {"list": []}
-
-    def test_list_my_apps_should_expose_published_forked_apps(self):
-        """商店添加（fork）且已发布的副本对用户可见，且不可编辑。"""
+    def test_list_my_apps_should_return_published_forked_apps(self):
         account_id = uuid4()
         forked = _app(
             name="OCR Reader",
@@ -105,15 +65,17 @@ class TestMyAppService:
             status=AppStatus.PUBLISHED.value,
             original_app_id=uuid4(),
         )
-        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])]))
+        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[forked])]))
 
         result = service.list_my_apps(account_id)
 
         assert len(result["list"]) == 1
         item = result["list"][0]
+        assert item["id"] == str(forked.id)
         assert item["source"] == "forked"
         assert item["status"] == AppStatus.PUBLISHED.value
         assert item["can_edit"] is False
+        assert "assignment_id" not in item
 
     def test_list_my_apps_should_skip_draft_forked_apps(self):
         """草稿态 fork 副本不具备上架资格，不得出现在“我的应用”。"""
@@ -124,8 +86,7 @@ class TestMyAppService:
             status=AppStatus.DRAFT.value,
             original_app_id=uuid4(),
         )
-        session = _SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])])
-        service = MyAppService(session=session)
+        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[forked])]))
 
         result = service.list_my_apps(account_id)
 
@@ -140,73 +101,61 @@ class TestMyAppService:
             status="offline",
             original_app_id=uuid4(),
         )
-        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[]), _QueryStub(all_result=[forked])]))
+        service = MyAppService(session=_SessionStub([_QueryStub(all_result=[forked])]))
 
         result = service.list_my_apps(account_id)
 
         assert result == {"list": []}
 
-    def test_list_my_apps_should_filter_forked_query_by_published_status(self):
-        """fork 查询应在 DB 层按 published 过滤（而非取回后再筛）。"""
+    def test_get_user_app_should_return_published_forked_app(self):
         account_id = uuid4()
-        forked_query = _QueryStub(all_result=[])
-        session = _SessionStub([_QueryStub(all_result=[]), forked_query])
-        service = MyAppService(session=session)
+        forked = _app(
+            account_id=account_id,
+            status=AppStatus.PUBLISHED.value,
+            original_app_id=uuid4(),
+        )
+        service = MyAppService(session=_SessionStub([_QueryStub(one_or_none_result=forked)]))
 
-        service.list_my_apps(account_id)
+        result = service.get_user_app(account_id, forked.id)
 
-        filter_args = forked_query.filters[0][0]
-        assert any(
-            getattr(expr, "right", None) is not None
-            and getattr(getattr(expr, "right", None), "value", None) == AppStatus.PUBLISHED.value
-            for expr in filter_args
-        ), "fork 查询必须包含 status == published 过滤条件"
+        assert result.id == forked.id
 
-    def test_get_assigned_app_should_return_app_for_active_assignment(self):
+    def test_get_user_app_should_reject_draft_forked_app(self):
         account_id = uuid4()
-        app = _app()
-        assignment = _assignment(app_id=app.id, account_id=account_id, status="active")
-        assignment.app = app
-        service = MyAppService(session=_SessionStub([_QueryStub(one_or_none_result=assignment)]))
+        forked = _app(
+            account_id=account_id,
+            status=AppStatus.DRAFT.value,
+            original_app_id=uuid4(),
+        )
+        service = MyAppService(session=_SessionStub([_QueryStub(one_or_none_result=forked)]))
 
-        result = service.get_assigned_app(account_id, app.id)
+        with pytest.raises(FailException):
+            service.get_user_app(account_id, forked.id)
 
-        assert result.id == app.id
-
-    def test_get_assigned_app_should_raise_when_not_assigned(self):
+    def test_get_user_app_should_raise_when_absent(self):
         service = MyAppService(session=_SessionStub([_QueryStub(one_or_none_result=None)]))
 
         with pytest.raises(NotFoundException):
-            service.get_assigned_app(uuid4(), uuid4())
-
-    def test_get_assigned_app_should_reject_unpublished_app(self):
-        account_id = uuid4()
-        app = _app(status=AppStatus.DRAFT.value)
-        assignment = _assignment(app_id=app.id, account_id=account_id, status="active")
-        assignment.app = app
-        service = MyAppService(session=_SessionStub([_QueryStub(one_or_none_result=assignment)]))
-
-        with pytest.raises(FailException):
-            service.get_assigned_app(account_id, app.id)
+            service.get_user_app(uuid4(), uuid4())
 
 
-def test_my_app_resp_schema_should_expose_can_edit():
-    """MyAppResp 必须声明 can_edit，否则 marshmallow dump 会丢弃 service 已返回的该字段。"""
+def test_my_app_resp_schema_should_not_expose_assignment_id():
+    """移除管理员分配后，MyAppResp 不应再声明 assignment_id。"""
     from internal.schema.my_app_schema import MyAppResp
 
     dumped = MyAppResp().dump(
         {
             "id": "app-1",
-            "assignment_id": "asg-1",
             "name": "Contract AI",
             "icon": "",
             "description": "desc",
-            "assigned_at": 1893456000,
-            "source": "assigned",
+            "created_at": 1893456000,
+            "source": "forked",
             "status": "published",
             "can_edit": False,
         }
     )
 
-    assert "can_edit" in dumped
+    assert "assignment_id" not in dumped
+    assert dumped["created_at"] == 1893456000
     assert dumped["can_edit"] is False

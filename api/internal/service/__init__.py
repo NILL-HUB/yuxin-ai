@@ -58,7 +58,6 @@ from .routing_log_service import RoutingLogService
 from .skill_service import SkillService
 from .skill_import_service import SkillImportService
 from .admin_app_service import AdminAppService
-from .admin_app_assignment_service import AdminAppAssignmentService
 from .admin_billing_plan_service import AdminBillingPlanService
 from .admin_customer_user_service import AdminCustomerUserService
 from .admin_rbac_service import AdminRbacService
@@ -135,7 +134,6 @@ __all__ = [
     "SystemKnowledgeService",
     "UserContentKnowledgeService",
     "AdminAppService",
-    "AdminAppAssignmentService",
     "AdminBillingPlanService",
     "AdminCustomerUserService",
     "AdminRbacService",
