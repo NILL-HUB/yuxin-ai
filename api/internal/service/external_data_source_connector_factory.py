@@ -12,7 +12,6 @@ class ConnectorFactory:
         ExternalSourceType.NOTION.value: NotionConnector,
         ExternalSourceType.DRIVE.value: LocalFolderConnector,
         ExternalSourceType.GITHUB.value: GithubConnector,
-        ExternalSourceType.ENTERPRISE_KNOWLEDGE.value: LocalFolderConnector,
     }
 
     def get_connector(self, source_type: str) -> BaseConnector:

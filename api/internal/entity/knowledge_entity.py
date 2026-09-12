@@ -36,7 +36,6 @@ class ExternalSourceType(str, Enum):
     NOTION = "notion"
     DRIVE = "drive"
     GITHUB = "github"
-    ENTERPRISE_KNOWLEDGE = "enterprise_knowledge"
 
 
 class ExternalAuthorizationStatus(str, Enum):

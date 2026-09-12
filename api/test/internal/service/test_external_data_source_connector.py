@@ -439,3 +439,16 @@ def test_github_authorize_accepts_personal_access_token_alias():
     )
 
     assert result == ExternalAuthorizationStatus.GRANTED.value
+
+
+def test_connector_factory_rejects_removed_enterprise_knowledge():
+    from internal.service.external_data_source_connector_factory import ConnectorFactory
+
+    with pytest.raises(ValueError):
+        ConnectorFactory().get_connector("enterprise_knowledge")
+
+
+def test_external_source_type_no_longer_has_enterprise_knowledge():
+    from internal.entity.knowledge_entity import ExternalSourceType
+
+    assert not hasattr(ExternalSourceType, "ENTERPRISE_KNOWLEDGE")
