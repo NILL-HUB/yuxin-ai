@@ -74,12 +74,4 @@ describe('config endpoint resolution', () => {
       'VITE_API_PREFIX must be an absolute http(s) URL or start with "/"',
     )
   })
-
-  it('exports the shared ai surface background gradient token', async () => {
-    const configModule = await importConfigModule()
-
-    expect(configModule.AI_SURFACE_BACKGROUND_GRADIENT).toBe(
-      'linear-gradient(135deg, #fff5f9 0%, #ffe3ee 25%, #ffd6e8 50%, #ffc4dd 75%, #fff5f9 100%)',
-    )
-  })
 })

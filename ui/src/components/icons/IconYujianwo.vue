@@ -4,9 +4,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import yuxinAIFull from '@/assets/images/yuxin_ai.png'
-import yuxinAICharacter from '@/assets/images/yuxin_ai_character.png'
-import yuxinAIMini from '@/assets/images/yuxin_ai_mini.png'
+import xiaoyuFull from '@/assets/images/xiaoyu.png'
+import xiaoyuCharacter from '@/assets/images/xiaoyu_character.png'
+import xiaoyuMini from '@/assets/images/xiaoyu_mini.png'
 
 interface Props {
   type?: 'character' | 'mini' | 'full'
@@ -23,24 +23,24 @@ const props = withDefaults(defineProps<Props>(), {
 const imageUrl = computed(() => {
   switch (props.type) {
     case 'character':
-      return yuxinAICharacter
+      return xiaoyuCharacter
     case 'mini':
-      return yuxinAIMini
+      return xiaoyuMini
     case 'full':
     default:
-      return yuxinAIFull
+      return xiaoyuFull
   }
 })
 
 const alt = computed(() => {
   switch (props.type) {
     case 'character':
-      return '钰心AI Character'
+      return '小钰 Character'
     case 'mini':
-      return '钰心AI Mini'
+      return '小钰 Mini'
     case 'full':
     default:
-      return '钰心AI'
+      return '小钰'
   }
 })
 </script>

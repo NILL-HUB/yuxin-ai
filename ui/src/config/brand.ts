@@ -1,8 +1,10 @@
-export const YUXIN_AI_NAME = '钰心AI'
+export const YUJIANWO_BRAND_NAME = '钰见我'
 
-export const YUXIN_AI_TEXT_AVATAR = '钰心AI'
+export const XIAOYU_NAME = '小钰'
 
-export const YUXIN_AI_ASSISTANT_APP = Object.freeze({
-  name: YUXIN_AI_NAME,
-  avatar_text: YUXIN_AI_TEXT_AVATAR,
+export const XIAOYU_TEXT_AVATAR = '小钰'
+
+export const ASSISTANT_APP = Object.freeze({
+  name: XIAOYU_NAME,
+  avatar_text: XIAOYU_TEXT_AVATAR,
 })
