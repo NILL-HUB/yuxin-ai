@@ -2,10 +2,8 @@
 /**
  * 外部数据源管理弹窗（知识库页内嵌）
  *
- * 说明：后端外部数据源能力尚未落地，当前采用「原型模拟数据」先行把 UI 定稿。
- * 模拟列表见 mockSources；待后端 /external-data-sources 就绪后，
- * 仅需把 loadDataSources 替换为真实 service 调用（getExternalDataSources），
- * 并把列表项字段名与后端模型对齐即可，模板无需改动。
+ * 数据来源：真实接口 /external-data-sources（列表/创建/授权/同步/解绑）。
+ * 凭证由服务端加密存储，接口返回时已脱敏，前端不回传明文。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Message } from '@arco-design/web-vue'
@@ -13,6 +11,15 @@ import { useI18n } from 'vue-i18n'
 import { useCredentialStore } from '@/stores/credential'
 import { isCredentialLoggedIn } from '@/utils/auth'
 import { redirectToLogin } from '@/utils/login-redirect'
+import { getErrorMessage } from '@/utils/error'
+import {
+  authorizeExternalDataSource,
+  createExternalDataSource,
+  deleteExternalDataSource,
+  getExternalDataSources,
+  syncExternalDataSource,
+} from '@/services/external-data-source'
+import type { ExternalDataSource } from '@/services/external-data-source'
 
 const props = defineProps<{
   visible: boolean
@@ -26,66 +33,33 @@ const { t } = useI18n()
 const isLoggedIn = computed(() => isCredentialLoggedIn(credentialStore.credential))
 
 /* ============================================================
-   模拟数据源定义（后端就绪后替换为真实接口返回）
-   ============================================================ */
-type SourceType = 'lark' | 'notion' | 'github' | 'drive' | 'enterprise_knowledge'
-
-interface MockSource {
-  id: string
-  source_type: SourceType
-  source_name: string
-  authorization_status: 'granted' | 'pending' | 'revoked' | 'expired'
-  sync_status: 'idle' | 'syncing' | 'success' | 'failed'
-  last_synced_at: string | null
-}
-
-const MOCK_SOURCES: MockSource[] = [
-  {
-    id: 'mock-lark-01',
-    source_type: 'lark',
-    source_name: '产品研发知识库',
-    authorization_status: 'granted',
-    sync_status: 'success',
-    last_synced_at: '2026-09-03T09:30:00',
-  },
-  {
-    id: 'mock-notion-01',
-    source_type: 'notion',
-    source_name: 'Notion 团队空间',
-    authorization_status: 'pending',
-    sync_status: 'idle',
-    last_synced_at: null,
-  },
-]
-
-/* ============================================================
    状态
    ============================================================ */
-const dataSources = ref<MockSource[]>([])
+const dataSources = ref<ExternalDataSource[]>([])
 const loading = ref(false)
 const syncingIds = ref<Record<string, boolean>>({})
+const authorizingIds = ref<Record<string, boolean>>({})
 
 // 解绑确认目标（自绘二次确认条）
-const unbindTarget = ref<MockSource | null>(null)
+const unbindTarget = ref<ExternalDataSource | null>(null)
 
 // 新建表单（内联展开，不嵌套弹窗，避免 Arco 多层 modal wrapper 残留）
 const creating = ref(false)
 const expandCreate = ref(false)
 const createForm = ref({
-  source_type: 'lark' as SourceType,
+  source_type: 'lark' as string,
   source_name: '',
   config: {} as Record<string, string>,
 })
 
-const sourceTypeOptions: Array<{ value: SourceType; label: string }> = [
+const sourceTypeOptions: Array<{ value: string; label: string }> = [
   { value: 'lark', label: t('externalDataSource.lark') },
   { value: 'notion', label: t('externalDataSource.notion') },
   { value: 'github', label: t('externalDataSource.github') },
   { value: 'drive', label: t('externalDataSource.drive') },
-  { value: 'enterprise_knowledge', label: t('externalDataSource.enterpriseKnowledge') },
 ]
 
-/* 各类型表单字段（原型字段定义） */
+/* 各类型表单字段（与后端连接器读取的 config key 对齐） */
 const credentialFields = computed(() => {
   switch (createForm.value.source_type) {
     case 'lark':
@@ -103,17 +77,12 @@ const credentialFields = computed(() => {
     case 'github':
       return [
         { key: 'personal_access_token', label: t('externalDataSource.fields.personalAccessToken'), required: true, full: true },
-        { key: 'owner', label: t('externalDataSource.fields.owner'), required: true, full: false },
         { key: 'repo', label: t('externalDataSource.fields.repo'), required: true, full: false },
+        { key: 'path', label: t('externalDataSource.fields.docsPath'), required: false, full: false },
       ]
     case 'drive':
       return [
         { key: 'folder_path', label: t('externalDataSource.fields.folderPath'), required: false, full: false },
-      ]
-    case 'enterprise_knowledge':
-      return [
-        { key: 'endpoint', label: t('externalDataSource.fields.endpoint'), required: false, full: false },
-        { key: 'api_key', label: t('externalDataSource.fields.apiKey'), required: false, full: false },
       ]
     default:
       return []
@@ -121,14 +90,16 @@ const credentialFields = computed(() => {
 })
 
 /* ============================================================
-   加载：后端就绪后替换为 getExternalDataSources() 真实调用
+   业务：真实接口
    ============================================================ */
 const loadDataSources = async () => {
   loading.value = true
   try {
-    // TODO(后端接入): const res = await getExternalDataSources(); dataSources.value = res.data || []
-    await new Promise((resolve) => setTimeout(resolve, 400))
-    dataSources.value = MOCK_SOURCES.map((s) => ({ ...s }))
+    const res = await getExternalDataSources()
+    dataSources.value = res.data?.items || []
+  } catch (error: unknown) {
+    dataSources.value = []
+    Message.error(getErrorMessage(error, t('externalDataSource.syncFailed')))
   } finally {
     loading.value = false
   }
@@ -142,7 +113,6 @@ const resetCreateForm = () => {
   }
 }
 
-/* 模拟「绑定成功」：把新数据源插入列表顶部并收起表单 */
 const handleCreate = async () => {
   if (!createForm.value.source_name.trim()) {
     Message.error(t('externalDataSource.createFailed'))
@@ -150,51 +120,75 @@ const handleCreate = async () => {
   }
   creating.value = true
   try {
-    // TODO(后端接入): await createExternalDataSource({...})
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    dataSources.value.unshift({
-      id: `mock-${Date.now()}`,
+    await createExternalDataSource({
       source_type: createForm.value.source_type,
       source_name: createForm.value.source_name.trim(),
-      authorization_status: 'pending',
-      sync_status: 'idle',
-      last_synced_at: null,
+      config: { ...createForm.value.config },
     })
     Message.success(t('externalDataSource.createSuccess'))
     expandCreate.value = false
     resetCreateForm()
+    await loadDataSources()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('externalDataSource.createFailed')))
   } finally {
     creating.value = false
   }
 }
 
-/* 模拟同步（表单态成功） */
-const handleSync = async (record: MockSource) => {
+const handleAuthorize = async (record: ExternalDataSource) => {
+  if (authorizingIds.value[record.id]) return
+  authorizingIds.value[record.id] = true
+  try {
+    await authorizeExternalDataSource(record.id, {})
+    Message.success(t('externalDataSource.granted'))
+    await loadDataSources()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('externalDataSource.syncFailed')))
+  } finally {
+    authorizingIds.value[record.id] = false
+  }
+}
+
+const handleSync = async (record: ExternalDataSource) => {
   if (syncingIds.value[record.id]) return
   syncingIds.value[record.id] = true
-  record.sync_status = 'syncing'
   try {
-    await new Promise((resolve) => setTimeout(resolve, 900))
-    record.sync_status = 'success'
-    record.last_synced_at = new Date().toISOString()
-    Message.success(
-      t('externalDataSource.syncSuccess', {
-        document: record.source_type === 'lark' ? 32 : 12,
-        segment: record.source_type === 'lark' ? 186 : 74,
-      }),
-    )
+    const res = await syncExternalDataSource(record.id)
+    const result = res.data
+    if (result && result.sync_status === 'success') {
+      Message.success(
+        t('externalDataSource.syncSuccess', {
+          document: result.document_count,
+          segment: result.segment_count,
+        }),
+      )
+    } else {
+      Message.error(
+        result?.last_error
+          ? `${t('externalDataSource.syncFailed')}: ${result.last_error}`
+          : t('externalDataSource.syncFailed'),
+      )
+    }
+    await loadDataSources()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('externalDataSource.syncFailed')))
   } finally {
     syncingIds.value[record.id] = false
   }
 }
 
-/* 解绑 */
 const confirmUnbind = async () => {
   if (!unbindTarget.value) return
   const target = unbindTarget.value
-  dataSources.value = dataSources.value.filter((s) => s.id !== target.id)
-  Message.success(t('externalDataSource.delete'))
-  unbindTarget.value = null
+  try {
+    await deleteExternalDataSource(target.id)
+    Message.success(t('externalDataSource.delete'))
+    unbindTarget.value = null
+    await loadDataSources()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('externalDataSource.syncFailed')))
+  }
 }
 
 const openLoginModal = () => {
@@ -210,16 +204,15 @@ const closeModal = () => {
 /* ============================================================
    展示辅助
    ============================================================ */
-const typeMeta: Record<SourceType, { labelKey: string; cls: string }> = {
+const typeMeta: Record<string, { labelKey: string; cls: string }> = {
   lark: { labelKey: 'lark', cls: 'type-lark' },
   notion: { labelKey: 'notion', cls: 'type-notion' },
   github: { labelKey: 'github', cls: 'type-github' },
   drive: { labelKey: 'drive', cls: 'type-drive' },
-  enterprise_knowledge: { labelKey: 'enterpriseKnowledge', cls: 'type-enterprise' },
 }
 
-const sourceTypeLabel = (type: SourceType) => t(`externalDataSource.${typeMeta[type].labelKey}`)
-const sourceTypeCls = (type: SourceType) => typeMeta[type]?.cls || 'type-drive'
+const sourceTypeLabel = (type: string) => t(`externalDataSource.${typeMeta[type]?.labelKey || 'drive'}`)
+const sourceTypeCls = (type: string) => typeMeta[type]?.cls || 'type-drive'
 
 const formatTime = (value: string | null) => {
   if (!value) return '-'
@@ -292,10 +285,10 @@ onBeforeUnmount(() => {
         <span class="eds-header-mark"><icon-cloud class="eds-header-icon" /></span>
         <div class="eds-header-text">
           <h3 class="eds-title">{{ t('externalDataSource.title') }}</h3>
-          <p class="eds-subtitle">绑定飞书、Notion、GitHub 等外部数据，供知识库检索使用</p>
+          <p class="eds-subtitle">{{ t('externalDataSource.subtitle') }}</p>
         </div>
       </div>
-      <button type="button" class="eds-m-close" aria-label="关闭" @click="closeModal">
+      <button type="button" class="eds-m-close" :aria-label="t('externalDataSource.close')" @click="closeModal">
         <icon-close />
       </button>
     </div>
@@ -314,7 +307,7 @@ onBeforeUnmount(() => {
     <div v-else class="eds-body">
       <div v-if="loading" class="eds-loading">
         <icon-loading class="eds-loading-spin" />
-        <span>加载中…</span>
+        <span>{{ t('externalDataSource.loading') }}</span>
       </div>
 
       <template v-else>
@@ -322,14 +315,14 @@ onBeforeUnmount(() => {
         <div v-if="dataSources.length === 0" class="eds-empty">
           <span class="eds-empty-ico"><icon-storage /></span>
           <p>{{ t('externalDataSource.noData') }}</p>
-          <p class="eds-empty-hint">绑定飞书、Notion、GitHub 等外部数据，供知识库检索使用</p>
+          <p class="eds-empty-hint">{{ t('externalDataSource.subtitle') }}</p>
         </div>
 
         <template v-else>
           <!-- 标题行 -->
           <div class="eds-section-head">
-            <h4 class="eds-section-title">已绑定数据源</h4>
-            <span class="eds-count-chip">{{ dataSources.length }} 个已绑定</span>
+            <h4 class="eds-section-title">{{ t('externalDataSource.boundSourcesTitle') }}</h4>
+            <span class="eds-count-chip">{{ t('externalDataSource.boundCount', { count: dataSources.length }) }}</span>
           </div>
 
           <!-- 列表卡片 -->
@@ -359,8 +352,11 @@ onBeforeUnmount(() => {
                 </div>
                 <p class="eds-row-sub">
                   {{ sourceTypeLabel(source.source_type) }}
-                  <template v-if="source.last_synced_at"> · 同步于 {{ formatTime(source.last_synced_at) }}</template>
-                  <template v-else> · 需要补充授权后开始同步</template>
+                  <template v-if="source.last_synced_at"> · {{ t('externalDataSource.syncedAt', { time: formatTime(source.last_synced_at) }) }}</template>
+                  <template v-else> · {{ t('externalDataSource.needsAuthorize') }}</template>
+                </p>
+                <p v-if="source.last_error" class="eds-row-sub eds-row-error">
+                  {{ source.last_error }}
                 </p>
               </div>
 
@@ -370,22 +366,28 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     class="kb-btn kb-btn-primary kb-btn-sm"
-                    @click="source.authorization_status = 'granted'"
+                    :disabled="!!authorizingIds[source.id]"
+                    @click="handleAuthorize(source)"
                   >
-                    <icon-safe class="kb-btn-ico" />去授权
+                    <icon-safe class="kb-btn-ico" />{{ t('externalDataSource.goAuthorize') }}
                   </button>
                 </template>
                 <template v-else>
                   <button
                     type="button"
                     class="kb-btn kb-btn-ghost kb-btn-sm"
-                    :disabled="syncingIds[source.id]"
+                    :disabled="!!syncingIds[source.id]"
                     @click="handleSync(source)"
                   >
-                    <icon-sync class="kb-btn-ico" />同步
+                    <icon-sync class="kb-btn-ico" />{{ t('externalDataSource.sync') }}
                   </button>
                 </template>
-                <button type="button" class="eds-unlink-btn" aria-label="解绑" @click="unbindTarget = source">
+                <button
+                  type="button"
+                  class="eds-unlink-btn"
+                  :aria-label="t('externalDataSource.unbind')"
+                  @click="unbindTarget = source"
+                >
                   <icon-link />
                 </button>
               </div>
@@ -397,11 +399,11 @@ onBeforeUnmount(() => {
         <div v-if="unbindTarget" class="eds-unbind-bar">
           <div class="eds-unbind-text">
             <icon-exclamation-circle class="eds-unbind-ico" />
-            <span>确认解绑「{{ unbindTarget.source_name }}」？解绑后该数据源将不再同步，且无法恢复。</span>
+            <span>{{ t('externalDataSource.unbindConfirmText', { name: unbindTarget.source_name }) }}</span>
           </div>
           <div class="eds-unbind-actions">
-            <button type="button" class="kb-btn kb-btn-ghost kb-btn-sm" @click="unbindTarget = null">取消</button>
-            <button type="button" class="kb-btn kb-btn-danger kb-btn-sm" @click="confirmUnbind">确认解绑</button>
+            <button type="button" class="kb-btn kb-btn-ghost kb-btn-sm" @click="unbindTarget = null">{{ t('externalDataSource.cancel') }}</button>
+            <button type="button" class="kb-btn kb-btn-danger kb-btn-sm" @click="confirmUnbind">{{ t('externalDataSource.confirmUnbind') }}</button>
           </div>
         </div>
       </template>
@@ -409,8 +411,8 @@ onBeforeUnmount(() => {
       <!-- ===== 绑定新数据源 ===== -->
       <div class="eds-create">
         <div class="eds-create-head">
-          <h4 class="eds-section-title">绑定新数据源</h4>
-          <span class="eds-create-note">数据仅用于知识库检索与同步</span>
+          <h4 class="eds-section-title">{{ t('externalDataSource.bindNewTitle') }}</h4>
+          <span class="eds-create-note">{{ t('externalDataSource.bindNote') }}</span>
         </div>
 
         <!-- 类型 chips -->
@@ -440,14 +442,14 @@ onBeforeUnmount(() => {
         <form v-if="expandCreate" class="eds-form" @submit.prevent="handleCreate">
           <div class="eds-field eds-field-full">
             <label class="eds-label" for="eds-source-name">
-              数据源名称 <span class="eds-required">*</span>
+              {{ t('externalDataSource.nameFieldLabel') }} <span class="eds-required">{{ t('externalDataSource.required') }}</span>
             </label>
             <input
               id="eds-source-name"
               v-model="createForm.source_name"
               type="text"
               class="kb-input"
-              :placeholder="'例如：' + (createForm.source_type === 'drive' ? '本地文档目录' : '产品知识库')"
+              :placeholder="t('externalDataSource.namePlaceholder', { example: createForm.source_type === 'drive' ? t('externalDataSource.namePlaceholderDrive') : t('externalDataSource.namePlaceholderDefault') })"
             />
           </div>
           <div
@@ -458,31 +460,31 @@ onBeforeUnmount(() => {
           >
             <label class="eds-label" :for="'eds-' + field.key">
               {{ field.label }}
-              <span v-if="field.required" class="eds-required">*</span>
-              <span v-else class="eds-optional">选填</span>
+              <span v-if="field.required" class="eds-required">{{ t('externalDataSource.required') }}</span>
+              <span v-else class="eds-optional">{{ t('externalDataSource.optional') }}</span>
             </label>
             <input
               :id="'eds-' + field.key"
               v-model="createForm.config[field.key]"
-              :type="field.key === 'app_secret' || field.key === 'integration_token' || field.key === 'api_key' ? 'password' : 'text'"
+              :type="field.key === 'app_secret' || field.key === 'integration_token' || field.key === 'personal_access_token' ? 'password' : 'text'"
               class="kb-input"
-              :placeholder="field.key === 'folder_token' ? '文件夹链接中的 token（不填默认同步有权限的全部文档）' : field.label"
+              :placeholder="field.key === 'folder_token' ? t('externalDataSource.folderTokenPlaceholder') : field.label"
             />
           </div>
 
           <div class="eds-secure-note">
             <icon-lock class="eds-secure-ico" />
-            凭证仅保存在你的账号下，用于定时同步该数据源；可随时解绑。
+            {{ t('externalDataSource.secureNote') }}
           </div>
 
           <!-- 底部操作条 -->
           <div class="eds-form-actions">
             <button type="button" class="kb-btn kb-btn-ghost" @click="expandCreate = false">
-              取消
+              {{ t('externalDataSource.cancel') }}
             </button>
             <button type="submit" class="kb-btn kb-btn-primary" :class="{ 'is-loading': creating }" :disabled="creating">
               <icon-link v-if="!creating" class="kb-btn-ico" />
-              {{ creating ? '绑定中…' : '绑定数据源' }}
+              {{ creating ? t('externalDataSource.binding') : t('externalDataSource.bindSource') }}
             </button>
           </div>
         </form>
@@ -696,9 +698,6 @@ onBeforeUnmount(() => {
 .type-drive {
   background: linear-gradient(135deg, #81d4fa, #0288d1);
 }
-.type-enterprise {
-  background: linear-gradient(135deg, var(--tw-accent, #ff9ec5), var(--aicss-accent));
-}
 .eds-row-main {
   min-width: 0;
   flex: 1;
@@ -746,6 +745,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.eds-row-error {
+  color: #f53f3f;
+  white-space: normal;
 }
 .eds-row-actions {
   display: flex;
