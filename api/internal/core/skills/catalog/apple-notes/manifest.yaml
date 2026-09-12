@@ -1,0 +1,16 @@
+source_key: apple-notes
+name: apple-notes
+label: Apple Notes
+description: 'Manage Apple Notes via memo CLI: create, search, edit.'
+category: 工具
+tags:
+- Notes
+- Apple
+- macOS
+- note-taking
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

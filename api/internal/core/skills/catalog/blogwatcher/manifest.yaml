@@ -1,0 +1,16 @@
+source_key: blogwatcher
+name: blogwatcher
+label: Blogwatcher
+description: Monitor blogs and RSS/Atom feeds via blogwatcher-cli tool.
+category: 研究
+tags:
+- RSS
+- Blogs
+- Feed-Reader
+- Monitoring
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,22 @@
+source_key: spike
+name: spike
+label: Spike
+description: Throwaway experiments to validate an idea before build.
+category: 开发
+tags:
+- spike
+- prototype
+- experiment
+- feasibility
+- throwaway
+- exploration
+- research
+- planning
+- mvp
+- proof-of-concept
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

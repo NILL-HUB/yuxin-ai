@@ -1,0 +1,17 @@
+source_key: dogfood
+name: dogfood
+label: Dogfood
+description: 'Exploratory QA of web apps: find bugs, evidence, reports.'
+category: 开发
+tags:
+- qa
+- testing
+- browser
+- web
+- dogfood
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,12 @@
+source_key: youtube-content
+name: youtube-content
+label: Youtube Content
+description: YouTube transcripts to summaries, threads, blogs.
+category: 内容处理
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

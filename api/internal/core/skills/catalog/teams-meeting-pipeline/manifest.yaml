@@ -1,0 +1,17 @@
+source_key: teams-meeting-pipeline
+name: teams-meeting-pipeline
+label: Teams Meeting Pipeline
+description: Teams meeting summaries, job replay, Graph subscriptions.
+category: 协作
+tags:
+- Teams
+- Microsoft Graph
+- Meetings
+- Productivity
+- Operations
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,17 @@
+source_key: systematic-debugging
+name: systematic-debugging
+label: Systematic Debugging
+description: '4-phase root cause debugging: understand bugs before fixing.'
+category: 开发
+tags:
+- debugging
+- troubleshooting
+- problem-solving
+- root-cause
+- investigation
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

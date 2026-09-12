@@ -1,0 +1,18 @@
+source_key: ocr-and-documents
+name: ocr-and-documents
+label: Ocr And Documents
+description: Extract text from PDFs/scans (pymupdf, marker-pdf).
+category: 协作
+tags:
+- PDF
+- Documents
+- Research
+- Arxiv
+- Text-Extraction
+- OCR
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,12 @@
+source_key: songwriting-and-ai-music
+name: songwriting-and-ai-music
+label: Songwriting And Ai Music
+description: Songwriting craft and Suno AI music prompts.
+category: 设计
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

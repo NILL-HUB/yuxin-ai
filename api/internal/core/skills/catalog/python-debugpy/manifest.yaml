@@ -1,0 +1,19 @@
+source_key: python-debugpy
+name: python-debugpy
+label: Python Debugpy
+description: 'Debug Python: pdb REPL + debugpy remote (DAP).'
+category: 开发
+tags:
+- debugging
+- python
+- pdb
+- debugpy
+- breakpoints
+- dap
+- post-mortem
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

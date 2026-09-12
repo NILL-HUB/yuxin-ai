@@ -1,0 +1,12 @@
+source_key: ascii-video
+name: ascii-video
+label: Ascii Video
+description: 'ASCII video: convert video/audio to colored ASCII MP4/GIF.'
+category: 设计
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

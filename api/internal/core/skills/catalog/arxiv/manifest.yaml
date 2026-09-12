@@ -1,0 +1,18 @@
+source_key: arxiv
+name: arxiv
+label: Arxiv
+description: Search arXiv papers by keyword, author, category, or ID.
+category: 研究
+tags:
+- Research
+- Arxiv
+- Papers
+- Academic
+- Science
+- API
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

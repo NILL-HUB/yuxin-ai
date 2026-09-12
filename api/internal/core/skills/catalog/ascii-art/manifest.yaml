@@ -1,0 +1,22 @@
+source_key: ascii-art
+name: ascii-art
+label: Ascii Art
+description: 'ASCII art: pyfiglet, cowsay, boxes, image-to-ascii.'
+category: 设计
+tags:
+- ASCII
+- Art
+- Banners
+- Creative
+- Unicode
+- Text-Art
+- pyfiglet
+- figlet
+- cowsay
+- boxes
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

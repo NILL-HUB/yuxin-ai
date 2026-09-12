@@ -1,0 +1,18 @@
+source_key: plan
+name: plan
+label: Plan
+description: Write a markdown plan to .hermes/plans/; no execution.
+category: 开发
+tags:
+- planning
+- plan-mode
+- implementation
+- workflow
+- design
+- documentation
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

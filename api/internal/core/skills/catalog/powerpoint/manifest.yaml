@@ -1,0 +1,17 @@
+source_key: powerpoint
+name: powerpoint
+label: Powerpoint
+description: Create, read, edit .pptx decks, slides, notes, templates.
+category: 协作
+tags:
+- PowerPoint
+- PPTX
+- Presentations
+- Office
+- Productivity
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

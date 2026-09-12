@@ -1,0 +1,20 @@
+source_key: pretext
+name: pretext
+label: Pretext
+description: Build creative browser demos with DOM-free text layout.
+category: 设计
+tags:
+- creative-coding
+- typography
+- pretext
+- ascii-art
+- canvas
+- generative
+- text-layout
+- kinetic-typography
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

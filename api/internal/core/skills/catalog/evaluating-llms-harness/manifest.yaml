@@ -1,0 +1,22 @@
+source_key: evaluating-llms-harness
+name: evaluating-llms-harness
+label: Evaluating Llms Harness
+description: 'lm-eval-harness: benchmark LLMs (MMLU, GSM8K, etc.).'
+category: 开发
+tags:
+- Evaluation
+- LM Evaluation Harness
+- Benchmarking
+- MMLU
+- HumanEval
+- GSM8K
+- EleutherAI
+- Model Quality
+- Academic Benchmarks
+- Industry Standard
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

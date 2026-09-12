@@ -1,0 +1,14 @@
+name: x_search
+label: X 消息搜索
+description: 搜索 X（Twitter）公开帖子、账号与话题，使用 xAI 的 X Search 工具，了解当前讨论、舆论与公开声明。
+params: []
+task_keywords:
+  - X搜索
+  - Twitter搜索
+  - 推特
+  - 社交搜索
+  - 话题讨论
+  - 舆论
+  - x search
+  - 帖子搜索
+  - 热门话题

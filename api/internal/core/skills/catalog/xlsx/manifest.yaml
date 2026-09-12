@@ -1,0 +1,17 @@
+source_key: xlsx
+name: xlsx
+label: Xlsx
+description: Create, read, edit Excel .xlsx spreadsheets and CSVs.
+category: 协作
+tags:
+- Excel
+- XLSX
+- Spreadsheets
+- Office
+- Productivity
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

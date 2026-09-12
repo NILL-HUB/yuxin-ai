@@ -1,0 +1,18 @@
+source_key: findmy
+name: findmy
+label: Findmy
+description: Track Apple devices/AirTags via FindMy.app on macOS.
+category: 工具
+tags:
+- FindMy
+- AirTag
+- location
+- tracking
+- macOS
+- Apple
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

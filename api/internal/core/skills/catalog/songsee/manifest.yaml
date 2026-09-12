@@ -1,0 +1,17 @@
+source_key: songsee
+name: songsee
+label: Songsee
+description: Audio spectrograms/features (mel, chroma, MFCC) via CLI.
+category: 内容处理
+tags:
+- Audio
+- Visualization
+- Spectrogram
+- Music
+- Analysis
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

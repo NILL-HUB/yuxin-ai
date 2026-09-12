@@ -1,0 +1,21 @@
+source_key: design-md
+name: design-md
+label: Design Md
+description: Author/validate/export Google's DESIGN.md token spec files.
+category: 设计
+tags:
+- design
+- design-system
+- tokens
+- ui
+- accessibility
+- wcag
+- tailwind
+- dtcg
+- google
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

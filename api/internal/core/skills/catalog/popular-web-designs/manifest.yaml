@@ -1,0 +1,12 @@
+source_key: popular-web-designs
+name: popular-web-designs
+label: Popular Web Designs
+description: 54 real design systems (Stripe, Linear, Vercel) as HTML/CSS.
+category: 设计
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

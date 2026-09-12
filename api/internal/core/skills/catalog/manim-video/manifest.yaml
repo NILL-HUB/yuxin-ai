@@ -1,0 +1,12 @@
+source_key: manim-video
+name: manim-video
+label: Manim Video
+description: 'Manim CE animations: 3Blue1Brown math/algo videos.'
+category: 设计
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

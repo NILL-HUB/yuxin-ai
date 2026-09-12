@@ -1,0 +1,22 @@
+source_key: touchdesigner-mcp
+name: touchdesigner-mcp
+label: Touchdesigner Mcp
+description: Control TouchDesigner via twozero MCP.
+category: 设计
+tags:
+- TouchDesigner
+- MCP
+- twozero
+- creative-coding
+- real-time-visuals
+- generative-art
+- audio-reactive
+- VJ
+- installation
+- GLSL
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

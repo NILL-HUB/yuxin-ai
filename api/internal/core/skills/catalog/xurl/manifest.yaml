@@ -1,0 +1,17 @@
+source_key: xurl
+name: xurl
+label: Xurl
+description: 'X/Twitter via xurl CLI: raw post search, posting, DM, media.'
+category: 协作
+tags:
+- twitter
+- x
+- social-media
+- xurl
+- official-api
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

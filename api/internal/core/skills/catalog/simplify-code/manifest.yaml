@@ -1,0 +1,19 @@
+source_key: simplify-code
+name: simplify-code
+label: Simplify Code
+description: Parallel 4-agent cleanup of recent code changes.
+category: 开发
+tags:
+- code-review
+- cleanup
+- refactor
+- delegation
+- subagent
+- parallel
+- simplify
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

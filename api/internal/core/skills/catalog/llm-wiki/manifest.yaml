@@ -1,0 +1,18 @@
+source_key: llm-wiki
+name: llm-wiki
+label: Llm Wiki
+description: 'Karpathy''s LLM Wiki: build/query interlinked markdown KB.'
+category: 研究
+tags:
+- wiki
+- knowledge-base
+- research
+- notes
+- markdown
+- rag-alternative
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

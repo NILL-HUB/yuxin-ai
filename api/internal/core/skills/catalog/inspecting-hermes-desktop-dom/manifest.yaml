@@ -1,0 +1,18 @@
+source_key: inspecting-hermes-desktop-dom
+name: inspecting-hermes-desktop-dom
+label: Inspecting Hermes Desktop Dom
+description: Read the live Hermes desktop DOM/CSS over CDP.
+category: 开发
+tags:
+- desktop
+- electron
+- cdp
+- dom
+- ui-verification
+- self-inspection
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

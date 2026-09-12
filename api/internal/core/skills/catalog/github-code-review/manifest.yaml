@@ -1,0 +1,17 @@
+source_key: github-code-review
+name: github-code-review
+label: Github Code Review
+description: 'Review PRs: diffs, inline comments via gh or REST.'
+category: GitHub
+tags:
+- GitHub
+- Code-Review
+- Pull-Requests
+- Git
+- Quality
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

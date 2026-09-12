@@ -1,0 +1,22 @@
+source_key: claude-design
+name: claude-design
+label: Claude Design
+description: Design one-off HTML artifacts (landing, deck, prototype).
+category: 设计
+tags:
+- design
+- html
+- prototype
+- ux
+- ui
+- creative
+- artifact
+- deck
+- motion
+- design-system
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

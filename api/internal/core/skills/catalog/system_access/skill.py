@@ -39,7 +39,7 @@ def _normalize_bool(value: Any, default: bool) -> bool:
 def _workspace_root() -> Path:
     configured = os.getenv("SYSTEM_ACCESS_WORKSPACE", "").strip()
     root = Path(configured).expanduser().resolve() if configured else (
-        Path(tempfile.gettempdir()) / "yuxin_system_access"
+        Path(tempfile.gettempdir()) / "yujianwo_system_access"
     )
     root.mkdir(parents=True, exist_ok=True)
     return root

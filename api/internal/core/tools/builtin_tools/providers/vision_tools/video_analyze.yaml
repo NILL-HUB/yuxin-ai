@@ -1,0 +1,14 @@
+name: video_analyze
+label: 视频分析
+description: 下载视频并抽取 3 个关键帧，用视觉模型逐帧分析后汇总，用于审阅视频内容、提取字幕、检查画面。
+params: []
+task_keywords:
+  - 视频
+  - 视频分析
+  - video analyze
+  - 视频内容
+  - 视频字幕
+  - 画面
+  - 视频理解
+  - 视频总结
+  - 看视频

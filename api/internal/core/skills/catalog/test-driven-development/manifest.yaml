@@ -1,0 +1,17 @@
+source_key: test-driven-development
+name: test-driven-development
+label: Test Driven Development
+description: 'TDD: enforce RED-GREEN-REFACTOR, tests before code.'
+category: 开发
+tags:
+- testing
+- tdd
+- development
+- quality
+- red-green-refactor
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

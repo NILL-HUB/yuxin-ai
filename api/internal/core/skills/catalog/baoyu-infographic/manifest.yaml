@@ -1,0 +1,16 @@
+source_key: baoyu-infographic
+name: baoyu-infographic
+label: Baoyu Infographic
+description: 'Infographics: 21 layouts x 21 styles (信息图, 可视化).'
+category: 设计
+tags:
+- infographic
+- visual-summary
+- creative
+- image-generation
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

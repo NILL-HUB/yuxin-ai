@@ -1,0 +1,18 @@
+source_key: codebase-inspection
+name: codebase-inspection
+label: Codebase Inspection
+description: 'Inspect codebases w/ pygount: LOC, languages, ratios.'
+category: GitHub
+tags:
+- LOC
+- Code Analysis
+- pygount
+- Codebase
+- Metrics
+- Repository
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

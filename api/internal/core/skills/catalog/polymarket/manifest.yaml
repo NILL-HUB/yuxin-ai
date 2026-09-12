@@ -1,0 +1,12 @@
+source_key: polymarket
+name: polymarket
+label: Polymarket
+description: 'Query Polymarket: markets, prices, orderbooks, history.'
+category: 研究
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

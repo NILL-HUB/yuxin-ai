@@ -1,0 +1,18 @@
+source_key: github-repo-management
+name: github-repo-management
+label: Github Repo Management
+description: Clone/create/fork repos; manage remotes, releases.
+category: GitHub
+tags:
+- GitHub
+- Repositories
+- Git
+- Releases
+- Secrets
+- Configuration
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,22 @@
+source_key: sketch
+name: sketch
+label: Sketch
+description: 'Throwaway HTML mockups: 2-3 design variants to compare.'
+category: 设计
+tags:
+- sketch
+- mockup
+- design
+- ui
+- prototype
+- html
+- variants
+- exploration
+- wireframe
+- comparison
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

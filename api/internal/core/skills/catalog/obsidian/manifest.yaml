@@ -1,0 +1,12 @@
+source_key: obsidian
+name: obsidian
+label: Obsidian
+description: Read, search, create, and edit notes in the Obsidian vault.
+category: 协作
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

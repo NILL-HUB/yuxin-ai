@@ -1,0 +1,21 @@
+source_key: serving-llms-vllm
+name: serving-llms-vllm
+label: Serving Llms Vllm
+description: 'vLLM: high-throughput LLM serving, OpenAI API, quantization.'
+category: 开发
+tags:
+- vLLM
+- Inference Serving
+- PagedAttention
+- Continuous Batching
+- High Throughput
+- Production
+- OpenAI API
+- Quantization
+- Tensor Parallelism
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

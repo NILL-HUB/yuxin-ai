@@ -1,0 +1,16 @@
+source_key: airtable
+name: airtable
+label: Airtable
+description: Airtable REST API via curl. Records CRUD, filters, upserts.
+category: 协作
+tags:
+- Airtable
+- Productivity
+- Database
+- API
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,23 @@
+source_key: llama-cpp
+name: llama-cpp
+label: Llama Cpp
+description: llama.cpp local GGUF inference + HF Hub model discovery.
+category: 开发
+tags:
+- llama.cpp
+- GGUF
+- Quantization
+- Hugging Face Hub
+- CPU Inference
+- Apple Silicon
+- Edge Deployment
+- AMD GPUs
+- Intel GPUs
+- NVIDIA
+- URL-first
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

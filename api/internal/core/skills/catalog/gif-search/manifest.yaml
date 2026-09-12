@@ -1,0 +1,17 @@
+source_key: gif-search
+name: gif-search
+label: Gif Search
+description: Search/download GIFs from Tenor via curl + jq.
+category: 内容处理
+tags:
+- GIF
+- Media
+- Search
+- Tenor
+- API
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

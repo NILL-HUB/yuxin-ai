@@ -1,0 +1,21 @@
+source_key: p5js
+name: p5js
+label: P5Js
+description: 'p5.js sketches: gen art, shaders, interactive, 3D.'
+category: 设计
+tags:
+- creative-coding
+- generative-art
+- p5js
+- canvas
+- interactive
+- visualization
+- webgl
+- shaders
+- animation
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

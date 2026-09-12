@@ -1,0 +1,24 @@
+source_key: hermes-agent
+name: hermes-agent
+label: Hermes Agent
+description: Use, configure, theme, extend, and orchestrate Hermes Agent.
+category: 开发
+tags:
+- hermes
+- setup
+- configuration
+- multi-agent
+- spawning
+- cli
+- gateway
+- themes
+- skins
+- desktop-plugins
+- tui-widgets
+- petdex
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

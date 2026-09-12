@@ -1,0 +1,17 @@
+source_key: himalaya
+name: himalaya
+label: Himalaya
+description: 'Himalaya CLI: IMAP/SMTP email from terminal.'
+category: 协作
+tags:
+- Email
+- IMAP
+- SMTP
+- CLI
+- Communication
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

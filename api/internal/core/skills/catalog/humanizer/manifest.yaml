@@ -1,0 +1,19 @@
+source_key: humanizer
+name: humanizer
+label: Humanizer
+description: 'Humanize text: strip AI-isms and add real voice.'
+category: 设计
+tags:
+- writing
+- editing
+- humanize
+- anti-ai-slop
+- voice
+- prose
+- text
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

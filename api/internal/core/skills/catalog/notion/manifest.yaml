@@ -1,0 +1,19 @@
+source_key: notion
+name: notion
+label: Notion
+description: 'Notion API + ntn CLI: pages, databases, markdown, Workers.'
+category: 协作
+tags:
+- Notion
+- Productivity
+- Notes
+- Database
+- API
+- CLI
+- Workers
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,24 @@
+source_key: research-paper-writing
+name: research-paper-writing
+label: Research Paper Writing
+description: 'Write ML papers for NeurIPS/ICML/ICLR: design→submit.'
+category: 研究
+tags:
+- Research
+- Paper Writing
+- Experiments
+- ML
+- AI
+- NeurIPS
+- ICML
+- ICLR
+- ACL
+- AAAI
+- COLM
+- LaTeX
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

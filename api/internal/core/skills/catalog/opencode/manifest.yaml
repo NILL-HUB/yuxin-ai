@@ -1,0 +1,17 @@
+source_key: opencode
+name: opencode
+label: Opencode
+description: Delegate coding to OpenCode CLI (features, PR review).
+category: 开发
+tags:
+- Coding-Agent
+- OpenCode
+- Autonomous
+- Refactoring
+- Code-Review
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

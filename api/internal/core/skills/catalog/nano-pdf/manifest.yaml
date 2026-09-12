@@ -1,13 +1,13 @@
-source_key: pdf
-name: pdf
-label: Pdf
-description: Create, merge, split, fill, and secure PDF files.
+source_key: nano-pdf
+name: nano-pdf
+label: Nano Pdf
+description: Edit text in existing PDFs via natural-language prompts.
 category: 协作
 tags:
 - PDF
 - Documents
-- Forms
-- Office
+- Editing
+- NLP
 - Productivity
 icon: ''
 enabled: true

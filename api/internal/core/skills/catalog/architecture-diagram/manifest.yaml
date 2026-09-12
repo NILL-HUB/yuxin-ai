@@ -1,0 +1,19 @@
+source_key: architecture-diagram
+name: architecture-diagram
+label: Architecture Diagram
+description: Dark-themed SVG architecture/cloud/infra diagrams as HTML.
+category: 设计
+tags:
+- architecture
+- diagrams
+- SVG
+- HTML
+- visualization
+- infrastructure
+- cloud
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

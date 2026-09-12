@@ -1,0 +1,12 @@
+source_key: huggingface-hub
+name: huggingface-hub
+label: Huggingface Hub
+description: 'HuggingFace hf CLI: search/download/upload models, datasets.'
+category: 开发
+tags: []
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

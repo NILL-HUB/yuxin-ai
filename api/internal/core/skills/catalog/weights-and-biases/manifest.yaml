@@ -1,0 +1,23 @@
+source_key: weights-and-biases
+name: weights-and-biases
+label: Weights And Biases
+description: 'W&B: log ML experiments, sweeps, model registry, dashboards.'
+category: 开发
+tags:
+- MLOps
+- Weights And Biases
+- WandB
+- Experiment Tracking
+- Hyperparameter Tuning
+- Model Registry
+- Collaboration
+- Real-Time Visualization
+- PyTorch
+- TensorFlow
+- HuggingFace
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

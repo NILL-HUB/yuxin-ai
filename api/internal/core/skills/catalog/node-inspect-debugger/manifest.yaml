@@ -1,0 +1,18 @@
+source_key: node-inspect-debugger
+name: node-inspect-debugger
+label: Node Inspect Debugger
+description: Debug Node.js via --inspect + Chrome DevTools Protocol CLI.
+category: 开发
+tags:
+- debugging
+- nodejs
+- node-inspect
+- cdp
+- breakpoints
+- ui-tui
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

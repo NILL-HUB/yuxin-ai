@@ -1,0 +1,18 @@
+source_key: github-auth
+name: github-auth
+label: Github Auth
+description: 'GitHub auth setup: HTTPS tokens, SSH keys, gh CLI login.'
+category: GitHub
+tags:
+- GitHub
+- Authentication
+- Git
+- gh-cli
+- SSH
+- Setup
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

@@ -1,0 +1,18 @@
+source_key: grounded-citations
+name: grounded-citations
+label: Grounded Citations
+description: Ground answers and documents in cited, verifiable sources.
+category: 研究
+tags:
+- Research
+- Citations
+- Grounding
+- Sources
+- Web
+- Reports
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

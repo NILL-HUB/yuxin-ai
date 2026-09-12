@@ -1,0 +1,18 @@
+source_key: excalidraw
+name: excalidraw
+label: Excalidraw
+description: Hand-drawn Excalidraw JSON diagrams (arch, flow, seq).
+category: 设计
+tags:
+- Excalidraw
+- Diagrams
+- Flowcharts
+- Architecture
+- Visualization
+- JSON
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

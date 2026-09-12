@@ -1,0 +1,17 @@
+source_key: imessage
+name: imessage
+label: Imessage
+description: Send and receive iMessages/SMS via the imsg CLI on macOS.
+category: 工具
+tags:
+- iMessage
+- SMS
+- messaging
+- macOS
+- Apple
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

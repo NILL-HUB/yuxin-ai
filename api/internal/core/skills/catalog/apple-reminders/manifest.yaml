@@ -1,0 +1,17 @@
+source_key: apple-reminders
+name: apple-reminders
+label: Apple Reminders
+description: 'Apple Reminders via remindctl: add, list, complete.'
+category: 工具
+tags:
+- Reminders
+- tasks
+- todo
+- macOS
+- Apple
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

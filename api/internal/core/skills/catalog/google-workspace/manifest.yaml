@@ -1,0 +1,21 @@
+source_key: google-workspace
+name: google-workspace
+label: Google Workspace
+description: Gmail, Calendar, Drive, Docs, Sheets via gws CLI or Python.
+category: 协作
+tags:
+- Google
+- Gmail
+- Calendar
+- Drive
+- Sheets
+- Docs
+- Contacts
+- Email
+- OAuth
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

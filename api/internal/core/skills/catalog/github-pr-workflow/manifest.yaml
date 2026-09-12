@@ -1,0 +1,18 @@
+source_key: github-pr-workflow
+name: github-pr-workflow
+label: Github Pr Workflow
+description: 'GitHub PR lifecycle: branch, commit, open, CI, merge.'
+category: GitHub
+tags:
+- GitHub
+- Pull-Requests
+- CI/CD
+- Git
+- Automation
+- Merge
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []

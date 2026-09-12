@@ -1,12 +1,12 @@
-source_key: pdf
-name: pdf
-label: Pdf
-description: Create, merge, split, fill, and secure PDF files.
+source_key: docx
+name: docx
+label: Docx
+description: Create, read, edit Word .docx documents and templates.
 category: 协作
 tags:
-- PDF
+- Word
+- DOCX
 - Documents
-- Forms
 - Office
 - Productivity
 icon: ''

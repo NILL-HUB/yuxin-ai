@@ -1,0 +1,24 @@
+source_key: maps
+name: maps
+label: Maps
+description: Geocode, POIs, routes, timezones via OpenStreetMap/OSRM.
+category: 协作
+tags:
+- maps
+- geocoding
+- places
+- routing
+- distance
+- directions
+- nearby
+- location
+- openstreetmap
+- nominatim
+- overpass
+- osrm
+icon: ''
+enabled: true
+version: 1
+executor_type: prompt
+capabilities: {}
+tools: []
