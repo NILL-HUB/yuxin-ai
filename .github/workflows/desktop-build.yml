@@ -23,13 +23,26 @@ jobs:
       - name: Install desktop dependencies
         working-directory: desktop
         run: npm install
+      - name: Install cua-driver (background computer control)
+        shell: pwsh
+        run: |
+          # 后台计算机控制 daemon（MIT，trycua/cua）。用于把二进制 stage 进安装包；
+          # 装不上不阻断构建（运行时自动回退前台 pyautogui 模式）。
+          try {
+            irm https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.ps1 | iex
+          } catch {
+            Write-Warning "cua-driver 安装失败，将跳过捆绑：$_"
+          }
       - name: Verify desktop sources
         working-directory: desktop
         run: |
           node --check main.js
           node --check preload.js
           node --check bridge.js
+          node --check device-registry.js
+          node --check cua-driver-host.js
           node --test test/bridge.test.js
+          node --test test/device-registry.test.js
       - name: Package Windows installer
         working-directory: desktop
         run: npm run dist

@@ -7,6 +7,19 @@ const fs = require('fs')
 const { createBridge } = require('./bridge')
 const { loadServerConfig, DEFAULT_ENTRY_ORIGIN } = require('./server-config')
 const { createCredentialStore } = require('./credential-store')
+const {
+  loadOrCreateDeviceId,
+  resolveBridgePublicOrigin,
+  resolveDeviceName,
+  registerDevice,
+  revokeDevice,
+} = require('./device-registry')
+const {
+  startCuaDriver,
+  stopCuaDriver,
+  cuaDriverStatus,
+  resolveCuaDriverExe,
+} = require('./cua-driver-host')
 const { createTray } = require('./tray')
 const { setupUpdater, checkForUpdates, autoUpdater } = require('./updater')
 const { computeWindowOptions, loadState, saveState } = require('./window-state')
@@ -23,6 +36,8 @@ let desktopConfigCache = null
 let serverConfigCachePath = null
 let serverConfigRefreshing = false
 let windowStateFilePath = null
+let deviceIdFilePath = null
+let bridgeAccessInfo = null
 
 function randomToken() {
   return crypto.randomBytes(24).toString('hex')
@@ -34,7 +49,7 @@ function pythonBin() {
 
 function workerScript() {
   // dev 模式（无打包 exe）统一走 worker_super：与打包版同一入口，
-  // 保证宿主存活看门狗（YUXIN_HOST_PID）在开发环境同样生效。
+  // 保证宿主存活看门狗（YUJIANWO_HOST_PID）在开发环境同样生效。
   const apiDir = path.resolve(__dirname, '..', 'api')
   return path.join(apiDir, 'scripts', 'worker_super.py')
 }
@@ -91,8 +106,8 @@ async function probePort(preferred, maxAttempts = 50, exclude = new Set()) {
 function workerCommand(name) {
   const resourcesDir = process.resourcesPath || ''
   const bundledCandidates = [
-    path.join(resourcesDir, 'yuxin-worker', 'yuxin-worker.exe'),
-    path.join(resourcesDir, 'yuxin-worker.exe'),
+    path.join(resourcesDir, 'yujianwo-worker', 'yujianwo-worker.exe'),
+    path.join(resourcesDir, 'yujianwo-worker.exe'),
   ]
   for (const exePath of bundledCandidates) {
     if (exePath && fs.existsSync(exePath)) {
@@ -118,7 +133,7 @@ function startWorker(name, env) {
       ...env,
       // 宿主存活看门狗：worker 周期性检测 Electron 主进程 PID，
       // 主进程退出（正常/被杀/崩溃）即自杀，避免进程树残留。
-      YUXIN_HOST_PID: String(process.pid),
+      YUJIANWO_HOST_PID: String(process.pid),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -179,7 +194,7 @@ function toDesktopConfig(serverCfg) {
     apiOrigin: origin,
     socketUrl: origin,
     socketPath: `${prefix}/socket.io`,
-    appName: serverCfgSafe.app_name || '钰心AI',
+    appName: serverCfgSafe.app_name || '钰见我',
   }
 }
 
@@ -248,12 +263,54 @@ function syncConfig() {
     const serverCfg = readDiskConfigCache() || {
       api_origin: DEFAULT_ENTRY_ORIGIN,
       api_prefix: '/api',
-      app_name: '钰心AI',
+      app_name: '钰见我',
     }
     applyServerConfig(serverCfg)
     void refreshServerConfig()
   }
   return desktopConfigCache
+}
+
+async function registerThisDevice() {
+  // 登录后把本机 bridge 地址与随机 token 上报服务端，按账号动态解析，
+  // 解决「随机 token 无法与静态 DESKTOP_BRIDGE_* 对齐」的断链问题。
+  if (!bridgeAccessInfo || !credentialStore) return { ok: false, reason: 'not_ready' }
+  const accessToken = credentialStore.load()
+  if (!accessToken) return { ok: false, reason: 'no_credential' }
+  const cfg = syncConfig()
+  const apiBase = cfg && cfg.apiBase
+  if (!apiBase) return { ok: false, reason: 'no_api_base' }
+  const result = await registerDevice({
+    apiBase,
+    accessToken,
+    deviceId: bridgeAccessInfo.deviceId,
+    bridgeOrigin: bridgeAccessInfo.origin,
+    bridgeToken: bridgeAccessInfo.token,
+    name: resolveDeviceName(),
+    platform: process.platform,
+  })
+  if (!result.ok) {
+    console.warn(`[desktop] 设备注册失败: ${result.reason}`)
+  } else {
+    console.log('[desktop] 设备注册成功')
+  }
+  return result
+}
+
+async function revokeThisDevice() {
+  // 登出时吊销本机设备：避免服务端继续把该账号的本机操作转发到已登出的电脑。
+  if (!bridgeAccessInfo || !credentialStore) return
+  const accessToken = credentialStore.load()
+  if (!accessToken) return
+  const cfg = syncConfig()
+  const apiBase = cfg && cfg.apiBase
+  if (!apiBase) return
+  const result = await revokeDevice({
+    apiBase,
+    accessToken,
+    deviceId: bridgeAccessInfo.deviceId,
+  })
+  if (!result.ok) console.warn(`[desktop] 设备吊销失败: ${result.reason}`)
 }
 
 function broadcastWindowState() {
@@ -273,7 +330,7 @@ function createWindow() {
     ...options,
     minWidth: 940,
     minHeight: 620,
-    title: '钰心AI',
+    title: '钰见我',
     show: false,
     // 原生窗口外观：去掉系统标题栏改用自绘标题栏（拖拽区在 renderer），
     // Windows 保留系统 min/max/close 按钮作为 titleBarOverlay（Hermes 同款方案）。
@@ -338,6 +395,7 @@ app.whenReady().then(async () => {
   })
   serverConfigCachePath = path.join(app.getPath('userData'), 'server-config.json')
   windowStateFilePath = path.join(app.getPath('userData'), 'window-state.json')
+  deviceIdFilePath = path.join(app.getPath('userData'), 'device-id')
 
   // renderer 以 file:// 加载（Origin: null），对配置的 API origin 放宽 CORS，
   // 使登录/业务请求不被浏览器同源策略拦截。
@@ -347,7 +405,12 @@ app.whenReady().then(async () => {
     const matchesApi = apiOrigin && requestUrl.toLowerCase().startsWith(apiOrigin.toLowerCase())
     const responseHeaders = { ...details.responseHeaders }
     if (matchesApi) {
-      responseHeaders['Access-Control-Allow-Origin'] = ['*']
+      // 不能使用 ACAO:'*'：renderer 请求携带凭据（request.ts 固定 credentials:'include'），
+      // Fetch 规范禁止通配符与凭据同时出现，Chromium 会直接拦截该响应导致请求失败。
+      // 改为回显请求的 Origin（file:// 页面为 "null"，dev server 为具体源），
+      // 使 CORS 校验通过且保持凭据可用。
+      const requestOrigin = details.requestHeaders?.['Origin'] || details.requestHeaders?.['origin'] || 'null'
+      responseHeaders['Access-Control-Allow-Origin'] = [requestOrigin]
       responseHeaders['Access-Control-Allow-Credentials'] = ['true']
       responseHeaders['Access-Control-Allow-Headers'] = ['Content-Type, Authorization, X-Account-Id']
       responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, PATCH, DELETE, OPTIONS']
@@ -394,9 +457,18 @@ app.whenReady().then(async () => {
     BROWSER_AUTOMATION_TOKEN: tokens.browser,
     BROWSER_AUTOMATION_PORT: String(browserPort),
   })
+  // 先托管 cua-driver daemon 再起 computer worker：worker 启动后探测 daemon 可达时
+  // 自动选 cua 后端（后台定向控制，不抢焦点/不动真实光标）；不可用则回退 pyautogui。
+  const cuaExe = resolveCuaDriverExe()
+  void startCuaDriver().then((ok) => {
+    if (ok) console.log('[desktop] cua-driver daemon 就绪（后台计算机控制已启用）')
+    else if (!cuaExe) console.log('[desktop] cua-driver 未安装，计算机控制回退前台模式')
+  })
   startWorker('computer', {
     COMPUTER_CONTROL_TOKEN: tokens.computer,
     COMPUTER_CONTROL_PORT: String(computerPort),
+    CUA_DRIVER_EXE: cuaExe,
+    YUJIANWO_RESOURCES_DIR: process.resourcesPath || '',
   })
 
   bridgeServer = createBridge({
@@ -416,6 +488,17 @@ app.whenReady().then(async () => {
     console.log('[desktop] local capability bridge listening on 127.0.0.1:9876')
   })
 
+  // 记录本机 bridge 访问信息，供登录后注册到服务端（账号维度动态解析）。
+  bridgeAccessInfo = {
+    deviceId: loadOrCreateDeviceId({ filePath: deviceIdFilePath }),
+    origin: resolveBridgePublicOrigin({
+      bridgePort: Number(process.env.DESKTOP_BRIDGE_PORT || 9876),
+    }),
+    token: tokens.bridge,
+  }
+  console.log(`[desktop] device_id=${bridgeAccessInfo.deviceId} bridge_origin=${bridgeAccessInfo.origin}`)
+  void registerThisDevice()
+
   ipcMain.on('desktop:get-config-sync', (event) => {
     event.returnValue = syncConfig()
   })
@@ -427,16 +510,23 @@ app.whenReady().then(async () => {
     return desktopConfigCache || cached
   })
   ipcMain.handle('desktop:get-credential', () => (credentialStore ? credentialStore.load() : null))
-  ipcMain.handle('desktop:set-credential', (_event, token) => {
+  ipcMain.handle('desktop:set-credential', async (_event, token) => {
     if (credentialStore && typeof token === 'string' && token) {
-      return credentialStore.save(token)
+      const saved = credentialStore.save(token)
+      // 登录成功即注册本机设备：服务端据此按账号动态解析 bridge 地址与 token。
+      void registerThisDevice()
+      return saved
     }
     return false
   })
-  ipcMain.handle('desktop:clear-credential', () => {
+  ipcMain.handle('desktop:clear-credential', async () => {
+    // 先吊销设备（需要 token），再清本地凭证；否则服务端仍会向已登出设备转发本机操作。
+    await revokeThisDevice()
     if (credentialStore) credentialStore.clear()
     return true
   })
+  // 供 renderer 在登录后主动触发设备注册（凭证同步为异步，避免竞态漏注册）。
+  ipcMain.handle('desktop:register-device', () => registerThisDevice())
   ipcMain.handle('desktop:worker-versions', () => {
     const result = {}
     for (const [name, child] of workers.entries()) {
@@ -487,11 +577,12 @@ app.whenReady().then(async () => {
     const child = workers.get('wake')
     return { running: Boolean(child && !child.killed) }
   })
+  ipcMain.handle('cua:status', () => cuaDriverStatus())
   ipcMain.handle('wake:enable', () => {
     if (workers.has('wake') && !workers.get('wake').killed) return true
     startWorker('wake', {
       WAKE_WORD_TOKEN: tokens.wake,
-      WAKE_WORD_KEYWORD: process.env.WAKE_WORD_KEYWORD || 'hey yuxin',
+      WAKE_WORD_KEYWORD: process.env.WAKE_WORD_KEYWORD || 'hey yujianwo',
       WAKE_WORD_ENDPOINT: process.env.WAKE_WORD_ENDPOINT || '',
     })
     return true
@@ -517,8 +608,8 @@ app.whenReady().then(async () => {
 
   setupUpdater({
     onStatus: (status) => {
-      if (status === 'available') notify('钰心AI 有更新可用', '正在后台下载，完成后将提示安装')
-      if (status === 'downloaded') notify('钰心AI 更新已就绪', '重启应用即可完成更新')
+      if (status === 'available') notify('钰见我 有更新可用', '正在后台下载，完成后将提示安装')
+      if (status === 'downloaded') notify('钰见我 更新已就绪', '重启应用即可完成更新')
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send('desktop:update-status', status)
       }
@@ -570,5 +661,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true
   for (const name of [...workers.keys()]) stopWorker(name)
+  stopCuaDriver()
   if (bridgeServer) bridgeServer.close()
 })

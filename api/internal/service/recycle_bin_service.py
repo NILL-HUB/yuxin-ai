@@ -14,7 +14,6 @@
 """
 import logging
 import math
-import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -263,6 +262,90 @@ class RecycleBinService:
             ],
         }
 
+    def user_overview(
+        self,
+        *,
+        account_id,
+        resource_type: str | None = None,
+        status: str | None = None,
+        search_word: str = "",
+        deleted_by_type: str | None = None,
+    ) -> dict:
+        """用户端回收站观测概览：总量/状态分布/类型分布/来源分布（SQL 级聚合）。
+
+        过滤条件与 list_user_items 保持一致：仅当前账号、user/agent 来源、
+        用户可见资源类型；admin 专属类型即使误标也不会出现在用户回收站概览。
+        """
+        from sqlalchemy import func
+
+        query = db.session.query(RecycleBin).filter(
+            RecycleBin.deleted_by == str(account_id),
+            RecycleBin.deleted_by_type.in_(("user", "agent")),
+            RecycleBin.resource_type.in_(self.USER_VISIBLE_RESOURCE_TYPES),
+        )
+        if deleted_by_type in ("user", "agent"):
+            query = query.filter(RecycleBin.deleted_by_type == deleted_by_type)
+        if resource_type in self.USER_VISIBLE_RESOURCE_TYPES:
+            query = query.filter(RecycleBin.resource_type == resource_type)
+        if status:
+            query = query.filter(RecycleBin.status == status)
+        if search_word:
+            query = query.filter(RecycleBin.resource_name.ilike(f"%{search_word}%"))
+
+        total = query.count()
+
+        status_rows = (
+            query.with_entities(RecycleBin.status, func.count().label("count"))
+            .group_by(RecycleBin.status)
+            .order_by(func.count().desc())
+            .all()
+        )
+        type_rows = (
+            query.with_entities(RecycleBin.resource_type, func.count().label("count"))
+            .group_by(RecycleBin.resource_type)
+            .order_by(func.count().desc())
+            .limit(15)
+            .all()
+        )
+        source_rows = (
+            query.with_entities(RecycleBin.deleted_by_type, func.count().label("count"))
+            .group_by(RecycleBin.deleted_by_type)
+            .order_by(func.count().desc())
+            .all()
+        )
+        pending_count = db.session.query(func.count()).select_from(RecycleBin).filter(
+            RecycleBin.status == "pending",
+            RecycleBin.deleted_by == str(account_id),
+            RecycleBin.deleted_by_type.in_(("user", "agent")),
+            RecycleBin.resource_type.in_(self.USER_VISIBLE_RESOURCE_TYPES),
+        )
+        if deleted_by_type in ("user", "agent"):
+            pending_count = pending_count.filter(
+                RecycleBin.deleted_by_type == deleted_by_type
+            )
+        if resource_type in self.USER_VISIBLE_RESOURCE_TYPES:
+            pending_count = pending_count.filter(
+                RecycleBin.resource_type == resource_type
+            )
+        pending_total = pending_count.scalar() or 0
+
+        return {
+            "total": total,
+            "pending_total": int(pending_total),
+            "by_status": [
+                {"name": row.status or "unknown", "count": int(row.count or 0)}
+                for row in status_rows
+            ],
+            "by_resource_type": [
+                {"name": row.resource_type or "unknown", "count": int(row.count or 0)}
+                for row in type_rows
+            ],
+            "by_deleted_by_type": [
+                {"name": row.deleted_by_type or "unknown", "count": int(row.count or 0)}
+                for row in source_rows
+            ],
+        }
+
     def _attach_deleted_by_names(self, items: list[RecycleBin]) -> None:
         """把删除人 ID 批量解析为账号名（admin=管理员账号，user/agent=用户账号）。
 
@@ -480,11 +563,15 @@ class RecycleBinService:
             if not entry or not entry.get("entry_id"):
                 continue
             original_path = str(entry.get("original_path") or "")
+            # 兼容 Windows(\\) 与 POSIX(/) 路径分隔符：宿主机 Windows 文件路径在
+            # 容器/非 Windows 环境下 os.sep 为 "/"，直接 split 会返回完整路径，
+            # 统一用正反斜杠都分割取最后一段作为展示名。
+            _basename = original_path.rstrip("\\/").split("\\")[-1].split("/")[-1]
             item = RecycleBin(
                 resource_type="os_file",
                 resource_id=str(entry.get("entry_id") or ""),
                 resource_key=str(entry.get("entry_id") or ""),
-                resource_name=original_path.split(os.sep)[-1] or original_path,
+                resource_name=_basename or original_path,
                 snapshot={
                     "os_entries": [entry],
                     "entry_id": entry.get("entry_id"),

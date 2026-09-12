@@ -125,6 +125,8 @@ desktop/dist-nsis/
 desktop/dist-verify/
 desktop/release/
 ui/dist-desktop/
+# 打包时从本机 cua-driver 安装复制而来（MIT，不入库；见 desktop/scripts/stage-cua-driver.js）
+desktop/vendor/cua-driver/
 
 # Data backups & one-off temp scripts (privacy/credentials)
 api/internal/migration/orphan_memory_backup_*.sql

@@ -1,15 +1,16 @@
 {
-  "name": "yuxin-ai-desktop",
+  "name": "yujianwo-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "钰心AI Windows 桌面端：Web UI + 本地 Worker（OS/回收站/浏览器/计算机/唤醒词）",
+  "description": "钰见我 Windows 桌面端：Web UI + 本地 Worker（OS/回收站/浏览器/计算机/唤醒词）",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "build:ui": "npm --prefix ../ui run build:desktop",
-    "pack": "electron-builder --dir",
-    "dist": "npm run build:ui && electron-builder --win"
+    "stage:cua": "node scripts/stage-cua-driver.js",
+    "pack": "npm run stage:cua && electron-builder --dir",
+    "dist": "npm run build:ui && npm run stage:cua && electron-builder --win"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
@@ -20,8 +21,8 @@
     "electron-builder": "^25.0.0"
   },
   "build": {
-    "appId": "ai.yuxin.desktop",
-    "productName": "钰心AI",
+    "appId": "ai.yujianwo.desktop",
+    "productName": "钰见我",
     "directories": {
       "output": "dist-nsis"
     },
@@ -30,6 +31,8 @@
       "preload.js",
       "server-config.js",
       "credential-store.js",
+      "device-registry.js",
+      "cua-driver-host.js",
       "bridge.js",
       "tray.js",
       "updater.js",
@@ -41,8 +44,12 @@
         "to": "ui-dist"
       },
       {
-        "from": "../api/scripts/pyinstaller/dist/yuxin-worker.exe",
-        "to": "yuxin-worker/yuxin-worker.exe"
+        "from": "../api/scripts/pyinstaller/dist/yujianwo-worker.exe",
+        "to": "yujianwo-worker/yujianwo-worker.exe"
+      },
+      {
+        "from": "vendor/cua-driver",
+        "to": "cua-driver"
       }
     ],
     "win": {

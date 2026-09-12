@@ -82,21 +82,32 @@ def _normalize_text(value: Any) -> str:
 
 
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
-    bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
-    if bridge_url and bridge_token:
+    # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
+    from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
+
+    resolved = resolve_desktop_bridge(payload.get("requester"), purpose="/file")
+    if resolved:
+        bridge_url, bridge_token = resolved
         endpoint = bridge_url.rstrip("/") + "/file"
         token = bridge_token
     else:
-        # OS_AUTOMATION_URL 指向 worker 根地址，需补 /file 路径
-        endpoint = _normalize_text(os.getenv("OS_AUTOMATION_URL"))
-        token = _normalize_text(os.getenv("OS_AUTOMATION_TOKEN"))
+        # 2.回退静态配置：DESKTOP_BRIDGE_URL/TOKEN（旧通道）或 OS_AUTOMATION_URL/TOKEN
+        bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
+        bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
+        if bridge_url and bridge_token:
+            endpoint = bridge_url.rstrip("/") + "/file"
+            token = bridge_token
+        else:
+            # OS_AUTOMATION_URL 指向 worker 根地址，需补 /file 路径
+            endpoint = _normalize_text(os.getenv("OS_AUTOMATION_URL"))
+            token = _normalize_text(os.getenv("OS_AUTOMATION_TOKEN"))
     if not endpoint or not token:
         return {
             "ok": False,
-            "error": "DESKTOP_BRIDGE_URL/TOKEN 或 OS_AUTOMATION_URL/TOKEN 未配置，无法调用宿主机文件操作",
+            "error": "未找到可用的桌面设备连接（当前账号未注册在线设备），"
+                     "且 DESKTOP_BRIDGE_URL/TOKEN、OS_AUTOMATION_URL/TOKEN 均未配置",
         }
-    url = endpoint if bridge_url and bridge_token else endpoint.rstrip("/") + "/file"
+    url = endpoint if endpoint.rstrip("/").endswith("/file") else endpoint.rstrip("/") + "/file"
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request = urllib.request.Request(
         url,

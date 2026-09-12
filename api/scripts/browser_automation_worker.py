@@ -33,7 +33,9 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8766
 MAX_TEXT_CHARS = 12000
 
-_ALLOWED_ACTIONS = frozenset({"navigate", "snapshot", "click", "type", "scroll", "back"})
+_ALLOWED_ACTIONS = frozenset(
+    {"navigate", "snapshot", "click", "type", "scroll", "back", "press", "get_images", "console"}
+)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -75,10 +77,14 @@ def _validate_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         return {"ok": False, "error": f"不支持的浏览器操作: {action}"}
     if action == "navigate" and not url:
         return {"ok": False, "error": "navigate 操作需要 url"}
+    if action == "console" and not url:
+        return {"ok": False, "error": "console 操作需要 url"}
     if action in {"click", "type", "scroll"} and not selector:
         return {"ok": False, "error": f"{action} 操作需要 selector"}
     if action == "type" and not text:
         return {"ok": False, "error": "type 操作需要 text"}
+    if action == "press" and not text:
+        return {"ok": False, "error": "press 操作需要按键（如 Enter/Escape，可按需带 selector 定位）"}
     return None
 
 
@@ -119,6 +125,35 @@ def _run_playwright(payload: dict[str, Any]) -> dict[str, Any]:
                     page.fill(selector, text)
                 elif action == "scroll":
                     page.locator(selector).scroll_into_view_if_needed(timeout=timeout)
+                elif action == "press":
+                    page.press(selector or "body", text)
+                elif action == "get_images":
+                    images = page.evaluate(
+                        "() => Array.from(document.images).map(img => ({"
+                        "src: img.currentSrc || img.src,"
+                        "alt: img.alt || '',"
+                        "width: img.naturalWidth || 0,"
+                        "height: img.naturalHeight || 0}))"
+                    )
+                    return {
+                        "ok": True,
+                        "action": action,
+                        "images": images,
+                        "count": len(images),
+                    }
+                elif action == "console":
+                    collected = []
+                    page.on("console", lambda msg: collected.append(msg.text[:500]))
+                    page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+                    import time as _time
+
+                    _time.sleep(wait_ms / 1000 if wait_ms else 0.3)
+                    return {
+                        "ok": True,
+                        "action": action,
+                        "console": collected,
+                        "count": len(collected),
+                    }
                 if wait_ms:
                     page.wait_for_timeout(wait_ms)
                 title = page.title() or ""

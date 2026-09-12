@@ -42,9 +42,11 @@ from .recycle_bin import RecycleBin
 from .schedule_task import ScheduleTask, ScheduleTaskRun
 from .model_pool_entity import ModelPoolConfig
 from .model_provider_entity import ModelProviderConfig
+from .desktop_device import DesktopDevice
 
 __all__ = [
     "ModelPoolConfig", "ModelProviderConfig",
+    "DesktopDevice",
     "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "UserMemory", "ExternalDataSource",
     "ToolConfirmation",
     "App", "AppAssignment", "AppConfig", "AppConfigVersion",

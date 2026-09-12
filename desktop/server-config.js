@@ -1,7 +1,10 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
-const DEFAULT_ENTRY_ORIGIN = 'https://openllm.cloud'
+// 内置入口域名：桌面端首次启动从这里拉取 desktop-config 决定 API 地址。
+// 生产默认 openllm.cloud；开发/自测可用环境变量 DESKTOP_ENTRY_ORIGIN 覆盖
+// （如 http://127.0.0.1 指向本地后端，admin 端可配桌面连接地址后自动跟随）。
+const DEFAULT_ENTRY_ORIGIN = process.env.DESKTOP_ENTRY_ORIGIN || 'https://openllm.cloud'
 const FETCH_TIMEOUT_MS = 8000
 
 async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath, fetchImpl } = {}) {
@@ -22,7 +25,7 @@ async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath,
         const cfg = {
           api_origin: String(data.api_origin).replace(/\/+$/, ''),
           api_prefix: data.api_prefix || '/api',
-          app_name: data.app_name || '钰心AI',
+          app_name: data.app_name || '钰见我',
         }
         if (cachePath) {
           fs.mkdirSync(path.dirname(cachePath), { recursive: true })
@@ -41,7 +44,7 @@ async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath,
       // 缓存损坏忽略
     }
   }
-  return { api_origin: entryOrigin, api_prefix: '/api', app_name: '钰心AI' }
+  return { api_origin: entryOrigin, api_prefix: '/api', app_name: '钰见我' }
 }
 
 module.exports = { loadServerConfig, DEFAULT_ENTRY_ORIGIN }

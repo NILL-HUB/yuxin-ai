@@ -38,20 +38,32 @@ def _normalize_text(value: Any) -> str:
 
 
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
-    bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
-    if bridge_url and bridge_token:
+    # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
+    from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
+
+    resolved = resolve_desktop_bridge(payload.get("requester"), purpose="/control")
+    if resolved:
+        bridge_url, bridge_token = resolved
         endpoint = bridge_url.rstrip("/")
         token = bridge_token
     else:
-        endpoint = _normalize_text(os.getenv("COMPUTER_CONTROL_URL"))
-        token = _normalize_text(os.getenv("COMPUTER_CONTROL_TOKEN"))
+        # 2.回退静态配置
+        bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
+        bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
+        if bridge_url and bridge_token:
+            endpoint = bridge_url.rstrip("/")
+            token = bridge_token
+        else:
+            endpoint = _normalize_text(os.getenv("COMPUTER_CONTROL_URL"))
+            token = _normalize_text(os.getenv("COMPUTER_CONTROL_TOKEN"))
     if not endpoint or not token:
         return {
             "ok": False,
-            "error": "DESKTOP_BRIDGE_URL/TOKEN 或 COMPUTER_CONTROL_URL/TOKEN 未配置，计算机控制默认关闭",
+            "error": "未找到可用的桌面设备连接（当前账号未注册在线设备），"
+                     "且 DESKTOP_BRIDGE_URL/TOKEN、COMPUTER_CONTROL_URL/TOKEN 均未配置",
         }
-    url = endpoint.rstrip("/") + "/control"
+    # 桌面桥自带 /control 路由；直连 worker 时才补路径
+    url = endpoint if endpoint.rstrip("/").endswith("/control") else endpoint.rstrip("/") + "/control"
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -86,9 +98,13 @@ class ComputerActionTool(BaseTool):
         "需要平台配置 COMPUTER_CONTROL_URL / COMPUTER_CONTROL_TOKEN 且按高风险审批。"
     )
     args_schema: type[BaseModel] = ComputerActionInput
+    requester: str = ""
 
     def _run(self, **kwargs: Any) -> str:
-        payload = {"actions": list(kwargs.get("actions") or [])}
+        payload = {
+            "actions": list(kwargs.get("actions") or []),
+            "requester": _normalize_text(kwargs.get("requester") or self.requester),
+        }
         result = _call_worker(payload)
         return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -98,4 +114,6 @@ class ComputerActionTool(BaseTool):
 
 def computer_action(**kwargs: Any) -> BaseTool:
     """工厂函数：返回计算机控制工具。"""
-    return ComputerActionTool()
+    return ComputerActionTool(
+        requester=_normalize_text(kwargs.get("requester")),
+    )

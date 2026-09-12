@@ -75,3 +75,65 @@ def test_os_recycle_bin_uses_desktop_bridge(monkeypatch):
     assert result["ok"] is True
     assert captured["url"] == "http://127.0.0.1:9876/recycle"
     assert captured["auth"] == "Bearer bridge-token"
+
+
+def test_os_recycle_bin_appends_recycle_path_for_os_automation_url(monkeypatch):
+    """OS_AUTOMATION_URL 分支必须拼接 /recycle（回归：曾直接使用该 URL 导致 404）。"""
+    monkeypatch.delenv("DESKTOP_BRIDGE_URL", raising=False)
+    monkeypatch.delenv("DESKTOP_BRIDGE_TOKEN", raising=False)
+    monkeypatch.setenv("OS_AUTOMATION_URL", "http://worker:8765")
+    monkeypatch.setenv("OS_AUTOMATION_TOKEN", "os-token")
+    captured = {}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true,"entries":[],"count":0}'
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["auth"] = request.headers.get("Authorization")
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    result = json.loads(OsRecycleBinTool()._run(op="list"))
+
+    assert result["ok"] is True
+    assert captured["url"] == "http://worker:8765/recycle"
+    assert captured["auth"] == "Bearer os-token"
+
+
+def test_os_recycle_bin_tolerates_trailing_slash_in_os_automation_url(monkeypatch):
+    """OS_AUTOMATION_URL 以 / 结尾时不应拼出双斜杠。"""
+    monkeypatch.delenv("DESKTOP_BRIDGE_URL", raising=False)
+    monkeypatch.delenv("DESKTOP_BRIDGE_TOKEN", raising=False)
+    monkeypatch.setenv("OS_AUTOMATION_URL", "http://worker:8765/")
+    monkeypatch.setenv("OS_AUTOMATION_TOKEN", "os-token")
+    captured = {}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true,"entries":[],"count":0}'
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    result = json.loads(OsRecycleBinTool()._run(op="list"))
+
+    assert result["ok"] is True
+    assert captured["url"] == "http://worker:8765/recycle"

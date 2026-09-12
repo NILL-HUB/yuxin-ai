@@ -6,11 +6,12 @@ type DesktopCredentialBridge = {
   getCredential: () => Promise<string | null>
   setCredential: (token: string) => Promise<unknown>
   clearCredential: () => Promise<unknown>
+  registerDevice?: () => Promise<unknown>
 }
 
 const resolveDesktopBridge = (): DesktopCredentialBridge | null => {
   if (typeof window === 'undefined') return null
-  const bridge = (window as unknown as { yuxinDesktop?: DesktopCredentialBridge }).yuxinDesktop
+  const bridge = (window as unknown as { yujianwoDesktop?: DesktopCredentialBridge }).yujianwoDesktop
   if (!bridge?.getCredential || !bridge?.setCredential || !bridge?.clearCredential) return null
   return bridge
 }
@@ -49,5 +50,10 @@ export const syncCredentialToDesktop = (credential: CredentialLike | null): Prom
   if (!accessToken) {
     return bridge.clearCredential().catch(() => undefined)
   }
-  return bridge.setCredential(accessToken).catch(() => undefined)
+  // 登录成功即注册本机设备：setCredential 落盘后主动触发一次设备注册，
+  // 使服务端能按账号动态解析本机 bridge（避免启动时无凭证导致漏注册）。
+  return bridge
+    .setCredential(accessToken)
+    .then(() => (bridge.registerDevice ? bridge.registerDevice() : undefined))
+    .catch(() => undefined)
 }

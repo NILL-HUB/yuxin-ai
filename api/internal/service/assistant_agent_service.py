@@ -966,6 +966,22 @@ class AssistantAgentService(BaseService):
             except Exception:
                 logger.warning("构建本机 OS 文件操作工具失败，不影响其他工具", exc_info=True)
 
+        # 计算机控制：按 requester（账号）动态解析该账号已注册的桌面设备 bridge，
+        # 解决桌面端随机 token 无法静态配置到服务端的断链问题。未注册在线设备时
+        # _call_worker 会回退静态环境变量并给出明确错误。高风险，仍需用户逐次确认。
+        if self.app_config_service is not None:
+            try:
+                cc_tool_factory = (
+                    self.app_config_service.builtin_provider_manager.get_tool(
+                        "computer_control",
+                        "computer_action",
+                    )
+                )
+                if cc_tool_factory is not None:
+                    tools.append(cc_tool_factory(requester=str(account_id)))
+            except Exception:
+                logger.warning("构建计算机控制工具失败，不影响其他工具", exc_info=True)
+
         # 语音工具：Agent 可朗读回复或转写语音输入。
         if self.app_config_service is not None:
             try:
@@ -1924,8 +1940,27 @@ class AssistantAgentService(BaseService):
                 if started_at
                 else int(float((msg.latency if msg else 0) or 0) * 1000)
             )
+            # 回填真实算力：以 billing_reconciliation（task_id=message.id，按真实模型售价
+            # 结算）为准；无对账行时退化为消息 token 估算（1000 token = 1 算力），
+            # 不再把 total_token_count 原样当作 estimated_credits（该字段实测恒为 0，
+            # 是“路由日志总积分 0”的根因）。
+            actual_credits = 0
+            try:
+                from internal.model.billing import BillingReconciliation
+                recon = (
+                    self.db.session.query(BillingReconciliation)
+                    .filter(BillingReconciliation.task_id == str(message.id))
+                    .first()
+                )
+                if recon is not None:
+                    actual_credits = int(recon.estimated_credits or 0)
+            except Exception:
+                actual_credits = 0
+            if actual_credits <= 0:
+                actual_credits = int(((msg.total_token_count if msg else 0) or 0) / 1000)
             cost_summary = {
-                "estimated_credits": float((msg.total_token_count if msg else 0) or 0),
+                "estimated_credits": float(actual_credits),
+                "actual_credits": float(actual_credits),
                 "total_tokens": int((msg.total_token_count if msg else 0) or 0),
                 "answer_token_count": int((msg.answer_token_count if msg else 0) or 0),
                 "message_token_count": int((msg.message_token_count if msg else 0) or 0),
