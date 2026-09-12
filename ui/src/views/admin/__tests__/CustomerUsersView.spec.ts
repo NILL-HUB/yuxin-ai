@@ -10,10 +10,6 @@ const mocks = vi.hoisted(() => ({
   disableCustomerUser: vi.fn(),
   enableCustomerUser: vi.fn(),
   revokeCustomerUserSessions: vi.fn(),
-  listUserAppAssignments: vi.fn(),
-  assignAppsToUser: vi.fn(),
-  revokeUserAppAssignment: vi.fn(),
-  listAdminApps: vi.fn(),
   messageSuccess: vi.fn(),
   messageError: vi.fn(),
 }))
@@ -23,16 +19,6 @@ vi.mock('@/services/admin-customer-users', () => ({
   disableCustomerUser: mocks.disableCustomerUser,
   enableCustomerUser: mocks.enableCustomerUser,
   revokeCustomerUserSessions: mocks.revokeCustomerUserSessions,
-}))
-
-vi.mock('@/services/admin-app-assignments', () => ({
-  listUserAppAssignments: mocks.listUserAppAssignments,
-  assignAppsToUser: mocks.assignAppsToUser,
-  revokeUserAppAssignment: mocks.revokeUserAppAssignment,
-}))
-
-vi.mock('@/services/admin-apps', () => ({
-  listAdminApps: mocks.listAdminApps,
 }))
 
 vi.mock('@arco-design/web-vue', () => ({
@@ -133,10 +119,6 @@ const renderView = async () => {
     list: [user, disabledUser],
     paginator: { total_record: 2, total_page: 1, current_page: 1, page_size: 20 },
   })
-  mocks.listUserAppAssignments.mockResolvedValue({
-    list: [{ id: 'assignment-1', app_id: 'app-1', account_id: 'user-1', assigned_by: 'admin-1', status: 'active', assigned_at: 1893456000, revoked_at: null, app: { id: 'app-1', name: '合同审查助手', icon: '', description: '', status: 'published', is_public: false } }],
-  })
-  mocks.listAdminApps.mockResolvedValue({ list: [{ id: 'app-2', name: 'App 2', icon: '', description: '', status: 'published', is_public: false }] })
   const pinia = createPinia()
   setActivePinia(pinia)
   useAdminStore(pinia).update({
@@ -234,35 +216,5 @@ describe('CustomerUsersView', () => {
 
     expect(mocks.revokeCustomerUserSessions).toHaveBeenCalledWith('user-1')
     expect(mocks.messageSuccess).toHaveBeenCalledWith('已踢下线 2 个会话')
-  })
-
-  it('loads assignments and assigns app to user', async () => {
-    mocks.assignAppsToUser.mockResolvedValue({ assigned: 1, reactivated: 0, skipped: 0, list: [] })
-    const wrapper = await renderView()
-
-    await wrapper.findAll('button').find((button) => button.text() === '分配应用')?.trigger('click')
-    await flushPromises()
-    expect(mocks.listUserAppAssignments).toHaveBeenCalledWith('user-1')
-    expect(wrapper.text()).toContain('合同审查助手')
-
-    await wrapper.find('.a-drawer input').setValue('app-2')
-    await wrapper.findAll('button').find((button) => button.text() === '确认分配')?.trigger('click')
-    await flushPromises()
-
-    expect(mocks.assignAppsToUser).toHaveBeenCalledWith('user-1', ['app-2'])
-    expect(mocks.messageSuccess).toHaveBeenCalledWith('应用已分配')
-  })
-
-  it('revokes assigned app from user', async () => {
-    mocks.revokeUserAppAssignment.mockResolvedValue({ id: 'assignment-1', status: 'revoked' })
-    const wrapper = await renderView()
-
-    await wrapper.findAll('button').find((button) => button.text() === '分配应用')?.trigger('click')
-    await flushPromises()
-    await wrapper.findAll('button').find((button) => button.text() === '撤销')?.trigger('click')
-    await flushPromises()
-
-    expect(mocks.revokeUserAppAssignment).toHaveBeenCalledWith('user-1', 'assignment-1')
-    expect(mocks.messageSuccess).toHaveBeenCalledWith('应用分配已撤销')
   })
 })

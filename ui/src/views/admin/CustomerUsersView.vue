@@ -12,9 +12,6 @@ import {
   setCustomerUserSuperior,
   updateCustomerUser,
 } from '@/services/admin-customer-users'
-import { assignAppsToUser, listUserAppAssignments, revokeUserAppAssignment } from '@/services/admin-app-assignments'
-import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
-import { type AppAssignment } from '@/models/app-assignment'
 import { getErrorMessage } from '@/utils/error'
 import { type CustomerUser, type CustomerUserStatus } from '@/models/admin-customer-user'
 import { useAdminStore } from '@/stores/admin'
@@ -47,12 +44,6 @@ const form = ref({
 // 删除确认
 const deleteReason = ref('')
 
-// 应用分配弹窗
-const selectedAssignmentUser = ref<CustomerUser | null>(null)
-const assignments = ref<AppAssignment[]>([])
-const assignmentAppIds = ref<string[]>([])
-const availableApps = ref<AdminAppRecord[]>([])
-
 // 上级绑定抽屉
 const selectedSuperiorUser = ref<CustomerUser | null>(null)
 const superiorInviterId = ref('')
@@ -82,10 +73,6 @@ const columns = computed(() => [
   { title: t('admin.customerUsers.actions'), slotName: 'actions', width: 480 },
 ])
 
-const appOptions = computed(() =>
-  availableApps.value.map((app) => ({ label: app.name, value: app.id })),
-)
-
 const loadUsers = async () => {
   loading.value = true
   try {
@@ -96,15 +83,6 @@ const loadUsers = async () => {
     Message.error(getErrorMessage(error, t('admin.customerUsers.loadFailed')))
   } finally {
     loading.value = false
-  }
-}
-
-const loadAvailableApps = async () => {
-  try {
-    const data = await listAdminApps({ current_page: 1, page_size: 100, status: 'all' })
-    availableApps.value = data.list || []
-  } catch {
-    availableApps.value = []
   }
 }
 
@@ -157,57 +135,6 @@ const handleRevokeSessions = async (user: CustomerUser) => {
     Message.success(t('admin.customerUsers.sessionsRevoked', { count: response.revoked_sessions }))
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.customerUsers.revokeSessionsFailed')))
-  } finally {
-    actionLoading.value = false
-  }
-}
-
-const openAssignments = async (user: CustomerUser) => {
-  selectedAssignmentUser.value = user
-  assignmentAppIds.value = []
-  actionLoading.value = true
-  try {
-    const response = await listUserAppAssignments(user.id)
-    assignments.value = response.list
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.customerUsers.loadAssignmentsFailed')))
-  } finally {
-    actionLoading.value = false
-  }
-}
-
-const closeAssignments = () => {
-  selectedAssignmentUser.value = null
-  assignments.value = []
-  assignmentAppIds.value = []
-}
-
-const handleAssignApps = async () => {
-  if (!selectedAssignmentUser.value || assignmentAppIds.value.length === 0) return
-  actionLoading.value = true
-  try {
-    await assignAppsToUser(selectedAssignmentUser.value.id, assignmentAppIds.value)
-    assignmentAppIds.value = []
-    Message.success(t('admin.customerUsers.appAssigned'))
-    const response = await listUserAppAssignments(selectedAssignmentUser.value.id)
-    assignments.value = response.list
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.customerUsers.assignFailed')))
-  } finally {
-    actionLoading.value = false
-  }
-}
-
-const handleRevokeAssignment = async (assignment: AppAssignment) => {
-  if (!selectedAssignmentUser.value) return
-  actionLoading.value = true
-  try {
-    await revokeUserAppAssignment(selectedAssignmentUser.value.id, assignment.id)
-    Message.success(t('admin.customerUsers.assignmentRevoked'))
-    const response = await listUserAppAssignments(selectedAssignmentUser.value.id)
-    assignments.value = response.list
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.customerUsers.revokeAssignmentFailed')))
   } finally {
     actionLoading.value = false
   }
@@ -458,7 +385,6 @@ const handleUnbindSuperior = async () => {
 
 onMounted(async () => {
   await loadUsers()
-  await loadAvailableApps()
 })
 </script>
 
@@ -574,7 +500,6 @@ onMounted(async () => {
                   :loading="actionLoading"
                   @click="handleRevokeSessions(record)"
                 >{{ t('admin.customerUsers.revokeSessions') }}</a-button>
-                <a-button size="mini" type="primary" :loading="actionLoading" @click="openAssignments(record)">{{ t('admin.customerUsers.assignApp') }}</a-button>
                 <a-button v-if="canManageDistribution" size="mini" :loading="actionLoading" @click="openSuperior(record)">{{ t('admin.customerUsers.superior') }}</a-button>
                 <a-button
                   v-if="canDeleteUser"
@@ -602,61 +527,6 @@ onMounted(async () => {
         @page-size-change="onPageSizeChange"
       />
     </div>
-
-    <!-- 应用分配抽屉 -->
-    <a-drawer
-      :visible="!!selectedAssignmentUser"
-      :width="560"
-      :title="t('admin.customerUsers.assignTitle', { name: selectedAssignmentUser?.name || selectedAssignmentUser?.email || '' })"
-      @cancel="closeAssignments"
-    >
-      <div class="space-y-4">
-        <!-- 分配新应用 -->
-        <div class="rounded-lg border bg-gray-50 p-4">
-          <div class="text-sm font-medium text-gray-700 mb-2">{{ t('admin.customerUsers.assignDesc') }}</div>
-          <div class="flex gap-2">
-            <a-select
-              v-model="assignmentAppIds"
-              :options="appOptions"
-              multiple
-              allow-search
-              :placeholder="t('admin.customerUsers.appSelectPlaceholder')"
-              class="flex-1"
-            />
-            <a-button type="primary" :loading="actionLoading" :disabled="assignmentAppIds.length === 0" @click="handleAssignApps">{{ t('admin.customerUsers.confirmAssign') }}</a-button>
-          </div>
-        </div>
-
-        <!-- 已分配列表 -->
-        <div class="space-y-2">
-          <div class="text-sm font-medium text-gray-700">{{ t('admin.customerUsers.assignedApps') }}</div>
-          <div v-if="assignments.length === 0" class="text-sm text-gray-400 py-4 text-center">{{ t('admin.customerUsers.noAssignments') }}</div>
-          <div
-            v-for="assignment in assignments"
-            :key="assignment.id"
-            class="flex items-center justify-between rounded-lg border bg-white p-3"
-          >
-            <div class="flex items-center gap-3 min-w-0">
-              <a-avatar :size="32" shape="square">{{ (assignment.app?.name || assignment.app_id || '?').charAt(0).toUpperCase() }}</a-avatar>
-              <div class="flex flex-col min-w-0">
-                <span class="font-medium text-gray-900 truncate">{{ assignment.app?.name || assignment.app_id }}</span>
-                <span class="text-xs text-gray-500">
-                  {{ assignment.status === 'active' ? t('admin.customerUsers.assigned') : t('admin.customerUsers.revoked') }}
-                  · {{ formatTime(assignment.assigned_at) }}
-                </span>
-              </div>
-            </div>
-            <a-button
-              v-if="assignment.status === 'active'"
-              size="mini"
-              status="danger"
-              :loading="actionLoading"
-              @click="handleRevokeAssignment(assignment)"
-            >{{ t('admin.customerUsers.revoke') }}</a-button>
-          </div>
-        </div>
-      </div>
-    </a-drawer>
 
     <!-- 上级绑定抽屉 -->
     <a-drawer

@@ -1,10 +1,9 @@
 export default  {
     title: 'My Apps',
-    description: 'Apps assigned by admins and apps you added from the App Store.',
-    empty: 'No apps yet. Add one from the App Store or ask an admin to assign one.',
+    description: 'Apps you added from the App Store.',
+    empty: 'No apps yet. Add one from the App Store.',
     loadFailed: 'Failed to load my apps',
     sendFailed: 'Failed to send message',
-    sourceAssigned: 'Assigned',
     sourceForked: 'From Store',
     noDescription: 'No description',
     chatEmpty: 'Send a message to start the conversation',

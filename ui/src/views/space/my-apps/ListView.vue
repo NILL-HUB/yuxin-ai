@@ -2,7 +2,7 @@
 /**
  * 我的应用 — 视觉对齐画布原型 my-apps.html。
  *
- * 数据来源：真实接口 listMyApps（管理员分配 + 商店添加双来源）。
+ * 数据来源：真实接口 listMyApps（本人从应用商店添加的 fork 副本）。
  * 可见性：仅展示 `status === published` 的应用（草稿不具备上架资格）。
  * - 列表视图：粉调大圆角应用卡片网格 + 搜索过滤，点击「打开」进入对话
  * - 对话视图：直接复用现成 agent 聊天框（MyAppChatPanel），
@@ -53,12 +53,7 @@ const filteredApps = computed(() => {
   )
 })
 
-const sourceLabel = (app: MyApp) => {
-  return app.source === 'forked' ? t('myApps.sourceForked') : t('myApps.sourceAssigned')
-}
-
-/** 原型：分叉 = 商店添加；分配 = 管理员分配 */
-const isForked = (app: MyApp) => app.source === 'forked'
+const sourceLabel = () => t('myApps.sourceForked')
 
 const openApp = (app: MyApp) => {
   activeApp.value = app
@@ -160,12 +155,10 @@ onMounted(loadApps)
                 <span v-else class="my-app-letter text-lg font-semibold">{{ firstChar(app.name) }}</span>
               </div>
               <span
-                class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-                :class="isForked(app) ? 'my-badge-fork' : 'my-badge-assign'"
+                class="my-badge-fork inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
               >
-                <icon-branch v-if="isForked(app)" class="h-3 w-3" />
-                <icon-user v-else class="h-3 w-3" />
-                {{ sourceLabel(app) }}
+                <icon-branch class="h-3 w-3" />
+                {{ sourceLabel() }}
               </span>
             </div>
 
@@ -230,10 +223,9 @@ onMounted(loadApps)
           <div class="flex items-center gap-2">
             <span class="truncate text-sm font-semibold text-text">{{ activeApp.name }}</span>
             <span
-              class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
-              :class="isForked(activeApp) ? 'my-badge-fork' : 'my-badge-assign'"
+              class="my-badge-fork inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
             >
-              {{ sourceLabel(activeApp) }}
+              {{ sourceLabel() }}
             </span>
           </div>
         </div>
@@ -243,7 +235,7 @@ onMounted(loadApps)
         :key="activeApp.id"
         class="flex-1 min-h-0"
         :app="activeApp"
-        :source-label="sourceLabel(activeApp)"
+        :source-label="sourceLabel()"
       />
     </div>
   </div>
@@ -304,10 +296,6 @@ onMounted(loadApps)
 .my-badge-fork {
   background: var(--aicss-accent-soft);
   color: var(--aicss-brand-text, var(--aicss-accent-text));
-}
-.my-badge-assign {
-  background: var(--aicss-surface-2);
-  color: var(--aicss-text-2);
 }
 
 /* 状态徽标 */

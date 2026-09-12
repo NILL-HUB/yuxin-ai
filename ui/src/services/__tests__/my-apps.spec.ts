@@ -13,7 +13,7 @@ describe('my apps service', () => {
     vi.clearAllMocks()
   })
 
-  it('lists my assigned AI apps', async () => {
+  it('lists my forked AI apps', async () => {
     vi.mocked(request.get).mockResolvedValue({
       code: 'success',
       message: '',
@@ -38,7 +38,7 @@ describe('my apps service', () => {
     expect(res.data.list).toEqual([])
   })
 
-  it('chats with my assigned AI app through SSE', async () => {
+  it('chats with my forked AI app through SSE', async () => {
     const onData = vi.fn()
     vi.mocked(request.ssePost).mockResolvedValue(undefined as never)
 

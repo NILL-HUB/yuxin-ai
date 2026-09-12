@@ -58,12 +58,11 @@ describe('my-apps ListView', () => {
         list: [
           {
             id: 'app-1',
-            assignment_id: 'asg-1',
             name: '智能写作助手',
             icon: '',
             description: '帮你写各种文案',
-            assigned_at: 1893456000,
-            source: 'assigned',
+            created_at: 1893456000,
+            source: 'forked',
             status: 'published',
             can_edit: false,
           },
@@ -96,12 +95,11 @@ describe('my-apps ListView', () => {
         list: [
           {
             id: 'app-1',
-            assignment_id: 'asg-1',
             name: '智能写作助手',
             icon: '',
             description: '帮你写各种文案',
-            assigned_at: 1893456000,
-            source: 'assigned',
+            created_at: 1893456000,
+            source: 'forked',
             status: 'published',
             can_edit: false,
           },
