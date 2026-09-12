@@ -96,7 +96,7 @@
 | 9 | 设备控制：**对话里让小钰操作电脑** | ✅ 真可用 | §4.1 断链已修复：桌面端登录后注册设备，服务端按账号动态解析 bridge（端到端实测通过） |
 | 10 | 电脑控制"不打扰本机"（后台控制） | ✅ 真可用 | §4.2 已闭环：桌面端主进程托管 cua-driver daemon + 二进制随包分发（实测背景点击不抢焦点/不动真实光标） |
 | 11 | 知识库视频素材 | ⚠️ 半可用 | 仅存储，**不解析/不抽帧/不入库**（设计后置） |
-| 12 | 我的应用列表 | 🎭 **壳子** | `my-apps/ListView.vue` 整页 mock 假数据，真实接口 `listMyApps` 已存在未接 |
+| 12 | 我的应用列表 | ✅ 真可用 | `my-apps/ListView.vue` 已接真实接口 `GET /my/apps`（分配 + 商店添加双来源），mock 数据已移除 |
 | 13 | 知识库「外部数据源」弹窗 | 🎭 **壳子** | `ExternalDataSourceModal.vue` 全 mock；真实页面与接口已存在未打通 |
 | 14 | 工作流商店预览 | ⚠️ 断链 | 跳转路由 `store-workflows-preview` 未注册，点击必报错 |
 | 15 | 用户共创 Studio | ⛔ 占位页 | `/studio` 仅占位，侧边栏仍给入口 |
@@ -115,7 +115,7 @@
 ## 四、曾经失效的问题（已修复）
 
 > 这几项曾**文档宣称已实现、实际不通或静默失效**，是"皮套壳子"风险的集中区。
-> 下列 §4.1 ~ §4.3 已于本轮修复并端到端验证；§4.4 仍待处理。
+> 下列 §4.1 ~ §4.3 已于本轮修复并端到端验证；§4.4 中的 my-apps 已修复，外部数据源仍待处理。
 
 ### 4.1 【最严重】桌面端 ↔ 服务端 Token 断链（✅ 已修复）
 
@@ -154,10 +154,10 @@ cua-driver 后台控制后端**已实现并通过实测**（后台点击时真�
 原问题：`ai_service._get_account_id()` 固定返回 `None`，导致 prompt 优化/代码助手/schema 助手的 `charge_for_feature` **永不执行**。
 修复：`optimize_prompt` / `code_assistant_chat` / `openapi_schema_assistant_chat` / `mcp_schema_assistant_chat` 四个 classmethod 增加 `account_id` 形参，由路由层传入 `account.id`；已补单测覆盖计费真实触发。
 
-### 4.4 前端两处 mock 冒充真实功能（⚠️ 待处理）
+### 4.4 前端 mock 冒充真实功能（⚠️ 部分待处理）
 
-- [my-apps/ListView.vue](file:///d:/DEMO/openagent-main/ui/src/views/space/my-apps/ListView.vue#L41-L68)：整页 9 条硬编码假应用，`loadApps` 只 `setTimeout` 回填；点击「打开」用假 id 调接口必 404。真实接口 `GET /my/apps` 已实现。
-- [ExternalDataSourceModal.vue](file:///d:/DEMO/openagent-main/ui/src/views/space/datasets/components/ExternalDataSourceModal.vue#L28-L59)：新建/同步/解绑全走 `setTimeout` 假装成功，刷新即丢。真实的 `/external-data-sources` 接口与页面均已存在。
+- ✅ [my-apps/ListView.vue](file:///d:/DEMO/openagent-main/ui/src/views/space/my-apps/ListView.vue)：原整页 9 条硬编码假应用已删除，`loadApps` 改为真实调用 `GET /my/apps`。
+- ⚠️ [ExternalDataSourceModal.vue](file:///d:/DEMO/openagent-main/ui/src/views/space/datasets/components/ExternalDataSourceModal.vue#L28-L59)：新建/同步/解绑全走 `setTimeout` 假装成功，刷新即丢。真实的 `/external-data-sources` 接口与页面均已存在。
 
 ---
 
@@ -178,7 +178,7 @@ cua-driver 后台控制后端**已实现并通过实测**（后台点击时真�
 
 | 阶段 | 目标 | 关键交付 |
 |---|---|---|
-| **P1 底座夯实**（当前） | 让已有能力**真正可用**，消灭壳子与断链 | ✅ 设备 token 链路；✅ AI 计费；✅ cua-driver 打包托管；⏳ 接通 my-apps / 外部数据源 |
+| **P1 底座夯实**（当前） | 让已有能力**真正可用**，消灭壳子与断链 | ✅ 设备 token 链路；✅ AI 计费；✅ cua-driver 打包托管；✅ my-apps 接通；⏳ 外部数据源
 | **P2 生态闭环** | 打通合伙人变现 | 分身审核流、自定价、版本分发；内容板块（图文/上新/展示） |
 | **P3 入口延伸** | 手机端 + 生活服务 | 手机端上线；滴滴/美团等生活服务接入 |
 | **P4 万物智联** | AI + 硬件 | AI 手表/空调/热水器接入；硬件供应商进入供应链矩阵 |
@@ -191,10 +191,11 @@ cua-driver 后台控制后端**已实现并通过实测**（后台点击时真�
 1. ✅ 修复设备 Token 断链（§4.1）——"小钰能替你操作电脑"已成立
 2. ✅ cua-driver 集成与打包（§4.2）——"不打扰本机"已闭环
 3. ✅ 修复 AI 计费（§4.3）——计费已真实触发
-4. 🔴 前端 my-apps / 外部数据源接通真实接口（§4.4）——消灭最显眼的壳子（待处理）
-5. 🟠 工作流商店预览路由修复（§三-14）
-6. 🟡 首页推荐池真实化（§三-23）
-7. 🟡 Studio 占位页处理：要么实现，要么移除侧边栏入口
+4. ✅ 前端 my-apps 接通真实接口（§4.4）——已消灭该壳子
+5. 🔴 前端外部数据源接通真实接口（§4.4）——消灭最后一个显眼壳子（待处理）
+6. 🟠 工作流商店预览路由修复（§三-14）
+7. 🟡 首页推荐池真实化（§三-23）
+8. 🟡 Studio 占位页处理：要么实现，要么移除侧边栏入口
 
 ---
 
