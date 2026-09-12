@@ -533,3 +533,66 @@ ResultSynthesizer 在合成最终回答时，需要融合两类记忆上下文�
 
 当前阶段暂不强制脱敏，但日志结构需要预留脱敏字段和策略开关，方便后续按合规要求启用。
 
+### 15.4 观测中心聚合接口（2026-09 新增）
+
+管理后台「观测中心」板块（路由日志 / 路由质量 / 审计日志 / 回收站 + 首页仪表盘）已翻新为「KPI 概览 + 时间序列 + 维度分布 + 高密度明细」结构。为此在既有分页列表接口之外，新增了 SQL 级全量聚合接口（均支持 `start_at/end_at` 秒级时间戳窗口，naive UTC）：
+
+| 接口 | Service 方法 | 返回要点 |
+| --- | --- | --- |
+| `GET /admin/routing-logs/stats` | `RoutingLogService.stats_overview` | 窗口内全量 `total_count/success_count/fallback_count/success_rate/fallback_rate/total_credits/avg_latency_ms/agent_pool_hit_rate/tool_pool_hit_rate` + `by_status` 分布；可选 `status/invoke_from` 过滤 |
+| `GET /admin/routing-logs/trend` | `RoutingLogService.trend` | `date_trunc(day\|hour)` 时间序列：`request_count/success_count/fallback_count/total_credits/avg_latency_ms` |
+| `GET /admin/routing-logs/distribution` | `RoutingLogService.distribution` | 维度分布（`execution_mode/intent/model_tier/complexity/model/status/invoke_from`），JSONB `#>>` 取值、空值归一 `unknown`，含 `count/credits/avg_latency_ms/percentage` |
+| `GET /admin/routing-quality/metrics` | `RoutingQualityMetricsService.build_metrics` | HTTP 层已接线 `start_at/end_at`（此前仅 service 层支持），整表内存聚合不变 |
+| `GET /admin/audit-logs/overview` | `AuditLogService.overview` | `total` + `by_action/by_resource_type/trend(按日)/top_admins` 聚合 |
+| `GET /admin/recycle-bin/overview` | `RecycleBinService.overview` | `total/pending_total` + `by_status/by_resource_type/by_deleted_by_type` 聚合 |
+| `GET /space/recycle-bin/overview` | `RecycleBinService.user_overview` | 用户端回收站概览：过滤条件与 `list_user_items` 一致（按账号归属 + user/agent 来源 + 用户可见资源类型），同样返回 `total/pending_total` + 三组分布 |
+
+关键语义：
+
+- 与 `routing-logs` 列表接口的 `summary`（仅基于当前页 Python 聚合，`total_count` 除外）不同，`stats_overview` 是**SQL 全量聚合**，修复了首页仪表盘此前「最近 6 条窗口统计冒充全量指标」的误导问题。
+- 成本键兼容 `cost_summary->>'estimated_credits'` 与旧键 `total_credits`（与 cost-stats 一致）。
+- 时间戳统一为秒级；`_normalize_window` 同时接受秒级时间戳/字符串/`datetime` 输入并归一为 naive UTC。
+- 审计与回收站 overview 沿用各表既有索引（`created_at`/`status`/`resource_type`），分布均为 Top N 截断（15/8 等），保证大表下查询可控。
+
+#### 15.4.1 调优建议持久化与可操作闭环（2026-09 修复）
+
+此前 `GET /admin/routing-quality/suggestions` 不带 `status` 时每次**实时生成、不落库、无 `id`**，而 `accept/dismiss/preview/apply` 全部要求 `suggestion_id` 并查库，导致管理端无法对建议做任何操作（数据库 `routing_optimization_suggestion` 恒为空）。本轮修复：
+
+- `RoutingOptimizationSuggestionService` 新增 `sync_open_suggestions(metrics)`：按当前指标实时生成建议后**落库**（open 状态按 `suggestion_type+target_type+target_id` 指纹去重：已存在则刷新 reason/evidence，不存在则插入），返回带 `id` 的可操作建议。
+- 无 `status` 的 `GET /suggestions` 改走 `sync_open_suggestions`；带 `status` 仍走 `list_suggestions` 查库。至此管理端「路由质量」板块与独立「调优建议管理」页（`/admin/routing-quality/suggestions`，已入观测中心侧边菜单）均可完整执行 采纳→预览→驳回→应用 闭环。
+- 语义约束：`collect_more_feedback` 类建议无对应策略配置，前端不提供采纳/应用，仅可驳回；`review_model_cost/review_tool_health/review_fallback_rate` 提供完整操作。
+
+#### 15.4.2 路由日志成本回填修复：`cost_summary.estimated_credits` 全 0（2026-09 修复）
+
+管理端「路由日志」KPI / 列表的算力值此前恒为 0，根因在**写侧回填键错位**：`AssistantAgentService._update_routing_log_execution` 原先把 `message.total_token_count`（该字段在多数执行路径恒为 0）直接当作 `cost_summary.estimated_credits` 写入。真实扣费（按 message 结算）落在 `billing_reconciliation`（`task_id=message.id`，售价口径，由 billing aggregator `final()` 结算，幂等）。
+
+本轮修复：
+
+- **写侧**：`_update_routing_log_execution` 回填前先按 `BillingReconciliation.task_id == message.id` 查询真实结算 `estimated_credits`；无对账行时退化为 `total_token_count / 1000` 估算；同时写入 `actual_credits` 同值，不再把 token 数当作算力值。
+- **读侧**（保持）：`routing_log_service._credits_sql_expr` 已按 `estimated_credits` → 旧键 `total_credits` 顺序读取，`stats_overview / trend / distribution / page.summary` 统一走该表达式，无需改动。
+- **前端**：RoutingLogsView 明细/列表展示新增 `displayCost()` 兼容 `estimated_credits / actual_credits / total_credits / credits` 多键读取。
+- **存量数据**：一次性 SQL 回填（`UPDATE routing_log SET cost_summary = jsonb_set(...) FROM billing_reconciliation`）把已有行中 `estimated_credits` 为 0 但存在对账行的记录修正为真实结算值。
+- 文案统一：管理端全部「积分 / 总 credits」中文展示改为「算力值 / 总算力值」（i18n `zh-CN.ts`）。
+
+#### 15.4.3 计费重复进位修复：同任务同模型调用合并后再 ceil（2026-09 修复）
+
+**问题**：底层计费以「单次模型调用」为最小单元独立向上取整——`pricing_engine.plan_usage` 对每次调用 `math.ceil(金额×credits_per_yuan)`，`billing_aggregator.final()` 又对每条 usage event **逐条** `consume_for_feature`。一次任务内含多次模型调用（Agent 多轮/工具循环）时，每笔不足 1 算力的小调用都进位收 1，多次重复进位造成系统性多收。
+
+**实测量化（NILL 账号，1,765 笔消费流水）**：按 desc token 逐笔 `ceil(token/1000)` 合计 **2,094**，按任务合并 token 后 `ceil` 合计 **1,373**——逐笔进位虚增约 **721 算力（约 34%）**。典型案例：「查北京天气」441,028 token 合并应收 442 算力、实际逐笔收 692（多 250）；每日 AI 头条 324,921 token 合并应收 325、实收 515（多 190）。
+
+**修复**：
+- `BillingUsageAggregator.final()`（`billing_metering_service.py`）：同任务扣费前先按 `model_id` 合并 usage_event 的 input/output/cached token，每组一次 `consume_for_feature`（一次 ceil）；幂等键改为 `{task_id}:{model_id}:merged`。
+- `BillingReconciliationService.settle()`：结算重算同样先按 `model_id` 合并 token 再 `plan_usage`（一次 ceil），`diff = 合并后实际 - 逐条预扣` 为负时经 `adjust_credits` 自动退还多收（历史已 settle 行不自动重算）。
+- 不变量：单任务内**不同模型**仍分开计价（各自合并）；`save_agent_thoughts` 的 `consume_for_message`（按整条消息汇总 token 单次扣费）本已是任务级合并，不受影响。
+
+**回归测试**：`test_final_should_pass_feature_key_and_token_count_to_consume`（同任务两笔 750+750 token 合并为一次 1500 扣费）、`test_settle_merges_same_model_events_before_ceil`（两笔 400 token 合并 800 → ceil 1，diff=-1 退还）。
+
+### 15.5 Agent 本机文件回收站（os_recycle_bin）修复记录（2026-09）
+
+「Agent 删除本机文件 → 用户回收站恢复」链路在端到端测试中发现并修复两个缺陷：
+
+1. **URL 拼接缺陷（`os_recycle_bin` 工具）**：`OsRecycleBinTool._call_worker` 在 `OS_AUTOMATION_URL` 分支未拼接 `/recycle` 路径，请求落到 worker 根路径返回 404 `not_found`，导致 Agent 删除本机文件失败（DESKTOP_BRIDGE_URL 分支因显式拼接 `/recycle` 正常）。修复为两分支统一在末尾拼接 `/recycle`（桥接分支 URL 已含则不再重复）。回归测试：`test_os_recycle_bin_appends_recycle_path_for_os_automation_url` / `test_os_recycle_bin_tolerates_trailing_slash_in_os_automation_url`。
+2. **resource_name 跨平台缺陷（`RecycleBinService.record_os_file_deletion`）**：取文件名用 `os.sep` 分割，宿主机为 Windows 路径（`\`）而服务运行在 Linux 容器（`/`）时返回完整路径。修复为同时按 `\` 与 `/` 分割取末段。回归测试：`test_record_os_file_deletion_uses_basename_across_path_separators`。
+
+端到端验证（NILL 账号，agent 来源 os_file）：删除 3 个测试文件 → 平台回收站记录（agent 来源、7 天留存、归属 NILL）→ 用户端列表可见 → 全部恢复成功、文件回到原位置、状态变 `restored`、overview 聚合正确。
+

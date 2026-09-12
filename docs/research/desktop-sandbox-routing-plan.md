@@ -158,14 +158,14 @@ computer worker 增加 `cua-driver` 后端（`cua-driver mcp` stdio 客户端）
    - `os_recycle_bin`（delete 移入回收站 / list / restore / purge）；
    - `os_snapshot`（rollback_file / rollback_turn / list_snapshots）。
    删除类命令检测（delete_guard 等）已随 run_os_task 链路一并删除，不再需要明文命令拦截。
-2. 删除文件的唯一出口是 `os_recycle_bin`（worker `/recycle` → `.yuxin_ai_recycle`，可恢复）；修改的唯一出口是 `os_file_task`（V4A apply 写前快照，`.yuxin_ai_snapshots`，可回滚）。
+2. 删除文件的唯一出口是 `os_recycle_bin`（worker `/recycle` → `.yujianwo_recycle`，可恢复）；修改的唯一出口是 `os_file_task`（V4A apply 写前快照，`.yujianwo_snapshots`，可回滚）。
 3. 兜底闭环：误删 → `os_recycle_bin list` + `restore`；改错 → `os_snapshot rollback_file` / `rollback_turn`。快照与回收站均存宿主机本机，默认留存 7 天。
 
 > 权限放开边界（现状，2026-09-08）：回收站只兜底"删错了"，兜不了"读走了"。写/删动作已放开
 > （靠快照+回收站自愈闭环兜底），但**读取面由 worker 敏感路径黑名单兜底**：`os_file_task`
 > read/search 命中敏感路径（`~/.ssh` 私钥、`.env` 密钥文件、浏览器凭据目录
-> `User Data`/`Login Data`/`logins.json`、`.aws`/`.kube`/`.gnupg` 等凭据目录、`.yuxin_ai_recycle`
-> `.yuxin_ai_snapshots` 自管目录）直接拒绝，不返回任何内容；search 用 rg 排除 glob 跳过敏感
+> `User Data`/`Login Data`/`logins.json`、`.aws`/`.kube`/`.gnupg` 等凭据目录、`.yujianwo_recycle`
+> `.yujianwo_snapshots` 自管目录）直接拒绝，不返回任何内容；search 用 rg 排除 glob 跳过敏感
 > 目录/文件。系统级变更类动作（注册表/装软件/锁屏等，cua-driver/computer 通道）仍保留审批。
 
 ### 4.2 通道 B：云沙箱（阶段 1）

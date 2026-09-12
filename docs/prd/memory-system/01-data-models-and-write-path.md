@@ -1872,7 +1872,7 @@ def _levenshtein_distance(s1: str, s2: str) -> int:
 
 当前记忆写入是**系统自动记录**（`AssistantAgentService._write_memory_from_conversation` 每次对话后后台线程触发 `MemoryWriteService`），Agent 本身没有"什么值得记"的自主权。吸纳 Hermes 的 Agent-Curated 机制，形成"系统自动记录（兜底快路径）+ Agent 自主记忆（精准路径）"双通道。
 
-**修正说明**：钰心AI 已有 `user_memory_retriever` 检索工具（让 Agent 检索用户记忆），以下新增的是**写入工具**，与检索工具配套形成完整的 memory tool 家族。
+**修正说明**：钰见我 已有 `user_memory_retriever` 检索工具（让 Agent 检索用户记忆），以下新增的是**写入工具**，与检索工具配套形成完整的 memory tool 家族。
 
 #### 双通道写入
 

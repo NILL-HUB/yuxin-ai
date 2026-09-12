@@ -4,7 +4,7 @@
 
 ## 结论
 
-Headroom 与钰心AI/OpenAgent 高度适配，而且比 CLI-Anything 更贴近我们的核心运行路径。它解决的是我们最疼的一个问题：工具输出、RAG 检索结果、沙箱产物、长会话历史一起塞进 LLM 上下文，token 成本高且容易逼近上下文窗口。
+Headroom 与钰见我/OpenAgent 高度适配，而且比 CLI-Anything 更贴近我们的核心运行路径。它解决的是我们最疼的一个问题：工具输出、RAG 检索结果、沙箱产物、长会话历史一起塞进 LLM 上下文，token 成本高且容易逼近上下文窗口。
 
 它的价值集中在三个场景：
 
@@ -67,7 +67,7 @@ Headroom 的请求生命周期固定为：Setup → Input Received → Routed �
 - x86 无 AVX2 时自动降级；Windows/Linux/macOS 都有预编译 wheel。
 - 安装依赖两个外部资产：`cdn.pyke.io` 的 ONNX Runtime、HuggingFace 的 Kompress 模型；可预置并离线运行。
 
-## 与钰心AI/OpenAgent 的适配分析
+## 与钰见我/OpenAgent 的适配分析
 
 ### 高度契合的点
 

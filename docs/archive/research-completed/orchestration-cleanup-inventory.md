@@ -1,7 +1,7 @@
 # Agent 编排层清理审计清单
 
 > 审计日期：2026-08-26
-> 范围：钰心 Agent 编排层（Conductor / Orchestrator / ExecutionCoordinator / Executors / AgentQueueManager / 工作流引擎）
+> 范围：钰见我 Agent 编排层（Conductor / Orchestrator / ExecutionCoordinator / Executors / AgentQueueManager / 工作流引擎）
 > 方法：设计文档、执行路线图、运行时代码引用、残留文件四层对账
 > 基线：编排相关后端测试当前共 69 项通过；`npm run build` 通过
 >

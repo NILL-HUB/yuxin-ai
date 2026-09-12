@@ -48,6 +48,16 @@
 
 余额=真金白银（充值+佣金共享），仅用于：购买套餐/算力、提现、自动续费；**不参与算力直接计费**（消费只烧套餐额度→永久算力，双 0 停止并引导充值）。
 
+### 3.1 会员中心（算力账户概览 + 流水）
+
+| 方法/路径 | 说明 |
+|---|---|
+| `GET /membership/summary` | 会员中心聚合概览：`{membership, credit_account{account_id,balance,total_granted,total_consumed}, recent_transactions[10], recent_tasks[6]}`；`recent_tasks` 按任务聚合返回最近 6 条用户提问任务（每任务=用户消息+扣费合计） |
+| `GET /membership/redeem-records` | 卡密兑换记录：`{list:[{code_mask, plan, redeemed_at, membership_expires_at, grant_token_credits}]}` |
+| `GET /membership/credit-transactions?page&page_size` | **算力流水（任务级聚合，分页）**：`{list:[{id,amount,transaction_type,source,source_id,description,created_at,ref_id,tx_count,task_message}], total, total_consumed, page, page_size}`；`total_consumed`=账户全部负向流水（消费）绝对值合计，与 `credit_account.total_consumed` 账本一致 |
+
+> 实现：`api/app/http/user_routes_9.py`；任务聚合逻辑在 `RedeemCodeService.list_credit_transactions / _build_task_flow_rows`。**任务口径**：一次用户提问（message）执行期间产生的多笔模型调用扣费归并为一行——`description/task_message`=用户消息原文，`amount`=该任务全部扣费合计（负值），`tx_count`=内部模型调用笔数；充值/到账（redeem_grant/order_grant）各自成行。归属规则=每条消费归到「不晚于其发生时间的最近一条用户提问」，保证「算力流水」与「最近任务消耗」口径一致、可读（修复早期把每笔模型请求拆成 -1/-2 碎片、一屏看不出任务总消耗的问题）。修复背景：早期会员页只读 `summary.recent_transactions`（最近 10 条原始流水）且流水接口直接暴露 credit_transaction 明细，用户看到个位数碎片扣费误以为消耗很少；实际累计消耗（如 NILL 2,226 条模型调用流水 / 2,058 算力，聚合后 487 个任务行）以角标「累计消耗」对照余额账本。
+
 ### 4. 套餐 / 统一订单 / 在线支付（预留）
 
 | 方法/路径 | 说明 |

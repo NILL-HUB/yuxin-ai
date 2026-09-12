@@ -44,11 +44,11 @@ API 容器
 
 ### 2.1 存储位置与目录
 
-- 根目录：与安全根同级隐藏目录，或安全根内 `.yuxin_ai_snapshots/`（默认在用户主目录下）。
-  - 由 `OS_AUTOMATION_SNAPSHOT_DIR` 环境变量覆盖（默认 `<safe_root>/.yuxin_ai_snapshots`）。
+- 根目录：与安全根同级隐藏目录，或安全根内 `.yujianwo_snapshots/`（默认在用户主目录下）。
+  - 由 `OS_AUTOMATION_SNAPSHOT_DIR` 环境变量覆盖（默认 `<safe_root>/.yujianwo_snapshots`）。
 - 目录结构：
   ```
-  .yuxin_ai_snapshots/
+  .yujianwo_snapshots/
     manifest.jsonl          # 全量索引（每个快照一行）
     files/<sha256>.snap     # 快照内容（内容寻址，相同内容不重复存）
   ```

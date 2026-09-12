@@ -17,7 +17,7 @@
 | 文件 | 职责 |
 | --- | --- |
 | `api/scripts/worker_super.py`（新建） | 单一 worker exe 入口：argparse 子命令 os/browser/computer/wake → 调用各 worker `main()` |
-| `api/scripts/pyinstaller/worker.spec`（新建） | PyInstaller 配置，产出 `yuxin-worker.exe` |
+| `api/scripts/pyinstaller/worker.spec`（新建） | PyInstaller 配置，产出 `yujianwo-worker.exe` |
 | `api/test/scripts/test_worker_super.py`（新建） | worker_super 子命令分发单测 |
 | `api/app/http/apps_routes.py` 或新 `desktop_routes.py` | `GET /desktop-config` 公开接口 |
 | `api/test/app/http/test_desktop_config.py`（新建） | desktop-config 接口测试 |
@@ -85,15 +85,15 @@ Expected: FAIL（ModuleNotFoundError: scripts.worker_super）
 创建 `api/scripts/worker_super.py`：
 
 ```python
-"""YuxinAI 桌面 worker 统一入口（单一 exe）。
+"""Yujianwo 桌面 worker 统一入口（单一 exe）。
 
-PyInstaller 打包为 yuxin-worker.exe 后，Electron 主进程通过子命令启动
+PyInstaller 打包为 yujianwo-worker.exe 后，Electron 主进程通过子命令启动
 对应服务，避免为每个 worker 单独打包：
 
-    yuxin-worker.exe os       --port 8765
-    yuxin-worker.exe browser  --port 8766
-    yuxin-worker.exe computer --port 8767
-    yuxin-worker.exe wake
+    yujianwo-worker.exe os       --port 8765
+    yujianwo-worker.exe browser  --port 8766
+    yujianwo-worker.exe computer --port 8767
+    yujianwo-worker.exe wake
 
 开发模式（无 exe）下等效于 python scripts/<worker>.py。
 """
@@ -107,7 +107,7 @@ from typing import Any
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="yuxin-worker", description="YuxinAI desktop worker")
+    parser = argparse.ArgumentParser(prog="yujianwo-worker", description="Yujianwo desktop worker")
     parser.add_argument(
         "service",
         choices=("os", "browser", "computer", "wake"),
@@ -223,7 +223,7 @@ async def async_desktop_config() -> Response:
     host = _req.headers.get("X-Forwarded-Host", _req.host)
     origin = f"{scheme}://{host}"
     return _ok({
-        "app_name": "钰心AI",
+        "app_name": "钰见我",
         "api_origin": origin,
         "api_prefix": "/api",
     })
@@ -455,7 +455,7 @@ async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath,
         const cfg = {
           api_origin: String(data.api_origin).replace(/\/+$/, ''),
           api_prefix: data.api_prefix || '/api',
-          app_name: data.app_name || '钰心AI',
+          app_name: data.app_name || '钰见我',
         }
         if (cachePath) {
           fs.mkdirSync(path.dirname(cachePath), { recursive: true })
@@ -474,7 +474,7 @@ async function loadServerConfig({ entryOrigin = DEFAULT_ENTRY_ORIGIN, cachePath,
       // 缓存损坏忽略
     }
   }
-  return { api_origin: entryOrigin, api_prefix: '/api', app_name: '钰心AI' }
+  return { api_origin: entryOrigin, api_prefix: '/api', app_name: '钰见我' }
 }
 
 module.exports = { loadServerConfig, DEFAULT_ENTRY_ORIGIN }
@@ -617,7 +617,7 @@ git commit -m "feat(desktop): safeStorage credential store"
 ```javascript
 const { contextBridge, ipcRenderer } = require('electron')
 
-contextBridge.exposeInMainWorld('yuxinDesktop', {
+contextBridge.exposeInMainWorld('yujianwoDesktop', {
   // ...既有方法保留...
   getDesktopConfig: () => ipcRenderer.invoke('desktop:get-config'),
   getCredential: () => ipcRenderer.invoke('desktop:get-credential'),
@@ -650,7 +650,7 @@ const credentialStore = createCredentialStore({
 
 ```javascript
 function workerCommand(name) {
-  const exe = path.join(process.resourcesPath || '', 'yuxin-worker.exe')
+  const exe = path.join(process.resourcesPath || '', 'yujianwo-worker.exe')
   if (fs.existsSync(exe)) {
     return { cmd: exe, args: [name] }
   }
@@ -749,11 +749,11 @@ const path = require('node:path')
 function createTray({ iconPath, onShow, onQuit, getStatus }) {
   const icon = nativeImage.createFromPath(iconPath || path.join(__dirname, 'tray-icon.png'))
   const tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon)
-  tray.setToolTip('钰心AI')
+  tray.setToolTip('钰见我')
   const buildMenu = () => {
     const status = (getStatus && getStatus()) || {}
     return Menu.buildFromTemplate([
-      { label: '显示钰心AI', click: onShow },
+      { label: '显示钰见我', click: onShow },
       { type: 'separator' },
       { label: `本机服务：${Object.keys(status).filter((k) => status[k]).length} 运行中`, enabled: false },
       { type: 'separator' },
@@ -835,7 +835,7 @@ git commit -m "feat(desktop): tray, notifications, launch-at-login, updater inte
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec：单一 worker exe（含 os/browser/computer/wake 四服务）
 # 用法：pyinstaller --clean --noconfirm api/scripts/pyinstaller/worker.spec
-# 产出：dist/yuxin-worker/yuxin-worker.exe（Electron 安装包以 extraResources 携带）
+# 产出：dist/yujianwo-worker/yujianwo-worker.exe（Electron 安装包以 extraResources 携带）
 
 import os
 
@@ -870,7 +870,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='yuxin-worker',
+    name='yujianwo-worker',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -893,7 +893,7 @@ exe = EXE(
 ```json
 {
   "extraResources": [
-    { "from": "../api/scripts/pyinstaller/dist/yuxin-worker/", "to": "yuxin-worker" }
+    { "from": "../api/scripts/pyinstaller/dist/yujianwo-worker/", "to": "yujianwo-worker" }
   ],
   "publish": {
     "provider": "generic",
@@ -911,19 +911,19 @@ Run（若 pyinstaller 未装先 `pip install pyinstaller`）：
 cd d:\DEMO\openagent-main\api\scripts\pyinstaller
 pyinstaller --clean --noconfirm worker.spec
 ```
-Expected: `dist/yuxin-worker/yuxin-worker.exe` 生成
+Expected: `dist/yujianwo-worker/yujianwo-worker.exe` 生成
 
 Run（验证 exe 可启动 os 服务）：
 ```powershell
 $env:OS_AUTOMATION_TOKEN='t'
-.\dist\yuxin-worker\yuxin-worker.exe os --port 8899
+.\dist\yujianwo-worker\yujianwo-worker.exe os --port 8899
 ```
 Expected: 输出 listening 后 Ctrl+C（若本机无 playwright 等依赖导致 browser 子命令失败，记录并确认 os 可用即可）
 
 - [ ] **Step 4: NSIS 打包（若 electron-builder 可运行）**
 
 Run: `cd d:\DEMO\openagent-main\desktop && npm run dist`
-Expected: `desktop/dist/yuxin-ai-desktop Setup.exe` 或类似产物（若因缺签名/图标资源失败，记录并降级为 `--dir` 免安装验证）
+Expected: `desktop/dist/yujianwo-desktop Setup.exe` 或类似产物（若因缺签名/图标资源失败，记录并降级为 `--dir` 免安装验证）
 
 - [ ] **Step 5: Commit**
 
@@ -966,7 +966,7 @@ git commit -m "feat(ui): enrich desktop device panel with versions, autostart, u
 ### Task 11: 登录态同步（renderer ↔ 主进程凭证）
 
 **Files:**
-- Modify: `ui/src/stores/credential.ts`（或调用的 utils/auth）——经 yuxinDesktop IPC 同步
+- Modify: `ui/src/stores/credential.ts`（或调用的 utils/auth）——经 yujianwoDesktop IPC 同步
 - Modify: `ui/src/utils/login-redirect.ts`（桌面端可能无需，仅评估）
 
 - [ ] **Step 1: 分析同步点**
@@ -978,7 +978,7 @@ git commit -m "feat(ui): enrich desktop device panel with versions, autostart, u
 在 `credential.ts` 的 `update` 与 `clear` 内，检测桌面环境并同步：
 
 ```typescript
-const desktopApi = (window as unknown as { yuxinDesktop?: { setCredential?: (t: string) => Promise<unknown>; clearCredential?: () => Promise<unknown>; getCredential?: () => Promise<string | null> } }).yuxinDesktop
+const desktopApi = (window as unknown as { yujianwoDesktop?: { setCredential?: (t: string) => Promise<unknown>; clearCredential?: () => Promise<unknown>; getCredential?: () => Promise<string | null> } }).yujianwoDesktop
 
 const syncToDesktop = (accessToken: string) => {
   if (desktopApi?.setCredential && accessToken) {

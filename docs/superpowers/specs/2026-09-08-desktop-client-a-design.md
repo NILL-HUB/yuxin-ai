@@ -53,7 +53,7 @@ Electron 主进程（唯一安装/运行入口）
 - 编译常量 `DESKTOP_ENTRY_ORIGIN`（如 `https://openllm.cloud`），打包注入。
 - 首次启动：`GET {DESKTOP_ENTRY_ORIGIN}/api/desktop-config`（公开、无鉴权，返回轻量 JSON）：
   ```json
-  { "ok": true, "data": { "app_name": "钰心AI", "api_origin": "https://openllm.cloud", "api_prefix": "/api" } }
+  { "ok": true, "data": { "app_name": "钰见我", "api_origin": "https://openllm.cloud", "api_prefix": "/api" } }
   ```
   - 后端只需返回当前同源信息（api_origin 即请求 origin），供 UI 兜底与校验；不承载"切换服务器"。
   - 缓存在 `userData/server-config.json`；请求失败用缓存；无缓存则用编译入口 origin 兜底。
@@ -64,11 +64,11 @@ Electron 主进程（唯一安装/运行入口）
 ### 3.2 单一 worker exe（PyInstaller）
 
 - 新增 `api/scripts/worker_super.py`：argparse 子命令 `os|browser|computer|wake`，转发调用各 worker 的 `main()`（导入各自模块后调其 main/相应入口），统一日志前缀。
-- PyInstaller spec：把 4 个 worker 模块 + super 打成一个 `yuxin-worker.exe`。
+- PyInstaller spec：把 4 个 worker 模块 + super 打成一个 `yujianwo-worker.exe`。
   - 隐藏导入（playwright、pyautogui、openwakeword 等动态导入依赖）在 spec 中显式声明。
   - browser worker 的 Chromium：PyInstaller 不打包浏览器二进制；`playwright install chromium` 的浏览器放 `userData/ms-playwright/` 或安装包 extraResources，worker 启动时 `PLAYWRIGHT_BROWSERS_PATH` 指向该处；若缺失，UI 引导首次下载（子项目 A 可先要求构建时预置，运行时缺失报清晰错误）。
   - wake worker（openWakeWord 模型文件）同理：模型放 extraResources 或 userData，`WAKE_WORD_MODEL_DIR` 指向。
-- Electron 侧 `worker-host` 不再 `spawn python script.py`，改 `spawn(process.resourcesPath/yuxin-worker.exe, ["os", "--port", ...])`；开发模式（无 exe）回退 `python scripts/os_automation_worker.py`（保留现有 DESKTOP_PYTHON 逻辑）。
+- Electron 侧 `worker-host` 不再 `spawn python script.py`，改 `spawn(process.resourcesPath/yujianwo-worker.exe, ["os", "--port", ...])`；开发模式（无 exe）回退 `python scripts/os_automation_worker.py`（保留现有 DESKTOP_PYTHON 逻辑）。
 - 安全：worker 间随机 token 由主进程生成并注入 env（沿用现有 tokens 机制）；仅回环监听。
 
 ### 3.3 原生体验
@@ -137,5 +137,5 @@ Electron 主进程（唯一安装/运行入口）
 
 ## 8. 相关文档
 - 登录路由化：`docs/superpowers/specs/2026-09-08-user-login-routing-design.md`
-- 本机文件自愈闭环：`docs/research/local-file-snapshot-rollback-plan.md`
+- 本机文件自愈闭环：`docs/archive/research-completed/local-file-snapshot-rollback-plan.md`
 - 多通道路由愿景（含子项目 B 远程中枢方向）：`docs/research/desktop-sandbox-routing-plan.md`

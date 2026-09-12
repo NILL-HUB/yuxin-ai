@@ -1,15 +1,15 @@
-# Hermes v0.20 与钰心AI 能力深度盘点
+# Hermes v0.20 与钰见我 能力深度盘点
 
 > 更新日期：2026-08-13
 > 定位：对 `docs/research/hermes-agent-v0-20-comparison.md` 的补充，按“子系统 + 源码落点 + 运行状态”逐项盘点，
 > 补齐此前只写模块名、没有展开核心机制的部分。Hermes 侧以仓库 `NousResearch/hermes-agent` tag `v2026.8.3`
-> 源码为准；钰心AI 侧以本仓库当前工作区源码为准。
+> 源码为准；钰见我 侧以本仓库当前工作区源码为准。
 
 ## 0. 结论速览
 
 - Hermes 的核心不是“一个能对话的模型客户端”，而是一整套**学习闭环、技能生命周期、多端执行环境、消息网关、
   定时/事件自动化、多 Agent 协作和本地可观测**的运行时。
-- 钰心AI 也不是“只有对话”，它已经具备编排决策、工具池治理、知识库、记忆、工作流、应用商店、计费、RBAC、
+- 钰见我 也不是“只有对话”，它已经具备编排决策、工具池治理、知识库、记忆、工作流、应用商店、计费、RBAC、
   OpenAPI 交付、标准 A2A、HMAC webhook、宿主机自动化等能力；真正薄弱的是 Hermes 那种**自主技能涌现、
   Curator 维护、跨端持续学习、真实终端/浏览器/桌面环境、以及超长任务的中断续跑**。
 - 两边目前最值得对标的不是“谁工具多”，而是**执行生命周期、用户授权交互、学习与技能成长、状态可恢复**这四件事。
@@ -352,7 +352,7 @@
 
 ---
 
-## 2. 钰心AI 深度能力全景
+## 2. 钰见我 深度能力全景
 
 > 以下按当前工作区源码盘点。标记说明：✅=有实现且有运行路径；◑=部分/有代码但未完全接线；✗=无。
 
@@ -585,13 +585,13 @@
 
 ## 3. 双向逐项对比矩阵
 
-| 能力 | Hermes v0.20 | 钰心AI | 差距性质 |
+| 能力 | Hermes v0.20 | 钰见我 | 差距性质 |
 | --- | --- | --- | --- |
-| 自研 Agent 主循环 | ✅ conversation_loop / turn lifecycle | ◑ LangGraph + FunctionCallAgent/ReACT | 架构不同，非优劣；钰心AI 更依赖 LangGraph 生态 |
-| 模型 provider | ✅ 30+ 插件 provider | ✅ OpenAI/Atlas/DeepSeek/Grok/Google/Moonshot/Tongyi/Wenxin/Ollama/Zhipu 等 | 钰心AI 管理端模型池/Key 池更平台化 |
+| 自研 Agent 主循环 | ✅ conversation_loop / turn lifecycle | ◑ LangGraph + FunctionCallAgent/ReACT | 架构不同，非优劣；钰见我 更依赖 LangGraph 生态 |
+| 模型 provider | ✅ 30+ 插件 provider | ✅ OpenAI/Atlas/DeepSeek/Grok/Google/Moonshot/Tongyi/Wenxin/Ollama/Zhipu 等 | 钰见我 管理端模型池/Key 池更平台化 |
 | 模型路由/降级/成本档位 | ✅ credential pool + fallback + billing | ✅ ModelGateway + FallbackManager + TierPolicy + CostPolicy | 双强 |
 | 上下文压缩 | ✅ 逐轮微压缩 + 尾巴保护 + ghost-skill 防御 | ✅ TokenBufferMemory + ContextCompressor，含 12k 字符工具结果兜底截断、最近 3 条用户消息硬保护、逐轮摊销压缩、已加载技能防幽灵重复注入 | 已对齐 |
-| 记忆 | ✅ 8 provider + Agent-curated + 学习图 + Curator | ✅ System1/2 + Ledger + 巩固 + 技能涌现 | 钰心AI 分层完整，Hermes 自主生命周期更成熟 |
+| 记忆 | ✅ 8 provider + Agent-curated + 学习图 + Curator | ✅ System1/2 + Ledger + 巩固 + 技能涌现 | 钰见我 分层完整，Hermes 自主生命周期更成熟 |
 | 技能涌现/维护 | ✅ 自动创建 + 自改进 + Curator 归档 | ◑ SkillEmergence + 技能商店，无 Curator 生命周期 | 需补技能生命周期治理 |
 | 会话搜索 | ✅ FTS5 + trigram + CJK | ✅ ConversationSearch（PG/Redis） | 双有，机制不同 |
 | 子代理 | ✅ delegate + /agents 实时状态 + 可执行代码 | ✅ `MultiAgentExecutor` + Redis 化 registry + `/subtasks` 查询/取消 + SSE 实时事件 + 首页面板 + `execute_code` 工具 RPC 桥 | 已对齐 |
@@ -612,20 +612,20 @@
 | MCP | ✅ 懒加载 + OAuth + catalog | ✅ MCP 商店 + 运行时挂载 | 双有 |
 | A2A | ✅ A2A v1.0 插件 | ✅ A2A v1.0 网关（message/send、tasks/get、tasks/cancel、message/stream）+ 出站客户端 | 已对齐 |
 | 消息平台 | ✅ 28+ 适配器 | ◑ 微信完整接入 + IM 语音笔记（LINE/WhatsApp/飞书/钉钉 webhook） | 语音链路已通，完整消息/会话按合规逐步接入 |
-| 定时任务 | ✅ cron + webhook + 蓝图 + 脚本注入 | ✅ 自然语言定时任务 + Celery | 钰心AI 无“GitHub/API 触发 + 多平台投递” |
+| 定时任务 | ✅ cron + webhook + 蓝图 + 脚本注入 | ✅ 自然语言定时任务 + Celery | 钰见我 无“GitHub/API 触发 + 多平台投递” |
 | 多 Agent 看板 | ✅ Kanban 板/调度器/fleet | ✗（工作流图替代） | 形态不同 |
 | Webhook | ✅ HMAC 出站 + 入站订阅 | ✅ HMAC 出站（确认/取消事件） | 入站触发未做 |
 | 桌面端 | ✅ Electron 40 + 插件 SDK + 预览 | ◑ Electron 壳（`desktop/`）+ 本地 workers + 唤醒词 worker | 壳已封装，构建发布待验证 |
 | TUI | ✅ Ink TUI | ✗ | 平台形态差异 |
 | ACP 编辑器集成 | ✅ | ✗ | 平台形态差异 |
-| Web dashboard | ✅ React（单机管理） | ✅ Vue 3 管理端 33+ 页（多租户治理） | 钰心AI 管理面更强 |
-| 知识库/RAG | ◑ 云记忆 + 文件引用 | ✅ 双层知识库 + 向量 + 重排 + 混合检索 | 钰心AI 更强 |
-| 可视化工作流 | ✗ | ✅ DAG + Vue Flow | 钰心AI 独有 |
+| Web dashboard | ✅ React（单机管理） | ✅ Vue 3 管理端 33+ 页（多租户治理） | 钰见我 管理面更强 |
+| 知识库/RAG | ◑ 云记忆 + 文件引用 | ✅ 双层知识库 + 向量 + 重排 + 混合检索 | 钰见我 更强 |
+| 可视化工作流 | ✗ | ✅ DAG + Vue Flow | 钰见我 独有 |
 | OpenAPI 交付 | ✅ OpenAI 兼容 API server | ✅ 自定义 OpenAPI chat + API Key | 双有，协议不同 |
-| 多租户/RBAC | ✗ 单用户 profile | ✅ 账号/角色/权限/审计/资源分配 | 钰心AI 独有 |
-| 对象存储/文件预览 | ◑ 本地文件 | ✅ MinIO/OSS/kkFileView/存储迁移 | 钰心AI 更强 |
+| 多租户/RBAC | ✗ 单用户 profile | ✅ 账号/角色/权限/审计/资源分配 | 钰见我 独有 |
+| 对象存储/文件预览 | ◑ 本地文件 | ✅ MinIO/OSS/kkFileView/存储迁移 | 钰见我 更强 |
 | 会话导出/检查点 | ✅ export md/html + checkpoint | ✗ 无导出/断点恢复 UI | 可借鉴 |
-| 可观测性 | ✅ OTLP + Langfuse + Nemo Relay | ✅ 路由日志/质量/成本/审计 | 钰心AI 缺标准导出 |
+| 可观测性 | ✅ OTLP + Langfuse + Nemo Relay | ✅ 路由日志/质量/成本/审计 | 钰见我 缺标准导出 |
 | 计费 | ✅ 订阅/credits/usage | ✅ 套餐/会员/积分/幂等扣费/成本策略 | 双强 |
 | 成就/PET/皮肤 | ✅ achievements + PET + themes | ✗ | 趣味性场景，非核心 |
 | 研究/数据生成 | ✅ batch + trajectory compression | ✗ | 训练向，非核心 |
@@ -635,7 +635,7 @@
 ## 4. 主要差距与建议（按优先级）
 
 1. **技能生命周期治理（P0）**：Hermes 的 Curator + skill_usage + learning graph 是“学习闭环”的落地；
-   钰心AI 已有 SkillEmergence，但缺使用统计、自动归档、可恢复归档与学习图展示。
+   钰见我 已有 SkillEmergence，但缺使用统计、自动归档、可恢复归档与学习图展示。
 2. **子任务实时状态（P0，已完成）**：`SubtaskRegistryService` + `SingleAgentExecutor` /
    `MultiAgentExecutor` + `GET /subtasks/<request_id>` + SSE `subtask_started/running/completed` +
    首页 `SubtaskProgressPanel` 已闭环，registry 已升级为 Redis 优先、内存兜底，并补齐超时/stall
@@ -658,6 +658,6 @@
 - Hermes 源码：`NousResearch/hermes-agent` tag `v2026.8.3`（本地稀疏克隆 `%TEMP%\hermes-agent`）。
 - Hermes README / AGENTS.md：`README.md`、`AGENTS.md`。
 - Hermes 发布说明：`https://github.com/NousResearch/hermes-agent/releases/tag/v2026.8.3`。
-- 钰心AI 源码：`api/`、`ui/`、`docker/`、`docs/prd/`。
-- 既有报告：`docs/research/hermes-agent-v0-20-comparison.md`、`docs/research/hermes-v0.20-alignment-report.md`、
-  `docs/research/hermes-v0.20-e2e-verification.md`。
+- 钰见我 源码：`api/`、`ui/`、`docker/`、`docs/prd/`。
+- 既有报告：`docs/research/hermes-agent-v0-20-comparison.md`、`docs/archive/research-completed/hermes-v0.20-alignment-report.md`、
+  `docs/archive/research-completed/hermes-v0.20-e2e-verification.md`。

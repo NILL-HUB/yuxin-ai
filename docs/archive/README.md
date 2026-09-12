@@ -11,3 +11,5 @@
 | [admin-refactor-plan.md](./admin-refactor-plan.md) | docs/prd/ | admin 端独立页面重构已落地；剩余为愿景设计 |
 | [2026-09-08-delete-egress-recycle-only.md](./2026-09-08-delete-egress-recycle-only.md) | docs/superpowers/plans/ | run_os_task/Codex 删除护栏方案——run_os_task 链路已整体移除，方案作废，由 `docs/research/local-file-snapshot-rollback-plan.md`（os_file_task 快照回滚 + os_recycle_bin）取代 |
 | [memory-system-execution/](./memory-system-execution/) | docs/prd/memory-system/execution/ | 记忆系统 10 阶段执行历史快照（A-H track） |
+| [cleanup-reports/](./cleanup-reports/) | docs/cleanup-reports/ | 每日代码整洁度清理报告（一次性执行记录，2026-08-13 ~ 08-17） |
+| [research-completed/](./research-completed/) | docs/research/ | 已完成落地的调研/验证快照（执行历史，非当前参考；2026-09-11 归档） |

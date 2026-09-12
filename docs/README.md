@@ -1,10 +1,14 @@
-# 钰心AI 文档导航
+# 钰见我 文档导航
 
 > 本文档索引当前生效的架构与设计文档。历史执行记录、已完成规划的路线图已移入 [docs/archive](./archive/README.md)，不再出现在导航中；导航内的每篇文档都应与真实代码保持一致（AGENTS.md「架构文档同步」规则强制）。
 
+## 从这里开始
+
+- [**产品总纲**](prd/product-vision.md)：产品形态、功能体系、**经代码验证的落地状态**（含壳子/断链判定）、愿景与发展路径 —— **产品问题的第一入口**
+
 ## 项目文档
 
-- [架构设计](prd/architecture-design.md)：核心架构、模块设计与目标演进方向
+- [架构设计](prd/architecture-design.md)：核心架构、模块设计、产品形态与生态蓝图
 - [演进任务与执行路线](prd/execution-roadmap.md)：阶段任务与完成状态（唯一仍在维护的 roadmap）
 - [扩展性设计](prd/extensibility-design.md)：第三方能力接入机制（工具池/治理/OS 自动化）
 - [记忆写入优化设计](prd/memory-write-optimization-design.md)
@@ -14,7 +18,7 @@
 - [Agent 池与工具池](prd/modules/01-agent-tool-pool.md)
 - [知识库双层设计](prd/modules/02-knowledge-base.md)
 - [Conductor 编排、执行协调与可观测性](prd/modules/03-orchestration-infra.md)
-- [社交社区与创作者经济（愿景设计·未实现）](prd/modules/04-social-creator.md)
+- [合伙人分身与内容板块（生态赋能）](prd/modules/04-social-creator.md)
 - [安全要求与风险决策](prd/modules/05-security-risk-decisions.md)
 - [文件存储与对象存储](prd/modules/06-file-storage.md)
 - [公共 AI 资源配置](prd/modules/07-public-ai-config.md)
@@ -41,4 +45,4 @@
 
 ## 说明
 
-项目已由 OpenAgent 更名为 **钰心AI**，全量品牌迁移已完成。旧 `openagent-app` / `openagent-workflow` 导入格式仅作为兼容入口保留。根目录不维护 `CONTEXT.md` / `docs/adr/`；领域事实以本导航下文档 + 代码为准。
+项目已由 OpenAgent 更名为 **钰见我**，全量品牌迁移已完成。旧 `openagent-app` / `openagent-workflow` 导入格式仅作为兼容入口保留。根目录不维护 `CONTEXT.md` / `docs/adr/`；领域事实以本导航下文档 + 代码为准。

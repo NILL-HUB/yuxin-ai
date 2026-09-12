@@ -155,7 +155,7 @@
 10. 路由日志只暴露给管理员；保留时长应可配置，若第一阶段配置复杂则默认保留一个月；当前暂不要求脱敏。
 11. 成本统计在管理员后台按用户、Agent、工具、模型、Key 等维度拆分；用户侧统一聚合为积分 / token 扣费。
 12. 动态工具改造应先设计通用 ToolPool 抽象，再用 MCP 作为第一类适配器试点，后续扩展 API、Builtin、知识库和 Workflow。
-13. 高风险工具按系统归属隔离：涉及 钰心AI 平台自身系统的工具普通用户不可触发；涉及用户自己系统、用户授权业务系统、沙箱或测试环境的高风险工具，可以在授权、作用域、审计和必要确认下触发。
+13. 高风险工具按系统归属隔离：涉及 钰见我 平台自身系统的工具普通用户不可触发；涉及用户自己系统、用户授权业务系统、沙箱或测试环境的高风险工具，可以在授权、作用域、审计和必要确认下触发。
 14. 执行过程需要实时计费，前端持续展示已消耗积分 / token，用户可在成本过高时手动终止任务止损；系统只扣已实际发生的成本。
 15. 子池分类第一阶段由管理员手动分配和打标签，不依赖自动分类。
 16. Agent 和工具质量评分第一阶段先由管理员手动维护，后续再基于成功率、反馈、耗时和成本数据做自动或半自动评分。
@@ -172,7 +172,7 @@
 27. 计费成本必须使用统一事件设计，至少包括 billing_started、billing_delta、billing_summary、billing_cancelled、billing_final；用户侧只展示当前已发生消耗。
 28. 用户资料内容库需要支持外部数据源接入和同步，包括飞书、Notion、网盘、GitHub、企业知识库等来源；第一阶段优先支持授权连接、手动同步和文本 / 结构化资料检索。
 29. 图片、视频、音频等媒体内容的深度解析后置；第一阶段不要求 OCR、ASR、视频抽帧、视觉理解、音视频转写等能力完成入库。
-30. 前端新增页面、按钮、导航、提示语、表单字段、空状态、错误提示和管理后台文案必须遵循现有 i18n 规范：组件中只能引用 `ui/src/i18n/messages/*` 中的语义化 key，不允许直接硬编码中文或英文；修改业务命名时必须同步 zh-CN 与 en-US 字典，并优先保留原 key 做兼容映射，避免旧入口残留或多语言缺 key。
+30. 前端新增页面、按钮、导航、提示语、表单字段、空状态、错误提示和管理后台文案必须遵循现有 i18n 规范：组件中只能引用 `ui/src/i18n/messages/*` 中的语义化 key，不允许直接硬编码中文或英文；修改业务命名时必须同步 zh-CN 与 en-US 字典，并优先保留原 key 做兼容映射，避免旧入口残留或多语言缺 key。i18n 字典已按板块拆分：`messages/<locale>/*.ts`（admin 内再按子模块拆为 `messages/<locale>/admin/*.ts`），zh-CN 与 en-US 目录结构必须镜像；新增文案须同步修改两个语言对应板块文件，并由 `ui/src/i18n/__tests__/parity.spec.ts` 校验 zh/en 键集合一致。
 31. 用户共创分身（Persona App）复用现有 App 模型，通过 `creator_account_id` + `is_user_created` + `fuel_price` + `quality_score` 等扩展字段区分系统资源与用户创作，不新建独立表。
 32. 创作门槛分层：L0 模板填充式是第一阶段主力路径（目标 80% 创作者），必须做到 5 分钟内完成创作并提交；L1 对话式/L2 可视化编排/L3 代码级为后续演进。
 33. 质量筛选以数据驱动为主、人工审核为辅：自动合规审核覆盖 100% 发布，质量分决定曝光等级联动，人工审核只覆盖高曝光（boosted）和被举报内容，预计人工审核量 < 5%。
@@ -210,7 +210,7 @@
 
 ## 27. 总结
 
-本 PRD 建议将 钰心AI 的演进方向定义为"通用 Agent 调度平台"。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、AppAssignment、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、脑启发记忆引擎（时序知识图谱+巩固引擎+技能涌现）、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
+本 PRD 建议将 钰见我 的演进方向定义为"面向钰字辈合伙人的线上生态赋能系统"（早期技术底座表述为"通用 Agent 调度平台"，见 [architecture-design.md §1](../architecture-design.md)）。系统不应推倒重来，而应复用现有 Assistant Agent、PublicAgentA2AService、McpProvider、AppConfig、AppAssignment、SSE、Dataset / Document / Segment 等基础能力，在其上逐步增加 Orchestrator、多 Agent 子池、多工具子池、系统级知识库、用户长期记忆库、用户资料内容库、脑启发记忆引擎（时序知识图谱+巩固引擎+技能涌现）、模型池、Key 池、实时计费、Cost Policy、Execution Coordinator、Result Synthesizer 和 Routing Observability。
 
 当前路径已经完成：
 

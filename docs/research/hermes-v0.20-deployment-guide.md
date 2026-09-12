@@ -1,6 +1,6 @@
 # Hermes 对齐能力部署与验证手册
 
-本文档记录钰心AI 中 Hermes v0.20 对齐能力的部署方式：环境变量、webhook/worker
+本文档记录钰见我 中 Hermes v0.20 对齐能力的部署方式：环境变量、webhook/worker
 端点、真实平台凭证配置步骤与本地验证命令。所有能力都已通过单元/集成测试，
 本节解决“接真实平台”的最后一步。
 
@@ -74,7 +74,7 @@ curl -X POST http://127.0.0.1:8765/recycle \
   -d '{"op":"delete","paths":["C:/Users/you/Desktop/tmp.txt"],"reason":"清理临时文件"}'
 ```
 
-删除会移入 `OS_AUTOMATION_SAFE_ROOT/.yuxin_ai_recycle` 并记录清单；`op=list`
+删除会移入 `OS_AUTOMATION_SAFE_ROOT/.yujianwo_recycle` 并记录清单；`op=list`
 按关键词检索，`op=restore` 恢复原处（冲突自动加后缀）。一次误删多文件时，
 删除阶段统一传入同一个 `task_id`，恢复时按 `task_id` 批量找回：
 
@@ -90,7 +90,7 @@ curl -X POST http://127.0.0.1:8765/recycle \
 
 ## 5. 已知边界
 
-- Photon 是 Hermes 私有端到端语音协议，钰心AI 无对应平台，不提供适配器。
+- Photon 是 Hermes 私有端到端语音协议，钰见我 无对应平台，不提供适配器。
 - 设备端唤醒词依赖本地麦克风常驻监听，Web 形态不适配，使用“按住说话”替代。
 - webhook 签名变量未配置时默认跳过校验（便于本地联调），生产环境务必配置。
 

@@ -7,7 +7,7 @@
 
 ```mermaid
 flowchart LR
-  UI[Vue3 Web UI] --> API[Yuxin API]
+  UI[Vue3 Web UI] --> API[Yujianwo API]
   Desktop[Windows Desktop 壳<br/>Electron/Tauri] --> UI
   Desktop --> LocalWorker[本地 OS/Recycle/Computer Worker]
   Mobile[手机 App<br/>Capacitor/PWA] --> API
@@ -68,7 +68,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   Agent[Agent 调用 os_recycle_bin delete] --> Worker[OS Worker /recycle]
-  Worker --> Move[文件/目录移入 .yuxin_ai_recycle]
+  Worker --> Move[文件/目录移入 .yujianwo_recycle]
   Worker --> Manifest[写入 manifest.jsonl<br/>原路径/时间/任务/原因/大小]
   User[用户误删/乱删] --> Agent2[Agent 调用 op=list 搜索]
   Agent2 --> Worker2[Worker 按关键词/任务/路径检索]
@@ -79,7 +79,7 @@ flowchart TD
   清单记录、越权拒绝、冲突自动加后缀、`assistant_agent_markdown_preset` 第 13 条
   （误删优先恢复）、按 task_id 批量恢复、留存期过期清理（purge）。
 - 免确认：删除可回滚，因此该工具不要求 approval_token；仍受安全根目录约束。
-- Agent 自写测试/调试文件：约定写入临时目录（如 `$TMP/yuxin_agent_scratch`），
+- Agent 自写测试/调试文件：约定写入临时目录（如 `$TMP/yujianwo_agent_scratch`），
   不占用回收站，减少清单噪音。
 
 ## 5. 误删恢复流程
@@ -106,9 +106,9 @@ flowchart TD
 | 手机 App 封装 | ✅ | `mobile/` Capacitor 壳（Android/iOS，webDir=../ui/dist） |
 | 设备唤醒功能 | ✅ | `scripts/wake_word_worker.py`（openWakeWord/sounddevice）+ 桌面 IPC 启停 |
 | 计算机控制 | ✅ | `scripts/computer_control_worker.py` + `computer_action`（move/click/scroll/type/press/hotkey/screenshot） |
-| 回收站安全删除 | ✅ | `/recycle delete`：移入 `.yuxin_ai_recycle` + manifest，不物理删除 |
+| 回收站安全删除 | ✅ | `/recycle delete`：移入 `.yujianwo_recycle` + manifest，不物理删除 |
 | 随时恢复到本机 | ✅ | `restore` 单条/按 task_id 批量恢复，冲突自动加后缀 |
-| Agent 自写文件不回收站 | ✅ | 提示词第 14 条：临时目录 `$TMP/yuxin_agent_scratch` |
+| Agent 自写文件不回收站 | ✅ | 提示词第 14 条：临时目录 `$TMP/yujianwo_agent_scratch` |
 | 免确认全自动化 | ✅ | `os_recycle_bin` 可回滚，不要求 approval_token |
 | 误删优先恢复 | ✅ | 提示词第 13 条 + `op=list/restore` |
 | 桌面本地能力桥 | ✅ | `desktop/bridge.js`（/recycle /browser /control）+ 工具接入 |

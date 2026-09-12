@@ -1,17 +1,28 @@
-# 社交社区与创作者经济
+# 合伙人分身与内容板块（线上生态赋能）
 
-> **状态：愿景设计（未实现）**
-> 本文档是产品愿景设计（v4.0），对应功能**尚未在代码中实现**：
-> - 后端无社交社区/内容流/关注关系/创作者收益表与服务；
-> - 前端 `/studio` 仅指向占位页 `ui/src/views/studio/StudioPlaceholderView.vue`；
-> - 分发/佣金体系（分销关系、余额、提现、订单）已实现于 `api/internal/service/distribution_service.py` 等（对应 `docs/api/commerce-distribution-api.md`），但"社交社区 + 用户共创分身"整体仍为远期规划。
+> **状态：愿景设计（部分未实现）** — 2026-09-11 按产品演讲稿重新定位
 >
-> 若按本文档开发，需先建立数据模型与路由；现有代码状态请以 [modules/03-orchestration-infra.md](./03-orchestration-infra.md) 与 [execution-roadmap](../execution-roadmap.md) 为准。
+> 本模块对应「钰见我」线上生态赋能系统中**面向合伙人的能力变现与内容生态**两大板块：
+> 1. **合伙人分身**：合伙人把自身特长/能力/经验打包成「分身」上架，供他人调用并按使用付费；
+> 2. **内容板块**：合伙人发布图文、上新品、展示内容（类小红书），承载生态内容流转。
 >
-> 本文档为主架构文档的子模块，包含社交社区架构设计（v4.0）和用户共创分身与创作者经济的完整内容。
+> **当前实现状态（对照代码，2026-09-11）**：
+> | 能力 | 状态 | 证据 |
+> |---|---|---|
+> | 应用商店（浏览/上架/预览） | 已实现 | `ui/src/views/store/public-apps/`、`api/internal/service/public_app_service.py` |
+> | 用户上传/共享到广场 | 已实现 | `share_app_to_square`（仅校验 published，无审核环节） |
+> | 他人应用被自动检索调用（A2A） | 已实现 | `public_agent_registry_service.py`、`public_agent_a2a_service.py` |
+> | **上架审核流程** | **未实现** | `AppStatus` 仅 DRAFT/PUBLISHED，无 pending_review |
+> | **分身自定价 / 按使用付费** | **未实现** | `App` 无 price 字段；现有付费仅会员套餐 |
+> | **分身版本更新（面向购买者）** | **未实现** | `AppConfigVersion` 是配置版本，非商店版本分发 |
+> | **内容板块（图文/上新/展示）** | **未实现** | 前端 `/studio` 为占位页 |
+> | 社交互动（关注/点赞/评论） | 未实现 | 无相关数据模型 |
+>
+> 下文 §18/§19 为原始设计稿（社交社区 + 创作者经济），保留作为设计参考；落地以本表状态为准。
 >
 > **主文档**: [architecture-design.md](../architecture-design.md)
 > **相关模块**: [05-security-risk-decisions.md](./05-security-risk-decisions.md)
+> **相关实现**: 分销/余额/提现/订单见 [commerce-distribution-api.md](../../api/commerce-distribution-api.md)（已实现，一级分销）
 
 ---
 

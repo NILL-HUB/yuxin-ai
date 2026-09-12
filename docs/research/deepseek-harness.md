@@ -363,7 +363,7 @@ OpenAgent 已经有“provider manager + 协议端口 + 服务注入”的雏形
 
 ### 现状对比
 
-| 维度 | OpenAgent（钰心AI） | DeepSeek Harness |
+| 维度 | OpenAgent（钰见我） | DeepSeek Harness |
 | --- | --- | --- |
 | 语言/运行时 | Python 3.11+、Quart、Celery | Node.js、TypeScript、Cordis |
 | Agent 编排 | LangChain / LangGraph，`BaseAgent`、`FunctionCallAgent`、`DeepThinkingAgent`、`ReACTAgent` | 自研 Agent/AgentLoop，step/turn 事件生命周期 |

@@ -1,6 +1,6 @@
 # 系统可扩展性设计：统一能力接入机制
 
-> **定位**：本文档定义 钰心AI 平台的第三方能力集成架构，解决"如何快速集成 GitHub 上新发布的 Agent 项目/工具/能力"的扩展性问题。
+> **定位**：本文档定义 钰见我 平台的第三方能力集成架构，解决"如何快速集成 GitHub 上新发布的 Agent 项目/工具/能力"的扩展性问题。
 >
 > **主文档**：[architecture-design.md](./architecture-design.md)
 > **关联模块**：[modules/01-agent-tool-pool.md](./modules/01-agent-tool-pool.md) | [modules/03-orchestration-infra.md](./modules/03-orchestration-infra.md)
@@ -11,7 +11,7 @@
 
 ### 1.1 问题陈述
 
-系统已基本脱离 钰心AI，成为自研架构的多租户 Agent 平台，功能依托第三方模型 API 实现。当前需要提升可扩展性，使新发布的 GitHub Agent 项目能快速集成进来实现功能复现。
+系统已基本脱离 钰见我，成为自研架构的多租户 Agent 平台，功能依托第三方模型 API 实现。当前需要提升可扩展性，使新发布的 GitHub Agent 项目能快速集成进来实现功能复现。
 
 ### 1.2 设计目标
 

@@ -4,13 +4,13 @@
 
 ## 结论
 
-CLI-Anything 与钰心AI/OpenAgent 的“能力接入”模型高度同构：它把 GUI 应用、代码库、Web API 转换成统一的 Click CLI（REPL + `--json` + 会话状态 + 测试 + `SKILL.md`），再通过 CLI-Hub 分发。这正好可以映射到我们已有的 Skill catalog、MCP provider、工作流工具节点、应用市场和 OpenAPI 交付能力上。
+CLI-Anything 与钰见我/OpenAgent 的“能力接入”模型高度同构：它把 GUI 应用、代码库、Web API 转换成统一的 Click CLI（REPL + `--json` + 会话状态 + 测试 + `SKILL.md`），再通过 CLI-Hub 分发。这正好可以映射到我们已有的 Skill catalog、MCP provider、工作流工具节点、应用市场和 OpenAPI 交付能力上。
 
 最现实的三条接入路径：
 
 1. **当工具目录用**：把 `cli-hub-meta-skill` 和官方/公共 registry 转成我们 catalog 里的技能包或工具目录，让 Agent 能发现和选择。
 2. **当执行底座用**：新增一个 CLI 执行器（沙箱 skill 或 builtin tool provider），负责 `cli-hub install` / `cli-anything-<name>` 子进程调用；只导入 SKILL.md 无法真正执行。
-3. **当设备 Agent 能力用**：在用户设备上安装真实软件 + 对应 harness，通过设备侧 worker 或 MCP stdio 桥接入平台，这与钰心AI 的“设备 Agent”定位最匹配。
+3. **当设备 Agent 能力用**：在用户设备上安装真实软件 + 对应 harness，通过设备侧 worker 或 MCP stdio 桥接入平台，这与钰见我 的“设备 Agent”定位最匹配。
 
 风险点：绝大多数 harness 强依赖真实桌面软件，Docker/SCF 沙箱里只能跑纯 API/纯 CLI 型 harness；Codex 官方接入仍标记 experimental；CLI-Hub 有匿名遥测（可关闭）；项目迭代很快，需要镜像审查。
 
@@ -98,14 +98,14 @@ CLI-Anything 与钰心AI/OpenAgent 的“能力接入”模型高度同构：它
 - 生成质量依赖前沿模型（官方举例 Claude Opus/Sonnet、GPT-5.x 级别），弱模型容易产出不完整 CLI
 - 一次生成后通常还要跑 `/refine` 扩展覆盖
 
-## 与钰心AI/OpenAgent 的适配分析
+## 与钰见我/OpenAgent 的适配分析
 
 ### 高度契合的点
 
 - **Skill 目录可直接吸收**：我们已有 `api/internal/core/skills/catalog/*/manifest.yaml`，支持 `executor_type: prompt` 和 `executor_type: scf`。CLI-Anything 的 `SKILL.md` 本身就是给 Agent 看的技能文档，转成 prompt 技能只需补一个 manifest；仓库里已有 `cli-creator` 这种“给 Codex 造 CLI”的同类技能，说明方向一致。
 - **MCP 底座可复用**：我们有完整的 `mcp_provider_manager`、`mcp_tool_factory`、`mcp_stdio_client`，可以把 `cli-anything-* --json` 包装成一个 stdio MCP 服务器，然后像普通 MCP provider 一样接入应用绑定和工作流。
 - **工作流节点可扩展**：`api/internal/core/workflow/nodes/tool/tool_node.py` 已经按 `tool_type` 分发 builtin/api/mcp/knowledge/skill/workflow/agent_binding 七种类型。加一种 `cli` 类型，或在设备侧把 CLI 包装成 MCP 再走现有 `mcp` 类型，都能和可视化工作流打通。
-- **设备 Agent 定位天然匹配**：CLI-Anything 的哲学就是“在本机软件上给 Agent 一条结构化命令通道”，这正好是钰心AI 设备 Agent 的形态。
+- **设备 Agent 定位天然匹配**：CLI-Anything 的哲学就是“在本机软件上给 Agent 一条结构化命令通道”，这正好是钰见我 设备 Agent 的形态。
 - **API 型 harness 能直接进沙箱**：OpenRefine、WireMock、AdGuardHome、Firefly III、Mailchimp、MiniMax、SiYuan、n8n、Dify 等 harness 只依赖 REST API/纯 Python，可以在 Docker 或 SCF 沙箱直接运行。
 - **市场/生态位重合**：CLI-Hub 里已经有 Feishu/Lark、WeCom、Sentry、Shopify、Contentful、Obsidian、Joplin、SiYuan、Zotero、n8n 等，很多正是我们应用市场想覆盖的工具。
 
