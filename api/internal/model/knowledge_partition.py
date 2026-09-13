@@ -32,18 +32,17 @@ class KnowledgePartition(Base):
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_knowledge_partition_id"),
         UniqueConstraint("knowledge_base_id", "partition_key", name="uq_knowledge_partition_base_key"),
-        Index("knowledge_partition_base_id_idx", "knowledge_base_id"),
         Index("knowledge_partition_parent_id_idx", "parent_id"),
         Index("knowledge_partition_sort_idx", "knowledge_base_id", "sort_order"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    knowledge_base_id = Column(UUID, ForeignKey("knowledge_base.id"), nullable=False)
+    knowledge_base_id = Column(UUID, ForeignKey("knowledge_base.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))
     # partition_key：分区业务键，日期模式为 2026-09 / 2026-09-12，自定义模式为 slug
     partition_key = Column(String(128), nullable=False, server_default=text("''::character varying"))
     # parent_id 为空表示顶层分区；两级树由服务层校验
-    parent_id = Column(UUID, ForeignKey("knowledge_partition.id"), nullable=True)
+    parent_id = Column(UUID, ForeignKey("knowledge_partition.id", ondelete="CASCADE"), nullable=True)
     description = Column(Text, nullable=False, server_default=text("''::text"))
     sort_order = Column(Integer, nullable=False, server_default=text("0"))
     enabled = Column(Boolean, nullable=False, server_default=text("true"))

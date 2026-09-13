@@ -30,15 +30,14 @@ class KnowledgeBaseTag(Base):
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_knowledge_base_tag_id"),
         UniqueConstraint("knowledge_base_id", "tag_id", name="uq_knowledge_base_tag_pair"),
-        Index("knowledge_base_tag_base_idx", "knowledge_base_id"),
         Index("knowledge_base_tag_tag_idx", "tag_id"),
         Index("knowledge_base_tag_account_idx", "account_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     account_id = Column(UUID, nullable=False)
-    knowledge_base_id = Column(UUID, ForeignKey("knowledge_base.id"), nullable=False)
-    tag_id = Column(UUID, ForeignKey("tag.id"), nullable=False)
+    knowledge_base_id = Column(UUID, ForeignKey("knowledge_base.id", ondelete="CASCADE"), nullable=False)
+    tag_id = Column(UUID, ForeignKey("tag.id", ondelete="CASCADE"), nullable=False)
     updated_at = Column(
         DateTime,
         nullable=False,
@@ -56,15 +55,14 @@ class KnowledgeDocumentTag(Base):
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_knowledge_document_tag_id"),
         UniqueConstraint("knowledge_document_id", "tag_id", name="uq_knowledge_document_tag_pair"),
-        Index("knowledge_document_tag_document_idx", "knowledge_document_id"),
         Index("knowledge_document_tag_tag_idx", "tag_id"),
         Index("knowledge_document_tag_account_idx", "account_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     account_id = Column(UUID, nullable=False)
-    knowledge_document_id = Column(UUID, ForeignKey("knowledge_document.id"), nullable=False)
-    tag_id = Column(UUID, ForeignKey("tag.id"), nullable=False)
+    knowledge_document_id = Column(UUID, ForeignKey("knowledge_document.id", ondelete="CASCADE"), nullable=False)
+    tag_id = Column(UUID, ForeignKey("tag.id", ondelete="CASCADE"), nullable=False)
     updated_at = Column(
         DateTime,
         nullable=False,

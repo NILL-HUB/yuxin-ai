@@ -14,3 +14,12 @@ def test_used_bytes_is_bigint():
 def test_account_id_is_unique():
     constraints = {c.name for c in AccountStorageUsage.__table__.constraints if c.name}
     assert "uq_account_storage_usage_account_id" in constraints
+
+
+def test_account_foreign_key_cascades():
+    fks = {fk.parent.name: fk for fk in AccountStorageUsage.__table__.foreign_keys}
+    assert fks["account_id"].ondelete == "CASCADE"
+
+
+def test_used_bytes_defaults_to_zero():
+    assert AccountStorageUsage.__table__.columns["used_bytes"].server_default.arg.text == "0"

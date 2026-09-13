@@ -10,7 +10,6 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
-    Index,
     PrimaryKeyConstraint,
     UUID,
     UniqueConstraint,
@@ -29,11 +28,10 @@ class AccountStorageUsage(Base):
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_account_storage_usage_id"),
         UniqueConstraint("account_id", name="uq_account_storage_usage_account_id"),
-        Index("account_storage_usage_account_idx", "account_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    account_id = Column(UUID, ForeignKey("account.id"), nullable=False)
+    account_id = Column(UUID, ForeignKey("account.id", ondelete="CASCADE"), nullable=False)
     # 已用字节数，BigInteger 支持 TB 级
     used_bytes = Column(BigInteger, nullable=False, server_default=text("0"))
     updated_at = Column(
