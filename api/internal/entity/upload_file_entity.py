@@ -36,15 +36,3 @@ def media_type_for_extension(extension: str) -> str:
             return media_type
     return "document"
 
-
-def _assert_media_type_keys_consistent() -> None:
-    """确认 MEDIA_TYPE_EXTENSIONS 的键与 DocumentMediaType 枚举值不漂移。"""
-    from internal.entity.knowledge_entity import DocumentMediaType
-
-    expected = {member.value for member in DocumentMediaType}
-    actual = set(MEDIA_TYPE_EXTENSIONS.keys())
-    if actual != expected:
-        raise RuntimeError(
-            f"MEDIA_TYPE_EXTENSIONS 与 DocumentMediaType 不一致：{actual} != {expected}"
-        )
-
