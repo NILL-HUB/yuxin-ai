@@ -46,7 +46,9 @@ def main() -> int:
                 "Check api/.env and ensure the target PostgreSQL instance is running."
             ) from exc
 
-        with db.engine.connect() as connection:
+        # 异步底座下 db.engine 是 AsyncEngine，同步上下文管理器不可用；
+        # 使用 sync_engine 读取当前 revision。
+        with db.sync_engine.connect() as connection:
             current_revision = MigrationContext.configure(connection).get_current_revision()
 
     if current_revision != heads[0]:

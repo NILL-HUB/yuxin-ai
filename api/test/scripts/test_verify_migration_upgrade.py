@@ -34,6 +34,7 @@ class _FakeEngine:
 class _FakeDB:
     def __init__(self):
         self.engine = _FakeEngine()
+        self.sync_engine = _FakeEngine()
 
 
 class _FakeApp:
