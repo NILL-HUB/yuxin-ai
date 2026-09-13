@@ -8,7 +8,14 @@ from sqlalchemy import desc, asc, func
 from werkzeug.datastructures import FileStorage
 
 from internal.entity.dataset_entity import DocumentStatus
-from internal.entity.knowledge_entity import KnowledgeCreatedFrom, KnowledgeScope, OperationContext, VisibilityScope
+from internal.entity.knowledge_entity import (
+    KnowledgeBaseType,
+    KnowledgeCreatedFrom,
+    KnowledgeScope,
+    OperationContext,
+    PartitionMode,
+    VisibilityScope,
+)
 from internal.exception import ForbiddenException, FailException, NotFoundException, ValidateErrorException
 from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
 from internal.model import (
@@ -67,9 +74,21 @@ class KnowledgeBaseService(BaseService):
         operation_context: str = "user",
         created_from: str = "manual_upload",
         description: str = "",
+        base_type: str = KnowledgeBaseType.MIXED.value,
+        partition_mode: str = PartitionMode.NONE.value,
     ) -> KnowledgeBase:
         if operation_context != OperationContext.USER.value:
             raise ForbiddenException("用户资料库必须在普通用户上下文创建")
+        if base_type not in {member.value for member in KnowledgeBaseType}:
+            raise ValidateErrorException(
+                f"不支持的板块类型：{base_type}",
+                {"base_type": [f"可选值：{[m.value for m in KnowledgeBaseType]}"]},
+            )
+        if partition_mode not in {member.value for member in PartitionMode}:
+            raise ValidateErrorException(
+                f"不支持的分区模式：{partition_mode}",
+                {"partition_mode": [f"可选值：{[m.value for m in PartitionMode]}"]},
+            )
         return self._create_base(
             name=name,
             description=description,
@@ -79,6 +98,8 @@ class KnowledgeBaseService(BaseService):
             operation_context=OperationContext.USER.value,
             visibility_scope=VisibilityScope.PRIVATE.value,
             created_from=created_from,
+            base_type=base_type,
+            partition_mode=partition_mode,
         )
 
     def create_user_memory_base(
@@ -144,6 +165,8 @@ class KnowledgeBaseService(BaseService):
         operation_context: str,
         visibility_scope: str,
         created_from: str,
+        base_type: str = KnowledgeBaseType.MIXED.value,
+        partition_mode: str = PartitionMode.NONE.value,
     ) -> KnowledgeBase:
         if not name or not name.strip():
             raise ValidateErrorException("知识库名称不能为空")
@@ -160,6 +183,8 @@ class KnowledgeBaseService(BaseService):
             name=name,
             description=description,
             knowledge_scope=knowledge_scope,
+            base_type=base_type,
+            partition_mode=partition_mode,
             owner_account_id=owner_account_id,
             owner_admin_user_id=owner_admin_user_id,
             operation_context=operation_context,
