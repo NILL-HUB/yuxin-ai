@@ -7,6 +7,7 @@ from .conversation import Conversation, Message, MessageAgentThought
 from .conversation_variable import ConversationVariable
 from .knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeSegment, UserMemory, ExternalDataSource
 from .knowledge_partition import KnowledgePartition
+from .knowledge_tag import KnowledgeBaseTag, KnowledgeDocumentTag
 from .end_user import EndUser
 from .upload_file import UploadFile
 from .storage_config import StorageConfig
@@ -48,7 +49,7 @@ from .desktop_device import DesktopDevice
 __all__ = [
     "ModelPoolConfig", "ModelProviderConfig",
     "DesktopDevice",
-    "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "KnowledgePartition", "UserMemory", "ExternalDataSource",
+    "KnowledgeBase", "KnowledgeDocument", "KnowledgeSegment", "KnowledgePartition", "KnowledgeBaseTag", "KnowledgeDocumentTag", "UserMemory", "ExternalDataSource",
     "ToolConfirmation",
     "App", "AppConfig", "AppConfigVersion",
     "ApiTool", "ApiToolProvider",
