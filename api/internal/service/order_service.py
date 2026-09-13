@@ -89,7 +89,7 @@ class OrderService:
             raise FailException("套餐不存在或已禁用")
         raw_method = normalize_provider((pay_method or "").strip().lower())
         plan_type = (plan.plan_type or "membership").strip().lower()
-        if plan_type not in ("balance", "membership", "credits"):
+        if plan_type not in ("balance", "membership", "credits", "storage_addon"):
             raise FailException("套餐类型无效")
         if plan_type == "balance":
             if raw_method not in ONLINE_METHODS:
@@ -254,6 +254,10 @@ class OrderService:
         if plan is None:
             raise FailException("关联套餐不存在")
         granted = int(plan.grant_token_credits or 0)
+        if order.plan_type == "storage_addon":
+            # 存储扩展包：容量由已支付订单直接参与配额计算（见 StorageQuotaService），
+            # 此处无需发放会员或算力权益。
+            return
         if order.plan_type == "membership":
             self._upsert_membership(order.account_id, plan, order.id)
             self._grant_credits(order.account_id, granted, order.id, pool="quota", plan=plan)

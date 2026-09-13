@@ -22,7 +22,7 @@ class UpsertAdminPlanReq(Form):
     code = StringField("code", validators=[Optional(), Length(max=128)])
     name = StringField("name", validators=[Optional(), Length(max=255)])
     description = StringField("description", default="", validators=[Optional(), Length(max=1024)])
-    plan_type = StringField("plan_type", default="membership", validators=[Optional(), AnyOf(["balance", "membership", "credits"])])
+    plan_type = StringField("plan_type", default="membership", validators=[Optional(), AnyOf(["balance", "membership", "credits", "storage_addon"])])
     duration_days = IntegerField("duration_days", validators=[Optional(), NumberRange(min=1, max=3650)])
     grant_token_credits = IntegerField("grant_token_credits", validators=[Optional(), NumberRange(min=0, max=10_000_000_000)])
     auto_renew_threshold_percent = IntegerField("auto_renew_threshold_percent", default=5, validators=[Optional(), NumberRange(min=0, max=100)])
