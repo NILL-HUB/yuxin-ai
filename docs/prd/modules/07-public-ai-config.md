@@ -21,19 +21,19 @@
 
 引入统一的 `public_ai_feature_config` 配置层，将"用哪个模型做这个 AI 任务"从代码层下沉到数据库层：
 
-- **集中管理**：admin 通过后台界面统一配置 26 个公共 AI 能力的模型、降级策略、是否计费
+- **集中管理**：admin 通过后台界面统一配置 27 个公共 AI 能力的模型、降级策略、是否计费
 - **类型隔离**：通过 `model_type` 字段强制 chat / image 类型匹配，防止类型错配
-- **成本归属**：通过 `billable` 字段明确区分用户付费（8 个）vs 系统付费（18 个）
-- **降级路径**：未配置时按 `fallback_tier`（cheap/standard/premium）从模型池自动选取兜底模型
+- **成本归属**：通过 `billable` 字段明确区分用户付费（8 个）vs 系统付费
+- **降级路径**：未配置时按 `fallback_tier`（模型池数字档位 `1`~`5`）从模型池自动选取兜底模型
 
 ### 24.1.3 设计原则
 
 | 原则 | 说明 |
 |---|---|
 | 配置优先 | 所有公共 AI 调用必须经过 `get_feature_model(feature_key)`，禁止直连 `get_cheap_chat_model` |
-| 系统预设非编辑 | `feature_key` / `feature_name` / `category` / `description` 由系统预置，admin 不可改 |
+| 系统预设非编辑 | `feature_key` / `feature_name` / `feature_category` / `feature_description` 由系统预置，admin 不可改 |
 | 仅 4 字段可编辑 | `model_config_id`（下拉）/ `fallback_tier`（下拉）/ `enabled`（勾选）/ `billable`（单选）|
-| 不支持增删 | 26 个 feature_key 由迁移脚本预置，admin 不能 create/delete，只能 edit |
+| 不支持增删 | 27 个 feature_key 由迁移脚本预置，admin 不能 create/delete，只能 edit |
 | 类型严格匹配 | `model_type` 决定下拉列表过滤范围，图像类只能选图像模型 |
 
 ---
@@ -44,36 +44,39 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | UUID PK | 主键 |
-| `feature_key` | VARCHAR(64) UNIQUE | 功能标识，如 `memory_explicit_detector` / `direct_answer` |
+| `feature_key` | VARCHAR(64) PK | 功能标识，如 `memory_explicit_detection` / `direct_answer` |
 | `feature_name` | VARCHAR(128) | 功能中文名，系统预设 |
-| `category` | VARCHAR(32) | 分类：`icon` / `memory` / `routing` / `assistant` / `conversation` |
-| `description` | TEXT | 功能描述，系统预设 |
-| `model_type` | VARCHAR(16) | 模型类型：`chat` / `image`，决定下拉过滤范围 |
+| `feature_category` | VARCHAR(64) | 分类：`icon` / `memory` / `routing` / `assistant` / `conversation` / `general` |
+| `feature_description` | VARCHAR(512) | 功能描述，系统预设 |
+| `model_type` | VARCHAR(32) | 模型类型：`chat` / `image_generation` / `embedding` / `rerank` / `audio`，决定下拉过滤范围 |
 | `model_config_id` | UUID FK→`model_pool_config.id` | 绑定的模型配置（可为空，表示走 fallback） |
-| `fallback_tier` | VARCHAR(16) | 降级档位：`cheap` / `standard` / `premium` |
+| `fallback_tier` | VARCHAR(64) | 降级档位：模型池数字档位字符串 `1`~`5`（`1`经济/`2`标准/`3`强力/`4`视觉/`5`长上下文） |
 | `enabled` | BOOLEAN | 是否启用，禁用时直接跳过该 AI 能力 |
 | `billable` | BOOLEAN | 是否计费：true=扣用户配额，false=系统承担 |
 | `deprecated` | BOOLEAN DEFAULT false | 是否已废弃（v5.2 新增）：被指挥官替代的旧路由 feature_key 标记为 true，运行时不再调用 |
+| `last_called_at` | TIMESTAMP NULL | 最后调用时间（60s 频控更新），用于识别未使用配置 |
+| `extra_config` | JSONB DEFAULT {} | 扩展配置 |
 | `created_at` / `updated_at` | TIMESTAMP | 时间戳 |
+
+> **主键口径**：本表主键是 `feature_key`（非 UUID `id`），feature_key 由代码/迁移预置，admin 只能编辑不能新建删除。
 
 ### 24.2.2 索引与约束
 
-- `UNIQUE(feature_key)` — 防止重复配置
-- `INDEX(model_config_id)` — 加速反向查询
-- `INDEX(category)` — 加速后台分类筛选
+- `PRIMARY KEY(feature_key)` — 防重复配置
+- `INDEX(feature_category)` — 加速后台分类筛选
+- `INDEX(enabled)` — 加速启用状态筛选
 
 ### 24.2.3 Alembic 迁移
 
-迁移链：`... → e9f0a1b2c3d4 (head)` 中包含 `public_ai_feature_config` 表创建 + 26 条预置数据 seed。
+迁移链：`... → e9f0a1b2c3d4 (head)` 中包含 `public_ai_feature_config` 表创建 + 27 条预置数据 seed。
 
 迁移幂等性：使用 `INSERT ... ON CONFLICT (feature_key) DO NOTHING` 确保重复执行不重复插入。
 
 ---
 
-## 24.3 26 个预置功能清单
+## 24.3 27 个预置功能清单
 
-> **DB 实际预置**：26 条记录已通过 Alembic 迁移 seed 至 `public_ai_feature_config` 表，与下表完全对齐（验证日期 2026-07-22）。
+> **DB 实际预置**：27 条记录已通过 Alembic 迁移 seed 至 `public_ai_feature_config` 表，与下表完全对齐（验证日期 2026-07-22）。
 
 ### 24.3.1 图标类（2 个，全部 billable=false）
 
@@ -100,7 +103,7 @@
 
 > **架构理念**：记忆系统的所有 AI 调用都是**后台异步任务**，不影响用户交互响应延迟。这类任务追求**精准度而非速度**，应使用**语义理解强大的高推理模型**异步处理——推理模型具备思维链能力，对语义的深度理解远强于非推理 chat 模型，慢几十秒无所谓因为是后台任务。**严禁因超时降级为正则匹配/默认值导致垃圾记忆污染大脑**。详见 §24.6.1。
 >
-> **当前配置**：11 个 memory_* feature_key 绑定到模型池中的高推理模型，fallback_tier=cheap。具体绑定的模型由 admin 在后台「池治理 → 公共 AI 配置」中按需选择，文档不硬编码推荐任何具体模型版本。
+> **当前配置**：11 个 memory_* feature_key 绑定到模型池中的高推理模型，fallback_tier 使用模型池数字档位（内部异步任务应取"质量刚好过关"的较低档以控成本）。具体绑定的模型由 admin 在后台「池治理 → 公共 AI 配置」中按需选择，文档不硬编码推荐任何具体模型版本。
 
 ### 24.3.3 路由类（1 个，billable=false，model_type=chat）
 
@@ -171,16 +174,19 @@ def get_feature_model(self, feature_key: str):
         if model and model.status == 'active':
             return model
 
-    # Level 2: 按 fallback_tier 从模型池取最便宜可用模型（按 model_type 过滤）
-    tier = (config.fallback_tier if config else 'cheap') or 'cheap'
-    model_type = config.model_type if config else 'chat'
-    model = self._pick_cheapest_by_tier(tier, model_type)
+    # Level 2: 按 fallback_tier 从模型池取对应该档位的可用模型（按 model_type 过滤）
+    # 档位口径为数字字符串 "1"~"5"；未配置时由 PublicAIFeatureService 归一化为默认档 "2"
+    tier = svc.get_feature_fallback_tier(feature_key)
+    model_type = svc.get_feature_model_type(feature_key)
+    model = self._get_runtime_chat_model_by_tier(tier, model_type)
     if model:
         return model
 
-    # Level 3: 兜底链（hardcoded）：Kolors → Qwen → DALLE（image）/ 最便宜 chat 模型
+    # Level 3: 兜底链（hardcoded）：最便宜 chat 模型 / 默认模型
     return self._fallback_hardcoded_chain(model_type)
 ```
+
+> **档位口径一致性（2026-09 修复）**：`public_ai_feature_config.fallback_tier` 与 `model_pool_config.tier` 统一使用模型池数字档位 `"1"`~`"5"`。`PublicAIFeatureService.get_feature_fallback_tier()` 在功能无配置记录或档位为空时返回 `DEFAULT_FALLBACK_TIER = "2"`，并把历史遗留的字符串档位（`cheap`/`standard`/`strong`/`premium`/`vision`/`long_context`）归一化为对应数字，避免档位解析落空导致功能静默走高成本兜底档。
 
 ### 24.4.2 `model_type` 过滤防类型错配
 
@@ -228,7 +234,7 @@ def consume_for_feature(
     """公共 AI 功能计费扣减
 
     Args:
-        feature_key: 必须为 26 个预置之一
+        feature_key: 必须为 27 个预置之一
         user_id: 用户 ID
         input_tokens / output_tokens: 本次调用的 token 消耗
         model_config_id: 实际使用的模型（可能为 fallback 模型）
@@ -373,8 +379,8 @@ fallback_tier 池 (Level 2)
 
 ### 24.7.2 列表页
 
-- 显示 26 条预置配置
-- 列：feature_key / feature_name / category / model_type / 绑定模型名 / fallback_tier / enabled / billable
+- 显示 27 条预置配置
+- 列：feature_key / feature_name / feature_category / model_type / 绑定模型名 / fallback_tier / enabled / billable
 - 筛选：category、enabled、billable
 - 不支持"新建"和"删除"按钮
 
@@ -385,11 +391,11 @@ fallback_tier 池 (Level 2)
 | 字段 | 控件 | 数据源 |
 |---|---|---|
 | `model_config_id` | 下拉单选 | `model_config WHERE model_type=:type AND status='active'` |
-| `fallback_tier` | 下拉单选 | `cheap` / `standard` / `premium` |
+| `fallback_tier` | 下拉单选 | 模型池数字档位 `1` / `2` / `3` / `4` / `5`（对应经济/标准/强力/视觉/长上下文） |
 | `enabled` | 复选框 | true / false |
 | `billable` | 单选 | true=扣用户额度 / false=系统承担 |
 
-**只读字段**（不可编辑）：`feature_key` / `feature_name` / `category` / `description` / `model_type`
+**只读字段**（不可编辑）：`feature_key` / `feature_name` / `feature_category` / `feature_description` / `model_type`
 
 ### 24.7.4 API 端点
 
@@ -412,7 +418,7 @@ fallback_tier 池 (Level 2)
 
 ### 24.8.1 与 §12 模型路由的关系
 
-`public_ai_feature_config` 是 §12 模型池的**消费方**：从 `model_config` 表中按 `model_config_id` 引用具体的模型配置。`fallback_tier` 字段也复用 §12 定义的模型档位（cheap/standard/premium）。
+`public_ai_feature_config` 是 §12 模型池的**消费方**：从 `model_config` 表中按 `model_config_id` 引用具体的模型配置。`fallback_tier` 字段也复用 §12 定义的模型池数字档位（`1`~`5`）。
 
 ### 24.8.2 与 §16 记忆系统的关系
 
@@ -422,17 +428,35 @@ fallback_tier 池 (Level 2)
 
 ### 24.8.3 与 §13 Orchestrator 的关系
 
-Orchestrator 的 4 个路由 AI 调用点（complexity_judge / intent_router / app_selection / web_search_decision）使用 `get_feature_model()` 取模型。这些是**同步路径**（用户等待），推荐配置 `fallback_tier=cheap` 保证响应速度。
+Orchestrator 的 4 个路由 AI 调用点（complexity_judge / intent_router / app_selection / web_search_decision）使用 `get_feature_model()` 取模型。这些是**同步路径**（用户等待），推荐配置为较低的模型池数字档位（如 `1`）保证响应速度。
 
 ### 24.8.4 与计费系统的关系
 
-`CreditService.consume_for_feature(feature_key, ...)` 是用户配额扣减的统一入口。8 个 `billable=true` 的 feature_key 必须在 LLM 调用成功后调用此方法。18 个 `billable=false` 的能力**禁止**调用此方法（直接走 LLM 不扣费）。
+`CreditService.consume_for_feature(feature_key, ...)` 是用户配额扣减的统一入口。`billable=true` 的 feature_key（当前 8 个）必须在 LLM 调用成功后调用此方法；`billable=false` 的能力（其余）**禁止**调用此方法（直接走 LLM 不扣费，成本由系统承担）。
+
+### 24.8.5 与存储配额的关系（同名 feature_key 消歧）
+
+> **本节不新增任何 AI 配置项，仅作消歧，避免后续误注册。**
+
+系统里存在两个**同名但不同表、不同语义**的 `feature_key`，必须区分：
+
+| 维度 | 本章的 `feature_key` | 存储配额的 `feature_key` |
+| --- | --- | --- |
+| 所在表 | `public_ai_feature_config`（主键） | `plan_entitlement`（普通列） |
+| 语义 | 公共 AI 能力的标识（如 `direct_answer`） | 会员套餐的存储容量权益键 `storage_quota_gb` |
+| 配置入口 | 池治理 → 公共 AI 配置（`/admin/public-ai-features`） | 会员套餐板块（为套餐新增 `storage_quota_gb` 权益） |
+| 消费方 | `LanguageModelService.get_feature_model()` 取模型 | `StorageQuotaService.resolve_total_quota_bytes()` 算容量 |
+
+因此：
+
+- **存储配额（`storage_quota_gb`）不属于本章范围**，不要把它注册进 `PublicAIFeatureService._BUILTIN_FEATURES`，也不要在 `/admin/public-ai-features` 板块管理。它是套餐权益，由管理员在会员套餐板块按 `PlanEntitlement(feature_key='storage_quota_gb')` 配置，配套的扩展包套餐类型为 `Plan.plan_type='storage_addon'`。
+- 存储配额权益的完整说明见 [02-knowledge-base.md §11.7.6](./02-knowledge-base.md#1176-存储配额与容量计量) 与 [06-file-storage.md §17.4](./06-file-storage.md#174-存储配额与用量计量p1-新增)。
 
 ---
 
 ## 24.9 实施验证清单
 
-- [x] `public_ai_feature_config` 表 + 26 条 seed 已通过 Alembic 迁移落库
+- [x] `public_ai_feature_config` 表 + 27 条 seed 已通过 Alembic 迁移落库
 - [x] `LanguageModelService.get_feature_model()` 方法实现并暴露
 - [x] `get_feature_model()` 改造完成：生产调用遍布 39 个文件 85+ 处，全部使用 `get_feature_model()`
 - [x] `IconGeneratorService` 改造为配置优先 + image 类型过滤
@@ -440,7 +464,7 @@ Orchestrator 的 4 个路由 AI 调用点（complexity_judge / intent_router / a
 - [x] 8 个 billable 服务的计费集成完成
 - [x] 后台管理页面（「池治理 → 公共 AI 配置」）可用：路由注册在 `api/app/http/admin_routes_8.py`（`/admin/public-ai-features` 系列端点），依赖经 `api/app/http/module.py` DI 注册 `PublicAIFeatureService`；权限点 `public_ai_feature:read` / `public_ai_feature:update` 见 `api/internal/core/rbac.py` 的 `PERMISSION_CATALOG`
 - [x] model_type 过滤在 UI 下拉 + 后端 fallback 两层生效
-- [x] 11 个 memory_* feature_key 绑定高推理模型，fallback_tier=cheap（2026-07-22 修正：原设计误用固定短超时切断推理模型思考导致降级，已改为探针式活性检测机制，详见 §24.6.1）
+- [x] 11 个 memory_* feature_key 绑定高推理模型，fallback_tier 使用模型池数字档位（2026-07-22 修正：原设计误用固定短超时切断推理模型思考导致降级，已改为探针式活性检测机制，详见 §24.6.1）
 
 ---
 

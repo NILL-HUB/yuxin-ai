@@ -618,6 +618,7 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 - 11.4 检索优先级与隔离策略
 - 11.5 现有知识库能力评估
 - 11.6 与工具池的关系
+- 11.7 知识库板块与分区体系（P1 已落地）
 
 详见子文档：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)
 
@@ -690,16 +691,17 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 
 子节索引：
 - 17.1 设计目标
-- 17.2 架构分层（端口 + 工厂 + 三后端）
-- 17.3 核心组件（ObjectStoragePort / StorageBackend / StorageFactory）
-- 17.4 后端实现（LocalStorageService / CosService / AliyunOSSService）
-- 17.5 配置项清单
-- 17.6 文件元数据模型
-- 17.7 文件上传调用链
-- 17.8 切换后端操作指南
-- 17.9 与记忆系统冷存储的关系
-- 17.10 安全要求
-- 17.11 后续演进路线
+- 17.2 架构分层（业务层 + 运行时代理 + 三后端）
+- 17.3 核心组件（ObjectStoragePort / StorageBackend / RuntimeStorageProxy / StorageConfigService）
+- 17.4 存储配额与用量计量（P1 新增）
+- 17.5 后端实现（LocalStorageService / CosService / AliyunOSSService）
+- 17.6 配置项清单
+- 17.7 文件元数据模型
+- 17.8 文件上传调用链
+- 17.9 切换后端操作指南
+- 17.10 与记忆系统冷存储的关系
+- 17.11 安全要求
+- 17.12 后续演进路线
 
 详见子文档：[modules/06-file-storage.md](./modules/06-file-storage.md)
 

@@ -240,18 +240,18 @@
 | 视频 | 第一阶段不要求视频解析、抽帧、字幕提取、ASR 入库，深度解析后置 |
 | 音频 | 第一阶段不要求音频 ASR、说话人切分、转写入库，深度解析后置 |
 
-明确缺口：
+明确缺口（P1 数据基座落地后已消解项标注 ✅）：
 
-1. 现有 Dataset 更像"用户上传资料型知识库"，适合作为用户资料内容库的基础。
+1. 现有 `KnowledgeBase` 已演进为"用户资料内容库 + 板块"的载体，分层作用域、板块类型与分区体系均已落地（主入口侧的多模态解析与检索取料能力见 §11.7 与 P2/P3 分期）。
 2. 现有 `TokenBufferMemory` 只是会话短期上下文裁剪，不是跨会话长期记忆。长期记忆由第 16 章记忆系统负责。
-3. 现有知识库缺少 `knowledge_scope`，无法区分系统级知识库、用户资料内容库、团队知识库。（长期记忆库已移出知识库系统）
-4. 现有知识库主要使用 `account_id` 做归属判断，但管理员账号也绑定普通 `Account`，因此仅靠 `account_id` 无法区分“管理员自己的个人知识库”和“管理员维护的系统级知识库”。
-5. 现有知识库缺少 `operation_context`、`owner_admin_user_id`、`visibility_scope` 等字段，无法表达管理上下文和发布范围。
+3. ✅ 已消解：`KnowledgeBase.knowledge_scope` 已落地，可区分系统级知识库、用户资料内容库、团队/租户/项目知识库。
+4. ✅ 已消解：归属判断已引入 `owner_account_id` + `owner_admin_user_id`，可区分"管理员自己的个人知识库"和"管理员维护的系统级知识库"。
+5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
-7. 现有资料库主要覆盖文本类文档，多媒体资料的 OCR、ASR、视频抽帧、视觉摘要、音视频转写等处理链路后置，不阻塞第一阶段。
+7. 资料库的多媒体深度解析链路（OCR、ASR、视频抽帧、视觉摘要、音视频转写）**尚未接入索引链路**，属 P2/P3 范围（数据落点已由 §11.7.5 的 `media_type` / `parse_profile` 预留）。
 8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
-9. 现有检索只按 account_id 做基础隔离，后续需要扩展用户级、团队级、项目级、租户级作用域。
-10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池。
+9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
+10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（P3 范围）。
 
 由于当前系统没有必须保留的旧数据，数据库模型可以按目标架构直接重构，不需要为了兼容历史数据做复杂迁移策略。实施时可以优先保证新模型清晰，而不是维持旧字段语义。
 
@@ -294,3 +294,105 @@ knowledge tool pool
 ```
 
 Agent 不直接访问全部知识库，而是通过 ToolPolicyFilter 获取本次任务允许访问的知识检索工具子集。
+
+### 11.7 知识库板块与分区体系（P1 已落地）
+
+P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素材中心**的组织结构：板块类型（`base_type`）决定板块可容纳的媒体、分区（`KnowledgePartition`）提供两级归类、标签（复用 `Tag`）提供多重属性，容量由存储配额统一管控。设计源头见 [knowledge-base-product-form-design.md](../knowledge-base-product-form-design.md) §二。
+
+#### 11.7.1 板块类型 base_type（硬约束）
+
+`knowledge_base.base_type` 决定该板块允许上传的媒体类型，**由服务端强制校验**（类型不符直接拒绝，不依赖前端提示）。枚举定义在 `internal/entity/knowledge_entity.py::KnowledgeBaseType`：
+
+| base_type | 允许的媒体类型 | 拒绝行为 | 默认 |
+| --- | --- | --- | --- |
+| `document` | 文档类（md/doc/docx/pdf/txt/csv/xlsx/html 等） | 图片/音视频 → 服务端拒绝 | |
+| `image` | 图片类（jpg/jpeg/png/webp/gif/svg） | 文档/音视频 → 服务端拒绝 | |
+| `video` | 视频类（mp4/mov/avi/mkv/webm） | 文档/图片/音频 → 服务端拒绝 | |
+| `audio` | 音频类（mp3/wav/m4a/aac/flac） | 文档/图片/视频 → 服务端拒绝 | |
+| `mixed` | 不限 | 兼容存量库 | ✅ |
+
+类型到扩展名的映射与两个工具函数 `allowed_extensions_for_base_type()` / `media_type_for_extension()` 位于 `internal/entity/upload_file_entity.py`。`KnowledgeBaseService.create_user_content_base()` 对 `base_type` / `partition_mode` 做取值校验，非法值抛 `ValidateErrorException`。存量 `KnowledgeBase` 默认迁移为 `mixed`（见 §11.7.7 迁移）。
+
+#### 11.7.2 分区模式 partition_mode
+
+`knowledge_base.partition_mode` 定义分区的产生方式，枚举 `PartitionMode`：
+
+| 模式 | 行为 |
+| --- | --- |
+| `none` | 不分分区，素材平铺（默认） |
+| `date_month` | 上传自动归入 `2026-09`，系统按需自动建分区 |
+| `date_day` | 上传自动归入 `2026-09-12` |
+| `custom` | 用户/小钰手动建命名分区（如「春季新品」） |
+
+#### 11.7.3 KnowledgePartition 两级树
+
+新增 `knowledge_partition` 表承载分区，`parent_id` 自引用形成两级树（父级 `parent_id` 为空表示顶层分区）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `knowledge_base_id` | 所属板块，级联删除（`ondelete=CASCADE`） |
+| `name` | 分区显示名 |
+| `partition_key` | 分区业务键，日期模式为 `2026-09`/`2026-09-12`，自定义模式为 slug；同库唯一（`uq_knowledge_partition_base_key`） |
+| `parent_id` | 父分区，为空即顶层 |
+| `sort_order` | 同级排序 |
+| `enabled` | 是否启用 |
+| `visibility_scope` | 权限字段预留，默认继承板块可见性（首版分区级权限不做） |
+
+**层级由服务层强制**：`KnowledgePartitionService.create_partition()` 校验父分区存在（否则抛 `FailException`）且父分区自身必须是顶层，第三级创建直接抛 `ValidateErrorException`（`MAX_PARTITION_DEPTH = 1`），避免深树带来的 UI 混乱与 Agent 导航复杂化。`parent_id` 结构天然支持未来放开更深层级，不需改表。
+
+分区权限首版不做——分区是组织手段而非权限边界，权限仍在板块层。
+
+#### 11.7.4 标签关联（复用既有 Tag）
+
+复用 `Tag` 模型与 `TagAssignmentService` 的自动打标能力，仅将作用对象从 App/Workflow 扩展到知识库，对齐既有 `AppTag` / `WorkflowTag` 模式，新增两张关联表：
+
+| 模型 | 表 | 关联 | 唯一约束 | 用途 |
+| --- | --- | --- | --- | --- |
+| `KnowledgeBaseTag` | `knowledge_base_tag` | 板块 ↔ `Tag` | `(knowledge_base_id, tag_id)` | 跨板块索引导航 |
+| `KnowledgeDocumentTag` | `knowledge_document_tag` | 素材 ↔ `Tag` | `(knowledge_document_id, tag_id)` | 素材属性过滤 |
+
+两表均含 `account_id`，标签或板块/素材删除时关联级联清理。
+
+**分区与标签的分工**：分区是互斥层级归类（一个素材只能在一个分区），标签是可交叉叠加的属性（一个素材可有多个标签）。
+
+#### 11.7.5 素材多模态字段
+
+`knowledge_document` 新增三个字段，为多模态素材与分级解析预留数据落点：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `partition_id` | UUID FK→`knowledge_partition.id` | 所属分区，可为空表示未归分区；分区删除时 `ondelete=SET NULL`（置空而非级联删素材） |
+| `media_type` | VARCHAR(32) | 单个素材的媒体类型：document / image / video / audio，默认 document（枚举 `DocumentMediaType`） |
+| `parse_profile` | JSONB | 解析档位与产物索引，默认 `{}`，形如 `{"tier1": {...}, "tier2": {...}, "frames": [...]}` |
+
+同时 `upload_file.size` 由 `Integer` 升级为 `BigInteger`，支撑 GB 级视频素材（原 `Integer` 上限约 2.1GB，必然溢出）。
+
+#### 11.7.6 存储配额与容量计量
+
+知识库容量纳入统一存储配额管控，规则为：
+
+```text
+total_quota = max(基线 5GB, 生效套餐 storage_quota_gb) + sum(已购扩展包 GB)
+used_bytes  = account_storage_usage.used_bytes   （上传/删除事件同步增减）
+```
+
+| 用户类型 | 存储配额 | 配置方式 |
+| --- | --- | --- |
+| 注册用户 | 5 GB | 系统默认基线（`DEFAULT_STORAGE_QUOTA_GB`） |
+| 普通会员 | 100 GB | 套餐权益 `PlanEntitlement.feature_key='storage_quota_gb'` |
+| 高级会员 | 500 GB | 同上 |
+| 扩展包 | 累加 | `Plan.plan_type='storage_addon'` 套餐，叠加在套餐配额之上 |
+
+- **配额承载**：走 `PlanEntitlement` 的 `feature_key='storage_quota_gb'` 自由键值（非给 `Plan` 加列），管理员在会员套餐板块新增该权益即生效，不改表结构、不改代码。常量与枚举定义在 `internal/entity/storage_quota_entity.py`。该 `feature_key` 属**套餐权益域**，与公共 AI 配置表的同名 `feature_key` 不是同一概念（详见 §24.8.5）。
+- **扩展包**：`Plan.plan_type='storage_addon'`，复用既有 `PurchaseOrder` 与 `BalanceAccount` 扣款链路；已放行 `admin_billing_plan_schema` 与 `order_service` 的 plan_type 白名单，`_fulfill_rights` 对其不发放会员/算力权益（容量由已支付订单直接参与配额计算）。
+- **计量**：新增 `account_storage_usage` 表（`account_id` 唯一，`used_bytes` 为 `BigInteger`）缓存已用字节，避免每次上传都全表 `sum(upload_file.size)`。
+- **服务与收口**：`StorageQuotaService`（`internal/service/storage_quota_service.py`）提供 `resolve_total_quota_bytes` / `get_used_bytes` / `get_usage_summary` / `check_quota` / `add_usage` / `release_usage`；配额校验统一收口到 `RuntimeStorageProxy`——`upload_file` 与 `upload_bytes` 均在写入前 `check_quota`、成功后 `add_usage`，一处覆盖全部后端与全部调用方。超配额抛 `ForbiddenException`（`reason_code=storage_quota_exceeded`），引导购买扩展包。详细存储侧说明见 [06-file-storage.md §17.4](./06-file-storage.md#174-存储配额与用量计量p1-新增)。
+
+#### 11.7.7 数据迁移
+
+P1 全部 DDL 由单个迁移 `p1a2b3c4d5e6_add_knowledge_product_form_base.py`（位于 `api/internal/migration/versions/`）承载，已在真实 DB 落库、迁移链保持单 head、`downgrade` 可逆：
+
+- `knowledge_base` 增加 `base_type` / `partition_mode`（+ `base_type` 索引）
+- `knowledge_document` 增加 `partition_id` / `media_type` / `parse_profile`（+ 两个索引）
+- `upload_file.size` 由 integer 升级为 bigint
+- 新建 `knowledge_partition` / `knowledge_base_tag` / `knowledge_document_tag` / `account_storage_usage`

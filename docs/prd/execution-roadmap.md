@@ -53,6 +53,35 @@
 | SSE 事件枚举补齐 | P2 | ✅ |
 | 路由守卫修复 | P1 | ✅ |
 
+### 知识库产品形态分期
+
+沿用 [knowledge-base-product-form-design.md](./knowledge-base-product-form-design.md) §9.2 的五阶段划分，P1 数据基座已完成并落库：
+
+| 阶段 | 主题 | 完成状态 |
+| --- | --- | --- |
+| P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
+| P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ⬜ 未开始 |
+| P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ⬜ 未开始 |
+| P4 | 视频轻量编辑（trim / concat / subtitle） | ⬜ 未开始 |
+| P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
+
+P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
+
+| 交付 | 载体 | 状态 |
+| --- | --- | --- |
+| 板块类型硬约束（document/image/video/audio/mixed） | `KnowledgeBase.base_type` + `KnowledgeBaseType` 枚举 + `allowed_extensions_for_base_type()` | ✅ |
+| 分区模式（none/date_month/date_day/custom） | `KnowledgeBase.partition_mode` + `PartitionMode` 枚举 | ✅ |
+| 两级分区树（第三级服务层拒绝） | `KnowledgePartition` 表 + `KnowledgePartitionService` | ✅ |
+| 知识库/素材标签关联（复用 Tag） | `knowledge_base_tag` / `knowledge_document_tag` | ✅ |
+| 多模态素材字段 | `knowledge_document.partition_id` / `media_type` / `parse_profile` | ✅ |
+| 大文件支撑 | `UploadFile.size` 升级 `BigInteger` | ✅ |
+| 存储配额解析与计量 | `StorageQuotaService` + `account_storage_usage` + `PlanEntitlement.feature_key='storage_quota_gb'` | ✅ |
+| 存储扩展包套餐类型 | `Plan.plan_type='storage_addon'`（已放行白名单与履约分支） | ✅ |
+| 配额校验收口 | `RuntimeStorageProxy.upload_file` / `upload_bytes` 接入 `check_quota` + `add_usage` | ✅ |
+| 数据迁移 | `p1a2b3c4d5e6_add_knowledge_product_form_base.py`（单 head、downgrade 可逆） | ✅ |
+
+> 架构文档同步见 [modules/02-knowledge-base.md §11.7](./modules/02-knowledge-base.md#117-知识库板块与分区体系p1-已落地) 与 [modules/06-file-storage.md §17.4](./modules/06-file-storage.md#174-存储配额与用量计量p1-新增)。
+
 ---
 
 ## 2. 待修复差异清单
