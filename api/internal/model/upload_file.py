@@ -1,8 +1,8 @@
 from sqlalchemy import (
+    BigInteger,
     Column,
     UUID,
     String,
-    Integer,
     DateTime,
     PrimaryKeyConstraint,
     text,
@@ -28,7 +28,8 @@ class UploadFile(Base):
     account_id = Column(UUID, nullable=True)
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))
     key = Column(String(255), nullable=False, server_default=text("''::character varying"))
-    size = Column(Integer, nullable=False, server_default=text('0'))
+    # 文件字节数：BigInteger 支持数 GB 级视频素材
+    size = Column(BigInteger, nullable=False, server_default=text('0'))
     extension = Column(String(255), nullable=False, server_default=text("''::character varying"))
     mime_type = Column(String(255), nullable=False, server_default=text("''::character varying"))
     hash = Column(String(255), nullable=False, server_default=text("''::character varying"))
