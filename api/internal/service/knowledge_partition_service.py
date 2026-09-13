@@ -41,12 +41,12 @@ class KnowledgePartitionService(BaseService):
         - parent_id 非空：父分区必须存在，且父分区自身必须是顶层（否则会形成三级树）；
         - 同一知识库下 partition_key 不允许重复。
         """
-        parent = (
-            self.db.session.query(KnowledgePartition)
-            .filter_by(id=parent_id, knowledge_base_id=knowledge_base_id)
-            .one_or_none()
-        )
         if parent_id is not None:
+            parent = (
+                self.db.session.query(KnowledgePartition)
+                .filter_by(id=parent_id, knowledge_base_id=knowledge_base_id)
+                .one_or_none()
+            )
             if parent is None:
                 raise FailException("父分区不存在")
             if parent.parent_id is not None:

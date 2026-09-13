@@ -94,10 +94,7 @@ def test_parent_not_found_is_rejected():
 
 def test_duplicate_partition_key_is_rejected():
     existing = SimpleNamespace(id=uuid4())
-    service = _new_service(_SessionStub([
-        _QueryStub(one_or_none_result=None),
-        _QueryStub(one_or_none_result=existing),
-    ]))
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=existing)]))
 
     with pytest.raises(FailException):
         service.create_partition(
