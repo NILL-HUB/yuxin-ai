@@ -21,12 +21,17 @@ class KnowledgeBase(Base):
         Index("knowledge_base_owner_admin_scope_idx", "owner_admin_user_id", "knowledge_scope"),
         Index("knowledge_base_target_tenant_idx", "target_tenant_id"),
         Index("knowledge_base_target_project_idx", "target_project_id"),
+        Index("knowledge_base_base_type_idx", "base_type"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     name = Column(String(255), nullable=False, server_default=text("''::character varying"))
     description = Column(Text, nullable=False, server_default=text("''::text"))
     knowledge_scope = Column(String(64), nullable=False, server_default=text("'user_content'::character varying"))
+    # 板块类型：决定允许上传的媒体类型（服务端硬约束）；存量库默认 mixed
+    base_type = Column(String(32), nullable=False, server_default=text("'mixed'::character varying"))
+    # 分区模式：none / date_month / date_day / custom
+    partition_mode = Column(String(32), nullable=False, server_default=text("'none'::character varying"))
     owner_account_id = Column(UUID, ForeignKey("account.id"), nullable=True)
     owner_admin_user_id = Column(UUID, ForeignKey("admin_user.id"), nullable=True)
     operation_context = Column(String(64), nullable=False, server_default=text("'user'::character varying"))
