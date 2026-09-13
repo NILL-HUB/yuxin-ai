@@ -12,6 +12,7 @@
 运行时激活的后端。
 """
 import logging
+import os
 from dataclasses import dataclass
 
 from injector import inject
@@ -20,6 +21,7 @@ from internal.exception import FailException
 from internal.model import UploadFile
 from internal.service.upload_file_service import UploadFileService
 from internal.service.storage.storage_config_service import StorageConfigService
+from internal.service.storage_quota_service import StorageQuotaService
 from pkg.sqlalchemy import SQLAlchemy
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ class RuntimeStorageProxy:
 
     upload_file_service: UploadFileService
     storage_config_service: StorageConfigService
+    storage_quota_service: StorageQuotaService
     db: SQLAlchemy
 
     def _resolve_backend(self) -> str:
@@ -78,8 +81,35 @@ class RuntimeStorageProxy:
     # 上传（跟随激活后端）
     # ------------------------------------------------------------------
     def upload_file(self, file, only_image: bool = False, account=None):
-        """上传文件到当前激活后端并创建 UploadFile 记录。"""
-        return self._get_service().upload_file(file, only_image, account)
+        """上传文件到当前激活后端并创建 UploadFile 记录。
+
+        上传前校验账号存储配额，成功写入后累加用量。account 为空时跳过校验
+        （系统/匿名上传不计入用户配额）。
+        """
+        account_id = getattr(account, "id", None)
+        if account_id is not None:
+            file_size = self._measure_upload_size(file)
+            self.storage_quota_service.check_quota(account_id, file_size)
+
+        upload_file = self._get_service().upload_file(file, only_image, account)
+
+        if account_id is not None:
+            self.storage_quota_service.add_usage(account_id, upload_file.size or 0)
+        return upload_file
+
+    @staticmethod
+    def _measure_upload_size(file) -> int:
+        """测量待上传文件字节数；无法测量时回退 0（校验放行）。"""
+        stream = getattr(file, "stream", None)
+        if stream is None:
+            return 0
+        try:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(0)
+            return int(size)
+        except (AttributeError, OSError, ValueError):
+            return 0
 
     def upload_bytes(
         self,

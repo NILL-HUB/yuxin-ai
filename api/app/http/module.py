@@ -116,6 +116,8 @@ class ExtensionModule(Module):
         binder.bind(StorageConfigService, to=StorageConfigService, scope=singleton)
         binder.bind(StorageMigrationService, to=StorageMigrationService, scope=singleton)
         binder.bind(RuntimeStorageProxy, to=RuntimeStorageProxy, scope=singleton)
+        from internal.service.storage_quota_service import StorageQuotaService
+        binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 
         # 注册编排子系统依赖（激活主调度链）
         binder.bind(OrchestrationFeatureFlagService, to=OrchestrationFeatureFlagService)
