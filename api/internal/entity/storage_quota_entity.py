@@ -1,7 +1,12 @@
-"""存储配额与知识库板块枚举。
+"""存储配额常量与扩展包套餐类型。
 
-集中定义配额常量、权益 feature_key、扩展包 plan_type 与板块/分区枚举，
-避免这些稳定值散落在 service 中。
+只承载「存储配额」域的稳定值：
+- 配额常量（默认基线、字节换算）
+- 套餐权益 feature_key
+- 存储扩展包的 plan_type
+
+知识库板块/分区枚举属「知识库」域，定义在
+``internal/entity/knowledge_entity.py``，不要在本文件重复定义。
 """
 from enum import Enum
 
@@ -17,34 +22,6 @@ STORAGE_QUOTA_FEATURE_KEY = "storage_quota_gb"
 
 
 class StorageAddonPlanType(str, Enum):
-    """套餐类型：存储扩展包。"""
+    """套餐类型：存储扩展包（Plan.plan_type 的一种取值）。"""
 
     STORAGE_ADDON = "storage_addon"
-
-
-class KnowledgeBaseType(str, Enum):
-    """知识库板块类型，决定允许上传的媒体类型（硬约束）。"""
-
-    DOCUMENT = "document"
-    IMAGE = "image"
-    VIDEO = "video"
-    AUDIO = "audio"
-    MIXED = "mixed"
-
-
-class PartitionMode(str, Enum):
-    """分区模式，决定分区如何产生。"""
-
-    NONE = "none"
-    DATE_MONTH = "date_month"
-    DATE_DAY = "date_day"
-    CUSTOM = "custom"
-
-
-class DocumentMediaType(str, Enum):
-    """素材媒体类型。"""
-
-    DOCUMENT = "document"
-    IMAGE = "image"
-    VIDEO = "video"
-    AUDIO = "audio"

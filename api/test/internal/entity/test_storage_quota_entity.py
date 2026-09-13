@@ -20,3 +20,11 @@ def test_quota_feature_key_is_stable():
 
 def test_storage_addon_plan_type_value():
     assert StorageAddonPlanType.STORAGE_ADDON.value == "storage_addon"
+
+
+def test_storage_addon_str_mixin_compares_with_plain_string():
+    assert StorageAddonPlanType.STORAGE_ADDON == "storage_addon"
+
+
+def test_storage_addon_enum_has_single_member():
+    assert [member.value for member in StorageAddonPlanType] == ["storage_addon"]
