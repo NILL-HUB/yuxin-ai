@@ -9,6 +9,38 @@ class KnowledgeScope(str, Enum):
     USER_CONTENT = "user_content"
 
 
+class KnowledgeBaseType(str, Enum):
+    """知识库板块类型，决定允许的媒体类型（服务端硬约束）。
+
+    注意与 DocumentMediaType 的区别：本枚举是「板块」的组织类型
+    （MIXED 板块可容纳任意 media_type），后者是「单个素材」的媒体类型。
+    """
+
+    DOCUMENT = "document"
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+    MIXED = "mixed"
+
+
+class PartitionMode(str, Enum):
+    """分区模式：决定分区由系统按日期产生还是用户手动创建。"""
+
+    NONE = "none"
+    DATE_MONTH = "date_month"
+    DATE_DAY = "date_day"
+    CUSTOM = "custom"
+
+
+class DocumentMediaType(str, Enum):
+    """单个素材的媒体类型（knowledge_document.media_type）。"""
+
+    DOCUMENT = "document"
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+
+
 class OperationContext(str, Enum):
     USER = "user"
     ADMIN = "admin"
