@@ -61,6 +61,8 @@ class KnowledgeDocument(Base):
         Index("knowledge_document_owner_account_idx", "owner_account_id"),
         Index("knowledge_document_source_idx", "source_type", "source_id"),
         Index("knowledge_document_status_idx", "status"),
+        Index("knowledge_document_partition_idx", "partition_id"),
+        Index("knowledge_document_media_type_idx", "media_type"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
@@ -71,6 +73,12 @@ class KnowledgeDocument(Base):
     source_type = Column(String(64), nullable=False, server_default=text("'manual_upload'::character varying"))
     source_id = Column(String(255), nullable=False, server_default=text("''::character varying"))
     upload_file_id = Column(UUID, nullable=True)
+    # 所属分区（两级树，可为空表示未归分区）；分区被删时置空而非级联删素材
+    partition_id = Column(UUID, ForeignKey("knowledge_partition.id", ondelete="SET NULL"), nullable=True)
+    # 媒体类型：document / image / video / audio
+    media_type = Column(String(32), nullable=False, server_default=text("'document'::character varying"))
+    # 解析档位与产物索引：{"tier1": {...}, "tier2": {...}, "frames": [...]}
+    parse_profile = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     metadata_ = Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     character_count = Column(Integer, nullable=False, server_default=text("0"))
     token_count = Column(Integer, nullable=False, server_default=text("0"))
