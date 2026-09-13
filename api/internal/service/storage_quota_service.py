@@ -8,10 +8,14 @@
 配额规则：
     total_quota = max(基线 5GB, 生效套餐 storage_quota_gb) + sum(已购扩展包 GB)
 """
+import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from injector import inject
+from sqlalchemy.exc import IntegrityError
 
 from internal.entity.storage_quota_entity import (
     BYTES_PER_GB,
@@ -23,6 +27,8 @@ from internal.exception import ForbiddenException
 from internal.model import AccountStorageUsage, Membership, PlanEntitlement, PurchaseOrder
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
+
+logger = logging.getLogger(__name__)
 
 
 @inject
@@ -37,18 +43,26 @@ class StorageQuotaService(BaseService):
 
         取「生效套餐的存储权益」与「默认基线」的较大值，再累加已购扩展包。
         """
-        base_quota_gb = DEFAULT_STORAGE_QUOTA_GB
+        effective_base_gb = DEFAULT_STORAGE_QUOTA_GB
         plan_quota_gb = self._resolve_active_plan_quota_gb(account_id)
-        if plan_quota_gb > base_quota_gb:
-            base_quota_gb = plan_quota_gb
+        if plan_quota_gb > effective_base_gb:
+            effective_base_gb = plan_quota_gb
         addon_gb = self._resolve_purchased_addon_gb(account_id)
-        return (base_quota_gb + addon_gb) * BYTES_PER_GB
+        return (effective_base_gb + addon_gb) * BYTES_PER_GB
 
     def _resolve_active_plan_quota_gb(self, account_id: UUID) -> int:
-        """取当前生效会员套餐的 storage_quota_gb；无生效套餐返回 0。"""
+        """取当前生效会员套餐的 storage_quota_gb；无生效套餐返回 0。
+
+        与 Membership.is_active 保持一致的生效判定：status=active 且未过期。
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
         membership = (
             self.db.session.query(Membership)
-            .filter_by(account_id=account_id, status="active")
+            .filter(
+                Membership.account_id == account_id,
+                Membership.status == "active",
+                Membership.expires_at >= now,
+            )
             .order_by(Membership.expires_at.desc())
             .first()
         )
@@ -61,9 +75,21 @@ class StorageQuotaService(BaseService):
         )
         if not entitlements:
             return 0
+        return self._entitlement_gb(entitlements[0])
+
+    @staticmethod
+    def _entitlement_gb(entitlement) -> int:
+        """把套餐权益解析为整数 GB；解析失败返回 0 并记日志。"""
         try:
-            return int(entitlements[0].feature_value)
-        except (TypeError, ValueError):
+            value = entitlement.parsed_value
+            if isinstance(value, Decimal):
+                return int(value)
+            return int(value)
+        except (TypeError, ValueError, ArithmeticError):
+            logger.warning(
+                "解析 storage_quota_gb 权益失败，按 0 处理：feature_value=%r",
+                getattr(entitlement, "feature_value", None),
+            )
             return 0
 
     def _resolve_purchased_addon_gb(self, account_id: UUID) -> int:
@@ -84,10 +110,7 @@ class StorageQuotaService(BaseService):
         )
         total_gb = 0
         for entitlement in entitlements:
-            try:
-                total_gb += int(entitlement.feature_value)
-            except (TypeError, ValueError):
-                continue
+            total_gb += self._entitlement_gb(entitlement)
         return total_gb
 
     def get_used_bytes(self, account_id: UUID) -> int:
@@ -137,11 +160,24 @@ class StorageQuotaService(BaseService):
         usage = (
             self.db.session.query(AccountStorageUsage)
             .filter_by(account_id=account_id)
+            .with_for_update()
             .one_or_none()
         )
         if usage is None:
-            created = self.create(AccountStorageUsage, account_id=account_id, used_bytes=bytes_delta)
-            return int(created.used_bytes)
+            try:
+                created = self.create(AccountStorageUsage, account_id=account_id, used_bytes=bytes_delta)
+                return int(created.used_bytes)
+            except IntegrityError:
+                # 并发下另一事务已创建该账号用量记录，回退为累加
+                self.db.session.rollback()
+                usage = (
+                    self.db.session.query(AccountStorageUsage)
+                    .filter_by(account_id=account_id)
+                    .with_for_update()
+                    .one_or_none()
+                )
+                if usage is None:
+                    return self.get_used_bytes(account_id)
         new_value = int(usage.used_bytes or 0) + bytes_delta
         self.update(usage, used_bytes=new_value)
         return new_value
@@ -153,6 +189,7 @@ class StorageQuotaService(BaseService):
         usage = (
             self.db.session.query(AccountStorageUsage)
             .filter_by(account_id=account_id)
+            .with_for_update()
             .one_or_none()
         )
         if usage is None:

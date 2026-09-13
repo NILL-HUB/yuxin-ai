@@ -25,6 +25,9 @@ class _QueryStub:
     def order_by(self, *_a, **_kw):
         return self
 
+    def with_for_update(self):
+        return self
+
     def first(self):
         return self._first
 
@@ -49,6 +52,10 @@ def _new_service(session=None):
     return StorageQuotaService(db=SimpleNamespace(session=session or _SessionStub()))
 
 
+def _fake_entitlement(gb: int):
+    return SimpleNamespace(feature_value=str(gb), value_type="number", parsed_value=gb)
+
+
 def test_default_quota_when_no_membership():
     service = _new_service(_SessionStub([_QueryStub(first_result=None), _QueryStub(all_result=[])]))
     assert service.resolve_total_quota_bytes(uuid4()) == 5 * (1024 ** 3)
@@ -57,7 +64,7 @@ def test_default_quota_when_no_membership():
 def test_membership_entitlement_overrides_default():
     plan_id = uuid4()
     membership = SimpleNamespace(plan_id=plan_id)
-    entitlement = SimpleNamespace(feature_value="100", value_type="number")
+    entitlement = _fake_entitlement(100)
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
         _QueryStub(all_result=[entitlement]),
@@ -69,15 +76,52 @@ def test_membership_entitlement_overrides_default():
 def test_addon_packages_are_additive():
     plan_id = uuid4()
     membership = SimpleNamespace(plan_id=plan_id)
-    entitlement = SimpleNamespace(feature_value="100", value_type="number")
-    addon_one = SimpleNamespace(feature_value="50", value_type="number")
-    addon_two = SimpleNamespace(feature_value="200", value_type="number")
+    entitlement = _fake_entitlement(100)
+    addon_one = _fake_entitlement(50)
+    addon_two = _fake_entitlement(200)
     service = _new_service(_SessionStub([
         _QueryStub(first_result=membership),
         _QueryStub(all_result=[entitlement]),
         _QueryStub(all_result=[addon_one, addon_two]),
     ]))
     assert service.resolve_total_quota_bytes(uuid4()) == 350 * (1024 ** 3)
+
+
+def test_expired_membership_does_not_apply():
+    """已过期会员（status=active 但 expires_at 已过）不应产生套餐配额。"""
+    from datetime import UTC, datetime, timedelta
+
+    membership = SimpleNamespace(plan_id=uuid4(), status="active",
+                                 expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1))
+    # 模拟 query 返回 None（真实 SQL 会过滤掉过期会员）
+    service = _new_service(_SessionStub([_QueryStub(first_result=None), _QueryStub(all_result=[])]))
+    assert service.resolve_total_quota_bytes(uuid4()) == 5 * (1024 ** 3)
+
+
+def test_decimal_entitlement_is_parsed():
+    from decimal import Decimal
+
+    plan_id = uuid4()
+    membership = SimpleNamespace(plan_id=plan_id)
+    entitlement = SimpleNamespace(feature_value="100.0", value_type="decimal", parsed_value=Decimal("100.0"))
+    service = _new_service(_SessionStub([
+        _QueryStub(first_result=membership),
+        _QueryStub(all_result=[entitlement]),
+        _QueryStub(all_result=[]),
+    ]))
+    assert service.resolve_total_quota_bytes(uuid4()) == 100 * (1024 ** 3)
+
+
+def test_invalid_entitlement_value_falls_back_to_zero():
+    plan_id = uuid4()
+    membership = SimpleNamespace(plan_id=plan_id)
+    entitlement = SimpleNamespace(feature_value="abc", value_type="number", parsed_value="abc")
+    service = _new_service(_SessionStub([
+        _QueryStub(first_result=membership),
+        _QueryStub(all_result=[entitlement]),
+        _QueryStub(all_result=[]),
+    ]))
+    assert service.resolve_total_quota_bytes(uuid4()) == 5 * (1024 ** 3)
 
 
 def test_check_raises_when_over_quota():
