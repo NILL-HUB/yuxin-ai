@@ -99,3 +99,48 @@ def test_check_passes_when_within_quota():
         _QueryStub(one_or_none_result=SimpleNamespace(used_bytes=1024)),
     ]))
     service.check_quota(account_id, incoming_bytes=1024)
+
+
+def test_add_usage_creates_record_when_absent(monkeypatch):
+    account_id = uuid4()
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=None)]))
+    created = []
+    monkeypatch.setattr(service, "create",
+        lambda model, **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
+
+    service.add_usage(account_id, 1024)
+
+    assert created[0]["account_id"] == account_id
+    assert created[0]["used_bytes"] == 1024
+
+
+def test_add_usage_increments_existing_record(monkeypatch):
+    account_id = uuid4()
+    usage = SimpleNamespace(used_bytes=2048)
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=usage)]))
+    updated = []
+    monkeypatch.setattr(service, "update",
+        lambda instance, **kwargs: updated.append(kwargs) or instance)
+
+    service.add_usage(account_id, 1024)
+
+    assert updated[0]["used_bytes"] == 3072
+
+
+def test_release_usage_never_goes_negative(monkeypatch):
+    account_id = uuid4()
+    usage = SimpleNamespace(used_bytes=512)
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=usage)]))
+    updated = []
+    monkeypatch.setattr(service, "update",
+        lambda instance, **kwargs: updated.append(kwargs) or instance)
+
+    service.release_usage(account_id, 4096)
+
+    assert updated[0]["used_bytes"] == 0
+
+
+def test_release_usage_is_noop_when_record_absent():
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=None)]))
+    service.release_usage(uuid4(), 4096)
+

@@ -129,3 +129,35 @@ class StorageQuotaService(BaseService):
                     "reason_code": "storage_quota_exceeded",
                 },
             )
+
+    def add_usage(self, account_id: UUID, bytes_delta: int) -> int:
+        """累加账号已用存储；无记录时自动创建。返回累加后的已用字节数。"""
+        if bytes_delta <= 0:
+            return self.get_used_bytes(account_id)
+        usage = (
+            self.db.session.query(AccountStorageUsage)
+            .filter_by(account_id=account_id)
+            .one_or_none()
+        )
+        if usage is None:
+            created = self.create(AccountStorageUsage, account_id=account_id, used_bytes=bytes_delta)
+            return int(created.used_bytes)
+        new_value = int(usage.used_bytes or 0) + bytes_delta
+        self.update(usage, used_bytes=new_value)
+        return new_value
+
+    def release_usage(self, account_id: UUID, bytes_delta: int) -> int:
+        """释放账号已用存储（删除 / 销毁时调用）；下限为 0。返回释放后的字节数。"""
+        if bytes_delta <= 0:
+            return self.get_used_bytes(account_id)
+        usage = (
+            self.db.session.query(AccountStorageUsage)
+            .filter_by(account_id=account_id)
+            .one_or_none()
+        )
+        if usage is None:
+            return 0
+        new_value = max(int(usage.used_bytes or 0) - bytes_delta, 0)
+        self.update(usage, used_bytes=new_value)
+        return new_value
+
