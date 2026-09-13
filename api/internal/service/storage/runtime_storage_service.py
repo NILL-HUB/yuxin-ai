@@ -85,6 +85,9 @@ class RuntimeStorageProxy:
 
         上传前校验账号存储配额，成功写入后累加用量。account 为空时跳过校验
         （系统/匿名上传不计入用户配额）。
+
+        已知限制：check_quota 与实际写入之间无事务锁，高并发下存在轻微超额窗口；
+        完整原子化需在上传事务内加锁，留待后续迭代。
         """
         account_id = getattr(account, "id", None)
         if account_id is not None:
@@ -99,17 +102,25 @@ class RuntimeStorageProxy:
 
     @staticmethod
     def _measure_upload_size(file) -> int:
-        """测量待上传文件字节数；无法测量时回退 0（校验放行）。"""
+        """测量待上传文件字节数；无法测量时回退 0（校验放行）。
+
+        无论成功与否都必须把流复位到起点，否则后续后端读取会拿到空内容。
+        """
         stream = getattr(file, "stream", None)
         if stream is None:
             return 0
+        size = 0
         try:
             stream.seek(0, os.SEEK_END)
-            size = stream.tell()
-            stream.seek(0)
-            return int(size)
+            size = int(stream.tell())
         except (AttributeError, OSError, ValueError):
-            return 0
+            size = 0
+        finally:
+            try:
+                stream.seek(0)
+            except (AttributeError, OSError, ValueError):
+                pass
+        return size
 
     def upload_bytes(
         self,
@@ -120,14 +131,24 @@ class RuntimeStorageProxy:
         mime_type: str | None = None,
         folder: str = "artifacts",
     ):
-        """上传内存字节到当前激活后端并创建 UploadFile 记录。"""
-        return self._get_service().upload_bytes(
+        """上传内存字节到当前激活后端并创建 UploadFile 记录。
+
+        account_id 非空时同样受配额约束（Agent 生成产物会占用用户存储）。
+        """
+        if account_id is not None:
+            self.storage_quota_service.check_quota(account_id, len(content))
+
+        upload_file = self._get_service().upload_bytes(
             filename=filename,
             content=content,
             account_id=account_id,
             mime_type=mime_type,
             folder=folder,
         )
+
+        if account_id is not None:
+            self.storage_quota_service.add_usage(account_id, upload_file.size or 0)
+        return upload_file
 
     def upload_bytes_without_record(
         self,

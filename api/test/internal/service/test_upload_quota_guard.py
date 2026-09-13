@@ -105,3 +105,93 @@ def test_measure_upload_size_falls_back_to_zero_without_stream():
     from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
 
     assert RuntimeStorageProxy._measure_upload_size(SimpleNamespace()) == 0
+
+
+def test_measure_upload_size_resets_stream_position():
+    """测量后流必须复位到起点，否则后端读取会拿到空内容。"""
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+
+    class _Stream:
+        def __init__(self, data: bytes):
+            self._data = data
+            self._pos = 0
+
+        def seek(self, offset, whence=0):
+            if whence == 2:
+                self._pos = len(self._data)
+            else:
+                self._pos = offset
+            return self._pos
+
+        def tell(self):
+            return self._pos
+
+    stream = _Stream(b"y" * 4096)
+    file = SimpleNamespace(stream=stream)
+    assert RuntimeStorageProxy._measure_upload_size(file) == 4096
+    assert stream.tell() == 0
+
+
+def test_measure_upload_size_resets_position_even_when_tell_fails():
+    """tell 失败时仍应尝试复位，不留在非法位置。"""
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+
+    class _BrokenStream:
+        def __init__(self):
+            self.reset_called = False
+
+        def seek(self, offset, whence=0):
+            if whence == 2:
+                return 0
+            self.reset_called = True
+            return 0
+
+        def tell(self):
+            raise OSError("boom")
+
+    stream = _BrokenStream()
+    assert RuntimeStorageProxy._measure_upload_size(SimpleNamespace(stream=stream)) == 0
+    assert stream.reset_called is True
+
+
+def test_upload_bytes_checks_quota_for_account():
+    """upload_bytes 也应对已登录账号做配额校验。"""
+    from internal.exception import ForbiddenException
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+    from internal.service.storage_quota_service import StorageQuotaService
+
+    account_id = uuid4()
+    quota = StorageQuotaService(db=SimpleNamespace(session=_SessionStub([
+        _QueryStub(first_result=None),
+        _QueryStub(all_result=[]),
+        _QueryStub(one_or_none_result=SimpleNamespace(used_bytes=5 * (1024 ** 3))),
+    ])))
+    proxy = RuntimeStorageProxy(
+        upload_file_service=SimpleNamespace(),
+        storage_config_service=SimpleNamespace(),
+        storage_quota_service=quota,
+        db=SimpleNamespace(),
+    )
+    with pytest.raises(ForbiddenException):
+        proxy.upload_bytes(filename="a.txt", content=b"x" * 1024, account_id=account_id)
+
+
+def test_upload_bytes_skips_quota_for_anonymous():
+    """account_id 为 None 时跳过校验（系统产物）。"""
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+    from internal.service.storage_quota_service import StorageQuotaService
+
+    calls = []
+    quota = StorageQuotaService(db=SimpleNamespace(session=_SessionStub([])))
+    quota.check_quota = lambda *a, **k: calls.append("check")
+    proxy = RuntimeStorageProxy(
+        upload_file_service=SimpleNamespace(),
+        storage_config_service=SimpleNamespace(),
+        storage_quota_service=quota,
+        db=SimpleNamespace(),
+    )
+    proxy._get_service = lambda *a, **k: SimpleNamespace(
+        upload_bytes=lambda **kw: SimpleNamespace(size=10)
+    )
+    proxy.upload_bytes(filename="a.txt", content=b"x" * 10, account_id=None)
+    assert calls == []
