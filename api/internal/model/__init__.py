@@ -45,6 +45,7 @@ from .schedule_task import ScheduleTask, ScheduleTaskRun
 from .model_pool_entity import ModelPoolConfig
 from .model_provider_entity import ModelProviderConfig
 from .desktop_device import DesktopDevice
+from .account_storage_usage import AccountStorageUsage
 
 __all__ = [
     "ModelPoolConfig", "ModelProviderConfig",
@@ -54,7 +55,7 @@ __all__ = [
     "App", "AppConfig", "AppConfigVersion",
     "ApiTool", "ApiToolProvider",
     "BuiltinTool", "BuiltinToolProvider",
-    "UploadFile",
+    "UploadFile", "AccountStorageUsage",
     "StorageConfig",
     "Conversation", "Message", "MessageAgentThought",
     "ConversationVariable",
