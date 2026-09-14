@@ -51,6 +51,16 @@ class _FakeChunkedUploadService:
         self.calls.append(("abort", kwargs))
         return None
 
+    def instant_upload(self, **kwargs):
+        self.calls.append(("instant_upload", kwargs))
+        return {
+            "instant": True,
+            "upload_file_id": "f-2",
+            "size": 2048,
+            "key": "2025/01/01/copied.bin",
+            "name": "big.bin",
+        }
+
 
 def _setup(monkeypatch):
     account = SimpleNamespace(id=uuid4())
@@ -74,6 +84,7 @@ class TestChunkedUploadRoutes:
         assert "/space/chunked-uploads/chunk" in rules
         assert "/space/chunked-uploads/<session_id>/status" in rules
         assert "/space/chunked-uploads/complete" in rules
+        assert "/space/chunked-uploads/instant" in rules
         assert "/space/chunked-uploads/abort" in rules
 
     def test_init_missing_fields_returns_400(self, monkeypatch):
@@ -213,3 +224,38 @@ class TestChunkedUploadRoutes:
         assert payload["data"]["missing_chunks"] == [1]
         assert payload["data"]["is_complete"] is False
         assert svc.calls[0][0] == "status"
+
+    def test_instant_missing_upload_file_id_returns_400(self, monkeypatch):
+        """秒传缺少源文件标识应返回 400。"""
+        _, svc = _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post("/space/chunked-uploads/instant", json={})
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+        assert svc.calls == []
+
+    def test_instant_success(self, monkeypatch):
+        """秒传接口应透传参数并返回新文件标识。"""
+        _, svc = _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/space/chunked-uploads/instant",
+                    json={"upload_file_id": "f-1", "fingerprint": "2048-abc"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["upload_file_id"] == "f-2"
+        assert payload["data"]["instant"] is True
+        assert svc.calls[0][0] == "instant_upload"
+        assert svc.calls[0][1]["upload_file_id"] == "f-1"
+        assert svc.calls[0][1]["fingerprint"] == "2048-abc"

@@ -27,6 +27,11 @@ import type {
   HitResponse,
   UpdateKnowledgeSegmentRequest,
 } from '@/models/knowledge-base'
+import {
+  uploadFileChunked,
+  type ChunkedUploadProgress,
+} from '@/services/chunked-upload'
+import { i18n } from '@/i18n'
 import { getErrorMessage } from '@/utils/error'
 
 // 获取用户端知识库分页列表
@@ -420,5 +425,34 @@ export const useUploadKnowledgeDocument = () => {
   }
 
   return { loading, handleUploadDocument }
+}
+
+// 上传大文件到知识库（分片上传，支持断点续传与秒传）
+export const useChunkedUploadKnowledgeDocument = () => {
+  const loading = ref(false)
+  const progress = ref<ChunkedUploadProgress>({
+    uploadedChunks: 0,
+    totalChunks: 0,
+    percent: 0,
+  })
+
+  const uploadDocument = async (knowledge_base_id: string, file: File) => {
+    try {
+      loading.value = true
+      progress.value = { uploadedChunks: 0, totalChunks: 0, percent: 0 }
+      return await uploadFileChunked(knowledge_base_id, file, (next) => {
+        progress.value = next
+      })
+    } catch (error: unknown) {
+      Message.error(
+        getErrorMessage(error, i18n.global.t('space.datasets.documents.chunkedUploadFailed')),
+      )
+      throw error
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { loading, progress, uploadDocument }
 }
 

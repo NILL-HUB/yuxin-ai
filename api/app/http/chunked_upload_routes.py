@@ -1,6 +1,6 @@
 """分片上传路由。
 
-提供 init / chunk / status / complete / abort 五个接口，
+提供 init / chunk / status / complete / instant / abort 六个接口，
 由前端在大文件上传时按分片调用，支持断点续传与秒传。
 
 沿用 app.http.support 的统一 helper，与 knowledge_mcp_routes.py 写法一致。
@@ -168,6 +168,33 @@ def register_routes(quart_app) -> None:
             session_id=session_id,
             account=account,
             knowledge_base_id=payload.get("knowledge_base_id", ""),
+        )
+        return _ok(result)
+
+    @quart_app.post("/space/chunked-uploads/instant")
+    async def chunked_upload_instant() -> Response:
+        """秒传：按既有文件复制一份（不建档，建档由 complete 完成）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(silent=True) or {}
+        upload_file_id = payload.get("upload_file_id") or ""
+        if not upload_file_id:
+            return _json_resp(
+                code="validate_error",
+                message="源文件标识必填",
+                data={"upload_file_id": ["源文件标识必填"]},
+                status=400,
+            )
+
+        from internal.service.chunked_upload_service import ChunkedUploadService
+
+        result = await _to_thread(
+            _get_service(ChunkedUploadService).instant_upload,
+            account=account,
+            upload_file_id=upload_file_id,
+            fingerprint=payload.get("fingerprint", ""),
         )
         return _ok(result)
 

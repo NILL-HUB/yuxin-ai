@@ -3,10 +3,12 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  useChunkedUploadKnowledgeDocument,
   useGetKnowledgeBase,
   useGetKnowledgeDocumentsWithPage,
   useUploadKnowledgeDocument,
 } from '@/hooks/use-knowledge-base'
+import { SINGLE_UPLOAD_THRESHOLD } from '@/services/chunked-upload'
 import { deleteKnowledgeDocument } from '@/services/knowledge-base'
 import RecycleBinDeleteModal from '@/components/recycle-bin/UserRecycleBinDeleteModal.vue'
 import HitTestingModal from '@/views/space/datasets/documents/components/HitTestingModal.vue'
@@ -24,7 +26,21 @@ const searchInput = ref('')
 const { knowledgeBase: dataset, loadKnowledgeBase: loadDataset } = useGetKnowledgeBase()
 const { loading, documents, paginator, loadDocuments } = useGetKnowledgeDocumentsWithPage()
 const { loading: uploadLoading, handleUploadDocument } = useUploadKnowledgeDocument()
+const {
+  loading: chunkedUploadLoading,
+  progress: chunkedUploadProgress,
+  uploadDocument: chunkedUploadDocument,
+} = useChunkedUploadKnowledgeDocument()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const resolvedUploadLoading = computed(
+  () => uploadLoading.value || chunkedUploadLoading.value,
+)
+const uploadProgressText = computed(() =>
+  t('space.datasets.documents.uploadProgress', {
+    percent: chunkedUploadProgress.value.percent,
+  }),
+)
 
 // 删除确认卡片：进入回收站 + 选择留存天数
 const deleteTarget = ref<{ id: string; name: string } | null>(null)
@@ -53,7 +69,7 @@ const triggerFileInput = () => {
   fileInputRef.value?.click()
 }
 
-// 文件选择后调用上传接口，成功后刷新文档列表与知识库详情
+// 文件选择后按大小分流上传，成功后刷新文档列表与知识库详情
 const handleFileChange = async (event: Event) => {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
@@ -61,7 +77,11 @@ const handleFileChange = async (event: Event) => {
   target.value = ''
   if (!file) return
   try {
-    await handleUploadDocument(datasetId.value, file)
+    if (file.size > SINGLE_UPLOAD_THRESHOLD) {
+      await chunkedUploadDocument(datasetId.value, file)
+    } else {
+      await handleUploadDocument(datasetId.value, file)
+    }
     // 上传成功后刷新文档列表与知识库详情
     void loadDocuments(datasetId.value, req.value)
     void loadDataset(datasetId.value)
@@ -234,7 +254,7 @@ watch(
  <a-button
  type="primary"
  class="rounded-xl px-4"
- :loading="uploadLoading"
+ :loading="resolvedUploadLoading"
  @click="triggerFileInput"
  >
  <template #icon>
@@ -245,6 +265,14 @@ watch(
  <a-button class="rounded-xl border-border-c bg-surface px-4 !text-text-2" @click="hitModalVisible = true">
  {{ t('space.datasets.documents.recallTest') }}
  </a-button>
+ </div>
+ <div v-if="chunkedUploadLoading" class="flex items-center gap-2 self-end text-xs text-text-2">
+ <a-progress
+ :percent="chunkedUploadProgress.percent / 100"
+ :show-text="false"
+ class="!w-[160px]"
+ />
+ <span>{{ uploadProgressText }}</span>
  </div>
  <div
  class="relative h-8 w-[220px] max-w-full self-end rounded-xl border border-border-strong bg-surface transition focus-within:border-brand focus-within:shadow-sm hover:border-border-strong"
@@ -451,7 +479,7 @@ watch(
  <input
  ref="fileInputRef"
  type="file"
- accept=".txt,.md,.markdown,.pdf,.docx,.doc,.csv"
+ accept=".txt,.md,.markdown,.pdf,.docx,.doc,.csv,.mp4,.mov,.avi,.mkv,.webm,.mp3,.wav,.m4a,.aac,.flac"
  class="hidden"
  @change="handleFileChange"
  />
