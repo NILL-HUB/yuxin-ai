@@ -1,5 +1,3 @@
-import json
-from types import SimpleNamespace
 from uuid import uuid4
 
 from internal.service.chunked_upload_session_service import (
@@ -12,7 +10,7 @@ class _FakeRedis:
     """最小 Redis 桩：仅实现本服务用到的命令。"""
 
     def __init__(self):
-        self.store: dict[str, bytes] = {}
+        self.store: dict = {}
         self.expires: dict[str, int] = {}
 
     def setex(self, key, ttl, value):
@@ -29,6 +27,33 @@ class _FakeRedis:
 
     def exists(self, key):
         return 1 if key in self.store else 0
+
+    def sadd(self, key, *members):
+        bucket = self.store.setdefault(key, set())
+        if not isinstance(bucket, set):
+            bucket = set()
+            self.store[key] = bucket
+        added = 0
+        for member in members:
+            if member not in bucket:
+                bucket.add(member)
+                added += 1
+        return added
+
+    def smembers(self, key):
+        bucket = self.store.get(key)
+        if not isinstance(bucket, set):
+            return set()
+        return {
+            member if isinstance(member, bytes) else str(member).encode()
+            for member in bucket
+        }
+
+    def expire(self, key, ttl):
+        if key in self.store:
+            self.expires[key] = int(ttl)
+            return 1
+        return 0
 
 
 def _service(redis=None):
@@ -130,3 +155,28 @@ def test_register_and_lookup_fingerprint():
 
     assert service.lookup_fingerprint(account_id, "fp-1") == upload_file_id
     assert service.lookup_fingerprint(account_id, "fp-unknown") is None
+
+
+def test_mark_received_keeps_all_indices_under_interleaved_writes():
+    """多次登记不同分片后，集合应完整保留（SADD 幂等且不丢更新）。"""
+    service = _service()
+    session = service.create(**_session_kwargs(total_chunks=5, total_size=25 * 1024 * 1024))
+
+    for index in [0, 2, 4, 1, 3]:
+        service.mark_received(session.session_id, index)
+
+    loaded = service.get(session.session_id)
+    assert loaded is not None
+    assert loaded.received_chunks == [0, 1, 2, 3, 4]
+    assert loaded.is_complete is True
+    assert service.missing_chunks(session.session_id) == []
+
+
+def test_mark_received_sets_received_key_ttl():
+    redis = _FakeRedis()
+    service = _service(redis)
+    session = service.create(**_session_kwargs())
+
+    service.mark_received(session.session_id, 0)
+
+    assert redis.expires[service._received_key(session.session_id)] == 86400

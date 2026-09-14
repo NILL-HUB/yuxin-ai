@@ -53,6 +53,10 @@ class ChunkedUploadSessionService:
     def _fingerprint_key(account_id: str, fingerprint: str) -> str:
         return f"chunked_upload:fingerprint:{account_id}:{fingerprint}"
 
+    @staticmethod
+    def _received_key(session_id: str) -> str:
+        return f"chunked_upload:received:{session_id}"
+
     def create(
         self,
         *,
@@ -78,30 +82,47 @@ class ChunkedUploadSessionService:
         return session
 
     def _save(self, session: ChunkedUploadSession) -> None:
-        payload = json.dumps(asdict(session), ensure_ascii=False).encode("utf-8")
-        self.redis.setex(self._key(session.session_id), _SESSION_TTL_SECONDS, payload)
+        """持久化会话元数据（不含已收分片集合，集合独立存 Redis Set）。"""
+        payload = asdict(session)
+        payload.pop("received_chunks", None)
+        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.redis.setex(self._key(session.session_id), _SESSION_TTL_SECONDS, encoded)
 
     def get(self, session_id: str) -> ChunkedUploadSession | None:
-        """读取会话；不存在或损坏时返回 None。"""
+        """读取会话；不存在或损坏时返回 None。已收分片从 Redis Set 回填。"""
         raw = self.redis.get(self._key(session_id))
         if raw is None:
             return None
         try:
             data = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
+            data["received_chunks"] = self._load_received(session_id)
             return ChunkedUploadSession(**data)
         except (ValueError, TypeError):
             logger.warning("分片会话数据损坏 session_id=%s", session_id, exc_info=True)
             return None
 
+    def _load_received(self, session_id: str) -> list[int]:
+        """读取已收分片下标（排序后返回）。"""
+        members = self.redis.smembers(self._received_key(session_id))
+        indices: list[int] = []
+        for member in members or []:
+            raw = member.decode("utf-8") if isinstance(member, bytes) else str(member)
+            try:
+                indices.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+        indices.sort()
+        return indices
+
     def mark_received(self, session_id: str, index: int) -> ChunkedUploadSession | None:
-        """登记某分片已收到（幂等）。"""
+        """登记某分片已收到（SADD 原子且幂等，避免并发丢更新）。"""
         session = self.get(session_id)
         if session is None:
             return None
-        if index not in session.received_chunks:
-            session.received_chunks.append(index)
-            session.received_chunks.sort()
-            self._save(session)
+        received_key = self._received_key(session_id)
+        self.redis.sadd(received_key, index)
+        self.redis.expire(received_key, _SESSION_TTL_SECONDS)
+        session.received_chunks = self._load_received(session_id)
         return session
 
     def missing_chunks(self, session_id: str) -> list[int]:
@@ -113,8 +134,8 @@ class ChunkedUploadSessionService:
         return [index for index in range(session.total_chunks) if index not in received]
 
     def abort(self, session_id: str) -> None:
-        """销毁会话（分片文件的清理由编排服务负责）。"""
-        self.redis.delete(self._key(session_id))
+        """销毁会话与已收分片集合（分片文件清理由编排服务负责）。"""
+        self.redis.delete(self._key(session_id), self._received_key(session_id))
 
     def register_fingerprint(self, account_id: str, fingerprint: str, upload_file_id: str) -> None:
         """登记秒传指纹 → UploadFile 映射（同账号有效）。"""
