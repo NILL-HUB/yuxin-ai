@@ -11,6 +11,7 @@ import hashlib
 import logging
 import mimetypes
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -37,6 +38,17 @@ DEFAULT_LOCAL_STORAGE_ROOT = "storage/uploads"
 def _get_local_storage_root() -> str:
     """读取本地存储根目录，未配置时使用默认值。"""
     return (os.getenv("LOCAL_STORAGE_ROOT") or DEFAULT_LOCAL_STORAGE_ROOT).strip() or DEFAULT_LOCAL_STORAGE_ROOT
+
+
+# 分片暂存根目录（相对于容器工作目录）
+DEFAULT_CHUNK_UPLOAD_ROOT = "storage/chunks"
+
+
+def _get_chunk_upload_root(override: str | None = None) -> str:
+    """读取分片暂存根目录，未配置时使用默认值。"""
+    if override:
+        return override.strip() or DEFAULT_CHUNK_UPLOAD_ROOT
+    return (os.getenv("CHUNK_UPLOAD_ROOT") or DEFAULT_CHUNK_UPLOAD_ROOT).strip() or DEFAULT_CHUNK_UPLOAD_ROOT
 
 
 def _get_local_storage_base_url() -> str:
@@ -190,6 +202,67 @@ class LocalStorageService:
             )
             raise FailException("上传产物文件失败，请稍后重试")
         return cls.get_file_url(upload_filename)
+
+    # ------------------------------------------------------------------
+    # 分片上传与对象管理
+    # ------------------------------------------------------------------
+    def _chunk_dir(self, session_id: str) -> str:
+        """分片暂存目录（防路径穿越）。"""
+        return _safe_join(_get_chunk_upload_root(), session_id)
+
+    def _chunk_path(self, session_id: str, index: int) -> str:
+        """单个分片的路径。"""
+        return os.path.join(self._chunk_dir(session_id), f"{index:06d}.part")
+
+    def _object_path(self, key: str) -> str:
+        """对象在本地存储中的路径。"""
+        return _safe_join(_get_local_storage_root(), key)
+
+    def save_chunk(self, session_id: str, index: int, content: bytes) -> int:
+        """把分片写入暂存目录，返回字节数（同下标覆盖）。"""
+        path = self._chunk_path(session_id, index)
+        _ensure_parent_dir(path)
+        with open(path, "wb") as fh:
+            fh.write(content)
+        return len(content)
+
+    def merge_chunks(self, session_id: str, total_chunks: int, target_key: str) -> tuple[int, str]:
+        """按序流式合并分片为最终对象，返回 (总字节数, sha3_256)。
+
+        全程分块读写，不把整个文件载入内存；缺任一必需分片时抛 FailException。
+        """
+        target_path = self._object_path(target_key)
+        _ensure_parent_dir(target_path)
+        hasher = hashlib.sha3_256()
+        total = 0
+        with open(target_path, "wb") as out:
+            for index in range(total_chunks):
+                chunk_path = self._chunk_path(session_id, index)
+                if not os.path.isfile(chunk_path):
+                    raise FailException(f"分片 {index} 缺失，无法完成合并")
+                with open(chunk_path, "rb") as src:
+                    while True:
+                        block = src.read(1024 * 1024)
+                        if not block:
+                            break
+                        out.write(block)
+                        hasher.update(block)
+                        total += len(block)
+        return total, hasher.hexdigest()
+
+    def cleanup_session(self, session_id: str) -> None:
+        """删除会话的分片暂存目录（幂等）。"""
+        shutil.rmtree(self._chunk_dir(session_id), ignore_errors=True)
+
+    def copy_object(self, source_key: str, target_key: str) -> int:
+        """服务端复制对象（秒传用），返回目标字节数。"""
+        source_path = self._object_path(source_key)
+        if not os.path.isfile(source_path):
+            raise FailException("源文件不存在，无法完成秒传")
+        target_path = self._object_path(target_key)
+        _ensure_parent_dir(target_path)
+        shutil.copyfile(source_path, target_path)
+        return os.path.getsize(target_path)
 
     # ------------------------------------------------------------------
     # 文件下载
