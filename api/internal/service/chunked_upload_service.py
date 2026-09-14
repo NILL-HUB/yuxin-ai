@@ -64,6 +64,10 @@ class ChunkedUploadService(BaseService):
         """创建分片上传会话；命中秒传指纹时直接返回既有文件。"""
         if total_size <= 0:
             raise ValidateErrorException("文件大小必须大于 0")
+        if chunk_size <= 0:
+            raise ValidateErrorException("分片大小必须大于 0")
+        if total_chunks <= 0:
+            raise ValidateErrorException("分片数量必须大于 0")
 
         max_bytes = self.storage_quota_service.resolve_max_file_size_bytes(account.id)
         if total_size > max_bytes:
@@ -149,16 +153,25 @@ class ChunkedUploadService(BaseService):
         extension = (
             session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
         )
-        upload_file = self.upload_file_service.create_upload_file(
-            account_id=account.id,
-            name=session.filename,
-            key=target_key,
-            size=total_size,
-            extension=extension,
-            mime_type="",
-            hash=digest,
-            storage_backend="local",
-        )
+        try:
+            upload_file = self.upload_file_service.create_upload_file(
+                account_id=account.id,
+                name=session.filename,
+                key=target_key,
+                size=total_size,
+                extension=extension,
+                mime_type="",
+                hash=digest,
+                storage_backend="local",
+            )
+        except Exception:
+            # 落库失败：回收已合并的目标对象，避免孤儿文件；会话保留以便重试
+            logger.exception("分片合并产物落库失败，回收目标对象 key=%s", target_key)
+            try:
+                self.storage.delete_object(target_key)
+            except Exception:
+                logger.warning("回收合并产物失败 key=%s", target_key, exc_info=True)
+            raise
 
         self.storage_quota_service.add_usage(account.id, total_size)
         self.storage.cleanup_session(session_id)
@@ -177,15 +190,23 @@ class ChunkedUploadService(BaseService):
 
     def instant_upload(self, *, account, upload_file_id: str, fingerprint: str) -> dict:
         """秒传：服务端复制既有对象并生成新的 UploadFile 记录。"""
+        try:
+            file_uuid = uuid.UUID(upload_file_id)
+        except (TypeError, ValueError):
+            raise ValidateErrorException("秒传源文件标识非法")
+
         source = (
             self.db.session.query(UploadFile)
-            .filter(UploadFile.id == uuid.UUID(upload_file_id))
+            .filter(UploadFile.id == file_uuid)
             .first()
         )
         if source is None:
             raise FailException("秒传源文件不存在")
         if getattr(source, "account_id", None) != account.id:
             raise FailException("无权秒传他人的文件")
+
+        # 秒传会真实复制一份占用存储，必须先校验配额
+        self.storage_quota_service.check_quota(account.id, int(getattr(source, "size", 0) or 0))
 
         target_key = _build_object_key(source.name or "material.bin")
         size = self.storage.copy_object(source.key, target_key)

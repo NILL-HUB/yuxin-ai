@@ -264,6 +264,18 @@ class LocalStorageService:
         shutil.copyfile(source_path, target_path)
         return os.path.getsize(target_path)
 
+    def delete_object(self, key: str) -> bool:
+        """删除本地对象（幂等）；不存在返回 False。"""
+        path = self._object_path(key)
+        if not os.path.isfile(path):
+            return False
+        try:
+            os.remove(path)
+            return True
+        except OSError:
+            logging.warning("删除本地对象失败 key=%s", key, exc_info=True)
+            return False
+
     # ------------------------------------------------------------------
     # 文件下载
     # ------------------------------------------------------------------

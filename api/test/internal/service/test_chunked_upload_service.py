@@ -324,3 +324,140 @@ def test_instant_upload_copies_object_and_creates_record():
     assert upload_file_service.created[0]["size"] == 999
     assert upload_file_service.created[0]["storage_backend"] == "local"
 
+
+def test_instant_upload_rejects_other_account():
+    """秒传必须先校验归属，防止复制他人文件。"""
+    from uuid import uuid4 as _uuid4
+
+    class _Query:
+        def filter(self, *_a, **_kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(
+                id=_uuid4(), account_id=_uuid4(),  # 属于另一个账号
+                key="2026/09/14/other.mp4", name="other.mp4",
+                extension="mp4", mime_type="video/mp4", size=10, hash="h",
+            )
+
+    service, _calls = _service()
+    service.db = SimpleNamespace(session=SimpleNamespace(query=lambda *_a, **_kw: _Query()))
+    account = _account()
+
+    with pytest.raises(FailException):
+        service.instant_upload(account=account, upload_file_id=str(_uuid4()), fingerprint="fp")
+
+
+def test_instant_upload_rejects_invalid_identifier():
+    service, _calls = _service()
+
+    with pytest.raises(ValidateErrorException):
+        service.instant_upload(account=_account(), upload_file_id="not-a-uuid", fingerprint="fp")
+
+
+def test_instant_upload_checks_quota_before_copy():
+    """秒传复制前必须做配额校验。"""
+    from internal.exception import ForbiddenException
+    from uuid import uuid4 as _uuid4
+
+    account = _account()
+
+    class _Query:
+        def filter(self, *_a, **_kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(
+                id=_uuid4(), account_id=account.id,
+                key="2026/09/14/src.mp4", name="src.mp4",
+                extension="mp4", mime_type="video/mp4", size=8192, hash="h",
+            )
+
+    service, calls = _service(quota_error=ForbiddenException("quota exceeded"))
+    service.db = SimpleNamespace(session=SimpleNamespace(query=lambda *_a, **_kw: _Query()))
+
+    with pytest.raises(ForbiddenException):
+        service.instant_upload(account=account, upload_file_id=str(_uuid4()), fingerprint="fp")
+
+
+def test_init_rejects_non_positive_chunk_size():
+    service, _calls = _service()
+
+    with pytest.raises(ValidateErrorException):
+        service.init(
+            account=_account(), filename="a.mp4", total_size=1024,
+            chunk_size=0, total_chunks=1, fingerprint="fp",
+        )
+
+
+def test_save_chunk_rejects_empty_content():
+    session_service = _FakeSessionService()
+    service, _calls = _service(session_service=session_service)
+    account = _account()
+    session_id = service.init(
+        account=account, filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp",
+    )["session_id"]
+
+    with pytest.raises(ValidateErrorException):
+        service.save_chunk(session_id=session_id, index=0, content=b"")
+
+
+def test_status_rejects_other_account():
+    session_service = _FakeSessionService()
+    service, _calls = _service(session_service=session_service)
+    session_id = service.init(
+        account=_account(), filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp",
+    )["session_id"]
+
+    with pytest.raises(FailException):
+        service.status(session_id=session_id, account=_account())
+
+
+def test_abort_rejects_other_account():
+    session_service = _FakeSessionService()
+    service, _calls = _service(session_service=session_service)
+    session_id = service.init(
+        account=_account(), filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp",
+    )["session_id"]
+
+    with pytest.raises(FailException):
+        service.abort(session_id=session_id, account=_account())
+
+
+def test_complete_recovers_when_persist_fails():
+    """落库失败时应回收已合并的目标对象，且会话不被销毁（可重试）。"""
+    session_service = _FakeSessionService()
+    storage = _FakeStorage()
+    storage.deleted = []
+
+    def _delete_object(key):
+        storage.deleted.append(key)
+        return True
+
+    storage.delete_object = _delete_object
+
+    class _BrokenUploadFileService:
+        def create_upload_file(self, **kwargs):
+            raise RuntimeError("db down")
+
+    service, _calls = _service(
+        storage=storage, session_service=session_service,
+        upload_file_service=_BrokenUploadFileService(),
+    )
+    account = _account()
+    session_id = service.init(
+        account=account, filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-fail",
+    )["session_id"]
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+
+    with pytest.raises(RuntimeError):
+        service.complete(session_id=session_id, account=account)
+
+    assert storage.deleted, "落库失败应回收合并产物"
+    assert session_service.get(session_id) is not None, "会话应保留以便重试"
+
