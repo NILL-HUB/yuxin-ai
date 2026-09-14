@@ -14,16 +14,26 @@ def _auto_commit():
 
 
 class _QueryStub:
-    """支持 filter/update/one_or_none 的查询桩。"""
+    """支持 filter/update/one_or_none/all 的查询桩。"""
 
-    def __init__(self, one_or_none_result=None):
+    def __init__(self, one_or_none_result=None, all_result=None):
         self._one_or_none = one_or_none_result
+        self._all = [] if all_result is None else all_result
 
     def filter(self, *_a, **_kw):
         return self
 
+    def filter_by(self, **_kw):
+        return self
+
     def update(self, *_a, **_kw):
         return 1
+
+    def delete(self, *_a, **_kw):
+        return 1
+
+    def all(self):
+        return self._all
 
     def one_or_none(self):
         return self._one_or_none
@@ -143,3 +153,26 @@ def test_media_document_with_no_segments_raises():
 
     with pytest.raises(Exception):
         service._build_media_document(_document("video"))
+
+
+def test_media_document_clears_existing_segments_before_rebuild():
+    """重复解析应先清理旧片段，避免 position 重复与检索污染。"""
+    removed = []
+    deleted = []
+
+    service, _extractor, _vector, created, _updates = _build_service([
+        MediaSegment(content="新片段", metadata={}),
+    ])
+    old_segment = SimpleNamespace(id=uuid4())
+    # 第一次 query 供 _get_upload_file 使用，第二次才是清理旧片段的查询
+    service.db.session._queries.insert(1, _QueryStub(all_result=[old_segment]))
+    service.knowledge_vector_service.remove_segment = (
+        lambda seg: removed.append(seg) or None
+    )
+    service.delete = lambda instance: deleted.append(instance) or instance
+
+    service._build_media_document(_document("video"))
+
+    assert removed == [old_segment]
+    assert deleted == [old_segment]
+    assert len(created) == 1

@@ -14,7 +14,7 @@ from internal.exception import NotFoundException
 from internal.model import KnowledgeDocument, KnowledgeSegment, UploadFile
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.jieba_service import JiebaService
-from internal.service.knowledge_media_extractor_service import KnowledgeMediaExtractorService, MediaSegment
+from internal.service.knowledge_media_extractor_service import KnowledgeMediaExtractorService
 from internal.service.knowledge_vector_service import KnowledgeVectorService
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pkg.sqlalchemy import SQLAlchemy
@@ -123,6 +123,13 @@ class KnowledgeIndexingService(BaseService):
         knowledge_base = document.knowledge_base
         if knowledge_base is None:
             raise NotFoundException("知识库不存在")
+
+        existing_segments = self.db.session.query(KnowledgeSegment).filter(
+            KnowledgeSegment.knowledge_document_id == document.id,
+        ).all()
+        for existing in existing_segments:
+            self.knowledge_vector_service.remove_segment(existing)
+            self.delete(existing)
 
         segment_ids = []
         for index, item in enumerate(media_segments, start=1):
