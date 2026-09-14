@@ -71,3 +71,45 @@ class KnowledgePartitionService(BaseService):
             description=description,
             sort_order=sort_order,
         )
+
+    def list_partitions(self, knowledge_base_id: UUID) -> list[KnowledgePartition]:
+        """列出某知识库的全部分区（按 sort_order、created_at 排序），供前端渲染两级树。"""
+        return (
+            self.db.session.query(KnowledgePartition)
+            .filter(KnowledgePartition.knowledge_base_id == knowledge_base_id)
+            .order_by(KnowledgePartition.sort_order, KnowledgePartition.created_at)
+            .all()
+        )
+
+    def delete_partition(self, knowledge_base_id: UUID, partition_id: UUID) -> None:
+        """删除分区。
+
+        仅在分区为空时允许删除：存在子分区或仍挂着素材时拒绝，
+        避免产生孤儿分区或让素材失去归属。
+        """
+        children = (
+            self.db.session.query(KnowledgePartition)
+            .filter(KnowledgePartition.parent_id == partition_id)
+            .all()
+        )
+        if children:
+            raise FailException("该分区下仍有子分区，请先删除子分区")
+
+        from internal.model import KnowledgeDocument
+
+        attached = (
+            self.db.session.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.partition_id == partition_id)
+            .first()
+        )
+        if attached is not None:
+            raise FailException("该分区下仍有素材，请先移动或删除素材")
+
+        partition = (
+            self.db.session.query(KnowledgePartition)
+            .filter_by(id=partition_id, knowledge_base_id=knowledge_base_id)
+            .one_or_none()
+        )
+        if partition is None:
+            raise FailException("分区不存在")
+        self.delete(partition)

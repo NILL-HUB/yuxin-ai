@@ -155,81 +155,109 @@ class ChunkedUploadService(BaseService):
                 )
                 knowledge_service.assert_upload_allowed(knowledge_base_id, pre_extension, account)
 
-            target_key = _build_object_key(session.filename)
+            # 原子预占配额：在行锁内完成「校验 + 累加」，关闭并发超卖窗口
+            # （init 的 check_quota 只是快速预检，两个会话可同时通过）。
+            # 放在合并之前，避免超额时白合并 GB 级文件。
+            quota_consumed = False
+            self.storage_quota_service.consume_quota(account.id, session.total_size)
+            quota_consumed = True
             try:
-                total_size, digest = self.storage.merge_chunks(
-                    session_id, session.total_chunks, target_key
+                return self._materialize(
+                    session=session,
+                    account=account,
+                    knowledge_base_id=knowledge_base_id,
+                    knowledge_service=knowledge_service,
                 )
             except Exception:
-                logger.exception("分片合并失败 session_id=%s", session_id)
-                raise
-
-            extension = (
-                session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
-            )
-            try:
-                upload_file = self.upload_file_service.create_upload_file(
-                    account_id=account.id,
-                    name=session.filename,
-                    key=target_key,
-                    size=total_size,
-                    extension=extension,
-                    mime_type="",
-                    hash=digest,
-                    storage_backend="local",
-                )
-            except Exception:
-                # 落库失败：回收已合并的目标对象，避免孤儿文件；会话保留以便重试
-                logger.exception("分片合并产物落库失败，回收目标对象 key=%s", target_key)
-                try:
-                    self.storage.delete_object(target_key)
-                except Exception:
-                    logger.warning("回收合并产物失败 key=%s", target_key, exc_info=True)
-                raise
-
-            # 第二层防御：建档前移到破坏性操作之前；失败则回滚对象与 UploadFile 记录并保留会话
-            result = {
-                "upload_file_id": str(upload_file.id),
-                "size": total_size,
-                "hash": digest,
-                "key": target_key,
-                "name": session.filename,
-            }
-            if knowledge_base_id and knowledge_service is not None:
-                try:
-                    document = knowledge_service.create_document_from_upload_file(
-                        knowledge_base_id=knowledge_base_id,
-                        upload_file=upload_file,
-                        account=account,
-                    )
-                except Exception:
-                    logger.exception(
-                        "分片上传建档失败，回滚已合并对象与文件记录 upload_file_id=%s",
-                        upload_file.id,
-                    )
+                if quota_consumed:
+                    # 合并/落库/建档失败：释放预占配额，会话保留以便用户重试
                     try:
-                        self.storage.delete_object(target_key)
+                        self.storage_quota_service.release_usage(account.id, session.total_size)
                     except Exception:
-                        logger.warning("回滚合并产物失败 key=%s", target_key, exc_info=True)
-                    try:
-                        self.upload_file_service.delete(upload_file)
-                    except Exception:
-                        logger.warning("回滚 UploadFile 记录失败 id=%s", upload_file.id, exc_info=True)
-                    raise
-                result["document_id"] = str(document.id)
-
-            # 全部成功后才执行破坏性收尾与计量
-            self.storage_quota_service.add_usage(account.id, total_size)
-            self.storage.cleanup_session(session_id)
-            self.session_service.abort(session_id)
-            self.session_service.register_fingerprint(
-                str(account.id), session.fingerprint, str(upload_file.id)
-            )
-
-            return result
+                        logger.warning(
+                            "释放分片上传预占配额失败 account_id=%s", account.id, exc_info=True
+                        )
+                raise
         except Exception:
             self.session_service.release_claim(session_id)
             raise
+
+    def _materialize(self, *, session, account, knowledge_base_id: str, knowledge_service) -> dict:
+        """合并分片 → 落 UploadFile → （可选）建档 → 收尾。配额已在此之前预占。"""
+        target_key = _build_object_key(session.filename)
+        try:
+            total_size, digest = self.storage.merge_chunks(
+                session_id=session.session_id,
+                total_chunks=session.total_chunks,
+                target_key=target_key,
+            )
+        except Exception:
+            logger.exception("分片合并失败 session_id=%s", session.session_id)
+            raise
+
+        extension = (
+            session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
+        )
+        try:
+            upload_file = self.upload_file_service.create_upload_file(
+                account_id=account.id,
+                name=session.filename,
+                key=target_key,
+                size=total_size,
+                extension=extension,
+                mime_type="",
+                hash=digest,
+                storage_backend="local",
+            )
+        except Exception:
+            # 落库失败：回收已合并的目标对象，避免孤儿文件；会话保留以便重试
+            logger.exception("分片合并产物落库失败，回收目标对象 key=%s", target_key)
+            self._safe_delete_object(target_key)
+            raise
+
+        # 第二层防御：建档前移到破坏性操作之前；失败则回滚对象与 UploadFile 记录并保留会话
+        result = {
+            "upload_file_id": str(upload_file.id),
+            "size": total_size,
+            "hash": digest,
+            "key": target_key,
+            "name": session.filename,
+        }
+        if knowledge_base_id and knowledge_service is not None:
+            try:
+                document = knowledge_service.create_document_from_upload_file(
+                    knowledge_base_id=knowledge_base_id,
+                    upload_file=upload_file,
+                    account=account,
+                )
+            except Exception:
+                logger.exception(
+                    "分片上传建档失败，回滚已合并对象与文件记录 upload_file_id=%s",
+                    upload_file.id,
+                )
+                self._safe_delete_object(target_key)
+                try:
+                    self.upload_file_service.delete(upload_file)
+                except Exception:
+                    logger.warning("回滚 UploadFile 记录失败 id=%s", upload_file.id, exc_info=True)
+                raise
+            result["document_id"] = str(document.id)
+
+        # 全部成功后才执行破坏性收尾（配额已在合并前预占）
+        self.storage.cleanup_session(session.session_id)
+        self.session_service.abort(session.session_id)
+        self.session_service.register_fingerprint(
+            str(account.id), session.fingerprint, str(upload_file.id)
+        )
+
+        return result
+
+    def _safe_delete_object(self, key: str) -> None:
+        """尽力删除对象，失败仅告警（不掩盖原始异常）。"""
+        try:
+            self.storage.delete_object(key)
+        except Exception:
+            logger.warning("删除对象失败 key=%s", key, exc_info=True)
 
     def instant_upload(
         self, *, account, upload_file_id: str, fingerprint: str, knowledge_base_id: str = ""
@@ -258,59 +286,64 @@ class ChunkedUploadService(BaseService):
                 knowledge_base_id, source.extension or "", account
             )
 
-        # 秒传会真实复制一份占用存储，必须先校验配额
-        self.storage_quota_service.check_quota(account.id, int(getattr(source, "size", 0) or 0))
+        # 秒传会真实复制一份占用存储，必须原子预占配额（锁内校验+累加，防并发超卖）；
+        # 复制前预占，避免复制完才被拒造成残留。
+        source_size = int(getattr(source, "size", 0) or 0)
+        self.storage_quota_service.consume_quota(account.id, source_size)
+        try:
+            target_key = _build_object_key(source.name or "material.bin")
+            size = self.storage.copy_object(source.key, target_key)
 
-        target_key = _build_object_key(source.name or "material.bin")
-        size = self.storage.copy_object(source.key, target_key)
+            upload_file = self.upload_file_service.create_upload_file(
+                account_id=account.id,
+                name=source.name,
+                key=target_key,
+                size=size,
+                extension=source.extension,
+                mime_type=source.mime_type,
+                hash=source.hash,
+                storage_backend="local",
+            )
 
-        upload_file = self.upload_file_service.create_upload_file(
-            account_id=account.id,
-            name=source.name,
-            key=target_key,
-            size=size,
-            extension=source.extension,
-            mime_type=source.mime_type,
-            hash=source.hash,
-            storage_backend="local",
-        )
+            # 第二层防御：建档失败则回滚复制产物与 UploadFile 记录，并释放预占配额
+            result = {
+                "instant": True,
+                "upload_file_id": str(upload_file.id),
+                "size": size,
+                "key": target_key,
+                "name": source.name,
+            }
+            if knowledge_base_id and knowledge_service is not None:
+                try:
+                    document = knowledge_service.create_document_from_upload_file(
+                        knowledge_base_id=knowledge_base_id,
+                        upload_file=upload_file,
+                        account=account,
+                    )
+                except Exception:
+                    logger.exception(
+                        "秒传建档失败，回滚复制产物与文件记录 upload_file_id=%s", upload_file.id
+                    )
+                    self._safe_delete_object(target_key)
+                    try:
+                        self.upload_file_service.delete(upload_file)
+                    except Exception:
+                        logger.warning("回滚秒传 UploadFile 失败 id=%s", upload_file.id, exc_info=True)
+                    raise
+                result["document_id"] = str(document.id)
 
-        # 第二层防御：建档失败则回滚复制产物与 UploadFile 记录，不累加用量
-        result = {
-            "instant": True,
-            "upload_file_id": str(upload_file.id),
-            "size": size,
-            "key": target_key,
-            "name": source.name,
-        }
-        if knowledge_base_id and knowledge_service is not None:
+            # 全部成功后才登记指纹（配额已在复制前预占）
+            self.session_service.register_fingerprint(
+                str(account.id), fingerprint, str(upload_file.id)
+            )
+            return result
+        except Exception:
+            # 任一步失败：释放预占配额，避免用户被自己失败的上传扣容量
             try:
-                document = knowledge_service.create_document_from_upload_file(
-                    knowledge_base_id=knowledge_base_id,
-                    upload_file=upload_file,
-                    account=account,
-                )
+                self.storage_quota_service.release_usage(account.id, source_size)
             except Exception:
-                logger.exception(
-                    "秒传建档失败，回滚复制产物与文件记录 upload_file_id=%s", upload_file.id
-                )
-                try:
-                    self.storage.delete_object(target_key)
-                except Exception:
-                    logger.warning("回滚秒传产物失败 key=%s", target_key, exc_info=True)
-                try:
-                    self.upload_file_service.delete(upload_file)
-                except Exception:
-                    logger.warning("回滚秒传 UploadFile 失败 id=%s", upload_file.id, exc_info=True)
-                raise
-            result["document_id"] = str(document.id)
-
-        # 全部成功后才计量与登记指纹
-        self.storage_quota_service.add_usage(account.id, size)
-        self.session_service.register_fingerprint(
-            str(account.id), fingerprint, str(upload_file.id)
-        )
-        return result
+                logger.warning("释放秒传预占配额失败 account_id=%s", account.id, exc_info=True)
+            raise
 
     def abort(self, *, session_id: str, account) -> None:
         """放弃上传：清理暂存与会话。"""

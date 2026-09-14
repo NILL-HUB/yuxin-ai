@@ -1,7 +1,7 @@
 """knowledge product form base
 
 Revision ID: p1a2b3c4d5e6
-Revises: o9d0e1f2a3b4
+Revises: n8c9d0e1f2a3
 Create Date: 2026-09-12
 
 新增知识库产品形态数据基座：
@@ -9,13 +9,19 @@ Create Date: 2026-09-12
 - knowledge_document 增加 partition_id / media_type / parse_profile
 - upload_file.size 由 integer 升级为 bigint
 - 新增 knowledge_partition / knowledge_base_tag / knowledge_document_tag / account_storage_usage
+
+注意：本迁移的 down_revision 必须是**已提交**的迁移（此处为 `n8c9d0e1f2a3`）。
+曾误指向未纳入版本控制的 `o9d0e1f2a3b4`，导致全新 clone / CI 上
+`alembic upgrade head` 因 "Revision ... is not present" 崩溃。
+若后续 `o9d0e1f2a3b4` 被提交，会与本迁移形成两个 head，必须补一个 merge 迁移
+（参见 test/internal/migration/test_migration_graph_integrity.py）。
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = 'p1a2b3c4d5e6'
-down_revision = 'o9d0e1f2a3b4'
+down_revision = 'n8c9d0e1f2a3'
 branch_labels = None
 depends_on = None
 

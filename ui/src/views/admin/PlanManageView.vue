@@ -4,7 +4,7 @@ import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import { useAdminStore } from '@/stores/admin'
 import { createPlan, deletePlan, getBillingConfig, listPlans, setPlanStatus, updateBillingConfig, updatePlan } from '@/services/admin-billing'
-import { type BillingConfig, type BillingStatus, type Plan } from '@/models/billing'
+import { type BillingConfig, type BillingStatus, type Plan, type PlanEntitlement, type PlanType } from '@/models/billing'
 import { getErrorMessage } from '@/utils/error'
 
 const { t } = useI18n()
@@ -78,24 +78,42 @@ const perYuanImpact = computed(() => {
   return `${sign}${delta.toFixed(0)}%`
 })
 
-type PlanType = 'balance' | 'membership' | 'credits'
+type PlanForm = {
+  code: string
+  name: string
+  description: string
+  plan_type: PlanType
+  price: number
+  duration_days: number
+  grant_token_credits: number
+  auto_renew_threshold_percent: number
+  auto_renew_threshold_days: number
+  purchase_limit: number
+  purchase_limit_period: 'none' | 'all' | 'day' | 'week' | 'month'
+  quota_refresh_period: 'none' | 'cycle'
+  auto_renew_default: boolean
+  sort_order: number
+  status: BillingStatus
+  entitlements: PlanEntitlement[]
+}
 
-const emptyForm = () => ({
+const emptyForm = (): PlanForm => ({
   code: '',
   name: '',
   description: '',
-  plan_type: 'membership' as PlanType,
+  plan_type: 'membership',
   price: 0,
   duration_days: 30,
   grant_token_credits: 0,
   auto_renew_threshold_percent: 10,
   auto_renew_threshold_days: 1,
   purchase_limit: 0,
-  purchase_limit_period: 'none' as 'none' | 'all' | 'day' | 'week' | 'month',
-  quota_refresh_period: 'none' as 'none' | 'cycle',
+  purchase_limit_period: 'none',
+  quota_refresh_period: 'none',
   auto_renew_default: false,
   sort_order: 0,
-  status: 'active' as BillingStatus,
+  status: 'active',
+  entitlements: [],
 })
 
 const drawerVisible = ref(false)
@@ -106,7 +124,29 @@ const planTypeOptions = computed(() => [
   { label: t('admin.plans.planType.membership'), value: 'membership' },
   { label: t('admin.plans.planType.credits'), value: 'credits' },
   { label: t('admin.plans.planType.balance'), value: 'balance' },
+  { label: t('admin.plans.planType.storage_addon'), value: 'storage_addon' },
 ])
+
+const valueTypeOptions = computed(() => [
+  { label: t('admin.plans.entitlements.valueTypes.string'), value: 'string' },
+  { label: t('admin.plans.entitlements.valueTypes.number'), value: 'number' },
+  { label: t('admin.plans.entitlements.valueTypes.decimal'), value: 'decimal' },
+  { label: t('admin.plans.entitlements.valueTypes.boolean'), value: 'boolean' },
+  { label: t('admin.plans.entitlements.valueTypes.json'), value: 'json' },
+])
+
+const entitlementPresets = computed(() => [
+  { label: t('admin.plans.entitlements.presets.storageQuota'), value: 'storage_quota_gb' },
+  { label: t('admin.plans.entitlements.presets.maxSingleFile'), value: 'max_single_file_gb' },
+])
+
+const addEntitlement = (featureKey = '') => {
+  form.entitlements.push({ feature_key: featureKey, feature_value: '', value_type: 'string' })
+}
+
+const removeEntitlement = (index: number) => {
+  form.entitlements.splice(index, 1)
+}
 
 const statusOptions = computed(() => [
   { label: t('admin.plans.statusFilter.all'), value: '' },
@@ -143,6 +183,7 @@ const perYuan = computed(() => form.grant_token_credits / Math.max(Number(form.p
 const planTypeHint = computed(() => {
   if (form.plan_type === 'membership') return t('admin.plans.hints.membership', { rate: perYuan.value.toFixed(0) })
   if (form.plan_type === 'credits') return t('admin.plans.hints.credits', { rate: perYuan.value.toFixed(0) })
+  if (form.plan_type === 'storage_addon') return t('admin.plans.hints.storage_addon')
   return t('admin.plans.hints.balance')
 })
 
@@ -193,6 +234,11 @@ const openEdit = (plan: Plan) => {
     auto_renew_default: !!plan.auto_renew_default,
     sort_order: plan.sort_order,
     status: plan.status,
+    entitlements: (plan.entitlements || []).map((item) => ({
+      feature_key: item.feature_key,
+      feature_value: item.feature_value,
+      value_type: item.value_type,
+    })),
   })
   drawerVisible.value = true
 }
@@ -220,6 +266,13 @@ const handleSave = async () => {
       duration_days: Math.max(0, Math.floor(Number(form.duration_days) || 0)),
       auto_renew_threshold_percent: Math.min(100, Math.max(0, Math.floor(Number(form.auto_renew_threshold_percent) || 0))),
       purchase_limit: Math.max(0, Math.floor(Number(form.purchase_limit) || 0)),
+      entitlements: form.entitlements
+        .filter((item) => item.feature_key.trim())
+        .map((item) => ({
+          feature_key: item.feature_key.trim(),
+          feature_value: item.feature_value ?? '',
+          value_type: item.value_type,
+        })),
     }
     if (editingId.value) {
       await updatePlan(editingId.value, payload)
@@ -275,6 +328,7 @@ const planTypeTag = (planType: string) => ({
   membership: 'blue',
   credits: 'arcoblue',
   balance: 'green',
+  storage_addon: 'orange',
 }[planType] || 'gray')
 
 const rateText = (plan: Plan) => {
@@ -518,6 +572,30 @@ onMounted(async () => {
         </div>
 
         <p class="hint">{{ planTypeHint }}</p>
+
+        <div class="field entitlement-editor">
+          <div class="entitlement-head">
+            <label>{{ t('admin.plans.entitlements.title') }}</label>
+            <a-button size="mini" @click="addEntitlement()">+ {{ t('admin.plans.entitlements.add') }}</a-button>
+          </div>
+          <p class="entitlement-desc">{{ t('admin.plans.entitlements.description') }}</p>
+
+          <div v-for="(item, index) in form.entitlements" :key="index" class="entitlement-row">
+            <a-input v-model="item.feature_key" :placeholder="t('admin.plans.entitlements.placeholders.key')" />
+            <a-input v-model="item.feature_value" :placeholder="t('admin.plans.entitlements.placeholders.value')" />
+            <a-select v-model="item.value_type" :options="valueTypeOptions" class="entitlement-type" />
+            <a-button size="mini" status="danger" @click="removeEntitlement(index)">{{ t('admin.plans.entitlements.remove') }}</a-button>
+          </div>
+
+          <p v-if="!form.entitlements.length" class="entitlement-empty">{{ t('admin.plans.entitlements.empty') }}</p>
+
+          <div class="entitlement-presets">
+            <span>{{ t('admin.plans.entitlements.presets.label') }}</span>
+            <a-button v-for="preset in entitlementPresets" :key="preset.value" size="mini" @click="addEntitlement(preset.value)">
+              {{ preset.label }}
+            </a-button>
+          </div>
+        </div>
 
         <div v-if="form.plan_type === 'membership' || form.plan_type === 'credits'" class="field">
           <label>{{ t('admin.plans.fields.autoRenewDefault') }}</label>
@@ -781,6 +859,55 @@ h2 {
   color: #4e7ee6;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.entitlement-editor {
+  padding: 12px;
+  border: 1px solid #eaeef5;
+  border-radius: 12px;
+  background: #fafbfd;
+}
+
+.entitlement-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.entitlement-desc {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.entitlement-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.9fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.entitlement-type {
+  width: 100%;
+}
+
+.entitlement-empty {
+  margin: 10px 0 0;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.entitlement-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  color: #667085;
+  font-size: 12px;
 }
 
 .form-actions {

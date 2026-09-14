@@ -130,9 +130,170 @@ const renderView = async () => {
   return wrapper
 }
 
+const clickButton = async (wrapper: ReturnType<typeof mount>, text: string) => {
+  const button = wrapper.findAll('button').find((node) => node.text().trim() === text)
+  if (!button) throw new Error(`button not found: ${text}`)
+  await button.trigger('click')
+}
+
+const clickFormButton = async (wrapper: ReturnType<typeof mount>, text: string) => {
+  const button = wrapper.find('.plan-form').findAll('button').find((node) => node.text().trim().replace(/^\+\s*/, '') === text)
+  if (!button) throw new Error(`form button not found: ${text}`)
+  await button.trigger('click')
+}
+
+const openCreate = async (wrapper: ReturnType<typeof mount>) => {
+  await clickButton(wrapper, '+ 新建套餐')
+  await nextTick()
+}
+
+const storageAddonPlan = {
+  id: 'plan-1',
+  code: 'STORAGE_50G',
+  name: '存储扩容包',
+  description: '',
+  plan_type: 'storage_addon' as const,
+  duration_days: 30,
+  grant_token_credits: 0,
+  auto_renew_threshold_percent: 5,
+  auto_renew_threshold_days: 1,
+  purchase_limit: 0,
+  purchase_limit_period: 'none' as const,
+  quota_refresh_period: 'none' as const,
+  auto_renew_default: false,
+  price: '9.90',
+  status: 'active' as const,
+  sort_order: 0,
+  created_at: null,
+  updated_at: null,
+  entitlements: [{ feature_key: 'storage_quota_gb', feature_value: '100', value_type: 'number' as const }],
+}
+
 describe('PlanManageView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('offers the storage_addon plan type option', async () => {
+    const wrapper = await renderView()
+
+    await openCreate(wrapper)
+
+    expect(wrapper.text()).toContain('存储扩容包')
+  })
+
+  it('starts a new plan with an empty entitlement list and shows the editor', async () => {
+    const wrapper = await renderView()
+
+    await openCreate(wrapper)
+
+    const form = (wrapper.vm as unknown as { form: { entitlements: unknown[] } }).form
+    expect(Array.isArray(form.entitlements)).toBe(true)
+    expect(form.entitlements).toHaveLength(0)
+    expect(wrapper.find('.entitlement-editor').exists()).toBe(true)
+    expect(wrapper.findAll('.entitlement-row')).toHaveLength(0)
+  })
+
+  it('adds entitlement rows and sends them in the create payload', async () => {
+    const wrapper = await renderView()
+
+    await openCreate(wrapper)
+    await clickFormButton(wrapper, '添加权益')
+    await nextTick()
+
+    expect(wrapper.findAll('.entitlement-row')).toHaveLength(1)
+
+    const row = wrapper.find('.entitlement-row')
+    const inputs = row.findAll('input')
+    await inputs[0].setValue('max_single_file_gb')
+    await inputs[1].setValue('2')
+    await row.find('select').setValue('number')
+    await nextTick()
+
+    const form = (wrapper.vm as unknown as { form: Record<string, unknown> }).form
+    form.code = 'STORAGE_2G'
+    form.name = '大文件包'
+    await clickFormButton(wrapper, '保存')
+    await flushPromises()
+
+    expect(mocks.createPlan).toHaveBeenCalledTimes(1)
+    expect(mocks.createPlan.mock.calls[0][0].entitlements).toEqual([
+      { feature_key: 'max_single_file_gb', feature_value: '2', value_type: 'number' },
+    ])
+  })
+
+  it('removes an entitlement row', async () => {
+    const wrapper = await renderView()
+
+    await openCreate(wrapper)
+    await clickFormButton(wrapper, '添加权益')
+    await clickFormButton(wrapper, '添加权益')
+    await nextTick()
+
+    expect(wrapper.findAll('.entitlement-row')).toHaveLength(2)
+
+    await wrapper.findAll('.entitlement-row')[1].find('button').trigger('click')
+    await nextTick()
+
+    expect(wrapper.findAll('.entitlement-row')).toHaveLength(1)
+  })
+
+  it('drops entitlement rows whose feature_key is blank', async () => {
+    const wrapper = await renderView()
+
+    await openCreate(wrapper)
+    await clickFormButton(wrapper, '添加权益')
+    await clickFormButton(wrapper, '添加权益')
+    await nextTick()
+
+    const rows = wrapper.findAll('.entitlement-row')
+    expect(rows).toHaveLength(2)
+    const filled = rows[1].findAll('input')
+    await filled[0].setValue('storage_quota_gb')
+    await filled[1].setValue('100')
+    await nextTick()
+
+    const form = (wrapper.vm as unknown as { form: Record<string, unknown> }).form
+    form.code = 'STORAGE_100G'
+    form.name = '容量包'
+    await clickFormButton(wrapper, '保存')
+    await flushPromises()
+
+    expect(mocks.createPlan.mock.calls[0][0].entitlements).toEqual([
+      { feature_key: 'storage_quota_gb', feature_value: '100', value_type: 'string' },
+    ])
+  })
+
+  it('backfills existing entitlements when editing and saves them back', async () => {
+    const wrapper = await renderView()
+
+    const vm = wrapper.vm as unknown as { openEdit: (plan: unknown) => void; form: { entitlements: unknown[] } }
+    vm.openEdit(storageAddonPlan)
+    await nextTick()
+
+    expect(vm.form.entitlements).toEqual([
+      { feature_key: 'storage_quota_gb', feature_value: '100', value_type: 'number' },
+    ])
+    expect(wrapper.findAll('.entitlement-row')).toHaveLength(1)
+
+    await clickFormButton(wrapper, '保存')
+    await flushPromises()
+
+    expect(mocks.updatePlan).toHaveBeenCalledWith('plan-1', expect.objectContaining({
+      entitlements: [{ feature_key: 'storage_quota_gb', feature_value: '100', value_type: 'number' }],
+    }))
+  })
+
+  it('shows the storage_addon hint when the plan type is storage_addon', async () => {
+    const wrapper = await renderView()
+
+    await openCreate(wrapper)
+    const form = (wrapper.vm as unknown as { form: Record<string, unknown> }).form
+    form.plan_type = 'storage_addon'
+    await nextTick()
+
+    expect(wrapper.text()).toContain('storage_quota_gb')
+    expect(wrapper.text()).toContain('max_single_file_gb')
   })
 
   it('renders two billing config cards with independent values', async () => {

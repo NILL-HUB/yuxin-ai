@@ -9,9 +9,10 @@ from internal.service.knowledge_partition_service import KnowledgePartitionServi
 
 
 class _QueryStub:
-    def __init__(self, *, one_or_none_result=None, all_result=None):
+    def __init__(self, *, one_or_none_result=None, all_result=None, first_result=None):
         self._one_or_none = one_or_none_result
         self._all = [] if all_result is None else all_result
+        self._first = first_result
 
     def filter(self, *_a, **_kw):
         return self
@@ -19,11 +20,17 @@ class _QueryStub:
     def filter_by(self, **_kw):
         return self
 
+    def order_by(self, *_a, **_kw):
+        return self
+
     def one_or_none(self):
         return self._one_or_none
 
     def all(self):
         return self._all
+
+    def first(self):
+        return self._first
 
 
 class _SessionStub:
@@ -99,3 +106,50 @@ def test_duplicate_partition_key_is_rejected():
     with pytest.raises(FailException):
         service.create_partition(
             knowledge_base_id=uuid4(), name="重复", partition_key="dup", parent_id=None)
+
+
+def test_list_partitions_returns_tree_ordered_rows():
+    """列出某知识库的全部分区（按 sort_order 排序），供前端渲染分区树。"""
+    rows = [
+        SimpleNamespace(id=uuid4(), name="产品A", parent_id=None, sort_order=1),
+        SimpleNamespace(id=uuid4(), name="外观", parent_id=uuid4(), sort_order=2),
+    ]
+    service = _new_service(_SessionStub([_QueryStub(all_result=rows)]))
+
+    result = service.list_partitions(uuid4())
+
+    assert result == rows
+
+
+def test_delete_partition_rejects_when_children_exist():
+    """有子分区时不允许删除父分区，避免产生孤儿分区。"""
+    service = _new_service(_SessionStub([_QueryStub(all_result=[SimpleNamespace(id=uuid4())])]))
+
+    with pytest.raises(FailException):
+        service.delete_partition(uuid4(), uuid4())
+
+
+def test_delete_partition_rejects_when_documents_exist():
+    """分区下仍有素材时不允许删除，避免素材失去归属。"""
+    service = _new_service(_SessionStub([
+        _QueryStub(all_result=[]),
+        _QueryStub(first_result=SimpleNamespace(id=uuid4())),
+    ]))
+
+    with pytest.raises(FailException):
+        service.delete_partition(uuid4(), uuid4())
+
+
+def test_delete_partition_succeeds_when_empty(monkeypatch):
+    partition = SimpleNamespace(id=uuid4())
+    service = _new_service(_SessionStub([
+        _QueryStub(all_result=[]),
+        _QueryStub(first_result=None),
+        _QueryStub(one_or_none_result=partition),
+    ]))
+    deleted = []
+    monkeypatch.setattr(service, "delete", lambda instance: deleted.append(instance))
+
+    service.delete_partition(uuid4(), partition.id)
+
+    assert deleted == [partition]

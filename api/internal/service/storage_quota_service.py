@@ -147,10 +147,63 @@ class StorageQuotaService(BaseService):
     def check_quota(self, account_id: UUID, incoming_bytes: int) -> None:
         """上传前校验：超出配额时抛 ForbiddenException。
 
-        所有上传路径（用户页面上传 / 小钰帮传 / 外部数据源同步）必须调用本方法。
+        仅做读校验，校验与后续写入之间不持锁，**存在并发超卖窗口**；
+        需要强一致的场景请改用 ``consume_quota``（校验+累加在同一行锁内完成）。
+        所有上传路径（用户页面上传 / 小钰帮传 / 外部数据源同步）必须调用本方法
+        或 ``consume_quota``。
         """
         total = self.resolve_total_quota_bytes(account_id)
         used = self.get_used_bytes(account_id)
+        self._assert_within_quota(total, used, incoming_bytes)
+
+    def consume_quota(self, account_id: UUID, incoming_bytes: int) -> int:
+        """原子预占：在同一把行锁内完成「校验 + 累加」，返回累加后的已用字节数。
+
+        与 ``check_quota`` + ``add_usage`` 两步走的区别：本方法先对
+        ``account_storage_usage`` 行加 ``FOR UPDATE`` 锁，再校验配额并写入，
+        因此并发上传不会同时通过校验（关闭超卖窗口）。超配额时抛
+        ``ForbiddenException`` 且不写入任何用量。
+
+        无用量记录时新建；并发创建撞唯一约束时回退为累加。
+        """
+        if incoming_bytes <= 0:
+            return self.get_used_bytes(account_id)
+
+        total = self.resolve_total_quota_bytes(account_id)
+        usage = (
+            self.db.session.query(AccountStorageUsage)
+            .filter_by(account_id=account_id)
+            .with_for_update()
+            .one_or_none()
+        )
+        if usage is None:
+            self._assert_within_quota(total, 0, incoming_bytes)
+            try:
+                created = self.create(
+                    AccountStorageUsage, account_id=account_id, used_bytes=incoming_bytes
+                )
+                return int(created.used_bytes)
+            except IntegrityError:
+                # 并发下另一事务已创建该账号用量记录，回退为加锁累加
+                self.db.session.rollback()
+                usage = (
+                    self.db.session.query(AccountStorageUsage)
+                    .filter_by(account_id=account_id)
+                    .with_for_update()
+                    .one_or_none()
+                )
+                if usage is None:
+                    return self.get_used_bytes(account_id)
+
+        used = int(usage.used_bytes or 0)
+        self._assert_within_quota(total, used, incoming_bytes)
+        new_value = used + incoming_bytes
+        self.update(usage, used_bytes=new_value)
+        return new_value
+
+    @staticmethod
+    def _assert_within_quota(total: int, used: int, incoming_bytes: int) -> None:
+        """校验 used + incoming 是否超总量；超出则抛 ForbiddenException。"""
         if used + incoming_bytes > total:
             raise ForbiddenException(
                 "存储空间不足，请购买存储扩展包后重试",

@@ -438,6 +438,8 @@ def register_routes(quart_app):
             name=_field(name),
             description=_field(str(payload.get("description") or "")),
             icon=_field(str(payload.get("icon") or "")),
+            base_type=_field(str(payload.get("base_type") or "mixed")),
+            partition_mode=_field(str(payload.get("partition_mode") or "none")),
         )
         await _to_thread(
             _get_service(KnowledgeBaseService).create_user_content_base_with_req,
@@ -504,6 +506,120 @@ def register_routes(quart_app):
             agent_id=payload.get("agent_id"),
         )
         return _ok_msg("删除知识库成功")
+
+    @quart_app.get("/space/knowledge-bases/<uuid:knowledge_base_id>/partitions")
+    async def async_list_partitions(knowledge_base_id) -> Response:
+        """async 列出知识库分区（两级树，供前端导航）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+        from internal.service.knowledge_partition_service import KnowledgePartitionService
+
+        # 先校验板块归属，避免越权读取他人分区结构
+        await _to_thread(
+            _get_service(KnowledgeBaseService).get_accessible_base,
+            knowledge_base_id,
+            account,
+        )
+        partitions = await _to_thread(
+            _get_service(KnowledgePartitionService).list_partitions,
+            knowledge_base_id,
+        )
+        return _ok([
+            {
+                "id": str(partition.id),
+                "name": partition.name,
+                "partition_key": partition.partition_key,
+                "parent_id": str(partition.parent_id) if partition.parent_id else "",
+                "description": partition.description or "",
+                "sort_order": partition.sort_order or 0,
+            }
+            for partition in partitions
+        ])
+
+    @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/partitions")
+    async def async_create_partition(knowledge_base_id) -> Response:
+        """async 创建知识库分区（最多两级）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+        from internal.service.knowledge_partition_service import KnowledgePartitionService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return _json_resp(
+                code="validate_error",
+                message="分区名称不能为空",
+                data={"name": ["分区名称不能为空"]},
+                status=400,
+            )
+
+        parent_id_raw = str(payload.get("parent_id") or "").strip()
+        parent_id = None
+        if parent_id_raw:
+            try:
+                parent_id = UUID(parent_id_raw)
+            except (TypeError, ValueError):
+                return _json_resp(
+                    code="validate_error",
+                    message="父分区标识非法",
+                    data={"parent_id": ["父分区标识非法"]},
+                    status=400,
+                )
+
+        # partition_key 未传时由名称派生（唯一约束要求非空）
+        partition_key = str(payload.get("partition_key") or "").strip() or name
+
+        # sort_order 来自 JSON body（注意不能用 _int_arg，它只读 query 参数）
+        try:
+            sort_order = int(payload.get("sort_order") or 0)
+        except (TypeError, ValueError):
+            sort_order = 0
+
+        await _to_thread(
+            _get_service(KnowledgeBaseService).get_accessible_base,
+            knowledge_base_id,
+            account,
+        )
+        partition = await _to_thread(
+            _get_service(KnowledgePartitionService).create_partition,
+            knowledge_base_id=knowledge_base_id,
+            name=name,
+            partition_key=partition_key,
+            parent_id=parent_id,
+            description=str(payload.get("description") or ""),
+            sort_order=sort_order,
+        )
+        return _ok({"id": str(partition.id), "name": partition.name})
+
+    @quart_app.post(
+        "/space/knowledge-bases/<uuid:knowledge_base_id>/partitions/<uuid:partition_id>/delete"
+    )
+    async def async_delete_partition(knowledge_base_id, partition_id) -> Response:
+        """async 删除分区（分区非空时拒绝）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+        from internal.service.knowledge_partition_service import KnowledgePartitionService
+
+        await _to_thread(
+            _get_service(KnowledgeBaseService).get_accessible_base,
+            knowledge_base_id,
+            account,
+        )
+        await _to_thread(
+            _get_service(KnowledgePartitionService).delete_partition,
+            knowledge_base_id,
+            partition_id,
+        )
+        return _ok_msg("删除分区成功")
 
     @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/hit")
     async def async_hit_test(knowledge_base_id) -> Response:

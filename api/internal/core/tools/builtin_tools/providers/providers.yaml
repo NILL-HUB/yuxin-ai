@@ -222,3 +222,10 @@
   background: "#F1F5F9"
   category: search
   created_at: 1789000000
+- name: knowledge_base_tools
+  label: 知识库工具
+  description: 知识库板块管理能力，支持 Agent 在对话内为用户创建素材/资料库板块。
+  icon: ""
+  background: "#EEF2FF"
+  category: tool
+  created_at: 1789100000

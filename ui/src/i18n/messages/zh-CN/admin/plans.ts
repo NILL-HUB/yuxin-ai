@@ -60,6 +60,7 @@ export default  {
         membership: '会员套餐',
         credits: '算力包',
         balance: '余额充值卡',
+        storage_addon: '存储扩容包',
       },
       columns: {
         plan: '套餐',
@@ -105,6 +106,31 @@ export default  {
         credits:
           '永久算力包：算力永不过期，系统换算标准为 100 算力/元，无额外赠送；余量≤阈值% 时自动复购。当前：{rate} 算力/元',
         balance: '余额充值卡：售价即充值面额，直接记入用户余额账户，不赠送算力。',
+        storage_addon:
+          '存储扩容包：购买后按 storage_quota_gb 权益扩容知识库总容量；如需提升单文件上限，额外配置 max_single_file_gb 权益（单位 GB）。',
+      },
+      entitlements: {
+        title: '存储与容量权益',
+        description: '自由键值权益，feature_key 与 feature_value 将随套餐生效；留空 feature_key 的行不会提交。',
+        add: '添加权益',
+        remove: '删除',
+        empty: '暂无权益，点击「添加权益」新增一行',
+        placeholders: {
+          key: '如 storage_quota_gb',
+          value: '如 100',
+        },
+        valueTypes: {
+          string: '字符串',
+          number: '整数',
+          decimal: '小数',
+          boolean: '布尔值',
+          json: 'JSON',
+        },
+        presets: {
+          label: '快捷填充：',
+          storageQuota: 'storage_quota_gb（容量 GB）',
+          maxSingleFile: 'max_single_file_gb（单文件 GB）',
+        },
       },
       errors: {
         codeRequired: '请填写套餐代码',

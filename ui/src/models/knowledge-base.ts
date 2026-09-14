@@ -1,5 +1,11 @@
 import { type BasePaginatorResponse, type BaseResponse } from '@/models/base'
 
+// 知识库板块类型：决定该库允许上传的媒体类型（服务端硬约束）
+export type KnowledgeBaseType = 'document' | 'image' | 'video' | 'audio' | 'mixed'
+
+// 分区模式：不分区 / 按月分区 / 按日分区 / 自定义分区
+export type PartitionMode = 'none' | 'date_month' | 'date_day' | 'custom'
+
 // 获取用户端知识库分页列表接口响应结构
 export type GetKnowledgeBasesWithPageResponse = BasePaginatorResponse<{
   id: string
@@ -10,6 +16,8 @@ export type GetKnowledgeBasesWithPageResponse = BasePaginatorResponse<{
   character_count: number
   creator_name: string
   creator_avatar: string
+  base_type?: string
+  partition_mode?: string
   embedding_model_id?: string
   updated_at: number
   created_at: number
@@ -21,6 +29,8 @@ export type CreateKnowledgeBaseRequest = {
   name: string
   icon: string
   description: string
+  base_type?: KnowledgeBaseType
+  partition_mode?: PartitionMode
 }
 
 // 更新知识库请求结构
@@ -39,6 +49,8 @@ export type GetKnowledgeBaseResponse = BaseResponse<{
   description: string
   document_count: number
   character_count: number
+  base_type?: string
+  partition_mode?: string
   embedding_model_id?: string
   updated_at: number
   created_at: number

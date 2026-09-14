@@ -230,24 +230,30 @@ class LocalStorageService:
         """按序流式合并分片为最终对象，返回 (总字节数, sha3_256)。
 
         全程分块读写，不把整个文件载入内存；缺任一必需分片时抛 FailException。
+        合并中途失败时回收半成品目标对象，避免留下孤儿文件（不计配额但会泄漏磁盘）。
         """
         target_path = self._object_path(target_key)
         _ensure_parent_dir(target_path)
         hasher = hashlib.sha3_256()
         total = 0
-        with open(target_path, "wb") as out:
-            for index in range(total_chunks):
-                chunk_path = self._chunk_path(session_id, index)
-                if not os.path.isfile(chunk_path):
-                    raise FailException(f"分片 {index} 缺失，无法完成合并")
-                with open(chunk_path, "rb") as src:
-                    while True:
-                        block = src.read(1024 * 1024)
-                        if not block:
-                            break
-                        out.write(block)
-                        hasher.update(block)
-                        total += len(block)
+        try:
+            with open(target_path, "wb") as out:
+                for index in range(total_chunks):
+                    chunk_path = self._chunk_path(session_id, index)
+                    if not os.path.isfile(chunk_path):
+                        raise FailException(f"分片 {index} 缺失，无法完成合并")
+                    with open(chunk_path, "rb") as src:
+                        while True:
+                            block = src.read(1024 * 1024)
+                            if not block:
+                                break
+                            out.write(block)
+                            hasher.update(block)
+                            total += len(block)
+        except Exception:
+            logging.warning("分片合并失败，回收半成品 key=%s", target_key, exc_info=True)
+            self.delete_object(target_key)
+            raise
         return total, hasher.hexdigest()
 
     def cleanup_session(self, session_id: str) -> None:

@@ -11,6 +11,7 @@ from wtforms.validators import (
 )
 
 from internal.entity.dataset_entity import RetrievalStrategy
+from internal.entity.knowledge_entity import KnowledgeBaseType, PartitionMode
 from internal.lib.helper import datetime_to_timestamp
 from internal.model import KnowledgeBase, KnowledgeDocument, KnowledgeSegment
 from pkg.paginator import PaginatorReq
@@ -38,6 +39,16 @@ class CreateKnowledgeBaseReq(Form):
     description = StringField("description", default="", validators=[
         Optional(),
         Length(max=2000, message="知识库描述长度不能超过2000字符"),
+    ])
+    # 板块类型：决定该知识库允许上传的媒体类型（服务端硬约束），默认 mixed 兼容通用库
+    base_type = StringField("base_type", default=KnowledgeBaseType.MIXED.value, validators=[
+        Optional(),
+        AnyOf([member.value for member in KnowledgeBaseType], message="不支持的板块类型"),
+    ])
+    # 分区模式：none / date_month / date_day / custom
+    partition_mode = StringField("partition_mode", default=PartitionMode.NONE.value, validators=[
+        Optional(),
+        AnyOf([member.value for member in PartitionMode], message="不支持的分区模式"),
     ])
     # embedding_model_id 由后端自动选择（维度优先+健康度），用户不能自选
     # 避免维度错位导致整个知识库向量失效
@@ -75,6 +86,8 @@ class GetKnowledgeBaseResp(Schema):
     name = fields.String(dump_default="")
     icon = fields.String(dump_default="")
     description = fields.String(dump_default="")
+    base_type = fields.String(dump_default="mixed")
+    partition_mode = fields.String(dump_default="none")
     document_count = fields.Integer(dump_default=0)
     character_count = fields.Integer(dump_default=0)
     embedding_model_id = fields.String(dump_default="")
@@ -88,6 +101,8 @@ class GetKnowledgeBaseResp(Schema):
             "name": data.name,
             "icon": _get_icon(data),
             "description": data.description,
+            "base_type": getattr(data, "base_type", None) or KnowledgeBaseType.MIXED.value,
+            "partition_mode": getattr(data, "partition_mode", None) or PartitionMode.NONE.value,
             "document_count": getattr(data, "document_count", 0) or 0,
             "character_count": getattr(data, "character_count", 0) or 0,
             "embedding_model_id": str(getattr(data, "embedding_model_id", "") or "") or "",
@@ -102,6 +117,8 @@ class GetKnowledgeBasesWithPageResp(Schema):
     name = fields.String(dump_default="")
     icon = fields.String(dump_default="")
     description = fields.String(dump_default="")
+    base_type = fields.String(dump_default="mixed")
+    partition_mode = fields.String(dump_default="none")
     document_count = fields.Integer(dump_default=0)
     character_count = fields.Integer(dump_default=0)
     creator_name = fields.String(dump_default="")
@@ -118,6 +135,8 @@ class GetKnowledgeBasesWithPageResp(Schema):
             "name": data.name,
             "icon": _get_icon(data),
             "description": data.description,
+            "base_type": getattr(data, "base_type", None) or KnowledgeBaseType.MIXED.value,
+            "partition_mode": getattr(data, "partition_mode", None) or PartitionMode.NONE.value,
             "document_count": getattr(data, "document_count", 0) or 0,
             "character_count": getattr(data, "character_count", 0) or 0,
             "creator_name": owner_account.name if owner_account else "",

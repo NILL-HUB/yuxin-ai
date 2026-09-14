@@ -25,6 +25,8 @@ import type {
   GetKnowledgeSegmentsWithPageResponse,
   HitRequest,
   HitResponse,
+  KnowledgeBaseType,
+  PartitionMode,
   UpdateKnowledgeSegmentRequest,
 } from '@/models/knowledge-base'
 import {
@@ -118,6 +120,10 @@ export const useCreateOrUpdateKnowledgeBase = () => {
     icon: '',
     name: '',
     description: '',
+    // 板块类型决定该库允许上传的媒体类型（服务端硬约束），仅在创建时提交
+    base_type: 'mixed' as KnowledgeBaseType,
+    // 分区模式：新建时选择，更新时不提交
+    partition_mode: 'none' as PartitionMode,
   }
   const form = ref(defaultForm)
   const formRef = ref<InstanceType<typeof Form>>()
@@ -141,10 +147,13 @@ export const useCreateOrUpdateKnowledgeBase = () => {
         })
         Message.success(resp.message)
       } else {
+        // 板块类型与分区模式仅在创建时提交，避免中途变更已建库的板块类型
         const resp = await createKnowledgeBase({
           icon: form.value.icon,
           name: form.value.name,
           description: form.value.description,
+          base_type: form.value.base_type,
+          partition_mode: form.value.partition_mode,
         })
         Message.success(resp.message)
       }

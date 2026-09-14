@@ -373,12 +373,15 @@ class KnowledgeBaseService(BaseService):
     # ==================== 用户端 user_content 知识库管理接口 ====================
 
     def create_user_content_base_with_req(self, req: CreateKnowledgeBaseReq, account: Account) -> KnowledgeBase:
-        """根据请求创建用户内容知识库（含图标设置）"""
+        """根据请求创建用户内容知识库（含板块类型、分区模式与图标设置）"""
         # 1.创建知识库基础记录
+        # req 可能是 wtforms 表单，也可能是路由层构造的 SimpleNamespace，故用 _req_value 安全取值
         knowledge_base = self.create_user_content_base(
             name=req.name.data,
             account=account,
             description=req.description.data or "",
+            base_type=self._req_value(req, "base_type", KnowledgeBaseType.MIXED.value),
+            partition_mode=self._req_value(req, "partition_mode", PartitionMode.NONE.value),
         )
 
         # 2.将图标 URL 写入 settings JSONB 字段
@@ -391,6 +394,15 @@ class KnowledgeBaseService(BaseService):
         self.update(knowledge_base, settings=settings, embedding_model_id=selected_model.id)
 
         return knowledge_base
+
+    @staticmethod
+    def _req_value(req, field: str, default: str) -> str:
+        """从请求对象安全取字段值（兼容 wtforms 的 .data 与 SimpleNamespace 裸值）。"""
+        raw = getattr(req, field, None)
+        if raw is None:
+            return default
+        value = getattr(raw, "data", raw)
+        return value or default
 
     def list_user_content_bases(
             self,

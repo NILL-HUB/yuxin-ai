@@ -11,6 +11,7 @@
 - [架构设计](prd/architecture-design.md)：核心架构、模块设计、产品形态与生态蓝图
 - [演进任务与执行路线](prd/execution-roadmap.md)：阶段任务与完成状态（唯一仍在维护的 roadmap）
 - [扩展性设计](prd/extensibility-design.md)：第三方能力接入机制（工具池/治理/OS 自动化）
+- [知识库产品形态设计](prd/knowledge-base-product-form-design.md)：素材中心 / 分级解析 / 容量商业化（P1、P2A、P2B 已落地，P3–P5 为设计稿）
 - [记忆写入优化设计](prd/memory-write-optimization-design.md)
 
 ## 子模块文档

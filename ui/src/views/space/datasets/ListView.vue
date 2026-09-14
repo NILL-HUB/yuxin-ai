@@ -20,7 +20,11 @@ import IconUploadGenerator from '@/components/IconUploadGenerator.vue'
 import { Message } from '@arco-design/web-vue'
 import { getUserAvatarUrl } from '@/utils/helper'
 import { getErrorMessage } from '@/utils/error'
-import type { GetKnowledgeBasesWithPageResponse } from '@/models/knowledge-base'
+import type {
+  GetKnowledgeBasesWithPageResponse,
+  KnowledgeBaseType,
+  PartitionMode,
+} from '@/models/knowledge-base'
 
 // 数据集列表项：后端列表接口会返回相关应用计数，模型未声明该字段，这里局部扩展
 type DatasetListItem = GetKnowledgeBasesWithPageResponse['data']['list'][number] & {
@@ -32,7 +36,7 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const accountStore = useAccountStore()
-let updateDatasetID = ''
+const updateDatasetID = ref('')
 const { knowledgeBase: dataset, loadKnowledgeBase: loadDataset } = useGetKnowledgeBase()
 const {
   loading,
@@ -86,7 +90,22 @@ let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined
 // 外部数据源弹窗开关
 const externalSourceVisible = ref(false)
 // 模态窗模式：新建/更新
-const isUpdateMode = computed(() => updateDatasetID !== '')
+const isUpdateMode = computed(() => updateDatasetID.value !== '')
+// 板块类型选项（含中文/英文文案，走 i18n）
+const baseTypeOptions = computed<Array<{ value: KnowledgeBaseType; label: string }>>(() => [
+  { value: 'document', label: t('space.datasets.baseType.document') },
+  { value: 'image', label: t('space.datasets.baseType.image') },
+  { value: 'video', label: t('space.datasets.baseType.video') },
+  { value: 'audio', label: t('space.datasets.baseType.audio') },
+  { value: 'mixed', label: t('space.datasets.baseType.mixed') },
+])
+// 分区模式选项
+const partitionModeOptions = computed<Array<{ value: PartitionMode; label: string }>>(() => [
+  { value: 'none', label: t('space.datasets.partitionMode.none') },
+  { value: 'date_month', label: t('space.datasets.partitionMode.dateMonth') },
+  { value: 'date_day', label: t('space.datasets.partitionMode.dateDay') },
+  { value: 'custom', label: t('space.datasets.partitionMode.custom') },
+])
 // 图标生成 loading：合并两种模式的 loading
 const iconGenerateLoading = computed(() => regenerateIconLoading.value || generateIconPreviewLoading.value)
 
@@ -139,7 +158,7 @@ const handleGenerateIcon = async () => {
     // 新建模式：仅需 name + description，无需 KB id
     // 更新模式：调用 regenerateIcon，需要已存在的 KB id
     const iconUrl = isUpdateMode.value
-      ? await handleRegenerateIcon(updateDatasetID)
+      ? await handleRegenerateIcon(updateDatasetID.value)
       : await handleGenerateIconPreview(form.value.name, form.value.description || '')
     if (iconUrl) {
       form.value.icon = iconUrl
@@ -170,7 +189,7 @@ const handleUpdate = (dataset_id: string) => {
   updateShowUpdateModal(true, async () => {
     // 1.调用api获取知识库详情
     await loadDataset(dataset_id)
-    updateDatasetID = dataset_id
+    updateDatasetID.value = dataset_id
 
     // 2.更新表单数据
     formRef.value?.resetFields()
@@ -178,18 +197,24 @@ const handleUpdate = (dataset_id: string) => {
     form.value.icon = dataset.value.icon
     form.value.name = dataset.value.name
     form.value.description = dataset.value.description
+    // 3.回填板块类型与分区模式（仅用于展示，提交时不发送）
+    form.value.base_type = (dataset.value.base_type as KnowledgeBaseType) || 'mixed'
+    form.value.partition_mode = (dataset.value.partition_mode as PartitionMode) || 'none'
   })
 }
 
 // 5.1 定义新建知识库处理器
 const handleCreate = () => {
   updateShowUpdateModal(true, () => {
-    updateDatasetID = ''
+    updateDatasetID.value = ''
     formRef.value?.resetFields()
     form.value.icon = ''
     form.value.fileList = []
     form.value.name = ''
     form.value.description = ''
+    // 重置板块类型与分区模式为默认值
+    form.value.base_type = 'mixed'
+    form.value.partition_mode = 'none'
   })
 }
 
@@ -197,7 +222,7 @@ const handleCreate = () => {
 const handleCancel = async () => {
   updateShowUpdateModal(false, async () => {
     // 1.重置整个表单数据
-    updateDatasetID = ''
+    updateDatasetID.value = ''
     formRef.value?.resetFields()
   })
 }
@@ -208,7 +233,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
   if (errors) return
 
   // 2.调用保存知识库服务
-  await saveDataset(updateDatasetID)
+  await saveDataset(updateDatasetID.value)
 
   // 3.关闭模态窗并且刷新数据
   handleCancel()
@@ -539,6 +564,26 @@ const handleCardClick = (datasetId: string) => {
               v-model="form.description"
               :auto-size="{ minRows: 4, maxRows: 6 }"
               :placeholder="t('space.datasets.modal.descriptionPlaceholder')"
+            />
+          </a-form-item>
+          <!-- 板块类型：决定允许上传的媒体类型（服务端硬约束），仅新建时可选 -->
+          <a-form-item field="base_type" :label="t('space.datasets.modal.baseTypeLabel')">
+            <a-select
+              v-model="form.base_type"
+              data-testid="kb-base-type"
+              :options="baseTypeOptions"
+              :disabled="isUpdateMode"
+              :placeholder="t('space.datasets.modal.baseTypePlaceholder')"
+            />
+          </a-form-item>
+          <!-- 分区模式：管理素材的组织方式，仅新建时可选（更新接口不接收该字段） -->
+          <a-form-item field="partition_mode" :label="t('space.datasets.modal.partitionModeLabel')">
+            <a-select
+              v-model="form.partition_mode"
+              data-testid="kb-partition-mode"
+              :options="partitionModeOptions"
+              :disabled="isUpdateMode"
+              :placeholder="t('space.datasets.modal.partitionModePlaceholder')"
             />
           </a-form-item>
           <!-- embedding 模型由后端自动选择（维度优先+健康度），用户不能自选，避免维度错位 -->

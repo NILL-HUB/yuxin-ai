@@ -125,7 +125,7 @@ binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 
 ### 17.4 存储配额与用量计量（P1 新增）
 
-存储配额在**服务层统一收口**：单次上传路径（用户页面上传、Agent 生成产物、小钰帮传、外部数据源同步）经 `RuntimeStorageProxy` 校验；分片上传链路（`ChunkedUploadService`）直接注入 `StorageQuotaService.check_quota` 校验。两条路径共用同一配额服务与 `account_storage_usage` 计量，禁止各入口自行判断。
+存储配额在**服务层统一收口**：单次上传路径（用户页面上传、Agent 生成产物、小钰帮传、外部数据源同步）经 `RuntimeStorageProxy` 校验；分片上传链路（`ChunkedUploadService`）直接注入 `StorageQuotaService` 校验。两条路径共用同一配额服务与 `account_storage_usage` 计量，禁止各入口自行判断。
 
 规则：
 
@@ -134,15 +134,24 @@ total_quota = max(基线 5GB, 生效套餐 storage_quota_gb) + sum(已购扩展�
 used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销毁 release_usage）
 ```
 
+**校验的两种模式（并发语义不同，别用错）**：
+
+| 方法 | 语义 | 并发安全性 | 适用场景 |
+| --- | --- | --- | --- |
+| `check_quota(account_id, bytes)` | 只读校验，超配额抛 `ForbiddenException` | ⚠️ 校验与写入之间不持锁，**存在并发超卖窗口** | 廉价预检（如分片 `init` 提前劝退） |
+| `consume_quota(account_id, bytes)` | 对 `account_storage_usage` 行加 `FOR UPDATE` 锁，**在同一把锁内完成校验 + 累加**，返回累加后用量；超配额时抛错且**不写入任何用量** | ✅ 原子，关闭超卖窗口 | 真正要占用存储的落点（分片 `complete`、秒传 `instant`） |
+
+> `consume_quota` 是「占用存储」的唯一正确入口：任何"先 check 后 add"的两步写法在并发下都可能让两个请求同时通过校验（如 5GB 配额下两个 4GB 上传各查各的空闲量）。失败路径必须配对调用 `release_usage` 归还预占。
+
 **增减时机（关键语义）**：
-- **累加**：上传成功（`RuntimeStorageProxy.upload_file` / `upload_bytes`）时 `add_usage(account_id, upload_file.size)`。
+- **累加**：上传成功时 `add_usage(account_id, upload_file.size)`（`RuntimeStorageProxy.upload_file` / `upload_bytes`）；分片上传与秒传走 `consume_quota`（合并/复制**之前**预占，失败则 `release_usage` 归还）。
 - **释放**：**仅在回收站留存期结束、底层存储对象被物理销毁时** `release_usage(account_id, size)`，落点在 `internal/service/recycle_bin_handlers.py` 的 `purge_knowledge_document` / `purge_knowledge_base`（删除底层对象之后调用 `_release_storage_quota`）。
 - **删除进回收站不释放**：删除 = 记录快照 + 物理删原表记录，但底层文件在留存期（默认 7~30 天）内仍占用存储，故此时**不**释放配额；删除后立刻恢复语义才成立（恢复不重复累加，因为配额从未被释放）。
 - **容错**：配额释放失败只记 warning，不向上抛异常——`purge` 抛异常的语义是"底层对象删除失败需重试"，配额释放失败若抛出会导致重复销毁。快照缺 `account_id` / `size`（老快照）时跳过释放。
 
 | 组件 | 位置 | 职责 |
 | --- | --- | --- |
-| `StorageQuotaService` | `api/internal/service/storage_quota_service.py` | `resolve_total_quota_bytes`（配额解析）/ `get_used_bytes` / `get_usage_summary` / `check_quota`（上传前校验）/ `add_usage` / `release_usage` |
+| `StorageQuotaService` | `api/internal/service/storage_quota_service.py` | `resolve_total_quota_bytes`（配额解析）/ `get_used_bytes` / `get_usage_summary` / `check_quota`（只读预检）/ `consume_quota`（原子预占）/ `add_usage` / `release_usage` |
 | `AccountStorageUsage` | `api/internal/model/account_storage_usage.py`（`account_storage_usage` 表） | 缓存每账号已用字节（`account_id` 唯一，`used_bytes` 为 `BigInteger`），避免每次上传全表 `sum(upload_file.size)` |
 | `PlanEntitlement.feature_key='storage_quota_gb'` | `plan_entitlement` 表 | 承载生效会员套餐的存储容量权益，管理员在套餐板块配置即生效 |
 | `Plan.plan_type='storage_addon'` | `plan` 表 | 存储扩展包套餐类型，容量叠加在套餐配额之上，复用 `PurchaseOrder` 扣款链路 |
@@ -352,13 +361,18 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 - 遍历 `storage/chunks/` 下每个会话目录，用 `ChunkedUploadSessionService.is_alive(session_id)`（即 `chunked_upload:session:{session_id}` 是否存在）判断是否仍活跃；不活跃即 `shutil.rmtree` 删除并 `SREM` 出 `chunked_upload:sessions` 跟踪集合（`LocalStorageService.cleanup_stale_session_dirs` + `ChunkedUploadSessionService.forget_session`）。
 - 调度：celery-beat `chunked-upload-stale-cleanup`，`crontab(minute=45)`（每小时 45 分）；注册于 `api/app/http/celery_app.py`（`TASK_MODULES` + `beat_schedule`）。
 
-**单文件上限按套餐分级**：`StorageQuotaService.resolve_max_file_size_bytes(account_id)` 取生效套餐的 `PlanEntitlement.feature_key = 'max_single_file_gb'` 权益，无权益时回退 `DEFAULT_MAX_SINGLE_FILE_BYTES = 15MB`（常量在 `api/internal/entity/storage_quota_entity.py`）。管理员在套餐板块配置该权益即可提升上限，无需改代码。注意该上限约束的是**单文件总字节数**，单个分片不受限。
+**单文件上限按套餐分级**：`StorageQuotaService.resolve_max_file_size_bytes(account_id)` 取生效套餐的 `PlanEntitlement.feature_key = 'max_single_file_gb'` 权益，无权益时回退 `DEFAULT_MAX_SINGLE_FILE_BYTES = 15MB`（常量在 `api/internal/entity/storage_quota_entity.py`）。注意该上限约束的是**单文件总字节数**，单个分片不受限。
+
+> ⚠️ **该上限依赖管理员配置权益**：默认值是 15MB，即**未配置 `max_single_file_gb` 的账号仍传不了大文件**（分片链路会在 `init` 第一步按此上限拒绝）。管理员需在 admin 套餐板块（`/admin/plans`，`PlanManageView.vue`）为套餐添加 `storage_quota_gb`（容量）与 `max_single_file_gb`（单文件上限，单位 GB）两条权益；「存储扩容包」需把 `plan_type` 选为 `storage_addon`。未配置时功能不可用，不是代码缺陷。
 
 **两层防御（顺序保证不留残留）**：
 
 1. **合并 / 复制前预校验板块类型**（`KnowledgeBaseService.assert_upload_allowed`）：避免「把视频传进图片库」这类场景白传几百 MB 后才被拒。
-2. **建档失败回滚**：`create_document_from_upload_file` 抛异常时，回滚已合并/复制的对象与 `UploadFile` 记录，**保留会话**（`complete`）以便重试；不累加配额。落库失败亦回收已合并对象，避免孤儿文件。
-3. 只有在全部成功后才执行破坏性收尾与计量：`add_usage` → 清理暂存 → 销毁会话 → 登记指纹。
+2. **合并前原子预占配额**（`consume_quota`）：`init` 的 `check_quota` 只是快速预检（并发下两个会话可同时通过），真正的占用在合并**之前**用行锁完成「校验 + 累加」。放在合并前是为了避免超额时白合并 GB 级文件；失败路径（合并/落库/建档任一失败）释放预占，**保留会话**以便重试。
+3. **建档失败回滚**：`create_document_from_upload_file` 抛异常时，回滚已合并/复制的对象与 `UploadFile` 记录；落库失败亦回收已合并对象，避免孤儿文件。
+4. 只有全部成功后才执行破坏性收尾：清理暂存 → 销毁会话 → 登记指纹。
+
+**合并失败的半成品回收**：`LocalStorageService.merge_chunks` 是流式写目标对象，中途失败（缺片、磁盘写失败等）会留下半成品。该方法在 `except` 中调用 `delete_object(target_key)` 回收，避免孤儿文件占盘（不计配额但会泄漏磁盘）。
 
 **后端支持范围**：**当前仅支持 `local` 后端**（`ChunkedUploadService` 直接注入 `LocalStorageService`，落库 `storage_backend="local"`）。`cos`/`oss` 的原生 multipart 上传属 **P2B-2**，未实现。
 

@@ -43,17 +43,16 @@
 
 ### 11.2 管理员身份与知识库归属边界
 
-当前系统中，管理员也是用户：管理员账号会绑定一个普通 `Account`，管理员登录后既有管理员身份，也会获得用户端身份。因此知识库归属不能只按“创建人是不是管理员”判断，而必须按“操作上下文 + 知识库作用域”判断。
+**管理员与用户端账号已彻底解耦（迁移 `e0a1b2c3d4e5` 起）**：`admin_user.account_id` 恒为 `NULL`，管理员账号**不绑定**普通 `Account`，管理员登录后只有管理员身份，**没有用户端身份**；管理员 JWT（`realm=admin`）访问用户端接口一律 403（见 `docs/rbac.md` §8）。因此**不存在**「管理员既是管理员又是某个用户」的双身份情形。
 
-核心原则：
+归属判定只取决于**操作上下文 + 知识库作用域**，且两者一一对应：
 
 ```text
-同一个自然人
-  -> 以普通用户上下文操作：写入用户个人知识库
-  -> 以管理员配置中心上下文操作，并显式选择系统级作用域：写入系统级知识库
+用户端上下文（Account 身份）  -> owner_account_id=<用户 id>，owner_admin_user_id=NULL -> user_memory / user_content
+管理端上下文（AdminUser 身份） -> owner_account_id=NULL，owner_admin_user_id=<管理员 id> -> system / tenant / project
 ```
 
-也就是说，管理员的知识库不天然等于系统级知识库。管理员也可以有自己的用户长期记忆库和用户资料内容库；只有当管理员在配置中心以管理行为创建、维护、发布的知识，才属于系统级知识库。
+`KnowledgeBase` 的归属字段是**互斥**的：`create_user_base` / `create_user_memory_base` 强制 `owner_account_id=account.id` + `owner_admin_user_id=None`；`create_system_base` 强制 `owner_account_id=None` + `owner_admin_user_id=admin_user.id`，且非管理员调用直接 `ForbiddenException("普通用户不能创建系统级知识库")`。
 
 判定矩阵：
 
@@ -61,8 +60,6 @@
 | --- | --- | --- | --- | --- |
 | 普通用户 | /home 或用户知识库页面 | user | user_memory | 用户长期记忆库 |
 | 普通用户 | /home 或用户知识库页面 | user | user_content | 用户资料内容库 |
-| 管理员 | /home 普通问答 | user | user_memory | 管理员自己的长期记忆库 |
-| 管理员 | /home 普通问答 | user | user_content | 管理员自己的资料内容库 |
 | 管理员 | 配置中心 / 系统知识库管理 | admin | system | 系统级知识库 |
 | 管理员 | 配置中心 / 租户知识库管理 | admin | tenant | 租户级知识库 |
 | 管理员 | 配置中心 / 项目知识库管理 | admin | project | 项目级知识库 |
@@ -71,8 +68,8 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| owner_account_id | 资源实际归属的用户账号，兼容现有 account_id |
-| owner_admin_user_id | 如果由管理员在管理上下文创建，记录管理员身份 |
+| owner_account_id | 资源实际归属的用户账号（管理员创建的管理级知识库为 NULL） |
+| owner_admin_user_id | 由管理员在管理上下文创建时记录管理员身份（用户个人知识库为 NULL） |
 | operation_context | user / admin / system_job，表示创建或修改时的操作上下文 |
 | knowledge_scope | system / tenant / project / user_memory / user_content |
 | visibility_scope | private / team / tenant / public / internal |
@@ -82,13 +79,11 @@
 
 边界规则：
 
-1. 管理员在 `/home` 的普通提问和回答中产生的长期记忆，默认进入管理员自己的用户长期记忆库。
-2. 管理员在用户资料页面上传的文档、图片、视频、音频，默认进入管理员自己的用户资料内容库。
-3. 管理员在配置中心创建的知识库，只有显式选择 `system`、`tenant` 或 `project` 作用域时，才进入对应管理级知识库。
-4. 系统级知识库必须要求管理员权限，并记录 `owner_admin_user_id`、操作日志和发布状态。
-5. 系统级知识库的内容可以被普通用户任务检索引用，但普通用户不能直接写入或管理。
-6. 用户个人知识库默认只服务该用户本人，不能因为用户拥有管理员身份而自动变成系统知识。
-7. 当同一条知识既可能是个人偏好又可能是系统规范时，必须让管理员明确选择保存到“个人长期记忆”还是“系统级知识库”。
+1. 管理员要拥有自己的用户长期记忆库 / 用户资料内容库，必须**走用户端注册一个用户账号**（管理员账号本身没有个人知识库）。
+2. 管理员在配置中心创建知识库时，只有显式选择 `system`、`tenant` 或 `project` 作用域时，才进入对应管理级知识库。
+3. 系统级知识库必须要求管理员权限，并记录 `owner_admin_user_id`、操作日志和发布状态。
+4. 系统级知识库的内容可以被普通用户任务检索引用，但普通用户不能直接写入或管理。
+5. 用户个人知识库只服务该用户本人——管理员身份不会让任何用户知识库自动变成系统知识（两个 realm 不互通）。
 
 ### 11.3 用户个人知识库
 
@@ -213,21 +208,26 @@
 
 | 能力 | 现有实现 |
 | --- | --- |
-| 知识库管理 | `Dataset` 模型、创建、更新、删除、分页、搜索 |
-| 文档管理 | `Document` 模型、上传后创建文档、启用 / 禁用、删除、重命名 |
-| 片段管理 | `Segment` 模型、片段增删改查、启用 / 禁用、命中次数 |
+| 知识库管理 | `KnowledgeBase` 模型、创建、更新、删除、分页、搜索（原 `Dataset` 命名已弃用，迁移 `x1a2b3c4d5e6`） |
+| 文档管理 | `KnowledgeDocument` 模型、上传后创建文档、启用 / 禁用、删除、重命名 |
+| 片段管理 | `KnowledgeSegment` 模型、片段增删改查、启用 / 禁用、命中次数 |
 | 文件上传 | 通过 `UploadFile` 关联文档 |
 | 文档处理 | 支持 automatic / custom 处理规则、分段规则、chunk_size、chunk_overlap |
 | 索引状态 | waiting、parsing、splitting、indexing、completed、error |
 | 检索策略 | semantic、full_text、hybrid |
-| 检索工具 | `dataset_retrieval` 可作为 LangChain Tool 被 Agent / Workflow 调用 |
-| 召回测试 | `/datasets/<id>/hit` 支持召回测试和最近查询记录 |
-| App 绑定 | `AppDatasetJoin`、`AppConfig.datasets` 支持应用绑定知识库 |
-| Workflow 绑定 | dataset_retrieval workflow node 支持工作流检索知识库 |
+| 检索工具 | 运行时名为 `search_knowledge_base`（`KNOWLEDGE_RETRIEVAL_TOOL_NAME`），可被 Agent / Workflow 调用；`dataset_retrieval` / `recall_dataset` 作为历史别名保留在别名映射中 |
+| 召回测试 | `/space/knowledge-bases/<uuid>/hit` 支持召回测试；admin 侧 `/admin/system-knowledge/<uuid>/hit-test` |
+| App 绑定 | `AppConfig.knowledge_base_ids`（JSONB）支持应用绑定知识库 |
+| Workflow 绑定 | `dataset_retrieval` workflow node 支持工作流检索知识库 |
 
-**代码审计修正（v4.0）**：
+**代码审计修正（v5.0，2026-09）**：
 
-上述"已具备能力"中，检索策略 semantic/full_text/hybrid 和 dataset_retrieval 工具在代码层面存在但生产链路不完整。knowledge_base_service.py 仅有基础 CRUD（create/get/delete），未见完整的 RAG 检索管线：缺失向量索引构建、chunk 切分执行、embedding 生成、相似度召回、rerank 等核心环节。App 绑定知识库的 AppDatasetJoin 存在，但 Agent 执行时是否真正调用知识库检索需要验证。
+RAG 检索管线**已完整落地**，不再只是基础 CRUD：
+
+- 索引链路：`KnowledgeIndexingService`（`api/internal/service/knowledge_indexing_service.py`）实现 `_parsing` → `_splitting` → `_indexing` → `_completed` 全流程，逐阶段更新 `Document`/`Segment` 状态。
+- 向量检索：`knowledge_vector_service.py` 负责向量化与相似度召回。
+- Rerank：`retrieval_service.py` 在召回后执行重排，provider rerank 不可用时走 LLM 兜底（`rerank_fallback`）。
+- App 绑定：早期文档提到的 `AppDatasetJoin` 关联表**不存在**，App 与知识库的绑定已改为 `AppConfig.knowledge_base_ids` 列。
 
 现有 TokenBufferMemory 仅是会话短期上下文裁剪（trim_messages strategy="last" max_tokens=2000），不是跨会话长期记忆。长期记忆已由第 16 章脑启发记忆系统完全接管，旧记忆系统代码（long_term_memory_service.py 的 MemoryCandidateExtractor / MemoryConfidenceTracker / UserMemoryConfirmationService）已删除。
 
@@ -258,9 +258,9 @@
 建议演进方式：
 
 ```text
-现有 Dataset / Document / Segment
-  -> 直接重构为带 knowledge_scope、owner_scope、visibility_scope 的知识库模型
-  -> 增加 operation_context 与 owner_admin_user_id
+KnowledgeBase / KnowledgeDocument / KnowledgeSegment（原 Dataset / Document / Segment 命名）
+  -> 已重构为带 knowledge_scope、owner_scope、visibility_scope 的知识库模型
+  -> 已落地 operation_context 与 owner_admin_user_id
   -> 承载系统级知识库 + 用户资料内容库
   -> 新增系统级知识库管理入口和发布状态
   -> 再统一接入 knowledge tool pool
@@ -272,9 +272,9 @@
 
 | 模型方向 | 策略 |
 | --- | --- |
-| Dataset | 可直接扩展或重命名为 KnowledgeBase，不需要保留旧数据兼容逻辑 |
-| Document / Segment | 可按资料内容库重新设计字段，第一阶段优先文本和结构化资料，多媒体解析字段预留但能力后置 |
-| UserMemory | 新增独立模型，不建议复用 Dataset 承载长期习惯 |
+| KnowledgeBase（原 Dataset） | ✅ 已完成——直接重命名为 `KnowledgeBase`，未保留旧数据兼容逻辑 |
+| KnowledgeDocument / KnowledgeSegment | 已按资料内容库重新设计字段，第一阶段优先文本和结构化资料，多媒体解析字段预留但能力后置 |
+| UserMemory | 新增独立模型，不复用知识库模型承载长期习惯 |
 | ExternalDataSource | 新增外部数据源连接模型，记录来源类型、授权状态、同步状态和作用域 |
 | KnowledgeScope | 作为核心枚举字段设计，不作为后补字段 |
 | Owner / Visibility | 初始模型就纳入 owner_account_id、owner_admin_user_id、visibility_scope |
@@ -313,6 +313,8 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 
 类型到扩展名的映射与两个工具函数 `allowed_extensions_for_base_type()` / `media_type_for_extension()` 位于 `internal/entity/upload_file_entity.py`。`KnowledgeBaseService.create_user_content_base()` 对 `base_type` / `partition_mode` 做取值校验，非法值抛 `ValidateErrorException`。存量 `KnowledgeBase` 默认迁移为 `mixed`（见 §11.7.7 迁移）。
 
+**用户端创建入口**：`POST /space/knowledge-bases` 接受可选 `base_type` / `partition_mode`（未传分别默认 `mixed` / `none`）。用户端知识库列表页（`ui/src/views/space/datasets/ListView.vue`）的新建弹窗提供两个选择器，用户可显式选择板块类型与分区模式；编辑已有库时板块类型选择器置灰（后端语义上不允许中途变更板块类型，避免改变该库允许上传的扩展名），且更新接口不提交这两个字段。
+
 #### 11.7.2 分区模式 partition_mode
 
 `knowledge_base.partition_mode` 定义分区的产生方式，枚举 `PartitionMode`：
@@ -340,7 +342,28 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 
 **层级由服务层强制**：`KnowledgePartitionService.create_partition()` 校验父分区存在（否则抛 `FailException`）且父分区自身必须是顶层，第三级创建直接抛 `ValidateErrorException`（`MAX_PARTITION_DEPTH = 1`），避免深树带来的 UI 混乱与 Agent 导航复杂化。`parent_id` 结构天然支持未来放开更深层级，不需改表。
 
+**用户端分区入口**（`api/app/http/knowledge_mcp_routes.py`）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/space/knowledge-bases/<uuid>/partitions` | 列出该板块全部分区（按 `sort_order`、`created_at` 排序），前端据此渲染两级树 |
+| POST | `/space/knowledge-bases/<uuid>/partitions` | 创建分区；`name` 必填，`partition_key` 未传时由 `name` 派生，`parent_id` 可选（非空即建为二级） |
+| POST | `/space/knowledge-bases/<uuid>/partitions/<uuid>/delete` | 删除分区；**仅空分区可删**——有子分区或仍挂着素材时抛错，避免孤儿分区与素材失去归属 |
+
+三条路由均先调用 `KnowledgeBaseService.get_accessible_base` 校验板块归属，避免越权读取/改动他人分区结构。
+
+`KnowledgePartitionService.delete_partition(knowledge_base_id, partition_id)` 的校验顺序：先查子分区 → 再查该分区下是否仍有 `KnowledgeDocument` → 最后按 `(id, knowledge_base_id)` 定位并删除。
+
 分区权限首版不做——分区是组织手段而非权限边界，权限仍在板块层。
+
+#### 11.7.3.1 对话内建库工具 `create_knowledge_base`
+
+小钰可在对话里直接为用户建板块，工具位于 `api/internal/core/tools/builtin_tools/providers/knowledge_base_tools/`（provider 登记在 `providers.yaml`，`category=tool`）：
+
+- 参数：`name`（必填）、`base_type`、`partition_mode`、`description`。
+- 工具内部对 `base_type` / `partition_mode` 做白名单校验（非法值返回可读错误而非抛异常），再调用 `KnowledgeBaseService.create_user_content_base(operation_context="user", ...)`。
+- **account 传递**：builtin 工具无全局 `g.account`，沿用 `computer_control` / `codex_os` 的范式——运行时挂载点（`assistant_agent_service.py` 的 `_build_assistant_runtime_tools`）用 `kb_tool_factory(account_id=str(account_id))` 注入；工具内再用 `AccountService.get_account()` 换成真实 `Account` 实例（服务层依赖 `account.id`）。
+- 只能为**当前登录用户**创建其私有板块，不能代他人建库。
 
 #### 11.7.4 标签关联（复用既有 Tag）
 

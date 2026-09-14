@@ -187,6 +187,19 @@ export default  {
       enterNameFirst: 'Enter a dataset name first',
       loadDetailFailed: 'Failed to load dataset details',
       stats: '{documents} documents · {characters}k chars · {apps} related apps',
+      baseType: {
+        document: 'Document Library',
+        image: 'Image Library',
+        video: 'Video Library',
+        audio: 'Audio Library',
+        mixed: 'Mixed Library',
+      },
+      partitionMode: {
+        none: 'No Partition',
+        dateMonth: 'Monthly Partition',
+        dateDay: 'Daily Partition',
+        custom: 'Custom Partition',
+      },
       modal: {
         createTitle: 'Create Dataset',
         updateTitle: 'Update Dataset',
@@ -197,6 +210,10 @@ export default  {
         namePlaceholder: 'Enter the dataset name',
         descriptionLabel: 'Dataset Description',
         descriptionPlaceholder: 'Enter a description for the dataset content',
+        baseTypeLabel: 'Library Type',
+        baseTypePlaceholder: 'Select a library type (determines allowed asset types)',
+        partitionModeLabel: 'Partition Mode',
+        partitionModePlaceholder: 'Select a partition mode',
         embeddingModelLabel: 'Embedding Model',
         embeddingModelPlaceholder: 'Select an embedding model (uses system default if unset)',
         embeddingModelHint:

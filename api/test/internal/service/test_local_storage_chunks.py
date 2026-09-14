@@ -71,6 +71,48 @@ def test_merge_chunks_raises_when_chunk_missing(isolated_storage):
         service.merge_chunks("sess-x", 3, "2026/09/14/x.mp4")
 
 
+def test_merge_chunks_removes_partial_target_when_merge_fails(isolated_storage):
+    """合并中途失败必须回收半成品目标对象，否则会留下不计配额的孤儿文件。"""
+    from internal.exception import FailException
+
+    service = _service()
+    session_id = "sess-partial"
+    service.save_chunk(session_id, 0, b"AAA")
+    # 故意缺少 index=1，合并会在写出 index=0 之后失败
+
+    target_key = "2026/09/14/partial.mp4"
+    with pytest.raises(FailException):
+        service.merge_chunks(session_id, 3, target_key)
+
+    assert not os.path.isfile(service._object_path(target_key))
+
+
+def test_merge_chunks_removes_partial_target_when_chunk_read_raises(isolated_storage, monkeypatch):
+    """分片读取抛非 FailException 异常时同样要回收半成品。"""
+    service = _service()
+    session_id = "sess-write-fail"
+    service.save_chunk(session_id, 0, b"AAA")
+    service.save_chunk(session_id, 1, b"BBB")
+
+    target_key = "2026/09/14/writefail.mp4"
+    # 先解析出绝对路径：monkeypatch 会影响路径解析，断言必须用已解析的真实路径
+    target_path = service._object_path(target_key)
+    real_open = open
+    poisoned = service._chunk_path(session_id, 1)
+
+    def _exploding_open(path, mode="r", *args, **kwargs):
+        if mode == "rb" and str(path) == str(poisoned):
+            raise OSError("read blew up")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", _exploding_open)
+
+    with pytest.raises(OSError):
+        service.merge_chunks(session_id, 2, target_key)
+
+    assert not os.path.isfile(target_path)
+
+
 def test_cleanup_session_removes_chunk_dir(isolated_storage):
     service = _service()
     service.save_chunk("sess-clean", 0, b"data")

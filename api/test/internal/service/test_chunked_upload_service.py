@@ -49,17 +49,20 @@ class _FakeSessionService:
 
 
 class _FakeStorage:
-    def __init__(self):
+    def __init__(self, merge_error=None):
         self.chunks = {}
         self.merged = []
         self.cleaned = []
         self.copied = []
+        self._merge_error = merge_error
 
     def save_chunk(self, session_id, index, content):
         self.chunks[(session_id, index)] = content
         return len(content)
 
     def merge_chunks(self, session_id, total_chunks, target_key):
+        if self._merge_error is not None:
+            raise self._merge_error
         self.merged.append((session_id, total_chunks, target_key))
         return 1234, "digest-abc"
 
@@ -69,6 +72,10 @@ class _FakeStorage:
     def copy_object(self, source_key, target_key):
         self.copied.append((source_key, target_key))
         return 999
+
+    def delete_object(self, key):
+        self.cleaned.append(("delete_object", key))
+        return True
 
 
 class _FakeUploadFileService:
@@ -90,12 +97,23 @@ def _service(*, storage=None, session_service=None, upload_file_service=None,
             return max_size
 
         def check_quota(self, account_id, incoming_bytes):
-            quota_calls.append((account_id, incoming_bytes))
+            quota_calls.append(("check", account_id, incoming_bytes))
             if quota_error:
                 raise quota_error
 
+        def consume_quota(self, account_id, incoming_bytes):
+            quota_calls.append(("consume", account_id, incoming_bytes))
+            if quota_error:
+                raise quota_error
+            return incoming_bytes
+
         def add_usage(self, account_id, bytes_delta):
+            quota_calls.append(("add", account_id, bytes_delta))
             return bytes_delta
+
+        def release_usage(self, account_id, bytes_delta):
+            quota_calls.append(("release", account_id, bytes_delta))
+            return 0
 
     service = ChunkedUploadService(
         db=SimpleNamespace(),
@@ -132,7 +150,7 @@ def test_init_checks_quota_and_returns_session():
 
     assert result["session_id"]
     assert result["total_chunks"] == 2
-    assert calls == [(account.id, 1024)]
+    assert calls == [("check", account.id, 1024)]
 
 
 def test_init_returns_instant_hit_when_fingerprint_matches():
@@ -384,6 +402,88 @@ def test_instant_upload_checks_quota_before_copy():
 
     with pytest.raises(ForbiddenException):
         service.instant_upload(account=account, upload_file_id=str(_uuid4()), fingerprint="fp")
+
+    assert calls == [("consume", account.id, 8192)]
+
+
+def test_complete_consumes_quota_atomically_instead_of_add_usage():
+    """complete 必须用 consume_quota（锁内校验+累加）而非 add_usage，避免并发超卖。"""
+    session_service = _FakeSessionService()
+    storage = _FakeStorage()
+    service, calls = _service(storage=storage, session_service=session_service)
+    account = _account()
+    session_id = service.init(
+        account=account, filename="final.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-atomic",
+    )["session_id"]
+    calls.clear()
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
+
+    service.complete(session_id=session_id, account=account)
+
+    assert calls == [("consume", account.id, 1024)]
+    assert not any(call[0] == "add" for call in calls)
+
+
+def test_complete_releases_reserved_quota_and_keeps_session_when_merge_fails():
+    """合并失败：必须释放已预占的配额、不清理分片目录、保留会话供用户重试。"""
+    session_service = _FakeSessionService()
+    storage = _FakeStorage(merge_error=OSError("disk exploded"))
+    service, calls = _service(storage=storage, session_service=session_service)
+    account = _account()
+    session_id = service.init(
+        account=account, filename="big.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-mergefail",
+    )["session_id"]
+    calls.clear()
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
+
+    with pytest.raises(OSError):
+        service.complete(session_id=session_id, account=account)
+
+    assert calls == [("consume", account.id, 1024), ("release", account.id, 1024)]
+    assert storage.cleaned == []
+    assert session_service.get(session_id) is not None
+
+
+def test_complete_releases_reserved_quota_when_declaring_document_fails():
+    """建档失败：释放预占配额，并回滚已合并对象与 UploadFile 记录。"""
+    session_service = _FakeSessionService()
+    storage = _FakeStorage()
+    upload_file_service = _FakeUploadFileService()
+    service, calls = _service(
+        storage=storage, session_service=session_service,
+        upload_file_service=upload_file_service,
+    )
+    account = _account()
+    session_id = service.init(
+        account=account, filename="final.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-docfail",
+    )["session_id"]
+    calls.clear()
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
+
+    class _KnowledgeService:
+        def assert_upload_allowed(self, *args, **kwargs):
+            return SimpleNamespace(id=uuid4())
+
+        def create_document_from_upload_file(self, **kwargs):
+            raise FailException("建档失败")
+
+    service._knowledge_base_service = lambda: _KnowledgeService()
+
+    with pytest.raises(FailException):
+        service.complete(
+            session_id=session_id, account=account, knowledge_base_id=str(uuid4())
+        )
+
+    assert ("release", account.id, 1024) in calls
+    assert storage.merged, "合并应已发生"
+    assert ("delete_object", storage.merged[0][2]) in storage.cleaned
+    assert session_service.get(session_id) is not None
 
 
 def test_init_rejects_non_positive_chunk_size():

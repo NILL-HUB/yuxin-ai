@@ -216,3 +216,74 @@ def test_max_file_size_falls_back_to_default_when_entitlement_is_zero():
     ]))
     assert service.resolve_max_file_size_bytes(uuid4()) == 15 * 1024 * 1024
 
+
+def test_consume_quota_increments_within_single_locked_transaction(monkeypatch):
+    """原子预占：在同一把行锁内完成校验与累加，返回累加后用量。"""
+    account_id = uuid4()
+    usage = SimpleNamespace(used_bytes=1024)
+    service = _new_service(_SessionStub([
+        _QueryStub(first_result=None),
+        _QueryStub(all_result=[]),
+        _QueryStub(one_or_none_result=usage),
+    ]))
+    updated = []
+    monkeypatch.setattr(service, "update",
+        lambda instance, **kwargs: updated.append(kwargs) or instance)
+
+    result = service.consume_quota(account_id, 2048)
+
+    assert result == 3072
+    assert updated[0]["used_bytes"] == 3072
+
+
+def test_consume_quota_raises_and_leaves_usage_untouched_when_over_quota(monkeypatch):
+    """超配额时必须抛错，且不得写入任何用量（避免超卖）。"""
+    account_id = uuid4()
+    usage = SimpleNamespace(used_bytes=5 * (1024 ** 3))
+    service = _new_service(_SessionStub([
+        _QueryStub(first_result=None),
+        _QueryStub(all_result=[]),
+        _QueryStub(one_or_none_result=usage),
+    ]))
+    updated = []
+    monkeypatch.setattr(service, "update",
+        lambda instance, **kwargs: updated.append(kwargs) or instance)
+
+    with pytest.raises(ForbiddenException):
+        service.consume_quota(account_id, 1024)
+
+    assert updated == []
+    assert usage.used_bytes == 5 * (1024 ** 3)
+
+
+def test_consume_quota_is_noop_for_non_positive_bytes(monkeypatch):
+    account_id = uuid4()
+    usage = SimpleNamespace(used_bytes=1024)
+    service = _new_service(_SessionStub([_QueryStub(one_or_none_result=usage)]))
+    updated = []
+    monkeypatch.setattr(service, "update",
+        lambda instance, **kwargs: updated.append(kwargs) or instance)
+
+    result = service.consume_quota(account_id, 0)
+
+    assert result == 1024
+    assert updated == []
+
+
+def test_consume_quota_creates_record_when_absent(monkeypatch):
+    """无用量记录时新建，且新记录的用量即为本次预占字节数。"""
+    account_id = uuid4()
+    service = _new_service(_SessionStub([
+        _QueryStub(first_result=None),
+        _QueryStub(all_result=[]),
+        _QueryStub(one_or_none_result=None),
+    ]))
+    created = []
+    monkeypatch.setattr(service, "create",
+        lambda model, **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
+
+    result = service.consume_quota(account_id, 2048)
+
+    assert result == 2048
+    assert created[0]["used_bytes"] == 2048
+

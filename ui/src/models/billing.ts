@@ -12,12 +12,14 @@ export type PlanEntitlement = {
   parsed_value?: unknown
 }
 
+export type PlanType = 'balance' | 'membership' | 'credits' | 'storage_addon'
+
 export type Plan = {
   id: string
   code: string
   name: string
   description: string
-  plan_type: 'balance' | 'membership' | 'credits'
+  plan_type: PlanType
   duration_days: number
   grant_token_credits: number
   auto_renew_threshold_percent: number

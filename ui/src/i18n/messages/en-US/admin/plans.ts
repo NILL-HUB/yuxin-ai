@@ -63,6 +63,7 @@ export default  {
         membership: 'Membership',
         credits: 'Credits Pack',
         balance: 'Balance Card',
+        storage_addon: 'Storage Add-on',
       },
       columns: {
         plan: 'Plan',
@@ -109,6 +110,32 @@ export default  {
           'Credits pack: permanent credits, system standard is 100 credits/CNY with no bonus; auto-renews when remaining ≤ threshold%. Current: {rate} credits/CNY',
         balance:
           'Balance card: the price is the recharge face value credited to the user balance; no credits granted.',
+        storage_addon:
+          'Storage add-on: expands total knowledge base capacity via the storage_quota_gb entitlement; to raise the per-file limit, also configure a max_single_file_gb entitlement (in GB).',
+      },
+      entitlements: {
+        title: 'Storage & Capacity Entitlements',
+        description:
+          'Free-form key/value entitlements applied with the plan; rows with an empty feature_key are not submitted.',
+        add: 'Add entitlement',
+        remove: 'Delete',
+        empty: 'No entitlements yet. Click "Add entitlement" to add a row.',
+        placeholders: {
+          key: 'e.g. storage_quota_gb',
+          value: 'e.g. 100',
+        },
+        valueTypes: {
+          string: 'String',
+          number: 'Integer',
+          decimal: 'Decimal',
+          boolean: 'Boolean',
+          json: 'JSON',
+        },
+        presets: {
+          label: 'Quick fill:',
+          storageQuota: 'storage_quota_gb (capacity GB)',
+          maxSingleFile: 'max_single_file_gb (per-file GB)',
+        },
       },
       errors: {
         codeRequired: 'Plan code is required',

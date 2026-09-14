@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：P1 数据基座已落地、P2A 多模态素材入库已完成（见 §9.2），P2B 与 P3–P5 为设计稿（待实施）｜**版本**：v1.1｜**日期**：2026-09-12
+> **状态**：P1 数据基座已落地、P2A 多模态素材入库与 P2B 分片上传均已完成（见 §9.2），P3–P5 为设计稿（待实施）｜**版本**：v1.2｜**日期**：2026-09-14
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -14,13 +14,15 @@
 
 `product-vision.md` 对知识库承诺的是**全媒体素材中心 + 视频制作闭环**，落地状态表中视频素材标注为「⚠️ 半可用 —— 仅存储，不解析/不抽帧/不入库」。代码核实后的真实落差：
 
-| 维度 | 产品承诺 | 代码现状 |
-| --- | --- | --- |
-| 媒体类型 | 文档 + 图片 + 视频 + 音频 | 仅文档可解析入库；图片层允许上传但不解析；**音视频不在上传白名单** |
-| 内容理解 | 素材可被语义检索 | 多模态能力（抽帧/OCR/ASR）**存在但独立于知识库**，产物用完即弃 |
-| 组织方式 | 按项目/类型/时间可管理 | 仅扁平 `KnowledgeBase`，无分类、无分区、无知识库级标签 |
-| 容量 | — | **存储配额能力完全空白**，上传仅 15MB 单文件上限 |
-| 大文件 | 视频素材动辄数 GB | `UploadFile.size` 为 `Integer`（上限约 2.1GB），**必然溢出** |
+> **注**：下表是**设计立项时的现状基线快照**。其中「媒体类型 / 内容理解 / 组织方式 / 容量 / 大文件」五项落差已由 P1 + P2A + P2B 解决（见 §9.2），保留此表仅用于说明起点。
+
+| 维度 | 产品承诺 | 代码现状（立项时基线） | 现状（P2B 后） |
+| --- | --- | --- | --- |
+| 媒体类型 | 文档 + 图片 + 视频 + 音频 | 仅文档可解析入库；图片层允许上传但不解析；**音视频不在上传白名单** | ✅ 已解决（P2A：音视频白名单 + 类型硬约束 + 多模态解析） |
+| 内容理解 | 素材可被语义检索 | 多模态能力（抽帧/OCR/ASR）**存在但独立于知识库**，产物用完即弃 | ✅ 已解决（P2A：产物写 Segment 并向量化） |
+| 组织方式 | 按项目/类型/时间可管理 | 仅扁平 `KnowledgeBase`，无分类、无分区、无知识库级标签 | ✅ 已解决（P1：`base_type` + 两级分区 + 知识库标签） |
+| 容量 | — | **存储配额能力完全空白**，上传仅 15MB 单文件上限 | ✅ 已解决（P1 配额体系 + P2B 分片上传解除上限，上限按套餐分级） |
+| 大文件 | 视频素材动辄数 GB | `UploadFile.size` 为 `Integer`（上限约 2.1GB），**必然溢出** | ✅ 已解决（P1 `BigInteger` + P2B 分片流式合并） |
 
 ### 1.2 定位修正
 
@@ -389,11 +391,19 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 
 ### 7.4 Agent 工具需求
 
-| 工具 | 用途 |
-| --- | --- |
-| `create_knowledge_base`（新增） | 参数含 `name` / `base_type` / `partition_mode`，支持对话内建库 |
-| 检索工具扩展（改造 `search_knowledge_base`） | 新增 `knowledge_base_ids` / `partition_id` / `tags` / `media_type` 过滤参数 |
-| 视频轻量编辑工具（新增） | `video_trim` / `video_concat` / `video_subtitle` |
+| 工具 | 用途 | 状态 |
+| --- | --- | --- |
+| `create_knowledge_base` | 参数含 `name` / `base_type` / `partition_mode` / `description`，支持对话内建库 | ✅ **已落地**（builtin provider `knowledge_base_tools`，见下） |
+| 检索工具扩展（改造 `search_knowledge_base`） | 新增 `knowledge_base_ids` / `partition_id` / `tags` / `media_type` 过滤参数 | ⬜ 规划（P3） |
+| 视频轻量编辑工具（新增） | `video_trim` / `video_concat` / `video_subtitle` | ⬜ 规划（P4） |
+
+`create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
+
+- 位置：`api/internal/core/tools/builtin_tools/providers/knowledge_base_tools/`（provider 在 `providers.yaml` 登记，category 为 `tool`）。
+- 参数：`name`（必填）、`base_type`（可选，`document`/`image`/`video`/`audio`/`mixed`，默认 `mixed`）、`partition_mode`（可选，`none`/`date_month`/`date_day`/`custom`，默认 `none`）、`description`（可选）。`base_type` / `partition_mode` 在工具内先做枚举校验，非法值直接返回可读错误，不进入服务层。
+- 服务调用：`KnowledgeBaseService.create_user_content_base(..., operation_context="user")`，仅创建**当前登录用户的私有**用户资料库。
+- 账号来源：由运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` 通过工厂参数 `account_id` 透传（与 `os_file_task` / `computer_action` 的 `requester` 同一注入点），工具内部再经 `AccountService` 加载真实 `Account` 实例。
+- **未落地**：检索过滤参数扩展与视频轻量编辑工具仍为规划项（P3 / P4）。
 
 ---
 
@@ -402,15 +412,19 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | # | 缺陷 | 现状 | 修复方案 | P1 状态 |
 | --- | --- | --- | --- | --- |
 | 1 | **`UploadFile.size` 溢出** | `Integer`，上限约 2.1GB | 升级 `BigInteger`（必改，否则大视频写坏） | ✅ 已修复 |
-| 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ✅ 已完成（P2B：分片上传链路 + 秒传 + 断点续传；上限按 `PlanEntitlement.max_single_file_gb` 分级，默认 15MB；单次接口上限放宽为 64MB 防御常量） |
+| 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ✅ 已完成（P2B：分片上传链路 + 秒传 + 断点续传；上限按 `PlanEntitlement.max_single_file_gb` 分级；单次接口上限放宽为 64MB 防御常量。**注**：未配置该权益时回退 15MB，需管理员在套餐板块配置） |
 | 3 | **上传白名单无音视频** | [upload_file_entity.py](../../api/internal/entity/upload_file_entity.py) 仅图片 + 文档 | 增加 mp4/mov/avi/mkv/webm、mp3/wav/m4a/aac 等 | ✅ 已完成（P2A：实体层白名单 + `allowed_extensions_for_base_type()` + 存储层全类型并集 + `upload_document` 类型硬约束） |
 | 4 | **多模态产物不入库** | 抽帧 / ASR / OCR 产物丢弃 | 接入索引链路，产物写 Segment + 向量化 | ✅ 已完成（P2A：`KnowledgeMediaExtractorService` 产物直达 Segment + 向量化；L2 产物属 P3） |
 | 5 | **标签未接入知识库** | 无 `KnowledgeBaseTag` / `DocumentTag` | 新增关联表，复用 Tag 服务 | ✅ 模型已落地（表 + FK + 唯一约束），服务层接入属后续 |
-| 6 | **无板块分类与分区** | 仅扁平 `KnowledgeBase` | 新增 `base_type` / `partition_mode` / `KnowledgePartition` | ✅ 已修复（含两级树服务层校验）|
+| 6 | **无板块分类与分区** | 仅扁平 `KnowledgeBase` | 新增 `base_type` / `partition_mode` / `KnowledgePartition` | ✅ 已修复（含两级树服务层校验 + 用户端创建入口 + 分区增删查路由 + 对话内建库工具）|
 | 7 | **存储配额空白** | account / Plan 均无存储字段 | 按 §2.6 新增配额模型 | ✅ 已修复（`PlanEntitlement.storage_quota_gb` + `StorageQuotaService`）|
 | 8 | **用量无 account 维度** | `StorageConfigService.get_storage_stats()` 仅全局 | 新增按 account 聚合计量 | ✅ 已修复（`account_storage_usage` + `StorageQuotaService.get_usage_summary`）|
 | 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | 🟡 L1 已落地（P2A：多媒体走 L1 解析并写 `parse_profile.tier1`）；`tier2` 数据落点已就绪，L2 触发链路属 P3 |
 | 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ⬜ P4 |
+| 11 | **配额并发超卖** | `check_quota`（读）与 `add_usage`（写）分离，无锁，两个会话可同时通过校验 | 新增 `StorageQuotaService.consume_quota()`，在 `FOR UPDATE` 行锁内完成校验+累加 | ✅ 已修复（分片 `complete` / 秒传 `instant` 改为合并前原子预占，失败释放预占）|
+| 12 | **合并失败留孤儿文件** | `merge_chunks` 流式写目标对象，中途失败不清理半成品 | 在 `except` 中 `delete_object(target_key)` 回收 | ✅ 已修复（`LocalStorageService.merge_chunks`）|
+
+> **迁移链注意**（`api/internal/migration/versions/p1a2b3c4d5e6_*.py`）：该迁移的 `down_revision` 必须指向**已提交**的迁移（现为 `n8c9d0e1f2a3`）。历史上曾误指向未纳入版本控制的 `o9d0e1f2a3b4`，导致全新 clone / CI 上 `alembic upgrade head` 因 "Revision ... is not present" 崩溃。`api/test/internal/migration/test_migration_graph_integrity.py` 以 git 跟踪的文件重建迁移图，对此类断链与多 head 设有守卫。
 
 ---
 
@@ -430,7 +444,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 阶段 | 目标 | 核心交付 | 可独立验证 | 状态 |
 | --- | --- | --- | --- | --- |
 | **P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
-| **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（已完成）**：分片上传 + 秒传 + 断点续传，解除单文件 15MB 上限 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：传 1GB 视频不中断（✅ 已达成） | ✅ **已完成**（P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
+| **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（已完成）**：分片上传 + 秒传 + 断点续传；单文件上限改为按套餐权益分级 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：分片链路本身可传 GB 级（流式合并，不整文件入内存）——**⚠️ 前提是管理员已在套餐配置 `max_single_file_gb` 权益，否则仍按默认 15MB 拒绝** | ✅ **已完成**（P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
 | **P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引 + 融合排序；检索工具支持板块/分区/标签/媒体类型过滤；L2 按需解析触发 | 以图搜图命中画面相似素材 | ⬜ 未开始 |
 | **P4 视频轻量编辑** | 「改细节」可落地 | `video_trim` / `video_concat` / `video_subtitle` 工具 + Celery 转码队列 + 对话框预览 | 对话里裁剪片段并预览成片 | ⬜ 未开始 |
 | **P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |

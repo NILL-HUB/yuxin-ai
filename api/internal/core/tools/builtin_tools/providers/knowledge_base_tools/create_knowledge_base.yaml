@@ -1,0 +1,53 @@
+name: create_knowledge_base
+label: 创建知识库
+description: 在对话内为用户创建知识库板块，可指定板块类型（文档/图片/视频/音频/混合）与分区模式（不分区/按月/按日/自定义）。
+params:
+- name: name
+  label: 板块名称
+  type: string
+  required: true
+- name: base_type
+  label: 板块类型
+  type: select
+  default: mixed
+  required: false
+  options:
+  - value: document
+    label: 文档
+  - value: image
+    label: 图片
+  - value: video
+    label: 视频
+  - value: audio
+    label: 音频
+  - value: mixed
+    label: 混合
+- name: partition_mode
+  label: 分区模式
+  type: select
+  default: none
+  required: false
+  options:
+  - value: none
+    label: 不分区
+  - value: date_month
+    label: 按月分区
+  - value: date_day
+    label: 按日分区
+  - value: custom
+    label: 自定义分区
+- name: description
+  label: 板块描述
+  type: string
+  required: false
+task_keywords:
+- 建知识库
+- 新建知识库
+- 创建知识库
+- 建素材库
+- 新建素材库
+- 知识库板块
+- 视频素材库
+- 图片库
+- 资料库
+- knowledge base
