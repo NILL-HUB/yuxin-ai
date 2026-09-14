@@ -45,3 +45,26 @@ def test_empty_extension_is_allowed():
     service = _service()
     base = SimpleNamespace(base_type="video")
     service._assert_media_type_allowed(base, "")
+
+
+def test_upload_document_rejects_before_storing_file(monkeypatch):
+    """板块类型不匹配时应在落盘前拒绝，不产生孤儿文件/配额占用。"""
+    from uuid import uuid4
+
+    upload_calls = []
+    service = _service()
+    service.get_accessible_base = lambda _id, _account: SimpleNamespace(
+        id=uuid4(), base_type="video"
+    )
+    cos_service = SimpleNamespace(
+        upload_file=lambda **kwargs: upload_calls.append(kwargs)
+    )
+    service._get_cos_service = lambda: cos_service
+
+    incoming = SimpleNamespace(filename="report.pdf")
+    account = SimpleNamespace(id=uuid4())
+
+    with pytest.raises(ValidateErrorException):
+        service.upload_document(uuid4(), incoming, account)
+
+    assert upload_calls == [], "被拒绝的文件不应执行上传"

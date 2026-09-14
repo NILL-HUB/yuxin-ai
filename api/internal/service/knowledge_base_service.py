@@ -202,16 +202,21 @@ class KnowledgeBaseService(BaseService):
     ) -> KnowledgeDocument:
         """上传素材到知识库并触发索引构建。
 
-        会按扩展名识别 media_type，并按知识库板块类型做硬约束校验。
+        先按扩展名做板块类型硬约束校验（避免被拒绝的文件落盘占用配额），
+        再执行上传与索引构建。
         """
         knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+
+        # 先校验后上传：被拒绝的文件不应写入存储、不应占用用户配额
+        filename = getattr(file, "filename", "") or ""
+        incoming_extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        self._assert_media_type_allowed(knowledge_base, incoming_extension)
 
         cos_service = self._get_cos_service()
         upload_file = cos_service.upload_file(file=file, only_image=False, account=account)
 
-        extension = (upload_file.extension or "").lower()
+        extension = (upload_file.extension or incoming_extension or "").lower()
         media_type = media_type_for_extension(extension)
-        self._assert_media_type_allowed(knowledge_base, extension)
 
         document = self.create(
             KnowledgeDocument,
