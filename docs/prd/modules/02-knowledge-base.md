@@ -138,9 +138,9 @@
 - 文档：md、doc、docx、txt、pdf、csv、xlsx、xls、html 等。
 - 外部数据源：飞书、Notion、本地文件夹、GitHub 等（同步导入的资料）。
 - 其他结构化或半结构化业务资料。
-- 图片：jpg、jpeg、png、webp、gif、svg 等，第一阶段先后置深度解析。
-- 视频：产品演示、会议录像、课程视频等，第一阶段先后置深度解析。
-- 音频：会议录音、访谈、播客、语音备忘等，第一阶段先后置深度解析。
+- 图片：jpg、jpeg、png、webp、gif、svg 等，L1 视觉理解已落地，L2 深度解析后置。
+- 视频：产品演示、会议录像、课程视频等，L1 关键帧视觉描述已落地，L2 深度解析后置。
+- 音频：会议录音、访谈、播客、语音备忘等，L1 ASR 转写已落地，L2 深度解析后置。
 
 资料内容库需要支持：
 
@@ -149,7 +149,7 @@
 | 上传 | 用户主动上传文件 |
 | 外部数据源连接 | 用户授权连接飞书、Notion、本地文件夹、GitHub 等外部数据源 |
 | 同步 | 支持手动同步与 Celery 定时自动同步（每 6 小时扫描已授权数据源） |
-| 解析 | 第一阶段优先处理文本和结构化资料；图片、视频、音频深度解析后置 |
+| 解析 | 文本与结构化资料走 parsing→splitting→indexing；图片/音频/视频走 L1 多模态解析直达入库（见 §11.8），L2 深度解析后置 |
 | 分段 | 将长内容切分为可检索片段 |
 | 索引 | 建立向量、全文和关键词索引 |
 | 检索 | 按任务动态召回相关资料 |
@@ -236,19 +236,19 @@
 | 类型 | 当前情况 |
 | --- | --- |
 | 文档 | 已支持 md、doc、docx、txt、pdf、csv、xlsx、xls、html 等 |
-| 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；第一阶段不要求完整 OCR / 视觉理解入库，深度解析后置 |
-| 视频 | 第一阶段不要求视频解析、抽帧、字幕提取、ASR 入库，深度解析后置 |
-| 音频 | 第一阶段不要求音频 ASR、说话人切分、转写入库，深度解析后置 |
+| 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（P2A），细粒度 OCR 区块坐标等 L2 能力后置 |
+| 视频 | L1 关键帧抽取 + 视觉描述入库已落地（P2A）；ASR 音轨提取、场景切分、视觉向量索引等 L2 能力后置 |
+| 音频 | L1 ASR 全文转写入库已落地（P2A）；说话人切分、章节切分等 L2 能力后置 |
 
 明确缺口（P1 数据基座落地后已消解项标注 ✅）：
 
-1. 现有 `KnowledgeBase` 已演进为"用户资料内容库 + 板块"的载体，分层作用域、板块类型与分区体系均已落地（主入口侧的多模态解析与检索取料能力见 §11.7 与 P2/P3 分期）。
+1. 现有 `KnowledgeBase` 已演进为"用户资料内容库 + 板块"的载体，分层作用域、板块类型与分区体系均已落地（多模态 L1 解析入库见 §11.8，检索取料能力属 P3）。
 2. 现有 `TokenBufferMemory` 只是会话短期上下文裁剪，不是跨会话长期记忆。长期记忆由第 16 章记忆系统负责。
 3. ✅ 已消解：`KnowledgeBase.knowledge_scope` 已落地，可区分系统级知识库、用户资料内容库、团队/租户/项目知识库。
 4. ✅ 已消解：归属判断已引入 `owner_account_id` + `owner_admin_user_id`，可区分"管理员自己的个人知识库"和"管理员维护的系统级知识库"。
 5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
-7. 资料库的多媒体深度解析链路（OCR、ASR、视频抽帧、视觉摘要、音视频转写）**尚未接入索引链路**，属 P2/P3 范围（数据落点已由 §11.7.5 的 `media_type` / `parse_profile` 预留）。
+7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频关键帧视觉描述）已接入索引链路**（P2A 已落地，见 §11.8）；**L2 深度解析链路（视频 ASR 音轨提取、说话人切分、关键帧视觉向量索引）尚未实现**，属 P3 范围。
 8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
 9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
 10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（P3 范围）。
@@ -396,3 +396,105 @@ P1 全部 DDL 由单个迁移 `p1a2b3c4d5e6_add_knowledge_product_form_base.py`�
 - `knowledge_document` 增加 `partition_id` / `media_type` / `parse_profile`（+ 两个索引）
 - `upload_file.size` 由 integer 升级为 bigint
 - 新建 `knowledge_partition` / `knowledge_base_tag` / `knowledge_document_tag` / `account_storage_usage`
+
+### 11.8 多模态素材解析（P2A 已落地）
+
+P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链路：图片、音频、视频素材上传后自动解析为可被语义检索命中的文本片段，实现"上传视频 → 能被语义检索命中"。实施计划见 [2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)。
+
+#### 11.8.1 KnowledgeMediaExtractorService（三分支）
+
+`KnowledgeMediaExtractorService`（`internal/service/knowledge_media_extractor_service.py`）负责把非文档素材转为文本片段，`extract(document, upload_file)` 按 `document.media_type` 分派：
+
+| 分支 | media_type | 处理链路 | 产物 |
+| --- | --- | --- | --- |
+| 图片 | `image` | 从对象存储下载 → `path_to_data_uri`（按扩展名推断 MIME，编码前上限 8MB）→ 视觉模型（画面描述 + OCR） | 1 个片段；摘要为空返回 `[]` |
+| 音频 | `audio` | 下载 → 包装为 `FileStorage` → `AudioService.audio_to_text` ASR 全文转写 | 1 个片段；转写为空返回 `[]` |
+| 视频 | `video` | 下载 → `extract_video_frames`（默认 3 帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 逐帧视觉描述 | 每帧 1 个片段；单帧失败跳过，全部失败抛错 |
+
+文档类型（`document`）返回空列表，由既有文本链路（parsing → splitting → indexing）处理。
+
+#### 11.8.2 视觉能力共享模块
+
+视觉模型调用与视频抽帧从内置工具中抽取为共享包 `internal/core/vision/vision_invoke.py`，供「内置工具」与「知识库多模态解析」复用，避免两处重复维护：
+
+| 函数 | 职责 |
+| --- | --- |
+| `path_to_data_uri(path)` | 本地图片 → data URI（按扩展名推断 MIME，8MB 上限） |
+| `invoke_vision_model(data_uri, prompt)` | 经 `LanguageModelService.get_feature_model("vision_analyze")` 调用视觉模型 |
+| `extract_video_frames(video_path, frame_count=3)` | 抽关键帧，返回 data URI 列表；ffmpeg 不可用时降级 imageio-ffmpeg，均不可用抛错 |
+
+`providers/vision_tools/vision_analyze.py` / `video_analyze.py` 已改为复用该模块，对外行为不变。
+
+#### 11.8.3 MediaSegment 产物结构
+
+解析产物 `MediaSegment`（dataclass）直接映射 `KnowledgeSegment` 的 `content` 与 `metadata_`：
+
+```python
+@dataclass
+class MediaSegment:
+    content: str
+    metadata: dict[str, Any]
+```
+
+| media_type | content | metadata 字段 |
+| --- | --- | --- |
+| `image` | 视觉摘要（含 OCR） | `media_type`、`vision_summary` |
+| `audio` | ASR 转写全文 | `media_type` |
+| `video` | 单帧视觉描述（含 OCR） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_count`（总帧数） |
+
+#### 11.8.4 索引链路按 media_type 分支
+
+`KnowledgeIndexingService.build_document()` 在置 `parsing` 后按 `media_type` 走两条路径：
+
+```text
+build_document(document_id)
+  ├─ media_type == document（默认）
+  │    parsing → splitting → indexing → completed
+  │    （文本抽取 → 递归切分 → 向量化 → 收尾）
+  └─ media_type in {image, audio, video}
+       _build_media_document：解析产物即片段，跳过文本切分
+         → 清理该文档旧片段（含向量，保证重解析幂等）
+         → 逐条建 KnowledgeSegment（keywords/character_count/token_count，status=indexing, enabled=false）
+         → knowledge_vector_service.index_segment 向量化
+         → _finalize_segments：片段置 completed + enabled，文档置 completed
+           parse_profile={"tier1": {...}}
+```
+
+公共能力经抽取复用：`_get_upload_file`（取关联上传文件，缺失抛 `NotFoundException`）、`_finalize_segments`（统一收尾，`document` 路径不写 `parse_profile`）。多媒体路径解析无产出时抛错，由 `build_document` 统一置 `error`。
+
+#### 11.8.5 上传媒体类型识别与板块类型硬约束
+
+`KnowledgeBaseService.upload_document` 增加两步：
+
+| 步骤 | 行为 |
+| --- | --- |
+| 媒体类型识别 | `media_type_for_extension(upload_file.extension)` 反查，写入 `knowledge_document.media_type`（未知扩展名归入 `document`） |
+| 板块类型校验 | `_assert_media_type_allowed(knowledge_base, incoming_extension)`：按 `base_type` 取 `allowed_extensions_for_base_type(base_type)` 校验，不符抛 `ValidateErrorException`，错误信息含该板块允许的扩展名列表 |
+
+**校验先于落盘**：`_assert_media_type_allowed` 在 `cos_service.upload_file` **之前**调用，被拒绝的文件不写入存储、不占用用户配额。板块 `base_type` 为空时视为 `mixed`（兼容存量库），扩展名为空时不拦截。
+
+#### 11.8.6 存储层白名单的分层设计
+
+存储层只校验"是否允许的媒体类型"，板块级细粒度约束由知识库服务负责：
+
+| 层级 | 校验者 | 白名单来源 | 约束范围 |
+| --- | --- | --- | --- |
+| 存储层 | `LocalStorageService` / `CosService` / `AliyunOSSService` | `allowed_extensions_for_base_type("mixed")`（图片 + 文档 + 视频 + 音频全类型并集） | 是否为系统允许上传的媒体类型（放行 video/audio） |
+| 板块层 | `KnowledgeBaseService._assert_media_type_allowed` | `allowed_extensions_for_base_type(knowledge_base.base_type)` | 该板块允许的具体媒体类型 |
+
+存储层不感知知识库板块语义；`only_image=True` 的调用仍额外要求命中 `ALLOWED_IMAGE_EXTENSION`。分层说明详见 [06-file-storage.md §17.11](./06-file-storage.md#1711-安全要求)。
+
+#### 11.8.7 解析档位与 L2 未实现
+
+多媒体路径收尾写入 `parse_profile.tier1`（L1 基础解析状态）：
+
+```json
+{"tier1": {"status": "completed", "media_type": "video", "segment_count": 3}}
+```
+
+| 档位 | 状态 | 内容 |
+| --- | --- | --- |
+| L1 基础解析 | ✅ 已落地（P2A） | 图片视觉摘要 + OCR、音频 ASR 转写、视频关键帧视觉描述 → 片段 + 向量 |
+| L2 深度解析 | ❌ 未实现（属 P3） | 视频 ASR 音轨提取、说话人切分、关键帧视觉向量索引（CLIP 类视觉编码 + 独立索引 + 融合排序） |
+
+L2 按需解析触发、关键帧视觉向量索引与检索取料的过滤能力（板块/分区/标签/媒体类型）均属 P3 范围；`parse_profile.tier2` 字段已在 §11.7.5 预留但当前不写入。

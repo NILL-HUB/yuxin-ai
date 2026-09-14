@@ -280,8 +280,8 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 
 ### 17.11 安全要求
 
-1. **上传校验**：扩展名白名单（`ALLOWED_IMAGE_EXTENSION` / `ALLOWED_DOCUMENT_EXTENSION`，P1 已扩展 `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION`），单文件大小 ≤ 15MB（分片上传解除上限属后续 P2）
-2. **板块类型硬约束**：知识库板块 `base_type` 决定允许的媒体类型，服务端按 `allowed_extensions_for_base_type()` 校验
+1. **上传校验**：扩展名白名单（`ALLOWED_IMAGE_EXTENSION` / `ALLOWED_DOCUMENT_EXTENSION` / `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION`，P1 已扩展音视频），单文件大小 ≤ 15MB（分片上传解除上限属后续 P2）
+2. **扩展名白名单分层**：存储层（`LocalStorageService` / `CosService` / `AliyunOSSService`）统一用 `allowed_extensions_for_base_type("mixed")` 取**全类型并集**（图片 + 文档 + 视频 + 音频），仅校验"是否为系统允许上传的媒体类型"，**放行 video/audio**，不感知知识库板块语义；板块级细粒度约束由 `KnowledgeBaseService._assert_media_type_allowed` 按 `knowledge_base.base_type` 负责，且**校验前移到落盘之前**，被拒文件不占用配额。详见 [02-knowledge-base.md §11.8.6](./02-knowledge-base.md#1186-存储层白名单的分层设计)
 3. **配额校验**：所有上传路径经 `RuntimeStorageProxy` 走 `StorageQuotaService.check_quota`，超限拒绝
 4. **路径穿越防护**：本地存储路由拒绝包含 `..` 的 key
 5. **匿名访问**：COS/OSS 默认返回匿名可访问 URL，要求 Bucket 为公共读；私有桶需显式开启预签名

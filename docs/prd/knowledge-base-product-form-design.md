@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：P1 数据基座已落地（见 §9.2），P2–P5 为设计稿（待实施）｜**版本**：v1.1｜**日期**：2026-09-12
+> **状态**：P1 数据基座已落地、P2A 多模态素材入库已完成（见 §9.2），P2B 与 P3–P5 为设计稿（待实施）｜**版本**：v1.1｜**日期**：2026-09-12
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -202,9 +202,9 @@ used_bytes  = account_storage_usage.used_bytes   （由上传/删除事件维护
 
 | 能力 | 现有实现 | 现状 |
 | --- | --- | --- |
-| 视频抽帧 + 视觉理解 | [video_analyze.py](../../api/internal/core/tools/builtin_tools/providers/vision_tools/video_analyze.py)（ffmpeg 抽帧，SSRF 防护，50MB 上限） | 内置工具，未接入索引 |
-| 图片 OCR + 视觉理解 | [vision_analyze.py](../../api/internal/core/tools/builtin_tools/providers/vision_tools/vision_analyze.py) | 内置工具，未接入索引 |
-| 音频 ASR | [audio_service.py](../../api/internal/service/audio_service.py)（SiliconFlow，TeleSpeechASR / whisper-large-v3） | 服务已就绪，未接入索引 |
+| 视频抽帧 + 视觉理解 | [video_analyze.py](../../api/internal/core/tools/builtin_tools/providers/vision_tools/video_analyze.py)（ffmpeg 抽帧，SSRF 防护，50MB 上限） | 内置工具 + 共享视觉模块，视频素材已接入索引（P2A） |
+| 图片 OCR + 视觉理解 | [vision_analyze.py](../../api/internal/core/tools/builtin_tools/providers/vision_tools/vision_analyze.py) | 内置工具 + 共享视觉模块，图片素材已接入索引（P2A） |
+| 音频 ASR | [audio_service.py](../../api/internal/service/audio_service.py)（SiliconFlow，TeleSpeechASR / whisper-large-v3） | 服务已就绪，音频素材已接入索引（P2A） |
 | 文生视频 | [atlascloud_video](../../api/internal/core/tools/builtin_tools/providers/atlascloud_video)（seedance 2.0 / hailuo 2.3 / kling o3 / vidu q3 turbo） | 已具备（下游内容生成用） |
 
 **要做的是把产物从"用完即弃"改为"写入 Segment + 向量化"**。
@@ -222,6 +222,8 @@ used_bytes  = account_storage_usage.used_bytes   （由上传/删除事件维护
 | 场景切分 | JSON（序号 + 起止时间） | `KnowledgeSegment.metadata` | ❌ | ❌ |
 | 关键帧 | 图片文件（720p JPEG 压缩） | 对象存储 + `UploadFile` | 文本描述 ✅ / 视觉向量 ✅ | ✅ |
 | 缩略图 / 封面 | 小图 | 对象存储 | ❌ | ✅（体积极小） |
+
+> **P2A 落地实况**：已落地「ASR 转写 / 视觉描述 / OCR 文本 → `KnowledgeSegment.content`（入文本向量库）」，即上表中"入向量库"的**文本侧**已通。**关键帧自身文件未留存（抽帧在临时目录内即用即弃）、视觉向量未建索引**；场景切分的 `time_range`、关键帧的 `frame_urls` 亦未写入 `metadata`（当前 `metadata` 仅含 `media_type` / `vision_summary` / `scene_index` / `frame_count`）。这些均属 P3（关键帧留存 + 视觉向量索引）范围。
 
 **为什么产物即 Segment**：
 
@@ -242,9 +244,11 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | --- | --- | --- |
 | 文档 | 现有链路：parsing → splitting → indexing → completed | 无（已完备） |
 | 图片 | OCR + 视觉摘要 → 1 Segment | 细粒度 OCR 区块坐标、多图关联 |
-| 短音频（≤5min） | ASR 全文转写 → 分段 Segment | 说话人切分、情绪标注 |
-| 长音频（>5min） | ASR 全文转写 → 分段 Segment | 说话人切分、章节切分 |
-| 视频 | 关键帧抽取 + ASR 转写 + 场景粗切分 | 逐场景视觉详述、精细时间轴 |
+| 短音频（≤5min） | ASR 全文转写 → 1 Segment | 说话人切分、情绪标注 |
+| 长音频（>5min） | ASR 全文转写 → 1 Segment | 说话人切分、章节切分 |
+| 视频 | 关键帧抽取 + 视觉描述 → 每帧 1 Segment | 视频 ASR 转写、逐场景视觉详述、精细时间轴 |
+
+> **L1 落地实况（P2A）**：图片（视觉摘要 + OCR）、音频（ASR 全文转写）已按上表落地。视频 L1 **当前仅实现关键帧抽取 + 视觉描述**，设计稿中的"ASR 转写 + 场景粗切分"未随 P2A 落地，与 L2 的"逐场景视觉详述、精细时间轴"一并属于 P3 范围。上表描述的是目标档位划分，非当前实现清单。
 
 **要点**：
 
@@ -398,14 +402,14 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | # | 缺陷 | 现状 | 修复方案 | P1 状态 |
 | --- | --- | --- | --- | --- |
 | 1 | **`UploadFile.size` 溢出** | `Integer`，上限约 2.1GB | 升级 `BigInteger`（必改，否则大视频写坏） | ✅ 已修复 |
-| 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ⬜ P2 |
-| 3 | **上传白名单无音视频** | [upload_file_entity.py](../../api/internal/entity/upload_file_entity.py) 仅图片 + 文档 | 增加 mp4/mov/avi/mkv/webm、mp3/wav/m4a/aac 等 | 🟡 实体层白名单与 `allowed_extensions_for_base_type()` 已就绪；上传入口接入属 P2 |
-| 4 | **多模态产物不入库** | 抽帧 / ASR / OCR 产物丢弃 | 接入索引链路，产物写 Segment + 向量化 | ⬜ P2 |
+| 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ⬜ P2B（P2A 未含） |
+| 3 | **上传白名单无音视频** | [upload_file_entity.py](../../api/internal/entity/upload_file_entity.py) 仅图片 + 文档 | 增加 mp4/mov/avi/mkv/webm、mp3/wav/m4a/aac 等 | ✅ 已完成（P2A：实体层白名单 + `allowed_extensions_for_base_type()` + 存储层全类型并集 + `upload_document` 类型硬约束） |
+| 4 | **多模态产物不入库** | 抽帧 / ASR / OCR 产物丢弃 | 接入索引链路，产物写 Segment + 向量化 | ✅ 已完成（P2A：`KnowledgeMediaExtractorService` 产物直达 Segment + 向量化；L2 产物属 P3） |
 | 5 | **标签未接入知识库** | 无 `KnowledgeBaseTag` / `DocumentTag` | 新增关联表，复用 Tag 服务 | ✅ 模型已落地（表 + FK + 唯一约束），服务层接入属后续 |
 | 6 | **无板块分类与分区** | 仅扁平 `KnowledgeBase` | 新增 `base_type` / `partition_mode` / `KnowledgePartition` | ✅ 已修复（含两级树服务层校验）|
 | 7 | **存储配额空白** | account / Plan 均无存储字段 | 按 §2.6 新增配额模型 | ✅ 已修复（`PlanEntitlement.storage_quota_gb` + `StorageQuotaService`）|
 | 8 | **用量无 account 维度** | `StorageConfigService.get_storage_stats()` 仅全局 | 新增按 account 聚合计量 | ✅ 已修复（`account_storage_usage` + `StorageQuotaService.get_usage_summary`）|
-| 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | 🟡 数据落点（`parse_profile`）已就绪，解析链路属 P2 |
+| 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | 🟡 L1 已落地（P2A：多媒体走 L1 解析并写 `parse_profile.tier1`）；`tier2` 数据落点已就绪，L2 触发链路属 P3 |
 | 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ⬜ P4 |
 
 ---
@@ -426,18 +430,24 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 阶段 | 目标 | 核心交付 | 可独立验证 | 状态 |
 | --- | --- | --- | --- | --- |
 | **P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
-| **P2 上传与解析** | 大文件与多模态入库 | 分片上传 + 秒传 + 白名单扩音视频 + 类型硬约束；`FileExtractor` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化 | 传 1GB 视频 → 可被语义检索命中 | ⬜ 未开始 |
+| **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（待做）**：分片上传 + 秒传 + 断点续传，解除单文件 15MB 上限 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：传 1GB 视频不中断 | 🟡 **P2A 已完成**（实施计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)）；P2B 待做 |
 | **P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引 + 融合排序；检索工具支持板块/分区/标签/媒体类型过滤；L2 按需解析触发 | 以图搜图命中画面相似素材 | ⬜ 未开始 |
 | **P4 视频轻量编辑** | 「改细节」可落地 | `video_trim` / `video_concat` / `video_subtitle` 工具 + Celery 转码队列 + 对话框预览 | 对话里裁剪片段并预览成片 | ⬜ 未开始 |
 | **P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
 
-**最小可用闭环 = P1 + P2 完成**（素材能入库、能被检索）。
+**最小可用闭环 = P1 + P2 完成**（素材能入库、能被检索）。P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；P2B（大文件分片上传）补全后 P2 完整收口。
 
 > **P1 落地说明（与设计稿的差异）**：
 > - `KnowledgePartition.visibility_scope` 按设计已落地（默认继承板块可见性），仅作**字段预留**，分区级权限校验首版不做。
 > - `UploadFile.size` 已升级 `BigInteger`；`upload_file` 表另有 `storage_backend` 字段（运行时代理按此路由），非本设计新增但为配额与后端切换的既有基础。
-> - 上传白名单的 `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION` 已就绪，但**分片上传与解除单文件 15MB 上限仍属 P2**。
+> - 上传白名单的 `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION` 已就绪，但**分片上传与解除单文件 15MB 上限仍属 P2B**。
 > - 配额校验的落点由设计稿的 `StorageQuotaService.check(account_id, incoming_bytes)` 实现为 `check_quota`，并在 `RuntimeStorageProxy` 统一收口（覆盖用户上传 / Agent 产物 / 后续同步）。
+
+> **P2A 落地说明（与设计稿的差异）**：
+> - 多模态分支落在新增的 `KnowledgeMediaExtractorService`，而非设计稿所述的 `FileExtractor` 扩展（`FileExtractor` 保持文本抽取职责，多媒体走独立的 `_build_media_document` 直达路径）。
+> - 视觉模型调用与视频抽帧抽取为共享模块 `internal/core/vision/vision_invoke.py`，内置工具与知识库解析共用。
+> - 多媒体片段是"每次完整重新生成"的产物：重解析前清理该文档旧片段（含向量），保证幂等。
+> - L1 解析状态写入 `parse_profile.tier1`（`status` / `media_type` / `segment_count`）；**视频 L1 未含 ASR 音轨提取**，该能力与说话人切分、关键帧视觉向量索引同属 L2，留待 P3。
 
 ### 9.3 明确不做
 
