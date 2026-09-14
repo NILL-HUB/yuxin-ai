@@ -161,9 +161,16 @@ class OrchestrationReleaseCheckService:
         }
 
     def _check_sensitive_tools_governed(self) -> bool:
-        """检查敏感工具是否有治理策略。"""
+        """检查敏感工具是否有已启用的治理策略。
+
+        判定口径：`tool_governance_policy` 中 `risk_level ∈ {sensitive, dangerous}`
+        且 `enabled=True` 的策略数量 > 0。ToolGovernancePolicy 以 `enabled` 承载
+        "是否启用"语义（表中不存在 `status` 列）。
+
+        查询异常时记录 warning 并返回 False（保守失败），避免静默吞异常。
+        """
         try:
-            from internal.model import ToolGovernancePolicy
+            from internal.model.tool_governance_entity import ToolGovernancePolicy
             from pkg.sqlalchemy import SQLAlchemy
             from injector import Injector
 
@@ -171,10 +178,11 @@ class OrchestrationReleaseCheckService:
             db = injector.get(SQLAlchemy)
             count = db.session.query(ToolGovernancePolicy).filter(
                 ToolGovernancePolicy.risk_level.in_(["sensitive", "dangerous"]),
-                ToolGovernancePolicy.status == "active",
+                ToolGovernancePolicy.enabled.is_(True),
             ).count()
             return count > 0
         except Exception:
+            logger.warning("检查敏感工具治理策略失败", exc_info=True)
             return False
 
     def _check_circuit_breaker(self) -> bool:

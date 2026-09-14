@@ -7,4 +7,5 @@ export default  {
       switchMode: '切换模式',
       viewLogs: '查看治理决策日志',
       currentMode: '当前治理模式',
+      currentModeSuffix: '：',
     }

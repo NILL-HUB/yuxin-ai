@@ -39,6 +39,8 @@ export default  {
       },
       search: '查询',
       batchRisk: '批量改风险',
+      deleteConfirmTitle: '删除治理策略',
+      deleteConfirmContent: '确认删除「{name}」的治理策略？该操作不可恢复。',
       empty: {
         policies: '暂无治理策略',
         audits: '暂无审计日志',

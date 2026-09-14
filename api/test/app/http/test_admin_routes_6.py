@@ -845,7 +845,14 @@ class _FakeAdminToolGovernanceService:
             "enabled": 8,
             "disabled": 2,
             "enabled_rate": 0.8,
-            "risk_distribution": {"low": 5, "medium": 3, "high": 2, "critical": 0},
+            "risk_distribution": {
+                "safe": 0,
+                "low": 5,
+                "medium": 3,
+                "high": 2,
+                "sensitive": 0,
+                "dangerous": 0,
+            },
             "source_distribution": {
                 "api_tool": 1,
                 "mcp": 2,
@@ -932,7 +939,7 @@ class TestAdminToolGovernanceRoutes:
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.patch(
                     f"/admin/tool-governance/{policy_id}",
-                    json={"risk_level": "critical"},
+                    json={"risk_level": "dangerous"},
                 )
                 return resp, await resp.json
 
@@ -942,7 +949,7 @@ class TestAdminToolGovernanceRoutes:
         call = governance_service.calls[0]
         assert call[0] == "update_policy"
         assert call[1] == policy_id
-        assert call[2]["risk_level"] == "critical"
+        assert call[2]["risk_level"] == "dangerous"
 
     def test_delete_policy(self, monkeypatch):
         governance_service = self._setup(monkeypatch)

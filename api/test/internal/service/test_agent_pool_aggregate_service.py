@@ -1,10 +1,28 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from internal.entity.agent_pool_entity import AgentSubPoolRegistry
 from internal.service.agent_pool_aggregate_service import (
     AgentInventory,
     AgentPoolService,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_builtin_sub_pools(monkeypatch):
+    """隔离子池注册表与数据库，保证断言内置池语义的用例具备确定性。
+
+    AgentSubPoolRegistry 默认 DB 优先（后台可增删改子池），若不断言隔离，
+    「无 Agent 时回退池元数据」这类用例的池数量会随运行环境的
+    sub_pool_definition 表内容变化（非 hermetic）。
+    """
+    from internal.entity import agent_pool_entity as agent_pool_module
+
+    monkeypatch.setattr(agent_pool_module, "_load_pools_from_db", lambda: None)
+    agent_pool_module.refresh_cache()
+    yield
+    agent_pool_module.refresh_cache()
 
 
 def _registry_with_agents():

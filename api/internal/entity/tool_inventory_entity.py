@@ -21,6 +21,18 @@ class RiskLevel(str, Enum):
     DANGEROUS = "dangerous"
 
 
+# 风险等级取值的唯一事实源（按从低到高排序）。
+# 管理端（admin service / schema / 前端下拉 / 统计分桶）与运行时治理必须共用本常量，
+# 禁止各自维护枚举副本——历史上管理端曾使用 low/medium/high/critical，与运行时的
+# safe/low/medium/high/sensitive/dangerous 不一致，导致高风险工具在阶段2静默放行。
+RISK_LEVEL_VALUES: tuple[str, ...] = tuple(item.value for item in RiskLevel)
+
+# 阶段2（block_sensitive_only）需要阻断的风险等级（运行时强语义档位）
+SENSITIVE_RISK_LEVEL_VALUES: frozenset[str] = frozenset(
+    {RiskLevel.SENSITIVE.value, RiskLevel.DANGEROUS.value}
+)
+
+
 DEFAULT_TOOL_METADATA = {
     "tool_pool": "general",
     "tool_tags": [],

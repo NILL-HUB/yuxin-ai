@@ -175,6 +175,7 @@ export default  {
         keyword_matching_manual_switch: 'Keyword matching + manual switch',
         observe_only: 'Observe only, no blocking',
         no_commission: 'No commission settlement',
+        orchestrator: 'Rule-based orchestrator',
         disabled: 'Disabled',
         block: 'Block',
       },

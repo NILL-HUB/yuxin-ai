@@ -4,8 +4,9 @@ from wtforms import IntegerField, StringField
 from wtforms.validators import AnyOf, InputRequired, Length, NumberRange, Optional
 
 from internal.schema import ListField
+from internal.entity.tool_inventory_entity import RISK_LEVEL_VALUES
 
-RISK_LEVELS = ["low", "medium", "high", "critical"]
+RISK_LEVELS = list(RISK_LEVEL_VALUES)
 SOURCE_TYPES = ["api_tool", "mcp", "skill", "builtin", "knowledge", "workflow", "agent_binding"]
 VISIBILITIES = ["private", "tenant", "public"]
 INVOCATION_STATUSES = ["success", "failed", "blocked", "timeout"]

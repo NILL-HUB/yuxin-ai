@@ -39,8 +39,11 @@ export default  {
     },
     riskLevel: {
       safe: '安全',
+      low: '低风险',
       medium: '中风险',
       high: '高风险',
+      sensitive: '敏感',
+      dangerous: '危险',
       unknown: '未知',
     },
     modelTier: {

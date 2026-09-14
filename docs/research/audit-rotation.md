@@ -41,4 +41,15 @@
   - #5 [P2] 池治理页面 read 角色可见写操作、删除无二次确认、`Promise.all` 权限耦合致整页失败。
   - #6 [P3] 池治理/观测页面 i18n 缺口（硬编码文案、`source_type` 语义映射用错表、`riskLevel` 缺 `low/critical`、`fallback` 缺 `orchestrator`）。
 - **备注**：`ToolInvokerService`（`tool_invoker_service.py`，含 `dangerous` 强拦截与注入检测）**未接线到任何生产调用点**（仅测试引用），属设计已就绪但运行期未启用的组件，本次未计为隐患，仅记录待确认。
+- **修复情况（2026-09-14 完成）**：6 项隐患**已全部修复并交付**（用户确认按生产级标准修复）：
+  - #1 建立风险枚举唯一事实源 `RISK_LEVEL_VALUES`（`tool_inventory_entity.py`）；admin service / schema / runtime gate / 前端下拉与配色统一为 6 值；新增迁移 `q2b3c4d5e6f7`（`critical → dangerous`，非法脏值归一 `medium`）；并补齐 `ToolPolicyFilter` 对 `dangerous` 的一律拒绝。
+  - #2 改用 `enabled.is_(True)`、修正 import 为具体模块路径、`except` 补 `logger.warning(..., exc_info=True)`；`model/__init__.py` 补导出。
+  - #3 修正根因：`CrossPoolAgentSubsetBuilder.build()` 此前**完全绕过 `AgentPolicyFilter`**，已新增 `collect_raw()` 并接通治理链路；`AgentRiskLevel` 非法值由 fail-open(`safe`) 改为 fail-closed(`high`)；补 `allow_confirmation` 与工具侧对称；`_serialize_candidate` 字段集对齐避免丢字段。
+  - #4 统计卡改用 `/admin/agent-pool/stats` 全量聚合。
+  - #5 新增 `canManage` 权限禁用写操作、删除加二次确认、拆分 `Promise.all` 权限耦合。
+  - #6 硬编码文案改字典键、`source_type` 改用 `tool_source_type` 映射、`riskLevel` 补 `low/sensitive/dangerous`、`fallback` 补 `orchestrator`（zh/en 双侧）。
+  - 回归测试：新增 `api/test/internal/service/test_pool_governance_fixes.py`（14 用例）+ release-check 断言用例；模块内 170 项测试全绿；前端 572 项全绿、`vue-tsc` 通过。
+  - 附带修复：清理 3 个**非 hermetic 测试**（`test_agent_pool_service.py` / `test_agent_pool_aggregate_service.py` 的子池注册表 DB 依赖、`test_home_integration.py` 的 HomeService 构造契约漂移），共 7 个用例由失败转为通过。
+  - 文档同步：`docs/prd/modules/01-agent-tool-pool.md` 风险枚举与策略章节已对齐实际 6 值。
+- **未修复的其它模块在途问题（非本模块，已确认与本轮改动无关）**：`test_admin_routes_5.py`/`test_asgi_app.py` 的 schedule-task 用例（`run_at` 列缺失）、`test_knowledge_partition_routes.py` 的 `sort_order` 用例——均属其它在途改动，未纳入本次修复范围。
 - **下一晚扫描**：`02-knowledge-base`（知识库双层设计）。

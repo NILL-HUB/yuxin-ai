@@ -5,12 +5,13 @@ from uuid import UUID
 from sqlalchemy import func
 
 from internal.exception import NotFoundException
+from internal.entity.tool_inventory_entity import RISK_LEVEL_VALUES
 from internal.extension.database_extension import db
 from internal.lib.helper import escape_like_pattern
 from internal.model.tool_governance_entity import ToolGovernancePolicy, ToolInvocationAudit
 
 
-RISK_LEVELS = ["low", "medium", "high", "critical"]
+RISK_LEVELS = list(RISK_LEVEL_VALUES)
 SOURCE_TYPES = ["api_tool", "mcp", "skill", "builtin", "knowledge", "workflow", "agent_binding"]
 VISIBILITIES = ["private", "tenant", "public"]
 INVOCATION_STATUSES = ["success", "failed", "blocked", "timeout"]

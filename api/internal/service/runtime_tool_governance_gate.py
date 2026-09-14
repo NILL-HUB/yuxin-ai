@@ -13,21 +13,21 @@ from uuid import UUID
 from injector import inject
 from pkg.sqlalchemy import SQLAlchemy
 
-from internal.entity.tool_inventory_entity import RiskLevel, normalize_tool_metadata
+from internal.entity.tool_inventory_entity import (
+    RISK_LEVEL_VALUES,
+    SENSITIVE_RISK_LEVEL_VALUES,
+    RiskLevel,
+    normalize_tool_metadata,
+)
 from internal.model import App
 from internal.model.tool_governance_entity import ToolGovernancePolicy
 from .composite_tool_resolver import CompositeToolResolver
 from .tool_inventory_service import ToolPolicyFilter, parse_tool_id
 
 
-# 风险等级排序，用于组合工具取成员 max
+# 风险等级排序，用于组合工具取成员 max（按从低到高，取自唯一事实源 RISK_LEVEL_VALUES）
 _RISK_ORDER: dict[str, int] = {
-    RiskLevel.SAFE.value: 0,
-    RiskLevel.LOW.value: 1,
-    RiskLevel.MEDIUM.value: 2,
-    RiskLevel.HIGH.value: 3,
-    RiskLevel.SENSITIVE.value: 4,
-    RiskLevel.DANGEROUS.value: 5,
+    level: index for index, level in enumerate(RISK_LEVEL_VALUES)
 }
 
 # 组合工具 source_type：需要调 CompositeToolResolver 解析成员
@@ -40,8 +40,8 @@ _NAME_PREFIX_TO_SOURCE_TYPE: dict[str, str] = {
     "agent_app_": "agent_binding",
 }
 
-# 阶段2（block_sensitive_only）仅阻断的风险等级集合
-_SENSITIVE_BLOCK_RISK_LEVELS = {RiskLevel.SENSITIVE.value, RiskLevel.DANGEROUS.value}
+# 阶段2（block_sensitive_only）仅阻断的风险等级集合（取自唯一事实源）
+_SENSITIVE_BLOCK_RISK_LEVELS = SENSITIVE_RISK_LEVEL_VALUES
 
 
 @inject
@@ -173,15 +173,21 @@ class RuntimeToolGovernanceGate:
                     continue
                 if not composite_blocking["should_block"]:
                     continue
+                composite_blocked_ids.add(tid)
                 # ToolPolicyFilter 已放行但部分阻断策略要求阻断 → 移出 accepted
-                if tid in accepted_ids:
-                    accepted_ids.discard(tid)
-                    composite_blocked_ids.add(tid)
-                    filtered_out_items.append({
-                        "id": tid,
-                        "name": self._extract_runtime_name(tool),
-                        "reason": composite_blocking["block_reason"],
-                    })
+                accepted_ids.discard(tid)
+                # 统一为更具信息量的成员级原因（如 member_dangerous）。
+                # ToolPolicyFilter 可能已为同一组合工具追加了通用原因（如
+                # dangerous_tool_not_allowed），此处先移除再补，保证审计中同一工具
+                # 仅有一条决策记录且原因为成员链路原因。
+                filtered_out_items = [
+                    item for item in filtered_out_items if item.get("id") != tid
+                ]
+                filtered_out_items.append({
+                    "id": tid,
+                    "name": self._extract_runtime_name(tool),
+                    "reason": composite_blocking["block_reason"],
+                })
 
         # 根据过滤结果筛选 BaseTool 列表
         if observe_only:

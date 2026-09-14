@@ -144,6 +144,7 @@ export default  {
         keyword_matching_manual_switch: '关键词匹配+手动开关',
         observe_only: '仅观测不阻断',
         no_commission: '不结算佣金',
+        orchestrator: '规则编排器',
         disabled: '已禁用',
         block: '阻断',
       },

@@ -765,9 +765,9 @@ onMounted(() => {
               class="pointer-events-none absolute z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 shadow-sm"
               :style="{ left: `${hoveredTrend.leftPercent}%`, top: '0' }"
             >
-              {{ hoveredTrend.dateLabel }} · 请求 {{ hoveredTrend.requestCount }}
+              {{ hoveredTrend.dateLabel }} · {{ t('admin.routingLogs.trendTooltipRequests', { count: hoveredTrend.requestCount }) }}
               <span v-if="hoveredTrend.fallbackCount > 0" class="text-amber-600">
-                · 降级 {{ hoveredTrend.fallbackCount }}
+                · {{ t('admin.routingLogs.trendTooltipFallback', { count: hoveredTrend.fallbackCount }) }}
               </span>
             </div>
             <svg

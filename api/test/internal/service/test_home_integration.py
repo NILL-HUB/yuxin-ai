@@ -34,8 +34,16 @@ class TestHomeIntentIntegration:
 
     @pytest.fixture
     def home_service(self, mock_db, intent_service):
-        """创建首页服务"""
-        return HomeService(db=mock_db, intent_recognition_service=intent_service)
+        """创建首页服务
+
+        HomeService 现要求注入 language_model_service（首页推荐链路用），
+        本文件仅覆盖 get_user_intent 流程，故以 Mock 满足构造契约。
+        """
+        return HomeService(
+            db=mock_db,
+            intent_recognition_service=intent_service,
+            language_model_service=Mock(),
+        )
 
     def test_complete_flow_with_cache_miss(
         self,

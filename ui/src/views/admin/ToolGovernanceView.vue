@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import {
   batchUpdateRisk,
@@ -15,6 +15,7 @@ import {
 import { getErrorMessage } from '@/utils/error'
 import { semanticLabel } from '@/utils/semantic-labels'
 import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
+import { useAdminStore } from '@/stores/admin'
 
 type ToolPolicy = {
   id: string
@@ -56,12 +57,16 @@ type GovernanceStats = {
   visibility_distribution: Record<string, number>
 }
 
-const RISK_LEVELS = ['low', 'medium', 'high', 'critical']
+const RISK_LEVELS = ['safe', 'low', 'medium', 'high', 'sensitive', 'dangerous']
 const SOURCE_TYPES = ['api_tool', 'mcp', 'skill', 'builtin', 'knowledge', 'workflow', 'agent_binding']
 const VISIBILITIES = ['private', 'tenant', 'public']
 const INVOCATION_STATUSES = ['success', 'failed', 'blocked', 'timeout']
 
 const { t } = useI18n()
+const adminStore = useAdminStore()
+
+// 写操作需 tool_governance:manage；仅具 tool_governance:read 的角色（如 viewer）只读浏览
+const canManage = computed(() => adminStore.hasPermission('tool_governance:manage'))
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -120,7 +125,14 @@ const form = ref({
 })
 
 const riskColor = (risk: string) =>
-  ({ low: 'green', medium: 'blue', high: 'orange', critical: 'red' } as Record<string, string>)[risk] || 'gray'
+  ({
+    safe: 'green',
+    low: 'green',
+    medium: 'blue',
+    high: 'orange',
+    sensitive: 'orangered',
+    dangerous: 'red',
+  } as Record<string, string>)[risk] || 'gray'
 
 const statusColor = (status: string) =>
   ({ success: 'green', failed: 'red', blocked: 'orange', timeout: 'gray' } as Record<string, string>)[status] || 'gray'
@@ -254,6 +266,20 @@ const toggleStatus = async (policy: ToolPolicy, enabled: boolean) => {
 }
 
 const remove = async (policy: ToolPolicy) => {
+  // 删除不可逆（后端直接物理删除），必须二次确认
+  const confirmed = await new Promise<boolean>((resolve) => {
+    Modal.warning({
+      title: t('admin.toolGovernance.deleteConfirmTitle'),
+      content: t('admin.toolGovernance.deleteConfirmContent', { name: policy.tool_name || policy.tool_id }),
+      hideCancel: false,
+      okText: t('common.actions.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+      onClose: () => resolve(false),
+    })
+  })
+  if (!confirmed) return
   actionLoading.value = true
   try {
     await deleteToolPolicy(policy.id)
@@ -373,9 +399,9 @@ onMounted(loadAll)
             <a-option v-for="v in VISIBILITIES" :key="v" :value="v">{{ v }}</a-option>
           </a-select>
           <a-button :loading="loading" @click="handlePolicySearch">{{ $t('admin.toolGovernance.search') }}</a-button>
-          <a-button :disabled="!selectedIds.length" @click="openBatchRisk">{{ $t('admin.toolGovernance.batchRisk') }}</a-button>
+          <a-button :disabled="!canManage || !selectedIds.length" @click="openBatchRisk">{{ $t('admin.toolGovernance.batchRisk') }}</a-button>
           <div class="ml-auto">
-            <a-button type="primary" @click="openCreate">{{ $t('admin.toolGovernance.createPolicy') }}</a-button>
+            <a-button type="primary" :disabled="!canManage" @click="openCreate">{{ $t('admin.toolGovernance.createPolicy') }}</a-button>
           </div>
         </div>
         <a-spin :loading="loading" class="block">
@@ -400,12 +426,12 @@ onMounted(loadAll)
                   <template #cell="{ record }">
                     <a-tooltip
                       :content="record.source_type"
-                      :disabled="semanticLabel('source_type', record.source_type, record.source_type) === record.source_type"
+                      :disabled="semanticLabel('tool_source_type', record.source_type, record.source_type) === record.source_type"
                       position="top"
                       mini
                     >
                       <span class="cursor-help">
-                        {{ semanticLabel('source_type', record.source_type, record.source_type) }}
+                        {{ semanticLabel('tool_source_type', record.source_type, record.source_type) }}
                       </span>
                     </a-tooltip>
                   </template>
@@ -429,6 +455,7 @@ onMounted(loadAll)
                     <a-switch
                       :model-value="record.enabled"
                       :loading="actionLoading"
+                      :disabled="!canManage"
                       @change="(v: string | number | boolean) => toggleStatus(record, Boolean(v))"
                     />
                   </template>
@@ -436,8 +463,8 @@ onMounted(loadAll)
                 <a-table-column :title="$t('admin.toolGovernance.field.actions')" :width="160">
                   <template #cell="{ record }">
                     <a-space>
-                      <a-button size="mini" @click="openEdit(record)">{{ $t('admin.toolGovernance.actions.edit') }}</a-button>
-                      <a-button size="mini" status="danger" @click="remove(record)">{{ $t('admin.toolGovernance.actions.delete') }}</a-button>
+                      <a-button size="mini" :disabled="!canManage" @click="openEdit(record)">{{ $t('admin.toolGovernance.actions.edit') }}</a-button>
+                      <a-button size="mini" status="danger" :disabled="!canManage" @click="remove(record)">{{ $t('admin.toolGovernance.actions.delete') }}</a-button>
                     </a-space>
                   </template>
                 </a-table-column>

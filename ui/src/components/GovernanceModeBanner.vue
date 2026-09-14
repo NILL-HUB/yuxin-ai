@@ -85,7 +85,7 @@ onMounted(loadFlags)
 <template>
   <a-alert :type="alertType" :loading="loading" class="governance-mode-banner" show-icon>
     <template #title>
-      <span class="font-medium">{{ t('admin.governanceMode.currentMode') }}：</span>
+      <span class="font-medium">{{ t('admin.governanceMode.currentMode') }}{{ t('admin.governanceMode.currentModeSuffix') }}</span>
       <span class="font-semibold">{{ modeLabel }}</span>
     </template>
     <div class="mt-1 flex flex-wrap items-center gap-4 text-sm">

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Message } from '@arco-design/web-vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import {
   checkAgentHealth,
   createAgentPoolConfig,
@@ -14,8 +14,13 @@ import {
 import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
 import { getErrorMessage } from '@/utils/error'
 import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
+import { useAdminStore } from '@/stores/admin'
 
 const { t } = useI18n()
+const adminStore = useAdminStore()
+
+// 写操作需 agent_pool:manage；仅具 agent_pool:read 的角色（如 viewer）只读浏览
+const canManage = computed(() => adminStore.hasPermission('agent_pool:manage'))
 
 // ==================== 类型定义 ====================
 
@@ -129,32 +134,58 @@ const form = ref({
 })
 
 // ==================== 统计卡片计算属性 ====================
+// 取自后端全量聚合接口 /admin/agent-pool/stats（AdminAgentPoolService.list_pool_stats），
+// 不能用当前页列表长度代替，否则翻页/改页长时统计数字会随页面变化而失真。
 
-const totalConfigs = computed(() => configs.value.length)
-const enabledConfigs = computed(() => configs.value.filter((c) => c.enabled).length)
-const healthyConfigs = computed(() => configs.value.filter((c) => c.health_status === 'healthy').length)
+const statsSummary = computed<PoolStatsItem>(() => stats.value[0] || { total: 0, enabled: 0, healthy: 0 })
+const totalConfigs = computed(() => statsSummary.value.total)
+const enabledConfigs = computed(() => statsSummary.value.enabled)
+const healthyConfigs = computed(() => statsSummary.value.healthy)
 
 // ==================== Agent 池配置方法 ====================
 
 const loadPoolConfigs = async () => {
   loading.value = true
   try {
-    const [configResult, statsResult, appResult] = await Promise.all([
-      listAgentPoolConfigs({ current_page: filters.value.current_page, page_size: filters.value.page_size }),
-      getAgentPoolStats(),
-      listAdminApps({ current_page: 1, page_size: 100 }),
-    ])
+    // 主数据（配置列表）必须成功，否则页面无内容
+    const configResult = await listAgentPoolConfigs({
+      current_page: filters.value.current_page,
+      page_size: filters.value.page_size,
+    })
     // request 返回完整 {code, message, data} 对象，data 中包含 list 和 paginator
     const configData = (configResult as { data?: { list?: AgentPoolConfig[]; paginator?: { total_record?: number } } }).data
-    const statsData = (statsResult as { data?: { list?: PoolStatsItem[] } }).data
     configs.value = configData?.list || []
     total.value = configData?.paginator?.total_record || 0
-    stats.value = statsData?.list || []
-    apps.value = appResult.list || []
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.agentPool.loadFailed')))
+    configs.value = []
+    total.value = 0
   } finally {
     loading.value = false
+  }
+  // 辅助数据（统计/App 名称映射）由各自权限决定，失败不影响主列表可用性
+  await Promise.allSettled([loadStats(), loadApps()])
+}
+
+// 统计卡数据：独立请求，失败时保留旧值并提示（不阻断列表）
+const loadStats = async () => {
+  try {
+    const statsResult = await getAgentPoolStats()
+    const statsData = (statsResult as { data?: { list?: PoolStatsItem[] } }).data
+    stats.value = statsData?.list || []
+  } catch {
+    // 静默降级：统计不可用不应影响配置列表浏览
+    stats.value = []
+  }
+}
+
+// App 名称映射：需要 app:read 权限；无权限时降级为展示截断 UUID
+const loadApps = async () => {
+  try {
+    const appResult = await listAdminApps({ current_page: 1, page_size: 100 })
+    apps.value = appResult.list || []
+  } catch {
+    apps.value = []
   }
 }
 
@@ -251,6 +282,20 @@ const runHealthCheck = async (config: AgentPoolConfig) => {
 }
 
 const remove = async (config: AgentPoolConfig) => {
+  // 删除不可逆（后端直接物理删除），必须二次确认
+  const confirmed = await new Promise<boolean>((resolve) => {
+    Modal.warning({
+      title: t('admin.agentPool.deleteConfirmTitle'),
+      content: t('admin.agentPool.deleteConfirmContent', { app: getAppLabel(config.app_id) }),
+      hideCancel: false,
+      okText: t('common.actions.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: () => resolve(true),
+      onCancel: () => resolve(false),
+      onClose: () => resolve(false),
+    })
+  })
+  if (!confirmed) return
   actionLoading.value = true
   try {
     await deleteAgentPoolConfig(config.id)
@@ -294,7 +339,7 @@ onMounted(loadPoolConfigs)
 
     <!-- Agent 池配置列表 -->
     <div class="mb-3 flex justify-end">
-      <a-button type="primary" @click="openCreate">{{ t('admin.agentPool.createConfig') }}</a-button>
+      <a-button type="primary" :disabled="!canManage" @click="openCreate">{{ t('admin.agentPool.createConfig') }}</a-button>
     </div>
 
     <a-spin :loading="loading" class="block">
@@ -345,6 +390,7 @@ onMounted(loadPoolConfigs)
                 <a-switch
                   :model-value="config.enabled"
                   :loading="actionLoading"
+                  :disabled="!canManage"
                   @change="(v: string | number | boolean) => toggleStatus(config, Boolean(v))"
                 />
               </td>
@@ -353,9 +399,9 @@ onMounted(loadPoolConfigs)
               </td>
               <td class="p-3">
                 <a-space>
-                  <a-button size="mini" @click="runHealthCheck(config)">{{ t('admin.agentPool.healthCheck') }}</a-button>
-                  <a-button size="mini" @click="openEdit(config)">{{ t('admin.agentPool.edit') }}</a-button>
-                  <a-button size="mini" status="danger" @click="remove(config)">{{ t('admin.agentPool.remove') }}</a-button>
+                  <a-button size="mini" :disabled="!canManage" @click="runHealthCheck(config)">{{ t('admin.agentPool.healthCheck') }}</a-button>
+                  <a-button size="mini" :disabled="!canManage" @click="openEdit(config)">{{ t('admin.agentPool.edit') }}</a-button>
+                  <a-button size="mini" status="danger" :disabled="!canManage" @click="remove(config)">{{ t('admin.agentPool.remove') }}</a-button>
                 </a-space>
               </td>
             </tr>

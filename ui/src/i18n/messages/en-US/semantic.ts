@@ -39,8 +39,11 @@ export default  {
     },
     riskLevel: {
       safe: 'Safe',
+      low: 'Low risk',
       medium: 'Medium risk',
       high: 'High risk',
+      sensitive: 'Sensitive',
+      dangerous: 'Dangerous',
       unknown: 'Unknown',
     },
     modelTier: {

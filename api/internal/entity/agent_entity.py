@@ -21,6 +21,18 @@ class AgentRiskLevel(str, Enum):
     HIGH = "high"
 
 
+# Agent 风险等级的合法取值（唯一事实源）。
+# 注意：Agent 与 Tool 的风险枚举不同——Agent 为 safe/medium/high（见 AGENTS.md 与
+# docs/prd/modules/01-agent-tool-pool.md §9.1），Tool 为 safe/low/medium/high/sensitive/dangerous。
+# 不可混用。
+AGENT_RISK_LEVEL_VALUES: tuple[str, ...] = tuple(item.value for item in AgentRiskLevel)
+
+# 非法/未知 risk_level 的兜底取值：fail-closed 到最高风险档。
+# 历史实现将未知值降级为默认值 `safe`（最低风险），导致 `sensitive`/`dangerous`
+# 等误配值反而比 `high` 更容易通过 AgentPolicyFilter 的风险过滤——属于越权隐患。
+AGENT_RISK_LEVEL_FALLBACK = AgentRiskLevel.HIGH.value
+
+
 DEFAULT_AGENT_METADATA = {
     "primary_pool": "general",
     "secondary_pools": [],
@@ -61,7 +73,7 @@ def normalize_agent_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
     normalized["risk_level"] = _normalize_choice(
         normalized.get("risk_level"),
         {item.value for item in AgentRiskLevel},
-        AgentRiskLevel.SAFE.value,
+        AGENT_RISK_LEVEL_FALLBACK,
     )
     normalized["model_tier"] = _normalize_choice(
         normalized.get("model_tier"),

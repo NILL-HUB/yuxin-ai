@@ -40,6 +40,8 @@ export default  {
       },
       search: 'Search',
       batchRisk: 'Batch Risk Update',
+      deleteConfirmTitle: 'Delete Governance Policy',
+      deleteConfirmContent: 'Delete the governance policy for "{name}"? This action cannot be undone.',
       empty: {
         policies: 'No governance policies',
         audits: 'No audit logs',

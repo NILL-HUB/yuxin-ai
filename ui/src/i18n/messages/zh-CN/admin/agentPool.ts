@@ -10,6 +10,8 @@ export default  {
       healthCheckFailed: '健康检查失败',
       deleted: '配置已删除',
       deleteFailed: '删除配置失败',
+      deleteConfirmTitle: '删除 Agent 池配置',
+      deleteConfirmContent: '确认删除「{app}」的 Agent 池配置？该操作不可恢复。',
       title: 'Agent 池配置',
       description:
         '维护各应用的主备池路由、风险等级、模型档位与成本等级，管理子池定义并执行健康检查。',

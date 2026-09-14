@@ -3,7 +3,7 @@ from uuid import UUID
 
 from injector import inject
 
-from internal.entity.agent_entity import normalize_agent_metadata
+from internal.entity.agent_entity import AgentRiskLevel, normalize_agent_metadata
 from internal.entity.app_entity import AppStatus
 from internal.extension.database_extension import db
 from internal.model.agent_pool_entity import AgentPoolConfig
@@ -57,8 +57,24 @@ class AgentCandidateCollector:
         self.session = session or db.session
 
     def collect(self, account_id: UUID) -> list[dict[str, object]]:
-        candidates = []
-        seen_app_ids = set()
+        serialized = [self._serialize_candidate(candidate) for candidate in self._collect_app_candidates(account_id)]
+        serialized.extend(self._builtin_candidates())
+        return serialized
+
+    def collect_raw(self, account_id: UUID) -> list[dict[str, object]]:
+        """返回供 AgentPolicyFilter 硬过滤的候选（保留 app 对象 + 内置 Agent）。
+
+        与 collect() 的区别：不做序列化（保留 app ORM 对象），因此
+        AgentPolicyFilter 能读取 app.status / app.is_public 等字段并真正执行过滤。
+        collect() 的序列化结果不含 app，传入 filter 会被当作"无 app 候选"全部放行。
+        """
+        candidates = self._collect_app_candidates(account_id)
+        candidates.extend(self._builtin_candidates())
+        return candidates
+
+    def _collect_app_candidates(self, account_id: UUID) -> list[dict[str, object]]:
+        candidates: list[dict[str, object]] = []
+        seen_app_ids: set = set()
         public_rows = (
             self.session.query(App, AgentPoolConfig)
             .outerjoin(AgentPoolConfig, AgentPoolConfig.app_id == App.id)
@@ -90,9 +106,7 @@ class AgentCandidateCollector:
             self._append_app_candidate(
                 candidates, seen_app_ids, app, "forked", None, allow_draft=True
             )
-        serialized = [self._serialize_candidate(candidate) for candidate in candidates]
-        serialized.extend(self._builtin_candidates())
-        return serialized
+        return candidates
 
     @staticmethod
     def _unpack_app_row(row) -> tuple[App, AgentPoolConfig | None]:
@@ -306,6 +320,7 @@ class AgentPolicyFilter:
         input_modalities: list[str] | None = None,
         budget_level: str = "medium",
         required_tool_categories: list[str] | None = None,
+        allow_confirmation: bool = False,
     ) -> dict[str, object]:
         accepted = []
         filtered_out = []
@@ -323,6 +338,7 @@ class AgentPolicyFilter:
                 input_modalities=input_modalities or [],
                 budget_level=budget_level,
                 required_tool_categories=required_tool_categories or [],
+                allow_confirmation=allow_confirmation,
             )
             if reason:
                 filtered_out.append(self._filtered(app, reason))
@@ -340,16 +356,23 @@ class AgentPolicyFilter:
         input_modalities: list[str],
         budget_level: str,
         required_tool_categories: list[str],
+        allow_confirmation: bool = False,
     ) -> str | None:
-        if app.status != AppStatus.PUBLISHED.value:
-            return "app_not_published"
-        if candidate.get("source_scope") not in {"public", "own"}:
+        source_scope = candidate.get("source_scope")
+        # forked（从应用商店添加）按设计允许 draft 态进入候选（架构文档 §8.2.4），
+        # 因此对其跳过"必须已发布"校验；public/own 由 AgentCandidateCollector 保证已发布。
+        if source_scope not in {"public", "own", "forked"}:
             return "app_not_authorized"
+        if source_scope != "forked" and app.status != AppStatus.PUBLISHED.value:
+            return "app_not_published"
         if metadata.get("primary_pool") == "internal_admin":
             return "pool_not_visible"
         if metadata.get("enabled") is False:
             return "agent_disabled"
-        if metadata.get("risk_level") == "high":
+        # high 风险 Agent 不对普通用户自动开放（架构文档 §8.2.4）。
+        # 仅在调用方显式允许确认流程（allow_confirmation=True）时放行，
+        # 与工具侧 ToolPolicyFilter 的 allow_confirmation 语义保持一致。
+        if metadata.get("risk_level") == AgentRiskLevel.HIGH.value and not allow_confirmation:
             return "risk_level_requires_confirmation"
         if not self._cost_allowed(str(metadata.get("cost_level")), budget_level):
             return "cost_level_exceeds_budget"
@@ -376,6 +399,12 @@ class AgentPolicyFilter:
     def _serialize_candidate(
         candidate: dict[str, object], metadata: dict[str, object]
     ) -> dict[str, object]:
+        """序列化候选并保留 collect() 路径的完整字段集。
+
+        必须与 AgentCandidateCollector._serialize_candidate 字段一致（含 pool_config /
+        status / is_public / visibility），否则 build() 经本过滤器后字段会丢失，
+        破坏下游（编排决策/前端）对这些字段的依赖。
+        """
         app = candidate["app"]
         return {
             "id": str(app.id),
@@ -383,10 +412,14 @@ class AgentPolicyFilter:
             "name": app.name,
             "icon": app.icon,
             "description": app.description,
+            "status": app.status,
+            "is_public": app.is_public,
             "source_scope": candidate["source_scope"],
             "source_type": "app",
             "app_id": str(app.id),
+            "visibility": "public" if app.is_public else "private",
             "metadata": metadata,
+            "pool_config": candidate.get("pool_config") or {},
         }
 
 
@@ -475,17 +508,38 @@ class CrossPoolAgentSubsetBuilder:
         self.policy_filter = policy_filter
         self.ranker = ranker or AgentRanker()
 
-    def build(self, account_id: UUID, *, primary_pool: str | None = None) -> dict[str, object]:
-        candidates = self.collector.collect(account_id)
-        return self._filter_serialized_candidates(candidates, primary_pool=primary_pool)
+    def build(
+        self,
+        account_id: UUID,
+        *,
+        primary_pool: str | None = None,
+        allow_confirmation: bool = False,
+    ) -> dict[str, object]:
+        """收集候选 → AgentPolicyFilter 硬过滤 → 按 primary_pool 裁剪排序。
+
+        治理链路：collect_raw() 保留 app ORM 对象，使 AgentPolicyFilter 能读取
+        app.status / is_public 等字段执行真实过滤（collect() 的序列化结果不含 app，
+        直接传入 filter 会被当作无 app 候选全部放行——历史实现即通过该路径
+        完全绕过了 AgentPolicyFilter）。
+        """
+        candidates = self.collector.collect_raw(account_id)
+        filtered = self.policy_filter.filter(
+            candidates, allow_confirmation=allow_confirmation
+        )
+        return self._filter_serialized_candidates(
+            filtered["candidates"], primary_pool=primary_pool
+        ) | {"filtered_out_agents": filtered["filtered_out_agents"]}
 
     def build_subset(
         self,
         candidates: list[dict[str, object]],
         *,
         primary_pool: str | None = None,
+        allow_confirmation: bool = False,
     ) -> dict[str, object]:
-        filtered = self.policy_filter.filter(candidates)
+        filtered = self.policy_filter.filter(
+            candidates, allow_confirmation=allow_confirmation
+        )
         return self._filter_serialized_candidates(filtered["candidates"], primary_pool=primary_pool) | {
             "filtered_out_agents": filtered["filtered_out_agents"]
         }

@@ -22,7 +22,7 @@
 
 因此目标架构必须把“完整池”变成“本次任务可见子集”。编排层与执行器只在受控子集中做选择，而不是直接访问全量池。
 
-> **实现备注**：真实实现中，动态子集归集由 `agent_pool_service.py` 承载——`AgentCandidateCollector`（候选收集）、`AgentPolicyFilter`（策略过滤）、`AgentRanker`（排序）、`CrossPoolAgentSubsetBuilder`（跨子池子集构建）均已实现；候选来源**已纳入 forked（含 draft 状态）Apps**（`agent_pool_service.py` `collect()`，`allow_draft=True`）。`AgentSubPoolRegistry` / `AgentInventory` / `AgentRouter` 等规划组件未作为独立实现存在——真实链路以"子池定义（`sub_pool_definition`）+ 候选收集/过滤/排序/裁剪"为骨架。
+> **实现备注**：真实实现中，动态子集归集由 `agent_pool_service.py` 承载——`AgentCandidateCollector`（候选收集）、`AgentPolicyFilter`（策略过滤）、`AgentRanker`（排序）、`CrossPoolAgentSubsetBuilder`（跨子池子集构建）均已实现；候选来源**已纳入 forked（含 draft 状态）Apps**（`agent_pool_service.py` `collect()`，`allow_draft=True`）。`AgentSubPoolRegistry`（`internal/entity/agent_pool_entity.py`）与 `AgentInventory`（`internal/service/agent_pool_aggregate_service.py`）**已作为独立实现落地**；仅 `AgentRouter` 未作为独立类存在——真实链路以"子池定义（`sub_pool_definition`）+ 候选收集/过滤/排序/裁剪"为骨架。
 
 ### 8.2 Agent 多子池归集流程
 
@@ -40,7 +40,7 @@ Conductor / Orchestrator / ExecutionCoordinatorService（编排决策层）
 
 #### 8.2.1 Agent 子池注册与管理
 
-编排层按子池元数据（`sub_pool_definition` 表，`primary_pool`/`secondary_pools`）与任务信号选取子池范围，而不是先经独立 `AgentSubPoolRegistry` 归集再路由。
+编排层按子池元数据（`sub_pool_definition` 表，字段为 `pool_type`/`name`/`label`/`description`/`visible_to_user`/`default_enabled`/`default_capabilities`/`task_keywords`/`is_system`/`sort_order`/`enabled`）与任务信号选取子池范围，而不是先经独立 `AgentSubPoolRegistry` 归集再路由。
 
 管理多个 Agent 子池，而不是把所有 Agent 放进一个无差别大池。示例子池：
 
@@ -221,7 +221,7 @@ CrossPoolAgentSubsetBuilder 输出本次任务允许使用的跨子池 Agent 子
   -> RuntimeToolMountService
 ```
 
-> **实现备注**：真实实现中，工具候选侧由 `tool_selector_service.py`（ToolCandidateCollector）与 `tool_inventory_service.py` 承载，治理过滤由 [10.5.2](#1052-工具治理打通) 的 `RuntimeToolGovernanceGate` + `ToolPolicyFilter` 注入 `AppService._build_runtime_tools_for_config`；`ToolSubPoolRegistry` / `AgentRouter` 等规划组件未作为独立类存在。旧文档列出的 `PoolIntentResolver → ToolSubPoolRegistry → ToolInventory` 串行已不再是主链路。
+> **实现备注**：真实实现中，工具候选侧由 `tool_selector_service.py`（ToolCandidateCollector）与 `tool_inventory_service.py` 承载，治理过滤由 [10.5.2](#1052-工具治理打通) 的 `RuntimeToolGovernanceGate` + `ToolPolicyFilter` 注入 `AppRuntimeService.build_runtime_tools_for_config`；`ToolSubPoolRegistry`（`internal/entity/tool_pool_entity.py`，已在 DI 容器注册）**已作为独立实现落地**；`AgentRouter` 未作为独立类存在。旧文档列出的 `PoolIntentResolver → ToolSubPoolRegistry → ToolInventory` 串行已不再是主链路。
 
 #### 8.4.1 ToolSubPoolRegistry
 
@@ -301,14 +301,19 @@ ToolPolicyFilter 是动态工具池的安全核心。
 | 数据范围 | 敏感数据工具需要更严格权限 |
 | 输入 schema | 与任务输入不兼容的工具过滤 |
 
-高风险工具处理策略：
+高风险工具处理策略（取值与 `internal/entity/tool_inventory_entity.py` 的 `RiskLevel` 一致）：
 
 ```text
-safe -> 可自动挂载
-controlled -> 权限通过后可挂载，必要时要求确认
-sensitive -> 默认不挂载，除非管理员策略显式允许
-dangerous -> 普通用户不可自动触发
+safe / low / medium -> 可自动挂载
+high -> 需权限过滤；requires_confirmation=True 时须经用户确认（allow_confirmation=False 则不挂载）
+sensitive -> 默认不挂载，除非管理员策略显式允许（阶段2/3 阻断）
+dangerous -> 一律不自动挂载（ToolPolicyFilter 直接拒绝；阶段2/3 阻断）
 ```
+
+> **枚举说明**：运行时工具风险等级为 6 值 `safe/low/medium/high/sensitive/dangerous`
+> （`RiskLevel`，唯一事实源 `RISK_LEVEL_VALUES`）；管理端页面下拉、
+> `admin_tool_governance_schema` 校验与 `get_governance_stats` 分桶共用该常量。
+> **Agent 风险等级不同**，仅 3 值 `safe/medium/high`（`AgentRiskLevel`），两者不可混用。
 
 #### 8.4.5 ToolRanker
 
@@ -347,7 +352,7 @@ CrossPoolToolSubsetBuilder 输出本次 Agent 可见的跨子池工具子集。
       "tool_id": "builtin-file-writer",
       "pool": "builtin",
       "runtime_name": "write_project_file",
-      "risk_level": "controlled",
+      "risk_level": "medium",
       "mount_reason": "required for sandbox/project file output",
       "permission_granted_by": "sandbox_scope_policy"
     }
@@ -422,11 +427,11 @@ BudgetAndRiskPolicy
 | capabilities | 能力标签 | `research`, `coding`, `summarization`, `data_analysis` |
 | task_types | 适合任务类型 | `qa`, `analysis`, `workflow`, `tool_use` |
 | complexity_level | 适合复杂度 | `simple`, `medium`, `complex` |
-| model_tier | 默认模型档位 | `cheap`, `standard`, `strong` |
+| model_tier | 默认模型档位 | 模型池档位码 `1`, `2`, `3`（见 03-orchestration-infra.md §12.1） |
 | cost_level | 成本等级 | `low`, `medium`, `high` |
 | routing_priority | 路由优先级 | 0-100 |
 | allowed_tool_categories | 可用工具类别 | `search`, `mcp`, `knowledge`, `database` |
-| risk_level | Agent 风险等级 | `safe`, `controlled`, `sensitive` |
+| risk_level | Agent 风险等级 | `safe`, `medium`, `high` |
 | visibility | 可见性 | `public`, `assigned`, `admin_only` |
 | quality_score | 历史质量评分 | 0-1 |
 | success_rate | 历史成功率 | 0-1 |
@@ -506,8 +511,8 @@ Agent 池第一阶段复用现有 App：
 | builtin | builtin_provider_manager + providers.yaml | 纳入 ToolSourceType | 平台内置基础能力（搜索、翻译、天气等） |
 | api_tool | ApiTool + ApiToolProvider + OpenAPI 解析 | 纳入 ToolSourceType | 企业业务 API、第三方服务 API |
 | mcp | McpProvider + McpToolFactory | 纳入 ToolSourceType | 外部能力接入和标准化工具调用 |
-| knowledge | Dataset + Document + Segment 检索 | 纳入 ToolSourceType | 知识库检索工具 |
-| workflow | WorkflowTool(BaseTool) 从已发布 Workflow 构建 | 纳入 ToolSourceType | 多步骤业务自动化，本质是组合工具 |
+| knowledge | KnowledgeBase + KnowledgeDocument + KnowledgeSegment 检索 | 纳入 ToolSourceType | 知识库检索工具 |
+| workflow | WorkflowToolAdapter(BaseTool) 从已发布 Workflow 构建 | 纳入 ToolSourceType | 多步骤业务自动化，本质是组合工具 |
 | skill | SkillToolFactory + SkillPackage | 纳入 ToolSourceType | 技能包，本质是组合工具 |
 | agent_binding | app_service 把另一个 App 包成委派工具 | 纳入 ToolSourceType | Agent 委派调用，A2A 协作的工具化表达 |
 
@@ -526,7 +531,7 @@ Agent 池第一阶段复用现有 App：
 - **注意：skill 不是"组合工具"**，它是"原子工具的打包集合"，治理上按工具包处理
 
 **组合工具（Composite）**：由多个节点编排而成，**内部递归引用其他工具**，封装为一个可调用单元。
-- workflow：由 12 种节点（LLM/代码/工具/知识库/HTTP/条件分支等）编排而成
+- workflow：由 15 种节点（LLM/代码/工具/知识库/HTTP/条件分支/循环/子流程/意图分类等）编排而成
 - agent_binding：把另一个 App 包装成工具，递归加载目标 App 的全部工具
 
 **底座真实嵌套能力（已审计）**：
@@ -534,7 +539,7 @@ Agent 池第一阶段复用现有 App：
 | 组合工具 | 内部可引用的工具类型 | 数据来源 | 是否需扩展 |
 | --- | --- | --- | --- |
 | workflow | builtin_tool / api_tool（ToolNode）+ knowledge（DatasetRetrievalNode 独立节点） | `Workflow.graph["nodes"]` | 已支持 |
-| workflow | mcp / skill / workflow / agent_binding | `ToolNodeData.tool_type` 当前仅 `builtin_tool/api_tool` | **需扩展 ToolNodeData** |
+| workflow | mcp / skill / workflow / agent_binding | `ToolNodeData.tool_type` 已扩展为 7 种（含上述四类） | **已支持** |
 | agent_binding（私有 App） | builtin / api_tool / mcp / skill / knowledge / workflow / 嵌套 agent_binding | 递归调用 `_build_runtime_tools` | 已支持 |
 | agent_binding（公开 App） | 不在本地解析，走 A2A 远端协议 | `PublicAgentA2AService.send_message` | 已支持（黑盒） |
 
@@ -545,8 +550,7 @@ Agent 池第一阶段复用现有 App：
     ├─→ 工具包：skill（manifest 内多个叶子工具，SCF 远端执行，不递归）
     │
     ├─→ 组合工具：workflow
-    │       └─ 内部节点可引用：builtin_tool / api_tool / knowledge【底座已支持】
-    │       └─ 内部节点不可引用：mcp / skill / workflow / agent_binding【需扩展 ToolNodeData】
+    │       └─ 内部节点可引用：builtin_tool / api_tool / knowledge / mcp / skill / workflow / agent_binding【已支持】
     │
     └─→ 组合工具：agent_binding（委派工具）
             └─ 私有 App：递归加载目标 App 全部工具（含 workflow/skill/嵌套 agent_binding）【已支持】
@@ -555,19 +559,19 @@ Agent 池第一阶段复用现有 App：
 ```
 
 **关键约束**：
-1. workflow 当前不能嵌套 mcp/skill/workflow/agent_binding——这是底座硬性限制，需扩展 `ToolNodeData.tool_type` 枚举才能支持
+1. workflow 已可嵌套 mcp/skill/workflow/agent_binding——`ToolNodeData.tool_type` 枚举已扩展为 7 种，由 `CompositeToolResolver._build_workflow_tool_ref` 统一解析
 2. agent_binding 是唯一支持完整递归嵌套的组合工具（私有 App 路径）
 3. skill 不是组合工具，是工具包，治理按工具包处理（整体或按内部 tool_name）
 4. agent_binding 公开 App 走 A2A，内部工具不可见，治理只能在 app_id 层级
 
 #### 10.1.3 统一工具描述符
 
-底座已有 `RuntimeToolDescriptor`（`internal/entity/runtime_tool_entity.py` L8-19），共 10 个字段。**当前完全没有组合工具建模字段**，需扩展：
+底座已有 `RuntimeToolDescriptor`（`internal/entity/runtime_tool_entity.py` L17-32），共 **15 个字段**，其中组合工具建模字段（`is_composite` / `composite_kind` / `composite_components` / `composite_root_id` / `runtime_name_stable`）**已落地**；配套 `CompositeComponentRef`（L8-13）：
 
 ```python
 @dataclass
 class RuntimeToolDescriptor(SerializableMixin):
-    # ─── 底座已有字段（10 个，保持不变）───
+    # ─── 底座基础字段（10 个）───
     tool_id: str           # 工具唯一标识，格式因来源而异
     runtime_name: str      # 运行时挂载名
     name: str              # 工具名称
@@ -579,7 +583,7 @@ class RuntimeToolDescriptor(SerializableMixin):
     metadata: dict         # 治理元数据（risk_level/cost_level/health_status 等）
     audit_context: dict    # 审计上下文
 
-    # ─── 新增字段（组合工具建模）───
+    # ─── 组合工具建模字段（已落地）───
     is_composite: bool = False                       # 是否为组合工具（仅 workflow/agent_binding 为 True，skill 为 False）
     composite_kind: str = ""                         # 组合类型："workflow" / "agent_binding"（skill 不是组合工具）
     composite_components: list["CompositeComponentRef"] = field(default_factory=list)  # 直接成员工具引用
@@ -616,7 +620,7 @@ tool_id 格式约定（与底座现有实现对齐）：
 
 #### 10.1.4 组合工具展开解析器 CompositeToolResolver
 
-底座当前**没有统一的"组合工具 id → 递归列出原子工具"解析器**。Workflow 需遍历 `graph["nodes"]`，Skill 需读 `manifest["tools"]`，agent_binding 需递归加载目标 AppConfig——三套逻辑分散在各 Service 中。组合工具治理透传（10.2.3）依赖此解析器，是落地的前置条件。
+底座已实现统一的"组合工具 id → 递归列出原子工具"解析器 `CompositeToolResolver`（`internal/service/composite_tool_resolver.py`，已在 DI 容器注册，由 `RuntimeToolGovernanceGate` 消费）。Workflow 遍历 `graph["nodes"]`，Skill 读 `manifest["tools"]`，agent_binding 递归加载目标 AppConfig——三类来源统一收敛在该解析器内。组合工具治理透传（10.2.3）依赖此解析器。
 
 **职责**：给定一个组合工具的 tool_id，递归解析出它直接和间接引用的所有成员工具，返回扁平化的 CompositeComponentRef 列表（含递归层级和引用路径）。
 
@@ -756,9 +760,9 @@ class CompositeToolResolver:
 | 字段 | 说明 | 默认值来源 |
 | --- | --- | --- |
 | tool_pool | 工具子池归属 | 按 source_type 自动赋值 |
-| risk_level | 风险等级（safe/controlled/sensitive/dangerous） | 默认 safe，管理员可覆盖 |
+| risk_level | 风险等级（safe/low/medium/high/sensitive/dangerous） | 默认 medium，管理员可覆盖 |
 | permission_scope | 权限范围（system/user/tenant/public） | 按 source_type 默认值 |
-| cost_level | 成本等级（low/medium/high） | 默认 low |
+| cost_level | 成本等级（low/medium/high） | 默认 medium |
 | health_status | 健康状态（healthy/degraded/offline/unknown） | 运行时动态更新 |
 | enabled | 是否启用 | 默认 true |
 | requires_confirmation | 是否需要用户确认 | 按 risk_level 推导 |
@@ -804,7 +808,7 @@ class CompositeToolResolver:
 workflow / agent_binding 被治理时：
   → CompositeToolResolver.resolve(tool_id) 递归解析所有成员工具
   → 查询每个成员的 ToolGovernancePolicy.risk_level
-  → 有效风险等级 = max(成员工具风险等级)  # safe < controlled < sensitive < dangerous
+  → 有效风险等级 = max(成员工具风险等级)  # safe < low < medium < high < sensitive < dangerous
   → 缓存结果（key: tool_id + Workflow.updated_at + AppConfig.updated_at）
 ```
 
@@ -815,8 +819,8 @@ workflow / agent_binding 被治理时：
 | 成员中存在 dangerous 工具 | 组合工具整体阻断 | dangerous 工具不可自动触发，组合工具也不应自动触发 |
 | 成员中存在 sensitive 工具 | 组合工具需用户确认 | 触发统一确认卡片，展示内部 sensitive 工具清单 |
 | 成员中存在 disabled 工具 | 组合工具整体阻断 | 任一成员工具 disabled 则组合工具不可用 |
-| 成员中存在 unhealthy 工具 | 组合工具降级或阻断 | 按业务策略：可降级（移除该成员节点）或整体阻断 |
-| 成员全部 safe/controlled | 组合工具正常放行 | 有效风险等级 = max(safe/controlled) = controlled |
+| 成员中存在 unhealthy 工具 | 组合工具整体阻断 | 当前实现取保守策略：`block_reason="member_unhealthy"` 直接整体阻断 |
+| 成员全部 safe/low/medium/high | 组合工具正常放行 | 有效风险等级 = max(成员风险等级)，如全为 safe/medium 则为 medium |
 
 **治理策略绑定层**：
 
@@ -835,9 +839,11 @@ ToolGovernancePolicy.tool_id 的绑定策略：
 | 风险等级 | 说明 | 执行策略 |
 | --- | --- | --- |
 | safe | 只读、无敏感数据 | 可自动执行 |
-| controlled | 有业务影响但可控，例如写入沙箱文件、修改临时文档 | 需权限过滤，必要时确认 |
+| low | 影响面很小的操作 | 可自动执行 |
+| medium | 有业务影响但可控，例如写入沙箱文件、修改临时文档 | 可自动执行 |
+| high | 有明确业务影响，需要用前确认 | 需权限过滤；requires_confirmation=True 且未获确认时不挂载 |
 | sensitive | 涉及敏感数据、外部通信、正式业务写入 | 默认不自动执行，需审批或管理员授权 |
-| dangerous | 删除、支付、权限变更、系统数据库增删改查 | 禁止普通用户自动触发 |
+| dangerous | 删除、支付、权限变更、系统数据库增删改查 | 禁止自动挂载（ToolPolicyFilter 直接拒绝） |
 
 高风险工具不应被理解为“普通用户经常需要查询平台核心数据”。普通用户没有合理动机查询 钰见我 自身的系统数据库、租户权限、计费账户、模型 Key 或生产运维数据，这类平台系统工具原则上不进入普通用户可触发工具池。
 
@@ -889,7 +895,7 @@ ToolPolicyFilter
 
 | 区域 | 字段 | 说明 |
 | --- | --- | --- |
-| 标题区 | 风险等级 | controlled / sensitive / dangerous |
+| 标题区 | 风险等级 | high / sensitive / dangerous |
 | 标题区 | 工具名称 | 即将调用的工具 |
 | 标题区 | 所属系统 | 用户系统、沙箱、测试环境或平台系统 |
 | 操作说明区 | 操作类型 | 读取、写入、删除、发送、发布、支付、权限变更等 |
@@ -958,24 +964,29 @@ Agent 执行时不装载完整工具子池集合，而是：
 
 **问题**：AgentPoolConfig 表存储了 App 的路由元数据（primary_pool/secondary_pools/risk_level/model_tier/routing_priority），但 AgentCandidateCollector 直接查 App 表，不读 AgentPoolConfig。
 
-**打通方案**：AgentPoolConfig 作为 App 的路由元数据扩展表，AgentCandidateCollector 在收集候选时 JOIN 读取。
+**打通方案**：Agent 路由元数据统一由 `App.agent_metadata`（JSONB）承载，`AgentCandidateCollector` 在收集候选时读取。
 
 ```text
 AgentCandidateCollector.collect(account_id)
   → 查询 App 表（public + assigned + own）  [底座已有]
-  → LEFT JOIN AgentPoolConfig ON app_id      [新增]
-  → 读取 primary_pool / secondary_pools / risk_level / model_tier / routing_priority
+  → outerjoin AgentPoolConfig ON app_id      [底座已有]
+  → 读取 App.agent_metadata 中的
+    primary_pool / secondary_pools / risk_level / model_tier / routing_priority
   → 合并到 Agent 元数据中
-  → AgentPolicyFilter 按这些字段做过滤       [底座已有，需接入]
+  → AgentPolicyFilter 按这些字段做过滤       [底座已有]
 ```
 
-AgentPoolConfig 不存在时降级为默认值（primary_pool=general, risk_level=safe, model_tier=standard）。
+AgentPoolConfig 不存在时降级为 `_DEFAULT_POOL_CONFIG = {}`（空配置，仅保留 `enabled` / `health_status` 默认值）。
+
+> **历史注记**：早期版本称需"新增 LEFT JOIN 打通"并降级为 `primary_pool=general, risk_level=safe, model_tier=standard`——这些字段已由迁移 `i4d5e6f7a8b9` 从 `agent_pool_config` 表移除并迁至 `App.agent_metadata`，JOIN 与降级逻辑均已是底座现状。
 
 #### 10.5.2 工具治理打通
 
-**问题**：AppConfig 绑定的工具走 LangChain BaseTool 通道，不经过 ToolCandidateCollector 和 ToolPolicyFilter。底座的工具构建入口是 `AppService._build_runtime_tools_for_config`（`app_service.py` L990-1059，静态方法），**不是** `AppConfigService`。
+**问题**：AppConfig 绑定的工具走 LangChain BaseTool 通道，不经过 ToolCandidateCollector 和 ToolPolicyFilter。底座的工具构建入口是 `AppRuntimeService.build_runtime_tools_for_config`（`app_runtime_service.py`），**不是** `AppConfigService`。
+>
+> **历史注记**：早期版本记为 `AppService._build_runtime_tools_for_config`（静态方法）——该方法在当前 `app_service.py` 中已不存在，实现已迁至 `AppRuntimeService`。
 
-**打通方案**：在 `AppService._build_runtime_tools_for_config` 的 return 前注入治理过滤层。
+**打通方案**：在 `AppRuntimeService.build_runtime_tools_for_config` 的工具构建流程中注入治理过滤层（已落地，含 `governance_gate` 参数）。
 
 **底座现状（已审计）**：
 
@@ -1007,7 +1018,7 @@ AppService._build_runtime_tools_for_config(config)  [底座已有，静态方法
       │
       ├─ 3. ToolPolicyFilter 按风险/权限/健康/成本过滤
       │     - 阶段1：只记录过滤决策到路由日志，不实际阻断
-      │     - 阶段2：sensitive/dangerous 阻断，safe/controlled 放行
+      │     - 阶段2：sensitive/dangerous 阻断，safe/low/medium/high 放行
       │     - 阶段3：全量过滤
       │
       ├─ 4. 敏感工具触发用户确认卡片
@@ -1058,7 +1069,7 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 
 阶段 2：敏感工具阻断
   → 只对 risk_level=sensitive/dangerous 的工具阻断
-  → safe/controlled 工具继续放行
+  → safe/low/medium/high 工具继续放行
 
 阶段 3：全量启用
   → 所有工具按治理策略过滤
@@ -1066,4 +1077,56 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 ```
 
 渐进式启用通过 OrchestrationFeatureFlag 控制（底座已有此机制）。
+
+---
+
+## 11. 内置工具：知识库板块创建（create_knowledge_base）
+
+`create_knowledge_base` 是 builtin 来源的原子工具，供首页助手（小钰）在对话内为用户创建知识库板块。产品侧需求见 [knowledge-base-product-form-design.md](../knowledge-base-product-form-design.md) §7.4。
+
+### 11.1 落点与注册
+
+| 项 | 值 |
+| --- | --- |
+| provider | `knowledge_base_tools` |
+| 目录 | `api/internal/core/tools/builtin_tools/providers/knowledge_base_tools/` |
+| 文件 | `__init__.py`（导出同名工厂函数）、`create_knowledge_base.py`、`create_knowledge_base.yaml`、`positions.yaml` |
+| providers.yaml 登记 | `category: tool`（`categories.yaml` 中不存在 `knowledge` 分类，故复用既有 `tool`） |
+| tool_id | `builtin:knowledge_base_tools:create_knowledge_base` |
+| DB 同步 | 启动时由 `BuiltinToolSyncService.sync_yaml_to_db()` 以 `source=catalog` 写入镜像表 |
+
+### 11.2 参数与校验
+
+工具 `args_schema` 为 Pydantic 模型（`CreateKnowledgeBaseInput`），四个参数：
+
+| 参数 | 必填 | 取值 | 说明 |
+| --- | --- | --- | --- |
+| `name` | ✅ | 非空字符串 | 板块名称 |
+| `base_type` | | `document`/`image`/`video`/`audio`/`mixed` | 默认 `mixed`，取值源自 `KnowledgeBaseType` |
+| `partition_mode` | | `none`/`date_month`/`date_day`/`custom` | 默认 `none`，取值源自 `PartitionMode` |
+| `description` | | 字符串 | 默认空 |
+
+工具内**先做枚举校验再落库**：非法 `base_type` / `partition_mode`、空 `name`、缺失 account，均返回 `{"ok": false, "error": "..."}` 的可读文本，不抛 500、不进入服务层。YAML 中两个枚举参数声明为 `select`，附 `options`，与既有 provider 的元数据表达一致。
+
+### 11.3 下游调用
+
+校验通过后调用 `KnowledgeBaseService.create_user_content_base(name=..., account=..., operation_context="user", description=..., base_type=..., partition_mode=...)`，仅创建当前用户私有的用户资料库（`knowledge_scope=user_content`、`visibility_scope=private`）。服务层仍有二次枚举与重名校验，非法值抛 `ValidateErrorException`，工具捕获后转成可读错误返回。
+
+### 11.4 账号注入方式（builtin 工具的通用范式）
+
+builtin 工具没有全局 `g.account`，账号通过**运行时挂载点的工厂参数**透传，这与 `computer_control` / `codex_os` 的 `requester` 是同一注入点：
+
+```text
+AssistantAgentService._build_assistant_runtime_tools(account_id)
+  → builtin_provider_manager.get_tool("knowledge_base_tools", "create_knowledge_base")
+  → tool_factory(account_id=str(account_id))     # 绑定到工具实例字段
+  → 工具 _run 内调用 AccountService.get_account(uuid) 加载真实 Account
+  → KnowledgeBaseService.create_user_content_base(account=..., operation_context="user")
+```
+
+工具内部不做上下文穿透，而是用工厂参数绑定 `account_id`，再用 `AccountService` 换取 `Account` 实例（服务层内部依赖 `account.id`）；account 无法解析或不存在时返回明确错误。该方式与既有 OS/computer 工具一致，且可在单测中直接构造工具实例验证，无需 app 上下文。
+
+### 11.5 测试
+
+`api/test/internal/core/tools/test_create_knowledge_base_tool.py` 覆盖：合法参数透传（name/base_type/partition_mode/description/operation_context/account）、默认值、非法 `base_type`、非法 `partition_mode`、空名称、缺失 account、账号不存在、服务异常降级为可读错误、工厂绑定。
 

@@ -83,7 +83,8 @@ def test_update_app_should_normalize_phase2_agent_metadata_fields():
         "task_types": ["customer_service"],
         "input_modalities": ["text", "image"],
         "output_modalities": ["text"],
-        "risk_level": "safe",
+        # 非法风险值 fail-closed 到最高档 high（不得降级为 safe 绕过风险过滤）
+        "risk_level": "high",
         "model_tier": "standard",
         "model_id": "gpt-4.1",
         "key_policy": "tenant",

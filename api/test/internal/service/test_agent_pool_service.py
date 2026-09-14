@@ -1,6 +1,8 @@
 from datetime import datetime
 from uuid import uuid4
 
+import pytest
+
 from internal.entity.agent_entity import DEFAULT_AGENT_METADATA, normalize_agent_metadata
 from internal.entity.agent_pool_entity import AgentSubPoolRegistry
 from internal.model.app import App
@@ -10,6 +12,24 @@ from internal.service.agent_pool_service import (
     AgentRanker,
     CrossPoolAgentSubsetBuilder,
 )
+
+
+@pytest.fixture(autouse=True)
+def _use_builtin_sub_pools(monkeypatch):
+    """隔离子池注册表与数据库，保证本文件语义确定性。
+
+    AgentSubPoolRegistry 默认 DB 优先（管理员可在后台增删改子池），
+    但本文件断言的是**内置池**的语义（general/coding/office/...）。
+    若不断言隔离，测试结果会随运行环境的 sub_pool_definition 表内容而变
+    （例如后台改过子池时会话/兜底归一化行为不同），属非 hermetic 测试。
+    这里强制走 BUILTIN_AGENT_SUB_POOLS 常量，并清理模块级 TTL 缓存。
+    """
+    from internal.entity import agent_pool_entity as agent_pool_module
+
+    monkeypatch.setattr(agent_pool_module, "_load_pools_from_db", lambda: None)
+    agent_pool_module.refresh_cache()
+    yield
+    agent_pool_module.refresh_cache()
 
 
 class _QueryStub:
@@ -119,7 +139,9 @@ def test_agent_metadata_should_normalize_phase2_boundaries():
         }
     )
 
-    assert metadata["risk_level"] == "safe"
+    # Agent 风险枚举仅 safe/medium/high；非法值（如高危语义的 dangerous）
+    # 必须 fail-closed 到最高档 high，不得降级为 safe 从而绕过风险过滤。
+    assert metadata["risk_level"] == "high"
     assert metadata["routing_priority"] == 1000
     assert metadata["quality_score"] == 1.0
     assert metadata["success_rate"] == 0.0

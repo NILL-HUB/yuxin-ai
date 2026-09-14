@@ -577,6 +577,10 @@ class ToolPolicyFilter:
             return "tool_disabled"
         if metadata.get("health_status") == "unhealthy":
             return "tool_unhealthy"
+        # dangerous 工具禁止自动挂载（架构文档 10.3：dangerous 禁止普通用户自动触发；
+        # 10.2.3：dangerous 工具不可自动触发）。该项不受 allow_confirmation 影响。
+        if metadata["risk_level"] == RiskLevel.DANGEROUS.value:
+            return "dangerous_tool_not_allowed"
         if metadata.get("tool_pool") in KNOWLEDGE_TOOL_POOLS and not self._owner_allowed(
             metadata, account_id
         ):

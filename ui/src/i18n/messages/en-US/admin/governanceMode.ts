@@ -7,4 +7,5 @@ export default  {
       switchMode: 'Switch mode',
       viewLogs: 'View governance decision logs',
       currentMode: 'Current governance mode',
+      currentModeSuffix: ': ',
     }

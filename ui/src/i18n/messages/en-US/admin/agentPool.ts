@@ -10,6 +10,8 @@ export default  {
       healthCheckFailed: 'Health check failed',
       deleted: 'Config deleted',
       deleteFailed: 'Failed to delete config',
+      deleteConfirmTitle: 'Delete Agent Pool Config',
+      deleteConfirmContent: 'Delete the agent pool config for "{app}"? This action cannot be undone.',
       title: 'Agent Pool Configuration',
       description:
         'Maintain primary/secondary pool routing, risk levels, and model tiers for each app, and perform health checks.',
