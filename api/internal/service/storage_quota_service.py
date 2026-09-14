@@ -11,7 +11,6 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from uuid import UUID
 
 from injector import inject
@@ -94,10 +93,7 @@ class StorageQuotaService(BaseService):
     def _entitlement_gb(entitlement) -> int:
         """把套餐权益解析为整数 GB；解析失败返回 0 并记日志。"""
         try:
-            value = entitlement.parsed_value
-            if isinstance(value, Decimal):
-                return int(value)
-            return int(value)
+            return int(entitlement.parsed_value)
         except (TypeError, ValueError, ArithmeticError):
             logger.warning(
                 "解析 storage_quota_gb 权益失败，按 0 处理：feature_value=%r",
