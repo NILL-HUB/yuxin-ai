@@ -96,7 +96,30 @@ class KnowledgeMediaExtractorService(BaseService):
         ]
 
     def _extract_audio(self, upload_file: UploadFile) -> list[MediaSegment]:
-        raise NotImplementedError("音频解析将在 Task 4 实现")
+        """音频：下载后经 ASR 转写为文本片段；转写为空则不产出片段。"""
+        from io import BytesIO
+
+        from werkzeug.datastructures import FileStorage
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = self._download_to(upload_file, temp_dir)
+            with open(file_path, "rb") as fh:
+                content = fh.read()
+
+        file_storage = FileStorage(
+            stream=BytesIO(content),
+            filename=upload_file.name or os.path.basename(upload_file.key),
+            content_type=getattr(upload_file, "mime_type", None) or "audio/mpeg",
+        )
+        transcript = str(self.audio_service.audio_to_text(file_storage) or "").strip()
+        if not transcript:
+            return []
+        return [
+            MediaSegment(
+                content=transcript,
+                metadata={"media_type": DocumentMediaType.AUDIO.value},
+            )
+        ]
 
     def _extract_video(self, upload_file: UploadFile) -> list[MediaSegment]:
         raise NotImplementedError("视频解析将在 Task 5 实现")

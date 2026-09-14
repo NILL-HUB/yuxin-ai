@@ -75,13 +75,69 @@ def test_image_extraction_propagates_vision_failure():
         service.extract(_document("image"), _upload_file("png"))
 
 
-def test_audio_extraction_not_implemented_yet():
-    service = _new_service()
-    with pytest.raises(NotImplementedError):
-        service.extract(_document("audio"), _upload_file("mp3"))
-
-
 def test_video_extraction_not_implemented_yet():
     service = _new_service()
     with pytest.raises(NotImplementedError):
         service.extract(_document("video"), _upload_file("mp4"))
+
+
+class _FakeAudioService:
+    def __init__(self, text="这是一段会议录音的转写内容。", error=None):
+        self.text = text
+        self.error = error
+        self.received_filename = None
+
+    def audio_to_text(self, audio, language="", provider="", model=""):
+        self.received_filename = getattr(audio, "filename", None)
+        if self.error:
+            raise self.error
+        return self.text
+
+
+def test_audio_extraction_returns_transcript_segment():
+    audio_service = _FakeAudioService()
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=audio_service,
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp3", name="meeting.mp3",
+        extension="mp3", mime_type="audio/mpeg",
+    )
+
+    segments = service.extract(_document("audio"), upload)
+
+    assert len(segments) == 1
+    assert "会议录音" in segments[0].content
+    assert segments[0].metadata["media_type"] == "audio"
+    assert audio_service.received_filename == "meeting.mp3"
+
+
+def test_audio_extraction_raises_when_asr_unavailable():
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=_FakeAudioService(error=RuntimeError("asr down")),
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.wav", name="a.wav",
+        extension="wav", mime_type="audio/wav",
+    )
+
+    with pytest.raises(RuntimeError):
+        service.extract(_document("audio"), upload)
+
+
+def test_audio_extraction_returns_empty_when_transcript_blank():
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=_FakeAudioService(text="   "),
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.m4a", name="silent.m4a",
+        extension="m4a", mime_type="audio/mp4",
+    )
+
+    assert service.extract(_document("audio"), upload) == []
