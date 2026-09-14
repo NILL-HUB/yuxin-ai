@@ -12,14 +12,11 @@ Hermes 把整个视频 base64 打包为 ``video_url`` 直传多模态模型；�
 
 from __future__ import annotations
 
-import base64
 import ipaddress
 import json
 import logging
 import os
-import shutil
 import socket
-import subprocess
 import tempfile
 import urllib.request
 from typing import Any
@@ -28,11 +25,11 @@ from urllib.parse import urlparse
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from internal.core.vision.vision_invoke import extract_video_frames, invoke_vision_model
+
 logger = logging.getLogger(__name__)
 
 _MAX_VIDEO_BYTES = 50 * 1024 * 1024
-_FRAME_COUNT = 3
-_FRAME_TIMEOUT = 60
 
 
 def _is_safe_video_url(url: str) -> tuple[bool, str]:
@@ -74,166 +71,6 @@ def _download_video(url: str, destination: str) -> None:
         fh.write(raw)
 
 
-def _ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None
-
-
-def _extract_frames(video_path: str) -> list[str]:
-    """抽取视频关键帧，返回 data URI 列表；无可用后端时抛错。"""
-    if _ffmpeg_available():
-        return _extract_frames_ffmpeg(video_path)
-    try:
-        import imageio_ffmpeg  # type: ignore
-
-        return _extract_frames_imageio(video_path)
-    except ImportError:
-        raise RuntimeError(
-            "视频抽帧不可用：容器未安装 ffmpeg，也未安装 imageio-ffmpeg。"
-            "请安装 imageio-ffmpeg（pip install imageio-ffmpeg）后重试。"
-        )
-
-
-def _extract_frames_ffmpeg(video_path: str) -> list[str]:
-    """用 ffmpeg select 均匀采样 _FRAME_COUNT 帧。"""
-    from PIL import Image
-
-    out_dir = tempfile.mkdtemp(prefix="video_frames_")
-    try:
-        pattern = os.path.join(out_dir, "frame_%03d.jpg")
-        cmd = [
-            "ffmpeg", "-y", "-i", video_path,
-            "-vf", f"select='not(mod(n\\,100))'",  # 兜底抽样
-            "-frames:v", str(_FRAME_COUNT),
-            "-q:v", "4", pattern,
-        ]
-        try:
-            probe = subprocess.run(
-                ["ffmpeg", "-i", video_path],
-                capture_output=True, timeout=_FRAME_TIMEOUT,
-            )
-            stderr = probe.stderr.decode("utf-8", errors="replace")
-            duration = None
-            for line in stderr.splitlines():
-                if "Duration:" in line:
-                    duration = line.split("Duration:")[1].split(",")[0].strip()
-                    break
-            if duration:
-                total_ms = _duration_to_ms(duration)
-                if total_ms > 0:
-                    step = max(1, int(total_ms / _FRAME_COUNT / 40))  # 每步约 1/FRAME 时长（40ms 采样粒度）
-                    cmd = [
-                        "ffmpeg", "-y", "-i", video_path,
-                        "-vf", f"select='not(mod(n\\,{step}))'",
-                        "-frames:v", str(_FRAME_COUNT),
-                        "-q:v", "4", pattern,
-                    ]
-        except Exception:
-            pass
-
-        subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 3, check=True)
-        frames = sorted(
-            os.path.join(out_dir, name)
-            for name in os.listdir(out_dir)
-            if name.startswith("frame_")
-        )
-        if not frames:
-            return _last_resort_first_frame(video_path)
-        return [_image_to_data_uri(path) for path in frames[: _FRAME_COUNT]]
-    except subprocess.CalledProcessError as exc:
-        logger.warning("ffmpeg 抽帧失败: %s", getattr(exc, "stderr", b"")[:200])
-        return _last_resort_first_frame(video_path)
-    finally:
-        try:
-            shutil.rmtree(out_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-
-def _duration_to_ms(duration: str) -> int:
-    parts = str(duration).split(":")
-    try:
-        if len(parts) == 3:
-            h, m, s = (float(p) for p in parts)
-            return int((h * 3600 + m * 60 + s) * 1000)
-    except ValueError:
-        return 0
-    return 0
-
-
-def _last_resort_first_frame(video_path: str) -> list[str]:
-    """ffmpeg 抽帧失败时尝试取首帧，再失败则抛错。"""
-    try:
-        out = tempfile.mktemp(suffix=".jpg")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-frames:v", "1", "-q:v", "4", out],
-            capture_output=True, timeout=_FRAME_TIMEOUT,
-            check=True,
-        )
-        from PIL import Image
-
-        Image.open(out).load()
-        return [_image_to_data_uri(out)]
-    except Exception as exc:
-        raise RuntimeError(f"视频帧提取失败: {exc}")
-
-
-def _extract_frames_imageio(video_path: str) -> list[str]:
-    """用 imageio_ffmpeg 的 ffmpeg 二进制抽帧。"""
-    import imageio_ffmpeg  # type: ignore
-
-    exe = imageio_ffmpeg.get_ffmpeg_exe()
-    out_dir = tempfile.mkdtemp(prefix="video_frames_")
-    try:
-        pattern = os.path.join(out_dir, "frame_%03d.jpg")
-        cmd = [exe, "-y", "-i", video_path, "-frames:v", str(_FRAME_COUNT), "-q:v", "4", pattern]
-        subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 3, check=True)
-        frames = sorted(
-            os.path.join(out_dir, name)
-            for name in os.listdir(out_dir)
-            if name.startswith("frame_")
-        )
-        if not frames:
-            raise RuntimeError("imageio_ffmpeg 未产出帧")
-        return [_image_to_data_uri(path) for path in frames[: _FRAME_COUNT]]
-    finally:
-        try:
-            shutil.rmtree(out_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-
-def _image_to_data_uri(path: str) -> str:
-    mime = "image/jpeg"
-    with open(path, "rb") as fh:
-        raw = fh.read(8 * 1024 * 1024 + 1)
-    if len(raw) > 8 * 1024 * 1024:
-        raise ValueError("抽帧图片超过大小限制")
-    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
-
-
-def _invoke_vision_model(data_uri: str, prompt: str) -> str:
-    from internal.service.language_model_service import LanguageModelService
-
-    llm = LanguageModelService.get_feature_model("vision_analyze")
-    if llm is None:
-        raise RuntimeError("未配置视觉分析模型")
-    content = [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": data_uri}},
-    ]
-    from langchain_core.messages import HumanMessage
-
-    response = llm.invoke([HumanMessage(content=content)])
-    text = getattr(response, "content", "")
-    if isinstance(text, list):
-        text = "\n".join(
-            str(item.get("text", ""))
-            for item in text
-            if isinstance(item, dict) and item.get("text")
-        )
-    return str(text or "").strip()
-
-
 class VideoAnalyzeInput(BaseModel):
     video_url: str = Field(..., description="视频的 http(s) URL")
     prompt: str = Field(
@@ -262,11 +99,11 @@ class VideoAnalyzeTool(BaseTool):
         video_path = tempfile.mktemp(suffix=os.path.splitext(urlparse(normalized_url).path)[1] or ".mp4")
         try:
             _download_video(normalized_url, video_path)
-            frames = _extract_frames(video_path)
+            frames = extract_video_frames(video_path)
             analysis: list[str] = []
             for index, frame in enumerate(frames, 1):
                 try:
-                    text = _invoke_vision_model(frame, normalized_prompt)
+                    text = invoke_vision_model(frame, normalized_prompt)
                     analysis.append(f"帧 {index}\n{text}")
                 except Exception as exc:  # noqa: BLE001
                     analysis.append(f"帧 {index}: 分析失败（{exc}）")

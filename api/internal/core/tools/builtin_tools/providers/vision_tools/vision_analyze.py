@@ -12,7 +12,6 @@ import base64
 import ipaddress
 import json
 import logging
-import re
 import socket
 import urllib.request
 from typing import Any
@@ -20,6 +19,8 @@ from urllib.parse import urlparse
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from internal.core.vision.vision_invoke import invoke_vision_model
 
 logger = logging.getLogger(__name__)
 
@@ -65,29 +66,6 @@ def _resolve_image_data_uri(value: str) -> str:
     return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
-def _invoke_vision_model(data_uri: str, prompt: str) -> str:
-    from internal.service.language_model_service import LanguageModelService
-
-    llm = LanguageModelService.get_feature_model("vision_analyze")
-    if llm is None:
-        raise RuntimeError("未配置视觉分析模型")
-    content = [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": data_uri}},
-    ]
-    from langchain_core.messages import HumanMessage
-
-    response = llm.invoke([HumanMessage(content=content)])
-    text = getattr(response, "content", "")
-    if isinstance(text, list):
-        text = "\n".join(
-            str(item.get("text", ""))
-            for item in text
-            if isinstance(item, dict) and item.get("text")
-        )
-    return str(text or "").strip()
-
-
 class VisionAnalyzeInput(BaseModel):
     image: str = Field(..., description="图片 URL 或 data:image/...;base64,.... 格式")
     prompt: str = Field(
@@ -108,7 +86,7 @@ class VisionAnalyzeTool(BaseTool):
         try:
             data_uri = _resolve_image_data_uri(image)
             normalized_prompt = str(prompt or "").strip() or "请详细描述这张图片的内容。"
-            text = _invoke_vision_model(data_uri, normalized_prompt)
+            text = invoke_vision_model(data_uri, normalized_prompt)
             return json.dumps({"ok": True, "analysis": text}, ensure_ascii=False)
         except Exception as exc:
             logger.warning("视觉分析失败", exc_info=True)

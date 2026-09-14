@@ -30,7 +30,7 @@ def test_vision_analyze_returns_analysis(monkeypatch):
     module = importlib.import_module(
         "internal.core.tools.builtin_tools.providers.vision_tools.vision_analyze"
     )
-    monkeypatch.setattr(module, "_invoke_vision_model", lambda data_uri, prompt: "图片里有一只猫")
+    monkeypatch.setattr(module, "invoke_vision_model", lambda data_uri, prompt: "图片里有一只猫")
 
     result = json.loads(
         VisionAnalyzeTool()._run(image="data:image/png;base64,AA==", prompt="描述")
