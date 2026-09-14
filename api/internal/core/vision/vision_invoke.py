@@ -24,10 +24,12 @@ _FRAME_TIMEOUT = 60
 
 def path_to_data_uri(path: str) -> str:
     """把本地图片文件转为 data URI（带大小上限）。"""
+    if not os.path.isfile(path):
+        raise ValueError(f"图片文件不存在：{path}")
     with open(path, "rb") as fh:
         raw = fh.read(_MAX_IMAGE_BYTES + 1)
     if len(raw) > _MAX_IMAGE_BYTES:
-        raise ValueError("图片超过大小限制")
+        raise ValueError(f"图片超过大小限制：{path}")
     return f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}"
 
 
@@ -72,8 +74,10 @@ def _duration_to_ms(duration: str) -> int:
 
 def extract_video_frames(video_path: str, frame_count: int = _DEFAULT_FRAME_COUNT) -> list[str]:
     """抽取视频关键帧，返回 data URI 列表；无可用后端时抛错。"""
+    requested = _DEFAULT_FRAME_COUNT if frame_count is None else int(frame_count)
+    normalized_count = max(1, requested)
     if _ffmpeg_available():
-        return _extract_frames_ffmpeg(video_path, frame_count)
+        return _extract_frames_ffmpeg(video_path, normalized_count)
     try:
         import imageio_ffmpeg  # type: ignore
     except ImportError:
@@ -81,7 +85,7 @@ def extract_video_frames(video_path: str, frame_count: int = _DEFAULT_FRAME_COUN
             "视频抽帧不可用：容器未安装 ffmpeg，也未安装 imageio-ffmpeg。"
             "请安装 imageio-ffmpeg（pip install imageio-ffmpeg）后重试。"
         )
-    return _extract_frames_imageio(video_path, frame_count)
+    return _extract_frames_imageio(video_path, normalized_count)
 
 
 def _extract_frames_ffmpeg(video_path: str, frame_count: int) -> list[str]:
@@ -135,16 +139,28 @@ def _extract_frames_ffmpeg(video_path: str, frame_count: int) -> list[str]:
 
 
 def _last_resort_first_frame(video_path: str) -> list[str]:
-    """抽帧失败时尝试取首帧，再失败则抛错。"""
+    """抽帧失败时尝试取首帧，再失败则抛错。
+
+    必须校验产出的首帧可被解码，否则损坏/空帧会被当作成功，
+    让下游视觉模型收到空图并静默失败。
+    """
     try:
-        out = tempfile.mktemp(suffix=".jpg")
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", video_path, "-frames:v", "1", "-q:v", "4", out],
-            capture_output=True, timeout=_FRAME_TIMEOUT, check=True,
-        )
-        uri = path_to_data_uri(out)
-        os.remove(out)
-        return [uri]
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+            out = handle.name
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", video_path, "-frames:v", "1", "-q:v", "4", out],
+                capture_output=True, timeout=_FRAME_TIMEOUT, check=True,
+            )
+            from PIL import Image
+
+            Image.open(out).load()
+            return [path_to_data_uri(out)]
+        finally:
+            try:
+                os.remove(out)
+            except OSError:
+                pass
     except Exception as exc:
         raise RuntimeError(f"视频帧提取失败: {exc}")
 
