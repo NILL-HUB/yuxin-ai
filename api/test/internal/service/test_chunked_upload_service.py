@@ -530,8 +530,6 @@ def test_complete_rejects_mismatched_base_type_before_merge(monkeypatch):
 
 def test_complete_rolls_back_when_document_creation_fails(monkeypatch):
     """建档失败时应回滚合并产物与 UploadFile 记录，并保留会话可重试。"""
-    import internal.service.chunked_upload_service as module
-
     session_service = _FakeSessionService()
     storage = _FakeStorage()
     storage.deleted = []
