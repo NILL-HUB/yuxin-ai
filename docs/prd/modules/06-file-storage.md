@@ -280,7 +280,7 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 
 ### 17.11 安全要求
 
-1. **上传校验**：扩展名白名单（`ALLOWED_IMAGE_EXTENSION` / `ALLOWED_DOCUMENT_EXTENSION` / `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION`，P1 已扩展音视频），单文件大小 ≤ 15MB（分片上传解除上限属后续 P2）
+1. **上传校验**：扩展名白名单（`ALLOWED_IMAGE_EXTENSION` / `ALLOWED_DOCUMENT_EXTENSION` / `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION`，P1 已扩展音视频）；单次请求大小上限 `MAX_SINGLE_REQUEST_BYTES = 64MB`（`UploadFileReq`，仅防御滥用，见 [§17.13](#1713-分片上传p2b-已落地)），大文件走分片上传；图片单次上传仍限 15MB（`UploadImageReq`）
 2. **扩展名白名单分层**：存储层（`LocalStorageService` / `CosService` / `AliyunOSSService`）统一用 `allowed_extensions_for_base_type("mixed")` 取**全类型并集**（图片 + 文档 + 视频 + 音频），仅校验"是否为系统允许上传的媒体类型"，**放行 video/audio**，不感知知识库板块语义；板块级细粒度约束由 `KnowledgeBaseService._assert_media_type_allowed` 按 `knowledge_base.base_type` 负责，且**校验前移到落盘之前**，被拒文件不占用配额。详见 [02-knowledge-base.md §11.8.6](./02-knowledge-base.md#1186-存储层白名单的分层设计)
 3. **配额校验**：所有上传路径经 `RuntimeStorageProxy` 走 `StorageQuotaService.check_quota`，超限拒绝
 4. **路径穿越防护**：本地存储路由拒绝包含 `..` 的 key
@@ -294,6 +294,76 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 2. **短期**：✅ 已完成存储配额与按 account 计量（`StorageQuotaService` + `account_storage_usage`）
 3. **中期**：将 `icon_generator_service` 的图标生成也走 `ObjectStoragePort`（当前绕过直接调用 COS 客户端）
 4. **中期**：将 `cold_storage_manager` 纳入 `ObjectStoragePort` 抽象
-5. **中期**：分片上传 + 秒传 + 断点续传，解除单文件 15MB 上限（P2）
-6. **长期**：支持 AWS S3、MinIO、Azure Blob 等更多后端
-7. **长期**：前端直传（STS 临时凭证）
+5. **中期**：✅ 已完成分片上传 + 秒传 + 断点续传，解除单次上传 15MB 上限（P2B，见 [§17.13](#1713-分片上传p2b-已落地)）
+6. **中期**：云后端（cos/oss）原生 multipart 分片（P2B-2）
+7. **长期**：支持 AWS S3、MinIO、Azure Blob 等更多后端
+8. **长期**：前端直传（STS 临时凭证）
+
+### 17.13 分片上传（P2B 已落地）
+
+大文件走「初始化 → 分片 → 合并」链路，绕开单次 multipart 的体积与超时限制，并附带秒传与断点续传能力。
+
+**前端触发点**：`ui/src/services/chunked-upload.ts`。`SINGLE_UPLOAD_THRESHOLD = 5MB` 以下的文件仍走原有单次接口（`documents/ListView.vue` 按此阈值分流）；超过阈值走分片。
+
+| 参数 | 取值 | 位置 |
+| --- | --- | --- |
+| 分片大小 | 5MB（`CHUNK_SIZE`） | 前端 `ui/src/services/chunked-upload.ts` |
+| 前端并发 | 3（`CONCURRENCY`） | 同上 |
+| 会话 TTL | 24h（`86400s`） | `chunked_upload_session_service.py` |
+| 秒传指纹 TTL | 7 天（`86400 * 7`） | 同上 |
+| 分片暂存根目录 | `storage/chunks/{session_id}/`（`CHUNK_UPLOAD_ROOT` 可覆盖） | `local_storage_service.py`（`DEFAULT_CHUNK_UPLOAD_ROOT`） |
+
+**会话状态存 Redis（非进程内存）**：API 以多 uvicorn worker 运行，进程内字典无法跨 worker 共享，故会话元数据与已收分片集合落在 Redis：
+
+| Redis key | 内容 | TTL |
+| --- | --- | --- |
+| `chunked_upload:session:{session_id}` | 会话元数据 JSON（account_id / filename / total_size / chunk_size / total_chunks / fingerprint） | 24h |
+| `chunked_upload:received:{session_id}` | 已收分片下标 Set（`SADD` 原子幂等，避免并发丢更新） | 24h |
+| `chunked_upload:fingerprint:{account_id}:{fingerprint}` | 秒传指纹 → `UploadFile.id` 映射（**同账号**有效） | 7 天 |
+
+分片实体暂存在存储后端（`LocalStorageService.save_chunk` → `storage/chunks/{session_id}/{index:06d}.part`，同下标覆盖）。
+
+**完整流程**：
+
+| 阶段 | 接口 | 行为 |
+| --- | --- | --- |
+| 初始化 | `POST /space/chunked-uploads/init` | 校验 `total_size/chunk_size/total_chunks > 0` 且分片数与文件大小匹配；按套餐校验单文件上限；查秒传指纹（命中直接返回 `{instant: true, upload_file_id}`）；`check_quota` 预校验配额；创建 Redis 会话返回 `session_id` |
+| 上传分片 | `POST /space/chunked-uploads/chunk` | 分片写入暂存目录；`SADD` 登记下标；返回 `received / total_chunks / missing_chunks` |
+| 查询进度 | `GET /space/chunked-uploads/{session_id}/status` | 断点续传：返回 `received_chunks` / `missing_chunks` / `is_complete` |
+| 合并完成 | `POST /space/chunked-uploads/complete` | 校验归属与无缺片 → **流式合并**分片为最终对象（边读边算增量 **sha3_256**，不整文件入内存）→ 落 `UploadFile` 记录 → **建档**（可选，`knowledge_base_id`）→ 清理暂存 → 销毁会话 → 登记秒传指纹 |
+| 秒传 | `POST /space/chunked-uploads/instant` | 校验源文件归属 → 预校验板块类型 → `check_quota` → **服务端复制**对象 → 落新 `UploadFile` → **建档**（可选）→ 累加配额 → 登记指纹 |
+| 放弃 | `POST /space/chunked-uploads/abort` | 清理暂存目录并销毁会话 |
+
+编排服务：`api/internal/service/chunked_upload_service.py`（`init` / `save_chunk` / `complete` / `instant_upload` / `abort` / `status`）；会话与指纹服务：`api/internal/service/chunked_upload_session_service.py`；路由：`api/app/http/chunked_upload_routes.py`。
+
+**秒传（同账号去重 + 服务端复制）**：
+
+- 指纹 = 文件大小 + 抽样分片哈希（浏览器取**首 / 中 / 尾各 256KB** 合并后 SHA-256）。全文件哈希对 GB 级文件在浏览器端过慢，故为抽样指纹；非安全上下文（`crypto.subtle` 不可用）退化为 `大小-文件名`。
+- 命中前提是**同一账号**（Redis key 含 `account_id`），不跨账号复用。
+- 秒传**不做硬链接或引用复用，而是服务端复制一份对象**（`copy_object`），并生成独立的 `UploadFile` 记录——保证两个文件的删除语义独立（删除其一时另一个不受影响）。
+- 秒传同样**建档**（携带 `knowledge_base_id` 时），与 `complete` 行为一致。
+
+**断点续传**：`status` 接口返回 `received_chunks` / `missing_chunks`，前端仅补传缺片；会话与已收分片在 24h 内有效。
+
+**单文件上限按套餐分级**：`StorageQuotaService.resolve_max_file_size_bytes(account_id)` 取生效套餐的 `PlanEntitlement.feature_key = 'max_single_file_gb'` 权益，无权益时回退 `DEFAULT_MAX_SINGLE_FILE_BYTES = 15MB`（常量在 `api/internal/entity/storage_quota_entity.py`）。管理员在套餐板块配置该权益即可提升上限，无需改代码。注意该上限约束的是**单文件总字节数**，单个分片不受限。
+
+**两层防御（顺序保证不留残留）**：
+
+1. **合并 / 复制前预校验板块类型**（`KnowledgeBaseService.assert_upload_allowed`）：避免「把视频传进图片库」这类场景白传几百 MB 后才被拒。
+2. **建档失败回滚**：`create_document_from_upload_file` 抛异常时，回滚已合并/复制的对象与 `UploadFile` 记录，**保留会话**（`complete`）以便重试；不累加配额。落库失败亦回收已合并对象，避免孤儿文件。
+3. 只有在全部成功后才执行破坏性收尾与计量：`add_usage` → 清理暂存 → 销毁会话 → 登记指纹。
+
+**后端支持范围**：**当前仅支持 `local` 后端**（`ChunkedUploadService` 直接注入 `LocalStorageService`，落库 `storage_backend="local"`）。`cos`/`oss` 的原生 multipart 上传属 **P2B-2**，未实现。
+
+**API 清单**：
+
+| 方法 | 路径 |
+| --- | --- |
+| POST | `/space/chunked-uploads/init` |
+| POST | `/space/chunked-uploads/chunk` |
+| GET | `/space/chunked-uploads/{session_id}/status` |
+| POST | `/space/chunked-uploads/complete` |
+| POST | `/space/chunked-uploads/instant` |
+| POST | `/space/chunked-uploads/abort` |
+
+> 与单次上传的配额口径差异：单次上传经 `RuntimeStorageProxy` 收口校验；分片上传由 `ChunkedUploadService` 直接调用 `StorageQuotaService.check_quota`（init / instant）与 `add_usage`（complete / instant），语义一致（成功后才计量）。

@@ -146,6 +146,17 @@ def test_upload_file_req_should_validate_document_extension(form_request):
     assert "file" in form.errors
 
 
+def test_upload_file_req_allows_file_above_legacy_15mb_limit(form_request):
+    """单次上传上限已放宽（大文件走分片），16MB 文件应通过大小校验。"""
+    ok, form = _validate_form(
+        form_request,
+        UploadFileReq,
+        data={"file": upload("document.txt", content=b"x" * (16 * 1024 * 1024))},
+        content_type="multipart/form-data",
+    )
+    assert ok, form.errors
+
+
 def test_upload_image_req_should_validate_image_extension(form_request):
     ok, form = _validate_form(
         form_request,

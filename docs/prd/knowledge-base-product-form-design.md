@@ -402,7 +402,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | # | 缺陷 | 现状 | 修复方案 | P1 状态 |
 | --- | --- | --- | --- | --- |
 | 1 | **`UploadFile.size` 溢出** | `Integer`，上限约 2.1GB | 升级 `BigInteger`（必改，否则大视频写坏） | ✅ 已修复 |
-| 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ⬜ P2B（P2A 未含） |
+| 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ✅ 已完成（P2B：分片上传链路 + 秒传 + 断点续传；上限按 `PlanEntitlement.max_single_file_gb` 分级，默认 15MB；单次接口上限放宽为 64MB 防御常量） |
 | 3 | **上传白名单无音视频** | [upload_file_entity.py](../../api/internal/entity/upload_file_entity.py) 仅图片 + 文档 | 增加 mp4/mov/avi/mkv/webm、mp3/wav/m4a/aac 等 | ✅ 已完成（P2A：实体层白名单 + `allowed_extensions_for_base_type()` + 存储层全类型并集 + `upload_document` 类型硬约束） |
 | 4 | **多模态产物不入库** | 抽帧 / ASR / OCR 产物丢弃 | 接入索引链路，产物写 Segment + 向量化 | ✅ 已完成（P2A：`KnowledgeMediaExtractorService` 产物直达 Segment + 向量化；L2 产物属 P3） |
 | 5 | **标签未接入知识库** | 无 `KnowledgeBaseTag` / `DocumentTag` | 新增关联表，复用 Tag 服务 | ✅ 模型已落地（表 + FK + 唯一约束），服务层接入属后续 |
@@ -430,17 +430,17 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 阶段 | 目标 | 核心交付 | 可独立验证 | 状态 |
 | --- | --- | --- | --- | --- |
 | **P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
-| **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（待做）**：分片上传 + 秒传 + 断点续传，解除单文件 15MB 上限 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：传 1GB 视频不中断 | 🟡 **P2A 已完成**（实施计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)）；P2B 待做 |
+| **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（已完成）**：分片上传 + 秒传 + 断点续传，解除单文件 15MB 上限 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：传 1GB 视频不中断（✅ 已达成） | ✅ **已完成**（P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
 | **P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引 + 融合排序；检索工具支持板块/分区/标签/媒体类型过滤；L2 按需解析触发 | 以图搜图命中画面相似素材 | ⬜ 未开始 |
 | **P4 视频轻量编辑** | 「改细节」可落地 | `video_trim` / `video_concat` / `video_subtitle` 工具 + Celery 转码队列 + 对话框预览 | 对话里裁剪片段并预览成片 | ⬜ 未开始 |
 | **P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
 
-**最小可用闭环 = P1 + P2 完成**（素材能入库、能被检索）。P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；P2B（大文件分片上传）补全后 P2 完整收口。
+**最小可用闭环 = P1 + P2 完成**（素材能入库、能被检索）。P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；P2B（大文件分片上传）落地后，P2 已完整收口。
 
 > **P1 落地说明（与设计稿的差异）**：
 > - `KnowledgePartition.visibility_scope` 按设计已落地（默认继承板块可见性），仅作**字段预留**，分区级权限校验首版不做。
 > - `UploadFile.size` 已升级 `BigInteger`；`upload_file` 表另有 `storage_backend` 字段（运行时代理按此路由），非本设计新增但为配额与后端切换的既有基础。
-> - 上传白名单的 `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION` 已就绪，但**分片上传与解除单文件 15MB 上限仍属 P2B**。
+> - 上传白名单的 `ALLOWED_VIDEO_EXTENSION` / `ALLOWED_AUDIO_EXTENSION` 已就绪；**分片上传与解除单文件 15MB 上限已在 P2B 落地**（见 9.2）。
 > - 配额校验的落点由设计稿的 `StorageQuotaService.check(account_id, incoming_bytes)` 实现为 `check_quota`，并在 `RuntimeStorageProxy` 统一收口（覆盖用户上传 / Agent 产物 / 后续同步）。
 
 > **P2A 落地说明（与设计稿的差异）**：
@@ -484,4 +484,4 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 2. **转码配额计量**：视频编辑的 CPU 转码是否单独计费，还是计入现有算力配额
 3. **外部数据源同步的配额策略**：同步超限时是整体拒绝、还是截断同步、还是仅告警
 4. **分级档位阈值**：短音频 5min 的切分阈值是否需按套餐/场景调整
-5. **大文件分片规格**：分片大小、并发数、断点续传的存储方案
+5. ~~**大文件分片规格**：分片大小、并发数、断点续传的存储方案~~ → **已定稿（P2B）**：分片大小 5MB、前端并发 3、会话状态存 Redis（多 worker 共享，key 前缀 `chunked_upload:`）、会话 TTL 24h（秒传指纹 TTL 7 天）；分片暂存 `storage/chunks/{session_id}/`，完成时流式合并。详见 [modules/06-file-storage.md §17.13](./modules/06-file-storage.md#1713-分片上传p2b-已落地)

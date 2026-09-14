@@ -6,11 +6,18 @@ from internal.lib.helper import datetime_to_timestamp
 from internal.model import UploadFile
 
 
+# 单次 multipart 上传的绝对上限（防御滥用）；大文件请走分片上传接口
+MAX_SINGLE_REQUEST_BYTES = 64 * 1024 * 1024
+
+
 class UploadFileReq(Form):
     """上传文件请求"""
-    file = FileField("file",validators=[
+    file = FileField("file", validators=[
         FileRequired("上传文件不能为空"),
-        FileSize(max_size=15*1024*1024, message="上传文件最大不能超过15MB"),
+        FileSize(
+            max_size=MAX_SINGLE_REQUEST_BYTES,
+            message=f"单次上传不能超过{MAX_SINGLE_REQUEST_BYTES // (1024 * 1024)}MB，大文件请使用分片上传",
+        ),
         FileAllowed(ALLOWED_DOCUMENT_EXTENSION, message=f"仅允许上传{'/'.join(ALLOWED_DOCUMENT_EXTENSION)}文件")
     ])
 
