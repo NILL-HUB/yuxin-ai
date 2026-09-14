@@ -461,3 +461,31 @@ def test_complete_recovers_when_persist_fails():
     assert storage.deleted, "落库失败应回收合并产物"
     assert session_service.get(session_id) is not None, "会话应保留以便重试"
 
+
+def test_complete_registers_document_when_knowledge_base_given(monkeypatch):
+    session_service = _FakeSessionService()
+    service, _calls = _service(session_service=session_service)
+    account = _account()
+    session_id = service.init(
+        account=account, filename="kb.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-kb",
+    )["session_id"]
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+
+    recorded = {}
+
+    class _Knowledge:
+        def create_document_from_upload_file(self, **kwargs):
+            recorded.update(kwargs)
+            return SimpleNamespace(id=uuid4())
+
+    monkeypatch.setattr(service, "_knowledge_base_service", lambda: _Knowledge())
+
+    result = service.complete(
+        session_id=session_id, account=account, knowledge_base_id=str(uuid4())
+    )
+
+    assert "document_id" in result
+    assert recorded["upload_file"].size == 1234
+

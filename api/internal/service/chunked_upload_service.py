@@ -128,7 +128,7 @@ class ChunkedUploadService(BaseService):
             "missing_chunks": self.session_service.missing_chunks(session_id),
         }
 
-    def complete(self, *, session_id: str, account) -> dict:
+    def complete(self, *, session_id: str, account, knowledge_base_id: str = "") -> dict:
         """合并分片、落库并清理暂存。"""
         session = self.session_service.get(session_id)
         if session is None:
@@ -180,13 +180,24 @@ class ChunkedUploadService(BaseService):
             str(account.id), session.fingerprint, str(upload_file.id)
         )
 
-        return {
+        result = {
             "upload_file_id": str(upload_file.id),
             "size": total_size,
             "hash": digest,
             "key": target_key,
             "name": session.filename,
         }
+
+        if knowledge_base_id:
+            knowledge_service = self._knowledge_base_service()
+            document = knowledge_service.create_document_from_upload_file(
+                knowledge_base_id=knowledge_base_id,
+                upload_file=upload_file,
+                account=account,
+            )
+            result["document_id"] = str(document.id)
+
+        return result
 
     def instant_upload(self, *, account, upload_file_id: str, fingerprint: str) -> dict:
         """秒传：服务端复制既有对象并生成新的 UploadFile 记录。"""
@@ -259,3 +270,11 @@ class ChunkedUploadService(BaseService):
             "missing_chunks": self.session_service.missing_chunks(session_id),
             "is_complete": len(session.received_chunks) >= session.total_chunks,
         }
+
+    def _knowledge_base_service(self):
+        """延迟获取知识库服务（避免与 knowledge_base_service 循环导入）。"""
+        from app.http.module import injector
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+
+        return injector.get(KnowledgeBaseService)

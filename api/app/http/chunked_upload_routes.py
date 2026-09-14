@@ -167,6 +167,7 @@ def register_routes(quart_app) -> None:
             _get_service(ChunkedUploadService).complete,
             session_id=session_id,
             account=account,
+            knowledge_base_id=payload.get("knowledge_base_id", ""),
         )
         return _ok(result)
 

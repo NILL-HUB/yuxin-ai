@@ -215,7 +215,28 @@ class KnowledgeBaseService(BaseService):
         cos_service = self._get_cos_service()
         upload_file = cos_service.upload_file(file=file, only_image=False, account=account)
 
-        extension = (upload_file.extension or incoming_extension or "").lower()
+        return self.create_document_from_upload_file(
+            knowledge_base_id=knowledge_base.id,
+            upload_file=upload_file,
+            account=account,
+        )
+
+    def create_document_from_upload_file(
+            self,
+            *,
+            knowledge_base_id,
+            upload_file: UploadFile,
+            account: Account,
+            partition_id=None,
+    ) -> KnowledgeDocument:
+        """由已存在的 UploadFile 创建知识库文档并触发索引。
+
+        用于分片上传完成后的建档；会做板块类型硬约束校验。
+        """
+        knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+
+        extension = (upload_file.extension or "").lower()
+        self._assert_media_type_allowed(knowledge_base, extension)
         media_type = media_type_for_extension(extension)
 
         document = self.create(
@@ -227,6 +248,7 @@ class KnowledgeBaseService(BaseService):
             source_type=KnowledgeCreatedFrom.MANUAL_UPLOAD.value,
             source_id=str(upload_file.id),
             upload_file_id=upload_file.id,
+            partition_id=partition_id,
             media_type=media_type,
             parse_profile={},
             metadata_={
