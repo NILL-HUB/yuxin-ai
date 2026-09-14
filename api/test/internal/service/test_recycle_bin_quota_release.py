@@ -155,3 +155,30 @@ def test_release_storage_quota_swallows_service_error(monkeypatch, fake_delete):
     # 不抛异常即为通过
     handlers.purge_knowledge_document(snapshot)
     assert fake_delete == [("local", "knowledge/doc-4.pdf")]
+
+
+def test_purge_upload_file_releases_quota(fake_quota, fake_delete):
+    """独立 upload_file 回收站条目的物理销毁同样应释放配额。"""
+    account_id = str(uuid4())
+    snapshot = {
+        "main": {
+            "account_id": account_id,
+            "size": 8192,
+            "key": "uploads/standalone.bin",
+            "storage_backend": "oss",
+        }
+    }
+
+    handlers.purge_upload_file(snapshot)
+
+    assert fake_delete == [("oss", "uploads/standalone.bin")]
+    assert fake_quota.calls == [(account_id, 8192)]
+
+
+def test_purge_upload_file_skips_release_when_fields_incomplete(fake_quota, fake_delete):
+    snapshot = {"main": {"size": 128, "key": "uploads/incomplete.bin"}}
+
+    handlers.purge_upload_file(snapshot)
+
+    assert fake_delete == [("local", "uploads/incomplete.bin")]
+    assert fake_quota.calls == []

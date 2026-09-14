@@ -556,6 +556,7 @@ def purge_upload_file(snapshot: dict[str, Any]) -> None:
     backend = (main_data.get("storage_backend") or "local").strip() or "local"
     from internal.service.storage.storage_migration_service import _delete_object
     _delete_object(backend, key)
+    _release_storage_quota(main_data)
     logger.info("回收站销毁上传文件 key=%s backend=%s", key, backend)
 
 
