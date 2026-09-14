@@ -240,14 +240,18 @@ class TestChunkedUploadRoutes:
         assert svc.calls == []
 
     def test_instant_success(self, monkeypatch):
-        """秒传接口应透传参数并返回新文件标识。"""
+        """秒传接口应透传参数（含 knowledge_base_id）并返回新文件标识。"""
         _, svc = _setup(monkeypatch)
 
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.post(
                     "/space/chunked-uploads/instant",
-                    json={"upload_file_id": "f-1", "fingerprint": "2048-abc"},
+                    json={
+                        "upload_file_id": "f-1",
+                        "fingerprint": "2048-abc",
+                        "knowledge_base_id": "kb-9",
+                    },
                 )
                 return resp, await resp.json
 
@@ -259,3 +263,4 @@ class TestChunkedUploadRoutes:
         assert svc.calls[0][0] == "instant_upload"
         assert svc.calls[0][1]["upload_file_id"] == "f-1"
         assert svc.calls[0][1]["fingerprint"] == "2048-abc"
+        assert svc.calls[0][1]["knowledge_base_id"] == "kb-9"

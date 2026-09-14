@@ -568,3 +568,91 @@ def test_complete_rolls_back_when_document_creation_fails(monkeypatch):
     assert upload_file_service.deleted, "应删除 UploadFile 记录"
     assert session_service.get(session_id) is not None, "会话应保留可重试"
 
+
+def test_instant_upload_creates_document_when_knowledge_base_given(monkeypatch):
+    """秒传传入 knowledge_base_id 时应建档并回填 document_id。"""
+    from uuid import uuid4 as _uuid4
+
+    account = _account()
+
+    class _Query:
+        def filter(self, *_a, **_kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(
+                id=_uuid4(), account_id=account.id, key="2026/09/14/src.mp4",
+                name="src.mp4", extension="mp4", mime_type="video/mp4",
+                size=1024, hash="h",
+            )
+
+    service, _calls = _service()
+    service.db = SimpleNamespace(session=SimpleNamespace(query=lambda *_a, **_kw: _Query()))
+
+    recorded = {}
+
+    class _Knowledge:
+        def assert_upload_allowed(self, knowledge_base_id, extension, account):
+            recorded["precheck"] = (knowledge_base_id, extension)
+
+        def create_document_from_upload_file(self, **kwargs):
+            recorded["created"] = kwargs
+            return SimpleNamespace(id=_uuid4())
+
+    monkeypatch.setattr(service, "_knowledge_base_service", lambda: _Knowledge())
+
+    result = service.instant_upload(
+        account=account, upload_file_id=str(_uuid4()),
+        fingerprint="fp-kb-instant", knowledge_base_id=str(_uuid4()),
+    )
+
+    assert "document_id" in result
+    assert "precheck" in recorded
+    assert "created" in recorded
+
+
+def test_instant_upload_rolls_back_when_document_creation_fails(monkeypatch):
+    """秒传建档失败时应回滚复制产物与 UploadFile 记录。"""
+    from uuid import uuid4 as _uuid4
+
+    account = _account()
+
+    class _Query:
+        def filter(self, *_a, **_kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(
+                id=_uuid4(), account_id=account.id, key="2026/09/14/src.mp4",
+                name="src.mp4", extension="mp4", mime_type="video/mp4",
+                size=1024, hash="h",
+            )
+
+    storage = _FakeStorage()
+    storage.deleted = []
+    storage.delete_object = lambda key: storage.deleted.append(key) or True
+    upload_file_service = _FakeUploadFileService()
+    upload_file_service.deleted = []
+    upload_file_service.delete = lambda inst: upload_file_service.deleted.append(inst) or inst
+
+    service, _calls = _service(storage=storage, upload_file_service=upload_file_service)
+    service.db = SimpleNamespace(session=SimpleNamespace(query=lambda *_a, **_kw: _Query()))
+
+    class _Knowledge:
+        def assert_upload_allowed(self, *_a, **_kw):
+            return None
+
+        def create_document_from_upload_file(self, **_kw):
+            raise RuntimeError("建档失败")
+
+    monkeypatch.setattr(service, "_knowledge_base_service", lambda: _Knowledge())
+
+    with pytest.raises(RuntimeError):
+        service.instant_upload(
+            account=account, upload_file_id=str(_uuid4()),
+            fingerprint="fp", knowledge_base_id=str(_uuid4()),
+        )
+
+    assert storage.deleted, "应回滚秒传复制产物"
+    assert upload_file_service.deleted, "应回滚 UploadFile 记录"
+

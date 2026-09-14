@@ -223,8 +223,10 @@ class ChunkedUploadService(BaseService):
 
         return result
 
-    def instant_upload(self, *, account, upload_file_id: str, fingerprint: str) -> dict:
-        """秒传：服务端复制既有对象并生成新的 UploadFile 记录。"""
+    def instant_upload(
+        self, *, account, upload_file_id: str, fingerprint: str, knowledge_base_id: str = ""
+    ) -> dict:
+        """秒传：服务端复制既有对象、生成新的 UploadFile 记录并（可选）建档。"""
         try:
             file_uuid = uuid.UUID(upload_file_id)
         except (TypeError, ValueError):
@@ -239,6 +241,14 @@ class ChunkedUploadService(BaseService):
             raise FailException("秒传源文件不存在")
         if getattr(source, "account_id", None) != account.id:
             raise FailException("无权秒传他人的文件")
+
+        # 第一层防御：复制前预校验板块类型，避免复制后无法建档造成残留
+        knowledge_service = None
+        if knowledge_base_id:
+            knowledge_service = self._knowledge_base_service()
+            knowledge_service.assert_upload_allowed(
+                knowledge_base_id, source.extension or "", account
+            )
 
         # 秒传会真实复制一份占用存储，必须先校验配额
         self.storage_quota_service.check_quota(account.id, int(getattr(source, "size", 0) or 0))
@@ -256,17 +266,43 @@ class ChunkedUploadService(BaseService):
             hash=source.hash,
             storage_backend="local",
         )
-        self.storage_quota_service.add_usage(account.id, size)
-        self.session_service.register_fingerprint(
-            str(account.id), fingerprint, str(upload_file.id)
-        )
-        return {
+
+        # 第二层防御：建档失败则回滚复制产物与 UploadFile 记录，不累加用量
+        result = {
             "instant": True,
             "upload_file_id": str(upload_file.id),
             "size": size,
             "key": target_key,
             "name": source.name,
         }
+        if knowledge_base_id and knowledge_service is not None:
+            try:
+                document = knowledge_service.create_document_from_upload_file(
+                    knowledge_base_id=knowledge_base_id,
+                    upload_file=upload_file,
+                    account=account,
+                )
+            except Exception:
+                logger.exception(
+                    "秒传建档失败，回滚复制产物与文件记录 upload_file_id=%s", upload_file.id
+                )
+                try:
+                    self.storage.delete_object(target_key)
+                except Exception:
+                    logger.warning("回滚秒传产物失败 key=%s", target_key, exc_info=True)
+                try:
+                    self.upload_file_service.delete(upload_file)
+                except Exception:
+                    logger.warning("回滚秒传 UploadFile 失败 id=%s", upload_file.id, exc_info=True)
+                raise
+            result["document_id"] = str(document.id)
+
+        # 全部成功后才计量与登记指纹
+        self.storage_quota_service.add_usage(account.id, size)
+        self.session_service.register_fingerprint(
+            str(account.id), fingerprint, str(upload_file.id)
+        )
+        return result
 
     def abort(self, *, session_id: str, account) -> None:
         """放弃上传：清理暂存与会话。"""

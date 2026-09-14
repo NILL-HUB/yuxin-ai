@@ -173,7 +173,7 @@ def register_routes(quart_app) -> None:
 
     @quart_app.post("/space/chunked-uploads/instant")
     async def chunked_upload_instant() -> Response:
-        """秒传：按既有文件复制一份（不建档，建档由 complete 完成）。"""
+        """秒传：按既有文件复制一份并（可选）创建知识库文档。"""
         account, err = await _resolve_account()
         if err is not None:
             return err
@@ -195,6 +195,7 @@ def register_routes(quart_app) -> None:
             account=account,
             upload_file_id=upload_file_id,
             fingerprint=payload.get("fingerprint", ""),
+            knowledge_base_id=payload.get("knowledge_base_id", ""),
         )
         return _ok(result)
 

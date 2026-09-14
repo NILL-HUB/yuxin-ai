@@ -69,8 +69,8 @@ const toResult = (data: Record<string, unknown>): ChunkedUploadResult => {
 /**
  * 上传单个文件（分片上传，含秒传与断点续传）。
  *
- * 说明：秒传接口当前只复制既有文件、不建档（后端 instant_upload 未接 knowledge_base_id），
- * 因此秒传命中时不会在知识库产生新文档；完整建档仍需后端补齐后由 complete 完成。
+ * 说明：秒传命中时后端会复制既有文件并按 knowledge_base_id 建档，
+ * 返回值含 document_id，与正常分片上传 complete 的行为一致。
  */
 export const uploadFileChunked = async (
   knowledgeBaseId: string,
@@ -94,11 +94,17 @@ export const uploadFileChunked = async (
   )
   const initData = initResponse.data
 
-  // 秒传命中：服务端复制既有文件（当前不建档）
+  // 秒传命中：服务端复制既有文件并建档
   if (initData.instant) {
     const copied = await post<BaseResponse<Record<string, unknown>>>(
       '/space/chunked-uploads/instant',
-      { body: { upload_file_id: String(initData.upload_file_id ?? ''), fingerprint } },
+      {
+        body: {
+          upload_file_id: String(initData.upload_file_id ?? ''),
+          fingerprint,
+          knowledge_base_id: knowledgeBaseId,
+        },
+      },
     )
     onProgress?.({ uploadedChunks: 1, totalChunks: 1, percent: 100 })
     return toResult(copied.data)
