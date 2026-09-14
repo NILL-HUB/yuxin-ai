@@ -9,10 +9,12 @@ from sqlalchemy import func
 
 from internal.core.file_extractor import FileExtractor
 from internal.entity.dataset_entity import DocumentStatus, SegmentStatus
+from internal.entity.knowledge_entity import DocumentMediaType
 from internal.exception import NotFoundException
 from internal.model import KnowledgeDocument, KnowledgeSegment, UploadFile
 from internal.service.embeddings_service import EmbeddingsService
 from internal.service.jieba_service import JiebaService
+from internal.service.knowledge_media_extractor_service import KnowledgeMediaExtractorService, MediaSegment
 from internal.service.knowledge_vector_service import KnowledgeVectorService
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pkg.sqlalchemy import SQLAlchemy
@@ -54,6 +56,7 @@ class KnowledgeIndexingService(BaseService):
     embeddings_service: EmbeddingsService
     jieba_service: JiebaService
     knowledge_vector_service: KnowledgeVectorService
+    media_extractor: KnowledgeMediaExtractorService
 
     def build_document(self, document_id: UUID, account) -> None:
         document = self.get(KnowledgeDocument, document_id)
@@ -66,17 +69,22 @@ class KnowledgeIndexingService(BaseService):
                 status=DocumentStatus.PARSING.value,
             )
 
-            logger.info("开始解析知识库文档 document_id=%s", document_id)
-            lc_documents = self._parsing(document)
+            media_type = getattr(document, "media_type", None) or DocumentMediaType.DOCUMENT.value
+            if media_type != DocumentMediaType.DOCUMENT.value:
+                logger.info("开始解析多模态素材 document_id=%s media_type=%s", document_id, media_type)
+                self._build_media_document(document)
+            else:
+                logger.info("开始解析知识库文档 document_id=%s", document_id)
+                lc_documents = self._parsing(document)
 
-            logger.info("开始分割知识库文档 document_id=%s", document_id)
-            lc_segments = self._splitting(document, lc_documents)
+                logger.info("开始分割知识库文档 document_id=%s", document_id)
+                lc_segments = self._splitting(document, lc_documents)
 
-            logger.info("开始构建知识库索引 document_id=%s", document_id)
-            self._indexing(document, lc_segments)
+                logger.info("开始构建知识库索引 document_id=%s", document_id)
+                self._indexing(document, lc_segments)
 
-            logger.info("开始完成知识库文档索引 document_id=%s", document_id)
-            self._completed(document, lc_segments)
+                logger.info("开始完成知识库文档索引 document_id=%s", document_id)
+                self._completed(document, lc_segments)
             logger.info("知识库文档处理完成 document_id=%s", document_id)
 
         except Exception as e:
@@ -94,15 +102,78 @@ class KnowledgeIndexingService(BaseService):
             except Exception as e:
                 logger.exception("批量构建知识库文档单条失败 document_id=%s 错误信息:%s", document_id, str(e))
 
-    def _parsing(self, document: KnowledgeDocument) -> list[LCDocument]:
+    def _get_upload_file(self, document: KnowledgeDocument) -> UploadFile:
+        """取文档关联的上传文件，缺失时抛错。"""
         if not document.upload_file_id:
             raise NotFoundException("当前文档未关联上传文件，无法解析")
-
         upload_file = self.db.session.query(UploadFile).filter(
             UploadFile.id == document.upload_file_id,
         ).one_or_none()
         if upload_file is None:
             raise NotFoundException("上传文件不存在")
+        return upload_file
+
+    def _build_media_document(self, document: KnowledgeDocument) -> None:
+        """多模态素材：解析产物即片段，跳过文本切分。"""
+        upload_file = self._get_upload_file(document)
+        media_segments = self.media_extractor.extract(document, upload_file)
+        if not media_segments:
+            raise NotFoundException("素材解析未产出可用内容")
+
+        knowledge_base = document.knowledge_base
+        if knowledge_base is None:
+            raise NotFoundException("知识库不存在")
+
+        segment_ids = []
+        for index, item in enumerate(media_segments, start=1):
+            segment = self.create(
+                KnowledgeSegment,
+                knowledge_base_id=document.knowledge_base_id,
+                knowledge_document_id=document.id,
+                owner_account_id=document.owner_account_id,
+                position=index,
+                content=item.content,
+                keywords=self.jieba_service.extract_keywords(item.content, 10),
+                metadata_=item.metadata,
+                character_count=len(item.content),
+                token_count=self.embeddings_service.calculate_token_count(item.content),
+                status=SegmentStatus.INDEXING.value,
+                enabled=False,
+            )
+            self.knowledge_vector_service.index_segment(segment, knowledge_base)
+            segment_ids.append(segment.id)
+
+        self.update(document, status=DocumentStatus.INDEXING.value)
+        self._finalize_segments(
+            document,
+            segment_ids,
+            parse_profile={
+                "tier1": {
+                    "status": "completed",
+                    "media_type": getattr(document, "media_type", None),
+                    "segment_count": len(segment_ids),
+                }
+            },
+        )
+
+    def _finalize_segments(self, document, segment_ids, parse_profile=None) -> None:
+        """统一收尾：片段置为完成并启用，文档置为完成。"""
+        if segment_ids:
+            with self.db.auto_commit():
+                self.db.session.query(KnowledgeSegment).filter(
+                    KnowledgeSegment.id.in_(segment_ids),
+                ).update({
+                    "status": SegmentStatus.COMPLETED.value,
+                    "enabled": True,
+                })
+
+        update_fields = {"status": DocumentStatus.COMPLETED.value}
+        if parse_profile is not None:
+            update_fields["parse_profile"] = parse_profile
+        self.update(document, **update_fields)
+
+    def _parsing(self, document: KnowledgeDocument) -> list[LCDocument]:
+        upload_file = self._get_upload_file(document)
 
         lc_documents = self.file_extractor.load(upload_file, False, True)
 
@@ -201,20 +272,11 @@ class KnowledgeIndexingService(BaseService):
     def _completed(self, document: KnowledgeDocument, lc_segments: list[LCDocument]) -> None:
         segment_ids = [lc_segment.metadata["segment_id"] for lc_segment in lc_segments]
 
-        if segment_ids:
-            with self.db.auto_commit():
-                self.db.session.query(KnowledgeSegment).filter(
-                    KnowledgeSegment.id.in_(segment_ids),
-                ).update({
-                    "status": SegmentStatus.COMPLETED.value,
-                    "enabled": True,
-                })
-
         self.update(
             document,
             character_count=sum([len(seg.page_content) for seg in lc_segments]),
-            status=DocumentStatus.COMPLETED.value,
         )
+        self._finalize_segments(document, segment_ids)
 
     @staticmethod
     def _clean_text_by_process_rule(text: str, rule: dict) -> str:

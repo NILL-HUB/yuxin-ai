@@ -78,7 +78,7 @@ class _Db:
 
 def _build_service(db=None, file_extractor=None,
                    embeddings_service=None, jieba_service=None,
-                   knowledge_vector_service=None):
+                   knowledge_vector_service=None, media_extractor=None):
     return KnowledgeIndexingService(
         db=db or SimpleNamespace(session=SimpleNamespace()),
         file_extractor=file_extractor or SimpleNamespace(),
@@ -86,6 +86,9 @@ def _build_service(db=None, file_extractor=None,
         jieba_service=jieba_service or SimpleNamespace(extract_keywords=lambda _t, _k: ["kw"]),
         knowledge_vector_service=knowledge_vector_service or SimpleNamespace(
             index_segment=lambda _seg, _kb: str(_seg.id)
+        ),
+        media_extractor=media_extractor or SimpleNamespace(
+            extract=lambda _doc, _file: []
         ),
     )
 
