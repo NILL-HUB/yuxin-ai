@@ -41,6 +41,12 @@ class _FakeSessionService:
     def lookup_fingerprint(self, account_id, fingerprint):
         return self.fingerprints.get((account_id, fingerprint))
 
+    def claim_for_completion(self, session_id, ttl_seconds=300):
+        return True
+
+    def release_claim(self, session_id):
+        return None
+
 
 class _FakeStorage:
     def __init__(self):
@@ -165,7 +171,7 @@ def test_save_chunk_marks_session():
         chunk_size=512, total_chunks=2, fingerprint="fp",
     )["session_id"]
 
-    result = service.save_chunk(session_id=session_id, index=0, content=b"x" * 512)
+    result = service.save_chunk(session_id=session_id, index=0, content=b"x" * 512, account=account)
 
     assert result["received"] == 1
     assert session_service.sessions[session_id].received_chunks == [0]
@@ -175,7 +181,7 @@ def test_save_chunk_rejects_unknown_session():
     service, _calls = _service()
 
     with pytest.raises(FailException):
-        service.save_chunk(session_id="nope", index=0, content=b"x")
+        service.save_chunk(session_id="nope", index=0, content=b"x", account=_account())
 
 
 def test_save_chunk_rejects_out_of_range_index():
@@ -188,7 +194,7 @@ def test_save_chunk_rejects_out_of_range_index():
     )["session_id"]
 
     with pytest.raises(ValidateErrorException):
-        service.save_chunk(session_id=session_id, index=5, content=b"x")
+        service.save_chunk(session_id=session_id, index=5, content=b"x", account=account)
 
 
 def test_complete_merges_persists_and_cleans_up():
@@ -204,8 +210,8 @@ def test_complete_merges_persists_and_cleans_up():
         account=account, filename="final.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp-final",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
-    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
 
     result = service.complete(session_id=session_id, account=account)
 
@@ -227,7 +233,7 @@ def test_complete_rejects_when_chunks_missing():
         account=account, filename="partial.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
 
     with pytest.raises(FailException):
         service.complete(session_id=session_id, account=account)
@@ -254,7 +260,7 @@ def test_status_reports_progress():
         account=account, filename="a.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
 
     status = service.status(session_id=session_id, account=account)
 
@@ -400,7 +406,7 @@ def test_save_chunk_rejects_empty_content():
     )["session_id"]
 
     with pytest.raises(ValidateErrorException):
-        service.save_chunk(session_id=session_id, index=0, content=b"")
+        service.save_chunk(session_id=session_id, index=0, content=b"", account=account)
 
 
 def test_status_rejects_other_account():
@@ -452,8 +458,8 @@ def test_complete_recovers_when_persist_fails():
         account=account, filename="a.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp-fail",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
-    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
 
     with pytest.raises(RuntimeError):
         service.complete(session_id=session_id, account=account)
@@ -470,8 +476,8 @@ def test_complete_registers_document_when_knowledge_base_given(monkeypatch):
         account=account, filename="kb.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp-kb",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
-    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
 
     recorded = {}
 
@@ -509,8 +515,8 @@ def test_complete_rejects_mismatched_base_type_before_merge(monkeypatch):
         account=account, filename="promo.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp-type",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
-    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
 
     class _Knowledge:
         def assert_upload_allowed(self, knowledge_base_id, extension, account):
@@ -547,8 +553,8 @@ def test_complete_rolls_back_when_document_creation_fails(monkeypatch):
         account=account, filename="a.mp4", total_size=1024,
         chunk_size=512, total_chunks=2, fingerprint="fp-roll",
     )["session_id"]
-    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
-    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
 
     class _Knowledge:
         def assert_upload_allowed(self, knowledge_base_id, extension, account):
@@ -655,4 +661,33 @@ def test_instant_upload_rolls_back_when_document_creation_fails(monkeypatch):
 
     assert storage.deleted, "应回滚秒传复制产物"
     assert upload_file_service.deleted, "应回滚 UploadFile 记录"
+
+
+def test_save_chunk_rejects_other_account():
+    session_service = _FakeSessionService()
+    service, _calls = _service(session_service=session_service)
+    session_id = service.init(
+        account=_account(), filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp",
+    )["session_id"]
+
+    with pytest.raises(FailException):
+        service.save_chunk(session_id=session_id, index=0, content=b"x" * 512, account=_account())
+
+
+def test_complete_rejects_when_session_already_claimed(monkeypatch):
+    """会话已被占用时应拒绝并发 complete。"""
+    session_service = _FakeSessionService()
+    service, _calls = _service(session_service=session_service)
+    account = _account()
+    session_id = service.init(
+        account=account, filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-claim",
+    )["session_id"]
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
+    session_service.claim_for_completion = lambda _sid: False
+
+    with pytest.raises(FailException):
+        service.complete(session_id=session_id, account=account)
 

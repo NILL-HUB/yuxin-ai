@@ -57,6 +57,14 @@ class ChunkedUploadSessionService:
     def _received_key(session_id: str) -> str:
         return f"chunked_upload:received:{session_id}"
 
+    @staticmethod
+    def _sessions_key() -> str:
+        return "chunked_upload:sessions"
+
+    @staticmethod
+    def _claim_key(session_id: str) -> str:
+        return f"chunked_upload:claim:{session_id}"
+
     def create(
         self,
         *,
@@ -79,6 +87,7 @@ class ChunkedUploadSessionService:
             fingerprint=fingerprint,
         )
         self._save(session)
+        self.redis.sadd(self._sessions_key(), session.session_id)
         return session
 
     def _save(self, session: ChunkedUploadSession) -> None:
@@ -136,6 +145,33 @@ class ChunkedUploadSessionService:
     def abort(self, session_id: str) -> None:
         """销毁会话与已收分片集合（分片文件清理由编排服务负责）。"""
         self.redis.delete(self._key(session_id), self._received_key(session_id))
+        self.redis.srem(self._sessions_key(), session_id)
+
+    def active_sessions(self) -> list[str]:
+        """返回仍在跟踪中的会话 id 列表（可能含已过期项，由调用方二次校验）。"""
+        members = self.redis.smembers(self._sessions_key()) or []
+        result = []
+        for member in members:
+            result.append(member.decode("utf-8") if isinstance(member, bytes) else str(member))
+        return result
+
+    def is_alive(self, session_id: str) -> bool:
+        """会话元数据是否仍存在（未被 TTL 过期、未 abort）。"""
+        return bool(self.redis.exists(self._key(session_id)))
+
+    def forget_session(self, session_id: str) -> None:
+        """从跟踪集合中移除会话（清理任务用）。"""
+        self.redis.srem(self._sessions_key(), session_id)
+
+    def claim_for_completion(self, session_id: str, ttl_seconds: int = 300) -> bool:
+        """原子占用会话以防并发 complete；成功返回 True。"""
+        return bool(
+            self.redis.set(self._claim_key(session_id), b"1", nx=True, ex=ttl_seconds)
+        )
+
+    def release_claim(self, session_id: str) -> None:
+        """释放占用（失败路径调用，便于用户重试）。"""
+        self.redis.delete(self._claim_key(session_id))
 
     def register_fingerprint(self, account_id: str, fingerprint: str, upload_file_id: str) -> None:
         """登记秒传指纹 → UploadFile 映射（同账号有效）。"""

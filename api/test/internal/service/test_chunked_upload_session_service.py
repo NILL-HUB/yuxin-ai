@@ -35,8 +35,9 @@ class _FakeRedis:
             self.store[key] = bucket
         added = 0
         for member in members:
-            if member not in bucket:
-                bucket.add(member)
+            target = member if isinstance(member, bytes) else str(member).encode()
+            if target not in bucket:
+                bucket.add(target)
                 added += 1
         return added
 
@@ -54,6 +55,26 @@ class _FakeRedis:
             self.expires[key] = int(ttl)
             return 1
         return 0
+
+    def srem(self, key, *members):
+        bucket = self.store.get(key)
+        if not isinstance(bucket, set):
+            return 0
+        removed = 0
+        for member in members:
+            target = member if isinstance(member, bytes) else str(member).encode()
+            if target in bucket:
+                bucket.discard(target)
+                removed += 1
+        return removed
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value if isinstance(value, bytes) else str(value).encode()
+        if ex is not None:
+            self.expires[key] = int(ex)
+        return True
 
 
 def _service(redis=None):
@@ -180,3 +201,21 @@ def test_mark_received_sets_received_key_ttl():
     service.mark_received(session.session_id, 0)
 
     assert redis.expires[service._received_key(session.session_id)] == 86400
+
+
+def test_abort_removes_session_from_tracking_set():
+    service = _service()
+    session = service.create(**_session_kwargs())
+
+    assert session.session_id in service.active_sessions()
+    service.abort(session.session_id)
+    assert session.session_id not in service.active_sessions()
+
+
+def test_is_alive_reflects_session_existence():
+    service = _service()
+    session = service.create(**_session_kwargs())
+    assert service.is_alive(session.session_id) is True
+
+    service.abort(session.session_id)
+    assert service.is_alive(session.session_id) is False

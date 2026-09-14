@@ -60,7 +60,7 @@
 | 阶段 | 主题 | 完成状态 |
 | --- | --- | --- |
 | P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
-| P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ⬜ 未开始 |
+| P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（P2A 多模态素材入库 + P2B 分片上传/秒传/断点续传） |
 | P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ⬜ 未开始 |
 | P4 | 视频轻量编辑（trim / concat / subtitle） | ⬜ 未开始 |
 | P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
@@ -88,11 +88,11 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 
 ### 差异 2：模型档位命名不一致（✅ 已修复）
 
-`CostPolicyService` 使用 `cheap/standard/strong`，`TaskClassifierService` 已统一为 `standard`。
+档位已统一为模型池数字档位码（`1`~`5`，见 `model_tier_policy`）；`task_classifier_service.py` 使用 `{"simple":"1","medium":"2","complex":"3"}` 的 `_TIER_BY_COMPLEXITY` 映射，`public_ai_feature_config.fallback_tier` 亦为数字档位码。
 
-### 差异 3：PoolIntentResolver 纯关键词匹配（中优先级）
+### 差异 3：PoolIntentResolver 语义增强（✅ 已修复）
 
-`PoolIntentResolver.resolve()` 接收 `classifier_result` 参数但未使用，仅靠 query 文本关键词匹配 6 个子池。
+`PoolIntentResolver.resolve(query, classifier_result)` 现已在 `classifier_result` 携带 `intent` 时优先采用其意图（LLM 分类结果），仅在缺失时回退关键词匹配。
 
 ### 差异 5：ResultSynthesizerService 多 Agent 路径被绕过（✅ 已修复）
 
@@ -100,7 +100,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 
 ### 差异 6：user_memory.scope 字段未生效（✅ 已修复）
 
-`recall_relevant_memories` 已按 `owner_account_id`、`status` 和 `scope` 过滤。`memory_candidate` 表已添加 `scope` 字段。
+`recall_relevant_memories` 已按 `owner_account_id`、`status` 和 `scope` 过滤。（注：`memory_candidate` 表已由迁移 `s3d4e5f6a7b8` 删除，记忆候选确认流程整体废弃，改为自动写入。）
 
 ---
 
@@ -117,8 +117,8 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **删除死代码 KnowledgeRetrievalOrchestrator** | `knowledge_retrieval_orchestrator.py` | ✅ 已删除 |
-| **后端 Tier 命名统一** | `task_classifier_service.py` | ✅ 代码已正确使用 `standard`，无需修改 |
-| **修复 UserMemory.scope 硬编码** | `scoped_knowledge_service.py` + migration | ✅ scope 参数+过滤+memory_candidate 字段 |
+| **后端 Tier 命名统一** | `task_classifier_service.py` | ✅ 已统一为数字档位码（`1`/`2`/`3`） |
+| **修复 UserMemory.scope 硬编码** | `scoped_knowledge_service.py` + migration | ✅ scope 参数与过滤已生效（`memory_candidate` 表已随后续重构删除） |
 | **接入 ResultSynthesizer 到多 Agent 路径** | `multi_agent_executor.py` | ✅ 已接入 `ResultSynthesizerService`，synthesis_meta 嵌入 SSE |
 | **OrchestratorService 委托 Conductor** | `orchestrator_service.py`、`orchestrator_entity.py` | ✅ `ENABLE_CONDUCTOR` 开启时由 Conductor 决策，失败回退旧链路 |
 | **ExecutionCoordinator Resume** | `execution_coordinator_service.py` | ✅ 支持基于 SubtaskRegistry 快照恢复未完成任务 |
@@ -131,7 +131,8 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **pgvector scope 过滤增强** | `knowledge_vector_service.py` + `retrieval_service.py` | ✅ KnowledgeVectorService.search() 和 search_in_knowledge_base() 支持 knowledge_scope 过滤 |
-| **打通记忆确认对话推送** | `assistant_agent_service.py` + `chat-stream.ts` + `HomeView.vue` | ✅ MemoryConfirmationCard 接入对话 SSE 流 |
+
+> **历史注记**：原 P2 表中的"打通记忆确认对话推送（`MemoryConfirmationCard`）"任务**已作废**——记忆候选确认流程连同 `memory_candidate` 表（迁移 `s3d4e5f6a7b8`）与前端 `MemoryConfirmationCard` 组件一并移除，改为显著性评分自动写入 + 事后管理。
 
 ### P3（已完成）
 
@@ -147,7 +148,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | 生活场景工具扩展（邮件/日历/任务管理） | |
 | 多模态输入输出（语音/文档/图片） | |
 | 社交社区深化 | |
-| PoolIntentResolver 语义升级 | 接入 LLM 意图识别替代纯关键词匹配 |
+| ~~PoolIntentResolver 语义升级~~ | ✅ 已完成：`resolve()` 已优先采用 `classifier_result.intent`（LLM 分类结果） |
 
 ---
 

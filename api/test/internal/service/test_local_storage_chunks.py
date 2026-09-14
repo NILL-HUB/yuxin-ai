@@ -81,6 +81,19 @@ def test_cleanup_session_removes_chunk_dir(isolated_storage):
     assert not os.path.isdir(service._chunk_dir("sess-clean"))
 
 
+def test_cleanup_stale_session_dirs_removes_inactive_only(isolated_storage):
+    """只清理不再活跃的会话目录，活跃的保留。"""
+    service = _service()
+    service.save_chunk("active-sess", 0, b"data")
+    service.save_chunk("stale-sess", 0, b"data")
+
+    cleaned = service.cleanup_stale_session_dirs(lambda sid: sid == "active-sess")
+
+    assert cleaned == ["stale-sess"]
+    assert os.path.isdir(service._chunk_dir("active-sess"))
+    assert not os.path.isdir(service._chunk_dir("stale-sess"))
+
+
 def test_copy_object_duplicates_file_server_side(isolated_storage):
     service = _service()
     source_key = "2026/09/14/source.mp4"

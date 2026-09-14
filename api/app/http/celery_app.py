@@ -79,6 +79,7 @@ TASK_MODULES = [
     "internal.task.recycle_bin_tasks",
     "internal.task.auto_renewal_tasks",
     "internal.task.external_data_source_tasks",
+    "internal.task.chunked_upload_tasks",
 ]
 
 
@@ -95,6 +96,7 @@ import internal.task.knowledge_indexing_tasks as _task_knowledge  # noqa: F401,E
 import internal.task.recycle_bin_tasks as _task_recycle  # noqa: F401,E402
 import internal.task.auto_renewal_tasks as _task_auto_renewal  # noqa: F401,E402
 import internal.task.external_data_source_tasks as _task_external_ds  # noqa: F401,E402
+import internal.task.chunked_upload_tasks as _task_chunked_upload  # noqa: F401,E402
 
 # 补充记忆系统定时任务（每日巩固/权重扫描/技能治理/统计合并），与 Config 内置 4 项合并
 from celery.schedules import crontab  # noqa: E402
@@ -125,6 +127,11 @@ beat_schedule.update(
         "external-data-source-auto-sync": {
             "task": "internal.task.external_data_source_tasks.run_external_data_source_auto_sync",
             "schedule": crontab(hour="*/6", minute=15),  # 每 6 小时 15 分同步一次
+            "args": [],
+        },
+        "chunked-upload-stale-cleanup": {
+            "task": "internal.task.chunked_upload_tasks.cleanup_stale_chunk_sessions",
+            "schedule": crontab(minute=45),  # 每小时 45 分清理残留分片
             "args": [],
         },
     }

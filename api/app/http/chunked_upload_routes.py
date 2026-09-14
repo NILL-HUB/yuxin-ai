@@ -125,6 +125,7 @@ def register_routes(quart_app) -> None:
             session_id=session_id,
             index=index,
             content=content,
+            account=account,
         )
         return _ok(result)
 

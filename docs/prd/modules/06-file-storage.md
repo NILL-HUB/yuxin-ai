@@ -28,8 +28,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  业务层（Handler / Service）                                 │
 │  - 上传路由 /upload-files/*   - KnowledgeBaseService        │
-│  - AdminUploadFileHandler    - IconGeneratorService         │
-│  - AppService               - DeepThinkingAgent             │
+│  - ChunkedUploadService      - IconGeneratorService         │
+│  - AppRuntimeService         - DeepThinkingAgent             │
 └────────────────────────┬────────────────────────────────────┘
                          │ 注入（ObjectStoragePort / CosService）
 ┌────────────────────────▼────────────────────────────────────┐
@@ -109,7 +109,7 @@ binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 - `_get_service()` 按后端名在运行时惰性构造对应的 `LocalStorageService` / `CosService` / `AliyunOSSService` 实例，三个后端本身不感知配额（纯存储职责）。
 - `UploadFile.storage_backend` 记录写入时的后端；历史文件（该字段为空）归属 legacy 后端（`STORAGE_BACKEND` 环境变量），保证切换激活后端后旧文件仍可访问。
 
-> **历史说明**：早期版本通过 `api/internal/service/storage/factory.py::get_storage_service_class()` 在 DI 配置阶段按环境变量选定后端实现类。该工厂函数在当前代码中已无任何调用点，实际绑定改为上述 `RuntimeStorageProxy`；`StorageBackend` 枚举（`backend.py`）仍在 `StorageConfigService` 的后端取值校验中被引用。
+> **历史说明**：早期版本通过 `api/internal/service/storage/factory.py::get_storage_service_class()` 在 DI 配置阶段按环境变量选定后端实现类。该工厂函数在当前代码中已无任何调用点，实际绑定改为上述 `RuntimeStorageProxy`；`StorageBackend` 枚举（`backend.py`）目前**无运行时引用点**，`StorageConfigService` 的后端取值校验自建常量 `SUPPORTED_BACKENDS = ("local", "cos", "oss")` 并自行校验，不依赖该枚举。
 
 #### 17.3.4 StorageConfigService（存储配置服务）
 
@@ -125,7 +125,7 @@ binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 
 ### 17.4 存储配额与用量计量（P1 新增）
 
-存储配额在**代理层统一收口**，所有上传路径（用户页面上传、Agent 生成产物、小钰帮传、外部数据源同步）都经 `RuntimeStorageProxy` 校验，禁止各入口自行判断。
+存储配额在**服务层统一收口**：单次上传路径（用户页面上传、Agent 生成产物、小钰帮传、外部数据源同步）经 `RuntimeStorageProxy` 校验；分片上传链路（`ChunkedUploadService`）直接注入 `StorageQuotaService.check_quota` 校验。两条路径共用同一配额服务与 `account_storage_usage` 计量，禁止各入口自行判断。
 
 规则：
 
@@ -274,9 +274,9 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 
 ### 17.10 与记忆系统冷存储的关系
 
-记忆系统的冷存储（`cold_storage_manager.py`）目前直接调用 `CosService._get_client()` 和 `_get_bucket()` 访问 COS，**不走 ObjectStoragePort 抽象**。这是历史遗留设计，因为冷存储需要直接操作 COS 客户端进行大文件分片上传。
+记忆系统的冷存储（`cold_storage_manager.py`）**已纳入 `ObjectStoragePort` 抽象**：通过 DI 注入端口实例（`injector.get(ObjectStoragePort)`）分发到当前 `STORAGE_BACKEND` 配置的后端，上传走 `upload_bytes_without_record`，不再直接调用 `CosService._get_client()` / `_get_bucket()`。
 
-后续演进计划：将冷存储也纳入 ObjectStoragePort 抽象，统一通过 `STORAGE_BACKEND` 切换。详见 `docs/prd/memory-system/02-storage-and-retrieval.md` §5.3。
+详见 `docs/prd/memory-system/02-storage-and-retrieval.md` §5.3。
 
 ### 17.11 安全要求
 
@@ -292,8 +292,8 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 
 1. **短期**：✅ 已完成 local/cos/oss 三后端切换（运行时代理分发）
 2. **短期**：✅ 已完成存储配额与按 account 计量（`StorageQuotaService` + `account_storage_usage`）
-3. **中期**：将 `icon_generator_service` 的图标生成也走 `ObjectStoragePort`（当前绕过直接调用 COS 客户端）
-4. **中期**：将 `cold_storage_manager` 纳入 `ObjectStoragePort` 抽象
+3. **中期**：✅ 已完成——`icon_generator_service` 图标生成已改走统一存储端口（P1B 覆盖 1-12MB 大模型图片资产上传，历史 P1A 覆盖 12KB-1MB 小图标数据库存储；两者按图片大小自动切换，`CosService` 已由 DI 绑定为 `RuntimeStorageProxy`，调用 `upload_bytes_without_record` 统一校验配额与落库）
+4. **中期**：✅ 已完成——`cold_storage_manager` 已纳入 `ObjectStoragePort` 抽象
 5. **中期**：✅ 已完成分片上传 + 秒传 + 断点续传，解除单次上传 15MB 上限（P2B，见 [§17.13](#1713-分片上传p2b-已落地)）
 6. **中期**：云后端（cos/oss）原生 multipart 分片（P2B-2）
 7. **长期**：支持 AWS S3、MinIO、Azure Blob 等更多后端
@@ -319,6 +319,8 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 | --- | --- | --- |
 | `chunked_upload:session:{session_id}` | 会话元数据 JSON（account_id / filename / total_size / chunk_size / total_chunks / fingerprint） | 24h |
 | `chunked_upload:received:{session_id}` | 已收分片下标 Set（`SADD` 原子幂等，避免并发丢更新） | 24h |
+| `chunked_upload:sessions` | 活跃会话 id 跟踪 Set（`SADD` 于 `create`、`SREM` 于 `abort`），供残留暂存目录清理任务比对 | 永久（无 TTL，条目由清理任务回收） |
+| `chunked_upload:claim:{session_id}` | complete 并发占用标记（`SET NX EX 300`），防止并发双执行导致双倍计量 | 300s |
 | `chunked_upload:fingerprint:{account_id}:{fingerprint}` | 秒传指纹 → `UploadFile.id` 映射（**同账号**有效） | 7 天 |
 
 分片实体暂存在存储后端（`LocalStorageService.save_chunk` → `storage/chunks/{session_id}/{index:06d}.part`，同下标覆盖）。
@@ -328,9 +330,9 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 | 阶段 | 接口 | 行为 |
 | --- | --- | --- |
 | 初始化 | `POST /space/chunked-uploads/init` | 校验 `total_size/chunk_size/total_chunks > 0` 且分片数与文件大小匹配；按套餐校验单文件上限；查秒传指纹（命中直接返回 `{instant: true, upload_file_id}`）；`check_quota` 预校验配额；创建 Redis 会话返回 `session_id` |
-| 上传分片 | `POST /space/chunked-uploads/chunk` | 分片写入暂存目录；`SADD` 登记下标；返回 `received / total_chunks / missing_chunks` |
+| 上传分片 | `POST /space/chunked-uploads/chunk` | 校验会话归属（`session.account_id == account.id`，与 complete/status/abort 一致）；分片写入暂存目录；`SADD` 登记下标；返回 `received / total_chunks / missing_chunks` |
 | 查询进度 | `GET /space/chunked-uploads/{session_id}/status` | 断点续传：返回 `received_chunks` / `missing_chunks` / `is_complete` |
-| 合并完成 | `POST /space/chunked-uploads/complete` | 校验归属与无缺片 → **流式合并**分片为最终对象（边读边算增量 **sha3_256**，不整文件入内存）→ 落 `UploadFile` 记录 → **建档**（可选，`knowledge_base_id`）→ 清理暂存 → 销毁会话 → 登记秒传指纹 |
+| 合并完成 | `POST /space/chunked-uploads/complete` | 校验归属与无缺片 → `SET NX` 原子占用会话（并发双执行时拒绝：`该上传正在处理中`）→ **流式合并**分片为最终对象（边读边算增量 **sha3_256**，不整文件入内存）→ 落 `UploadFile` 记录 → **建档**（可选，`knowledge_base_id`）→ 清理暂存 → 销毁会话 → 登记秒传指纹；失败路径释放占用以便重试 |
 | 秒传 | `POST /space/chunked-uploads/instant` | 校验源文件归属 → 预校验板块类型 → `check_quota` → **服务端复制**对象 → 落新 `UploadFile` → **建档**（可选）→ 累加配额 → 登记指纹 |
 | 放弃 | `POST /space/chunked-uploads/abort` | 清理暂存目录并销毁会话 |
 
@@ -344,6 +346,11 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 - 秒传同样**建档**（携带 `knowledge_base_id` 时），与 `complete` 行为一致。
 
 **断点续传**：`status` 接口返回 `received_chunks` / `missing_chunks`，前端仅补传缺片；会话与已收分片在 24h 内有效。
+
+**残留暂存回收（定时任务兜底）**：`complete` / `abort` 会清理暂存目录，但客户端中途放弃且不调 `abort` 时目录会残留（不计配额，Redis 会话 24h 过期后无人知晓）。故由 `internal.task.chunked_upload_tasks.cleanup_stale_chunk_sessions` 兜底回收：
+
+- 遍历 `storage/chunks/` 下每个会话目录，用 `ChunkedUploadSessionService.is_alive(session_id)`（即 `chunked_upload:session:{session_id}` 是否存在）判断是否仍活跃；不活跃即 `shutil.rmtree` 删除并 `SREM` 出 `chunked_upload:sessions` 跟踪集合（`LocalStorageService.cleanup_stale_session_dirs` + `ChunkedUploadSessionService.forget_session`）。
+- 调度：celery-beat `chunked-upload-stale-cleanup`，`crontab(minute=45)`（每小时 45 分）；注册于 `api/app/http/celery_app.py`（`TASK_MODULES` + `beat_schedule`）。
 
 **单文件上限按套餐分级**：`StorageQuotaService.resolve_max_file_size_bytes(account_id)` 取生效套餐的 `PlanEntitlement.feature_key = 'max_single_file_gb'` 权益，无权益时回退 `DEFAULT_MAX_SINGLE_FILE_BYTES = 15MB`（常量在 `api/internal/entity/storage_quota_entity.py`）。管理员在套餐板块配置该权益即可提升上限，无需改代码。注意该上限约束的是**单文件总字节数**，单个分片不受限。
 

@@ -107,11 +107,13 @@ class ChunkedUploadService(BaseService):
             "received_chunks": [],
         }
 
-    def save_chunk(self, *, session_id: str, index: int, content: bytes) -> dict:
+    def save_chunk(self, *, session_id: str, index: int, content: bytes, account) -> dict:
         """暂存一个分片并登记会话。"""
         session = self.session_service.get(session_id)
         if session is None:
             raise FailException("上传会话不存在或已过期，请重新开始上传")
+        if session.account_id != str(account.id):
+            raise FailException("无权上传该会话的分片")
         if index < 0 or index >= session.total_chunks:
             raise ValidateErrorException(
                 "分片下标越界", {"index": [f"应在 0~{session.total_chunks - 1}"]}
@@ -141,87 +143,93 @@ class ChunkedUploadService(BaseService):
         if missing:
             raise FailException(f"仍有 {len(missing)} 个分片未上传，无法完成")
 
-        # 第一层防御：合并前预校验板块类型，避免白传大文件（用户把视频传图片库的场景）
-        knowledge_service = None
-        if knowledge_base_id:
-            knowledge_service = self._knowledge_base_service()
-            pre_extension = (
+        if not self.session_service.claim_for_completion(session_id):
+            raise FailException("该上传正在处理中，请稍候重试")
+        try:
+            # 第一层防御：合并前预校验板块类型，避免白传大文件（用户把视频传图片库的场景）
+            knowledge_service = None
+            if knowledge_base_id:
+                knowledge_service = self._knowledge_base_service()
+                pre_extension = (
+                    session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
+                )
+                knowledge_service.assert_upload_allowed(knowledge_base_id, pre_extension, account)
+
+            target_key = _build_object_key(session.filename)
+            try:
+                total_size, digest = self.storage.merge_chunks(
+                    session_id, session.total_chunks, target_key
+                )
+            except Exception:
+                logger.exception("分片合并失败 session_id=%s", session_id)
+                raise
+
+            extension = (
                 session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
             )
-            knowledge_service.assert_upload_allowed(knowledge_base_id, pre_extension, account)
-
-        target_key = _build_object_key(session.filename)
-        try:
-            total_size, digest = self.storage.merge_chunks(
-                session_id, session.total_chunks, target_key
-            )
-        except Exception:
-            logger.exception("分片合并失败 session_id=%s", session_id)
-            raise
-
-        extension = (
-            session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
-        )
-        try:
-            upload_file = self.upload_file_service.create_upload_file(
-                account_id=account.id,
-                name=session.filename,
-                key=target_key,
-                size=total_size,
-                extension=extension,
-                mime_type="",
-                hash=digest,
-                storage_backend="local",
-            )
-        except Exception:
-            # 落库失败：回收已合并的目标对象，避免孤儿文件；会话保留以便重试
-            logger.exception("分片合并产物落库失败，回收目标对象 key=%s", target_key)
             try:
-                self.storage.delete_object(target_key)
-            except Exception:
-                logger.warning("回收合并产物失败 key=%s", target_key, exc_info=True)
-            raise
-
-        # 第二层防御：建档前移到破坏性操作之前；失败则回滚对象与 UploadFile 记录并保留会话
-        result = {
-            "upload_file_id": str(upload_file.id),
-            "size": total_size,
-            "hash": digest,
-            "key": target_key,
-            "name": session.filename,
-        }
-        if knowledge_base_id and knowledge_service is not None:
-            try:
-                document = knowledge_service.create_document_from_upload_file(
-                    knowledge_base_id=knowledge_base_id,
-                    upload_file=upload_file,
-                    account=account,
+                upload_file = self.upload_file_service.create_upload_file(
+                    account_id=account.id,
+                    name=session.filename,
+                    key=target_key,
+                    size=total_size,
+                    extension=extension,
+                    mime_type="",
+                    hash=digest,
+                    storage_backend="local",
                 )
             except Exception:
-                logger.exception(
-                    "分片上传建档失败，回滚已合并对象与文件记录 upload_file_id=%s",
-                    upload_file.id,
-                )
+                # 落库失败：回收已合并的目标对象，避免孤儿文件；会话保留以便重试
+                logger.exception("分片合并产物落库失败，回收目标对象 key=%s", target_key)
                 try:
                     self.storage.delete_object(target_key)
                 except Exception:
-                    logger.warning("回滚合并产物失败 key=%s", target_key, exc_info=True)
-                try:
-                    self.upload_file_service.delete(upload_file)
-                except Exception:
-                    logger.warning("回滚 UploadFile 记录失败 id=%s", upload_file.id, exc_info=True)
+                    logger.warning("回收合并产物失败 key=%s", target_key, exc_info=True)
                 raise
-            result["document_id"] = str(document.id)
 
-        # 全部成功后才执行破坏性收尾与计量
-        self.storage_quota_service.add_usage(account.id, total_size)
-        self.storage.cleanup_session(session_id)
-        self.session_service.abort(session_id)
-        self.session_service.register_fingerprint(
-            str(account.id), session.fingerprint, str(upload_file.id)
-        )
+            # 第二层防御：建档前移到破坏性操作之前；失败则回滚对象与 UploadFile 记录并保留会话
+            result = {
+                "upload_file_id": str(upload_file.id),
+                "size": total_size,
+                "hash": digest,
+                "key": target_key,
+                "name": session.filename,
+            }
+            if knowledge_base_id and knowledge_service is not None:
+                try:
+                    document = knowledge_service.create_document_from_upload_file(
+                        knowledge_base_id=knowledge_base_id,
+                        upload_file=upload_file,
+                        account=account,
+                    )
+                except Exception:
+                    logger.exception(
+                        "分片上传建档失败，回滚已合并对象与文件记录 upload_file_id=%s",
+                        upload_file.id,
+                    )
+                    try:
+                        self.storage.delete_object(target_key)
+                    except Exception:
+                        logger.warning("回滚合并产物失败 key=%s", target_key, exc_info=True)
+                    try:
+                        self.upload_file_service.delete(upload_file)
+                    except Exception:
+                        logger.warning("回滚 UploadFile 记录失败 id=%s", upload_file.id, exc_info=True)
+                    raise
+                result["document_id"] = str(document.id)
 
-        return result
+            # 全部成功后才执行破坏性收尾与计量
+            self.storage_quota_service.add_usage(account.id, total_size)
+            self.storage.cleanup_session(session_id)
+            self.session_service.abort(session_id)
+            self.session_service.register_fingerprint(
+                str(account.id), session.fingerprint, str(upload_file.id)
+            )
+
+            return result
+        except Exception:
+            self.session_service.release_claim(session_id)
+            raise
 
     def instant_upload(
         self, *, account, upload_file_id: str, fingerprint: str, knowledge_base_id: str = ""

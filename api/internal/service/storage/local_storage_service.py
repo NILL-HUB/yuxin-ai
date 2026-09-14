@@ -254,6 +254,30 @@ class LocalStorageService:
         """删除会话的分片暂存目录（幂等）。"""
         shutil.rmtree(self._chunk_dir(session_id), ignore_errors=True)
 
+    def cleanup_stale_session_dirs(self, is_active) -> list[str]:
+        """清理不再活跃的会话分片目录；is_active(session_id) 返回该会话是否仍有效。
+
+        返回被清理的 session_id 列表。
+        """
+        root = _get_chunk_upload_root()
+        if not os.path.isdir(root):
+            return []
+        cleaned: list[str] = []
+        for name in os.listdir(root):
+            session_dir = os.path.join(root, name)
+            if not os.path.isdir(session_dir):
+                continue
+            try:
+                active = is_active(name)
+            except Exception:
+                logging.warning("校验分片会话活跃性失败 session_id=%s", name, exc_info=True)
+                continue
+            if active:
+                continue
+            shutil.rmtree(session_dir, ignore_errors=True)
+            cleaned.append(name)
+        return cleaned
+
     def copy_object(self, source_key: str, target_key: str) -> int:
         """服务端复制对象（秒传用），返回目标字节数。"""
         source_path = self._object_path(source_key)
