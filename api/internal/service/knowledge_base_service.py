@@ -281,6 +281,15 @@ class KnowledgeBaseService(BaseService):
                 {"file": [f"板块类型 {base_type} 允许的扩展名：{'/'.join(allowed)}"]},
             )
 
+    def assert_upload_allowed(self, knowledge_base_id, extension: str, account: Account) -> KnowledgeBase:
+        """预校验某扩展名能否上传到指定知识库；不合格抛 ValidateErrorException。
+
+        供分片上传在合并前预校验使用，避免先落盘后拒绝造成的浪费与残留。
+        """
+        knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+        self._assert_media_type_allowed(knowledge_base, extension)
+        return knowledge_base
+
     def _get_cos_service(self):
         from .cos_service import CosService
         return current_app.injector.get(CosService)

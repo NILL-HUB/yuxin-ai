@@ -476,6 +476,9 @@ def test_complete_registers_document_when_knowledge_base_given(monkeypatch):
     recorded = {}
 
     class _Knowledge:
+        def assert_upload_allowed(self, knowledge_base_id, extension, account):
+            return None
+
         def create_document_from_upload_file(self, **kwargs):
             recorded.update(kwargs)
             return SimpleNamespace(id=uuid4())
@@ -488,4 +491,82 @@ def test_complete_registers_document_when_knowledge_base_given(monkeypatch):
 
     assert "document_id" in result
     assert recorded["upload_file"].size == 1234
+
+
+def test_complete_rejects_mismatched_base_type_before_merge(monkeypatch):
+    """板块类型不匹配时应在合并前拒绝，不产生合并产物与 UploadFile。"""
+    from internal.exception import ValidateErrorException
+
+    session_service = _FakeSessionService()
+    storage = _FakeStorage()
+    upload_file_service = _FakeUploadFileService()
+    service, _calls = _service(
+        storage=storage, session_service=session_service,
+        upload_file_service=upload_file_service,
+    )
+    account = _account()
+    session_id = service.init(
+        account=account, filename="promo.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-type",
+    )["session_id"]
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+
+    class _Knowledge:
+        def assert_upload_allowed(self, knowledge_base_id, extension, account):
+            raise ValidateErrorException("板块类型不允许")
+
+    monkeypatch.setattr(service, "_knowledge_base_service", lambda: _Knowledge())
+
+    with pytest.raises(ValidateErrorException):
+        service.complete(
+            session_id=session_id, account=account, knowledge_base_id=str(uuid4())
+        )
+
+    assert storage.merged == [], "不应执行合并"
+    assert upload_file_service.created == [], "不应创建 UploadFile 记录"
+    assert session_service.get(session_id) is not None, "会话应保留"
+
+
+def test_complete_rolls_back_when_document_creation_fails(monkeypatch):
+    """建档失败时应回滚合并产物与 UploadFile 记录，并保留会话可重试。"""
+    import internal.service.chunked_upload_service as module
+
+    session_service = _FakeSessionService()
+    storage = _FakeStorage()
+    storage.deleted = []
+    storage.delete_object = lambda key: storage.deleted.append(key) or True
+    upload_file_service = _FakeUploadFileService()
+    upload_file_service.deleted = []
+    upload_file_service.delete = lambda instance: upload_file_service.deleted.append(instance) or instance
+
+    service, _calls = _service(
+        storage=storage, session_service=session_service,
+        upload_file_service=upload_file_service,
+    )
+    account = _account()
+    session_id = service.init(
+        account=account, filename="a.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-roll",
+    )["session_id"]
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512)
+
+    class _Knowledge:
+        def assert_upload_allowed(self, knowledge_base_id, extension, account):
+            return None
+
+        def create_document_from_upload_file(self, **kwargs):
+            raise RuntimeError("建档失败")
+
+    monkeypatch.setattr(service, "_knowledge_base_service", lambda: _Knowledge())
+
+    with pytest.raises(RuntimeError):
+        service.complete(
+            session_id=session_id, account=account, knowledge_base_id=str(uuid4())
+        )
+
+    assert storage.deleted, "应回收合并产物"
+    assert upload_file_service.deleted, "应删除 UploadFile 记录"
+    assert session_service.get(session_id) is not None, "会话应保留可重试"
 

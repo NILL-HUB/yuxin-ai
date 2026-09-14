@@ -70,3 +70,22 @@ def test_create_document_from_upload_file_accepts_partition_id():
     )
 
     assert created[0]["partition_id"] == partition_id
+
+
+def test_assert_upload_allowed_returns_base_when_valid():
+    service, _created, _indexed = _service()
+    account = SimpleNamespace(id=uuid4())
+    knowledge_base_id = uuid4()
+
+    base = service.assert_upload_allowed(knowledge_base_id, "mp4", account)
+
+    assert base.id == knowledge_base_id
+
+
+def test_assert_upload_allowed_rejects_mismatched_type():
+    service, _created, _indexed = _service()
+    service.get_accessible_base = lambda _id, _account: SimpleNamespace(id=_id, base_type="video")
+    account = SimpleNamespace(id=uuid4())
+
+    with pytest.raises(ValidateErrorException):
+        service.assert_upload_allowed(uuid4(), "pdf", account)
