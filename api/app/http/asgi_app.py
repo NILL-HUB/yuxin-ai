@@ -231,6 +231,7 @@ from app.http.a2a_routes import register_routes as _register_a2a_routes
 from app.http.desktop_routes import register_routes as _register_desktop_routes
 from app.http.im_voice_routes import register_routes as _register_im_voice_routes
 from app.http.user_recycle_bin_routes import register_routes as _register_user_recycle_bin_routes
+from app.http.chunked_upload_routes import register_routes as _register_chunked_upload_routes
 
 _register_admin_routes_1(quart_app)
 _register_admin_routes_2(quart_app)
@@ -257,6 +258,7 @@ _register_a2a_routes(quart_app)
 _register_desktop_routes(quart_app)
 _register_im_voice_routes(quart_app)
 _register_user_recycle_bin_routes(quart_app)
+_register_chunked_upload_routes(quart_app)
 
 
 # Socket.IO（ASGI 模式）：/socket.io/* 由 AsyncServer 处理，其余 HTTP 透传 quart_app。

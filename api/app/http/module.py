@@ -13,6 +13,9 @@ from internal.service.faiss_service import FaissService
 from internal.service.notification_service import NotificationService
 from internal.service.cos_service import CosService
 from internal.core.ports.storage_port import ObjectStoragePort
+from internal.service.chunked_upload_service import ChunkedUploadService
+from internal.service.chunked_upload_session_service import ChunkedUploadSessionService
+from internal.service.storage.local_storage_service import LocalStorageService
 from internal.service.orchestrator_service import OrchestratorService
 from internal.service.conductor_service import ConductorService
 from internal.service.prompt_sync_service import PromptSyncService
@@ -118,6 +121,11 @@ class ExtensionModule(Module):
         binder.bind(RuntimeStorageProxy, to=RuntimeStorageProxy, scope=singleton)
         from internal.service.storage_quota_service import StorageQuotaService
         binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
+
+        # 注册分片上传服务（本地后端暂存 + Redis 会话状态）
+        binder.bind(ChunkedUploadSessionService, to=ChunkedUploadSessionService, scope=singleton)
+        binder.bind(LocalStorageService, to=LocalStorageService, scope=singleton)
+        binder.bind(ChunkedUploadService, to=ChunkedUploadService, scope=singleton)
 
         # 注册编排子系统依赖（激活主调度链）
         binder.bind(OrchestrationFeatureFlagService, to=OrchestrationFeatureFlagService)
