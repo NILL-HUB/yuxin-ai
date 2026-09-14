@@ -24,7 +24,10 @@ from dataclasses import dataclass
 from injector import inject
 from werkzeug.datastructures import FileStorage
 
-from internal.entity.upload_file_entity import ALLOWED_DOCUMENT_EXTENSION, ALLOWED_IMAGE_EXTENSION
+from internal.entity.upload_file_entity import (
+    ALLOWED_IMAGE_EXTENSION,
+    allowed_extensions_for_base_type,
+)
 from internal.exception import FailException
 from internal.lib.helper import utc_now_naive
 from internal.model import Account, UploadFile
@@ -101,7 +104,8 @@ class AliyunOSSService:
         filename = file.filename
         extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
         extension_lower = extension.lower()
-        if extension_lower not in (ALLOWED_IMAGE_EXTENSION + ALLOWED_DOCUMENT_EXTENSION):
+        allowed_extensions = allowed_extensions_for_base_type("mixed")
+        if extension_lower not in allowed_extensions:
             raise FailException(f"该.{extension}扩展的文件不允许上传")
         if only_image and extension_lower not in ALLOWED_IMAGE_EXTENSION:
             raise FailException(f"该.{extension}扩展的文件不支持上传，请上传正确的图片")
