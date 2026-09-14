@@ -17,7 +17,7 @@ from typing import Any
 from injector import inject
 
 from internal.core.ports.storage_port import ObjectStoragePort
-from internal.core.vision.vision_invoke import invoke_vision_model, path_to_data_uri
+from internal.core.vision.vision_invoke import extract_video_frames, invoke_vision_model, path_to_data_uri
 from internal.entity.knowledge_entity import DocumentMediaType
 from internal.model import KnowledgeDocument, UploadFile
 from pkg.sqlalchemy import SQLAlchemy
@@ -87,7 +87,9 @@ class KnowledgeMediaExtractorService(BaseService):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = self._download_to(upload_file, temp_dir)
             data_uri = path_to_data_uri(file_path)
-            summary = self._invoke_vision(data_uri, _IMAGE_PROMPT)
+            summary = str(self._invoke_vision(data_uri, _IMAGE_PROMPT) or "").strip()
+        if not summary:
+            return []
         return [
             MediaSegment(
                 content=summary,
@@ -106,9 +108,14 @@ class KnowledgeMediaExtractorService(BaseService):
             with open(file_path, "rb") as fh:
                 content = fh.read()
 
+        filename = (
+            getattr(upload_file, "name", None)
+            or os.path.basename(getattr(upload_file, "key", "") or "")
+            or "material.audio"
+        )
         file_storage = FileStorage(
             stream=BytesIO(content),
-            filename=upload_file.name or os.path.basename(upload_file.key),
+            filename=filename,
             content_type=getattr(upload_file, "mime_type", None) or "audio/mpeg",
         )
         transcript = str(self.audio_service.audio_to_text(file_storage) or "").strip()
@@ -123,8 +130,6 @@ class KnowledgeMediaExtractorService(BaseService):
 
     def _extract_frames(self, video_path: str) -> list[str]:
         """视频抽帧（独立方法便于测试替换）。"""
-        from internal.core.vision.vision_invoke import extract_video_frames
-
         return extract_video_frames(video_path)
 
     def _extract_video(self, upload_file: UploadFile) -> list[MediaSegment]:

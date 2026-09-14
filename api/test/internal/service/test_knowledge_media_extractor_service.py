@@ -208,3 +208,44 @@ def test_video_extraction_raises_when_no_frames_extracted():
 
     with pytest.raises(RuntimeError):
         service.extract(_document("video"), upload)
+
+
+def test_image_extraction_returns_empty_when_summary_blank():
+    """视觉模型返回空白描述时不应产出空内容片段。"""
+    service = _new_service(vision_text="   ")
+    assert service.extract(_document("image"), _upload_file("jpg")) == []
+
+
+def test_video_extraction_raises_when_all_descriptions_blank():
+    """帧非空但所有帧描述均为空白时，应抛错而不是产出空片段。"""
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames = lambda path: ["data:a", "data:b"]
+    service._invoke_vision = lambda data_uri, prompt: "   "
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="blank.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+    with pytest.raises(RuntimeError):
+        service.extract(_document("video"), upload)
+
+
+def test_audio_extraction_uses_fallback_filename_when_name_absent():
+    """name 与 key 均缺失时 filename 应有兜底，不应为空串。"""
+    audio_service = _FakeAudioService()
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=audio_service,
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key="", name="", extension="mp3", mime_type="audio/mpeg",
+    )
+
+    service.extract(_document("audio"), upload)
+
+    assert audio_service.received_filename == "material.audio"
