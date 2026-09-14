@@ -19,7 +19,9 @@ from sqlalchemy.exc import IntegrityError
 
 from internal.entity.storage_quota_entity import (
     BYTES_PER_GB,
+    DEFAULT_MAX_SINGLE_FILE_BYTES,
     DEFAULT_STORAGE_QUOTA_GB,
+    MAX_SINGLE_FILE_FEATURE_KEY,
     STORAGE_QUOTA_FEATURE_KEY,
     StorageAddonPlanType,
 )
@@ -44,14 +46,25 @@ class StorageQuotaService(BaseService):
         取「生效套餐的存储权益」与「默认基线」的较大值，再累加已购扩展包。
         """
         effective_base_gb = DEFAULT_STORAGE_QUOTA_GB
-        plan_quota_gb = self._resolve_active_plan_quota_gb(account_id)
+        plan_quota_gb = self._resolve_entitlement_gb(account_id, STORAGE_QUOTA_FEATURE_KEY)
         if plan_quota_gb > effective_base_gb:
             effective_base_gb = plan_quota_gb
         addon_gb = self._resolve_purchased_addon_gb(account_id)
         return (effective_base_gb + addon_gb) * BYTES_PER_GB
 
-    def _resolve_active_plan_quota_gb(self, account_id: UUID) -> int:
-        """取当前生效会员套餐的 storage_quota_gb；无生效套餐返回 0。
+    def resolve_max_file_size_bytes(self, account_id: UUID) -> int:
+        """解析账号的单文件上传上限（字节）。
+
+        取「生效套餐的 max_single_file_gb 权益」，无权益时回退默认 15MB。
+        分片上传的单个分片不受此限制；本上限约束单次上传的总字节数。
+        """
+        plan_quota_gb = self._resolve_entitlement_gb(account_id, MAX_SINGLE_FILE_FEATURE_KEY)
+        if plan_quota_gb > 0:
+            return plan_quota_gb * BYTES_PER_GB
+        return DEFAULT_MAX_SINGLE_FILE_BYTES
+
+    def _resolve_entitlement_gb(self, account_id: UUID, feature_key: str) -> int:
+        """取当前生效会员套餐指定权益的整数值（GB）；无生效套餐返回 0。
 
         与 Membership.is_active 保持一致的生效判定：status=active 且未过期。
         """
@@ -70,7 +83,7 @@ class StorageQuotaService(BaseService):
             return 0
         entitlements = (
             self.db.session.query(PlanEntitlement)
-            .filter_by(plan_id=membership.plan_id, feature_key=STORAGE_QUOTA_FEATURE_KEY)
+            .filter_by(plan_id=membership.plan_id, feature_key=feature_key)
             .all()
         )
         if not entitlements:

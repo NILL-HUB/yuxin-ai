@@ -188,3 +188,20 @@ def test_release_usage_is_noop_when_record_absent():
     service = _new_service(_SessionStub([_QueryStub(one_or_none_result=None)]))
     service.release_usage(uuid4(), 4096)
 
+
+def test_max_file_size_falls_back_to_default_when_no_entitlement():
+    service = _new_service(_SessionStub([_QueryStub(first_result=None), _QueryStub(all_result=[])]))
+    assert service.resolve_max_file_size_bytes(uuid4()) == 15 * 1024 * 1024
+
+
+def test_max_file_size_uses_plan_entitlement():
+    plan_id = uuid4()
+    membership = SimpleNamespace(plan_id=plan_id)
+    entitlement = _fake_entitlement(1024)
+    service = _new_service(_SessionStub([
+        _QueryStub(first_result=membership),
+        _QueryStub(all_result=[entitlement]),
+        _QueryStub(all_result=[]),
+    ]))
+    assert service.resolve_max_file_size_bytes(uuid4()) == 1024 * (1024 ** 3)
+

@@ -20,6 +20,12 @@ DEFAULT_STORAGE_QUOTA_GB = 5
 # 套餐权益中承载存储容量的 feature_key（PlanEntitlement.feature_key）
 STORAGE_QUOTA_FEATURE_KEY = "storage_quota_gb"
 
+# 套餐权益中承载「单文件上传上限（GB）」的 feature_key
+MAX_SINGLE_FILE_FEATURE_KEY = "max_single_file_gb"
+
+# 无套餐权益时的单文件上限（字节）：默认 15MB，与历史行为一致
+DEFAULT_MAX_SINGLE_FILE_BYTES = 15 * 1024 * 1024
+
 
 class StorageAddonPlanType(str, Enum):
     """套餐类型：存储扩展包（Plan.plan_type 的一种取值）。"""
