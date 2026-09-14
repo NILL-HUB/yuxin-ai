@@ -21,6 +21,14 @@ def _get_service(cls):
     return _support._get_service(cls)
 
 
+def _to_int(value) -> int | None:
+    """安全地把入参转为整数；非法返回 None（调用方据此返回 400）。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def register_routes(quart_app) -> None:
     """注册分片上传路由（幂等）。"""
     global _registered
@@ -48,15 +56,26 @@ def register_routes(quart_app) -> None:
                 status=400,
             )
 
+        total_size = _to_int(payload.get("total_size"))
+        chunk_size = _to_int(payload.get("chunk_size"))
+        total_chunks = _to_int(payload.get("total_chunks"))
+        if total_size is None or chunk_size is None or total_chunks is None:
+            return _json_resp(
+                code="validate_error",
+                message="分片参数必须为整数",
+                data={"params": ["total_size/chunk_size/total_chunks 必须为整数"]},
+                status=400,
+            )
+
         from internal.service.chunked_upload_service import ChunkedUploadService
 
         result = await _to_thread(
             _get_service(ChunkedUploadService).init,
             account=account,
             filename=payload["filename"],
-            total_size=int(payload["total_size"]),
-            chunk_size=int(payload["chunk_size"]),
-            total_chunks=int(payload["total_chunks"]),
+            total_size=total_size,
+            chunk_size=chunk_size,
+            total_chunks=total_chunks,
             fingerprint=payload.get("fingerprint", ""),
         )
         return _ok(result)
@@ -90,12 +109,21 @@ def register_routes(quart_app) -> None:
             )
         content = chunk.stream.read()
 
+        index = _to_int(index_raw)
+        if index is None:
+            return _json_resp(
+                code="validate_error",
+                message="分片下标必须为整数",
+                data={"index": ["分片下标必须为整数"]},
+                status=400,
+            )
+
         from internal.service.chunked_upload_service import ChunkedUploadService
 
         result = await _to_thread(
             _get_service(ChunkedUploadService).save_chunk,
             session_id=session_id,
-            index=int(index_raw),
+            index=index,
             content=content,
         )
         return _ok(result)

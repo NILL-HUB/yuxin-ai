@@ -1,12 +1,14 @@
 """分片上传路由测试：init / chunk / status / complete / abort 的校验与编排调用。"""
 
 import asyncio
+import io
 from types import SimpleNamespace
 from uuid import uuid4
 
 import app.http.asgi_app as asgi_app
 from app.http import chunked_upload_routes, support
 from internal.service.chunked_upload_service import ChunkedUploadService
+from werkzeug.datastructures import FileStorage
 
 chunked_upload_routes.register_routes(asgi_app.quart_app)
 
@@ -137,6 +139,64 @@ class TestChunkedUploadRoutes:
         resp, payload = asyncio.run(_run())
         assert resp.status_code == 400
         assert payload["code"] == "validate_error"
+
+    def test_init_route_rejects_non_integer_size(self, monkeypatch):
+        """非整数参数应返回 400 而非 500。"""
+        _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/space/chunked-uploads/init",
+                    json={
+                        "filename": "a.mp4",
+                        "total_size": "abc",
+                        "chunk_size": 5,
+                        "total_chunks": 2,
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_chunk_route_rejects_non_integer_index(self, monkeypatch):
+        """分片下标非整数应返回 400。"""
+        _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/space/chunked-uploads/chunk",
+                    form={"session_id": "sess-1", "index": "abc"},
+                    files={
+                        "chunk": FileStorage(
+                            stream=io.BytesIO(b"data"), filename="chunk.bin"
+                        )
+                    },
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 400
+        assert payload["code"] == "validate_error"
+
+    def test_abort_route_succeeds(self, monkeypatch):
+        """abort 接口应正常返回。"""
+        _, svc = _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    "/space/chunked-uploads/abort", json={"session_id": "sess-1"}
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert svc.calls[0][0] == "abort"
 
     def test_status_returns_progress(self, monkeypatch):
         _, svc = _setup(monkeypatch)
