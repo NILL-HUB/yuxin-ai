@@ -702,6 +702,7 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 - 17.10 与记忆系统冷存储的关系
 - 17.11 安全要求
 - 17.12 后续演进路线
+- 17.13 分片上传（P2B 已落地）
 
 详见子文档：[modules/06-file-storage.md](./modules/06-file-storage.md)
 
