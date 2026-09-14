@@ -1,5 +1,3 @@
-import os
-import tempfile
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -75,3 +73,15 @@ def test_image_extraction_propagates_vision_failure():
     service._invoke_vision = lambda data_uri, prompt: (_ for _ in ()).throw(RuntimeError("no model"))
     with pytest.raises(RuntimeError):
         service.extract(_document("image"), _upload_file("png"))
+
+
+def test_audio_extraction_not_implemented_yet():
+    service = _new_service()
+    with pytest.raises(NotImplementedError):
+        service.extract(_document("audio"), _upload_file("mp3"))
+
+
+def test_video_extraction_not_implemented_yet():
+    service = _new_service()
+    with pytest.raises(NotImplementedError):
+        service.extract(_document("video"), _upload_file("mp4"))

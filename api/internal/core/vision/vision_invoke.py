@@ -22,15 +22,27 @@ _DEFAULT_FRAME_COUNT = 3
 _FRAME_TIMEOUT = 60
 
 
+_EXTENSION_MIME_MAP = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+
 def path_to_data_uri(path: str) -> str:
-    """把本地图片文件转为 data URI（带大小上限）。"""
+    """把本地图片文件转为 data URI（按扩展名推断 MIME，带大小上限）。"""
     if not os.path.isfile(path):
         raise ValueError(f"图片文件不存在：{path}")
     with open(path, "rb") as fh:
         raw = fh.read(_MAX_IMAGE_BYTES + 1)
     if len(raw) > _MAX_IMAGE_BYTES:
         raise ValueError(f"图片超过大小限制：{path}")
-    return f"data:image/jpeg;base64,{base64.b64encode(raw).decode('ascii')}"
+    extension = os.path.splitext(path)[1].lower()
+    mime = _EXTENSION_MIME_MAP.get(extension, "image/jpeg")
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
 def invoke_vision_model(data_uri: str, prompt: str) -> str:

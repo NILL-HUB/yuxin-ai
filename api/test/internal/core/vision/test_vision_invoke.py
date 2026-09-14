@@ -47,6 +47,22 @@ def test_path_to_data_uri_accepts_empty_file():
         assert path_to_data_uri(path) == "data:image/jpeg;base64,"
 
 
+def test_path_to_data_uri_infers_png_mime():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        path = os.path.join(temp_dir, "shot.png")
+        with open(path, "wb") as fh:
+            fh.write(b"\x89PNG\r\n")
+        assert path_to_data_uri(path).startswith("data:image/png;base64,")
+
+
+def test_path_to_data_uri_defaults_to_jpeg_for_unknown_extension():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        path = os.path.join(temp_dir, "thing.bin")
+        with open(path, "wb") as fh:
+            fh.write(b"raw")
+        assert path_to_data_uri(path).startswith("data:image/jpeg;base64,")
+
+
 def test_extract_video_frames_normalizes_zero_frame_count(monkeypatch):
     """frame_count=0 应被归一化为至少 1，不应抛除零错误。"""
     import internal.core.vision.vision_invoke as module
