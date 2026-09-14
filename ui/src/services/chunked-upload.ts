@@ -1,5 +1,6 @@
 import { get, post, upload } from '@/utils/request'
 import { type BaseResponse } from '@/models/base'
+import storage from '@/utils/storage'
 
 // 分片大小：5MB（与后端默认一致）
 const CHUNK_SIZE = 5 * 1024 * 1024
@@ -7,6 +8,33 @@ const CHUNK_SIZE = 5 * 1024 * 1024
 export const SINGLE_UPLOAD_THRESHOLD = CHUNK_SIZE
 // 并发上传分片数
 const CONCURRENCY = 3
+
+// 会话缓存键：按指纹保存未完成的 session_id，用于跨调用断点续传
+const SESSION_CACHE_PREFIX = 'chunked-upload-session:'
+
+const readCachedSessionId = (fingerprint: string): string => {
+  try {
+    return storage.get<string>(`${SESSION_CACHE_PREFIX}${fingerprint}`, '')
+  } catch {
+    return ''
+  }
+}
+
+const writeCachedSessionId = (fingerprint: string, sessionId: string): void => {
+  try {
+    storage.set(`${SESSION_CACHE_PREFIX}${fingerprint}`, sessionId)
+  } catch {
+    /* 隐私模式等场景下写入失败不影响上传 */
+  }
+}
+
+const clearCachedSessionId = (fingerprint: string): void => {
+  try {
+    storage.remove(`${SESSION_CACHE_PREFIX}${fingerprint}`)
+  } catch {
+    /* 忽略 */
+  }
+}
 
 export interface ChunkedUploadProgress {
   uploadedChunks: number
@@ -67,10 +95,13 @@ const toResult = (data: Record<string, unknown>): ChunkedUploadResult => {
 }
 
 /**
- * 上传单个文件（分片上传，含秒传与断点续传）。
+ * 上传单个文件（分片上传，含秒传与跨调用断点续传）。
  *
  * 说明：秒传命中时后端会复制既有文件并按 knowledge_base_id 建档，
  * 返回值含 document_id，与正常分片上传 complete 的行为一致。
+ * 跨调用续传依赖 localStorage 会话缓存：按文件指纹保存未完成的 session_id，
+ * 重试时先查询该会话已收到的分片，命中则只补传缺失分片（后端 init 每次
+ * 都会生成新 session_id，故不能靠重新 init 续传）。
  */
 export const uploadFileChunked = async (
   knowledgeBaseId: string,
@@ -80,47 +111,68 @@ export const uploadFileChunked = async (
   const fingerprint = await computeFingerprint(file)
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
 
-  const initResponse = await post<BaseResponse<Record<string, unknown>>>(
-    '/space/chunked-uploads/init',
-    {
-      body: {
-        filename: file.name,
-        total_size: file.size,
-        chunk_size: CHUNK_SIZE,
-        total_chunks: totalChunks,
-        fingerprint,
-      },
-    },
-  )
-  const initData = initResponse.data
+  // 优先复用上次未完成的会话（跨调用断点续传）
+  let sessionId = readCachedSessionId(fingerprint)
+  let received = new Set<number>()
 
-  // 秒传命中：服务端复制既有文件并建档
-  if (initData.instant) {
-    const copied = await post<BaseResponse<Record<string, unknown>>>(
-      '/space/chunked-uploads/instant',
+  if (sessionId) {
+    try {
+      const statusResponse = await get<BaseResponse<Record<string, unknown>>>(
+        `/space/chunked-uploads/${sessionId}/status`,
+      )
+      const statusData = statusResponse.data ?? {}
+      // 会话仍有效且文件一致时才复用
+      if (Number(statusData.total_chunks) === totalChunks) {
+        received = new Set((statusData.received_chunks as number[]) ?? [])
+      } else {
+        sessionId = ''
+      }
+    } catch {
+      // 会话已过期或已 abort，走全新上传
+      sessionId = ''
+    }
+    if (!sessionId) {
+      clearCachedSessionId(fingerprint)
+    }
+  }
+
+  if (!sessionId) {
+    const initResponse = await post<BaseResponse<Record<string, unknown>>>(
+      '/space/chunked-uploads/init',
       {
         body: {
-          upload_file_id: String(initData.upload_file_id ?? ''),
+          filename: file.name,
+          total_size: file.size,
+          chunk_size: CHUNK_SIZE,
+          total_chunks: totalChunks,
           fingerprint,
-          knowledge_base_id: knowledgeBaseId,
         },
       },
     )
-    onProgress?.({ uploadedChunks: 1, totalChunks: 1, percent: 100 })
-    return toResult(copied.data)
-  }
+    const initData = initResponse.data
 
-  const sessionId = String(initData.session_id ?? '')
+    // 秒传命中：服务端复制既有文件并建档（无会话，直接返回）
+    if (initData.instant) {
+      const copied = await post<BaseResponse<Record<string, unknown>>>(
+        '/space/chunked-uploads/instant',
+        {
+          body: {
+            upload_file_id: String(initData.upload_file_id ?? ''),
+            fingerprint,
+            knowledge_base_id: knowledgeBaseId,
+          },
+        },
+      )
+      onProgress?.({ uploadedChunks: 1, totalChunks: 1, percent: 100 })
+      clearCachedSessionId(fingerprint)
+      return toResult(copied.data)
+    }
 
-  // 断点续传：查询服务端已收到的分片
-  let received = new Set<number>()
-  try {
-    const statusResponse = await get<BaseResponse<Record<string, unknown>>>(
-      `/space/chunked-uploads/${sessionId}/status`,
-    )
-    received = new Set((statusResponse.data.received_chunks as number[]) ?? [])
-  } catch {
-    received = new Set<number>()
+    sessionId = String(initData.session_id ?? '')
+    if (!sessionId) {
+      throw new Error('初始化分片上传失败')
+    }
+    writeCachedSessionId(fingerprint, sessionId)
   }
 
   const pending: number[] = []
@@ -162,5 +214,6 @@ export const uploadFileChunked = async (
     '/space/chunked-uploads/complete',
     { body: { session_id: sessionId, knowledge_base_id: knowledgeBaseId } },
   )
+  clearCachedSessionId(fingerprint)
   return toResult(completed.data)
 }
