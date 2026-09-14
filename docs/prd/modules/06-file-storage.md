@@ -131,8 +131,14 @@ binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 
 ```text
 total_quota = max(基线 5GB, 生效套餐 storage_quota_gb) + sum(已购扩展包 GB)
-used_bytes  = account_storage_usage.used_bytes   （上传/删除事件同步增减）
+used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销毁 release_usage）
 ```
+
+**增减时机（关键语义）**：
+- **累加**：上传成功（`RuntimeStorageProxy.upload_file` / `upload_bytes`）时 `add_usage(account_id, upload_file.size)`。
+- **释放**：**仅在回收站留存期结束、底层存储对象被物理销毁时** `release_usage(account_id, size)`，落点在 `internal/service/recycle_bin_handlers.py` 的 `purge_knowledge_document` / `purge_knowledge_base`（删除底层对象之后调用 `_release_storage_quota`）。
+- **删除进回收站不释放**：删除 = 记录快照 + 物理删原表记录，但底层文件在留存期（默认 7~30 天）内仍占用存储，故此时**不**释放配额；删除后立刻恢复语义才成立（恢复不重复累加，因为配额从未被释放）。
+- **容错**：配额释放失败只记 warning，不向上抛异常——`purge` 抛异常的语义是"底层对象删除失败需重试"，配额释放失败若抛出会导致重复销毁。快照缺 `account_id` / `size`（老快照）时跳过释放。
 
 | 组件 | 位置 | 职责 |
 | --- | --- | --- |

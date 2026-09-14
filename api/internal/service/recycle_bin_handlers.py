@@ -453,6 +453,34 @@ def restore_knowledge_document(snapshot: dict[str, Any]) -> bool:
     return True
 
 
+def _get_storage_quota_service():
+    """经 DI 容器获取存储配额服务（延迟获取，避免循环依赖）。"""
+    from app.http.module import injector
+    from internal.service.storage_quota_service import StorageQuotaService
+
+    return injector.get(StorageQuotaService)
+
+
+def _release_storage_quota(upload_file_data: dict[str, Any]) -> None:
+    """物理销毁后释放账号存储配额；字段缺失时跳过（老快照兼容）。
+
+    释放必须在底层对象删除**之后**调用：回收站留存期内底层文件仍占用存储，
+    只有物理销毁才真正释放。释放失败只记 warning 而**不**向上抛——purge 的异常
+    语义是"底层对象删除失败，需重试"，配额释放失败若抛出会导致重复销毁。
+    """
+    account_id = upload_file_data.get("account_id")
+    size = upload_file_data.get("size") or 0
+    if not account_id or not size:
+        return
+    try:
+        quota_service = _get_storage_quota_service()
+        quota_service.release_usage(account_id, int(size))
+    except Exception:
+        logger.warning(
+            "释放存储配额失败 account_id=%s size=%s", account_id, size, exc_info=True
+        )
+
+
 def purge_knowledge_document(snapshot: dict[str, Any]) -> None:
     """留存期结束彻底销毁：删除底层存储对象（local 物理文件 / COS、OSS 对象）。
 
@@ -466,6 +494,7 @@ def purge_knowledge_document(snapshot: dict[str, Any]) -> None:
     backend = (upload_file_data.get("storage_backend") or "local").strip() or "local"
     from internal.service.storage.storage_migration_service import _delete_object
     _delete_object(backend, key)
+    _release_storage_quota(upload_file_data)
     logger.info("回收站销毁文档存储文件 key=%s backend=%s", key, backend)
 
 
@@ -479,6 +508,7 @@ def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
             continue
         backend = (upload_file_data.get("storage_backend") or "local").strip() or "local"
         _delete_object(backend, key)
+        _release_storage_quota(upload_file_data)
         logger.info("回收站销毁知识库存储文件 key=%s backend=%s", key, backend)
 
 
