@@ -121,5 +121,44 @@ class KnowledgeMediaExtractorService(BaseService):
             )
         ]
 
+    def _extract_frames(self, video_path: str) -> list[str]:
+        """视频抽帧（独立方法便于测试替换）。"""
+        from internal.core.vision.vision_invoke import extract_video_frames
+
+        return extract_video_frames(video_path)
+
     def _extract_video(self, upload_file: UploadFile) -> list[MediaSegment]:
-        raise NotImplementedError("视频解析将在 Task 5 实现")
+        """视频：抽关键帧 → 逐帧视觉描述；单帧失败跳过，全部失败则抛错。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = self._download_to(upload_file, temp_dir)
+            frames = self._extract_frames(file_path)
+
+        if not frames:
+            raise RuntimeError("视频抽帧结果为空，无法解析")
+
+        segments: list[MediaSegment] = []
+        for index, frame in enumerate(frames, start=1):
+            try:
+                description = self._invoke_vision(frame, _VIDEO_FRAME_PROMPT)
+            except Exception:
+                logger.warning(
+                    "视频帧视觉分析失败 document_file=%s scene_index=%s",
+                    upload_file.name, index, exc_info=True,
+                )
+                continue
+            if not str(description or "").strip():
+                continue
+            segments.append(
+                MediaSegment(
+                    content=description,
+                    metadata={
+                        "media_type": DocumentMediaType.VIDEO.value,
+                        "scene_index": index,
+                        "frame_count": len(frames),
+                    },
+                )
+            )
+
+        if not segments:
+            raise RuntimeError("视频解析未产出任何可用内容")
+        return segments

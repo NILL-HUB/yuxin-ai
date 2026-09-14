@@ -75,12 +75,6 @@ def test_image_extraction_propagates_vision_failure():
         service.extract(_document("image"), _upload_file("png"))
 
 
-def test_video_extraction_not_implemented_yet():
-    service = _new_service()
-    with pytest.raises(NotImplementedError):
-        service.extract(_document("video"), _upload_file("mp4"))
-
-
 class _FakeAudioService:
     def __init__(self, text="这是一段会议录音的转写内容。", error=None):
         self.text = text
@@ -141,3 +135,76 @@ def test_audio_extraction_returns_empty_when_transcript_blank():
     )
 
     assert service.extract(_document("audio"), upload) == []
+
+
+def test_video_extraction_returns_segment_per_frame():
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames = lambda path: ["data:frame-1", "data:frame-2"]
+    seen_prompts = []
+
+    def _vision(data_uri, prompt):
+        seen_prompts.append((data_uri, prompt))
+        return f"画面描述-{data_uri}"
+
+    service._invoke_vision = _vision
+
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="promo.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+    segments = service.extract(_document("video"), upload)
+
+    assert len(segments) == 2
+    assert segments[0].content == "画面描述-data:frame-1"
+    assert segments[0].metadata["media_type"] == "video"
+    assert segments[0].metadata["scene_index"] == 1
+    assert segments[0].metadata["frame_count"] == 2
+    assert segments[1].metadata["scene_index"] == 2
+    assert len(seen_prompts) == 2
+
+
+def test_video_extraction_skips_frames_that_fail_analysis():
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames = lambda path: ["data:ok", "data:bad"]
+
+    def _vision(data_uri, prompt):
+        if data_uri == "data:bad":
+            raise RuntimeError("vision failed")
+        return "可用画面描述"
+
+    service._invoke_vision = _vision
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mov", name="clip.mov",
+        extension="mov", mime_type="video/quicktime",
+    )
+
+    segments = service.extract(_document("video"), upload)
+
+    assert len(segments) == 1
+    assert segments[0].content == "可用画面描述"
+    assert segments[0].metadata["scene_index"] == 1
+
+
+def test_video_extraction_raises_when_no_frames_extracted():
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames = lambda path: []
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mkv", name="broken.mkv",
+        extension="mkv", mime_type="video/x-matroska",
+    )
+
+    with pytest.raises(RuntimeError):
+        service.extract(_document("video"), upload)
