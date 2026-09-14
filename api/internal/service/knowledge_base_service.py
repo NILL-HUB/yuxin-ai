@@ -16,6 +16,7 @@ from internal.entity.knowledge_entity import (
     PartitionMode,
     VisibilityScope,
 )
+from internal.entity.upload_file_entity import allowed_extensions_for_base_type, media_type_for_extension
 from internal.exception import ForbiddenException, FailException, NotFoundException, ValidateErrorException
 from internal.lib.helper import datetime_to_timestamp, escape_like_pattern
 from internal.model import (
@@ -199,11 +200,18 @@ class KnowledgeBaseService(BaseService):
             file: FileStorage,
             account: Account,
     ) -> KnowledgeDocument:
-        """上传文档到知识库并触发索引构建"""
+        """上传素材到知识库并触发索引构建。
+
+        会按扩展名识别 media_type，并按知识库板块类型做硬约束校验。
+        """
         knowledge_base = self.get_accessible_base(knowledge_base_id, account)
 
         cos_service = self._get_cos_service()
         upload_file = cos_service.upload_file(file=file, only_image=False, account=account)
+
+        extension = (upload_file.extension or "").lower()
+        media_type = media_type_for_extension(extension)
+        self._assert_media_type_allowed(knowledge_base, extension)
 
         document = self.create(
             KnowledgeDocument,
@@ -214,6 +222,8 @@ class KnowledgeBaseService(BaseService):
             source_type=KnowledgeCreatedFrom.MANUAL_UPLOAD.value,
             source_id=str(upload_file.id),
             upload_file_id=upload_file.id,
+            media_type=media_type,
+            parse_profile={},
             metadata_={
                 "upload_file_id": str(upload_file.id),
                 "operation_context": OperationContext.USER.value,
@@ -226,6 +236,23 @@ class KnowledgeBaseService(BaseService):
         indexing_service.build_document(document.id, account)
 
         return document
+
+    @staticmethod
+    def _assert_media_type_allowed(knowledge_base: KnowledgeBase, extension: str) -> None:
+        """板块类型硬约束：扩展名必须属于该板块允许的媒体类型。
+
+        板块 base_type 为空时视为 mixed（兼容存量库）；扩展名为空时不拦截。
+        """
+        normalized = (extension or "").strip().lower()
+        if not normalized:
+            return
+        base_type = getattr(knowledge_base, "base_type", None) or KnowledgeBaseType.MIXED.value
+        allowed = allowed_extensions_for_base_type(base_type)
+        if normalized not in allowed:
+            raise ValidateErrorException(
+                f"当前知识库不允许上传 .{normalized} 文件",
+                {"file": [f"板块类型 {base_type} 允许的扩展名：{'/'.join(allowed)}"]},
+            )
 
     def _get_cos_service(self):
         from .cos_service import CosService
