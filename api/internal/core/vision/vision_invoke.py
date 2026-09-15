@@ -101,6 +101,33 @@ def _duration_to_ms(duration: str) -> int:
     return 0
 
 
+def _run_ffmpeg_probe(exe: str, video_path: str):
+    """执行 ffmpeg 探测（独立方法便于测试替换，避免单测依赖真实 ffmpeg）。"""
+    return subprocess.run(
+        [exe, "-i", video_path], capture_output=True, timeout=_FRAME_TIMEOUT
+    )
+
+
+def probe_duration_sec(video_path: str) -> float:
+    """探测视频时长（秒）；无法探测时返回 0.0（由调用方退回默认帧数）。
+
+    ffmpeg 无 ffprobe 依赖也能给出 Duration 行，故复用同一可执行文件，
+    不额外要求 ffprobe 存在。
+    """
+    try:
+        exe = _resolve_ffmpeg_exe()
+        result = _run_ffmpeg_probe(exe, video_path)
+        stderr = (result.stderr or b"").decode("utf-8", errors="replace")
+    except Exception:
+        logger.warning("视频时长探测失败 path=%s", video_path, exc_info=True)
+        return 0.0
+    for line in stderr.splitlines():
+        if "Duration:" in line:
+            raw = line.split("Duration:")[1].split(",")[0].strip()
+            return _duration_to_ms(raw) / 1000.0
+    return 0.0
+
+
 def extract_video_frames(video_path: str, frame_count: int = _DEFAULT_FRAME_COUNT) -> list[str]:
     """抽取视频关键帧，返回 data URI 列表；无可用后端时抛错。"""
     requested = _DEFAULT_FRAME_COUNT if frame_count is None else int(frame_count)
