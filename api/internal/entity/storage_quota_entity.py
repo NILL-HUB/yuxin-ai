@@ -26,6 +26,11 @@ MAX_SINGLE_FILE_FEATURE_KEY = "max_single_file_gb"
 # 无套餐权益时的单文件上限（字节）：15MB，与分片上传引入前的单文件上传上限一致
 DEFAULT_MAX_SINGLE_FILE_BYTES = 15 * 1024 * 1024
 
+# 素材解析预留：L1 帧数上限(60) × 单帧上限(最坏 4K ≈110KB) ≈ 6.6MB。
+# 实测（testsrc 合成源）帧开销是绝对量、与源视频大小无关，故用固定上界而非倍率。
+# 语义：仅作为上传准入的门槛参与校验，不计入已用；真实占用由帧落库时按实际字节计入。
+PARSE_RESERVE_BYTES = 8 * 1024 * 1024
+
 
 class StorageAddonPlanType(str, Enum):
     """套餐类型：存储扩展包（Plan.plan_type 的一种取值）。"""

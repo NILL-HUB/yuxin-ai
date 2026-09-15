@@ -156,13 +156,20 @@ class StorageQuotaService(BaseService):
         used = self.get_used_bytes(account_id)
         self._assert_within_quota(total, used, incoming_bytes)
 
-    def consume_quota(self, account_id: UUID, incoming_bytes: int) -> int:
+    def consume_quota(
+        self, account_id: UUID, incoming_bytes: int, reserve_bytes: int = 0
+    ) -> int:
         """原子预占：在同一把行锁内完成「校验 + 累加」，返回累加后的已用字节数。
 
         与 ``check_quota`` + ``add_usage`` 两步走的区别：本方法先对
         ``account_storage_usage`` 行加 ``FOR UPDATE`` 锁，再校验配额并写入，
         因此并发上传不会同时通过校验（关闭超卖窗口）。超配额时抛
         ``ForbiddenException`` 且不写入任何用量。
+
+        ``reserve_bytes`` 是**准入预留**：参与超额校验，但**不计入已用**。
+        用于素材上传时把「解析将产生的帧占用」一并纳入门槛——否则用户可传满
+        配额，随后帧留存把用量顶穿。预留只是门槛，真实占用由帧落库时按实际
+        字节 ``add_usage`` 计入。
 
         无用量记录时新建；并发创建撞唯一约束时回退为累加。
         """
@@ -177,7 +184,7 @@ class StorageQuotaService(BaseService):
             .one_or_none()
         )
         if usage is None:
-            self._assert_within_quota(total, 0, incoming_bytes)
+            self._assert_within_quota(total, 0, incoming_bytes + reserve_bytes)
             try:
                 created = self.create(
                     AccountStorageUsage, account_id=account_id, used_bytes=incoming_bytes
@@ -196,7 +203,7 @@ class StorageQuotaService(BaseService):
                     return self.get_used_bytes(account_id)
 
         used = int(usage.used_bytes or 0)
-        self._assert_within_quota(total, used, incoming_bytes)
+        self._assert_within_quota(total, used, incoming_bytes + reserve_bytes)
         new_value = used + incoming_bytes
         self.update(usage, used_bytes=new_value)
         return new_value

@@ -939,7 +939,12 @@ git commit -m "feat(knowledge): carry frame time_offset into parse_profile manif
 
 - [ ] **Step 1: 写失败测试**
 
-在 `test_storage_quota_service.py` 末尾追加（复用该文件既有的 `_new_service` / `_SessionStub` / `_QueryStub` 桩）：
+在 `test_storage_quota_service.py` 末尾追加（复用该文件既有的 `_new_service` / `_SessionStub` / `_QueryStub` 桩）。
+
+> **桩要点（实测）**：`resolve_total_quota_bytes` 用 `monkeypatch.setattr` 直接替换即可；
+> `BaseService.update` 依赖 `db.auto_commit()`，而 `_new_service` 的 db 桩只有 `session`，
+> **必须** monkeypatch `service.update`，且桩只记录 kwargs（不写回实例），
+> 因此断言要看记录的 kwargs 而非 `usage.used_bytes`。
 
 ```python
 class TestConsumeQuotaWithReserve:
@@ -949,39 +954,57 @@ class TestConsumeQuotaWithReserve:
     若把预留也计入已用：用户被白扣一笔从未占用的空间。
     """
 
-    def test_reserve_blocks_upload_when_total_insufficient():
+    def _service_with_usage(self, monkeypatch, used_bytes):
+        account_id = uuid4()
+        usage = SimpleNamespace(used_bytes=used_bytes)
+        service = _new_service(_SessionStub([_QueryStub(one_or_none_result=usage)]))
+        updated = []
+        monkeypatch.setattr(
+            service, "update",
+            lambda instance, **kwargs: updated.append(kwargs) or instance,
+        )
+        return service, usage, updated
+
+    def test_reserve_blocks_upload_when_total_insufficient(self, monkeypatch):
         """used=0，配额 2048；传 1024 本可通过，加预留 2048 后超额 -> 拒绝。"""
-        service = _new_service(_SessionStub([
-            _QueryStub(first_result=None, all_result=[]),          # resolve_total_quota_bytes
-            _QueryStub(one_or_none_result=SimpleNamespace(used_bytes=0)),  # usage
-        ]))
-        # 配额基线 5GB，改用显式 stub 控制总量更直接
-        service.resolve_total_quota_bytes = lambda account_id: 2048
+        service, usage, updated = self._service_with_usage(monkeypatch, used_bytes=0)
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 2048)
 
         with pytest.raises(ForbiddenException):
             service.consume_quota(uuid4(), 1024, reserve_bytes=2048)
 
-    def test_reserve_not_counted_into_used_bytes():
+        assert updated == []
+        assert usage.used_bytes == 0
+
+    def test_reserve_not_counted_into_used_bytes(self, monkeypatch):
         """累加值只含 incoming_bytes，不含 reserve。"""
-        usage = SimpleNamespace(used_bytes=0)
-        service = _new_service(_SessionStub([
-            _QueryStub(one_or_none_result=usage),
-        ]))
-        service.resolve_total_quota_bytes = lambda account_id: 10_000
+        service, usage, updated = self._service_with_usage(monkeypatch, used_bytes=0)
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 10_000)
 
         result = service.consume_quota(uuid4(), 1_000, reserve_bytes=5_000)
 
         assert result == 1_000
-        assert usage.used_bytes == 1_000
+        assert updated == [{"used_bytes": 1_000}]
 
-    def test_without_reserve_behaves_as_before():
-        usage = SimpleNamespace(used_bytes=0)
-        service = _new_service(_SessionStub([
-            _QueryStub(one_or_none_result=usage),
-        ]))
-        service.resolve_total_quota_bytes = lambda account_id: 1_000
+    def test_without_reserve_behaves_as_before(self, monkeypatch):
+        service, usage, updated = self._service_with_usage(monkeypatch, used_bytes=0)
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 1_000)
 
         assert service.consume_quota(uuid4(), 1_000) == 1_000
+        assert updated == [{"used_bytes": 1_000}]
+
+    def test_reserve_gate_applies_when_usage_record_absent(self, monkeypatch):
+        """无用量记录时预留同样参与门槛，避免新账号传满后再被帧顶穿。"""
+        service = _new_service(_SessionStub([_QueryStub(one_or_none_result=None)]))
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 2048)
+        created = []
+        monkeypatch.setattr(service, "create",
+            lambda model, **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
+
+        with pytest.raises(ForbiddenException):
+            service.consume_quota(uuid4(), 1024, reserve_bytes=2048)
+
+        assert created == []
 ```
 
 - [ ] **Step 2: 运行测试确认失败**

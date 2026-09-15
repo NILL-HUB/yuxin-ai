@@ -287,3 +287,63 @@ def test_consume_quota_creates_record_when_absent(monkeypatch):
     assert result == 2048
     assert created[0]["used_bytes"] == 2048
 
+
+class TestConsumeQuotaWithReserve:
+    """上传准入需把「解析预留」纳入校验，但预留本身不计入已用。
+
+    若不纳入：用户剩 2G、传 2G 视频会通过校验，随后帧留存把用量顶穿配额。
+    若把预留也计入已用：用户被白扣一笔从未占用的空间。
+    """
+
+    def _service_with_usage(self, monkeypatch, used_bytes):
+        account_id = uuid4()
+        usage = SimpleNamespace(used_bytes=used_bytes)
+        service = _new_service(_SessionStub([_QueryStub(one_or_none_result=usage)]))
+        updated = []
+        monkeypatch.setattr(
+            service, "update",
+            lambda instance, **kwargs: updated.append(kwargs) or instance,
+        )
+        return service, usage, updated
+
+    def test_reserve_blocks_upload_when_total_insufficient(self, monkeypatch):
+        """used=0，配额 2048；传 1024 本可通过，加预留 2048 后超额 -> 拒绝。"""
+        service, usage, updated = self._service_with_usage(monkeypatch, used_bytes=0)
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 2048)
+
+        with pytest.raises(ForbiddenException):
+            service.consume_quota(uuid4(), 1024, reserve_bytes=2048)
+
+        assert updated == []
+        assert usage.used_bytes == 0
+
+    def test_reserve_not_counted_into_used_bytes(self, monkeypatch):
+        """累加值只含 incoming_bytes，不含 reserve。"""
+        service, usage, updated = self._service_with_usage(monkeypatch, used_bytes=0)
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 10_000)
+
+        result = service.consume_quota(uuid4(), 1_000, reserve_bytes=5_000)
+
+        assert result == 1_000
+        assert updated == [{"used_bytes": 1_000}]
+
+    def test_without_reserve_behaves_as_before(self, monkeypatch):
+        service, usage, updated = self._service_with_usage(monkeypatch, used_bytes=0)
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 1_000)
+
+        assert service.consume_quota(uuid4(), 1_000) == 1_000
+        assert updated == [{"used_bytes": 1_000}]
+
+    def test_reserve_gate_applies_when_usage_record_absent(self, monkeypatch):
+        """无用量记录时预留同样参与门槛，避免新账号传满后再被帧顶穿。"""
+        service = _new_service(_SessionStub([_QueryStub(one_or_none_result=None)]))
+        monkeypatch.setattr(service, "resolve_total_quota_bytes", lambda account_id: 2048)
+        created = []
+        monkeypatch.setattr(service, "create",
+            lambda model, **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
+
+        with pytest.raises(ForbiddenException):
+            service.consume_quota(uuid4(), 1024, reserve_bytes=2048)
+
+        assert created == []
+
