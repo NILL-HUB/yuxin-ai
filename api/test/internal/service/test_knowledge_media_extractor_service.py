@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from internal.core.vision.vision_invoke import ExtractedFrame
 from internal.service.knowledge_media_extractor_service import (
     KnowledgeMediaExtractorService,
     MediaSegment,
@@ -46,14 +47,14 @@ def _upload_file(extension: str = "jpg"):
     )
 
 
-def _write_frames(tmp_path, count: int) -> list[str]:
-    """写 count 个真实帧文件；帧抽取现返回文件路径（供留存与 data URI 转换）。"""
-    paths = []
+def _write_frames(tmp_path, count: int) -> list[ExtractedFrame]:
+    """写 count 个真实帧文件；抽帧现返回帧文件路径与时间偏移。"""
+    frames = []
     for index in range(1, count + 1):
         path = tmp_path / f"frame_{index:03d}.jpg"
         path.write_bytes(b"\xff\xd8\xff\xe0frame")
-        paths.append(str(path))
-    return paths
+        frames.append(ExtractedFrame(path=str(path), time_offset=float(index - 1)))
+    return frames
 
 
 def _raise_no_audio(_video_path):
@@ -159,7 +160,7 @@ def test_video_extraction_returns_segment_per_frame(tmp_path):
         audio_service=SimpleNamespace(),
     )
     frames = _write_frames(tmp_path, 2)
-    service._extract_frames_to_dir = lambda path, out_dir: frames
+    service._extract_frames_with_offsets = lambda path, out_dir: frames
     service._extract_audio_track = _raise_no_audio
     seen_prompts = []
 
@@ -193,7 +194,7 @@ def test_video_extraction_skips_frames_that_fail_analysis(tmp_path):
         audio_service=SimpleNamespace(),
     )
     frames = _write_frames(tmp_path, 2)
-    service._extract_frames_to_dir = lambda path, out_dir: frames
+    service._extract_frames_with_offsets = lambda path, out_dir: frames
     service._extract_audio_track = _raise_no_audio
     calls = {"count": 0}
 
@@ -222,7 +223,7 @@ def test_video_extraction_raises_when_no_frames_extracted():
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames_to_dir = lambda path, out_dir: []
+    service._extract_frames_with_offsets = lambda path, out_dir: []
     service._extract_audio_track = _raise_no_audio
     upload = SimpleNamespace(
         id=uuid4(), key=f"2026/09/13/{uuid4()}.mkv", name="broken.mkv",
@@ -246,7 +247,7 @@ def test_video_extraction_raises_when_all_descriptions_blank(tmp_path):
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames_to_dir = lambda path, out_dir: _write_frames(tmp_path, 2)
+    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 2)
     service._extract_audio_track = _raise_no_audio
     service._invoke_vision = lambda data_uri, prompt: "   "
     upload = SimpleNamespace(

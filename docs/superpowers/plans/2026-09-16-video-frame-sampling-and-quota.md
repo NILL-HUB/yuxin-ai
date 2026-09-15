@@ -590,9 +590,18 @@ from internal.service.knowledge_media_extractor_service import (
 
 
 class _FakeStorage:
+    """模拟对象存储：下载写字节，上传返回带 key 的产物记录。
+
+    必须实现 upload_bytes——否则 _persist_frame 抛错被降级为 frame_url=""，
+    用例按 frame_url 过滤会得到 0 个片段，断言「看起来失败」而非「确实校验」。
+    """
+
     def download_file(self, key, target_path):
         with open(target_path, "wb") as fh:
             fh.write(b"video-bytes")
+
+    def upload_bytes(self, filename, content, **_kwargs):
+        return SimpleNamespace(key=f"frames/{filename}", size=len(content))
 
 
 class _FakeUploadFileService:
@@ -604,19 +613,34 @@ class _FakeUploadFileService:
         return SimpleNamespace(key=kwargs["key"])
 
 
+def _upload():
+    return SimpleNamespace(
+        id=uuid4(), key=f"2026/09/16/{uuid4()}.mp4", name="clip.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+
+def _document():
+    return SimpleNamespace(
+        id=uuid4(), media_type="video",
+        knowledge_base_id=uuid4(), owner_account_id=uuid4(),
+    )
+
+
 def _video_service(frames):
     """构造视频分支所需依赖；抽帧/音轨/视觉调用均以桩替换。
 
-    cos_service 用该文件既有的 _FakeStorage（其 download_file 落字节），
-    供 _download_to 写入临时文件。
+    frames 为 None 时不替换抽帧方法——实例属性会遮蔽类方法，使模块级
+    monkeypatch 失效（校验转调行为的用例必须走真实方法）。
     """
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
-        cos_service=_FakeStorage(b"video-bytes"),
+        cos_service=_FakeStorage(),
         audio_service=SimpleNamespace(),
         upload_file_service=_FakeUploadFileService(),
     )
-    service._extract_frames_with_offsets = lambda path, out_dir: frames
+    if frames is not None:
+        service._extract_frames_with_offsets = lambda path, out_dir: frames
     service._transcribe_video_track = lambda path, upload: ""
     service._invoke_vision = lambda data_uri, prompt: "画面描述"
     return service
@@ -634,25 +658,41 @@ def _mk_frames(tmp_path, count):
 def test_frame_segments_carry_time_offset(tmp_path):
     frames = _mk_frames(tmp_path, 3)
     service = _video_service(frames)
-    document = SimpleNamespace(
-        id=uuid4(), media_type="video", knowledge_base_id=uuid4(),
-        owner_account_id=uuid4(),
-    )
-    upload = _upload_file("mp4")
 
     segments = service.extract(
-        document, upload, account_id=uuid4(), document_id=document.id
+        _document(), _upload(), account_id=uuid4(), document_id=uuid4()
     )
 
     frame_segments = [s for s in segments if s.metadata.get("frame_url")]
     assert len(frame_segments) == 3
     assert [s.metadata["time_offset"] for s in frame_segments] == [0.0, 5.0, 10.0]
     assert [s.metadata["scene_index"] for s in frame_segments] == [1, 2, 3]
+
+
+def test_extract_frames_with_offsets_delegates(monkeypatch, tmp_path):
+    """`_extract_frames_with_offsets` 应转调 vision_invoke 的新函数。"""
+    import internal.service.knowledge_media_extractor_service as module
+
+    captured = {}
+
+    def _fake(video_path, out_dir):
+        captured["video_path"] = video_path
+        captured["out_dir"] = out_dir
+        return [ExtractedFrame(path="/tmp/frame_001.jpg", time_offset=1.0)]
+
+    monkeypatch.setattr(module, "extract_video_frames_with_offsets", _fake)
+    service = _video_service(None)
+
+    result = service._extract_frames_with_offsets("in.mp4", str(tmp_path))
+
+    assert [frame.path for frame in result] == ["/tmp/frame_001.jpg"]
+    assert [frame.time_offset for frame in result] == [1.0]
+    assert captured == {"video_path": "in.mp4", "out_dir": str(tmp_path)}
 ```
 
-> **注**：该文件已有 `_FakeStorage` / `_upload_file` / `_document` 辅助，直接复用即可，
-> 不要重复定义（`_document` 会与既有同名函数冲突）。若既有 `_FakeStorage` 的
-> `download_file` 行为与 `_download_to` 不兼容，按其构造参数调整。
+> **注**：这是新文件，所需的 `_FakeStorage` / `_FakeUploadFileService` / `_upload` / `_document`
+> 必须在**本文件内**定义（不要指望从其他测试文件 import）。`_FakeStorage` **必须**实现
+> `upload_bytes`，否则 `_persist_frame` 会抛错降级、`frame_url` 恒为空字符串。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -661,11 +701,23 @@ Expected: FAIL —— `AttributeError: ... has no attribute '_extract_frames_wit
 
 - [ ] **Step 3: 实现**
 
-`knowledge_media_extractor_service.py` 顶部 import 增补：
+`knowledge_media_extractor_service.py` 顶部 import 增补（**必须顶层导入**：既有模块与
+`test_frame_persistence.py` 都按 `monkeypatch.setattr(module, "extract_video_frames_to_dir", ...)`
+的方式替换，函数内 import 会让补丁失效并直接 `AttributeError`）：
 
 ```python
-from internal.core.vision.vision_invoke import ExtractedFrame
+from internal.core.vision.vision_invoke import (
+    ExtractedFrame,
+    extract_video_audio,
+    extract_video_frames_with_offsets,
+    invoke_vision_model,
+    path_to_data_uri,
+)
 ```
+
+> 注意：`extract_video_frames_to_dir` 在服务层不再被引用（改名后无调用方），
+> 应从该 import 列表移除，避免遗留未使用导入。`vision_invoke` 中该函数本身保留
+> （仍有 `test_frame_persistence.py` 的直接用例覆盖）。
 
 替换 `_extract_frames_to_dir` 为带偏移的版本：
 
@@ -676,8 +728,6 @@ from internal.core.vision.vision_invoke import ExtractedFrame
         L1 按视频时长动态决定帧数并全片均匀取帧——固定帧数会让长视频只覆盖
         开头（历史缺陷），导致「改细节」无法定位到中后段片段。
         """
-        from internal.core.vision.vision_invoke import extract_video_frames_with_offsets
-
         return extract_video_frames_with_offsets(video_path, out_dir)
 ```
 
@@ -741,15 +791,17 @@ Expected: PASS
 
 Run: `python -m pytest test/internal/service/test_knowledge_media_extractor_service.py test/internal/service/test_knowledge_media_ingest.py test/internal/service/test_frame_persistence.py test/internal/service/test_video_audio_extraction.py -q --no-header --no-cov`
 
-**必改的既有测试（已实测清点，否则会因方法改名/返回类型变化而失败）**：
+**必改的既有测试（已逐文件实测清点，否则会因方法改名/返回类型变化而失败）**：
 
 | 文件 | 需改动 |
 | --- | --- |
-| `test_frame_persistence.py` | 6 处 `service._extract_frames_to_dir = lambda _v, _d: [...]` 桩 → 改名 `_extract_frames_with_offsets`，且返回值由 `list[str]` 变为 `list[ExtractedFrame]`（用 `ExtractedFrame(path=..., time_offset=...)` 包装） |
-| `test_frame_persistence.py` | `TestExtractFramesToDirDelegation` 整个类需重写：改为断言 `_extract_frames_with_offsets` 转调 `vision_invoke.extract_video_frames_with_offsets` |
-| `test_knowledge_media_extractor_service.py` | `service._extract_frames_to_dir = lambda path, out_dir: frames` 桩同样改名；配合 `_write_frames` 辅助改为返回 `ExtractedFrame` 列表 |
-| `test_knowledge_media_ingest.py` | 若有 `_extract_frames_to_dir` 桩，同样改名 |
-| `test_video_audio_extraction.py` | 同上（该文件聚焦音轨，可能不涉及） |
+| `test_frame_persistence.py` | 6 处 `service._extract_frames_to_dir = ...` 桩（L191/207/225/241/254/268）→ 改名 `_extract_frames_with_offsets`，且返回值由 `list[str]` 变为 `list[ExtractedFrame]`。既有辅助 `_write_frame(tmp_path, index=1) -> str` 保持返回路径，另加包装：桩写成 `lambda _v, _d: [ExtractedFrame(path=_write_frame(tmp_path), time_offset=0.0)]`，多处（L253）需按 index 生成多条 |
+| `test_frame_persistence.py` | `TestExtractFramesToDirDelegation` 整个类（L276-295）需重写：改名 `TestExtractFramesWithOffsetsDelegation`，patch 目标由 `module.extract_video_frames_to_dir` 改为 `module.extract_video_frames_with_offsets`，断言返回值由 `["/tmp/frame_001.jpg"]` 改为 `ExtractedFrame` 列表 |
+| `test_knowledge_media_extractor_service.py` | 4 处桩（L162/196/225/249）改名 `_extract_frames_with_offsets`；辅助 `_write_frames(tmp_path, count)` 改为直接返回 `list[ExtractedFrame]`（`_write_frames` 目前被 L161/249 两处使用；L225 传空列表可直接保留） |
+| `test_video_audio_extraction.py` | **6 处桩（L132/148/161/177/196/209）同样必须改名**——当前计划正文遗漏了该文件，其 `_extract_frames_to_dir` 桩会因方法改名而失效（`monkeypatch.setattr` 在方法不存在时抛 `AttributeError`，6 个用例直接报错）。该文件的 `_write_frame(tmp_path, index=1) -> str` 同样需要 `ExtractedFrame` 包装 |
+
+> 建议：全局搜索 `_extract_frames_to_dir`（排除 `vision_invoke.py` 内的旧函数定义）
+> 确认无遗漏后再跑回归——这是改名类改动最易漏的地方。
 
 Expected: PASS
 

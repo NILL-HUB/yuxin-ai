@@ -20,8 +20,9 @@ from injector import inject
 
 from internal.core.ports.storage_port import ObjectStoragePort
 from internal.core.vision.vision_invoke import (
+    ExtractedFrame,
     extract_video_audio,
-    extract_video_frames_to_dir,
+    extract_video_frames_with_offsets,
     invoke_vision_model,
     path_to_data_uri,
 )
@@ -144,12 +145,13 @@ class KnowledgeMediaExtractorService(BaseService):
             )
         ]
 
-    def _extract_frames_to_dir(self, video_path: str, out_dir: str) -> list[str]:
-        """视频抽帧到指定目录（独立方法便于测试替换），返回帧文件路径列表。
+    def _extract_frames_with_offsets(self, video_path: str, out_dir: str) -> list[ExtractedFrame]:
+        """视频抽帧（独立方法便于测试替换），返回帧与其时间偏移。
 
-        返回路径而非 data URI：关键帧需要留存为 UploadFile（视觉向量的前置）。
+        L1 按视频时长动态决定帧数并全片均匀取帧——固定帧数会让长视频只覆盖
+        开头（历史缺陷），导致「改细节」无法定位到中后段片段。
         """
-        return extract_video_frames_to_dir(video_path, out_dir)
+        return extract_video_frames_with_offsets(video_path, out_dir)
 
     def _extract_audio_track(self, video_path: str) -> str:
         """抽取视频音轨为单声道 16k WAV（独立方法便于测试替换）。
@@ -216,7 +218,7 @@ class KnowledgeMediaExtractorService(BaseService):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = self._download_to(upload_file, temp_dir)
             frames_dir = os.path.join(temp_dir, "frames")
-            frames = self._extract_frames_to_dir(file_path, frames_dir)
+            frames = self._extract_frames_with_offsets(file_path, frames_dir)
 
             if not frames:
                 raise RuntimeError("视频抽帧结果为空，无法解析")
@@ -240,7 +242,7 @@ class KnowledgeMediaExtractorService(BaseService):
                 if account_id is not None and document_id is not None:
                     try:
                         frame_url = self._persist_frame(
-                            frame, account_id=account_id, document_id=document_id,
+                            frame.path, account_id=account_id, document_id=document_id,
                         ).key or ""
                     except Exception:
                         logger.warning(
@@ -251,7 +253,7 @@ class KnowledgeMediaExtractorService(BaseService):
 
                 try:
                     description = self._invoke_vision(
-                        path_to_data_uri(frame), _VIDEO_FRAME_PROMPT,
+                        path_to_data_uri(frame.path), _VIDEO_FRAME_PROMPT,
                     )
                 except Exception:
                     logger.warning(
@@ -269,6 +271,9 @@ class KnowledgeMediaExtractorService(BaseService):
                             "scene_index": index,
                             "frame_count": len(frames),
                             "frame_url": frame_url,
+                            # 帧在视频中的时间偏移（秒）：L2 区间密抽与「改细节」定位的
+                            # 唯一依据，缺失则检索到的片段无法换算成时间轴位置。
+                            "time_offset": float(frame.time_offset or 0.0),
                         },
                     )
                 )

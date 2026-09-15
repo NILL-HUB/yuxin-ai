@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 
 from internal.core.vision import vision_invoke
+from internal.core.vision.vision_invoke import ExtractedFrame
 from internal.service.knowledge_media_extractor_service import KnowledgeMediaExtractorService
 
 
@@ -188,7 +189,10 @@ class TestFrameUrlMetadata:
     def test_frame_segments_carry_frame_url(self, monkeypatch, tmp_path):
         service, _upload_file_service = _service()
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         _silence_audio(service, monkeypatch, tmp_path)
 
@@ -204,7 +208,10 @@ class TestFrameUrlMetadata:
         """帧文件在临时目录内，视觉调用必须收到 data URI（而非已失效的路径）。"""
         service, _upload_file_service = _service()
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         _silence_audio(service, monkeypatch, tmp_path)
         seen: list[str] = []
 
@@ -222,7 +229,10 @@ class TestFrameUrlMetadata:
         storage = _FakeStorage(upload_error=RuntimeError("storage down"))
         service, _upload_file_service = _service(storage)
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         _silence_audio(service, monkeypatch, tmp_path)
 
@@ -238,7 +248,10 @@ class TestFrameUrlMetadata:
         storage = _FakeStorage()
         service, upload_file_service = _service(storage)
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         _silence_audio(service, monkeypatch, tmp_path)
 
@@ -250,8 +263,11 @@ class TestFrameUrlMetadata:
 
     def test_uses_frame_count_from_frames_dir(self, monkeypatch, tmp_path):
         service, _upload_file_service = _service()
-        frames = [_write_frame(tmp_path, 1), _write_frame(tmp_path, 2)]
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: frames)
+        frames = [
+            ExtractedFrame(path=_write_frame(tmp_path, 1), time_offset=0.0),
+            ExtractedFrame(path=_write_frame(tmp_path, 2), time_offset=5.0),
+        ]
+        monkeypatch.setattr(service, "_extract_frames_with_offsets", lambda _v, _d: frames)
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         _silence_audio(service, monkeypatch, tmp_path)
 
@@ -265,7 +281,7 @@ class TestFrameUrlMetadata:
 
     def test_raises_when_frames_empty(self, monkeypatch, tmp_path):
         service, _upload_file_service = _service()
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [])
+        monkeypatch.setattr(service, "_extract_frames_with_offsets", lambda _v, _d: [])
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: str(tmp_path / "a.wav"))
         monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "视频里说的话")
 
@@ -273,8 +289,8 @@ class TestFrameUrlMetadata:
             service._extract_video(_upload(), account_id=uuid4(), document_id=uuid4())
 
 
-class TestExtractFramesToDirDelegation:
-    """`_extract_frames_to_dir` 是可替换方法，应转调 vision_invoke 的新函数。"""
+class TestExtractFramesWithOffsetsDelegation:
+    """`_extract_frames_with_offsets` 是可替换方法，应转调 vision_invoke 的新函数。"""
 
     def test_delegates_to_vision_invoke(self, monkeypatch, tmp_path):
         import internal.service.knowledge_media_extractor_service as module
@@ -284,12 +300,13 @@ class TestExtractFramesToDirDelegation:
         def _fake(video_path, out_dir):
             captured["video_path"] = video_path
             captured["out_dir"] = out_dir
-            return ["/tmp/frame_001.jpg"]
+            return [ExtractedFrame(path="/tmp/frame_001.jpg", time_offset=1.0)]
 
-        monkeypatch.setattr(module, "extract_video_frames_to_dir", _fake)
+        monkeypatch.setattr(module, "extract_video_frames_with_offsets", _fake)
         service, _upload_file_service = _service()
 
-        result = service._extract_frames_to_dir("in.mp4", str(tmp_path))
+        result = service._extract_frames_with_offsets("in.mp4", str(tmp_path))
 
-        assert result == ["/tmp/frame_001.jpg"]
+        assert [frame.path for frame in result] == ["/tmp/frame_001.jpg"]
+        assert [frame.time_offset for frame in result] == [1.0]
         assert captured == {"video_path": "in.mp4", "out_dir": str(tmp_path)}

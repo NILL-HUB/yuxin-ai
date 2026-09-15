@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from internal.core.vision import vision_invoke
+from internal.core.vision.vision_invoke import ExtractedFrame
 from internal.service.knowledge_media_extractor_service import KnowledgeMediaExtractorService
 
 
@@ -130,7 +131,10 @@ class TestVideoTranscriptSegments:
         service = _service()
         frame = _write_frame(tmp_path)
         audio = _write_audio(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: audio)
         monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "视频里说的话")
@@ -146,7 +150,10 @@ class TestVideoTranscriptSegments:
     def test_blank_transcript_produces_no_segment(self, monkeypatch, tmp_path):
         service = _service()
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: _write_audio(tmp_path))
         monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "   ")
@@ -159,7 +166,10 @@ class TestVideoTranscriptSegments:
         """音轨抽取抛异常时视频解析仍必须成功（帧描述是有效产物）。"""
         service = _service()
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
 
         def _boom(_video_path):
@@ -175,7 +185,10 @@ class TestVideoTranscriptSegments:
         """音轨抽成功但 ASR 失败时同样只降级，不得中断解析。"""
         service = _service()
         frame = _write_frame(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: _write_audio(tmp_path))
 
@@ -193,7 +206,10 @@ class TestVideoTranscriptSegments:
         service = _service()
         frame = _write_frame(tmp_path)
         audio = _write_audio(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: audio)
         monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "视频里说的话")
@@ -206,7 +222,10 @@ class TestVideoTranscriptSegments:
         service = _service()
         frame = _write_frame(tmp_path)
         audio = _write_audio(tmp_path)
-        monkeypatch.setattr(service, "_extract_frames_to_dir", lambda _v, _d: [frame])
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: audio)
 
