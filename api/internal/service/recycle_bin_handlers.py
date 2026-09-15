@@ -563,9 +563,28 @@ def purge_upload_file(snapshot: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # os_file：宿主机本机文件（由 OS automation worker 移入宿主机回收站）
 # ---------------------------------------------------------------------------
-def _worker_recycle_endpoint() -> str:
-    """解析 worker 回收站端点与令牌。"""
+def _worker_recycle_endpoint(account_id: Any = None) -> tuple[str, str]:
+    """解析 worker 回收站端点与令牌。
+
+    解析优先级与 4 个 Agent 工具（`os_file_task` / `os_recycle_bin` / `os_snapshot`
+    / `computer_action`）**完全一致**，统一走 `resolve_desktop_bridge`：
+    1. **按账号动态解析**：`desktop_device` 表中该账号已注册且在线的设备。桌面端
+       token 是每次启动随机生成的（`crypto.randomBytes(24)`），只有这条路能拿到；
+    2. 静态 `DESKTOP_BRIDGE_URL` / `DESKTOP_BRIDGE_TOKEN` 回退；
+    3. 兼容既有部署的 `OS_AUTOMATION_URL` / `OS_AUTOMATION_TOKEN`。
+
+    历史缺陷：本函数曾只读静态 env，导致「agent 删了本机文件 → 用户在平台回收站
+    里恢复/销毁」在纯动态注册（未配静态 env）场景下必然失败——功能入口存在、
+    执行路径却断。修复后与工具侧同源，不再出现两套解析不一致。
+    """
     import os as _os
+
+    from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
+
+    resolved = resolve_desktop_bridge(account_id, purpose="/recycle")
+    if resolved:
+        origin, token = resolved
+        return origin.rstrip("/") + "/recycle", token
 
     bridge_url = _os.getenv("DESKTOP_BRIDGE_URL", "").strip()
     bridge_token = _os.getenv("DESKTOP_BRIDGE_TOKEN", "").strip()
@@ -576,14 +595,14 @@ def _worker_recycle_endpoint() -> str:
     return endpoint.rstrip("/") + "/recycle" if endpoint else "", token
 
 
-def _call_worker_recycle(payload: dict[str, Any]) -> dict[str, Any]:
+def _call_worker_recycle(payload: dict[str, Any], account_id: Any = None) -> dict[str, Any]:
     """调用宿主机 OS automation worker 的回收站接口（best-effort）。"""
     import json as _json
     import os as _os
     import urllib.error
     import urllib.request
 
-    endpoint, token = _worker_recycle_endpoint()
+    endpoint, token = _worker_recycle_endpoint(account_id)
     if not endpoint or not token:
         return {"ok": False, "error": "OS_AUTOMATION_URL/TOKEN 或 DESKTOP_BRIDGE_URL/TOKEN 未配置"}
     body = _json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
@@ -616,12 +635,15 @@ def restore_os_file(
     target_path: str = "",
     check_device: bool = False,
     confirm_device_mismatch: bool = False,
+    account_id: Any = None,
 ) -> bool:
     """恢复本机文件：调用 worker 把文件移回原处（或自选目标路径）。
 
     check_device=True 时要求 worker 校验删除设备与当前设备是否一致：
     不一致且未确认时抛 DeviceMismatchException（由路由转换为 device_mismatch 响应，
     前端提示「这并非本机删除的文件」并提供两种恢复方式）。
+
+    account_id 用于按账号动态解析桌面 bridge；不传则退回静态配置。
     """
     from internal.exception import DeviceMismatchException, ValidateErrorException
 
@@ -636,7 +658,8 @@ def restore_os_file(
             "target_path": str(target_path or "").strip(),
             "check_device": bool(check_device),
             "confirm_device_mismatch": bool(confirm_device_mismatch),
-        }
+        },
+        account_id=account_id,
     )
     if not result.get("ok"):
         if result.get("code") == "device_mismatch":
@@ -651,11 +674,14 @@ def restore_os_file(
     return True
 
 
-def purge_os_file(snapshot: dict[str, Any]) -> None:
+def purge_os_file(snapshot: dict[str, Any], *, account_id: Any = None) -> None:
     """本机文件到期销毁：调用 worker 精确清理当前条目（失败向上抛）。
 
     worker 不可达 / 清理失败时抛异常，由 ``purge_expired`` 捕获后保持
     ``pending`` 待重试，避免"状态已销毁但文件仍在"。
+
+    account_id 用于按账号动态解析桌面 bridge；销毁由定时任务触发时无账号上下文，
+    此时退回静态配置（与既有部署保持一致）。
     """
     entry_id = str((snapshot or {}).get("entry_id") or "").strip()
     if not entry_id:
@@ -671,7 +697,8 @@ def purge_os_file(snapshot: dict[str, Any]) -> None:
             "op": "purge",
             "entry_id": entry_id,
             "safe_root": safe_root or None,
-        }
+        },
+        account_id=account_id,
     )
     if not result.get("ok"):
         raise RuntimeError(f"本机回收站 purge 失败: {result.get('error')}")
@@ -1117,6 +1144,7 @@ def restore_resource(
     target_path: str = "",
     check_device: bool = False,
     confirm_device_mismatch: bool = False,
+    account_id: Any = None,
 ) -> bool:
     if resource_type == "knowledge_base":
         return restore_knowledge_base(snapshot)
@@ -1132,6 +1160,7 @@ def restore_resource(
             target_path=target_path,
             check_device=check_device,
             confirm_device_mismatch=confirm_device_mismatch,
+            account_id=account_id,
         )
     if resource_type == "schedule_task":
         return restore_schedule_task(snapshot)
@@ -1144,7 +1173,9 @@ def restore_resource(
     return restore_generic(resource_type, snapshot)
 
 
-def purge_resource(resource_type: str, snapshot: dict[str, Any]) -> None:
+def purge_resource(
+    resource_type: str, snapshot: dict[str, Any], *, account_id: Any = None
+) -> None:
     """到期销毁收尾：knowledge_base/system_prompt 的资源记录在删除时已物理删除，
     其余类型的存储文件残留由对应业务清理；此处预留扩展点。"""
     if resource_type == "knowledge_document":
@@ -1154,7 +1185,7 @@ def purge_resource(resource_type: str, snapshot: dict[str, Any]) -> None:
     elif resource_type == "upload_file":
         purge_upload_file(snapshot)
     elif resource_type == "os_file":
-        purge_os_file(snapshot)
+        purge_os_file(snapshot, account_id=account_id)
     elif resource_type == "schedule_task":
         purge_schedule_task(snapshot)
     elif resource_type == "external_data_source":

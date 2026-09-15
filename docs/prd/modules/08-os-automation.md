@@ -15,7 +15,7 @@
 ## 架构
 
 ```text
-用户端 / 首页助手
+用户端 / 首页助手 / 平台回收站
   → AssistantAgentService 挂载 os_file_task / os_recycle_bin / os_snapshot（内置工具）
      （构建期注入 requester=account_id；computer_action 同）
   → resolve_desktop_bridge(account_id, purpose="/file")
@@ -27,6 +27,21 @@
      ├─ /recycle   → delete（移入回收站）/ list / restore / purge
      └─ /snapshot  → rollback_file / rollback_turn / list_snapshots
 ```
+
+**解析路径只有一条（工具与平台回收站同源）**：Agent 工具（`os_file_task` /
+`os_recycle_bin` / `os_snapshot` / `computer_action`）与平台回收站的
+`restore` / `purge` 本机文件，**都经 `resolve_desktop_bridge`** 解析 bridge，
+不存在两套逻辑。`recycle_bin_handlers._worker_recycle_endpoint(account_id)` 与工具侧
+同源；归属账号取自回收站条目的 `_owner_account_context()`（`deleted_by_type` 为
+`user`/`agent` 时用 `deleted_by`，`admin` 条目不含账号语义故返回 `None` 退回静态配置）。
+
+> **历史缺陷（已修复）**：`_worker_recycle_endpoint` 曾只读静态 env，不调
+> `resolve_desktop_bridge`。桌面端 token 是每次启动随机生成的
+> （`desktop/main.js` 的 `randomBytes(24)`），只有注册到 `desktop_device` 才能解析到；
+> 因此在**未配静态 env 的纯动态注册场景**下，「agent 删了本机文件 → 用户在平台回收站
+> 里恢复/销毁」必然失败（报 `OS_AUTOMATION_URL/TOKEN 或 DESKTOP_BRIDGE_URL/TOKEN 未配置`），
+> 而同一账号的 Agent 工具却能正常工作。回归测试见
+> `api/test/internal/service/test_recycle_bin_handlers.py::TestWorkerRecycleEndpointResolution`。
 
 平台容器运行在 Docker 内，默认不直接接触宿主机磁盘。宿主机侧常驻轻量 HTTP worker，
 以 `Bearer <OS_AUTOMATION_TOKEN>` 鉴权，所有文件操作限制在安全根目录内

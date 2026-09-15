@@ -14,7 +14,7 @@ def _snapshot(entry_id="e1"):
 def test_restore_os_file_passes_target_and_confirm_flags(monkeypatch):
     captured = {}
 
-    def fake_call_worker(payload):
+    def fake_call_worker(payload, account_id=None):
         captured.update(payload)
         return {"ok": True, "restored_to": "C:/tmp/custom/a.txt"}
 
@@ -39,7 +39,7 @@ def test_restore_os_file_raises_device_mismatch(monkeypatch):
     monkeypatch.setattr(
         handlers,
         "_call_worker_recycle",
-        lambda payload: {
+        lambda payload, account_id=None: {
             "ok": False,
             "code": "device_mismatch",
             "recorded_device": {"ip": "192.168.1.10", "name": "alice"},
@@ -59,7 +59,7 @@ def test_restore_os_file_raises_validate_error_on_worker_failure(monkeypatch):
     monkeypatch.setattr(
         handlers,
         "_call_worker_recycle",
-        lambda payload: {"ok": False, "error": "回收站中未找到对应条目"},
+        lambda payload, account_id=None: {"ok": False, "error": "回收站中未找到对应条目"},
     )
 
     with pytest.raises(ValidateErrorException) as exc_info:
@@ -78,7 +78,7 @@ def test_purge_os_file_passes_recorded_safe_root_not_recycle_root(monkeypatch):
     monkeypatch.setattr(
         handlers,
         "_call_worker_recycle",
-        lambda payload: captured.update(payload) or {"ok": True, "purged": []},
+        lambda payload, account_id=None: captured.update(payload) or {"ok": True, "purged": []},
     )
     snapshot = {
         "entry_id": "entry-1",
@@ -106,12 +106,104 @@ def test_purge_os_file_raises_on_worker_failure(monkeypatch):
     monkeypatch.setattr(
         handlers,
         "_call_worker_recycle",
-        lambda payload: {"ok": False, "error": "worker 不可达"},
+        lambda payload, account_id=None: {"ok": False, "error": "worker 不可达"},
     )
 
     with pytest.raises(RuntimeError) as exc_info:
         handlers.purge_os_file({"entry_id": "entry-1"})
     assert "purge 失败" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# 本机回收站端点解析：必须与 4 个 Agent 工具走同一套「按账号动态解析」
+# ---------------------------------------------------------------------------
+class TestWorkerRecycleEndpointResolution:
+    """回归：平台回收站恢复/销毁本机文件曾只读静态 env。
+
+    桌面端 token 是每次启动随机生成的（`crypto.randomBytes(24)`），只有注册到
+    `desktop_device` 后由 `resolve_desktop_bridge` 才能解析到。因此只读静态 env
+    会导致「agent 删了本机文件 → 平台回收站里恢复必然失败」的断链。
+    """
+
+    def test_prefers_account_scoped_dynamic_resolution(self, monkeypatch):
+        calls = {}
+
+        def fake_resolve(account_id=None, *, purpose=""):
+            calls["account_id"] = account_id
+            calls["purpose"] = purpose
+            return ("http://host.docker.internal:9876", "dynamic-token")
+
+        monkeypatch.setattr(
+            "internal.service.desktop_bridge_resolver.resolve_desktop_bridge",
+            fake_resolve,
+        )
+        # 静态 env 故意配成别的值：动态解析必须优先
+        monkeypatch.setenv("DESKTOP_BRIDGE_URL", "http://static:1")
+        monkeypatch.setenv("DESKTOP_BRIDGE_TOKEN", "static-token")
+
+        endpoint, token = handlers._worker_recycle_endpoint(account_id="acct-1")
+
+        assert endpoint == "http://host.docker.internal:9876/recycle"
+        assert token == "dynamic-token"
+        assert calls["account_id"] == "acct-1"
+
+    def test_falls_back_to_static_when_no_dynamic_device(self, monkeypatch):
+        monkeypatch.setattr(
+            "internal.service.desktop_bridge_resolver.resolve_desktop_bridge",
+            lambda account_id=None, *, purpose="": None,
+        )
+        monkeypatch.setenv("DESKTOP_BRIDGE_URL", "http://static:1")
+        monkeypatch.setenv("DESKTOP_BRIDGE_TOKEN", "static-token")
+
+        endpoint, token = handlers._worker_recycle_endpoint(account_id="acct-1")
+
+        assert endpoint == "http://static:1/recycle"
+        assert token == "static-token"
+
+    def test_keeps_legacy_os_automation_fallback(self, monkeypatch):
+        """无账号上下文时仍须保留既有 OS_AUTOMATION_* 兼容路径。"""
+        monkeypatch.setattr(
+            "internal.service.desktop_bridge_resolver.resolve_desktop_bridge",
+            lambda account_id=None, *, purpose="": None,
+        )
+        monkeypatch.delenv("DESKTOP_BRIDGE_URL", raising=False)
+        monkeypatch.delenv("DESKTOP_BRIDGE_TOKEN", raising=False)
+        monkeypatch.setenv("OS_AUTOMATION_URL", "http://legacy:8765")
+        monkeypatch.setenv("OS_AUTOMATION_TOKEN", "legacy-token")
+
+        endpoint, token = handlers._worker_recycle_endpoint()
+
+        assert endpoint == "http://legacy:8765/recycle"
+        assert token == "legacy-token"
+
+    def test_restore_uses_account_scoped_endpoint(self, monkeypatch):
+        """恢复接口要把账号透传下去，否则拿不到动态设备。"""
+        captured = {}
+        monkeypatch.setattr(
+            handlers,
+            "_call_worker_recycle",
+            lambda payload, account_id=None: captured.update(
+                {"payload": payload, "account_id": account_id}
+            ) or {"ok": True},
+        )
+
+        handlers.restore_os_file(_snapshot(), account_id="acct-9")
+
+        assert captured["account_id"] == "acct-9"
+
+    def test_purge_uses_account_scoped_endpoint(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            handlers,
+            "_call_worker_recycle",
+            lambda payload, account_id=None: captured.update(
+                {"payload": payload, "account_id": account_id}
+            ) or {"ok": True, "purged": []},
+        )
+
+        handlers.purge_os_file({"entry_id": "entry-1"}, account_id="acct-9")
+
+        assert captured["account_id"] == "acct-9"
 
 
 # ---------------------------------------------------------------------------
