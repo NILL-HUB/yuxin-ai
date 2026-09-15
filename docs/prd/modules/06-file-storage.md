@@ -99,10 +99,12 @@ binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 
 | 方法 | 后端解析规则 | 配额守卫 |
 | --- | --- | --- |
-| `upload_file` | 当前激活后端 | 写入前 `check_quota`，成功后 `add_usage`（`account` 为空则跳过） |
-| `upload_bytes` | 当前激活后端 | 写入前 `check_quota`，成功后 `add_usage`（`account_id` 为空则跳过） |
+| `upload_file` | 当前激活后端 | 写入前 `check_quota(size + PARSE_RESERVE_BYTES)`，成功后 `add_usage`（`account` 为空则跳过） |
+| `upload_bytes` | 当前激活后端 | 写入前 `check_quota(len(content))`，成功后 `add_usage`（`account_id` 为空则跳过）。**不加解析预留**——这是帧/Agent 产物的写入通道，逐次写入加预留会反复卡门槛 |
 | `upload_bytes_without_record` | 当前激活后端 | 不创建记录、不计配额 |
 | `download_file` / `get_file_url` | 优先按 `upload_file.storage_backend` 路由，未命中回退激活后端 | — |
+
+**解析预留（`PARSE_RESERVE_BYTES` = 8MB）**：素材上传（含分片 `complete` / `instant_upload` 的 `consume_quota`）在配额门槛上额外计入该常量，把「解析将产生的关键帧占用」一并纳入准入校验。它**只是门槛、不计入已用**——`consume_quota(account_id, incoming_bytes, reserve_bytes=...)` 中预留参与 `_assert_within_quota` 但不写入 `used_bytes`；真实占用由帧落库时按实际字节计（详见 `02-knowledge-base.md` §11.10.5）。
 
 说明：
 
@@ -138,14 +140,14 @@ used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销
 
 | 方法 | 语义 | 并发安全性 | 适用场景 |
 | --- | --- | --- | --- |
-| `check_quota(account_id, bytes)` | 只读校验，超配额抛 `ForbiddenException` | ⚠️ 校验与写入之间不持锁，**存在并发超卖窗口** | 廉价预检（如分片 `init` 提前劝退） |
-| `consume_quota(account_id, bytes)` | 对 `account_storage_usage` 行加 `FOR UPDATE` 锁，**在同一把锁内完成校验 + 累加**，返回累加后用量；超配额时抛错且**不写入任何用量** | ✅ 原子，关闭超卖窗口 | 真正要占用存储的落点（分片 `complete`、秒传 `instant`） |
+| `check_quota(account_id, bytes)` | 只读校验，超配额抛 `ForbiddenException` | ⚠️ 校验与写入之间不持锁，**存在并发超卖窗口** | 廉价预检（如分片 `init` 提前劝退、素材直传 `upload_file`） |
+| `consume_quota(account_id, bytes, reserve_bytes=0)` | 对 `account_storage_usage` 行加 `FOR UPDATE` 锁，**在同一把锁内完成校验 + 累加**，返回累加后用量；超配额时抛错且**不写入任何用量**。`reserve_bytes` 是**准入预留**：参与超额校验（`incoming + reserve`），但**不计入已用** | ✅ 原子，关闭超卖窗口 | 真正要占用存储的落点（分片 `complete`、秒传 `instant`；素材上传带 `PARSE_RESERVE_BYTES`） |
 
 > `consume_quota` 是「占用存储」的唯一正确入口：任何"先 check 后 add"的两步写法在并发下都可能让两个请求同时通过校验（如 5GB 配额下两个 4GB 上传各查各的空闲量）。失败路径必须配对调用 `release_usage` 归还预占。
 
 **增减时机（关键语义）**：
 - **累加**：上传成功时 `add_usage(account_id, upload_file.size)`（`RuntimeStorageProxy.upload_file` / `upload_bytes`）；分片上传与秒传走 `consume_quota`（合并/复制**之前**预占，失败则 `release_usage` 归还）。
-- **释放**：**仅在回收站留存期结束、底层存储对象被物理销毁时** `release_usage(account_id, size)`，落点在 `internal/service/recycle_bin_handlers.py` 的 `purge_knowledge_document` / `purge_knowledge_base`（删除底层对象之后调用 `_release_storage_quota`）。
+- **释放**：**仅在回收站留存期结束、底层存储对象被物理销毁时** `release_usage(account_id, size)`，落点在 `internal/service/recycle_bin_handlers.py` 的 `purge_knowledge_document` / `purge_knowledge_base`（删除底层对象之后调用 `_release_storage_quota`）。**关键帧文件是独立于文档主文件的 `upload_file` 记录**，上述两个 purge 会一并清理帧文件并释放其配额（快照侧由 `_collect_document_frame_files` 采集）——帧经存储代理计入配额，不释放即配额泄漏。
 - **删除进回收站不释放**：删除 = 记录快照 + 物理删原表记录，但底层文件在留存期（默认 7~30 天）内仍占用存储，故此时**不**释放配额；删除后立刻恢复语义才成立（恢复不重复累加，因为配额从未被释放）。
 - **容错**：配额释放失败只记 warning，不向上抛异常——`purge` 抛异常的语义是"底层对象删除失败需重试"，配额释放失败若抛出会导致重复销毁。快照缺 `account_id` / `size`（老快照）时跳过释放。
 
@@ -246,7 +248,7 @@ used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销
     → account_auth_routes.py：_get_service(CosService).upload_file(...)
       （CosService 在 DI 中绑定到 RuntimeStorageProxy）
   → RuntimeStorageProxy.upload_file(file, only_image, account)
-      → account 非空：StorageQuotaService.check_quota(account_id, file_size)   ← 超限抛 ForbiddenException
+      → account 非空：StorageQuotaService.check_quota(account_id, file_size + PARSE_RESERVE_BYTES)   ← 超限抛 ForbiddenException
       → _get_service()（按 storage_config 激活后端惰性构造）
           → [local] LocalStorageService: 写入 storage/uploads/{key}
           → [cos]   CosService: client.put_object(bucket, content, key)

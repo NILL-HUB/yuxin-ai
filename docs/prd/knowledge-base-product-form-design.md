@@ -273,9 +273,11 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 计费 | 每帧多一次编码调用 + 多一份向量存储；视觉编码走独立模型凭证（`get_provider_credentials(model_type="visual_embedding")`） |
 | 与文本检索关系 | 语义检索主路径仍走文本向量（`knowledge_segment_embedding_{dim}`）；视觉向量是并行的补充召回通道 |
 
-**解析链路要求（已落地）**：关键帧生成后同时留存帧文件与 `parse_profile.frames`（含 `segment_id` / `frame_url` / `scene_index`），即使 L2 未跑，帧文件也在，保证视觉向量可后补而不必重跑解析。
+**解析链路要求（已落地）**：关键帧生成后同时留存帧文件与 `parse_profile.frames`（含 `segment_id` / `frame_url` / `scene_index` / `time_offset`），即使 L2 未跑，帧文件也在，保证视觉向量可后补而不必重跑解析。
 
-**关键帧留存不计用户存储配额**：帧是解析中间产物（随素材删除），当前实现不调用 `add_usage`；因此它不占用 §2.6 的配额额度。若后续要计入，需在 `_persist_frame` 后配对 `add_usage` 与 `purge_knowledge_document` 的 `release_usage`。
+**关键帧留存计入用户存储配额**：帧是**持久化产物**（落对象存储 + 落 `upload_file` 记录），按「堆积即计费」判据计入 §2.6 的配额额度。
+
+计费**不在帧代码里**：`_persist_frame` 调 `cos_service.upload_bytes(...)`，而 `ObjectStoragePort` 在 DI 中被绑定到 `RuntimeStorageProxy`，其 `upload_bytes` 内部已执行 `check_quota` + `add_usage`——这是跨模块隐式契约，已由 `api/test/internal/service/test_frame_quota_charge.py` 锁定。释放侧必须成对：`purge_knowledge_document`（单文档）与 `purge_knowledge_base`（整库）除主文件外一并清理帧文件并 `release_usage`；素材上传准入另加 `PARSE_RESERVE_BYTES`（8MB）预留把帧占用纳入门槛（预留只是门槛、不计入已用）。
 
 > **落地实况（P3 已完成）**：帧文件留存 —— 每帧上传为 `UploadFile`，其对象 key 作为 `frame_url` 写入该帧片段的 `metadata`（未留存/留存失败时为空字符串）；`parse_profile.frames` 汇总已写入；`video_visual_embedding` 表（含 HNSW 余弦索引）与 `VisualEmbeddingService` 已落地，解析链路在写完文本向量后自动为带 `frame_url` 的帧片段建立视觉向量索引（重解析前先清空旧向量，保证幂等）。**读取侧**已接入检索主链路：`RetrievalService._visual_recall_knowledge_base` 在 `semantic`/`hybrid` 策略下并行补充视觉召回，按 `segment_id` 去重合并、受同一套过滤约束（分区/媒体类型/标签/阈值），并在 `has_vectors()` 预检为否时不发起编码调用以控成本（此前只写不读，已修正）。视觉检索当前在服务层按余弦相似度排序（每视频数帧，量级可控）；若单库帧数显著增长，可改为 SQL 侧 pgvector 查询（表已建 HNSW 索引）。
 
@@ -474,7 +476,8 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 > - **视觉编码服务不注册 langchain `model_class_registry`**：该模型 REST 入参（裸字符串 / `{"image":...}` / 对象数组）与 `OpenAIEmbeddings` 不兼容，注册会导致静默只编码文本，故 `VisualEmbeddingService` 走独立 HTTP 调用。
 > - **L2 触发链路落在独立 Celery 任务 + 显式触发入口**：任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`（`bind=True` / `max_retries=2` / `default_retry_delay=60`），**不加 beat 条目**（按需触发，不做定时轮询）；触发入口为 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2` → `KnowledgeBaseService.trigger_document_l2`（Celery 优先、失败回退同步）。状态写 `parse_profile.tier2`，失败只标 error 不回滚 L1 产物，增强时**回写同一批 Segment 不新建**。
 > - **检索过滤全部 SQL 下推**：分区 / 媒体类型 / 素材id / 相似度阈值直接进向量 SQL（命中 HNSW 索引）；全文分支需先把分区/媒体类型解析为素材 id 再与标签取交集；**标签无命中 fail closed**，不退化为不过滤。
-> - 帧留存**不计用户存储配额**（解析中间产物，随素材删除）。
+> - 帧留存**计入用户存储配额**（持久化产物）；计费由存储代理 `RuntimeStorageProxy.upload_bytes` 隐式完成，释放由 `purge_knowledge_document` / `purge_knowledge_base` 成对完成；素材上传准入另加 8MB 解析预留。
+> - **L1 抽帧随时长动态**：帧数 `clamp(round(8·log2(sec) − 35), 6, 60)`，**1 小时触顶 60 帧**，全片均匀取帧并记录 `time_offset`（取代此前「固定 3 帧且只取开头若干帧」）。`parse_profile.frames` 每项含 `time_offset`。
 
 ### 9.3 明确不做
 

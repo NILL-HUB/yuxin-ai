@@ -362,7 +362,7 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 
 - 参数：`name`（必填）、`base_type`、`partition_mode`、`description`。
 - 工具内部对 `base_type` / `partition_mode` 做白名单校验（非法值返回可读错误而非抛异常），再调用 `KnowledgeBaseService.create_user_content_base(operation_context="user", ...)`。
-- **account 传递**：builtin 工具无全局 `g.account`，沿用 `computer_control` / `codex_os` 的范式——运行时挂载点（`assistant_agent_service.py` 的 `_build_assistant_runtime_tools`）用 `kb_tool_factory(account_id=str(account_id))` 注入；工具内再用 `AccountService.get_account()` 换成真实 `Account` 实例（服务层依赖 `account.id`）。
+- **account 传递**：builtin 工具无全局 `g.account`，沿用 `computer_control` / `host_os` 的范式——运行时挂载点（`assistant_agent_service.py` 的 `_build_assistant_runtime_tools`）用 `kb_tool_factory(account_id=str(account_id))` 注入；工具内再用 `AccountService.get_account()` 换成真实 `Account` 实例（服务层依赖 `account.id`）。
 - 只能为**当前登录用户**创建其私有板块，不能代他人建库。
 
 #### 11.7.4 标签关联（复用既有 Tag）
@@ -377,6 +377,7 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 两表均含 `account_id`，标签或板块/素材删除时关联级联清理。
 
 **分区与标签的分工**：分区是互斥层级归类（一个素材只能在一个分区），标签是可交叉叠加的属性（一个素材可有多个标签）。
+
 **服务层 `KnowledgeTagService`**（`internal/service/knowledge_tag_service.py`，P3 已落地），6 个方法：
 
 | 方法 | 职责 |
@@ -397,7 +398,6 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 | POST | `/space/knowledge-bases/<uuid>/documents/<uuid>/tags/<uuid>/delete` | 移除素材标签，返回「移除标签成功」 |
 
 三条路由均先调用 `KnowledgeBaseService.get_accessible_base` 校验板块归属，避免越权读改他人素材标签；打标签的 `account_id` 取当前登录账号。
-
 
 #### 11.7.5 素材多模态字段
 
@@ -453,13 +453,13 @@ P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链�
 | --- | --- | --- | --- |
 | 图片 | `image` | 从对象存储下载 → `path_to_data_uri`（按扩展名推断 MIME，编码前上限 8MB）→ 视觉模型（画面描述 + OCR） | 1 个片段；摘要为空返回 `[]` |
 | 音频 | `audio` | 下载 → 包装为 `FileStorage` → `AudioService.audio_to_text` ASR 全文转写 | 1 个片段；转写为空返回 `[]` |
-| 视频 | `video` | 下载 → `extract_video_frames_to_dir`（默认 3 帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 逐帧 `path_to_data_uri` 视觉描述；同目录内 `extract_video_audio` 抽音轨 → ASR 转写 | 转写片段（1 个，非空时）+ 每帧 1 个片段；单帧失败跳过，全部失败抛错 |
+| 视频 | `video` | 下载 → `probe_duration_sec` 探测时长 → `extract_video_frames_with_offsets`（L1 帧数随时长动态、全片均匀取帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 逐帧 `path_to_data_uri` 视觉描述；同目录内 `extract_video_audio` 抽音轨 → ASR 转写 | 转写片段（1 个，非空时）+ 每帧 1 个片段；单帧失败跳过，全部失败抛错 |
 
 `account_id` / `document_id` 仅供视频分支的关键帧留存使用（帧的归属账号与来源文档），缺省时视频照常解析但不留存帧（`frame_url` 为空字符串），保证既有调用方向后兼容。
 
 文档类型（`document`）返回空列表，由既有文本链路（parsing → splitting → indexing）处理。
-**音轨 ASR 属可降级能力**：视频可能无音轨、ASR 可能不可用，`_transcribe_video_track` 捕获全部异常后只记 warning 并返回空串，帧描述仍作为有效产物产出；音轨临时文件在 `finally` 中删除。
 
+**音轨 ASR 属可降级能力**：视频可能无音轨、ASR 可能不可用，`_transcribe_video_track` 捕获全部异常后只记 warning 并返回空串，帧描述仍作为有效产物产出；音轨临时文件在 `finally` 中删除。
 
 #### 11.8.2 视觉能力共享模块
 
@@ -471,7 +471,10 @@ P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链�
 | `invoke_vision_model(data_uri, prompt)` | 经 `LanguageModelService.get_feature_model("vision_analyze")` 调用视觉模型 |
 | `extract_video_frames(video_path, frame_count=3)` | 抽关键帧，返回 data URI 列表；产物随临时目录销毁；ffmpeg 不可用时降级 imageio-ffmpeg，均不可用抛错 |
 | `extract_video_audio(video_path, target_path)` | 抽音轨为单声道 16k WAV（`-vn` / `-ac 1` / `-ar 16000`），返回 `target_path`；无可用 ffmpeg 或未产出文件抛 `RuntimeError` |
-| `extract_video_frames_to_dir(video_path, out_dir, frame_count=3)` | 抽帧到指定目录，返回帧文件路径列表；不删目录、不转 data URI，生命周期由调用方负责（关键帧留存用） |
+| `extract_video_frames_to_dir(video_path, out_dir, frame_count=3)` | 抽帧到指定目录，返回帧文件路径列表；不删目录、不转 data URI，生命周期由调用方负责。**注意：关键帧留存链路已改用 `extract_video_frames_with_offsets`（需时间偏移），本函数当前仅剩测试覆盖，无生产调用方** |
+| `probe_duration_sec(video_path)` | 用同一 ffmpeg 可执行文件解析 `Duration:` 行返回秒数（不额外依赖 ffprobe）；无法探测返回 `0.0`，由调用方退回兜底策略 |
+| `extract_video_frames_with_offsets(video_path, out_dir, frame_count=None)` | 按视频时长均匀抽帧，返回 `list[ExtractedFrame]`（`path` + `time_offset` 秒）。`frame_count` 显式传入时按其抽（供 L2 区间密抽复用）；时长为 0 时退回首帧兜底，仍保证有产物 |
+| `plan_frame_offsets(duration_sec)` / `resolve_l1_frame_count(duration_sec)` | 抽帧策略纯函数（`internal/core/vision/frame_sampling.py`）：帧数 `clamp(round(8·log2(sec) − 35), 6, 60)`，**1 小时触顶 60 帧**，全片均匀取偏移 |
 | `_resolve_ffmpeg_exe()` | 解析可用 ffmpeg 可执行文件：优先系统 `ffmpeg`，其次 `imageio-ffmpeg` 自带静态二进制，均无则抛错 |
 
 `providers/vision_tools/vision_analyze.py` / `video_analyze.py` 已改为复用该模块，对外行为不变（仍使用返回 data URI 的 `extract_video_frames`）。
@@ -492,7 +495,7 @@ class MediaSegment:
 | `image` | 视觉摘要（含 OCR） | `media_type`、`vision_summary` |
 | `audio` | ASR 转写全文 | `media_type` |
 | `video`（音轨转写） | 视频音轨 ASR 转写全文 | `media_type`、`source="audio_transcript"` |
-| `video`（关键帧） | 单帧视觉描述（含 OCR） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_count`（总帧数）、`frame_url`（留存帧的对象 key，未留存/留存失败为空字符串） |
+| `video`（关键帧） | 单帧视觉描述（含 OCR） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_count`（总帧数）、`frame_url`（留存帧的对象 key，未留存/留存失败为空字符串）、`time_offset`（该帧在视频中的时间偏移秒数，L2 区间定位与「改细节」的唯一依据） |
 
 转写片段排在帧片段之前（「讲什么」的检索价值高于「画面是什么」）。
 
@@ -521,8 +524,8 @@ build_document(document_id)
        _build_media_document：解析产物即片段，跳过文本切分
          → 清理该文档旧片段（含向量，保证重解析幂等）
          → 逐条建 KnowledgeSegment（keywords/character_count/token_count，status=indexing, enabled=false）
-         → _index_visual_vectors：为带 frame_url 的视频帧建视觉向量（先清空旧向量）
          → knowledge_vector_service.index_segment 向量化
+         → _index_visual_vectors：为带 frame_url 的视频帧建视觉向量（先清空旧向量）
          → _finalize_segments：片段置 completed + enabled，文档置 completed
            parse_profile={"tier1": {...}, "frames": [...]}
 ```
@@ -558,8 +561,8 @@ build_document(document_id)
 ```json
 {"tier1": {"status": "completed", "media_type": "video", "segment_count": 3, "video_frame_count": 3}, "frames": [{"segment_id": "...", "frame_url": "...", "scene_index": 1}]}
 ```
-（`video_frame_count` 与 `frames` 为 P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。）
 
+（`video_frame_count` 与 `frames` 为 P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。每个 frame 条目含 `segment_id` / `frame_url` / `scene_index` / `time_offset`（`_segment_frame` 输出，时间偏移是该帧在视频中的坐标——缺它则帧清单只能排序、无法换算时间轴位置，L2 区间密抽与「改细节」都无从定位）。）
 
 | 档位 | 状态 | 内容 |
 | --- | --- | --- |
@@ -697,9 +700,13 @@ P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分�
 
 测试：`api/test/internal/service/test_visual_recall_retrieval.py`（含方法级护栏测试——公开路径的「标签无命中 → 空」由上游早返回兜住，若不单独锁护栏，把它误写成 `if not document_ids` 也不会有测试失败，那正是最危险的 fail-open）。
 
-#### 11.10.5 帧留存不计用户存储配额
+#### 11.10.5 帧留存计入用户存储配额
 
-关键帧是解析中间产物（随素材删除），当前实现**不调用 `add_usage`**，因此**不占用** §11.7.6 的存储配额。若后续要计入，需在 `_persist_frame` 后配对 `add_usage` 与 `purge_knowledge_document` 的 `release_usage`。
+关键帧是**持久化产物**（落对象存储 + 落 `upload_file` 记录），按「堆积即计费」判据**计入** §11.7.6 的存储配额。
+
+- **计费发生在存储代理层，不在帧代码里**：`_persist_frame` 调 `cos_service.upload_bytes(...)`，而 `ObjectStoragePort` 在 DI 中被绑定到 `RuntimeStorageProxy`（`api/app/http/module.py`），该代理的 `upload_bytes` 内部已执行 `check_quota` + `add_usage`。这是一条**跨模块隐式契约**，由 `api/test/internal/service/test_frame_quota_charge.py` 显式锁定，避免被静默移除后帧变成免费存储。
+- **释放**：`purge_knowledge_document`（单文档）与 `purge_knowledge_base`（整库）除主文件外**一并清理帧文件并 `release_usage`**。其快照分别由 `snapshot_knowledge_document`（`frames`）与 `snapshot_knowledge_base`（文档级 `_frames`）采集（按 segment 的 `frame_url` 反查 `UploadFile` 记录）。二者必须成对——只计费不释放会让用户删除素材后帧仍占额（配额泄漏）。
+- **准入预留**：素材上传（分片 `complete` / `instant_upload` / `upload_file` 直传）的校验量为「素材大小 + `PARSE_RESERVE_BYTES`（8MB）」，把解析将产生的帧占用一并纳入门槛；该预留**只是门槛、不计入已用**（`consume_quota(reserve_bytes=...)`）。**产物写入路径 `upload_bytes` 不加预留**（帧/Agent 产物逐次写入，加预留会反复卡门槛）。
 
 ---
 
