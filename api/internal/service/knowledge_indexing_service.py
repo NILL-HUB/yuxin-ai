@@ -288,6 +288,9 @@ class KnowledgeIndexingService(BaseService):
             "segment_id": str(segment.id),
             "frame_url": frame_url,
             "scene_index": int(metadata.get("scene_index") or 0),
+            # 时间偏移是帧的定位坐标：缺它则帧清单只能排序、无法换算时间轴位置，
+            # 「改细节」与 L2 区间密抽都无从定位到具体片段。
+            "time_offset": float(metadata.get("time_offset") or 0.0),
         }
 
     @classmethod

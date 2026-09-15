@@ -238,3 +238,58 @@ class TestMediaExtractionReceivesOwnership:
         call = extractor.calls[0]
         assert call["account_id"] == doc.owner_account_id
         assert call["document_id"] == doc.id
+
+
+class TestFrameManifestCarriesTimeOffset:
+    """parse_profile.frames 必须带 time_offset，供「改细节」定位与 L2 扩抽。
+
+    缺该字段时帧清单只能排序、无法把命中的帧换算成视频时间轴位置，
+    即「改细节」无从定位到具体片段。
+    """
+
+    def test_frame_segment_includes_time_offset(self):
+        segment = SimpleNamespace(
+            id=uuid4(),
+            metadata_={
+                "media_type": "video",
+                "frame_url": "2026/09/16/frame_001.jpg",
+                "scene_index": 1,
+                "time_offset": 7.5,
+            },
+        )
+
+        frame = KnowledgeIndexingService._segment_frame(segment)
+
+        assert frame["time_offset"] == 7.5
+
+    def test_frame_segment_defaults_time_offset_to_zero(self):
+        """旧数据无 time_offset 时不得抛错，退化为 0.0。"""
+        segment = SimpleNamespace(
+            id=uuid4(),
+            metadata_={"media_type": "video", "frame_url": "frames/f1.jpg", "scene_index": 1},
+        )
+
+        assert KnowledgeIndexingService._segment_frame(segment)["time_offset"] == 0.0
+
+    def test_frame_segment_returns_none_without_frame_url(self):
+        segment = SimpleNamespace(
+            id=uuid4(),
+            metadata_={"media_type": "video", "frame_url": "", "time_offset": 1.0},
+        )
+
+        assert KnowledgeIndexingService._segment_frame(segment) is None
+
+    def test_parse_profile_manifest_carries_time_offset(self):
+        visual = _FakeVisualService()
+        doc = _document()
+        segment = _frame_segment()
+        segment.metadata = {**segment.metadata, "time_offset": 12.5}
+        service, _ = _build_service([segment], visual, _FakeStorage())
+        captured = {}
+        service._finalize_segments = (
+            lambda document, segment_ids, parse_profile=None: captured.update(parse_profile)
+        )
+
+        service._build_media_document(doc)
+
+        assert captured["frames"][0]["time_offset"] == 12.5

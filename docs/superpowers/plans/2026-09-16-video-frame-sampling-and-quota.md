@@ -822,18 +822,20 @@ git commit -m "feat(knowledge): record frame time_offset from uniform extraction
 
 - [ ] **Step 1: 写失败测试**
 
-在 `test_visual_indexing.py` 追加：
+在 `test_visual_indexing.py` 追加（复用该文件既有的 `SimpleNamespace` / `uuid4` /
+`_FakeVisualService` / `_FakeStorage` / `_build_service` / `_document` / `_frame_segment`；
+注意 `_frame_segment()` 返回的是 `MediaSegment`，其字段名是 **`metadata`**（不是 `metadata_`），
+只有 `SimpleNamespace` 桩才用 `metadata_`）：
 
 ```python
 class TestFrameManifestCarriesTimeOffset:
-    """parse_profile.frames 必须带 time_offset，供「改细节」定位与 L2 扩抽。"""
+    """parse_profile.frames 必须带 time_offset，供「改细节」定位与 L2 扩抽。
 
-    def test_collect_frames_includes_time_offset(self):
-        from types import SimpleNamespace
-        from uuid import uuid4
+    缺该字段时帧清单只能排序、无法把命中的帧换算成视频时间轴位置，
+    即「改细节」无从定位到具体片段。
+    """
 
-        from internal.service.knowledge_indexing_service import KnowledgeIndexingService
-
+    def test_frame_segment_includes_time_offset(self):
         segment = SimpleNamespace(
             id=uuid4(),
             metadata_={
@@ -844,20 +846,41 @@ class TestFrameManifestCarriesTimeOffset:
             },
         )
 
-        frames = KnowledgeIndexingService._collect_frames([segment])
+        frame = KnowledgeIndexingService._segment_frame(segment)
 
-        assert frames[0]["time_offset"] == 7.5
+        assert frame["time_offset"] == 7.5
 
-    def test_segment_frame_returns_none_without_frame_url(self):
-        from types import SimpleNamespace
-        from uuid import uuid4
-
-        from internal.service.knowledge_indexing_service import KnowledgeIndexingService
-
+    def test_frame_segment_defaults_time_offset_to_zero(self):
+        """旧数据无 time_offset 时不得抛错，退化为 0.0。"""
         segment = SimpleNamespace(
-            id=uuid4(), metadata_={"media_type": "video", "frame_url": "", "time_offset": 1.0}
+            id=uuid4(),
+            metadata_={"media_type": "video", "frame_url": "frames/f1.jpg", "scene_index": 1},
         )
+
+        assert KnowledgeIndexingService._segment_frame(segment)["time_offset"] == 0.0
+
+    def test_frame_segment_returns_none_without_frame_url(self):
+        segment = SimpleNamespace(
+            id=uuid4(),
+            metadata_={"media_type": "video", "frame_url": "", "time_offset": 1.0},
+        )
+
         assert KnowledgeIndexingService._segment_frame(segment) is None
+
+    def test_parse_profile_manifest_carries_time_offset(self):
+        visual = _FakeVisualService()
+        doc = _document()
+        segment = _frame_segment()
+        segment.metadata = {**segment.metadata, "time_offset": 12.5}
+        service, _ = _build_service([segment], visual, _FakeStorage())
+        captured = {}
+        service._finalize_segments = (
+            lambda document, segment_ids, parse_profile=None: captured.update(parse_profile)
+        )
+
+        service._build_media_document(doc)
+
+        assert captured["frames"][0]["time_offset"] == 12.5
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -899,6 +922,11 @@ Expected: PASS
 git add api/internal/service/knowledge_indexing_service.py api/test/internal/service/test_visual_indexing.py
 git commit -m "feat(knowledge): carry frame time_offset into parse_profile manifest"
 ```
+
+> **接线状态（务必如实标注）**：`parse_profile.frames[].time_offset` 目前**只写不读**——
+> 全仓尚无读取该字段的代码。读取端（L2 区间密抽、以 L1 命中帧换算出时间窗口）属
+> **Plan 2**，本任务只交付「写入路径」。在 Plan 2 落地前，不得把「改细节可定位到片段」
+> 描述为已可用能力。
 
 ---
 
