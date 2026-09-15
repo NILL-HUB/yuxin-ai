@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from injector import inject
 
+from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
 from internal.exception import FailException
 from internal.model import UploadFile
 from internal.service.upload_file_service import UploadFileService
@@ -92,7 +93,10 @@ class RuntimeStorageProxy:
         account_id = getattr(account, "id", None)
         if account_id is not None:
             file_size = self._measure_upload_size(file)
-            self.storage_quota_service.check_quota(account_id, file_size)
+            # 素材上传：把解析将产生的帧占用一并纳入门槛（预留不计入已用）
+            self.storage_quota_service.check_quota(
+                account_id, file_size + PARSE_RESERVE_BYTES
+            )
 
         upload_file = self._get_service().upload_file(file, only_image, account)
 

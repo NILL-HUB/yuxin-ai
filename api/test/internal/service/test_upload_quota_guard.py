@@ -195,3 +195,79 @@ def test_upload_bytes_skips_quota_for_anonymous():
     )
     proxy.upload_bytes(filename="a.txt", content=b"x" * 10, account_id=None)
     assert calls == []
+
+
+def test_upload_file_includes_parse_reserve():
+    """素材直传（upload_file）的准入校验须含解析预留。"""
+    from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+
+    calls = []
+
+    class _Quota:
+        def check_quota(self, account_id, incoming_bytes):
+            calls.append((account_id, incoming_bytes))
+
+        def add_usage(self, account_id, bytes_delta):
+            return bytes_delta
+
+    proxy = RuntimeStorageProxy(
+        upload_file_service=SimpleNamespace(),
+        storage_config_service=SimpleNamespace(),
+        storage_quota_service=_Quota(),
+        db=SimpleNamespace(),
+    )
+    proxy._get_service = lambda *a, **k: SimpleNamespace(
+        upload_file=lambda file, only_image, account: SimpleNamespace(size=100)
+    )
+    account = SimpleNamespace(id=uuid4())
+
+    class _Stream:
+        def __init__(self, n):
+            self._n = n
+            self._pos = 0
+
+        def seek(self, offset, whence=0):
+            self._pos = self._n if whence == 2 else offset
+            return self._pos
+
+        def tell(self):
+            return self._pos
+
+    proxy.upload_file(SimpleNamespace(stream=_Stream(100)), account=account)
+
+    assert calls == [(account.id, 100 + PARSE_RESERVE_BYTES)]
+
+
+def test_upload_bytes_does_not_add_parse_reserve():
+    """产物写入路径（upload_bytes）不得掺入解析预留。
+
+    它是帧/Agent 产物的写入通道，每帧都加 8MB 预留会反复卡门槛。
+    """
+    from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+
+    calls = []
+
+    class _Quota:
+        def check_quota(self, account_id, incoming_bytes):
+            calls.append((account_id, incoming_bytes))
+
+        def add_usage(self, account_id, bytes_delta):
+            return bytes_delta
+
+    proxy = RuntimeStorageProxy(
+        upload_file_service=SimpleNamespace(),
+        storage_config_service=SimpleNamespace(),
+        storage_quota_service=_Quota(),
+        db=SimpleNamespace(),
+    )
+    proxy._get_service = lambda *a, **k: SimpleNamespace(
+        upload_bytes=lambda **kw: SimpleNamespace(key="f.jpg", size=10)
+    )
+    account_id = uuid4()
+
+    proxy.upload_bytes(filename="f.jpg", content=b"x" * 10, account_id=account_id)
+
+    assert calls == [(account_id, 10)]
+    assert calls[0][1] != 10 + PARSE_RESERVE_BYTES

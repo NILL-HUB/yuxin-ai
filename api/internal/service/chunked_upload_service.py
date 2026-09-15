@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 from injector import inject
 
+from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
 from internal.exception import FailException, ValidateErrorException
 from internal.model import UploadFile
 from internal.service.chunked_upload_session_service import ChunkedUploadSessionService
@@ -159,7 +160,9 @@ class ChunkedUploadService(BaseService):
             # （init 的 check_quota 只是快速预检，两个会话可同时通过）。
             # 放在合并之前，避免超额时白合并 GB 级文件。
             quota_consumed = False
-            self.storage_quota_service.consume_quota(account.id, session.total_size)
+            self.storage_quota_service.consume_quota(
+                account.id, session.total_size, reserve_bytes=PARSE_RESERVE_BYTES
+            )
             quota_consumed = True
             try:
                 return self._materialize(
@@ -289,7 +292,9 @@ class ChunkedUploadService(BaseService):
         # 秒传会真实复制一份占用存储，必须原子预占配额（锁内校验+累加，防并发超卖）；
         # 复制前预占，避免复制完才被拒造成残留。
         source_size = int(getattr(source, "size", 0) or 0)
-        self.storage_quota_service.consume_quota(account.id, source_size)
+        self.storage_quota_service.consume_quota(
+            account.id, source_size, reserve_bytes=PARSE_RESERVE_BYTES
+        )
         try:
             target_key = _build_object_key(source.name or "material.bin")
             size = self.storage.copy_object(source.key, target_key)

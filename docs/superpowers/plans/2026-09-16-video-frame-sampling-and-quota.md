@@ -1087,9 +1087,10 @@ git commit -m "feat(quota): support parse reserve in consume_quota gate"
 ## Task 7: 上传路径带上解析预留
 
 **Files:**
-- Modify: `api/internal/service/chunked_upload_service.py:90,162,292`
-- Modify: `api/internal/service/storage/runtime_storage_service.py:95,139`
+- Modify: `api/internal/service/chunked_upload_service.py:162,292`
+- Modify: `api/internal/service/storage/runtime_storage_service.py:94`（**仅 `upload_file`**；**不要**改 `upload_bytes`，原因见 Step 3）
 - Test: `api/test/internal/service/test_chunked_upload_service.py`（补充用例）
+- Test: `api/test/internal/service/test_upload_quota_guard.py`（补充用例）
 
 - [ ] **Step 1: 写失败测试**
 
@@ -1117,15 +1118,17 @@ def test_complete_passes_parse_reserve_to_consume_quota():
     assert calls == [("consume", account.id, 1024, PARSE_RESERVE_BYTES)]
 ```
 
-> **必须同步修改的既有测试（否则会失败）**：该文件 `_service` 夹具的 `_Quota` 桩当前签名不含预留，且**既有两个用例对 `calls` 做精确相等断言**：
+> **必须同步修改的既有测试（否则会失败）**：该文件 `_service` 夹具的 `_Quota` 桩当前签名不含预留，且**既有用例对 `calls` 做精确相等断言**（已实测定位）：
 >
-> - 第 104-108 行 `consume_quota` 桩 → 改为 `def consume_quota(self, account_id, incoming_bytes, reserve_bytes=0):` 并把元组追加为 `("consume", account_id, incoming_bytes, reserve_bytes)`
-> - 第 99-102 行 `check_quota` 桩 → 同样加 `reserve_bytes=0` 并记入元组
-> - 第 406 行 `assert calls == [("consume", account.id, 8192)]` → 改为 `[("consume", account.id, 8192, PARSE_RESERVE_BYTES)]`
-> - 第 425 行 `assert calls == [("consume", account.id, 1024)]` → 改为 `[("consume", account.id, 1024, PARSE_RESERVE_BYTES)]`
-> - 第 426 行 `assert not any(call[0] == "add" for call in calls)` 不受影响（按元组首元素判断）
+> - `_Quota.check_quota` 桩 → `def check_quota(self, account_id, incoming_bytes, reserve_bytes=0):`，元组统一记为 4 项 `("check", account_id, incoming_bytes, reserve_bytes)`
+> - `_Quota.consume_quota` 桩 → `def consume_quota(self, account_id, incoming_bytes, reserve_bytes=0):`，元组记为 `("consume", account_id, incoming_bytes, reserve_bytes)`
+> - L153 `assert calls == [("check", account.id, 1024)]` → `[("check", account.id, 1024, 0)]`（init 不传预留）
+> - L406 `assert calls == [("consume", account.id, 8192)]` → `[("consume", account.id, 8192, PARSE_RESERVE_BYTES)]`
+> - L425 `assert calls == [("consume", account.id, 1024)]` → `[("consume", account.id, 1024, PARSE_RESERVE_BYTES)]`
+> - L446 `assert calls == [("consume", account.id, 1024), ("release", account.id, 1024)]` → consume 项补第 4 项，`release` 不动
+> - 其余只按元组首元素判断的断言（`("release", ...) in calls`、`call[0] == "add"`）不受影响
 >
-> 其余使用 `release_usage` 断言的用例（如第 429、451 行）不受影响。
+> 另：`test_upload_quota_guard.py` 的新用例里，`RuntimeStorageProxy.upload_file` 上传成功后还会调 `add_usage`，故 `_Quota` 桩**必须同时实现 `add_usage`**，否则首跑是 `AttributeError` 而非断言红灯。
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -1158,13 +1161,23 @@ from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
 
 init 阶段的快速预检（第 90 行）保持 `check_quota` 不变（它只是预检，真实闸门在 complete）。
 
-`runtime_storage_service.py` 的两处 `check_quota` 改为带预留的校验：
+`runtime_storage_service.py` 中**只**改 `upload_file`（素材直传路径）的校验：
 
 ```python
+        account_id = getattr(account, "id", None)
+        if account_id is not None:
+            file_size = self._measure_upload_size(file)
+            # 素材上传：把解析将产生的帧占用一并纳入门槛（预留不计入已用）
             self.storage_quota_service.check_quota(
                 account_id, file_size + PARSE_RESERVE_BYTES
             )
 ```
+
+> **⚠️ 严禁改 `upload_bytes`（重要，实地核查结论）**：`upload_bytes` 是**产物写入路径**
+> （`_persist_frame` 走的就是它，经 `ObjectStoragePort` → `RuntimeStorageProxy` 绑定，
+> 见 `app/http/module.py` 的 `binder.bind(ObjectStoragePort, to=RuntimeStorageProxy)`）。
+> 若在此加 8MB 预留，则**每一帧写入**都要求 8MB 余量（60 帧反复卡门槛），
+> 语义完全错误。`upload_bytes` 的 `check_quota` 保持原样。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -1180,21 +1193,42 @@ git commit -m "feat(quota): include parse reserve in upload admission"
 
 ---
 
-## Task 8: 帧计入配额
+## Task 8: 锁定「帧计入配额」的既有行为（回归测试，不改生产代码）
+
+> **重写原因（实地核查结论，务必先读）**：原计划假设「帧当前不计配额、需新增 `add_usage`」。
+> 核查后**该前提不成立**——帧**已经在计费**，且不需要任何新代码：
+>
+> 1. `_persist_frame` 调 `self.cos_service.upload_bytes(...)`（`cos_service: ObjectStoragePort`）；
+> 2. `ObjectStoragePort` 在 DI 中被绑定到 `RuntimeStorageProxy`
+>    （`app/http/module.py`：`binder.bind(ObjectStoragePort, to=RuntimeStorageProxy)`，
+>    同时 `binder.bind(CosService, to=RuntimeStorageProxy)`）；
+> 3. `RuntimeStorageProxy.upload_bytes` 内部**已经**执行
+>    `check_quota(account_id, len(content))` + `add_usage(account_id, upload_file.size or 0)`。
+>
+> 因此若按原计划再加一次 `add_usage`，会**双重计费**（每帧扣两遍）。故本任务改为
+> 「用测试把这条隐式计费链路钉住」：它是**跨模块的隐式契约**（帧的计费依赖存储代理的实现，
+> 而非帧自己的代码），一旦有人把 `upload_bytes` 的计费去掉，帧会**静默**变成免费，
+> 且没有任何测试会报警。本任务就是补这个报警。
 
 **Files:**
-- Modify: `api/internal/service/knowledge_media_extractor_service.py:177-201`
-- Test: `api/test/internal/service/test_frame_quota_charge.py`
+- Modify: `api/test/internal/service/test_frame_quota_charge.py`（新建，仅测试）
+- 生产代码：**不改**
 
-- [ ] **Step 1: 写失败测试**
+- [ ] **Step 1: 写测试**
+
+新建 `api/test/internal/service/test_frame_quota_charge.py`：
 
 ```python
-"""帧留存计费测试：帧是持久化产物，须计入存储配额。
+"""帧计费链路锁定测试（回归护栏）。
 
-设计决策（规格 §6.1）：判据是「是否堆积」——帧落 COS 且落 upload_file 记录，
-属堆积，计入；音轨/中间文件用完即删，不计入。
+背景：帧的配额计费**不发生在帧自己的代码里**，而是由存储代理隐式完成——
+`_persist_frame` → `cos_service.upload_bytes`（`ObjectStoragePort`）
+→ DI 绑定到 `RuntimeStorageProxy` → 其 `upload_bytes` 内部 `check_quota` + `add_usage`。
 
-反转 P3 决定：P3 曾明确「帧不计配额」，本设计有意改为计入。
+这是一条跨模块的隐式契约：若有人移除 `RuntimeStorageProxy.upload_bytes` 的计费，
+帧会静默变成免费存储，且不会有任何测试失败。故此处显式锁定两个事实：
+1. 代理层确实对产物字节计费（`upload_bytes` 侧）；
+2. 帧留存确实经由该路径（`_persist_frame` 侧）。
 """
 from types import SimpleNamespace
 from uuid import uuid4
@@ -1202,141 +1236,115 @@ from uuid import uuid4
 from internal.service.knowledge_media_extractor_service import (
     KnowledgeMediaExtractorService,
 )
+from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
 
 
-class _FakeStorage:
-    def upload_bytes(self, filename, content, account_id, mime_type):
-        return SimpleNamespace(key=f"frames/{filename}")
-
-
-class _FakeQuota:
+class _RecordingQuota:
     def __init__(self):
         self.calls = []
 
+    def check_quota(self, account_id, incoming_bytes):
+        self.calls.append(("check", account_id, incoming_bytes))
+
     def add_usage(self, account_id, bytes_delta):
-        self.calls.append((account_id, bytes_delta))
+        self.calls.append(("add", account_id, bytes_delta))
         return bytes_delta
 
 
-class _FakeUploadFileService:
-    def create_upload_file(self, **kwargs):
-        return SimpleNamespace(key=kwargs["key"])
-
-
-def test_persist_frame_charges_quota(tmp_path):
-    quota = _FakeQuota()
-    service = KnowledgeMediaExtractorService(
+def _proxy(quota):
+    proxy = RuntimeStorageProxy(
+        upload_file_service=SimpleNamespace(),
+        storage_config_service=SimpleNamespace(),
+        storage_quota_service=quota,
         db=SimpleNamespace(),
-        cos_service=_FakeStorage(),
-        audio_service=SimpleNamespace(),
-        upload_file_service=_FakeUploadFileService(),
     )
-    service._get_storage_quota_service = lambda: quota
+    proxy._get_service = lambda backend=None: SimpleNamespace(
+        upload_bytes=lambda **kw: SimpleNamespace(key="frames/frame_001.jpg", size=104)
+    )
+    return proxy
 
-    frame_path = tmp_path / "frame_001.jpg"
-    frame_path.write_bytes(b"\xff\xd8\xff\xe0" + b"x" * 100)
+
+def test_proxy_charges_quota_for_uploaded_bytes():
+    """代理层必须对产物字节同时做校验与累加（帧计费的实际发生处）。"""
+    quota = _RecordingQuota()
+    proxy = _proxy(quota)
     account_id = uuid4()
 
-    service._persist_frame(str(frame_path), account_id=account_id, document_id=uuid4())
-
-    assert len(quota.calls) == 1
-    charged_account, charged_bytes = quota.calls[0]
-    assert charged_account == account_id
-    assert charged_bytes == frame_path.stat().st_size
-
-
-def test_persist_frame_does_not_charge_when_no_account(tmp_path):
-    """无账号上下文时不留存、也不计费（既有兼容行为）。"""
-    quota = _FakeQuota()
-    service = KnowledgeMediaExtractorService(
-        db=SimpleNamespace(),
-        cos_service=_FakeStorage(),
-        audio_service=SimpleNamespace(),
-        upload_file_service=_FakeUploadFileService(),
+    proxy.upload_bytes(
+        filename="frame_001.jpg", content=b"x" * 104,
+        account_id=account_id, mime_type="image/jpeg",
     )
-    service._get_storage_quota_service = lambda: quota
 
-    frame_path = tmp_path / "frame_001.jpg"
-    frame_path.write_bytes(b"\xff\xd8\xff\xe0x")
+    assert quota.calls == [("check", account_id, 104), ("add", account_id, 104)]
 
-    service._persist_frame(str(frame_path), account_id=None, document_id=uuid4())
+
+def test_proxy_skips_quota_without_account():
+    """无账号上下文（系统产物）不计费。"""
+    quota = _RecordingQuota()
+    proxy = _proxy(quota)
+
+    proxy.upload_bytes(filename="f.jpg", content=b"x" * 10, account_id=None)
 
     assert quota.calls == []
+
+
+def test_persist_frame_routes_through_storage_port():
+    """帧留存必须走 cos_service.upload_bytes —— 这正是计费得以发生的路径。
+
+    若有人把 `_persist_frame` 改为绕过存储端口（直接落盘/直连 SDK），
+    本用例与上一条共同失效，从而暴露「帧不再计费」。
+    """
+    seen = {}
+
+    class _Storage:
+        def upload_bytes(self, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(key="frames/frame_001.jpg")
+
+    class _UploadFileService:
+        def create_upload_file(self, **kwargs):
+            return SimpleNamespace(key=kwargs["key"])
+
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_Storage(),
+        audio_service=SimpleNamespace(),
+        upload_file_service=_UploadFileService(),
+    )
+    account_id = uuid4()
+
+    service._persist_frame(
+        _write_frame_file(), account_id=account_id, document_id=uuid4()
+    )
+
+    assert seen["account_id"] == account_id
+    assert seen["mime_type"] == "image/jpeg"
+    assert seen["content"], "必须把帧字节交给存储端口，否则代理层无从计费"
+
+
+def _write_frame_file():
+    import tempfile
+    import os
+
+    path = os.path.join(tempfile.mkdtemp(), "frame_001.jpg")
+    with open(path, "wb") as fh:
+        fh.write(b"\xff\xd8\xff\xe0" + b"x" * 100)
+    return path
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [ ] **Step 2: 运行测试**
 
 Run: `python -m pytest test/internal/service/test_frame_quota_charge.py -q --no-header --no-cov`
-Expected: FAIL —— `assert [] == [(UUID(...), 104)]`
+Expected: **PASS**（3 个用例）
 
-- [ ] **Step 3: 实现**
+> 注意：本任务是**加护栏**，不是修 bug，所以预期一开始就是绿灯。若某个用例失败，
+> 说明现状与核查结论不符，**先停下来核实**，不要为了让它变绿而改生产代码。
 
-在 `KnowledgeMediaExtractorService` 中新增依赖获取方法：
-
-```python
-    def _get_storage_quota_service(self):
-        """延迟获取配额服务（独立方法便于测试替换，避免循环依赖）。"""
-        from internal.context import current_app
-
-        from .storage_quota_service import StorageQuotaService
-
-        return current_app.injector.get(StorageQuotaService)
-```
-
-`_persist_frame` 改为：
-
-```python
-    def _persist_frame(self, frame_path: str, *, account_id, document_id) -> UploadFile:
-        """把关键帧留存为 UploadFile，并计入存储配额。
-
-        关键帧必须留存：视觉向量属可后补能力，留存后无需重跑整个视频解析
-        （设计稿 §3.4）。
-
-        **计配额**：帧是持久化产物（落 COS + 落 upload_file），符合「堆积即计费」
-        判据。计费与「释放」必须成对——释放见 `purge_knowledge_document`，
-        否则用户删素材后帧仍占额，造成配额泄漏。
-        """
-        with open(frame_path, "rb") as fh:
-            content = fh.read()
-        filename = os.path.basename(frame_path)
-        stored = self.cos_service.upload_bytes(
-            filename=filename,
-            content=content,
-            account_id=account_id,
-            mime_type="image/jpeg",
-        )
-        upload_file = self.upload_file_service.create_upload_file(
-            account_id=account_id,
-            name=filename,
-            key=stored.key,
-            size=len(content),
-            extension="jpg",
-            mime_type="image/jpeg",
-            hash=hashlib.sha3_256(content).hexdigest(),
-            storage_backend="local",
-        )
-        if account_id is not None and content:
-            try:
-                self._get_storage_quota_service().add_usage(account_id, len(content))
-            except Exception:
-                # 计费失败只记 warning：帧已落库，抛错会让整段视频解析失败，
-                # 代价远大于少记的这点用量。
-                logger.warning(
-                    "关键帧配额计费失败 file=%s", filename, exc_info=True
-                )
-        return upload_file
-```
-
-- [ ] **Step 4: 运行测试确认通过**
-
-Run: `python -m pytest test/internal/service/test_frame_quota_charge.py -q --no-header --no-cov`
-Expected: PASS（2 个用例）
-
-- [ ] **Step 5: 提交**
+- [ ] **Step 3: 提交**
 
 ```bash
-git add api/internal/service/knowledge_media_extractor_service.py api/test/internal/service/test_frame_quota_charge.py
-git commit -m "feat(quota): charge storage quota for persisted keyframes"
+git add api/test/internal/service/test_frame_quota_charge.py
+git commit -m "test(quota): lock implicit frame quota charging via storage proxy"
 ```
 
 ---

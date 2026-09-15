@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
 from internal.exception import FailException, ValidateErrorException
 from internal.service.chunked_upload_service import ChunkedUploadService
 
@@ -96,13 +97,13 @@ def _service(*, storage=None, session_service=None, upload_file_service=None,
         def resolve_max_file_size_bytes(self, account_id):
             return max_size
 
-        def check_quota(self, account_id, incoming_bytes):
-            quota_calls.append(("check", account_id, incoming_bytes))
+        def check_quota(self, account_id, incoming_bytes, reserve_bytes=0):
+            quota_calls.append(("check", account_id, incoming_bytes, reserve_bytes))
             if quota_error:
                 raise quota_error
 
-        def consume_quota(self, account_id, incoming_bytes):
-            quota_calls.append(("consume", account_id, incoming_bytes))
+        def consume_quota(self, account_id, incoming_bytes, reserve_bytes=0):
+            quota_calls.append(("consume", account_id, incoming_bytes, reserve_bytes))
             if quota_error:
                 raise quota_error
             return incoming_bytes
@@ -150,7 +151,7 @@ def test_init_checks_quota_and_returns_session():
 
     assert result["session_id"]
     assert result["total_chunks"] == 2
-    assert calls == [("check", account.id, 1024)]
+    assert calls == [("check", account.id, 1024, 0)]
 
 
 def test_init_returns_instant_hit_when_fingerprint_matches():
@@ -403,7 +404,7 @@ def test_instant_upload_checks_quota_before_copy():
     with pytest.raises(ForbiddenException):
         service.instant_upload(account=account, upload_file_id=str(_uuid4()), fingerprint="fp")
 
-    assert calls == [("consume", account.id, 8192)]
+    assert calls == [("consume", account.id, 8192, PARSE_RESERVE_BYTES)]
 
 
 def test_complete_consumes_quota_atomically_instead_of_add_usage():
@@ -422,7 +423,7 @@ def test_complete_consumes_quota_atomically_instead_of_add_usage():
 
     service.complete(session_id=session_id, account=account)
 
-    assert calls == [("consume", account.id, 1024)]
+    assert calls == [("consume", account.id, 1024, PARSE_RESERVE_BYTES)]
     assert not any(call[0] == "add" for call in calls)
 
 
@@ -443,7 +444,10 @@ def test_complete_releases_reserved_quota_and_keeps_session_when_merge_fails():
     with pytest.raises(OSError):
         service.complete(session_id=session_id, account=account)
 
-    assert calls == [("consume", account.id, 1024), ("release", account.id, 1024)]
+    assert calls == [
+        ("consume", account.id, 1024, PARSE_RESERVE_BYTES),
+        ("release", account.id, 1024),
+    ]
     assert storage.cleaned == []
     assert session_service.get(session_id) is not None
 
@@ -790,4 +794,51 @@ def test_complete_rejects_when_session_already_claimed(monkeypatch):
 
     with pytest.raises(FailException):
         service.complete(session_id=session_id, account=account)
+
+
+def test_complete_passes_parse_reserve_to_consume_quota():
+    """分片 complete 的配额预占必须带解析预留，挡住「刚好传满」的场景。"""
+    from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
+
+    session_service = _FakeSessionService()
+    storage = _FakeStorage()
+    service, calls = _service(storage=storage, session_service=session_service)
+    account = _account()
+    session_id = service.init(
+        account=account, filename="final.mp4", total_size=1024,
+        chunk_size=512, total_chunks=2, fingerprint="fp-reserve",
+    )["session_id"]
+    calls.clear()
+    service.save_chunk(session_id=session_id, index=0, content=b"a" * 512, account=account)
+    service.save_chunk(session_id=session_id, index=1, content=b"b" * 512, account=account)
+
+    service.complete(session_id=session_id, account=account)
+
+    assert calls == [("consume", account.id, 1024, PARSE_RESERVE_BYTES)]
+
+
+def test_instant_upload_passes_parse_reserve_to_consume_quota():
+    """秒传的配额预占同样必须带解析预留。"""
+    from internal.entity.storage_quota_entity import PARSE_RESERVE_BYTES
+    from uuid import uuid4 as _uuid4
+
+    account = _account()
+
+    class _Query:
+        def filter(self, *_a, **_kw):
+            return self
+
+        def first(self):
+            return SimpleNamespace(
+                id=_uuid4(), account_id=account.id,
+                key="2026/09/14/src.mp4", name="src.mp4",
+                extension="mp4", mime_type="video/mp4", size=8192, hash="h",
+            )
+
+    service, calls = _service()
+    service.db = SimpleNamespace(session=SimpleNamespace(query=lambda *_a, **_kw: _Query()))
+
+    service.instant_upload(account=account, upload_file_id=str(_uuid4()), fingerprint="fp-reserve-2")
+
+    assert calls == [("consume", account.id, 8192, PARSE_RESERVE_BYTES)]
 
