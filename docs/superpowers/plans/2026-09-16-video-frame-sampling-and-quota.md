@@ -187,7 +187,7 @@ def plan_frame_offsets(duration_sec: float) -> list[float]:
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/core/vision/test_frame_sampling.py -q --no-header --no-cov`
-Expected: PASS（16 个用例）
+Expected: PASS（11 个用例：`TestResolveL1FrameCount` 6 个 + `TestPlanFrameOffsets` 5 个）
 
 - [ ] **Step 5: 提交**
 
@@ -318,8 +318,44 @@ def _write_fake_frames(out_dir, count):
     return paths
 
 
+def _requested_frames(cmd):
+    """取出命令里的 `-frames:v` 值，模拟真实 ffmpeg「按请求帧数产出」。"""
+    return int(cmd[cmd.index("-frames:v") + 1])
+
+
 class TestExtractVideoFramesWithOffsets:
     def test_returns_offset_per_frame(self, monkeypatch, tmp_path):
+        out_dir = str(tmp_path)
+
+        def _fake_run(cmd, **kwargs):
+            _write_fake_frames(out_dir, _requested_frames(cmd))
+
+            class _R:
+                returncode = 0
+                stderr = b""
+
+            return _R()
+
+        monkeypatch.setattr(vision_invoke, "_resolve_ffmpeg_exe", lambda: "ffmpeg")
+        monkeypatch.setattr(vision_invoke, "probe_duration_sec", lambda p: 60.0)
+        monkeypatch.setattr(vision_invoke.subprocess, "run", _fake_run)
+
+        frames = vision_invoke.extract_video_frames_with_offsets("v.mp4", out_dir)
+
+        assert len(frames) == 12
+        assert all(frame.time_offset is not None for frame in frames)
+        # 时间偏移必须递增且覆盖全片
+        offsets = [frame.time_offset for frame in frames]
+        assert offsets == sorted(offsets)
+        assert offsets[-1] > 60.0 * 0.8
+
+    def test_keeps_real_offsets_when_fewer_frames_produced(self, monkeypatch, tmp_path):
+        """少产帧时保留真实前缀偏移，不得把全片重新摊开（否则元数据失真）。
+
+        `fps=1/interval` 自片头起算，少产必然是同一条时间线上的前 k 帧，
+        其真实位置就是计划偏移的前 k 项。L2 靠 time_offset 定位区间，
+        若按实际帧数重排会静默抽错片段。
+        """
         out_dir = str(tmp_path)
 
         def _fake_run(cmd, **kwargs):
@@ -337,12 +373,8 @@ class TestExtractVideoFramesWithOffsets:
 
         frames = vision_invoke.extract_video_frames_with_offsets("v.mp4", out_dir)
 
-        assert len(frames) == 6
-        assert all(frame.time_offset is not None for frame in frames)
-        # 时间偏移必须递增且覆盖全片
-        offsets = [frame.time_offset for frame in frames]
-        assert offsets == sorted(offsets)
-        assert offsets[-1] > 60.0 * 0.8
+        expected = [round(5.0 * (index + 0.5), 3) for index in range(6)]
+        assert [frame.time_offset for frame in frames] == expected
 
     def test_uses_duration_based_count_not_fixed_three(self, monkeypatch, tmp_path):
         """关键回归：60 秒视频应抽 12 帧，而非固定 3 帧。"""
@@ -518,7 +550,12 @@ def extract_video_frames_with_offsets(
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/core/vision/test_uniform_frame_extraction.py -q --no-header --no-cov`
-Expected: PASS（4 个用例）
+Expected: PASS（5 个用例）
+
+> 不变量：`time_offset` 与帧文件按下标一一对应，**不得**因实际产出帧数少而把全片重排。
+> `fps=1/interval` 自片头起算，少产必然是同一条时间线上的前 k 帧，其真实位置是计划偏移的前 k 项；
+> 重排会给位于片头 2.5s 的帧标上 5.0s，属伪造元数据，会让 L2 静默抽错片段。
+
 
 - [ ] **Step 5: 提交**
 

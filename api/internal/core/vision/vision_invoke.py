@@ -11,6 +11,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+from dataclasses import dataclass
+
+from internal.core.vision.frame_sampling import (
+    plan_frame_offsets,
+    resolve_l1_frame_count,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +191,93 @@ def extract_video_frames_to_dir(
         return _extract_frames_to_dir_ffmpeg(video_path, requested, out_dir)
     exe = _resolve_ffmpeg_exe()
     return _extract_frames_to_dir_imageio(video_path, requested, out_dir, exe)
+
+
+@dataclass
+class ExtractedFrame:
+    """抽出的帧文件及其在视频中的时间偏移（秒）。"""
+
+    path: str
+    time_offset: float
+
+
+def _extract_frames_by_interval(
+    exe: str, video_path: str, out_dir: str, interval_sec: float, max_frames: int
+) -> None:
+    """按固定时间间隔抽帧。
+
+    用 `fps=1/interval` 而非帧号取模：后者依赖源帧率，同一策略在不同帧率
+    视频上会得到不同的采样密度；按时间间隔才与「时长」这一产品维度一致。
+    """
+    pattern = os.path.join(out_dir, "frame_%03d.jpg")
+    fps = 1.0 / max(interval_sec, 0.001)
+    cmd = [
+        exe, "-y", "-i", video_path,
+        "-vf", f"fps={fps:.6f}",
+        "-frames:v", str(max_frames),
+        "-q:v", "4", pattern,
+    ]
+    subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 6, check=True)
+
+
+def extract_video_frames_with_offsets(
+    video_path: str,
+    out_dir: str,
+    frame_count: int | None = None,
+) -> list[ExtractedFrame]:
+    """按视频时长均匀抽帧，返回帧文件与各自的时间偏移。
+
+    与 `extract_video_frames_to_dir` 的区别：后者只给路径、无时间信息，
+    且上层若传固定帧数会退化成「只取开头」。本函数按 `frame_sampling`
+    的策略全片均匀取帧——这是「改细节」能定位到片段的前提。
+
+    frame_count 显式传入时按传入值抽（供 L2 区间密抽复用）。
+    """
+    duration = probe_duration_sec(video_path)
+    if frame_count is not None:
+        count = max(1, int(frame_count))
+        offsets = (
+            [round(duration / count * (i + 0.5), 3) for i in range(count)]
+            if duration > 0
+            else [0.0] * count
+        )
+    else:
+        count = resolve_l1_frame_count(duration)
+        offsets = plan_frame_offsets(duration)
+        if not offsets:
+            # 时长不可得：退回下限帧数，偏移未知记 0
+            count = resolve_l1_frame_count(0)
+            offsets = [0.0] * count
+
+    os.makedirs(out_dir, exist_ok=True)
+    if duration > 0:
+        _extract_frames_by_interval(
+            _resolve_ffmpeg_exe(), video_path, out_dir, duration / count, count
+        )
+
+    paths = _list_frame_files(out_dir)
+    if not paths:
+        # 时长不可得（或按间隔抽帧未产出）：退回「抽首帧」保证仍有产物。
+        # 注意顺序——必须先尝试兜底再判定失败，否则兜底分支不可达。
+        first = os.path.join(out_dir, "frame_001.jpg")
+        _dump_first_frame(video_path, first, _resolve_ffmpeg_exe())
+        paths = _list_frame_files(out_dir)
+
+    if not paths:
+        raise RuntimeError("视频抽帧未产出任何文件")
+
+    # 偏移按下标与帧文件一一对应，不因实际产出帧数少而重排。
+    # `fps=1/interval` 采样自片头起算，实际产出必然是同一条时间线上的**前 k 帧**，
+    # 故其真实位置就是计划偏移的前 k 项；若按「实际帧数」把全片重新摊开，
+    # 会给位于片头 20s 的帧标上 50s 一类偏移，等于伪造元数据——L2 依赖
+    # time_offset 定位区间，错标会静默抽错片段。宁可保留真实偏移、少抽几帧。
+    return [
+        ExtractedFrame(
+            path=path,
+            time_offset=float(offsets[index]) if index < len(offsets) else 0.0,
+        )
+        for index, path in enumerate(paths)
+    ]
 
 
 def _extract_frames_to_dir_ffmpeg(video_path: str, frame_count: int, out_dir: str) -> list[str]:
