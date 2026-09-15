@@ -10,7 +10,7 @@
 | module_slug | module_name | round | last_scanned | findings_p0_p1_p2_p3 | issue_numbers |
 |---|---|---|---|---|---|
 | 01-agent-tool-pool | Agent 池与工具池 | 1 | 2026-09-14 | 0/3/2/1 | #1, #2, #3, #4, #5, #6 |
-| 02-knowledge-base | 知识库双层设计 | 0 | — | — | — |
+| 02-knowledge-base | 知识库双层设计 | 1 | 2026-09-16 | 1/5/4/1 | #7, #8, #9, #10, #11, #12, #13, #14, #15, #16, #17 |
 | 03-orchestration-infra | Conductor 编排、执行协调与可观测性 | 0 | — | — | — |
 | 04-social-creator | 合伙人分身与内容板块（生态赋能） | 0 | — | — | — |
 | 05-security-risk-decisions | 安全要求与风险决策 | 0 | — | — | — |
@@ -53,3 +53,30 @@
   - 文档同步：`docs/prd/modules/01-agent-tool-pool.md` 风险枚举与策略章节已对齐实际 6 值。
 - **未修复的其它模块在途问题（非本模块，已确认与本轮改动无关）**：`test_admin_routes_5.py`/`test_asgi_app.py` 的 schedule-task 用例（`run_at` 列缺失）、`test_knowledge_partition_routes.py` 的 `sort_order` 用例——均属其它在途改动，未纳入本次修复范围。
 - **下一晚扫描**：`02-knowledge-base`（知识库双层设计）。
+
+### round 1 · 2026-09-16 · 02-knowledge-base（知识库双层设计）
+
+- **权威状态出处**：`docs/prd/execution-roadmap.md` §1「知识库产品形态 P1/P2/P3 ✅ 完成」（含 P3「检索与视觉向量」全部条目与「L2 按需解析任务与触发入口」）、§3「知识库产品形态 P3：检索与视觉向量（已完成）」；`docs/prd/modules/02-knowledge-base.md` §11.1~§11.12；`docs/prd/product-vision.md` §三（第 2/13 项 ✅ 真可用）。
+- **覆盖维度**：业务性（核心流程闭环、分区/标签链路、状态机分支、配额计量）、安全性（鉴权与越权、租户/用户隔离、输入校验、审计留痕）、交互性（加载/空/错误/禁用态、i18n 字典合规）、前后端一致性（接口字段命名/类型、枚举取值、SSRF/召回契约）。
+- **前后端代码入口**：
+  - 后端：`api/internal/service/knowledge_base_service.py`、`knowledge_indexing_service.py`、`knowledge_partition_service.py`、`knowledge_tag_service.py`、`knowledge_vector_service.py`、`visual_embedding_service.py`、`retrieval_service.py`、`scoped_knowledge_service.py`（`SystemKnowledgeService` / `UserContentKnowledgeService`）、`chunked_upload_service.py`、`knowledge_media_extractor_service.py`、`storage/runtime_storage_service.py`、`api/app/http/knowledge_mcp_routes.py`、`admin_routes_2.py`、`api/internal/task/knowledge_l2_tasks.py`、`api/internal/migration/versions/{d1e2f3a4b5c7,p1a2b3c4d5e6,c9d0e1f2a3b4}.py`。
+  - 前端：`ui/src/views/space/datasets/ListView.vue`、`datasets/documents/ListView.vue`、`datasets/documents/segments/ListView.vue`、`datasets/documents/components/HitTestingModal.vue`、`datasets/components/ExternalDataSourceModal.vue`、`views/admin/AdminSystemKnowledgeView.vue`、`hooks/use-knowledge-base.ts`、`services/knowledge-base.ts`、`components/DocumentIndexNotification.vue`、`components/IconUploadGenerator.vue`。
+- **结论**：发现 11 项隐患（P0×1 / P1×5 / P2×4 / P3×1），均已建 issue 并打 `audit:02-knowledge-base` + `needs-triage` + 优先级标签。
+  - #9 [P0] 分区/素材标签路由只校验板块存在、不校验作用域与素材从属：普通用户 JWT 可对系统级知识库建/删分区（垂直越权），并可用自己的 kb_id 跨库读/改/删他人素材标签（水平越权）。
+  - #8 [P1] 用户端召回测试 `POST /space/knowledge-bases/<kb>/hit` 字段名三方不一致（路由给 `top_k`，服务层读 `req.k` / `req.retrieval_strategy`），必然 500；且即使修好，前端提交的策略/条数也会被静默忽略。
+  - #10 [P1] 片段编辑/启用禁用路由字段名不匹配（前端 `enabled`、路由 `is_enabled`、服务读 `req.enabled`），内容编辑与启用开关均必然 500。
+  - #7 [P1] admin 系统知识库 4 条路由硬编码全零 UUID 冒充管理员：`owner_admin_user_id` 外键违约致建库 500，审计写入异常被吞致更新/删除无留痕。
+  - #13 [P1] 视觉向量召回 `_rank()` 丢弃 `content` / `knowledge_document_id`：命中项 `page_content` 恒空、`document_id` 恒 None（中间层丢字段，与历史 `frame_url` 丢字段同类）。
+  - #11 [P1] `knowledge_base.partition_mode` 只写不读：`date_month` / `date_day` 全仓零消费点，上传不建分区、素材 `partition_id` 恒空。
+  - #14 [P2] 管理端召回测试策略下拉取值 `fulltext` 与后端枚举 `full_text` 不一致，选「全文」实际走 hybrid（静默走错分支）。
+  - #12 [P2] 列表页「应用引用」统计卡与卡片单位词读取 `related_app_count`，该字段后端 schema/service 从不产出，恒显示 0。
+  - #16 [P2] 检索过滤四入参（`partition_id`/`media_types`/`tags`/`score_threshold`）与分区/标签能力在前端零消费，用户端无任何入口（有实现无入口）。
+  - #15 [P2] `docs/prd/modules/02-knowledge-base.md` §11.10.5 称「帧留存不占存储配额」，实际经 `RuntimeStorageProxy.upload_bytes` 计费（文档与代码相反，属文档失真）。
+  - #17 [P3] 知识库模块 i18n 缺口：`use-knowledge-base.ts` 9 处 Modal/Message 硬编码中文、`DocumentIndexNotification.vue` / `IconUploadGenerator.vue` 用手工 `isEnglish` 三元分支绕过字典、列表页单位词硬编码（已有 `space.datasets.stats` 键未用）、admin 策略下拉硬编码英文，另存 4 个 `Dataset→KnowledgeBase` 重命名遗留死字典。
+- **备注（未计为隐患，仅记录）**：
+  - 用户端「召回测试」与「片段编辑」属**完全不可用**（必然 500），单测因 fake 只记录调用、不读取字段而全绿——再次印证 AGENTS.md「单测全绿不代表能跑起来」。
+  - 分片上传 `assert_upload_allowed` 在合并前预校验、秒传校验 `source.account_id`，配额预占/回滚成对，未见问题。
+  - 视觉召回护栏（`has_vectors` 预检、标签无命中 fail closed、`media_types` 不含 video 时不召回）实现正确，`test_visual_recall_retrieval.py` 已锁定。
+  - `VideoVisualEmbedding` 的 `search_by_image`（以图搜图）在检索链路中无生产调用点（仅 `search_by_text` 被调用），属「已提供能力但未接入」，本次未计为隐患。
+- **文档漂移（随 #15、#16 一并记录）**：§11.10.5 配额描述与代码相反；§11.7.3 声称「用户端分区入口，前端据此渲染两级树」，实际前端零消费。
+- **下一晚扫描**：`03-orchestration-infra`（Conductor 编排、执行协调与可观测性）。
