@@ -12,6 +12,7 @@ HNSW 索引加速检索。利用 SQL JOIN 实现 knowledge_scope 权限过滤与
 
 import logging
 from dataclasses import dataclass
+from uuid import UUID
 
 from injector import inject
 from sqlalchemy import text
@@ -103,6 +104,10 @@ class KnowledgeVectorService:
         query: str,
         top_k: int = 5,
         knowledge_scope: str | None = None,
+        partition_id: UUID | None = None,
+        media_types: list[str] | None = None,
+        document_ids: list[UUID] | None = None,
+        score_threshold: float | None = None,
     ) -> list[dict]:
         """在指定知识库中执行向量相似度检索（按维度分表）
 
@@ -111,6 +116,16 @@ class KnowledgeVectorService:
         - knowledge_scope 权限隔离（通过 JOIN knowledge_base 表）
         - document_enabled / segment_enabled 过滤
         - 元数据从原表 JOIN 获取
+
+        结构化过滤（分区/媒体类型/素材/分数阈值）全部下推到 SQL，
+        而非取回后在 Python 里再筛——否则 LIMIT 会先把不匹配的行取走，
+        导致召回数量不足。
+
+        Args:
+            partition_id: 仅在该分区内检索（分区是组织手段，非权限边界）。
+            media_types: 仅检索这些媒体类型（video/image/audio/document）。
+            document_ids: 仅在这些素材内检索（标签过滤的交集/并集结果）。
+            score_threshold: 相似度下限，低于该值的结果不返回。
         """
         try:
             embeddings_client, dimension, table_name = self._resolve_kb_embedding(knowledge_base)
@@ -144,6 +159,22 @@ class KnowledgeVectorService:
         if knowledge_scope is not None:
             sql += " AND kb.knowledge_scope = :scope"
             params["scope"] = knowledge_scope
+        if partition_id is not None:
+            sql += " AND kd.partition_id = :partition_id"
+            params["partition_id"] = str(partition_id)
+        if media_types:
+            # 用 = ANY(...) 而非 IN :list：text() 的 IN 绑定需 bindparam(expanding=True)
+            # 才可靠展开，ANY + 数组更稳且 PostgreSQL 原生支持
+            sql += " AND kd.media_type = ANY(:media_types)"
+            params["media_types"] = list(media_types)
+        if document_ids:
+            sql += " AND kd.id = ANY(:document_ids)"
+            params["document_ids"] = [str(doc_id) for doc_id in document_ids]
+        if score_threshold is not None:
+            sql += (
+                " AND 1 - (v.embedding <=> CAST(:embedding AS vector)) >= :score_threshold"
+            )
+            params["score_threshold"] = float(score_threshold)
 
         sql += " ORDER BY v.embedding <=> CAST(:embedding AS vector) LIMIT :limit"
         params["limit"] = top_k

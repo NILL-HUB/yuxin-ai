@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：P1 数据基座已落地、P2A 多模态素材入库与 P2B 分片上传均已完成（见 §9.2），P3–P5 为设计稿（待实施）｜**版本**：v1.2｜**日期**：2026-09-14
+> **状态**：P1 数据基座、P2A 多模态素材入库、P2B 分片上传、P3 检索与视觉向量均已完成（见 §9.2），P4–P5 为设计稿（待实施）｜**版本**：v1.3｜**日期**：2026-09-15
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -12,7 +12,7 @@
 
 ### 1.1 当前落差
 
-`product-vision.md` 对知识库承诺的是**全媒体素材中心 + 视频制作闭环**，落地状态表中视频素材标注为「⚠️ 半可用 —— 仅存储，不解析/不抽帧/不入库」。代码核实后的真实落差：
+`product-vision.md` 对知识库承诺的是**全媒体素材中心 + 视频制作闭环**；立项时落地状态表中视频素材标注为「⚠️ 半可用 —— 仅存储，不解析/不抽帧/不入库」（该标注已由 P2A/P2B/P3 消除，现为「✅ 真可用」）。代码核实后的真实落差：
 
 > **注**：下表是**设计立项时的现状基线快照**。其中「媒体类型 / 内容理解 / 组织方式 / 容量 / 大文件」五项落差已由 P1 + P2A + P2B 解决（见 §9.2），保留此表仅用于说明起点。
 
@@ -93,9 +93,9 @@ KnowledgeBaseTag / KnowledgeDocumentTag（新增：标签关联）
 account_storage_usage（新增：容量计量）
   account_id / used_bytes / updated_at
 
-VideoVisualEmbedding（新增：关键帧视觉向量）
-  segment_id / knowledge_document_id / frame_index / time_offset
-  frame_url / visual_embedding(Vector) / model_id
+VideoVisualEmbedding（P3 已落地：关键帧视觉向量）
+  account_id / knowledge_base_id / knowledge_document_id / segment_id（唯一）
+  frame_url / scene_index / model_id / embedding(Vector(1536))
 ```
 
 ### 2.2 为什么 `KnowledgeBase` 即「板块」，不另建 Project
@@ -222,10 +222,10 @@ used_bytes  = account_storage_usage.used_bytes   （由上传/删除事件维护
 | 视觉描述 | 文本（每场景一段） | `KnowledgeSegment.content` | ✅ | ❌ |
 | OCR 文本 | 文本 | `KnowledgeSegment.content` | ✅ | ❌ |
 | 场景切分 | JSON（序号 + 起止时间） | `KnowledgeSegment.metadata` | ❌ | ❌ |
-| 关键帧 | 图片文件（720p JPEG 压缩） | 对象存储 + `UploadFile` | 文本描述 ✅ / 视觉向量 ✅ | ✅ |
+| 关键帧 | 图片文件（JPEG 压缩） | 对象存储 + `UploadFile` | 文本描述 ✅ / 视觉向量 ✅ | ❌（解析中间产物，见 §3.4） |
 | 缩略图 / 封面 | 小图 | 对象存储 | ❌ | ✅（体积极小） |
 
-> **P2A 落地实况**：已落地「ASR 转写 / 视觉描述 / OCR 文本 → `KnowledgeSegment.content`（入文本向量库）」，即上表中"入向量库"的**文本侧**已通。**关键帧自身文件未留存（抽帧在临时目录内即用即弃）、视觉向量未建索引**；场景切分的 `time_range`、关键帧的 `frame_urls` 亦未写入 `metadata`（当前 `metadata` 仅含 `media_type` / `vision_summary` / `scene_index` / `frame_count`）。这些均属 P3（关键帧留存 + 视觉向量索引）范围。
+> **落地实况**：已落地「ASR 转写 / 视觉描述 / OCR 文本 → `KnowledgeSegment.content`（入文本向量库）」，即上表中"入向量库"的**文本侧**已通。视频关键帧现已**留存为 `UploadFile`**（`frame_url` 写入帧片段 `metadata`），使视觉向量可后补而不必重跑解析；**视觉向量索引已建立**（P3：`video_visual_embedding` 表 + `VisualEmbeddingService`，见 §3.4 与 [modules/02-knowledge-base.md §11.10](./modules/02-knowledge-base.md#1110-关键帧视觉向量p3-已落地)）。场景切分的 `time_range` 仍未写入 `metadata`（视频帧片段当前 `metadata` 为 `media_type` / `scene_index` / `frame_count` / `frame_url`）。
 
 **为什么产物即 Segment**：
 
@@ -248,9 +248,11 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 图片 | OCR + 视觉摘要 → 1 Segment | 细粒度 OCR 区块坐标、多图关联 |
 | 短音频（≤5min） | ASR 全文转写 → 1 Segment | 说话人切分、情绪标注 |
 | 长音频（>5min） | ASR 全文转写 → 1 Segment | 说话人切分、章节切分 |
-| 视频 | 关键帧抽取 + 视觉描述 → 每帧 1 Segment | 视频 ASR 转写、逐场景视觉详述、精细时间轴 |
+| 视频 | 音轨 ASR 转写 + 关键帧抽取 + 视觉描述 → 每帧 1 Segment | 逐场景视觉详述、精细时间轴、说话人切分 |
 
-> **L1 落地实况（P2A）**：图片（视觉摘要 + OCR）、音频（ASR 全文转写）已按上表落地。视频 L1 **当前仅实现关键帧抽取 + 视觉描述**，设计稿中的"ASR 转写 + 场景粗切分"未随 P2A 落地，与 L2 的"逐场景视觉详述、精细时间轴"一并属于 P3 范围。上表描述的是目标档位划分，非当前实现清单。
+> **L1 落地实况**：图片（视觉摘要 + OCR）、音频（ASR 全文转写）已按上表落地。视频 L1 已实现「音轨 ASR 转写 + 关键帧抽取 + 视觉描述」并留存关键帧（`frame_url`），设计稿中的"场景粗切分"未落地。上表描述的是目标档位划分，非当前实现清单。
+>
+> **L2 落地实况（P3）**：视频 L2 的「逐场景视觉详述」已落地，落点见 §3.4 与 [modules/02-knowledge-base.md §11.11](./modules/02-knowledge-base.md#1111-l2-按需解析p3-已落地)：由 Celery 任务 `internal.task.knowledge_l2_tasks.build_document_l2_task` **按需触发**（不加 beat），状态写入 `parse_profile.tier2`，**回写同一批 Segment 的 content/metadata，不新建 Segment**。仍未实现：精细时间轴、说话人切分、图片细粒度 OCR 区块坐标、多图关联。
 
 **要点**：
 
@@ -266,12 +268,16 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 项 | 说明 |
 | --- | --- |
 | 存储 | `VideoVisualEmbedding` 独立表（视觉向量维度与文本 embedding 不同，不复用 `knowledge_segment_embedding_{dim}`） |
-| 模型 | 需在模型池接入 CLIP 类视觉编码模型，新增一套模型配置 |
-| 检索 | 文本检索与视觉检索是**两个独立空间**，需融合排序策略（非直接混排） |
-| 计费 | 每帧多一次编码调用 + 多一份向量存储 |
-| 与文本检索关系 | 语义检索主路径仍走文本向量；视觉向量是**并行的补充召回通道** |
+| 模型 | 模型池新增模型类型 `visual_embedding`（`ModelType.VISUAL_EMBEDDING`，视觉编码，无上下文窗口概念）；选型为硅基流动 `Qwen/Qwen3-VL-Embedding-8B`（文本/图片共享语义空间），维度固定 `1536`（原生 4096 经 MRL 降维，受 pgvector 上限 2000 约束）。该类型**不注册进 langchain `model_class_registry`**——其 REST 入参与 `OpenAIEmbeddings` 不兼容，注册会导致静默只编码文本，改为独立 HTTP 调用 |
+| 检索 | **同一语义空间，无需融合排序**（原设计假设的"两个独立空间"经实测修正）：Qwen3-VL-Embedding 把文本、图片、视频映射到同一语义空间，因此文本 query 可直接与库内图片向量比对余弦相似度；`VisualEmbeddingService.search_by_text` / `search_by_image` 共用同一套排序逻辑。检索为**并行的补充召回通道**，与文本向量召回结果由上层合并 |
+| 计费 | 每帧多一次编码调用 + 多一份向量存储；视觉编码走独立模型凭证（`get_provider_credentials(model_type="visual_embedding")`） |
+| 与文本检索关系 | 语义检索主路径仍走文本向量（`knowledge_segment_embedding_{dim}`）；视觉向量是并行的补充召回通道 |
 
-**解析链路要求**：关键帧生成后同时留存帧文件与 `frame_urls`，即使 L2 未跑，帧文件也在，保证视觉向量可后补而不必重跑解析。
+**解析链路要求（已落地）**：关键帧生成后同时留存帧文件与 `parse_profile.frames`（含 `segment_id` / `frame_url` / `scene_index`），即使 L2 未跑，帧文件也在，保证视觉向量可后补而不必重跑解析。
+
+**关键帧留存不计用户存储配额**：帧是解析中间产物（随素材删除），当前实现不调用 `add_usage`；因此它不占用 §2.6 的配额额度。若后续要计入，需在 `_persist_frame` 后配对 `add_usage` 与 `purge_knowledge_document` 的 `release_usage`。
+
+> **落地实况（P3 已完成）**：帧文件留存 —— 每帧上传为 `UploadFile`，其对象 key 作为 `frame_url` 写入该帧片段的 `metadata`（未留存/留存失败时为空字符串）；`parse_profile.frames` 汇总已写入；`video_visual_embedding` 表（含 HNSW 余弦索引）与 `VisualEmbeddingService` 已落地，解析链路在写完文本向量后自动为带 `frame_url` 的帧片段建立视觉向量索引（重解析前先清空旧向量，保证幂等）。**读取侧**已接入检索主链路：`RetrievalService._visual_recall_knowledge_base` 在 `semantic`/`hybrid` 策略下并行补充视觉召回，按 `segment_id` 去重合并、受同一套过滤约束（分区/媒体类型/标签/阈值），并在 `has_vectors()` 预检为否时不发起编码调用以控成本（此前只写不读，已修正）。视觉检索当前在服务层按余弦相似度排序（每视频数帧，量级可控）；若单库帧数显著增长，可改为 SQL 侧 pgvector 查询（表已建 HNSW 索引）。
 
 ---
 
@@ -394,7 +400,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 工具 | 用途 | 状态 |
 | --- | --- | --- |
 | `create_knowledge_base` | 参数含 `name` / `base_type` / `partition_mode` / `description`，支持对话内建库 | ✅ **已落地**（builtin provider `knowledge_base_tools`，见下） |
-| 检索工具扩展（改造 `search_knowledge_base`） | 新增 `knowledge_base_ids` / `partition_id` / `tags` / `media_type` 过滤参数 | ⬜ 规划（P3） |
+| 检索工具扩展（改造 `search_knowledge_base`） | 新增 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤参数 | ✅ **已落地**（P3，见 [modules/02-knowledge-base.md §11.9.3](./modules/02-knowledge-base.md#1193-检索工具的四个可选入参)） |
 | 视频轻量编辑工具（新增） | `video_trim` / `video_concat` / `video_subtitle` | ⬜ 规划（P4） |
 
 `create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
@@ -403,7 +409,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 - 参数：`name`（必填）、`base_type`（可选，`document`/`image`/`video`/`audio`/`mixed`，默认 `mixed`）、`partition_mode`（可选，`none`/`date_month`/`date_day`/`custom`，默认 `none`）、`description`（可选）。`base_type` / `partition_mode` 在工具内先做枚举校验，非法值直接返回可读错误，不进入服务层。
 - 服务调用：`KnowledgeBaseService.create_user_content_base(..., operation_context="user")`，仅创建**当前登录用户的私有**用户资料库。
 - 账号来源：由运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` 通过工厂参数 `account_id` 透传（与 `os_file_task` / `computer_action` 的 `requester` 同一注入点），工具内部再经 `AccountService` 加载真实 `Account` 实例。
-- **未落地**：检索过滤参数扩展与视频轻量编辑工具仍为规划项（P3 / P4）。
+- **未落地**：视频轻量编辑工具仍为规划项（P4）。检索过滤参数扩展已在 P3 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.9](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)）。
 
 ---
 
@@ -415,11 +421,11 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 2 | **单文件 15MB 上限** | [upload_file_schema.py](../../api/internal/schema/upload_file_schema.py) 限制 | 分片上传 + 秒传 + 断点续传；上限按套餐分级 | ✅ 已完成（P2B：分片上传链路 + 秒传 + 断点续传；上限按 `PlanEntitlement.max_single_file_gb` 分级；单次接口上限放宽为 64MB 防御常量。**注**：未配置该权益时回退 15MB，需管理员在套餐板块配置） |
 | 3 | **上传白名单无音视频** | [upload_file_entity.py](../../api/internal/entity/upload_file_entity.py) 仅图片 + 文档 | 增加 mp4/mov/avi/mkv/webm、mp3/wav/m4a/aac 等 | ✅ 已完成（P2A：实体层白名单 + `allowed_extensions_for_base_type()` + 存储层全类型并集 + `upload_document` 类型硬约束） |
 | 4 | **多模态产物不入库** | 抽帧 / ASR / OCR 产物丢弃 | 接入索引链路，产物写 Segment + 向量化 | ✅ 已完成（P2A：`KnowledgeMediaExtractorService` 产物直达 Segment + 向量化；L2 产物属 P3） |
-| 5 | **标签未接入知识库** | 无 `KnowledgeBaseTag` / `DocumentTag` | 新增关联表，复用 Tag 服务 | ✅ 模型已落地（表 + FK + 唯一约束），服务层接入属后续 |
+| 5 | **标签未接入知识库** | 无 `KnowledgeBaseTag` / `DocumentTag` | 新增关联表，复用 Tag 服务 | ✅ 已修复（模型层表 + FK + 唯一约束为 P1；服务层 `KnowledgeTagService` 与三条素材标签路由为 P3） |
 | 6 | **无板块分类与分区** | 仅扁平 `KnowledgeBase` | 新增 `base_type` / `partition_mode` / `KnowledgePartition` | ✅ 已修复（含两级树服务层校验 + 用户端创建入口 + 分区增删查路由 + 对话内建库工具）|
 | 7 | **存储配额空白** | account / Plan 均无存储字段 | 按 §2.6 新增配额模型 | ✅ 已修复（`PlanEntitlement.storage_quota_gb` + `StorageQuotaService`）|
 | 8 | **用量无 account 维度** | `StorageConfigService.get_storage_stats()` 仅全局 | 新增按 account 聚合计量 | ✅ 已修复（`account_storage_usage` + `StorageQuotaService.get_usage_summary`）|
-| 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | 🟡 L1 已落地（P2A：多媒体走 L1 解析并写 `parse_profile.tier1`）；`tier2` 数据落点已就绪，L2 触发链路属 P3 |
+| 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | ✅ 已修复（L1 为 P2A：多媒体走 L1 解析并写 `parse_profile.tier1`；L2 为 P3：`build_document_l2_task` + 触发路由 `/documents/<id>/l2` 按需触发并写 `parse_profile.tier2`，见 §9.2） |
 | 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ⬜ P4 |
 | 11 | **配额并发超卖** | `check_quota`（读）与 `add_usage`（写）分离，无锁，两个会话可同时通过校验 | 新增 `StorageQuotaService.consume_quota()`，在 `FOR UPDATE` 行锁内完成校验+累加 | ✅ 已修复（分片 `complete` / 秒传 `instant` 改为合并前原子预占，失败释放预占）|
 | 12 | **合并失败留孤儿文件** | `merge_chunks` 流式写目标对象，中途失败不清理半成品 | 在 `except` 中 `delete_object(target_key)` 回收 | ✅ 已修复（`LocalStorageService.merge_chunks`）|
@@ -445,7 +451,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | --- | --- | --- | --- | --- |
 | **P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
 | **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（已完成）**：分片上传 + 秒传 + 断点续传；单文件上限改为按套餐权益分级 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：分片链路本身可传 GB 级（流式合并，不整文件入内存）——**⚠️ 前提是管理员已在套餐配置 `max_single_file_gb` 权益，否则仍按默认 15MB 拒绝** | ✅ **已完成**（P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
-| **P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引 + 融合排序；检索工具支持板块/分区/标签/媒体类型过滤；L2 按需解析触发 | 以图搜图命中画面相似素材 | ⬜ 未开始 |
+| **P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
 | **P4 视频轻量编辑** | 「改细节」可落地 | `video_trim` / `video_concat` / `video_subtitle` 工具 + Celery 转码队列 + 对话框预览 | 对话里裁剪片段并预览成片 | ⬜ 未开始 |
 | **P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
 
@@ -461,7 +467,14 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 > - 多模态分支落在新增的 `KnowledgeMediaExtractorService`，而非设计稿所述的 `FileExtractor` 扩展（`FileExtractor` 保持文本抽取职责，多媒体走独立的 `_build_media_document` 直达路径）。
 > - 视觉模型调用与视频抽帧抽取为共享模块 `internal/core/vision/vision_invoke.py`，内置工具与知识库解析共用。
 > - 多媒体片段是"每次完整重新生成"的产物：重解析前清理该文档旧片段（含向量），保证幂等。
-> - L1 解析状态写入 `parse_profile.tier1`（`status` / `media_type` / `segment_count`）；**视频 L1 未含 ASR 音轨提取**，该能力与说话人切分、关键帧视觉向量索引同属 L2，留待 P3。
+> - L1 解析状态写入 `parse_profile.tier1`（`status` / `media_type` / `segment_count`；P3 又补 `video_frame_count` 与 `frames`）；视频 L1 已补 ASR 音轨提取（`source: "audio_transcript"` 片段）与关键帧留存（`frame_url`）。（音轨 ASR 与帧留存为 P3 落地，见下方 P3 落地说明。）
+
+> **P3 落地说明（与设计稿的差异）**：
+> - **视觉向量不再"融合排序"**：设计稿原假设「视觉与文本是两个独立语义空间」，实测 `Qwen/Qwen3-VL-Embedding-8B` 把文本/图片/视频映射到**同一语义空间**，因此文本 query 可直接与库内图片向量比对余弦相似度，`search_by_text` / `search_by_image` 共用一套排序；视觉向量定位为并行的补充召回通道，由上层与文本召回合并。
+> - **视觉编码服务不注册 langchain `model_class_registry`**：该模型 REST 入参（裸字符串 / `{"image":...}` / 对象数组）与 `OpenAIEmbeddings` 不兼容，注册会导致静默只编码文本，故 `VisualEmbeddingService` 走独立 HTTP 调用。
+> - **L2 触发链路落在独立 Celery 任务 + 显式触发入口**：任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`（`bind=True` / `max_retries=2` / `default_retry_delay=60`），**不加 beat 条目**（按需触发，不做定时轮询）；触发入口为 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2` → `KnowledgeBaseService.trigger_document_l2`（Celery 优先、失败回退同步）。状态写 `parse_profile.tier2`，失败只标 error 不回滚 L1 产物，增强时**回写同一批 Segment 不新建**。
+> - **检索过滤全部 SQL 下推**：分区 / 媒体类型 / 素材id / 相似度阈值直接进向量 SQL（命中 HNSW 索引）；全文分支需先把分区/媒体类型解析为素材 id 再与标签取交集；**标签无命中 fail closed**，不退化为不过滤。
+> - 帧留存**不计用户存储配额**（解析中间产物，随素材删除）。
 
 ### 9.3 明确不做
 
@@ -494,7 +507,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 
 以下细节在实施前需进一步确认：
 
-1. **视觉编码模型选型**：CLIP / 中文 CLIP / 其他，及接入 `ModelPoolConfig` 的具体方式
+1. ~~**视觉编码模型选型**：CLIP / 中文 CLIP / 其他，及接入 `ModelPoolConfig` 的具体方式~~ → **已定稿并落地（P3）**：选定硅基流动 `Qwen/Qwen3-VL-Embedding-8B`，以新模型类型 `visual_embedding` 接入 `ModelPoolConfig`，维度固定 1536（MRL 降维）。模型类型登记已落地（`ModelType.VISUAL_EMBEDDING` + 后端/前端各两份白名单已同步，并有 `test_model_type_parity.py` 防漂移守卫）；编码服务 `VisualEmbeddingService`、向量表 `video_visual_embedding`（含 HNSW 余弦索引）与迁移 `c9d0e1f2a3b4` / `dae1f2a3b4c5` 均已落地。
 2. **转码配额计量**：视频编辑的 CPU 转码是否单独计费，还是计入现有算力配额
 3. **外部数据源同步的配额策略**：同步超限时是整体拒绝、还是截断同步、还是仅告警
 4. **分级档位阈值**：短音频 5min 的切分阈值是否需按套餐/场景调整

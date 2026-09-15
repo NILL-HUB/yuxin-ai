@@ -46,6 +46,7 @@ from .model_pool_entity import ModelPoolConfig
 from .model_provider_entity import ModelProviderConfig
 from .desktop_device import DesktopDevice
 from .account_storage_usage import AccountStorageUsage
+from .video_visual_embedding import VideoVisualEmbedding
 from .tool_governance_entity import ToolGovernancePolicy, ToolInvocationAudit
 
 __all__ = [

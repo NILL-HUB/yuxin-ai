@@ -32,6 +32,7 @@ const { t } = useI18n()
 const ALL_MODEL_TYPES = [
   'chat', 'embedding', 'multimodal',
   'image_generation', 'video_generation', 'ocr', 'tts', 'asr', 'rerank',
+  'visual_embedding',
 ]
 
 const loading = ref(false)

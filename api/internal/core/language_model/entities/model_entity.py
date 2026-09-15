@@ -29,6 +29,7 @@ class ModelType(str, Enum):
     TTS = "tts"  # 语音合成
     ASR = "asr"  # 语音识别
     RERANK = "rerank"  # 重排序模型
+    VISUAL_EMBEDDING = "visual_embedding"  # 视觉编码模型（关键帧以图搜图）
 
 
 class ModelParameterType(str, Enum):

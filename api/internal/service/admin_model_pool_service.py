@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # 无上下文概念的模型类型：不展示也不校验 max_tokens，后端自动置 0
 CONTEXT_LESS_MODEL_TYPES = frozenset(
-    {"image_generation", "video_generation", "tts", "asr", "ocr"}
+    {"image_generation", "video_generation", "tts", "asr", "ocr", "visual_embedding"}
 )
 
 # OpenAI 兼容 Chat 类接口的路径后缀，完整地址模式下需要剥离，避免 langchain 重复追加
@@ -255,9 +255,9 @@ class AdminModelPoolService:
             raise ConflictException(f"模型 {payload['model_name']} 在供应商 {provider_name} 下已存在")
 
         model_type = payload.get("model_type") or "chat"
-        # embedding 模型自动探测维度（忽略前端传入的 embedding_dimension）
+        # embedding / 视觉编码模型自动探测维度（忽略前端传入的 embedding_dimension）
         embedding_dimension = 0
-        if model_type == "embedding":
+        if model_type in {"embedding", "visual_embedding"}:
             embedding_dimension = self._auto_probe_dimension(
                 provider_name, payload["model_name"]
             )
@@ -426,17 +426,17 @@ class AdminModelPoolService:
             model.max_tokens = (model.max_input_tokens or 0) + (model.max_output_tokens or 0)
 
         # 判断是否需要重新探测维度：
-        # 1. model_type 变为 embedding（之前不是）
-        # 2. model_type 仍为 embedding，但 provider 或 model_name 变更
+        # 1. model_type 变为嵌入类（embedding / visual_embedding），且之前不是同一类型
+        # 2. model_type 仍为同一嵌入类，但 provider 或 model_name 变更
         new_model_type = model.model_type
         need_probe = False
-        if new_model_type == "embedding":
-            if old_model_type != "embedding":
+        if new_model_type in {"embedding", "visual_embedding"}:
+            if old_model_type != new_model_type:
                 need_probe = True
             elif old_provider != model.provider or old_model_name != model.model_name:
                 need_probe = True
         else:
-            # 非 embedding 类型，维度清零
+            # 非嵌入类模型，维度清零
             model.embedding_dimension = 0
 
         if need_probe:

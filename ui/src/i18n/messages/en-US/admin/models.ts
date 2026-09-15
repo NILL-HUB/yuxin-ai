@@ -306,6 +306,7 @@ export default  {
         tts: 'TTS',
         asr: 'ASR',
         rerank: 'Rerank',
+        visual_embedding: 'Visual Embedding',
       },
       compatibleApiOptions: {
         openai: 'OpenAI Compatible',

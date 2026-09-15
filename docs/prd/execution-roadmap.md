@@ -55,13 +55,13 @@
 
 ### 知识库产品形态分期
 
-沿用 [knowledge-base-product-form-design.md](./knowledge-base-product-form-design.md) §9.2 的五阶段划分，P1 数据基座已完成并落库：
+沿用 [knowledge-base-product-form-design.md](./knowledge-base-product-form-design.md) §9.2 的五阶段划分，P1–P3 已完成并落库：
 
 | 阶段 | 主题 | 完成状态 |
 | --- | --- | --- |
 | P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
 | P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（P2A 多模态素材入库 + P2B 分片上传/秒传/断点续传） |
-| P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ⬜ 未开始 |
+| P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
 | P4 | 视频轻量编辑（trim / concat / subtitle） | ⬜ 未开始 |
 | P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
 
@@ -133,6 +133,24 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **pgvector scope 过滤增强** | `knowledge_vector_service.py` + `retrieval_service.py` | ✅ KnowledgeVectorService.search() 和 search_in_knowledge_base() 支持 knowledge_scope 过滤 |
 
 > **历史注记**：原 P2 表中的"打通记忆确认对话推送（`MemoryConfirmationCard`）"任务**已作废**——记忆候选确认流程连同 `memory_candidate` 表（迁移 `s3d4e5f6a7b8`）与前端 `MemoryConfirmationCard` 组件一并移除，改为显著性评分自动写入 + 事后管理。
+
+### 知识库产品形态 P3：检索与视觉向量（已完成）
+
+| 任务 | 文件 | 状态 |
+| --- | --- | --- |
+| **检索过滤参数扩展（4 个，全部 SQL 下推）** | `knowledge_vector_service.py`（`partition_id` / `media_types` / `document_ids` / `score_threshold`）+ `retrieval_service.py`（`RetrievalFilter`） | ✅ 已落地；标签无命中 fail closed，不退化为不过滤 |
+| **检索工具过滤入参** | `retrieval_service.py`（`create_knowledge_retrieval_tool` 的 `partition_id` / `media_types` / `tags` / `score_threshold`） | ✅ 已落地 |
+| **素材标签服务与路由** | `knowledge_tag_service.py`（`KnowledgeTagService`）+ `knowledge_mcp_routes.py` 三条素材标签路由 | ✅ 已落地 |
+| **视频 L1 补 ASR 音轨 + 关键帧留存** | `vision_invoke.py`（`extract_video_audio` / `extract_video_frames_to_dir` / `_resolve_ffmpeg_exe`）+ `knowledge_media_extractor_service.py`（`_persist_frame`） | ✅ 已落地；音轨失败只记 warning 不中断，帧留存失败 `frame_url` 置空 |
+| **关键帧视觉向量表与迁移** | `video_visual_embedding.py` + 迁移 `c9d0e1f2a3b4` / `dae1f2a3b4c5` | ✅ 已落地（维度 1536，HNSW 余弦索引） |
+| **视觉编码服务** | `visual_embedding_service.py`（`VisualEmbeddingService`） | ✅ 已落地；不注册 `model_class_registry`（入参与 OpenAIEmbeddings 不兼容） |
+| **视觉向量索引写入** | `knowledge_indexing_service.py`（`_index_visual_vectors` 等） | ✅ 已落地；先清空旧向量再重建（幂等） |
+| **视觉向量读取侧接入（自动补充召回）** | `retrieval_service.py`（`_visual_recall_knowledge_base` / `_merge_visual_documents`）+ `visual_embedding_service.py`（`has_vectors` / 过滤下推） | ✅ 已落地；`semantic`/`hybrid` 并行补充、按 `segment_id` 去重、过滤同源、无帧向量时不发编码调用（此前只写不读，已修正） |
+| **L2 按需解析任务与触发入口** | `knowledge_l2_tasks.py` + `celery_app.py` 登记 + `KnowledgeBaseService.trigger_document_l2` + 路由 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2` | ✅ 已落地（`bind=True` / `max_retries=2` / `default_retry_delay=60`；**不加 beat**；Celery 优先、失败回退同步） |
+| **模型类型 `visual_embedding` 登记与防漂移测试** | `model_entity.py` 等 9 处 + `test_model_type_parity.py` | ✅ 已落地 |
+| **迁移链守卫测试** | `test_migration_graph_integrity.py` | ✅ 已落地（以 git 跟踪文件重建迁移图，检测悬空 `down_revision` 与多 head） |
+
+> 架构文档同步见 [modules/02-knowledge-base.md §11.9–§11.12](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)。
 
 ### P3（已完成）
 

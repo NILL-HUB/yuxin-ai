@@ -46,6 +46,21 @@ def _upload_file(extension: str = "jpg"):
     )
 
 
+def _write_frames(tmp_path, count: int) -> list[str]:
+    """写 count 个真实帧文件；帧抽取现返回文件路径（供留存与 data URI 转换）。"""
+    paths = []
+    for index in range(1, count + 1):
+        path = tmp_path / f"frame_{index:03d}.jpg"
+        path.write_bytes(b"\xff\xd8\xff\xe0frame")
+        paths.append(str(path))
+    return paths
+
+
+def _raise_no_audio(_video_path):
+    """音轨分支桩：默认视为视频无音轨，让用例聚焦帧逻辑。"""
+    raise RuntimeError("no audio stream")
+
+
 def test_image_extraction_returns_single_segment_with_summary():
     service = _new_service(vision_text="画面为新品海报，含文字「限时五折」")
 
@@ -137,13 +152,15 @@ def test_audio_extraction_returns_empty_when_transcript_blank():
     assert service.extract(_document("audio"), upload) == []
 
 
-def test_video_extraction_returns_segment_per_frame():
+def test_video_extraction_returns_segment_per_frame(tmp_path):
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames = lambda path: ["data:frame-1", "data:frame-2"]
+    frames = _write_frames(tmp_path, 2)
+    service._extract_frames_to_dir = lambda path, out_dir: frames
+    service._extract_audio_track = _raise_no_audio
     seen_prompts = []
 
     def _vision(data_uri, prompt):
@@ -160,24 +177,29 @@ def test_video_extraction_returns_segment_per_frame():
     segments = service.extract(_document("video"), upload)
 
     assert len(segments) == 2
-    assert segments[0].content == "画面描述-data:frame-1"
+    assert segments[0].content.startswith("画面描述-data:image/jpeg;base64,")
     assert segments[0].metadata["media_type"] == "video"
     assert segments[0].metadata["scene_index"] == 1
     assert segments[0].metadata["frame_count"] == 2
+    assert segments[0].metadata["frame_url"] == ""
     assert segments[1].metadata["scene_index"] == 2
     assert len(seen_prompts) == 2
 
 
-def test_video_extraction_skips_frames_that_fail_analysis():
+def test_video_extraction_skips_frames_that_fail_analysis(tmp_path):
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames = lambda path: ["data:ok", "data:bad"]
+    frames = _write_frames(tmp_path, 2)
+    service._extract_frames_to_dir = lambda path, out_dir: frames
+    service._extract_audio_track = _raise_no_audio
+    calls = {"count": 0}
 
     def _vision(data_uri, prompt):
-        if data_uri == "data:bad":
+        calls["count"] += 1
+        if calls["count"] == 2:
             raise RuntimeError("vision failed")
         return "可用画面描述"
 
@@ -200,7 +222,8 @@ def test_video_extraction_raises_when_no_frames_extracted():
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames = lambda path: []
+    service._extract_frames_to_dir = lambda path, out_dir: []
+    service._extract_audio_track = _raise_no_audio
     upload = SimpleNamespace(
         id=uuid4(), key=f"2026/09/13/{uuid4()}.mkv", name="broken.mkv",
         extension="mkv", mime_type="video/x-matroska",
@@ -216,14 +239,15 @@ def test_image_extraction_returns_empty_when_summary_blank():
     assert service.extract(_document("image"), _upload_file("jpg")) == []
 
 
-def test_video_extraction_raises_when_all_descriptions_blank():
+def test_video_extraction_raises_when_all_descriptions_blank(tmp_path):
     """帧非空但所有帧描述均为空白时，应抛错而不是产出空片段。"""
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames = lambda path: ["data:a", "data:b"]
+    service._extract_frames_to_dir = lambda path, out_dir: _write_frames(tmp_path, 2)
+    service._extract_audio_track = _raise_no_audio
     service._invoke_vision = lambda data_uri, prompt: "   "
     upload = SimpleNamespace(
         id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="blank.mp4",

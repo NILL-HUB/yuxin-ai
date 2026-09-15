@@ -97,11 +97,12 @@ const { t } = useI18n()
 const ALL_MODEL_TYPES = [
   'chat', 'embedding', 'multimodal',
   'image_generation', 'video_generation', 'ocr', 'tts', 'asr', 'rerank',
+  'visual_embedding',
 ]
 const COMPATIBLE_APIS = ['openai', 'claude']
 // 无上下文概念的模型类型：不展示也不校验 max_tokens
 const CONTEXT_LESS_MODEL_TYPES = [
-  'image_generation', 'video_generation', 'tts', 'asr', 'ocr',
+  'image_generation', 'video_generation', 'tts', 'asr', 'ocr', 'visual_embedding',
 ]
 // 上下文长度预设值，点击即填入；同时支持手动输入自定义值
 const MAX_TOKENS_PRESETS = [

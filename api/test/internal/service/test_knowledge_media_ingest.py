@@ -56,8 +56,8 @@ class _FakeMediaExtractor:
         self.segments = segments
         self.calls = []
 
-    def extract(self, document, upload_file):
-        self.calls.append((document, upload_file))
+    def extract(self, document, upload_file, account_id=None, document_id=None):
+        self.calls.append((document, upload_file, account_id, document_id))
         return self.segments
 
 

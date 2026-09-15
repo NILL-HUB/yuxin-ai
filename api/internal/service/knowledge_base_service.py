@@ -290,6 +290,45 @@ class KnowledgeBaseService(BaseService):
         self._assert_media_type_allowed(knowledge_base, extension)
         return knowledge_base
 
+    def trigger_document_l2(
+            self,
+            knowledge_base_id: UUID,
+            document_id: UUID,
+            account: Account,
+    ) -> dict:
+        """按需触发某素材的 L2 深度解析（用户显式要求）。
+
+        L1 上传即跑、保证素材「能被找到」；L2 逐帧视觉详述最贵，故**只在显式要求时触发**，
+        不做定时轮询。派发走 Celery，不可用时回退同步执行，避免请求静默丢失。
+
+        校验顺序与 `get_document_detail` 一致：先校验知识库归属，再校验文档是否属于该库，
+        防止越权触发他人素材的付费解析。
+        """
+        # 1.校验知识库归属
+        self.get_user_content_base(knowledge_base_id, account)
+
+        # 2.查询文档并校验归属
+        document = self.get(KnowledgeDocument, document_id)
+        if document is None or str(document.knowledge_base_id) != str(knowledge_base_id):
+            raise NotFoundException("该文档不存在，请核实后重试")
+
+        # 3.派发 L2 任务（Celery 优先，不可用时同步兜底）
+        return self._dispatch_document_l2(document.id)
+
+    def _dispatch_document_l2(self, document_id) -> dict:
+        """派发 L2 深度解析：优先 Celery 后台执行，不可用时回退同步，保证解析不丢失。"""
+        try:
+            from internal.task.knowledge_l2_tasks import build_document_l2_task
+
+            build_document_l2_task.delay(str(document_id))
+            logging.info("L2 深度解析已派发 Celery document_id=%s", document_id)
+            return {"document_id": str(document_id), "dispatched": True}
+        except Exception:
+            logging.warning(
+                "L2 派发 Celery 失败，回退同步执行 document_id=%s", document_id, exc_info=True,
+            )
+            return self._get_knowledge_indexing_service().build_document_l2(document_id)
+
     def _get_cos_service(self):
         from .cos_service import CosService
         return current_app.injector.get(CosService)

@@ -76,6 +76,7 @@ TASK_MODULES = [
     "internal.task.schedule_tasks",
     "internal.task.consolidation_tasks",
     "internal.task.knowledge_indexing_tasks",
+    "internal.task.knowledge_l2_tasks",
     "internal.task.recycle_bin_tasks",
     "internal.task.auto_renewal_tasks",
     "internal.task.external_data_source_tasks",
@@ -93,6 +94,7 @@ import internal.task.email_task as _task_email  # noqa: F401,E402
 import internal.task.schedule_tasks as _task_schedule  # noqa: F401,E402
 import internal.task.consolidation_tasks as _task_consolidation  # noqa: F401,E402
 import internal.task.knowledge_indexing_tasks as _task_knowledge  # noqa: F401,E402
+import internal.task.knowledge_l2_tasks as _task_knowledge_l2  # noqa: F401,E402
 import internal.task.recycle_bin_tasks as _task_recycle  # noqa: F401,E402
 import internal.task.auto_renewal_tasks as _task_auto_renewal  # noqa: F401,E402
 import internal.task.external_data_source_tasks as _task_external_ds  # noqa: F401,E402

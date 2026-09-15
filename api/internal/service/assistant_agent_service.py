@@ -1021,6 +1021,20 @@ class AssistantAgentService(BaseService):
                     tools.append(todo_tool_factory())
             except Exception:
                 logger.warning("构建任务清单工具失败，不影响其他工具", exc_info=True)
+        # 知识库工具：Agent 可在对话内为用户创建知识库板块。
+        # 账号随请求维度透传（与 os_file_task / computer_action 同一注入点），
+        # 工具内部据此加载 Account 并调用 KnowledgeBaseService.create_user_content_base。
+        if self.app_config_service is not None:
+            try:
+                kb_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                    "knowledge_base_tools",
+                    "create_knowledge_base",
+                )
+                if kb_tool_factory is not None:
+                    tools.append(kb_tool_factory(account_id=str(account_id)))
+            except Exception:
+                logger.warning("构建知识库工具失败，不影响其他工具", exc_info=True)
+
 
         # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
         # 同时挂载系统知识库（knowledge_scope='system'，admin 通过 enabled 开关控制），

@@ -10,6 +10,7 @@ PROVIDER_STATUSES = ["active", "disabled"]
 MODEL_TYPES = [
     "chat", "embedding", "multimodal",
     "image_generation", "video_generation", "ocr", "tts", "asr", "rerank",
+    "visual_embedding",
 ]
 COMPATIBLE_APIS = ["openai", "claude"]
 

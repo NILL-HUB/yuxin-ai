@@ -621,6 +621,102 @@ def register_routes(quart_app):
         )
         return _ok_msg("删除分区成功")
 
+    @quart_app.get(
+        "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/tags"
+    )
+    async def async_list_document_tags(knowledge_base_id, document_id) -> Response:
+        """async 列出素材标签。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+        from internal.service.knowledge_tag_service import KnowledgeTagService
+
+        # 先校验板块归属，避免越权读取他人素材标签
+        await _to_thread(
+            _get_service(KnowledgeBaseService).get_accessible_base,
+            knowledge_base_id,
+            account,
+        )
+        tags = await _to_thread(
+            _get_service(KnowledgeTagService).list_document_tags,
+            document_id,
+        )
+        return _ok([{"id": str(tag.id), "name": tag.name} for tag in tags])
+
+    @quart_app.post(
+        "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/tags"
+    )
+    async def async_attach_document_tag(knowledge_base_id, document_id) -> Response:
+        """async 为素材打标签。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+        from internal.service.knowledge_tag_service import KnowledgeTagService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        tag_id_raw = str(payload.get("tag_id") or "").strip()
+        if not tag_id_raw:
+            return _json_resp(
+                code="validate_error",
+                message="标签标识不能为空",
+                data={"tag_id": ["标签标识不能为空"]},
+                status=400,
+            )
+        try:
+            tag_id = UUID(tag_id_raw)
+        except (TypeError, ValueError):
+            return _json_resp(
+                code="validate_error",
+                message="标签标识非法",
+                data={"tag_id": ["标签标识非法"]},
+                status=400,
+            )
+
+        # 先校验板块归属，避免越权修改他人素材
+        await _to_thread(
+            _get_service(KnowledgeBaseService).get_accessible_base,
+            knowledge_base_id,
+            account,
+        )
+        link = await _to_thread(
+            _get_service(KnowledgeTagService).attach_document_tag,
+            account.id,
+            document_id,
+            tag_id,
+            verify_document=True,
+        )
+        return _ok({"id": str(link.id)})
+
+    @quart_app.post(
+        "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>"
+        "/tags/<uuid:tag_id>/delete"
+    )
+    async def async_detach_document_tag(knowledge_base_id, document_id, tag_id) -> Response:
+        """async 移除素材标签。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+        from internal.service.knowledge_tag_service import KnowledgeTagService
+
+        # 先校验板块归属，避免越权修改他人素材
+        await _to_thread(
+            _get_service(KnowledgeBaseService).get_accessible_base,
+            knowledge_base_id,
+            account,
+        )
+        await _to_thread(
+            _get_service(KnowledgeTagService).detach_document_tag,
+            document_id,
+            tag_id,
+        )
+        return _ok_msg("移除标签成功")
+
     @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/hit")
     async def async_hit_test(knowledge_base_id) -> Response:
         """async 知识库召回测试。"""
@@ -730,6 +826,23 @@ def register_routes(quart_app):
             agent_id=payload.get("agent_id"),
         )
         return _ok_msg("删除文档成功")
+
+    @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/l2")
+    async def async_trigger_document_l2(knowledge_base_id, document_id) -> Response:
+        """async 触发某素材的 L2 深度解析（按需，不做定时轮询）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service import KnowledgeBaseService
+
+        await _to_thread(
+            _get_service(KnowledgeBaseService).trigger_document_l2,
+            knowledge_base_id,
+            document_id,
+            account,
+        )
+        return _ok_msg("L2 深度解析已触发")
 
     @quart_app.get("/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/segments")
     async def async_get_segments_with_page(knowledge_base_id, document_id) -> Response:

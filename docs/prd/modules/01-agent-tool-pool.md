@@ -1129,4 +1129,22 @@ AssistantAgentService._build_assistant_runtime_tools(account_id)
 ### 11.5 测试
 
 `api/test/internal/core/tools/test_create_knowledge_base_tool.py` 覆盖：合法参数透传（name/base_type/partition_mode/description/operation_context/account）、默认值、非法 `base_type`、非法 `partition_mode`、空名称、缺失 account、账号不存在、服务异常降级为可读错误、工厂绑定。
+---
+
+## 12. 知识库检索工具 `search_knowledge_base` 的过滤入参（P3 已落地）
+
+运行时名为 `search_knowledge_base`（常量 `KNOWLEDGE_RETRIEVAL_TOOL_NAME`）的检索工具由 `RetrievalService.create_knowledge_retrieval_tool(...)` 构造，其 `args_schema`（`KnowledgeRetrievalInput`）在 P3 新增 4 个**可选**过滤字段：
+
+| 入参 | 类型 | 说明 |
+| --- | --- | --- |
+| `query` | `str` | 检索语句（原有，必填） |
+| `partition_id` | `str \| None` | 限定在某分区内检索，传分区 ID；非法 UUID 记 warning 并忽略该过滤 |
+| `media_types` | `list[str] \| None` | 限定素材类型，取值 `image` / `video` / `audio` / `document` |
+| `tags` | `list[str] \| None` | 按素材标签名过滤，多个标签取**并集** |
+| `score_threshold` | `float \| None` | 相似度下限（0~1），低于该值的结果不返回 |
+
+入参组装由 `RetrievalService._build_retrieval_filter(...)` 完成，产出 `RetrievalFilter` 传给 `layered_search`：四个入参全为空时返回 `None`（不过滤）；有标签名但解析不到任何标签时返回**空 `tag_ids`** 的 filter，由检索层 **fail closed**（返回空结果），**不得退化成"不过滤"**。过滤语义与 SQL 下推位置详见 [02-knowledge-base.md §11.9](./02-knowledge-base.md#119-检索过滤参数p3-已落地)。
+
+> 注意：工具入参名为 `media_types`（复数列表），与产品设计稿中早期写的单数 `media_type` 不同，以代码为准。
+
 

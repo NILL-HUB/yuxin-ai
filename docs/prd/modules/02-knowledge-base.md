@@ -133,9 +133,9 @@
 - 文档：md、doc、docx、txt、pdf、csv、xlsx、xls、html 等。
 - 外部数据源：飞书、Notion、本地文件夹、GitHub 等（同步导入的资料）。
 - 其他结构化或半结构化业务资料。
-- 图片：jpg、jpeg、png、webp、gif、svg 等，L1 视觉理解已落地，L2 深度解析后置。
-- 视频：产品演示、会议录像、课程视频等，L1 关键帧视觉描述已落地，L2 深度解析后置。
-- 音频：会议录音、访谈、播客、语音备忘等，L1 ASR 转写已落地，L2 深度解析后置。
+- 图片：jpg、jpeg、png、webp、gif、svg 等，L1 视觉理解已落地，细粒度 OCR 区块坐标等 L2 增强未实现。
+- 视频：产品演示、会议录像、课程视频等，L1（音轨 ASR + 关键帧视觉描述 + 关键帧留存）与 L2（逐帧视觉详述）均已落地。
+- 音频：会议录音、访谈、播客、语音备忘等，L1 ASR 转写已落地，说话人切分等 L2 增强未实现。
 
 资料内容库需要支持：
 
@@ -144,7 +144,7 @@
 | 上传 | 用户主动上传文件 |
 | 外部数据源连接 | 用户授权连接飞书、Notion、本地文件夹、GitHub 等外部数据源 |
 | 同步 | 支持手动同步与 Celery 定时自动同步（每 6 小时扫描已授权数据源） |
-| 解析 | 文本与结构化资料走 parsing→splitting→indexing；图片/音频/视频走 L1 多模态解析直达入库（见 §11.8），L2 深度解析后置 |
+| 解析 | 文本与结构化资料走 parsing→splitting→indexing；图片/音频/视频走 L1 多模态解析直达入库（见 §11.8），视频可再按需触发 L2 逐帧详述（见 §11.11） |
 | 分段 | 将长内容切分为可检索片段 |
 | 索引 | 建立向量、全文和关键词索引 |
 | 检索 | 按任务动态召回相关资料 |
@@ -215,7 +215,7 @@
 | 文档处理 | 支持 automatic / custom 处理规则、分段规则、chunk_size、chunk_overlap |
 | 索引状态 | waiting、parsing、splitting、indexing、completed、error |
 | 检索策略 | semantic、full_text、hybrid |
-| 检索工具 | 运行时名为 `search_knowledge_base`（`KNOWLEDGE_RETRIEVAL_TOOL_NAME`），可被 Agent / Workflow 调用；`dataset_retrieval` / `recall_dataset` 作为历史别名保留在别名映射中 |
+| 检索工具 | 运行时名为 `search_knowledge_base`（`KNOWLEDGE_RETRIEVAL_TOOL_NAME`），可被 Agent / Workflow 调用；支持 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤入参（P3，见 §11.9.3）；`dataset_retrieval` / `recall_dataset` 作为历史别名保留在别名映射中 |
 | 召回测试 | `/space/knowledge-bases/<uuid>/hit` 支持召回测试；admin 侧 `/admin/system-knowledge/<uuid>/hit-test` |
 | App 绑定 | `AppConfig.knowledge_base_ids`（JSONB）支持应用绑定知识库 |
 | Workflow 绑定 | `dataset_retrieval` workflow node 支持工作流检索知识库 |
@@ -236,19 +236,19 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 | 类型 | 当前情况 |
 | --- | --- |
 | 文档 | 已支持 md、doc、docx、txt、pdf、csv、xlsx、xls、html 等 |
-| 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（P2A），细粒度 OCR 区块坐标等 L2 能力后置 |
-| 视频 | L1 关键帧抽取 + 视觉描述入库已落地（P2A）；ASR 音轨提取、场景切分、视觉向量索引等 L2 能力后置 |
-| 音频 | L1 ASR 全文转写入库已落地（P2A）；说话人切分、章节切分等 L2 能力后置 |
+| 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（P2A）；细粒度 OCR 区块坐标等 L2 增强未实现 |
+| 视频 | L1 音轨 ASR 转写 + 关键帧抽取 + 视觉描述入库、关键帧留存为 UploadFile（P2A + P3）；关键帧视觉向量索引与 L2 逐帧视觉详述已落地（P3，见 §11.10 / §11.11）；场景切分、精细时间轴未实现 |
+| 音频 | L1 ASR 全文转写入库已落地（P2A）；说话人切分、章节切分等 L2 增强未实现 |
 
 明确缺口（P1 数据基座落地后已消解项标注 ✅）：
 
-1. 现有 `KnowledgeBase` 已演进为"用户资料内容库 + 板块"的载体，分层作用域、板块类型与分区体系均已落地（多模态 L1 解析入库见 §11.8，检索取料能力属 P3）。
+1. 现有 `KnowledgeBase` 已演进为"用户资料内容库 + 板块"的载体，分层作用域、板块类型与分区体系均已落地（多模态 L1 解析入库见 §11.8，检索取料过滤能力见 §11.9）。
 2. 现有 `TokenBufferMemory` 只是会话短期上下文裁剪，不是跨会话长期记忆。长期记忆由第 16 章记忆系统负责。
 3. ✅ 已消解：`KnowledgeBase.knowledge_scope` 已落地，可区分系统级知识库、用户资料内容库、团队/租户/项目知识库。
 4. ✅ 已消解：归属判断已引入 `owner_account_id` + `owner_admin_user_id`，可区分"管理员自己的个人知识库"和"管理员维护的系统级知识库"。
 5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
-7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频关键帧视觉描述）已接入索引链路**（P2A 已落地，见 §11.8）；**L2 深度解析链路（视频 ASR 音轨提取、说话人切分、关键帧视觉向量索引）尚未实现**，属 P3 范围。
+7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 关键帧视觉描述 + 关键帧留存）已接入索引链路**（P2A + P3，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频逐帧视觉详述）已在 P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分与精细时间轴仍未实现。
 8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
 9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
 10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（P3 范围）。
@@ -377,6 +377,27 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 两表均含 `account_id`，标签或板块/素材删除时关联级联清理。
 
 **分区与标签的分工**：分区是互斥层级归类（一个素材只能在一个分区），标签是可交叉叠加的属性（一个素材可有多个标签）。
+**服务层 `KnowledgeTagService`**（`internal/service/knowledge_tag_service.py`，P3 已落地），6 个方法：
+
+| 方法 | 职责 |
+| --- | --- |
+| `attach_base_tag(account_id, knowledge_base_id, tag_id)` | 为板块打标签（幂等：已存在关联直接返回原记录） |
+| `attach_document_tag(account_id, knowledge_document_id, tag_id, verify_document=False)` | 为素材打标签（幂等）；`verify_document=True` 时先校验素材存在，不存在抛 `FailException` |
+| `detach_document_tag(knowledge_document_id, tag_id)` | 移除素材标签，返回是否确有移除（不存在返回 `False` 而非抛错） |
+| `list_document_tags(knowledge_document_id)` | 列出素材全部标签（返回 `Tag` 列表） |
+| `resolve_tag_ids_by_names(names)` | 标签名 → 标签 id（供检索工具按名过滤）；名称解析不到时忽略该名称 |
+| `document_ids_for_tags(tag_ids, match_all=False)` | 按标签查素材 id；`match_all=True` 取交集（用分组计数实现：`count(tag_id) >= len(set(tag_ids))`），`False` 取并集 |
+
+**用户端素材标签入口**（`api/app/http/knowledge_mcp_routes.py`，服务 `KnowledgeTagService`）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/space/knowledge-bases/<uuid>/documents/<uuid>/tags` | 列出该素材已打标签，返回 `[{"id", "name"}]` |
+| POST | `/space/knowledge-bases/<uuid>/documents/<uuid>/tags` | 为素材打标签；body `{"tag_id"}`，缺失或非合法 UUID 返回 400 `validate_error`（不 500）；服务侧 `verify_document=True` 校验素材存在 |
+| POST | `/space/knowledge-bases/<uuid>/documents/<uuid>/tags/<uuid>/delete` | 移除素材标签，返回「移除标签成功」 |
+
+三条路由均先调用 `KnowledgeBaseService.get_accessible_base` 校验板块归属，避免越权读改他人素材标签；打标签的 `account_id` 取当前登录账号。
+
 
 #### 11.7.5 素材多模态字段
 
@@ -426,15 +447,19 @@ P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链�
 
 #### 11.8.1 KnowledgeMediaExtractorService（三分支）
 
-`KnowledgeMediaExtractorService`（`internal/service/knowledge_media_extractor_service.py`）负责把非文档素材转为文本片段，`extract(document, upload_file)` 按 `document.media_type` 分派：
+`KnowledgeMediaExtractorService`（`internal/service/knowledge_media_extractor_service.py`）负责把非文档素材转为文本片段，`extract(document, upload_file, account_id=None, document_id=None)` 按 `document.media_type` 分派：
 
 | 分支 | media_type | 处理链路 | 产物 |
 | --- | --- | --- | --- |
 | 图片 | `image` | 从对象存储下载 → `path_to_data_uri`（按扩展名推断 MIME，编码前上限 8MB）→ 视觉模型（画面描述 + OCR） | 1 个片段；摘要为空返回 `[]` |
 | 音频 | `audio` | 下载 → 包装为 `FileStorage` → `AudioService.audio_to_text` ASR 全文转写 | 1 个片段；转写为空返回 `[]` |
-| 视频 | `video` | 下载 → `extract_video_frames`（默认 3 帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 逐帧视觉描述 | 每帧 1 个片段；单帧失败跳过，全部失败抛错 |
+| 视频 | `video` | 下载 → `extract_video_frames_to_dir`（默认 3 帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 逐帧 `path_to_data_uri` 视觉描述；同目录内 `extract_video_audio` 抽音轨 → ASR 转写 | 转写片段（1 个，非空时）+ 每帧 1 个片段；单帧失败跳过，全部失败抛错 |
+
+`account_id` / `document_id` 仅供视频分支的关键帧留存使用（帧的归属账号与来源文档），缺省时视频照常解析但不留存帧（`frame_url` 为空字符串），保证既有调用方向后兼容。
 
 文档类型（`document`）返回空列表，由既有文本链路（parsing → splitting → indexing）处理。
+**音轨 ASR 属可降级能力**：视频可能无音轨、ASR 可能不可用，`_transcribe_video_track` 捕获全部异常后只记 warning 并返回空串，帧描述仍作为有效产物产出；音轨临时文件在 `finally` 中删除。
+
 
 #### 11.8.2 视觉能力共享模块
 
@@ -444,9 +469,12 @@ P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链�
 | --- | --- |
 | `path_to_data_uri(path)` | 本地图片 → data URI（按扩展名推断 MIME，8MB 上限） |
 | `invoke_vision_model(data_uri, prompt)` | 经 `LanguageModelService.get_feature_model("vision_analyze")` 调用视觉模型 |
-| `extract_video_frames(video_path, frame_count=3)` | 抽关键帧，返回 data URI 列表；ffmpeg 不可用时降级 imageio-ffmpeg，均不可用抛错 |
+| `extract_video_frames(video_path, frame_count=3)` | 抽关键帧，返回 data URI 列表；产物随临时目录销毁；ffmpeg 不可用时降级 imageio-ffmpeg，均不可用抛错 |
+| `extract_video_audio(video_path, target_path)` | 抽音轨为单声道 16k WAV（`-vn` / `-ac 1` / `-ar 16000`），返回 `target_path`；无可用 ffmpeg 或未产出文件抛 `RuntimeError` |
+| `extract_video_frames_to_dir(video_path, out_dir, frame_count=3)` | 抽帧到指定目录，返回帧文件路径列表；不删目录、不转 data URI，生命周期由调用方负责（关键帧留存用） |
+| `_resolve_ffmpeg_exe()` | 解析可用 ffmpeg 可执行文件：优先系统 `ffmpeg`，其次 `imageio-ffmpeg` 自带静态二进制，均无则抛错 |
 
-`providers/vision_tools/vision_analyze.py` / `video_analyze.py` 已改为复用该模块，对外行为不变。
+`providers/vision_tools/vision_analyze.py` / `video_analyze.py` 已改为复用该模块，对外行为不变（仍使用返回 data URI 的 `extract_video_frames`）。
 
 #### 11.8.3 MediaSegment 产物结构
 
@@ -463,7 +491,22 @@ class MediaSegment:
 | --- | --- | --- |
 | `image` | 视觉摘要（含 OCR） | `media_type`、`vision_summary` |
 | `audio` | ASR 转写全文 | `media_type` |
-| `video` | 单帧视觉描述（含 OCR） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_count`（总帧数） |
+| `video`（音轨转写） | 视频音轨 ASR 转写全文 | `media_type`、`source="audio_transcript"` |
+| `video`（关键帧） | 单帧视觉描述（含 OCR） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_count`（总帧数）、`frame_url`（留存帧的对象 key，未留存/留存失败为空字符串） |
+
+转写片段排在帧片段之前（「讲什么」的检索价值高于「画面是什么」）。
+
+#### 11.8.3.1 关键帧留存为 UploadFile
+
+视频关键帧解析后立即留存，避免后续视觉向量能力上线时重跑整个视频解析：
+
+| 环节 | 行为 |
+| --- | --- |
+| `_persist_frame(frame_path, *, account_id, document_id)` | 读帧字节 → `cos_service.upload_bytes(filename, content, account_id, mime_type="image/jpeg")` → `upload_file_service.create_upload_file(...)`（`extension="jpg"`、`storage_backend="local"`、`hash=sha3_256`） |
+| 降级策略 | `_persist_frame` 抛异常只记 warning 并把 `frame_url` 置空，帧描述片段照常产出——留存是增强能力，不得让整个视频解析失败 |
+| 依赖 | 服务新增 dataclass 字段 `upload_file_service: UploadFileService`（具体类型标注，injector 按类型解析） |
+
+> 帧留存本身不写视觉向量；视觉向量的编码与索引由索引链路在写完文本片段向量后单独执行（`_index_visual_vectors`，P3 已落地，见 §11.10.3）。
 
 #### 11.8.4 索引链路按 media_type 分支
 
@@ -478,9 +521,10 @@ build_document(document_id)
        _build_media_document：解析产物即片段，跳过文本切分
          → 清理该文档旧片段（含向量，保证重解析幂等）
          → 逐条建 KnowledgeSegment（keywords/character_count/token_count，status=indexing, enabled=false）
+         → _index_visual_vectors：为带 frame_url 的视频帧建视觉向量（先清空旧向量）
          → knowledge_vector_service.index_segment 向量化
          → _finalize_segments：片段置 completed + enabled，文档置 completed
-           parse_profile={"tier1": {...}}
+           parse_profile={"tier1": {...}, "frames": [...]}
 ```
 
 公共能力经抽取复用：`_get_upload_file`（取关联上传文件，缺失抛 `NotFoundException`）、`_finalize_segments`（统一收尾，`document` 路径不写 `parse_profile`）。多媒体路径解析无产出时抛错，由 `build_document` 统一置 `error`。
@@ -507,17 +551,190 @@ build_document(document_id)
 
 存储层不感知知识库板块语义；`only_image=True` 的调用仍额外要求命中 `ALLOWED_IMAGE_EXTENSION`。分层说明详见 [06-file-storage.md §17.11](./06-file-storage.md#1711-安全要求)。
 
-#### 11.8.7 解析档位与 L2 未实现
+#### 11.8.7 解析档位与 L2 状态
 
 多媒体路径收尾写入 `parse_profile.tier1`（L1 基础解析状态）：
 
 ```json
-{"tier1": {"status": "completed", "media_type": "video", "segment_count": 3}}
+{"tier1": {"status": "completed", "media_type": "video", "segment_count": 3, "video_frame_count": 3}, "frames": [{"segment_id": "...", "frame_url": "...", "scene_index": 1}]}
 ```
+（`video_frame_count` 与 `frames` 为 P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。）
+
 
 | 档位 | 状态 | 内容 |
 | --- | --- | --- |
-| L1 基础解析 | ✅ 已落地（P2A） | 图片视觉摘要 + OCR、音频 ASR 转写、视频关键帧视觉描述 → 片段 + 向量 |
-| L2 深度解析 | ❌ 未实现（属 P3） | 视频 ASR 音轨提取、说话人切分、关键帧视觉向量索引（CLIP 类视觉编码 + 独立索引 + 融合排序） |
+| L1 基础解析 | ✅ 已落地（P2A 建链路；视频音轨 ASR 与关键帧留存为 P3 补强，见 §11.8） | 图片视觉摘要 + OCR、音频 ASR 转写、视频「音轨 ASR 转写 + 关键帧视觉描述」，关键帧留存为 UploadFile → 片段 + 向量 |
+| L2 深度解析 | ✅ 已落地（P3，见 §11.11） | 视频逐帧视觉详述（回写同一批 Segment）；说话人切分、细粒度 OCR 坐标、精细时间轴仍未实现 |
 
-L2 按需解析触发、关键帧视觉向量索引与检索取料的过滤能力（板块/分区/标签/媒体类型）均属 P3 范围；`parse_profile.tier2` 字段已在 §11.7.5 预留但当前不写入。
+L2 为**按需触发**（Celery 任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`，**不加 beat 条目**），状态写入 `parse_profile.tier2`。检索取料的过滤能力（分区 / 媒体类型 / 标签 / 相似度阈值）与关键帧视觉向量索引均已在 P3 落地，见 §11.9 / §11.10。
+
+---
+
+### 11.9 检索过滤参数（P3 已落地）
+
+P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分区、媒体类型、标签与相似度下限收窄范围。
+
+#### 11.9.1 向量检索的 SQL 下推
+
+`KnowledgeVectorService.search()`（`internal/service/knowledge_vector_service.py`）新增 4 个过滤参数，**全部在 SQL 侧过滤**（而非取回后在 Python 里再筛——否则 `LIMIT` 会先把不匹配的行取走，导致召回数量不足）：
+
+| 参数 | SQL 条件 |
+| --- | --- |
+| `partition_id` | `AND kd.partition_id = :partition_id` |
+| `media_types` | `AND kd.media_type = ANY(:media_types)` |
+| `document_ids` | `AND kd.id = ANY(:document_ids)` |
+| `score_threshold` | `AND 1 - (v.embedding <=> CAST(:embedding AS vector)) >= :score_threshold` |
+
+- 分区 / 媒体类型通过 `JOIN knowledge_document`（别名 `kd`）在向量 SQL 内命中 **HNSW 索引**，**不额外回查素材表**。
+- 用 `= ANY(:media_types)` 而非 `IN :list`：`text()` 的 `IN` 绑定需 `bindparam(expanding=True)` 才可靠展开，`ANY` + 数组更稳且 PostgreSQL 原生支持。
+
+#### 11.9.2 RetrievalFilter 与 fail closed 语义
+
+`retrieval_service.py` 新增 dataclass `RetrievalFilter`（`partition_id` / `media_types` / `tag_ids` / `match_all_tags` / `score_threshold`），`search_in_knowledge_base()` 增加 `retrieval_filter` 参数。三个解析方法：
+
+| 方法 | 职责 |
+| --- | --- |
+| `_resolve_tag_document_ids(retrieval_filter)` | 标签 → 素材 id；`None` 表示未使用标签过滤，`[]` 表示无命中 |
+| `_resolve_structural_document_ids(retrieval_filter)` | 分区 / 媒体类型 → 素材 id（供全文分支使用） |
+| `_restricted_document_ids_for_full_text(retrieval_filter, tag_document_ids)` | 全文分支的「标签 ∩ 结构化」受限素材范围 |
+
+> **关键语义：标签无命中必须 fail closed（返回空结果），绝不能退化成"不过滤"**。用户以为已按标签收窄范围，实际却召回全库，是最危险的静默失效模式。实现上必须用 `is None` 而非真假值判断 `tag_ids`——空列表 `[]` 表示「有标签过滤但一个都没匹配上」，属 fail closed 情形；写成 `if not tag_ids` 会让空列表退化成"无标签过滤"。同理，`tag_document_ids == []` 与 `restricted_document_ids == []` 时 `search_in_knowledge_base` 直接 `return []`。
+
+**两个分支的过滤方式不同**：
+
+| 分支 | 过滤方式 |
+| --- | --- |
+| 向量 / 混合检索的向量部分 | 分区与媒体类型**直接下推 SQL**（命中 HNSW 索引，不额外查素材表）；标签解析出的素材 id 也一并下推 `document_ids` |
+| 全文检索（作用于 `knowledge_segment`） | 必须**先把分区 / 媒体类型解析为素材 id** 再限定范围，且与标签取**交集**（`_restricted_document_ids_for_full_text`） |
+
+`score_threshold` 在向量分支由 SQL 侧过滤；`_apply_score_threshold` 作为全文 / 混合分支的兜底（全文分支无分数语义，不施加阈值，避免把结果全滤掉）。
+
+#### 11.9.3 检索工具的四个可选入参
+
+`create_knowledge_retrieval_tool` 构造的 `search_knowledge_base` 工具入参新增 4 个可选字段（`_build_retrieval_filter` 负责组装）：
+
+| 入参 | 类型 | 说明 |
+| --- | --- | --- |
+| `partition_id` | `str \| None` | 限定在某分区内检索，传分区 ID（非法 UUID 记 warning 并忽略该过滤） |
+| `media_types` | `list[str] \| None` | 限定素材类型，取值 `image` / `video` / `audio` / `document` |
+| `tags` | `list[str] \| None` | 按标签名过滤，多个标签取**并集**（经 `resolve_tag_ids_by_names` 解析为 tag_id） |
+| `score_threshold` | `float \| None` | 相似度下限（0~1），低于该值不返回 |
+
+四个入参全为空时 `_build_retrieval_filter` 返回 `None`（不过滤）；有标签名但解析不到任何标签时返回空 `tag_ids` 的 filter，由检索层 fail closed 处理。
+
+---
+
+### 11.10 关键帧视觉向量（P3 已落地）
+
+#### 11.10.1 数据表 `video_visual_embedding`
+
+新增模型 `VideoVisualEmbedding`（`internal/model/video_visual_embedding.py`）：
+
+| 列 | 说明 |
+| --- | --- |
+| `account_id` | 归属账号 |
+| `knowledge_base_id` / `knowledge_document_id` / `segment_id` | 三个外键均 `ondelete=CASCADE`（板块 / 素材 / 片段删除时向量自动清理）；`segment_id` 上有唯一约束 `uq_video_visual_embedding_segment` |
+| `frame_url` | 帧文件在对象存储中的 key（对应 `UploadFile.key`），供「改细节」定位画面 |
+| `scene_index` | 帧在该视频中的序号（从 1 起），与 `Segment.metadata.scene_index` 对齐 |
+| `model_id` | 生成该向量的模型 id（便于换模型后重建） |
+| `embedding` | `Vector(1536)` |
+
+三个普通索引（`knowledge_base_id` / `knowledge_document_id` / `account_id`）+ HNSW 余弦索引（`vector_cosine_ops`）。
+
+**为什么维度是 1536**：选型模型 `Qwen/Qwen3-VL-Embedding-8B` 原生 4096 维，**超出 pgvector `vector` 类型上限 2000**，需经 MRL 降维到 1536（常量 `VISUAL_EMBEDDING_DIMENSION = 1536`）。
+
+#### 11.10.2 VisualEmbeddingService
+
+`VisualEmbeddingService`（`internal/service/visual_embedding_service.py`）独立于 `EmbeddingsService`：
+
+| 方法 | 入参格式 | 说明 |
+| --- | --- | --- |
+| `embed_text(content)` | 裸字符串 | 文本编码（与图片共享语义空间，可直接跨模态比对） |
+| `embed_image(data_uri)` | `{"image": ...}` | 图片编码 |
+| `embed_mixed(text_content, data_uri)` | `[{"text": ...}, {"image": ...}]` | 图文混合编码（融合为一个向量） |
+| `has_vectors(knowledge_base_ids)` | — | **预检这些库内是否有帧向量**，供检索链路决定是否值得发起编码调用（视觉编码按次计费） |
+| `search_by_image(*, image_uri, knowledge_base_id, limit, document_ids, partition_id, media_types)` | — | 以图搜图；结构化过滤在 SQL 侧下推 |
+| `search_by_text(*, query, knowledge_base_id, limit, document_ids, partition_id, media_types)` | — | 跨模态文本召图；与文本检索共用同一套过滤语义 |
+| `index_frame(*, knowledge_base_id, knowledge_document_id, segment_id, account_id, frame_url, scene_index, embedding, model_id)` | — | 写入 / 覆盖一条帧向量（以 `segment_id` 为冲突键 upsert） |
+| `delete_by_document(knowledge_document_id)` | — | 清空某素材的全部视觉向量 |
+
+**为什么不注册进 `model_class_registry`**：Qwen3-VL-Embedding 的 REST 入参与 `OpenAIEmbeddings` **不兼容**（后者只能表达纯文本），若注册进 langchain 的 `model_class_registry`，会**静默只编码文本**——「以图搜图」拿到的其实是文本向量。因此改为独立 HTTP 调用。
+
+**同一语义空间，可直接文本召图（无需融合排序）**：Qwen3-VL-Embedding 把文本、图片、视频映射到同一语义空间，文本 query 可直接与库内图片向量比对余弦相似度，`search_by_text` / `search_by_image` 共用同一套排序逻辑（`_rank`）。这是对设计稿最初「两个独立空间 + 融合排序」假设的实测修正：视觉向量是**并行的补充召回通道**，与文本向量召回结果由上层合并。
+
+**编码失败一律返回空列表**（维度不符 / 请求失败），不写入错误向量破坏索引一致性；调用方据此跳过该帧。
+
+#### 11.10.3 索引链路的视觉向量写入
+
+`KnowledgeIndexingService._index_visual_vectors(document, segments)` 在写完文本片段向量后，为带 `frame_url` 的视频帧片段建立视觉向量：
+
+- **幂等语义**：先 `delete_by_document(document.id)` 清空该素材旧视觉向量再重建——素材是「每次完整重新生成」的产物，与文本片段保持同一幂等语义。
+- 逐帧下载帧文件 → `path_to_data_uri` → `service.embed_image(data_uri)` → `service.index_frame(...)`；单帧失败只记 warning 并跳过。
+- 相关辅助：`_segment_frame(segment)`（取出片段帧信息，非视频帧片段返回 `None`）、`_collect_frames(segments)`（帧清单）、`_count_frames(segments)`。
+- `_build_media_document` 现在把 `account_id` / `document_id` 传给媒体提取器——**不传则帧不留存、`frame_url` 恒空，视觉链路静默失效**；并把 `parse_profile.frames` 与 `tier1.video_frame_count` 写入档案。
+
+**模型池登记**：模型池新增模型类型 `visual_embedding`（`ModelType.VISUAL_EMBEDDING`），共 9 处登记点同步（枚举、两份后端 `MODEL_TYPES` 副本、`CONTEXT_LESS_MODEL_TYPES`、维度探测分支、前端 `ModelsView.vue` / `ModelProvidersView.vue`、i18n 双端）。新增防漂移测试 `api/test/internal/schema/test_model_type_parity.py`（此前这两份后端副本 + 两份前端副本 + `CONTEXT_LESS_MODEL_TYPES` 两份均无一致性测试）。
+
+**迁移**：
+- `c9d0e1f2a3b4_add_video_visual_embedding.py`（`down_revision = q2b3c4d5e6f7`）：建表 + 三个外键 + 三个索引 + HNSW 余弦索引。
+- `dae1f2a3b4c5_seed_siliconflow_vl_embedding.py`：幂等 seed `SiliconFlow` provider 与 `Qwen/Qwen3-VL-Embedding-8B` 模型（`model_type='visual_embedding'`、`embedding_dimension=1536`）；**不写密钥**，密钥由管理员在 admin 端配置。
+
+#### 11.10.4 视觉向量读取侧接入（自动补充召回）
+
+`RetrievalService._visual_recall_knowledge_base` 把 `VideoVisualEmbedding` 的**读取侧**接进检索主链路——此前只写不读（表有数据、服务有方法，但检索零调用点），导致「以图搜图 / 文本跨模态召回画面」在运行时不可达。
+
+| 项 | 语义 |
+| --- | --- |
+| 触发时机 | 仅 `semantic` / `hybrid` 策略；`full_text` 是关键词路径，不引入编码调用 |
+| 召回方式 | 文本 query 直接与库内帧向量比对余弦相似度（同一语义空间），作为**并行的补充召回通道** |
+| 合并去重 | `_merge_visual_documents` 按 `segment_id` 去重，已有文本命中优先保留（帧片段的视觉描述文本可能已被文本分支命中）；合并后总数仍受 `k` 约束 |
+| 阈值语义 | `score_threshold` 在**合并之后**统一施加——视觉命中同样是带真实分数的语义结果，若只滤文本分支，低分帧会绕过用户设定的下限 |
+| 过滤同源 | 标签收敛出的 `document_ids`、分区、媒体类型**全部下推**到视觉 SQL；视觉召回不得绕过任一过滤 |
+| fail closed | `media_types` 明确不含 `video` 时不召回（帧向量必不在范围内）；标签无命中时同样不召回 |
+| 成本护栏 | `has_vectors()` 预检：库内没有帧向量则**不发编码调用**（视觉编码按次计费，白跑纯浪费） |
+| 降级 | 视觉是补充通道：未注入服务或任何异常都只记日志并返回空，**不影响**主检索结果 |
+| 元数据透传 | `layered_search` 额外透传 `frame_url` / `scene_index`，供上游展示缩略图与定位画面（设计稿 §4.1「带缩略图 / 时间戳」）；只透传 `retrieval`/`source` 会让视觉结果退化成无图文本 |
+
+测试：`api/test/internal/service/test_visual_recall_retrieval.py`（含方法级护栏测试——公开路径的「标签无命中 → 空」由上游早返回兜住，若不单独锁护栏，把它误写成 `if not document_ids` 也不会有测试失败，那正是最危险的 fail-open）。
+
+#### 11.10.5 帧留存不计用户存储配额
+
+关键帧是解析中间产物（随素材删除），当前实现**不调用 `add_usage`**，因此**不占用** §11.7.6 的存储配额。若后续要计入，需在 `_persist_frame` 后配对 `add_usage` 与 `purge_knowledge_document` 的 `release_usage`。
+
+---
+
+### 11.11 L2 按需解析（P3 已落地）
+
+L2 让素材「能被精细修改」，与 L1「能被找到」互补。
+
+#### 11.11.1 任务与触发方式
+
+| 项 | 值 |
+| --- | --- |
+| 任务名 | `internal.task.knowledge_l2_tasks.build_document_l2_task` |
+| 任务配置 | `bind=True`、`max_retries=2`、`default_retry_delay=60` |
+| 注册 | 已登记在 `api/app/http/celery_app.py` 的 `TASK_MODULES` 并加显式 import |
+| beat 条目 | **不加**——L2 是**按需触发**（检索命中 / 用户显式要求），不做定时轮询（长视频视觉详述最贵） |
+| 服务调用 | 任务内经 `injector` 取服务调用 `KnowledgeIndexingService.build_document_l2` |
+| **触发入口** | 路由 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2` → `KnowledgeBaseService.trigger_document_l2`（先校验知识库与文档归属，再 `_dispatch_document_l2`：Celery 优先、失败回退同步，避免请求静默丢失） |
+
+#### 11.11.2 状态与回写语义
+
+`KnowledgeIndexingService.build_document_l2(document_id)`：
+
+- 状态写入 `parse_profile.tier2`（`running` → `completed` / `error`），返回 `{"document_id": ..., "tier2": {...}}`。
+- **失败只标记 error，不回滚 L1 产物**——L1 的「能被找到」能力必须保留。
+- `_enhance_l2` 对视频帧补详尽视觉描述并**回写同一批 Segment 的 `content` / `metadata_`，不新建 Segment**（`metadata` 写 `tier2_summary` / `tier2_status`），避免重复片段。
+- `_invoke_l2_vision(data_uri)` 为可替换方法（独立出来便于测试替换），内部调用 `invoke_vision_model` 与 L2 提示词 `_L2_FRAME_PROMPT`。
+- 当前仅处理**视频**（`media_type == video`）；图片的细粒度 OCR 坐标、音频的说话人切分等 L2 增强仍未实现。
+
+---
+
+### 11.12 迁移链守卫测试（P3 已落地）
+
+`api/test/internal/migration/test_migration_graph_integrity.py` 以 **git 跟踪的文件**（而非磁盘上的全部文件）重建迁移图，断言：
+
+1. 无悬空 `down_revision`（每个 `down_revision` 都能在 git 跟踪的迁移文件中找到定义方）；
+2. 迁移图只有一个 head。
+
+背景：历史上曾出现 `down_revision` 指向**未被 git 跟踪**的迁移（`o9d0e1f2a3b4`），开发机因该文件恰好存在而不报错，但全新 clone / CI 上 `alembic upgrade head` 会因 "Revision ... is not present" 直接崩溃。

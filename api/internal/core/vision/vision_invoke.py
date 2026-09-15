@@ -73,6 +73,23 @@ def _ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def _resolve_ffmpeg_exe() -> str:
+    """返回可用的 ffmpeg 可执行文件路径；两者皆无时抛错。
+
+    优先系统 ffmpeg，其次 imageio-ffmpeg 自带的静态二进制（容器内常见兜底）。
+    """
+    if _ffmpeg_available():
+        return "ffmpeg"
+    try:
+        import imageio_ffmpeg  # type: ignore
+    except ImportError:
+        raise RuntimeError(
+            "ffmpeg 不可用：容器未安装 ffmpeg，也未安装 imageio-ffmpeg。"
+            "请安装 imageio-ffmpeg（pip install imageio-ffmpeg）后重试。"
+        )
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
 def _duration_to_ms(duration: str) -> int:
     parts = str(duration).split(":")
     try:
@@ -98,6 +115,118 @@ def extract_video_frames(video_path: str, frame_count: int = _DEFAULT_FRAME_COUN
             "请安装 imageio-ffmpeg（pip install imageio-ffmpeg）后重试。"
         )
     return _extract_frames_imageio(video_path, normalized_count)
+
+
+def extract_video_audio(video_path: str, target_path: str) -> str:
+    """抽取视频音轨为单声道 16k WAV（ASR 友好输入），返回 target_path。
+
+    视频无音轨 / 无可用 ffmpeg / 未产出文件时统一抛 RuntimeError，
+    由调用方决定是否降级（视频解析中音轨属增强能力，缺失不应中断解析）。
+    """
+    exe = _resolve_ffmpeg_exe()
+    cmd = [
+        exe, "-y", "-i", video_path,
+        "-vn",           # 丢弃视频流，只要音频
+        "-ac", "1",      # 单声道（ASR 模型的标准输入）
+        "-ar", "16000",  # 16k 采样率（ASR 模型的标准输入）
+        "-f", "wav",
+        target_path,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 3, check=True)
+    except subprocess.CalledProcessError as exc:
+        logger.warning("ffmpeg 抽音轨失败: %s", getattr(exc, "stderr", b"")[:200])
+        raise RuntimeError("视频音轨抽取失败") from exc
+    if not os.path.isfile(target_path):
+        raise RuntimeError("视频音轨抽取未产出文件")
+    return target_path
+
+
+def extract_video_frames_to_dir(
+    video_path: str,
+    out_dir: str,
+    frame_count: int = _DEFAULT_FRAME_COUNT,
+) -> list[str]:
+    """抽取视频关键帧到指定目录，返回帧文件路径列表。
+
+    与 extract_video_frames 的区别：不删除目录、不转 data URI，
+    产物生命周期由调用方负责（帧留存 / 视觉向量都要求文件可复用）。
+    """
+    requested = _DEFAULT_FRAME_COUNT if frame_count is None else max(1, int(frame_count))
+    os.makedirs(out_dir, exist_ok=True)
+    if _ffmpeg_available():
+        return _extract_frames_to_dir_ffmpeg(video_path, requested, out_dir)
+    exe = _resolve_ffmpeg_exe()
+    return _extract_frames_to_dir_imageio(video_path, requested, out_dir, exe)
+
+
+def _extract_frames_to_dir_ffmpeg(video_path: str, frame_count: int, out_dir: str) -> list[str]:
+    """用系统 ffmpeg 抽帧到 out_dir；失败时回落到首帧（仍写文件）。"""
+    pattern = os.path.join(out_dir, "frame_%03d.jpg")
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", "select='not(mod(n\\,100))'",
+        "-frames:v", str(frame_count),
+        "-q:v", "4", pattern,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 3, check=True)
+    except subprocess.CalledProcessError as exc:
+        logger.warning("ffmpeg 抽帧失败: %s", getattr(exc, "stderr", b"")[:200])
+    frames = _list_frame_files(out_dir)
+    if not frames:
+        first_frame = os.path.join(out_dir, "frame_001.jpg")
+        _dump_first_frame(video_path, first_frame, "ffmpeg")
+        frames = _list_frame_files(out_dir)
+    return frames[:frame_count]
+
+
+def _extract_frames_to_dir_imageio(
+    video_path: str,
+    frame_count: int,
+    out_dir: str,
+    exe: str,
+) -> list[str]:
+    """imageio-ffmpeg 兜底抽帧到 out_dir。"""
+    pattern = os.path.join(out_dir, "frame_%03d.jpg")
+    cmd = [exe, "-y", "-i", video_path, "-frames:v", str(frame_count), "-q:v", "4", pattern]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 3, check=True)
+    except subprocess.CalledProcessError as exc:
+        logger.warning("imageio_ffmpeg 抽帧失败: %s", getattr(exc, "stderr", b"")[:200])
+    frames = _list_frame_files(out_dir)
+    if not frames:
+        first_frame = os.path.join(out_dir, "frame_001.jpg")
+        _dump_first_frame(video_path, first_frame, exe)
+        frames = _list_frame_files(out_dir)
+    return frames[:frame_count]
+
+
+def _list_frame_files(out_dir: str) -> list[str]:
+    """列出目录内已产出的帧文件（按文件名排序）。"""
+    return sorted(
+        os.path.join(out_dir, name)
+        for name in os.listdir(out_dir)
+        if name.startswith("frame_") and name.endswith(".jpg")
+    )
+
+
+def _dump_first_frame(video_path: str, target_path: str, exe: str) -> str:
+    """抽首帧写到 target_path，并校验可解码，失败则抛错。
+
+    损坏/空帧必须抛出而不是当作成功，否则下游视觉模型会收到空图静默失败。
+    """
+    try:
+        subprocess.run(
+            [exe, "-y", "-i", video_path, "-frames:v", "1", "-q:v", "4", target_path],
+            capture_output=True, timeout=_FRAME_TIMEOUT, check=True,
+        )
+        from PIL import Image
+
+        Image.open(target_path).load()
+    except Exception as exc:
+        raise RuntimeError(f"视频帧提取失败: {exc}") from exc
+    return target_path
 
 
 def _extract_frames_ffmpeg(video_path: str, frame_count: int) -> list[str]:

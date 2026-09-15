@@ -301,6 +301,7 @@ export default  {
         tts: '语音合成',
         asr: '语音识别',
         rerank: '重排序',
+        visual_embedding: '视觉编码',
       },
       compatibleApiOptions: {
         openai: 'OpenAI 兼容',
