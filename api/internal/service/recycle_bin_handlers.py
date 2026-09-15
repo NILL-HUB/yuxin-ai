@@ -194,6 +194,8 @@ def snapshot_knowledge_base(resource_id) -> dict[str, Any] | None:
                 .one_or_none()
             )
         doc_data["_upload_file"] = _row_to_dict(upload_file) if upload_file is not None else None
+        # 帧文件与文档主文件是两批独立记录，整库销毁时同样必须清理并释放配额
+        doc_data["_frames"] = _collect_document_frame_files(segments)
         snapshot["documents"].append(doc_data)
     return snapshot
 
@@ -246,6 +248,8 @@ def restore_knowledge_base(snapshot: dict[str, Any]) -> bool:
     for doc_data in snapshot.get("documents") or []:
         segments = doc_data.pop("_segments", [])
         upload_file_data = doc_data.pop("_upload_file", None) or {}
+        # 帧索引仅供销毁期清理，不参与恢复（帧记录与主文件同在底层留存期内保留）
+        doc_data.pop("_frames", None)
         if upload_file_data.get("id") is not None and db.session.query(UploadFile).filter(
             UploadFile.id == upload_file_data["id"],
         ).one_or_none() is None:
@@ -356,6 +360,28 @@ def restore_system_prompt(snapshot: dict[str, Any]) -> bool:
     return True
 
 
+def _collect_document_frame_files(segments: list) -> list[dict[str, Any]]:
+    """采集视频帧片段的 UploadFile 记录，供销毁时清理与释放配额。
+
+    帧文件是独立于文档主文件的 upload_file 记录（`_persist_frame` 创建），
+    不采集则销毁时既不删文件也不释放配额——帧已计配额，会变成配额泄漏。
+    """
+    keys: list[str] = []
+    for segment in segments or []:
+        metadata = getattr(segment, "metadata_", None) or {}
+        frame_url = str(metadata.get("frame_url") or "").strip()
+        if frame_url:
+            keys.append(frame_url)
+    if not keys:
+        return []
+    rows = (
+        db.session.query(UploadFile)
+        .filter(UploadFile.key.in_(keys))
+        .all()
+    )
+    return [_row_to_dict(row) for row in rows]
+
+
 def snapshot_knowledge_document(resource_id) -> dict[str, Any] | None:
     """快照知识库文档：文档主体 + 分段 + 关联的上传文件记录。"""
     doc = (
@@ -382,6 +408,8 @@ def snapshot_knowledge_document(resource_id) -> dict[str, Any] | None:
         "main": _row_to_dict(doc),
         "segments": [_row_to_dict(s) for s in segments],
         "upload_file": _row_to_dict(upload_file) if upload_file is not None else None,
+        # 帧文件独立于主文件：不采集则销毁时既不删文件也不释放配额
+        "frames": _collect_document_frame_files(segments),
     }
 
 
@@ -486,30 +514,46 @@ def purge_knowledge_document(snapshot: dict[str, Any]) -> None:
 
     删除失败向上抛异常：由 ``purge_expired`` 捕获后保持 pending 待重试，
     避免"状态已销毁但实际文件仍在"。
+
+    除主文件外，**必须一并清理帧文件并释放其配额**：帧经由存储代理计入配额，
+    只删主文件会导致用户删除素材后帧仍占额（配额泄漏）。
     """
     upload_file_data = snapshot.get("upload_file") or {}
-    key = upload_file_data.get("key")
-    if not key:
-        return
-    backend = (upload_file_data.get("storage_backend") or "local").strip() or "local"
+    targets = [upload_file_data] if upload_file_data.get("key") else []
+    targets.extend(snapshot.get("frames") or [])
+
     from internal.service.storage.storage_migration_service import _delete_object
-    _delete_object(backend, key)
-    _release_storage_quota(upload_file_data)
-    logger.info("回收站销毁文档存储文件 key=%s backend=%s", key, backend)
+
+    for data in targets:
+        key = data.get("key")
+        if not key:
+            continue
+        backend = (data.get("storage_backend") or "local").strip() or "local"
+        _delete_object(backend, key)
+        _release_storage_quota(data)
+        logger.info("回收站销毁文档存储文件 key=%s backend=%s", key, backend)
 
 
 def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
-    """留存期结束彻底销毁知识库关联的底层存储对象（失败向上抛）。"""
+    """留存期结束彻底销毁知识库关联的底层存储对象（失败向上抛）。
+
+    每个文档除主文件外，**还必须一并清理其帧文件并释放配额**（与
+    `purge_knowledge_document` 同理，帧已计配额，不释放即配额泄漏）。
+    """
     from internal.service.storage.storage_migration_service import _delete_object
+
     for doc_data in snapshot.get("documents") or []:
         upload_file_data = doc_data.get("_upload_file") or {}
-        key = upload_file_data.get("key")
-        if not key:
-            continue
-        backend = (upload_file_data.get("storage_backend") or "local").strip() or "local"
-        _delete_object(backend, key)
-        _release_storage_quota(upload_file_data)
-        logger.info("回收站销毁知识库存储文件 key=%s backend=%s", key, backend)
+        targets = [upload_file_data] if upload_file_data.get("key") else []
+        targets.extend(doc_data.get("_frames") or [])
+        for data in targets:
+            key = data.get("key")
+            if not key:
+                continue
+            backend = (data.get("storage_backend") or "local").strip() or "local"
+            _delete_object(backend, key)
+            _release_storage_quota(data)
+            logger.info("回收站销毁知识库存储文件 key=%s backend=%s", key, backend)
 
 
 def snapshot_upload_file(resource_id) -> dict[str, Any] | None:

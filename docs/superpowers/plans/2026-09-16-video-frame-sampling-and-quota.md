@@ -1351,9 +1351,24 @@ git commit -m "test(quota): lock implicit frame quota charging via storage proxy
 
 ## Task 9: 素材删除时释放帧占用（成对修复）
 
+> **实测补充：存在两条 purge 路径，只改一条仍会泄漏。** 原计划只覆盖
+> `purge_knowledge_document`（单文档删除）；核查发现**整库删除走
+> `purge_knowledge_base`，其 `snapshot_knowledge_base` 只采集 `_upload_file`，
+> 同样遗漏帧**。两条路径都必须改，否则「删库」仍会留下帧配额泄漏。
+
 **Files:**
-- Modify: `api/internal/service/recycle_bin_handlers.py:359-385,484-498`
-- Test: `api/test/internal/service/test_recycle_bin_handlers.py`（补充用例）
+- Modify: `api/internal/service/recycle_bin_handlers.py`
+  - 新增 `_collect_document_frame_files`
+  - `snapshot_knowledge_document`（补 `frames`）
+  - `snapshot_knowledge_base`（补 `_frames`）
+  - `purge_knowledge_document` / `purge_knowledge_base`（遍历主文件 + 帧）
+- Test: `api/test/internal/service/test_recycle_bin_quota_release.py`（**该文件已有 `fake_quota` / `fake_delete` 夹具且 patch 目标正确，直接复用**，不必新建到 `test_recycle_bin_handlers.py`）
+
+> **桩要点（实测）**：`fake_delete` 已正确 patch `storage_migration_service._delete_object`
+> （函数的定义处），无需再处理函数内 import 问题。
+> 另：`_row_to_dict` 依赖 ORM mapper（`inspect(type(row)).mapper`），因此
+> `_collect_document_frame_files` 的查询桩**必须返回真实 `UploadFile` 实例**，
+> 用 `SimpleNamespace` 会报 `NoInspectionAvailable`。
 
 - [ ] **Step 1: 写失败测试**
 

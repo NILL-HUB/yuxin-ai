@@ -3,6 +3,7 @@
 配额在删除/进回收站时不释放（底层文件留存期内仍占用存储），只有留存期结束的
 物理销毁（purge）才真正删除底层对象，因此释放必须发生在 purge 阶段。
 """
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -182,3 +183,134 @@ def test_purge_upload_file_skips_release_when_fields_incomplete(fake_quota, fake
 
     assert fake_delete == [("local", "uploads/incomplete.bin")]
     assert fake_quota.calls == []
+
+
+class TestFrameFilesReleasedOnPurge:
+    """删除素材必须连带清理帧文件并释放其配额（成对修复）。
+
+    背景：帧的 upload_file 记录此前**永不清理**（purge 只删主文件），已是孤儿；
+    而帧自 P3 起就经由存储代理计了配额（`_persist_frame` → `upload_bytes`）。
+    只删主文件 = 用户删掉素材后帧仍占额，扣掉的空间永不归还，即配额泄漏。
+    """
+
+    def test_purge_deletes_and_releases_frame_files(self, fake_quota, fake_delete):
+        """主文件 + 全部帧文件都要删对象并释放配额。"""
+        account_id = str(uuid4())
+        snapshot = {
+            "upload_file": {
+                "account_id": account_id, "size": 100, "key": "main.mp4",
+                "storage_backend": "local",
+            },
+            "frames": [
+                {"account_id": account_id, "size": 10, "key": "frames/f1.jpg",
+                 "storage_backend": "local"},
+                {"account_id": account_id, "size": 20, "key": "frames/f2.jpg",
+                 "storage_backend": "local"},
+            ],
+        }
+
+        handlers.purge_knowledge_document(snapshot)
+
+        assert fake_delete == [
+            ("local", "main.mp4"),
+            ("local", "frames/f1.jpg"),
+            ("local", "frames/f2.jpg"),
+        ]
+        assert fake_quota.calls == [
+            (account_id, 100),
+            (account_id, 10),
+            (account_id, 20),
+        ]
+
+    def test_purge_tolerates_snapshot_without_frames(self, fake_quota, fake_delete):
+        """老快照无 frames 字段时不得报错（向后兼容）。"""
+        account_id = str(uuid4())
+        snapshot = {
+            "upload_file": {
+                "account_id": account_id, "size": 1, "key": "main.mp4",
+                "storage_backend": "local",
+            }
+        }
+
+        handlers.purge_knowledge_document(snapshot)
+
+        assert fake_delete == [("local", "main.mp4")]
+        assert fake_quota.calls == [(account_id, 1)]
+
+    def test_purge_knowledge_base_deletes_and_releases_frames(self, fake_quota, fake_delete):
+        """整库销毁时，每个文档的帧文件同样要删对象并释放配额。"""
+        account_id = str(uuid4())
+        snapshot = {
+            "main": {"id": "kb-1"},
+            "documents": [
+                {
+                    "_upload_file": {
+                        "account_id": account_id, "size": 1000, "key": "main.mp4",
+                        "storage_backend": "cos",
+                    },
+                    "_frames": [
+                        {"account_id": account_id, "size": 30, "key": "frames/f1.jpg",
+                         "storage_backend": "cos"},
+                    ],
+                },
+                {
+                    "_upload_file": None,
+                    "_frames": [
+                        {"account_id": account_id, "size": 40, "key": "frames/f2.jpg",
+                         "storage_backend": "cos"},
+                    ],
+                },
+            ],
+        }
+
+        handlers.purge_knowledge_base(snapshot)
+
+        assert fake_delete == [
+            ("cos", "main.mp4"),
+            ("cos", "frames/f1.jpg"),
+            ("cos", "frames/f2.jpg"),
+        ]
+        assert fake_quota.calls == [
+            (account_id, 1000),
+            (account_id, 30),
+            (account_id, 40),
+        ]
+
+    def test_collect_document_frame_files_queries_by_frame_url(self, monkeypatch):
+        """快照需按 frame_url 采集帧 UploadFile 记录，否则销毁时无从释放。"""
+        from internal.model import UploadFile
+
+        captured = {}
+
+        class _Query:
+            def filter(self, *args, **kwargs):
+                captured["filtered"] = True
+                return self
+
+            def all(self):
+                return [UploadFile(
+                    account_id=uuid4(), name="f1.jpg", key="f1.jpg", size=10,
+                    extension="jpg", mime_type="image/jpeg", hash="h",
+                    storage_backend="local",
+                )]
+
+        monkeypatch.setattr(
+            handlers, "db",
+            SimpleNamespace(session=SimpleNamespace(query=lambda *a, **k: _Query())),
+        )
+
+        segment = SimpleNamespace(metadata_={"frame_url": "f1.jpg"})
+        frames = handlers._collect_document_frame_files([segment])
+
+        assert captured["filtered"] is True
+        assert frames[0]["key"] == "f1.jpg"
+        assert frames[0]["size"] == 10
+
+    def test_collect_document_frame_files_skips_segments_without_frame(self, monkeypatch):
+        """无 frame_url 的片段（非视频帧、或留存失败置空）不应参与查询。"""
+        segments = [
+            SimpleNamespace(metadata_={"media_type": "video", "frame_url": ""}),
+            SimpleNamespace(metadata_={"media_type": "audio"}),
+        ]
+
+        assert handlers._collect_document_frame_files(segments) == []
