@@ -202,6 +202,89 @@ def test_build_routes_candidates_through_policy_filter():
     assert result["filtered_out_agents"][0]["reason"] == "risk_level_requires_confirmation"
 
 
+# ------------------------------------------------------------------ #
+#  5.1 collect_raw() 必须保留 app 对象（防止重复定义再次覆盖）          #
+# ------------------------------------------------------------------ #
+
+class _CollectorQueryStub:
+    """最小查询桩：仅维持链式调用并返回预设行。"""
+
+    def __init__(self, all_result=None):
+        self._all_result = [] if all_result is None else all_result
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args):
+        return self
+
+    def outerjoin(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return self._all_result
+
+
+class _CollectorSessionStub:
+    def __init__(self, queries=None):
+        self._queries = list(queries or [])
+
+    def query(self, *_args, **_kwargs):
+        if self._queries:
+            return self._queries.pop(0)
+        return _CollectorQueryStub()
+
+
+def test_collect_raw_must_preserve_app_object():
+    """AgentCandidateCollector.collect_raw() 必须保留 app 对象。
+
+    历史缺陷：collect_raw() 在类中被**重复定义**，后一个定义退化为 collect() 的
+    简单转发（序列化结果不含 app 键），覆盖了保留 app 对象的正确实现。后果是
+    build() 拿到的候选 `candidate.get("app")` 恒为 None，AgentPolicyFilter 因
+    `if app is None: accepted.append(candidate)` 而**无条件放行全部候选**，
+    pool_not_visible / risk_level / cost_level 等硬过滤全部静默失效。
+
+    注意：本用例刻意使用**真实 collector**而非桩——既有用例用桩注入
+    collect_raw 恰好掩盖了该缺陷，因此这里必须覆盖真实实现。
+
+    内置候选（_builtin_candidates）按设计不含 app 键，由 AgentPolicyFilter 透传，
+    因此这里只断言「App 候选」保留了 app 对象。
+    """
+    app = _app(risk_level="high")
+    collector = AgentCandidateCollector(
+        session=_CollectorSessionStub([_CollectorQueryStub([app])])
+    )
+
+    raw = collector.collect_raw(ACCOUNT_ID)
+
+    app_candidates = [candidate for candidate in raw if candidate.get("app") is not None]
+    assert len(app_candidates) == 1, "App 候选必须出现在 collect_raw() 结果中"
+    assert app_candidates[0]["app"] is app, (
+        "collect_raw() 必须保留 app 对象，否则 AgentPolicyFilter 会无条件放行全部候选"
+    )
+
+
+def test_collect_raw_feeds_policy_filter_end_to_end():
+    """真实 collector → 真实 filter 端到端：high 风险 Agent 必须被拒。
+
+    与 test_build_routes_candidates_through_policy_filter 的区别：该用例的桩
+    collector 直接产出合规候选，无法发现 collect_raw 被覆盖；本用例串起真实
+    链路，使「治理链路静默断开」可被测试捕获。
+    """
+    app = _app(risk_level="high")
+    collector = AgentCandidateCollector(
+        session=_CollectorSessionStub([_CollectorQueryStub([app])])
+    )
+
+    result = AgentPolicyFilter().filter(collector.collect_raw(ACCOUNT_ID))
+
+    # high 风险 App 必须被过滤且带原因（内置候选无 app 键，按设计透传）
+    assert result["filtered_out_agents"][0]["reason"] == "risk_level_requires_confirmation"
+    assert all(
+        candidate.get("app") is not app for candidate in result["candidates"]
+    ), "被拒的 high 风险 App 不得出现在通过列表中"
+
+
 def test_build_subset_forwards_allow_confirmation():
     """build_subset 必须把 allow_confirmation 透传给 policy_filter。"""
     high_risk = _app(risk_level="high")

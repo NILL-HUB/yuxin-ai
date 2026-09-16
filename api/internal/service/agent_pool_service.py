@@ -138,13 +138,6 @@ class AgentCandidateCollector:
             "health_status": config.health_status,
         }
 
-    def collect_raw(self, account_id: UUID) -> list[dict[str, object]]:
-        serialized = self.collect(account_id)
-        raw_candidates = []
-        for item in serialized:
-            raw_candidates.append(item)
-        return raw_candidates
-
     def collect_by_pools(
         self, account_id: UUID, pools: list[str], *, query: str = ""
     ) -> list[dict[str, object]]:

@@ -198,6 +198,51 @@ def test_orchestrator_should_attach_agent_subset_for_matched_pools():
     ]
 
 
+def test_agent_candidate_collection_failure_fails_closed():
+    """候选收集异常必须退化为空候选，不得绕过 AgentPolicyFilter。
+
+    历史实现会在异常时 fallback 到 AgentPoolService.list_agents()——该路径直读
+    子池清单、不过滤、不按 account 隔离，等于异常时静默放行全部 Agent，使
+    pool_not_visible / risk_level / cost_level 等治理规则集体失效。
+
+    注意：不能在 build_subset_from_candidates 内部 assert——该方法抛出的异常会被
+    decide() 外层的 except Exception 捕获并回退为 _fallback_decision，导致断言被
+    吞掉、测试假通过。因此这里把入参记录下来，在 decide() 返回后再断言。
+    """
+    from uuid import uuid4
+
+    captured: dict = {}
+
+    class _BrokenSubsetBuilder:
+        def build(self, _account_id):
+            raise RuntimeError("db down")
+
+        def build_subset_from_candidates(self, candidates, **kwargs):
+            captured["candidates"] = candidates
+            return {
+                "matched_agent_pools": kwargs["matched_pools"],
+                "selected_agents": [],
+                "backup_agents": [],
+                "filtered_out_agents": [],
+                "selection_reason": "no_candidates",
+            }
+
+    service = OrchestratorService(
+        task_classifier_service=TaskClassifierService(),
+        pool_intent_resolver=PoolIntentResolver(
+            registry=AgentSubPoolRegistry(pools=BUILTIN_AGENT_SUB_POOLS)
+        ),
+        subset_builder=_BrokenSubsetBuilder(),
+    )
+
+    service.decide("帮我写前端代码", account_id=str(uuid4()))
+
+    assert captured["candidates"] == [], (
+        "候选收集失败时必须传入空候选列表（fail closed），"
+        f"实际传入 {captured['candidates']!r}——可能又回退成了不过滤的全量 Agent"
+    )
+
+
 def test_orchestrator_should_fill_routing_log_observability_fields():
     from uuid import uuid4
 

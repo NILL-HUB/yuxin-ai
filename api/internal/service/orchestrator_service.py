@@ -19,7 +19,6 @@ from internal.service.routing_log_service import RoutingLogService
 from internal.service.routing_observability_service import RoutingObservabilityService
 from internal.service.task_planner_service import TaskPlannerService
 from .agent_pool_service import CrossPoolAgentSubsetBuilder
-from .agent_pool_aggregate_service import AgentPoolService
 from .tool_inventory_service import CrossPoolToolSubsetBuilder
 from .pool_intent_resolver_service import PoolIntentResolver
 from .task_classifier_service import TaskClassifierService
@@ -44,7 +43,6 @@ class OrchestratorService:
         cost_policy_service: CostPolicyService | None = None,
         execution_mode_selector: ExecutionModeSelectorService | None = None,
         routing_observability_service: RoutingObservabilityService | None = None,
-        agent_pool_service: AgentPoolService | None = None,
         tool_selector_service: ToolSelectorService | None = None,
         conductor_service: ConductorService | None = None,
     ):
@@ -59,7 +57,6 @@ class OrchestratorService:
         self.request_context_builder = request_context_builder
         self.model_assignment_policy = model_assignment_policy
         self.model_gateway_service = model_gateway_service
-        self.agent_pool_service = agent_pool_service
         self.cost_policy_service = cost_policy_service
         self.execution_mode_selector = execution_mode_selector
         self.routing_observability_service = routing_observability_service
@@ -623,14 +620,13 @@ class OrchestratorService:
             try:
                 collected = self.subset_builder.build(account_id)
                 candidates = collected.get("candidates", []) if isinstance(collected, dict) else []
-            except Exception:
-                logger.warning("Agent 候选收集失败，尝试 AgentPoolService fallback", exc_info=True)
-                if self.agent_pool_service is not None:
-                    try:
-                        candidates = self.agent_pool_service.list_agents()
-                    except Exception:
-                        logger.warning("AgentPoolService fallback 失败", exc_info=True)
-                        candidates = []
+            except Exception as exc:
+                # fail closed：候选收集失败必须退化为空候选，不得绕过 AgentPolicyFilter。
+                # 历史实现会 fallback 到 AgentPoolService.list_agents()（直读子池清单、
+                # 不过滤、不按 account 隔离），等于在异常时静默放行全部 Agent，
+                # 使 pool_not_visible / risk_level / cost_level 等治理规则集体失效。
+                # 与工具侧 _build_tool_subset 的处理保持一致（异常即空候选）。
+                logger.warning("Agent 候选收集失败，使用空候选列表: %s", exc, exc_info=True)
         return self.subset_builder.build_subset_from_candidates(
             candidates, matched_pools=matched_pools
         )

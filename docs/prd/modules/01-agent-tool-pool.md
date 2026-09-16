@@ -60,13 +60,14 @@ Conductor / Orchestrator / ExecutionCoordinatorService（编排决策层）
 AgentInventory 负责从相关子池读取可治理 Agent 清单（作为候选收集的数据视图），来源包括：
 
 - public App。
-- assigned App。
-- 管理员配置中心创建的 App。
+- 本人自建 App（`App.account_id = 当前账号`）。
 - forked（含 draft 状态）App。
 - 内置轻量 Agent。
 - 内置强推理 Agent。
 - 深度思考 Agent。
 - 外部 A2A Agent。
+
+> 管理员在配置中心创建的 App 其 `account_id` 为 `NULL`（平台级资源，见迁移 `e0a1b2c3d4e5`），因此**只在 `is_public=True` 时**才作为候选被收集，不会因"管理员创建"而自动进入某个账号的候选集。
 
 它不直接暴露给模型，只作为候选来源。
 
@@ -86,7 +87,9 @@ AgentCandidateCollector 负责按任务在相关 Agent 子池内分别召回候�
 - public 应用。
 - 管理员指定默认 Agent。
 
-> **实现备注**：`AgentCandidateCollector.collect()`（`agent_pool_service.py`）真实实现按 `public + assigned + own + forked` 四类来源收集，`forked` 来源调用 `_append_app_candidate(..., allow_draft=True)` 允许 draft 状态 App 进入候选。另提供 `collect_raw()`（不匹配、不排序的原始收集）与 `collect_by_pools()`（按子池元数据收集）供上层使用。
+> **实现备注**：`AgentCandidateCollector.collect()`（`agent_pool_service.py`）真实实现按 `public + own + forked` 三类来源收集，`forked` 来源调用 `_append_app_candidate(..., allow_draft=True)` 允许 draft 状态 App 进入候选。另提供 `collect_by_pools()`（按子池元数据收集）供上层使用。
+>
+> **`collect_raw()` 是治理链路的承重件（不可退化为 `collect()` 转发）**：它返回**保留 `app` ORM 对象**的候选（无 `app` 键的仅有内置 Agent），`AgentPolicyFilter` 依赖 `candidate["app"]` 读取 `app.status` / `app.is_public` 等字段执行硬过滤。其过滤循环开头是 `if app is None: accepted.append(candidate)`——一旦 `collect_raw()` 退化成 `collect()` 的序列化转发（序列化结果不含 `app`），**全部候选会被无条件放行**，`pool_not_visible` / `agent_disabled` / `risk_level_requires_confirmation` / `cost_level_exceeds_budget` 等规则集体静默失效。历史上 `collect_raw()` 曾被同类的第二个定义覆盖而长期失效，回归防护见 `test/internal/service/test_pool_governance_fixes.py::test_collect_raw_must_preserve_app_object`（刻意使用**真实 collector** 而非桩，避免再次被掩盖）。
 
 输出示例：
 
@@ -96,7 +99,7 @@ AgentCandidateCollector 负责按任务在相关 Agent 子池内分别召回候�
   "raw_candidates": [
     {
       "agent_id": "agent-a",
-      "source": "assigned",
+      "source": "own",
       "match_reason": "capability:data_analysis",
       "semantic_score": 0.82
     },
@@ -116,15 +119,18 @@ AgentPolicyFilter 负责做硬过滤。
 
 过滤维度包括：
 
-| 维度 | 说明 |
-| --- | --- |
-| 用户权限 | 普通用户只能使用 public 或 assigned Agent |
-| Agent 状态 | disabled、deleted 不进入候选（forked 来源的 draft App 允许进入候选） |
-| 风险等级 | 高风险 Agent 不对普通用户自动开放 |
-| 成本策略 | 超预算 Agent 被过滤或降级 |
-| 输入能力 | 不支持图片/文件/长上下文的 Agent 不能处理对应任务 |
-| 工具策略 | 任务需要工具但 Agent 不允许使用工具池时过滤 |
-| 管理员策略 | 管理员可调试更多 Agent，普通用户不可见 |
+| 维度 | 说明 | 拒绝原因（代码实际取值） |
+| --- | --- | --- |
+| 来源授权 | 仅 `public` / `own` / `forked` 三种来源可进入候选 | `app_not_authorized` |
+| 发布状态 | 非 `published` 不进入（`forked` 来源的 draft App 例外） | `app_not_published` |
+| 子池可见性 | `internal_admin` 池不对普通用户可见 | `pool_not_visible` |
+| 启用开关 | `metadata.enabled=False` 不进入候选 | `agent_disabled` |
+| 风险等级 | 高风险 Agent 需确认流程才放行 | `risk_level_requires_confirmation` |
+| 成本策略 | 超预算 Agent 被过滤 | `cost_level_exceeds_budget` |
+| 输入能力 | 不支持图片/文件/长上下文的 Agent 不能处理对应任务 | `input_modality_not_supported` |
+| 工具策略 | 任务需要工具但 Agent 不允许该工具类别时过滤 | `tool_category_not_allowed` |
+
+**候选收集必须 fail closed**：`CrossPoolAgentSubsetBuilder.build()` 收集候选抛异常时，必须退化为**空候选**，不得回退到 `AgentPoolService.list_agents()` 这类"直读子池清单、不过滤、不按 account 隔离"的路径——那等于在异常时静默放行全部 Agent，使上表全部规则集体失效。该行为与工具侧 `_build_tool_subset` 一致（异常即空候选），回归防护见 `test/internal/service/test_orchestrator_service.py::test_agent_candidate_collection_failure_fails_closed`。
 
 过滤输出必须保留原因：
 
@@ -133,7 +139,7 @@ AgentPolicyFilter 负责做硬过滤。
   "filtered_out": [
     {
       "agent_id": "agent-x",
-      "reason": "not_assigned_to_user"
+      "reason": "app_not_authorized"
     },
     {
       "agent_id": "agent-y",
@@ -432,7 +438,7 @@ BudgetAndRiskPolicy
 | routing_priority | 路由优先级 | 0-100 |
 | allowed_tool_categories | 可用工具类别 | `search`, `mcp`, `knowledge`, `database` |
 | risk_level | Agent 风险等级 | `safe`, `medium`, `high` |
-| visibility | 可见性 | `public`, `assigned`, `admin_only` |
+| enabled | 是否启用 | `true` / `false`（`false` 时被过滤为 `agent_disabled`） |
 | quality_score | 历史质量评分 | 0-1 |
 | success_rate | 历史成功率 | 0-1 |
 | latency_p95 | P95 延迟 | 毫秒 |
@@ -464,8 +470,10 @@ internal_admin 子池默认只对管理员和系统内部流程开放，不参�
 Agent 池第一阶段复用现有 App：
 
 - public App。
-- assigned App。
-- 管理员配置中心创建的 App。
+- 本人自建 App。
+- 本人从应用商店添加（fork）的 App。
+
+> `visibility` 并非 `agent_metadata` 的输入字段，而是 `AgentPolicyFilter` 序列化候选时的**派生输出**：`app.is_public` 为真则 `"public"`，否则 `"private"`（取值只有这两个）。历史上的 `assigned` 来源随 `AppAssignment` 表一并下线，不再存在。
 
 后续可以扩展：
 
@@ -968,7 +976,7 @@ Agent 执行时不装载完整工具子池集合，而是：
 
 ```text
 AgentCandidateCollector.collect(account_id)
-  → 查询 App 表（public + assigned + own）  [底座已有]
+  → 查询 App 表（public + own）              [底座已有]
   → outerjoin AgentPoolConfig ON app_id      [底座已有]
   → 读取 App.agent_metadata 中的
     primary_pool / secondary_pools / risk_level / model_tier / routing_priority
@@ -1114,7 +1122,7 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 
 ### 11.4 账号注入方式（builtin 工具的通用范式）
 
-builtin 工具没有全局 `g.account`，账号通过**运行时挂载点的工厂参数**透传，这与 `computer_control` / `codex_os` 的 `requester` 是同一注入点：
+builtin 工具没有全局 `g.account`，账号通过**运行时挂载点的工厂参数**透传，这与 `computer_control` / `host_os` 的 `requester` 是同一注入点：
 
 ```text
 AssistantAgentService._build_assistant_runtime_tools(account_id)
@@ -1129,6 +1137,7 @@ AssistantAgentService._build_assistant_runtime_tools(account_id)
 ### 11.5 测试
 
 `api/test/internal/core/tools/test_create_knowledge_base_tool.py` 覆盖：合法参数透传（name/base_type/partition_mode/description/operation_context/account）、默认值、非法 `base_type`、非法 `partition_mode`、空名称、缺失 account、账号不存在、服务异常降级为可读错误、工厂绑定。
+
 ---
 
 ## 12. 知识库检索工具 `search_knowledge_base` 的过滤入参（P3 已落地）
@@ -1146,5 +1155,4 @@ AssistantAgentService._build_assistant_runtime_tools(account_id)
 入参组装由 `RetrievalService._build_retrieval_filter(...)` 完成，产出 `RetrievalFilter` 传给 `layered_search`：四个入参全为空时返回 `None`（不过滤）；有标签名但解析不到任何标签时返回**空 `tag_ids`** 的 filter，由检索层 **fail closed**（返回空结果），**不得退化成"不过滤"**。过滤语义与 SQL 下推位置详见 [02-knowledge-base.md §11.9](./02-knowledge-base.md#119-检索过滤参数p3-已落地)。
 
 > 注意：工具入参名为 `media_types`（复数列表），与产品设计稿中早期写的单数 `media_type` 不同，以代码为准。
-
 
