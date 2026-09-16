@@ -265,6 +265,7 @@ class KnowledgeBaseService(BaseService):
         再执行上传与索引构建。
         """
         knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+        self._assert_not_render_output_base(knowledge_base)
 
         # 先校验后上传：被拒绝的文件不应写入存储、不应占用用户配额
         filename = getattr(file, "filename", "") or ""
@@ -293,6 +294,7 @@ class KnowledgeBaseService(BaseService):
         用于分片上传完成后的建档；会做板块类型硬约束校验。
         """
         knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+        self._assert_not_render_output_base(knowledge_base)
 
         extension = (upload_file.extension or "").lower()
         self._assert_media_type_allowed(knowledge_base, extension)
@@ -324,6 +326,19 @@ class KnowledgeBaseService(BaseService):
         return document
 
     @staticmethod
+    def _assert_not_render_output_base(knowledge_base: KnowledgeBase) -> None:
+        """成品库为系统托管，禁止任何手动上传（设计 §4.1）。
+
+        系统自身的成品写入走 store_render_output()，不经此校验——
+        本校验只拦「用户上传」这条路径。
+        """
+        if (
+            getattr(knowledge_base, "created_from", None)
+            == KnowledgeCreatedFrom.RENDER_OUTPUT.value
+        ):
+            raise ForbiddenException("成品库为系统托管，不支持手动上传素材，请在素材库中上传")
+
+    @staticmethod
     def _assert_media_type_allowed(knowledge_base: KnowledgeBase, extension: str) -> None:
         """板块类型硬约束：扩展名必须属于该板块允许的媒体类型。
 
@@ -346,6 +361,7 @@ class KnowledgeBaseService(BaseService):
         供分片上传在合并前预校验使用，避免先落盘后拒绝造成的浪费与残留。
         """
         knowledge_base = self.get_accessible_base(knowledge_base_id, account)
+        self._assert_not_render_output_base(knowledge_base)
         self._assert_media_type_allowed(knowledge_base, extension)
         return knowledge_base
 
