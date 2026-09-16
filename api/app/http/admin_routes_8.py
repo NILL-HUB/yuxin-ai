@@ -104,11 +104,11 @@ def _builtin_tool_update(tool_id, data):
         if tool is None:
             raise NotFoundException(f"builtin 工具 {tool_id} 不存在")
 
-        allowed_fields = {"label", "description", "task_keywords", "icon"}
+        allowed_fields = {"label", "description", "task_keywords", "icon", "enabled"}
         provided_fields = set(data.keys()) & allowed_fields
         if not provided_fields:
             return {
-                "_errors": {"form": ["至少提供 label/description/task_keywords/icon 中的一个字段"]}
+                "_errors": {"form": ["至少提供 label/description/task_keywords/icon/enabled 中的一个字段"]}
             }
         if "task_keywords" in data:
             kw = data["task_keywords"]
@@ -120,6 +120,8 @@ def _builtin_tool_update(tool_id, data):
             return {"_errors": {"description": ["description 必须是字符串"]}}
         if "icon" in data and not isinstance(data["icon"], str):
             return {"_errors": {"icon": ["icon 必须是字符串"]}}
+        if "enabled" in data and not isinstance(data["enabled"], bool):
+            return {"_errors": {"enabled": ["enabled 必须是布尔值"]}}
 
         if "label" in data:
             tool.label = data["label"]
@@ -127,11 +129,20 @@ def _builtin_tool_update(tool_id, data):
             tool.description = data["description"]
         if "task_keywords" in data:
             tool.task_keywords = data["task_keywords"]
+        if "enabled" in data:
+            # 启停内置工具：读侧（BuiltinProviderManager / BuiltinToolService /
+            # 向量索引）都已尊重 enabled=False，此前只是缺这条写路径。
+            tool.enabled = bool(data["enabled"])
         if "icon" in data:
             provider = db.session.get(BuiltinToolProvider, tool.provider_id)
             if provider is None:
                 raise NotFoundException("工具对应的 provider 不存在")
             provider.icon = data["icon"]
+
+        # 管理员一旦编辑，即置 source="custom"：否则下次进程启动时
+        # BuiltinToolSyncService 会用 YAML 值无条件覆盖这次编辑（静默丢失）。
+        # 对照 prompt 域 PromptSyncService.update_prompt 的同一做法。
+        tool.source = "custom"
 
         db.session.commit()
         db.session.refresh(tool)

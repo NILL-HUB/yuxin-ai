@@ -37,6 +37,46 @@ class BuiltinToolService:
 
         return self._get_builtin_tools_from_manager()
 
+    def set_tool_enabled(
+        self,
+        tool_id,
+        enabled: bool,
+        *,
+        set_custom_source: bool = True,
+    ):
+        """启用/停用某个内置工具。
+
+        为什么需要这个方法：`builtin_tool.enabled` 的**读侧早已齐备**
+        （`BuiltinProviderManager._load_from_db`、`_get_builtin_tools_from_db`、
+        `ResourceIndexService` 都尊重 `enabled=False`），但**写侧完全缺失**
+        ——全仓没有任何写 `builtin_tool.enabled` 的代码，而 `rbac.py` 里
+        `builtin_tool:update` 的说明恰恰是「启停内置工具」。授权了却无路径可走。
+
+        为什么必须同时置 ``source="custom"``：
+        ``BuiltinToolSyncService`` 启动时会用 YAML 无条件覆盖 ``source="catalog"``
+        的行；若只改 ``enabled`` 不置 custom，管理员在后台的启停会在下次进程
+        重启时被 YAML 覆写回 true（实测确认 builtin 域此前从未写过 custom，
+        即这层双源保护一直是失效的）。
+
+        Args:
+            set_custom_source: 由"管理员显式编辑"触发时传 True（默认）；
+                若在数据迁移/回滚场景需要保持 catalog，可传 False。
+
+        Raises:
+            NotFoundException: 工具不存在。
+        """
+        from internal.extension.database_extension import db
+        from internal.model.builtin_tool import BuiltinTool
+
+        tool = db.session.query(BuiltinTool).filter_by(id=tool_id).first()
+        if tool is None:
+            raise NotFoundException(f"builtin 工具 {tool_id} 不存在")
+        with db.auto_commit():
+            tool.enabled = bool(enabled)
+            if set_custom_source:
+                tool.source = "custom"
+        return tool
+
     def _get_builtin_tools_from_db(self) -> list:
         """从 DB 镜像表读取 builtin 工具信息（包含 task_keywords）"""
         from internal.extension.database_extension import db
