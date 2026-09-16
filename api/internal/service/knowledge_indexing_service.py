@@ -232,6 +232,10 @@ class KnowledgeIndexingService(BaseService):
         existing_segments = self.db.session.query(KnowledgeSegment).filter(
             KnowledgeSegment.knowledge_document_id == document.id,
         ).all()
+        # 旧帧必须先释放：帧已计入存储配额，若只删片段不删帧文件，
+        # 每轮重解析（编辑文档重建索引 / Celery 重试）都会多留一批永不释放的
+        # 帧对象与记录，等于持续配额泄漏。
+        self._release_stale_frames(document, existing_segments)
         for existing in existing_segments:
             self.knowledge_vector_service.remove_segment(existing)
             self.delete(existing)
@@ -301,6 +305,76 @@ class KnowledgeIndexingService(BaseService):
     @classmethod
     def _count_frames(cls, segments) -> int:
         return len(cls._collect_frames(segments))
+
+    def _release_stale_frames(self, document, segments) -> None:
+        """删除上一轮解析留下的帧对象与 UploadFile 记录，并释放其配额。
+
+        帧是持久化产物且计入存储配额。重解析（编辑文档重建索引、Celery 重试）
+        若只清片段不清帧，会持续留下孤儿帧对象——既占对象存储，又因用户永不
+        删除它们而永久占用配额。
+
+        失败只记 warning 不中断：清理是补偿动作，不应让整轮解析失败。
+        """
+        keys: list[str] = []
+        for segment in segments or []:
+            metadata = getattr(segment, "metadata_", None) or {}
+            frame_url = str(metadata.get("frame_url") or "").strip()
+            if frame_url and frame_url not in keys:
+                keys.append(frame_url)
+        if not keys:
+            return
+
+        rows = (
+            self.db.session.query(UploadFile)
+            .filter(UploadFile.key.in_(keys))
+            .all()
+        )
+        seen: set[str] = set()
+        for row in rows:
+            key = getattr(row, "key", None)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            try:
+                self._delete_frame_object(key, getattr(row, "storage_backend", None))
+            except Exception:
+                logger.warning(
+                    "清理旧帧对象失败 document_id=%s key=%s", document.id, key, exc_info=True,
+                )
+            try:
+                account_id = getattr(row, "account_id", None)
+                size = int(getattr(row, "size", 0) or 0)
+                if account_id is not None and size > 0:
+                    self._release_frame_quota(account_id, size)
+            except Exception:
+                logger.warning(
+                    "释放旧帧配额失败 document_id=%s key=%s", document.id, key, exc_info=True,
+                )
+            try:
+                self.delete(row)
+            except Exception:
+                logger.warning(
+                    "删除旧帧记录失败 document_id=%s key=%s", document.id, key, exc_info=True,
+                )
+
+    @staticmethod
+    def _delete_frame_object(key: str, storage_backend) -> None:
+        """删除帧的底层存储对象（独立方法便于测试替换）。
+
+        注意：`ObjectStoragePort` 协议没有删除操作，必须走既有的
+        `_delete_object(backend, key)` 分发到 local/cos/oss 实现。
+        """
+        from internal.service.storage.storage_migration_service import _delete_object
+
+        backend = (storage_backend or "local").strip() or "local"
+        _delete_object(backend, key)
+
+    def _release_frame_quota(self, account_id, size: int) -> None:
+        """释放旧帧占用的存储配额（独立方法便于测试替换）。"""
+        from app.http.module import injector
+        from internal.service.storage_quota_service import StorageQuotaService
+
+        injector.get(StorageQuotaService).release_usage(account_id, size)
 
     def _index_visual_vectors(self, document, segments) -> None:
         """为带 frame_url 的视频帧片段建立视觉向量索引。

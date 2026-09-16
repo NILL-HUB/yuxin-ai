@@ -248,8 +248,7 @@ def restore_knowledge_base(snapshot: dict[str, Any]) -> bool:
     for doc_data in snapshot.get("documents") or []:
         segments = doc_data.pop("_segments", [])
         upload_file_data = doc_data.pop("_upload_file", None) or {}
-        # 帧索引仅供销毁期清理，不参与恢复（帧记录与主文件同在底层留存期内保留）
-        doc_data.pop("_frames", None)
+        frames = doc_data.pop("_frames", None) or []
         if upload_file_data.get("id") is not None and db.session.query(UploadFile).filter(
             UploadFile.id == upload_file_data["id"],
         ).one_or_none() is None:
@@ -258,6 +257,9 @@ def restore_knowledge_base(snapshot: dict[str, Any]) -> bool:
                 _apply_column_value(UploadFile, upload_file, col_name, value)
             db.session.add(upload_file)
             db.session.flush()
+        # 帧记录与主文件记录必须同样重建（物理删除时二者一并删除），
+        # 否则恢复后再次删除会采不到帧记录 -> purge 少释放这部分配额。
+        _restore_frame_records(frames)
         doc = KnowledgeDocument()
         for col_name, value in doc_data.items():
             _apply_column_value(KnowledgeDocument, doc, col_name, value)
@@ -365,12 +367,16 @@ def _collect_document_frame_files(segments: list) -> list[dict[str, Any]]:
 
     帧文件是独立于文档主文件的 upload_file 记录（`_persist_frame` 创建），
     不采集则销毁时既不删文件也不释放配额——帧已计配额，会变成配额泄漏。
+
+    按 key 去重：历史缺陷曾让同一帧留下两条同 key 记录，若不去重，purge 会对
+    同一份字节 `release_usage` 两次，把配额多还给用户。根因已修，此处为存量
+    数据与未来回归的防御。
     """
     keys: list[str] = []
     for segment in segments or []:
         metadata = getattr(segment, "metadata_", None) or {}
         frame_url = str(metadata.get("frame_url") or "").strip()
-        if frame_url:
+        if frame_url and frame_url not in keys:
             keys.append(frame_url)
     if not keys:
         return []
@@ -379,7 +385,16 @@ def _collect_document_frame_files(segments: list) -> list[dict[str, Any]]:
         .filter(UploadFile.key.in_(keys))
         .all()
     )
-    return [_row_to_dict(row) for row in rows]
+    frames: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in rows:
+        data = _row_to_dict(row)
+        key = data.get("key")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        frames.append(data)
+    return frames
 
 
 def snapshot_knowledge_document(resource_id) -> dict[str, Any] | None:
@@ -438,6 +453,11 @@ def physical_delete_knowledge_document(resource_id) -> None:
         except Exception as exc:
             logger.warning("清理文档向量失败 segment=%s: %s", segment.id, exc)
     upload_file_id = getattr(doc, "upload_file_id", None)
+    frame_keys = [
+        str((getattr(s, "metadata_", None) or {}).get("frame_url") or "").strip()
+        for s in segments
+    ]
+    frame_keys = [key for key in frame_keys if key]
     db.session.query(KnowledgeSegment).filter(
         KnowledgeSegment.knowledge_document_id == doc.id,
     ).delete(synchronize_session=False)
@@ -447,6 +467,12 @@ def physical_delete_knowledge_document(resource_id) -> None:
     if upload_file_id is not None:
         db.session.query(UploadFile).filter(
             UploadFile.id == upload_file_id,
+        ).delete(synchronize_session=False)
+    # 帧 UploadFile 记录独立于主文件，不删会成为永久孤儿记录
+    # （无任何入口再引用它们，既占记录也无法在 purge 阶段被找到）。
+    if frame_keys:
+        db.session.query(UploadFile).filter(
+            UploadFile.key.in_(frame_keys),
         ).delete(synchronize_session=False)
 
 
@@ -468,6 +494,9 @@ def restore_knowledge_document(snapshot: dict[str, Any]) -> bool:
             _apply_column_value(UploadFile, upload_file, col_name, value)
         db.session.add(upload_file)
         db.session.flush()
+    # 帧记录与主文件记录必须同样重建：物理删除时二者一并删除，若此处不重建，
+    # 恢复后再次删除会采不到帧记录 -> purge 少释放这部分配额（欠释放）。
+    _restore_frame_records(snapshot.get("frames") or [])
     doc = KnowledgeDocument()
     for col_name, value in main_data.items():
         _apply_column_value(KnowledgeDocument, doc, col_name, value)
@@ -479,6 +508,21 @@ def restore_knowledge_document(snapshot: dict[str, Any]) -> bool:
             _apply_column_value(KnowledgeSegment, seg, col_name, value)
         db.session.add(seg)
     return True
+
+
+def _restore_frame_records(frames: list[dict[str, Any]]) -> None:
+    """按快照重建帧 UploadFile 记录（已存在同 id 记录则跳过）。"""
+    for frame_data in frames:
+        frame_id = frame_data.get("id")
+        if frame_id is None:
+            continue
+        if db.session.query(UploadFile).filter(UploadFile.id == frame_id).one_or_none() is not None:
+            continue
+        record = UploadFile()
+        for col_name, value in frame_data.items():
+            _apply_column_value(UploadFile, record, col_name, value)
+        db.session.add(record)
+    db.session.flush()
 
 
 def _get_storage_quota_service():
@@ -509,6 +553,37 @@ def _release_storage_quota(upload_file_data: dict[str, Any]) -> None:
         )
 
 
+def _purge_storage_targets(targets: list[dict[str, Any]], log_label: str) -> None:
+    """先删除全部底层对象，再统一释放配额；按对象 key 去重。
+
+    **顺序是重试安全的必要条件**：`purge_expired` 在 purge 抛异常时保持条目
+    pending 并重试。若「边删边释放」，删到一半失败时前面的配额已释放，重试会
+    把同一份字节再释放一次（配额多还）。因此删除阶段要么全部成功、要么抛出，
+    配额只在删除全部成功后才释放。
+
+    去重同样必要：快照可能来自旧版本或历史缺陷（同一 key 两条记录），
+    重复释放会把配额多还给用户。
+    """
+    from internal.service.storage.storage_migration_service import _delete_object
+
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for data in targets:
+        key = data.get("key")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(data)
+
+    for data in unique:
+        backend = (data.get("storage_backend") or "local").strip() or "local"
+        _delete_object(backend, data["key"])
+        logger.info("回收站销毁%s存储文件 key=%s backend=%s", log_label, data["key"], backend)
+
+    for data in unique:
+        _release_storage_quota(data)
+
+
 def purge_knowledge_document(snapshot: dict[str, Any]) -> None:
     """留存期结束彻底销毁：删除底层存储对象（local 物理文件 / COS、OSS 对象）。
 
@@ -521,17 +596,7 @@ def purge_knowledge_document(snapshot: dict[str, Any]) -> None:
     upload_file_data = snapshot.get("upload_file") or {}
     targets = [upload_file_data] if upload_file_data.get("key") else []
     targets.extend(snapshot.get("frames") or [])
-
-    from internal.service.storage.storage_migration_service import _delete_object
-
-    for data in targets:
-        key = data.get("key")
-        if not key:
-            continue
-        backend = (data.get("storage_backend") or "local").strip() or "local"
-        _delete_object(backend, key)
-        _release_storage_quota(data)
-        logger.info("回收站销毁文档存储文件 key=%s backend=%s", key, backend)
+    _purge_storage_targets(targets, "文档")
 
 
 def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
@@ -539,21 +604,17 @@ def purge_knowledge_base(snapshot: dict[str, Any]) -> None:
 
     每个文档除主文件外，**还必须一并清理其帧文件并释放配额**（与
     `purge_knowledge_document` 同理，帧已计配额，不释放即配额泄漏）。
-    """
-    from internal.service.storage.storage_migration_service import _delete_object
 
+    **汇总全部文档的目标后一次性处理**：若逐文档调用，删到第 N 个文档失败时
+    前面文档的配额已释放，重试会重复释放（配额多还）。
+    """
+    targets: list[dict[str, Any]] = []
     for doc_data in snapshot.get("documents") or []:
         upload_file_data = doc_data.get("_upload_file") or {}
-        targets = [upload_file_data] if upload_file_data.get("key") else []
+        if upload_file_data.get("key"):
+            targets.append(upload_file_data)
         targets.extend(doc_data.get("_frames") or [])
-        for data in targets:
-            key = data.get("key")
-            if not key:
-                continue
-            backend = (data.get("storage_backend") or "local").strip() or "local"
-            _delete_object(backend, key)
-            _release_storage_quota(data)
-            logger.info("回收站销毁知识库存储文件 key=%s backend=%s", key, backend)
+    _purge_storage_targets(targets, "知识库")
 
 
 def snapshot_upload_file(resource_id) -> dict[str, Any] | None:

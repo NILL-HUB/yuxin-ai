@@ -224,6 +224,65 @@ class TestVisualIndexing:
         assert captured["frames"][0]["frame_url"] == "frames/f1.jpg"
 
 
+class TestReparseReleasesStaleFrames:
+    """重解析必须清理上一轮的帧文件记录与对象，否则每轮都留下永不释放的孤儿。
+
+    可达入口：`ScopedKnowledgeService.update_text_document_for_admin` 复用同一
+    document.id 重建索引；Celery `build_document_task` 还会 `max_retries=2` 重试，
+    故不清理会持续放大（帧已计入配额，等于持续泄漏）。
+    """
+
+    def test_reparse_deletes_stale_frame_records(self):
+        """旧帧记录（按上一轮 segment 的 frame_url 关联）必须在新一轮解析前被删除。"""
+        from internal.model import UploadFile
+
+        deleted_records = []
+        deleted_objects = []
+        released = []
+
+        old_row = UploadFile(
+            account_id=uuid4(), name="old1.jpg", key="frames/old1.jpg", size=10,
+            extension="jpg", mime_type="image/jpeg", hash="h", storage_backend="local",
+        )
+
+        class _AnyQuery:
+            def filter(self, *_a, **_kw):
+                return self
+
+            def filter_by(self, **_kw):
+                return self
+
+            def all(self):
+                return [old_row]
+
+            def one_or_none(self):
+                return None
+
+            def delete(self, **_kw):
+                deleted_records.append(True)
+                return 1
+
+        service, _ = _build_service([], _FakeVisualService(), _FakeStorage())
+        service.db = SimpleNamespace(
+            session=SimpleNamespace(query=lambda model, *a, **k: _AnyQuery()),
+            auto_commit=lambda: _auto_commit(),
+        )
+        service.update = lambda instance, **kwargs: instance
+        service.create = lambda model, **kwargs: SimpleNamespace(id=uuid4(), **kwargs)
+        service.delete = lambda instance: deleted_records.append(True)
+        service._delete_frame_object = lambda key, backend: deleted_objects.append(key)
+        service._release_frame_quota = lambda account_id, size: released.append((account_id, size))
+
+        service._release_stale_frames(
+            _document(),
+            [SimpleNamespace(metadata_={"frame_url": "frames/old1.jpg"})],
+        )
+
+        assert deleted_objects == ["frames/old1.jpg"], "旧帧底层对象必须删除"
+        assert released == [(old_row.account_id, 10)], "旧帧配额必须释放"
+        assert deleted_records, "旧帧 UploadFile 记录必须删除"
+
+
 class TestMediaExtractionReceivesOwnership:
     def test_extract_receives_account_and_document_id(self):
         """必须把 account_id/document_id 传下去，否则帧不会被留存（frame_url 恒空），

@@ -152,6 +152,35 @@ class TestExtractVideoFramesToDir:
 class TestPersistFrame:
     """`_persist_frame` 必须同时完成对象存储上传与 UploadFile 记录创建。"""
 
+    def test_creates_exactly_one_record_per_frame(self, tmp_path):
+        """留存一帧只能产生一条 UploadFile 记录。
+
+        `cos_service.upload_bytes` 内部已经创建了 UploadFile 记录；若外层
+        再调一次 `create_upload_file`，同一个对象 key 会有两条记录，
+        进而 purge 时同一份字节被 `release_usage` 两次（配额被多还）。
+        """
+        storage = _FakeStorage()
+        service, upload_file_service = _service(storage)
+
+        service._persist_frame(
+            _write_frame(tmp_path), account_id=uuid4(), document_id=uuid4()
+        )
+
+        assert len(upload_file_service.calls) == 0, "upload_bytes 已建记录，外层不得重复创建"
+        assert len(storage.uploaded) == 1
+
+    def test_returns_record_produced_by_storage(self, tmp_path):
+        """返回值必须是存储层建的那条记录（key 一致），不是另建的新记录。"""
+        storage = _FakeStorage()
+        service, _upload_file_service = _service(storage)
+
+        record = service._persist_frame(
+            _write_frame(tmp_path), account_id=uuid4(), document_id=uuid4()
+        )
+
+        assert record.key == "frames/frame_001.jpg"
+        assert record.size == len(b"\xff\xd8\xff\xe0frame-bytes")
+
     def test_uploads_bytes_and_creates_upload_file_record(self, tmp_path):
         storage = _FakeStorage()
         service, upload_file_service = _service(storage)
@@ -162,16 +191,29 @@ class TestPersistFrame:
 
         assert result.key == "frames/frame_001.jpg"
         assert storage.uploaded == [("frame_001.jpg", b"\xff\xd8\xff\xe0frame-bytes")]
-        assert len(upload_file_service.calls) == 1
-        record = upload_file_service.calls[0]
-        assert record["account_id"] == account_id
-        assert record["name"] == "frame_001.jpg"
-        assert record["key"] == "frames/frame_001.jpg"
-        assert record["size"] == len(b"\xff\xd8\xff\xe0frame-bytes")
-        assert record["extension"] == "jpg"
-        assert record["mime_type"] == "image/jpeg"
-        assert record["storage_backend"] == "local"
-        assert len(record["hash"]) == 64, "hash 应为 sha3_256 十六进制摘要"
+        assert result.size == len(b"\xff\xd8\xff\xe0frame-bytes")
+
+    def test_forwards_account_and_mime_to_storage(self, tmp_path):
+        """归属与 MIME 必须交给存储层（它负责建记录），否则归属丢失。"""
+        captured = {}
+
+        class _CapturingStorage(_FakeStorage):
+            def upload_bytes(self, filename, content, **kwargs):
+                captured["filename"] = filename
+                captured["mime_type"] = kwargs.get("mime_type")
+                captured["account_id"] = kwargs.get("account_id")
+                return super().upload_bytes(filename, content, **kwargs)
+
+        service, _upload_file_service = _service(_CapturingStorage())
+        account_id = uuid4()
+
+        service._persist_frame(
+            _write_frame(tmp_path), account_id=account_id, document_id=uuid4()
+        )
+
+        assert captured["filename"] == "frame_001.jpg"
+        assert captured["mime_type"] == "image/jpeg"
+        assert captured["account_id"] == account_id
 
     def test_raises_when_upload_fails(self, tmp_path):
         storage = _FakeStorage(upload_error=RuntimeError("storage down"))

@@ -8,7 +8,6 @@
 产物 MediaSegment 直接映射 KnowledgeSegment 的 content 与 metadata，
 由 KnowledgeIndexingService 写入并向量化，从而让多媒体素材可被语义检索。
 """
-import hashlib
 import logging
 import os
 import tempfile
@@ -181,25 +180,18 @@ class KnowledgeMediaExtractorService(BaseService):
 
         关键帧必须留存：视觉向量属于可后补能力，留存后无需重跑整个视频解析
         （设计稿 §3.4）。extension/mime_type 固定为 jpg，与抽帧产物一致。
+
+        **记录由存储层创建**：`upload_bytes` 内部已调 `create_upload_file` 并返回该
+        记录，此处不得再建一条——同一对象 key 出现两条记录会让 purge 时同一份
+        字节被 `release_usage` 两次（配额被多还）。
         """
         with open(frame_path, "rb") as fh:
             content = fh.read()
-        filename = os.path.basename(frame_path)
-        stored = self.cos_service.upload_bytes(
-            filename=filename,
+        return self.cos_service.upload_bytes(
+            filename=os.path.basename(frame_path),
             content=content,
             account_id=account_id,
             mime_type="image/jpeg",
-        )
-        return self.upload_file_service.create_upload_file(
-            account_id=account_id,
-            name=filename,
-            key=stored.key,
-            size=len(content),
-            extension="jpg",
-            mime_type="image/jpeg",
-            hash=hashlib.sha3_256(content).hexdigest(),
-            storage_backend="local",
         )
 
     def _extract_video(

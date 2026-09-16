@@ -276,6 +276,168 @@ class TestFrameFilesReleasedOnPurge:
             (account_id, 40),
         ]
 
+    def test_purge_does_not_release_quota_when_a_delete_fails(self, fake_quota, monkeypatch):
+        """任一对象删除失败时，一条配额都不得释放（重试安全的必要条件）。
+
+        `purge_expired` 在 purge 抛异常时保持条目 pending 并重试。若采用
+        「边删边释放」，第一个对象已释放、第二个删除失败 -> 重试时第一个对象
+        的配额被**重复释放**（配额多还）。故必须先删完全部对象、再统一释放。
+        """
+        from internal.service.storage import storage_migration_service
+
+        def _flaky_delete(backend, key):
+            if key == "frames/f2.jpg":
+                raise RuntimeError("storage down")
+            return None
+
+        monkeypatch.setattr(storage_migration_service, "_delete_object", _flaky_delete)
+
+        account_id = str(uuid4())
+        snapshot = {
+            "upload_file": {
+                "account_id": account_id, "size": 100, "key": "main.mp4",
+                "storage_backend": "local",
+            },
+            "frames": [
+                {"account_id": account_id, "size": 10, "key": "frames/f1.jpg",
+                 "storage_backend": "local"},
+                {"account_id": account_id, "size": 20, "key": "frames/f2.jpg",
+                 "storage_backend": "local"},
+            ],
+        }
+
+        with pytest.raises(RuntimeError):
+            handlers.purge_knowledge_document(snapshot)
+
+        assert fake_quota.calls == [], "删除未全部成功前不得释放任何配额（否则重试会重复释放）"
+
+    def test_physical_delete_removes_frame_records(self, monkeypatch):
+        """物理删除文档时必须连带删除帧 UploadFile 记录，避免永久孤儿。
+
+        帧记录在删除后没有任何入口再引用（文档与 segment 都已删），
+        若不删就会永久留在 upload_file 表里。
+        """
+        from internal.model import KnowledgeSegment
+
+        deleted_uploads = []
+        deleted_segments = []
+
+        class _SegmentQuery:
+            def filter(self, *args, **kwargs):
+                return self
+
+            def all(self):
+                return [SimpleNamespace(
+                    id=uuid4(), metadata_={"frame_url": "frames/f1.jpg"},
+                )]
+
+            def delete(self, **kwargs):
+                deleted_segments.append(True)
+
+        class _DocQuery:
+            def filter(self, *args, **kwargs):
+                return self
+
+            def one_or_none(self):
+                return SimpleNamespace(id=uuid4(), upload_file_id=uuid4())
+
+            def delete(self, **kwargs):
+                return None
+
+        class _UploadQuery:
+            def __init__(self):
+                self.filters = []
+
+            def filter(self, *args, **kwargs):
+                self.filters.append(args)
+                return self
+
+            def delete(self, **kwargs):
+                deleted_uploads.append(self.filters)
+                return 1
+
+        def _query(model, *a, **k):
+            if model is KnowledgeSegment:
+                return _SegmentQuery()
+            name = getattr(model, "__name__", "")
+            if name == "KnowledgeDocument":
+                return _DocQuery()
+            return _UploadQuery()
+
+        monkeypatch.setattr(
+            handlers, "db",
+            SimpleNamespace(session=SimpleNamespace(query=_query)),
+        )
+        import internal.service.knowledge_vector_service as kvs
+        monkeypatch.setattr(
+            kvs, "KnowledgeVectorService",
+            lambda: SimpleNamespace(remove_segment=lambda seg: None),
+            raising=False,
+        )
+
+        handlers.physical_delete_knowledge_document(uuid4())
+
+        assert len(deleted_uploads) == 2, "主文件记录 + 帧记录都应被删除"
+        frame_deletes = [
+            call for call in deleted_uploads if len(call) == 1
+        ]
+        assert frame_deletes, "其中一次删除必须是按 key 批量删帧（区别于按 id 删主文件）"
+
+    def test_collect_document_frame_files_dedupes_by_key(self, monkeypatch):
+        """同一对象 key 出现多条 UploadFile 记录时只取一条。
+
+        历史缺陷曾让 `_persist_frame` 对一帧建两条记录（upload_bytes 内已建、
+        外层又建）。根因已修，但存量数据可能仍是重复的；若不去重，purge 会对
+        同一份字节 `release_usage` 两次，把配额多还给用户。
+        """
+        from internal.model import UploadFile
+
+        def _row():
+            return UploadFile(
+                account_id=uuid4(), name="f1.jpg", key="f1.jpg", size=10,
+                extension="jpg", mime_type="image/jpeg", hash="h",
+                storage_backend="local",
+            )
+
+        class _Query:
+            def filter(self, *args, **kwargs):
+                return self
+
+            def all(self):
+                return [_row(), _row()]
+
+        monkeypatch.setattr(
+            handlers, "db",
+            SimpleNamespace(session=SimpleNamespace(query=lambda *a, **k: _Query())),
+        )
+
+        segment = SimpleNamespace(metadata_={"frame_url": "f1.jpg"})
+        frames = handlers._collect_document_frame_files([segment])
+
+        assert len(frames) == 1
+        assert frames[0]["key"] == "f1.jpg"
+
+    def test_purge_releases_once_when_duplicate_frame_rows(self, fake_quota, fake_delete):
+        """重复的帧记录不得导致同一份字节被释放两次（配额多还）。"""
+        account_id = str(uuid4())
+        snapshot = {
+            "upload_file": {
+                "account_id": account_id, "size": 100, "key": "main.mp4",
+                "storage_backend": "local",
+            },
+            "frames": [
+                {"account_id": account_id, "size": 10, "key": "frames/f1.jpg",
+                 "storage_backend": "local"},
+                {"account_id": account_id, "size": 10, "key": "frames/f1.jpg",
+                 "storage_backend": "local"},
+            ],
+        }
+
+        handlers.purge_knowledge_document(snapshot)
+
+        assert fake_delete == [("local", "main.mp4"), ("local", "frames/f1.jpg")]
+        assert fake_quota.calls == [(account_id, 100), (account_id, 10)]
+
     def test_collect_document_frame_files_queries_by_frame_url(self, monkeypatch):
         """快照需按 frame_url 采集帧 UploadFile 记录，否则销毁时无从释放。"""
         from internal.model import UploadFile

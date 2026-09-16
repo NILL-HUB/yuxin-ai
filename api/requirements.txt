@@ -72,6 +72,7 @@ httpx==0.28.1
 httpx-sse==0.4.3
 hyperframe==6.1.0
 idna==3.11
+imageio-ffmpeg==0.6.0
 iniconfig==2.3.0
 injector==0.21.0
 ipython==8.12.3
