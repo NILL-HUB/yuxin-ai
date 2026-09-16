@@ -22,6 +22,13 @@ class KnowledgeBase(Base):
         Index("knowledge_base_target_tenant_idx", "target_tenant_id"),
         Index("knowledge_base_target_project_idx", "target_project_id"),
         Index("knowledge_base_base_type_idx", "base_type"),
+        # 系统预置成品库每账号至多一个（部分唯一索引，只约束 render_output）
+        Index(
+            "knowledge_base_render_output_uniq",
+            "owner_account_id",
+            unique=True,
+            postgresql_where=text("created_from = 'render_output'"),
+        ),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))

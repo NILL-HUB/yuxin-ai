@@ -61,6 +61,7 @@ class KnowledgeCreatedFrom(str, Enum):
     ADMIN_CONFIG = "admin_config"
     EXTERNAL_SYNC = "external_sync"
     WORKFLOW_IMPORT = "workflow_import"  # 工作流导入
+    RENDER_OUTPUT = "render_output"  # 渲染成品（系统托管成品库）
 
 
 class ExternalSourceType(str, Enum):
