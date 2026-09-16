@@ -1,0 +1,21 @@
+name: render_video
+label: 渲染视频
+description: 把小钰编排好的视频脚本渲染成 MP4 成品，并自动存入用户的成品库，可在成品库中检索与复用。
+params:
+- name: composition
+  label: 视频脚本
+  type: string
+  required: true
+- name: name
+  label: 成品名称
+  type: string
+  required: false
+task_keywords:
+- 渲染视频
+- 生成视频
+- 导出视频
+- 出片
+- 制作视频
+- 剪视频
+- 合成视频
+- render video

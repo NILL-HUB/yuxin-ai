@@ -229,3 +229,10 @@
   background: "#EEF2FF"
   category: tool
   created_at: 1789100000
+- name: video_render_tools
+  label: 视频渲染工具
+  description: 视频渲染能力，支持 Agent 在对话内把视频脚本渲染为 MP4 并存入成品库。
+  icon: ""
+  background: "#F3E8FF"
+  category: video
+  created_at: 1789200000

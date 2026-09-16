@@ -1051,6 +1051,18 @@ class AssistantAgentService(BaseService):
             except Exception:
                 logger.warning("构建知识库工具失败，不影响其他工具", exc_info=True)
 
+        # 视频渲染工具：Agent 可在对话内把脚本渲染成 MP4 并存入成品库。
+        if self.app_config_service is not None:
+            try:
+                render_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                    "video_render_tools",
+                    "render_video",
+                )
+                if render_tool_factory is not None:
+                    tools.append(render_tool_factory(account_id=str(account_id)))
+            except Exception:
+                logger.warning("构建视频渲染工具失败，不影响其他工具", exc_info=True)
+
         # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
         # 同时挂载系统知识库（knowledge_scope='system'，admin 通过 enabled 开关控制），
         # 让系统级知识库/可管理提示词真正对 Agent 生效
