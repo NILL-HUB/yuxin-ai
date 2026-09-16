@@ -8,30 +8,55 @@
 为什么拒绝不抛异常：工具的调用方是 LLM。抛异常会中断整轮对话，而
 `PermissionError` / `ValueError` 都是"该动作不能做"的正常业务结论——
 应作为**可读结果**回给模型，让它如实向管理员汇报（审计已由执行层写好）。
+`CustomException` 家族（`FailException` / `NotFoundException` 等）同理：
+它们是执行层与下游 service 表达"业务上做不到"的正常信号（如"板块尚未
+实现"、"目标工具已不存在"），同样必须转成可读结果而非中断对话。
+范围**仅限**这三类可预期的业务结论，不放宽为 `except Exception`——
+真正的程序缺陷（TypeError 等）仍应上抛，否则会被静默吞掉。
 """
 from __future__ import annotations
 
+import asyncio
 import json
-import logging
+import re
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, create_model
 
+from internal.core.admin_agent_boards import board_ids_of
 from internal.core.admin_agent_boards import boards as _boards
 from internal.entity.admin_agent_entity import AdminAgentPrincipal
-
-logger = logging.getLogger(__name__)
+from internal.exception import CustomException
 
 __all__ = ["build_board_tools", "tool_name_for_board"]
 
+_BOARD_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_BOARD_NAME_MAX_LENGTH = 64
+
 
 def tool_name_for_board(board: str) -> str:
-    """板块 → LLM 工具名（LLM 工具名只允许字母/数字/下划线/连字符）。"""
+    """板块 → LLM 工具名（LLM 工具名只允许字母/数字/下划线/连字符）。
+
+    fail closed：板块标识非法（空、超长、含工具名不接受的字符）时抛
+    ``ValueError``，而不是拼出一个 LLM 侧无法可靠解析、或与既有工具名
+    冲突的名字。板块标识会进入工具名与提示词，必须是最小的安全字符集。
+    """
+    board = str(board or "").strip()
+    if not board:
+        raise ValueError("板块标识不能为空")
+    if len(board) > _BOARD_NAME_MAX_LENGTH:
+        raise ValueError(
+            f"板块标识过长：{len(board)} 字符，上限 {_BOARD_NAME_MAX_LENGTH}"
+        )
+    if _BOARD_NAME_PATTERN.fullmatch(board) is None:
+        raise ValueError(
+            f"板块标识非法：{board!r}（只允许字母/数字/下划线/连字符）"
+        )
     return f"admin_{board}"
 
 
-def _make_args_schema(board: str, actions: list[str]):
+def _make_args_schema(board: str, actions: list[str]) -> type[BaseModel]:
     description = (
         f"要执行的动作，必须取自：{', '.join(actions)}。"
         "未登记的动作会被拒绝（fail closed）。"
@@ -43,7 +68,7 @@ def _make_args_schema(board: str, actions: list[str]):
     )
 
 
-def _make_tool_class(board: str, actions: list[str]):
+def _make_tool_class(board: str, actions: list[str]) -> type[BaseTool]:
     schema = _make_args_schema(board, actions)
     tool_name = tool_name_for_board(board)
 
@@ -62,18 +87,24 @@ def _make_tool_class(board: str, actions: list[str]):
                 result = self.execution_service.run(
                     self.principal, board=board, action=action, payload=payload or {}
                 )
-            except (PermissionError, ValueError) as exc:
+            except (PermissionError, ValueError, CustomException) as exc:
                 # 拒绝是正常业务结论：回可读结果，不中断对话（审计已由执行层记录）
                 return json.dumps(
                     {"ok": False, "board": board, "action": action, "error": str(exc)},
                     ensure_ascii=False,
+                    default=str,
                 )
             return json.dumps(
-                {"ok": True, "board": board, **result}, ensure_ascii=False
+                {"ok": True, "board": board, **result},
+                ensure_ascii=False,
+                default=str,
             )
 
         async def _arun(self, action: str = "", payload: dict | None = None, **kwargs: Any) -> str:
-            return self._run(action=action, payload=payload, **kwargs)
+            # 执行层是同步的（DB / 下游 service），直接调用会阻塞事件循环
+            return await asyncio.to_thread(
+                self._run, action=action, payload=payload, **kwargs
+            )
 
     return _BoardTool
 
@@ -83,8 +114,6 @@ def build_board_tools(execution_service, principal: AdminAgentPrincipal) -> list
 
     工具实例持有 principal，因此**不能**跨 Agent 复用或缓存。
     """
-    from internal.core.admin_agent_boards import board_ids_of
-
     tools: list[BaseTool] = []
     for board in _boards():
         cls = _make_tool_class(board, board_ids_of(board))
