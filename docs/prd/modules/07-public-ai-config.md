@@ -11,7 +11,7 @@
 
 ### 24.1.1 问题定义
 
-钰见我 平台存在 40+ 个系统级 AI 调用点（实际落地后 `get_feature_model()` 生产调用遍布 39 个文件 85+ 处），分散在记忆系统、对话路由、助手引导、内容生成等链路。原设计存在三个核心问题：
+钰见我 平台存在 40+ 个系统级 AI 调用点（`get_feature_model()` 生产调用在 `api/internal/` 下共 44 处、32 个文件），分散在记忆系统、对话路由、助手引导、内容生成等链路。原设计存在三个核心问题：
 
 1. **模型选择硬编码**：每个调用点独立调用 `get_cheap_chat_model()`，无法按需切换模型，admin 无法介入
 2. **成本归属混乱**：用户直接受益的 AI 能力（如直接回答、代码助手）与系统基础设施能力（如记忆检测、路由判断）共用同一成本中心，无法准确计费
@@ -21,9 +21,9 @@
 
 引入统一的 `public_ai_feature_config` 配置层，将"用哪个模型做这个 AI 任务"从代码层下沉到数据库层：
 
-- **集中管理**：admin 通过后台界面统一配置 27 个公共 AI 能力的模型、降级策略、是否计费
+- **集中管理**：admin 通过后台界面统一配置 26 个公共 AI 能力的模型、降级策略、是否计费
 - **类型隔离**：通过 `model_type` 字段强制 chat / image 类型匹配，防止类型错配
-- **成本归属**：通过 `billable` 字段明确区分用户付费（8 个）vs 系统付费
+- **成本归属**：通过 `billable` 字段明确区分用户付费（8 个）vs 系统付费（18 个）
 - **降级路径**：未配置时按 `fallback_tier`（模型池数字档位 `1`~`5`）从模型池自动选取兜底模型
 
 ### 24.1.3 设计原则
@@ -33,7 +33,7 @@
 | 配置优先 | 所有公共 AI 调用必须经过 `get_feature_model(feature_key)`，禁止直连 `get_cheap_chat_model` |
 | 系统预设非编辑 | `feature_key` / `feature_name` / `feature_category` / `feature_description` 由系统预置，admin 不可改 |
 | 仅 4 字段可编辑 | `model_config_id`（下拉）/ `fallback_tier`（下拉）/ `enabled`（勾选）/ `billable`（单选）|
-| 不支持增删 | 27 个 feature_key 由迁移脚本预置，admin 不能 create/delete，只能 edit |
+| 不支持增删 | 26 个 feature_key 由迁移 seed 与启动补齐（`_BUILTIN_FEATURES`）共同预置，admin 不能 create/delete，只能 edit |
 | 类型严格匹配 | `model_type` 决定下拉列表过滤范围，图像类只能选图像模型 |
 
 ---
@@ -50,7 +50,7 @@
 | `feature_description` | VARCHAR(512) | 功能描述，系统预设 |
 | `model_type` | VARCHAR(32) | 模型类型：`chat` / `image_generation` / `embedding` / `rerank` / `audio`，决定下拉过滤范围 |
 | `model_config_id` | UUID FK→`model_pool_config.id` | 绑定的模型配置（可为空，表示走 fallback） |
-| `fallback_tier` | VARCHAR(64) | 降级档位：模型池数字档位字符串 `1`~`5`（`1`经济/`2`标准/`3`强力/`4`视觉/`5`长上下文） |
+| `fallback_tier` | VARCHAR(64) | 降级档位：引用 `model_tier_policy.tier_code` 的字符串档位码（内置 seed 为 `1`经济型/`2`标准型/`3`强力型/`4`视觉型/`5`长上下文型，档位名可在后台重命名，如线上实例为 `0`免费/`1`低价/`2`均衡/`3`高价）。缺省归一化为默认档 `2` |
 | `enabled` | BOOLEAN | 是否启用，禁用时直接跳过该 AI 能力 |
 | `billable` | BOOLEAN | 是否计费：true=扣用户配额，false=系统承担 |
 | `deprecated` | BOOLEAN DEFAULT false | 是否已废弃（v5.2 新增）：被指挥官替代的旧路由 feature_key 标记为 true，运行时不再调用 |
@@ -68,15 +68,16 @@
 
 ### 24.2.3 Alembic 迁移
 
-迁移链：`... → e9f0a1b2c3d4 (head)` 中包含 `public_ai_feature_config` 表创建 + 27 条预置数据 seed。
+迁移链：建表迁移为 `a4b5c6d7e8f9_create_public_ai_feature_config`，初始数据由 `b5c6d7e8f9a0_seed_public_ai_feature_defaults` 写入 27 条。此后经 `m8b9c0d1e2f3_cleanup_public_ai_feature_config` 删除 4 条被指挥官替代的旧路由键，`f1a2b3c4d5e6` 与 `f1a2b3c4d5e7` 做字段/档位调整。**当前表内共 26 条**（验证日期 2026-09-14）。
 
 迁移幂等性：使用 `INSERT ... ON CONFLICT (feature_key) DO NOTHING` 确保重复执行不重复插入。
 
 ---
 
-## 24.3 27 个预置功能清单
+## 24.3 26 个预置功能清单
 
-> **DB 实际预置**：27 条记录已通过 Alembic 迁移 seed 至 `public_ai_feature_config` 表，与下表完全对齐（验证日期 2026-07-22）。
+> **DB 实际预置**：当前 `public_ai_feature_config` 表内共 26 条记录（验证日期 2026-09-14）。
+> **记录来源有两条通道**：① 迁移 seed（`b5c6d7e8f9a0` 写入 27 条，`m8b9c0d1e2f3` 删 4 条 → 23 条）；② 应用启动时 `PublicAIFeatureService.ensure_builtin_features()` 按 `_BUILTIN_FEATURES` 补齐（当前注册 `conductor`、`schedule_intent_parser`）。`assistant_agent` 为历史遗留记录，代码中**只被读取**（`get_assistant_agent_model_config`），无迁移或启动补齐写入点。
 
 ### 24.3.1 图标类（2 个，全部 billable=false）
 
@@ -105,39 +106,42 @@
 >
 > **当前配置**：11 个 memory_* feature_key 绑定到模型池中的高推理模型，fallback_tier 使用模型池数字档位（内部异步任务应取"质量刚好过关"的较低档以控成本）。具体绑定的模型由 admin 在后台「池治理 → 公共 AI 配置」中按需选择，文档不硬编码推荐任何具体模型版本。
 
-### 24.3.3 路由类（1 个，billable=false，model_type=chat）
+### 24.3.3 路由类（3 个，全部 billable=false，model_type=chat）
 
-> **v5.2 变更**：原 4 个路由类 feature_key（intent_recognition / pool_intent_resolution / task_classification / task_decomposition）已被指挥官 `ConductorService` 一体化替代，不再作为独立调用点。指挥官用单次 LLM `structured_output` 完成意图识别、任务分类、任务拆解和池选择。
+> **v5.2 变更**：原 4 个路由类 feature_key（pool_intent_resolution / task_classification / task_decomposition / tool_selection）已被指挥官 `ConductorService` 一体化替代，不再作为独立调用点（其中 4 条记录已由迁移 `m8b9c0d1e2f3` 删除）。指挥官用单次 LLM `structured_output` 完成意图识别、任务分类、任务拆解和池选择。
 
 | feature_key | 说明 |
 |---|---|
 | `conductor` | 指挥官决策层模型（输出 ConductorPlan 编排计划） |
+| `intent_recognition` | 首页用户意图识别（推荐问题、个性化介绍），与指挥官路由决策无关 |
+| `schedule_intent_parser` | 定时任务配置解析（一句话 → cron + 精化 prompt） |
 
 > **deprecated 字段**：`public_ai_feature_config` 表的 `deprecated` 字段（v5.2 新增）标记被指挥官替代的旧路由 feature_key，运行时不再调用。
 
-### 24.3.4 助手类（4 个，全部 billable=true，model_type=chat）
+### 24.3.4 助手类（5 个，其中 4 个 billable=true，model_type=chat）
 
-| feature_key | 说明 |
-|---|---|
-| `assistant_agent_intro` | 首页助手 Agent 自动生成介绍文案 |
-| `prompt_optimization` | 优化用户编写的 Agent Prompt |
-| `code_assistant` | 代码生成、补全、解释 |
-| `schema_assistant` | SQL 生成、Schema 解读 |
+| feature_key | billable | 说明 |
+|---|---|---|
+| `prompt_optimization` | true | 优化用户编写的 Agent Prompt |
+| `code_assistant` | true | 代码生成、补全、解释 |
+| `schema_assistant` | true | SQL 生成、Schema 解读 |
+| `tag_assignment` | true | 自动标签分配 |
+| `app_auto_creation` | false | 应用自动创建（根据描述自动生成 App 配置） |
 
-### 24.3.5 对话类（4 个，全部 billable=true，model_type=chat）
+### 24.3.5 会话类（4 个，全部 billable=true，model_type=chat）
 
 | feature_key | 说明 |
 |---|---|
 | `direct_answer` | 简单查询不走 Agent，直接 LLM 回答 |
 | `conversation_summary` | 会话结束后生成长期记忆摘要 |
+| `assistant_agent_intro` | 首页助手 Agent 自动生成介绍文案 |
 | `rerank_fallback` | 主检索失败时的重排兜底 |
-| `tag_assignment` | 给对话/记忆自动打标签 |
 
-### 24.3.6 平台资源类（1 个，billable=false，model_type=chat）
+### 24.3.6 助手 Agent 类（1 个，billable=false，model_type=chat）
 
 | feature_key | 说明 |
 |---|---|
-| `app_auto_creation` | 应用自动创建（如根据描述自动生成 App 配置） |
+| `assistant_agent` | 助手 Agent 主对话模型（`get_assistant_agent_model_config` 优先读取） |
 
 ### 24.3.7 计费汇总
 
@@ -145,10 +149,10 @@
 |---|---|---|---|
 | 图标 | 2 | 0 | 2 |
 | 记忆 | 11 | 0 | 11 |
-| 路由 | 4 | 0 | 4 |
-| 助手 | 4 | 4 | 0 |
-| 对话 | 4 | 4 | 0 |
-| 平台资源 | 1 | 0 | 1 |
+| 路由 | 3 | 0 | 3 |
+| 助手 | 5 | 4 | 1 |
+| 会话 | 4 | 4 | 0 |
+| 助手 Agent | 1 | 0 | 1 |
 | **合计** | **26** | **8** | **18** |
 
 **计费原则**：
@@ -159,44 +163,50 @@
 
 ## 24.4 模型取用策略
 
-### 24.4.1 `LanguageModelService.get_feature_model(feature_key)` 三级回退
+### 24.4.1 `LanguageModelService.get_feature_model(feature_key)` 两级回退
+
+真实实现为 classmethod（[language_model_service.py](../../api/internal/service/language_model_service.py)）：
 
 ```python
-def get_feature_model(self, feature_key: str):
-    """三级取模型策略：配置模型 → fallback_tier 池 → 最便宜可用模型"""
-    config = self._load_feature_config(feature_key)
-    # Level 0: enabled=false 时直接拒绝调用，功能不可用
-    if config and not config.enabled:
-        raise FeatureDisabled("公共 AI 功能已关闭")
-    # Level 1: 从 public_ai_feature_config 读取绑定的 model_config_id
-    if config and config.model_config_id:
-        model = self._load_model_by_id(config.model_config_id)
-        if model and model.status == 'active':
-            return model
+@classmethod
+def get_feature_model(cls, feature_key: str):
+    """两级取模型策略：绑定模型 → fallback_tier 池（失败再走 load_default_language_model）"""
+    svc = injector.get(PublicAIFeatureService)
+    # Level 0: enabled=false 时直接拒绝调用
+    if not svc.is_feature_enabled(feature_key):
+        raise FailException(f"公共 AI 功能已关闭: {feature_key}")
 
-    # Level 2: 按 fallback_tier 从模型池取对应该档位的可用模型（按 model_type 过滤）
-    # 档位口径为数字字符串 "1"~"5"；未配置时由 PublicAIFeatureService 归一化为默认档 "2"
-    tier = svc.get_feature_fallback_tier(feature_key)
+    # Level 1: 优先使用功能绑定的模型
+    model_config = svc.get_feature_model_config(feature_key)
+    if model_config is not None:
+        llm = cls._instantiate_model_from_pool_config(model_config)
+        if llm is not None:
+            svc.touch_last_called(feature_key)
+            return llm
+
+    # Level 2: 回退到 fallback_tier（按 model_type 过滤，防止类型不匹配）
+    # 档位口径为数字字符串；未配置时由 PublicAIFeatureService 归一化为默认档 "2"
+    fallback_tier = svc.get_feature_fallback_tier(feature_key)
     model_type = svc.get_feature_model_type(feature_key)
-    model = self._get_runtime_chat_model_by_tier(tier, model_type)
-    if model:
-        return model
-
-    # Level 3: 兜底链（hardcoded）：最便宜 chat 模型 / 默认模型
-    return self._fallback_hardcoded_chain(model_type)
+    llm = cls._get_runtime_chat_model_by_tier(fallback_tier, model_type)
+    if llm is not None:
+        svc.touch_last_called(feature_key)
+    return llm
 ```
 
-> **档位口径一致性（2026-09 修复）**：`public_ai_feature_config.fallback_tier` 与 `model_pool_config.tier` 统一使用模型池数字档位 `"1"`~`"5"`。`PublicAIFeatureService.get_feature_fallback_tier()` 在功能无配置记录或档位为空时返回 `DEFAULT_FALLBACK_TIER = "2"`，并把历史遗留的字符串档位（`cheap`/`standard`/`strong`/`premium`/`vision`/`long_context`）归一化为对应数字，避免档位解析落空导致功能静默走高成本兜底档。
+> **档位口径一致性（2026-09 修复）**：`public_ai_feature_config.fallback_tier` 与 `model_pool_config.tier` 统一使用模型池档位码。`PublicAIFeatureService.get_feature_fallback_tier()` 在功能无配置记录或档位为空时返回 `DEFAULT_FALLBACK_TIER = "2"`，并把历史遗留的字符串档位（`cheap`/`standard`/`strong`/`premium`/`vision`/`long_context`）归一化为对应数字，避免档位解析落空导致功能静默走高成本兜底档。
+>
+> **说明**：档位解析无可用模型时，`_get_runtime_chat_model_by_tier` 内部会继续兜底到 `load_default_language_model()`（按默认档位取池内 active chat 模型，最终回落到任意 active chat 模型），因此文档不将其单列为"Level 3 硬编码链"——代码中不存在 `_fallback_hardcoded_chain` 这类硬编码模型链。
 
 ### 24.4.2 `model_type` 过滤防类型错配
 
 | 步骤 | 位置 | 过滤逻辑 |
 |---|---|---|
-| Admin UI 下拉 | `admin_routes_8.py` 中 `/admin/public-ai-features/models` 路由对应的模块级 DB helper | `WHERE model_type = :type AND status = 'active'` |
-| 后端 fallback | `_pick_cheapest_by_tier` | `WHERE tier = :tier AND model_type = :type` |
-| 图像生成调用 | `icon_generator_service._generate_with_configured_model` | 二次校验 `model.model_type == 'image'` |
+| Admin UI 下拉 | `admin_routes_8.py` 的 `GET /admin/public-ai-features/models` 路由对应的模块级 DB helper | 按 `model_type` 过滤（含 image/audio 别名族），仅返回 `status='active'` |
+| 后端 fallback | `RuntimeModelPoolService.select_model_with_fallback(tier, model_type)` | 按 `tier` + `model_type` 取 active 模型，再按 `model_tier_policy.allowed_models` 白名单与 `default_model` 校正 |
+| 图像生成调用 | `icon_generator_service` 经 `LanguageModelService.get_feature_credentials("icon_image_generation")` 取凭证 | 取绑定模型对应 provider 的 api_key/base_url + 该模型 model_name |
 
-**强制约束**：`icon_image_generation` 的 `model_type` 为 `image`，其余 25 个为 `chat`。任何路径都不允许 chat 模型生成图像或 image 模型做对话。
+**强制约束**：`icon_image_generation` 的 `model_type` 为 `image_generation`（迁移 `c7d8e9f0a1b2` 设定），其余为 `chat`。任何路径都不允许 chat 模型生成图像或 image 模型做对话。
 
 ### 24.4.3 全量调用点改造
 
@@ -212,7 +222,7 @@ from internal.service import LanguageModelService
 llm = LanguageModelService().get_feature_model('memory_explicit_detection')
 ```
 
-改造规模：`get_feature_model()` 生产调用点遍布 39 个文件 85+ 处（截至 2026-08 复核，覆盖运行代码；另有对应测试文件），主要分布在记忆写读链路（explicit_detector / salience_scorer / entity_extractor / entity_resolution / write_time_conflict_resolver / consolidation_engine / conflict_detector / funnel_compressor / policy_router / digest_manager / skill_emergence / llm_activity_probe）、对话/路由（direct_answer / conductor / task_classifier / pool_intent_resolver / intent_recognition / tool_selector / rerank / tag_assignment / schedule_intent_parser）、助手（assistant_agent / ai_service / conversation / app_service）与图像生成（icon_generator）等。
+改造规模：`get_feature_model()` 生产调用点在 `api/internal/` 下共 **44 处、32 个文件**（截至 2026-09-14 实测；含少量位于 docstring/注释中的示例调用），主要分布在记忆写读链路（explicit_detector / salience_scorer / entity_extractor / entity_resolution / write_time_conflict_resolver / consolidation_engine / conflict_detector / funnel_compressor / policy_router / digest_manager / skill_emergence / llm_activity_probe）、对话/路由（direct_answer / conductor / task_classifier / pool_intent_resolver / intent_recognition / tool_selector / rerank / tag_assignment / schedule_intent_parser）、助手（assistant_agent / ai_service / conversation / app_service）与图像生成（icon_generator）等。
 
 涉及服务：`MemoryWriteService` / `ConsolidationEngine` / `DigestManager` / `PolicyRouter` / `DirectAnswerExecutor` / `RerankService` / `TagAssignmentService` / `AssistantAgentService` / `ConversationService` / `AIService` / `IconGeneratorService` 等。
 
@@ -222,36 +232,33 @@ llm = LanguageModelService().get_feature_model('memory_explicit_detection')
 
 ### 24.5.1 `CreditService.consume_for_feature`
 
+真实签名（[credit_service.py](../../api/internal/service/credit_service.py)）：
+
 ```python
 def consume_for_feature(
     self,
-    user_id: str,
+    account_id: UUID,
     feature_key: str,
-    input_tokens: int,
-    output_tokens: int,
-    model_config_id: Optional[UUID] = None,
-) -> Optional[UUID]:
-    """公共 AI 功能计费扣减
+    *,
+    token_count: int,
+    idempotency_key: str | None = None,
+    model_id: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cached_input_tokens: int | None = None,
+) -> dict:
+    """扣减用户算力值，用于非消息上下文的公共 AI 功能调用。
 
-    Args:
-        feature_key: 必须为 27 个预置之一
-        user_id: 用户 ID
-        input_tokens / output_tokens: 本次调用的 token 消耗
-        model_config_id: 实际使用的模型（可能为 fallback 模型）
-
-    Returns:
-        credit_log 记录 ID；若 billable=false 则返回 None
+    - 先查 PublicAIFeatureConfig.billable：false 时直接返回
+      {"consumed": False, "reason": "system_borne"}，不扣任何算力。
+    - true 时用 idempotency_key 生成 uuid5 合成 message_id，
+      复用 consume_for_message 的幂等扣费逻辑。
+    - 传入 model_id/input_tokens/output_tokens/cached_input_tokens 时，
+      经 PricingEngine 按模型售价精确计价；缺省则回退全局汇率。
     """
-    config = self._load_feature_config(feature_key)
-    if not config or not config.billable:
-        return None  # 系统付费，不扣用户配额
-
-    # 计算扣减量（按模型档位 tier × token 量）
-    tier = self._resolve_model_tier(model_config_id)
-    cost = self._calculate_cost(tier, input_tokens, output_tokens)
-
-    return self._deduct_user_quota(user_id, cost, feature_key=feature_key)
 ```
+
+实际调用方是 `BillingUsageAggregator.final()`（[billing_metering_service.py](../../api/internal/service/billing_metering_service.py)）与 `usage_utils.charge_for_feature()`，而非各业务服务直接调用——业务侧只负责上报 token 用量，扣费在任务收尾时统一结算（同 model_id 合并 token 后一次 ceil）。
 
 ### 24.5.2 8 个 billable 调用点的集成
 
@@ -379,34 +386,38 @@ fallback_tier 池 (Level 2)
 
 ### 24.7.2 列表页
 
-- 显示 27 条预置配置
+- 显示 26 条预置配置
 - 列：feature_key / feature_name / feature_category / model_type / 绑定模型名 / fallback_tier / enabled / billable
 - 筛选：category、enabled、billable
 - 不支持"新建"和"删除"按钮
 
 ### 24.7.3 编辑页
 
-仅 3 个字段可编辑：
+仅 4 个字段可编辑：
 
 | 字段 | 控件 | 数据源 |
 |---|---|---|
-| `model_config_id` | 下拉单选 | `model_config WHERE model_type=:type AND status='active'` |
-| `fallback_tier` | 下拉单选 | 模型池数字档位 `1` / `2` / `3` / `4` / `5`（对应经济/标准/强力/视觉/长上下文） |
+| `model_config_id` | 下拉单选 | `model_pool_config WHERE model_type=:type AND status='active'`（含 image/audio 别名族） |
+| `fallback_tier` | 下拉单选 | 模型池档位码（数据源 `model_tier_policy.tier_code`，档位名由管理员维护，如 免费/低价/均衡/高价） |
 | `enabled` | 复选框 | true / false |
 | `billable` | 单选 | true=扣用户额度 / false=系统承担 |
 
 **只读字段**（不可编辑）：`feature_key` / `feature_name` / `feature_category` / `feature_description` / `model_type`
 
+列表页另提供「一键批量绑定」：按 `model_type` 族把启用功能批量绑定到同一模型（先 `batch-bind/preview` 预览再 `batch-bind` 应用）。
+
 ### 24.7.4 API 端点
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/admin/public-ai-features` | 列表（带分页） |
-| GET | `/admin/public-ai-features/{id}` | 详情 |
-| PATCH | `/admin/public-ai-features/{id}` | 编辑（仅 3 字段） |
-| GET | `/admin/public-ai-features/{id}/models` | 该 feature 可选的模型列表（按 model_type 过滤） |
+| GET | `/admin/public-ai-features` | 列表（带分页，支持 category/enabled/model_type/billable/deprecated 过滤） |
+| GET | `/admin/public-ai-features/models` | 可绑定模型列表（按 `model_type` query 过滤） |
+| GET | `/admin/public-ai-features/<string:feature_key>` | 详情（路径参数是 **feature_key**，非 UUID id） |
+| PATCH | `/admin/public-ai-features/<string:feature_key>` | 编辑（`model_config_id` / `enabled` / `fallback_tier` / `billable` 共 4 字段） |
+| POST | `/admin/public-ai-features/batch-bind/preview` | 批量绑定预览 |
+| POST | `/admin/public-ai-features/batch-bind` | 批量绑定应用 |
 
-**禁止的接口**：POST（新建）/ DELETE（删除）
+**禁止的接口**：POST（新建单条）/ DELETE（删除）——两个 POST 端点仅用于批量绑定，不用于新建 feature_key。
 
 ### 24.7.5 权限
 
@@ -418,21 +429,23 @@ fallback_tier 池 (Level 2)
 
 ### 24.8.1 与 §12 模型路由的关系
 
-`public_ai_feature_config` 是 §12 模型池的**消费方**：从 `model_config` 表中按 `model_config_id` 引用具体的模型配置。`fallback_tier` 字段也复用 §12 定义的模型池数字档位（`1`~`5`）。
+`public_ai_feature_config` 是 §12 模型池的**消费方**：从 `model_pool_config` 表中按 `model_config_id` 引用具体的模型配置。`fallback_tier` 字段也复用 §12 定义的模型池档位码。
 
 ### 24.8.2 与 §16 记忆系统的关系
 
-记忆系统的 12 个 LLM 调用点（explicit_detector / salience_scorer / entity_extractor / conflict_resolver / consolidation 各阶段 / skill_extraction / digest_refinement / intent_classification / conversation_summary）必须使用 `get_feature_model()` 取模型，禁止直连 `get_cheap_chat_model()`。
+记忆系统的 LLM 调用点（explicit_detector / salience_scorer / entity_extractor / entity_resolution / write_time_conflict_resolver / consolidation_engine / conflict_detector / funnel_compressor / policy_router / digest_manager / skill_emergence / llm_activity_probe）必须使用 `get_feature_model()` 取模型，禁止直连 `get_cheap_chat_model()`。
 
 **关键设计**：记忆系统所有 LLM 调用必须**异步执行**（Celery 任务或后台线程），不阻塞用户交互路径。详见 §16.18（新增章节）。
 
 ### 24.8.3 与 §13 Orchestrator 的关系
 
-Orchestrator 的 4 个路由 AI 调用点（complexity_judge / intent_router / app_selection / web_search_decision）使用 `get_feature_model()` 取模型。这些是**同步路径**（用户等待），推荐配置为较低的模型池数字档位（如 `1`）保证响应速度。
+Orchestrator 的复杂度判断由 `TaskClassifierService` 承担（[task_classifier_service.py](../../api/internal/service/task_classifier_service.py)），其 LLM 分支使用 `get_feature_model("task_classification")`；工具选择由 `ToolSelectorService` 使用 `get_feature_model("tool_selection")`。这些是**同步路径**（用户等待），推荐配置为较低的模型池档位（如 `1`）保证响应速度。
+
+> **历史注记**：文档早期版本此处列出的 `complexity_judge` / `intent_router` / `app_selection` / `web_search_decision` 四个名称在代码中**不存在**（全仓零命中），已按真实调用点更正。
 
 ### 24.8.4 与计费系统的关系
 
-`CreditService.consume_for_feature(feature_key, ...)` 是用户配额扣减的统一入口。`billable=true` 的 feature_key（当前 8 个）必须在 LLM 调用成功后调用此方法；`billable=false` 的能力（其余）**禁止**调用此方法（直接走 LLM 不扣费，成本由系统承担）。
+`CreditService.consume_for_feature(account_id, feature_key, ...)` 是公共 AI 功能扣减用户配额的服务层入口（实际由 `BillingUsageAggregator.final()` 在任务收尾时统一调用）。`billable=true` 的 feature_key（当前 8 个）会扣用户算力；`billable=false` 的能力在 `consume_for_feature` 内直接返回 `{"consumed": False, "reason": "system_borne"}`，成本由系统承担。
 
 ### 24.8.5 与存储配额的关系（同名 feature_key 消歧）
 
@@ -456,9 +469,9 @@ Orchestrator 的 4 个路由 AI 调用点（complexity_judge / intent_router / a
 
 ## 24.9 实施验证清单
 
-- [x] `public_ai_feature_config` 表 + 27 条 seed 已通过 Alembic 迁移落库
+- [x] `public_ai_feature_config` 表已通过 Alembic 迁移落库（当前 26 条）
 - [x] `LanguageModelService.get_feature_model()` 方法实现并暴露
-- [x] `get_feature_model()` 改造完成：生产调用遍布 39 个文件 85+ 处，全部使用 `get_feature_model()`
+- [x] `get_feature_model()` 改造完成：生产调用在 `api/internal/` 下 44 处、32 个文件，全部使用 `get_feature_model()`
 - [x] `IconGeneratorService` 改造为配置优先 + image 类型过滤
 - [x] `CreditService.consume_for_feature()` 实现
 - [x] 8 个 billable 服务的计费集成完成

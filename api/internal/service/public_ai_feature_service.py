@@ -17,6 +17,19 @@ from pkg.sqlalchemy import SQLAlchemy
 logger = logging.getLogger(__name__)
 
 
+# 功能未显式配置 fallback_tier 时的默认档位（标准型），与模型池数字档位口径一致。
+DEFAULT_FALLBACK_TIER = "2"
+# 历史字符串档位 → 数字档位映射，兜底兼容迁移前遗留数据（迁移 f1a2b3c4d5e6 已回填）。
+_LEGACY_TIER_ALIASES = {
+    "cheap": "1",
+    "standard": "2",
+    "strong": "3",
+    "premium": "3",
+    "vision": "4",
+    "long_context": "5",
+}
+
+
 # 系统预置的 feature_key 默认配置。
 # feature_key 由代码注册，管理员在后台仅为其绑定模型/开关/档位，不能新建或删除。
 # 启动时通过 ensure_builtin_features() 自动补齐缺失记录，避免迁移脚本多 head 问题。
@@ -141,11 +154,18 @@ class PublicAIFeatureService:
             self.db.session.rollback()
 
     def get_feature_fallback_tier(self, feature_key: str) -> str:
-        """读取功能的回退档位，未配置返回 'cheap'。"""
+        """读取功能的回退档位，未配置返回默认档位。
+
+        档位口径为模型池的数字档位字符串（"1"~"5"，见 model_pool_config.tier /
+        model_tier_policy.tier_code），缺省回落到标准档 "2"。历史上此处曾返回
+        字符串 "cheap"，与数字档位体系不一致，会导致档位解析落空、功能静默走高
+        成本兜底档，故统一为数字档位。
+        """
         cfg = self.get_feature_config(feature_key)
-        if cfg is None:
-            return "cheap"
-        return (cfg.fallback_tier or "cheap").lower()
+        tier = (cfg.fallback_tier or "").strip().lower() if cfg is not None else ""
+        if not tier:
+            return DEFAULT_FALLBACK_TIER
+        return _LEGACY_TIER_ALIASES.get(tier, tier)
 
     def get_feature_model_type(self, feature_key: str) -> str:
         """读取功能所需的模型类型，未配置返回 'chat'。"""
