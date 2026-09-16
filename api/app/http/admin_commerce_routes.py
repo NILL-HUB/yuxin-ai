@@ -1,7 +1,11 @@
-﻿"""Admin 商务路由（Quart）：分销/订单/售后/提现/支付配置/上级绑定。
+"""Admin 商务路由（Quart）：订单/售后/提现/支付配置。
 
 通过 ``register_routes(quart_app)`` 注册；权限点来自 RBAC 迁移种子
-（distribution/order/refund/withdraw/payment_config:*）。
+（order/refund/withdraw/payment_config:*）。
+
+注意：管理端**不提供分销能力**——分销上下级绑定是用户端独有功能
+（管理员若需使用分销应走用户端注册账号）。此处不注册任何 distribution/* 端点，
+分销开关的启停统一由「编排控制」页的功能开关（ENABLE_DISTRIBUTION）管理。
 """
 
 from uuid import UUID
@@ -47,86 +51,6 @@ def register_routes(quart_app):
     if _registered:
         return
     _registered = True
-
-    # =====================================================
-    # 分销管理
-    # =====================================================
-    @quart_app.get("/admin/distribution/overview")
-    async def admin_distribution_overview():
-        from app.http import asgi_app as a
-        from internal.service.admin_distribution_service import AdminDistributionService
-
-        admin, err = await a._resolve_admin_permission("distribution:view")
-        if err is not None:
-            return err
-        result = await a._to_thread(a._get_service(AdminDistributionService).overview)
-        return a._ok(result)
-
-    @quart_app.get("/admin/distribution/relations")
-    async def admin_distribution_relations():
-        from app.http import asgi_app as a
-        from internal.service.admin_distribution_service import AdminDistributionService
-
-        admin, err = await a._resolve_admin_permission("distribution:view")
-        if err is not None:
-            return err
-        result = await a._to_thread(
-            a._get_service(AdminDistributionService).list_relations,
-            _int_arg("current_page", 1),
-            _int_arg("page_size", 20),
-            str(request_args().get("inviter_id") or ""),
-        )
-        return a._ok(result)
-
-    @quart_app.get("/admin/distribution/commissions")
-    async def admin_distribution_commissions():
-        from app.http import asgi_app as a
-        from internal.service.distribution_service import DistributionService
-
-        admin, err = await a._resolve_admin_permission("distribution:view")
-        if err is not None:
-            return err
-        from uuid import UUID as U
-
-        user_id = str(request_args().get("user_id") or "")
-        account_id = None
-        if user_id:
-            try:
-                account_id = U(user_id)
-            except ValueError:
-                return a._json_resp(code="validate_error", message="user_id 格式错误", status=400)
-        result = await a._to_thread(
-            a._get_service(DistributionService).list_commissions,
-            account_id,
-            _int_arg("current_page", 1),
-            _int_arg("page_size", 20),
-        )
-        return a._ok(result)
-
-    @quart_app.put("/admin/users/<user_id>/superior")
-    async def admin_user_bind_superior(user_id: str):
-        from app.http import asgi_app as a
-        from internal.schema.admin_commerce_schema import SuperiorBindReq
-        from internal.service.admin_distribution_service import AdminDistributionService
-
-        admin, err = await a._resolve_admin_permission("distribution:manage")
-        if err is not None:
-            return err
-        payload = await _json_payload()
-        form = SuperiorBindReq(data=payload)
-        if not form.validate():
-            return a._json_resp(code="validate_error", message="参数错误", data=form.errors, status=400)
-        invitee_id = UUID(user_id)
-        inviter_id = payload.get("inviter_id")
-        before = {}
-        result = await a._to_thread(
-            a._get_service(AdminDistributionService).bind_or_unbind_superior,
-            invitee_id,
-            UUID(inviter_id) if inviter_id else None,
-            admin["id"],
-        )
-        _write_audit(admin["id"], "bind_superior" if inviter_id else "unbind_superior", "distribution_relation", invitee_id, before, result)
-        return a._ok(result)
 
     # =====================================================
     # 订单管理

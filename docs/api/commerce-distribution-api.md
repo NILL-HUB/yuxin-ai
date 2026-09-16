@@ -6,7 +6,8 @@
 ## 通用约定
 
 - 统一响应：`{ "code": "success", "message": "", "data": {...} }`；业务错误返回非 success code 与 HTTP 4xx/5xx。
-- 认证：用户侧接口需登录态（Bearer）；管理侧接口需管理员登录态且配齐权限码（RBAC 种子见迁移 `fe1a2b3c4d5e`）。
+- 认证：用户侧接口需登录态（Bearer）；管理侧接口需管理员登录态且配齐权限码（RBAC 种子见迁移 `fe1a2b3c4d5e`，其中分销类权限点已由 `q2c3d4e5f6a7` 移除）。
+- **账号隔离**：管理员与用户端账号是两套独立身份。管理员 JWT（`realm=admin`）访问用户端接口一律 403；用户端业务（含分销上下级绑定）只能以用户账号操作。
 - 分页：`paginator = { "total_record", "total_page", "current_page", "page_size" }`；入参 `current_page`、`page_size`（默认 1 / 20，上限 50）。
 - 金额：Decimal，响应为 Number，展示保留 2 位小数；佣金率 `commission_rate` 字符串（如 `"0.20"`）。
 - 分销总开关：`ENABLE_DISTRIBUTION`（feature flag，默认关闭）。关闭=邀请码可选 + 不产生新佣金；开启=注册邀请码必填 + 佣金结算生效。
@@ -63,6 +64,7 @@
 | 方法/路径 | 说明 |
 |---|---|
 | `GET /plans` | 可购套餐列表（仅 active）：`{list:[{id,code,name,description,plan_type,duration_days,grant_token_credits,price,auto_renew_threshold_percent}]}` |
+| `GET /payment-methods` | **用户侧可用支付方式（只读）**：`{list:[{provider,name,online}]}`。`balance`（余额）恒在首位；微信/支付宝仅在后台对应渠道 `enabled=true` 时出现（与 `payment_provider_config.enabled` 同步）。会员中心据此动态渲染充值渠道/购买方式，后台停用后用户端不再显示该渠道 |
 | `POST /orders` | `{plan_id, pay_method}`；`pay_method=balance/wechatpay/alipay`。规则：余额充值类订单仅支持在线渠道；直购支持余额/在线；在线渠道需已配置启用。余额即时支付返回 `{order:{...}, payment_params:null}`；在线返回订单 + `payment_params`（未接入 SDK 时明确报"支付渠道暂未开通"） |
 | `GET /orders?current_page&page_size` | 我的订单：`{list:[{order_no,plan_id,plan_type,amount,pay_method,order_source,status,transaction_id,paid_at,created_at}], paginator}` |
 | `GET /orders/:order_no` | 订单详情 |
@@ -92,12 +94,10 @@
 
 ## 二、管理端接口（均需权限码）
 
+> **管理端不提供分销能力（2026-09-14 起）**：分销上下级绑定是**用户端独有**功能，管理员账号不得与用户端混用。此处不再提供 `GET /admin/distribution/*` 与 `PUT /admin/users/:id/superior`；管理员若需使用分销，应完全走用户端注册账号。分销总开关的启停由管理端「编排控制」的功能开关（`ENABLE_DISTRIBUTION`）管理。历史 DB 中残留的 `distribution:view` / `distribution:manage` 权限点由迁移 `q2c3d4e5f6a7` 清理。
+
 | 方法/路径 | 权限码 | 说明 |
 |---|---|---|
-| `GET /admin/distribution/overview` | distribution:view | `{bound_users, commission_total, month_commission, inviter_users, distribution_enabled}` |
-| `GET /admin/distribution/relations?current_page&page_size&inviter_id` | distribution:view | 全量绑定关系分页 |
-| `GET /admin/distribution/commissions?user_id=&...` | distribution:view | 指定用户的佣金明细 |
-| `PUT /admin/users/:id/superior` | distribution:manage | `{inviter_id}` 绑定或 `{inviter_id:null}` 解绑；自绑/互为上下级拦截；写审计 |
 | `GET /admin/orders?status&order_source&account_id&...` | order:view | 订单列表（含 auto_renew 筛选） |
 | `GET /admin/orders/:id` | order:view | 订单详情 |
 | `POST /admin/orders/:id/close` | order:manage | 关闭待支付订单（写审计） |

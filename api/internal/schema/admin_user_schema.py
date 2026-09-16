@@ -8,7 +8,7 @@ from pkg.password import password_pattern
 
 class GetAdminUsersReq(Form):
     search = StringField("search", default="", validators=[Optional(), Length(max=255)])
-    status = StringField("status", default="all", validators=[Optional(), AnyOf(["all", "active", "disabled", "pending"])])
+    status = StringField("status", default="all", validators=[Optional(), AnyOf(["all", "active", "disabled", "pending", "deleted"])])
     current_page = IntegerField("current_page", default=1, validators=[Optional(), NumberRange(min=1, max=9999)])
     page_size = IntegerField("page_size", default=20, validators=[Optional(), NumberRange(min=1, max=50)])
 
@@ -32,6 +32,12 @@ class ResetAdminUserPasswordReq(Form):
     password = StringField("password", validators=[DataRequired("密码不能为空"), regexp(regex=password_pattern, message="密码需包含字母和数字，可使用下划线、点等常规字符，长度6~32位")])
 
 
+class DeleteAdminUserReq(Form):
+    """删除（注销）管理员请求体。reason 可选，用于审计留痕。"""
+
+    reason = StringField("reason", default="", validators=[Optional(), Length(max=1024)])
+
+
 class AdminUserResp(Schema):
     id = fields.String()
     username = fields.String()
@@ -45,6 +51,8 @@ class AdminUserResp(Schema):
     last_login_at = fields.Integer(allow_none=True)
     last_login_ip = fields.String()
     is_online = fields.Boolean()
+    deleted_at = fields.Integer(allow_none=True)
+    deleted_reason = fields.String()
 
 
 class AdminUserPageResp(Schema):

@@ -51,4 +51,13 @@ export default  {
       revokeSessions: '踢下线',
       sessionsRevoked: '已踢下线 {count} 个会话',
       revokeSessionsFailed: '踢下线失败',
+      delete: '删除',
+      deleteAdmin: '删除管理员',
+      deleteTitle: '删除管理员',
+      deleteDesc: '确定删除管理员「{name}」？该账号将无法登录且不可恢复。',
+      deleteReason: '删除原因（可选）',
+      deleteReasonPlaceholder: '填写删除原因，便于审计追溯',
+      adminDeleted: '管理员已删除',
+      deleteFailed: '删除管理员失败',
+      cancel: '取消',
     }

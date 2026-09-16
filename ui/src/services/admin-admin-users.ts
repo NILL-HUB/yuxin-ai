@@ -1,4 +1,4 @@
-import { get, post, request } from '@/utils/request'
+import { del, get, post, request } from '@/utils/request'
 import { type BaseResponse } from '@/models/base'
 
 const patch = <T>(url: string, body?: Record<string, unknown>) =>
@@ -77,3 +77,6 @@ export const resetAdminUserPassword = (id: string, password: string) =>
 export const revokeAdminUserSessions = (adminId: string) => {
   return post<BaseResponse<{ revoked_sessions: number }>>(`/admin/admin-users/${adminId}/sessions/revoke`)
 }
+
+export const deleteAdminUser = (id: string, reason = '') =>
+  del<BaseResponse<AdminUser>>(`/admin/admin-users/${id}`, { body: { reason } })

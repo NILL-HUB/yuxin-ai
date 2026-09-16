@@ -49,6 +49,13 @@ class AdminUser(Base):
     # 密码最近变更时间：用于密码修改后立即使旧登录会话失效
     password_changed_at = Column(DateTime, nullable=True)
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
+    # 管理员删除（注销，不可逆）：status='deleted' 时由管理员删除触发，禁止登录。
+    # 采用软删除而非物理删除：admin_user.id 被 admin_session / admin_user_role /
+    # audit_log / knowledge_base.owner_admin_user_id / app.created_by_admin 等多处
+    # 外键引用，物理删除会触发 FK 约束失败并丢失审计追溯能力。
+    deleted_at = Column(DateTime, nullable=True)
+    deleted_by = Column(UUID, nullable=True)
+    deleted_reason = Column(String(1024), nullable=False, server_default=text("''::character varying"))
     last_login_at = Column(DateTime, nullable=True)
     last_login_ip = Column(String(255), nullable=False, server_default=text("''::character varying"))
     updated_at = Column(
@@ -70,6 +77,11 @@ class AdminUser(Base):
     @property
     def is_active(self) -> bool:
         return self.status == "active"
+
+    @property
+    def is_deleted(self) -> bool:
+        """是否已删除（注销）。已删除的管理员不可登录，且不出现在默认列表中。"""
+        return self.status == "deleted"
 
 
 class AdminSession(Base):

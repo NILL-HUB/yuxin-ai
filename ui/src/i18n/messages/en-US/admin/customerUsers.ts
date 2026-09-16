@@ -63,25 +63,4 @@ export default  {
       onlineStatus: 'Online Status',
       online: 'Online',
       offline: 'Offline',
-      superior: 'Superior Binding',
-      superiorTitle: 'Superior Binding: {name}',
-      superiorCol: 'Superior',
-      currentSuperior: 'Current Superior',
-      noSuperiorText: 'No superior',
-      replaceSuperiorTitle: 'Replace Superior',
-      replaceSuperiorDesc:
-        'The current superior of this user is "{old}". It will be replaced by "{name}" after binding. Continue?',
-      unbindSuperiorTitle: 'Unbind Superior',
-      unbindSuperiorDesc:
-        'Unbind the superior "{name}" of this user? The relationship can only be restored by re-binding.',
-      superiorDesc:
-        'Search and select a user as the superior to create a distribution binding; unbinding removes the current superior of this user.',
-      superiorSelectPlaceholder: 'Search and select superior user (name/email)',
-      superiorBind: 'Confirm Bind',
-      superiorUnbind: 'Unbind',
-      superiorBound: 'Superior bound',
-      superiorUnbound: 'Superior unbound',
-      superiorBindFailed: 'Failed to bind superior',
-      superiorUnbindFailed: 'Failed to unbind superior',
-      superiorInviterRequired: 'Please enter superior user ID',
     }

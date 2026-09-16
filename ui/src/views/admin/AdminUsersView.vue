@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Message } from '@arco-design/web-vue'
+import { computed, h, onMounted, ref } from 'vue'
+import { Message, Modal } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
 import {
   createAdminUser,
+  deleteAdminUser,
   disableAdminUser,
   enableAdminUser,
   listAdminUsers,
@@ -20,6 +21,9 @@ const { t } = useI18n()
 const adminStore = useAdminStore()
 const canManageAdmin = computed(() => adminStore.hasPermission('admin_user:disable'))
 const canUpdateAdmin = computed(() => adminStore.hasPermission('admin_user:update'))
+// 删除需独立权限点 admin_user:delete，不能复用 update/disable
+// （后端 support.py 的权限映射同样按 DELETE → admin_user:delete 强制）
+const canDeleteAdmin = computed(() => adminStore.hasPermission('admin_user:delete'))
 
 const loading = ref(false)
 const actionLoading = ref(false)
@@ -270,6 +274,53 @@ const submitResetPwd = async () => {
   }
 }
 
+const deleteReason = ref('')
+
+const handleDelete = (admin: AdminUser) => {
+  deleteReason.value = ''
+  Modal.confirm({
+    title: t('admin.adminUsers.deleteTitle'),
+    content: () =>
+      h('div', { class: 'space-y-3' }, [
+        h(
+          'p',
+          t('admin.adminUsers.deleteDesc', {
+            name: admin.username || admin.name || admin.id,
+          }),
+        ),
+        h('div', [
+          h(
+            'div',
+            { class: 'text-xs text-gray-500 mb-1' },
+            t('admin.adminUsers.deleteReason'),
+          ),
+          h('input', {
+            value: deleteReason.value,
+            class: 'delete-reason-input',
+            placeholder: t('admin.adminUsers.deleteReasonPlaceholder'),
+            onInput: (event: Event) => {
+              deleteReason.value = (event.target as HTMLInputElement).value
+            },
+          }),
+        ]),
+      ]),
+    okText: t('admin.adminUsers.deleteAdmin'),
+    okButtonProps: { status: 'danger' },
+    cancelText: t('admin.adminUsers.cancel'),
+    onBeforeOk: async () => {
+      try {
+        await deleteAdminUser(admin.id, deleteReason.value.trim())
+        Message.success(t('admin.adminUsers.adminDeleted'))
+        await loadAdmins()
+        return true
+      } catch (error) {
+        Message.error(getErrorMessage(error, t('admin.adminUsers.deleteFailed')))
+        return false
+      }
+    },
+  })
+}
+
 onMounted(async () => {
   await loadRoles()
   await loadAdmins()
@@ -351,6 +402,12 @@ onMounted(async () => {
                   :loading="actionLoading"
                   @click="handleEnable(record)"
                 >{{ t('admin.adminUsers.enable') }}</a-button>
+                <a-button
+                  v-if="canDeleteAdmin && record.status !== 'deleted' && !isSuperAdmin(record)"
+                  size="mini"
+                  status="danger"
+                  @click="handleDelete(record)"
+                >{{ t('admin.adminUsers.delete') }}</a-button>
               </a-space>
             </template>
           </template>

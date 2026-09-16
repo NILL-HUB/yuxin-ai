@@ -794,7 +794,8 @@ def register_routes(quart_app):
     async def ai_optimize_prompt():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        # 管理端专用 AI 辅助：走管理员身份、成本由系统承担，不回落到用户账号
+        account, err = await a._resolve_admin_ai_account()
         if err is not None:
             return err
 
@@ -847,7 +848,8 @@ def register_routes(quart_app):
     async def ai_code_assistant_chat():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        # 管理端专用 AI 辅助：走管理员身份、成本由系统承担，不回落到用户账号
+        account, err = await a._resolve_admin_ai_account()
         if err is not None:
             return err
 
@@ -873,7 +875,8 @@ def register_routes(quart_app):
     async def ai_openapi_schema_assistant_chat():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        # 管理端专用 AI 辅助：走管理员身份、成本由系统承担，不回落到用户账号
+        account, err = await a._resolve_admin_ai_account()
         if err is not None:
             return err
 
@@ -899,7 +902,8 @@ def register_routes(quart_app):
     async def ai_mcp_schema_assistant_chat():
         from app.http import asgi_app as a
 
-        account, err = await a._resolve_account()
+        # 管理端专用 AI 辅助：走管理员身份、成本由系统承担，不回落到用户账号
+        account, err = await a._resolve_admin_ai_account()
         if err is not None:
             return err
 

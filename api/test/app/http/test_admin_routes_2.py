@@ -105,7 +105,7 @@ class _FakeWorkflowService:
     def __init__(self):
         self.calls = []
 
-    def create_workflow(self, req, created_by_admin=None):
+    def create_workflow(self, req, account=None, *, created_by_admin=None):
         self.calls.append(("create", req.name.data, created_by_admin))
         return SimpleNamespace(id=uuid4())
 
@@ -274,6 +274,8 @@ class TestAdminWorkflowRoutes:
         assert "id" in payload["data"]
         assert wf_service.calls[0][0] == "create"
         assert wf_service.calls[0][1] == "新工作流"
+        # created_by_admin 必须记录发起管理员（历史缺陷：引用了不存在的 a._ADMIN_USER_ID，恒为 None）
+        assert wf_service.calls[0][2] == "00000000-0000-0000-0000-000000000000"
 
     def test_create_workflow_requires_name(self, monkeypatch):
         self._setup(monkeypatch)

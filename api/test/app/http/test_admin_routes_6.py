@@ -110,6 +110,14 @@ class _FakeAdminUserService:
         self.calls.append(("revoke_sessions", admin_user_id))
         return {"revoked_sessions": 2}
 
+    def delete_admin_user(self, admin_user_id, *, reason="", operator_id, ip, user_agent):
+        self.calls.append(("delete", admin_user_id, reason))
+        result = dict(self.admin)
+        result["status"] = "deleted"
+        result["deleted_at"] = 1710000000
+        result["deleted_reason"] = reason
+        return result
+
 
 class TestAdminAuthRoutes:
     def _setup(self, monkeypatch):
@@ -413,6 +421,40 @@ class TestAdminUserRoutes:
         assert resp.status_code == 200
         assert payload["data"]["revoked_sessions"] == 2
         assert admin_service.calls[0] == ("revoke_sessions", admin_id)
+
+    def test_delete(self, monkeypatch):
+        admin_service = self._setup(monkeypatch)
+        admin_id = uuid4()
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.delete(
+                    f"/admin/admin-users/{admin_id}",
+                    json={"reason": "离职"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["data"]["status"] == "deleted"
+        assert payload["data"]["deleted_reason"] == "离职"
+        assert admin_service.calls[0] == ("delete", admin_id, "离职")
+
+    def test_delete_without_body(self, monkeypatch):
+        """删除请求体可选：无 body 时 reason 应为空串而非报错。"""
+        admin_service = self._setup(monkeypatch)
+        admin_id = uuid4()
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.delete(f"/admin/admin-users/{admin_id}")
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert admin_service.calls[0] == ("delete", admin_id, "")
 
 
 class _FakeRoutingQualityFeedbackService:

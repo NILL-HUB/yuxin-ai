@@ -1,42 +1,11 @@
 import { get, post } from '@/utils/request'
 import {
-  type AdminDistributionOverviewResponse,
-  type AdminDistributionRelationListResponse,
-  type CommissionListResponse,
-} from '@/models/distribution'
-import {
   type AdminOrderListResponse,
   type AdminOrderResponse,
   type RefundListResponse,
   type WithdrawalListResponse,
   type WithdrawalResponse,
 } from '@/models/commerce'
-
-export const getDistributionOverview = async () => {
-  const response = await get<AdminDistributionOverviewResponse>('/admin/distribution/overview')
-  return response.data
-}
-
-export const listDistributionRelations = async (params: {
-  current_page: number
-  page_size: number
-  inviter_id?: string
-}) => {
-  const response = await get<AdminDistributionRelationListResponse>('/admin/distribution/relations', { params })
-  return response.data
-}
-
-export const listDistributionCommissions = async (params: {
-  user_id?: string
-  current_page: number
-  page_size: number
-}) => {
-  const cleanParams = Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== '' && value !== undefined && value !== null),
-  )
-  const response = await get<CommissionListResponse>('/admin/distribution/commissions', { params: cleanParams })
-  return response.data
-}
 
 export const listAdminOrders = async (params: {
   status?: string

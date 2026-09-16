@@ -179,6 +179,11 @@ async def _resolve_account(account_id_override: str | None = None):
     return await _support._resolve_account(account_id_override)
 
 
+async def _resolve_admin_ai_account():
+    """管理端 AI 辅助端点的调用身份（管理员 token，成本由系统承担，不回落到用户账号）。"""
+    return await _support._resolve_admin_ai_account()
+
+
 async def _resolve_admin_permission(permission_code: str):
     return await _support._resolve_admin_permission(permission_code)
 

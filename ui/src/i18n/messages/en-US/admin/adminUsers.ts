@@ -51,4 +51,13 @@ export default  {
       revokeSessions: 'Revoke Sessions',
       sessionsRevoked: 'Revoked {count} session(s)',
       revokeSessionsFailed: 'Failed to revoke sessions',
+      delete: 'Delete',
+      deleteAdmin: 'Delete Admin',
+      deleteTitle: 'Delete Admin',
+      deleteDesc: 'Delete admin "{name}"? This account will be unable to log in and cannot be restored.',
+      deleteReason: 'Deletion reason (optional)',
+      deleteReasonPlaceholder: 'Provide a reason for auditing',
+      adminDeleted: 'Admin deleted',
+      deleteFailed: 'Failed to delete admin',
+      cancel: 'Cancel',
     }

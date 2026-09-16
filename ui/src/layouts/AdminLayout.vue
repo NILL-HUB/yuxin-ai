@@ -155,7 +155,6 @@ const menuGroups = computed(() => ([
     title: t('admin.adminLayout.menu.commerceOps'),
     icon: 'M3 3h3v3H3zM18 3h3v3h-3zM3 18h3v3H3zM18 18h3v3h-3zM12 7v10M7 12h10',
     items: [
-      { to: '/admin/distribution', label: t('admin.adminLayout.menu.distribution'), permission: 'distribution:view' },
       { to: '/admin/orders', label: t('admin.adminLayout.menu.orders'), permission: 'order:view' },
       { to: '/admin/refunds', label: t('admin.adminLayout.menu.refunds'), permission: 'refund:view' },
       { to: '/admin/withdrawals', label: t('admin.adminLayout.menu.withdrawals'), permission: 'withdraw:view' },

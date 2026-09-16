@@ -99,6 +99,11 @@ def register_routes(quart_app):
         from app.http import asgi_app as a
         from internal.service import WorkflowService
 
+        # 解析当前管理员作为操作者；created_by_admin 记录创建者，供展示归属与审计
+        operator, err = await a._resolve_admin_operator()
+        if err is not None:
+            return err
+
         payload = await request.get_json(force=True, silent=True) or {}
         name = str(payload.get("name") or "").strip()
         if not name:
@@ -118,7 +123,8 @@ def register_routes(quart_app):
         workflow = await a._to_thread(
             a._get_service(WorkflowService).create_workflow,
             req,
-            created_by_admin=a._ADMIN_USER_ID if hasattr(a, "_ADMIN_USER_ID") else None,
+            None,
+            created_by_admin=str(operator.id),
         )
         return a._ok({"id": str(workflow.id)})
 

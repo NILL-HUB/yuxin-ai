@@ -62,9 +62,6 @@ class AdminCustomerUserResp(Schema):
     created_at = fields.Integer(allow_none=True)
     sessions = fields.List(fields.Nested(AdminCustomerUserSessionResp))
     is_online = fields.Boolean()
-    superior_id = fields.String(allow_none=True)
-    superior_name = fields.String(allow_none=True)
-    superior_email = fields.String(allow_none=True)
 
 
 class AdminCustomerUserPageResp(Schema):

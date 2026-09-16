@@ -35,25 +35,6 @@ export type DistributionCommission = {
   created_at: number | null
 }
 
-export type AdminDistributionOverview = {
-  bound_users: number
-  commission_total: number
-  month_commission: number
-  inviter_users: number
-  distribution_enabled: boolean
-}
-
-export type AdminDistributionRelation = {
-  id: string
-  name: string
-  email?: string | null
-  inviter_id: string
-  inviter_name?: string | null
-  inviter_email?: string | null
-  bound_at: number | null
-  source: string
-}
-
 export type RegisterInviteInfo = {
   valid: boolean
   required: boolean
@@ -63,6 +44,4 @@ export type RegisterInviteInfo = {
 export type MyDistributionResponse = BaseResponse<MyDistribution>
 export type SubordinateListResponse = BasePaginatorResponse<DistributionSubordinate>
 export type CommissionListResponse = BasePaginatorResponse<DistributionCommission>
-export type AdminDistributionOverviewResponse = BaseResponse<AdminDistributionOverview>
-export type AdminDistributionRelationListResponse = BasePaginatorResponse<AdminDistributionRelation>
 export type RegisterInviteInfoResponse = BaseResponse<RegisterInviteInfo>

@@ -347,6 +347,31 @@ def register_routes(quart_app):
         resp = RevokeAdminUserSessionsResp()
         return a._ok(resp.dump(result))
 
+    @quart_app.delete("/admin/admin-users/<uuid:admin_id>")
+    async def admin_user_delete(admin_id):
+        """删除（注销）管理员账号。
+
+        权限点 `admin_user:delete` 由全局 RBAC 门禁（asgi_app.before_request
+        → support._admin_route_permission）强制，无需在此重复校验；
+        service 层另做超管保护与"不能删除自己"的业务约束。
+        """
+        from app.http import asgi_app as a
+        from internal.schema.admin_user_schema import AdminUserResp
+        from internal.service.admin_user_service import AdminUserService
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        operator_id, ip, user_agent = await _get_operator_context()
+        result = await a._to_thread(
+            a._get_service(AdminUserService).delete_admin_user,
+            admin_id,
+            reason=str(payload.get("reason") or ""),
+            operator_id=operator_id,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        resp = AdminUserResp()
+        return a._ok(resp.dump(result))
+
     # ===================== admin_routing_quality =====================
     @quart_app.post("/admin/routing-quality/feedback")
     async def admin_routing_quality_feedback_create():

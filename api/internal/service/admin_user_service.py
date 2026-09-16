@@ -331,6 +331,10 @@ class AdminUserService:
             query = query.filter((AdminUser.username.ilike(keyword)) | (AdminUser.email.ilike(keyword)) | (AdminUser.name.ilike(keyword)))
         if status and status != "all":
             query = query.filter(AdminUser.status == status)
+        else:
+            # 默认不展示已删除管理员（避免列表被注销账号占满；
+            # 可显式按 status=deleted 查，与 customer_user 列表语义一致）
+            query = query.filter(AdminUser.status != "deleted")
         total = query.count()
         admin_users = query.order_by(AdminUser.created_at.desc()).offset((current_page - 1) * page_size).limit(page_size).all()
         return {
@@ -458,6 +462,14 @@ class AdminUserService:
             admin_user.status = status
         if role_codes is not None:
             self._replace_admin_user_roles(admin_user.id, role_codes)
+            # 角色变更可能改变该管理员的权限集 → 立即清理其 Agent 的失效授权（§4.4）。
+            # 必须在 commit 之前：与角色变更同一次提交生效，避免中间态被读到。
+            self._prune_admin_agent_permissions(
+                admin_user.id,
+                admin_permissions=self._get_permission_codes(
+                    self._get_role_codes(admin_user.id)
+                ),
+            )
         serialized = self._serialize_admin_user_with_roles(admin_user)
         self._emit_audit(
             operator_id=operator_id,
@@ -495,6 +507,10 @@ class AdminUserService:
         before_status = admin_user.status
         self._ensure_super_admin_still_available(admin_user.id, before_roles, before_roles, "disabled")
         admin_user.status = "disabled"
+        # 管理员被禁用 → 其名下 Agent 的授权全部失效（§4.4）。
+        # 在 commit 之前调用：与状态变更同一次提交生效。
+        # 语义取舍：重新启用后需**手动重新下放**权限（更安全的默认）。
+        self._prune_admin_agent_permissions(admin_user.id, admin_permissions=[])
         self._emit_audit(
             operator_id=operator_id,
             action="disable",
@@ -572,6 +588,74 @@ class AdminUserService:
             user_agent=user_agent,
             before_data={},
             after_data={},
+        )
+        self.session.commit()
+        return self._serialize_admin_user_with_roles(admin_user)
+
+    def delete_admin_user(
+        self,
+        admin_id: UUID,
+        *,
+        reason: str = "",
+        operator_id=None,
+        ip: str = "",
+        user_agent: str = "",
+    ) -> dict[str, object]:
+        """删除（注销）管理员账号：status='deleted'，不可逆。
+
+        与 disable（停用、可逆、保留登录能力）区分：
+        - disable：可随时 enable 恢复
+        - delete：注销账号，禁止登录、吊销全部会话，不可恢复
+
+        软删除而非物理删除：`admin_user.id` 被 `admin_session` /
+        `admin_user_role` / `audit_log` / `knowledge_base.owner_admin_user_id`
+        等多处外键引用，物理删除会触发 FK 约束失败并丢失审计追溯能力。
+        """
+        admin_user = self.session.query(AdminUser).filter(AdminUser.id == admin_id).one_or_none()
+        if admin_user is None:
+            raise NotFoundException("管理员不存在")
+        if admin_user.is_deleted:
+            raise FailException("管理员账号已删除，请勿重复操作")
+        roles = self._get_role_codes(admin_user.id)
+        # 超级管理员账号不允许被删除，避免系统最高权限账号消失导致系统瘫痪
+        if "super_admin" in roles:
+            raise FailException("超级管理员账号不允许删除")
+        # 复用既有的"至少保留一个超管"约束：删除后若不再有活跃超管则拒绝。
+        # （删除会把 status 置为 deleted，等价于该超管不再可用）
+        self._ensure_super_admin_still_available(admin_user.id, roles, roles, "deleted")
+        # 不允许删除自己（避免管理员把自己锁在系统外）
+        if operator_id and str(operator_id) == str(admin_user.id):
+            raise FailException("不能删除自己的账号")
+
+        before_data = {
+            "username": admin_user.username,
+            "name": admin_user.name,
+            "email": admin_user.email,
+            "status": admin_user.status,
+            "roles": roles,
+        }
+
+        now = self._now()
+        admin_user.status = "deleted"
+        admin_user.deleted_at = now
+        admin_user.deleted_by = operator_id
+        admin_user.deleted_reason = reason or ""
+        # 立即吊销全部会话：软删除后 is_active 为 False 已能拒绝鉴权，
+        # 此处主动吊销可避免活跃会话残留（与 reset_password 的处理一致）。
+        self._revoke_all_admin_sessions(admin_user.id)
+
+        self._emit_audit(
+            operator_id=operator_id,
+            action="delete",
+            resource_type="admin_user",
+            resource_id=str(admin_user.id),
+            ip=ip,
+            user_agent=user_agent,
+            before_data=before_data,
+            after_data={
+                "status": "deleted",
+                "deleted_reason": admin_user.deleted_reason,
+            },
         )
         self.session.commit()
         return self._serialize_admin_user_with_roles(admin_user)
@@ -678,6 +762,47 @@ class AdminUserService:
         for role_id in role_ids:
             self.session.add(AdminUserRole(admin_user_id=admin_user_id, role_id=role_id))
 
+    def _agent_service_db(self):
+        """构造 AdminAgentService 所需的最小 db 适配（复用同一 session）。
+
+        `AdminAgentService` 只用到 `db.session` 与 `db.auto_commit()`；这里复用
+        `self.session`（而非另建连接），保证「角色变更」与「权限清理」在同一次
+        事务中提交、彼此可见，也避免两条连接带来的可见性问题。
+        """
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        @contextmanager
+        def _auto_commit():
+            try:
+                yield
+                self.session.commit()
+            except Exception:
+                self.session.rollback()
+                raise
+
+        return SimpleNamespace(session=self.session, auto_commit=_auto_commit)
+
+    def _prune_admin_agent_permissions(
+        self, admin_user_id, *, admin_permissions
+    ) -> None:
+        """管理员失权 → 立即清理其名下 Agent 的失效权限（设计 §4.4）。
+
+        静默失败：清理不应阻断主流程（角色变更本身已成功），
+        但必须记日志以便排查。
+        """
+        try:
+            from internal.service.admin_agent_service import AdminAgentService
+
+            AdminAgentService(db=self._agent_service_db()).prune_revoked_permissions(
+                admin_user_id=admin_user_id,
+                admin_permissions=admin_permissions,
+            )
+        except Exception:
+            logger.exception(
+                "清理管理端 Agent 失效权限失败 admin_user_id=%s", admin_user_id
+            )
+
     def _serialize_current_admin_user(self, admin_user: AdminUser) -> dict[str, object]:
         result = self._serialize_admin_user(admin_user)
         account_id = getattr(admin_user, "account_id", None)
@@ -749,4 +874,8 @@ class AdminUserService:
             "created_at": AdminUserService._timestamp(admin_user.created_at),
             "last_login_at": AdminUserService._timestamp(admin_user.last_login_at),
             "last_login_ip": admin_user.last_login_ip or "",
+            "deleted_at": AdminUserService._timestamp(
+                getattr(admin_user, "deleted_at", None)
+            ),
+            "deleted_reason": getattr(admin_user, "deleted_reason", "") or "",
         }

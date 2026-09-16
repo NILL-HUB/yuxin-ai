@@ -129,7 +129,7 @@ const renderView = async () => {
     avatar: '',
     status: 'active',
     roles: ['operator'],
-    permissions: ['customer:read', 'customer:update', 'distribution:manage'],
+    permissions: ['customer:read', 'customer:update'],
   })
   const wrapper = mount(CustomerUsersView, {
     global: {

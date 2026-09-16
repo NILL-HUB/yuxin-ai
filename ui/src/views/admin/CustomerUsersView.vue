@@ -9,7 +9,6 @@ import {
   enableCustomerUser,
   listCustomerUsers,
   revokeCustomerUserSessions,
-  setCustomerUserSuperior,
   updateCustomerUser,
 } from '@/services/admin-customer-users'
 import { getErrorMessage } from '@/utils/error'
@@ -18,7 +17,6 @@ import { useAdminStore } from '@/stores/admin'
 
 const { t } = useI18n()
 const adminStore = useAdminStore()
-const canManageDistribution = computed(() => adminStore.hasPermission('distribution:manage'))
 const canCreateUser = computed(() => adminStore.hasPermission('user:create'))
 const canUpdateUser = computed(() => adminStore.hasPermission('user:update'))
 const canDeleteUser = computed(() => adminStore.hasPermission('user:delete'))
@@ -44,12 +42,6 @@ const form = ref({
 // 删除确认
 const deleteReason = ref('')
 
-// 上级绑定抽屉
-const selectedSuperiorUser = ref<CustomerUser | null>(null)
-const superiorInviterId = ref('')
-const superiorLoading = ref(false)
-const superiorOptions = ref<{ label: string; value: string }[]>([])
-
 const statusOptions = computed(() => [
   { label: t('admin.customerUsers.allStatus'), value: '' },
   { label: t('admin.customerUsers.statusActive'), value: 'active' },
@@ -66,7 +58,6 @@ const formatTime = (value: number | null) => {
 
 const columns = computed(() => [
   { title: t('admin.customerUsers.user'), slotName: 'user' },
-  { title: t('admin.customerUsers.superiorCol'), slotName: 'superior' },
   { title: t('admin.customerUsers.status'), slotName: 'status' },
   { title: t('admin.customerUsers.onlineStatus'), slotName: 'online_status' },
   { title: t('admin.customerUsers.lastLogin'), slotName: 'last_login' },
@@ -137,29 +128,6 @@ const handleRevokeSessions = async (user: CustomerUser) => {
     Message.error(getErrorMessage(error, t('admin.customerUsers.revokeSessionsFailed')))
   } finally {
     actionLoading.value = false
-  }
-}
-
-const openSuperior = (user: CustomerUser) => {
-  selectedSuperiorUser.value = user
-  superiorInviterId.value = ''
-  superiorOptions.value = [
-    {
-      label: `${user.name || user.email || user.id}${user.email && user.name ? ` · ${user.email}` : ''}`,
-      value: user.id,
-    },
-  ]
-}
-
-const onSuperiorSearch = async (keyword: string) => {
-  try {
-    const response = await listCustomerUsers({ keyword, status: '', current_page: 1, page_size: 20 })
-    superiorOptions.value = (response.list || []).map((user) => ({
-      label: `${user.name || user.email || user.id}${user.email && user.name ? ` · ${user.email}` : ''}`,
-      value: user.id,
-    }))
-  } catch {
-    superiorOptions.value = []
   }
 }
 
@@ -298,91 +266,6 @@ const handleDelete = (user: CustomerUser) => {
   })
 }
 
-const closeSuperior = () => {
-  selectedSuperiorUser.value = null
-  superiorInviterId.value = ''
-}
-
-const superiorOptionLabel = (id: string) => {
-  const option = superiorOptions.value.find((item) => item.value === id)
-  return option?.label || id
-}
-
-const doBindSuperior = async (user: CustomerUser, inviterId: string) => {
-  superiorLoading.value = true
-  try {
-    await setCustomerUserSuperior(user.id, inviterId)
-    Message.success(t('admin.customerUsers.superiorBound'))
-    closeSuperior()
-    await loadUsers()
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.customerUsers.superiorBindFailed')))
-  } finally {
-    superiorLoading.value = false
-  }
-}
-
-const handleBindSuperior = async () => {
-  if (!selectedSuperiorUser.value) return
-  const inviterId = superiorInviterId.value.trim()
-  if (!inviterId) {
-    Message.error(t('admin.customerUsers.superiorInviterRequired'))
-    return
-  }
-  const user = selectedSuperiorUser.value
-  const newName = superiorOptionLabel(inviterId)
-  if (user.superior_id) {
-    Modal.confirm({
-      title: t('admin.customerUsers.replaceSuperiorTitle'),
-      content: t('admin.customerUsers.replaceSuperiorDesc', {
-        old: user.superior_name || user.superior_email || t('admin.customerUsers.noSuperiorText'),
-        name: newName,
-      }),
-      okText: t('admin.customerUsers.superiorBind'),
-      cancelText: t('common.actions.cancel'),
-      onOk: () => doBindSuperior(user, inviterId),
-    })
-  } else {
-    await doBindSuperior(user, inviterId)
-  }
-}
-
-const doUnbindSuperior = async (user: CustomerUser) => {
-  superiorLoading.value = true
-  try {
-    const result = await setCustomerUserSuperior(user.id, null)
-    if (result?.unbound) {
-      Message.success(t('admin.customerUsers.superiorUnbound'))
-    } else {
-      Message.success(t('admin.customerUsers.superiorUnbound'))
-    }
-    closeSuperior()
-    await loadUsers()
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.customerUsers.superiorUnbindFailed')))
-  } finally {
-    superiorLoading.value = false
-  }
-}
-
-const handleUnbindSuperior = async () => {
-  if (!selectedSuperiorUser.value) return
-  const user = selectedSuperiorUser.value
-  if (user.superior_id) {
-    Modal.confirm({
-      title: t('admin.customerUsers.unbindSuperiorTitle'),
-      content: t('admin.customerUsers.unbindSuperiorDesc', {
-        name: user.superior_name || user.superior_email || t('admin.customerUsers.noSuperiorText'),
-      }),
-      okText: t('admin.customerUsers.superiorUnbind'),
-      cancelText: t('common.actions.cancel'),
-      onOk: () => doUnbindSuperior(user),
-    })
-  } else {
-    await doUnbindSuperior(user)
-  }
-}
-
 onMounted(async () => {
   await loadUsers()
 })
@@ -439,19 +322,6 @@ onMounted(async () => {
                 </div>
               </div>
             </template>
-            <template v-if="col.slotName === 'superior'">
-              <template v-if="record.superior_id">
-                <div class="cell-stack">
-                  <span>{{ record.superior_name || record.superior_email || '-' }}</span>
-                  <span v-if="record.superior_email && record.superior_name" class="cell-sub">{{ record.superior_email }}</span>
-                  <div class="cell-id-row">
-                    <code class="cell-id">{{ record.superior_id }}</code>
-                    <a-button size="mini" type="text" @click="record.superior_id && copyUserId(record.superior_id)">{{ t('admin.customerUsers.copyId') }}</a-button>
-                  </div>
-                </div>
-              </template>
-              <span v-else class="text-gray-400">-</span>
-            </template>
             <template v-else-if="col.slotName === 'status'">
               <a-tag v-if="record.status === 'active'" size="small" color="green">{{ t('admin.customerUsers.pillActive') }}</a-tag>
               <a-tag v-else-if="record.status === 'disabled'" size="small" color="red">{{ t('admin.customerUsers.pillDisabled') }}</a-tag>
@@ -500,7 +370,6 @@ onMounted(async () => {
                   :loading="actionLoading"
                   @click="handleRevokeSessions(record)"
                 >{{ t('admin.customerUsers.revokeSessions') }}</a-button>
-                <a-button v-if="canManageDistribution" size="mini" :loading="actionLoading" @click="openSuperior(record)">{{ t('admin.customerUsers.superior') }}</a-button>
                 <a-button
                   v-if="canDeleteUser"
                   size="mini"
@@ -527,44 +396,6 @@ onMounted(async () => {
         @page-size-change="onPageSizeChange"
       />
     </div>
-
-    <!-- 上级绑定抽屉 -->
-    <a-drawer
-      :visible="!!selectedSuperiorUser"
-      :width="520"
-      :title="t('admin.customerUsers.superiorTitle', { name: selectedSuperiorUser?.name || selectedSuperiorUser?.email || '' })"
-      @cancel="closeSuperior"
-    >
-      <div class="space-y-4">
-        <div class="rounded-lg border bg-gray-50 p-4">
-          <div class="text-sm font-medium text-gray-700 mb-2">{{ t('admin.customerUsers.superiorDesc') }}</div>
-          <div v-if="selectedSuperiorUser?.superior_id" class="rounded-lg border border-amber-200 bg-amber-50 p-3 mb-3">
-            <div class="text-xs text-amber-700 font-medium mb-1">{{ t('admin.customerUsers.currentSuperior') }}</div>
-            <div class="text-sm text-gray-800">
-              {{ selectedSuperiorUser.superior_name || selectedSuperiorUser.superior_email || '-' }}
-              <span v-if="selectedSuperiorUser.superior_email && selectedSuperiorUser.superior_name" class="text-gray-500"> · {{ selectedSuperiorUser.superior_email }}</span>
-            </div>
-            <code class="text-xs text-gray-400">{{ selectedSuperiorUser.superior_id }}</code>
-          </div>
-          <div class="flex gap-2">
-            <a-select
-              v-model="superiorInviterId"
-              :options="superiorOptions"
-              allow-search
-              allow-clear
-              :filter-option="false"
-              :placeholder="t('admin.customerUsers.superiorSelectPlaceholder')"
-              class="flex-1"
-              @search="onSuperiorSearch"
-            />
-          </div>
-          <div class="mt-3 flex gap-2">
-            <a-button type="primary" :loading="superiorLoading" @click="handleBindSuperior">{{ t('admin.customerUsers.superiorBind') }}</a-button>
-            <a-button status="warning" :loading="superiorLoading" @click="handleUnbindSuperior">{{ t('admin.customerUsers.superiorUnbind') }}</a-button>
-          </div>
-        </div>
-      </div>
-    </a-drawer>
 
     <!-- 新建/编辑用户弹窗 -->
     <a-modal

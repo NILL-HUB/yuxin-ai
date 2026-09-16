@@ -43,7 +43,6 @@ export default  {
         costStats: 'Cost Dashboard',
         costStrategy: 'Cost Strategy',
         commerceOps: 'Commerce Ops',
-        distribution: 'Distribution',
         orders: 'Orders',
         refunds: 'Refunds',
         withdrawals: 'Withdrawals',

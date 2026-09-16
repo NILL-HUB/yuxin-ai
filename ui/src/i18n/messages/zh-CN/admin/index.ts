@@ -29,7 +29,6 @@ import reconcile from './reconcile'
 import messageConfig from './messageConfig'
 import desktopClientConfig from './desktopClientConfig'
 import plans from './plans'
-import distribution from './distribution'
 import orders from './orders'
 import refunds from './refunds'
 import withdrawals from './withdrawals'
@@ -71,7 +70,6 @@ export default {
   messageConfig,
   desktopClientConfig,
   plans,
-  distribution,
   orders,
   refunds,
   withdrawals,

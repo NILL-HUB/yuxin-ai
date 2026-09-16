@@ -197,12 +197,6 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['plan:read'] },
             },
             {
-              path: 'distribution',
-              name: 'admin-distribution',
-              component: () => import('@/views/admin/AdminDistributionView.vue'),
-              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['distribution:view'] },
-            },
-            {
               path: 'orders',
               name: 'admin-orders',
               component: () => import('@/views/admin/AdminOrdersView.vue'),

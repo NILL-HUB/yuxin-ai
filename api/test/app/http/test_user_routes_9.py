@@ -35,6 +35,16 @@ def _mock_resolve_account(monkeypatch, account):
     return account
 
 
+def _mock_resolve_admin_ai_account(monkeypatch, account):
+    """模拟管理端 AI 辅助端点的系统身份（管理员 token 经系统身份占位，id=None）。"""
+
+    async def _fake_resolve_admin_ai_account():
+        return account, None
+
+    monkeypatch.setattr(support, "_resolve_admin_ai_account", _fake_resolve_admin_ai_account)
+    return account
+
+
 @dataclass
 class _Paginator:
     total_page: int = 1
@@ -623,10 +633,13 @@ class _FakeAIService:
 
 class TestAIRoutes:
     def _setup(self, monkeypatch):
-        account = SimpleNamespace(id=uuid4())
+        # 管理端 AI 辅助端点（optimize-prompt / chat / schema-chat）走管理员身份；
+        # /ai/suggested-questions 仍是用户端接口，走普通用户账号。
+        account = support._SystemBorneAccount()
         service = _FakeAIService()
         monkeypatch.setattr(support, "_load_account", lambda _aid: account)
         _mock_resolve_account(monkeypatch, account)
+        _mock_resolve_admin_ai_account(monkeypatch, account)
         monkeypatch.setattr(support, "_get_service", lambda cls: service)
         return account, service
 
@@ -647,8 +660,8 @@ class TestAIRoutes:
         assert resp.mimetype == "text/event-stream"
         assert "opt-1" in body
         assert service.calls[0][0] == "optimize"
-        # 计费链路：路由必须把当前账号 id 传入 service（否则 charge_for_feature 静默失效）
-        assert service.calls[0][2] is not None
+        # 账号隔离：管理端 AI 调用使用系统身份（id=None），不计入任何用户配额
+        assert service.calls[0][2] is None
 
     def test_optimize_prompt_requires_prompt(self, monkeypatch):
         self._setup(monkeypatch)

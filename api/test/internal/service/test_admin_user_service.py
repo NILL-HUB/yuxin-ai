@@ -426,6 +426,86 @@ class TestAdminUserService:
         assert admin_user.status == "active"
         assert session.commits == 0
 
+    def test_delete_admin_user_should_soft_delete_and_revoke_sessions(self):
+        """删除=软删除：置 status=deleted + 记录删除轨迹 + 吊销全部会话。"""
+        operator_id = uuid4()
+        admin_id = uuid4()
+        admin_user = AdminUser(id=admin_id, email="x@example.com", name="X", status="active")
+        audit_log_service = _AuditLogServiceStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=admin_user),   # 查目标管理员
+            _QueryStub(all_result=[("operator",)]),      # 查其角色（非超管）
+            _QueryStub(one_or_none_result=None),         # _get_active_super_admin_user
+            _QueryStub(all_result=[]),                   # 查其会话（吊销用）
+            _QueryStub(all_result=[]),                   # 序列化角色
+        ])
+        service = AdminUserService(session=session, audit_log_service=audit_log_service)
+
+        result = service.delete_admin_user(
+            admin_id,
+            reason="离职",
+            operator_id=operator_id,
+            ip="127.0.0.1",
+            user_agent="pytest",
+        )
+
+        assert admin_user.status == "deleted"
+        assert admin_user.deleted_reason == "离职"
+        assert admin_user.deleted_by == operator_id
+        assert admin_user.deleted_at is not None
+        assert result["status"] == "deleted"
+        assert result["deleted_reason"] == "离职"
+        assert session.commits == 1
+        assert audit_log_service.records[0]["action"] == "delete"
+
+    def test_delete_admin_user_should_reject_super_admin(self):
+        """超级管理员不允许被删除（与禁用/重置密码的保护一致）。"""
+        super_admin_id = uuid4()
+        admin_user = AdminUser(id=super_admin_id, email="root@example.com", name="Root", status="active")
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=admin_user),
+            _QueryStub(all_result=[("super_admin",)]),
+        ])
+        service = AdminUserService(session=session)
+
+        with pytest.raises(FailException) as exc_info:
+            service.delete_admin_user(super_admin_id)
+
+        assert "超级管理员账号不允许删除" in str(exc_info.value)
+        assert admin_user.status == "active"
+        assert session.commits == 0
+
+    def test_delete_admin_user_should_reject_self(self):
+        """不允许删除自己，避免管理员把自己锁在系统外。"""
+        admin_id = uuid4()
+        admin_user = AdminUser(id=admin_id, email="me@example.com", name="Me", status="active")
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=admin_user),
+            _QueryStub(all_result=[("operator",)]),
+            _QueryStub(one_or_none_result=None),
+        ])
+        service = AdminUserService(session=session)
+
+        with pytest.raises(FailException) as exc_info:
+            service.delete_admin_user(admin_id, operator_id=admin_id)
+
+        assert "不能删除自己的账号" in str(exc_info.value)
+        assert admin_user.status == "active"
+        assert session.commits == 0
+
+    def test_delete_admin_user_should_reject_already_deleted(self):
+        """重复删除必须被拒绝，不能静默成功。"""
+        admin_id = uuid4()
+        admin_user = AdminUser(id=admin_id, email="x@example.com", name="X", status="deleted")
+        session = _SessionStub([_QueryStub(one_or_none_result=admin_user)])
+        service = AdminUserService(session=session)
+
+        with pytest.raises(FailException) as exc_info:
+            service.delete_admin_user(admin_id)
+
+        assert "已删除" in str(exc_info.value)
+        assert session.commits == 0
+
     def test_create_admin_user_should_record_audit_log_before_commit(self):
         operator_id = uuid4()
         audit_log_service = _AuditLogServiceStub()
@@ -532,3 +612,111 @@ class TestAdminUserService:
         permissions = service._get_permission_codes(["super_admin"])
 
         assert permissions == list(all_permission_codes())
+
+
+class TestAgentPermissionPruningWiring:
+    """§4.4 权限回收的**接线**测试：确认两个触发点真的调用了清理。
+
+    为什么单独测接线：`AdminAgentService.prune_revoked_permissions` 自身有
+    单测（行为正确），但若不接进 `AdminUserService`，功能在运行时**不可达**
+    ——即 AGENTS.md 所述"断链"。单测各自全绿也发现不了，必须断言调用发生。
+
+    两个触发点：
+    1. `update_admin_user(role_codes=...)` —— 角色变更改变权限集；
+    2. `disable_admin_user(...)` —— 直接失效（传空权限集）。
+    """
+
+    def _install_fake_agent_service(self, monkeypatch, calls):
+        class _FakeAgentService:
+            def __init__(self, db=None):
+                self._db = db
+
+            def prune_revoked_permissions(self, *, admin_user_id, admin_permissions):
+                calls.append((admin_user_id, list(admin_permissions), self._db))
+                return 1
+
+        # _prune_admin_agent_permissions 在调用时从该模块导入 AdminAgentService，
+        # 故 patch 模块属性即可拦截（验证"接线存在"而无需真库）。
+        monkeypatch.setattr(
+            "internal.service.admin_agent_service.AdminAgentService",
+            _FakeAgentService,
+        )
+
+    def test_update_admin_user_role_change_prunes_agent_permissions(self, monkeypatch):
+        """角色变更后必须按**新**权限集清理（不是旧权限集）。"""
+        calls = []
+        self._install_fake_agent_service(monkeypatch, calls)
+
+        admin_id = uuid4()
+        role_id = uuid4()
+        admin_user = AdminUser(id=admin_id, email="a@example.com", name="A", status="active")
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=admin_user),          # 查目标管理员
+            _QueryStub(all_result=[("viewer",)]),               # before_roles
+            _QueryStub(),                                       # 删旧角色
+            _QueryStub(all_result=[(str(role_id), "viewer")]),  # _resolve_role_ids
+            _QueryStub(all_result=[("viewer",)]),               # _get_role_codes（清理用）
+            _QueryStub(all_result=[("app:read",)]),             # _get_permission_codes
+            _QueryStub(all_result=[("viewer",)]),               # 序列化角色
+            _QueryStub(all_result=[]),                          # _is_admin_online
+        ])
+        service = AdminUserService(session=session)
+
+        service.update_admin_user(admin_id, role_codes=["viewer"])
+
+        assert len(calls) == 1, "角色变更未触发 Agent 权限清理（断链）"
+        pruned_admin_id, pruned_perms, _db = calls[0]
+        assert pruned_admin_id == admin_id
+        assert pruned_perms == ["app:read"], "清理应基于变更后的新权限集"
+
+    def test_disable_admin_user_prunes_all_agent_permissions(self, monkeypatch):
+        """禁用管理员后，其 Agent 的授权应被清空（传空权限集）。"""
+        calls = []
+        self._install_fake_agent_service(monkeypatch, calls)
+
+        admin_id = uuid4()
+        admin_user = AdminUser(id=admin_id, email="d@example.com", name="D", status="active")
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=admin_user),  # 查目标管理员
+            _QueryStub(all_result=[("viewer",)]),       # 角色（非超管）
+        ])
+        service = AdminUserService(session=session, audit_log_service=_AuditLogServiceStub())
+
+        service.disable_admin_user(admin_id)
+
+        assert len(calls) == 1, "禁用管理员未触发 Agent 权限清理（断链）"
+        assert calls[0][0] == admin_id
+        assert calls[0][1] == [], "禁用应清空全部已下放权限"
+
+    def test_prune_failure_does_not_break_role_update(self, monkeypatch):
+        """清理失败必须被吞掉：角色变更本身已成功，不能因清理失败回滚主流程。"""
+        class _ExplodingAgentService:
+            def __init__(self, db=None):
+                pass
+
+            def prune_revoked_permissions(self, **_kw):
+                raise RuntimeError("agent service down")
+
+        monkeypatch.setattr(
+            "internal.service.admin_agent_service.AdminAgentService",
+            _ExplodingAgentService,
+        )
+
+        admin_id = uuid4()
+        role_id = uuid4()
+        admin_user = AdminUser(id=admin_id, email="b@example.com", name="B", status="active")
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=admin_user),
+            _QueryStub(all_result=[("viewer",)]),
+            _QueryStub(),
+            _QueryStub(all_result=[(str(role_id), "viewer")]),
+            _QueryStub(all_result=[("viewer",)]),
+            _QueryStub(all_result=[("app:read",)]),
+            _QueryStub(all_result=[("viewer",)]),
+            _QueryStub(all_result=[]),
+        ])
+        service = AdminUserService(session=session)
+
+        # 不应抛出：清理失败被静默吸收
+        service.update_admin_user(admin_id, role_codes=["viewer"])
+        assert session.commits == 1, "主流程（角色变更）应正常提交"

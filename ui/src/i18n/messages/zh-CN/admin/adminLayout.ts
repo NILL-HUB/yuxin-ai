@@ -43,7 +43,6 @@ export default  {
         costStats: '成本面板',
         costStrategy: '成本策略',
         commerceOps: '商务运营',
-        distribution: '分销管理',
         orders: '订单管理',
         refunds: '售后管理',
         withdrawals: '提现审核',
