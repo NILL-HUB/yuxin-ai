@@ -215,11 +215,25 @@ class AuditLog(Base):
         Index("audit_log_action_idx", "action"),
         Index("audit_log_resource_type_idx", "resource_type"),
         Index("audit_log_created_at_idx", "created_at"),
+        Index("audit_log_actor_type_idx", "actor_type"),
+        Index("audit_log_agent_id_idx", "agent_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     admin_user_id = Column(UUID, ForeignKey("admin_user.id"), nullable=True)
     account_id = Column(UUID, ForeignKey("account.id"), nullable=True)
+    # 操作者类型：human=管理员本人操作 / agent=管理端 Agent 代操作（设计 §9）。
+    # admin_user_id 始终保持为**人类责任人**，因此能精确区分
+    # "A 自己改的" 与 "A 让 AI 改的"。
+    actor_type = Column(
+        String(16),
+        nullable=False,
+        server_default=text("'human'::character varying"),
+    )
+    # 执行该操作的 Agent（仅 actor_type=agent 时有值）。
+    # 刻意**不加 FK 约束**：Agent 行可被物理删除，而审计必须留住痕迹
+    # （与 policy_change_draft 的零外键设计一致）。
+    agent_id = Column(UUID, nullable=True)
     action = Column(String(255), nullable=False, server_default=text("''::character varying"))
     resource_type = Column(String(255), nullable=False, server_default=text("''::character varying"))
     resource_id = Column(String(255), nullable=False, server_default=text("''::character varying"))

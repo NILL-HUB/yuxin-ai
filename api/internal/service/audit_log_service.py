@@ -202,6 +202,8 @@ class AuditLogService:
         user_agent: str = "",
         before_data: dict | None = None,
         after_data: dict | None = None,
+        actor_type: str = "human",
+        agent_id=None,
         commit: bool = True,
     ) -> AuditLog:
         audit_log = AuditLog(
@@ -213,6 +215,8 @@ class AuditLogService:
             user_agent=user_agent,
             before_data=before_data or {},
             after_data=after_data or {},
+            actor_type=actor_type,
+            agent_id=agent_id,
         )
         self.session.add(audit_log)
         if commit:
@@ -230,6 +234,8 @@ class AuditLogService:
         user_agent: str = "",
         before_data: dict | None = None,
         after_data: dict | None = None,
+        actor_type: str = "human",
+        agent_id=None,
     ) -> AuditLog | None:
         if not admin_user_id:
             return None
@@ -242,6 +248,8 @@ class AuditLogService:
             user_agent=user_agent,
             before_data=before_data,
             after_data=after_data,
+            actor_type=actor_type,
+            agent_id=agent_id,
             commit=False,
         )
 
@@ -448,10 +456,12 @@ class AuditLogService:
         admin_user_map: dict | None = None,
         account_map: dict | None = None,
         resource_name_map: dict | None = None,
+        agent_name_map: dict | None = None,
     ) -> dict[str, object]:
         admin_user_map = admin_user_map or {}
         account_map = account_map or {}
         resource_name_map = resource_name_map or {}
+        agent_name_map = agent_name_map or {}
         admin_user_name = admin_user_map.get(audit_log.admin_user_id, "") if audit_log.admin_user_id else ""
         account_name = account_map.get(audit_log.account_id, "") if audit_log.account_id else ""
         # 优先用快照里的名称；快照没有时用回源补全的名称
@@ -462,6 +472,10 @@ class AuditLogService:
             resource_name = resource_name_map.get(
                 (str(audit_log.resource_type), str(audit_log.resource_id)), ""
             )
+        # actor_type / agent_id：历史对象（或测试替身）可能缺列，兜底 human / None
+        # 而非抛错——审计序列化不应因列缺失让列表整体 500。
+        actor_type = getattr(audit_log, "actor_type", "human") or "human"
+        agent_id = getattr(audit_log, "agent_id", None)
         return {
             "id": str(audit_log.id),
             "admin_user_id": str(audit_log.admin_user_id) if audit_log.admin_user_id else None,
@@ -472,6 +486,9 @@ class AuditLogService:
             "resource_type": audit_log.resource_type,
             "resource_id": audit_log.resource_id,
             "resource_name": resource_name,
+            "actor_type": actor_type,
+            "agent_id": str(agent_id) if agent_id else None,
+            "agent_name": agent_name_map.get(str(agent_id), "") if agent_id else "",
             "ip": audit_log.ip,
             "user_agent": audit_log.user_agent,
             "before_data": audit_log.before_data,

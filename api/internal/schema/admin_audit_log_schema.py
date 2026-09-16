@@ -24,6 +24,11 @@ class AuditLogResp(Schema):
     resource_type = fields.String()
     resource_id = fields.String()
     resource_name = fields.String()
+    # 操作者身份（设计 §9）：actor_type 区分人工 vs Agent 代操作；
+    # agent_name 是 agent_id 的派生展示名（由 service 回源补齐）。
+    actor_type = fields.String(dump_default="human")
+    agent_id = fields.String(allow_none=True)
+    agent_name = fields.String(dump_default="")
     ip = fields.String()
     user_agent = fields.String()
     before_data = fields.Dict()
