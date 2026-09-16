@@ -9,12 +9,28 @@ Create Date: 2026-09-12
 - knowledge_document 增加 partition_id / media_type / parse_profile
 - upload_file.size 由 integer 升级为 bigint
 - 新增 knowledge_partition / knowledge_base_tag / knowledge_document_tag / account_storage_usage
+- （修复）补建 tag / app_tag / workflow_tag
 
-注意：本迁移的 down_revision 必须是**已提交**的迁移（此处为 `n8c9d0e1f2a3`）。
+注意一：本迁移的 down_revision 必须是**已提交**的迁移（此处为 `n8c9d0e1f2a3`）。
 曾误指向未纳入版本控制的 `o9d0e1f2a3b4`，导致全新 clone / CI 上
 `alembic upgrade head` 因 "Revision ... is not present" 崩溃。
 若后续 `o9d0e1f2a3b4` 被提交，会与本迁移形成两个 head，必须补一个 merge 迁移
 （参见 test/internal/migration/test_migration_graph_integrity.py）。
+
+注意二（修复记录，2026-09 空库验证）：本迁移第 5/6 步建
+`knowledge_base_tag` / `knowledge_document_tag`，带外键 `REFERENCES tag (id)`，
+但 `tag` 表在**迁移链中从未被创建**（历史上经 `Base.metadata.create_all()` 或
+手工 DDL 建出，未落进迁移；真实库中该表确实存在，故本地长期未暴露）。
+空库上 `alembic upgrade head` 抛：
+
+    relation "tag" does not exist
+    CREATE TABLE knowledge_base_tag ( ... FOREIGN KEY(tag_id) REFERENCES tag (id) ... )
+
+修复选择「就地补建」而非「插入新迁移」：`tag` 的**唯一**引用点就是本迁移
+（`app_tag` / `workflow_tag` 的模型未声明外键，无顺序约束），在本迁移开头用
+`CREATE TABLE IF NOT EXISTS` 建出即可，既保证顺序又**不动迁移图**（不多一个
+head、不新增 revision）。对已应用本迁移的库是 no-op（表早已存在）。
+守卫：test/internal/migration/test_migration_empty_db_smoke.py。
 """
 from alembic import op
 import sqlalchemy as sa
@@ -27,6 +43,66 @@ depends_on = None
 
 
 def upgrade():
+    # 0) 兜底补建 tag / app_tag / workflow_tag（见模块 docstring「注意二」）。
+    #    必须在第 5) 步建 knowledge_base_tag（外键 REFERENCES tag(id)）之前。
+    #    对已存在这些表的库是 no-op（IF NOT EXISTS）。
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tag (
+            id UUID NOT NULL DEFAULT uuid_generate_v4(),
+            account_id UUID NOT NULL,
+            name VARCHAR(50) NOT NULL,
+            description TEXT DEFAULT ''::text,
+            tag_type VARCHAR(50) NOT NULL DEFAULT 'custom',
+            status VARCHAR(50) NOT NULL DEFAULT 'active',
+            updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+            CONSTRAINT pk_tag_id PRIMARY KEY (id)
+        )
+        """
+    )
+    op.execute("CREATE INDEX IF NOT EXISTS tag_account_id_idx ON tag (account_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS tag_status_idx ON tag (status)")
+    op.execute("CREATE INDEX IF NOT EXISTS tag_type_idx ON tag (tag_type)")
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_tag (
+            id UUID NOT NULL DEFAULT uuid_generate_v4(),
+            account_id UUID NOT NULL,
+            app_id UUID NOT NULL,
+            tag_id UUID NOT NULL,
+            updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+            CONSTRAINT pk_app_tag_id PRIMARY KEY (id)
+        )
+        """
+    )
+    op.execute("CREATE INDEX IF NOT EXISTS app_tag_app_id_idx ON app_tag (app_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS app_tag_tag_id_idx ON app_tag (tag_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS app_tag_account_id_idx ON app_tag (account_id)")
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow_tag (
+            id UUID NOT NULL DEFAULT uuid_generate_v4(),
+            account_id UUID NOT NULL,
+            workflow_id UUID NOT NULL,
+            tag_id UUID NOT NULL,
+            updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+            created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
+            CONSTRAINT pk_workflow_tag_id PRIMARY KEY (id)
+        )
+        """
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS workflow_tag_workflow_id_idx ON workflow_tag (workflow_id)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS workflow_tag_tag_id_idx ON workflow_tag (tag_id)"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS workflow_tag_account_id_idx ON workflow_tag (account_id)"
+    )
+
     # 1) knowledge_base 扩展
     op.add_column('knowledge_base', sa.Column(
         'base_type', sa.String(length=32), nullable=False,

@@ -27,12 +27,19 @@ depends_on = None
 def upgrade() -> None:
     # 1. provider：SiliconFlow（代码中无 seed，此前依赖管理员手工创建；
     #    若已存在则保持原样，不覆盖运维配置的 base_url）
+    #
+    #    注意 id：`model_provider_config.id` 在建表迁移 `t6e7f8a9b0c1` 中
+    #    只声明了 nullable=False，**没有 server_default**（实测真实库
+    #    column_default 为空），因此不能依赖默认值，必须在 INSERT 里显式给出
+    #    `uuid_generate_v4()`。其余 seed 迁移（u7f8a9b0c1d2 / v8a9b0c1d2e3 /
+    #    本文件下方 model_pool_config）均已显式生成。
     op.execute(
         sa.text(
             """
             INSERT INTO model_provider_config
-                (name, label, description, default_base_url, supported_model_types, status)
+                (id, name, label, description, default_base_url, supported_model_types, status)
             SELECT
+                uuid_generate_v4(),
                 'SiliconFlow', '硅基流动',
                 '硅基流动 AI 云（多模态嵌入、重排序、语音与图像生成）',
                 'https://api.siliconflow.cn/v1',

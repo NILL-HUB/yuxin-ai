@@ -9,6 +9,23 @@ knowledge_segment.embedding 中的现有向量迁移到新表。
     - knowledge_segment_embedding_{dim}: 存储 knowledge_segment 的向量（按维度分表）
     - 原表的 embedding 列保留但不再使用（后续迁移中废弃）
 
+**修复记录（2026-09，空库验证）**：`user_memory.embedding` 与
+`knowledge_segment.embedding` 这两列在**建表迁移中并没有创建**
+（`d1e2f3a4b5c7` 建 `user_memory` / `knowledge_segment` 时均无 embedding 列），
+但 ORM 模型声明了它们，且本迁移第 3/4 步要 SELECT 它们做数据搬运。原实现直接
+`SELECT ... embedding`，空库上抛：
+
+    column "embedding" does not exist
+    (There is a column named "embedding" in table "user_memory_embedding_1536",
+     but it cannot be referenced from this part of the query.)
+
+本地库因为历史上该列被旁路 DDL 直接创建过（实测 pg 中两列均存在、类型
+user-defined）而侥幸不报错，只有空库踩中。
+
+修复：在本迁移**建分表前**用 `ADD COLUMN IF NOT EXISTS` 补建这两列（可空）。
+这样迁移链自洽——建列 → 建分表 → 搬运数据；对已存在该列的库则完全无副作用。
+守卫：`test/internal/migration/test_migration_empty_db_smoke.py`。
+
 Revision ID: a3d4e5f6g7b8
 Revises: z2c3d4e5f6a7
 Create Date: 2026-07-18 21:30:00.000000
@@ -31,6 +48,17 @@ def upgrade() -> None:
     """创建 1536 维向量分表并迁移现有数据。"""
     um_table = f"user_memory_embedding_{_DIMENSION}"
     ks_table = f"knowledge_segment_embedding_{_DIMENSION}"
+
+    # 0. 兜底补建源向量列（见模块 docstring「修复记录」）。
+    #    先建列再建分表再搬运，保证空库可跑；对已有该列的库是 no-op。
+    op.execute(
+        f"ALTER TABLE user_memory "
+        f"ADD COLUMN IF NOT EXISTS embedding vector({_DIMENSION})"
+    )
+    op.execute(
+        f"ALTER TABLE knowledge_segment "
+        f"ADD COLUMN IF NOT EXISTS embedding vector({_DIMENSION})"
+    )
 
     # 1. 创建 user_memory_embedding_1536 表
     op.execute(f"""
@@ -109,3 +137,5 @@ def downgrade() -> None:
 
     op.execute(f"DROP TABLE IF EXISTS {um_table} CASCADE")
     op.execute(f"DROP TABLE IF EXISTS {ks_table} CASCADE")
+    # 注意：不删除 upgrade 中兜底补建的 embedding 列——该列在 ORM 模型中
+    # 仍有声明、且被 memory 检索链路使用，删除会破坏运行时。此处保持列存在。

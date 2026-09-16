@@ -5,6 +5,14 @@ Revision ID: u7f8a9b0c1d2
 Revises: t6e7f8a9b0c1
 Create Date: 2026-07-16 23:01:00.000000
 
+**修复记录（2026-09，空库验证）**：`supported_model_types` 原以
+`sa.text("'[...]'")` 作为**绑定参数值**传入，psycopg2 会抛
+`can't adapt type 'TextClause'`。该 INSERT 因外层有 "已存在则 continue" 的幂等
+短路，在本地（provider 早已存在）**从未真正执行过**，只有空库才会走到，
+于是长期潜伏——与 `e1f2a3b4c5d7` 同属"空库才暴露"的一类。
+
+SQL 已写 `CAST(:supported_model_types AS jsonb)`，故此处只需传**普通 JSON 字符串**，
+类型转换交给 SQL。守卫：`test/internal/migration/test_migration_empty_db_smoke.py`。
 """
 import json
 
@@ -104,7 +112,7 @@ def upgrade() -> None:
                 "name": provider["name"],
                 "label": provider["label"],
                 "default_base_url": provider["default_base_url"],
-                "supported_model_types": sa.text(f"'{json.dumps(provider['supported_model_types'])}'"),
+                "supported_model_types": json.dumps(provider["supported_model_types"]),
             },
         )
 
