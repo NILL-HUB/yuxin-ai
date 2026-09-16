@@ -73,8 +73,24 @@ class RecycleBinService:
         "conversation",
         "memory",
     )
+    # admin 专属资源类型 = RESOURCE_TYPES − USER_VISIBLE_RESOURCE_TYPES。
+    # 写成显式字面量而非生成器派生：**类体内的生成器无法访问类作用域的名字**
+    # （NameError），这是 Python 作用域的硬限制。一致性由
+    # test_recycle_bin_admin_agent.py::test_admin_only_types_match_derivation 守护。
+    ADMIN_ONLY_RESOURCE_TYPES = (
+        "system_prompt",
+        "app",
+        "workflow",
+        "skill",
+        "mcp",
+        "api_tool",
+        "upload_file",
+    )
     DEFAULT_RETENTION_DAYS = 30
     AGENT_RETENTION_DAYS = AGENT_RETENTION_DAYS
+    # admin Agent 代删的默认留存天数：比用户侧 agent（7 天）长，
+    # 与 admin 手动删除（30 天）一致。
+    ADMIN_AGENT_RETENTION_DAYS = 30
     RETENTION_CHOICES = (7, 30, 90, 180)
 
     def delete_resource(
@@ -105,7 +121,7 @@ class RecycleBinService:
         if resource_type not in self.RESOURCE_TYPES:
             raise ValidateErrorException(f"不支持的资源类型: {resource_type}")
         deleted_by_type = (deleted_by_type or "admin").strip().lower()
-        if deleted_by_type not in ("admin", "user", "agent"):
+        if deleted_by_type not in ("admin", "user", "agent", "admin_agent"):
             deleted_by_type = "admin"
         if (
             deleted_by_type in ("user", "agent")
@@ -114,7 +130,13 @@ class RecycleBinService:
             raise ValidateErrorException(
                 f"资源类型 {resource_type} 仅支持管理员删除，不能进入用户回收站"
             )
-        if deleted_by_type == "agent":
+        if deleted_by_type == "admin_agent":
+            # admin Agent 代删：留存按 admin 口径（可配），默认 30 天。
+            # 与用户侧 agent 的固定 7 天区分——admin 板块资源更需要可追溯期。
+            retention_days = int(retention_days or self.ADMIN_AGENT_RETENTION_DAYS)
+            if retention_days not in self.RETENTION_CHOICES:
+                retention_days = self.ADMIN_AGENT_RETENTION_DAYS
+        elif deleted_by_type == "agent":
             retention_days = self.AGENT_RETENTION_DAYS
         else:
             retention_days = int(retention_days or self.DEFAULT_RETENTION_DAYS)
@@ -124,7 +146,7 @@ class RecycleBinService:
         snapshot = snapshot_resource(resource_type, resource_id, resource_key)
         if snapshot is None:
             return False
-        if deleted_by_type == "agent" and agent_id is not None:
+        if deleted_by_type in ("agent", "admin_agent") and agent_id is not None:
             snapshot["_agent_id"] = str(agent_id)
 
         now = _utcnow_naive()
@@ -168,7 +190,7 @@ class RecycleBinService:
         if resource_type:
             query = query.filter(RecycleBin.resource_type == resource_type)
         if deleted_by_type:
-            query = query.filter(RecycleBin.deleted_by_type == deleted_by_type)
+            query = self._apply_deleted_by_type_filter(query, deleted_by_type)
         if status:
             query = query.filter(RecycleBin.status == status)
         if search_word:
@@ -205,7 +227,7 @@ class RecycleBinService:
         if resource_type:
             query = query.filter(RecycleBin.resource_type == resource_type)
         if deleted_by_type:
-            query = query.filter(RecycleBin.deleted_by_type == deleted_by_type)
+            query = self._apply_deleted_by_type_filter(query, deleted_by_type)
         if status:
             query = query.filter(RecycleBin.status == status)
         if search_word:
@@ -236,8 +258,8 @@ class RecycleBinService:
             RecycleBin.status == "pending"
         )
         if deleted_by_type:
-            pending_count = pending_count.filter(
-                RecycleBin.deleted_by_type == deleted_by_type
+            pending_count = self._apply_deleted_by_type_filter(
+                pending_count, deleted_by_type
             )
         if resource_type:
             pending_count = pending_count.filter(
@@ -363,7 +385,7 @@ class RecycleBinService:
         admin_ids = {
             str(item.deleted_by)
             for item in items
-            if item.deleted_by_type == "admin"
+            if item.deleted_by_type in ("admin", "admin_agent")
             and item.deleted_by
             and _valid_uuid(str(item.deleted_by))
         }
@@ -394,12 +416,26 @@ class RecycleBinService:
             if not item.deleted_by:
                 item.deleted_by_name = None
                 continue
-            if item.deleted_by_type == "admin":
+            if item.deleted_by_type in ("admin", "admin_agent"):
                 item.deleted_by_name = admin_names.get(str(item.deleted_by))
             elif item.deleted_by_type in ("user", "agent"):
                 item.deleted_by_name = user_names.get(str(item.deleted_by))
             else:
                 item.deleted_by_name = None
+
+    @staticmethod
+    def _apply_deleted_by_type_filter(query, deleted_by_type: str):
+        """按删除来源过滤。
+
+        特例：``admin`` 视图需**同时覆盖** ``admin_agent``——两者都是"管理端删除"，
+        若只按 ``== 'admin'`` 精确匹配，Agent 代删的系统资源在后台回收站里
+        **看不见**、无法恢复。其余来源仍为精确匹配。
+        """
+        if deleted_by_type == "admin":
+            return query.filter(
+                RecycleBin.deleted_by_type.in_(("admin", "admin_agent"))
+            )
+        return query.filter(RecycleBin.deleted_by_type == deleted_by_type)
 
     def get_item(self, item_id: int) -> RecycleBin:
         item = db.session.query(RecycleBin).filter(RecycleBin.id == item_id).one_or_none()
@@ -702,10 +738,3 @@ class RecycleBinService:
         # 若不 commit，连接会以 idle in transaction 滞留（celery 长连接泄漏源之一）。
         db.session.commit()
         return {"purged": purged, "failed": failed, "total": len(expired)}
-
-
-RecycleBinService.ADMIN_ONLY_RESOURCE_TYPES = tuple(
-    resource_type
-    for resource_type in RecycleBinService.RESOURCE_TYPES
-    if resource_type not in RecycleBinService.USER_VISIBLE_RESOURCE_TYPES
-)
