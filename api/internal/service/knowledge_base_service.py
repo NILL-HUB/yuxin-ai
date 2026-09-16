@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
 
 from internal.context import current_app
@@ -10,6 +11,7 @@ from werkzeug.datastructures import FileStorage
 
 from internal.entity.dataset_entity import DocumentStatus
 from internal.entity.knowledge_entity import (
+    DocumentMediaType,
     KnowledgeBaseType,
     KnowledgeCreatedFrom,
     KnowledgeScope,
@@ -323,6 +325,62 @@ class KnowledgeBaseService(BaseService):
         indexing_service = self._get_knowledge_indexing_service()
         indexing_service.build_document(document.id, account)
 
+        return document
+
+    def store_render_output(
+        self,
+        *,
+        account: Account,
+        video_path,
+        name: str,
+        base: KnowledgeBase | None = None,
+    ) -> KnowledgeDocument:
+        """把渲染成品写入成品库并建索引（设计 §4）。
+
+        这是**系统写入**路径，供渲染链路调用，因此**不**经过
+        `_assert_not_render_output_base`（那条只拦用户手动上传）。
+
+        步骤：取/建成品库 → MP4 落 COS → 建 KnowledgeDocument → 触发索引。
+        索引不可省：不建索引的成品检索不到，「可复用」即落空。
+        """
+        path = Path(video_path)
+        if not path.is_file():
+            raise NotFoundException(f"渲染产物不存在：{path}")
+
+        knowledge_base = base or self.get_or_create_render_output_base(account)
+
+        content = path.read_bytes()
+        # 成品是系统写入，按设计 §6.3 走「宽让」配额：剩余 > 0 即放行（允许溢出），
+        # 避免因配额差一点让整轮渲染白干；恰好为 0 仍拒绝。
+        upload_file = self._get_cos_service().upload_bytes(
+            filename=path.name,
+            content=content,
+            account_id=account.id,
+            mime_type="video/mp4",
+            allow_overflow=True,
+        )
+
+        document = self.create(
+            KnowledgeDocument,
+            knowledge_base_id=knowledge_base.id,
+            owner_account_id=account.id,
+            name=(name or path.stem),
+            content_type="document",
+            source_type=KnowledgeCreatedFrom.RENDER_OUTPUT.value,
+            source_id=str(upload_file.id),
+            upload_file_id=upload_file.id,
+            partition_id=None,
+            media_type=DocumentMediaType.VIDEO.value,
+            parse_profile={},
+            metadata_={
+                "upload_file_id": str(upload_file.id),
+                "operation_context": OperationContext.USER.value,
+            },
+            character_count=0,
+            status=DocumentStatus.WAITING.value,
+        )
+
+        self._get_knowledge_indexing_service().build_document(document.id, account)
         return document
 
     @staticmethod
