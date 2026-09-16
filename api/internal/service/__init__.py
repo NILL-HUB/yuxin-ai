@@ -63,6 +63,7 @@ from .admin_customer_user_service import AdminCustomerUserService
 from .admin_rbac_service import AdminRbacService
 from .admin_redeem_code_service import AdminRedeemCodeService
 from .admin_user_service import AdminUserService
+from .admin_agent_service import AdminAgentService
 from .admin_workflow_service import AdminWorkflowService
 from .admin_model_pool_service import AdminModelPoolService
 from .admin_model_provider_service import AdminModelProviderService
@@ -139,6 +140,7 @@ __all__ = [
     "AdminRbacService",
     "AdminRedeemCodeService",
     "AdminUserService",
+    "AdminAgentService",
     "AdminWorkflowService",
     "AdminModelPoolService",
     "AdminModelProviderService",

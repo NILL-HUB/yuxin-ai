@@ -254,6 +254,36 @@ def register_routes(quart_app):
         return a._ok(resp.dump(result))
 
     # ------------------------------------------------------------------
+    # admin_agent_handler -> AdminAgentService（管理端 Agent 治理，设计 §4）
+    # ------------------------------------------------------------------
+    @quart_app.get("/admin/agents/assignable-permissions")
+    async def admin_agent_assignable_permissions():
+        """返回当前管理员**可下放**的权限点（交集，不是全量目录）。
+
+        设计 §4.3「展示即受限」：管理员看不到自己没有的权限点，无从选择。
+        注意：这里返回的是**后端算好的交集**，而不是"把全量目录交给前端过滤"
+        ——前端过滤不是安全边界。具体的保存校验在
+        `assert_grantable`（第二层），运行时在每次请求实时重算（第三层）。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_schema import (
+            AdminAgentAssignablePermissionsResp,
+        )
+        from internal.service.admin_agent_service import AdminAgentService
+
+        codes = await a._to_thread(
+            a._get_service(AdminAgentService).list_assignable_permissions,
+            admin_permissions=list(admin.get("permissions") or []),
+        )
+        resp = AdminAgentAssignablePermissionsResp()
+        return a._ok(resp.dump({"codes": codes}))
+
+    # ------------------------------------------------------------------
     # admin_customer_user_handler -> AdminCustomerUserService
     # ------------------------------------------------------------------
     @quart_app.get("/admin/users")

@@ -33,6 +33,26 @@
 | Phase 12 | BillingMetering/CancelToken | ✅ 完成 |
 | Phase 13 | 外部数据源连接 | ✅ 完成 |
 | Phase 14 | 调优建议采纳与策略变更 | ✅ 完成 |
+| Phase 15 | 管理端 Agent 治理 P1a（授权与身份内核） | ✅ 完成 |
+
+### 管理端 Agent 治理（P1a 授权与身份内核，2026-09-16 完成）
+
+管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。本阶段**只做授权与身份**——Agent 尚不能真正执行板块动作（工具装配与执行属后续阶段）。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 授权内核（可下放白名单 fail closed + 三重交集 + 保存校验） | `api/internal/core/admin_agent_authorization.py` |
+| 执行身份与自动化级别 | `api/internal/entity/admin_agent_entity.py` |
+| `admin_agent` 表 + 模型 | `api/internal/model/admin_agent.py`、迁移 `s5f6a7b8c9d0` |
+| 服务（定义 CRUD + 授权校验 + 失权回收） | `api/internal/service/admin_agent_service.py` |
+| 可分配权限 API | `GET /admin/agents/assignable-permissions`（`admin_routes_7.py`） |
+| 失权自动回收触发点 | `AdminUserService.update_admin_user` / `disable_admin_user` |
+| 机制文档 | [rbac.md §9](../rbac.md) |
+
+**授权模型**：`effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`；白名单为**显式登记制（fail closed）**，新增权限点默认不可下放。三层强制（展示即受限 / 保存校验 / 运行时实时重算）+ 失权自动物理清理。实现计划见 `docs/superpowers/plans/2026-09-16-admin-agent-p1a-authorization-core.md`。
+
+**回归防护**：`test_admin_agent_authorization.py`、`test_admin_agent_principal.py`、`test_admin_agent_model.py`、`test_admin_agent_service.py`、`test_admin_agent_routes.py`、`test_admin_user_service.py::TestAgentPermissionPruningWiring`——**均含反向验证**（改坏实现时测试必须失败），并已用真实 DB 跑通端到端闭环。
+
 
 ### 第三轮并行修复（P0-P3 全部完成）
 

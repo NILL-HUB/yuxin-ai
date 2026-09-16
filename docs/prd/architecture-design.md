@@ -37,7 +37,7 @@
 |---|---|---|---|---|
 | 1 | **设备赋能 / 电脑管家** | 操作本机、修软件故障、改系统设置 | ✅ 已实现（后台控制 cua-driver + pyautogui fallback、OS 自动化） | `api/scripts/computer_control_worker.py`、`08-os-automation.md` |
 | 2 | **安全兜底** | 回收站 + 快照，改坏回滚、删错找回，且小钰可自主执行 | ✅ 已实现 | `recycle_bin_handlers.py`、`os_snapshot` |
-| 3 | **定时任务** | 清垃圾/日总结/排日程/总结微信群消息 | ✅ 已实现（OS 定时任务 + 微信场景待接） | `schedule_task_service.py` |
+| 3 | **定时任务** | 清垃圾/日总结/排日程/总结微信群消息 | ✅ 已实现（cron/间隔/单次三种触发；单次任务执行后自动归档回收站。OS 定时任务 + 微信场景待接） | `schedule_task_service.py`、`03-orchestration-infra.md` §13.3.2 |
 | 4 | **知识库** | 存所有文件含**视频素材**；做视频时讨论细节→自翻素材→出片预览→改 | ✅ 文本/图片/音视频 RAG 已实现（含视频 ASR 转写、关键帧留存 + 视觉向量、L2 按需解析）；⚠️ 视频轻量编辑、场景切分属 P4 设计稿（`02-knowledge-base.md`） | `retrieval_service.py`、`visual_embedding_service.py` |
 | 5 | **内容生成** | 做 PPT/文档/表格、改图片、自动做短视频、**小红书图文** | ✅ 前五项已实现；❌ 小红书图文未实现 | `skills/catalog/{powerpoint,docx,xlsx}`、`atlascloud_video` |
 | 6 | **双交互方式** | ① 纯语音入口（像打电话，全自动，成本偏高）② 传统页面交互（半自动） | ✅ 语音(实时/ASR/TTS) 与页面交互均已实现 | `realtime_voice_service.py`、`audio_service.py` |
@@ -234,12 +234,12 @@
 | --- | --- | --- |
 | Agent 载体 | App 表 + AppConfig | App 表继续作为 Agent 的唯一 DB 载体，AppConfig.preset_prompt 存储提示词 |
 | Agent 元数据 | App.agent_metadata(JSONB) | 继续使用 JSONB 存储结构化元数据，池治理层读写此字段 |
-| 工具绑定 | AppConfig.tools/mcp_bindings/skills/workflows/agent_bindings/datasets | 继续作为工具绑定的配置入口 |
+| 工具绑定 | AppConfig.tools/mcp_bindings/skills/workflows/agent_bindings/knowledge_base_ids | 继续作为工具绑定的配置入口（知识库绑定列已由 `datasets` 重命名为 `knowledge_base_ids`） |
 | 工具执行抽象 | LangChain BaseTool | 所有工具统一转成 BaseTool 被 Agent 调用 |
 | Builtin 工具 | builtin_provider_manager + providers.yaml | 直接复用，纳入治理 |
 | API 工具 | ApiTool + ApiToolProvider + OpenAPI 解析 | 直接复用，纳入治理 |
 | MCP 工具 | McpProvider + McpToolFactory | 直接复用，纳入治理 |
-| Workflow 工具 | WorkflowTool(BaseTool) | 直接复用，纳入治理 |
+| Workflow 工具 | WorkflowToolAdapter(BaseTool) | 直接复用，纳入治理 |
 | Skill 工具 | SkillToolFactory + SkillPackage | 直接复用，纳入治理 |
 | Agent 委派 | agent_binding 包装成委派工具 | 直接复用，纳入治理 |
 | 候选收集 | AgentCandidateCollector 从 App 表收集 | 复用收集逻辑，增加治理过滤层 |
@@ -396,6 +396,9 @@
 | ResultSynthesizer | 汇总 Agent 和工具结果，统一整理后返回用户 | Phase 6 |
 | QualityChecker | 检查结果完整性、冲突、置信度和风险 | Phase 6 |
 | RoutingObservabilityService | 记录调度决策、模型成本、Agent/工具选择、失败原因 | Phase 7 |
+| AdminAgentService（管理端 Agent 授权内核） | 管理端 Agent 的定义 CRUD、可下放权限白名单与三重交集授权、失权自动回收、身份对象 `AdminAgentPrincipal` | Phase 7（v7.1 新增，P1a） |
+
+> **v7.1 管理端 Agent 治理（P1a 授权内核）**：管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。授权模型为三重交集 `effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`，白名单采用**显式登记制（fail closed）**——新增权限点默认不可下放。机制细节（三层强制、权限回收、身份对象、自动化级别、表与路由）见 [RBAC 权限模型 §9](../rbac.md)。**本阶段只做授权与身份**：Agent 尚不能真正执行板块动作，工具装配与执行属后续阶段。
 
 > **v5.2 架构变更说明**：原 `OrchestratorService` + `TaskClassifier` + `TaskPlanner` + `PoolIntentResolver` + `CostPolicyService` + `ExecutionModeSelector` 六个串行模块已被 `ConductorService` 替代。指挥官用单次 LLM `structured_output` 一体化完成意图识别、复杂度判断、任务拆解和执行模式选择，消除了多模块串行的延迟和上下文丢失问题。`CostPolicyService` 的预算判断职责合并到指挥官 prompt 中（budget_level + balance_credits 作为上下文输入）。
 
@@ -419,7 +422,7 @@
 11. ToolPolicyFilter 过滤未授权、高风险、不健康、超作用域工具。
 12. ToolRanker 在子池内和跨子池排序，CrossPoolToolSubsetBuilder 裁剪出本次 Agent 可见工具子集。
 13. RuntimeToolMountService 将工具子集转换为运行时 tools，只挂载给对应 Agent。
-14. 模型档位对齐：指挥官 model_tier (1/2/3 算力档位) + capability 自动升级 (vision→4, long_context→5)，与 fallback_tier (1-5 能力档位) 体系对齐。
+14. 模型档位对齐：指挥官 model_tier（`1`/`2`/`3` 算力档位）+ capability 自动升级（vision→`4`，long_context→`5`），与 `public_ai_feature_config.fallback_tier`、`model_pool_config.tier` 共用同一套 `model_tier_policy.tier_code` 档位码体系。
 15. ModelGateway 从模型池和 Key 池中选择可用模型和 Key，支持管理员对 Agent 的底座模型配置。
 16. ExecutionCoordinator 执行 direct/single/multi/deep 路径，Agent 间通过 A2A 协作，工具通过统一 ToolInvoker 调用。
 17. AgentResultNormalizer 将不同 Agent 输出标准化。
@@ -511,7 +514,53 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 - 哪里失败了？
 - 是否发生 fallback？
 
+### 6.6 后台线程必须经统一入口归还数据库 session
 
+容器化改造后 `app_context()` 是 **no-op**（`internal/server/http.py` 的
+`Http.app_context` 直接 yield，注释即"service 层不再依赖 Flask app context"）。
+**进入 app 上下文不再提供任何资源生命周期保障**；而 SQLAlchemy `scoped_session`
+按线程绑定，线程内首次 `db.session.query(...)` 即开启事务，必须显式
+`db.session.remove()` 才会结束事务并归还连接。
+
+历史上仓库有三道 session 归还网，但**互不相交**，恰好漏掉了「service 层自建线程」：
+
+| 归还机制 | 位置 | 覆盖边界 |
+|---|---|---|
+| 线程池清理 | `support._to_thread` 的 `finally` | 仅 HTTP 路由经它调用的路径 |
+| 请求兜底 | `asgi_app._clear_request_scope`（teardown） | 仅主线程（teardown 不跑在后台线程） |
+| 任务兜底 | `celery_app.AppContextTask.after_return` | 仅 Celery 任务生命周期 |
+
+于是任何 `threading.Thread(target=...)`、`ThreadPoolExecutor.submit(...)` 或裸
+`asyncio.to_thread(...)` 进入 app_context 跑 DB 后，线程退出时 session 悬空，
+连接停在 `idle in transaction`，累积至 `max_connections` 耗尽，并阻塞 DDL
+（实测：一条 `ALTER TABLE admin_user` 被其表锁阻塞数分钟；另一次实测同一条
+`SELECT account...` 连接卡住 1h08m）。
+
+**强制约定**：新增任何「后台线程 / 线程池 / `asyncio.to_thread` 中访问数据库」
+的代码，必须经统一辅助 `internal/lib/runtime_context.py`：
+
+| 场景 | 用法 |
+|---|---|
+| `threading.Thread(target=...)` / `ThreadPoolExecutor.submit(...)` | `target=run_in_app_context(fn)` |
+| `asyncio.to_thread(fn, ...)` | `await to_thread_in_app_context(fn, ...)` |
+| 工具闭包 / 短逻辑（含已自行进入 app_context 时） | `with app_session_scope():` / `with session_scope():` |
+
+设计要点：
+
+- **可重入**：只有最外层作用域退出时才 `remove()`。内层提前归还会回滚外层
+  未提交的事务，制造比泄漏更难排查的"写丢失"；嵌套深度记录在线程本地
+  （`threading.local`，不可用 contextvar——后者会被复制进子线程，导致子线程
+  继承父线程深度而**永不归还**）。
+- **不夺取所有权**：进入作用域前若调用方已有 session（HTTP 请求线程 / Celery
+  任务），退出时不 `remove()`，其生命周期仍由调用方负责。
+- **清理静默**：`remove()` 失败或无引擎时不得反噬业务主流程。
+
+防回退守卫（回归即 CI 失败）：
+
+- `test/internal/lib/test_runtime_context.py`：行为级锁定上述三条契约；
+- `test/internal/service/test_session_cleanup_guard.py`：AST 静态扫描
+  `internal/` 与 `app/`，冻结「裸后台线程 + DB 访问」写法，并含检测器自测
+  （防止守卫本身退化为恒真）。
 
 ## 7. 角色与使用边界
 
@@ -847,11 +896,11 @@ Agent 不应只依赖名称和描述被路由。每个可调度 Agent 需要结�
 
 | 指挥官 model_tier | 含义 | 对应 fallback_tier |
 |---|---|---|
-| 1 | 轻量省钱 | 1 (cheap) |
-| 2 | 标准 | 2 (standard) |
-| 3 | 强模型 | 3 (premium) |
-| 4（自动升级） | 视觉模型 | 4 (vision)，required_capabilities 含 vision 时触发 |
-| 5（自动升级） | 长上下文模型 | 5 (long_context)，required_capabilities 含 long_context 时触发 |
+| 1 | 轻量省钱 | 1（经济） |
+| 2 | 标准 | 2（标准） |
+| 3 | 强模型 | 3（强力） |
+| 4（自动升级） | 视觉模型 | 4（视觉），required_capabilities 含 vision 时触发 |
+| 5（自动升级） | 长上下文模型 | 5（长上下文），required_capabilities 含 long_context 时触发 |
 
 升级规则：`_resolve_effective_tier(agent)` 取 model_tier 和 capability 升级档位中的较高值。
 
