@@ -44,6 +44,7 @@
 | 管理端路由 | 全在 `api/app/http/admin_routes_7.py`；`support._admin_route_permission` 对 `/admin/agents*` 通用映射：`GET → agent_pool:read`，`POST/PATCH/PUT/DELETE → agent_pool:manage`（**新路由无需改权限表**） |
 | 管理员字典 | `await a._resolve_admin_permission(code)` → `(admin_dict, None)` 或 `(None, err)`；`admin_dict["id"]` 为**字符串** |
 | SSE 写法参照 | `api/app/http/schedule_assistant_routes.py` 的 `POST /assistant-agent/chat`：`await _to_thread(service.chat, req, account)` → `_sse_response(gen)`；`support._sse_response` 包成 `text/event-stream` |
+| **DI 构造（易致命）** | `support._get_service(cls)` = `injector.get(cls)`；只有 `@inject` 标注过的类可被构造，**仅写 `db: SQLAlchemy` 注解不够**。实测缺 `@inject` 的三个 admin-agent 服务全部 `CallError`（已修，提交 `0f24d29`），守卫测试 `test_admin_agent_di_construction.py` |
 | 测试约定 | conftest autouse 把 `support._resolve_admin_permission` 替换为无条件放行，需显式覆盖才能测权限；路由测试用 `quart_app.test_client()` + `asyncio.run` |
 
 ---
@@ -633,24 +634,36 @@ class AdminAgentChatEvent(str, Enum):
 """管理端 Agent 的会话与消息服务（设计 §10.1）。
 
 只做会话/消息的持久化与归属校验，不感知 LLM 与板块工具。
+
+**归属契约（勿弱化）**：归属校验**只**由 `get_conversation` / `list_conversations`
+提供；`append_message` / `list_messages` 只收 `conversation_id`，**依赖调用方先调
+`get_conversation`**。新增调用方跳过该前置，隔离即失效。
+
+**类型契约**：`conversation_id` / `admin_user_id` / `admin_agent_id` 均为 `UUID`。
+`admin["id"]` 由序列化层产出为**字符串**，**路由层负责 `UUID(str(...))` 归一化**
+——传字符串会让属主比较恒不相等而误判 403（P1 已踩过的坑）。
 """
 from __future__ import annotations
 
-import logging
+from dataclasses import dataclass
+from uuid import UUID
+
+from injector import inject
 
 from internal.entity.admin_agent_chat_entity import AdminAgentMessageRole
 from internal.exception import ForbiddenException, NotFoundException
 from internal.model import AdminAgentConversation, AdminAgentMessage
 from pkg.sqlalchemy import SQLAlchemy
 
-logger = logging.getLogger(__name__)
 
-
+# 必须带 @inject：`support._get_service` 实为 `injector.get`，而 injector 只对
+# `@inject` 标注过的类做构造注入——仅写 `db: SQLAlchemy` 注解**不够**。
+# 历史事故：AdminAgentService / AdminChangeDraftService / 本服务曾漏 @inject，
+# 使 /admin/agents/* 全部路由在生产上抛 CallError（测试因替换了 _get_service 而全绿）。
+@inject
+@dataclass
 class AdminAgentConversationService:
-    """刻意不用 @inject @dataclass：只持有 db，便于测试直接构造。"""
-
-    def __init__(self, db: SQLAlchemy):
-        self.db = db
+    db: SQLAlchemy
 
     def list_conversations(self, *, admin_agent_id, admin_user_id) -> list[AdminAgentConversation]:
         return (
@@ -1362,6 +1375,9 @@ NOT NULL）+ 启停/健康元数据，**没有任何授权字段**；而治理 A
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+
+from injector import inject
 
 from internal.model import AdminAgent
 from pkg.sqlalchemy import SQLAlchemy
@@ -1385,11 +1401,11 @@ BUILTIN_ADMIN_AGENTS: list[dict[str, str]] = [
 ]
 
 
+# 必须带 @inject（否则 `a._get_service(AdminAgentBuiltinService)` 运行时 CallError）
+@inject
+@dataclass
 class AdminAgentBuiltinService:
-    """刻意不用 @inject：只持 db，便于测试直接构造。"""
-
-    def __init__(self, db: SQLAlchemy):
-        self.db = db
+    db: SQLAlchemy
 
     def ensure_builtin_agents(self, admin_user_id) -> int:
         """为该管理员补齐缺失的预置 Agent，返回新建条数（幂等）。
@@ -1629,7 +1645,10 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Generator
+
+from injector import inject
 
 from internal.entity.admin_agent_chat_entity import (
     AdminAgentChatEvent,
@@ -1647,9 +1666,11 @@ MAX_TOOL_ITERATIONS = 6
 FEATURE_KEY = "admin_agent"
 
 
+# 必须带 @inject（否则 `a._get_service(AdminAgentChatService)` 运行时 CallError）
+@inject
+@dataclass
 class AdminAgentChatService:
-    def __init__(self, db: SQLAlchemy):
-        self.db = db
+    db: SQLAlchemy
 
     # ------------------------------------------------------------------
     # 主链路
@@ -2326,13 +2347,16 @@ def _timestamp(value):
         assert [name for name, _ in svc.calls] == ["ensure_builtin_agents", "list_agents"]
 ```
 
-> **已核实（勿改）**：`AdminAgentConversationService` / `AdminAgentService` /
-> `AdminAgentChatService` 都**不是** `@inject @dataclass`，但构造函数只声明
-> `db: SQLAlchemy`（类型注解可被 injector 解析），因此 `a._get_service(cls)`
-> 能直接构造——本文件既有的 `a._get_service(AdminAgentService)` 就是同一用法。
-> **不要**自造 `_build_*` 工厂或 `db_handle` 之类的辅助 API。
-> 路由测试通过 `monkeypatch.setattr(support, "_get_service", lambda cls: stub)`
-> 替换整条服务链（与 `test_admin_agent_invoke_routes.py` 同法）。
+> **已实测（勿改）**：`support._get_service(cls)` 实为 `injector.get(cls)`，而 injector
+> **只对 `@inject` 标注过的类**做构造注入——仅写 `db: SQLAlchemy` 注解**不够**。
+> 实测：`injector.get(AdminAgentService)` / `AdminChangeDraftService` /
+> `AdminAgentConversationService` 在补 `@inject` **之前**全部抛 `CallError`，
+> 导致 `/admin/agents/*` 全部路由生产上 500（测试替换了 `_get_service` 故全绿）。
+> 因此：**本计划涉及的服务一律 `@inject` + `@dataclass` + `db: SQLAlchemy`**，
+> 并且路由测试**至少有一条不替换 `_get_service`**（见
+> `api/test/internal/service/test_admin_agent_di_construction.py`），否则断链会再次隐身。
+> `_build_draft_service` 的 try/except 回退分支与「不是 @inject」注释现已过时（死代码），
+> 本任务顺手清理为直接 `a._get_service(AdminChangeDraftService)`。
 
 - [ ] **Step 5: 运行测试确认通过**
 
@@ -2475,6 +2499,7 @@ Expected: 全绿（无 failed）
   - `admin_agent` feature_key → `LanguageModelService.get_feature_model("admin_agent")`（`AdminAgentChatService.FEATURE_KEY`）
 - [ ] **新表读写俱全**：`admin_agent_conversation`/`admin_agent_message` 有写入（编排）与读取（两条 GET 路由）
 - [ ] **新路由**均在 `admin_routes_7.py` 的 `register_routes` 内，且 `test_admin_rbac_guard.py` 通过（前缀映射已覆盖，无需改 `support.py`）
+- [ ] **DI 构造守卫**：每个新服务都带 `@inject` + `@dataclass`（否则 `_get_service` 运行时 `CallError` → 500）；`test_admin_agent_di_construction.py` 覆盖每个新服务的 `injector.get` 可构造性，且**至少一条路由测试不替换 `_get_service`**（保护真实构造路径）
 - [ ] **提示词无硬编码**：`ops_agent` / `marketing_agent` / 系统提示词全部来自 `prompts/**/*.yaml` + `prompt_template`
 - [ ] **预置 Agent 不下放权限**：`granted_permissions=[]` 有测试锁定
 - [ ] **`admin_user_id` 一律 UUID**：三条新路由均 `UUID(str(admin["id"]))`，有测试锁定
