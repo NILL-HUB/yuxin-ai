@@ -1,7 +1,8 @@
 """L2 按需解析任务测试。
 
-L2 目标：让素材「能被精细修改」——视频逐场景视觉详述与精细时间轴。
-L2 回填同一批 Segment 的 content/metadata，**不新建 Segment**（避免重复）。
+L2 目标：让素材「能被精细修改」——由 L1 命中帧定位时间窗口，只在窗口内
+按 0.5 秒/帧密抽并逐帧详述（不重扫全片）。
+窗口内新帧**新建 Segment**（`metadata.tier2_window=True`），与 L1 粗抽帧区分。
 """
 from pathlib import Path
 

@@ -11,7 +11,8 @@ from sqlalchemy import func
 
 from internal.core.file_extractor import FileExtractor
 from internal.core.ports.storage_port import ObjectStoragePort
-from internal.core.vision.vision_invoke import path_to_data_uri
+from internal.core.vision.frame_sampling import plan_l2_windows
+from internal.core.vision.vision_invoke import path_to_data_uri, probe_duration_sec
 from internal.entity.dataset_entity import DocumentStatus, SegmentStatus
 from internal.entity.knowledge_entity import DocumentMediaType
 from internal.exception import NotFoundException
@@ -32,6 +33,9 @@ _L2_FRAME_PROMPT = (
 )
 
 logger = logging.getLogger(__name__)
+
+# L2 密抽窗口的临时子目录名
+_L2_WINDOW_DIR = "l2_windows"
 
 # 默认的处理规则（文档分割与预处理配置）
 _DEFAULT_PROCESS_RULE = {
@@ -148,51 +152,277 @@ class KnowledgeIndexingService(BaseService):
         self.update(document, parse_profile=parse_profile)
         return {"document_id": str(document_id), "tier2": parse_profile["tier2"]}
 
-    def _enhance_l2(self, document: KnowledgeDocument) -> dict:
-        """L2 增强主体：对视频帧补详尽视觉描述并回写既有 Segment。
+    def _enhance_l2(
+        self, document: KnowledgeDocument, explicit_range: tuple[float, float] | None = None
+    ) -> dict:
+        """L2 增强主体：由 L1 命中帧定位窗口，只在窗口内密抽并详述。
 
-        仅处理视频（图片/音频的 L2 增强——细粒度 OCR 坐标、说话人切分——为后续增量）。
+        规格 §5.4：L2 是「放大镜」不是「重扫」。L1 帧的 `time_offset` 给出
+        目标时刻，扩窗后仅在窗口内按 0.5 秒/帧抽取——这是成本从「整片逐帧」
+        降到「按需区间」的关键。
+
+        其余媒体类型（图片/音频）的 L2 增强仍是后续增量，此处直接返回。
         """
         media_type = getattr(document, "media_type", None) or DocumentMediaType.DOCUMENT.value
         if media_type != DocumentMediaType.VIDEO.value:
-            return {"media_type": media_type, "enhanced_segments": 0}
+            return {"media_type": media_type, "window_frames": 0}
 
-        storage = getattr(self, "cos_service", None)
         segments = self.db.session.query(KnowledgeSegment).filter(
             KnowledgeSegment.knowledge_document_id == document.id,
         ).all()
 
-        enhanced = 0
-        for segment in segments:
-            frame = self._segment_frame(segment)
-            if frame is None or storage is None:
+        # 窗口只能由 **L1 片段**推导：L2 自己产生的窗口帧若参与推导，会形成
+        # 「上一轮窗口 → 下一轮更大窗口」的自我放大（帧数逐轮膨胀）。
+        l1_segments = [
+            s for s in segments if not (getattr(s, "metadata_", None) or {}).get("tier2_window")
+        ]
+        hit_offsets = [
+            frame["time_offset"]
+            for frame in (self._segment_frame(s) for s in l1_segments)
+            if frame is not None
+        ]
+
+        # 重新触发 L2 前先清掉上一轮的窗口片段与帧：否则会累积重复片段，
+        # 且旧帧对象永不释放（帧已计配额，等于配额泄漏）。
+        self._clear_previous_l2_windows(document, segments)
+
+        windows = plan_l2_windows(
+            hit_offsets,
+            duration_sec=self._resolve_document_duration(document),
+            explicit_range=explicit_range,
+        )
+        if not windows:
+            logger.info("L2 无可用窗口（无 L1 命中帧），跳过 document_id=%s", document.id)
+            return {"media_type": media_type, "window_frames": 0, "windows": 0}
+
+        created = 0
+        for index, (window_start, window_end) in enumerate(windows, start=1):
+            created += self._extract_and_persist_window(
+                document, window_start, window_end - window_start, window_index=index
+            )
+        return {
+            "media_type": media_type,
+            "window_frames": created,
+            "windows": len(windows),
+        }
+
+    def _clear_previous_l2_windows(self, document: KnowledgeDocument, segments) -> None:
+        """删除上一轮 L2 窗口片段及其帧对象、记录与配额。
+
+        L2 的窗口帧是**新建**的持久化产物（与 L1 帧不同，L1 每轮由
+        `_release_stale_frames` 统一清理）。若不清理旧窗口，重复触发会：
+        1. 累积重复片段（同一时间段出现多份详述）；
+        2. 旧帧对象与配额永不释放（泄漏）。
+        """
+        stale = [
+            s for s in segments if (getattr(s, "metadata_", None) or {}).get("tier2_window")
+        ]
+        if not stale:
+            return
+
+        keys: list[str] = []
+        for segment in stale:
+            metadata = getattr(segment, "metadata_", None) or {}
+            frame_url = str(metadata.get("frame_url") or "").strip()
+            if frame_url and frame_url not in keys:
+                keys.append(frame_url)
+
+        rows = (
+            self.db.session.query(UploadFile)
+            .filter(UploadFile.key.in_(keys))
+            .all()
+            if keys
+            else []
+        )
+        seen: set[str] = set()
+        for row in rows:
+            key = getattr(row, "key", None)
+            if not key or key in seen:
                 continue
+            seen.add(key)
             try:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    local_path = os.path.join(temp_dir, os.path.basename(frame["frame_url"]))
-                    storage.download_file(frame["frame_url"], local_path)
-                    data_uri = path_to_data_uri(local_path)
-                detailed = self._invoke_l2_vision(data_uri)
-                if not detailed:
-                    continue
-                metadata = dict(getattr(segment, "metadata_", None) or {})
-                metadata["tier2_summary"] = detailed
-                metadata["tier2_status"] = "completed"
-                # 回写同一 Segment，不新建
-                self.update(
-                    segment,
-                    content=detailed,
-                    metadata_=metadata,
-                    character_count=len(detailed),
-                    token_count=self.embeddings_service.calculate_token_count(detailed),
-                )
-                enhanced += 1
+                self._delete_frame_object(key, getattr(row, "storage_backend", None))
             except Exception:
                 logger.warning(
-                    "L2 帧增强失败 segment_id=%s", segment.id, exc_info=True
+                    "清理旧 L2 帧对象失败 document_id=%s key=%s", document.id, key, exc_info=True,
+                )
+            try:
+                account_id = getattr(row, "account_id", None)
+                size = int(getattr(row, "size", 0) or 0)
+                if account_id is not None and size > 0:
+                    self._release_frame_quota(account_id, size)
+            except Exception:
+                logger.warning(
+                    "释放旧 L2 帧配额失败 document_id=%s key=%s", document.id, key, exc_info=True,
+                )
+            try:
+                self.delete(row)
+            except Exception:
+                logger.warning(
+                    "删除旧 L2 帧记录失败 document_id=%s key=%s", document.id, key, exc_info=True,
                 )
 
-        return {"media_type": media_type, "enhanced_segments": enhanced}
+        for segment in stale:
+            try:
+                self.knowledge_vector_service.remove_segment(segment)
+            except Exception:
+                logger.warning(
+                    "清理旧 L2 片段向量失败 segment_id=%s", segment.id, exc_info=True,
+                )
+            try:
+                self.delete(segment)
+            except Exception:
+                logger.warning(
+                    "删除旧 L2 片段失败 segment_id=%s", segment.id, exc_info=True,
+                )
+
+    def _resolve_document_duration(self, document: KnowledgeDocument) -> float:
+        """解析视频时长（独立方法便于测试替换）；探测失败返回 0.0（不裁剪上界）。
+
+        注意：`probe_duration_sec` 需要**本地文件路径**，而 `upload_file.key`
+        是对象存储 key——必须先下载到临时文件再探测，否则恒为 0.0（窗口上界失效）。
+        本方法在 `_download_document_video` 之外单独下载，是为了保证「时长探测」
+        与「实际抽帧」互不复用同一临时文件的生命周期。
+        """
+        try:
+            upload_file = self._get_upload_file(document)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                local_path = os.path.join(
+                    temp_dir, os.path.basename(upload_file.key) or "material.mp4"
+                )
+                self.cos_service.download_file(upload_file.key, local_path)
+                duration = probe_duration_sec(local_path)
+        except Exception:
+            logger.warning("L2 时长解析失败 document_id=%s", document.id, exc_info=True)
+            duration = 0.0
+        return float(duration or 0.0)
+
+    def _extract_and_persist_window(
+        self, document: KnowledgeDocument, start_sec: float, duration_sec: float, *, window_index: int
+    ) -> int:
+        """对单个窗口密抽并逐帧建 Segment；返回成功入库的帧数。
+
+        单帧失败只跳过该帧——L2 是增强能力，不应因个别帧失败丢弃整个窗口。
+
+        **必须同时写文本向量与视觉向量**：L2 的价值就是让窗口内的细节「能被搜到」。
+        只建 Segment 不索引，用户永远检索不到这些片段，等于白跑。
+        """
+        knowledge_base = document.knowledge_base
+        if knowledge_base is None:
+            return 0
+
+        video_path = self._download_document_video(document)
+        if not video_path:
+            return 0
+
+        created = 0
+        next_position = self._next_segment_position(document)
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                out_dir = os.path.join(temp_dir, _L2_WINDOW_DIR, str(window_index))
+                frames = self.media_extractor._extract_frames_in_range(
+                    video_path, out_dir, start_sec=start_sec, duration_sec=duration_sec
+                )
+                for frame in frames:
+                    try:
+                        frame_url = self._persist_window_frame(frame, document)
+                    except Exception:
+                        logger.warning(
+                            "L2 窗口帧留存失败 document_id=%s offset=%s",
+                            document.id, frame.time_offset, exc_info=True,
+                        )
+                        frame_url = ""
+                    if not frame_url:
+                        continue
+                    try:
+                        data_uri = self._load_frame_data_uri(frame_url)
+                        detailed = self._invoke_l2_vision(data_uri)
+                    except Exception:
+                        logger.warning(
+                            "L2 窗口帧视觉详述失败 document_id=%s frame_url=%s",
+                            document.id, frame_url, exc_info=True,
+                        )
+                        continue
+                    if not str(detailed or "").strip():
+                        continue
+                    segment = self.create(
+                        KnowledgeSegment,
+                        knowledge_base_id=document.knowledge_base_id,
+                        knowledge_document_id=document.id,
+                        owner_account_id=document.owner_account_id,
+                        position=next_position,
+                        content=detailed,
+                        keywords=self.jieba_service.extract_keywords(detailed, 10),
+                        metadata_={
+                            "media_type": DocumentMediaType.VIDEO.value,
+                            "scene_index": created + 1,
+                            "frame_url": frame_url,
+                            "time_offset": float(frame.time_offset or 0.0),
+                            # 标记为 L2 窗口帧，区别于 L1 全片粗抽帧
+                            "tier2_window": True,
+                            "tier2_window_start": float(start_sec),
+                            "tier2_window_duration": float(duration_sec),
+                            "tier2_status": "completed",
+                        },
+                        character_count=len(detailed),
+                        token_count=self.embeddings_service.calculate_token_count(detailed),
+                        status=SegmentStatus.INDEXING.value,
+                        enabled=False,
+                    )
+                    # 文本向量：让窗口细节可被文本检索命中
+                    self.knowledge_vector_service.index_segment(segment, knowledge_base)
+                    # 视觉向量：让窗口细节可被画面检索命中（与 L1 帧共用同一通道）
+                    self._index_visual_vectors(document, [segment])
+                    # 置为完成并启用（与 L1 收尾语义一致）
+                    self.update(
+                        segment,
+                        status=SegmentStatus.COMPLETED.value,
+                        enabled=True,
+                    )
+                    next_position += 1
+                    created += 1
+        except Exception:
+            logger.warning(
+                "L2 窗口抽帧失败 document_id=%s window=%s", document.id, start_sec, exc_info=True
+            )
+        return created
+
+    def _next_segment_position(self, document: KnowledgeDocument) -> int:
+        """返回该文档下一个可用的片段序号（L2 新片段接在既有片段之后）。"""
+        existing = self.db.session.query(KnowledgeSegment).filter(
+            KnowledgeSegment.knowledge_document_id == document.id,
+        ).all()
+        return max((int(getattr(s, "position", 0) or 0) for s in existing), default=0) + 1
+
+    def _download_document_video(self, document: KnowledgeDocument) -> str:
+        """把素材视频下载到临时文件；失败返回空串（单窗口失败不中断整轮 L2）。"""
+        try:
+            upload_file = self._get_upload_file(document)
+            directory = tempfile.mkdtemp()
+            target = os.path.join(directory, os.path.basename(upload_file.key) or "material.mp4")
+            self.cos_service.download_file(upload_file.key, target)
+            return target
+        except Exception:
+            logger.warning("L2 素材下载失败 document_id=%s", document.id, exc_info=True)
+            return ""
+
+    def _load_frame_data_uri(self, frame_url: str) -> str:
+        """把留存帧下载并转为 data URI（独立方法便于测试替换）。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, os.path.basename(frame_url))
+            self.cos_service.download_file(frame_url, local_path)
+            return path_to_data_uri(local_path)
+
+    def _persist_window_frame(self, frame, document: KnowledgeDocument) -> str:
+        """把窗口帧留存为 UploadFile，返回对象 key（失败抛错由调用方降级）。"""
+        return str(
+            self.media_extractor._persist_frame(
+                frame.path,
+                account_id=getattr(document, "owner_account_id", None),
+                document_id=document.id,
+            ).key
+            or ""
+        )
 
     def _invoke_l2_vision(self, data_uri: str) -> str:
         """L2 视觉详述调用（独立方法便于测试替换）。"""
