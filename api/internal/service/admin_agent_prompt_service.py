@@ -11,11 +11,7 @@
 """
 from __future__ import annotations
 
-import logging
-
 from internal.entity.admin_agent_entity import AdminAgentPrincipal
-
-logger = logging.getLogger(__name__)
 
 __all__ = ["DEFAULT_ADMIN_AGENT_PROMPT_KEY", "AdminAgentPromptService"]
 
