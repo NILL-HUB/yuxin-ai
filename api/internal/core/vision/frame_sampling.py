@@ -23,6 +23,13 @@ L1_CAP_DURATION_SEC = 3600
 _LOG_MULTIPLIER = 8
 _LOG_OFFSET = 35
 
+# L2 区间密抽：命中时刻两侧留白（秒）
+L2_WINDOW_PADDING_SEC = 10.0
+# L2 区间内抽帧密度：每 0.5 秒 1 帧
+L2_INTERVAL_SEC = 0.5
+# 单次窗口抽帧上限（600 帧 = 5 分钟 @0.5s/帧），挡住「整段触发 L2」
+L2_MAX_FRAMES_PER_WINDOW = 600
+
 
 def resolve_l1_frame_count(duration_sec: float) -> int:
     """按视频时长解析 L1 抽帧数量。
@@ -54,3 +61,86 @@ def plan_frame_offsets(duration_sec: float) -> list[float]:
     count = resolve_l1_frame_count(duration)
     slot = duration / count
     return [round(slot * (index + 0.5), 3) for index in range(count)]
+
+
+def resolve_l2_window_frame_count(duration_sec: float) -> int:
+    """按窗口时长解析要抽取的帧数（每 0.5 秒 1 帧，上限 600）。
+
+    极短窗口至少 1 帧（否则「定位到了却什么都没抽」）；时长非法时同样退回 1，
+    让调用方无需额外判空。
+    """
+    try:
+        duration = float(duration_sec)
+    except (TypeError, ValueError):
+        return 1
+    if duration <= 0:
+        return 1
+    raw = int(duration / L2_INTERVAL_SEC)
+    return max(1, min(L2_MAX_FRAMES_PER_WINDOW, raw))
+
+
+def merge_time_windows(windows: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """合并重叠或首尾相接的时间窗口，返回按起点升序的规范窗口列表。
+
+    合并是成本控制的关键：一串相邻命中若各自成窗，会重复抽取重叠区间。
+    """
+    normalized: list[tuple[float, float]] = []
+    for start, end in windows:
+        low, high = (start, end) if start <= end else (end, start)
+        normalized.append((float(low), float(high)))
+    normalized.sort(key=lambda item: item[0])
+
+    merged: list[tuple[float, float]] = []
+    for start, end in normalized:
+        if merged and start <= merged[-1][1]:
+            prev_start, prev_end = merged[-1]
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def plan_l2_windows(
+    hit_offsets: list[float],
+    duration_sec: float,
+    explicit_range: tuple[float, float] | None = None,
+) -> list[tuple[float, float]]:
+    """推导 L2 要密抽的时间窗口（秒）。
+
+    - `explicit_range` 给出时直接用它（用户显式指定时间段，规格 §2「A+B」）；
+    - 否则由 L1 命中帧的 `time_offset` 各自向两侧扩 `L2_WINDOW_PADDING_SEC` 再合并；
+    - 窗口裁剪到 `[0, duration_sec]`；时长未知（<=0）时只保下界，不把窗口截空。
+    """
+    if explicit_range is not None:
+        candidates = [explicit_range]
+    else:
+        candidates = []
+        for offset in hit_offsets or []:
+            try:
+                position = float(offset)
+            except (TypeError, ValueError):
+                continue
+            if position < 0:
+                continue
+            candidates.append(
+                (position - L2_WINDOW_PADDING_SEC, position + L2_WINDOW_PADDING_SEC)
+            )
+
+    if not candidates:
+        return []
+
+    windows = merge_time_windows(candidates)
+
+    try:
+        duration = float(duration_sec)
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    clamped: list[tuple[float, float]] = []
+    for start, end in windows:
+        low = max(0.0, start)
+        high = end if duration <= 0 else min(duration, end)
+        if high <= low:
+            continue
+        clamped.append((low, high))
+    return clamped
