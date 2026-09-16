@@ -73,16 +73,26 @@ def upgrade():
         sa.ForeignKeyConstraint(
             ["admin_agent_id"],
             ["admin_agent.id"],
-            name="fk_admin_agent_conversation_agent_id_admin_agent",
+            name="fk_admin_agent_conversation_admin_agent_id_admin_agent",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["admin_user_id"],
+            ["admin_user.id"],
+            name="fk_admin_agent_conversation_admin_user_id_admin_user",
             ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name="pk_admin_agent_conversation_id"),
     )
     op.create_index(
-        "admin_agent_conversation_agent_idx", "admin_agent_conversation", ["admin_agent_id"]
+        "admin_agent_conversation_admin_agent_id_idx",
+        "admin_agent_conversation",
+        ["admin_agent_id"],
     )
     op.create_index(
-        "admin_agent_conversation_admin_idx", "admin_agent_conversation", ["admin_user_id"]
+        "admin_agent_conversation_admin_user_id_idx",
+        "admin_agent_conversation",
+        ["admin_user_id"],
     )
 
     op.create_table(
@@ -130,15 +140,19 @@ def upgrade():
         sa.PrimaryKeyConstraint("id", name="pk_admin_agent_message_id"),
     )
     op.create_index(
-        "admin_agent_message_conversation_idx", "admin_agent_message", ["conversation_id"]
+        "admin_agent_message_conversation_id_idx", "admin_agent_message", ["conversation_id"]
     )
 
 
 def downgrade():
-    op.drop_index("admin_agent_message_conversation_idx", table_name="admin_agent_message")
+    op.drop_index("admin_agent_message_conversation_id_idx", table_name="admin_agent_message")
     op.drop_table("admin_agent_message")
-    op.drop_index("admin_agent_conversation_admin_idx", table_name="admin_agent_conversation")
-    op.drop_index("admin_agent_conversation_agent_idx", table_name="admin_agent_conversation")
+    op.drop_index(
+        "admin_agent_conversation_admin_user_id_idx", table_name="admin_agent_conversation"
+    )
+    op.drop_index(
+        "admin_agent_conversation_admin_agent_id_idx", table_name="admin_agent_conversation"
+    )
     op.drop_table("admin_agent_conversation")
     op.drop_index("admin_agent_owner_builtin_uniq", table_name="admin_agent")
     op.drop_column("admin_agent", "builtin_key")

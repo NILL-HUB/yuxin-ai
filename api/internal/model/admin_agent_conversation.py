@@ -35,11 +35,17 @@ class AdminAgentConversation(Base):
         ForeignKeyConstraint(
             ["admin_agent_id"],
             ["admin_agent.id"],
-            name="fk_admin_agent_conversation_agent_id_admin_agent",
+            name="fk_admin_agent_conversation_admin_agent_id_admin_agent",
             ondelete="CASCADE",
         ),
-        Index("admin_agent_conversation_agent_idx", "admin_agent_id"),
-        Index("admin_agent_conversation_admin_idx", "admin_user_id"),
+        ForeignKeyConstraint(
+            ["admin_user_id"],
+            ["admin_user.id"],
+            name="fk_admin_agent_conversation_admin_user_id_admin_user",
+            ondelete="CASCADE",
+        ),
+        Index("admin_agent_conversation_admin_agent_id_idx", "admin_agent_id"),
+        Index("admin_agent_conversation_admin_user_id_idx", "admin_user_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
@@ -70,7 +76,7 @@ class AdminAgentMessage(Base):
             name="fk_admin_agent_message_conversation_id_admin_agent_conversation",
             ondelete="CASCADE",
         ),
-        Index("admin_agent_message_conversation_idx", "conversation_id"),
+        Index("admin_agent_message_conversation_id_idx", "conversation_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
