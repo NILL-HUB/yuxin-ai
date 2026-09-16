@@ -93,3 +93,41 @@ def test_api_entrypoint_should_scale_asgi_workers_when_configured(tmp_path):
 
     assert "uvicorn" in command
     assert "--workers 4" in command
+
+
+def test_celery_entrypoint_should_filter_queues_when_configured(tmp_path):
+    """渲染 worker 必须能只消费 render 队列，否则会与业务任务抢 worker。
+
+    render 是分钟级长任务；celery 未传 -Q 会消费全部已声明队列，
+    故渲染 worker 用 CELERY_QUEUES=render 显式隔离（见 execution-roadmap P3.7）。
+    """
+    command = _run_api_entrypoint(
+        tmp_path,
+        extra_env={
+            "MODE": "celery",
+            "CELERY_QUEUES": "render",
+        },
+    )
+
+    assert "celery" in command
+    assert "-Q render" in command
+
+
+def test_celery_entrypoint_should_support_multiple_queues(tmp_path):
+    command = _run_api_entrypoint(
+        tmp_path,
+        extra_env={
+            "MODE": "celery",
+            "CELERY_QUEUES": "render,mail",
+        },
+    )
+
+    assert "-Q render,mail" in command
+
+
+def test_celery_entrypoint_should_consume_all_queues_by_default(tmp_path):
+    """未设 CELERY_QUEUES 时必须保持原行为（不传 -Q），避免影响既有 worker。"""
+    command = _run_api_entrypoint(tmp_path, extra_env={"MODE": "celery"})
+
+    assert "celery" in command
+    assert "-Q" not in command

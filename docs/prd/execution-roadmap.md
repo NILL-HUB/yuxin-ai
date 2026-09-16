@@ -239,10 +239,13 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **render 队列与任务** | `config/config.py`（`Queue("render")`）+ `internal/task/render_tasks.py` | ✅ 已落地；已登记 `TASK_MODULES` 并配路由；派发点见下 |
 | **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具派发 `render_composition_task`（Celery 优先、失败回退同步） |
 
-> **尚未落地（另立部署计划）**：`-Q render` 容器隔离编排（compose 服务 + entrypoint 队列过滤）。
-> 渲染镜像 `api/Dockerfile.render` 已落地（见下）。渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；
-> 现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）与 `api/Dockerfile.worker`
-> （有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**，故渲染镜像在 api 镜像之上补齐。
+> **渲染 worker 部署编排（已落地）**：`api/Dockerfile.render`（在 api 镜像之上补 Node24+Chromium+ffmpeg/ffprobe）
+> \+ `docker/docker-compose.yaml` 的 `llmops-render-worker` 服务
+> \+ `docker/entrypoint.sh` 的 `CELERY_QUEUES` 队列过滤支持。
+> 渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）
+> 与 `api/Dockerfile.worker`（有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**，故渲染镜像在 api 镜像之上补齐。
+> ⚠️ 渲染镜像的**完整构建**尚未在本机跑通——本机对 apt 大包（chromium / fonts-noto-cjk / libllvm15）
+> 持续下载不稳定（`Connection failed`），已在 Dockerfile 内加 `Acquire::Retries`；需在稳定网络环境复验。
 >
 > **Node 统一规则（已定，勿再摇摆）**：全架构统一 **Node 24 + `bookworm-slim`（glibc）这一个变体**。
 > - **版本下限**：HyperFrames 的要求是 `Node >= 22`；本机 host v24.9.0 已实测跑通 hyperframes 0.8.42 并产出真 MP4。
@@ -260,11 +263,11 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 >    在路径缺失时抛**不重试**的 `RenderEnvironmentError`（设计如此：环境问题重试无意义），
 >    因此主 worker 未配置时会快速失败、不会空转重试；但一旦把路径配到主 worker 上，
 >    分钟级渲染就会占用业务 worker 槽位。
-> 2. **`render` 队列需要专用消费者**。`docker/entrypoint.sh` 的 celery 分支当前
->    **不带 `-Q`**，而 `Queue("render")` 已登记进 `task_queues`——按 Celery 语义，
->    未传 `-Q` 的 worker 会消费**全部已声明队列**（含 `render`）。故上线渲染 worker 时
->    必须显式 `-Q render`；entrypoint 目前不支持队列过滤参数，需在部署计划里一并补上
->    （本机无 bash，无法就地验证该脚本改动）。
+> 2. **`render` 队列由专用 worker 独占**。`Queue("render")` 已登记进 `task_queues`，而按 Celery 语义，
+>    未传 `-Q` 的 worker 会消费**全部已声明队列**（含 `render`）——所以主业务 worker 必须保持不消费它。
+>    现已在 `docker/entrypoint.sh` 增加 `CELERY_QUEUES` 开关（映射为 `-Q`，不设则行为不变），
+>    并由 `llmops-render-worker` 服务设 `CELERY_QUEUES=render` 独占消费；
+>    该行为有测试覆盖（`test_api_entrypoint.py`，需 Linux/容器内的 bash 执行）。
 
 ### P3（已完成）
 

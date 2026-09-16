@@ -116,6 +116,53 @@ services:
       llmops-redis:
         condition: service_healthy
 
+  # 渲染 worker：独占消费 render 队列。
+  # 为什么单独一个服务：渲染是分钟级长任务，且渲染镜像要塞进 Node24+Chromium+ffmpeg，
+  # 体积与资源占用都远大于业务 worker；混在一起会抢占业务槽位（设计 §3.2）。
+  # ⚠️ HYPERFRAMES_* 三件依赖只配在本服务上，勿配到 llmops-celery。
+  # ⚠️ CELERY_QUEUES 必须为 render：不设则本 worker 会消费全部队列，隔离失效。
+  llmops-render-worker:
+    image: llmops-render:${IMAGE_VERSION:-0.1.0}
+    build:
+      context: ../api
+      dockerfile: Dockerfile.render
+    container_name: llmops-render-worker
+    restart: always
+    volumes:
+      - ../api:/app/api
+      - ./volumes/app/storage:/app/api/storage
+    env_file:
+      - ../api/.env
+    environment:
+      APP_ENV: production
+      APP_DEBUG: '0'
+      SQLALCHEMY_ECHO: 'false'
+      MODE: celery
+      MIGRATION_ENABLED: 'false'
+      # 独占 render 队列（见 docker/entrypoint.sh 的 CELERY_QUEUES 支持）
+      CELERY_QUEUES: render
+      # 渲染吃满 CPU/内存，默认单并发，避免多进程争抢导致整体变慢
+      CELERY_WORKER_AMOUNT: '1'
+      POSTGRES_HOST: llmops-db
+      POSTGRES_PORT: 5432
+      REDIS_HOST: llmops-redis
+      REDIS_PORT: 6379
+      NEO4J_URI: bolt://llmops-neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      MINIO_ENDPOINT: http://llmops-minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      # HyperFrames 三件依赖：镜像内已装，路径为 Debian 包默认位置
+      HYPERFRAMES_BROWSER_PATH: /usr/bin/chromium
+      HYPERFRAMES_FFMPEG_PATH: /usr/bin/ffmpeg
+      HYPERFRAMES_FFPROBE_PATH: /usr/bin/ffprobe
+      HYPERFRAMES_CLI_VERSION: '0.8.42'
+    depends_on:
+      llmops-db:
+        condition: service_healthy
+      llmops-redis:
+        condition: service_healthy
+
   llmops-celery-beat:
     image: llmops-api:${IMAGE_VERSION:-0.1.0}
     build:

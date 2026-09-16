@@ -131,7 +131,19 @@ if [[ "${MODE}" == "asgi" ]]; then
     app.http.asgi_app:app
 elif [[ "${MODE}" == "celery" ]]; then
   # 7.运行Celery命令（阶段 C：独立 Celery 应用，与 Flask 初始化解耦）
-  celery -A app.http.celery_app:celery_app worker -P ${CELERY_WORKER_CLASS:-prefork} -c ${CELERY_WORKER_AMOUNT:-1} --loglevel DEBUG
+  # CELERY_QUEUES：可选，限定本 worker 消费哪些队列（逗号分隔，转成 celery 的 -Q）。
+  # 不设置时保持原行为——celery 未传 -Q 会消费「全部已声明队列」。
+  # 为何必须有这个开关：render 队列已登记进 task_queues，而渲染是分钟级长任务；
+  # 若不隔离，主业务 worker 会把 render 一起消费掉，抢占业务槽位。
+  # 渲染 worker 必须设 CELERY_QUEUES=render（见 docs/prd/execution-roadmap.md P3.7）。
+  CELERY_QUEUE_ARGS=""
+  if [[ -n "${CELERY_QUEUES:-}" ]]; then
+    CELERY_QUEUE_ARGS="-Q ${CELERY_QUEUES}"
+    echo "[celery] 限定消费队列：${CELERY_QUEUES}"
+  else
+    echo "[celery] 未设 CELERY_QUEUES，消费全部已声明队列"
+  fi
+  celery -A app.http.celery_app:celery_app worker -P ${CELERY_WORKER_CLASS:-prefork} -c ${CELERY_WORKER_AMOUNT:-1} ${CELERY_QUEUE_ARGS} --loglevel DEBUG
 elif [[ "${MODE}" == "celery-beat" ]]; then
   # 7b.运行Celery Beat调度器
   celery -A app.http.celery_app:celery_app beat --loglevel DEBUG
