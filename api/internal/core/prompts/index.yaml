@@ -5,3 +5,7 @@
 - key: conductor
   category: routing
   file: routing/conductor.yaml
+
+- key: admin_agent_board_agent
+  category: admin_agent
+  file: admin_agent/board_agent.yaml

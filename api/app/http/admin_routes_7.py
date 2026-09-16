@@ -122,6 +122,70 @@ def _build_file_items(
     return items
 
 
+def _build_board_executor():
+    """构造板块工具执行闸门（无状态，每次新建即可）。"""
+    from internal.service.admin_agent_board_tools import BoardToolExecutor
+
+    return BoardToolExecutor()
+
+
+def _build_draft_service(a):
+    """构造通用变更草稿服务（Db 依赖由 injector 提供）。"""
+    from internal.service.admin_change_draft_service import AdminChangeDraftService
+
+    try:
+        return a._get_service(AdminChangeDraftService)
+    except Exception:
+        # AdminChangeDraftService 不是 @inject：injector 无法自动构造时
+        # 回退到直接注入 db（与 ScopedKnowledgeService._get_audit_log_service 同思路）。
+        from internal.extension.database_extension import db
+
+        return AdminChangeDraftService(db=db)
+
+
+def _build_audit_service():
+    """构造审计服务（session=None → 走全局 db.session）。"""
+    from internal.service.audit_log_service import AuditLogService
+
+    return AuditLogService()
+
+
+def _build_execution_service(a, *, board_executor, draft_service, audit_log_service):
+    """构造执行编排服务。
+
+    独立成模块级工厂是**刻意留的测试接缝**：该服务的三个依赖都需按请求现场
+    组装（board_executor 无状态、draft/audit 依赖 db），因此无法经
+    `_get_service` 单例解析；路由测试据此替换整条执行链，避免为了测"路由接线"
+    而把真实 DB 写链路拉进来。
+    """
+    from internal.service.admin_agent_execution_service import (
+        AdminAgentExecutionService,
+    )
+
+    return AdminAgentExecutionService(
+        board_executor=board_executor,
+        draft_service=draft_service,
+        audit_log_service=audit_log_service,
+    )
+
+
+def _dump_draft(draft) -> dict:
+    """序列化变更草稿（UUID / datetime → 字符串 / 时间戳）。"""
+    from internal.lib.helper import datetime_to_timestamp
+
+    return {
+        "id": str(draft.id),
+        "policy_type": draft.policy_type,
+        "target_id": draft.target_id,
+        "before_config": draft.before_config or {},
+        "after_config": draft.after_config or {},
+        "diff": draft.diff or {},
+        "impact": draft.impact or {},
+        "status": draft.status,
+        "created_at": datetime_to_timestamp(draft.created_at),
+    }
+
+
 def register_routes(quart_app):
     """把批次 7 的 Admin 端点注册到 quart_app（幂等，重复调用直接返回）。"""
     global _registered
@@ -282,6 +346,106 @@ def register_routes(quart_app):
         )
         resp = AdminAgentAssignablePermissionsResp()
         return a._ok(resp.dump({"codes": codes}))
+
+    @quart_app.post("/admin/agents/<uuid:agent_id>/invoke")
+    async def admin_agent_invoke(agent_id):
+        """执行一个板块动作（管理端 Agent 治理，设计 §7.1 执行四步）。
+
+        权限点由全局 RBAC 门禁强制为 `agent_pool:manage`（见 support.py）——
+        执行入口代表"让 Agent 在后台动手"，不接受只读权限触发。
+
+        本路由只做接线：把当前管理员的**实时权限**交给 `get_principal`
+        重算三重交集，再把分流/执行/审计交给 `AdminAgentExecutionService`。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_schema import AdminAgentInvokeReq
+        from internal.service.admin_agent_service import AdminAgentService
+
+        body = await request.get_json(force=True, silent=True) or {}
+        form = AdminAgentInvokeReq()
+        try:
+            req = form.load(body)
+        except Exception as exc:
+            return a._json_resp(
+                code="validate_error", message=f"参数错误: {exc}", status=400
+            )
+
+        admin_user_id = admin.get("id")
+        admin_permissions = list(admin.get("permissions") or [])
+
+        def _run():
+            principal = a._get_service(AdminAgentService).get_principal(
+                agent_id=agent_id,
+                admin_user_id=admin_user_id,
+                admin_permissions=admin_permissions,
+            )
+            if principal is None:
+                return None
+            execution = _build_execution_service(
+                a,
+                board_executor=_build_board_executor(),
+                draft_service=_build_draft_service(a),
+                audit_log_service=_build_audit_service(),
+            )
+            return execution.run(
+                principal,
+                board=req["board"],
+                action=req["action"],
+                payload=req.get("payload") or {},
+            )
+
+        try:
+            result = await a._to_thread(_run)
+        except PermissionError as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), status=400)
+        if result is None:
+            return a._json_resp(code="not_found", message="Agent 不存在", status=404)
+        return a._ok(result)
+
+    @quart_app.get("/admin/agents/<uuid:agent_id>/drafts")
+    async def admin_agent_drafts(agent_id):
+        """列出某 Agent 产出的待应用变更草稿（供后台「待批准变更」消费）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_schema import AdminAgentDraftListResp
+        from internal.service.admin_agent_service import AdminAgentService
+
+        admin_user_id = admin.get("id")
+
+        def _run():
+            agent = a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            if agent is None:
+                return None
+            rows = _build_draft_service(a).list_drafts(status="pending")
+            # 草稿表用 impact.agent_id 记录提议者，据此做归属隔离
+            mine = [
+                d
+                for d in rows
+                if str((d.impact or {}).get("agent_id") or "") == str(agent_id)
+            ]
+            return {"items": [_dump_draft(d) for d in mine]}
+
+        try:
+            result = await a._to_thread(_run)
+        except PermissionError as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
+        if result is None:
+            return a._json_resp(code="not_found", message="Agent 不存在", status=404)
+        resp = AdminAgentDraftListResp()
+        return a._ok(resp.dump(result))
 
     # ------------------------------------------------------------------
     # admin_customer_user_handler -> AdminCustomerUserService

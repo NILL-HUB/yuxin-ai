@@ -513,6 +513,10 @@ def _admin_route_permission(method: str, path: str) -> str | None:
     # assignable-permissions 属只读查询 → read。
     # 必须放在通用 admin/users 等分支之前判定，避免前缀重叠被先行捕获。
     if _admin_match(segments, ("admin", "agents")):
+        # 执行入口是写性质操作：即使动作本身只读，也代表"让 Agent 在后台动手"，
+        # 必须持 agent_pool:manage，不允许只读权限触发。
+        if method == "POST" and len(segments) >= 4 and segments[-1] == "invoke":
+            return "agent_pool:manage"
         if method == "GET":
             return "agent_pool:read"
         if method in {"POST", "PATCH", "PUT", "DELETE"}:
