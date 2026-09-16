@@ -156,6 +156,29 @@ class StorageQuotaService(BaseService):
         used = self.get_used_bytes(account_id)
         self._assert_within_quota(total, used, incoming_bytes)
 
+    def check_quota_allow_overflow(self, account_id: UUID, incoming_bytes: int) -> None:
+        """成品入库的**宽让**校验（设计 §6.3）：仅当剩余 <= 0 时拒绝，允许超量溢出。
+
+        与 `check_quota` 的差别只在超限行为：
+        - 素材上传（严格）：`used + incoming > total` 即拒绝；
+        - 成品入库（宽让）：只要还有剩余就放行，写入后可能超额。
+
+        为什么宽让：成品由系统写入，因配额差一点失败会让整轮渲染白干。
+        为什么仍设闸：`remaining <= 0` 才拒绝，防止已超额用户无限产片。
+        """
+        total = self.resolve_total_quota_bytes(account_id)
+        used = self.get_used_bytes(account_id)
+        if total - used <= 0:
+            raise ForbiddenException(
+                "存储空间已满，请购买存储扩展包后重试",
+                {
+                    "total_bytes": total,
+                    "used_bytes": used,
+                    "incoming_bytes": incoming_bytes,
+                    "reason_code": "storage_quota_exceeded",
+                },
+            )
+
     def consume_quota(
         self, account_id: UUID, incoming_bytes: int, reserve_bytes: int = 0
     ) -> int:

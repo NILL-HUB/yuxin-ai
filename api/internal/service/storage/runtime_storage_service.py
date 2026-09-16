@@ -134,13 +134,21 @@ class RuntimeStorageProxy:
         account_id,
         mime_type: str | None = None,
         folder: str = "artifacts",
+        allow_overflow: bool = False,
     ):
         """上传内存字节到当前激活后端并创建 UploadFile 记录。
 
         account_id 非空时同样受配额约束（Agent 生成产物会占用用户存储）。
+        `allow_overflow=True` 走宽让校验（仅当剩余 <= 0 拒绝），供系统写入成品使用
+        （设计 §6.3）；其余场景保持严格，不要随意打开。
         """
         if account_id is not None:
-            self.storage_quota_service.check_quota(account_id, len(content))
+            checker = (
+                self.storage_quota_service.check_quota_allow_overflow
+                if allow_overflow
+                else self.storage_quota_service.check_quota
+            )
+            checker(account_id, len(content))
 
         upload_file = self._get_service().upload_bytes(
             filename=filename,
@@ -151,6 +159,7 @@ class RuntimeStorageProxy:
         )
 
         if account_id is not None:
+            # 宽让也照常记账：溢出的部分要真实反映在用量里（网盘式语义）
             self.storage_quota_service.add_usage(account_id, upload_file.size or 0)
         return upload_file
 
