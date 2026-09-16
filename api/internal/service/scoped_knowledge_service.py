@@ -497,17 +497,29 @@ class SystemKnowledgeService(KnowledgeBaseService):
         before_data: dict | None = None,
         after_data: dict | None = None,
     ) -> None:
-        """记录系统级知识库操作审计日志，失败不影响主流程。"""
+        """记录系统级知识库操作审计日志，失败不影响主流程。
+
+        此处用 ``record(commit=True)`` 而非 ``record_for_write(commit=False)``：
+        三个调用点（create/update/delete）的业务写分别经由
+        ``BaseService.auto_commit()`` 与 ``RecycleBinService.delete_resource()``
+        提交，二者都会 ``session.remove()`` 归还 session；若审计再走
+        "随调用方事务"，它写入的将是已归还的 session，退出时被 close() 回滚，
+        导致 system_knowledge 的审计**全部**丢失。
+
+        换言之：本审计是**独立于业务事务的旁路记录**，与 record_for_write 的
+        "随调用方事务"契约本就不同。
+        """
         if not admin_user_id:
             return
         try:
-            self._get_audit_log_service().record_for_write(
+            self._get_audit_log_service().record(
                 admin_user_id=admin_user_id,
                 action=action,
                 resource_type="system_knowledge",
                 resource_id=resource_id,
                 before_data=before_data,
                 after_data=after_data,
+                commit=True,
             )
         except Exception:
             import logging

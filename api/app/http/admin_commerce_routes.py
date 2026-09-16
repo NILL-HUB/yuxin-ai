@@ -24,20 +24,29 @@ def _int_arg(name, default):
 
 
 def _write_audit(admin_id, action, resource_type, resource_id, before_data, after_data, note=None):
-    """写入管理员操作审计。note 仅作过程说明（AuditLog 无独立备注列）。"""
-    from internal.extension.database_extension import db
-    from internal.model.admin import AuditLog
+    """写入管理员操作审计。note 归入 after_data（AuditLog 无独立备注列）。
 
-    db.session.add(AuditLog(
+    必须用 `commit=True`（而非直接 db.session.add 后不管）：本函数运行在
+    **事件循环线程**，与线程池 worker 的 session 不是同一个；且 asgi teardown
+    只做 `remove()` 不提交，业务事务的提交不会捎带这条审计。历史上此处 4 类
+    审计（关单 / 提现 / 退款 / 支付配置）因此全部丢失。
+
+    走 AuditLogService 而非直接构造 AuditLog，可复用统一的空值保护与序列化。
+    """
+    from internal.service.audit_log_service import AuditLogService
+
+    merged_after = dict(after_data or {})
+    if note:
+        merged_after.setdefault("_note", note)
+    AuditLogService().record(
         admin_user_id=admin_id,
         action=action,
         resource_type=resource_type,
         resource_id=str(resource_id) if resource_id else "",
-        before_data=before_data or {},
-        after_data=after_data or {},
-        ip="",
-        user_agent="",
-    ))
+        before_data=before_data,
+        after_data=merged_after,
+        commit=True,
+    )
 
 
 async def _json_payload():

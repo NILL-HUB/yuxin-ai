@@ -169,6 +169,9 @@ class AdminRedeemCodeService:
             before_data=None,
             after_data={"code_mask": redeem_code.code_mask},
         )
+        # _emit_audit 走 record_for_write(commit=False)：本方法是只读查询、
+        # 业务上无其它写，因此必须显式提交，否则审计会随 session 归还被回滚。
+        self.session.commit()
         return {
             "id": str(redeem_code.id),
             "code_mask": redeem_code.code_mask,

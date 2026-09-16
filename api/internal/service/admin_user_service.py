@@ -694,8 +694,10 @@ class AdminUserService:
             if session.revoked_at is None and (session.expires_at is None or session.expires_at >= now):
                 session.revoked_at = now
                 revoked_count += 1
-        self.session.commit()
-        # 审计日志：记录踢下线操作及撤销会话数量
+        # 审计日志：记录踢下线操作及撤销会话数量。
+        # 必须在 commit 之前写入：_emit_audit 走 record_for_write(commit=False)，
+        # 事务由本次 commit 一并提交；顺序颠倒会让审计在 commit 之后才写入，
+        # session 归还时的 close() 会回滚它，导致审计静默丢失。
         self._emit_audit(
             operator_id=operator_id,
             action="revoke_admin_sessions",
@@ -705,6 +707,7 @@ class AdminUserService:
             user_agent=user_agent,
             after_data={"revoked_count": revoked_count},
         )
+        self.session.commit()
         return {"revoked_sessions": revoked_count}
 
     def _resolve_role_ids(self, role_codes: list[str]) -> list[str]:
