@@ -150,6 +150,7 @@ used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销
 - **释放**：**仅在回收站留存期结束、底层存储对象被物理销毁时** `release_usage(account_id, size)`，落点在 `internal/service/recycle_bin_handlers.py` 的 `purge_knowledge_document` / `purge_knowledge_base`（删除底层对象之后调用 `_release_storage_quota`）。**关键帧文件是独立于文档主文件的 `upload_file` 记录**，上述两个 purge 会一并清理帧文件并释放其配额（快照侧由 `_collect_document_frame_files` 采集）——帧经存储代理计入配额，不释放即配额泄漏。
 - **删除进回收站不释放**：删除 = 记录快照 + 物理删原表记录，但底层文件在留存期（默认 7~30 天）内仍占用存储，故此时**不**释放配额；删除后立刻恢复语义才成立（恢复不重复累加，因为配额从未被释放）。
 - **容错**：配额释放失败只记 warning，不向上抛异常——`purge` 抛异常的语义是"底层对象删除失败需重试"，配额释放失败若抛出会导致重复销毁。快照缺 `account_id` / `size`（老快照）时跳过释放。
+- **多目标销毁的顺序（重试安全）**：一次 purge 涉及多个对象（主文件 + 若干帧）时必须**先删完全部对象、再统一释放配额**，整库路径先汇总全部文档目标后一次性处理。若「边删边释放」，删到一半失败时前面的配额已释放，`purge_expired` 保持 pending 重试会把同一份字节再释放一次（配额多还）。释放侧另按对象 key 去重，防御存量重复记录。
 
 | 组件 | 位置 | 职责 |
 | --- | --- | --- |

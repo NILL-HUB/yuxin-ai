@@ -505,9 +505,9 @@ class MediaSegment:
 
 | 环节 | 行为 |
 | --- | --- |
-| `_persist_frame(frame_path, *, account_id, document_id)` | 读帧字节 → `cos_service.upload_bytes(filename, content, account_id, mime_type="image/jpeg")` → `upload_file_service.create_upload_file(...)`（`extension="jpg"`、`storage_backend="local"`、`hash=sha3_256`） |
+| `_persist_frame(frame_path, *, account_id, document_id)` | 读帧字节 → `cos_service.upload_bytes(filename, content, account_id, mime_type="image/jpeg")`，**直接返回该调用产出的记录**（记录与 `extension="jpg"` / `hash=sha3_256` 等字段均由存储后端在 `upload_bytes` 内建好）。**不得**再调 `create_upload_file`——那会对同一对象 key 建出第二条记录（详见 §11.10.5「记录唯一性」） |
 | 降级策略 | `_persist_frame` 抛异常只记 warning 并把 `frame_url` 置空，帧描述片段照常产出——留存是增强能力，不得让整个视频解析失败 |
-| 依赖 | 服务新增 dataclass 字段 `upload_file_service: UploadFileService`（具体类型标注，injector 按类型解析） |
+| 依赖 | 服务保留 dataclass 字段 `upload_file_service: UploadFileService`（具体类型标注，injector 按类型解析）；帧记录实际由存储后端创建 |
 
 > 帧留存本身不写视觉向量；视觉向量的编码与索引由索引链路在写完文本片段向量后单独执行（`_index_visual_vectors`，P3 已落地，见 §11.10.3）。
 
@@ -707,6 +707,10 @@ P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分�
 - **计费发生在存储代理层，不在帧代码里**：`_persist_frame` 调 `cos_service.upload_bytes(...)`，而 `ObjectStoragePort` 在 DI 中被绑定到 `RuntimeStorageProxy`（`api/app/http/module.py`），该代理的 `upload_bytes` 内部已执行 `check_quota` + `add_usage`。这是一条**跨模块隐式契约**，由 `api/test/internal/service/test_frame_quota_charge.py` 显式锁定，避免被静默移除后帧变成免费存储。
 - **释放**：`purge_knowledge_document`（单文档）与 `purge_knowledge_base`（整库）除主文件外**一并清理帧文件并 `release_usage`**。其快照分别由 `snapshot_knowledge_document`（`frames`）与 `snapshot_knowledge_base`（文档级 `_frames`）采集（按 segment 的 `frame_url` 反查 `UploadFile` 记录）。二者必须成对——只计费不释放会让用户删除素材后帧仍占额（配额泄漏）。
 - **准入预留**：素材上传（分片 `complete` / `instant_upload` / `upload_file` 直传）的校验量为「素材大小 + `PARSE_RESERVE_BYTES`（8MB）」，把解析将产生的帧占用一并纳入门槛；该预留**只是门槛、不计入已用**（`consume_quota(reserve_bytes=...)`）。**产物写入路径 `upload_bytes` 不加预留**（帧/Agent 产物逐次写入，加预留会反复卡门槛）。
+- **记录唯一性**：帧的 `UploadFile` 记录由 `upload_bytes` 内部创建，`_persist_frame` **直接复用其返回值**，不得再调 `create_upload_file`——同一对象 key 出现两条记录会让 purge 对同一份字节 `release_usage` 两次（配额多还）。purge 侧的 `_purge_storage_targets` 另按 key 去重，作为存量数据与未来回归的防御。
+- **purge 顺序（重试安全）**：多目标销毁必须**先删完全部对象、再统一释放配额**，且整库路径先汇总全部文档的目标后一次性处理。若「边删边释放」，删到一半失败时前面的配额已释放，`purge_expired` 保持 pending 重试会把同一份字节再释放一次（配额多还）。
+- **记录生命周期**：`physical_delete_knowledge_document` / `physical_delete_knowledge_base` 在物理删除时**一并删除帧 `UploadFile` 记录**（否则帧记录无任何入口再引用，成为永久孤儿）；恢复侧 `restore_*` 必须**成对重建**帧记录，否则恢复后再删除会采不到帧记录（欠释放）。
+- **重解析清理**：`_release_stale_frames` 在 `_build_media_document` 清理旧片段**之前**删除上一轮的帧对象、`UploadFile` 记录并 `release_usage`。可达入口为「编辑文档重建索引」（`update_text_document_for_admin` 复用同一 document id）与 Celery `build_document_task`（`max_retries=2`）；不清理则每轮都留下永不释放的孤儿帧（持续配额泄漏）。清理失败只记 warning 不中断本轮解析。
 
 ---
 
