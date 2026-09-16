@@ -26,7 +26,7 @@
 | 渲染**必须**显式给 3 个路径 | `HYPERFRAMES_BROWSER_PATH`、`HYPERFRAMES_FFMPEG_PATH`、`HYPERFRAMES_FFPROBE_PATH`（否则 doctor/render 报缺） |
 | **浏览器必须是能响应 `--version` 的 Chrome** | `chrome-headless-shell.exe --version` → `Google Chrome for Testing 152.0.7977.8`（正常）；而完整版 `chrome.exe --version` 在本机会**挂死**（sandbox 拒绝访问），导致 render 直接拒绝启动 |
 | **ffprobe 必须是真 ffprobe** | 用 ffmpeg 二进制冒充 ffprobe 会失败：`Unrecognized option 'print_format'`（`-print_format` 是 ffprobe 专有参数）。换成真 ffprobe 后渲染 100% 成功 |
-| HyperFrames 自己的 docker 渲染器形态 | 其 `Dockerfile.render` 为 `FROM node:22-bookworm-slim` + `ARG HYPERFRAMES_VERSION` + `npm install -g hyperframes@${HYPERFRAMES_VERSION}` |
+| HyperFrames 自己的 docker 渲染器形态 | 其 `Dockerfile.render` 为 `FROM node:22-bookworm-slim` + `ARG HYPERFRAMES_VERSION` + `npm install -g hyperframes@${HYPERFRAMES_VERSION}`。**注意**：22 只是 HyperFrames 的选择，其要求是 `Node >= 22`（下限）；本项目统一用 **Node 24**，且并入 Debian 后端镜像必须用 **glibc** 变体（`node:24-bookworm-slim`），不能用 alpine（musl）
 | 现有两个镜像都不适合作渲染底座 | `api/Dockerfile` 有 node 但**无 chromium/ffmpeg**；`api/Dockerfile.worker` 有 playwright+chromium 但**无 node、无 ffmpeg** |
 | 迁移图当前**单 head** | `v0d1e2f3a4b5`（`v0d1e2f3a4b5_extend_recycle_bin_admin_agent.py`），共 153 个已跟踪迁移 |
 
@@ -2811,7 +2811,7 @@ git commit -m "feat(video): add render service and in-conversation render_video 
 > （`api/Dockerfile.render` 等）。渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；
 > 现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）与 `api/Dockerfile.worker`
 > （有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**。
-> 参考 HyperFrames 自有渲染镜像的形态：`FROM node:22-bookworm-slim` + `npm i -g hyperframes@<钉死版本>`。
+> 渲染镜像 `api/Dockerfile.render` 已落地（基于 api 镜像 + `node:24-bookworm-slim` 拷贝 Node 24 + chromium/ffmpeg）。**Node 统一规则**：本项目统一 **Node 24**；libc 必须与并入的镜像一致——并入 Debian 后端须 glibc（bookworm），独立运行的 UI 工作负载用 alpine（更小）。
 > 在镜像就绪前，`render` 队列任务需由具备上述三件的环境消费。
 ```
 

@@ -1,5 +1,8 @@
 # 使用官方 Node.js 24 LTS 镜像作为基础镜像
-FROM node:24-alpine AS builder
+# 全架构统一 Node 24，且统一用 bookworm-slim（glibc）这一个变体：
+# 混用 alpine 会让生产服务器多留一整个 node 基础镜像（musl/glibc 层不共享、无法优化）。
+# 本阶段是构建期，产物阶段是 nginx:1.30-alpine，node 层不会进入交付镜像。
+FROM node:24-bookworm-slim AS builder
 
 # 设置工作目录
 WORKDIR /app/web

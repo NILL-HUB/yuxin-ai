@@ -239,11 +239,21 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **render 队列与任务** | `config/config.py`（`Queue("render")`）+ `internal/task/render_tasks.py` | ✅ 已落地；已登记 `TASK_MODULES` 并配路由；派发点见下 |
 | **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具派发 `render_composition_task`（Celery 优先、失败回退同步） |
 
-> **尚未落地（另立部署计划）**：渲染 worker 镜像与 `-Q render` 容器隔离编排
-> （`api/Dockerfile.render` 等）。渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；
+> **尚未落地（另立部署计划）**：`-Q render` 容器隔离编排（compose 服务 + entrypoint 队列过滤）。
+> 渲染镜像 `api/Dockerfile.render` 已落地（见下）。渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；
 > 现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）与 `api/Dockerfile.worker`
-> （有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**。
-> 参考 HyperFrames 自有渲染镜像的形态：`FROM node:22-bookworm-slim` + `npm i -g hyperframes@<钉死版本>`。
+> （有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**，故渲染镜像在 api 镜像之上补齐。
+>
+> **Node 统一规则（已定，勿再摇摆）**：全架构统一 **Node 24 + `bookworm-slim`（glibc）这一个变体**。
+> - **版本下限**：HyperFrames 的要求是 `Node >= 22`；本机 host v24.9.0 已实测跑通 hyperframes 0.8.42 并产出真 MP4。
+> - **必须 glibc（bookworm）而非 alpine**，两条理由：
+>   1. 渲染镜像要把 node 二进制**并入** Debian(glibc) 后端镜像；alpine 的 node 链接
+>      `libc.musl-x86_64.so.1`，拷进去会因缺 `ld-musl` 起不来（实测 `ldd` 确认）。
+>   2. **运维成本（关键）**：混用两个 libc 变体会让生产服务器**多留一整个 node 基础镜像**——
+>      musl 与 glibc 的层不共享、也无法优化消除。这不是「层大小差几十 MB」，而是一整个镜像的净占用。
+> - **落地清单**（全部 `node:24-bookworm-slim`）：`api/Dockerfile`（从阶段拷贝，替代原 Debian Node 18）、
+>   `api/Dockerfile.render`、`ui/Dockerfile`、`ui/Dockerfile.dev`、`docker/docker-compose.dev.yaml`。
+>   UI 的**产物阶段**仍是 `nginx:1.30-alpine`，那是 nginx 不是 node，与本次统一无关。
 >
 > **部署时的两条硬约束（现状已核实，勿踩）**：
 > 1. **`HYPERFRAMES_*` 三个路径只能配在渲染 worker 上**。`render_composition_task`

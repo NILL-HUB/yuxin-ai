@@ -1,6 +1,7 @@
 # 开发期前端镜像：Vite 开发服务器（源码由 compose 挂载，保存后 HMR 热更新）
 # 生产部署请使用 ui/Dockerfile（编译产物塞进 nginx 镜像，体积更小）。
-FROM node:24-alpine
+# Node 变体全架构统一为 24-bookworm-slim，避免生产服务器上多留一个 alpine node 基础镜像。
+FROM node:24-bookworm-slim
 
 WORKDIR /app/web
 

@@ -171,7 +171,7 @@ docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d llmops-ap
 ```
 
 - `llmops-api` 以开发模式运行（`APP_DEBUG=1`、`MIGRATION_ENABLED=true`）
-- `llmops-ui` 使用 `node:24-alpine` 运行 Vite 开发服务器（http://127.0.0.1:5173，热更新，`VITE_PROXY_TARGET` 指向 `llmops-api`）
+- `llmops-ui` 使用 `node:24-bookworm-slim` 运行 Vite 开发服务器（http://127.0.0.1:5173，热更新，`VITE_PROXY_TARGET` 指向 `llmops-api`）
 - `llmops-nginx` 通过 profile 自动禁用
 
 ## 常见场景
