@@ -21,6 +21,7 @@ from internal.core.ports.storage_port import ObjectStoragePort
 from internal.core.vision.vision_invoke import (
     ExtractedFrame,
     extract_video_audio,
+    extract_video_frames_in_range,
     extract_video_frames_with_offsets,
     invoke_vision_model,
     path_to_data_uri,
@@ -151,6 +152,18 @@ class KnowledgeMediaExtractorService(BaseService):
         开头（历史缺陷），导致「改细节」无法定位到中后段片段。
         """
         return extract_video_frames_with_offsets(video_path, out_dir)
+
+    def _extract_frames_in_range(
+        self, video_path: str, out_dir: str, *, start_sec: float, duration_sec: float
+    ) -> list[ExtractedFrame]:
+        """在指定时间区间内密抽帧（独立方法便于测试替换，供 L2 扩窗使用）。
+
+        与 `_extract_frames_with_offsets`（全片均匀）相对：本方法只解出窗口内的
+        画面，这是 L2「按需放大」而非重扫全片的实现基础。
+        """
+        return extract_video_frames_in_range(
+            video_path, out_dir, start_sec=start_sec, duration_sec=duration_sec
+        )
 
     def _extract_audio_track(self, video_path: str) -> str:
         """抽取视频音轨为单声道 16k WAV（独立方法便于测试替换）。
