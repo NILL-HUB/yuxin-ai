@@ -177,12 +177,23 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **L1 抽帧随时长动态** | `internal/core/vision/frame_sampling.py`（纯函数 `resolve_l1_frame_count` / `plan_frame_offsets`）+ `vision_invoke.py`（`probe_duration_sec` / `extract_video_frames_with_offsets` / `ExtractedFrame`） | ✅ 已落地；帧数 `clamp(round(8·log2(sec) − 35), 6, 60)`，**1 小时触顶 60 帧**，全片均匀取帧。取代此前「固定 3 帧 + 帧号取模」——旧实现无论视频多长都只取开头若干帧 |
-| **帧时间偏移落库与透传** | `knowledge_media_extractor_service.py`（`_extract_frames_with_offsets`）+ `knowledge_indexing_service.py`（`_segment_frame` 输出 `time_offset`） | ✅ 已落地；帧片段 metadata 与 `parse_profile.frames` 均带 `time_offset`。**当前只写不读**——读取端（L2 区间定位）属后续计划 |
+| **帧时间偏移落库与透传** | `knowledge_media_extractor_service.py`（`_extract_frames_with_offsets`）+ `knowledge_indexing_service.py`（`_segment_frame` 输出 `time_offset`） | ✅ 已落地；帧片段 metadata 与 `parse_profile.frames` 均带 `time_offset`。读取端（L2 区间定位）已在 P3.6 落地 |
 | **配额预留（准入门槛）** | `storage_quota_entity.py`（`PARSE_RESERVE_BYTES = 8MB`）+ `storage_quota_service.py`（`consume_quota(..., reserve_bytes=0)`）+ `chunked_upload_service.py` / `runtime_storage_service.py`（`upload_file`） | ✅ 已落地；素材上传校验量含预留（预留参与门槛但**不计入已用**）；**产物写入路径 `upload_bytes` 不加预留** |
 | **帧计费链路锁定** | `test_frame_quota_charge.py` | ✅ 已落地；帧经存储代理（`RuntimeStorageProxy.upload_bytes`）**隐式计费**，用测试锁定该跨模块契约（无生产代码改动——核查确认现状已计费，再加 `add_usage` 会双重计费） |
 | **帧释放（成对修复）** | `recycle_bin_handlers.py`（`_collect_document_frame_files` + `snapshot_knowledge_document` / `snapshot_knowledge_base` / `purge_knowledge_document` / `purge_knowledge_base`） | ✅ 已落地；帧此前**只计费不清理**（配额泄漏），现两条 purge 路径均一并删帧文件并 `release_usage` |
 
-> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。**尚未落地**：L2 区间密抽（用 `time_offset` 定位后按 0.5s/帧扩抽）与 HyperFrames 渲染宿主（P4 主体），两者在后续计划中。
+> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。L2 区间密抽已由 P3.6 落地；**尚未落地**：HyperFrames 渲染宿主（P4 主体），在后续计划中。
+
+### 知识库产品形态 P3.6：L2 区间密抽（已完成）
+
+| 任务 | 文件 | 状态 |
+| --- | --- | --- |
+| **L2 窗口推导纯函数** | `frame_sampling.py`（`plan_l2_windows` / `merge_time_windows` / `resolve_l2_window_frame_count` / `L2_WINDOW_PADDING_SEC` / `L2_INTERVAL_SEC` / `L2_MAX_FRAMES_PER_WINDOW`） | ✅ 已落地；命中帧 ±10s 扩窗并合并，单窗上限 600 帧，窗口只由 L1 片段推导（避免自我放大） |
+| **按区间抽帧** | `vision_invoke.py`（`extract_video_frames_in_range`，ffmpeg `-ss`/`-t`/`fps=`/`-frames:v`） | ✅ 已落地；偏移是视频时间轴绝对位置，与 L1 同一坐标系 |
+| **L2 改为窗口化密抽** | `knowledge_indexing_service.py`（`_enhance_l2` / `_extract_and_persist_window` / `_persist_window_frame` / `_clear_previous_l2_windows` / `_resolve_document_duration`） | ✅ 已落地；窗口内帧新建 Segment（`tier2_window=True`）并同时写文本/视觉向量，无命中不抽 |
+| **显式区间透传** | `knowledge_base_service.py` / `knowledge_l2_tasks.py` / `knowledge_mcp_routes.py` | ✅ 已落地；请求体 `start_sec` + `end_sec` 均给出时按其密抽 |
+
+> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../superpowers/plans/2026-09-16-l2-range-sampling.md)。**尚未落地**：HyperFrames 渲染（计划 3）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
 
 ### P3（已完成）
 

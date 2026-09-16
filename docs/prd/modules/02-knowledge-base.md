@@ -134,7 +134,7 @@
 - 外部数据源：飞书、Notion、本地文件夹、GitHub 等（同步导入的资料）。
 - 其他结构化或半结构化业务资料。
 - 图片：jpg、jpeg、png、webp、gif、svg 等，L1 视觉理解已落地，细粒度 OCR 区块坐标等 L2 增强未实现。
-- 视频：产品演示、会议录像、课程视频等，L1（音轨 ASR + 关键帧视觉描述 + 关键帧留存）与 L2（逐帧视觉详述）均已落地。
+- 视频：产品演示、会议录像、课程视频等，L1（音轨 ASR + 关键帧视觉描述 + 关键帧留存）与 L2（区间窗口密抽 + 逐帧视觉详述）均已落地。
 - 音频：会议录音、访谈、播客、语音备忘等，L1 ASR 转写已落地，说话人切分等 L2 增强未实现。
 
 资料内容库需要支持：
@@ -144,7 +144,7 @@
 | 上传 | 用户主动上传文件 |
 | 外部数据源连接 | 用户授权连接飞书、Notion、本地文件夹、GitHub 等外部数据源 |
 | 同步 | 支持手动同步与 Celery 定时自动同步（每 6 小时扫描已授权数据源） |
-| 解析 | 文本与结构化资料走 parsing→splitting→indexing；图片/音频/视频走 L1 多模态解析直达入库（见 §11.8），视频可再按需触发 L2 逐帧详述（见 §11.11） |
+| 解析 | 文本与结构化资料走 parsing→splitting→indexing；图片/音频/视频走 L1 多模态解析直达入库（见 §11.8），视频可再按需触发 L2 区间窗口密抽（见 §11.11） |
 | 分段 | 将长内容切分为可检索片段 |
 | 索引 | 建立向量、全文和关键词索引 |
 | 检索 | 按任务动态召回相关资料 |
@@ -237,7 +237,7 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 | --- | --- |
 | 文档 | 已支持 md、doc、docx、txt、pdf、csv、xlsx、xls、html 等 |
 | 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（P2A）；细粒度 OCR 区块坐标等 L2 增强未实现 |
-| 视频 | L1 音轨 ASR 转写 + 关键帧抽取 + 视觉描述入库、关键帧留存为 UploadFile（P2A + P3）；关键帧视觉向量索引与 L2 逐帧视觉详述已落地（P3，见 §11.10 / §11.11）；场景切分、精细时间轴未实现 |
+| 视频 | L1 音轨 ASR 转写 + 关键帧抽取 + 视觉描述入库、关键帧留存为 UploadFile（P2A + P3）；关键帧视觉向量索引与 L2 区间窗口密抽（逐帧视觉详述）已落地（P3，见 §11.10 / §11.11）；场景切分未实现 |
 | 音频 | L1 ASR 全文转写入库已落地（P2A）；说话人切分、章节切分等 L2 增强未实现 |
 
 明确缺口（P1 数据基座落地后已消解项标注 ✅）：
@@ -248,7 +248,7 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 4. ✅ 已消解：归属判断已引入 `owner_account_id` + `owner_admin_user_id`，可区分"管理员自己的个人知识库"和"管理员维护的系统级知识库"。
 5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
-7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 关键帧视觉描述 + 关键帧留存）已接入索引链路**（P2A + P3，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频逐帧视觉详述）已在 P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分与精细时间轴仍未实现。
+7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 关键帧视觉描述 + 关键帧留存）已接入索引链路**（P2A + P3，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频区间窗口密抽 + 逐帧视觉详述）已在 P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分仍未实现。
 8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
 9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
 10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（P3 范围）。
@@ -473,8 +473,10 @@ P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链�
 | `extract_video_audio(video_path, target_path)` | 抽音轨为单声道 16k WAV（`-vn` / `-ac 1` / `-ar 16000`），返回 `target_path`；无可用 ffmpeg 或未产出文件抛 `RuntimeError` |
 | `extract_video_frames_to_dir(video_path, out_dir, frame_count=3)` | 抽帧到指定目录，返回帧文件路径列表；不删目录、不转 data URI，生命周期由调用方负责。**注意：关键帧留存链路已改用 `extract_video_frames_with_offsets`（需时间偏移），本函数当前仅剩测试覆盖，无生产调用方** |
 | `probe_duration_sec(video_path)` | 用同一 ffmpeg 可执行文件解析 `Duration:` 行返回秒数（不额外依赖 ffprobe）；无法探测返回 `0.0`，由调用方退回兜底策略 |
-| `extract_video_frames_with_offsets(video_path, out_dir, frame_count=None)` | 按视频时长均匀抽帧，返回 `list[ExtractedFrame]`（`path` + `time_offset` 秒）。`frame_count` 显式传入时按其抽（供 L2 区间密抽复用）；时长为 0 时退回首帧兜底，仍保证有产物 |
-| `plan_frame_offsets(duration_sec)` / `resolve_l1_frame_count(duration_sec)` | 抽帧策略纯函数（`internal/core/vision/frame_sampling.py`）：帧数 `clamp(round(8·log2(sec) − 35), 6, 60)`，**1 小时触顶 60 帧**，全片均匀取偏移 |
+| `extract_video_frames_with_offsets(video_path, out_dir, frame_count=None)` | 按视频时长**全片**均匀抽帧，返回 `list[ExtractedFrame]`（`path` + `time_offset` 秒）。L1 关键帧链路的抽帧入口；时长为 0 时退回首帧兜底，仍保证有产物 |
+| `extract_video_frames_in_range(video_path, out_dir, start_sec, duration_sec, frame_count=None)` | 只在 `[start_sec, start_sec+duration_sec)` 内密抽（L2 区间入口）：ffmpeg `-ss`/`-t` 限定解码范围 + `-vf fps=1/L2_INTERVAL_SEC`（0.5s/帧）控制密度 + `-frames:v` 封顶。偏移是**视频时间轴绝对位置**，与 L1 帧同一坐标系 |
+| `plan_frame_offsets(duration_sec)` / `resolve_l1_frame_count(duration_sec)` | L1 抽帧策略纯函数（`internal/core/vision/frame_sampling.py`）：帧数 `clamp(round(8·log2(sec) − 35), 6, 60)`，**1 小时触顶 60 帧**，全片均匀取偏移 |
+| `plan_l2_windows(hit_offsets, duration_sec, explicit_range=None)` / `merge_time_windows(windows)` / `resolve_l2_window_frame_count(duration_sec)` | L2 窗口推导纯函数（同模块）：命中帧 `time_offset` 各向两侧扩 `L2_WINDOW_PADDING_SEC`（10s）并合并重叠/相接窗口；显式区间优先；帧数 = 窗口秒数 × 2，上限 `L2_MAX_FRAMES_PER_WINDOW`（600 帧） |
 | `_resolve_ffmpeg_exe()` | 解析可用 ffmpeg 可执行文件：优先系统 `ffmpeg`，其次 `imageio-ffmpeg` 自带静态二进制，均无则抛错 |
 
 `providers/vision_tools/vision_analyze.py` / `video_analyze.py` 已改为复用该模块，对外行为不变（仍使用返回 data URI 的 `extract_video_frames`）。
@@ -567,7 +569,7 @@ build_document(document_id)
 | 档位 | 状态 | 内容 |
 | --- | --- | --- |
 | L1 基础解析 | ✅ 已落地（P2A 建链路；视频音轨 ASR 与关键帧留存为 P3 补强，见 §11.8） | 图片视觉摘要 + OCR、音频 ASR 转写、视频「音轨 ASR 转写 + 关键帧视觉描述」，关键帧留存为 UploadFile → 片段 + 向量 |
-| L2 深度解析 | ✅ 已落地（P3，见 §11.11） | 视频逐帧视觉详述（回写同一批 Segment）；说话人切分、细粒度 OCR 坐标、精细时间轴仍未实现 |
+| L2 深度解析 | ✅ 已落地（P3，见 §11.11） | 视频**区间窗口密抽**：由 L1 命中帧的 `time_offset` 扩窗（±10s，可给显式区间），窗口内按 0.5s/帧密抽并新建 Segment 逐帧详述；说话人切分、细粒度 OCR 坐标、场景切分仍未实现 |
 
 L2 为**按需触发**（Celery 任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`，**不加 beat 条目**），状态写入 `parse_profile.tier2`。检索取料的过滤能力（分区 / 媒体类型 / 标签 / 相似度阈值）与关键帧视觉向量索引均已在 P3 落地，见 §11.9 / §11.10。
 
@@ -727,17 +729,22 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | 注册 | 已登记在 `api/app/http/celery_app.py` 的 `TASK_MODULES` 并加显式 import |
 | beat 条目 | **不加**——L2 是**按需触发**（检索命中 / 用户显式要求），不做定时轮询（长视频视觉详述最贵） |
 | 服务调用 | 任务内经 `injector` 取服务调用 `KnowledgeIndexingService.build_document_l2` |
-| **触发入口** | 路由 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2` → `KnowledgeBaseService.trigger_document_l2`（先校验知识库与文档归属，再 `_dispatch_document_l2`：Celery 优先、失败回退同步，避免请求静默丢失） |
+| **触发入口** | 路由 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2` → `KnowledgeBaseService.trigger_document_l2`（先校验知识库与文档归属，再 `_dispatch_document_l2`：Celery 优先、失败回退同步，避免请求静默丢失）。请求体可选 `start_sec` / `end_sec`，均给出时按显式区间密抽，否则由 L1 命中帧自动推导窗口 |
 
-#### 11.11.2 状态与回写语义
+#### 11.11.2 区间窗口密抽（规格 §5.4）
 
-`KnowledgeIndexingService.build_document_l2(document_id)`：
+`KnowledgeIndexingService.build_document_l2(document_id, start_sec=None, end_sec=None)`：
 
-- 状态写入 `parse_profile.tier2`（`running` → `completed` / `error`），返回 `{"document_id": ..., "tier2": {...}}`。
-- **失败只标记 error，不回滚 L1 产物**——L1 的「能被找到」能力必须保留。
-- `_enhance_l2` 对视频帧补详尽视觉描述并**回写同一批 Segment 的 `content` / `metadata_`，不新建 Segment**（`metadata` 写 `tier2_summary` / `tier2_status`），避免重复片段。
+- **窗口推导**：`plan_l2_windows(hit_offsets, duration_sec, explicit_range)`（纯函数，`frame_sampling.py`）。命中帧的 `time_offset` 各向两侧扩 `L2_WINDOW_PADDING_SEC`（10s），重叠/相接窗口合并；`start_sec` + `end_sec` 均给出时按其显式区间。窗口裁剪到 `[0, duration]`。窗口**只由 L1 片段推导**——L2 自己产生的窗口帧若参与推导，会形成「上一轮窗口 → 下一轮更大窗口」的自我放大。
+- **窗口内密抽**：`extract_video_frames_in_range`（`vision_invoke.py`）用 ffmpeg `-ss`/`-t` 限定解码范围 + `-vf fps=1/0.5` 控制密度 + `-frames:v` 封顶。帧数 = `resolve_l2_window_frame_count(duration)` = 窗口秒数 × 2（`L2_INTERVAL_SEC = 0.5`），上限 `L2_MAX_FRAMES_PER_WINDOW`（600 帧 = 5 分钟）。帧的 `time_offset` 是**视频时间轴绝对位置**，与 L1 帧同一坐标系。
+- **回写语义**：窗口内帧**新建 Segment**（`metadata.tier2_window=True` + `tier2_window_start` / `tier2_window_duration` / `time_offset`），与 L1 全片粗抽帧区分；不再改写 L1 片段 `content`。新建 Segment 同时写入文本向量（`index_segment`）与视觉向量（`_index_visual_vectors`），否则密抽产物不可检索。
+- **重复触发先清旧**：`_clear_previous_l2_windows` 清掉上一轮的窗口片段与帧，避免累积重复片段。
+- **无命中即不抽**：没有 L1 命中帧且未给显式区间时，窗口列表为空 → 不抽任何帧（L2 是「放大镜」不是「重扫全片」）。
+- **成本**：1 小时视频改 20 秒片段，视觉调用从 7,200 次降到约 40 次。
+- **配额**：窗口帧是新的持久化产物，经存储代理计入配额（同 L1 帧口径）；重解析会由 `_release_stale_frames` 清理上一轮帧。
+- 状态写入 `parse_profile.tier2`（`running` → `completed` / `error`），返回 `{"document_id": ..., "tier2": {...}}`；**失败只标记 error，不回滚 L1 产物**——L1 的「能被找到」能力必须保留。
 - `_invoke_l2_vision(data_uri)` 为可替换方法（独立出来便于测试替换），内部调用 `invoke_vision_model` 与 L2 提示词 `_L2_FRAME_PROMPT`。
-- 当前仅处理**视频**（`media_type == video`）；图片的细粒度 OCR 坐标、音频的说话人切分等 L2 增强仍未实现。
+- 当前仅处理**视频**（`media_type == video`）；图片的细粒度 OCR 坐标、音频的说话人切分等 L2 增强仍未实现；**场景切分（按画面切换选帧）仍为后续增量**——当前按时间窗口密抽，非按场景。
 
 ---
 
