@@ -1,6 +1,6 @@
-﻿# L2 区间密集抽帧 Implementation Plan
+# L2 区间密集抽帧 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 让 L2 从「对全部 L1 帧逐帧详述」改为「用 L1 命中帧的 `time_offset` 定位 → 扩窗 → 仅在窗口内按 0.5 秒/帧密抽」，把 1 小时视频改 20 秒片段的视觉调用从 7200 次降到约 40 次。
 
@@ -60,7 +60,7 @@
 - Modify: `api/internal/core/vision/frame_sampling.py`
 - Test: `api/test/internal/core/vision/test_l2_windows.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `api/test/internal/core/vision/test_l2_windows.py`：
 
@@ -189,12 +189,12 @@ class TestPlanL2Windows:
         assert len(plan_l2_windows(hits, duration_sec=600.0)) == 1
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `python -m pytest test/internal/core/vision/test_l2_windows.py -q --no-header --no-cov`
 Expected: FAIL —— `ImportError: cannot import name 'L2_MAX_FRAMES_PER_WINDOW'`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `frame_sampling.py` 末尾追加（**同时**在文件顶部常量区加入两个常量）：
 
@@ -290,17 +290,17 @@ def plan_l2_windows(
     return clamped
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/core/vision/test_l2_windows.py -q --no-header --no-cov`
 Expected: PASS（21 个用例）
 
-- [ ] **Step 5: 运行 vision 目录回归**
+- [x] **Step 5: 运行 vision 目录回归**
 
 Run: `python -m pytest test/internal/core/vision -q --no-header --no-cov`
 Expected: PASS（含既有 27 个用例，无回归）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add api/internal/core/vision/frame_sampling.py api/test/internal/core/vision/test_l2_windows.py
@@ -315,7 +315,7 @@ git commit -m "feat(vision): add L2 range window derivation"
 - Modify: `api/internal/core/vision/vision_invoke.py`
 - Test: `api/test/internal/core/vision/test_range_extraction.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `api/test/internal/core/vision/test_range_extraction.py`：
 
@@ -443,12 +443,12 @@ class TestExtractFramesInRange:
             )
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `python -m pytest test/internal/core/vision/test_range_extraction.py -q --no-header --no-cov`
 Expected: FAIL —— `AttributeError: module ... has no attribute 'extract_video_frames_in_range'`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `vision_invoke.py` 的 `extract_video_frames_with_offsets` 之后新增：
 
@@ -519,17 +519,17 @@ from internal.core.vision.frame_sampling import (
 > **注意**：`L2_INTERVAL_SEC` 已在 Task 1 定义于 `frame_sampling.py`，此处**直接 import 复用**，
 > 不要在本文件再写一遍常量定义。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/core/vision/test_range_extraction.py -q --no-header --no-cov`
 Expected: PASS（4 个用例）
 
-- [ ] **Step 5: 运行 vision 目录回归**
+- [x] **Step 5: 运行 vision 目录回归**
 
 Run: `python -m pytest test/internal/core/vision -q --no-header --no-cov`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add api/internal/core/vision/vision_invoke.py api/test/internal/core/vision/test_range_extraction.py
@@ -544,7 +544,7 @@ git commit -m "feat(vision): extract frames within an explicit time range"
 - Modify: `api/internal/service/knowledge_media_extractor_service.py`
 - Test: `api/test/internal/service/test_media_range_extraction.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `api/test/internal/service/test_media_range_extraction.py`：
 
@@ -594,12 +594,12 @@ def test_delegates_to_vision_invoke_range(monkeypatch, tmp_path):
     assert captured["out_dir"] == str(tmp_path)
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `python -m pytest test/internal/service/test_media_range_extraction.py -q --no-header --no-cov`
 Expected: FAIL —— `AttributeError: ... has no attribute '_extract_frames_in_range'`（或 `monkeypatch` 目标不存在）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `knowledge_media_extractor_service.py` 顶部 import 补上：
 
@@ -630,17 +630,17 @@ from internal.core.vision.vision_invoke import (
         )
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/service/test_media_range_extraction.py -q --no-header --no-cov`
 Expected: PASS
 
-- [ ] **Step 5: 运行媒体提取器既有测试防回归**
+- [x] **Step 5: 运行媒体提取器既有测试防回归**
 
 Run: `python -m pytest test/internal/service/test_knowledge_media_extractor_service.py test/internal/service/test_frame_persistence.py test/internal/service/test_video_frame_offsets.py test/internal/service/test_video_audio_extraction.py test/internal/service/test_media_range_extraction.py -q --no-header --no-cov`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add api/internal/service/knowledge_media_extractor_service.py api/test/internal/service/test_media_range_extraction.py
@@ -657,7 +657,7 @@ git commit -m "feat(knowledge): expose range frame extraction on media extractor
 - Modify: `api/internal/service/knowledge_indexing_service.py`
 - Test: `api/test/internal/service/test_l2_range_sampling.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `api/test/internal/service/test_l2_range_sampling.py`：
 
@@ -1003,12 +1003,12 @@ class TestL2WindowSampling:
         assert created == []
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `python -m pytest test/internal/service/test_l2_range_sampling.py -q --no-header --no-cov`
 Expected: FAIL —— 现有 `_enhance_l2` 不接收窗口推导，`window_frames` 键不存在 / 调用次数不符
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `knowledge_indexing_service.py` 顶部 import 补上：
 
@@ -1072,9 +1072,9 @@ _L2_WINDOW_DIR = "l2_windows"
             return {"media_type": media_type, "window_frames": 0, "windows": 0}
 
         created = 0
-        for index, (start_sec, duration_sec) in enumerate(windows, start=1):
+        for index, (window_start, window_end) in enumerate(windows, start=1):
             created += self._extract_and_persist_window(
-                document, start_sec, duration_sec, window_index=index
+                document, window_start, window_end - window_start, window_index=index
             )
         return {
             "media_type": media_type,
@@ -1310,19 +1310,19 @@ from internal.core.vision.vision_invoke import path_to_data_uri, probe_duration_
 
 （原 `from internal.core.vision.vision_invoke import path_to_data_uri` 一行改为上面的合并写法。）
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/service/test_l2_range_sampling.py -q --no-header --no-cov`
 Expected: PASS（6 个用例）
 
-- [ ] **Step 5: 运行索引链路回归**
+- [x] **Step 5: 运行索引链路回归**
 
 Run: `python -m pytest test/internal/service/test_visual_indexing.py test/internal/service/test_knowledge_media_ingest.py test/internal/service/test_knowledge_l2_trigger.py test/internal/task/test_knowledge_l2_tasks.py test/internal/service/test_l2_range_sampling.py -q --no-header --no-cov`
 Expected: PASS
 
 > **注意**：若 `test_visual_indexing.py` 中已有对旧 `_enhance_l2` 行为的断言（如 `enhanced_segments`），需按新语义更新——新返回值键为 `window_frames` / `windows`。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add api/internal/service/knowledge_indexing_service.py api/test/internal/service/test_l2_range_sampling.py
@@ -1339,7 +1339,7 @@ git commit -m "feat(knowledge): L2 samples only derived hit windows"
 - Modify: `api/internal/task/knowledge_l2_tasks.py`
 - Test: `api/test/internal/service/test_l2_explicit_range.py`
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 新建 `api/test/internal/service/test_l2_explicit_range.py`：
 
@@ -1394,12 +1394,12 @@ def test_without_explicit_range_kwargs_are_none(monkeypatch):
     assert task.calls[0]["kwargs"]["end_sec"] is None
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `python -m pytest test/internal/service/test_l2_explicit_range.py -q --no-header --no-cov`
 Expected: FAIL —— `TypeError: trigger_document_l2() got an unexpected keyword argument 'start_sec'`
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `knowledge_base_service.py` 的 `trigger_document_l2` 签名与派发改为：
 
@@ -1568,17 +1568,17 @@ def build_document_l2_task(
 > `payload = await request.get_json(force=True, silent=True) or {}`，
 > 见该文件 L819 等约 20 处）；**不要**引入新 helper。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `python -m pytest test/internal/service/test_l2_explicit_range.py -q --no-header --no-cov`
 Expected: PASS（2 个用例）
 
-- [ ] **Step 5: 运行 L2 全链路回归**
+- [x] **Step 5: 运行 L2 全链路回归**
 
 Run: `python -m pytest test/internal/service/test_l2_explicit_range.py test/internal/service/test_knowledge_l2_trigger.py test/internal/service/test_l2_range_sampling.py test/internal/task/test_knowledge_l2_tasks.py test/app/http -q --no-header --no-cov`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add api/internal/service/knowledge_base_service.py api/internal/service/knowledge_indexing_service.py api/internal/task/knowledge_l2_tasks.py api/app/http/knowledge_mcp_routes.py api/test/internal/service/test_l2_explicit_range.py
@@ -1593,7 +1593,7 @@ git commit -m "feat(knowledge): accept explicit time range for L2 sampling"
 - Modify: `docs/prd/modules/02-knowledge-base.md`
 - Modify: `docs/prd/execution-roadmap.md`
 
-- [ ] **Step 1: 更新 02-knowledge-base.md §11.11**
+- [x] **Step 1: 更新 02-knowledge-base.md §11.11**
 
 把 §11.11.2「状态与回写语义」中关于 L2 的描述改写为窗口化密抽：
 
@@ -1611,7 +1611,7 @@ git commit -m "feat(knowledge): accept explicit time range for L2 sampling"
 - 状态写入 `parse_profile.tier2`，失败只标 error 不回滚 L1 产物。
 ```
 
-- [ ] **Step 2: 更新 execution-roadmap.md**
+- [x] **Step 2: 更新 execution-roadmap.md**
 
 在 P3.5 小节之后追加：
 
@@ -1628,14 +1628,14 @@ git commit -m "feat(knowledge): accept explicit time range for L2 sampling"
 > **尚未落地**：HyperFrames 渲染（计划 3）。场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
 ```
 
-- [ ] **Step 3: 提交**
+- [x] **Step 3: 提交**
 
 ```bash
 git add docs/prd/modules/02-knowledge-base.md docs/prd/execution-roadmap.md
 git commit -m "docs(knowledge): document L2 range sampling"
 ```
 
-- [ ] **Step 4: 刷新知识图谱**
+- [x] **Step 4: 刷新知识图谱**
 
 Run: `python -m graphify update .`
 
@@ -1643,10 +1643,10 @@ Run: `python -m graphify update .`
 
 ## 自检清单（实施者收尾前逐项确认）
 
-- [ ] 每个新符号都有生产调用方（`plan_l2_windows` → `_enhance_l2`；`extract_video_frames_in_range` → `_extract_frames_in_range` → `_enhance_l2`；`_persist_window_frame` → `_extract_and_persist_window`）
-- [ ] 新符号若暂未被生产代码调用，必须在回复与文档中标注「已提供能力但未接入」，不得写成「已实现」
-- [ ] `time_offset` 在 L1 与 L2 帧中**同一坐标系**（绝对视频时间），可由测试断言
-- [ ] 600 帧上限有测试覆盖（`resolve_l2_window_frame_count(3600) == 600`）
-- [ ] 无命中时不抽帧（成本保护），有测试覆盖
-- [ ] 窗口帧的 `UploadFile` 只创建一条记录（复用 `_persist_frame`，不重复建）
-- [ ] 全量回归：`python -m pytest test -q --no-header --no-cov`
+- [x] 每个新符号都有生产调用方（`plan_l2_windows` → `_enhance_l2`；`extract_video_frames_in_range` → `_extract_frames_in_range` → `_enhance_l2`；`_persist_window_frame` → `_extract_and_persist_window`）
+- [x] 新符号若暂未被生产代码调用，必须在回复与文档中标注「已提供能力但未接入」，不得写成「已实现」
+- [x] `time_offset` 在 L1 与 L2 帧中**同一坐标系**（绝对视频时间），可由测试断言
+- [x] 600 帧上限有测试覆盖（`resolve_l2_window_frame_count(3600) == 600`）
+- [x] 无命中时不抽帧（成本保护），有测试覆盖
+- [x] 窗口帧的 `UploadFile` 只创建一条记录（复用 `_persist_frame`，不重复建）
+- [x] 全量回归：`python -m pytest test -q --no-header --no-cov`
