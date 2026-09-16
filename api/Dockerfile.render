@@ -40,10 +40,14 @@ FROM ${API_IMAGE}
 
 SHELL ["/bin/bash", "-c"]
 
-# 1) 换国内 apt 源：deb.debian.org（Fastly CDN）在本网环境会间歇返回 502，
-#    导致 apt 下载中途失败（实测：284 个包成功、2 个 502 后整体 exit 100）。
-#    同时兼容新版 deb822（debian.sources）与旧版 sources.list 两种格式。
+# 1) 换国内 apt 源并加大重试：本网络环境对大文件持续下载不稳定，
+#    deb.debian.org（Fastly）会间歇 502，aliyun 镜像对 chromium / fonts-noto-cjk /
+#    libllvm15 这类大包会中断连接（实测 "Connection failed"）。故：
+#    - 换 aliyun 源（避开 Fastly 502）；
+#    - 打开 apt 重试与超时放宽，让大包能断点续传重试。
 RUN set -eux; \
+    printf 'Acquire::Retries "10";\nAcquire::http::Timeout "120";\nAcquire::https::Timeout "120";\n' \
+        > /etc/apt/apt.conf.d/99-hf-retries; \
     for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
         if [ -f "$f" ]; then sed -i 's|deb.debian.org|mirrors.aliyun.com|g' "$f"; fi; \
     done; \
