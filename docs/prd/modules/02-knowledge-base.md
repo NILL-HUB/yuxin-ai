@@ -756,3 +756,48 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 2. 迁移图只有一个 head。
 
 背景：历史上曾出现 `down_revision` 指向**未被 git 跟踪**的迁移（`o9d0e1f2a3b4`），开发机因该文件恰好存在而不报错，但全新 clone / CI 上 `alembic upgrade head` 会因 "Revision ... is not present" 直接崩溃。
+
+---
+
+### 11.13 系统预置成品库（P3.7 已落地）
+
+渲染成品需要一个**确定的、唯一的、系统托管的**归集处，故不新增 `base_type`，
+而是每用户预置一个成品库（设计 §4.1）。
+
+| 项 | 值 |
+| --- | --- |
+| 标识 | `knowledge_base.created_from = 'render_output'`（`KnowledgeCreatedFrom.RENDER_OUTPUT`） |
+| 名称 | `成品库`（常量 `RENDER_OUTPUT_BASE_NAME`） |
+| 归属 | 用户私有（`knowledge_scope=user_content`、`owner_account_id=账号`），每账号**至多一个** |
+| 唯一性 | PostgreSQL **部分唯一索引** `knowledge_base_render_output_uniq`（`WHERE created_from='render_output'`）；不能用全表唯一约束——`manual_upload` 等同账号下允许多个 |
+| 创建时机 | 首次写成品时 `get_or_create_render_output_base` 幂等创建（不给从未出片的用户平白建库）；并发冲突靠唯一索引兜底后重查 |
+| 禁止手动上传 | `upload_document` / `create_document_from_upload_file` / `assert_upload_allowed` 三处均经 `_assert_not_render_output_base` 拒绝 |
+| 系统写入 | `KnowledgeBaseService.store_render_output()` —— 落 COS → 建成品库 `KnowledgeDocument`（`source_type='render_output'`、`media_type=video`）→ 触发索引。**该路径不经「禁止上传」校验**（那条只拦用户上传） |
+
+成品库走**同一套 P3 检索**（分区/媒体类型/标签/相似度阈值），因此「可复用」天然成立——
+用户可让小钰从成品库翻旧片翻新。
+
+### 11.14 HyperFrames 渲染宿主（P3.7 已落地）
+
+三层编/渲/库流水线，全部由对话内工具触发：
+
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| 编 | `internal/core/video/composition_builder.py`（`build_composition_html`） | 纯函数：结构化 spec → HyperFrames HTML；文本一律 HTML 转义，输出满足 `data-composition-id` / `class="clip"` / `window.__timelines` 契约 |
+| 渲 | `internal/core/video/hyperframes_renderer.py`（`render_composition` / `verify_artifact` / `build_render_env` / `build_render_command`） | 写工程目录 → subprocess 调 `npx hyperframes@<钉死版本> render` → ffprobe 校验产物。判定为「退出码 0 **且** 产物非空 **且** ffprobe 读出正时长」三者同时满足 |
+| 库 | `KnowledgeBaseService.get_or_create_render_output_base` + `store_render_output` | MP4 落 COS → 成品库建档 → 索引 |
+
+编排与触发：
+
+| 项 | 位置 |
+| --- | --- |
+| 编排服务 | `internal/service/render_service.py`（`RenderService.render_composition` / `render_to_render_output_base`） |
+| Celery 队列与任务 | `config/config.py`（`Queue("render")` + `internal.task.render_tasks.*` 路由）+ `internal/task/render_tasks.py`（`render_composition_task`，`bind=True` / `max_retries=2` / `default_retry_delay=60`） |
+| 会话内入口 | builtin provider `video_render_tools`（`render_video`）+ 运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools`；工具派发 `render_composition_task`（Celery 优先、派发失败回退同步） |
+| 配额宽让 | `StorageQuotaService.check_quota_allow_overflow` + `RuntimeStorageProxy.upload_bytes(allow_overflow=True)`：成品由系统写入，剩余 > 0 即放行（允许溢出），恰好为 0 才拒绝（设计 §6.3）；**素材上传仍严格** |
+| 渲染运行时配置 | `HYPERFRAMES_BROWSER_PATH` / `HYPERFRAMES_FFMPEG_PATH` / `HYPERFRAMES_FFPROBE_PATH` / `HYPERFRAMES_CLI_VERSION`（默认 `0.8.42`）/ `RENDER_TIMEOUT_SEC` |
+
+> 渲染硬依赖三个外部二进制（浏览器 / ffmpeg / ffprobe），缺任一渲染在启动阶段即失败。
+> 浏览器须是能响应 `--version` 的 Chrome 构建（chrome-headless-shell 实测正常）；
+> ffprobe 必须是**真 ffprobe**（用 ffmpeg 冒充会因 `-print_format` 不支持而失败）。
+> **尚未落地（另立部署计划）**：渲染 worker 镜像与 `-Q render` 容器隔离编排（`api/Dockerfile.render` 等）。

@@ -212,7 +212,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **帧计费链路锁定** | `test_frame_quota_charge.py` | ✅ 已落地；帧经存储代理（`RuntimeStorageProxy.upload_bytes`）**隐式计费**，用测试锁定该跨模块契约（无生产代码改动——核查确认现状已计费，再加 `add_usage` 会双重计费） |
 | **帧释放（成对修复）** | `recycle_bin_handlers.py`（`_collect_document_frame_files` + `snapshot_knowledge_document` / `snapshot_knowledge_base` / `purge_knowledge_document` / `purge_knowledge_base`） | ✅ 已落地；帧此前**只计费不清理**（配额泄漏），现两条 purge 路径均一并删帧文件并 `release_usage` |
 
-> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。L2 区间密抽已由 P3.6 落地；**尚未落地**：HyperFrames 渲染宿主（P4 主体），在后续计划中。
+> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。L2 区间密抽已由 P3.6 落地；HyperFrames 渲染宿主已由 **P3.7** 落地（见下）。
 
 ### 知识库产品形态 P3.6：L2 区间密抽（已完成）
 
@@ -223,7 +223,28 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **L2 改为窗口化密抽** | `knowledge_indexing_service.py`（`_enhance_l2` / `_extract_and_persist_window` / `_persist_window_frame` / `_clear_previous_l2_windows` / `_resolve_document_duration`） | ✅ 已落地；窗口内帧新建 Segment（`tier2_window=True`）并同时写文本/视觉向量，无命中不抽 |
 | **显式区间透传** | `knowledge_base_service.py` / `knowledge_l2_tasks.py` / `knowledge_mcp_routes.py` | ✅ 已落地；请求体 `start_sec` + `end_sec` 均给出时按其密抽 |
 
-> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../superpowers/plans/2026-09-16-l2-range-sampling.md)。**尚未落地**：HyperFrames 渲染（计划 3）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
+> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../superpowers/plans/2026-09-16-l2-range-sampling.md)。HyperFrames 渲染已由 **P3.7** 落地（见下）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
+
+### 知识库产品形态 P3.7：HyperFrames 渲染宿主与成品库（已完成）
+
+| 任务 | 文件 | 状态 |
+| --- | --- | --- |
+| **渲染运行时配置** | `config/config.py`（`HYPERFRAMES_BROWSER_PATH` / `HYPERFRAMES_FFMPEG_PATH` / `HYPERFRAMES_FFPROBE_PATH` / `HYPERFRAMES_CLI_VERSION` / `RENDER_TIMEOUT_SEC`） | ✅ 已落地；CLI 版本钉死 0.8.42 |
+| **成品库标识与唯一约束** | `knowledge_entity.py`（`RENDER_OUTPUT`）+ 迁移 `w1e2f3a4b5c6` | ✅ 已落地；部分唯一索引保证每账号至多一个 |
+| **成品库幂等创建与禁上传** | `knowledge_base_service.py`（`get_or_create_render_output_base` / `_assert_not_render_output_base`） | ✅ 已落地；三条上传入口均拒绝 |
+| **composition 编译器** | `internal/core/video/composition_builder.py`（`build_composition_html`） | ✅ 已落地；纯函数，输出经真实 `hyperframes lint` 校验（0 errors） |
+| **渲染执行器** | `internal/core/video/hyperframes_renderer.py`（`render_composition` / `verify_artifact`） | ✅ 已落地；**实测产出 h264 1920x1080 MP4** |
+| **成品入库** | `knowledge_base_service.py`（`store_render_output`） | ✅ 已落地；落 COS + 建档 + 触发索引 |
+| **成品配额宽让** | `storage_quota_service.py`（`check_quota_allow_overflow`）+ `runtime_storage_service.py`（`upload_bytes(allow_overflow=True)`） | ✅ 已落地；剩余 > 0 即放行（允许溢出），恰好为 0 拒绝（设计 §6.3）。**素材上传仍严格** |
+| **render 队列与任务** | `config/config.py`（`Queue("render")`）+ `internal/task/render_tasks.py` | ✅ 已落地；已登记 `TASK_MODULES` 并配路由；派发点见下 |
+| **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具派发 `render_composition_task`（Celery 优先、失败回退同步） |
+
+> **尚未落地（另立部署计划）**：渲染 worker 镜像与 `-Q render` 容器隔离编排
+> （`api/Dockerfile.render` 等）。渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；
+> 现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）与 `api/Dockerfile.worker`
+> （有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**。
+> 参考 HyperFrames 自有渲染镜像的形态：`FROM node:22-bookworm-slim` + `npm i -g hyperframes@<钉死版本>`。
+> 在镜像就绪前，`render` 队列任务需由具备上述三件的环境消费。
 
 ### P3（已完成）
 

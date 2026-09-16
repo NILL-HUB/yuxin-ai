@@ -403,7 +403,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | --- | --- | --- |
 | `create_knowledge_base` | 参数含 `name` / `base_type` / `partition_mode` / `description`，支持对话内建库 | ✅ **已落地**（builtin provider `knowledge_base_tools`，见下） |
 | 检索工具扩展（改造 `search_knowledge_base`） | 新增 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤参数 | ✅ **已落地**（P3，见 [modules/02-knowledge-base.md §11.9.3](./modules/02-knowledge-base.md#1193-检索工具的四个可选入参)） |
-| 视频轻量编辑工具（新增） | `video_trim` / `video_concat` / `video_subtitle` | ⬜ 规划（P4） |
+| 视频渲染出片（新增） | `render_video`（builtin provider `video_render_tools`）+ 成品库 | ✅ **已落地**（P3.7）：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库。`video_trim` / `video_concat` / `video_subtitle` 三个独立编辑工具**未实现**——当前经 composition 的 `data-media-start` 裁切与多轨排布实现同等能力 |
 
 `create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
 
@@ -411,7 +411,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 - 参数：`name`（必填）、`base_type`（可选，`document`/`image`/`video`/`audio`/`mixed`，默认 `mixed`）、`partition_mode`（可选，`none`/`date_month`/`date_day`/`custom`，默认 `none`）、`description`（可选）。`base_type` / `partition_mode` 在工具内先做枚举校验，非法值直接返回可读错误，不进入服务层。
 - 服务调用：`KnowledgeBaseService.create_user_content_base(..., operation_context="user")`，仅创建**当前登录用户的私有**用户资料库。
 - 账号来源：由运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` 通过工厂参数 `account_id` 透传（与 `os_file_task` / `computer_action` 的 `requester` 同一注入点），工具内部再经 `AccountService` 加载真实 `Account` 实例。
-- **未落地**：视频轻量编辑工具仍为规划项（P4）。检索过滤参数扩展已在 P3 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.9](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)）。
+- **未落地**：`video_trim` / `video_concat` / `video_subtitle` 三个**独立编辑工具未实现**（渲染出片能力已由 `render_video` 提供，见 §7.4 与 [modules/02-knowledge-base.md §11.14](./modules/02-knowledge-base.md#1114-hyperframes-渲染宿主p37-已落地)）。检索过滤参数扩展已在 P3 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.9](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)）。
 
 ---
 
@@ -428,7 +428,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 7 | **存储配额空白** | account / Plan 均无存储字段 | 按 §2.6 新增配额模型 | ✅ 已修复（`PlanEntitlement.storage_quota_gb` + `StorageQuotaService`）|
 | 8 | **用量无 account 维度** | `StorageConfigService.get_storage_stats()` 仅全局 | 新增按 account 聚合计量 | ✅ 已修复（`account_storage_usage` + `StorageQuotaService.get_usage_summary`）|
 | 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | ✅ 已修复（L1 为 P2A：多媒体走 L1 解析并写 `parse_profile.tier1`；L2 为 P3：`build_document_l2_task` + 触发路由 `/documents/<id>/l2` 按需触发并写 `parse_profile.tier2`，见 §9.2） |
-| 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ⬜ P4 |
+| 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ⚠️ 部分落地（P3.7）：渲染出片能力已由 `render_video` + HyperFrames composition 提供（裁切经 `data-media-start`、拼接经多轨排布）；`video_trim` / `video_concat` / `video_subtitle` 三个独立工具仍未实现 |
 | 11 | **配额并发超卖** | `check_quota`（读）与 `add_usage`（写）分离，无锁，两个会话可同时通过校验 | 新增 `StorageQuotaService.consume_quota()`，在 `FOR UPDATE` 行锁内完成校验+累加 | ✅ 已修复（分片 `complete` / 秒传 `instant` 改为合并前原子预占，失败释放预占）|
 | 12 | **合并失败留孤儿文件** | `merge_chunks` 流式写目标对象，中途失败不清理半成品 | 在 `except` 中 `delete_object(target_key)` 回收 | ✅ 已修复（`LocalStorageService.merge_chunks`）|
 
@@ -454,7 +454,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | **P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
 | **P2 上传与解析** | 大文件与多模态入库 | **P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**P2B（已完成）**：分片上传 + 秒传 + 断点续传；单文件上限改为按套餐权益分级 | P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；P2B：分片链路本身可传 GB 级（流式合并，不整文件入内存）——**⚠️ 前提是管理员已在套餐配置 `max_single_file_gb` 权益，否则仍按默认 15MB 拒绝** | ✅ **已完成**（P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
 | **P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
-| **P4 视频轻量编辑** | 「改细节」可落地 | `video_trim` / `video_concat` / `video_subtitle` 工具 + Celery 转码队列 + 对话框预览 | 对话里裁剪片段并预览成片 | ⬜ 未开始 |
+| **P4 视频编辑与出片** | 「改细节」可落地 | ✅ **渲染出片已落地（P3.7）**：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）。⬜ **未落地**：`video_trim` / `video_concat` / `video_subtitle` 独立编辑工具、对话框成片预览 | 对话里出片并存入成品库（✅ 已达成） | ⚠️ 部分完成（P3.7） |
 | **P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
 
 **最小可用闭环 = P1 + P2 完成**（素材能入库、能被检索）。P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；P2B（大文件分片上传）落地后，P2 已完整收口。
