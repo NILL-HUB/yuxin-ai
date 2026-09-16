@@ -10,9 +10,12 @@ diff/impact），管理员在后台点「应用」才真正落库，并提供回
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID
+
+from injector import inject
 
 from internal.exception import NotFoundException
 from internal.model.routing_quality import PolicyChangeDraftModel
@@ -31,11 +34,12 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+@inject
+@dataclass
 class AdminChangeDraftService:
     """通用 admin 变更草稿的创建 / 列出 / 应用 / 回滚。"""
 
-    def __init__(self, db: SQLAlchemy):
-        self.db = db
+    db: SQLAlchemy
 
     def create_draft(
         self,

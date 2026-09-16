@@ -8,7 +8,10 @@
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
+
+from injector import inject
 
 from internal.core.admin_agent_authorization import (
     ASSIGNABLE_PERMISSIONS,
@@ -34,9 +37,10 @@ def _is_valid_level(level) -> bool:
     return True
 
 
+@inject
+@dataclass
 class AdminAgentService:
-    def __init__(self, db: SQLAlchemy):
-        self.db = db
+    db: SQLAlchemy
 
     # ---------- 授权（§4.3 展示即受限） ----------
 
