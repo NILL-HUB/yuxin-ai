@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listAutoRenewals: vi.fn(),
   getMyDistribution: vi.fn(),
   listPlans: vi.fn(),
+  listPaymentMethods: vi.fn(),
   listSubordinates: vi.fn(),
   listMyCommissions: vi.fn(),
   getDistributionQrcode: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('@/services/commerce', () => ({
   createRefund: vi.fn(),
   listAutoRenewals: mocks.listAutoRenewals,
   listOrders: mocks.listOrders,
+  listPaymentMethods: mocks.listPaymentMethods,
   listPlans: mocks.listPlans,
   setAutoRenewalStatus: vi.fn(),
 }))
@@ -74,7 +76,11 @@ const summary = {
   ],
 }
 
-const renderView = async () => {
+const renderView = async (
+  paymentMethods: Array<{ provider: string; name: string; online: boolean }> = [
+    { provider: 'balance', name: '余额', online: false },
+  ],
+) => {
   mocks.getMembershipSummary.mockResolvedValue(summary)
   mocks.getRedeemRecords.mockResolvedValue({ list: [] })
   mocks.getCreditTransactions.mockResolvedValue({
@@ -100,6 +106,7 @@ const renderView = async () => {
     superior: null, subordinate_count: 8, high_rate_locked: true, commission_rate: '30',
   })
   mocks.listPlans.mockResolvedValue({ list: [], paginator: { total_record: 0 } })
+  mocks.listPaymentMethods.mockResolvedValue({ list: paymentMethods })
   mocks.listSubordinates.mockResolvedValue({ list: [], paginator: { total_record: 0 } })
   mocks.listMyCommissions.mockResolvedValue({ list: [], paginator: { total_record: 0 } })
   mocks.getDistributionQrcode.mockResolvedValue({ share_url: '', qrcode_url: null })
@@ -209,5 +216,49 @@ describe('MembershipView (真实接口)', () => {
     await flushPromises()
     expect(mocks.getCreditTransactions).toHaveBeenCalledWith({ page: 2, page_size: 10 })
     expect(wrapper.text()).toContain('模型对话算力消耗')
+  })
+
+  it('在线渠道全部停用时，充值区不显示微信/支付宝并给出提示', async () => {
+    mocks.listPaymentMethods.mockResolvedValue({
+      list: [{ provider: 'balance', name: '余额', online: false }],
+    })
+    const wrapper = await renderView()
+    // 展开“余额充值”面板
+    const summaries = wrapper.findAll('summary')
+    const topupSummary = summaries.find((s) => s.text().includes('余额充值'))
+    expect(topupSummary).toBeTruthy()
+    await topupSummary!.trigger('click')
+    await flushPromises()
+    const text = wrapper.text()
+    expect(text).not.toContain('微信支付')
+    expect(text).not.toContain('支付宝')
+    expect(text).toContain('在线支付渠道暂未开通')
+  })
+
+  it('仅启用微信时充值区只显示微信，不显示支付宝', async () => {
+    const wrapper = await renderView([
+      { provider: 'balance', name: '余额', online: false },
+      { provider: 'wechat', name: '微信支付', online: true },
+    ])
+    const summaries = wrapper.findAll('summary')
+    const topupSummary = summaries.find((s) => s.text().includes('余额充值'))
+    await topupSummary!.trigger('click')
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('微信支付')
+    expect(html).not.toContain('支付宝')
+  })
+
+  it('购买方式按开关动态渲染：仅余额时只出现余额', async () => {
+    const wrapper = await renderView()
+    const summaries = wrapper.findAll('summary')
+    const planSummary = summaries.find((s) => s.text().includes('套餐购买'))
+    await planSummary!.trigger('click')
+    await flushPromises()
+    const html = wrapper.html()
+    expect(html).toContain('购买方式')
+    expect(html).toContain('value="balance"')
+    expect(html).not.toContain('value="wechat"')
+    expect(html).not.toContain('value="alipay"')
   })
 })

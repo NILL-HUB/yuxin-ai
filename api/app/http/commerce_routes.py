@@ -68,6 +68,27 @@ def register_routes(quart_app):
         return a._ok(result)
 
     # =====================================================
+    # 可用支付方式（用户侧只读）：余额始终可用，在线渠道按后台开关同步
+    # =====================================================
+    @quart_app.get("/payment-methods")
+    async def payment_methods():
+        from app.http import asgi_app as a
+        from internal.service.payment_config_service import PaymentConfigService
+
+        def _load():
+            service = a._get_service(PaymentConfigService)
+            online = service.list_enabled_providers()
+            methods = [{"provider": "balance", "name": "余额", "online": False}]
+            methods.extend(
+                {"provider": item["provider"], "name": item["name"], "online": True}
+                for item in online
+            )
+            return {"list": methods}
+
+        result = await a._to_thread(_load)
+        return a._ok(result)
+
+    # =====================================================
     # 分销中心
     # =====================================================
     @quart_app.get("/distribution/me")

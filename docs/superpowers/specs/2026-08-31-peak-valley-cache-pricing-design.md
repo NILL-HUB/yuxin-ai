@@ -74,8 +74,8 @@ peak_windows   JSONB  DEFAULT '[]'
 语义约定：
 
 - `peak_valley_enabled=false`：使用 `input/output_price_per_1k_tokens`、`input/output_cost_per_1k_tokens`（现有列）作为唯一单价；
-- `peak_valley_enabled=true`：使用 `peak_*` / `valley_*` 两档；现有列仍保留（作为"非峰谷模式"的常态价，切换开关时可参考），引擎在开启时不读取。
-- `cache_pricing_enabled=true` 且未开峰谷：输入拆为 `input_price`（未命中）+ `input_cached_price`（命中）；开峰谷时拆为 `peak/valley_input_cached_*` 与 `peak/valley_input_*`。
+- `peak_valley_enabled=true`：使用 `peak_*` / `valley_*` 两档；现有列作为"常规档价"保留，档位价缺失（=0）时引擎回退读取常规列，避免按 0 计费造成漏收（2026-09 修复）。
+- `cache_pricing_enabled=true` 且未开峰谷：输入拆为 `input_price`（未命中）+ `input_cached_price`（命中）；开峰谷时拆为 `peak/valley_input_cached_*` 与 `peak/valley_input_*`；缓存价缺失（=0）时回退对应常规输入价，避免命中缓存被按 0 计费（2026-09 修复）。
 - `cache_pricing_enabled=false`：忽略所有 cached 列，输入统一按普通输入价（成本按普通输入成本）——平台让利较少、毛利较高；实测的 cached token 仍记录在事件中供审计。
 
 ### 4.2 全局配置（billing_config 新增 code）
@@ -93,7 +93,7 @@ peak_windows   JSONB  DEFAULT '[]'
 `plan_usage(model_id, *, input_tokens, output_tokens, cached_input_tokens=0, moment=None)` 扩展：
 
 1. `moment` 缺省取当前时间（UTC）；按 `peak_valley_timezone` 折算"北京时间"再查 `peak_windows` 判定当次是峰档还是谷档。
-2. 按档位取价：峰档读 `peak_*`，谷档读 `valley_*`；未开峰谷读现有普通列。
+2. 按档位取价：峰档读 `peak_*`，谷档读 `valley_*`；未开峰谷读现有普通列。**档位价缺失（=0）时回退常规列**（`input/output_price_per_1k_tokens` 等），避免按 0 计费（2026-09 修复）。
 3. 若 `cache_pricing_enabled`：输入拆 `cached_input_tokens`（缓存价）与 `input_tokens - cached_input_tokens`（未命中价）；否则统一按未命中输入价。
 4. 售价算力：
    `ceil((cached_in × sell_cached + miss_in × sell_in + out × sell_out) / 1000)`
@@ -109,7 +109,7 @@ peak_windows   JSONB  DEFAULT '[]'
 - `model_tokens(...)` 增加 `cached_input_tokens` 与 `moment` 透传；`settle` 重算时按**事件行内记录的 moment/档位**重算 actual/cost，保证多轮 Agent 内部各次调用分别按各自时刻计价、对账自洽。
 - `billing_usage_event` 新增列：`cached_input_tokens INTEGER`、`price_tier VARCHAR(16)`、`moment TIMESTAMP`（或沿用 created_at 承担时刻）。
 - usage 提取统一入口（`usage_utils.extract_token_usage` / `direct_answer_executor._extract_token_usage`）增加 `cached_tokens` 解析：优先 `usage.prompt_tokens_details.cached_tokens`，其次 `prompt_cache_hit_tokens`，缺失为 0。
-- 毛利看板增加"按档位/缓存拆分"的分组口径；negative_margin 告警保持"成本>0 才触发"。
+- 毛利看板增加"按档位/缓存拆分"的分组口径；negative_margin 告警保持"成本>0 才触发"。告警落库 `billing_reconciliation.alert_flags` 的同时输出结构化 WARN 日志（`billing_margin_alert`，含 flags/estimated/actual/cost/diff），便于日志侧告警接入（2026-09 修复）。
 
 ### 4.5 平衡机制（双界校验 + 自动定价助手）
 

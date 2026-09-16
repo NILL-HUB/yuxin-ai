@@ -101,6 +101,13 @@ export type CommercePlan = {
 export type OrderListResponse = BasePaginatorResponse<PurchaseOrder>
 export type OrderCreateResponse = BaseResponse<OrderCreateResult>
 export type OrderResponse = BaseResponse<PurchaseOrder>
+export type PaymentMethod = {
+  provider: string
+  name: string
+  online: boolean
+}
+export type PaymentMethodListData = { list: PaymentMethod[] }
+export type PaymentMethodListResponse = BaseResponse<PaymentMethodListData>
 export type AdminOrderListResponse = BasePaginatorResponse<AdminPurchaseOrder>
 export type AdminOrderResponse = BaseResponse<AdminPurchaseOrder>
 export type RefundListResponse = BasePaginatorResponse<RefundRecord>

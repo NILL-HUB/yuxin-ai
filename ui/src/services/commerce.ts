@@ -5,6 +5,7 @@ import {
   type OrderCreateResponse,
   type OrderListResponse,
   type OrderResponse,
+  type PaymentMethodListResponse,
   type PlanListResponse,
   type RefundCreateResponse,
   type RefundListResponse,
@@ -17,6 +18,11 @@ export const listPlans = async (params: { current_page: number; page_size: numbe
 
 export const createOrder = async (planId: string, payMethod: string) => {
   const response = await post<OrderCreateResponse>('/orders', { body: { plan_id: planId, pay_method: payMethod } })
+  return response.data
+}
+
+export const listPaymentMethods = async () => {
+  const response = await get<PaymentMethodListResponse>('/payment-methods')
   return response.data
 }
 

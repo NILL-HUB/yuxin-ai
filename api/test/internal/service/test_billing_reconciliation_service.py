@@ -352,6 +352,62 @@ def test_settle_merges_same_model_events_before_ceil():
     assert adjust_calls[0]["diff_credits"] == -1
 
 
+def test_settle_logs_structured_warning_when_alert_raised(caplog):
+    """告警此前仅落 alert_flags 列、无主动可观测信号；补结构化 WARN 日志供日志侧告警接入。"""
+    import logging
+
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+    credit_stub, _ = _credit_stub()
+    svc = BillingReconciliationService(
+        session=session,
+        pricing_engine=_engine(_plan(sell_credits=45, cost_credits=0)),
+        credit_service=credit_stub,
+        alert_ratio=0.30,
+        alert_min_abs=10,
+        cost_cover_ratio=1.0,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        svc.settle(
+            task_id="task-alert",
+            account_id=ACCOUNT_ID,
+            events=[
+                {"model_id": "m1", "input_tokens": 1000, "output_tokens": 0,
+                 "estimated_credits": 30, "billing_basis": "provider_usage"},
+            ],
+        )
+
+    assert any(
+        "billing_margin_alert" in r.getMessage() and "ratio_deviation" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_settle_does_not_log_alert_when_no_flags(caplog):
+    import logging
+
+    session = _SessionStub([_QueryStub(one_or_none_result=None)])
+    credit_stub, _ = _credit_stub()
+    svc = BillingReconciliationService(
+        session=session,
+        pricing_engine=_engine(_plan(sell_credits=30, cost_credits=0)),
+        credit_service=credit_stub,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = svc.settle(
+            task_id="task-noalert",
+            account_id=ACCOUNT_ID,
+            events=[
+                {"model_id": "m1", "input_tokens": 1000, "output_tokens": 0,
+                 "estimated_credits": 30, "billing_basis": "provider_usage"},
+            ],
+        )
+
+    assert result["alert_flags"] == []
+    assert not any("billing_margin_alert" in r.getMessage() for r in caplog.records)
+
+
 def test_margin_summary_groups_by_tier_and_cache_total():
     events = [
         BillingUsageEvent(

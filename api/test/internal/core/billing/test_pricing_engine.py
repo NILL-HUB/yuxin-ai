@@ -244,6 +244,41 @@ def test_plan_usage_legacy_behavior_unchanged_when_flags_off():
     assert plan.price_tier is None
 
 
+def test_plan_usage_peak_falls_back_to_flat_price_when_tier_price_missing():
+    """峰谷开启但峰/谷档价未配置（为 0）时回退常规价，避免按 0 计费造成漏收。"""
+    from datetime import UTC, datetime
+    from internal.core.billing.pricing_engine import PricingEngine
+
+    model = _model()  # 常规：in 1.2 / out 4.8
+    model.peak_valley_enabled = True
+    model.peak_windows = [{"days": "0-6", "start": "09:00", "end": "18:00"}]
+    engine = PricingEngine(
+        session=_RecorderSession(model=model),
+        configs={"credits_per_1k_tokens": 1, "credits_per_yuan": 100},
+    )
+    peak = datetime(2026, 8, 31, 2, 0, tzinfo=UTC)  # 北京 10:00
+    plan = engine.plan_usage("m", input_tokens=1000, output_tokens=0, moment=peak)
+    assert plan.price_tier == "peak"
+    assert plan.sell_credits == 120  # 回退常规 1.2 元/1k
+    assert plan.sell_input_per_1k == 1.2
+
+
+def test_plan_usage_cache_enabled_without_cached_price_falls_back_to_input_price():
+    """缓存计价开启但缓存价未配置（为 0）时回退常规输入价，避免命中缓存被按 0 计费。"""
+    from internal.core.billing.pricing_engine import PricingEngine
+
+    model = _model()  # 常规：in 1.2 / out 4.8
+    model.cache_pricing_enabled = True
+    engine = PricingEngine(
+        session=_RecorderSession(model=model),
+        configs={"credits_per_1k_tokens": 1, "credits_per_yuan": 100},
+    )
+    plan = engine.plan_usage("m", input_tokens=0, output_tokens=0, cached_input_tokens=1000)
+    assert plan.cached_input_tokens == 1000
+    assert plan.sell_credits == 120  # 回退常规输入价 1.2 元/1k
+    assert plan.sell_cached_input_per_1k == 1.2
+
+
 # ---------------------------------------------------------------------------
 # 查询失败可观测性 + 事务隔离（真实 SQLAlchemy 行为模拟）
 # ---------------------------------------------------------------------------

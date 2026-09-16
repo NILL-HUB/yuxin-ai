@@ -7,6 +7,12 @@ from internal.service.payment.gateway_base import normalize_provider
 
 SUPPORTED_PROVIDERS = ("wechat", "alipay")
 
+# 渠道默认展示名（用户侧与管理端占位行共用）
+DEFAULT_PROVIDER_NAMES = {
+    "wechat": "微信支付",
+    "alipay": "支付宝",
+}
+
 # 需要加密存储的密钥字段白名单
 SECRET_CONFIG_KEYS = {
     "mch_id",
@@ -53,6 +59,26 @@ class PaymentConfigService:
     def is_enabled(self, provider: str) -> bool:
         config = self.get(provider)
         return bool(config and config.enabled)
+
+    def list_enabled_providers(self) -> list[dict]:
+        """用户侧可用支付渠道（仅返回已启用渠道的展示名，不暴露任何商户密钥）。"""
+        rows = (
+            self.session.query(PaymentProviderConfig)
+            .filter(PaymentProviderConfig.enabled.is_(True))
+            .order_by(PaymentProviderConfig.created_at.asc())
+            .all()
+        )
+        by_provider = {row.provider: row for row in rows}
+        result = []
+        for provider in SUPPORTED_PROVIDERS:
+            row = by_provider.get(provider)
+            if row is None or not row.enabled:
+                continue
+            result.append({
+                "provider": provider,
+                "name": row.name or DEFAULT_PROVIDER_NAMES.get(provider, provider),
+            })
+        return result
 
     def list_sanitized(self) -> list[dict]:
         rows = (
@@ -123,7 +149,7 @@ class PaymentConfigService:
                 self.session.add(
                     PaymentProviderConfig(
                         provider=provider,
-                        name={"wechat": "微信支付", "alipay": "支付宝"}[provider],
+                        name=DEFAULT_PROVIDER_NAMES.get(provider, provider),
                         configs={},
                         enabled=False,
                     )

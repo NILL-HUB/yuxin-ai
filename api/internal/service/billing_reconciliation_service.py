@@ -1,11 +1,14 @@
 """对账服务：任务结束后把 usage 事件落库、按定价引擎重算实际/成本算力，
 求差多退少补，写对账摘要行，按阈值判定告警。"""
+import logging
 import math
 from decimal import Decimal
 from typing import Any
 
 from internal.model.billing import BillingReconciliation, BillingUsageEvent
 from internal.service.credit_service import CreditService
+
+logger = logging.getLogger(__name__)
 
 
 class BillingReconciliationService:
@@ -158,6 +161,20 @@ class BillingReconciliationService:
                 alert_flags.append("ratio_deviation")
         if total_actual > 0 and total_cost > 0 and (total_cost / total_actual) > self.cost_cover_ratio:
             alert_flags.append("negative_margin")
+        if alert_flags:
+            # 告警此前只落 alert_flags 列、无主动可观测信号，运维需人工进后台才能发现。
+            # 这里补一条结构化 WARN 日志，便于日志侧告警接入（按 flag 分流监控）。
+            logger.warning(
+                "billing_margin_alert task_id=%s account_id=%s flags=%s "
+                "estimated_credits=%d actual_credits=%d cost_credits=%d diff_credits=%d",
+                task_id,
+                account_id,
+                ",".join(alert_flags),
+                total_estimated,
+                total_actual,
+                total_cost,
+                diff,
+            )
 
         row = BillingReconciliation(
             task_id=task_id, account_id=account_id,

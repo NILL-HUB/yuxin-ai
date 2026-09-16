@@ -24,6 +24,7 @@ import {
   createRefund,
   listAutoRenewals,
   listOrders,
+  listPaymentMethods,
   listPlans,
   setAutoRenewalStatus,
 } from '@/services/commerce'
@@ -37,6 +38,7 @@ import type {
   AutoRenewal,
   BalanceProfile,
   CommercePlan,
+  PaymentMethod,
   PurchaseOrder,
   WithdrawalRecord,
 } from '@/models/commerce'
@@ -301,6 +303,7 @@ const loadAll = async () => {
     loading.value = false
   }
   void loadCreditTransactions(1)
+  void loadPaymentMethods()
   void reloadSecondary()
 }
 
@@ -531,11 +534,43 @@ const handleCopy = async (text: string) => {
   }
 }
 
-// 充值渠道（沿用在线渠道固定项）
-const onlineChannels = computed(() => [
-  { value: 'wechat', label: '微信支付' },
-  { value: 'alipay', label: '支付宝' },
-])
+// 可用支付方式（来自后端 /payment-methods，与后台微信/支付宝开关同步）
+const paymentMethods = ref<PaymentMethod[]>([])
+const loadPaymentMethods = async () => {
+  try {
+    const res = await listPaymentMethods()
+    paymentMethods.value = res.list || []
+  } catch {
+    /* 静默：拉取失败时退化为仅余额支付 */
+    paymentMethods.value = []
+  }
+}
+
+// 充值渠道（仅在线渠道）：后台停用某渠道后此处自动不显示
+const onlineChannels = computed(() =>
+  paymentMethods.value
+    .filter((m) => m.online && (m.provider === 'wechat' || m.provider === 'alipay'))
+    .map((m) => ({
+      value: m.provider,
+      label: m.provider === 'wechat' ? '微信支付' : m.provider === 'alipay' ? '支付宝' : m.name,
+    })),
+)
+
+// 购买方式：余额始终可用；微信/支付宝仅在后台启用时出现
+const purchaseMethods = computed(() => {
+  const online = paymentMethods.value.filter((m) => m.online)
+  const list: PaymentMethod[] = [
+    { provider: 'balance', name: '余额', online: false },
+    ...online,
+  ]
+  // 若当前选中项已被停用，回退到余额
+  if (!list.some((m) => m.provider === purchaseMethod.value)) {
+    purchaseMethod.value = 'balance'
+  }
+  return list
+})
+const purchaseMethodLabel = (m: PaymentMethod) =>
+  m.provider === 'wechat' ? '微信' : m.provider === 'alipay' ? '支付宝' : m.name
 
 onMounted(loadAll)
 </script>
@@ -626,7 +661,7 @@ onMounted(loadAll)
               </div>
               <p v-else class="hint">暂无可充值套餐</p>
               <p class="field-label">支付渠道</p>
-              <div class="radio-grid cols-2">
+              <div v-if="onlineChannels.length" class="radio-grid cols-2">
                 <label v-for="ch in onlineChannels" :key="ch.value" class="radio-card row" :class="{ checked: topupChannel === ch.value }">
                   <input type="radio" name="recharge-channel" class="sr" :value="ch.value" v-model="topupChannel" />
                   <svg v-if="ch.value === 'wechat'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
@@ -635,6 +670,7 @@ onMounted(loadAll)
                   <span class="radio-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
                 </label>
               </div>
+              <p v-else class="hint">在线支付渠道暂未开通，请联系管理员</p>
               <button type="button" class="btn-primary block" :disabled="!topupPlanId || !topupChannel || orderLoading" @click="handleTopup">
                 {{ orderLoading ? '处理中…' : '去支付' }}
               </button>
@@ -668,23 +704,13 @@ onMounted(loadAll)
               </div>
               <p v-else class="hint">暂无可购套餐</p>
               <p class="field-label">购买方式</p>
-              <div class="radio-grid cols-3">
-                <label class="radio-card row" :class="{ checked: purchaseMethod === 'balance' }">
-                  <input type="radio" name="buy-pay" class="sr" value="balance" v-model="purchaseMethod" />
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
-                  <span class="grow">余额</span>
-                  <span class="radio-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-                </label>
-                <label class="radio-card row" :class="{ checked: purchaseMethod === 'wechat' }">
-                  <input type="radio" name="buy-pay" class="sr" value="wechat" v-model="purchaseMethod" />
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
-                  <span class="grow">微信</span>
-                  <span class="radio-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-                </label>
-                <label class="radio-card row" :class="{ checked: purchaseMethod === 'alipay' }">
-                  <input type="radio" name="buy-pay" class="sr" value="alipay" v-model="purchaseMethod" />
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
-                  <span class="grow">支付宝</span>
+              <div class="radio-grid" :class="purchaseMethods.length === 3 ? 'cols-3' : 'cols-2'">
+                <label v-for="m in purchaseMethods" :key="m.provider" class="radio-card row" :class="{ checked: purchaseMethod === m.provider }">
+                  <input type="radio" name="buy-pay" class="sr" :value="m.provider" v-model="purchaseMethod" />
+                  <svg v-if="m.provider === 'balance'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+                  <svg v-else-if="m.provider === 'wechat'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="row-ico"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                  <span class="grow">{{ purchaseMethodLabel(m) }}</span>
                   <span class="radio-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
                 </label>
               </div>

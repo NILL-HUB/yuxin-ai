@@ -142,22 +142,25 @@ class PricingEngine:
             )
             return fallback
 
-        def _col_sell(name_peak, name_valley, name_flat):
+        def _col_for_tier(name_peak, name_valley, name_flat):
+            flat = self._decimal_float(getattr(model, name_flat, 0) or 0)
             if enabled_pv and tier == "peak":
-                return self._decimal_float(getattr(model, name_peak, 0) or 0)
+                return self._decimal_float(getattr(model, name_peak, 0) or 0) or flat
             if enabled_pv and tier == "valley":
-                return self._decimal_float(getattr(model, name_valley, 0) or 0)
-            return self._decimal_float(getattr(model, name_flat, 0) or 0)
+                return self._decimal_float(getattr(model, name_valley, 0) or 0) or flat
+            return flat
 
         # 售价列口径 = 人民币元/1k（与成本列一致）；扣费算力 = 元 × credits_per_yuan
-        sell_in = _col_sell("peak_input_price_per_1k_tokens", "valley_input_price_per_1k_tokens", "input_price_per_1k_tokens")
-        sell_out = _col_sell("peak_output_price_per_1k_tokens", "valley_output_price_per_1k_tokens", "output_price_per_1k_tokens")
-        sell_cached = _col_sell("peak_input_cached_price_per_1k_tokens", "valley_input_cached_price_per_1k_tokens", "input_cached_price_per_1k_tokens")
+        sell_in = _col_for_tier("peak_input_price_per_1k_tokens", "valley_input_price_per_1k_tokens", "input_price_per_1k_tokens")
+        sell_out = _col_for_tier("peak_output_price_per_1k_tokens", "valley_output_price_per_1k_tokens", "output_price_per_1k_tokens")
+        sell_cached = _col_for_tier("peak_input_cached_price_per_1k_tokens", "valley_input_cached_price_per_1k_tokens", "input_cached_price_per_1k_tokens")
         base_price = self._decimal_float(getattr(model, "price_per_1k_tokens", 0) or 0)
         if not sell_in:
             sell_in = base_price
         if not sell_out:
             sell_out = base_price
+        if enabled_cache and sell_cached <= 0:
+            sell_cached = sell_in
 
         if sell_in <= 0 and sell_out <= 0:
             # 无任何售价配置 → 全局汇率兜底
@@ -176,9 +179,11 @@ class PricingEngine:
         sell_rmb = (input_tokens * sell_in + cached_input_tokens * sell_cached + output_tokens * sell_out) / 1000
         sell = math.ceil(sell_rmb * credits_per_yuan)
 
-        cost_in = _col_sell("peak_input_cost_per_1k_tokens", "valley_input_cost_per_1k_tokens", "input_cost_per_1k_tokens")
-        cost_out = _col_sell("peak_output_cost_per_1k_tokens", "valley_output_cost_per_1k_tokens", "output_cost_per_1k_tokens")
-        cost_cached = _col_sell("peak_input_cached_cost_per_1k_tokens", "valley_input_cached_cost_per_1k_tokens", "input_cached_cost_per_1k_tokens")
+        cost_in = _col_for_tier("peak_input_cost_per_1k_tokens", "valley_input_cost_per_1k_tokens", "input_cost_per_1k_tokens")
+        cost_out = _col_for_tier("peak_output_cost_per_1k_tokens", "valley_output_cost_per_1k_tokens", "output_cost_per_1k_tokens")
+        cost_cached = _col_for_tier("peak_input_cached_cost_per_1k_tokens", "valley_input_cached_cost_per_1k_tokens", "input_cached_cost_per_1k_tokens")
+        if enabled_cache and cost_cached <= 0:
+            cost_cached = cost_in
         cost_rmb = (input_tokens * cost_in + cached_input_tokens * cost_cached + output_tokens * cost_out) / 1000
         cost = math.ceil(cost_rmb * credits_per_yuan)
 
