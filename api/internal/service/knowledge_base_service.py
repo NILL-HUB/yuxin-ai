@@ -5,6 +5,7 @@ from uuid import UUID
 from internal.context import current_app
 from injector import inject
 from sqlalchemy import desc, asc, func
+from sqlalchemy.exc import IntegrityError
 from werkzeug.datastructures import FileStorage
 
 from internal.entity.dataset_entity import DocumentStatus
@@ -40,6 +41,10 @@ from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 from .icon_generator_service import IconGeneratorService
 from .retrieval_service import RetrievalService
+
+
+# 系统预置成品库的固定名称（每用户唯一，系统托管，禁止手动上传）
+RENDER_OUTPUT_BASE_NAME = "成品库"
 
 
 @inject
@@ -143,6 +148,60 @@ class KnowledgeBaseService(BaseService):
             visibility_scope=visibility_scope,
             created_from=created_from,
         )
+
+    def get_or_create_render_output_base(self, account: Account) -> KnowledgeBase:
+        """取当前账号的系统预置成品库，不存在则幂等创建。
+
+        设计 §4.2：首次需要写成品时才建库，避免给从未出片的用户平白建库。
+
+        并发安全：两个请求可能同时查不到而各建一个。DB 侧的
+        `knowledge_base_render_output_uniq`（部分唯一索引）会拒绝第二个，
+        此处捕获 IntegrityError 后 rollback 并重查，返回先建成的那个。
+
+        按 `created_from` 查而非按名称查——用户完全可能已手建一个叫「成品库」
+        的普通素材库，按名称查会错误地复用它。
+        """
+        def _find() -> KnowledgeBase | None:
+            return (
+                self.db.session.query(KnowledgeBase)
+                .filter_by(
+                    owner_account_id=account.id,
+                    created_from=KnowledgeCreatedFrom.RENDER_OUTPUT.value,
+                )
+                .one_or_none()
+            )
+
+        existing = _find()
+        if existing is not None:
+            return existing
+
+        try:
+            knowledge_base = self.create(
+                KnowledgeBase,
+                name=RENDER_OUTPUT_BASE_NAME,
+                description="系统预置：渲染成品的归集处（系统托管，不支持手动上传）",
+                knowledge_scope=KnowledgeScope.USER_CONTENT.value,
+                base_type=KnowledgeBaseType.VIDEO.value,
+                partition_mode=PartitionMode.NONE.value,
+                owner_account_id=account.id,
+                owner_admin_user_id=None,
+                operation_context=OperationContext.USER.value,
+                visibility_scope=VisibilityScope.PRIVATE.value,
+                created_from=KnowledgeCreatedFrom.RENDER_OUTPUT.value,
+                settings={"operation_context": OperationContext.USER.value},
+            )
+        except IntegrityError:
+            # 并发下已被另一请求建成：回滚后取既有库
+            self.db.session.rollback()
+            concurrent = _find()
+            if concurrent is None:
+                raise
+            return concurrent
+
+        # 与 create_user_content_base_with_req 同口径：自动选 embedding 模型，
+        # 使成品可被检索复用（设计 §4.1「用户可让小钰从成品库翻旧片翻新」）
+        selected_model = self.auto_select_embedding_model()
+        return self.update(knowledge_base, embedding_model_id=selected_model.id)
 
     def get_accessible_base(self, knowledge_base_id, account: Account) -> KnowledgeBase:
         knowledge_base = self.get(KnowledgeBase, knowledge_base_id)
