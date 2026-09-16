@@ -501,28 +501,32 @@ class _Query:
 class _Session:
     def __init__(self, rows):
         self._rows = rows
+        self.added = []
 
     def query(self, model):
         return _Query(self._rows)
 
+    def add(self, obj):
+        self.added.append(obj)
+
+
+class _AutoCommit:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
 
 def _service(rows):
     service = AdminAgentConversationService.__new__(AdminAgentConversationService)
-    service.db = SimpleNamespace(session=_Session(rows))
-    service.create = lambda model, **kwargs: SimpleNamespace(id=uuid4(), **kwargs)
+    session = _Session(rows)
+    service.db = SimpleNamespace(session=session, auto_commit=lambda: _AutoCommit())
+    service.session = session
     return service
 
 
 def test_get_conversation_rejects_foreign_admin():
-    conv = SimpleNamespace(id=uuid4(), admin_agent_id=uuid4(), admin_user_id=uuid4())
-    service = _service([conv])
-
-    with pytest.raises(ForbiddenException):
-        service.get_conversation(conv.id, admin_user_id=conv.admin_user_id)
-    # 上面调用应失败（admin_user_id 不匹配），此处显式断言异常分支已覆盖
-
-
-def test_get_conversation_rejects_foreign_admin_explicit():
     owner = uuid4()
     conv = SimpleNamespace(id=uuid4(), admin_agent_id=uuid4(), admin_user_id=owner)
     service = _service([conv])
@@ -540,27 +544,47 @@ def test_missing_conversation_raises_not_found():
         service.get_conversation(uuid4(), admin_user_id=uuid4())
 
 
-def test_append_message_persists_role_and_tool_calls():
-    created = {}
+def test_create_conversation_persists_owner_and_title():
+    admin_id = uuid4()
+    agent_id = uuid4()
     service = _service([])
 
-    def _create(model, **kwargs):
-        created.update(kwargs)
-        return SimpleNamespace(id=uuid4(), **kwargs)
+    conversation = service.create_conversation(
+        admin_agent_id=agent_id, admin_user_id=admin_id, title="看看现状"
+    )
 
-    service.create = _create
+    assert conversation.admin_agent_id == agent_id
+    assert conversation.admin_user_id == admin_id
+    assert conversation.title == "看看现状"
+    assert len(service.session.added) == 1, "必须落库"
 
-    service.append_message(
+
+def test_append_message_persists_role_and_tool_calls():
+    service = _service([])
+
+    message = service.append_message(
         conversation_id=uuid4(),
         role="assistant",
         content="好的",
         tool_calls=[{"name": "admin_builtin_tool", "args": {"action": "list"}}],
     )
 
-    assert created["role"] == "assistant"
-    assert created["content"] == "好的"
-    assert created["tool_calls"][0]["name"] == "admin_builtin_tool"
+    assert message.role == "assistant"
+    assert message.content == "好的"
+    assert message.tool_calls[0]["name"] == "admin_builtin_tool"
+    assert len(service.session.added) == 1
+
+
+def test_append_message_rejects_illegal_role():
+    service = _service([])
+
+    with pytest.raises(ValueError):
+        service.append_message(conversation_id=uuid4(), role="robot", content="x")
 ```
+
+> **为什么替身要带 `auto_commit`/`session.add`**：服务实现用
+> `with self.db.auto_commit(): self.db.session.add(...)`（与 `BaseService.create` 同形），
+> 因此替身必须提供可用的上下文管理器与 `add`，否则测试会以 `AttributeError` 假失败。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -694,7 +718,7 @@ class AdminAgentConversationService:
 cd api && python -m pytest test/internal/service/test_admin_agent_conversation_service.py -q --no-header --no-cov
 ```
 
-Expected: PASS（4 个用例）
+Expected: PASS（5 个用例）
 
 - [ ] **Step 6: 提交**
 
