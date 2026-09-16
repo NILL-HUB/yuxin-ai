@@ -1714,11 +1714,16 @@ class AdminAgentChatService:
         )
 
         agent = self._load_agent(principal.agent_id, admin_user_id)
-        tools = self._build_tools(principal)
-        system_prompt = self._build_system_prompt(principal, getattr(agent, "prompt_key", None))
         llm = self._build_model()
 
+        # 提示词/工具构造放进 try：`_build_system_prompt` 在提示词缺失时抛
+        # RuntimeError（Task 4 的守卫）。若放在 try 之外，异常会**逃出 SSE 生成器**
+        # （客户端拿到断流而非 `event: error`），故必须纳入统一兜底。
         try:
+            tools = self._build_tools(principal)
+            system_prompt = self._build_system_prompt(
+                principal, getattr(agent, "prompt_key", None)
+            )
             answer, tool_events = self._run_tool_loop(
                 llm=llm,
                 system_prompt=system_prompt,
