@@ -41,6 +41,10 @@ export default  {
       resumeTaskLabel: 'Continue last task',
       startNewTaskLabel: 'Start a new task',
     },
+    recommend: {
+      agentsTitle: 'Recommended agents',
+      toolsTitle: 'Recommended tools',
+    },
     conversation: {
       title: 'Current conversation',
       loading: 'Loading conversation info...',

@@ -98,7 +98,7 @@
 | 11 | 知识库视频素材 | ✅ 真可用 | P2A/P2B 已落地：视频抽关键帧 + 视觉描述、音频 ASR 转写、图片 OCR+摘要，产物写 Segment 并向量化（可被语义检索）；分片上传支持 GB 级素材（流式合并，不整文件入内存）。P3 已补：视频音轨 ASR 转写 + 关键帧留存（`frame_url`）、关键帧视觉向量索引（`video_visual_embedding` 表 + `VisualEmbeddingService`，支持以图搜图与文本跨模态召图）、检索工具分区/媒体类型/标签/相似度阈值过滤、L2 按需解析（视频逐帧视觉详述）。⚠️ 仍未实现：说话人切分、场景切分与精细时间轴、视频轻量编辑（属 [knowledge-base-product-form-design.md §9.2](./knowledge-base-product-form-design.md) P4） |
 | 12 | 我的应用列表 | ✅ 真可用 | `my-apps/ListView.vue` 已接真实接口 `GET /my/apps`；来源为**本人从应用商店添加（fork）**，且**仅展示 `status=published`**（草稿不上架）；对话页复用现成 agent 聊天框，后端 agent = 用户长期记忆 + 应用工具/知识库/上下文。管理员分配应用功能已下线（`AppAssignment` 表与相关权限/审计已移除） |
 | 13 | 知识库「外部数据源」弹窗 | ✅ 真可用 | 弹窗已接真实接口；凭证明文落库/回传、授权不落库、级联清理缺失已修复，并新增定时自动同步 |
-| 14 | 工作流商店预览 | ⚠️ 断链 | 跳转路由 `store-workflows-preview` 未注册，点击必报错 |
+| 14 | 工作流商店预览 | ✅ 真可用 | 已修复：`AdminWorkflowsView` 新增「预览」按钮跳转已注册的 `admin-store-workflows-preview` → `store/workflows/PreviewView.vue`（走真实 `/admin/workflows/*` 只读接口）；同时下线无后端支撑的用户端工作流广场页（`store/workflows/ListView.vue`）及其指向的未注册路由名 |
 | 15 | 用户共创 Studio | ⛔ 占位页 | `/studio` 仅占位，侧边栏仍给入口 |
 | 16 | 合伙人分身：审核/自定价/版本分发 | ⛔ 未实现 | 商店+上传+A2A 已具备，闭环三要素缺失 |
 | 17 | 内容板块（图文/上新/展示） | ⛔ 未实现 | 无后端模型与服务 |
@@ -107,7 +107,7 @@
 | 20 | 生活服务：滴滴/美团 | ⛔ 未实现 | 无对应接入 |
 | 21 | 手机端 | ⛔ 未实现 | Capacitor 壳就绪，能力未做 |
 | 22 | AI + 硬件 | ⛔ 未实现 | 远期 |
-| 23 | 首页意图推荐（recommended_agents/tools） | ⚠️ **半壳** | 真实 LLM 意图识别后，推荐池/工具池被硬编码为空/`["general"]` |
+| 23 | 首页意图推荐（recommended_agents/tools） | ✅ 真可用 | 已修复：`HomeService._build_intent_recommendations` 复用编排主链路候选收集器真实产出推荐 Agent（`AgentCandidateCollector.collect_by_pools` 按子池+query 打分取 Top3）与推荐工具（`ToolCandidateCollector` + `ToolSelectorService` 关键词/LLM 选择取 Top5）；schema 补全四个字段（此前被 marshmallow 静默丢弃）；前端首页渲染「推荐 Agent / 推荐工具」并可点击发起对话 |
 | 24 | AI 助手计费 | ✅ 真可用 | §4.3 已修复：`account_id` 由路由层显式传入，计费真实触发（含单测覆盖） |
 
 ---
@@ -204,8 +204,8 @@ cua-driver 后台控制后端**已实现并通过实测**（后台点击时真�
 3. ✅ 修复 AI 计费（§4.3）——计费已真实触发
 4. ✅ 前端 my-apps 接通真实接口（§4.4）——已消灭该壳子
 5. ✅ 前端外部数据源接通真实接口 + 后端加固（§4.4）——已消灭最后一个显眼壳子
-6. 🟠 工作流商店预览路由修复（§三-14）
-7. 🟡 首页推荐池真实化（§三-23）
+6. ✅ 工作流商店预览路由修复（§三-14）——预览按钮已接通真实只读视图，死链已清除
+7. ✅ 首页推荐池真实化（§三-23）——推荐 Agent / 工具由编排主链路候选收集器真实产出
 8. 🟡 Studio 占位页处理：要么实现，要么移除侧边栏入口
 
 ---

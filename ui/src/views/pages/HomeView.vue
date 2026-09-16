@@ -75,7 +75,7 @@ import {
   toPositiveNumber,
   type MessageMetrics,
 } from '@/views/shared/chat-metrics'
-import type { HomeIntentData } from '@/models/home'
+import type { HomeIntentData, HomeIntentRecommendedAgent, HomeIntentRecommendedTool } from '@/models/home'
 import type { BillingUsageEvent } from '@/models/billing-metering'
 import { calculateScrollDuration, smoothScroll } from '@/utils/scrollAnimation'
 import { ASSISTANT_APP } from '@/config/brand'
@@ -178,6 +178,8 @@ const HOME_INTRO_AUDIO_STREAM_ID = 'home-introduction-audio'
 const opening_questions = ref<string[]>([...defaultOpeningQuestions.value])
 const homeIntentRequestVersion = ref(0)
 const homeIntentApplied = ref(false)
+const recommendedAgents = ref<HomeIntentRecommendedAgent[]>([])
+const recommendedTools = ref<HomeIntentRecommendedTool[]>([])
 const introductionLatency = ref(0)
 const introductionTotalTokenCount = ref(0)
 // 从 localStorage 恢复播放状态，防止刷新后重复播放
@@ -439,6 +441,12 @@ const applyHomeIntentResult = (intentData: HomeIntentData) => {
   if (opening_questions.value.length === 0) {
     opening_questions.value = [...defaultOpeningQuestions.value]
   }
+  recommendedAgents.value = Array.isArray(intentData.recommended_agents)
+    ? intentData.recommended_agents.filter((item) => String(item?.name || '').trim() !== '')
+    : []
+  recommendedTools.value = Array.isArray(intentData.recommended_tools)
+    ? intentData.recommended_tools.filter((item) => String(item?.name || '').trim() !== '')
+    : []
   introductionLatency.value = 0
   introductionTotalTokenCount.value = estimateTokenCount(assistantIntroduction.value)
   homeIntentApplied.value = true
@@ -1295,6 +1303,13 @@ const handleThumbsDown = () => {
   Message.info('感谢您的反馈')
 }
 
+// 点击推荐 Agent：以该 Agent 的名称作为提问提交，复用现有对话链路
+const handleSelectRecommendedAgent = (agent: HomeIntentRecommendedAgent) => {
+  const name = String(agent?.name || '').trim()
+  if (!name) return
+  void handleSubmitQuestion(name)
+}
+
 // 7.定义问题提交函数
 const handleSubmitQuestion = async (question: string) => {
   if (!isAuthenticated.value) {
@@ -1793,6 +1808,46 @@ onUnmounted(() => {
             message_class="glass-message-bubble bg-surface/50 backdrop-blur-xl border border-border-c/80 text-text px-4 py-3 rounded-2xl break-all w-fit max-w-full shadow-xl shadow-[var(--aicss-shadow-card)]"
             @select-suggested-question="handleSubmitQuestion"
           />
+        </div>
+        <!-- 意图推荐：推荐 Agent / 推荐工具（后端按意图真实产出） -->
+        <div
+          v-if="recommendedAgents.length || recommendedTools.length"
+          class="w-full max-w-[600px] flex flex-col gap-3 mt-1"
+        >
+          <div v-if="recommendedAgents.length" class="flex flex-col gap-2">
+            <div class="text-xs font-semibold text-muted px-1">
+              {{ t('home.recommend.agentsTitle') }}
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="agent in recommendedAgents"
+                :key="agent.agent_id"
+                type="button"
+                class="flex flex-col items-start gap-0.5 rounded-xl border border-border-c bg-surface/60 px-3 py-2 text-left transition hover:border-brand hover:bg-surface"
+                @click="handleSelectRecommendedAgent(agent)"
+              >
+                <span class="text-sm font-medium text-text">{{ agent.name }}</span>
+                <span v-if="agent.description" class="line-clamp-1 text-xs text-muted">
+                  {{ agent.description }}
+                </span>
+              </button>
+            </div>
+          </div>
+          <div v-if="recommendedTools.length" class="flex flex-col gap-2">
+            <div class="text-xs font-semibold text-muted px-1">
+              {{ t('home.recommend.toolsTitle') }}
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <span
+                v-for="tool in recommendedTools"
+                :key="`${tool.source_type}:${tool.provider_id}:${tool.tool_name}`"
+                class="rounded-full border border-border-c bg-surface/60 px-3 py-1 text-xs text-muted"
+                :title="tool.description"
+              >
+                {{ tool.name }}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
       <!-- 对话输入框 -->

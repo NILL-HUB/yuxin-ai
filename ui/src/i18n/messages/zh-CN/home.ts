@@ -40,6 +40,10 @@ export default  {
       resumeTaskLabel: '继续上次任务',
       startNewTaskLabel: '开启新任务',
     },
+    recommend: {
+      agentsTitle: '推荐 Agent',
+      toolsTitle: '推荐工具',
+    },
     conversation: {
       title: '当前会话',
       loading: '正在加载会话信息...',

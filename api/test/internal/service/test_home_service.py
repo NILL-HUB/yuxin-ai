@@ -26,7 +26,9 @@ class TestHomeService:
     def service(self, mock_db, mock_intent_service):
         """创建服务实例"""
         service = HomeService(
-            db=mock_db, intent_recognition_service=mock_intent_service
+            db=mock_db,
+            intent_recognition_service=mock_intent_service,
+            language_model_service=Mock(),
         )
         return service
 
@@ -161,9 +163,13 @@ class TestHomeService:
         result = service.get_user_intent(user)
 
         assert result["matched_agent_pools"] == ["coding"]
-        assert result["recommended_agents"] == []
-        assert result["matched_tool_pools"] == ["general"]
-        assert result["recommended_tools"] == []
+        # 推荐 Agent / 工具由 _build_intent_recommendations 真实产出（下方专项用例覆盖）；
+        # 此处仅断言字段存在且结构稳定，不再固化为"永远为空"。
+        assert "recommended_agents" in result
+        assert "recommended_tools" in result
+        assert isinstance(result["recommended_agents"], list)
+        assert isinstance(result["recommended_tools"], list)
+        assert result["matched_tool_pools"]
         assert result["cost_policy"]["model_tier"] == "1"
         assert result["billing_events"][0]["event"] == "billing_started"
         assert result["task_plan_summary"] == {
@@ -182,6 +188,149 @@ class TestHomeService:
         assert "model_selection" not in result
         assert "key_usage" not in result
         assert "internal_cost_breakdown" not in result
+
+    def test_build_intent_recommendations_should_return_real_agents_and_tools(
+        self,
+        service,
+        monkeypatch,
+    ):
+        """测试推荐 Agent / 工具由候选收集器真实产出（而非写死占位）"""
+        from internal.service.agent_pool_service import AgentCandidateCollector
+        from internal.service.tool_inventory_service import ToolCandidateCollector
+        from internal.service.tool_selector_service import ToolSelectorService
+
+        monkeypatch.setattr(
+            AgentCandidateCollector,
+            "collect_by_pools",
+            lambda self, account_id, pools, *, query="": [
+                {
+                    "agent_id": "app-1",
+                    "name": "通用助手",
+                    "description": "处理通用任务",
+                    "icon": "robot",
+                    "source_scope": "own",
+                    "source_type": "app",
+                    "app_id": "app-1",
+                    "pool": "general",
+                    "match_reason": "primary_pool:general",
+                    "semantic_score": 1.0,
+                    "metadata": {"primary_pool": "general"},
+                },
+                {
+                    "agent_id": "app-2",
+                    "name": "代码工坊",
+                    "description": "写代码",
+                    "icon": "code",
+                    "source_scope": "public",
+                    "source_type": "app",
+                    "app_id": "app-2",
+                    "pool": "coding",
+                    "match_reason": "primary_pool:coding",
+                    "semantic_score": 0.9,
+                    "metadata": {"primary_pool": "coding"},
+                },
+            ],
+        )
+        monkeypatch.setattr(
+            ToolCandidateCollector,
+            "collect",
+            lambda self, account_id: [
+                {
+                    "source_type": "skill",
+                    "provider_id": "p1",
+                    "name": "python-debugpy",
+                    "description": "Python 调试",
+                    "metadata": {"tool_pool": "coding_tools"},
+                }
+            ],
+        )
+        monkeypatch.setattr(
+            ToolSelectorService,
+            "select_tools",
+            lambda self, query, *, candidates=None, max_tools=5: [
+                {
+                    "source_type": "skill",
+                    "provider_id": "p1",
+                    "tool_name": "python-debugpy",
+                    "reason": "keyword:python",
+                    "match_type": "keyword",
+                }
+            ],
+        )
+
+        user = SimpleNamespace(id=uuid4())
+        result = service._build_intent_recommendations(
+            user, "帮我写 Python 代码", ["coding"]
+        )
+
+        assert [item["name"] for item in result["recommended_agents"]] == [
+            "通用助手",
+            "代码工坊",
+        ]
+        assert result["recommended_agents"][0]["pool"] == "general"
+        assert result["recommended_agents"][0]["score"] == 1.0
+        assert result["recommended_tools"] == [
+            {
+                "source_type": "skill",
+                "provider_id": "p1",
+                "tool_name": "python-debugpy",
+                "name": "python-debugpy",
+                "description": "Python 调试",
+                "tool_pool": "coding_tools",
+                "reason": "keyword:python",
+                "match_type": "keyword",
+            }
+        ]
+        assert result["matched_tool_pools"] == ["coding_tools"]
+
+    def test_build_intent_recommendations_should_fallback_to_general_without_tools(
+        self,
+        service,
+        monkeypatch,
+    ):
+        """测试无工具候选时 matched_tool_pools 兜底为 general"""
+        from internal.service.agent_pool_service import AgentCandidateCollector
+        from internal.service.tool_inventory_service import ToolCandidateCollector
+
+        monkeypatch.setattr(
+            AgentCandidateCollector,
+            "collect_by_pools",
+            lambda self, account_id, pools, *, query="": [],
+        )
+        monkeypatch.setattr(
+            ToolCandidateCollector,
+            "collect",
+            lambda self, account_id: [],
+        )
+
+        user = SimpleNamespace(id=uuid4())
+        result = service._build_intent_recommendations(user, "你好", ["general"])
+
+        assert result["recommended_agents"] == []
+        assert result["recommended_tools"] == []
+        assert result["matched_tool_pools"] == ["general"]
+
+    def test_build_intent_recommendations_should_be_fail_open(
+        self,
+        service,
+        monkeypatch,
+    ):
+        """测试候选收集异常时降级为空列表，不向上抛出"""
+        from internal.service.agent_pool_service import AgentCandidateCollector
+        from internal.service.tool_inventory_service import ToolCandidateCollector
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("collector boom")
+
+        monkeypatch.setattr(AgentCandidateCollector, "collect_by_pools", _raise)
+        monkeypatch.setattr(ToolCandidateCollector, "collect", _raise)
+
+        user = SimpleNamespace(id=uuid4())
+        result = service._build_intent_recommendations(user, "你好", ["general"])
+
+        assert result["recommended_agents"] == []
+        assert result["recommended_tools"] == []
+        assert result["matched_tool_pools"] == ["general"]
 
     def test_get_user_intent_single_user_message_triggers_recognition(
         self,

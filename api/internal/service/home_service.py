@@ -16,6 +16,7 @@ from .base_service import BaseService
 from .billing_metering_service import BillingUsageAggregator
 from .cost_policy_service import CostPolicyService
 from .intent_recognition_service import IntentRecognitionService
+from .language_model_service import LanguageModelService
 from .pool_intent_resolver_service import PoolIntentResolver
 
 
@@ -26,11 +27,14 @@ class HomeService(BaseService):
 
     db: SQLAlchemy
     intent_recognition_service: IntentRecognitionService
+    language_model_service: LanguageModelService
 
     RECENT_MESSAGES_LIMIT = 8
     RECENT_MEMORIES_LIMIT = 10
     RECENT_CONVERSATION_SUMMARIES_LIMIT = 5
     MIN_MESSAGES_FOR_INTENT = 1
+    RECOMMENDED_AGENTS_LIMIT = 3
+    RECOMMENDED_TOOLS_LIMIT = 5
 
     def get_user_intent(self, user: Account) -> dict[str, Any]:
         """获取用户的意图识别结果"""
@@ -94,10 +98,18 @@ class HomeService(BaseService):
             pool_result = PoolIntentResolver().resolve(
                 recent_messages[-1].get("content", "")
             )
-            intent_result["matched_agent_pools"] = pool_result["matched_pools"]
-            intent_result["recommended_agents"] = []
-            intent_result["matched_tool_pools"] = ["general"]
-            intent_result["recommended_tools"] = []
+            matched_agent_pools = pool_result["matched_pools"]
+            # 基于匹配出的 Agent 子池，真实产出推荐 Agent 与推荐工具
+            # （此前为写死占位：recommended_agents=[] / matched_tool_pools=["general"]）
+            recommendations = self._build_intent_recommendations(
+                user,
+                recent_messages[-1].get("content", ""),
+                matched_agent_pools,
+            )
+            intent_result["matched_agent_pools"] = matched_agent_pools
+            intent_result["recommended_agents"] = recommendations["recommended_agents"]
+            intent_result["matched_tool_pools"] = recommendations["matched_tool_pools"]
+            intent_result["recommended_tools"] = recommendations["recommended_tools"]
             intent_result["cost_policy"] = CostPolicyService().build_policy(
                 task_complexity="simple",
                 budget_level="normal",
@@ -200,6 +212,119 @@ class HomeService(BaseService):
         except Exception as e:
             logging.error(f"Failed to get recent messages: {str(e)}")
             return []
+
+    def _build_intent_recommendations(
+        self,
+        user: Account,
+        query: str,
+        matched_agent_pools: list[str],
+    ) -> dict[str, Any]:
+        """根据匹配出的 Agent 子池，真实产出推荐 Agent 与推荐工具。
+
+        此前首页意图摘要把 recommended_agents/recommended_tools 写死为空、
+        matched_tool_pools 写死 ["general"]，是纯占位。这里改为复用编排主链路
+        已在用的候选收集器：
+        - Agent：AgentCandidateCollector.collect_by_pools(account_id, pools, query)
+          按子池 + query 语义打分，取 Top N；
+        - 工具：ToolCandidateCollector.collect(account_id) → ToolSelectorService
+          .select_tools(query, candidates) 关键词快通道 + LLM 兜底。
+
+        全部为"尽力而为"：任一环节异常都静默降级为空列表（首页摘要不应因此失败）。
+        """
+        recommended_agents: list[dict[str, Any]] = []
+        recommended_tools: list[dict[str, Any]] = []
+        matched_tool_pools: list[str] = []
+
+        # 1. 推荐 Agent：按子池 + query 打分取 Top 3
+        try:
+            from .agent_pool_service import AgentCandidateCollector
+
+            collector = AgentCandidateCollector(session=self.db.session)
+            candidates = collector.collect_by_pools(
+                user.id, matched_agent_pools, query=query
+            )
+            for candidate in candidates[: self.RECOMMENDED_AGENTS_LIMIT]:
+                metadata = candidate.get("metadata") or {}
+                recommended_agents.append(
+                    {
+                        "agent_id": str(candidate.get("agent_id") or ""),
+                        "name": str(candidate.get("name") or ""),
+                        "description": str(candidate.get("description") or ""),
+                        "icon": str(candidate.get("icon") or ""),
+                        "source_scope": str(candidate.get("source_scope") or ""),
+                        "source_type": str(candidate.get("source_type") or ""),
+                        "app_id": str(candidate.get("app_id") or ""),
+                        "pool": str(candidate.get("pool") or metadata.get("primary_pool") or ""),
+                        "match_reason": str(candidate.get("match_reason") or ""),
+                        "score": float(candidate.get("semantic_score") or 0.0),
+                    }
+                )
+        except Exception:
+            logging.warning("首页推荐 Agent 收集失败，降级为空列表", exc_info=True)
+
+        # 2. 推荐工具：先收集候选，再用选择器按 query 语义筛选
+        try:
+            from .tool_inventory_service import ToolCandidateCollector
+            from .tool_selector_service import ToolSelectorService
+
+            tool_candidates = ToolCandidateCollector(
+                session=self.db.session
+            ).collect(user.id)
+            if query and tool_candidates:
+                selected = ToolSelectorService(
+                    language_model_service=self.language_model_service
+                ).select_tools(
+                    query, candidates=tool_candidates, max_tools=self.RECOMMENDED_TOOLS_LIMIT
+                )
+                # selected 只含 (source_type, provider_id, tool_name) 三元组，
+                # 需回填 name/description 等展示字段
+                candidate_map = {
+                    (
+                        str(item.get("source_type") or ""),
+                        str(item.get("provider_id") or ""),
+                        str(item.get("name") or ""),
+                    ): item
+                    for item in tool_candidates
+                }
+                seen_pools: list[str] = []
+                for item in selected:
+                    key = (
+                        str(item.get("source_type") or ""),
+                        str(item.get("provider_id") or ""),
+                        str(item.get("tool_name") or ""),
+                    )
+                    matched = candidate_map.get(key)
+                    if matched is None:
+                        continue
+                    metadata = matched.get("metadata") or {}
+                    tool_pool = str(metadata.get("tool_pool") or matched.get("source_type") or "")
+                    if tool_pool and tool_pool not in seen_pools:
+                        seen_pools.append(tool_pool)
+                    recommended_tools.append(
+                        {
+                            "source_type": key[0],
+                            "provider_id": key[1],
+                            "tool_name": key[2],
+                            "name": str(matched.get("name") or key[2]),
+                            "description": str(matched.get("description") or ""),
+                            "tool_pool": tool_pool,
+                            "reason": str(item.get("reason") or ""),
+                            "match_type": str(item.get("match_type") or ""),
+                        }
+                    )
+                matched_tool_pools = seen_pools
+        except Exception:
+            logging.warning("首页推荐工具收集失败，降级为空列表", exc_info=True)
+
+        # 兜底：未产出任何工具池时退化为 general，保持字段语义稳定
+        if not matched_tool_pools:
+            matched_tool_pools = ["general"]
+
+        return {
+            "recommended_agents": recommended_agents,
+            "recommended_tools": recommended_tools,
+            "matched_tool_pools": matched_tool_pools,
+        }
 
     def _get_recent_memory_context(self, user: Account) -> str:
         """取最近活跃用户记忆，作为意图识别中“未完成任务/目标”的上下文。"""

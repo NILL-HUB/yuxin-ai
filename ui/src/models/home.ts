@@ -30,6 +30,30 @@ export type HomeIntentSuggestedAction = {
   icon: string
 }
 
+export type HomeIntentRecommendedAgent = {
+  agent_id: string
+  name: string
+  description: string
+  icon: string
+  source_scope: string
+  source_type: string
+  app_id: string
+  pool: string
+  match_reason: string
+  score: number
+}
+
+export type HomeIntentRecommendedTool = {
+  source_type: string
+  provider_id: string
+  tool_name: string
+  name: string
+  description: string
+  tool_pool: string
+  reason: string
+  match_type: string
+}
+
 export type HomeIntentData = {
   intent: string
   confidence: number
@@ -39,6 +63,10 @@ export type HomeIntentData = {
   is_default: boolean
   task_plan_summary: HomeTaskPlanSummary
   synthesis_summary: HomeSynthesisSummary
+  matched_agent_pools: string[]
+  matched_tool_pools: string[]
+  recommended_agents: HomeIntentRecommendedAgent[]
+  recommended_tools: HomeIntentRecommendedTool[]
 }
 
 export type GetHomeIntentResponse = BaseResponse<HomeIntentData>
