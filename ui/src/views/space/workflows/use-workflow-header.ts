@@ -42,11 +42,8 @@ export const useWorkflowHeader = (options: UseWorkflowHeaderOptions) => {
   const isAdmin = Boolean(options.isAdmin?.value)
 
   const headerBackRoute = computed<RouteLocationRaw>(() => {
-    return {
-      name: options.isPreviewMode.value
-        ? (isAdmin ? 'admin-workflows' : 'store-workflows-list')
-        : 'admin-workflows',
-    }
+    // 用户端工作流商店已下线，预览与编辑统一回退到后台工作流列表
+    return { name: 'admin-workflows' }
   })
 
   const workflowStatusText = computed(() => {

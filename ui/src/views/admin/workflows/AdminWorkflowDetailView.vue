@@ -71,7 +71,7 @@ const route = useRoute()
 const router = useRouter()
 const { t, locale } = useI18n()
 const workflowId = ref<string>(String(route.params?.workflow_id ?? '')) // 缓存 workflow_id，避免路由切换时丢失
-const isPreviewMode = computed(() => route.name === 'store-workflows-preview') // 判断是否为预览模式
+const isPreviewMode = computed(() => route.name === 'admin-store-workflows-preview') // 判断是否为预览模式
 const NOTE_TYPES = {
   start: markRaw(StartNode),
   llm: markRaw(LlmNode),

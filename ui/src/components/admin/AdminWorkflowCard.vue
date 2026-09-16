@@ -12,15 +12,18 @@ const props = withDefaults(
     canUpdate: boolean
     canDelete?: boolean
     canEdit?: boolean
+    canPreview?: boolean
   }>(),
   {
     canDelete: undefined,
     canEdit: true,
+    canPreview: true,
   },
 )
 
 const emit = defineEmits<{
   (event: 'edit', workflowId: string): void
+  (event: 'preview', workflowId: string): void
   (event: 'toggle-public', workflow: AdminWorkflowRecord): void
   (event: 'offline', workflow: AdminWorkflowRecord): void
   (event: 'delete', workflow: AdminWorkflowRecord): void
@@ -69,6 +72,13 @@ const visibilityActionLabel = computed(() => {
         @click="emit('edit', workflow.id)"
       >
         {{ t('admin.workflowsAdmin.actions.edit') }}
+      </a-button>
+      <a-button
+        v-if="canPreview"
+        :data-testid="`workflow-preview-${workflow.id}`"
+        @click="emit('preview', workflow.id)"
+      >
+        {{ t('admin.workflowsAdmin.actions.preview') }}
       </a-button>
       <a-button
         v-if="canUpdate"

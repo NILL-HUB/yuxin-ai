@@ -115,6 +115,13 @@ const handleEdit = async (workflowId: string) => {
 }
 
 /**
+ * 跳转到只读工作流预览视图。
+ */
+const handlePreview = async (workflowId: string) => {
+  await router.push({ name: 'admin-store-workflows-preview', params: { workflow_id: workflowId } })
+}
+
+/**
  * 打开创建工作流弹窗。
  */
 const openCreateModal = () => {
@@ -492,6 +499,7 @@ onMounted(() => {
           :can-update="true"
           :can-delete="true"
           @edit="handleEdit"
+          @preview="handlePreview"
           @delete="handleDelete"
           @offline="handleOffline"
           @toggle-public="handleTogglePublic"

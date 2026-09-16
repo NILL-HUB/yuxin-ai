@@ -50,7 +50,7 @@ describe('use-workflow-header', () => {
     const router = createRouter()
     const header = useWorkflowHeader({ isPreviewMode, workflowId, workflow, router })
 
-    expect(header.headerBackRoute.value).toEqual({ name: 'store-workflows-list' })
+    expect(header.headerBackRoute.value).toEqual({ name: 'admin-workflows' })
     expect(header.workflowStatusText.value).toBe('草稿')
     expect(header.showPreviewReadonlyTag.value).toBe(true)
     expect(header.showDebugPassedTag.value).toBe(false)

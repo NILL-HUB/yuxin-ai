@@ -161,11 +161,6 @@ const handleUnauthorized = (clearCredential: () => void) => {
 const NO_PROMPT_PUBLIC_GET_ROUTE_NAMES = new Set([
   'store-public-apps-list',
   'store-public-apps-preview',
-  'store-tools-list',
-  'store-skills-list',
-  'store-mcp-list',
-  'store-workflows-list',
-  'store-workflows-preview',
   'openapi-index',
 ])
 

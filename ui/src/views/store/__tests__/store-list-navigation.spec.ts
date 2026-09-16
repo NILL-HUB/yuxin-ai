@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import PublicAppsListView from '@/views/store/public-apps/ListView.vue'
-import WorkflowsListView from '@/views/store/workflows/ListView.vue'
 
 const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
@@ -9,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   getPublicApps: vi.fn(),
   getAppTags: vi.fn(),
   forkPublicApp: vi.fn(),
-  getPublicWorkflows: vi.fn(),
 }))
 
 vi.mock('@/utils/login-redirect', () => ({
@@ -46,10 +44,6 @@ vi.mock('@/stores/credential', () => ({
       expire_at: 0,
     },
   }),
-}))
-
-vi.mock('@/services/public-workflow', () => ({
-  getPublicWorkflows: mocks.getPublicWorkflows,
 }))
 
 const slotStub = {
@@ -113,28 +107,6 @@ describe('store list navigation', () => {
         },
       },
     })
-
-    mocks.getPublicWorkflows.mockResolvedValue({
-      data: {
-        list: [
-          {
-            id: 'workflow-1',
-            name: '工作流一',
-            icon: '',
-            description: '工作流描述',
-            tags: [],
-            published_at: 1700000000,
-            created_at: 1700000000,
-            account_name: 'tester',
-            account_avatar: '',
-            is_forked: false,
-          },
-        ],
-        paginator: {
-          total_record: 1,
-        },
-      },
-    })
   })
 
   it('navigates when clicking a public app card button', async () => {
@@ -157,26 +129,6 @@ describe('store list navigation', () => {
     })
   })
 
-  it('navigates when clicking a workflow card button', async () => {
-    const wrapper = shallowMount(WorkflowsListView, {
-      global: {
-        stubs: globalStubs,
-      },
-    })
-    await flushPromises()
-
-    const previewButton = wrapper.find('button.w-full')
-    expect(previewButton.exists()).toBe(true)
-    expect(previewButton.attributes('type')).toBe('button')
-
-    await previewButton.trigger('click')
-
-    expect(mocks.routerPush).toHaveBeenCalledWith({
-      name: 'store-workflows-preview',
-      params: { workflow_id: 'workflow-1' },
-    })
-  })
-
   it('does not render copy actions on cards', async () => {
     const appWrapper = shallowMount(PublicAppsListView, {
       global: {
@@ -186,15 +138,6 @@ describe('store list navigation', () => {
     await flushPromises()
     expect(appWrapper.text()).not.toContain('复制')
     expect(appWrapper.text()).not.toContain('已复制')
-
-    const workflowWrapper = shallowMount(WorkflowsListView, {
-      global: {
-        stubs: globalStubs,
-      },
-    })
-    await flushPromises()
-    expect(workflowWrapper.text()).not.toContain('复制')
-    expect(workflowWrapper.text()).not.toContain('已复制')
   })
 
   it('redirects to the unified login page when clicking fork while logged out', async () => {
