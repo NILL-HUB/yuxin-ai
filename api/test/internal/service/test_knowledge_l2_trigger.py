@@ -19,7 +19,7 @@ class _FakeIndexing:
     def __init__(self):
         self.sync_calls = []
 
-    def build_document_l2(self, document_id):
+    def build_document_l2(self, document_id, start_sec=None, end_sec=None):
         self.sync_calls.append(document_id)
         return {"document_id": str(document_id), "tier2": {"status": "completed"}}
 
@@ -35,8 +35,9 @@ def _install_fake_task(monkeypatch, *, available=True):
 
     if available:
         class _Task:
-            def delay(self, document_id):
+            def delay(self, document_id, **kwargs):
                 dispatched["args"] = (document_id,)
+                dispatched["kwargs"] = kwargs
                 return SimpleNamespace(id="task-1")
 
         module.build_document_l2_task = _Task()
@@ -138,7 +139,9 @@ class _FakeKnowledgeBaseService:
         self.calls = []
         self.raise_not_found = raise_not_found
 
-    def trigger_document_l2(self, knowledge_base_id, document_id, account):
+    def trigger_document_l2(
+        self, knowledge_base_id, document_id, account, start_sec=None, end_sec=None
+    ):
         self.calls.append((knowledge_base_id, document_id, account))
         if self.raise_not_found:
             raise NotFoundException("该文档不存在，请核实后重试")

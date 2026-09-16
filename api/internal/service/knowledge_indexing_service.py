@@ -121,13 +121,22 @@ class KnowledgeIndexingService(BaseService):
             except Exception as e:
                 logger.exception("批量构建知识库文档单条失败 document_id=%s 错误信息:%s", document_id, str(e))
 
-    def build_document_l2(self, document_id: UUID) -> dict:
+    def build_document_l2(
+        self,
+        document_id: UUID,
+        start_sec: float | None = None,
+        end_sec: float | None = None,
+    ) -> dict:
         """对已完成的素材执行 L2 深度解析（按需触发）。
 
-        L2 让素材「能被精细修改」：对视频逐帧补一遍更详尽的视觉详述，
-        **更新原有 Segment 的 content 与 metadata，不新建 Segment**（避免重复）。
+        L2 让素材「能被精细修改」：由 L1 命中帧定位窗口，只在窗口内按 0.5 秒/帧
+        密抽并逐帧详述，**不重扫全片**（规格 §5.4）。窗口内新帧新建 Segment，
+        与 L1 片段区分（`metadata.tier2_window=True`）。
         状态写入 parse_profile.tier2，失败只标记 error 不回滚 L1 产物——
         L1 的「能被找到」能力必须保留。
+
+        `start_sec` / `end_sec` 均给出时按显式区间密抽（规格 §2「A+B」）；
+        缺省时由 L1 命中帧自动推导窗口。
 
         Returns:
             {"document_id": ..., "tier2": {...}}，供任务侧记录。
@@ -140,8 +149,14 @@ class KnowledgeIndexingService(BaseService):
         parse_profile["tier2"] = {"status": "running"}
         self.update(document, parse_profile=parse_profile)
 
+        explicit_range = (
+            (float(start_sec), float(end_sec))
+            if start_sec is not None and end_sec is not None
+            else None
+        )
+
         try:
-            result = self._enhance_l2(document)
+            result = self._enhance_l2(document, explicit_range=explicit_range)
         except Exception as exc:
             logger.exception("L2 深度解析失败 document_id=%s", document_id)
             parse_profile["tier2"] = {"status": "error", "error": str(exc)}

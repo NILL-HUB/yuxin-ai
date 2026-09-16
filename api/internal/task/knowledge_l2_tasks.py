@@ -22,17 +22,22 @@ logger = logging.getLogger(__name__)
     max_retries=2,
     default_retry_delay=60,
 )
-def build_document_l2_task(self, document_id: str):
+def build_document_l2_task(
+    self, document_id: str, start_sec: float | None = None, end_sec: float | None = None
+):
     """对指定文档执行 L2 深度解析。
 
-    幂等：重复执行会覆盖同一批 Segment，不产生重复片段。
+    窗口化密抽：由 L1 命中帧的 time_offset 推导窗口；`start_sec` / `end_sec`
+    均给出时按其显式区间。重复执行会先清理上一轮窗口片段与帧，不产生重复片段。
     """
     from app.http.module import injector
     from internal.service.knowledge_indexing_service import KnowledgeIndexingService
 
     indexing_service = injector.get(KnowledgeIndexingService)
     try:
-        return indexing_service.build_document_l2(document_id)
+        return indexing_service.build_document_l2(
+            document_id, start_sec=start_sec, end_sec=end_sec
+        )
     except Exception as exc:
         logger.exception("L2 深度解析失败 document_id=%s", document_id)
         raise self.retry(exc=exc)

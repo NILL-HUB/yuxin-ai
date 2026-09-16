@@ -829,18 +829,25 @@ def register_routes(quart_app):
 
     @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/l2")
     async def async_trigger_document_l2(knowledge_base_id, document_id) -> Response:
-        """async 触发某素材的 L2 深度解析（按需，不做定时轮询）。"""
+        """async 触发某素材的 L2 深度解析（按需，不做定时轮询）。
+
+        请求体可选 `start_sec` / `end_sec`：给出时按显式区间密抽，
+        否则由 L1 命中帧自动推导窗口。
+        """
         account, err = await _resolve_account()
         if err is not None:
             return err
 
         from internal.service import KnowledgeBaseService
 
+        payload = await request.get_json(force=True, silent=True) or {}
         await _to_thread(
             _get_service(KnowledgeBaseService).trigger_document_l2,
             knowledge_base_id,
             document_id,
             account,
+            start_sec=payload.get("start_sec"),
+            end_sec=payload.get("end_sec"),
         )
         return _ok_msg("L2 深度解析已触发")
 
