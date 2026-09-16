@@ -2,12 +2,14 @@
 import { computed, reactive, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import dayjs from 'dayjs'
 import { getErrorMessage } from '@/utils/error'
 import {
   createScheduleTask,
   parseScheduleIntent,
   rejectScheduleSuggestion,
   type ScheduleParseResult,
+  type ScheduleTriggerType,
 } from '@/services/schedule-task'
 
 export type ScheduleSuggestion = {
@@ -51,12 +53,22 @@ const answers = reactive<Record<string, string>>({})
 const taskName = ref('')
 const refinedPrompt = ref('')
 const cronParts = ref<string[]>(['*', '*', '*', '*', '*', '*'])
+const triggerType = ref<ScheduleTriggerType>('cron')
+const onceRunAt = ref<dayjs.Dayjs | null>(null)
 
 const cronExpression = computed(() => cronParts.value.join(' '))
 const missingFields = computed(() => parseResult.value?.missing_fields ?? [])
 
+const triggerSummary = computed(() => {
+  if (triggerType.value === 'once') {
+    if (!onceRunAt.value) return t('space.schedules.onceNotSet')
+    return t('space.schedules.onceSummary', { time: onceRunAt.value.format('YYYY-MM-DD HH:mm') })
+  }
+  return parseResult.value?.cron_humanized || cronExpression.value
+})
+
 const buildAssistantText = (result: ScheduleParseResult): string => {
-  const humanized = result.cron_humanized || result.cron_expression
+  const humanized = result.cron_humanized || result.cron_expression || result.trigger_type
   if (result.missing_fields && result.missing_fields.length > 0) {
     return `${humanized}；还需补充：${result.missing_fields.join('、')}`
   }
@@ -80,6 +92,8 @@ const resetAll = () => {
   taskName.value = ''
   refinedPrompt.value = ''
   cronParts.value = ['*', '*', '*', '*', '*', '*']
+  triggerType.value = 'cron'
+  onceRunAt.value = null
   for (const key of Object.keys(answers)) {
     delete answers[key]
   }
@@ -94,7 +108,13 @@ const runParse = async (input: string, snapshot: { user: string; assistant: stri
     history.value = [...snapshot, { user: input, assistant: buildAssistantText(result) }]
     taskName.value = result.task_name || taskName.value || ''
     refinedPrompt.value = result.prompt || ''
-    applyCron(result.cron_expression)
+    if (result.trigger_type === 'once') {
+      triggerType.value = 'once'
+      onceRunAt.value = result.run_at ? dayjs.unix(result.run_at) : null
+    } else {
+      triggerType.value = 'cron'
+      applyCron(result.cron_expression)
+    }
     return result
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('space.schedules.parseFailed')))
@@ -143,6 +163,8 @@ const backToInput = () => {
   taskName.value = ''
   refinedPrompt.value = ''
   cronParts.value = ['*', '*', '*', '*', '*', '*']
+  triggerType.value = 'cron'
+  onceRunAt.value = null
   for (const key of Object.keys(answers)) {
     delete answers[key]
   }
@@ -158,18 +180,32 @@ const handleCreate = async () => {
     Message.warning(t('space.schedules.promptRequired'))
     return
   }
-  const parts = cronParts.value.map((part) => String(part).trim())
-  if (parts.some((part) => part === '')) {
-    Message.warning(t('space.schedules.cronInvalid'))
-    return
+  const isOnce = triggerType.value === 'once'
+  if (isOnce) {
+    if (!onceRunAt.value) {
+      Message.warning(t('space.schedules.onceTimeRequired'))
+      return
+    }
+    if (onceRunAt.value.valueOf() < Date.now() - 60_000) {
+      Message.warning(t('space.schedules.onceTimePast'))
+      return
+    }
+  } else {
+    const parts = cronParts.value.map((part) => String(part).trim())
+    if (parts.some((part) => part === '')) {
+      Message.warning(t('space.schedules.cronInvalid'))
+      return
+    }
   }
   saving.value = true
   try {
     await createScheduleTask({
       name: taskName.value.trim(),
       prompt: refinedPrompt.value.trim(),
-      cron_expression: parts.join(' '),
-      cron_humanized: parseResult.value?.cron_humanized || '',
+      trigger_type: isOnce ? 'once' : 'cron',
+      cron_expression: isOnce ? '' : cronParts.value.map((part) => String(part).trim()).join(' '),
+      cron_humanized: isOnce ? '' : parseResult.value?.cron_humanized || '',
+      run_at: isOnce && onceRunAt.value ? onceRunAt.value.unix() : null,
     })
     Message.success(t('space.schedules.createSuccess'))
     wizardVisible.value = false
@@ -260,10 +296,22 @@ const closeWizard = () => {
     <div v-else>
       <div class="mb-4 rounded-lg border border-gray-200 p-4">
         <div class="mb-2 text-sm font-semibold text-gray-800">{{ t('space.schedules.humanizedLabel') }}</div>
-        <a-tag color="arcoblue" size="medium">{{ parseResult?.cron_humanized || cronExpression }}</a-tag>
+        <a-tag color="arcoblue" size="medium">{{ triggerSummary }}</a-tag>
       </div>
 
-      <div class="mb-4">
+      <!-- 单次任务：仅选择一次执行时刻，到点执行后自动归档到回收站 -->
+      <div v-if="triggerType === 'once'" class="mb-4 rounded-lg border border-gray-200 p-4">
+        <div class="mb-2 text-sm font-semibold text-gray-800">{{ t('space.schedules.onceTitle') }}</div>
+        <input
+          :value="onceRunAt ? onceRunAt.format('YYYY-MM-DDTHH:mm') : ''"
+          type="datetime-local"
+          class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+          @change="onceRunAt = ($event.target as HTMLInputElement).value ? dayjs(($event.target as HTMLInputElement).value) : null"
+        />
+        <div class="mt-1 text-xs text-gray-400">{{ t('space.schedules.onceHint') }}</div>
+      </div>
+
+      <div v-else class="mb-4">
         <div class="mb-2 text-sm font-semibold text-gray-800">{{ t('space.schedules.preset') }}</div>
         <a-space :size="8" wrap>
           <a-button
@@ -279,7 +327,7 @@ const closeWizard = () => {
       </div>
 
       <a-form layout="vertical" class="mb-4" :model="{}">
-        <a-form-item :label="t('space.schedules.cronLabel')">
+        <a-form-item v-if="triggerType !== 'once'" :label="t('space.schedules.cronLabel')">
           <div class="grid grid-cols-6 gap-2">
             <div v-for="(part, index) in cronParts" :key="index">
               <a-input v-model="cronParts[index]" class="w-full text-center" />

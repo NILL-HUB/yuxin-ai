@@ -80,7 +80,7 @@ def register_routes(quart_app):
                 code="validate_error", message="任务需求不能为空",
                 data={"prompt": ["任务需求不能为空"]}, status=400,
             )
-        if trigger_type not in ("cron", "interval"):
+        if trigger_type not in ("cron", "interval", "once"):
             return a._json_resp(
                 code="validate_error", message="触发类型不合法",
                 data={"trigger_type": ["触发类型不合法"]}, status=400,
@@ -102,6 +102,7 @@ def register_routes(quart_app):
                 owner_type="admin",
                 trigger_type=trigger_type,
                 interval_config=interval_config,
+                run_at=body.get("run_at"),
                 app_id=body.get("app_id") or None,
                 task_type=body.get("task_type") or None,
                 input_params=body.get("input_params") or None,
@@ -130,7 +131,8 @@ def register_routes(quart_app):
         parser = a._get_service(ScheduleIntentParser)
         try:
             result = await a._to_thread(parser.parse, user_input, history)
-            await a._to_thread(parser.validate_cron, result.get("cron_expression", ""))
+            if result.get("trigger_type") != "once":
+                await a._to_thread(parser.validate_cron, result.get("cron_expression", ""))
         except Exception as exc:
             return a._json_resp(
                 code="validate_error", message=str(exc),
@@ -145,10 +147,11 @@ def register_routes(quart_app):
         body = await request.get_json(force=True, silent=True) or {}
         name = (body.get("name") or "定时任务").strip()
         prompt = (body.get("prompt") or "").strip()
+        trigger_type = (body.get("trigger_type") or "cron").strip()
         cron_expression = (body.get("cron_expression") or "").strip()
         cron_humanized = (body.get("cron_humanized") or "").strip()
         fingerprint = (body.get("fingerprint") or "").strip()
-        if not prompt or not cron_expression:
+        if not prompt or (trigger_type == "cron" and not cron_expression):
             return a._json_resp(
                 code="validate_error", message="缺少需求或定时表达式",
                 data={"prompt": ["缺少需求或定时表达式"]}, status=400,
@@ -161,6 +164,9 @@ def register_routes(quart_app):
             cron_expression,
             cron_humanized=cron_humanized,
             owner_type="admin",
+            trigger_type=trigger_type,
+            interval_config=body.get("interval_config") or None,
+            run_at=body.get("run_at"),
             app_id=body.get("app_id") or None,
             task_type=body.get("task_type") or None,
             input_params=body.get("input_params") or None,
@@ -239,6 +245,7 @@ def register_routes(quart_app):
                 owner_type="admin",
                 trigger_type=body.get("trigger_type"),
                 interval_config=body.get("interval_config"),
+                run_at=body.get("run_at"),
                 app_id=body.get("app_id"),
                 task_type=body.get("task_type"),
                 input_params=body.get("input_params"),

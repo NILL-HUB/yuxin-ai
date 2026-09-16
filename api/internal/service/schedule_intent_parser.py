@@ -68,11 +68,44 @@ class ScheduleIntentParser:
         except json.JSONDecodeError:
             raise ValueError("解析失败：JSON 不合法")
         data.setdefault("missing_fields", [])
+        data.setdefault("trigger_type", "cron")
         data.setdefault("cron_expression", "0 0 0 * * *")
         data.setdefault("cron_humanized", "每天 00:00:00")
         data.setdefault("task_name", "定时任务")
         data.setdefault("prompt", "")
+        data.setdefault("run_at", None)
+        if data.get("trigger_type") != "once":
+            data["trigger_type"] = "cron"
+            data["run_at"] = None
+        else:
+            run_at_dt = self._parse_run_at(data.get("run_at"))
+            # 统一回传 UTC 秒级时间戳，前端原样回传即可（避免无时区字符串歧义）
+            data["run_at"] = int(run_at_dt.replace(tzinfo=UTC).timestamp()) if run_at_dt else None
         return data
+
+    def _parse_run_at(self, value) -> datetime | None:
+        """解析模型返回的单次执行时刻（支持 ISO8601 与秒级时间戳）。"""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), tz=UTC).replace(tzinfo=None)
+            except (OverflowError, OSError, ValueError):
+                return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            try:
+                return datetime.fromtimestamp(float(raw), tz=UTC).replace(tzinfo=None)
+            except (OverflowError, OSError, ValueError):
+                return None
+        if dt.tzinfo is not None:
+            return dt.astimezone(UTC).replace(tzinfo=None)
+        # 模型可能返回业务时区（北京）的裸时间，按业务时区解释
+        return dt.replace(tzinfo=ZoneInfo("Asia/Shanghai")).astimezone(UTC).replace(tzinfo=None)
 
     def validate_cron(self, cron_expression: str) -> str:
         """校验并归一化 cron，非法时抛 FailException（由 handler 转 400）"""

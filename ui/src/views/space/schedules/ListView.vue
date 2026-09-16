@@ -171,11 +171,24 @@ const typeIcon = (task: ScheduleTaskItem) => {
   return 'icon-robot'
 }
 
+// 频率列展示：单次任务显示仅执行一次的时刻，interval 显示间隔描述，cron 显示描述/公式
+const triggerLabel = (task: ScheduleTaskItem) => {
+  if (task.trigger_type === 'once') {
+    return task.run_at
+      ? t('space.schedules.onceListLabel', { time: formatRunTime(task.run_at) })
+      : t('space.schedules.triggerOnce')
+  }
+  if (task.trigger_type === 'interval') {
+    return task.cron_humanized || t('space.schedules.triggerInterval')
+  }
+  return task.cron_humanized || task.cron_expression
+}
+
 // 短日期（今天/昨天/MM-DD HH:mm）
+// 后端返回秒级时间戳，formatTimestampLong 内部会自行换算毫秒，此处不得重复乘 1000
 const formatRunTime = (ts: number | null | undefined) => {
   if (!ts) return '-'
-  const ms = ts < 10000000000 ? ts * 1000 : ts
-  return formatTimestampLong(ms)
+  return formatTimestampLong(ts)
 }
 
 onMounted(() => {
@@ -211,7 +224,7 @@ onMounted(() => {
             <div>
               <h2 class="schedule-subtitle text-lg font-semibold">全部任务</h2>
               <p class="mt-0.5 text-xs text-muted">
-                共 {{ total }} 个定时任务 · 支持 cron 与间隔两种触发方式
+                共 {{ total }} 个定时任务 · 支持单次、cron 与间隔三种触发方式
               </p>
             </div>
             <p class="flex items-center gap-1.5 text-xs text-muted">
@@ -278,7 +291,7 @@ onMounted(() => {
                     </td>
                     <td class="px-5 py-4">
                       <span class="schedule-pill inline-flex rounded-[var(--aicss-radius)] px-3 py-1 text-xs font-medium">
-                        {{ task.cron_humanized || (task.trigger_type === 'interval' ? t('space.schedules.triggerInterval') : task.cron_expression) }}
+                        {{ triggerLabel(task) }}
                       </span>
                     </td>
                     <td class="px-5 py-4">
@@ -289,7 +302,13 @@ onMounted(() => {
                         >
                           {{ task.task_type === 'app_execution' ? t('space.schedules.executorApp') : t('space.schedules.executorAssistant') }}
                         </span>
-                        <span class="schedule-cron font-mono text-xs text-muted">{{ task.cron_expression }}</span>
+                        <span
+                          v-if="task.trigger_type === 'once'"
+                          class="schedule-executor schedule-executor-once inline-flex rounded-[var(--aicss-radius)] px-3 py-1 text-xs font-medium"
+                        >
+                          {{ t('space.schedules.triggerOnce') }}
+                        </span>
+                        <span v-else class="schedule-cron font-mono text-xs text-muted">{{ task.cron_expression }}</span>
                       </div>
                     </td>
                     <td class="px-5 py-4">
@@ -522,6 +541,10 @@ onMounted(() => {
 .schedule-executor-assistant {
   background: var(--aicss-bg-subtle);
   color: var(--aicss-muted);
+}
+.schedule-executor-once {
+  background: var(--aicss-accent-soft);
+  color: var(--aicss-accent-text);
 }
 
 .schedule-cron {

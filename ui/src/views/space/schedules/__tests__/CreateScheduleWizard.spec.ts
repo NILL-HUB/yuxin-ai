@@ -40,6 +40,7 @@ const intervalTask = {
   cron_expression: '0 0 0 * * *',
   cron_humanized: '',
   interval_config: { unit: 'day' as const, every: 2, hours: 14 },
+  run_at: null,
   enabled: true,
   status: 'active',
   description: '',
@@ -69,6 +70,18 @@ const multiWeekdayTask = {
   cron_expression: '0 0 17 * * 1,5',
   cron_humanized: '每周一、周五 17:00:00',
   interval_config: {},
+}
+
+// 单次任务：指定时刻执行一次后自动归档
+const onceTask = {
+  ...intervalTask,
+  id: 'task-once-1',
+  name: '单次整理文档',
+  trigger_type: 'once' as const,
+  cron_expression: '',
+  cron_humanized: '仅执行一次：2026-09-13 15:00',
+  interval_config: {},
+  run_at: 1789282800,
 }
 
 describe('CreateScheduleWizard 日历与间隔同步', () => {
@@ -120,5 +133,32 @@ describe('CreateScheduleWizard 日历与间隔同步', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('每周一、周五 17:00:00')
+  })
+})
+
+describe('CreateScheduleWizard 单次任务', () => {
+  it('提供单次任务触发类型选项', async () => {
+    const wrapper = shallowMount(CreateScheduleWizard, {
+      props: { visible: false, task: cronTask },
+    })
+    await nextTick()
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('单次任务')
+  })
+
+  it('编辑单次任务时，日历摘要显示仅执行一次的时刻', async () => {
+    const wrapper = shallowMount(CreateScheduleWizard, {
+      props: { visible: false, task: onceTask },
+    })
+    await nextTick()
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('单次执行时间')
+    expect(wrapper.text()).toContain('仅执行一次：')
+    // 单次任务不展示 cron 公式编辑区
+    expect(wrapper.text()).not.toContain('快捷预设')
   })
 })

@@ -19,6 +19,7 @@ class ScheduleTaskResp(Schema):
     cron_expression = fields.String(dump_default="")
     cron_humanized = fields.String(dump_default="")
     interval_config = fields.Raw(dump_default={})
+    run_at = fields.Integer(allow_none=True)
     enabled = fields.Boolean(dump_default=True)
     status = fields.String(dump_default="")
     description = fields.String(dump_default="")
@@ -43,6 +44,7 @@ class ScheduleTaskResp(Schema):
             "cron_expression": data.cron_expression,
             "cron_humanized": data.cron_humanized,
             "interval_config": data.interval_config or {},
+            "run_at": datetime_to_timestamp(data.run_at) if data.run_at else None,
             "enabled": data.enabled,
             "status": data.status,
             "description": data.description,

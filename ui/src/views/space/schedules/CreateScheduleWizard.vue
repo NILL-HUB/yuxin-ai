@@ -20,6 +20,7 @@ import {
   type IntervalConfig,
   type ScheduleParseResult,
   type ScheduleTaskItem,
+  type ScheduleTriggerType,
 } from '@/services/schedule-task'
 import { getAppsWithPage } from '@/services/app'
 
@@ -103,14 +104,16 @@ const loadUserApps = async () => {
   }
 }
 
-// 触发类型：cron（定时表达式）或 interval（间隔触发）
-const triggerType = ref<'cron' | 'interval'>('cron')
+// 触发类型：cron（定时表达式）/ interval（间隔触发）/ once（单次任务）
+const triggerType = ref<ScheduleTriggerType>('cron')
 const intervalUnit = ref<IntervalConfig['unit']>('hour')
 const intervalEvery = ref(1)
 const intervalDayOfMonth = ref(1)
 const intervalDayOfWeek = ref(1)
 const intervalHours = ref(0)
 const intervalMinutes = ref(0)
+// 单次任务执行时刻（本地时区，提交时转 UTC 秒级时间戳）
+const onceRunAt = ref<Dayjs | null>(null)
 
 // 日历快速设置状态：周期类型 + 每 N 个周期 + 时间 + 周几(可多选)/每月几号/分点
 const calType = ref<CalendarType>('day')
@@ -210,13 +213,18 @@ const syncCalendarFromInterval = () => {
 
 // 按当前触发类型把状态同步到日历（日历始终展示当前生效配置）
 const syncCalendarFromState = () => {
+  if (triggerType.value === 'once') return
   if (triggerType.value === 'interval') syncCalendarFromInterval()
   else syncCalendarFromCron()
 }
 
-// 当前设置的实时摘要（cron 显示描述，interval 显示间隔文案）
+// 当前设置的实时摘要（once 显示单次时刻，cron 显示描述，interval 显示间隔文案）
 const scheduleSummary = computed(() => {
   const every = Math.max(1, Number(intervalEvery.value) || 1)
+  if (triggerType.value === 'once') {
+    if (!onceRunAt.value) return t('space.schedules.onceNotSet')
+    return t('space.schedules.onceSummary', { time: onceRunAt.value.format('YYYY-MM-DD HH:mm') })
+  }
   if (triggerType.value === 'interval') {
     switch (intervalUnit.value) {
       case 'minute':
@@ -309,6 +317,7 @@ const resetAll = () => {
   intervalDayOfWeek.value = 1
   intervalHours.value = 0
   intervalMinutes.value = 0
+  onceRunAt.value = null
   cronParts.value = ['*', '*', '*', '*', '*', '*']
   cronHumanized.value = ''
   calType.value = 'day'
@@ -347,8 +356,10 @@ const fillFromTask = () => {
   taskName.value = task.name || ''
   refinedPrompt.value = task.prompt || ''
   boundAppId.value = task.app_id || ''
-  triggerType.value = task.trigger_type === 'interval' ? 'interval' : 'cron'
-  if (task.trigger_type === 'interval') {
+  triggerType.value = task.trigger_type === 'once' ? 'once' : task.trigger_type === 'interval' ? 'interval' : 'cron'
+  if (task.trigger_type === 'once') {
+    if (task.run_at) onceRunAt.value = dayjs.unix(task.run_at)
+  } else if (task.trigger_type === 'interval') {
     applyIntervalConfig(task.interval_config)
   } else {
     applyCron(task.cron_expression || '0 0 0 * * *')
@@ -356,8 +367,10 @@ const fillFromTask = () => {
   }
   syncCalendarFromState()
   parseResult.value = {
+    trigger_type: task.trigger_type,
     cron_expression: task.cron_expression || '',
     cron_humanized: task.cron_humanized || '',
+    run_at: task.run_at ?? null,
     task_name: task.name || '',
     prompt: task.prompt || '',
     missing_fields: [],
@@ -375,8 +388,13 @@ const runParse = async (input: string, snapshot: HistoryTurn[]) => {
     taskName.value = result.task_name || taskName.value || ''
     refinedPrompt.value = result.prompt || ''
     if (result.cron_humanized) cronHumanized.value = result.cron_humanized
-    triggerType.value = 'cron'
-    applyCron(result.cron_expression)
+    if (result.trigger_type === 'once') {
+      triggerType.value = 'once'
+      onceRunAt.value = result.run_at ? dayjs.unix(result.run_at) : null
+    } else {
+      triggerType.value = 'cron'
+      applyCron(result.cron_expression)
+    }
     return result
   } catch (error: unknown) {
     Message.error(getErrorMessage(error, t('space.schedules.parseFailed')))
@@ -444,7 +462,17 @@ const handleCreate = async () => {
     return
   }
   const isInterval = triggerType.value === 'interval'
-  if (isInterval) {
+  const isOnce = triggerType.value === 'once'
+  if (isOnce) {
+    if (!onceRunAt.value) {
+      Message.warning(t('space.schedules.onceTimeRequired'))
+      return
+    }
+    if (onceRunAt.value.valueOf() < Date.now() - 60_000) {
+      Message.warning(t('space.schedules.onceTimePast'))
+      return
+    }
+  } else if (isInterval) {
     if (!(Number(intervalEvery.value) > 0)) {
       Message.warning(t('space.schedules.intervalEveryRequired'))
       return
@@ -461,10 +489,11 @@ const handleCreate = async () => {
     const payload = {
       name: taskName.value.trim(),
       prompt: refinedPrompt.value.trim(),
-      trigger_type: isInterval ? ('interval' as const) : ('cron' as const),
-      cron_expression: isInterval ? '' : cronParts.value.map((part) => String(part).trim()).join(' '),
-      cron_humanized: isInterval ? '' : cronHumanized.value || parseResult.value?.cron_humanized || '',
+      trigger_type: isOnce ? ('once' as const) : isInterval ? ('interval' as const) : ('cron' as const),
+      cron_expression: isOnce || isInterval ? '' : cronParts.value.map((part) => String(part).trim()).join(' '),
+      cron_humanized: isOnce || isInterval ? '' : cronHumanized.value || parseResult.value?.cron_humanized || '',
       interval_config: isInterval ? buildIntervalConfig() : {},
+      run_at: isOnce && onceRunAt.value ? onceRunAt.value.unix() : null,
       app_id: boundAppId.value || null,
       task_type: boundAppId.value ? ('app_execution' as const) : ('assistant_chat' as const),
       input_params: {},
@@ -685,8 +714,32 @@ watch(
           </div>
         </div>
 
+        <!-- 单次任务：仅需选择一次执行时刻 -->
+        <div v-if="triggerType === 'once'" class="csw-cal-box">
+          <div class="csw-cal-head">
+            <span class="csw-cal-title"><icon-clock-circle class="csw-cal-title-ico" />{{ t('space.schedules.onceTitle') }}</span>
+            <span class="csw-cal-tag">{{ t('space.schedules.onceTag') }}</span>
+          </div>
+          <div class="csw-field-row csw-wrap">
+            <span class="csw-frag-label">{{ t('space.schedules.onceTimeLabel') }}</span>
+            <input
+              :value="onceRunAt ? onceRunAt.format('YYYY-MM-DDTHH:mm') : ''"
+              type="datetime-local"
+              class="csw-time-input csw-datetime-input"
+              @change="onceRunAt = ($event.target as HTMLInputElement).value ? dayjs(($event.target as HTMLInputElement).value) : null"
+            />
+            <span class="csw-frag-label">{{ t('space.schedules.onceTimeZoneHint') }}</span>
+          </div>
+          <div class="csw-cal-summary">
+            <span class="csw-cal-summary-ico"><icon-check-circle /></span>
+            <span class="csw-cal-summary-key">{{ t('space.schedules.currentSetting') }}</span>
+            <span class="csw-cal-summary-val">{{ scheduleSummary }}</span>
+          </div>
+          <div class="csw-hint"><icon-info-circle /> {{ t('space.schedules.onceHint') }}</div>
+        </div>
+
         <!-- 日历快速设置 -->
-        <div class="csw-cal-box">
+        <div v-else class="csw-cal-box">
           <div class="csw-cal-head">
             <span class="csw-cal-title"><icon-clock-circle class="csw-cal-title-ico" />{{ t('space.schedules.calendarTitle') }}</span>
             <span class="csw-cal-tag">日历设置 · 自动生成公式</span>
@@ -844,6 +897,14 @@ watch(
               <button
                 type="button"
                 class="csw-pill"
+                :class="{ 'is-active': triggerType === 'once' }"
+                @click="triggerType = 'once'"
+              >
+                {{ t('space.schedules.triggerOnce') }}
+              </button>
+              <button
+                type="button"
+                class="csw-pill"
                 :class="{ 'is-active': triggerType === 'cron' }"
                 @click="triggerType = 'cron'"
               >
@@ -859,8 +920,23 @@ watch(
               </button>
             </div>
 
+            <!-- once 高级：选择具体执行时刻（到点执行一次后自动归档到回收站） -->
+            <div v-if="triggerType === 'once'" class="csw-adv-sec">
+              <div class="csw-hr-label">{{ t('space.schedules.onceTimeLabel') }}</div>
+              <div class="csw-row csw-wrap">
+                <input
+                  :value="onceRunAt ? onceRunAt.format('YYYY-MM-DDTHH:mm') : ''"
+                  type="datetime-local"
+                  class="csw-time-input csw-datetime-input"
+                  @change="onceRunAt = ($event.target as HTMLInputElement).value ? dayjs(($event.target as HTMLInputElement).value) : null"
+                />
+                <span class="csw-frag-label">{{ t('space.schedules.onceTimeZoneHint') }}</span>
+              </div>
+              <div class="csw-note"><icon-info-circle /> {{ t('space.schedules.onceHint') }}</div>
+            </div>
+
             <!-- cron 高级：描述 + 预设 + 6 段公式 -->
-            <div v-if="triggerType === 'cron'" class="csw-adv-sec">
+            <div v-else-if="triggerType === 'cron'" class="csw-adv-sec">
               <div class="csw-hr-label">{{ t('space.schedules.humanizedLabel') }}</div>
               <div class="csw-row csw-wrap csw-end">
                 <input
@@ -1932,6 +2008,9 @@ watch(
 .csw-time-input:focus {
   border-color: var(--aicss-accent);
   box-shadow: 0 0 0 3px var(--aicss-accent-soft);
+}
+.csw-datetime-input {
+  width: 210px;
 }
 .csw-select {
   height: 34px;

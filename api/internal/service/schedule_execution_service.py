@@ -294,6 +294,36 @@ end
         self._push_notification(task, run)
         if not success:
             self._maybe_disable_after_consecutive_failures(task)
+        self._archive_once_task(task)
+
+    def _archive_once_task(self, task: ScheduleTask) -> None:
+        """单次任务执行完成后自动进入回收站（不再保留在主列表）。
+
+        单次任务语义为「只执行一次」：无论执行成功或失败，本次执行结束后即归档，
+        快照包含任务本身与全部运行记录，留存期跟随系统默认（30 天），
+        期间用户/admin 可在回收站中恢复查看。
+        """
+        if (task.trigger_type or "") != "once":
+            return
+        try:
+            from internal.service.recycle_bin_service import RecycleBinService
+
+            deleted_by_type = "admin" if (task.owner_type or "").lower() == "admin" else "user"
+            archived = RecycleBinService().delete_resource(
+                resource_type="schedule_task",
+                resource_id=task.id,
+                resource_key=str(task.id),
+                resource_name=task.name,
+                deleted_by=str(task.account_id) if task.account_id else None,
+                deleted_by_type=deleted_by_type,
+            )
+            if not archived:
+                logger.warning("单次任务归档跳过（任务不存在）task_id=%s", task.id)
+            else:
+                logger.info("单次任务已执行完成并归档到回收站 task_id=%s", task.id)
+        except Exception:
+            # 归档失败不影响主流程：任务保留在主列表，用户可手动删除
+            logger.exception("单次任务归档失败 task_id=%s", task.id)
 
     def _maybe_disable_after_consecutive_failures(self, task: ScheduleTask) -> None:
         """连续失败 5 次自动停用"""

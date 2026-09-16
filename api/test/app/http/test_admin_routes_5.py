@@ -46,6 +46,7 @@ class _FakeScheduleTaskService:
             cron_humanized="每天 8 点",
             trigger_type="cron",
             interval_config={},
+            run_at=None,
             created_at=1710000000,
             updated_at=1710000000,
             run_count=0,

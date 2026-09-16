@@ -35,6 +35,8 @@ class ScheduleTask(Base):
     cron_expression = Column(String(64), nullable=False)
     cron_humanized = Column(String(255), nullable=False, server_default=text("''::character varying"))
     interval_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # 单次任务（trigger_type=once）的执行时刻（UTC naive）；执行完成后任务自动入回收站
+    run_at = Column(DateTime, nullable=True)
     enabled = Column(db.Boolean, nullable=False, server_default=text("true"))
     status = Column(String(32), nullable=False, server_default=text("'active'::character varying"))
     description = Column(String(512), nullable=False, server_default=text("''::character varying"))

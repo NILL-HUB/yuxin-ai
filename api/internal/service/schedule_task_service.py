@@ -30,7 +30,12 @@ APP_DEFAULT_TIMEZONE = "Asia/Shanghai"
 # 触发类型
 TRIGGER_TYPE_CRON = "cron"
 TRIGGER_TYPE_INTERVAL = "interval"
-TRIGGER_TYPES = (TRIGGER_TYPE_CRON, TRIGGER_TYPE_INTERVAL)
+# 单次任务：在 run_at 指定时刻执行一次，执行完成后自动进入回收站
+TRIGGER_TYPE_ONCE = "once"
+TRIGGER_TYPES = (TRIGGER_TYPE_CRON, TRIGGER_TYPE_INTERVAL, TRIGGER_TYPE_ONCE)
+
+# 单次任务不允许设置为过去的时刻（留 60 秒容差，便于边解析边创建）
+ONCE_TRIGGER_PAST_TOLERANCE_SECONDS = 60
 
 # 任务类型：绑定应用执行 / 通用助手对话
 TASK_TYPE_APP_EXECUTION = "app_execution"
@@ -208,11 +213,64 @@ class ScheduleTaskService(BaseService):
             return (day_start + timedelta(days=1)).astimezone(UTC).replace(tzinfo=None)
         return (day_start + timedelta(minutes=next_day_minutes)).astimezone(UTC).replace(tzinfo=None)
 
-    def compute_task_next_run(self, trigger_type: str, cron_expression: str = "", interval_config: dict | None = None, base: datetime | None = None) -> datetime:
+    def compute_task_next_run(self, trigger_type: str, cron_expression: str = "", interval_config: dict | None = None, base: datetime | None = None, run_at=None) -> datetime | None:
         """按任务触发类型分发计算下一次执行时间。"""
+        if trigger_type == TRIGGER_TYPE_ONCE:
+            return self.validate_once_run_at(run_at)
         if trigger_type == TRIGGER_TYPE_INTERVAL:
             return self.compute_interval_next_run_at(interval_config or {}, base)
         return self.compute_next_run_at(cron_expression, base)
+
+    # ---------------------------------------------------------------- once 单次触发
+
+    def _normalize_run_at(self, run_at) -> datetime | None:
+        """把执行时刻归一化为 UTC naive datetime；无法识别时返回 None。"""
+        if isinstance(run_at, datetime):
+            dt = run_at
+        elif isinstance(run_at, (int, float)):
+            try:
+                dt = datetime.fromtimestamp(float(run_at), tz=UTC)
+            except (OverflowError, OSError, ValueError):
+                return None
+        elif isinstance(run_at, str):
+            raw = run_at.strip()
+            if not raw:
+                return None
+            try:
+                dt = datetime.fromtimestamp(float(raw), tz=UTC)
+            except (OverflowError, OSError, ValueError):
+                try:
+                    dt = datetime.fromisoformat(raw)
+                except ValueError:
+                    return None
+        else:
+            return None
+        if dt.tzinfo is not None:
+            return dt.astimezone(UTC).replace(tzinfo=None)
+        return dt
+
+    def validate_once_run_at(self, run_at) -> datetime:
+        """校验单次任务的执行时刻，返回用于存储的 UTC naive datetime。"""
+        normalized = self._normalize_run_at(run_at)
+        if normalized is None:
+            raise FailException("单次任务需要指定合法的执行时间")
+        earliest = _utcnow_naive() - timedelta(seconds=ONCE_TRIGGER_PAST_TOLERANCE_SECONDS)
+        if normalized < earliest:
+            raise FailException("执行时间不能早于当前时间")
+        return normalized
+
+    def describe_once(self, run_at) -> str:
+        """生成单次任务的人类可读描述，如「仅执行一次：2026-09-13 15:00」。"""
+        normalized = self._normalize_run_at(run_at)
+        if normalized is None:
+            return "仅执行一次"
+        local = normalized.replace(tzinfo=UTC).astimezone(_app_timezone())
+        return f"仅执行一次：{local.strftime('%Y-%m-%d %H:%M')}"
+
+    @staticmethod
+    def is_once_task(task: ScheduleTask) -> bool:
+        """判断任务是否为单次任务（执行完成后需自动归档到回收站）。"""
+        return (task.trigger_type or "") == TRIGGER_TYPE_ONCE
 
     def describe_interval(self, interval_config: dict) -> str:
         """生成间隔触发的人类可读描述，如「每 2 个月 5 号 00:00」。"""
@@ -229,8 +287,10 @@ class ScheduleTaskService(BaseService):
             return f"每 {every} 小时 {config['minutes']:02d} 分"
         return f"每 {every} 分钟"
 
-    def _describe_trigger(self, trigger_type: str, cron_expression: str, cron_humanized: str, interval_config: dict | None) -> str:
+    def _describe_trigger(self, trigger_type: str, cron_expression: str, cron_humanized: str, interval_config: dict | None, run_at=None) -> str:
         """按触发类型生成展示用描述。"""
+        if trigger_type == TRIGGER_TYPE_ONCE:
+            return self.describe_once(run_at)
         if trigger_type == TRIGGER_TYPE_INTERVAL:
             return self.describe_interval(interval_config or {})
         return cron_humanized or cron_expression
@@ -272,19 +332,26 @@ class ScheduleTaskService(BaseService):
         app_id=None,
         task_type: str | None = None,
         input_params: dict | None = None,
+        run_at=None,
     ) -> ScheduleTask:
         trigger_type = trigger_type or TRIGGER_TYPE_CRON
         if trigger_type not in TRIGGER_TYPES:
             raise FailException("触发类型不合法")
         normalized_interval = None
-        if trigger_type == TRIGGER_TYPE_INTERVAL:
+        normalized_run_at = None
+        if trigger_type == TRIGGER_TYPE_ONCE:
+            # 单次任务：仅需一个明确的执行时刻，执行一次后自动入回收站
+            normalized_run_at = self.validate_once_run_at(run_at)
+            cron_expression = cron_expression or ""
+            humanized = self.describe_once(normalized_run_at)
+        elif trigger_type == TRIGGER_TYPE_INTERVAL:
             normalized_interval = self.validate_interval_config(interval_config)
             cron_expression = cron_expression or ""
             humanized = self.describe_interval(normalized_interval)
         else:
             self.validate_cron(cron_expression)
             humanized = cron_humanized or self._guess_humanized(cron_expression)
-        next_run_at = self.compute_task_next_run(trigger_type, cron_expression, normalized_interval)
+        next_run_at = self.compute_task_next_run(trigger_type, cron_expression, normalized_interval, run_at=normalized_run_at)
         if owner_type == "admin":
             account_id = self._get_platform_account().id
         else:
@@ -311,6 +378,7 @@ class ScheduleTaskService(BaseService):
             cron_expression=cron_expression,
             cron_humanized=humanized,
             interval_config=normalized_interval or {},
+            run_at=normalized_run_at,
             description=description or "",
             status=ScheduleTaskStatus.ACTIVE.value,
             next_run_at=next_run_at,
@@ -339,6 +407,7 @@ class ScheduleTaskService(BaseService):
         app_id=None,
         task_type=None,
         input_params=None,
+        run_at=None,
     ) -> ScheduleTask:
         task = self.get_task(task_id, account, owner_type=owner_type)
         updates = {}
@@ -364,8 +433,18 @@ class ScheduleTaskService(BaseService):
             raise FailException("触发类型不合法")
         if trigger_type_changed:
             updates["trigger_type"] = final_trigger_type
-        if cron_expression is not None or interval_config is not None or trigger_type_changed:
-            if final_trigger_type == TRIGGER_TYPE_INTERVAL:
+        run_at_changed = run_at is not None and final_trigger_type == TRIGGER_TYPE_ONCE
+        if run_at_changed or cron_expression is not None or interval_config is not None or trigger_type_changed:
+            if final_trigger_type == TRIGGER_TYPE_ONCE:
+                normalized_run_at = self.validate_once_run_at(
+                    run_at if run_at is not None else task.run_at
+                )
+                updates["cron_expression"] = ""
+                updates["cron_humanized"] = self.describe_once(normalized_run_at)
+                updates["interval_config"] = {}
+                updates["run_at"] = normalized_run_at
+                updates["next_run_at"] = normalized_run_at
+            elif final_trigger_type == TRIGGER_TYPE_INTERVAL:
                 normalized_interval = self.validate_interval_config(
                     interval_config if interval_config is not None else (task.interval_config or {})
                 )
@@ -374,12 +453,14 @@ class ScheduleTaskService(BaseService):
                 updates["cron_expression"] = new_cron
                 updates["cron_humanized"] = humanized
                 updates["interval_config"] = normalized_interval
+                updates["run_at"] = None
                 updates["next_run_at"] = self.compute_interval_next_run_at(normalized_interval)
             else:
                 self.validate_cron(cron_expression if cron_expression is not None else task.cron_expression)
                 updates["cron_expression"] = cron_expression if cron_expression is not None else task.cron_expression
                 updates["cron_humanized"] = cron_humanized or self._guess_humanized(updates["cron_expression"])
                 updates["interval_config"] = {}
+                updates["run_at"] = None
                 updates["next_run_at"] = self.compute_next_run_at(updates["cron_expression"])
         if not updates:
             return task
@@ -472,6 +553,12 @@ class ScheduleTaskService(BaseService):
 
     def advance_next_run(self, task: ScheduleTask) -> ScheduleTask:
         """系统扫描后推进 next_run_at（跳过 account 校验）"""
+        if self.is_once_task(task):
+            # 单次任务只执行一次：清空 next_run_at 即可阻止下个 tick 重复扫描
+            # （scan_due_tasks 要求 next_run_at 非空）。此处必须保持 enabled=True，
+            # 否则 schedule_task_execute 会命中「已停用」分支而跳过本次执行；
+            # 执行完成后由 ScheduleExecutionService 归档到回收站。
+            return self.update(task, next_run_at=None)
         next_run_at = self.compute_task_next_run(
             task.trigger_type, task.cron_expression, task.interval_config or {}, task.last_run_at or _utcnow_naive()
         )

@@ -62,6 +62,7 @@ def register_routes(quart_app):
         body = await request.get_json(force=True, silent=True) or {}
         name = str(body.get("name") or "").strip()
         prompt = str(body.get("prompt") or "").strip()
+        trigger_type = str(body.get("trigger_type") or "cron").strip()
         cron_expression = str(body.get("cron_expression") or "").strip()
         if not name:
             return _json_resp(
@@ -77,7 +78,7 @@ def register_routes(quart_app):
                 data={"prompt": ["任务需求不能为空"]},
                 status=400,
             )
-        if not cron_expression:
+        if trigger_type == "cron" and not cron_expression:
             return _json_resp(
                 code="validate_error",
                 message="定时表达式不能为空",
@@ -93,6 +94,9 @@ def register_routes(quart_app):
                 cron_expression,
                 description=str(body.get("description") or ""),
                 cron_humanized=str(body.get("cron_humanized") or ""),
+                trigger_type=trigger_type,
+                interval_config=body.get("interval_config") or None,
+                run_at=body.get("run_at"),
                 app_id=body.get("app_id") or None,
                 task_type=body.get("task_type") or None,
                 input_params=body.get("input_params") or None,
@@ -128,7 +132,8 @@ def register_routes(quart_app):
         parser = _get_service(ScheduleIntentParser)
         try:
             result = await _to_thread(parser.parse, user_input, history)
-            await _to_thread(parser.validate_cron, result.get("cron_expression", ""))
+            if result.get("trigger_type") != "once":
+                await _to_thread(parser.validate_cron, result.get("cron_expression", ""))
         except Exception as exc:
             return _json_resp(
                 code="validate_error",
@@ -152,9 +157,10 @@ def register_routes(quart_app):
         body = await request.get_json(force=True, silent=True) or {}
         name = str(body.get("name") or "定时任务").strip()
         prompt = str(body.get("prompt") or "").strip()
+        trigger_type = str(body.get("trigger_type") or "cron").strip()
         cron_expression = str(body.get("cron_expression") or "").strip()
         fingerprint = str(body.get("fingerprint") or "").strip()
-        if not prompt or not cron_expression:
+        if not prompt or (trigger_type == "cron" and not cron_expression):
             return _json_resp(
                 code="validate_error",
                 message="缺少需求或定时表达式",
@@ -168,6 +174,9 @@ def register_routes(quart_app):
             prompt,
             cron_expression,
             cron_humanized=str(body.get("cron_humanized") or ""),
+            trigger_type=trigger_type,
+            interval_config=body.get("interval_config") or None,
+            run_at=body.get("run_at"),
             app_id=body.get("app_id") or None,
             task_type=body.get("task_type") or None,
             input_params=body.get("input_params") or None,
@@ -260,6 +269,9 @@ def register_routes(quart_app):
                 description=body.get("description"),
                 enabled=body.get("enabled"),
                 cron_humanized=body.get("cron_humanized"),
+                trigger_type=body.get("trigger_type"),
+                interval_config=body.get("interval_config"),
+                run_at=body.get("run_at"),
                 app_id=body.get("app_id"),
                 task_type=body.get("task_type"),
                 input_params=body.get("input_params"),

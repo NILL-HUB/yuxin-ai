@@ -10,6 +10,8 @@ export type IntervalConfig = {
   minutes?: number
 }
 
+export type ScheduleTriggerType = 'cron' | 'interval' | 'once'
+
 export type ScheduleTaskItem = {
   id: string
   name: string
@@ -17,10 +19,11 @@ export type ScheduleTaskItem = {
   app_id: string | null
   task_type: 'app_execution' | 'assistant_chat'
   input_params: Record<string, unknown>
-  trigger_type: 'cron' | 'interval'
+  trigger_type: ScheduleTriggerType
   cron_expression: string
   cron_humanized: string
   interval_config: IntervalConfig | Record<string, never>
+  run_at: number | null
   enabled: boolean
   status: string
   description: string
@@ -47,8 +50,10 @@ export type ScheduleTaskRunItem = {
 }
 
 export type ScheduleParseResult = {
+  trigger_type: ScheduleTriggerType
   cron_expression: string
   cron_humanized: string
+  run_at: number | null
   task_name: string
   prompt: string
   missing_fields: string[]
@@ -68,8 +73,9 @@ export const createScheduleTask = (
     cron_expression?: string
     cron_humanized?: string
     description?: string
-    trigger_type?: 'cron' | 'interval'
+    trigger_type?: ScheduleTriggerType
     interval_config?: IntervalConfig | Record<string, never>
+    run_at?: number | null
     app_id?: string | null
     task_type?: 'app_execution' | 'assistant_chat'
     input_params?: Record<string, unknown>
@@ -79,7 +85,7 @@ export const createScheduleTask = (
 
 export const updateScheduleTask = (
   id: string,
-  body: Partial<{ name: string; prompt: string; cron_expression: string; cron_humanized: string; description: string; enabled: boolean; trigger_type: 'cron' | 'interval'; interval_config: IntervalConfig | Record<string, never>; app_id: string | null; task_type: 'app_execution' | 'assistant_chat'; input_params: Record<string, unknown> }>,
+  body: Partial<{ name: string; prompt: string; cron_expression: string; cron_humanized: string; description: string; enabled: boolean; trigger_type: ScheduleTriggerType; interval_config: IntervalConfig | Record<string, never>; run_at: number | null; app_id: string | null; task_type: 'app_execution' | 'assistant_chat'; input_params: Record<string, unknown> }>,
   admin = false,
 ) => put<BaseResponse<ScheduleTaskItem>>(`${scheduleTaskBasePath(admin)}/${id}`, { body })
 
