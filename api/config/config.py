@@ -165,10 +165,14 @@ class Config:
                 Queue("celery"),
                 Queue("mail"),
                 Queue("consolidation"),
+                # 渲染是分钟级长任务，独立队列以免与业务任务争抢 worker
+                # （消费方必须显式 `-Q render`，见 Dockerfile.render / entrypoint）
+                Queue("render"),
             ),
             "task_routes": {
                 "internal.task.email_task.send_verification_email_task": {"queue": "mail"},
                 "internal.task.consolidation_tasks.*": {"queue": "consolidation"},
+                "internal.task.render_tasks.*": {"queue": "render"},
             },
             "beat_schedule": {
                 "daily-consolidation": {
