@@ -344,6 +344,20 @@ class ToolSourceType(str, Enum):
 
 技术栈一致：Vue 3 + Arco Design 前端，Flask + SQLAlchemy 后端。新增一个 admin API 端点暴露 `list_providers()` 即可。
 
+### 7.1 管理端 Agent 的板块级工具封装（P1b 已落地）
+
+「管理端 Agent」**不复用**用户端工具池，而是经**板块级聚合工具**执行管理动作（机制细节见 [RBAC 权限模型 §9](../rbac.md)）：
+
+| 机制 | 位置 | 要点 |
+|---|---|---|
+| 板块动作注册表 | `api/internal/core/admin_agent_boards.py`（`BOARD_ACTIONS` / `BOARD_IDS` / `resolve_action`） | 每个 `(board, action)` 显式登记 `kind` 与所需 `permission_code`；**未登记即拒绝**（fail closed） |
+| 板块实现体 | `api/internal/service/admin_agent_board_tools.py`（`BoardToolExecutor` / `available_boards`） | service 层不感知 Agent，保持纯粹；权限门控基于入参 `AdminAgentPrincipal` |
+| 执行编排 | `api/internal/service/admin_agent_execution_service.py` | 校验权限 → 按 `automation_policy` 分流 → 执行 → 写审计（`actor_type=agent`） |
+
+当前只登记 `builtin_tool` 一个样板板块（`list` / `update_enabled` / `update_metadata`）；其余板块按同一模式增量登记 `BOARD_ACTIONS` 并补实现体。
+
+> **MCP 动态身份注入尚未落地（P5）**：设计为装配期构造 binding 副本、签名放独立内部字段、`_binding_hash` 计算前剥离下划线开头字段。在此之前，板块级工具只覆盖平台内 service 动作。
+
 ---
 
 ## 8. 后续快速集成标准流程

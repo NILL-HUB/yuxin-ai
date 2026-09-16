@@ -237,7 +237,9 @@ UI 过滤只是体验，**不是安全边界**。三层各自独立成立：
 
 **已实现的板块动作（P1b 范围）**：仅 `builtin_tool`（`list` / `update_enabled` / `update_metadata`）——作为端到端样板；其余板块按同一模式增量登记 `BOARD_ACTIONS` 并补 `_do_<board>` 实现体即可。
 
-**入口**：`POST /admin/agents/<id>/invoke`（权限 `agent_pool:manage`——执行入口代表"让 Agent 在后台动手"，不接受只读权限触发）+ `GET /admin/agents/<id>/drafts`（权限 `agent_pool:read`，按 `impact.agent_id` 做归属隔离）+ `GET /admin/agents/boards`（权限 `agent_pool:read`，返回已登记板块与动作明细含 `permission_code`，供前端渲染"这个 Agent 能做什么"并做「展示即受限」门控）。路由只做接线：把当前管理员的**实时权限**交给 `AdminAgentService.get_principal()` 重算三重交集（9.1 运行时层）。
+**入口**：定义 CRUD `GET /admin/agents`（`agent_pool:read`，仅返回创建者自己的 Agent）+ `POST /admin/agents`（`agent_pool:manage`）+ `PATCH /admin/agents/<id>` / `DELETE /admin/agents/<id>`（均 `agent_pool:manage`；非属主 403、不存在 404）+ 执行入口 `POST /admin/agents/<id>/invoke`（权限 `agent_pool:manage`——执行入口代表"让 Agent 在后台动手"，不接受只读权限触发）+ `GET /admin/agents/<id>/drafts`（权限 `agent_pool:read`，按 `impact.agent_id` 做归属隔离）+ `GET /admin/agents/boards`（权限 `agent_pool:read`，返回已登记板块与动作明细含 `permission_code`，供前端渲染"这个 Agent 能做什么"并做「展示即受限」门控）。路由只做接线：把当前管理员的**实时权限**交给 `AdminAgentService.get_principal()` 重算三重交集（9.1 运行时层）。完整契约见 [管理端 Agent API](../api/admin-agents-api.md)。
+
+> **实现注意（易踩坑）**：`admin["id"]` 经 `_serialize_admin_user` 序列化为**字符串**，而 `admin_agent.owner_admin_user_id` 是 **UUID 列**、服务内 `get_agent` 做纯 Python 属主比较——路由必须 `UUID(str(admin["id"]))` 后再交给服务，否则合法属主会被误判 403（历史缺陷，已在路由层修复并由路由测试锁定）。
 
 **审计身份**（第 9 节）：`audit_log.actor_type`（`human`/`agent`，NOT NULL，默认 `human`）+ `agent_id`（可空，**刻意不加 FK**——Agent 可被物理删除，审计必须留住痕迹）。`admin_user_id` 始终保持为人类责任人，因此可精确区分「A 自己改的」与「A 让 AI 改的」；`agent_name` 由 `_build_agent_name_map` 批量回源展示。
 
@@ -245,6 +247,6 @@ UI 过滤只是体验，**不是安全边界**。三层各自独立成立：
 
 **回收站 `admin_agent` 来源**：既有 `deleted_by_type="agent"` 被硬约束为仅 7 类用户可见资源，admin 专属资源（`app`/`workflow`/`skill`/`mcp`/`api_tool`/`system_prompt`/`upload_file`）以该来源入站会抛 `ValidateErrorException`。因此新增 `admin_agent` 来源：放行 admin 专属资源、留存按 admin 口径（默认 30 天、可配，区别于用户侧 agent 的固定 7 天）、`_agent_id` 写入快照供追溯。**admin 回收站列表与概览改为 `in_(('admin','admin_agent'))`**，否则 Agent 代删条目在后台不可见、无法恢复。
 
-**回归防护**（均含反向验证）：`test_admin_agent_boards.py`、`test_admin_change_draft_service.py`、`test_admin_agent_board_tools.py`、`test_admin_agent_execution_service.py`、`test_admin_agent_invoke_routes.py`、`test_recycle_bin_admin_agent.py`、`test_builtin_tool_write_paths.py`、`test_audit_write_commit_guard.py`。
+**回归防护**（均含反向验证）：`test_admin_agent_boards.py`、`test_admin_change_draft_service.py`、`test_admin_agent_board_tools.py`、`test_admin_agent_execution_service.py`、`test_admin_agent_invoke_routes.py`、`test_admin_agent_crud_routes.py`、`test_recycle_bin_admin_agent.py`、`test_builtin_tool_write_paths.py`、`test_audit_write_commit_guard.py`。
 
 **未接入项（明确标注）**：`AdminChangeDraftService.apply_draft` / `rollback_draft` 已提供能力，但「待批准变更」前端页属后续阶段，当前只有测试调用。

@@ -397,8 +397,11 @@
 | QualityChecker | 检查结果完整性、冲突、置信度和风险 | Phase 6 |
 | RoutingObservabilityService | 记录调度决策、模型成本、Agent/工具选择、失败原因 | Phase 7 |
 | AdminAgentService（管理端 Agent 授权内核） | 管理端 Agent 的定义 CRUD、可下放权限白名单与三重交集授权、失权自动回收、身份对象 `AdminAgentPrincipal` | Phase 7（v7.1 新增，P1a） |
+| AdminAgentExecutionService + BoardToolExecutor（管理端 Agent 执行链路） | 板块动作注册表（未登记即拒绝）+ 按 `automation_policy` 分流（`supervised` → 变更草稿 / `autonomous` → 直接执行 / `blocked` → 熔断）+ 审计 `actor_type=agent` | Phase 7（v7.2 新增，P1b） |
 
-> **v7.1 管理端 Agent 治理（P1a 授权内核）**：管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。授权模型为三重交集 `effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`，白名单采用**显式登记制（fail closed）**——新增权限点默认不可下放。机制细节（三层强制、权限回收、身份对象、自动化级别、表与路由）见 [RBAC 权限模型 §9](../rbac.md)。**本阶段只做授权与身份**：Agent 尚不能真正执行板块动作，工具装配与执行属后续阶段。
+> **v7.1 管理端 Agent 治理（P1a 授权内核）**：管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。授权模型为三重交集 `effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`，白名单采用**显式登记制（fail closed）**——新增权限点默认不可下放。机制细节（三层强制、权限回收、身份对象、自动化级别、表与路由）见 [RBAC 权限模型 §9](../rbac.md)。
+>
+> **v7.2 执行链路（P1b）**：在授权内核之上装配能力层（L2）与执行层（L1）——`AdminAgentPrincipal` 作为显式入参全链路传递；板块工具内部按 `action` 分支，且**每个 action 显式声明所需权限点（未声明即拒绝）**；写操作按 `automation_policy` 分流（`supervised` 产变更草稿、`autonomous` 直接执行、`blocked` 熔断）；审计新增 `actor_type`（`human`/`agent`）与 `agent_id`。当前只登记 `builtin_tool` 一个样板板块，其余板块按同一模式增量登记。HTTP 入口见 [管理端 Agent API](../api/admin-agents-api.md)。对话式入口与会话表属 P2，尚未落地。
 
 > **v5.2 架构变更说明**：原 `OrchestratorService` + `TaskClassifier` + `TaskPlanner` + `PoolIntentResolver` + `CostPolicyService` + `ExecutionModeSelector` 六个串行模块已被 `ConductorService` 替代。指挥官用单次 LLM `structured_output` 一体化完成意图识别、复杂度判断、任务拆解和执行模式选择，消除了多模块串行的延迟和上下文丢失问题。`CostPolicyService` 的预算判断职责合并到指挥官 prompt 中（budget_level + balance_credits 作为上下文输入）。
 
