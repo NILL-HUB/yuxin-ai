@@ -2,13 +2,13 @@ import importlib
 import json
 import urllib.request
 
-from internal.core.tools.builtin_tools.providers.codex_os.os_snapshot import (
+from internal.core.tools.builtin_tools.providers.host_os.os_snapshot import (
     OsSnapshotTool,
 )
 
 
 module = importlib.import_module(
-    "internal.core.tools.builtin_tools.providers.codex_os.os_snapshot"
+    "internal.core.tools.builtin_tools.providers.host_os.os_snapshot"
 )
 
 
@@ -158,7 +158,7 @@ def test_os_snapshot_falls_back_to_bound_conversation_turn(monkeypatch):
 
 def test_os_snapshot_factory_binds_session_context(monkeypatch):
     """工厂透传：os_snapshot(session_id=..., conversation_turn=...) 绑定到工具实例。"""
-    from internal.core.tools.builtin_tools.providers.codex_os.os_snapshot import (
+    from internal.core.tools.builtin_tools.providers.host_os.os_snapshot import (
         os_snapshot,
     )
 

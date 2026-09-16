@@ -38,7 +38,7 @@ _TOKEN_PATTERNS = [
     r"pplx-[A-Za-z0-9]{10,}",           # Perplexity
     r"fal_[A-Za-z0-9_-]{10,}",          # Fal.ai
     r"fc-[A-Za-z0-9]{10,}",             # Firecrawl
-    r"gAAAA[A-Za-z0-9_=-]{20,}",        # Codex encrypted tokens
+    r"gAAAA[A-Za-z0-9_=-]{20,}",        # Fernet 加密凭证（本仓库工具凭证同用该前缀）
     r"dop_v1_[A-Za-z0-9]{10,}",         # DigitalOcean PAT
     r"ntn_[A-Za-z0-9]{10,}",            # Notion internal integration token
 ]

@@ -4,7 +4,7 @@
 ``KnowledgeBaseService.create_user_content_base`` 落库（用户资料库，
 ``operation_context="user"``）。
 
-account 获取方式：与 ``computer_control`` / ``codex_os`` 保持一致——
+account 获取方式：与 ``computer_control`` / ``host_os`` 保持一致——
 由运行时挂载点通过工厂参数 ``account_id`` 注入当前账号，工具内部再用
 ``AccountService`` 加载真实 ``Account`` 实例（服务层内部依赖 ``account.id``）。
 builtin 工具没有全局 ``g.account``，因此不使用上下文穿透。

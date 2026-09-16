@@ -2,14 +2,14 @@ import importlib
 import json
 import urllib.request
 
-from internal.core.tools.builtin_tools.providers.codex_os.os_file_task import (
+from internal.core.tools.builtin_tools.providers.host_os.os_file_task import (
     OsFileTaskTool,
     os_file_task,
 )
 
 
 module = importlib.import_module(
-    "internal.core.tools.builtin_tools.providers.codex_os.os_file_task"
+    "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
 )
 
 
@@ -41,7 +41,7 @@ def test_os_file_task_read_calls_host_worker(monkeypatch):
         return _FakeResponse()
 
     module = importlib.import_module(
-        "internal.core.tools.builtin_tools.providers.codex_os.os_file_task"
+        "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
     )
     monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
     tool = OsFileTaskTool(requester="user-1")
@@ -79,7 +79,7 @@ def test_os_file_task_passes_session_context_to_worker(monkeypatch):
         return _FakeResponse()
 
     module = importlib.import_module(
-        "internal.core.tools.builtin_tools.providers.codex_os.os_file_task"
+        "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
     )
     monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
     tool = OsFileTaskTool(

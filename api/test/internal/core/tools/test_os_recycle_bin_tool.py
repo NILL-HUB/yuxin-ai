@@ -2,13 +2,13 @@ import importlib
 import json
 import urllib.request
 
-from internal.core.tools.builtin_tools.providers.codex_os.os_recycle_bin import (
+from internal.core.tools.builtin_tools.providers.host_os.os_recycle_bin import (
     OsRecycleBinTool,
 )
 
 
 module = importlib.import_module(
-    "internal.core.tools.builtin_tools.providers.codex_os.os_recycle_bin"
+    "internal.core.tools.builtin_tools.providers.host_os.os_recycle_bin"
 )
 
 

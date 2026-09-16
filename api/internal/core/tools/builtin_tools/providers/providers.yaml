@@ -159,7 +159,7 @@
   background: "#F3F4F6"
   category: tool
   created_at: 1740800000
-- name: codex_os
+- name: host_os
   label: 本机文件操作
   description: 在宿主机执行本机文件操作（读/搜/V4A 补丁）与回收站删除/恢复，纯 Python 实现，不依赖外部 CLI。
   icon: ""
