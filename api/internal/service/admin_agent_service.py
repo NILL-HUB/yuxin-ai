@@ -13,10 +13,25 @@ from uuid import UUID
 from internal.core.admin_agent_authorization import (
     ASSIGNABLE_PERMISSIONS,
     assert_grantable,
+    compute_effective_permissions,
 )
-from internal.entity.admin_agent_entity import AutomationLevel
+from internal.entity.admin_agent_entity import AdminAgentPrincipal, AutomationLevel
 from internal.model.admin_agent import AdminAgent
 from pkg.sqlalchemy import SQLAlchemy
+
+
+def _is_valid_level(level) -> bool:
+    """automation_policy 取值合法性判定。
+
+    非法值直接丢弃 → 由 ``AdminAgentPrincipal.automation_level_for`` 兜底到
+    SUPERVISED（fail closed）。这里不抛错：策略里的脏数据不应让整条执行链路
+    不可用，但**绝不能**被当作"已配置"而放行。
+    """
+    try:
+        AutomationLevel(level)
+    except (ValueError, TypeError):
+        return False
+    return True
 
 
 class AdminAgentService:
@@ -32,6 +47,47 @@ class AdminAgentService:
         管理员看不到自己没有的权限点，无从选择。
         """
         return sorted(frozenset(admin_permissions) & ASSIGNABLE_PERMISSIONS)
+
+    def get_principal(
+        self,
+        *,
+        agent_id: UUID,
+        admin_user_id: UUID,
+        admin_permissions,
+    ) -> AdminAgentPrincipal | None:
+        """组装执行身份 ``AdminAgentPrincipal``（设计 §4.1 运行时层）。
+
+        每次请求实时重算三重交集，**不依赖任何静态快照**——管理员角色调整后
+        Agent 能力立即随之收紧。
+
+        Returns:
+            principal；Agent 不存在时返回 ``None``。
+
+        Raises:
+            PermissionError: 非创建者调用，或 Agent 已停用。
+        """
+        agent = self.get_agent(agent_id=agent_id, admin_user_id=admin_user_id)
+        if agent is None:
+            return None
+        if not bool(getattr(agent, "enabled", True)):
+            raise PermissionError("该 Agent 已停用")
+
+        effective = compute_effective_permissions(
+            admin_permissions=admin_permissions,
+            granted_permissions=list(agent.granted_permissions or []),
+        )
+        policy = {
+            str(board): AutomationLevel(level)
+            for board, level in (agent.automation_policy or {}).items()
+            if _is_valid_level(level)
+        }
+        return AdminAgentPrincipal(
+            admin_user_id=admin_user_id,
+            agent_id=agent.id,
+            agent_name=agent.name or "",
+            effective_permissions=effective,
+            automation_policy=policy,
+        )
 
     # ---------- Agent 定义 CRUD ----------
 
