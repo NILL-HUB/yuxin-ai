@@ -244,7 +244,17 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 > 现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）与 `api/Dockerfile.worker`
 > （有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**。
 > 参考 HyperFrames 自有渲染镜像的形态：`FROM node:22-bookworm-slim` + `npm i -g hyperframes@<钉死版本>`。
-> 在镜像就绪前，`render` 队列任务需由具备上述三件的环境消费。
+>
+> **部署时的两条硬约束（现状已核实，勿踩）**：
+> 1. **`HYPERFRAMES_*` 三个路径只能配在渲染 worker 上**。`render_composition_task`
+>    在路径缺失时抛**不重试**的 `RenderEnvironmentError`（设计如此：环境问题重试无意义），
+>    因此主 worker 未配置时会快速失败、不会空转重试；但一旦把路径配到主 worker 上，
+>    分钟级渲染就会占用业务 worker 槽位。
+> 2. **`render` 队列需要专用消费者**。`docker/entrypoint.sh` 的 celery 分支当前
+>    **不带 `-Q`**，而 `Queue("render")` 已登记进 `task_queues`——按 Celery 语义，
+>    未传 `-Q` 的 worker 会消费**全部已声明队列**（含 `render`）。故上线渲染 worker 时
+>    必须显式 `-Q render`；entrypoint 目前不支持队列过滤参数，需在部署计划里一并补上
+>    （本机无 bash，无法就地验证该脚本改动）。
 
 ### P3（已完成）
 
