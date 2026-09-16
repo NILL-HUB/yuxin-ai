@@ -884,7 +884,7 @@ const topAdminRows = computed<DistRow[]>(() =>
                   <th class="px-4 py-3 font-medium">{{ t('admin.auditLogs.admin') }}</th>
                   <th class="px-4 py-3 font-medium">{{ t('admin.auditLogs.action') }}</th>
                   <th class="px-4 py-3 font-medium">{{ t('admin.auditLogs.resourceType') }}</th>
-                  <th class="px-4 py-3 font-medium">{{ t('admin.auditLogs.resourceId') }}</th>
+                  <th class="px-4 py-3 font-medium">{{ t('admin.auditLogs.resource') }}</th>
                   <th class="px-4 py-3 font-medium">IP</th>
                   <th class="px-4 py-3 font-medium">{{ t('admin.auditLogs.detail') }}</th>
                 </tr>
@@ -924,11 +924,16 @@ const topAdminRows = computed<DistRow[]>(() =>
                       {{ t('admin.auditLogs.unknownResource') }}
                     </a-tag>
                   </td>
-                  <td class="px-4 py-3 font-mono text-xs">
-                    <a-tooltip v-if="log.resource_id" :content="log.resource_id" position="top" mini>
-                      <span class="text-slate-600">{{ truncateId(log.resource_id) }}</span>
-                    </a-tooltip>
-                    <span v-else class="text-slate-400">-</span>
+                  <td class="px-4 py-3">
+                    <div class="flex min-w-0 flex-col gap-0.5">
+                      <span v-if="log.resource_name" class="truncate font-medium text-slate-700" :title="log.resource_name">
+                        {{ log.resource_name }}
+                      </span>
+                      <a-tooltip v-if="log.resource_id" :content="log.resource_id" position="top" mini>
+                        <span class="cursor-help font-mono text-xs text-slate-400">{{ truncateId(log.resource_id) }}</span>
+                      </a-tooltip>
+                      <span v-if="!log.resource_name && !log.resource_id" class="text-slate-400">-</span>
+                    </div>
                   </td>
                   <td class="px-4 py-3 text-xs text-slate-500">{{ log.ip || '-' }}</td>
                   <td class="whitespace-nowrap px-4 py-3">
@@ -995,7 +1000,11 @@ const topAdminRows = computed<DistRow[]>(() =>
               {{ resourceTypeLabel(detailTarget.resource_type) }}
             </a-tag>
           </div>
-          <div>
+          <div class="col-span-2">
+            <span class="text-slate-500">{{ t('admin.auditLogs.resourceNameLabel') }}</span>
+            {{ detailTarget.resource_name || '-' }}
+          </div>
+          <div class="col-span-2">
             <span class="text-slate-500">{{ t('admin.auditLogs.resourceIdLabel') }}</span>
             {{ detailTarget.resource_id || '-' }}
           </div>

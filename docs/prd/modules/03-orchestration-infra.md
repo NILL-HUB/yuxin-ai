@@ -13,13 +13,15 @@
 
 ### 12.1 模型档位
 
-| 档位 | 适用任务 | 示例策略 |
+档位码为 `model_tier_policy.tier_code`（内置 seed 与线上实例档位名可不同，见 07 文档 §24.2.1）。按语义分为五级：
+
+| 档位码 | 适用任务 | 示例策略 |
 | --- | --- | --- |
-| cheap | 简单问答、改写、摘要、分类 | 默认优先使用 |
-| standard | 中等复杂任务、普通工具调用 | 常规执行模型 |
-| strong | 复杂推理、规划、多 Agent 汇总、代码/研究 | 按需升级 |
-| vision | 图片理解 | 有图片输入或视觉任务时使用 |
-| long_context | 长文档任务 | 长上下文场景使用 |
+| `1`（经济型 / 低价） | 简单问答、改写、摘要、分类 | 默认优先使用 |
+| `2`（标准型 / 均衡） | 中等复杂任务、普通工具调用 | 常规执行模型 |
+| `3`（强力型 / 高价） | 复杂推理、规划、多 Agent 汇总、代码/研究 | 按需升级 |
+| `4`（视觉型） | 图片理解 | 有图片输入或视觉任务时使用 |
+| `5`（长上下文型） | 长文档任务 | 长上下文场景使用 |
 
 ### 12.1.1 模型池与提供商体系
 
@@ -39,6 +41,8 @@
 - 速率限制。
 - 健康状态。
 - 优先级与默认 fallback。
+
+> **模型类型（`model_type`）白名单**：以 `ModelType` 枚举（`internal/core/language_model/entities/model_entity.py`）为唯一事实源，当前为 `chat` / `embedding` / `multimodal` / `image_generation` / `video_generation` / `ocr` / `tts` / `asr` / `rerank` / `visual_embedding`。该枚举在后端有两份白名单副本（`admin_model_pool_schema.MODEL_TYPES`、`admin_model_provider_schema.MODEL_TYPES`），必须与枚举保持一致；`test_model_type_parity.py` 断言三者相等以防新增类型时漏改。`visual_embedding`（视觉编码，用于知识库关键帧以图搜图）与 `embedding` 同属「嵌入类」：创建/更新时都会触发 `_auto_probe_dimension` 维度探测（`_EMBEDDING_MODEL_DIMENSIONS` 兜底）；它同时属于 `CONTEXT_LESS_MODEL_TYPES`（无上下文窗口，token 上限强制 0）。该类型刻意**不注册进** langchain `model_class_registry`，其 REST 入参与 `OpenAIEmbeddings` 不兼容。
 
 Key 池管理（并入模型池体系，`ModelKeyConfig`）：
 
@@ -117,7 +121,7 @@ Key 池管理（并入模型池体系，`ModelKeyConfig`）：
 
 ### 12.2 复杂度判断
 
-> **v5.2 变更**：原 `TaskClassifier` 模块已被指挥官 `ConductorService` 替代。复杂度判断不再是独立模块的输出，而是指挥官单次 LLM `structured_output` 输出的 `ConductorPlan.complexity` 字段。下表的判断规则现在作为指挥官 prompt 的参考规则，由 LLM 在推理时应用。
+> **v5.2 变更（现状修正）**：`ENABLE_CONDUCTOR` 开启时，复杂度判断由指挥官 `ConductorService` 单次 LLM `structured_output` 输出的 `ConductorPlan.complexity` 字段承载；但 **`TaskClassifierService` 并未被删除**——它仍是旧规则回落链路与关键词快路径的活跃实现（`orchestrator_service.py` 调用，见 [task_classifier_service.py](../../api/internal/service/task_classifier_service.py)），其 LLM 分支使用 `get_feature_model("task_classification")`。下表规则同样作为指挥官 prompt 的参考规则。
 
 `simple / medium / complex` 初始规则不是给用户看的产品概念，而是给指挥官使用的调度规则。它决定：
 
@@ -133,9 +137,9 @@ Key 池管理（并入模型池体系，`ModelKeyConfig`）：
 
 | 复杂度 | 判断信号 | 默认执行 |
 | --- | --- | --- |
-| simple | 单轮问答、常识解释、轻量改写、无需外部工具、无需多步骤推理 | cheap 模型 direct_answer |
-| medium | 明确垂直任务、需要一个 Agent、需要少量工具、需要读取资料或生成结构化内容 | standard 模型 single_agent 或 single_agent_with_tools |
-| complex | 多目标、多领域、多文件、长上下文、需要规划、需要多个 Agent、需要质量校验 | strong 模型 deep_thinking 或 multi_agent |
+| simple | 单轮问答、常识解释、轻量改写、无需外部工具、无需多步骤推理 | 经济档模型 direct_answer |
+| medium | 明确垂直任务、需要一个 Agent、需要少量工具、需要读取资料或生成结构化内容 | 标准档（`2`）模型 single_agent 或 single_agent_with_tools |
+| complex | 多目标、多领域、多文件、长上下文、需要规划、需要多个 Agent、需要质量校验 | 强力档（`3`）模型 deep_thinking 或 multi_agent |
 
 补充判断规则（已融入指挥官 prompt）：
 
@@ -280,7 +284,7 @@ UI 展示原则：
 推荐顺序：
 
 ```text
-cheap -> standard -> strong
+1 -> 2 -> 3
 ```
 
 升级条件：
@@ -288,7 +292,7 @@ cheap -> standard -> strong
 - 分类不确定。
 - 用户明确要求高质量。
 - 任务高复杂度。
-- cheap/standard 执行失败。
+- 低档位（`1`/`2`）执行失败。
 - 结果校验未通过。
 
 
@@ -298,7 +302,7 @@ cheap -> standard -> strong
 > **现状说明（取代原 v5.2 注记）**：原 Orchestrator 多模块串行（TaskClassifier → TaskPlanner → PoolIntentResolver → ExecutionModeSelector）已被 ConductorService 替代。现状链路为：
 > - 编排决策：`ENABLE_CONDUCTOR` 开启时，`assistant_agent_service.py` / `orchestrator_service.py` 委托 **ConductorService.plan()** 单次 LLM `structured_output` 输出 `ConductorPlan`；OrchestratorService 在 Conductor 决策异常时回退旧规则链路（`orchestrator_service.py` 日志"Conductor 决策失败，回退旧 Orchestrator"）。
 > - 执行编排：`ConductorPlan` 经 `to_task_plan()` 转为 `TaskPlan`，由 **ExecutionCoordinatorService** 按并行/波次/串行分派执行；执行失败经 `repair_plan()` 修复（`_build_plan_repairer`，见 `assistant_agent_service.py`）。
-> - 执行器真实现位于 `internal/service/executors/`：`single_agent_executor.py` / `multi_agent_executor.py` / `direct_answer_executor.py`，其中 `agent_task_executor.py` 的 `AgentTaskExecutor` 负责具体子任务执行，并在 `_resolve_query` 中把上游子任务结果（`upstream_results`）拼进 query。
+> - 执行器真实现分部：`internal/service/executors/` 下为 `single_agent_executor.py` / `multi_agent_executor.py` / `direct_answer_executor.py`；`AgentTaskExecutor`（`agent_task_executor.py`）位于 `internal/service/` 根目录（不在 `executors/`），负责具体子任务执行，并在 `_resolve_query` 中把上游子任务结果（`upstream_results`）拼进 query。
 > - DAGEngine 时代遗留（`dag_entity` / `dag_engine_service` / `agent_instance_pool` / `test_dag_engine`）已于 2026-08-26 删除，统一为 `TaskPlan + ExecutionCoordinatorService`。
 
 ### 13.1 执行模式
@@ -375,6 +379,32 @@ ConductorService.plan
 | 连续失败自动停用 | `_maybe_disable_after_consecutive_failures`：最近连续 5 次 run 全 failed → `enabled=False, status=paused` | 避免任务永久失败烧资源 |
 | 进程级 checkpoint（可选） | LangGraph 同步 RedisSaver + `checkpoint_thread_id`（`AGENT_CHECKPOINT_BY_CONVERSATION=1` / 显式传入开启） | 进程崩溃后同会话重发从节点边界续跑；需 Redis 带 RediSearch 模块，默认关闭 |
 
+#### 13.3.2 单次任务（trigger_type=once）
+
+> **现状说明**：定时任务支持三种触发类型 `trigger_type`：`cron`（6 段秒级表达式）、`interval`（间隔对齐）、`once`（单次执行）。`once` 面向「用户在对话中提出的临时诉求」——例如「下午三点帮我把 XX 文档整理一遍」——Agent 在意图解析阶段识别为一次性诉求后自动创建，到点执行一次即完成交付。
+
+**语义与实现**：
+
+| 环节 | 实现 | 说明 |
+| --- | --- | --- |
+| 字段 | `schedule_task.run_at`（`DateTime`，UTC naive），迁移 `o9d0e1f2a3b4` | 单次任务的绝对执行时刻；`cron`/`interval` 任务该列为 NULL |
+| 意图识别 | `ScheduleIntentParser` 输出 `trigger_type` + `run_at`（ISO8601 或秒级时间戳） | 提示词 `schedule_intent_parser_prompt`（`system_prompts.yaml`）判定一次性 vs 重复诉求；裸时间按业务时区（Asia/Shanghai）解释后转 UTC |
+| 创建校验 | `ScheduleTaskService.validate_once_run_at` / `describe_once` | 未提供或非法时刻报「单次任务需要指定合法的执行时间」；早于当前时间（60s 容差）报「执行时间不能早于当前时间」；`cron_expression` 置空，`next_run_at = run_at` |
+| 扫描后不重跑 | `advance_next_run`：单次任务清空 `next_run_at`（保持 `enabled=True`） | `scan_due_tasks` 要求 `next_run_at` 非空，清空即阻止下个 tick 重复扫描；保持 enabled 是为了让 `schedule_task_execute` 不命中「已停用」分支而跳过本次执行 |
+| 执行后自动归档 | `ScheduleExecutionService._archive_once_task`（`_finish_run` 末尾调用） | 无论成功或失败，执行结束即经 `RecycleBinService.delete_resource` 入回收站；快照含任务与全部运行记录；留存期跟随系统默认（30 天），期间用户/admin 可在回收站恢复 |
+| 归档失败降级 | `_archive_once_task` 捕获全部异常仅记日志 | 归档失败不影响主流程，任务保留在主列表供用户手动删除 |
+| 恢复后不重复执行 | 归档时 `next_run_at` 已清空并写入快照，恢复后该列为 NULL | 恢复的语义是「找回记录/结果」而非「重跑」；如需重跑，用户可显式点「立即执行」 |
+
+**触发类型对照**：
+
+| trigger_type | 时间字段 | 执行次数 | 执行后 |
+| --- | --- | --- | --- |
+| `cron` | `cron_expression` | 按表达式周期 | 保留，`next_run_at` 推进 |
+| `interval` | `interval_config` | 按间隔周期 | 保留，`next_run_at` 推进 |
+| `once` | `run_at` | 仅 1 次 | 自动进入回收站 |
+
+**接口**：用户端 `POST /schedule-tasks`、`POST /schedule-tasks/confirm`、`PUT /schedule-tasks/<id>` 与 admin 端 `/admin/schedule-tasks*` 均已支持 `trigger_type=once` + `run_at`；`GET /schedule-tasks*` 响应新增 `run_at` 字段。前端用户端与 admin 端共用同一套向导组件（`CreateScheduleWizard.vue`）与建议卡片（`ScheduleSuggestionCard.vue`），均提供「单次任务」触发类型与日期时间选择器。
+
 **中断场景行为**：
 
 - Agent 执行抛业务异常（LLM/工具失败冒泡）→ run 落 `failed` + error_message，ws 通知用户；连续失败 5 次自动停用；失败重跑靠下个 cron tick（next_run 已推进）。
@@ -412,6 +442,26 @@ ConductorService.plan
 ### 13.6 Orchestrator 旧链路的保留形态
 
 `OrchestratorService` 仍保留为旧规则链路（`ENABLE_CONDUCTOR` 关闭时的默认路径），其 `decide()` 内部：先做 `task_classifier_service.classify()`（规则分类）→ 意图识别/成本策略/执行模式选择等规则决策；`ENABLE_CONDUCTOR` 开启时在分类前委托 `conductor_service.decide()` 输出 `RoutingDecision`，异常时回退到分类链路。`PoolIntentResolver`（`pool_intent_resolver_service.py`）不再位于主入口调度主链路，仅被 `home_service.py`（`/home` 意图摘要路径，`PoolIntentResolver().resolve(...)`）等轻量场景引用。
+
+#### 13.6.1 `/home` 意图摘要的推荐产出（2026-09-13 修复）
+
+首页意图摘要（`GET /home/intent`）此前只做真实 LLM 意图识别，但 **推荐字段为写死占位**：
+`recommended_agents=[]`、`matched_tool_pools=["general"]`、`recommended_tools=[]`，且 `GetIntentResp`
+schema 未声明这四个字段，导致即便后端产出也会被 marshmallow `dump()` **静默丢弃**。
+
+现由 `HomeService._build_intent_recommendations(user, query, matched_agent_pools)` 复用编排主链路
+已在用的候选收集器真实产出：
+
+| 产物 | 来源 | 上限 |
+|---|---|---|
+| `recommended_agents` | `AgentCandidateCollector(session).collect_by_pools(account_id, matched_agent_pools, query)` 按子池 + query 语义打分排序 | `RECOMMENDED_AGENTS_LIMIT = 3` |
+| `recommended_tools` | `ToolCandidateCollector(session).collect(account_id)` → `ToolSelectorService(language_model_service).select_tools(query, candidates, max_tools)`（关键词快通道 + LLM 兜底） | `RECOMMENDED_TOOLS_LIMIT = 5` |
+| `matched_tool_pools` | 由被选中工具的 `metadata.tool_pool` 去重汇总；无产出时兜底 `["general"]` | — |
+
+- `HomeService` 因此新增注入 `language_model_service: LanguageModelService`（工具选择器的 LLM 兜底需要）。
+- 全流程 **fail-open**：Agent/工具任一收集环节异常都 `logging.warning` 后降级为空列表，首页摘要不因推荐失败而报错。
+- 契约层：`GetIntentResp` 补全 `matched_agent_pools` / `matched_tool_pools` / `recommended_agents` / `recommended_tools` 四个字段（新增 `RecommendedAgentSchema` / `RecommendedToolSchema`）。
+- 前端：首页渲染「推荐 Agent」「推荐工具」两个区块，点击推荐 Agent 直接以该 Agent 名发起对话。
 
 
 
@@ -572,7 +622,7 @@ ResultSynthesizer 在合成最终回答时，需要融合两类记忆上下文�
 - **读侧**（保持）：`routing_log_service._credits_sql_expr` 已按 `estimated_credits` → 旧键 `total_credits` 顺序读取，`stats_overview / trend / distribution / page.summary` 统一走该表达式，无需改动。
 - **前端**：RoutingLogsView 明细/列表展示新增 `displayCost()` 兼容 `estimated_credits / actual_credits / total_credits / credits` 多键读取。
 - **存量数据**：一次性 SQL 回填（`UPDATE routing_log SET cost_summary = jsonb_set(...) FROM billing_reconciliation`）把已有行中 `estimated_credits` 为 0 但存在对账行的记录修正为真实结算值。
-- 文案统一：管理端全部「积分 / 总 credits」中文展示改为「算力值 / 总算力值」（i18n `zh-CN.ts`）。
+- 文案统一：管理端全部「积分 / 总 credits」中文展示改为「算力值 / 总算力值」（i18n 字典 `ui/src/i18n/messages/<locale>/*.ts`，按板块模块化）。
 
 #### 15.4.3 计费重复进位修复：同任务同模型调用合并后再 ceil（2026-09 修复）
 
@@ -595,4 +645,19 @@ ResultSynthesizer 在合成最终回答时，需要融合两类记忆上下文�
 2. **resource_name 跨平台缺陷（`RecycleBinService.record_os_file_deletion`）**：取文件名用 `os.sep` 分割，宿主机为 Windows 路径（`\`）而服务运行在 Linux 容器（`/`）时返回完整路径。修复为同时按 `\` 与 `/` 分割取末段。回归测试：`test_record_os_file_deletion_uses_basename_across_path_separators`。
 
 端到端验证（NILL 账号，agent 来源 os_file）：删除 3 个测试文件 → 平台回收站记录（agent 来源、7 天留存、归属 NILL）→ 用户端列表可见 → 全部恢复成功、文件回到原位置、状态变 `restored`、overview 聚合正确。
+
+### 15.6 审计日志资源名称展示（2026-09 新增）
+
+管理端「观测中心 → 审计日志」此前只展示 `resource_id`（UUID / 内部标识），管理员看到「删除了个用户」却无从得知删的是谁，等价于没有信息。为让审计明细可读，`AuditLogService` 与 `AuditLogResp` 新增 `resource_name` 字段：
+
+- **schema**：`AuditLogResp.resource_name`（`admin_audit_log_schema.py`），`AuditLog` 前端类型同步新增 `resource_name?: string`。
+- **优先取快照**：`AuditLogService._extract_resource_name(before_data, after_data)` 按固定优先级扫描名称字段——`resource_name → name → username → display_name → title → tool_name → code → order_no → user_name → email → key`；先 `after_data` 再回退 `before_data`（删除类操作的名称只存在于变更前快照）。覆盖 `create/update/delete` 等把名称写入快照的操作（如 `customer_user` 删除 → 用户名 `t67545`）。
+- **回源表兜底**：`disable/enable/set_status/revoke_sessions` 等**状态变更类操作**快照里只有状态字段，没有名称。此时 `AuditLogService._build_resource_name_map(audit_logs)` 按 `resource_type` 分组（`_RESOURCE_NAME_LOOKUPS` 登记了 30 个资源类型 → 模型/匹配列/名称列的映射），对缺失名称的记录批量各发一次 `IN` 查询回源表补全，避免 N+1；快照有名称时优先用快照，不触发回源。
+- **健壮性**：未登记的资源类型、非 UUID 的 `resource_id`、导入失败或查询异常均静默降级为空字符串，不影响列表返回。
+- **前端**：`AuditLogsView.vue` 列表「资源」列主显名称（超长截断、`a-tooltip` 显示全名），有 `resource_id` 时其次显截断 ID；详情弹窗新增「资源名称」行。i18n 新增 `admin.auditLogs.resource` / `admin.auditLogs.resourceNameLabel`。
+- **无迁移**：名称是读时解析（`before_data/after_data` 中历史数据已存在名称字段），因此对存量记录同样生效。
+
+回归测试：后端 `test_list_audit_logs_should_fallback_to_source_table_name`（状态变更回源补全）、`test_list_audit_logs_should_prefer_snapshot_name_over_source_table`（快照优先）、`test_list_audit_logs_should_tolerate_unknown_resource_type`（未登记类型降级），以及 `_extract_resource_name` 的 4 个单测；前端 `AuditLogsView.spec.ts` 覆盖名称展示、名称缺失时回退截断 ID、详情弹窗名称行。
+
+接口契约（路径 / 入参 / 返回字段 / 枚举取值）见 [审计日志 API](../../api/audit-log-api.md)。
 

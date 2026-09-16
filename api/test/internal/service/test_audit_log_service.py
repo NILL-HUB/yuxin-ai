@@ -38,12 +38,13 @@ class _QueryStub:
 
 
 class _SessionStub:
-    def __init__(self, query=None, admin_user_rows=None, account_rows=None):
+    def __init__(self, query=None, admin_user_rows=None, account_rows=None, resource_rows=None):
         self.added = []
         self.commits = 0
         self.query_stub = query
         self.admin_user_rows = [] if admin_user_rows is None else admin_user_rows
         self.account_rows = [] if account_rows is None else account_rows
+        self.resource_rows = {} if resource_rows is None else resource_rows
 
     def add(self, obj):
         self.added.append(obj)
@@ -56,6 +57,10 @@ class _SessionStub:
             return _QueryStub(rows=self.admin_user_rows)
         if _args and _args[0] is Account.id:
             return _QueryStub(rows=self.account_rows)
+        if _args and hasattr(_args[0], "class_"):
+            table = getattr(_args[0].class_, "__tablename__", "")
+            if table in self.resource_rows:
+                return _QueryStub(rows=self.resource_rows[table])
         return self.query_stub or _QueryStub()
 
 
@@ -155,6 +160,7 @@ class TestAuditLogService:
         assert query.limit_value == 20
         assert result["list"][0]["admin_user_id"] == str(admin_user_id)
         assert result["list"][0]["admin_user_name"] == "root"
+        assert result["list"][0]["resource_name"] == "Root"
         assert result["list"][0]["created_at"] == int(audit_log.created_at.timestamp())
         assert result["paginator"] == {
             "total_record": 1,
@@ -162,3 +168,93 @@ class TestAuditLogService:
             "current_page": 1,
             "page_size": 20,
         }
+
+    def test_extract_resource_name_should_prefer_after_data(self):
+        assert (
+            AuditLogService._extract_resource_name(
+                {"name": "旧名称"}, {"name": "新名称"}
+            )
+            == "新名称"
+        )
+
+    def test_extract_resource_name_should_fall_back_to_before_data_for_delete(self):
+        # 删除类操作：名称只存在于变更前快照
+        assert (
+            AuditLogService._extract_resource_name({"name": "t67545", "status": "active"}, {"status": "deleted"})
+            == "t67545"
+        )
+
+    def test_extract_resource_name_should_support_various_name_keys(self):
+        assert AuditLogService._extract_resource_name({}, {"tool_name": "web_search"}) == "web_search"
+        assert AuditLogService._extract_resource_name({}, {"code": "plan_basic"}) == "plan_basic"
+        assert AuditLogService._extract_resource_name({}, {"order_no": 20260101}) == "20260101"
+        assert AuditLogService._extract_resource_name({}, {"email": "user@example.com"}) == "user@example.com"
+
+    def test_extract_resource_name_should_return_empty_when_absent(self):
+        assert AuditLogService._extract_resource_name({}, {"status": "deleted"}) == ""
+        assert AuditLogService._extract_resource_name(None, None) == ""
+        assert AuditLogService._extract_resource_name({"name": "   "}, {}) == ""
+
+    def test_list_audit_logs_should_fallback_to_source_table_name(self):
+        # 状态变更类操作（disable/set_status）快照里没有名称，需要回源表补全
+        resource_id = uuid4()
+        audit_log = AuditLog(
+            id=uuid4(),
+            action="set_status",
+            resource_type="plan",
+            resource_id=str(resource_id),
+            before_data={"status": "disabled"},
+            after_data={"status": "active"},
+        )
+        audit_log.created_at = datetime(2030, 1, 1, 0, 0, 0)
+        query = _QueryStub(rows=[audit_log])
+        session = _SessionStub(
+            query=query,
+            resource_rows={"plan": [(resource_id, "会员套餐", "vip_basic")]},
+        )
+        service = AuditLogService(session=session)
+
+        result = service.list_audit_logs(current_page=1, page_size=20)
+
+        assert result["list"][0]["resource_name"] == "会员套餐"
+
+    def test_list_audit_logs_should_prefer_snapshot_name_over_source_table(self):
+        resource_id = uuid4()
+        audit_log = AuditLog(
+            id=uuid4(),
+            action="update",
+            resource_type="plan",
+            resource_id=str(resource_id),
+            before_data={"name": "旧套餐"},
+            after_data={"name": "新套餐"},
+        )
+        audit_log.created_at = datetime(2030, 1, 1, 0, 0, 0)
+        query = _QueryStub(rows=[audit_log])
+        session = _SessionStub(
+            query=query,
+            resource_rows={"plan": [(resource_id, "数据库里的套餐", "db_plan")]},
+        )
+        service = AuditLogService(session=session)
+
+        result = service.list_audit_logs(current_page=1, page_size=20)
+
+        assert result["list"][0]["resource_name"] == "新套餐"
+
+    def test_list_audit_logs_should_tolerate_unknown_resource_type(self):
+        # 未登记的资源类型不应报错，只是名称留空
+        audit_log = AuditLog(
+            id=uuid4(),
+            action="unknown_action",
+            resource_type="not_registered_type",
+            resource_id=str(uuid4()),
+            before_data={},
+            after_data={},
+        )
+        audit_log.created_at = datetime(2030, 1, 1, 0, 0, 0)
+        query = _QueryStub(rows=[audit_log])
+        session = _SessionStub(query=query)
+        service = AuditLogService(session=session)
+
+        result = service.list_audit_logs(current_page=1, page_size=20)
+
+        assert result["list"][0]["resource_name"] == ""

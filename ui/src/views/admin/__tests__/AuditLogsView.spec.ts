@@ -61,7 +61,9 @@ const tValues: Record<string, string> = {
   'admin.auditLogs.admin': 'Admin',
   'admin.auditLogs.action': 'Action',
   'admin.auditLogs.resourceType': 'Resource Type',
+  'admin.auditLogs.resource': 'Resource',
   'admin.auditLogs.resourceId': 'Resource ID',
+  'admin.auditLogs.resourceNameLabel': 'Resource Name:',
   'admin.auditLogs.detail': 'Detail',
   'admin.auditLogs.loadFailed': 'Load failed',
   'admin.auditLogs.view': 'View',
@@ -165,6 +167,7 @@ const logFixture = {
   action: 'create',
   resource_type: 'workflow',
   resource_id: 'workflow-12345678',
+  resource_name: 'Onboarding Flow',
   ip: '127.0.0.1',
   user_agent: 'Mozilla/5.0',
   before_data: { name: 'old' },
@@ -306,16 +309,45 @@ describe('AuditLogsView', () => {
     })
   })
 
-  it('renders the audit log table with action badge and truncated resource id', async () => {
+  it('renders the audit log table with action badge, resource name and truncated resource id', async () => {
     const wrapper = await renderView()
 
     expect(wrapper.text()).toContain('Audit details')
     expect(wrapper.text()).toContain('root')
+    expect(wrapper.text()).toContain('Onboarding Flow')
     expect(wrapper.text()).toContain('workflow...')
     expect(wrapper.find('.a-tooltip').attributes('data-content')).toBe('workflow-12345678')
     expect(wrapper.text()).toContain('View')
     const tags = wrapper.findAll('.a-tag')
     expect(tags.some((tag) => tag.attributes('data-color') === 'green')).toBe(true)
+  })
+
+  it('falls back to truncated resource id when resource name is missing', async () => {
+    mocks.listAuditLogs.mockResolvedValue({
+      data: {
+        list: [{ ...logFixture, resource_name: undefined }],
+        paginator: { total_record: 1, total_page: 1, current_page: 1, page_size: 20 },
+      },
+    })
+    mocks.getAuditLogOverview.mockResolvedValue({ data: { ...overviewFixture } })
+
+    const wrapper = mount(AuditLogsView, {
+      global: {
+        stubs: {
+          'a-input': inputStub,
+          'a-select': selectStub,
+          'a-button': buttonStub,
+          'a-tag': tagStub,
+          'a-pagination': paginationStub,
+          'a-modal': modalStub,
+          'a-tooltip': tooltipStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('workflow...')
+    expect(wrapper.find('.a-tooltip').attributes('data-content')).toBe('workflow-12345678')
   })
 
   it('opens the detail modal with before/after change JSON', async () => {
@@ -329,6 +361,8 @@ describe('AuditLogsView', () => {
     const modal = wrapper.find('.a-modal')
     expect(modal.exists()).toBe(true)
     expect(modal.text()).toContain('Audit Detail')
+    expect(modal.text()).toContain('Resource Name:')
+    expect(modal.text()).toContain('Onboarding Flow')
     expect(modal.text()).toContain('Mozilla/5.0')
     expect(modal.text()).toContain('Before Change')
     expect(modal.text()).toContain('After Change')

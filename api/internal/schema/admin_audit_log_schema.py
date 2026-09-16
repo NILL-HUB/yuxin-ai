@@ -23,6 +23,7 @@ class AuditLogResp(Schema):
     action = fields.String()
     resource_type = fields.String()
     resource_id = fields.String()
+    resource_name = fields.String()
     ip = fields.String()
     user_agent = fields.String()
     before_data = fields.Dict()

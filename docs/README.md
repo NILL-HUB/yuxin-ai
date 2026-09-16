@@ -37,6 +37,7 @@
 
 - [RBAC 权限模型](rbac.md)
 - [分销/余额/订单 API](api/commerce-distribution-api.md)
+- [审计日志 API](api/audit-log-api.md)
 
 ## 调研与计划归档
 

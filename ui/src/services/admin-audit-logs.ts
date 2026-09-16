@@ -10,6 +10,7 @@ export interface AuditLog {
   action: string
   resource_type?: string
   resource_id?: string
+  resource_name?: string
   ip?: string
   user_agent?: string
   before_data?: Record<string, unknown>
