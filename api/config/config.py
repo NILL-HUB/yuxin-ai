@@ -206,6 +206,24 @@ class Config:
         self.LOCAL_STORAGE_ROOT = _get_env("LOCAL_STORAGE_ROOT") or "storage/uploads"
         self.LOCAL_STORAGE_BASE_URL = _get_env("LOCAL_STORAGE_BASE_URL") or ""
 
+        # ==================== 视频渲染（HyperFrames）====================
+        # 渲染宿主硬依赖三个外部二进制；三者为空时渲染服务会显式报错，
+        # 不做「猜路径」——猜错会把分钟级渲染变成静默失败。
+        #
+        # 浏览器路径经验证需指向「能响应 --version 的 Chrome 构建」：
+        # chrome-headless-shell 可正常响应，部分完整版 Chrome 在受限环境下
+        # --version 会挂死，导致 HyperFrames 判定 "Chrome cannot start" 而拒绝渲染。
+        self.HYPERFRAMES_BROWSER_PATH = _get_env("HYPERFRAMES_BROWSER_PATH") or ""
+        self.HYPERFRAMES_FFMPEG_PATH = _get_env("HYPERFRAMES_FFMPEG_PATH") or ""
+        # 必须是真 ffprobe：用 ffmpeg 冒充会因 `-print_format` 不支持而渲染失败
+        self.HYPERFRAMES_FFPROBE_PATH = _get_env("HYPERFRAMES_FFPROBE_PATH") or ""
+        # 钉死 CLI 版本，保证同一 composition 重复渲染结果一致
+        self.HYPERFRAMES_CLI_VERSION = (
+            _get_env("HYPERFRAMES_CLI_VERSION") or "0.8.42"
+        )
+        # 渲染是分钟级长任务，超时按「长视频 + 慢机器」放宽
+        self.RENDER_TIMEOUT_SEC = int(_get_env("RENDER_TIMEOUT_SEC") or 1800)
+
         # 腾讯云 COS 配置（STORAGE_BACKEND=cos 时生效）
         self.COS_SECRET_ID = _get_env("COS_SECRET_ID")
         self.COS_SECRET_KEY = _get_env("COS_SECRET_KEY")
