@@ -217,3 +217,34 @@ UI 过滤只是体验，**不是安全边界**。三层各自独立成立：
 
 - 表 `admin_agent`（迁移 `s5f6a7b8c9d0_add_admin_agent_table`）：归属 `admin_user`（`ON DELETE CASCADE`），**不归属 `account`**；含 `granted_permissions` / `automation_policy` / `budget_config`（JSONB，均有空默认值）。
 - 路由 `/admin/agents*` 登记在 `api/app/http/support.py` 的 `_admin_route_permission`：`GET → agent_pool:read`，`POST/PATCH/PUT/DELETE → agent_pool:manage`，**未登记方法 fail closed 返回 `None`**。新路由必须登记，否则 `test_admin_rbac_guard.py::test_every_registered_admin_route_has_a_permission` 失败。
+
+### 9.7 板块工具与执行分流（P1b）
+
+授权（9.1-9.4）解决「Agent 能不能碰」，执行层解决「碰的时候要不要等人」。
+
+**板块动作注册表**：`api/internal/core/admin_agent_boards.py` 是「板块动作 → 所需权限点」的**唯一事实源**（`BOARD_ACTIONS` / `resolve_action()` / `board_ids_of()` / `boards()`）。采用**显式登记制**：未声明的 `(board, action)` 一律抛 `ValueError`——工具内部按 action 分支，漏声明必须表现为明确报错而非静默放行。`BOARD_IDS` 由 `BOARD_ACTIONS` 派生，禁止手工维护两个清单。`is_write` 区分只读/写/删：**只读动作不进变更草稿**（否则 `supervised` 档的 Agent 连列表都查不了）。
+
+**执行四步**（`AdminAgentExecutionService.run`，`api/internal/service/admin_agent_execution_service.py`）：
+
+| 步 | 行为 | 失败处置 |
+|---|---|---|
+| 1 | 校验 `principal.effective_permissions` 含该 action 所需权限点；判 `blocked` 熔断 | 拒绝**并记审计**（action 后缀 `.denied`，让"被挡住的动作"也可追溯） |
+| 2 | 按 `automation_policy` 分流：`supervised` → 产变更草稿（**不执行**）/ `autonomous` → 继续 / `blocked` → 已在第 1 步拒绝 | 未配置板块一律 `supervised`（fail closed） |
+| 3 | 调板块实现体（service 层不感知 Agent，保持纯粹） | 异常向上抛出 |
+| 4 | 写审计：`actor_type=agent` + `agent_id` + `admin_user_id`（人类责任人） | 审计失败不阻断主流程，记日志 |
+
+**为什么新建独立执行链路而不复用用户端 `chat()`**：`AssistantAgentService._build_assistant_runtime_tools()` 是**用户域固有工具的装配点**，且是**条件装配**（逐个 `try` + 功能开关 + 运行上下文），实际工具数随配置动态变化。复用它只能靠黑名单排除用户域工具，而黑名单对动态集合不完备——漏一个就是越权。新链路只装配 admin 板块工具（白名单式，未登记即不装配），边界可自证。
+
+**已实现的板块动作（P1b 范围）**：仅 `builtin_tool`（`list` / `update_enabled` / `update_metadata`）——作为端到端样板；其余板块按同一模式增量登记 `BOARD_ACTIONS` 并补 `_do_<board>` 实现体即可。
+
+**入口**：`POST /admin/agents/<id>/invoke`（权限 `agent_pool:manage`——执行入口代表"让 Agent 在后台动手"，不接受只读权限触发）+ `GET /admin/agents/<id>/drafts`（权限 `agent_pool:read`，按 `impact.agent_id` 做归属隔离）+ `GET /admin/agents/boards`（权限 `agent_pool:read`，返回已登记板块与动作明细含 `permission_code`，供前端渲染"这个 Agent 能做什么"并做「展示即受限」门控）。路由只做接线：把当前管理员的**实时权限**交给 `AdminAgentService.get_principal()` 重算三重交集（9.1 运行时层）。
+
+**审计身份**（第 9 节）：`audit_log.actor_type`（`human`/`agent`，NOT NULL，默认 `human`）+ `agent_id`（可空，**刻意不加 FK**——Agent 可被物理删除，审计必须留住痕迹）。`admin_user_id` 始终保持为人类责任人，因此可精确区分「A 自己改的」与「A 让 AI 改的」；`agent_name` 由 `_build_agent_name_map` 批量回源展示。
+
+**变更草稿**（9.5 的 `supervised` 载体）：`policy_change_draft` 已泛化为**通用 admin 变更草稿**（`suggestion_id` 可空 + `policy_type` 承载板块标识），通用台账由 `AdminChangeDraftService` 承担（创建/列出/应用/回滚 + 状态机守卫：仅 `pending` 可应用、仅 `applied` 可回滚）；路由板继续用 `RoutingPolicyChangeService`，二者共用同一张表。`agent_id` 写入 `impact` JSONB 以支持追溯。
+
+**回收站 `admin_agent` 来源**：既有 `deleted_by_type="agent"` 被硬约束为仅 7 类用户可见资源，admin 专属资源（`app`/`workflow`/`skill`/`mcp`/`api_tool`/`system_prompt`/`upload_file`）以该来源入站会抛 `ValidateErrorException`。因此新增 `admin_agent` 来源：放行 admin 专属资源、留存按 admin 口径（默认 30 天、可配，区别于用户侧 agent 的固定 7 天）、`_agent_id` 写入快照供追溯。**admin 回收站列表与概览改为 `in_(('admin','admin_agent'))`**，否则 Agent 代删条目在后台不可见、无法恢复。
+
+**回归防护**（均含反向验证）：`test_admin_agent_boards.py`、`test_admin_change_draft_service.py`、`test_admin_agent_board_tools.py`、`test_admin_agent_execution_service.py`、`test_admin_agent_invoke_routes.py`、`test_recycle_bin_admin_agent.py`、`test_builtin_tool_write_paths.py`、`test_audit_write_commit_guard.py`。
+
+**未接入项（明确标注）**：`AdminChangeDraftService.apply_draft` / `rollback_draft` 已提供能力，但「待批准变更」前端页属后续阶段，当前只有测试调用。

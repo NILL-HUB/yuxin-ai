@@ -465,6 +465,8 @@ Agent 池不是一个单独的大池，而是由多个面向领域和能力的�
 
 internal_admin 子池默认只对管理员和系统内部流程开放，不参与普通用户自动路由。
 
+> **`internal_admin` 池的消费方（2026-09 已接线）**：该子池此前为"预留未接线"。P1b 起，管理端 Agent 治理链路（`api/internal/service/admin_agent_execution_service.py`）是其消费方——它经 `AdminAgentPrincipal` 携带管理端身份执行板块动作。与用户端 Agent 候选收集（`AgentCandidateCollector`）是**两条互不交叉的链路**：用户端链路按 `account_id` 隔离、走 `AgentPolicyFilter`；管理端链路按 `admin_user_id` 隔离、走板块动作注册表（`api/internal/core/admin_agent_boards.py`）。两条链路的候选/授权来源不同，不可互相替代。
+
 ### 9.3 Agent 来源
 
 Agent 池第一阶段复用现有 App：

@@ -169,6 +169,31 @@ def _build_execution_service(a, *, board_executor, draft_service, audit_log_serv
     )
 
 
+def _list_board_actions() -> dict:
+    """拍平板块动作注册表为展示结构。
+
+    返回 ``{"boards": [...板块名...], "actions": [...动作明细...]}``：
+    前端既要知道"有哪些板块"（分组渲染），也要知道"每个板块能做什么"
+    （动作明细与所需权限点）。
+    """
+    from internal.core.admin_agent_boards import BOARD_ACTIONS
+    from internal.service.admin_agent_board_tools import available_boards
+
+    return {
+        "boards": list(available_boards()),
+        "actions": [
+            {
+                "board": action.board,
+                "action": action.action,
+                "kind": action.kind,
+                "permission_code": action.permission_code,
+                "description": action.description,
+            }
+            for action in BOARD_ACTIONS
+        ],
+    }
+
+
 def _dump_draft(draft) -> dict:
     """序列化变更草稿（UUID / datetime → 字符串 / 时间戳）。"""
     from internal.lib.helper import datetime_to_timestamp
@@ -346,6 +371,21 @@ def register_routes(quart_app):
         )
         resp = AdminAgentAssignablePermissionsResp()
         return a._ok(resp.dump({"codes": codes}))
+
+    @quart_app.get("/admin/agents/boards")
+    async def admin_agent_boards_list():
+        """列出已登记的治理板块与动作。
+
+        供前端渲染"这个 Agent 能做什么"，也是 `available_boards()` 的生产消费者。
+        注意路径用 `boards` 而非 uuid，与 `/admin/agents/<uuid:agent_id>/*` 不冲突。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        return a._ok(_list_board_actions())
 
     @quart_app.post("/admin/agents/<uuid:agent_id>/invoke")
     async def admin_agent_invoke(agent_id):

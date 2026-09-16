@@ -1,4 +1,6 @@
 """audit_log.actor_type / agent_id 列结构测试（设计 §9）。"""
+from types import SimpleNamespace
+
 from internal.model.admin import AuditLog
 
 
@@ -157,3 +159,54 @@ def test_serialize_tolerates_missing_actor_columns():
     data = AuditLogService._serialize_audit_log(row)
     assert data["actor_type"] == "human"
     assert data["agent_id"] is None
+    assert data["agent_name"] == ""
+
+
+def test_serialize_uses_agent_name_map():
+    """agent_id → 名称的展示（审计页要看到"哪个 Agent 干的"）。"""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from internal.service.audit_log_service import AuditLogService
+
+    agent_id = uuid4()
+    row = SimpleNamespace(
+        id=uuid4(),
+        admin_user_id=None,
+        account_id=None,
+        action="a",
+        resource_type="builtin_tool",
+        resource_id="r1",
+        ip="",
+        user_agent="",
+        before_data={},
+        after_data={},
+        created_at=None,
+        actor_type="agent",
+        agent_id=agent_id,
+    )
+    data = AuditLogService._serialize_audit_log(
+        row, agent_name_map={str(agent_id): "运维 Agent"}
+    )
+    assert data["agent_name"] == "运维 Agent"
+
+
+class TestAgentNameMap:
+    def test_returns_empty_when_no_agent_ids(self):
+        from internal.service.audit_log_service import AuditLogService
+
+        row = SimpleNamespace(agent_id=None)
+        assert AuditLogService(session=None)._build_agent_name_map([row]) == {}
+
+    def test_degrades_silently_on_query_error(self):
+        """关联查询失败必须静默降级为空 map（不影响审计列表返回）。"""
+        from uuid import uuid4
+
+        from internal.service.audit_log_service import AuditLogService
+
+        class _S:
+            def query(self, *a, **kw):
+                raise RuntimeError("admin_agent 表不可用")
+
+        rows = [SimpleNamespace(agent_id=uuid4())]
+        assert AuditLogService(session=_S())._build_agent_name_map(rows) == {}

@@ -34,10 +34,11 @@
 | Phase 13 | 外部数据源连接 | ✅ 完成 |
 | Phase 14 | 调优建议采纳与策略变更 | ✅ 完成 |
 | Phase 15 | 管理端 Agent 治理 P1a（授权与身份内核） | ✅ 完成 |
+| Phase 16 | 管理端 Agent 治理 P1b（板块工具与执行链路） | ✅ 完成 |
 
 ### 管理端 Agent 治理（P1a 授权与身份内核，2026-09-16 完成）
 
-管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。本阶段**只做授权与身份**——Agent 尚不能真正执行板块动作（工具装配与执行属后续阶段）。
+管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。本阶段**只做授权与身份**——Agent 尚不能真正执行板块动作（工具装配与执行见下一节 P1b）。
 
 | 交付物 | 位置 |
 | --- | --- |
@@ -52,6 +53,35 @@
 **授权模型**：`effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`；白名单为**显式登记制（fail closed）**，新增权限点默认不可下放。三层强制（展示即受限 / 保存校验 / 运行时实时重算）+ 失权自动物理清理。实现计划见 `docs/superpowers/plans/2026-09-16-admin-agent-p1a-authorization-core.md`。
 
 **回归防护**：`test_admin_agent_authorization.py`、`test_admin_agent_principal.py`、`test_admin_agent_model.py`、`test_admin_agent_service.py`、`test_admin_agent_routes.py`、`test_admin_user_service.py::TestAgentPermissionPruningWiring`——**均含反向验证**（改坏实现时测试必须失败），并已用真实 DB 跑通端到端闭环。
+
+
+### 管理端 Agent 治理（P1b 板块工具与执行链路，2026-09-16 完成）
+
+在 P1a 授权内核之上装配能力层与执行层，让 Agent 从「只有授权」变为「能真正执行板块动作」。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 板块动作注册表（fail closed） | `api/internal/core/admin_agent_boards.py` |
+| 通用变更草稿服务（supervised 档载体） | `api/internal/service/admin_change_draft_service.py` |
+| 板块级聚合工具与执行闸门 | `api/internal/service/admin_agent_board_tools.py` |
+| 执行层（分流 + 审计） | `api/internal/service/admin_agent_execution_service.py` |
+| 执行入口 | `POST /admin/agents/<id>/invoke`、`GET /admin/agents/<id>/drafts`（`admin_routes_7.py`） |
+| 审计身份 | `audit_log.actor_type` / `agent_id`（迁移 `t8b9c0d1e2f3`） |
+| 草稿泛化 | `policy_change_draft.suggestion_id` 可空 + 板块标识（迁移 `u9c0d1e2f3a4`） |
+| 回收站 Agent 来源 | `deleted_by_type='admin_agent'`（迁移 `v0d1e2f3a4b5`） |
+| builtin 工具写路径补齐 | `BuiltinToolService.set_tool_enabled` + `_builtin_tool_update` 放开 enabled |
+| 板块 Agent 提示词 | `api/internal/core/prompts/admin_agent/board_agent.yaml`（`prompt_key=admin_agent_board_agent`） |
+| 机制文档 | [rbac.md §9.7](../rbac.md) |
+
+**执行模型**：`AdminAgentExecutionService.run` 执行四步——① 权限/熔断校验（拒绝并记审计）② 按 `automation_policy` 分流（`supervised` 产草稿不执行 / `autonomous` 直接执行 / `blocked` 熔断）③ 调板块实现体 ④ 写 `actor_type=agent` 审计。未配置板块一律 `supervised`（fail closed）。
+
+**已实现板块**：仅 `builtin_tool`（`list` / `update_enabled` / `update_metadata`）作为端到端样板；其余板块按同一模式增量登记。实现计划见 `docs/superpowers/plans/2026-09-16-admin-agent-p1b-board-tools.md`。
+
+**顺带修复**：4 类审计写入静默丢失（`system_knowledge` 全量、`admin_user.revoke_admin_sessions`、`redeem_code.view_plain` 在 commit 之后写入被回滚；`admin_commerce_routes._write_audit` 绕过 service 且永不提交），并新增 AST 静态守卫 `test_audit_write_commit_guard.py`。
+
+**回归防护**：`test_admin_agent_boards.py`、`test_admin_change_draft_service.py`、`test_admin_agent_board_tools.py`、`test_admin_agent_execution_service.py`、`test_admin_agent_invoke_routes.py`、`test_recycle_bin_admin_agent.py`、`test_builtin_tool_write_paths.py`、`test_audit_write_commit_guard.py`——**均含反向验证**。
+
+**未接入项（明确标注）**：`AdminChangeDraftService.apply_draft` / `rollback_draft` 已提供能力，但「待批准变更」前端页属后续阶段，当前只有测试调用。
 
 
 ### 第三轮并行修复（P0-P3 全部完成）

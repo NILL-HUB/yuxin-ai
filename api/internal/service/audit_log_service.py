@@ -331,10 +331,19 @@ class AuditLogService:
 
         # 快照缺失名称时（如 disable/enable/set_status 类状态变更），批量回源表补全
         resource_name_map = self._build_resource_name_map(audit_logs)
+        # actor_type=agent 的记录需要展示"哪个 Agent 干的"（agent_id 是 UUID，
+        # 直接展示对管理员没有意义）
+        agent_name_map = self._build_agent_name_map(audit_logs)
 
         return {
             "list": [
-                self._serialize_audit_log(audit_log, admin_user_map, account_map, resource_name_map)
+                self._serialize_audit_log(
+                    audit_log,
+                    admin_user_map,
+                    account_map,
+                    resource_name_map,
+                    agent_name_map,
+                )
                 for audit_log in audit_logs
             ],
             "paginator": {
@@ -344,6 +353,29 @@ class AuditLogService:
                 "page_size": page_size,
             },
         }
+
+    def _build_agent_name_map(self, audit_logs: list) -> dict[str, str]:
+        """批量解析 agent_id → Agent 名称。
+
+        与 `_build_resource_name_map` 同模式：按需回源、一次 IN 查询、失败静默
+        降级为空 map（审计列表不应因关联表缺失/异常而整体 500）。
+        """
+        agent_ids = {
+            str(log.agent_id) for log in audit_logs if getattr(log, "agent_id", None)
+        }
+        if not agent_ids:
+            return {}
+        try:
+            from internal.model.admin_agent import AdminAgent
+
+            rows = (
+                self.session.query(AdminAgent.id, AdminAgent.name)
+                .filter(AdminAgent.id.in_(list(agent_ids)))
+                .all()
+            )
+        except Exception:
+            return {}
+        return {str(row[0]): (row[1] or "") for row in rows}
 
     def _build_resource_name_map(self, audit_logs: list) -> dict[tuple[str, str], str]:
         """批量回源查询资源名称，补齐快照中缺失名称的审计记录。

@@ -273,6 +273,31 @@ class TestInvokeEndpoint:
         assert body["data"]["draft_id"] == "55555555-5555-5555-5555-555555555555"
 
 
+class TestBoardsEndpoint:
+    def test_lists_board_actions(self, monkeypatch):
+        """板块清单供前端渲染"Agent 能做什么"。"""
+        _wire(monkeypatch, "11111111-1111-1111-1111-111111111111", ["agent_pool:read"])
+        resp = _get("/admin/agents/boards")
+        assert resp.status_code == 200
+        body = asyncio.run(resp.get_json())
+        data = body["data"]
+        assert "builtin_tool" in data["boards"]
+        actions = {(a["board"], a["action"]) for a in data["actions"]}
+        assert ("builtin_tool", "list") in actions
+        assert ("builtin_tool", "update_enabled") in actions
+        # 动作明细必须带所需权限点（前端据此做"展示即受限"的门控）
+        sample = next(
+            a for a in data["actions"] if a["action"] == "update_enabled"
+        )
+        assert sample["permission_code"] == "builtin_tool:update"
+
+    def test_boards_requires_read_permission(self):
+        assert (
+            support._admin_route_permission("GET", "/admin/agents/boards")
+            == "agent_pool:read"
+        )
+
+
 class TestDraftsEndpoint:
     def test_lists_only_own_agent_drafts(self, monkeypatch):
         """按 impact.agent_id 过滤——只能看到本 Agent 的草稿。"""
