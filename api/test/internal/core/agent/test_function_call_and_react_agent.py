@@ -13,7 +13,7 @@ from internal.core.agent.entities.agent_entity import DATASET_RETRIEVAL_TOOL_NAM
 from internal.core.agent.entities.tool_policy_entity import KNOWLEDGE_RETRIEVAL_TOOL_NAME, ToolPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.language_model.entities.model_entity import BaseLanguageModel, ModelFeature
-from internal.core.tools.builtin_tools.providers.codex_os.os_file_task import OsFileTaskTool
+from internal.core.tools.builtin_tools.providers.host_os.os_file_task import OsFileTaskTool
 from internal.entity.conversation_entity import InvokeFrom
 from internal.exception import FailException
 
@@ -1038,7 +1038,7 @@ def test_function_call_agent_tools_node_should_inject_session_context_for_os_too
     import importlib as _importlib
 
     module = _importlib.import_module(
-        "internal.core.tools.builtin_tools.providers.codex_os.os_file_task"
+        "internal.core.tools.builtin_tools.providers.host_os.os_file_task"
     )
     monkeypatch.setattr(module.urllib.request, "urlopen", _fake_urlopen)
     tool = OsFileTaskTool(requester="user-1")
