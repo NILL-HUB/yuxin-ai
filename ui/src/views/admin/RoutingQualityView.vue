@@ -745,7 +745,7 @@ const suggestionActionKeys = (suggestion: AdminRoutingOptimizationSuggestion): s
     <a-modal
       :visible="dismissVisible"
       :title="t('policyChange.dismiss')"
-      :ok-text="t('common.confirm')"
+      :ok-text="t('common.actions.confirm')"
       :cancel-text="t('common.cancel')"
       :ok-loading="dismissSubmitting"
       @ok="submitDismiss"
@@ -763,7 +763,7 @@ const suggestionActionKeys = (suggestion: AdminRoutingOptimizationSuggestion): s
     <a-modal
       :visible="applyConfirmVisible"
       :title="t('policyChange.apply')"
-      :ok-text="t('common.confirm')"
+      :ok-text="t('common.actions.confirm')"
       :cancel-text="t('common.cancel')"
       :ok-loading="applySubmitting"
       @ok="submitApply"

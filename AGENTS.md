@@ -17,19 +17,73 @@
 架构文档是 Agent 判断当前系统真实结构的唯一权威来源；**文档过期会直接误导后续开发与代码审查**。因此：
 
 - 任何开发任务，只要其改动涉及架构（新增/删除/重命名模块、service、路由、数据表、迁移、核心流程、跨模块调用关系、API 语义），**必须在完成代码后同步更新对应架构文档**，再宣告任务完成。
+- **导航入口是 `docs/README.md`**：它是全部生效文档的唯一索引。任何**新增 / 重命名 / 删除 / 归档**文档的动作，都必须同步更新 `docs/README.md`；新增顶层文档若不登记，等于不存在（Agent 不会发现它）。
+- 文档分层与权威性：
+  - **生效文档（权威）**：`docs/README.md` 导航内列出的文档，代表系统现状；与代码冲突时以代码为准并立即修正文档。
+  - **非权威区**：`docs/research/`（调研与审计快照）、`docs/archive/`（已落地规划与执行历史）、`docs/superpowers/`（功能计划与规格）——**它们只代表当时的调研/计划/历史，不代表当前实现**，禁止作为判断系统现状的依据。
 - 文档映射（写到哪）：
-  - 核心架构/演进方向：`docs/prd/architecture-design.md`
-  - 顶层模块（Agent/知识库/编排/存储/安全/等）：`docs/prd/modules/01-*.md` ~ `08-*.md`
-  - 记忆系统：`docs/prd/memory-system/*.md`
-  - 执行状态类：`docs/prd/execution-roadmap.md` 中的任务状态栏
-  - API 契约（对外接口）：`docs/api/*.md`
-  - 权限/RBAC 变更：`docs/rbac.md`
+
+| 要记录的内容 | 写到哪 |
+|---|---|
+| 产品形态、功能体系、愿景、**经代码验证的落地状态** | `docs/prd/product-vision.md`（产品问题的第一入口） |
+| 核心架构、模块设计、跨模块关系、架构演进方向 | `docs/prd/architecture-design.md` |
+| 顶层模块细节：Agent/工具池、知识库、编排、社交、安全、文件存储、公共 AI 配置、OS 自动化、桌面客户端 | `docs/prd/modules/01-*.md` ~ `09-*.md`（现有 01~09，新增板块续号并登记导航） |
+| 记忆系统设计 | `docs/prd/memory-system/*.md` |
+| 第三方能力接入 / 扩展性机制（工具池、治理、OS 自动化接入） | `docs/prd/extensibility-design.md` |
+| 知识库产品形态（素材中心、容量、分级解析等） | `docs/prd/knowledge-base-product-form-design.md` |
+| 记忆写入路径优化设计 | `docs/prd/memory-write-optimization-design.md` |
+| 阶段任务与执行状态 | `docs/prd/execution-roadmap.md` 的任务状态栏（唯一仍在维护的 roadmap） |
+| 对外 API 契约 | `docs/api/*.md` |
+| 权限 / RBAC 变更 | `docs/rbac.md` |
+| 某功能的实现计划 / 设计规格 | `docs/superpowers/plans/*.md`、`docs/superpowers/specs/*.md` |
+| 外部项目调研、内部审计快照 | `docs/research/*.md`（**非权威**） |
+| 已完成规划 / 执行历史归档 | `docs/archive/`（**非权威**，见 `docs/archive/README.md`） |
+
 - 同步更新的动作要求：
   - 若文档描述与实际代码不符（引用已删除文件/模块、声称未实现的功能已实现、模块已被取代但文档仍为主线叙事），**立即修正**，不得保留过期内容。
-  - 删除模块时同步删除文档中对它的描述；新增模块时在对应文档补一节。
+  - 删除模块时同步删除文档中对它的描述；新增模块时在对应文档补一节，并在 `docs/README.md` 登记新文档。
+  - 修改文档前先核对**实际代码/配置/迁移**（如档位、字段名、条目数量、枚举值），不要照抄旧文档的表述——旧文档本身可能就是漂移源。
   - 文档中禁止留下"状态待确认/执行中/待开始"之类与实际不符的标记——完成了就标完成，未实现就标注"愿景设计、未实现"。
-- 若某任务涉及删除或大改一篇文档的定位（如 roadmap 已完成需归档），在 commit message 中说明"docs: archive ..."，将过期规划移到 `docs/archive/` 而不是让它们继续出现在导航里误导 Agent。
+- **高频漂移类型（写/审文档时逐项自检）**。以下类型在历史审计中反复出现，是文档失真的主要来源：
+  - **重命名未同步**：实体/表/字段/类重命名后，全仓旧名残留。典型：`Dataset→KnowledgeBase`、`Document→KnowledgeDocument`、`AppDatasetJoin→AppConfig.knowledge_base_ids`、`model_config→model_pool_config`、`WorkflowTool→WorkflowToolAdapter`、`AppService._build_runtime_tools_for_config→AppRuntimeService.build_runtime_tools_for_config`、字符串档位→数字档位码。
+  - **"待实现"实为已实现**：文档把已落地能力写成计划/待办/前置条件。核对时先搜代码是否存在，再决定措辞。
+  - **伪代码不是真代码**：文档中的示例代码必须与真实签名一致（参数名、是否 classmethod、返回值）。禁止凭想象编写 `FeatureDisabled`、`_pick_cheapest_by_tier`、`_fallback_hardcoded_chain` 这类代码中不存在的符号。
+  - **枚举值臆造**：`risk_level` 等枚举必须照抄代码定义（如 Agent 为 `safe/medium/high`，工具为 `safe/low/medium/high/sensitive/dangerous`），不要混用或自造 `controlled`。
+  - **数量统计过期**：条目数、文件数、调用点数会随迭代变化，必须实测后再写（例：`get_feature_model()` 生产调用以实测为准，不沿用历史数字）。
+  - **路径/行号引用失效**：引用文件位置时优先用可点击的形式，避免写死的行号在重构后指向错误代码。
+- **表格化数据必须与代码同源**：权限点数量、默认角色授权、功能清单、字段枚举等"表格式事实"极易过期。`docs/rbac.md` 的权限目录以 `api/internal/core/rbac.py` 的 `PERMISSION_CATALOG` / `DEFAULT_ROLES` 为唯一事实源，文档只描述机制与排查方法，不逐条抄写全量清单。
+- **注意"只增不删"型同步机制的残留**：RBAC 的 `initialize_defaults()` 只补不删——删除权限点或收缩默认角色授权后，DB 会残留孤儿 `permission` 行与 `role_permission` 绑定。**下线功能时必须同时写迁移清理对应权限点**，否则文档与 DB 会长期不一致（历史案例：`app_assignment` 表已 drop，但 `app_assignment:read` / `app_assignment:update` 权限点残留）。
+- 若某任务涉及删除或大改一篇文档的定位（如 roadmap 已完成需归档），在 commit message 中说明"docs: archive ..."，将过期规划移到 `docs/archive/` 而不是让它们继续出现在导航里误导 Agent；归档时同步更新 `docs/README.md` 与 `docs/archive/README.md` 的清单表。
 - 完成涉及架构的改动后，运行 `python -m graphify update .` 保持知识图谱最新（见下节）。
+
+## 任务完成前的接线审查（强制规则）
+
+本仓库高发一类「代码写得对、但运行时根本走不到」的失效模式（下称**断链**）。它逃得过 lint / 类型检查 / 单测——单测习惯直接构造服务对象或注入替身，恰好绕过了接线环节。历史案例（均已在真实审查中发现并修复）：
+
+| 断链类型 | 历史案例 |
+|---|---|
+| 任务无派发点 | `internal.task.knowledge_l2_tasks.build_document_l2_task` 已注册进 Celery，但**没有任何 `delay()` 调用方**，用户与 Agent 都无法触发 |
+| 只写不读 | `video_visual_embedding` 表有写入、`VisualEmbeddingService.search_by_*` 有实现，但检索链路**零调用点**，「以图搜图 / 文本跨模态召图」在运行时不可达 |
+| 工具无挂载点 | `create_knowledge_base` 的工具文件与 `providers.yaml` 登记均已提交，但 `assistant_agent_service` 里的**挂载点漏在工作树未提交**，对话内无法实际建库 |
+| 中间层丢字段 | `layered_search` 聚合 `SearchResult` 时只透传 `retrieval` / `source`，**静默丢弃 `frame_url`**，视觉召回命中的帧地址到不了上游 |
+
+规则：**任何任务在宣告完成前，必须逐一回答「这个新东西的入口在哪」，并实测验证，而不是凭「代码已写完」推定可用。**
+
+- **逐个新符号点名入口**：本次新增/重命名的每个 service 方法、Celery 任务、builtin 工具、路由、表/模型、配置项，都要能指出其**调用方或触发路径**。指不出入口就不算交付——要么补接线，要么在文档与回复中明确标注「已提供能力但未接入」，**不得含糊写成「已实现」**。
+- **按产物类型核对接线面**（只完成右列任一项即为断链）：
+
+| 新增产物 | 必须同时具备 | 常见遗漏 |
+|---|---|---|
+| Celery 任务 | `celery_app.py` 的 `TASK_MODULES` 登记 **+ 派发点**（`delay` / `apply_async` 调用方） | 只有任务函数与注册 |
+| 新表 / 模型 | 写入路径 **+ 读取路径** | 只有写入，或只有迁移建表 |
+| builtin 工具 | `.py` + `.yaml` + `providers.yaml` 登记 **+ 运行时挂载点** | 只有工具文件与登记 |
+| 新路由 | 路由函数 **+ 在 `register_routes` 中注册** + 调用方 | 只有路由函数 |
+| 新配置项 | admin 可编辑入口 **+ 运行时读取点** | 只有表字段 |
+| 新迁移 | `down_revision` 必须指向**已被 git 跟踪**的迁移文件（悬空引用会让全新 clone / CI 上 `alembic upgrade head` 直接崩溃，而本机因文件恰好存在而不报错）；分支合并后必须收敛为**单 head** | 指向未跟踪的迁移文件；多分支各留一个 head |
+
+- **用调用方搜索验证，不要只信单测**：对新符号在全仓搜引用（排除 `api/test/**` 与文档），若命中只有「定义处」与「测试处」，即为断链。**单测全绿不代表能跑起来。**
+- **中间层核对字段透传**：新增字段若需跨层（服务 → 聚合 → 工具 → 前端）传递，逐层确认未被丢弃；聚合/序列化处「只挑几个字段」的白名单式赋值是丢字段高发点。同理，过滤条件必须确保**每个检索分支都受约束**，不得有分支绕过。
+- **收尾自检写进回复**：宣告任务完成时，用一行点明关键新增能力的入口（如「L2 触发入口：`POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2`」）。这既是对上述要求的自证，也让审查者能直接复核，而不必回读全部 diff。
 
 ## 前端 i18n 规范（强制规则）
 
@@ -39,8 +93,25 @@
 - **字典按板块模块化组织**：i18n 字典位于 `ui/src/i18n/messages/<locale>/`（`<locale>` 为 `zh-CN`/`en-US`），按顶层板块一文件（`common.ts`、`layout.ts`、`admin/` 等），`admin/` 目录内再按子模块拆文件（`admin/customerUsers.ts`、`admin/adminUsers.ts`）。**禁止**回退为单文件巨型字典（`messages/zh-CN.ts` / `en-US.ts` 已废弃）；新增板块时新建对应模块文件，并在目录 `index.ts` 中注册聚合。
 - **结构必须镜像且同步增改**：`zh-CN/` 与 `en-US/` 目录结构必须一致（同路径必有同文件）。新增/修改文案时，**同时**在 zh-CN 与 en-US 的对应板块文件各改一处，不允许只改一侧；删除/重命名键同理两侧同步。
 - **保持 zh/en 键集合一致**：新增文案后运行 `npx vitest run src/i18n/__tests__/parity.spec.ts` 校验。该测试递归断言 zh-CN 与 en-US 叶子键集合完全一致，缺键会直接失败并报出缺失路径；**提交前必须通过**。
+- **引用的键必须真实存在**：同一 parity 测试还会扫描 `ui/src` 全部 `t('...')` / `$t('...')` 字面量调用，断言每个键都能在字典中解析。**禁止**出现「代码引用的键在字典里不存在」——最常见成因是给板块字典多包了一层命名空间（如文件内写成 `{ desktopClient: { title } }`，实际路径变成 `admin.desktopClientConfig.desktopClient.title`，与组件引用的 `admin.desktopClientConfig.title` 对不上），届时整块文案会退化成显示裸键。新增/改写字典后若报出 `(引用位置: ...)`，按提示修正引用的键路径或补齐字典键；**提交前必须通过**。
 - **不硬编码语境文案的归属**：一个语义单位（如删除确认标题、表单 label + placeholder）归入其所属页面的板块命名空间下（如用户管理页文案统一放 `admin.customerUsers.*`），复用高频通用词放 `common.*`，不要为凑数随意铺散或复制整段键。
 - **消息插值用 i18n 语法**：含动态值的文案在字典里写成 `删除用户：{name}`，代码侧用 `t('...', { name })`，不要用字符串拼接代替。
+
+## 系统配置复用 admin 板块（强制规则）
+
+新增「公共 AI 配置」与「系统提示词」时，**必须复用 admin 端既有的两个管理板块**，禁止在代码里硬编码新条目或绕过 admin API 直接写表。两个板块及其对应的后端表、seed 机制、admin 入口如下：
+
+| 板块 | admin 入口 | 后端表 | seed 机制 | admin 可编辑范围 |
+|---|---|---|---|---|
+| 公共 AI 配置 | `/admin/public-ai-features`（`PublicAIFeatureConfigView.vue`） | `public_ai_feature_config` | `PublicAIFeatureService._BUILTIN_FEATURES` + `ensure_builtin_features()` 启动时补齐 | 模型绑定 / 开关 / fallback_tier / billable |
+| 系统提示词 | `/admin/system-knowledge` 第二个页签 `prompts`（`AdminSystemKnowledgeView.vue`） | `prompt_template` | `api/internal/core/prompts/<category>/<key>.yaml` + `index.yaml` 清单 + `PromptSyncService` 同步；通用 agent 身份类 prompt 走 `system_prompts.yaml` + `SystemPromptLibraryService` 同步到「系统提示词库」知识库 | content / name / description / variables（`source=custom` 不被 YAML 覆盖） |
+
+规则：
+- **新增公共 AI 配置**（如新功能的 feature_key、新增模型档位策略等）：必须在 `PublicAIFeatureService._BUILTIN_FEATURES` 注册 feature_key + feature_name + feature_category + fallback_tier + billable，由 `ensure_builtin_features()` 写入 `public_ai_feature_config` 表；管理员在 `/admin/public-ai-features` 板块为其绑定模型/开关。**禁止**在业务代码里直接 INSERT/UPDATE `public_ai_feature_config`，或硬编码 feature_key→model_config_id 映射绕过该表。
+- **新增系统提示词**（如新 Agent 的身份 prompt、新分类器/规划器/反思 prompt、新执行模式的 system prompt 等）：必须把 prompt 内容写入 `api/internal/core/prompts/` 下对应 YAML 文件，并在 `index.yaml`（或 `system_prompts.yaml` 的 `prompts:` 清单）登记 `key`；运行时通过 `SystemPromptLibraryService.get_prompt_or_default()` / `PromptTemplate` 查询读取。**禁止**把新 prompt 字符串直接写在 `.py` 代码里（多行字符串、常量拼接、f-string 形式均属硬编码）。运行时读取顺序：DB（admin 编辑过的 `source=custom` 版本） > YAML seed（兜底）。
+- **双源保护不可绕过**：YAML 同步只覆盖 `source=catalog` 的记录；admin 编辑过的 `source=custom` 记录不被覆盖。新增条目时不要手动改 `source` 字段，让同步服务自动标记。
+- **优先扩展而非新建**：新需求先看是否能复用已有 feature_key / prompt_key（如 `conductor`、`conductor_fallback`、`agent_system_prompt_template`），避免功能相近的重复条目；确需新建时按 `feature_category` / `category` 归类到既有一级分类（routing/memory/assistant/conversation/chat/general/icon）。
+- **YAML 是数据而非代码**：`api/internal/core/prompts/*.yaml` 不计入代码硬编码；它是 seed 数据文件，与代码逻辑解耦，便于部署/数据卷重建时自动恢复。
 
 ## graphify
 

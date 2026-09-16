@@ -27,6 +27,7 @@ export default  {
         'After unpublishing, the app will be removed from the App Store, and the WebApp and published social channels will stop working.',
       cancelPublishSuccess: 'The app has been unpublished and removed from the App Store.',
       updateDraftFailed: 'Failed to update the draft app configuration',
+      loadGraphFailed: 'Failed to load the workflow graph',
       workflowNotDebuggedTitle: 'Workflow not debugged',
       workflowNotDebuggedContent:
         'This workflow has not been debugged successfully. Publish it anyway? Doing so will update the draft config and publish it to the workflow marketplace.',

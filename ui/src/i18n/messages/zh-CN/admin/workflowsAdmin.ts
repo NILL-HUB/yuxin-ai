@@ -35,6 +35,7 @@ export default  {
       },
       actions: {
         edit: '进入编辑',
+        preview: '预览',
         makePublic: '设为公开',
         makePrivate: '设为私有',
         offline: '下架',

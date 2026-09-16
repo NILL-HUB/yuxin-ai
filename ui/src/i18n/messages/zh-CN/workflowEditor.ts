@@ -43,6 +43,7 @@ export default  {
     parameterType: '变量类型',
     parameterValue: '值',
     inputParameters: '输入参数',
+    inputData: '输入数据',
     outputData: '输出数据',
     referencePrefix: '引用 /',
     bindTool: '绑定插件',

@@ -37,6 +37,7 @@ export default  {
       },
       actions: {
         edit: 'Open editor',
+        preview: 'Preview',
         makePublic: 'Make public',
         makePrivate: 'Make private',
         offline: 'Offline',

@@ -82,7 +82,7 @@ const tValues: Record<string, string> = {
   'policyChange.target': 'Target',
   'policyChange.beforeConfig': 'Before config',
   'policyChange.afterConfig': 'After config',
-  'common.confirm': 'Confirm',
+  'common.actions.confirm': 'Confirm',
   'common.cancel': 'Cancel',
 }
 

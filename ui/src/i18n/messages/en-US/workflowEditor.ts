@@ -45,6 +45,7 @@ export default  {
     parameterType: 'Variable type',
     parameterValue: 'Value',
     inputParameters: 'Input Parameters',
+    inputData: 'Input Data',
     outputData: 'Output Data',
     referencePrefix: 'Reference /',
     bindTool: 'Bind Plugin',

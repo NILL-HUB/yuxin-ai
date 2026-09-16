@@ -10,8 +10,8 @@ const { isDark, toggleTheme } = useTheme()
   <button
     type="button"
     class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--aicss-radius)] border border-[var(--aicss-border)] bg-[var(--aicss-surface)] text-[var(--aicss-muted)] transition hover:border-[var(--aicss-border-strong)] hover:text-[var(--aicss-accent)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--aicss-accent)]"
-    :title="isDark ? t('theme.switchToLight') : t('theme.switchToDark')"
-    :aria-label="isDark ? t('theme.switchToLight') : t('theme.switchToDark')"
+    :title="isDark ? t('home.theme.switchToLight') : t('home.theme.switchToDark')"
+    :aria-label="isDark ? t('home.theme.switchToLight') : t('home.theme.switchToDark')"
     @click="toggleTheme"
   >
     <!-- 亮色主题显示月亮（提示可切换暗色）；暗色主题显示太阳 -->
