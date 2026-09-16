@@ -416,6 +416,17 @@ class RecycleBinService:
         if str(item.deleted_by) != str(account_id):
             raise ForbiddenException("无权限操作该回收站条目")
 
+    def _owner_account_context(self, item: RecycleBin) -> str | None:
+        """取出该条目的归属账号，用于按账号动态解析桌面 bridge。
+
+        仅 user/agent 来源的条目有真实归属账号（`deleted_by` 即账号 ID）；
+        admin 条目（`deleted_by_type=admin`）的 `deleted_by` 是管理员 ID，
+        不能当账号用，必须返回 None 让其退回静态配置，避免拿错账号去解析设备。
+        """
+        if item.deleted_by_type not in ("user", "agent"):
+            return None
+        return str(item.deleted_by) if item.deleted_by else None
+
     def _check_expire_deadline(self, item: RecycleBin) -> None:
         """已到留存期截止（expire_at <= now）的 pending 条目禁止恢复。
 
@@ -436,7 +447,11 @@ class RecycleBinService:
         if item.status != "pending":
             raise ValidateErrorException("该条目已恢复或已销毁，不能重复恢复")
         self._check_expire_deadline(item)
-        ok = restore_resource(item.resource_type, item.snapshot)
+        ok = restore_resource(
+            item.resource_type,
+            item.snapshot,
+            account_id=self._owner_account_context(item),
+        )
         if not ok:
             raise ValidateErrorException("恢复失败：目标资源已存在或系统提示词库不存在")
         item.status = "restored"
@@ -523,6 +538,7 @@ class RecycleBinService:
                 target_path=target_path,
                 check_device=True,
                 confirm_device_mismatch=confirm_device_mismatch,
+                account_id=account_id,
             )
         else:
             ok = restore_resource(item.resource_type, item.snapshot)
