@@ -101,7 +101,9 @@ curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/health
 
 ## 平台工具
 
-内置 `codex_os` provider 下三个工具已预挂载到首页助手（`assistant_agent_service`）：
+内置 `host_os` provider（展示名"本机文件操作"）下三个工具已预挂载到首页助手（`assistant_agent_service`）：
+
+> **命名说明**：该 provider 原名 `codex_os`，现目录与 provider name 均已更正为 `host_os`（`api/internal/core/tools/builtin_tools/providers/host_os/`，DB 侧由迁移 `q3d4e5f6a7b8` 迁移）。原 Codex CLI 链路（`run_os_task` 工具 + worker `/run` 端点 + `delete_guard`）已于 2026-09-08 **整体移除**，原因是 Codex 强依赖 OpenAI（ChatGPT 登录/API key + 地区限制），ToC 不可行且 Windows 沙箱为 experimental；DB 残留由迁移 `0a1b2c3d4e6f` 清理。现存三件套为**纯 Python 自研**（`os_automation_worker.py` 中已无任何 Codex 依赖），`providers.yaml` 描述即"纯 Python 实现，不依赖外部 CLI"。**不要把 `host_os` 理解为依赖 Codex。**
 
 - `os_file_task`：op=`read`（支持分页）/ `search`（ripgrep）/ `patch`（V4A）。
   `patch` 默认 `mode=apply` 直接修改（写前自动快照）；`mode=preview` 只读 dry-run 预检查。

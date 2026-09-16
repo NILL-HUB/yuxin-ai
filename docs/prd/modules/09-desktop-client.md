@@ -36,7 +36,8 @@ Electron 主进程（desktop/main.js，唯一入口）
 │     托盘 tray.js（关闭驻留/显示/真退出停 worker）
 │     系统通知（worker 异常/更新可用）
 │     开机自启 IPC（app.setLoginItemSettings）
-│     自动更新 updater.js（electron-updater，publish 指向更新服务器占位）
+│     自动更新 updater.js（electron-updater，publish.provider=generic，
+│       url=https://openllm.cloud/desktop-updates）
 ├─ 凭证 credential-store.js
 │     safeStorage（Windows DPAPI）加密存取 access_token（userData/credential.bin）
 │     与 Web UI localStorage 双向同步
@@ -57,7 +58,9 @@ Electron 主进程（desktop/main.js，唯一入口）
 - PyInstaller spec `api/scripts/pyinstaller/worker.spec` 产出 `api/scripts/pyinstaller/dist/yujianwo-worker.exe`（hiddenimports 显式声明 4 个 worker 模块）。
 - computer worker 的 `pyautogui`/`Pillow` 依赖族经 spec 内 `collect_all` 显式打进 exe（worker 内为延迟 import，静态分析扫不到），使桌面端安装包开箱即可真正操作鼠标/键盘/截屏，无需用户额外装 Python 依赖。
 - worker 间 token 由主进程 `crypto.randomBytes` 生成注入 env；全部仅回环监听。
-- 打包依赖：浏览器/唤醒词运行时二进制（Chromium/模型）不在 PyInstaller 内——浏览器 worker 需 `PLAYWRIGHT_BROWSERS_PATH`、唤醒词需 `WAKE_WORD_MODEL_DIR`；缺失时对应能力报清晰错误（os/computer 不受影响）。
+- 打包依赖：浏览器/唤醒词运行时二进制（Chromium/模型）不在 PyInstaller 内——浏览器 worker 依赖 `playwright` + `playwright install chromium`，唤醒词 worker 依赖 `sounddevice`/`numpy`/`openwakeword`；缺失时对应 worker 启动即报明确依赖缺失错误（os/computer 不受影响）。
+>
+> **历史注记**：早期版本此处提到 `PLAYWRIGHT_BROWSERS_PATH` / `WAKE_WORD_MODEL_DIR` 两个环境变量，但代码中并未读取它们；worker 各自解析的是 `BROWSER_AUTOMATION_*` 与 `WAKE_WORD_*`（keyword/endpoint/token/engine）系列变量。
 
 ### 1b. cua-driver 后台计算机控制托管
 
@@ -123,7 +126,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 - Worker exe（已装 PyInstaller 时）：`cd api/scripts/pyinstaller && pyinstaller --clean --noconfirm worker.spec`。
 - NSIS 安装包：`cd desktop && npm run dist`（自动先跑 `build:ui` 与 `stage:cua` 把 cua-driver 二进制 stage 到 `desktop/vendor/cua-driver/`；electron-builder 输出固定 `desktop/dist-nsis/`；`extraResources` 携带 `ui-dist`、`yujianwo-worker.exe` 与 `cua-driver/`）。
 - 打包环境变量（NSIS 资源下载失败时）：`ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`。
-- 签名：`signAndEditExecutable: false`，正式发布需代码签名证书；publish.url 为占位。
+- 签名：`signAndEditExecutable: false`，正式发布需代码签名证书；`publish` 已指向 `https://openllm.cloud/desktop-updates`（generic provider），更新服务器目录需自行托管安装包与 `latest.yml`。
 
 ## 验证
 
@@ -133,7 +136,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 
 ## 首版范围与后续
 
-- 已交付（2026-09-08）：单 exe worker 托管、服务器地址注入、托盘/通知/自启/更新框架、safeStorage 凭证同步、设备面板完善、NSIS 打包验证（`钰见我 Setup 0.1.0.exe`）。
+- 已交付（2026-09-08）：单 exe worker 托管、服务器地址注入、托盘/通知/自启/更新框架、safeStorage 凭证同步、设备面板完善、NSIS 打包验证（`desktop/package.json` 未设 `productName`，安装包名取自 `name=yujianwo-desktop`；仓库内 `desktop/dist-nsis/` 现存产物为更名前构建的 `钰心AI Setup 0.1.0.exe`，重新构建会按当前配置产出新名）。
 - 已交付（2026-09-09，窗口原生化，对标 Hermes）：移除默认应用菜单栏（`Menu.setApplicationMenu(null)`）；`titleBarStyle:'hidden'` + Windows `titleBarOverlay`（系统原生 min/max/close 叠加层，renderer 经 `navigator.windowControlsOverlay` 读取按钮区宽度避让）；自绘标题栏组件 `DesktopTitleBar.vue`（拖拽区 + 双击最大化 + 品牌名，fixed 毛玻璃悬浮，仅桌面环境渲染）；窗口位置/尺寸/最大化状态持久化（`window-state.js`）；布局以 CSS 变量 `--desktop-titlebar-h` 适配（Web 为 0，零影响）；worker 宿主存活看门狗修复（`GetExitCodeProcess` 探活替代 Windows 下不可用的 `os.kill(pid,0)`，宿主退出即自杀，含 PyInstaller onefile 双层进程）。
 - 已交付（2026-09-09，连接配置与 CORS 修复）：admin 端新增"桌面客户端连接地址"配置（`desktop_client_config` 表单行 JSONB + `GET/PUT /admin/desktop-client-config` + `AdminDesktopClientConfigView.vue`），`/desktop-config` 优先返回配置地址、未配置/DB 异常回退同源；`DESKTOP_ENTRY_ORIGIN` 支持环境变量覆盖；修复 `onHeadersReceived` CORS 通配符 + 凭据非法组合（改为回显请求 Origin）。
 - 已交付（2026-09-11，电脑控制开箱可用）：worker exe 打包 `pyautogui`/`Pillow` 依赖族，桌面端无需额外装 Python 依赖即可真实操作鼠标/键盘/截屏（实测移动鼠标与截图通过）；重新产出 NSIS 安装包。
