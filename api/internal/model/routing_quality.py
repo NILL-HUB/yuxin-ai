@@ -87,15 +87,33 @@ class RoutingOptimizationSuggestionModel(Base):
 
 
 class PolicyChangeDraftModel(Base):
+    """策略变更草稿（已泛化为**通用 admin 变更草稿**，设计 §5.2）。
+
+    泛化说明：
+    - ``suggestion_id`` 可空——通用草稿（如 builtin_tool 的启停建议）不来自
+      路由调优建议。路由路径仍会写入它，既有取值保持兼容。
+    - ``policy_type`` 语义扩展为**板块标识**（承载任意 admin 板块，如
+      ``builtin_tool`` / ``prompt_template``）；路由三个既有取值
+      （``model_routing`` / ``tool_policy`` / ``agent_policy``）保持不变。
+    - 无任何外键（与原设计一致）：草稿是台账，主体被删也要留住痕迹。
+    """
+
     __tablename__ = "policy_change_draft"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_policy_change_draft_id"),
         Index("policy_change_draft_suggestion_id_idx", "suggestion_id"),
         Index("policy_change_draft_status_idx", "status"),
+        # 通用草稿需要「列出全部板块的待应用草稿」这条查询
+        Index(
+            "policy_change_draft_status_created_idx",
+            "status",
+            "created_at",
+        ),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    suggestion_id = Column(UUID, nullable=False)
+    # 来源调优建议；通用草稿为 NULL（路由路径仍写入，保持兼容）
+    suggestion_id = Column(UUID, nullable=True)
     policy_type = Column(String(64), nullable=False)
     target_id = Column(String(128), nullable=False, server_default=text("''::character varying"))
     before_config = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
