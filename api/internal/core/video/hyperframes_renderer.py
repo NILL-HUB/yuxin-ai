@@ -14,12 +14,16 @@
    因此本模块的判定是「退出码为 0 **且** 产物存在非空 **且** ffprobe 能读出正时长」，
    三者同时满足才返回成功；任一不满足一律抛错，交给上层重试，
    绝不把半成品当成品入库。
+6. **`npx` 必须经 `shutil.which` 解析**（Windows 实测）：Windows 上 npx 实际是
+   `npx.CMD`，而 `subprocess` 不带 shell 时按无扩展名解析不到，直接抛
+   `FileNotFoundError [WinError 2]`。故命令首元素用解析后的真实路径，不用裸 `npx`。
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
@@ -51,6 +55,16 @@ class RenderEnvironmentError(RuntimeError):
 
 class RenderFailedError(RuntimeError):
     """渲染失败（CLI 报错 / 产物缺失 / 产物无效）。"""
+
+
+def _resolve_executable(name: str) -> str:
+    """把可执行名解析为真实路径（遵循 PATH 与 Windows PATHEXT）。
+
+    Windows 实测：`npx` 实际是 `npx.CMD`，而 `subprocess` 不带 shell 时按无扩展名
+    解析不到，会抛 `FileNotFoundError [WinError 2]`。故统一用 `shutil.which` 解析；
+    解析不到时原样返回，交运行时 PATH 兜底（Linux 容器内通常可直接命中）。
+    """
+    return shutil.which(name) or name
 
 
 def build_render_env(settings: Any) -> dict[str, str]:
@@ -87,7 +101,7 @@ def build_render_command(
 
     version = getattr(settings, "HYPERFRAMES_CLI_VERSION", "") or "0.8.42"
     return [
-        "npx",
+        _resolve_executable("npx"),
         "--yes",
         f"hyperframes@{version}",
         "render",
@@ -107,7 +121,9 @@ def probe_duration_sec(video_path: Path, settings: Any) -> float:
     的探测思路，但那里解析的是 ffmpeg 的 stderr，产出的是「源文件时长」，
     与「渲染产物是否有效」是两件事，故此处独立实现。
     """
-    ffprobe = getattr(settings, "HYPERFRAMES_FFPROBE_PATH", "") or "ffprobe"
+    ffprobe = _resolve_executable(
+        getattr(settings, "HYPERFRAMES_FFPROBE_PATH", "") or "ffprobe"
+    )
     cmd = [
         ffprobe,
         "-v",
@@ -161,9 +177,13 @@ def render_composition(
     """在 project_dir 内渲染 composition 到 output_path，返回校验通过的产物路径。
 
     `runner` / `prober` 为测试注入点（默认走真实 subprocess 与 ffprobe）。
+
+    两个路径**一律解析为绝对路径**再使用：CLI 以 project_dir 为 cwd 运行，
+    若传相对 `--output`，它会按 cwd 再拼一次，产物落到
+    `<project_dir>/<原相对路径>`（实测），随后校验就会找不到文件。
     """
-    project_dir = Path(project_dir)
-    output_path = Path(output_path)
+    project_dir = Path(project_dir).resolve()
+    output_path = Path(output_path).resolve()
     if not (project_dir / "index.html").is_file():
         raise RenderFailedError(f"工程目录缺少 index.html：{project_dir}")
 

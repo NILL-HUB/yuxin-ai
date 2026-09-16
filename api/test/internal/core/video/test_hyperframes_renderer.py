@@ -49,11 +49,25 @@ def test_build_render_command_pins_cli_version():
         _Settings(), output_path=Path("out.mp4"), quality="draft", fps=30
     )
 
-    assert cmd[0] == "npx"
+    assert Path(cmd[0]).name.lower().startswith("npx")
     assert "hyperframes@0.8.42" in cmd, "CLI 版本必须钉死以保证结果可复现"
     assert "render" in cmd
     assert "out.mp4" in " ".join(cmd)
     assert "--quality" in cmd and "draft" in cmd
+
+
+def test_render_command_resolves_npx_to_real_executable():
+    """Windows 上 npx 实为 npx.CMD，裸 `npx` 会 FileNotFoundError [WinError 2]。
+
+    必须用 shutil.which 解析后的真实路径，否则本机渲染链路直接崩在启动阶段。
+    """
+    import shutil
+
+    cmd = build_render_command(
+        _Settings(), output_path=Path("out.mp4"), quality="draft", fps=30
+    )
+
+    assert cmd[0] == (shutil.which("npx") or "npx")
 
 
 def test_unsupported_quality_rejected():
@@ -61,6 +75,36 @@ def test_unsupported_quality_rejected():
         build_render_command(
             _Settings(), output_path=Path("o.mp4"), quality="ultra", fps=30
         )
+
+
+def test_render_composition_normalises_relative_output_path(tmp_path, monkeypatch):
+    """相对 --output 会被 CLI 按 cwd（工程目录）再拼一层，产物落错位置。
+
+    实测：传 `--output proj/out.mp4` 且 cwd=proj 时，产物落在
+    `<proj>/proj/out.mp4`，随后校验找不到文件。故必须解析为绝对路径。
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "proj").mkdir()
+    (tmp_path / "proj" / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    captured = {}
+
+    def _runner(cmd, cwd, env, timeout):
+        captured["output_arg"] = cmd[cmd.index("--output") + 1]
+        Path(captured["output_arg"]).write_bytes(b"mp4")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    render_composition(
+        project_dir="proj",
+        output_path="proj/out.mp4",
+        settings=_Settings(),
+        runner=_runner,
+        prober=lambda path: 10.0,
+    )
+
+    assert Path(captured["output_arg"]).is_absolute(), (
+        "传给 CLI 的 --output 必须是绝对路径，否则会被按 cwd 二次拼接"
+    )
 
 
 def test_render_composition_raises_when_artifact_missing(tmp_path):
