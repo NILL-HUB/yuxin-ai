@@ -1,7 +1,6 @@
 """DeepThinkingAgent — 深度思考智能体。"""
 from __future__ import annotations
 
-import asyncio
 from contextlib import nullcontext
 import logging
 import mimetypes
@@ -53,6 +52,7 @@ from internal.core.agent.entities.sandbox_policy_entity import SandboxPolicy
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.core.agent.middleware import DeepTimelineMiddleware
 from internal.core.agent.usage_utils import track_language_model_usage
+from internal.lib.runtime_context import session_scope, to_thread_in_app_context
 
 logger = logging.getLogger(__name__)
 
@@ -1213,7 +1213,7 @@ class DeepThinkingAgent(FunctionCallAgent):
         if flask_app is not None and not is_active_app(flask_app):
             app_context = flask_app.app_context()
 
-        with app_context:
+        with app_context, session_scope():
             from app.http.module import injector  # noqa: PLC0415
             from internal.service import CosService  # noqa: PLC0415
 
@@ -1545,7 +1545,9 @@ class DeepThinkingAgent(FunctionCallAgent):
 
             try:
                 if not structured_document_mode and not skip_regular_deep_invoke:
-                    result = await asyncio.to_thread(
+                    # to_thread_in_app_context：新线程独立持有 scoped_session，
+                    # 需在退出时归还（deep_agent 内部会调用工具访问 DB）。
+                    result = await to_thread_in_app_context(
                         deep_agent.invoke,
                         {"messages": [HumanMessage(content=query)]},
                     )
@@ -2107,7 +2109,7 @@ class DeepThinkingAgent(FunctionCallAgent):
         if flask_app is not None and not is_active_app(flask_app):
             app_context = flask_app.app_context()
 
-        with app_context:
+        with app_context, session_scope():
             from app.http.module import injector  # noqa: PLC0415
             from internal.service import CosService  # noqa: PLC0415
 

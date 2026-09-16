@@ -27,7 +27,9 @@ from .language_model_service import LanguageModelService
 from .orchestrator_service import OrchestratorService
 from .retrieval_service import RetrievalService
 from .skill_service import SkillService
+from .memory.user_memory_recall import recall_user_memory_for_chat
 from internal.core.agent.agents import AgentQueueManager
+from internal.lib.runtime_context import session_scope
 
 
 logger = logging.getLogger(__name__)
@@ -305,6 +307,13 @@ class WebAppService(BaseService):
         #     SSE 生成器只负责转发事件。即使前端断线/刷新，任务仍在后台继续，
         #     确认授权后结果也会写入数据库，供会话恢复时读取。
         long_term_memory = token_buffer_memory.get_distant_summary(conversation) or (conversation.summary or "")
+        # 记忆读回闭环：WebApp 需登录，account 即当前登录用户，故与首页助手/我的应用
+        # 一致地注入其长期记忆（fail-open，不阻断对话）。
+        user_memory_text = recall_user_memory_for_chat(
+            account_id=account.id,
+            query=req.query.data,
+            conversation_id=str(conversation.id),
+        )
         sse_queue: "queue.Queue[Any]" = queue.Queue()
         _SENTINEL = object()
 
@@ -333,12 +342,15 @@ class WebAppService(BaseService):
                 if runtime_flask_app is not None
                 else nullcontext()
             )
-            with app_ctx:
+            # session_scope 与 app_context 组合：worker 线程退出时归还
+            # scoped_session，否则落库/reload 期间的事务会悬空占用连接。
+            with app_ctx, session_scope():
                 try:
                     for agent_thought in agent.stream({
                         "messages": [llm.convert_to_human_message(req.query.data, req.image_urls.data)],
                         "history": history,
                         "long_term_memory": long_term_memory,
+                        "user_memory": user_memory_text,
                     }):
                         event_id = str(agent_thought.id)
                         if agent_thought.event != QueueEvent.PING.value:

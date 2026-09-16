@@ -51,12 +51,14 @@ def recall_user_memory_for_chat(
     def _do_retrieve() -> None:
         try:
             from app.http import asgi_app as a
-            from app.http.app import app as _flask_app
+            from internal.lib.runtime_context import app_session_scope
             from internal.service.memory.digest_manager import DigestManager
             from internal.service.memory.retriever import MemoryRetriever
 
             char_budget = max(int(max_tokens) * 4, 500)
-            with _flask_app.app_context():
+            # 守护线程内必须用 app_session_scope：退出时归还 session，
+            # 否则检索开启的事务会以 `idle in transaction` 悬空占用连接。
+            with app_session_scope():
                 digest_manager = a._get_service(DigestManager)
                 retriever = MemoryRetriever(digest_manager=digest_manager)
                 user_id = str(account_id)

@@ -276,7 +276,11 @@ class WechatService(BaseService):
             query: str,
     ):
         """使用子线程创建会话信息，避免数据处理超过5s"""
-        with flask_app.app_context():
+        from internal.lib.runtime_context import app_session_scope
+
+        # 自建线程必须用 app_session_scope：退出时归还 session，
+        # 否则本线程内的大量 DB 读写会以 idle in transaction 悬空占用连接。
+        with app_session_scope():
             # 1.从语言模型中根据模型配置获取模型实例
             app = self.get(App, app_id)
             llm = self.language_model_service.load_language_model(app_config.get("model_config", {}))

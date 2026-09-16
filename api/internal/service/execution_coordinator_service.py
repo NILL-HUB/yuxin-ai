@@ -11,6 +11,7 @@ from internal.entity.execution_orchestration_entity import (
     TaskPlanItem,
 )
 from internal.entity.orchestrator_entity import ExecutionMode
+from internal.lib.runtime_context import run_in_app_context
 
 
 _SINGLE_SHOT_MODES = {
@@ -227,8 +228,10 @@ class ExecutionCoordinatorService:
         max_workers = min(len(items), _MAX_PARALLEL_WORKERS)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_map = {
+                # 线程池 worker 是独立线程，各自持有线程绑定的 scoped_session；
+                # 经 run_in_app_context 提交，保证每个 worker 退出时归还连接。
                 executor.submit(
-                    self._safe_execute_item,
+                    run_in_app_context(self._safe_execute_item),
                     item,
                     execution_mode,
                     context_map.get(item.task_id),
@@ -445,7 +448,9 @@ class ExecutionCoordinatorService:
             return self._execute_item(item, execution_mode, context)
         # 软超时：返回失败结果让协调器继续，但不强杀正在执行的 Agent/工具线程。
         executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(self._execute_item, item, execution_mode, context)
+        future = executor.submit(
+            run_in_app_context(self._execute_item), item, execution_mode, context
+        )
         try:
             return future.result(timeout=timeout)
         except TimeoutError:

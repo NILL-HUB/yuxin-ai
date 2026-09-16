@@ -1,6 +1,5 @@
 from collections import OrderedDict
 from datetime import UTC, datetime
-import asyncio
 import json
 import logging
 import math
@@ -21,6 +20,7 @@ from internal.entity.conversation_entity import (
     SuggestedQuestions, InvokeFrom, MessageStatus,
 )
 from internal.lib.helper import datetime_to_timestamp
+from internal.lib.runtime_context import to_thread_in_app_context
 from pkg.paginator import Paginator
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
@@ -735,7 +735,9 @@ class ConversationService(BaseService):
         """
         session = async_db.session_factory()
         if session is None:
-            return await asyncio.to_thread(self.get_recent_conversations, account, limit)
+            return await to_thread_in_app_context(
+                self.get_recent_conversations, account, limit
+            )
 
         safe_limit = max(1, min(limit, 1000))
         message_scan_limit = max(80, safe_limit * 30)
@@ -919,7 +921,7 @@ class ConversationService(BaseService):
         """
         session = async_db.session_factory()
         if session is None:
-            return await asyncio.to_thread(
+            return await to_thread_in_app_context(
                 self.get_conversation_messages_with_page,
                 conversation_id,
                 req,

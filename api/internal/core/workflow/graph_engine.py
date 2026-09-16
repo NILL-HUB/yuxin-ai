@@ -32,6 +32,8 @@ from datetime import UTC, datetime
 from typing import Any, AsyncIterator, Callable, Iterator
 from uuid import UUID
 
+from internal.lib.runtime_context import run_in_app_context
+
 from .entities.node_entity import BaseNodeData, NodeType
 from .entities.retry_entity import RetryConfig
 from .entities.variable_entity import VariableValueType
@@ -238,7 +240,9 @@ class GraphEngine:
             results: dict[UUID, tuple[dict[str, Any] | None, Exception | None, float]] = {}
             with ThreadPoolExecutor(max_workers=min(8, len(executable_nodes))) as executor:
                 future_to_node = {
-                    executor.submit(self._execute_node_safe, self._node_map[nid]): nid
+                    # worker 为独立线程：经 run_in_app_context 提交，退出时归还 session
+                    # （节点可能访问知识库/模型配置等 DB 资源）。
+                    executor.submit(run_in_app_context(self._execute_node_safe), self._node_map[nid]): nid
                     for nid in executable_nodes
                 }
                 for future in as_completed(future_to_node):
@@ -532,7 +536,8 @@ class GraphEngine:
                 # 重试耗尽后仍然失败，向上抛出由执行方推送 node_failed 事件
                 raise
 
-        return await asyncio.to_thread(self._execute_node, node)
+        # 同步节点走线程池：经 run_in_app_context 包装，线程退出时归还 session。
+        return await asyncio.to_thread(run_in_app_context(self._execute_node), node)
 
     async def _execute_node_safe_async(self, node: BaseNodeData) -> tuple[dict[str, Any] | None, Exception | None, float]:
         """安全执行单个节点（async 并行执行用），返回 (outputs, exception, elapsed_time)。

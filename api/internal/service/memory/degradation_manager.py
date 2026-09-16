@@ -146,32 +146,31 @@ class DegradationManager:
     def _check_pgvector(self) -> bool:
         """检查 pgvector 连通性（SELECT 1 + 验证向量扩展，2s 超时）。
 
-        Flask-SQLAlchemy 的 session 依赖 app context，后台线程中需主动推入。
+        ``session`` 是线程绑定的 ``scoped_session``：无论成功与否，都必须在
+        ``finally`` 中 ``remove()``，否则后台健康检查线程会持续把连接留在
+        ``idle in transaction``（健康检查每 30s 跑一次，泄漏累积极快）。
         """
         if self._db is None:
             return False
+        session = None
         try:
             from sqlalchemy import text
 
-            # 后台线程无 app context，需主动推入
-            if self._flask_app is not None:
-                with self._flask_app.app_context():
-                    with self._db.session() as session:
-                        session.execute(text("SELECT 1"))
-                        session.execute(
-                            text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
-                        ).fetchone()
-                    return True
-            else:
-                with self._db.session() as session:
-                    session.execute(text("SELECT 1"))
-                    session.execute(
-                        text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
-                    ).fetchone()
-                return True
+            session = self._db.sync_session
+            session.execute(text("SELECT 1"))
+            session.execute(
+                text("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            ).fetchone()
+            return True
         except Exception:
             logger.warning("pgvector 健康检查失败", exc_info=True)
             return False
+        finally:
+            if session is not None:
+                try:
+                    session.remove()
+                except Exception:
+                    logger.debug("pgvector 健康检查 session 释放失败（已忽略）", exc_info=True)
 
     def _check_redis(self) -> bool:
         """检查 Redis 连通性（PING，2s 超时）。"""

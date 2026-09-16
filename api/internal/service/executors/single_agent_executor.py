@@ -3,10 +3,7 @@ import logging
 import queue
 import threading
 import uuid
-from contextlib import nullcontext
 from dataclasses import dataclass, field
-
-from internal.context import current_app, has_app_context
 
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.execution_orchestration_entity import (
@@ -14,6 +11,7 @@ from internal.entity.execution_orchestration_entity import (
     TaskPlanItem,
 )
 from internal.entity.orchestrator_entity import ExecutionMode
+from internal.lib.runtime_context import run_in_app_context
 from internal.service.agent_task_executor import AgentTaskExecutor
 from internal.service.execution_coordinator_service import (
     ExecutionCoordinatorService,
@@ -79,7 +77,6 @@ class SingleAgentExecutor:
             # 通过线程 + queue.Queue 让 coordinator.execute() 在后台执行，
             # 主线程实时消费 agent.stream() 产出的 AgentThought 并 yield SSE
             sse_queue: "queue.Queue[Any]" = queue.Queue()
-            flask_app = current_app._get_current_object() if has_app_context() else None
             # 跟踪是否已通过流式发送了 answer（避免 _message_sse 重复累加）
             stream_state = {"has_streamed_answer": False}
 
@@ -104,36 +101,38 @@ class SingleAgentExecutor:
                     logger.debug("实时 SSE 转换失败", exc_info=True)
 
             def _run_coordinator() -> None:
-                app_ctx = flask_app.app_context() if flask_app is not None else nullcontext()
-                with app_ctx:
-                    try:
-                        executor = AgentTaskExecutor(
-                            agent_class=self.agent_class,
-                            agent_config=self.agent_config,
-                            tools=self.tools or [],
-                            llm=self.llm,
-                            history=self.history or [],
-                            query=query,
-                            long_term_memory=self.long_term_memory,
-                            user_memory=self.user_memory,
-                            event_emitter=_event_emitter,
-                        )
-                        coordinator = ExecutionCoordinatorService(
-                            executor=executor,
-                            cancel_token=self.cancel_token,
-                            subtask_registry=self.subtask_registry,
-                            request_id=message_id,
-                            plan_repairer=self.plan_repairer,
-                            escalation_policy_service=resolve_escalation_policy_service(),
-                        )
-                        results = coordinator.execute(plan)
-                        sse_queue.put((_RESULT_MARKER, results))
-                    except Exception as e:  # noqa: BLE001
-                        sse_queue.put((_ERROR_MARKER, e))
-                    finally:
-                        sse_queue.put(_SENTINEL)
+                try:
+                    executor = AgentTaskExecutor(
+                        agent_class=self.agent_class,
+                        agent_config=self.agent_config,
+                        tools=self.tools or [],
+                        llm=self.llm,
+                        history=self.history or [],
+                        query=query,
+                        long_term_memory=self.long_term_memory,
+                        user_memory=self.user_memory,
+                        event_emitter=_event_emitter,
+                    )
+                    coordinator = ExecutionCoordinatorService(
+                        executor=executor,
+                        cancel_token=self.cancel_token,
+                        subtask_registry=self.subtask_registry,
+                        request_id=message_id,
+                        plan_repairer=self.plan_repairer,
+                        escalation_policy_service=resolve_escalation_policy_service(),
+                    )
+                    results = coordinator.execute(plan)
+                    sse_queue.put((_RESULT_MARKER, results))
+                except Exception as e:  # noqa: BLE001
+                    sse_queue.put((_ERROR_MARKER, e))
+                finally:
+                    sse_queue.put(_SENTINEL)
 
-            thread = threading.Thread(target=_run_coordinator, daemon=True)
+            # run_in_app_context：进入 app 上下文并在退出时归还 session
+            # （自建线程不在 HTTP teardown / Celery after_return 的回收范围内）。
+            thread = threading.Thread(
+                target=run_in_app_context(_run_coordinator), daemon=True
+            )
             thread.start()
 
             results = None
@@ -141,7 +140,7 @@ class SingleAgentExecutor:
                 try:
                     item = sse_queue.get(timeout=15)
                 except queue.Empty:
-                    # 长任务（如 Codex OS 自动化 preview）执行期间持续输出心跳，
+                    # 长任务（如本机文件操作 preview）执行期间持续输出心跳，
                     # 避免 SSE 空闲超时把连接杀掉，也避免前端误以为流已中断。
                     yield self._keepalive_sse(conversation_id, message_id)
                     continue

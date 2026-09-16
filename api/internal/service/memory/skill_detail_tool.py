@@ -16,6 +16,8 @@ from uuid import UUID
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
+from internal.lib.runtime_context import app_session_scope
+
 
 class SkillDetailInput(BaseModel):
     """技能详情查询入参。"""
@@ -55,7 +57,7 @@ class SkillDetailTool(BaseTool):
         if self.flask_app is None:
             return "技能详情不可用：缺少应用上下文"
 
-        with self.flask_app.app_context():
+        with app_session_scope():
             try:
                 from app.http.app import injector
                 from internal.service.memory.digest_manager import DigestManager

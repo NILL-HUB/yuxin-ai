@@ -174,7 +174,12 @@ class AssistantAgentService(BaseService):
 
         def _worker() -> None:
             try:
-                with flask_app.app_context():
+                # 统一走 app_session_scope：进入上下文 + 退出必归还 session。
+                # 历史直接在 app_context 中跑 DB 而不 remove，导致线程退出后
+                # 连接停在 idle in transaction（见 internal/lib/runtime_context.py）。
+                from internal.lib.runtime_context import app_session_scope
+
+                with app_session_scope():
                     account = self.get(Account, account_id)
                     if account is None:
                         return
@@ -325,7 +330,7 @@ class AssistantAgentService(BaseService):
         }
         yield f"event: error\ndata:{json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    def _stream_direct_answer(self, req, account, conversation, message, routing_decision=None, _chat_started_at: float = 0, llm=None, tools=None):
+    def _stream_direct_answer(self, req, account, conversation, message, routing_decision=None, _chat_started_at: float = 0, llm=None, tools=None, user_memory_text: str = ""):
         """direct_answer 路径：真流式 LLM 调用，逐 token yield SSE 事件。
 
         如果指挥官已给出 direct_answer 内容（routing_decision.task_plan_summary.direct_answer），
@@ -337,6 +342,7 @@ class AssistantAgentService(BaseService):
                 传入时 DirectAnswerExecutor 直接使用，避免独立解析到不可用模型。
                 未传入时 DirectAnswerExecutor 走 get_feature_model() 自行解析（向后兼容）。
             tools: 知识库检索等工具（BaseTool 列表），direct_answer 阶段也能检索系统知识库。
+            user_memory_text: 外层召回的长期记忆文本，注入 system prompt 使简单问答不失忆。
         """
         from internal.entity.billing_metering_entity import BillingEventType
         from internal.service.billing_metering_service import BillingUsageAggregator
@@ -379,6 +385,7 @@ class AssistantAgentService(BaseService):
                 llm=llm,
                 tools=tools or [],
                 system_prompt_override=self._build_assistant_system_prompt(),
+                user_memory_text=user_memory_text,
             )
             # 真流式改造：直接 yield from executor.stream()，LLM 生成时即可逐 token yield
             # 绕过 coordinator.execute() 的同步收集，避免"等完整答案再假分块"的延迟
@@ -811,8 +818,16 @@ class AssistantAgentService(BaseService):
                 account_id = account.id
 
                 def _bg_write():
-                    """后台线程：进入 app context 后执行记忆写入。"""
-                    with flask_app.app_context():
+                    """后台线程：进入 app context 后执行记忆写入。
+
+                    必须用 app_session_scope 而非裸 `flask_app.app_context()`：
+                    线程内 `self.db.session.get(...)` 会开启事务，线程退出若不
+                    `db.session.remove()`，连接会停在 idle in transaction 直至
+                    连接池耗尽（这是实测到的泄漏元凶）。
+                    """
+                    from internal.lib.runtime_context import app_session_scope
+
+                    with app_session_scope():
                         try:
                             from app.http.app import injector
                             # 重新查询 account 对象，避免使用请求结束后变为 detached 的实例
@@ -905,7 +920,7 @@ class AssistantAgentService(BaseService):
                 for tool_name in ("os_file_task", "os_recycle_bin", "os_snapshot"):
                     os_tool_factory = (
                         self.app_config_service.builtin_provider_manager.get_tool(
-                            "codex_os",
+                            "host_os",
                             tool_name,
                         )
                     )
@@ -1021,6 +1036,7 @@ class AssistantAgentService(BaseService):
                     tools.append(todo_tool_factory())
             except Exception:
                 logger.warning("构建任务清单工具失败，不影响其他工具", exc_info=True)
+
         # 知识库工具：Agent 可在对话内为用户创建知识库板块。
         # 账号随请求维度透传（与 os_file_task / computer_action 同一注入点），
         # 工具内部据此加载 Account 并调用 KnowledgeBaseService.create_user_content_base。
@@ -1034,7 +1050,6 @@ class AssistantAgentService(BaseService):
                     tools.append(kb_tool_factory(account_id=str(account_id)))
             except Exception:
                 logger.warning("构建知识库工具失败，不影响其他工具", exc_info=True)
-
 
         # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
         # 同时挂载系统知识库（knowledge_scope='system'，admin 通过 enabled 开关控制），
@@ -1677,7 +1692,7 @@ class AssistantAgentService(BaseService):
                 )
                 return
             if execution_mode == "direct_answer":
-                yield from self._stream_direct_answer(req, account, conversation, message, routing_decision, _chat_started_at, llm=llm, tools=tools)
+                yield from self._stream_direct_answer(req, account, conversation, message, routing_decision, _chat_started_at, llm=llm, tools=tools, user_memory_text=user_memory_text)
                 # 与 single_agent 分支一致：从 message._collected_thoughts 读取流式期间
                 # 收集的 AgentThought（推理链/工具调用等），避免 reload 时思考内容丢失
                 collected_thoughts = getattr(message, '_collected_thoughts', None) or []
@@ -1702,6 +1717,7 @@ class AssistantAgentService(BaseService):
                     yield from self._stream_multi_agent(
                         req, account, conversation, message, routing_decision, llm, tools, history,
                         distant_summary=distant_summary,
+                        user_memory_text=user_memory_text,
                         invoke_from=invoke_from,
                         cancel_token=cancel_token,
                     )

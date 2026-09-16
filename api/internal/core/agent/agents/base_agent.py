@@ -14,6 +14,7 @@ from internal.core.agent.entities.agent_entity import AgentConfig, AgentState
 from internal.core.agent.entities.queue_entity import AgentResult, AgentThought, QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
 from internal.exception import FailException
+from internal.lib.runtime_context import session_scope
 from .agent_queue_manager import AgentQueueManager
 
 
@@ -156,7 +157,9 @@ class BaseAgent(Serializable, Runnable):
             app_context = nullcontext()
             if runtime_flask_app is not None and not is_active_app(runtime_flask_app):
                 app_context = runtime_flask_app.app_context()
-            with app_context:
+            # session_scope 与 app_context 组合：线程退出时归还 scoped_session，
+            # 否则图执行期间开启的事务会以 idle in transaction 悬空占用连接。
+            with app_context, session_scope():
                 try:
                     # 图节点已 async 化（_llm_node 使用 astream），同步 invoke 无法执行
                     # async 节点，因此在子线程内用 asyncio.run 驱动 ainvoke（每线程独立事件循环）
@@ -301,7 +304,8 @@ class BaseAgent(Serializable, Runnable):
             app_context = nullcontext()
             if runtime_flask_app is not None and not is_active_app(runtime_flask_app):
                 app_context = runtime_flask_app.app_context()
-            with app_context:
+            # 同上：续跑线程同样需要退出时归还 session。
+            with app_context, session_scope():
                 try:
                     # ainvoke(None)：不追加新输入，续跑 checkpoint 中 pending 的节点
                     asyncio.run(self._agent.ainvoke(None, self._resolve_checkpoint_config(config)))

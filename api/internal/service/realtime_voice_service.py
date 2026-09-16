@@ -357,21 +357,25 @@ class RealtimeVoiceService:
 
     @staticmethod
     def _stop_active_task(session: RealtimeVoiceSession, assistant_service) -> None:
+        from internal.lib.runtime_context import session_scope
         from internal.model import Account
 
         task_id = session.current_message_id
         if not task_id:
             session.cancel()
             return
-        try:
-            account = assistant_service.db.session.query(Account).filter_by(id=session.account_id).first()
-        except Exception:
-            account = None
-        if account is not None:
+        # session_scope：本方法在事件循环线程内同步执行 DB 访问，
+        # 退出时归还 session，避免该线程的事务长期悬空。
+        with session_scope():
             try:
-                assistant_service.stop_chat(UUID(task_id), account, service=assistant_service)
-            except Exception as error:
-                logger.warning("realtime voice stop_chat failed: %s", error)
+                account = assistant_service.db.session.query(Account).filter_by(id=session.account_id).first()
+            except Exception:
+                account = None
+            if account is not None:
+                try:
+                    assistant_service.stop_chat(UUID(task_id), account, service=assistant_service)
+                except Exception as error:
+                    logger.warning("realtime voice stop_chat failed: %s", error)
         session.cancel()
 
     @staticmethod
@@ -382,38 +386,34 @@ class RealtimeVoiceService:
         transcript: str,
         turn_id: str,
     ) -> None:
-        from app.http.app import app as flask_app
+        from internal.lib.runtime_context import app_session_scope
         from internal.model import Account
 
-        try:
-            account = assistant_service.db.session.query(Account).filter_by(id=session.account_id).first()
-        except Exception:
-            account = None
-        if account is None:
-            return
+        # app_session_scope 同时负责「进入 app 上下文」与「退出归还 session」，
+        # 替代原先手写的 flask_app.app_context() + finally remove 组合。
+        with app_session_scope():
+            try:
+                account = assistant_service.db.session.query(Account).filter_by(id=session.account_id).first()
+            except Exception:
+                account = None
+            if account is None:
+                return
 
-        req = SimpleNamespace(
-            query=SimpleNamespace(data=transcript),
-            conversation_id=SimpleNamespace(data=""),
-            image_urls=SimpleNamespace(data=[]),
-            confirm_deep_thinking=SimpleNamespace(data=False),
-        )
-        try:
-            with flask_app.app_context():
+            req = SimpleNamespace(
+                query=SimpleNamespace(data=transcript),
+                conversation_id=SimpleNamespace(data=""),
+                image_urls=SimpleNamespace(data=[]),
+                confirm_deep_thinking=SimpleNamespace(data=False),
+            )
+            try:
                 generator = assistant_service.chat(req, account)
                 RealtimeVoiceService._speak_agent_stream(generator, audio_service, session, turn_id)
-        except Exception as error:
-            logger.exception("realtime voice agent turn failed: %s", error)
-            session.queue.put_nowait({
-                "event": "rt.error",
-                "data": {"turn_id": turn_id, "message": "Agent 执行失败"},
-            })
-        finally:
-            from internal.extension.database_extension import db
-
-            remove_session = getattr(db.session, "remove", None)
-            if callable(remove_session):
-                remove_session()
+            except Exception as error:
+                logger.exception("realtime voice agent turn failed: %s", error)
+                session.queue.put_nowait({
+                    "event": "rt.error",
+                    "data": {"turn_id": turn_id, "message": "Agent 执行失败"},
+                })
 
     @staticmethod
     def _speak_agent_stream(

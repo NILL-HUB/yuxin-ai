@@ -14,6 +14,7 @@ from openai import APIConnectionError
 from pydantic import BaseModel, Field
 
 from internal.entity.app_entity import AppStatus
+from internal.lib.runtime_context import session_scope
 from internal.model import App, Workflow
 from pkg.sqlalchemy import SQLAlchemy
 
@@ -212,7 +213,7 @@ class PublicAgentRegistryService(BaseService):
     ) -> list[dict[str, Any]]:
         """在需要时显式补充 Flask application context，再执行公开Agent检索。"""
         if flask_app is not None and not is_active_app(flask_app):
-            with flask_app.app_context():
+            with flask_app.app_context(), session_scope():
                 return self.search_public_apps(
                     query=query,
                     limit=limit,

@@ -19,6 +19,7 @@ from .knowledge_vector_service import KnowledgeVectorService
 from .rerank_service import RerankService
 from .visual_embedding_service import VisualEmbeddingService
 from internal.core.agent.entities.tool_policy_entity import KNOWLEDGE_RETRIEVAL_TOOL_NAME
+from internal.lib.runtime_context import app_session_scope
 
 
 # 分层检索的作用域优先级顺序：用户个人 → 项目 → 租户 → 系统
@@ -621,7 +622,9 @@ class RetrievalService(BaseService):
                 tags=tags,
                 score_threshold=score_threshold,
             )
-            with flask_app.app_context():
+            # app_session_scope：工具可能在 Agent 自建线程内调用，
+            # 退出时归还 session（否则检索事务悬空占用连接）。
+            with app_session_scope():
                 # 调用分层检索：按 knowledge_scope 分层独立检索并保留来源作用域
                 search_results = self.layered_search(
                     account_id=account_id,

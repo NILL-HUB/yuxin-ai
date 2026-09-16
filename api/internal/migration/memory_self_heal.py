@@ -291,13 +291,14 @@ def _build_payload(node: dict) -> dict:
 
 
 def _run_repair(nodes: list[dict]) -> dict:
-    """进入 Flask app context 执行重建。返回统计。"""
+    """进入 app 上下文执行重建。返回统计。"""
     # 延迟 import：仅在 --repair 时加载应用
-    from app.http.app import app as flask_app
+    from internal.lib.runtime_context import app_session_scope
     from internal.service.memory.ledger_writer import LedgerWriter
 
     stats = {"repaired": 0, "failed": 0, "skipped": []}
-    with flask_app.app_context():
+    # app_session_scope：退出时归还 session（重建会写 pgvector）。
+    with app_session_scope():
         from app.http.app import injector
 
         ledger_writer = injector.get(LedgerWriter)

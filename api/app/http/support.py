@@ -10,16 +10,15 @@
 """
 
 import asyncio
-import contextvars
 import json
 import logging
 import time
 from types import SimpleNamespace
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from quart import Response, request
 
-from app.http.app import app as flask_app
+from app.http.app import app as flask_app  # noqa: F401  兼容外部按模块属性引用
 from app.http.module import injector
 from internal.service.account_service import AccountService
 from internal.service.app_runtime_service import AppRuntimeService
@@ -54,11 +53,14 @@ def _load_runtime_context(app_id, account_id, image_urls):
     """在运行时容器上下文中加载 account / draft_app_config / async llm。
 
     同步 DB 操作集中在线程中执行（配合 asyncio.to_thread 调用），
-    避免阻塞 uvicorn 事件循环。
+    避免阻塞 uvicorn 事件循环。内部走 app_session_scope：本函数可能被裸
+    `asyncio.to_thread` 直接调用（见 chat_routes），线程退出必须归还 session。
     """
+    from internal.lib.runtime_context import app_session_scope
+
     _services = _get_services()
     language_model_service, account_service, app_service = _services[1], _services[2], _services[3]
-    with flask_app.app_context():
+    with app_session_scope():
         account = account_service.get_account(account_id)
         draft_app_config = app_service.get_draft_app_config(app_id, account)
         resolution = language_model_service.resolve_runtime_language_model(
@@ -71,10 +73,16 @@ def _load_runtime_context(app_id, account_id, image_urls):
 
 
 def _load_account(account_id):
-    """在线程中加载 account（同步 DB 访问，配合 asyncio.to_thread 调用）。"""
+    """在线程中加载 account（同步 DB 访问，配合 asyncio.to_thread 调用）。
+
+    内部走 app_session_scope：本函数可能被裸 `asyncio.to_thread` 直接调用
+    （见 `_resolve_account`），线程退出必须归还 session。
+    """
+    from internal.lib.runtime_context import app_session_scope
+
     _services = _get_services()
     account_service = _services[2]
-    with flask_app.app_context():
+    with app_session_scope():
         return account_service.get_account(account_id)
 
 
@@ -151,20 +159,17 @@ def _sse_response(generator):
     - 断连协作：客户端断开（CancelledError）时调用 generator.close()，
       触发生成器 finally 落库，避免孤儿线程继续运行。
     """
-    from app.http.app import app as _flask_app
 
     def _next_in_context(gen):
-        with _flask_app.app_context():
+        # 统一走 app_session_scope：进入上下文 + 退出必归还 session
+        # （历史为本地重复实现，见 internal/lib/runtime_context.py 的说明）
+        from internal.lib.runtime_context import app_session_scope
+
+        with app_session_scope():
             try:
                 return next(gen)
             except StopIteration:
                 return None
-            finally:
-                from internal.extension.database_extension import db
-
-                remove_session = getattr(db.session, "remove", None)
-                if callable(remove_session):
-                    remove_session()
 
     async def _stream():
         last_activity = time.monotonic()
@@ -246,12 +251,15 @@ def _sse_response(generator):
 
 
 async def _resolve_account(account_id_override: str | None = None):
-    """从 Authorization Bearer token 解析账号并加载。
+    """从 Authorization Bearer token 解析**用户端账号**并加载。
 
-    凭证优先级（修复 Flask→Quart 迁移后的鉴权/断流问题）：
+    凭证优先级：
     1. 用户 JWT：sub 即 account_id；若请求显式携带 account_id，则必须一致（防冒用）。
-    2. 管理员 JWT：放行，account_id 以请求参数为准（管理员调试任意应用的场景）。
-    3. 无 token：仅当显式携带 account_id 时回退加载（公开端点兼容），否则 401。
+    2. 无 token：仅当显式携带 account_id 且为公开只读端点时回退（公开端点兼容），否则 401。
+
+    **管理员 token 不再回落为用户账号**：管理员账号与用户端账号完全解耦，管理员
+    不得以用户身份访问用户端接口（如需使用用户侧功能，请走用户端注册账号）。
+    管理端专用的 AI 辅助端点请改用 `_resolve_admin_ai_account()`。
 
     返回 (account, None) 或 (None, 错误响应)。
     """
@@ -274,60 +282,36 @@ async def _resolve_account(account_id_override: str | None = None):
     token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
 
     if token:
-        # 1) 用户 JWT（优先：sub 即账号 ID；admin token 带 realm=admin，跳过）
+        # 1) 用户 JWT（sub 即账号 ID；admin token 带 realm=admin，直接拒绝）
         try:
             from internal.service.jwt_service import JwtService
 
             payload = JwtService.parse_token(token)
-            if payload.get("realm") != "admin":
-                account_id = str(payload.get("sub") or "")
-                if account_id and account_id.lower() != "none":
-                    if _is_user_api_blocked(request.path, request.method):
-                        return None, _err("forbidden", "该接口仅管理员可用", 403)
-                    if requested_id and requested_id != account_id:
-                        return None, _err("forbidden", "无权访问该账号", 403)
-                    try:
-                        await _to_thread(
-                            _get_services()[2].validate_access_session,
-                            payload,
-                        )
-                    except UnauthorizedException:
-                        return None, _err("unauthorized", "登录会话已失效，请重新登录", 401)
-                    account = await asyncio.to_thread(_load_account, UUID(account_id))
-                    return account, None
+            if payload.get("realm") == "admin":
+                # 管理员 token 不得冒充用户端身份
+                return None, _err("forbidden", "管理员账号不可访问用户端接口", 403)
+            account_id = str(payload.get("sub") or "")
+            if account_id and account_id.lower() != "none":
+                if _is_user_api_blocked(request.path, request.method):
+                    return None, _err("forbidden", "该接口仅管理员可用", 403)
+                if requested_id and requested_id != account_id:
+                    return None, _err("forbidden", "无权访问该账号", 403)
+                try:
+                    await _to_thread(
+                        _get_services()[2].validate_access_session,
+                        payload,
+                    )
+                except UnauthorizedException:
+                    return None, _err("unauthorized", "登录会话已失效，请重新登录", 401)
+                account = await asyncio.to_thread(_load_account, UUID(account_id))
+                return account, None
         except UnauthorizedException:
             pass
         except Exception:
             logger.exception("async 端点解析用户凭证失败")
             return None, _err("unauthorized", "登录凭证无效", 401)
 
-        # 2) 管理员 JWT（用户 token 解析失败时尝试）
-        try:
-            from internal.service.admin_user_service import AdminUserService
-
-            admin = await _to_thread(
-                _get_service(AdminUserService).get_current_admin_from_token, token
-            )
-            if not admin:
-                return None, _err("unauthorized", "管理员凭证无效", 401)
-            if not requested_id:
-                admin_account_id = (
-                    admin.get("account_id")
-                    if isinstance(admin, dict)
-                    else getattr(admin, "account_id", None)
-                )
-                if not admin_account_id:
-                    return None, _err("invalid_param", "缺少 account_id 参数", 400)
-                requested_id = str(admin_account_id)
-            account = await asyncio.to_thread(_load_account, UUID(requested_id))
-            return account, None
-        except UnauthorizedException:
-            return None, _err("unauthorized", "管理员凭证无效", 401)
-        except Exception:
-            logger.exception("async 端点解析管理员凭证失败")
-            return None, _err("unauthorized", "登录凭证无效", 401)
-
-    # 3) 无 token：仅允许公开只读端点显式携带 account_id 时回退，否则拒绝。
+    # 2) 无 token：仅允许公开只读端点显式携带 account_id 时回退，否则拒绝。
     #    - 写操作一律拒绝：防止匿名攻击者仅凭目标 account_id 冒充任意账号执行
     #      修改/创建/删除（C-1 认证绕过修复）。
     #    - 读操作同样执行 _is_user_api_blocked 封锁检查：用户端已收敛的接口
@@ -349,6 +333,69 @@ async def _resolve_account(account_id_override: str | None = None):
     except Exception:
         logger.exception("async 端点加载 account 失败: account_id=%s", requested_id)
     return None, _err("account_not_found", "账号不存在", 404)
+
+
+class _SystemBorneAccount:
+    """管理端 AI 辅助调用使用的**系统身份**占位。
+
+    管理员账号与用户端账号完全解耦，管理端 AI 辅助（Prompt 优化 / 代码助手 /
+    Schema 助手）不得借用某个用户账号，也不应把成本记到任何用户头上。
+    `AIService` 各方法在 `account_id is None` 时跳过计费（成本由系统承担），
+    因此这里把 `.id` 暴露为 None，业务层按"无账号"处理即可。
+    """
+
+    id = None
+
+
+async def _resolve_admin_ai_account():
+    """解析**管理端 AI 辅助端点**的调用身份。
+
+    仅接受有效的管理员 JWT；返回系统身份占位（`id=None`），使 AI 调用不计入
+    任何用户配额（系统承担成本）。**不会**回落到用户账号，保证管理员与用户端
+    账号隔离。
+
+    错误语义：
+    - 无 token / token 无法解析 / 非有效管理员 → 401（未认证）。
+    - 携带**有效用户 JWT** 访问 → 403（已认证但该接口仅管理员可用），与
+      `_is_user_api_blocked` 的 403 语义一致。
+
+    返回 (account, None) 或 (None, 错误响应)。
+    """
+    from internal.exception import UnauthorizedException
+
+    auth_header = request.headers.get("Authorization") or ""
+    token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    if not token:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+
+    # 用户 JWT 携带的是用户端身份，明确拒绝（403），避免被误判为"未登录"
+    try:
+        from internal.service.jwt_service import JwtService
+
+        payload = JwtService.parse_token(token)
+        if payload.get("realm") != "admin":
+            return None, _err("forbidden", "该接口仅管理员可用", 403)
+    except UnauthorizedException:
+        pass
+    except Exception:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+
+    try:
+        from internal.service.admin_user_service import AdminUserService
+
+        admin = await _to_thread(
+            _get_service(AdminUserService).get_current_admin_from_token,
+            token,
+        )
+    except UnauthorizedException:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+    except Exception:
+        logger.exception("管理端 AI 端点解析管理员凭证失败")
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+
+    if not admin:
+        return None, _err("unauthorized", "管理员凭证无效", 401)
+    return _SystemBorneAccount(), None
 
 
 async def _resolve_admin_permission(permission_code: str | None = None):
@@ -441,6 +488,15 @@ def _admin_route_permission(method: str, path: str) -> str | None:
         if _admin_match(segments, ("admin", *prefix)):
             return permission
 
+    # 管理端不提供分销能力：分销上下级绑定是**用户端独有**功能，管理员账号
+    # 不得与用户端混用（管理员若需使用分销应走用户端注册账号）。以下历史路径
+    # 一律拒绝（fail closed），且必须先于通用的 admin/users 分支判定，避免
+    # 被重新挂载后静默落到 user:update 而获得越权。
+    if _admin_match(segments, ("admin", "distribution")):
+        return None
+    if _admin_match(segments, ("admin", "users")) and "superior" in segments:
+        return None
+
     # RBAC 管理。
     if _admin_match(segments, ("admin", "roles")):
         if method == "GET":
@@ -452,11 +508,26 @@ def _admin_route_permission(method: str, path: str) -> str | None:
         if method == "DELETE":
             return "role:delete"
         return None
+    # 管理端 Agent 治理（设计 §4）。查询用 agent_pool:read；
+    # 创建/更新/删除用 agent_pool:manage。
+    # assignable-permissions 属只读查询 → read。
+    # 必须放在通用 admin/users 等分支之前判定，避免前缀重叠被先行捕获。
+    if _admin_match(segments, ("admin", "agents")):
+        if method == "GET":
+            return "agent_pool:read"
+        if method in {"POST", "PATCH", "PUT", "DELETE"}:
+            return "agent_pool:manage"
+        # 未登记的方法 fail closed
+        return None
     if _admin_match(segments, ("admin", "permissions")):
         return "permission:read" if method == "GET" else None
     if _admin_match(segments, ("admin", "admin-users")):
         if method == "GET":
             return "admin_user:read"
+        if method == "DELETE":
+            # 删除（注销）管理员需独立的 delete 权限：不能与 update 混用，
+            # 否则只持有"更新"权限的管理员即可删除账号（权限放大）。
+            return "admin_user:delete"
         if method == "POST" and len(segments) == 2:
             return "admin_user:create"
         if method in {"PATCH", "PUT"}:
@@ -465,7 +536,10 @@ def _admin_route_permission(method: str, path: str) -> str | None:
             return "admin_user:disable"
         if "enable" in segments or "reset-password" in segments or "sessions" in segments:
             return "admin_user:disable"
-        return "admin_user:update"
+        # fail closed：未显式登记的 admin-users 方法一律拒绝。
+        # 历史实现此处 `return "admin_user:update"` 兜底，会让任何新增方法
+        # （如 DELETE）静默继承 update 权限而越权。
+        return None
 
     # 用户管理。
     if _admin_match(segments, ("admin", "users")):
@@ -656,11 +730,6 @@ def _admin_route_permission(method: str, path: str) -> str | None:
             return update_code
         return None
 
-    # 分销管理。
-    if _admin_match(segments, ("admin", "distribution")):
-        return "distribution:view" if method == "GET" else "distribution:manage"
-    if _admin_match(segments, ("admin", "users")) and "superior" in segments:
-        return "distribution:manage"
     # 订单管理。
     if _admin_match(segments, ("admin", "orders")):
         return "order:view" if method == "GET" else "order:manage"
@@ -782,21 +851,14 @@ def _to_thread(fn, *args, **kwargs):
     统一在运行时容器上下文中执行：同步服务层依赖 current_app.extensions /
     db.session 等容器能力，缺省会并发 500。同时显式复制当前 contextvars，
     保证线程内仍能读取 internal.context.request / has_request_context。
+
+    实现委托 `internal.lib.runtime_context.run_in_app_context`——**session 归还
+    统一由该辅助负责**（try/finally + db.session.remove()），避免各处重复实现
+    导致遗漏（历史上 service 层自建线程正是漏在这条网外）。
     """
-    request_context = contextvars.copy_context()
+    from internal.lib.runtime_context import run_in_app_context
 
-    def _run_in_context():
-        with flask_app.app_context():
-            try:
-                return request_context.run(fn, *args, **kwargs)
-            finally:
-                from internal.extension.database_extension import db
-
-                remove_session = getattr(db.session, "remove", None)
-                if callable(remove_session):
-                    remove_session()
-
-    return asyncio.to_thread(_run_in_context)
+    return asyncio.to_thread(run_in_app_context(fn), *args, **kwargs)
 
 
 def _resolve_webapp_actor():

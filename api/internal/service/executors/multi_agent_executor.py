@@ -10,13 +10,12 @@ import json
 import logging
 import queue
 import threading
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
-from internal.context import current_app, has_app_context
 from internal.core.agent.entities.queue_entity import AgentThought, QueueEvent
 from internal.entity.execution_orchestration_entity import TaskPlan, TaskPlanItem
+from internal.lib.runtime_context import run_in_app_context
 from internal.service.agent_task_executor import AgentTaskExecutor
 from internal.service.execution_coordinator_service import (
     ExecutionCoordinatorService,
@@ -77,7 +76,6 @@ class MultiAgentExecutor:
             yield self._subtask_plan_sse(plan, conversation_id, message_id)
 
             sse_queue: "queue.Queue[Any]" = queue.Queue()
-            flask_app = current_app._get_current_object() if has_app_context() else None
             stream_state = {"has_streamed_answer": False}
 
             def _event_emitter(thought: AgentThought) -> None:
@@ -101,32 +99,34 @@ class MultiAgentExecutor:
                     logger.debug("实时 SSE 转换失败", exc_info=True)
 
             def _run_coordinator() -> None:
-                app_ctx = flask_app.app_context() if flask_app is not None else nullcontext()
-                with app_ctx:
-                    try:
-                        task_executor = _SubtaskTaskExecutor(
-                            host=self,
-                            event_emitter=_event_emitter,
-                            sse_queue=sse_queue,
-                            conversation_id=conversation_id,
-                            message_id=message_id,
-                        )
-                        coordinator = ExecutionCoordinatorService(
-                            executor=task_executor,
-                            cancel_token=self.cancel_token,
-                            subtask_registry=self.subtask_registry,
-                            request_id=message_id,
-                            plan_repairer=self.plan_repairer,
-                            escalation_policy_service=resolve_escalation_policy_service(),
-                        )
-                        results = coordinator.execute(plan, request_id=message_id)
-                        sse_queue.put((_RESULT_MARKER, results))
-                    except Exception as e:  # noqa: BLE001
-                        sse_queue.put((_ERROR_MARKER, e))
-                    finally:
-                        sse_queue.put(_SENTINEL)
+                try:
+                    task_executor = _SubtaskTaskExecutor(
+                        host=self,
+                        event_emitter=_event_emitter,
+                        sse_queue=sse_queue,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                    )
+                    coordinator = ExecutionCoordinatorService(
+                        executor=task_executor,
+                        cancel_token=self.cancel_token,
+                        subtask_registry=self.subtask_registry,
+                        request_id=message_id,
+                        plan_repairer=self.plan_repairer,
+                        escalation_policy_service=resolve_escalation_policy_service(),
+                    )
+                    results = coordinator.execute(plan, request_id=message_id)
+                    sse_queue.put((_RESULT_MARKER, results))
+                except Exception as e:  # noqa: BLE001
+                    sse_queue.put((_ERROR_MARKER, e))
+                finally:
+                    sse_queue.put(_SENTINEL)
 
-            thread = threading.Thread(target=_run_coordinator, daemon=True)
+            # run_in_app_context：进入 app 上下文并在退出时归还 session
+            # （自建线程不在 HTTP teardown / Celery after_return 的回收范围内）。
+            thread = threading.Thread(
+                target=run_in_app_context(_run_coordinator), daemon=True
+            )
             thread.start()
 
             results = None

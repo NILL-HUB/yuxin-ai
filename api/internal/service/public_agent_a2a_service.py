@@ -18,6 +18,7 @@ from internal.entity.cancel_token_entity import CancelToken
 from internal.entity.conversation_entity import InvokeFrom, MessageStatus
 from internal.exception import NotFoundException, ValidateErrorException
 from internal.lib.helper import build_input_parts, build_output_payload
+from internal.lib.runtime_context import session_scope
 from internal.model import App, Conversation, Message, MessageAgentThought
 from internal.core.agent.entities.queue_entity import QueueEvent
 from internal.core.agent.usage_utils import summarize_agent_thoughts
@@ -78,7 +79,7 @@ class PublicAgentA2AService(BaseService):
         def route_public_agents(query: str) -> dict[str, Any]:
             """当用户明确要求使用某个已有智能体回答，或当前问题更适合交给已发布公共/垂直/Agent这样的细分具体问题处理时，优先调用该工具。它会先检索公开Agent，再筛选出真正相关的候选，最后按A2A协议依次调用，最多返回3个相关Agent的结果。对于“请使用xx智能体回答”“让xxAgent来回答”“帮我解决xx”“帮我解决xx等垂直问题”等这类请求，必须优先使用本工具，禁止改用 `create_app` 新建应用。"""
             if flask_app is not None and not is_active_app(flask_app):
-                with flask_app.app_context():
+                with flask_app.app_context(), session_scope():
                     return self.route_public_agents(
                         query=query,
                         caller_account_id=account_id,

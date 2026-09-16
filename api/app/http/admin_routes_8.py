@@ -74,13 +74,14 @@ def tool_to_dict(tool: BuiltinTool, provider: BuiltinToolProvider | None = None)
 def _builtin_tool_detail(tool_id):
     """按 DB 主键读取 builtin 工具详情（与 admin_builtin_tool_handler.get_tool 一致）。
 
-    工具不存在时返回 None。DB 访问在 Flask app context 中执行。
+    工具不存在时返回 None。DB 访问走 app_session_scope（进入上下文 + 退出归还
+    session），使本函数无论被 `_to_thread` 还是直接调用都安全。
     """
-    from app.http import asgi_app as a
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model.builtin_tool import BuiltinTool, BuiltinToolProvider
 
-    with a.flask_app.app_context():
+    with app_session_scope():
         tool = db.session.get(BuiltinTool, tool_id)
         if tool is None:
             return None
@@ -93,12 +94,12 @@ def _builtin_tool_update(tool_id, data):
 
     校验失败时返回 ``{"_errors": {...}}``；工具不存在时抛 NotFoundException。
     """
-    from app.http import asgi_app as a
     from internal.exception import NotFoundException
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model.builtin_tool import BuiltinTool, BuiltinToolProvider
 
-    with a.flask_app.app_context():
+    with app_session_scope():
         tool = db.session.get(BuiltinTool, tool_id)
         if tool is None:
             raise NotFoundException(f"builtin 工具 {tool_id} 不存在")
@@ -140,11 +141,11 @@ def _builtin_tool_update(tool_id, data):
 
 def _list_available_models(model_type):
     """列出可选模型池配置（与 admin_public_ai_feature_handler.list_available_models 一致）。"""
-    from app.http import asgi_app as a
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model.model_pool_entity import ModelPoolConfig
 
-    with a.flask_app.app_context():
+    with app_session_scope():
         query = db.session.query(ModelPoolConfig).filter_by(status="active")
         if model_type:
             # 兼容历史数据：功能的 model_type 与模型池类型存在别名差异时，
@@ -178,13 +179,13 @@ def _update_public_ai_feature(feature_key, payload):
 
     功能不存在时抛 NotFoundException；模型配置不存在时抛 FailException。
     """
-    from app.http import asgi_app as a
     from internal.exception import FailException, NotFoundException
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model import PublicAIFeatureConfig
     from internal.model.model_pool_entity import ModelPoolConfig
 
-    with a.flask_app.app_context():
+    with app_session_scope():
         record = (
             db.session.query(PublicAIFeatureConfig)
             .filter_by(feature_key=feature_key)
@@ -249,12 +250,12 @@ def _resolve_target_model(model_config_id: str) -> dict:
     返回 dict 而非 ORM 实例：调用方可能在退出 app_context 后继续使用其字段，
     避免 DetachedInstanceError / session 关闭导致的运行时 500。
     """
-    from app.http import asgi_app as a
     from internal.exception import FailException
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model.model_pool_entity import ModelPoolConfig
 
-    with a.flask_app.app_context():
+    with app_session_scope():
         model = db.session.query(ModelPoolConfig).filter_by(id=model_config_id).first()
         if model is None:
             raise FailException(f"模型配置不存在: {model_config_id}")
@@ -277,8 +278,8 @@ def _batch_bind_feature_model(_model_type, model_config_id, fallback_tier=""):
         {"updated": int, "skipped": int, "items": [{feature_key, feature_name, ...}]}
     类型错配的功能会跳过并计入 skipped；目标模型不存在/未启用时抛 FailException。
     """
-    from app.http import asgi_app as a
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model import PublicAIFeatureConfig
 
     model = _resolve_target_model(model_config_id)
@@ -286,7 +287,7 @@ def _batch_bind_feature_model(_model_type, model_config_id, fallback_tier=""):
     updated = 0
     skipped = 0
     items = []
-    with a.flask_app.app_context():
+    with app_session_scope():
         records = (
             db.session.query(PublicAIFeatureConfig)
             .filter(PublicAIFeatureConfig.enabled.is_(True))
@@ -329,8 +330,8 @@ def _preview_batch_bind_feature_model(_model_type, model_config_id):
 
     返回与 ``_batch_bind_feature_model`` 相同结构，updated/skipped 为预估结果。
     """
-    from app.http import asgi_app as a
     from internal.extension.database_extension import db
+    from internal.lib.runtime_context import app_session_scope
     from internal.model import PublicAIFeatureConfig
 
     model = _resolve_target_model(model_config_id)
@@ -338,7 +339,7 @@ def _preview_batch_bind_feature_model(_model_type, model_config_id):
     updated = 0
     skipped = 0
     items = []
-    with a.flask_app.app_context():
+    with app_session_scope():
         records = (
             db.session.query(PublicAIFeatureConfig)
             .filter(PublicAIFeatureConfig.enabled.is_(True))

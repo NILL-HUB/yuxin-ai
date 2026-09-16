@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from internal.entity.app_entity import AppStatus, DEFAULT_APP_CONFIG
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.dataset_entity import RetrievalStrategy
 from internal.model import App, Account
+from internal.lib.runtime_context import to_thread_in_app_context
 from pkg.sqlalchemy import SQLAlchemy
 from .app_config_service import AppConfigService, call_config_loader
 from .base_service import BaseService
@@ -889,7 +889,7 @@ class AppRuntimeService(BaseService):
         与 stream_agent_events 逻辑一致，但消费 agent.astream（事件循环中执行，
         LLM 节点已 async 化），不占用额外子线程，是并发承载优化的推荐路径。
         """
-        tools = await asyncio.to_thread(
+        tools = await to_thread_in_app_context(
             self.build_runtime_tools,
             app_id,
             account,

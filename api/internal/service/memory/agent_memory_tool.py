@@ -21,6 +21,8 @@ from uuid import UUID
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
+from internal.lib.runtime_context import app_session_scope
+
 logger = logging.getLogger(__name__)
 
 # 会话级配额 Redis 键前缀
@@ -57,26 +59,29 @@ class MemoryRemoveInput(BaseModel):
     memory_id: str = Field(description="要移除的记忆 ID")
 
 
-def _check_quota(flask_app: Any, account_id: Any) -> bool:
+def _check_quota(account_id: Any) -> bool:
     """检查会话级配额（每会话最多 memory_add_max_per_session 次）。
 
     通过 Redis 计数，TTL=24h（会话级）。降级时允许通过。
+
+    注意：本函数不自行进入 app context——它只被 `MemoryAddTool._run` 在
+    `app_session_scope()` 内部调用；若在此再套一层，退出时会提前
+    `db.session.remove()`，反而破坏外层作用域。
     """
     try:
-        with flask_app.app_context():
-            from internal.context import current_app
-            from internal.config.memory_settings import settings
+        from internal.context import current_app
+        from internal.config.memory_settings import settings
 
-            max_per_session = settings.write.memory_add_max_per_session
-            redis_client = current_app.extensions.get("redis")
-            if redis_client is None:
-                return True  # Redis 不可用时降级允许
+        max_per_session = settings.write.memory_add_max_per_session
+        redis_client = current_app.extensions.get("redis")
+        if redis_client is None:
+            return True  # Redis 不可用时降级允许
 
-            key = f"{_QUOTA_KEY_PREFIX}{account_id}"
-            current = redis_client.incr(key)
-            if current == 1:
-                redis_client.expire(key, 86400)  # 24h TTL
-            return current <= max_per_session
+        key = f"{_QUOTA_KEY_PREFIX}{account_id}"
+        current = redis_client.incr(key)
+        if current == 1:
+            redis_client.expire(key, 86400)  # 24h TTL
+        return current <= max_per_session
     except Exception:
         logger.warning("_check_quota: 配额检查失败，降级允许", exc_info=True)
         return True
@@ -102,9 +107,9 @@ class MemoryAddTool(BaseTool):
         if self.flask_app is None:
             return "记忆写入不可用：缺少应用上下文"
 
-        with self.flask_app.app_context():
+        with app_session_scope():
             # 配额检查
-            if not _check_quota(self.flask_app, self.account_id):
+            if not _check_quota(self.account_id):
                 return "已达本会话记忆写入上限，请下次对话再记录"
 
             try:
@@ -147,7 +152,7 @@ class MemoryReplaceTool(BaseTool):
         if self.flask_app is None:
             return "记忆替换不可用：缺少应用上下文"
 
-        with self.flask_app.app_context():
+        with app_session_scope():
             try:
                 from app.http.app import injector
                 from internal.service.memory.ledger_writer import LedgerWriter
@@ -201,7 +206,7 @@ class MemoryRemoveTool(BaseTool):
         if self.flask_app is None:
             return "记忆移除不可用：缺少应用上下文"
 
-        with self.flask_app.app_context():
+        with app_session_scope():
             try:
                 from app.http.app import injector
                 from internal.service.memory.ledger_writer import LedgerWriter

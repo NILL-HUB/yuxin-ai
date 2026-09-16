@@ -53,14 +53,21 @@ def _estimate_num_tokens_from_messages(messages: Any) -> int:
 
 @contextmanager
 def _ensure_app_context():
-    """确保存在 app context（无则临时进入容器上下文，兼容 Celery/线程场景）。"""
-    if current_app._get_current_object() is not None:
-        yield
-    else:
-        from app.http.app import app
+    """确保存在 app context，并在**最外层**退出时归还数据库 session。
 
-        with app.app_context():
-            yield
+    历史上这里判断 `current_app._get_current_object() is not None` 来决定是否
+    进入上下文，但容器化后该表达式恒为真（全局容器始终存在），函数退化为纯
+    no-op 且**从不归还 session**。现直接复用统一辅助
+    `internal.lib.runtime_context.app_session_scope`：
+    - 进入 app 上下文（容器模式下为 no-op，代价可忽略）
+    - 退出时按线程嵌套深度决定是否 `db.session.remove()`
+
+    兼容 Celery / 后台线程 / HTTP 请求线程等所有调用场景。
+    """
+    from internal.lib.runtime_context import app_session_scope
+
+    with app_session_scope():
+        yield
 
 # 数据库未配置模型时的兜底档位（按 tier 升序取第一个 active 模型）
 # "2" 对应标准型（原 "standard"）
