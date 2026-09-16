@@ -484,9 +484,9 @@ def extract_video_frames_in_range(
     fps = 1.0 / max(interval, 0.001)
     cmd = [
         _resolve_ffmpeg_exe(), "-y",
-        "-ss", f"{start:.3f}",
+        "-ss", f"{start}",
         "-i", video_path,
-        "-t", f"{duration:.3f}",
+        "-t", f"{duration}",
         "-vf", f"fps={fps:.6f}",
         "-frames:v", str(count),
         "-q:v", "4", pattern,

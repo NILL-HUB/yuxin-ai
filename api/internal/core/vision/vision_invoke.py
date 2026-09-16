@@ -14,8 +14,10 @@ import tempfile
 from dataclasses import dataclass
 
 from internal.core.vision.frame_sampling import (
+    L2_INTERVAL_SEC,
     plan_frame_offsets,
     resolve_l1_frame_count,
+    resolve_l2_window_frame_count,
 )
 
 logger = logging.getLogger(__name__)
@@ -276,6 +278,57 @@ def extract_video_frames_with_offsets(
             path=path,
             time_offset=float(offsets[index]) if index < len(offsets) else 0.0,
         )
+        for index, path in enumerate(paths)
+    ]
+
+
+def extract_video_frames_in_range(
+    video_path: str,
+    out_dir: str,
+    start_sec: float,
+    duration_sec: float,
+    frame_count: int | None = None,
+) -> list[ExtractedFrame]:
+    """只在 [start_sec, start_sec + duration_sec) 内按 0.5 秒间隔密抽帧。
+
+    L2「扩窗密抽」的落地入口：相比从片头全片均匀抽，本函数用 ffmpeg 的
+    `-ss` / `-t` 把解码范围限定在窗口内，这是「1 小时视频改 20 秒片段只花
+    约 40 次视觉调用」而非 7200 次的根本原因。
+
+    frame_count 缺省时按 `resolve_l2_window_frame_count(duration_sec)` 推导。
+    返回的 `time_offset` 是**视频时间轴上的绝对位置**（与 L1 帧同一坐标系）。
+    """
+    start = max(0.0, float(start_sec))
+    duration = max(0.0, float(duration_sec))
+    count = (
+        max(1, int(frame_count))
+        if frame_count is not None
+        else resolve_l2_window_frame_count(duration)
+    )
+
+    os.makedirs(out_dir, exist_ok=True)
+    interval = duration / count if count else L2_INTERVAL_SEC
+
+    pattern = os.path.join(out_dir, "frame_%03d.jpg")
+    fps = 1.0 / max(interval, 0.001)
+    cmd = [
+        _resolve_ffmpeg_exe(), "-y",
+        "-ss", f"{start}",
+        "-i", video_path,
+        "-t", f"{duration}",
+        "-vf", f"fps={fps:.6f}",
+        "-frames:v", str(count),
+        "-q:v", "4", pattern,
+    ]
+    subprocess.run(cmd, capture_output=True, timeout=_FRAME_TIMEOUT * 6, check=True)
+
+    paths = _list_frame_files(out_dir)
+    if not paths:
+        raise RuntimeError("视频区间抽帧未产出任何文件")
+
+    offsets = [start + round(interval * (index + 0.5), 3) for index in range(len(paths))]
+    return [
+        ExtractedFrame(path=path, time_offset=float(offsets[index]))
         for index, path in enumerate(paths)
     ]
 
