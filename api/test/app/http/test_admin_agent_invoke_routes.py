@@ -189,9 +189,15 @@ class TestInvokeEndpoint:
         assert resp.status_code == 200
         body = asyncio.run(resp.get_json())
         assert body["data"]["outcome"] == "executed"
-        # 路由透传的是 `admin["id"]`（字符串），与 `_resolve_admin_permission`
-        # 的返回结构一致——不在这里额外做 UUID 转换，避免与既有惯例不一致。
-        assert agent_svc.requests[0]["admin_user_id"] == str(admin_id)
+        # 路由必须把 `admin["id"]`（字符串）显式转为 UUID 再交给服务：
+        # 服务契约声明 admin_user_id: UUID，且 admin_agent.owner_admin_user_id
+        # 是 UUID 列——传字符串会让 get_agent 的属主比较恒不相等，合法属主
+        # 也被误判 403（历史缺陷，路由层已修）。
+        from uuid import UUID
+
+        passed_admin_user_id = agent_svc.requests[0]["admin_user_id"]
+        assert isinstance(passed_admin_user_id, UUID)
+        assert passed_admin_user_id == admin_id
         assert set(agent_svc.requests[0]["admin_permissions"]) == {
             "builtin_tool:read",
             "builtin_tool:update",

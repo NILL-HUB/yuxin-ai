@@ -211,6 +211,23 @@ def _dump_draft(draft) -> dict:
     }
 
 
+def _dump_agent(agent) -> dict:
+    """序列化管理端 Agent 定义（UUID / datetime → 字符串 / 时间戳）。"""
+    from internal.lib.helper import datetime_to_timestamp
+
+    return {
+        "id": str(agent.id),
+        "name": agent.name,
+        "description": agent.description or "",
+        "prompt_key": agent.prompt_key,
+        "granted_permissions": list(agent.granted_permissions or []),
+        "automation_policy": dict(agent.automation_policy or {}),
+        "enabled": bool(agent.enabled),
+        "created_at": datetime_to_timestamp(agent.created_at),
+        "updated_at": datetime_to_timestamp(agent.updated_at),
+    }
+
+
 def register_routes(quart_app):
     """把批次 7 的 Admin 端点注册到 quart_app（幂等，重复调用直接返回）。"""
     global _registered
@@ -415,7 +432,12 @@ def register_routes(quart_app):
                 code="validate_error", message=f"参数错误: {exc}", status=400
             )
 
-        admin_user_id = admin.get("id")
+        # 必须转 UUID：服务层契约声明 admin_user_id: UUID，且
+        # admin_agent.owner_admin_user_id 是 UUID 列——传字符串会让
+        # get_agent 的属主比较恒不相等，合法属主也会被误判 403。
+        from uuid import UUID
+
+        admin_user_id = UUID(str(admin.get("id")))
         admin_permissions = list(admin.get("permissions") or [])
 
         def _run():
@@ -461,7 +483,10 @@ def register_routes(quart_app):
         from internal.schema.admin_agent_schema import AdminAgentDraftListResp
         from internal.service.admin_agent_service import AdminAgentService
 
-        admin_user_id = admin.get("id")
+        # 同 invoke：服务层契约为 UUID，传字符串会误判 403。
+        from uuid import UUID
+
+        admin_user_id = UUID(str(admin.get("id")))
 
         def _run():
             agent = a._get_service(AdminAgentService).get_agent(
@@ -486,6 +511,153 @@ def register_routes(quart_app):
             return a._json_resp(code="not_found", message="Agent 不存在", status=404)
         resp = AdminAgentDraftListResp()
         return a._ok(resp.dump(result))
+
+    @quart_app.get("/admin/agents")
+    async def admin_agent_list():
+        """列出当前管理员**自己创建**的管理端 Agent（设计 §2：仅创建者可用）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_schema import AdminAgentListResp
+        from internal.service.admin_agent_service import AdminAgentService
+        from uuid import UUID
+
+        admin_user_id = UUID(str(admin.get("id")))
+        rows = await a._to_thread(
+            a._get_service(AdminAgentService).list_agents,
+            admin_user_id=admin_user_id,
+        )
+        resp = AdminAgentListResp()
+        return a._ok(resp.dump({"items": [_dump_agent(r) for r in rows]}))
+
+    @quart_app.post("/admin/agents")
+    async def admin_agent_create():
+        """创建一个管理端 Agent，并把权限子集显式下放给它（设计 §4）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_schema import (
+            AdminAgentCreateReq,
+            AdminAgentResp,
+        )
+        from internal.service.admin_agent_service import AdminAgentService
+        from uuid import UUID
+
+        body = await request.get_json(force=True, silent=True) or {}
+        form = AdminAgentCreateReq()
+        try:
+            req = form.load(body)
+        except Exception as exc:
+            return a._json_resp(
+                code="validate_error", message=f"参数错误: {exc}", status=400
+            )
+
+        admin_user_id = UUID(str(admin.get("id")))
+        admin_permissions = list(admin.get("permissions") or [])
+
+        def _run():
+            return a._get_service(AdminAgentService).create_agent(
+                admin_user_id=admin_user_id,
+                admin_permissions=admin_permissions,
+                name=req["name"],
+                description=req.get("description") or "",
+                prompt_key=req.get("prompt_key"),
+                granted_permissions=req.get("granted_permissions") or [],
+                automation_policy=req.get("automation_policy") or {},
+            )
+
+        try:
+            agent = await a._to_thread(_run)
+        except ValueError as exc:
+            # assert_grantable / _validate_policy 的拒绝（越界下放、非法自动化级别）
+            return a._json_resp(code="validate_error", message=str(exc), status=400)
+        resp = AdminAgentResp()
+        return a._ok(resp.dump(_dump_agent(agent)))
+
+    @quart_app.patch("/admin/agents/<uuid:agent_id>")
+    async def admin_agent_update(agent_id):
+        """更新管理端 Agent；未提供的字段保持原值。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_schema import (
+            AdminAgentResp,
+            AdminAgentUpdateReq,
+        )
+        from internal.service.admin_agent_service import AdminAgentService
+        from uuid import UUID
+
+        body = await request.get_json(force=True, silent=True) or {}
+        form = AdminAgentUpdateReq()
+        try:
+            req = form.load(body)
+        except Exception as exc:
+            return a._json_resp(
+                code="validate_error", message=f"参数错误: {exc}", status=400
+            )
+
+        admin_user_id = UUID(str(admin.get("id")))
+        admin_permissions = list(admin.get("permissions") or [])
+
+        def _run():
+            return a._get_service(AdminAgentService).update_agent(
+                agent_id=agent_id,
+                admin_user_id=admin_user_id,
+                admin_permissions=admin_permissions,
+                name=req.get("name"),
+                description=req.get("description"),
+                prompt_key=req.get("prompt_key"),
+                granted_permissions=req.get("granted_permissions"),
+                automation_policy=req.get("automation_policy"),
+                enabled=req.get("enabled"),
+            )
+
+        try:
+            agent = await a._to_thread(_run)
+        except PermissionError as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
+        except LookupError as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+        except ValueError as exc:
+            return a._json_resp(code="validate_error", message=str(exc), status=400)
+        resp = AdminAgentResp()
+        return a._ok(resp.dump(_dump_agent(agent)))
+
+    @quart_app.delete("/admin/agents/<uuid:agent_id>")
+    async def admin_agent_delete(agent_id):
+        """删除管理端 Agent（仅创建者）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from internal.service.admin_agent_service import AdminAgentService
+        from uuid import UUID
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            a._get_service(AdminAgentService).delete_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+
+        try:
+            await a._to_thread(_run)
+        except PermissionError as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
+        except LookupError as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+        return a._ok_msg("删除 Agent 成功")
 
     # ------------------------------------------------------------------
     # admin_customer_user_handler -> AdminCustomerUserService
