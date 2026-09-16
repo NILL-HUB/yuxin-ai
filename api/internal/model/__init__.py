@@ -19,6 +19,7 @@ from .mcp import McpProvider, McpTool
 from .skill import SkillPackage, SkillPackageVersion
 from .admin import AdminUser, AdminSession, Role, Permission, AdminUserRole, RolePermission, AuditLog
 from .admin_agent import AdminAgent
+from .admin_agent_conversation import AdminAgentConversation, AdminAgentMessage
 from .billing import Plan, PlanEntitlement, Membership, CreditAccount, CreditTransaction, RedeemCodeBatch, RedeemCode
 from .routing_log import RoutingLog
 from .orchestration_feature_flag import OrchestrationFeatureFlagModel
@@ -71,6 +72,7 @@ __all__ = [
     "SkillPackage", "SkillPackageVersion",
     "AdminUser", "AdminSession", "Role", "Permission", "AdminUserRole", "RolePermission", "AuditLog",
     "AdminAgent",
+    "AdminAgentConversation", "AdminAgentMessage",
     "Plan", "PlanEntitlement", "Membership", "CreditAccount", "CreditTransaction", "RedeemCodeBatch", "RedeemCode",
     "ReferralCode", "DistributionRelation", "BalanceAccount", "BalanceTransaction", "WithdrawalRequest",
     "PaymentProviderConfig", "PurchaseOrder", "ReturnRequest", "AutoRenewal",
