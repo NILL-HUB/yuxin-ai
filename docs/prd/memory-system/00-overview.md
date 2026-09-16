@@ -410,20 +410,36 @@ v5.2 修复了 3 个设计与实现之间的断裂点：
 ### 16.20 记忆读回闭环（对话时注入，v5.3 已接通）
 
 > **状态**：已实现并接入首页助手对话链路（2026-09-05）；已扩展到应用对话链路
-> （「我的应用」+ 应用调试，2026-09-12）。
+> （「我的应用」+ 应用调试，2026-09-12）；已补齐执行模式与外部入口的漏传
+> （2026-09-13）。
 
 此前 Digest / MemoryRetriever 仅通过 REST（`/memory/retrieve`、`/memory/digest`）触达，
 未进入对话链路，导致记忆"只写不读"。v5.3 打通读回闭环：
 
 - **接入点（首页助手）**：`AssistantAgentService.chat` 在构建三层上下文（recent_messages +
   distant_summary）后，调用 `recall_user_memory_for_chat` 检索用户长期记忆，
-  结果作为 `user_memory_text` 注入两个执行路径（single_agent / multi_agent /
-  deep_thinking）的 `<用户长期记忆>` 提示词区段。
+  结果作为 `user_memory_text` 注入 **全部四条执行路径**的 `<用户长期记忆>` 提示词区段：
+  `single_agent` / `multi_agent`（含 parallel、sequential）/ `deep_thinking` /
+  `direct_answer`。
+- **执行模式覆盖（2026-09-13 补齐）**：此前 `direct_answer` 与 `multi_agent` 两个分支
+  在调用执行器时**漏传** `user_memory_text`——召回结果虽已算出，却未进入提示词，
+  表现为"同一用户在不同执行模式下记忆时有时无"。现已修复：
+  - `_stream_direct_answer` 新增 `user_memory_text` 形参并透传给 `DirectAnswerExecutor`；
+  - `_stream_multi_agent` 调用点补传 `user_memory_text`；
+  - `DirectAnswerExecutor` 的两个入口（`stream` / coordinator 协议 `execute`）统一走
+    `_system_prompt_with_memory()`，保证简单问答路径不再失忆。
 - **接入点（应用对话，2026-09-12 扩展）**：`AppDebugService.debug_chat` 在取出短期
   history 后同样调用 `recall_user_memory_for_chat`，把 `user_memory` 与应用自身的
   工具插件 / MCP / 技能 / 工作流 / 知识库（即"应用上下文"）**并列**注入；两条执行
   路径（Orchestrator 执行器与 `stream_agent_events` 回退）均已生效。这样「我的应用」
   里的 agent = 用户长期记忆 + 该应用的工具与上下文。
+- **接入点（应用调试·提示词对比）**：`AppDebugService.prompt_compare_chat` 同步接入，
+  避免对比调试结果与真实对话因"是否带记忆"而产生系统性偏差。
+- **接入点（WebApp，2026-09-13 扩展）**：`WebAppService.web_app_chat` 对**当前登录用户**
+  注入其长期记忆，与首页助手/我的应用口径一致。
+- **显式边界（不注入，非缺陷）**：OpenAPI 与微信入口的调用方是 `EndUser`（终端用户），
+  与 app owner 的 `Account` 是两套主体。若注入 owner 的记忆将造成**跨主体隐私泄露**，
+  因此这两条链路刻意不注入——属于设计边界，不是漏接。
 - **共享实现**：召回策略集中在 `internal/service/memory/user_memory_recall.py`
   的 `recall_user_memory_for_chat`（`AssistantAgentService._retrieve_user_memory_for_chat`
   为其薄委托），所有对话入口复用同一套 System 1 / System 2 策略与 fail-open 语义。

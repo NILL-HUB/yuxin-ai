@@ -88,6 +88,47 @@ class TestDirectAnswerExecutor:
         assert invoked_messages[2] is history[1]
         assert invoked_messages[3] == {"role": "user", "content": "继续"}
 
+    def test_stream_should_inject_user_memory_into_system_prompt(self):
+        """direct_answer 流式路径必须把召回的长期记忆拼进 system prompt（记忆读回闭环）"""
+        llm = MagicMock()
+        llm.client.create.return_value = [_FakeChunk(content="好的")]
+        executor = DirectAnswerExecutor(llm=llm, user_memory_text="用户偏好简洁回答")
+
+        with patch.object(SystemPromptLibraryService, "get_prompt_or_default", return_value=SYSTEM_PROMPT):
+            list(executor.stream(query="你好", conversation_id="conv-1", message_id="msg-1"))
+
+        invoked_system = llm.client.create.call_args.kwargs["messages"][0]["content"]
+        assert invoked_system.startswith(SYSTEM_PROMPT)
+        assert "<用户长期记忆>" in invoked_system
+        assert "用户偏好简洁回答" in invoked_system
+
+    def test_stream_should_omit_memory_block_without_user_memory(self):
+        """无召回记忆时不得注入空的 <用户长期记忆> 区段"""
+        llm = MagicMock()
+        llm.client.create.return_value = [_FakeChunk(content="好的")]
+        executor = DirectAnswerExecutor(llm=llm, user_memory_text="   ")
+
+        with patch.object(SystemPromptLibraryService, "get_prompt_or_default", return_value=SYSTEM_PROMPT):
+            list(executor.stream(query="你好", conversation_id="conv-1", message_id="msg-1"))
+
+        invoked_system = llm.client.create.call_args.kwargs["messages"][0]["content"]
+        assert invoked_system == SYSTEM_PROMPT
+
+    def test_execute_should_inject_user_memory_into_system_prompt(self):
+        """direct_answer 的 coordinator execute 路径同样必须注入长期记忆"""
+        llm = MagicMock()
+        llm.stream.return_value = [_FakeChunk(content="好的")]
+        executor = DirectAnswerExecutor(llm=llm, user_memory_text="用户偏好简洁回答")
+        item = SimpleNamespace(description="你好", task_id="task-1", title="标题")
+
+        with patch.object(SystemPromptLibraryService, "get_prompt_or_default", return_value=SYSTEM_PROMPT):
+            executor.execute(item)
+
+        invoked_system = llm.stream.call_args.args[0][0].content
+        assert invoked_system.startswith(SYSTEM_PROMPT)
+        assert "<用户长期记忆>" in invoked_system
+        assert "用户偏好简洁回答" in invoked_system
+
     def test_stream_error_yields_error_event(self):
         llm = MagicMock()
         llm.client.create.side_effect = RuntimeError("模型调用失败")

@@ -33,7 +33,7 @@ class DirectAnswerExecutor:
     # 工具调用最大轮数（首轮可能出工具，随后带工具结果再请求，最多再请求 2 次）
     MAX_TOOL_ROUNDS = 2
 
-    def __init__(self, language_model_service=None, credit_service=None, account_id=None, llm=None, tools=None, system_prompt_override=None):
+    def __init__(self, language_model_service=None, credit_service=None, account_id=None, llm=None, tools=None, system_prompt_override=None, user_memory_text=""):
         self.language_model_service = language_model_service
         self.credit_service = credit_service
         self.account_id = account_id
@@ -43,6 +43,8 @@ class DirectAnswerExecutor:
         self.tools = list(tools or [])
         # 外层传入的系统提示词（首页助手路径会注入系统知识库身份认知内容）
         self.system_prompt_override = system_prompt_override
+        # 外层召回的长期记忆文本：拼进 system prompt，避免 direct_answer 路径"失忆"
+        self.user_memory_text = str(user_memory_text or "").strip()
         # 流式调用后填充，供外层做计费和持久化
         self.last_answer = ""
         self.last_token_usage = None
@@ -61,6 +63,19 @@ class DirectAnswerExecutor:
             return SystemPromptLibraryService().load_yaml_prompts().get(
                 "direct_answer_system_prompt", ""
             )
+
+    def _system_prompt_with_memory(self) -> str:
+        """在 system prompt 末尾拼接召回的长期记忆（无记忆时原样返回）。
+
+        记忆读回闭环：direct_answer 的两个入口（stream / execute）都必须注入，
+        与 single_agent/multi_agent 经 ``<用户长期记忆>`` 区段注入的约定保持一致。
+        """
+        system_prompt = self._resolve_system_prompt()
+        if self.user_memory_text:
+            system_prompt = (
+                f"{system_prompt}\n\n<用户长期记忆>\n{self.user_memory_text}\n</用户长期记忆>"
+            )
+        return system_prompt
 
     def _build_tool_schemas(self):
         """把 langchain BaseTool 列表转换为 OpenAI 工具 schema；失败项跳过。"""
@@ -234,8 +249,9 @@ class DirectAnswerExecutor:
             native_client = getattr(reasoning_llm, "client", None) or getattr(reasoning_llm, "openai_client", None)
             model_name = getattr(reasoning_llm, "model_name", None) or getattr(reasoning_llm, "model", None) or ""
 
-            # system prompt 从系统提示词库读取（可管理），未配置时回退内置默认
-            system_prompt = self._resolve_system_prompt()
+            # system prompt 从系统提示词库读取（可管理），未配置时回退内置默认；
+            # 并拼接召回的长期记忆，与 single_agent/multi_agent 路径一致
+            system_prompt = self._system_prompt_with_memory()
             messages = (
                 [{"role": "system", "content": system_prompt}]
                 + (history or [])
@@ -380,7 +396,7 @@ class DirectAnswerExecutor:
             llm = self._resolve_llm()
 
             messages = (
-                [SystemMessage(content=self._resolve_system_prompt())]
+                [SystemMessage(content=self._system_prompt_with_memory())]
                 + [HumanMessage(content=query)]
             )
             # 使用流式调用，收集完整 answer 和 token 用量

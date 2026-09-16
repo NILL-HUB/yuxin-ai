@@ -455,6 +455,13 @@ class AppDebugService(BaseService):
         if draft_app_config["long_term_memory"]["enable"]:
             long_term_memory = self._get_debug_long_term_memory_snapshot(app, account)
 
+        # 记忆读回闭环：与应用调试/我的应用共用同一召回策略（fail-open）
+        user_memory_text = recall_user_memory_for_chat(
+            account_id=account.id,
+            query=req.query.data,
+            conversation_id=req.lane_id.data.strip() if req.lane_id.data else str(uuid4()),
+        )
+
         yield from self.app_runtime_service.stream_agent_events(
             app_id=app_id,
             account=account,
@@ -467,6 +474,7 @@ class AppDebugService(BaseService):
             conversation_id=req.lane_id.data.strip() if req.lane_id.data else str(uuid4()),
             message_id=str(uuid4()),
             flask_app=current_app._get_current_object() if has_app_context() else None,
+            user_memory=user_memory_text,
         )
 
     def stop_debug_chat(self, app_id: UUID, task_id: UUID, account: Account) -> None:
