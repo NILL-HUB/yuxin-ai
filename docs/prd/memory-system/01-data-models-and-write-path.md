@@ -550,7 +550,7 @@ class ConsolidationReport(BaseModel):
 
 **本阶段（P3a）范围**：写侧**双写**新列（系统路径 `_upsert_vector` + Agent 策展路径 `write_agent_curated`，含向量分表的 `INSERT` 与 `ON CONFLICT` 分支）+ 存量回填 `owner_type='user'`；**读路径未切换**（仍按 `owner_account_id` / `user_id` 过滤），故行为零变化。
 
-**兼容性语义**：`user:{account_uuid}` 与历史 `str(account.id)` **同值**，因此 Neo4j / Redis / 冷存储的存量键无需改写即可与主体键对齐。
+**兼容性语义（P3b 关键前提）**：`user:{account_uuid}` 与历史各层实际写入的裸 `str(account.id)`（Neo4j 节点属性 `user_id`、Redis 键 `memory:digest:{uuid}`、冷存储路径片段）**不相等**——`to_key() != str(account.id)`。因此跨层切到 `owner_key` 时，**Neo4j 存量节点必须配套迁移**（否则全部历史记忆检索不到），Redis 键按 TTL 自然过期重建，PG 侧 `owner_account_id` 是 UUID 列需 `parse()` 回解。
 
 Neo4j / Redis / 冷存储的键统一与读路径切换属 **P3b**（尚未落地）；键前缀常量 `OWNER_KEY_USER_PREFIX` / `OWNER_KEY_ADMIN_PREFIX` / `OWNER_KEY_SEPARATOR`（`api/internal/config/memory_settings.py`）本阶段**尚无生产消费方**。
 

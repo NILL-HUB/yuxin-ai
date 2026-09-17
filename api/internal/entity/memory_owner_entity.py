@@ -12,13 +12,21 @@
 | Neo4j / Redis / 冷存储 | 字符串 `owner_key` |
 
 `owner_key` 形态（确定性、可解析、无歧义分隔）：
-- 用户主体：`user:{account_uuid}`（与旧 `str(account.id)` **同值**，保证存量零变化）
+- 用户主体：`user:{account_uuid}`
 - 管理员主体：`admin:{admin_uuid}`
 - 管理员 + Agent（两级隔离，设计 §3 L1）：`admin:{admin_uuid}:{agent_uuid}`
 
 **为什么不用 JSON / 不用长度前缀**：这些键要作为 Redis key 与 S3 路径片段，
 必须是短、可读、URL/路径安全、且人类可直接看懂归属的形态。UUID 本身无冒号，
 故 `:` 作为分隔符无歧义。
+
+**与存量键的关系（务必注意，勿再误述为"同值"）**：历史各存储层写的是**裸
+`str(account.id)`**（Neo4j 节点属性 `user_id`、Redis 键 `memory:digest:{uuid}`、
+冷存储路径片段），**不带 `user:` 前缀**；而 `to_key()` 产出 `user:{uuid}`。
+两者**不相等**（`to_key() != str(account.id)`）。因此跨层切到 `owner_key` 时，
+Neo4j 存量节点的键必须配套迁移（否则历史记忆检索不到），Redis 键按 TTL 自然
+过期重建，PG 侧因 `owner_account_id` 是 UUID 列需 `parse()` 回解。
+详见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-*.md`。
 """
 from __future__ import annotations
 
