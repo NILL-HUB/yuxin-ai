@@ -307,7 +307,7 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 3. **中期**：✅ 已完成——`icon_generator_service` 图标生成已改走统一存储端口（P1B 覆盖 1-12MB 大模型图片资产上传，历史 P1A 覆盖 12KB-1MB 小图标数据库存储；两者按图片大小自动切换，`CosService` 已由 DI 绑定为 `RuntimeStorageProxy`，调用 `upload_bytes_without_record` 统一校验配额与落库）
 4. **中期**：✅ 已完成——`cold_storage_manager` 已纳入 `ObjectStoragePort` 抽象
 5. **中期**：✅ 已完成分片上传 + 秒传 + 断点续传，解除单次上传 15MB 上限（P2B，见 [§17.13](#1713-分片上传p2b-已落地)）
-6. **中期**：云后端（cos/oss）原生 multipart 分片（P2B-2）
+6. **中期**：✅ 已完成云后端（cos/oss）落盘支持——分片产物落到运行时激活后端（P2B-2，见 [§17.13](#1713-分片上传p2b-已落地)）
 7. **长期**：支持 AWS S3、MinIO、Azure Blob 等更多后端
 8. **长期**：前端直传（STS 临时凭证）
 
@@ -375,9 +375,14 @@ COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 3. **建档失败回滚**：`create_document_from_upload_file` 抛异常时，回滚已合并/复制的对象与 `UploadFile` 记录；落库失败亦回收已合并对象，避免孤儿文件。
 4. 只有全部成功后才执行破坏性收尾：清理暂存 → 销毁会话 → 登记指纹。
 
-**合并失败的半成品回收**：`LocalStorageService.merge_chunks` 是流式写目标对象，中途失败（缺片、磁盘写失败等）会留下半成品。该方法在 `except` 中调用 `delete_object(target_key)` 回收，避免孤儿文件占盘（不计配额但会泄漏磁盘）。
+**合并失败的半成品回收**：`LocalStorageService.merge_chunks_to_file` 是流式写本地临时文件，中途失败（缺片、磁盘写失败等）会留下半成品。该方法在 `except` 中回收半成品文件，避免孤儿文件占盘；编排层用 `finally` 兜底清理临时文件。
 
-**后端支持范围**：**当前仅支持 `local` 后端**（`ChunkedUploadService` 直接注入 `LocalStorageService`，落库 `storage_backend="local"`）。`cos`/`oss` 的原生 multipart 上传属 **P2B-2**，未实现。
+**后端支持范围**：**全部后端均支持**（P2B-2 已落地）。设计要点是**分片暂存与产物落盘解耦**：
+- 分片暂存**永远在本地磁盘**（`storage/chunks/{session_id}/`）——分片是逐块到达的临时数据，与最终后端无关；
+- 合并先在本地临时文件完成（流式，不整文件入内存），再由 `RuntimeStorageProxy.upload_local_file` **流式落到运行时激活后端**：COS 走 SDK 多分片上传、OSS 走 `put_object_from_file`、local 走原子 `os.replace`；
+- `upload_file.storage_backend` 如实记录**落盘时的激活后端**，下载/URL 按该字段路由，切换后端后历史文件仍可访问。
+
+> 关键意义：修复前分片产物写死 `storage_backend="local"`，导致 >5MB 的文件（含视频素材）切到 COS 后**仍留在本地盘**、下载继续占用服务器带宽。单机小带宽场景下这是致命瓶颈。
 
 **API 清单**：
 

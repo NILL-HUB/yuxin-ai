@@ -27,12 +27,11 @@
 | `llmops-ui-dev` | 1.06 GB |
 | `neo4j` | 637 MB |
 | `postgres`/`pgvector` | 445 MB |
-| `minio` | 175 MB |
 | `redis` | 114 MB |
 | `llmops-ui` | 102 MB |
 | `nginx` | 62 MB |
 
-**全量拉取 ≈ 10.9 GB。3 Mbps ≈ 366 KB/s → 约 8.4 小时**（且期间几乎无法提供正常服务）。
+**全量拉取 ≈ 10.8 GB。3 Mbps ≈ 366 KB/s → 约 8.4 小时**（且期间几乎无法提供正常服务）。
 
 **对策**（择一或组合）：
 - **裁减服务**（见 §2）：只拉必需镜像（api + ui + nginx + pgvector + redis + render ≈ 5.7 GB），约 4.4 小时；
@@ -75,7 +74,6 @@ CLI 自报：默认堆上限 2240 MB 只支持约 1 个 capture worker。超过�
 | `llmops-kkfileview` | **531 MB** | 1.6 GB | **关闭** | 文档在线预览，非核心链路 |
 | `llmops-api` | 353 MB | 1.48 GB | 保留 | 核心 |
 | `llmops-db`（pgvector） | 129 MB | 445 MB | 保留 | 核心 |
-| `llmops-minio` | 67 MB | 175 MB | **关闭** | 改用本地存储或 COS（`STORAGE_BACKEND=local\|cos`） |
 | `llmops-ui` | 47 MB | 102 MB | 保留 | 生产用 nginx 静态版 |
 | `llmops-celery-beat` | 26 MB | 1.48 GB | 保留 | 定时任务调度 |
 | `llmops-redis` | 16 MB | 114 MB | 保留 | 核心 |
@@ -88,7 +86,7 @@ CLI 自报：默认堆上限 2240 MB 只支持约 1 个 capture worker。超过�
 
 > ⚠️ `llmops-celery` 926 MB 偏高且**未设内存配额**。它承载全部业务异步任务，随负载增长。若 OOM，优先查它。
 
-**关闭方法**：为这几个服务加 `profiles: ["optional"]`（当前 `neo4j`/`minio`/`kkfileview` **无 profile，默认会启动**），或用 `--scale` 排除。**这是待做的配置改动**（见 §6）。
+**关闭方法**：为这几个服务加 `profiles: ["optional"]`（当前 `neo4j`/`kkfileview` **无 profile，默认会启动**），或用 `--scale` 排除。**这是待做的配置改动**（见 §6）。
 
 ---
 
@@ -159,6 +157,23 @@ llmops-render-worker:
 | 队列可见性 | `visibility_timeout=86400` | 保持 |
 | ffprobe 探测 | 硬编码 120s | 保持 |
 
+### 3.5 存储后端：3M 带宽下的必选项
+
+**结论：一旦有真实用户下载素材/成品，必须切云对象存储（COS/OSS），理由不是省钱而是解放带宽。**
+
+| 后端 | 文件 URL | 下载是否占你的 3M 带宽 |
+| --- | --- | --- |
+| `local`（默认） | `/storage/local/{key}`（经你的服务器） | **占满**，且全体用户共享 3M |
+| `cos` / `oss` | 直连对象存储域名 | **不占**，你的 3M 只管 API |
+
+- 存储单价：COS 标准存储 **0.118 元/GB/月**，云硬盘约 0.35 元/GB/月；
+- 流量单价：COS 外网下行 **0.5 元/GB**，轻量服务器超额流量 **0.8 元/GB**；
+- **同地域** 服务器 → COS 的写入走内网，**免费**（渲染产物入库零流量成本）。
+
+**切换方式**：admin 存储配置板块切换激活后端，**无需停机**。`upload_file.storage_backend` 记录每个文件的真实后端，下载按记录路由，历史文件仍可访问；存量文件可用 `StorageMigrationService` 批量搬迁。
+
+**已验证的能力边界**：分片上传（>5MB 大文件，含全部视频素材）**已支持落盘到激活后端**（P2B-2）。修复前该链路写死 `local`，会导致切到 COS 后大视频仍留在本地盘、下载继续占满 3M——这是 3M 环境下的致命瓶颈，现已解除。
+
 ---
 
 ## 4. 回链（出片完成通知）
@@ -199,9 +214,9 @@ docker compose exec llmops-render-worker \
 docker compose exec llmops-render-worker ffmpeg -version | head -1
 ```
 
-**不启动的服务**（裁减项）：`llmops-neo4j`、`llmops-kkfileview`、`llmops-minio`、`llmops-browser-worker`、`llmops-computer-worker`。
+**不启动的服务**（裁减项）：`llmops-neo4j`、`llmops-kkfileview`、`llmops-browser-worker`、`llmops-computer-worker`。
 
-**注意**：若关闭 neo4j/minio/kkfileview，需在 `api/.env` 中确认相关功能降级不会报错（记忆系统 TKG、对象存储改用 local/cos、文档预览不可用）。
+**注意**：若关闭 neo4j/kkfileview，需在 `api/.env` 中确认相关功能降级不会报错（记忆系统 TKG、文档预览不可用）。
 
 ---
 
@@ -210,7 +225,7 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | # | 改动 | 类型 | 影响 |
 | --- | --- | --- | --- |
 | 1 | 主 worker 设 `CELERY_QUEUES` 排除 render | compose | 堵 §3.3 隐患 |
-| 2 | `neo4j`/`minio`/`kkfileview` 加 `profiles: ["optional"]` | compose | 默认不启动 |
+| 2 | `neo4j`/`kkfileview` 加 `profiles: ["optional"]` | compose | 默认不启动 |
 | 3 | render worker 加 `deploy.resources.limits` + `NODE_OPTIONS` | compose | 内存隔离 |
 | 4 | 每账号渲染并发上限 = 1 | 代码 | 闸门 1 |
 | 5 | 渲染防重锁（Redis SETNX） | 代码 | 闸门 2 |
