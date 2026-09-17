@@ -156,6 +156,8 @@ services:
       HYPERFRAMES_BROWSER_PATH: /usr/bin/chromium
       HYPERFRAMES_FFMPEG_PATH: /usr/bin/ffmpeg
       HYPERFRAMES_FFPROBE_PATH: /usr/bin/ffprobe
+      # CLI 为镜像内「本地安装」（全局安装会 Missing manifest），故给绝对路径
+      HYPERFRAMES_CLI_BIN: /opt/hyperframes/node_modules/.bin/hyperframes
       HYPERFRAMES_CLI_VERSION: '0.8.42'
     depends_on:
       llmops-db:

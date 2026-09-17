@@ -70,6 +70,37 @@ def test_render_command_resolves_npx_to_real_executable():
     assert cmd[0] == (shutil.which("npx") or "npx")
 
 
+def test_render_command_uses_explicit_cli_bin_when_configured():
+    """配置了 HYPERFRAMES_CLI_BIN 时必须直接用该绝对路径，不走 npx。
+
+    容器内 HyperFrames 是本地安装（全局安装会 Missing manifest），
+    不依赖 PATH，故必须能显式指定可执行文件。
+    """
+    class _WithBin(_Settings):
+        HYPERFRAMES_CLI_BIN = "/opt/hyperframes/node_modules/.bin/hyperframes"
+
+    cmd = build_render_command(
+        _WithBin(), output_path=Path("out.mp4"), quality="draft", fps=30
+    )
+
+    assert cmd[0] == "/opt/hyperframes/node_modules/.bin/hyperframes"
+    assert "npx" not in cmd, "显式指定 CLI 时不得再经 npx（容器内 npx 布局会失败）"
+    assert "render" in cmd
+
+
+def test_explicit_cli_bin_blank_falls_back_to_npx():
+    """空字符串必须视为未配置，退回 npx（否则会拼出一个空的可执行路径）。"""
+
+    class _Blank(_Settings):
+        HYPERFRAMES_CLI_BIN = "   "
+
+    cmd = build_render_command(
+        _Blank(), output_path=Path("out.mp4"), quality="draft", fps=30
+    )
+
+    assert Path(cmd[0]).name.lower().startswith("npx")
+
+
 def test_unsupported_quality_rejected():
     with pytest.raises(RenderFailedError):
         build_render_command(

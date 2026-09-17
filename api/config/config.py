@@ -225,6 +225,10 @@ class Config:
         self.HYPERFRAMES_CLI_VERSION = (
             _get_env("HYPERFRAMES_CLI_VERSION") or "0.8.42"
         )
+        # CLI 可执行文件绝对路径。容器内 HyperFrames 是「本地安装」在固定目录
+        # （全局安装会导致 [HyperframeRuntimeLoader] Missing manifest），
+        # 故此处显式指定、不依赖 PATH；为空时退回 `npx --yes hyperframes@<版本>`。
+        self.HYPERFRAMES_CLI_BIN = _get_env("HYPERFRAMES_CLI_BIN") or ""
         # 渲染是分钟级长任务，超时按「长视频 + 慢机器」放宽
         self.RENDER_TIMEOUT_SEC = int(_get_env("RENDER_TIMEOUT_SEC") or 1800)
 

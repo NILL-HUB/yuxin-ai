@@ -44,22 +44,34 @@ SHELL ["/bin/bash", "-c"]
 #    deb.debian.org（Fastly）会间歇 502，aliyun 镜像对 chromium / fonts-noto-cjk /
 #    libllvm15 这类大包会中断连接（实测 "Connection failed"）。故：
 #    - 换 aliyun 源（避开 Fastly 502）；
-#    - 打开 apt 重试与超时放宽，让大包能断点续传重试。
+#    - 打开 apt 重试与超时放宽；
+#    - **外层循环重试整条 install**：单次 apt-get install 里任何一个大文件超时都会让
+#      整个事务失败，但已下好的 .deb 会留在缓存里、下一轮直接命中。
+#      故失败后重跑就能「逐轮啃下」大包，这是本网络环境下最有效的办法。
 RUN set -eux; \
-    printf 'Acquire::Retries "10";\nAcquire::http::Timeout "120";\nAcquire::https::Timeout "120";\n' \
+    printf 'Acquire::Retries "10";\nAcquire::http::Timeout "240";\nAcquire::https::Timeout "240";\n' \
         > /etc/apt/apt.conf.d/99-hf-retries; \
     for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do \
         if [ -f "$f" ]; then sed -i 's|deb.debian.org|mirrors.aliyun.com|g' "$f"; fi; \
     done; \
     apt-get update; \
-    apt-get install -y --no-install-recommends \
-        ffmpeg \
-        chromium \
-        ca-certificates curl unzip xz-utils \
-        libgbm1 libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 \
-        libxdamage1 libxrandr2 libcups2 libasound2 libpangocairo-1.0-0 \
-        libxshmfence1 libgtk-3-0 \
-        fonts-liberation fonts-noto-cjk fonts-dejavu-core fontconfig; \
+    ok=0; \
+    for attempt in 1 2 3 4 5 6 7 8; do \
+        echo "=== apt install attempt $attempt ==="; \
+        if apt-get install -y --no-install-recommends \
+            ffmpeg \
+            chromium \
+            ca-certificates curl unzip xz-utils \
+            libgbm1 libnss3 libatk-bridge2.0-0 libdrm2 libxcomposite1 \
+            libxdamage1 libxrandr2 libcups2 libasound2 libpangocairo-1.0-0 \
+            libxshmfence1 libgtk-3-0 \
+            fonts-liberation fonts-noto-cjk fonts-dejavu-core fontconfig; then \
+            ok=1; break; \
+        fi; \
+        echo "attempt $attempt failed, retrying after cache-preserving sleep"; \
+        sleep 5; \
+    done; \
+    test "$ok" = "1" || { echo "apt install failed after retries"; exit 1; }; \
     rm -rf /var/lib/apt/lists/*; \
     fc-cache -fv; \
     ffmpeg -version | head -1; ffprobe -version | head -1; chromium --version
@@ -74,13 +86,26 @@ RUN set -eux; \
     node --version; npm --version; \
     node -e 'const v=process.versions.node.split(".").map(Number); if(v[0]<22){console.error("Node < 22，HyperFrames 无法运行"); process.exit(1)}'
 
-# 3) 钉死 HyperFrames CLI 版本，保证同一 composition 重复渲染结果一致。
-#    走国内 npm 镜像，避开海外源抖动。
+# 3) 安装 HyperFrames CLI（钉死版本，保证同一 composition 重复渲染结果一致）。
+#
+# ⚠️ 必须用 **本地安装**（装进固定目录），**不要用 `npm install -g`**：
+#    实测在容器内，全局安装（/usr/local/lib/node_modules/hyperframes）下渲染会失败于
+#      [HyperframeRuntimeLoader] Missing manifest ...
+#    而同样的镜像、同样的 composition，改用本地安装（node_modules/hyperframes）即可
+#    完整渲染成功（120/120 帧 → MP4）。
+#    原因：CLI 的 renderSetupWorker 子进程依赖打包 chunk 的相对布局推导 manifest 路径，
+#    全局安装的扁平化路径布局与之不符。本地安装保留了预期目录结构，故可用。
+#
+#    注意这与「宿主机上全局安装能跑通」不矛盾——差异在 npm 布局 + 容器内 cwd 组合。
 ARG HYPERFRAMES_VERSION=0.8.42
+ENV HYPERFRAMES_HOME=/opt/hyperframes
 RUN set -eux; \
     npm config set registry https://registry.npmmirror.com; \
-    npm install -g hyperframes@${HYPERFRAMES_VERSION}; \
-    hyperframes --version
+    mkdir -p ${HYPERFRAMES_HOME}; \
+    cd ${HYPERFRAMES_HOME}; \
+    npm init -y > /dev/null; \
+    npm install hyperframes@${HYPERFRAMES_VERSION} --no-audit --no-fund; \
+    ${HYPERFRAMES_HOME}/node_modules/.bin/hyperframes --version
 
 # 渲染产物与中间文件默认落在工作目录，交给挂载卷
 WORKDIR /app/api

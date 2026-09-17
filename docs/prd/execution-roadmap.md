@@ -244,12 +244,13 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 > \+ `docker/entrypoint.sh` 的 `CELERY_QUEUES` 队列过滤支持。
 > 渲染底座需 Node ≥ 22 + Chromium + ffmpeg/ffprobe 三件齐全；现有 `api/Dockerfile`（有 node、无 chromium/ffmpeg）
 > 与 `api/Dockerfile.worker`（有 playwright/chromium、无 node/ffmpeg）**都不能直接复用**，故渲染镜像在 api 镜像之上补齐。
-> ⚠️ 渲染镜像的**完整构建**尚未在本机跑通——本机对 apt 大包持续下载不稳定：
-> ffmpeg 系依赖与 `chromium-common`(30MB) 可下，但 `chromium`(100MB+) 反复重试仍 `Connection failed`/超时。
-> 已在 Dockerfile 内加 `Acquire::Retries "10"` 与超时放宽（有改善但未根治）。
-> **可选规避**（留给部署计划评估）：不必用 Debian 的 `chromium` 包——本仓 `Dockerfile.worker` 已有
-> Playwright 装 Chromium 的先例（`requirements-workers.txt` + `playwright install chromium`），
-> 改用它可绕开这个超大包，并把 `HYPERFRAMES_BROWSER_PATH` 指向 Playwright 的 Chromium 二进制。
+> ⚠️ **HyperFrames 必须是「本地安装」，不能用 `npm install -g`**（容器内实测结论）：
+> 全局安装（`/usr/local/lib/node_modules/hyperframes`）下渲染会失败于
+> `[HyperframeRuntimeLoader] Missing manifest`（该 manifest 实际存在且 sha256 正确，
+> 属 CLI 的 chunk 相对布局推导问题）；改为本地安装（固定目录 `node_modules/hyperframes`）
+> 后**完整渲染成功**（120/120 帧 → MP4）。
+> 故镜像把 CLI 装在 `/opt/hyperframes`，并通过 `HYPERFRAMES_CLI_BIN` 显式指向它、不依赖 PATH。
+> 另：容器内存低于 8GB 时 CLI 会进入 low-memory 模式（退化为逐帧截图、较慢但可用）。
 >
 > **Node 统一规则（已定，勿再摇摆）**：全架构统一 **Node 24 + `bookworm-slim`（glibc）这一个变体**。
 > - **版本下限**：HyperFrames 的要求是 `Node >= 22`；本机 host v24.9.0 已实测跑通 hyperframes 0.8.42 并产出真 MP4。

@@ -67,6 +67,24 @@ def _resolve_executable(name: str) -> str:
     return shutil.which(name) or name
 
 
+def _resolve_hyperframes_cli(settings: Any) -> list[str]:
+    """解析渲染命令的前缀（可执行文件 + 前置参数）。
+
+    优先用显式配置的 CLI 绝对路径（`HYPERFRAMES_CLI_BIN`）：容器内 HyperFrames 是
+    **本地安装**在固定目录（见 Dockerfile.render 的说明——全局安装会导致
+    `[HyperframeRuntimeLoader] Missing manifest`，本地安装才可用），因此不依赖 PATH。
+
+    未配置时退回 `npx --yes hyperframes@<版本>`——这是宿主机上的常规用法。
+    npx 同样经 `shutil.which` 解析（Windows 上是 `npx.CMD`）。
+    """
+    explicit = (getattr(settings, "HYPERFRAMES_CLI_BIN", "") or "").strip()
+    if explicit:
+        return [explicit]
+
+    version = getattr(settings, "HYPERFRAMES_CLI_VERSION", "") or "0.8.42"
+    return [_resolve_executable("npx"), "--yes", f"hyperframes@{version}"]
+
+
 def build_render_env(settings: Any) -> dict[str, str]:
     """构造渲染子进程环境：继承当前环境 + 注入 HyperFrames 三个路径。
 
@@ -99,11 +117,8 @@ def build_render_command(
     if int(fps) not in _SUPPORTED_FPS:
         raise RenderFailedError(f"不支持的帧率：{fps}，可选：{list(_SUPPORTED_FPS)}")
 
-    version = getattr(settings, "HYPERFRAMES_CLI_VERSION", "") or "0.8.42"
     return [
-        _resolve_executable("npx"),
-        "--yes",
-        f"hyperframes@{version}",
+        *_resolve_hyperframes_cli(settings),
         "render",
         "--quality",
         quality,
