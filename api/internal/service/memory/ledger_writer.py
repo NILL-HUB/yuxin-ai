@@ -983,12 +983,25 @@ class LedgerWriter:
             # 先清掉再写当前维度，保证「一个投影行最多一条向量」。
             self._delete_stale_vector_rows(memory_id, exclude_table=table_name)
 
-            # 写入向量到维度分表
+            # 写入向量到维度分表（归属列与主表同源，均取 owner_key_obj.pg_kwargs()，
+            # 避免主表/分表两处语义分叉）
+            owner_columns = owner_key_obj.pg_kwargs()
             self.db.session.execute(
                 _text(f"""
-                    INSERT INTO {table_name} (memory_id, owner_account_id, embedding, embedding_node_id)
-                    VALUES (:memory_id, :owner_id, :embedding, :node_id)
+                    INSERT INTO {table_name} (
+                        memory_id, owner_account_id,
+                        owner_type, owner_admin_user_id, owner_agent_id,
+                        embedding, embedding_node_id
+                    )
+                    VALUES (
+                        :memory_id, :owner_id,
+                        :owner_type, :owner_admin_user_id, :owner_agent_id,
+                        :embedding, :node_id
+                    )
                     ON CONFLICT (memory_id) DO UPDATE SET
+                        owner_type = EXCLUDED.owner_type,
+                        owner_admin_user_id = EXCLUDED.owner_admin_user_id,
+                        owner_agent_id = EXCLUDED.owner_agent_id,
                         embedding = EXCLUDED.embedding,
                         embedding_node_id = EXCLUDED.embedding_node_id,
                         updated_at = CURRENT_TIMESTAMP(0)
@@ -996,6 +1009,9 @@ class LedgerWriter:
                 {
                     "memory_id": memory_id,
                     "owner_id": str(owner_account_id),
+                    "owner_type": owner_columns["owner_type"],
+                    "owner_admin_user_id": owner_columns["owner_admin_user_id"],
+                    "owner_agent_id": owner_columns["owner_agent_id"],
                     "embedding": vector,
                     "node_id": point_id,
                 },

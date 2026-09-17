@@ -841,6 +841,51 @@ Expected: PASS（4 个用例）—— 这是**纯函数契约测试**，Task 1 �
 > 该路径主体是用户（`owner_type='user'`），用 `MemoryOwnerKey.for_user(account_id)` 取列值，
 > 保持与系统路径同一套映射（避免两条写入路径的归属语义再次分叉）。
 
+**同样必须改向量分表 INSERT（易漏点）**：`_upsert_vector` 写维度分表
+`user_memory_embedding_{dim}` 的 `INSERT INTO ... (memory_id, owner_account_id, embedding, embedding_node_id)`
+只有 4 列，**归属三新列必须一并写入**，且 `ON CONFLICT ... DO UPDATE SET` 也要同步这三列
+（否则命中已有行时归属不更新）。参数取 `owner_key_obj.pg_kwargs()`，与主表同源：
+
+```python
+            # 写入向量到维度分表（归属列与主表同源，均取 owner_key_obj.pg_kwargs()）
+            owner_columns = owner_key_obj.pg_kwargs()
+            self.db.session.execute(
+                _text(f"""
+                    INSERT INTO {table_name} (
+                        memory_id, owner_account_id,
+                        owner_type, owner_admin_user_id, owner_agent_id,
+                        embedding, embedding_node_id
+                    )
+                    VALUES (
+                        :memory_id, :owner_id,
+                        :owner_type, :owner_admin_user_id, :owner_agent_id,
+                        :embedding, :node_id
+                    )
+                    ON CONFLICT (memory_id) DO UPDATE SET
+                        owner_type = EXCLUDED.owner_type,
+                        owner_admin_user_id = EXCLUDED.owner_admin_user_id,
+                        owner_agent_id = EXCLUDED.owner_agent_id,
+                        embedding = EXCLUDED.embedding,
+                        embedding_node_id = EXCLUDED.embedding_node_id,
+                        updated_at = CURRENT_TIMESTAMP(0)
+                """),
+                {
+                    "memory_id": memory_id,
+                    "owner_id": str(owner_account_id),
+                    "owner_type": owner_columns["owner_type"],
+                    "owner_admin_user_id": owner_columns["owner_admin_user_id"],
+                    "owner_agent_id": owner_columns["owner_agent_id"],
+                    "embedding": vector,
+                    "node_id": point_id,
+                },
+            )
+```
+
+> **为什么这条不能省**：Task 2 已把三列落到分表 DDL 与迁移，若写入端不消费，
+> 则 `owner_admin_user_id` / `owner_agent_id` 永为 NULL、`owner_type` 只是靠默认值
+> `'user'` 侥幸正确——属「只建列不写列」断链。P3b 接入 admin 主体时会在分表落成
+> 错标归属。测试必须断言分表 INSERT 的列清单与参数，而不是只断言"INSERT 存在"。
+
 - [ ] **Step 4: 跑记忆写入相关回归**
 
 ```bash

@@ -175,6 +175,26 @@ def test_upsert_vector_writes_owner_type_columns(monkeypatch):
     # 向量分表写入照旧
     assert any("INSERT INTO user_memory_embedding_" in e[0] for e in db.session.executed)
     assert db.session.committed >= 1
+    # 分表 INSERT 同样必须双写三新列（列已在 Task 2 建好，写入端必须消费，
+    # 否则 `owner_admin_user_id` / `owner_agent_id` 永远是 NULL，
+    # `owner_type` 只是靠 DEFAULT 'user' 侥幸正确 —— 属"只建列不写列"断链）
+    insert_execs = [
+        (sql, params)
+        for sql, params in db.session.executed
+        if "INSERT INTO user_memory_embedding_" in sql
+    ]
+    assert len(insert_execs) == 1
+    insert_sql, insert_params = insert_execs[0]
+    for column in ("owner_type", "owner_admin_user_id", "owner_agent_id"):
+        assert column in insert_sql, f"分表 INSERT 缺列 {column}"
+        # ON CONFLICT 分支也要同步归属列，命中时不至于留下旧归属
+        assert f"{column} = EXCLUDED.{column}" in insert_sql, (
+            f"分表 ON CONFLICT 未同步列 {column}"
+        )
+    assert insert_params["owner_type"] == "user"
+    assert insert_params["owner_admin_user_id"] is None
+    assert insert_params["owner_agent_id"] is None
+    assert insert_params["owner_id"] == str(account_id)
 
 
 def test_upsert_vector_skips_write_when_owner_unparsable(monkeypatch):
