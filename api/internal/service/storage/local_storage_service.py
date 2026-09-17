@@ -227,12 +227,26 @@ class LocalStorageService:
         return len(content)
 
     def merge_chunks(self, session_id: str, total_chunks: int, target_key: str) -> tuple[int, str]:
-        """按序流式合并分片为最终对象，返回 (总字节数, sha3_256)。
+        """按序流式合并分片为本地对象，返回 (总字节数, sha3_256)。
+
+        仅用于 local 作为最终后端时的就地合并；跨后端场景请用
+        ``merge_chunks_to_file`` 合并到临时文件后再由激活后端落盘。
+        """
+        return self.merge_chunks_to_file(
+            session_id=session_id,
+            total_chunks=total_chunks,
+            target_path=self._object_path(target_key),
+        )
+
+    def merge_chunks_to_file(
+        self, *, session_id: str, total_chunks: int, target_path: str
+    ) -> tuple[int, str]:
+        """按序流式合并分片到任意本地路径，返回 (总字节数, sha3_256)。
 
         全程分块读写，不把整个文件载入内存；缺任一必需分片时抛 FailException。
-        合并中途失败时回收半成品目标对象，避免留下孤儿文件（不计配额但会泄漏磁盘）。
+        合并中途失败时回收半成品目标文件，避免留下孤儿文件。
+        与具体存储后端解耦：分片暂存永远在本地，产物由调用方决定落到哪个后端。
         """
-        target_path = self._object_path(target_key)
         _ensure_parent_dir(target_path)
         hasher = hashlib.sha3_256()
         total = 0
@@ -251,8 +265,12 @@ class LocalStorageService:
                             hasher.update(block)
                             total += len(block)
         except Exception:
-            logging.warning("分片合并失败，回收半成品 key=%s", target_key, exc_info=True)
-            self.delete_object(target_key)
+            logging.warning("分片合并失败，回收半成品 target=%s", target_path, exc_info=True)
+            try:
+                if os.path.isfile(target_path):
+                    os.remove(target_path)
+            except OSError:
+                logging.warning("回收半成品失败 target=%s", target_path, exc_info=True)
             raise
         return total, hasher.hexdigest()
 
@@ -293,6 +311,27 @@ class LocalStorageService:
         _ensure_parent_dir(target_path)
         shutil.copyfile(source_path, target_path)
         return os.path.getsize(target_path)
+
+    def upload_local_file(
+        self, *, source_path: str, target_key: str, mime_type: str | None = None
+    ) -> str:
+        """把本地磁盘文件落到本地存储的 target_key（保持 key 不变）。
+
+        local 后端的语义是「移动/复制到最终位置」：源文件与目标为同一路径时
+        直接返回（分片合并已就地写入的情形），否则同文件系统内原子 move，
+        跨文件系统退回 copy+delete，避免把整文件读进内存。
+        """
+        target_path = self._object_path(target_key)
+        _ensure_parent_dir(target_path)
+        source_abs = os.path.abspath(source_path)
+        target_abs = os.path.abspath(target_path)
+        if source_abs == target_abs:
+            return target_key
+        try:
+            os.replace(source_abs, target_abs)
+        except OSError:
+            shutil.move(source_abs, target_abs)
+        return target_key
 
     def delete_object(self, key: str) -> bool:
         """删除本地对象（幂等）；不存在返回 False。"""

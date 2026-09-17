@@ -3,13 +3,19 @@
 职责：
 - init：校验单文件上限与配额、创建分片会话、秒传命中则直接复用
 - save_chunk：把分片交给存储后端暂存并登记会话
-- complete：流式合并分片 → 落 UploadFile 记录 → 清理暂存 → 登记秒传指纹
+- complete：流式合并分片 → 落盘到激活后端 → 落 UploadFile 记录 → 清理暂存 → 登记秒传指纹
 - abort：清理暂存与会话
 - status：查询进度（断点续传）
 
-仅支持 local 后端（云后端原生 multipart 属后续 P2B-2）。
+存储后端支持（P2B-2 已落地）：
+- **分片暂存永远在本地磁盘**：分片是逐块到达的临时数据，与最终后端无关；
+- **合并产物落到运行时激活后端**（admin 可切换 local/cos/oss）：合并先在本地
+  临时文件完成（流式、不进内存），再由激活后端通过 ``upload_local_file``
+  流式上传（COS 多分片 / OSS 文件流 / local 原子 move）。
 """
 import logging
+import os
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,6 +27,7 @@ from internal.exception import FailException, ValidateErrorException
 from internal.model import UploadFile
 from internal.service.chunked_upload_session_service import ChunkedUploadSessionService
 from internal.service.storage.local_storage_service import LocalStorageService
+from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
 from internal.service.storage_quota_service import StorageQuotaService
 from internal.service.upload_file_service import UploadFileService
 from pkg.sqlalchemy import SQLAlchemy
@@ -44,10 +51,16 @@ def _build_object_key(filename: str) -> str:
 @inject
 @dataclass
 class ChunkedUploadService(BaseService):
-    """分片上传编排。"""
+    """分片上传编排。
+
+    ``storage`` 仅用于**分片暂存与合并**（永远是本地磁盘）；
+    ``runtime_storage`` 负责**最终产物的落盘与对象管理**，跟随运行时激活的后端。
+    二者职责分离是 P2B-2 的核心：分片是临时数据，产物才需要跟随存储策略。
+    """
 
     db: SQLAlchemy
     storage: LocalStorageService
+    runtime_storage: RuntimeStorageProxy
     session_service: ChunkedUploadSessionService
     upload_file_service: UploadFileService
     storage_quota_service: StorageQuotaService
@@ -186,17 +199,33 @@ class ChunkedUploadService(BaseService):
             raise
 
     def _materialize(self, *, session, account, knowledge_base_id: str, knowledge_service) -> dict:
-        """合并分片 → 落 UploadFile → （可选）建档 → 收尾。配额已在此之前预占。"""
+        """合并分片 → 落到激活后端 → 落 UploadFile → （可选）建档 → 收尾。
+
+        配额已在此之前预占。分片暂存在本地，产物落到 runtime 激活的后端：
+        合并先在本地临时文件完成（流式，不进内存），再流式上传到目标后端。
+        """
         target_key = _build_object_key(session.filename)
+        backend = self.runtime_storage.active_backend()
+        temp_path = self._new_temp_path(session.filename)
         try:
-            total_size, digest = self.storage.merge_chunks(
+            # 合并到本地临时文件（流式，不进内存），再流式落到激活后端。
+            # 无论成功失败都清理临时文件（finally），避免磁盘泄漏。
+            total_size, digest = self.storage.merge_chunks_to_file(
                 session_id=session.session_id,
                 total_chunks=session.total_chunks,
-                target_key=target_key,
+                target_path=temp_path,
+            )
+            self.runtime_storage.upload_local_file(
+                source_path=temp_path, target_key=target_key
             )
         except Exception:
-            logger.exception("分片合并失败 session_id=%s", session.session_id)
+            logger.exception(
+                "分片合并/落盘失败 backend=%s key=%s", backend, target_key, exc_info=True
+            )
+            self._safe_delete_object(target_key)
             raise
+        finally:
+            self._discard_temp_file(temp_path)
 
         extension = (
             session.filename.rsplit(".", 1)[-1].lower() if "." in session.filename else ""
@@ -210,7 +239,7 @@ class ChunkedUploadService(BaseService):
                 extension=extension,
                 mime_type="",
                 hash=digest,
-                storage_backend="local",
+                storage_backend=backend,
             )
         except Exception:
             # 落库失败：回收已合并的目标对象，避免孤儿文件；会话保留以便重试
@@ -256,11 +285,59 @@ class ChunkedUploadService(BaseService):
         return result
 
     def _safe_delete_object(self, key: str) -> None:
-        """尽力删除对象，失败仅告警（不掩盖原始异常）。"""
+        """尽力删除对象，失败仅告警（不掩盖原始异常）。按文件记录/激活后端路由。"""
         try:
-            self.storage.delete_object(key)
+            self.runtime_storage.delete_object(key)
         except Exception:
             logger.warning("删除对象失败 key=%s", key, exc_info=True)
+
+    @staticmethod
+    def _new_temp_path(filename: str) -> str:
+        """为合并产物创建本地临时文件路径（延后到合并时写入）。"""
+        extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        suffix = f".{extension}" if extension else ""
+        fd, path = tempfile.mkstemp(prefix="chunk-merge-", suffix=suffix)
+        os.close(fd)
+        return path
+
+    @staticmethod
+    def _discard_temp_file(path: str) -> None:
+        """删除本地合并临时文件（幂等，失败不抛）。"""
+        try:
+            if path and os.path.isfile(path):
+                os.remove(path)
+        except OSError:
+            logger.warning("清理合并临时文件失败 path=%s", path, exc_info=True)
+
+    def _copy_source_to_active_backend(self, source) -> tuple[str, int, str]:
+        """把秒传源对象复制到激活后端，返回 (target_key, 字节数, 目标后端)。
+
+        同后端时走服务端复制（快、不落本地）；跨后端时下载到本地临时文件后
+        流式上传到激活后端——与激活后端策略保持一致，避免历史文件永久留在旧后端。
+        """
+        active = self.runtime_storage.active_backend()
+        source_backend = (getattr(source, "storage_backend", None) or "").strip().lower() or active
+        target_key = _build_object_key(source.name or "material.bin")
+
+        if source_backend == active:
+            size = self.runtime_storage.copy_object(
+                source.key, target_key, backend=source_backend
+            )
+            return target_key, size, active
+
+        temp_path = self._new_temp_path(source.name or "material.bin")
+        try:
+            self.runtime_storage.download_file(source.key, temp_path, backend=source_backend)
+            size = os.path.getsize(temp_path)
+            self.runtime_storage.upload_local_file(
+                source_path=temp_path, target_key=target_key
+            )
+        except Exception:
+            self._safe_delete_object(target_key)
+            raise
+        finally:
+            self._discard_temp_file(temp_path)
+        return target_key, size, active
 
     def instant_upload(
         self, *, account, upload_file_id: str, fingerprint: str, knowledge_base_id: str = ""
@@ -296,8 +373,7 @@ class ChunkedUploadService(BaseService):
             account.id, source_size, reserve_bytes=PARSE_RESERVE_BYTES
         )
         try:
-            target_key = _build_object_key(source.name or "material.bin")
-            size = self.storage.copy_object(source.key, target_key)
+            target_key, size, target_backend = self._copy_source_to_active_backend(source)
 
             upload_file = self.upload_file_service.create_upload_file(
                 account_id=account.id,
@@ -307,7 +383,7 @@ class ChunkedUploadService(BaseService):
                 extension=source.extension,
                 mime_type=source.mime_type,
                 hash=source.hash,
-                storage_backend="local",
+                storage_backend=target_backend,
             )
 
             # 第二层防御：建档失败则回滚复制产物与 UploadFile 记录，并释放预占配额

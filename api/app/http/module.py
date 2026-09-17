@@ -122,7 +122,7 @@ class ExtensionModule(Module):
         from internal.service.storage_quota_service import StorageQuotaService
         binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
 
-        # 注册分片上传服务（本地后端暂存 + Redis 会话状态）
+        # 注册分片上传服务（本地暂存分片 + Redis 会话状态；产物落盘跟随激活后端）
         binder.bind(ChunkedUploadSessionService, to=ChunkedUploadSessionService, scope=singleton)
         binder.bind(LocalStorageService, to=LocalStorageService, scope=singleton)
         binder.bind(ChunkedUploadService, to=ChunkedUploadService, scope=singleton)

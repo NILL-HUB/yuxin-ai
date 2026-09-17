@@ -191,6 +191,45 @@ class AliyunOSSService:
             logging.exception("OSS download failed: key=%s target=%s", key, target_file_path)
             raise FailException(f"下载文件失败: {e}")
 
+    def upload_local_file(
+        self, *, source_path: str, target_key: str, mime_type: str | None = None
+    ) -> str:
+        """把本地磁盘文件**流式**上传到 OSS（保持 target_key 不变）。
+
+        用 ``put_object_from_file`` 让 SDK 按文件流读取，不把整文件读进内存，
+        适合 GB 级视频素材。
+        """
+        try:
+            bucket = self._get_bucket()
+            bucket.put_object_from_file(target_key, source_path)
+        except Exception:
+            logging.exception(
+                "OSS local-file upload failed: key=%s source=%s", target_key, source_path
+            )
+            raise FailException("上传文件失败，请稍后重试")
+        return target_key
+
+    def copy_object(self, source_key: str, target_key: str) -> int:
+        """服务端复制同桶对象，返回目标字节数。"""
+        bucket = self._get_bucket()
+        bucket_name = os.getenv("OSS_BUCKET")
+        bucket.copy_object(bucket_name, source_key, target_key)
+        try:
+            return int(bucket.head_object(target_key).content_length)
+        except Exception:
+            logging.warning("读取 OSS 对象大小失败 key=%s", target_key, exc_info=True)
+            return 0
+
+    def delete_object(self, key: str) -> bool:
+        """删除 OSS 对象（幂等）；对象不存在返回 False。"""
+        try:
+            bucket = self._get_bucket()
+            bucket.delete_object(key)
+            return True
+        except Exception:
+            logging.warning("删除 OSS 对象失败 key=%s", key, exc_info=True)
+            return False
+
     @classmethod
     def get_file_url(cls, key: str, download_name: str | None = None) -> str:
         """根据 OSS key 获取文件访问 URL。

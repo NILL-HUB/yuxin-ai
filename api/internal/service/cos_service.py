@@ -230,6 +230,57 @@ class CosService:
 
         client.download_file(bucket, key, target_file_path)
 
+    def upload_local_file(
+        self, *, source_path: str, target_key: str, mime_type: str | None = None
+    ) -> str:
+        """把本地磁盘文件**流式**上传到 COS（保持 target_key 不变）。
+
+        用 SDK 的 ``upload_file`` 多分片上传：文件不读进内存，适合 GB 级视频素材。
+        """
+        client = self._get_client()
+        bucket = self._get_bucket()
+        try:
+            client.upload_file(
+                Bucket=bucket,
+                Key=target_key,
+                LocalFilePath=source_path,
+                PartSize=1,
+                MAXThread=5,
+                EnableMD5=False,
+            )
+        except Exception:
+            logging.exception(
+                "COS local-file upload failed: bucket=%s key=%s source=%s",
+                bucket,
+                target_key,
+                source_path,
+            )
+            raise FailException("上传文件失败，请稍后重试")
+        return target_key
+
+    def copy_object(self, source_key: str, target_key: str) -> int:
+        """服务端复制同桶对象，返回目标字节数。"""
+        client = self._get_client()
+        bucket = self._get_bucket()
+        client.copy_object(
+            Bucket=bucket,
+            Key=target_key,
+            CopySource={"Bucket": bucket, "Key": source_key, "Region": os.getenv("COS_REGION")},
+        )
+        head = client.head_object(bucket, target_key)
+        return int(head.get("Content-Length", 0) or 0)
+
+    def delete_object(self, key: str) -> bool:
+        """删除 COS 对象（幂等）；对象不存在返回 False。"""
+        client = self._get_client()
+        bucket = self._get_bucket()
+        try:
+            client.delete_object(Bucket=bucket, Key=key)
+            return True
+        except Exception:
+            logging.warning("删除 COS 对象失败 key=%s", key, exc_info=True)
+            return False
+
     @staticmethod
     def _build_download_filename(filename: str) -> str:
         """构建用于 Content-Disposition 的安全文件名。"""

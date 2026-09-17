@@ -41,6 +41,10 @@ class RuntimeStorageProxy:
     def _resolve_backend(self) -> str:
         return self.storage_config_service.get_active_backend()
 
+    def active_backend(self) -> str:
+        """当前激活的存储后端名（local/cos/oss）。供落盘记录 ``storage_backend`` 用。"""
+        return self._resolve_backend()
+
     def _resolve_file_backend(self, key: str) -> str | None:
         """按对象 key 反查文件记录的后端（供下载/URL 路由）。
 
@@ -192,3 +196,26 @@ class RuntimeStorageProxy:
         """生成文件访问 URL，路由规则同 download_file。"""
         resolved = backend or self._resolve_file_backend(key)
         return self._get_service(resolved).get_file_url(key, download_name)
+
+    # ------------------------------------------------------------------
+    # 大文件落盘 / 对象管理（跟随激活后端，或按显式 backend 路由）
+    # ------------------------------------------------------------------
+    def upload_local_file(self, *, source_path: str, target_key: str) -> str:
+        """把本地磁盘文件流式落到**当前激活后端**（分片合并产物、跨后端搬运）。
+
+        走 SDK 的流式/分片上传，不把整个文件读进内存，适合 GB 级视频素材。
+        返回最终对象 key。
+        """
+        return self._get_service().upload_local_file(
+            source_path=source_path, target_key=target_key
+        )
+
+    def copy_object(self, source_key: str, target_key: str, backend: str | None = None) -> int:
+        """在指定后端（默认按源文件记录，其次激活后端）内做服务端复制，返回字节数。"""
+        resolved = backend or self._resolve_file_backend(source_key) or self._resolve_backend()
+        return self._get_service(resolved).copy_object(source_key, target_key)
+
+    def delete_object(self, key: str, backend: str | None = None) -> bool:
+        """删除指定后端（默认按源文件记录，其次激活后端）的对象，幂等。"""
+        resolved = backend or self._resolve_file_backend(key) or self._resolve_backend()
+        return self._get_service(resolved).delete_object(key)
