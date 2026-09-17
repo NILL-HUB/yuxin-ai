@@ -9,3 +9,11 @@
 - key: admin_agent_board_agent
   category: admin_agent
   file: admin_agent/board_agent.yaml
+
+- key: admin_agent_ops_agent
+  category: admin_agent
+  file: admin_agent/ops_agent.yaml
+
+- key: admin_agent_marketing_agent
+  category: admin_agent
+  file: admin_agent/marketing_agent.yaml
