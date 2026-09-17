@@ -32,6 +32,7 @@ from injector import inject
 from internal.context import current_app
 
 from pkg.sqlalchemy import SQLAlchemy
+from internal.entity.memory_owner_entity import MemoryOwnerKey, MemoryOwnerKeyError
 from internal.model.knowledge import UserMemory
 from internal.model.memory_models import ExplicitDetectionResult, MemoryEvent
 from internal.service.memory.metrics import MetricsCollector, observe_latency
@@ -807,6 +808,7 @@ class LedgerWriter:
         vector: list[float],
         payload: dict,
         forced_memory_id: Optional[str] = None,
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> Optional[str]:
         """将向量写入维度分表，元数据写入 user_memory 表。
 
@@ -828,6 +830,10 @@ class LedgerWriter:
             payload: 元数据字典，含 ``content`` / ``event_type`` / ``user_id`` 等
             forced_memory_id: 可选，强制新建行使用该 id（agent_curated 用，
                 保证 user_memory.id == 图节点 node_id）
+            owner_key: 可选主体键。为空时从 ``payload["user_id"]`` 按历史语义
+                （``str(account.id)``）解析；agent_curated 路径显式传入
+                ``MemoryOwnerKey.for_user(account_id)``，保证两条写入路径
+                共用同一套主体映射（设计 §8）。
 
         Returns:
             成功写入的 user_memory.id（字符串），失败时返回 None。
@@ -839,17 +845,23 @@ class LedgerWriter:
         content = payload.get("content", "") or ""
         user_id_raw = payload.get("user_id")
 
-        # owner_account_id 是 UUID 外键，需校验合法性
-        owner_account_id: Optional[UUID] = None
-        if user_id_raw is not None:
+        # 主体解析：统一走 MemoryOwnerKey；无法解析即跳过写入
+        # （与既有 UUID(str(...)) 失败 → 置空 → 降级跳过的行为一致）
+        owner_key_obj = owner_key
+        if owner_key_obj is None and user_id_raw is not None:
             try:
-                owner_account_id = UUID(str(user_id_raw))
-            except (ValueError, AttributeError, TypeError):
+                owner_key_obj = MemoryOwnerKey.from_legacy_user_id(str(user_id_raw))
+            except MemoryOwnerKeyError:
                 logger.warning(
                     "_upsert_vector: user_id 非合法 UUID，owner_account_id 置空 user_id=%r",
                     user_id_raw,
                 )
-                owner_account_id = None
+                owner_key_obj = None
+
+        # 旧列 owner_account_id 仍是 NOT NULL 外键，读路径依赖它
+        owner_account_id: Optional[UUID] = (
+            owner_key_obj.owner_account_id if owner_key_obj is not None else None
+        )
 
         if owner_account_id is None:
             # 外键约束要求非空，无法写入，降级跳过
@@ -950,6 +962,11 @@ class LedgerWriter:
                 user_memory = UserMemory(
                     id=memory_id,
                     owner_account_id=owner_account_id,
+                    **{
+                        k: v
+                        for k, v in owner_key_obj.pg_kwargs().items()
+                        if k != "owner_account_id"
+                    },
                     memory_type=payload.get("event_type", "episode"),
                     content=content,
                     embedding_node_id=point_id,
@@ -1178,6 +1195,7 @@ class LedgerWriter:
             vector=embedding,
             payload=curated_metadata,
             forced_memory_id=str(memory_id),
+            owner_key=MemoryOwnerKey.for_user(account_id),
         )
         if vector_memory_id is None:
             logger.warning(
