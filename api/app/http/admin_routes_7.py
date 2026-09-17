@@ -133,14 +133,7 @@ def _build_draft_service(a):
     """构造通用变更草稿服务（Db 依赖由 injector 提供）。"""
     from internal.service.admin_change_draft_service import AdminChangeDraftService
 
-    try:
-        return a._get_service(AdminChangeDraftService)
-    except Exception:
-        # AdminChangeDraftService 不是 @inject：injector 无法自动构造时
-        # 回退到直接注入 db（与 ScopedKnowledgeService._get_audit_log_service 同思路）。
-        from internal.extension.database_extension import db
-
-        return AdminChangeDraftService(db=db)
+    return a._get_service(AdminChangeDraftService)
 
 
 def _build_audit_service():
@@ -226,6 +219,12 @@ def _dump_agent(agent) -> dict:
         "created_at": datetime_to_timestamp(agent.created_at),
         "updated_at": datetime_to_timestamp(agent.updated_at),
     }
+
+
+def _timestamp(value):
+    from internal.lib.helper import datetime_to_timestamp
+
+    return datetime_to_timestamp(value)
 
 
 def register_routes(quart_app):
@@ -522,14 +521,18 @@ def register_routes(quart_app):
             return err
 
         from internal.schema.admin_agent_schema import AdminAgentListResp
+        from internal.service.admin_agent_builtin_agents import AdminAgentBuiltinService
         from internal.service.admin_agent_service import AdminAgentService
         from uuid import UUID
 
         admin_user_id = UUID(str(admin.get("id")))
-        rows = await a._to_thread(
-            a._get_service(AdminAgentService).list_agents,
-            admin_user_id=admin_user_id,
-        )
+
+        def _run():
+            # 预置 Agent 幂等补建：首次打开列表即补齐缺失的内置 Agent
+            a._get_service(AdminAgentBuiltinService).ensure_builtin_agents(admin_user_id)
+            return a._get_service(AdminAgentService).list_agents(admin_user_id=admin_user_id)
+
+        rows = await a._to_thread(_run)
         resp = AdminAgentListResp()
         return a._ok(resp.dump({"items": [_dump_agent(r) for r in rows]}))
 
@@ -658,6 +661,147 @@ def register_routes(quart_app):
         except LookupError as exc:
             return a._json_resp(code="not_found", message=str(exc), status=404)
         return a._ok_msg("删除 Agent 成功")
+
+    @quart_app.post("/admin/agents/<uuid:agent_id>/chat")
+    async def admin_agent_chat(agent_id):
+        """与某个管理端 Agent 对话（SSE 流式）。
+
+        路由只做接线：把当前管理员的**实时权限**与查询交给
+        `AdminAgentChatService.chat`，由它完成 principal → 会话 → 提示词
+        → 工具循环 → 落库，并逐帧 yield SSE。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_chat_schema import AdminAgentChatReq
+        from internal.service.admin_agent_chat_service import AdminAgentChatService
+        from uuid import UUID
+
+        body = await request.get_json(force=True, silent=True) or {}
+        form = AdminAgentChatReq()
+        try:
+            req = form.load(body)
+        except Exception as exc:
+            return a._json_resp(
+                code="validate_error", message=f"参数错误: {exc}", status=400
+            )
+
+        # 同 invoke/drafts：服务契约是 UUID，传字符串会让属主比较恒不相等
+        admin_user_id = UUID(str(admin.get("id")))
+        admin_permissions = list(admin.get("permissions") or [])
+        conversation_id = req.get("conversation_id") or None
+
+        generator = a._get_service(AdminAgentChatService).chat(
+            agent_id=agent_id,
+            admin_user_id=admin_user_id,
+            admin_permissions=admin_permissions,
+            query=req["query"],
+            conversation_id=conversation_id,
+        )
+        return a._sse_response(generator)
+
+    @quart_app.get("/admin/agents/<uuid:agent_id>/conversations")
+    async def admin_agent_conversations(agent_id):
+        """列出某 Agent 的会话（仅创建者可见）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from internal.schema.admin_agent_chat_schema import (
+            AdminAgentConversationListResp,
+        )
+        from internal.service.admin_agent_service import AdminAgentService
+        from internal.service.admin_agent_conversation_service import (
+            AdminAgentConversationService,
+        )
+        from uuid import UUID
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            # 先校验 Agent 归属（非属主 → PermissionError）
+            a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            return a._get_service(AdminAgentConversationService).list_conversations(
+                admin_agent_id=agent_id, admin_user_id=admin_user_id
+            )
+
+        try:
+            rows = await a._to_thread(_run)
+        except PermissionError as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
+        resp = AdminAgentConversationListResp()
+        return a._ok(
+            resp.dump(
+                {
+                    "items": [
+                        {
+                            "id": str(row.id),
+                            "admin_agent_id": str(row.admin_agent_id),
+                            "title": row.title,
+                            "created_at": _timestamp(row.created_at),
+                            "updated_at": _timestamp(row.updated_at),
+                        }
+                        for row in rows
+                    ]
+                }
+            )
+        )
+
+    @quart_app.get("/admin/agents/conversations/<uuid:conversation_id>/messages")
+    async def admin_agent_conversation_messages(conversation_id):
+        """列出某会话的消息（仅会话归属管理员可见）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from internal.exception import ForbiddenException, NotFoundException
+        from internal.schema.admin_agent_chat_schema import (
+            AdminAgentChatMessageListResp,
+        )
+        from internal.service.admin_agent_conversation_service import (
+            AdminAgentConversationService,
+        )
+        from uuid import UUID
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            service = a._get_service(AdminAgentConversationService)
+            service.get_conversation(conversation_id, admin_user_id=admin_user_id)
+            return service.list_messages(conversation_id=conversation_id)
+
+        try:
+            rows = await a._to_thread(_run)
+        except ForbiddenException as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
+        resp = AdminAgentChatMessageListResp()
+        return a._ok(
+            resp.dump(
+                {
+                    "items": [
+                        {
+                            "id": str(row.id),
+                            "role": row.role,
+                            "content": row.content,
+                            "tool_calls": list(row.tool_calls or []),
+                            "created_at": _timestamp(row.created_at),
+                        }
+                        for row in rows
+                    ]
+                }
+            )
+        )
 
     # ------------------------------------------------------------------
     # admin_customer_user_handler -> AdminCustomerUserService

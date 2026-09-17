@@ -61,6 +61,10 @@ class _StubAgentService:
         self._record("list_agents", {"admin_user_id": admin_user_id})
         return self._agents
 
+    def ensure_builtin_agents(self, admin_user_id):
+        self._record("ensure_builtin_agents", {"admin_user_id": admin_user_id})
+        return 0
+
     def create_agent(self, **kwargs):
         self._record("create_agent", kwargs)
         return _agent_row(uuid4())
@@ -124,9 +128,25 @@ class TestListEndpoint:
         assert resp.status_code == 200
         assert len(body["data"]["items"]) == 1
         assert body["data"]["items"][0]["name"] == "运维 Agent"
-        _, kwargs = svc.calls[0]
+        _, kwargs = next(call for call in svc.calls if call[0] == "list_agents")
         assert isinstance(kwargs["admin_user_id"], UUID)
         assert kwargs["admin_user_id"] == admin_id
+
+    def test_list_ensures_builtin_agents_before_listing(self, monkeypatch):
+        admin_id = uuid4()
+        svc = _wire(
+            monkeypatch,
+            admin_id,
+            ["agent_pool:read"],
+            _StubAgentService(agents=[]),
+        )
+
+        resp, _ = _req("GET", "/admin/agents")
+
+        assert resp.status_code == 200
+        assert ("ensure_builtin_agents", {"admin_user_id": admin_id}) in svc.calls
+        # 补建必须发生在列出之前
+        assert [name for name, _ in svc.calls] == ["ensure_builtin_agents", "list_agents"]
 
 
 class TestCreateEndpoint:
