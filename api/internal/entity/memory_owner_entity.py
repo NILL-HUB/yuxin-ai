@@ -51,7 +51,10 @@ class MemoryOwnerType(str, Enum):
 class MemoryOwnerKey:
     """记忆主体键（不可变值对象）。
 
-    不变量（构造即校验，fail closed）：
+    不变量（构造即校验，fail closed）：既校验字段组合，也校验 UUID 取值类型——
+    三个 UUID 字段（`owner_account_id` / `owner_admin_user_id` / `owner_agent_id`）
+    必须为 `None` 或 `uuid.UUID` 实例，裸构造传字符串会被拒绝，
+    以免绕过 `for_user` / `for_admin` 造出 `user:not-a-uuid` 这类坏键。
     - `user` 类型：必须有 `owner_account_id`，且不得携带 admin/agent 字段；
     - `admin` 类型：必须有 `owner_admin_user_id`，且不得携带 `owner_account_id`；
     - `owner_agent_id` 仅 `admin` 类型允许（user 主体没有 Agent 概念）。
@@ -73,12 +76,15 @@ class MemoryOwnerKey:
                 raise MemoryOwnerKeyError(
                     "user 主体不得携带 owner_admin_user_id / owner_agent_id"
                 )
+            _ensure_uuid_or_none(self.owner_account_id, "owner_account_id")
             return
 
         if self.owner_admin_user_id is None:
             raise MemoryOwnerKeyError("admin 主体必须提供 owner_admin_user_id")
         if self.owner_account_id is not None:
             raise MemoryOwnerKeyError("admin 主体不得携带 owner_account_id")
+        _ensure_uuid_or_none(self.owner_admin_user_id, "owner_admin_user_id")
+        _ensure_uuid_or_none(self.owner_agent_id, "owner_agent_id")
 
     # ------------------------------------------------------------------
     # 构造
@@ -159,6 +165,13 @@ class MemoryOwnerKey:
         （降级会造出 account 为空的坏键，污染归属判定）。
         """
         return cls.for_user(_parse_uuid(user_id, str(user_id)))
+
+
+def _ensure_uuid_or_none(value: object, field: str) -> None:
+    if value is not None and not isinstance(value, UUID):
+        raise MemoryOwnerKeyError(
+            f"{field} 必须是 uuid.UUID 或 None，实际：{type(value).__name__}"
+        )
 
 
 def _as_uuid(value: UUID | str) -> UUID:

@@ -4,7 +4,7 @@
 对非法输入 fail closed，且**用户主体产出与旧行为逐字节一致**
 （`user:<account_uuid>` == 旧 `str(account.id)` 的语义对齐）。
 """
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -128,3 +128,37 @@ def test_from_legacy_user_id_treats_non_uuid_as_user_key():
     """
     with pytest.raises(MemoryOwnerKeyError):
         MemoryOwnerKey.from_legacy_user_id("not-a-uuid")
+
+
+def test_user_type_rejects_non_uuid_account_id():
+    """裸构造绕过工厂方法时，UUID 值校验必须仍在 `__post_init__` 生效。"""
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey(
+            owner_type=MemoryOwnerType.USER,
+            owner_account_id="not-a-uuid",
+        )
+
+
+def test_user_type_rejects_integer_account_id():
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey(
+            owner_type=MemoryOwnerType.USER,
+            owner_account_id=123,
+        )
+
+
+def test_admin_type_rejects_non_uuid_admin_user_id():
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey(
+            owner_type=MemoryOwnerType.ADMIN,
+            owner_admin_user_id="x",
+        )
+
+
+def test_admin_type_rejects_non_uuid_agent_id():
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey(
+            owner_type=MemoryOwnerType.ADMIN,
+            owner_admin_user_id=uuid4(),
+            owner_agent_id="x",
+        )
