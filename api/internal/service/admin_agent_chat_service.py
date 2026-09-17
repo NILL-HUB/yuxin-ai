@@ -84,12 +84,11 @@ class AdminAgentChatService:
             conversation_id=conversation.id, role=AdminAgentMessageRole.USER.value, content=text
         )
 
-        # D2：Agent 加载、工具装配、提示词构造、模型获取**全部**纳入 try。
-        # 这些步骤任一抛错（如提示词缺失、公共 AI 配置关闭了本 feature）都必须
-        # 转成 `event: error` 帧回给客户端，而不是**逃出 SSE 生成器**——逃出的
-        # 异常会被 `support._sse_response` 的通用兜底改用另一套 payload 结构，
-        # 本链路的 error 帧契约（`{"error": ...}`）就此丢失，客户端表现为断流。
-        in_tool_loop = False
+        # D2：Agent 加载、工具装配、提示词构造、模型获取、工具循环**全部**纳入 try。
+        # 这些步骤任一抛错（如提示词缺失、公共 AI 配置关闭了本 feature、工具循环
+        # 超轮次上限不收敛）都必须转成 `event: error` 帧回给客户端，而不是
+        # **逃出 SSE 生成器**——逃出的异常会被 `support._sse_response` 的通用兜底
+        # 改用另一套 payload 结构，本链路的 error 帧契约（`{"error": ...}`）就此丢失。
         try:
             agent = self._load_agent(principal.agent_id, admin_user_id)
             tools = self._build_tools(principal)
@@ -97,7 +96,6 @@ class AdminAgentChatService:
                 principal, getattr(agent, "prompt_key", None)
             )
             llm = self._build_model()
-            in_tool_loop = True
             answer, tool_events = self._run_tool_loop(
                 llm=llm,
                 system_prompt=system_prompt,
@@ -111,11 +109,12 @@ class AdminAgentChatService:
                 ),
             )
         except FailException as exc:
+            # 本链路所有可预期失败（含工具循环超过轮次上限不收敛）统一以
+            # `event: error` 帧结束，不再让异常逃出生成器：逃出的异常会被
+            # `support._sse_response` 的通用兜底捕获并追加一帧结构不同的错误
+            # （`event: <failure_event>` + `observation`），客户端会收到两帧
+            # 语义冲突的错误，本链路契约随之丢失。
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
-            # 构造阶段失败已由 error 帧完整告知客户端（不逃出生成器）；工具循环
-            # 内部失败（如超过轮次上限）仍需上抛，让调用方感知这轮未产出答复。
-            if in_tool_loop:
-                raise
             return
         except Exception as exc:
             logger.exception("管理端 Agent 对话失败 agent_id=%s", principal.agent_id)

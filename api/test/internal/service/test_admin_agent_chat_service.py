@@ -14,7 +14,10 @@ import pytest
 
 from internal.entity.admin_agent_entity import AdminAgentPrincipal, AutomationLevel
 from internal.exception import FailException
-from internal.service.admin_agent_chat_service import AdminAgentChatService
+from internal.service.admin_agent_chat_service import (
+    MAX_TOOL_ITERATIONS,
+    AdminAgentChatService,
+)
 
 
 class _FakeTool:
@@ -116,17 +119,22 @@ def test_tool_loop_aborts_on_excessive_iterations():
         SimpleNamespace(content="", tool_calls=[{"name": "admin_builtin_tool", "args": {}, "id": f"c{i}"}])
         for i in range(20)
     ]
-    service = _service(_principal(), _FakeLLM(looping), [_FakeTool("admin_builtin_tool")])
+    llm = _FakeLLM(looping)
+    service = _service(_principal(), llm, [_FakeTool("admin_builtin_tool")])
 
-    with pytest.raises(FailException):
-        list(
-            service.chat(
-                agent_id=uuid4(),
-                admin_user_id=uuid4(),
-                admin_permissions=["builtin_tool:read"],
-                query="循环",
-            )
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="循环",
         )
+    )
+
+    body = "".join(frames)
+    assert "event: error" in body
+    assert str(MAX_TOOL_ITERATIONS) in body
+    assert llm.invocations and len(llm.invocations) <= MAX_TOOL_ITERATIONS + 1
 
 
 def test_build_tools_wires_execution_service_that_has_run():
