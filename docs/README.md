@@ -36,6 +36,7 @@
 ## 接口与规范
 
 - [RBAC 权限模型](rbac.md)
+- [单机 4C4G 部署与资源规划](deployment-single-node.md)：服务裁减清单、渲染资源分配与闸门、内存超卖风险（含实测数值）
 - [分销/余额/订单 API](api/commerce-distribution-api.md)
 - [审计日志 API](api/audit-log-api.md)
 - [管理端 Agent API](api/admin-agents-api.md)
