@@ -467,6 +467,17 @@ internal_admin 子池默认只对管理员和系统内部流程开放，不参�
 
 > **`internal_admin` 池的消费方（2026-09 已接线）**：该子池此前为"预留未接线"。P1b 起，管理端 Agent 治理链路（`api/internal/service/admin_agent_execution_service.py`）是其消费方——它经 `AdminAgentPrincipal` 携带管理端身份执行板块动作。与用户端 Agent 候选收集（`AgentCandidateCollector`）是**两条互不交叉的链路**：用户端链路按 `account_id` 隔离、走 `AgentPolicyFilter`；管理端链路按 `admin_user_id` 隔离、走板块动作注册表（`api/internal/core/admin_agent_boards.py`）。两条链路的候选/授权来源不同，不可互相替代。
 
+> **P2 起对话链路也是消费方（2026-09-17）**：管理端 Agent 的**对话式入口**
+> （`api/internal/service/admin_agent_chat_service.py`）同样装配白名单式板块工具
+> （`admin_agent_chat_tools.build_board_tools`，每板块一个工具），复用同一条执行层
+> （`AdminAgentExecutionService.run`）与同一套板块动作注册表。它仍属**管理端链路**，
+> 按 `admin_user_id` 隔离，**不进入**用户端候选收集（`AgentCandidateCollector`）。
+>
+> 另注：P2 的**预置 Agent 不落 Agent 池**——池成员是用户端 `app`（`agent_pool_config.app_id`
+> 非空）且无授权字段，而治理 Agent 的授权（`granted_permissions` / `automation_policy`）
+> 挂在 `admin_agent` 表；塞进池只能伪造 `app` 行，正好落进用户端候选域。故预置落
+> `admin_agent`（`builtin_key` 幂等键），池继续只做用户端 App 的候选/可见性路由。
+
 ### 9.3 Agent 来源
 
 Agent 池第一阶段复用现有 App：

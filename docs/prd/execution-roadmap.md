@@ -35,6 +35,7 @@
 | Phase 14 | 调优建议采纳与策略变更 | ✅ 完成 |
 | Phase 15 | 管理端 Agent 治理 P1a（授权与身份内核） | ✅ 完成 |
 | Phase 16 | 管理端 Agent 治理 P1b（板块工具与执行链路） | ✅ 完成 |
+| Phase 17 | 管理端 Agent 治理 P2（对话式入口 + 会话表 + 预置提示词） | ✅ 完成 |
 
 ### 管理端 Agent 治理（P1a 授权与身份内核，2026-09-16 完成）
 
@@ -82,6 +83,38 @@
 **回归防护**：`test_admin_agent_boards.py`、`test_admin_change_draft_service.py`、`test_admin_agent_board_tools.py`、`test_admin_agent_execution_service.py`、`test_admin_agent_invoke_routes.py`、`test_recycle_bin_admin_agent.py`、`test_builtin_tool_write_paths.py`、`test_audit_write_commit_guard.py`——**均含反向验证**。
 
 **未接入项（明确标注）**：`AdminChangeDraftService.apply_draft` / `rollback_draft` 已提供能力，但「待批准变更」前端页属后续阶段，当前只有测试调用。
+
+---
+
+### 管理端 Agent 治理（P2 对话式入口，2026-09-17 完成）
+
+在 P1a/P1b 之上补「管理员与 Agent 多轮对话」的入口：会话/消息独立落库、板块工具交给 LLM 调用、系统提示词与预置人格可管理。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 独立会话/消息表 | `api/internal/model/admin_agent_conversation.py` + 迁移 `x1a2b3c4d5e7` |
+| 预置 Agent 幂等键 | `admin_agent.builtin_key` + 部分唯一索引 `admin_agent_owner_builtin_uniq`（同迁移） |
+| 会话/消息服务（归属隔离） | `api/internal/service/admin_agent_conversation_service.py` |
+| 板块工具的 LLM 适配（每板块一个工具） | `api/internal/service/admin_agent_chat_tools.py` |
+| 系统提示词构造（无硬编码） | `api/internal/service/admin_agent_prompt_service.py` |
+| 预置 Agent 与人格 | `api/internal/service/admin_agent_builtin_agents.py` + `prompts/admin_agent/{ops,marketing}_agent.yaml` |
+| 对话编排（工具循环 + 落库 + SSE） | `api/internal/service/admin_agent_chat_service.py` |
+| feature 注册（system-borne） | `public_ai_feature_service.py`（`admin_agent`，`billable=False`） |
+| HTTP 入口 | `POST /admin/agents/<id>/chat`（SSE）、`GET /admin/agents/<id>/conversations`、`GET /admin/agents/conversations/<id>/messages` |
+| 预置 Agent 补建派发点 | `GET /admin/agents`（先 `ensure_builtin_agents` 再 `list_agents`，顺序有测试锁定） |
+| API 契约 | [admin-agents-api.md §6](../api/admin-agents-api.md) |
+
+**关键设计决定**：
+
+- **不与用户端混表**：会话/消息走独立表，因此**不扩展** `InvokeFrom` 枚举；管理端链路不复用用户域 `chat()`/`FunctionCallAgent`（那会带入 app/account 上下文与记忆、确认流等用户域语义）。
+- **预置 Agent 落 `admin_agent` 而非 Agent 池**：池成员是用户端 `app`（`app_id` 非空）且无授权字段；治理 Agent 的授权（`granted_permissions` / `automation_policy`）挂在 `admin_agent`，塞进池只能伪造 `app` 行（正好落进用户端候选收集域）。
+- **预置不下放权限**：`granted_permissions=[]`，权限必须由管理员显式下放（符合 §4.3）；`automation_policy={}` 由 `automation_level_for` 兜底 `supervised`（fail closed）。
+- **chat 失败语义**：端点通过 HTTP 鉴权后恒 `200` + `text/event-stream`，业务失败以 `event: error` 帧表达（原因见 [admin-agents-api.md §6](../api/admin-agents-api.md)）。
+- **工具拒绝不中断对话**：板块工具捕获 `CustomException` 家族（含 `FailException`/`NotFoundException`）并回可读 JSON，让模型如实向管理员汇报；审计已由执行层写好。
+
+**回归防护**：`test_admin_agent_conversation_migration.py`、`test_admin_agent_conversation_service.py`、`test_admin_agent_chat_tools.py`、`test_admin_agent_prompt_service.py`、`test_admin_agent_builtin_agents.py`、`test_admin_agent_chat_service.py`、`test_admin_agent_chat_routes.py`、`test_admin_agent_feature_registration.py`、`test_admin_agent_di_construction.py`——均含反向验证。
+
+**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（P4）；记忆主体抽象（P3）；MCP 动态身份注入（P5）。
 
 
 ### 第三轮并行修复（P0-P3 全部完成）

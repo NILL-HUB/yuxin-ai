@@ -185,11 +185,68 @@ Agent 响应体（`AgentResp`）字段：
 
 ---
 
-## 6. 尚未落地
+## 6. 对话与会话
+
+### `POST /admin/agents/<agent_id>/chat`
+
+权限：`agent_pool:manage`（发起对话 = 让 Agent 动起来，不接受只读权限触发）
+
+**请求体**：`{"query": "看看内置工具现状", "conversation_id": "<可选，续聊时传 UUID>"}`
+
+**响应**：`text/event-stream`，逐帧格式 `event: <name>\ndata:<json>\n\n`：
+
+| `event` | `data` | 说明 |
+| --- | --- | --- |
+| `message` | `{"conversation_id": "..."}` | 会话已建立/复用 |
+| `tool` | `{"call": {"name","args","id"}, "result": "<JSON 字符串>"}` | 一次板块工具调用及结果 |
+| `answer` | `{"answer": "..."}` | 最终答复 |
+| `error` | `{"error": "..."}` | 可读错误 |
+| `end` | `{}` | 流结束 |
+
+链路：解析 `AdminAgentPrincipal`（三重交集实时重算）→ 取/建会话 → 系统提示词
+（Agent 的 `prompt_key`，缺省 `admin_agent_board_agent`）→ 装配板块工具（每板块一个）
+→ 工具循环（上限 6 轮）→ 落库 → SSE。写动作仍按 `automation_policy` 分流
+（`supervised` 产待批准草稿）。
+
+**失败语义（重要）**：本端点**一旦通过 HTTP 鉴权就恒返回 `200` + `text/event-stream`**，
+业务失败在 **SSE 帧内**表达为 `event: error`。即「非属主 / Agent 已停用 / 提示词缺失 /
+feature 未启用 / 工具循环超轮次不收敛」都不会产生 HTTP 403/404/500，而是 error 帧——
+这是刻意的：`support._sse_response` 会把逃出生成器的异常改写成**另一套** payload 结构
+（`event: <failure_event>` + `observation`），破坏本链路契约，故服务层把可预期异常
+统一转为本链路的 error 帧。
+
+唯一的 HTTP 层 `400 validate_error`：`query` 为空、或 `conversation_id` 不是合法 UUID
+（body 参数校验，尚未进入服务层）。
+
+### `GET /admin/agents/<agent_id>/conversations`
+
+权限：`agent_pool:read` — 列出该 Agent 的会话（先经 `get_agent` 校验归属）。
+
+**响应 `data`**：`{"items": [{"id","admin_agent_id","title","created_at","updated_at"}]}`
+
+**错误**：`403 forbidden`（非属主 —— `AdminAgentService.get_agent` 抛 `PermissionError`）。
+
+### `GET /admin/agents/conversations/<conversation_id>/messages`
+
+权限：`agent_pool:read` — 列出会话内消息（先经 `get_conversation` 校验会话归属）。
+
+**响应 `data`**：`{"items": [{"id","role","content","tool_calls","created_at"}]}`，
+`role ∈ {user, assistant, tool}`；`tool` 角色消息的 `tool_calls` 承载
+`{"call": {...}, "result": "..."}`。
+
+**错误**：`403 forbidden`（非会话归属管理员）、`404 not_found`（会话不存在）。
+
+> **多轮上下文说明**：续聊时服务按 LLM 协议还原历史——每个 `tool` 行还原为
+> 「携 `tool_calls` 的 assistant 消息 + 对应 `tool` 结果」成对结构；assistant 行
+> 只还原文本。若还原成孤立 `tool` 消息，OpenAI 兼容接口会以 4xx 拒收。
+
+---
+
+## 7. 尚未落地
 
 | 能力 | 阶段 |
 | --- | --- |
-| 对话式入口与会话表（`admin_agent_conversation`） | P2 |
+| 管理端前端对话页（后端入口已就绪，见 §6） | 前端任务 |
 | 记忆主体统一抽象 + 按 Agent 隔离 | P3 |
 | 预算闸门实际执行 + 定时任务 `agent_id` 通道 | P4 |
 | MCP 动态身份注入 | P5 |
