@@ -36,6 +36,7 @@
 | Phase 15 | 管理端 Agent 治理 P1a（授权与身份内核） | ✅ 完成 |
 | Phase 16 | 管理端 Agent 治理 P1b（板块工具与执行链路） | ✅ 完成 |
 | Phase 17 | 管理端 Agent 治理 P2（对话式入口 + 会话表 + 预置提示词） | ✅ 完成 |
+| Phase 18 | 管理端 Agent 治理 P3a（记忆主体抽象内核 + 存量迁移） | ✅ 完成 |
 
 ### 管理端 Agent 治理（P1a 授权与身份内核，2026-09-16 完成）
 
@@ -114,7 +115,35 @@
 
 **回归防护**：`test_admin_agent_conversation_migration.py`、`test_admin_agent_conversation_service.py`、`test_admin_agent_chat_tools.py`、`test_admin_agent_prompt_service.py`、`test_admin_agent_builtin_agents.py`、`test_admin_agent_chat_service.py`、`test_admin_agent_chat_routes.py`、`test_admin_agent_feature_registration.py`、`test_admin_agent_di_construction.py`——均含反向验证。
 
-**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（P4）；记忆主体抽象（P3）；MCP 动态身份注入（P5）。
+**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（P4）；记忆主体抽象读路径切换（P3b）；MCP 动态身份注入（P5）。
+
+
+### 管理端 Agent 治理（P3a 记忆主体抽象内核，2026-09-17 完成）
+
+把记忆归属从「硬编码 `Account`」升级为**主体类型**维度（`user` / `admin` + Agent），使记忆可归属管理员与 Agent。本阶段**只做写入双写与存量迁移，读路径一律不变**，用全量回归逐字节证明行为零变化。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 主体键值对象（构造即校验，fail closed） | `api/internal/entity/memory_owner_entity.py`（`MemoryOwnerKey` / `MemoryOwnerType` / `MemoryOwnerKeyError`） |
+| 主体列 | `user_memory` + 向量分表 `user_memory_embedding_{dim}` 补 `owner_type` / `owner_admin_user_id` / `owner_agent_id` |
+| 迁移（补列 + 回填 + 分表扫描补列，可逆） | `api/internal/migration/versions/y2b3c4d5e6f8_add_memory_owner_type.py` |
+| 分表建表 DDL 带新列 | `api/internal/service/embedding_table_router.py`（`ensure_tables_for_dimension`） |
+| 写入双写（系统路径 + Agent 策展路径 + 分表 INSERT） | `api/internal/service/memory/ledger_writer.py`（`_upsert_vector` / `write_agent_curated`） |
+| 跨层键前缀常量 | `api/internal/config/memory_settings.py`（`OWNER_KEY_USER_PREFIX` 等） |
+| 回归防护 | `test_memory_owner_entity.py`、`test_memory_owner_type_migration.py`、`test_ledger_writer_owner.py`、`test_memory_owner_backfill_consistency.py`（真库校验）、`test_memory_owner_settings.py` |
+
+**主体键形态**（`MemoryOwnerKey.to_key()`）：`user:{account_uuid}`（与旧 `str(account.id)` 同值）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10。
+
+**关键设计决定**：
+
+- **先双写不切读**：读路径不动才能用现有全量回归证明"零变化"；读切换与写改造混在一个计划里，回归失败无法区分归因。
+- **分表必须同步双写**：向量分表是**动态表名**（按维度建表），迁移只能靠 `information_schema` 扫描补列；若写入端不消费新列，`owner_admin_user_id` / `owner_agent_id` 永为 NULL、`owner_type` 只是靠 `DEFAULT 'user'` 侥幸正确——属「只建列不写列」断链，P3b 接入 admin 主体后会落成错标归属。
+- **`agent_id` 独立落列**：规格 §8 要求「`admin_user_id` + `agent_id` 两级隔离」，故新增 `owner_agent_id` 列（可空 FK `admin_agent.id`），而非复用 `owner_admin_user_id`。
+- **存量零变化**：既有 234 行全部回填 `owner_type='user'`，`owner_account_id` 不动；真库一致性守卫断言无 NULL、无非 user 行、分表列齐备。
+
+**未落地（P3b）**：读路径切 `owner_key`（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点属性 `user_id` → `owner_key`、Redis 键改造、冷存储路径改造、服务层 60+ 处 `user_id: str` 签名统一、admin Agent 记忆**读写**接入；以及既有不一致 C1（Neo4j `Skill` 节点写入键与统计合并键不符）、C2（`DigestConfig` 配置双源）、C3（GDPR 清 Redis 白名单键与真实键不符 → 清理无效）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
+
+实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`。
 
 
 ### 第三轮并行修复（P0-P3 全部完成）
@@ -143,7 +172,7 @@
 | 阶段 | 主题 | 完成状态 |
 | --- | --- | --- |
 | P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
-| P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（P2A 多模态素材入库 + P2B 分片上传/秒传/断点续传） |
+| P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（P2A 多模态素材入库 + P2B 分片上传/秒传/断点续传 + P2B-2 分片产物落盘跟随激活后端，支持 cos/oss） |
 | P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
 | P4 | 视频轻量编辑（trim / concat / subtitle） | ⬜ 未开始 |
 | P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |

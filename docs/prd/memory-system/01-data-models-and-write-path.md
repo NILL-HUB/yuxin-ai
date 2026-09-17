@@ -534,6 +534,26 @@ class ConsolidationReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 ```
 
+### 1.10 记忆主体抽象（P3a 已落地）
+
+记忆归属从"硬编码 `Account`"升级为**主体类型**维度（治理设计 §8），使记忆可归属管理员与 Agent。权威实现见 `api/internal/entity/memory_owner_entity.py` 的 `MemoryOwnerKey`；写入落点见 `api/internal/service/memory/ledger_writer.py`。
+
+| 层 | 归属表达 |
+| --- | --- |
+| PG `user_memory` | `owner_type`(`'user'`\|`'admin'`) + `owner_account_id` + `owner_admin_user_id` + `owner_agent_id` |
+| PG `user_memory_embedding_{dim}` | 同上四列（新建分表由 `EmbeddingTableRouter.ensure_tables_for_dimension` DDL 带上；已存在的分表由迁移 `y2b3c4d5e6f8` 用 `information_schema` 扫描补列） |
+| 跨层主体键 | `MemoryOwnerKey.to_key()`：`user:{account_uuid}` / `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}` |
+
+**两级隔离**：管理员 + Agent（`admin:{admin_uuid}:{agent_uuid}`），同一管理员的多个 Agent 互不干扰。
+
+**构造即校验（fail closed）**：`MemoryOwnerKey.__post_init__` 校验字段组合与 UUID 取值类型——`user` 主体必须有 `owner_account_id` 且不得携带 admin/agent 字段；`admin` 主体必须有 `owner_admin_user_id`、不得携带 `owner_account_id`。裸构造传字符串会被拒绝，以免绕过 `for_user` / `for_admin` 造出 `user:not-a-uuid` 这类坏键。
+
+**本阶段（P3a）范围**：写侧**双写**新列（系统路径 `_upsert_vector` + Agent 策展路径 `write_agent_curated`，含向量分表的 `INSERT` 与 `ON CONFLICT` 分支）+ 存量回填 `owner_type='user'`；**读路径未切换**（仍按 `owner_account_id` / `user_id` 过滤），故行为零变化。
+
+**兼容性语义**：`user:{account_uuid}` 与历史 `str(account.id)` **同值**，因此 Neo4j / Redis / 冷存储的存量键无需改写即可与主体键对齐。
+
+Neo4j / Redis / 冷存储的键统一与读路径切换属 **P3b**（尚未落地）；键前缀常量 `OWNER_KEY_USER_PREFIX` / `OWNER_KEY_ADMIN_PREFIX` / `OWNER_KEY_SEPARATOR`（`api/internal/config/memory_settings.py`）本阶段**尚无生产消费方**。
+
 ---
 
 ## 2. 写入路径
