@@ -140,13 +140,12 @@ llmops-render-worker:
 | 6 | 队列 | 积压超阈值（建议 5）拒绝并提示 | 任务堆到用户以为卡死 |
 | 7 | 回退 | Celery 不可用 → **直接报错**（不回退同步） | 同步渲染打爆 |
 
-> **⚠️ 隐患（已实测确认，必须先修）**：`llmops-celery` 当前**未设 `CELERY_QUEUES`**。
-> 实测该容器环境仅含 `MODE=celery`，无 `CELERY_QUEUES`；而 Celery 已声明队列为
-> `['celery', 'mail', 'consolidation', 'render']`（含 render），未传 `-Q` 的 worker 会**消费全部已声明队列**。
-> 因此 render worker 不在时（重启间隙/未启动），主 worker 会以 `-c 4` 捞走渲染任务 → **4 并发 ≈ 2.6 G+**。
-> 修复：给主 worker 设 `CELERY_QUEUES: celery,mail,consolidation`（排除 render）。
+> **✅ 隐患已修复**：`llmops-celery` 原先**未设 `CELERY_QUEUES`**，而 Celery 已声明队列含
+> `render`，未传 `-Q` 的 worker 会**消费全部已声明队列**；render worker 不在时（重启间隙/未启动），
+> 主 worker 会以 `-c 4` 捞走渲染任务 → **4 并发 ≈ 2.6 G+**。
+> 现已在 compose 给主 worker 设 `CELERY_QUEUES: celery,mail,consolidation`（排除 render）。
 
-> **闸门 1、2、5、6、7 属代码改动，尚未实现**；3、4 属配置改动。不要误以为已生效。
+> **闸门 1~7 已全部落地**（载体见 §6），不再是待办。配置项 3、4 亦已生效。
 
 ### 3.4 超时设置
 
@@ -178,18 +177,22 @@ llmops-render-worker:
 
 ## 4. 回链（出片完成通知）
 
-**现状（查证结论）**：
+**通道现状（已查证 + 已接线）**：
 
 | 通道 | 状态 |
 | --- | --- |
-| `agent_notification` | ✅ **唯一端到端闭合**（room + 事件 + 前端 hook + 5s 轮询兜底） |
-| `document_index_notification` | ⚠️ 前端在等，**但无生产者**（历史重构中摘除） |
+| `agent_notification` | ✅ 端到端闭合，但**语义是 app 构建专用**（`create_agent_notification` 需 `app_id`），不适合渲染 |
+| `document_index_notification` | ✅ **渲染回链已接入**（前端 `App.vue` 全局订阅 + 后端订阅处理器 + `room = account_id`，此前只缺生产者） |
 | `schedule_task_result` | ⚠️ 后端推送，**前端未订阅** |
 | L1/L2 索引 | 只写 DB 状态，靠前端轮询 |
 
-**方案**：渲染完成事件**复用 `agent_notification` 通道**（room = `agent:{account_id}`），前端**零改动**即可收到通知。**不自造新机制。**
+**落地方式**：渲染完成（成功或重试耗尽失败）时，`render_tasks._notify_render_finished`
+经 `NotificationService.create_notification` 落一条通知，再经
+`ws_manager.emit_notification_to_user(room=account_id, event="document_index_notification")` 推送。
+**复用既有通道，前端零改动**，不自造新事件。
 
-> 待做；当前 `render_video` 工具派发后只返回 task_id，用户需自行去成品库查看。
+> 与设计原案的差异：设计写「复用 `agent_notification`」，实测该通道需 `app_id`（app 构建专用）；
+> 成品本质是「一篇入库文档」，故改用 `document_index_notification`——语义更贴、且前端已订阅。
 
 ---
 
@@ -220,20 +223,29 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 
 ---
 
-## 6. 待做的改动清单（本文只出方案，未改代码）
+## 6. 改动清单（已全部落地）
 
-| # | 改动 | 类型 | 影响 |
+| # | 改动 | 类型 | 状态 |
 | --- | --- | --- | --- |
-| 1 | 主 worker 设 `CELERY_QUEUES` 排除 render | compose | 堵 §3.3 隐患 |
-| 2 | `neo4j`/`kkfileview` 加 `profiles: ["optional"]` | compose | 默认不启动 |
-| 3 | render worker 加 `deploy.resources.limits` + `NODE_OPTIONS` | compose | 内存隔离 |
-| 4 | 每账号渲染并发上限 = 1 | 代码 | 闸门 1 |
-| 5 | 渲染防重锁（Redis SETNX） | 代码 | 闸门 2 |
-| 6 | `acks_late` + `reject_on_worker_lost` | 代码 | 闸门 5 |
-| 7 | 队列积压阈值拒绝 | 代码 | 闸门 6 |
-| 8 | 去掉同步回退，失败即报错 | 代码 | 闸门 7 |
-| 9 | 渲染完成回链（复用 agent_notification） | 代码 | §4 |
-| 10 | `RENDER_TIMEOUT_SEC` 收紧 + Celery `soft_time_limit` | 配置+代码 | §3.4 |
+| 1 | 主 worker 设 `CELERY_QUEUES` 排除 render | compose | ✅ 已落地（`celery,mail,consolidation`） |
+| 2 | `neo4j`/`kkfileview` 加 `profiles: ["optional"]` | compose | ✅ 已落地（实测默认启动清单已不含二者） |
+| 3 | render worker 加 `deploy.resources.limits` + `NODE_OPTIONS` | compose | ✅ 已落地（cpus 2 / mem 2800M / V8 堆 2048） |
+| 4 | 每账号渲染并发上限 = 1 | 代码 | ✅ `RenderGuardService.MAX_CONCURRENT_RENDERS_PER_ACCOUNT` |
+| 5 | 渲染防重锁（Redis SETNX，脚本指纹） | 代码 | ✅ `RenderGuardService.admit` |
+| 6 | `acks_late` + `reject_on_worker_lost` | 代码 | ✅ `render_tasks.py` |
+| 7 | 队列积压阈值拒绝（阈值 5） | 代码 | ✅ `RenderGuardService`（`mark_enqueued`/`mark_dequeued`） |
+| 8 | 去掉同步回退，失败即报错 | 代码 | ✅ `render_video.py`（不再有 sync 分支） |
+| 9 | 渲染完成回链 | 代码 | ✅ 复用 `document_index_notification` 通道（前端零改动） |
+| 10 | `RENDER_TIMEOUT_SEC` 收紧 + Celery `soft_time_limit` | 配置+代码 | ✅ 900s / `soft_time_limit=1200s` |
+
+**闸门实现载体**：`api/internal/service/render_guard_service.py`（`RenderGuardService`）。
+准入在派发端（`render_video._dispatch_render`），归还在任务开始/结束端（`render_tasks`），
+两端用同源脚本指纹（sha256 前 32 位）保证防重锁能正确释放。
+
+> 关于第 9 项：设计原写「复用 `agent_notification`」，但实测该通道是 app 构建专用
+> （`create_agent_notification` 需 `app_id`）。而成品本质是「一篇入库文档」，故改走
+> **`document_index_notification`** 通道——前端（`App.vue`）已全局订阅、后端已有订阅
+> 处理器与 `room = account_id` 约定，此前只缺生产者。复用后前端**零改动**。
 
 ---
 
