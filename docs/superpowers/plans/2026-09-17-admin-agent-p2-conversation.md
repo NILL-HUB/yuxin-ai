@@ -1713,17 +1713,17 @@ class AdminAgentChatService:
             conversation_id=conversation.id, role=AdminAgentMessageRole.USER.value, content=text
         )
 
-        agent = self._load_agent(principal.agent_id, admin_user_id)
-        llm = self._build_model()
-
-        # 提示词/工具构造放进 try：`_build_system_prompt` 在提示词缺失时抛
-        # RuntimeError（Task 4 的守卫）。若放在 try 之外，异常会**逃出 SSE 生成器**
-        # （客户端拿到断流而非 `event: error`），故必须纳入统一兜底。
+        # 提示词/工具/模型/Agent 加载**全部**放进 try：任一在 try 之外抛错都会
+        # **逃出 SSE 生成器**（客户端拿到断流而非 `event: error`）。
+        # `_build_system_prompt` 提示词缺失抛 FailException（Task 4 守卫）；
+        # `_build_model` 在 feature 被关闭时抛 FailException（get_feature_model）。
         try:
+            agent = self._load_agent(principal.agent_id, admin_user_id)
             tools = self._build_tools(principal)
             system_prompt = self._build_system_prompt(
                 principal, getattr(agent, "prompt_key", None)
             )
+            llm = self._build_model()
             answer, tool_events = self._run_tool_loop(
                 llm=llm,
                 system_prompt=system_prompt,
@@ -1811,8 +1811,32 @@ class AdminAgentChatService:
     def _build_tools(self, principal: AdminAgentPrincipal):
         from internal.service.admin_agent_board_tools import BoardToolExecutor
         from internal.service.admin_agent_chat_tools import build_board_tools
+        from internal.service.admin_agent_execution_service import (
+            AdminAgentExecutionService,
+        )
 
-        return build_board_tools(BoardToolExecutor(), principal)
+        # 协作者必须是 **AdminAgentExecutionService**（有 `run(principal, board=,
+        # action=, payload=)`），不是 `BoardToolExecutor`（只有
+        # `assert_allowed` / `requires_draft` / `execute`，**没有 `run`**）。
+        # 传错会在第一次工具调用时抛 AttributeError，使整轮对话以 error 帧结束。
+        execution = AdminAgentExecutionService(
+            board_executor=BoardToolExecutor(),
+            draft_service=self._build_draft_service(),
+            audit_log_service=self._build_audit_service(),
+        )
+        return build_board_tools(execution, principal)
+
+    def _build_draft_service(self):
+        from internal.service.admin_change_draft_service import (
+            AdminChangeDraftService,
+        )
+
+        return AdminChangeDraftService(db=self.db)
+
+    def _build_audit_service(self):
+        from internal.service.audit_log_service import AuditLogService
+
+        return AuditLogService(db=self.db)
 
     def _build_system_prompt(self, principal: AdminAgentPrincipal, prompt_key) -> str:
         from internal.service.admin_agent_prompt_service import AdminAgentPromptService
@@ -1880,17 +1904,36 @@ class AdminAgentChatService:
             if row.role == AdminAgentMessageRole.USER.value:
                 history.append(HumanMessage(content=row.content or ""))
             elif row.role == AdminAgentMessageRole.ASSISTANT.value:
+                # 只还原文本答复，**不带** tool_calls：本轮的工具调用已由下面的
+                # TOOL 行还原为「前置 AIMessage(tool_calls) + ToolMessage」。
+                # 若在此再挂 tool_calls，会形成「没有对应 ToolMessage 的悬空
+                # tool_calls」——协议非法，下一轮续聊会被 OpenAI 兼容接口 4xx 拒收。
                 history.append(AIMessage(content=row.content or ""))
             elif row.role == AdminAgentMessageRole.TOOL.value and row.tool_calls:
-                first = row.tool_calls[0]
-                call = first.get("call") or {}
-                history.append(
-                    ToolMessage(
-                        content=first.get("result") or "",
-                        tool_call_id=call.get("id") or "",
-                        name=call.get("name") or "",
+                # 每个 TOOL 行承载 {call, result}。还原为协议要求的**成对**结构：
+                # 先补一条携 tool_calls 的 AIMessage，再补对应的 ToolMessage，
+                # 否则孤立的 ToolMessage 无前置匹配（多轮续聊必 400）。
+                for item in row.tool_calls:
+                    call = item.get("call") or {}
+                    history.append(
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "name": call.get("name") or "",
+                                    "args": call.get("args") or {},
+                                    "id": call.get("id") or "",
+                                }
+                            ],
+                        )
                     )
-                )
+                    history.append(
+                        ToolMessage(
+                            content=item.get("result") or "",
+                            tool_call_id=call.get("id") or "",
+                            name=call.get("name") or "",
+                        )
+                    )
         return history
 
     @staticmethod
@@ -1904,7 +1947,18 @@ class AdminAgentChatService:
 cd api && python -m pytest test/internal/service/test_admin_agent_chat_service.py -q --no-header --no-cov
 ```
 
-Expected: PASS（3 个用例）
+Expected: PASS（7 个用例）
+
+> **Step 3 附加要求（防 D1/D3 回归，必须落地）**：除计划原有 3 个用例外，必须再补 4 条用例——
+> 1. **真实工具装配**：不替换 `_build_tools`，断言装配出的工具其 `execution_service`
+>    **有 `run`**（即 `AdminAgentExecutionService`，不是 `BoardToolExecutor`）。
+>    这条是 D1 的唯一自动防线（D1：传错协作者会让任何工具调用抛 `AttributeError`）。
+> 2. **模型构造失败走 error 帧**：让 `_build_model` 抛 `FailException`，断言生成器
+>    **不抛异常**且能收到 `event: error`（防 D2：异常逃出生成器导致客户端断流）。
+> 3. **多轮上下文协议合法**：用 `_history_for` 还原含 TOOL 行的历史，断言
+>    每个 `ToolMessage.tool_call_id` 都能在前面找到**携同 id `tool_calls` 的 AIMessage**
+>    （防 D3：孤立 ToolMessage 会被 OpenAI 兼容接口 4xx 拒收）。
+> 4. **非属主不调模型**：`get_principal` 抛 `PermissionError` 时断言模型零调用。
 
 - [ ] **Step 5: 提交**
 
