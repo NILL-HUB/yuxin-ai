@@ -148,6 +148,9 @@ class EmbeddingTableRouter:
                             id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
                             memory_id UUID REFERENCES user_memory(id) ON DELETE CASCADE,
                             owner_account_id UUID NOT NULL REFERENCES account(id),
+                            owner_type VARCHAR(16) NOT NULL DEFAULT 'user',
+                            owner_admin_user_id UUID REFERENCES admin_user(id),
+                            owner_agent_id UUID REFERENCES admin_agent(id),
                             embedding vector({dimension}) NOT NULL,
                             embedding_node_id VARCHAR(255),
                             created_at TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
@@ -171,6 +174,10 @@ class EmbeddingTableRouter:
                     conn.execute(text(
                         f"CREATE INDEX IF NOT EXISTS {um_table}_embedding_hnsw_idx "
                         f"ON {um_table} USING hnsw (embedding vector_cosine_ops)"
+                    ))
+                    conn.execute(text(
+                        f"CREATE INDEX IF NOT EXISTS {um_table}_owner_agent_idx "
+                        f"ON {um_table} (owner_agent_id)"
                     ))
 
                     # 2. knowledge_segment_embedding_{dim}

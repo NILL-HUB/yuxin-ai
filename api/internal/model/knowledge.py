@@ -135,10 +135,21 @@ class UserMemory(Base):
         PrimaryKeyConstraint("id", name="pk_user_memory_id"),
         Index("user_memory_owner_type_idx", "owner_account_id", "memory_type"),
         Index("user_memory_status_idx", "status"),
+        # 按主体类型 + 管理员 + Agent 检索（P3b 读路径切换后使用）
+        Index("user_memory_owner_admin_idx", "owner_admin_user_id"),
+        Index("user_memory_owner_agent_idx", "owner_agent_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     owner_account_id = Column(UUID, ForeignKey("account.id"), nullable=False)
+    # 主体类型（设计 §8）：'user' | 'admin'；存量全为 'user'
+    owner_type = Column(
+        String(16), nullable=False, server_default=text("'user'::character varying")
+    )
+    # 管理员主体（owner_type='admin' 时非空；与知识库 owner_admin_user_id 同义）
+    owner_admin_user_id = Column(UUID, ForeignKey("admin_user.id"), nullable=True)
+    # Agent 主体（设计 §3 L1：admin_user_id + agent_id 两级隔离）
+    owner_agent_id = Column(UUID, ForeignKey("admin_agent.id"), nullable=True)
     memory_type = Column(String(64), nullable=False, server_default=text("'preference'::character varying"))
     content = Column(Text, nullable=False, server_default=text("''::text"))
     confidence = Column(Integer, nullable=False, server_default=text("0"))
