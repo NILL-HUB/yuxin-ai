@@ -16,6 +16,7 @@ import pytest
 import app.http.asgi_app as asgi_app
 from app.http.admin_routes_7 import register_routes
 from app.http.module import injector
+from internal.service.admin_agent_builtin_agents import AdminAgentBuiltinService
 from internal.service.admin_agent_conversation_service import (
     AdminAgentConversationService,
 )
@@ -27,7 +28,12 @@ register_routes(asgi_app.quart_app)
 
 @pytest.mark.parametrize(
     "service_cls",
-    [AdminAgentService, AdminChangeDraftService, AdminAgentConversationService],
+    [
+        AdminAgentService,
+        AdminAgentBuiltinService,
+        AdminChangeDraftService,
+        AdminAgentConversationService,
+    ],
 )
 def test_service_is_constructible_by_injector(service_cls):
     """injector.get 必须能构造服务（否则 `_get_service` 在生产上抛 CallError）。"""
