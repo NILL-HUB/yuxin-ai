@@ -49,16 +49,27 @@ class _StubChatService:
 
 
 class _StubAgentService:
-    """`get_agent` 归属校验替身（None → NotFoundException，异常 → 上抛）。"""
+    """`get_agent` 归属校验替身。
 
-    def __init__(self, error=None):
+    - 默认返回一个真值 Agent 对象（表示存在且属主合法）；
+    - 显式传 ``agent=None`` 表示 Agent 不存在（服务契约：不存在返回 None）；
+    - ``error`` 非空时上抛（非属主 → PermissionError）。
+    """
+
+    _UNSET = object()
+
+    def __init__(self, error=None, agent=_UNSET):
         self.calls = []
         self._error = error
+        self._agent = (
+            SimpleNamespace(id=uuid4()) if agent is _StubAgentService._UNSET else agent
+        )
 
     def get_agent(self, **kwargs):
         self.calls.append(kwargs)
         if self._error is not None:
             raise self._error
+        return self._agent
 
 
 class _StubConversationService:
@@ -240,6 +251,33 @@ class TestConversationsEndpoint:
         resp = _run(_go())
 
         assert resp.status_code == 403
+
+    def test_conversations_returns_404_when_agent_missing(self, monkeypatch):
+        """Agent 不存在：`get_agent` 返回 None 时必须 404，而非 200 空列表。
+
+        `AdminAgentService.get_agent` 对不存在**返回 None 而非抛错**，若不显式
+        判空，路由会继续 list_conversations 并返回 200 + 空 items，与文档
+        「不存在 404」契约不符。
+        """
+        conv_svc = _StubConversationService()
+        _wire_multi(
+            monkeypatch,
+            uuid4(),
+            ["agent_pool:read"],
+            {
+                "AdminAgentService": _StubAgentService(agent=None),
+                "AdminAgentConversationService": conv_svc,
+            },
+        )
+
+        async def _go():
+            client = asgi_app.quart_app.test_client()
+            return await client.get(f"/admin/agents/{uuid4()}/conversations")
+
+        resp = _run(_go())
+
+        assert resp.status_code == 404
+        assert conv_svc.calls == [], "Agent 不存在不得查询会话"
 
 
 class TestMessagesEndpoint:

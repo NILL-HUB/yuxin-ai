@@ -725,6 +725,7 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
+        from internal.exception import NotFoundException
         from internal.schema.admin_agent_chat_schema import (
             AdminAgentConversationListResp,
         )
@@ -737,10 +738,14 @@ def register_routes(quart_app):
         admin_user_id = UUID(str(admin.get("id")))
 
         def _run():
-            # 先校验 Agent 归属（非属主 → PermissionError）
-            a._get_service(AdminAgentService).get_agent(
+            # 先校验 Agent 归属：非属主 → PermissionError；不存在 → 404。
+            # `get_agent` 对不存在返回 None（不抛错），若不显式判空，该端点会
+            # 对不存在的 Agent 返回 200 + 空列表，与「不存在 404」契约不符。
+            agent = a._get_service(AdminAgentService).get_agent(
                 agent_id=agent_id, admin_user_id=admin_user_id
             )
+            if agent is None:
+                raise NotFoundException("Agent 不存在")
             return a._get_service(AdminAgentConversationService).list_conversations(
                 admin_agent_id=agent_id, admin_user_id=admin_user_id
             )
@@ -749,6 +754,8 @@ def register_routes(quart_app):
             rows = await a._to_thread(_run)
         except PermissionError as exc:
             return a._json_resp(code="forbidden", message=str(exc), status=403)
+        except NotFoundException as exc:
+            return a._json_resp(code="not_found", message=str(exc), status=404)
         resp = AdminAgentConversationListResp()
         return a._ok(
             resp.dump(

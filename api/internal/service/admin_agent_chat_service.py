@@ -71,6 +71,10 @@ class AdminAgentChatService:
         # 预初始化：`except Exception` 分支要记录 agent_id，若身份解析阶段就抛错，
         # 直接引用 `principal.agent_id` 会 UnboundLocalError（历史缺陷）。
         principal: AdminAgentPrincipal | None = None
+        # 工具事件在循环**进行中**逐条累加（供 assistant 落库）并即时 yield 帧，
+        # 而不是等循环结束再一次性补帧——否则最长 6 轮期间客户端只见 keep-alive。
+        tool_events: list[dict] = []
+        answer = ""
         # try 边界覆盖**全链路**：身份解析 → 会话解析 → 落 user 消息 → MESSAGE 帧
         # → Agent 加载 → 工具装配 → 提示词构造 → 模型获取 → 工具循环。
         # `get_principal` 的 PermissionError（非属主/已停用）与
@@ -107,7 +111,10 @@ class AdminAgentChatService:
                 principal, getattr(agent, "prompt_key", None)
             )
             llm = self._build_model()
-            answer, tool_events = self._run_tool_loop(
+            # 迭代工具循环生成器：每拿到一个 ("tool", event) 就立刻落库并推 TOOL
+            # 帧（"边跑边推"），最后一帧 ("answer", text) 作为最终答复。循环最长
+            # 6 轮，若等循环结束再一次性补帧，客户端在此期间只见 keep-alive。
+            for kind, payload in self._run_tool_loop(
                 llm=llm,
                 system_prompt=system_prompt,
                 history=self._history_for(conversation.id),
@@ -118,7 +125,12 @@ class AdminAgentChatService:
                     content=json.dumps(event, ensure_ascii=False),
                     tool_calls=[event],
                 ),
-            )
+            ):
+                if kind == "tool":
+                    tool_events.append(payload)
+                    yield self._frame(AdminAgentChatEvent.TOOL, payload)
+                else:
+                    answer = str(payload or "")
         except FailException as exc:
             # 业务结论（含工具循环超轮次不收敛）：统一以 error 帧结束，不上抛
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
@@ -140,9 +152,6 @@ class AdminAgentChatService:
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": f"对话失败：{exc}"})
             return
 
-        for event in tool_events:
-            yield self._frame(AdminAgentChatEvent.TOOL, event)
-
         self.append_message(
             conversation_id=conversation.id,
             role=AdminAgentMessageRole.ASSISTANT.value,
@@ -156,20 +165,28 @@ class AdminAgentChatService:
     # 工具循环
     # ------------------------------------------------------------------
 
-    def _run_tool_loop(self, *, llm, system_prompt: str, history, tools, on_tool) -> tuple[str, list[dict]]:
+    def _run_tool_loop(
+        self, *, llm, system_prompt: str, history, tools, on_tool
+    ) -> Generator[tuple[str, Any], None, None]:
+        """驱动「LLM ⇄ 板块工具」循环（**生成器**）。
+
+        逐次产出 ``("tool", event)``（每完成一次工具调用即产出），使调用方
+        得以在循环进行中即时推帧；收敛后产出 ``("answer", text)`` 收尾。
+        """
         from langchain_core.messages import SystemMessage, ToolMessage
+        from pydantic import ValidationError
 
         messages: list[Any] = [SystemMessage(content=system_prompt), *history]
         tools_by_name = {tool.name: tool for tool in tools}
         bound = llm.bind_tools(tools) if tools else llm
-        tool_events: list[dict] = []
 
         for _ in range(MAX_TOOL_ITERATIONS):
             ai = bound.invoke(messages)
             messages.append(ai)
             calls = list(getattr(ai, "tool_calls", None) or [])
             if not calls:
-                return str(getattr(ai, "content", "") or ""), tool_events
+                yield ("answer", str(getattr(ai, "content", "") or ""))
+                return
 
             for call in calls:
                 name = str(call.get("name") or "")
@@ -177,12 +194,29 @@ class AdminAgentChatService:
                 if tool is None:
                     result = json.dumps({"ok": False, "error": f"未知工具：{name}"}, ensure_ascii=False)
                 else:
-                    result = tool.invoke(call.get("args") or {})
+                    try:
+                        result = tool.invoke(call.get("args") or {})
+                    except ValidationError as exc:
+                        # langchain `BaseTool.run` 在**进入 `_run` 之前**先用
+                        # `args_schema` 校验入参；校验失败抛 `ValidationError`，
+                        # 工具 `_run` 内的 try 拦不到。它是"入参不合法"这一**业务
+                        # 结论**（如 action 缺失 / payload 非 dict），必须转成可读
+                        # 结果回给模型据实改正重试，不得中断整轮对话。此处只捕获
+                        # `ValidationError`，不放宽为 `except Exception`——真正的
+                        # 编程缺陷仍应上抛，否则会被静默吞掉。
+                        result = json.dumps(
+                            {
+                                "ok": False,
+                                "board": name.removeprefix("admin_"),
+                                "error": f"入参不合法: {exc}",
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        )
                 event = {
                     "call": {"name": name, "args": call.get("args") or {}, "id": call.get("id") or ""},
                     "result": result,
                 }
-                tool_events.append(event)
                 on_tool(event)
                 messages.append(
                     ToolMessage(
@@ -191,6 +225,7 @@ class AdminAgentChatService:
                         name=name,
                     )
                 )
+                yield ("tool", event)
         raise FailException(
             f"Agent 工具调用超过 {MAX_TOOL_ITERATIONS} 轮仍未收敛，已中止（疑似循环）"
         )
@@ -266,16 +301,25 @@ class AdminAgentChatService:
         )
 
     def _resolve_conversation(self, *, admin_agent_id, admin_user_id, conversation_id, title):
-        """取既有会话（校验归属）或新建会话。"""
+        """取既有会话（校验归属）或新建会话。
+
+        续聊时除 ``get_conversation`` 的属主校验外，还必须校验会话属于**当前
+        Agent**：``conversation_id`` 由客户端提交，若只校验属主，同一管理员
+        用 Agent B 续聊 Agent A 的会话会把 A 的历史（含 A 的工具调用结果）
+        灌进 B 的上下文，B 的答复又落进 A 的会话——归属与审计都错位。
+        """
         from internal.service.admin_agent_conversation_service import (
             AdminAgentConversationService,
         )
 
         conversations = AdminAgentConversationService(self.db)
         if conversation_id:
-            return conversations.get_conversation(
+            conversation = conversations.get_conversation(
                 conversation_id, admin_user_id=admin_user_id
             )
+            if conversation.admin_agent_id != admin_agent_id:
+                raise FailException("会话不属于该 Agent")
+            return conversation
         return conversations.create_conversation(
             admin_agent_id=admin_agent_id, admin_user_id=admin_user_id, title=title
         )

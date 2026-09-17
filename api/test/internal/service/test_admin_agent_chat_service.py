@@ -30,6 +30,37 @@ class _FakeTool:
         return json.dumps({"ok": True, "board": "builtin_tool", "outcome": "executed"})
 
 
+def _validation_error() -> Exception:
+    """构造一个真实的 pydantic `ValidationError`（入参不合法）。"""
+    from pydantic import BaseModel, ValidationError
+
+    class _Args(BaseModel):
+        action: str
+
+    try:
+        _Args()  # 缺必填字段
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("应当抛出 ValidationError")
+
+
+class _GuidanceTool:
+    """入参缺 ``action`` 时抛 `ValidationError`（模拟 `_run` 之前的校验），
+
+    入参合法时正常返回——用于验证模型能在同一轮内据可读 error 改正重试。
+    """
+
+    def __init__(self, name):
+        self.name = name
+        self.calls = []
+
+    def invoke(self, args):
+        self.calls.append(args)
+        if not (args or {}).get("action"):
+            raise _validation_error()
+        return json.dumps({"ok": True, "board": "builtin_tool", "outcome": "executed"})
+
+
 class _FakeLLM:
     """按脚本产出若干轮 AI 消息，最后一轮不带 tool_calls。"""
 
@@ -285,3 +316,117 @@ def test_permission_error_from_principal_skips_model():
     assert "event: error" in body
     assert "非属主" in body
     assert llm.invocations == [], "非属主不得调用模型"
+
+
+def test_invalid_tool_args_do_not_break_chat_and_model_can_recover():
+    """I-1：工具入参校验失败（`ValidationError`，逃出 `_run`）不得中断对话。
+
+    历史上该异常会穿透工具边界 → chat 的 `except Exception` → 整轮以
+    "对话失败" error 帧结束，模型失去自我纠正机会。修复后同一轮里模型应能
+    看到可读 error 结果并改正重试，最终仍产出 answer。
+    """
+    llm = _FakeLLM(
+        [
+            # 第一次：入参非法（缺 action）→ 工具抛 ValidationError
+            SimpleNamespace(content="", tool_calls=[{"name": "admin_builtin_tool", "args": {}, "id": "c1"}]),
+            # 第二次：模型据 error 结果改正后重试成功
+            SimpleNamespace(content="", tool_calls=[{"name": "admin_builtin_tool", "args": {"action": "list"}, "id": "c2"}]),
+            SimpleNamespace(content="已按合法入参重试完成。", tool_calls=[]),
+        ]
+    )
+    invalid_tool = _GuidanceTool("admin_builtin_tool")
+    service = _service(_principal(), llm, [invalid_tool])
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="先给个坏入参",
+        )
+    )
+
+    body = "".join(frames)
+    # 对话不中断：不出现链路级"对话失败"error 帧，且最终答案照常产出
+    assert "对话失败" not in body
+    assert "event: answer" in body
+    assert "已按合法入参重试完成。" in body
+    # 工具结果里带可读 error（模型据此改正）
+    tool_messages = [item for item in service._persist if item["role"] == "tool"]
+    assert tool_messages, "工具调用必须落库"
+    assert "入参不合法" in tool_messages[0]["content"]
+    assert llm.invocations, "模型必须被继续调用以纠正重试"
+
+
+def test_tool_loop_still_works_with_valid_and_missing_tools():
+    """回归：合法工具与未知工具路径仍按原语义产出 tool 事件。"""
+    llm = _FakeLLM(
+        [
+            SimpleNamespace(
+                content="",
+                tool_calls=[
+                    {"name": "admin_builtin_tool", "args": {"action": "list"}, "id": "c1"},
+                    {"name": "admin_nope", "args": {}, "id": "c2"},
+                ],
+            ),
+            SimpleNamespace(content="完成。", tool_calls=[]),
+        ]
+    )
+    tool = _FakeTool("admin_builtin_tool")
+    service = _service(_principal(), llm, [tool])
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="混合调用",
+        )
+    )
+
+    body = "".join(frames)
+    assert body.count("event: tool") == 2
+    assert "未知工具" in body
+    assert "完成。" in body
+
+
+def test_resume_rejects_conversation_of_another_agent():
+    """M-3：续聊必须校验会话属于当前 Agent，否则以 error 帧结束。"""
+
+    class _StubConversations:
+        def __init__(self, db):
+            self.db = db
+
+        def get_conversation(self, conversation_id, *, admin_user_id):
+            return SimpleNamespace(id=conversation_id, admin_agent_id=uuid4())
+
+    import internal.service.admin_agent_conversation_service as conversations
+
+    original = conversations.AdminAgentConversationService
+    conversations.AdminAgentConversationService = _StubConversations
+    try:
+        llm = _FakeLLM([])
+        service = AdminAgentChatService.__new__(AdminAgentChatService)
+        service.db = object()
+        service.get_principal = lambda **kwargs: _principal()
+        service._build_model = lambda: llm
+        service._build_tools = lambda p: []
+        service._build_system_prompt = lambda p, prompt_key: "系统提示词"
+        service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(prompt_key=None)
+
+        frames = list(
+            service.chat(
+                agent_id=uuid4(),
+                admin_user_id=uuid4(),
+                admin_permissions=["builtin_tool:read"],
+                query="续聊别的 Agent 的会话",
+                conversation_id=uuid4(),
+            )
+        )
+    finally:
+        conversations.AdminAgentConversationService = original
+
+    body = "".join(frames)
+    assert "event: error" in body
+    assert "不属于该 Agent" in body
+    assert llm.invocations == [], "会话归属不匹配不得调用模型"

@@ -208,15 +208,32 @@ Agent 响应体（`AgentResp`）字段：
 → 工具循环（上限 6 轮）→ 落库 → SSE。写动作仍按 `automation_policy` 分流
 （`supervised` 产待批准草稿）。
 
+**逐帧推送**：`tool` 帧在工具循环**进行中**即时产出（每完成一次工具调用即推一帧），
+不等循环结束一次性补帧——循环最长 6 轮、单轮可能是分钟级，集中补帧会让前端在此期间
+只见 keep-alive。落库顺序仍为 `user → tool → assistant`。
+
+**工具失败不中断对话**：工具入参非法（`action` 缺失 / `payload` 非 dict 等，由
+`args_schema` 在进入工具 `_run` 之前校验并抛 `ValidationError`）与业务拒绝（无权限 /
+未登记动作 / 板块未实现）一样，都以**可读 JSON** 作为该次 `tool` 帧的 `result` 回给
+模型（形如 `{"ok": false, "board": ..., "error": "入参不合法: ..."}`），模型可据实改正
+后重试，不产生 error 帧、不中断整轮。
+
 **失败语义（重要）**：本端点**一旦通过 HTTP 鉴权就恒返回 `200` + `text/event-stream`**，
 业务失败在 **SSE 帧内**表达为 `event: error`。即「非属主 / Agent 已停用 / 提示词缺失 /
-feature 未启用 / 工具循环超轮次不收敛」都不会产生 HTTP 403/404/500，而是 error 帧——
+feature 未启用 / 会话不属于该 Agent（续聊传了别个 Agent 的 `conversation_id`）/
+工具循环超轮次不收敛」都不会产生 HTTP 403/404/500，而是 error 帧——
 这是刻意的：`support._sse_response` 会把逃出生成器的异常改写成**另一套** payload 结构
 （`event: <failure_event>` + `observation`），破坏本链路契约，故服务层把可预期异常
 统一转为本链路的 error 帧。
 
-唯一的 HTTP 层 `400 validate_error`：`query` 为空、或 `conversation_id` 不是合法 UUID
-（body 参数校验，尚未进入服务层）。
+唯一的 HTTP 层 `400 validate_error`：**请求体结构非法**——body 里**缺失 `query` key**
+（或为 `null`，schema `required=True` 校验失败），或 `conversation_id` 不是合法 UUID。
+两者都发生在体参数校验阶段，尚未进入服务层。
+
+> **注意区分 `query` 的两种「空」**：缺 key → 400；`query` 为空字符串（或纯空白）是
+> **合法请求**，走 200 + SSE，服务层在帧内以 `event: error`（内容「消息不能为空」）
+> 收尾。原因：HTTP 400 只留给「请求体结构非法」，而「用户确实发了空消息」是业务结论，
+> 与其余业务失败保持同一套帧解析逻辑。
 
 ### `GET /admin/agents/<agent_id>/conversations`
 
@@ -224,7 +241,9 @@ feature 未启用 / 工具循环超轮次不收敛」都不会产生 HTTP 403/40
 
 **响应 `data`**：`{"items": [{"id","admin_agent_id","title","created_at","updated_at"}]}`
 
-**错误**：`403 forbidden`（非属主 —— `AdminAgentService.get_agent` 抛 `PermissionError`）。
+**错误**：`403 forbidden`（非属主 —— `AdminAgentService.get_agent` 抛 `PermissionError`）、
+`404 not_found`（Agent 不存在 —— `get_agent` 对不存在**返回 `None` 而非抛错**，
+路由显式判空后抛 `NotFoundException`）。
 
 ### `GET /admin/agents/conversations/<conversation_id>/messages`
 
