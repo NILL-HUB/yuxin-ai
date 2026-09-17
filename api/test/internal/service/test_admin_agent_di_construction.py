@@ -17,6 +17,7 @@ import app.http.asgi_app as asgi_app
 from app.http.admin_routes_7 import register_routes
 from app.http.module import injector
 from internal.service.admin_agent_builtin_agents import AdminAgentBuiltinService
+from internal.service.admin_agent_chat_service import AdminAgentChatService
 from internal.service.admin_agent_conversation_service import (
     AdminAgentConversationService,
 )
@@ -31,6 +32,7 @@ register_routes(asgi_app.quart_app)
     [
         AdminAgentService,
         AdminAgentBuiltinService,
+        AdminAgentChatService,
         AdminChangeDraftService,
         AdminAgentConversationService,
     ],

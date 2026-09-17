@@ -99,19 +99,25 @@ def test_tool_loop_executes_tool_and_returns_answer():
     assert roles == ["user", "tool", "assistant"]
 
 
-def test_unknown_agent_raises_without_calling_model():
-    service = _service(None, _FakeLLM([]), [])
+def test_unknown_agent_reports_error_frame_without_calling_model():
+    """未知 Agent：不调模型，且以 error 帧结束（不逃出生成器）。"""
+    llm = _FakeLLM([])
+    service = _service(None, llm, [])
     service.get_principal = lambda **kwargs: None
 
-    with pytest.raises(FailException):
-        list(
-            service.chat(
-                agent_id=uuid4(),
-                admin_user_id=uuid4(),
-                admin_permissions=[],
-                query="hi",
-            )
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=[],
+            query="hi",
         )
+    )
+
+    body = "".join(frames)
+    assert "event: error" in body
+    assert "不存在" in body or "不可用" in body
+    assert llm.invocations == [], "未知 Agent 不得调用模型"
 
 
 def test_tool_loop_aborts_on_excessive_iterations():
@@ -253,7 +259,11 @@ def test_history_for_pairs_tool_calls_with_tool_messages(monkeypatch):
 
 
 def test_permission_error_from_principal_skips_model():
-    """非属主：`get_principal` 抛 `PermissionError` 时模型**零调用**。"""
+    """非属主：`get_principal` 抛 `PermissionError` 时模型**零调用**，且转 error 帧。
+
+    该异常来自身份解析阶段（try 内的第一步）。必须转成 error 帧而非逃出
+    生成器——否则会被 `support._sse_response` 的通用兜底改写成另一套结构。
+    """
     llm = _FakeLLM([])
     service = _service(None, llm, [])
 
@@ -262,14 +272,16 @@ def test_permission_error_from_principal_skips_model():
 
     service.get_principal = _deny
 
-    with pytest.raises(PermissionError):
-        list(
-            service.chat(
-                agent_id=uuid4(),
-                admin_user_id=uuid4(),
-                admin_permissions=[],
-                query="hi",
-            )
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=[],
+            query="hi",
         )
+    )
 
-    assert llm.invocations == []
+    body = "".join(frames)
+    assert "event: error" in body
+    assert "非属主" in body
+    assert llm.invocations == [], "非属主不得调用模型"

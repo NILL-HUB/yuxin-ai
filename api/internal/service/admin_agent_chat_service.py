@@ -26,7 +26,7 @@ from internal.entity.admin_agent_chat_entity import (
     AdminAgentMessageRole,
 )
 from internal.entity.admin_agent_entity import AdminAgentPrincipal
-from internal.exception import FailException
+from internal.exception import CustomException, FailException
 from pkg.sqlalchemy import SQLAlchemy
 
 logger = logging.getLogger(__name__)
@@ -56,40 +56,51 @@ class AdminAgentChatService:
         query: str,
         conversation_id=None,
     ) -> Generator[str, None, None]:
-        """执行一轮对话，逐帧 yield SSE 字符串。"""
+        """执行一轮对话，逐帧 yield SSE 字符串。
+
+        本链路**所有可预期失败都以 `event: error` 帧结束**，不逃出生成器：
+        逃出的异常会被 `support._sse_response` 的通用兜底捕获，改用另一套
+        payload 结构（`event: <failure_event>` + `observation`），本链路的
+        error 帧契约（`{"error": ...}`）就此丢失，客户端表现为断流或双帧冲突。
+        """
         text = str(query or "").strip()
         if not text:
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": "消息不能为空"})
             return
 
-        principal = self.get_principal(
-            agent_id=agent_id,
-            admin_user_id=admin_user_id,
-            admin_permissions=admin_permissions,
-        )
-        if principal is None:
-            raise FailException("Agent 不存在或不可用")
-
-        conversation = self._resolve_conversation(
-            admin_agent_id=principal.agent_id,
-            admin_user_id=admin_user_id,
-            conversation_id=conversation_id,
-            title=text[:50],
-        )
-        yield self._frame(
-            AdminAgentChatEvent.MESSAGE, {"conversation_id": str(conversation.id)}
-        )
-
-        self.append_message(
-            conversation_id=conversation.id, role=AdminAgentMessageRole.USER.value, content=text
-        )
-
-        # D2：Agent 加载、工具装配、提示词构造、模型获取、工具循环**全部**纳入 try。
-        # 这些步骤任一抛错（如提示词缺失、公共 AI 配置关闭了本 feature、工具循环
-        # 超轮次上限不收敛）都必须转成 `event: error` 帧回给客户端，而不是
-        # **逃出 SSE 生成器**——逃出的异常会被 `support._sse_response` 的通用兜底
-        # 改用另一套 payload 结构，本链路的 error 帧契约（`{"error": ...}`）就此丢失。
+        # 预初始化：`except Exception` 分支要记录 agent_id，若身份解析阶段就抛错，
+        # 直接引用 `principal.agent_id` 会 UnboundLocalError（历史缺陷）。
+        principal: AdminAgentPrincipal | None = None
+        # try 边界覆盖**全链路**：身份解析 → 会话解析 → 落 user 消息 → MESSAGE 帧
+        # → Agent 加载 → 工具装配 → 提示词构造 → 模型获取 → 工具循环。
+        # `get_principal` 的 PermissionError（非属主/已停用）与
+        # `_resolve_conversation` 的 NotFoundException/ForbiddenException
+        # 同样是本链路可预期失败，落在 try 之外就会以另一套结构收尾。
         try:
+            principal = self.get_principal(
+                agent_id=agent_id,
+                admin_user_id=admin_user_id,
+                admin_permissions=admin_permissions,
+            )
+            if principal is None:
+                raise FailException("Agent 不存在或不可用")
+
+            conversation = self._resolve_conversation(
+                admin_agent_id=principal.agent_id,
+                admin_user_id=admin_user_id,
+                conversation_id=conversation_id,
+                title=text[:50],
+            )
+            yield self._frame(
+                AdminAgentChatEvent.MESSAGE, {"conversation_id": str(conversation.id)}
+            )
+
+            self.append_message(
+                conversation_id=conversation.id,
+                role=AdminAgentMessageRole.USER.value,
+                content=text,
+            )
+
             agent = self._load_agent(principal.agent_id, admin_user_id)
             tools = self._build_tools(principal)
             system_prompt = self._build_system_prompt(
@@ -109,15 +120,23 @@ class AdminAgentChatService:
                 ),
             )
         except FailException as exc:
-            # 本链路所有可预期失败（含工具循环超过轮次上限不收敛）统一以
-            # `event: error` 帧结束，不再让异常逃出生成器：逃出的异常会被
-            # `support._sse_response` 的通用兜底捕获并追加一帧结构不同的错误
-            # （`event: <failure_event>` + `observation`），客户端会收到两帧
-            # 语义冲突的错误，本链路契约随之丢失。
+            # 业务结论（含工具循环超轮次不收敛）：统一以 error 帧结束，不上抛
+            yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
+            return
+        except CustomException as exc:
+            # NotFound/Forbidden/Validate 等同族：同样转 error 帧（HTTP 层保持
+            # 200 + text/event-stream，客户端据帧内容判定失败）。
+            yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
+            return
+        except PermissionError as exc:
+            # 非属主/已停用 Agent（AdminAgentService 契约）
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
             return
         except Exception as exc:
-            logger.exception("管理端 Agent 对话失败 agent_id=%s", principal.agent_id)
+            logger.exception(
+                "管理端 Agent 对话失败 agent_id=%s",
+                getattr(principal, "agent_id", None),
+            )
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": f"对话失败：{exc}"})
             return
 

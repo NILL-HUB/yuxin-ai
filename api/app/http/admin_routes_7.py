@@ -692,7 +692,20 @@ def register_routes(quart_app):
         # 同 invoke/drafts：服务契约是 UUID，传字符串会让属主比较恒不相等
         admin_user_id = UUID(str(admin.get("id")))
         admin_permissions = list(admin.get("permissions") or [])
+        # conversation_id 同为服务契约里的 UUID：schema 只保证它是字符串，
+        # 直接透传会让会话查询拿字符串与 UUID 列比较（SQLite 方言下走 UUID
+        # 绑定处理，直接 AttributeError），故在此归一化；非法值 400。
         conversation_id = req.get("conversation_id") or None
+        if conversation_id is not None:
+            try:
+                conversation_id = UUID(str(conversation_id))
+            except (TypeError, ValueError):
+                return a._json_resp(
+                    code="validate_error",
+                    message="conversation_id 必须为合法 UUID",
+                    data={"conversation_id": ["conversation_id 必须为合法 UUID"]},
+                    status=400,
+                )
 
         generator = a._get_service(AdminAgentChatService).chat(
             agent_id=agent_id,
