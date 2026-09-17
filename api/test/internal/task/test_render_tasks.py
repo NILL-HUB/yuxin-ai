@@ -46,3 +46,23 @@ def test_task_is_retryable_and_uses_injector():
     assert "max_retries" in source
     assert "self.retry" in source
     assert "injector" in source
+
+
+def test_task_declares_late_ack_and_worker_lost_rejection():
+    """闸门 5：worker 中途被杀时任务必须重新入队，不能静默丢失。"""
+    source = _read(TASK_FILE)
+    assert "acks_late=True" in source
+    assert "reject_on_worker_lost=True" in source
+
+
+def test_task_has_soft_time_limit():
+    """闸门 6：必须有超时上限，避免长任务无限占用渲染槽位。"""
+    source = _read(TASK_FILE)
+    assert "soft_time_limit" in source
+
+
+def test_task_returns_gate_slot_on_finish():
+    """任务结束必须归还闸门计数，否则渲染额度会泄漏、用户永久被拒。"""
+    source = _read(TASK_FILE)
+    assert "mark_dequeued" in source, "任务开始必须递减队列积压计数"
+    assert "guard.release" in source, "任务结束必须归还账号槽位与防重锁"

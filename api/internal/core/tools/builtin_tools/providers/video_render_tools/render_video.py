@@ -6,12 +6,15 @@
 account 获取方式与 create_knowledge_base 一致：由运行时挂载点通过工厂参数
 account_id 注入当前账号。builtin 工具没有全局 g.account，不做上下文穿透。
 
-渲染是分钟级长任务：优先派发 Celery `render` 队列，不可用时回退同步执行，
-避免请求静默丢失（与 L2 触发同一容错口径）。
+渲染是分钟级长任务，**必须走 Celery `render` 队列**：派发前先过渲染闸门
+（每账号并发=1 + 防重锁 + 队列积压保护），后台上跑不动时**直接报错而不是
+回退同步**——同步渲染会在请求线程里吃掉 GB 级内存并挂住对话（4C4G 单机
+不可承受），这是与 L2 触发**不同**的容错口径，见设计 §3.3 闸门 7。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -23,38 +26,52 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
-def _load_render_service():
+def _load_render_guard():
     from app.http.module import injector
-    from internal.service.render_service import RenderService
+    from internal.service.render_guard_service import RenderGuardService
 
-    return injector.get(RenderService)
+    return injector.get(RenderGuardService)
+
+
+def _composition_fingerprint(composition: dict) -> str:
+    """脚本指纹：用于防重锁识别「同一脚本重复提交」。"""
+    try:
+        payload = json.dumps(composition, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        payload = str(composition)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
 def _dispatch_render(composition: dict, account_id: str, name: str) -> dict:
-    """派发渲染：Celery `render` 队列优先，不可用时回退同步执行。
+    """派发渲染：过闸门 → 入 Celery `render` 队列。
 
-    渲染是分钟级长任务，必须走后台，否则会把对话请求挂住。但派发本身可能失败
-    （broker 不可用），此时**回退同步**而不是把请求丢掉——与 L2 触发同一容错口径
-    （`KnowledgeBaseService._dispatch_document_l2`）。
-
-    返回 {"mode": "celery"|"sync", "result": ...}。
+    返回 {"mode": "celery", "result": ...}。失败一律抛异常，由调用方转成
+    可读错误返回给 Agent——不静默回退同步（见模块 docstring）。
     """
-    try:
-        from internal.task.render_tasks import render_composition_task
+    from internal.task.render_tasks import render_composition_task
 
+    fingerprint = _composition_fingerprint(composition)
+    guard = _load_render_guard()
+
+    admission = guard.admit(account_id=account_id, fingerprint=fingerprint)
+    if not admission.allowed:
+        logger.info("渲染被闸门拒绝 account_id=%s reason=%s", account_id, admission.reason)
+        raise RenderRejectedError(admission.reason)
+
+    try:
         async_result = render_composition_task.delay(composition, account_id, name)
-        return {"mode": "celery", "result": async_result}
     except Exception:
-        logger.warning(
-            "渲染派发 Celery 失败，回退同步执行 account_id=%s", account_id, exc_info=True
-        )
-        service = _load_render_service()
-        return {
-            "mode": "sync",
-            "result": service.render_to_render_output_base(
-                composition_spec=composition, account_id=account_id, name=name
-            ),
-        }
+        # 派发失败：释放已占用的槽位与防重锁，避免额度泄漏
+        guard.release(account_id=account_id, fingerprint=fingerprint)
+        logger.warning("渲染派发 Celery 失败 account_id=%s", account_id, exc_info=True)
+        raise
+
+    guard.mark_enqueued()
+    return {"mode": "celery", "result": async_result, "fingerprint": fingerprint}
+
+
+class RenderRejectedError(Exception):
+    """渲染被闸门拒绝（并发/重复/积压），消息面向用户可直接展示。"""
 
 
 class RenderVideoInput(BaseModel):
@@ -103,32 +120,25 @@ class RenderVideoTool(BaseTool):
         normalized_name = str(name or "").strip()
         try:
             dispatched = _dispatch_render(composition, account_id, normalized_name)
+        except RenderRejectedError as exc:
+            # 闸门拒绝：提示面向用户可直接展示，不当作系统故障
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
         except Exception as exc:
             logger.warning("渲染视频失败 account_id=%s", account_id, exc_info=True)
             return json.dumps(
-                {"ok": False, "error": f"渲染视频失败：{exc}"}, ensure_ascii=False
-            )
-
-        if dispatched["mode"] == "celery":
-            return json.dumps(
                 {
-                    "ok": True,
-                    "dispatched": True,
-                    "task_id": str(getattr(dispatched["result"], "id", "")),
-                    "message": "视频渲染已提交后台处理，完成后会自动存入成品库",
+                    "ok": False,
+                    "error": f"渲染视频失败：{exc}（渲染服务暂不可用，请稍后重试）",
                 },
                 ensure_ascii=False,
             )
 
-        result = dispatched["result"]
         return json.dumps(
             {
                 "ok": True,
-                "dispatched": False,
-                "document_id": result.get("document_id", ""),
-                "knowledge_base_id": result.get("knowledge_base_id", ""),
-                "name": result.get("name", ""),
-                "message": "视频已渲染完成并存入成品库",
+                "dispatched": True,
+                "task_id": str(getattr(dispatched["result"], "id", "")),
+                "message": "视频渲染已提交后台处理，完成后会自动存入成品库",
             },
             ensure_ascii=False,
         )
