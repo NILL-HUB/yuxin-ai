@@ -92,6 +92,10 @@ services:
       SQLALCHEMY_ECHO: 'false'
       MODE: celery
       MIGRATION_ENABLED: 'false'
+      # ⚠️ 必须排除 render 队列：Celery 未传 -Q 时会消费「全部已声明队列」，
+      # 而 render 已登记进 task_queues。若不排除，本 worker 会以 -c 4 捞走
+      # 渲染任务 → 4 并发渲染 ≈ 2.6G+，直接打爆 4C4G 单机（见部署文档 §3.3）。
+      CELERY_QUEUES: celery,mail,consolidation
       POSTGRES_HOST: llmops-db
       POSTGRES_PORT: 5432
       # Redis 连接使用 Docker 服务名
@@ -135,6 +139,10 @@ services:
       CELERY_QUEUES: render
       # 渲染吃满 CPU/内存，默认单并发，避免多进程争抢导致整体变慢
       CELERY_WORKER_AMOUNT: '1'
+      # V8 默认堆 2240MB 已临界（CLI 自报只够 1 个 capture worker），显式压到 2048
+      NODE_OPTIONS: --max-old-space-size=2048
+      # 4C4G 上收紧渲染超时，避免长任务占满（见部署文档 §3.4）
+      RENDER_TIMEOUT_SEC: '900'
       POSTGRES_HOST: llmops-db
       POSTGRES_PORT: 5432
       REDIS_HOST: llmops-redis
@@ -148,6 +156,12 @@ services:
       # CLI 为镜像内「本地安装」（全局安装会 Missing manifest），故给绝对路径
       HYPERFRAMES_CLI_BIN: /opt/hyperframes/node_modules/.bin/hyperframes
       HYPERFRAMES_CLI_VERSION: '0.8.42'
+    # 渲染峰值实测 ~1.7G；限 2800M 给基础服务留出余量（4C4G 上不回旋超卖）
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2800M
     depends_on:
       llmops-db:
         condition: service_healthy
@@ -296,6 +310,9 @@ services:
     image: keking/kkfileview:latest
     restart: always
     container_name: llmops-kkfileview
+    # 4C4G 单机上默认不启动（实测常驻 531MB）：文档在线预览非核心链路。
+    # 需要预览时：docker compose --profile optional up -d llmops-kkfileview
+    profiles: ["optional"]
     environment:
       # 允许预览内网地址文件（docker 网络内通过 llmops-nginx 访问本地存储）
       KKFILEVIEW_DISABLE_INTERNAL_HOSTS: "false"
@@ -311,6 +328,9 @@ services:
     image: neo4j:2026-community
     restart: always
     container_name: llmops-neo4j
+    # 4C4G 单机上默认不启动（实测常驻 738MB，是最大奢侈项）：仅记忆系统 TKG 使用。
+    # 需要记忆图谱时：docker compose --profile optional up -d llmops-neo4j
+    profiles: ["optional"]
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-openagent123}
       NEO4J_PLUGINS: '["apoc"]'
