@@ -5,8 +5,11 @@
    属于他人的同 builtin_key 记录不得被复用；重复调用零写入；
 2. **不下放权限**：预置 Agent 的 granted_permissions 必须为空——
    权限只能由管理员显式下放（设计 §4.3），系统预置不得绕过；
-3. 并发冲突只吞 `admin_agent_owner_builtin_uniq` 的唯一约束冲突并继续，
-   其余 IntegrityError 与非 IntegrityError 硬错误一律上抛；
+3. 并发冲突只吞「**确证**唯一违规（SQLSTATE 23505）且约束名为
+   `admin_agent_owner_builtin_uniq`（或约束名不可得）」的冲突并继续；
+   凡是无法确证唯一违规的 IntegrityError（含实测 constraint_name 为 None
+   的 NOT NULL 违规 23502、FK 23503、CHECK 23514、无 pgcode 的非唯一错）
+   与非 IntegrityError 硬错误一律上抛，绝不谎报 created>0；
 4. 入参归一化：字符串 admin_user_id 也要能工作，且落库字段为 UUID；
 5. BUILTIN_ADMIN_AGENTS 的每个 prompt_key 都在 prompts/index.yaml 登记
    （登记缺失会让运行时取不到提示词）。
@@ -34,9 +37,25 @@ _INDEX_YAML_PATH = (
 )
 
 
-def _integrity_error(constraint_name=BUILTIN_UNIQUE_CONSTRAINT):
-    """构造真实 IntegrityError（orig.diag.constraint_name 可读）。"""
-    orig = SimpleNamespace(diag=SimpleNamespace(constraint_name=constraint_name))
+def _integrity_error(
+    pgcode="23505",
+    constraint_name=BUILTIN_UNIQUE_CONSTRAINT,
+    *,
+    use_diag=True,
+):
+    """构造真实 `sqlalchemy.exc.IntegrityError`，orig 替身携带 pgcode / constraint_name。
+
+    - `use_diag=True`：psycopg2 形态——约束名走 `orig.diag.constraint_name`
+      （同时 `orig.pgcode` 可得）；
+    - `use_diag=False`：asyncpg 形态——**没有 `diag`**，只有
+      `orig.constraint_name`（asyncpg 原文无 pgcode，由 SQLAlchemy 方言从
+      `sqlstate` 回填到 `orig.pgcode`）。
+    """
+    orig = SimpleNamespace(pgcode=pgcode)
+    if use_diag:
+        orig.diag = SimpleNamespace(constraint_name=constraint_name)
+    else:
+        orig.constraint_name = constraint_name
     return IntegrityError("INSERT INTO admin_agent ...", {}, orig)
 
 
@@ -211,24 +230,140 @@ def test_ensure_swallows_concurrent_duplicate_and_continues():
 
 
 def test_ensure_rethrows_integrity_error_from_other_constraint():
-    """非本索引的完整性错误不得被当成"并发已存在"吞掉。"""
+    """唯一违规但约束名不是本索引：不得被当成"并发已存在"吞掉。"""
     admin_id = uuid4()
-    service = _service(existing=[], add_error=_integrity_error("some_other_uniq"))
+    service = _service(
+        existing=[],
+        add_error=_integrity_error(
+            pgcode="23505", constraint_name="some_other_uniq"
+        ),
+    )
 
     with pytest.raises(IntegrityError):
         service.ensure_builtin_agents(admin_id)
 
 
-def test_ensure_swallows_integrity_error_without_diagnostics():
-    """取不到 constraint_name 时按 IntegrityError 处理（fail-open）并继续。
+@pytest.mark.parametrize("use_diag", [True, False])
+def test_ensure_swallows_only_builtin_unique_violation(use_diag):
+    """确证 23505 且约束名为本索引时才吞；两种驱动形态（psycopg2 / asyncpg）都成立。"""
+    admin_id = uuid4()
+    service = _service(
+        existing=[],
+        add_error=_integrity_error(
+            pgcode="23505",
+            constraint_name=BUILTIN_UNIQUE_CONSTRAINT,
+            use_diag=use_diag,
+        ),
+    )
 
-    驱动/版本差异可能让 `orig.diag.constraint_name` 缺失；此时宁可放过一次
-    真冲突，也不要把"并发已建"退化成用户可见的报错。
+    created = service.ensure_builtin_agents(admin_id)
+
+    assert created == len(BUILTIN_ADMIN_AGENTS) - 1
+
+
+def test_ensure_rethrows_not_null_violation_without_constraint_name():
+    """NOT NULL 违规（23502）的 constraint_name 实测为 None，绝不能 fail-open 吞掉。"""
+    admin_id = uuid4()
+    service = _service(
+        existing=[],
+        add_error=_integrity_error(pgcode="23502", constraint_name=None),
+    )
+
+    with pytest.raises(IntegrityError):
+        service.ensure_builtin_agents(admin_id)
+
+
+@pytest.mark.parametrize("use_diag", [True, False])
+def test_ensure_swallows_unique_violation_without_constraint_name(use_diag):
+    """已确证 23505 但约束名不可得：按并发冲突吞掉（约束名不是唯一违规的判定依据）。"""
+    admin_id = uuid4()
+    service = _service(
+        existing=[],
+        add_error=_integrity_error(
+            pgcode="23505", constraint_name=None, use_diag=use_diag
+        ),
+    )
+
+    created = service.ensure_builtin_agents(admin_id)
+
+    assert created == len(BUILTIN_ADMIN_AGENTS) - 1
+
+
+def test_ensure_swallows_real_asyncpg_unique_violation():
+    """真实 asyncpg 唯一违规异常（无 pgcode、无 diag）也须被识别为并发冲突。"""
+    from asyncpg.exceptions import UniqueViolationError
+
+    admin_id = uuid4()
+    orig = UniqueViolationError("duplicate key")
+    orig.constraint_name = BUILTIN_UNIQUE_CONSTRAINT
+    service = _service(
+        existing=[],
+        add_error=IntegrityError("INSERT INTO admin_agent ...", {}, orig),
+    )
+
+    created = service.ensure_builtin_agents(admin_id)
+
+    assert created == len(BUILTIN_ADMIN_AGENTS) - 1
+
+
+def test_ensure_rethrows_foreign_key_violation():
+    """外键违规（23503）即便带约束名，也不是唯一违规，必须上抛。"""
+    admin_id = uuid4()
+    service = _service(
+        existing=[],
+        add_error=_integrity_error(
+            pgcode="23503", constraint_name="admin_agent_owner_admin_user_id_fkey"
+        ),
+    )
+
+    with pytest.raises(IntegrityError):
+        service.ensure_builtin_agents(admin_id)
+
+
+def test_ensure_rethrows_integrity_error_without_any_diagnostics():
+    """无名 IntegrityError（无 pgcode、无 constraint_name）：必须上抛而非谎报 created=0。
+
+    修复前的 fail-open 会把这类硬错误静默吞成"并发已建"，使
+    ``ensure_builtin_agents`` 返回 created=0 却零写入。
     """
     admin_id = uuid4()
     service = _service(
         existing=[],
-        add_error=IntegrityError("INSERT INTO admin_agent ...", {}, Exception("duplicate key")),
+        add_error=IntegrityError(
+            "INSERT INTO admin_agent ...", {}, SimpleNamespace()
+        ),
+    )
+
+    with pytest.raises(IntegrityError):
+        service.ensure_builtin_agents(admin_id)
+
+
+def test_ensure_rethrows_non_unique_driver_error_without_pgcode():
+    """真实驱动异常但非唯一违规（NOT NULL）且无 pgcode：仍须上抛。"""
+    from asyncpg.exceptions import NotNullViolationError
+
+    admin_id = uuid4()
+    service = _service(
+        existing=[],
+        add_error=IntegrityError(
+            "INSERT INTO admin_agent ...", {}, NotNullViolationError("null value")
+        ),
+    )
+
+    with pytest.raises(IntegrityError):
+        service.ensure_builtin_agents(admin_id)
+
+
+def test_ensure_swallows_unique_violation_when_pgcode_unavailable():
+    """pgcode 取不到时退化为 isinstance(orig, UniqueViolation) 判定，仍可识别并发冲突。"""
+    from psycopg2.errors import UniqueViolation
+
+    admin_id = uuid4()
+    service = _service(
+        existing=[],
+        add_error=IntegrityError(
+            "INSERT INTO admin_agent ...", {}, UniqueViolation("duplicate key")
+        ),
     )
 
     created = service.ensure_builtin_agents(admin_id)

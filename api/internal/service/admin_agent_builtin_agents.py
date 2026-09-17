@@ -12,8 +12,10 @@ NOT NULL）+ 启停/健康元数据，**没有任何授权字段**；而治理 A
 """
 from __future__ import annotations
 
+import importlib
 import logging
 from dataclasses import dataclass
+from functools import lru_cache
 from uuid import UUID
 
 from injector import inject
@@ -27,6 +29,49 @@ logger = logging.getLogger(__name__)
 # 预置 Agent 的幂等键：`internal/model/admin_agent.py` 中声明的部分唯一索引名。
 # 只有来自该索引的冲突才代表"并发下已被另一请求建成"，才可跳过。
 BUILTIN_UNIQUE_CONSTRAINT = "admin_agent_owner_builtin_uniq"
+
+# PostgreSQL 唯一违规的 SQLSTATE。
+UNIQUE_VIOLATION_SQLSTATE = "23505"
+
+
+@lru_cache(maxsize=1)
+def _unique_violation_classes() -> tuple[type, ...]:
+    """各驱动暴露的"唯一违规"异常类（缺驱动则跳过，返回空元组 = 不上报）。"""
+    classes: list[type] = []
+    for module_name, attr in (
+        ("psycopg2.errors", "UniqueViolation"),
+        ("asyncpg.exceptions", "UniqueViolationError"),
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError:  # pragma: no cover - 驱动缺失时不该命中唯一冲突判定
+            continue
+        cls = getattr(module, attr, None)
+        if isinstance(cls, type):
+            classes.append(cls)
+    return tuple(classes)
+
+
+def _constraint_name_of(orig) -> str | None:
+    """读取冲突约束名，兼容 psycopg2 与 asyncpg 的属性差异。
+
+    - psycopg2：`exc.orig.diag.constraint_name`（`Error.diag` 服务端诊断对象）
+    - asyncpg：只有 `exc.orig.constraint_name`（**没有** `diag`）
+    """
+    diag = getattr(orig, "diag", None)
+    name = getattr(diag, "constraint_name", None)
+    if name:
+        return name
+    return getattr(orig, "constraint_name", None)
+
+
+def _is_unique_violation(orig) -> bool:
+    """确认底层异常**确为**唯一违规（SQLSTATE 23505）。取不到 pgcode 时退化为类型判定。"""
+    pgcode = getattr(orig, "pgcode", None)
+    if pgcode is not None:
+        return pgcode == UNIQUE_VIOLATION_SQLSTATE
+    return any(isinstance(orig, cls) for cls in _unique_violation_classes())
+
 
 # 预置清单。新增项只需在此追加 + 在 prompts/index.yaml 登记对应 prompt_key。
 BUILTIN_ADMIN_AGENTS: list[dict[str, str]] = [
@@ -107,16 +152,37 @@ class AdminAgentBuiltinService:
     def _is_builtin_conflict(exc: IntegrityError) -> bool:
         """判断 IntegrityError 是否来自预置 Agent 的幂等唯一索引。
 
-        约束名经 `exc.orig.diag.constraint_name` 读取（asyncpg/psycopg2 的
-        服务端诊断字段）；取不到时（驱动版本差异 / 非 DBAPI 异常）按
-        IntegrityError 处理并记 warning——宁可放过一次真冲突，也不要让
-        "并发已建"退化成对用户的报错。
+        必须**先确证底层错误是唯一违规**（SQLSTATE 23505），再校验约束名：
+
+        - `pgcode`：psycopg2 原文提供；asyncpg 由 SQLAlchemy 方言在异常翻译时
+          从 `sqlstate` 回填，故优先取 `exc.orig.pgcode`。
+        - 取不到 `pgcode` 时退化为 `isinstance(exc.orig, UniqueViolation)` 类型判定。
+        - 约束名读取需兼容两个驱动：psycopg2 走 `exc.orig.diag.constraint_name`，
+          asyncpg **没有 `diag`**、只有 `exc.orig.constraint_name`。
+
+        只有"确证唯一违规 **且**（约束名 == `admin_agent_owner_builtin_uniq`
+        或约束名不可得）"才返回 True。凡是无法确证唯一违规的——包括
+        `constraint_name=None` 且拿不到 pgcode 的（实测 NOT NULL 违规 23502
+        就命中此形态）、以及 23503/23514 等——一律返回 False 让异常上抛。
+
+        核心原则：宁可让真并发冲突上抛（调用方可重试），也不要把表结构
+        未迁移、列缺失一类的硬错误静默吞成"创建成功"。
         """
-        diag = getattr(getattr(exc, "orig", None), "diag", None)
-        constraint_name = getattr(diag, "constraint_name", None)
+        orig = getattr(exc, "orig", None)
+        if orig is None:
+            return False
+        if not _is_unique_violation(orig):
+            logger.warning(
+                "IntegrityError 非唯一违规（pgcode=%s），按硬错误上抛：%s",
+                getattr(orig, "pgcode", None),
+                exc,
+            )
+            return False
+        constraint_name = _constraint_name_of(orig)
         if constraint_name is None:
             logger.warning(
-                "IntegrityError 缺少 constraint_name 诊断信息，按预置 Agent 并发冲突处理：%s",
+                "IntegrityError 确为唯一违规但缺少 constraint_name 诊断信息，"
+                "按预置 Agent 并发冲突处理：%s",
                 exc,
             )
             return True
