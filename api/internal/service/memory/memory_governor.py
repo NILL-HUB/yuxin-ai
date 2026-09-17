@@ -321,7 +321,10 @@ class MemoryGovernor:
     # =========================================================
 
     def gdpr_delete(self, user_id: str) -> dict:
-        """GDPR 级联删除：Neo4j + pgvector + Redis + MinIO 全部清理。
+        """GDPR 级联删除：Neo4j + pgvector + Redis 三处清理。
+
+        冷存储归档对象（L3 Frozen 层）经统一存储后端落盘，由存储后端自身
+        的生命周期管理，不在本方法的清理范围内。
 
         Args:
             user_id: 用户标识

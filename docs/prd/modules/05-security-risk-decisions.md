@@ -180,7 +180,7 @@
 35. 用户创作入口独立为创作工作室 `/studio`，与配置中心 `/space/*` 完全分离，不共享路由和组件。**（愿景设计，未实现）**：当前前端仅有 `ui/src/views/studio/StudioPlaceholderView.vue` 占位页（仅展示提示并引导跳转 `/store/public-apps`），尚未实现真正的创作工作室；与 04-social-creator.md 的共创分身体系同属远期路线（见 execution-roadmap.md P3 远期清单）。
 36. 分身发布后进入 `user_persona` Agent 子池，参与动态归集；池治理对分身有只读展示权，`exposure_level` 由资源运营管理，`risk_level` 由池治理管理，两者独立。
 37. 脑启发记忆系统（第 16 章）作为第 11.3.1 节"用户长期记忆库"的引擎层：**交互层已由"候选→确认→保存"改为自动写入 + 事后管理**（旧确认流程与候选表已删除），第 16 章定义引擎层（评分→写入→巩固→检索）。
-38. 记忆系统引入 Neo4j（TKG）+ PostgreSQL pgvector（向量）+ MinIO（归档）+ Celery（定时巩固），与现有 PostgreSQL + Redis 共存，不替换现有知识库存储。
+38. 记忆系统引入 Neo4j（TKG）+ PostgreSQL pgvector（向量）+ Celery（定时巩固），与现有 PostgreSQL + Redis 共存，不替换现有知识库存储；冷存储归档经系统统一存储后端（local/cos/oss）落盘，不引入独立对象存储容器。
 39. System 1/System 2 双系统对应 Orchestrator 的快速路径/复杂路径：System 1 通过 Digest 注入（<200ms），System 2 触发 TKG 图检索+漏斗压缩。
 40. 巩固引擎在非交互时段离线运行（6h 周期），执行冲突检测+权重衰减+冗余合并+技能涌现，不阻塞用户交互。
 41. 技能从行为数据中涌现（频率≥3 且成功率≥0.7），通过 Digest 注入 Agent 上下文，不直接成为 Agent 池成员。
@@ -220,7 +220,7 @@
 后续推荐路径调整为：
 
 ```text
-脑启发记忆系统基础设施（Neo4j+pgvector+MinIO+Celery）-> SalienceScorer+LedgerWriter 写入路径 -> MemoryRetriever+Digest 读取路径 -> 巩固引擎+技能涌现 -> Policy 完善 -> 多媒体资料深度解析 -> 企业级租户 / 团队 / 项目权限矩阵 -> 跨子池 A2A 多 Agent 协作增强
+脑启发记忆系统基础设施（Neo4j+pgvector+Celery）-> SalienceScorer+LedgerWriter 写入路径 -> MemoryRetriever+Digest 读取路径 -> 巩固引擎+技能涌现 -> Policy 完善 -> 多媒体资料深度解析 -> 企业级租户 / 团队 / 项目权限矩阵 -> 跨子池 A2A 多 Agent 协作增强
 ```
 
 社区与创作者经济支线（与主路径并行推进）：

@@ -92,7 +92,7 @@ System 1 依赖预计算的 Views（Digest + Skills），确保大多数请求�
 | 16.8 巩固引擎 | 五阶段巩固流程、冲突检测与事实失效、表征排斥 | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) |
 | 16.9 技能池涌现 | 从行为数据涌现可复用模式、技能成熟度计算 | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) |
 | 16.10 Policy 层 | PolicyRouter 策略路由器、MemoryGovernor 记忆治理 | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) |
-| 16.11 技术栈适配 | Neo4j/MinIO/Celery 与 PostgreSQL 18+pgvector/Redis 关系 | 本文下文 |
+| 16.11 技术栈适配 | Neo4j/Celery 与 PostgreSQL 18+pgvector/Redis 关系 | 本文下文 |
 | 16.12 API 接口 | 13 个端点定义（替代旧 API） | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) |
 | 16.13 监控与度量 | 任务有效性/记忆质量/效率/治理四维指标 | [03-consolidation-skill-policy-api.md](./03-consolidation-skill-policy-api.md) |
 | 16.14 实现路线图 | P0-P5 七阶段交付 | 本文下文 |
@@ -109,6 +109,8 @@ System 1 依赖预计算的 Views（Digest + Skills），确保大多数请求�
 > - 向量检索统一到 PostgreSQL 18 + pgvector，利用 SQL JOIN 实现 knowledge_scope 权限过滤
 > - 保留 Neo4j 用于 TKG 时序知识图谱
 > - Redis 8 Vector Set 作为后续语义缓存的可选项
+>
+> **对象存储变更（2026-09-17）**：原规划使用 MinIO（S3 兼容）承载记忆系统 Frozen 层归档。经核查，`ColdStorageManager` 实际已改为经统一存储端口 `ObjectStoragePort`（由 `STORAGE_BACKEND` 分发到 local/cos/oss）落盘，**代码层从未接入 MinIO**：全仓无任何读取 `MINIO_ENDPOINT` 的调用，依赖清单亦无 minio/boto3 客户端。故移除 MinIO 容器、`MINIO_*` 环境变量与数据卷（零迁移成本）。冷存储归档统一走系统级存储后端，生产环境建议配置云对象存储（COS/OSS）以解除单机带宽瓶颈。
 
 脑启发记忆系统引入 Neo4j（时序知识图谱）作为核心图存储。知识库系统和记忆系统的向量检索统一使用 PostgreSQL 18 + pgvector 扩展：
 
@@ -118,18 +120,18 @@ System 1 依赖预计算的 Views（Digest + Skills），确保大多数请求�
 | 向量检索 | PostgreSQL 18 + pgvector | PostgreSQL 18 + pgvector（共享） | 知识库向量存于 `segment.embedding` / `knowledge_segment.embedding`；记忆向量存于 `user_memory.embedding`。HNSW 索引，SQL JOIN 过滤 knowledge_scope |
 | 图存储 | 无 | Neo4j 2026 | Neo4j 仅用于记忆系统 TKG，知识库系统不需要图存储 |
 | 缓存 | Redis 8 | Redis 8（共享） | 知识库系统用 Redis 做通用缓存；记忆系统额外用 Redis 做 Digest/Profile/Skill 缓存 |
-| 对象存储 | 无 | MinIO（S3 兼容） | MinIO 仅用于记忆系统 Frozen 层归档 |
+| 对象存储 | 无 | 复用系统级存储后端（local/cos/oss） | 记忆系统不引入独立对象存储；Frozen 层归档经 `ObjectStoragePort` 落到系统配置的后端 |
 | 任务调度 | 无 | Celery + Redis Broker | Celery 仅用于记忆系统巩固引擎定时任务 |
 | LLM | OpenAI 兼容 | 同左（共享） | 复用现有 LLM 调用基础设施 |
 | 嵌入模型 | 现有 embedding | text-embedding-3-large (1024d) | 记忆向量使用独立 embedding 模型，与知识库向量隔离 |
 
-**部署增量**：在现有 docker-compose 中新增 neo4j、minio 两个服务（Qdrant 和 Weaviate 已移除），不影响现有服务运行。
+**部署增量**：在现有 docker-compose 中新增 neo4j 服务。
 
 ### 16.14 实现路线图
 
 | 阶段 | 交付物 | 验收标准 |
 |---|---|---|
-| P0: 基础设施 | docker-compose 新增 Neo4j/MinIO + Celery；PostgreSQL 18 启用 pgvector 扩展 | 所有服务可连接、健康检查通过；pgvector 扩展可用 |
+| P0: 基础设施 | docker-compose 新增 Neo4j + Celery；PostgreSQL 18 启用 pgvector 扩展 | 所有服务可连接、健康检查通过；pgvector 扩展可用 |
 | P1: 写入路径 | SalienceScorer + LedgerWriter + API | 可接收事件并正确写入 TKG + Vector |
 | P2: 读取路径 | Retriever + Digest + Funnel | 可准确召回，System 1 可用 |
 | P2.5: 技能池 | SkillEmergence + Digest 集成 | 技能自动涌现 + 增量更新 |
