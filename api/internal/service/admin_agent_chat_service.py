@@ -84,17 +84,20 @@ class AdminAgentChatService:
             conversation_id=conversation.id, role=AdminAgentMessageRole.USER.value, content=text
         )
 
-        agent = self._load_agent(principal.agent_id, admin_user_id)
-        llm = self._build_model()
-
-        # 提示词/工具构造放进 try：`_build_system_prompt` 在提示词缺失时抛
-        # RuntimeError（Task 4 的守卫）。若放在 try 之外，异常会**逃出 SSE 生成器**
-        # （客户端拿到断流而非 `event: error`），故必须纳入统一兜底。
+        # D2：Agent 加载、工具装配、提示词构造、模型获取**全部**纳入 try。
+        # 这些步骤任一抛错（如提示词缺失、公共 AI 配置关闭了本 feature）都必须
+        # 转成 `event: error` 帧回给客户端，而不是**逃出 SSE 生成器**——逃出的
+        # 异常会被 `support._sse_response` 的通用兜底改用另一套 payload 结构，
+        # 本链路的 error 帧契约（`{"error": ...}`）就此丢失，客户端表现为断流。
+        in_tool_loop = False
         try:
+            agent = self._load_agent(principal.agent_id, admin_user_id)
             tools = self._build_tools(principal)
             system_prompt = self._build_system_prompt(
                 principal, getattr(agent, "prompt_key", None)
             )
+            llm = self._build_model()
+            in_tool_loop = True
             answer, tool_events = self._run_tool_loop(
                 llm=llm,
                 system_prompt=system_prompt,
@@ -109,7 +112,11 @@ class AdminAgentChatService:
             )
         except FailException as exc:
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
-            raise
+            # 构造阶段失败已由 error 帧完整告知客户端（不逃出生成器）；工具循环
+            # 内部失败（如超过轮次上限）仍需上抛，让调用方感知这轮未产出答复。
+            if in_tool_loop:
+                raise
+            return
         except Exception as exc:
             logger.exception("管理端 Agent 对话失败 agent_id=%s", principal.agent_id)
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": f"对话失败：{exc}"})
@@ -182,8 +189,35 @@ class AdminAgentChatService:
     def _build_tools(self, principal: AdminAgentPrincipal):
         from internal.service.admin_agent_board_tools import BoardToolExecutor
         from internal.service.admin_agent_chat_tools import build_board_tools
+        from internal.service.admin_agent_execution_service import (
+            AdminAgentExecutionService,
+        )
 
-        return build_board_tools(BoardToolExecutor(), principal)
+        # 协作者必须是 **AdminAgentExecutionService**（有 `run(principal,
+        # board=, action=, payload=)`），不是 `BoardToolExecutor`（只有
+        # `assert_allowed` / `requires_draft` / `execute`，**没有 `run`**）。
+        # 传错会在第一次工具调用时抛 AttributeError，使整轮对话以 error 帧结束。
+        execution = AdminAgentExecutionService(
+            board_executor=BoardToolExecutor(),
+            draft_service=self._build_draft_service(),
+            audit_log_service=self._build_audit_service(),
+        )
+        return build_board_tools(execution, principal)
+
+    def _build_draft_service(self):
+        from internal.service.admin_change_draft_service import (
+            AdminChangeDraftService,
+        )
+
+        return AdminChangeDraftService(db=self.db)
+
+    def _build_audit_service(self):
+        from internal.service.audit_log_service import AuditLogService
+
+        # 实读签名：`__init__(self, session=None)`——**不接收 `db=`**。显式传
+        # 注入的 `self.db.session`（与 `session=None` 回落到全局 `db.session`
+        # 是同一 scoped session，但显式传参可测、不依赖全局单例的惰性初始化）。
+        return AuditLogService(session=self.db.session)
 
     def _build_system_prompt(self, principal: AdminAgentPrincipal, prompt_key) -> str:
         from internal.service.admin_agent_prompt_service import AdminAgentPromptService
@@ -251,17 +285,37 @@ class AdminAgentChatService:
             if row.role == AdminAgentMessageRole.USER.value:
                 history.append(HumanMessage(content=row.content or ""))
             elif row.role == AdminAgentMessageRole.ASSISTANT.value:
+                # 只还原文本答复，**不带** tool_calls：本轮的工具调用已由下面的
+                # TOOL 行还原为「前置 AIMessage(tool_calls) + ToolMessage」。
+                # 若在此再挂 tool_calls，会形成「没有对应 ToolMessage 的悬空
+                # tool_calls」——协议非法，下一轮续聊会被 OpenAI 兼容接口 4xx 拒收。
                 history.append(AIMessage(content=row.content or ""))
             elif row.role == AdminAgentMessageRole.TOOL.value and row.tool_calls:
-                first = row.tool_calls[0]
-                call = first.get("call") or {}
-                history.append(
-                    ToolMessage(
-                        content=first.get("result") or "",
-                        tool_call_id=call.get("id") or "",
-                        name=call.get("name") or "",
+                # 每个 TOOL 行承载 {call, result}。按 LLM 协议**成对**还原：
+                # 先补一条携 tool_calls 的 AIMessage，再补对应的 ToolMessage。
+                # 孤立 ToolMessage（前面无携同 id tool_calls 的 AIMessage）会被
+                # OpenAI 兼容接口 4xx 拒收，多轮续聊直接失败。
+                for item in row.tool_calls:
+                    call = item.get("call") or {}
+                    history.append(
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "name": call.get("name") or "",
+                                    "args": call.get("args") or {},
+                                    "id": call.get("id") or "",
+                                }
+                            ],
+                        )
                     )
-                )
+                    history.append(
+                        ToolMessage(
+                            content=item.get("result") or "",
+                            tool_call_id=call.get("id") or "",
+                            name=call.get("name") or "",
+                        )
+                    )
         return history
 
     @staticmethod
