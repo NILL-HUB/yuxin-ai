@@ -52,6 +52,16 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "fallback_tier": "3",  # 配置解析需要较强的结构化输出能力
         "billable": False,     # 系统侧辅助调用（用户创建定时任务时后台解析），系统承担成本
     },
+    {
+        "feature_key": "admin_agent",
+        "feature_name": "管理端 Agent 对话",
+        # category 取 admin 端 FEATURE_CATEGORIES 既有值（无 "admin"，自造会让后台列表显示裸键）
+        "feature_category": "routing",
+        "feature_description": "管理端 Agent 的对话与板块动作执行（受管理员监督的后台自动化）",
+        "model_type": "chat",
+        "fallback_tier": "3",  # 治理动作需要较强的工具调用能力
+        "billable": False,     # 系统治理功能：system_borne，系统承担成本（设计 §6.2）
+    },
 ]
 
 
