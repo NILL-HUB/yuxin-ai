@@ -106,9 +106,11 @@ class AdminAgentConversationService:
 
         **不校验归属**：调用方需先经 ``get_conversation`` 完成归属校验。
 
-        排序依赖 ``created_at``（列精度为秒，见模型 ``CURRENT_TIMESTAMP(0)``）
-        且当前**无 tiebreaker**（未按 ``id`` 兜底）——同一秒内写入的多条消息
-        相对顺序不保证稳定，需要严格顺序的调用方应自行二次排序。
+        排序依赖 ``created_at``：经 ORM 写入时走模型的 Python ``default``
+        （``_utcnow_naive``，**微秒**精度），故常规路径下同轮消息顺序稳定；
+        但该列**无 tiebreaker**（未按 ``id`` 兜底），若出现同微秒写入或
+        绕过 ORM 的 raw SQL（回退到 ``CURRENT_TIMESTAMP(0)`` 秒级 server_default），
+        相对顺序即不保证。需要严格顺序的调用方应自行二次排序。
         """
         return (
             self.db.session.query(AdminAgentMessage)
