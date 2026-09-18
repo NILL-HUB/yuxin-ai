@@ -207,6 +207,54 @@ ffmpeg + ffprobe                                      < 1 MB
 
 > 对比：若**不裁剪** onnxruntime 的平台目录，安装包增量将 **+282 MB**（约 450 MB）。
 
+#### 源目录来源：从容器取（保证两端同源）
+
+**决策（用户明确指示）**：运行时源目录**从 `llmops-render-worker` 容器提取**，
+而非在打包机上 `npm install`。
+
+**理由**：与「桌面端 Node 对齐容器 24」同一思路——**保证本机渲染与云端渲染使用
+完全相同的 Chromium / ffmpeg / hyperframes 版本**。若打包机自行安装，两个渠道的
+版本会独立漂移，可能产生「本机成功、云端失败」或输出像素不一致，且报错往往不指向
+版本差异，排查成本极高。
+
+提取方式（容器已按 `Dockerfile.render` 构建，内含全部运行时）：
+
+```bash
+# 从容器导出运行时（node_modules + chromium + ffmpeg/ffprobe）到打包机
+docker cp llmops-render-worker:/opt/hyperframes/node_modules <staging>/node_modules
+docker cp llmops-render-worker:/usr/lib/chromium <staging>/chromium
+docker cp llmops-render-worker:/usr/bin/ffmpeg <staging>/ffmpeg
+docker cp llmops-render-worker:/usr/bin/ffprobe <staging>/ffprobe
+export RENDER_RUNTIME_SOURCE_DIR=<staging>
+```
+
+> **注意**：容器内 Chromium 是 linux/x64 构建，**Windows 打包需换成 win32 构建**的
+> `chrome-headless-shell`（§0.5 约束 1：必须是能响应 `--version` 的构建）。
+> 故实际策略为：
+> - **`node_modules`（hyperframes + onnxruntime）从容器取**——这部分是跨平台 JS + 多平台原生库，同源无碍；
+> - **Chromium / ffmpeg / ffprobe 用 Windows 构建**（各自从官方渠道获取并钉住版本号，
+>   版本号需与容器内一致，可在 `MANIFEST.json` 中记录以便比对）。
+>
+> 容器内版本基准（实测）：ffmpeg/ffprobe 来自 Debian bookworm 包、Chromium 来自
+> `apt` 的 `chromium`；Windows 侧应选用**版本号对齐**的对应构建。
+
+**容器版本基准（实测，Windows 侧须对齐）**：
+
+| 组件 | 容器内版本 | 说明 |
+| --- | --- | --- |
+| Node | **v24.21.0** | 桌面端由 Electron 43.x 内置（Task 0） |
+| Chromium | **152.0.7977.82** | Debian bookworm 构建；Windows 侧取同版本 `chrome-headless-shell` |
+| ffmpeg / ffprobe | **5.1.9-0+deb12u1** | Windows 侧取同版本构建 |
+| hyperframes | **0.8.42** | `node_modules` 从容器取，天然同源 |
+| onnxruntime-node | **1.21.1** | 同上 |
+
+用于比对的采集命令（打包前跑一次，结果写入 `MANIFEST.json`）：
+
+```bash
+docker exec llmops-render-worker sh -c \
+  'node -v; chromium --version; ffmpeg -version | head -1; ffprobe -version | head -1'
+```
+
 #### 落地方式：照搬既有 `stage-cua-driver.js` 范式
 
 本仓库已有远端二进制随包的成熟模式（`desktop/scripts/stage-cua-driver.js` →
