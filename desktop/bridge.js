@@ -28,6 +28,16 @@ function createBridge(options = {}) {
       token: options.computerToken || process.env.COMPUTER_CONTROL_TOKEN || '',
       path: '/control',
     },
+    '/render': {
+      port: Number(options.renderPort || process.env.RENDER_WORKER_PORT || 8768),
+      token: options.renderToken || process.env.RENDER_WORKER_TOKEN || '',
+      path: '/render',
+    },
+    '/artifact': {
+      port: Number(options.renderPort || process.env.RENDER_WORKER_PORT || 8768),
+      token: options.renderToken || process.env.RENDER_WORKER_TOKEN || '',
+      path: '/artifact',
+    },
   }
 
   return http.createServer((req, res) => {

@@ -425,6 +425,7 @@ app.whenReady().then(async () => {
     os: randomToken(),
     browser: randomToken(),
     computer: randomToken(),
+    render: randomToken(),
     wake: randomToken(),
     bridge: randomToken(),
   }
@@ -435,9 +436,11 @@ app.whenReady().then(async () => {
   const preferOsPort = Number(process.env.OS_AUTOMATION_PORT || 8765)
   const preferBrowserPort = Number(process.env.BROWSER_AUTOMATION_PORT || 8766)
   const preferComputerPort = Number(process.env.COMPUTER_CONTROL_PORT || 8767)
+  const preferRenderPort = Number(process.env.RENDER_WORKER_PORT || 8768)
   const osPort = await probePort(preferOsPort)
   const browserPort = await probePort(preferBrowserPort, 50, new Set([osPort]))
   const computerPort = await probePort(preferComputerPort, 50, new Set([osPort, browserPort]))
+  const renderPort = await probePort(preferRenderPort, 50, new Set([osPort, browserPort, computerPort]))
   if (osPort !== preferOsPort) {
     console.log(`[desktop] os worker 端口 ${preferOsPort} 被占用，改用 ${osPort}`)
   }
@@ -446,6 +449,9 @@ app.whenReady().then(async () => {
   }
   if (computerPort !== preferComputerPort) {
     console.log(`[desktop] computer worker 端口 ${preferComputerPort} 被占用，改用 ${computerPort}`)
+  }
+  if (renderPort !== preferRenderPort) {
+    console.log(`[desktop] render worker 端口 ${preferRenderPort} 被占用，改用 ${renderPort}`)
   }
 
   startWorker('os', {
@@ -471,6 +477,29 @@ app.whenReady().then(async () => {
     YUJIANWO_RESOURCES_DIR: process.resourcesPath || '',
   })
 
+  // 渲染运行时：Node 用 Electron 内置的（经 shim 包装），Chromium/ffmpeg/ffprobe
+  // 随安装包分发（resources/render-runtime/，见 §0.5.2）。缺失时 worker 返回可读错误而非崩溃。
+  const { resolveRuntimePaths, ensureCliShim } = require('./render-runtime')
+  const runtime = resolveRuntimePaths({
+    env: process.env,
+    resourcesDir: process.resourcesPath,
+  })
+  const shimDir = path.join(app.getPath('userData'), 'render-runtime-bin')
+  const cliShim = ensureCliShim({
+    electronPath: process.execPath,          // 必须原地引用，不可拷贝单文件
+    cliJsPath: runtime.cliJsPath,
+    targetDir: shimDir,
+  })
+
+  startWorker('render', {
+    RENDER_WORKER_TOKEN: tokens.render,
+    RENDER_WORKER_PORT: String(renderPort),
+    HYPERFRAMES_CLI_BIN: cliShim,
+    HYPERFRAMES_BROWSER_PATH: runtime.browserPath,
+    HYPERFRAMES_FFMPEG_PATH: runtime.ffmpegPath,
+    HYPERFRAMES_FFPROBE_PATH: runtime.ffprobePath,
+  })
+
   bridgeServer = createBridge({
     token: tokens.bridge,
     filePort: osPort,
@@ -483,6 +512,8 @@ app.whenReady().then(async () => {
     browserToken: tokens.browser,
     computerPort,
     computerToken: tokens.computer,
+    renderPort,
+    renderToken: tokens.render,
   })
   bridgeServer.listen(Number(process.env.DESKTOP_BRIDGE_PORT || 9876), '127.0.0.1', () => {
     console.log('[desktop] local capability bridge listening on 127.0.0.1:9876')

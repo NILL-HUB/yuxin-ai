@@ -126,3 +126,49 @@ test('bridge forwards /snapshot to os worker /snapshot with worker token', async
     server.close()
   }
 })
+
+test('bridge forwards /render to render worker with worker token', async () => {
+  let seen = null
+  const { server, port } = await stubWorker('{}', (call) => {
+    seen = call
+  })
+  const bridge = createBridge({
+    token: 'secret',
+    renderPort: port,
+    renderToken: 'render-token',
+  })
+  const bridgePort = await listen(bridge)
+  try {
+    const result = await request(bridgePort, '/render', 'secret')
+    assert.equal(result.status, 200)
+    assert.ok(seen, '请求应被转发到 render worker')
+    assert.equal(seen.path, '/render')
+    assert.equal(seen.authorization, 'Bearer render-token')
+  } finally {
+    bridge.close()
+    server.close()
+  }
+})
+
+test('bridge forwards /artifact to render worker with worker token', async () => {
+  let seen = null
+  const { server, port } = await stubWorker('{}', (call) => {
+    seen = call
+  })
+  const bridge = createBridge({
+    token: 'secret',
+    renderPort: port,
+    renderToken: 'render-token',
+  })
+  const bridgePort = await listen(bridge)
+  try {
+    const result = await request(bridgePort, '/artifact', 'secret')
+    assert.equal(result.status, 200)
+    assert.ok(seen, '请求应被转发到 render worker')
+    assert.equal(seen.path, '/artifact')
+    assert.equal(seen.authorization, 'Bearer render-token')
+  } finally {
+    bridge.close()
+    server.close()
+  }
+})
