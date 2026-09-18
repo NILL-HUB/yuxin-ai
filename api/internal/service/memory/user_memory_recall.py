@@ -30,7 +30,7 @@ def recall_user_memory_for_chat(
     """召回用户长期记忆，组装为可注入 AgentState.user_memory 的文本。
 
     Args:
-        account_id: 账号 id（其字符串形式作为记忆系统的 ``user_id``）。
+        account_id: 账号 id；其主体键形态（见 ``MemoryOwnerKey.to_key()``）作为记忆系统归属键。
         query: 本轮用户提问，用于 System 2 语义检索。
         conversation_id: 会话 id（当前实现仅用于日志/未来扩展）。
         max_wait_seconds: 召回超时上限，超时返回空串。

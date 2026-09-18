@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import time
+from uuid import uuid4
 
 import pytest
 from prometheus_client import REGISTRY
@@ -278,8 +279,8 @@ class TestComponentInstrumentation:
         retriever = MemoryRetriever()
 
         before = memory_retrieve_total._value.get()
-        # 空查询直接返回空列表，但仍记录指标
-        results = retriever.retrieve("", "test_user")
+        # 空查询直接返回空列表，但仍记录指标；主体键须为合法 UUID（否则 parse 失败）
+        results = retriever.retrieve("", str(uuid4()))
         after = memory_retrieve_total._value.get()
 
         assert after == before + 1, "检索后 memory_retrieve_total 应增加 1"
@@ -290,8 +291,8 @@ class TestComponentInstrumentation:
         from internal.service.memory.retriever import MemoryRetriever
 
         retriever = MemoryRetriever()
-        # 空查询返回 0 个结果
-        retriever.retrieve("", "test_user")
+        # 空查询返回 0 个结果；主体键须为合法 UUID
+        retriever.retrieve("", str(uuid4()))
 
         body, _ = render_metrics()
         body_str = body.decode("utf-8")

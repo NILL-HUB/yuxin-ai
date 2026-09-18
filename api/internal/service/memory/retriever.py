@@ -33,7 +33,7 @@ from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from internal.config.memory_settings import settings
-from internal.entity.memory_owner_entity import MemoryOwnerKey
+from internal.entity.memory_owner_entity import MemoryOwnerKey, MemoryOwnerKeyError
 from internal.model.memory_models import (
     RetrievalConfig,
     RetrievalOptions,
@@ -155,7 +155,7 @@ class MemoryRetriever:
                 return digest_text
         except Exception:
             logger.warning(
-                "_system1_fast_path: Digest 获取失败 user=%s", owner_key, exc_info=True
+                "_system1_fast_path: Digest 获取失败 owner=%s", owner_key, exc_info=True
             )
 
         return None
@@ -347,6 +347,11 @@ class MemoryRetriever:
                 results.append(rr)
 
             return results
+        except MemoryOwnerKeyError:
+            logger.warning(
+                "_tkg_recall: 非法主体键，跳过召回 owner=%r", owner_key
+            )
+            return []
         except Exception:
             logger.warning("_tkg_recall: 全文检索失败", exc_info=True)
             return []
@@ -435,6 +440,11 @@ class MemoryRetriever:
                 results.append(rr)
 
             return results
+        except MemoryOwnerKeyError:
+            logger.warning(
+                "_vector_recall: 非法主体键，跳过召回 owner=%r", owner_key
+            )
+            return []
         except Exception:
             logger.warning("_vector_recall: 向量检索失败", exc_info=True)
             return []
@@ -542,6 +552,11 @@ class MemoryRetriever:
                 results.append(rr)
 
             return results
+        except MemoryOwnerKeyError:
+            logger.warning(
+                "_community_recall: 非法主体键，跳过召回 owner=%r", owner_key
+            )
+            return []
         except Exception:
             logger.warning("_community_recall: Community 主题召回失败", exc_info=True)
             return []
