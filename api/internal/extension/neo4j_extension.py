@@ -54,6 +54,16 @@ def _ensure_constraints_and_indexes(driver: Driver) -> None:
         "CREATE CONSTRAINT entity_node_id IF NOT EXISTS FOR (n:Entity) REQUIRE (n.name, n.user_id) IS UNIQUE",
         # 全文索引：覆盖 Episode/Entity/SemanticMemory 的 content 字段
         "CREATE FULLTEXT INDEX memoryFullText IF NOT EXISTS FOR (n:Episode) ON EACH [n.content, n.summary]",
+        # ── admin 主体：属性级分离（用户端用 user_id，admin 端用 admin_user_id + agent_id）──
+        # 唯一约束对「属性缺失」天然豁免，故加这些约束不影响存量 user 节点。
+        "CREATE CONSTRAINT entity_name_admin_unique IF NOT EXISTS "
+        "FOR (n:Entity) REQUIRE (n.name, n.admin_user_id, n.agent_id) IS UNIQUE",
+        "CREATE CONSTRAINT community_key_admin_unique IF NOT EXISTS "
+        "FOR (n:Community) REQUIRE (n.key, n.admin_user_id, n.agent_id) IS UNIQUE",
+        "CREATE INDEX episode_admin_user_id_idx IF NOT EXISTS FOR (n:Episode) ON (n.admin_user_id)",
+        "CREATE INDEX entity_admin_user_id_idx IF NOT EXISTS FOR (n:Entity) ON (n.admin_user_id)",
+        "CREATE INDEX memorynode_admin_user_id_idx IF NOT EXISTS FOR (n:MemoryNode) ON (n.admin_user_id)",
+        "CREATE INDEX community_admin_user_id_idx IF NOT EXISTS FOR (n:Community) ON (n.admin_user_id)",
     ]
     for stmt in statements:
         try:
