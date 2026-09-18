@@ -310,9 +310,7 @@ services:
     image: keking/kkfileview:latest
     restart: always
     container_name: llmops-kkfileview
-    # 4C4G 单机上默认不启动（实测常驻 531MB）：文档在线预览非核心链路。
-    # 需要预览时：docker compose --profile optional up -d llmops-kkfileview
-    profiles: ["optional"]
+    # 文档在线预览的必需组件（admin 迁移、文档预览均依赖），默认启动。
     environment:
       # 允许预览内网地址文件（docker 网络内通过 llmops-nginx 访问本地存储）
       KKFILEVIEW_DISABLE_INTERNAL_HOSTS: "false"
@@ -328,9 +326,8 @@ services:
     image: neo4j:2026-community
     restart: always
     container_name: llmops-neo4j
-    # 4C4G 单机上默认不启动（实测常驻 738MB，是最大奢侈项）：仅记忆系统 TKG 使用。
-    # 需要记忆图谱时：docker compose --profile optional up -d llmops-neo4j
-    profiles: ["optional"]
+    # 记忆系统（TKG）的必需底座：ledger_writer / consolidation_engine /
+    # degradation_manager / cold_storage_manager 等均依赖，默认启动。
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-openagent123}
       NEO4J_PLUGINS: '["apoc"]'

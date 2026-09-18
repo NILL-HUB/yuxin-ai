@@ -8,7 +8,7 @@
 
 ## 0. 一句话结论
 
-**4C4G 可以跑，但没有余量。** 渲染峰值 ~1.7G 叠加基础服务 ~1.5G 已接近 3.2G，一旦并发业务请求（大文件上传、L2 解析）同时发生，OOM 风险真实存在。真正的解法是把渲染拆到独立机器；单机方案是「能用」而非「充裕」。
+**4C4G 可以跑，但没有余量。** 基础服务常驻 ~2.8G，渲染峰值 ~1.7G，两者叠加 ~4.5G **已超过 4G 上限**；因此渲染期间一旦并发重活（大文件上传、L2 解析），OOM 风险不是「可能」而是「必然」。当前靠闸门（并发=1、队列隔离、防重锁）把渲染与重活错开；真正的解法是把渲染拆到独立机器。单机方案是「能用」而非「充裕」。
 
 ---
 
@@ -34,7 +34,7 @@
 **全量拉取 ≈ 10.8 GB。3 Mbps ≈ 366 KB/s → 约 8.4 小时**（且期间几乎无法提供正常服务）。
 
 **对策**（择一或组合）：
-- **裁减服务**（见 §2）：只拉必需镜像（api + ui + nginx + pgvector + redis + render ≈ 5.7 GB），约 4.4 小时；
+- **裁减服务**（见 §2）：只拉必需镜像（api + ui + nginx + pgvector + redis + neo4j + kkfileview + render ≈ 8.0 GB），约 6.1 小时；
 - **在本地/其他机器 `docker save` → 上传 tar → `docker load`**，绕开逐层拉取；
 - **错峰拉取**：先跑基础设施（db/redis），再逐个拉业务镜像。
 
@@ -63,15 +63,15 @@ CLI 自报：默认堆上限 2240 MB 只支持约 1 个 capture worker。超过�
 
 ---
 
-## 2. 服务裁减清单（4C4G 必做）
+## 2. 服务内存清单（4C4G 实测基线）
 
 以下为**实测常驻内存**（本机 idle 基线，非峰值；峰值更高）：
 
 | 服务 | 实测内存 | 镜像 | 4C4G 建议 | 理由 |
 | --- | --- | --- | --- | --- |
 | `llmops-celery` | **926 MB** | 1.48 GB | **保留** | 核心业务异步任务 |
-| `llmops-neo4j` | **738 MB** | 637 MB | **关闭** | 仅记忆系统 TKG 使用；单机上是最大奢侈项 |
-| `llmops-kkfileview` | **531 MB** | 1.6 GB | **关闭** | 文档在线预览，非核心链路 |
+| `llmops-neo4j` | **738 MB** | 637 MB | **必须保留** | 记忆系统（TKG）底座；关闭则记忆系统不可用 |
+| `llmops-kkfileview` | **531 MB** | 1.6 GB | **必须保留** | 文档在线预览；关闭则文档系统预览不可用 |
 | `llmops-api` | 353 MB | 1.48 GB | 保留 | 核心 |
 | `llmops-db`（pgvector） | 129 MB | 445 MB | 保留 | 核心 |
 | `llmops-ui` | 47 MB | 102 MB | 保留 | 生产用 nginx 静态版 |
@@ -80,13 +80,23 @@ CLI 自报：默认堆上限 2240 MB 只支持约 1 个 capture worker。超过�
 | `llmops-nginx` | 5 MB | 62 MB | 保留 | 入口 |
 | `llmops-browser-worker` | 6 MB | 1.8 GB | **默认已关** | `profiles: local-workers` |
 | `llmops-computer-worker` | 11 MB | 1.8 GB | **默认已关** | 同上 |
-| `llmops-render-worker` | 渲染时 1.5–1.7 G | 3.47 GB | **常驻**（见 §3） | 视频出片 |
+| `llmops-render-worker` | 渲染时 1.5–1.7 G（空闲 ~90 MB） | 3.47 GB | **常驻**（见 §3） | 视频出片 |
 
-**关闭后估算**：基础服务 ~1.5 G（api 353 + celery 926 + db 129 + redis 16 + ui 47 + beat 26 + nginx 5 ≈ 1.5 G）。
+**常驻基线估算**：基础服务 ~2.8 G（api 353 + celery 926 + neo4j 738 + kkfileview 531 + db 129 + redis 16 + ui 47 + beat 26 + nginx 5 ≈ 2.77 G），再加渲染 worker 空闲 90 MB。
 
-> ⚠️ `llmops-celery` 926 MB 偏高且**未设内存配额**。它承载全部业务异步任务，随负载增长。若 OOM，优先查它。
+也就是说，**基础服务 2.8 G + 渲染峰值 1.7 G ≈ 4.5 G，已超过 4G 上限**——这不是「接近」，而是**必须靠闸门控制「渲染期间不并发重活」才能不 OOM**。可立即采用的降内存杠杆：`llmops-celery` 由 `-c 4` 降到 `-c 2`（省约 590 MB）。
 
-**关闭方法**：为这几个服务加 `profiles: ["optional"]`（当前 `neo4j`/`kkfileview` **无 profile，默认会启动**），或用 `--scale` 排除。**这是待做的配置改动**（见 §6）。
+> ⚠️ **不要关 neo4j / kkfileview**。二者是功能必需项，不是可选组件：
+> - `neo4j` 是整个记忆系统 TKG 的存储底座（`ledger_writer` / `consolidation_engine` /
+>   `degradation_manager` / `cold_storage_manager` / `spread_activation` 等 12+ 个模块依赖）；
+> - `kkfileview` 是文档在线预览的核心（`admin_routes_7` 生成预览地址）。
+>
+> 关闭它们省下的 ~1.27 G 换不来对等价值——会直接让记忆系统与文档预览不可用。二者在
+> compose 中**默认启动**（无 profile）。真正省内存的杠杆是「主 worker 降并发」与
+> 「渲染走独立队列」，见 §3.3 与 §6。
+
+> ⚠️ `llmops-celery` 926 MB 偏高。它承载全部业务异步任务（默认 `-c 4`，4 个子进程各
+> 约 300 MB）。4C4G 上可降到 `-c 2` 省约 590 MB，代价是异步吞吐减半、可随时调回。
 
 ---
 
@@ -128,7 +138,7 @@ llmops-render-worker:
 
 **为什么 `cpus: '2'`**：4 核总量，渲染是 CPU 密集型，占 2 核可保证 api/celery 仍能响应。
 
-### 3.3 渲染闸门（设计已定，代码待做）
+### 3.3 渲染闸门（已全部落地）
 
 | # | 层 | 措施 | 解决的问题 |
 | --- | --- | --- | --- |
@@ -147,12 +157,12 @@ llmops-render-worker:
 
 > **闸门 1~7 已全部落地**（载体见 §6），不再是待办。配置项 3、4 亦已生效。
 
-### 3.4 超时设置
+### 3.4 超时设置（已落地）
 
-| 层 | 现状 | 建议 |
+| 层 | 现状 | 说明 |
 | --- | --- | --- |
-| subprocess | `RENDER_TIMEOUT_SEC=1800`（30 分钟） | 4C4G 上可收紧到 **900s**，避免长任务占满 |
-| Celery | **无 `task_time_limit`** | 建议加 `soft_time_limit`（略大于 subprocess 超时） |
+| subprocess | `RENDER_TIMEOUT_SEC=900`（15 分钟） | compose 已收紧，避免长任务占满 2 核 |
+| Celery | `soft_time_limit=1200`（20 分钟） | 略大于 subprocess 超时，留收尾余量（`render_tasks._SOFT_TIME_LIMIT_SEC`） |
 | 队列可见性 | `visibility_timeout=86400` | 保持 |
 | ffprobe 探测 | 硬编码 120s | 保持 |
 
@@ -201,7 +211,7 @@ llmops-render-worker:
 ```bash
 # 1) 先起基础设施（体积小，先验证连通）
 cd docker
-docker compose up -d llmops-db llmops-redis
+docker compose up -d llmops-db llmops-redis llmops-neo4j llmops-kkfileview
 
 # 2) 拉业务镜像（3M 下建议逐个，耐心等）
 docker compose pull llmops-api llmops-ui llmops-nginx
@@ -217,9 +227,9 @@ docker compose exec llmops-render-worker \
 docker compose exec llmops-render-worker ffmpeg -version | head -1
 ```
 
-**不启动的服务**（裁减项）：`llmops-neo4j`、`llmops-kkfileview`、`llmops-browser-worker`、`llmops-computer-worker`。
+**不启动的服务**（裁减项）：`llmops-browser-worker`、`llmops-computer-worker`（`profiles: local-workers`，按需启用）。
 
-**注意**：若关闭 neo4j/kkfileview，需在 `api/.env` 中确认相关功能降级不会报错（记忆系统 TKG、文档预览不可用）。
+**注意**：`llmops-neo4j` 与 `llmops-kkfileview` **不是裁减项，必须启动**（见 §2）：前者是记忆系统 TKG 的存储底座，后者是文档在线预览的核心。
 
 ---
 
@@ -228,7 +238,7 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | # | 改动 | 类型 | 状态 |
 | --- | --- | --- | --- |
 | 1 | 主 worker 设 `CELERY_QUEUES` 排除 render | compose | ✅ 已落地（`celery,mail,consolidation`） |
-| 2 | `neo4j`/`kkfileview` 加 `profiles: ["optional"]` | compose | ✅ 已落地（实测默认启动清单已不含二者） |
+| 2 | ~~`neo4j`/`kkfileview` 加 `profiles: ["optional"]`~~ → **已回滚** | compose | ❌ 已回滚：二者是功能必需项，关闭会崩记忆系统与文档预览（见 §2） |
 | 3 | render worker 加 `deploy.resources.limits` + `NODE_OPTIONS` | compose | ✅ 已落地（cpus 2 / mem 2800M / V8 堆 2048） |
 | 4 | 每账号渲染并发上限 = 1 | 代码 | ✅ `RenderGuardService.MAX_CONCURRENT_RENDERS_PER_ACCOUNT` |
 | 5 | 渲染防重锁（Redis SETNX，脚本指纹） | 代码 | ✅ `RenderGuardService.admit` |
@@ -253,12 +263,12 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 
 ### 7.1 内存超卖风险（真实存在）
 
-即使做完 §6，4C4G 上：渲染峰值 1.7 G + 基础服务 1.5 G ≈ 3.2 G，**剩 0.8 G**。以下场景会同时发生内存占用：
+即使做完 §6，4C4G 上：渲染峰值 1.7 G + 基础服务 2.8 G ≈ 4.5 G，**已超 4G 上限**。以下场景会同时发生内存占用：
 - 用户上传 100 MB+ 视频（素材解析 + 抽帧 + 视觉向量）
 - L2 深度解析（每帧视觉调用 + 向量写入）
 - 多个用户同时对话（celery 任务堆积）
 
-**建议**：起步阶段对上传体积与 L2 触发做额外限制；监控 `docker stats` 的 `llmops-celery` 与 `llmops-render-worker`。
+**必做**：`llmops-celery` 由默认 `-c 4` 降到 `-c 2`（省 ~590 MB），把基线压到 ~2.2 G；起步阶段对上传体积与 L2 触发做额外限制；监控 `docker stats` 的 `llmops-celery` 与 `llmops-render-worker`。
 
 ### 7.2 第三方 CDN 依赖（3M 环境需注意）
 
