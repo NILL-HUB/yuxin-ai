@@ -204,7 +204,9 @@ services:
       context: ../api
       dockerfile: Dockerfile.worker
     container_name: llmops-browser-worker
-    profiles: ["local-workers"]
+    # 服务端浏览器自动化：给「未安装桌面端的纯 Web 用户」用的回退通道，默认启动。
+    # 注意：桌面客户端**自带**同名 worker 子进程（desktop/main.js startWorker），
+    # 其电脑控制经本机 bridge 回传，不依赖本容器；本容器只服务无桌面端场景。
     restart: always
     command: ["python", "scripts/browser_automation_worker.py"]
     volumes:
@@ -224,7 +226,9 @@ services:
       context: ../api
       dockerfile: Dockerfile.worker
     container_name: llmops-computer-worker
-    profiles: ["local-workers"]
+    # 服务端计算机控制：给「未安装桌面端的纯 Web 用户」用的回退通道（xvfb + pyautogui），默认启动。
+    # 注意：桌面客户端**自带** computer worker（desktop/main.js startWorker），
+    # 且经 cua-driver 提供后台定向控制；本容器只是无桌面端时的降级通道。
     restart: always
     command: ["sh", "-c", "xvfb-run -a python scripts/computer_control_worker.py"]
     volumes:
