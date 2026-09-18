@@ -377,7 +377,7 @@ class MemoryWriteService:
             )
             polarity = detection.polarity.value if detection.polarity else "positive"
             emergence.register_seed_hint(
-                user_id=event.user_id,
+                owner_key=event.user_id,
                 skill_name=detection.subject or "",
                 polarity=polarity,
                 source="explicit_statement",
