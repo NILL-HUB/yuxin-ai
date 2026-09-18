@@ -238,6 +238,49 @@ export RENDER_RUNTIME_SOURCE_DIR=<staging>
 > 容器内版本基准（实测）：ffmpeg/ffprobe 来自 Debian bookworm 包、Chromium 来自
 > `apt` 的 `chromium`；Windows 侧应选用**版本号对齐**的对应构建。
 
+#### ⚠️ 容器 node_modules 并非全平台（实测推翻上文「同源无碍」的简化表述）
+
+上文称「node_modules 是跨平台 JS + 多平台原生库」——这句**只对 onnxruntime 成立**，
+对 **`esbuild` 与 `sharp` 不成立**。实测（`llmops-render-worker` 容器内）：
+
+| 包 | 容器内目录 | `package.json` 的 os 约束 | 是否跨平台 |
+| --- | --- | --- | --- |
+| `onnxruntime-node` | `bin/napi-v3/{win32,darwin,linux}/` | `os: [win32,darwin,linux]` | ✅ 一份通吃（N-API v3） |
+| `esbuild` | `@esbuild/linux-x64` | `os: ["linux"]` | ❌ **仅 linux** |
+| `sharp` | `@img/sharp-linux-x64`、`@img/sharp-libvips-linux-x64` | `os: ["linux"]` | ❌ **仅 linux** |
+
+**后果（实测，非推断）**：把容器提取的 `node_modules` 直接在 Windows 上跑，
+`node dist/cli.js --version` 立即崩溃——
+
+```
+Error: Could not load the "sharp" module using the win32-x64 runtime
+    at file:///.../sharp/dist/sharp.mjs:171:9
+```
+
+原因：`hyperframes/dist/cli.js` 在**启动阶段就 eagerly import `sharp`**（不是渲染时才用），
+所以缺失 win32 构建时连 `--version` 都过不去。`esbuild` 不受影响（其 Node 包装器
+只在真正调用时加载平台二进制，实测 `--version` 与 `transformSync` 均正常）。
+
+**正确做法（已落地在 `stage-render-runtime.js`）**：
+
+1. **裁掉**容器带来的非目标平台原生包（`@esbuild/linux-*`、`@img/sharp-linux-*`、
+   `@img/sharp-libvips-linux-*`）；
+2. **从 Windows 侧补齐**同版本 win32 原生包（`@esbuild/win32-x64`、`@img/sharp-win32-x64`），
+   路径经 `RENDER_RUNTIME_WIN32_MODULES_DIR` 传入——在 Windows 上执行
+   `npm install hyperframes@<与容器同版本>`，取其 `node_modules` 即可；
+3. **自校验**：暂存结束前断言 win32 原生包存在，缺失即**报错终止打包**
+   （宁可打包失败，也不要交付一个「渲染必崩」的安装包）。
+
+```bash
+# Windows 侧准备同版本原生包（版本必须与容器内一致）
+mkdir -p <win32-staging> && cd <win32-staging>
+npm init -y && npm install hyperframes@0.8.42 --no-audit --no-fund
+export RENDER_RUNTIME_WIN32_MODULES_DIR=<win32-staging>/node_modules
+```
+
+> 实测口径：`@esbuild/win32-x64` 与 `@img/sharp-win32-x64` 须与容器内对应包**同版本**
+> （实测均为 0.25.12 与 0.35.4）。跨版本混装可能触发原生绑定不兼容。
+
 **容器版本基准（实测，Windows 侧须对齐）**：
 
 | 组件 | 容器内版本 | 说明 |

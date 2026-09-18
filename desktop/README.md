@@ -36,6 +36,36 @@ playwright install chromium
 > Node（`ELECTRON_RUN_AS_NODE=1`）驱动 HyperFrames CLI；Chromium/ffmpeg/ffprobe 随安装包分发到
 > `resources/render-runtime/`，无需用户额外配置。
 
+### 渲染运行时的打包前置（仅打包机需要，**不是**用户侧）
+
+`npm run pack` / `npm run dist` 会用 `scripts/stage-render-runtime.js` 暂存渲染运行时，
+需要两个环境变量：
+
+| 变量 | 作用 |
+| --- | --- |
+| `RENDER_RUNTIME_SOURCE_DIR` | 运行时源目录（含 `node_modules`）。**从 `llmops-render-worker` 容器提取**，保证与云端版本同源 |
+| `RENDER_RUNTIME_WIN32_MODULES_DIR` | Windows 侧 `hyperframes` 的 `node_modules`，用于补齐 win32 原生包 |
+| `ORT_PLATFORMS` | 可选，`onnxruntime-node` 保留的平台，默认 `win32` |
+
+```bash
+# 1) 从容器导出运行时（node_modules 同源；Chromium/ffmpeg/ffprobe 另用 Windows 构建）
+docker cp llmops-render-worker:/opt/hyperframes/node_modules <staging>/node_modules
+export RENDER_RUNTIME_SOURCE_DIR=<staging>
+
+# 2) Windows 侧装同版本 hyperframes，取其原生包
+mkdir -p <win32-staging> && cd <win32-staging>
+npm init -y && npm install hyperframes@0.8.42 --no-audit --no-fund
+export RENDER_RUNTIME_WIN32_MODULES_DIR=<win32-staging>/node_modules
+```
+
+> ⚠️ **`RENDER_RUNTIME_WIN32_MODULES_DIR` 不可省略**：容器内 `node_modules` 只有 linux 原生包
+> （`@esbuild/linux-x64`、`@img/sharp-linux-x64`、`@img/sharp-libvips-linux-x64`），
+> 而 HyperFrames 的 `dist/cli.js` **在启动阶段就 eager import `sharp`**，缺 win32 构建时
+> 安装版连 `hyperframes --version` 都会崩（实测报 `Could not load the "sharp" module using
+> the win32-x64 runtime`）。暂存脚本会裁掉 linux 包并 overlay win32 包，
+> **并在缺失时报错终止打包**，不会静默产出「渲染必崩」的安装包。
+> 注意 `onnxruntime-node` 不受影响——它走 N-API v3 多平台布局，一份即可跨平台。
+
 ## 安全模型
 
 - 主进程为每个 Worker 生成随机 Bearer token，仅本机回环地址监听。
