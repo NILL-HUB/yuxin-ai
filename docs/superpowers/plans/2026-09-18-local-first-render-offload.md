@@ -1,0 +1,1972 @@
+# 重负载任务本机化（渲染优先）Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 把视频渲染等重负载计算从平台云服务器迁到用户本机执行，云端渲染完整保留为"可随时接通的回退路径"（默认关闭），使平台服务器只处理轻量内容、成本可控。
+
+**Architecture:** 复用本仓库已验证的「桌面端自带 worker + 本地能力桥 + 服务端按账号动态解析」范式（browser/computer worker 已落地同一模式）。新增 `render` 作为桌面 worker 子命令，服务端渲染工具改为**三级路由**：本机 bridge（首选）→ 服务端 Celery `render` 队列（回退，受开关控制）。云端代码**不删除**，仅用配置开关下线。
+
+**Tech Stack:** Python 3.12 / LangChain BaseTool / http.server（worker）/ Node.js + Electron（桌面宿主）/ HyperFrames CLI 0.8.42 / pytest
+
+---
+
+## 0. 前置背景（执行者必读）
+
+### 0.1 本方案要解决的问题
+
+平台当前把视频渲染放在云服务器（`llmops-render-worker` 容器独占 `render` 队列）。多租户下算力成本与用户数挂钩：要让 1000 个渲染 1 小时内完成需约 20 核 + 13 G，10 分钟内完成需约 116 核 + 75 G。把算力外部化到用户本机，可让平台服务器只承担轻量内容。
+
+### 0.2 关键设计决策（已与用户确认）
+
+| 决策 | 内容 |
+| --- | --- |
+| **云端渲染处理** | **保留代码，默认关闭**。不删除、不重构。未来可一键接通。 |
+| **本机渲染** | 新增，作为首选执行路径 |
+| **降级顺序** | 本机 bridge → 云端 Celery → 明确报错 |
+| **是否给渲染计费** | 不改（本机执行不消耗平台算力） |
+
+### 0.3 现有可复用资产（勿重复造）
+
+| 能力 | 现成实现 | 说明 |
+| --- | --- | --- |
+| 客户端托管 worker | `desktop/main.js` `startWorker()`（约 L124-155） | 随机 token、端口顺延、宿主看门狗，**直接复用** |
+| worker 统一入口 | `api/scripts/worker_super.py` | 子命令白名单在**两处**：`parse_args` 的 `choices`（约 L148）与 `_module_and_entry`（约 L158-164），**必须同时改** |
+| 本地能力桥 | `desktop/bridge.js` | 路由表 `targets`（约 L5-31）需加 `/render` |
+| 设备注册表 | `desktop_device` 表 + `DesktopDeviceService.resolve_bridge` | **无需改动** |
+| 按账号解析桥 | `internal/service/desktop_bridge_resolver.py` `resolve_desktop_bridge(account_id, purpose=)` | **无需改动** |
+| 服务端调用范式 | `providers/host_os/os_file_task.py` `_call_worker`（L84-132） | **照抄此范式** |
+| 渲染执行 | `internal/core/video/hyperframes_renderer.py` | 已可直接复用（纯 subprocess） |
+| 成品入库 | `KnowledgeBaseService.store_render_output` | **无需改动** |
+
+### 0.4 ⚠️ 必须避免的反面范例
+
+`providers/browser_automation/browser_action.py` 的 `_call_worker` **没有调用 `resolve_desktop_bridge`**，只读静态 env——导致「桌面端纯动态注册」场景下打不到用户设备（已知断链）。**本方案的 render worker 调用必须走 `resolve_desktop_bridge`。**
+
+### 0.5 已知技术约束（实测，勿踩）
+
+1. **Chromium 必须是能响应 `--version` 的构建**：`chrome-headless-shell` 正常；完整版 Chrome 在受限环境 `--version` 会挂死，CLI 判定 `Chrome cannot start`。**Electron 自带的 `chrome.exe` 不可替代**。
+2. **ffprobe 必须是真 ffprobe**：用 ffmpeg 冒充会因 `-print_format` 不支持而失败。
+3. **HyperFrames 必须「本地安装」**（`npm install hyperframes@0.8.42`），全局 `-g` 会报 `[HyperframeRuntimeLoader] Missing manifest`。
+4. **渲染后半段强依赖服务端**：本机只能产出 MP4，入库/索引必须回传服务端。分界点在 `render_service.py` 的 `store_render_output`。
+5. **composition 引用外网 CDN**（`cdn.jsdelivr.net` 的 GSAP、Google Fonts），本机渲染同样需要外网可达。
+
+### 0.6 测试命令
+
+```bash
+cd api && python -m pytest test/ -q          # 全量
+cd api && python -m pytest test/path/to/test.py::test_name -v   # 单测
+```
+
+### 0.7 本方案的复用价值（不只服务渲染）
+
+本方案确立的是一套**「重负载任务本机化」的通用范式**，后续其他重型任务可直接套用：
+
+```
+服务端工具
+  → resolve_desktop_bridge(account_id, purpose="/xxx")   # 已有，无需改动
+  → 打用户本机的 xxx worker（新增 worker 子命令 + bridge 路由）
+  → 本机算完，产物经 bridge 取回
+  → 复用服务端既有入库能力（store_render_output 之类的落库函数）
+  ← 不可用则回退云端（云端代码保留，开关控制）
+```
+
+**判定是否适合本机化的三个标准**：
+
+| 标准 | 说明 |
+| --- | --- |
+| **计算密集、结果可搬运** | 吃 CPU/内存但产物是单个文件（如渲染出 MP4）→ 适合 |
+| **不改平台数据** | 本机只做「算」，写库/写对象存储仍在服务端 → 适合 |
+| **有可接受的降级** | 用户没装客户端时能回退云端或明确报错 → 适合 |
+
+**典型候选**（供后续评估，本文不展开）：视频转码/剪辑、大文件批量解析、
+本地模型推理（ASR/视觉）、批量 OCR、批量图像处理。
+
+**注意事项**（渲染已踩过的坑，复用时要重查）：
+- 本机运行时体积（渲染是 ~500 MB）——每个重型任务都带一份运行时不可持续，**优先复用同一份 Node/Chromium/ffmpeg 底座**；
+- 外网依赖（渲染依赖 GSAP CDN + Google Fonts）；
+- 用户设备性能差异与中途休眠，需要幂等 + 可重试。
+
+
+---
+
+## 1. 文件结构规划
+
+### 新建文件
+
+| 文件 | 职责 |
+| --- | --- |
+| `api/scripts/render_worker.py` | 本机渲染 worker：HTTP 服务（`POST /render`），Bearer 鉴权，调用 HyperFrames CLI 出 MP4，返回产物路径/字节 |
+| `api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py` | 服务端侧「调本机 render worker」的客户端封装：解析 bridge → POST → 返回结果 |
+| `api/test/scripts/test_render_worker.py` | render worker 单测 |
+| `api/test/internal/core/tools/test_local_render_runner.py` | 本机渲染客户端单测 |
+
+### 修改文件
+
+| 文件 | 改动 |
+| --- | --- |
+| `api/scripts/worker_super.py` | 子命令白名单两处加 `render`；`_SERVICE_SUPPORTS_HOST_PORT` 加 `render` |
+| `api/config/config.py` | 新增 `RENDER_LOCAL_ENABLED` / `RENDER_CLOUD_FALLBACK_ENABLED` 两个开关 |
+| `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py` | `_dispatch_render` 改为三级路由（本机优先 → 云端回退） |
+| `desktop/bridge.js` | `targets` 加 `/render` 路由 |
+| `desktop/main.js` | 新增 render worker 的 token/端口/startWorker/createBridge 参数 |
+| `api/scripts/pyinstaller/worker.spec` | `hiddenimports` 加 `scripts.render_worker` |
+| `docker/docker-compose.yaml` | 云端 render worker 改为默认不启动（保留 profile，可随时接通） |
+| `docs/deployment-single-node.md` | 同步「云端渲染默认关闭、本机优先」 |
+| `docs/prd/modules/09-desktop-client.md` | 登记 render worker 子命令与桥路由 |
+
+### 不改动（重要）
+
+- `api/internal/task/render_tasks.py`、`api/internal/service/render_service.py`、`api/internal/service/render_guard_service.py`
+  —— 云端渲染链路**整体保留**，仅通过开关决定是否派发。
+- `desktop_device` 表、`desktop_bridge_resolver.py`、`store_render_output`。
+
+---
+
+## Task 1: 新增渲染执行开关配置
+
+**Files:**
+- Modify: `api/config/config.py`（在 §视频渲染 段，约 L213-234）
+- Test: `api/test/config/test_render_execution_config.py`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `api/test/config/test_render_execution_config.py`：
+
+```python
+"""渲染执行目标配置：本机优先 / 云端回退 的开关语义。"""
+import importlib
+import os
+
+
+def _load_config_with(monkeypatch, **env):
+    for key in ("RENDER_LOCAL_ENABLED", "RENDER_CLOUD_FALLBACK_ENABLED"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    import config.config as module
+
+    importlib.reload(module)
+    return module.Config()
+
+
+def test_defaults_local_first_and_cloud_fallback_on(monkeypatch):
+    conf = _load_config_with(monkeypatch)
+    assert conf.RENDER_LOCAL_ENABLED is True
+    assert conf.RENDER_CLOUD_FALLBACK_ENABLED is True
+
+
+def test_local_can_be_disabled(monkeypatch):
+    conf = _load_config_with(monkeypatch, RENDER_LOCAL_ENABLED="false")
+    assert conf.RENDER_LOCAL_ENABLED is False
+
+
+def test_cloud_fallback_can_be_disabled(monkeypatch):
+    """云端渲染默认关闭时，显式关掉回退即完全不派发云端。"""
+    conf = _load_config_with(monkeypatch, RENDER_CLOUD_FALLBACK_ENABLED="false")
+    assert conf.RENDER_CLOUD_FALLBACK_ENABLED is False
+
+
+def test_env_parsing_is_case_insensitive(monkeypatch):
+    conf = _load_config_with(monkeypatch, RENDER_LOCAL_ENABLED="FALSE")
+    assert conf.RENDER_LOCAL_ENABLED is False
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/config/test_render_execution_config.py -q`
+Expected: FAIL（`AttributeError: 'Config' object has no attribute 'RENDER_LOCAL_ENABLED'`）
+
+- [ ] **Step 3: 实现配置**
+
+在 `api/config/config.py` 的 `RENDER_TIMEOUT_SEC` 之后（约 L233 后）追加：
+
+```python
+        # 渲染执行目标：本机优先（把重负载算力外部化到用户设备，平台只管轻量内容）。
+        # 本机不可用时是否回退云端 Celery render 队列——云端链路完整保留，
+        # 用该开关控制是否启用，便于未来随时接通。
+        self.RENDER_LOCAL_ENABLED = (
+            (_get_env("RENDER_LOCAL_ENABLED") or "true").strip().lower()
+            not in {"false", "0", "no", "off"}
+        )
+        self.RENDER_CLOUD_FALLBACK_ENABLED = (
+            (_get_env("RENDER_CLOUD_FALLBACK_ENABLED") or "true").strip().lower()
+            not in {"false", "0", "no", "off"}
+        )
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/config/test_render_execution_config.py -q`
+Expected: PASS（4 passed）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add api/config/config.py api/test/config/test_render_execution_config.py
+git commit -m "feat(render): add local-first render execution switches"
+```
+
+---
+
+## Task 2: 本机渲染 worker（HTTP 服务）
+
+**Files:**
+- Create: `api/scripts/render_worker.py`
+- Test: `api/test/scripts/test_render_worker.py`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `api/test/scripts/test_render_worker.py`：
+
+```python
+"""本机渲染 worker：鉴权、入参校验、渲染调用、错误包装。"""
+import json
+from pathlib import Path
+
+import pytest
+
+from scripts import render_worker
+
+
+def test_authorized_accepts_matching_bearer(monkeypatch):
+    monkeypatch.setenv("RENDER_WORKER_TOKEN", "secret-token")
+    assert render_worker._authorized("Bearer secret-token") is True
+
+
+def test_authorized_rejects_wrong_token(monkeypatch):
+    monkeypatch.setenv("RENDER_WORKER_TOKEN", "secret-token")
+    assert render_worker._authorized("Bearer wrong") is False
+
+
+def test_authorized_rejects_when_token_unset(monkeypatch):
+    monkeypatch.delenv("RENDER_WORKER_TOKEN", raising=False)
+    assert render_worker._authorized("Bearer anything") is False
+
+
+def test_validate_payload_requires_segments():
+    error = render_worker._validate_payload({"composition": {"duration": 10}})
+    assert error is not None
+    assert "segments" in error["error"]
+
+
+def test_validate_payload_requires_composition_dict():
+    error = render_worker._validate_payload({"composition": "not-a-dict"})
+    assert error is not None
+    assert "composition" in error["error"]
+
+
+def test_validate_payload_accepts_valid():
+    payload = {
+        "composition": {
+            "composition_id": "main",
+            "width": 1920,
+            "height": 1080,
+            "duration": 10.0,
+            "segments": [{"start": 0.0, "duration": 10.0, "text": "hi"}],
+        }
+    }
+    assert render_worker._validate_payload(payload) is None
+
+
+def test_run_render_returns_error_when_env_missing(monkeypatch):
+    """缺少 HYPERFRAMES_* 路径时返回可读错误，不抛异常。"""
+    for key in (
+        "HYPERFRAMES_BROWSER_PATH",
+        "HYPERFRAMES_FFMPEG_PATH",
+        "HYPERFRAMES_FFPROBE_PATH",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    payload = {
+        "composition": {
+            "composition_id": "main",
+            "width": 1920,
+            "height": 1080,
+            "duration": 10.0,
+            "segments": [{"start": 0.0, "duration": 10.0, "text": "hi"}],
+        }
+    }
+    result = render_worker._run_render(payload)
+    assert result["ok"] is False
+    assert "HYPERFRAMES" in result["error"]
+
+
+def test_run_render_invokes_renderer_with_composition(monkeypatch, tmp_path):
+    """渲染成功时返回产物字节与落盘路径，并保持与原产物一致。"""
+    fake_mp4 = tmp_path / "out.mp4"
+    fake_mp4.write_bytes(b"FAKE_MP4_BYTES")
+    captured = {}
+
+    def fake_render(composition_spec, *, output_path, settings):
+        captured["spec"] = composition_spec
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(fake_mp4.read_bytes())
+        return str(output_path)
+
+    monkeypatch.setattr(render_worker, "_render_composition", fake_render)
+
+    payload = {
+        "composition": {
+            "composition_id": "main",
+            "width": 1920,
+            "height": 1080,
+            "duration": 10.0,
+            "segments": [{"start": 0.0, "duration": 10.0, "text": "hi"}],
+        },
+        "name": "demo",
+    }
+    result = render_worker._run_render(payload)
+
+    assert result["ok"] is True
+    assert result["size_bytes"] == len(b"FAKE_MP4_BYTES")
+    assert captured["spec"]["segments"][0]["text"] == "hi"
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/scripts/test_render_worker.py -q`
+Expected: FAIL（`ModuleNotFoundError: No module named 'scripts.render_worker'`）
+
+- [ ] **Step 3: 实现 worker**
+
+创建 `api/scripts/render_worker.py`：
+
+```python
+"""本机渲染 worker（用户设备侧出片）。
+
+由桌面客户端（Electron 主进程）托管启动，经本地能力桥（desktop/bridge.js）
+的 `/render` 路由被服务端调用；也可在服务端容器内独立运行（回退通道）。
+
+与 browser/computer worker 同一范式：ThreadingHTTPServer + Bearer 常量时间鉴权。
+差异点：渲染是分钟级长任务，且**不返回产物字节流**——只回传落盘路径与体积，
+由调用方（服务端）自行取回入库，避免在 HTTP body 里搬运几十 MB 视频。
+
+安全模型：
+- 仅接受 Authorization: Bearer <RENDER_WORKER_TOKEN>；
+- 未配置 token 时拒绝启动；
+- 仅在调用方指定的工作目录内写文件，不暴露任意路径读能力。
+
+硬依赖（与 hyperframes_renderer 一致，缺一不可）：
+HYPERFRAMES_BROWSER_PATH / HYPERFRAMES_FFMPEG_PATH / HYPERFRAMES_FFPROBE_PATH。
+"""
+
+from __future__ import annotations
+
+import argparse
+import hmac
+import json
+import logging
+import os
+import shutil
+import tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+logger = logging.getLogger("render_worker")
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8768
+
+_REQUIRED_ENV_KEYS = (
+    "HYPERFRAMES_BROWSER_PATH",
+    "HYPERFRAMES_FFMPEG_PATH",
+    "HYPERFRAMES_FFPROBE_PATH",
+)
+
+
+def _env(key: str, default: str = "") -> str:
+    return str(os.environ.get(key, default) or "").strip()
+
+
+def _authorized(header_value: str) -> bool:
+    """常量时间比对 Bearer token；未配置 token 一律拒绝。"""
+    expected = _env("RENDER_WORKER_TOKEN")
+    if not expected:
+        return False
+    header = str(header_value or "")
+    if not header.lower().startswith("bearer "):
+        return False
+    return hmac.compare_digest(header[7:].strip(), expected)
+
+
+def _validate_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """校验入参，返回错误 dict 或 None。"""
+    composition = payload.get("composition")
+    if not isinstance(composition, dict):
+        return {"ok": False, "error": "composition 必须是对象"}
+    segments = composition.get("segments")
+    if not isinstance(segments, list) or not segments:
+        return {"ok": False, "error": "composition.segments 必须是非空列表"}
+    return None
+
+
+def _load_settings() -> Any:
+    """构造渲染器所需配置视图（属性访问语义，与 server 侧一致）。
+
+    本 worker 不依赖 Flask / internal.context，直接读环境变量并包成对象——
+    ``hyperframes_renderer`` 全部用 ``getattr(settings, "HYPERFRAMES_*")``
+    属性读取，对 dict 做 getattr 会静默落空。
+    """
+    return SimpleNamespace(
+        HYPERFRAMES_BROWSER_PATH=_env("HYPERFRAMES_BROWSER_PATH"),
+        HYPERFRAMES_FFMPEG_PATH=_env("HYPERFRAMES_FFMPEG_PATH"),
+        HYPERFRAMES_FFPROBE_PATH=_env("HYPERFRAMES_FFPROBE_PATH"),
+        HYPERFRAMES_CLI_VERSION=_env("HYPERFRAMES_CLI_VERSION") or "0.8.42",
+        HYPERFRAMES_CLI_BIN=_env("HYPERFRAMES_CLI_BIN"),
+    )
+
+
+def _render_composition(
+    composition_spec: dict, *, output_path: str, settings: Any
+) -> str:
+    """默认实现：复用服务端渲染器的 CLI 调用（测试会替换本函数）。"""
+    from internal.core.video.composition_builder import build_composition_html
+    from internal.core.video.hyperframes_renderer import _render as render_impl
+
+    work_dir = Path(output_path).parent
+    (work_dir / "index.html").write_text(
+        build_composition_html(composition_spec), encoding="utf-8"
+    )
+    render_impl(
+        project_dir=work_dir,
+        output_path=Path(output_path),
+        settings=settings,
+        quality="standard",
+        fps=int(composition_spec.get("fps") or 30),
+    )
+    return str(output_path)
+
+
+def _cleanup_dir(path: str) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _run_render(payload: dict[str, Any]) -> dict[str, Any]:
+    """执行一次渲染，返回 {ok, path, size_bytes, name} 或 {ok: False, error}。"""
+    validation_error = _validate_payload(payload)
+    if validation_error is not None:
+        return validation_error
+
+    settings = _load_settings()
+    missing = [key for key in _REQUIRED_ENV_KEYS if not getattr(settings, key, "")]
+    if missing:
+        return {
+            "ok": False,
+            "error": "渲染环境缺少必需配置：" + "、".join(missing),
+        }
+
+    composition = payload["composition"]
+    name = str(payload.get("name") or "渲染成品").strip() or "渲染成品"
+    work_dir = tempfile.mkdtemp(prefix="hf-local-render-")
+    try:
+        output_path = str(Path(work_dir) / "output.mp4")
+        produced = _render_composition(
+            composition, output_path=output_path, settings=settings
+        )
+        artifact = Path(produced)
+        if not artifact.is_file() or artifact.stat().st_size <= 0:
+            _cleanup_dir(work_dir)
+            return {"ok": False, "error": "渲染未产出有效文件"}
+    except Exception as exc:  # noqa: BLE001 - worker 边界必须转成 JSON 错误
+        logger.warning("本机渲染失败: %s", exc, exc_info=True)
+        _cleanup_dir(work_dir)
+        return {"ok": False, "error": f"本机渲染失败: {exc}"}
+
+    # 成功：**保留 work_dir**——调用方随后经 `/artifact` 取回产物，
+    # 取走后由 `_read_artifact` 清理该目录。
+    return {
+        "ok": True,
+        "path": str(artifact),
+        "size_bytes": artifact.stat().st_size,
+        "name": name,
+    }
+
+
+class _Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        logger.info("%s - %s", self.address_string(), fmt % args)
+
+    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler 约定
+        if self.path.rstrip("/") != "/render":
+            self._json_response({"ok": False, "error": "not found"}, status=404)
+            return
+        if not _authorized(self.headers.get("Authorization", "")):
+            self._json_response({"ok": False, "error": "unauthorized"}, status=401)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except Exception:
+            self._json_response({"ok": False, "error": "invalid json"}, status=400)
+            return
+        result = _run_render(payload)
+        self._json_response(result)
+
+    def _json_response(self, data: dict, status: int = 200):
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Local render worker")
+    parser.add_argument("--host", default=_env("RENDER_WORKER_HOST", DEFAULT_HOST))
+    parser.add_argument(
+        "--port", type=int, default=int(_env("RENDER_WORKER_PORT", str(DEFAULT_PORT)))
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    if not _env("RENDER_WORKER_TOKEN"):
+        logger.error("RENDER_WORKER_TOKEN 未配置，拒绝启动")
+        raise SystemExit(1)
+    server = ThreadingHTTPServer((args.host, args.port), _Handler)
+    logger.info("Local render worker listening on %s:%s", args.host, args.port)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/scripts/test_render_worker.py -q`
+Expected: PASS（8 passed）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add api/scripts/render_worker.py api/test/scripts/test_render_worker.py
+git commit -m "feat(render): add local render worker with bearer auth"
+```
+
+---
+
+## Task 3: 注册 render 子命令到 worker_super
+
+**Files:**
+- Modify: `api/scripts/worker_super.py`（`parse_args` 的 `choices` 约 L148；`_SERVICE_SUPPORTS_HOST_PORT` L35；`_module_and_entry` L158-164）
+- Test: `api/test/scripts/test_worker_super.py`（追加用例）
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `api/test/scripts/test_worker_super.py` 末尾追加：
+
+```python
+def test_render_subcommand_is_accepted():
+    """render 必须在 choices 白名单内，否则 argparse 直接拒绝。"""
+    from scripts.worker_super import parse_args
+
+    args = parse_args(["render", "--port", "8768"])
+    assert args.service == "render"
+    assert args.port == 8768
+
+
+def test_render_subcommand_maps_to_render_worker_module():
+    """render 必须映射到 scripts.render_worker，否则 KeyError。"""
+    from scripts.worker_super import _module_and_entry
+
+    module_name, entry_name = _module_and_entry("render")
+    assert module_name == "scripts.render_worker"
+    assert entry_name == "main"
+
+
+def test_render_worker_module_is_importable():
+    import importlib
+
+    module = importlib.import_module("scripts.render_worker")
+    assert hasattr(module, "main")
+
+
+def test_render_supports_host_port_injection():
+    """render worker 的 main 声明了 --host/--port，须在白名单内。"""
+    from scripts.worker_super import _SERVICE_SUPPORTS_HOST_PORT
+
+    assert "render" in _SERVICE_SUPPORTS_HOST_PORT
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/scripts/test_worker_super.py -q -k render`
+Expected: FAIL（argparse 报 `invalid choice: 'render'`）
+
+- [ ] **Step 3: 实现注册**
+
+在 `api/scripts/worker_super.py` 做三处改动：
+
+**3a. 模块 docstring 的子命令清单**（约 L6-9）改为：
+
+```python
+    yujianwo-worker.exe os       --port 8765
+    yujianwo-worker.exe browser  --port 8766
+    yujianwo-worker.exe computer --port 8767
+    yujianwo-worker.exe render   --port 8768
+    yujianwo-worker.exe wake
+```
+
+**3b. 白名单常量**（L35）：
+
+```python
+_SERVICE_SUPPORTS_HOST_PORT = frozenset(("os", "browser", "computer", "render"))
+```
+
+**3c. `choices` 与映射表**：
+
+```python
+        choices=("os", "browser", "computer", "render", "wake"),
+```
+
+```python
+def _module_and_entry(service: str) -> tuple[str, str]:
+    return {
+        "os": ("scripts.os_automation_worker", "main"),
+        "browser": ("scripts.browser_automation_worker", "main"),
+        "computer": ("scripts.computer_control_worker", "main"),
+        "render": ("scripts.render_worker", "main"),
+        "wake": ("scripts.wake_word_worker", "main"),
+    }[service]
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/scripts/test_worker_super.py -q`
+Expected: PASS（含新增 4 例）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add api/scripts/worker_super.py api/test/scripts/test_worker_super.py
+git commit -m "feat(render): register render subcommand in worker_super"
+```
+
+---
+
+## Task 4: PyInstaller 打包登记 render worker
+
+**Files:**
+- Modify: `api/scripts/pyinstaller/worker.spec`（`hiddenimports` 约 L43-51）
+- Test: `api/test/scripts/test_worker_spec.py`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `api/test/scripts/test_worker_spec.py`：
+
+```python
+"""worker.spec 必须显式登记每个 worker 模块（PyInstaller 不做动态发现）。"""
+from pathlib import Path
+
+SPEC = (
+    Path(__file__).resolve().parents[2]
+    / "scripts"
+    / "pyinstaller"
+    / "worker.spec"
+)
+
+
+def test_spec_lists_all_worker_modules():
+    text = SPEC.read_text(encoding="utf-8")
+    for module in (
+        "scripts.os_automation_worker",
+        "scripts.browser_automation_worker",
+        "scripts.computer_control_worker",
+        "scripts.render_worker",
+        "scripts.wake_word_worker",
+    ):
+        assert f"'{module}'" in text, f"{module} 未登记到 hiddenimports"
+
+
+def test_spec_keeps_cua_driver_client():
+    """既有登记不能被误删。"""
+    text = SPEC.read_text(encoding="utf-8")
+    assert "'scripts.cua_driver_client'" in text
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/scripts/test_worker_spec.py -q`
+Expected: FAIL（`scripts.render_worker 未登记到 hiddenimports`）
+
+- [ ] **Step 3: 实现登记**
+
+在 `api/scripts/pyinstaller/worker.spec` 的 `hiddenimports` 列表中加入一行（放在 computer 之后、cua_driver_client 之前）：
+
+```python
+        'scripts.computer_control_worker',
+        # 本机渲染 worker：作为 render 子命令被 worker_super 动态导入
+        'scripts.render_worker',
+        # cua-driver 后端客户端：computer worker 探测 daemon 后按其路由到后台控制
+        'scripts.cua_driver_client',
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/scripts/test_worker_spec.py -q`
+Expected: PASS（2 passed）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add api/scripts/pyinstaller/worker.spec api/test/scripts/test_worker_spec.py
+git commit -m "build(render): register render worker in pyinstaller spec"
+```
+
+---
+
+## Task 5: 服务端「调本机渲染 worker」客户端
+
+**Files:**
+- Create: `api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py`
+- Test: `api/test/internal/core/tools/test_local_render_runner.py`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `api/test/internal/core/tools/test_local_render_runner.py`：
+
+```python
+"""服务端侧本机渲染客户端：bridge 解析优先级、产物取回、错误包装。"""
+import json
+
+import pytest
+
+from internal.core.tools.builtin_tools.providers.video_render_tools import (
+    local_render_runner,
+)
+
+
+def _spec():
+    return {
+        "composition_id": "main",
+        "width": 1920,
+        "height": 1080,
+        "duration": 10.0,
+        "segments": [{"start": 0.0, "duration": 10.0, "text": "hi"}],
+    }
+
+
+def test_returns_not_available_when_no_bridge(monkeypatch):
+    """无设备且无静态配置时返回不可用，供上层回退云端。"""
+    monkeypatch.setattr(
+        local_render_runner, "resolve_desktop_bridge", lambda *a, **k: None
+    )
+    result = local_render_runner.render_on_local_device(
+        composition=_spec(), account_id="acc-1", name="demo"
+    )
+    assert result["ok"] is False
+    assert result["unavailable"] is True
+
+
+def test_prefers_account_scoped_bridge(monkeypatch):
+    calls = []
+
+    def fake_resolve(account_id, *, purpose=""):
+        calls.append((account_id, purpose))
+        return ("http://host:9876", "bridge-token")
+
+    monkeypatch.setattr(local_render_runner, "resolve_desktop_bridge", fake_resolve)
+    monkeypatch.setattr(
+        local_render_runner,
+        "_post_render",
+        lambda **kwargs: {"ok": True, "path": "/tmp/out.mp4", "size_bytes": 10},
+    )
+    result = local_render_runner.render_on_local_device(
+        composition=_spec(), account_id="acc-1", name="demo"
+    )
+
+    assert result["ok"] is True
+    assert calls == [("acc-1", "/render")]
+
+
+def test_posts_composition_to_render_route(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        local_render_runner,
+        "resolve_desktop_bridge",
+        lambda *a, **k: ("http://host:9876", "bridge-token"),
+    )
+
+    def fake_post(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "path": "/tmp/out.mp4", "size_bytes": 10}
+
+    monkeypatch.setattr(local_render_runner, "_post_render", fake_post)
+    local_render_runner.render_on_local_device(
+        composition=_spec(), account_id="acc-1", name="demo"
+    )
+
+    assert captured["endpoint"] == "http://host:9876/render"
+    assert captured["token"] == "bridge-token"
+    assert captured["payload"]["name"] == "demo"
+    assert captured["payload"]["composition"]["segments"][0]["text"] == "hi"
+
+
+def test_worker_error_is_not_unavailable(monkeypatch):
+    """worker 明确返回失败 ≠ 通道不可用：不应触发云端回退。"""
+    monkeypatch.setattr(
+        local_render_runner,
+        "resolve_desktop_bridge",
+        lambda *a, **k: ("http://host:9876", "bridge-token"),
+    )
+    monkeypatch.setattr(
+        local_render_runner,
+        "_post_render",
+        lambda **kwargs: {"ok": False, "error": "渲染环境缺少必需配置：HYPERFRAMES_BROWSER_PATH"},
+    )
+    result = local_render_runner.render_on_local_device(
+        composition=_spec(), account_id="acc-1", name="demo"
+    )
+    assert result["ok"] is False
+    assert result.get("unavailable") is not True
+    assert "HYPERFRAMES" in result["error"]
+
+
+def test_connection_failure_is_unavailable(monkeypatch):
+    """连不上桌面 bridge 视为通道不可用，允许回退云端。"""
+    monkeypatch.setattr(
+        local_render_runner,
+        "resolve_desktop_bridge",
+        lambda *a, **k: ("http://host:9876", "bridge-token"),
+    )
+
+    def boom(**kwargs):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(local_render_runner, "_post_render", boom)
+    result = local_render_runner.render_on_local_device(
+        composition=_spec(), account_id="acc-1", name="demo"
+    )
+    assert result["ok"] is False
+    assert result["unavailable"] is True
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py -q`
+Expected: FAIL（`ModuleNotFoundError`）
+
+- [ ] **Step 3: 实现客户端**
+
+创建 `api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py`：
+
+```python
+"""在用户本机执行渲染（经桌面 bridge）。
+
+服务端不直接跑 Node/Chromium，而是把脚本下发到用户设备上的 render worker
+（`scripts/render_worker.py`），由用户机器的 CPU 出片——把重负载算力外部化。
+
+通道解析**必须**走 `resolve_desktop_bridge`（按账号动态解析已注册设备），
+不可只读静态 env：桌面端 token 每次启动随机生成，静态配置对不上（这是
+`browser_action` 的已知断链，勿重蹈）。
+
+语义区分（决定是否回退云端）：
+- `unavailable=True` —— 通道本身不可用（无注册设备 / 连不上 bridge）。
+  上层可据此回退云端渲染。
+- `ok=False` 且无 `unavailable` —— 通道可用但渲染失败（环境缺二进制、
+  脚本非法等）。属业务失败，**不回退**，直接报错给用户。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import urllib.error
+import urllib.request
+from typing import Any
+
+from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["render_on_local_device"]
+
+# 渲染是分钟级长任务，超时必须显著大于服务端 CLI 超时（RENDER_TIMEOUT_SEC，默认 1800s）
+_LOCAL_RENDER_TIMEOUT_SEC = 1900
+
+
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _post_render(*, endpoint: str, token: str, payload: dict) -> dict:
+    """POST 到本机 render worker，返回解析后的 JSON。"""
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=_LOCAL_RENDER_TIMEOUT_SEC) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+        return json.loads(raw or "{}")
+
+
+def render_on_local_device(
+    *, composition: dict, account_id: Any, name: str = ""
+) -> dict[str, Any]:
+    """在用户本机渲染；返回 {ok, path, size_bytes, name} 或错误。
+
+    失败时若为「通道不可用」，额外带 `unavailable=True` 供上层决定是否回退云端。
+    """
+    resolved = resolve_desktop_bridge(account_id, purpose="/render")
+    if not resolved:
+        return {
+            "ok": False,
+            "unavailable": True,
+            "error": "未找到可用的桌面设备（当前账号未注册在线设备），且未配置静态桌面桥",
+        }
+
+    bridge_url, bridge_token = resolved
+    endpoint = _normalize_text(bridge_url).rstrip("/") + "/render"
+    payload = {"composition": composition, "name": _normalize_text(name)}
+
+    try:
+        result = _post_render(endpoint=endpoint, token=bridge_token, payload=payload)
+    except urllib.error.HTTPError as exc:
+        try:
+            error_payload = json.loads(exc.read().decode("utf-8", errors="replace"))
+        except Exception:
+            error_payload = {"error": str(exc)}
+        # 401/502 属通道问题（bridge 鉴权失败 / worker 不在），可回退
+        if exc.code in {401, 502, 503, 504}:
+            return {
+                "ok": False,
+                "unavailable": True,
+                "error": f"本机渲染通道不可用（HTTP {exc.code}）：{error_payload.get('error', '')}",
+            }
+        return {"ok": False, "error": error_payload.get("error", str(exc))}
+    except Exception as exc:  # noqa: BLE001 - 网络层失败统一按通道不可用处理
+        logger.info("调用本机渲染 worker 失败（按通道不可用处理）: %s", exc)
+        return {
+            "ok": False,
+            "unavailable": True,
+            "error": f"无法连接本机渲染服务：{exc}",
+        }
+
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error") or "本机渲染失败"}
+
+    return {
+        "ok": True,
+        "path": result.get("path", ""),
+        "size_bytes": int(result.get("size_bytes") or 0),
+        "name": result.get("name") or name or "渲染成品",
+    }
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py -q`
+Expected: PASS（5 passed）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py api/test/internal/core/tools/test_local_render_runner.py
+git commit -m "feat(render): add service-side local render client via desktop bridge"
+```
+
+---
+
+## Task 6: render_video 三级路由（本机 → 云端 → 报错）
+
+**Files:**
+- Modify: `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py`（`_dispatch_render` L45-70；`_run` L102-144）
+- Test: `api/test/internal/core/tools/test_render_video_tool.py`（追加用例）
+
+- [ ] **Step 1: 写失败的测试**
+
+> ⚠️ **同时必须改既有测试的替身装配**：`api/test/internal/core/tools/test_render_video_tool.py`
+> 现有的 `_install_fakes()`（L47-84）没有关掉本机开关。改动后本机分支会**先被命中**，
+> 导致既有 3 个云端用例（`test_dispatch_prefers_celery` /
+> `test_dispatch_does_not_fall_back_to_sync_when_celery_unavailable` /
+> `test_dispatch_rejects_when_guard_denies`）失去意义或失败。
+> 在该 helper 的 `module = importlib.import_module(...)` 之后追加两行：
+>
+> ```python
+>     # 既有用例聚焦云端链路：显式关掉本机渲染，避免命中本机分支
+>     monkeypatch.setattr(module, "_local_enabled", lambda: False)
+>     monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+> ```
+
+在本文件末尾追加：
+
+```python
+def test_prefers_local_device_over_cloud(monkeypatch):
+    """本机可用时不应派发 Celery——这是成本外部化的核心断言。"""
+    from internal.core.tools.builtin_tools.providers.video_render_tools import (
+        render_video as module,
+    )
+
+    monkeypatch.setattr(module, "_local_enabled", lambda: True)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": True, "path": "/tmp/x.mp4", "size_bytes": 1},
+    )
+
+    def cloud_should_not_run(**kwargs):
+        raise AssertionError("本机可用时不应派发云端 Celery")
+
+    monkeypatch.setattr(module, "_dispatch_cloud_render", cloud_should_not_run)
+
+    result = module._dispatch_render({"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo")
+    assert result["mode"] == "local"
+
+
+def test_falls_back_to_cloud_when_local_unavailable(monkeypatch):
+    from internal.core.tools.builtin_tools.providers.video_render_tools import (
+        render_video as module,
+    )
+
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": False, "unavailable": True, "error": "无设备"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_dispatch_cloud_render",
+        lambda **kwargs: {"mode": "celery", "result": type("R", (), {"id": "t1"})()},
+    )
+
+    result = module._dispatch_render({"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo")
+    assert result["mode"] == "celery"
+
+
+def test_local_business_failure_does_not_fall_back(monkeypatch):
+    """本机渲染业务失败（非通道问题）应直接报错，不静默回退云端。"""
+    import pytest
+
+    from internal.core.tools.builtin_tools.providers.video_render_tools import (
+        render_video as module,
+    )
+
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": False, "error": "渲染环境缺少必需配置"},
+    )
+
+    def cloud_should_not_run(**kwargs):
+        raise AssertionError("业务失败不应回退云端")
+
+    monkeypatch.setattr(module, "_dispatch_cloud_render", cloud_should_not_run)
+
+    with pytest.raises(module.RenderExecutionError):
+        module._dispatch_render(
+            {"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo"
+        )
+
+
+def test_local_disabled_goes_straight_to_cloud(monkeypatch):
+    from internal.core.tools.builtin_tools.providers.video_render_tools import (
+        render_video as module,
+    )
+
+    monkeypatch.setattr(module, "_local_enabled", lambda: False)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_dispatch_cloud_render",
+        lambda **kwargs: {"mode": "celery", "result": type("R", (), {"id": "t1"})()},
+    )
+
+    result = module._dispatch_render({"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo")
+    assert result["mode"] == "celery"
+
+
+def test_cloud_disabled_and_no_device_raises_clear_error(monkeypatch):
+    import pytest
+
+    from internal.core.tools.builtin_tools.providers.video_render_tools import (
+        render_video as module,
+    )
+
+    monkeypatch.setattr(module, "_local_enabled", lambda: True)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: False)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": False, "unavailable": True, "error": "无设备"},
+    )
+
+    with pytest.raises(module.RenderExecutionError) as exc:
+        module._dispatch_render(
+            {"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo"
+        )
+    assert "桌面端" in str(exc.value) or "本机" in str(exc.value)
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/internal/core/tools/test_render_video_tool.py -q -k "local or cloud or falls_back"`
+Expected: FAIL（`AttributeError: module has no attribute '_cloud_fallback_enabled'`）
+
+- [ ] **Step 3: 实现三级路由**
+
+修改 `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py`：
+
+**3a. 模块 docstring 更新**（把「必须走 Celery」改为三级路由说明）：
+
+```python
+"""渲染视频工具（对话内出片）。
+
+小钰把编排好的视频脚本交给渲染链路：编译为 HyperFrames composition →
+渲染为 MP4 → 自动存入用户的成品库（系统预置、每用户唯一）。
+
+**执行位置（三级路由）**：
+1. **用户本机优先**：经桌面 bridge 下发到用户设备上的 render worker，
+   吃用户自己的 CPU——把重负载算力外部化，平台服务器只处理轻量内容；
+2. **云端回退**：本机通道不可用时，派发 Celery `render` 队列（受
+   `RENDER_CLOUD_FALLBACK_ENABLED` 控制，云端链路完整保留、可随时接通）；
+3. **明确报错**：两者都不可用时返回可读错误。
+
+注意「通道不可用」与「渲染业务失败」的区别：前者才回退云端，后者直接报错
+（详见 local_render_runner 的语义说明）。
+
+account 获取方式与 create_knowledge_base 一致：由运行时挂载点通过工厂参数
+account_id 注入当前账号。builtin 工具没有全局 g.account，不做上下文穿透。
+"""
+```
+
+**3b. 新增开关与封装函数**（插在 `_load_render_guard` 之后）：
+
+```python
+def _local_enabled() -> bool:
+    """本机渲染是否启用（默认启用）。
+
+    注意：容器 config 是**普通 dict**（不是 Flask 那种带 ``__getattr__`` 的子类），
+    必须用 ``.get()`` 读取；用 ``getattr`` 会静默取到默认值、开关形同虚设。
+    """
+    from internal.context import current_app
+
+    return bool(current_app.config.get("RENDER_LOCAL_ENABLED", True))
+
+
+def _cloud_fallback_enabled() -> bool:
+    """云端回退是否启用（默认启用）。"""
+    from internal.context import current_app
+
+    return bool(current_app.config.get("RENDER_CLOUD_FALLBACK_ENABLED", True))
+
+
+def _run_local_render(*, composition: dict, account_id: str, name: str) -> dict:
+    from internal.core.tools.builtin_tools.providers.video_render_tools.local_render_runner import (
+        render_on_local_device,
+    )
+
+    return render_on_local_device(
+        composition=composition, account_id=account_id, name=name
+    )
+
+
+def _dispatch_cloud_render(*, composition: dict, account_id: str, name: str) -> dict:
+    """派发云端 Celery（原 _dispatch_render 的逻辑原样保留）。"""
+    from internal.task.render_tasks import render_composition_task
+
+    fingerprint = _composition_fingerprint(composition)
+    guard = _load_render_guard()
+
+    admission = guard.admit(account_id=account_id, fingerprint=fingerprint)
+    if not admission.allowed:
+        logger.info("渲染被闸门拒绝 account_id=%s reason=%s", account_id, admission.reason)
+        raise RenderRejectedError(admission.reason)
+
+    try:
+        async_result = render_composition_task.delay(composition, account_id, name)
+    except Exception:
+        guard.release(account_id=account_id, fingerprint=fingerprint)
+        logger.warning("渲染派发 Celery 失败 account_id=%s", account_id, exc_info=True)
+        raise
+
+    guard.mark_enqueued()
+    return {"mode": "celery", "result": async_result, "fingerprint": fingerprint}
+```
+
+**3c. 新增异常类**（紧邻 `RenderRejectedError`）：
+
+```python
+class RenderExecutionError(Exception):
+    """渲染执行失败（本机与云端均不可用，或本机业务失败），消息可直接展示。"""
+```
+
+**3d. `_dispatch_render` 改为编排三级路由**（整体替换原函数）：
+
+```python
+def _dispatch_render(composition: dict, account_id: str, name: str) -> dict:
+    """三级路由：本机优先 → 云端回退 → 明确报错。"""
+    local_attempted = False
+    if _local_enabled():
+        local_attempted = True
+        local_result = _run_local_render(
+            composition=composition, account_id=account_id, name=name
+        )
+        if local_result.get("ok"):
+            return {
+                "mode": "local",
+                "result": local_result,
+                "size_bytes": local_result.get("size_bytes", 0),
+            }
+        if not local_result.get("unavailable"):
+            # 通道可用但业务失败：不回退，直接报错
+            raise RenderExecutionError(
+                local_result.get("error") or "本机渲染失败"
+            )
+        logger.info(
+            "本机渲染通道不可用，尝试云端回退 account_id=%s reason=%s",
+            account_id,
+            local_result.get("error"),
+        )
+        local_error = local_result.get("error") or "本机渲染通道不可用"
+
+    if _cloud_fallback_enabled():
+        return _dispatch_cloud_render(
+            composition=composition, account_id=account_id, name=name
+        )
+
+    if local_attempted:
+        raise RenderExecutionError(
+            f"本机渲染不可用（{local_error}），且云端渲染回退已关闭。"
+            "请启动桌面客户端后重试。"
+        )
+    raise RenderExecutionError("渲染不可用：本机渲染未启用且云端回退已关闭。")
+```
+
+**3e. `_run` 的异常分支补充 `RenderExecutionError`**（把原有 `except RenderRejectedError` 分支改为同时捕获两者）：
+
+```python
+        try:
+            dispatched = _dispatch_render(composition, account_id, normalized_name)
+        except (RenderRejectedError, RenderExecutionError) as exc:
+            # 闸门拒绝 / 执行不可用：提示面向用户可直接展示，不当作系统故障
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning("渲染视频失败 account_id=%s", account_id, exc_info=True)
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": f"渲染视频失败：{exc}（渲染服务暂不可用，请稍后重试）",
+                },
+                ensure_ascii=False,
+            )
+```
+
+**3f. 成功返回分支兼容本机模式**（把原返回体改为按 mode 区分）：
+
+```python
+        if dispatched.get("mode") == "local":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "mode": "local",
+                    "message": "视频已在你的电脑上渲染完成，正在存入成品库",
+                },
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {
+                "ok": True,
+                "dispatched": True,
+                "task_id": str(getattr(dispatched["result"], "id", "")),
+                "message": "视频渲染已提交后台处理，完成后会自动存入成品库",
+            },
+            ensure_ascii=False,
+        )
+```
+
+> **实现提示**：本机模式下「出片 → 入库」需在本机上产出 MP4 后再走服务端
+> `store_render_output`。因用户设备无法直写服务端对象存储，本任务先打通「能出片」，
+> 入库回传在 Task 7 完成（届时用 bridge 的 `/upload` 或服务端拉取本机路径）。
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/internal/core/tools/test_render_video_tool.py -q`
+Expected: PASS（含新增 5 例）
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py api/test/internal/core/tools/test_render_video_tool.py
+git commit -m "feat(render): route render to local device first, cloud as fallback"
+```
+
+---
+
+## Task 7: 本机产物回传服务端入库
+
+**Files:**
+- Modify: `api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py`
+- Modify: `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py`
+- Test: `api/test/internal/core/tools/test_local_render_runner.py`（追加用例）
+
+**背景**：本机上出片的 MP4 落在用户设备临时目录，必须回传服务端才能入库（对象存储 + 成品库建档 + 索引）。这是本方案**唯一必须新增的服务端能力**，其余全部复用。
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `api/test/internal/core/tools/test_local_render_runner.py` 末尾追加：
+
+```python
+def test_fetch_artifact_returns_bytes_and_name(monkeypatch):
+    """从本机 worker 取回产物字节（经 bridge /artifact 路由）。"""
+    monkeypatch.setattr(
+        local_render_runner,
+        "resolve_desktop_bridge",
+        lambda *a, **k: ("http://host:9876", "bridge-token"),
+    )
+    monkeypatch.setattr(
+        local_render_runner,
+        "_post_artifact",
+        lambda **kwargs: {"ok": True, "name": "demo.mp4", "content_base64": "RkFLRQ=="},
+    )
+
+    result = local_render_runner.fetch_local_artifact(
+        account_id="acc-1", artifact_path="/tmp/x.mp4"
+    )
+    assert result["ok"] is True
+    assert result["name"] == "demo.mp4"
+    assert result["content"] == b"FAKE"
+
+
+def test_fetch_artifact_unavailable_when_no_bridge(monkeypatch):
+    monkeypatch.setattr(
+        local_render_runner, "resolve_desktop_bridge", lambda *a, **k: None
+    )
+    result = local_render_runner.fetch_local_artifact(
+        account_id="acc-1", artifact_path="/tmp/x.mp4"
+    )
+    assert result["ok"] is False
+    assert result["unavailable"] is True
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py -q -k fetch_artifact`
+Expected: FAIL（`AttributeError: module has no attribute 'fetch_local_artifact'`）
+
+- [ ] **Step 3: 实现产物取回**
+
+在 `local_render_runner.py` 追加：
+
+```python
+import base64
+
+__all__ = ["render_on_local_device", "fetch_local_artifact"]
+
+_ARTIFACT_TIMEOUT_SEC = 300
+
+
+def _post_artifact(*, endpoint: str, token: str, payload: dict) -> dict:
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=_ARTIFACT_TIMEOUT_SEC) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+        return json.loads(raw or "{}")
+
+
+def fetch_local_artifact(*, account_id: Any, artifact_path: str) -> dict[str, Any]:
+    """取回本机渲染产物字节（经 bridge `/artifact` 路由）。
+
+    约定：bridge 侧实现 `/artifact` → render worker 的 `POST /artifact`，
+    入参 {"path": ...}，返回 {"ok": True, "name": ..., "content_base64": ...}。
+    """
+    resolved = resolve_desktop_bridge(account_id, purpose="/artifact")
+    if not resolved:
+        return {
+            "ok": False,
+            "unavailable": True,
+            "error": "未找到可用的桌面设备，无法取回本机渲染产物",
+        }
+
+    bridge_url, bridge_token = resolved
+    endpoint = _normalize_text(bridge_url).rstrip("/") + "/artifact"
+    try:
+        result = _post_artifact(
+            endpoint=endpoint,
+            token=bridge_token,
+            payload={"path": _normalize_text(artifact_path)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "unavailable": True,
+            "error": f"取回本机渲染产物失败：{exc}",
+        }
+
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error") or "取回产物失败"}
+    try:
+        content = base64.b64decode(result.get("content_base64") or "")
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"产物解码失败：{exc}"}
+    return {
+        "ok": True,
+        "name": result.get("name") or "render-output.mp4",
+        "content": content,
+    }
+```
+
+在 `api/scripts/render_worker.py` 的 `_Handler.do_POST` 中增加 `/artifact` 分支（同文件内实现读取）：
+
+```python
+    def do_POST(self):  # noqa: N802
+        route = self.path.rstrip("/")
+        if route not in {"/render", "/artifact"}:
+            self._json_response({"ok": False, "error": "not found"}, status=404)
+            return
+        if not _authorized(self.headers.get("Authorization", "")):
+            self._json_response({"ok": False, "error": "unauthorized"}, status=401)
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except Exception:
+            self._json_response({"ok": False, "error": "invalid json"}, status=400)
+            return
+
+        if route == "/artifact":
+            self._json_response(_read_artifact(payload))
+            return
+        self._json_response(_run_render(payload))
+```
+
+并在 `render_worker.py` 增加：
+
+```python
+import base64
+import re
+
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _read_artifact(payload: dict[str, Any]) -> dict[str, Any]:
+    """读取本机渲染产物（仅限渲染临时目录，防止任意路径读取）。
+
+    安全边界：产物路径必须位于系统临时目录下且前缀为 hf-local-render-，
+    否则拒绝——避免该端点被用作任意文件读取。
+    """
+    raw_path = str(payload.get("path") or "").strip()
+    if not raw_path:
+        return {"ok": False, "error": "path 不能为空"}
+    artifact = Path(raw_path).resolve()
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    if not str(artifact).startswith(str(tmp_root)) or "hf-local-render-" not in str(artifact):
+        return {"ok": False, "error": "产物路径不在允许范围内"}
+    if not artifact.is_file():
+        return {"ok": False, "error": "产物不存在或已被清理"}
+    safe_name = _SAFE_NAME_RE.sub("_", artifact.name) or "render-output.mp4"
+    with open(artifact, "rb") as fh:
+        content = fh.read()
+    # 产物已取走，清理渲染临时目录，避免用户设备上残留
+    _cleanup_dir(str(artifact.parent))
+    return {
+        "ok": True,
+        "name": safe_name,
+        "size_bytes": len(content),
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    }
+```
+
+- [ ] **Step 4: 接入入库（在 render_video 本机成功分支后）**
+
+修改 `render_video.py` 的本机成功分支，取回产物并入库：
+
+```python
+        if dispatched.get("mode") == "local":
+            ingest = _ingest_local_artifact(
+                account_id=account_id,
+                artifact_path=dispatched["result"].get("path", ""),
+                name=dispatched["result"].get("name") or normalized_name,
+            )
+            if not ingest.get("ok"):
+                return json.dumps(
+                    {"ok": False, "error": ingest.get("error") or "成品入库失败"},
+                    ensure_ascii=False,
+                )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "mode": "local",
+                    "document_id": ingest.get("document_id", ""),
+                    "message": "视频已在你的电脑上渲染完成并存入成品库",
+                },
+                ensure_ascii=False,
+            )
+```
+
+并新增：
+
+```python
+def _ingest_local_artifact(*, account_id: str, artifact_path: str, name: str) -> dict:
+    """取回本机产物并写入成品库（复用既有 store_render_output）。"""
+    from internal.core.tools.builtin_tools.providers.video_render_tools.local_render_runner import (
+        fetch_local_artifact,
+    )
+
+    fetched = fetch_local_artifact(account_id=account_id, artifact_path=artifact_path)
+    if not fetched.get("ok"):
+        return {"ok": False, "error": fetched.get("error") or "取回本机产物失败"}
+
+    import tempfile
+    from pathlib import Path
+
+    from app.http.module import injector
+    from internal.service.account_service import AccountService
+    from internal.service.knowledge_base_service import KnowledgeBaseService
+
+    account = injector.get(AccountService).get_account(UUID(str(account_id)))
+    if account is None:
+        return {"ok": False, "error": f"账号不存在：{account_id}"}
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="hf-ingest-"))
+    try:
+        video_path = tmp_dir / (fetched.get("name") or "render-output.mp4")
+        video_path.write_bytes(fetched["content"])
+        document = injector.get(KnowledgeBaseService).store_render_output(
+            account=account, video_path=video_path, name=name or "渲染成品"
+        )
+        return {"ok": True, "document_id": str(document.id)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("本机渲染产物入库失败 account_id=%s", account_id, exc_info=True)
+        return {"ok": False, "error": f"成品入库失败：{exc}"}
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+```
+
+`render_video.py` 顶部已有 `import logging`（L19）与 `from uuid import UUID`（L21），无需重复导入。
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py test/internal/core/tools/test_render_video_tool.py -q`
+Expected: PASS
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add api/internal/core/tools/builtin_tools/providers/video_render_tools/ api/scripts/render_worker.py api/test/internal/core/tools/
+git commit -m "feat(render): ingest local render artifact into render-output library"
+```
+
+---
+
+## Task 8: 桌面端接线（bridge 路由 + worker 托管）
+
+**Files:**
+- Modify: `desktop/bridge.js`（`targets` L5-31）
+- Modify: `desktop/main.js`（`tokens` L424-430、端口探测 L435-449、`startWorker` L451-472、`createBridge` L474-489）
+- Test: `desktop/test/bridge.test.js`（追加用例）
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `desktop/test/bridge.test.js` 末尾追加（**照抄该文件既有的 `stubWorker` 辅助函数用法**，不要新造函数）：
+
+```javascript
+test('bridge forwards /render to render worker with worker token', async () => {
+  let seen = null
+  const { server, port } = await stubWorker('{}', (call) => {
+    seen = call
+  })
+  const bridge = createBridge({
+    token: 'secret',
+    renderPort: port,
+    renderToken: 'render-token',
+  })
+  const bridgePort = await listen(bridge)
+  try {
+    const result = await request(bridgePort, '/render', 'secret')
+    assert.equal(result.status, 200)
+    assert.ok(seen, '请求应被转发到 render worker')
+    assert.equal(seen.path, '/render')
+    assert.equal(seen.authorization, 'Bearer render-token')
+  } finally {
+    bridge.close()
+    server.close()
+  }
+})
+
+test('bridge forwards /artifact to render worker with worker token', async () => {
+  let seen = null
+  const { server, port } = await stubWorker('{}', (call) => {
+    seen = call
+  })
+  const bridge = createBridge({
+    token: 'secret',
+    renderPort: port,
+    renderToken: 'render-token',
+  })
+  const bridgePort = await listen(bridge)
+  try {
+    const result = await request(bridgePort, '/artifact', 'secret')
+    assert.equal(result.status, 200)
+    assert.ok(seen, '请求应被转发到 render worker')
+    assert.equal(seen.path, '/artifact')
+    assert.equal(seen.authorization, 'Bearer render-token')
+  } finally {
+    bridge.close()
+    server.close()
+  }
+})
+```
+
+> 参照物：同文件 L82-104 的 `/file` 用例（`stubWorker` + `createBridge` + 断言上游 `authorization`）。`stubWorker` 定义在 L63-80，`listen` 在 L6-10，`request` 在 L12-22。
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd desktop && node --test test/bridge.test.js`
+Expected: FAIL（`/render` 返回 404）
+
+- [ ] **Step 3: 实现 bridge 路由**
+
+在 `desktop/bridge.js` 的 `targets` 对象中，`/control` 之后追加：
+
+```javascript
+    '/render': {
+      port: Number(options.renderPort || process.env.RENDER_WORKER_PORT || 8768),
+      token: options.renderToken || process.env.RENDER_WORKER_TOKEN || '',
+      path: '/render',
+    },
+    '/artifact': {
+      port: Number(options.renderPort || process.env.RENDER_WORKER_PORT || 8768),
+      token: options.renderToken || process.env.RENDER_WORKER_TOKEN || '',
+      path: '/artifact',
+    },
+```
+
+- [ ] **Step 4: 实现 main.js 托管**
+
+**4a. token 增加 render**（L424-430）：
+
+```javascript
+  const tokens = {
+    os: randomToken(),
+    browser: randomToken(),
+    computer: randomToken(),
+    render: randomToken(),
+    wake: randomToken(),
+    bridge: randomToken(),
+  }
+```
+
+**4b. 端口探测**（L435-449，加在 computerPort 之后，注意互相排除）：
+
+```javascript
+  const preferRenderPort = Number(process.env.RENDER_WORKER_PORT || 8768)
+  const renderPort = await probePort(preferRenderPort, 50, new Set([osPort, browserPort, computerPort]))
+  if (renderPort !== preferRenderPort) {
+    console.log(`[desktop] render worker 端口 ${preferRenderPort} 被占用，改用 ${renderPort}`)
+  }
+```
+
+**4c. 启动 worker**（L451-472，加在 computer 之后）：
+
+```javascript
+  // render worker：本机出片。渲染运行时（Node/Chromium/ffmpeg）需在子进程 PATH 中可达，
+  // 或由 RENDER_RUNTIME_DIR 提供；缺失时该 worker 返回可读错误而非崩溃。
+  startWorker('render', {
+    RENDER_WORKER_TOKEN: tokens.render,
+    RENDER_WORKER_PORT: String(renderPort),
+    HYPERFRAMES_BROWSER_PATH: process.env.HYPERFRAMES_BROWSER_PATH || '',
+    HYPERFRAMES_FFMPEG_PATH: process.env.HYPERFRAMES_FFMPEG_PATH || '',
+    HYPERFRAMES_FFPROBE_PATH: process.env.HYPERFRAMES_FFPROBE_PATH || '',
+    HYPERFRAMES_CLI_BIN: process.env.HYPERFRAMES_CLI_BIN || '',
+  })
+```
+
+**4d. createBridge 参数**（L474-489）：
+
+```javascript
+    renderPort,
+    renderToken: tokens.render,
+```
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `cd desktop && node --test test/bridge.test.js`
+Expected: PASS
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add desktop/bridge.js desktop/main.js desktop/test/bridge.test.js
+git commit -m "feat(desktop): host render worker and expose /render bridge route"
+```
+
+---
+
+## Task 9: 云端渲染默认关闭（保留可接通路径）
+
+**Files:**
+- Modify: `docker/docker-compose.yaml`（`llmops-render-worker` 服务，约 L120-169）
+- Modify: `api/.env.example`（渲染段）
+- Test: `api/test/deploy/test_render_worker_profile.py`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `api/test/deploy/test_render_worker_profile.py`：
+
+```python
+"""云端 render worker 必须「保留但默认不启动」——可随时接通。"""
+from pathlib import Path
+
+COMPOSE = (
+    Path(__file__).resolve().parents[3] / "docker" / "docker-compose.yaml"
+)
+
+
+def _render_service_block() -> str:
+    text = COMPOSE.read_text(encoding="utf-8")
+    start = text.index("llmops-render-worker:")
+    # 到下一个顶层服务定义（两个空格 + 非空字符）为止
+    rest = text[start:]
+    lines = rest.splitlines()
+    block = [lines[0]]
+    for line in lines[1:]:
+        if line.startswith("  ") and not line.startswith("    ") and line.strip():
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
+def test_render_worker_has_profile_so_it_can_be_re_enabled():
+    """用 profile 下线：docker compose --profile cloud-render up -d llmops-render-worker"""
+    block = _render_service_block()
+    assert "cloud-render" in block, "云端渲染未用 profile 下线，无法保留可接通路径"
+
+
+def test_render_worker_definition_is_retained():
+    """服务定义整体保留，不删除——这是「未来可随时接通」的前提。"""
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "llmops-render-worker:" in text
+    assert "CELERY_QUEUES: render" in text
+
+
+def test_render_worker_keeps_resource_limits():
+    """离线不等于删除限流：重新启用时仍受内存限额保护。"""
+    block = _render_service_block()
+    assert "memory: 2800M" in block
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd api && python -m pytest test/deploy/test_render_worker_profile.py -q`
+Expected: FAIL（`云端渲染未用 profile 下线`）
+
+- [ ] **Step 3: 实现下线（保留定义）**
+
+在 `docker/docker-compose.yaml` 的 `llmops-render-worker` 服务内，`container_name` 之后加注释与 profile：
+
+```yaml
+    container_name: llmops-render-worker
+    # 【默认关闭】渲染已下放到用户本机（桌面端 render worker），云端不再常驻，
+    # 以节省服务器算力成本。服务定义与全部限流参数**完整保留**，需要时一键接通：
+    #   docker compose --profile cloud-render up -d llmops-render-worker
+    # 配合 api/.env 的 RENDER_CLOUD_FALLBACK_ENABLED=true 即恢复云端渲染路径。
+    profiles: ["cloud-render"]
+```
+
+在 `api/.env.example` 渲染段追加：
+
+```dotenv
+# 渲染执行目标：本机优先（桌面端 render worker），本机不可用时是否回退云端
+RENDER_LOCAL_ENABLED=true
+RENDER_CLOUD_FALLBACK_ENABLED=true
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd api && python -m pytest test/deploy/test_render_worker_profile.py -q`
+Expected: PASS（3 passed）
+
+- [ ] **Step 5: 验证 compose 默认清单不含 render worker**
+
+Run: `cd docker && docker compose config --services`
+Expected: 输出**不含** `llmops-render-worker`（默认已下线）
+
+Run: `cd docker && docker compose --profile cloud-render config --services`
+Expected: 输出**含** `llmops-render-worker`（可随时接通）
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add docker/docker-compose.yaml api/.env.example api/test/deploy/test_render_worker_profile.py
+git commit -m "chore(render): disable cloud render worker by default, keep it re-enablable"
+```
+
+---
+
+## Task 10: 文档同步
+
+**Files:**
+- Modify: `docs/prd/modules/09-desktop-client.md`
+- Modify: `docs/prd/modules/08-os-automation.md`
+- Modify: `docs/deployment-single-node.md`
+- Modify: `desktop/README.md`
+- Modify: `docs/README.md`（若新增顶层文档才需登记；本任务不新增，故不改）
+
+- [ ] **Step 1: 更新桌面端模块文档**
+
+在 `docs/prd/modules/09-desktop-client.md` 的 worker 清单处，把子命令从 `os|browser|computer|wake` 更新为 `os|browser|computer|render|wake`，并补一段：
+
+```markdown
+### render worker（本机出片）
+
+- **子命令**：`yujianwo-worker.exe render --port 8768`
+- **职责**：在本机执行 HyperFrames 渲染（Node + Chromium + ffmpeg），把重负载算力
+  从平台服务器转移到用户设备；平台服务器只处理轻量内容，成本可控。
+- **桥路由**：`/render`（出片）、`/artifact`（取回产物字节）
+- **硬依赖**：`HYPERFRAMES_BROWSER_PATH` / `HYPERFRAMES_FFMPEG_PATH` /
+  `HYPERFRAMES_FFPROBE_PATH`，缺一即返回可读错误。**浏览器必须是能响应 `--version`
+  的构建（chrome-headless-shell）**，Electron 自带 chrome.exe 不可替代。
+- **回传**：产物在用户设备临时目录，服务端经 `/artifact` 取回后复用
+  `KnowledgeBaseService.store_render_output` 入库。
+```
+
+- [ ] **Step 2: 更新 08-os-automation 的桥路由表**
+
+在 `docs/prd/modules/08-os-automation.md` 的桥路由表中补 `/render` 与 `/artifact` 两行（指向 render worker:8768），并注明「服务端工具经 `resolve_desktop_bridge` 解析，勿只读静态 env」。
+
+- [ ] **Step 3: 更新部署文档**
+
+在 `docs/deployment-single-node.md` 的渲染段补一节：
+
+```markdown
+### 渲染执行位置（本机优先，云端保留）
+
+渲染默认在**用户本机**执行（桌面端 render worker），云端 `llmops-render-worker`
+**默认不启动**（`profiles: ["cloud-render"]`），以节省服务器算力。
+
+| 场景 | 执行位置 | 说明 |
+| --- | --- | --- |
+| 已装桌面端 | 用户本机 | 首选；吃用户 CPU |
+| 未装桌面端 / 本机不可用 | 云端 `render` 队列 | 需 `RENDER_CLOUD_FALLBACK_ENABLED=true`（默认开） |
+
+**云端渲染未删除**，可随时接通：
+```bash
+docker compose --profile cloud-render up -d llmops-render-worker
+```
+```
+
+- [ ] **Step 4: 更新 desktop/README.md**
+
+在 worker 清单与桥路由表处补 render worker 与 `/render`、`/artifact`。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add docs/prd/modules/09-desktop-client.md docs/prd/modules/08-os-automation.md docs/deployment-single-node.md desktop/README.md
+git commit -m "docs(render): document local-first render with cloud path retained"
+```
+
+---
+
+## Task 11: 接线审查与全量回归
+
+**Files:**（无代码改动，仅验证）
+
+- [ ] **Step 1: 逐个新符号点名入口（AGENTS.md 强制要求）**
+
+对照下表逐项确认，任一项找不到调用方即为断链：
+
+| 新符号 | 必须存在的入口 | 复核命令 |
+| --- | --- | --- |
+| `scripts/render_worker.main` | `worker_super._module_and_entry("render")` | `python -m pytest test/scripts/test_worker_super.py -q -k render` |
+| `scripts.render_worker` | `worker.spec` hiddenimports | `python -m pytest test/scripts/test_worker_spec.py -q` |
+| `desktop /render 路由` | `bridge.js targets` + `main.js renderPort/renderToken` | `cd desktop && node --test` |
+| `local_render_runner.render_on_local_device` | `render_video._run_local_render` | `python -m pytest test/internal/core/tools/test_render_video_tool.py -q` |
+| `local_render_runner.fetch_local_artifact` | `render_video._ingest_local_artifact` | 同上 |
+| `Config.RENDER_LOCAL_ENABLED` | `render_video._local_enabled()` | `python -m pytest test/config/test_render_execution_config.py -q` |
+| `Config.RENDER_CLOUD_FALLBACK_ENABLED` | `render_video._cloud_fallback_enabled()` | 同上 |
+| `cloud-render` profile | compose + `deployment-single-node.md` | `docker compose --profile cloud-render config --services` |
+
+- [ ] **Step 2: 全仓搜索新符号的引用方（排除测试与文档）**
+
+Run:
+```bash
+cd d:/DEMO/openagent-main
+grep -rn "render_on_local_device\|fetch_local_artifact\|RENDER_CLOUD_FALLBACK_ENABLED\|render_worker" --include=*.py api/ | grep -v "/test/" | grep -v "\.pyc"
+```
+Expected: 每个符号都能在**非测试**代码中找到引用（定义处 + 调用处）
+
+- [ ] **Step 3: 运行全量后端测试**
+
+Run: `cd api && python -m pytest test/ -q`
+Expected: 全部通过（允许存在与本改动无关的既有环境失败，需逐条确认）
+记录：passed 数、failed 列表
+
+- [ ] **Step 4: 运行桌面端测试**
+
+Run: `cd desktop && node --test`
+Expected: 全部通过
+
+- [ ] **Step 5: 真机端到端验证（本机渲染闭环）**
+
+前置：本机具备 Node ≥22 + chrome-headless-shell + ffmpeg/ffprobe。
+
+```bash
+# 1) 启动 render worker（本机直接跑，模拟桌面端托管）
+cd api
+RENDER_WORKER_TOKEN=dev-render-token \
+HYPERFRAMES_BROWSER_PATH=<chrome-headless-shell 路径> \
+HYPERFRAMES_FFMPEG_PATH=<ffmpeg 路径> \
+HYPERFRAMES_FFPROBE_PATH=<ffprobe 路径> \
+python scripts/worker_super.py render --port 8768
+
+# 2) 另开终端，直接打 worker 验证出片
+curl -s -X POST http://127.0.0.1:8768/render \
+  -H "Authorization: Bearer dev-render-token" \
+  -H "Content-Type: application/json" \
+  -d '{"composition":{"composition_id":"main","width":1920,"height":1080,"duration":5,"segments":[{"start":0,"duration":5,"text":"本机渲染验证"}]},"name":"e2e"}'
+```
+
+Expected: 返回 `{"ok": true, "path": "...", "size_bytes": <正数>}`，且 `ffprobe <path>` 能读出 h264 与正时长。
+
+- [ ] **Step 6: 验证云端开关行为**
+
+Run: `cd docker && docker compose config --services | grep render`
+Expected: **无输出**（默认不含 render worker）
+
+Run: `docker compose --profile cloud-render config --services | grep render`
+Expected: `llmops-render-worker`
+
+- [ ] **Step 7: 提交验证记录（若有文档更新）**
+
+```bash
+git add -A
+git commit -m "test(render): verify local-first render wiring end to end"
+```
+
+---
+
+## 自检清单（执行者收尾时逐项打勾）
+
+- [ ] 云端渲染代码**未被删除或重构**，仅通过 `profiles` 与 env 开关下线
+- [ ] 本机渲染调用**走 `resolve_desktop_bridge`**（未重蹈 `browser_action` 静态 env 的断链）
+- [ ] `worker_super` 的**两处**白名单（`choices` + `_module_and_entry`）都已加 `render`
+- [ ] `_SERVICE_SUPPORTS_HOST_PORT` 已含 `render`（否则 `--port` 不生效）
+- [ ] 「通道不可用」与「渲染业务失败」语义已区分：前者回退云端，后者直接报错
+- [ ] 每个新符号都能指向调用方（Task 11 Step 1 表格逐项通过）
+- [ ] `docker compose config --services` 默认不含 `llmops-render-worker`
+- [ ] 文档四处已同步（09 / 08 / deployment / desktop README）
+- [ ] 全量回归通过，既有失败已逐条确认为环境问题
