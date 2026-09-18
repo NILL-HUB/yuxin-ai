@@ -199,6 +199,8 @@ class ResultSynthesizerService:
         # 注入 Memory Digest 区段（B8 集成 DigestManager）
         # 与系统规则/用户偏好区段并列，互不覆盖；异常时不阻断合成
         # digest_manager 懒加载：@inject 未标注类型时不自动注入，从 injector 获取
+        # 注意：user_id 即记忆主体键（用户主体为裸 UUID，见 MemoryOwnerKey.to_key()），
+        # 与 DigestManager.get_digest 的 owner_key 语义一致，直接透传不做二次转换。
         digest_manager = self.digest_manager
         if digest_manager is None:
             digest_manager = self._get_digest_manager()

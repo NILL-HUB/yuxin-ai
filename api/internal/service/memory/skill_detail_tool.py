@@ -60,12 +60,13 @@ class SkillDetailTool(BaseTool):
         with app_session_scope():
             try:
                 from app.http.app import injector
+                from internal.entity.memory_owner_entity import MemoryOwnerKey
                 from internal.service.memory.digest_manager import DigestManager
 
                 dm = injector.get(DigestManager)
-                return dm.get_skill_detail(
-                    str(self.account_id), skill_name, tier
-                )
+                # 主体键：用户主体为裸 UUID（与历史 str(account_id) 逐字节一致）
+                owner_key = MemoryOwnerKey.for_user(self.account_id).to_key()
+                return dm.get_skill_detail(owner_key, skill_name, tier)
             except Exception:
                 import logging
 

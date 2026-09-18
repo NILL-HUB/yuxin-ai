@@ -244,10 +244,13 @@ def _invalidate_digest_cache(user_id: str) -> None:
     Redis 不可用时静默降级，不影响巩固主流程。
     """
     try:
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.extension.redis_extension import redis_client
         from internal.service.memory.digest_manager import DigestManager
 
-        DigestManager(redis_client=redis_client).invalidate(user_id)
+        # 主体键：用户主体为裸 UUID（与历史 str(user_id) 逐字节一致）
+        owner_key = MemoryOwnerKey.for_user(user_id).to_key()
+        DigestManager(redis_client=redis_client).invalidate(owner_key)
     except Exception:
         logger.warning(
             "invalidate_digest_cache: 失效 Digest 缓存失败 user=%s", user_id,

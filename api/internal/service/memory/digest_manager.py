@@ -9,7 +9,8 @@ System 1 快速路径与对话 system prompt 注入的数据源。
     偏好/厌恶/习惯/身份/目标/能力 六组展示，无 token 预算硬限制（用户体验优先）。
 
 缓存策略:
-    - Redis 缓存键: ``memory:digest:{user_id}``，TTL 默认 86400s（1 天兜底）
+    - Redis 缓存键: ``memory:digest:{owner_key}``（用户主体为裸 UUID，见
+      ``MemoryOwnerKey.to_key()``），TTL 默认 86400s（1 天兜底）
     - 缓存命中直接返回，miss 则从 Neo4j 重建
     - 变更驱动失效：记忆写入/编辑/删除/降权/巩固完成后调用 ``invalidate``
       主动删除缓存，未变更时长期复用，避免重复消耗 token 重建
@@ -36,6 +37,7 @@ from injector import inject
 from redis import Redis
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.service.language_model_service import LanguageModelService
 from internal.service.memory.metrics import MetricsCollector
 
@@ -58,16 +60,16 @@ class DigestManager:
     # 主入口
     # =========================================================
 
-    def get_digest(self, user_id: str) -> str:
+    def get_digest(self, owner_key: str) -> str:
         """先查 Redis 缓存，miss 则调用 update_digest 重建。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 ``MemoryOwnerKey``）
 
         Returns:
             Digest 文本字符串，不可用时返回空字符串
         """
-        cache_key = self._cache_key(user_id)
+        cache_key = self._cache_key(owner_key)
 
         # 1. 查 Redis 缓存
         try:
@@ -80,22 +82,22 @@ class DigestManager:
                 return data.get("text", "")
         except Exception:
             logger.warning(
-                "get_digest: Redis 缓存读取失败 user=%s，将走重建路径",
-                user_id,
+                "get_digest: Redis 缓存读取失败 owner=%s，将走重建路径",
+                owner_key,
                 exc_info=True,
             )
 
         # 2. 缓存 miss，重建
         MetricsCollector.record_digest_cache(hit=False)
         try:
-            return self.update_digest(user_id)
+            return self.update_digest(owner_key)
         except Exception:
             logger.warning(
-                "get_digest: 重建 Digest 失败 user=%s", user_id, exc_info=True
+                "get_digest: 重建 Digest 失败 owner=%s", owner_key, exc_info=True
             )
             return ""
 
-    def invalidate(self, user_id: str) -> None:
+    def invalidate(self, owner_key: str) -> None:
         """主动失效用户 Digest 缓存（内容变更后调用，下次读取时重建）。
 
         与长 TTL 兜底配合实现「变更驱动重建」：
@@ -104,30 +106,30 @@ class DigestManager:
         - 未发生变更时缓存长期有效，避免每次打开页面都消耗 token 重建。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 ``MemoryOwnerKey``）
         """
         try:
-            self.redis_client.delete(self._cache_key(user_id))
+            self.redis_client.delete(self._cache_key(owner_key))
         except Exception:
             logger.warning(
-                "invalidate: Redis 缓存删除失败 user=%s", user_id, exc_info=True
+                "invalidate: Redis 缓存删除失败 owner=%s", owner_key, exc_info=True
             )
 
-    def update_digest(self, user_id: str) -> str:
+    def update_digest(self, owner_key: str) -> str:
         """从 Neo4j 查 4 部分 → 渲染 → 写 Redis。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 ``MemoryOwnerKey``）
 
         Returns:
             渲染后的 Digest 文本
         """
         # 1. 从 Neo4j 拉取数据（含显式陈述分组）
-        profile = self._fetch_profile(user_id)
-        skills = self._fetch_skills(user_id)
-        events = self._fetch_recent_episodes(user_id)
-        tasks = self._fetch_tasks(user_id)
-        themes = self._fetch_themes(user_id)
+        profile = self._fetch_profile(owner_key)
+        skills = self._fetch_skills(owner_key)
+        events = self._fetch_recent_episodes(owner_key)
+        tasks = self._fetch_tasks(owner_key)
+        themes = self._fetch_themes(owner_key)
 
         # 2. 渲染 Digest
         digest_text = self._render_digest(profile, skills, events, tasks, themes)
@@ -147,7 +149,7 @@ class DigestManager:
         try:
             from internal.service.memory.post_execution_hook import NudgeEvaluator
 
-            nudge_prompt = NudgeEvaluator.consume_nudge_prompt(user_id)
+            nudge_prompt = NudgeEvaluator.consume_nudge_prompt(owner_key)
             if nudge_prompt:
                 digest_text += f"\n\n{nudge_prompt}"
                 token_count = self._count_tokens(digest_text)
@@ -155,7 +157,7 @@ class DigestManager:
             logger.warning("Nudge Prompt 注入失败", exc_info=True)
 
         # 5. 写 Redis 缓存
-        cache_key = self._cache_key(user_id)
+        cache_key = self._cache_key(owner_key)
         cache_data = json.dumps(
             {
                 "text": digest_text,
@@ -172,7 +174,7 @@ class DigestManager:
             )
         except Exception:
             logger.warning(
-                "update_digest: Redis 缓存写入失败 user=%s", user_id, exc_info=True
+                "update_digest: Redis 缓存写入失败 owner=%s", owner_key, exc_info=True
             )
 
         return digest_text
@@ -181,7 +183,7 @@ class DigestManager:
     # Neo4j 数据拉取
     # =========================================================
 
-    def _fetch_profile(self, user_id: str) -> str:
+    def _fetch_profile(self, owner_key: str) -> str:
         """查用户画像（Profile 落库节点优先，回退显式陈述分组 + Entity 画像）。
 
         Profile 落库（User/Trait/Preference）由 ProfileGraphService 维护；
@@ -196,12 +198,12 @@ class DigestManager:
                 from internal.service.memory.profile_graph import ProfileGraphService
 
                 profile_service = ProfileGraphService(neo4j_driver=self._get_driver())
-                stored = profile_service.get_profile_text(user_id)
+                stored = profile_service.get_profile_text(owner_key)
                 if stored:
                     return stored
-                sync_result = profile_service.sync_from_explicit_episodes(user_id)
+                sync_result = profile_service.sync_from_explicit_episodes(owner_key)
                 if sync_result.get("traits") or sync_result.get("preferences"):
-                    stored = profile_service.get_profile_text(user_id)
+                    stored = profile_service.get_profile_text(owner_key)
                     if stored:
                         return stored
             except Exception:
@@ -212,18 +214,18 @@ class DigestManager:
         parts = []
 
         # 1. 显式陈述分组渲染（记忆写入优化 §5.8）
-        explicit_profile = self._fetch_explicit_memories(user_id)
+        explicit_profile = self._fetch_explicit_memories(owner_key)
         if explicit_profile:
             parts.append(explicit_profile)
 
         # 2. Entity 画像补充
-        entity_profile = self._fetch_entity_profile(user_id)
+        entity_profile = self._fetch_entity_profile(owner_key)
         if entity_profile and entity_profile != "暂无用户画像数据":
             parts.append(entity_profile)
 
         return "\n".join(parts) if parts else "暂无用户画像数据"
 
-    def _fetch_explicit_memories(self, user_id: str) -> str:
+    def _fetch_explicit_memories(self, owner_key: str) -> str:
         """查询带 explicit_category 属性的 Episode 节点，按 category + polarity 分组渲染。
 
         Cypher 过滤 t_invalidated_at IS NULL，排除已被写时冲突解决标记的失效记忆。
@@ -234,9 +236,11 @@ class DigestManager:
             return ""
 
         try:
-            cypher = """
-            MATCH (e:Episode {user_id: $user_id})
-            WHERE e.explicit_category IS NOT NULL
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (e:Episode)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.explicit_category IS NOT NULL
               AND e.t_invalidated_at IS NULL
               AND (e.status IS NULL OR NOT (e.status IN ['superseded', 'deprecated']))
             RETURN e.explicit_category AS category,
@@ -249,7 +253,7 @@ class DigestManager:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": settings.digest.explicit_max_items},
+                    {"limit": settings.digest.explicit_max_items, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -310,7 +314,7 @@ class DigestManager:
 
         return "\n".join(lines)
 
-    def _fetch_entity_profile(self, user_id: str) -> str:
+    def _fetch_entity_profile(self, owner_key: str) -> str:
         """查 Entity 画像（type='person' 或 'profile'），作为显式陈述的补充。
 
         无数据返回 "暂无用户画像数据"。
@@ -320,16 +324,18 @@ class DigestManager:
             return "暂无用户画像数据"
 
         try:
-            cypher = """
-            MATCH (e:Entity {user_id: $user_id})
-            WHERE e.type IN ['person', 'profile', 'user']
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (e:Entity)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.type IN ['person', 'profile', 'user']
             RETURN e.name AS name, e.summary AS summary
             LIMIT $limit
             """
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": settings.digest.profile_max_items},
+                    {"limit": settings.digest.profile_max_items, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -350,19 +356,19 @@ class DigestManager:
             logger.warning("_fetch_entity_profile: 查询失败", exc_info=True)
             return "暂无用户画像数据"
 
-    def _fetch_skills(self, user_id: str) -> str:
+    def _fetch_skills(self, owner_key: str) -> str:
         """查活跃技能 Tier0 摘要（基因2, §8.6）。
 
         Tier0 只注入 name + description + use_count，不加载 template/parameters，
         控制 context 成本。Agent 可通过 ``get_skill_detail`` 工具按需加载 Tier1/Tier2。
 
-        优先从 Redis 缓存读取（key: skill:pool:{user_id}）。
+        优先从 Redis 缓存读取（key: skill:pool:{owner_key}，用户主体为裸 UUID）。
         无数据返回 "暂无已习得技能"。
         """
         # 优先从 Redis 缓存读取
         if self.redis_client is not None:
             try:
-                cached = self.redis_client.get(f"skill:pool:{user_id}")
+                cached = self.redis_client.get(f"skill:pool:{owner_key}")
                 if cached:
                     cached_text = cached.decode("utf-8") if isinstance(cached, bytes) else cached
                     if cached_text:
@@ -375,10 +381,12 @@ class DigestManager:
             return "暂无已习得技能"
 
         try:
+            owner = MemoryOwnerKey.parse(owner_key)
             # Tier0: 只查摘要字段，不查 template（减少查询开销与 context 占用）
-            cypher = """
-            MATCH (s:Skill {user_id: $user_id})
-            WHERE s.status = 'active'
+            cypher = f"""
+            MATCH (s:Skill)
+            WHERE {owner.neo4j_filter_condition("s")}
+              AND s.status = 'active'
             RETURN s.name AS name, s.description AS description,
                    s.use_count AS use_count
             ORDER BY s.maturity DESC, s.use_count DESC
@@ -388,7 +396,7 @@ class DigestManager:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": tier0_max},
+                    {"limit": tier0_max, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -414,7 +422,7 @@ class DigestManager:
             # 写回 Redis 缓存（TTL 5min）
             if self.redis_client is not None:
                 try:
-                    self.redis_client.setex(f"skill:pool:{user_id}", 300, skills_text)
+                    self.redis_client.setex(f"skill:pool:{owner_key}", 300, skills_text)
                 except Exception:
                     logger.warning("_fetch_skills: Redis 缓存写入失败", exc_info=True)
 
@@ -423,7 +431,7 @@ class DigestManager:
             logger.warning("_fetch_skills: 查询失败", exc_info=True)
             return "暂无已习得技能"
 
-    def get_skill_detail(self, user_id: str, skill_name: str, tier: int = 1) -> str:
+    def get_skill_detail(self, owner_key: str, skill_name: str, tier: int = 1) -> str:
         """基因2: 按需加载技能详情（Tier1/Tier2, §8.6）。
 
         与 ``_fetch_skills``（Tier0 摘要注入）配合实现 Progressive Disclosure：
@@ -432,7 +440,7 @@ class DigestManager:
         - Tier2: Agent 调用本方法查看 source_memories + 相关 Episode（深度按需）
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 ``MemoryOwnerKey``）
             skill_name: 技能名称（支持 CONTAINS 模糊匹配）
             tier: 加载层级（1=模板+参数，2=模板+参数+来源记忆）
 
@@ -444,11 +452,13 @@ class DigestManager:
             return "技能详情不可用：图存储未连接"
 
         try:
+            owner = MemoryOwnerKey.parse(owner_key)
             if tier <= 1:
                 # Tier1: template + parameters
-                cypher = """
-                MATCH (s:Skill {user_id: $user_id})
-                WHERE s.status IN ['active', 'emerging']
+                cypher = f"""
+                MATCH (s:Skill)
+                WHERE {owner.neo4j_filter_condition("s")}
+                  AND s.status IN ['active', 'emerging']
                   AND s.name CONTAINS $skill_name
                 RETURN s.name AS name, s.description AS description,
                        s.template AS template, s.parameters AS parameters,
@@ -457,9 +467,10 @@ class DigestManager:
                 """
             else:
                 # Tier2: template + parameters + source_memories
-                cypher = """
-                MATCH (s:Skill {user_id: $user_id})
-                WHERE s.status IN ['active', 'emerging']
+                cypher = f"""
+                MATCH (s:Skill)
+                WHERE {owner.neo4j_filter_condition("s")}
+                  AND s.status IN ['active', 'emerging']
                   AND s.name CONTAINS $skill_name
                 RETURN s.name AS name, s.description AS description,
                        s.template AS template, s.parameters AS parameters,
@@ -471,7 +482,7 @@ class DigestManager:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "skill_name": skill_name[:50]},
+                    {"skill_name": skill_name[:50], **owner.neo4j_props()},
                 )
                 record = result.single()
 
@@ -564,7 +575,7 @@ class DigestManager:
             logger.warning("_fetch_memory_contents: 查询失败", exc_info=True)
             return ""
 
-    def _fetch_recent_episodes(self, user_id: str) -> str:
+    def _fetch_recent_episodes(self, owner_key: str) -> str:
         """查近期事件（Episode 节点，storage_tier IN ['hot','warm'] 或 IS NULL）。
 
         无数据返回 "暂无近期事件"。
@@ -574,9 +585,11 @@ class DigestManager:
             return "暂无近期事件"
 
         try:
-            cypher = """
-            MATCH (e:Episode {user_id: $user_id})
-            WHERE e.storage_tier IS NULL OR e.storage_tier IN ['hot', 'warm']
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (e:Episode)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND (e.storage_tier IS NULL OR e.storage_tier IN ['hot', 'warm'])
             RETURN e.summary AS summary, e.content AS content, e.created_at AS created_at
             ORDER BY e.created_at DESC
             LIMIT $limit
@@ -584,7 +597,7 @@ class DigestManager:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": settings.digest.events_max_items},
+                    {"limit": settings.digest.events_max_items, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -612,7 +625,7 @@ class DigestManager:
             logger.warning("_fetch_recent_episodes: 查询失败", exc_info=True)
             return "暂无近期事件"
 
-    def _fetch_tasks(self, user_id: str) -> str:
+    def _fetch_tasks(self, owner_key: str) -> str:
         """查任务状态（Entity 节点中 type='task'）。
 
         无数据返回 "暂无待办任务"。
@@ -622,16 +635,18 @@ class DigestManager:
             return "暂无待办任务"
 
         try:
-            cypher = """
-            MATCH (e:Entity {user_id: $user_id})
-            WHERE e.type IN ['task', 'todo']
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (e:Entity)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.type IN ['task', 'todo']
             RETURN e.name AS name, e.summary AS summary
             LIMIT $limit
             """
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": settings.digest.tasks_max_items},
+                    {"limit": settings.digest.tasks_max_items, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -652,7 +667,7 @@ class DigestManager:
             logger.warning("_fetch_tasks: 查询失败", exc_info=True)
             return "暂无待办任务"
 
-    def _fetch_themes(self, user_id: str) -> str:
+    def _fetch_themes(self, owner_key: str) -> str:
         """查长期主题（Community 节点，P5 新皮层层）。
 
         Community 由巩固阶段的 Community 归纳产生，代表跨会话/跨批次的高层
@@ -663,9 +678,11 @@ class DigestManager:
             return ""
 
         try:
-            cypher = """
-            MATCH (c:Community {user_id: $user_id})
-            WHERE c.is_active <> false
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (c:Community)
+            WHERE {owner.neo4j_filter_condition("c")}
+              AND c.is_active <> false
               AND (c.status IS NULL OR c.status IN ['candidate', 'active'])
             RETURN c.title AS title, c.summary AS summary
             ORDER BY coalesce(c.maturity, 0.0) DESC, c.updated_at DESC
@@ -674,7 +691,7 @@ class DigestManager:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "limit": 5},
+                    {"limit": 5, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -760,9 +777,9 @@ class DigestManager:
     # 辅助方法
     # =========================================================
 
-    def _cache_key(self, user_id: str) -> str:
-        """构造 Redis 缓存键。"""
-        return f"{settings.digest.cache_key_prefix}{user_id}"
+    def _cache_key(self, owner_key: str) -> str:
+        """构造 Redis 缓存键（用户主体为 ``memory:digest:{裸uuid}``）。"""
+        return f"{settings.digest.cache_key_prefix}{owner_key}"
 
     @staticmethod
     def _count_tokens(text: str) -> int:
