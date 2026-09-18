@@ -1786,6 +1786,20 @@ Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。a
 （如 `agent_id = '__none__'`）使三元约束生效——但这会改变「属性缺失即管理员级」语义，需同步改
 `neo4j_props()` / `neo4j_filter_condition()` 的 `IS NULL` 判定。限制已登记在
 `api/internal/extension/neo4j_extension.py` 的注释与守卫测试中。
+
+### 已知缺口四：`DigestManager._fetch_profile` 委派给 ProfileGraphService 时未主体化（P3b 未修）
+
+`DigestManager._fetch_profile` 把 `owner_key` 原样递给
+`ProfileGraphService.get_profile_text(owner_key)` / `sync_from_explicit_episodes(owner_key)`
+（`api/internal/service/memory/digest_manager.py`），而该服务的 Cypher 是
+`MATCH (e:Episode {user_id: $user_id})`（`profile_graph.py`）——即把 owner_key 当作**属性值**使用。
+
+- 用户主体下 `owner_key == 裸 UUID`，与改造前等价，**无行为变化**；
+- admin 主体下（`admin:{uuid}`）该查询查不到，会回退到已正确主体化的 `_fetch_explicit_memories`。
+
+因 admin 写路径未接线（P3c），当前无实际影响；但属「属性级分离」未贯通的残留点，
+P3c 接线 admin 记忆读写时须一并改造 `ProfileGraphService` 的归属谓词（改用
+`neo4j_filter_condition` / `neo4j_props`）。
 ```
 
 - [ ] **Step 4: 更新记忆系统文档的「读路径」表述**
