@@ -245,6 +245,7 @@ def register_routes(quart_app):
         if err is not None:
             return err
 
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.model.memory_models import RetrievalOptions
         from internal.schema.memory_schema import MemoryRetrieveResp
         from internal.service.memory.digest_manager import DigestManager
@@ -264,7 +265,7 @@ def register_routes(quart_app):
         time_range_days = payload.get("time_range_days")
         budget_tokens = _to_int(payload.get("budget_tokens"), 2000)
 
-        user_id = str(account.id)
+        owner_key = MemoryOwnerKey.for_user(account.id).to_key()
         options = RetrievalOptions(
             top_k=top_k,
             time_range_days=time_range_days,
@@ -272,7 +273,7 @@ def register_routes(quart_app):
         )
 
         retriever = MemoryRetriever(digest_manager=a._get_service(DigestManager))
-        results = await a._to_thread(retriever.retrieve, query, user_id, options)
+        results = await a._to_thread(retriever.retrieve, query, owner_key, options)
 
         summary = None
         retrieval_path = "system2"

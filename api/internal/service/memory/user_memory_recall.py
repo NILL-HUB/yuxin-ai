@@ -51,6 +51,7 @@ def recall_user_memory_for_chat(
     def _do_retrieve() -> None:
         try:
             from app.http import asgi_app as a
+            from internal.entity.memory_owner_entity import MemoryOwnerKey
             from internal.lib.runtime_context import app_session_scope
             from internal.service.memory.digest_manager import DigestManager
             from internal.service.memory.retriever import MemoryRetriever
@@ -61,9 +62,9 @@ def recall_user_memory_for_chat(
             with app_session_scope():
                 digest_manager = a._get_service(DigestManager)
                 retriever = MemoryRetriever(digest_manager=digest_manager)
-                user_id = str(account_id)
+                owner_key = MemoryOwnerKey.for_user(account_id).to_key()
                 # System 1: Digest 快速路径（Redis 缓存，几乎无延迟）
-                digest_text = retriever._system1_fast_path(query, user_id)
+                digest_text = retriever._system1_fast_path(query, owner_key)
                 if digest_text:
                     result_box["text"] = digest_text[:char_budget]
                     return
@@ -71,7 +72,7 @@ def recall_user_memory_for_chat(
                 from internal.model.memory_models import RetrievalOptions
 
                 options = RetrievalOptions(top_k=5, budget_tokens=0)
-                results = retriever.retrieve(query, user_id, options)
+                results = retriever.retrieve(query, owner_key, options)
                 if not results:
                     return
                 # 组装为可注入文本：拼接 top 命中（保留命中原文）

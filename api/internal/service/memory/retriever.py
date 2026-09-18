@@ -33,6 +33,7 @@ from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.model.memory_models import (
     RetrievalConfig,
     RetrievalOptions,
@@ -84,14 +85,14 @@ class MemoryRetriever:
     def retrieve(
         self,
         query: str,
-        user_id: str,
+        owner_key: str,
         options: Optional[RetrievalOptions] = None,
     ) -> list[RetrievalResult]:
         """主检索入口，先尝试 System 1 快速路径，未命中则走 System 2 深度搜索。
 
         Args:
             query: 查询文本
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 MemoryOwnerKey）
             options: 检索选项，None 时使用默认值
 
         Returns:
@@ -109,7 +110,7 @@ class MemoryRetriever:
             options = RetrievalOptions()
 
         # System 1 快速路径
-        fast_result = self._system1_fast_path(query, user_id)
+        fast_result = self._system1_fast_path(query, owner_key)
         if fast_result is not None:
             results = [
                 RetrievalResult(
@@ -123,7 +124,7 @@ class MemoryRetriever:
             return results
 
         # System 2 深度搜索
-        results = self._system2_deep_search(query, user_id, options)
+        results = self._system2_deep_search(query, owner_key, options)
         MetricsCollector.record_retrieve(_time.perf_counter() - start, len(results))
         return results
 
@@ -131,7 +132,7 @@ class MemoryRetriever:
     # System 1: Digest 缓存快速路径
     # =========================================================
 
-    def _system1_fast_path(self, query: str, user_id: str) -> Optional[str]:
+    def _system1_fast_path(self, query: str, owner_key: str) -> Optional[str]:
         """检查 Digest 缓存是否足够，足够则直接返回。
 
         若 digest_manager 可用，则返回 Digest 文本作为快速路径结果。
@@ -140,7 +141,7 @@ class MemoryRetriever:
 
         Args:
             query: 查询文本
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 MemoryOwnerKey）
 
         Returns:
             Digest 文本或 None
@@ -149,12 +150,12 @@ class MemoryRetriever:
             return None
 
         try:
-            digest_text = self._digest_manager.get_digest(user_id)
+            digest_text = self._digest_manager.get_digest(owner_key)
             if digest_text and len(digest_text) > 50:
                 return digest_text
         except Exception:
             logger.warning(
-                "_system1_fast_path: Digest 获取失败 user=%s", user_id, exc_info=True
+                "_system1_fast_path: Digest 获取失败 user=%s", owner_key, exc_info=True
             )
 
         return None
@@ -166,7 +167,7 @@ class MemoryRetriever:
     def _system2_deep_search(
         self,
         query: str,
-        user_id: str,
+        owner_key: str,
         options: RetrievalOptions,
     ) -> list[RetrievalResult]:
         """TKG 粗召回 + 向量精召回 + 主题召回 + 图扩展 + 混合评分 + 早停。
@@ -184,14 +185,14 @@ class MemoryRetriever:
 
         # ① TKG BM25 粗召回
         all_candidates: dict[str, RetrievalResult] = {}
-        tkg_results = self._tkg_recall(query, user_id, recall_k)
+        tkg_results = self._tkg_recall(query, owner_key, recall_k)
         for result in tkg_results:
             all_candidates[result.memory_id] = result
 
         # ② 向量精召回
         query_embedding = self._embed_query(query)
         if query_embedding:
-            vector_results = self._vector_recall(query_embedding, user_id, recall_k)
+            vector_results = self._vector_recall(query_embedding, owner_key, recall_k)
             for result in vector_results:
                 mem_id = result.memory_id
                 if mem_id in all_candidates:
@@ -217,7 +218,7 @@ class MemoryRetriever:
 
         # ③ Community 主题级召回（P5 新皮层）：命中主题时一并纳入候选，
         #     后续图扩展从主题沿 TOPIC_OF/MEMBER_OF 拉起其成员作为间接证据。
-        community_results = self._community_recall(query, user_id, recall_k)
+        community_results = self._community_recall(query, owner_key, recall_k)
         for result in community_results:
             if result.memory_id not in all_candidates:
                 all_candidates[result.memory_id] = result
@@ -281,7 +282,7 @@ class MemoryRetriever:
     def _tkg_recall(
         self,
         query: str,
-        user_id: str,
+        owner_key: str,
         top_k: int,
     ) -> list[RetrievalResult]:
         """Neo4j 全文索引 BM25 粗召回。
@@ -291,7 +292,7 @@ class MemoryRetriever:
 
         Args:
             query: 查询文本
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 MemoryOwnerKey）
             top_k: 返回数量上限
 
         Returns:
@@ -303,10 +304,11 @@ class MemoryRetriever:
             return []
 
         try:
-            cypher = """
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
             CALL db.index.fulltext.queryNodes("memoryFullText", $query)
             YIELD node, score
-            WHERE node.user_id = $user_id
+            WHERE {owner.neo4j_filter_condition("node")}
               AND (node.storage_tier IS NULL OR node.storage_tier IN ['hot', 'warm'])
               AND node.is_active <> false
               AND node.t_invalidated_at IS NULL
@@ -323,7 +325,7 @@ class MemoryRetriever:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"query": query, "user_id": user_id, "top_k": top_k},
+                    {"query": query, "top_k": top_k, **owner.neo4j_props()},
                 )
                 records = list(result)
 
@@ -352,7 +354,7 @@ class MemoryRetriever:
     def _vector_recall(
         self,
         query_embedding: list[float],
-        user_id: str,
+        owner_key: str,
         top_k: int,
     ) -> list[RetrievalResult]:
         """pgvector 向量检索精召回（按维度分表，HNSW 索引 + ``<=>`` 余弦距离）。
@@ -361,7 +363,7 @@ class MemoryRetriever:
 
         Args:
             query_embedding: 查询向量
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 MemoryOwnerKey）
             top_k: 返回数量上限
 
         Returns:
@@ -387,6 +389,9 @@ class MemoryRetriever:
                 return []
             table_name = router.get_user_memory_table_name(dimension)
 
+            owner = MemoryOwnerKey.parse(owner_key)
+            owner_where, owner_bind = owner.pg_sql_predicate("v")
+
             # 从维度分表检索 + JOIN user_memory 获取元数据
             # 绑定参数需 CAST 为 vector（同 knowledge_vector_service），
             # 否则 psycopg2 将 list 推断为 numeric[] 导致检索失败
@@ -398,14 +403,14 @@ class MemoryRetriever:
                        1 - (v.embedding <=> CAST(:embedding AS vector)) AS score
                 FROM {table_name} v
                 JOIN user_memory um ON v.memory_id = um.id
-                WHERE v.owner_account_id = :user_id
+                WHERE {owner_where}
                   AND um.status = 'active'
                 ORDER BY v.embedding <=> CAST(:embedding AS vector)
                 LIMIT :top_k
             """)
 
             rows = db.session.execute(sql, {
-                "user_id": user_id,
+                **owner_bind,
                 "embedding": query_embedding,
                 "top_k": top_k,
             }).all()
@@ -464,7 +469,7 @@ class MemoryRetriever:
     def _community_recall(
         self,
         query: str,
-        user_id: str,
+        owner_key: str,
         top_k: int = 10,
     ) -> list[RetrievalResult]:
         """Community 主题级召回（P5 新皮层枢纽）。
@@ -476,7 +481,7 @@ class MemoryRetriever:
 
         Args:
             query: 查询文本
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 MemoryOwnerKey）
             top_k: 返回数量上限
 
         Returns:
@@ -487,10 +492,11 @@ class MemoryRetriever:
             return []
 
         try:
-            cypher = """
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
             CALL db.index.fulltext.queryNodes("communityFullText", $query)
             YIELD node, score
-            WHERE node.user_id = $user_id
+            WHERE {owner.neo4j_filter_condition("node")}
               AND node.is_active <> false
               AND (node.status IS NULL OR node.status IN ['candidate', 'active'])
             WITH node, score
@@ -505,7 +511,7 @@ class MemoryRetriever:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"query": query, "user_id": user_id, "top_k": top_k},
+                    {"query": query, "top_k": top_k, **owner.neo4j_props()},
                 )
                 records = list(result)
 
