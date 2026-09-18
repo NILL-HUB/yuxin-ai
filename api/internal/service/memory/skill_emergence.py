@@ -627,7 +627,8 @@ class SkillEmergence:
             owner = MemoryOwnerKey.parse(skill.user_id)
             cypher = """
             MERGE (s:Skill {id: $skill_id})
-            SET s.name = $name,
+            SET s.skill_id = $skill_id,
+                s.name = $name,
                 s.description = $description,
                 s.template = $template,
                 s.parameters = $parameters,
@@ -978,12 +979,25 @@ class SkillEmergence:
                     s.last_updated_at = datetime()
                 """
                 with driver.session() as session:
-                    session.run(cypher, {
+                    summary = session.run(cypher, {
                         "skill_id": skill_id,
                         "delta": use_count_delta,
                         "last_used_at": last_used_at,
                         **owner.neo4j_props(),
-                    })
+                    }).consume()
+
+                # 保守策略：部分 driver 版本或测试替身的 summary 不提供
+                # counters.properties_set；此时取到 None，按“视为命中”处理，
+                # 避免驱动不支持时被误判为未命中而永不清理 Redis 统计。
+                counters = getattr(summary, "counters", None)
+                properties_set = getattr(counters, "properties_set", None)
+                if properties_set == 0:
+                    logger.warning(
+                        "flush_bump_use_to_neo4j: 未命中 Skill 节点，跳过清空统计 skill_id=%s",
+                        skill_id,
+                    )
+                    continue
+
                 flushed += 1
             except Exception:
                 logger.warning(
