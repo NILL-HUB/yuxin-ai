@@ -51,7 +51,8 @@
 
 ### 1.2 渲染在 4G 上必然进入 low-memory 模式
 
-HyperFrames CLI 内置阈值 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（源码常量，非配置项）。**容器内存 < 8G 时自动降级**：锁死 1 worker + 强制逐帧截图。
+HyperFrames CLI 内置阈值 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（**渲染镜像内 CLI 包常量**，
+非本项目代码，位置 `/opt/hyperframes/node_modules/hyperframes/dist/cli.js`）。**容器内存 < 8G 时自动降级**：锁死 1 worker + 强制逐帧截图。
 
 也就是说，**4C4G 上渲染永远走慢路径**，这是设计使然、不是故障。实测差异：
 
@@ -60,17 +61,30 @@ HyperFrames CLI 内置阈值 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（源码常�
 | 10s/300 帧（纯文字） | 20.3s | 12.6s |
 | 30s/900 帧（含视频素材） | 62s | 38s |
 
-> 关闭可快 ~40%，但会超 V8 默认堆（见 §3.4），**不建议在 4G 上关闭**。
+> 关闭可快 ~40%，但会抬高 capture worker 数、超出 V8 堆上限（见 §1.3），**不建议在 4G 上关闭**。
 
-### 1.3 Node V8 默认堆上限会限制并发
+### 1.3 Node V8 堆决定 capture worker 上限
 
-CLI 自报：默认堆上限 2240 MB 只支持约 1 个 capture worker。超过即告警：
+CLI 的 worker 数由三路取小（`computeWorkerSizing`，`cli.js`）：CPU 路 `cpuCount-2`、
+内存路 `⌊总内存×0.5/1536⌋`、**堆路 `max(1, ⌊(heapLimit−1024)/640⌋)`**。
+超限时告警（实测文案）：
 
 ```
-[WARN] 2 capture workers may exceed this process's V8 heap (limit 2240MB supports ~1)
+[Render] N capture workers may exceed this process's V8 heap
+(limit 2240MB supports ~1). If the render dies with "JavaScript heap out of memory",
+raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers N.
 ```
 
-**结论**：4C4G 上「渲染并发 = 1」不只是内存选择，也是 V8 堆的硬约束。
+**实测修正（重要）**：镜像**默认**堆只有 **1592 MB**（`heap_size_limit` 实测），
+`⌊(1592−1024)/640⌋ = 0` → 兜底为 1。而 compose 设的
+`NODE_OPTIONS=--max-old-space-size=2048` 会把堆**抬到 2240 MB**，
+`⌊(2240−1024)/640⌋ = 1`。
+
+也就是说该配置**不是「压低堆」，而是把堆抬到能稳稳支撑 1 个 worker**——
+这是保护性设置，不是限制。（此前文档写成「默认 2240 已临界、显式压到 2048」，方向说反了。）
+
+**结论**：本镜像下 capture worker 实际上限就是 **1**，与 §3.2 的并发=1 一致；
+`NODE_OPTIONS=2048` 应保留。
 
 ---
 
@@ -157,7 +171,7 @@ llmops-render-worker:
   environment:
     CELERY_QUEUES: render              # 独占 render 队列
     CELERY_WORKER_AMOUNT: '1'          # 并发=1（核心护城河）
-    NODE_OPTIONS: --max-old-space-size=2048   # 显式给 V8 堆，默认 2240 已临界
+    NODE_OPTIONS: --max-old-space-size=2048   # 把 V8 堆由默认 1592 抬到 2240，稳定支撑 1 worker（见 §1.3）
     HYPERFRAMES_BROWSER_PATH: /usr/bin/chromium
     HYPERFRAMES_FFMPEG_PATH: /usr/bin/ffmpeg
     HYPERFRAMES_FFPROBE_PATH: /usr/bin/ffprobe
@@ -169,6 +183,10 @@ llmops-render-worker:
 ```
 
 **为什么 `cpus: '2'`**：4 核总量，渲染是 CPU 密集型，占 2 核可保证 api/celery 仍能响应。
+
+**为什么 `memory: 2800M`**：实测容器 cgroup `memory.max = 2936012800`（恰好 2800 MiB）。
+注意这个限额**也是 CLI 判定 low-memory 的输入**（`getSystemTotalMb` 读 cgroup），
+2800 < 8192 → 必然走 low-memory 慢路径（§1.2）。这是刻意的取舍：限太高会挤垮同机其他服务。
 
 ### 3.3 渲染闸门（已全部落地）
 
@@ -310,9 +328,16 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 **⚠️ 不要拆 browser/computer worker**：二者合计仅 **45 MB**（17 + 28），拆走省不到 50 MB，
 却要新开跨机链路。**它们是镜像大（1.8 GB）不是内存大**——按内存算，拆它们性价比为零。
 
-**⚠️ 2C2G 装不下渲染**：渲染要求 V8 堆 2048 MB（§3.2 的 `NODE_OPTIONS`）+ Chromium，
-而 HyperFrames CLI 的 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192` 会在 <8 G 时降级。
-2C2G 上渲染会因内存不足直接失败。**渲染机至少 4C8G**（8G 是为了跳出 low-memory 慢路径）。
+**⚠️ 2C2G 装不下渲染**（实测推算）：
+- 渲染要求 V8 堆 ≥ 2048 MB（`NODE_OPTIONS`）+ Chromium 峰值 ~1.5 G，而 2G 容器里
+  cgroup 内存路 `⌊2048×0.5/1536⌋ = 0` → 兜底 1，勉强能起但**渲染中途必 OOM**；
+- 且 CLI 的 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192` 会在 cgroup < 8G 时降级（§1.2），
+  2C2G 更不例外。
+- **渲染机建议 4C8G**：4 核保证 `cpuCount-2 = 2` 有余量；8G 让 cgroup 内存路
+  `⌊8192×0.5/1536⌋ = 2`。
+  注意判定是 `totalMb <= 8192` 即降级，故 **8G 仍走慢路径**；要跳出需 cgroup **> 8G**（如 16G）。
+  实践中建议先接受慢路径（实测 900 帧含素材 62s，可接受），把 4C8G 作为起点。
+  预算有限时 4C4G 也**能跑**（同样走慢路径），但别再低。
 
 #### 跨机接线（3 处改动）
 
@@ -360,5 +385,5 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | 2 并发 | 62s，峰值 2567 MB |
 | 3 并发 | 83s，峰值 2679 MB |
 | 3 串行（同时 1 个） | 178s，峰值 1659 MB |
-| low-memory 阈值 | `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（源码常量） |
+| low-memory 阈值 | `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（渲染镜像内 CLI 包常量，见 §1.2） |
 | V8 默认堆 | 2240 MB（支持 ~1 worker） |
