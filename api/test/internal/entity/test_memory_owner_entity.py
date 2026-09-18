@@ -2,7 +2,7 @@
 
 主体键是跨层（PG/Neo4j/Redis/冷存储）的唯一归属表达，必须可逆、
 对非法输入 fail closed，且**用户主体产出与旧行为逐字节一致**
-（`user:<account_uuid>` == 旧 `str(account.id)` 的语义对齐）。
+（裸 `<account_uuid>` == 旧 `str(account.id)`）。
 """
 from uuid import uuid4
 
@@ -23,7 +23,14 @@ def test_for_user_produces_account_scoped_key():
     assert key.owner_account_id == account_id
     assert key.owner_admin_user_id is None
     assert key.owner_agent_id is None
-    assert key.to_key() == f"user:{account_id}"
+    # 用户主体键 == 历史四层存储实际写入的裸 UUID（零迁移契约）
+    assert key.to_key() == str(account_id)
+
+
+def test_user_owner_key_equals_legacy_user_id():
+    """回归锁：用户主体键必须与 `str(account.id)` 逐字节相等。"""
+    account_id = uuid4()
+    assert MemoryOwnerKey.for_user(account_id).to_key() == str(account_id)
 
 
 def test_for_admin_without_agent():
@@ -49,9 +56,23 @@ def test_to_key_is_stable_for_same_identity():
     assert MemoryOwnerKey.for_user(account_id).to_key() == MemoryOwnerKey.for_user(account_id).to_key()
 
 
+def test_parses_legacy_bare_uuid_as_user_key():
+    account_id = uuid4()
+    key = MemoryOwnerKey.parse(str(account_id))
+
+    assert key.owner_type is MemoryOwnerType.USER
+    assert key.owner_account_id == account_id
+
+
+def test_parses_prefixed_user_key_for_backward_compat():
+    """容忍带前缀形态（历史日志 / 手写输入），解析结果与裸 UUID 等价。"""
+    account_id = uuid4()
+    assert MemoryOwnerKey.parse(f"user:{account_id}").to_key() == str(account_id)
+
+
 def test_parses_user_key_roundtrip():
     account_id = uuid4()
-    key = MemoryOwnerKey.parse(f"user:{account_id}")
+    key = MemoryOwnerKey.parse(MemoryOwnerKey.for_user(account_id).to_key())
 
     assert key.owner_type is MemoryOwnerType.USER
     assert key.owner_account_id == account_id

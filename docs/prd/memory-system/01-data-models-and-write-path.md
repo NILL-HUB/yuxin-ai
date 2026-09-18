@@ -542,7 +542,7 @@ class ConsolidationReport(BaseModel):
 | --- | --- |
 | PG `user_memory` | `owner_type`(`'user'`\|`'admin'`) + `owner_account_id` + `owner_admin_user_id` + `owner_agent_id` |
 | PG `user_memory_embedding_{dim}` | 同上四列（新建分表由 `EmbeddingTableRouter.ensure_tables_for_dimension` DDL 带上；已存在的分表由迁移 `y2b3c4d5e6f8` 用 `information_schema` 扫描补列） |
-| 跨层主体键 | `MemoryOwnerKey.to_key()`：`user:{account_uuid}` / `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}` |
+| 跨层主体键 | `MemoryOwnerKey.to_key()`：用户 = **裸 `{account_uuid}`**（与四层存量值逐字节一致）；管理员 = `admin:{admin_uuid}`；管理员 + Agent = `admin:{admin_uuid}:{agent_uuid}` |
 
 **两级隔离**：管理员 + Agent（`admin:{admin_uuid}:{agent_uuid}`），同一管理员的多个 Agent 互不干扰。
 
@@ -550,7 +550,11 @@ class ConsolidationReport(BaseModel):
 
 **本阶段（P3a）范围**：写侧**双写**新列（系统路径 `_upsert_vector` + Agent 策展路径 `write_agent_curated`，含向量分表的 `INSERT` 与 `ON CONFLICT` 分支）+ 存量回填 `owner_type='user'`；**读路径未切换**（仍按 `owner_account_id` / `user_id` 过滤），故行为零变化。
 
-**兼容性语义（P3b 关键前提）**：`user:{account_uuid}` 与历史各层实际写入的裸 `str(account.id)`（Neo4j 节点属性 `user_id`、Redis 键 `memory:digest:{uuid}`、冷存储路径片段）**不相等**——`to_key() != str(account.id)`。因此跨层切到 `owner_key` 时，**Neo4j 存量节点必须配套迁移**（否则全部历史记忆检索不到），Redis 键按 TTL 自然过期重建，PG 侧 `owner_account_id` 是 UUID 列需 `parse()` 回解。
+**兼容性语义（P3b 已落地）**：用户主体键就是历史四层存储实际写入的裸 `str(account.id)`
+（Neo4j 属性值、Redis `memory:digest:{uuid}`、冷存储路径片段），故**用户路径零迁移、零行为变化**。
+这与治理设计 §8 字面的 `user:{uuid}` 有意偏离——`admin:` 前缀已足以区分三类主体，
+而带前缀需迁移全部 Neo4j 节点属性、重建唯一约束与索引，失败模式是「静默召回为空」。
+管理员 / Agent 主体的读写调用方接入属 **P3c**（本阶段只让链路可表达）。
 
 Neo4j / Redis / 冷存储的键统一与读路径切换属 **P3b**（尚未落地）；键前缀常量 `OWNER_KEY_USER_PREFIX` / `OWNER_KEY_ADMIN_PREFIX` / `OWNER_KEY_SEPARATOR`（`api/internal/config/memory_settings.py`）本阶段**尚无生产消费方**。
 

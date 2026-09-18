@@ -11,22 +11,23 @@
 | PG | `owner_type` + `owner_account_id` / `owner_admin_user_id` / `owner_agent_id` |
 | Neo4j / Redis / 冷存储 | 字符串 `owner_key` |
 
-`owner_key` 形态（确定性、可解析、无歧义分隔）：
-- 用户主体：`user:{account_uuid}`
+`owner_key` 字符串形态（确定性、可解析、无歧义分隔；仅用于 Redis / 冷存储等扁平命名空间）：
+- 用户主体：**裸 `{account_uuid}`**——与历史 Redis 键 `memory:digest:{uuid}`、冷存储
+  路径片段实际写入值**逐字节一致**，因此用户侧零迁移、零行为变化。
 - 管理员主体：`admin:{admin_uuid}`
 - 管理员 + Agent（两级隔离，设计 §3 L1）：`admin:{admin_uuid}:{agent_uuid}`
+
+> **Neo4j 不走本字符串键**：节点属性级分离——用户写 `user_id`（裸 UUID，存量不动），
+> admin 写 `admin_user_id` + `agent_id`；归属按「哪一侧属性非空」判定。见
+> `neo4j_props()` / `neo4j_filter_condition()`。
+
+> **与设计 §8 的偏离（已确认）**：§8 字面写 `user:{uuid}`。本实现用户态不带前缀，
+> 原因是四层存储的存量值均为裸 UUID，带前缀需迁移全部 Neo4j 节点属性、重建唯一约束
+> 与索引，且失败模式是「静默召回为空」。`admin:` 前缀已足以让三类主体互不冲突。
 
 **为什么不用 JSON / 不用长度前缀**：这些键要作为 Redis key 与 S3 路径片段，
 必须是短、可读、URL/路径安全、且人类可直接看懂归属的形态。UUID 本身无冒号，
 故 `:` 作为分隔符无歧义。
-
-**与存量键的关系（务必注意，勿再误述为"同值"）**：历史各存储层写的是**裸
-`str(account.id)`**（Neo4j 节点属性 `user_id`、Redis 键 `memory:digest:{uuid}`、
-冷存储路径片段），**不带 `user:` 前缀**；而 `to_key()` 产出 `user:{uuid}`。
-两者**不相等**（`to_key() != str(account.id)`）。因此跨层切到 `owner_key` 时，
-Neo4j 存量节点的键必须配套迁移（否则历史记忆检索不到），Redis 键按 TTL 自然
-过期重建，PG 侧因 `owner_account_id` 是 UUID 列需 `parse()` 回解。
-详见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-*.md`。
 """
 from __future__ import annotations
 
@@ -123,9 +124,17 @@ class MemoryOwnerKey:
     # ------------------------------------------------------------------
 
     def to_key(self) -> str:
-        """跨层主体键字符串（Neo4j 属性 / Redis key 片段 / 冷存储路径片段）。"""
+        """跨层字符串主体键（**Redis key 片段 / 冷存储路径片段**）。
+
+        仅用于**扁平命名空间**（键即字符串，无法按属性分离）：
+        - 用户主体返回**裸 UUID**（与历史 Redis 键 / 冷存储路径片段逐字节一致）；
+        - 管理员主体加 `admin:` 前缀以与用户命名空间区分，带 Agent 时再追加一级。
+
+        **不用于 Neo4j**：Neo4j 节点走属性级分离（用户写 `user_id`，admin 写
+        `admin_user_id` + `agent_id`），见 `neo4j_props()` / `neo4j_filter_condition()`。
+        """
         if self.owner_type is MemoryOwnerType.USER:
-            return f"{_USER_PREFIX}:{self.owner_account_id}"
+            return str(self.owner_account_id)
         if self.owner_agent_id is None:
             return f"{_ADMIN_PREFIX}:{self.owner_admin_user_id}"
         return f"{_ADMIN_PREFIX}:{self.owner_admin_user_id}:{self.owner_agent_id}"
@@ -141,18 +150,16 @@ class MemoryOwnerKey:
 
     @classmethod
     def parse(cls, key: str) -> "MemoryOwnerKey":
-        """解析 `to_key()` 产物；非法输入抛 `MemoryOwnerKeyError`。"""
+        """解析 `to_key()` 产物；兼容历史裸 UUID 与带 `user:` 前缀形态。
+
+        非法输入抛 `MemoryOwnerKeyError`。
+        """
         if not isinstance(key, str) or not key:
             raise MemoryOwnerKeyError("主体键必须是非空字符串")
-        parts = key.split(":")
-        prefix = parts[0]
 
-        if prefix == _USER_PREFIX:
-            if len(parts) != 2:
-                raise MemoryOwnerKeyError(f"user 主体键格式应为 user:<uuid>，实际：{key}")
-            return cls.for_user(_parse_uuid(parts[1], key))
-
-        if prefix == _ADMIN_PREFIX:
+        # 管理员：admin:{uuid} 或 admin:{uuid}:{uuid}
+        if key.startswith(f"{_ADMIN_PREFIX}:"):
+            parts = key.split(":")
             if len(parts) == 2:
                 return cls.for_admin(_parse_uuid(parts[1], key))
             if len(parts) == 3:
@@ -163,7 +170,10 @@ class MemoryOwnerKey:
                 f"admin 主体键格式应为 admin:<uuid> 或 admin:<uuid>:<uuid>，实际：{key}"
             )
 
-        raise MemoryOwnerKeyError(f"未知主体键前缀：{prefix!r}（期望 user/admin）")
+        # 用户：带前缀（历史兼容）或裸 UUID（当前规范形态）
+        if key.startswith(f"{_USER_PREFIX}:"):
+            return cls.for_user(_parse_uuid(key[len(_USER_PREFIX) + 1 :], key))
+        return cls.for_user(_parse_uuid(key, key))
 
     @classmethod
     def from_legacy_user_id(cls, user_id: str) -> "MemoryOwnerKey":

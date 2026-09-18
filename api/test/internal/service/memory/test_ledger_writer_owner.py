@@ -48,7 +48,7 @@ def test_resolve_owner_key_from_legacy_user_id():
     key = MemoryOwnerKey.from_legacy_user_id(str(account_id))
 
     assert key.owner_account_id == account_id
-    assert key.to_key() == f"user:{account_id}"
+    assert key.to_key() == str(account_id)
 
 
 def test_resolve_owner_key_rejects_non_uuid():
