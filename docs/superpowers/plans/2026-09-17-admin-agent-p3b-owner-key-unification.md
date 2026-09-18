@@ -1855,6 +1855,39 @@ Entity 分组路径实际失效）。
 - 用户态不受影响（`user_id` 键存在且为裸 UUID）；因 admin 写路径未接线（P3c），当前不可触发；
 - 修法（P3c）：`_node_to_skill` 按主体类型读取对应属性（`user_id` 或 `admin_user_id` [+ `agent_id`]），
   与 `neo4j_props()` 的写入形态对称。
+
+### 已知缺口八：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis（P3b 未修，改造前既有）
+
+- `MemoryGovernor.gdpr_delete`（含 `_clear_all_user_cache`）全仓**无生产调用方**——仅测试可达。
+  Task 6 修好的「精确通配」清理路径在生产运行时当前**不可达**（`_clear_user_cache` 那条可达，已生效）。
+- 另：用户注销路径 `AdminCustomerUserService._cleanup_user_runtime_data` 自行做 PG + Neo4j 清理，
+  但**完全不碰 Redis**（该文件内无 redis 引用），故注销后 `memory:digest:` / `skill:*` / `nudge:*`
+  等键只能靠 TTL 兜底存活（digest 最久 86400s）。
+- 均属改造前既有状态（Task 6 仅改名，未使其恶化）。修法（P3c）：为 GDPR 删除补路由/任务入口，
+  或让注销路径调用 `_clear_all_user_cache`。
+
+### 已知缺口九：`_verify_owner` / `edit_memory` / `gdpr_delete` 的 Neo4j 侧仅支持用户主体
+
+上述三处的 Neo4j 查询/回填仍固定用属性 `user_id`（`_verify_owner` 读 `n.user_id`、`edit_memory`
+复制新节点时写 `user_id`、`gdpr_delete` 起点 `MATCH (u:User {id: $owner_key})`）。
+admin / Agent 主体下取不到 `user_id` → **fail-closed**（返回 False / 0，不会误删），但功能不可用。
+
+- 用户态零影响（`owner_key == str(account.id)`）；因 admin 写路径未接线（P3c），当前不可触发。
+- 已在这三处 docstring 如实披露（Task 6 落实 I-1）；修法（P3c）：按 `neo4j_filter_condition` /
+  `neo4j_props` 改造其归属处理。
+
+### 已知缺口十：主体键的 Redis 键必须以 `:` 与前后缀分隔（约定，非缺陷）
+
+`_clear_all_user_cache` 用 `*:{owner_key}`（尾部）与 `*:{owner_key}:*`（中部）两个精确模式。
+**新增含主体键的 Redis 键时，必须确保主体键以 `:` 与前后缀分隔**，否则该键不会被 GDPR 清理命中
+（与 C3 同类的静默失效模式）。另：把主体混入哈希的键（如 `schedule_suggestion:{md5}`）**天然无法**
+被任何基于 owner_key 的通配命中，需各自实现清理。
+
+### 已知缺口十一：`gdpr_delete` 的 `stats["redis_keys"]` 重复计数（P3b 未修，改造前既有）
+
+`_clear_all_user_cache` 的 `len(keys)` 会把同时命中「精确 digest 键」与「`*:{owner_key}` 通配」的
+`memory:digest:{owner}` 计两次（实测 8 个 distinct 键返回 9）。因 `delete(*keys)` 幂等，
+**不影响清理正确性**，仅统计值偏大；且该路径当前不可达（见缺口八）。修法：`keys = list(dict.fromkeys(keys))`。
 ```
 
 - [ ] **Step 4: 更新记忆系统文档的「读路径」表述**
