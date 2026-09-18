@@ -132,24 +132,92 @@ set ELECTRON_RUN_AS_NODE=1
 - shim 路径需登记进 `build.extraResources`，且生成逻辑要在「首次运行」时确保存在
   （安装目录只读，故实际应生成到 `userData/` 并指向安装目录的 electron.exe）。
 
-### 0.5.2 渲染运行时（Chromium + ffmpeg/ffprobe）的分发策略
+### 0.5.2 渲染运行时随包内置（不含按需下载）
 
-Node 由 Electron 内置解决后，仍需为 CLI 提供三件外部二进制。**禁止随包全量携带
-~500 MB**，采用**四级探测 + 按需下载**（复用 `cua-driver-host.js` 既有范式）：
+**决策（用户明确指示）**：渲染所需的全部组件**随安装包一起分发**，不做按需下载。
+理由：彻底消除「首次渲染时下载失败 / 被墙 / 离线不可用」这类客服问题；
+安装包体积增大的代价可接受（用户不会在意 100M 还是 500M）。
 
-| 优先级 | 来源 | 说明 |
+**实测体积账**（在 `llmops-render-worker` 容器内实测）：
+
+| 组件 | 原始 | 说明 |
 | --- | --- | --- |
-| 1 | 显式环境变量 | `HYPERFRAMES_BROWSER_PATH` 等已设则直接用（开发/高级用户） |
-| 2 | 安装包目录 | `resources/render-runtime/`（可选内置，见下） |
-| 3 | 用户数据目录 | `userData/render-runtime/`（**首次渲染时按需下载并缓存**） |
-| 4 | 系统 PATH | 探测系统已装的 chromium/chrome-headless-shell/ffmpeg/ffprobe |
+| `hyperframes` 包本体 | 37 MB | `dist/cli.js` 11 MB（**非自包含**，会 import 兄弟包） |
+| `node_modules`（全部依赖） | 700 MB | 其中 `onnxruntime-node` **独占 536 MB** |
+| `node_modules`（**排除 onnxruntime**） | **164 MB** | 压缩后仅 **38 MB** |
+| Chromium（`/usr/lib/chromium`） | **338 MB** | 体积主体，必须随包 |
+| ffmpeg + ffprobe | < 1 MB | 极小 |
 
-**推荐组合**：Chromium（338 MB）走「第 3 级按需下载」，ffmpeg+ffprobe（<1 MB）
-走「第 2 级随包内置」——小件内置避免下载失败，大件按需避免安装包膨胀。
+**关键结论：CLI 不是自包含的**（实测 `dist/cli.js` 单独复制后运行报
+`ERR_MODULE_NOT_FOUND: Cannot find package 'esbuild'`），**必须连 `node_modules` 一起带**。
 
-> 按需下载需处理：断点续传、校验（sha256）、离线兜底提示。
-> **下载源与合规**：Chromium 用官方 `chrome-for-testing` 渠道，ffmpeg 用项目既有
-> 供应链（与 `Dockerfile.render` 保持一致），避免引入新第三方来源。
+#### ⚠️ `onnxruntime-node` 建议排除（536 MB，非渲染必需）
+
+实测确认它只服务两个**可选**能力，且全部是**动态 import + 友好报错**：
+
+```javascript
+async function loadNative(name, load) {
+  try { return await load(); }
+  catch (err) { throw new Error(
+    `remove-background needs the optional native module '${name}', which isn't available
+     (${err.message}). Install it with \`npm i ${name}\`, or reinstall hyperframes with
+     optional dependencies enabled.`); }
+}
+// 用途一：remove-background（抠像）
+const ort = await loadNative("onnxruntime-node", () => import("onnxruntime-node"));
+// 用途二：localEmbedder（本地语义检索）
+async function localRuntimeAvailable() { try { await import("onnxruntime-node"); return true; } catch { return false; } }
+```
+
+- **`render` 主路径不依赖它**——仅在「抠像」与「本地语义检索」时才加载，缺失时给出
+  明确可读的错误而非崩溃。
+- **保留的代价**：压缩后从 38 MB → 320 MB（多 282 MB）。
+- **决策点**：默认**排除**。若后续 composition 要用「抠像」，再加回。
+
+#### 打包体积预估
+
+```
+node_modules（排除 onnxruntime）  164 MB  →  压缩约 38 MB
+Chromium                          338 MB  →  压缩约 120 MB
+ffmpeg + ffprobe                  < 1 MB
+------------------------------------------------------
+合计原始                          约 502 MB
+安装包增量（NSIS 压缩后）          约 160–200 MB
+```
+
+> 若保留 `onnxruntime-node`，安装包增量再 **+282 MB**（约 450 MB）。
+
+#### 落地方式：照搬既有 `stage-cua-driver.js` 范式
+
+本仓库已有远端二进制随包的成熟模式（`desktop/scripts/stage-cua-driver.js` →
+`desktop/vendor/cua-driver/` → `electron-builder` 的 `extraResources`），
+**新增 `stage-render-runtime.js` 完全照此结构**，不引入新机制。
+
+**新建文件**：
+
+| 文件 | 职责 |
+| --- | --- |
+| `desktop/scripts/stage-render-runtime.js` | 暂存脚本：把 `node_modules`（排除 onnxruntime）、`cli.js`、Chromium、ffmpeg/ffprobe 复制到 `desktop/vendor/render-runtime/` |
+| `desktop/render-runtime.js` | 运行时定位（见 Task 0B）：解析 vendor 路径 + 生成 CLI shim |
+
+**`extraResources` 追加**（`desktop/package.json`）：
+
+```json
+    {
+      "from": "vendor/render-runtime",
+      "to": "render-runtime"
+    }
+```
+
+**体积清单固定（可选但推荐）**：随包后建议写一份 `vendor/render-runtime/MANIFEST.json`
+（版本号 + 各文件 sha256），便于排查「用户机上运行的是哪个版本」。
+
+> **注意**：`desktop/vendor/` 属构建产物，不应提交（`stage-cua-driver.js` 同样如此，
+> 由 `pack` / `dist` 脚本在打包前生成）。需确认 `.gitignore` 覆盖 `vendor/render-runtime/`。
+>
+> **ffmpeg/ffprobe 必须是真 ffprobe**（见 §0.5 约束 2）；**Chromium 必须是
+> `chrome-headless-shell` 一类能响应 `--version` 的构建**（见 §0.5 约束 1），
+> 不可用 Electron 自带的 `chrome.exe` 替代。
 
 ### 0.6 测试命令
 
@@ -211,7 +279,9 @@ cd api && python -m pytest test/path/to/test.py::test_name -v   # 单测
 | `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py` | `_dispatch_render` 改为三级路由（本机优先 → 云端回退） |
 | `desktop/bridge.js` | `targets` 加 `/render` 与 `/artifact` 路由 |
 | `desktop/main.js` | 新增 render worker 的 token/端口/startWorker/createBridge 参数；**用 Electron 内置 Node 作为渲染子进程的 node** |
-| `desktop/render-runtime.js` | **新建**：渲染运行时（Chromium/ffmpeg/ffprobe）四级探测 + 按需下载（见 §0.5.2） |
+| `desktop/render-runtime.js` | **新建**：运行时定位（解析随包 `resources/render-runtime/`）+ 生成 CLI shim |
+| `desktop/scripts/stage-render-runtime.js` | **新建**：打包前暂存 node_modules（排除 onnxruntime）/Chromium/ffmpeg/ffprobe 到 `vendor/render-runtime/` |
+| `.gitignore` | 加 `desktop/vendor/render-runtime/`（构建产物不入库） |
 | `api/scripts/pyinstaller/worker.spec` | `hiddenimports` 加 `scripts.render_worker` |
 | `docker/docker-compose.yaml` | 云端 render worker 改为默认不启动（保留 profile，可随时接通） |
 | `docs/deployment-single-node.md` | 同步「云端渲染默认关闭、本机优先」 |
@@ -389,31 +459,30 @@ test('ensureCliShim writes a shim that runs electron as node', () => {
   }
 })
 
-test('resolveRuntimePaths prefers explicit env over everything', () => {
+test('resolveRuntimePaths points at bundled runtime dir', () => {
+  const paths = resolveRuntimePaths({
+    env: {},
+    resourcesDir: '/res',
+  })
+  assert.equal(paths.runtimeDir, '/res/render-runtime')
+  assert.match(paths.cliJsPath, /render-runtime.*hyperframes.*cli\.js$/)
+  assert.match(paths.browserPath, /render-runtime/)
+  assert.match(paths.ffmpegPath, /render-runtime/)
+  assert.match(paths.ffprobePath, /render-runtime/)
+})
+
+test('resolveRuntimePaths lets explicit env override bundled defaults', () => {
   const paths = resolveRuntimePaths({
     env: {
       HYPERFRAMES_BROWSER_PATH: '/custom/chrome',
       HYPERFRAMES_FFMPEG_PATH: '/custom/ffmpeg',
       HYPERFRAMES_FFPROBE_PATH: '/custom/ffprobe',
     },
-    userDataDir: '/ud',
     resourcesDir: '/res',
   })
   assert.equal(paths.browserPath, '/custom/chrome')
   assert.equal(paths.ffmpegPath, '/custom/ffmpeg')
   assert.equal(paths.ffprobePath, '/custom/ffprobe')
-})
-
-test('resolveRuntimePaths falls back to userData then resources', () => {
-  const paths = resolveRuntimePaths({
-    env: {},
-    userDataDir: '/ud',
-    resourcesDir: '/res',
-  })
-  // 无显式 env 时应给出可判定的候选位置（不抛错，供电竞探测继续）
-  assert.ok(paths.browserPath === '' || typeof paths.browserPath === 'string')
-  assert.ok(Array.isArray(paths.searchedDirs))
-  assert.ok(paths.searchedDirs.length >= 2)
 })
 ```
 
@@ -434,22 +503,29 @@ const path = require('node:path')
 
 // HyperFrames CLI 需要「node + cli.js」两段式调用，而服务端 HYPERFRAMES_CLI_BIN
 // 只接受单个可执行文件路径，故必须生成 shim 把 Electron 的 Node 包在中间。
+// 运行时二进制随安装包分发（见 §0.5.2），路径位于 resources/render-runtime/。
 // 详见 docs/superpowers/plans/2026-09-18-local-first-render-offload.md §0.5.1。
 
 function _shimFileName() {
   return process.platform === 'win32' ? 'hyperframes.cmd' : 'hyperframes'
 }
 
-function resolveRuntimePaths({ env, userDataDir, resourcesDir }) {
+function resolveRuntimePaths({ env, resourcesDir }) {
   const pick = (key) => String((env && env[key]) || '').trim()
-  const searchedDirs = [
-    path.join(userDataDir, 'render-runtime'),
-    path.join(resourcesDir, 'render-runtime'),
-  ]
-  const browserPath = pick('HYPERFRAMES_BROWSER_PATH')
-  const ffmpegPath = pick('HYPERFRAMES_FFMPEG_PATH')
-  const ffprobePath = pick('HYPERFRAMES_FFPROBE_PATH')
-  return { browserPath, ffmpegPath, ffprobePath, searchedDirs }
+  // 随包分发：运行时固定在 resources/render-runtime/（见 §0.5.2）
+  const runtimeDir = path.join(resourcesDir, 'render-runtime')
+  const withExe = (name) =>
+    process.platform === 'win32' ? `${name}.exe` : name
+  return {
+    runtimeDir,
+    cliJsPath: path.join(runtimeDir, 'node_modules', 'hyperframes', 'dist', 'cli.js'),
+    browserPath: pick('HYPERFRAMES_BROWSER_PATH') ||
+      path.join(runtimeDir, withExe('chrome-headless-shell')),
+    ffmpegPath: pick('HYPERFRAMES_FFMPEG_PATH') ||
+      path.join(runtimeDir, withExe('ffmpeg')),
+    ffprobePath: pick('HYPERFRAMES_FFPROBE_PATH') ||
+      path.join(runtimeDir, withExe('ffprobe')),
+  }
 }
 
 function ensureCliShim({ electronPath, cliJsPath, targetDir }) {
@@ -495,7 +571,190 @@ Expected: PASS（4 passed）
 
 ```bash
 git add desktop/render-runtime.js desktop/test/render-runtime.test.js desktop/package.json
-git commit -m "feat(desktop): add render runtime probe and electron-node cli shim"
+git commit -m "feat(desktop): add render runtime resolver and electron-node cli shim"
+```
+
+---
+
+## Task 0C: 暂存渲染运行时并打进安装包
+
+**为什么需要**：按用户决策（§0.5.2），渲染所需的 `node_modules` + Chromium + ffmpeg/ffprobe
+**随安装包分发**，避免运行时下载。照搬既有 `stage-cua-driver.js` 范式。
+
+**Files:**
+- Create: `desktop/scripts/stage-render-runtime.js`
+- Modify: `desktop/package.json`（`extraResources` 加 render-runtime；`scripts.pack`/`dist` 前置暂存）
+- Modify: `.gitignore`（加 `desktop/vendor/render-runtime/`）
+- Test: `desktop/test/stage-render-runtime.test.js`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `desktop/test/stage-render-runtime.test.js`：
+
+```javascript
+const { test } = require('node:test')
+const assert = require('node:assert')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const { execFileSync } = require('node:child_process')
+
+const SCRIPT = path.join(__dirname, '..', 'scripts', 'stage-render-runtime.js')
+
+test('stage script exists and is runnable', () => {
+  assert.ok(fs.existsSync(SCRIPT), 'stage-render-runtime.js 不存在')
+})
+
+test('stage script skips gracefully when source is absent', () => {
+  // 源缺失时应打印提示并以 0 退出（不阻断打包），与 stage-cua-driver.js 一致
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-rr-'))
+  try {
+    const out = execFileSync(process.execPath, [SCRIPT], {
+      env: { ...process.env, RENDER_RUNTIME_SOURCE_DIR: dir, STAGE_TARGET_DIR: dir },
+      encoding: 'utf-8',
+    })
+    assert.match(out + '', /skip|跳过|未找到/i)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd desktop && node --test test/stage-render-runtime.test.js`
+Expected: FAIL（脚本不存在）
+
+- [ ] **Step 3: 实现暂存脚本**
+
+创建 `desktop/scripts/stage-render-runtime.js`（结构对照 `stage-cua-driver.js`）：
+
+```javascript
+// 把渲染运行时暂存到 desktop/vendor/render-runtime/，供 electron-builder
+// extraResources 打进安装包。随包分发以彻底避免运行时下载（见 plan §0.5.2）。
+//
+// 需要暂存的内容：
+//   1. node_modules/（**排除 onnxruntime-node**，536MB 且渲染主路径不需要）
+//   2. Chromium（chrome-headless-shell）
+//   3. ffmpeg + ffprobe
+//
+// 体积参考：排除 onnxruntime 后 node_modules 约 164MB（压缩 38MB），
+// Chromium 约 338MB。安装包增量约 160–200MB。
+//
+// 源缺失时打印提示并跳过（不阻断打包），与 stage-cua-driver.js 行为一致。
+
+const fs = require('node:fs')
+const path = require('node:path')
+
+const EXCLUDED = new Set(['onnxruntime-node'])
+
+function shouldSkip(name) {
+  return EXCLUDED.has(name)
+}
+
+function copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true })
+  let count = 0
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (shouldSkip(entry.name)) continue
+    const from = path.join(src, entry.name)
+    const to = path.join(dest, entry.name)
+    if (entry.isDirectory()) {
+      count += copyDir(from, to)
+    } else if (entry.isFile()) {
+      fs.copyFileSync(from, to)
+      count += 1
+    }
+  }
+  return count
+}
+
+function main() {
+  const sourceDir = process.env.RENDER_RUNTIME_SOURCE_DIR || ''
+  const targetDir =
+    process.env.STAGE_TARGET_DIR || path.join(__dirname, '..', 'vendor', 'render-runtime')
+
+  // 目录必须始终存在，否则 electron-builder 的 extraResources 会因源缺失而失败
+  fs.mkdirSync(targetDir, { recursive: true })
+
+  if (!sourceDir || !fs.existsSync(sourceDir)) {
+    console.warn(
+      '[stage-render-runtime] 未找到渲染运行时源目录（RENDER_RUNTIME_SOURCE_DIR）；' +
+        '跳过捆绑，本机渲染将不可用（云端回退仍可用）。',
+    )
+    return
+  }
+
+  const nodeModules = path.join(sourceDir, 'node_modules')
+  if (!fs.existsSync(nodeModules)) {
+    console.warn(`[stage-render-runtime] ${sourceDir} 内无 node_modules，跳过`)
+    return
+  }
+
+  const copied = copyDir(nodeModules, path.join(targetDir, 'node_modules'))
+  console.log(`[stage-render-runtime] node_modules 已暂存（${copied} 个文件，已排除 onnxruntime-node）`)
+
+  for (const name of ['chrome-headless-shell', 'chrome-headless-shell.exe', 'ffmpeg', 'ffmpeg.exe', 'ffprobe', 'ffprobe.exe']) {
+    const src = path.join(sourceDir, name)
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, path.join(targetDir, name))
+      console.log(`[stage-render-runtime] copied ${name}`)
+    }
+  }
+
+  fs.writeFileSync(
+    path.join(targetDir, 'SOURCE.txt'),
+    `Staged from ${sourceDir}\nhyperframes + Chromium + ffmpeg/ffprobe\n` +
+      `onnxruntime-node excluded (not required by render path)\n`,
+    'utf-8',
+  )
+  console.log(`[stage-render-runtime] done → ${targetDir}`)
+}
+
+main()
+```
+
+- [ ] **Step 4: 接线（extraResources + scripts + gitignore）**
+
+`desktop/package.json` 的 `extraResources` 追加：
+
+```json
+    {
+      "from": "vendor/render-runtime",
+      "to": "render-runtime"
+    }
+```
+
+`scripts` 中 `pack` / `dist` 前置暂存（与 `stage:cua` 并列）：
+
+```json
+    "stage:render": "node scripts/stage-render-runtime.js",
+    "pack": "npm run stage:cua && npm run stage:render && electron-builder --dir",
+    "dist": "npm run build:ui && npm run stage:cua && npm run stage:render && electron-builder --win"
+```
+
+`.gitignore` 追加（对照既有 `desktop/vendor/cua-driver/`）：
+
+```
+# 打包时暂存的渲染运行时（不入库；见 desktop/scripts/stage-render-runtime.js）
+desktop/vendor/render-runtime/
+```
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `cd desktop && node --test test/stage-render-runtime.test.js`
+Expected: PASS（2 passed）
+
+- [ ] **Step 6: 验证暂存产物被 git 忽略**
+
+Run: `cd d:/DEMO/openagent-main && git check-ignore -v desktop/vendor/render-runtime/SOURCE.txt`
+Expected: 输出命中 `.gitignore` 中新增的 `desktop/vendor/render-runtime/` 规则
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add desktop/scripts/stage-render-runtime.js desktop/test/stage-render-runtime.test.js desktop/package.json .gitignore
+git commit -m "build(desktop): bundle render runtime into installer via stage script"
 ```
 
 ---
@@ -2064,19 +2323,16 @@ Expected: FAIL（`/render` 返回 404）
 
 ```javascript
   // 渲染运行时：Node 用 Electron 内置的（经 shim 包装），Chromium/ffmpeg/ffprobe
-  // 由 render-runtime 四级探测（见 §0.5.2）。缺失时 worker 返回可读错误而非崩溃。
+  // 随安装包分发（resources/render-runtime/，见 §0.5.2）。缺失时 worker 返回可读错误而非崩溃。
   const { resolveRuntimePaths, ensureCliShim } = require('./render-runtime')
   const runtime = resolveRuntimePaths({
     env: process.env,
-    userDataDir: app.getPath('userData'),
     resourcesDir: process.resourcesPath,
   })
   const shimDir = path.join(app.getPath('userData'), 'render-runtime-bin')
   const cliShim = ensureCliShim({
     electronPath: process.execPath,          // 必须原地引用，不可拷贝单文件
-    cliJsPath: path.join(
-      process.resourcesPath, 'render-runtime', 'node_modules', 'hyperframes', 'dist', 'cli.js'
-    ),
+    cliJsPath: runtime.cliJsPath,
     targetDir: shimDir,
   })
 
@@ -2408,6 +2664,10 @@ git commit -m "test(render): verify local-first render wiring end to end"
 - [ ] **桌面端 Electron 内置 Node 为 24**，与容器 `node:24-bookworm-slim`（v24.21.0）major 一致
 - [ ] **用户无需自装 Node**：渲染走 Electron 内置 Node（经 shim + `ELECTRON_RUN_AS_NODE=1`）
 - [ ] shim **原地引用** `process.execPath`（未拷贝 electron.exe 单文件，否则 DLL 缺失报 `0xC0000135`）
+- [ ] **渲染运行时随包分发**（无按需下载）：`stage-render-runtime.js` 产出 `vendor/render-runtime/`，
+      已挂进 `extraResources` 与 `pack`/`dist` 脚本
+- [ ] **`onnxruntime-node` 已排除**（536MB，渲染主路径动态 import，属可选抠像能力）
+- [ ] `vendor/render-runtime/` 已在 `.gitignore` 中（构建产物不入库）
 - [ ] 新增的 `render-runtime.js` 已登记进 `package.json` 的 `build.files`（否则安装版崩）
 - [ ] 云端渲染代码**未被删除或重构**，仅通过 `profiles` 与 env 开关下线
 - [ ] 本机渲染调用**走 `resolve_desktop_bridge`**（未重蹈 `browser_action` 静态 env 的断链）
