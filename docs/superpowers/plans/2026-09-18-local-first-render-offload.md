@@ -144,48 +144,68 @@ set ELECTRON_RUN_AS_NODE=1
 | --- | --- | --- |
 | `hyperframes` 包本体 | 37 MB | `dist/cli.js` 11 MB（**非自包含**，会 import 兄弟包） |
 | `node_modules`（全部依赖） | 700 MB | 其中 `onnxruntime-node` **独占 536 MB** |
-| `node_modules`（**排除 onnxruntime**） | **164 MB** | 压缩后仅 **38 MB** |
+| `node_modules`（**不含 onnxruntime**，对比基线） | 164 MB | 压缩后仅 38 MB（仅供参考） |
 | Chromium（`/usr/lib/chromium`） | **338 MB** | 体积主体，必须随包 |
 | ffmpeg + ffprobe | < 1 MB | 极小 |
 
 **关键结论：CLI 不是自包含的**（实测 `dist/cli.js` 单独复制后运行报
 `ERR_MODULE_NOT_FOUND: Cannot find package 'esbuild'`），**必须连 `node_modules` 一起带**。
 
-#### ⚠️ `onnxruntime-node` 建议排除（536 MB，非渲染必需）
+#### `onnxruntime-node` 一并打包（裁剪到 Windows/x64）
 
-实测确认它只服务两个**可选**能力，且全部是**动态 import + 友好报错**：
+**决策（用户明确指示）**：一并打包，供后续**图片处理**（抠像 / remove-background）使用。
+
+**体积优化（实测）**：该包的 `bin/napi-v3/` 下同时携带 **6 个平台**目录，共 536 MB，
+但 `dist/binding.js` 是**按运行时平台动态选择**的：
 
 ```javascript
-async function loadNative(name, load) {
-  try { return await load(); }
-  catch (err) { throw new Error(
-    `remove-background needs the optional native module '${name}', which isn't available
-     (${err.message}). Install it with \`npm i ${name}\`, or reinstall hyperframes with
-     optional dependencies enabled.`); }
-}
-// 用途一：remove-background（抠像）
-const ort = await loadNative("onnxruntime-node", () => import("onnxruntime-node"));
-// 用途二：localEmbedder（本地语义检索）
-async function localRuntimeAvailable() { try { await import("onnxruntime-node"); return true; } catch { return false; } }
+exports.binding = require(`../bin/napi-v3/${process.platform}/${process.arch}/onnxruntime_binding.node`);
 ```
 
-- **`render` 主路径不依赖它**——仅在「抠像」与「本地语义检索」时才加载，缺失时给出
-  明确可读的错误而非崩溃。
-- **保留的代价**：压缩后从 38 MB → 320 MB（多 282 MB）。
-- **决策点**：默认**排除**。若后续 composition 要用「抠像」，再加回。
+因此 Windows x64 安装包**只需 `win32/x64` 一个目录**，其余可删：
 
-#### 打包体积预估
+| 目录 | 体积 | Windows 安装包是否需要 |
+| --- | --- | --- |
+| `linux/x64` | **370 MB** | ❌ 删（这是容器用的，占了大头） |
+| `linux/arm64` | 34 MB | ❌ 删 |
+| `darwin/x64` | 35 MB | ❌ 删 |
+| `darwin/arm64` | 31 MB | ❌ 删 |
+| `win32/x64` | **34 MB** | ✅ **保留**（压缩后约 15 MB） |
+| `win32/arm64` | 34 MB | ⚠️ 默认删；若要支持 Windows on ARM 则保留 |
+
+**裁剪后：536 MB → 68 MB**（仅留 win32 全 arch）或 **34 MB**（仅 win32/x64）。
+
+> **实现要点**：`stage-render-runtime.js` 复制 `onnxruntime-node` 时，
+> 删除 `bin/napi-v3/` 下除 `win32/` 外的平台目录。（不要删整个包——`dist/` 与
+> `package.json` 仍需保留。）
+
+**✅ 关键风险已实测排除：Electron 能否加载该原生模块？**
+
+原生 `.node` 模块跨运行时（Node ↔ Electron）常有 ABI 不匹配问题，故专门验证：
+
+| 验证项 | 结果 |
+| --- | --- |
+| 模块类型 | **N-API v3**（`bin/napi-v3/`，`binary.napi_versions: [3]`）——ABI 稳定接口 |
+| 是否源码编译型 | 否（无 `binding.gyp`，预编译分发） |
+| Electron 33（**Node 20.18.3**）能否 `require` 该 `.node` | ✅ `BINDING_LOADED=true`，导出 `InferenceSession` / `initOrtOnce` |
+| 能否加载完整入口 `dist/index.js` | ✅ `FULL_ENTRY_LOADED=true`，`listSupportedBackends` 可用 |
+
+结论：**N-API v3 的 ABI 稳定性成立，Electron 可直接加载，无需针对 Electron 重新编译**
+（也不需要 `electron-rebuild`）。同时注意：这也意味着**它不依赖 Node 版本**，
+即使将来调整 Node 版本也不会失效。
+
+#### 打包体积预估（含 onnxruntime）
 
 ```
-node_modules（排除 onnxruntime）  164 MB  →  压缩约 38 MB
-Chromium                          338 MB  →  压缩约 120 MB
-ffmpeg + ffprobe                  < 1 MB
-------------------------------------------------------
-合计原始                          约 502 MB
-安装包增量（NSIS 压缩后）          约 160–200 MB
+node_modules（含 onnxruntime-node，裁剪到 win32/x64）  164 + 34 = 198 MB  →  压缩约 53 MB
+Chromium                                              338 MB  →  压缩约 120 MB
+ffmpeg + ffprobe                                      < 1 MB
+--------------------------------------------------------------------------
+合计原始                                               约 536 MB
+安装包增量（NSIS 压缩后）                              约 175–215 MB
 ```
 
-> 若保留 `onnxruntime-node`，安装包增量再 **+282 MB**（约 450 MB）。
+> 对比：若**不裁剪** onnxruntime 的平台目录，安装包增量将 **+282 MB**（约 450 MB）。
 
 #### 落地方式：照搬既有 `stage-cua-driver.js` 范式
 
@@ -197,7 +217,7 @@ ffmpeg + ffprobe                  < 1 MB
 
 | 文件 | 职责 |
 | --- | --- |
-| `desktop/scripts/stage-render-runtime.js` | 暂存脚本：把 `node_modules`（排除 onnxruntime）、`cli.js`、Chromium、ffmpeg/ffprobe 复制到 `desktop/vendor/render-runtime/` |
+| `desktop/scripts/stage-render-runtime.js` | 暂存脚本：把 `node_modules`（含 onnxruntime，裁剪到 win32）、`cli.js`、Chromium、ffmpeg/ffprobe 复制到 `desktop/vendor/render-runtime/` |
 | `desktop/render-runtime.js` | 运行时定位（见 Task 0B）：解析 vendor 路径 + 生成 CLI shim |
 
 **`extraResources` 追加**（`desktop/package.json`）：
@@ -280,7 +300,7 @@ cd api && python -m pytest test/path/to/test.py::test_name -v   # 单测
 | `desktop/bridge.js` | `targets` 加 `/render` 与 `/artifact` 路由 |
 | `desktop/main.js` | 新增 render worker 的 token/端口/startWorker/createBridge 参数；**用 Electron 内置 Node 作为渲染子进程的 node** |
 | `desktop/render-runtime.js` | **新建**：运行时定位（解析随包 `resources/render-runtime/`）+ 生成 CLI shim |
-| `desktop/scripts/stage-render-runtime.js` | **新建**：打包前暂存 node_modules（排除 onnxruntime）/Chromium/ffmpeg/ffprobe 到 `vendor/render-runtime/` |
+| `desktop/scripts/stage-render-runtime.js` | **新建**：打包前暂存 node_modules（含 onnxruntime，裁剪到 win32）/Chromium/ffmpeg/ffprobe 到 `vendor/render-runtime/` |
 | `.gitignore` | 加 `desktop/vendor/render-runtime/`（构建产物不入库） |
 | `api/scripts/pyinstaller/worker.spec` | `hiddenimports` 加 `scripts.render_worker` |
 | `docker/docker-compose.yaml` | 云端 render worker 改为默认不启动（保留 profile，可随时接通） |
@@ -618,6 +638,45 @@ test('stage script skips gracefully when source is absent', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('stage script prunes non-target onnxruntime platforms', () => {
+  // 构造假的 node_modules/onnxruntime-node/bin/napi-v3/{win32,linux,darwin}
+  // 断言：暂存后仅保留 win32，其余被删（536MB → 68MB 的核心优化）
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-src-'))
+  const dst = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-dst-'))
+  try {
+    const napi = path.join(src, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v3')
+    for (const p of ['win32', 'linux', 'darwin']) {
+      fs.mkdirSync(path.join(napi, p, 'x64'), { recursive: true })
+      fs.writeFileSync(path.join(napi, p, 'x64', 'onnxruntime_binding.node'), 'x')
+    }
+    // 加一个必须被保留的普通包，验证没有误删
+    fs.mkdirSync(path.join(src, 'node_modules', 'hyperframes'), { recursive: true })
+    fs.writeFileSync(path.join(src, 'node_modules', 'hyperframes', 'keep.txt'), 'k')
+
+    execFileSync(process.execPath, [SCRIPT], {
+      env: {
+        ...process.env,
+        RENDER_RUNTIME_SOURCE_DIR: src,
+        STAGE_TARGET_DIR: dst,
+        ORT_PLATFORMS: 'win32',
+      },
+      encoding: 'utf-8',
+    })
+
+    const outNapi = path.join(dst, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v3')
+    assert.ok(fs.existsSync(path.join(outNapi, 'win32')), 'win32 应保留')
+    assert.ok(!fs.existsSync(path.join(outNapi, 'linux')), 'linux 应被裁剪')
+    assert.ok(!fs.existsSync(path.join(outNapi, 'darwin')), 'darwin 应被裁剪')
+    assert.ok(
+      fs.existsSync(path.join(dst, 'node_modules', 'hyperframes', 'keep.txt')),
+      '其它包不应被误删',
+    )
+  } finally {
+    fs.rmSync(src, { recursive: true, force: true })
+    fs.rmSync(dst, { recursive: true, force: true })
+  }
+})
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -634,39 +693,55 @@ Expected: FAIL（脚本不存在）
 // extraResources 打进安装包。随包分发以彻底避免运行时下载（见 plan §0.5.2）。
 //
 // 需要暂存的内容：
-//   1. node_modules/（**排除 onnxruntime-node**，536MB 且渲染主路径不需要）
+//   1. node_modules/（**含 onnxruntime-node**，供图片处理/抠像使用）
 //   2. Chromium（chrome-headless-shell）
 //   3. ffmpeg + ffprobe
 //
-// 体积参考：排除 onnxruntime 后 node_modules 约 164MB（压缩 38MB），
-// Chromium 约 338MB。安装包增量约 160–200MB。
+// onnxruntime-node 裁剪：其 bin/napi-v3/ 带 6 个平台共 536MB，但 dist/binding.js
+// 是按 process.platform/arch 动态 require 的，故只保留 win32/ 即可：
+//   536MB → 68MB（仅 win32 全 arch）
+//
+// 体积参考：node_modules 约 198MB（含裁剪后的 onnxruntime），Chromium 约 338MB。
+// 安装包增量约 175–215MB。
 //
 // 源缺失时打印提示并跳过（不阻断打包），与 stage-cua-driver.js 行为一致。
 
 const fs = require('node:fs')
 const path = require('node:path')
 
-const EXCLUDED = new Set(['onnxruntime-node'])
+// onnxruntime-node 跨平台裁剪：仅保留目标平台（默认 win32）
+const TARGET_ORT_PLATFORMS = (process.env.ORT_PLATFORMS || 'win32')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
 
-function shouldSkip(name) {
-  return EXCLUDED.has(name)
-}
-
-function copyDir(src, dest) {
+function copyDir(src, dest, { skipNames } = {}) {
   fs.mkdirSync(dest, { recursive: true })
   let count = 0
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (shouldSkip(entry.name)) continue
+    if (skipNames && skipNames.has(entry.name)) continue
     const from = path.join(src, entry.name)
     const to = path.join(dest, entry.name)
     if (entry.isDirectory()) {
-      count += copyDir(from, to)
+      count += copyDir(from, to, { skipNames })
     } else if (entry.isFile()) {
       fs.copyFileSync(from, to)
       count += 1
     }
   }
   return count
+}
+
+function pruneOnnxPlatforms(ortDir) {
+  const napiDir = path.join(ortDir, 'bin', 'napi-v3')
+  if (!fs.existsSync(napiDir)) return
+  for (const entry of fs.readdirSync(napiDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    if (!TARGET_ORT_PLATFORMS.includes(entry.name)) {
+      fs.rmSync(path.join(napiDir, entry.name), { recursive: true, force: true })
+      console.log(`[stage-render-runtime] 裁剪 onnxruntime 平台目录: ${entry.name}`)
+    }
+  }
 }
 
 function main() {
@@ -692,7 +767,10 @@ function main() {
   }
 
   const copied = copyDir(nodeModules, path.join(targetDir, 'node_modules'))
-  console.log(`[stage-render-runtime] node_modules 已暂存（${copied} 个文件，已排除 onnxruntime-node）`)
+  console.log(`[stage-render-runtime] node_modules 已暂存（${copied} 个文件，含 onnxruntime-node）`)
+
+  // 裁剪 onnxruntime 的非目标平台目录（536MB → 68MB）
+  pruneOnnxPlatforms(path.join(targetDir, 'node_modules', 'onnxruntime-node'))
 
   for (const name of ['chrome-headless-shell', 'chrome-headless-shell.exe', 'ffmpeg', 'ffmpeg.exe', 'ffprobe', 'ffprobe.exe']) {
     const src = path.join(sourceDir, name)
@@ -704,8 +782,8 @@ function main() {
 
   fs.writeFileSync(
     path.join(targetDir, 'SOURCE.txt'),
-    `Staged from ${sourceDir}\nhyperframes + Chromium + ffmpeg/ffprobe\n` +
-      `onnxruntime-node excluded (not required by render path)\n`,
+    `Staged from ${sourceDir}\nhyperframes + Chromium + ffmpeg/ffprobe + onnxruntime-node\n` +
+      `onnxruntime platforms kept: ${TARGET_ORT_PLATFORMS.join(',')}\n`,
     'utf-8',
   )
   console.log(`[stage-render-runtime] done → ${targetDir}`)
@@ -743,7 +821,7 @@ desktop/vendor/render-runtime/
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `cd desktop && node --test test/stage-render-runtime.test.js`
-Expected: PASS（2 passed）
+Expected: PASS（3 passed）
 
 - [ ] **Step 6: 验证暂存产物被 git 忽略**
 
@@ -2666,7 +2744,8 @@ git commit -m "test(render): verify local-first render wiring end to end"
 - [ ] shim **原地引用** `process.execPath`（未拷贝 electron.exe 单文件，否则 DLL 缺失报 `0xC0000135`）
 - [ ] **渲染运行时随包分发**（无按需下载）：`stage-render-runtime.js` 产出 `vendor/render-runtime/`，
       已挂进 `extraResources` 与 `pack`/`dist` 脚本
-- [ ] **`onnxruntime-node` 已排除**（536MB，渲染主路径动态 import，属可选抠像能力）
+- [ ] **`onnxruntime-node` 已含入并裁剪到 win32**（536MB → 68MB；图片处理可用）
+- [ ] **已验证 Electron 能加载 onnxruntime 原生模块**（N-API v3，ABI 稳定，无需 electron-rebuild）
 - [ ] `vendor/render-runtime/` 已在 `.gitignore` 中（构建产物不入库）
 - [ ] 新增的 `render-runtime.js` 已登记进 `package.json` 的 `build.files`（否则安装版崩）
 - [ ] 云端渲染代码**未被删除或重构**，仅通过 `profiles` 与 env 开关下线
