@@ -1127,12 +1127,29 @@ cd api && python -m pytest test/internal/service/memory/test_consolidation_owner
 
 1. 形参 `user_id: str` → `owner_key: str`（改名，含 docstring 的 `Args` 说明）；
 2. 方法体内所有 `user_id` 局部变量与 Cypher/SQL 绑定**值**改用 `owner_key`；
-3. **Neo4j 归属谓词改为走访问器**（这是属性分离的落点）：把形如
-   `MATCH (e:Episode {user_id: $user_id})` 改为
-   `MATCH (e:Episode) WHERE {owner.neo4j_filter_condition("e")}`，参数改为 `**owner.neo4j_props()`；
-   形如 `MERGE (c:Community {user_id: $user_id, key: $key})` 改为
-   `MERGE (c:Community {key: $key}) ON CREATE SET c += $owner_props`（`owner_props = owner.neo4j_props()`）。
-   **用户态产物与改造前逐字节相同**（`user_id = $user_id` + `{"user_id": "<裸 uuid>"}`），故存量结果不变。
+3. **Neo4j 归属谓词改为走访问器**（这是属性分离的落点），分两类：
+   - **查询过滤**：把形如 `MATCH (e:Episode {user_id: $user_id})` 改为
+     `MATCH (e:Episode) WHERE {owner.neo4j_filter_condition("e")}`，参数改为 `**owner.neo4j_props()`。
+   - **`MERGE` 归属键**（⚠️ 易错点）：**必须把归属属性保留在 MERGE 模式内**，
+     **不得**退化成只按业务键（`key`）MERGE —— 那样会让不同用户的同名 Community
+     合并到同一节点（跨主体污染，严重回归）。正确写法是用 `neo4j_props()` 的**键名**拼出模式片段：
+
+     ```python
+     props = owner.neo4j_props()
+     merge_props = ", ".join(f"{name}: ${name}" for name in props)
+     cypher = f"""
+     MERGE (c:Community {{{merge_props}, key: $key}})
+     ON CREATE SET c.node_id = $community_id, ...
+     ON MATCH SET c.last_active_at = $now_iso, ...
+     """
+     ```
+
+     用户态产出 `MERGE (c:Community {user_id: $user_id, key: $key})` —— 与改造前**逐字节相同**；
+     admin 态产出 `{admin_user_id: $admin_user_id[, agent_id: $agent_id], key: $key}`，天然按主体隔离。
+     **写入归属属性**同理用 `SET c += $owner_props`（键名正确），不要硬编码 `SET c.user_id = ...`。
+   - **`CREATE` 建节点**（如 `_create_evolved_community`、`SkillEmergence` 建 SemanticMemory）：
+     把内联的 `user_id: $user_id,` 属性行改为 `SET n += $owner_props`（或 `CREATE (n:Label $owner_props)` 形式），
+     使属性名由 `neo4j_props()` 决定；用户态仍写 `user_id`，逐字节等价。
 4. `Skill.user_id` 属性赋值（`skill_emergence.py` 的 `new_skill.user_id = user_id`）改为
    `new_skill.user_id = owner_key`（User 主体，值仍为裸 UUID）；
 5. **PG 侧**：`consolidation_engine.py` 的 `_find_similar_nodes_pgvector` 用 helper：
@@ -1800,6 +1817,44 @@ Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。a
 因 admin 写路径未接线（P3c），当前无实际影响；但属「属性级分离」未贯通的残留点，
 P3c 接线 admin 记忆读写时须一并改造 `ProfileGraphService` 的归属谓词（改用
 `neo4j_filter_condition` / `neo4j_props`）。
+
+### 已知缺口五：`Skill` 节点的 `MERGE` 键不含归属（P3b 未修，改造前既有）
+
+`SkillEmergence._persist_skill` 用 `MERGE (s:Skill {id: $skill_id})`，而
+`skill_id = f"skill_{md5(name)[:12]}"`（`api/internal/service/memory/skill_emergence.py`）——
+**不同主体的同名技能会算出同一个 `skill_id`**。实测（2026-09）在真实 Neo4j 上：
+先写 `{user_id: u1}` 再写 `{admin_user_id: a1}`，同一 `id` 节点会变成**同时带两个归属属性**的
+混装节点，违反属性分离不变量（Task 8 的 `test_neo4j_no_mixed_owner_nodes` 会报出）。
+
+- 纯用户态下改造前后行为一致（`_find_existing_skill` 两侧均按主体过滤），**非本次引入**；
+- admin 落库后会把 admin 属性叠加到用户节点上。因 admin 写路径未接线（P3c），当前不可触发。
+- 修法（P3c）：把归属属性并入 MERGE 模式（与 Community 的 `merge_props` 写法一致），
+  或把 `skill_id` 改为含主体键的派生值。
+
+### 已知缺口六：`CommunityInductionEngine._collect_eligible` 的 `$cutoff` 未绑定（P3b 未修，改造前既有）
+
+`cypher_groups` 引用 `$cutoff` 但绑定字典只给归属参数（`community_induction.py`）。
+实测真实 Neo4j 报 `Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): cutoff`，
+异常被 `except` 吞掉 → `groups = []` → **Entity 聚合候选在生产中恒为空**（Community 归纳的
+Entity 分组路径实际失效）。
+
+- 该缺口在 P3b 改造前即存在（`1201116` 版本同样只绑 `user_id`），**非本次引入**；
+- Task 5 **刻意未修**：补上绑定会把 `entity_group` 候选从「恒空」变为「有值」，
+  改变用户态行为与 LLM 归纳输入，违反 P3b「用户路径零行为变化」契约；
+- 修法与验证应作为**独立修复任务**（需评估对 Community 归纳结果的影响），已在代码注释登记。
+
+### 已知缺口七：`SkillEmergence._node_to_skill` 只读 `user_id`，admin 治理链静默空转（P3b 未修）
+
+`SkillEmergence._node_to_skill` 用 `user_id=node.get("user_id", "")` 反序列化节点归属
+（`api/internal/service/memory/skill_emergence.py`）。admin 主体节点的归属属性是
+`admin_user_id`，故该处会取到空串 → `_persist_skill` 内 `MemoryOwnerKey.parse("")` 抛错
+→ 被 `except` 吞成 warning。
+
+- 后果：admin 主体下 `curate_skills` 的「读→改→写」回路由「读得到」变成「写不回」，
+  且 `scanned` 计数仍自增，属**静默假成功**；
+- 用户态不受影响（`user_id` 键存在且为裸 UUID）；因 admin 写路径未接线（P3c），当前不可触发；
+- 修法（P3c）：`_node_to_skill` 按主体类型读取对应属性（`user_id` 或 `admin_user_id` [+ `agent_id`]），
+  与 `neo4j_props()` 的写入形态对称。
 ```
 
 - [ ] **Step 4: 更新记忆系统文档的「读路径」表述**

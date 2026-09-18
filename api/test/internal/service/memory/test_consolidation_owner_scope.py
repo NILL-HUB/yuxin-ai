@@ -126,9 +126,7 @@ def test_query_old_episodes_scopes_admin_owner_keeping_clauses():
     assert "MATCH (e:Episode)" in cypher
     assert "e.admin_user_id = $admin_user_id AND e.agent_id IS NULL" in cypher
     assert "e.user_id = $user_id" not in cypher
-    for clause in ("LIMIT 100", "ORDER BY", "RETURN", "e.processed IS NULL"):
-        if clause == "ORDER BY":
-            continue
+    for clause in ("LIMIT 100", "RETURN", "e.processed IS NULL"):
         assert clause in cypher, f"既有子句 {clause} 不得丢失"
     assert params["admin_user_id"] == str(admin_id)
 
@@ -213,6 +211,78 @@ def test_user_owner_predicate_is_byte_identical():
 
     assert owner.neo4j_filter_condition("e") == "e.user_id = $user_id"
     assert owner.neo4j_props() == {"user_id": str(account_id)}
+
+
+# =========================================================
+# CREATE 分支的归属写入（属性分离的另一半——新增节点必须按主体落归属属性）
+# =========================================================
+
+
+def test_create_semantic_memory_sets_owner_props():
+    """`_create_semantic_memory` 建节点必须写主体归属属性（用户态写 user_id）。"""
+    from internal.service.memory.consolidation_engine import ConsolidationEngine
+
+    account_id = uuid4()
+    owner_key = MemoryOwnerKey.for_user(account_id).to_key()
+    driver = _CapturedDriver()
+    engine = _engine_with_driver(ConsolidationEngine, driver)
+
+    engine._create_semantic_memory(driver, owner_key, "摘要内容", [])
+
+    cypher, params = driver.calls[0]
+    assert "CREATE (s:SemanticMemory:MemoryNode" in cypher
+    assert "SET s += $owner_props" in cypher
+    assert params["owner_props"] == {"user_id": str(account_id)}
+
+
+def test_create_evolved_community_sets_owner_props_for_admin():
+    """演化出的新 Community 必须按主体落归属属性（判别性用例）。"""
+    from internal.service.memory.community_induction import CommunityInductionEngine
+
+    admin_id, agent_id = uuid4(), uuid4()
+    owner_key = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).to_key()
+    driver = _CapturedDriver()
+    engine = _engine_with_driver(CommunityInductionEngine, driver)
+
+    engine._create_evolved_community(
+        owner_key, "old-node", {"key": "k1", "title": "t", "summary": "s"}, []
+    )
+
+    cypher, params = driver.calls[0]
+    assert "CREATE (new:Community" in cypher
+    assert params["owner_props"] == {
+        "admin_user_id": str(admin_id),
+        "agent_id": str(agent_id),
+    }
+    assert "user_id" not in params["owner_props"]
+
+
+def test_register_seed_hint_uses_owner_key_redis_key():
+    """种子提示的 Redis 键必须以 owner_key 作主体片段（用户态 == 裸 uuid）。"""
+    from internal.service.memory.skill_emergence import SkillEmergence
+
+    account_id = uuid4()
+    owner_key = MemoryOwnerKey.for_user(account_id).to_key()
+
+    class _RecordingRedis:
+        def __init__(self):
+            self.setex_calls = []
+
+        def setex(self, key, ttl, value):
+            self.setex_calls.append((key, value))
+
+    redis = _RecordingRedis()
+    emergence = SkillEmergence.__new__(SkillEmergence)
+    emergence._neo4j_driver = None
+    emergence._redis = redis
+
+    emergence.register_seed_hint(
+        owner_key=owner_key, skill_name="代码审查", polarity="positive", source="explicit_statement"
+    )
+
+    assert redis.setex_calls, "应写入种子提示键"
+    key, _value = redis.setex_calls[0]
+    assert key.startswith(f"seed:{account_id}:"), f"键主体片段必须是 owner_key，实际 {key}"
 
 
 # =========================================================
