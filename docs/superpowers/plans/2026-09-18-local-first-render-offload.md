@@ -50,6 +50,107 @@
 4. **渲染后半段强依赖服务端**：本机只能产出 MP4，入库/索引必须回传服务端。分界点在 `render_service.py` 的 `store_render_output`。
 5. **composition 引用外网 CDN**（`cdn.jsdelivr.net` 的 GSAP、Google Fonts），本机渲染同样需要外网可达。
 
+### 0.5.1 Node 运行时：用户**无需**自装，用 Electron 内置的 Node（版本必须对齐 24）
+
+**问题**：HyperFrames 需要 Node 才能跑。用户装了桌面端后，是否还得自己装 Node？
+
+**答案：不需要，但前提是把 Electron 升级到 43.7.0+。**
+
+**依据（已实测）**：
+
+1. **HyperFrames 有硬性版本门禁**。入口 `bin/hyperframes.mjs` 主动校验：
+   ```javascript
+   import { runtimeVersionError } from "../dist/runtimeVersion.js";
+   const error = runtimeVersionError(process.versions.node);
+   if (error) { console.error(error); process.exitCode = 1; }
+   ```
+   而 `runtimeVersion.js` 中 `MINIMUM_NODE_MAJOR = 22`，低于即报
+   `HyperFrames requires Node.js >= 22 (current: x.y.z)` 并退出。
+
+2. **Electron 内置 Node**，可用 `ELECTRON_RUN_AS_NODE=1` 把 `electron.exe` 当 node 用
+   （实测可执行脚本、可 `import` ESM）。因此**无需随包额外分发 Node**。
+
+3. **但项目当前 Electron 33 内置的是 Node 20.18.3，会被门禁拒绝**。实测对照：
+
+   | Electron | 内置 Node | 是否满足 |
+   | --- | --- | --- |
+   | 33.4.11（**当前**） | 20.18.3 | ❌ 低于 22 |
+   | 34.5.8 | 20.19.1 | ❌ |
+   | 35.7.5 | 22.16.0 | ⚠️ 可用但版本与容器不一致 |
+   | **43.7.2** | **24.21.0** | ✅ **与容器完全一致** |
+   | 44.4.2 | 24.21.0 | ✅ |
+
+4. **版本对齐要求（用户明确指示）**：容器 `Dockerfile.render` 用
+   `ARG NODE_IMAGE=node:24-bookworm-slim`，实测容器内 `node -v` = **v24.21.0**。
+   为避免「本机 22 / 云端 24」双版本导致的难排查 BUG，**桌面端必须选内置 Node 24 的
+   Electron**，即 **`electron@^43.7.0`**（内置 Node 24.21.0，与容器逐位一致）。
+
+> **为什么必须对齐**：渲染产物由本机与云端两条路径产出（§三级路由），若两边 Node
+> 大版本不同，同一 composition 可能出现「本机成功、云端失败」或输出像素不一致，
+> 而报错信息往往不指向 Node 版本，排查成本极高。
+
+**落地要点**：
+
+- `desktop/package.json`：`electron` 由 `^33.0.0` 升到 **`^43.7.0`**，
+  `electron-builder` 相应升到支持该 Electron 的版本。
+- **如何把 Electron 的 Node 喂给渲染子进程**（机制已实测，见下）。
+- **Chromium 与 ffmpeg/ffprobe 仍需另行提供**——Electron 自带的
+  `chrome.exe` / `ffmpeg.dll` **不能**用于 HyperFrames（前者 `--version` 行为不符、
+  后者是 DLL 不是 CLI 可执行文件）。这部分见 §0.5.2 的分发策略。
+
+#### 把 Electron 内置 Node 接入渲染链路（本次已实测验证）
+
+渲染子进程的调用形态是：`hyperframes_renderer.build_render_command()` 生成
+`[*_resolve_hyperframes_cli(settings), "render", ...]`，其中
+`_resolve_hyperframes_cli()` 在配置了 `HYPERFRAMES_CLI_BIN` 时**只返回单个可执行文件**
+（`[explicit]`）。而 HyperFrames CLI 实际是个 **Node 脚本**，需要
+`node <cli.js> render ...` 两个 token——**单个可执行文件路径不够用**。
+
+**结论：必须用 shim 包装。** 实测验证如下：
+
+| 验证项 | 结果 |
+| --- | --- |
+| `electron.exe` 设 `ELECTRON_RUN_AS_NODE=1` 能否当 node 用 | ✅ 可执行外部脚本，`process.versions.node` 正确输出（当前 33 为 20.18.3） |
+| 能否正确透传 CLI 参数 | ✅ `argv=["render","--quality","standard"]` 完整保留 |
+| `electron.exe` 拷贝成单独文件再运行 | ❌ **失败**（退出码 `0xC0000135` = DLL 缺失）——**必须原地使用 dist 目录内的可执行文件** |
+| subprocess **不带 shell** 能否执行 `.cmd` shim 并透传参数 | ✅ `SHIM_FORWARDED=["render","--quality","standard","--fps","30"]` |
+
+因此桌面端需生成一个 shim（Windows 为 `.cmd`，macOS/Linux 为 `#!/bin/sh` 脚本），
+内容等价于：
+
+```bat
+@echo off
+set ELECTRON_RUN_AS_NODE=1
+"<安装目录>\electron.exe" "<安装目录>\resources\render-runtime\cli.js" %*
+```
+
+然后令 `HYPERFRAMES_CLI_BIN=<该 shim 路径>`。要点：
+
+- shim 内**必须原地引用 electron.exe**（不可拷贝单文件），并**显式设 `ELECTRON_RUN_AS_NODE=1`**；
+- `cli.js` 是 HyperFrames「本地安装」产物（`node_modules/hyperframes/dist/cli.js`），
+  随包放在 `resources/render-runtime/`；
+- shim 路径需登记进 `build.extraResources`，且生成逻辑要在「首次运行」时确保存在
+  （安装目录只读，故实际应生成到 `userData/` 并指向安装目录的 electron.exe）。
+
+### 0.5.2 渲染运行时（Chromium + ffmpeg/ffprobe）的分发策略
+
+Node 由 Electron 内置解决后，仍需为 CLI 提供三件外部二进制。**禁止随包全量携带
+~500 MB**，采用**四级探测 + 按需下载**（复用 `cua-driver-host.js` 既有范式）：
+
+| 优先级 | 来源 | 说明 |
+| --- | --- | --- |
+| 1 | 显式环境变量 | `HYPERFRAMES_BROWSER_PATH` 等已设则直接用（开发/高级用户） |
+| 2 | 安装包目录 | `resources/render-runtime/`（可选内置，见下） |
+| 3 | 用户数据目录 | `userData/render-runtime/`（**首次渲染时按需下载并缓存**） |
+| 4 | 系统 PATH | 探测系统已装的 chromium/chrome-headless-shell/ffmpeg/ffprobe |
+
+**推荐组合**：Chromium（338 MB）走「第 3 级按需下载」，ffmpeg+ffprobe（<1 MB）
+走「第 2 级随包内置」——小件内置避免下载失败，大件按需避免安装包膨胀。
+
+> 按需下载需处理：断点续传、校验（sha256）、离线兜底提示。
+> **下载源与合规**：Chromium 用官方 `chrome-for-testing` 渠道，ffmpeg 用项目既有
+> 供应链（与 `Dockerfile.render` 保持一致），避免引入新第三方来源。
+
 ### 0.6 测试命令
 
 ```bash
@@ -104,21 +205,298 @@ cd api && python -m pytest test/path/to/test.py::test_name -v   # 单测
 
 | 文件 | 改动 |
 | --- | --- |
+| `desktop/package.json` | **`electron` 由 `^33.0.0` 升到 `^43.7.0`**（内置 Node 24.21.0，与容器对齐）；`electron-builder` 同步升级 |
 | `api/scripts/worker_super.py` | 子命令白名单两处加 `render`；`_SERVICE_SUPPORTS_HOST_PORT` 加 `render` |
 | `api/config/config.py` | 新增 `RENDER_LOCAL_ENABLED` / `RENDER_CLOUD_FALLBACK_ENABLED` 两个开关 |
 | `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py` | `_dispatch_render` 改为三级路由（本机优先 → 云端回退） |
-| `desktop/bridge.js` | `targets` 加 `/render` 路由 |
-| `desktop/main.js` | 新增 render worker 的 token/端口/startWorker/createBridge 参数 |
+| `desktop/bridge.js` | `targets` 加 `/render` 与 `/artifact` 路由 |
+| `desktop/main.js` | 新增 render worker 的 token/端口/startWorker/createBridge 参数；**用 Electron 内置 Node 作为渲染子进程的 node** |
+| `desktop/render-runtime.js` | **新建**：渲染运行时（Chromium/ffmpeg/ffprobe）四级探测 + 按需下载（见 §0.5.2） |
 | `api/scripts/pyinstaller/worker.spec` | `hiddenimports` 加 `scripts.render_worker` |
 | `docker/docker-compose.yaml` | 云端 render worker 改为默认不启动（保留 profile，可随时接通） |
 | `docs/deployment-single-node.md` | 同步「云端渲染默认关闭、本机优先」 |
 | `docs/prd/modules/09-desktop-client.md` | 登记 render worker 子命令与桥路由 |
+| `docs/prd/modules/08-os-automation.md` | 桥路由表补 `/render` 与 `/artifact` |
 
 ### 不改动（重要）
 
 - `api/internal/task/render_tasks.py`、`api/internal/service/render_service.py`、`api/internal/service/render_guard_service.py`
   —— 云端渲染链路**整体保留**，仅通过开关决定是否派发。
 - `desktop_device` 表、`desktop_bridge_resolver.py`、`store_render_output`。
+- `api/Dockerfile.render` 的 `node:24-bookworm-slim` —— 容器侧已是 24，**无需改动**；
+  桌面端对齐的是它。
+
+---
+
+## Task 0: 桌面端 Electron 升级到内置 Node 24（前置任务）
+
+**为什么必须先做**：HyperFrames 门禁要求 Node ≥ 22，而当前 Electron 33 内置 Node 20.18.3，
+**渲染在本机根本起不来**。且按用户要求，须与容器（Node 24.21.0）**精确对齐**避免版本漂移。
+
+**Files:**
+- Modify: `desktop/package.json`（`devDependencies.electron`、`devDependencies.electron-builder`）
+- Test: `desktop/test/electron-version.test.js`（新建）
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `desktop/test/electron-version.test.js`：
+
+```javascript
+const { test } = require('node:test')
+const assert = require('node:assert')
+const { execFileSync } = require('node:child_process')
+const path = require('node:path')
+const fs = require('node:fs')
+
+// 容器侧基准（api/Dockerfile.render 的 ARG NODE_IMAGE=node:24-bookworm-slim，实测 24.21.0）
+const REQUIRED_NODE_MAJOR = 24
+
+function electronBinary() {
+  const base = path.join(__dirname, '..', 'node_modules', 'electron', 'dist')
+  if (process.platform === 'win32') return path.join(base, 'electron.exe')
+  if (process.platform === 'darwin') return path.join(base, 'Electron.app', 'Contents', 'MacOS', 'Electron')
+  return path.join(base, 'electron')
+}
+
+test('desktop electron bundles Node 24 to match the render container', () => {
+  const bin = electronBinary()
+  assert.ok(fs.existsSync(bin), 'electron 二进制不存在，请先 npm install')
+  const out = execFileSync(bin, ['-e', 'console.log(process.versions.node)'], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    encoding: 'utf-8',
+  }).trim()
+  const major = Number.parseInt(out.split('.')[0], 10)
+  assert.equal(
+    major,
+    REQUIRED_NODE_MAJOR,
+    `Electron 内置 Node 为 ${out}，要求 major=${REQUIRED_NODE_MAJOR}（与容器 node:24 对齐）`,
+  )
+})
+
+test('electron binary can run as node with ESM support', () => {
+  const bin = electronBinary()
+  const out = execFileSync(
+    bin,
+    ['-e', "import('node:module').then(() => console.log('esm-ok'))"],
+    {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      encoding: 'utf-8',
+    },
+  ).trim()
+  assert.match(out, /esm-ok/)
+})
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd desktop && node --test test/electron-version.test.js`
+Expected: FAIL（`Electron 内置 Node 为 20.18.3，要求 major=24`）
+
+- [ ] **Step 3: 升级 Electron**
+
+修改 `desktop/package.json` 的 `devDependencies`：
+
+```json
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^43.7.0",
+    "electron-builder": "^26.0.0"
+  },
+```
+
+> **版本核实（已查 npm registry）**：`electron@^43.7.0` 解析到 `43.7.3`（内置 Node 24.21.0）；
+> `electron-builder` 最新为 `26.15.3`，原 `^25.0.0` 需一并升级（25.x 对 Electron 43 支持不全）。
+> 当前实际值：`electron: ^33.0.0`、`electron-builder: ^25.0.0`。
+
+重新安装：
+
+```bash
+cd desktop && npm install
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `cd desktop && node --test test/electron-version.test.js`
+Expected: PASS（2 passed）——此时内置 Node 应为 24.21.0
+
+- [ ] **Step 5: 回归既有桌面端测试（跨 10 个大版本，必须验）**
+
+Run: `cd desktop && node --test`
+Expected: 全部通过。若因 Electron API 变更失败，按报错逐项修（用到的均为 `app` /
+`BrowserWindow` / `ipcMain` / `shell` / `safeStorage` / `Notification` / `session` /
+`Menu` / `screen` / `Tray` 等稳定 API，预期风险低）。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add desktop/package.json desktop/package-lock.json desktop/test/electron-version.test.js
+git commit -m "build(desktop): upgrade electron to 43.x for bundled Node 24 aligned with render container"
+```
+
+---
+
+## Task 0B: 渲染运行时探测与 shim（把 Electron 的 Node 接进 CLI）
+
+**为什么需要**：`HYPERFRAMES_CLI_BIN` 只接受**单个可执行文件路径**，但 HyperFrames CLI 是
+Node 脚本，需要 `node cli.js` 两段式调用；且 Electron 的 `electron.exe` 必须设
+`ELECTRON_RUN_AS_NODE=1` 才能当 node 用（均已在 §0.5.1 实测确认）。故必须生成 shim。
+
+**Files:**
+- Create: `desktop/render-runtime.js`
+- Modify: `desktop/package.json`（`build.files` 加 `render-runtime.js`）
+- Test: `desktop/test/render-runtime.test.js`
+
+- [ ] **Step 1: 写失败的测试**
+
+创建 `desktop/test/render-runtime.test.js`：
+
+```javascript
+const { test } = require('node:test')
+const assert = require('node:assert')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+
+const {
+  resolveRuntimePaths,
+  ensureCliShim,
+  _shimFileName,
+} = require('../render-runtime')
+
+test('shim file name is platform specific', () => {
+  const name = _shimFileName()
+  if (process.platform === 'win32') {
+    assert.match(name, /\.cmd$/)
+  } else {
+    assert.match(name, /hyperframes$/)
+  }
+})
+
+test('ensureCliShim writes a shim that runs electron as node', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shim-test-'))
+  try {
+    const shimPath = ensureCliShim({
+      electronPath: 'C:/app/electron.exe',
+      cliJsPath: 'C:/app/resources/render-runtime/cli.js',
+      targetDir: dir,
+    })
+    assert.ok(fs.existsSync(shimPath), 'shim 未生成')
+    const content = fs.readFileSync(shimPath, 'utf-8')
+    assert.match(content, /ELECTRON_RUN_AS_NODE/)
+    assert.match(content, /render-runtime/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('resolveRuntimePaths prefers explicit env over everything', () => {
+  const paths = resolveRuntimePaths({
+    env: {
+      HYPERFRAMES_BROWSER_PATH: '/custom/chrome',
+      HYPERFRAMES_FFMPEG_PATH: '/custom/ffmpeg',
+      HYPERFRAMES_FFPROBE_PATH: '/custom/ffprobe',
+    },
+    userDataDir: '/ud',
+    resourcesDir: '/res',
+  })
+  assert.equal(paths.browserPath, '/custom/chrome')
+  assert.equal(paths.ffmpegPath, '/custom/ffmpeg')
+  assert.equal(paths.ffprobePath, '/custom/ffprobe')
+})
+
+test('resolveRuntimePaths falls back to userData then resources', () => {
+  const paths = resolveRuntimePaths({
+    env: {},
+    userDataDir: '/ud',
+    resourcesDir: '/res',
+  })
+  // 无显式 env 时应给出可判定的候选位置（不抛错，供电竞探测继续）
+  assert.ok(paths.browserPath === '' || typeof paths.browserPath === 'string')
+  assert.ok(Array.isArray(paths.searchedDirs))
+  assert.ok(paths.searchedDirs.length >= 2)
+})
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `cd desktop && node --test test/render-runtime.test.js`
+Expected: FAIL（`Cannot find module '../render-runtime'`）
+
+- [ ] **Step 3: 实现 render-runtime.js**
+
+创建 `desktop/render-runtime.js`：
+
+```javascript
+'use strict'
+
+const fs = require('node:fs')
+const path = require('node:path')
+
+// HyperFrames CLI 需要「node + cli.js」两段式调用，而服务端 HYPERFRAMES_CLI_BIN
+// 只接受单个可执行文件路径，故必须生成 shim 把 Electron 的 Node 包在中间。
+// 详见 docs/superpowers/plans/2026-09-18-local-first-render-offload.md §0.5.1。
+
+function _shimFileName() {
+  return process.platform === 'win32' ? 'hyperframes.cmd' : 'hyperframes'
+}
+
+function resolveRuntimePaths({ env, userDataDir, resourcesDir }) {
+  const pick = (key) => String((env && env[key]) || '').trim()
+  const searchedDirs = [
+    path.join(userDataDir, 'render-runtime'),
+    path.join(resourcesDir, 'render-runtime'),
+  ]
+  const browserPath = pick('HYPERFRAMES_BROWSER_PATH')
+  const ffmpegPath = pick('HYPERFRAMES_FFMPEG_PATH')
+  const ffprobePath = pick('HYPERFRAMES_FFPROBE_PATH')
+  return { browserPath, ffmpegPath, ffprobePath, searchedDirs }
+}
+
+function ensureCliShim({ electronPath, cliJsPath, targetDir }) {
+  fs.mkdirSync(targetDir, { recursive: true })
+  const shimPath = path.join(targetDir, _shimFileName())
+  if (process.platform === 'win32') {
+    const content = [
+      '@echo off',
+      'set ELECTRON_RUN_AS_NODE=1',
+      `"${electronPath}" "${cliJsPath}" %*`,
+      '',
+    ].join('\r\n')
+    fs.writeFileSync(shimPath, content, 'utf-8')
+  } else {
+    const content = [
+      '#!/bin/sh',
+      'export ELECTRON_RUN_AS_NODE=1',
+      `exec "${electronPath}" "${cliJsPath}" "$@"`,
+      '',
+    ].join('\n')
+    fs.writeFileSync(shimPath, content, 'utf-8')
+    fs.chmodSync(shimPath, 0o755)
+  }
+  return shimPath
+}
+
+module.exports = { resolveRuntimePaths, ensureCliShim, _shimFileName }
+```
+
+> **注意**：shim 内必须**原地引用** `electronPath`（不可把 electron.exe 拷成单文件，
+> 会缺 DLL 报 `0xC0000135`）；`electronPath` 应为 `process.execPath`。
+
+- [ ] **Step 4: 登记打包白名单**
+
+在 `desktop/package.json` 的 `build.files` 数组末尾加入 `"render-runtime.js"`（见 Task 8 Step 4e）。
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `cd desktop && node --test test/render-runtime.test.js`
+Expected: PASS（4 passed）
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add desktop/render-runtime.js desktop/test/render-runtime.test.js desktop/package.json
+git commit -m "feat(desktop): add render runtime probe and electron-node cli shim"
+```
 
 ---
 
@@ -1681,16 +2059,34 @@ Expected: FAIL（`/render` 返回 404）
 
 **4c. 启动 worker**（L451-472，加在 computer 之后）：
 
+先用 `render-runtime.js` 解析运行时并生成 shim，再启动：
+（需在文件顶部 `const path = require('node:path')` 已有则复用）
+
 ```javascript
-  // render worker：本机出片。渲染运行时（Node/Chromium/ffmpeg）需在子进程 PATH 中可达，
-  // 或由 RENDER_RUNTIME_DIR 提供；缺失时该 worker 返回可读错误而非崩溃。
+  // 渲染运行时：Node 用 Electron 内置的（经 shim 包装），Chromium/ffmpeg/ffprobe
+  // 由 render-runtime 四级探测（见 §0.5.2）。缺失时 worker 返回可读错误而非崩溃。
+  const { resolveRuntimePaths, ensureCliShim } = require('./render-runtime')
+  const runtime = resolveRuntimePaths({
+    env: process.env,
+    userDataDir: app.getPath('userData'),
+    resourcesDir: process.resourcesPath,
+  })
+  const shimDir = path.join(app.getPath('userData'), 'render-runtime-bin')
+  const cliShim = ensureCliShim({
+    electronPath: process.execPath,          // 必须原地引用，不可拷贝单文件
+    cliJsPath: path.join(
+      process.resourcesPath, 'render-runtime', 'node_modules', 'hyperframes', 'dist', 'cli.js'
+    ),
+    targetDir: shimDir,
+  })
+
   startWorker('render', {
     RENDER_WORKER_TOKEN: tokens.render,
     RENDER_WORKER_PORT: String(renderPort),
-    HYPERFRAMES_BROWSER_PATH: process.env.HYPERFRAMES_BROWSER_PATH || '',
-    HYPERFRAMES_FFMPEG_PATH: process.env.HYPERFRAMES_FFMPEG_PATH || '',
-    HYPERFRAMES_FFPROBE_PATH: process.env.HYPERFRAMES_FFPROBE_PATH || '',
-    HYPERFRAMES_CLI_BIN: process.env.HYPERFRAMES_CLI_BIN || '',
+    HYPERFRAMES_CLI_BIN: cliShim,
+    HYPERFRAMES_BROWSER_PATH: runtime.browserPath,
+    HYPERFRAMES_FFMPEG_PATH: runtime.ffmpegPath,
+    HYPERFRAMES_FFPROBE_PATH: runtime.ffprobePath,
   })
 ```
 
@@ -1701,6 +2097,32 @@ Expected: FAIL（`/render` 返回 404）
     renderToken: tokens.render,
 ```
 
+**4e. ⚠️ 打包白名单登记（必做，否则安装版崩而开发环境正常）**
+
+`desktop/package.json` 的 `build.files` 是**显式白名单**，未登记的文件不会进入安装包。
+若新增 `render-runtime.js`（Task 8 之外的模块）必须一并登记，否则出现
+「`npm start` 正常、安装版启动报 `Cannot find module`」——这是 Electron 项目高发的
+打包遗漏。检查当前白名单内容并补充：
+
+```json
+  "files": [
+    "main.js",
+    "preload.js",
+    "server-config.js",
+    "credential-store.js",
+    "device-registry.js",
+    "cua-driver-host.js",
+    "bridge.js",
+    "tray.js",
+    "updater.js",
+    "window-state.js",
+    "render-runtime.js"
+  ],
+```
+
+> 若本任务未新建 `render-runtime.js`，则此处无需改动；**只要新增了任何 `.js` 模块就必须加**。
+> 同时注意 `extraResources` 是否需登记随包内置的 ffmpeg/ffprobe（见 §0.5.2 第 2 级策略）。
+
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `cd desktop && node --test test/bridge.test.js`
@@ -1709,7 +2131,7 @@ Expected: PASS
 - [ ] **Step 6: 提交**
 
 ```bash
-git add desktop/bridge.js desktop/main.js desktop/test/bridge.test.js
+git add desktop/bridge.js desktop/main.js desktop/package.json desktop/test/bridge.test.js
 git commit -m "feat(desktop): host render worker and expose /render bridge route"
 ```
 
@@ -1894,6 +2316,11 @@ git commit -m "docs(render): document local-first render with cloud path retaine
 | `scripts/render_worker.main` | `worker_super._module_and_entry("render")` | `python -m pytest test/scripts/test_worker_super.py -q -k render` |
 | `scripts.render_worker` | `worker.spec` hiddenimports | `python -m pytest test/scripts/test_worker_spec.py -q` |
 | `desktop /render 路由` | `bridge.js targets` + `main.js renderPort/renderToken` | `cd desktop && node --test` |
+| `desktop /artifact 路由` | `bridge.js targets` + `local_render_runner.fetch_local_artifact` | 同上 |
+| `render-runtime.ensureCliShim` | `main.js` 的 `startWorker('render', {HYPERFRAMES_CLI_BIN: cliShim})` | `cd desktop && node --test test/render-runtime.test.js` |
+| `render-runtime.resolveRuntimePaths` | 同上（提供 browser/ffmpeg/ffprobe 三路径） | 同上 |
+| `electron 内置 Node 24` | `main.js` 用 `process.execPath` 作 shim 的 node | `cd desktop && node --test test/electron-version.test.js` |
+| `render-runtime.js` 打包登记 | `package.json` 的 `build.files` 数组 | 目视核对（缺则安装版崩） |
 | `local_render_runner.render_on_local_device` | `render_video._run_local_render` | `python -m pytest test/internal/core/tools/test_render_video_tool.py -q` |
 | `local_render_runner.fetch_local_artifact` | `render_video._ingest_local_artifact` | 同上 |
 | `Config.RENDER_LOCAL_ENABLED` | `render_video._local_enabled()` | `python -m pytest test/config/test_render_execution_config.py -q` |
@@ -1906,28 +2333,41 @@ Run:
 ```bash
 cd d:/DEMO/openagent-main
 grep -rn "render_on_local_device\|fetch_local_artifact\|RENDER_CLOUD_FALLBACK_ENABLED\|render_worker" --include=*.py api/ | grep -v "/test/" | grep -v "\.pyc"
+grep -rn "ensureCliShim\|resolveRuntimePaths\|render-runtime" desktop/ --include=*.js | grep -v "test/"
 ```
 Expected: 每个符号都能在**非测试**代码中找到引用（定义处 + 调用处）
 
-- [ ] **Step 3: 运行全量后端测试**
+- [ ] **Step 3: 运行时一致性验证（Node 版本必须两端相同）**
+
+Run:
+```bash
+docker exec llmops-render-worker node -v
+cd desktop && node -e "console.log(require('electron/package.json').version)"
+cd desktop && ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe -e "console.log(process.versions.node)" 2>/dev/null || true
+```
+Expected: 容器 `v24.x` 与桌面端 Electron 内置 Node **major 相同（24）**。
+若不一致，说明 Task 0 未生效或版本被改回，**属阻断问题，必须修复后再继续**。
+
+- [ ] **Step 4: 运行全量后端测试**
 
 Run: `cd api && python -m pytest test/ -q`
 Expected: 全部通过（允许存在与本改动无关的既有环境失败，需逐条确认）
 记录：passed 数、failed 列表
 
-- [ ] **Step 4: 运行桌面端测试**
+- [ ] **Step 5: 运行桌面端测试**
 
 Run: `cd desktop && node --test`
 Expected: 全部通过
 
-- [ ] **Step 5: 真机端到端验证（本机渲染闭环）**
+- [ ] **Step 6: 真机端到端验证（本机渲染闭环）**
 
-前置：本机具备 Node ≥22 + chrome-headless-shell + ffmpeg/ffprobe。
+前置：本机具备 chrome-headless-shell + ffmpeg/ffprobe（Node 由 Electron 提供）。
 
 ```bash
 # 1) 启动 render worker（本机直接跑，模拟桌面端托管）
 cd api
 RENDER_WORKER_TOKEN=dev-render-token \
+HYPERFRAMES_CLI_BIN=<shim 路径> \
 HYPERFRAMES_BROWSER_PATH=<chrome-headless-shell 路径> \
 HYPERFRAMES_FFMPEG_PATH=<ffmpeg 路径> \
 HYPERFRAMES_FFPROBE_PATH=<ffprobe 路径> \
@@ -1942,7 +2382,11 @@ curl -s -X POST http://127.0.0.1:8768/render \
 
 Expected: 返回 `{"ok": true, "path": "...", "size_bytes": <正数>}`，且 `ffprobe <path>` 能读出 h264 与正时长。
 
-- [ ] **Step 6: 验证云端开关行为**
+> **Node 版本门禁验证**：若 shim 未正确带 `ELECTRON_RUN_AS_NODE=1`，或 Electron 仍是 33，
+> 此处会返回 `HyperFrames requires Node.js >= 22 (current: 20.x)`——出现该错误即证明
+> Task 0（升级）或 Task 0B（shim）未生效。
+
+- [ ] **Step 7: 验证云端开关行为**
 
 Run: `cd docker && docker compose config --services | grep render`
 Expected: **无输出**（默认不含 render worker）
@@ -1961,6 +2405,10 @@ git commit -m "test(render): verify local-first render wiring end to end"
 
 ## 自检清单（执行者收尾时逐项打勾）
 
+- [ ] **桌面端 Electron 内置 Node 为 24**，与容器 `node:24-bookworm-slim`（v24.21.0）major 一致
+- [ ] **用户无需自装 Node**：渲染走 Electron 内置 Node（经 shim + `ELECTRON_RUN_AS_NODE=1`）
+- [ ] shim **原地引用** `process.execPath`（未拷贝 electron.exe 单文件，否则 DLL 缺失报 `0xC0000135`）
+- [ ] 新增的 `render-runtime.js` 已登记进 `package.json` 的 `build.files`（否则安装版崩）
 - [ ] 云端渲染代码**未被删除或重构**，仅通过 `profiles` 与 env 开关下线
 - [ ] 本机渲染调用**走 `resolve_desktop_bridge`**（未重蹈 `browser_action` 静态 env 的断链）
 - [ ] `worker_super` 的**两处**白名单（`choices` + `_module_and_entry`）都已加 `render`
