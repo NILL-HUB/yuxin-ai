@@ -44,10 +44,21 @@ def pg_engine():
 
 
 def _neo4j_driver():
-    """返回可连的 Neo4j 驱动；不可用时返回 None（调用方 skip）。"""
-    uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-    user = os.getenv("NEO4J_USER", "neo4j")
-    password = os.getenv("NEO4J_PASSWORD", "openagent123")
+    """返回可连的 Neo4j 驱动；不可用时返回 None（调用方 skip）。
+
+    与同目录/相邻 live 守卫保持同一来源约定：优先环境变量，缺失时回落
+     `settings.neo4j`。本守卫自身不写入口令字面量（凭据统一取自 env / `settings.neo4j`）；
+     硬编码口令会使守卫在口令变更时静默 skip、失去覆盖。
+     """
+    uri = os.getenv("NEO4J_URI", "")
+    user = os.getenv("NEO4J_USER", "")
+    password = os.getenv("NEO4J_PASSWORD", "")
+    if not (uri and user and password):
+        from internal.config.memory_settings import settings
+
+        uri = uri or settings.neo4j.uri
+        user = user or settings.neo4j.user
+        password = password or settings.neo4j.password
     try:
         from neo4j import GraphDatabase
 
@@ -101,16 +112,31 @@ def test_no_prefixed_user_owner_type_in_storage(pg_engine):
     assert bad == 0
 
 
+def test_owner_type_is_known_enum_value(pg_engine):
+    """owner_type 取值必须落在已知枚举内（防「拼错但无冒号」的脏值，如 usr/admn）。"""
+    from sqlalchemy import text
+
+    with pg_engine.connect() as conn:
+        bad = conn.execute(
+            text(
+                "SELECT count(*) FROM user_memory "
+                "WHERE owner_type IS NULL OR owner_type NOT IN ('user', 'admin')"
+            )
+        ).scalar()
+    assert bad == 0
+
+
 # =========================================================
 # Neo4j：属性级分离 + 访问器产物与存量形态一致 + admin 约束落地
 # =========================================================
 
 
 def test_neo4j_user_ids_are_bare_uuids(neo4j_driver):
+    # 不做 LIMIT 抽样：全图扫描代价可忽略，抽样会让未抽中的脏数据漏检
     with neo4j_driver.session() as session:
         records = session.run(
             "MATCH (n) WHERE n.user_id IS NOT NULL "
-            "RETURN DISTINCT n.user_id AS uid LIMIT 200"
+            "RETURN DISTINCT n.user_id AS uid"
         ).data()
 
     prefixed = [
