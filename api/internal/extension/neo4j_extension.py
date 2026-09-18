@@ -58,8 +58,9 @@ def _ensure_constraints_and_indexes(driver: Driver) -> None:
         # 唯一约束对「属性缺失」天然豁免 —— 双刃：
         #   好处：加这些约束不影响存量 user 节点（它们无 admin 属性）。
         #   ⚠️ 代价：Neo4j 多属性唯一约束要求约束内**所有属性都存在**才施加，
-        #     故「管理员级」节点（admin 无 agent、不写 agent_id）**不受**该约束管辖，
-        #     其唯一性仅由写侧 MERGE 语义保证，DB 不兜底并发创建竞态。
+        #     故「管理员级」节点（admin 无 agent、不写 agent_id）**不受**该约束管辖；
+        #     其唯一性只能依赖写侧 MERGE 语义（待 P3c 接通 admin 写路径后成立），
+        #     DB 不兜底并发创建竞态。
         #     实测（2026-09）：同名同 admin 的无 agent 节点可重复创建成功；
         #     带 agent 的三元节点则正确报 22N79 唯一冲突。
         "CREATE CONSTRAINT entity_name_admin_unique IF NOT EXISTS "
