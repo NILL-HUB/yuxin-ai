@@ -44,6 +44,8 @@ a = Analysis(
         'scripts.os_automation_worker',
         'scripts.browser_automation_worker',
         'scripts.computer_control_worker',
+        # 本机渲染 worker：作为 render 子命令被 worker_super 动态导入
+        'scripts.render_worker',
         # cua-driver 后端客户端：computer worker 探测 daemon 后按其路由到后台控制
         'scripts.cua_driver_client',
         'scripts.wake_word_worker',

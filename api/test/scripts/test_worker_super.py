@@ -158,3 +158,35 @@ class TestHostWatchdog:
             worker_super._run_with_host_watchdog(host_pid, boom, "os")
         assert excinfo.value.code == 3
         assert "yujianwo-worker os 启动失败" in capsys.readouterr().err
+
+
+def test_render_subcommand_is_accepted():
+    """render 必须在 choices 白名单内，否则 argparse 直接拒绝。"""
+    from scripts.worker_super import parse_args
+
+    args = parse_args(["render", "--port", "8768"])
+    assert args.service == "render"
+    assert args.port == 8768
+
+
+def test_render_subcommand_maps_to_render_worker_module():
+    """render 必须映射到 scripts.render_worker，否则 KeyError。"""
+    from scripts.worker_super import _module_and_entry
+
+    module_name, entry_name = _module_and_entry("render")
+    assert module_name == "scripts.render_worker"
+    assert entry_name == "main"
+
+
+def test_render_worker_module_is_importable():
+    import importlib
+
+    module = importlib.import_module("scripts.render_worker")
+    assert hasattr(module, "main")
+
+
+def test_render_supports_host_port_injection():
+    """render worker 的 main 声明了 --host/--port，须在白名单内。"""
+    from scripts.worker_super import _SERVICE_SUPPORTS_HOST_PORT
+
+    assert "render" in _SERVICE_SUPPORTS_HOST_PORT

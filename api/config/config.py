@@ -231,6 +231,17 @@ class Config:
         self.HYPERFRAMES_CLI_BIN = _get_env("HYPERFRAMES_CLI_BIN") or ""
         # 渲染是分钟级长任务，超时按「长视频 + 慢机器」放宽
         self.RENDER_TIMEOUT_SEC = int(_get_env("RENDER_TIMEOUT_SEC") or 1800)
+        # 渲染执行目标：本机优先（把重负载算力外部化到用户设备，平台只管轻量内容）。
+        # 本机不可用时是否回退云端 Celery render 队列——云端链路完整保留，
+        # 用该开关控制是否启用，便于未来随时接通。
+        self.RENDER_LOCAL_ENABLED = (
+            (_get_env("RENDER_LOCAL_ENABLED") or "true").strip().lower()
+            not in {"false", "0", "no", "off"}
+        )
+        self.RENDER_CLOUD_FALLBACK_ENABLED = (
+            (_get_env("RENDER_CLOUD_FALLBACK_ENABLED") or "true").strip().lower()
+            not in {"false", "0", "no", "off"}
+        )
 
         # 腾讯云 COS 配置（STORAGE_BACKEND=cos 时生效）
         self.COS_SECRET_ID = _get_env("COS_SECRET_ID")

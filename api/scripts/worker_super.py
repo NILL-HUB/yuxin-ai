@@ -6,6 +6,7 @@ PyInstaller 打包为 yujianwo-worker.exe 后，Electron 主进程通过子命�
     yujianwo-worker.exe os       --port 8765
     yujianwo-worker.exe browser  --port 8766
     yujianwo-worker.exe computer --port 8767
+    yujianwo-worker.exe render   --port 8768
     yujianwo-worker.exe wake
 
 开发模式（无 exe）下等效于 python scripts/<worker>.py。
@@ -32,7 +33,7 @@ if os.path.isdir(os.path.join(_API_ROOT, "scripts")) and _API_ROOT not in sys.pa
 # 接受并透传 --host/--port 的服务（其 worker main 的 argparse 声明了这两个参数）。
 # wake_word_worker 的 argparse 只接受 --keyword/--endpoint/--token/--engine/--check，
 # 向其注入 --host/--port 会以误导性 usage 崩溃，故不在白名单内。
-_SERVICE_SUPPORTS_HOST_PORT = frozenset(("os", "browser", "computer"))
+_SERVICE_SUPPORTS_HOST_PORT = frozenset(("os", "browser", "computer", "render"))
 
 # Electron 主进程启动 worker 时注入自身 PID；worker 周期性检测该宿主是否存活，
 # 宿主退出（正常退出/被杀/崩溃）即自杀，避免 worker 进程树散落残留。
@@ -145,7 +146,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="yujianwo-worker", description="Yujianwo desktop worker")
     parser.add_argument(
         "service",
-        choices=("os", "browser", "computer", "wake"),
+        choices=("os", "browser", "computer", "render", "wake"),
         help="要启动的 worker 服务",
     )
     # 默认 None（而非 ""/0），仅当调用方显式提供 --host/--port 时才注入到 worker argv，
@@ -160,6 +161,7 @@ def _module_and_entry(service: str) -> tuple[str, str]:
         "os": ("scripts.os_automation_worker", "main"),
         "browser": ("scripts.browser_automation_worker", "main"),
         "computer": ("scripts.computer_control_worker", "main"),
+        "render": ("scripts.render_worker", "main"),
         "wake": ("scripts.wake_word_worker", "main"),
     }[service]
 
