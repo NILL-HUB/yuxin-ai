@@ -333,6 +333,10 @@ class MemoryGovernor:
         Args:
             owner_key: 记忆主体键（用户主体为裸 UUID，见 ``MemoryOwnerKey``）
 
+        ⚠️ Neo4j 侧当前**仅覆盖用户主体**：删除起点为 ``MATCH (u:User {id: $owner_key})``，
+        admin / Agent 主体（节点归属属性为 ``admin_user_id``）不在删除范围内。
+        admin 主体谓词属 P3c（见 P3b 计划已知缺口）。
+
         Returns:
             删除统计 dict
         """
@@ -413,7 +417,13 @@ class MemoryGovernor:
     # =========================================================
 
     def _verify_owner(self, memory_id: str, owner_key: str, driver) -> bool:
-        """验证记忆节点 owner 是否为指定主体。"""
+        """验证记忆节点 owner 是否为指定主体。
+
+        ⚠️ Neo4j 侧当前**仅支持用户主体**：按属性 ``n.user_id`` 取值比对。
+        admin / Agent 主体（其归属属性为 ``admin_user_id`` [+ ``agent_id``]）
+        会因取不到 ``user_id`` 而恒返回 False（fail-closed）。
+        admin 主体谓词属 P3c（见 P3b 计划已知缺口）。
+        """
         try:
             with driver.session() as session:
                 result = session.run(
