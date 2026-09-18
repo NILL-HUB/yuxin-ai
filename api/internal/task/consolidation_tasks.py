@@ -43,6 +43,7 @@ def run_daily_consolidation(self, user_ids: list[str] | None = None):
         ``{user_id: {"success": bool, "items": int}}`` 执行摘要
     """
     try:
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.model.memory_models import ConsolidationPhase
         from internal.service.memory.consolidation_engine import ConsolidationEngine
 
@@ -55,7 +56,9 @@ def run_daily_consolidation(self, user_ids: list[str] | None = None):
         results: dict[str, dict] = {}
         for uid in user_ids:
             try:
-                report = engine.run_consolidation(str(uid))
+                # 主体键：用户主体为裸 UUID（与历史 str(uid) 逐字节一致）
+                owner_key = MemoryOwnerKey.for_user(uid).to_key()
+                report = engine.run_consolidation(owner_key)
                 results[str(uid)] = {
                     "success": report.is_success,
                     "items": report.total_items_processed,
@@ -100,11 +103,14 @@ def run_weight_scan(self, user_id: str):
         阶段 3（weight_scan / tier）结果字典
     """
     try:
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.model.memory_models import ConsolidationPhase
         from internal.service.memory.consolidation_engine import ConsolidationEngine
 
         engine = ConsolidationEngine()
-        report = engine.run_consolidation(str(user_id))
+        # 主体键：用户主体为裸 UUID（与历史 str(user_id) 逐字节一致）
+        owner_key = MemoryOwnerKey.for_user(user_id).to_key()
+        report = engine.run_consolidation(owner_key)
 
         # 仅返回阶段 3（TIER）结果
         phase_key = ConsolidationPhase.TIER.value
@@ -144,6 +150,7 @@ def run_skill_curation(self, user_ids: list[str] | None = None):
         ``{user_id: {"scanned": int, "transitioned": int, "deprecated": int}}``
     """
     try:
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.service.memory.skill_emergence import SkillEmergence
 
         emergence = SkillEmergence()
@@ -155,7 +162,9 @@ def run_skill_curation(self, user_ids: list[str] | None = None):
         results: dict[str, dict] = {}
         for uid in user_ids:
             try:
-                result = emergence.curate_skills(str(uid))
+                # 主体键：用户主体为裸 UUID（与历史 str(uid) 逐字节一致）
+                owner_key = MemoryOwnerKey.for_user(uid).to_key()
+                result = emergence.curate_skills(owner_key)
                 results[str(uid)] = result
             except Exception as exc:
                 logger.warning(
@@ -205,6 +214,7 @@ def run_skill_stats_flush(self, user_ids: list[str] | None = None):
     """
     try:
         from internal.config.memory_settings import settings as memory_settings
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.service.memory.skill_emergence import SkillEmergence
 
         # 配置关闭时跳过
@@ -220,7 +230,9 @@ def run_skill_stats_flush(self, user_ids: list[str] | None = None):
         results: dict[str, dict] = {}
         for uid in user_ids:
             try:
-                result = emergence.flush_bump_use_to_neo4j(str(uid))
+                # 主体键：用户主体为裸 UUID（与历史 str(uid) 逐字节一致）
+                owner_key = MemoryOwnerKey.for_user(uid).to_key()
+                result = emergence.flush_bump_use_to_neo4j(owner_key)
                 results[str(uid)] = result
             except Exception as exc:
                 logger.warning(

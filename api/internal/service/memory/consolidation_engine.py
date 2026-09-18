@@ -31,6 +31,7 @@ from typing import Optional
 from uuid import uuid4
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.model.memory_models import (
     ConsolidationConfig,
     ConsolidationPhase,
@@ -69,14 +70,14 @@ class ConsolidationEngine:
     # 主入口
     # =========================================================
 
-    def run_consolidation(self, user_id: str) -> ConsolidationReport:
+    def run_consolidation(self, owner_key: str) -> ConsolidationReport:
         """执行完整的五阶段巩固流程。
 
         按顺序执行每个阶段，单个阶段失败不影响后续阶段。
         返回包含 phases 与 errors 的 ConsolidationReport。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID，见 `MemoryOwnerKey.to_key()`）
 
         Returns:
             ConsolidationReport 巩固报告
@@ -84,14 +85,14 @@ class ConsolidationEngine:
         import time as _time
 
         _start = _time.perf_counter()
-        report = self._run_consolidation_impl(user_id)
+        report = self._run_consolidation_impl(owner_key)
         MetricsCollector.record_consolidation_phase(
             _time.perf_counter() - _start,
             error=len(report.errors) > 0,
         )
         return report
 
-    def _run_consolidation_impl(self, user_id: str) -> ConsolidationReport:
+    def _run_consolidation_impl(self, owner_key: str) -> ConsolidationReport:
         """run_consolidation 的原始实现。"""
         report = ConsolidationReport(
             run_id=uuid4(),
@@ -111,7 +112,7 @@ class ConsolidationEngine:
 
         for phase_name, phase_func in phases:
             try:
-                phase_result = phase_func(user_id)
+                phase_result = phase_func(owner_key)
                 report.phases[phase_name] = phase_result
 
                 # 累加汇总字段
@@ -138,7 +139,7 @@ class ConsolidationEngine:
     # Phase 1: 情景 → 语义
     # =========================================================
 
-    def _phase1_episodic_to_semantic(self, user_id: str) -> dict:
+    def _phase1_episodic_to_semantic(self, owner_key: str) -> dict:
         """阶段 1：7 天以上 Episode → LLM 提取共性 → SemanticMemory 节点。
 
         步骤:
@@ -146,6 +147,9 @@ class ConsolidationEngine:
             2. 对每个 Episode 用 pgvector 搜索相似 Episode 簇
             3. 簇内数量 >= semantic_min_examples 时，调 LLM 提取共性语义
             4. 创建 SemanticMemory 节点 + IS_ABSTRACTION_OF 边
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"count": int, "semantics_created": int}``
@@ -160,7 +164,7 @@ class ConsolidationEngine:
 
         # 查找老的 HOT Episode
         try:
-            old_episodes = self._query_old_episodes(driver, user_id, episode_age_days)
+            old_episodes = self._query_old_episodes(driver, owner_key, episode_age_days)
         except Exception:
             logger.warning("_phase1: 查询老 Episode 失败", exc_info=True)
             return {"count": 0, "semantics_created": 0}
@@ -179,7 +183,7 @@ class ConsolidationEngine:
 
             # 查找相似 Episode 簇
             cluster = self._find_similar_cluster(
-                driver, user_id, episode, similarity_threshold
+                driver, owner_key, episode, similarity_threshold
             )
 
             if len(cluster) < min_examples:
@@ -199,7 +203,7 @@ class ConsolidationEngine:
             # 创建 SemanticMemory 节点 + IS_ABSTRACTION_OF 边
             try:
                 self._create_semantic_memory(
-                    driver, user_id, semantic_desc, cluster
+                    driver, owner_key, semantic_desc, cluster
                 )
                 semantics_created += 1
             except Exception:
@@ -211,12 +215,15 @@ class ConsolidationEngine:
     # Phase 1b: 语义/实体 → Community 主题（P5 新皮层）
     # =========================================================
 
-    def _phase_community_induction(self, user_id: str) -> dict:
+    def _phase_community_induction(self, owner_key: str) -> dict:
         """阶段 1b：跨批次高层主题归纳 → Community 节点。
 
         委托 CommunityInductionEngine.run_induction 执行。Community 是
         脑启发记忆分层（Episode→Semantic→Community→Policy）中的新皮层
         层，通过跨会话/跨批次的语义与实体簇 LLM 归纳形成慢速高层主题。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"candidates", "created", "merged", "evolved", "deprecated", "errors"}``
@@ -230,7 +237,7 @@ class ConsolidationEngine:
                 neo4j_driver=self._driver or self._get_driver(),
                 config=self._config,
             )
-            return engine.run_induction(user_id)
+            return engine.run_induction(owner_key)
         except Exception:
             logger.warning("_phase_community_induction: Community 归纳失败", exc_info=True)
             return {
@@ -246,8 +253,11 @@ class ConsolidationEngine:
     # Phase 2: 冲突检测
     # =========================================================
 
-    def _phase2_conflict_detection(self, user_id: str) -> dict:
-        """阶段 2：委托 ConflictDetector.detect(user_id)。
+    def _phase2_conflict_detection(self, owner_key: str) -> dict:
+        """阶段 2：委托 ConflictDetector.detect(owner_key)。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"count", "contradictions", "updates", "complements"}``
@@ -259,7 +269,7 @@ class ConsolidationEngine:
                 neo4j_driver=self._driver or self._get_driver(),
                 config=self._config,
             )
-            return detector.detect(user_id)
+            return detector.detect(owner_key)
         except Exception:
             logger.warning("_phase2: 冲突检测失败", exc_info=True)
             return {"count": 0, "contradictions": 0, "updates": 0, "complements": 0}
@@ -268,8 +278,11 @@ class ConsolidationEngine:
     # Phase 3: 权重扫描
     # =========================================================
 
-    def _phase3_weight_scan(self, user_id: str) -> dict:
+    def _phase3_weight_scan(self, owner_key: str) -> dict:
         """阶段 3：HebbianDecay.batch_update_weights + tier 降级。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"edges_scanned": int, "tier_migrations": {"hot": n, "warm": m, "cold": k}}``
@@ -280,7 +293,7 @@ class ConsolidationEngine:
 
         # 读取用户所有边
         try:
-            edges = self._query_user_edges(driver, user_id)
+            edges = self._query_user_edges(driver, owner_key)
         except Exception:
             logger.warning("_phase3: 查询边失败", exc_info=True)
             return {"edges_scanned": 0, "tier_migrations": {"hot": 0, "warm": 0, "cold": 0}}
@@ -322,8 +335,11 @@ class ConsolidationEngine:
     # Phase 4: 冗余合并
     # =========================================================
 
-    def _phase4_redundancy_merge(self, user_id: str) -> dict:
+    def _phase4_redundancy_merge(self, owner_key: str) -> dict:
         """阶段 4：相似度 > 0.9 的节点合并（创建 MERGED_INTO 边）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"count": int, "merged": int}``
@@ -336,7 +352,7 @@ class ConsolidationEngine:
 
         # 查询 HOT 层 MemoryNode
         try:
-            nodes = self._query_hot_nodes(driver, user_id)
+            nodes = self._query_hot_nodes(driver, owner_key)
         except Exception:
             logger.warning("_phase4: 查询 HOT 节点失败", exc_info=True)
             return {"count": 0, "merged": 0}
@@ -355,7 +371,7 @@ class ConsolidationEngine:
 
             # 用 pgvector 查找相似节点
             similar_nodes = self._find_similar_nodes_pgvector(
-                user_id, node_id, merge_threshold
+                owner_key, node_id, merge_threshold
             )
 
             if not similar_nodes:
@@ -389,12 +405,15 @@ class ConsolidationEngine:
     # Phase 5: 技能涌现
     # =========================================================
 
-    def _phase5_skill_emergence(self, user_id: str) -> dict:
+    def _phase5_skill_emergence(self, owner_key: str) -> dict:
         """阶段 5：委托 SkillEmergence.scan_and_emerge 涌现技能。
 
         扫描 30 天内高频行为模式（≥ min_pattern_frequency 次），LLM 提取
         参数化技能模板，执行 CANDIDATE→EMERGING→ACTIVE→STALE→DEPRECATED
         状态转移。种子提示机制：有 positive 种子的技能阈值降为 1。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"skills_emerged": int, "skills_updated": int}``
@@ -406,7 +425,7 @@ class ConsolidationEngine:
                 neo4j_driver=self._driver or self._get_driver(),
                 redis_client=self._get_redis(),
             )
-            skills = emergence.scan_and_emerge(user_id)
+            skills = emergence.scan_and_emerge(owner_key)
             # 区分新增和更新：status=CANDIDATE 视为新增，其余视为更新
             new_count = sum(
                 1 for s in skills if s.status.value == "candidate"
@@ -424,8 +443,11 @@ class ConsolidationEngine:
     # Phase 6: 统计摘要
     # =========================================================
 
-    def _phase6_stats_summary(self, user_id: str) -> dict:
+    def _phase6_stats_summary(self, owner_key: str) -> dict:
         """阶段 6：更新统计计数器。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"total_nodes", "total_edges", "tier_distribution"}``
@@ -435,14 +457,15 @@ class ConsolidationEngine:
             return {"total_nodes": 0, "total_edges": 0, "tier_distribution": {}}
 
         try:
-            cypher = """
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
             MATCH (n)
-            WHERE n.user_id = $user_id AND n.is_active <> false
+            WHERE {owner.neo4j_filter_condition("n")} AND n.is_active <> false
             RETURN count(n) AS total_nodes,
                    collect(n.storage_tier) AS tiers
             """
             with driver.session() as session:
-                result = session.run(cypher, {"user_id": user_id})
+                result = session.run(cypher, {**owner.neo4j_props()})
                 record = result.single()
 
             total_nodes = 0
@@ -455,13 +478,13 @@ class ConsolidationEngine:
                     tier_distribution[key] = tier_distribution.get(key, 0) + 1
 
             # 统计边数
-            cypher_edges = """
+            cypher_edges = f"""
             MATCH (s)-[r]->(t)
-            WHERE s.user_id = $user_id AND r.is_active <> false
+            WHERE {owner.neo4j_filter_condition("s")} AND r.is_active <> false
             RETURN count(r) AS total_edges
             """
             with driver.session() as session:
-                result = session.run(cypher_edges, {"user_id": user_id})
+                result = session.run(cypher_edges, {**owner.neo4j_props()})
                 edge_record = result.single()
 
             total_edges = edge_record.get("total_edges", 0) if edge_record else 0
@@ -479,12 +502,14 @@ class ConsolidationEngine:
     # Phase 1 内部方法
     # =========================================================
 
-    def _query_old_episodes(self, driver, user_id: str, age_days: int) -> list[dict]:
+    def _query_old_episodes(self, driver, owner_key: str, age_days: int) -> list[dict]:
         """查询 HOT 层且年龄 >= age_days 的 Episode 节点。"""
+        owner = MemoryOwnerKey.parse(owner_key)
         cutoff = datetime.now(UTC) - timedelta(days=age_days)
-        cypher = """
-        MATCH (e:Episode {user_id: $user_id})
-        WHERE (e.storage_tier IS NULL OR e.storage_tier = 'hot')
+        cypher = f"""
+        MATCH (e:Episode)
+        WHERE {owner.neo4j_filter_condition("e")}
+          AND (e.storage_tier IS NULL OR e.storage_tier = 'hot')
           AND e.is_active <> false
           AND e.created_at <= $cutoff
           AND e.content IS NOT NULL
@@ -499,14 +524,14 @@ class ConsolidationEngine:
         with driver.session() as session:
             result = session.run(
                 cypher,
-                {"user_id": user_id, "cutoff": cutoff.isoformat()},
+                {"cutoff": cutoff.isoformat(), **owner.neo4j_props()},
             )
             return [dict(record) for record in result]
 
     def _find_similar_cluster(
         self,
         driver,
-        user_id: str,
+        owner_key: str,
         episode: dict,
         similarity_threshold: float,
     ) -> list[dict]:
@@ -514,6 +539,7 @@ class ConsolidationEngine:
 
         简化实现：使用 Neo4j 的点积相似度（若有向量索引）或内容关键词匹配。
         """
+        owner = MemoryOwnerKey.parse(owner_key)
         ep_id = episode.get("node_id", "")
         content = episode.get("content") or episode.get("summary") or ""
 
@@ -522,9 +548,10 @@ class ConsolidationEngine:
 
         try:
             # 使用 Neo4j 向量相似度查询（如果节点有 embedding 属性）
-            cypher = """
-            MATCH (e:Episode {user_id: $user_id})
-            WHERE e.node_id <> $ep_id
+            cypher = f"""
+            MATCH (e:Episode)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.node_id <> $ep_id
               AND (e.storage_tier IS NULL OR e.storage_tier = 'hot')
               AND e.is_active <> false
               AND e.content IS NOT NULL
@@ -546,15 +573,15 @@ class ConsolidationEngine:
                     cypher,
                     {
                         "ep_id": ep_id,
-                        "user_id": user_id,
                         "content": content[:500],
                         "threshold": similarity_threshold * 0.5,  # 降低阈值因 Jaccard 较严格
+                        **owner.neo4j_props(),
                     },
                 )
                 cluster = [dict(record) for record in result]
         except Exception:
             # GDS 不可用，降级为简单内容匹配
-            cluster = self._fallback_content_match(driver, user_id, ep_id, content)
+            cluster = self._fallback_content_match(driver, owner_key, ep_id, content)
 
         # 将自身加入簇
         cluster.insert(0, episode)
@@ -563,19 +590,21 @@ class ConsolidationEngine:
     def _fallback_content_match(
         self,
         driver,
-        user_id: str,
+        owner_key: str,
         ep_id: str,
         content: str,
     ) -> list[dict]:
         """GDS 不可用时，用简单 CONTAINS 匹配。"""
+        owner = MemoryOwnerKey.parse(owner_key)
         # 取内容前 50 字符作为关键词
         keyword = content[:50].strip()
         if not keyword:
             return []
 
-        cypher = """
-        MATCH (e:Episode {user_id: $user_id})
-        WHERE e.node_id <> $ep_id
+        cypher = f"""
+        MATCH (e:Episode)
+        WHERE {owner.neo4j_filter_condition("e")}
+          AND e.node_id <> $ep_id
           AND e.is_active <> false
           AND e.content CONTAINS $keyword
         RETURN e.node_id AS node_id,
@@ -588,7 +617,7 @@ class ConsolidationEngine:
         with driver.session() as session:
             result = session.run(
                 cypher,
-                {"ep_id": ep_id, "user_id": user_id, "keyword": keyword},
+                {"ep_id": ep_id, "keyword": keyword, **owner.neo4j_props()},
             )
             return [dict(record) for record in result]
 
@@ -642,20 +671,20 @@ class ConsolidationEngine:
     def _create_semantic_memory(
         self,
         driver,
-        user_id: str,
+        owner_key: str,
         semantic_desc: str,
         cluster: list[dict],
     ) -> None:
         """创建 SemanticMemory 节点 + IS_ABSTRACTION_OF 边。"""
+        owner = MemoryOwnerKey.parse(owner_key)
         now = datetime.now(UTC).isoformat()
         semantic_id = str(uuid4())
 
-        # 创建 SemanticMemory 节点
+        # 创建 SemanticMemory 节点（归属属性由主体访问器决定）
         cypher_create = """
         CREATE (s:SemanticMemory:MemoryNode {
             node_id: $semantic_id,
             id: $semantic_id,
-            user_id: $user_id,
             content: $content,
             summary: $content,
             storage_tier: 'hot',
@@ -665,15 +694,16 @@ class ConsolidationEngine:
             updated_at: $now,
             source: 'consolidation'
         })
+        SET s += $owner_props
         """
         with driver.session() as session:
             session.run(
                 cypher_create,
                 {
                     "semantic_id": semantic_id,
-                    "user_id": user_id,
                     "content": semantic_desc[:1000],
                     "now": now,
+                    "owner_props": owner.neo4j_props(),
                 },
             ).consume()
 
@@ -707,11 +737,12 @@ class ConsolidationEngine:
     # Phase 3 内部方法
     # =========================================================
 
-    def _query_user_edges(self, driver, user_id: str) -> list[MemoryEdge]:
-        """查询用户所有活跃边，构造 MemoryEdge 列表。"""
-        cypher = """
+    def _query_user_edges(self, driver, owner_key: str) -> list[MemoryEdge]:
+        """查询主体所有活跃边，构造 MemoryEdge 列表。"""
+        owner = MemoryOwnerKey.parse(owner_key)
+        cypher = f"""
         MATCH (s)-[r]->(t)
-        WHERE s.user_id = $user_id AND r.is_active <> false
+        WHERE {owner.neo4j_filter_condition("s")} AND r.is_active <> false
         RETURN r.edge_id AS edge_id,
                s.node_id AS source_id,
                t.node_id AS target_id,
@@ -723,7 +754,7 @@ class ConsolidationEngine:
                r.cooccurrence_count AS cooccurrence_count
         """
         with driver.session() as session:
-            result = session.run(cypher, {"user_id": user_id})
+            result = session.run(cypher, {**owner.neo4j_props()})
             edges = []
             for record in result:
                 try:
@@ -749,11 +780,12 @@ class ConsolidationEngine:
     # Phase 4 内部方法
     # =========================================================
 
-    def _query_hot_nodes(self, driver, user_id: str) -> list[dict]:
-        """查询用户 HOT 层 MemoryNode。"""
-        cypher = """
+    def _query_hot_nodes(self, driver, owner_key: str) -> list[dict]:
+        """查询主体 HOT 层 MemoryNode。"""
+        owner = MemoryOwnerKey.parse(owner_key)
+        cypher = f"""
         MATCH (n)
-        WHERE n.user_id = $user_id
+        WHERE {owner.neo4j_filter_condition("n")}
           AND (n.storage_tier IS NULL OR n.storage_tier = 'hot')
           AND n.is_active <> false
           AND n.content IS NOT NULL
@@ -764,16 +796,24 @@ class ConsolidationEngine:
         LIMIT 200
         """
         with driver.session() as session:
-            result = session.run(cypher, {"user_id": user_id})
+            result = session.run(cypher, {**owner.neo4j_props()})
             return [dict(record) for record in result]
 
     def _find_similar_nodes_pgvector(
         self,
-        user_id: str,
+        owner_key: str,
         node_id: str,
         threshold: float,
     ) -> list[tuple[str, float]]:
         """用 pgvector 查找相似度 >= threshold 的其他节点。
+
+        过滤条件走 ``MemoryOwnerKey.pg_filter_conditions``（owner_type + 归属列），
+        避免仅按 ``owner_account_id`` 过滤导致跨主体合并记忆。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+            node_id: 源节点 ID
+            threshold: 相似度阈值
 
         Returns:
             ``[(node_id, similarity), ...]``
@@ -785,10 +825,12 @@ class ConsolidationEngine:
         try:
             from internal.model.knowledge import UserMemory
 
+            owner = MemoryOwnerKey.parse(owner_key)
+
             # 查找源节点的 embedding
             source = (
                 db.session.query(UserMemory.embedding, UserMemory.embedding_node_id)
-                .filter(UserMemory.owner_account_id == user_id)
+                .filter(*owner.pg_filter_conditions(UserMemory))
                 .filter(UserMemory.embedding_node_id == node_id)
                 .filter(UserMemory.embedding.isnot(None))
                 .first()
@@ -805,7 +847,7 @@ class ConsolidationEngine:
                     UserMemory.embedding_node_id,
                     UserMemory.embedding,
                 )
-                .filter(UserMemory.owner_account_id == user_id)
+                .filter(*owner.pg_filter_conditions(UserMemory))
                 .filter(UserMemory.embedding.isnot(None))
                 .filter(UserMemory.embedding_node_id != node_id)
                 .order_by(UserMemory.embedding.cosine_distance(query_vec))

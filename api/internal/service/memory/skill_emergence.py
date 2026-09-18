@@ -29,6 +29,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.service.memory.metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
@@ -123,25 +124,25 @@ class SkillEmergence:
         self._redis = redis_client
         self._config = config or SkillConfig()
 
-    def scan_and_emerge(self, user_id: str) -> list[Skill]:
+    def scan_and_emerge(self, owner_key: str) -> list[Skill]:
         """扫描高频行为模式并涌现技能。
 
         种子提示机制（§5.7）: 有 positive 种子提示的技能，min_pattern_frequency
         从 3 降为 1，加速成熟但仍需行为验证。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             新涌现或更新的技能列表
         """
-        patterns = self._scan_high_frequency_patterns(user_id)
+        patterns = self._scan_high_frequency_patterns(owner_key)
         if not patterns:
             MetricsCollector.update_skill_count(0)
             return []
 
         # 获取种子提示，用于降低频次阈值
-        seed_hints = self._get_seed_hints(user_id)
+        seed_hints = self._get_seed_hints(owner_key)
 
         results: list[Skill] = []
         for pattern in patterns:
@@ -150,7 +151,7 @@ class SkillEmergence:
             memory_ids = pattern.get("keys", [])
 
             # 检查已有技能
-            existing = self._find_existing_skill(user_id, pattern_key)
+            existing = self._find_existing_skill(owner_key, pattern_key)
 
             if existing is not None:
                 # 增量更新
@@ -170,7 +171,7 @@ class SkillEmergence:
                     if memories:
                         new_skill = self._extract_template(memories)
                         if new_skill is not None:
-                            new_skill.user_id = user_id
+                            new_skill.user_id = owner_key
                             new_skill.frequency = frequency
                             new_skill.source_memories = memory_ids
                             new_skill.first_seen_at = datetime.now(UTC)
@@ -188,7 +189,7 @@ class SkillEmergence:
 
     def register_seed_hint(
         self,
-        user_id: str,
+        owner_key: str,
         skill_name: str,
         polarity: str,
         source: str = "explicit_statement",
@@ -201,7 +202,7 @@ class SkillEmergence:
         种子提示存入 Redis，TTL=90 天。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
             skill_name: 技能/能力名称（显式陈述的 subject）
             polarity: 'positive' 或 'negative'
             source: 来源标记，默认 'explicit_statement'
@@ -212,7 +213,7 @@ class SkillEmergence:
         if not self._redis or not skill_name:
             return False
         try:
-            key = f"seed:{user_id}:{skill_name}"
+            key = f"seed:{owner_key}:{skill_name}"
             value = json.dumps(
                 {
                     "polarity": polarity,
@@ -223,8 +224,8 @@ class SkillEmergence:
             )
             self._redis.setex(key, 90 * 86400, value)  # 90 天 TTL
             logger.info(
-                "种子提示已注册: user=%s skill=%s polarity=%s",
-                user_id,
+                "种子提示已注册: owner=%s skill=%s polarity=%s",
+                owner_key,
                 skill_name,
                 polarity,
             )
@@ -233,8 +234,11 @@ class SkillEmergence:
             logger.warning("register_seed_hint: 注册失败", exc_info=True)
             return False
 
-    def _get_seed_hints(self, user_id: str) -> dict[str, dict]:
-        """获取用户的所有种子提示。
+    def _get_seed_hints(self, owner_key: str) -> dict[str, dict]:
+        """获取主体的所有种子提示。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             {skill_name: {"polarity": ..., "source": ..., "created_at": ...}}
@@ -242,7 +246,7 @@ class SkillEmergence:
         if not self._redis:
             return {}
         try:
-            pattern = f"seed:{user_id}:*"
+            pattern = f"seed:{owner_key}:*"
             keys = self._redis.keys(pattern)
             hints: dict[str, dict] = {}
             for key in keys:
@@ -251,7 +255,7 @@ class SkillEmergence:
                     continue
                 text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
                 data = json.loads(text)
-                # key 格式: seed:{user_id}:{skill_name}
+                # key 格式: seed:{owner_key}:{skill_name}
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
                 parts = key_str.split(":", 2)
                 skill_name = parts[2] if len(parts) >= 3 else ""
@@ -290,8 +294,12 @@ class SkillEmergence:
     # 内部方法
     # =========================================================
 
-    def _scan_high_frequency_patterns(self, user_id: str) -> list[dict]:
-        """扫描高频行为模式（30 天内出现 ≥ min_pattern_frequency 次）。"""
+    def _scan_high_frequency_patterns(self, owner_key: str) -> list[dict]:
+        """扫描高频行为模式（30 天内出现 ≥ min_pattern_frequency 次）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+        """
         driver = self._get_driver()
         if driver is None:
             return []
@@ -300,9 +308,11 @@ class SkillEmergence:
             window_days = self._config.pattern_window_days
             min_freq = self._config.min_pattern_frequency
 
-            cypher = """
-            MATCH (e:Episode {user_id: $user_id})
-            WHERE e.created_at >= datetime() - duration({days: $window_days})
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (e:Episode)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.created_at >= datetime() - duration({{days: $window_days}})
             WITH e.content AS pattern, collect(e.id) AS eids
             WHERE size(eids) >= $min_freq
             RETURN pattern AS pattern, size(eids) AS count, eids AS keys
@@ -314,9 +324,9 @@ class SkillEmergence:
                 result = session.run(
                     cypher,
                     {
-                        "user_id": user_id,
                         "window_days": window_days,
                         "min_freq": min_freq,
+                        **owner.neo4j_props(),
                     },
                 )
                 records = list(result)
@@ -333,8 +343,13 @@ class SkillEmergence:
             logger.warning("_scan_high_frequency_patterns: 查询失败", exc_info=True)
             return []
 
-    def _find_existing_skill(self, user_id: str, pattern_key: str) -> Optional[Skill]:
-        """查找已有技能（status IN candidate/emerging/active 且 name CONTAINS pattern_key）。"""
+    def _find_existing_skill(self, owner_key: str, pattern_key: str) -> Optional[Skill]:
+        """查找已有技能（status IN candidate/emerging/active 且 name CONTAINS pattern_key）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+            pattern_key: 行为模式键
+        """
         if not pattern_key:
             return None
 
@@ -343,9 +358,11 @@ class SkillEmergence:
             return None
 
         try:
-            cypher = """
-            MATCH (s:Skill {user_id: $user_id})
-            WHERE s.status IN ['candidate', 'emerging', 'active']
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (s:Skill)
+            WHERE {owner.neo4j_filter_condition("s")}
+              AND s.status IN ['candidate', 'emerging', 'active']
               AND s.name CONTAINS $pattern_key
             RETURN s
             LIMIT 1
@@ -354,7 +371,7 @@ class SkillEmergence:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"user_id": user_id, "pattern_key": pattern_key[:50]},
+                    {"pattern_key": pattern_key[:50], **owner.neo4j_props()},
                 )
                 record = result.single()
 
@@ -594,19 +611,26 @@ class SkillEmergence:
         return current
 
     def _persist_skill(self, skill: Skill) -> None:
-        """持久化技能到 Neo4j 并失效 Redis 缓存。"""
+        """持久化技能到 Neo4j 并失效 Redis 缓存。
+
+        归属属性（用户态 `user_id`，admin 态 `admin_user_id` [+ `agent_id`]）
+        由 `MemoryOwnerKey.neo4j_props()` 决定，经 `SET s += $owner_props` 写入。
+
+        Args:
+            skill: 待持久化技能（`skill.user_id` 承载跨层主体键）
+        """
         driver = self._get_driver()
         if driver is None:
             return
 
         try:
+            owner = MemoryOwnerKey.parse(skill.user_id)
             cypher = """
             MERGE (s:Skill {id: $skill_id})
             SET s.name = $name,
                 s.description = $description,
                 s.template = $template,
                 s.parameters = $parameters,
-                s.user_id = $user_id,
                 s.status = $status,
                 s.maturity = $maturity,
                 s.use_count = $use_count,
@@ -615,6 +639,7 @@ class SkillEmergence:
                 s.last_used_at = $last_used_at,
                 s.last_updated_at = $last_updated_at,
                 s.source_memories = $source_memories
+            SET s += $owner_props
             """
 
             with driver.session() as session:
@@ -626,7 +651,6 @@ class SkillEmergence:
                         "description": skill.description,
                         "template": skill.template,
                         "parameters": skill.parameters,
-                        "user_id": skill.user_id,
                         "status": skill.status.value,
                         "maturity": skill.maturity,
                         "use_count": skill.use_count,
@@ -635,6 +659,7 @@ class SkillEmergence:
                         "last_used_at": skill.last_used_at,
                         "last_updated_at": skill.last_updated_at,
                         "source_memories": skill.source_memories,
+                        "owner_props": owner.neo4j_props(),
                     },
                 ).consume()
 
@@ -699,7 +724,7 @@ class SkillEmergence:
     # Curator 周期治理（修复断裂点 ⚠️-3）
     # =========================================================
 
-    def curate_skills(self, user_id: str) -> dict:
+    def curate_skills(self, owner_key: str) -> dict:
         """周期性技能治理：重算成熟度 + 状态转移 + 剪枝。
 
         合并 Redis 实时使用统计到 Neo4j，重算所有 ACTIVE/STALE 技能的成熟度，
@@ -708,7 +733,7 @@ class SkillEmergence:
         设计参考：docs/prd/memory-system/03-consolidation-skill-policy-api.md §8.7
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"scanned": int, "transitioned": int, "deprecated": int}``
@@ -719,13 +744,15 @@ class SkillEmergence:
 
         # 1. 查询所有 ACTIVE/STALE 技能
         try:
-            cypher = """
-            MATCH (s:Skill {user_id: $user_id})
-            WHERE s.status IN ['active', 'stale']
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (s:Skill)
+            WHERE {owner.neo4j_filter_condition("s")}
+              AND s.status IN ['active', 'stale']
             RETURN s
             """
             with driver.session() as session:
-                result = session.run(cypher, {"user_id": user_id})
+                result = session.run(cypher, {**owner.neo4j_props()})
                 records = list(result)
         except Exception:
             logger.warning("curate_skills: 查询技能失败", exc_info=True)
@@ -735,7 +762,7 @@ class SkillEmergence:
             return {"scanned": 0, "transitioned": 0, "deprecated": 0}
 
         # 2. 合并 Redis 实时统计 + 重算成熟度 + 状态转移
-        redis_stats = self._read_skill_stats(user_id)
+        redis_stats = self._read_skill_stats(owner_key)
         scanned = 0
         transitioned = 0
         deprecated = 0
@@ -773,11 +800,11 @@ class SkillEmergence:
             self._persist_skill(skill)
 
         # 3. 清理已合并的 Redis 统计
-        self._clear_skill_stats(user_id)
+        self._clear_skill_stats(owner_key)
 
         logger.info(
-            "curate_skills: user=%s scanned=%d transitioned=%d deprecated=%d",
-            user_id,
+            "curate_skills: owner=%s scanned=%d transitioned=%d deprecated=%d",
+            owner_key,
             scanned,
             transitioned,
             deprecated,
@@ -788,12 +815,16 @@ class SkillEmergence:
             "deprecated": deprecated,
         }
 
-    def _read_skill_stats(self, user_id: str) -> dict[str, dict]:
-        """从 Redis 读取技能实时使用统计（bump_use 累积的计数）。"""
+    def _read_skill_stats(self, owner_key: str) -> dict[str, dict]:
+        """从 Redis 读取技能实时使用统计（bump_use 累积的计数）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+        """
         if not self._redis:
             return {}
         try:
-            key = f"skill:stats:{user_id}"
+            key = f"skill:stats:{owner_key}"
             raw = self._redis.hgetall(key)
             if not raw:
                 return {}
@@ -816,13 +847,17 @@ class SkillEmergence:
             logger.warning("_read_skill_stats: 读取失败", exc_info=True)
             return {}
 
-    def _clear_skill_stats(self, user_id: str) -> None:
-        """清理已合并的 Redis 统计键。"""
+    def _clear_skill_stats(self, owner_key: str) -> None:
+        """清理已合并的 Redis 统计键。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+        """
         redis_client = self._get_redis()
         if redis_client is None:
             return
         try:
-            redis_client.delete(f"skill:stats:{user_id}")
+            redis_client.delete(f"skill:stats:{owner_key}")
         except Exception:
             logger.warning("_clear_skill_stats: 清理失败", exc_info=True)
 
@@ -852,7 +887,7 @@ class SkillEmergence:
     # 基因3: bump_use 实时统计（§8.7）
     # =========================================================
 
-    def bump_use(self, user_id: str, skill_id: str) -> bool:
+    def bump_use(self, owner_key: str, skill_id: str) -> bool:
         """技能使用实时计数（基因3, §8.7）。
 
         使用 Redis HINCRBY 累加 use_count，HSET 更新 last_used_at。
@@ -863,7 +898,7 @@ class SkillEmergence:
         ``_clear_skill_stats``（清理侧）组成完整的 Redis 统计生命周期。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
             skill_id: 技能 ID
 
         Returns:
@@ -877,7 +912,7 @@ class SkillEmergence:
             return False
 
         try:
-            key = f"skill:stats:{user_id}"
+            key = f"skill:stats:{owner_key}"
             now = datetime.now(UTC).isoformat()
             pipe = redis_client.pipeline()
             pipe.hincrby(key, f"{skill_id}:use_count", 1)
@@ -888,7 +923,7 @@ class SkillEmergence:
             logger.warning("bump_use: Redis 计数失败", exc_info=True)
             return False
 
-    def flush_bump_use_to_neo4j(self, user_id: str) -> dict:
+    def flush_bump_use_to_neo4j(self, owner_key: str) -> dict:
         """将 Redis 中的技能使用统计合并到 Neo4j（基因3, §8.7）。
 
         独立于 ``curate_skills``，只做统计合并，不做 maturity 重算和状态转移。
@@ -898,6 +933,9 @@ class SkillEmergence:
         设计为高频定时任务（默认每小时），与低频 ``curate_skills``（每周）形成双轨：
         - flush: 高频合并统计，保持 Neo4j use_count 近实时
         - curate: 低频重算 maturity + 状态转移 + 剪枝
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"flushed": int, "errors": int}``
@@ -911,9 +949,11 @@ class SkillEmergence:
             return {"flushed": 0, "errors": 0}
 
         # 1. 读取 Redis 统计
-        redis_stats = self._read_skill_stats(user_id)
+        redis_stats = self._read_skill_stats(owner_key)
         if not redis_stats:
             return {"flushed": 0, "errors": 0}
+
+        owner = MemoryOwnerKey.parse(owner_key)
 
         # 2. 逐个合并到 Neo4j
         flushed = 0
@@ -925,8 +965,9 @@ class SkillEmergence:
                 if use_count_delta <= 0:
                     continue
 
-                cypher = """
-                MATCH (s:Skill {skill_id: $skill_id, user_id: $user_id})
+                cypher = f"""
+                MATCH (s:Skill {{skill_id: $skill_id}})
+                WHERE {owner.neo4j_filter_condition("s")}
                 SET s.use_count = coalesce(s.use_count, 0) + $delta,
                     s.last_used_at = CASE
                         WHEN $last_used_at IS NOT NULL
@@ -939,9 +980,9 @@ class SkillEmergence:
                 with driver.session() as session:
                     session.run(cypher, {
                         "skill_id": skill_id,
-                        "user_id": user_id,
                         "delta": use_count_delta,
                         "last_used_at": last_used_at,
+                        **owner.neo4j_props(),
                     })
                 flushed += 1
             except Exception:
@@ -952,10 +993,10 @@ class SkillEmergence:
 
         # 3. 清理已合并的 Redis 统计
         if flushed > 0:
-            self._clear_skill_stats(user_id)
+            self._clear_skill_stats(owner_key)
 
         logger.info(
-            "flush_bump_use_to_neo4j: user=%s flushed=%d errors=%d",
-            user_id, flushed, errors,
+            "flush_bump_use_to_neo4j: owner=%s flushed=%d errors=%d",
+            owner_key, flushed, errors,
         )
         return {"flushed": flushed, "errors": errors}

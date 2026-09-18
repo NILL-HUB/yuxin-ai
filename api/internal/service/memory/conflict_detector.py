@@ -28,6 +28,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.model.memory_models import ConflictType, ConflictResult
 from internal.service.language_model_service import LanguageModelService
 from internal.service.memory.llm_activity_probe import (
@@ -83,11 +84,11 @@ class ConflictDetector:
     # 主入口
     # =========================================================
 
-    def detect(self, user_id: str) -> dict:
-        """批量检测用户的所有潜在冲突记忆对。
+    def detect(self, owner_key: str) -> dict:
+        """批量检测主体的所有潜在冲突记忆对。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"count": int, "contradictions": int, "updates": int, "complements": int}``
@@ -106,9 +107,9 @@ class ConflictDetector:
 
         batch_size = self._config.conflict_check_batch_size
 
-        # 查询用户的热 SemanticMemory 对（a.id < b.id）
+        # 查询主体的热 SemanticMemory 对（a.id < b.id）
         try:
-            pairs = self._query_conflict_pairs(driver, user_id, batch_size)
+            pairs = self._query_conflict_pairs(driver, owner_key, batch_size)
         except Exception:
             logger.warning(
                 "ConflictDetector.detect: 查询冲突对失败",
@@ -286,10 +287,10 @@ class ConflictDetector:
     def _query_conflict_pairs(
         self,
         driver,
-        user_id: str,
+        owner_key: str,
         batch_size: int,
     ) -> list[dict]:
-        """查询用户的潜在冲突记忆对。
+        """查询主体的潜在冲突记忆对。
 
         查询 storage_tier='HOT' 或 IS NULL 的 SemanticMemory/Episode 对，
         a.node_id < b.node_id（避免重复对），LIMIT batch_size。
@@ -298,11 +299,17 @@ class ConflictDetector:
             跳过已被写时冲突处理器标记的节点：
             - t_invalidated_at IS NOT NULL（已被 SUPERSEDE/CONTRADICTION 标记失效）
             - status IN ['superseded', 'deprecated']（已被标记为废弃）
+
+        Args:
+            driver: Neo4j 驱动
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+            batch_size: 批量上限
         """
-        cypher = """
+        owner = MemoryOwnerKey.parse(owner_key)
+        cypher = f"""
         MATCH (a), (b)
-        WHERE a.user_id = $user_id
-          AND b.user_id = $user_id
+        WHERE {owner.neo4j_filter_condition("a")}
+          AND {owner.neo4j_filter_condition("b")}
           AND a.node_id < b.node_id
           AND (a.storage_tier IS NULL OR a.storage_tier IN ['hot', 'warm'])
           AND (b.storage_tier IS NULL OR b.storage_tier IN ['hot', 'warm'])
@@ -326,7 +333,7 @@ class ConflictDetector:
         with driver.session() as session:
             result = session.run(
                 cypher,
-                {"user_id": user_id, "batch_size": batch_size},
+                {"batch_size": batch_size, **owner.neo4j_props()},
             )
             return [dict(record) for record in result]
 

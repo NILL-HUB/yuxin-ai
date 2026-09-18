@@ -33,6 +33,7 @@ from typing import Optional
 from uuid import uuid4
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class CommunityInductionEngine:
     """Community 归纳引擎。
 
     不使用 ``@inject``：Neo4j 驱动由构造函数传入或运行时获取，
-    配置从 ``settings.consolidation`` 读取。方法签名全部带 ``user_id``。
+    配置从 ``settings.consolidation`` 读取。方法签名全部带 ``owner_key``。
     """
 
     def __init__(self, neo4j_driver=None, config=None) -> None:
@@ -66,14 +67,14 @@ class CommunityInductionEngine:
         self._driver = neo4j_driver
         self._config = config or settings.consolidation
 
-    def run_induction(self, user_id: str) -> dict:
+    def run_induction(self, owner_key: str) -> dict:
         """执行一轮完整的 Community 归纳。
 
         调用链：收集候选 → 聚类 → LLM 提取主题 → 幂等持久化 → 生命周期治理。
         单步失败仅记录 errors，不阻断后续步骤。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             ``{"candidates": n, "created": n, "merged": n, "evolved": n,
@@ -88,7 +89,7 @@ class CommunityInductionEngine:
             "errors": [],
         }
         try:
-            candidates = self._collect_eligible(user_id)
+            candidates = self._collect_eligible(owner_key)
         except Exception as exc:
             logger.warning("run_induction: 收集候选失败", exc_info=True)
             result["errors"].append(f"collect: {exc}")
@@ -98,7 +99,7 @@ class CommunityInductionEngine:
         if not candidates:
             return result
 
-        clusters = self._cluster_candidates(user_id, candidates)
+        clusters = self._cluster_candidates(owner_key, candidates)
 
         for cluster in clusters:
             try:
@@ -107,8 +108,8 @@ class CommunityInductionEngine:
                 theme = self._extract_theme(cluster)
                 if not theme:
                     continue
-                existing_id = self._find_existing_community(user_id, theme.get("key") or "")
-                node_id = self._persist_community(user_id, theme, cluster)
+                existing_id = self._find_existing_community(owner_key, theme.get("key") or "")
+                node_id = self._persist_community(owner_key, theme, cluster)
                 if node_id is None:
                     continue
                 if existing_id is not None:
@@ -120,13 +121,13 @@ class CommunityInductionEngine:
                 logger.warning("run_induction: 主题持久化失败", exc_info=True)
 
         try:
-            result["evolved"] = self._evolve_stale(user_id)
+            result["evolved"] = self._evolve_stale(owner_key)
         except Exception as exc:
             result["errors"].append(f"evolve: {exc}")
             logger.warning("run_induction: 演化治理失败", exc_info=True)
 
         try:
-            result["deprecated"] = self._deprecate_inactive(user_id)
+            result["deprecated"] = self._deprecate_inactive(owner_key)
         except Exception as exc:
             result["errors"].append(f"deprecate: {exc}")
             logger.warning("run_induction: 弃用治理失败", exc_info=True)
@@ -137,13 +138,16 @@ class CommunityInductionEngine:
     # 第 1 步：收集合格候选
     # =========================================================
 
-    def _collect_eligible(self, user_id: str) -> list[dict]:
+    def _collect_eligible(self, owner_key: str) -> list[dict]:
         """收集可归纳的 SemanticMemory 与 Entity 聚合条目。
 
         Cypher：取本用户 ``created_at <= now - community_age_days 天`` 的
         active SemanticMemory 与 Entity；Entity 按共享相同 user_id 的同类型、
         且已与语义/事件有 CONTAINS/IS_ABSTRACTION_OF 关联的实体聚合为
         ``kind='entity_group'`` 条目。总量限制 <= 40 条避免 LLM 超时。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             候选 dict 列表：``{"node_id", "kind", "content"/"name", "summary",
@@ -153,12 +157,14 @@ class CommunityInductionEngine:
         if driver is None:
             return []
 
+        owner = MemoryOwnerKey.parse(owner_key)
         cutoff = datetime.now(UTC) - timedelta(days=self._config.community_age_days)
         candidates: list[dict] = []
         try:
-            cypher_semantic = """
-            MATCH (s:SemanticMemory {user_id: $user_id})
-            WHERE s.is_active <> false
+            cypher_semantic = f"""
+            MATCH (s:SemanticMemory)
+            WHERE {owner.neo4j_filter_condition("s")}
+              AND s.is_active <> false
               AND s.created_at <= $cutoff
               AND (s.summary IS NOT NULL OR s.content IS NOT NULL)
             RETURN s.node_id AS node_id,
@@ -173,7 +179,7 @@ class CommunityInductionEngine:
             with driver.session() as session:
                 result = session.run(
                     cypher_semantic,
-                    {"user_id": user_id, "cutoff": cutoff.isoformat()},
+                    {"cutoff": cutoff.isoformat(), **owner.neo4j_props()},
                 )
                 for record in result:
                     content = record.get("content") or ""
@@ -194,9 +200,10 @@ class CommunityInductionEngine:
             return []
 
         try:
-            cypher_groups = """
-            MATCH (e:Entity {user_id: $user_id})
-            WHERE e.is_active <> false
+            cypher_groups = f"""
+            MATCH (e:Entity)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.is_active <> false
               AND (e.created_at IS NULL OR e.created_at <= $cutoff)
               AND (e.summary IS NOT NULL OR e.content IS NOT NULL)
             OPTIONAL MATCH (ep:Episode)-[:CONTAINS]->(e)
@@ -213,7 +220,9 @@ class CommunityInductionEngine:
                    [m IN members | m.created_at] AS created_ats
             """
             with driver.session() as session:
-                result = session.run(cypher_groups, {"user_id": user_id})
+                # 注意：此处保持与改造前一致的绑定集合（仅替换归属参数），
+                # 不引入行为变更（`$cutoff` 的绑定问题不在本任务范围）。
+                result = session.run(cypher_groups, {**owner.neo4j_props()})
                 groups = list(result)
         except Exception:
             logger.warning("_collect_eligible: 聚合 Entity 失败", exc_info=True)
@@ -271,7 +280,7 @@ class CommunityInductionEngine:
     # 第 2 步：轻量关键词聚类
     # =========================================================
 
-    def _cluster_candidates(self, user_id: str, candidates: list[dict]) -> list[list[dict]]:
+    def _cluster_candidates(self, owner_key: str, candidates: list[dict]) -> list[list[dict]]:
         """用轻量关键词 overlap 对候选做贪心粗分簇。
 
         取 summary 前 80 字去停用词，两两 Jaccard >=
@@ -279,7 +288,7 @@ class CommunityInductionEngine:
         community_min_evidence 的簇仍允许输出，但至少 2 个成员才进 LLM。
 
         Args:
-            user_id: 用户标识（保留，便于后续接入 pgvector/全文索引）
+            owner_key: 记忆主体键（保留，便于后续接入 pgvector/全文索引）
             candidates: ``_collect_eligible`` 返回的候选列表
 
         Returns:
@@ -435,8 +444,12 @@ class CommunityInductionEngine:
         value = re.sub(r"-{2,}", "-", value).strip("-")
         return value[:64]
 
-    def _find_existing_community(self, user_id: str, key: str) -> Optional[str]:
-        """查找用户已有 active/candidate 的 ``(:Community)``（按 key 精确匹配）。
+    def _find_existing_community(self, owner_key: str, key: str) -> Optional[str]:
+        """查找主体已有 active/candidate 的 ``(:Community)``（按 key 精确匹配）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+            key: 主题业务键
 
         Returns:
             命中主题的 node_id；无命中返回 None
@@ -447,9 +460,11 @@ class CommunityInductionEngine:
         if driver is None:
             return None
         try:
-            cypher = """
-            MATCH (c:Community {user_id: $user_id, key: $key})
-            WHERE c.status IN ['active', 'candidate']
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (c:Community {{key: $key}})
+            WHERE {owner.neo4j_filter_condition("c")}
+              AND c.status IN ['active', 'candidate']
               AND c.is_active <> false
             RETURN c.node_id AS node_id
             LIMIT 1
@@ -457,7 +472,7 @@ class CommunityInductionEngine:
             with driver.session() as session:
                 record = session.run(
                     cypher,
-                    {"user_id": user_id, "key": key},
+                    {"key": key, **owner.neo4j_props()},
                 ).single()
             if record and record.get("node_id"):
                 return record["node_id"]
@@ -470,16 +485,20 @@ class CommunityInductionEngine:
     # 第 4 步：幂等持久化 Community
     # =========================================================
 
-    def _persist_community(self, user_id: str, theme: dict, cluster) -> Optional[str]:
-        """幂等持久化主题：按 ``(key, user_id)`` MERGE → 更新或新建 Community + 建边。
+    def _persist_community(self, owner_key: str, theme: dict, cluster) -> Optional[str]:
+        """幂等持久化主题：按 ``(key, 主体)`` MERGE → 更新或新建 Community + 建边。
 
-        命中 active/candidate 的 ``(:Community {user_id, key})`` 时：更新
+        命中 active/candidate 的 ``(:Community {key, 主体属性})`` 时：更新
         ``last_active_at/summary(若新更长)/evidence_count+1``，并把命中成员建立边
         （已存在边则跳过，不重复计数）。未命中则新建 ``(:Community)`` + 建立
         TOPIC_OF/MEMBER_OF 边。节点带 ``source='community_induction'``。
 
+        **归属属性必须保留在 MERGE 模式内**：只按 ``key`` MERGE 会让不同主体的
+        同名主题合并到同一节点（跨主体污染）。归属属性名由 ``neo4j_props()`` 决定
+        （用户态 `user_id`，admin 态 `admin_user_id` [+ `agent_id`]）。
+
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
             theme: ``_extract_theme`` 返回的主题 dict
             cluster: 候选簇（list[dict]）
 
@@ -489,6 +508,10 @@ class CommunityInductionEngine:
         driver = self._get_driver()
         if driver is None:
             return None
+
+        owner = MemoryOwnerKey.parse(owner_key)
+        owner_props = owner.neo4j_props()
+        merge_props = ", ".join(f"{name}: ${name}" for name in owner_props)
 
         now_iso = datetime.now(UTC).isoformat()
         community_id = uuid4().hex
@@ -503,8 +526,8 @@ class CommunityInductionEngine:
         maturity = self._compute_maturity(cluster)
 
         try:
-            cypher = """
-            MERGE (c:Community {user_id: $user_id, key: $key})
+            cypher = f"""
+            MERGE (c:Community {{{merge_props}, key: $key}})
             ON CREATE SET c.node_id = $community_id,
                           c.id = $community_id,
                           c.title = $title,
@@ -544,7 +567,6 @@ class CommunityInductionEngine:
                     cypher,
                     {
                         "community_id": community_id,
-                        "user_id": user_id,
                         "key": key,
                         "title": title,
                         "summary": summary,
@@ -553,11 +575,12 @@ class CommunityInductionEngine:
                         "evidence_count": evidence_count,
                         "member_count": len(cluster),
                         "now_iso": now_iso,
+                        **owner_props,
                     },
                 ).single()
 
             node_id = record["node_id"] if record else community_id
-            self._link_members(user_id, node_id, cluster, now_iso)
+            self._link_members(owner_key, node_id, cluster, now_iso)
             return node_id
         except Exception:
             logger.warning("_persist_community: 持久化主题失败 key=%s", key, exc_info=True)
@@ -573,12 +596,15 @@ class CommunityInductionEngine:
         raw = 1.0 - 1.0 / evidence
         return max(0.0, min(1.0, round(raw, 4)))
 
-    def _link_members(self, user_id: str, community_id: str, cluster, now_iso: str) -> None:
+    def _link_members(self, owner_key: str, community_id: str, cluster, now_iso: str) -> None:
         """为 Community 建立 TOPIC_OF/MEMBER_OF 边（已存在则跳过）。
 
         semantic 成员建 ``(c)-[:TOPIC_OF {edge_id, weight, created_at,
         is_active:true}]->(s:SemanticMemory)``；entity_group 成员对组内每个
         Entity 建 ``(c)-[:MEMBER_OF {...}]->(e:Entity)``。
+
+        Args:
+            owner_key: 记忆主体键（保留，边端点由 node_id 标识）
         """
         driver = self._get_driver()
         if driver is None or not cluster:
@@ -660,7 +686,7 @@ class CommunityInductionEngine:
     # 第 5 步：候选主题演化治理
     # =========================================================
 
-    def _evolve_stale(self, user_id: str) -> int:
+    def _evolve_stale(self, owner_key: str) -> int:
         """对超 30 天无活跃的 candidate Community 执行演化（限 3/run 防抖）。
 
         治理开关 ``community_governance_enabled=False`` 时跳过。每个候选复用其
@@ -670,7 +696,7 @@ class CommunityInductionEngine:
         TOPIC_OF/MEMBER_OF 边，老节点 ``status='deprecated', is_active:false``。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             演化成功数
@@ -681,12 +707,14 @@ class CommunityInductionEngine:
         if driver is None:
             return 0
 
+        owner = MemoryOwnerKey.parse(owner_key)
         stale_cutoff = datetime.now(UTC) - timedelta(days=30)
         evolved = 0
         try:
-            cypher = """
-            MATCH (c:Community {user_id: $user_id})
-            WHERE c.status = 'candidate'
+            cypher = f"""
+            MATCH (c:Community)
+            WHERE {owner.neo4j_filter_condition("c")}
+              AND c.status = 'candidate'
               AND (c.last_active_at IS NULL OR c.last_active_at < $cutoff)
             RETURN c.node_id AS node_id,
                    c.key AS key,
@@ -698,7 +726,7 @@ class CommunityInductionEngine:
             with driver.session() as session:
                 records = list(session.run(
                     cypher,
-                    {"user_id": user_id, "cutoff": stale_cutoff.isoformat()},
+                    {"cutoff": stale_cutoff.isoformat(), **owner.neo4j_props()},
                 ))
         except Exception:
             logger.warning("_evolve_stale: 查询候选主题失败", exc_info=True)
@@ -712,8 +740,8 @@ class CommunityInductionEngine:
                 if not old_id:
                     continue
 
-                members = self._load_community_members(user_id, old_id)
-                fresh = self._load_latest_semantics(user_id)
+                members = self._load_community_members(owner_key, old_id)
+                fresh = self._load_latest_semantics(owner_key)
                 evidence_cluster = members + fresh
                 if not evidence_cluster:
                     continue
@@ -725,7 +753,7 @@ class CommunityInductionEngine:
                 if self._text_similarity(theme.get("summary") or "", old_summary) >= self._config.community_merge_threshold:
                     continue
 
-                new_id = self._create_evolved_community(user_id, old_id, theme, members)
+                new_id = self._create_evolved_community(owner_key, old_id, theme, members)
                 if new_id is not None:
                     evolved += 1
             except Exception as exc:
@@ -734,14 +762,21 @@ class CommunityInductionEngine:
 
         return evolved
 
-    def _load_community_members(self, user_id: str, community_id: str) -> list[dict]:
-        """读取一个 Community 的当前证据（TOPIC_OF/MEMBER_OF 边指向的成员）。"""
+    def _load_community_members(self, owner_key: str, community_id: str) -> list[dict]:
+        """读取一个 Community 的当前证据（TOPIC_OF/MEMBER_OF 边指向的成员）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+            community_id: Community 节点 ID
+        """
         driver = self._get_driver()
         if driver is None:
             return []
         try:
-            cypher = """
-            MATCH (c:Community {user_id: $user_id, node_id: $cid})-[r:TOPIC_OF|MEMBER_OF]->(m)
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (c:Community {{node_id: $cid}})-[r:TOPIC_OF|MEMBER_OF]->(m)
+            WHERE {owner.neo4j_filter_condition("c")}
             RETURN m.node_id AS node_id,
                    type(r) AS rel,
                    m.summary AS summary,
@@ -751,7 +786,7 @@ class CommunityInductionEngine:
             with driver.session() as session:
                 records = list(session.run(
                     cypher,
-                    {"user_id": user_id, "cid": community_id},
+                    {"cid": community_id, **owner.neo4j_props()},
                 ))
             members = []
             for record in records:
@@ -770,15 +805,21 @@ class CommunityInductionEngine:
             logger.warning("_load_community_members: 读取成员失败", exc_info=True)
             return []
 
-    def _load_latest_semantics(self, user_id: str) -> list[dict]:
-        """读取用户最新的 hot SemanticMemory，作为演化时的追加证据。"""
+    def _load_latest_semantics(self, owner_key: str) -> list[dict]:
+        """读取主体最新的 hot SemanticMemory，作为演化时的追加证据。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+        """
         driver = self._get_driver()
         if driver is None:
             return []
         try:
-            cypher = """
-            MATCH (s:SemanticMemory {user_id: $user_id})
-            WHERE s.is_active <> false
+            owner = MemoryOwnerKey.parse(owner_key)
+            cypher = f"""
+            MATCH (s:SemanticMemory)
+            WHERE {owner.neo4j_filter_condition("s")}
+              AND s.is_active <> false
               AND (s.storage_tier IS NULL OR s.storage_tier = 'hot')
             RETURN s.node_id AS node_id,
                    s.summary AS summary,
@@ -788,7 +829,7 @@ class CommunityInductionEngine:
             LIMIT 3
             """
             with driver.session() as session:
-                records = list(session.run(cypher, {"user_id": user_id}))
+                records = list(session.run(cypher, {**owner.neo4j_props()}))
             result = []
             for record in records:
                 node_id = record.get("node_id") or ""
@@ -807,12 +848,18 @@ class CommunityInductionEngine:
 
     def _create_evolved_community(
         self,
-        user_id: str,
+        owner_key: str,
         old_community_id: str,
         theme: dict,
         members,
     ) -> Optional[str]:
         """创建演化后的新 Community + EVOLVED_INTO 边，并迁移成员边、弃用老节点。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID）
+            old_community_id: 被演化的老 Community ID
+            theme: ``_extract_theme`` 返回的主题 dict
+            members: 证据成员列表
 
         Returns:
             新 Community 的 node_id；失败返回 None
@@ -820,6 +867,7 @@ class CommunityInductionEngine:
         driver = self._get_driver()
         if driver is None:
             return None
+        owner = MemoryOwnerKey.parse(owner_key)
         now_iso = datetime.now(UTC).isoformat()
         new_id = uuid4().hex
         key = theme.get("key") or uuid4().hex[:12]
@@ -835,7 +883,6 @@ class CommunityInductionEngine:
                 key: $key,
                 title: $title,
                 summary: $summary,
-                user_id: $user_id,
                 status: 'candidate',
                 maturity: $maturity,
                 evidence_count: $evidence_count,
@@ -847,6 +894,7 @@ class CommunityInductionEngine:
                 is_active: true,
                 source: 'community_induction'
             })
+            SET new += $owner_props
             CREATE (old)-[:EVOLVED_INTO {
                 edge_id: $edge_id,
                 created_at: $now_iso,
@@ -866,7 +914,6 @@ class CommunityInductionEngine:
                         "key": key,
                         "title": title,
                         "summary": summary,
-                        "user_id": user_id,
                         "maturity": self._compute_maturity(members or [{"members": 1}]),
                         "evidence_count": sum(
                             int(m.get("members", 1) or 1) for m in (members or [])
@@ -874,6 +921,7 @@ class CommunityInductionEngine:
                         "member_count": len(members or []),
                         "edge_id": uuid4().hex,
                         "now_iso": now_iso,
+                        "owner_props": owner.neo4j_props(),
                     },
                 ).single()
 
@@ -929,13 +977,13 @@ class CommunityInductionEngine:
     # 第 6 步：活跃主题弃用治理
     # =========================================================
 
-    def _deprecate_inactive(self, user_id: str) -> int:
+    def _deprecate_inactive(self, owner_key: str) -> int:
         """活跃主题生命周期转移：active 超 90 天 → stale，stale 再超 30 天 → deprecated。
 
         治理开关 ``community_governance_enabled=False`` 时跳过。
 
         Args:
-            user_id: 用户标识
+            owner_key: 记忆主体键（用户主体为裸 UUID）
 
         Returns:
             发生状态转移（或弃用）的主题数
@@ -946,14 +994,16 @@ class CommunityInductionEngine:
         if driver is None:
             return 0
 
+        owner = MemoryOwnerKey.parse(owner_key)
         now = datetime.now(UTC)
         stale_cutoff = now - timedelta(days=90)
         deprecated_cutoff = now - timedelta(days=120)
         changed = 0
         try:
-            cypher = """
-            MATCH (c:Community {user_id: $user_id})
-            WHERE c.status = 'active'
+            cypher = f"""
+            MATCH (c:Community)
+            WHERE {owner.neo4j_filter_condition("c")}
+              AND c.status = 'active'
               AND (c.updated_at IS NULL OR c.updated_at < $stale_cutoff)
               AND (c.is_active <> false)
             SET c.status = 'stale',
@@ -965,9 +1015,9 @@ class CommunityInductionEngine:
                 record = session.run(
                     cypher,
                     {
-                        "user_id": user_id,
                         "stale_cutoff": stale_cutoff.isoformat(),
                         "now_iso": now.isoformat(),
+                        **owner.neo4j_props(),
                     },
                 ).single()
             if record:
@@ -976,9 +1026,10 @@ class CommunityInductionEngine:
             logger.warning("_deprecate_inactive: active→stale 失败", exc_info=True)
 
         try:
-            cypher = """
-            MATCH (c:Community {user_id: $user_id})
-            WHERE c.status = 'stale'
+            cypher = f"""
+            MATCH (c:Community)
+            WHERE {owner.neo4j_filter_condition("c")}
+              AND c.status = 'stale'
               AND (c.updated_at IS NULL OR c.updated_at < $deprecated_cutoff)
             SET c.status = 'deprecated',
                 c.is_active = false,
@@ -989,9 +1040,9 @@ class CommunityInductionEngine:
                 record = session.run(
                     cypher,
                     {
-                        "user_id": user_id,
                         "deprecated_cutoff": deprecated_cutoff.isoformat(),
                         "now_iso": now.isoformat(),
+                        **owner.neo4j_props(),
                     },
                 ).single()
             if record:
