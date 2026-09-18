@@ -534,7 +534,7 @@ class ConsolidationReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 ```
 
-### 1.10 记忆主体抽象（P3a 键形态已落地；读路径切换待 P3b 后续 Task）
+### 1.10 记忆主体抽象（P3a 主体抽象落地；键形态于 P3b Task 1 定形，读路径切换待后续 Task）
 
 记忆归属从"硬编码 `Account`"升级为**主体类型**维度（治理设计 §8），使记忆可归属管理员与 Agent。权威实现见 `api/internal/entity/memory_owner_entity.py` 的 `MemoryOwnerKey`；写入落点见 `api/internal/service/memory/ledger_writer.py`。
 

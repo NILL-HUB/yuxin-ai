@@ -132,7 +132,7 @@
 | 跨层键前缀常量 | `api/internal/config/memory_settings.py`（`OWNER_KEY_USER_PREFIX` 等） |
 | 回归防护 | `test_memory_owner_entity.py`、`test_memory_owner_type_migration.py`、`test_ledger_writer_owner.py`、`test_memory_owner_backfill_consistency.py`（真库校验）、`test_memory_owner_settings.py` |
 
-**主体键形态**（`MemoryOwnerKey.to_key()`，仅用于 Redis / 冷存储等扁平命名空间）：用户 = **裸 `{account_uuid}`**（与旧 `str(account.id)` 逐字节一致，故用户侧零迁移）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。Neo4j 侧不用字符串键，走节点属性级分离（用户 `user_id` / admin `admin_user_id` + `agent_id`），详见 P3b 小节。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10。
+**主体键形态**（`MemoryOwnerKey.to_key()`，仅用于 Redis / 冷存储等扁平命名空间）：用户 = **裸 `{account_uuid}`**（与旧 `str(account.id)` 逐字节一致，故用户侧零迁移）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。Neo4j 侧不用字符串键，走节点属性级分离（用户 `user_id` / admin `admin_user_id` + `agent_id`）。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10；后续阶段的切分设计见 [P3b 实现计划](../superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md)。
 
 **关键设计决定**：
 
@@ -141,9 +141,9 @@
 - **`agent_id` 独立落列**：规格 §8 要求「`admin_user_id` + `agent_id` 两级隔离」，故新增 `owner_agent_id` 列（可空 FK `admin_agent.id`），而非复用 `owner_admin_user_id`。
 - **存量零变化**：既有 234 行全部回填 `owner_type='user'`，`owner_account_id` 不动；真库一致性守卫断言无 NULL、无非 user 行、分表列齐备。
 
-**未落地（P3b）**：读路径切 `owner_key`（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点属性 `user_id` → `owner_key`、Redis 键改造、冷存储路径改造、服务层 60+ 处 `user_id: str` 签名统一、admin Agent 记忆**读写**接入；以及既有不一致 C1（Neo4j `Skill` 节点写入键与统计合并键不符）、C2（`DigestConfig` 配置双源）、C3（GDPR 清 Redis 白名单键与真实键不符 → 清理无效）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
+**未落地（P3b 后续 Task / P3c）**：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、Redis 键改造、冷存储路径改造、服务层 `user_id: str` 签名统一、admin Agent 记忆**读写**接入；以及既有不一致 C1（Neo4j `Skill` 节点写入键与统计合并键不符）、C2（`DigestConfig` 配置双源）、C3（GDPR 清 Redis 白名单键与真实键不符 → 清理无效）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
 
-实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`。
+实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（P3a）；后续阶段的键形态与切分设计见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
 
 
 ### 第三轮并行修复（P0-P3 全部完成）

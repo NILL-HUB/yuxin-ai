@@ -871,7 +871,7 @@ from internal.entity.memory_owner_entity import MemoryOwnerKey
 
 - [ ] **Step 4: 改 Neo4j 两路分支**
 
-`_tkg_recall` 与 `_community_recall`：形参 `user_id` → `owner_key`，Cypher 绑定的**值来源**改为 owner_key（对用户态与改造前同值）：
+`_tkg_recall` 与 `_community_recall`：形参 `user_id` → `owner_key`；**归属谓词与绑定参数改由 Neo4j 访问器产出**（`neo4j_filter_condition(alias)` / `neo4j_props()`，见 Task 2）。用户态产物与改造前逐字节相同（`node.user_id = $user_id` + `{"user_id": "<裸 uuid>"}`）：
 
 ```python
     def _tkg_recall(self, query: str, owner_key: str, top_k: int) -> list[RetrievalResult]:
