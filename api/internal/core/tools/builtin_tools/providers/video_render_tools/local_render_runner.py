@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -26,10 +27,12 @@ from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["render_on_local_device"]
+__all__ = ["render_on_local_device", "fetch_local_artifact"]
 
 # 渲染是分钟级长任务，超时必须显著大于服务端 CLI 超时（RENDER_TIMEOUT_SEC，默认 1800s）
 _LOCAL_RENDER_TIMEOUT_SEC = 1900
+
+_ARTIFACT_TIMEOUT_SEC = 300
 
 
 def _normalize_text(value: Any) -> str:
@@ -103,4 +106,62 @@ def render_on_local_device(
         "path": result.get("path", ""),
         "size_bytes": int(result.get("size_bytes") or 0),
         "name": result.get("name") or name or "渲染成品",
+    }
+
+
+def _post_artifact(*, endpoint: str, token: str, payload: dict) -> dict:
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=_ARTIFACT_TIMEOUT_SEC) as response:
+        raw = response.read().decode("utf-8", errors="replace")
+        return json.loads(raw or "{}")
+
+
+def fetch_local_artifact(*, account_id: Any, artifact_path: str) -> dict[str, Any]:
+    """取回本机渲染产物字节（经 bridge `/artifact` 路由）。
+
+    约定：bridge 侧实现 `/artifact` → render worker 的 `POST /artifact`，
+    入参 {"path": ...}，返回 {"ok": True, "name": ..., "content_base64": ...}。
+    """
+    resolved = resolve_desktop_bridge(account_id, purpose="/artifact")
+    if not resolved:
+        return {
+            "ok": False,
+            "unavailable": True,
+            "error": "未找到可用的桌面设备，无法取回本机渲染产物",
+        }
+
+    bridge_url, bridge_token = resolved
+    endpoint = _normalize_text(bridge_url).rstrip("/") + "/artifact"
+    try:
+        result = _post_artifact(
+            endpoint=endpoint,
+            token=bridge_token,
+            payload={"path": _normalize_text(artifact_path)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "unavailable": True,
+            "error": f"取回本机渲染产物失败：{exc}",
+        }
+
+    if not result.get("ok"):
+        return {"ok": False, "error": result.get("error") or "取回产物失败"}
+    try:
+        content = base64.b64decode(result.get("content_base64") or "")
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"产物解码失败：{exc}"}
+    return {
+        "ok": True,
+        "name": result.get("name") or "render-output.mp4",
+        "content": content,
     }

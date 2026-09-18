@@ -66,6 +66,44 @@ def _run_local_render(*, composition: dict, account_id: str, name: str) -> dict:
     )
 
 
+def _ingest_local_artifact(*, account_id: str, artifact_path: str, name: str) -> dict:
+    """取回本机产物并写入成品库（复用既有 store_render_output）。"""
+    from internal.core.tools.builtin_tools.providers.video_render_tools.local_render_runner import (
+        fetch_local_artifact,
+    )
+
+    fetched = fetch_local_artifact(account_id=account_id, artifact_path=artifact_path)
+    if not fetched.get("ok"):
+        return {"ok": False, "error": fetched.get("error") or "取回本机产物失败"}
+
+    import tempfile
+    from pathlib import Path
+
+    from app.http.module import injector
+    from internal.service.account_service import AccountService
+    from internal.service.knowledge_base_service import KnowledgeBaseService
+
+    account = injector.get(AccountService).get_account(UUID(str(account_id)))
+    if account is None:
+        return {"ok": False, "error": f"账号不存在：{account_id}"}
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="hf-ingest-"))
+    try:
+        video_path = tmp_dir / (fetched.get("name") or "render-output.mp4")
+        video_path.write_bytes(fetched["content"])
+        document = injector.get(KnowledgeBaseService).store_render_output(
+            account=account, video_path=video_path, name=name or "渲染成品"
+        )
+        return {"ok": True, "document_id": str(document.id)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("本机渲染产物入库失败 account_id=%s", account_id, exc_info=True)
+        return {"ok": False, "error": f"成品入库失败：{exc}"}
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _dispatch_cloud_render(*, composition: dict, account_id: str, name: str) -> dict:
     """派发云端 Celery（原 _dispatch_render 的逻辑原样保留）。"""
     from internal.task.render_tasks import render_composition_task
@@ -205,11 +243,22 @@ class RenderVideoTool(BaseTool):
             )
 
         if dispatched.get("mode") == "local":
+            ingest = _ingest_local_artifact(
+                account_id=account_id,
+                artifact_path=dispatched["result"].get("path", ""),
+                name=dispatched["result"].get("name") or normalized_name,
+            )
+            if not ingest.get("ok"):
+                return json.dumps(
+                    {"ok": False, "error": ingest.get("error") or "成品入库失败"},
+                    ensure_ascii=False,
+                )
             return json.dumps(
                 {
                     "ok": True,
                     "mode": "local",
-                    "message": "视频已在你的电脑上渲染完成，正在存入成品库",
+                    "document_id": ingest.get("document_id", ""),
+                    "message": "视频已在你的电脑上渲染完成并存入成品库",
                 },
                 ensure_ascii=False,
             )

@@ -19,10 +19,12 @@ HYPERFRAMES_BROWSER_PATH / HYPERFRAMES_FFMPEG_PATH / HYPERFRAMES_FFPROBE_PATH。
 from __future__ import annotations
 
 import argparse
+import base64
 import hmac
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +36,8 @@ logger = logging.getLogger("render_worker")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8768
+
+_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 _REQUIRED_ENV_KEYS = (
     "HYPERFRAMES_BROWSER_PATH",
@@ -150,12 +154,41 @@ def _run_render(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _read_artifact(payload: dict[str, Any]) -> dict[str, Any]:
+    """读取本机渲染产物（仅限渲染临时目录，防止任意路径读取）。
+
+    安全边界：产物路径必须位于系统临时目录下且前缀为 hf-local-render-，
+    否则拒绝——避免该端点被用作任意文件读取。
+    """
+    raw_path = str(payload.get("path") or "").strip()
+    if not raw_path:
+        return {"ok": False, "error": "path 不能为空"}
+    artifact = Path(raw_path).resolve()
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    if not str(artifact).startswith(str(tmp_root)) or "hf-local-render-" not in str(artifact):
+        return {"ok": False, "error": "产物路径不在允许范围内"}
+    if not artifact.is_file():
+        return {"ok": False, "error": "产物不存在或已被清理"}
+    safe_name = _SAFE_NAME_RE.sub("_", artifact.name) or "render-output.mp4"
+    with open(artifact, "rb") as fh:
+        content = fh.read()
+    # 产物已取走，清理渲染临时目录，避免用户设备上残留
+    _cleanup_dir(str(artifact.parent))
+    return {
+        "ok": True,
+        "name": safe_name,
+        "size_bytes": len(content),
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
 class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         logger.info("%s - %s", self.address_string(), fmt % args)
 
-    def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler 约定
-        if self.path.rstrip("/") != "/render":
+    def do_POST(self):  # noqa: N802
+        route = self.path.rstrip("/")
+        if route not in {"/render", "/artifact"}:
             self._json_response({"ok": False, "error": "not found"}, status=404)
             return
         if not _authorized(self.headers.get("Authorization", "")):
@@ -167,8 +200,11 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             self._json_response({"ok": False, "error": "invalid json"}, status=400)
             return
-        result = _run_render(payload)
-        self._json_response(result)
+
+        if route == "/artifact":
+            self._json_response(_read_artifact(payload))
+            return
+        self._json_response(_run_render(payload))
 
     def _json_response(self, data: dict, status: int = 200):
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")

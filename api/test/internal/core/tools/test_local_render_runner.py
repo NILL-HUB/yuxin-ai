@@ -112,3 +112,35 @@ def test_connection_failure_is_unavailable(monkeypatch):
     )
     assert result["ok"] is False
     assert result["unavailable"] is True
+
+
+def test_fetch_artifact_returns_bytes_and_name(monkeypatch):
+    """从本机 worker 取回产物字节（经 bridge /artifact 路由）。"""
+    monkeypatch.setattr(
+        local_render_runner,
+        "resolve_desktop_bridge",
+        lambda *a, **k: ("http://host:9876", "bridge-token"),
+    )
+    monkeypatch.setattr(
+        local_render_runner,
+        "_post_artifact",
+        lambda **kwargs: {"ok": True, "name": "demo.mp4", "content_base64": "RkFLRQ=="},
+    )
+
+    result = local_render_runner.fetch_local_artifact(
+        account_id="acc-1", artifact_path="/tmp/x.mp4"
+    )
+    assert result["ok"] is True
+    assert result["name"] == "demo.mp4"
+    assert result["content"] == b"FAKE"
+
+
+def test_fetch_artifact_unavailable_when_no_bridge(monkeypatch):
+    monkeypatch.setattr(
+        local_render_runner, "resolve_desktop_bridge", lambda *a, **k: None
+    )
+    result = local_render_runner.fetch_local_artifact(
+        account_id="acc-1", artifact_path="/tmp/x.mp4"
+    )
+    assert result["ok"] is False
+    assert result["unavailable"] is True
