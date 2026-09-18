@@ -1773,6 +1773,19 @@ cd api && git diff --stat $P3B_BASELINE HEAD -- internal/service/memory internal
 P3b 已让读路径按主体类型分支（admin 分支谓词就位），但该分支在约束解除前查不到数据——属预期。
 解除需迁移：两处改为可空 + 补 CHECK 约束「`owner_type='user'` ⇒ `owner_account_id` 非空 /
 `owner_type='admin'` ⇒ `owner_admin_user_id` 非空」。属 P3c。
+
+### 已知缺口三：Neo4j 唯一约束对「管理员级」节点失效（P3b 已登记，待 P3c 收敛）
+
+Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。admin 侧约束
+`(name, admin_user_id, agent_id)` 因此对「管理员级」节点（admin 无 agent、不写 `agent_id`）
+**完全失效**——实测（2026-09）同名同 admin 的无 agent 节点可重复创建成功；带 agent 的三元节点
+则正确报 `22N79`。
+
+当前因 **admin 侧 Neo4j 写路径尚未接线**（`neo4j_props()` 零生产调用方），此为潜在缺陷；
+一旦 P3c 接通 admin 写路径即升级为需处理项。可选方案：给无 agent 的 admin 节点写非空哨兵值
+（如 `agent_id = '__none__'`）使三元约束生效——但这会改变「属性缺失即管理员级」语义，需同步改
+`neo4j_props()` / `neo4j_filter_condition()` 的 `IS NULL` 判定。限制已登记在
+`api/internal/extension/neo4j_extension.py` 的注释与守卫测试中。
 ```
 
 - [ ] **Step 4: 更新记忆系统文档的「读路径」表述**
