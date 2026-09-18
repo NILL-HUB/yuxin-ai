@@ -8,11 +8,14 @@
 """
 from contextlib import contextmanager
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
 from internal.service.assistant_agent_service import AssistantAgentService
 from internal.service.memory.retriever import RetrievalResult
+
+_TEST_ACCOUNT_ID = str(uuid4())
 
 
 @contextmanager
@@ -104,18 +107,18 @@ class TestRetrieveUserMemoryForChat:
     def test_returns_empty_when_engine_disabled(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text="有记忆", engine_enabled=False)
         service = _service()
-        assert service._retrieve_user_memory_for_chat(account_id="u1", query="你好", conversation_id="c1") == ""
+        assert service._retrieve_user_memory_for_chat(account_id=_TEST_ACCOUNT_ID, query="你好", conversation_id="c1") == ""
 
     def test_returns_empty_when_query_blank(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text="有记忆", engine_enabled=True)
         service = _service()
-        assert service._retrieve_user_memory_for_chat(account_id="u1", query="   ", conversation_id="c1") == ""
+        assert service._retrieve_user_memory_for_chat(account_id=_TEST_ACCOUNT_ID, query="   ", conversation_id="c1") == ""
 
     def test_system1_digest_hit_returns_digest(self, monkeypatch):
         _patch_deps(monkeypatch, digest_text="用户喜欢 Python", engine_enabled=True)
         service = _service()
         text = service._retrieve_user_memory_for_chat(
-            account_id="u1", query="帮我写代码", conversation_id="c1", max_wait_seconds=3
+            account_id=_TEST_ACCOUNT_ID, query="帮我写代码", conversation_id="c1", max_wait_seconds=3
         )
         assert "Python" in text
 
@@ -131,7 +134,7 @@ class TestRetrieveUserMemoryForChat:
         )
         service = _service()
         text = service._retrieve_user_memory_for_chat(
-            account_id="u1", query="有什么偏好", conversation_id="c1", max_wait_seconds=3
+            account_id=_TEST_ACCOUNT_ID, query="有什么偏好", conversation_id="c1", max_wait_seconds=3
         )
         assert "偏好简洁" in text
         assert "部署方案" in text
@@ -140,6 +143,6 @@ class TestRetrieveUserMemoryForChat:
         _patch_deps(monkeypatch, digest_text=None, results="raise", engine_enabled=True)
         service = _service()
         text = service._retrieve_user_memory_for_chat(
-            account_id="u1", query="触发异常", conversation_id="c1", max_wait_seconds=3
+            account_id=_TEST_ACCOUNT_ID, query="触发异常", conversation_id="c1", max_wait_seconds=3
         )
         assert text == ""
