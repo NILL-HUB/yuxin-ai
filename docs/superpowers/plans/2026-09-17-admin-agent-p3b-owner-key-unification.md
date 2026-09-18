@@ -815,8 +815,11 @@ def test_vector_recall_scopes_by_owner_type(monkeypatch):
     sql_text = " ".join(s for s, _ in db.session.statements)
     assert "owner_type" in sql_text, "向量分支必须约束 owner_type"
     assert "owner_account_id" in sql_text
+    # 谓词由 pg_sql_predicate 产出：owner_type 以字面量内联，绑定只含归属列
+    assert "owner_type = 'user'" in sql_text, "用户分支须把 owner_type 钉为 'user'"
     bound = db.session.statements[0][1]
-    assert bound["owner_type"] == "user"
+    assert "owner_account_id" in bound
+    assert "owner_type" not in bound
 ```
 
 其中 `_StubRouter` 直接照搬既有用例（`test/internal/service/memory/test_ledger_writer_owner.py`）已验证可行的替身：
