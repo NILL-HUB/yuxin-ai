@@ -281,6 +281,80 @@ export RENDER_RUNTIME_WIN32_MODULES_DIR=<win32-staging>/node_modules
 > 实测口径：`@esbuild/win32-x64` 与 `@img/sharp-win32-x64` 须与容器内对应包**同版本**
 > （实测均为 0.25.12 与 0.35.4）。跨版本混装可能触发原生绑定不兼容。
 
+#### ⚠️ Chromium 不是单文件（实测会崩）
+
+`chrome-headless-shell.exe` 依赖**同目录**的 `icudtl.dat` / `*.pak` / `*.dll`
+（`libEGL.dll`、`libGLESv2.dll`、`vk_swiftshader.dll`、`vulkan-1.dll`、`headless_lib_*.pak` 等）。
+实测只把 exe 拷到空目录后启动会**直接崩溃**（退出码 `0x80000003`），
+`--version` 都过不去。故 `stage-render-runtime.js` 必须**整目录复制**
+（`RENDER_RUNTIME_BROWSER_DIR` 指向目录），并断言 `chrome-headless-shell.exe` 与
+`icudtl.dat` 均存在。
+
+> `locales/`（42 MB）与 `hyphen-data/` 实测**非必需**（已在 render 实测中验证），
+> 但为降低风险默认保留；若要瘦身可后续按需裁剪。
+
+#### ⚠️ ffmpeg 需要三项能力（缺一即渲染失败）
+
+实测：Trae 自带的 ffmpeg 6.1.1 缺 `image2pipe` 解复用器 → 渲染报
+`Unknown input format: 'image2pipe'`；playwright 附带的 ffmpeg 缺 `libx264` 编码器 → 无法编码。
+渲染链路实际需要：
+
+| 能力 | 用途 | 缺失时的表现 |
+| --- | --- | --- |
+| `image2pipe` 解复用器 | 从 stdin 读帧序列 | `Unknown input format: 'image2pipe'` |
+| `mjpeg` 解码器 | 解码捕获的 JPEG 帧 | 无法读取帧 |
+| `libx264` 编码器 | 编码为 H.264 MP4 | 编码失败 |
+
+且 ffmpeg 必须是**自包含**构建：实测 `kzip_sogou` 的 ffmpeg 依赖同目录 `avcodec-58.dll` 等，
+单独拷贝后启动即报 `0xC0000135`（缺 DLL）。
+
+**结论**：`stage-render-runtime.js` 暂存后对 ffmpeg 做三项能力探测，不达标**报错终止打包**。
+实测可用：gyan.dev essentials 自包含构建（`ffmpeg-release-essentials.zip`，
+本次实测为 9.0.1），Chromium 用 playwright 的 `chromium_headless_shell` 152.x。
+
+> **版本无法与容器完全对齐**：容器是 Debian 的 ffmpeg 5.1.9 / Chromium 152.0.7977.82，
+> Windows 侧不存在版本号完全一致的官方构建。这是「node_modules 同源、
+> Chromium/ffmpeg 各自取本平台构建」策略的固有代价，故用 `MANIFEST.json` 记录实际版本供比对。
+> 实测该组合（Chromium 152.x + ffmpeg 9.0.1）渲染产物正常（h264 / 分辨率 / 时长均正确）。
+
+#### ⚠️ electron-builder 会剔除 `extraResources` 根部的 `node_modules`（必读）
+
+**这是最隐蔽的一处，会导致「`npm start` 正常、安装版渲染必崩」。**
+
+electron-builder 的 `app-builder-lib/out/util/filter.js` 中有无条件排除：
+
+```javascript
+// filter the root node_modules, but not a subnode_modules (like /appDir/others/foo/node_modules/blah)
+if (relative === "node_modules") {
+    return false;
+}
+```
+
+即：**匹配器 `from` 目录根部**的 `node_modules` 会被整棵剪掉。若把
+`vendor/render-runtime` 作为单一条目传给 `extraResources`，打包后
+`resources/render-runtime/node_modules/` **完全不存在**——CLI 缺依赖，渲染必崩。
+
+**正确配置**（已落地在 `desktop/package.json`）：拆成**两条独立** `extraResources`，
+让 `node_modules` 不再是匹配器根部：
+
+```json
+    {
+      "from": "vendor/render-runtime",
+      "to": "render-runtime",
+      "filter": ["**/*", "!node_modules/**"]
+    },
+    {
+      "from": "vendor/render-runtime/node_modules",
+      "to": "render-runtime/node_modules"
+    }
+```
+
+**打包后自检命令**（必须为 True）：
+
+```bash
+ls desktop/dist-nsis/win-unpacked/resources/render-runtime/node_modules/hyperframes/dist/cli.js
+```
+
 **容器版本基准（实测，Windows 侧须对齐）**：
 
 | 组件 | 容器内版本 | 说明 |

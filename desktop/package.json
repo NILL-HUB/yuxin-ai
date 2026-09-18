@@ -55,7 +55,15 @@
       },
       {
         "from": "vendor/render-runtime",
-        "to": "render-runtime"
+        "to": "render-runtime",
+        "filter": [
+          "**/*",
+          "!node_modules/**"
+        ]
+      },
+      {
+        "from": "vendor/render-runtime/node_modules",
+        "to": "render-runtime/node_modules"
       }
     ],
     "win": {

@@ -1,32 +1,36 @@
 // 把渲染运行时暂存到 desktop/vendor/render-runtime/，供 electron-builder
 // extraResources 打进安装包。随包分发以彻底避免运行时下载（见 plan §0.5.2）。
 //
-// 需要暂存的内容：
-//   1. node_modules/（**含 onnxruntime-node**，供图片处理/抠像使用）
-//   2. Chromium（chrome-headless-shell）
-//   3. ffmpeg + ffprobe
+// 需要暂存的内容（四类）：
+//   1. node_modules/（含 onnxruntime-node，供图片处理/抠像使用）
+//   2. Chromium（chrome-headless-shell **整目录**，不是单文件）
+//   3. ffmpeg + ffprobe（**同一构建的自包含版本**）
 //
-// onnxruntime-node 裁剪：其 bin/napi-v3/ 带 6 个平台共 536MB，但 dist/binding.js
-// 是按 process.platform/arch 动态 require 的，故只保留 win32/ 即可：
-//   536MB → 68MB（仅 win32 全 arch）
+// ── 实测踩坑（均为真机验证，勿删对应逻辑） ────────────────────────────────
 //
-// ⚠️ **平台原生包必须换成 win32 构建（实测会硬崩，勿删此逻辑）**：
-//   容器内的 node_modules 只有 linux 平台原生包——
-//     @esbuild/linux-x64、@img/sharp-linux-x64、@img/sharp-libvips-linux-x64
-//   而 hyperframes 的 dist/cli.js 在**启动阶段就 eagerly import 'sharp'**。
-//   若直接打进安装包，Windows 上连 `hyperframes --version` 都会崩：
+// [坑 1] node_modules 里的平台原生包不是全平台。
+//   容器内只有 @esbuild/linux-x64、@img/sharp-linux-x64、@img/sharp-libvips-linux-x64，
+//   而 hyperframes/dist/cli.js 在**启动阶段就 eager import 'sharp'**，直接打包会让
+//   Windows 上连 `hyperframes --version` 都崩：
 //     Error: Could not load the "sharp" module using the win32-x64 runtime
-//   （onnxruntime 不受影响：它走 N-API v3 多平台布局，一份即可跨平台。）
-//   故本脚本会把 @esbuild / @img 下的非目标平台目录裁掉，并从 Windows 侧安装
-//   （RENDER_RUNTIME_WIN32_MODULES_DIR）覆盖同版本的 win32 平台包。
+//   故需裁掉非目标平台包，并从 Windows 侧 overlay 同版本 win32 包
+//   （RENDER_RUNTIME_WIN32_MODULES_DIR）。
+//   onnxruntime-node 不受影响：它走 N-API v3 多平台布局，一份即跨平台。
 //
-// 体积参考：node_modules 约 198MB（含裁剪后的 onnxruntime），Chromium 约 338MB。
-// 安装包增量约 175–215MB。
+// [坑 2] Chromium 不是单文件。chrome-headless-shell.exe 依赖同目录的
+//   icudtl.dat / *.pak / *.dll，只拷 exe 会在启动时直接崩溃（实测退出码 0x80000003）。
+//   故必须整目录复制（RENDER_RUNTIME_BROWSER_DIR）。
+//
+// [坑 3] ffmpeg 需要三项能力：image2pipe 解复用 + mjpeg 解码 + libx264 编码。
+//   实测缺 image2pipe 的构建报 `Unknown input format: 'image2pipe'`；
+//   缺 libx264 的构建无法编码。故暂存前做能力探测，不达标**直接报错终止打包**，
+//   避免产出一个「点了就失败」的安装包。
 //
 // 源缺失时打印提示并跳过（不阻断打包），与 stage-cua-driver.js 行为一致。
 
 const fs = require('node:fs')
 const path = require('node:path')
+const { execFileSync } = require('node:child_process')
 
 // electron-builder 目标平台（本方案当前只出 Windows 包）
 const TARGET_PLATFORM = process.env.TARGET_PLATFORM || 'win32'
@@ -40,10 +44,41 @@ const TARGET_ORT_PLATFORMS = (process.env.ORT_PLATFORMS || 'win32')
 // 含平台原生二进制的包前缀：这些包名形如 <scope>/<name>-<platform>-<arch>
 const PLATFORM_SCOPES = ['@esbuild', '@img']
 
-// 必须存在 win32 构建、否则 Windows 上无法启动的原生包（sharp 为 eager import）
+// 必须存在目标平台构建、否则无法启动的原生包（sharp 为 eager import）
 const REQUIRED_WIN32_PACKAGES = [
   ['@esbuild', 'win32-x64'],
   ['@img', 'sharp-win32-x64'],
+]
+
+// 平台 token 全集（用于判定某个包目录是否属于「别的平台」）
+const KNOWN_PLATFORMS = [
+  'linux',
+  'linuxmusl',
+  'darwin',
+  'win32',
+  'freebsd',
+  'android',
+  'openbsd',
+  'sunos',
+  'aix',
+  'netbsd',
+  'wasm32',
+  'webcontainers',
+]
+
+const _withExe = (name) =>
+  TARGET_PLATFORM === 'win32' ? `${name}.exe` : name
+
+const BROWSER_EXE = _withExe('chrome-headless-shell')
+
+// Chromium 启动必需的旁挂文件：缺任一则 exe 起不来（坑 2）
+const REQUIRED_BROWSER_FILES = [BROWSER_EXE, 'icudtl.dat']
+
+// ffmpeg 渲染必需能力（坑 3）
+const REQUIRED_FFMPEG_FEATURES = [
+  { args: ['-hide_banner', '-demuxers'], keyword: 'image2pipe', label: 'image2pipe 解复用器' },
+  { args: ['-hide_banner', '-decoders'], keyword: 'mjpeg', label: 'mjpeg 解码器' },
+  { args: ['-hide_banner', '-encoders'], keyword: 'libx264', label: 'libx264 编码器' },
 ]
 
 function copyDir(src, dest, { skipNames } = {}) {
@@ -79,21 +114,6 @@ function pruneOnnxPlatforms(ortDir) {
 // 包名形如 `linux-x64` / `sharp-linux-x64` / `sharp-libvips-linux-x64`，
 // 平台 token 一定是 `-` 分段中的一段，故按分段判定（不能只看前缀，
 // 否则漏掉 `sharp-libvips-linux-x64` 这类中间带平台的包）。
-const KNOWN_PLATFORMS = [
-  'linux',
-  'linuxmusl',
-  'darwin',
-  'win32',
-  'freebsd',
-  'android',
-  'openbsd',
-  'sunos',
-  'aix',
-  'netbsd',
-  'wasm32',
-  'webcontainers',
-]
-
 function _isForeignPlatformDir(name) {
   const platforms = name
     .split('-')
@@ -160,9 +180,108 @@ function _assertWin32Packages(nodeModulesDir) {
   }
 }
 
+function _capture(exe, args) {
+  return execFileSync(exe, args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] })
+}
+
+/**
+ * 探测 ffmpeg 是否具备渲染所需能力（坑 3）。
+ * 返回缺失能力的中文描述数组；为空表示通过。
+ *
+ * run 可注入（便于单测）：签名 (args: string[]) => string（stdout）。
+ */
+function checkFfmpegCapabilities(ffmpegPath, { run } = {}) {
+  const runner = run || ((args) => _capture(ffmpegPath, args))
+  const missing = []
+  for (const { args, keyword, label } of REQUIRED_FFMPEG_FEATURES) {
+    let output = ''
+    try {
+      output = runner(args)
+    } catch (error) {
+      missing.push(`${label}（探测失败：${String(error.message).split('\n')[0]}）`)
+      continue
+    }
+    if (!output.includes(keyword)) missing.push(label)
+  }
+  return missing
+}
+
+// 解析传入的浏览器路径：既接受 exe 路径，也接受所在目录
+function _resolveBrowserDir(browserDirOrExe) {
+  const raw = String(browserDirOrExe || '').trim()
+  if (!raw) return ''
+  if (raw.toLowerCase().endsWith('.exe') || raw.toLowerCase() === BROWSER_EXE) {
+    return path.dirname(raw)
+  }
+  return raw
+}
+
+function stageBrowser(targetDir, browserDirOrExe) {
+  const browserDir = _resolveBrowserDir(browserDirOrExe)
+  if (!browserDir || !fs.existsSync(browserDir)) {
+    throw new Error(
+      `[stage-render-runtime] 浏览器目录不存在：${browserDirOrExe}。` +
+        '（RENDER_RUNTIME_BROWSER_DIR 应指向含 chrome-headless-shell.exe 的目录）',
+    )
+  }
+  // 坑 2：整目录复制，不可只拷 exe
+  const copied = copyDir(browserDir, targetDir)
+  const missing = REQUIRED_BROWSER_FILES.filter(
+    (name) => !fs.existsSync(path.join(targetDir, name)),
+  )
+  if (missing.length) {
+    throw new Error(
+      `[stage-render-runtime] Chromium 暂存不完整，缺少：${missing.join('、')}。\n` +
+        'chrome-headless-shell.exe 依赖同目录的 icudtl.dat / *.pak / *.dll，' +
+        '只拷单个 exe 会导致浏览器启动即崩（实测 0x80000003）。',
+    )
+  }
+  console.log(`[stage-render-runtime] Chromium 已整目录暂存（${copied} 个文件，含 DLL/pak/icudtl）`)
+}
+
+function stageFfmpeg(targetDir, ffmpegPath, ffprobePath, { skipProbe } = {}) {
+  for (const [label, src] of [['ffmpeg', ffmpegPath], ['ffprobe', ffprobePath]]) {
+    if (!src || !fs.existsSync(src)) {
+      throw new Error(
+        `[stage-render-runtime] 缺少 ${label}（RENDER_RUNTIME_${label.toUpperCase()}_PATH）：` +
+          `${src || '(未设置)'}。需为**自包含**且成对的 Windows 构建。`,
+      )
+    }
+  }
+  // 目标名固定为 ffmpeg.exe / ffprobe.exe —— render-runtime.js 按此名解析
+  fs.copyFileSync(ffmpegPath, path.join(targetDir, _withExe('ffmpeg')))
+  fs.copyFileSync(ffprobePath, path.join(targetDir, _withExe('ffprobe')))
+
+  if (!skipProbe) {
+    const missing = checkFfmpegCapabilities(path.join(targetDir, _withExe('ffmpeg')))
+    if (missing.length) {
+      throw new Error(
+        `[stage-render-runtime] ffmpeg 缺少渲染必需能力：${missing.join('、')}。\n` +
+          '实测：缺 image2pipe 会报 `Unknown input format: \'image2pipe\'`，' +
+          '缺 libx264 无法编码。请换用**自包含的 gyan.dev/BtbN essentials 构建**。',
+      )
+    }
+    console.log('[stage-render-runtime] ffmpeg 能力探测通过（image2pipe / mjpeg / libx264）')
+  } else {
+    console.warn('[stage-render-runtime] 已跳过 ffmpeg 能力探测（RENDER_RUNTIME_SKIP_BINARY_PROBE=1）')
+  }
+}
+
+function _safeVersion(exe, args) {
+  try {
+    return _capture(exe, args).split('\n')[0].trim()
+  } catch {
+    return ''
+  }
+}
+
 function main() {
   const sourceDir = process.env.RENDER_RUNTIME_SOURCE_DIR || ''
   const win32ModulesDir = process.env.RENDER_RUNTIME_WIN32_MODULES_DIR || ''
+  const browserDirOrExe = process.env.RENDER_RUNTIME_BROWSER_DIR || ''
+  const ffmpegPath = process.env.RENDER_RUNTIME_FFMPEG_PATH || ''
+  const ffprobePath = process.env.RENDER_RUNTIME_FFPROBE_PATH || ''
+  const skipProbe = process.env.RENDER_RUNTIME_SKIP_BINARY_PROBE === '1'
   const targetDir =
     process.env.STAGE_TARGET_DIR || path.join(__dirname, '..', 'vendor', 'render-runtime')
 
@@ -190,40 +309,66 @@ function main() {
     return
   }
 
+  // 1) node_modules（含 onnxruntime 裁剪 + win32 原生包 overlay）
   const stagedModules = path.join(targetDir, 'node_modules')
   const copied = copyDir(nodeModules, stagedModules)
   console.log(`[stage-render-runtime] node_modules 已暂存（${copied} 个文件，含 onnxruntime-node）`)
 
-  // 裁剪 onnxruntime 的非目标平台目录（536MB → 68MB）
   pruneOnnxPlatforms(path.join(stagedModules, 'onnxruntime-node'))
-
-  // 裁掉 @esbuild / @img 下的 linux-only 原生包（容器来源必然只有 linux 构建）
   pruneForeignPlatformPackages(stagedModules)
-
-  // 用 Windows 侧同版本原生包补齐（否则 sharp 启动即崩）
   if (win32ModulesDir) {
     overlayWin32Packages(stagedModules, win32ModulesDir)
   }
-
-  // 最后自校验：宁可打包失败，也不要交付一个「渲染必崩」的安装包
   _assertWin32Packages(stagedModules)
 
-  for (const name of ['chrome-headless-shell', 'chrome-headless-shell.exe', 'ffmpeg', 'ffmpeg.exe', 'ffprobe', 'ffprobe.exe']) {
-    const src = path.join(sourceDir, name)
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, path.join(targetDir, name))
-      console.log(`[stage-render-runtime] copied ${name}`)
-    }
-  }
+  // 2) Chromium（整目录，坑 2）
+  stageBrowser(targetDir, browserDirOrExe)
 
+  // 3) ffmpeg + ffprobe（自包含且成对，坑 3）
+  stageFfmpeg(targetDir, ffmpegPath, ffprobePath, { skipProbe })
+
+  // 4) 记录来源与版本（便于与容器比对；计划 §0.5.2 的 MANIFEST 约定）
+  const manifest = {
+    stagedFrom: { sourceDir, win32ModulesDir, browserDirOrExe, ffmpegPath, ffprobePath },
+    targetPlatform: TARGET_PLATFORM,
+    onnxruntimePlatformsKept: TARGET_ORT_PLATFORMS,
+    versions: {
+      ffmpeg: _safeVersion(path.join(targetDir, _withExe('ffmpeg')), ['-hide_banner', '-version']),
+      ffprobe: _safeVersion(path.join(targetDir, _withExe('ffprobe')), ['-hide_banner', '-version']),
+      chromium: _safeVersion(path.join(targetDir, BROWSER_EXE), ['--version']),
+    },
+    note:
+      '容器侧基准（llmops-render-worker）：Node v24.21.0 / Chromium 152.0.7977.82 / ' +
+      'ffmpeg 5.1.9-0+deb12u1 / hyperframes 0.8.42 / onnxruntime-node 1.21.1。' +
+      'Windows 侧 Chromium/ffmpeg 为独立构建，版本号可能与容器不同（详见 plan §0.5.2）。',
+  }
+  fs.writeFileSync(
+    path.join(targetDir, 'MANIFEST.json'),
+    JSON.stringify(manifest, null, 2) + '\n',
+    'utf-8',
+  )
   fs.writeFileSync(
     path.join(targetDir, 'SOURCE.txt'),
-    `Staged from ${sourceDir}\nhyperframes + Chromium + ffmpeg/ffprobe + onnxruntime-node\n` +
+    `Staged from ${sourceDir}\n` +
+      `hyperframes + Chromium + ffmpeg/ffprobe + onnxruntime-node\n` +
+      `target platform: ${TARGET_PLATFORM} (win32 native packages overlaid)\n` +
       `onnxruntime platforms kept: ${TARGET_ORT_PLATFORMS.join(',')}\n` +
-      `target platform: ${TARGET_PLATFORM} (win32 native packages overlaid)\n`,
+      `ffmpeg : ${manifest.versions.ffmpeg}\n` +
+      `ffprobe: ${manifest.versions.ffprobe}\n` +
+      `chromium: ${manifest.versions.chromium}\n`,
     'utf-8',
   )
   console.log(`[stage-render-runtime] done → ${targetDir}`)
 }
 
-main()
+if (require.main === module) {
+  main()
+}
+
+module.exports = {
+  main,
+  checkFfmpegCapabilities,
+  _isForeignPlatformDir,
+  _resolveBrowserDir,
+  _withExe,
+}

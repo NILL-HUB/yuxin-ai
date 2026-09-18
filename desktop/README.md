@@ -38,33 +38,63 @@ playwright install chromium
 
 ### 渲染运行时的打包前置（仅打包机需要，**不是**用户侧）
 
-`npm run pack` / `npm run dist` 会用 `scripts/stage-render-runtime.js` 暂存渲染运行时，
-需要两个环境变量：
+`npm run pack` / `npm run dist` 会用 `scripts/stage-render-runtime.js` 暂存渲染运行时。
+缺失/不达标时脚本会**报错终止打包**，不会静默产出「渲染必崩」的安装包。
 
-| 变量 | 作用 |
-| --- | --- |
-| `RENDER_RUNTIME_SOURCE_DIR` | 运行时源目录（含 `node_modules`）。**从 `llmops-render-worker` 容器提取**，保证与云端版本同源 |
-| `RENDER_RUNTIME_WIN32_MODULES_DIR` | Windows 侧 `hyperframes` 的 `node_modules`，用于补齐 win32 原生包 |
-| `ORT_PLATFORMS` | 可选，`onnxruntime-node` 保留的平台，默认 `win32` |
+| 变量 | 必填 | 作用 |
+| --- | --- | --- |
+| `RENDER_RUNTIME_SOURCE_DIR` | ✅ | 运行时源目录（含 `node_modules`）。**从 `llmops-render-worker` 容器提取**，保证与云端 `hyperframes` 同源 |
+| `RENDER_RUNTIME_WIN32_MODULES_DIR` | ✅ | Windows 侧 `hyperframes` 的 `node_modules`，用于补齐 win32 原生包 |
+| `RENDER_RUNTIME_BROWSER_DIR` | ✅ | 含 `chrome-headless-shell.exe` 的**目录**（非单文件） |
+| `RENDER_RUNTIME_FFMPEG_PATH` | ✅ | 自包含 ffmpeg 的 exe 路径 |
+| `RENDER_RUNTIME_FFPROBE_PATH` | ✅ | 同构建的 ffprobe exe 路径 |
+| `ORT_PLATFORMS` | ❌ | `onnxruntime-node` 保留的平台，默认 `win32` |
+| `RENDER_RUNTIME_SKIP_BINARY_PROBE` | ❌ | 置 `1` 跳过 ffmpeg 能力探测（仅排障用，勿用于正式打包） |
 
 ```bash
-# 1) 从容器导出运行时（node_modules 同源；Chromium/ffmpeg/ffprobe 另用 Windows 构建）
+# 1) 从容器导出 node_modules（与云端同源）
 docker cp llmops-render-worker:/opt/hyperframes/node_modules <staging>/node_modules
 export RENDER_RUNTIME_SOURCE_DIR=<staging>
 
-# 2) Windows 侧装同版本 hyperframes，取其原生包
+# 2) Windows 侧装同版本 hyperframes，取 win32 原生包
 mkdir -p <win32-staging> && cd <win32-staging>
 npm init -y && npm install hyperframes@0.8.42 --no-audit --no-fund
 export RENDER_RUNTIME_WIN32_MODULES_DIR=<win32-staging>/node_modules
+
+# 3) Win32 Chromium / ffmpeg / ffprobe
+export RENDER_RUNTIME_BROWSER_DIR=<.../chromium_headless_shell-1237/chrome-headless-shell-win64>
+export RENDER_RUNTIME_FFMPEG_PATH=<.../ffmpeg.exe>
+export RENDER_RUNTIME_FFPROBE_PATH=<.../ffprobe.exe>
 ```
 
-> ⚠️ **`RENDER_RUNTIME_WIN32_MODULES_DIR` 不可省略**：容器内 `node_modules` 只有 linux 原生包
-> （`@esbuild/linux-x64`、`@img/sharp-linux-x64`、`@img/sharp-libvips-linux-x64`），
-> 而 HyperFrames 的 `dist/cli.js` **在启动阶段就 eager import `sharp`**，缺 win32 构建时
-> 安装版连 `hyperframes --version` 都会崩（实测报 `Could not load the "sharp" module using
-> the win32-x64 runtime`）。暂存脚本会裁掉 linux 包并 overlay win32 包，
-> **并在缺失时报错终止打包**，不会静默产出「渲染必崩」的安装包。
-> 注意 `onnxruntime-node` 不受影响——它走 N-API v3 多平台布局，一份即可跨平台。
+**三个实测踩坑（对应脚本内的防护逻辑，勿绕过）**：
+
+1. **容器 `node_modules` 不是全平台**。容器内只有 `@esbuild/linux-x64`、`@img/sharp-linux-x64`、
+   `@img/sharp-libvips-linux-x64`，而 `hyperframes/dist/cli.js` **在启动阶段就 eager import `sharp`**，
+   直接打包会让 Windows 上连 `hyperframes --version` 都崩
+   （`Could not load the "sharp" module using the win32-x64 runtime`）。脚本会裁掉 linux 包、
+   overlay win32 包并断言其存在。`onnxruntime-node` 不受影响（N-API v3 多平台布局）。
+2. **Chromium 不是单文件**。`chrome-headless-shell.exe` 依赖同目录的 `icudtl.dat` / `*.pak` / `*.dll`，
+   只拷 exe 会在启动时直接崩（实测退出码 `0x80000003`）。脚本整目录复制并校验必需文件。
+3. **ffmpeg 需要三项能力**：`image2pipe` 解复用 + `mjpeg` 解码 + `libx264` 编码。
+   实测缺 `image2pipe` 报 `Unknown input format: 'image2pipe'`；缺 `libx264` 无法编码。
+   脚本暂存后做能力探测，不达标即终止打包。
+
+> **版本说明**：Chromium / ffmpeg 必须用 **Windows 构建**，与容器内的 Debian 构建版本号
+> 不可能完全相同（容器基准：Chromium 152.0.7977.82、ffmpeg 5.1.9-0+deb12u1）。
+> 实测可用的组合：`chromium_headless_shell`（Google Chrome for Testing 152.x）+
+> gyan.dev essentials 自包含 ffmpeg/ffprobe。实际打入的版本会记入
+> `resources/render-runtime/MANIFEST.json` 便于比对。
+
+> **⚠️ `extraResources` 的 `node_modules` 必须拆成独立条目**（已配置，勿合并回去）：
+> electron-builder 会**无条件剔除**匹配器**根部**的 `node_modules`
+> （见 app-builder-lib `util/filter.js`：`if (relative === "node_modules") return false`）。
+> 若把 `vendor/render-runtime` 作为单一条目传入，`node_modules` 会整棵丢失，
+> 结果就是「`npm start` 正常、安装版渲染必崩」。故 `desktop/package.json` 中
+> `render-runtime`（含 `filter: ["**/*","!node_modules/**"]`）与
+> `render-runtime/node_modules` 是**两条独立** `extraResources`。
+> 打包后可用 `desktop/dist-nsis/win-unpacked/resources/render-runtime/node_modules/hyperframes/dist/cli.js`
+> 是否存在来快速自检。
 
 ## 安全模型
 
