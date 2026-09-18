@@ -3,12 +3,17 @@
 > **性质**：生效文档（运维指导）。本文的**实测数值**来自本机容器与渲染镜像真机验证；**建议配额**是基于实测的推算，非代码现状。
 > **适用**：4 核 4G、3 Mbps 带宽的单台云服务器（生产起步规格）。
 > **前置**：渲染链路（P3.7）已完成，渲染镜像与本机渲染均已实测跑通。
+>
+> ⚠️ **2026-09-19 现状变更（影响本文多处结论）**：渲染已**下放到用户本机**（桌面端 render worker），
+> 云端 `llmops-render-worker` **默认不启动**（`profiles: ["cloud-render"]`）。因此 §0～§2 中
+> 「渲染叠加导致 4.5–5.0 G」「拆机」等结论，是**云端渲染启用时**的容量测算；默认形态下渲染不占服务器资源，
+> 见 §3「渲染执行位置」。云端链路完整保留、可一键接通，故相关实测与配额仍具参考价值。
 
 ---
 
 ## 0. 一句话结论
 
-**4C4G 单机跑得起来，但很紧；拆机是更稳的选择。** 稳态实测：**不含渲染**已约 3.57 G
+**4C4G 单机跑得起来，但很紧；拆机是更稳的选择**（前提：云端渲染启用）。稳态实测：**不含渲染**已约 3.57 G
 （celery 1.54 + api 1.0 + neo4j 0.81 + kkfileview 0.58 + 其余 0.24），已逼近 4G 上限；
 渲染（cgroup 实测峰值 0.9–1.4 G）再叠上去 → **总量 4.5–5.0 G**，超出 4G。
 
@@ -51,8 +56,8 @@
 > 不重复计费。`llmops-ui-dev`（1.06 GB）为开发版 UI，生产用 `llmops-ui`（102 MB），可跳过。
 
 **对策**（择一或组合）：
-- **`llmops-render` 单独处理**：3.47 GB 是最大头，且按 §7.1 它本就该部署在**第二台机器**上，
-  不需要拉到首台；
+- **`llmops-render` 单独处理**：3.47 GB 是最大头；渲染已下放到用户本机，云端该服务**默认不启动**
+  （`profiles: ["cloud-render"]`），故单机默认**根本不需要拉取它**——仅在需要云端渲染回退时才拉；
 - **在本地/其他机器 `docker save` → 上传 tar → `docker load`**，绕开逐层拉取；
 - **错峰拉取**：先跑基础设施（db/redis/neo4j/kkfileview），再逐个拉业务镜像。
 
@@ -137,7 +142,7 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers 1.
 | `llmops-api` | 353 MB | **998 MB** | 1.48 GB | 保留 | 核心 |
 | `llmops-neo4j` | 738 MB | **808 MB** | 637 MB | **必须保留** | 记忆系统（TKG）底座；关闭则记忆系统不可用 |
 | `llmops-kkfileview` | 531 MB | **583 MB** | 1.6 GB | **必须保留** | 文档在线预览；关闭则文档系统预览不可用 |
-| `llmops-render-worker` | ~90 MB | **524 MB** | 3.47 GB | **常驻**（见 §3） | 视频出片；渲染时 cgroup 峰值 0.9–1.4 G |
+| `llmops-render-worker` | ~90 MB | **524 MB** | 3.47 GB | **默认不启动**（见 §3） | 视频出片；默认走用户本机，云端为接通后的回退通道（启用时 cgroup 峰值 0.9–1.4 G） |
 | `llmops-db`（pgvector） | 129 MB | **99 MB** | 445 MB | 保留 | 核心 |
 | `llmops-ui` | 47 MB | **66 MB** | 102 MB | 保留 | 生产用 nginx 静态版 |
 | `llmops-celery-beat` | 26 MB | **63 MB** | 1.48 GB | 保留 | 定时任务调度 |
@@ -149,7 +154,13 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers 1.
 **全部容器常驻合计（稳态，含 render 空闲）** ≈ **4.09 G**
 （celery 1.54 + api 0.998 + neo4j 0.808 + kkfileview 0.583 + render 空闲 0.524 + db 0.099 + ui 0.066 + beat 0.063 + computer 0.028 + redis 0.024 + browser 0.017 + nginx 0.007 ≈ 4.09 G）
 
+> ⚠️ 上表含 `render` 空闲 524 MB。**默认形态下 render worker 不启动**（`profiles: ["cloud-render"]`），
+> 故实际常驻 ≈ **3.57 G**（见下）。接通云端渲染后才会回到 4.09 G。
+
 **其中不含 render 的基础服务** ≈ **3.57 G**。
+
+> 默认形态（云端 render worker 不启动）下，服务器只承担这 3.57 G；渲染走用户本机。
+> 下面关于「渲染峰值叠加」的紧张测算，适用于**接通云端渲染**后的场景。
 
 > ⚠️ 渲染还没开始，**3.57 G 就已逼近 4G 上限**。渲染 peak 0.9–1.4 G 一旦叠加，
 > 总量直奔 4.5–5.0 G。因此 4C4G 单机**必须同时做两件事**：
@@ -185,6 +196,33 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers 1.
 ---
 
 ## 3. 渲染资源分配
+
+### 渲染执行位置（本机优先，云端保留）
+
+渲染默认在**用户本机**执行（桌面端 render worker，默认端口 8768，经本机 bridge 的 `/render` 出片、
+`/artifact` 取回产物）；云端 `llmops-render-worker` **默认不启动**（compose 中已加
+`profiles: ["cloud-render"]`），以节省服务器算力——渲染吃的是**用户自己的 CPU**，平台服务器只处理轻量内容。
+
+| 场景 | 执行位置 | 说明 |
+| --- | --- | --- |
+| 已装桌面端 | 用户本机 | 首选；吃用户 CPU，不占服务器内存 |
+| 未装桌面端 / 本机通道不可用 | 云端 `render` 队列 | 需接通云端 worker 且 `RENDER_CLOUD_FALLBACK_ENABLED=true`（默认 true） |
+
+服务端渲染工具为**三级路由**：本机 bridge 优先 → 云端 Celery `render` 队列回退 → 明确报错。
+判定差异：只有「通道不可用」（无注册设备 / 连不上 bridge / bridge 返回 401、502、503、504）
+才回退云端；「通道可用但渲染失败」（缺二进制、脚本非法等）属业务失败，**不回退**，直接报错。
+
+**云端渲染未删除**，服务定义与全部限流参数完整保留，可随时接通：
+
+```bash
+docker compose --profile cloud-render up -d llmops-render-worker
+```
+
+> 两个执行开关（`api/config/config.py`）：`RENDER_LOCAL_ENABLED`（默认 true，关掉则跳过本机通道）
+> 与 `RENDER_CLOUD_FALLBACK_ENABLED`（默认 true，关掉则本机不可用时直接报错而非回退云端）。
+>
+> **以下 §3.1～§3.4 全部是对「云端 render worker 启用时」的资源配置实测与推导**——默认关闭状态下
+> 这些内存/并发开销不落在服务器上；若接通云端渲染，再按本节配额与闸门约束执行。
 
 ### 3.1 内存模型：叠加，不是共享（cgroup 实测）
 
@@ -381,9 +419,11 @@ docker compose up -d llmops-api llmops-celery llmops-celery-beat \
 
 ```bash
 # ===== 第二台（渲染机，2C2G 起；见 §7.1 跨机接线）=====
+# 可选：仅当你需要「云端渲染回退」时才在独立机器上跑。默认渲染走用户本机，
+# 无需为此单独准备机器。
 # 3) 渲染镜像（3.47 GB，最慢的一步）
-docker compose pull llmops-render-worker
-docker compose up -d llmops-render-worker
+docker compose --profile cloud-render pull llmops-render-worker
+docker compose --profile cloud-render up -d llmops-render-worker
 
 # 4) 验证渲染链路（真出片）
 docker compose exec llmops-render-worker \
@@ -391,7 +431,11 @@ docker compose exec llmops-render-worker \
 docker compose exec llmops-render-worker ffmpeg -version | head -1
 ```
 
-**首台默认启动清单**：`llmops-api`、`llmops-celery`、`llmops-celery-beat`、`llmops-ui`、`llmops-nginx`、`llmops-db`、`llmops-redis`、`llmops-neo4j`、`llmops-kkfileview`、`llmops-browser-worker`、`llmops-computer-worker`（**全部默认启动**，compose 中已无 `profiles` 裁减项）。`llmops-render-worker` 在第二台启动。
+> ⚠️ **默认清单不含 `llmops-render-worker`**：渲染已下放到用户本机（桌面端 render worker），
+> 云端该服务加 `profiles: ["cloud-render"]` **默认不启动**。需要云端回退时，用
+> `docker compose --profile cloud-render up -d llmops-render-worker` 显式启用。
+
+**首台默认启动清单**：`llmops-api`、`llmops-celery`、`llmops-celery-beat`、`llmops-ui`、`llmops-nginx`、`llmops-db`、`llmops-redis`、`llmops-neo4j`、`llmops-kkfileview`、`llmops-browser-worker`、`llmops-computer-worker`（**全部默认启动**，compose 中已无 `profiles` 裁减项）。`llmops-render-worker` 带 `cloud-render` profile，**默认不启动**，仅在需要云端渲染回退时于首台或第二台显式启用。
 
 ---
 
@@ -410,6 +454,7 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | 9 | 渲染完成回链 | 代码 | ✅ 复用 `document_index_notification` 通道（前端零改动） |
 | 10 | `RENDER_TIMEOUT_SEC` 收紧 + Celery `soft_time_limit` | 配置+代码 | ✅ 900s / `soft_time_limit=1200s` |
 | 11 | 关闭 low-memory 降级 / 抬高 V8 堆 | 配置 | ⏳ **待定**（实测可快 31%、更省内存，见 §3.1.2；需先定 2-workers 策略） |
+| 12 | 云端 render worker 默认不启动（`profiles: ["cloud-render"]`），渲染下放到用户本机 | compose+代码 | ✅ 已落地（三级路由：本机优先 → 云端回退 → 报错；开关 `RENDER_LOCAL_ENABLED` / `RENDER_CLOUD_FALLBACK_ENABLED` 默认均 true） |
 
 **闸门实现载体**：`api/internal/service/render_guard_service.py`（`RenderGuardService`）。
 准入在派发端（`render_video._dispatch_render`），归还在任务开始/结束端（`render_tasks`），
@@ -424,7 +469,12 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 
 ## 7. 风险与验证记录
 
-### 7.1 拆机方案（推荐；4C4G 单机的稳妥解）
+### 7.1 拆机方案（仅接通云端渲染时需要；4C4G 单机的稳妥解）
+
+> ⚠️ **前提已变**：渲染默认在用户本机执行、云端 render worker 默认不启动（§3「渲染执行位置」），
+> 因此**默认形态下无需拆机**——首台本来就不含 render 那 524 MB 与 0.9–1.4 G 峰值。
+> 本节的「拆」只在**你决定接通云端渲染回退**（`profiles: ["cloud-render"]`）时才有意义：那时它
+> 仍然是最稳妥的做法（把 render 放到独立机器，而非与首台共享算力）。
 
 **为什么要拆**：稳态实测**不含渲染已 ~3.57 G**（§2），已逼近 4G 上限；渲染 peak 0.9–1.4 G。
 单机只能靠 `celery -c 2` + 严格错峰硬扛，余量约 1 G、没有缓冲。

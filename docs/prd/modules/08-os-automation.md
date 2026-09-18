@@ -1,10 +1,10 @@
 # 宿主机 OS 自动化
 
-> 更新日期：2026-09-11（设备链路已打通）
+> 更新日期：2026-09-19（新增本机渲染路由）
 >
 > ✅ **实现状态（2026-09-11）**：本文描述的"用户端自然语言提出本机任务 → 平台 Agent 调用宿主机 worker"这条**服务端 → 宿主机方向**的链路**已打通**。桌面端登录后把本机 bridge 地址与随机 token 上报服务端（`desktop_device` 表，按账号存储），服务端经 `resolve_desktop_bridge(account_id, purpose=...)` 动态解析出该账号默认在线设备的 bridge，替代静态 `DESKTOP_BRIDGE_URL/TOKEN`；静态配置仍作回退。容器内 `host.docker.internal` 可达宿主机回环（已实测）。实现细节见 [product-vision.md §4.1](../product-vision.md)。
 >
-> **宿主壳关联**：本文描述的 `os_automation_worker.py`（及 browser/computer/wake worker）由桌面客户端托管与分发——Windows 桌面端以单一 `yujianwo-worker.exe`（PyInstaller + worker_super 子命令入口）随安装包携带，Electron 主进程 spawn 启动（开发模式回退 python 脚本）。桌面壳架构见 [09-desktop-client.md](./09-desktop-client.md)。
+> **宿主壳关联**：本文描述的 `os_automation_worker.py`（及 browser/computer/render/wake worker）由桌面客户端托管与分发——Windows 桌面端以单一 `yujianwo-worker.exe`（PyInstaller + worker_super 子命令入口）随安装包携带，Electron 主进程 spawn 启动（开发模式回退 python 脚本）。桌面壳架构见 [09-desktop-client.md](./09-desktop-client.md)。
 
 ## 目标
 
@@ -27,6 +27,24 @@
      ├─ /recycle   → delete（移入回收站）/ list / restore / purge
      └─ /snapshot  → rollback_file / rollback_turn / list_snapshots
 ```
+
+本地能力桥（`desktop/bridge.js`，`127.0.0.1:9876`）的路由表——服务端工具不直接连 worker，
+统一经 bridge 转发到对应 worker：
+
+| 桥路由 | 目标 worker | 端口 |
+| --- | --- | --- |
+| `POST /file` | os worker | 8765 |
+| `POST /recycle` | os worker | 8765 |
+| `POST /snapshot` | os worker | 8765 |
+| `POST /browser` | browser worker | 8766 |
+| `POST /control` | computer worker | 8767 |
+| `POST /render` | render worker | 8768 |
+| `POST /artifact` | render worker | 8768 |
+
+> ⚠️ **服务端工具必须经 `resolve_desktop_bridge(account_id, purpose=...)` 解析 bridge，勿只读静态 env**
+> （如 `DESKTOP_BRIDGE_URL/TOKEN`、`OS_AUTOMATION_URL/TOKEN`）：桌面端 bridge token 由主进程每次启动
+> 随机生成，只有注册到 `desktop_device` 才能解析到（见上文「历史缺陷」）。`purpose` 传入目标路由
+> （如 `/render`、`/artifact`、`/file`），解析结果即该账号默认在线设备的 bridge 地址与 token。
 
 **解析路径只有一条（工具与平台回收站同源）**：Agent 工具（`os_file_task` /
 `os_recycle_bin` / `os_snapshot` / `computer_action`）与平台回收站的
