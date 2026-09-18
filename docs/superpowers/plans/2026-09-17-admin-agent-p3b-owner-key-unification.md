@@ -1888,6 +1888,16 @@ admin / Agent 主体下取不到 `user_id` → **fail-closed**（返回 False / 
 `_clear_all_user_cache` 的 `len(keys)` 会把同时命中「精确 digest 键」与「`*:{owner_key}` 通配」的
 `memory:digest:{owner}` 计两次（实测 8 个 distinct 键返回 9）。因 `delete(*keys)` 幂等，
 **不影响清理正确性**，仅统计值偏大；且该路径当前不可达（见缺口八）。修法：`keys = list(dict.fromkeys(keys))`。
+
+### 已知缺口十二：`skill:stats:{owner}` 无 TTL，未命中残留可累积（P3b 未修，Task 7 后新显）
+
+`SkillEmergence.bump_use` 用 `HINCRBY`/`HSET` 写 `skill:stats:{owner}` 且**未设过期**。
+Task 7（C1 修复）把 flush 从「每小时整键清（但丢数）」改为「按 skill_id 粒度清理」，于是：
+**未命中的技能统计（如节点已从图中删除、或 legacy 节点长期未被 `_persist_skill` 回填）会永久滞留**。
+兜底仅 `MemoryGovernor._clear_user_cache`（软删/硬删路径可达），`gdpr_delete` 路径不可达（见缺口八）。
+
+修法：给该 hash 补 TTL（如与 `register_seed_hint` 一致的 90 天），或在 flush 中对长期未命中的
+skill_id 做超期清理。
 ```
 
 - [ ] **Step 4: 更新记忆系统文档的「读路径」表述**
