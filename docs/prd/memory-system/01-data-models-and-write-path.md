@@ -534,7 +534,7 @@ class ConsolidationReport(BaseModel):
     errors: list[str] = Field(default_factory=list)
 ```
 
-### 1.10 记忆主体抽象（P3a 主体抽象落地；键形态于 P3b Task 1 定形，读路径切换待后续 Task）
+### 1.10 记忆主体抽象（P3a 主体抽象落地；P3b 完成键形态定形与读路径主体化）
 
 记忆归属从"硬编码 `Account`"升级为**主体类型**维度（治理设计 §8），使记忆可归属管理员与 Agent。权威实现见 `api/internal/entity/memory_owner_entity.py` 的 `MemoryOwnerKey`；写入落点见 `api/internal/service/memory/ledger_writer.py`。
 
@@ -548,15 +548,22 @@ class ConsolidationReport(BaseModel):
 
 **构造即校验（fail closed）**：`MemoryOwnerKey.__post_init__` 校验字段组合与 UUID 取值类型——`user` 主体必须有 `owner_account_id` 且不得携带 admin/agent 字段；`admin` 主体必须有 `owner_admin_user_id`、不得携带 `owner_account_id`。裸构造传字符串会被拒绝，以免绕过 `for_user` / `for_admin` 造出 `user:not-a-uuid` 这类坏键。
 
-**本阶段（P3a）范围**：写侧**双写**新列（系统路径 `_upsert_vector` + Agent 策展路径 `write_agent_curated`，含向量分表的 `INSERT` 与 `ON CONFLICT` 分支）+ 存量回填 `owner_type='user'`；**读路径未切换**（仍按 `owner_account_id` / `user_id` 过滤），故行为零变化。
+**本阶段（P3a）范围**：写侧**双写**新列（系统路径 `_upsert_vector` + Agent 策展路径 `write_agent_curated`，含向量分表的 `INSERT` 与 `ON CONFLICT` 分支）+ 存量回填 `owner_type='user'`；P3a 当时读路径未切换（故行为零变化）。**P3b 已完成读路径主体化**（见下）。
 
-**兼容性语义（P3b Task 1 已落地：键形态定形）**：用户主体键就是历史四层存储实际写入的裸 `str(account.id)`
+**兼容性语义（P3b 已落地）**：用户主体键就是历史四层存储实际写入的裸 `str(account.id)`
 （Neo4j 属性值、Redis `memory:digest:{uuid}`、冷存储路径片段），故**用户路径零迁移、零行为变化**。
 这与治理设计 §8 字面的 `user:{uuid}` 有意偏离——`admin:` 前缀已足以区分三类主体，
 而带前缀需迁移全部 Neo4j 节点属性、重建唯一约束与索引，失败模式是「静默召回为空」。
-管理员 / Agent 主体的读写调用方接入属 **P3c**（本阶段只让链路可表达）。
+管理员 / Agent 主体的**读写调用方**接入属 **P3c**（P3b 只让链路可表达）。
 
-Neo4j / Redis / 冷存储的键统一与读路径切换属 **P3b 后续 Task**（尚未落地）；键前缀常量 `OWNER_KEY_USER_PREFIX` / `OWNER_KEY_ADMIN_PREFIX` / `OWNER_KEY_SEPARATOR`（`api/internal/config/memory_settings.py`）本阶段**尚无生产消费方**。
+**读路径主体化（P3b 已落地）**：`retriever` / `digest_manager` / 巩固链（`consolidation_engine` /
+`community_induction` / `skill_emergence` / `conflict_detector`）/ `memory_governor` 已统一按
+`owner_key` + 主体类型过滤：PG 走 `owner_type` + 归属列（`pg_sql_predicate` / `pg_filter_conditions`），
+Neo4j 走**属性级分离**谓词（`neo4j_filter_condition` / `neo4j_props`：用户 `user_id`，admin `admin_user_id`
+[+ `agent_id`]）。**用户主体下产物与改造前逐字节等价**，故存量结果集不变。
+详见 [02-storage-and-retrieval.md](./02-storage-and-retrieval.md) 的「主体化检索注记」与「P3b 已知缺口」。
+
+键前缀常量 `OWNER_KEY_USER_PREFIX` / `OWNER_KEY_ADMIN_PREFIX` / `OWNER_KEY_SEPARATOR`（`api/internal/config/memory_settings.py`）**仍无生产消费方**（已提供、未接入）——因用户态键为裸 UUID、admin 态由 `to_key()` 直接拼 `admin:` 前缀，常量目前仅 `parse()` 的历史兼容分支使用。
 
 ---
 

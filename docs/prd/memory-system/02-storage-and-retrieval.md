@@ -1984,9 +1984,11 @@ class DigestConfig(BaseModel):
 ## Neo4j schema 的真实生效点
 
 > **约束与索引由 `api/internal/extension/neo4j_extension.py::_ensure_constraints_and_indexes`
-> 在应用启动时幂等创建**（Task 2b 新增的 admin 侧 2 条唯一约束 + 4 个索引即落于此）。
+> 在应用启动时幂等创建**（含 Task 2b 新增的 admin 侧 2 条唯一约束 `entity_name_admin_unique` /
+> `community_key_admin_unique` 与 4 个 `*_admin_user_id_idx` 索引）。
+> 当前 extension 实际创建 **4 条约束 + 5 个索引**（含 1 个全文索引）。
 > `api/internal/migration/neo4j_init.cypher` **当前全仓零引用（死文件）**，且其清单与 extension
-> 实际创建的**不一致**（例：它声明了 6 条约束 + 11 个索引，而 extension 只建 2 条约束 + 1 个全文索引）。
+> 实际创建的**不一致**（它声明了 **6 条约束 + 16 个索引**）。
 > **新增约束必须加到 extension**；该 `.cypher` 的处置（对齐或删除）列入 P3c。
 
 ---
@@ -2075,4 +2077,28 @@ admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_
 admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，
 含 `LedgerWriter` 写侧与召回读侧）、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()`
 空实现）——均属 P3c 实施范围。
+
+### 缺口十三：其余用户读端点的 Neo4j 查询未主体化（既有读端口）
+
+`user_routes_9.py` 的 `/memory/graph`、`/memory/graph/<uid>/cluster/<type>`、`/memory/<id>` 详情、
+`/memory/skills` 等**用户读端点**仍硬编码属性 `user_id`（非经 `MemoryOwnerKey` 访问器）。
+用户态等价、admin 无读入口，故无运行时影响；但属「读路径主体化」未覆盖的既有读端口。
+
+### 缺口十四：以下写/读路径模块仍硬编码 `user_id` 属性（P3b 文件范围外）
+
+`write_time_conflict_resolver.py`（生产写路径，经 `MemoryWriteService` 调用）、
+`post_execution_hook.py::_fetch_recent_episodes`、`entity_resolution.py`（`EntityResolver`）、
+`ledger_writer.py`（Neo4j 节点属性写入）均仍以属性 `user_id` 直接写入/查询。
+用户态等价；admin 写路径未接线前无影响，但 P3c 接入时应统一改走访问器。
+
+### 缺口十五：`EntityResolver` / `ColdStorageManager` 无注入消费点（未接线模块）
+
+`entity_resolution.py` 的 `EntityResolver` 全仓仅 DI 注册、**无注入消费点**（与 `ColdStorageManager`
+同级的未接线模块），且内含 `user_id` 属性硬编码。属「已提供、未接入」，P3c 接线时需一并主体化。
+
+### 缺口十六：`_delete_all_pgvector_rows` 仅按 `owner_account_id` 过滤、未追加 `owner_type`
+
+`MemoryGovernor._delete_all_pgvector_rows` 只按 `owner_account_id == owner_key` 过滤，未追加 `owner_type`
+（与同文件其它已主体化路径不一致）。admin 主体该列为 NULL 不会被删到（fail-safe）；该方法仅经
+`gdpr_delete`（不可达，见缺口八）触达。已内联注释披露。
 

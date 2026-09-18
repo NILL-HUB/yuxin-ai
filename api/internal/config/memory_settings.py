@@ -353,11 +353,12 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # ============================================================
-# 记忆主体键（设计 §8，P3a 落常量，P3b 起被 Redis/冷存储使用）
+# 记忆主体键（设计 §8，P3a 落常量；**已提供、尚未接入**）
 # ============================================================
-# 跨层主体键的形态由 MemoryOwnerKey.to_key() 唯一决定，此处常量只提供给
-# 需要"按前缀拼键/扫描"的存储层（Redis scan / 冷存储路径），避免各处自行
-# 硬编码 'user'/'admin' 造成漂移。
+# 跨层主体键的形态由 MemoryOwnerKey.to_key() 唯一决定。用户态键为裸 UUID、
+# admin 态由 to_key() 直接拼 `admin:` 前缀，故这些常量目前**无生产消费方**
+# （仅 parse() 的历史兼容分支与测试使用）。保留以供将来需要"按前缀拼键/扫描"
+# 的存储层（Redis scan / 冷存储路径）复用，避免各处自行硬编码 'user'/'admin' 漂移。
 OWNER_KEY_USER_PREFIX = "user"
 OWNER_KEY_ADMIN_PREFIX = "admin"
 OWNER_KEY_SEPARATOR = ":"
