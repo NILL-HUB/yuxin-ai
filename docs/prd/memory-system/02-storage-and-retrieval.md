@@ -515,13 +515,27 @@ class ColdStorageEntry(BaseModel):
 > - 旧的 Weaviate `UserMemory` collection 检索路径已删除，向量检索统一走 PostgreSQL pgvector（`user_memory.embedding` 列）。
 > - 从 Weaviate 单路向量检索，升级为 TKG 图遍历（Neo4j BM25）+ pgvector 向量相似度的混合检索 + SpreadActivation 图扩展。
 
-> **主题召回注记（v5.3, 2026-09）**：上述 6.1 流程图在真实实现中于 ① TKG 粗召回 与
+> **社区主题召回注记（v5.3, 2026-09）**：上述 6.1 流程图在真实实现中于 ① TKG 粗召回 与
 > ③ 图扩展 之间插入了 **Community 主题级召回**（`_community_recall`）：
 > - 使用 `communityFullText` 全文索引在 `(:Community)` 上按查询主题粗召回；
 > - 命中主题以 `source="community_theme"` 纳入候选；
 > - 主题成员（SemanticMemory/Entity）由随后的 SpreadActivation 沿
 >   `TOPIC_OF`/`MEMBER_OF` 边拉起，形成「主题→成员」间接证据链；
 > - Community 节点不带 `:MemoryNode` 标签，不参与 memoryFullText 召回，无重复。
+
+> **主体化检索注记（P3b, 2026-09 已落地）**：检索的三路召回一律按**主体身份**过滤，
+> 用户端与 admin 端逐层切分、互不串扰（`MemoryRetriever.retrieve(query, owner_key, options)`）：
+>
+> - **PG 向量分支**：`owner_type='user'` 时按 `owner_account_id` 过滤；`owner_type='admin'` 时按
+>   `owner_admin_user_id` [+ `owner_agent_id`] 过滤。谓词由 `MemoryOwnerKey.pg_sql_predicate("v")`
+>   产出（返回 `(where, binds)`，无 agent 的 admin 用 `IS NULL` 而非 `= NULL`）。
+> - **Neo4j 图分支**（Episode / Entity / MemoryNode / Community / Skill）：**属性级分离**——
+>   用户端命中属性 `user_id`（裸 UUID），admin 端命中属性 `admin_user_id` [+ `agent_id`]，
+>   由 `MemoryOwnerKey.neo4j_filter_condition(alias)` 产出谓词、`neo4j_props()` 产出绑定。
+>
+> **用户主体下两者与改造前逐字节等价**（`user_id` 属性名 + 裸 UUID 值均未变），故存量结果集不变。
+> 上述 §6.2/§6.5 内嵌的 Python 代码块为**早期实现示意**（含 `AsyncDriver`、裸 `user_id` 形参等），
+> 与当前签名不符；当前实现以 `api/internal/service/memory/` 下的源码为准。
 
 ```python
 from __future__ import annotations
@@ -1964,4 +1978,101 @@ class DigestConfig(BaseModel):
 | MemoryVectorService (旧 pgvector) | PostgreSQL pgvector 向量存储 | 记忆向量迁移到 user_memory.embedding 列 |
 | user_memory_retrieval_tool | 内部切换到 MemoryRetriever | LangChain 工具接口不变，内部实现替换 |
 | MemoryConfirmationCard.vue | 图可视化界面 | 从逐条确认卡片升级为全局图管理 |
+
+---
+
+## Neo4j schema 的真实生效点
+
+> **约束与索引由 `api/internal/extension/neo4j_extension.py::_ensure_constraints_and_indexes`
+> 在应用启动时幂等创建**（Task 2b 新增的 admin 侧 2 条唯一约束 + 4 个索引即落于此）。
+> `api/internal/migration/neo4j_init.cypher` **当前全仓零引用（死文件）**，且其清单与 extension
+> 实际创建的**不一致**（例：它声明了 6 条约束 + 11 个索引，而 extension 只建 2 条约束 + 1 个全文索引）。
+> **新增约束必须加到 extension**；该 `.cypher` 的处置（对齐或删除）列入 P3c。
+
+---
+
+## P3b 已知缺口（主体身份切分未闭合项）
+
+以下均**不影响用户端**（用户主体下与改造前等价），且因 **admin 写路径尚未接线**而未在生产触发；
+待 P3c 接入 admin / Agent 记忆读写时须逐项收敛。
+
+### 缺口一：图扩展与节点详情无主体谓词
+
+`SpreadActivation.activate(start_ids, top_k)` 与 `MemoryRetriever._get_node_data`
+**只按 `node_id` 匹配，不带主体谓词**。当前因节点 id 全局唯一且起点来自已过滤的召回结果，
+实际风险低；但引入 admin / Agent 主体后，若扩展路径跨到其它主体节点，会形成**跨主体泄漏**。
+
+### 缺口二：PG 侧 `owner_account_id` NOT NULL 阻塞 admin 记忆落库
+
+`user_memory.owner_account_id` 与向量分表 `user_memory_embedding_{dim}.owner_account_id` 均为
+**NOT NULL**；admin 主体该列为 NULL，故 **admin 记忆在 PG 侧无法写入**。读路径的 admin 分支谓词
+已就位，但在约束解除前查不到数据。解除需迁移：两处改为可空 + 补 CHECK「`owner_type='user'` ⇒
+`owner_account_id` 非空 / `owner_type='admin'` ⇒ `owner_admin_user_id` 非空」。
+
+### 缺口三：Neo4j 唯一约束对「管理员级」节点失效
+
+Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。admin 侧约束
+`(name, admin_user_id, agent_id)` 因此对「管理员级」（admin 无 agent、不写 `agent_id`）**完全失效**——
+实测同名同 admin 的无 agent 节点可重复创建成功；带 agent 的三元节点则正确报 `22N79`。
+限制已登记在 `neo4j_extension.py` 注释与守卫测试中；可选修法是给无 agent 的 admin 节点写非空哨兵值，
+但会改变「属性缺失即管理员级」语义。
+
+### 缺口四：`DigestManager._fetch_profile` 委派未主体化
+
+`DigestManager._fetch_profile` 把 `owner_key` 原样递给
+`ProfileGraphService.get_profile_text/sync_from_explicit_episodes`，而该服务 Cypher 为
+`MATCH (e:Episode {user_id: $user_id})`——把 owner_key 当**属性值**用。用户态等价；
+admin 主体下查不到，会回退到已正确主体化的 `_fetch_explicit_memories`。
+
+### 缺口五：`Skill` 节点的 `MERGE` 键不含归属
+
+`SkillEmergence._persist_skill` 用 `MERGE (s:Skill {id: $skill_id})`，而 `skill_id = f"skill_{md5(name)[:12]}"`
+——**不同主体的同名技能算出同一 skill_id**。实测：先写 `{user_id: u1}` 再写 `{admin_user_id: a1}`，
+同一 `id` 节点会变成**同时带两个归属属性**的混装节点（违反属性分离；Task 8 的
+`test_neo4j_no_mixed_owner_nodes` 会报出）。纯用户态下与改造前一致，**非本次引入**。
+
+### 缺口六：`CommunityInductionEngine._collect_eligible` 的 `$cutoff` 未绑定
+
+`cypher_groups` 引用 `$cutoff` 但绑定字典只给归属参数。实测真实 Neo4j 报
+`Neo.ClientError.Statement.ParameterMissing`，异常被吞 → `groups = []` → **Entity 聚合候选恒为空**。
+改造前既有；Task 5 刻意未修（补绑定会把候选从「恒空」变为「有值」，改变用户态行为）。
+
+### 缺口七：`SkillEmergence._node_to_skill` 只读 `user_id`
+
+admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_persist_skill` 内
+`MemoryOwnerKey.parse("")` 抛错被吞 → admin 下 `curate_skills` 的「读→改→写」回路**写不回**
+（`scanned` 仍自增，属静默假成功）。
+
+### 缺口八：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis
+
+`MemoryGovernor.gdpr_delete`（含 `_clear_all_user_cache`）全仓**无生产调用方**；用户注销路径
+`AdminCustomerUserService._cleanup_user_runtime_data` 做 PG + Neo4j 清理但**完全不碰 Redis**，
+故注销后 `memory:digest:` / `skill:*` / `nudge:*` 等键只能靠 TTL 兜底存活（digest 最久 86400s）。
+
+### 缺口九：`_verify_owner` / `edit_memory` / `gdpr_delete` 的 Neo4j 侧仅支持用户主体
+
+三处固定用属性 `user_id`；admin 主体下 **fail-closed**（返回 False / 0，不会误删）但功能不可用。
+已在这三处 docstring 如实披露。
+
+### 缺口十：主体键的 Redis 键必须以 `:` 与前后缀分隔（约定）
+
+`_clear_all_user_cache` 用 `*:{owner_key}` 与 `*:{owner_key}:*` 两个精确模式。
+**新增含主体键的 Redis 键时必须确保以 `:` 分隔**，否则不会被 GDPR 清理命中（与 C3 同类失效）。
+把主体混入哈希的键（如 `schedule_suggestion:{md5}`）天然无法被通配命中。
+
+### 缺口十一：`gdpr_delete` 的 `stats["redis_keys"]` 重复计数
+
+`_clear_all_user_cache` 的 `len(keys)` 会把同时命中「精确 digest 键」与 `*:{owner_key}` 通配的键计两次。
+`delete(*keys)` 幂等，**不影响清理正确性**，仅统计偏大；该路径当前不可达。
+
+### 缺口十二：`skill:stats:{owner}` 无 TTL，未命中残留可累积
+
+`SkillEmergence.bump_use` 写 `skill:stats:{owner}` 未设过期。C1 修复后 flush 改为**按 skill_id 粒度清理**，
+未命中的技能统计（节点已删 / legacy 未回填）会**永久滞留**。建议补 TTL 或做超期清理。
+
+### 不适用（P3c 待办，非缺陷）
+
+admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，
+含 `LedgerWriter` 写侧与召回读侧）、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()`
+空实现）——均属 P3c 实施范围。
 

@@ -115,7 +115,7 @@
 
 **回归防护**：`test_admin_agent_conversation_migration.py`、`test_admin_agent_conversation_service.py`、`test_admin_agent_chat_tools.py`、`test_admin_agent_prompt_service.py`、`test_admin_agent_builtin_agents.py`、`test_admin_agent_chat_service.py`、`test_admin_agent_chat_routes.py`、`test_admin_agent_feature_registration.py`、`test_admin_agent_di_construction.py`——均含反向验证。
 
-**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（P4）；记忆主体抽象读路径切换（P3b）；MCP 动态身份注入（P5）。
+**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（P4）；MCP 动态身份注入（P5）。（「记忆主体抽象读路径切换（P3b）」已于 2026-09-17 完成，见下节。）
 
 
 ### 管理端 Agent 治理（P3a 记忆主体抽象内核，2026-09-17 完成）
@@ -141,9 +141,45 @@
 - **`agent_id` 独立落列**：规格 §8 要求「`admin_user_id` + `agent_id` 两级隔离」，故新增 `owner_agent_id` 列（可空 FK `admin_agent.id`），而非复用 `owner_admin_user_id`。
 - **存量零变化**：既有 234 行全部回填 `owner_type='user'`，`owner_account_id` 不动；真库一致性守卫断言无 NULL、无非 user 行、分表列齐备。
 
-**未落地（P3b 后续 Task / P3c）**：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、Redis 键改造、冷存储路径改造、服务层 `user_id: str` 签名统一、admin Agent 记忆**读写**接入；以及既有不一致 C1（Neo4j `Skill` 节点写入键与统计合并键不符）、C2（`DigestConfig` 配置双源）、C3（GDPR 清 Redis 白名单键与真实键不符 → 清理无效）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
+**已由 P3b 落地**（2026-09-17）：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、服务层签名统一为 `owner_key`、admin 侧 Neo4j 约束与索引就位；并修复既有缺陷 **C1**（Neo4j `Skill` 节点 flush 键与写入属性不符 → 静默丢数）与 **C3**（GDPR 清 Redis 白名单键与实际键前缀不符 → 清理无效）。详见下节「管理端 Agent 治理（P3b …）」。
 
-实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（P3a）；后续阶段的键形态与切分设计见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
+**仍未落地（P3c）**：admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，含 `LedgerWriter` 写侧与召回读侧）、**解除 PG 主表与向量分表 `owner_account_id` 的 NOT NULL**（否则 admin 记忆在 PG 侧无法落库）、Redis / 冷存储的键前缀改造、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
+
+实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（P3a）与 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（P3b）。
+
+
+### 管理端 Agent 治理（P3b 主体身份跨层切分，2026-09-17 完成）
+
+让记忆读路径按**主体身份**过滤，用户端行为逐字节不变的同时，让 admin / Agent 主体在链路上可表达。
+核心设定是**用户端与 admin 端「复用但切分」**——同一套代码与同一张 PG 表复用，存储层逐层显式切分。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 主体身份访问器（字符串键 / PG 列 / Neo4j 属性） | `api/internal/entity/memory_owner_entity.py`（`to_key()` / `parse()` / `pg_sql_predicate()` / `pg_filter_conditions()` / `neo4j_props()` / `neo4j_filter_condition()`） |
+| Neo4j admin 侧约束与索引 | `api/internal/extension/neo4j_extension.py` |
+| 检索读路径主体化 | `retriever.py`（PG 向量 + Neo4j 两路）、`user_memory_recall.py` |
+| Digest 缓存与查询主体化 | `digest_manager.py` |
+| 巩固链主体化 | `consolidation_engine.py` / `community_induction.py` / `skill_emergence.py` / `conflict_detector.py` / `consolidation_tasks.py` |
+| 治理主体化 + Redis 键修正（C3） | `memory_governor.py` |
+| Skill flush 键修正（C1） | `skill_emergence.py` |
+| 跨层一致性守卫 | `test_memory_owner_key_consistency.py`（真库 + 真图） |
+
+**关键决策（复用但切分）**：用户端与 admin 端在**存储层逐层显式切分**：
+
+| 层 | 用户端 | admin 端 | 切分机制 |
+| --- | --- | --- | --- |
+| PG `user_memory` | `owner_type='user'` + `owner_account_id` | `owner_type='admin'` + `owner_admin_user_id` + `owner_agent_id` | 列分离（P3a 已落地） |
+| Neo4j 节点 | 属性 `user_id`（裸 UUID） | 属性 `admin_user_id` + `agent_id` | **属性分离**（P3b 落地） |
+| Redis / 冷存储 | `…:{uuid}` | `…:admin:{uuid}[:{agent}]` | 键前缀分离 |
+
+**用户主体键采用裸 UUID**（与存量值逐字节一致，**零迁移**）。此形态**有意偏离**治理设计 §8 的字面 `user:{uuid}`——带前缀需迁移全部 Neo4j 节点属性、重建唯一约束与索引，且失败模式是「静默召回为空」。偏离已记录在 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10。
+
+**验证**：全量回归 4937 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
+
+**已知缺口（P3b 未闭合，待 P3c）**：12 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「P3b 已知缺口」一节
+（图扩展无主体谓词、PG `owner_account_id` NOT NULL 阻塞 admin 落库、Neo4j 唯一约束对管理员级失效、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL）。
+
+实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
 
 
 ### 第三轮并行修复（P0-P3 全部完成）
