@@ -848,17 +848,32 @@ class SkillEmergence:
             logger.warning("_read_skill_stats: 读取失败", exc_info=True)
             return {}
 
-    def _clear_skill_stats(self, owner_key: str) -> None:
-        """清理已合并的 Redis 统计键。
+    def _clear_skill_stats(self, owner_key: str, skill_ids: Optional[list[str]] = None) -> None:
+        """清理已合并的 Redis 统计字段。
 
         Args:
             owner_key: 记忆主体键（用户主体为裸 UUID）
+            skill_ids: 仅清理这些技能对应的字段；``None`` 表示清理整个主体键
+                （供 ``curate_skills`` 等「全量已读」场景使用）。
+
+        说明：按 skill_id 粒度清理可避免「混合批次」下把**未命中**技能的
+        计数一并抹掉（否则 flush 的「未命中则跳过」保护会被整键 DEL 抵消）。
         """
         redis_client = self._get_redis()
         if redis_client is None:
             return
         try:
-            redis_client.delete(f"skill:stats:{owner_key}")
+            key = f"skill:stats:{owner_key}"
+            if skill_ids is None:
+                redis_client.delete(key)
+                return
+            if not skill_ids:
+                return
+            fields: list[str] = []
+            for skill_id in skill_ids:
+                fields.append(f"{skill_id}:use_count")
+                fields.append(f"{skill_id}:last_used_at")
+            redis_client.hdel(key, *fields)
         except Exception:
             logger.warning("_clear_skill_stats: 清理失败", exc_info=True)
 
@@ -959,6 +974,7 @@ class SkillEmergence:
         # 2. 逐个合并到 Neo4j
         flushed = 0
         errors = 0
+        flushed_skill_ids: list[str] = []
         for skill_id, stat in redis_stats.items():
             try:
                 use_count_delta = int(stat.get("use_count", 0))
@@ -999,15 +1015,17 @@ class SkillEmergence:
                     continue
 
                 flushed += 1
+                flushed_skill_ids.append(skill_id)
             except Exception:
                 logger.warning(
                     "flush_bump_use_to_neo4j: 合并 %s 失败", skill_id, exc_info=True
                 )
                 errors += 1
 
-        # 3. 清理已合并的 Redis 统计
-        if flushed > 0:
-            self._clear_skill_stats(owner_key)
+        # 3. 只清理**已成功合并**的技能统计字段（按 skill_id 粒度）。
+        # 若整键 DEL，混合批次下会把未命中技能的计数一并抹掉，抵消上面的「未命中跳过」保护。
+        if flushed_skill_ids:
+            self._clear_skill_stats(owner_key, flushed_skill_ids)
 
         logger.info(
             "flush_bump_use_to_neo4j: owner=%s flushed=%d errors=%d",
