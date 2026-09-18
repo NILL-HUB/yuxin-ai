@@ -134,9 +134,8 @@ def test_vector_recall_scopes_by_admin_agent_owner(monkeypatch):
     assert bound["owner_agent_id"] == agent_id
 
 
-def test_tkg_recall_invalid_owner_key_returns_empty():
-    """非法主体键被显式捕获：返回空列表而非冒充「检索失败」。"""
-    from internal.service.memory.retriever import MemoryRetriever
+def _make_neo4j_stub():
+    """替身 Neo4j：`session.run` 一旦被调用即抛错——非法主体键不得下推 Cypher。"""
 
     class _StubSession:
         def run(self, cypher, params):
@@ -152,6 +151,61 @@ def test_tkg_recall_invalid_owner_key_returns_empty():
         def session(self):
             return _StubSession()
 
-    retriever = MemoryRetriever(neo4j_driver=_StubDriver())
+    return _StubDriver()
 
-    assert retriever._tkg_recall("q", "not-a-uuid", 5) == []
+
+def test_tkg_recall_invalid_owner_key_returns_empty(caplog):
+    """非法主体键必须走专用 except：返回 [] 且日志明确指向「非法主体键」，
+    而非被通用 except 吞成「检索失败」（后者同样返回 []，无法区分）。"""
+    import logging
+
+    from internal.service.memory.retriever import MemoryRetriever
+
+    retriever = MemoryRetriever(neo4j_driver=_make_neo4j_stub())
+
+    with caplog.at_level(logging.WARNING):
+        assert retriever._tkg_recall("q", "not-a-uuid", 5) == []
+
+    assert "非法主体键" in caplog.text, "必须走专用 except 分支（否则日志为『检索失败』）"
+
+
+def test_vector_recall_invalid_owner_key_returns_empty(monkeypatch, caplog):
+    """向量分支非法主体键：返回 []、日志含「非法主体键」，且 SQL 未下推。"""
+    import logging
+
+    from internal.service.memory.retriever import MemoryRetriever
+    from internal.service.embedding_table_router import EmbeddingTableRouter
+
+    monkeypatch.setattr(
+        EmbeddingTableRouter,
+        "get_instance",
+        staticmethod(lambda db=None: _StubRouter()),
+    )
+    db = _FakeDB()
+    retriever = MemoryRetriever(db=db)
+
+    with caplog.at_level(logging.WARNING):
+        assert (
+            retriever._vector_recall(
+                query_embedding=[0.1] * 8, owner_key="not-a-uuid", top_k=3
+            )
+            == []
+        )
+
+    assert "非法主体键" in caplog.text, "必须走专用 except 分支（否则日志为『向量检索失败』）"
+    assert db.session.statements == [], "非法主体键不得下推 SQL"
+
+
+def test_community_recall_invalid_owner_key_returns_empty(caplog):
+    """Community 分支非法主体键：返回 [] 且日志含「非法主体键」，
+    不得被通用 except 吞成「Community 主题召回失败」。"""
+    import logging
+
+    from internal.service.memory.retriever import MemoryRetriever
+
+    retriever = MemoryRetriever(neo4j_driver=_make_neo4j_stub())
+
+    with caplog.at_level(logging.WARNING):
+        assert retriever._community_recall("q", "not-a-uuid", 5) == []
+
+    assert "非法主体键" in caplog.text, "必须走专用 except 分支（否则日志为『主题召回失败』）"
