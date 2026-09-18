@@ -204,3 +204,110 @@ def test_parse_rejects_none_and_non_string():
         MemoryOwnerKey.parse(None)
     with pytest.raises(MemoryOwnerKeyError):
         MemoryOwnerKey.parse("")
+
+
+def test_pg_filter_params_for_user_scopes_by_account_column():
+    account_id = uuid4()
+    params = MemoryOwnerKey.for_user(account_id).pg_filter_params()
+
+    assert params == {
+        "owner_type": "user",
+        "owner_account_id": account_id,
+        "owner_admin_user_id": None,
+        "owner_agent_id": None,
+    }
+
+
+def test_pg_filter_params_for_admin_without_agent_pins_agent_null():
+    """admin 且无 agent：必须把 owner_agent_id 钉为 NULL，
+    否则「管理员级」记忆会与「某 Agent 级」记忆互相污染。"""
+    admin_id = uuid4()
+    params = MemoryOwnerKey.for_admin(admin_id).pg_filter_params()
+
+    assert params["owner_type"] == "admin"
+    assert params["owner_account_id"] is None
+    assert params["owner_admin_user_id"] == admin_id
+    assert params["owner_agent_id"] is None
+
+
+def test_pg_filter_params_for_admin_with_agent():
+    admin_id, agent_id = uuid4(), uuid4()
+    params = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_filter_params()
+
+    assert params["owner_agent_id"] == agent_id
+
+
+def test_pg_filter_conditions_covers_owner_type_for_user():
+    """用户主体过滤必须同时约束 owner_type —— 否则 admin 行会漏进结果集。"""
+    from internal.model import UserMemory
+
+    account_id = uuid4()
+    conds = MemoryOwnerKey.for_user(account_id).pg_filter_conditions(UserMemory)
+    rendered = " ".join(str(c) for c in conds)
+
+    assert "owner_type" in rendered
+    assert "owner_account_id" in rendered
+    assert len(conds) == 2
+
+
+def test_pg_filter_conditions_for_admin_pins_three_columns():
+    from internal.model import UserMemory
+
+    admin_id = uuid4()
+    conds = MemoryOwnerKey.for_admin(admin_id).pg_filter_conditions(UserMemory)
+
+    assert len(conds) == 3  # owner_type + owner_admin_user_id + owner_agent_id IS NULL
+
+
+# =========================================================
+# Neo4j 属性级分离（用户端 user_id；admin 端 admin_user_id + agent_id）
+# =========================================================
+
+
+def test_neo4j_props_user_writes_only_user_id():
+    """用户节点只写 user_id，**不得**出现 admin_user_id / agent_id。"""
+    account_id = uuid4()
+    props = MemoryOwnerKey.for_user(account_id).neo4j_props()
+
+    assert props == {"user_id": str(account_id)}
+
+
+def test_neo4j_props_admin_writes_only_admin_columns():
+    """admin 节点只写 admin_user_id（+ agent_id），**不得**出现 user_id。"""
+    admin_id = uuid4()
+    props = MemoryOwnerKey.for_admin(admin_id).neo4j_props()
+
+    assert props == {"admin_user_id": str(admin_id)}
+    assert "user_id" not in props
+
+
+def test_neo4j_props_admin_with_agent_adds_agent_id():
+    admin_id, agent_id = uuid4(), uuid4()
+    props = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).neo4j_props()
+
+    assert props == {"admin_user_id": str(admin_id), "agent_id": str(agent_id)}
+    assert "user_id" not in props
+
+
+def test_neo4j_filter_condition_user_matches_user_id_property():
+    account_id = uuid4()
+    cond = MemoryOwnerKey.for_user(account_id).neo4j_filter_condition("n")
+
+    assert cond == "n.user_id = $user_id"
+    assert "admin_user_id" not in cond
+
+
+def test_neo4j_filter_condition_admin_distinguishes_agent_levels():
+    """admin 无 agent 与带 agent 必须是互斥条件（属性缺失 vs 等值）。"""
+    admin_id, agent_id = uuid4(), uuid4()
+    key_no_agent = MemoryOwnerKey.for_admin(admin_id)
+    key_with_agent = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id)
+
+    assert key_no_agent.neo4j_filter_condition("c") == (
+        "c.admin_user_id = $admin_user_id AND c.agent_id IS NULL"
+    )
+    assert key_with_agent.neo4j_filter_condition("c") == (
+        "c.admin_user_id = $admin_user_id AND c.agent_id = $agent_id"
+    )
+    assert "c.user_id" not in key_no_agent.neo4j_filter_condition("c")
+    assert "c.user_id" not in key_with_agent.neo4j_filter_condition("c")

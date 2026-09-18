@@ -20,7 +20,7 @@
 
 > **Neo4j 不走本字符串键**：节点属性级分离——用户写 `user_id`（裸 UUID，存量不动），
 > admin 写 `admin_user_id` + `agent_id`；归属按「哪一侧属性非空」判定。见
-> `neo4j_props()` / `neo4j_filter_condition()`（P3b Task 2 实现）。
+> `neo4j_props()` / `neo4j_filter_condition()`。
 
 > **与设计 §8 的偏离（已确认）**：§8 字面写 `user:{uuid}`。本实现用户态不带前缀，
 > 原因是四层存储的存量值均为裸 UUID，带前缀需迁移全部 Neo4j 节点属性、重建唯一约束
@@ -132,8 +132,7 @@ class MemoryOwnerKey:
         - 管理员主体加 `admin:` 前缀以与用户命名空间区分，带 Agent 时再追加一级。
 
         **不用于 Neo4j**：Neo4j 节点走属性级分离（用户写 `user_id`，admin 写
-        `admin_user_id` + `agent_id`），见 `neo4j_props()` / `neo4j_filter_condition()`
-        （P3b Task 2 实现）。
+        `admin_user_id` + `agent_id`），见 `neo4j_props()` / `neo4j_filter_condition()`。
         """
         if self.owner_type is MemoryOwnerType.USER:
             return str(self.owner_account_id)
@@ -149,6 +148,78 @@ class MemoryOwnerKey:
             "owner_admin_user_id": self.owner_admin_user_id,
             "owner_agent_id": self.owner_agent_id,
         }
+
+    def pg_filter_params(self) -> dict:
+        """原生 SQL 用的过滤绑定参数（键名与 `user_memory` 列名一致）。
+
+        与 `pg_kwargs()` 的区别是**语义**：`pg_kwargs()` 用于写入（列值即归属），
+        本方法用于读取（除归属列外还需约束 `owner_type`，防止跨主体混入）。
+        """
+        return {
+            "owner_type": self.owner_type.value,
+            "owner_account_id": self.owner_account_id,
+            "owner_admin_user_id": self.owner_admin_user_id,
+            "owner_agent_id": self.owner_agent_id,
+        }
+
+    def pg_filter_conditions(self, model) -> list:
+        """ORM 用的过滤条件列表（SQLAlchemy 表达式）。
+
+        `model` 需具备 `owner_type` / `owner_account_id` / `owner_admin_user_id` /
+        `owner_agent_id` 四列（当前为 `internal.model.UserMemory`）。
+        """
+        if self.owner_type is MemoryOwnerType.USER:
+            return [
+                model.owner_type == MemoryOwnerType.USER.value,
+                model.owner_account_id == self.owner_account_id,
+            ]
+        conditions = [
+            model.owner_type == MemoryOwnerType.ADMIN.value,
+            model.owner_admin_user_id == self.owner_admin_user_id,
+        ]
+        if self.owner_agent_id is None:
+            # 「管理员级」记忆必须与「某 Agent 级」严格区分
+            conditions.append(model.owner_agent_id.is_(None))
+        else:
+            conditions.append(model.owner_agent_id == self.owner_agent_id)
+        return conditions
+
+    # ------------------------------------------------------------------
+    # Neo4j：属性级分离（用户端 user_id；admin 端 admin_user_id + agent_id）
+    # ------------------------------------------------------------------
+
+    def neo4j_props(self) -> dict:
+        """Neo4j 节点写入用的归属属性字典（属性级分离，**非**复合字符串键）。
+
+        - 用户主体：`{"user_id": "<裸 uuid>"}`（与存量节点逐字节一致）
+        - admin 主体：`{"admin_user_id": "<uuid>"}`，带 Agent 时追加 `"agent_id"`
+
+        两侧属性**互不出现**：用户节点不含 `admin_user_id`，admin 节点不含 `user_id`，
+        归属由「哪一侧非空」判定（Neo4j 唯一约束对属性缺失天然豁免）。
+        """
+        if self.owner_type is MemoryOwnerType.USER:
+            return {"user_id": str(self.owner_account_id)}
+        props = {"admin_user_id": str(self.owner_admin_user_id)}
+        if self.owner_agent_id is not None:
+            props["agent_id"] = str(self.owner_agent_id)
+        return props
+
+    def neo4j_filter_condition(self, alias: str) -> str:
+        """产出 Cypher 归属谓词片段（不含 WHERE 关键字）。
+
+        `alias` 为节点变量名。用户与 admin 各自返回**不同属性**上的条件，
+        因此互相不会命中对方节点。
+
+        调用方需把返回值拼进 Cypher，并绑定 `neo4j_props()` 的参数：
+        ``f"WHERE {owner.neo4j_filter_condition('n')}"`` + ``**owner.neo4j_props()``。
+        """
+        if self.owner_type is MemoryOwnerType.USER:
+            return f"{alias}.user_id = $user_id"
+        condition = f"{alias}.admin_user_id = $admin_user_id"
+        if self.owner_agent_id is None:
+            # 「管理员级」与「某 Agent 级」严格区分（Agent 属性缺失即管理员级）
+            return f"{condition} AND {alias}.agent_id IS NULL"
+        return f"{condition} AND {alias}.agent_id = $agent_id"
 
     @classmethod
     def parse(cls, key: str) -> "MemoryOwnerKey":
