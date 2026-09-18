@@ -9,8 +9,9 @@
     "dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "build:ui": "npm --prefix ../ui run build:desktop",
     "stage:cua": "node scripts/stage-cua-driver.js",
-    "pack": "npm run stage:cua && electron-builder --dir",
-    "dist": "npm run build:ui && npm run stage:cua && electron-builder --win"
+    "stage:render": "node scripts/stage-render-runtime.js",
+    "pack": "npm run stage:cua && npm run stage:render && electron-builder --dir",
+    "dist": "npm run build:ui && npm run stage:cua && npm run stage:render && electron-builder --win"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
@@ -51,6 +52,10 @@
       {
         "from": "vendor/cua-driver",
         "to": "cua-driver"
+      },
+      {
+        "from": "vendor/render-runtime",
+        "to": "render-runtime"
       }
     ],
     "win": {
