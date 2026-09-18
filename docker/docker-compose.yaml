@@ -123,6 +123,11 @@ services:
       context: ../api
       dockerfile: Dockerfile.render
     container_name: llmops-render-worker
+    # 【默认关闭】渲染已下放到用户本机（桌面端 render worker），云端不再常驻，
+    # 以节省服务器算力成本。服务定义与全部限流参数**完整保留**，需要时一键接通：
+    #   docker compose --profile cloud-render up -d llmops-render-worker
+    # 配合 api/.env 的 RENDER_CLOUD_FALLBACK_ENABLED=true 即恢复云端渲染路径。
+    profiles: ["cloud-render"]
     restart: always
     volumes:
       - ../api:/app/api
