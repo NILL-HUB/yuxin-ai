@@ -8,11 +8,18 @@
 
 ## 0. 一句话结论
 
-**4C4G 跑不起来，必须拆机。** 稳态实测：**不含渲染**已约 3.57 G（celery 1.54 + api 1.0 + neo4j 0.81 + kkfileview 0.58 + 其余 0.24），已逼近 4G 上限；渲染峰值再叠 1.5–1.7 G → **总量 5.1 G+，必然 OOM**。
+**4C4G 单机跑得起来，但很紧；拆机是更稳的选择。** 稳态实测：**不含渲染**已约 3.57 G
+（celery 1.54 + api 1.0 + neo4j 0.81 + kkfileview 0.58 + 其余 0.24），已逼近 4G 上限；
+渲染（cgroup 实测峰值 0.9–1.4 G）再叠上去 → **总量 4.5–5.0 G**，超出 4G。
 
 两条出路：
-1. **单机硬扛（不推荐，仅应急）**：`celery -c 2`、渲染严格串行、上传/L2 错峰——没有任何余量，一次并发就崩；
-2. **拆机（推荐）**：把渲染 worker 移到第二台机器（见 §7.1），单机压力立刻回到可接受区间。
+1. **单机硬扛**：`celery -c 2`（省 ~0.6 G）+ 渲染严格串行 + 上传/L2 错峰 → 约 2.9 G，余量 ~1 G，
+   **可用但脆弱**，一次并发重活就可能 OOM；
+2. **拆机（推荐）**：把渲染 worker 移到第二台机器（见 §7.1）。
+
+> ✅ **好消息（实测修正）**：第二台**不需要 4C8G 那么贵**。曾经断言「2C2G 装不下渲染」，
+> 真机把容器限额压到 2048 MiB 跑 60s/1800 帧重负载，**成功出片**（cgroup 峰值仅 0.9–1.1 G，
+> 见 §3.1.2）。**2C2G 足以承担渲染**（慢一些、需排队），正合「买一台便宜机器分担」的思路。
 
 > 注：`llmops-render-worker` 空闲占 524 MB（不是原文档写的 90 MB），常驻本身也有成本；
 > 拆走后这笔内存与 3.47 GB 镜像体积一并离开首台机器。
@@ -49,42 +56,73 @@
 - **在本地/其他机器 `docker save` → 上传 tar → `docker load`**，绕开逐层拉取；
 - **错峰拉取**：先跑基础设施（db/redis/neo4j/kkfileview），再逐个拉业务镜像。
 
-### 1.2 渲染在 4G 上必然进入 low-memory 模式
+### 1.2 low-memory 模式：触发条件、代价、以及**可覆盖**（实测）
 
 HyperFrames CLI 内置阈值 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（**渲染镜像内 CLI 包常量**，
-非本项目代码，位置 `/opt/hyperframes/node_modules/hyperframes/dist/cli.js`）。**容器内存 < 8G 时自动降级**：锁死 1 worker + 强制逐帧截图。
+非本项目代码，位置 `/opt/hyperframes/node_modules/hyperframes/dist/cli.js`）。
+判定式 `isLowMemorySystem()` 为 `totalMb <= 8192`，其中 `totalMb = min(宿主机内存, cgroup 限额)`。
+compose 的 `memory: 2800M` 使 cgroup 为 2800 → **必然判定为 low-memory**。
 
-也就是说，**4C4G 上渲染永远走慢路径**，这是设计使然、不是故障。实测差异：
+**它实际做了四件事**（源码逐处核对）：
 
-| 组合 | low-memory（4G 必现） | 关闭 low-memory |
+| # | 行为 | 位置 |
 | --- | --- | --- |
-| 10s/300 帧（纯文字） | 20.3s | 12.6s |
-| 30s/900 帧（含视频素材） | 62s | 38s |
+| 1 | 强制 `forceScreenshot = true`（捕获模式由 `beginframe` 退化为 `screenshot`） | `cli.js` |
+| 2 | 当 `--workers` 未显式指定时，**锁死 1 个 capture worker**（跳过自动校准） | worker 解析 |
+| 3 | 强制 software GPU（`softwareGpuForced`） | config merge |
+| 4 | 跳过 capture 成本校准（`capture_calibration` 记 `skipped`） | 校准阶段 |
 
-> 关闭可快 ~40%，但会抬高 capture worker 数、超出 V8 堆上限（见 §1.3），**不建议在 4G 上关闭**。
+**✅ 可用环境变量覆盖，无需改代码**（CLI 自己在日志里写明了）：
+`PRODUCER_LOW_MEMORY_MODE=false` 或 `--no-low-memory-mode`。
 
-### 1.3 Node V8 堆决定 capture worker 上限
+> 透传链路已确认：`hyperframes_renderer.build_render_env` 以 `dict(os.environ)` 为基础构造
+> 子进程环境，故 compose 里加一行 `PRODUCER_LOW_MEMORY_MODE: 'false'` 即可生效。
 
-CLI 的 worker 数由三路取小（`computeWorkerSizing`，`cli.js`）：CPU 路 `cpuCount-2`、
-内存路 `⌊总内存×0.5/1536⌋`、**堆路 `max(1, ⌊(heapLimit−1024)/640⌋)`**。
-超限时告警（实测文案）：
+### 1.3 Node V8 堆：只是**告警**，不是 worker 数限制（源码核对 + 实测）
+
+**worker 数**由 `computeWorkerSizing`（`cli.js`）决定，取**三路最小值**：
 
 ```
-[Render] N capture workers may exceed this process's V8 heap
+optimal = min(cpuBasedWorkers, memoryBasedWorkers, frameBasedWorkers)
+
+cpuBasedWorkers    = max(1, cpuCount - 2)              # 8 核 → 6
+memoryBasedWorkers = max(1, ⌊总内存MB × 0.5 / 1536⌋)    # 2800MB → 0 → 1
+frameBasedWorkers  = ⌊总帧数 / 30⌋                      # 900 帧 → 30
+```
+
+之后还有两道**下限与争用**约束（`MIN_WORKERS=1`、`minParallelFrames` 决定 ≥2、
+大任务按 `coresPerWorker` 争用收缩）。
+
+**堆路 `heapBasedWorkers = max(1, ⌊(heapLimit − 1024) / 640⌋)` 不在上面的 min 里**，
+它只用于 `exceedsHeapAdvisory = workers > heapBasedWorkers` —— 即**仅产生一条告警**，
+**不会把 worker 数压下来**。告警文案（实测）：
+
+```
+[WARN] [Render] 2 capture workers may exceed this process's V8 heap
 (limit 2240MB supports ~1). If the render dies with "JavaScript heap out of memory",
-raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers N.
+raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers 1.
 ```
 
-**实测修正（重要）**：镜像**默认**堆只有 **1592 MB**（`heap_size_limit` 实测），
-`⌊(1592−1024)/640⌋ = 0` → 兜底为 1。而 compose 设的
-`NODE_OPTIONS=--max-old-space-size=2048` 会把堆**抬到 2240 MB**，
-`⌊(2240−1024)/640⌋ = 1`。
+> ⚠️ **修正前一轮的错误表述**：此前本文写「堆路是三路取小之一」「本镜像 worker 上限就是 1」，
+> 均不准确。实测在 `NODE_OPTIONS=--max-old-space-size=2048`（堆 2240MB，`heapBasedWorkers=1`）下，
+> CLI **实际使用了 2 个 capture worker**并照常出片（仅告警）。故：**堆决定告警，不决定并发**。
 
-也就是说该配置**不是「压低堆」，而是把堆抬到能稳稳支撑 1 个 worker**——
-这是保护性设置，不是限制。（此前文档写成「默认 2240 已临界、显式压到 2048」，方向说反了。）
+**堆值与 `heapBasedWorkers` 的实测对应**：
 
-**结论**：本镜像下 capture worker 实际上限就是 **1**，与 §3.2 的并发=1 一致；
-`NODE_OPTIONS=2048` 应保留。
+| `--max-old-space-size` | 实测 `heap_size_limit` | `heapBasedWorkers` | 2 workers 时是否告警 |
+| --- | --- | --- | --- |
+| 镜像默认（未设） | 1592 MB | 0 → 兜底 1 | 告警 |
+| 2048（**当前 compose**） | 2240 MB | 1 | ⚠️ 告警 |
+| 3072 | 3264 MB | 3 | ✅ 无告警 |
+| 4096 | 4288 MB | 5 | ✅ 无告警 |
+
+> 实测验证：`--max-old-space-size=4096` 时跑 60s/1800 帧、2 workers，告警消失、正常出片
+> （耗时 71.4s / cgroup 峰值 1310MB），与 2048 下的 71.6s / 1276MB 基本一致——
+> 说明**该告警在这些负载下并未真正触发 OOM**，属余量提示。
+
+**结论**：`NODE_OPTIONS=2048` 是「够用但偏紧」；若要正式启用 2 workers 消除告警，
+应提到 **3072**（`heapBasedWorkers=3`）。但见 §3.2：**生产上仍推荐 worker=1**，
+因为真正昂贵的是**内存线性叠加**（§3.1），而非这条告警。
 
 ---
 
@@ -99,7 +137,7 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers N.
 | `llmops-api` | 353 MB | **998 MB** | 1.48 GB | 保留 | 核心 |
 | `llmops-neo4j` | 738 MB | **808 MB** | 637 MB | **必须保留** | 记忆系统（TKG）底座；关闭则记忆系统不可用 |
 | `llmops-kkfileview` | 531 MB | **583 MB** | 1.6 GB | **必须保留** | 文档在线预览；关闭则文档系统预览不可用 |
-| `llmops-render-worker` | ~90 MB | **524 MB** | 3.47 GB | **常驻**（见 §3） | 视频出片；渲染时峰值 1.5–1.7 G |
+| `llmops-render-worker` | ~90 MB | **524 MB** | 3.47 GB | **常驻**（见 §3） | 视频出片；渲染时 cgroup 峰值 0.9–1.4 G |
 | `llmops-db`（pgvector） | 129 MB | **99 MB** | 445 MB | 保留 | 核心 |
 | `llmops-ui` | 47 MB | **66 MB** | 102 MB | 保留 | 生产用 nginx 静态版 |
 | `llmops-celery-beat` | 26 MB | **63 MB** | 1.48 GB | 保留 | 定时任务调度 |
@@ -113,12 +151,12 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers N.
 
 **其中不含 render 的基础服务** ≈ **3.57 G**。
 
-> ⚠️ 渲染还没开始，**3.57 G 就已逼近 4G 上限**。渲染峰值 1.5–1.7 G 一旦叠加，
-> 总量直奔 5.1–5.3 G。因此 4C4G 单机**必须同时做两件事**：
+> ⚠️ 渲染还没开始，**3.57 G 就已逼近 4G 上限**。渲染 peak 0.9–1.4 G 一旦叠加，
+> 总量直奔 4.5–5.0 G。因此 4C4G 单机**必须同时做两件事**：
 > 1. `llmops-celery` 由默认 `-c 4` 降到 `-c 2`（省 ~0.6 G）；
 > 2. 渲染严格串行（闸门已保证并发=1）且不与大文件上传/L2 解析同时发生。
 >
-> 即便两件都做，余量也仅 ~1 G；**§7.1 的「拆机」不是优化项，是容量上的必需项**。
+> 即便两件都做，余量也仅 ~1 G；**§7.1 的「拆机」是更稳的选择**（但不强制——见 §0）。
 
 > ⚠️ **browser / computer worker 也不是裁减项**（此前误列为「默认已关」，已纠正）：
 > 二者是「未安装桌面端的纯 Web 用户」使用浏览器自动化 / 电脑控制的**唯一通道**。关掉它们，
@@ -148,21 +186,88 @@ raise the heap (NODE_OPTIONS=--max-old-space-size=8192) or pass --workers N.
 
 ## 3. 渲染资源分配
 
-### 3.1 内存模型：叠加，不是共享（实测）
+### 3.1 内存模型：叠加，不是共享（cgroup 实测）
 
-同一容器内、同样的 30s/900 帧含视频素材任务：
+30s / 900 帧纯文字 composition（1920×1080 / 30fps），**关闭 low-memory、单容器内 N 个渲染同时跑**：
 
-| 并发渲染数 | 墙钟 | 内存峰值 |
-| --- | --- | --- |
-| 1 | 59s | **1470 MB** |
-| 2 | 62s | **2567 MB** |
-| 3 | 83s | **2679 MB** |
-| 3 个**串行**（同时 1 个） | 178s | **1659 MB** |
+| 并发 | 墙钟 | 单实例均摊 | **cgroup 峰值** | RSS 口径（虚高） |
+| --- | --- | --- | --- | --- |
+| 1 | 36.8s | 36.8s | **1261 MB** | 1885 MB |
+| 2 | 51.7s | 25.8s | **1989 MB** | 3764 MB |
+| 3 | 82.4s | 27.5s | **2471 MB** | 5648 MB |
 
 **关键结论**：
-- 内存 ≈ **1.5 G × 并发数**，每个渲染是独立 Node + Chromium 进程，互不复用；
-- **并发不提升吞吐**：4 核已满，2 并发只快 3 秒、3 并发反而更慢；
-- **「排队」本身不省内存**（队列里是几 KB 消息），**「并发=1」才是护城河**。
+- **内存随并发增长，不是恒定的**：1261 → 1989 → 2471 MB，边际增量 **+728 / +482 MB**。
+  这直接回答「一个用户跑 1G，两个三个用户是不是也 1G」——**不是**。每个渲染是独立
+  Node + Chromium 进程，**互不共享**。
+- 但**增长不是干净的 ×N**（3 并发 2471MB 明显低于 3×1261MB）。原因是每实例的
+  Node/Chromium 运行时并非完全互斥：一部分常驻页在 cgroup 口径下只计一次。
+  工程上**按「单实例 + ≥0.5 G/并发」保守预留**即可。
+- **并发几乎不提升吞吐**：单实例 36.8s；2 并发总 51.7s（均摊 25.8s）；3 并发总 82.4s
+  （均摊 27.5s，比 2 并发还差）。4 核下开到 3 已无收益，纯粹拿内存换不来速度。
+- **「排队」不费内存**（队列里是几 KB 消息）；**「并发」才费内存**。
+
+> ⚠️ **口径陷阱（务必用 cgroup，不要用 `ps`/RSS）**：上表 RSS 列比 cgroup 高 50%–130%，
+> 因为 RSS 会把 Chromium 的**共享文件页按进程重复计数**，而 cgroup 由内核只记一次。
+> 用 RSS 估算容量会严重高估。容器内取真实值的正确方式：
+> `cat /sys/fs/cgroup/memory.current`（V2）或 `.../memory.usage_in_bytes`（V1）。
+> **`docker stats` 显示的即 cgroup 口径，可直接采信。**
+
+#### 3.1.1 多用户同时渲染会怎样？——**排队，不叠加**（已实测确认）
+
+生产链路上 render worker 由 `CELERY_WORKER_AMOUNT: '1'` 固定为**单进程串行消费**
+（`api/docker/entrypoint.sh` 的 `celery ... -c 1 -Q render`）。因此：
+
+- **N 个用户同时点渲染 → 任务进 `render` 队列排队，同一时刻只有 1 个在执行**；
+- 容器内存峰值恒为**单实例水平（~1.3 G）**，不随用户数增长；
+- 代价是**等待时间线性增加**（第 3 个用户要等前 2 个跑完）。
+
+所以上表的「2/3 并发」**不会在生产中出现**——它只用于证明「内存随并发增长」这个物理事实，
+用来解释**为什么必须守住并发=1**：一旦把 `CELERY_WORKER_AMOUNT` 调到 2，内存立刻又多一份
+（+0.5～0.7 G），2800M 限额的余量被吃掉大半。
+
+> **结论**：你担心的「内存变 2G、3G」在**当前配置下不会发生**（靠串行化规避）。
+> 但它是**配置依赖**，不是架构保证——**渲染并发必须始终锁死 1**。
+
+#### 3.1.2 能不能改阈值、在低配机器上开快速渲染？——**可以，但方向要搞对**（实测）
+
+**先纠正一个误区**：`LOW_MEMORY_TOTAL_MB_THRESHOLD` 是 **CLI 包内常量**，不是本项目配置项，
+**改不了**（除非重建镜像）。但**不需要改它**——用 `PRODUCER_LOW_MEMORY_MODE=false` 直接
+覆盖判定结果即可（§1.2），一行 compose 环境变量。
+
+**再纠正我自己此前的错误结论**：本文曾写「2C2G 上渲染必然 OOM、渲染机至少 4C8G」。
+真机实测**证伪**：把容器限额压到 **2048 MiB**，跑 60s/1800 帧重负载，两种模式**都成功出片**：
+
+| 2 GB 限额下（60s / 1800 帧） | 耗时 | cgroup 峰值 | 输出 |
+| --- | --- | --- | --- |
+| low-memory（默认） | 93.97s | 1075 MB | 238231 B |
+| **关闭 low-memory** | **64.9s（快 31%）** | **903 MB（省 172 MB）** | 238231 B（**完全相同**） |
+
+**为什么「关掉省内存模式」反而更省内存**（**实测现象；机理为推断，未逐行验证**）：
+low-memory 强制逐帧 `screenshot` 捕获，每帧位图需完整驻留并编码；
+`beginframe` 走 CDP 增量帧协议，峰值反而更低。即 low-memory 是为**更极端**的内存环境
+（如几百 MB）设计的保守兜底，在 2G 上反而**帮倒忙**。此项以实测数据为准，机理留待后续验证。
+
+**速度提升的真实来源**（另一个反直觉点）：实测 `--workers 1` + 关 low-memory = 49.3s，
+与 low-memory 的 48.5s 持平；而**自动（2 workers）** = 34.9s。
+所以**加速来自并行的 2 个 capture worker，不是 beginframe 本身**。
+
+**推荐配置（4C4G 单机、渲染与业务同机）**：
+
+```yaml
+PRODUCER_LOW_MEMORY_MODE: 'false'   # 关掉过度保守的降级，走 beginframe
+# 保持 CELERY_WORKER_AMOUNT: '1'（任务级串行）；CLI 内部 2 workers 是进程内并行，
+# 二者不冲突：串行保证同时只有 1 个渲染任务，进程内 2 workers 只在该任务内提速。
+```
+
+**但有一个前提要先验证**：2 workers 会触发 V8 堆告警（§1.3，堆 2240MB 时 `heapBasedWorkers=1`）。
+本机重负载实测**未真正 OOM**（告警属余量提示），但若要彻底消除风险，
+把 `NODE_OPTIONS` 提到 `--max-old-space-size=3072`（`heapBasedWorkers=3`）即可。
+
+> **结论**：低配开快速渲染**可行且划算**——实测在 2G 限额下既快 31% 又省 172MB，
+> 且产物字节完全一致。落地只需两行环境变量，无需改代码、无需改镜像。
+> **代价**：进程内 fan-out 到 2 个 Chromium，CPU 占用翻倍——**必须配合任务级串行（并发=1）**，
+> 否则多任务叠加会打爆内存。
 
 ### 3.2 建议配额
 
@@ -258,7 +363,7 @@ llmops-render-worker:
 
 ## 5. 部署步骤
 
-> ⚠️ **4C4G 单机不推荐**（见 §0/§7.1）。推荐形态：**首台 4C4G（不含 render）+ 渲染机 4C8G**。
+> ⚠️ **4C4G 单机偏紧**（见 §0/§7.1）。推荐形态：**首台 4C4G（不含 render）+ 渲染机 2C2G/4C4G**。
 > 下面步骤 1/2/4 在首台执行；步骤 3（渲染镜像）在**第二台机器**执行。
 
 ```bash
@@ -275,7 +380,7 @@ docker compose up -d llmops-api llmops-celery llmops-celery-beat \
 ```
 
 ```bash
-# ===== 第二台（4C8G，只跑渲染；见 §7.1 跨机接线）=====
+# ===== 第二台（渲染机，2C2G 起；见 §7.1 跨机接线）=====
 # 3) 渲染镜像（3.47 GB，最慢的一步）
 docker compose pull llmops-render-worker
 docker compose up -d llmops-render-worker
@@ -304,6 +409,7 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | 8 | 去掉同步回退，失败即报错 | 代码 | ✅ `render_video.py`（不再有 sync 分支） |
 | 9 | 渲染完成回链 | 代码 | ✅ 复用 `document_index_notification` 通道（前端零改动） |
 | 10 | `RENDER_TIMEOUT_SEC` 收紧 + Celery `soft_time_limit` | 配置+代码 | ✅ 900s / `soft_time_limit=1200s` |
+| 11 | 关闭 low-memory 降级 / 抬高 V8 堆 | 配置 | ⏳ **待定**（实测可快 31%、更省内存，见 §3.1.2；需先定 2-workers 策略） |
 
 **闸门实现载体**：`api/internal/service/render_guard_service.py`（`RenderGuardService`）。
 准入在派发端（`render_video._dispatch_render`），归还在任务开始/结束端（`render_tasks`），
@@ -318,26 +424,34 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 
 ## 7. 风险与验证记录
 
-### 7.1 拆机方案（推荐；4C4G 单机的正解）
+### 7.1 拆机方案（推荐；4C4G 单机的稳妥解）
 
-**为什么必须拆**：稳态实测**不含渲染已 ~4.09 G**（§2），已压到 4G 上限；渲染峰值再叠 1.5–1.7 G。
-单机只能靠 `celery -c 2` + 严格错峰硬扛，没有任何余量。
+**为什么要拆**：稳态实测**不含渲染已 ~3.57 G**（§2），已逼近 4G 上限；渲染 peak 0.9–1.4 G。
+单机只能靠 `celery -c 2` + 严格错峰硬扛，余量约 1 G、没有缓冲。
 
-**拆什么**：只拆 `llmops-render-worker`（`render` 队列独占），首台立刻回收 **524 MB 空闲内存 + 1.5–1.7 G 渲染峰值 + 3.47 GB 镜像体积**。
+**拆什么**：只拆 `llmops-render-worker`（`render` 队列独占），首台立刻回收
+**524 MB 空闲内存 + 0.9–1.4 G 渲染峰值 + 3.47 GB 镜像体积**。
 
 **⚠️ 不要拆 browser/computer worker**：二者合计仅 **45 MB**（17 + 28），拆走省不到 50 MB，
 却要新开跨机链路。**它们是镜像大（1.8 GB）不是内存大**——按内存算，拆它们性价比为零。
 
-**⚠️ 2C2G 装不下渲染**（实测推算）：
-- 渲染要求 V8 堆 ≥ 2048 MB（`NODE_OPTIONS`）+ Chromium 峰值 ~1.5 G，而 2G 容器里
-  cgroup 内存路 `⌊2048×0.5/1536⌋ = 0` → 兜底 1，勉强能起但**渲染中途必 OOM**；
-- 且 CLI 的 `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192` 会在 cgroup < 8G 时降级（§1.2），
-  2C2G 更不例外。
-- **渲染机建议 4C8G**：4 核保证 `cpuCount-2 = 2` 有余量；8G 让 cgroup 内存路
-  `⌊8192×0.5/1536⌋ = 2`。
-  注意判定是 `totalMb <= 8192` 即降级，故 **8G 仍走慢路径**；要跳出需 cgroup **> 8G**（如 16G）。
-  实践中建议先接受慢路径（实测 900 帧含素材 62s，可接受），把 4C8G 作为起点。
-  预算有限时 4C4G 也**能跑**（同样走慢路径），但别再低。
+**⚠️ 关于渲染机规格（实测修正，推翻此前的 4C8G 结论）**：
+
+此前本文断言「2C2G 装不下渲染、渲染机至少 4C8G」。**真机实测证伪**：
+把容器限额压到 **2048 MiB**、跑 60s/1800 帧重负载，**成功出片**（cgroup 峰值仅 903～1075 MB，
+见 §3.1.2）。原因是 CLI 的 `memoryBasedWorkers` 会自动收缩到 1，内存实际需求远低于早期估算。
+
+修正后的建议：
+
+| 规格 | 结论 |
+| --- | --- |
+| **2C2G** | ✅ **实测可跑**（2GB 限额下 60s/1800帧成功出片，峰值 ~1 G）。适合只服务少量用户、能接受排队 |
+| **2C4G** | ✅ 稳妥起点；`memoryBasedWorkers = ⌊4096×0.5/1536⌋ = 1`，够用且有余量 |
+| **4C4G+** | 若要 CLI 进程内并行 2 workers 提速（§3.1.2），需 ≥4 核 + 堆提到 3072 才无告警 |
+
+> 判定 `totalMb <= 8192` 即降级仍然成立（§1.2），但**降级不再等于「不可用」**——
+> 它只是走保守路径。用 `PRODUCER_LOW_MEMORY_MODE=false` 可主动关闭（实测更快更省）。
+> **CPU 才是低配渲染的真瓶颈**：`cpuCount-2` 在 2 核上为 0（兜底 1），单 worker 下 900 帧约 50–90s。
 
 #### 跨机接线（3 处改动）
 
@@ -360,12 +474,12 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 #### 首台剩余容量（拆机后，稳态）
 
 ```
-不含 render：4.09 G - 0.524 G ≈ 3.57 G      （4G 上限下仍偏紧）
-再把 celery 降到 -c 2：3.57 - 0.7 ≈ 2.87 G  （留 ~1.1 G 给上传/L2 峰值，可接受）
+不含 render：4.09 G - 0.524 G ≈ 3.57 G      （4G 上限下偏紧，但不再有渲染峰值风险）
+再把 celery 降到 -c 2：3.57 - 0.6 ≈ 2.97 G  （留 ~1 G 给上传/L2 峰值，可接受）
 ```
 
-**结论**：拆掉渲染 + `celery -c 2` 后，首台从「必然 OOM」变为「有约 1 G 余量」。
-这是 4C4G 上唯一能真正跑起来的组合。
+**结论**：拆掉渲染 + `celery -c 2` 后，首台从「渲染叠上来必超 4G」变为「稳态 ~3 G、余量 ~1 G」。
+这是 4C4G 上最稳妥的组合（不拆也能勉强跑，但缓冲更薄——见 §0）。
 
 ### 7.2 第三方 CDN 依赖（3M 环境需注意）
 
