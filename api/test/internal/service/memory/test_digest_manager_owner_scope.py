@@ -7,6 +7,7 @@
    admin 态用 `{alias}.admin_user_id = $admin_user_id` [+ agent 维度]，
    且**不得丢失任何既有 WHERE / ORDER BY / LIMIT / RETURN 子句**。
 """
+import re
 import textwrap
 from uuid import uuid4
 
@@ -160,18 +161,47 @@ def test_user_owner_cypher_keeps_full_clause_set(monkeypatch, method_name, expec
 
 
 @pytest.mark.parametrize("method_name,expected", USER_CASES)
-def test_admin_owner_cypher_scopes_by_admin_props(monkeypatch, method_name, expected):
-    """admin 态：用 admin 属性下推，且用户属性完全不出现。"""
+def test_admin_owner_cypher_keeps_full_clause_set(monkeypatch, method_name, expected):
+    """admin 态：除归属谓词外，其余子句一个不丢。
+
+    与用户态用**同一份期望串**做整串比对：把期望串里的用户归属谓词替换为 admin 三元谓词，
+    这样若 admin 分支误删 LIMIT / ORDER BY / RETURN 等子句，本用例会失败
+    （早期版本只做子串断言，无法捕获子句丢失）。
+    """
     admin_id = uuid4()
     owner_key = MemoryOwnerKey.for_admin(admin_id).to_key()
 
     cypher, params = _capture(monkeypatch, owner_key, method_name)
 
+    # 用户态谓词 → admin 态谓词（无 agent 时以 IS NULL 表达「管理员级」）
+    match = re.search(r"(\w+)\.user_id = \$user_id", _norm(expected))
+    assert match, f"{method_name} 期望串必须含用户归属谓词"
+    alias = match.group(1)
+    expected_admin = _norm(expected).replace(
+        f"{alias}.user_id = $user_id",
+        f"{alias}.admin_user_id = $admin_user_id AND {alias}.agent_id IS NULL",
+        1,
+    )
+
+    assert _norm(cypher) == expected_admin
     assert "admin_user_id = $admin_user_id" in cypher
     assert ".user_id = $user_id" not in cypher
     assert "agent_id IS NULL" in cypher
     assert params["admin_user_id"] == str(admin_id)
     assert "user_id" not in params
+
+
+def test_admin_with_agent_cypher_scopes_by_agent(monkeypatch):
+    """带 agent 的 admin 主体：谓词须等值匹配 agent，而非 IS NULL。"""
+    admin_id, agent_id = uuid4(), uuid4()
+    owner_key = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).to_key()
+
+    cypher, params = _capture(monkeypatch, owner_key, "_fetch_skills")
+
+    assert "s.admin_user_id = $admin_user_id AND s.agent_id = $agent_id" in cypher
+    assert "IS NULL" not in cypher
+    assert params["admin_user_id"] == str(admin_id)
+    assert params["agent_id"] == str(agent_id)
 
 
 def test_get_skill_detail_scopes_both_tiers(monkeypatch):
