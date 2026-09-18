@@ -44,6 +44,7 @@
 ## 调研与计划归档
 
 - [调研文档](research/)：外部项目调研（Hermes 等）与内部审计快照，结论供参考、不代表当前实现
+  - [渲染架构与多租户扩容方案评估](research/render-distribution-and-multi-tenant-scaling.md)：渲染算力成本模型、官方分布式方案、桌面端本机渲染可行性（设计稿）
 - [已完成计划的归档](archive/)：已落地的 roadmap / 执行历史（orchestration / knowledge / admin-refactor / memory-system execution）
 - [superpowers plans & specs](superpowers/)：近期功能的实现计划与规格（distribution / billing / pricing / auth）
 
