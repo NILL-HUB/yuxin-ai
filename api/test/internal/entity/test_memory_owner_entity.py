@@ -206,35 +206,47 @@ def test_parse_rejects_none_and_non_string():
         MemoryOwnerKey.parse("")
 
 
-def test_pg_filter_params_for_user_scopes_by_account_column():
+def test_pg_sql_predicate_user_uses_account_column():
     account_id = uuid4()
-    params = MemoryOwnerKey.for_user(account_id).pg_filter_params()
+    where, binds = MemoryOwnerKey.for_user(account_id).pg_sql_predicate("v")
 
-    assert params == {
-        "owner_type": "user",
-        "owner_account_id": account_id,
-        "owner_admin_user_id": None,
-        "owner_agent_id": None,
-    }
+    assert where == "v.owner_type = 'user' AND v.owner_account_id = :owner_account_id"
+    assert binds == {"owner_account_id": account_id}
 
 
-def test_pg_filter_params_for_admin_without_agent_pins_agent_null():
-    """admin 且无 agent：必须把 owner_agent_id 钉为 NULL，
-    否则「管理员级」记忆会与「某 Agent 级」记忆互相污染。"""
+def test_pg_sql_predicate_admin_without_agent_uses_is_null():
+    """管理员级必须用 IS NULL —— 用 = NULL 会恒不成立导致召回恒空。"""
     admin_id = uuid4()
-    params = MemoryOwnerKey.for_admin(admin_id).pg_filter_params()
+    where, binds = MemoryOwnerKey.for_admin(admin_id).pg_sql_predicate("v")
 
-    assert params["owner_type"] == "admin"
-    assert params["owner_account_id"] is None
-    assert params["owner_admin_user_id"] == admin_id
-    assert params["owner_agent_id"] is None
+    assert where == (
+        "v.owner_type = 'admin' "
+        "AND v.owner_admin_user_id = :owner_admin_user_id "
+        "AND v.owner_agent_id IS NULL"
+    )
+    assert binds == {"owner_admin_user_id": admin_id}
+    assert "= :owner_agent_id" not in where
 
 
-def test_pg_filter_params_for_admin_with_agent():
+def test_pg_sql_predicate_admin_with_agent_binds_agent():
     admin_id, agent_id = uuid4(), uuid4()
-    params = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_filter_params()
+    where, binds = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_sql_predicate("v")
 
-    assert params["owner_agent_id"] == agent_id
+    assert where == (
+        "v.owner_type = 'admin' "
+        "AND v.owner_admin_user_id = :owner_admin_user_id "
+        "AND v.owner_agent_id = :owner_agent_id"
+    )
+    assert binds == {"owner_admin_user_id": admin_id, "owner_agent_id": agent_id}
+
+
+def test_pg_sql_predicate_pins_owner_type_for_both_sides():
+    """两侧谓词都必须钉 owner_type，否则跨主体混召回。"""
+    user_where, _ = MemoryOwnerKey.for_user(uuid4()).pg_sql_predicate("v")
+    admin_where, _ = MemoryOwnerKey.for_admin(uuid4()).pg_sql_predicate("v")
+
+    assert "owner_type = 'user'" in user_where
+    assert "owner_type = 'admin'" in admin_where
 
 
 def test_pg_filter_conditions_covers_owner_type_for_user():
@@ -250,13 +262,32 @@ def test_pg_filter_conditions_covers_owner_type_for_user():
     assert len(conds) == 2
 
 
-def test_pg_filter_conditions_for_admin_pins_three_columns():
+def test_pg_filter_conditions_admin_without_agent_pins_agent_null():
+    """第 3 条必须是 IS NULL —— 若误写成 `== 值` 则管理员级与 Agent 级混召回。"""
     from internal.model import UserMemory
 
     admin_id = uuid4()
     conds = MemoryOwnerKey.for_admin(admin_id).pg_filter_conditions(UserMemory)
+    rendered = " ".join(str(c) for c in conds)
 
-    assert len(conds) == 3  # owner_type + owner_admin_user_id + owner_agent_id IS NULL
+    assert len(conds) == 3
+    assert "owner_type" in rendered
+    assert "owner_admin_user_id" in rendered
+    assert "owner_agent_id IS NULL" in rendered
+
+
+def test_pg_filter_conditions_admin_with_agent_equals_agent():
+    """带 agent 时必须等值匹配该 agent，而非 IS NULL。"""
+    from internal.model import UserMemory
+
+    admin_id, agent_id = uuid4(), uuid4()
+    conds = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_filter_conditions(UserMemory)
+    rendered = " ".join(str(c) for c in conds)
+
+    assert len(conds) == 3
+    assert "owner_agent_id = " in rendered
+    # SQLAlchemy 的 str() 渲染的是绑定参数名而非取值，故直接核对第 3 条的绑定值
+    assert conds[2].right.value == agent_id
 
 
 # =========================================================
@@ -311,3 +342,21 @@ def test_neo4j_filter_condition_admin_distinguishes_agent_levels():
     )
     assert "c.user_id" not in key_no_agent.neo4j_filter_condition("c")
     assert "c.user_id" not in key_with_agent.neo4j_filter_condition("c")
+
+
+def test_neo4j_filter_params_are_derivable_from_props():
+    """读侧谓词里的 $param 必须都能从写侧 neo4j_props() 取到——
+    防「写入写 A 属性、读取查 B 属性」的静默错配。"""
+    import re
+
+    admin_id, agent_id = uuid4(), uuid4()
+    keys = [
+        MemoryOwnerKey.for_user(uuid4()),
+        MemoryOwnerKey.for_admin(admin_id),
+        MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id),
+    ]
+    for key in keys:
+        params = set(re.findall(r"\$(\w+)", key.neo4j_filter_condition("n")))
+        assert params <= set(key.neo4j_props().keys()), (
+            f"谓词参数 {params} 无法全部从 props {set(key.neo4j_props().keys())} 取得"
+        )

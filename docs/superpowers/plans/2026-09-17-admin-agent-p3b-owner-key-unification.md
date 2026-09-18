@@ -76,7 +76,7 @@ extension 实际创建的不一致——见 Task 9 Step 5 的漂移登记）。
 **本计划做：**
 1. `MemoryOwnerKey` 三层形态定形：
    - 跨层字符串键 `to_key()`（用户态 = 裸 UUID；admin 态 = `admin:{uuid}[:{agent}]`）——用于 Redis / 冷存储这类扁平命名空间；
-   - PG 过滤访问器 `pg_filter_params()` / `pg_filter_conditions(model)`（Task 2，P3a 已定义列，此处补齐过滤入口）；
+   - PG 过滤访问器 `pg_sql_predicate(alias)` / `pg_filter_conditions(model)`（Task 2，P3a 已定义列，此处补齐过滤入口）；
    - **Neo4j 属性访问器** `neo4j_props()` / `neo4j_filter_condition(alias)`（Task 3）——用户态产出 `user_id`，admin 态产出 `admin_user_id` + `agent_id`，**属性级分离**。
 2. 读路径主体化：`retriever` / `digest_manager` / 巩固链 / `memory_governor` 按主体过滤（用户态过滤条件与改造前逐字节等价）。
 3. Neo4j admin 侧属性与约束就位：在 `api/internal/extension/neo4j_extension.py` 补 admin 侧唯一约束与索引（幂等、非破坏，实测不影响存量 user 节点）。
@@ -97,7 +97,7 @@ extension 实际创建的不一致——见 Task 9 Step 5 的漂移登记）。
 
 | 文件 | 职责 | 本计划动作 |
 | --- | --- | --- |
-| `api/internal/entity/memory_owner_entity.py` | 主体键值对象（跨层唯一归属表达） | 改 `to_key()` / `parse()`；新增 `pg_filter_params()` / `pg_filter_conditions()` / `neo4j_props()` / `neo4j_filter_condition()` |
+| `api/internal/entity/memory_owner_entity.py` | 主体键值对象（跨层唯一归属表达） | 改 `to_key()` / `parse()`；新增 `pg_sql_predicate()` / `pg_filter_conditions()` / `neo4j_props()` / `neo4j_filter_condition()` |
 | `api/internal/extension/neo4j_extension.py` | Neo4j 驱动与 schema 初始化（**约束真实生效点**） | 补 admin 侧唯一约束与索引 |
 | `api/internal/service/memory/retriever.py` | 混合检索（PG 向量 + Neo4j 两路） | 3 个召回分支主体化 |
 | `api/internal/service/memory/digest_manager.py` | Digest 渲染与缓存 | 缓存键 + 6 个 `_fetch_*` 主体化 |
@@ -356,35 +356,47 @@ git commit -m "feat(memory): make user owner key the bare legacy uuid"
 追加到 `api/test/internal/entity/test_memory_owner_entity.py`：
 
 ```python
-def test_pg_filter_params_for_user_scopes_by_account_column():
+def test_pg_sql_predicate_user_uses_account_column():
     account_id = uuid4()
-    params = MemoryOwnerKey.for_user(account_id).pg_filter_params()
+    where, binds = MemoryOwnerKey.for_user(account_id).pg_sql_predicate("v")
 
-    assert params == {
-        "owner_type": "user",
-        "owner_account_id": account_id,
-        "owner_admin_user_id": None,
-        "owner_agent_id": None,
-    }
+    assert where == "v.owner_type = 'user' AND v.owner_account_id = :owner_account_id"
+    assert binds == {"owner_account_id": account_id}
 
 
-def test_pg_filter_params_for_admin_without_agent_pins_agent_null():
-    """admin 且无 agent：必须把 owner_agent_id 钉为 NULL，
-    否则「管理员级」记忆会与「某 Agent 级」记忆互相污染。"""
+def test_pg_sql_predicate_admin_without_agent_uses_is_null():
+    """管理员级必须用 IS NULL —— 用 = NULL 会恒不成立导致召回恒空。"""
     admin_id = uuid4()
-    params = MemoryOwnerKey.for_admin(admin_id).pg_filter_params()
+    where, binds = MemoryOwnerKey.for_admin(admin_id).pg_sql_predicate("v")
 
-    assert params["owner_type"] == "admin"
-    assert params["owner_account_id"] is None
-    assert params["owner_admin_user_id"] == admin_id
-    assert params["owner_agent_id"] is None
+    assert where == (
+        "v.owner_type = 'admin' "
+        "AND v.owner_admin_user_id = :owner_admin_user_id "
+        "AND v.owner_agent_id IS NULL"
+    )
+    assert binds == {"owner_admin_user_id": admin_id}
+    assert "= :owner_agent_id" not in where
 
 
-def test_pg_filter_params_for_admin_with_agent():
+def test_pg_sql_predicate_admin_with_agent_binds_agent():
     admin_id, agent_id = uuid4(), uuid4()
-    params = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_filter_params()
+    where, binds = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_sql_predicate("v")
 
-    assert params["owner_agent_id"] == agent_id
+    assert where == (
+        "v.owner_type = 'admin' "
+        "AND v.owner_admin_user_id = :owner_admin_user_id "
+        "AND v.owner_agent_id = :owner_agent_id"
+    )
+    assert binds == {"owner_admin_user_id": admin_id, "owner_agent_id": agent_id}
+
+
+def test_pg_sql_predicate_pins_owner_type_for_both_sides():
+    """两侧谓词都必须钉 owner_type，否则跨主体混召回。"""
+    user_where, _ = MemoryOwnerKey.for_user(uuid4()).pg_sql_predicate("v")
+    admin_where, _ = MemoryOwnerKey.for_admin(uuid4()).pg_sql_predicate("v")
+
+    assert "owner_type = 'user'" in user_where
+    assert "owner_type = 'admin'" in admin_where
 
 
 def test_pg_filter_conditions_covers_owner_type_for_user():
@@ -400,13 +412,32 @@ def test_pg_filter_conditions_covers_owner_type_for_user():
     assert len(conds) == 2
 
 
-def test_pg_filter_conditions_for_admin_pins_three_columns():
+def test_pg_filter_conditions_admin_without_agent_pins_agent_null():
+    """第 3 条必须是 IS NULL —— 若误写成 `== 值` 则管理员级与 Agent 级混召回。"""
     from internal.model import UserMemory
 
     admin_id = uuid4()
     conds = MemoryOwnerKey.for_admin(admin_id).pg_filter_conditions(UserMemory)
+    rendered = " ".join(str(c) for c in conds)
 
-    assert len(conds) == 3  # owner_type + owner_admin_user_id + owner_agent_id IS NULL
+    assert len(conds) == 3
+    assert "owner_type" in rendered
+    assert "owner_admin_user_id" in rendered
+    assert "owner_agent_id IS NULL" in rendered
+
+
+def test_pg_filter_conditions_admin_with_agent_equals_agent():
+    """带 agent 时必须等值匹配该 agent，而非 IS NULL。"""
+    from internal.model import UserMemory
+
+    admin_id, agent_id = uuid4(), uuid4()
+    conds = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).pg_filter_conditions(UserMemory)
+    rendered = " ".join(str(c) for c in conds)
+
+    assert len(conds) == 3
+    assert "owner_agent_id = " in rendered
+    # SQLAlchemy 的 str() 渲染的是绑定参数名而非取值，故直接核对第 3 条的绑定值
+    assert conds[2].right.value == agent_id
 
 
 # =========================================================
@@ -472,25 +503,44 @@ def test_neo4j_filter_condition_admin_distinguishes_agent_levels():
 cd api && python -m pytest test/internal/entity/test_memory_owner_entity.py -q --no-header --no-cov
 ```
 
-Expected: FAIL —— `AttributeError: 'MemoryOwnerKey' object has no attribute 'pg_filter_params'`
+Expected: FAIL —— `AttributeError: 'MemoryOwnerKey' object has no attribute 'pg_sql_predicate'`
 
 - [ ] **Step 3: 实现四个方法（PG 两个 + Neo4j 两个）**
 
 在 `api/internal/entity/memory_owner_entity.py` 的 `pg_kwargs()` 之后追加：
 
 ```python
-    def pg_filter_params(self) -> dict:
-        """原生 SQL 用的过滤绑定参数（键名与 `user_memory` 列名一致）。
+    def pg_sql_predicate(self, alias: str = "v") -> tuple[str, dict]:
+        """产出原生 SQL 的归属谓词片段与绑定参数（供 `WHERE` 使用）。
 
-        与 `pg_kwargs()` 的区别是**语义**：`pg_kwargs()` 用于写入（列值即归属），
-        本方法用于读取（除归属列外还需约束 `owner_type`，防止跨主体混入）。
+        与 `pg_kwargs()` 的区别：`pg_kwargs()` 是**写入**用的「列名 → 值」字典；
+        本方法产**读取**用的 WHERE 片段与绑定，且能正确表达三值逻辑——
+        无 agent 的 admin 主体必须用 `IS NULL`，不能用 `= NULL`（后者恒不成立，
+        会让用户/管理员级召回恒空）。`owner_type` 一并钉进谓词，防止跨主体混入。
+
+        Args:
+            alias: 表别名（如向量分表 `v`）。
+
+        Returns:
+            `(where_fragment, bind_params)`；`where_fragment` 不含 `WHERE` 关键字。
         """
-        return {
-            "owner_type": self.owner_type.value,
-            "owner_account_id": self.owner_account_id,
-            "owner_admin_user_id": self.owner_admin_user_id,
-            "owner_agent_id": self.owner_agent_id,
-        }
+        if self.owner_type is MemoryOwnerType.USER:
+            return (
+                f"{alias}.owner_type = 'user' AND {alias}.owner_account_id = :owner_account_id",
+                {"owner_account_id": self.owner_account_id},
+            )
+        fragment = (
+            f"{alias}.owner_type = 'admin' "
+            f"AND {alias}.owner_admin_user_id = :owner_admin_user_id"
+        )
+        binds = {"owner_admin_user_id": self.owner_admin_user_id}
+        if self.owner_agent_id is None:
+            # 管理员级：Agent 属性缺失即管理员级，必须用 IS NULL
+            fragment += f" AND {alias}.owner_agent_id IS NULL"
+        else:
+            fragment += f" AND {alias}.owner_agent_id = :owner_agent_id"
+            binds["owner_agent_id"] = self.owner_agent_id
+        return fragment, binds
 
     def pg_filter_conditions(self, model) -> list:
         """ORM 用的过滤条件列表（SQLAlchemy 表达式）。
@@ -805,7 +855,7 @@ Expected: FAIL —— `TypeError: _vector_recall() got an unexpected keyword arg
 > 用户分支保持**与改造前等价**；admin 分支按 `owner_admin_user_id` / `owner_agent_id` 过滤
 > （注：在 NOT NULL 解除前该分支查不到数据，属预期，已在文档登记）。
 
-`api/internal/service/memory/retriever.py`：把形参 `user_id: str` 改为 `owner_key: str`，SQL 过滤改为按主体类型分支：
+`api/internal/service/memory/retriever.py`：把形参 `user_id: str` 改为 `owner_key: str`，SQL 过滤谓词改由主体访问器产出：
 
 ```python
     def _vector_recall(
@@ -823,22 +873,7 @@ Expected: FAIL —— `TypeError: _vector_recall() got an unexpected keyword arg
         """
         # …（维度解析与建表逻辑保持不变，仅在 SQL 处改动）…
         owner = MemoryOwnerKey.parse(owner_key)
-
-        # 按主体类型产出 WHERE 谓词：用户走 owner_account_id，admin 走 owner_admin_user_id
-        # (+ owner_agent_id)。两侧互斥，靠 owner_type 钉死，避免跨主体混召回。
-        if owner.owner_type is MemoryOwnerType.USER:
-            owner_where = "v.owner_type = 'user' AND v.owner_account_id = :owner_account_id"
-            owner_bind = {"owner_account_id": owner.owner_account_id}
-        else:
-            owner_where = (
-                "v.owner_type = 'admin' AND v.owner_admin_user_id = :owner_admin_user_id"
-            )
-            owner_bind = {"owner_admin_user_id": owner.owner_admin_user_id}
-            if owner.owner_agent_id is None:
-                owner_where += " AND v.owner_agent_id IS NULL"
-            else:
-                owner_where += " AND v.owner_agent_id = :owner_agent_id"
-                owner_bind["owner_agent_id"] = owner.owner_agent_id
+        owner_where, owner_bind = owner.pg_sql_predicate("v")
 
         sql = text(f"""
             SELECT um.id AS memory_id,
@@ -867,7 +902,13 @@ Expected: FAIL —— `TypeError: _vector_recall() got an unexpected keyword arg
 from internal.entity.memory_owner_entity import MemoryOwnerKey
 ```
 
-> **注意**：`owner_account_id` 是 UUID 列，绑定参数为 `dict(owner.pg_filter_params())["owner_account_id"]`（`UUID` 实例）。既有代码绑的是字符串 `user_id`，由 asyncpg/psycopg2 隐式转换；改用 UUID 实例同样合法，且更精确。**若实测驱动不接受 `None`**（admin 主体 `owner_account_id` 为 `None`），需在 admin 分支改用 `utils` 分支 SQL——但 P3b 无 admin 调用方，故当前路径恒为 user，不存在该问题；**在代码注释中标注此前提**。
+> **注意**：归属谓词与绑定参数**一律走 `owner.pg_sql_predicate("v")`**（返回 `(where, binds)`）——
+> 不要手工拼 `owner_where` / `owner_bind` 分支：手工拼写极易把「管理员级」写成 `= NULL`
+> （三值逻辑下恒不成立 → 召回恒空），且会与 ORM 侧 `pg_filter_conditions()` 漂移。
+> 注意 `owner_account_id` 是 UUID 列，绑定为 `UUID` 实例（既有代码绑字符串 `user_id`，
+> 由 asyncpg/psycopg2 隐式转换；改用 UUID 实例同样合法且更精确）。**若实测驱动不接受 `None`**
+> （admin 主体 `owner_account_id` 为 `None`），需在 admin 分支改用 utils 分支 SQL——但 P3b 无 admin
+> 调用方，故当前路径恒为 user，不存在该问题；**在代码注释中标注此前提**。
 
 - [ ] **Step 4: 改 Neo4j 两路分支**
 
@@ -1770,7 +1811,7 @@ P3b 已让读路径按主体类型分支（admin 分支谓词就位），但该�
 
 | 交付物 | 位置 |
 | --- | --- |
-| 主体身份访问器（PG 列 / Neo4j 属性 / 字符串键） | `api/internal/entity/memory_owner_entity.py`（`to_key()` / `parse()` / `pg_filter_params()` / `pg_filter_conditions()` / `neo4j_props()` / `neo4j_filter_condition()`） |
+| 主体身份访问器（PG 列 / Neo4j 属性 / 字符串键） | `api/internal/entity/memory_owner_entity.py`（`to_key()` / `parse()` / `pg_sql_predicate()` / `pg_filter_conditions()` / `neo4j_props()` / `neo4j_filter_condition()`） |
 | Neo4j admin 侧约束与索引 | `api/internal/extension/neo4j_extension.py` |
 | 检索读路径主体化 | `retriever.py`（PG 向量 + Neo4j 两路）、`user_memory_recall.py` |
 | Digest 缓存与查询主体化 | `digest_manager.py` |
@@ -1817,7 +1858,7 @@ git commit -m "docs(memory): document owner key unification (P3b)"
 
 - [ ] **每个新符号点名入口**：
   - `MemoryOwnerKey.to_key()` / `parse()` → Redis 键与冷存储路径片段（扁平命名空间）
-  - `pg_filter_params()` / `pg_filter_conditions()` → retriever `_vector_recall`、consolidation `_find_similar_nodes_pgvector`
+  - `pg_sql_predicate()` / `pg_filter_conditions()` → retriever `_vector_recall`（`pg_sql_predicate("v")` 产出 `(where, binds)`）、consolidation `_find_similar_nodes_pgvector`
   - `neo4j_props()` / `neo4j_filter_condition()` → retriever `_tkg_recall` / `_community_recall`、巩固链四个服务
   - admin 侧约束（`entity_name_admin_unique` / `community_key_admin_unique` 等）→ `neo4j_extension._ensure_constraints_and_indexes`（启动时幂等执行），由 Task 8 真图守卫验收
   - 用户主体键值 == 旧 `str(account.id)` → 由 Task 8 真库守卫锁定

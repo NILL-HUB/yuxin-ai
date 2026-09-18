@@ -149,18 +149,37 @@ class MemoryOwnerKey:
             "owner_agent_id": self.owner_agent_id,
         }
 
-    def pg_filter_params(self) -> dict:
-        """原生 SQL 用的过滤绑定参数（键名与 `user_memory` 列名一致）。
+    def pg_sql_predicate(self, alias: str = "v") -> tuple[str, dict]:
+        """产出原生 SQL 的归属谓词片段与绑定参数（供 `WHERE` 使用）。
 
-        与 `pg_kwargs()` 的区别是**语义**：`pg_kwargs()` 用于写入（列值即归属），
-        本方法用于读取（除归属列外还需约束 `owner_type`，防止跨主体混入）。
+        与 `pg_kwargs()` 的区别：`pg_kwargs()` 是**写入**用的「列名 → 值」字典；
+        本方法产**读取**用的 WHERE 片段与绑定，且能正确表达三值逻辑——
+        无 agent 的 admin 主体必须用 `IS NULL`，不能用 `= NULL`（后者恒不成立，
+        会让用户/管理员级召回恒空）。`owner_type` 一并钉进谓词，防止跨主体混入。
+
+        Args:
+            alias: 表别名（如向量分表 `v`）。
+
+        Returns:
+            `(where_fragment, bind_params)`；`where_fragment` 不含 `WHERE` 关键字。
         """
-        return {
-            "owner_type": self.owner_type.value,
-            "owner_account_id": self.owner_account_id,
-            "owner_admin_user_id": self.owner_admin_user_id,
-            "owner_agent_id": self.owner_agent_id,
-        }
+        if self.owner_type is MemoryOwnerType.USER:
+            return (
+                f"{alias}.owner_type = 'user' AND {alias}.owner_account_id = :owner_account_id",
+                {"owner_account_id": self.owner_account_id},
+            )
+        fragment = (
+            f"{alias}.owner_type = 'admin' "
+            f"AND {alias}.owner_admin_user_id = :owner_admin_user_id"
+        )
+        binds = {"owner_admin_user_id": self.owner_admin_user_id}
+        if self.owner_agent_id is None:
+            # 管理员级：Agent 属性缺失即管理员级，必须用 IS NULL
+            fragment += f" AND {alias}.owner_agent_id IS NULL"
+        else:
+            fragment += f" AND {alias}.owner_agent_id = :owner_agent_id"
+            binds["owner_agent_id"] = self.owner_agent_id
+        return fragment, binds
 
     def pg_filter_conditions(self, model) -> list:
         """ORM 用的过滤条件列表（SQLAlchemy 表达式）。
@@ -209,6 +228,9 @@ class MemoryOwnerKey:
 
         `alias` 为节点变量名。用户与 admin 各自返回**不同属性**上的条件，
         因此互相不会命中对方节点。
+
+        **注入约束**：`alias` 只接受代码内字面量变量名（如 `"n"` / `"c"`），
+        **禁止**传入任何用户可控字符串。
 
         调用方需把返回值拼进 Cypher，并绑定 `neo4j_props()` 的参数：
         ``f"WHERE {owner.neo4j_filter_condition('n')}"`` + ``**owner.neo4j_props()``。
