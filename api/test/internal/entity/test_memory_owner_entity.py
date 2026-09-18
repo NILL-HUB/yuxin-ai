@@ -28,7 +28,11 @@ def test_for_user_produces_account_scoped_key():
 
 
 def test_user_owner_key_equals_legacy_user_id():
-    """回归锁：用户主体键必须与 `str(account.id)` 逐字节相等。"""
+    """回归锁：用户主体键必须与 `str(account.id)` 逐字节相等。
+
+    这是「用户路径零行为变化」的根基——一旦有人把它改回带前缀，
+    Neo4j / Redis / 冷存储的全部存量键立刻失配。
+    """
     account_id = uuid4()
     assert MemoryOwnerKey.for_user(account_id).to_key() == str(account_id)
 
@@ -183,3 +187,20 @@ def test_admin_type_rejects_non_uuid_agent_id():
             owner_admin_user_id=uuid4(),
             owner_agent_id="x",
         )
+
+
+def test_parses_admin_key_without_agent_roundtrip():
+    """admin 无 Agent 是最常用的 admin 形态，必须有往返锁。"""
+    admin_id = uuid4()
+    key = MemoryOwnerKey.parse(f"admin:{admin_id}")
+
+    assert key.owner_type is MemoryOwnerType.ADMIN
+    assert key.owner_admin_user_id == admin_id
+    assert key.owner_agent_id is None
+
+
+def test_parse_rejects_none_and_non_string():
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey.parse(None)
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey.parse("")

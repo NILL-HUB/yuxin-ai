@@ -1,4 +1,4 @@
-"""主体键跨层前缀常量（供 P3b 的 Neo4j/Redis/冷存储统一使用）。
+"""主体键跨层前缀常量（供 P3b 的 Redis/冷存储统一使用）。
 
 这些常量是「按前缀拼键 / 扫描」的存储层唯一来源（Redis `scan`、冷存储路径），
 避免各处自行硬编码 `'user'` / `'admin'` 造成漂移。
@@ -36,9 +36,12 @@ def test_owner_key_constants_match_value_object_output():
 
     user_key = MemoryOwnerKey.for_user(account_id).to_key()
     assert user_key == str(account_id)
-    assert not user_key.startswith(
-        f"{memory_settings.OWNER_KEY_USER_PREFIX}{memory_settings.OWNER_KEY_SEPARATOR}"
+    # 常量必须真能用于解析历史前缀形态：一旦 OWNER_KEY_USER_PREFIX 与实体内部
+    # 前缀漂移，下面这条断言立刻失败（恒真的 startswith 断言无法防此漂移）
+    legacy_prefixed = (
+        f"{memory_settings.OWNER_KEY_USER_PREFIX}{memory_settings.OWNER_KEY_SEPARATOR}{account_id}"
     )
+    assert MemoryOwnerKey.parse(legacy_prefixed).to_key() == str(account_id)
 
     admin_key = MemoryOwnerKey.for_admin(admin_id).to_key()
     assert admin_key.startswith(

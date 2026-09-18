@@ -9,7 +9,8 @@
 | 层 | 表达 |
 | --- | --- |
 | PG | `owner_type` + `owner_account_id` / `owner_admin_user_id` / `owner_agent_id` |
-| Neo4j / Redis / 冷存储 | 字符串 `owner_key` |
+| Neo4j | 节点属性级分离：用户 `user_id`（裸 UUID） / admin `admin_user_id` + `agent_id` |
+| Redis / 冷存储 | 字符串 `owner_key` |
 
 `owner_key` 字符串形态（确定性、可解析、无歧义分隔；仅用于 Redis / 冷存储等扁平命名空间）：
 - 用户主体：**裸 `{account_uuid}`**——与历史 Redis 键 `memory:digest:{uuid}`、冷存储
@@ -19,7 +20,7 @@
 
 > **Neo4j 不走本字符串键**：节点属性级分离——用户写 `user_id`（裸 UUID，存量不动），
 > admin 写 `admin_user_id` + `agent_id`；归属按「哪一侧属性非空」判定。见
-> `neo4j_props()` / `neo4j_filter_condition()`。
+> `neo4j_props()` / `neo4j_filter_condition()`（P3b Task 2 实现）。
 
 > **与设计 §8 的偏离（已确认）**：§8 字面写 `user:{uuid}`。本实现用户态不带前缀，
 > 原因是四层存储的存量值均为裸 UUID，带前缀需迁移全部 Neo4j 节点属性、重建唯一约束
@@ -131,7 +132,8 @@ class MemoryOwnerKey:
         - 管理员主体加 `admin:` 前缀以与用户命名空间区分，带 Agent 时再追加一级。
 
         **不用于 Neo4j**：Neo4j 节点走属性级分离（用户写 `user_id`，admin 写
-        `admin_user_id` + `agent_id`），见 `neo4j_props()` / `neo4j_filter_condition()`。
+        `admin_user_id` + `agent_id`），见 `neo4j_props()` / `neo4j_filter_condition()`
+        （P3b Task 2 实现）。
         """
         if self.owner_type is MemoryOwnerType.USER:
             return str(self.owner_account_id)
