@@ -23,13 +23,27 @@ logger = logging.getLogger(__name__)
 
 
 def _load_settings():
-    """取渲染所需的运行时配置（Flask config）。
+    """取渲染所需的运行时配置，返回**支持属性访问**的配置视图。
 
-    独立成模块级函数便于测试替换——渲染服务本身不需要 app context 的其他部分。
+    独立成模块级函数便于测试替换。
+
+    ⚠️ 两个坑，缺一不可：
+
+    1. 必须用 ``internal.context.current_app``（本仓库替代 flask.current_app 的运行时
+       容器代理），**不能**用 ``flask.current_app``：渲染任务在 Celery worker 中执行，
+       那里没有 Flask app context 栈（``_ensure_runtime`` 初始化的是运行时容器，不是
+       Flask 应用），用 flask.current_app 会直接抛 ``Working outside of application
+       context``。
+    2. 必须包成对象而非直接用 ``current_app.config``：容器 config 是普通 dict，而
+       ``hyperframes_renderer`` 全部用 ``getattr(settings, "HYPERFRAMES_*")`` **属性**
+       读取，对 dict 做 getattr 取不到值会静默落空（Flask 的 config 是带
+       ``__getattr__`` 的子类，换容器后该语义消失）。故用 SimpleNamespace 还原属性语义。
     """
-    from flask import current_app
+    from types import SimpleNamespace
 
-    return current_app.config
+    from internal.context import current_app
+
+    return SimpleNamespace(**current_app.config)
 
 
 @inject
