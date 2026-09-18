@@ -2,6 +2,7 @@
 
 工具不抛异常到 Agent 层，一律返回 {"ok": false, "error": ...}。
 """
+import importlib
 import json
 
 import pytest
@@ -9,6 +10,18 @@ import pytest
 from internal.core.tools.builtin_tools.providers.video_render_tools.render_video import (
     render_video,
 )
+
+
+def _render_video_module():
+    """取 render_video 子模块本体。
+
+    包 ``video_render_tools/__init__.py`` 把 ``render_video`` 重绑定为工厂函数，
+    故 ``from ...video_render_tools import render_video`` 拿到的是函数而非模块，
+    必须用 importlib 显式取子模块才能 monkeypatch 模块级私有函数。
+    """
+    return importlib.import_module(
+        "internal.core.tools.builtin_tools.providers.video_render_tools.render_video"
+    )
 
 
 def test_missing_account_returns_readable_error():
@@ -53,6 +66,10 @@ def _install_fakes(monkeypatch, *, delay, admission_allowed=True, admission_reas
     module = importlib.import_module(
         "internal.core.tools.builtin_tools.providers.video_render_tools.render_video"
     )
+
+    # 既有用例聚焦云端链路：显式关掉本机渲染，避免命中本机分支
+    monkeypatch.setattr(module, "_local_enabled", lambda: False)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
 
     class _Task:
         pass
@@ -156,3 +173,102 @@ def test_dispatch_rejects_when_guard_denies(monkeypatch):
     assert payload["ok"] is False
     assert "正在进行" in payload["error"]
     assert dispatched["called"] is False, "被拒绝时不得派发任务"
+
+
+def test_prefers_local_device_over_cloud(monkeypatch):
+    """本机可用时不应派发 Celery——这是成本外部化的核心断言。"""
+    module = _render_video_module()
+
+    monkeypatch.setattr(module, "_local_enabled", lambda: True)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": True, "path": "/tmp/x.mp4", "size_bytes": 1},
+    )
+
+    def cloud_should_not_run(**kwargs):
+        raise AssertionError("本机可用时不应派发云端 Celery")
+
+    monkeypatch.setattr(module, "_dispatch_cloud_render", cloud_should_not_run)
+
+    result = module._dispatch_render({"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo")
+    assert result["mode"] == "local"
+
+
+def test_falls_back_to_cloud_when_local_unavailable(monkeypatch):
+    module = _render_video_module()
+
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": False, "unavailable": True, "error": "无设备"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_dispatch_cloud_render",
+        lambda **kwargs: {"mode": "celery", "result": type("R", (), {"id": "t1"})()},
+    )
+
+    result = module._dispatch_render({"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo")
+    assert result["mode"] == "celery"
+
+
+def test_local_business_failure_does_not_fall_back(monkeypatch):
+    """本机渲染业务失败（非通道问题）应直接报错，不静默回退云端。"""
+    import pytest
+
+    module = _render_video_module()
+
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": False, "error": "渲染环境缺少必需配置"},
+    )
+
+    def cloud_should_not_run(**kwargs):
+        raise AssertionError("业务失败不应回退云端")
+
+    monkeypatch.setattr(module, "_dispatch_cloud_render", cloud_should_not_run)
+
+    with pytest.raises(module.RenderExecutionError):
+        module._dispatch_render(
+            {"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo"
+        )
+
+
+def test_local_disabled_goes_straight_to_cloud(monkeypatch):
+    module = _render_video_module()
+
+    monkeypatch.setattr(module, "_local_enabled", lambda: False)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_dispatch_cloud_render",
+        lambda **kwargs: {"mode": "celery", "result": type("R", (), {"id": "t1"})()},
+    )
+
+    result = module._dispatch_render({"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo")
+    assert result["mode"] == "celery"
+
+
+def test_cloud_disabled_and_no_device_raises_clear_error(monkeypatch):
+    import pytest
+
+    module = _render_video_module()
+
+    monkeypatch.setattr(module, "_local_enabled", lambda: True)
+    monkeypatch.setattr(module, "_cloud_fallback_enabled", lambda: False)
+    monkeypatch.setattr(
+        module,
+        "_run_local_render",
+        lambda **kwargs: {"ok": False, "unavailable": True, "error": "无设备"},
+    )
+
+    with pytest.raises(module.RenderExecutionError) as exc:
+        module._dispatch_render(
+            {"segments": [{"start": 0, "duration": 1, "text": "a"}]}, "acc-1", "demo"
+        )
+    assert "桌面端" in str(exc.value) or "本机" in str(exc.value)
