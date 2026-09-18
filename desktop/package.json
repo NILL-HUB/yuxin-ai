@@ -36,7 +36,8 @@
       "bridge.js",
       "tray.js",
       "updater.js",
-      "window-state.js"
+      "window-state.js",
+      "render-runtime.js"
     ],
     "extraResources": [
       {
