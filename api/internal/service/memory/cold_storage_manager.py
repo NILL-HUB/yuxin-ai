@@ -20,10 +20,12 @@
 恒空转。L3 冷记忆下沉（tier→冷存储归档）尚未落地，属「能力已实现但未接入」。
 归属处理已按主体键（``MemoryOwnerKey``）主体化，接线时无需再改。
 
-⚠️ 另一处端口约束：``archive`` 计算出的 ``{prefix}{owner_key}/{year}/{month}/…``
-对象键，在调用 ``upload_bytes_without_record(filename, content, mime_type, folder)``
-时**只传了 basename**（folder="memory-cold"），故 owner 路径片段当前**未真正落到
-对象路径**。对象键中的主体分层需端口支持 path 或改用 folder 传主体，属接线时的待办。
+ADMIN-P3c-4（C4 落地）：``archive`` 已改走 ``upload_local_file(source_path,
+target_key)`` 保 target_key——对象键 ``{prefix}{owner}/{year}/{month}/{node_id}.json.gz``
+**真正落盘**（此前 ``upload_bytes_without_record`` 只收 basename，主体路径丢失）。
+新增 ``archive_owner_cold_nodes(owner_key)`` 并在 consolidation 每日任务中接入
+（``consolidation_tasks.run_daily_consolidation`` 每个主体循环末尾调用），
+冷存储归档自此有生产触发路径。
 
 设计参考:
     docs/prd/memory-system/02-storage-and-retrieval.md §5.3
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import gzip
 import logging
+import os
 import re
 from collections import Counter
 from datetime import UTC, datetime
@@ -113,19 +116,118 @@ class ColdStorageManager:
             f"{now.year}/{now.month:02d}/{entry.node_id}.json.gz"
         )
 
+        # ADMIN-P3c-4（C4）：改走 upload_local_file 保 target_key——先把 gzip
+        # 字节写本地临时文件，再由后端流式落到 s3_key（local move / OSS 流式），
+        # 主体路径片段**真正落盘**。此前 upload_bytes_without_record 只收 basename。
+        import tempfile
+
         try:
             payload = entry.model_dump_json().encode("utf-8")
             compressed = gzip.compress(payload)
-            url = storage.upload_bytes_without_record(
-                filename=s3_key.rsplit("/", 1)[-1] if "/" in s3_key else s3_key,
-                content=compressed,
-                folder="memory-cold",
-            )
+            fd, tmp_path = tempfile.mkstemp(suffix=".json.gz")
+            try:
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(compressed)
+                storage.upload_local_file(source_path=tmp_path, target_key=s3_key)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            url = storage.get_file_url(s3_key)
             entry.s3_key = url
             return url
         except Exception:
             logger.warning("archive: 写入存储失败 key=%s", s3_key, exc_info=True)
             return None
+
+    def archive_owner_cold_nodes(self, owner_key: str) -> dict:
+        """把某主体的 COLD 层节点归档到冷存储并标记（C4 接线入口）。
+
+        ADMIN-P3c-4：供 consolidation 每日任务调用——查询该主体 ``storage_tier='cold'``
+        且未归档（``archived_at IS NULL``）的节点，逐条 ``archive()`` 落盘，
+        成功后标记 ``archived_at`` 与 ``is_active=false``（保留节点、不物理删除，可逆）。
+
+        Args:
+            owner_key: 记忆主体键（用户主体为裸 UUID，admin 为 ``admin:{uuid}``）
+
+        Returns:
+            ``{"scanned": n, "archived": n, "errors": [..]}``
+        """
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.parse(owner_key)
+        props = owner.neo4j_props()
+        driver = self._driver or self._get_driver()
+        if driver is None:
+            logger.warning("archive_owner_cold_nodes: Neo4j 不可用，跳过归档 owner=%s", owner_key)
+            return {"scanned": 0, "archived": 0, "errors": ["no_driver"]}
+
+        scanned = 0
+        archived = 0
+        errors: list[str] = []
+        try:
+            with driver.session() as session:
+                result = session.run(
+                    f"""
+                    MATCH (n:MemoryNode)
+                    WHERE {owner.neo4j_filter_condition("n")}
+                      AND n.storage_tier = 'cold'
+                      AND n.archived_at IS NULL
+                      AND n.content IS NOT NULL
+                    RETURN n.node_id AS node_id, n.content AS content,
+                           coalesce(n.weight, 0.0) AS weight,
+                           coalesce(n.cooccurrence_count, 0) AS cooccurrence_count
+                    LIMIT 500
+                    """,
+                    **props,
+                )
+                rows = [dict(r) for r in result]
+        except Exception:
+            logger.warning("archive_owner_cold_nodes: 查询失败 owner=%s", owner_key, exc_info=True)
+            return {"scanned": 0, "archived": 0, "errors": ["query_failed"]}
+
+        for row in rows:
+            node_id = row.get("node_id")
+            if not node_id:
+                continue
+            scanned += 1
+            try:
+                entry = ColdStorageEntry(
+                    node_id=node_id,
+                    user_id=owner_key,
+                    weight=float(row.get("weight", 0.0) or 0.0),
+                    content=row.get("content", "") or "",
+                    metadata={"cooccurrence_count": row.get("cooccurrence_count", 0)},
+                )
+                if self.archive(entry) is None:
+                    continue
+                # 标记已归档（保留节点、不物理删除，可逆）
+                with driver.session() as session:
+                    session.run(
+                        f"""
+                        MATCH (n:MemoryNode)
+                        WHERE {owner.neo4j_filter_condition("n")}
+                          AND n.node_id = $node_id
+                        SET n.archived_at = $now, n.is_active = false
+                        """,
+                        node_id=str(node_id),
+                        now=datetime.now(UTC).isoformat(),
+                        **props,
+                    ).consume()
+                archived += 1
+            except Exception:
+                logger.warning(
+                    "archive_owner_cold_nodes: 归档失败 node=%s owner=%s",
+                    node_id, owner_key, exc_info=True,
+                )
+                errors.append(f"archive:{node_id}")
+
+        logger.info(
+            "archive_owner_cold_nodes: owner=%s scanned=%d archived=%d errors=%d",
+            owner_key, scanned, archived, len(errors),
+        )
+        return {"scanned": scanned, "archived": archived, "errors": errors}
 
     def read_archive(self, s3_key: str) -> Optional[ColdStorageEntry]:
         """从冷存储读取并解压冷记忆条目。

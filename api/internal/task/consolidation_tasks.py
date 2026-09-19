@@ -71,6 +71,23 @@ def run_daily_consolidation(self, user_ids: list[str] | None = None):
                 # 巩固落库变更 → 失效 Digest 缓存（内容变更驱动重建）
                 if report.is_success and report.total_items_processed > 0:
                     _invalidate_digest_cache(owner_key)
+                # C4 接线：巩固后把该主体的 COLD 层节点归档到冷存储（best-effort）
+                try:
+                    from internal.service.memory.cold_storage_manager import (
+                        ColdStorageManager,
+                    )
+
+                    cold = ColdStorageManager().archive_owner_cold_nodes(owner_key)
+                    if cold.get("archived", 0):
+                        logger.info(
+                            "run_daily_consolidation: owner=%s 冷归档 %d 条",
+                            owner_key, cold["archived"],
+                        )
+                except Exception:
+                    logger.warning(
+                        "run_daily_consolidation: 冷存储归档失败 owner=%s",
+                        owner_key, exc_info=True,
+                    )
             except Exception as exc:
                 logger.warning(
                     "run_daily_consolidation: 用户 %s 巩固失败: %s",
