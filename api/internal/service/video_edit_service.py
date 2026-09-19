@@ -12,11 +12,13 @@ subtitle 的重编码也仅对短视频耗时明显；故由 Celery 的 max_retr
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from injector import inject
 
@@ -252,14 +254,23 @@ class VideoEditService:
         return docs
 
     def _store_output(self, *, account: Any, video_path: Path, name: str) -> dict:
-        """把剪辑产物写入成品库（复用 KB-P3.7 的 store_render_output）。"""
+        """把剪辑产物写入成品库（复用 KB-P3.7 的 store_render_output）。
+
+        返回 `document_id` 与可播放的 `artifact`——后者是「对话内成片预览」
+        的载荷来源（缺它则前端只能显示一条无链接的提示）。
+        """
         from app.http.module import injector
         from internal.service.knowledge_base_service import KnowledgeBaseService
 
-        document = injector.get(KnowledgeBaseService).store_render_output(
+        service = injector.get(KnowledgeBaseService)
+        document = service.store_render_output(
             account=account, video_path=video_path, name=name
         )
-        return {"document_id": str(document.id)}
+        result = {"document_id": str(document.id)}
+        artifact = service.build_output_artifact(document)
+        if artifact:
+            result["artifact"] = artifact
+        return result
 
     def _prepare_source_file(self, doc: Any, work_dir: Path) -> Path:
         """把文档对应素材下载到工作目录，返回本地路径。"""
@@ -317,9 +328,13 @@ class VideoEditService:
 
     def subtitle_document(
         self, *, account: Any, knowledge_base_id: str, document_id: str,
-        cues: list[dict[str, Any]], name: str,
+        cues: list[dict[str, Any]] | None, name: str,
     ) -> dict:
-        """给库内视频烧录字幕并存入成品库。"""
+        """给库内视频烧录字幕并存入成品库。
+
+        `cues` 缺省（None/空）时**自动生成时间轴**：优先复用素材入库时留存的
+        ASR 时间轴，缺失才重跑一次 ASR（见 `_resolve_cues`）。
+        """
         docs = self._load_source_documents(
             account=account, knowledge_base_id=knowledge_base_id, document_ids=[document_id]
         )
@@ -330,5 +345,102 @@ class VideoEditService:
             work_dir = Path(work)
             source = self._prepare_source_file(docs[0], work_dir)
             output = work_dir / "output.mp4"
-            self.burn_subtitles(source_path=source, output_path=output, cues=cues)
+            resolved = self._resolve_cues(
+                document=docs[0], source_path=source, cues=cues,
+            )
+            self.burn_subtitles(source_path=source, output_path=output, cues=resolved)
             return self._store_output(account=account, video_path=output, name=name)
+
+    # ── 自动字幕：时间轴解析 ─────────────────────────────────────────────
+
+    def _load_document_segments(self, document_id: Any) -> list[Any]:
+        """取出该素材的全部片段（独立方法便于测试替换）。"""
+        from app.http.module import injector
+        from internal.model import KnowledgeSegment
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+
+        session = injector.get(KnowledgeBaseService).db.session
+        return session.query(KnowledgeSegment).filter(
+            KnowledgeSegment.knowledge_document_id == document_id,
+        ).all()
+
+    def _load_stored_cues(self, document: Any) -> list[dict[str, Any]]:
+        """读取 L1 解析时留存的 ASR 时间轴（`metadata.transcript_segments`）。
+
+        优先复用已落库的时间轴：素材入库时已跑过一次 ASR，重跑既慢、又可能
+        得到不一致的分段，还会多消耗一次 ASR 配额。
+        """
+        document_id = getattr(document, "id", None)
+        if document_id is None:
+            return []
+
+        cues: list[dict[str, Any]] = []
+        for row in self._load_document_segments(document_id):
+            metadata = getattr(row, "metadata_", None) or {}
+            raw = metadata.get("transcript_segments")
+            if not isinstance(raw, list):
+                continue
+            cues.extend(cue for cue in raw if isinstance(cue, dict))
+        # 多片段合并后必须按时间排序：SRT 时间码乱序会让部分播放器错位
+        return sorted(cues, key=lambda cue: float(cue.get("start") or 0.0))
+
+    def _transcribe_source(self, source_path: str | Path) -> list[dict[str, Any]]:
+        """对本地视频重跑 ASR 得到时间轴（独立方法便于测试替换）。
+
+        这是「素材入库时未留存时间轴」时的兜底路径：抽取音轨 → 带时间轴 ASR。
+        音轨落在临时目录内，随上下文退出整体回收。
+        """
+        from io import BytesIO
+
+        from werkzeug.datastructures import FileStorage
+
+        from app.http.module import injector
+        from internal.core.vision.vision_invoke import extract_video_audio
+        from internal.service.audio_service import AudioService
+
+        with tempfile.TemporaryDirectory(prefix="video-subtitle-asr-") as work:
+            audio_path = os.path.join(work, f"{uuid4().hex}.wav")
+            extract_video_audio(str(source_path), audio_path)
+            with open(audio_path, "rb") as fh:
+                content = fh.read()
+
+        file_storage = FileStorage(
+            stream=BytesIO(content),
+            filename=os.path.basename(audio_path),
+            content_type="audio/wav",
+        )
+        _, cues = injector.get(AudioService).audio_to_text_with_segments(file_storage)
+        return [cue for cue in (cues or []) if isinstance(cue, dict)]
+
+    def _resolve_cues(
+        self, *, document: Any, source_path: str | Path,
+        cues: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        """确定最终字幕条目：显式传入优先，否则自动生成。
+
+        自动生成的两级来源（先便宜后昂贵）：
+        1. 复用 L1 落库的 ASR 时间轴（零额外 ASR 成本）；
+        2. 兜底重跑 ASR（素材入库时未留存时间轴，或素材并非视频）。
+        """
+        if cues:
+            return list(cues)
+
+        stored = self._load_stored_cues(document)
+        if stored:
+            logger.info(
+                "复用已留存 ASR 时间轴 document_id=%s cue_count=%s",
+                getattr(document, "id", None), len(stored),
+            )
+            return stored
+
+        generated = self._transcribe_source(source_path)
+        if not generated:
+            raise VideoEditError(
+                "未能生成字幕时间轴：素材未留存语音时间戳，重新识别也未返回带时间轴的结果。"
+                "请确认素材含清晰人声，或在调用时显式提供 cues。"
+            )
+        logger.info(
+            "重跑 ASR 生成字幕时间轴 document_id=%s cue_count=%s",
+            getattr(document, "id", None), len(generated),
+        )
+        return generated

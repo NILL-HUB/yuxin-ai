@@ -186,6 +186,75 @@ class AudioService(BaseService):
                 candidates.append(fallback)
         return candidates
 
+    def _request_transcription(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        language: str = "",
+        provider: str = "",
+        model: str = "",
+        response_format: str = "",
+    ) -> dict[str, Any]:
+        """调用 ASR 端点并返回原始 JSON（时间戳能力的唯一出口）。
+
+        `response_format` 为空时**不带该字段**——保持与历史行为逐字节一致，
+        避免改变既有调用方（IM 语音、实时语音、语音笔记）的请求契约。
+        实测（SiliconFlow / TeleAI-TeleSpeechASR）：显式传 `verbose_json`
+        时响应会多出 `segments: [{start, end, text}]`；不传则只有 text/duration/usage。
+        """
+        api_key, base_url, configured_model = self._resolve_siliconflow_credentials(model_type="asr")
+        endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
+        payload = {
+            "model": self._resolve_asr_model(
+                provider=provider,
+                model=model,
+                configured_model=configured_model,
+            ),
+        }
+        normalized_format = str(response_format or "").strip()
+        if normalized_format:
+            payload["response_format"] = normalized_format
+        normalized_language = str(language or "").strip()
+        if normalized_language:
+            payload["language"] = normalized_language
+
+        resp = self._get_requests_session().post(
+            endpoint,
+            headers={"Authorization": f"Bearer {api_key}"},
+            files={"file": (filename or "audio.wav", BytesIO(content))},
+            data=payload,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def _normalize_segments(raw: Any) -> list[dict[str, Any]]:
+        """把 ASR 返回的 segments 归一化为 `[{start, end, text}]`。
+
+        逐条容错（丢弃空文本 / 时间非法 / 非字典条目）而不是整批报错：
+        一条坏分段不该让整段素材失去字幕时间轴。
+        """
+        normalized: list[dict[str, Any]] = []
+        if not isinstance(raw, list):
+            return normalized
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                start = float(item.get("start"))
+                end = float(item.get("end"))
+            except (TypeError, ValueError):
+                continue
+            if start < 0 or end <= start:
+                continue
+            normalized.append({"start": start, "end": end, "text": text})
+        return normalized
+
     def audio_to_text(
         self,
         audio: FileStorage,
@@ -196,32 +265,58 @@ class AudioService(BaseService):
         """将语音转换为文本（SiliconFlow ASR，可指定语言/provider/模型）."""
         if not audio or not (content := audio.stream.read()):
             raise FailException("音频文件无效或为空")
-        api_key, base_url, configured_model = self._resolve_siliconflow_credentials(model_type="asr")
-        endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
-        payload = {
-            "model": self._resolve_asr_model(
+        try:
+            data = self._request_transcription(
+                content=content,
+                filename=getattr(audio, "filename", "audio.wav"),
+                language=language,
                 provider=provider,
                 model=model,
-                configured_model=configured_model,
-            ),
-        }
-        normalized_language = str(language or "").strip()
-        if normalized_language:
-            payload["language"] = normalized_language
-
-        try:
-            resp = self._get_requests_session().post(
-                endpoint,
-                headers={"Authorization": f"Bearer {api_key}"},
-                files={"file": (getattr(audio, "filename", "audio.wav"), BytesIO(content))},
-                data=payload,
-                timeout=60
             )
-            resp.raise_for_status()
-            return resp.json()["text"].strip()
+            return str(data.get("text") or "").strip()
+        except FailException:
+            # 配置缺失等可读业务错误原样抛出：包成「识别失败」会让管理员
+            # 无从得知是凭证没配，而不是 ASR 服务抖动。
+            raise
         except Exception as e:
             logger.exception("语音转文本请求失败", exc_info=e)
             raise FailException("语音识别请求失败，请稍后重试")
+
+    def audio_to_text_with_segments(
+        self,
+        audio: FileStorage,
+        language: str = "",
+        provider: str = "",
+        model: str = "",
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """将语音转换为（文本, 时间轴分段），供自动字幕等需要时间码的场景使用。
+
+        与 `audio_to_text` 的唯一差异是显式请求 `response_format=verbose_json`；
+        返回的 segments 已归一化为 `[{start, end, text}]`（秒），
+        可直接喂给 `internal.core.video.ffmpeg_edit.render_srt`。
+        """
+        if not audio or not (content := audio.stream.read()):
+            raise FailException("音频文件无效或为空")
+        try:
+            data = self._request_transcription(
+                content=content,
+                filename=getattr(audio, "filename", "audio.wav"),
+                language=language,
+                provider=provider,
+                model=model,
+                response_format="verbose_json",
+            )
+        except FailException:
+            # 与 audio_to_text 同一口径：配置类错误必须原样冒泡，不得被降级成
+            # 「识别失败」——否则调用方会把凭证问题误判为模型不支持时间戳。
+            raise
+        except Exception as e:
+            logger.exception("语音转文本（带时间轴）请求失败", exc_info=e)
+            raise FailException("语音识别请求失败，请稍后重试")
+        return (
+            str(data.get("text") or "").strip(),
+            self._normalize_segments(data.get("segments")),
+        )
 
     def message_to_audio(self, message_id: UUID, account: Account) -> Generator:
         """将消息转换成流式事件输出语音（SiliconFlow TTS）"""

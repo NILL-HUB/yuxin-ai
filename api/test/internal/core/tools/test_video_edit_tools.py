@@ -25,6 +25,7 @@ def _capture_delay(monkeypatch, module):
         @staticmethod
         def delay(*args, **kwargs):
             captured["args"] = args
+            captured["kwargs"] = kwargs
             return __import__("types").SimpleNamespace(id="task-1")
 
     monkeypatch.setattr(module, "_load_task", lambda: _Task)
@@ -105,11 +106,23 @@ def test_concat_tool_dispatches_in_order(monkeypatch):
     assert captured["args"][1] == ["d3", "d1"]
 
 
-def test_subtitle_tool_requires_cues():
+def test_subtitle_tool_dispatches_none_cues_for_auto_generation(monkeypatch):
+    """不传 cues 是合法路径：service 会自动生成时间轴。"""
+    captured = _capture_delay(monkeypatch, video_subtitle)
+    tool = video_subtitle.video_subtitle(account_id="acc")
+    payload = json.loads(tool._run(knowledge_base_id="kb", document_id="d", name="自动字幕"))
+    assert payload["ok"] is True
+    assert captured["args"][2] is None, "缺省 cues 必须以 None 下发，交由 service 自动生成"
+    assert "自动" in payload["message"]
+
+
+def test_subtitle_tool_treats_empty_cues_as_auto(monkeypatch):
+    """Agent 传空列表等同于不传（不能把它当作用户输入错误拦下）。"""
+    captured = _capture_delay(monkeypatch, video_subtitle)
     tool = video_subtitle.video_subtitle(account_id="acc")
     payload = json.loads(tool._run(knowledge_base_id="kb", document_id="d", cues=[]))
-    assert payload["ok"] is False
-    assert "字幕" in payload["error"]
+    assert payload["ok"] is True
+    assert captured["args"][2] is None
 
 
 def test_subtitle_tool_rejects_malformed_cue():
@@ -122,6 +135,16 @@ def test_subtitle_tool_rejects_malformed_cue():
     assert "时间" in payload["error"]
 
 
+def test_subtitle_tool_rejects_all_blank_cues():
+    """显式提供的 cues 若全是空文本，仍应报错（而非静默退化成自动生成）。"""
+    tool = video_subtitle.video_subtitle(account_id="acc")
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb", document_id="d", cues=[{"start": 0, "end": 1, "text": "  "}])
+    )
+    assert payload["ok"] is False
+    assert "字幕" in payload["error"]
+
+
 def test_subtitle_tool_dispatches_cues(monkeypatch):
     captured = _capture_delay(monkeypatch, video_subtitle)
     tool = video_subtitle.video_subtitle(account_id="acc")
@@ -130,6 +153,39 @@ def test_subtitle_tool_dispatches_cues(monkeypatch):
         tool._run(knowledge_base_id="kb", document_id="d", cues=cues, name="字幕")
     )
     assert captured["args"][2] == cues
+
+
+# ── 会话上下文透传（对话内成片预览的必要条件） ─────────────────────────────
+#
+# 为什么必须锁定：任务完成后要按 message_id 把成品回填到原消息。
+# 若工厂函数漏传（只传 account_id），一切都"看起来正常"——
+# 任务照跑、成品照入库，只是**永远回填不到那条消息**，用户看不到成片。
+# 这类静默失效逃得过既有断言，故逐工具显式锁定。
+
+
+def test_edit_tool_factories_pass_chat_context(monkeypatch):
+    for module, tool_name in (
+        (video_trim, "video_trim"),
+        (video_concat, "video_concat"),
+        (video_subtitle, "video_subtitle"),
+    ):
+        tool = getattr(module, tool_name)(
+            account_id="acc", message_id="msg-1", conversation_id="conv-1",
+        )
+        assert tool.message_id == "msg-1", f"{tool_name} 工厂未透传 message_id"
+        assert tool.conversation_id == "conv-1", f"{tool_name} 工厂未透传 conversation_id"
+
+
+def test_trim_tool_forwards_chat_context_to_celery(monkeypatch):
+    captured = _capture_delay(monkeypatch, video_trim)
+    tool = video_trim.video_trim(
+        account_id="acc", message_id="msg-1", conversation_id="conv-1",
+    )
+
+    json.loads(tool._run(knowledge_base_id="kb", document_id="d", start_sec=0, end_sec=1))
+
+    assert captured["kwargs"]["message_id"] == "msg-1"
+    assert captured["kwargs"]["conversation_id"] == "conv-1"
 
 
 def test_tool_yamls_declare_expected_shape():

@@ -1,6 +1,6 @@
 name: video_subtitle
 label: 视频加字幕
-description: 给知识库里的视频烧录字幕（需提供带时间轴的字幕条目），并自动存入成品库。
+description: 给知识库里的视频烧录字幕。默认自动识别语音生成时间轴，也可传入带时间轴的字幕条目覆盖；完成后自动存入成品库。
 params:
 - name: knowledge_base_id
   label: 知识库
@@ -11,9 +11,9 @@ params:
   type: string
   required: true
 - name: cues
-  label: 字幕条目（含时间轴）
+  label: 字幕条目（可选，含时间轴）
   type: string
-  required: true
+  required: false
 - name: name
   label: 成品名称
   type: string

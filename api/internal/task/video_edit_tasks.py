@@ -53,6 +53,33 @@ def _delegate(self, action: str, fn):
         raise self.retry(exc=exc)
 
 
+def _notify_artifact(
+    *, account_id: str, message_id: str, conversation_id: str,
+    result: dict | None, tool: str,
+) -> None:
+    """把已就绪的成品回填到原对话消息（对话内成片预览）。
+
+    失败不抛：任务本身已成功落库，回填只是「让用户不必去成品库翻」的增强，
+    不应因推送失败把成功的任务标记成失败。
+    """
+    if not result:
+        return
+    artifact = result.get("artifact")
+    if not artifact:
+        logger.info("成品未生成可播放地址，跳过回填 tool=%s", tool)
+        return
+
+    from internal.service.artifact_notification_service import notify_artifact_ready
+
+    notify_artifact_ready(
+        account_id=account_id,
+        message_id=message_id,
+        conversation_id=conversation_id,
+        artifact=artifact,
+        tool=tool,
+    )
+
+
 @shared_task(
     name="internal.task.video_edit_tasks.video_trim_task",
     bind=True,
@@ -62,8 +89,9 @@ def _delegate(self, action: str, fn):
 def video_trim_task(
     self, knowledge_base_id: str, document_id: str,
     start_sec: float, end_sec, name: str, account_id: str, reencode: bool = False,
+    message_id: str = "", conversation_id: str = "",
 ):
-    """裁剪库内视频并存入成品库。"""
+    """裁剪库内视频并存入成品库，完成后回填到原对话消息。"""
     service = _load_service()
     account = _load_account(account_id)
 
@@ -74,7 +102,12 @@ def video_trim_task(
             name=name, reencode=reencode,
         )
 
-    return _delegate(self, "trim", _run)
+    result = _delegate(self, "trim", _run)
+    _notify_artifact(
+        account_id=account_id, message_id=message_id, conversation_id=conversation_id,
+        result=result, tool="video_trim",
+    )
+    return result
 
 
 @shared_task(
@@ -84,9 +117,10 @@ def video_trim_task(
     default_retry_delay=30,
 )
 def video_concat_task(
-    self, knowledge_base_id: str, document_ids: list, name: str, account_id: str
+    self, knowledge_base_id: str, document_ids: list, name: str, account_id: str,
+    message_id: str = "", conversation_id: str = "",
 ):
-    """按给定顺序拼接库内视频并存入成品库。"""
+    """按给定顺序拼接库内视频并存入成品库，完成后回填到原对话消息。"""
     service = _load_service()
     account = _load_account(account_id)
 
@@ -96,7 +130,12 @@ def video_concat_task(
             document_ids=list(document_ids or []), name=name,
         )
 
-    return _delegate(self, "concat", _run)
+    result = _delegate(self, "concat", _run)
+    _notify_artifact(
+        account_id=account_id, message_id=message_id, conversation_id=conversation_id,
+        result=result, tool="video_concat",
+    )
+    return result
 
 
 @shared_task(
@@ -106,17 +145,27 @@ def video_concat_task(
     default_retry_delay=30,
 )
 def video_subtitle_task(
-    self, knowledge_base_id: str, document_id: str, cues: list,
+    self, knowledge_base_id: str, document_id: str, cues,
     name: str, account_id: str,
+    message_id: str = "", conversation_id: str = "",
 ):
-    """给库内视频烧录字幕并存入成品库。"""
+    """给库内视频烧录字幕并存入成品库，完成后回填到原对话消息。
+
+    `cues` 为 None / 空列表时由 service 自动生成时间轴（复用已留存 ASR 时间轴，
+    缺失则重跑 ASR）——这是「用户只说『给这个视频加字幕』」的正常路径。
+    """
     service = _load_service()
     account = _load_account(account_id)
 
     def _run():
         return service.subtitle_document(
             account=account, knowledge_base_id=knowledge_base_id,
-            document_id=document_id, cues=list(cues or []), name=name,
+            document_id=document_id, cues=list(cues or []) or None, name=name,
         )
 
-    return _delegate(self, "subtitle", _run)
+    result = _delegate(self, "subtitle", _run)
+    _notify_artifact(
+        account_id=account_id, message_id=message_id, conversation_id=conversation_id,
+        result=result, tool="video_subtitle",
+    )
+    return result

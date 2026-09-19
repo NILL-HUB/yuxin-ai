@@ -965,3 +965,119 @@ class TestAudioService:
 
         with pytest.raises(FailException):
             service._create_tts_response(input_text="hello", voice="alex")
+
+
+# ── 带时间轴 ASR（自动字幕的时间码来源） ────────────────────────────────────
+#
+# 实测依据：SiliconFlow ASR 在 response_format=verbose_json 下返回
+#   {"duration":..., "text":..., "segments":[{"start":0.04,"end":3.48,"text":"..."}]}
+# 不传该参数时响应只有 text/duration/usage。
+# 故本项目历史结论「ASR 无时间戳」是错的——只是从未请求过该字段。
+
+
+def _asr_response(payload):
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        @staticmethod
+        def json():
+            return payload
+
+    return _Response()
+
+
+def _capture_transcription(monkeypatch, payload):
+    captured = {}
+
+    def _fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return _asr_response(payload)
+
+    monkeypatch.setattr(
+        "internal.service.audio_service.requests.Session",
+        lambda: _FakeSession(_fake_post),
+    )
+    return captured
+
+
+def test_audio_to_text_with_segments_requests_verbose_json(monkeypatch):
+    captured = _capture_transcription(
+        monkeypatch,
+        {"text": "你好", "segments": [{"start": 0.0, "end": 1.0, "text": "你好"}]},
+    )
+    audio = FileStorage(stream=BytesIO(b"wav-data"), filename="v.wav")
+
+    text, cues = _build_service().audio_to_text_with_segments(audio)
+
+    assert text == "你好"
+    assert cues == [{"start": 0.0, "end": 1.0, "text": "你好"}]
+    # 关键：必须显式请求 verbose_json，否则服务端不会返回 segments
+    assert captured["kwargs"]["data"]["response_format"] == "verbose_json"
+    assert captured["url"] == "https://api.example.com/v1/audio/transcriptions"
+
+
+def test_audio_to_text_does_not_send_response_format(monkeypatch):
+    """既有纯文本接口的请求契约不得被时间戳改动污染（8+ 调用方依赖）。"""
+    captured = _capture_transcription(monkeypatch, {"text": "hello"})
+    audio = FileStorage(stream=BytesIO(b"wav-data"), filename="v.wav")
+
+    _build_service().audio_to_text(audio)
+
+    assert "response_format" not in captured["kwargs"]["data"]
+
+
+def test_audio_to_text_with_segments_normalizes_dirty_segments(monkeypatch):
+    """逐条容错：坏分段丢弃，好分段保留（一条坏数据不该毁掉整条时间轴）。"""
+    _capture_transcription(
+        monkeypatch,
+        {
+            "text": "全文",
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "好"},
+                {"start": 1.0, "end": 2.0, "text": "   "},      # 空文本
+                {"start": "bad", "end": 3.0, "text": "坏时间"},
+                {"start": 3.0, "end": 3.0, "text": "零长度"},   # end <= start
+                {"start": -1.0, "end": 4.0, "text": "负起点"},
+                "not-a-dict",
+                {"start": 4.0, "end": 5.0, "text": "好2"},
+            ],
+        },
+    )
+    audio = FileStorage(stream=BytesIO(b"wav-data"), filename="v.wav")
+
+    _, cues = _build_service().audio_to_text_with_segments(audio)
+
+    assert [cue["text"] for cue in cues] == ["好", "好2"]
+
+
+def test_audio_to_text_with_segments_tolerates_missing_segments_field(monkeypatch):
+    """模型不支持时间戳时返回无 segments，应得到空列表而非异常。"""
+    _capture_transcription(monkeypatch, {"text": "只有文本"})
+    audio = FileStorage(stream=BytesIO(b"wav-data"), filename="v.wav")
+
+    text, cues = _build_service().audio_to_text_with_segments(audio)
+
+    assert text == "只有文本"
+    assert cues == []
+
+
+def test_audio_to_text_with_segments_raises_on_empty_audio():
+    audio = FileStorage(stream=BytesIO(b""), filename="empty.wav")
+
+    with pytest.raises(FailException):
+        _build_service().audio_to_text_with_segments(audio)
+
+
+def test_audio_to_text_with_segments_wraps_request_error(monkeypatch):
+    monkeypatch.setattr(
+        "internal.service.audio_service.requests.Session",
+        lambda: _FakeSession(
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("network-error"))
+        ),
+    )
+    audio = FileStorage(stream=BytesIO(b"wav-data"), filename="v.wav")
+
+    with pytest.raises(FailException):
+        _build_service().audio_to_text_with_segments(audio)

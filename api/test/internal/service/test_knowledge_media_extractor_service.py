@@ -92,16 +92,27 @@ def test_image_extraction_propagates_vision_failure():
 
 
 class _FakeAudioService:
-    def __init__(self, text="这是一段会议录音的转写内容。", error=None):
+    def __init__(self, text="这是一段会议录音的转写内容。", error=None, segments=None):
         self.text = text
         self.error = error
+        self.segments = segments if segments is not None else []
         self.received_filename = None
+        self.timestamp_calls = 0
+        self.plain_calls = 0
 
     def audio_to_text(self, audio, language="", provider="", model=""):
+        self.plain_calls += 1
         self.received_filename = getattr(audio, "filename", None)
         if self.error:
             raise self.error
         return self.text
+
+    def audio_to_text_with_segments(self, audio, language="", provider="", model=""):
+        self.timestamp_calls += 1
+        self.received_filename = getattr(audio, "filename", None)
+        if self.error:
+            raise self.error
+        return self.text, self.segments
 
 
 def test_audio_extraction_returns_transcript_segment():
@@ -122,6 +133,92 @@ def test_audio_extraction_returns_transcript_segment():
     assert "会议录音" in segments[0].content
     assert segments[0].metadata["media_type"] == "audio"
     assert audio_service.received_filename == "meeting.mp3"
+
+
+def test_audio_extraction_persists_asr_timeline():
+    """时间轴必须落进 metadata：它是后续「自动加字幕」的唯一时间码来源。"""
+    cues = [{"start": 0.04, "end": 3.48, "text": "今天天气很好。"}]
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=_FakeAudioService(segments=cues),
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp3", name="meeting.mp3",
+        extension="mp3", mime_type="audio/mpeg",
+    )
+
+    segments = service.extract(_document("audio"), upload)
+
+    assert segments[0].metadata["transcript_segments"] == cues
+
+
+def test_audio_extraction_omits_timeline_key_when_absent():
+    """无可信时间轴时不应写入空列表（避免下游误判为「已留存」）。"""
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=_FakeAudioService(segments=[]),
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp3", name="a.mp3",
+        extension="mp3", mime_type="audio/mpeg",
+    )
+
+    segments = service.extract(_document("audio"), upload)
+
+    assert "transcript_segments" not in segments[0].metadata
+
+
+def test_asr_falls_back_to_plain_text_when_timestamp_api_fails():
+    """带时间轴接口不可用时不能丢掉转写结果（降级为纯文本，而非整段失败）。"""
+
+    class _FlakyAsr:
+        def __init__(self):
+            self.plain_calls = 0
+
+        def audio_to_text_with_segments(self, audio, language="", provider="", model=""):
+            raise RuntimeError("verbose_json unsupported")
+
+        def audio_to_text(self, audio, language="", provider="", model=""):
+            self.plain_calls += 1
+            return "降级文本"
+
+    asr = _FlakyAsr()
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=asr,
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp3", name="a.mp3",
+        extension="mp3", mime_type="audio/mpeg",
+    )
+
+    segments = service.extract(_document("audio"), upload)
+
+    assert segments[0].content == "降级文本"
+    assert asr.plain_calls == 1
+    assert "transcript_segments" not in segments[0].metadata
+
+
+def test_asr_does_not_rerun_plain_call_when_timeline_succeeds():
+    """时间轴路径成功时不得重复调用一次纯文本接口（会双倍消耗 ASR）。"""
+    audio_service = _FakeAudioService(segments=[{"start": 0, "end": 1, "text": "x"}])
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"audio-bytes"),
+        audio_service=audio_service,
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp3", name="a.mp3",
+        extension="mp3", mime_type="audio/mpeg",
+    )
+
+    service.extract(_document("audio"), upload)
+
+    assert audio_service.timestamp_calls == 1
+    assert audio_service.plain_calls == 0
 
 
 def test_audio_extraction_raises_when_asr_unavailable():

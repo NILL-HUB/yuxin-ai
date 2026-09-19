@@ -2,7 +2,7 @@
 
 覆盖三件事：
 1. `extract_video_audio` 生成的 ffmpeg 命令必须含 ASR 友好参数（`-vn` / `-ac 1` / `-ar 16000`）；
-2. `_extract_video` 在音轨转写成功时把转写片段排在逐帧描述之前；
+2. `_extract_video` 在音轨转写成功时把转写片段排在逐帧描述之前，并透传 ASR 时间轴；
 3. 音轨抽取/转写失败只降级告警，且音轨临时文件必须被清理。
 """
 import os
@@ -31,10 +31,22 @@ class _FakeStorage:
 class _FakeAudioService:
     """ASR 桩：记录收到的 FileStorage，便于断言包装是否发生。"""
 
-    def __init__(self, text: str = "视频里说的话", error: Exception | None = None):
+    def __init__(
+        self,
+        text: str = "视频里说的话",
+        error: Exception | None = None,
+        cues: list | None = None,
+    ):
         self.text = text
         self.error = error
+        self.cues = cues if cues is not None else []
         self.received = None
+
+    def audio_to_text_with_segments(self, audio, **_kwargs):
+        self.received = audio
+        if self.error is not None:
+            raise self.error
+        return self.text, self.cues
 
     def audio_to_text(self, audio, **_kwargs):
         self.received = audio
@@ -43,11 +55,15 @@ class _FakeAudioService:
         return self.text
 
 
-def _service(audio_text: str = "视频里说的话", audio_error: Exception | None = None):
+def _service(
+    audio_text: str = "视频里说的话",
+    audio_error: Exception | None = None,
+    cues: list | None = None,
+):
     return KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(),
-        audio_service=_FakeAudioService(audio_text, audio_error),
+        audio_service=_FakeAudioService(audio_text, audio_error, cues),
     )
 
 
@@ -137,7 +153,7 @@ class TestVideoTranscriptSegments:
         )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: audio)
-        monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "视频里说的话")
+        monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: ("视频里说的话", []))
 
         segments = service._extract_video(_upload())
 
@@ -146,6 +162,24 @@ class TestVideoTranscriptSegments:
         assert segments[0].metadata["source"] == "audio_transcript"
         assert segments[1].metadata["scene_index"] == 1
         assert segments[1].metadata["frame_count"] == 1
+
+    def test_transcript_segment_carries_asr_timeline_into_metadata(self, monkeypatch, tmp_path):
+        """视频音轨的时间轴必须随转写片段落库——它是自动字幕的来源。"""
+        cues = [{"start": 0.5, "end": 2.5, "text": "视频里说的话"}]
+        service = _service(cues=cues)
+        frame = _write_frame(tmp_path)
+        monkeypatch.setattr(
+            service, "_extract_frames_with_offsets",
+            lambda _v, _d: [ExtractedFrame(path=frame, time_offset=0.0)],
+        )
+        monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
+        monkeypatch.setattr(service, "_extract_audio_track", lambda _v: _write_audio(tmp_path))
+
+        segments = service._extract_video(_upload())
+
+        assert segments[0].metadata["transcript_segments"] == cues
+        # 帧片段不应带时间轴（避免下游把它误当作字幕来源）
+        assert "transcript_segments" not in segments[1].metadata
 
     def test_blank_transcript_produces_no_segment(self, monkeypatch, tmp_path):
         service = _service()
@@ -156,7 +190,7 @@ class TestVideoTranscriptSegments:
         )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: _write_audio(tmp_path))
-        monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "   ")
+        monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: ("   ", []))
 
         segments = service._extract_video(_upload())
 
@@ -212,7 +246,7 @@ class TestVideoTranscriptSegments:
         )
         monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
         monkeypatch.setattr(service, "_extract_audio_track", lambda _v: audio)
-        monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: "视频里说的话")
+        monkeypatch.setattr(service, "_transcribe_audio_file", lambda _p: ("视频里说的话", []))
 
         service._extract_video(_upload())
 
@@ -243,9 +277,10 @@ class TestVideoTranscriptSegments:
         audio = _write_audio(tmp_path)
         service = _service()
 
-        transcript = service._transcribe_audio_file(audio)
+        transcript, cues = service._transcribe_audio_file(audio)
 
         assert transcript == "视频里说的话"
+        assert cues == []
         received = service.audio_service.received
         assert received is not None
         assert received.filename == "track.wav"

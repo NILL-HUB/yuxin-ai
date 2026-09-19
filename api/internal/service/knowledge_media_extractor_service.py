@@ -115,7 +115,11 @@ class KnowledgeMediaExtractorService(BaseService):
         ]
 
     def _extract_audio(self, upload_file: UploadFile) -> list[MediaSegment]:
-        """音频：下载后经 ASR 转写为文本片段；转写为空则不产出片段。"""
+        """音频：下载后经 ASR 转写为文本片段；转写为空则不产出片段。
+
+        metadata 一并保留 ASR 时间轴（`transcript_segments`）——它是「给素材
+        自动加字幕」的唯一时间码来源，不留存则事后只能重新跑一遍 ASR。
+        """
         from io import BytesIO
 
         from werkzeug.datastructures import FileStorage
@@ -135,15 +139,13 @@ class KnowledgeMediaExtractorService(BaseService):
             filename=filename,
             content_type=getattr(upload_file, "mime_type", None) or "audio/mpeg",
         )
-        transcript = str(self.audio_service.audio_to_text(file_storage) or "").strip()
+        transcript, cues = self._call_asr_with_segments(file_storage)
         if not transcript:
             return []
-        return [
-            MediaSegment(
-                content=transcript,
-                metadata={"media_type": DocumentMediaType.AUDIO.value},
-            )
-        ]
+        metadata: dict[str, Any] = {"media_type": DocumentMediaType.AUDIO.value}
+        if cues:
+            metadata["transcript_segments"] = cues
+        return [MediaSegment(content=transcript, metadata=metadata)]
 
     def _extract_frames_with_offsets(self, video_path: str, out_dir: str) -> list[ExtractedFrame]:
         """视频抽帧（独立方法便于测试替换），返回帧与其时间偏移。
@@ -173,8 +175,8 @@ class KnowledgeMediaExtractorService(BaseService):
         target_path = os.path.join(os.path.dirname(video_path), f"{uuid4().hex}.wav")
         return extract_video_audio(video_path, target_path)
 
-    def _transcribe_audio_file(self, audio_path: str) -> str:
-        """把音轨文件转写为文本（独立方法便于测试替换）。"""
+    def _transcribe_audio_file(self, audio_path: str) -> tuple[str, list[dict]]:
+        """把音轨文件转写为（文本, 时间轴分段）（独立方法便于测试替换）。"""
         from io import BytesIO
 
         from werkzeug.datastructures import FileStorage
@@ -186,7 +188,31 @@ class KnowledgeMediaExtractorService(BaseService):
             filename=os.path.basename(audio_path),
             content_type="audio/wav",
         )
-        return str(self.audio_service.audio_to_text(file_storage) or "").strip()
+        return self._call_asr_with_segments(file_storage)
+
+    def _call_asr_with_segments(self, file_storage) -> tuple[str, list[dict]]:
+        """调用带时间轴的 ASR；ASR 不支持时间戳时降级为纯文本。
+
+        降级路径是必要的：`verbose_json` 是 OpenAI Whisper 兼容参数，
+        换用不兼容的 ASR 模型时可能报错，此时仍应产出文本片段
+        （字幕能力降级，而非素材解析整体失败）。
+        """
+        try:
+            text, cues = self.audio_service.audio_to_text_with_segments(file_storage)
+        except Exception:
+            logger.warning(
+                "带时间轴的语音转写失败，降级为纯文本转写 filename=%s（期间无机器可读原因）",
+                getattr(file_storage, "filename", None), exc_info=True,
+            )
+            # 时间戳接口不可用：回退到既有纯文本接口（老模型/老 SDK 兼容路径）。
+            # 只有「调用失败」才回退——调用成功但结果为空说明音频本身无人声，
+            # 此时再调一次纯文本接口只会白白多花一次 ASR。
+            try:
+                file_storage.stream.seek(0)
+            except Exception:
+                logger.debug("音轨流不可回绕，直接复用当前读取位置")
+            return str(self.audio_service.audio_to_text(file_storage) or "").strip(), []
+        return str(text or "").strip(), list(cues or [])
 
     def _persist_frame(self, frame_path: str, *, account_id, document_id) -> UploadFile:
         """把关键帧留存为 UploadFile，返回落库记录。
@@ -228,19 +254,18 @@ class KnowledgeMediaExtractorService(BaseService):
             if not frames:
                 raise RuntimeError("视频抽帧结果为空，无法解析")
 
-            transcript = self._transcribe_video_track(file_path, upload_file)
+            transcript, cues = self._transcribe_video_track(file_path, upload_file)
 
             segments: list[MediaSegment] = []
             if transcript:
-                segments.append(
-                    MediaSegment(
-                        content=transcript,
-                        metadata={
-                            "media_type": DocumentMediaType.VIDEO.value,
-                            "source": "audio_transcript",
-                        },
-                    )
-                )
+                metadata: dict[str, Any] = {
+                    "media_type": DocumentMediaType.VIDEO.value,
+                    "source": "audio_transcript",
+                }
+                # 与音频同理：时间轴是「自动加字幕」的来源，需随片段一起落库
+                if cues:
+                    metadata["transcript_segments"] = cues
+                segments.append(MediaSegment(content=transcript, metadata=metadata))
 
             for index, frame in enumerate(frames, start=1):
                 frame_url = ""
@@ -287,8 +312,10 @@ class KnowledgeMediaExtractorService(BaseService):
             raise RuntimeError("视频解析未产出任何可用内容")
         return segments
 
-    def _transcribe_video_track(self, video_path: str, upload_file: UploadFile) -> str:
-        """抽取并转写视频音轨；任一环节失败都降级为无转写（返回空串）。
+    def _transcribe_video_track(
+        self, video_path: str, upload_file: UploadFile
+    ) -> tuple[str, list[dict]]:
+        """抽取并转写视频音轨；任一环节失败都降级为无转写（返回空串 + 空时间轴）。
 
         音轨是增强能力：视频可能没有音轨、ASR 可能不可用，都不应让帧描述失败。
         音轨临时文件无论成功与否都必须删除（抽取失败时路径未知，交由临时目录回收）。
@@ -296,13 +323,14 @@ class KnowledgeMediaExtractorService(BaseService):
         audio_path = ""
         try:
             audio_path = self._extract_audio_track(video_path)
-            return str(self._transcribe_audio_file(audio_path) or "").strip()
+            text, cues = self._transcribe_audio_file(audio_path)
+            return str(text or "").strip(), list(cues or [])
         except Exception:
             logger.warning(
                 "视频音轨转写失败，降级为仅帧描述 file=%s",
                 getattr(upload_file, "name", None), exc_info=True,
             )
-            return ""
+            return "", []
         finally:
             if audio_path:
                 try:

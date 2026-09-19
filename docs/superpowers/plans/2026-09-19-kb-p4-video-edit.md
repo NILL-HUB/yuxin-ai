@@ -16,8 +16,37 @@
 
 | # | 设计稿说法 | 实测事实 | 本计划的处理 |
 | --- | --- | --- | --- |
-| 1 | §5.2「字幕源来自 Segment 的 ASR 文本 **+ 时间戳**」 | `AudioService.audio_to_text` 只 `return resp.json()["text"]`（**纯文本零时间戳**）；视频 ASR Segment metadata 仅 `{media_type, source}`；全仓 `srt`/`vtt`/`subtitle` **0 命中** | 字幕**由调用方显式传入** `[{start,end,text}]`（LLM 可读文本+时长后分配时间轴再传入）。**不做**自动对齐 |
+| 1 | §5.2「字幕源来自 Segment 的 ASR 文本 **+ 时间戳**」 | ❌ **本计划此处的判断后来被推翻**，见 §0.1 | 字幕**由调用方显式传入** `[{start,end,text}]`（初版实现）。**§0.1 已改为自动生成** |
 | 2 | §5.2「转码是 CPU 密集：需专门任务队列（Celery）」 | api 容器 `NO_FFMPEG_IN_API`，仅 `imageio_ffmpeg` 静态兜底（v7.0.2，实测支持 `libx264` + `concat` demuxer + `subtitles` 滤镜）；主 worker 跑的正是 api 镜像 | 走 **Celery**（不阻塞请求线程），但**复用默认 `celery` 队列**，不新建队列/容器 |
+
+### 0.1 更正：ASR **能**提供时间戳（后续实测推翻本计划原结论）
+
+上文第 1 行原写「`AudioService.audio_to_text` 只返回 `resp.json()["text"]`（纯文本零时间戳）→ 不做自动对齐」。
+**该推理有缺陷**：它只观察到「本项目从未拿到时间戳」，却直接推断「服务端不提供」。
+
+用真实人声对 SiliconFlow ASR 端点实测（`POST {base_url}/audio/transcriptions`）：
+
+| 请求 | 响应字段 |
+| --- | --- |
+| `{"model": ...}`（即现有实现） | `duration, text, usage` —— **无** segments |
+| `{"model": ..., "response_format": "verbose_json"}` | `duration, segments, text, usage` |
+
+`segments` 形如（真实返回）：
+
+```json
+[
+  {"start": 0.04, "end": 3.48, "text": "今天天气很好，我们一起去公园散步吧。"},
+  {"start": 3.72, "end": 5.12, "text": "然后回家吃饭。"}
+]
+```
+
+即这是 OpenAI Whisper 兼容参数，**此前只是从未请求过该字段**。据此已补充实现（见 §11.16）：
+
+- 新增 `AudioService.audio_to_text_with_segments()`（请求 `verbose_json`）；**纯文本 `audio_to_text()` 请求契约保持不变**（不发送 `response_format`），其既有 8+ 调用方不受影响；
+- L1 解析把时间轴写入 `KnowledgeSegment.metadata.transcript_segments`；
+- `video_subtitle` 的 `cues` 改为**可选**：不传则自动生成（复用 L1 留存 → 缺失则重跑 ASR）。
+
+> 保留此节是为了留下「错误结论如何产生」的记录：**只凭调用方观察不到某字段，不足以断言服务端不提供**。
 
 **其他已核实的可复用构件**（勿重造）：
 
@@ -2220,10 +2249,11 @@ git commit -m "docs(video-edit): record verified ffmpeg edit capabilities on api
 **执行环境**：api 容器内**无系统 ffmpeg**，依赖 `imageio_ffmpeg` 静态二进制（实测 v7.0.2，具备 libx264 / concat demuxer / subtitles 滤镜；**无 drawtext**，故字幕走 subtitles 烧录）。
 剪辑经 Celery 任务（`internal.task.video_edit_tasks.*`，走默认 `celery` 队列）异步执行，避免阻塞对话请求线程。
 
-**⚠️ 字幕时间轴的现状（重要，勿按旧设计稿理解）**：
-现有 ASR（`AudioService.audio_to_text`）**只返回纯文本、零时间戳**，故**无法**从库内 ASR 产物自动生成 SRT。
-`video_subtitle` 的工具入参因此要求调用方直接给出 `cues=[{start, end, text}]`；
-需要「自动对齐」时，应由上层（LLM 读 ASR 文本 + 视频时长）分配时间轴后再传入。
+**⚠️ 字幕时间轴：三级解析（**本段原写「ASR 只返回纯文本、必须显式传 cues」，已被 §0.1 推翻**）**：
+L1 解析时经 `AudioService.audio_to_text_with_segments()`（请求 `response_format=verbose_json`）取得
+`segments[{start,end,text}]` 并写入 `KnowledgeSegment.metadata.transcript_segments`。
+`video_subtitle` 的 `cues` 因此为**可选**：不传即自动生成（① 复用 L1 留存时间轴 → ② 缺失则重跑 ASR）；
+仅在人工修订文案 / 精确对齐时才需显式传入。
 
 **工具挂载点**：`assistant_agent_service._build_assistant_runtime_tools`（与 `render_video` 同处，注入 `account_id` 用于素材归属校验与成品库归属）。
 ```
@@ -2236,11 +2266,11 @@ git commit -m "docs(video-edit): record verified ffmpeg edit capabilities on api
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成：渲染出片由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地（见 [02-knowledge-base.md §11.15](./modules/02-knowledge-base.md)） |
 ```
 
-并在 KB-P4 小节（若已建）或 KB-P3.8 之后补一节 `### KB-P4：视频轻量剪辑（已完成）`，列出三个工具、执行环境、字幕时间轴现状。
+并在 KB-P4 小节（若已建）或 KB-P3.8 之后补一节 `### KB-P4：视频轻量剪辑（已完成）`，列出三个工具、执行环境、字幕时间轴三级解析（见 §0.1）。
 
 - [ ] **Step 3: 更新 knowledge-base-product-form-design.md**
 
-- §5.2 表格「加字幕」行的「说明」列改为：`字幕源由**调用方显式提供**（含时间轴）；实测现有 ASR 只返回纯文本，无法自动对齐`
+- §5.2 表格「加字幕」行的「说明」列改为：`字幕源可为**调用方显式提供**（含时间轴），也可**自动生成**（实测 ASR 请求 response_format=verbose_json 即返回 segments`（**注**：原计划此处写「实测现有 ASR 只返回纯文本，无法自动对齐」，已被 §0.1 推翻）
 - §7.4 表格末行状态改为：三工具**已落地**
 - §9.2 的 KB-P4 行状态改为 `✅ 已完成`
 
@@ -2330,7 +2360,7 @@ git commit -m "test(video-edit): verify KB-P4 wiring end to end"
 - [ ] 三个工具已挂载到 `_build_assistant_runtime_tools` 并注入 `account_id`
 - [ ] 产物落库走 `store_render_output`，**未额外 `add_usage`**（避免双重计费）
 - [ ] 临时工作目录用 `TemporaryDirectory`，成功/失败都不残留
-- [ ] 字幕时间轴策略已在代码注释与文档双处说明（勿让后来者误以为「能自动对齐」）
+- [ ] 字幕时间轴策略已在代码注释与文档双处说明（初版策略为「必须显式传入」，**已由 §0.1 更正为三级自动解析**）
 - [ ] 全量回归通过，既有失败已逐条确认为环境问题
 - [ ] 文档三处已同步（02-knowledge-base §11.15 / roadmap KB-P4 / form-design §5.2·§7.4·§9.2）
 - [ ] 运行 `python -m graphify update .` 保持知识图谱最新
@@ -2341,7 +2371,7 @@ git commit -m "test(video-edit): verify KB-P4 wiring end to end"
 
 | # | 设计稿 | 本计划 | 依据 |
 | --- | --- | --- | --- |
-| 1 | §5.2 字幕「ASR 产物直接复用（ASR 文本 + 时间戳）」 | 字幕时间轴**由调用方显式传入** | 实测 `audio_to_text` 只返回纯文本；全仓无 timestamp/srt/vtt 代码 |
+| 1 | §5.2 字幕「ASR 产物直接复用（ASR 文本 + 时间戳）」 | **已按设计稿实现**（§0.1 更正）：`audio_to_text_with_segments()` 请求 `verbose_json` 取得 `segments`，L1 落库后自动复用；调用方仍可显式覆盖 | 实测：不传 `response_format` 无 segments，传 `verbose_json` 则返回 `[{start,end,text}]`。**原判断「ASR 零时间戳」是错的**——它把「本项目没请求」误读为「服务端不提供」 |
 | 2 | §5.2「转码是 CPU 密集：需专门任务队列（Celery）+ 独立配额计量」 | 用 Celery，但**复用默认 `celery` 队列**，不新建队列/容器/闸门 | api 容器无系统 ffmpeg 但有 `imageio_ffmpeg`；主 worker 即 api 镜像；剪辑为秒级操作，专用队列属过度设计 |
 
 > 另：设计稿说「产物默认不入知识库，用户显式要求才存档」。本计划选择**入成品库**（与 `render_video` 同口径，零额外机制）。

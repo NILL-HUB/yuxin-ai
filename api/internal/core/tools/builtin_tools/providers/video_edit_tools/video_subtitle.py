@@ -2,10 +2,13 @@
 
 将字幕烧录进画面并存入成品库。
 
-**字幕时间轴由调用方显式提供**（`cues=[{start,end,text}]`）——这是经实测的
-刻意设计：现有 ASR（`AudioService.audio_to_text`）只返回纯文本、零时间戳，
-无法自动生成时间轴。需要自动对齐时，应由上层（LLM 读 ASR 文本 + 视频时长）
-先分配时间轴再传入，而非在本工具内猜测。
+**字幕时间轴默认自动生成**：调用方可以不传 `cues`，此时系统按素材已留存的
+ASR 时间轴（`metadata.transcript_segments`）生成字幕；未留存则重跑一次 ASR。
+实测依据：SiliconFlow ASR 在 `response_format=verbose_json` 下返回
+`segments: [{start, end, text}]`（本项目此前未请求该字段，故历史结论「ASR 无
+时间戳」是错的）。
+
+`cues` 仍可显式传入以覆盖自动结果（人工修订的文案 / 精确对齐）。
 """
 from __future__ import annotations
 
@@ -30,11 +33,12 @@ class VideoSubtitleInput(BaseModel):
 
     knowledge_base_id: str = Field(..., description="素材所在知识库 id")
     document_id: str = Field(..., description="要加字幕的视频素材 id")
-    cues: list[dict] = Field(
-        ...,
+    cues: list[dict] | None = Field(
+        None,
         description=(
-            "字幕条目列表，每项形如 {start: 0.0, end: 1.5, text: '字幕文本'}，"
-            "start/end 为秒。**必须由调用方给出时间轴**（系统不做自动对齐）。"
+            "可选的字幕条目列表，每项形如 {start: 0.0, end: 1.5, text: '字幕文本'}，"
+            "start/end 为秒。**不传则自动根据素材语音生成时间轴**；"
+            "仅在需要人工修订文案或精确对齐时才显式提供。"
         ),
     )
     name: str = Field("", description="成品名称，可选")
@@ -46,10 +50,14 @@ class VideoSubtitleTool(BaseTool):
     name: str = "video_subtitle"
     description: str = (
         "当用户要求给视频加字幕/烧字幕/配字幕时调用。"
-        "须提供带时间轴的字幕条目（start/end 秒 + 文本），系统会烧录进画面并存入成品库。"
+        "默认自动识别素材语音并生成带时间轴的字幕后烧录进画面；"
+        "如需人工指定文案，可额外传入带时间轴的字幕条目（start/end 秒 + 文本）。"
     )
     args_schema: type[BaseModel] = VideoSubtitleInput
     account_id: str = ""
+    # 会话上下文：任务完成后据此把成品回填到原消息（对话内成片预览）。
+    message_id: str = ""
+    conversation_id: str = ""
 
     def _run(
         self,
@@ -68,14 +76,20 @@ class VideoSubtitleTool(BaseTool):
                 ensure_ascii=False,
             )
 
-        normalized = self._normalize_cues(cues)
-        if isinstance(normalized, str):
-            return json.dumps({"ok": False, "error": normalized}, ensure_ascii=False)
+        # 空/缺省 cues 合法：交由 service 自动生成时间轴
+        normalized: list[dict] | None = None
+        if cues:
+            checked = self._normalize_cues(cues)
+            if isinstance(checked, str):
+                return json.dumps({"ok": False, "error": checked}, ensure_ascii=False)
+            normalized = checked
 
         try:
             async_result = _load_task().delay(
                 str(knowledge_base_id), str(document_id), normalized,
                 str(name or "").strip(), account_id,
+                message_id=str(kwargs.get("message_id") or self.message_id or ""),
+                conversation_id=str(kwargs.get("conversation_id") or self.conversation_id or ""),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("字幕任务提交失败 account_id=%s", account_id, exc_info=True)
@@ -88,13 +102,17 @@ class VideoSubtitleTool(BaseTool):
                 "ok": True,
                 "dispatched": True,
                 "task_id": str(getattr(async_result, "id", "")),
-                "message": "字幕已提交后台烧录，完成后会自动存入成品库",
+                "message": (
+                    "字幕已提交后台烧录（将自动识别语音生成时间轴），完成后会自动存入成品库并在对话中展示"
+                    if normalized is None
+                    else "字幕已提交后台烧录，完成后会自动存入成品库并在对话中展示"
+                ),
             },
             ensure_ascii=False,
         )
 
     @staticmethod
-    def _normalize_cues(cues: list[dict] | None) -> list[dict] | str:
+    def _normalize_cues(cues: list[dict]) -> list[dict] | str:
         """校验并归一化字幕条目；不合法时返回错误消息字符串。
 
         在工具层拦下非法时间（早于 service，避免把明显错误的输入丢进 Celery）。
@@ -133,5 +151,13 @@ class VideoSubtitleTool(BaseTool):
 
 
 def video_subtitle(**kwargs: Any) -> BaseTool:
-    """工厂函数（函数名必须与工具名一致）。"""
-    return VideoSubtitleTool(account_id=str(kwargs.get("account_id") or "").strip())
+    """工厂函数（函数名必须与工具名一致）。
+
+    message_id / conversation_id 必须一并透传：任务完成后要据此把成品
+    回填到原对话消息（遗漏则「对话内成片预览」静默失效）。
+    """
+    return VideoSubtitleTool(
+        account_id=str(kwargs.get("account_id") or "").strip(),
+        message_id=str(kwargs.get("message_id") or "").strip(),
+        conversation_id=str(kwargs.get("conversation_id") or "").strip(),
+    )

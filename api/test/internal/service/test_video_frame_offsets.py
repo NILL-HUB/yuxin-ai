@@ -64,7 +64,7 @@ def _video_service(frames):
     )
     if frames is not None:
         service._extract_frames_with_offsets = lambda path, out_dir: frames
-    service._transcribe_video_track = lambda path, upload: ""
+    service._transcribe_video_track = lambda path, upload: ("", [])
     service._invoke_vision = lambda data_uri, prompt: "画面描述"
     return service
 

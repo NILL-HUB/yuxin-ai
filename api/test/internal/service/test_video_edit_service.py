@@ -1,6 +1,7 @@
 """视频编辑服务：命令执行、产物校验、失败语义。"""
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -286,6 +287,111 @@ def test_temp_dir_is_cleaned_after_success(monkeypatch):
     )
     # 不能在用户/服务器上残留临时工作目录
     assert not Path(seen["dir"]).exists()
+
+
+# ── 自动字幕：时间轴三级解析（显式 > 复用已留存 > 重跑 ASR） ────────────────
+#
+# 背景：本项目历史上认定「ASR 只返回纯文本、无时间戳」，故字幕时间轴被强制
+# 由调用方提供。实测证明该结论错误——SiliconFlow ASR 在 verbose_json 下返回
+# segments[{start,end,text}]，因此可以自动生成字幕。
+
+
+def test_resolve_cues_prefers_explicit_input(monkeypatch):
+    """显式传入时必须原样使用，不触碰库内留存与 ASR。"""
+    svc = VideoEditService.__new__(VideoEditService)
+    given = [{"start": 0.0, "end": 1.0, "text": "hi"}]
+    monkeypatch.setattr(svc, "_load_stored_cues", lambda doc: [{"start": 9, "end": 10, "text": "stored"}])
+    monkeypatch.setattr(
+        svc, "_transcribe_source",
+        lambda p: (_ for _ in ()).throw(AssertionError("不应重跑 ASR")),
+    )
+
+    result = svc._resolve_cues(document=SimpleNamespace(id="d"), source_path="s.mp4", cues=given)
+
+    assert result == given
+
+
+def test_resolve_cues_reuses_stored_timeline_without_rerunning_asr(monkeypatch):
+    """库内已留存时间轴时应零 ASR 成本复用（这是最常见的自动字幕路径）。"""
+    svc = VideoEditService.__new__(VideoEditService)
+    stored = [{"start": 0.0, "end": 2.0, "text": "留存"}]
+    monkeypatch.setattr(svc, "_load_stored_cues", lambda doc: stored)
+    monkeypatch.setattr(
+        svc, "_transcribe_source",
+        lambda p: (_ for _ in ()).throw(AssertionError("不应重跑 ASR")),
+    )
+
+    result = svc._resolve_cues(document=SimpleNamespace(id="d"), source_path="s.mp4", cues=None)
+
+    assert result == stored
+
+
+def test_resolve_cues_falls_back_to_rerunning_asr(monkeypatch):
+    """未留存时间轴（老素材）时才重跑 ASR——兜底而非默认。"""
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_load_stored_cues", lambda doc: [])
+    generated = [{"start": 0.0, "end": 2.0, "text": "重跑"}]
+    monkeypatch.setattr(svc, "_transcribe_source", lambda p: generated)
+
+    result = svc._resolve_cues(document=SimpleNamespace(id="d"), source_path="s.mp4", cues=None)
+
+    assert result == generated
+
+
+def test_resolve_cues_raises_when_nothing_available(monkeypatch):
+    """既无留存、重跑也无结果时必须报可读错误，不能烧出无字幕成品。"""
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_load_stored_cues", lambda doc: [])
+    monkeypatch.setattr(svc, "_transcribe_source", lambda p: [])
+
+    with pytest.raises(VideoEditError, match="未能生成字幕时间轴"):
+        svc._resolve_cues(document=SimpleNamespace(id="d"), source_path="s.mp4", cues=None)
+
+
+def test_load_stored_cues_sorts_by_start_and_skips_timeline_less_segments(monkeypatch):
+    """跨片段合并后必须按时间排序；无时间轴的片段（如帧描述）必须被跳过。"""
+    from types import SimpleNamespace as NS
+
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(
+        svc, "_load_document_segments",
+        lambda doc_id: [
+            NS(metadata_={"transcript_segments": [{"start": 5.0, "end": 6.0, "text": "后"}]}),
+            NS(metadata_={"transcript_segments": [{"start": 1.0, "end": 2.0, "text": "前"}]}),
+            NS(metadata_={"media_type": "video", "scene_index": 1}),
+        ],
+    )
+
+    result = svc._load_stored_cues(NS(id="doc-1"))
+
+    assert [cue["text"] for cue in result] == ["前", "后"]
+
+
+def test_subtitle_document_auto_generates_when_cues_absent(tmp_path, monkeypatch):
+    """端到端（服务层）：不传 cues 时也能完成烧录并入库。"""
+    doc = _fake_doc("doc-1")
+    svc = _edit_service(monkeypatch, docs=[doc])
+    burned = {}
+
+    def fake_burn(**kw):
+        burned["cues"] = kw["cues"]
+        Path(kw["output_path"]).write_bytes(b"o" * 4096)
+        return Path(kw["output_path"])
+
+    monkeypatch.setattr(svc, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(
+        svc, "_load_stored_cues",
+        lambda d: [{"start": 0.0, "end": 1.0, "text": "自动生成"}],
+    )
+    monkeypatch.setattr(svc, "_store_output", lambda **kw: {"document_id": "auto"})
+
+    result = svc.subtitle_document(
+        account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+        cues=None, name="自动字幕成品",
+    )
+
+    assert result["document_id"] == "auto"
+    assert burned["cues"] == [{"start": 0.0, "end": 1.0, "text": "自动生成"}]
 
 
 
