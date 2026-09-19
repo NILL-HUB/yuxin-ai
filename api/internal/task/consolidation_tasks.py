@@ -21,6 +21,11 @@ import logging
 
 from celery import shared_task
 
+from internal.entity.memory_owner_entity import (
+    NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+    MemoryOwnerKey,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,15 +54,15 @@ def run_daily_consolidation(self, user_ids: list[str] | None = None):
 
         engine = ConsolidationEngine()
 
-        # user_ids 为 None 时查询所有活跃用户
+        # subject 列表为 None 时查询全部活跃主体（用户 + admin）
         if user_ids is None:
-            user_ids = _query_active_users()
+            user_ids = _query_active_subjects()
 
         results: dict[str, dict] = {}
         for uid in user_ids:
             try:
-                # 主体键：用户主体为裸 UUID（与历史 str(uid) 逐字节一致）
-                owner_key = MemoryOwnerKey.for_user(uid).to_key()
+                # 主体键：裸 UUID → 用户主体（逐字节等价）；admin:{...} → admin 主体
+                owner_key = _subject_key_of(uid)
                 report = engine.run_consolidation(owner_key)
                 results[str(uid)] = {
                     "success": report.is_success,
@@ -65,7 +70,7 @@ def run_daily_consolidation(self, user_ids: list[str] | None = None):
                 }
                 # 巩固落库变更 → 失效 Digest 缓存（内容变更驱动重建）
                 if report.is_success and report.total_items_processed > 0:
-                    _invalidate_digest_cache(str(uid))
+                    _invalidate_digest_cache(owner_key)
             except Exception as exc:
                 logger.warning(
                     "run_daily_consolidation: 用户 %s 巩固失败: %s",
@@ -103,20 +108,19 @@ def run_weight_scan(self, user_id: str):
         阶段 3（weight_scan / tier）结果字典
     """
     try:
-        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.model.memory_models import ConsolidationPhase
         from internal.service.memory.consolidation_engine import ConsolidationEngine
 
         engine = ConsolidationEngine()
-        # 主体键：用户主体为裸 UUID（与历史 str(user_id) 逐字节一致）
-        owner_key = MemoryOwnerKey.for_user(user_id).to_key()
+        # 主体键：裸 UUID → 用户主体（逐字节等价）；admin:{...} → admin 主体
+        owner_key = _subject_key_of(user_id)
         report = engine.run_consolidation(owner_key)
 
         # 仅返回阶段 3（TIER）结果
         phase_key = ConsolidationPhase.TIER.value
         # 权重扫描可能触发 tier 变更 → 失效 Digest 缓存
         if report.is_success and report.total_items_processed > 0:
-            _invalidate_digest_cache(str(user_id))
+            _invalidate_digest_cache(owner_key)
         return report.phases.get(phase_key, {})
     except Exception as exc:
         logger.error(
@@ -155,15 +159,15 @@ def run_skill_curation(self, user_ids: list[str] | None = None):
 
         emergence = SkillEmergence()
 
-        # user_ids 为 None 时查询所有活跃用户
+        # subject 列表为 None 时查询全部活跃主体（用户 + admin）
         if user_ids is None:
-            user_ids = _query_active_users()
+            user_ids = _query_active_subjects()
 
         results: dict[str, dict] = {}
         for uid in user_ids:
             try:
-                # 主体键：用户主体为裸 UUID（与历史 str(uid) 逐字节一致）
-                owner_key = MemoryOwnerKey.for_user(uid).to_key()
+                # 主体键：裸 UUID → 用户主体（逐字节等价）；admin:{...} → admin 主体
+                owner_key = _subject_key_of(uid)
                 result = emergence.curate_skills(owner_key)
                 results[str(uid)] = result
             except Exception as exc:
@@ -223,15 +227,15 @@ def run_skill_stats_flush(self, user_ids: list[str] | None = None):
 
         emergence = SkillEmergence(config=memory_settings.skill)
 
-        # user_ids 为 None 时查询所有活跃用户
+        # subject 列表为 None 时查询全部活跃主体（用户 + admin）
         if user_ids is None:
-            user_ids = _query_active_users()
+            user_ids = _query_active_subjects()
 
         results: dict[str, dict] = {}
         for uid in user_ids:
             try:
-                # 主体键：用户主体为裸 UUID（与历史 str(uid) 逐字节一致）
-                owner_key = MemoryOwnerKey.for_user(uid).to_key()
+                # 主体键：裸 UUID → 用户主体（逐字节等价）；admin:{...} → admin 主体
+                owner_key = _subject_key_of(uid)
                 result = emergence.flush_bump_use_to_neo4j(owner_key)
                 results[str(uid)] = result
             except Exception as exc:
@@ -249,23 +253,106 @@ def run_skill_stats_flush(self, user_ids: list[str] | None = None):
         raise self.retry(exc=exc)
 
 
-def _invalidate_digest_cache(user_id: str) -> None:
-    """主动失效用户 Digest 缓存（内容变更后调用，避免陈旧摘要长期滞留）。
+def _subject_key_of(subject: str) -> str:
+    """把「用户 id 或 admin 主体键」规范化为跨层主体键。
 
+    裸 UUID → 用户主体（与历史 ``str(uid)`` 逐字节一致）；
+    ``admin:{uuid}[:{uuid}]`` → admin 主体。非法输入抛 ``MemoryOwnerKeyError``
+    （fail-closed：不猜主体）。
+    """
+    return MemoryOwnerKey.parse(str(subject)).to_key()
+
+
+def _admin_key_from_row(admin_user_id, agent_id) -> str:
+    """扫描结果行 → 规范 admin 主体键。
+
+    管理员级（``agent_id`` 为 NULL 或哨兵）产出两级键，Agent 级产出三级键。
+    """
+    from uuid import UUID
+
+    agent = "" if agent_id is None else str(agent_id)
+    if not agent or agent == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL:
+        return MemoryOwnerKey.for_admin(UUID(str(admin_user_id))).to_key()
+    return MemoryOwnerKey.for_admin(
+        UUID(str(admin_user_id)), agent_id=UUID(agent)
+    ).to_key()
+
+
+def _get_neo4j_driver():
+    """获取 Neo4j 驱动（可替换点，便于测试）。"""
+    from internal.extension.neo4j_extension import get_driver
+
+    return get_driver()
+
+
+def _query_active_admin_subjects() -> list[str]:
+    """查询拥有记忆归属的 admin / Agent 主体键。
+
+    与 ``_query_active_users``（扫 ``(u:User)``）互补：admin 记忆的归属属性是
+    ``admin_user_id`` + ``agent_id``，不会出现在 ``User`` 节点上，故必须单独扫描。
+    否则 admin 记忆**永不**进入巩固/治理/flush（ADMIN-P3c-3）。
+
+    Returns:
+        规范主体键列表（``admin:{uuid}`` / ``admin:{uuid}:{uuid}``），降级返回空列表。
+    """
+    try:
+        driver = _get_neo4j_driver()
+        if driver is None:
+            logger.warning("_query_active_admin_subjects: Neo4j 不可用，返回空列表")
+            return []
+
+        cypher = """
+        MATCH (n)
+        WHERE (n:MemoryNode OR n:Episode OR n:Entity OR n:Community OR n:Skill)
+          AND n.admin_user_id IS NOT NULL
+        WITH DISTINCT n.admin_user_id AS admin_user_id, n.agent_id AS agent_id
+        RETURN admin_user_id, agent_id
+        """
+        with driver.session() as session:
+            records = list(session.run(cypher))
+
+        keys: list[str] = []
+        for record in records:
+            admin_user_id = record.get("admin_user_id")
+            if not admin_user_id:
+                continue
+            try:
+                keys.append(
+                    _admin_key_from_row(admin_user_id, record.get("agent_id"))
+                )
+            except Exception:
+                logger.warning(
+                    "_query_active_admin_subjects: 跳过非法归属行 admin=%s",
+                    admin_user_id,
+                    exc_info=True,
+                )
+        return keys
+    except Exception:
+        logger.warning("_query_active_admin_subjects: 查询失败", exc_info=True)
+        return []
+
+
+def _query_active_subjects() -> list[str]:
+    """巩固派发全集：活跃用户主体 + 拥有记忆的 admin 主体。"""
+    return list(_query_active_users()) + _query_active_admin_subjects()
+
+
+def _invalidate_digest_cache(subject: str) -> None:
+    """主动失效主体 Digest 缓存（内容变更后调用，避免陈旧摘要长期滞留）。
+
+    ``subject`` 为**已规范化的主体键**（裸 UUID 或 ``admin:{...}``）。
     直接构造 DigestManager（redis 已由 extension 初始化），删除缓存键；
     Redis 不可用时静默降级，不影响巩固主流程。
     """
     try:
-        from internal.entity.memory_owner_entity import MemoryOwnerKey
         from internal.extension.redis_extension import redis_client
         from internal.service.memory.digest_manager import DigestManager
 
-        # 主体键：用户主体为裸 UUID（与历史 str(user_id) 逐字节一致）
-        owner_key = MemoryOwnerKey.for_user(user_id).to_key()
-        DigestManager(redis_client=redis_client).invalidate(owner_key)
+        DigestManager(redis_client=redis_client).invalidate(str(subject))
     except Exception:
         logger.warning(
-            "invalidate_digest_cache: 失效 Digest 缓存失败 user=%s", user_id,
+            "invalidate_digest_cache: 失效 Digest 缓存失败 subject=%s",
+            subject,
             exc_info=True,
         )
 
