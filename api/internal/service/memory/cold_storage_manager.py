@@ -14,6 +14,17 @@
     - Neo4j 不可用时 _restore_to_neo4j 跳过
     - gzip/JSON 异常时跳过单条，不影响整体
 
+⚠️ 接线状态（ADMIN-P3c-3 实测）：本模块当前**无任何生产调用方**——未注册 DI、
+无路由/定时任务/巩固链引用；`list_user_archives` 因统一存储端口（ObjectStoragePort）
+不支持列举而**无条件返回空列表**，故 `global_traverse` / `statistical_mining`
+恒空转。L3 冷记忆下沉（tier→冷存储归档）尚未落地，属「能力已实现但未接入」。
+归属处理已按主体键（``MemoryOwnerKey``）主体化，接线时无需再改。
+
+⚠️ 另一处端口约束：``archive`` 计算出的 ``{prefix}{owner_key}/{year}/{month}/…``
+对象键，在调用 ``upload_bytes_without_record(filename, content, mime_type, folder)``
+时**只传了 basename**（folder="memory-cold"），故 owner 路径片段当前**未真正落到
+对象路径**。对象键中的主体分层需端口支持 path 或改用 folder 传主体，属接线时的待办。
+
 设计参考:
     docs/prd/memory-system/02-storage-and-retrieval.md §5.3
     docs/prd/memory-system/execution/03-track-b-storage-retrieval.md B2
@@ -90,10 +101,15 @@ class ColdStorageManager:
             logger.warning("archive: 存储服务不可用，跳过归档")
             return None
 
-        # 构造对象键 {prefix}{user_id}/{year}/{month}/{memory_id}.json.gz
+        # 构造对象键 {prefix}{owner_key}/{year}/{month}/{memory_id}.json.gz
+        # 路径片段由主体键产出（用户主体为裸 UUID，与历史逐字节一致；
+        # admin 主体为 admin:{uuid}，路径安全）——ADMIN-P3c-3。
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.parse(entry.user_id)
         now = entry.archived_at or datetime.now(UTC)
         s3_key = (
-            f"{self._config.s3_prefix}{entry.user_id}/"
+            f"{self._config.s3_prefix}{owner.to_key()}/"
             f"{now.year}/{now.month:02d}/{entry.node_id}.json.gz"
         )
 
@@ -285,20 +301,25 @@ class ColdStorageManager:
     # =========================================================
 
     def _restore_to_neo4j(self, entry: ColdStorageEntry) -> None:
-        """将冷条目恢复到 Neo4j 热层（storage_tier=hot）。"""
+        """将冷条目恢复到 Neo4j 热层（storage_tier=hot，按主体属性归属）。"""
         driver = self._driver or self._get_driver()
         if driver is None:
             return
 
         try:
-            cypher = """
+            from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+            owner = MemoryOwnerKey.parse(entry.user_id)
+            props = owner.neo4j_props()
+            set_owner = ", ".join(f"n.{name} = ${name}" for name in props)
+            cypher = f"""
             MERGE (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity) AND n.node_id = $node_id
             SET n.content = $content,
                 n.weight = $weight,
                 n.storage_tier = 'hot',
                 n.restored_at = $now,
                 n.is_active = true,
-                n.user_id = $user_id
+                {set_owner}
             """
             with driver.session() as session:
                 session.run(
@@ -308,7 +329,7 @@ class ColdStorageManager:
                         "content": entry.content[:2000],
                         "weight": entry.weight,
                         "now": datetime.now(UTC).isoformat(),
-                        "user_id": entry.user_id,
+                        **props,
                     },
                 ).consume()
         except Exception:
