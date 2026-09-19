@@ -858,18 +858,17 @@ class LedgerWriter:
                 )
                 owner_key_obj = None
 
-        # 旧列 owner_account_id 仍是 NOT NULL 外键，读路径依赖它
-        owner_account_id: Optional[UUID] = (
-            owner_key_obj.owner_account_id if owner_key_obj is not None else None
-        )
-
-        if owner_account_id is None:
-            # 外键约束要求非空，无法写入，降级跳过
+        # 主体必须可解析；未解析即跳过（与既有「非 UUID user_id → 跳过」行为一致）。
+        # 注意：admin 主体 owner_account_id 为 None 是**合法**的（P3c-1 起
+        # owner_account_id 改可空，由 ck_*_owner_subject 保证按主体类型非空）。
+        if owner_key_obj is None:
             logger.warning(
-                "_upsert_vector: owner_account_id 为空，跳过 pgvector 写入 point_id=%s",
+                "_upsert_vector: 主体无法解析，跳过 pgvector 写入 point_id=%s",
                 point_id,
             )
             return None
+
+        owner_account_id: Optional[UUID] = owner_key_obj.owner_account_id
 
         if not point_id:
             logger.warning(
@@ -1008,7 +1007,7 @@ class LedgerWriter:
                 """),
                 {
                     "memory_id": memory_id,
-                    "owner_id": str(owner_account_id),
+                    "owner_id": str(owner_account_id) if owner_account_id is not None else None,
                     "owner_type": owner_columns["owner_type"],
                     "owner_admin_user_id": owner_columns["owner_admin_user_id"],
                     "owner_agent_id": owner_columns["owner_agent_id"],
