@@ -268,3 +268,41 @@ class TestKnowledgeIndexingService:
             target is document and kwargs.get("status") == DocumentStatus.COMPLETED.value
             for target, kwargs in updates
         )
+
+
+def test_segment_frame_falls_back_to_window_midpoint_for_timeline_segment():
+    """时间线段（无 time_offset）应回退 (start_sec+end_sec)/2 作为定位坐标。"""
+    from types import SimpleNamespace
+
+    from internal.service.knowledge_indexing_service import KnowledgeIndexingService
+
+    segment = SimpleNamespace(
+        metadata_={
+            "media_type": "video",
+            "frame_url": "key-frame-1.jpg",
+            "source": "vision_timeline",
+            "start_sec": 3.2,
+            "end_sec": 8.7,
+        }
+    )
+
+    frame = KnowledgeIndexingService._segment_frame(segment)
+
+    assert frame is not None
+    assert frame["time_offset"] == pytest.approx(5.95)
+    assert frame["frame_url"] == "key-frame-1.jpg"
+
+
+def test_segment_frame_keeps_explicit_time_offset_when_present():
+    """逐帧段仍读 time_offset，不受 start/end 影响。"""
+    from types import SimpleNamespace
+
+    from internal.service.knowledge_indexing_service import KnowledgeIndexingService
+
+    segment = SimpleNamespace(
+        metadata_={"media_type": "video", "frame_url": "k.jpg", "time_offset": 4.0}
+    )
+
+    frame = KnowledgeIndexingService._segment_frame(segment)
+
+    assert frame["time_offset"] == 4.0

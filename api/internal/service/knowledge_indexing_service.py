@@ -533,13 +533,23 @@ class KnowledgeIndexingService(BaseService):
         frame_url = str(metadata.get("frame_url") or "")
         if not frame_url:
             return None
+        # 时间偏移是帧的定位坐标：缺它则帧清单只能排序、无法换算时间轴位置，
+        # 「改细节」与 L2 区间密抽都无从定位到具体片段。
+        # 时间线叙述段不落 time_offset，但带 start_sec/end_sec 窗口，回退到窗口中点。
+        time_offset = metadata.get("time_offset")
+        if time_offset is None:
+            start = metadata.get("start_sec")
+            end = metadata.get("end_sec")
+            time_offset = (
+                (float(start) + float(end)) / 2.0
+                if start is not None and end is not None
+                else 0.0
+            )
         return {
-            "segment_id": str(segment.id),
+            "segment_id": str(getattr(segment, "id", "")),
             "frame_url": frame_url,
             "scene_index": int(metadata.get("scene_index") or 0),
-            # 时间偏移是帧的定位坐标：缺它则帧清单只能排序、无法换算时间轴位置，
-            # 「改细节」与 L2 区间密抽都无从定位到具体片段。
-            "time_offset": float(metadata.get("time_offset") or 0.0),
+            "time_offset": float(time_offset or 0.0),
         }
 
     @classmethod
