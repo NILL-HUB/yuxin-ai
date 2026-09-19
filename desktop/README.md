@@ -67,6 +67,24 @@ export RENDER_RUNTIME_FFMPEG_PATH=<.../ffmpeg.exe>
 export RENDER_RUNTIME_FFPROBE_PATH=<.../ffprobe.exe>
 ```
 
+**二进制获取（版本钉死，保证可复现）**：
+
+```powershell
+# Chromium：用 playwright 的 chrome-headless-shell（需能响应 --version）
+npx playwright install chromium-headless-shell
+
+# ffmpeg / ffprobe：gyan.dev essentials 自包含构建（**必须钉死版本号**）
+#   ⚠️ 不要用 .../ffmpeg-release-essentials.zip —— 那是滚动最新版，下次打包会拿到不同版本
+$ver = '9.0.1'
+Invoke-WebRequest "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-$ver-essentials_build.zip" -OutFile ffmpeg.zip
+Expand-Archive ffmpeg.zip -DestinationPath ffmpeg
+# → ffmpeg-<ver>-essentials_build/bin/{ffmpeg.exe,ffprobe.exe}
+```
+
+> 实测可用组合与体积：Chromium `152.0.7977.x`（约 200 MB 主程序 + 68 MB 旁挂文件）、
+> ffmpeg/ffprobe `9.0.1` 静态构建（**各约 98 MB**）。
+> 打入的版本会写入 `resources/render-runtime/MANIFEST.json` 便于与容器比对。
+
 **三个实测踩坑（对应脚本内的防护逻辑，勿绕过）**：
 
 1. **容器 `node_modules` 不是全平台**。容器内只有 `@esbuild/linux-x64`、`@img/sharp-linux-x64`、
@@ -95,6 +113,13 @@ export RENDER_RUNTIME_FFPROBE_PATH=<.../ffprobe.exe>
 > `render-runtime/node_modules` 是**两条独立** `extraResources`。
 > 打包后可用 `desktop/dist-nsis/win-unpacked/resources/render-runtime/node_modules/hyperframes/dist/cli.js`
 > 是否存在来快速自检。
+
+**体积与可选瘦身**：暂存产物实测约 **687 MB**（node_modules 222 MB + Chromium 268 MB + ffmpeg/ffprobe 196 MB）。
+其中 `locales/`（42 MB）与 `hyphen-data/` 实测**非必需**（渲染链路不读它们），
+如需瘦身可在 `stage-render-runtime.js` 的 `stageBrowser` 里按需跳过；当前为降低风险默认保留。
+
+> **`onnxruntime-node` 属「已提供能力但未接入」**：它已随包分发（含 win32 裁剪，供后续
+> 图片处理 / 抠像使用），但**当前全仓无任何生产调用点**。请勿据此认为「图片处理已实现」。
 
 ## 安全模型
 

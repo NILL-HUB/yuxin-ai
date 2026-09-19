@@ -793,11 +793,28 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | --- | --- |
 | 编排服务 | `internal/service/render_service.py`（`RenderService.render_composition` / `render_to_render_output_base`） |
 | Celery 队列与任务 | `config/config.py`（`Queue("render")` + `internal.task.render_tasks.*` 路由）+ `internal/task/render_tasks.py`（`render_composition_task`，`bind=True` / `max_retries=2` / `default_retry_delay=60`） |
-| 会话内入口 | builtin provider `video_render_tools`（`render_video`）+ 运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools`；工具派发 `render_composition_task`（Celery 优先、派发失败回退同步） |
+| 会话内入口 | builtin provider `video_render_tools`（`render_video`）+ 运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools`；工具 `_dispatch_render` 做**三级路由**（见下） |
 | 配额宽让 | `StorageQuotaService.check_quota_allow_overflow` + `RuntimeStorageProxy.upload_bytes(allow_overflow=True)`：成品由系统写入，剩余 > 0 即放行（允许溢出），恰好为 0 才拒绝（设计 §6.3）；**素材上传仍严格** |
-| 渲染运行时配置 | `HYPERFRAMES_BROWSER_PATH` / `HYPERFRAMES_FFMPEG_PATH` / `HYPERFRAMES_FFPROBE_PATH` / `HYPERFRAMES_CLI_VERSION`（默认 `0.8.42`）/ `RENDER_TIMEOUT_SEC` |
+| 渲染运行时配置 | `HYPERFRAMES_BROWSER_PATH` / `HYPERFRAMES_FFMPEG_PATH` / `HYPERFRAMES_FFPROBE_PATH` / `HYPERFRAMES_CLI_VERSION`（默认 `0.8.42`）/ `HYPERFRAMES_CLI_BIN` / `RENDER_TIMEOUT_SEC` |
+| 执行位置开关 | `RENDER_LOCAL_ENABLED`（默认 `true`）/ `RENDER_CLOUD_FALLBACK_ENABLED`（默认 `true`）；读取点 `render_video._local_enabled` / `_cloud_fallback_enabled`（容器 config 是普通 dict，须 `.get()`） |
 
+**渲染执行位置 = 三级路由**（`render_video._dispatch_render`）：
+
+| 优先级 | 位置 | 触发/回退条件 |
+| --- | --- | --- |
+| 1 | **用户本机**（桌面端 render worker） | `RENDER_LOCAL_ENABLED=true` 时优先；经 `resolve_desktop_bridge(account_id, purpose="/render")` 下发，产物经 bridge `/artifact` 取回后复用 `store_render_output` 入库 |
+| 2 | **云端 Celery `render` 队列** | 仅当本机**通道不可用**（无在线设备 / 连不上 bridge / HTTP 401·502·503·504）且 `RENDER_CLOUD_FALLBACK_ENABLED=true` |
+| 3 | 明确报错 | 两者均不可用 |
+
+> **「通道不可用」与「渲染业务失败」语义必须区分**：前者才回退云端；后者（环境缺二进制、脚本非法等）
+> 直接抛 `RenderExecutionError` 报错，**不静默回退**。
+>
 > 渲染硬依赖三个外部二进制（浏览器 / ffmpeg / ffprobe），缺任一渲染在启动阶段即失败。
 > 浏览器须是能响应 `--version` 的 Chrome 构建（chrome-headless-shell 实测正常）；
 > ffprobe 必须是**真 ffprobe**（用 ffmpeg 冒充会因 `-print_format` 不支持而失败）。
-> **尚未落地（另立部署计划）**：渲染 worker 镜像与 `-Q render` 容器隔离编排（`api/Dockerfile.render` 等）。
+>
+> **云端渲染编排已落地、默认关闭**：`api/Dockerfile.render` + compose 的 `llmops-render-worker`
+> 已加 `profiles: ["cloud-render"]`，默认不启动；需云端回退时
+> `docker compose --profile cloud-render up -d llmops-render-worker` 一键接通。
+> 详见 [deployment-single-node.md](../../deployment-single-node.md) 的「渲染执行位置」与
+> [09-desktop-client.md](09-desktop-client.md) 的 render worker 小节。

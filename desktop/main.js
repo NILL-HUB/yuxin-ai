@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session, Menu, screen } = require('electron')
+﻿const { app, BrowserWindow, ipcMain, shell, safeStorage, Notification, session, Menu, screen } = require('electron')
 const { spawn, execSync } = require('child_process')
 const net = require('net')
 const crypto = require('crypto')
@@ -479,26 +479,24 @@ app.whenReady().then(async () => {
 
   // 渲染运行时：Node 用 Electron 内置的（经 shim 包装），Chromium/ffmpeg/ffprobe
   // 随安装包分发（resources/render-runtime/，见 §0.5.2）。缺失时 worker 返回可读错误而非崩溃。
-  const { resolveRuntimePaths, ensureCliShim } = require('./render-runtime')
-  const runtime = resolveRuntimePaths({
-    env: process.env,
+  // 组装逻辑抽到 render-worker.js（不依赖 Electron），以便 node --test 覆盖这段接线。
+  const { prepareRenderWorker, buildRenderWorkerEnv } = require('./render-worker')
+  const { runtime, cliShim } = prepareRenderWorker({
     resourcesDir: process.resourcesPath,
-  })
-  const shimDir = path.join(app.getPath('userData'), 'render-runtime-bin')
-  const cliShim = ensureCliShim({
-    electronPath: process.execPath,          // 必须原地引用，不可拷贝单文件
-    cliJsPath: runtime.cliJsPath,
-    targetDir: shimDir,
+    env: process.env,
+    execPath: process.execPath, // 必须原地引用，不可拷贝单文件
+    userDataDir: app.getPath('userData'),
   })
 
-  startWorker('render', {
-    RENDER_WORKER_TOKEN: tokens.render,
-    RENDER_WORKER_PORT: String(renderPort),
-    HYPERFRAMES_CLI_BIN: cliShim,
-    HYPERFRAMES_BROWSER_PATH: runtime.browserPath,
-    HYPERFRAMES_FFMPEG_PATH: runtime.ffmpegPath,
-    HYPERFRAMES_FFPROBE_PATH: runtime.ffprobePath,
-  })
+  startWorker(
+    'render',
+    buildRenderWorkerEnv({
+      renderToken: tokens.render,
+      renderPort,
+      runtime,
+      cliShim,
+    }),
+  )
 
   bridgeServer = createBridge({
     token: tokens.bridge,

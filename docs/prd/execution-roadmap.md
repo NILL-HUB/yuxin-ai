@@ -335,7 +335,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **成品入库** | `knowledge_base_service.py`（`store_render_output`） | ✅ 已落地；落 COS + 建档 + 触发索引 |
 | **成品配额宽让** | `storage_quota_service.py`（`check_quota_allow_overflow`）+ `runtime_storage_service.py`（`upload_bytes(allow_overflow=True)`） | ✅ 已落地；剩余 > 0 即放行（允许溢出），恰好为 0 拒绝（设计 §6.3）。**素材上传仍严格** |
 | **render 队列与任务** | `config/config.py`（`Queue("render")`）+ `internal/task/render_tasks.py` | ✅ 已落地；已登记 `TASK_MODULES` 并配路由；派发点见下 |
-| **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具派发 `render_composition_task`（Celery 优先、失败回退同步） |
+| **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具 `_dispatch_render` 做三级路由（本机 → 云端 → 报错），详见 **P3.8** |
 
 > **渲染 worker 部署编排（已落地）**：`api/Dockerfile.render`（在 api 镜像之上补 Node24+Chromium+ffmpeg/ffprobe）
 > \+ `docker/docker-compose.yaml` 的 `llmops-render-worker` 服务
@@ -371,6 +371,60 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 >    现已在 `docker/entrypoint.sh` 增加 `CELERY_QUEUES` 开关（映射为 `-Q`，不设则行为不变），
 >    并由 `llmops-render-worker` 服务设 `CELERY_QUEUES=render` 独占消费；
 >    该行为有测试覆盖（`test_api_entrypoint.py`，需 Linux/容器内的 bash 执行）。
+
+### 知识库产品形态 P3.8：重负载任务本机化（渲染优先）（已完成）
+
+**动机**：渲染是多租户下最贵的算力开销（官方定位即「用户本地渲染」，平台常驻容器成本随用户数不可控）。
+故把渲染下放到用户本机执行，**云端代码完整保留但默认关闭**，成本可控且随时可接通。
+
+实施计划：[superpowers/plans/2026-09-18-local-first-render-offload.md](../superpowers/plans/2026-09-18-local-first-render-offload.md)
+
+| 任务 | 文件 | 状态 |
+| --- | --- | --- |
+| **执行位置开关** | `config/config.py`（`RENDER_LOCAL_ENABLED` / `RENDER_CLOUD_FALLBACK_ENABLED`，默认均 `true`） | ✅ 已落地 |
+| **三级路由** | `render_video._dispatch_render`（本机 → 云端 → 明确报错）；`_local_enabled` / `_cloud_fallback_enabled` 用 `.config.get()` 读取 | ✅ 已落地；区分「通道不可用」（回退）与「业务失败」（报错） |
+| **本机 render worker** | `api/scripts/render_worker.py`（`ThreadingHTTPServer`，`POST /render` + `POST /artifact`，Bearer 鉴权） | ✅ 已落地；产物取走后自动清理临时目录，`/artifact` 有路径穿越防护 |
+| **worker 注册与打包** | `scripts/worker_super.py`（`choices` + `_module_and_entry` + `_SERVICE_SUPPORTS_HOST_PORT` 三处加 `render`）+ `pyinstaller/worker.spec` hiddenimports | ✅ 已落地 |
+| **服务端客户端** | `video_render_tools/local_render_runner.py`（`render_on_local_device` / `fetch_local_artifact`） | ✅ 已落地；**必须**经 `resolve_desktop_bridge` 动态解析（勿读静态 env，勿重蹈 `browser_action` 断链） |
+| **产物回传入库** | `render_video._ingest_local_artifact` 复用 `KnowledgeBaseService.store_render_output` | ✅ 已落地；落 COS + 建档 + 索引 |
+| **桌面端托管** | `desktop/main.js`（`startWorker('render')` + shim 生成）、`desktop/bridge.js`（`/render` + `/artifact`）、`desktop/render-runtime.js` | ✅ 已落地；Node 用 Electron 内置（`ELECTRON_RUN_AS_NODE=1`），用户无需自装 Node |
+| **运行时随包分发** | `desktop/scripts/stage-render-runtime.js` + `extraResources` + `.gitignore` | ✅ 已落地；**实测踩坑三处见下** |
+| **云端默认下线** | compose `llmops-render-worker` 加 `profiles: ["cloud-render"]` | ✅ 已落地；定义与限流参数完整保留，一键接通 |
+
+> **本方案确立的是「重负载任务本机化」的通用范式**，后续其他重型任务可直接套用：
+>
+> ```
+> 服务端工具
+>   → resolve_desktop_bridge(account_id, purpose="/xxx")   # 已有，无需改动
+>   → 打用户本机的 xxx worker（新增 worker 子命令 + bridge 路由）
+>   → 本机算完，产物经 bridge 取回
+>   → 复用服务端既有入库能力
+>   ← 不可用则回退云端（云端代码保留，开关控制）
+> ```
+>
+> **适合本机化的三个判定标准**：① 计算密集、结果可搬运（产物是单个文件）；
+> ② 不改平台数据（本机只「算」，写库/写对象存储仍在服务端）；
+> ③ 有可接受的降级（未装客户端能回退云端或明确报错）。
+> 典型候选：视频转码/剪辑、大文件批量解析、本地模型推理（ASR/视觉）、批量 OCR、批量图像处理。
+>
+> **复用时的注意事项**：本机运行时体积大（渲染约 687 MB，**优先复用同一份 Node/Chromium/ffmpeg 底座**）；
+> 外网依赖（渲染依赖 GSAP CDN）；用户设备性能差异与中途休眠，需幂等 + 可重试。
+
+> **⚠️ 打包侧三处实测踩坑（均已加防护，勿绕过）**：
+> 1. **容器 `node_modules` 不是全平台**：容器内只有 `@esbuild/linux-x64`、`@img/sharp-linux-x64`、
+>    `@img/sharp-libvips-linux-x64`，而 `hyperframes/dist/cli.js` **启动阶段即 eager import `sharp`**，
+>    直接打包会让 Windows 上连 `--version` 都崩。已改为裁掉非目标平台包 + overlay win32 包 + 断言。
+>    （`onnxruntime-node` 不受影响：N-API v3 多平台布局。）
+> 2. **Chromium 不是单文件**：`chrome-headless-shell.exe` 依赖同目录 `icudtl.dat`/`*.pak`/`*.dll`，
+>    只拷 exe 会启动即崩（实测退出码 `0x80000003`）。已改为整目录复制 + 校验必需文件。
+> 3. **electron-builder 会剔除 `extraResources` 根部的 `node_modules`**（`app-builder-lib` 的
+>    `util/filter.js` 有无条件排除），导致「`npm start` 正常、安装版渲染必崩」。已改为把
+>    `render-runtime` 与 `render-runtime/node_modules` 拆成**两条独立** `extraResources`。
+>
+> 打包前置与自检命令见 `desktop/README.md` 的「渲染运行时的打包前置」。
+>
+> **已提供能力但未接入**：`onnxruntime-node` 已随包分发（供后续图片处理/抠像用），
+> 但**当前全仓无任何生产调用点**——属预留能力，非「已实现功能」。
 
 ### P3（已完成）
 

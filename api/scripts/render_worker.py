@@ -120,6 +120,69 @@ def _cleanup_dir(path: str) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+# 成功渲染的产物目录会**刻意保留**，等调用方经 /artifact 取回后再删。
+# 但服务端取回可能失败或根本没取（如进程被杀、网络中断），若无兜底清理，
+# 用户设备上的 %TEMP%/hf-local-render-* 会缓慢堆积。故在 worker 启动时
+# 清扫超龄残留（默认 24h），以及长期未取回的中间目录。
+_WORK_DIR_PREFIX = "hf-local-render-"
+_DEFAULT_WORK_DIR_TTL_SEC = 24 * 3600
+
+
+def _work_dir_ttl_sec() -> int:
+    """残留工作目录的存活上限（秒）；RENDER_WORKER_WORK_DIR_TTL_SEC 可覆盖。"""
+    raw = _env("RENDER_WORKER_WORK_DIR_TTL_SEC")
+    if not raw:
+        return _DEFAULT_WORK_DIR_TTL_SEC
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("RENDER_WORKER_WORK_DIR_TTL_SEC 非法（%s），改用默认值", raw)
+        return _DEFAULT_WORK_DIR_TTL_SEC
+    return value if value > 0 else _DEFAULT_WORK_DIR_TTL_SEC
+
+
+def sweep_stale_work_dirs(
+    *, now: float | None = None, ttl_sec: int | None = None, tmp_root: str | None = None
+) -> list[str]:
+    """清扫超龄的渲染残留目录，返回被删除的目录路径列表。
+
+    安全边界（与 `_read_artifact` 同口径，避免误删用户文件）：
+    - 只在系统临时目录的**直接子目录**里找；
+    - 目录名必须以 `hf-local-render-` 开头；
+    - 仅当 mtime 早于 `now - ttl_sec` 才删。
+
+    Args:
+        now: 当前时间戳（测试注入，默认 time.time()）。
+        ttl_sec: 存活上限秒数（默认取 `_work_dir_ttl_sec()`）。
+        tmp_root: 临时目录根（测试注入，默认 `tempfile.gettempdir()`）。
+    """
+    import time
+
+    current = time.time() if now is None else now
+    ttl = _work_dir_ttl_sec() if ttl_sec is None else ttl_sec
+    root = Path(tmp_root or tempfile.gettempdir())
+
+    removed: list[str] = []
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        logger.warning("清扫渲染残留目录失败：无法列出 %s", root, exc_info=True)
+        return removed
+
+    for entry in entries:
+        try:
+            if not entry.is_dir() or not entry.name.startswith(_WORK_DIR_PREFIX):
+                continue
+            if entry.stat().st_mtime > current - ttl:
+                continue
+            _cleanup_dir(str(entry))
+            removed.append(str(entry))
+            logger.info("已清扫超龄渲染残留目录：%s", entry)
+        except OSError:
+            logger.warning("清扫渲染残留目录失败：%s", entry, exc_info=True)
+    return removed
+
+
 def _run_render(payload: dict[str, Any]) -> dict[str, Any]:
     """执行一次渲染，返回 {ok, path, size_bytes, name} 或 {ok: False, error}。"""
     validation_error = _validate_payload(payload)
@@ -227,6 +290,16 @@ def main() -> None:
     if not _env("RENDER_WORKER_TOKEN"):
         logger.error("RENDER_WORKER_TOKEN 未配置，拒绝启动")
         raise SystemExit(1)
+
+    # 启动时清扫超龄残留：成功渲染的目录刻意保留待 /artifact 取回，
+    # 但取回可能失败/根本没取，长期会堆积（见 sweep_stale_work_dirs 说明）。
+    try:
+        swept = sweep_stale_work_dirs()
+        if swept:
+            logger.info("启动清扫：已清理 %d 个超龄渲染残留目录", len(swept))
+    except Exception:  # noqa: BLE001 - 清扫失败不应阻断 worker 启动
+        logger.warning("启动清扫渲染残留目录失败（忽略，不影响渲染）", exc_info=True)
+
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
     logger.info("Local render worker listening on %s:%s", args.host, args.port)
     server.serve_forever()

@@ -38,7 +38,8 @@
       "tray.js",
       "updater.js",
       "window-state.js",
-      "render-runtime.js"
+      "render-runtime.js",
+      "render-worker.js"
     ],
     "extraResources": [
       {

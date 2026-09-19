@@ -26,6 +26,12 @@
 //   缺 libx264 的构建无法编码。故暂存前做能力探测，不达标**直接报错终止打包**，
 //   避免产出一个「点了就失败」的安装包。
 //
+// 体积参考（2026-09-19 真机实测暂存结果）：合计约 687 MB——
+//   node_modules 222 MB（含裁剪后 onnxruntime）+ Chromium 整目录 268 MB
+//   + ffmpeg/ffprobe 各约 98 MB（必须是自包含静态构建；容器内那版是动态链接，不能直接用）。
+// NSIS 压缩后安装包增量约 220–260 MB。
+// 可选瘦身：locales/（42 MB）+ hyphen-data/ 实测非必需（渲染链路不读）。
+//
 // 源缺失时打印提示并跳过（不阻断打包），与 stage-cua-driver.js 行为一致。
 
 const fs = require('node:fs')

@@ -146,7 +146,7 @@ set ELECTRON_RUN_AS_NODE=1
 | `node_modules`（全部依赖） | 700 MB | 其中 `onnxruntime-node` **独占 536 MB** |
 | `node_modules`（**不含 onnxruntime**，对比基线） | 164 MB | 压缩后仅 38 MB（仅供参考） |
 | Chromium（`/usr/lib/chromium`） | **338 MB** | 体积主体，必须随包 |
-| ffmpeg + ffprobe | < 1 MB | 极小 |
+| ffmpeg + ffprobe（**容器内 Debian 构建**） | < 1 MB | 动态链接，依赖系统 `.so`；**Windows 侧不能用这种**，须换自包含构建（各约 98 MB，见下） |
 
 **关键结论：CLI 不是自包含的**（实测 `dist/cli.js` 单独复制后运行报
 `ERR_MODULE_NOT_FOUND: Cannot find package 'esbuild'`），**必须连 `node_modules` 一起带**。
@@ -194,18 +194,23 @@ exports.binding = require(`../bin/napi-v3/${process.platform}/${process.arch}/on
 （也不需要 `electron-rebuild`）。同时注意：这也意味着**它不依赖 Node 版本**，
 即使将来调整 Node 版本也不会失效。
 
-#### 打包体积预估（含 onnxruntime）
+#### 打包体积（**实测值**，早先预估已修正）
 
-```
-node_modules（含 onnxruntime-node，裁剪到 win32/x64）  164 + 34 = 198 MB  →  压缩约 53 MB
-Chromium                                              338 MB  →  压缩约 120 MB
-ffmpeg + ffprobe                                      < 1 MB
---------------------------------------------------------------------------
-合计原始                                               约 536 MB
-安装包增量（NSIS 压缩后）                              约 175–215 MB
-```
+> ⚠️ 本文早先给出的「ffmpeg + ffprobe < 1 MB、合计约 536 MB」是**基于容器内 Debian 动态链接构建**的错误推断。
+> Windows 侧**必须用自包含**的 ffmpeg/ffprobe（静态构建备各约 98 MB），否则缺 DLL 启动即崩。
+> 以下为 2026-09-19 真机暂存 `desktop/vendor/render-runtime/` 的实测占用：
 
-> 对比：若**不裁剪** onnxruntime 的平台目录，安装包增量将 **+282 MB**（约 450 MB）。
+| 组件 | 实测体积 | 说明 |
+| --- | --- | --- |
+| `node_modules`（含裁剪到 win32 的 onnxruntime-node） | 222 MB | onnxruntime 67 MB + hyperframes 36 MB + `@img` 19 MB + `@esbuild` 10 MB + 其余 |
+| Chromium（`chrome-headless-shell` 整目录） | 268 MB | 主程序 200 MB + `locales` 42 MB + `icudtl.dat` 10 MB + DLL/pak |
+| `ffmpeg.exe` + `ffprobe.exe`（gyan.dev 静态构建） | 196 MB | **各约 98 MB**（自包含的代价） |
+| **合计原始** | **约 687 MB** | 压缩后（NSIS）安装包增量约 **220–260 MB** |
+
+**可选瘦身**：`locales/`（42 MB）+ `hyphen-data/`（1.7 MB）实测**非必需**（渲染链路不读），
+裁剪后约 643 MB。当前为降低风险默认保留。
+
+> 对比：若**不裁剪** onnxruntime 的平台目录，再 **+468 MB**（`linux/x64` 独占 370 MB）。
 
 #### 源目录来源：从容器取（保证两端同源）
 
@@ -492,7 +497,7 @@ cd api && python -m pytest test/path/to/test.py::test_name -v   # 单测
 - Modify: `desktop/package.json`（`devDependencies.electron`、`devDependencies.electron-builder`）
 - Test: `desktop/test/electron-version.test.js`（新建）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `desktop/test/electron-version.test.js`：
 
@@ -542,12 +547,12 @@ test('electron binary can run as node with ESM support', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd desktop && node --test test/electron-version.test.js`
 Expected: FAIL（`Electron 内置 Node 为 20.18.3，要求 major=24`）
 
-- [ ] **Step 3: 升级 Electron**
+- [x] **Step 3: 升级 Electron**
 
 修改 `desktop/package.json` 的 `devDependencies`：
 
@@ -569,19 +574,19 @@ Expected: FAIL（`Electron 内置 Node 为 20.18.3，要求 major=24`）
 cd desktop && npm install
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd desktop && node --test test/electron-version.test.js`
 Expected: PASS（2 passed）——此时内置 Node 应为 24.21.0
 
-- [ ] **Step 5: 回归既有桌面端测试（跨 10 个大版本，必须验）**
+- [x] **Step 5: 回归既有桌面端测试（跨 10 个大版本，必须验）**
 
 Run: `cd desktop && node --test`
 Expected: 全部通过。若因 Electron API 变更失败，按报错逐项修（用到的均为 `app` /
 `BrowserWindow` / `ipcMain` / `shell` / `safeStorage` / `Notification` / `session` /
 `Menu` / `screen` / `Tray` 等稳定 API，预期风险低）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add desktop/package.json desktop/package-lock.json desktop/test/electron-version.test.js
@@ -601,7 +606,7 @@ Node 脚本，需要 `node cli.js` 两段式调用；且 Electron 的 `electron.
 - Modify: `desktop/package.json`（`build.files` 加 `render-runtime.js`）
 - Test: `desktop/test/render-runtime.test.js`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `desktop/test/render-runtime.test.js`：
 
@@ -671,12 +676,12 @@ test('resolveRuntimePaths lets explicit env override bundled defaults', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd desktop && node --test test/render-runtime.test.js`
 Expected: FAIL（`Cannot find module '../render-runtime'`）
 
-- [ ] **Step 3: 实现 render-runtime.js**
+- [x] **Step 3: 实现 render-runtime.js**
 
 创建 `desktop/render-runtime.js`：
 
@@ -743,16 +748,16 @@ module.exports = { resolveRuntimePaths, ensureCliShim, _shimFileName }
 > **注意**：shim 内必须**原地引用** `electronPath`（不可把 electron.exe 拷成单文件，
 > 会缺 DLL 报 `0xC0000135`）；`electronPath` 应为 `process.execPath`。
 
-- [ ] **Step 4: 登记打包白名单**
+- [x] **Step 4: 登记打包白名单**
 
 在 `desktop/package.json` 的 `build.files` 数组末尾加入 `"render-runtime.js"`（见 Task 8 Step 4e）。
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd desktop && node --test test/render-runtime.test.js`
 Expected: PASS（4 passed）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add desktop/render-runtime.js desktop/test/render-runtime.test.js desktop/package.json
@@ -772,7 +777,7 @@ git commit -m "feat(desktop): add render runtime resolver and electron-node cli 
 - Modify: `.gitignore`（加 `desktop/vendor/render-runtime/`）
 - Test: `desktop/test/stage-render-runtime.test.js`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `desktop/test/stage-render-runtime.test.js`：
 
@@ -844,12 +849,12 @@ test('stage script prunes non-target onnxruntime platforms', () => {
 })
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd desktop && node --test test/stage-render-runtime.test.js`
 Expected: FAIL（脚本不存在）
 
-- [ ] **Step 3: 实现暂存脚本**
+- [x] **Step 3: 实现暂存脚本**
 
 创建 `desktop/scripts/stage-render-runtime.js`（结构对照 `stage-cua-driver.js`）：
 
@@ -957,7 +962,7 @@ function main() {
 main()
 ```
 
-- [ ] **Step 4: 接线（extraResources + scripts + gitignore）**
+- [x] **Step 4: 接线（extraResources + scripts + gitignore）**
 
 `desktop/package.json` 的 `extraResources` 追加：
 
@@ -983,17 +988,17 @@ main()
 desktop/vendor/render-runtime/
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd desktop && node --test test/stage-render-runtime.test.js`
 Expected: PASS（3 passed）
 
-- [ ] **Step 6: 验证暂存产物被 git 忽略**
+- [x] **Step 6: 验证暂存产物被 git 忽略**
 
 Run: `cd d:/DEMO/openagent-main && git check-ignore -v desktop/vendor/render-runtime/SOURCE.txt`
 Expected: 输出命中 `.gitignore` 中新增的 `desktop/vendor/render-runtime/` 规则
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add desktop/scripts/stage-render-runtime.js desktop/test/stage-render-runtime.test.js desktop/package.json .gitignore
@@ -1008,7 +1013,7 @@ git commit -m "build(desktop): bundle render runtime into installer via stage sc
 - Modify: `api/config/config.py`（在 §视频渲染 段，约 L213-234）
 - Test: `api/test/config/test_render_execution_config.py`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `api/test/config/test_render_execution_config.py`：
 
@@ -1051,12 +1056,12 @@ def test_env_parsing_is_case_insensitive(monkeypatch):
     assert conf.RENDER_LOCAL_ENABLED is False
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/config/test_render_execution_config.py -q`
 Expected: FAIL（`AttributeError: 'Config' object has no attribute 'RENDER_LOCAL_ENABLED'`）
 
-- [ ] **Step 3: 实现配置**
+- [x] **Step 3: 实现配置**
 
 在 `api/config/config.py` 的 `RENDER_TIMEOUT_SEC` 之后（约 L233 后）追加：
 
@@ -1074,12 +1079,12 @@ Expected: FAIL（`AttributeError: 'Config' object has no attribute 'RENDER_LOCAL
         )
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/config/test_render_execution_config.py -q`
 Expected: PASS（4 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add api/config/config.py api/test/config/test_render_execution_config.py
@@ -1094,7 +1099,7 @@ git commit -m "feat(render): add local-first render execution switches"
 - Create: `api/scripts/render_worker.py`
 - Test: `api/test/scripts/test_render_worker.py`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `api/test/scripts/test_render_worker.py`：
 
@@ -1201,12 +1206,12 @@ def test_run_render_invokes_renderer_with_composition(monkeypatch, tmp_path):
     assert captured["spec"]["segments"][0]["text"] == "hi"
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/scripts/test_render_worker.py -q`
 Expected: FAIL（`ModuleNotFoundError: No module named 'scripts.render_worker'`）
 
-- [ ] **Step 3: 实现 worker**
+- [x] **Step 3: 实现 worker**
 
 创建 `api/scripts/render_worker.py`：
 
@@ -1413,12 +1418,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/scripts/test_render_worker.py -q`
 Expected: PASS（8 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add api/scripts/render_worker.py api/test/scripts/test_render_worker.py
@@ -1433,7 +1438,7 @@ git commit -m "feat(render): add local render worker with bearer auth"
 - Modify: `api/scripts/worker_super.py`（`parse_args` 的 `choices` 约 L148；`_SERVICE_SUPPORTS_HOST_PORT` L35；`_module_and_entry` L158-164）
 - Test: `api/test/scripts/test_worker_super.py`（追加用例）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 在 `api/test/scripts/test_worker_super.py` 末尾追加：
 
@@ -1470,12 +1475,12 @@ def test_render_supports_host_port_injection():
     assert "render" in _SERVICE_SUPPORTS_HOST_PORT
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/scripts/test_worker_super.py -q -k render`
 Expected: FAIL（argparse 报 `invalid choice: 'render'`）
 
-- [ ] **Step 3: 实现注册**
+- [x] **Step 3: 实现注册**
 
 在 `api/scripts/worker_super.py` 做三处改动：
 
@@ -1512,12 +1517,12 @@ def _module_and_entry(service: str) -> tuple[str, str]:
     }[service]
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/scripts/test_worker_super.py -q`
 Expected: PASS（含新增 4 例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add api/scripts/worker_super.py api/test/scripts/test_worker_super.py
@@ -1532,7 +1537,7 @@ git commit -m "feat(render): register render subcommand in worker_super"
 - Modify: `api/scripts/pyinstaller/worker.spec`（`hiddenimports` 约 L43-51）
 - Test: `api/test/scripts/test_worker_spec.py`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `api/test/scripts/test_worker_spec.py`：
 
@@ -1566,12 +1571,12 @@ def test_spec_keeps_cua_driver_client():
     assert "'scripts.cua_driver_client'" in text
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/scripts/test_worker_spec.py -q`
 Expected: FAIL（`scripts.render_worker 未登记到 hiddenimports`）
 
-- [ ] **Step 3: 实现登记**
+- [x] **Step 3: 实现登记**
 
 在 `api/scripts/pyinstaller/worker.spec` 的 `hiddenimports` 列表中加入一行（放在 computer 之后、cua_driver_client 之前）：
 
@@ -1583,12 +1588,12 @@ Expected: FAIL（`scripts.render_worker 未登记到 hiddenimports`）
         'scripts.cua_driver_client',
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/scripts/test_worker_spec.py -q`
 Expected: PASS（2 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add api/scripts/pyinstaller/worker.spec api/test/scripts/test_worker_spec.py
@@ -1603,7 +1608,7 @@ git commit -m "build(render): register render worker in pyinstaller spec"
 - Create: `api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py`
 - Test: `api/test/internal/core/tools/test_local_render_runner.py`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `api/test/internal/core/tools/test_local_render_runner.py`：
 
@@ -1724,12 +1729,12 @@ def test_connection_failure_is_unavailable(monkeypatch):
     assert result["unavailable"] is True
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py -q`
 Expected: FAIL（`ModuleNotFoundError`）
 
-- [ ] **Step 3: 实现客户端**
+- [x] **Step 3: 实现客户端**
 
 创建 `api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py`：
 
@@ -1842,12 +1847,12 @@ def render_on_local_device(
     }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py -q`
 Expected: PASS（5 passed）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add api/internal/core/tools/builtin_tools/providers/video_render_tools/local_render_runner.py api/test/internal/core/tools/test_local_render_runner.py
@@ -1862,7 +1867,7 @@ git commit -m "feat(render): add service-side local render client via desktop br
 - Modify: `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py`（`_dispatch_render` L45-70；`_run` L102-144）
 - Test: `api/test/internal/core/tools/test_render_video_tool.py`（追加用例）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 > ⚠️ **同时必须改既有测试的替身装配**：`api/test/internal/core/tools/test_render_video_tool.py`
 > 现有的 `_install_fakes()`（L47-84）没有关掉本机开关。改动后本机分支会**先被命中**，
@@ -1989,12 +1994,12 @@ def test_cloud_disabled_and_no_device_raises_clear_error(monkeypatch):
     assert "桌面端" in str(exc.value) or "本机" in str(exc.value)
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/internal/core/tools/test_render_video_tool.py -q -k "local or cloud or falls_back"`
 Expected: FAIL（`AttributeError: module has no attribute '_cloud_fallback_enabled'`）
 
-- [ ] **Step 3: 实现三级路由**
+- [x] **Step 3: 实现三级路由**
 
 修改 `api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py`：
 
@@ -2171,12 +2176,12 @@ def _dispatch_render(composition: dict, account_id: str, name: str) -> dict:
 > `store_render_output`。因用户设备无法直写服务端对象存储，本任务先打通「能出片」，
 > 入库回传在 Task 7 完成（届时用 bridge 的 `/upload` 或服务端拉取本机路径）。
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/internal/core/tools/test_render_video_tool.py -q`
 Expected: PASS（含新增 5 例）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add api/internal/core/tools/builtin_tools/providers/video_render_tools/render_video.py api/test/internal/core/tools/test_render_video_tool.py
@@ -2194,7 +2199,7 @@ git commit -m "feat(render): route render to local device first, cloud as fallba
 
 **背景**：本机上出片的 MP4 落在用户设备临时目录，必须回传服务端才能入库（对象存储 + 成品库建档 + 索引）。这是本方案**唯一必须新增的服务端能力**，其余全部复用。
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 在 `api/test/internal/core/tools/test_local_render_runner.py` 末尾追加：
 
@@ -2231,12 +2236,12 @@ def test_fetch_artifact_unavailable_when_no_bridge(monkeypatch):
     assert result["unavailable"] is True
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py -q -k fetch_artifact`
 Expected: FAIL（`AttributeError: module has no attribute 'fetch_local_artifact'`）
 
-- [ ] **Step 3: 实现产物取回**
+- [x] **Step 3: 实现产物取回**
 
 在 `local_render_runner.py` 追加：
 
@@ -2367,7 +2372,7 @@ def _read_artifact(payload: dict[str, Any]) -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 4: 接入入库（在 render_video 本机成功分支后）**
+- [x] **Step 4: 接入入库（在 render_video 本机成功分支后）**
 
 修改 `render_video.py` 的本机成功分支，取回产物并入库：
 
@@ -2437,12 +2442,12 @@ def _ingest_local_artifact(*, account_id: str, artifact_path: str, name: str) ->
 
 `render_video.py` 顶部已有 `import logging`（L19）与 `from uuid import UUID`（L21），无需重复导入。
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/internal/core/tools/test_local_render_runner.py test/internal/core/tools/test_render_video_tool.py -q`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add api/internal/core/tools/builtin_tools/providers/video_render_tools/ api/scripts/render_worker.py api/test/internal/core/tools/
@@ -2458,7 +2463,7 @@ git commit -m "feat(render): ingest local render artifact into render-output lib
 - Modify: `desktop/main.js`（`tokens` L424-430、端口探测 L435-449、`startWorker` L451-472、`createBridge` L474-489）
 - Test: `desktop/test/bridge.test.js`（追加用例）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 在 `desktop/test/bridge.test.js` 末尾追加（**照抄该文件既有的 `stubWorker` 辅助函数用法**，不要新造函数）：
 
@@ -2512,12 +2517,12 @@ test('bridge forwards /artifact to render worker with worker token', async () =>
 
 > 参照物：同文件 L82-104 的 `/file` 用例（`stubWorker` + `createBridge` + 断言上游 `authorization`）。`stubWorker` 定义在 L63-80，`listen` 在 L6-10，`request` 在 L12-22。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd desktop && node --test test/bridge.test.js`
 Expected: FAIL（`/render` 返回 404）
 
-- [ ] **Step 3: 实现 bridge 路由**
+- [x] **Step 3: 实现 bridge 路由**
 
 在 `desktop/bridge.js` 的 `targets` 对象中，`/control` 之后追加：
 
@@ -2534,7 +2539,7 @@ Expected: FAIL（`/render` 返回 404）
     },
 ```
 
-- [ ] **Step 4: 实现 main.js 托管**
+- [x] **Step 4: 实现 main.js 托管**
 
 **4a. token 增加 render**（L424-430）：
 
@@ -2622,12 +2627,12 @@ Expected: FAIL（`/render` 返回 404）
 > 若本任务未新建 `render-runtime.js`，则此处无需改动；**只要新增了任何 `.js` 模块就必须加**。
 > 同时注意 `extraResources` 是否需登记随包内置的 ffmpeg/ffprobe（见 §0.5.2 第 2 级策略）。
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `cd desktop && node --test test/bridge.test.js`
 Expected: PASS
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add desktop/bridge.js desktop/main.js desktop/package.json desktop/test/bridge.test.js
@@ -2643,7 +2648,7 @@ git commit -m "feat(desktop): host render worker and expose /render bridge route
 - Modify: `api/.env.example`（渲染段）
 - Test: `api/test/deploy/test_render_worker_profile.py`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `api/test/deploy/test_render_worker_profile.py`：
 
@@ -2689,12 +2694,12 @@ def test_render_worker_keeps_resource_limits():
     assert "memory: 2800M" in block
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `cd api && python -m pytest test/deploy/test_render_worker_profile.py -q`
 Expected: FAIL（`云端渲染未用 profile 下线`）
 
-- [ ] **Step 3: 实现下线（保留定义）**
+- [x] **Step 3: 实现下线（保留定义）**
 
 在 `docker/docker-compose.yaml` 的 `llmops-render-worker` 服务内，`container_name` 之后加注释与 profile：
 
@@ -2715,12 +2720,12 @@ RENDER_LOCAL_ENABLED=true
 RENDER_CLOUD_FALLBACK_ENABLED=true
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `cd api && python -m pytest test/deploy/test_render_worker_profile.py -q`
 Expected: PASS（3 passed）
 
-- [ ] **Step 5: 验证 compose 默认清单不含 render worker**
+- [x] **Step 5: 验证 compose 默认清单不含 render worker**
 
 Run: `cd docker && docker compose config --services`
 Expected: 输出**不含** `llmops-render-worker`（默认已下线）
@@ -2728,7 +2733,7 @@ Expected: 输出**不含** `llmops-render-worker`（默认已下线）
 Run: `cd docker && docker compose --profile cloud-render config --services`
 Expected: 输出**含** `llmops-render-worker`（可随时接通）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add docker/docker-compose.yaml api/.env.example api/test/deploy/test_render_worker_profile.py
@@ -2746,7 +2751,7 @@ git commit -m "chore(render): disable cloud render worker by default, keep it re
 - Modify: `desktop/README.md`
 - Modify: `docs/README.md`（若新增顶层文档才需登记；本任务不新增，故不改）
 
-- [ ] **Step 1: 更新桌面端模块文档**
+- [x] **Step 1: 更新桌面端模块文档**
 
 在 `docs/prd/modules/09-desktop-client.md` 的 worker 清单处，把子命令从 `os|browser|computer|wake` 更新为 `os|browser|computer|render|wake`，并补一段：
 
@@ -2764,11 +2769,11 @@ git commit -m "chore(render): disable cloud render worker by default, keep it re
   `KnowledgeBaseService.store_render_output` 入库。
 ```
 
-- [ ] **Step 2: 更新 08-os-automation 的桥路由表**
+- [x] **Step 2: 更新 08-os-automation 的桥路由表**
 
 在 `docs/prd/modules/08-os-automation.md` 的桥路由表中补 `/render` 与 `/artifact` 两行（指向 render worker:8768），并注明「服务端工具经 `resolve_desktop_bridge` 解析，勿只读静态 env」。
 
-- [ ] **Step 3: 更新部署文档**
+- [x] **Step 3: 更新部署文档**
 
 在 `docs/deployment-single-node.md` 的渲染段补一节：
 
@@ -2789,11 +2794,11 @@ docker compose --profile cloud-render up -d llmops-render-worker
 ```
 ```
 
-- [ ] **Step 4: 更新 desktop/README.md**
+- [x] **Step 4: 更新 desktop/README.md**
 
 在 worker 清单与桥路由表处补 render worker 与 `/render`、`/artifact`。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add docs/prd/modules/09-desktop-client.md docs/prd/modules/08-os-automation.md docs/deployment-single-node.md desktop/README.md
@@ -2806,7 +2811,7 @@ git commit -m "docs(render): document local-first render with cloud path retaine
 
 **Files:**（无代码改动，仅验证）
 
-- [ ] **Step 1: 逐个新符号点名入口（AGENTS.md 强制要求）**
+- [x] **Step 1: 逐个新符号点名入口（AGENTS.md 强制要求）**
 
 对照下表逐项确认，任一项找不到调用方即为断链：
 
@@ -2826,7 +2831,7 @@ git commit -m "docs(render): document local-first render with cloud path retaine
 | `Config.RENDER_CLOUD_FALLBACK_ENABLED` | `render_video._cloud_fallback_enabled()` | 同上 |
 | `cloud-render` profile | compose + `deployment-single-node.md` | `docker compose --profile cloud-render config --services` |
 
-- [ ] **Step 2: 全仓搜索新符号的引用方（排除测试与文档）**
+- [x] **Step 2: 全仓搜索新符号的引用方（排除测试与文档）**
 
 Run:
 ```bash
@@ -2836,7 +2841,7 @@ grep -rn "ensureCliShim\|resolveRuntimePaths\|render-runtime" desktop/ --include
 ```
 Expected: 每个符号都能在**非测试**代码中找到引用（定义处 + 调用处）
 
-- [ ] **Step 3: 运行时一致性验证（Node 版本必须两端相同）**
+- [x] **Step 3: 运行时一致性验证（Node 版本必须两端相同）**
 
 Run:
 ```bash
@@ -2847,18 +2852,18 @@ cd desktop && ELECTRON_RUN_AS_NODE=1 node_modules/electron/dist/electron.exe -e 
 Expected: 容器 `v24.x` 与桌面端 Electron 内置 Node **major 相同（24）**。
 若不一致，说明 Task 0 未生效或版本被改回，**属阻断问题，必须修复后再继续**。
 
-- [ ] **Step 4: 运行全量后端测试**
+- [x] **Step 4: 运行全量后端测试**
 
 Run: `cd api && python -m pytest test/ -q`
 Expected: 全部通过（允许存在与本改动无关的既有环境失败，需逐条确认）
 记录：passed 数、failed 列表
 
-- [ ] **Step 5: 运行桌面端测试**
+- [x] **Step 5: 运行桌面端测试**
 
 Run: `cd desktop && node --test`
 Expected: 全部通过
 
-- [ ] **Step 6: 真机端到端验证（本机渲染闭环）**
+- [x] **Step 6: 真机端到端验证（本机渲染闭环）**
 
 前置：本机具备 chrome-headless-shell + ffmpeg/ffprobe（Node 由 Electron 提供）。
 
@@ -2885,7 +2890,7 @@ Expected: 返回 `{"ok": true, "path": "...", "size_bytes": <正数>}`，且 `ff
 > 此处会返回 `HyperFrames requires Node.js >= 22 (current: 20.x)`——出现该错误即证明
 > Task 0（升级）或 Task 0B（shim）未生效。
 
-- [ ] **Step 7: 验证云端开关行为**
+- [x] **Step 7: 验证云端开关行为**
 
 Run: `cd docker && docker compose config --services | grep render`
 Expected: **无输出**（默认不含 render worker）
@@ -2893,10 +2898,10 @@ Expected: **无输出**（默认不含 render worker）
 Run: `docker compose --profile cloud-render config --services | grep render`
 Expected: `llmops-render-worker`
 
-- [ ] **Step 7: 提交验证记录（若有文档更新）**
+- [x] **Step 8: 提交验证记录（若有文档更新）**
 
 ```bash
-git add -A
+git add api/ desktop/ docs/ docker/
 git commit -m "test(render): verify local-first render wiring end to end"
 ```
 
@@ -2904,21 +2909,21 @@ git commit -m "test(render): verify local-first render wiring end to end"
 
 ## 自检清单（执行者收尾时逐项打勾）
 
-- [ ] **桌面端 Electron 内置 Node 为 24**，与容器 `node:24-bookworm-slim`（v24.21.0）major 一致
-- [ ] **用户无需自装 Node**：渲染走 Electron 内置 Node（经 shim + `ELECTRON_RUN_AS_NODE=1`）
-- [ ] shim **原地引用** `process.execPath`（未拷贝 electron.exe 单文件，否则 DLL 缺失报 `0xC0000135`）
-- [ ] **渲染运行时随包分发**（无按需下载）：`stage-render-runtime.js` 产出 `vendor/render-runtime/`，
+- [x] **桌面端 Electron 内置 Node 为 24**，与容器 `node:24-bookworm-slim`（v24.21.0）major 一致
+- [x] **用户无需自装 Node**：渲染走 Electron 内置 Node（经 shim + `ELECTRON_RUN_AS_NODE=1`）
+- [x] shim **原地引用** `process.execPath`（未拷贝 electron.exe 单文件，否则 DLL 缺失报 `0xC0000135`）
+- [x] **渲染运行时随包分发**（无按需下载）：`stage-render-runtime.js` 产出 `vendor/render-runtime/`，
       已挂进 `extraResources` 与 `pack`/`dist` 脚本
-- [ ] **`onnxruntime-node` 已含入并裁剪到 win32**（536MB → 68MB；图片处理可用）
-- [ ] **已验证 Electron 能加载 onnxruntime 原生模块**（N-API v3，ABI 稳定，无需 electron-rebuild）
-- [ ] `vendor/render-runtime/` 已在 `.gitignore` 中（构建产物不入库）
-- [ ] 新增的 `render-runtime.js` 已登记进 `package.json` 的 `build.files`（否则安装版崩）
-- [ ] 云端渲染代码**未被删除或重构**，仅通过 `profiles` 与 env 开关下线
-- [ ] 本机渲染调用**走 `resolve_desktop_bridge`**（未重蹈 `browser_action` 静态 env 的断链）
-- [ ] `worker_super` 的**两处**白名单（`choices` + `_module_and_entry`）都已加 `render`
-- [ ] `_SERVICE_SUPPORTS_HOST_PORT` 已含 `render`（否则 `--port` 不生效）
-- [ ] 「通道不可用」与「渲染业务失败」语义已区分：前者回退云端，后者直接报错
-- [ ] 每个新符号都能指向调用方（Task 11 Step 1 表格逐项通过）
-- [ ] `docker compose config --services` 默认不含 `llmops-render-worker`
-- [ ] 文档四处已同步（09 / 08 / deployment / desktop README）
-- [ ] 全量回归通过，既有失败已逐条确认为环境问题
+- [x] **`onnxruntime-node` 已含入并裁剪到 win32**（536MB → 68MB；图片处理可用）
+- [x] **已验证 Electron 能加载 onnxruntime 原生模块**（N-API v3，ABI 稳定，无需 electron-rebuild）
+- [x] `vendor/render-runtime/` 已在 `.gitignore` 中（构建产物不入库）
+- [x] 新增的 `render-runtime.js` 已登记进 `package.json` 的 `build.files`（否则安装版崩）
+- [x] 云端渲染代码**未被删除或重构**，仅通过 `profiles` 与 env 开关下线
+- [x] 本机渲染调用**走 `resolve_desktop_bridge`**（未重蹈 `browser_action` 静态 env 的断链）
+- [x] `worker_super` 的**两处**白名单（`choices` + `_module_and_entry`）都已加 `render`
+- [x] `_SERVICE_SUPPORTS_HOST_PORT` 已含 `render`（否则 `--port` 不生效）
+- [x] 「通道不可用」与「渲染业务失败」语义已区分：前者回退云端，后者直接报错
+- [x] 每个新符号都能指向调用方（Task 11 Step 1 表格逐项通过）
+- [x] `docker compose config --services` 默认不含 `llmops-render-worker`
+- [x] 文档四处已同步（09 / 08 / deployment / desktop README）
+- [x] 全量回归通过，既有失败已逐条确认为环境问题
