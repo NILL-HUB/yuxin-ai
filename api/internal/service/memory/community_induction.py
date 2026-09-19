@@ -220,9 +220,10 @@ class CommunityInductionEngine:
                    [m IN members | m.created_at] AS created_ats
             """
             with driver.session() as session:
-                # 注意：此处保持与改造前一致的绑定集合（仅替换归属参数），
-                # 不引入行为变更（`$cutoff` 的绑定问题不在本任务范围）。
-                result = session.run(cypher_groups, {**owner.neo4j_props()})
+                # 缺口六（ADMIN-P3c-4）：补上 $cutoff 绑定——此前缺失导致真图报
+                # ParameterMissing、异常被吞、groups 恒空，Entity 聚合候选永远为空。
+                # SemanticMemory 分支一直正确绑定 cutoff；此处与之对齐。
+                result = session.run(cypher_groups, {"cutoff": cutoff.isoformat(), **owner.neo4j_props()})
                 groups = list(result)
         except Exception:
             logger.warning("_collect_eligible: 聚合 Entity 失败", exc_info=True)

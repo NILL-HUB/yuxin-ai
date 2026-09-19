@@ -81,3 +81,89 @@ class TestRetrieverCommunityRecall:
         monkeypatch.setattr(retriever, "_get_embeddings_service", lambda: None)
         result = retriever.retrieve("测试主题查询", str(uuid4()))
         assert isinstance(result, list)
+
+
+class TestCommunityInductionCutoffBinding:
+    """缺口六（ADMIN-P3c-4）：Entity 聚合分支的 `$cutoff` 必须绑定。
+
+    修复前 `session.run(cypher_groups, {**owner.neo4j_props()})` 缺 cutoff →
+    真图 ParameterMissing 被吞 → groups 恒空 → Entity 聚合候选永远为空。
+    """
+
+    def test_entity_group_branch_binds_cutoff(self, monkeypatch):
+        """Entity 聚合 Cypher 的 run 绑定必须含 cutoff（与 SemanticMemory 分支对齐）。"""
+        from uuid import uuid4
+
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+        from internal.service.memory import community_induction as ci_mod
+
+        captured_binds = {}
+
+        class _Session:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def run(self, cypher, parameters=None, **binds):
+                params = dict(parameters or {})
+                params.update(binds)
+                captured_binds.setdefault(len(captured_binds), (cypher, params))
+                return iter([])  # 无记录
+
+        class _Driver:
+            def session(self):
+                return _Session()
+
+        engine = CommunityInductionEngine(neo4j_driver=_Driver())
+        owner_key = str(uuid4())
+
+        # 不吞异常、不依赖真图：直接调用 _collect_eligible，捕获 session.run 绑定
+        monkeypatch.setattr(
+            ci_mod.CommunityInductionEngine,
+            "_compute_age_days",
+            lambda self, ts: 0,
+        )
+        engine._collect_eligible(owner_key)
+
+        # 第二个 run 是 Entity 聚合分支（第一个是 SemanticMemory）
+        assert len(captured_binds) == 2
+        _, entity_binds = captured_binds[1]
+        assert "cutoff" in entity_binds, "Entity 聚合分支必须绑定 $cutoff（缺口六）"
+        assert "user_id" in entity_binds or "admin_user_id" in entity_binds
+
+    def test_entity_branch_cutoff_isoformat_matches_semantic_branch(self, monkeypatch):
+        """两个分支的 cutoff 值一致（同一时间点，ISO 格式）。"""
+        from uuid import uuid4
+
+        from internal.service.memory import community_induction as ci_mod
+
+        captured_binds = {}
+
+        class _Session:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def run(self, cypher, parameters=None, **binds):
+                params = dict(parameters or {})
+                params.update(binds)
+                captured_binds.setdefault(len(captured_binds), params)
+                return iter([])
+
+        class _Driver:
+            def session(self):
+                return _Session()
+
+        engine = CommunityInductionEngine(neo4j_driver=_Driver())
+        monkeypatch.setattr(
+            ci_mod.CommunityInductionEngine,
+            "_compute_age_days",
+            lambda self, ts: 0,
+        )
+        engine._collect_eligible(str(uuid4()))
+
+        assert captured_binds[0]["cutoff"] == captured_binds[1]["cutoff"]
