@@ -202,11 +202,39 @@
 
 **验证**：全量回归 4947 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
 
-**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：15 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
-（图扩展无主体谓词、PG `owner_account_id` NOT NULL 阻塞 admin 落库、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点、`_delete_all_pgvector_rows` 未追加 `owner_type`）。
-其中原「Neo4j 唯一约束对管理员级失效」（原缺口三）已修复（2026-09，哨兵值方案；见同节「缺口三（已修复）」）。
+**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：14 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
+（图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点、`_delete_all_pgvector_rows` 未追加 `owner_type`）。
+其中「Neo4j 唯一约束对管理员级失效」（原缺口三）已修复（2026-09，哨兵值方案）；「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二）已修复（2026-09-19，ADMIN-P3c-1；见下节）。
 
 实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
+
+
+### ADMIN-P3c-1 写入侧主体化（2026-09-19 完成）
+
+解除 admin / Agent 主体在 PG 侧的写入阻塞，并让 Neo4j / PG **写入路径**按主体键落归属。
+阅读端与调用方接线（admin 对话召回/写入、治理层、巩固任务）属 **P3c-2**；配置与冷存储属 **P3c-3**。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 解阻塞迁移（可空 + 按主体类型 CHECK，含动态分表扫描） | `api/internal/migration/versions/z3c4d5e6f7a8_memory_owner_nullable_account.py` |
+| 模型 / 运行时建表 DDL 同步 | `api/internal/model/knowledge.py`、`api/internal/service/embedding_table_router.py` |
+| 写路径主体化（PG 投影 + Neo4j 节点） | `api/internal/service/memory/ledger_writer.py`（`_owner_props()` / `_owner_pattern()`） |
+| agent_curated 调用方同步签名 | `api/internal/service/memory/agent_memory_tool.py` |
+
+**关键决策**：
+- 约束语义从「列级非空」升级为「**按主体类型非空**」：`user ⇒ owner_account_id` 非空、
+  `admin ⇒ owner_admin_user_id` 非空（`ck_<table>_owner_subject`）。主表与全部动态分表同口径。
+- `_upsert_vector` 的跳过条件从「account 为空」改为「**主体无法解析**」（admin 的 account=NULL 合法）。
+- Neo4j 写入统一走 `MemoryOwnerKey.neo4j_props()`；用户态不传主体键时回落历史 `user_id` 字面量，
+  **逐字节等价且不要求可解析为 UUID**。
+
+**验证**：真库 `alembic upgrade head` 成功（`y2b3c4d5e6f8 → z3c4d5e6f7a8`）；真库断言主表 + 两张分表
+（1024/1536）均落 CHECK、admin 行可插入且非法 user 行被拒；Neo4j 探针 `user_id` 为 null、`agent_id`
+为哨兵，清理 leftover=0。真库/真图守卫 8 passed；全量回归 **5055 passed / 13 skipped / 0 failed**。
+
+> **诚实披露**：本阶段完成后 admin **写入能力**已具备（`LedgerWriter` 各写路径接受
+> `MemoryOwnerKey.for_admin(...)`），但**仍无生产调用方**——admin 对话链路对记忆零接线，
+> 属「已提供能力、未接入」。真正端到端可达由 P3c-2 完成。
 
 
 ### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
@@ -482,10 +510,21 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 （实测 **v7.0.2**，具备 libx264 / concat demuxer / subtitles 滤镜；**无 drawtext**——故字幕走
 `subtitles` 烧录而非 drawtext）。剪辑经 Celery **默认 `celery` 队列**异步执行，不阻塞对话请求线程。
 
-**⚠️ 字幕时间轴现状（与设计稿不符，以实测为准）**：现有 ASR（`AudioService.audio_to_text`）
-**只返回纯文本、零时间戳**，故**无法**从库内 ASR 产物自动生成 SRT；`video_subtitle` 因此要求
-调用方显式给出 `cues=[{start, end, text}]`。需要「自动对齐」时，应由上层（LLM 读 ASR 文本 + 视频时长）
-先分配时间轴再传入。
+**字幕时间轴：自动生成（已修正的历史结论）**：此处**曾错误记载**「现有 ASR 只返回纯文本、零时间戳，
+故无法自动生成 SRT，`video_subtitle` 必须由调用方显式给出 `cues`」。**该结论已被实测推翻**：
+SiliconFlow ASR 在请求体带 `response_format=verbose_json` 时返回
+`segments: [{start, end, text}]`（OpenAI Whisper 兼容），本项目此前只是**从未请求该字段**。
+
+现已落地的自动字幕链路（三级解析，先便宜后昂贵）：
+
+| 层级 | 来源 | 实现 |
+| --- | --- | --- |
+| 1 | 调用方显式 `cues` | 工具入参 `cues` 仍可传，原样使用（人工修订/精确对齐） |
+| 2 | **复用 L1 已留存时间轴** | `AudioService.audio_to_text_with_segments()` 于 L1 解析时把时间轴写入 `KnowledgeSegment.metadata.transcript_segments`；`VideoEditService._load_stored_cues()` 读回复用（**零额外 ASR 成本**） |
+| 3 | 兜底重跑 ASR | `VideoEditService._transcribe_source()` 抽音轨 + 带时间轴 ASR（老素材未留存时间轴时） |
+
+因此 `video_subtitle` 的 `cues` 现为**可选**：不传即自动生成，三层皆空才报可读错误。
+纯文本接口 `audio_to_text()` 的请求契约**未被改动**（不发送 `response_format`），其 8+ 调用方不受影响。
 
 **⚠️ 已修复的实测缺陷（字体静默失效）**：api 镜像（python slim）**原本既无 fontconfig 配置也无任何字体**，
 而 libass 找不到字体时**不报错、静默跳过字幕渲染**——实测产物与源帧**逐像素 md5 完全相同**、退出码仍为 0。
@@ -495,6 +534,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 
 **真机 E2E 实测（2026-09-19）**：trim（5s 源 → 2.02s 产物）、concat（2s + 2s → 4.00s）、
 subtitle（2.00s，字幕像素已烧入、帧 md5 相对源发生变化）均通过；ffprobe 均可读出有效时长。
+自动字幕链路另行实测（TTS 造人声 → 带时间轴 ASR → 写库 → 读回复用 → 烧录，逐帧 md5 变化）通过。
 
 ### FIX-P3（第三轮修复，已完成）
 

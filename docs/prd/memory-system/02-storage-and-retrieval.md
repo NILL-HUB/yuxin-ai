@@ -1997,7 +1997,7 @@ class DigestConfig(BaseModel):
 
 以下均**不影响用户端**（用户主体下与改造前等价），且因 **admin 写路径尚未接线**而未在生产触发；
 待 P3c 接入 admin / Agent 记忆读写时须逐项收敛。
-（例外：**缺口三已修复**，保留编号以维持与既有引用的对应关系。）
+（例外：**缺口二、缺口三已修复**，保留编号以维持与既有引用的对应关系。）
 
 ### 缺口一：图扩展与节点详情无主体谓词
 
@@ -2005,12 +2005,25 @@ class DigestConfig(BaseModel):
 **只按 `node_id` 匹配，不带主体谓词**。当前因节点 id 全局唯一且起点来自已过滤的召回结果，
 实际风险低；但引入 admin / Agent 主体后，若扩展路径跨到其它主体节点，会形成**跨主体泄漏**。
 
-### 缺口二：PG 侧 `owner_account_id` NOT NULL 阻塞 admin 记忆落库
+### 缺口二（已修复，2026-09-19，ADMIN-P3c-1）：PG 侧 `owner_account_id` NOT NULL 阻塞 admin 记忆落库
 
-`user_memory.owner_account_id` 与向量分表 `user_memory_embedding_{dim}.owner_account_id` 均为
-**NOT NULL**；admin 主体该列为 NULL，故 **admin 记忆在 PG 侧无法写入**。读路径的 admin 分支谓词
-已就位，但在约束解除前查不到数据。解除需迁移：两处改为可空 + 补 CHECK「`owner_type='user'` ⇒
-`owner_account_id` 非空 / `owner_type='admin'` ⇒ `owner_admin_user_id` 非空」。
+`user_memory.owner_account_id` 与向量分表 `user_memory_embedding_{dim}.owner_account_id` 原为
+**NOT NULL**；admin 主体该列为 NULL，`LedgerWriter._upsert_vector` 因此在 account 为空时主动
+return None 跳过写入，形成「图节点已建、投影行缺失」的键值互补破坏。
+
+**修复**：迁移 `z3c4d5e6f7a8`（`down_revision=y2b3c4d5e6f8`）把主表与全部分表（动态表名走
+`information_schema` 扫描）的 `owner_account_id` 改为可空，并以 `ck_<table>_owner_subject`
+把约束语义升级为「按主体类型非空」：
+
+    owner_type='user'  ⇒ owner_account_id      IS NOT NULL
+    owner_type='admin' ⇒ owner_admin_user_id   IS NOT NULL
+
+新建维度分表由 `EmbeddingTableRouter.ensure_tables_for_dimension()` 的 DDL 直接带同款 CHECK
+（与迁移同名同语义，避免新维度重复踩坑）。`_upsert_vector` 的跳过条件随之从「account 为空」
+改为「**主体无法解析**」；`UserMemory.owner_account_id` 模型侧同步改 `nullable=True`。
+
+真库实测：迁移在 api 容器内 `upgrade head` 成功；主表 + 两张分表（1024/1536）均落 CHECK；
+admin 主体行（`owner_account_id=NULL`）可成功插入，非法 user 行（缺 account）被拒。
 
 ### 缺口三（已修复，2026-09）：Neo4j 唯一约束对「管理员级」节点失效
 
@@ -2096,9 +2109,14 @@ admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `Me
 ### 缺口十四：以下写/读路径模块仍硬编码 `user_id` 属性（P3b 文件范围外）
 
 `write_time_conflict_resolver.py`（生产写路径，经 `MemoryWriteService` 调用）、
-`post_execution_hook.py::_fetch_recent_episodes`、`entity_resolution.py`（`EntityResolver`）、
-`ledger_writer.py`（Neo4j 节点属性写入）均仍以属性 `user_id` 直接写入/查询。
-用户态等价；admin 写路径未接线前无影响，但 P3c 接入时应统一改走访问器。
+`post_execution_hook.py::_fetch_recent_episodes`、`entity_resolution.py`（`EntityResolver`）
+均仍以属性 `user_id` 直接写入/查询。用户态等价；admin 写路径未接线前无影响，但 P3c 接入时应统一改走访问器。
+
+> **已收敛部分（ADMIN-P3c-1）**：`ledger_writer.py` 的 Neo4j 写路径**已主体化**——
+> `_create_episode_node` / `_merge_entity_node` / `_increment_entity_access` /
+> `_increment_cooccurrence` / `write_agent_curated` / `invalidate_agent_curated` 均改走
+> `_owner_props()`（内部调 `MemoryOwnerKey.neo4j_props()`）；用户态不传主体键时回落历史
+> `user_id` 字面量，逐字节等价。此条不再适用于 `ledger_writer.py`。
 
 ### 缺口十五：`EntityResolver` / `ColdStorageManager` 无注入消费点（未接线模块）
 
@@ -2108,6 +2126,10 @@ admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `Me
 ### 缺口十六：`_delete_all_pgvector_rows` 仅按 `owner_account_id` 过滤、未追加 `owner_type`
 
 `MemoryGovernor._delete_all_pgvector_rows` 只按 `owner_account_id == owner_key` 过滤，未追加 `owner_type`
-（与同文件其它已主体化路径不一致）。admin 主体该列为 NULL 不会被删到（fail-safe）；该方法仅经
-`gdpr_delete`（不可达，见缺口八）触达。已内联注释披露。
+（与同文件其它已主体化路径不一致）。该方法仅经 `gdpr_delete`（不可达，见缺口八）触达。
+
+> **⚠️ 风险升级（ADMIN-P3c-1 后）**：缺口二已修复，admin 行现可真正落库（`owner_account_id` 为 NULL）。
+> 因而此方法的「admin 不会被删到」不再是无害的 fail-safe，而是**admin 记忆无法被 GDPR 删除**。
+> 与缺口九（Neo4j 侧仅支持用户主体）同属治理层主体化，需在 P3c-2 一并收敛。
+> 已内联注释披露。
 
