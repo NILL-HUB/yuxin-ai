@@ -265,6 +265,34 @@ class MemoryOwnerKey:
         )
 
     @classmethod
+    def from_neo4j_props(cls, node) -> "MemoryOwnerKey":
+        """``neo4j_props()`` 的逆：从节点属性还原主体键（属性级分离）。
+
+        判定顺序：**admin 属性优先**——混装节点（admin 与 user 属性并存，
+        P3b 缺口五的既有产物）应判为 admin 主体，不得误判为用户。
+
+        管理员级的 ``agent_id`` 为 ``NEO4J_ADMIN_LEVEL_AGENT_SENTINEL``，
+        在此映射回「无 agent」。
+
+        Raises:
+            MemoryOwnerKeyError: 节点无任何归属属性，或属性值非法。
+        """
+        admin_id = node.get("admin_user_id")
+        if admin_id:
+            agent = node.get("agent_id")
+            if agent and agent != NEO4J_ADMIN_LEVEL_AGENT_SENTINEL:
+                return cls.for_admin(
+                    _parse_uuid(admin_id, f"admin_user_id={admin_id}"),
+                    agent_id=_parse_uuid(agent, f"agent_id={agent}"),
+                )
+            return cls.for_admin(_parse_uuid(admin_id, f"admin_user_id={admin_id}"))
+
+        user_id = node.get("user_id")
+        if not user_id:
+            raise MemoryOwnerKeyError("节点缺少归属属性（admin_user_id / user_id）")
+        return cls.for_user(_parse_uuid(user_id, f"user_id={user_id}"))
+
+    @classmethod
     def parse(cls, key: str) -> "MemoryOwnerKey":
         """解析 `to_key()` 产物；兼容历史裸 UUID 与带 `user:` 前缀形态。
 

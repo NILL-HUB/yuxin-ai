@@ -387,3 +387,46 @@ def test_neo4j_filter_params_are_derivable_from_props():
         assert params <= set(key.neo4j_props().keys()), (
             f"谓词参数 {params} 无法全部从 props {set(key.neo4j_props().keys())} 取得"
         )
+
+
+# =========================================================
+# ADMIN-P3c-3：neo4j_props() 的逆（属性还原主体）
+# =========================================================
+
+
+def test_from_neo4j_props_user_roundtrip():
+    account_id = uuid4()
+    props = MemoryOwnerKey.for_user(account_id).neo4j_props()
+    assert MemoryOwnerKey.from_neo4j_props(props) == MemoryOwnerKey.for_user(account_id)
+
+
+def test_from_neo4j_props_admin_level_uses_sentinel():
+    """管理员级：agent_id 为哨兵时必须还原为「无 agent」。"""
+    admin_id = uuid4()
+    props = MemoryOwnerKey.for_admin(admin_id).neo4j_props()
+    assert props["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+    assert MemoryOwnerKey.from_neo4j_props(props) == MemoryOwnerKey.for_admin(admin_id)
+
+
+def test_from_neo4j_props_admin_agent_roundtrip():
+    admin_id, agent_id = uuid4(), uuid4()
+    props = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).neo4j_props()
+    assert MemoryOwnerKey.from_neo4j_props(props) == MemoryOwnerKey.for_admin(
+        admin_id, agent_id=agent_id
+    )
+
+
+def test_from_neo4j_props_admin_wins_over_user():
+    """混装节点（既有缺陷产物）：admin 属性优先，不得误判为用户主体。"""
+    admin_id = uuid4()
+    node = {
+        "admin_user_id": str(admin_id),
+        "agent_id": NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+        "user_id": str(uuid4()),
+    }
+    assert MemoryOwnerKey.from_neo4j_props(node) == MemoryOwnerKey.for_admin(admin_id)
+
+
+def test_from_neo4j_props_without_owner_raises():
+    with pytest.raises(MemoryOwnerKeyError):
+        MemoryOwnerKey.from_neo4j_props({"name": "无归属"})
