@@ -33,6 +33,7 @@ import re
 from datetime import UTC, datetime
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 
 logger = logging.getLogger(__name__)
 
@@ -88,22 +89,36 @@ class ProfileGraphService:
     # =========================================================
 
     def ensure_user(self, user_id: str) -> None:
-        """MERGE (:User {id})，更新 last_active_at/name。"""
+        """MERGE (:User)，按主体归属，更新 last_active_at/name。
+
+        Args:
+            user_id: 主体键字符串（用户态为裸 UUID；admin 态为 ``admin:{uuid}``
+                或 ``admin:{uuid}:{uuid}``，见 ``MemoryOwnerKey``）。ADMIN-P3c-4 缺口四。
+        """
         driver = self._get_driver()
         if driver is None:
             return
         try:
+            owner = MemoryOwnerKey.parse(user_id)
+            props = owner.neo4j_props()
+            if owner.owner_type.value == "user":
+                merge_clause = "MERGE (u:User {id: $user_id})"
+            else:
+                merge_clause = (
+                    "MERGE (u:User {admin_user_id: $admin_user_id, agent_id: $agent_id})"
+                )
+            set_clause = ", ".join(f"u.{k} = ${k}" for k in props)
             with driver.session() as session:
                 session.run(
-                    """
-                    MERGE (u:User {id: $user_id})
-                    SET u.user_id = $user_id,
+                    f"""
+                    {merge_clause}
+                    SET {set_clause},
                         u.name = COALESCE(u.name, ''),
                         u.last_active_at = $now,
                         u.created_at = COALESCE(u.created_at, $now),
                         u.is_active = COALESCE(u.is_active, true)
                     """,
-                    user_id=user_id,
+                    **props,
                     now=_now_iso(),
                 ).consume()
         except Exception:
@@ -130,11 +145,14 @@ class ProfileGraphService:
         result["user"] = True
 
         try:
+            owner = MemoryOwnerKey.parse(user_id)
+            props = owner.neo4j_props()
             with driver.session() as session:
                 fetched = session.run(
-                    """
-                    MATCH (e:Episode {user_id: $user_id})
-                    WHERE e.explicit_category IS NOT NULL
+                    f"""
+                    MATCH (e:Episode)
+                    WHERE {owner.neo4j_filter_condition("e")}
+                      AND e.explicit_category IS NOT NULL
                       AND e.t_invalidated_at IS NULL
                       AND (e.status IS NULL OR NOT (e.status IN $invalid_statuses))
                       AND e.is_active <> false
@@ -147,7 +165,7 @@ class ProfileGraphService:
                            e.node_id AS node_id,
                            e.id AS id
                     """,
-                    user_id=user_id,
+                    **props,
                     invalid_statuses=list(_EPISODE_INVALID_STATUSES),
                 )
                 records = [record for record in fetched]
@@ -204,8 +222,8 @@ class ProfileGraphService:
             for (node_type, node_key), bucket in buckets.items():
                 try:
                     session.run(
-                        self._upsert_cypher(node_type),
-                        self._upsert_params(user_id, bucket),
+                        self._upsert_cypher(node_type, owner),
+                        self._upsert_params(owner, bucket),
                     ).consume()
                     if node_type == "Trait":
                         traits += 1
@@ -223,15 +241,16 @@ class ProfileGraphService:
 
                 try:
                     session.run(
-                        """
-                        MATCH (u:User {id: $user_id})
+                        f"""
+                        MATCH (u:User)
+                        WHERE {owner.neo4j_filter_condition("u")}
                         MATCH (e:Episode)
-                        WHERE e.user_id = $user_id
+                        WHERE {owner.neo4j_filter_condition("e")}
                           AND (e.node_id IN $source_ids OR e.id IN $source_ids)
                         WITH u, e
                         MERGE (u)-[:HAS_EXPLICIT_MEMORY]->(e)
                         """,
-                        user_id=user_id,
+                        **owner.neo4j_props(),
                         source_ids=bucket["sources"],
                     ).consume()
                     linked += 1
@@ -260,12 +279,13 @@ class ProfileGraphService:
             return ""
 
         try:
+            owner = MemoryOwnerKey.parse(user_id)
             with driver.session() as session:
                 rows = list(
                     session.run(
-                        """
+                        f"""
                         MATCH (n)
-                        WHERE n.user_id = $user_id
+                        WHERE {owner.neo4j_filter_condition("n")}
                           AND (n:Trait OR n:Preference)
                           AND n.is_active <> false
                         RETURN n.category AS category,
@@ -274,7 +294,7 @@ class ProfileGraphService:
                                n.value AS value,
                                n.key AS key
                         """,
-                        user_id=user_id,
+                        **owner.neo4j_props(),
                     )
                 )
         except Exception:
@@ -306,16 +326,24 @@ class ProfileGraphService:
         if driver is None:
             return
         try:
+            owner = MemoryOwnerKey.parse(user_id)
+            props = owner.neo4j_props()
+            if owner.owner_type.value == "user":
+                match_clause = "MATCH (u:User {id: $user_id})"
+            else:
+                match_clause = (
+                    "MATCH (u:User {admin_user_id: $admin_user_id, agent_id: $agent_id})"
+                )
             with driver.session() as session:
                 session.run(
-                    """
-                    MATCH (u:User {id: $user_id})
+                    f"""
+                    {match_clause}
                     SET u.is_active = false
                     WITH u
                     OPTIONAL MATCH (u)-[:HAS_TRAIT|HAS_PREFERENCE]->(n)
                     SET n.is_active = false
                     """,
-                    user_id=user_id,
+                    **props,
                 ).consume()
         except Exception:
             logger.warning(
@@ -347,10 +375,11 @@ class ProfileGraphService:
             return "Preference", f"pref_{cleaned}", content, "偏好", "positive"
         return None, None, None, None, None
 
-    def _upsert_cypher(self, node_type: str) -> str:
+    def _upsert_cypher(self, node_type: str, owner: MemoryOwnerKey) -> str:
         rel = "HAS_TRAIT" if node_type == "Trait" else "HAS_PREFERENCE"
+        owner_pattern = ", ".join(f"{name}: ${name}" for name in owner.neo4j_props())
         return f"""
-        MERGE (n:{node_type} {{key: $key, user_id: $user_id}})
+        MERGE (n:{node_type} {{key: $key, {owner_pattern}}})
         SET n.label = $label,
             n.category = $category,
             n.polarity = $polarity,
@@ -362,14 +391,15 @@ class ProfileGraphService:
             n.is_active = COALESCE(n.is_active, true),
             n.node_id = COALESCE(n.node_id, $node_id)
         WITH n
-        MATCH (u:User {{id: $user_id}})
+        MATCH (u:User)
+        WHERE {owner.neo4j_filter_condition("u")}
         MERGE (u)-[:{rel}]->(n)
         """
 
-    def _upsert_params(self, user_id: str, bucket: dict) -> dict:
+    def _upsert_params(self, owner: MemoryOwnerKey, bucket: dict) -> dict:
         now = _now_iso()
         return {
-            "user_id": user_id,
+            **owner.neo4j_props(),
             "key": bucket["key"],
             "label": bucket["label"],
             "category": bucket["category"],
@@ -378,7 +408,7 @@ class ProfileGraphService:
             "sources": list(bucket["sources"])[:20],
             "episode_count": bucket["episode_count"],
             "now": now,
-            "node_id": f"{bucket['type']}:{user_id}:{bucket['key']}",
+            "node_id": f"{bucket['type']}:{owner.to_key()}:{bucket['key']}",
         }
 
     def _group_of(self, category: str, polarity: str):
