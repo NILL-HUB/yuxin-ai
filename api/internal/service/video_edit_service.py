@@ -150,6 +150,34 @@ class VideoEditService:
                 raise VideoEditError(f"拼接失败：{detail or exc}") from exc
         return self._ensure_output(out)
 
+    def _assert_fonts_available(self) -> None:
+        """校验容器内有可用字体（字幕烧录的**前置硬条件**）。
+
+        为什么必须显式校验：libass 找不到字体时**不会报错退出**，
+        而是静默跳过字幕渲染——实测产物与源帧逐像素完全相同、退出码仍是 0。
+        这种「假成功」比失败更危险（用户以为加了字幕，实际没有）。
+        故在烧录前用 fc-list 探一次，缺失时给可读错误。
+        """
+        import shutil
+
+        fc_list = shutil.which("fc-list")
+        if not fc_list:
+            raise VideoEditError(
+                "容器缺少 fontconfig（fc-list 不可用），无法烧录字幕。"
+                "请在镜像中安装 fontconfig + 字体（见 api/Dockerfile 的说明）。"
+            )
+        try:
+            result = subprocess.run(
+                [fc_list], capture_output=True, timeout=30, check=False
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise VideoEditError(f"字体探测失败：{exc}") from exc
+        if not (result.stdout or b"").strip():
+            raise VideoEditError(
+                "容器内没有任何可用字体，字幕无法烧录（libass 会静默跳过）。"
+                "请安装字体包（如 fonts-dejavu-core）后重试。"
+            )
+
     def burn_subtitles(
         self,
         *,
@@ -167,6 +195,9 @@ class VideoEditService:
         except ValueError as exc:
             # 统一成 VideoEditError，工具层只需处理一种异常
             raise VideoEditError(str(exc)) from exc
+
+        # 前置校验：缺字体时 libass 会静默不渲染（退出码仍为 0），必须先拦下
+        self._assert_fonts_available()
 
         with tempfile.TemporaryDirectory(prefix="video-subtitle-") as work:
             srt_path = Path(work) / "subtitle.srt"

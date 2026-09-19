@@ -7,8 +7,11 @@ import pytest
 from internal.service.video_edit_service import VideoEditService, VideoEditError
 
 
-def _service(monkeypatch, *, run_result=None, run_error=None, duration=10.0):
-    """构造绕过 DI 的服务实例，并替换 ffmpeg 执行与时长探测。"""
+def _service(monkeypatch, *, run_result=None, run_error=None, duration=10.0, fonts=True):
+    """构造绕过 DI 的服务实例，并替换 ffmpeg 执行与时长探测。
+
+    fonts=True 时 stub 掉字体探测（真实环境无字体时该探测会正确拦下字幕烧录）。
+    """
     svc = VideoEditService.__new__(VideoEditService)
     calls = []
 
@@ -21,6 +24,8 @@ def _service(monkeypatch, *, run_result=None, run_error=None, duration=10.0):
     monkeypatch.setattr(svc, "_run_ffmpeg", fake_run)
     monkeypatch.setattr(svc, "_probe_duration", lambda p: duration)
     monkeypatch.setattr(svc, "_resolve_exe", lambda: "ffmpeg")
+    if fonts:
+        monkeypatch.setattr(svc, "_assert_fonts_available", lambda: None)
     return svc, calls
 
 
@@ -282,3 +287,63 @@ def test_temp_dir_is_cleaned_after_success(monkeypatch):
     # 不能在用户/服务器上残留临时工作目录
     assert not Path(seen["dir"]).exists()
 
+
+
+# ── 字体前置校验（真机实测发现的静默失效防护） ────────────────────────────
+#
+# 背景：api 镜像（python slim）**没有 fontconfig 配置与任何字体**。
+# libass 找不到字体时不会报错退出，而是**静默跳过字幕渲染**——
+# 实测产物与源帧逐像素完全相同（md5 一致）、退出码仍为 0。
+# 这种「假成功」会把没加字幕的片子当成品入库，故必须前置拦下。
+
+
+def _svc_raw(monkeypatch):
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_resolve_exe", lambda: "ffmpeg")
+    return svc
+
+
+def test_assert_fonts_available_rejects_when_fc_list_missing(monkeypatch):
+    svc = _svc_raw(monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    with pytest.raises(VideoEditError, match="fontconfig"):
+        svc._assert_fonts_available()
+
+
+def test_assert_fonts_available_rejects_when_no_fonts(monkeypatch):
+    svc = _svc_raw(monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/fc-list")
+
+    class _R:
+        stdout = b"   \n  "
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+    with pytest.raises(VideoEditError, match="没有任何可用字体"):
+        svc._assert_fonts_available()
+
+
+def test_assert_fonts_available_passes_when_fonts_present(monkeypatch):
+    svc = _svc_raw(monkeypatch)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/fc-list")
+
+    class _R:
+        stdout = b"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf: DejaVu Sans:style=Book\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+    svc._assert_fonts_available()  # 不应抛错
+
+
+def test_burn_subtitles_blocks_when_fonts_missing(tmp_path, monkeypatch):
+    """缺字体时必须在起 ffmpeg 之前拦下——否则会产出「没字幕的假成品」。"""
+    src, out = tmp_path / "in.mp4", tmp_path / "out.mp4"
+    _touch_ok(src)
+    svc, calls = _service(monkeypatch, fonts=False)
+    monkeypatch.setattr("shutil.which", lambda name: None)
+
+    with pytest.raises(VideoEditError, match="fontconfig"):
+        svc.burn_subtitles(
+            source_path=src, output_path=out,
+            cues=[{"start": 0.0, "end": 1.0, "text": "hi"}],
+        )
+    # 关键断言：不应消耗一次 ffmpeg 调用（校验在之前）
+    assert calls == []

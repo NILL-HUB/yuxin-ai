@@ -21,7 +21,17 @@ WORKDIR /app/api
 
 # 安装系统依赖（包括 curl 用于下载 tiktoken 文件）
 # 注意：Node 不在这里装——见文件头的阶段一说明（统一 Node 24，glibc）。
-RUN apt-get update && apt-get install -y --no-install-recommends libmagic1 curl tzdata && rm -rf /var/lib/apt/lists/*
+#
+# fontconfig + 字体：视频字幕烧录（KB-P4 video_subtitle）依赖 ffmpeg 的 `subtitles`
+# 滤镜（libass），而 libass 需要 fontconfig 配置与至少一套可用字体。
+# **slim 镜像两者都没有**，缺了不会报错退出，而是**静默不渲染字幕**
+# （实测：退出码 0、无异常，但画面与源帧逐像素相同）。
+# 故这里显式安装 fontconfig + DejaVu 字体，避免该静默失效。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libmagic1 curl tzdata \
+        fontconfig fonts-dejavu-core \
+    && fc-cache -f \
+    && rm -rf /var/lib/apt/lists/*
 
 # 预下载 tiktoken 编码文件到缓存目录
 RUN mkdir -p /root/.cache/tiktoken && \
