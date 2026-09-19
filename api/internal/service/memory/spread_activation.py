@@ -46,6 +46,7 @@ class SpreadActivation:
         self,
         start_nodes: list[str],
         top_k: int = 20,
+        owner_key: str = "",
     ) -> list[tuple[str, float]]:
         """从起始节点沿边扩展，返回激活值排序的 (node_id, activation) 列表。
 
@@ -55,6 +56,8 @@ class SpreadActivation:
         Args:
             start_nodes: 起始节点 ID 列表
             top_k: 返回最大数量
+            owner_key: 记忆主体键（用户主体为裸 UUID，admin 为 ``admin:{uuid}``）；
+                传空串时不加主体谓词（历史行为）。
 
         Returns:
             ``[(node_id, activation), ...]`` 按 activation 降序排列
@@ -70,13 +73,13 @@ class SpreadActivation:
             return []
 
         try:
-            return self._cypher_multi_hop(driver, start_nodes, top_k)
+            return self._cypher_multi_hop(driver, start_nodes, top_k, owner_key=owner_key)
         except Exception:
             logger.warning(
                 "SpreadActivation.activate: Cypher 多跳遍历失败，回退到迭代遍历",
                 exc_info=True,
             )
-            return self._fallback_iterative(driver, start_nodes, top_k)
+            return self._fallback_iterative(driver, start_nodes, top_k, owner_key=owner_key)
 
     # =========================================================
     # Cypher 多跳遍历
@@ -87,12 +90,18 @@ class SpreadActivation:
         driver,
         start_nodes: list[str],
         top_k: int,
+        owner_key: str = "",
     ) -> list[tuple[str, float]]:
         """使用 Cypher 多跳遍历实现扩散激活。
 
         为每跳生成独立 MATCH-WITH 阶段，每跳衰减因子 decay = activation_decay ** hop。
         用 UNION ALL 合并各跳结果。
+
+        ADMIN-P3c-4（缺口一）：传 ``owner_key`` 时，起点与扩展节点均按主体谓词
+        约束（不跨主体扩散）；缺省为空串时与历史行为逐字节等价（无谓词）。
         """
+        owner_predicate = self._owner_predicate(owner_key)
+        owner_binds = self._owner_binds(owner_key)
         max_hops = self._config.max_hops
         decay = self._config.activation_decay
         min_activation = self._config.min_activation
@@ -107,6 +116,8 @@ class SpreadActivation:
                 UNWIND $start_nodes AS start_id
                 MATCH (s {{node_id: start_id}})-[r]->(t)
                 WHERE t.node_id <> start_id
+                  AND {owner_predicate.format(node="s")}
+                  AND {owner_predicate.format(node="t")}
                 WITH t.node_id AS node_id, {hop_decay} * coalesce(r.weight, 1.0) AS activation
                 WHERE activation >= {min_activation}
                 RETURN node_id, activation
@@ -118,6 +129,8 @@ class SpreadActivation:
                 UNWIND $start_nodes AS start_id
                 MATCH (s {{node_id: start_id}})-[r*{hop}]-(t)
                 WHERE t.node_id <> start_id
+                  AND {owner_predicate.format(node="s")}
+                  AND {owner_predicate.format(node="t")}
                 WITH t.node_id AS node_id,
                      {hop_decay} * reduce(w = 1.0, rel IN r | w * coalesce(rel.weight, 1.0)) AS activation
                 WHERE activation >= {min_activation}
@@ -140,7 +153,7 @@ class SpreadActivation:
         """
 
         with driver.session() as session:
-            result = session.run(full_query, {"start_nodes": start_nodes})
+            result = session.run(full_query, {"start_nodes": start_nodes, **owner_binds})
             return [(record["node_id"], record["activation"]) for record in result]
 
     # =========================================================
@@ -152,11 +165,15 @@ class SpreadActivation:
         driver,
         start_nodes: list[str],
         top_k: int,
+        owner_key: str = "",
     ) -> list[tuple[str, float]]:
         """Neo4j APOC/Cypher 多跳不可用时，用迭代遍历替代。
 
         逐跳循环，每跳查询出边，计算衰减后的激活值。
+
+        ADMIN-P3c-4（缺口一）：``owner_key`` 透传给 ``_query_neighbors`` 做主体约束。
         """
+        owner_binds = self._owner_binds(owner_key)
         max_hops = self._config.max_hops
         decay = self._config.activation_decay
         min_activation = self._config.min_activation
@@ -179,7 +196,7 @@ class SpreadActivation:
             for node_id, base_activation in current_frontier:
                 try:
                     # 查询出边
-                    neighbors = self._query_neighbors(driver, node_id, visited)
+                    neighbors = self._query_neighbors(driver, node_id, visited, owner_key=owner_key)
                     for neighbor_id, edge_weight in neighbors:
                         act = base_activation * float(edge_weight) * hop_decay
                         if act < min_activation:
@@ -213,15 +230,22 @@ class SpreadActivation:
         driver,
         node_id: str,
         visited: set[str],
+        owner_key: str = "",
     ) -> list[tuple[str, float]]:
-        """查询单个节点的出边邻居（同步 Neo4j session）。"""
-        cypher = """
-        MATCH (s {node_id: $node_id})-[r]->(t)
+        """查询单个节点的出边邻居（同步 Neo4j session）。
+
+        ADMIN-P3c-4（缺口一）：传 ``owner_key`` 时邻居按主体谓词约束。
+        """
+        owner_predicate = self._owner_predicate(owner_key)
+        owner_binds = self._owner_binds(owner_key)
+        cypher = f"""
+        MATCH (s {{node_id: $node_id}})-[r]->(t)
         WHERE t.node_id IS NOT NULL AND t.node_id <> $node_id
+          AND {owner_predicate.format(node="t")}
         RETURN t.node_id AS neighbor_id, coalesce(r.weight, 1.0) AS weight
         """
         with driver.session() as session:
-            result = session.run(cypher, {"node_id": node_id})
+            result = session.run(cypher, {"node_id": node_id, **owner_binds})
             neighbors = []
             for record in result:
                 neighbor_id = record["neighbor_id"]
@@ -232,6 +256,36 @@ class SpreadActivation:
     # =========================================================
     # 辅助
     # =========================================================
+
+    def _owner_predicate(self, owner_key: str) -> str:
+        """主体谓词模板（`{node}` 为占位符），缺省空串返回恒真条件。
+
+        ADMIN-P3c-4（缺口一）：传 ``owner_key`` 时按主体约束，防止跨主体扩散；
+        空串时返回 ``true``（不约束，与历史行为等价）。
+        """
+        if not owner_key:
+            return "true"
+        try:
+            from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+            owner = MemoryOwnerKey.parse(owner_key)
+            # 访问器以别名参数产出谓词；此处把别名替换为 `{node}` 占位符
+            return owner.neo4j_filter_condition("{node}")
+        except Exception:
+            logger.warning("_owner_predicate: 主体键非法 owner=%s", owner_key, exc_info=True)
+            return "true"
+
+    def _owner_binds(self, owner_key: str) -> dict:
+        """主体属性绑定，缺省空串返回空 dict。"""
+        if not owner_key:
+            return {}
+        try:
+            from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+            return dict(MemoryOwnerKey.parse(owner_key).neo4j_props())
+        except Exception:
+            logger.warning("_owner_binds: 主体键非法 owner=%s", owner_key, exc_info=True)
+            return {}
 
     def _get_driver(self):
         """获取 Neo4j 驱动，不可用时返回 None。"""

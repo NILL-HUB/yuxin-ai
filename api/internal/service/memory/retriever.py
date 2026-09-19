@@ -226,11 +226,11 @@ class MemoryRetriever:
         # ④ 图扩展
         if all_candidates:
             start_ids = list(all_candidates.keys())[:5]
-            spread_results = self._graph_spread(start_ids, top_k=options.top_k)
+            spread_results = self._graph_spread(start_ids, top_k=options.top_k, owner_key=owner_key)
             for node_id, activation in spread_results:
                 if node_id not in all_candidates:
-                    # 获取节点数据
-                    node_data = self._get_node_data(node_id)
+                    # 获取节点数据（带主体谓词，防跨主体取到他人节点）
+                    node_data = self._get_node_data(node_id, owner_key=owner_key)
                     if node_data:
                         all_candidates[node_id] = RetrievalResult(
                             memory_id=node_id,
@@ -453,12 +453,15 @@ class MemoryRetriever:
         self,
         start_ids: list[str],
         top_k: int = 20,
+        owner_key: str = "",
     ) -> list[tuple[str, float]]:
         """调用 SpreadActivation 进行图扩展。
 
         Args:
             start_ids: 起始节点 ID 列表
             top_k: 返回最大数量
+            owner_key: 记忆主体键（用户主体为裸 UUID）；透传给 SpreadActivation
+                做主体约束（ADMIN-P3c-4 缺口一）。
 
         Returns:
             ``[(node_id, activation), ...]`` 列表
@@ -471,7 +474,7 @@ class MemoryRetriever:
                 neo4j_driver=self._driver or self._get_driver(),
                 config=SpreadConfig(),
             )
-            return spread.activate(start_ids, top_k=top_k)
+            return spread.activate(start_ids, top_k=top_k, owner_key=owner_key)
         except Exception:
             logger.warning("_graph_spread: 图扩展失败", exc_info=True)
             return []
@@ -729,22 +732,35 @@ class MemoryRetriever:
             logger.warning("_embed_query: 查询向量化失败", exc_info=True)
             return None
 
-    def _get_node_data(self, node_id: str) -> Optional[dict]:
-        """从 Neo4j 获取节点数据（content、timestamp 等）。"""
+    def _get_node_data(self, node_id: str, owner_key: str = "") -> Optional[dict]:
+        """从 Neo4j 获取节点数据（content、timestamp 等）。
+
+        ADMIN-P3c-4（缺口一）：传 ``owner_key`` 时按主体谓词约束节点归属，
+        防止跨主体取到他人节点；空串时不加谓词（历史行为等价）。
+        """
         driver = self._driver or self._get_driver()
         if driver is None:
             return None
 
         try:
-            cypher = """
-            MATCH (n {node_id: $node_id})
+            owner_predicate = "true"
+            owner_binds: dict = {}
+            if owner_key:
+                from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+                owner = MemoryOwnerKey.parse(owner_key)
+                owner_predicate = owner.neo4j_filter_condition("n")
+                owner_binds = dict(owner.neo4j_props())
+            cypher = f"""
+            MATCH (n {{node_id: $node_id}})
+            WHERE {owner_predicate}
             RETURN n.content AS content,
                    n.summary AS summary,
                    n.created_at AS created_at,
                    n.user_id AS user_id
             """
             with driver.session() as session:
-                result = session.run(cypher, {"node_id": node_id})
+                result = session.run(cypher, {"node_id": node_id, **owner_binds})
                 record = result.single()
 
             if record is None:
