@@ -19,8 +19,9 @@
 - 管理员 + Agent（两级隔离，设计 §3 L1）：`admin:{admin_uuid}:{agent_uuid}`
 
 > **Neo4j 不走本字符串键**：节点属性级分离——用户写 `user_id`（裸 UUID，存量不动），
-> admin 写 `admin_user_id` + `agent_id`；归属按「哪一侧属性非空」判定。见
-> `neo4j_props()` / `neo4j_filter_condition()`。
+> admin 写 `admin_user_id` + `agent_id`；归属按「哪一侧属性出现」判定（用户节点无 admin 属性，
+> admin 节点无 `user_id`）。admin 侧的 `agent_id` **恒存在**：Agent 级写真实 UUID，
+> 管理员级写 `NEO4J_ADMIN_LEVEL_AGENT_SENTINEL`。见 `neo4j_props()` / `neo4j_filter_condition()`。
 
 > **与设计 §8 的偏离（已确认）**：§8 字面写 `user:{uuid}`。本实现用户态不带前缀，
 > 原因是四层存储的存量值均为裸 UUID，带前缀需迁移全部 Neo4j 节点属性、重建唯一约束
@@ -40,10 +41,22 @@ __all__ = [
     "MemoryOwnerType",
     "MemoryOwnerKey",
     "MemoryOwnerKeyError",
+    "NEO4J_ADMIN_LEVEL_AGENT_SENTINEL",
 ]
 
 _USER_PREFIX = "user"
 _ADMIN_PREFIX = "admin"
+
+# Neo4j「管理员级」Agent 哨兵值。
+#
+# 背景：Neo4j 多属性唯一约束要求约束内**所有属性都存在**才施加，任一属性缺失即整条豁免。
+# admin 约束 `(name, admin_user_id, agent_id)` 因此对「管理员级」（admin 无 agent、不写
+# agent_id）失效——实测同名同 admin 的无 agent 节点可重复创建。
+#
+# 解法：admin 节点**始终**写 `agent_id` 属性——Agent 级写真实 UUID，管理员级写本哨兵值。
+# 属性恒存在 ⇒ 约束对两级同时生效，且「管理员级」与「Agent 级」仍互斥（哨兵 != 任何 UUID）。
+# 哨兵取非 UUID 字面量，与真实 agent UUID 无碰撞可能。
+NEO4J_ADMIN_LEVEL_AGENT_SENTINEL = "__admin_level__"
 
 
 class MemoryOwnerKeyError(ValueError):
@@ -211,23 +224,32 @@ class MemoryOwnerKey:
         """Neo4j 节点写入用的归属属性字典（属性级分离，**非**复合字符串键）。
 
         - 用户主体：`{"user_id": "<裸 uuid>"}`（与存量节点逐字节一致）
-        - admin 主体：`{"admin_user_id": "<uuid>"}`，带 Agent 时追加 `"agent_id"`
+        - admin 主体：`{"admin_user_id": "<uuid>", "agent_id": "<uuid 或哨兵>"}`
+          ——**始终写 `agent_id`**：Agent 级写真实 UUID，管理员级写
+          `NEO4J_ADMIN_LEVEL_AGENT_SENTINEL`。原因是 Neo4j 多属性唯一约束要求
+          属性全存在才生效，缺失即豁免（否则管理员级不受约束管辖）。
 
-        两侧属性**互不出现**：用户节点不含 `admin_user_id`，admin 节点不含 `user_id`，
-        归属由「哪一侧非空」判定（Neo4j 唯一约束对属性缺失天然豁免）。
+        两侧属性**互不出现**：用户节点不含 admin 属性，admin 节点不含 `user_id`。
         """
         if self.owner_type is MemoryOwnerType.USER:
             return {"user_id": str(self.owner_account_id)}
-        props = {"admin_user_id": str(self.owner_admin_user_id)}
-        if self.owner_agent_id is not None:
-            props["agent_id"] = str(self.owner_agent_id)
-        return props
+        return {
+            "admin_user_id": str(self.owner_admin_user_id),
+            "agent_id": (
+                str(self.owner_agent_id)
+                if self.owner_agent_id is not None
+                else NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+            ),
+        }
 
     def neo4j_filter_condition(self, alias: str) -> str:
         """产出 Cypher 归属谓词片段（不含 WHERE 关键字）。
 
         `alias` 为节点变量名。用户与 admin 各自返回**不同属性**上的条件，
         因此互相不会命中对方节点。
+
+        管理员级（无 agent）以「`agent_id = 哨兵`」表达，而非 `IS NULL`——
+        与 `neo4j_props()` 的写入形态对称（属性恒存在，故不能靠缺失区分）。
 
         **注入约束**：`alias` 只接受代码内字面量变量名（如 `"n"` / `"c"`），
         **禁止**传入任何用户可控字符串。
@@ -237,11 +259,10 @@ class MemoryOwnerKey:
         """
         if self.owner_type is MemoryOwnerType.USER:
             return f"{alias}.user_id = $user_id"
-        condition = f"{alias}.admin_user_id = $admin_user_id"
-        if self.owner_agent_id is None:
-            # 「管理员级」与「某 Agent 级」严格区分（Agent 属性缺失即管理员级）
-            return f"{condition} AND {alias}.agent_id IS NULL"
-        return f"{condition} AND {alias}.agent_id = $agent_id"
+        return (
+            f"{alias}.admin_user_id = $admin_user_id "
+            f"AND {alias}.agent_id = $agent_id"
+        )
 
     @classmethod
     def parse(cls, key: str) -> "MemoryOwnerKey":

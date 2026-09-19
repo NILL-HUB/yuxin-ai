@@ -55,14 +55,12 @@ def _ensure_constraints_and_indexes(driver: Driver) -> None:
         # 全文索引：覆盖 Episode/Entity/SemanticMemory 的 content 字段
         "CREATE FULLTEXT INDEX memoryFullText IF NOT EXISTS FOR (n:Episode) ON EACH [n.content, n.summary]",
         # ── admin 主体：属性级分离（用户端用 user_id，admin 端用 admin_user_id + agent_id）──
-        # 唯一约束对「属性缺失」天然豁免 —— 双刃：
-        #   好处：加这些约束不影响存量 user 节点（它们无 admin 属性）。
-        #   ⚠️ 代价：Neo4j 多属性唯一约束要求约束内**所有属性都存在**才施加，
-        #     故「管理员级」节点（admin 无 agent、不写 agent_id）**不受**该约束管辖；
-        #     其唯一性只能依赖写侧 MERGE 语义（待 P3c 接通 admin 写路径后成立），
-        #     DB 不兜底并发创建竞态。
-        #     实测（2026-09）：同名同 admin 的无 agent 节点可重复创建成功；
-        #     带 agent 的三元节点则正确报 22N79 唯一冲突。
+        # 唯一约束对「属性缺失」天然豁免（故加这些约束不影响存量 user 节点——它们无 admin 属性）。
+        # ⚠️ 前提：Neo4j 多属性唯一约束要求约束内**所有属性都存在**才施加。
+        #   因此 admin 节点**始终**写 agent_id：Agent 级写真实 UUID，管理员级写
+        #   `NEO4J_ADMIN_LEVEL_AGENT_SENTINEL`（见 internal/entity/memory_owner_entity.py）。
+        #   若管理员级省略 agent_id，本约束对其**整条豁免**——实测同名同 admin 的无 agent
+        #   节点可重复创建（2026-09）。写入侧保证属性恒存在，约束才对两级同时生效。
         "CREATE CONSTRAINT entity_name_admin_unique IF NOT EXISTS "
         "FOR (n:Entity) REQUIRE (n.name, n.admin_user_id, n.agent_id) IS UNIQUE",
         "CREATE CONSTRAINT community_key_admin_unique IF NOT EXISTS "

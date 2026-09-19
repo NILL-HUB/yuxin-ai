@@ -12,6 +12,32 @@
 
 ---
 
+## 0. 编号体系约定（读本文前必看）
+
+本文历史上并行存在多套 `P*/Phase` 编号，**同一篇文档内 `P3` 曾同时指代 4 件不同的事**
+（知识库阶段 / 修复批次优先级 / 技术债优先级 / UX 优先级），极易误读。自 2026-09-19 起统一加前缀：
+
+| 前缀 | 所属体系 | 语义轴 | 编号形态 |
+| --- | --- | --- | --- |
+| `Phase N` | 编排 / 路由 / 治理**主线** | 阶段（顺序里程碑） | 0–18 |
+| `ADMIN-P*` | 管理端 Agent 治理 | 阶段 | P1a / P1b / P2 / P3a / P3b / P3c / P4 / P5 |
+| `KB-P*` | **知识库产品形态** | 阶段 | P1 / P2 / P2A / P2B / P3 / P3.5 / P3.6 / P3.7 / P3.8 / P4 / P5 |
+| `POOL-P*` | 池治理打通与工具统一 | 阶段 | P0 / P1 / P2 |
+| `FIX-P*` | 第三轮并行修复 | **优先级**（非阶段） | P0–P3 |
+| `DEBT-P*` | 技术债清理 | **优先级**（非阶段） | P1–P5 |
+| `UX-N` | 管理端五板块 UX 治理 | 序号（优先级另列一栏） | UX-1 – UX-8 |
+
+> **关键区分**：`KB-P*` / `ADMIN-P*` / `POOL-P*` / `Phase N` 是**阶段**（前后有依赖顺序，
+> 数字大 = 更靠后）；`FIX-P*` / `DEBT-P*` 是**优先级**（数字小 = 更该先做，彼此无依赖）。
+> 二者数字方向与含义都不同，**不可互相引用**。
+>
+> **历史标签例外**：`docs/superpowers/` 下的计划与设计**文件名**（如
+> `2026-09-16-video-production-p4-design.md`）是已归档的历史产物，文件名中的 `p4` 保持不变；
+> 正文提及该设计稿时会标注为「KB-P4 设计稿」。
+
+---
+
+
 ## 1. 已完成状态总览
 
 以下阶段均已开发完成、测试通过：
@@ -33,14 +59,14 @@
 | Phase 12 | BillingMetering/CancelToken | ✅ 完成 |
 | Phase 13 | 外部数据源连接 | ✅ 完成 |
 | Phase 14 | 调优建议采纳与策略变更 | ✅ 完成 |
-| Phase 15 | 管理端 Agent 治理 P1a（授权与身份内核） | ✅ 完成 |
-| Phase 16 | 管理端 Agent 治理 P1b（板块工具与执行链路） | ✅ 完成 |
-| Phase 17 | 管理端 Agent 治理 P2（对话式入口 + 会话表 + 预置提示词） | ✅ 完成 |
-| Phase 18 | 管理端 Agent 治理 P3a（记忆主体抽象内核 + 存量迁移） | ✅ 完成 |
+| Phase 15 | ADMIN-P1a 授权与身份内核 | ✅ 完成 |
+| Phase 16 | ADMIN-P1b 板块工具与执行链路 | ✅ 完成 |
+| Phase 17 | ADMIN-P2 对话式入口 + 会话表 + 预置提示词 | ✅ 完成 |
+| Phase 18 | ADMIN-P3a 记忆主体抽象内核 + 存量迁移 | ✅ 完成 |
 
-### 管理端 Agent 治理（P1a 授权与身份内核，2026-09-16 完成）
+### ADMIN-P1a 授权与身份内核（2026-09-16 完成）
 
-管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。本阶段**只做授权与身份**——Agent 尚不能真正执行板块动作（工具装配与执行见下一节 P1b）。
+管理员可创建「管理端 Agent」并**显式下放**自己权限的子集，实现"管理员监督下的后台自动化"。本阶段**只做授权与身份**——Agent 尚不能真正执行板块动作（工具装配与执行见 ADMIN-P1b）。
 
 | 交付物 | 位置 |
 | --- | --- |
@@ -57,9 +83,9 @@
 **回归防护**：`test_admin_agent_authorization.py`、`test_admin_agent_principal.py`、`test_admin_agent_model.py`、`test_admin_agent_service.py`、`test_admin_agent_routes.py`、`test_admin_user_service.py::TestAgentPermissionPruningWiring`——**均含反向验证**（改坏实现时测试必须失败），并已用真实 DB 跑通端到端闭环。
 
 
-### 管理端 Agent 治理（P1b 板块工具与执行链路，2026-09-16 完成）
+### ADMIN-P1b 板块工具与执行链路（2026-09-16 完成）
 
-在 P1a 授权内核之上装配能力层与执行层，让 Agent 从「只有授权」变为「能真正执行板块动作」。
+在 ADMIN-P1a 授权内核之上装配能力层与执行层，让 Agent 从「只有授权」变为「能真正执行板块动作」。
 
 | 交付物 | 位置 |
 | --- | --- |
@@ -87,9 +113,9 @@
 
 ---
 
-### 管理端 Agent 治理（P2 对话式入口，2026-09-17 完成）
+### ADMIN-P2 对话式入口（2026-09-17 完成）
 
-在 P1a/P1b 之上补「管理员与 Agent 多轮对话」的入口：会话/消息独立落库、板块工具交给 LLM 调用、系统提示词与预置人格可管理。
+在 ADMIN-P1a/ADMIN-P1b 之上补「管理员与 Agent 多轮对话」的入口：会话/消息独立落库、板块工具交给 LLM 调用、系统提示词与预置人格可管理。
 
 | 交付物 | 位置 |
 | --- | --- |
@@ -115,10 +141,10 @@
 
 **回归防护**：`test_admin_agent_conversation_migration.py`、`test_admin_agent_conversation_service.py`、`test_admin_agent_chat_tools.py`、`test_admin_agent_prompt_service.py`、`test_admin_agent_builtin_agents.py`、`test_admin_agent_chat_service.py`、`test_admin_agent_chat_routes.py`、`test_admin_agent_feature_registration.py`、`test_admin_agent_di_construction.py`——均含反向验证。
 
-**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（P4）；MCP 动态身份注入（P5）。（「记忆主体抽象读路径切换（P3b）」已于 2026-09-17 完成，见下节。）
+**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（ADMIN-P4）；MCP 动态身份注入（ADMIN-P5）。（「记忆主体抽象读路径切换（ADMIN-P3b）」已于 2026-09-17 完成，见下节。）
 
 
-### 管理端 Agent 治理（P3a 记忆主体抽象内核，2026-09-17 完成）
+### ADMIN-P3a 记忆主体抽象内核（2026-09-17 完成）
 
 把记忆归属从「硬编码 `Account`」升级为**主体类型**维度（`user` / `admin` + Agent），使记忆可归属管理员与 Agent。本阶段**只做写入双写与存量迁移，读路径一律不变**，用全量回归逐字节证明行为零变化。
 
@@ -141,14 +167,14 @@
 - **`agent_id` 独立落列**：规格 §8 要求「`admin_user_id` + `agent_id` 两级隔离」，故新增 `owner_agent_id` 列（可空 FK `admin_agent.id`），而非复用 `owner_admin_user_id`。
 - **存量零变化**：既有 234 行全部回填 `owner_type='user'`，`owner_account_id` 不动；真库一致性守卫断言无 NULL、无非 user 行、分表列齐备。
 
-**已由 P3b 落地**（2026-09-17）：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、服务层签名统一为 `owner_key`、admin 侧 Neo4j 约束与索引就位；并修复既有缺陷 **C1**（Neo4j `Skill` 节点 flush 键与写入属性不符 → 静默丢数）与 **C3**（GDPR 清 Redis 白名单键与实际键前缀不符 → 清理无效）。详见下节「管理端 Agent 治理（P3b …）」。
+**已由 ADMIN-P3b 落地**（2026-09-17）：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、服务层签名统一为 `owner_key`、admin 侧 Neo4j 约束与索引就位；并修复既有缺陷 **C1**（Neo4j `Skill` 节点 flush 键与写入属性不符 → 静默丢数）与 **C3**（GDPR 清 Redis 白名单键与实际键前缀不符 → 清理无效）。详见下节「管理端 Agent 治理（P3b …）」。
 
 **仍未落地（P3c）**：admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，含 `LedgerWriter` 写侧与召回读侧）、**解除 PG 主表与向量分表 `owner_account_id` 的 NOT NULL**（否则 admin 记忆在 PG 侧无法落库）、Redis / 冷存储的键前缀改造、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
 
-实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（P3a）与 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（P3b）。
+实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（ADMIN-P3a）与 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（ADMIN-P3b）。
 
 
-### 管理端 Agent 治理（P3b 主体身份跨层切分，2026-09-17 完成）
+### ADMIN-P3b 主体身份跨层切分（2026-09-17 完成）
 
 让记忆读路径按**主体身份**过滤，用户端行为逐字节不变的同时，让 admin / Agent 主体在链路上可表达。
 核心设定是**用户端与 admin 端「复用但切分」**——同一套代码与同一张 PG 表复用，存储层逐层显式切分。
@@ -168,50 +194,53 @@
 
 | 层 | 用户端 | admin 端 | 切分机制 |
 | --- | --- | --- | --- |
-| PG `user_memory` | `owner_type='user'` + `owner_account_id` | `owner_type='admin'` + `owner_admin_user_id` + `owner_agent_id` | 列分离（P3a 已落地） |
-| Neo4j 节点 | 属性 `user_id`（裸 UUID） | 属性 `admin_user_id` + `agent_id` | **属性分离**（P3b 落地） |
+| PG `user_memory` | `owner_type='user'` + `owner_account_id` | `owner_type='admin'` + `owner_admin_user_id` + `owner_agent_id` | 列分离（ADMIN-P3a 已落地） |
+| Neo4j 节点 | 属性 `user_id`（裸 UUID） | 属性 `admin_user_id` + `agent_id`（管理员级写哨兵 `__admin_level__`） | **属性分离**（ADMIN-P3b 落地；哨兵见下条缺口三修复） |
 | Redis / 冷存储 | `…:{uuid}` | `…:admin:{uuid}[:{agent}]` | 键前缀分离 |
 
 **用户主体键采用裸 UUID**（与存量值逐字节一致，**零迁移**）。此形态**有意偏离**治理设计 §8 的字面 `user:{uuid}`——带前缀需迁移全部 Neo4j 节点属性、重建唯一约束与索引，且失败模式是「静默召回为空」。偏离已记录在 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10。
 
-**验证**：全量回归 4937 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
+**验证**：全量回归 4947 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
 
-**已知缺口（P3b 未闭合，待 P3c）**：12 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「P3b 已知缺口」一节
-（图扩展无主体谓词、PG `owner_account_id` NOT NULL 阻塞 admin 落库、Neo4j 唯一约束对管理员级失效、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL）。
+**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：15 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「P3b 已知缺口」一节
+（图扩展无主体谓词、PG `owner_account_id` NOT NULL 阻塞 admin 落库、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点、`_delete_all_pgvector_rows` 未追加 `owner_type`）。
+其中原「Neo4j 唯一约束对管理员级失效」（原缺口三）已修复（2026-09，哨兵值方案；见同节「缺口三（已修复）」）。
 
 实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
 
 
-### 第三轮并行修复（P0-P3 全部完成）
+### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
+
+> 本表第 2 列为 **FIX-Pn 优先级**（数字小 = 更该先做），与「阶段」无关。
 
 | 任务 | 优先级 | 状态 |
 | --- | --- | --- |
-| 统一执行入口（5种模式走 ExecutionCoordinator） | P0 | ✅ |
-| debug_chat 接入治理架构（默认关闭，逐步上线） | P0 | ✅ |
-| 废弃空壳 ModelPoolService/KeyPoolService | P0 | ✅（已物理删除） |
-| 补齐 billing_summary SSE 推送 + multi/single delta | P0 | ✅ |
-| 实现 EscalationPolicy | P0 | ✅（已存在完整实现） |
-| 统一 Tier 命名（前端 balanced→standard） | P0 | ✅ |
-| Prompt 注入防护加固（PromptInjectionDetector） | P1 | ✅ |
-| 接入 ToolConfirmationCard（4 个聊天页面） | P1 | ✅ |
-| 管理员/用户身份隔离 | P1 | ✅ |
-| 子池定义动态注册 | P1 | ✅ |
-| 6 个管理页 i18n 补齐（实际完成8个） | P2/P3 | ✅ |
-| 模型类型定义集中化（orchestration.ts） | P3 | ✅ |
-| SSE 事件枚举补齐 | P2 | ✅ |
-| 路由守卫修复 | P1 | ✅ |
+| 统一执行入口（5种模式走 ExecutionCoordinator） | FIX-P0 | ✅ |
+| debug_chat 接入治理架构（默认关闭，逐步上线） | FIX-P0 | ✅ |
+| 废弃空壳 ModelPoolService/KeyPoolService | FIX-P0 | ✅（已物理删除） |
+| 补齐 billing_summary SSE 推送 + multi/single delta | FIX-P0 | ✅ |
+| 实现 EscalationPolicy | FIX-P0 | ✅（已存在完整实现） |
+| 统一 Tier 命名（前端 balanced→standard） | FIX-P0 | ✅ |
+| Prompt 注入防护加固（PromptInjectionDetector） | FIX-P1 | ✅ |
+| 接入 ToolConfirmationCard（4 个聊天页面） | FIX-P1 | ✅ |
+| 管理员/用户身份隔离 | FIX-P1 | ✅ |
+| 子池定义动态注册 | FIX-P1 | ✅ |
+| 6 个管理页 i18n 补齐（实际完成8个） | FIX-P2/FIX-P3 | ✅ |
+| 模型类型定义集中化（orchestration.ts） | FIX-P3 | ✅ |
+| SSE 事件枚举补齐 | FIX-P2 | ✅ |
+| 路由守卫修复 | FIX-P1 | ✅ |
 
-### 知识库产品形态分期
+### KB 分期总览（知识库产品形态）
 
-沿用 [knowledge-base-product-form-design.md](./knowledge-base-product-form-design.md) §9.2 的五阶段划分，P1–P3 已完成并落库：
+沿用 [knowledge-base-product-form-design.md](./knowledge-base-product-form-design.md) §9.2 的五阶段划分，KB-P1 – KB-P3 已完成并落库：
 
 | 阶段 | 主题 | 完成状态 |
 | --- | --- | --- |
-| P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
-| P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（P2A 多模态素材入库 + P2B 分片上传/秒传/断点续传 + P2B-2 分片产物落盘跟随激活后端，支持 cos/oss） |
-| P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
-| P4 | 视频轻量编辑（trim / concat / subtitle） | ⬜ 未开始 |
-| P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
+| KB-P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
+| KB-P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（KB-P2A 多模态素材入库 + KB-P2B 分片上传/秒传/断点续传 + 分片产物落盘跟随激活后端，支持 cos/oss） |
+| KB-P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
+| KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ⚠️ 部分完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 未开始） |
+| KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
 
 P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
 
@@ -254,13 +283,13 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 
 ## 3. 最新任务清单
 
-### P0（已完成）
+### FIX-P0（第三轮修复，已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **开通 debug_chat 编排开关** | `app_service.py` | ✅ 已开通并监控 |
 
-### P1（已完成）
+### FIX-P1（第三轮修复，已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -274,15 +303,15 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **SSE 事件契约测试** | `test_sse_contracts.py` | ✅ subtask/agent_message 事件载荷已固定 |
 | **AgentQueueManager Redis 事件通道** | `agent_queue_manager.py` | ✅ 发布/消费均支持 Redis，`AGENT_QUEUE_REDIS_CONSUME=1` 启用 |
 
-### P2（已完成）
+### FIX-P2（第三轮修复，已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **pgvector scope 过滤增强** | `knowledge_vector_service.py` + `retrieval_service.py` | ✅ KnowledgeVectorService.search() 和 search_in_knowledge_base() 支持 knowledge_scope 过滤 |
 
-> **历史注记**：原 P2 表中的"打通记忆确认对话推送（`MemoryConfirmationCard`）"任务**已作废**——记忆候选确认流程连同 `memory_candidate` 表（迁移 `s3d4e5f6a7b8`）与前端 `MemoryConfirmationCard` 组件一并移除，改为显著性评分自动写入 + 事后管理。
+> **历史注记**：原 FIX-P2 表中的"打通记忆确认对话推送（`MemoryConfirmationCard`）"任务**已作废**——记忆候选确认流程连同 `memory_candidate` 表（迁移 `s3d4e5f6a7b8`）与前端 `MemoryConfirmationCard` 组件一并移除，改为显著性评分自动写入 + 事后管理。
 
-### 知识库产品形态 P3：检索与视觉向量（已完成）
+### KB-P3：检索与视觉向量（已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -300,7 +329,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 
 > 架构文档同步见 [modules/02-knowledge-base.md §11.9–§11.12](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)。
 
-### 知识库产品形态 P3.5：分层抽帧与帧配额（已完成）
+### KB-P3.5：分层抽帧与帧配额（已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -310,9 +339,9 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **帧计费链路锁定** | `test_frame_quota_charge.py` | ✅ 已落地；帧经存储代理（`RuntimeStorageProxy.upload_bytes`）**隐式计费**，用测试锁定该跨模块契约（无生产代码改动——核查确认现状已计费，再加 `add_usage` 会双重计费） |
 | **帧释放（成对修复）** | `recycle_bin_handlers.py`（`_collect_document_frame_files` + `snapshot_knowledge_document` / `snapshot_knowledge_base` / `purge_knowledge_document` / `purge_knowledge_base`） | ✅ 已落地；帧此前**只计费不清理**（配额泄漏），现两条 purge 路径均一并删帧文件并 `release_usage` |
 
-> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。L2 区间密抽已由 P3.6 落地；HyperFrames 渲染宿主已由 **P3.7** 落地（见下）。
+> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。L2 区间密抽已由 KB-P3.6 落地；HyperFrames 渲染宿主已由 **KB-P3.7** 落地（见下）。
 
-### 知识库产品形态 P3.6：L2 区间密抽（已完成）
+### KB-P3.6：L2 区间密抽（已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -321,9 +350,9 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **L2 改为窗口化密抽** | `knowledge_indexing_service.py`（`_enhance_l2` / `_extract_and_persist_window` / `_persist_window_frame` / `_clear_previous_l2_windows` / `_resolve_document_duration`） | ✅ 已落地；窗口内帧新建 Segment（`tier2_window=True`）并同时写文本/视觉向量，无命中不抽 |
 | **显式区间透传** | `knowledge_base_service.py` / `knowledge_l2_tasks.py` / `knowledge_mcp_routes.py` | ✅ 已落地；请求体 `start_sec` + `end_sec` 均给出时按其密抽 |
 
-> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../superpowers/plans/2026-09-16-l2-range-sampling.md)。HyperFrames 渲染已由 **P3.7** 落地（见下）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
+> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../superpowers/plans/2026-09-16-l2-range-sampling.md)。HyperFrames 渲染已由 **KB-P3.7** 落地（见下）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
 
-### 知识库产品形态 P3.7：HyperFrames 渲染宿主与成品库（已完成）
+### KB-P3.7：HyperFrames 渲染宿主与成品库（已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -335,7 +364,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **成品入库** | `knowledge_base_service.py`（`store_render_output`） | ✅ 已落地；落 COS + 建档 + 触发索引 |
 | **成品配额宽让** | `storage_quota_service.py`（`check_quota_allow_overflow`）+ `runtime_storage_service.py`（`upload_bytes(allow_overflow=True)`） | ✅ 已落地；剩余 > 0 即放行（允许溢出），恰好为 0 拒绝（设计 §6.3）。**素材上传仍严格** |
 | **render 队列与任务** | `config/config.py`（`Queue("render")`）+ `internal/task/render_tasks.py` | ✅ 已落地；已登记 `TASK_MODULES` 并配路由；派发点见下 |
-| **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具 `_dispatch_render` 做三级路由（本机 → 云端 → 报错），详见 **P3.8** |
+| **对话内入口** | `video_render_tools`（`render_video`）+ 挂载点 `assistant_agent_service._build_assistant_runtime_tools` | ✅ 已落地；工具 `_dispatch_render` 做三级路由（本机 → 云端 → 报错），详见 **KB-P3.8** |
 
 > **渲染 worker 部署编排（已落地）**：`api/Dockerfile.render`（在 api 镜像之上补 Node24+Chromium+ffmpeg/ffprobe）
 > \+ `docker/docker-compose.yaml` 的 `llmops-render-worker` 服务
@@ -372,12 +401,12 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 >    并由 `llmops-render-worker` 服务设 `CELERY_QUEUES=render` 独占消费；
 >    该行为有测试覆盖（`test_api_entrypoint.py`，需 Linux/容器内的 bash 执行）。
 
-### 知识库产品形态 P3.8：重负载任务本机化（渲染优先）（已完成）
+### KB-P3.8：重负载任务本机化（渲染优先）（已完成）
 
 **动机**：渲染是多租户下最贵的算力开销（官方定位即「用户本地渲染」，平台常驻容器成本随用户数不可控）。
 故把渲染下放到用户本机执行，**云端代码完整保留但默认关闭**，成本可控且随时可接通。
 
-实施计划：[superpowers/plans/2026-09-18-local-first-render-offload.md](../superpowers/plans/2026-09-18-local-first-render-offload.md)
+实施计划（KB-P3.8）：[superpowers/plans/2026-09-18-local-first-render-offload.md](../superpowers/plans/2026-09-18-local-first-render-offload.md)
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -426,13 +455,13 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 > **已提供能力但未接入**：`onnxruntime-node` 已随包分发（供后续图片处理/抠像用），
 > 但**当前全仓无任何生产调用点**——属预留能力，非「已实现功能」。
 
-### P3（已完成）
+### FIX-P3（第三轮修复，已完成）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **多 Agent DAG 重写** | 已废弃 DAGEngine，统一为 `TaskPlan + ExecutionCoordinatorService` | ✅ 2026-08-26 删除 `dag_entity.py` / `dag_engine_service.py` / `agent_instance_pool.py` / `test_dag_engine.py` |
 
-### P3（远期待实施）
+### FUTURE-P3（远期待实施）
 
 | 任务 | 描述 |
 | --- | --- |
@@ -469,34 +498,34 @@ P0-5 AgentPoolConfig 接入 AgentCandidateCollector（完全独立，可并行�
 P0-6 统一 tool_id 格式映射（完全独立，可并行）
 ```
 
-### P0：数据结构与解析器（前置）
+### POOL-P0：数据结构与解析器（前置）
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **P0-1 扩展 ToolSourceType + RuntimeToolDescriptor + CompositeComponentRef** | tool_inventory_entity.py, runtime_tool_entity.py | ✅ 已完成 | ToolSourceType 新增 WORKFLOW/SKILL/AGENT_BINDING；RuntimeToolDescriptor 新增 is_composite/composite_kind/composite_components/composite_root_id/runtime_name_stable；新增 CompositeComponentRef dataclass |
-| **P0-2 实现 CompositeToolResolver** | 新增 composite_tool_resolver.py | ✅ 已完成 | 递归解析组合工具成员工具，复用 agent_binding 环检测思路，max_depth=8；workflow 解析 graph["nodes"]，agent_binding 递归加载目标 AppConfig，公开 App 不展开；20 测试通过，覆盖率 83% |
-| **P0-3 实现 RuntimeToolGovernanceGate** | 新增 runtime_tool_governance_gate.py | ✅ 已完成 | 治理注入门：BaseTool → RuntimeToolDescriptor → 查询 ToolGovernancePolicy → ToolPolicyFilter 过滤 → 返回过滤后列表 + 审计上下文；组合工具调 CompositeToolResolver 计算有效风险等级 |
-| **P0-4 注入 AppService._build_runtime_tools_for_config** | app_service.py, module.py | ✅ 已完成 | 在 return 前增加可选参数 governance_gate，向后兼容；DI 注册 CompositeToolResolver + RuntimeToolGovernanceGate；governance_gate=None 时行为不变 |
-| **P0-5 AgentPoolConfig 接入 AgentCandidateCollector** | agent_pool_service.py | ✅ 已完成 | AgentCandidateCollector.collect() 查 App 时 LEFT JOIN AgentPoolConfig，读取 primary_pool/risk_level/model_tier/routing_priority；21 测试通过 |
-| **P0-6 统一 tool_id 格式映射** | tool_inventory_service.py | ✅ 已完成 | 统一 tool_id 格式（builtin:{provider}:{tool} 等 7 种），新增 build_tool_id/parse_tool_id 辅助函数；16 测试通过 |
+| **POOL-P0-1 扩展 ToolSourceType + RuntimeToolDescriptor + CompositeComponentRef** | tool_inventory_entity.py, runtime_tool_entity.py | ✅ 已完成 | ToolSourceType 新增 WORKFLOW/SKILL/AGENT_BINDING；RuntimeToolDescriptor 新增 is_composite/composite_kind/composite_components/composite_root_id/runtime_name_stable；新增 CompositeComponentRef dataclass |
+| **POOL-P0-2 实现 CompositeToolResolver** | 新增 composite_tool_resolver.py | ✅ 已完成 | 递归解析组合工具成员工具，复用 agent_binding 环检测思路，max_depth=8；workflow 解析 graph["nodes"]，agent_binding 递归加载目标 AppConfig，公开 App 不展开；20 测试通过，覆盖率 83% |
+| **POOL-P0-3 实现 RuntimeToolGovernanceGate** | 新增 runtime_tool_governance_gate.py | ✅ 已完成 | 治理注入门：BaseTool → RuntimeToolDescriptor → 查询 ToolGovernancePolicy → ToolPolicyFilter 过滤 → 返回过滤后列表 + 审计上下文；组合工具调 CompositeToolResolver 计算有效风险等级 |
+| **POOL-P0-4 注入 AppService._build_runtime_tools_for_config** | app_service.py, module.py | ✅ 已完成 | 在 return 前增加可选参数 governance_gate，向后兼容；DI 注册 CompositeToolResolver + RuntimeToolGovernanceGate；governance_gate=None 时行为不变 |
+| **POOL-P0-5 AgentPoolConfig 接入 AgentCandidateCollector** | agent_pool_service.py | ✅ 已完成 | AgentCandidateCollector.collect() 查 App 时 LEFT JOIN AgentPoolConfig，读取 primary_pool/risk_level/model_tier/routing_priority；21 测试通过 |
+| **POOL-P0-6 统一 tool_id 格式映射** | tool_inventory_service.py | ✅ 已完成 | 统一 tool_id 格式（builtin:{provider}:{tool} 等 7 种），新增 build_tool_id/parse_tool_id 辅助函数；16 测试通过 |
 
-### P1：组合工具治理透传与渐进式启用
+### POOL-P1：组合工具治理透传与渐进式启用
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **P1-1 组合工具治理透传** | runtime_tool_governance_gate.py | ✅ 已完成 | 部分阻断策略（dangerous/disabled/unhealthy 整体阻断，sensitive 需确认）；治理策略双层叠加（组合工具层级 + 成员层级取严）；28 测试通过 |
-| **P1-2 渐进式启用机制** | governance_mode_resolver.py, orchestration_feature_flag_entity.py, runtime_tool_governance_gate.py, app_service.py, module.py | ✅ 已完成 | 三阶段开关（ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY/BLOCK_SENSITIVE/BLOCK_ALL）；GovernanceModeResolver 解析当前模式；block_sensitive_only 参数；160 测试通过 |
-| **P1-3 skill 工具包治理** | tool_inventory_service.py | ✅ 已完成 | ToolCandidateCollector 新增 _collect_skill_tools，skill:{skill_package_id} 整体治理；5 测试通过 |
-| **P1-4 WorkflowTool 纳入治理** | tool_inventory_service.py | ✅ 已完成 | ToolCandidateCollector 新增 _collect_workflow_tools，workflow:{workflow_id} 整体治理；6 测试通过 |
-| **P1-5 AgentBinding 委派工具纳入治理** | runtime_tool_governance_gate.py | ✅ 已完成 | agent_binding:{app_id} 治理；私有 App 递归解析成员，公开 App 黑盒不展开；4 测试通过 |
+| **POOL-P1-1 组合工具治理透传** | runtime_tool_governance_gate.py | ✅ 已完成 | 部分阻断策略（dangerous/disabled/unhealthy 整体阻断，sensitive 需确认）；治理策略双层叠加（组合工具层级 + 成员层级取严）；28 测试通过 |
+| **POOL-P1-2 渐进式启用机制** | governance_mode_resolver.py, orchestration_feature_flag_entity.py, runtime_tool_governance_gate.py, app_service.py, module.py | ✅ 已完成 | 三阶段开关（ENABLE_POOL_GOVERNANCE_OBSERVE_ONLY/BLOCK_SENSITIVE/BLOCK_ALL）；GovernanceModeResolver 解析当前模式；block_sensitive_only 参数；160 测试通过 |
+| **POOL-P1-3 skill 工具包治理** | tool_inventory_service.py | ✅ 已完成 | ToolCandidateCollector 新增 _collect_skill_tools，skill:{skill_package_id} 整体治理；5 测试通过 |
+| **POOL-P1-4 WorkflowTool 纳入治理** | tool_inventory_service.py | ✅ 已完成 | ToolCandidateCollector 新增 _collect_workflow_tools，workflow:{workflow_id} 整体治理；6 测试通过 |
+| **POOL-P1-5 AgentBinding 委派工具纳入治理** | runtime_tool_governance_gate.py | ✅ 已完成 | agent_binding:{app_id} 治理；私有 App 递归解析成员，公开 App 黑盒不展开；4 测试通过 |
 
-### P2：管理界面与远期扩展
+### POOL-P2：管理界面与远期扩展
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
 | **P2-1 Agent 元数据补充 prompt 摘要展示** | AgentPoolView.vue, admin_agent_pool_service.py | ✅ 已完成 | 池治理页面展示 AppConfig.preset_prompt 摘要（只读，tooltip+truncate，批量预取避免 N+1） |
 | **P2-2 工具治理页面扩展来源类型筛选** | ToolGovernanceView.vue, admin_tool_governance_schema.py, admin_tool_governance_service.py | ✅ 已完成 | SOURCE_TYPES 从 4 项扩展为 7 项（api_tool/mcp/skill/builtin/knowledge/workflow/agent_binding），同步更新 schema 校验和 service stats 初始化 |
-| **P2-3 Workflow ToolNode 扩展（远期）** | tool_entity.py, tool_node.py, composite_tool_resolver.py | ✅ 已完成 | ToolNodeData.tool_type 从 2 种扩展为 7 种（+mcp/knowledge/skill/workflow/agent_binding）；execute 按 tool_type 分发复用底座 service；workflow/agent_binding 嵌套含环检测（max_depth=8，call_stack 传递）；CompositeToolResolver._resolve_workflow 支持解析 7 种节点类型；22+7 测试通过 |
+| **POOL-P2-3 Workflow ToolNode 扩展（远期）** | tool_entity.py, tool_node.py, composite_tool_resolver.py | ✅ 已完成 | ToolNodeData.tool_type 从 2 种扩展为 7 种（+mcp/knowledge/skill/workflow/agent_binding）；execute 按 tool_type 分发复用底座 service；workflow/agent_binding 嵌套含环检测（max_depth=8，call_stack 传递）；CompositeToolResolver._resolve_workflow 支持解析 7 种节点类型；22+7 测试通过 |
 
 ### 渐进式启用路线图
 
@@ -537,26 +566,28 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 
 ## 4. 技术债清理
 
+> 本表第 2 列为 **DEBT-Pn 优先级**（数字小 = 更该先做），与「阶段」无关。
+
 | 任务 | 优先级 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| ilike 转义 | P1 | ✅ 已完成 | 22 个 service 文件全覆盖 |
-| 抽取统一 to_dict 基类（SerializableMixin） | P1 | ✅ 完成 | 12 类/6 文件迁移完成 |
-| OrchestratorService DI 改造 | P2 | ✅ 完成 | 6 处 or X() 兜底已移除，None 检查替代 |
-| 反转 core→service 反向依赖 | P2 | ✅ 完成 | UserMemoryServicePort/ObjectStoragePort 已落地 |
-| 拆分 deep_thinking_agent.py（~2410 行） | P3 | ✅ 完成 | 17 个纯函数抽取到 deep_thinking_utils.py |
-| 拆分 app_service.py（~2368 行） | P3 | 🟡 部分完成 | AppIconService 已抽取；AppDebugService 经评估确认深度耦合（debug_chat 依赖 `_build_runtime_tools`/`_create_runtime_agent`/`_stream_agent_events` 等共享私有方法，同时被子应用 A2A 调用 `_invoke_agent_binding_target` 与 `prompt_compare_chat` 共用），强行抽取会破坏封装或引入 AppService↔AppDebugService 循环依赖，已改用 `#region AppDebug` 标记 5 处 debug 方法块（会话管理/长期记忆快照/调试主流程/停止调试/消息分页）便于定位与折叠，维持内聚 |
-| ExecutionModeSelector | P4 | ✅ 已完成 | |
-| 执行链路接通（5 种模式全量） | P4 | ✅ 已完成 | |
-| 废弃空壳 ModelPoolService/KeyPoolService | P5 | ✅ 已完成 | 物理删除 |
-| 补齐 billing_summary SSE | P5 | ✅ 已完成 | 全路径推送+delta 补全 |
-| 实现 EscalationPolicy | P5 | ✅ 已完成 | 完整实现+测试覆盖 |
-| 统一 Tier 命名（前端） | P5 | ✅ 已完成 | |
-| 统一 Tier 命名（后端） | P5 | ✅ 完成 | TaskClassifierService 已使用 standard |
-| 删除 KnowledgeRetrievalOrchestrator | P5 | ✅ 完成 | |
-| 修复 UserMemory.scope | P5 | ✅ 完成 | scope 参数+过滤+字段 |
-| 接入 ToolConfirmationCard | P5 | ✅ 已完成 | 4 个聊天页面 |
-| Prompt 注入防护加固 | P5 | ✅ 已完成 | PromptInjectionDetector |
-| 遗留标记分类 | P5 | ✅ 已完成 | TODO/FIXME/HACK 0 处；兼容标记分类保留 |
+| ilike 转义 | DEBT-P1 | ✅ 已完成 | 22 个 service 文件全覆盖 |
+| 抽取统一 to_dict 基类（SerializableMixin） | DEBT-P1 | ✅ 完成 | 12 类/6 文件迁移完成 |
+| OrchestratorService DI 改造 | DEBT-P2 | ✅ 完成 | 6 处 or X() 兜底已移除，None 检查替代 |
+| 反转 core→service 反向依赖 | DEBT-P2 | ✅ 完成 | UserMemoryServicePort/ObjectStoragePort 已落地 |
+| 拆分 deep_thinking_agent.py（~2410 行） | DEBT-P3 | ✅ 完成 | 17 个纯函数抽取到 deep_thinking_utils.py |
+| 拆分 app_service.py（~2368 行） | DEBT-P3 | 🟡 部分完成 | AppIconService 已抽取；AppDebugService 经评估确认深度耦合（debug_chat 依赖 `_build_runtime_tools`/`_create_runtime_agent`/`_stream_agent_events` 等共享私有方法，同时被子应用 A2A 调用 `_invoke_agent_binding_target` 与 `prompt_compare_chat` 共用），强行抽取会破坏封装或引入 AppService↔AppDebugService 循环依赖，已改用 `#region AppDebug` 标记 5 处 debug 方法块（会话管理/长期记忆快照/调试主流程/停止调试/消息分页）便于定位与折叠，维持内聚 |
+| ExecutionModeSelector | DEBT-P4 | ✅ 已完成 | |
+| 执行链路接通（5 种模式全量） | DEBT-P4 | ✅ 已完成 | |
+| 废弃空壳 ModelPoolService/KeyPoolService | DEBT-P5 | ✅ 已完成 | 物理删除 |
+| 补齐 billing_summary SSE | DEBT-P5 | ✅ 已完成 | 全路径推送+delta 补全 |
+| 实现 EscalationPolicy | DEBT-P5 | ✅ 已完成 | 完整实现+测试覆盖 |
+| 统一 Tier 命名（前端） | DEBT-P5 | ✅ 已完成 | |
+| 统一 Tier 命名（后端） | DEBT-P5 | ✅ 完成 | TaskClassifierService 已使用 standard |
+| 删除 KnowledgeRetrievalOrchestrator | DEBT-P5 | ✅ 完成 | |
+| 修复 UserMemory.scope | DEBT-P5 | ✅ 完成 | scope 参数+过滤+字段 |
+| 接入 ToolConfirmationCard | DEBT-P5 | ✅ 已完成 | 4 个聊天页面 |
+| Prompt 注入防护加固 | DEBT-P5 | ✅ 已完成 | PromptInjectionDetector |
+| 遗留标记分类 | DEBT-P5 | ✅ 已完成 | TODO/FIXME/HACK 0 处；兼容标记分类保留 |
 
 ---
 
@@ -577,16 +608,18 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 
 ### 待修复任务
 
+> 本表第 2 列为 **PRI n 优先级**（数字小 = 更该先做）；任务号 `UX-N` 为序号，与优先级无关。
+
 | 任务 | 优先级 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **UX-1 ToolsView 改造为真正的工具管理** | P1 | ⏳ 待开始 | 当前只读展示 ToolPolicy，与 ToolGovernanceView 严重重叠。改为管理工具本身（创建/编辑/删除 API Tool Provider），与 ToolGovernanceView 职责分离 |
-| **UX-2 AppsView 重写 + 数据所有权统一** | P1 | ⏳ 待开始 | 裸 HTML 重写为 Arco Design 风格；primary_pool/risk_level/routing_priority 只在 AgentPoolView 编辑，AppsView 只读展示 |
-| **UX-3 资源运营补充上架/下架操作** | P2 | ⏳ 待开始 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件 |
-| **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | P2 | ⏳ 待开始 | 上架是运营动作，不应在编排页面。移到资源运营的工作流商店页 |
-| **UX-5 AdminDatasetsView/MCP/Skills 补充 CRUD** | P2 | ⏳ 待开始 | 资源编排 3 个只读页面补充创建/编辑/删除，使"编排"名副其实 |
-| **UX-6 ModelsView 成本策略移到计费运营** | P3 | ⏳ 待开始 | 成本策略（maxCostPerRequest/billingMode）是计费策略，应从池治理移到计费运营板块 |
-| **UX-7 审计日志加跳转** | P3 | ⏳ 待开始 | AuditLogsView 的 resourceType/resourceId 可点击跳转到对应资源管理页 |
-| **UX-8 商店预览模式** | P3 | ⏳ 待开始 | 资源运营上架操作旁加"预览商店效果"按钮，让管理员看到用户视角 |
+| **UX-1 ToolsView 改造为真正的工具管理** | PRI1 | ⏳ 待开始 | 当前只读展示 ToolPolicy，与 ToolGovernanceView 严重重叠。改为管理工具本身（创建/编辑/删除 API Tool Provider），与 ToolGovernanceView 职责分离 |
+| **UX-2 AppsView 重写 + 数据所有权统一** | PRI1 | ⏳ 待开始 | 裸 HTML 重写为 Arco Design 风格；primary_pool/risk_level/routing_priority 只在 AgentPoolView 编辑，AppsView 只读展示 |
+| **UX-3 资源运营补充上架/下架操作** | PRI2 | ⏳ 待开始 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件 |
+| **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | PRI2 | ⏳ 待开始 | 上架是运营动作，不应在编排页面。移到资源运营的工作流商店页 |
+| **UX-5 AdminDatasetsView/MCP/Skills 补充 CRUD** | PRI2 | ⏳ 待开始 | 资源编排 3 个只读页面补充创建/编辑/删除，使"编排"名副其实 |
+| **UX-6 ModelsView 成本策略移到计费运营** | PRI3 | ⏳ 待开始 | 成本策略（maxCostPerRequest/billingMode）是计费策略，应从池治理移到计费运营板块 |
+| **UX-7 审计日志加跳转** | PRI3 | ⏳ 待开始 | AuditLogsView 的 resourceType/resourceId 可点击跳转到对应资源管理页 |
+| **UX-8 商店预览模式** | PRI3 | ⏳ 待开始 | 资源运营上架操作旁加"预览商店效果"按钮，让管理员看到用户视角 |
 
 ### 板块职责定义（架构文档对齐）
 

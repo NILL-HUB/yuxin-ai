@@ -1997,6 +1997,7 @@ class DigestConfig(BaseModel):
 
 以下均**不影响用户端**（用户主体下与改造前等价），且因 **admin 写路径尚未接线**而未在生产触发；
 待 P3c 接入 admin / Agent 记忆读写时须逐项收敛。
+（例外：**缺口三已修复**，保留编号以维持与既有引用的对应关系。）
 
 ### 缺口一：图扩展与节点详情无主体谓词
 
@@ -2011,13 +2012,21 @@ class DigestConfig(BaseModel):
 已就位，但在约束解除前查不到数据。解除需迁移：两处改为可空 + 补 CHECK「`owner_type='user'` ⇒
 `owner_account_id` 非空 / `owner_type='admin'` ⇒ `owner_admin_user_id` 非空」。
 
-### 缺口三：Neo4j 唯一约束对「管理员级」节点失效
+### 缺口三（已修复，2026-09）：Neo4j 唯一约束对「管理员级」节点失效
 
-Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。admin 侧约束
-`(name, admin_user_id, agent_id)` 因此对「管理员级」（admin 无 agent、不写 `agent_id`）**完全失效**——
+Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。修复前 admin 侧约束
+`(name, admin_user_id, agent_id)` 对「管理员级」（admin 无 agent、不写 `agent_id`）**整条豁免**——
 实测同名同 admin 的无 agent 节点可重复创建成功；带 agent 的三元节点则正确报 `22N79`。
-限制已登记在 `neo4j_extension.py` 注释与守卫测试中；可选修法是给无 agent 的 admin 节点写非空哨兵值，
-但会改变「属性缺失即管理员级」语义。
+
+**修复**（哨兵值方案）：给 admin 节点**始终**写 `agent_id` 属性——Agent 级写真实 UUID，
+管理员级写 `NEO4J_ADMIN_LEVEL_AGENT_SENTINEL = "__admin_level__"`（定义于
+`api/internal/entity/memory_owner_entity.py`，由 `MemoryOwnerKey.neo4j_props()` 统一产出）。
+属性恒存在 ⇒ 约束对两级同时生效，且「管理员级」与「Agent 级」仍互斥（哨兵 != 任何 UUID 字面量）。
+读侧 `neo4j_filter_condition()` 两级均用 `agent_id = $agent_id`（管理员级绑定哨兵）。
+
+约定随之从「**属性缺失**即管理员级」改为「**`agent_id` 等于哨兵**即管理员级」：**判断管理员级须比对哨兵，
+不得再用 `IS NULL`**。修复上线时点上 admin 节点数为 0（零迁移窗口），故无存量数据受影响；
+真库实测确认同名同 admin 的管理员级节点现报 `22N79`。
 
 ### 缺口四：`DigestManager._fetch_profile` 委派未主体化
 

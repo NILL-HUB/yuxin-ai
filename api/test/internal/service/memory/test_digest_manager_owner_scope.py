@@ -13,7 +13,10 @@ from uuid import uuid4
 
 import pytest
 
-from internal.entity.memory_owner_entity import MemoryOwnerKey
+from internal.entity.memory_owner_entity import (
+    MemoryOwnerKey,
+    NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+)
 from internal.service.memory.digest_manager import DigestManager
 
 
@@ -173,35 +176,36 @@ def test_admin_owner_cypher_keeps_full_clause_set(monkeypatch, method_name, expe
 
     cypher, params = _capture(monkeypatch, owner_key, method_name)
 
-    # 用户态谓词 → admin 态谓词（无 agent 时以 IS NULL 表达「管理员级」）
+    # 用户态谓词 → admin 态谓词（两级同构，互斥性由 agent_id 绑定值体现：哨兵 vs 真实 UUID）
     match = re.search(r"(\w+)\.user_id = \$user_id", _norm(expected))
     assert match, f"{method_name} 期望串必须含用户归属谓词"
     alias = match.group(1)
     expected_admin = _norm(expected).replace(
         f"{alias}.user_id = $user_id",
-        f"{alias}.admin_user_id = $admin_user_id AND {alias}.agent_id IS NULL",
+        f"{alias}.admin_user_id = $admin_user_id AND {alias}.agent_id = $agent_id",
         1,
     )
 
     assert _norm(cypher) == expected_admin
     assert "admin_user_id = $admin_user_id" in cypher
     assert ".user_id = $user_id" not in cypher
-    assert "agent_id IS NULL" in cypher
+    assert "agent_id = $agent_id" in cypher
     assert params["admin_user_id"] == str(admin_id)
+    assert params["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
     assert "user_id" not in params
 
 
 def test_admin_with_agent_cypher_scopes_by_agent(monkeypatch):
-    """带 agent 的 admin 主体：谓词须等值匹配 agent，而非 IS NULL。"""
+    """带 agent 的 admin 主体：谓词等值匹配 agent，绑定值为真实 UUID（非哨兵）。"""
     admin_id, agent_id = uuid4(), uuid4()
     owner_key = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).to_key()
 
     cypher, params = _capture(monkeypatch, owner_key, "_fetch_skills")
 
     assert "s.admin_user_id = $admin_user_id AND s.agent_id = $agent_id" in cypher
-    assert "IS NULL" not in cypher
     assert params["admin_user_id"] == str(admin_id)
     assert params["agent_id"] == str(agent_id)
+    assert params["agent_id"] != NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
 
 
 def test_get_skill_detail_scopes_both_tiers(monkeypatch):

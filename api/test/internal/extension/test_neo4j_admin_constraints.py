@@ -90,13 +90,32 @@ def test_existing_three_statements_still_present():
     assert any(s.startswith("CREATE FULLTEXT INDEX memoryFullText") for s in statements)
 
 
-def test_admin_level_uniqueness_limitation_is_documented():
-    """🔒 设计限制必须有代码内登记：管理员级节点不受该约束管辖。
+def test_admin_constraint_applies_to_both_levels_via_sentinel():
+    """约束对「管理员级」生效的前提是写入侧**始终写 agent_id**（哨兵兜底）。
 
-    实测：Neo4j 多属性唯一约束要求属性全存在才施加；admin 无 agent 时不写
-    agent_id，故 (name, admin_user_id, agent_id) 对其失效。此限制若不写明，
-    后续读者（含 AI Agent）会误以为 DB 已完整兜底。
+    Neo4j 多属性唯一约束要求属性全存在才施加。修复方式：admin 节点恒写 agent_id
+    （Agent 级写真实 UUID、管理员级写 NEO4J_ADMIN_LEVEL_AGENT_SENTINEL），
+    使 (name, admin_user_id, agent_id) 对两级同时生效。
     """
+    from internal.entity.memory_owner_entity import (
+        MemoryOwnerKey,
+        NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+    )
+    from uuid import uuid4
+
+    admin_id = uuid4()
+    admin_level = MemoryOwnerKey.for_admin(admin_id).neo4j_props()
+
+    assert "agent_id" in admin_level, "管理员级必须写 agent_id（否则约束对其豁免）"
+    assert admin_level["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+    # 约束文本本身必须覆盖 agent_id（若约束不含该属性，哨兵也救不了）
+    statements = _declared_statements()
+    assert any("REQUIRE (n.name, n.admin_user_id, n.agent_id) IS UNIQUE" in s for s in statements)
+    assert any("REQUIRE (n.key, n.admin_user_id, n.agent_id) IS UNIQUE" in s for s in statements)
+
+
+def test_sentinel_documented_in_extension():
+    """写入侧恒写 agent_id 的前提必须在 extension 注释中登记（防读者误以为属性可省）。"""
     source = _source()
-    assert "不受" in source or "失效" in source, "必须登记管理员级不被约束兜底"
-    assert "MERGE" in source, "必须说明管理员级唯一性依赖写侧 MERGE"
+    assert "NEO4J_ADMIN_LEVEL_AGENT_SENTINEL" in source
+    assert "所有属性都存在" in source or "整条豁免" in source

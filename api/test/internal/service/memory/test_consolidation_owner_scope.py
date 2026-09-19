@@ -16,7 +16,10 @@ from uuid import uuid4
 
 import pytest
 
-from internal.entity.memory_owner_entity import MemoryOwnerKey
+from internal.entity.memory_owner_entity import (
+    MemoryOwnerKey,
+    NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+)
 
 
 def test_pgvector_similarity_query_uses_owner_conditions():
@@ -124,11 +127,12 @@ def test_query_old_episodes_scopes_admin_owner_keeping_clauses():
 
     cypher, params = driver.calls[0]
     assert "MATCH (e:Episode)" in cypher
-    assert "e.admin_user_id = $admin_user_id AND e.agent_id IS NULL" in cypher
+    assert "e.admin_user_id = $admin_user_id AND e.agent_id = $agent_id" in cypher
     assert "e.user_id = $user_id" not in cypher
     for clause in ("LIMIT 100", "RETURN", "e.processed IS NULL"):
         assert clause in cypher, f"既有子句 {clause} 不得丢失"
     assert params["admin_user_id"] == str(admin_id)
+    assert params["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
 
 
 def test_query_old_episodes_user_owner_keeps_full_clause_set():
@@ -157,8 +161,8 @@ def test_conflict_pairs_dual_alias_scopes_admin_owner():
     detector._query_conflict_pairs(driver, owner_key, 50)
 
     cypher, params = driver.calls[0]
-    assert "a.admin_user_id = $admin_user_id AND a.agent_id IS NULL" in cypher
-    assert "b.admin_user_id = $admin_user_id AND b.agent_id IS NULL" in cypher
+    assert "a.admin_user_id = $admin_user_id AND a.agent_id = $agent_id" in cypher
+    assert "b.admin_user_id = $admin_user_id AND b.agent_id = $agent_id" in cypher
     assert "a.user_id = $user_id" not in cypher
     assert "b.user_id = $user_id" not in cypher
     assert params["admin_user_id"] == str(admin_id)
@@ -183,7 +187,10 @@ def test_persist_skill_sets_owner_props_for_admin():
     cypher, params = driver.calls[0]
     assert "s += $owner_props" in cypher
     assert "s.user_id = $user_id" not in cypher
-    assert params["owner_props"] == {"admin_user_id": str(admin_id)}
+    assert params["owner_props"] == {
+        "admin_user_id": str(admin_id),
+        "agent_id": NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+    }
 
 
 def test_persist_skill_user_writes_user_id_prop():

@@ -12,6 +12,7 @@ from internal.entity.memory_owner_entity import (
     MemoryOwnerKey,
     MemoryOwnerType,
     MemoryOwnerKeyError,
+    NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
 )
 
 
@@ -304,11 +305,18 @@ def test_neo4j_props_user_writes_only_user_id():
 
 
 def test_neo4j_props_admin_writes_only_admin_columns():
-    """admin 节点只写 admin_user_id（+ agent_id），**不得**出现 user_id。"""
+    """admin 节点写 admin_user_id + agent_id（管理员级写哨兵），**不得**出现 user_id。
+
+    管理员级必须写哨兵而非省略 agent_id：Neo4j 多属性唯一约束要求属性全存在才生效，
+    省略会让管理员级不被约束管辖。
+    """
     admin_id = uuid4()
     props = MemoryOwnerKey.for_admin(admin_id).neo4j_props()
 
-    assert props == {"admin_user_id": str(admin_id)}
+    assert props == {
+        "admin_user_id": str(admin_id),
+        "agent_id": NEO4J_ADMIN_LEVEL_AGENT_SENTINEL,
+    }
     assert "user_id" not in props
 
 
@@ -318,6 +326,18 @@ def test_neo4j_props_admin_with_agent_adds_agent_id():
 
     assert props == {"admin_user_id": str(admin_id), "agent_id": str(agent_id)}
     assert "user_id" not in props
+    assert props["agent_id"] != NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+
+
+def test_neo4j_admin_level_and_agent_level_props_are_distinct():
+    """管理员级与 Agent 级的 props 必须可区分（哨兵 vs 真实 UUID）。"""
+    admin_id, agent_id = uuid4(), uuid4()
+    admin_level = MemoryOwnerKey.for_admin(admin_id).neo4j_props()
+    agent_level = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id).neo4j_props()
+
+    assert admin_level != agent_level
+    assert admin_level["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+    assert agent_level["agent_id"] == str(agent_id)
 
 
 def test_neo4j_filter_condition_user_matches_user_id_property():
@@ -329,19 +349,26 @@ def test_neo4j_filter_condition_user_matches_user_id_property():
 
 
 def test_neo4j_filter_condition_admin_distinguishes_agent_levels():
-    """admin 无 agent 与带 agent 必须是互斥条件（属性缺失 vs 等值）。"""
+    """admin 无 agent 与带 agent 必须是互斥条件。
+
+    管理员级以「agent_id = 哨兵」表达（**不是** IS NULL）——因为写入侧始终写 agent_id，
+    属性恒存在；用 IS NULL 反而永远命不中。谓词与 `neo4j_props()` 的绑定值同源。
+    """
     admin_id, agent_id = uuid4(), uuid4()
     key_no_agent = MemoryOwnerKey.for_admin(admin_id)
     key_with_agent = MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id)
 
     assert key_no_agent.neo4j_filter_condition("c") == (
-        "c.admin_user_id = $admin_user_id AND c.agent_id IS NULL"
+        "c.admin_user_id = $admin_user_id AND c.agent_id = $agent_id"
     )
     assert key_with_agent.neo4j_filter_condition("c") == (
         "c.admin_user_id = $admin_user_id AND c.agent_id = $agent_id"
     )
     assert "c.user_id" not in key_no_agent.neo4j_filter_condition("c")
     assert "c.user_id" not in key_with_agent.neo4j_filter_condition("c")
+    # 两级互斥性由**绑定值**体现（哨兵 vs 真实 UUID），而非谓词文本差异
+    assert key_no_agent.neo4j_props()["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+    assert key_with_agent.neo4j_props()["agent_id"] == str(agent_id)
 
 
 def test_neo4j_filter_params_are_derivable_from_props():
