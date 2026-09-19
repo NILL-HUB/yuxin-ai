@@ -21,7 +21,7 @@
 | --- | --- | --- | --- |
 | `Phase N` | 编排 / 路由 / 治理**主线** | 阶段（顺序里程碑） | 0–18 |
 | `ADMIN-P*` | 管理端 Agent 治理 | 阶段 | P1a / P1b / P2 / P3a / P3b / P3c / P4 / P5 |
-| `KB-P*` | **知识库产品形态** | 阶段 | P1 / P2 / P2A / P2B / P3 / P3.5 / P3.6 / P3.7 / P3.8 / P4 / P5 |
+| `KB-P*` | **知识库产品形态** | 阶段 | P1 / P2 / P2A / P2B / P3 / P3.5 / P3.6 / P3.7 / P3.8 / P4 / P4.5 / P5 |
 | `POOL-P*` | 池治理打通与工具统一 | 阶段 | P0 / P1 / P2 |
 | `FIX-P*` | 第三轮并行修复 | **优先级**（非阶段） | P0–P3 |
 | `DEBT-P*` | 技术债清理 | **优先级**（非阶段） | P1–P5 |
@@ -371,6 +371,7 @@
 | KB-P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（KB-P2A 多模态素材入库 + KB-P2B 分片上传/秒传/断点续传 + 分片产物落盘跟随激活后端，支持 cos/oss） |
 | KB-P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
+| KB-P4.5 | L1 视频时间线叙述（批次化批喂替代逐帧调用，段落即编辑挂载点） | ✅ 完成（场景 B/A 锚点 + 每批 ≈10 锚点多图批喂 + 服务端时间码投影 + 降级逐帧；时间线段落结构 `start_sec/end_sec/speech_text` 为 KB-P4 剪辑的定位基础，见 [modules/02-knowledge-base.md §11.8](./modules/02-knowledge-base.md#118-多模态l1基础解析kb-p2a已落地)） |
 | KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
 | KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕 / 封面，默认关闭） | ⬜ 未开始（调研与实测复核已完成，见 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp待拓展kb-p6未立项)） |
 
@@ -640,6 +641,34 @@ SiliconFlow ASR 在请求体带 `response_format=verbose_json` 时返回
 **真机 E2E 实测（2026-09-19）**：trim（5s 源 → 2.02s 产物）、concat（2s + 2s → 4.00s）、
 subtitle（2.00s，字幕像素已烧入、帧 md5 相对源发生变化）均通过；ffprobe 均可读出有效时长。
 自动字幕链路另行实测（TTS 造人声 → 带时间轴 ASR → 写库 → 读回复用 → 烧录，逐帧 md5 变化）通过。
+
+### KB-P4.5：L1 视频时间线叙述（已完成）
+
+**动机**：KB-P3 之前 L1 视频解析对抽出的每一帧**逐帧独立调用**视觉模型（N 帧 = N 次调用，无时间语义），
+产物只有孤立的 `scene_index` 帧描述，**无法回答「视频在讲什么、段落在哪」**。KB-P4 剪辑定位
+（trim / concat / subtitle 的 `start_sec/end_sec`）需要**时间线段落**结构作为挂载点。本阶段把 L1
+视频解析升级为**批次化时间线叙述**：调次数从 N 降到 N/块，模型只输出 `[{anchor_index, description}]`，
+时间码一律由服务端投影（ASR cues / 抽帧偏移），段落即剪辑定位基础。
+
+实施计划（KB-P4.5）：[superpowers/plans/2026-09-20-kb-video-timeline-p4.md](../superpowers/plans/2026-09-20-kb-video-timeline-p4.md)
+
+| 任务 | 文件 | 状态 |
+| --- | --- | --- |
+| **时间线规划纯函数** | [timeline_planning.py](../../api/internal/core/vision/timeline_planning.py)（`build_timeline_plan` / `plan_scene_b_anchors` / `plan_scene_a_blocks` / `chunk_anchors` / `anchor_representative_frame` / `parse_timeline_descriptions`） | ✅ 已落地；无 IO 纯函数，JSON 容错含未闭合 code fence（`_strip_code_fence`） |
+| **多图批喂** | [vision_invoke.py](../../api/internal/core/vision/vision_invoke.py) `invoke_vision_model_multi(image_data_uris, prompt)`（共享 `_invoke_vision_content`） | ✅ 已落地；单图 `invoke_vision_model` 签名与行为不变 |
+| **批喂改造** | [knowledge_media_extractor_service.py](../../api/internal/service/knowledge_media_extractor_service.py) `_extract_video` → `_process_timeline_batch` / `_invoke_vision_batch` / `_build_batch_prompt` | ✅ 已落地；批喂失败重试 1 次 → 仍失败降级逐帧（`_fallback_frame_segments`） |
+| **段落代表帧回退** | [knowledge_indexing_service.py](../../api/internal/service/knowledge_indexing_service.py) `_segment_frame` | ✅ 已落地；`_segment_frame` 无 `time_offset` 时回退 `(start_sec+end_sec)/2`，`segment_id` 用 `getattr` 防御 |
+
+**场景路由**：有 ASR cues → **场景 B**（`speech_sentence` 锚点，按 cue 窗口归组帧）；无 cues →
+**场景 A**（`time_slot` 锚点，块 10 帧、重叠 1）。段落落库 `MediaSegment.metadata.source=vision_timeline`，
+含 `anchor_type / anchor_text / start_sec / end_sec / frame_url（锚点内时间居中帧）/ speech_text`；
+场景 B 模型未给描述时保留仅台词段落（`content=speech_text`）。主路径只留存段落代表帧；
+批喂连续失败降级逐帧时逐帧留存。详见 [modules/02-knowledge-base.md §11.8](./modules/02-knowledge-base.md#118-多模态l1基础解析kb-p2a已落地)。
+
+**真机链路验证（2026-09-20，本机无 DB 降级为桩注入）**：真实 ffmpeg 抽帧 + 真实场景路由 +
+视觉/ASR 桩。场景 B（6 帧 → 2 锚点 → 1 次批喂[3 帧] → 2 条 timeline 段，start/end 与 cues 一致、
+speech_text 注入）；场景 A（6 帧 → 1 锚点 → 1 次批喂[6 帧] → 1 条 time_slot 段）。真实模型调用
+（GLM-5.3-Flash 批喂 / SiliconFlow ASR）因本机无可用 DB 留待部署环境。
 
 ### FIX-P3（第三轮修复，已完成）
 

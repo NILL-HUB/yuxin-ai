@@ -134,7 +134,7 @@
 - 外部数据源：飞书、Notion、本地文件夹、GitHub 等（同步导入的资料）。
 - 其他结构化或半结构化业务资料。
 - 图片：jpg、jpeg、png、webp、gif、svg 等，L1 视觉理解已落地，细粒度 OCR 区块坐标等 L2 增强未实现。
-- 视频：产品演示、会议录像、课程视频等，L1（音轨 ASR + 关键帧视觉描述 + 关键帧留存）与 L2（区间窗口密抽 + 逐帧视觉详述）均已落地。
+- 视频：产品演示、会议录像、课程视频等，L1（音轨 ASR + 批次化时间线叙述 + 段落代表帧留存）与 L2（区间窗口密抽 + 逐帧视觉详述）均已落地。
 - 音频：会议录音、访谈、播客、语音备忘等，L1 ASR 转写已落地，说话人切分等 L2 增强未实现。
 
 资料内容库需要支持：
@@ -237,7 +237,7 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 | --- | --- |
 | 文档 | 已支持 md、doc、docx、txt、pdf、csv、xlsx、xls、html 等 |
 | 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（KB-P2A）；细粒度 OCR 区块坐标等 L2 增强未实现 |
-| 视频 | L1 音轨 ASR 转写 + 关键帧抽取 + 视觉描述入库、关键帧留存为 UploadFile（KB-P2A + KB-P3）；关键帧视觉向量索引与 L2 区间窗口密抽（逐帧视觉详述）已落地（KB-P3，见 §11.10 / §11.11）；场景切分未实现 |
+| 视频 | L1 音轨 ASR 转写 + 批次化时间线叙述（锚点段落视觉描述）、段落代表帧留存为 UploadFile（KB-P2A + KB-P3 + KB-P4.5）；关键帧视觉向量索引与 L2 区间窗口密抽（逐帧视觉详述）已落地（KB-P3，见 §11.10 / §11.11）；场景切分未实现 |
 | 音频 | L1 ASR 全文转写入库已落地（KB-P2A）；说话人切分、章节切分等 L2 增强未实现 |
 
 明确缺口（KB-P1 数据基座落地后已消解项标注 ✅）：
@@ -248,7 +248,7 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 4. ✅ 已消解：归属判断已引入 `owner_account_id` + `owner_admin_user_id`，可区分"管理员自己的个人知识库"和"管理员维护的系统级知识库"。
 5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
-7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 关键帧视觉描述 + 关键帧留存）已接入索引链路**（KB-P2A + KB-P3，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频区间窗口密抽 + 逐帧视觉详述）已在 KB-P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分仍未实现。
+7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 批次化时间线叙述 + 段落代表帧留存）已接入索引链路**（KB-P2A + KB-P3 + KB-P4.5，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频区间窗口密抽 + 逐帧视觉详述）已在 KB-P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分仍未实现。
 8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
 9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
 10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（KB-P3 范围）。
@@ -453,7 +453,7 @@ KB-P2A 把 KB-P1 预留的 `media_type` / `parse_profile` 数据落点接上索�
 | --- | --- | --- | --- |
 | 图片 | `image` | 从对象存储下载 → `path_to_data_uri`（按扩展名推断 MIME，编码前上限 8MB）→ 视觉模型（画面描述 + OCR） | 1 个片段；摘要为空返回 `[]` |
 | 音频 | `audio` | 下载 → 包装为 `FileStorage` → `AudioService.audio_to_text` ASR 全文转写 | 1 个片段；转写为空返回 `[]` |
-| 视频 | `video` | 下载 → `probe_duration_sec` 探测时长 → `extract_video_frames_with_offsets`（L1 帧数随时长动态、全片均匀取帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 逐帧 `path_to_data_uri` 视觉描述；同目录内 `extract_video_audio` 抽音轨 → ASR 转写 | 转写片段（1 个，非空时）+ 每帧 1 个片段；单帧失败跳过，全部失败抛错 |
+| 视频 | `video` | 下载 → `probe_duration_sec` 探测时长 → `extract_video_frames_with_offsets`（L1 帧数随时长动态、全片均匀取帧，优先系统 ffmpeg，降级 imageio-ffmpeg）→ 同目录内 `extract_video_audio` 抽音轨 → ASR 转写 → **批次化时间线叙述**（有 ASR cues 走场景 B 台词句锚点、无 cues 走场景 A 时间片锚点，每批 ≈10 锚点一次多图批喂视觉模型，时间码一律由服务端投影） | 转写片段（1 个，非空时）+ 每锚点 1 个时间线段落；批喂失败重试 1 次 → 仍失败降级为该批内逐帧独立调用 |
 
 `account_id` / `document_id` 仅供视频分支的关键帧留存使用（帧的归属账号与来源文档），缺省时视频照常解析但不留存帧（`frame_url` 为空字符串），保证既有调用方向后兼容。
 
@@ -468,7 +468,8 @@ KB-P2A 把 KB-P1 预留的 `media_type` / `parse_profile` 数据落点接上索�
 | 函数 | 职责 |
 | --- | --- |
 | `path_to_data_uri(path)` | 本地图片 → data URI（按扩展名推断 MIME，8MB 上限） |
-| `invoke_vision_model(data_uri, prompt)` | 经 `LanguageModelService.get_feature_model("vision_analyze")` 调用视觉模型 |
+| `invoke_vision_model(data_uri, prompt)` | 经 `LanguageModelService.get_feature_model("vision_analyze")` 调用视觉模型（单图，签名与行为不变） |
+| `invoke_vision_model_multi(image_data_uris, prompt)` | 多图批喂：文本 + 多张 `image_url` 同消息一次调用（时间线批喂入口，唯一调用方 `_invoke_vision_batch`） |
 | `extract_video_frames(video_path, frame_count=3)` | 抽关键帧，返回 data URI 列表；产物随临时目录销毁；ffmpeg 不可用时降级 imageio-ffmpeg，均不可用抛错 |
 | `extract_video_audio(video_path, target_path)` | 抽音轨为单声道 16k WAV（`-vn` / `-ac 1` / `-ar 16000`），返回 `target_path`；无可用 ffmpeg 或未产出文件抛 `RuntimeError` |
 | `extract_video_frames_to_dir(video_path, out_dir, frame_count=3)` | 抽帧到指定目录，返回帧文件路径列表；不删目录、不转 data URI，生命周期由调用方负责。**注意：关键帧留存链路已改用 `extract_video_frames_with_offsets`（需时间偏移），本函数当前仅剩测试覆盖，无生产调用方** |
@@ -480,6 +481,8 @@ KB-P2A 把 KB-P1 预留的 `media_type` / `parse_profile` 数据落点接上索�
 | `_resolve_ffmpeg_exe()` | 解析可用 ffmpeg 可执行文件：优先系统 `ffmpeg`，其次 `imageio-ffmpeg` 自带静态二进制，均无则抛错 |
 
 `providers/vision_tools/vision_analyze.py` / `video_analyze.py` 已改为复用该模块，对外行为不变（仍使用返回 data URI 的 `extract_video_frames`）。
+
+L1 视频时间线规划为纯函数模块 `internal/core/vision/timeline_planning.py`（无 IO）：`build_timeline_plan(cues, frames)` 路由场景（有 ASR cues → 场景 B 台词句锚点 `speech_sentence`；无 cues → 场景 A 时间片锚点 `time_slot`，块 10 帧、块间重叠 1）、`chunk_anchors` 按批 ≈10 连续切分、`anchor_representative_frame` 取锚点内时间居中帧为段落代表帧、`parse_timeline_descriptions` 解析模型返回的 JSON 数组（非法 JSON 抛 `TimelineParseError`、越界/空描述跳过）。**时间码一律由服务端投影**（ASR cues / 抽帧偏移），视觉模型只输出 `[{anchor_index, description}]`。
 
 #### 11.8.3 MediaSegment 产物结构
 
@@ -495,11 +498,14 @@ class MediaSegment:
 | media_type | content | metadata 字段 |
 | --- | --- | --- |
 | `image` | 视觉摘要（含 OCR） | `media_type`、`vision_summary` |
-| `audio` | ASR 转写全文 | `media_type` |
-| `video`（音轨转写） | 视频音轨 ASR 转写全文 | `media_type`、`source="audio_transcript"` |
-| `video`（关键帧） | 单帧视觉描述（含 OCR） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_count`（总帧数）、`frame_url`（留存帧的对象 key，未留存/留存失败为空字符串）、`time_offset`（该帧在视频中的时间偏移秒数，L2 区间定位与「改细节」的唯一依据） |
+| `audio` | ASR 转写全文 | `media_type`、`transcript_segments`（ASR 时间轴，自动字幕来源） |
+| `video`（音轨转写） | 视频音轨 ASR 转写全文 | `media_type`、`source="audio_transcript"`、`transcript_segments`（非空时） |
+| `video`（时间线叙述） | 锚点段落视觉描述（场景 B 模型未给描述时退化为 `speech_text`） | `media_type`、`source="vision_timeline"`、`anchor_type`（`speech_sentence`/`time_slot`）、`anchor_text`（台词文本）、`start_sec`/`end_sec`（**服务端投影**的时间窗口，L2 定位与「改细节」的依据）、`speech_text`（ASR 台词，场景 B 非空）、`frame_url`（段落代表帧的对象 key，未留存/留存失败为空字符串） |
+| `video`（降级逐帧） | 单帧视觉描述（仅批喂连续失败降级时产出） | `media_type`、`scene_index`（帧序号，从 1 起）、`frame_url`、`time_offset`（该帧在视频中的时间偏移秒数） |
 
-转写片段排在帧片段之前（「讲什么」的检索价值高于「画面是什么」）。
+转写片段排在时间线段落之前（「讲什么」的检索价值高于「画面是什么」）。
+
+时间线叙述段不落逐帧 `time_offset`；`_segment_frame`（`knowledge_indexing_service.py`）读取 `start_sec`/`end_sec` 回退 `(start_sec+end_sec)/2` 作为 L2 扩窗 / 「改细节」的定位坐标（`parse_profile.frames` 与 L2 窗口来源见 §11.11）。
 
 #### 11.8.3.1 关键帧留存为 UploadFile
 
@@ -508,7 +514,8 @@ class MediaSegment:
 | 环节 | 行为 |
 | --- | --- |
 | `_persist_frame(frame_path, *, account_id, document_id)` | 读帧字节 → `cos_service.upload_bytes(filename, content, account_id, mime_type="image/jpeg")`，**直接返回该调用产出的记录**（记录与 `extension="jpg"` / `hash=sha3_256` 等字段均由存储后端在 `upload_bytes` 内建好）。**不得**再调 `create_upload_file`——那会对同一对象 key 建出第二条记录（详见 §11.10.5「记录唯一性」） |
-| 降级策略 | `_persist_frame` 抛异常只记 warning 并把 `frame_url` 置空，帧描述片段照常产出——留存是增强能力，不得让整个视频解析失败 |
+| 留存范围 | 主路径只留存**段落代表帧**（每锚点 1 帧，`anchor_representative_frame` 取锚点内时间居中帧）；批喂连续失败降级逐帧时对该批内帧逐帧留存 |
+| 降级策略 | `_persist_frame` 抛异常只记 warning 并把 `frame_url` 置空，时间线叙述段照常产出——留存是增强能力，不得让整个视频解析失败 |
 | 依赖 | 服务保留 dataclass 字段 `upload_file_service: UploadFileService`（具体类型标注，injector 按类型解析）；帧记录实际由存储后端创建 |
 
 > 帧留存本身不写视觉向量；视觉向量的编码与索引由索引链路在写完文本片段向量后单独执行（`_index_visual_vectors`，KB-P3 已落地，见 §11.10.3）。
@@ -564,11 +571,11 @@ build_document(document_id)
 {"tier1": {"status": "completed", "media_type": "video", "segment_count": 3, "video_frame_count": 3}, "frames": [{"segment_id": "...", "frame_url": "...", "scene_index": 1}]}
 ```
 
-（`video_frame_count` 与 `frames` 为 KB-P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。每个 frame 条目含 `segment_id` / `frame_url` / `scene_index` / `time_offset`（`_segment_frame` 输出，时间偏移是该帧在视频中的坐标——缺它则帧清单只能排序、无法换算时间轴位置，L2 区间密抽与「改细节」都无从定位）。）
+（`video_frame_count` 与 `frames` 为 KB-P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。每个 frame 条目含 `segment_id` / `frame_url` / `scene_index` / `time_offset`（`_segment_frame` 输出，时间偏移是该帧在视频中的坐标——缺它则帧清单只能排序、无法换算时间轴位置，L2 区间密抽与「改细节」都无从定位。KB-P4.5 起：时间线叙述段不落 `time_offset`，`_segment_frame` 对其回退 `(start_sec+end_sec)/2`，见 §11.8.3）。）
 
 | 档位 | 状态 | 内容 |
 | --- | --- | --- |
-| L1 基础解析 | ✅ 已落地（KB-P2A 建链路；视频音轨 ASR 与关键帧留存为 KB-P3 补强，见 §11.8） | 图片视觉摘要 + OCR、音频 ASR 转写、视频「音轨 ASR 转写 + 关键帧视觉描述」，关键帧留存为 UploadFile → 片段 + 向量 |
+| L1 基础解析 | ✅ 已落地（KB-P2A 建链路；视频音轨 ASR 与关键帧留存为 KB-P3 补强；批次化时间线叙述为 KB-P4.5，见 §11.8） | 图片视觉摘要 + OCR、音频 ASR 转写、视频「音轨 ASR 转写 + 批次化时间线叙述」，段落代表帧留存为 UploadFile → 片段 + 向量 |
 | L2 深度解析 | ✅ 已落地（KB-P3，见 §11.11） | 视频**区间窗口密抽**：由 L1 命中帧的 `time_offset` 扩窗（±10s，可给显式区间），窗口内按 0.5s/帧密抽并新建 Segment 逐帧详述；说话人切分、细粒度 OCR 坐标、场景切分仍未实现 |
 
 L2 为**按需触发**（Celery 任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`，**不加 beat 条目**），状态写入 `parse_profile.tier2`。检索取料的过滤能力（分区 / 媒体类型 / 标签 / 相似度阈值）与关键帧视觉向量索引均已在 KB-P3 落地，见 §11.9 / §11.10。
