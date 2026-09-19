@@ -40,6 +40,7 @@ from injector import inject
 from pydantic import BaseModel, Field
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey, MemoryOwnerType
 from internal.model.memory_models import (
     ConflictType,
     ExplicitDetectionResult,
@@ -365,10 +366,22 @@ class WriteTimeConflictResolver:
 
         查询路径: Entity(name=subject) <-[:CONTAINS]- Episode
         过滤条件: is_active=true, storage_tier IN ['hot','warm'], t_invalidated_at IS NULL
+
+        ADMIN-P3c-4（缺口十四a）：`user_id` 参数为**主体键字符串**——用户态为裸 UUID
+        （与历史 `user_id` 字面量逐字节等价）；admin 态为 ``admin:{uuid}`` 或
+        ``admin:{uuid}:{uuid}``，Entity 按 `admin_user_id` + `agent_id` 属性匹配。
         """
-        cypher = """
-        MATCH (e:Entity {name: $subject, user_id: $user_id})<-[:CONTAINS]-(ep:Episode)
-        WHERE ep.is_active = true
+        owner = MemoryOwnerKey.parse(user_id)
+        if owner.owner_type is MemoryOwnerType.USER:
+            match_clause = "MATCH (e:Entity {name: $subject, user_id: $user_id})"
+            owner_binds = {"user_id": user_id}
+        else:
+            match_clause = "MATCH (e:Entity {name: $subject})"
+            owner_binds = dict(owner.neo4j_props())
+        cypher = f"""
+        {match_clause}<-[:CONTAINS]-(ep:Episode)
+        WHERE {owner.neo4j_filter_condition("e")}
+          AND ep.is_active = true
           AND (ep.storage_tier IS NULL OR ep.storage_tier IN ['hot', 'warm'])
           AND ep.t_invalidated_at IS NULL
           AND ep.content IS NOT NULL
@@ -381,7 +394,7 @@ class WriteTimeConflictResolver:
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    {"subject": subject, "user_id": user_id},
+                    {"subject": subject, **owner_binds},
                 )
                 return [dict(record) for record in result]
         except Exception:
