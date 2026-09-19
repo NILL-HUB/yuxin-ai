@@ -38,7 +38,6 @@
     │ RetrievalConfig          │ doc2                                    │
     │ SpreadConfig             │ doc2                                    │
     │ FunnelConfig             │ doc2                                    │
-    │ DigestConfig             │ doc2                                    │
     │ DecayConfig              │ doc2 §5.2                               │
     │ ColdStorageEntry         │ doc2 §5.3                               │
     │ RebuildResult            │ doc2 §5.3                               │
@@ -558,20 +557,6 @@ class FunnelConfig(BaseModel):
     llm_model: str = Field(default="gpt-4o-mini", description="漏斗 LLM 模型")
     llm_temperature: float = Field(default=0.0, description="漏斗 LLM 温度")
     llm_max_tokens: int = Field(default=2000, description="漏斗 LLM 最大 token 数")
-
-
-class DigestConfig(BaseModel):
-    """Memory Digest 配置。"""
-
-    cache_ttl_seconds: int = Field(default=300, description="缓存 TTL（秒）")
-    cache_key_prefix: str = Field(default="memory:digest:", description="缓存键前缀")
-    max_tokens: int = Field(default=2000, description="Digest 最大 token 数")
-    profile_max_items: int = Field(default=5, description="画像最大条数")
-    skills_max_items: int = Field(default=10, description="技能最大条数")
-    events_max_items: int = Field(default=10, description="事件最大条数")
-    tasks_max_items: int = Field(default=5, description="任务最大条数")
-    render_model: str = Field(default="gpt-4o-mini", description="渲染 LLM 模型")
-    render_temperature: float = Field(default=0.0, description="渲染 LLM 温度")
 
 
 class DecayConfig(BaseModel):
