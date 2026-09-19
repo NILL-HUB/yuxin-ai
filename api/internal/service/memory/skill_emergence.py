@@ -29,6 +29,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from internal.config.memory_settings import SkillConfig
 from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.service.memory.metrics import MetricsCollector
 
@@ -64,29 +65,8 @@ class Skill(BaseModel):
     source_memories: list[str] = Field(default_factory=list)
 
 
-class SkillConfig(BaseModel):
-    """技能涌现配置。"""
-
-    min_pattern_frequency: int = 3
-    pattern_window_days: int = 30
-    maturity_active_threshold: float = 0.7
-    maturity_stale_threshold: float = 0.2
-    stale_days: int = 90
-    extraction_model: str = "gpt-4o-mini"
-    extraction_temperature: float = 0.2
-    # ── 基因1: Skill 即时触发（§8.5）──
-    instant_emergence_enabled: bool = True
-    instant_emergence_min_tool_calls: int = 5
-    instant_emergence_async: bool = True
-    # ── 基因3: Curator + bump_use（§8.7）──
-    curator_enabled: bool = True
-    curator_interval_days: int = 7
-    curator_merge_similarity_threshold: float = 0.85
-    curator_stale_to_deprecated_days: int = 30
-    bump_use_redis_enabled: bool = True
-    bump_use_neo4j_flush_interval: int = 3600
-    # 统计 hash 兜底 TTL（防未命中技能统计永久滞留，见 P3c-3 缺口十二）
-    skill_stats_ttl_seconds: int = 90 * 86400
+# ``SkillConfig`` 唯一事实源为 ``internal.config.memory_settings``，
+# 本模块直接复用（见顶部 import）。兼容既有 ``from ...skill_emergence import SkillConfig``。
 
 
 # =========================================================

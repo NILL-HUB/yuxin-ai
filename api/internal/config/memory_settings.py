@@ -245,6 +245,8 @@ class SkillConfig(BaseModel):
     curator_stale_to_deprecated_days: int = 30
     bump_use_redis_enabled: bool = True
     bump_use_neo4j_flush_interval: int = 3600
+    # 统计 hash 兜底 TTL（防未命中技能统计永久滞留，见 P3c-3 缺口十二）
+    skill_stats_ttl_seconds: int = 90 * 86400
 
 
 class SpreadConfig(BaseModel):
