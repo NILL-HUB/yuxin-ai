@@ -62,6 +62,15 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "fallback_tier": "3",  # 治理动作需要较强的工具调用能力
         "billable": False,     # 系统治理功能：system_borne，系统承担成本（设计 §6.2）
     },
+    {
+        "feature_key": "vision_analyze",
+        "feature_name": "视觉分析（图片/视频帧识别）",
+        "feature_category": "assistant",
+        "feature_description": "多模态视觉模型：图片 OCR 与摘要、视频关键帧/逐帧画面描述（L1 解析、视频时间线、以图搜图的视觉编码输入来源）",
+        "model_type": "chat",   # 视觉调用走 OpenAI 兼容 image_url 多模态（本质是 chat LLM）
+        "fallback_tier": "2",   # 标准型 Flash 级模型即可胜任视觉描述
+        "billable": True,       # 用户主动发起（对话内识图/视频解析），按用量计费
+    },
 ]
 
 

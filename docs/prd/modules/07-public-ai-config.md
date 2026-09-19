@@ -21,9 +21,9 @@
 
 引入统一的 `public_ai_feature_config` 配置层，将"用哪个模型做这个 AI 任务"从代码层下沉到数据库层：
 
-- **集中管理**：admin 通过后台界面统一配置 26 个公共 AI 能力的模型、降级策略、是否计费
+- **集中管理**：admin 通过后台界面统一配置 27 个公共 AI 能力的模型、降级策略、是否计费
 - **类型隔离**：通过 `model_type` 字段强制 chat / image 类型匹配，防止类型错配
-- **成本归属**：通过 `billable` 字段明确区分用户付费（8 个）vs 系统付费（18 个）
+- **成本归属**：通过 `billable` 字段明确区分用户付费（9 个）vs 系统付费（18 个）
 - **降级路径**：未配置时按 `fallback_tier`（模型池数字档位 `1`~`5`）从模型池自动选取兜底模型
 
 ### 24.1.3 设计原则
@@ -33,7 +33,7 @@
 | 配置优先 | 所有公共 AI 调用必须经过 `get_feature_model(feature_key)`，禁止直连 `get_cheap_chat_model` |
 | 系统预设非编辑 | `feature_key` / `feature_name` / `feature_category` / `feature_description` 由系统预置，admin 不可改 |
 | 仅 4 字段可编辑 | `model_config_id`（下拉）/ `fallback_tier`（下拉）/ `enabled`（勾选）/ `billable`（单选）|
-| 不支持增删 | 26 个 feature_key 由迁移 seed 与启动补齐（`_BUILTIN_FEATURES`）共同预置，admin 不能 create/delete，只能 edit |
+| 不支持增删 | 27 个 feature_key 由迁移 seed 与启动补齐（`_BUILTIN_FEATURES`）共同预置，admin 不能 create/delete，只能 edit |
 | 类型严格匹配 | `model_type` 决定下拉列表过滤范围，图像类只能选图像模型 |
 
 ---
@@ -68,16 +68,16 @@
 
 ### 24.2.3 Alembic 迁移
 
-迁移链：建表迁移为 `a4b5c6d7e8f9_create_public_ai_feature_config`，初始数据由 `b5c6d7e8f9a0_seed_public_ai_feature_defaults` 写入 27 条。此后经 `m8b9c0d1e2f3_cleanup_public_ai_feature_config` 删除 4 条被指挥官替代的旧路由键，`f1a2b3c4d5e6` 与 `f1a2b3c4d5e7` 做字段/档位调整。**当前表内共 26 条**（验证日期 2026-09-14）。
+迁移链：建表迁移为 `a4b5c6d7e8f9_create_public_ai_feature_config`，初始数据由 `b5c6d7e8f9a0_seed_public_ai_feature_defaults` 写入 27 条。此后经 `m8b9c0d1e2f3_cleanup_public_ai_feature_config` 删除 4 条被指挥官替代的旧路由键，`f1a2b3c4d5e6` 与 `f1a2b3c4d5e7` 做字段/档位调整，`ensure_builtin_features()` 启动补齐 `vision_analyze`。**当前表内共 27 条**（验证日期 2026-09-20）。
 
 迁移幂等性：使用 `INSERT ... ON CONFLICT (feature_key) DO NOTHING` 确保重复执行不重复插入。
 
 ---
 
-## 24.3 26 个预置功能清单
+## 24.3 27 个预置功能清单
 
-> **DB 实际预置**：当前 `public_ai_feature_config` 表内共 26 条记录（验证日期 2026-09-14）。
-> **记录来源有两条通道**：① 迁移 seed（`b5c6d7e8f9a0` 写入 27 条，`m8b9c0d1e2f3` 删 4 条 → 23 条）；② 应用启动时 `PublicAIFeatureService.ensure_builtin_features()` 按 `_BUILTIN_FEATURES` 补齐（当前注册 `conductor`、`schedule_intent_parser`）。`assistant_agent` 为历史遗留记录，代码中**只被读取**（`get_assistant_agent_model_config`），无迁移或启动补齐写入点。
+> **DB 实际预置**：当前 `public_ai_feature_config` 表内共 27 条记录（验证日期 2026-09-20）。
+> **记录来源有两条通道**：① 迁移 seed（`b5c6d7e8f9a0` 写入 27 条，`m8b9c0d1e2f3` 删 4 条 → 23 条）；② 应用启动时 `PublicAIFeatureService.ensure_builtin_features()` 按 `_BUILTIN_FEATURES` 补齐（当前注册 `conductor`、`schedule_intent_parser`、`admin_agent`、`vision_analyze`）。`assistant_agent` 为历史遗留记录，代码中**只被读取**（`get_assistant_agent_model_config`），无迁移或启动补齐写入点。
 
 ### 24.3.1 图标类（2 个，全部 billable=false）
 
@@ -143,6 +143,17 @@
 |---|---|
 | `assistant_agent` | 助手 Agent 主对话模型（`get_assistant_agent_model_config` 优先读取） |
 
+### 24.3.6b 视觉类（1 个，billable=true，model_type=chat）
+
+> **补充注册（2026-09-20）**：`vision_analyze` 此前**未注册**——生产代码 `get_feature_model("vision_analyze")`
+> 一直按「未配置视为启用」回落 tier=2 chat 模型，admin 后台不可见、不可绑定。已按 AGENTS.md 强制规则补入
+> `_BUILTIN_FEATURES` 并经 `ensure_builtin_features()` 落库；同时绑定火山方舟 GLM-5.3-Flash 作为视觉识别模型
+> （见 `docs/deployment-single-node.md` 模型池小节）。
+
+| feature_key | billable | 说明 |
+|---|---|---|
+| `vision_analyze` | true | 视觉分析：图片 OCR 与摘要、视频关键帧/逐帧画面描述、视频时间线叙述（多模态模型） |
+
 ### 24.3.7 计费汇总
 
 | 类别 | 总数 | billable=true | billable=false |
@@ -153,10 +164,11 @@
 | 助手 | 5 | 4 | 1 |
 | 会话 | 4 | 4 | 0 |
 | 助手 Agent | 1 | 0 | 1 |
-| **合计** | **26** | **8** | **18** |
+| 视觉 | 1 | 1 | 0 |
+| **合计** | **27** | **9** | **18** |
 
 **计费原则**：
-- `billable=true`（8 个）：用户**直接受益**的 AI 能力，扣用户配额（`CreditService.consume_for_feature`）
+- `billable=true`（9 个）：用户**直接受益**的 AI 能力，扣用户配额（`CreditService.consume_for_feature`）
 - `billable=false`（18 个）：**系统基础设施**能力，平台承担成本，不扣用户配额
 
 ---
@@ -386,7 +398,7 @@ fallback_tier 池 (Level 2)
 
 ### 24.7.2 列表页
 
-- 显示 26 条预置配置
+- 显示 27 条预置配置
 - 列：feature_key / feature_name / feature_category / model_type / 绑定模型名 / fallback_tier / enabled / billable
 - 筛选：category、enabled、billable
 - 不支持"新建"和"删除"按钮
@@ -469,7 +481,7 @@ Orchestrator 的复杂度判断由 `TaskClassifierService` 承担（[task_classi
 
 ## 24.9 实施验证清单
 
-- [x] `public_ai_feature_config` 表已通过 Alembic 迁移落库（当前 26 条）
+- [x] `public_ai_feature_config` 表已通过 Alembic 迁移落库（当前 27 条，含启动补齐的 `vision_analyze`）
 - [x] `LanguageModelService.get_feature_model()` 方法实现并暴露
 - [x] `get_feature_model()` 改造完成：生产调用在 `api/internal/` 下 44 处、32 个文件，全部使用 `get_feature_model()`
 - [x] `IconGeneratorService` 改造为配置优先 + image 类型过滤
