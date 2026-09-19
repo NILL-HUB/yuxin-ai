@@ -125,3 +125,108 @@ def test_embedding_shards_have_owner_columns_backfilled(engine):
                 text(f"SELECT count(*) FROM {table} WHERE owner_type <> 'user'")
             ).scalar()
             assert non_user == 0, f"{table} 出现非 user 主体行"
+
+
+# =========================================================
+# ADMIN-P3c-1：解阻塞迁移（z3c4d5e6f7a8）的真库产物断言
+# =========================================================
+
+
+def test_owner_account_id_is_nullable_with_subject_check(engine):
+    """真库：owner_account_id 必须可空，且存在按主体类型的 CHECK。"""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        nullable = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'user_memory' AND column_name = 'owner_account_id'"
+            )
+        ).scalar()
+        assert nullable == "YES", "owner_account_id 在真库仍为 NOT NULL"
+
+        check = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = 'ck_user_memory_owner_subject'"
+            )
+        ).scalar()
+        assert check is not None, "缺少 ck_user_memory_owner_subject 约束"
+        assert "owner_admin_user_id" in check
+
+
+def test_embedding_shards_have_subject_check(engine):
+    """分表同样必须有 CHECK（动态表名，最易漏）。"""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        shards = _shard_tables(conn)
+    assert shards, "未发现任何向量分表"
+    with engine.connect() as conn:
+        for table in shards:
+            check = conn.execute(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conname = :name"
+                ),
+                {"name": f"ck_{table}_owner_subject"},
+            ).scalar()
+            assert check is not None, f"{table} 缺少主体 CHECK"
+
+
+def test_admin_subject_row_is_insertable(engine):
+    """端到端：admin 主体行必须能真正落库（CHECK 不误伤 admin）。
+
+    owner_admin_user_id 有 FK → admin_user(id)，探针用**真实存在**的 admin_user id；
+    无管理员数据时跳过（不制造假绿）。整段在显式事务内回滚，绝不残留。
+    """
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        admin_id = conn.execute(
+            text("SELECT id FROM admin_user ORDER BY created_at LIMIT 1")
+        ).scalar()
+        if admin_id is None:
+            pytest.skip("无 admin_user 数据，跳过 admin 落库探针")
+
+        # 连接已 autobegin（前面的 SELECT 已开启事务），故这里直接 execute，
+        # 结束时统一 rollback —— 探针绝不落库。
+        conn.execute(
+            text(
+                "INSERT INTO user_memory (id, owner_type, owner_account_id, "
+                "owner_admin_user_id, memory_type, content, status, scope) "
+                "VALUES (gen_random_uuid(), 'admin', NULL, :admin_id, 'preference', "
+                "'P3C1_PROBE', 'active', 'user_memory')"
+            ),
+            {"admin_id": str(admin_id)},
+        )
+        stored = conn.execute(
+            text(
+                "SELECT owner_account_id FROM user_memory "
+                "WHERE content = 'P3C1_PROBE' AND owner_admin_user_id = :admin_id"
+            ),
+            {"admin_id": str(admin_id)},
+        ).scalar()
+        assert stored is None, "admin 行的 owner_account_id 必须为 NULL"
+        conn.rollback()
+
+
+def test_user_row_requires_account_column(engine):
+    """CHECK 反向：owner_type='user' 但 account 为 NULL 必须被拒绝。"""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        raised = False
+        try:
+            conn.execute(
+                text(
+                    "INSERT INTO user_memory (id, owner_type, owner_account_id, "
+                    "memory_type, content, status, scope) "
+                    "VALUES (gen_random_uuid(), 'user', NULL, 'preference', "
+                    "'P3C1_BAD', 'active', 'user_memory')"
+                )
+            )
+        except Exception:
+            raised = True
+        conn.rollback()
+        assert raised, "user 主体缺 account 应被 CHECK 拒绝"
