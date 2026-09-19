@@ -141,7 +141,8 @@ class UserMemory(Base):
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
-    owner_account_id = Column(UUID, ForeignKey("account.id"), nullable=False)
+    # 归属账号（owner_type='user' 时非空；admin 主体为 NULL，见 P3c-1 迁移 z3c4d5e6f7a8）
+    owner_account_id = Column(UUID, ForeignKey("account.id"), nullable=True)
     # 主体类型（设计 §8）：'user' | 'admin'；存量全为 'user'
     owner_type = Column(
         String(16), nullable=False, server_default=text("'user'::character varying")

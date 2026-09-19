@@ -60,3 +60,24 @@ def test_migration_is_reversible():
     assert "owner_type = 'admin'" in source
     # 拒绝逻辑必须覆盖分表：分表若留 admin 行，SET NOT NULL 会落到裸 PG 报错
     assert source.count("owner_type = 'admin'") >= 2, "降级守卫必须同时检查主表与分表"
+
+
+def test_model_declares_account_column_nullable():
+    from internal.model import UserMemory
+
+    assert UserMemory.__table__.c.owner_account_id.nullable is True, (
+        "owner_account_id 必须可空（admin 主体该列为 NULL）"
+    )
+
+
+def test_router_ddl_matches_nullable_and_check():
+    """新建维度分表的 DDL 必须与迁移同口径，否则新维度重复踩坑。"""
+    router_src = (
+        API_ROOT / "internal" / "service" / "embedding_table_router.py"
+    ).read_text(encoding="utf-8")
+
+    assert "owner_account_id UUID NOT NULL REFERENCES account(id)" not in router_src, (
+        "分表 DDL 仍把 owner_account_id 写死 NOT NULL"
+    )
+    assert "owner_account_id UUID REFERENCES account(id)" in router_src
+    assert "ck_" in router_src and "owner_subject" in router_src, "分表 DDL 必须带主体 CHECK"
