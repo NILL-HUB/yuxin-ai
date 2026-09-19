@@ -179,3 +179,188 @@ def test_unparsable_user_id_still_skipped(monkeypatch):
 
     assert memory_id is None
     assert db.session.added == []
+
+
+# =========================================================
+# Neo4j 写路径主体化（episode / entity / access / cooccur）
+# =========================================================
+
+
+class _CapturingSession:
+    def __init__(self, sink):
+        self._sink = sink
+
+    def run(self, cypher, params=None, **kwargs):
+        self._sink.append((cypher, params if params is not None else kwargs))
+        return self
+
+    def single(self):
+        return None
+
+    def consume(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _CapturingDriver:
+    def __init__(self):
+        self.calls = []
+
+    def session(self):
+        return _CapturingSession(self.calls)
+
+
+def _writer_with_driver(monkeypatch, driver=None):
+    """返回 (writer, driver)；driver 必须是**同一个实例**被反复返回——
+    否则被测代码里的 ``self._get_driver()`` 会拿到新实例，断言看不到任何调用。"""
+    db = _wire(monkeypatch)
+    writer = LedgerWriter(db=db)
+    stable = driver or _CapturingDriver()
+    monkeypatch.setattr(writer, "_get_driver", lambda: stable)
+    return writer, stable
+
+
+def _event(user_id="acc-raw"):
+    from internal.model.memory_models import EventSource, MemoryEvent
+
+    return MemoryEvent(content="内容", source=EventSource.USER_MESSAGE, user_id=user_id)
+
+
+def test_episode_node_user_owner_keeps_user_id_prop(monkeypatch):
+    """用户态逐字节等价：属性名仍是 user_id，值仍是原始字符串。"""
+    from datetime import UTC, datetime
+
+    writer, driver = _writer_with_driver(monkeypatch)
+    writer._create_episode_node(driver, _event(), datetime.now(UTC))
+
+    cypher, params = driver.calls[0]
+    assert "SET e += $owner_props" in cypher
+    assert params["owner_props"] == {"user_id": "acc-raw"}
+    assert "user_id: $user_id" not in cypher, "归属改由 owner_props 注入"
+
+
+def test_episode_node_admin_owner_writes_admin_props(monkeypatch):
+    from datetime import UTC, datetime
+
+    writer, driver = _writer_with_driver(monkeypatch)
+    admin_id, agent_id = uuid4(), uuid4()
+    writer._create_episode_node(
+        driver, _event("ignored"), datetime.now(UTC),
+        owner=MemoryOwnerKey.for_admin(admin_id, agent_id=agent_id),
+    )
+
+    _cypher, params = driver.calls[0]
+    props = params["owner_props"]
+    assert props["admin_user_id"] == str(admin_id)
+    assert props["agent_id"] == str(agent_id)
+    assert "user_id" not in props, "admin 节点不得带 user_id（属性分离）"
+
+
+def test_merge_entity_pattern_includes_owner(monkeypatch):
+    """MERGE 键必须含归属，否则不同主体同名实体被合并（跨主体污染）。"""
+    from datetime import UTC, datetime
+
+    writer, driver = _writer_with_driver(monkeypatch)
+    admin_id = uuid4()
+    writer._merge_entity_node(
+        driver, {"name": "实体", "type": "t", "summary": ""}, datetime.now(UTC),
+        owner=MemoryOwnerKey.for_admin(admin_id),
+    )
+
+    cypher, params = driver.calls[0]
+    assert "MERGE (e:Entity:MemoryNode {name: $name" in cypher
+    assert "admin_user_id: $admin_user_id" in cypher
+    assert "agent_id: $agent_id" in cypher
+    assert params["admin_user_id"] == str(admin_id)
+    assert params["agent_id"] == NEO4J_ADMIN_LEVEL_AGENT_SENTINEL
+    assert "user_id" not in params
+
+
+def test_merge_entity_user_owner_keeps_user_pattern(monkeypatch):
+    from datetime import UTC, datetime
+
+    writer, driver = _writer_with_driver(monkeypatch)
+    writer._merge_entity_node(
+        driver, {"name": "实体", "type": "t", "summary": ""}, datetime.now(UTC),
+        fallback_user_id="acc-raw",
+    )
+
+    cypher, params = driver.calls[0]
+    assert "user_id: $user_id" in cypher
+    assert params["user_id"] == "acc-raw"
+
+
+def test_increment_entity_access_admin_owner(monkeypatch):
+    from datetime import UTC, datetime
+
+    writer, driver = _writer_with_driver(monkeypatch)
+    admin_id = uuid4()
+    writer._increment_entity_access(
+        driver, "实体", datetime.now(UTC),
+        owner=MemoryOwnerKey.for_admin(admin_id),
+    )
+
+    cypher, params = driver.calls[0]
+    assert "MATCH (e:Entity {name: $name" in cypher
+    assert "admin_user_id: $admin_user_id" in cypher
+    assert params["admin_user_id"] == str(admin_id)
+
+
+def test_increment_cooccurrence_admin_scopes_both_ends(monkeypatch):
+    from datetime import UTC, datetime
+
+    writer, driver = _writer_with_driver(monkeypatch)
+    admin_id = uuid4()
+    writer._increment_cooccurrence(
+        driver, "甲", "乙", datetime.now(UTC),
+        owner=MemoryOwnerKey.for_admin(admin_id),
+    )
+
+    cypher, params = driver.calls[0]
+    # 两个端点（a/b）都必须受主体约束——任一漏掉都会跨主体匹配
+    assert cypher.count("admin_user_id: $admin_user_id") == 2
+    assert cypher.count("agent_id: $agent_id") == 2
+    assert "user_id" not in params
+    assert params["admin_user_id"] == str(admin_id)
+
+
+def test_write_full_path_admin_writes_admin_nodes(monkeypatch):
+    """端到端：write_full_path 传 admin 主体键时，Episode/Entity 都落 admin 归属。"""
+    writer, driver = _writer_with_driver(monkeypatch)
+    admin_id = uuid4()
+
+    writer._write_full_path_impl(
+        event=_event("ignored"),
+        entities=[{"name": "E1", "type": "t", "summary": ""}],
+        relations=[],
+        embedding=[0.1] * 8,
+        owner_key=MemoryOwnerKey.for_admin(admin_id),
+    )
+
+    episode_calls = [c for c in driver.calls if "Episode:MemoryNode" in c[0]]
+    assert episode_calls, "应写 Episode 节点"
+    assert episode_calls[0][1]["owner_props"]["admin_user_id"] == str(admin_id)
+    entity_calls = [c for c in driver.calls if "Entity:MemoryNode" in c[0]]
+    assert entity_calls, "应写 Entity 节点"
+    assert entity_calls[0][1]["admin_user_id"] == str(admin_id)
+    assert "user_id" not in entity_calls[0][1]
+
+
+def test_write_full_path_user_owner_keeps_user_id(monkeypatch):
+    """用户态：不传主体键时，归属仍是 event.user_id（零变化）。"""
+    writer, driver = _writer_with_driver(monkeypatch)
+
+    writer._write_full_path_impl(
+        event=_event("acc-raw"),
+        entities=[{"name": "E1", "type": "t", "summary": ""}],
+        relations=[],
+        embedding=[0.1] * 8,
+    )
+
+    episode_calls = [c for c in driver.calls if "Episode:MemoryNode" in c[0]]
+    assert episode_calls[0][1]["owner_props"] == {"user_id": "acc-raw"}

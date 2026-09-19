@@ -41,6 +41,29 @@ from internal.service.memory.metrics import MetricsCollector, observe_latency
 logger = logging.getLogger(__name__)
 
 
+def _owner_props(owner: Optional[MemoryOwnerKey], fallback_user_id: str) -> dict:
+    """Neo4j 归属属性字典（主体级分离）。
+
+    - 有主体键：走 ``MemoryOwnerKey.neo4j_props()``——用户态产出
+      ``{"user_id": "<裸 uuid>"}``（与历史硬编码逐字节一致），admin 态产出
+      ``{"admin_user_id": ..., "agent_id": ...}``（管理员级写哨兵）。
+    - 无主体键（历史调用方 / ``event.user_id`` 非 UUID 的脏值）：回落到
+      历史 ``user_id`` 字面量，**保持行为零变化**（不因解析失败而改写归属）。
+    """
+    if owner is not None:
+        return owner.neo4j_props()
+    return {"user_id": fallback_user_id}
+
+
+def _owner_pattern(props: dict) -> str:
+    """把归属属性拼成 Cypher 模式片段（``a: $a, b: $b``）。
+
+    用于 MERGE / MATCH 的模式内——归属必须在**模式内**，否则不同主体的同名
+    节点会被合并（跨主体污染）。
+    """
+    return ", ".join(f"{name}: ${name}" for name in props)
+
+
 def _json_dumps(payload: dict) -> str:
     """将 payload 序列化为 JSON 字符串（供 metadata_ jsonb 列写入）。"""
     try:
@@ -78,6 +101,7 @@ class LedgerWriter:
         relations: list[dict],
         embedding: list[float],
         explicit_detection: Optional[ExplicitDetectionResult] = None,
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """完整写入路径：全量存储原文、实体、关系与向量。
 
@@ -91,6 +115,9 @@ class LedgerWriter:
                 - 将 explicit_category/polarity/subject 写入 Episode 节点属性
                 - 将 subject 作为实体种子注入 entities 列表头部
                 - 根据 predicate/object 补充三元组关系
+            owner_key: 可选主体键（P3c-1）。为空时按历史语义用 ``event.user_id``
+                作 ``user_id``（用户态行为零变化）；admin 主体传入
+                ``MemoryOwnerKey.for_admin(...)`` 以写 ``admin_user_id`` [+ ``agent_id``]
 
         Returns:
             ``{episode_node_id, entity_count, edge_count, vector_id}``；
@@ -98,7 +125,7 @@ class LedgerWriter:
         """
         with observe_latency(lambda s: MetricsCollector.record_write(s)):
             return self._write_full_path_impl(
-                event, entities, relations, embedding, explicit_detection
+                event, entities, relations, embedding, explicit_detection, owner_key
             )
 
     def _write_full_path_impl(
@@ -108,6 +135,7 @@ class LedgerWriter:
         relations: list[dict],
         embedding: list[float],
         explicit_detection: Optional[ExplicitDetectionResult] = None,
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """write_full_path 的原始实现。"""
         now = datetime.now(UTC)
@@ -156,14 +184,18 @@ class LedgerWriter:
             try:
                 # 1. 创建 Episode 节点（完整原文，hot 层，携带 explicit_* 属性）
                 episode_node_id = self._create_episode_node(
-                    driver, event, now, explicit_detection=explicit_detection
+                    driver, event, now, owner=owner_key,
+                    explicit_detection=explicit_detection,
                 )
 
                 # 2. 合并实体并建立 Episode -> Entity 的 CONTAINS 边
                 entity_id_map: dict[str, str] = {}
                 for ent in merged_entities:
                     try:
-                        eid = self._merge_entity_node(driver, ent, now, event.user_id)
+                        eid = self._merge_entity_node(
+                            driver, ent, now, owner=owner_key,
+                            fallback_user_id=event.user_id,
+                        )
                     except Exception:
                         logger.warning(
                             "write_full_path: 合并实体失败 name=%s",
@@ -209,7 +241,8 @@ class LedgerWriter:
                                 driver,
                                 {"name": subj_name, "type": "unknown", "summary": ""},
                                 now,
-                                event.user_id,
+                                owner=owner_key,
+                                fallback_user_id=event.user_id,
                             )
                             entity_id_map[subj_name] = subj_id
                             entity_count += 1
@@ -226,7 +259,8 @@ class LedgerWriter:
                                 driver,
                                 {"name": obj_name, "type": "unknown", "summary": ""},
                                 now,
-                                event.user_id,
+                                owner=owner_key,
+                                fallback_user_id=event.user_id,
                             )
                             entity_id_map[obj_name] = obj_id
                             entity_count += 1
@@ -289,6 +323,7 @@ class LedgerWriter:
                 point_id=episode_node_id,
                 vector=embedding,
                 payload=vector_payload,
+                owner_key=owner_key,
             )
         else:
             # 图写入失败或 Neo4j 不可用：记补偿标记，供对账/B 类补齐
@@ -317,6 +352,7 @@ class LedgerWriter:
         entities: list[dict],
         relations: list[dict],
         embedding: list[float],
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """摘要写入路径：仅写入摘要内容与前 5 个实体/关系。
 
@@ -326,13 +362,14 @@ class LedgerWriter:
             entities: 实体列表（仅处理前 5 个）
             relations: 关系列表（仅处理前 5 个）
             embedding: 摘要内容的嵌入向量
+            owner_key: 可选主体键（P3c-1）；为空时按历史语义用 ``event.user_id``
 
         Returns:
             写入结果摘要字典
         """
         with observe_latency(lambda s: MetricsCollector.record_write(s)):
             return self._write_summary_path_impl(
-                event, summary, entities, relations, embedding
+                event, summary, entities, relations, embedding, owner_key
             )
 
     def _write_summary_path_impl(
@@ -342,6 +379,7 @@ class LedgerWriter:
         entities: list[dict],
         relations: list[dict],
         embedding: list[float],
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """write_summary_path 的原始实现。"""
         now = datetime.now(UTC)
@@ -360,7 +398,7 @@ class LedgerWriter:
             try:
                 # 1. 创建 Episode 节点（摘要内容，hot 层）
                 episode_node_id = self._create_episode_node(
-                    driver, event, now, content_override=summary
+                    driver, event, now, owner=owner_key, content_override=summary
                 )
 
                 # 2. 仅处理前 5 个实体与关系
@@ -370,7 +408,10 @@ class LedgerWriter:
                 entity_id_map: dict[str, str] = {}
                 for ent in top_entities:
                     try:
-                        eid = self._merge_entity_node(driver, ent, now, event.user_id)
+                        eid = self._merge_entity_node(
+                            driver, ent, now, owner=owner_key,
+                            fallback_user_id=event.user_id,
+                        )
                     except Exception:
                         logger.warning(
                             "write_summary_path: 合并实体失败 name=%s",
@@ -453,6 +494,7 @@ class LedgerWriter:
                     "event_id": str(event.event_id),
                     "created_from": "memory_system",
                 },
+                owner_key=owner_key,
             )
         else:
             # 图写入失败或 Neo4j 不可用：记补偿标记，供对账/B 类补齐
@@ -478,23 +520,26 @@ class LedgerWriter:
         self,
         event: MemoryEvent,
         entities: list[dict],
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """草稿写入路径：仅更新实体访问计数与共现统计，不写 Episode 与向量。
 
         Args:
             event: 原始记忆事件（仅取 user_id）
             entities: 实体列表
+            owner_key: 可选主体键（P3c-1）；为空时按历史语义用 ``event.user_id``
 
         Returns:
             ``{updated_entities: N, vector_id: None}``
         """
         with observe_latency(lambda s: MetricsCollector.record_write(s)):
-            return self._write_stats_path_impl(event, entities)
+            return self._write_stats_path_impl(event, entities, owner_key)
 
     def _write_stats_path_impl(
         self,
         event: MemoryEvent,
         entities: list[dict],
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> dict:
         """write_stats_path 的原始实现。"""
         now = datetime.now(UTC)
@@ -515,7 +560,10 @@ class LedgerWriter:
             if not name:
                 continue
             try:
-                self._increment_entity_access(driver, name, now, event.user_id)
+                self._increment_entity_access(
+                    driver, name, now,
+                    owner=owner_key, fallback_user_id=event.user_id,
+                )
                 entity_names.append(name)
                 updated_entities += 1
             except Exception:
@@ -532,7 +580,8 @@ class LedgerWriter:
                         entity_names[i],
                         entity_names[j],
                         now,
-                        event.user_id,
+                        owner=owner_key,
+                        fallback_user_id=event.user_id,
                     )
                 except Exception:
                     logger.warning(
@@ -553,6 +602,7 @@ class LedgerWriter:
         driver,
         event: MemoryEvent,
         now: datetime,
+        owner: Optional[MemoryOwnerKey] = None,
         content_override: Optional[str] = None,
         explicit_detection: Optional[ExplicitDetectionResult] = None,
     ) -> str:
@@ -562,6 +612,7 @@ class LedgerWriter:
             driver: Neo4j 驱动
             event: 记忆事件
             now: 当前时间戳
+            owner: 可选主体键；为空时按历史语义写 ``user_id = event.user_id``
             content_override: 非空时用其替代 ``event.content``（摘要路径用）
             explicit_detection: 显式陈述检测结果（可选），非空且 is_explicit 时
                 将 explicit_category/polarity/subject 写入节点属性
@@ -585,8 +636,8 @@ class LedgerWriter:
             explicit_polarity = explicit_detection.polarity.value
             explicit_subject = explicit_detection.subject
 
-        cypher = """
-        CREATE (e:Episode:MemoryNode {
+        cypher = f"""
+        CREATE (e:Episode:MemoryNode {{
             node_id: $node_id,
             id: $node_id,
             content: $content,
@@ -600,12 +651,12 @@ class LedgerWriter:
             last_accessed: $now,
             access_count: 0,
             is_active: true,
-            user_id: $user_id,
             session_id: $session_id,
             explicit_category: $explicit_category,
             explicit_polarity: $explicit_polarity,
             explicit_subject: $explicit_subject
-        })
+        }})
+        SET e += $owner_props
         RETURN e.node_id AS node_id
         """
         params = {
@@ -614,7 +665,7 @@ class LedgerWriter:
             "summary": summary,
             "source": event.source.value if event.source else None,
             "now": now.isoformat(),
-            "user_id": event.user_id,
+            "owner_props": _owner_props(owner, event.user_id),
             "session_id": event.session_id,
             "explicit_category": explicit_category,
             "explicit_polarity": explicit_polarity,
@@ -635,7 +686,8 @@ class LedgerWriter:
         driver,
         entity: dict,
         now: datetime,
-        user_id: str,
+        owner: Optional[MemoryOwnerKey] = None,
+        fallback_user_id: str = "",
     ) -> str:
         """合并（MERGE）实体节点，返回其 node_id。
 
@@ -645,7 +697,8 @@ class LedgerWriter:
             driver: Neo4j 驱动
             entity: ``{"name", "type", "summary"}``
             now: 当前时间戳
-            user_id: 用户标识（与 name 共同唯一确定实体）
+            owner: 可选主体键；为空时按历史语义用 ``fallback_user_id`` 作 ``user_id``
+            fallback_user_id: 无主体键时的历史 ``user_id`` 字面量
 
         Returns:
             实体节点的 node_id
@@ -655,8 +708,9 @@ class LedgerWriter:
             raise ValueError("entity.name 不能为空")
 
         node_id = str(uuid4())
-        cypher = """
-        MERGE (e:Entity:MemoryNode {name: $name, user_id: $user_id})
+        props = _owner_props(owner, fallback_user_id)
+        cypher = f"""
+        MERGE (e:Entity:MemoryNode {{name: $name, {_owner_pattern(props)}}})
         ON CREATE SET e.node_id = $node_id,
                       e.id = $node_id,
                       e.type = $type,
@@ -675,11 +729,11 @@ class LedgerWriter:
         """
         params = {
             "name": name,
-            "user_id": user_id,
             "node_id": node_id,
             "type": entity.get("type", "unknown"),
             "summary": entity.get("summary", ""),
             "now": now.isoformat(),
+            **props,
         }
 
         with driver.session() as session:
@@ -754,18 +808,20 @@ class LedgerWriter:
         driver,
         entity_name: str,
         now: datetime,
-        user_id: str,
+        owner: Optional[MemoryOwnerKey] = None,
+        fallback_user_id: str = "",
     ) -> None:
         """自增实体访问计数并更新最后访问时间。"""
-        cypher = """
-        MATCH (e:Entity {name: $name, user_id: $user_id})
+        props = _owner_props(owner, fallback_user_id)
+        cypher = f"""
+        MATCH (e:Entity {{name: $name, {_owner_pattern(props)}}})
         SET e.access_count = e.access_count + 1,
             e.last_accessed = $now
         """
         params = {
             "name": entity_name,
-            "user_id": user_id,
             "now": now.isoformat(),
+            **props,
         }
         with driver.session() as session:
             session.run(cypher, params).consume()
@@ -776,12 +832,15 @@ class LedgerWriter:
         entity_a: str,
         entity_b: str,
         now: datetime,
-        user_id: str,
+        owner: Optional[MemoryOwnerKey] = None,
+        fallback_user_id: str = "",
     ) -> None:
         """自增两个实体间的 CO_OCCUR_WITH 共现计数。"""
-        cypher = """
-        MATCH (a:Entity {name: $name_a, user_id: $user_id}),
-              (b:Entity {name: $name_b, user_id: $user_id})
+        props = _owner_props(owner, fallback_user_id)
+        pattern = _owner_pattern(props)
+        cypher = f"""
+        MATCH (a:Entity {{name: $name_a, {pattern}}}),
+              (b:Entity {{name: $name_b, {pattern}}})
         MERGE (a)-[r:CO_OCCUR_WITH]->(b)
         ON CREATE SET r.count = 1,
                       r.last_seen = $now,
@@ -792,8 +851,8 @@ class LedgerWriter:
         params = {
             "name_a": entity_a,
             "name_b": entity_b,
-            "user_id": user_id,
             "now": now.isoformat(),
+            **props,
         }
         with driver.session() as session:
             session.run(cypher, params).consume()
