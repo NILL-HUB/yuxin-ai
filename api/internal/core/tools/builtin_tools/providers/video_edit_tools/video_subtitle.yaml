@@ -1,0 +1,26 @@
+name: video_subtitle
+label: 视频加字幕
+description: 给知识库里的视频烧录字幕（需提供带时间轴的字幕条目），并自动存入成品库。
+params:
+- name: knowledge_base_id
+  label: 知识库
+  type: string
+  required: true
+- name: document_id
+  label: 视频素材
+  type: string
+  required: true
+- name: cues
+  label: 字幕条目（含时间轴）
+  type: string
+  required: true
+- name: name
+  label: 成品名称
+  type: string
+  required: false
+task_keywords:
+- 加字幕
+- 烧字幕
+- 配字幕
+- 字幕
+- subtitle

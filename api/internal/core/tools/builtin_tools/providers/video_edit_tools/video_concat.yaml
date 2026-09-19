@@ -1,0 +1,23 @@
+name: video_concat
+label: 拼接视频
+description: 把知识库里的多段视频按指定顺序拼成一段，并自动存入成品库。
+params:
+- name: knowledge_base_id
+  label: 知识库
+  type: string
+  required: true
+- name: document_ids
+  label: 视频素材（按拼接顺序）
+  type: string
+  required: true
+- name: name
+  label: 成品名称
+  type: string
+  required: false
+task_keywords:
+- 拼接视频
+- 合并视频
+- 视频拼起来
+- 串视频
+- 合成一段
+- concat
