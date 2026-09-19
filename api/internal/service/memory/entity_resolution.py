@@ -7,6 +7,11 @@
 
 三路信号加权融合后与 merge_threshold 比较，决定合并或新建。
 任一信号异常时降级为 0.0，主流程不中断。
+
+⚠️ 接线状态（ADMIN-P3c-4 缺口十五）：本模块当前**无生产调用方**（仅 DI 注册），
+属「已提供能力、未接入」。归属查询已按主体键（``MemoryOwnerKey``）主体化
+（缺口十四c），接线时无需再改归属；接线点（写入热路径 or consolidation RESOLVE
+阶段）待产品决策。
 """
 
 import logging
@@ -171,17 +176,26 @@ class EntityResolver:
 
         Returns:
             候选字典列表，每项含 node_id / name / summary / fulltext_score。
+
+        ADMIN-P3c-4（缺口十四c）：`user_id` 参数为**主体键字符串**——用户态为裸
+        UUID（与历史 `user_id` 字面量逐字节等价）；admin 态走 `admin_user_id` +
+        `agent_id` 属性级分离。
         """
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.parse(user_id)
+        owner_binds = dict(owner.neo4j_props())
         by_node: dict[str, dict] = {}
 
         try:
             with driver.session() as session:
-                # 直接类型 + 用户隔离匹配
+                # 直接类型 + 主体隔离匹配
                 direct_result = session.run(
-                    "MATCH (e:Entity {type: $type, is_active: true, user_id: $user_id}) "
+                    f"MATCH (e:Entity {{type: $type, is_active: true, "
+                    f"{', '.join(f'{k}: ${k}' for k in owner_binds)}}}) "
                     "RETURN e.node_id AS node_id, e.name AS name, e.summary AS summary",
                     type=entity_type,
-                    user_id=user_id,
+                    **owner_binds,
                 )
                 for row in direct_result:
                     nid = row["node_id"]
@@ -192,16 +206,17 @@ class EntityResolver:
                         "fulltext_score": 0.0,
                     }
 
-                # 全文索引补充（按 user_id 过滤确保多用户隔离）
+                # 全文索引补充（按主体归属过滤确保多用户隔离）
                 try:
                     fulltext_result = session.run(
                         "CALL db.index.fulltext.queryNodes('entityFullText', $query) "
                         "YIELD node, score "
-                        "WHERE node.user_id = $user_id AND node.is_active = true "
+                        f"WHERE {owner.neo4j_filter_condition('node')} "
+                        "AND node.is_active = true "
                         "RETURN node.node_id AS node_id, node.name AS name, "
                         "node.summary AS summary, score",
                         query=entity_name,
-                        user_id=user_id,
+                        **owner_binds,
                     )
                     for row in fulltext_result:
                         nid = row["node_id"]
