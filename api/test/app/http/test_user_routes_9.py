@@ -600,6 +600,126 @@ class TestMemoryRoutes:
         assert payload["data"]["total"] == 0
 
 
+class _RecordingCypherResult:
+    """单条记录或空迭代，供 route 内查询消费。"""
+
+    def __init__(self, record=None, records=None):
+        self._record = record
+        self._records = list(records or [])
+        self.consumed = False
+
+    def single(self):
+        return self._record
+
+    def __iter__(self):
+        return iter(self._records)
+
+
+class _RecordingSession:
+    def __init__(self, result):
+        self._result = result
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def run(self, cypher, parameters=None, **binds):
+        params = dict(parameters or {})
+        params.update(binds)
+        self.calls.append((cypher, params))
+        return self._result
+
+
+class _RecordingDriver:
+    def __init__(self, result=None, records=None):
+        self._result = _RecordingCypherResult(record=result, records=records)
+        self.session_obj = None
+
+    def session(self):
+        self.session_obj = _RecordingSession(self._result)
+        return self.session_obj
+
+
+class TestMemoryReadEndpointsSubjectized:
+    """缺口十三（ADMIN-P3c-4）：用户读端点经 MemoryOwnerKey 产主体谓词。
+
+    用户态下与历史 `user_id = $user_id` 逐字节等价；本组测试注入录制 driver，
+    断言 Cypher 绑定保持用户态语义（未引入 admin 属性），且 detail 保留
+    `IS NULL` 豁免。
+    """
+
+    def _recording_setup(self, monkeypatch, *, records=None):
+        driver = _RecordingDriver(records=records)
+        monkeypatch.setitem(asgi_app.flask_app.extensions, "neo4j", driver)
+        # 避免命中无依赖降级分支
+        monkeypatch.setattr(
+            "internal.service.memory.degradation_manager._degradation_manager", None
+        )
+        account = SimpleNamespace(id=uuid4())
+        _mock_resolve_account(monkeypatch, account)
+        return driver, account
+
+    def test_memory_graph_binds_user_id_literal(self, monkeypatch):
+        driver, account = self._recording_setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/memory/graph/{uuid4()}?account_id={uuid4()}")
+                return resp, await resp.json
+
+        _run_coro(_run())
+        cypher, params = driver.session_obj.calls[0]
+        assert "n.user_id = $user_id" in cypher
+        assert params["user_id"] == str(account.id)
+
+    def test_memory_cluster_binds_user_id_literal(self, monkeypatch):
+        driver, account = self._recording_setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(
+                    f"/memory/graph/{uuid4()}/cluster/person?account_id={uuid4()}"
+                )
+                return resp, await resp.json
+
+        _run_coro(_run())
+        cypher, params = driver.session_obj.calls[0]
+        assert "n.user_id = $user_id" in cypher
+        assert params["user_id"] == str(account.id)
+
+    def test_memory_detail_keeps_is_null_exemption(self, monkeypatch):
+        driver, account = self._recording_setup(monkeypatch, records=[{"n": {}, "related": []}])
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/memory/mem-1?account_id={uuid4()}")
+                return resp, await resp.json
+
+        resp, payload = _run_coro(_run())
+        cypher, params = driver.session_obj.calls[0]
+        assert "n.user_id = $user_id OR n.user_id IS NULL" in cypher
+        assert params["user_id"] == str(account.id)
+
+    def test_memory_skills_binds_user_id_literal(self, monkeypatch):
+        driver, account = self._recording_setup(
+            monkeypatch, records=[{"s": SimpleNamespace(get=lambda k: None)}]
+        )
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/memory/skills/{uuid4()}?account_id={uuid4()}")
+                return resp, await resp.json
+
+        _run_coro(_run())
+        cypher, params = driver.session_obj.calls[0]
+        assert "MATCH (s:Skill)" in cypher
+        assert "s.user_id = $user_id" in cypher
+        assert params["user_id"] == str(account.id)
+
+
 class _FakeAIService:
     def __init__(self):
         self.calls = []

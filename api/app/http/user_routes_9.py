@@ -424,17 +424,21 @@ def register_routes(quart_app):
                 "total_nodes": 0,
             }))
 
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.for_user(account.id)
+
         def _run_query(driver, user_id):
-            cypher = """
+            cypher = f"""
             MATCH (n:MemoryNode)
-            WHERE n.user_id = $user_id AND n.is_active = true
+            WHERE {owner.neo4j_filter_condition("n")} AND n.is_active = true
             RETURN coalesce(n.memory_type, labels(n)[0]) AS memory_type,
                    count(n) AS node_count,
                    max(coalesce(n.last_accessed, n.created_at)) AS last_updated_at
             ORDER BY memory_type
             """
             with driver.session() as session:
-                result = session.run(cypher, user_id=user_id)
+                result = session.run(cypher, **owner.neo4j_props())
                 return list(result)
 
         try:
@@ -479,28 +483,32 @@ def register_routes(quart_app):
                 "nodes": [], "edges": [], "truncated": False,
             }))
 
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.for_user(account.id)
+
         def _run_query(driver, user_id, cluster_type):
-            cypher = """
+            cypher = f"""
             MATCH (n:MemoryNode)
-            WHERE n.user_id = $user_id AND n.is_active = true
+            WHERE {owner.neo4j_filter_condition("n")} AND n.is_active = true
               AND ($cluster_type IN labels(n) OR n.memory_type = $cluster_type)
             WITH n ORDER BY coalesce(n.access_count, 0) DESC LIMIT 200
             OPTIONAL MATCH (n)-[r]-(m:MemoryNode)
-            WHERE m.user_id = $user_id AND m.is_active = true
+            WHERE {owner.neo4j_filter_condition("m")} AND m.is_active = true
             WITH n, r, startNode(r) AS sn, endNode(r) AS en
             RETURN collect(DISTINCT n) AS nodes,
-                   collect(DISTINCT {
+                   collect(DISTINCT {{
                      source: sn.id, target: en.id,
                      type: type(r), weight: coalesce(r.weight, 0.5),
                      edge_id: coalesce(r.edge_id, elementId(r))
-                   }) AS edges,
+                   }}) AS edges,
                    count(DISTINCT n) AS node_count
             """
             with driver.session() as session:
                 result = session.run(
                     cypher,
-                    user_id=user_id,
                     cluster_type=cluster_type,
+                    **owner.neo4j_props(),
                 )
                 return result.single()
 
@@ -542,19 +550,22 @@ def register_routes(quart_app):
             return a._ok({})
 
         user_id = str(account.id)
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.for_user(account.id)
 
         def _run_query(driver, memory_id, user_id):
-            cypher = """
-            MATCH (n {node_id: $memory_id})
-            WHERE n.user_id = $user_id OR n.user_id IS NULL
+            cypher = f"""
+            MATCH (n {{node_id: $memory_id}})
+            WHERE {owner.neo4j_filter_condition("n")} OR n.user_id IS NULL
             OPTIONAL MATCH (n)-[r]-(m)
-            RETURN n, collect({node: m, weight: r.weight, relation: type(r)}) AS related
+            RETURN n, collect({{node: m, weight: r.weight, relation: type(r)}}) AS related
             """
             with driver.session() as session:
                 return session.run(
                     cypher,
                     memory_id=memory_id,
-                    user_id=user_id,
+                    **owner.neo4j_props(),
                 ).single()
 
         try:
@@ -736,10 +747,14 @@ def register_routes(quart_app):
                 "user_id": user_id, "skills": [], "total": 0,
             }))
 
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        owner = MemoryOwnerKey.for_user(account.id)
+
         def _run_query(driver, user_id):
-            cypher = """
-            MATCH (s:Skill {user_id: $user_id})
-            WHERE s.status <> 'deprecated'
+            cypher = f"""
+            MATCH (s:Skill)
+            WHERE {owner.neo4j_filter_condition("s")} AND s.status <> 'deprecated'
             RETURN s
             ORDER BY
                 CASE s.status
@@ -751,7 +766,7 @@ def register_routes(quart_app):
                 s.maturity DESC
             """
             with driver.session() as session:
-                result = session.run(cypher, user_id=user_id)
+                result = session.run(cypher, **owner.neo4j_props())
                 return list(result)
 
         try:
