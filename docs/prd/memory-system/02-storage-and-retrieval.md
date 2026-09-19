@@ -1565,6 +1565,12 @@ class FunnelLayer(str, Enum):
 
 ### 6.5 DigestManager 完整 Python 实现
 
+> **⚠️ 配置以代码为准（ADMIN-P3c-3）**：本节代码片段为设计期示例（含 `AsyncDriver` 等），
+> **不代表当前实现**。`DigestConfig` 的**唯一事实源**是
+> `api/internal/config/memory_settings.py`（`settings.digest`）——其 `cache_ttl_seconds`
+> 默认 **86400**（变更驱动重建 + 长 TTL 兜底）。本节示例里的 `300` 与曾在
+> `internal/model/memory_models.py` 的第二份死副本同源，该死副本已于 ADMIN-P3c-3 删除（C2）。
+
 > **替代说明（v5.1）**：MemoryDigest（DigestManager）**只替代** `token_buffer_memory` 中的 `relevant_facts`（原 relevant_facts 500 tokens 部分），不接管整个对话缓冲。
 >
 > - **属于记忆系统（DigestManager 负责）**：用户画像 / 已习得技能 / 近期事件 / 待办任务的结构化摘要（≤ 2K tokens），由 Neo4j 重建 + Redis 缓存。
@@ -1999,6 +2005,10 @@ class DigestConfig(BaseModel):
 待 P3c 接入 admin / Agent 记忆读写时须逐项收敛。
 （例外：**缺口二、三、九、十六已修复**，保留编号以维持与既有引用的对应关系。）
 
+> **修复进度（2026-09-19）**：ADMIN-P3c-1 修复缺口二；ADMIN-P3c-2 修复缺口九、十六；
+> **ADMIN-P3c-3 修复缺口五、七、十一、十二，并登记 C2（`DigestConfig` 死副本，已删除）、
+> C4（`ColdStorageManager` 主体化，仍**未接线**）**。剩余开放：缺口一、四、六、八、十、十三、十四、十五。
+
 ### 缺口一：图扩展与节点详情无主体谓词
 
 `SpreadActivation.activate(start_ids, top_k)` 与 `MemoryRetriever._get_node_data`
@@ -2048,12 +2058,21 @@ Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。�
 `MATCH (e:Episode {user_id: $user_id})`——把 owner_key 当**属性值**用。用户态等价；
 admin 主体下查不到，会回退到已正确主体化的 `_fetch_explicit_memories`。
 
-### 缺口五：`Skill` 节点的 `MERGE` 键不含归属
+### 缺口五（已修复，2026-09-19，ADMIN-P3c-3）：`Skill` 节点的 `MERGE` 键不含归属
 
 `SkillEmergence._persist_skill` 用 `MERGE (s:Skill {id: $skill_id})`，而 `skill_id = f"skill_{md5(name)[:12]}"`
 ——**不同主体的同名技能算出同一 skill_id**。实测：先写 `{user_id: u1}` 再写 `{admin_user_id: a1}`，
 同一 `id` 节点会变成**同时带两个归属属性**的混装节点（违反属性分离；Task 8 的
 `test_neo4j_no_mixed_owner_nodes` 会报出）。纯用户态下与改造前一致，**非本次引入**。
+
+**修复**：`MERGE` 键并入主体属性——按主体动态拼 `owner_pattern`，与 `id` 一同参与匹配：
+
+    owner_pattern = ", ".join(f"{name}: ${name}" for name in owner.neo4j_props())
+    MERGE (s:Skill {{id: $skill_id, {owner_pattern}}}) ... SET s += $owner_props
+
+绑定字典在原有参数上追加 `owner.neo4j_props()`。用户主体产物与历史逐字节等价（属性仍是 `user_id`），
+admin 主体因 `agent_id` 恒写哨兵而两级键不同。真图实测：同名同 `id` 但归属不同的两条写入现产出
+**2 个独立节点**（修复前为 1 个混装节点），探针残留 leftover=0。
 
 ### 缺口六：`CommunityInductionEngine._collect_eligible` 的 `$cutoff` 未绑定
 
@@ -2061,11 +2080,17 @@ admin 主体下查不到，会回退到已正确主体化的 `_fetch_explicit_me
 `Neo.ClientError.Statement.ParameterMissing`，异常被吞 → `groups = []` → **Entity 聚合候选恒为空**。
 改造前既有；Task 5 刻意未修（补绑定会把候选从「恒空」变为「有值」，改变用户态行为）。
 
-### 缺口七：`SkillEmergence._node_to_skill` 只读 `user_id`
+### 缺口七（已修复，2026-09-19，ADMIN-P3c-3）：`SkillEmergence._node_to_skill` 只读 `user_id`
 
 admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_persist_skill` 内
 `MemoryOwnerKey.parse("")` 抛错被吞 → admin 下 `curate_skills` 的「读→改→写」回路**写不回**
 （`scanned` 仍自增，属静默假成功）。
+
+**修复**：`_node_to_skill` 改走 `MemoryOwnerKey.from_neo4j_props(node)`（与写侧 `neo4j_props()`
+互逆的访问器），按主体属性还原出 `owner.to_key()` 作为 `Skill.user_id`；无任何归属属性的节点
+抛 `MemoryOwnerKeyError`，被本方法 `except` 捕获 → 返回 `None`。`curate_skills` 的
+`scanned += 1` **位于 `None` 检查之后**，故无归属节点既不被处理、也不计入 `scanned`
+——不再是「静默假成功」。用户主体产物与历史逐字节等价。
 
 ### 缺口八：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis
 
@@ -2090,22 +2115,35 @@ admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_
 `_clear_all_user_cache` 用 `*:{owner_key}` 与 `*:{owner_key}:*` 两个精确模式。
 **新增含主体键的 Redis 键时必须确保以 `:` 分隔**，否则不会被 GDPR 清理命中（与 C3 同类失效）。
 把主体混入哈希的键（如 `schedule_suggestion:{md5}`）天然无法被通配命中。
+该约定已于 ADMIN-P3c-3 写入 `_clear_all_user_cache` 的 docstring（含「混入哈希的键需各自实现清理」）。
 
-### 缺口十一：`gdpr_delete` 的 `stats["redis_keys"]` 重复计数
+### 缺口十一（已修复，2026-09-19，ADMIN-P3c-3）：`gdpr_delete` 的 `stats["redis_keys"]` 重复计数
 
 `_clear_all_user_cache` 的 `len(keys)` 会把同时命中「精确 digest 键」与 `*:{owner_key}` 通配的键计两次。
 `delete(*keys)` 幂等，**不影响清理正确性**，仅统计偏大；该路径当前不可达。
 
-### 缺口十二：`skill:stats:{owner}` 无 TTL，未命中残留可累积
+**修复**：收集完三个模式命中的键后按序去重——`keys = list(dict.fromkeys(keys))`，再 `delete` 并返回
+`len(keys)`，`stats["redis_keys"]` 不再重复计数。
+
+### 缺口十二（已修复，2026-09-19，ADMIN-P3c-3）：`skill:stats:{owner}` 无 TTL，未命中残留可累积
 
 `SkillEmergence.bump_use` 写 `skill:stats:{owner}` 未设过期。C1 修复后 flush 改为**按 skill_id 粒度清理**，
 未命中的技能统计（节点已删 / legacy 未回填）会**永久滞留**。建议补 TTL 或做超期清理。
+
+**修复**：`bump_use` 在写入后补兜底 TTL——`pipe.expire(key, self._config.skill_stats_ttl_seconds)`，
+新增配置项 `SkillConfig.skill_stats_ttl_seconds` 默认 **90 天**（`90 * 86400`）。正常路径仍由
+`curate_skills` 的 `_clear_skill_stats` 主动清理，TTL 只兜底异常残留。
 
 ### 不适用（P3c 待办，非缺陷）
 
 admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，
 含 `LedgerWriter` 写侧与召回读侧）、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()`
 空实现）——均属 P3c 实施范围。
+
+> **已落地（ADMIN-P3c-2 / P3c-3）**：admin 读写调用方接入已完成（P3c-2，见 `execution-roadmap.md`）；
+> **C2**：`internal/model/memory_models.py` 中的第二份 `DigestConfig` 死副本**已于 P3c-3 删除**，
+> 配置唯一事实源为 `api/internal/config/memory_settings.py`（`settings.digest`，
+> `cache_ttl_seconds` 默认 **86400**）；**C4**：冷存储已主体化但**仍未接线**（详见缺口十五）。
 
 ### 缺口十三：其余用户读端点的 Neo4j 查询未主体化（既有读端口）
 
@@ -2129,6 +2167,12 @@ admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `Me
 
 `entity_resolution.py` 的 `EntityResolver` 全仓仅 DI 注册、**无注入消费点**（与 `ColdStorageManager`
 同级的未接线模块），且内含 `user_id` 属性硬编码。属「已提供、未接入」，P3c 接线时需一并主体化。
+
+> **部分收敛（ADMIN-P3c-3 / C4）**：`ColdStorageManager` **已主体化**——`archive()` 的路径归属改为
+> `MemoryOwnerKey.parse(entry.user_id).to_key()`，`_restore_to_neo4j()` 改用 `owner.neo4j_props()`
+> 动态产属性；模块 docstring 已如实披露「**无任何生产调用方**（未注册 DI）」。**接线本身仍未落地**
+> （见「已提供、未接入」的诚实披露）——且 `upload_bytes_without_record` 端口仅接收**文件名 basename**，
+> 归属目录片段到不了存储层，接线时须一并改造端口签名。`EntityResolver` 仍未接线、未主体化。
 
 ### 缺口十六（已修复，2026-09-19，ADMIN-P3c-2）：`_delete_all_pgvector_rows` 仅按 `owner_account_id` 过滤、未追加 `owner_type`
 

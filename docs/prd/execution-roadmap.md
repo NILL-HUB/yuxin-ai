@@ -202,9 +202,9 @@
 
 **验证**：全量回归 4947 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
 
-**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：12 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
-（图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点）。
-其中已修复：「Neo4j 唯一约束对管理员级失效」（原缺口三，2026-09 哨兵值方案）、「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二，ADMIN-P3c-1）、「`_verify_owner`/`edit_memory`/`gdpr_delete` 仅支持用户主体」（原缺口九，ADMIN-P3c-2）、「`_delete_all_pgvector_rows` 未追加 `owner_type`」（原缺口十六，ADMIN-P3c-2）。
+**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：16 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
+（图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点，另有缺口一/四/十三/十四/十五/十六的细化条目）。
+其中**已修复 8 项**：「Neo4j 唯一约束对管理员级失效」（原缺口三，2026-09 哨兵值方案）、「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二，ADMIN-P3c-1）、「`_verify_owner`/`edit_memory`/`gdpr_delete` 仅支持用户主体」（原缺口九，ADMIN-P3c-2）、「`_delete_all_pgvector_rows` 未追加 `owner_type`」（原缺口十六，ADMIN-P3c-2）、「`Skill` MERGE 键不含归属」（原缺口五，ADMIN-P3c-3）、「`_node_to_skill` 只读 `user_id`」（原缺口七，ADMIN-P3c-3）、「`redis_keys` 重复计数」（原缺口十一，ADMIN-P3c-3）、「`skill:stats` 无 TTL」（原缺口十二，ADMIN-P3c-3）。剩余开放 8 项：缺口一、四、六、八、十、十三、十四、十五。
 
 实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
 
@@ -260,6 +260,53 @@
 > **闭环**：P3c-1 遗留的「`LedgerWriter.owner_key` 零调用方」断链已解除——调用链为
 > `AdminAgentChatService._write_memory` → `MemoryWriteService.write_admin_conversation` →
 > `write_from_event(owner_key=)` → `LedgerWriter.write_*(owner_key=)`。
+
+
+### ADMIN-P3c-3 admin 巩固派发 + 配置/冷存储收敛（2026-09-19 完成）
+
+把 admin / Agent 主体接进记忆**巩固链**（此前巩固任务只扫描用户主体），并修复技能链两个
+真缺陷（缺口五跨主体 MERGE 混装、缺口七静默假成功）与配置/冷存储类问题。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 逆访问器（Neo4j 属性 → 主体键） | `api/internal/entity/memory_owner_entity.py`（`MemoryOwnerKey.from_neo4j_props`） |
+| admin 巩固派发（扫描 admin 归属节点） | `api/internal/task/consolidation_tasks.py`（`_query_active_admin_subjects` / `_query_active_subjects`） |
+| 技能链主体化（MERGE 键 + `_node_to_skill` + 种子提示 + TTL） | `api/internal/service/memory/skill_emergence.py` |
+| 配置单源收敛（SkillConfig 去重，`skill_stats_ttl_seconds` 落到生产配置） | `api/internal/config/memory_settings.py`、`api/internal/service/memory/skill_emergence.py` |
+| 删除 DigestConfig 死副本（C2） | `api/internal/model/memory_models.py` |
+| 冷存储主体化（C4） | `api/internal/service/memory/cold_storage_manager.py` |
+| Redis 键约定 + 去重（缺口十一） | `api/internal/service/memory/memory_governor.py` |
+
+**关键决策**：
+- 技能节点 `MERGE` 键并入主体属性（`id + owner_props` 共同参与匹配），用户单主体路径
+  逐字节等价；admin 两级因 `agent_id` 恒写哨兵而键互斥。
+- `_node_to_skill` 改走 `from_neo4j_props`：无归属节点返回 `None` 且**不计入 `scanned`**，
+  不再静默假成功。
+- 巩固任务统一先 `_subject_key_of` 归一化主体键再派发；admin 主体由
+  `_query_active_admin_subjects` 从 Neo4j 归属节点扫描得到。
+- **SkillConfig 双源收敛**：本地重复类删除，`memory_settings` 为唯一事实源；
+  新字段 `skill_stats_ttl_seconds`（默认 90 天）由生产配置直接携带。
+
+**验证**：Task 7 全量回归 **5119 passed / 13 skipped / 3 failed**（3 项均非本次改动：`test_account_service`
+邮箱通道未见环境失败 2 变体，及并行 KB-P4 未提交工作树中的 `render_video`/`websocket`）；
+新增判别性用例 **33 个**（其中 3 个为接线修复后补的 `test_skill_config_single_source.py`）。
+真图实测：同名同 `id` 不同归属的两条 Skill 写入现产出 **2 个独立节点**
+（修复前为 1 个混装节点），探针残留 leftover=0。
+
+> **接线修复（本次追加）**：Task 3 曾把 `skill_stats_ttl_seconds` 只加在 `skill_emergence.py`
+> 的本地重复 `SkillConfig` 上，而生产构造走 `memory_settings.skill` → 生产 `bump_use` 会
+> `AttributeError` 被吞、静默失效。修复：删除本地重复类，`memory_settings` 为唯一事实源；
+> 相关测试（`test_skill_emergence` 11 例 + `test_skill_emergence_owner_scope` 11 例 +
+> `test_digest_config_single_source` 2 例 + `test_skill_config_single_source` 3 例）复跑全绿。
+
+> **诚实披露**：
+> - admin 巩固**派发已具备**（`consolidation_tasks` 扫描 admin 归属节点），但需 **Celery beat
+>   实际运行**才会触发（`celery_app.py` 已注册 `run_skill_curation` / `run_skill_stats_flush`）。
+> - 冷存储归档**下沉仍未接线**（模块已主体化，但 `archive()` 无生产调用方、未注册 DI，
+>   且存储端口只收 basename——见 02-storage 缺口十五）。
+> - 仍开放：缺口一（图扩展无主体谓词）、四（`_fetch_profile` 委派）、六（`$cutoff` 未绑定）、
+>   八（`gdpr_delete` 无路由入口）、十（Redis 键约定）、十三（用户读端点）、十四（其余硬编码
+>   `user_id` 模块）、十五（`EntityResolver` 接线）。
 
 
 ### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
