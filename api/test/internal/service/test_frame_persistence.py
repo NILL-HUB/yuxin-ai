@@ -303,23 +303,31 @@ class TestFrameUrlMetadata:
         assert storage.uploaded == []
         assert upload_file_service.calls == []
 
-    def test_uses_frame_count_from_frames_dir(self, monkeypatch, tmp_path):
+    def test_scene_a_batches_frames_into_timeline_segment(self, monkeypatch, tmp_path):
         service, _upload_file_service = _service()
         frames = [
             ExtractedFrame(path=_write_frame(tmp_path, 1), time_offset=0.0),
             ExtractedFrame(path=_write_frame(tmp_path, 2), time_offset=5.0),
         ]
         monkeypatch.setattr(service, "_extract_frames_with_offsets", lambda _v, _d: frames)
-        monkeypatch.setattr(service, "_invoke_vision", lambda _uri, _prompt: "画面描述")
+        monkeypatch.setattr(
+            service, "_invoke_vision_batch",
+            lambda _uris, _prompt: '[{"anchor_index": 0, "description": "画面描述"}]',
+        )
         _silence_audio(service, monkeypatch, tmp_path)
 
         segments = service._extract_video(
             _upload(), account_id=uuid4(), document_id=uuid4()
         )
 
-        assert len(segments) == 2
-        assert [s.metadata["frame_count"] for s in segments] == [2, 2]
-        assert [s.metadata["scene_index"] for s in segments] == [1, 2]
+        timeline = [s for s in segments if s.metadata.get("source") == "vision_timeline"]
+        assert len(timeline) == 1
+        assert timeline[0].metadata["anchor_type"] == "time_slot"
+        assert timeline[0].metadata["start_sec"] == 0.0
+        assert timeline[0].metadata["end_sec"] == 5.0
+        # 段落代表帧 = 锚点内时间居中的帧（此处为 5.0s 的第二帧）
+        assert timeline[0].metadata["frame_url"] == "frames/frame_002.jpg"
+        assert timeline[0].content == "画面描述"
 
     def test_raises_when_frames_empty(self, monkeypatch, tmp_path):
         service, _upload_file_service = _service()
