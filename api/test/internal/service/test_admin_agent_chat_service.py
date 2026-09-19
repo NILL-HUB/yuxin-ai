@@ -93,7 +93,9 @@ def _service(principal, llm, tools):
     service.get_principal = lambda **kwargs: principal
     service._build_model = lambda: llm
     service._build_tools = lambda p: tools
-    service._build_system_prompt = lambda p, prompt_key: "系统提示词"
+    service._build_system_prompt = lambda p, prompt_key, *, memory_text="": "系统提示词"
+    service._recall_memory = lambda **kw: ""
+    service._write_memory = lambda **kw: None
     service._persist = []
     service.append_message = lambda **kwargs: service._persist.append(kwargs) or SimpleNamespace(id=uuid4())
     service._history_for = lambda conversation_id: []
@@ -411,7 +413,9 @@ def test_resume_rejects_conversation_of_another_agent():
         service.get_principal = lambda **kwargs: _principal()
         service._build_model = lambda: llm
         service._build_tools = lambda p: []
-        service._build_system_prompt = lambda p, prompt_key: "系统提示词"
+        service._build_system_prompt = lambda p, prompt_key, *, memory_text="": "系统提示词"
+        service._recall_memory = lambda **kw: ""
+        service._write_memory = lambda **kw: None
         service._load_agent = lambda agent_id, admin_user_id: SimpleNamespace(prompt_key=None)
 
         frames = list(
@@ -430,3 +434,98 @@ def test_resume_rejects_conversation_of_another_agent():
     assert "event: error" in body
     assert "不属于该 Agent" in body
     assert llm.invocations == [], "会话归属不匹配不得调用模型"
+
+
+def test_chat_injects_admin_memory_into_system_prompt(monkeypatch):
+    """召回文本必须进入 system prompt（否则读路径等于没接）。"""
+    llm = _FakeLLM([SimpleNamespace(content="好的。", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+    captured = {}
+
+    def _fake_build_prompt(p, prompt_key, *, memory_text=""):
+        captured["memory_text"] = memory_text
+        return "系统提示词"
+
+    service._build_system_prompt = _fake_build_prompt
+    service._recall_memory = lambda **kw: "管理员上次说过：偏好简洁"
+
+    list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="你好",
+        )
+    )
+
+    assert "偏好简洁" in captured["memory_text"], "召回文本必须注入提示词"
+
+
+def test_chat_writes_admin_memory_after_answer():
+    """答后必须写入记忆（带 query 与 ai_response）。"""
+    llm = _FakeLLM([SimpleNamespace(content="回答内容", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+    captured = {}
+
+    service._recall_memory = lambda **kw: ""
+    service._write_memory = lambda **kw: captured.update(kw)
+
+    list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="记住我偏好简洁",
+        )
+    )
+
+    assert captured.get("query") == "记住我偏好简洁"
+    assert captured.get("ai_response") == "回答内容"
+
+
+def test_memory_recall_failure_does_not_break_chat():
+    """召回失败必须不影响对话（fail-open）。"""
+    llm = _FakeLLM([SimpleNamespace(content="正常回答", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+
+    def _boom(**kwargs):
+        raise RuntimeError("memory down")
+
+    service._recall_memory = _boom
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="你好",
+        )
+    )
+
+    body = "".join(frames)
+    assert "event: answer" in body
+    assert "正常回答" in body
+
+
+def test_memory_write_failure_does_not_break_chat():
+    llm = _FakeLLM([SimpleNamespace(content="正常回答", tool_calls=[])])
+    service = _service(_principal(), llm, [])
+
+    def _boom(**kwargs):
+        raise RuntimeError("write down")
+
+    service._recall_memory = lambda **kw: ""
+    service._write_memory = _boom
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="你好",
+        )
+    )
+
+    body = "".join(frames)
+    assert "event: answer" in body
+    assert "event: end" in body

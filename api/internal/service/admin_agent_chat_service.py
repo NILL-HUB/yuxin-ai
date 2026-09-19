@@ -107,8 +107,22 @@ class AdminAgentChatService:
 
             agent = self._load_agent(principal.agent_id, admin_user_id)
             tools = self._build_tools(principal)
+            # 记忆读回（ADMIN-P3c-2）：admin/Agent 主体召回，fail-open。
+            # 召回复用 P3b 已主体化的读路径（retriever/digest），此处只构造 admin
+            # 主体键并注入提示词。两道防线（方法内吞错 + 调用点兜底）：记忆是增强项，
+            # 任何失败都不得让整轮对话以 error 帧结束。
+            try:
+                memory_text = self._recall_memory(
+                    admin_user_id=principal.admin_user_id,
+                    agent_id=principal.agent_id,
+                    query=text,
+                    conversation_id=str(conversation.id),
+                )
+            except Exception:
+                logger.warning("管理端 Agent 记忆召回失败，静默降级", exc_info=True)
+                memory_text = ""
             system_prompt = self._build_system_prompt(
-                principal, getattr(agent, "prompt_key", None)
+                principal, getattr(agent, "prompt_key", None), memory_text=memory_text
             )
             llm = self._build_model()
             # 迭代工具循环生成器：每拿到一个 ("tool", event) 就立刻落库并推 TOOL
@@ -158,6 +172,17 @@ class AdminAgentChatService:
             content=answer,
             tool_calls=[e["call"] for e in tool_events],
         )
+        # 对话后写入记忆（ADMIN-P3c-2）：异步 + 吞错，不影响已产出的答复。
+        try:
+            self._write_memory(
+                admin_user_id=principal.admin_user_id,
+                agent_id=principal.agent_id,
+                query=text,
+                ai_response=answer,
+                conversation_id=str(conversation.id),
+            )
+        except Exception:
+            logger.warning("管理端 Agent 记忆写入失败，静默降级", exc_info=True)
         yield self._frame(AdminAgentChatEvent.ANSWER, {"answer": answer})
         yield self._frame(AdminAgentChatEvent.END, {})
 
@@ -272,12 +297,84 @@ class AdminAgentChatService:
         # 是同一 scoped session，但显式传参可测、不依赖全局单例的惰性初始化）。
         return AuditLogService(session=self.db.session)
 
-    def _build_system_prompt(self, principal: AdminAgentPrincipal, prompt_key) -> str:
+    def _build_system_prompt(
+        self, principal: AdminAgentPrincipal, prompt_key, *, memory_text: str = ""
+    ) -> str:
         from internal.service.admin_agent_prompt_service import AdminAgentPromptService
 
-        return AdminAgentPromptService().build_system_prompt(
+        prompt = AdminAgentPromptService().build_system_prompt(
             principal, prompt_key=prompt_key
         )
+        # 记忆注入（ADMIN-P3c-2）：命中时才附加，避免空段污染提示词。
+        if memory_text:
+            prompt = f"{prompt}\n\n## 你记得的相关信息\n{memory_text}"
+        return prompt
+
+    def _recall_memory(
+        self, *, admin_user_id, agent_id, query: str, conversation_id: str
+    ) -> str:
+        """召回 admin/Agent 主体记忆（fail-open：任何异常返回空串）。
+
+        主体键由 ``recall_admin_agent_memory_for_chat`` 内部构造为
+        ``for_admin(admin_user_id, agent_id=...)``——admin 无 account，绝不走用户主体。
+        """
+        from internal.service.memory.admin_memory_recall import (
+            recall_admin_agent_memory_for_chat,
+        )
+
+        return recall_admin_agent_memory_for_chat(
+            admin_user_id=admin_user_id,
+            agent_id=agent_id,
+            query=query,
+            conversation_id=conversation_id,
+        )
+
+    def _write_memory(
+        self,
+        *,
+        admin_user_id,
+        agent_id,
+        query: str,
+        ai_response: str,
+        conversation_id: str,
+    ) -> None:
+        """对话后写入 admin/Agent 主体记忆（后台线程 + 吞错）。
+
+        与用户端 ``AssistantAgentService._write_memory_from_conversation`` 同策：
+        记忆写入涉及 LLM（实体抽取/显著性评分），放后台线程避免阻塞响应流；
+        线程内必须用 ``app_session_scope``（否则连接停在 idle in transaction）。
+        """
+        if not ai_response:
+            return
+
+        from internal.config.memory_settings import settings as memory_settings
+
+        if not memory_settings.memory_engine_enabled:
+            return
+
+        def _bg_write() -> None:
+            from internal.lib.runtime_context import app_session_scope
+
+            with app_session_scope():
+                try:
+                    from app.http.app import injector
+                    from internal.service.memory.memory_write_service import (
+                        MemoryWriteService,
+                    )
+
+                    injector.get(MemoryWriteService).write_admin_conversation(
+                        admin_user_id=admin_user_id,
+                        agent_id=agent_id,
+                        query=query,
+                        ai_response=ai_response,
+                        conversation_id=conversation_id,
+                    )
+                except Exception:
+                    logger.warning("管理端 Agent 记忆写入失败", exc_info=True)
+
+        from threading import Thread
+
+        Thread(target=_bg_write, daemon=True).start()
 
     def get_principal(self, *, agent_id, admin_user_id, admin_permissions):
         from internal.service.admin_agent_service import AdminAgentService
