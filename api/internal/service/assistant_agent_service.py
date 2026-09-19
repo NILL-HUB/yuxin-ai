@@ -1063,6 +1063,25 @@ class AssistantAgentService(BaseService):
             except Exception:
                 logger.warning("构建视频渲染工具失败，不影响其他工具", exc_info=True)
 
+        # 视频编辑工具（裁剪/拼接/加字幕）：Agent 可在对话内改细节并存入成品库。
+        # 依赖当前账号（素材归属校验 + 成品库归属），故必须在此显式挂载并注入 account_id
+        # ——`_load_non_mcp_tool` 那条通用路径是空参实例化，拿不到账号。
+        if self.app_config_service is not None:
+            for edit_tool_name in ("video_trim", "video_concat", "video_subtitle"):
+                try:
+                    edit_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                        "video_edit_tools",
+                        edit_tool_name,
+                    )
+                    if edit_tool_factory is not None:
+                        tools.append(edit_tool_factory(account_id=str(account_id)))
+                except Exception:
+                    logger.warning(
+                        "构建视频编辑工具失败 name=%s，不影响其他工具",
+                        edit_tool_name,
+                        exc_info=True,
+                    )
+
         # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
         # 同时挂载系统知识库（knowledge_scope='system'，admin 通过 enabled 开关控制），
         # 让系统级知识库/可管理提示词真正对 Agent 生效

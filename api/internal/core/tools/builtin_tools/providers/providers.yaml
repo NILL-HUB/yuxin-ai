@@ -236,3 +236,10 @@
   background: "#F3E8FF"
   category: video
   created_at: 1789200000
+- name: video_edit_tools
+  label: 视频编辑工具
+  description: 视频轻量剪辑能力，支持 Agent 在对话内裁剪、拼接、加字幕并存入成品库。
+  icon: ""
+  background: "#EEF2FF"
+  category: video
+  created_at: 1789800000
