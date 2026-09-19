@@ -562,7 +562,7 @@ class ConsolidationReport(BaseModel):
 Neo4j 走**属性级分离**谓词（`neo4j_filter_condition` / `neo4j_props`：用户 `user_id`，admin `admin_user_id` +
 `agent_id`——Agent 级写真实 UUID，管理员级写哨兵 `NEO4J_ADMIN_LEVEL_AGENT_SENTINEL`，见 02 的「缺口三（已修复）」）。
 **用户主体下产物与改造前逐字节等价**，故存量结果集不变。
-详见 [02-storage-and-retrieval.md](./02-storage-and-retrieval.md) 的「主体化检索注记」与「P3b 已知缺口」。
+详见 [02-storage-and-retrieval.md](./02-storage-and-retrieval.md) 的「主体化检索注记」与「ADMIN-P3b 已知缺口」。
 
 键前缀常量 `OWNER_KEY_USER_PREFIX` / `OWNER_KEY_ADMIN_PREFIX` / `OWNER_KEY_SEPARATOR`（`api/internal/config/memory_settings.py`）**仍无生产消费方**（已提供、未接入）——因用户态键为裸 UUID、admin 态由 `to_key()` 直接拼 `admin:` 前缀，常量目前仅 `parse()` 的历史兼容分支使用。
 
