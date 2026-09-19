@@ -2005,15 +2005,21 @@ class DigestConfig(BaseModel):
 待 P3c 接入 admin / Agent 记忆读写时须逐项收敛。
 （例外：**缺口二、三、九、十六已修复**，保留编号以维持与既有引用的对应关系。）
 
-> **修复进度（2026-09-19）**：ADMIN-P3c-1 修复缺口二；ADMIN-P3c-2 修复缺口九、十六；
-> **ADMIN-P3c-3 修复缺口五、七、十一、十二，并登记 C2（`DigestConfig` 死副本，已删除）、
-> C4（`ColdStorageManager` 主体化，仍**未接线**）**。剩余开放：缺口一、四、六、八、十、十三、十四、十五。
+> **修复进度（2026-09-20）**：ADMIN-P3c-1 修复缺口二；ADMIN-P3c-2 修复缺口九、十六；
+> **ADMIN-P3c-3 修复缺口五、七、十一、十二，并登记 C2（`DigestConfig` 死副本，已删除）**；
+> **ADMIN-P3c-4 修复缺口一、四、六、八、十三、十四（a/b/c），C4 冷存储接线**。
+> 剩余开放：缺口十（Redis 键约定，docstring 已固化）、十五（`EntityResolver` 接线，待产品决策）。
 
-### 缺口一：图扩展与节点详情无主体谓词
+### 缺口一（已修复，2026-09-20，ADMIN-P3c-4）：图扩展与节点详情无主体谓词
 
 `SpreadActivation.activate(start_ids, top_k)` 与 `MemoryRetriever._get_node_data`
 **只按 `node_id` 匹配，不带主体谓词**。当前因节点 id 全局唯一且起点来自已过滤的召回结果，
 实际风险低；但引入 admin / Agent 主体后，若扩展路径跨到其它主体节点，会形成**跨主体泄漏**。
+
+**修复**：`activate` / `_cypher_multi_hop` / `_fallback_iterative` / `_query_neighbors` 增加可选
+`owner_key` 参数（缺省空串 = 无谓词，历史行为等价）；非空时起点与扩展节点均按
+`MemoryOwnerKey.neo4j_filter_condition` 约束。`retriever._get_node_data(node_id, owner_key="")`
+同款主体谓词；`_graph_spread` 从 `_system2_deep_search`（已有 owner_key）透传。
 
 ### 缺口二（已修复，2026-09-19，ADMIN-P3c-1）：PG 侧 `owner_account_id` NOT NULL 阻塞 admin 记忆落库
 
@@ -2051,12 +2057,17 @@ Neo4j 多属性唯一约束**要求约束内所有属性都存在**才施加。�
 不得再用 `IS NULL`**。修复上线时点上 admin 节点数为 0（零迁移窗口），故无存量数据受影响；
 真库实测确认同名同 admin 的管理员级节点现报 `22N79`。
 
-### 缺口四：`DigestManager._fetch_profile` 委派未主体化
+### 缺口四（已修复，2026-09-20，ADMIN-P3c-4）：`DigestManager._fetch_profile` 委派未主体化
 
 `DigestManager._fetch_profile` 把 `owner_key` 原样递给
 `ProfileGraphService.get_profile_text/sync_from_explicit_episodes`，而该服务 Cypher 为
 `MATCH (e:Episode {user_id: $user_id})`——把 owner_key 当**属性值**用。用户态等价；
 admin 主体下查不到，会回退到已正确主体化的 `_fetch_explicit_memories`。
+
+**修复**（`profile_graph.py` 全方法主体化）：`ensure_user` / `sync_from_explicit_episodes` /
+`get_profile_text` / `mark_user_inactive` / `_upsert_cypher` / `_upsert_params` 改走
+`MemoryOwnerKey`——用户态 `parse(裸uuid)` 产物 == 历史 `user_id` 字面量（逐字节等价），
+admin 态写 `admin_user_id` + `agent_id` 属性（画像节点与写侧同源）。
 
 ### 缺口五（已修复，2026-09-19，ADMIN-P3c-3）：`Skill` 节点的 `MERGE` 键不含归属
 
@@ -2074,11 +2085,16 @@ admin 主体下查不到，会回退到已正确主体化的 `_fetch_explicit_me
 admin 主体因 `agent_id` 恒写哨兵而两级键不同。真图实测：同名同 `id` 但归属不同的两条写入现产出
 **2 个独立节点**（修复前为 1 个混装节点），探针残留 leftover=0。
 
-### 缺口六：`CommunityInductionEngine._collect_eligible` 的 `$cutoff` 未绑定
+### 缺口六（已修复，2026-09-20，ADMIN-P3c-4）：`CommunityInductionEngine._collect_eligible` 的 `$cutoff` 未绑定
 
 `cypher_groups` 引用 `$cutoff` 但绑定字典只给归属参数。实测真实 Neo4j 报
 `Neo.ClientError.Statement.ParameterMissing`，异常被吞 → `groups = []` → **Entity 聚合候选恒为空**。
-改造前既有；Task 5 刻意未修（补绑定会把候选从「恒空」变为「有值」，改变用户态行为）。
+改造前既有；P3c-3 刻意未修（补绑定会把候选从「恒空」变为「有值」，改变用户态行为）。
+
+**修复**：Entity 分支绑定补上 `cutoff`（与 SemanticMemory 分支一致）：
+`session.run(cypher_groups, {"cutoff": cutoff.isoformat(), **owner.neo4j_props()})`。
+**行为变更（已披露）**：Entity 聚合候选从恒空恢复为有值——这是修复 bug（原设计意图），
+用户态与 admin 态均生效。真图实测同一查询现产出 **5 个 entity_group 候选**（修复前恒空）。
 
 ### 缺口七（已修复，2026-09-19，ADMIN-P3c-3）：`SkillEmergence._node_to_skill` 只读 `user_id`
 
@@ -2092,11 +2108,16 @@ admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_
 `scanned += 1` **位于 `None` 检查之后**，故无归属节点既不被处理、也不计入 `scanned`
 ——不再是「静默假成功」。用户主体产物与历史逐字节等价。
 
-### 缺口八：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis
+### 缺口八（已修复，2026-09-20，ADMIN-P3c-4）：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis
 
 `MemoryGovernor.gdpr_delete`（含 `_clear_all_user_cache`）全仓**无生产调用方**；用户注销路径
 `AdminCustomerUserService._cleanup_user_runtime_data` 做 PG + Neo4j 清理但**完全不碰 Redis**，
 故注销后 `memory:digest:` / `skill:*` / `nudge:*` 等键只能靠 TTL 兜底存活（digest 最久 86400s）。
+
+**修复**：`_cleanup_user_runtime_data` 末尾追加 Redis 清理段——构造 `MemoryGovernor()`
+调 `_clear_all_user_cache(str(account_id))`（用户态 owner_key=裸 UUID，与历史键逐字节一致），
+结果计入 `stats["redis_keys"]`，best-effort 失败不阻断注销。注销入口：
+`AdminCustomerUserService.delete_customer_user` → `_cleanup_user_runtime_data`（P3c-4）。
 
 ### 缺口九（已修复，2026-09-19，ADMIN-P3c-2）：`_verify_owner` / `edit_memory` / `gdpr_delete` 的 Neo4j 侧仅支持用户主体
 
@@ -2140,22 +2161,33 @@ admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `Me
 含 `LedgerWriter` 写侧与召回读侧）、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()`
 空实现）——均属 P3c 实施范围。
 
-> **已落地（ADMIN-P3c-2 / P3c-3）**：admin 读写调用方接入已完成（P3c-2，见 `execution-roadmap.md`）；
+> **已落地（ADMIN-P3c-2 / P3c-3 / P3c-4）**：admin 读写调用方接入已完成（P3c-2，见 `execution-roadmap.md`）；
 > **C2**：`internal/model/memory_models.py` 中的第二份 `DigestConfig` 死副本**已于 P3c-3 删除**，
 > 配置唯一事实源为 `api/internal/config/memory_settings.py`（`settings.digest`，
-> `cache_ttl_seconds` 默认 **86400**）；**C4**：冷存储已主体化但**仍未接线**（详见缺口十五）。
+> `cache_ttl_seconds` 默认 **86400**）；**C4**：冷存储已主体化且已接线（详见缺口十五；
+> `list_user_archives` 因端口无列举能力仍恒空）。
 
-### 缺口十三：其余用户读端点的 Neo4j 查询未主体化（既有读端口）
+### 缺口十三（已修复，2026-09-20，ADMIN-P3c-4）：其余用户读端点的 Neo4j 查询未主体化（既有读端口）
 
 `user_routes_9.py` 的 `/memory/graph`、`/memory/graph/<uid>/cluster/<type>`、`/memory/<id>` 详情、
 `/memory/skills` 等**用户读端点**仍硬编码属性 `user_id`（非经 `MemoryOwnerKey` 访问器）。
 用户态等价、admin 无读入口，故无运行时影响；但属「读路径主体化」未覆盖的既有读端口。
 
-### 缺口十四：以下写/读路径模块仍硬编码 `user_id` 属性（P3b 文件范围外）
+**修复**：四处改走 `MemoryOwnerKey.for_user(account.id)` → `neo4j_filter_condition("n")` +
+`neo4j_props()` 绑定。用户态产物与历史 `user_id = $user_id` 逐字节等价；
+`/memory/<id>` 详情保留 `OR n.user_id IS NULL` 豁免语义。
+
+### 缺口十四（已修复，2026-09-20，ADMIN-P3c-4）：以下写/读路径模块仍硬编码 `user_id` 属性（P3b 文件范围外）
 
 `write_time_conflict_resolver.py`（生产写路径，经 `MemoryWriteService` 调用）、
 `post_execution_hook.py::_fetch_recent_episodes`、`entity_resolution.py`（`EntityResolver`）
 均仍以属性 `user_id` 直接写入/查询。用户态等价；admin 写路径未接线前无影响，但 P3c 接入时应统一改走访问器。
+
+**修复**（a/b/c 三项）：
+- a. `write_time_conflict_resolver._query_candidates`：参数 `user_id` 语义升级为主体键字符串，
+  内部 `MemoryOwnerKey.parse` 产归属谓词（用户态逐字节等价；admin 态 `admin_user_id` + `agent_id`）。
+- b. `post_execution_hook._fetch_recent_episodes`：Episode 按主体谓词查询（同 a）。
+- c. `entity_resolution._retrieve_candidates`：直接匹配 + 全文索引均按主体归属过滤（同 a）。
 
 > **已收敛部分（ADMIN-P3c-1）**：`ledger_writer.py` 的 Neo4j 写路径**已主体化**——
 > `_create_episode_node` / `_merge_entity_node` / `_increment_entity_access` /
@@ -2163,16 +2195,18 @@ admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `Me
 > `_owner_props()`（内部调 `MemoryOwnerKey.neo4j_props()`）；用户态不传主体键时回落历史
 > `user_id` 字面量，逐字节等价。此条不再适用于 `ledger_writer.py`。
 
-### 缺口十五：`EntityResolver` / `ColdStorageManager` 无注入消费点（未接线模块）
+### 缺口十五：`EntityResolver` 无注入消费点（未接线模块）
 
-`entity_resolution.py` 的 `EntityResolver` 全仓仅 DI 注册、**无注入消费点**（与 `ColdStorageManager`
-同级的未接线模块），且内含 `user_id` 属性硬编码。属「已提供、未接入」，P3c 接线时需一并主体化。
+`entity_resolution.py` 的 `EntityResolver` 全仓仅 DI 注册、**无注入消费点**，且归属查询
+已按主体键主体化（P3c-4 缺口十四c）。属「已提供、未接入」——接线点（写入热路径 or
+consolidation RESOLVE 阶段）**待产品决策**，本批不强行接入（避免改变用户态实体写入行为）。
 
-> **部分收敛（ADMIN-P3c-3 / C4）**：`ColdStorageManager` **已主体化**——`archive()` 的路径归属改为
-> `MemoryOwnerKey.parse(entry.user_id).to_key()`，`_restore_to_neo4j()` 改用 `owner.neo4j_props()`
-> 动态产属性；模块 docstring 已如实披露「**无任何生产调用方**（未注册 DI）」。**接线本身仍未落地**
-> （见「已提供、未接入」的诚实披露）——且 `upload_bytes_without_record` 端口仅接收**文件名 basename**，
-> 归属目录片段到不了存储层，接线时须一并改造端口签名。`EntityResolver` 仍未接线、未主体化。
+> **部分收敛（ADMIN-P3c-3 / P3c-4）**：`ColdStorageManager` **已主体化且已接线**——
+> `archive()` 改走 `upload_local_file(source_path, target_key)` 保 target_key，对象键
+> `{prefix}{owner}/{year}/{month}/{node_id}.json.gz` **真正落盘**（P3c-4 修复了此前
+> `upload_bytes_without_record` 只收 basename 的路径丢失）；新增
+> `archive_owner_cold_nodes(owner_key)`，在 `consolidation_tasks.run_daily_consolidation`
+> 每个主体循环末尾调用（生产触发路径）。`EntityResolver` 仍未接线（见上）。
 
 ### 缺口十六（已修复，2026-09-19，ADMIN-P3c-2）：`_delete_all_pgvector_rows` 仅按 `owner_account_id` 过滤、未追加 `owner_type`
 

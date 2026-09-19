@@ -204,7 +204,7 @@
 
 **已知缺口（ADMIN-P3b 未闭合，待后续批次）**：16 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
 （图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点，另有缺口一/四/十三/十四/十五/十六的细化条目）。
-其中**已修复 8 项**：「Neo4j 唯一约束对管理员级失效」（原缺口三，2026-09 哨兵值方案）、「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二，ADMIN-P3c-1）、「`_verify_owner`/`edit_memory`/`gdpr_delete` 仅支持用户主体」（原缺口九，ADMIN-P3c-2）、「`_delete_all_pgvector_rows` 未追加 `owner_type`」（原缺口十六，ADMIN-P3c-2）、「`Skill` MERGE 键不含归属」（原缺口五，ADMIN-P3c-3）、「`_node_to_skill` 只读 `user_id`」（原缺口七，ADMIN-P3c-3）、「`redis_keys` 重复计数」（原缺口十一，ADMIN-P3c-3）、「`skill:stats` 无 TTL」（原缺口十二，ADMIN-P3c-3）。剩余开放 8 项：缺口一、四、六、八、十、十三、十四、十五。
+其中**已修复 14 项**：「Neo4j 唯一约束对管理员级失效」（原缺口三，2026-09 哨兵值方案）、「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二，ADMIN-P3c-1）、「`_verify_owner`/`edit_memory`/`gdpr_delete` 仅支持用户主体」（原缺口九，ADMIN-P3c-2）、「`_delete_all_pgvector_rows` 未追加 `owner_type`」（原缺口十六，ADMIN-P3c-2）、「`Skill` MERGE 键不含归属」（原缺口五，ADMIN-P3c-3）、「`_node_to_skill` 只读 `user_id`」（原缺口七，ADMIN-P3c-3）、「`redis_keys` 重复计数」（原缺口十一，ADMIN-P3c-3）、「`skill:stats` 无 TTL」（原缺口十二，ADMIN-P3c-3）、「图扩展/节点详情无主体谓词」（原缺口一，ADMIN-P3c-4）、「`_fetch_profile` 委派未主体化」（原缺口四，ADMIN-P3c-4）、「`$cutoff` 未绑定」（原缺口六，ADMIN-P3c-4）、「注销路径不清 Redis / `gdpr_delete` 无入口」（原缺口八，ADMIN-P3c-4）、「用户读端点未主体化」（原缺口十三，ADMIN-P3c-4）、「其余模块硬编码 `user_id`」（原缺口十四，ADMIN-P3c-4）。剩余开放 2 项：缺口十（Redis 键约定，已固化 docstring）、缺口十五（`EntityResolver` 接线，待产品决策）。
 
 实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
 
@@ -302,11 +302,42 @@
 > **诚实披露**：
 > - admin 巩固**派发已具备**（`consolidation_tasks` 扫描 admin 归属节点），但需 **Celery beat
 >   实际运行**才会触发（`celery_app.py` 已注册 `run_skill_curation` / `run_skill_stats_flush`）。
-> - 冷存储归档**下沉仍未接线**（模块已主体化，但 `archive()` 无生产调用方、未注册 DI，
->   且存储端口只收 basename——见 02-storage 缺口十五）。
-> - 仍开放：缺口一（图扩展无主体谓词）、四（`_fetch_profile` 委派）、六（`$cutoff` 未绑定）、
->   八（`gdpr_delete` 无路由入口）、十（Redis 键约定）、十三（用户读端点）、十四（其余硬编码
->   `user_id` 模块）、十五（`EntityResolver` 接线）。
+> - 冷存储归档下沉当时**仍未接线**（`archive()` 无生产调用方、存储端口只收 basename）——
+>   **已由 ADMIN-P3c-4 解决**（见下节 C4）。
+> - 仍开放项均已由 **ADMIN-P3c-4** 闭环（缺口一/四/六/八/十三/十四 + C4），
+>   仅缺口十（Redis 键约定，docstring 固化）与缺口十五（`EntityResolver` 接线，待产品决策）保留。
+
+
+### ADMIN-P3c-4 剩余缺口全量闭合（2026-09-20 完成）
+
+把 P3b 已知缺口剩余项与冷存储接线一次收尾：用户态全部逐字节等价，admin/Agent 主体真正可达。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 注销路径补 Redis 清理（缺口八） | `api/internal/service/admin_customer_user_service.py`（`_cleanup_user_runtime_data` → `MemoryGovernor._clear_all_user_cache`） |
+| Entity 聚合 `$cutoff` 绑定（缺口六） | `api/internal/service/memory/community_induction.py` |
+| ProfileGraphService 全方法主体化（缺口四） | `api/internal/service/memory/profile_graph.py` |
+| 写时冲突/执行钩子/实体消解主体化（缺口十四 a/b/c） | `write_time_conflict_resolver.py`、`post_execution_hook.py`、`entity_resolution.py` |
+| 用户读端点主体化（缺口十三） | `api/app/http/user_routes_9.py`（graph/cluster/detail/skills） |
+| 图扩展/节点详情主体谓词（缺口一） | `spread_activation.py`、`retriever.py` |
+| 冷存储 archive 保 key + 接线（C4） | `cold_storage_manager.py`（`upload_local_file` 保 target_key + `archive_owner_cold_nodes`）、`consolidation_tasks.py` |
+
+**关键决策**：
+- 用户态下全部改造**逐字节等价**（`parse(裸uuid)` 产物 == 历史 `user_id` 字面量）；
+  admin 态统一走 `MemoryOwnerKey` 访问器属性级分离。
+- 缺口六为**行为变更**（Entity 聚合候选从恒空恢复有值，bug 修复），已真图验证并披露。
+- C4：`archive()` 改走 `upload_local_file(source_path, target_key)` 保 key——对象键
+  `{prefix}{owner}/{year}/{month}/{node_id}.json.gz` 真正落盘；`archive_owner_cold_nodes`
+  在每日巩固任务每主体循环末尾调用（生产触发路径，归档后标记 `archived_at` 保留节点，可逆）。
+- `EntityResolver` 已主体化但**保持未接线披露**（接线点待产品决策，不强行改写入行为）。
+
+**验证**：全量回归 **5173 passed / 13 skipped / 2 failed**（2 项均非本批：
+`test_timeline_planning` 为并行 KB-P4 提交 468aeecd 引入、P3c-4 时点文件不存在；
+`test_account_service` 邮箱通道环境失败，已在 P3c-4 时点 worktree 复现）。新增判别性用例 20 个。
+真图实测：缺口六 Entity 聚合候选 **5 个**（修复前恒空）；COLD 节点存量 0（零迁移窗口）。
+
+> **闭环**：P3b 已知缺口 16 项至此全部修复/收敛——仅缺口十（约定，已固化 docstring）
+> 与缺口十五（`EntityResolver` 接线，待产品决策）保留开放。
 
 
 ### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
