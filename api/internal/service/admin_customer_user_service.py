@@ -371,6 +371,7 @@ class AdminCustomerUserService:
         - Neo4j：按 user_id 清理 Episode/Entity/SemanticMemory/Community 节点；
           独占 Skill（仅归属该账号）物理删除；User/Trait/Preference 画像节点级联清理
         - PG：停用该账号名下定时任务（schedule_task.enabled=false）
+        - Redis：清理 memory:digest: / skill:* / nudge:* 等主体缓存键（ADMIN-P3c-4 缺口八）
         """
         stats = {
             "pg_rows": 0,
@@ -378,6 +379,7 @@ class AdminCustomerUserService:
             "neo4j_skills": 0,
             "neo4j_user_nodes": 0,
             "schedule_tasks_disabled": 0,
+            "redis_keys": 0,
         }
         try:
             from internal.model.knowledge import UserMemory
@@ -479,6 +481,18 @@ class AdminCustomerUserService:
             import logging
             logging.getLogger(__name__).warning(
                 "delete_customer_user: 停用定时任务失败 account=%s", account_id, exc_info=True
+            )
+        # Redis 缓存清理（缺口八）：注销后 memory:digest: / skill:* / nudge:* 等键
+        # 此前只能靠 TTL 兜底。复用 MemoryGovernor._clear_all_user_cache（主体键=裸 UUID，
+        # 与历史键逐字节一致）。best-effort，失败不阻断注销。
+        try:
+            from internal.service.memory.memory_governor import MemoryGovernor
+
+            stats["redis_keys"] = MemoryGovernor()._clear_all_user_cache(str(account_id))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "delete_customer_user: Redis 缓存清理失败 account=%s", account_id, exc_info=True
             )
         return stats
 

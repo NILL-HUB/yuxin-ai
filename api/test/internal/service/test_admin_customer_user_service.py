@@ -425,6 +425,73 @@ class TestAdminCustomerUserService:
         with pytest.raises(FailException):
             service.delete_customer_user(account.id, operator_id=uuid4())
 
+    def test_delete_customer_user_should_clear_redis_cache(self, monkeypatch):
+        """缺口八：注销路径此前不碰 Redis——须调用 MemoryGovernor 清理主体缓存并计入 stats。"""
+        import internal.service.memory.memory_governor as _governor_mod
+
+        operator_id = uuid4()
+        account_id = uuid4()
+        account = _account(id=account_id, status="active", email="del@example.com", name="待删")
+        audit_log_service = _AuditLogServiceStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=account),
+            _QueryStub(one_or_none_result=None),
+            _QueryStub(all_result=[]),
+            _QueryStub(delete_result=3),
+            _QueryStub(delete_result=2),
+        ])
+
+        cleared_keys = []
+
+        class _GovernorStub:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def _clear_all_user_cache(self, owner_key):
+                cleared_keys.append(owner_key)
+                return 5
+
+        monkeypatch.setattr(_governor_mod, "MemoryGovernor", _GovernorStub)
+        service = AdminCustomerUserService(session=session, audit_log_service=audit_log_service)
+
+        result = service.delete_customer_user(
+            account_id,
+            reason="用户要求注销",
+            operator_id=operator_id,
+            ip="127.0.0.1",
+            user_agent="pytest",
+        )
+
+        assert cleared_keys == [str(account_id)]
+        assert audit_log_service.records[0]["after_data"]["cleanup"]["redis_keys"] == 5
+        assert result["status"] == "deleted"
+
+    def test_delete_customer_user_should_not_fail_when_redis_unavailable(self):
+        """Redis 不可用时注销不阻断（_clear_all_user_cache 返回 0，stats 记 0）。"""
+        operator_id = uuid4()
+        account_id = uuid4()
+        account = _account(id=account_id, status="active", email="del@example.com", name="待删")
+        audit_log_service = _AuditLogServiceStub()
+        session = _SessionStub([
+            _QueryStub(one_or_none_result=account),
+            _QueryStub(one_or_none_result=None),
+            _QueryStub(all_result=[]),
+            _QueryStub(delete_result=3),
+            _QueryStub(delete_result=2),
+        ])
+        service = AdminCustomerUserService(session=session, audit_log_service=audit_log_service)
+
+        result = service.delete_customer_user(
+            account_id,
+            reason="用户要求注销",
+            operator_id=operator_id,
+            ip="127.0.0.1",
+            user_agent="pytest",
+        )
+
+        assert result["status"] == "deleted"
+        assert audit_log_service.records[0]["after_data"]["cleanup"]["redis_keys"] == 0
+
     def test_disable_deleted_user_should_reject(self):
         from internal.exception import FailException
 
