@@ -183,3 +183,121 @@ class VideoEditService:
                 detail = (exc.stderr or b"").decode("utf-8", errors="replace")[:200]
                 raise VideoEditError(f"字幕烧录失败：{detail or exc}") from exc
         return self._ensure_output(out)
+
+    # ── 编排层：document → 下载 → 剪辑 → 成品库 ───────────────────────────
+
+    def _download_source(self, key: str, dest: str) -> None:
+        """从对象存储下载素材到本地（独立方法便于测试替换）。"""
+        from app.http.module import injector
+        from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+
+        injector.get(RuntimeStorageProxy).download_file(key, dest)
+
+    def _load_source_documents(
+        self, *, account: Any, knowledge_base_id: str, document_ids: list[str]
+    ) -> list[Any]:
+        """按 id 批量取素材文档（含 upload_file），保持传入顺序。
+
+        归属校验复用 `get_document_detail`（内含知识库归属 + 文档归属双重校验），
+        避免手写查询绕过权限。
+        """
+        from app.http.module import injector
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+
+        service = injector.get(KnowledgeBaseService)
+        docs = []
+        for doc_id in document_ids:
+            doc = service.get_document_detail(knowledge_base_id, doc_id, account)
+            # get_document_detail 返回的 document 不带 upload_file 关系，按需补取
+            upload_file = getattr(doc, "upload_file", None)
+            if upload_file is None and getattr(doc, "upload_file_id", None):
+                from internal.model.upload_file import UploadFile
+
+                upload_file = service.db.session.query(UploadFile).filter(
+                    UploadFile.id == doc.upload_file_id
+                ).one_or_none()
+                setattr(doc, "upload_file", upload_file)
+            docs.append(doc)
+        return docs
+
+    def _store_output(self, *, account: Any, video_path: Path, name: str) -> dict:
+        """把剪辑产物写入成品库（复用 KB-P3.7 的 store_render_output）。"""
+        from app.http.module import injector
+        from internal.service.knowledge_base_service import KnowledgeBaseService
+
+        document = injector.get(KnowledgeBaseService).store_render_output(
+            account=account, video_path=video_path, name=name
+        )
+        return {"document_id": str(document.id)}
+
+    def _prepare_source_file(self, doc: Any, work_dir: Path) -> Path:
+        """把文档对应素材下载到工作目录，返回本地路径。"""
+        upload_file = getattr(doc, "upload_file", None)
+        key = getattr(upload_file, "key", "") if upload_file else ""
+        if not key:
+            raise VideoEditError(f"素材不存在或缺少存储对象：document_id={doc.id}")
+        dest = work_dir / f"{doc.id}_{Path(key).name or 'source.mp4'}"
+        try:
+            self._download_source(key, str(dest))
+        except Exception as exc:  # noqa: BLE001 - 统一成可读错误
+            logger.warning("下载素材失败 key=%s", key, exc_info=True)
+            raise VideoEditError(f"下载素材失败：{exc}") from exc
+        return dest
+
+    def trim_document(
+        self, *, account: Any, knowledge_base_id: str, document_id: str,
+        start_sec: float, end_sec: float | None, name: str, reencode: bool = False,
+    ) -> dict:
+        """裁剪单个库内视频并存入成品库。"""
+        docs = self._load_source_documents(
+            account=account, knowledge_base_id=knowledge_base_id, document_ids=[document_id]
+        )
+        if not docs:
+            raise VideoEditError(f"素材不存在：document_id={document_id}")
+
+        with tempfile.TemporaryDirectory(prefix="video-edit-") as work:
+            work_dir = Path(work)
+            source = self._prepare_source_file(docs[0], work_dir)
+            output = work_dir / "output.mp4"
+            self.trim(
+                source_path=source, output_path=output,
+                start_sec=start_sec, end_sec=end_sec, reencode=reencode,
+            )
+            return self._store_output(account=account, video_path=output, name=name)
+
+    def concat_documents(
+        self, *, account: Any, knowledge_base_id: str, document_ids: list[str],
+        name: str,
+    ) -> dict:
+        """按给定顺序拼接多段库内视频并存入成品库。"""
+        docs = self._load_source_documents(
+            account=account, knowledge_base_id=knowledge_base_id, document_ids=document_ids
+        )
+        if len(docs) != len(document_ids):
+            missing = set(document_ids) - {str(d.id) for d in docs}
+            raise VideoEditError(f"素材不存在：document_id={sorted(missing)}")
+
+        with tempfile.TemporaryDirectory(prefix="video-edit-") as work:
+            work_dir = Path(work)
+            sources = [self._prepare_source_file(doc, work_dir) for doc in docs]
+            output = work_dir / "output.mp4"
+            self.concat(source_paths=sources, output_path=output)
+            return self._store_output(account=account, video_path=output, name=name)
+
+    def subtitle_document(
+        self, *, account: Any, knowledge_base_id: str, document_id: str,
+        cues: list[dict[str, Any]], name: str,
+    ) -> dict:
+        """给库内视频烧录字幕并存入成品库。"""
+        docs = self._load_source_documents(
+            account=account, knowledge_base_id=knowledge_base_id, document_ids=[document_id]
+        )
+        if not docs:
+            raise VideoEditError(f"素材不存在：document_id={document_id}")
+
+        with tempfile.TemporaryDirectory(prefix="video-edit-") as work:
+            work_dir = Path(work)
+            source = self._prepare_source_file(docs[0], work_dir)
+            output = work_dir / "output.mp4"
+            self.burn_subtitles(source_path=source, output_path=output, cues=cues)
+            return self._store_output(account=account, video_path=output, name=name)

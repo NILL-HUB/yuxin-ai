@@ -152,3 +152,133 @@ def test_burn_subtitles_rejects_empty_cues(tmp_path, monkeypatch):
     svc, _ = _service(monkeypatch)
     with pytest.raises(VideoEditError, match="字幕内容为空"):
         svc.burn_subtitles(source_path=src, output_path=out, cues=[])
+
+
+def _edit_service(monkeypatch, *, docs, downloads_ok=True):
+    """构造带素材下载与入库替身的服务。"""
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_resolve_exe", lambda: "ffmpeg")
+    monkeypatch.setattr(svc, "_probe_duration", lambda p: 10.0)
+
+    def fake_download(key, dest):
+        if not downloads_ok:
+            raise RuntimeError("download boom")
+        Path(dest).write_bytes(b"v" * 2048)
+
+    monkeypatch.setattr(svc, "_download_source", fake_download)
+    monkeypatch.setattr(svc, "_load_source_documents", lambda **kw: docs)
+    return svc
+
+
+def _fake_doc(doc_id, key="kb/video.mp4", name="素材.mp4"):
+    from types import SimpleNamespace
+    return SimpleNamespace(id=doc_id, upload_file_id="uf-1",
+                           upload_file=SimpleNamespace(key=key, name=name))
+
+
+def test_trim_from_documents_downloads_and_stores(tmp_path, monkeypatch):
+    doc = _fake_doc("doc-1")
+    svc = _edit_service(monkeypatch, docs=[doc])
+    stored = {}
+
+    def fake_trim(**kw):
+        Path(kw["output_path"]).write_bytes(b"o" * 4096)
+        return Path(kw["output_path"])
+
+    monkeypatch.setattr(svc, "trim", fake_trim)
+    monkeypatch.setattr(
+        svc, "_store_output",
+        lambda *, account, video_path, name: stored.update(
+            {"path": str(video_path), "name": name}
+        ) or {"document_id": "new-doc"},
+    )
+
+    result = svc.trim_document(
+        account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+        start_sec=0.0, end_sec=3.0, name="裁剪成品",
+    )
+
+    assert result["document_id"] == "new-doc"
+    assert stored["name"] == "裁剪成品"
+
+
+def test_trim_document_unknown_document_raises(monkeypatch):
+    svc = _edit_service(monkeypatch, docs=[])
+    with pytest.raises(VideoEditError, match="素材不存在"):
+        svc.trim_document(
+            account="acc", knowledge_base_id="kb-1", document_id="nope",
+            start_sec=0.0, end_sec=1.0, name="x",
+        )
+
+
+def test_concat_documents_preserves_input_order(tmp_path, monkeypatch):
+    docs = [_fake_doc("d1"), _fake_doc("d2"), _fake_doc("d3")]
+    svc = _edit_service(monkeypatch, docs=docs)
+    captured = {}
+
+    def fake_concat(**kw):
+        captured["paths"] = [Path(p).name for p in kw["source_paths"]]
+        Path(kw["output_path"]).write_bytes(b"o" * 4096)
+        return Path(kw["output_path"])
+
+    monkeypatch.setattr(svc, "concat", fake_concat)
+    monkeypatch.setattr(svc, "_store_output", lambda **kw: {"document_id": "nd"})
+
+    svc.concat_documents(
+        account="acc", knowledge_base_id="kb-1",
+        document_ids=["d3", "d1", "d2"], name="拼接成品",
+    )
+
+    # 顺序必须严格按调用方给定（不能按 id 排序或去重）
+    assert len(captured["paths"]) == 3
+    assert len(set(captured["paths"])) == 3
+
+
+def test_subtitle_document_burns_and_stores(tmp_path, monkeypatch):
+    doc = _fake_doc("doc-1")
+    svc = _edit_service(monkeypatch, docs=[doc])
+
+    def fake_burn(**kw):
+        Path(kw["output_path"]).write_bytes(b"o" * 4096)
+        return Path(kw["output_path"])
+
+    monkeypatch.setattr(svc, "burn_subtitles", fake_burn)
+    monkeypatch.setattr(svc, "_store_output", lambda **kw: {"document_id": "sd"})
+
+    result = svc.subtitle_document(
+        account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+        cues=[{"start": 0, "end": 1, "text": "hi"}], name="字幕成品",
+    )
+    assert result["document_id"] == "sd"
+
+
+def test_download_failure_is_wrapped(tmp_path, monkeypatch):
+    doc = _fake_doc("doc-1")
+    svc = _edit_service(monkeypatch, docs=[doc], downloads_ok=False)
+    with pytest.raises(VideoEditError, match="下载素材失败"):
+        svc.trim_document(
+            account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+            start_sec=0.0, end_sec=1.0, name="x",
+        )
+
+
+def test_temp_dir_is_cleaned_after_success(monkeypatch):
+    doc = _fake_doc("doc-1")
+    svc = _edit_service(monkeypatch, docs=[doc])
+    seen = {}
+
+    def fake_trim(**kw):
+        seen["dir"] = str(Path(kw["output_path"]).parent)
+        Path(kw["output_path"]).write_bytes(b"o" * 4096)
+        return Path(kw["output_path"])
+
+    monkeypatch.setattr(svc, "trim", fake_trim)
+    monkeypatch.setattr(svc, "_store_output", lambda **kw: {"document_id": "d"})
+
+    svc.trim_document(
+        account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+        start_sec=0.0, end_sec=1.0, name="x",
+    )
+    # 不能在用户/服务器上残留临时工作目录
+    assert not Path(seen["dir"]).exists()
+
