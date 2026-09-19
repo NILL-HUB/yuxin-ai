@@ -215,7 +215,7 @@
 | 文档处理 | 支持 automatic / custom 处理规则、分段规则、chunk_size、chunk_overlap |
 | 索引状态 | waiting、parsing、splitting、indexing、completed、error |
 | 检索策略 | semantic、full_text、hybrid |
-| 检索工具 | 运行时名为 `search_knowledge_base`（`KNOWLEDGE_RETRIEVAL_TOOL_NAME`），可被 Agent / Workflow 调用；支持 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤入参（P3，见 §11.9.3）；`dataset_retrieval` / `recall_dataset` 作为历史别名保留在别名映射中 |
+| 检索工具 | 运行时名为 `search_knowledge_base`（`KNOWLEDGE_RETRIEVAL_TOOL_NAME`），可被 Agent / Workflow 调用；支持 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤入参（KB-P3，见 §11.9.3）；`dataset_retrieval` / `recall_dataset` 作为历史别名保留在别名映射中 |
 | 召回测试 | `/space/knowledge-bases/<uuid>/hit` 支持召回测试；admin 侧 `/admin/system-knowledge/<uuid>/hit-test` |
 | App 绑定 | `AppConfig.knowledge_base_ids`（JSONB）支持应用绑定知识库 |
 | Workflow 绑定 | `dataset_retrieval` workflow node 支持工作流检索知识库 |
@@ -236,11 +236,11 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 | 类型 | 当前情况 |
 | --- | --- |
 | 文档 | 已支持 md、doc、docx、txt、pdf、csv、xlsx、xls、html 等 |
-| 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（P2A）；细粒度 OCR 区块坐标等 L2 增强未实现 |
-| 视频 | L1 音轨 ASR 转写 + 关键帧抽取 + 视觉描述入库、关键帧留存为 UploadFile（P2A + P3）；关键帧视觉向量索引与 L2 区间窗口密抽（逐帧视觉详述）已落地（P3，见 §11.10 / §11.11）；场景切分未实现 |
-| 音频 | L1 ASR 全文转写入库已落地（P2A）；说话人切分、章节切分等 L2 增强未实现 |
+| 图片 | 上传层允许 jpg、jpeg、png、webp、gif、svg；L1 视觉理解 + OCR 入库已落地（KB-P2A）；细粒度 OCR 区块坐标等 L2 增强未实现 |
+| 视频 | L1 音轨 ASR 转写 + 关键帧抽取 + 视觉描述入库、关键帧留存为 UploadFile（KB-P2A + KB-P3）；关键帧视觉向量索引与 L2 区间窗口密抽（逐帧视觉详述）已落地（KB-P3，见 §11.10 / §11.11）；场景切分未实现 |
+| 音频 | L1 ASR 全文转写入库已落地（KB-P2A）；说话人切分、章节切分等 L2 增强未实现 |
 
-明确缺口（P1 数据基座落地后已消解项标注 ✅）：
+明确缺口（KB-P1 数据基座落地后已消解项标注 ✅）：
 
 1. 现有 `KnowledgeBase` 已演进为"用户资料内容库 + 板块"的载体，分层作用域、板块类型与分区体系均已落地（多模态 L1 解析入库见 §11.8，检索取料过滤能力见 §11.9）。
 2. 现有 `TokenBufferMemory` 只是会话短期上下文裁剪，不是跨会话长期记忆。长期记忆由第 16 章记忆系统负责。
@@ -248,10 +248,10 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 4. ✅ 已消解：归属判断已引入 `owner_account_id` + `owner_admin_user_id`，可区分"管理员自己的个人知识库"和"管理员维护的系统级知识库"。
 5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
-7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 关键帧视觉描述 + 关键帧留存）已接入索引链路**（P2A + P3，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频区间窗口密抽 + 逐帧视觉详述）已在 P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分仍未实现。
+7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 关键帧视觉描述 + 关键帧留存）已接入索引链路**（KB-P2A + KB-P3，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频区间窗口密抽 + 逐帧视觉详述）已在 KB-P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分仍未实现。
 8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
 9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
-10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（P3 范围）。
+10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（KB-P3 范围）。
 
 由于当前系统没有必须保留的旧数据，数据库模型可以按目标架构直接重构，不需要为了兼容历史数据做复杂迁移策略。实施时可以优先保证新模型清晰，而不是维持旧字段语义。
 
@@ -295,9 +295,9 @@ knowledge tool pool
 
 Agent 不直接访问全部知识库，而是通过 ToolPolicyFilter 获取本次任务允许访问的知识检索工具子集。
 
-### 11.7 知识库板块与分区体系（P1 已落地）
+### 11.7 知识库板块与分区体系（KB-P1 已落地）
 
-P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素材中心**的组织结构：板块类型（`base_type`）决定板块可容纳的媒体、分区（`KnowledgePartition`）提供两级归类、标签（复用 `Tag`）提供多重属性，容量由存储配额统一管控。设计源头见 [knowledge-base-product-form-design.md](../knowledge-base-product-form-design.md) §二。
+KB-KB-KB-P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素材中心**的组织结构：板块类型（`base_type`）决定板块可容纳的媒体、分区（`KnowledgePartition`）提供两级归类、标签（复用 `Tag`）提供多重属性，容量由存储配额统一管控。设计源头见 [knowledge-base-product-form-design.md](../knowledge-base-product-form-design.md) §二。
 
 #### 11.7.1 板块类型 base_type（硬约束）
 
@@ -378,7 +378,7 @@ P1 数据基座已落地，知识库从"扁平文本库"升级为**全媒体素�
 
 **分区与标签的分工**：分区是互斥层级归类（一个素材只能在一个分区），标签是可交叉叠加的属性（一个素材可有多个标签）。
 
-**服务层 `KnowledgeTagService`**（`internal/service/knowledge_tag_service.py`，P3 已落地），6 个方法：
+**服务层 `KnowledgeTagService`**（`internal/service/knowledge_tag_service.py`，KB-P3 已落地），6 个方法：
 
 | 方法 | 职责 |
 | --- | --- |
@@ -434,16 +434,16 @@ used_bytes  = account_storage_usage.used_bytes   （上传/删除事件同步增
 
 #### 11.7.7 数据迁移
 
-P1 全部 DDL 由单个迁移 `p1a2b3c4d5e6_add_knowledge_product_form_base.py`（位于 `api/internal/migration/versions/`）承载，已在真实 DB 落库、迁移链保持单 head、`downgrade` 可逆：
+KB-KB-KB-P1 全部 DDL 由单个迁移 `p1a2b3c4d5e6_add_knowledge_product_form_base.py`（位于 `api/internal/migration/versions/`）承载，已在真实 DB 落库、迁移链保持单 head、`downgrade` 可逆：
 
 - `knowledge_base` 增加 `base_type` / `partition_mode`（+ `base_type` 索引）
 - `knowledge_document` 增加 `partition_id` / `media_type` / `parse_profile`（+ 两个索引）
 - `upload_file.size` 由 integer 升级为 bigint
 - 新建 `knowledge_partition` / `knowledge_base_tag` / `knowledge_document_tag` / `account_storage_usage`
 
-### 11.8 多模态素材解析（P2A 已落地）
+### 11.8 多模态素材解析（KB-P2A 已落地）
 
-P2A 把 P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链路：图片、音频、视频素材上传后自动解析为可被语义检索命中的文本片段，实现"上传视频 → 能被语义检索命中"。实施计划见 [2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)。
+KB-P2A 把 KB-P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链路：图片、音频、视频素材上传后自动解析为可被语义检索命中的文本片段，实现"上传视频 → 能被语义检索命中"。实施计划见 [2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)。
 
 #### 11.8.1 KnowledgeMediaExtractorService（三分支）
 
@@ -511,7 +511,7 @@ class MediaSegment:
 | 降级策略 | `_persist_frame` 抛异常只记 warning 并把 `frame_url` 置空，帧描述片段照常产出——留存是增强能力，不得让整个视频解析失败 |
 | 依赖 | 服务保留 dataclass 字段 `upload_file_service: UploadFileService`（具体类型标注，injector 按类型解析）；帧记录实际由存储后端创建 |
 
-> 帧留存本身不写视觉向量；视觉向量的编码与索引由索引链路在写完文本片段向量后单独执行（`_index_visual_vectors`，P3 已落地，见 §11.10.3）。
+> 帧留存本身不写视觉向量；视觉向量的编码与索引由索引链路在写完文本片段向量后单独执行（`_index_visual_vectors`，KB-P3 已落地，见 §11.10.3）。
 
 #### 11.8.4 索引链路按 media_type 分支
 
@@ -564,20 +564,20 @@ build_document(document_id)
 {"tier1": {"status": "completed", "media_type": "video", "segment_count": 3, "video_frame_count": 3}, "frames": [{"segment_id": "...", "frame_url": "...", "scene_index": 1}]}
 ```
 
-（`video_frame_count` 与 `frames` 为 P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。每个 frame 条目含 `segment_id` / `frame_url` / `scene_index` / `time_offset`（`_segment_frame` 输出，时间偏移是该帧在视频中的坐标——缺它则帧清单只能排序、无法换算时间轴位置，L2 区间密抽与「改细节」都无从定位）。）
+（`video_frame_count` 与 `frames` 为 KB-P3 新增：由 `_count_frames` / `_collect_frames` 汇总，供「改细节」定位与视觉向量后补。每个 frame 条目含 `segment_id` / `frame_url` / `scene_index` / `time_offset`（`_segment_frame` 输出，时间偏移是该帧在视频中的坐标——缺它则帧清单只能排序、无法换算时间轴位置，L2 区间密抽与「改细节」都无从定位）。）
 
 | 档位 | 状态 | 内容 |
 | --- | --- | --- |
-| L1 基础解析 | ✅ 已落地（P2A 建链路；视频音轨 ASR 与关键帧留存为 P3 补强，见 §11.8） | 图片视觉摘要 + OCR、音频 ASR 转写、视频「音轨 ASR 转写 + 关键帧视觉描述」，关键帧留存为 UploadFile → 片段 + 向量 |
-| L2 深度解析 | ✅ 已落地（P3，见 §11.11） | 视频**区间窗口密抽**：由 L1 命中帧的 `time_offset` 扩窗（±10s，可给显式区间），窗口内按 0.5s/帧密抽并新建 Segment 逐帧详述；说话人切分、细粒度 OCR 坐标、场景切分仍未实现 |
+| L1 基础解析 | ✅ 已落地（KB-P2A 建链路；视频音轨 ASR 与关键帧留存为 KB-P3 补强，见 §11.8） | 图片视觉摘要 + OCR、音频 ASR 转写、视频「音轨 ASR 转写 + 关键帧视觉描述」，关键帧留存为 UploadFile → 片段 + 向量 |
+| L2 深度解析 | ✅ 已落地（KB-P3，见 §11.11） | 视频**区间窗口密抽**：由 L1 命中帧的 `time_offset` 扩窗（±10s，可给显式区间），窗口内按 0.5s/帧密抽并新建 Segment 逐帧详述；说话人切分、细粒度 OCR 坐标、场景切分仍未实现 |
 
-L2 为**按需触发**（Celery 任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`，**不加 beat 条目**），状态写入 `parse_profile.tier2`。检索取料的过滤能力（分区 / 媒体类型 / 标签 / 相似度阈值）与关键帧视觉向量索引均已在 P3 落地，见 §11.9 / §11.10。
+L2 为**按需触发**（Celery 任务 `internal.task.knowledge_l2_tasks.build_document_l2_task`，**不加 beat 条目**），状态写入 `parse_profile.tier2`。检索取料的过滤能力（分区 / 媒体类型 / 标签 / 相似度阈值）与关键帧视觉向量索引均已在 KB-P3 落地，见 §11.9 / §11.10。
 
 ---
 
-### 11.9 检索过滤参数（P3 已落地）
+### 11.9 检索过滤参数（KB-P3 已落地）
 
-P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分区、媒体类型、标签与相似度下限收窄范围。
+KB-P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分区、媒体类型、标签与相似度下限收窄范围。
 
 #### 11.9.1 向量检索的 SQL 下推
 
@@ -629,7 +629,7 @@ P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分�
 
 ---
 
-### 11.10 关键帧视觉向量（P3 已落地）
+### 11.10 关键帧视觉向量（KB-P3 已落地）
 
 #### 11.10.1 数据表 `video_visual_embedding`
 
@@ -716,7 +716,7 @@ P3 为检索链路补上四类结构化过滤，使「自翻素材」可按分�
 
 ---
 
-### 11.11 L2 按需解析（P3 已落地）
+### 11.11 L2 按需解析（KB-P3 已落地）
 
 L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 
@@ -748,7 +748,7 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 
 ---
 
-### 11.12 迁移链守卫测试（P3 已落地）
+### 11.12 迁移链守卫测试（KB-P3 已落地）
 
 `api/test/internal/migration/test_migration_graph_integrity.py` 以 **git 跟踪的文件**（而非磁盘上的全部文件）重建迁移图，断言：
 
@@ -759,7 +759,7 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 
 ---
 
-### 11.13 系统预置成品库（P3.7 已落地）
+### 11.13 系统预置成品库（KB-P3.7 已落地）
 
 渲染成品需要一个**确定的、唯一的、系统托管的**归集处，故不新增 `base_type`，
 而是每用户预置一个成品库（设计 §4.1）。
@@ -774,10 +774,10 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | 禁止手动上传 | `upload_document` / `create_document_from_upload_file` / `assert_upload_allowed` 三处均经 `_assert_not_render_output_base` 拒绝 |
 | 系统写入 | `KnowledgeBaseService.store_render_output()` —— 落 COS → 建成品库 `KnowledgeDocument`（`source_type='render_output'`、`media_type=video`）→ 触发索引。**该路径不经「禁止上传」校验**（那条只拦用户上传） |
 
-成品库走**同一套 P3 检索**（分区/媒体类型/标签/相似度阈值），因此「可复用」天然成立——
+成品库走**同一套 KB-P3 检索**（分区/媒体类型/标签/相似度阈值），因此「可复用」天然成立——
 用户可让小钰从成品库翻旧片翻新。
 
-### 11.14 HyperFrames 渲染宿主（P3.7 已落地）
+### 11.14 HyperFrames 渲染宿主（KB-P3.7 已落地）
 
 三层编/渲/库流水线，全部由对话内工具触发：
 
@@ -793,7 +793,7 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | --- | --- |
 | 编排服务 | `internal/service/render_service.py`（`RenderService.render_composition` / `render_to_render_output_base`） |
 | Celery 队列与任务 | `config/config.py`（`Queue("render")` + `internal.task.render_tasks.*` 路由）+ `internal/task/render_tasks.py`（`render_composition_task`，`bind=True` / `max_retries=2` / `default_retry_delay=60`） |
-| 会话内入口 | builtin provider `video_render_tools`（`render_video`）+ 运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools`；工具 `_dispatch_render` 做**三级路由**（见下） |
+| 会话内入口 | builtin provider `video_render_tools`（`render_video`）+ 运行时挂载点 [assistant_agent_service.py](../../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools`；工具 `_dispatch_render` 做**三级路由**（见下） |
 | 配额宽让 | `StorageQuotaService.check_quota_allow_overflow` + `RuntimeStorageProxy.upload_bytes(allow_overflow=True)`：成品由系统写入，剩余 > 0 即放行（允许溢出），恰好为 0 才拒绝（设计 §6.3）；**素材上传仍严格** |
 | 渲染运行时配置 | `HYPERFRAMES_BROWSER_PATH` / `HYPERFRAMES_FFMPEG_PATH` / `HYPERFRAMES_FFPROBE_PATH` / `HYPERFRAMES_CLI_VERSION`（默认 `0.8.42`）/ `HYPERFRAMES_CLI_BIN` / `RENDER_TIMEOUT_SEC` |
 | 执行位置开关 | `RENDER_LOCAL_ENABLED`（默认 `true`）/ `RENDER_CLOUD_FALLBACK_ENABLED`（默认 `true`）；读取点 `render_video._local_enabled` / `_cloud_fallback_enabled`（容器 config 是普通 dict，须 `.get()`） |

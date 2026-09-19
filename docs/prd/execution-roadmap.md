@@ -158,18 +158,18 @@
 | 跨层键前缀常量 | `api/internal/config/memory_settings.py`（`OWNER_KEY_USER_PREFIX` 等） |
 | 回归防护 | `test_memory_owner_entity.py`、`test_memory_owner_type_migration.py`、`test_ledger_writer_owner.py`、`test_memory_owner_backfill_consistency.py`（真库校验）、`test_memory_owner_settings.py` |
 
-**主体键形态**（`MemoryOwnerKey.to_key()`，仅用于 Redis / 冷存储等扁平命名空间）：用户 = **裸 `{account_uuid}`**（与旧 `str(account.id)` 逐字节一致，故用户侧零迁移）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。Neo4j 侧不用字符串键，走节点属性级分离（用户 `user_id` / admin `admin_user_id` + `agent_id`）。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10；后续阶段的切分设计见 [P3b 实现计划](../superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md)。
+**主体键形态**（`MemoryOwnerKey.to_key()`，仅用于 Redis / 冷存储等扁平命名空间）：用户 = **裸 `{account_uuid}`**（与旧 `str(account.id)` 逐字节一致，故用户侧零迁移）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。Neo4j 侧不用字符串键，走节点属性级分离（用户 `user_id` / admin `admin_user_id` + `agent_id`）。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10；后续阶段的切分设计见 [ADMIN-P3b 实现计划](../superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md)。
 
 **关键设计决定**：
 
 - **先双写不切读**：读路径不动才能用现有全量回归证明"零变化"；读切换与写改造混在一个计划里，回归失败无法区分归因。
-- **分表必须同步双写**：向量分表是**动态表名**（按维度建表），迁移只能靠 `information_schema` 扫描补列；若写入端不消费新列，`owner_admin_user_id` / `owner_agent_id` 永为 NULL、`owner_type` 只是靠 `DEFAULT 'user'` 侥幸正确——属「只建列不写列」断链，P3b 接入 admin 主体后会落成错标归属。
+- **分表必须同步双写**：向量分表是**动态表名**（按维度建表），迁移只能靠 `information_schema` 扫描补列；若写入端不消费新列，`owner_admin_user_id` / `owner_agent_id` 永为 NULL、`owner_type` 只是靠 `DEFAULT 'user'` 侥幸正确——属「只建列不写列」断链，ADMIN-P3b 接入 admin 主体后会落成错标归属。
 - **`agent_id` 独立落列**：规格 §8 要求「`admin_user_id` + `agent_id` 两级隔离」，故新增 `owner_agent_id` 列（可空 FK `admin_agent.id`），而非复用 `owner_admin_user_id`。
 - **存量零变化**：既有 234 行全部回填 `owner_type='user'`，`owner_account_id` 不动；真库一致性守卫断言无 NULL、无非 user 行、分表列齐备。
 
-**已由 ADMIN-P3b 落地**（2026-09-17）：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、服务层签名统一为 `owner_key`、admin 侧 Neo4j 约束与索引就位；并修复既有缺陷 **C1**（Neo4j `Skill` 节点 flush 键与写入属性不符 → 静默丢数）与 **C3**（GDPR 清 Redis 白名单键与实际键前缀不符 → 清理无效）。详见下节「管理端 Agent 治理（P3b …）」。
+**已由 ADMIN-P3b 落地**（2026-09-17）：读路径按主体身份过滤（`retriever` / `digest_manager` / `consolidation_engine` / `memory_governor`）、Neo4j 节点**属性级分离**（用户继续用 `user_id`，admin 新增 `admin_user_id` + `agent_id`；**不改用字符串 key、不做属性迁移**）、服务层签名统一为 `owner_key`、admin 侧 Neo4j 约束与索引就位；并修复既有缺陷 **C1**（Neo4j `Skill` 节点 flush 键与写入属性不符 → 静默丢数）与 **C3**（GDPR 清 Redis 白名单键与实际键前缀不符 → 清理无效）。详见下节「管理端 Agent 治理（ADMIN-P3b …）」。
 
-**仍未落地（P3c）**：admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，含 `LedgerWriter` 写侧与召回读侧）、**解除 PG 主表与向量分表 `owner_account_id` 的 NOT NULL**（否则 admin 记忆在 PG 侧无法落库）、Redis / 冷存储的键前缀改造、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
+**仍未落地（后续批次）**：admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，含 `LedgerWriter` 写侧与召回读侧）、**解除 PG 主表与向量分表 `owner_account_id` 的 NOT NULL**（否则 admin 记忆在 PG 侧无法落库）、Redis / 冷存储的键前缀改造、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
 
 实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（ADMIN-P3a）与 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（ADMIN-P3b）。
 
@@ -202,7 +202,7 @@
 
 **验证**：全量回归 4947 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
 
-**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：15 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「P3b 已知缺口」一节
+**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：15 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
 （图扩展无主体谓词、PG `owner_account_id` NOT NULL 阻塞 admin 落库、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点、`_delete_all_pgvector_rows` 未追加 `owner_type`）。
 其中原「Neo4j 唯一约束对管理员级失效」（原缺口三）已修复（2026-09，哨兵值方案；见同节「缺口三（已修复）」）。
 
@@ -242,7 +242,7 @@
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ⚠️ 部分完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 未开始） |
 | KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
 
-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
+KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
 
 | 交付 | 载体 | 状态 |
 | --- | --- | --- |
@@ -318,7 +318,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | **检索过滤参数扩展（4 个，全部 SQL 下推）** | `knowledge_vector_service.py`（`partition_id` / `media_types` / `document_ids` / `score_threshold`）+ `retrieval_service.py`（`RetrievalFilter`） | ✅ 已落地；标签无命中 fail closed，不退化为不过滤 |
 | **检索工具过滤入参** | `retrieval_service.py`（`create_knowledge_retrieval_tool` 的 `partition_id` / `media_types` / `tags` / `score_threshold`） | ✅ 已落地 |
 | **素材标签服务与路由** | `knowledge_tag_service.py`（`KnowledgeTagService`）+ `knowledge_mcp_routes.py` 三条素材标签路由 | ✅ 已落地 |
-| **视频 L1 补 ASR 音轨 + 关键帧留存** | `vision_invoke.py`（`extract_video_audio` / `_resolve_ffmpeg_exe`）+ `knowledge_media_extractor_service.py`（`_persist_frame`） | ✅ 已落地；音轨失败只记 warning 不中断，帧留存失败 `frame_url` 置空。抽帧函数已由 `extract_video_frames_to_dir` 换为 `extract_video_frames_with_offsets`（见 P3.5） |
+| **视频 L1 补 ASR 音轨 + 关键帧留存** | `vision_invoke.py`（`extract_video_audio` / `_resolve_ffmpeg_exe`）+ `knowledge_media_extractor_service.py`（`_persist_frame`） | ✅ 已落地；音轨失败只记 warning 不中断，帧留存失败 `frame_url` 置空。抽帧函数已由 `extract_video_frames_to_dir` 换为 `extract_video_frames_with_offsets`（见 KB-P3.5） |
 | **关键帧视觉向量表与迁移** | `video_visual_embedding.py` + 迁移 `c9d0e1f2a3b4` / `dae1f2a3b4c5` | ✅ 已落地（维度 1536，HNSW 余弦索引） |
 | **视觉编码服务** | `visual_embedding_service.py`（`VisualEmbeddingService`） | ✅ 已落地；不注册 `model_class_registry`（入参与 OpenAIEmbeddings 不兼容） |
 | **视觉向量索引写入** | `knowledge_indexing_service.py`（`_index_visual_vectors` 等） | ✅ 已落地；先清空旧向量再重建（幂等） |
@@ -334,7 +334,7 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
 | **L1 抽帧随时长动态** | `internal/core/vision/frame_sampling.py`（纯函数 `resolve_l1_frame_count` / `plan_frame_offsets`）+ `vision_invoke.py`（`probe_duration_sec` / `extract_video_frames_with_offsets` / `ExtractedFrame`） | ✅ 已落地；帧数 `clamp(round(8·log2(sec) − 35), 6, 60)`，**1 小时触顶 60 帧**，全片均匀取帧。取代此前「固定 3 帧 + 帧号取模」——旧实现无论视频多长都只取开头若干帧 |
-| **帧时间偏移落库与透传** | `knowledge_media_extractor_service.py`（`_extract_frames_with_offsets`）+ `knowledge_indexing_service.py`（`_segment_frame` 输出 `time_offset`） | ✅ 已落地；帧片段 metadata 与 `parse_profile.frames` 均带 `time_offset`。读取端（L2 区间定位）已在 P3.6 落地 |
+| **帧时间偏移落库与透传** | `knowledge_media_extractor_service.py`（`_extract_frames_with_offsets`）+ `knowledge_indexing_service.py`（`_segment_frame` 输出 `time_offset`） | ✅ 已落地；帧片段 metadata 与 `parse_profile.frames` 均带 `time_offset`。读取端（L2 区间定位）已在 KB-P3.6 落地 |
 | **配额预留（准入门槛）** | `storage_quota_entity.py`（`PARSE_RESERVE_BYTES = 8MB`）+ `storage_quota_service.py`（`consume_quota(..., reserve_bytes=0)`）+ `chunked_upload_service.py` / `runtime_storage_service.py`（`upload_file`） | ✅ 已落地；素材上传校验量含预留（预留参与门槛但**不计入已用**）；**产物写入路径 `upload_bytes` 不加预留** |
 | **帧计费链路锁定** | `test_frame_quota_charge.py` | ✅ 已落地；帧经存储代理（`RuntimeStorageProxy.upload_bytes`）**隐式计费**，用测试锁定该跨模块契约（无生产代码改动——核查确认现状已计费，再加 `add_usage` 会双重计费） |
 | **帧释放（成对修复）** | `recycle_bin_handlers.py`（`_collect_document_frame_files` + `snapshot_knowledge_document` / `snapshot_knowledge_base` / `purge_knowledge_document` / `purge_knowledge_base`） | ✅ 已落地；帧此前**只计费不清理**（配额泄漏），现两条 purge 路径均一并删帧文件并 `release_usage` |
@@ -481,21 +481,21 @@ P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../s
 
 ```text
 依赖链：
-P0-1 数据结构扩展（ToolSourceType + RuntimeToolDescriptor + CompositeComponentRef）
+POOL-POOL-POOL-P0-1 数据结构扩展（ToolSourceType + RuntimeToolDescriptor + CompositeComponentRef）
   ↓
-P0-2 CompositeToolResolver（依赖 P0-1 的 CompositeComponentRef）
+POOL-POOL-POOL-P0-2 CompositeToolResolver（依赖 POOL-P0-1 的 CompositeComponentRef）
   ↓
-P0-3 RuntimeToolGovernanceGate（依赖 P0-2 的 CompositeToolResolver）
+POOL-POOL-POOL-P0-3 RuntimeToolGovernanceGate（依赖 POOL-P0-2 的 CompositeToolResolver）
   ↓
-P0-4 注入 AppService._build_runtime_tools_for_config（依赖 P0-3）
+POOL-POOL-POOL-P0-4 注入 AppService._build_runtime_tools_for_config（依赖 POOL-P0-3）
   ↓
-P1-1 组合工具治理透传（依赖 P0-2 + P0-3）
-P1-2 渐进式启用机制（依赖 P0-4，可与 P1-1 并行）
-P1-3 skill 工具包治理（独立，可并行）
-P1-4 WorkflowTool 纳入治理（独立，可并行）
-P1-5 AgentBinding 委派工具纳入治理（依赖 P0-3，可并行）
-P0-5 AgentPoolConfig 接入 AgentCandidateCollector（完全独立，可并行）
-P0-6 统一 tool_id 格式映射（完全独立，可并行）
+POOL-P1-1 组合工具治理透传（依赖 POOL-P0-2 + POOL-P0-3）
+POOL-P1-2 渐进式启用机制（依赖 POOL-P0-4，可与 POOL-P1-1 并行）
+POOL-POOL-POOL-P1-3 skill 工具包治理（独立，可并行）
+POOL-POOL-POOL-P1-4 WorkflowTool 纳入治理（独立，可并行）
+POOL-POOL-POOL-P1-5 AgentBinding 委派工具纳入治理（依赖 POOL-P0-3，可并行）
+POOL-POOL-POOL-P0-5 AgentPoolConfig 接入 AgentCandidateCollector（完全独立，可并行）
+POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 ```
 
 ### POOL-P0：数据结构与解析器（前置）
@@ -523,8 +523,8 @@ P0-6 统一 tool_id 格式映射（完全独立，可并行）
 
 | 任务 | 文件 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **P2-1 Agent 元数据补充 prompt 摘要展示** | AgentPoolView.vue, admin_agent_pool_service.py | ✅ 已完成 | 池治理页面展示 AppConfig.preset_prompt 摘要（只读，tooltip+truncate，批量预取避免 N+1） |
-| **P2-2 工具治理页面扩展来源类型筛选** | ToolGovernanceView.vue, admin_tool_governance_schema.py, admin_tool_governance_service.py | ✅ 已完成 | SOURCE_TYPES 从 4 项扩展为 7 项（api_tool/mcp/skill/builtin/knowledge/workflow/agent_binding），同步更新 schema 校验和 service stats 初始化 |
+| **POOL-P2-1 Agent 元数据补充 prompt 摘要展示** | AgentPoolView.vue, admin_agent_pool_service.py | ✅ 已完成 | 池治理页面展示 AppConfig.preset_prompt 摘要（只读，tooltip+truncate，批量预取避免 N+1） |
+| **POOL-P2-2 工具治理页面扩展来源类型筛选** | ToolGovernanceView.vue, admin_tool_governance_schema.py, admin_tool_governance_service.py | ✅ 已完成 | SOURCE_TYPES 从 4 项扩展为 7 项（api_tool/mcp/skill/builtin/knowledge/workflow/agent_binding），同步更新 schema 校验和 service stats 初始化 |
 | **POOL-P2-3 Workflow ToolNode 扩展（远期）** | tool_entity.py, tool_node.py, composite_tool_resolver.py | ✅ 已完成 | ToolNodeData.tool_type 从 2 种扩展为 7 种（+mcp/knowledge/skill/workflow/agent_binding）；execute 按 tool_type 分发复用底座 service；workflow/agent_binding 嵌套含环检测（max_depth=8，call_stack 传递）；CompositeToolResolver._resolve_workflow 支持解析 7 种节点类型；22+7 测试通过 |
 
 ### 渐进式启用路线图
