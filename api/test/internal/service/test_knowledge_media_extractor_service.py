@@ -250,23 +250,23 @@ def test_audio_extraction_returns_empty_when_transcript_blank():
     assert service.extract(_document("audio"), upload) == []
 
 
-def test_video_extraction_returns_segment_per_frame(tmp_path):
+def test_video_extraction_scene_a_batches_into_timeline_segments(tmp_path):
+    """无音轨视频走场景 A：一批锚点一次批喂，产出 timeline 段而非逐帧段。"""
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    frames = _write_frames(tmp_path, 2)
+    frames = _write_frames(tmp_path, 12)
     service._extract_frames_with_offsets = lambda path, out_dir: frames
-    service._extract_audio_track = _raise_no_audio
-    seen_prompts = []
+    service._transcribe_video_track = lambda path, upload: ("", [])
+    calls = []
 
-    def _vision(data_uri, prompt):
-        seen_prompts.append((data_uri, prompt))
-        return f"画面描述-{data_uri}"
+    def _batch(uris, prompt):
+        calls.append(len(uris))
+        return '[{"anchor_index": 0, "description": "块0"}, {"anchor_index": 1, "description": "块1"}]'
 
-    service._invoke_vision = _vision
-
+    service._invoke_vision_batch = _batch  # type: ignore[assignment]
     upload = SimpleNamespace(
         id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="promo.mp4",
         extension="mp4", mime_type="video/mp4",
@@ -274,44 +274,52 @@ def test_video_extraction_returns_segment_per_frame(tmp_path):
 
     segments = service.extract(_document("video"), upload)
 
-    assert len(segments) == 2
-    assert segments[0].content.startswith("画面描述-data:image/jpeg;base64,")
-    assert segments[0].metadata["media_type"] == "video"
-    assert segments[0].metadata["scene_index"] == 1
-    assert segments[0].metadata["frame_count"] == 2
-    assert segments[0].metadata["frame_url"] == ""
-    assert segments[1].metadata["scene_index"] == 2
-    assert len(seen_prompts) == 2
+    timeline = [s for s in segments if s.metadata.get("source") == "vision_timeline"]
+    assert len(timeline) == 2
+    assert calls == [13]  # 12 帧 + 块间重叠 1 帧，全部一次批喂
+    assert timeline[0].metadata["anchor_type"] == "time_slot"
+    assert timeline[0].metadata["start_sec"] == 0.0
+    assert timeline[0].metadata["end_sec"] == 9.0
+    assert timeline[1].metadata["start_sec"] == 9.0  # 重叠帧归属下一块
+    assert timeline[1].metadata["end_sec"] == 11.0
+    assert timeline[0].content == "块0"
 
 
-def test_video_extraction_skips_frames_that_fail_analysis(tmp_path):
+def test_video_extraction_falls_back_to_per_frame_after_batch_failures(tmp_path):
+    """批喂连续失败（含重试）→ 降级为批内逐帧独立调用，仍产出片段。"""
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    frames = _write_frames(tmp_path, 2)
+    frames = _write_frames(tmp_path, 3)
     service._extract_frames_with_offsets = lambda path, out_dir: frames
-    service._extract_audio_track = _raise_no_audio
-    calls = {"count": 0}
+    service._transcribe_video_track = lambda path, upload: ("", [])
+    batch_calls = {"n": 0}
 
-    def _vision(data_uri, prompt):
-        calls["count"] += 1
-        if calls["count"] == 2:
-            raise RuntimeError("vision failed")
-        return "可用画面描述"
+    def _batch(uris, prompt):
+        batch_calls["n"] += 1
+        raise RuntimeError("vision down")
 
-    service._invoke_vision = _vision
+    service._invoke_vision_batch = _batch  # type: ignore[assignment]
+    single_calls = {"n": 0}
+
+    def _single(uri, prompt):
+        single_calls["n"] += 1
+        return "降级描述"
+
+    service._invoke_vision = _single  # type: ignore[assignment]
     upload = SimpleNamespace(
-        id=uuid4(), key=f"2026/09/13/{uuid4()}.mov", name="clip.mov",
-        extension="mov", mime_type="video/quicktime",
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="clip.mp4",
+        extension="mp4", mime_type="video/mp4",
     )
 
     segments = service.extract(_document("video"), upload)
 
-    assert len(segments) == 1
-    assert segments[0].content == "可用画面描述"
-    assert segments[0].metadata["scene_index"] == 1
+    assert batch_calls["n"] == 2  # 初次 + 重试 1 次
+    assert single_calls["n"] == 3
+    assert len(segments) == 3
+    assert segments[0].metadata["time_offset"] == 0.0  # 降级段保留逐帧定位坐标
 
 
 def test_video_extraction_raises_when_no_frames_extracted():
@@ -337,16 +345,18 @@ def test_image_extraction_returns_empty_when_summary_blank():
     assert service.extract(_document("image"), _upload_file("jpg")) == []
 
 
-def test_video_extraction_raises_when_all_descriptions_blank(tmp_path):
-    """帧非空但所有帧描述均为空白时，应抛错而不是产出空片段。"""
+def test_video_extraction_scene_a_all_blank_descriptions_raise(tmp_path):
+    """场景 A 批喂返回全空描述时应抛错而不是产出空片段。"""
     service = KnowledgeMediaExtractorService(
         db=SimpleNamespace(),
         cos_service=_FakeStorage(b"video-bytes"),
         audio_service=SimpleNamespace(),
     )
-    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 2)
-    service._extract_audio_track = _raise_no_audio
-    service._invoke_vision = lambda data_uri, prompt: "   "
+    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 3)
+    service._transcribe_video_track = lambda path, upload: ("", [])
+    service._invoke_vision_batch = lambda uris, prompt: (  # type: ignore[assignment]
+        '[{"anchor_index": 0, "description": "  "}]'
+    )
     upload = SimpleNamespace(
         id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="blank.mp4",
         extension="mp4", mime_type="video/mp4",
@@ -371,3 +381,117 @@ def test_audio_extraction_uses_fallback_filename_when_name_absent():
     service.extract(_document("audio"), upload)
 
     assert audio_service.received_filename == "material.audio"
+
+
+def test_video_extraction_scene_b_injects_speech_and_window(tmp_path):
+    """有 ASR cues 走场景 B：锚点窗口 = cue 区间，speech_text 注入。"""
+    cues = [
+        {"start": 0.0, "end": 5.0, "text": "第一句台词。"},
+        {"start": 5.5, "end": 9.0, "text": "第二句台词。"},
+    ]
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 6)
+    service._transcribe_video_track = lambda path, upload: ("两句台词", cues)
+    service._invoke_vision_batch = lambda uris, prompt: (  # type: ignore[assignment]
+        '[{"anchor_index": 0, "description": "画面A"}, {"anchor_index": 1, "description": "画面B"}]'
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="talk.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+    segments = service.extract(_document("video"), upload)
+
+    timeline = [s for s in segments if s.metadata.get("source") == "vision_timeline"]
+    assert len(timeline) == 2
+    assert timeline[0].metadata["anchor_type"] == "speech_sentence"
+    assert timeline[0].metadata["start_sec"] == 0.0
+    assert timeline[0].metadata["end_sec"] == 5.0
+    assert timeline[0].metadata["speech_text"] == "第一句台词。"
+    assert timeline[0].metadata["anchor_text"] == "第一句台词。"
+    assert timeline[0].content == "画面A"
+    assert timeline[1].metadata["speech_text"] == "第二句台词。"
+
+
+def test_video_extraction_batch_retries_once_then_succeeds(tmp_path):
+    """批喂首次失败重试一次成功，不降级。"""
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 2)
+    service._transcribe_video_track = lambda path, upload: ("", [])
+    calls = {"n": 0}
+
+    def _batch(uris, prompt):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient")
+        return '[{"anchor_index": 0, "description": "重试成功"}]'
+
+    service._invoke_vision_batch = _batch  # type: ignore[assignment]
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="r.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+    segments = service.extract(_document("video"), upload)
+
+    assert calls["n"] == 2
+    timeline = [s for s in segments if s.metadata.get("source") == "vision_timeline"]
+    assert timeline[0].content == "重试成功"
+
+
+def test_video_extraction_scene_b_blank_description_falls_back_to_speech(tmp_path):
+    """场景 B 模型未给描述时保留仅台词段落（可检索）。"""
+    cues = [{"start": 0.0, "end": 3.0, "text": "只有台词。"}]
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 2)
+    service._transcribe_video_track = lambda path, upload: ("只有台词。", cues)
+    service._invoke_vision_batch = lambda uris, prompt: (  # type: ignore[assignment]
+        '[{"anchor_index": 0, "description": "  "}]'
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="speech.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+    segments = service.extract(_document("video"), upload)
+
+    timeline = [s for s in segments if s.metadata.get("source") == "vision_timeline"]
+    assert len(timeline) == 1
+    assert timeline[0].content == "只有台词。"
+    assert timeline[0].metadata["speech_text"] == "只有台词。"
+
+
+def test_video_extraction_scene_a_empty_description_skips_anchor(tmp_path):
+    """场景 A 某锚点描述为空时跳过该条，其余照常产出。"""
+    service = KnowledgeMediaExtractorService(
+        db=SimpleNamespace(),
+        cos_service=_FakeStorage(b"video-bytes"),
+        audio_service=SimpleNamespace(),
+    )
+    service._extract_frames_with_offsets = lambda path, out_dir: _write_frames(tmp_path, 12)
+    service._transcribe_video_track = lambda path, upload: ("", [])
+    service._invoke_vision_batch = lambda uris, prompt: (  # type: ignore[assignment]
+        '[{"anchor_index": 0, "description": "有效"}, {"anchor_index": 1, "description": "  "}]'
+    )
+    upload = SimpleNamespace(
+        id=uuid4(), key=f"2026/09/13/{uuid4()}.mp4", name="mixed.mp4",
+        extension="mp4", mime_type="video/mp4",
+    )
+
+    segments = service.extract(_document("video"), upload)
+
+    timeline = [s for s in segments if s.metadata.get("source") == "vision_timeline"]
+    assert len(timeline) == 1
+    assert timeline[0].content == "有效"

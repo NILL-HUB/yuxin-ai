@@ -18,12 +18,20 @@ from uuid import uuid4
 from injector import inject
 
 from internal.core.ports.storage_port import ObjectStoragePort
+from internal.core.vision.timeline_planning import (
+    TimelineAnchor,
+    anchor_representative_frame,
+    build_timeline_plan,
+    chunk_anchors,
+    parse_timeline_descriptions,
+)
 from internal.core.vision.vision_invoke import (
     ExtractedFrame,
     extract_video_audio,
     extract_video_frames_in_range,
     extract_video_frames_with_offsets,
     invoke_vision_model,
+    invoke_vision_model_multi,
     path_to_data_uri,
 )
 from internal.entity.knowledge_entity import DocumentMediaType
@@ -43,6 +51,17 @@ _IMAGE_PROMPT = (
 _VIDEO_FRAME_PROMPT = (
     "这是视频的一个关键帧。请描述画面主体、场景、动作与镜头类型，"
     "并识别画面中的字幕或文字（OCR）。用简洁的中文段落输出。"
+)
+
+_TIMELINE_PROMPT = (
+    "这是视频内容时间线描述任务。下面给出若干锚点（台词句或时间片）及对应画面帧。\n"
+    "请按锚点顺序，为每个锚点描述其代表画面：画面主体、场景、动作与镜头类型。\n"
+    "输出要求：\n"
+    "1. 只输出一个 JSON 数组，形如 [{\"anchor_index\": 0, \"description\": \"...\"}]\n"
+    "2. 数组元素与锚点一一对应，anchor_index 必须等于锚点序号\n"
+    "3. 禁止输出时间码（时间由系统换算）\n"
+    "4. 禁止识别画面内字幕文字（字幕由语音转写提供）\n"
+    "5. 用简洁的中文段落描述"
 )
 
 
@@ -99,6 +118,35 @@ class KnowledgeMediaExtractorService(BaseService):
     def _invoke_vision(self, data_uri: str, prompt: str) -> str:
         """视觉模型调用（独立方法便于测试替换）。"""
         return invoke_vision_model(data_uri, prompt)
+
+    def _invoke_vision_batch(self, image_data_uris: list[str], prompt: str) -> str:
+        """多图批喂视觉模型（独立方法便于测试替换）。"""
+        return invoke_vision_model_multi(image_data_uris, prompt)
+
+    def _build_batch_prompt(self, scenario: str, batch: list[TimelineAnchor]) -> str:
+        """构造一批锚点的提示词正文（锚点列表 + 帧序号对应关系）。"""
+        parts = [_TIMELINE_PROMPT, ""]
+        cursor = 0
+        for index, anchor in enumerate(batch):
+            count = len(anchor.frames)
+            frame_range = f"帧号 {cursor}~{cursor + count - 1}" if count else "无对应画面帧"
+            if scenario == "B":
+                if count:
+                    parts.append(
+                        f"锚点 {index}：台词「{anchor.anchor_text}」"
+                        f"（时间 {anchor.start_sec:.2f}-{anchor.end_sec:.2f}s），对应{frame_range}"
+                    )
+                else:
+                    parts.append(
+                        f"锚点 {index}：台词「{anchor.anchor_text}」"
+                        f"（时间 {anchor.start_sec:.2f}-{anchor.end_sec:.2f}s），无对应画面帧，仅按台词上下文描述"
+                    )
+            else:
+                parts.append(
+                    f"锚点 {index}：时间片 {anchor.start_sec:.2f}-{anchor.end_sec:.2f}s，对应{frame_range}"
+                )
+            cursor += count
+        return "\n".join(parts)
 
     def _extract_image(self, upload_file: UploadFile) -> list[MediaSegment]:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -233,17 +281,135 @@ class KnowledgeMediaExtractorService(BaseService):
             mime_type="image/jpeg",
         )
 
+    def _process_timeline_batch(
+        self, batch: list[TimelineAnchor], scenario: str, *, account_id, document_id
+    ) -> list[MediaSegment]:
+        """处理一批锚点：留存代表帧 → 批喂视觉 → 解析 → 投影落库。
+
+        失败链：批喂/解析失败 → 重试 1 次 → 仍失败 → 降级为该批内逐帧独立调用
+        （等价改造前逐帧路径，保证最坏情况仍产出片段）。
+        """
+        batch_frames: list[ExtractedFrame] = []
+        for anchor in batch:
+            batch_frames.extend(anchor.frames)
+
+        label = getattr(next((f for a in batch for f in a.frames), None), "path", "?")
+
+        frame_urls: dict[int, str] = {}
+        for index, frame in enumerate(batch_frames):
+            frame_url = ""
+            if account_id is not None and document_id is not None:
+                try:
+                    frame_url = self._persist_frame(
+                        frame.path, account_id=account_id, document_id=document_id
+                    ).key or ""
+                except Exception:
+                    logger.warning(
+                        "关键帧留存失败 file=%s frame_index=%s，降级为空 frame_url",
+                        label, index, exc_info=True,
+                    )
+                    frame_url = ""
+            frame_urls[index] = frame_url
+
+        data_uris = [path_to_data_uri(frame.path) for frame in batch_frames]
+        prompt = self._build_batch_prompt(scenario, batch)
+
+        descriptions: list[tuple[int, str]] = []
+        try:
+            descriptions = parse_timeline_descriptions(
+                self._invoke_vision_batch(data_uris, prompt), len(batch)
+            )
+        except Exception:
+            logger.warning("时间线批喂失败，重试一次 file=%s", label, exc_info=True)
+            try:
+                descriptions = parse_timeline_descriptions(
+                    self._invoke_vision_batch(data_uris, prompt), len(batch)
+                )
+            except Exception:
+                logger.warning("时间线批喂重试仍失败，降级逐帧 file=%s", label, exc_info=True)
+                return self._fallback_frame_segments(
+                    batch, frame_urls, account_id=account_id, document_id=document_id
+                )
+
+        description_map = dict(descriptions)
+        segments: list[MediaSegment] = []
+        cursor = 0
+        for anchor_index, anchor in enumerate(batch):
+            rep = anchor_representative_frame(anchor)
+            rep_url = ""
+            if rep is not None:
+                rep_url = frame_urls.get(cursor + anchor.frames.index(rep), "")
+            cursor += len(anchor.frames)
+
+            description = description_map.get(anchor_index)
+            if scenario == "B" and not description and anchor.speech_text:
+                # 场景 B：模型未给描述也保留仅台词段落（可检索）
+                description = anchor.speech_text
+            if not description:
+                # 场景 A 空描述跳过；场景 B 无台词又无描述则跳过
+                continue
+
+            metadata: dict[str, Any] = {
+                "media_type": DocumentMediaType.VIDEO.value,
+                "source": "vision_timeline",
+                "anchor_type": anchor.anchor_type,
+                "anchor_text": anchor.anchor_text,
+                "start_sec": float(anchor.start_sec),
+                "end_sec": float(anchor.end_sec),
+                "frame_url": rep_url,
+            }
+            if anchor.speech_text:
+                metadata["speech_text"] = anchor.speech_text
+            segments.append(MediaSegment(content=description, metadata=metadata))
+        return segments
+
+    def _fallback_frame_segments(
+        self, batch: list[TimelineAnchor], frame_urls: dict[int, str], *, account_id, document_id
+    ) -> list[MediaSegment]:
+        """降级：对该批内帧逐帧独立调用，产出与改造前一致的逐帧片段。"""
+        segments: list[MediaSegment] = []
+        cursor = 0
+        for anchor in batch:
+            for rel, frame in enumerate(anchor.frames):
+                frame_url = frame_urls.get(cursor + rel, "")
+                try:
+                    description = self._invoke_vision(
+                        path_to_data_uri(frame.path), _VIDEO_FRAME_PROMPT
+                    )
+                except Exception:
+                    logger.warning(
+                        "降级逐帧视觉分析失败 frame_index=%s", cursor + rel, exc_info=True
+                    )
+                    continue
+                if not str(description or "").strip():
+                    continue
+                segments.append(
+                    MediaSegment(
+                        content=description,
+                        metadata={
+                            "media_type": DocumentMediaType.VIDEO.value,
+                            "scene_index": cursor + rel + 1,
+                            "frame_url": frame_url,
+                            "time_offset": float(frame.time_offset or 0.0),
+                        },
+                    )
+                )
+            cursor += len(anchor.frames)
+        return segments
+
     def _extract_video(
         self,
         upload_file: UploadFile,
         account_id=None,
         document_id=None,
     ) -> list[MediaSegment]:
-        """视频：音轨 ASR（可降级）+ 关键帧视觉描述（帧留存）。
+        """视频：音轨 ASR（可降级）+ 批次化时间线叙述（段落代表帧留存）。
 
         抽帧到临时目录后：
         - 音轨抽取/转写失败只记 warning 不中断（帧描述本身已是有效产物）；
-        - 逐帧先留存为 UploadFile 拿到 frame_url，再转 data URI 交给视觉模型；
+        - 有 ASR cues 走场景 B（台词句锚点），无 cues 走场景 A（时间片锚点）；
+        - 锚点分批（每批 ≈10）批喂视觉模型，每锚点只留存代表帧为 UploadFile；
+        - 批喂失败重试 1 次 → 仍失败降级为该批内逐帧独立调用；
         - account_id / document_id 缺失时跳过留存（frame_url 为空字符串）。
         """
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -267,44 +433,14 @@ class KnowledgeMediaExtractorService(BaseService):
                     metadata["transcript_segments"] = cues
                 segments.append(MediaSegment(content=transcript, metadata=metadata))
 
-            for index, frame in enumerate(frames, start=1):
-                frame_url = ""
-                if account_id is not None and document_id is not None:
-                    try:
-                        frame_url = self._persist_frame(
-                            frame.path, account_id=account_id, document_id=document_id,
-                        ).key or ""
-                    except Exception:
-                        logger.warning(
-                            "关键帧留存失败 file=%s scene_index=%s，降级为空 frame_url",
-                            upload_file.name, index, exc_info=True,
-                        )
-                        frame_url = ""
+            scenario, anchors = build_timeline_plan(cues, frames)
+            if not anchors:
+                raise RuntimeError("视频解析未产出任何可用内容")
 
-                try:
-                    description = self._invoke_vision(
-                        path_to_data_uri(frame.path), _VIDEO_FRAME_PROMPT,
-                    )
-                except Exception:
-                    logger.warning(
-                        "视频帧视觉分析失败 document_file=%s scene_index=%s",
-                        upload_file.name, index, exc_info=True,
-                    )
-                    continue
-                if not str(description or "").strip():
-                    continue
-                segments.append(
-                    MediaSegment(
-                        content=description,
-                        metadata={
-                            "media_type": DocumentMediaType.VIDEO.value,
-                            "scene_index": index,
-                            "frame_count": len(frames),
-                            "frame_url": frame_url,
-                            # 帧在视频中的时间偏移（秒）：L2 区间密抽与「改细节」定位的
-                            # 唯一依据，缺失则检索到的片段无法换算成时间轴位置。
-                            "time_offset": float(frame.time_offset or 0.0),
-                        },
+            for batch in chunk_anchors(anchors):
+                segments.extend(
+                    self._process_timeline_batch(
+                        batch, scenario, account_id=account_id, document_id=document_id
                     )
                 )
 
