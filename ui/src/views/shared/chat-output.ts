@@ -1,4 +1,5 @@
 const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.tif', '.tiff', '.avif']
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.ogv', '.mkv', '.avi']
 const MARKDOWN_IMAGE_URL_PATTERN = /!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/giu
 const STRUCTURED_IMAGE_URL_PATTERN = /图片\s*\d+\s*:\s*(?:\n\s*)?URL\s*:\s*(https?:\/\/[^\s)]+)/giu
 const RAW_IMAGE_URL_PATTERN = /https?:\/\/[^\s<>()]+?\.(?:png|jpg|jpeg|gif|webp|bmp|svg|tiff|tif|avif)(?:\?[^\s<>()]*)?/giu
@@ -28,6 +29,13 @@ export type ChatOutputPart =
     extension?: string
     group_id?: string
     group_name?: string
+  })
+  | ({
+    type: 'video'
+    url: string
+    name?: string
+    mime_type?: string
+    extension?: string
   })
   | ({
     type: 'artifact'
@@ -123,6 +131,46 @@ export const isImageArtifact = (artifact: ChatArtifact) => {
   return isImageUrl(artifact.url)
 }
 
+const isVideoUrl = (value: unknown) => {
+  const url = cleanUrl(value)
+  if (!url) return false
+  try {
+    const pathname = new URL(url).pathname.toLowerCase()
+    return VIDEO_EXTENSIONS.some(extension => pathname.endsWith(extension))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 判断产物是否应内联播放（视频）。
+ *
+ * 依据 mime_type 与扩展名，URL 后缀兜底——仅凭 URL 会漏判：
+ * 产物地址形如 /storage/local/artifacts/xxx.mp4，但预签名 URL 可能带 query。
+ */
+export const isVideoArtifact = (artifact: ChatArtifact) => {
+  const mimeType = String(artifact.mime_type || '').trim().toLowerCase()
+  if (mimeType.startsWith('video/'))
+    return true
+  const extension = String(artifact.extension || '').trim().toLowerCase()
+  if (extension) {
+    const normalizedExtension = extension.startsWith('.') ? extension : `.${extension}`
+    if (VIDEO_EXTENSIONS.includes(normalizedExtension))
+      return true
+  }
+  return isVideoUrl(artifact.url)
+}
+
+const buildVideoPart = (artifact: ChatArtifact): ChatOutputPart => {
+  return {
+    type: 'video',
+    url: artifact.url,
+    ...(artifact.name ? { name: artifact.name } : {}),
+    ...(artifact.mime_type ? { mime_type: artifact.mime_type } : {}),
+    ...(artifact.extension ? { extension: artifact.extension } : {}),
+  }
+}
+
 const buildImagePart = (url: string, options: Partial<ChatArtifact> = {}): ChatOutputPart => {
   return {
     type: 'image',
@@ -186,6 +234,36 @@ export function extractInlineImageUrls(answer: string, existingUrls: string[] = 
   return imageUrls
 }
 
+/**
+ * 从工具的返回体（observation）里提取 artifact。
+ *
+ * 为什么需要：部分工具的产物是**同步就绪**的（如本机渲染），
+ * 此时工具返回值里就带了可播放地址，无需等异步回填。
+ *
+ * 只解析「合法 JSON 且 ok 为真且带 artifact」的情形——不做模糊匹配，
+ * 避免把普通回答文本里的链接误判成产物。
+ */
+export function extractArtifactFromToolObservation(observation: unknown): ChatArtifact | null {
+  const text = String(observation ?? '').trim()
+  if (!text.startsWith('{'))
+    return null
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(text)
+  } catch {
+    return null
+  }
+
+  if (!payload || typeof payload !== 'object')
+    return null
+  const record = payload as Record<string, unknown>
+  if (!record.ok)
+    return null
+
+  return normalizeChatArtifact(record.artifact)
+}
+
 const collectInlineImageParts = (answer: string, existingUrls: Set<string>) => {
   const parts: ChatOutputPart[] = []
   for (const url of extractInlineImageUrls(answer, [...existingUrls]))
@@ -214,6 +292,11 @@ export const buildChatOutputParts = (answer: string, artifacts: unknown[] = []):
   for (const artifact of normalizedArtifacts) {
     if (isImageArtifact(artifact))
       continue
+    // 视频单独成 part：前端据此渲染内联播放器（而非「下载附件」链接）
+    if (isVideoArtifact(artifact)) {
+      parts.push(buildVideoPart(artifact))
+      continue
+    }
     parts.push(buildArtifactPart(artifact))
   }
 
@@ -248,6 +331,12 @@ export const normalizeChatOutputParts = (value: unknown, fallbackAnswer: string,
           group_id: String(record.group_id || '').trim(),
           group_name: String(record.group_name || '').trim(),
         })
+      }
+      if (type === 'video') {
+        const artifact = normalizeChatArtifact(record)
+        if (!artifact)
+          return null
+        return buildVideoPart(artifact)
       }
       if (type === 'artifact') {
         const artifact = normalizeChatArtifact(record)

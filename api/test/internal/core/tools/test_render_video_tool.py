@@ -105,8 +105,9 @@ def test_dispatch_prefers_celery(monkeypatch):
     """Celery 可用时必须走后台渲染，不能同步阻塞对话请求。"""
     dispatched = {}
 
-    def _delay(composition, account_id, name):
+    def _delay(composition, account_id, name, **kwargs):
         dispatched["args"] = (composition, account_id, name)
+        dispatched["context"] = kwargs
         return __import__("types").SimpleNamespace(id="task-1")
 
     module, calls = _install_fakes(monkeypatch, delay=_delay)
@@ -125,6 +126,44 @@ def test_dispatch_prefers_celery(monkeypatch):
     assert dispatched["args"][0] is composition, "脚本必须原样透传给任务"
     # 通过闸门后必须登记队列计数
     assert calls["enqueued"] == 1
+
+
+def test_dispatch_passes_chat_context_to_celery(monkeypatch):
+    """会话上下文必须透传到任务：否则云端渲染完成后无法回填到原消息。"""
+    dispatched = {}
+
+    def _delay(composition, account_id, name, **kwargs):
+        dispatched["context"] = kwargs
+        return __import__("types").SimpleNamespace(id="task-1")
+
+    module, _calls = _install_fakes(monkeypatch, delay=_delay)
+    tool = render_video(
+        account_id="11111111-1111-1111-1111-111111111111",
+        message_id="msg-1",
+        conversation_id="conv-1",
+    )
+    composition = {
+        "composition_id": "main",
+        "duration": 1.0,
+        "segments": [{"start": 0, "duration": 1, "text": "x"}],
+    }
+
+    json.loads(tool._run(composition=composition, name="片"))
+
+    assert dispatched["context"]["message_id"] == "msg-1"
+    assert dispatched["context"]["conversation_id"] == "conv-1"
+
+
+def test_factory_passes_chat_context_onto_tool():
+    """工厂漏传则任务永远拿不到 message_id，回填静默失效（无任何报错）。"""
+    tool = render_video(
+        account_id="11111111-1111-1111-1111-111111111111",
+        message_id="msg-1",
+        conversation_id="conv-1",
+    )
+
+    assert tool.message_id == "msg-1"
+    assert tool.conversation_id == "conv-1"
 
 
 def test_dispatch_does_not_fall_back_to_sync_when_celery_unavailable(monkeypatch):

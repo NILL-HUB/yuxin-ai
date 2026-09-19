@@ -14,11 +14,14 @@ import {
 } from '@/views/shared/chat-output'
 import AgentThought from './AgentThought.vue'
 import ChatImageGallery from './ChatImageGallery.vue'
+import ChatVideoGallery from './ChatVideoGallery.vue'
+import { useArtifactBackfillStore } from '@/stores/artifact-backfill'
 import DeepAgentTimeline from './DeepAgentTimeline.vue'
 import DeepThinkingPanel from './DeepThinkingPanel.vue'
 import AiThinkingState from './ai-chat-ui/AiThinkingState.vue'
 import AiStreamingText from './ai-chat-ui/AiStreamingText.vue'
 import { QueueEvent } from '@/config'
+import { getActivePinia } from 'pinia'
 import 'github-markdown-css'
 import 'highlight.js/styles/github.css'
 
@@ -79,8 +82,17 @@ const props = defineProps({
 const emits = defineEmits(['selectSuggestedQuestion'])
 const { t } = useI18n()
 const { renderMarkdown, handleMarkdownCopyClick } = useMarkdownRenderer()
+// Pinia 可能尚未安装（组件被独立挂载时，如部分单测）；缺失时退化为「无回填产物」，
+// 而不是让整个消息组件挂掉——回填是增强能力，不该成为渲染的硬依赖。
+const artifactBackfillStore = getActivePinia() ? useArtifactBackfillStore() : null
+const backfilledArtifacts = computed(() => {
+  return artifactBackfillStore?.artifactsForMessage(props.message_id) || []
+})
 const normalizedArtifacts = computed(() => {
-  return mergeChatArtifacts([], props.artifacts) as ChatArtifact[]
+  return mergeChatArtifacts(
+    [],
+    [...(props.artifacts || []), ...backfilledArtifacts.value],
+  ) as ChatArtifact[]
 })
 const resolvedAnswerParts = computed(() => {
   return normalizeChatOutputParts(props.answer_parts, props.answer, normalizedArtifacts.value) as ChatOutputPart[]
@@ -151,8 +163,37 @@ const renderedArtifactParts = computed(() => {
       size: part.size,
     }))
 })
+/**
+ * 成片（视频）产物：单独成组，用内联播放器渲染而非「下载附件」。
+ *
+ * 与图片分组同理去重——同一产物可能同时来自实时流与完成回填两条通道。
+ */
+const galleryVideos = computed(() => {
+  const videos: Array<{ name?: string, url: string, mime_type?: string, extension?: string }> = []
+  const seenUrls = new Set<string>()
+
+  for (const part of resolvedAnswerParts.value) {
+    if (part.type !== 'video')
+      continue
+    const url = String(part.url || '').trim()
+    if (!url || seenUrls.has(url))
+      continue
+    seenUrls.add(url)
+    videos.push({
+      name: part.name || '',
+      url,
+      mime_type: part.mime_type,
+      extension: part.extension,
+    })
+  }
+
+  return videos
+})
 const hasRenderableAnswer = computed(() => {
-  return renderedTextParts.value.length > 0 || galleryImages.value.length > 0 || renderedArtifactParts.value.length > 0
+  return renderedTextParts.value.length > 0
+    || galleryImages.value.length > 0
+    || galleryVideos.value.length > 0
+    || renderedArtifactParts.value.length > 0
 })
 const hasThoughtContent = computed(() => {
   return Array.isArray(props.agent_thoughts) && props.agent_thoughts.length > 0
@@ -355,6 +396,11 @@ const handleMarkdownClick = async (event: MouseEvent) => {
             v-if="galleryImages.length > 0"
             :images="galleryImages"
             :title="t('chat.gallery.generatedImages')"
+            class="message-gallery-card"
+          />
+          <chat-video-gallery
+            v-if="galleryVideos.length > 0"
+            :videos="galleryVideos"
             class="message-gallery-card"
           />
           <template v-for="part in renderedArtifactParts" :key="part.key">

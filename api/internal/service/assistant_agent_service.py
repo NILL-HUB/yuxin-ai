@@ -876,6 +876,8 @@ class AssistantAgentService(BaseService):
         *,
         session_id: str = "",
         conversation_turn: str = "",
+        message_id: str = "",
+        conversation_id: str = "",
     ) -> list[BaseTool]:
         """构建首页助手运行时工具，包括公共 Agent、创建应用、全局 MCP 绑定和用户知识库检索。
 
@@ -883,6 +885,10 @@ class AssistantAgentService(BaseService):
         预构建工具只能绑定「随请求创建」的实例，故在此透传给 os_file_task/os_snapshot
         等工具（与 requester 同一注入点）；conversation_turn 还会在 agent 执行节点按轮次
         回填（_tools_node），确保写前快照 manifest 带轮次 ID。
+
+        message_id / conversation_id：异步视频工具（渲染/剪辑）专用。这些工具的产物
+        要等 Celery 跑完才就绪，届时需据此把成品**回填到原消息**，用户才能在对话里
+        看到成片（否则只能自己去成品库翻）。
         """
         search_public_agents_tool = (
             self.public_agent_registry_service.convert_public_agent_search_to_tool()
@@ -1059,13 +1065,20 @@ class AssistantAgentService(BaseService):
                     "render_video",
                 )
                 if render_tool_factory is not None:
-                    tools.append(render_tool_factory(account_id=str(account_id)))
+                    tools.append(
+                        render_tool_factory(
+                            account_id=str(account_id),
+                            message_id=message_id,
+                            conversation_id=conversation_id,
+                        )
+                    )
             except Exception:
                 logger.warning("构建视频渲染工具失败，不影响其他工具", exc_info=True)
 
         # 视频编辑工具（裁剪/拼接/加字幕）：Agent 可在对话内改细节并存入成品库。
         # 依赖当前账号（素材归属校验 + 成品库归属），故必须在此显式挂载并注入 account_id
         # ——`_load_non_mcp_tool` 那条通用路径是空参实例化，拿不到账号。
+        # message_id/conversation_id 用于任务完成后把成品回填到原消息（对话内成片预览）。
         if self.app_config_service is not None:
             for edit_tool_name in ("video_trim", "video_concat", "video_subtitle"):
                 try:
@@ -1074,7 +1087,13 @@ class AssistantAgentService(BaseService):
                         edit_tool_name,
                     )
                     if edit_tool_factory is not None:
-                        tools.append(edit_tool_factory(account_id=str(account_id)))
+                        tools.append(
+                            edit_tool_factory(
+                                account_id=str(account_id),
+                                message_id=message_id,
+                                conversation_id=conversation_id,
+                            )
+                        )
                 except Exception:
                     logger.warning(
                         "构建视频编辑工具失败 name=%s，不影响其他工具",
@@ -1695,6 +1714,8 @@ class AssistantAgentService(BaseService):
             invoke_from=invoke_from,
             session_id=str(conversation.id),
             conversation_turn=f"{conversation.id}:{message.id}",
+            message_id=str(message.id),
+            conversation_id=str(conversation.id),
         )
 
         # 6.0 工具池治理挂载：读取 orchestrator 决策的 tool_subset，与固有工具合并

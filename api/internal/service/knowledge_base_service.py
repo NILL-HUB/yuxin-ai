@@ -383,6 +383,58 @@ class KnowledgeBaseService(BaseService):
         self._get_knowledge_indexing_service().build_document(document.id, account)
         return document
 
+    def build_output_artifact(self, document: KnowledgeDocument) -> dict:
+        """把成品文档转成对话侧可播放的 artifact 载荷。
+
+        为什么单独成方法：产物入库后需要「回给对话前端一个可播放地址」，
+        而 store_render_output 的返回值（KnowledgeDocument）不含 URL，
+        故在此按文档关联的 upload_file 生成访问地址。
+
+        URL 生成**不传 download_name**：传了会带上
+        `response-content-disposition: attachment`，浏览器会把视频当附件下载
+        而不是内联播放——那正好与「成片预览」的目标相反。
+        """
+        upload_file = None
+        upload_file_id = getattr(document, "upload_file_id", None)
+        if upload_file_id:
+            upload_file = self.db.session.query(UploadFile).filter(
+                UploadFile.id == upload_file_id,
+            ).one_or_none()
+        if upload_file is None:
+            return {}
+
+        key = str(getattr(upload_file, "key", "") or "")
+        if not key:
+            return {}
+
+        try:
+            url = self._get_cos_service().get_file_url(key)
+        except Exception:
+            logging.warning(
+                "成品访问地址生成失败 document_id=%s key=%s", document.id, key, exc_info=True,
+            )
+            return {}
+        if not url:
+            return {}
+
+        name = str(getattr(document, "name", "") or "") or str(getattr(upload_file, "name", "") or "")
+        artifact = {
+            "id": str(document.id),
+            "name": name,
+            "url": url,
+            "mime_type": str(getattr(upload_file, "mime_type", "") or "video/mp4"),
+        }
+        extension = str(getattr(upload_file, "extension", "") or "")
+        if extension:
+            artifact["extension"] = extension.lstrip(".")
+        size = getattr(upload_file, "size", None)
+        if size:
+            try:
+                artifact["size"] = int(size)
+            except (TypeError, ValueError):
+                pass
+        return artifact
+
     @staticmethod
     def _assert_not_render_output_base(knowledge_base: KnowledgeBase) -> None:
         """成品库为系统托管，禁止任何手动上传（设计 §4.1）。

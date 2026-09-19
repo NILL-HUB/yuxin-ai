@@ -44,6 +44,10 @@ class VideoTrimTool(BaseTool):
     )
     args_schema: type[BaseModel] = VideoTrimInput
     account_id: str = ""
+    # 会话上下文：任务完成后据此把成品回填到原消息（对话内成片预览）。
+    # 由 assistant_agent_service 在挂载时注入——工具实例无法自行得知当前消息。
+    message_id: str = ""
+    conversation_id: str = ""
 
     def _run(
         self,
@@ -81,6 +85,8 @@ class VideoTrimTool(BaseTool):
             async_result = _load_task().delay(
                 str(knowledge_base_id), str(document_id), start, end,
                 str(name or "").strip(), account_id,
+                message_id=str(kwargs.get("message_id") or self.message_id or ""),
+                conversation_id=str(kwargs.get("conversation_id") or self.conversation_id or ""),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("裁剪任务提交失败 account_id=%s", account_id, exc_info=True)
@@ -93,7 +99,7 @@ class VideoTrimTool(BaseTool):
                 "ok": True,
                 "dispatched": True,
                 "task_id": str(getattr(async_result, "id", "")),
-                "message": "视频裁剪已提交后台处理，完成后会自动存入成品库",
+                "message": "视频裁剪已提交后台处理，完成后会自动存入成品库并在对话中展示",
             },
             ensure_ascii=False,
         )
@@ -109,5 +115,13 @@ class VideoTrimTool(BaseTool):
 
 
 def video_trim(**kwargs: Any) -> BaseTool:
-    """工厂函数（函数名必须与工具名一致，Provider 按此动态导入）。"""
-    return VideoTrimTool(account_id=str(kwargs.get("account_id") or "").strip())
+    """工厂函数（函数名必须与工具名一致，Provider 按此动态导入）。
+
+    message_id / conversation_id 必须一并透传：任务完成后要据此把成品
+    回填到原对话消息（遗漏则「对话内成片预览」静默失效）。
+    """
+    return VideoTrimTool(
+        account_id=str(kwargs.get("account_id") or "").strip(),
+        message_id=str(kwargs.get("message_id") or "").strip(),
+        conversation_id=str(kwargs.get("conversation_id") or "").strip(),
+    )

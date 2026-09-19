@@ -7,6 +7,11 @@ import { useDocumentIndexNotificationWebSocket } from '@/hooks/use-document-inde
 import { useDocumentIndexNotificationPolling } from '@/hooks/use-document-index-notification-polling'
 import { useAgentNotificationWebSocket } from '@/hooks/use-agent-notification-websocket'
 import { useAgentNotificationPolling } from '@/hooks/use-agent-notification-polling'
+import {
+  useArtifactNotificationWebSocket,
+  type ArtifactReadyPayload,
+} from '@/hooks/use-artifact-notification-websocket'
+import { useArtifactBackfillStore } from '@/stores/artifact-backfill'
 import type { DocumentIndexNotification as DocumentNotificationType } from '@/models/notification'
 import type { AgentNotification as AgentNotificationType } from '@/models/agent-notification'
 import { useI18n } from 'vue-i18n'
@@ -47,6 +52,12 @@ const {
   isEnabled: isAgentNotificationEnabled,
   isReady: isAgentNotificationReady,
 } = useAgentNotificationWebSocket()
+
+// 初始化「成品就绪」回填监听：异步渲染/剪辑完成后把播放器插回原消息。
+// 无需轮询兜底——产物已持久化到消息（刷新后由历史接口带回），本通道只负责即时补挂。
+const { subscribeToNotifications: subscribeToArtifactNotifications } =
+  useArtifactNotificationWebSocket()
+const artifactBackfillStore = useArtifactBackfillStore()
 
 // 初始化 Agent 通知轮询备选方案
 const { startPolling: startAgentPolling, stopPolling: stopAgentPolling } =
@@ -160,6 +171,14 @@ onMounted(() => {
   // 订阅 Agent 完成通知
   subscribeToAgentNotifications((notification: AgentNotificationType) => {
     agentNotificationRef.value?.addNotification(notification)
+  })
+
+  // 订阅「成品就绪」回填：把产物寄存到 store，由渲染该消息的组件按 message_id 取用
+  subscribeToArtifactNotifications((payload: ArtifactReadyPayload) => {
+    const artifact = payload?.artifact
+    if (!artifact || !payload?.message_id)
+      return
+    artifactBackfillStore.addArtifact(String(payload.message_id), artifact)
   })
 })
 

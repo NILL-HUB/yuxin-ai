@@ -36,11 +36,15 @@ _SOFT_TIME_LIMIT_SEC = 1200
     reject_on_worker_lost=True,
     soft_time_limit=_SOFT_TIME_LIMIT_SEC,
 )
-def render_composition_task(self, composition_spec: dict, account_id: str, name: str = ""):
+def render_composition_task(
+    self, composition_spec: dict, account_id: str, name: str = "",
+    message_id: str = "", conversation_id: str = "",
+):
     """渲染一段 composition 并把成品写入成品库。
 
     入参：composition_spec（结构化脚本，见 composition_builder）、
-    account_id（成品的归属账号）、name（成品名称，缺省用文件名）。
+    account_id（成品的归属账号）、name（成品名称，缺省用文件名）、
+    message_id / conversation_id（完成后把成品回填到原对话消息，供对话内成片预览）。
     """
     from app.http.module import injector
     from internal.core.video.hyperframes_renderer import (
@@ -76,7 +80,36 @@ def render_composition_task(self, composition_spec: dict, account_id: str, name:
 
     # 成功：回链通知用户（前端订阅 document_index_notification，room = account_id）
     _notify_render_finished(account_id=account_id, name=name, result=result)
+
+    # 对话内成片预览：把可播放地址回填到原消息（在线免刷新 + 刷新后仍在）
+    _backfill_chat_artifact(
+        account_id=account_id, message_id=message_id,
+        conversation_id=conversation_id, result=result,
+    )
     return result
+
+
+def _backfill_chat_artifact(
+    *, account_id: str, message_id: str, conversation_id: str, result: dict | None
+) -> None:
+    """把渲染成品回填到原对话消息。失败不抛（任务本身已成功）。"""
+    if not result:
+        return
+    artifact = result.get("artifact")
+    if not artifact:
+        # 渲染产物未生成可播放地址（存储异常等）：仅记日志，不阻断
+        logger.info("渲染成品未生成可播放地址，跳过对话回填 account_id=%s", account_id)
+        return
+
+    from internal.service.artifact_notification_service import notify_artifact_ready
+
+    notify_artifact_ready(
+        account_id=account_id,
+        message_id=message_id,
+        conversation_id=conversation_id,
+        artifact=artifact,
+        tool="render_video",
+    )
 
 
 def _notify_render_finished(*, account_id: str, name: str, result: dict | None) -> None:

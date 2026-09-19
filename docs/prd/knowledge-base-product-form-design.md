@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 未开始｜**版本**：v1.4｜**日期**：2026-09-19
+> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 未开始、KB-P6（外部素材获取，yt-dlp）已完成调研复核、未立项（见 §5.3）｜**版本**：v1.5｜**日期**：2026-09-20
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -218,14 +218,14 @@ used_bytes  = account_storage_usage.used_bytes   （由上传/删除事件维护
 | 产物 | 形态 | 存放位置 | 入向量库 | 计配额 |
 | --- | --- | --- | --- | --- |
 | 原素材 | 文件 | 对象存储 + `UploadFile` | ❌ | ✅ |
-| ASR 转写 | 文本 + 时间戳 | `KnowledgeSegment.content` | ✅ | ❌ |
+| ASR 转写 | 文本（`content`）+ 时间戳（`metadata.transcript_segments`） | `KnowledgeSegment.content` / `.metadata` | ✅（文本侧） | ❌ |
 | 视觉描述 | 文本（每场景一段） | `KnowledgeSegment.content` | ✅ | ❌ |
 | OCR 文本 | 文本 | `KnowledgeSegment.content` | ✅ | ❌ |
 | 场景切分 | JSON（序号 + 起止时间） | `KnowledgeSegment.metadata` | ❌ | ❌ |
 | 关键帧 | 图片文件（JPEG 压缩） | 对象存储 + `UploadFile` | 文本描述 ✅ / 视觉向量 ✅ | ❌（解析中间产物，见 §3.4） |
 | 缩略图 / 封面 | 小图 | 对象存储 | ❌ | ✅（体积极小） |
 
-> **落地实况**：已落地「ASR 转写 / 视觉描述 / OCR 文本 → `KnowledgeSegment.content`（入文本向量库）」，即上表中"入向量库"的**文本侧**已通。视频关键帧现已**留存为 `UploadFile`**（`frame_url` 写入帧片段 `metadata`），使视觉向量可后补而不必重跑解析；**视觉向量索引已建立**（KB-P3：`video_visual_embedding` 表 + `VisualEmbeddingService`，见 §3.4 与 [modules/02-knowledge-base.md §11.10](./modules/02-knowledge-base.md#1110-关键帧视觉向量p3-已落地)）。场景切分的 `time_range` 仍未写入 `metadata`（视频帧片段当前 `metadata` 为 `media_type` / `scene_index` / `frame_count` / `frame_url`）。
+> **落地实况**：已落地「ASR 转写 / 视觉描述 / OCR 文本 → `KnowledgeSegment.content`（入文本向量库）」，即上表中"入向量库"的**文本侧**已通。ASR 时间轴亦已落地：`AudioService.audio_to_text_with_segments()`（请求 `response_format=verbose_json`）产出 `segments[{start,end,text}]`，由 L1 解析写入 `metadata.transcript_segments`，并被「自动加字幕」复用。视频关键帧现已**留存为 `UploadFile`**（`frame_url` 写入帧片段 `metadata`），使视觉向量可后补而不必重跑解析；**视觉向量索引已建立**（KB-P3：`video_visual_embedding` 表 + `VisualEmbeddingService`，见 §3.4 与 [modules/02-knowledge-base.md §11.10](./modules/02-knowledge-base.md#1110-关键帧视觉向量p3-已落地)）。场景切分的 `time_range` 仍未写入 `metadata`（视频帧片段当前 `metadata` 为 `media_type` / `scene_index` / `frame_count` / `frame_url` / `time_offset`）。
 
 **为什么产物即 Segment**：
 
@@ -343,7 +343,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | --- | --- | --- | --- |
 | 裁剪（trim） | ffmpeg 封装，按时间区间切分 | 支持起止秒区间裁剪 | ✅ `video_trim`：`-ss`（置于 `-i` 前）/`-t` + `-c copy`，默认流拷贝无损秒级 |
 | 拼接（concat / merge） | ffmpeg concat demuxer | 同编码参数素材直接拼接 | ✅ `video_concat`：concat demuxer + `-c copy`，严格按传入顺序；编码参数不一致时需重编码 |
-| 加字幕 | ffmpeg 字幕烧录 | 字幕源由**调用方显式提供**（含时间轴）；实测现有 ASR 只返回纯文本，无法自动对齐 | ✅ `video_subtitle`：`subtitles` 滤镜（libass）+ 重编码，入参 `cues=[{start,end,text}]` |
+| 加字幕 | ffmpeg 字幕烧录 | 字幕源可为**调用方显式提供**（含时间轴），也可**自动生成**（实测 ASR 请求 `response_format=verbose_json` 即返回 segments） | ✅ `video_subtitle`：`subtitles` 滤镜（libass）+ 重编码，入参 `cues=[{start,end,text}]` **可选**——不传即自动生成时间轴（复用 L1 留存 ASR 时间轴，缺失则重跑；见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 
 **设计约束**（含落地偏离，勿按原文理解现状）：
 
@@ -353,6 +353,59 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
   → **落地偏离**：确实走 Celery，但**复用默认 `celery` 队列**（未新建队列/容器），亦**未做独立配额计量**——剪辑为秒级 IO 操作（trim/concat 均为 `-c copy`），专用队列与独立计量属过度设计；产物写入走既有存储代理隐式计费
 - 产物默认不入知识库，用户显式要求才存档
   → **落地偏离**：产物**默认存入成品库**（`store_render_output`，与 `render_video` 出片同口径），零额外机制，也更利于「翻旧片复用」
+
+### 5.3 素材获取：外部媒体平台下载（yt-dlp）｜待拓展（KB-P6，未立项）
+
+**定位**：把「素材入库旁路」（§1.3）向上游延伸一步——用户给一条媒体平台链接（B 站 / 抖音 / 西瓜 / YouTube / TikTok 等），小钰直接下载入库存为素材，省去「手动下载再上传」的中间环节。**首版覆盖四类产物**：视频（主形态）、纯音频、平台字幕、封面缩略图。
+
+**技术选型（已调研并实测复核，2026-09-20）**：开源项目 [yt-dlp](https://github.com/yt-dlp/yt-dlp)（youtube-dl 社区增强分支）。
+
+| 维度 | 结论（均实测核实，非转述文档） |
+| --- | --- |
+| 许可证 | **Unlicense（公有领域）**（PyPI `license_expression` 实测），商用 / 闭源集成无义务 |
+| 兼容性 | Python ≥ 3.10（本机 3.13 实测 `pip install` + 嵌入 API 冒烟通过；API 容器为 Python 3.12，可直接作 pip 依赖） |
+| 站点覆盖 | 实测 `gen_extractor_classes()` 共 **1751 个提取器**；已确认覆盖 BiliBili 全系（含番剧 / 空间 / 搜索）、抖音、西瓜、爱奇艺、AcFun、斗鱼、虎牙、花椒、酷我，以及 YouTube / TikTok / X / Instagram / Facebook 等国际平台 |
+| 嵌入用法 | Python 库形态：`yt_dlp.YoutubeDL(opts).extract_info(url, download=...)`；实测 `download=False` 可**免下载预取元数据**（B 站真实样本：标题 / 时长 / UP 主 / 15 个格式 / 360p–1080p 全部拿到） |
+| 格式控制 | format selector 可按分辨率 / 体积 / 编码过滤（如 `[height<=720]`），下载前可控体积，与配额体系双保险 |
+| 产物形态 | 视频（`bv*+ba/b`）、**纯音频**（`ba`，mp3/m4a）、**平台字幕**（`writesubtitles`，vtt/srt）、**封面缩略图**（`writethumbnail`）——四类均可由嵌入 opts 独立开关 |
+
+**接线设计（全部复用现有设施，零新基建）**：
+
+```text
+对话「帮我把这个 B 站视频存进视频库」「把这首歌存进音频库」
+  → Agent 调 fetch_media 工具（URL + 可选分辨率 / 体积上限）
+  → Celery 任务：yt-dlp 嵌入 API 下载到临时文件（提取器白名单校验前置）
+      ├─ 下载形态由目标板块 base_type 推断：video → `bv*+ba/b`；audio → `ba`；mixed → 默认视频
+      └─ 附属产物顺带抓取：平台字幕（vtt/srt）+ 封面缩略图
+  → COS 上传（cos_service.upload_bytes → UploadFile；附属产物同样经存储代理计量）
+  → create_document_from_upload_file（板块类型硬约束 + 配额校验）
+      ├─ 字幕：随素材关联，L1 解析时优先消费（见下表「字幕落点」）
+      └─ 封面：UploadFile id 记入素材 metadata_（素材网格展示用）
+  → 自动触发 L1 解析（关键帧 + ASR）→ 素材可被检索取料
+```
+
+| 接线面 | 复用点（均已在代码中核实存在） |
+| --- | --- |
+| builtin 工具 | 新增 `media_fetch_tools` provider（`fetch_media` 工具），参照 `video_edit_tools` 模式：`.py` + `.yaml` + `positions.yaml` + `providers.yaml` 登记 |
+| 运行时挂载 | [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) `_build_assistant_runtime_tools` 显式挂载并注入 `account_id`（与 `video_edit_tools` 同一注入点） |
+| 异步执行 | 新增 Celery 任务模块，走 `celery_app.py` TASK_MODULES 双重注册模式（include + 显式 import） |
+| 入库路径 | [knowledge_base_service.py](../../api/internal/service/knowledge_base_service.py) `create_document_from_upload_file`（类型硬约束 + L1 触发）；[cos_service.py](../../api/internal/service/cos_service.py) `upload_bytes` |
+| 体积控制 | KB-P1 配额体系（`StorageQuotaService`）+ yt-dlp format 过滤双保险 |
+| 字幕落点 | L1 解析小幅扩展：`KnowledgeMediaExtractorService` 视频分支**优先消费平台字幕**（解析为带时间轴 cues 的 transcript Segment，source 标注 `platform_subtitle`），无字幕才回退 ASR 音轨提取——省转写成本，落点复用现有 Segment + 向量化 |
+| 封面落点 | 封面作为附属 UploadFile 入存储（经存储代理计量，几十 KB 级），id 记入 `KnowledgeDocument.metadata_`（`cover_upload_file_id`），素材网格与详情展示用 |
+
+**安全与合规约束（强制，实施时不可裁剪）**：
+
+| # | 约束 | 说明 |
+| --- | --- | --- |
+| 1 | **默认关闭** | 参照 `code_execution_tool` 先例：环境变量开关（如 `ENABLE_MEDIA_FETCH_TOOL`）+ 管理员显式开启；未开启时挂载点不挂载 |
+| 2 | **提取器白名单，排除 generic 兜底** | 仅放行 yt-dlp 命名提取器（`_VALID_URL`）命中的 URL；实测存在 `generic` 通用兜底提取器，会对**任意 URL**（含内网地址）发起请求，不排除即 SSRF 缺口 |
+| 3 | **体积与内存上限** | 下载前用 format 过滤（分辨率 / filesize 估算）限制；附属产物（字幕 / 封面）体积小但仍统一经存储代理计量；注意 `upload_bytes` 为全内存（`content: bytes`），大视频应限制单文件上限或经临时文件流式入库，防内存峰值 |
+| 4 | **合规免责** | 平台 ToS 与内容版权由用户负责；工具描述与用户协议明确标注；**不做登录态下载（cookies 凭证托管）**，仅公开可访问内容 |
+| 5 | **版本锁定与升级** | 提取器随平台改版失效是常态（非异常）；requirements 锁定版本 + 定期升级；站点失效错误需翻译为用户可读提示（「该站点暂不可用」而非堆栈） |
+| 6 | **库调用而非 CLI** | 一律 `import yt_dlp` 嵌入调用，禁止拼接 shell 命令（注入风险） |
+
+**依赖与前置**：无硬前置——上传 / 配额 / 类型硬约束 / L1 解析链路均已就绪。与 KB-P5（前台）无依赖关系，可并行或先后实施。
 
 ---
 
@@ -407,6 +460,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 检索工具扩展（改造 `search_knowledge_base`） | 新增 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤参数 | ✅ **已落地**（KB-P3，见 [modules/02-knowledge-base.md §11.9.3](./modules/02-knowledge-base.md#1193-检索工具的四个可选入参)） |
 | 视频渲染出片（新增） | `render_video`（builtin provider `video_render_tools`）+ 成品库 | ✅ **已落地**（KB-P3.7）：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库。 |
 | 视频轻量剪辑三件套（新增） | `video_trim` / `video_concat` / `video_subtitle`（builtin provider `video_edit_tools`）+ 成品库 | ✅ **已落地**（KB-P4）：裁剪（流拷贝）/ 拼接（concat demuxer）/ 加字幕（`subtitles` 滤镜），经 Celery 默认队列异步执行，产物走 `store_render_output` 存入成品库。见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地) |
+| 外部媒体下载（新增） | `fetch_media`（builtin provider `media_fetch_tools`，**默认关闭**）：用户给媒体平台链接 → yt-dlp 下载视频 / 纯音频（按板块 base_type 推断）+ 顺带抓平台字幕与封面 → 入库存为素材并触发解析 | ⬜ **未落地**（KB-P6 待拓展；调研与实测复核已完成，见 §5.3） |
 
 `create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
 
@@ -414,7 +468,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 - 参数：`name`（必填）、`base_type`（可选，`document`/`image`/`video`/`audio`/`mixed`，默认 `mixed`）、`partition_mode`（可选，`none`/`date_month`/`date_day`/`custom`，默认 `none`）、`description`（可选）。`base_type` / `partition_mode` 在工具内先做枚举校验，非法值直接返回可读错误，不进入服务层。
 - 服务调用：`KnowledgeBaseService.create_user_content_base(..., operation_context="user")`，仅创建**当前登录用户的私有**用户资料库。
 - 账号来源：由运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` 通过工厂参数 `account_id` 透传（与 `os_file_task` / `computer_action` 的 `requester` 同一注入点），工具内部再经 `AccountService` 加载真实 `Account` 实例。
-- **未落地**：对话框内成片预览（`render_video` 与三个剪辑工具的产物均存入成品库，尚无对话内直接预览的成片播放器）。`video_trim` / `video_concat` / `video_subtitle` 已在 KB-P4 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)）。检索过滤参数扩展已在 KB-P3 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.9](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)）。
+- ✅ **已落地**：对话框内成片预览（KB-P4 补充）：渲染/剪辑产物入库后，同步路径（本机渲染）由工具返回值携带可播放 `artifact`，异步路径（裁剪/拼接/字幕/云端渲染）在 Celery 完成后经 `notify_artifact_ready` 双通道回填（持久化到消息 + Socket.IO `artifact_ready` 推送）；前端 `ChatVideoGallery.vue` 内联播放。见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)。⬜ **仍未落地**：对话框内成片编辑器（时间轴拖拽/逐段替换）；成品库页面播放入口（属 KB-P5）。
 
 ---
 
@@ -459,8 +513,9 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | **KB-P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
 | **KB-P2 上传与解析** | 大文件与多模态入库 | **KB-P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**KB-P2B（已完成）**：分片上传 + 秒传 + 断点续传；单文件上限改为按套餐权益分级 | KB-P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；KB-P2B：分片链路本身可传 GB 级（流式合并，不整文件入内存）——**⚠️ 前提是管理员已在套餐配置 `max_single_file_gb` 权益，否则仍按默认 15MB 拒绝** | ✅ **已完成**（KB-P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；KB-P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
 | **KB-P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（KB-P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
-| **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **已落地**：渲染出片（KB-P3.7）结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）；轻量剪辑三件套（KB-P4）`video_trim` / `video_concat` / `video_subtitle`（`video_edit_tools` provider，经 Celery 默认队列，产物走 `store_render_output`）。⬜ **未落地**：对话框内成片预览 | 对话里出片并存入成品库（✅ 已达成）；对话里裁剪/拼接/加字幕并存入成品库（✅ 已达成） | ✅ **已完成**（出片 KB-P3.7 + 剪辑 KB-P4，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
+| **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **已落地**：渲染出片（KB-P3.7）结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）；轻量剪辑三件套（KB-P4）`video_trim` / `video_concat` / `video_subtitle`（`video_edit_tools` provider，经 Celery 默认队列，产物走 `store_render_output`）；**对话内成片预览**（同步走工具返回值、异步走 Celery 完成后双通道回填 + 前端内联播放）。⬜ **未落地**：对话框内成片编辑器 | 对话里出片并存入成品库（✅ 已达成）；对话里裁剪/拼接/加字幕并存入成品库（✅ 已达成）；对话内直接预览成片（✅ 已达成，见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)） | ✅ **已完成**（出片 KB-P3.7 + 剪辑/预览 KB-P4，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | **KB-P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
+| **KB-P6 外部素材获取（待拓展）** | 链接直达素材入库（视频 / 音频 + 字幕 / 封面） | `fetch_media` builtin 工具（`media_fetch_tools` provider，默认关闭）+ yt-dlp 嵌入下载 Celery 任务（视频 / 纯音频按板块 base_type 推断，顺带抓平台字幕与封面）+ 提取器白名单（排除 generic）+ 复用入库 / 配额 / L1 解析链路（L1 小幅扩展：优先消费平台字幕，省 ASR 成本） | 对话里给 B 站链接 → 素材入视频库 → 可被语义检索命中；给音频链接 → 入音频库；平台字幕文本可检索 | ⬜ 未开始（调研与实测复核已完成，见 §5.3） |
 
 **最小可用闭环 = KB-P1 + KB-P2 完成**（素材能入库、能被检索）。KB-P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；KB-P2B（大文件分片上传）落地后，KB-P2 已完整收口。
 

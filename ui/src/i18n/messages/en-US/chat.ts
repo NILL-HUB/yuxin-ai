@@ -120,6 +120,13 @@ export default  {
       imageIndexed: 'Image {index}',
       downloadAria: 'Download {filename}',
     },
+    video: {
+      untitled: 'Video {index}',
+      download: 'Download video',
+      downloadAria: 'Download {filename}',
+      playbackFailed: 'This browser cannot play the video',
+      openInNewTab: 'Open in new tab',
+    },
     navigation: {
       jumpToItem: 'Jump to item {index}',
     },

@@ -294,6 +294,7 @@
 | KB-P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
+| KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕 / 封面，默认关闭） | ⬜ 未开始（调研与实测复核已完成，见 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp待拓展kb-p6未立项)） |
 
 KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
 
@@ -522,8 +523,9 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 | **素材定位与产物入库编排** | 同上（`trim_document` / `concat_documents` / `subtitle_document`） | ✅ 已落地；归属校验复用 `KnowledgeBaseService.get_document_detail`；产物经 `store_render_output` 落 COS + 建档 + 索引（与出片同口径） |
 | **Celery 任务** | [video_edit_tasks.py](../../api/internal/task/video_edit_tasks.py)（`video_trim_task` / `video_concat_task` / `video_subtitle_task`） | ✅ 已落地；已登记 `TASK_MODULES` + 显式 import，走**默认 `celery` 队列**（未新建队列/容器）。`VideoEditError` 属业务失败**不重试**，其余异常重试（`max_retries=2`） |
 | **builtin 工具三件套** | `video_edit_tools/video_trim.py` / `video_concat.py` / `video_subtitle.py`（+ 各自 `.yaml` + `positions.yaml`） | ✅ 已落地；`providers.yaml` 已登记 provider，工具在对话内派发 Celery 任务后立即返回任务号 |
-| **运行时挂载点** | [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` | ✅ 已落地；与 `render_video` 同处显式挂载并注入 `account_id` |
+| **运行时挂载点** | [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` | ✅ 已落地；与 `render_video` 同处显式挂载并注入 `account_id`，同时注入 `message_id` / `conversation_id` 供成片回填 |
 | **字体前置条件修复** | [api/Dockerfile](../../api/Dockerfile)（`fontconfig fonts-dejavu-core` + `fc-cache -f`）+ `VideoEditService._assert_fonts_available()` | ✅ 已落地；修复「假成功」缺陷，见下 |
+| **对话内成片预览** | `KnowledgeBaseService.build_output_artifact` + [artifact_notification_service.py](../../api/internal/service/artifact_notification_service.py) + [ChatVideoGallery.vue](../../ui/src/components/ChatVideoGallery.vue) | ✅ 已落地；同步走工具返回值、异步走 Celery 完成后双通道回填（落库 + Socket.IO `artifact_ready`）；详见 [02-knowledge-base.md §11.16](./modules/02-knowledge-base.md) |
 
 | 能力 | 实现 | 说明 |
 | --- | --- | --- |

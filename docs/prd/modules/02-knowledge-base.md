@@ -827,15 +827,23 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | --- | --- | --- | --- |
 | 裁剪 | `video_trim` | ffmpeg `-ss/-t -c copy` | 默认流拷贝（无损、秒级）；`reencode=True` 可重编码换取帧精度 |
 | 拼接 | `video_concat` | ffmpeg `concat demuxer -c copy` | 按传入顺序拼接，要求各段编码参数一致 |
-| 加字幕 | `video_subtitle` | ffmpeg `subtitles` 滤镜（libass）+ 重编码 | **字幕时间轴由调用方显式提供**（见下） |
+| 加字幕 | `video_subtitle` | ffmpeg `subtitles` 滤镜（libass）+ 重编码 | **字幕时间轴默认自动生成**（`cues` 可选，见下） |
 
 **执行环境**：api 容器内**无系统 ffmpeg**，依赖 `imageio_ffmpeg` 静态二进制（实测 v7.0.2，具备 libx264 / concat demuxer / subtitles 滤镜；**无 drawtext**，故字幕走 subtitles 烧录）。
 剪辑经 Celery 任务（`internal.task.video_edit_tasks.*`，走默认 `celery` 队列）异步执行，避免阻塞对话请求线程。
 
-**⚠️ 字幕时间轴的现状（重要，勿按旧设计稿理解）**：
-现有 ASR（`AudioService.audio_to_text`）**只返回纯文本、零时间戳**，故**无法**从库内 ASR 产物自动生成 SRT。
-`video_subtitle` 的工具入参因此要求调用方直接给出 `cues=[{start, end, text}]`；
-需要「自动对齐」时，应由上层（LLM 读 ASR 文本 + 视频时长）分配时间轴后再传入。
+**字幕时间轴：三级解析（先便宜后昂贵）**：此处**曾错误记载**「现有 ASR 只返回纯文本、零时间戳，
+故无法自动生成 SRT」。**该结论已被实测推翻**：SiliconFlow ASR 在请求体带 `response_format=verbose_json`
+时返回 `segments: [{start, end, text}]`（OpenAI Whisper 兼容），本项目此前只是**从未请求该字段**。
+
+| 层级 | 来源 | 实现 |
+| --- | --- | --- |
+| 1 | 调用方显式 `cues` | 工具入参仍可传，原样使用（人工修订 / 精确对齐） |
+| 2 | **复用 L1 已留存时间轴** | L1 解析时 [audio_service.py](../../../api/internal/service/audio_service.py) 的 `audio_to_text_with_segments()` 产出时间轴，经 [knowledge_media_extractor_service.py](../../../api/internal/service/knowledge_media_extractor_service.py) 写入 `KnowledgeSegment.metadata.transcript_segments`；`VideoEditService._load_stored_cues()` 读回复用（**零额外 ASR 成本**） |
+| 3 | 兜底重跑 ASR | `VideoEditService._transcribe_source()`：抽音轨 → 带时间轴 ASR（老素材未留存时间轴时） |
+
+三层皆空才抛可读错误。纯文本接口 `audio_to_text()` 请求契约**未被改动**（不发送 `response_format`），
+其既有调用方（IM 语音、实时语音、语音笔记等）行为不变。
 
 **⚠️ 字幕烧录的字体前置条件（实测缺陷，已修复）**：api 镜像（python slim）**原本既无 fontconfig 配置也无任何字体**，
 而 libass 找不到字体时**不报错、静默跳过字幕渲染**——实测产物与源帧**逐像素 md5 完全相同**、退出码仍为 0。
@@ -853,5 +861,63 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | 异步任务 | [video_edit_tasks.py](../../../api/internal/task/video_edit_tasks.py) | 薄委托（与 `knowledge_l2_tasks` 同范式）；`VideoEditError` 为业务失败**不重试**，IO/存储抖动才重试（`max_retries=2`） |
 | 对话内工具 | `video_edit_tools`（`video_trim` / `video_concat` / `video_subtitle`，各含 `.py` + `.yaml` + `positions.yaml`，provider 已在 `providers.yaml` 登记） | 参数校验 → 派发 Celery → 立即返回任务号 |
 
-**工具挂载点**：`assistant_agent_service._build_assistant_runtime_tools`（与 `render_video` 同处，注入 `account_id` 用于素材归属校验与成品库归属）。
+**工具挂载点**：`assistant_agent_service._build_assistant_runtime_tools`（与 `render_video` 同处，注入 `account_id` 用于素材归属校验与成品库归属，并注入 `message_id` / `conversation_id` 供成片回填，见 §11.16）。
+
+**产物默认存入成品库**（`store_render_output`），并在对话内直接成片预览——见 §11.16。
+
+### 11.16 对话内成片预览（已落地）
+
+**动机**：渲染/剪辑的产物此前只存进成品库，对话里**看不到成片**——用户得到一句
+「已存入成品库」，必须自己去知识库翻。本能力把成片**直接播在消息里**。
+
+**难点：产物有同步与异步两种就绪时机**，必须分别处理，缺一不可：
+
+| 路径 | 就绪时机 | 回填方式 |
+| --- | --- | --- |
+| 本机渲染（`render_video` 的 local 分支） | **同步**——工具返回时成片已入库 | 工具返回值直接带 `artifact`，经 `agent_action.observation` 落到消息 |
+| 裁剪 / 拼接 / 加字幕 / 云端渲染 | **异步**——工具只返回 `task_id`，消息早已发出 | Celery 完成后回填（见下），双通道：落库 + 实时推送 |
+
+**产物载荷（artifact）**：由 [knowledge_base_service.py](../../../api/internal/service/knowledge_base_service.py) 的
+`build_output_artifact(document)` 生成，含 `url` / `name` / `mime_type` / `extension` / `size`。
+生成 URL **不传 `download_name`**——传了会带 `content-disposition: attachment`，浏览器只下载不内联播放。
+
+**异步回填（双通道，缺一不可）**：经 [artifact_notification_service.py](../../../api/internal/service/artifact_notification_service.py)
+的 `notify_artifact_ready()`：
+
+1. **持久化**：往原消息追加一条 `agent_action` 推理记录，artifact 放进 `tool_input.artifact`。
+   消息的 artifacts 本就由 `answer` + `agent_thoughts` 反推（`internal.lib.helper.build_output_payload`），
+   故**落库即恢复**——刷新/重开对话后依然能看到播放器。
+2. **实时推送**：经 Socket.IO 推 `artifact_ready` 事件（room = `artifact:<account_id>`），
+   让**当前开着该对话**的用户免刷新即见。
+
+只推不存 → 刷新即丢；只存不推 → 必须手动刷新。**故两者都做**。
+
+**会话上下文透传链路**（异步回填的唯一依据，任一环漏传即静默失效）：
+
+```
+assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_id)
+  → 工具工厂 render_video/video_trim/...(...)  ← 工厂必须转传到工具实例
+  → tool._run() 派发 Celery 时带 message_id/conversation_id
+  → Celery 任务完成后 notify_artifact_ready(...) 回填
+```
+
+**前端渲染**：
+- `ChatOutputPart` 新增 `video` 类型（[chat-output.ts](../../../ui/src/views/shared/chat-output.ts)），
+  视频产物**不再落 artifact 分支**（那只会渲染「下载附件」链接）；`isVideoArtifact()` 按
+  mime/扩展名判定，URL 后缀兜底。
+- [ChatVideoGallery.vue](../../../ui/src/components/ChatVideoGallery.vue)：原生 `<video controls playsinline>`，
+  播放失败降级为「新窗口打开」直链（容器/浏览器不支持编码时不至于变成死块）。
+- 回填接收（[App.vue](../../../ui/src/App.vue) + [artifact-backfill.ts](../../../ui/src/stores/artifact-backfill.ts)）：
+  推送到达时按 `message_id` 寄存到 Pinia store，由渲染该消息的 `AiMessage` 取用——
+  **一处接收、各入口生效**（HomeView / 我的应用等多个入口都渲染消息）。
+- `extractArtifactFromToolObservation()`（[chat-output.ts](../../../ui/src/views/shared/chat-output.ts)）：
+  从 `agent_action.observation` 抽同步就绪的 artifact，本机渲染**无需等回填**即可播放。
+
+**⚠️ 易漏点（历史缺陷类型）**：工具**工厂函数**只转发 `account_id` 而漏掉
+`message_id` / `conversation_id` 时，任务照跑、成品照入库，只是**永远回填不到那条消息**——
+无任何报错。故单测显式锁定每个工厂的上下文透传
+（`test_edit_tool_factories_pass_chat_context` / `test_factory_passes_chat_context_onto_tool`）。
+
+**未落地**：对话框内的成片编辑器（时间轴拖拽 / 逐段替换）；成品库页面的播放入口（属 KB-P5）。
+
 

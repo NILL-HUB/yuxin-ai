@@ -169,6 +169,45 @@ async def handle_unsubscribe_agent_notification(sid: str, data: dict[str, Any] |
         await sio.leave_room(sid, agent_notification_key)
 
 
+async def handle_subscribe_artifact_notification(sid: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
+    """订阅「成品就绪」回填通知（对话内成片预览）。
+
+    房间仍按账号隔离（与文档索引通知同一 room 语义），只是事件名独立——
+    前端据此把播放器插入原消息，而不是像文档通知那样弹 toast。
+    """
+    from internal.extension.socketio_extension import get_socketio
+
+    try:
+        connection = _require_authenticated_connection(sid)
+    except UnauthorizedException as exc:
+        logging.warning("[WS] rejected artifact subscribe sid=%s: %s", sid, exc)
+        return {"ok": False, "error": "unauthorized"}
+
+    artifact_channel = f"artifact:{connection.account_id}"
+    ws_manager.subscribe_notification(sid, artifact_channel)
+    sio = get_socketio()
+    if sio is not None:
+        await sio.enter_room(sid, artifact_channel)
+    return {"ok": True, "channel": artifact_channel}
+
+
+async def handle_unsubscribe_artifact_notification(sid: str, data: dict[str, Any] | None = None) -> None:
+    """取消订阅「成品就绪」回填通知。"""
+    from internal.extension.socketio_extension import get_socketio
+
+    try:
+        connection = _require_authenticated_connection(sid)
+    except UnauthorizedException as exc:
+        logging.warning("[WS] rejected artifact unsubscribe sid=%s: %s", sid, exc)
+        return
+
+    artifact_channel = f"artifact:{connection.account_id}"
+    ws_manager.unsubscribe_notification(sid, artifact_channel)
+    sio = get_socketio()
+    if sio is not None:
+        await sio.leave_room(sid, artifact_channel)
+
+
 def register_socketio_handlers(socketio: Any) -> None:
     """在 Socket.IO 初始化完成后显式注册事件处理器（on 装饰器形式）。"""
     socketio.on("connect")(handle_connect)
@@ -179,3 +218,5 @@ def register_socketio_handlers(socketio: Any) -> None:
     socketio.on("unsubscribe_document_index_notification")(handle_unsubscribe_document_index_notification)
     socketio.on("subscribe_agent_notification")(handle_subscribe_agent_notification)
     socketio.on("unsubscribe_agent_notification")(handle_unsubscribe_agent_notification)
+    socketio.on("subscribe_artifact_notification")(handle_subscribe_artifact_notification)
+    socketio.on("unsubscribe_artifact_notification")(handle_unsubscribe_artifact_notification)

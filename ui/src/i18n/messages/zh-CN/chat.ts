@@ -118,6 +118,13 @@ export default  {
       imageIndexed: '图片 {index}',
       downloadAria: '下载 {filename}',
     },
+    video: {
+      untitled: '成片 {index}',
+      download: '下载成片',
+      downloadAria: '下载 {filename}',
+      playbackFailed: '当前浏览器无法播放该成片',
+      openInNewTab: '在新窗口打开',
+    },
     navigation: {
       jumpToItem: '跳转到第 {index} 项',
     },

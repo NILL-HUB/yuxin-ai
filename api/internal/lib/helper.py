@@ -298,6 +298,30 @@ def _build_image_group_metadata(agent_thought):
     return {"group_id": group_id, "group_name": _DEFAULT_IMAGE_GROUP_NAME}
 
 
+def _extract_artifact_from_observation(observation) -> dict | None:
+    """从工具返回体（observation）里提取 artifact。
+
+    为什么需要：视频渲染/剪辑工具的产物是**同步就绪**的（本机渲染），
+    此时 artifact 在**工具返回值**里，而非 tool_input。
+    既有链路只认 tool_input.artifact，故在此补一条从工具返回值提取的路径。
+
+    只解析 JSON 且明确带 artifact 字段的情形——不做模糊文本匹配，
+    避免把普通回答里的 url 误判成产物。
+    """
+    text = str(observation or "").strip()
+    if not text or not text.startswith("{"):
+        return None
+    try:
+        payload = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if not payload.get("ok"):
+        return None
+    return payload.get("artifact")
+
+
 def _read_object_field(value, field, default):
     """兼容 dict / 对象 两种访问方式。"""
     if isinstance(value, dict):
@@ -320,6 +344,14 @@ def extract_output_artifacts(agent_thoughts):
             tool_input = {}
 
         artifact = _normalize_output_artifact(tool_input.get("artifact"))
+        if artifact is None:
+            # 视频渲染/剪辑等工具的产物在**工具返回值**里（同步就绪场景），
+            # 既有链路只认 tool_input.artifact，故补这条提取路径。
+            artifact = _normalize_output_artifact(
+                _extract_artifact_from_observation(
+                    _read_object_field(agent_thought, "observation", "")
+                )
+            )
         if artifact is None:
             event = _read_object_field(agent_thought, "event", "")
             normalized_event = str(getattr(event, "value", event) or "").strip().lower()

@@ -91,10 +91,16 @@ def _ingest_local_artifact(*, account_id: str, artifact_path: str, name: str) ->
     try:
         video_path = tmp_dir / (fetched.get("name") or "render-output.mp4")
         video_path.write_bytes(fetched["content"])
-        document = injector.get(KnowledgeBaseService).store_render_output(
+        service = injector.get(KnowledgeBaseService)
+        document = service.store_render_output(
             account=account, video_path=video_path, name=name or "渲染成品"
         )
-        return {"ok": True, "document_id": str(document.id)}
+        result = {"ok": True, "document_id": str(document.id)}
+        # 可播放地址：本机渲染是同步的，产物此刻已就绪，直接回给对话前端播放
+        artifact = service.build_output_artifact(document)
+        if artifact:
+            result["artifact"] = artifact
+        return result
     except Exception as exc:  # noqa: BLE001
         logger.warning("本机渲染产物入库失败 account_id=%s", account_id, exc_info=True)
         return {"ok": False, "error": f"成品入库失败：{exc}"}
@@ -104,8 +110,14 @@ def _ingest_local_artifact(*, account_id: str, artifact_path: str, name: str) ->
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _dispatch_cloud_render(*, composition: dict, account_id: str, name: str) -> dict:
-    """派发云端 Celery（原 _dispatch_render 的逻辑原样保留）。"""
+def _dispatch_cloud_render(
+    *, composition: dict, account_id: str, name: str, context: dict | None = None
+) -> dict:
+    """派发云端 Celery（原 _dispatch_render 的逻辑原样保留）。
+
+    `context` 携带 message_id / conversation_id：云端渲染是异步的，
+    任务完成后据此把成品回填到原对话消息（对话内成片预览）。
+    """
     from internal.task.render_tasks import render_composition_task
 
     fingerprint = _composition_fingerprint(composition)
@@ -116,8 +128,13 @@ def _dispatch_cloud_render(*, composition: dict, account_id: str, name: str) -> 
         logger.info("渲染被闸门拒绝 account_id=%s reason=%s", account_id, admission.reason)
         raise RenderRejectedError(admission.reason)
 
+    ctx = context or {}
     try:
-        async_result = render_composition_task.delay(composition, account_id, name)
+        async_result = render_composition_task.delay(
+            composition, account_id, name,
+            message_id=str(ctx.get("message_id") or ""),
+            conversation_id=str(ctx.get("conversation_id") or ""),
+        )
     except Exception:
         guard.release(account_id=account_id, fingerprint=fingerprint)
         logger.warning("渲染派发 Celery 失败 account_id=%s", account_id, exc_info=True)
@@ -136,7 +153,9 @@ def _composition_fingerprint(composition: dict) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def _dispatch_render(composition: dict, account_id: str, name: str) -> dict:
+def _dispatch_render(
+    composition: dict, account_id: str, name: str, context: dict | None = None
+) -> dict:
     """三级路由：本机优先 → 云端回退 → 明确报错。"""
     local_attempted = False
     if _local_enabled():
@@ -164,7 +183,7 @@ def _dispatch_render(composition: dict, account_id: str, name: str) -> dict:
 
     if _cloud_fallback_enabled():
         return _dispatch_cloud_render(
-            composition=composition, account_id=account_id, name=name
+            composition=composition, account_id=account_id, name=name, context=context
         )
 
     if local_attempted:
@@ -207,6 +226,9 @@ class RenderVideoTool(BaseTool):
     )
     args_schema: type[BaseModel] = RenderVideoInput
     account_id: str = ""
+    # 会话上下文：云端渲染完成后据此把成品回填到原消息（对话内成片预览）。
+    message_id: str = ""
+    conversation_id: str = ""
 
     def _run(
         self,
@@ -227,8 +249,12 @@ class RenderVideoTool(BaseTool):
             )
 
         normalized_name = str(name or "").strip()
+        context = {
+            "message_id": str(kwargs.get("message_id") or self.message_id or ""),
+            "conversation_id": str(kwargs.get("conversation_id") or self.conversation_id or ""),
+        }
         try:
-            dispatched = _dispatch_render(composition, account_id, normalized_name)
+            dispatched = _dispatch_render(composition, account_id, normalized_name, context)
         except (RenderRejectedError, RenderExecutionError) as exc:
             # 闸门拒绝 / 执行不可用：提示面向用户可直接展示，不当作系统故障
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -253,22 +279,24 @@ class RenderVideoTool(BaseTool):
                     {"ok": False, "error": ingest.get("error") or "成品入库失败"},
                     ensure_ascii=False,
                 )
-            return json.dumps(
-                {
-                    "ok": True,
-                    "mode": "local",
-                    "document_id": ingest.get("document_id", ""),
-                    "message": "视频已在你的电脑上渲染完成并存入成品库",
-                },
-                ensure_ascii=False,
-            )
+            payload = {
+                "ok": True,
+                "mode": "local",
+                "document_id": ingest.get("document_id", ""),
+                "message": "视频已在你的电脑上渲染完成并存入成品库",
+            }
+            # 本机渲染同步就绪：带上可播放地址，前端可直接内联播放
+            artifact = ingest.get("artifact")
+            if artifact:
+                payload["artifact"] = artifact
+            return json.dumps(payload, ensure_ascii=False)
 
         return json.dumps(
             {
                 "ok": True,
                 "dispatched": True,
                 "task_id": str(getattr(dispatched["result"], "id", "")),
-                "message": "视频渲染已提交后台处理，完成后会自动存入成品库",
+                "message": "视频渲染已提交后台处理，完成后会自动存入成品库并在对话中展示",
             },
             ensure_ascii=False,
         )
@@ -280,5 +308,13 @@ class RenderVideoTool(BaseTool):
 
 
 def render_video(**kwargs: Any) -> BaseTool:
-    """工厂函数：返回渲染视频的 LangChain 工具。"""
-    return RenderVideoTool(account_id=str(kwargs.get("account_id") or "").strip())
+    """工厂函数：返回渲染视频的 LangChain 工具。
+
+    message_id / conversation_id 必须一并透传：云端渲染完成后要据此把成品
+    回填到原对话消息（遗漏则「对话内成片预览」静默失效）。
+    """
+    return RenderVideoTool(
+        account_id=str(kwargs.get("account_id") or "").strip(),
+        message_id=str(kwargs.get("message_id") or "").strip(),
+        conversation_id=str(kwargs.get("conversation_id") or "").strip(),
+    )

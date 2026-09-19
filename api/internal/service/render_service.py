@@ -121,17 +121,24 @@ class RenderService(BaseService):
                 work_dir=work_dir,
                 quality=quality,
             )
-            document = self._get_service(KnowledgeBaseService).store_render_output(
+            kb_service = self._get_service(KnowledgeBaseService)
+            document = kb_service.store_render_output(
                 account=account, video_path=output_path, name=name or "渲染成品"
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
-        return {
+        result = {
             "document_id": str(document.id),
             "knowledge_base_id": str(document.knowledge_base_id),
             "name": document.name,
         }
+        # 可播放地址：对话内成片预览的载荷来源。
+        # 必须在 rmtree 之后调用——它只依赖 DB 记录（upload_file.key），不碰工作目录。
+        artifact = kb_service.build_output_artifact(document)
+        if artifact:
+            result["artifact"] = artifact
+        return result
 
     def _get_service(self, cls):
         from app.http.module import injector

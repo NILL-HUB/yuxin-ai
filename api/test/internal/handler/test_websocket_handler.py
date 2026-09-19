@@ -140,4 +140,6 @@ def test_register_socketio_handlers_should_bind_expected_events():
         ("unsubscribe_document_index_notification", "handle_unsubscribe_document_index_notification"),
         ("subscribe_agent_notification", "handle_subscribe_agent_notification"),
         ("unsubscribe_agent_notification", "handle_unsubscribe_agent_notification"),
+        ("subscribe_artifact_notification", "handle_subscribe_artifact_notification"),
+        ("unsubscribe_artifact_notification", "handle_unsubscribe_artifact_notification"),
     ]
