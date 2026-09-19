@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from injector import inject
 
 from internal.config.memory_settings import settings
+from internal.entity.memory_owner_entity import MemoryOwnerKey
 from internal.model.memory_models import (
     EventSource,
     ExplicitCategory,
@@ -118,11 +119,49 @@ class MemoryWriteService:
 
         return self.write_from_event(event)
 
+    def write_admin_conversation(
+        self,
+        *,
+        admin_user_id,
+        agent_id=None,
+        query: str,
+        ai_response: str,
+        conversation_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """admin / Agent 对话后写入记忆（主体为 admin，非 account）。
+
+        ADMIN-P3c-2：与 ``write_from_conversation`` 同策，仅主体键不同——
+        admin 没有 account（``admin_user.account_id`` 恒 NULL），不能走
+        ``for_user``，必须构造 ``MemoryOwnerKey.for_admin(...)``。
+        """
+        if not settings.memory_engine_enabled:
+            logger.warning("记忆引擎已禁用（memory_engine_enabled=False），跳过写入")
+            return None
+
+        if not query or not ai_response:
+            return None
+
+        owner_key = MemoryOwnerKey.for_admin(admin_user_id, agent_id=agent_id)
+        event = MemoryEvent(
+            event_id=uuid4(),
+            timestamp=datetime.now(UTC),
+            source=EventSource.SYSTEM_OBSERVATION,
+            content=f"Admin: {query}\nAgent: {ai_response}",
+            context_messages=[],
+            metadata={"query": query, "conversation_id": conversation_id},
+            session_id=str(conversation_id),
+            user_id=owner_key.to_key(),
+        )
+
+        return self.write_from_event(event, owner_key=owner_key)
+
     # =========================================================
     # 核心写入编排（A4 / A5 共用）
     # =========================================================
 
-    def write_from_event(self, event: MemoryEvent) -> Optional[dict[str, Any]]:
+    def write_from_event(
+        self, event: MemoryEvent, owner_key: Optional[MemoryOwnerKey] = None
+    ) -> Optional[dict[str, Any]]:
         """对事件执行三层决策并按写入路径写入 Neo4j + pgvector。
 
         三层决策架构:
@@ -132,6 +171,9 @@ class MemoryWriteService:
 
         Args:
             event: 已构建的记忆事件。
+            owner_key: 可选主体键（ADMIN-P3c-2）。为空时按历史语义由
+                ``event.user_id`` 解析为**用户**主体（既有路径零变化）；
+                admin / Agent 主体须显式传入 ``MemoryOwnerKey.for_admin(...)``。
 
         Returns:
             写入结果 dict，含 ``status`` / ``memory_id`` / ``created_at`` / ``score``；
@@ -206,11 +248,11 @@ class MemoryWriteService:
 
             # ===== 按路径分流写入 =====
             if write_path == WritePath.FULL:
-                result = self._write_full(event, detection)
+                result = self._write_full(event, detection, owner_key=owner_key)
             elif write_path == WritePath.SUMMARY:
-                result = self._write_summary(event)
+                result = self._write_summary(event, owner_key=owner_key)
             elif write_path == WritePath.SKETCH:
-                result = self._write_sketch(event)
+                result = self._write_sketch(event, owner_key=owner_key)
             else:
                 # WritePath.REJECT 或未知路径：不写入
                 logger.info("写入路径 %s，跳过写入", write_path.value)
@@ -259,6 +301,7 @@ class MemoryWriteService:
         self,
         event: MemoryEvent,
         explicit_detection: Optional[ExplicitDetectionResult] = None,
+        owner_key: Optional[MemoryOwnerKey] = None,
     ) -> Optional[dict[str, Any]]:
         """FULL 路径：embed 原文 + 全量实体/关系抽取 + 写入。
 
@@ -266,6 +309,7 @@ class MemoryWriteService:
             event: 记忆事件
             explicit_detection: 显式陈述检测结果（可选），传递给 LedgerWriter
                 用于实体种子注入与 explicit_* 属性写入
+            owner_key: 可选主体键（ADMIN-P3c-2），透传给 LedgerWriter
         """
         # 1. 生成原文向量
         embedding = self._embed_text(event.content)
@@ -285,10 +329,13 @@ class MemoryWriteService:
             relations=relations,
             embedding=embedding,
             explicit_detection=explicit_detection,
+            owner_key=owner_key,
         )
         return result
 
-    def _write_summary(self, event: MemoryEvent) -> Optional[dict[str, Any]]:
+    def _write_summary(
+        self, event: MemoryEvent, owner_key: Optional[MemoryOwnerKey] = None
+    ) -> Optional[dict[str, Any]]:
         """SUMMARY 路径：生成摘要 + embed 摘要 + 截断实体/关系(≤5) + 写入。"""
         # 1. 生成摘要
         summary = self.entity_extractor.generate_summary(event.content)
@@ -314,10 +361,13 @@ class MemoryWriteService:
             entities=entities,
             relations=relations,
             embedding=embedding,
+            owner_key=owner_key,
         )
         return result
 
-    def _write_sketch(self, event: MemoryEvent) -> Optional[dict[str, Any]]:
+    def _write_sketch(
+        self, event: MemoryEvent, owner_key: Optional[MemoryOwnerKey] = None
+    ) -> Optional[dict[str, Any]]:
         """SKETCH 路径：仅抽取实体 + 更新统计计数。"""
         # 仅抽取实体（不抽关系，轻量）
         entities, _ = self.entity_extractor.extract_entities_and_relations(
@@ -328,6 +378,7 @@ class MemoryWriteService:
         result = self.ledger_writer.write_stats_path(
             event=event,
             entities=entities,
+            owner_key=owner_key,
         )
         return result
 
