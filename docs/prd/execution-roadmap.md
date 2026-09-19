@@ -239,7 +239,7 @@
 | KB-P1 | 数据基座（板块类型 / 两级分区 / 标签关联 / 多模态字段 / 存储配额） | ✅ 完成 |
 | KB-P2 | 上传与解析（分片上传 / 白名单接入 / 多模态产物入库） | ✅ 完成（KB-P2A 多模态素材入库 + KB-P2B 分片上传/秒传/断点续传 + 分片产物落盘跟随激活后端，支持 cos/oss） |
 | KB-P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
-| KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ⚠️ 部分完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 未开始） |
+| KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
 
 KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
@@ -454,6 +454,47 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 >
 > **已提供能力但未接入**：`onnxruntime-node` 已随包分发（供后续图片处理/抠像用），
 > 但**当前全仓无任何生产调用点**——属预留能力，非「已实现功能」。
+
+### KB-P4：视频轻量剪辑（已完成）
+
+**动机**：KB-P3.7 的渲染出片解决「从零生成」，但用户高频的「改细节」需求（掐一段、接两段、配字幕）
+此前**没有任何入口**——ffmpeg 在全仓仅用于抽帧（无 trim / concat / 字幕实现）。
+
+实施计划（KB-P4）：[superpowers/plans/2026-09-19-kb-p4-video-edit.md](../superpowers/plans/2026-09-19-kb-p4-video-edit.md)
+
+| 任务 | 文件 | 状态 |
+| --- | --- | --- |
+| **ffmpeg 命令构造纯函数** | [ffmpeg_edit.py](../../api/internal/core/video/ffmpeg_edit.py)（`build_trim_command` / `build_concat_command` / `build_subtitle_command` / `render_srt` / `format_srt_timestamp`） | ✅ 已落地；无 subprocess / 无 IO，单测不依赖真实 ffmpeg |
+| **剪辑服务（执行与校验）** | [video_edit_service.py](../../api/internal/service/video_edit_service.py)（`trim` / `concat` / `burn_subtitles`） | ✅ 已落地；产物校验为「文件存在 **且** ≥1KB」，退出码 0 但无产物即报错 |
+| **素材定位与产物入库编排** | 同上（`trim_document` / `concat_documents` / `subtitle_document`） | ✅ 已落地；归属校验复用 `KnowledgeBaseService.get_document_detail`；产物经 `store_render_output` 落 COS + 建档 + 索引（与出片同口径） |
+| **Celery 任务** | [video_edit_tasks.py](../../api/internal/task/video_edit_tasks.py)（`video_trim_task` / `video_concat_task` / `video_subtitle_task`） | ✅ 已落地；已登记 `TASK_MODULES` + 显式 import，走**默认 `celery` 队列**（未新建队列/容器）。`VideoEditError` 属业务失败**不重试**，其余异常重试（`max_retries=2`） |
+| **builtin 工具三件套** | `video_edit_tools/video_trim.py` / `video_concat.py` / `video_subtitle.py`（+ 各自 `.yaml` + `positions.yaml`） | ✅ 已落地；`providers.yaml` 已登记 provider，工具在对话内派发 Celery 任务后立即返回任务号 |
+| **运行时挂载点** | [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` | ✅ 已落地；与 `render_video` 同处显式挂载并注入 `account_id` |
+| **字体前置条件修复** | [api/Dockerfile](../../api/Dockerfile)（`fontconfig fonts-dejavu-core` + `fc-cache -f`）+ `VideoEditService._assert_fonts_available()` | ✅ 已落地；修复「假成功」缺陷，见下 |
+
+| 能力 | 实现 | 说明 |
+| --- | --- | --- |
+| 裁剪 `video_trim` | ffmpeg `-ss`（置于 `-i` 前）/`-t` + `-c copy` | 默认流拷贝，**无损且秒级**；`reencode=True` 才重编码换帧精度 |
+| 拼接 `video_concat` | ffmpeg concat demuxer + `-c copy` | 严格按传入顺序；**要求各段编码参数一致**，否则需走重编码 |
+| 加字幕 `video_subtitle` | ffmpeg `subtitles` 滤镜（libass）+ 重编码（libx264/AAC） | 字幕必须重编码才能烧进画面，无法 copy |
+
+**执行环境（实测）**：api 容器**无系统 ffmpeg**，依赖 `imageio_ffmpeg` 静态二进制
+（实测 **v7.0.2**，具备 libx264 / concat demuxer / subtitles 滤镜；**无 drawtext**——故字幕走
+`subtitles` 烧录而非 drawtext）。剪辑经 Celery **默认 `celery` 队列**异步执行，不阻塞对话请求线程。
+
+**⚠️ 字幕时间轴现状（与设计稿不符，以实测为准）**：现有 ASR（`AudioService.audio_to_text`）
+**只返回纯文本、零时间戳**，故**无法**从库内 ASR 产物自动生成 SRT；`video_subtitle` 因此要求
+调用方显式给出 `cues=[{start, end, text}]`。需要「自动对齐」时，应由上层（LLM 读 ASR 文本 + 视频时长）
+先分配时间轴再传入。
+
+**⚠️ 已修复的实测缺陷（字体静默失效）**：api 镜像（python slim）**原本既无 fontconfig 配置也无任何字体**，
+而 libass 找不到字体时**不报错、静默跳过字幕渲染**——实测产物与源帧**逐像素 md5 完全相同**、退出码仍为 0。
+这种「假成功」比失败更危险。修复分两处：① [api/Dockerfile](../../api/Dockerfile) 显式安装
+`fontconfig fonts-dejavu-core` 并 `fc-cache -f`；② `VideoEditService._assert_fonts_available()`
+在烧录前用 `fc-list` 校验，缺失即抛可读错误，杜绝「假成功」。
+
+**真机 E2E 实测（2026-09-19）**：trim（5s 源 → 2.02s 产物）、concat（2s + 2s → 4.00s）、
+subtitle（2.00s，字幕像素已烧入、帧 md5 相对源发生变化）均通过；ffprobe 均可读出有效时长。
 
 ### FIX-P3（第三轮修复，已完成）
 

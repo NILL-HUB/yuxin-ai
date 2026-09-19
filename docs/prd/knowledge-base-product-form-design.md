@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 部分完成（渲染出片已落地）、KB-P5 未开始｜**版本**：v1.4｜**日期**：2026-09-19
+> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 未开始｜**版本**：v1.4｜**日期**：2026-09-19
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -333,24 +333,26 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | --- | --- |
 | 文生视频 | ✅ 已有 4 模型（seedance 2.0 / hailuo 2.3 / kling o3 / vidu q3 turbo） |
 | 视频分析抽帧 | ✅ 已有 `video_analyze.py` |
-| 视频剪辑 / 拼接 / 合成 | ❌ **完全没有**（ffmpeg 仅用于抽帧，无 `concat` / `trim` / 时间轴实现） |
+| 视频剪辑 / 拼接 / 合成 | ✅ 裁剪 / 拼接 / 加字幕三件套**已落地**（KB-P4：`video_trim` / `video_concat` / `video_subtitle`，见 §5.2 与 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)）；此前 ffmpeg 仅用于抽帧 |
 
 ### 5.2 纳入范围：轻量剪辑三件套
 
-按决策纳入**裁剪 + 拼接 + 加字幕**三件套，覆盖多数「改细节」刚需。
+按决策纳入**裁剪 + 拼接 + 加字幕**三件套，覆盖多数「改细节」刚需。**三件套已由 KB-P4 落地**（下表"实现方式 / 说明"列中括号内容为设计稿原述，实际实现以"落地"列为准）。
 
-| 能力 | 实现方式 | 说明 |
-| --- | --- | --- |
-| 裁剪（trim） | ffmpeg 封装，按 `metadata.time_range` 切分 | 支持单段/多段裁剪 |
-| 拼接（concat / merge） | ffmpeg concat demuxer | 同编码参数素材直接拼接 |
-| 加字幕 | ffmpeg 字幕烧录（ASR 产物直接复用） | 字幕源来自 Segment 的 ASR 文本 + 时间戳 |
+| 能力 | 实现方式 | 说明 | 落地（KB-P4） |
+| --- | --- | --- | --- |
+| 裁剪（trim） | ffmpeg 封装，按时间区间切分 | 支持起止秒区间裁剪 | ✅ `video_trim`：`-ss`（置于 `-i` 前）/`-t` + `-c copy`，默认流拷贝无损秒级 |
+| 拼接（concat / merge） | ffmpeg concat demuxer | 同编码参数素材直接拼接 | ✅ `video_concat`：concat demuxer + `-c copy`，严格按传入顺序；编码参数不一致时需重编码 |
+| 加字幕 | ffmpeg 字幕烧录 | 字幕源由**调用方显式提供**（含时间轴）；实测现有 ASR 只返回纯文本，无法自动对齐 | ✅ `video_subtitle`：`subtitles` 滤镜（libass）+ 重编码，入参 `cues=[{start,end,text}]` |
 
-**设计约束**：
+**设计约束**（含落地偏离，勿按原文理解现状）：
 
 - **不做时间轴 UI**：产物由对话框预览，避免引入专业剪辑前端
 - **不做转场 / 特效 / 多轨音画**：留给独立项目
 - **转码是 CPU 密集**：需专门任务队列（Celery）+ 独立配额计量，避免阻塞主链路
+  → **落地偏离**：确实走 Celery，但**复用默认 `celery` 队列**（未新建队列/容器），亦**未做独立配额计量**——剪辑为秒级 IO 操作（trim/concat 均为 `-c copy`），专用队列与独立计量属过度设计；产物写入走既有存储代理隐式计费
 - 产物默认不入知识库，用户显式要求才存档
+  → **落地偏离**：产物**默认存入成品库**（`store_render_output`，与 `render_video` 出片同口径），零额外机制，也更利于「翻旧片复用」
 
 ---
 
@@ -403,7 +405,8 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | --- | --- | --- |
 | `create_knowledge_base` | 参数含 `name` / `base_type` / `partition_mode` / `description`，支持对话内建库 | ✅ **已落地**（builtin provider `knowledge_base_tools`，见下） |
 | 检索工具扩展（改造 `search_knowledge_base`） | 新增 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤参数 | ✅ **已落地**（KB-P3，见 [modules/02-knowledge-base.md §11.9.3](./modules/02-knowledge-base.md#1193-检索工具的四个可选入参)） |
-| 视频渲染出片（新增） | `render_video`（builtin provider `video_render_tools`）+ 成品库 | ✅ **已落地**（KB-P3.7）：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库。`video_trim` / `video_concat` / `video_subtitle` 三个独立编辑工具**未实现**——当前经 composition 的 `data-media-start` 裁切与多轨排布实现同等能力 |
+| 视频渲染出片（新增） | `render_video`（builtin provider `video_render_tools`）+ 成品库 | ✅ **已落地**（KB-P3.7）：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库。 |
+| 视频轻量剪辑三件套（新增） | `video_trim` / `video_concat` / `video_subtitle`（builtin provider `video_edit_tools`）+ 成品库 | ✅ **已落地**（KB-P4）：裁剪（流拷贝）/ 拼接（concat demuxer）/ 加字幕（`subtitles` 滤镜），经 Celery 默认队列异步执行，产物走 `store_render_output` 存入成品库。见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地) |
 
 `create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
 
@@ -411,7 +414,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 - 参数：`name`（必填）、`base_type`（可选，`document`/`image`/`video`/`audio`/`mixed`，默认 `mixed`）、`partition_mode`（可选，`none`/`date_month`/`date_day`/`custom`，默认 `none`）、`description`（可选）。`base_type` / `partition_mode` 在工具内先做枚举校验，非法值直接返回可读错误，不进入服务层。
 - 服务调用：`KnowledgeBaseService.create_user_content_base(..., operation_context="user")`，仅创建**当前登录用户的私有**用户资料库。
 - 账号来源：由运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` 通过工厂参数 `account_id` 透传（与 `os_file_task` / `computer_action` 的 `requester` 同一注入点），工具内部再经 `AccountService` 加载真实 `Account` 实例。
-- **未落地**：`video_trim` / `video_concat` / `video_subtitle` 三个**独立编辑工具未实现**（渲染出片能力已由 `render_video` 提供，见 §7.4 与 [modules/02-knowledge-base.md §11.14](./modules/02-knowledge-base.md#1114-hyperframes-渲染宿主p37-已落地)）。检索过滤参数扩展已在 KB-P3 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.9](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)）。
+- **未落地**：对话框内成片预览（`render_video` 与三个剪辑工具的产物均存入成品库，尚无对话内直接预览的成片播放器）。`video_trim` / `video_concat` / `video_subtitle` 已在 KB-P4 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)）。检索过滤参数扩展已在 KB-P3 落地（见 §7.4 表与 [modules/02-knowledge-base.md §11.9](./modules/02-knowledge-base.md#119-检索过滤参数p3-已落地)）。
 
 ---
 
@@ -428,7 +431,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 7 | **存储配额空白** | account / Plan 均无存储字段 | 按 §2.6 新增配额模型 | ✅ 已修复（`PlanEntitlement.storage_quota_gb` + `StorageQuotaService`）|
 | 8 | **用量无 account 维度** | `StorageConfigService.get_storage_stats()` 仅全局 | 新增按 account 聚合计量 | ✅ 已修复（`account_storage_usage` + `StorageQuotaService.get_usage_summary`）|
 | 9 | **解析无分级策略** | 无档位概念 | 按 §3.3 实现 L1 / L2 双阶段 | ✅ 已修复（L1 为 KB-P2A：多媒体走 L1 解析并写 `parse_profile.tier1`；L2 为 KB-P3：`build_document_l2_task` + 触发路由 `/documents/<id>/l2` 按需触发并写 `parse_profile.tier2`，见 §9.2） |
-| 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ⚠️ 部分落地（KB-P3.7）：渲染出片能力已由 `render_video` + HyperFrames composition 提供（裁切经 `data-media-start`、拼接经多轨排布）；`video_trim` / `video_concat` / `video_subtitle` 三个独立工具仍未实现 |
+| 10 | **无视频轻量编辑** | ffmpeg 仅用于抽帧 | 按 §5.2 新增裁剪 / 拼接 / 字幕 | ✅ 已完成：渲染出片由 KB-P3.7 落地（`render_video` + HyperFrames composition）；`video_trim` / `video_concat` / `video_subtitle` 三个独立编辑工具由 KB-P4 落地（见 §5.2 与 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | 11 | **配额并发超卖** | `check_quota`（读）与 `add_usage`（写）分离，无锁，两个会话可同时通过校验 | 新增 `StorageQuotaService.consume_quota()`，在 `FOR UPDATE` 行锁内完成校验+累加 | ✅ 已修复（分片 `complete` / 秒传 `instant` 改为合并前原子预占，失败释放预占）|
 | 12 | **合并失败留孤儿文件** | `merge_chunks` 流式写目标对象，中途失败不清理半成品 | 在 `except` 中 `delete_object(target_key)` 回收 | ✅ 已修复（`LocalStorageService.merge_chunks`）|
 
@@ -456,7 +459,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | **KB-P1 数据基座** | 模型与配额能跑 | `KnowledgeBase` 加 `base_type`/`partition_mode`；新增 `KnowledgePartition`、`KnowledgeBaseTag`/`DocumentTag`、`account_storage_usage`；`UploadFile.size` → `BigInteger`；`PlanEntitlement` 挂 `storage_quota_gb` + `storage_addon` plan_type；`StorageQuotaService` | 建板块、传小文件、配额正确累加与拒绝 | ✅ **已完成**（实施计划：[2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)） |
 | **KB-P2 上传与解析** | 大文件与多模态入库 | **KB-P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**KB-P2B（已完成）**：分片上传 + 秒传 + 断点续传；单文件上限改为按套餐权益分级 | KB-P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；KB-P2B：分片链路本身可传 GB 级（流式合并，不整文件入内存）——**⚠️ 前提是管理员已在套餐配置 `max_single_file_gb` 权益，否则仍按默认 15MB 拒绝** | ✅ **已完成**（KB-P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；KB-P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
 | **KB-P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（KB-P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
-| **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **渲染出片已落地（KB-P3.7）**：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）。⬜ **未落地**：`video_trim` / `video_concat` / `video_subtitle` 独立编辑工具、对话框成片预览 | 对话里出片并存入成品库（✅ 已达成） | ⚠️ 部分完成（KB-P3.7） |
+| **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **已落地**：渲染出片（KB-P3.7）结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）；轻量剪辑三件套（KB-P4）`video_trim` / `video_concat` / `video_subtitle`（`video_edit_tools` provider，经 Celery 默认队列，产物走 `store_render_output`）。⬜ **未落地**：对话框内成片预览 | 对话里出片并存入成品库（✅ 已达成）；对话里裁剪/拼接/加字幕并存入成品库（✅ 已达成） | ✅ **已完成**（出片 KB-P3.7 + 剪辑 KB-P4，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | **KB-P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
 
 **最小可用闭环 = KB-P1 + KB-P2 完成**（素材能入库、能被检索）。KB-P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；KB-P2B（大文件分片上传）落地后，KB-P2 已完整收口。

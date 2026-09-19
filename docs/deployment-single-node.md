@@ -551,3 +551,32 @@ docker compose exec llmops-render-worker ffmpeg -version | head -1
 | 3 串行（同时 1 个） | 178s，峰值 1659 MB |
 | low-memory 阈值 | `LOW_MEMORY_TOTAL_MB_THRESHOLD = 8192`（渲染镜像内 CLI 包常量，见 §1.2） |
 | V8 默认堆 | 2240 MB（支持 ~1 worker） |
+
+### 7.4 视频轻量剪辑运行依赖与实测（KB-P4）
+
+KB-P4 的剪辑三件套（`video_trim` / `video_concat` / `video_subtitle`）与渲染链路**运行在不同容器**，
+依赖也不同，勿混为一谈：
+
+| 能力 | 执行容器 | ffmpeg 来源 | 额外系统依赖 |
+| --- | --- | --- | --- |
+| 渲染出片（KB-P3.7） | `llmops-render-worker`（默认不启动） | 镜像内 `/usr/bin/ffmpeg`（`HYPERFRAMES_FFMPEG_PATH`） | Node 24 + Chromium + ffmpeg/ffprobe |
+| 轻量剪辑（KB-P4） | **`llmops-api` / `llmops-celery`（默认启动，走默认 `celery` 队列）** | **api 容器内无系统 ffmpeg**，用 `imageio_ffmpeg` 静态二进制兜底 | **字幕另需 `fontconfig` + 字体**（见下） |
+
+- **无需额外安装 ffmpeg**：`imageio-ffmpeg`（`api/requirements.txt`，实测二进制 **v7.0.2**）随 pip 依赖装入 api 镜像，
+  具备 **libx264 / concat demuxer / subtitles 滤镜**；**无 `drawtext`**（故字幕走 `subtitles` 烧录）。
+- **字幕需要字体，且这是硬条件**：libass 找不到字体时**不报错、静默跳过字幕渲染**（退出码仍为 0），
+  产物会与源帧逐像素相同。故 [api/Dockerfile](../api/Dockerfile) 显式安装
+  `fontconfig fonts-dejavu-core` 并执行 `fc-cache -f`，且 `VideoEditService._assert_fonts_available()`
+  在烧录前用 `fc-list` 校验。**自定义镜像若省掉这两个包，字幕会静默失效**。
+- **不占渲染侧资源**：剪辑只跑在 api / 主 worker 上，默认清单即可用，不需要 `cloud-render` profile，
+  也不会占用 `render` 队列的并发额度。
+
+**本机实测记录（2026-09-19，api 容器内）**：
+
+| 项 | 结果 |
+| --- | --- |
+| trim（`-c copy`，5s 源取 1.0–3.0s） | 产物 2.02s，ffprobe 校验通过 |
+| concat（concat demuxer，2s + 2s） | 产物 4.00s，ffprobe 校验通过 |
+| subtitle（同源 2s，两条字幕） | 产物 2.00s，字幕像素已烧入（相对源帧 md5 发生变化） |
+| 字体缺失场景 | 修复前：退出码 0 但产物与源帧 md5 完全相同（静默失效）；修复后：`fc-list` 校验拦下并抛可读错误 |
+

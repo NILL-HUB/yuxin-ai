@@ -818,3 +818,40 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 > `docker compose --profile cloud-render up -d llmops-render-worker` 一键接通。
 > 详见 [deployment-single-node.md](../../deployment-single-node.md) 的「渲染执行位置」与
 > [09-desktop-client.md](09-desktop-client.md) 的 render worker 小节。
+
+### 11.15 视频轻量剪辑（KB-P4 已落地）
+
+「改细节」链路的剪辑三件套：裁剪 / 拼接 / 加字幕，产物存入成品库（与出片共用 `store_render_output`）。
+
+| 能力 | 工具 | 实现 | 说明 |
+| --- | --- | --- | --- |
+| 裁剪 | `video_trim` | ffmpeg `-ss/-t -c copy` | 默认流拷贝（无损、秒级）；`reencode=True` 可重编码换取帧精度 |
+| 拼接 | `video_concat` | ffmpeg `concat demuxer -c copy` | 按传入顺序拼接，要求各段编码参数一致 |
+| 加字幕 | `video_subtitle` | ffmpeg `subtitles` 滤镜（libass）+ 重编码 | **字幕时间轴由调用方显式提供**（见下） |
+
+**执行环境**：api 容器内**无系统 ffmpeg**，依赖 `imageio_ffmpeg` 静态二进制（实测 v7.0.2，具备 libx264 / concat demuxer / subtitles 滤镜；**无 drawtext**，故字幕走 subtitles 烧录）。
+剪辑经 Celery 任务（`internal.task.video_edit_tasks.*`，走默认 `celery` 队列）异步执行，避免阻塞对话请求线程。
+
+**⚠️ 字幕时间轴的现状（重要，勿按旧设计稿理解）**：
+现有 ASR（`AudioService.audio_to_text`）**只返回纯文本、零时间戳**，故**无法**从库内 ASR 产物自动生成 SRT。
+`video_subtitle` 的工具入参因此要求调用方直接给出 `cues=[{start, end, text}]`；
+需要「自动对齐」时，应由上层（LLM 读 ASR 文本 + 视频时长）分配时间轴后再传入。
+
+**⚠️ 字幕烧录的字体前置条件（实测缺陷，已修复）**：api 镜像（python slim）**原本既无 fontconfig 配置也无任何字体**，
+而 libass 找不到字体时**不报错、静默跳过字幕渲染**——实测产物与源帧**逐像素 md5 完全相同**、退出码仍为 0。
+即「退出码 0」在此场景下不代表字幕已烧入。修复分两处：
+① [api/Dockerfile](../../../api/Dockerfile) 显式安装 `fontconfig fonts-dejavu-core` 并 `fc-cache -f`；
+② [video_edit_service.py](../../../api/internal/service/video_edit_service.py) 的 `VideoEditService._assert_fonts_available()`
+在烧录前用 `fc-list` 校验，缺失即抛可读错误，杜绝「假成功」。
+
+**分层与实现**：
+
+| 层 | 文件 | 职责 |
+| --- | --- | --- |
+| 命令构造 | [ffmpeg_edit.py](../../../api/internal/core/video/ffmpeg_edit.py)（`build_trim_command` / `build_concat_command` / `build_subtitle_command` / `render_srt` / `format_srt_timestamp`） | 纯函数：只构造命令与 SRT 文本，不碰 subprocess / 文件系统 |
+| 执行与校验 | [video_edit_service.py](../../../api/internal/service/video_edit_service.py)（`trim` / `concat` / `burn_subtitles` + `trim_document` / `concat_documents` / `subtitle_document`） | 下载素材 → 执行 ffmpeg → 校验产物 → 存成品库；归属校验复用 `get_document_detail` |
+| 异步任务 | [video_edit_tasks.py](../../../api/internal/task/video_edit_tasks.py) | 薄委托（与 `knowledge_l2_tasks` 同范式）；`VideoEditError` 为业务失败**不重试**，IO/存储抖动才重试（`max_retries=2`） |
+| 对话内工具 | `video_edit_tools`（`video_trim` / `video_concat` / `video_subtitle`，各含 `.py` + `.yaml` + `positions.yaml`，provider 已在 `providers.yaml` 登记） | 参数校验 → 派发 Celery → 立即返回任务号 |
+
+**工具挂载点**：`assistant_agent_service._build_assistant_runtime_tools`（与 `render_video` 同处，注入 `account_id` 用于素材归属校验与成品库归属）。
+
