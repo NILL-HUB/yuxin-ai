@@ -85,6 +85,8 @@ class SkillConfig(BaseModel):
     curator_stale_to_deprecated_days: int = 30
     bump_use_redis_enabled: bool = True
     bump_use_neo4j_flush_interval: int = 3600
+    # 统计 hash 兜底 TTL（防未命中技能统计永久滞留，见 P3c-3 缺口十二）
+    skill_stats_ttl_seconds: int = 90 * 86400
 
 
 # =========================================================
@@ -167,7 +169,7 @@ class SkillEmergence:
 
                 if frequency >= min_freq:
                     # 新技能提取（需行为验证：frequency >= min_freq）
-                    memories = self._fetch_memories(memory_ids)
+                    memories = self._fetch_memories(memory_ids, owner_key=owner_key)
                     if memories:
                         new_skill = self._extract_template(memories)
                         if new_skill is not None:
@@ -256,9 +258,12 @@ class SkillEmergence:
                 text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
                 data = json.loads(text)
                 # key 格式: seed:{owner_key}:{skill_name}
+                # owner_key 自身可能含 ':'（admin:{uuid}[:{agent}]），故不能按
+                # 冒号段数拆——必须按已解析的主体键前缀精确切掉，否则 admin 键下
+                # skill_name 会得到 '{uuid}:{skill}' 而非 skill 名（P3c-3）。
+                prefix = f"seed:{owner_key}:"
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                parts = key_str.split(":", 2)
-                skill_name = parts[2] if len(parts) >= 3 else ""
+                skill_name = key_str[len(prefix):] if key_str.startswith(prefix) else ""
                 if skill_name:
                     hints[skill_name] = data
             return hints
@@ -384,8 +389,15 @@ class SkillEmergence:
             logger.warning("_find_existing_skill: 查询失败", exc_info=True)
             return None
 
-    def _fetch_memories(self, memory_ids: list[str]) -> list[dict]:
-        """批量获取记忆内容。"""
+    def _fetch_memories(
+        self, memory_ids: list[str], owner_key: str = ""
+    ) -> list[dict]:
+        """批量获取记忆内容（按主体谓词限定，防跨主体取数）。
+
+        Args:
+            memory_ids: 记忆节点 id 列表
+            owner_key: 主体键；非空时追加归属谓词（只取本主体节点）
+        """
         if not memory_ids:
             return []
 
@@ -394,14 +406,21 @@ class SkillEmergence:
             return []
 
         try:
-            cypher = """
+            where = ""
+            props: dict = {}
+            if owner_key:
+                owner = MemoryOwnerKey.parse(owner_key)
+                where = f"AND {owner.neo4j_filter_condition('n')}"
+                props = owner.neo4j_props()
+            cypher = f"""
             UNWIND $ids AS mid
             MATCH (n) WHERE (n:MemoryNode OR n:Episode) AND (n.node_id = mid OR n.id = mid)
+              {where}
             RETURN n.node_id AS id, n.content AS content, n.created_at AS created_at
             """
 
             with driver.session() as session:
-                result = session.run(cypher, ids=memory_ids)
+                result = session.run(cypher, ids=memory_ids, **props)
                 records = list(result)
 
             return [
@@ -625,8 +644,13 @@ class SkillEmergence:
 
         try:
             owner = MemoryOwnerKey.parse(skill.user_id)
-            cypher = """
-            MERGE (s:Skill {id: $skill_id})
+            # 归属并入 MERGE 模式：否则不同主体的同名技能算出同一 skill_id
+            # （md5(name)），会被合并成同时带两种归属属性的混装节点（P3b 缺口五）。
+            owner_pattern = ", ".join(
+                f"{name}: ${name}" for name in owner.neo4j_props()
+            )
+            cypher = f"""
+            MERGE (s:Skill {{id: $skill_id, {owner_pattern}}})
             SET s.skill_id = $skill_id,
                 s.name = $name,
                 s.description = $description,
@@ -661,6 +685,7 @@ class SkillEmergence:
                         "last_updated_at": skill.last_updated_at,
                         "source_memories": skill.source_memories,
                         "owner_props": owner.neo4j_props(),
+                        **owner.neo4j_props(),
                     },
                 ).consume()
 
@@ -682,13 +707,19 @@ class SkillEmergence:
             except ValueError:
                 status = SkillStatus.CANDIDATE
 
+            # 归属：按主体属性还原（admin 节点无 user_id，不得退化为空串——
+            # 否则 _persist_skill 的 parse("") 抛错被吞，形成「静默假成功」）。
+            # 无归属节点抛 MemoryOwnerKeyError → 本方法 except 捕获 → 返回 None，
+            # 调用方跳过该节点且不计入 scanned。
+            owner = MemoryOwnerKey.from_neo4j_props(node)
+
             return Skill(
                 skill_id=node.get("id", ""),
                 name=node.get("name", ""),
                 description=node.get("description", ""),
                 template=node.get("template", ""),
                 parameters=node.get("parameters", []) or [],
-                user_id=node.get("user_id", ""),
+                user_id=owner.to_key(),
                 status=status,
                 maturity=float(node.get("maturity", 0.0)),
                 use_count=int(node.get("use_count", 0)),
@@ -933,6 +964,9 @@ class SkillEmergence:
             pipe = redis_client.pipeline()
             pipe.hincrby(key, f"{skill_id}:use_count", 1)
             pipe.hset(key, f"{skill_id}:last_used_at", now)
+            # 兜底 TTL（缺口十二）：flush 只清「已成功合并」的字段，未命中技能
+            # （节点已删/legacy 未回填）的统计否则会永久滞留。
+            pipe.expire(key, self._config.skill_stats_ttl_seconds)
             pipe.execute()
             return True
         except Exception:
