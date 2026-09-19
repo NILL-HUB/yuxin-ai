@@ -540,7 +540,14 @@ class MemoryGovernor:
             logger.warning("_clear_user_cache: 清理失败 owner=%s", owner_key, exc_info=True)
 
     def _clear_all_user_cache(self, owner_key: str) -> int:
-        """清理主体全部 Redis 缓存键，返回删除数量。"""
+        """清理主体全部 Redis 缓存键，返回删除数量。
+
+        ⚠️ 约定（P3c-3 缺口十）：新增含主体键的 Redis 键时，主体键**必须**以
+        ``:`` 与前后缀分隔（如 ``prefix:{owner}`` / ``prefix:{owner}:suffix``），
+        否则不会被本方法的两个通配模式命中，GDPR 清理将静默漏删。
+        把主体混入哈希/摘要的键（如 ``schedule_suggestion:{md5}``）天然无法命中，
+        需各自实现清理。
+        """
         redis_client = self._get_redis()
         if redis_client is None:
             return 0
@@ -553,6 +560,9 @@ class MemoryGovernor:
             ]
             for pattern in patterns:
                 keys.extend(redis_client.keys(pattern))
+            # 同一键可能被多个模式命中（如 digest 键同时匹配 *:{owner} 与精确前缀）；
+            # delete 幂等，但 len() 会重复计数使 stats 偏大（缺口十一）——按序去重。
+            keys = list(dict.fromkeys(keys))
             if keys:
                 redis_client.delete(*keys)
             return len(keys)

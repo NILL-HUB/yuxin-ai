@@ -148,3 +148,32 @@ def test_clear_all_user_cache_hits_every_owner_scoped_key():
 def test_clear_all_user_cache_returns_zero_without_redis():
     gov = _governor(None)
     assert gov._clear_all_user_cache(str(uuid4())) == 0
+
+
+def test_clear_all_user_cache_dedupes_count():
+    """缺口十一：同一键被两个模式命中时，计数不得重复。
+
+    ``memory:digest:{owner}`` 同时匹配 ``*:{owner}``（尾部主体键）与精确前缀
+    ``memory:digest:{owner}``。``delete(*keys)`` 幂等，故清理正确性不受影响，
+    但 ``len(keys)`` 会把它计两次，使 stats["redis_keys"] 偏大。
+    """
+    account_id = uuid4()
+    digest_key = f"memory:digest:{account_id}"
+
+    class _Redis:
+        def keys(self, pattern):
+            if pattern == f"*:{account_id}":
+                return [digest_key, f"skill:pool:{account_id}"]
+            if pattern == f"*:{account_id}:*":
+                return []
+            # 精确前缀模式
+            return [digest_key]
+
+        def delete(self, *keys):
+            return len(keys)
+
+    gov = _governor(_Redis())
+
+    count = gov._clear_all_user_cache(str(account_id))
+
+    assert count == 2, "distinct 键为 2（digest + skill:pool），不得重复计数"
