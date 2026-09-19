@@ -114,11 +114,12 @@ class MemoryAddTool(BaseTool):
 
             try:
                 from app.http.app import injector
+                from internal.entity.memory_owner_entity import MemoryOwnerKey
                 from internal.service.memory.ledger_writer import LedgerWriter
 
                 writer = injector.get(LedgerWriter)
                 memory_id = writer.write_agent_curated(
-                    account_id=self.account_id,
+                    owner_key=MemoryOwnerKey.for_user(self.account_id),
                     content=content,
                     memory_type=memory_type,
                 )
@@ -155,13 +156,15 @@ class MemoryReplaceTool(BaseTool):
         with app_session_scope():
             try:
                 from app.http.app import injector
+                from internal.entity.memory_owner_entity import MemoryOwnerKey
                 from internal.service.memory.ledger_writer import LedgerWriter
 
                 writer = injector.get(LedgerWriter)
+                owner_key = MemoryOwnerKey.for_user(self.account_id)
 
                 # 1. 标记旧记忆为 superseded
                 ok = writer.invalidate_agent_curated(
-                    account_id=self.account_id,
+                    owner_key=owner_key,
                     memory_id=old_memory_id,
                     action="replace",
                 )
@@ -170,7 +173,7 @@ class MemoryReplaceTool(BaseTool):
 
                 # 2. 写入新记忆
                 new_id = writer.write_agent_curated(
-                    account_id=self.account_id,
+                    owner_key=owner_key,
                     content=new_content,
                     memory_type=memory_type,
                     metadata={"replaces": old_memory_id},
@@ -209,11 +212,12 @@ class MemoryRemoveTool(BaseTool):
         with app_session_scope():
             try:
                 from app.http.app import injector
+                from internal.entity.memory_owner_entity import MemoryOwnerKey
                 from internal.service.memory.ledger_writer import LedgerWriter
 
                 writer = injector.get(LedgerWriter)
                 ok = writer.invalidate_agent_curated(
-                    account_id=self.account_id,
+                    owner_key=MemoryOwnerKey.for_user(self.account_id),
                     memory_id=memory_id,
                     action="remove",
                 )

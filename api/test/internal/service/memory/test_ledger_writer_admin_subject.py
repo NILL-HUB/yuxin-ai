@@ -364,3 +364,100 @@ def test_write_full_path_user_owner_keeps_user_id(monkeypatch):
 
     episode_calls = [c for c in driver.calls if "Episode:MemoryNode" in c[0]]
     assert episode_calls[0][1]["owner_props"] == {"user_id": "acc-raw"}
+
+
+# =========================================================
+# agent_curated 路径主体化（write / invalidate）
+# =========================================================
+
+
+def test_write_agent_curated_user_owner_uses_user_id_prop(monkeypatch):
+    """用户态：Neo4j 属性仍是 user_id（逐字节等价）。"""
+    writer, driver = _writer_with_driver(monkeypatch)
+    # 抽出的可替换向量入口：避免单测依赖真实 embedding 服务/网络
+    monkeypatch.setattr(writer, "_embed_content", lambda content: [0.1] * 8)
+    monkeypatch.setattr(writer, "_upsert_vector", lambda **kw: str(kw["forced_memory_id"]))
+
+    account_id = uuid4()
+    result = writer.write_agent_curated(
+        owner_key=MemoryOwnerKey.for_user(account_id), content="内容"
+    )
+
+    assert result is not None
+    cypher, params = driver.calls[0]
+    assert "user_id: $user_id" in cypher
+    assert params["user_id"] == str(account_id)
+    assert "admin_user_id" not in params
+
+
+def test_write_agent_curated_admin_owner_writes_admin_props(monkeypatch):
+    writer, driver = _writer_with_driver(monkeypatch)
+    monkeypatch.setattr(writer, "_embed_content", lambda content: [0.1] * 8)
+    monkeypatch.setattr(writer, "_upsert_vector", lambda **kw: str(kw["forced_memory_id"]))
+
+    admin_id = uuid4()
+    result = writer.write_agent_curated(
+        owner_key=MemoryOwnerKey.for_admin(admin_id), content="管理员记忆"
+    )
+
+    assert result is not None
+    cypher, params = driver.calls[0]
+    assert "admin_user_id: $admin_user_id" in cypher
+    assert "user_id: $user_id" not in cypher
+    assert params["admin_user_id"] == str(admin_id)
+    assert "user_id" not in params
+
+
+def test_write_agent_curated_no_embedding_returns_none(monkeypatch):
+    """向量生成失败/为空：不写投影（不变量：不得造纯 DB 孤儿行）。"""
+    writer, _driver = _writer_with_driver(monkeypatch)
+    monkeypatch.setattr(writer, "_embed_content", lambda content: [])
+
+    assert writer.write_agent_curated(
+        owner_key=MemoryOwnerKey.for_user(uuid4()), content="内容"
+    ) is None
+
+
+def test_invalidate_agent_curated_admin_owner(monkeypatch):
+    writer, driver = _writer_with_driver(monkeypatch)
+
+    admin_id = uuid4()
+    writer.invalidate_agent_curated(
+        owner_key=MemoryOwnerKey.for_admin(admin_id), memory_id="m-1"
+    )
+
+    cypher, params = driver.calls[0]
+    assert "admin_user_id: $admin_user_id" in cypher
+    assert "user_id: $user_id" not in cypher
+    assert params["admin_user_id"] == str(admin_id)
+
+
+def test_invalidate_agent_curated_user_owner_uses_user_id(monkeypatch):
+    writer, driver = _writer_with_driver(monkeypatch)
+
+    account_id = uuid4()
+    writer.invalidate_agent_curated(
+        owner_key=MemoryOwnerKey.for_user(account_id), memory_id="m-1"
+    )
+
+    cypher, params = driver.calls[0]
+    assert "user_id: $user_id" in cypher
+    assert params["user_id"] == str(account_id)
+
+
+def test_invalidate_agent_curated_writes_pg_owner_predicate(monkeypatch):
+    """PG 侧失效必须按主体谓词（不能只比 owner_account_id，否则 admin 行命中不到）。"""
+    writer, _driver = _writer_with_driver(monkeypatch)
+
+    account_id = uuid4()
+    writer.invalidate_agent_curated(
+        owner_key=MemoryOwnerKey.for_user(account_id), memory_id="m-1"
+    )
+
+    update_sqls = [
+        sql for sql, _params in writer.db.session.executed
+        if "UPDATE user_memory" in sql
+    ]
+    assert update_sqls, "应下推 UPDATE user_memory"
+    assert "owner_type" in update_sqls[0], "PG 失效必须带主体类型谓词"
+    assert "owner_account_id" in update_sqls[0]

@@ -1150,9 +1150,21 @@ class LedgerWriter:
     # 基因4: Agent-Curated Memory（§2.5）
     # =========================================================
 
+    def _embed_content(self, content: str) -> list[float]:
+        """内容向量（抽为独立方法便于测试替换；失败返回空列表）。"""
+        try:
+            from internal.service.embeddings_service import EmbeddingsService
+            from app.http.app import injector
+
+            return injector.get(EmbeddingsService).embeddings.embed_query(content) or []
+        except Exception:
+            logger.warning("write_agent_curated: 向量生成失败", exc_info=True)
+            return []
+
     def write_agent_curated(
         self,
-        account_id: UUID,
+        *,
+        owner_key: MemoryOwnerKey,
         content: str,
         memory_type: str = "preference",
         metadata: Optional[dict] = None,
@@ -1169,7 +1181,8 @@ class LedgerWriter:
             3. 同步生成向量并写入维度分表（消除“后台补向量”从未落地的历史欠账）
 
         Args:
-            account_id: 用户账号 ID
+            owner_key: 记忆主体键（P3c-1）。用户主体 ``for_user(account_id)``；
+                admin 主体 ``for_admin(admin_id[, agent_id])``
             content: 记忆内容文本
             memory_type: 记忆类型（preference/habit/identity/goal/capability/episode）
             metadata: 额外元数据（如 explicit_category, explicit_polarity）
@@ -1177,18 +1190,21 @@ class LedgerWriter:
         Returns:
             成功返回 memory_id 字符串，失败返回 None
         """
-        if not content or not account_id:
+        if not content or owner_key is None:
             return None
 
         now = datetime.now(UTC)
         memory_id = uuid4()
+        props = owner_key.neo4j_props()
 
         # 合并 metadata，强制标记 source
         curated_metadata = dict(metadata or {})
         curated_metadata["source"] = "agent_curated"
         curated_metadata["curated_at"] = now.isoformat()
         curated_metadata["event_type"] = memory_type
-        curated_metadata["user_id"] = str(account_id)
+        # user_id 仅用户主体写（admin 主体无此语义；归属由 pg_kwargs/neo4j_props 承载）
+        if owner_key.owner_account_id is not None:
+            curated_metadata["user_id"] = str(owner_key.owner_account_id)
         curated_metadata["memory_type"] = memory_type
 
         # 1. 写入 Neo4j Episode 节点（source="agent_curated"，键的权威）
@@ -1196,25 +1212,25 @@ class LedgerWriter:
         node_created = False
         if driver is not None:
             try:
-                cypher = """
-                CREATE (e:Episode:MemoryNode {
+                cypher = f"""
+                CREATE (e:Episode:MemoryNode {{
                     node_id: $node_id,
-                    user_id: $user_id,
+                    {_owner_pattern(props)},
                     content: $content,
                     summary: $content,
                     created_at: datetime(),
                     storage_tier: 'hot',
                     source: 'agent_curated',
                     memory_type: $memory_type
-                })
+                }})
                 RETURN e.node_id AS node_id
                 """
                 with driver.session() as session:
                     session.run(cypher, {
                         "node_id": str(memory_id),
-                        "user_id": str(account_id),
                         "content": content,
                         "memory_type": memory_type,
+                        **props,
                     })
                 node_created = True
             except Exception:
@@ -1227,9 +1243,9 @@ class LedgerWriter:
         if not node_created:
             # 键值互补不变式：图节点未创建成功则不写 PG 投影行，避免 C 类纯 DB 孤儿
             logger.warning(
-                "write_agent_curated: Neo4j 不可用/写入失败，跳过 PG 写入 account=%s "
+                "write_agent_curated: Neo4j 不可用/写入失败，跳过 PG 写入 owner=%s "
                 "（不再产生纯 DB 孤儿行）",
-                account_id,
+                owner_key.to_key(),
             )
             return None
 
@@ -1240,27 +1256,15 @@ class LedgerWriter:
         curated_metadata["created_from"] = "agent_curated"
         curated_metadata["event_type"] = memory_type
         curated_metadata["memory_type"] = memory_type
-        curated_metadata["user_id"] = str(account_id)
+        if owner_key.owner_account_id is not None:
+            curated_metadata["user_id"] = str(owner_key.owner_account_id)
         curated_metadata["node_id"] = str(memory_id)
 
-        try:
-            from internal.service.embeddings_service import EmbeddingsService
-            from app.http.app import injector
-
-            embeddings_service = injector.get(EmbeddingsService)
-            embedding = embeddings_service.embeddings.embed_query(content)
-        except Exception:
-            logger.warning(
-                "write_agent_curated: 向量生成失败，图节点已建、投影待对账补齐 account=%s",
-                account_id,
-                exc_info=True,
-            )
-            return None
-
+        embedding = self._embed_content(content)
         if not embedding:
             logger.warning(
-                "write_agent_curated: 向量为空，图节点已建、投影待对账补齐 account=%s",
-                account_id,
+                "write_agent_curated: 向量为空/生成失败，图节点已建、投影待对账补齐 owner=%s",
+                owner_key.to_key(),
             )
             return None
 
@@ -1269,24 +1273,25 @@ class LedgerWriter:
             vector=embedding,
             payload=curated_metadata,
             forced_memory_id=str(memory_id),
-            owner_key=MemoryOwnerKey.for_user(account_id),
+            owner_key=owner_key,
         )
         if vector_memory_id is None:
             logger.warning(
-                "write_agent_curated: 投影/向量写入失败（图节点已建，待对账）account=%s",
-                account_id,
+                "write_agent_curated: 投影/向量写入失败（图节点已建，待对账）owner=%s",
+                owner_key.to_key(),
             )
             return None
 
         logger.info(
-            "write_agent_curated: account=%s memory_id=%s type=%s",
-            account_id, memory_id, memory_type,
+            "write_agent_curated: owner=%s memory_id=%s type=%s",
+            owner_key.to_key(), memory_id, memory_type,
         )
         return str(memory_id)
 
     def invalidate_agent_curated(
         self,
-        account_id: UUID,
+        *,
+        owner_key: MemoryOwnerKey,
         memory_id: str,
         action: str = "remove",
     ) -> bool:
@@ -1299,33 +1304,34 @@ class LedgerWriter:
         同时更新 UserMemory 表和 Neo4j Episode 节点状态。
 
         Args:
-            account_id: 用户账号 ID（权限校验）
+            owner_key: 记忆主体键（P3c-1），同时用于权限校验
             memory_id: 要失效的记忆 ID
             action: "replace" 或 "remove"
 
         Returns:
             成功返回 True，记忆不存在或权限不匹配返回 False
         """
-        if not memory_id or not account_id:
+        if not memory_id or owner_key is None:
             return False
 
         status = "superseded" if action == "replace" else "deprecated"
 
-        # 1. 更新 UserMemory 表
+        # 1. 更新 UserMemory 表（按主体谓词；不能只比 owner_account_id——admin 行该列为 NULL）
         try:
             from sqlalchemy import text as _text
 
+            where_fragment, bind_params = owner_key.pg_sql_predicate("user_memory")
             result = self.db.session.execute(
-                _text("""
+                _text(f"""
                     UPDATE user_memory
                     SET status = :status, updated_at = CURRENT_TIMESTAMP(0)
-                    WHERE id = :memory_id AND owner_account_id = :account_id
+                    WHERE id = :memory_id AND {where_fragment}
                       AND created_from = 'agent_curated'
                 """),
                 {
                     "status": status,
                     "memory_id": memory_id,
-                    "account_id": str(account_id),
+                    **bind_params,
                 },
             )
             self.db.session.commit()
@@ -1341,20 +1347,21 @@ class LedgerWriter:
             self.db.session.rollback()
             return False
 
-        # 2. 更新 Neo4j Episode 节点状态
+        # 2. 更新 Neo4j Episode 节点状态（归属谓词与写入同源）
         driver = self._get_driver()
         if driver is not None:
             try:
-                cypher = """
-                MATCH (e:Episode {node_id: $node_id, user_id: $user_id})
+                props = owner_key.neo4j_props()
+                cypher = f"""
+                MATCH (e:Episode {{node_id: $node_id, {_owner_pattern(props)}}})
                 SET e.status = $status,
                     e.t_invalidated_at = datetime()
                 """
                 with driver.session() as session:
                     session.run(cypher, {
                         "node_id": memory_id,
-                        "user_id": str(account_id),
                         "status": status,
+                        **props,
                     })
             except Exception:
                 logger.warning(
@@ -1363,7 +1370,7 @@ class LedgerWriter:
                 )
 
         logger.info(
-            "invalidate_agent_curated: account=%s memory_id=%s action=%s",
-            account_id, memory_id, action,
+            "invalidate_agent_curated: owner=%s memory_id=%s action=%s",
+            owner_key.to_key(), memory_id, action,
         )
         return True
