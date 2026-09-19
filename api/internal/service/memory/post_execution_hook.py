@@ -325,23 +325,31 @@ class PostExecutionHook:
         """获取最近 1 小时的 Episode 节点作为执行轨迹。
 
         优先按 conversation_id 查询，回退到按 user_id 查最近 N 条。
+
+        ADMIN-P3c-4（缺口十四b）：`user_id` 参数为**主体键字符串**——用户态为裸 UUID
+        （与历史 `user_id` 字面量逐字节等价）；admin 态走 `admin_user_id` + `agent_id`
+        属性级分离。
         """
         driver = emergence._get_driver()
         if driver is None:
             return []
 
         try:
+            from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+            owner = MemoryOwnerKey.parse(user_id)
             # 查询最近 1 小时的 Episode 节点（按时间倒序，最多 20 条）
-            cypher = """
-            MATCH (e:Episode {user_id: $user_id})
-            WHERE e.created_at >= datetime() - duration({hours: 1})
+            cypher = f"""
+            MATCH (e:Episode)
+            WHERE {owner.neo4j_filter_condition("e")}
+              AND e.created_at >= datetime() - duration({{hours: 1}})
             RETURN e.node_id AS id, e.content AS content, e.created_at AS created_at
             ORDER BY e.created_at DESC
             LIMIT 20
             """
 
             with driver.session() as session:
-                result = session.run(cypher, user_id=user_id)
+                result = session.run(cypher, **owner.neo4j_props())
                 records = list(result)
 
             return [
