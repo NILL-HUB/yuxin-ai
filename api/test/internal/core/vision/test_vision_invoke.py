@@ -90,3 +90,32 @@ def test_invoke_vision_model_raises_without_model(monkeypatch):
     )
     with pytest.raises(RuntimeError):
         module.invoke_vision_model("data:image/jpeg;base64,AAAA", "describe")
+
+
+def test_invoke_vision_model_multi_sends_all_images(monkeypatch):
+    """多图批喂应把每张图都作为 image_url 放进同一消息。"""
+    import internal.core.vision.vision_invoke as module
+    from internal.service.language_model_service import LanguageModelService
+
+    captured = {}
+
+    class _FakeLLM:
+        def invoke(self, messages):
+            captured["content"] = messages[0].content
+            return type("R", (), {"content": "ok"})()
+
+    monkeypatch.setattr(
+        LanguageModelService, "get_feature_model", classmethod(lambda cls, _key: _FakeLLM())
+    )
+
+    result = module.invoke_vision_model_multi(
+        ["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"], "描述画面"
+    )
+
+    assert result == "ok"
+    urls = [
+        item["image_url"]["url"]
+        for item in captured["content"]
+        if item["type"] == "image_url"
+    ]
+    assert urls == ["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"]

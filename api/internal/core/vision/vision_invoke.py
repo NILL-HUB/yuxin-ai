@@ -53,8 +53,8 @@ def path_to_data_uri(path: str) -> str:
     return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 
-def invoke_vision_model(data_uri: str, prompt: str) -> str:
-    """调用平台视觉模型分析单张图片（入参为 data URI）。"""
+def _invoke_vision_content(content: list) -> str:
+    """把构造好的消息内容交给视觉模型，统一解析返回文本（无模型时抛错）。"""
     from langchain_core.messages import HumanMessage
 
     from internal.service.language_model_service import LanguageModelService
@@ -62,10 +62,6 @@ def invoke_vision_model(data_uri: str, prompt: str) -> str:
     llm = LanguageModelService.get_feature_model("vision_analyze")
     if llm is None:
         raise RuntimeError("未配置视觉分析模型")
-    content = [
-        {"type": "text", "text": prompt},
-        {"type": "image_url", "image_url": {"url": data_uri}},
-    ]
     response = llm.invoke([HumanMessage(content=content)])
     text = getattr(response, "content", "")
     if isinstance(text, list):
@@ -75,6 +71,24 @@ def invoke_vision_model(data_uri: str, prompt: str) -> str:
             if isinstance(item, dict) and item.get("text")
         )
     return str(text or "").strip()
+
+
+def invoke_vision_model(data_uri: str, prompt: str) -> str:
+    """调用平台视觉模型分析单张图片（入参为 data URI）。"""
+    content = [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": data_uri}},
+    ]
+    return _invoke_vision_content(content)
+
+
+def invoke_vision_model_multi(image_data_uris: list[str], prompt: str) -> str:
+    """一次调用分析多张图片（时间线批喂）：文本 + 多张 image_url 同消息。"""
+    content: list = [{"type": "text", "text": prompt}]
+    content.extend(
+        {"type": "image_url", "image_url": {"url": uri}} for uri in image_data_uris
+    )
+    return _invoke_vision_content(content)
 
 
 def _ffmpeg_available() -> bool:
