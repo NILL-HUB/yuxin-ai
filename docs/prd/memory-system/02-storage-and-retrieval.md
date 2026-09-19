@@ -1997,7 +1997,7 @@ class DigestConfig(BaseModel):
 
 以下均**不影响用户端**（用户主体下与改造前等价），且因 **admin 写路径尚未接线**而未在生产触发；
 待 P3c 接入 admin / Agent 记忆读写时须逐项收敛。
-（例外：**缺口二、缺口三已修复**，保留编号以维持与既有引用的对应关系。）
+（例外：**缺口二、三、九、十六已修复**，保留编号以维持与既有引用的对应关系。）
 
 ### 缺口一：图扩展与节点详情无主体谓词
 
@@ -2073,10 +2073,17 @@ admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_
 `AdminCustomerUserService._cleanup_user_runtime_data` 做 PG + Neo4j 清理但**完全不碰 Redis**，
 故注销后 `memory:digest:` / `skill:*` / `nudge:*` 等键只能靠 TTL 兜底存活（digest 最久 86400s）。
 
-### 缺口九：`_verify_owner` / `edit_memory` / `gdpr_delete` 的 Neo4j 侧仅支持用户主体
+### 缺口九（已修复，2026-09-19，ADMIN-P3c-2）：`_verify_owner` / `edit_memory` / `gdpr_delete` 的 Neo4j 侧仅支持用户主体
 
-三处固定用属性 `user_id`；admin 主体下 **fail-closed**（返回 False / 0，不会误删）但功能不可用。
-已在这三处 docstring 如实披露。
+三处原固定用属性 `user_id`；admin 主体下 fail-closed（返回 False / 0，不会误删）但功能不可用。
+
+**修复**：统一改走 `MemoryOwnerKey` 访问器（与写入侧同源，P3b 属性级分离）：
+
+- `_verify_owner` 用 `neo4j_filter_condition("n")` 产谓词 + `neo4j_props()` 绑定；
+  主体键非法时仍 fail-closed（不查库直接 `False`）。
+- `gdpr_delete` 的 Neo4j 起点由 `MATCH (u:User {id: $owner_key})` 改为按主体谓词
+  匹配归属节点——用户态与 admin / Agent 主体均被覆盖（管理员级 `agent_id` 为哨兵，
+  由 `neo4j_props()` 统一产出）。
 
 ### 缺口十：主体键的 Redis 键必须以 `:` 与前后缀分隔（约定）
 
@@ -2123,13 +2130,12 @@ admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `Me
 `entity_resolution.py` 的 `EntityResolver` 全仓仅 DI 注册、**无注入消费点**（与 `ColdStorageManager`
 同级的未接线模块），且内含 `user_id` 属性硬编码。属「已提供、未接入」，P3c 接线时需一并主体化。
 
-### 缺口十六：`_delete_all_pgvector_rows` 仅按 `owner_account_id` 过滤、未追加 `owner_type`
+### 缺口十六（已修复，2026-09-19，ADMIN-P3c-2）：`_delete_all_pgvector_rows` 仅按 `owner_account_id` 过滤、未追加 `owner_type`
 
-`MemoryGovernor._delete_all_pgvector_rows` 只按 `owner_account_id == owner_key` 过滤，未追加 `owner_type`
-（与同文件其它已主体化路径不一致）。该方法仅经 `gdpr_delete`（不可达，见缺口八）触达。
+`MemoryGovernor._delete_all_pgvector_rows` 原只按 `owner_account_id == owner_key` 过滤。
+缺口二修复后 admin 行可落库（该列为 NULL），该漏删从「无害 fail-safe」升级为
+**admin 记忆无法被 GDPR 删除**。
 
-> **⚠️ 风险升级（ADMIN-P3c-1 后）**：缺口二已修复，admin 行现可真正落库（`owner_account_id` 为 NULL）。
-> 因而此方法的「admin 不会被删到」不再是无害的 fail-safe，而是**admin 记忆无法被 GDPR 删除**。
-> 与缺口九（Neo4j 侧仅支持用户主体）同属治理层主体化，需在 P3c-2 一并收敛。
-> 已内联注释披露。
+**修复**：改用 `MemoryOwnerKey.pg_filter_conditions(UserMemory)`（含 `owner_type`），
+用户态与 admin 主体均按各自归属列精确匹配。
 

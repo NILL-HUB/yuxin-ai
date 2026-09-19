@@ -202,9 +202,9 @@
 
 **验证**：全量回归 4947 passed / 13 skipped / 0 failed；真库 + 真图守卫 7 passed（0 skipped）；用户态零变化自证（访问器产物 == 改造前硬编码形态，14 项全等）。
 
-**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：14 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
-（图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、`_verify_owner` 等仅支持用户主体、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点、`_delete_all_pgvector_rows` 未追加 `owner_type`）。
-其中「Neo4j 唯一约束对管理员级失效」（原缺口三）已修复（2026-09，哨兵值方案）；「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二）已修复（2026-09-19，ADMIN-P3c-1；见下节）。
+**已知缺口（ADMIN-P3b 未闭合，待后续批次）**：12 项，详见 [memory-system/02-storage-and-retrieval.md](./memory-system/02-storage-and-retrieval.md) 的「ADMIN-P3b 已知缺口」一节
+（图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点）。
+其中已修复：「Neo4j 唯一约束对管理员级失效」（原缺口三，2026-09 哨兵值方案）、「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二，ADMIN-P3c-1）、「`_verify_owner`/`edit_memory`/`gdpr_delete` 仅支持用户主体」（原缺口九，ADMIN-P3c-2）、「`_delete_all_pgvector_rows` 未追加 `owner_type`」（原缺口十六，ADMIN-P3c-2）。
 
 实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
 
@@ -232,9 +232,34 @@
 （1024/1536）均落 CHECK、admin 行可插入且非法 user 行被拒；Neo4j 探针 `user_id` 为 null、`agent_id`
 为哨兵，清理 leftover=0。真库/真图守卫 8 passed；全量回归 **5055 passed / 13 skipped / 0 failed**。
 
-> **诚实披露**：本阶段完成后 admin **写入能力**已具备（`LedgerWriter` 各写路径接受
-> `MemoryOwnerKey.for_admin(...)`），但**仍无生产调用方**——admin 对话链路对记忆零接线，
-> 属「已提供能力、未接入」。真正端到端可达由 P3c-2 完成。
+> **诚实披露（已被 P3c-2 取代）**：本阶段完成时 admin 写入能力虽已具备，但**无生产调用方**——
+> admin 对话链路对记忆零接线，属「已提供能力、未接入」。该断链已由 **ADMIN-P3c-2** 接上（见下节）。
+
+
+### ADMIN-P3c-2 admin 对话记忆接线 + 治理主体化（2026-09-19 完成）
+
+把 P3c-1 已具备但零调用方的 admin 记忆读写能力接进 admin 对话链路（镜像用户端「先召回、
+后写入」），并让治理层支持 admin 主体——admin 记忆自此**端到端可达**。
+
+| 交付物 | 位置 |
+| --- | --- |
+| admin/Agent 主体召回 | `api/internal/service/memory/admin_memory_recall.py` |
+| 写入 owner 透传 + admin 便捷入口 | `api/internal/service/memory/memory_write_service.py`（`write_from_event(owner_key=)` / `write_admin_conversation`） |
+| 对话链路接线（先召回、答后写入） | `api/internal/service/admin_agent_chat_service.py`（`_recall_memory` / `_write_memory`） |
+| 治理层主体化 | `api/internal/service/memory/memory_governor.py`（`_verify_owner` / `_delete_all_pgvector_rows` / `gdpr_delete`） |
+
+**关键决策**：
+- admin 无 account（`admin_user.account_id` 恒 NULL），主体键**只能** `for_admin(admin_user_id, agent_id=...)`，绝不 `for_user`。
+- 召回与写入均 **fail-open / 吞错**（方法内 + 调用点双保险）；写入走后台线程 + `app_session_scope`——
+  记忆是增强项，任何失败都不得让整轮对话以 error 帧结束。
+- 治理层与写入侧**同源**用 `MemoryOwnerKey` 访问器（`neo4j_filter_condition` / `pg_filter_conditions`），无手写死 `user_id`。
+
+**验证**：全量回归 **5073 passed / 13 skipped / 1 failed**（该 1 项为 `test_account_service` 的邮箱通道未见
+环境失败，已用 git worktree 在 P3c-2 之前的提交复现，确认与本改动无关）；新增 19 个判别性用例。
+
+> **闭环**：P3c-1 遗留的「`LedgerWriter.owner_key` 零调用方」断链已解除——调用链为
+> `AdminAgentChatService._write_memory` → `MemoryWriteService.write_admin_conversation` →
+> `write_from_event(owner_key=)` → `LedgerWriter.write_*(owner_key=)`。
 
 
 ### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
