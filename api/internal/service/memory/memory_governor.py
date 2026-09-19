@@ -330,12 +330,12 @@ class MemoryGovernor:
         冷存储归档对象（L3 Frozen 层）经统一存储后端落盘，由存储后端自身
         的生命周期管理，不在本方法的清理范围内。
 
-        Args:
-            owner_key: 记忆主体键（用户主体为裸 UUID，见 ``MemoryOwnerKey``）
+        ADMIN-P3c-2：Neo4j 侧改走 ``MemoryOwnerKey`` 访问器产出的归属谓词，
+        用户态与 admin / Agent 主体**均**被覆盖（管理员级 agent_id 为哨兵，
+        由 ``neo4j_props()`` 统一产出）。
 
-        ⚠️ Neo4j 侧当前**仅覆盖用户主体**：删除起点为 ``MATCH (u:User {id: $owner_key})``，
-        admin / Agent 主体（节点归属属性为 ``admin_user_id``）不在删除范围内。
-        admin 主体谓词属 P3c（见 P3b 计划已知缺口）。
+        Args:
+            owner_key: 记忆主体键（见 ``MemoryOwnerKey``）
 
         Returns:
             删除统计 dict
@@ -349,21 +349,23 @@ class MemoryGovernor:
 
         driver = self._get_driver()
 
-        # Neo4j 删除
+        # Neo4j 删除（按主体谓词匹配归属节点，含 admin）
         if driver is not None:
             try:
+                from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+                owner = MemoryOwnerKey.parse(owner_key)
+                where = owner.neo4j_filter_condition("n")
                 with driver.session() as session:
                     result = session.run(
-                        """
-                        MATCH (u:User {id: $owner_key})
-                        OPTIONAL MATCH (u)-[r]-(n)
-                        WITH u, collect(DISTINCT n) AS nodes, collect(DISTINCT r) AS rels
-                        DETACH DELETE u
-                        WITH nodes, rels
-                        UNWIND nodes AS node DETACH DELETE node
+                        f"""
+                        MATCH (n) WHERE {where}
+                        OPTIONAL MATCH (n)-[r]-(m)
+                        WITH collect(DISTINCT n) AS nodes, collect(DISTINCT r) AS rels
+                        FOREACH (x IN nodes | DETACH DELETE x)
                         RETURN size(nodes) AS node_count, size(rels) AS edge_count
                         """,
-                        owner_key=owner_key,
+                        {"owner_key": owner_key, **owner.neo4j_props()},
                     ).single()
                     if result:
                         stats["neo4j_nodes"] = result.get("node_count", 0)
@@ -417,26 +419,34 @@ class MemoryGovernor:
     # =========================================================
 
     def _verify_owner(self, memory_id: str, owner_key: str, driver) -> bool:
-        """验证记忆节点 owner 是否为指定主体。
+        """验证记忆节点 owner 是否为指定主体（按主体类型取对应归属属性）。
 
-        ⚠️ Neo4j 侧当前**仅支持用户主体**：按属性 ``n.user_id`` 取值比对。
-        admin / Agent 主体（其归属属性为 ``admin_user_id`` [+ ``agent_id``]）
-        会因取不到 ``user_id`` 而恒返回 False（fail-closed）。
-        admin 主体谓词属 P3c（见 P3b 计划已知缺口）。
+        ADMIN-P3c-2：用户态取 ``n.user_id``；admin 态取 ``n.admin_user_id``
+        （+ ``agent_id`` 哨兵/真实 UUID）。谓词由 ``MemoryOwnerKey`` 访问器产出，
+        与写入侧同源（P3b 属性级分离），不再对 admin 恒返回 False。
+        主体键非法时 fail-closed（不查库，直接 False）。
         """
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
         try:
+            owner = MemoryOwnerKey.parse(owner_key)
+        except Exception:
+            logger.warning("_verify_owner: 主体键非法 owner=%s", owner_key)
+            return False
+
+        try:
+            where = owner.neo4j_filter_condition("n")
             with driver.session() as session:
                 result = session.run(
-                    """
-                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity OR n:Community) AND (n.node_id = $memory_id OR n.id = $memory_id)
-                    RETURN n.user_id AS owner
+                    f"""
+                    MATCH (n) WHERE (n:MemoryNode OR n:Episode OR n:Entity OR n:Community)
+                      AND (n.node_id = $memory_id OR n.id = $memory_id)
+                      AND {where}
+                    RETURN count(n) AS c
                     """,
-                    memory_id=memory_id,
+                    {"memory_id": memory_id, **owner.neo4j_props()},
                 ).single()
-                if result is None:
-                    return False
-                owner = result.get("owner")
-                return owner == owner_key
+                return bool(result and result.get("c"))
         except Exception:
             logger.warning("_verify_owner: 查询失败", exc_info=True)
             return False
@@ -482,20 +492,27 @@ class MemoryGovernor:
     def _delete_all_pgvector_rows(self, owner_key: str) -> int:
         """删除主体全部 pgvector 向量行，返回删除行数。
 
-        注：仅按 ``owner_account_id`` 过滤（admin 主体的该列为 NULL，当前无
-        admin 写入路径，故未追加 owner_type 条件以保持删除语义不变）。
+        ADMIN-P3c-2：改用 ``MemoryOwnerKey.pg_filter_conditions`` 产出的主体谓词
+        （含 ``owner_type``）。此前只比 ``owner_account_id``——admin 主体该列为
+        NULL，会**漏删 admin 记忆**（缺口二修复后 admin 行可落库，该漏删已从
+        「无害 fail-safe」升级为「admin 记忆无法被 GDPR 删除」）。
         """
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+        from internal.model.knowledge import UserMemory
+
         db = self._get_db()
         if db is None:
             return 0
         try:
-            from internal.model.knowledge import UserMemory
-
-            count = db.session.query(UserMemory).filter(UserMemory.owner_account_id == owner_key).delete()
+            owner = MemoryOwnerKey.parse(owner_key)
+            conditions = owner.pg_filter_conditions(UserMemory)
+            count = db.session.query(UserMemory).filter(*conditions).delete()
             db.session.commit()
             return count
         except Exception:
-            logger.warning("_delete_all_pgvector_rows: 删除失败 owner=%s", owner_key, exc_info=True)
+            logger.warning(
+                "_delete_all_pgvector_rows: 删除失败 owner=%s", owner_key, exc_info=True
+            )
             return 0
 
     def _clear_user_cache(self, owner_key: str) -> None:
