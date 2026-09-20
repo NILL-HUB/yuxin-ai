@@ -61,7 +61,7 @@ const stubs = {
   'a-empty': { template: '<div><slot name="description" /></div>' },
   'a-skeleton': { template: '<div />' },
   'timeline-editor-modal': {
-    template: '<div data-test="reassemble-modal" />',
+    template: '<div v-if="visible" data-test="reassemble-modal" />',
     props: ['visible'],
   },
 }
