@@ -7,6 +7,7 @@ import {
   type GetKnowledgeDocumentResponse,
   type GetKnowledgeDocumentsWithPageRequest,
   type GetKnowledgeDocumentsWithPageResponse,
+  type GetKnowledgePartitionsResponse,
   type GetKnowledgeSegmentsWithPageRequest,
   type GetKnowledgeSegmentsWithPageResponse,
   type HitRequest,
@@ -68,6 +69,13 @@ export const deleteKnowledgeBase = (knowledge_base_id: string, retentionDays?: n
 // 获取用户端知识库详情
 export const getKnowledgeBase = (knowledge_base_id: string) => {
   return get<GetKnowledgeBaseResponse>(`/space/knowledge-bases/${knowledge_base_id}`)
+}
+
+// 获取知识库分区列表（两级树，供详情页分区导航）
+export const getPartitions = (knowledge_base_id: string) => {
+  return get<GetKnowledgePartitionsResponse>(
+    `/space/knowledge-bases/${knowledge_base_id}/partitions`,
+  )
 }
 
 // 知识库召回测试

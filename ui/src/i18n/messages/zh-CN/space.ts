@@ -365,6 +365,10 @@ export default  {
           loadFailed: '用量加载失败，请稍后重试',
           upgrade: '扩容',
         },
+        partitions: {
+          title: '分区导航',
+          all: '全部素材',
+        },
       },
     },
     schedules: {

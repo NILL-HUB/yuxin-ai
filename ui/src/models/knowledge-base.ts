@@ -56,6 +56,19 @@ export type GetKnowledgeBaseResponse = BaseResponse<{
   created_at: number
 }>
 
+// 知识库分区节点（两级树）
+export type KnowledgePartition = {
+  id: string
+  name: string
+  partition_key: string
+  parent_id: string
+  description: string
+  sort_order: number
+}
+
+// 获取知识库分区列表响应结构
+export type GetKnowledgePartitionsResponse = BaseResponse<KnowledgePartition[]>
+
 // 获取指定知识库文档列表分页请求结构
 export type GetKnowledgeDocumentsWithPageRequest = {
   current_page: number

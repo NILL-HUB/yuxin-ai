@@ -374,6 +374,10 @@ export default  {
           loadFailed: 'Failed to load usage',
           upgrade: 'Upgrade',
         },
+        partitions: {
+          title: 'Partitions',
+          all: 'All materials',
+        },
       },
     },
     schedules: {
