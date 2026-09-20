@@ -892,7 +892,13 @@ class KnowledgeBaseService(BaseService):
         )
         frame_urls: dict[str, str] = {}
         for doc_id, key in frame_rows:
-            url = cos_service.get_file_url(str(key))
+            try:
+                url = cos_service.get_file_url(str(key))
+            except Exception:
+                logging.warning(
+                    "帧缩略图地址生成失败 document_id=%s key=%s", doc_id, key, exc_info=True,
+                )
+                continue
             if url:
                 frame_urls[str(doc_id)] = url
 
@@ -918,7 +924,13 @@ class KnowledgeBaseService(BaseService):
             if upload is not None:
                 key = str(getattr(upload, "key", "") or "")
                 if key:
-                    playback_url = cos_service.get_file_url(key) or ""
+                    try:
+                        playback_url = cos_service.get_file_url(key) or ""
+                    except Exception:
+                        logging.warning(
+                            "播放直链生成失败 document_id=%s key=%s", document.id, key, exc_info=True,
+                        )
+                        playback_url = ""
             setattr(document, "playback_url", playback_url)
 
     def _enrich_segment_previews(self, segments: list[KnowledgeSegment]) -> None:
@@ -936,7 +948,16 @@ class KnowledgeBaseService(BaseService):
             key = str(metadata.get("frame_url", "") or "")
             frame_url = ""
             if key:
-                frame_url = cos_service.get_file_url(key) or ""
+                try:
+                    frame_url = cos_service.get_file_url(key) or ""
+                except Exception:
+                    logging.warning(
+                        "分段帧缩略图地址生成失败 segment_id=%s key=%s",
+                        getattr(segment, "id", None),
+                        key,
+                        exc_info=True,
+                    )
+                    frame_url = ""
             setattr(segment, "frame_url", frame_url)
             setattr(segment, "start_sec", float(metadata.get("start_sec", 0.0) or 0.0))
             setattr(segment, "end_sec", float(metadata.get("end_sec", 0.0) or 0.0))

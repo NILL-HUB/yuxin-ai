@@ -129,6 +129,34 @@ def test_enrich_segments_defaults_when_metadata_missing():
     assert getattr(segment, "speech_text") == ""
 
 
+class _FailingCosStub:
+    def get_file_url(self, key):
+        raise RuntimeError(f"cos signing boom: {key}")
+
+
+def test_enrich_previews_fall_back_when_cos_signing_fails():
+    """COS 签名抛异常：frame_url / playback_url 全部回退空串，不向上抛（对齐 build_output_artifact 防御）。"""
+    video_doc = _doc()
+    frame_query = _ChainStub([(video_doc.id, "2026/09/13/frame-1.jpg")])
+    upload_query = _ChainStub(
+        [SimpleNamespace(id=video_doc.upload_file_id, key="2026/09/13/out.mp4")]
+    )
+    service = _new_service(
+        _SessionStub([frame_query, upload_query]),
+        cos=_FailingCosStub(),
+    )
+
+    service._enrich_document_previews([video_doc])
+
+    assert getattr(video_doc, "frame_url") == ""
+    assert getattr(video_doc, "playback_url") == ""
+
+    segment = SimpleNamespace(id=uuid4(), metadata_={"frame_url": "2026/09/13/rep.jpg"})
+    service._enrich_segment_previews([segment])
+
+    assert getattr(segment, "frame_url") == ""
+
+
 def test_documents_schema_dumps_preview_fields():
     """文档列表 schema 应透出 frame_url / playback_url。"""
     from datetime import datetime, timezone
