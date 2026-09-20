@@ -662,6 +662,58 @@ def register_routes(quart_app):
             return a._json_resp(code="not_found", message=str(exc), status=404)
         return a._ok_msg("删除 Agent 成功")
 
+    @quart_app.post("/admin/memory/gdpr-delete")
+    async def admin_memory_gdpr_delete():
+        """记忆 GDPR 级联删除：按主体清理 Neo4j + pgvector + Redis（ADMIN-P4）。
+
+        路由只做接线：接收主体分解字段（user / admin / agent），在服务端构造
+        ``MemoryOwnerKey``（不信任客户端裸 key），交由 ``MemoryGovernor.gdpr_delete``
+        执行并写审计。
+
+        body: ``{subject_type: "user"|"admin"|"agent", subject_id, agent_id?}``
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        body = await request.get_json(force=True, silent=True) or {}
+        subject_type = str(body.get("subject_type") or "").strip().lower()
+        subject_id = str(body.get("subject_id") or "").strip()
+        agent_id = body.get("agent_id")
+
+        from internal.entity.memory_owner_entity import MemoryOwnerKey
+
+        def _bad(message):
+            return a._json_resp(code="validate_error", message=message, status=400)
+
+        try:
+            if subject_type == "user":
+                owner_key = MemoryOwnerKey.for_user(UUID(subject_id)).to_key()
+            elif subject_type == "admin":
+                owner_key = MemoryOwnerKey.for_admin(UUID(subject_id)).to_key()
+            elif subject_type == "agent":
+                if not agent_id:
+                    return _bad("agent 主体必须提供 agent_id")
+                owner_key = MemoryOwnerKey.for_admin(
+                    UUID(subject_id), agent_id=UUID(str(agent_id))
+                ).to_key()
+            else:
+                return _bad("subject_type 必须为 user / admin / agent")
+        except (TypeError, ValueError):
+            return _bad("subject_id / agent_id 必须为合法 UUID")
+
+        def _run():
+            from internal.service.memory.memory_governor import MemoryGovernor
+
+            return MemoryGovernor().gdpr_delete(owner_key)
+
+        stats = await a._to_thread(_run)
+        return a._ok({"owner_key": owner_key, "stats": stats})
+
     @quart_app.post("/admin/agents/<uuid:agent_id>/chat")
     async def admin_agent_chat(agent_id):
         """与某个管理端 Agent 对话（SSE 流式）。

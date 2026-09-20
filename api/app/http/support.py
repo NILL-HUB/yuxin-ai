@@ -523,6 +523,12 @@ def _admin_route_permission(method: str, path: str) -> str | None:
             return "agent_pool:manage"
         # 未登记的方法 fail closed
         return None
+    # 记忆治理（ADMIN-P4）：GDPR 级联删除是破坏性操作 → agent_pool:manage
+    # （管理端 Agent 记忆由 admin_agent 治理语境管理）。其余 memory 方法未登记一律拒绝。
+    if _admin_match(segments, ("admin", "memory")):
+        if method == "POST" and len(segments) == 3 and segments[2] == "gdpr-delete":
+            return "agent_pool:manage"
+        return None
     if _admin_match(segments, ("admin", "permissions")):
         return "permission:read" if method == "GET" else None
     if _admin_match(segments, ("admin", "admin-users")):
