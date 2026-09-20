@@ -74,12 +74,17 @@ export type GetKnowledgeDocumentsWithPageRequest = {
   current_page: number
   page_size: number
   search_word: string
+  /** 按分区过滤：传分区 UUID（可选），不传则返回全部素材 */
+  partition_id?: string
 }
 
 // 获取指定知识库文档分页列表响应结构
 export type GetKnowledgeDocumentsWithPageResponse = BasePaginatorResponse<{
   id: string
   name: string
+  media_type?: string
+  content_type?: string
+  parse_profile?: Record<string, unknown>
   character_count: number
   status: string
   error: string
@@ -92,6 +97,9 @@ export type GetKnowledgeDocumentResponse = BaseResponse<{
   id: string
   knowledge_base_id: string
   name: string
+  media_type?: string
+  content_type?: string
+  parse_profile?: Record<string, unknown>
   segment_count: number
   character_count: number
   status: string

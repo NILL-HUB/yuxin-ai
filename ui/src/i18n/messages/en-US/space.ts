@@ -378,6 +378,12 @@ export default  {
           title: 'Partitions',
           all: 'All materials',
         },
+        material: {
+          gridView: 'Grid',
+          tableView: 'Table',
+          empty: 'No materials',
+          searchPlaceholder: 'Search materials',
+        },
       },
     },
     schedules: {

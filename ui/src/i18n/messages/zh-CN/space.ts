@@ -369,6 +369,12 @@ export default  {
           title: '分区导航',
           all: '全部素材',
         },
+        material: {
+          gridView: '网格',
+          tableView: '表格',
+          empty: '暂无素材',
+          searchPlaceholder: '搜索素材',
+        },
       },
     },
     schedules: {
