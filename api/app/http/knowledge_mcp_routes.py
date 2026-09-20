@@ -395,6 +395,20 @@ def register_routes(quart_app):
             return _json_resp(code="internal_error", message="纠正消息暂存失败", status=500)
         return _ok({"redirected": True, "request_id": str(request_id)})
 
+    @quart_app.get("/space/storage/usage")
+    async def async_get_storage_usage() -> Response:
+        """async 获取用户端存储用量概览（供用量面板）。"""
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        from internal.service.storage_quota_service import StorageQuotaService
+
+        summary = await _to_thread(
+            _get_service(StorageQuotaService).get_usage_summary, account.id
+        )
+        return _ok(summary)
+
     @quart_app.get("/space/knowledge-bases")
     async def async_get_knowledge_bases_with_page() -> Response:
         """async 获取用户端知识库分页列表。"""

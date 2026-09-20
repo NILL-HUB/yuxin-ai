@@ -177,6 +177,9 @@ class GetKnowledgeDocumentsWithPageResp(Schema):
     """获取知识库文档分页列表响应结构"""
     id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
+    media_type = fields.String(dump_default="document")
+    content_type = fields.String(dump_default="document")
+    parse_profile = fields.Dict(dump_default=dict)
     character_count = fields.Integer(dump_default=0)
     segment_count = fields.Integer(dump_default=0)
     segment_character_count = fields.Integer(dump_default=0)
@@ -192,6 +195,9 @@ class GetKnowledgeDocumentsWithPageResp(Schema):
         return {
             "id": data.id,
             "name": data.name,
+            "media_type": data.media_type,
+            "content_type": data.content_type,
+            "parse_profile": data.parse_profile or {},
             "character_count": data.character_count,
             "segment_count": getattr(data, "segment_count", 0),
             "segment_character_count": getattr(data, "segment_character_count", data.character_count or 0),
@@ -207,6 +213,9 @@ class GetKnowledgeDocumentResp(Schema):
     id = fields.UUID(dump_default="")
     knowledge_base_id = fields.UUID(dump_default="")
     name = fields.String(dump_default="")
+    media_type = fields.String(dump_default="document")
+    content_type = fields.String(dump_default="document")
+    parse_profile = fields.Dict(dump_default=dict)
     character_count = fields.Integer(dump_default=0)
     segment_count = fields.Integer(dump_default=0)
     status = fields.String(dump_default="")
@@ -220,6 +229,9 @@ class GetKnowledgeDocumentResp(Schema):
             "id": data.id,
             "knowledge_base_id": data.knowledge_base_id,
             "name": data.name,
+            "media_type": data.media_type,
+            "content_type": data.content_type,
+            "parse_profile": data.parse_profile or {},
             "character_count": data.character_count,
             "segment_count": getattr(data, "segment_count", 0) or 0,
             "status": data.status,
