@@ -16,6 +16,7 @@ _PKG = "internal.core.tools.builtin_tools.providers.video_edit_tools"
 video_trim = importlib.import_module(f"{_PKG}.video_trim")
 video_concat = importlib.import_module(f"{_PKG}.video_concat")
 video_subtitle = importlib.import_module(f"{_PKG}.video_subtitle")
+video_reassemble = importlib.import_module(f"{_PKG}.video_reassemble")
 
 
 def _capture_delay(monkeypatch, module):
@@ -202,6 +203,7 @@ def test_edit_tool_factories_pass_chat_context(monkeypatch):
         (video_trim, "video_trim"),
         (video_concat, "video_concat"),
         (video_subtitle, "video_subtitle"),
+        (video_reassemble, "video_reassemble"),
     ):
         tool = getattr(module, tool_name)(
             account_id="acc", message_id="msg-1", conversation_id="conv-1",
@@ -228,7 +230,7 @@ def test_tool_yamls_declare_expected_shape():
     import yaml
 
     base = Path(video_trim.__file__).parent
-    for stem in ("video_trim", "video_concat", "video_subtitle"):
+    for stem in ("video_trim", "video_concat", "video_subtitle", "video_reassemble"):
         data = yaml.safe_load((base / f"{stem}.yaml").read_text(encoding="utf-8"))
         assert data["name"] == stem
         assert data["label"]
@@ -236,14 +238,14 @@ def test_tool_yamls_declare_expected_shape():
         assert isinstance(data["task_keywords"], list) and data["task_keywords"]
 
 
-def test_positions_yaml_lists_all_three_tools():
+def test_positions_yaml_lists_all_four_tools():
     from pathlib import Path
 
     import yaml
 
     base = Path(video_trim.__file__).parent
     names = yaml.safe_load((base / "positions.yaml").read_text(encoding="utf-8"))
-    assert set(names) == {"video_trim", "video_concat", "video_subtitle"}
+    assert set(names) == {"video_trim", "video_concat", "video_subtitle", "video_reassemble"}
 
 
 # ── Task 6：provider 登记与运行时挂载（接线回归） ──────────────────────────
@@ -278,7 +280,7 @@ def test_tools_are_mounted_at_runtime_with_account_id():
     # 用带引号的精确字面量匹配：裸子串匹配会被 `video_edit_tools_DISABLED` 这类
     # 变体误判为通过（反向验证实测踩到过），故必须锚定引号。
     assert '"video_edit_tools"' in text, "assistant_agent_service 未挂载 video_edit_tools"
-    for tool_name in ("video_trim", "video_concat", "video_subtitle"):
+    for tool_name in ("video_trim", "video_concat", "video_subtitle", "video_reassemble"):
         assert f'"{tool_name}"' in text, f"未挂载 {tool_name}"
     # 依赖账号的工具必须注入 account_id，否则会返回「缺少账号」
     assert "account_id=str(account_id)" in text
@@ -293,7 +295,7 @@ def test_package_init_reexports_factories():
     import importlib
 
     pkg = importlib.import_module(_PKG)
-    for name in ("video_trim", "video_concat", "video_subtitle"):
+    for name in ("video_trim", "video_concat", "video_subtitle", "video_reassemble"):
         symbol = getattr(pkg, name)
         assert callable(symbol), f"{_PKG}.{name} 必须是可调用的工厂函数"
 
@@ -313,6 +315,77 @@ def test_provider_loader_discovers_all_tools():
         logging.disable(logging.NOTSET)
 
     assert provider is not None, "provider 未被管理器发现"
-    assert set(provider.tool_func_map) == {"video_trim", "video_concat", "video_subtitle"}
-    for name in ("video_trim", "video_concat", "video_subtitle"):
+    assert set(provider.tool_func_map) == {"video_trim", "video_concat", "video_subtitle", "video_reassemble"}
+    for name in ("video_trim", "video_concat", "video_subtitle", "video_reassemble"):
         assert callable(provider.tool_func_map[name]), f"{name} 工厂函数不可调用"
+
+
+# ── 成片编排工具（video_reassemble） ──────────────────────────────────────
+
+
+def test_reassemble_tool_requires_account():
+    tool = video_reassemble.video_reassemble()
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb", document_id="d",
+                  clips='[{"document_id": "d", "segment_index": 1}]')
+    )
+    assert payload["ok"] is False
+    assert "账号" in payload["error"]
+
+
+def test_reassemble_tool_requires_kb_and_document():
+    tool = video_reassemble.video_reassemble(account_id="acc")
+    payload = json.loads(tool._run(clips='[{"document_id": "d", "segment_index": 1}]'))
+    assert payload["ok"] is False
+    assert "知识库" in payload["error"] or "素材" in payload["error"]
+
+
+def test_reassemble_tool_rejects_non_json_clips():
+    tool = video_reassemble.video_reassemble(account_id="acc")
+    payload = json.loads(tool._run(knowledge_base_id="kb", document_id="d", clips="not-json"))
+    assert payload["ok"] is False
+    assert "JSON" in payload["error"]
+
+
+def test_reassemble_tool_rejects_empty_clips():
+    tool = video_reassemble.video_reassemble(account_id="acc")
+    payload = json.loads(tool._run(knowledge_base_id="kb", document_id="d", clips="[]"))
+    assert payload["ok"] is False
+    assert "至少" in payload["error"]
+
+
+def test_reassemble_tool_rejects_clip_without_document_id():
+    tool = video_reassemble.video_reassemble(account_id="acc")
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb", document_id="d",
+                  clips='[{"segment_index": 1}]')
+    )
+    assert payload["ok"] is False
+    assert "document_id" in payload["error"]
+
+
+def test_reassemble_tool_dispatches_parsed_clips(monkeypatch):
+    captured = _capture_delay(monkeypatch, video_reassemble)
+    tool = video_reassemble.video_reassemble(account_id="acc")
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb-1", document_id="doc-1",
+                  clips='[{"document_id": "doc-2", "segment_index": 2}]',
+                  name="重排")
+    )
+    assert payload["ok"] is True
+    assert payload["task_id"] == "task-1"
+    assert captured["args"][2] == [{"document_id": "doc-2", "segment_index": 2}], "clips 应解析为列表透传"
+    assert captured["args"][3] == "重排"
+
+
+def test_reassemble_tool_forwards_chat_context_to_celery(monkeypatch):
+    captured = _capture_delay(monkeypatch, video_reassemble)
+    tool = video_reassemble.video_reassemble(
+        account_id="acc", message_id="msg-1", conversation_id="conv-1",
+    )
+    json.loads(
+        tool._run(knowledge_base_id="kb", document_id="d",
+                  clips='[{"document_id": "d", "segment_index": 1}]')
+    )
+    assert captured["kwargs"]["message_id"] == "msg-1"
+    assert captured["kwargs"]["conversation_id"] == "conv-1"

@@ -1092,7 +1092,7 @@ class AssistantAgentService(BaseService):
         # ——`_load_non_mcp_tool` 那条通用路径是空参实例化，拿不到账号。
         # message_id/conversation_id 用于任务完成后把成品回填到原消息（对话内成片预览）。
         if self.app_config_service is not None:
-            for edit_tool_name in ("video_trim", "video_concat", "video_subtitle"):
+            for edit_tool_name in ("video_trim", "video_concat", "video_subtitle", "video_reassemble"):
                 try:
                     edit_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
                         "video_edit_tools",

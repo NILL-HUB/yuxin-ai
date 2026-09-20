@@ -1,0 +1,32 @@
+name: video_reassemble
+label: 成片编排
+description: 把知识库里的成片/视频按时间线段落重新编排（调整顺序/删除/用其他素材段落替换），并自动存入成品库。
+params:
+- name: knowledge_base_id
+  label: 知识库
+  type: string
+  required: true
+- name: document_id
+  label: 主视频素材
+  type: string
+  required: true
+- name: clips
+  label: 编排片段
+  description: 'JSON 数组字符串，每项 {"document_id": "素材id", "segment_index": 段落序号}；segment_index 为 1-based，0/缺省取整段'
+  type: string
+  required: true
+- name: name
+  label: 成品名称
+  type: string
+  required: false
+task_keywords:
+- 重新编排
+- 调整顺序
+- 重排
+- 删掉某段
+- 删除段落
+- 替换段落
+- 换一段
+- 时间线编排
+- 编排成片
+- reassemble
