@@ -367,6 +367,14 @@ export default  {
         toolCount: '{count} tools',
         noTools: 'No tools',
       },
+      detail: {
+        usage: {
+          title: 'Storage Usage',
+          refresh: 'Refresh',
+          loadFailed: 'Failed to load usage',
+          upgrade: 'Upgrade',
+        },
+      },
     },
     schedules: {
       title: 'Scheduled Tasks',

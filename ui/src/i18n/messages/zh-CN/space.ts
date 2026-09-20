@@ -358,6 +358,14 @@ export default  {
         toolCount: '{count} 个工具',
         noTools: '暂无工具',
       },
+      detail: {
+        usage: {
+          title: '存储用量',
+          refresh: '刷新',
+          loadFailed: '用量加载失败，请稍后重试',
+          upgrade: '扩容',
+        },
+      },
     },
     schedules: {
       title: '定时任务',
