@@ -69,15 +69,27 @@ const paginationConfig = computed(() => ({
       <a-grid :cols="4" :col-gap="16" :row-gap="16">
         <a-grid-item v-for="doc in documents" :key="doc.id">
           <div
-            class="cursor-pointer rounded-xl border border-border-c bg-surface p-3 transition hover:border-brand"
+            class="cursor-pointer rounded-xl border border-border-c bg-surface p-2 transition hover:border-brand"
             @click="emit('open', String(doc.id))"
           >
-            <div class="flex items-center justify-between">
-              <a-avatar shape="square" :size="40" class="rounded-lg bg-brand-soft">
-                <template #trigger-icon>
-                  <icon-font :type="mediaIcon(doc.media_type)" />
-                </template>
-              </a-avatar>
+            <div class="relative h-[92px] w-full overflow-hidden rounded-lg bg-surface-2">
+              <img
+                v-if="doc.frame_url"
+                :src="doc.frame_url"
+                :alt="doc.name"
+                class="h-full w-full object-cover"
+              />
+              <div v-else class="flex h-full w-full items-center justify-center bg-brand-soft">
+                <icon-font :type="mediaIcon(doc.media_type)" />
+              </div>
+              <span
+                v-if="doc.media_type === 'video'"
+                class="absolute right-1 top-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white"
+              >
+                {{ t('space.datasets.detail.material.videoBadge') }}
+              </span>
+            </div>
+            <div class="mt-2 flex items-center justify-between">
               <a-tag
                 class="rounded-full text-xs"
                 :class="doc.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'"
@@ -85,7 +97,7 @@ const paginationConfig = computed(() => ({
                 {{ statusText(doc.status) }}
               </a-tag>
             </div>
-            <p class="mt-2 line-clamp-1 break-all text-sm font-medium text-text">{{ doc.name }}</p>
+            <p class="mt-1 line-clamp-1 break-all text-sm font-medium text-text">{{ doc.name }}</p>
             <p class="mt-1 text-xs text-muted">
               {{ doc.character_count }} · {{ new Date(Number(doc.created_at) * 1000).toLocaleDateString() }}
             </p>

@@ -25,6 +25,7 @@ const i18n = createI18n({
               tableView: '表格',
               empty: '暂无素材',
               searchPlaceholder: '搜索素材',
+              videoBadge: '视频',
             },
           },
         },
@@ -39,6 +40,7 @@ const i18n = createI18n({
               tableView: 'Table',
               empty: 'No materials',
               searchPlaceholder: 'Search materials',
+              videoBadge: 'Video',
             },
           },
         },
@@ -100,5 +102,30 @@ describe('MaterialGrid', () => {
       'kb-1',
       expect.objectContaining({ partition_id: 'p-key' }),
     )
+  })
+
+  it('视频素材带 frame_url 时渲染帧缩略图而非图标', async () => {
+    mocks.getKnowledgeDocumentsWithPage.mockResolvedValue({
+      data: {
+        list: [
+          {
+            id: 'd1',
+            name: 'demo.mp4',
+            media_type: 'video',
+            frame_url: 'https://cos/frame.jpg',
+            status: 'completed',
+            character_count: 120,
+            created_at: 1700000000,
+          },
+        ],
+        paginator: { current_page: 1, page_size: 20, total_page: 1, total_record: 1 },
+      },
+    })
+    const wrapper = mount(MaterialGrid, {
+      props: { knowledgeBaseId: 'kb-1', partitionId: '' },
+      global: { plugins: [i18n], stubs },
+    })
+    await flushPromises()
+    expect(wrapper.find('img').attributes('src')).toBe('https://cos/frame.jpg')
   })
 })

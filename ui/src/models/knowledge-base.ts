@@ -85,6 +85,8 @@ export type GetKnowledgeDocumentsWithPageResponse = BasePaginatorResponse<{
   media_type?: string
   content_type?: string
   parse_profile?: Record<string, unknown>
+  frame_url?: string
+  playback_url?: string
   character_count: number
   status: string
   error: string
@@ -100,6 +102,8 @@ export type GetKnowledgeDocumentResponse = BaseResponse<{
   media_type?: string
   content_type?: string
   parse_profile?: Record<string, unknown>
+  frame_url?: string
+  playback_url?: string
   segment_count: number
   character_count: number
   status: string
@@ -163,6 +167,11 @@ export type GetKnowledgeSegmentsWithPageResponse = BasePaginatorResponse<{
   hit_count: number
   enabled: boolean
   status: string
+  frame_url?: string
+  start_sec?: number
+  end_sec?: number
+  source?: string
+  speech_text?: string
   updated_at: number
   created_at: number
 }>
