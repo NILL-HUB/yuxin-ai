@@ -698,6 +698,74 @@ def register_routes(quart_app):
             return a._json_resp(code="not_found", message="定时任务不存在", status=404)
         return a._ok_msg("删除成功")
 
+    @quart_app.get("/admin/agents/<uuid:agent_id>/memory/stats")
+    async def admin_agent_memory_stats(agent_id):
+        """管理端 Agent 记忆规模统计 + 最近片段（ADMIN-P4 T4）。
+
+        只读视图（agent_pool:read）；Agent 归属校验后调用
+        ``AdminMemoryReadService.memory_stats``（Neo4j 不可用/异常时返回空结构）。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        from internal.service.admin_agent_service import AdminAgentService
+        from internal.service.memory.admin_memory_read import AdminMemoryReadService
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            agent = a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            if agent is None:
+                return None
+            return a._get_service(AdminMemoryReadService).memory_stats(
+                admin_user_id=admin_user_id, agent_id=agent_id
+            )
+
+        result = await a._to_thread(_run)
+        if result is None:
+            return a._json_resp(code="not_found", message="Agent 不存在", status=404)
+        return a._ok(result)
+
+    @quart_app.get("/admin/agents/<uuid:agent_id>/memory/list")
+    async def admin_agent_memory_list(agent_id):
+        """分页列出管理端 Agent 的记忆节点（ADMIN-P4 T4）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        from internal.service.admin_agent_service import AdminAgentService
+        from internal.service.memory.admin_memory_read import AdminMemoryReadService
+
+        admin_user_id = UUID(str(admin.get("id")))
+        page = _int_arg("page", 1)
+        page_size = _int_arg("page_size", 20)
+
+        def _run():
+            agent = a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            if agent is None:
+                return None
+            return a._get_service(AdminMemoryReadService).list_memories(
+                admin_user_id=admin_user_id, agent_id=agent_id, page=page, page_size=page_size
+            )
+
+        result = await a._to_thread(_run)
+        if result is None:
+            return a._json_resp(code="not_found", message="Agent 不存在", status=404)
+        return a._ok(result)
+
     @quart_app.get("/admin/agents")
     async def admin_agent_list():
         """列出当前管理员**自己创建**的管理端 Agent（设计 §2：仅创建者可用）。"""
