@@ -162,6 +162,17 @@ def _build_execution_service(a, *, board_executor, draft_service, audit_log_serv
     )
 
 
+def _build_budget_gate():
+    """构造预算闸门（ADMIN-P4 T2）。
+
+    独立成模块级工厂同样是测试接缝：invoke / usage 路由据此替换为抛错或
+    桩计数的替身，避免测路由接线时依赖真实 Redis。
+    """
+    from internal.core.admin_agent_budget import AdminAgentBudgetGate
+
+    return AdminAgentBudgetGate()
+
+
 def _list_board_actions() -> dict:
     """拍平板块动作注册表为展示结构。
 
@@ -447,6 +458,17 @@ def register_routes(quart_app):
             )
             if principal is None:
                 return None
+            # 预算闸门（ADMIN-P4 T2）：invoke 是"让 Agent 在后台动手"的入口，
+            # 执行前先取 agent 定义中的 budget_config 做校验并累计周期用量。
+            # 超限抛 AdminAgentBudgetExceeded（ValueError 子类）→ 下方转 400。
+            agent = a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            if agent is None:
+                return None
+            _build_budget_gate().check_and_record(
+                str(agent.id), getattr(agent, "budget_config", None) or {}
+            )
             execution = _build_execution_service(
                 a,
                 board_executor=_build_board_executor(),
@@ -466,6 +488,43 @@ def register_routes(quart_app):
             return a._json_resp(code="forbidden", message=str(exc), status=403)
         except ValueError as exc:
             return a._json_resp(code="validate_error", message=str(exc), status=400)
+        if result is None:
+            return a._json_resp(code="not_found", message="Agent 不存在", status=404)
+        return a._ok(result)
+
+    @quart_app.get("/admin/agents/<uuid:agent_id>/budget/usage")
+    async def admin_agent_budget_usage(agent_id):
+        """查询某 Agent 当前周期的预算用量（执行次数 / token，ADMIN-P4 T2）。
+
+        只读查询 → agent_pool:read（support.py 的 /admin/agents GET 分支已覆盖，
+        无需新增路由权限映射）。透出 budget_config（前端展示额度）与当前计数。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        from internal.service.admin_agent_service import AdminAgentService
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            agent = a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            if agent is None:
+                return None
+            budget_config = getattr(agent, "budget_config", None) or {}
+            usage = _build_budget_gate().usage(str(agent.id), budget_config)
+            return {"budget_config": budget_config, "usage": usage}
+
+        try:
+            result = await a._to_thread(_run)
+        except PermissionError as exc:
+            return a._json_resp(code="forbidden", message=str(exc), status=403)
         if result is None:
             return a._json_resp(code="not_found", message="Agent 不存在", status=404)
         return a._ok(result)

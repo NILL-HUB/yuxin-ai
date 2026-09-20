@@ -41,7 +41,14 @@ class _StubAgentService:
 
     def get_agent(self, *, agent_id, admin_user_id):
         # principal 为 None 时代表"Agent 不存在/不可用"
-        return object() if self._principal is not None else None
+        if self._principal is None:
+            return None
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id="22222222-2222-2222-2222-222222222222",
+            budget_config={},
+        )
 
 
 class _StubExecutionService:
@@ -277,6 +284,69 @@ class TestInvokeEndpoint:
         body = asyncio.run(resp.get_json())
         assert body["data"]["outcome"] == "drafted"
         assert body["data"]["draft_id"] == "55555555-5555-5555-5555-555555555555"
+
+
+class TestBudgetGate:
+    def test_budget_exceeded_returns_400(self, monkeypatch):
+        """预算闸门拒绝（ADMIN-P4 T2）：invoke 入口转 400，执行服务不被调用。"""
+        from uuid import uuid4
+
+        from internal.core.admin_agent_budget import AdminAgentBudgetExceeded
+
+        class _BoomGate:
+            def check_and_record(self, *args, **kwargs):
+                raise AdminAgentBudgetExceeded(
+                    "预算闸门: daily_executions 周期额度已用完"
+                )
+
+        import app.http.admin_routes_7 as routes7
+
+        agent_svc, exec_svc, _ = _wire(
+            monkeypatch, uuid4(), ["builtin_tool:update"]
+        )
+        monkeypatch.setattr(routes7, "_build_budget_gate", lambda: _BoomGate())
+        resp = _post(
+            f"/admin/agents/{uuid4()}/invoke",
+            {"board": "builtin_tool", "action": "list"},
+        )
+        assert resp.status_code == 400
+        assert exec_svc.calls == [], "预算超限时执行服务不得被调用"
+
+
+class TestBudgetUsageEndpoint:
+    def test_usage_returns_budget_config_and_usage(self, monkeypatch):
+        """用量查询：透出 budget_config 与当前周期计数（供 admin 前端展示）。"""
+        from uuid import uuid4
+
+        import app.http.admin_routes_7 as routes7
+
+        class _StubGate:
+            def usage(self, agent_id, budget_config):
+                return {"daily_executions": 3, "monthly_executions": 3}
+
+        _wire(monkeypatch, uuid4(), ["agent_pool:read"])
+        monkeypatch.setattr(routes7, "_build_budget_gate", lambda: _StubGate())
+        resp = _get(f"/admin/agents/{uuid4()}/budget/usage")
+        assert resp.status_code == 200
+        body = asyncio.run(resp.get_json())
+        data = body["data"]
+        assert data["budget_config"] == {}
+        assert data["usage"]["daily_executions"] == 3
+
+    def test_usage_unknown_agent_returns_404(self, monkeypatch):
+        from uuid import uuid4
+
+        _wire(monkeypatch, uuid4(), ["agent_pool:read"], principal=None)
+        resp = _get(f"/admin/agents/{uuid4()}/budget/usage")
+        assert resp.status_code == 404
+
+    def test_usage_requires_read_permission(self):
+        assert (
+            support._admin_route_permission(
+                "GET", "/admin/agents/11111111-1111-1111-1111-111111111111/budget/usage"
+            )
+            == "agent_pool:read"
+        )
 
 
 class TestBoardsEndpoint:

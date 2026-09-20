@@ -529,3 +529,37 @@ def test_memory_write_failure_does_not_break_chat():
     body = "".join(frames)
     assert "event: answer" in body
     assert "event: end" in body
+
+
+def test_budget_exceeded_reports_error_frame_without_calling_model():
+    """预算闸门拒绝（ADMIN-P4 T2）：不调模型，以 error 帧结束。
+
+    闸门文案（额度耗尽）必须原样透出，不得被 `except Exception` 改写成
+    "对话失败：…"——否则管理员看不到"哪个周期额度用完"。
+    """
+    from internal.core.admin_agent_budget import AdminAgentBudgetExceeded
+
+    class _BoomGate:
+        def check_and_record(self, *args, **kwargs):
+            raise AdminAgentBudgetExceeded(
+                "预算闸门: daily_executions 周期额度已用完（10/10）"
+            )
+
+    llm = _FakeLLM([])
+    service = _service(_principal(), llm, [])
+    service._budget_gate = lambda: _BoomGate()
+
+    frames = list(
+        service.chat(
+            agent_id=uuid4(),
+            admin_user_id=uuid4(),
+            admin_permissions=["builtin_tool:read"],
+            query="执行一次盘点",
+        )
+    )
+
+    body = "".join(frames)
+    assert "event: error" in body
+    assert "额度已用完" in body
+    assert "对话失败" not in body
+    assert llm.invocations == [], "预算超限时不得调用模型"

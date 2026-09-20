@@ -21,6 +21,7 @@ from typing import Any, Generator
 
 from injector import inject
 
+from internal.core.admin_agent_budget import AdminAgentBudgetExceeded
 from internal.entity.admin_agent_chat_entity import (
     AdminAgentChatEvent,
     AdminAgentMessageRole,
@@ -106,6 +107,13 @@ class AdminAgentChatService:
             )
 
             agent = self._load_agent(principal.agent_id, admin_user_id)
+            # 预算闸门（ADMIN-P4 T2）：对话是"让 Agent 动手"的一类入口，进入
+            # 模型/工具循环前先校验并累计周期用量。超限抛
+            # `AdminAgentBudgetExceeded`，由下方 except 分支转 error 帧。
+            self._budget_gate().check_and_record(
+                str(principal.agent_id),
+                getattr(agent, "budget_config", None) or {},
+            )
             tools = self._build_tools(principal)
             # 记忆读回（ADMIN-P3c-2）：admin/Agent 主体召回，fail-open。
             # 召回复用 P3b 已主体化的读路径（retriever/digest），此处只构造 admin
@@ -156,6 +164,12 @@ class AdminAgentChatService:
             return
         except PermissionError as exc:
             # 非属主/已停用 Agent（AdminAgentService 契约）
+            yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
+            return
+        except AdminAgentBudgetExceeded as exc:
+            # 预算闸门拒绝（ADMIN-P4 T2）：额度耗尽不是链路故障，原样透出
+            # 闸门文案（管理员据此知道"哪个周期额度用完"），不得被兜底的
+            # `except Exception` 改写成"对话失败：…"。
             yield self._frame(AdminAgentChatEvent.ERROR, {"error": str(exc)})
             return
         except Exception as exc:
@@ -258,6 +272,12 @@ class AdminAgentChatService:
     # ------------------------------------------------------------------
     # 可替换点（测试替换，避免真实 LLM / DB / 提示词）
     # ------------------------------------------------------------------
+
+    def _budget_gate(self):
+        """预算闸门（ADMIN-P4 T2，测试可替换为抛错的替身）。"""
+        from internal.core.admin_agent_budget import AdminAgentBudgetGate
+
+        return AdminAgentBudgetGate()
 
     def _build_model(self):
         from internal.service.language_model_service import LanguageModelService
