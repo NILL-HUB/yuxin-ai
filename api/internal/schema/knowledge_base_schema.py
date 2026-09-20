@@ -269,6 +269,11 @@ class GetKnowledgeSegmentsWithPageResp(Schema):
     hit_count = fields.Integer(dump_default=0)
     enabled = fields.Boolean(dump_default=False)
     status = fields.String(dump_default="")
+    frame_url = fields.String(dump_default="")
+    start_sec = fields.Float(dump_default=0.0)
+    end_sec = fields.Float(dump_default=0.0)
+    source = fields.String(dump_default="")
+    speech_text = fields.String(dump_default="")
     updated_at = fields.Integer(dump_default=0)
     created_at = fields.Integer(dump_default=0)
 
@@ -286,6 +291,11 @@ class GetKnowledgeSegmentsWithPageResp(Schema):
             "hit_count": data.hit_count,
             "enabled": data.enabled,
             "status": data.status,
+            "frame_url": getattr(data, "frame_url", "") or "",
+            "start_sec": getattr(data, "start_sec", 0.0) or 0.0,
+            "end_sec": getattr(data, "end_sec", 0.0) or 0.0,
+            "source": getattr(data, "source", "") or "",
+            "speech_text": getattr(data, "speech_text", "") or "",
             "updated_at": datetime_to_timestamp(data.updated_at),
             "created_at": datetime_to_timestamp(data.created_at),
         }

@@ -183,3 +183,39 @@ def test_documents_schema_dumps_preview_fields():
 
     assert payload["frame_url"] == "https://cos/rep.jpg"
     assert payload["playback_url"] == "https://cos/out.mp4"
+
+
+def test_segments_schema_dumps_timeline_fields():
+    """分段 schema 应透出时间线元数据字段。"""
+    from datetime import datetime, timezone
+
+    from internal.schema.knowledge_base_schema import GetKnowledgeSegmentsWithPageResp
+
+    segment = SimpleNamespace(
+        id=uuid4(),
+        knowledge_base_id=uuid4(),
+        knowledge_document_id=uuid4(),
+        position=1,
+        content="画面A",
+        keywords=[],
+        character_count=3,
+        token_count=0,
+        hit_count=0,
+        enabled=True,
+        status="completed",
+        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        frame_url="https://cos/rep.jpg",
+        start_sec=3.2,
+        end_sec=8.7,
+        source="vision_timeline",
+        speech_text="第一句台词。",
+    )
+
+    payload = GetKnowledgeSegmentsWithPageResp().dump(segment)
+
+    assert payload["frame_url"] == "https://cos/rep.jpg"
+    assert payload["start_sec"] == 3.2
+    assert payload["end_sec"] == 8.7
+    assert payload["source"] == "vision_timeline"
+    assert payload["speech_text"] == "第一句台词。"

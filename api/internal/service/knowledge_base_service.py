@@ -1124,6 +1124,9 @@ class KnowledgeBaseService(BaseService):
             self.db.session.query(KnowledgeSegment).filter(*filters).order_by(asc("position"))
         )
 
+        # 6.注入时间线预览字段（帧缩略图 / start/end/source/speech_text）
+        self._enrich_segment_previews(segments)
+
         return segments, paginator
 
     def update_segment(
