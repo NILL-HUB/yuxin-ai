@@ -887,6 +887,51 @@ class TestAssistantAgentService:
         assert calls == [("客服助手", "面向工单场景自动答疑", account_id)]
         assert "应用名称: 客服助手" in result
 
+    def test_build_assistant_runtime_tools_should_include_upload_to_knowledge_base(
+        self, monkeypatch
+    ):
+        """挂载点应把 upload_to_knowledge_base 注入对话工具列表并透传 account_id。"""
+        service = self._build_service()
+        account_id = uuid4()
+        kb_tool_factories = {
+            "upload_to_knowledge_base": lambda **kwargs: "upload-tool",
+        }
+        service.public_agent_registry_service = SimpleNamespace(
+            convert_public_agent_search_to_tool=lambda: "search-tool"
+        )
+        service.public_agent_a2a_service = SimpleNamespace(
+            convert_public_agent_route_to_tool=lambda _account_id: f"route:{_account_id}"
+        )
+        service.app_config_service = SimpleNamespace(
+            get_langchain_tools_by_mcp_bindings=lambda bindings: [],
+            builtin_provider_manager=SimpleNamespace(
+                get_tool=lambda provider_name, tool_name: kb_tool_factories.get(
+                    tool_name
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            service,
+            "convert_create_app_to_tool",
+            lambda _account_id: f"create:{_account_id}",
+        )
+        monkeypatch.setattr(
+            "internal.service.memory.skill_detail_tool.create_skill_detail_tool",
+            lambda **kwargs: "skill-detail-tool",
+        )
+        monkeypatch.setattr(
+            "internal.service.memory.agent_memory_tool.create_agent_memory_tools",
+            lambda **kwargs: ["memory-add-tool", "memory-replace-tool", "memory-remove-tool"],
+        )
+
+        flask_app = TestApp(__name__)
+        flask_app.config["ASSISTANT_MCP_BINDINGS"] = []
+
+        with flask_app.app_context():
+            tools = service._build_assistant_runtime_tools(account_id)
+
+        assert "upload-tool" in [getattr(tool, "name", str(tool)) for tool in tools]
+
     def test_build_assistant_runtime_tools_should_include_global_mcp_bindings(self, monkeypatch):
         service = self._build_service()
         account_id = uuid4()

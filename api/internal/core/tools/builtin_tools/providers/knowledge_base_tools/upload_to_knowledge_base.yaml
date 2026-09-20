@@ -1,0 +1,23 @@
+name: upload_to_knowledge_base
+label: 存入知识库
+description: 把平台已有文件（对话附件/先前上传）建档进用户的某个知识库板块，并触发解析索引。需要 user 明确指定目标板块与文件。
+params:
+- name: knowledge_base_id
+  label: 目标知识库
+  type: string
+  required: true
+- name: file_id
+  label: 文件 id
+  type: string
+  required: true
+- name: partition_id
+  label: 目标分区
+  type: string
+  required: false
+task_keywords:
+- 存入知识库
+- 传到知识库
+- 保存到知识库
+- 帮传
+- 上传素材
+- 存到资源库

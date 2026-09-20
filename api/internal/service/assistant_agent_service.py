@@ -1057,6 +1057,18 @@ class AssistantAgentService(BaseService):
             except Exception:
                 logger.warning("构建知识库工具失败，不影响其他工具", exc_info=True)
 
+        # 小钰帮传：Agent 在对话内把平台已有文件建档进用户知识库。
+        if self.app_config_service is not None:
+            try:
+                upload_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                    "knowledge_base_tools",
+                    "upload_to_knowledge_base",
+                )
+                if upload_tool_factory is not None:
+                    tools.append(upload_tool_factory(account_id=str(account_id)))
+            except Exception:
+                logger.warning("构建上传素材工具失败，不影响其他工具", exc_info=True)
+
         # 视频渲染工具：Agent 可在对话内把脚本渲染成 MP4 并存入成品库。
         if self.app_config_service is not None:
             try:
