@@ -226,6 +226,7 @@ def _dump_agent(agent) -> dict:
         "prompt_key": agent.prompt_key,
         "granted_permissions": list(agent.granted_permissions or []),
         "automation_policy": dict(agent.automation_policy or {}),
+        "budget_config": dict(agent.budget_config or {}),
         "enabled": bool(agent.enabled),
         "created_at": datetime_to_timestamp(agent.created_at),
         "updated_at": datetime_to_timestamp(agent.updated_at),
@@ -828,6 +829,7 @@ def register_routes(quart_app):
                 prompt_key=req.get("prompt_key"),
                 granted_permissions=req.get("granted_permissions") or [],
                 automation_policy=req.get("automation_policy") or {},
+                budget_config=req.get("budget_config") or {},
             )
 
         try:
@@ -876,6 +878,7 @@ def register_routes(quart_app):
                 prompt_key=req.get("prompt_key"),
                 granted_permissions=req.get("granted_permissions"),
                 automation_policy=req.get("automation_policy"),
+                budget_config=req.get("budget_config"),
                 enabled=req.get("enabled"),
             )
 

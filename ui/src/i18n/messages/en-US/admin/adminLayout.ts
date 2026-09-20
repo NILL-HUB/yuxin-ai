@@ -22,6 +22,7 @@ export default  {
         mcpStore: 'MCP Store',
         poolGovernance: 'Pool Governance',
         agentPool: 'Agent Pool Config',
+        agents: 'Admin Agents',
         toolGovernance: 'Tool Pool Governance',
         subPoolDef: 'Sub-Pool Definition',
         models: 'Model Pool Management',

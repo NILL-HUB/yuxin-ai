@@ -126,6 +126,7 @@ class AdminAgentService:
         prompt_key: str | None = None,
         granted_permissions=None,
         automation_policy=None,
+        budget_config=None,
     ) -> AdminAgent:
         granted = list(granted_permissions or [])
         assert_grantable(requested=granted, admin_permissions=admin_permissions)
@@ -138,7 +139,7 @@ class AdminAgentService:
             prompt_key=prompt_key,
             granted_permissions=granted,
             automation_policy=policy,
-            budget_config={},
+            budget_config=self._validate_budget_config(budget_config),
             enabled=True,
         )
         with self.db.auto_commit():
@@ -156,6 +157,7 @@ class AdminAgentService:
         prompt_key: str | None = None,
         granted_permissions=None,
         automation_policy=None,
+        budget_config=None,
         enabled: bool | None = None,
     ) -> AdminAgent:
         agent = self.get_agent(agent_id=agent_id, admin_user_id=admin_user_id)
@@ -168,6 +170,8 @@ class AdminAgentService:
             agent.granted_permissions = granted
         if automation_policy is not None:
             agent.automation_policy = self._validate_policy(automation_policy)
+        if budget_config is not None:
+            agent.budget_config = self._validate_budget_config(budget_config)
         if name is not None:
             agent.name = name
         if description is not None:
@@ -246,4 +250,35 @@ class AdminAgentService:
                     f"非法自动化级别: {board}={level!r}，"
                     f"可选值 {[x.value for x in AutomationLevel]}"
                 )
+        return result
+
+    @staticmethod
+    def _validate_budget_config(budget_config) -> dict:
+        """校验 budget_config 取值（§6.3：非负整数上限，空 = 不限制）。
+
+        取值最终由 ``AdminAgentBudgetGate._limits`` 读取——它在读路径对非法值
+        静默忽略。这里在**写路径**显式报错，避免管理员配了却不知为何不生效。
+        """
+        cfg = budget_config or {}
+        result: dict[str, int] = {}
+        for key in (
+            "daily_executions",
+            "monthly_executions",
+            "daily_tokens",
+            "monthly_tokens",
+        ):
+            raw = cfg.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"非法预算配置: {key}={raw!r}，必须为非负整数"
+                )
+            if value < 0:
+                raise ValueError(
+                    f"非法预算配置: {key}={raw!r}，必须为非负整数"
+                )
+            result[key] = value
         return result

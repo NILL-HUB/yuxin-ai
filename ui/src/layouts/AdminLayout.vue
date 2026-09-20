@@ -105,6 +105,7 @@ const menuGroups = computed(() => ([
     icon: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
     items: [
       { to: '/admin/agent-pool', label: t('admin.adminLayout.menu.agentPool'), permission: 'agent_pool:read' },
+      { to: '/admin/agents', label: t('admin.adminLayout.menu.agents'), permission: 'agent_pool:read' },
       { to: '/admin/tool-governance', label: t('admin.adminLayout.menu.toolGovernance'), permission: 'tool_governance:read' },
       { to: '/admin/sub-pool-definition', label: t('admin.adminLayout.menu.subPoolDef'), permission: 'agent_pool:read' },
       { to: '/admin/model-providers', label: t('admin.adminLayout.menu.modelProviders'), permission: 'model_provider:read' },

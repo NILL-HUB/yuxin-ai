@@ -22,6 +22,7 @@ export default  {
         mcpStore: 'MCP商店',
         poolGovernance: '池治理',
         agentPool: 'Agent池配置',
+        agents: '管理端Agent',
         toolGovernance: '工具池治理',
         subPoolDef: '子池定义',
         models: '模型池管理',

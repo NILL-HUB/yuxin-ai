@@ -154,6 +154,48 @@ class TestCreateAgent:
         assert created.automation_policy == {}
         assert created.granted_permissions == ["model_pool:read"]
 
+    def test_persists_budget_config_and_drops_empty_keys(self):
+        svc, session = _service()
+        svc.create_agent(
+            admin_user_id=uuid4(),
+            admin_permissions=["model_pool:read"],
+            name="x",
+            granted_permissions=["model_pool:read"],
+            budget_config={
+                "daily_executions": 5,
+                "monthly_tokens": 1000,
+                "daily_tokens": None,
+            },
+        )
+        created = session.added[0]
+        # 空值键不落库，闸门读路径按"未配置"处理
+        assert created.budget_config == {
+            "daily_executions": 5,
+            "monthly_tokens": 1000,
+        }
+
+    def test_rejects_negative_budget_value(self):
+        svc, _ = _service()
+        with pytest.raises(ValueError, match="非法预算配置"):
+            svc.create_agent(
+                admin_user_id=uuid4(),
+                admin_permissions=["model_pool:read"],
+                name="x",
+                granted_permissions=["model_pool:read"],
+                budget_config={"daily_executions": -1},
+            )
+
+    def test_rejects_non_integer_budget_value(self):
+        svc, _ = _service()
+        with pytest.raises(ValueError, match="非法预算配置"):
+            svc.create_agent(
+                admin_user_id=uuid4(),
+                admin_permissions=["model_pool:read"],
+                name="x",
+                granted_permissions=["model_pool:read"],
+                budget_config={"monthly_tokens": "abc"},
+            )
+
 
 class TestUpdateAgent:
     def test_rejects_non_owner(self):
@@ -191,6 +233,42 @@ class TestUpdateAgent:
             automation_policy={"model_pool": "autonomous"},
         )
         assert agent.automation_policy == {"model_pool": "autonomous"}
+
+    def test_updates_budget_config(self):
+        owner = uuid4()
+        agent = _agent(owner_admin_user_id=owner)
+        svc, _ = _service([agent])
+        svc.update_agent(
+            agent_id=agent.id,
+            admin_user_id=owner,
+            admin_permissions=["model_pool:read"],
+            budget_config={"daily_executions": 3, "monthly_tokens": 500},
+        )
+        assert agent.budget_config == {"daily_executions": 3, "monthly_tokens": 500}
+
+    def test_update_budget_config_absent_keeps_original(self):
+        owner = uuid4()
+        agent = _agent(owner_admin_user_id=owner, budget_config={"daily_executions": 3})
+        svc, _ = _service([agent])
+        svc.update_agent(
+            agent_id=agent.id,
+            admin_user_id=owner,
+            admin_permissions=["model_pool:read"],
+            name="改名",
+        )
+        assert agent.budget_config == {"daily_executions": 3}
+
+    def test_rejects_invalid_budget_value_on_update(self):
+        owner = uuid4()
+        agent = _agent(owner_admin_user_id=owner)
+        svc, _ = _service([agent])
+        with pytest.raises(ValueError, match="非法预算配置"):
+            svc.update_agent(
+                agent_id=agent.id,
+                admin_user_id=owner,
+                admin_permissions=["model_pool:read"],
+                budget_config={"daily_tokens": "x"},
+            )
 
 
 class TestPermissionRevocation:

@@ -40,6 +40,7 @@ def _agent_row(agent_id):
         prompt_key=None,
         granted_permissions=["builtin_tool:read"],
         automation_policy={"builtin_tool": "supervised"},
+        budget_config={"daily_executions": 5},
         enabled=True,
         created_at=datetime(2026, 1, 1),
         updated_at=datetime(2026, 1, 2),
@@ -173,6 +174,43 @@ class TestCreateEndpoint:
         assert kwargs["granted_permissions"] == ["builtin_tool:read"]
         assert kwargs["automation_policy"] == {"builtin_tool": "supervised"}
 
+    def test_create_passes_budget_config_and_serializes_it(self, monkeypatch):
+        admin_id = uuid4()
+        svc = _wire(monkeypatch, admin_id, ["agent_pool:manage"], _StubAgentService())
+
+        resp, body = _req(
+            "POST",
+            "/admin/agents",
+            {
+                "name": "运维 Agent",
+                "granted_permissions": [],
+                "budget_config": {"daily_executions": 10, "monthly_tokens": 800},
+            },
+        )
+
+        assert resp.status_code == 200
+        _, kwargs = svc.calls[0]
+        assert kwargs["budget_config"] == {"daily_executions": 10, "monthly_tokens": 800}
+        # 响应里序列化出 budget_config（前端据此回显）
+        assert body["data"]["budget_config"] == {"daily_executions": 5}
+
+    def test_create_rejects_invalid_budget_value(self, monkeypatch):
+        _wire(
+            monkeypatch,
+            uuid4(),
+            ["agent_pool:manage"],
+            _StubAgentService(error=ValueError("非法预算配置: daily_tokens='x'")),
+        )
+
+        resp, body = _req(
+            "POST",
+            "/admin/agents",
+            {"name": "x", "budget_config": {"daily_tokens": "x"}},
+        )
+
+        assert resp.status_code == 400
+        assert "非法预算配置" in body["message"]
+
     def test_missing_name_rejected(self, monkeypatch):
         _wire(monkeypatch, uuid4(), ["agent_pool:manage"], _StubAgentService())
 
@@ -210,6 +248,22 @@ class TestUpdateEndpoint:
         # 未提供的字段保持 None（服务层据此判定"不修改"）
         assert kwargs["name"] is None
         assert kwargs["granted_permissions"] is None
+
+    def test_update_passes_budget_config(self, monkeypatch):
+        agent_id = uuid4()
+        svc = _wire(monkeypatch, uuid4(), ["agent_pool:manage"], _StubAgentService())
+
+        resp, _ = _req(
+            "PATCH",
+            f"/admin/agents/{agent_id}",
+            {"budget_config": {"monthly_executions": 30}},
+        )
+
+        assert resp.status_code == 200
+        _, kwargs = svc.calls[0]
+        assert kwargs["budget_config"] == {"monthly_executions": 30}
+        # 未提供的字段保持 None（服务层据此判定"不修改"）
+        assert kwargs["name"] is None
 
     def test_not_found_returns_404(self, monkeypatch):
         _wire(

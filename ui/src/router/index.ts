@@ -389,6 +389,18 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['agent_pool:read'] },
             },
             {
+              path: 'agents',
+              name: 'admin-agents',
+              component: () => import('@/views/admin/agents/ListView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['agent_pool:read'] },
+            },
+            {
+              path: 'agents/:id/chat',
+              name: 'admin-agents-chat',
+              component: () => import('@/views/admin/agents/ChatView.vue'),
+              meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['agent_pool:read'], fluid: true },
+            },
+            {
               path: 'sub-pool-definition',
               name: 'admin-sub-pool-definition',
               component: () => import('@/views/admin/sub-pool-definition/index.vue'),

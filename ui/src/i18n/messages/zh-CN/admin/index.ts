@@ -37,6 +37,7 @@ import costStats from './costStats'
 import costStrategy from './costStrategy'
 import auditLogs from './auditLogs'
 import customerUsers from './customerUsers'
+import agents from './agents'
 
 export default {
   dashboard,
@@ -78,4 +79,5 @@ export default {
   costStrategy,
   auditLogs,
   customerUsers,
+  agents,
 }

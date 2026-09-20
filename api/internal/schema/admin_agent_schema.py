@@ -18,6 +18,8 @@ class AdminAgentCreateReq(Schema):
     prompt_key = fields.String(load_default=None, allow_none=True)
     granted_permissions = fields.List(fields.String(), load_default=list)
     automation_policy = fields.Dict(load_default=dict)
+    # 预算闸门配置（§6.3）：daily/monthly 的执行次数与 token 上限，空 = 不限制
+    budget_config = fields.Dict(load_default=dict)
 
 
 class AdminAgentUpdateReq(Schema):
@@ -30,6 +32,7 @@ class AdminAgentUpdateReq(Schema):
         fields.String(), load_default=None, allow_none=True
     )
     automation_policy = fields.Dict(load_default=None, allow_none=True)
+    budget_config = fields.Dict(load_default=None, allow_none=True)
     enabled = fields.Boolean(load_default=None, allow_none=True)
 
 
@@ -40,6 +43,7 @@ class AdminAgentResp(Schema):
     prompt_key = fields.String(allow_none=True)
     granted_permissions = fields.List(fields.String(), dump_default=[])
     automation_policy = fields.Dict(dump_default={})
+    budget_config = fields.Dict(dump_default={})
     enabled = fields.Boolean()
     created_at = fields.Integer(allow_none=True)
     updated_at = fields.Integer(allow_none=True)
