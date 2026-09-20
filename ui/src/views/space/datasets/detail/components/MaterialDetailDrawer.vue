@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Message } from '@arco-design/web-vue'
 import {
@@ -8,6 +8,7 @@ import {
 } from '@/hooks/use-knowledge-base'
 import { deleteKnowledgeDocument, triggerDocumentL2 } from '@/services/knowledge-base'
 import { getErrorMessage } from '@/utils/error'
+import TimelineEditorModal from './TimelineEditorModal.vue'
 
 const props = defineProps<{
   knowledgeBaseId: string
@@ -24,6 +25,8 @@ const { loading: docLoading, document, loadDocument } = useGetKnowledgeDocument(
 const { loading: segLoading, segments, loadSegments } = useGetKnowledgeSegmentsWithPage()
 const l2Loading = ref(false)
 const deleteLoading = ref(false)
+const editorVisible = ref(false)
+const canReassemble = computed(() => document.value.media_type === 'video')
 
 watch(
   () => [props.visible, props.documentId] as const,
@@ -103,6 +106,14 @@ const formatTime = (sec: number) => {
         <a-button type="primary" size="small" :loading="l2Loading" @click="handleTriggerL2">
           {{ t('space.datasets.detail.material.triggerL2') }}
         </a-button>
+        <a-button
+          v-if="canReassemble"
+          size="small"
+          data-test="open-reassemble"
+          @click="editorVisible = true"
+        >
+          {{ t('space.datasets.detail.material.reassemble') }}
+        </a-button>
         <a-button size="small" status="danger" :loading="deleteLoading" @click="handleDelete">
           {{ t('space.datasets.detail.material.delete') }}
         </a-button>
@@ -136,5 +147,11 @@ const formatTime = (sec: number) => {
         </template>
       </div>
     </div>
+
+    <timeline-editor-modal
+      v-model:visible="editorVisible"
+      :knowledge-base-id="knowledgeBaseId"
+      :document-id="String(documentId || '')"
+    />
   </a-drawer>
 </template>

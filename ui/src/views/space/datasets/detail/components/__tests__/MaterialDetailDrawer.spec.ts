@@ -29,6 +29,21 @@ const material = {
   triggerL2: 'L2 深度解析',
   noSegments: '暂无分段',
   delete: '删除素材',
+  reassemble: '重新编排',
+  reassembleTitle: '时间线编排',
+  reassembleHint: '拖拽调整顺序，可删除段落或用其他素材的段落替换',
+  reassembleDelete: '删除',
+  reassembleReplace: '替换',
+  reassembleReplaceTitle: '选择替换素材',
+  reassemblePickDoc: '选择素材',
+  reassemblePickSegment: '选择段落',
+  reassembleSubmit: '生成成片',
+  reassembleCancel: '取消',
+  reassembleBack: '返回',
+  reassembleSubmitted: '已提交后台处理，完成后会自动存入成品库',
+  reassembleFailed: '编排提交失败，请稍后重试',
+  reassembleEmpty: '暂无时间线段落，无法编排',
+  reassembleNamePlaceholder: '成品名称（可选）',
 }
 const i18n = createI18n({
   legacy: false,
@@ -45,6 +60,10 @@ const stubs = {
   'a-tag': { template: '<span><slot /></span>' },
   'a-empty': { template: '<div><slot name="description" /></div>' },
   'a-skeleton': { template: '<div />' },
+  'timeline-editor-modal': {
+    template: '<div data-test="reassemble-modal" />',
+    props: ['visible'],
+  },
 }
 
 import MaterialDetailDrawer from '@/views/space/datasets/detail/components/MaterialDetailDrawer.vue'
@@ -149,5 +168,36 @@ describe('MaterialDetailDrawer', () => {
     await flushPromises()
     expect(wrapper.find('img').attributes('src')).toBe('https://cos/f.jpg')
     expect(wrapper.text()).toContain('00:03')
+  })
+
+  it('视频素材显示重新编排按钮，点击后打开编排弹窗', async () => {
+    mocks.getKnowledgeDocument.mockResolvedValue({
+      data: {
+        id: 'd1',
+        name: 'demo.mp4',
+        media_type: 'video',
+        segment_count: 3,
+        character_count: 0,
+        status: 'completed',
+      },
+    })
+    mocks.getKnowledgeSegmentsWithPage.mockResolvedValue({
+      data: {
+        list: [
+          { id: 's1', position: 1, content: '段1', source: 'vision_timeline', start_sec: 0, end_sec: 5 },
+        ],
+        paginator: { current_page: 1, page_size: 20, total_page: 1, total_record: 1 },
+      },
+    })
+    const wrapper = mount(MaterialDetailDrawer, {
+      props,
+      global: { plugins: [i18n], stubs },
+    })
+    await flushPromises()
+    const button = wrapper.find('[data-test="open-reassemble"]')
+    expect(button.exists()).toBe(true)
+    await button.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="reassemble-modal"]').exists()).toBe(true)
   })
 })
