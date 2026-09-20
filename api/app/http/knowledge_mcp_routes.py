@@ -7,6 +7,7 @@ from quart import Response, request
 
 from app.http import support as _support
 from app.http.support import (
+    _err,
     _field,
     _int_arg,
     _json_resp,
@@ -924,6 +925,42 @@ def register_routes(quart_app):
             account,
         )
         return _ok_msg("更新片段成功")
+
+    @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/reassemble")
+    async def async_reassemble_document(knowledge_base_id, document_id) -> Response:
+        """async 按时间线编排重建视频（成片编辑器提交入口）。
+
+        请求体：`{"clips": [{"document_id": "...", "segment_index": 3}, ...], "name": ""}`
+        `segment_index` 为 1-based 段落序号，0/缺省取整段。结构性校验在前
+        （片段非空 / 必含 document_id / 序号非负整数），业务校验（素材归属、
+        序号越界、文件下载）留在 `VideoEditService.reassemble_document`。
+        """
+        account, err = await _resolve_account()
+        if err is not None:
+            return err
+
+        payload = await request.get_json(force=True, silent=True) or {}
+        clips = payload.get("clips")
+        if not isinstance(clips, list) or not clips:
+            return _err("invalid_param", "编排至少需要一个片段")
+        for clip in clips:
+            if not isinstance(clip, dict) or not str(clip.get("document_id") or "").strip():
+                return _err("invalid_param", "编排片段缺少 document_id")
+            try:
+                segment_index = int(clip.get("segment_index") or 0)
+            except (TypeError, ValueError):
+                return _err("invalid_param", "编排片段的段落序号必须是整数（0 表示整段）")
+            if segment_index < 0:
+                return _err("invalid_param", "编排片段的段落序号不能为负")
+
+        from internal.task.video_edit_tasks import video_reassemble_task
+
+        async_result = await _to_thread(
+            video_reassemble_task.delay,
+            str(knowledge_base_id), str(document_id), clips,
+            str(payload.get("name") or "").strip(), str(account.id),
+        )
+        return _ok({"task_id": str(getattr(async_result, "id", ""))})
 
     @quart_app.post("/space/knowledge-bases/<uuid:knowledge_base_id>/regenerate-icon")
     async def async_knowledge_base_regenerate_icon(knowledge_base_id) -> Response:

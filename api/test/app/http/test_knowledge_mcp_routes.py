@@ -234,3 +234,71 @@ class TestDocumentMediaFields:
         item = payload["data"]
         assert item["media_type"] == "audio"
         assert item["parse_profile"] == {}
+
+
+class TestReassembleDocumentRoute:
+    def test_route_registered(self):
+        rules = [r.rule for r in asgi_app.quart_app.url_map.iter_rules()]
+        assert "/space/knowledge-bases/<uuid:knowledge_base_id>/documents/<uuid:document_id>/reassemble" in rules
+
+    def test_reassemble_dispatches_task_with_clips(self, monkeypatch):
+        """合法 clips 应派发 video_reassemble_task（同步 delay 在 _to_thread 内）。"""
+        from internal.task import video_edit_tasks as tasks_module
+
+        captured = {}
+
+        class _Task:
+            @staticmethod
+            def delay(*args, **kwargs):
+                captured["args"] = args
+                return SimpleNamespace(id="task-re")
+
+        account = _setup(monkeypatch)
+        monkeypatch.setattr(tasks_module, "video_reassemble_task", _Task)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/space/knowledge-bases/{uuid4()}/documents/{uuid4()}/reassemble",
+                    json={"clips": [{"document_id": str(uuid4()), "segment_index": 2}], "name": "重排"},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert payload["code"] == "success"
+        assert payload["data"]["task_id"] == "task-re"
+        assert captured["args"][1] == "重排" or captured["args"][3] == "重排"
+
+    def test_reassemble_rejects_empty_clips(self, monkeypatch):
+        account = _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/space/knowledge-bases/{uuid4()}/documents/{uuid4()}/reassemble",
+                    json={"clips": []},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 400
+        assert "至少需要一个片段" in payload["message"]
+
+    def test_reassemble_rejects_clip_without_document_id(self, monkeypatch):
+        account = _setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.post(
+                    f"/space/knowledge-bases/{uuid4()}/documents/{uuid4()}/reassemble",
+                    json={"clips": [{"segment_index": 1}]},
+                )
+                return resp, await resp.json
+
+        resp, payload = asyncio.run(_run())
+
+        assert resp.status_code == 400
+        assert "document_id" in payload["message"]
