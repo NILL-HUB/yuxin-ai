@@ -61,6 +61,15 @@ const handleDelete = async () => {
     deleteLoading.value = false
   }
 }
+
+const formatTime = (sec: number) => {
+  const total = Math.max(0, Math.floor(Number(sec) || 0))
+  const m = Math.floor(total / 60)
+    .toString()
+    .padStart(2, '0')
+  const s = (total % 60).toString().padStart(2, '0')
+  return `${m}:${s}`
+}
 </script>
 
 <template>
@@ -70,6 +79,13 @@ const handleDelete = async () => {
     </template>
 
     <div class="flex flex-col gap-4">
+      <div
+        v-if="document.media_type === 'video' && document.playback_url"
+        class="overflow-hidden rounded-xl border border-border-c bg-black"
+      >
+        <video :src="document.playback_url" controls playsinline class="aspect-video w-full" />
+      </div>
+
       <div v-loading="docLoading" class="space-y-2 rounded-xl border border-border-c bg-surface-2 p-4">
         <p class="text-sm text-text-2">
           {{ t('space.datasets.detail.material.status') }}:
@@ -95,9 +111,24 @@ const handleDelete = async () => {
       <div class="space-y-2">
         <a-skeleton v-if="segLoading" :animation="true" />
         <template v-else>
-          <div v-for="seg in segments" :key="seg.id" class="rounded-lg border border-border-c bg-surface p-3">
-            <p class="line-clamp-3 text-sm text-text-2">{{ seg.content }}</p>
-            <p class="mt-1 text-xs text-muted">#{{ seg.position }}</p>
+          <div
+            v-for="seg in segments"
+            :key="seg.id"
+            class="flex gap-3 rounded-lg border border-border-c bg-surface p-3"
+          >
+            <img
+              v-if="seg.frame_url"
+              :src="seg.frame_url"
+              class="h-16 w-24 shrink-0 rounded object-cover"
+              alt=""
+            />
+            <div class="min-w-0 flex-1">
+              <p v-if="seg.start_sec && seg.start_sec > 0" class="text-xs text-muted">
+                {{ formatTime(seg.start_sec) }} ~ {{ formatTime(seg.end_sec) }}
+              </p>
+              <p class="line-clamp-3 text-sm text-text-2">{{ seg.content }}</p>
+              <p class="mt-1 text-xs text-muted">#{{ seg.position }}</p>
+            </div>
           </div>
           <a-empty v-if="segments.length === 0">
             <template #description>{{ t('space.datasets.detail.material.noSegments') }}</template>

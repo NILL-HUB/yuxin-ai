@@ -105,4 +105,49 @@ describe('MaterialDetailDrawer', () => {
     expect(mocks.deleteKnowledgeDocument).toHaveBeenCalledWith('kb-1', 'd1')
     expect(wrapper.emitted('deleted')).toBeTruthy()
   })
+
+  it('视频成品带 playback_url 时渲染内联播放器', async () => {
+    mocks.getKnowledgeDocument.mockResolvedValue({
+      data: {
+        id: 'd1',
+        name: 'demo.mp4',
+        media_type: 'video',
+        playback_url: 'https://cos/out.mp4',
+        segment_count: 0,
+        character_count: 0,
+        status: 'completed',
+      },
+    })
+    const wrapper = mount(MaterialDetailDrawer, {
+      props,
+      global: { plugins: [i18n], stubs },
+    })
+    await flushPromises()
+    expect(wrapper.find('video').attributes('src')).toBe('https://cos/out.mp4')
+  })
+
+  it('分段带 frame_url 时渲染帧缩略图与时间标签', async () => {
+    mocks.getKnowledgeSegmentsWithPage.mockResolvedValue({
+      data: {
+        list: [
+          {
+            id: 's1',
+            position: 1,
+            content: 'some segment content',
+            frame_url: 'https://cos/f.jpg',
+            start_sec: 3.2,
+            end_sec: 8.7,
+          },
+        ],
+        paginator: { current_page: 1, page_size: 20, total_page: 1, total_record: 1 },
+      },
+    })
+    const wrapper = mount(MaterialDetailDrawer, {
+      props,
+      global: { plugins: [i18n], stubs },
+    })
+    await flushPromises()
+    expect(wrapper.find('img').attributes('src')).toBe('https://cos/f.jpg')
+    expect(wrapper.text()).toContain('00:03')
+  })
 })
