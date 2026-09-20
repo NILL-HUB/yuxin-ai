@@ -19,7 +19,7 @@ from celery import shared_task
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["video_concat_task", "video_subtitle_task", "video_trim_task"]
+__all__ = ["video_concat_task", "video_subtitle_task", "video_trim_task", "video_reassemble_task"]
 
 
 def _load_service():
@@ -173,5 +173,39 @@ def video_subtitle_task(
     _notify_artifact(
         account_id=account_id, message_id=message_id, conversation_id=conversation_id,
         result=result, tool="video_subtitle",
+    )
+    return result
+
+
+@shared_task(
+    name="internal.task.video_edit_tasks.video_reassemble_task",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+)
+def video_reassemble_task(
+    self, knowledge_base_id: str, document_id: str, clips,
+    name: str, account_id: str,
+    message_id: str = "", conversation_id: str = "",
+):
+    """按时间线编排重建库内视频并存入成品库，完成后回填到原对话消息。
+
+    `clips` 为有序编排片段（每项含 document_id / segment_index），
+    由工具或前端编辑器提交；业务校验全在
+    `VideoEditService.reassemble_document`（素材归属/序号越界/参数非法）。
+    """
+    service = _load_service()
+    account = _load_account(account_id)
+
+    def _run():
+        return service.reassemble_document(
+            account=account, knowledge_base_id=knowledge_base_id,
+            document_id=document_id, clips=list(clips or []), name=name,
+        )
+
+    result = _delegate(self, "reassemble", _run)
+    _notify_artifact(
+        account_id=account_id, message_id=message_id, conversation_id=conversation_id,
+        result=result, tool="video_reassemble",
     )
     return result

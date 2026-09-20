@@ -49,6 +49,12 @@ def _install_service(monkeypatch, *, result=None, error=None):
                 raise error
             return result or {"document_id": "d1"}
 
+        def reassemble_document(self, **kw):
+            calls.update(kw)
+            if error is not None:
+                raise error
+            return result or {"document_id": "d1"}
+
     monkeypatch.setattr(video_edit_tasks, "_load_service", lambda: _Svc())
     # 账号加载依赖真实 DB 与 UUID 入参，测试替身直接回传，聚焦委托与重试语义
     monkeypatch.setattr(video_edit_tasks, "_load_account", lambda account_id: account_id)
@@ -134,3 +140,40 @@ def test_task_names_are_stable():
         (video_edit_tasks.video_subtitle_task, "internal.task.video_edit_tasks.video_subtitle_task"),
     ):
         assert task.name == expected
+
+
+def test_reassemble_task_delegates_with_clips(monkeypatch):
+    calls = _install_service(monkeypatch)
+    clips = [{"document_id": "doc-1", "segment_index": 1}]
+    out = _invoke(
+        video_edit_tasks.video_reassemble_task, _FakeSelf(),
+        "kb-1", "doc-1", clips, "新成片", "acc-1",
+    )
+    assert out == {"document_id": "d1"}
+    assert calls["knowledge_base_id"] == "kb-1"
+    assert calls["document_id"] == "doc-1"
+    assert calls["clips"] == clips
+    assert calls["name"] == "新成片"
+
+
+def test_reassemble_task_does_not_retry_business_error(monkeypatch):
+    _install_service(monkeypatch, error=VideoEditError("编排至少需要一个片段"))
+    self_obj = _FakeSelf()
+    with pytest.raises(VideoEditError, match="至少需要一个片段"):
+        _invoke(video_edit_tasks.video_reassemble_task, self_obj, "kb", "doc", [], "n", "acc")
+    assert self_obj.retries == []
+
+
+def test_reassemble_task_retries_on_transient_error(monkeypatch):
+    _install_service(monkeypatch, error=RuntimeError("io boom"))
+    self_obj = _FakeSelf()
+    with pytest.raises(RuntimeError, match="retry:"):
+        _invoke(video_edit_tasks.video_reassemble_task, self_obj, "kb", "doc", [{"document_id": "d", "segment_index": 1}], "n", "acc")
+    assert len(self_obj.retries) == 1
+
+
+def test_reassemble_task_name_is_stable():
+    # 派发端（工具/路由）按名字路由，改名即断链
+    assert video_edit_tasks.video_reassemble_task.name == (
+        "internal.task.video_edit_tasks.video_reassemble_task"
+    )
