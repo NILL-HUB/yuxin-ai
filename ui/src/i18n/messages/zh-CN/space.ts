@@ -372,6 +372,7 @@ export default  {
         material: {
           gridView: '网格',
           tableView: '表格',
+          videoBadge: '视频',
           empty: '暂无素材',
           searchPlaceholder: '搜索素材',
           status: '解析状态',

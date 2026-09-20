@@ -381,6 +381,7 @@ export default  {
         material: {
           gridView: 'Grid',
           tableView: 'Table',
+          videoBadge: 'Video',
           empty: 'No materials',
           searchPlaceholder: 'Search materials',
           status: 'Status',
