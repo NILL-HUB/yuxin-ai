@@ -134,6 +134,61 @@ class TestDocumentMediaFields:
         assert item["parse_profile"] == {"video_frame_count": 12}
         assert item["segment_count"] == 3
 
+    def test_documents_with_page_filters_by_partition(self, monkeypatch):
+        """GET .../documents?partition_id=... 应将分区 id 透传进服务请求。"""
+        from datetime import UTC, datetime
+
+        from internal.service import KnowledgeBaseService
+
+        fake_doc = _FakeDocModel(
+            id=uuid4(),
+            name="a.txt",
+            media_type="document",
+            content_type="document",
+            parse_profile={},
+            character_count=10,
+            status="completed",
+            error="",
+            updated_at=datetime.now(UTC),
+            created_at=datetime.now(UTC),
+        )
+        from dataclasses import dataclass
+
+        @dataclass
+        class Paginator:
+            current_page: int = 1
+            page_size: int = 20
+            total_page: int = 1
+            total_record: int = 1
+
+        received = {}
+
+        class _FakeKb:
+            @staticmethod
+            def get_documents_with_page(knowledge_base_id, req, account):
+                received["partition_id"] = req.partition_id.data
+                return [fake_doc], Paginator()
+
+        _setup(monkeypatch, service=None)
+        monkeypatch.setattr(
+            support, "_get_service",
+            lambda cls: _FakeKb() if cls is KnowledgeBaseService else None,
+        )
+
+        target_partition = uuid4()
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(
+                    f"/space/knowledge-bases/{uuid4()}/documents?partition_id={target_partition}"
+                )
+                return resp, await resp.json
+
+        resp, _ = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert received["partition_id"] == target_partition
+
     def test_document_detail_includes_media_fields(self, monkeypatch):
         """文档详情响应应带媒体字段。"""
         from datetime import UTC, datetime

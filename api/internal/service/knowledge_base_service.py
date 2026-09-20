@@ -844,6 +844,9 @@ class KnowledgeBaseService(BaseService):
             filters.append(
                 KnowledgeDocument.name.ilike(f"%{escape_like_pattern(req.search_word.data)}%")
             )
+        partition_id = getattr(getattr(req, "partition_id", None), "data", None)
+        if partition_id:
+            filters.append(KnowledgeDocument.partition_id == partition_id)
 
         # 4.执行分页查询
         documents = paginator.paginate(

@@ -19,6 +19,16 @@ from app.http.support import (
 _registered = False
 
 
+def _parse_partition_id_arg(raw) -> "UUID | None":
+    """解析分区 id query 参数：非法或缺失返回 None。"""
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return UUID(str(raw).strip())
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def _get_service(cls):
     return _support._get_service(cls)
 
@@ -767,6 +777,7 @@ def register_routes(quart_app):
             current_page=_field(_int_arg("current_page", 1), 1),
             page_size=_field(_int_arg("page_size", 20), 20),
             search_word=_field(request.args.get("search_word"), None),
+            partition_id=_field(_parse_partition_id_arg(request.args.get("partition_id")), None),
         )
         documents, paginator = await _to_thread(
             _get_service(KnowledgeBaseService).get_documents_with_page,
