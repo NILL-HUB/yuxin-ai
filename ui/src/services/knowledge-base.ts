@@ -112,6 +112,16 @@ export const getKnowledgeDocument = (
   )
 }
 
+// 触发指定素材的 L2 深度解析（按需，不做定时轮询）
+export const triggerDocumentL2 = (
+  knowledge_base_id: string,
+  document_id: string,
+) => {
+  return post<BaseResponse<Record<string, unknown>>>(
+    `/space/knowledge-bases/${knowledge_base_id}/documents/${document_id}/l2`,
+  )
+}
+
 // 删除知识库下指定文档（进入回收站，可指定留存天数）
 export const deleteKnowledgeDocument = (
   knowledge_base_id: string,
