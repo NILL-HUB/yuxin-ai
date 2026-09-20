@@ -11,7 +11,7 @@ from redis import Redis
 
 from internal.entity.conversation_entity import InvokeFrom
 from internal.entity.schedule_task_entity import ScheduleRunStatus
-from internal.exception import NotFoundException
+from internal.exception import FailException, NotFoundException
 from internal.model import Account, Conversation, Message, ScheduleTask, ScheduleTaskRun
 from internal.service.base_service import BaseService
 from internal.service.assistant_agent_resolver import resolve_assistant_agent_app_id
@@ -37,6 +37,53 @@ _SUMMARY_MAX_LENGTH = 2000
 
 def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _build_admin_agent_principal(agent) -> "AdminAgentPrincipal | None":
+    """按 agent 定义重算执行身份（ADMIN-P4 T3，测试接缝）。
+
+    生产走 injector 解析：定时执行在 worker 进程内，无 HTTP token，
+    管理员实时权限点按 `owner_admin_user_id` 重算，再交给
+    ``AdminAgentService.get_principal`` 做三重交集。
+    """
+    from internal.service.admin_agent_service import AdminAgentService
+    from internal.service.admin_user_service import AdminUserService
+
+    admin_user_service = current_app.injector.get(AdminUserService)
+    admin_permissions = admin_user_service.get_permission_codes_for(
+        agent.owner_admin_user_id
+    )
+    return current_app.injector.get(AdminAgentService).get_principal(
+        agent_id=agent.id,
+        admin_user_id=agent.owner_admin_user_id,
+        admin_permissions=admin_permissions,
+    )
+
+
+def _build_admin_agent_execution():
+    """构造管理端 Agent 执行链（ADMIN-P4 T3，测试接缝）。
+
+    与 admin 路由的 `_build_execution_service` 同一套依赖，仅换注入来源。
+    """
+    from internal.service.admin_agent_board_tools import BoardToolExecutor
+    from internal.service.admin_agent_execution_service import (
+        AdminAgentExecutionService,
+    )
+    from internal.service.admin_change_draft_service import AdminChangeDraftService
+    from internal.service.audit_log_service import AuditLogService
+
+    return AdminAgentExecutionService(
+        board_executor=BoardToolExecutor(),
+        draft_service=current_app.injector.get(AdminChangeDraftService),
+        audit_log_service=AuditLogService(),
+    )
+
+
+def _build_budget_gate():
+    """构造预算闸门（ADMIN-P4 T3 复用 T2，测试接缝）。"""
+    from internal.core.admin_agent_budget import AdminAgentBudgetGate
+
+    return AdminAgentBudgetGate()
 
 
 @inject
@@ -94,7 +141,12 @@ class ScheduleExecutionService(BaseService):
         try:
             run = self._create_run(schedule_task)
             try:
-                if schedule_task.task_type == "app_execution" and schedule_task.app_id:
+                if (
+                    schedule_task.task_type == "admin_agent_execution"
+                    and schedule_task.admin_agent_id
+                ):
+                    answer = self._run_admin_agent(schedule_task)
+                elif schedule_task.task_type == "app_execution" and schedule_task.app_id:
                     answer = self._run_bound_app(schedule_task)
                 else:
                     answer = self._run_assistant_chat(schedule_task)
@@ -153,6 +205,48 @@ end
         except Exception:
             logger.warning("检查账号并发额度失败，放行 account_id=%s", account_id, exc_info=True)
             return True
+
+    def _run_admin_agent(self, schedule_task: ScheduleTask) -> str:
+        """以管理端 Agent 身份按绑定板块动作周期执行，返回执行结果摘要（ADMIN-P4 T3）。
+
+        流程：查 admin_agent → 重算执行身份（归属 admin_user + 权限重算）→
+        预算闸门（复用 T2，超限抛异常 → 运行记录标记失败）→
+        ``AdminAgentExecutionService.run`` 按 ``automation_policy`` 自动分流
+        （supervised 档产出变更草稿，autonomous 档直接执行），审计 actor_type=agent
+        由执行服务内部完成。
+        """
+        import json
+
+        from internal.model import AdminAgent
+
+        agent = (
+            self.db.session.query(AdminAgent)
+            .filter(AdminAgent.id == schedule_task.admin_agent_id)
+            .one_or_none()
+        )
+        if agent is None:
+            raise NotFoundException("管理端 Agent 不存在")
+        if not bool(getattr(agent, "enabled", True)):
+            raise NotFoundException("管理端 Agent 已停用")
+
+        params = schedule_task.input_params or {}
+        board = params.get("board")
+        action = params.get("action")
+        if not board or not action:
+            raise FailException("定时任务缺少 board/action 参数")
+        payload = params.get("payload") or {}
+
+        _build_budget_gate().check_and_record(
+            str(agent.id), getattr(agent, "budget_config", None) or {}
+        )
+
+        principal = _build_admin_agent_principal(agent)
+        if principal is None:
+            raise NotFoundException("管理端 Agent 不可用")
+
+        execution = _build_admin_agent_execution()
+        result = execution.run(principal, board=board, action=action, payload=payload)
+        return json.dumps(result, ensure_ascii=False)
 
     def _run_bound_app(self, schedule_task: ScheduleTask) -> str:
         """以任务归属用户身份按绑定应用执行，返回最终回答文本。"""
@@ -263,6 +357,7 @@ end
             schedule_task_id=schedule_task.id,
             account_id=schedule_task.account_id,
             owner_type=schedule_task.owner_type or "user",
+            admin_agent_id=schedule_task.admin_agent_id,
             trigger_source="schedule",
             status=ScheduleRunStatus.RUNNING.value,
         )

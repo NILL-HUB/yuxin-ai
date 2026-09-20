@@ -570,6 +570,134 @@ def register_routes(quart_app):
         resp = AdminAgentDraftListResp()
         return a._ok(resp.dump(result))
 
+    @quart_app.post("/admin/agents/<uuid:agent_id>/schedules")
+    async def admin_agent_schedule_create(agent_id):
+        """为管理端 Agent 创建周期执行任务（ADMIN-P4 T3）。
+
+        body: ``{name, prompt?, cron_expression, board, action, payload?}``。
+        board/action/payload 写入 ``input_params``，执行时由
+        ``ScheduleExecutionService`` 按 `admin_agent_execution` 分支调
+        ``AdminAgentExecutionService.run``。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        from internal.service.admin_agent_service import AdminAgentService
+        from internal.service.schedule_task_service import ScheduleTaskService
+
+        body = await request.get_json(force=True, silent=True) or {}
+        admin_user_id = UUID(str(admin.get("id")))
+        name = str(body.get("name") or "").strip()
+        cron_expression = str(body.get("cron_expression") or "").strip()
+        board = str(body.get("board") or "").strip()
+        action = str(body.get("action") or "").strip()
+        if not name or not cron_expression or not board or not action:
+            return a._json_resp(
+                code="validate_error",
+                message="name/cron_expression/board/action 不能为空",
+                status=400,
+            )
+
+        def _run():
+            agent = a._get_service(AdminAgentService).get_agent(
+                agent_id=agent_id, admin_user_id=admin_user_id
+            )
+            if agent is None:
+                return None
+            return a._get_service(ScheduleTaskService).create_task(
+                account=None,
+                name=name,
+                prompt=str(body.get("prompt") or ""),
+                cron_expression=cron_expression,
+                owner_type="admin",
+                admin_agent_id=agent_id,
+                admin_user_id=admin_user_id,
+                input_params={
+                    "board": board,
+                    "action": action,
+                    "payload": body.get("payload") or {},
+                },
+            )
+
+        try:
+            task = await a._to_thread(_run)
+        except FailException as exc:
+            return a._json_resp(code="validate_error", message=str(exc), status=400)
+        if task is None:
+            return a._json_resp(code="not_found", message="Agent 不存在", status=404)
+        from internal.schema.schedule_task_schema import ScheduleTaskResp
+
+        return a._ok(ScheduleTaskResp.pre_dump_process(task))
+
+    @quart_app.get("/admin/agents/<uuid:agent_id>/schedules")
+    async def admin_agent_schedule_list(agent_id):
+        """列出某管理端 Agent 的周期执行任务（ADMIN-P4 T3）。"""
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:read")
+        if err is not None:
+            return err
+
+        from internal.schema.schedule_task_schema import ScheduleTaskResp
+        from internal.service.schedule_task_service import ScheduleTaskService
+
+        page = _int_arg("page", 1)
+        page_size = _int_arg("page_size", 20)
+        tasks, total = await a._to_thread(
+            a._get_service(ScheduleTaskService).list_tasks,
+            None,
+            page,
+            page_size,
+            "admin",
+            agent_id=agent_id,
+        )
+        return a._ok({"items": ScheduleTaskResp.dump_many(tasks), "total": total})
+
+    @quart_app.delete("/admin/agents/<uuid:agent_id>/schedules/<uuid:task_id>")
+    async def admin_agent_schedule_delete(agent_id, task_id):
+        """删除某管理端 Agent 的周期执行任务（ADMIN-P4 T3）。
+
+        先确认任务确实绑定本 Agent，再进入平台回收站。
+        """
+        from app.http import asgi_app as a
+
+        admin, err = await a._resolve_admin_permission("agent_pool:manage")
+        if err is not None:
+            return err
+
+        from uuid import UUID
+
+        from internal.service.schedule_task_service import ScheduleTaskService
+
+        admin_user_id = UUID(str(admin.get("id")))
+
+        def _run():
+            task = a._get_service(ScheduleTaskService).get_task(
+                task_id, None, owner_type="admin"
+            )
+            if task is None or str(task.admin_agent_id or "") != str(agent_id):
+                return None
+            a._get_service(ScheduleTaskService).delete_task(
+                task_id,
+                None,
+                owner_type="admin",
+                agent_id=admin_user_id,
+            )
+            return True
+
+        try:
+            result = await a._to_thread(_run)
+        except FailException as exc:
+            return a._json_resp(code="validate_error", message=str(exc), status=400)
+        if result is None:
+            return a._json_resp(code="not_found", message="定时任务不存在", status=404)
+        return a._ok_msg("删除成功")
+
     @quart_app.get("/admin/agents")
     async def admin_agent_list():
         """列出当前管理员**自己创建**的管理端 Agent（设计 §2：仅创建者可用）。"""

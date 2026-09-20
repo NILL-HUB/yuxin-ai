@@ -835,6 +835,15 @@ class AdminUserService:
         result["is_online"] = self._is_admin_online(admin_user.id)
         return result
 
+    def get_permission_codes_for(self, admin_user_id) -> list[str]:
+        """按管理员 id 重算其权限点集合（无 token 依赖）。
+
+        供后台 / 定时任务链路使用：定时任务在 worker 进程内执行，没有 HTTP
+        请求里的 JWT，但仍需按管理员当前角色实时重算权限点，再交给
+        ``AdminAgentService.get_principal`` 做三重交集（ADMIN-P4 T3）。
+        """
+        return self._get_permission_codes(self._get_role_codes(admin_user_id))
+
     def _get_role_codes(self, admin_user_id) -> list[str]:
         rows = (
             self.session.query(Role.code)

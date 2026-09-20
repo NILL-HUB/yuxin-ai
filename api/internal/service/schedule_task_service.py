@@ -37,10 +37,11 @@ TRIGGER_TYPES = (TRIGGER_TYPE_CRON, TRIGGER_TYPE_INTERVAL, TRIGGER_TYPE_ONCE)
 # 单次任务不允许设置为过去的时刻（留 60 秒容差，便于边解析边创建）
 ONCE_TRIGGER_PAST_TOLERANCE_SECONDS = 60
 
-# 任务类型：绑定应用执行 / 通用助手对话
+# 任务类型：绑定应用执行 / 通用助手对话 / 管理端 Agent 周期执行板块动作
 TASK_TYPE_APP_EXECUTION = "app_execution"
 TASK_TYPE_ASSISTANT_CHAT = "assistant_chat"
-TASK_TYPES = (TASK_TYPE_APP_EXECUTION, TASK_TYPE_ASSISTANT_CHAT)
+TASK_TYPE_ADMIN_AGENT_EXECUTION = "admin_agent_execution"
+TASK_TYPES = (TASK_TYPE_APP_EXECUTION, TASK_TYPE_ASSISTANT_CHAT, TASK_TYPE_ADMIN_AGENT_EXECUTION)
 
 # 间隔单位
 INTERVAL_UNIT_MONTH = "month"
@@ -333,6 +334,8 @@ class ScheduleTaskService(BaseService):
         task_type: str | None = None,
         input_params: dict | None = None,
         run_at=None,
+        admin_agent_id=None,
+        admin_user_id=None,
     ) -> ScheduleTask:
         trigger_type = trigger_type or TRIGGER_TYPE_CRON
         if trigger_type not in TRIGGER_TYPES:
@@ -358,7 +361,17 @@ class ScheduleTaskService(BaseService):
             account_id = account.id if account is not None else None
         normalized_app_id = None
         normalized_task_type = TASK_TYPE_ASSISTANT_CHAT
-        if app_id:
+        normalized_admin_agent_id = None
+        if admin_agent_id:
+            if owner_type != "admin":
+                raise FailException("仅平台级（owner_type=admin）任务可绑定管理端 Agent")
+            if app_id:
+                raise FailException("绑定管理端 Agent 的任务不能同时绑定应用")
+            normalized_admin_agent_id = self._validate_admin_agent_binding(
+                admin_agent_id, admin_user_id
+            )
+            normalized_task_type = TASK_TYPE_ADMIN_AGENT_EXECUTION
+        elif app_id:
             normalized_app_id = self._validate_bound_app(app_id, account_id, owner_type)
             normalized_task_type = task_type or TASK_TYPE_APP_EXECUTION
         elif task_type:
@@ -372,6 +385,7 @@ class ScheduleTaskService(BaseService):
             name=name,
             prompt=prompt,
             app_id=normalized_app_id,
+            admin_agent_id=normalized_admin_agent_id,
             task_type=normalized_task_type,
             input_params=input_params or {},
             trigger_type=trigger_type,
@@ -482,6 +496,27 @@ class ScheduleTaskService(BaseService):
             raise FailException("绑定的应用不存在或不属于当前账号")
         return app.id
 
+    def _validate_admin_agent_binding(self, admin_agent_id, admin_user_id):
+        """校验管理端 Agent 存在且归属当前管理员（仅 owner_type='admin' 任务可绑定）。
+
+        绑定语义与 admin_agent 治理一致：Agent 仅创建者可用（设计 §2），
+        定时任务不得把他人 Agent 拉入自己的调度。
+        """
+        from internal.model.admin_agent import AdminAgent
+
+        if not admin_user_id:
+            raise FailException("绑定管理端 Agent 需要管理员身份")
+        agent = (
+            self.db.session.query(AdminAgent)
+            .filter(AdminAgent.id == admin_agent_id)
+            .one_or_none()
+        )
+        if agent is None:
+            raise FailException("管理端 Agent 不存在")
+        if str(agent.owner_admin_user_id) != str(admin_user_id):
+            raise FailException("管理端 Agent 不属于当前管理员")
+        return agent.id
+
     def get_task(self, task_id, account: Account | None, owner_type: str = "user") -> ScheduleTask:
         task = self.get(ScheduleTask, task_id)
         if task is None:
@@ -494,11 +529,19 @@ class ScheduleTaskService(BaseService):
         return task
 
     def list_tasks(
-        self, account: Account | None, page: int, page_size: int, owner_type: str = "user"
+        self,
+        account: Account | None,
+        page: int,
+        page_size: int,
+        owner_type: str = "user",
+        agent_id=None,
     ) -> tuple[list[ScheduleTask], int]:
         query = self.db.session.query(ScheduleTask)
         if owner_type == "admin":
             query = query.filter(ScheduleTask.owner_type == "admin")
+            # ADMIN-P4 T3：按管理端 Agent 维度过滤，实现"某 Agent 的周期任务"视图隔离
+            if agent_id is not None:
+                query = query.filter(ScheduleTask.admin_agent_id == agent_id)
         else:
             query = query.filter(ScheduleTask.owner_type == "user")
             if account is not None:

@@ -18,6 +18,7 @@ class ScheduleTask(Base):
         PrimaryKeyConstraint("id", name="pk_schedule_task_id"),
         Index("ix_schedule_task_account", "account_id"),
         Index("ix_schedule_task_enabled", "enabled"),
+        Index("ix_schedule_task_admin_agent", "admin_agent_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
@@ -27,6 +28,13 @@ class ScheduleTask(Base):
     prompt = Column(Text, nullable=False)
     # 绑定的应用（可空）：空=通用助手任务，非空=按应用执行
     app_id = Column(UUID, ForeignKey("app.id"), nullable=True)
+    # 绑定的管理端 Agent（ADMIN-P4 T3，可空）：仅 owner_type='admin' 的任务可绑定，
+    # task_type=admin_agent_execution 时按 input_params 的 {board, action, payload} 周期执行板块动作
+    admin_agent_id = Column(
+        UUID,
+        ForeignKey("admin_agent.id", name="fk_schedule_task_admin_agent_id_admin_agent"),
+        nullable=True,
+    )
     # 任务类型：app_execution=绑定应用执行 / assistant_chat=通用助手对话
     task_type = Column(String(32), nullable=False, server_default=text("'assistant_chat'::character varying"))
     # 绑定应用时的输入参数（如 query、参数集合）
@@ -58,12 +66,19 @@ class ScheduleTaskRun(Base):
         PrimaryKeyConstraint("id", name="pk_schedule_task_run_id"),
         Index("ix_schedule_task_run_task", "schedule_task_id"),
         Index("ix_schedule_task_run_account", "account_id"),
+        Index("ix_schedule_task_run_admin_agent", "admin_agent_id"),
     )
 
     id = Column(UUID, nullable=False, server_default=text("uuid_generate_v4()"))
     schedule_task_id = Column(UUID, ForeignKey("schedule_task.id"), nullable=False)
     account_id = Column(UUID, ForeignKey("account.id"), nullable=False)
     owner_type = Column(String(16), nullable=False, server_default=text("'user'::character varying"))
+    # 绑定的管理端 Agent（ADMIN-P4 T3，可空）：透传 schedule_task.admin_agent_id
+    admin_agent_id = Column(
+        UUID,
+        ForeignKey("admin_agent.id", name="fk_schedule_task_run_admin_agent_id_admin_agent"),
+        nullable=True,
+    )
     trigger_source = Column(String(32), nullable=False, server_default=text("'schedule'::character varying"))
     status = Column(String(32), nullable=False, server_default=text("'running'::character varying"))
     started_at = Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP(0)"))
