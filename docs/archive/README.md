@@ -13,3 +13,4 @@
 | [memory-system-execution/](./memory-system-execution/) | docs/prd/memory-system/execution/ | 记忆系统 10 阶段执行历史快照（A-H track） |
 | [cleanup-reports/](./cleanup-reports/) | docs/cleanup-reports/ | 每日代码整洁度清理报告（一次性执行记录，2026-08-13 ~ 08-17） |
 | [research-completed/](./research-completed/) | docs/research/ | 已完成落地的调研/验证快照（执行历史，非当前参考；2026-09-11 归档） |
+| [2026-09-21-account-handoff.md](./2026-09-21-account-handoff.md) | 会话交接 | 跨账号切换的会话记忆摘要（仓库状态/验证基线/环境信息/待办）；新账号 Agent 接手必读 |
