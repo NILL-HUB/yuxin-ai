@@ -17,6 +17,7 @@ from internal.service.external_data_source_credentials import (
     encrypt_config,
 )
 from internal.service.knowledge_vector_service import KnowledgeVectorService
+from internal.service.storage_quota_service import StorageQuotaService
 from pkg.sqlalchemy import SQLAlchemy
 from .base_service import BaseService
 
@@ -33,12 +34,20 @@ class MockExternalConnector:
 
 class ExternalDataSourceService(BaseService):
     @inject
-    def __init__(self, db: SQLAlchemy, connector=None, knowledge_vector_service: KnowledgeVectorService = None):
+    def __init__(
+        self,
+        db: SQLAlchemy,
+        connector=None,
+        knowledge_vector_service: KnowledgeVectorService = None,
+        storage_quota_service: StorageQuotaService = None,
+    ):
         self.db = db
         self.connector = connector
         self.connector_factory = ConnectorFactory()
         # 向量库服务，用于将同步的 segment 写入向量索引
         self.knowledge_vector_service = knowledge_vector_service
+        # 存储配额服务：外部数据源同步产物纳入配额校验（KB-P5-C）
+        self.storage_quota_service = storage_quota_service
 
     def create_connection(
         self,
@@ -103,43 +112,81 @@ class ExternalDataSourceService(BaseService):
         operation_context = OperationContext.USER.value
         # 预加载知识库，用于后续向量索引（按 knowledge_base_id 查询一次）
         knowledge_base = self._get_knowledge_base(data_source.knowledge_base_id)
-        for document in documents:
-            content = document.get("content", "")
-            knowledge_doc = self.create(
-                KnowledgeDocument,
-                knowledge_base_id=data_source.knowledge_base_id,
-                owner_account_id=account.id,
-                name=document.get("name", "external_document"),
-                content_type="document",
-                source_type=data_source.source_type,
-                source_id=str(data_source.id),
-                metadata_={
-                    "external_data_source_id": str(data_source.id),
-                    "operation_context": operation_context,
-                },
-                character_count=len(content),
-                status="completed",
-            )
-            segments = self._split_document(content)
-            for idx, segment_text in enumerate(segments):
-                segment = self.create(
-                    KnowledgeSegment,
+
+        # ── 外部数据源同步纳入存储配额（KB-P5-C）──
+        # 同步产物为 DB 文档/分段文本 + 向量，不落 COS；按本次内容 utf-8 字节
+        # 原子预占（校验+累加），超限即拒绝并标记 FAILED。口径对齐分片上传的
+        # consume_quota / release_usage 范式。
+        incoming_bytes = sum(
+            len(str(doc.get("content") or "").encode("utf-8")) for doc in documents
+        )
+        quota_consumed = False
+        try:
+            if incoming_bytes > 0 and self.storage_quota_service is not None:
+                self.storage_quota_service.consume_quota(account.id, incoming_bytes)
+                quota_consumed = True
+        except Exception as exc:
+            data_source.sync_status = ExternalSyncStatus.FAILED.value
+            data_source.last_error = f"存储配额不足或扣减失败：{exc}"
+            return {
+                "sync_status": data_source.sync_status,
+                "document_count": 0,
+                "last_error": data_source.last_error,
+            }
+
+        try:
+            for document in documents:
+                content = document.get("content", "")
+                knowledge_doc = self.create(
+                    KnowledgeDocument,
                     knowledge_base_id=data_source.knowledge_base_id,
-                    knowledge_document_id=knowledge_doc.id,
                     owner_account_id=account.id,
-                    position=idx + 1,
-                    content=segment_text,
-                    keywords=[],
-                    metadata_={"source": "external_sync", "operation_context": operation_context},
-                    character_count=len(segment_text),
+                    name=document.get("name", "external_document"),
+                    content_type="document",
+                    source_type=data_source.source_type,
+                    source_id=str(data_source.id),
+                    metadata_={
+                        "external_data_source_id": str(data_source.id),
+                        "operation_context": operation_context,
+                    },
+                    character_count=len(content),
                     status="completed",
-                    enabled=True,
                 )
-                segment_count += 1
-                # 写入向量索引，失败不阻断同步主流程，仅记录 error 状态
-                self._index_segment_safely(segment, knowledge_base)
-            if document.get("cursor"):
-                data_source.sync_cursor = document["cursor"]
+                segments = self._split_document(content)
+                for idx, segment_text in enumerate(segments):
+                    segment = self.create(
+                        KnowledgeSegment,
+                        knowledge_base_id=data_source.knowledge_base_id,
+                        knowledge_document_id=knowledge_doc.id,
+                        owner_account_id=account.id,
+                        position=idx + 1,
+                        content=segment_text,
+                        keywords=[],
+                        metadata_={"source": "external_sync", "operation_context": operation_context},
+                        character_count=len(segment_text),
+                        status="completed",
+                        enabled=True,
+                    )
+                    segment_count += 1
+                    # 写入向量索引，失败不阻断同步主流程，仅记录 error 状态
+                    self._index_segment_safely(segment, knowledge_base)
+                if document.get("cursor"):
+                    data_source.sync_cursor = document["cursor"]
+        except Exception as exc:
+            # 写库/索引失败：释放预占配额，避免残留占位；同步标记 FAILED（沿既有语义）
+            if quota_consumed and self.storage_quota_service is not None:
+                try:
+                    self.storage_quota_service.release_usage(account.id, incoming_bytes)
+                except Exception:
+                    logger.warning("释放外部数据源同步预占配额失败", exc_info=True)
+            data_source.sync_status = ExternalSyncStatus.FAILED.value
+            data_source.last_error = str(exc)
+            return {
+                "sync_status": data_source.sync_status,
+                "document_count": 0,
+                "last_error": data_source.last_error,
+            }
+        # 成功路径：预占字节即实际内容字节（consume_quota 已入账），无需二次调整。
         data_source.sync_status = ExternalSyncStatus.SUCCESS.value
         data_source.last_error = ""
         data_source.last_synced_at = datetime.now(UTC).replace(tzinfo=None)

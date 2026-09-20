@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 未开始、KB-P6（外部素材获取，yt-dlp）已完成调研复核、未立项（见 §5.3）｜**版本**：v1.5｜**日期**：2026-09-20
+> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 已完成（前台页面 / 小钰帮传 / 同步配额，见 §9.2）、KB-P6（外部素材获取，yt-dlp）已完成调研复核、未立项（见 §5.3）｜**版本**：v1.5｜**日期**：2026-09-20
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -468,7 +468,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 - 参数：`name`（必填）、`base_type`（可选，`document`/`image`/`video`/`audio`/`mixed`，默认 `mixed`）、`partition_mode`（可选，`none`/`date_month`/`date_day`/`custom`，默认 `none`）、`description`（可选）。`base_type` / `partition_mode` 在工具内先做枚举校验，非法值直接返回可读错误，不进入服务层。
 - 服务调用：`KnowledgeBaseService.create_user_content_base(..., operation_context="user")`，仅创建**当前登录用户的私有**用户资料库。
 - 账号来源：由运行时挂载点 [assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py) 的 `_build_assistant_runtime_tools` 通过工厂参数 `account_id` 透传（与 `os_file_task` / `computer_action` 的 `requester` 同一注入点），工具内部再经 `AccountService` 加载真实 `Account` 实例。
-- ✅ **已落地**：对话框内成片预览（KB-P4 补充）：渲染/剪辑产物入库后，同步路径（本机渲染）由工具返回值携带可播放 `artifact`，异步路径（裁剪/拼接/字幕/云端渲染）在 Celery 完成后经 `notify_artifact_ready` 双通道回填（持久化到消息 + Socket.IO `artifact_ready` 推送）；前端 `ChatVideoGallery.vue` 内联播放。见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)。⬜ **仍未落地**：对话框内成片编辑器（时间轴拖拽/逐段替换）；成品库页面播放入口（属 KB-P5）。
+- ✅ **已落地**：对话框内成片预览（KB-P4 补充）：渲染/剪辑产物入库后，同步路径（本机渲染）由工具返回值携带可播放 `artifact`，异步路径（裁剪/拼接/字幕/云端渲染）在 Celery 完成后经 `notify_artifact_ready` 双通道回填（持久化到消息 + Socket.IO `artifact_ready` 推送）；前端 `ChatVideoGallery.vue` 内联播放。见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)。⬜ **仍未落地**：对话框内成片编辑器（时间轴拖拽/逐段替换）；成品库页面播放入口。
 
 ---
 
@@ -514,7 +514,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | **KB-P2 上传与解析** | 大文件与多模态入库 | **KB-P2A（已完成）**：白名单扩音视频 + 类型硬约束；`KnowledgeMediaExtractorService` 扩展多模态分支；L1 解析接入 `video_analyze`/`vision_analyze`/`audio_service` 产物写 Segment + 向量化。**KB-P2B（已完成）**：分片上传 + 秒传 + 断点续传；单文件上限改为按套餐权益分级 | KB-P2A：传视频/音频/图片 → 可被语义检索命中（✅ 已达成）；KB-P2B：分片链路本身可传 GB 级（流式合并，不整文件入内存）——**⚠️ 前提是管理员已在套餐配置 `max_single_file_gb` 权益，否则仍按默认 15MB 拒绝** | ✅ **已完成**（KB-P2A 计划：[2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)；KB-P2B 计划：[2026-09-14-knowledge-base-p2b-chunked-upload.md](../superpowers/plans/2026-09-14-knowledge-base-p2b-chunked-upload.md)） |
 | **KB-P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（KB-P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
 | **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **已落地**：渲染出片（KB-P3.7）结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）；轻量剪辑三件套（KB-P4）`video_trim` / `video_concat` / `video_subtitle`（`video_edit_tools` provider，经 Celery 默认队列，产物走 `store_render_output`）；**对话内成片预览**（同步走工具返回值、异步走 Celery 完成后双通道回填 + 前端内联播放）。⬜ **未落地**：对话框内成片编辑器 | 对话里出片并存入成品库（✅ 已达成）；对话里裁剪/拼接/加字幕并存入成品库（✅ 已达成）；对话内直接预览成片（✅ 已达成，见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)） | ✅ **已完成**（出片 KB-P3.7 + 剪辑/预览 KB-P4，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
-| **KB-P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传（desktop bridge）打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ⬜ 未开始 |
+| **KB-P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ✅ **已完成**（A 前台页面 + B 小钰帮传 `upload_to_knowledge_base` + C 同步配额，见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)） |
 | **KB-P6 外部素材获取（待拓展）** | 链接直达素材入库（视频 / 音频 + 字幕 / 封面） | `fetch_media` builtin 工具（`media_fetch_tools` provider，默认关闭）+ yt-dlp 嵌入下载 Celery 任务（视频 / 纯音频按板块 base_type 推断，顺带抓平台字幕与封面）+ 提取器白名单（排除 generic）+ 复用入库 / 配额 / L1 解析链路（L1 小幅扩展：优先消费平台字幕，省 ASR 成本） | 对话里给 B 站链接 → 素材入视频库 → 可被语义检索命中；给音频链接 → 入音频库；平台字幕文本可检索 | ⬜ 未开始（调研与实测复核已完成，见 §5.3） |
 
 **最小可用闭环 = KB-P1 + KB-P2 完成**（素材能入库、能被检索）。KB-P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；KB-P2B（大文件分片上传）落地后，KB-P2 已完整收口。

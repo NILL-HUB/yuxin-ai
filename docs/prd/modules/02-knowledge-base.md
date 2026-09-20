@@ -249,7 +249,7 @@ RAG 检索管线**已完整落地**，不再只是基础 CRUD：
 5. ✅ 已消解：`operation_context`、`owner_admin_user_id`、`visibility_scope` 字段已落地，可表达管理上下文和发布范围。
 6. 长期记忆管理已由第 16 章记忆系统接管（图可视化 CRUD），知识库系统不再负责记忆管理。
 7. 资料库的**多媒体 L1 基础解析（图片视觉摘要 + OCR、音频 ASR、视频音轨 ASR + 批次化时间线叙述 + 段落代表帧留存）已接入索引链路**（KB-P2A + KB-P3 + KB-P4.5，见 §11.8）；**关键帧视觉向量索引与 L2 按需解析（视频区间窗口密抽 + 逐帧视觉详述）已在 KB-P3 落地**（见 §11.10 / §11.11）；说话人切分、细粒度 OCR 坐标、场景切分仍未实现。
-8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）。
+8. 外部数据源连接与同步**已实现**：`ExternalDataSource` 模型 + lark/notion/github 连接器（真实 API）+ 本地文件夹连接器；凭证经 Fernet 加密存储、API 返回脱敏；支持手动同步与 Celery 定时自动同步；删除数据源时级联清理同步产物（文档/分段/向量/上传文件）；**同步产物已纳入存储配额校验（KB-P5-C，见 §11.17）**。
 9. ✅ 已消解：分层检索（`layered_search` 按 `knowledge_scope` 分层）已落地，不再只按 account_id 做基础隔离。
 10. 现有 App 绑定知识库是预绑定模式，后续需要接入动态知识检索工具子池（KB-P3 范围）。
 
@@ -926,5 +926,44 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 （`test_edit_tool_factories_pass_chat_context` / `test_factory_passes_chat_context_onto_tool`）。
 
 **未落地**：对话框内的成片编辑器（时间轴拖拽 / 逐段替换）；成品库页面的播放入口（属 KB-P5）。
+
+### 11.17 知识库前台与运维（KB-P5 已落地）
+
+用户端「我的知识库」从「板块列表 + 文档表格」升级为完整的板块管理闭环：
+
+| 能力 | 前端入口 | 数据源 |
+| --- | --- | --- |
+| 板块详情页 | `ui/src/views/space/datasets/detail/IndexView.vue`（路由 `space-datasets-detail`，`my-knowledge/:dataset_id`；板块列表卡片点击进入） | `GET /space/knowledge-bases/<id>` **（既有）** |
+| 分区树导航 | `PartitionTreeNav.vue`（「全部素材」根 + 分区列表，选中即过滤） | `GET /space/knowledge-bases/<id>/partitions` **（既有）** |
+| 素材网格 / 表格 | `MaterialGrid.vue`（媒体类型图标 + 状态角标 + 网格⇄表格切换 + 搜索） | `GET .../documents?partition_id=<uuid>` **（本阶段新增 `partition_id` 过滤）**；文档/详情 schema 本阶段透出 `media_type` / `content_type` / `parse_profile` |
+| 素材详情抽屉 | `MaterialDetailDrawer.vue`（基本信息 + 分段列表 + L2 触发 + 删除） | `GET .../documents/<id>`、`GET .../documents/<id>/segments`、`POST .../documents/<id>/l2` **（均既有）** |
+| 存储用量面板 | `UsagePanel.vue`（进度条 + 用量数值 + 扩容按钮 → `/membership`） | `GET /space/storage/usage` **（本阶段新增）** → `StorageQuotaService.get_usage_summary` |
+
+前端 i18n 键归 `space.datasets.detail.*`（zh-CN/en-US 双侧同步，parity spec 把关）。
+
+**小钰帮传（KB-P5-B 已落地）**：对话内新增 builtin 工具 `upload_to_knowledge_base`
+（provider `knowledge_base_tools`，挂载点 `assistant_agent_service._build_assistant_runtime_tools`，
+注入 `account_id`）。入参 `knowledge_base_id` / `file_id` / `partition_id?`：
+
+- **只接受平台 `file_id`**（对话附件或先前上传形成的 `UploadFile`），**不接受任意本地路径**——
+  api 容器读不到用户本机文件，盲目读取会引入任意文件读取洞；
+- 校验 `upload_file.account_id` 归属当前账号（防越权引用他人文件）；
+- 复用 `KnowledgeBaseService.create_document_from_upload_file`（板块媒体类型硬约束 + 触发索引），
+  与用户自传（`POST .../documents/upload`）**同一建档链路、同一份数据**——即产品口径的
+  「用户自传 / 小钰帮传是同一件事的两条路径」。
+
+**外部数据源同步纳入配额（KB-P5-C 已落地）**：`ExternalDataSourceService.manual_sync` 在写库前按
+本次内容 utf-8 字节调 `StorageQuotaService.consume_quota`（原子「校验+累加」），超限即标记
+`sync_status=failed` 并返回可读错误；写库/索引异常释放预占（`release_usage`）。定时自动同步经
+`auto_sync_all` → `manual_sync` 复用同一校验，无需另接。
+
+> **接线注意（实测踩坑）**：`storage_quota_service` 构造参数**必须带类型注解**——injector 只按注解
+> 解析依赖，无注解时该属性恒为 `None`，配额校验被 `if ... is not None` 静默短路（代码「看起来对」但
+> 运行时永不生效）。`test_service_should_receive_storage_quota_service_via_injector` 用真实 injector
+> 解析依赖树锁定此接线。
+
+**兼容**：原有 `documents/ListView.vue`（a-table）与 `segments/ListView.vue` 保留，深度链接（`space-datasets-documents-list` / `space-datasets-documents-segments-list`）不下线。
+
+**未落地**：网格缩略图直出（`frame_url`）；对话框内成片编辑器与成品库播放入口（见 §11.16）。
 
 

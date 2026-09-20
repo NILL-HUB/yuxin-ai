@@ -360,3 +360,155 @@ def test_auto_sync_all_counts_failures_without_raising(monkeypatch):
     result = service.auto_sync_all()
 
     assert result == {"scanned": 1, "synced": 0, "failed": 1}
+
+
+# ── 外部数据源同步配额（KB-P5-C） ──────────────────────────────────────────
+
+
+class _FakeQuota:
+    def __init__(self, *, limit=None, raise_exc=None):
+        self.limit = limit
+        self.raise_exc = raise_exc
+        self.consume_called = False
+        self.consume_bytes = 0
+        self.released = False
+        self.released_bytes = 0
+
+    def consume_quota(self, account_id, incoming_bytes, reserve_bytes=0):
+        self.consume_called = True
+        self.consume_bytes = incoming_bytes
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        if self.limit is not None and incoming_bytes > self.limit:
+            raise ForbiddenException("存储空间不足，请扩容")
+        return incoming_bytes
+
+    def release_usage(self, account_id, bytes_delta):
+        self.released = True
+        self.released_bytes = bytes_delta
+
+
+def _granted_data_source(owner_id, **kw):
+    base = dict(
+        id=uuid4(),
+        owner_account_id=owner_id,
+        knowledge_base_id=uuid4(),
+        source_type="mock",
+        source_name="Mock",
+        sync_status="idle",
+        authorization_status="granted",
+        sync_cursor="",
+        last_error="",
+        config={},
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_sync_rejects_when_quota_exceeded(monkeypatch):
+    """配额不足时同步被拒且数据源标记 FAILED，不写任何文档/分段。"""
+    from internal.exception import ForbiddenException
+
+    owner_id = uuid4()
+    quota = _FakeQuota(raise_exc=ForbiddenException("存储空间不足，请扩容"))
+    data_source = _granted_data_source(owner_id)
+    service = ExternalDataSourceService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])),
+        connector=MockExternalConnector([{"name": "a.md", "content": "你好世界"}]),
+        storage_quota_service=quota,
+    )
+    created = []
+    monkeypatch.setattr(
+        service, "create",
+        lambda model, **kwargs: created.append((model, kwargs)) or SimpleNamespace(**kwargs),
+    )
+
+    result = service.manual_sync(data_source.id, SimpleNamespace(id=owner_id))
+
+    assert quota.consume_called is True
+    assert created == []
+    assert data_source.sync_status == "failed"
+    assert "空间不足" in data_source.last_error
+    assert result["sync_status"] == "failed"
+    assert result["document_count"] == 0
+
+
+def test_sync_pre_reserves_content_bytes(monkeypatch):
+    """正常同步：预占字节 = 文档内容 utf-8 字节总和。"""
+    owner_id = uuid4()
+    quota = _FakeQuota(limit=100_000)
+    data_source = _granted_data_source(owner_id)
+    service = ExternalDataSourceService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])),
+        connector=MockExternalConnector([{"name": "a.md", "content": "你好"}]),
+        storage_quota_service=quota,
+    )
+    created = []
+
+    def _mock_create(model, **kwargs):
+        obj = SimpleNamespace(**kwargs)
+        if not hasattr(obj, "id"):
+            obj.id = uuid4()
+        created.append((model, kwargs))
+        return obj
+
+    monkeypatch.setattr(service, "create", _mock_create)
+    monkeypatch.setattr(service, "_index_segment_safely", lambda *a, **k: None)
+
+    result = service.manual_sync(data_source.id, SimpleNamespace(id=owner_id))
+
+    assert result["sync_status"] == "success"
+    assert quota.consume_called is True
+    assert quota.consume_bytes == len("你好".encode("utf-8"))  # 6 bytes
+    assert quota.released is False
+
+
+def test_sync_releases_pre_reserved_quota_on_write_failure(monkeypatch):
+    """connector 成功但写库/索引抛异常时，释放预占配额并标记 FAILED。"""
+    owner_id = uuid4()
+    quota = _FakeQuota(limit=100_000)
+    data_source = _granted_data_source(owner_id)
+    service = ExternalDataSourceService(
+        db=_fake_db(_SessionStub([_QueryStub(one_or_none_result=data_source)])),
+        connector=MockExternalConnector([{"name": "boom.md", "content": "x"}]),
+        storage_quota_service=quota,
+    )
+
+    def _boom_create(model, **kwargs):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(service, "create", _boom_create)
+
+    result = service.manual_sync(data_source.id, SimpleNamespace(id=owner_id))
+
+    assert quota.consume_called is True
+    assert quota.released is True
+    assert quota.released_bytes == len("x".encode("utf-8"))
+    assert result["sync_status"] == "failed"
+    assert "db down" in result["last_error"]
+
+
+def test_service_should_receive_storage_quota_service_via_injector():
+    """接线保证：injector 必须真的把 StorageQuotaService 注入进来。
+
+    配额校验以 ``self.storage_quota_service is not None`` 为开关；若构造参数
+    缺少**类型注解**（injector 只按注解解析依赖），生产环境该属性恒为 None，
+    配额校验被静默短路——正是「代码写完但运行时走不到」的断链。故用真实
+    injector 解析依赖树断言注入生效，而非只靠测试里手工传入替身。
+    """
+    from injector import Injector, Module, singleton
+
+    from internal.service.knowledge_vector_service import KnowledgeVectorService
+    from internal.service.storage_quota_service import StorageQuotaService
+    from pkg.sqlalchemy import SQLAlchemy
+
+    class _Module(Module):
+        def configure(self, binder):
+            binder.bind(SQLAlchemy, to=SimpleNamespace(), scope=singleton)
+            binder.bind(StorageQuotaService, to=StorageQuotaService, scope=singleton)
+            binder.bind(KnowledgeVectorService, to=lambda: None, scope=singleton)
+
+    service = Injector([_Module()]).get(ExternalDataSourceService)
+
+    assert service.storage_quota_service is not None
+    assert isinstance(service.storage_quota_service, StorageQuotaService)
