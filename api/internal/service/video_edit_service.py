@@ -363,7 +363,10 @@ class VideoEditService:
             if not clip_doc_id:
                 raise VideoEditError("编排片段缺少 document_id")
             try:
-                seg_index = int((clip or {}).get("segment_index") or 0)
+                raw_index = (clip or {}).get("segment_index") or 0
+                if isinstance(raw_index, float) and not raw_index.is_integer():
+                    raise VideoEditError("编排片段的段落序号必须是整数（0 表示整段）")
+                seg_index = int(raw_index)
             except (TypeError, ValueError):
                 raise VideoEditError("编排片段的段落序号必须是整数（0 表示整段）")
             if seg_index < 0:

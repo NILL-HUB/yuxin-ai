@@ -129,6 +129,15 @@ def test_reassemble_rejects_negative_segment_index(monkeypatch):
         )
 
 
+def test_reassemble_rejects_fractional_segment_index(monkeypatch):
+    svc, _, _, _ = _svc(monkeypatch)
+    with pytest.raises(VideoEditError, match="整数"):
+        svc.reassemble_document(
+            account="acc", knowledge_base_id="kb", document_id=str(uuid4()),
+            clips=[{"document_id": str(uuid4()), "segment_index": 1.5}], name="",
+        )
+
+
 def test_reassemble_rejects_segment_index_out_of_range(monkeypatch):
     svc, _, docs, _ = _svc(monkeypatch)
     main_id = uuid4()
