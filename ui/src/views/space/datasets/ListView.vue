@@ -280,7 +280,7 @@ onMounted(() => {
 // 10.定义卡片点击处理器
 const handleCardClick = (datasetId: string) => {
   router.push({
-    name: 'space-datasets-documents-list',
+    name: 'space-datasets-detail',
     params: { dataset_id: datasetId },
   })
 }

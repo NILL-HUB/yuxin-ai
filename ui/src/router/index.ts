@@ -60,6 +60,12 @@ const router = createRouter({
           component: () => import('@/views/space/datasets/documents/segments/ListView.vue'),
         },
         {
+          path: 'my-knowledge/:dataset_id',
+          name: 'space-datasets-detail',
+          component: () => import('@/views/space/datasets/detail/IndexView.vue'),
+          meta: { requiresAuth: true },
+        },
+        {
           path: 'store/public-apps',
           name: 'store-public-apps-list',
           component: () => import('@/views/store/public-apps/ListView.vue'),
