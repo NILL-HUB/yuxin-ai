@@ -32,7 +32,7 @@ const { t } = useI18n()
 // 主文档分段与替换素材分段必须用两个 hook 实例：单实例单缓存，
 // 共用一个会把主文档时间线冲掉（替换素材分段加载会覆盖缓存）。
 const { loading: segLoading, segments: mainSegments, loadSegments: loadMainSegments } = useGetKnowledgeSegmentsWithPage()
-const { segments: sourceSegments, loadSegments: loadSourceSegments } = useGetKnowledgeSegmentsWithPage()
+const { loading: sourceSegLoading, segments: sourceSegments, loadSegments: loadSourceSegments } = useGetKnowledgeSegmentsWithPage()
 const { loading: docLoading, documents, loadDocuments } = useGetKnowledgeDocumentsWithPage()
 
 const clips = ref<TimelineClip[]>([])
@@ -202,6 +202,7 @@ const formatTime = (sec?: number) => {
           class="flex items-center gap-3 rounded-lg border border-border-c bg-surface p-3"
           draggable="true"
           @dragstart="handleDragStart(index)"
+          @dragend="dragIndex = null"
           @dragover="handleDragOver"
           @drop="handleDrop(index)"
         >
@@ -268,7 +269,7 @@ const formatTime = (sec?: number) => {
           >
             {{ t('space.datasets.detail.material.reassembleBack') }}
           </button>
-          <a-skeleton v-if="segLoading" :animation="true" />
+          <a-skeleton v-if="sourceSegLoading" :animation="true" />
           <button
             v-for="(seg, segIndex) in replaceSegments"
             :key="segIndex"
