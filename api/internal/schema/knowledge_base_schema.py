@@ -183,6 +183,8 @@ class GetKnowledgeDocumentsWithPageResp(Schema):
     character_count = fields.Integer(dump_default=0)
     segment_count = fields.Integer(dump_default=0)
     segment_character_count = fields.Integer(dump_default=0)
+    frame_url = fields.String(dump_default="")
+    playback_url = fields.String(dump_default="")
     status = fields.String(dump_default="")
     error = fields.String(dump_default="")
     updated_at = fields.Integer(dump_default=0)
@@ -201,6 +203,8 @@ class GetKnowledgeDocumentsWithPageResp(Schema):
             "character_count": data.character_count,
             "segment_count": getattr(data, "segment_count", 0),
             "segment_character_count": getattr(data, "segment_character_count", data.character_count or 0),
+            "frame_url": getattr(data, "frame_url", "") or "",
+            "playback_url": getattr(data, "playback_url", "") or "",
             "status": data.status,
             "error": data.error,
             "updated_at": datetime_to_timestamp(data.updated_at),
@@ -218,6 +222,8 @@ class GetKnowledgeDocumentResp(Schema):
     parse_profile = fields.Dict(dump_default=dict)
     character_count = fields.Integer(dump_default=0)
     segment_count = fields.Integer(dump_default=0)
+    frame_url = fields.String(dump_default="")
+    playback_url = fields.String(dump_default="")
     status = fields.String(dump_default="")
     error = fields.String(dump_default="")
     updated_at = fields.Integer(dump_default=0)
@@ -234,6 +240,8 @@ class GetKnowledgeDocumentResp(Schema):
             "parse_profile": getattr(data, "parse_profile", None) or {},
             "character_count": data.character_count,
             "segment_count": getattr(data, "segment_count", 0) or 0,
+            "frame_url": getattr(data, "frame_url", "") or "",
+            "playback_url": getattr(data, "playback_url", "") or "",
             "status": data.status,
             "error": data.error,
             "updated_at": datetime_to_timestamp(data.updated_at),

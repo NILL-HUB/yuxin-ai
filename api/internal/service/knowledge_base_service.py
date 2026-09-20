@@ -860,7 +860,88 @@ class KnowledgeBaseService(BaseService):
             ).scalar() or 0
             setattr(document, "segment_count", segment_count)
 
+        # 6.为每个文档注入预览字段（缩略图 / 播放直链）
+        self._enrich_document_previews(documents)
+
         return documents, paginator
+
+    def _enrich_document_previews(self, documents: list[KnowledgeDocument]) -> None:
+        """给文档注入预览字段（frame_url 缩略图 / playback_url 视频播放地址）。
+
+        数据源：分段的 `metadata->>'frame_url'`（COS key，需签名）与文档关联的
+        `upload_file.key`（成品播放直链）。注入发生在 schema 序列化之前，schema 用
+        getattr 读取，与既有 segment_count 注入同款模式。
+        """
+        if not documents:
+            return
+        cos_service = self._get_cos_service()
+        doc_ids = [document.id for document in documents]
+
+        frame_rows = (
+            self.db.session.query(
+                KnowledgeSegment.knowledge_document_id,
+                KnowledgeSegment.metadata_["frame_url"].astext,
+            )
+            .filter(
+                KnowledgeSegment.knowledge_document_id.in_(doc_ids),
+                KnowledgeSegment.metadata_["frame_url"].astext != "",
+            )
+            .order_by(KnowledgeSegment.knowledge_document_id, KnowledgeSegment.position)
+            .distinct(KnowledgeSegment.knowledge_document_id)
+            .all()
+        )
+        frame_urls: dict[str, str] = {}
+        for doc_id, key in frame_rows:
+            url = cos_service.get_file_url(str(key))
+            if url:
+                frame_urls[str(doc_id)] = url
+
+        upload_ids = [
+            document.upload_file_id
+            for document in documents
+            if document.media_type == DocumentMediaType.VIDEO.value
+            and document.upload_file_id
+        ]
+        uploads: dict[str, UploadFile] = {}
+        if upload_ids:
+            upload_rows = (
+                self.db.session.query(UploadFile)
+                .filter(UploadFile.id.in_(upload_ids))
+                .all()
+            )
+            uploads = {str(row.id): row for row in upload_rows}
+
+        for document in documents:
+            setattr(document, "frame_url", frame_urls.get(str(document.id), ""))
+            playback_url = ""
+            upload = uploads.get(str(document.upload_file_id or ""))
+            if upload is not None:
+                key = str(getattr(upload, "key", "") or "")
+                if key:
+                    playback_url = cos_service.get_file_url(key) or ""
+            setattr(document, "playback_url", playback_url)
+
+    def _enrich_segment_previews(self, segments: list[KnowledgeSegment]) -> None:
+        """给分段注入预览字段（frame_url 缩略图 / 时间线元数据透出）。
+
+        数据源：分段自身的 `metadata` JSONB——视觉时间线分段写入
+        `source=vision_timeline`、`start_sec`/`end_sec`、`frame_url`（COS key）、
+        `speech_text`。frame_url 需签名后注入，其余字段原样透出。
+        """
+        if not segments:
+            return
+        cos_service = self._get_cos_service()
+        for segment in segments:
+            metadata = getattr(segment, "metadata_", None) or {}
+            key = str(metadata.get("frame_url", "") or "")
+            frame_url = ""
+            if key:
+                frame_url = cos_service.get_file_url(key) or ""
+            setattr(segment, "frame_url", frame_url)
+            setattr(segment, "start_sec", float(metadata.get("start_sec", 0.0) or 0.0))
+            setattr(segment, "end_sec", float(metadata.get("end_sec", 0.0) or 0.0))
+            setattr(segment, "source", str(metadata.get("source", "") or ""))
+            setattr(segment, "speech_text", str(metadata.get("speech_text", "") or ""))
 
     def get_document_detail(
             self,
@@ -882,6 +963,9 @@ class KnowledgeBaseService(BaseService):
             KnowledgeSegment.knowledge_document_id == document.id,
         ).scalar() or 0
         setattr(document, "segment_count", segment_count)
+
+        # 4.补充预览字段（缩略图 / 播放直链）
+        self._enrich_document_previews([document])
 
         return document
 
