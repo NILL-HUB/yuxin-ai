@@ -64,6 +64,7 @@
 | Phase 17 | ADMIN-P2 对话式入口 + 会话表 + 预置提示词 | ✅ 完成 |
 | Phase 18 | ADMIN-P3a 记忆主体抽象内核 + 存量迁移 | ✅ 完成 |
 | Phase 19 | ADMIN-P4 记忆治理（gdpr 删除/预算闸门/前端对话/定时任务通道） | ✅ 完成 |
+| Phase 20 | ADMIN-P5 MCP 动态身份注入（动态签名 header + hash 剥离 + 对话链路装配） | ✅ 完成 |
 
 ### ADMIN-P1a 授权与身份内核（2026-09-16 完成）
 
@@ -142,7 +143,7 @@
 
 **回归防护**：`test_admin_agent_conversation_migration.py`、`test_admin_agent_conversation_service.py`、`test_admin_agent_chat_tools.py`、`test_admin_agent_prompt_service.py`、`test_admin_agent_builtin_agents.py`、`test_admin_agent_chat_service.py`、`test_admin_agent_chat_routes.py`、`test_admin_agent_feature_registration.py`、`test_admin_agent_di_construction.py`——均含反向验证。
 
-**未落地**：MCP 动态身份注入（ADMIN-P5）。管理端前端对话页、定时任务 `agent_id` 通道与预算闸门均已随 ADMIN-P4 落地（见 [ADMIN-P4 节](#admin-p4-记忆治理与对话入口2026-09-20-完成)）。（「记忆主体抽象读路径切换（ADMIN-P3b）」已于 2026-09-17 完成，见下节。）
+**未落地（后续批次）**：管理端前端对话页、定时任务 `agent_id` 通道与预算闸门均已随 ADMIN-P4 落地（见 [ADMIN-P4 节](#admin-p4-记忆治理与对话入口2026-09-20-完成)）；MCP 动态身份注入已随 ADMIN-P5 落地（见 [ADMIN-P5 节](#admin-p5-mcp-动态身份注入2026-09-21-完成)）。（「记忆主体抽象读路径切换（ADMIN-P3b）」已于 2026-09-17 完成，见下节。）
 
 
 ### ADMIN-P3a 记忆主体抽象内核（2026-09-17 完成）
@@ -379,7 +380,43 @@ stats 归零、Neo4j 计数 0。全量回归 **5272 passed / 13 skipped / 2 fail
 
 > **未接入项（诚实披露）**：`AdminChangeDraftService.apply_draft` / `rollback_draft` 仍仅有
 > 测试调用（「待批准变更」前端页后续阶段）；admin 记忆深度可视化（图可视化 / 时间线）留 P5；
-> MCP 动态身份注入留 ADMIN-P5。
+> MCP 动态身份注入已随 ADMIN-P5 落地（见下节）。
+
+### ADMIN-P5 MCP 动态身份注入（2026-09-21 完成）
+
+让管理端 Agent 对话链路装配 MCP 工具时，为每个 runtime binding **副本**注入动态 principal 签名
+（JWT HS256，`JWT_SECRET_KEY` 签发），`McpToolFactory._jsonrpc_request` 将其作为
+`X-Admin-Agent-Principal` header 发送给 MCP server；`_binding_hash` 计算前剥离下划线开头的内部字段，
+保证动态签名不破坏既有 MCP 快照复用。
+
+| 交付物 | 位置 |
+| --- | --- |
+| 签名/装配/验证模块 | `api/internal/core/admin_agent_mcp_identity.py`（`sign_principal_token` / `build_runtime_bindings_with_identity` / `verify_principal_token`） |
+| McpToolFactory 注入与 hash 剥离 | `mcp_tool_factory.py`（`_jsonrpc_request` 读 `_principal_token` 注入 header；`_binding_hash` 剥离 `_` 开头内部字段） |
+| 对话链路装配点 | `admin_agent_chat_service.py::_build_tools`（`ASSISTANT_MCP_BINDINGS` 同源配置 → 运行时副本注入签名 → `McpToolFactory().get_tools`） |
+| 计划 | [2026-09-21-admin-agent-p5-mcp-dynamic-identity.md](../superpowers/plans/2026-09-21-admin-agent-p5-mcp-dynamic-identity.md) |
+
+**关键决策**：
+- **token 只承载身份标识**（`admin_user_id` / `agent_id` / `agent_name` / `iat` / `exp`，5 分钟有效），
+  **不放权限快照**——权限是三重交集运行时实时重算（设计 §4.1），快照会过期；MCP server 侧应凭
+  `agent_id` 走 `AdminAgentService.get_principal`（与 L1 同一入口）重算授权。
+- **独立内部字段而非 headers**：`headers` 在库中存加密后的静态凭证（`decrypt_headers` 对非空 value
+  强制解密，失败抛 `ValueError`）；内部字段不进 `headers` 列表、不落库（快照存原始 binding）、
+  不参与 hash（计算前剥离）。
+- **装配以运维配置 `ASSISTANT_MCP_BINDINGS` 为唯一来源**（与用户端同源白名单）；未配置时默认不装配
+  （保持 admin 链路 fail closed）。
+
+**验证**：`test_admin_agent_mcp_identity.py`（签名往返/不含权限快照/副本不污染原 binding）、
+`test_mcp_tool_factory_identity.py`（hash 剥离一致性/header 注入/无 token 不注入）、
+`test_admin_agent_chat_service.py` 装配点两测（配置时注入装配、未配置 fail closed）。
+MCP 相关既有回归（`api/test/internal/core/tools/` + `test_app_config_service` + `test_assistant_agent_service`）
+**252 passed**；admin agent + jwt 全量 **227 passed**。
+
+> **未接入项（诚实披露）**：`verify_principal_token` / `principal_from_token` 已提供能力（供未来进程内
+> MCP server 侧还原 principal 做与 L1 相同的权限与自动化级别校验，设计 §7.2），但本系统**当前无进程内
+> MCP server 实现**，暂无生产消费方（已提供、未接入）。注入侧（装配 + 动态签名 header）已全链路接通：
+> 入口 `POST /admin/agents/<id>/chat`（SSE）→ `AdminAgentChatService.chat` → `_build_tools` →
+> `McpToolFactory.get_tools` → `tools/call` 时带 `X-Admin-Agent-Principal`。
 
 ### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
 

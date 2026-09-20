@@ -300,7 +300,30 @@ class AdminAgentChatService:
             draft_service=self._build_draft_service(),
             audit_log_service=self._build_audit_service(),
         )
-        return build_board_tools(execution, principal)
+        tools = build_board_tools(execution, principal)
+
+        # ADMIN-P5 MCP 动态身份注入（设计 §7.2）：与用户端同一全局配置
+        # （ASSISTANT_MCP_BINDINGS，assistant_agent_service.py 同源），对每个
+        # binding **副本**注入 _principal_token 后装配。MCP server 侧凭签名
+        # 还原 principal，再做与 L1 相同的权限与自动化级别校验。无 app
+        # context（测试/Celery）或未配置时不装配（保持白名单 fail closed）。
+        from internal.context import current_app, has_app_context
+        from internal.core.admin_agent_mcp_identity import (
+            build_runtime_bindings_with_identity,
+        )
+        from internal.core.tools.mcp_tools.providers import McpToolFactory
+
+        mcp_bindings = (
+            current_app.config.get("ASSISTANT_MCP_BINDINGS", [])
+            if has_app_context()
+            else []
+        )
+        if isinstance(mcp_bindings, list) and mcp_bindings:
+            runtime_bindings = build_runtime_bindings_with_identity(
+                mcp_bindings, principal
+            )
+            tools.extend(McpToolFactory().get_tools(runtime_bindings))
+        return tools
 
     def _build_draft_service(self):
         from internal.service.admin_change_draft_service import (

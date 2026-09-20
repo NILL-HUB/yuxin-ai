@@ -563,3 +563,74 @@ def test_budget_exceeded_reports_error_frame_without_calling_model():
     assert "额度已用完" in body
     assert "对话失败" not in body
     assert llm.invocations == [], "预算超限时不得调用模型"
+
+
+def test_build_tools_assembles_mcp_tools_with_identity_when_configured(monkeypatch):
+    """配置 ASSISTANT_MCP_BINDINGS 时，_build_tools 装配 MCP 工具并注入身份签名。
+
+    ADMIN-P5 装配契约（设计 §7.2）：MCP 工具与板块工具同场装配；传给
+    McpToolFactory 的 binding 是**运行时副本**（带 `_principal_token`），
+    原配置不被污染。
+    """
+    import internal.context as ctx
+    from internal.core.admin_agent_mcp_identity import PRINCIPAL_TOKEN_FIELD
+    from internal.core.tools.mcp_tools.providers.mcp_tool_factory import McpToolFactory
+
+    captured = {}
+
+    def _fake_get_tools(self, mcp_bindings, mcp_tool_snapshots=None):
+        captured["bindings"] = mcp_bindings
+        return [_FakeTool("mcp__global_mcp__weather")]
+
+    monkeypatch.setattr(McpToolFactory, "get_tools", _fake_get_tools)
+    monkeypatch.setattr(
+        ctx,
+        "_app_container",
+        SimpleNamespace(
+            config={
+                "ASSISTANT_MCP_BINDINGS": [
+                    {
+                        "name": "global-mcp",
+                        "transport": "streamable_http",
+                        "url": "https://mcp.example.com",
+                        "enabled": True,
+                    }
+                ]
+            }
+        ),
+    )
+
+    service = AdminAgentChatService.__new__(AdminAgentChatService)
+    service.db = SimpleNamespace(session=object())
+    tools = service._build_tools(_principal())
+
+    names = [getattr(t, "name", "") for t in tools]
+    assert "admin_builtin_tool" in names, "板块工具仍应装配"
+    assert "mcp__global_mcp__weather" in names, "MCP 工具应装配"
+
+    assert captured["bindings"], "必须调用 McpToolFactory 装配 MCP 工具"
+    assert PRINCIPAL_TOKEN_FIELD in captured["bindings"][0], "binding 副本须带身份签名"
+    # 原配置不被污染：内部字段只存在于装配期运行时副本
+    assert PRINCIPAL_TOKEN_FIELD not in ctx._app_container.config["ASSISTANT_MCP_BINDINGS"][0]
+
+
+def test_build_tools_without_mcp_config_keeps_board_tools_only(monkeypatch):
+    """未配置 ASSISTANT_MCP_BINDINGS 时，_build_tools 不装配 MCP（fail closed）。"""
+    from internal.core.tools.mcp_tools.providers.mcp_tool_factory import McpToolFactory
+
+    calls = []
+
+    def _fake_get_tools(self, mcp_bindings, mcp_tool_snapshots=None):
+        calls.append(mcp_bindings)
+        return []
+
+    monkeypatch.setattr(McpToolFactory, "get_tools", _fake_get_tools)
+
+    service = AdminAgentChatService.__new__(AdminAgentChatService)
+    service.db = SimpleNamespace(session=object())
+    tools = service._build_tools(_principal())
+
+    assert calls == [], "未配置 MCP 不得触发 MCP 装配"
+    names = [getattr(t, "name", "") for t in tools]
+    assert names, "板块工具必须装配"
+    assert all(not n.startswith("mcp__") for n in names)

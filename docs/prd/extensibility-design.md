@@ -356,7 +356,23 @@ class ToolSourceType(str, Enum):
 
 当前只登记 `builtin_tool` 一个样板板块（`list` / `update_enabled` / `update_metadata`）；其余板块按同一模式增量登记 `BOARD_ACTIONS` 并补实现体。
 
-> **MCP 动态身份注入尚未落地（P5）**：设计为装配期构造 binding 副本、签名放独立内部字段、`_binding_hash` 计算前剥离下划线开头字段。在此之前，板块级工具只覆盖平台内 service 动作。
+> **MCP 动态身份注入已随 ADMIN-P5 落地**（机制见 [7.2](#72-管理端-agent-的-mcp-动态身份注入admin-p5-已落地)）。板块级工具覆盖平台内 service 动作之外，管理端对话链路可装配 MCP 工具并携带 Agent 身份。
+
+### 7.2 管理端 Agent 的 MCP 动态身份注入（ADMIN-P5 已落地）
+
+管理端对话链路（`POST /admin/agents/<id>/chat` → `AdminAgentChatService._build_tools`）在板块工具之外，可装配配置中的 MCP 工具，并在 `tools/call` 时向 MCP server 注入**动态签名身份**，让 server 侧能识别「哪个管理 Agent 在调用」。实现见 `api/internal/core/admin_agent_mcp_identity.py` 与 `api/internal/core/tools/mcp_tools/providers/mcp_tool_factory.py`。
+
+| 机制 | 位置 | 要点 |
+|---|---|---|
+| 身份签名 | `sign_principal_token(principal)` | JWT HS256（复用 `JwtService`，`JWT_SECRET_KEY`），payload 只含 `admin_user_id` / `agent_id` / `agent_name` / `iat` / `exp`（5 分钟），**不含权限快照**——权限在 server 侧按三重交集运行时实时重算 |
+| 装配期注入 | `build_runtime_bindings_with_identity(bindings, principal)` | 构造 binding **副本**，签名放独立内部字段 `_principal_token`（不进 `headers` 列表、不落库，规避 `decrypt_headers` 对非空 value 强制解密抛 `ValueError`） |
+| 请求头透传 | `McpToolFactory._jsonrpc_request` | 读取 `_principal_token` 追加 `X-Admin-Agent-Principal` header |
+| hash 稳定 | `McpToolFactory._binding_hash` | 计算前剥离 `_` 开头的内部字段，装配态与原始 binding 哈希一致（tools/list 探测比对不受影响） |
+| 装配来源 | `ASSISTANT_MCP_BINDINGS` 配置（与用户端同源） | 未配置 fail closed，仅装配板块工具 |
+
+**接线链路**：`POST /admin/agents/<id>/chat`（SSE）→ `AdminAgentChatService.chat` → `_build_tools`（板块工具 + MCP 工具并集）→ `McpToolFactory.get_tools` → `tools/call` 时带 `X-Admin-Agent-Principal`。
+
+**已提供能力但未接入（诚实披露）**：`verify_principal_token(token)` / `principal_from_token(token)`（server 侧验签与身份还原）已实现并有单测，但系统当前**无进程内 MCP server** 消费该 header，属「已提供、未接入」，待引入进程内 MCP server 后接线。
 
 ---
 

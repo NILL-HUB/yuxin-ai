@@ -154,7 +154,12 @@ class McpToolFactory:
     @staticmethod
     def _binding_hash(binding: dict[str, Any]) -> str:
         try:
-            payload = json.dumps(binding or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            # 剥离下划线开头的内部字段（如 ADMIN-P5 的 `_principal_token`）：
+            # 动态签名每次签发不同（JWT 含 iat/exp），若参与 hash 会令快照
+            # 频繁失配（周期性多打 tools/list）。剥离后含/不含内部字段的
+            # binding 产出相同 hash，快照复用不受影响（设计 §7.2）。
+            stable = {k: v for k, v in (binding or {}).items() if not k.startswith("_")}
+            payload = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         except Exception:
             payload = json.dumps({}, ensure_ascii=False)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -701,6 +706,14 @@ class McpToolFactory:
 
         decrypted_headers = decrypt_headers(binding.get("headers"))
         headers.update(_normalize_headers(decrypted_headers))
+
+        # ADMIN-P5 MCP 动态身份注入：装配期（AdminAgentService 侧）在 binding
+        # 副本中注入 `_principal_token`（JWT HS256），此处原样放入请求头。
+        # 独立内部字段：不进 `headers` 列表（规避 decrypt_headers 抛错路径）、
+        # 不参与 `_binding_hash`（hash 剥离）、不落库（仅运行时副本存在）。
+        principal_token = binding.get("_principal_token")
+        if principal_token:
+            headers["X-Admin-Agent-Principal"] = str(principal_token)
 
         url = _normalize_text(binding.get("url"))
         payload: dict[str, Any] = {
