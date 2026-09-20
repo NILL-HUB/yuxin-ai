@@ -338,6 +338,77 @@ class VideoEditService:
             self.concat(source_paths=sources, output_path=output)
             return self._store_output(account=account, video_path=output, name=name)
 
+    def reassemble_document(
+        self, *, account: Any, knowledge_base_id: str, document_id: str,
+        clips: list[dict[str, Any]], name: str,
+    ) -> dict:
+        """按时间线编排重建视频并存入成品库（成片编辑器后端）。
+
+        `clips` 是有序编排片段，每项 `{"document_id": str, "segment_index": int}`：
+        - `segment_index` > 0：取该素材第 N 个时间线段落（1-based，越界抛错，
+          复用 `_resolve_trim_range` 的既有校验与日志）；
+        - `segment_index` 为 0 / 缺省：取该素材完整视频（首尾全量）。
+        同一文档可多次引用（重排/复用段落）；替换段落则引用其他素材——
+        归属校验统一走 `_load_source_documents`（复用 get_document_detail 双重校验）。
+
+        执行：下载涉及的素材 → 逐项本地 trim（流拷贝秒级）→ concat（仅 1 项
+        跳过）→ 单次 `_store_output`。中间产物只存在于工作目录，不污染成品库。
+        """
+        if not clips:
+            raise VideoEditError("编排至少需要一个片段")
+
+        normalized: list[dict[str, Any]] = []
+        for clip in clips:
+            clip_doc_id = str((clip or {}).get("document_id") or "").strip()
+            if not clip_doc_id:
+                raise VideoEditError("编排片段缺少 document_id")
+            try:
+                seg_index = int((clip or {}).get("segment_index") or 0)
+            except (TypeError, ValueError):
+                raise VideoEditError("编排片段的段落序号必须是整数（0 表示整段）")
+            if seg_index < 0:
+                raise VideoEditError("编排片段的段落序号不能为负")
+            normalized.append({"document_id": clip_doc_id, "segment_index": seg_index})
+
+        # 去重加载涉及的素材（保持首见顺序），并确认主文档确实存在
+        unique_ids: list[str] = []
+        for clip in normalized:
+            if clip["document_id"] not in unique_ids:
+                unique_ids.append(clip["document_id"])
+        docs = self._load_source_documents(
+            account=account, knowledge_base_id=knowledge_base_id,
+            document_ids=unique_ids,
+        )
+        docs_by_id = {str(doc.id): doc for doc in docs}
+        if str(document_id) not in docs_by_id:
+            raise VideoEditError(f"素材不存在：document_id={document_id}")
+
+        with tempfile.TemporaryDirectory(prefix="video-reassemble-") as work:
+            work_dir = Path(work)
+            pieces: list[Path] = []
+            for index, clip in enumerate(normalized, start=1):
+                doc = docs_by_id.get(clip["document_id"])
+                if doc is None:
+                    raise VideoEditError(f"素材不存在：document_id={clip['document_id']}")
+                start, end = self._resolve_trim_range(
+                    document=doc, segment_index=clip["segment_index"] or None,
+                    start_sec=0.0, end_sec=None,
+                )
+                source = self._prepare_source_file(doc, work_dir)
+                piece = work_dir / f"piece_{index}.mp4"
+                self.trim(
+                    source_path=source, output_path=piece,
+                    start_sec=start, end_sec=end,
+                )
+                pieces.append(piece)
+
+            if len(pieces) == 1:
+                output = pieces[0]
+            else:
+                output = work_dir / "output.mp4"
+                self.concat(source_paths=pieces, output_path=output)
+            return self._store_output(account=account, video_path=output, name=name)
+
     def subtitle_document(
         self, *, account: Any, knowledge_base_id: str, document_id: str,
         cues: list[dict[str, Any]] | None, name: str,
