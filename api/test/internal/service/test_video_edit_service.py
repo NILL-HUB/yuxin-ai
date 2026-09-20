@@ -453,3 +453,150 @@ def test_burn_subtitles_blocks_when_fonts_missing(tmp_path, monkeypatch):
         )
     # 关键断言：不应消耗一次 ffmpeg 调用（校验在之前）
     assert calls == []
+
+
+# ── 时间线段落选段（KB-P4.5 衔接）：video_trim 按段落序号定位裁剪区间 ──
+#
+# 背景：KB-P4.5 起 L1 视频解析把「批次化时间线叙述」段落写入
+# KnowledgeSegment.metadata.source=vision_timeline（含 start_sec/end_sec）。
+# 衔接目标是让 video_trim 能基于这些段落选段（如「裁第 2 段」），而不是
+# 只能手填秒数——段落即 KB-P4 剪辑的定位挂载点。
+
+
+def _fake_doc_with_timeline_meta(doc_id="doc-1"):
+    """构造带时间线段落的文档，其段落按 (start_sec, end_sec) 升序。"""
+    from types import SimpleNamespace as NS
+
+    doc = _fake_doc(doc_id)
+    segments = [
+        NS(metadata_={
+            "media_type": "video", "source": "vision_timeline",
+            "anchor_type": "speech_sentence", "anchor_text": "第一段",
+            "start_sec": 0.0, "end_sec": 3.0, "speech_text": "今天很好",
+        }),
+        NS(metadata_={
+            "media_type": "video", "source": "vision_timeline",
+            "anchor_type": "speech_sentence", "anchor_text": "第二段",
+            "start_sec": 3.0, "end_sec": 6.0, "speech_text": "然后回家",
+        }),
+        # 非时间线段（transcript_segments / 逐帧）必须被过滤，不作为选段来源
+        NS(metadata_={"media_type": "video", "scene_index": 1, "time_offset": 1.5}),
+        NS(metadata_={"media_type": "video",
+                      "transcript_segments": [{"start": 0.0, "end": 2.0, "text": "转写"}]}),
+    ]
+    doc._fake_segments = segments
+    return doc
+
+
+def test_load_timeline_segments_filters_and_sorts(monkeypatch):
+    """只保留 source=vision_timeline 段落，并按 start_sec 升序；忽略其他段。"""
+    from types import SimpleNamespace as NS
+
+    svc = VideoEditService.__new__(VideoEditService)
+    rows = [
+        # 乱序存放，验证按 start_sec 排序
+        NS(metadata_={"source": "vision_timeline", "start_sec": 3.0, "end_sec": 6.0,
+                      "anchor_type": "speech_sentence", "anchor_text": "b"}),
+        NS(metadata_={"scene_index": 0, "time_offset": 1.0}),
+        NS(metadata_={"source": "vision_timeline", "start_sec": 0.0, "end_sec": 3.0,
+                      "anchor_type": "time_slot", "anchor_text": "a"}),
+    ]
+    monkeypatch.setattr(svc, "_load_document_segments", lambda doc_id: rows)
+
+    result = svc._load_timeline_segments(NS(id="doc-1"))
+
+    assert len(result) == 2
+    assert result[0]["start_sec"] == 0.0
+    assert result[1]["start_sec"] == 3.0
+    assert result[1]["anchor_text"] == "b"
+
+
+def test_load_timeline_segments_returns_empty_when_none(monkeypatch):
+    """素材未解析出时间线段落（老素材/纯音频）时返回空列表，不抛错。"""
+    from types import SimpleNamespace as NS
+
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_load_document_segments",
+                        lambda doc_id: [NS(metadata_={"scene_index": 0, "time_offset": 0.1})])
+
+    assert svc._load_timeline_segments(NS(id="doc-1")) == []
+
+
+def test_resolve_trim_range_by_segment_index(monkeypatch):
+    """segment_index 命中：返回该段落的 (start_sec, end_sec)。"""
+    doc = _fake_doc_with_timeline_meta()
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_load_document_segments", lambda doc_id: doc._fake_segments)
+
+    start, end = svc._resolve_trim_range(document=doc, segment_index=2,
+                                          start_sec=None, end_sec=None)
+
+    assert (start, end) == (3.0, 6.0)
+
+
+def test_resolve_trim_range_segment_index_out_of_range(monkeypatch):
+    """segment_index 越界时报可读错误，不静默截错段。"""
+    doc = _fake_doc_with_timeline_meta()
+    svc = VideoEditService.__new__(VideoEditService)
+    monkeypatch.setattr(svc, "_load_document_segments", lambda doc_id: doc._fake_segments)
+
+    with pytest.raises(VideoEditError, match="时间线段落"):
+        svc._resolve_trim_range(document=doc, segment_index=99,
+                                 start_sec=None, end_sec=None)
+
+
+def test_resolve_trim_range_prefers_manual_seconds_when_no_segment_index(monkeypatch):
+    """未传 segment_index 时维持手填秒数语义，不触碰时间线段。"""
+    from types import SimpleNamespace as NS
+
+    svc = VideoEditService.__new__(VideoEditService)
+    # _load_document_segments 不应被调用（零成本）
+    monkeypatch.setattr(
+        svc, "_load_document_segments",
+        lambda doc_id: (_ for _ in ()).throw(AssertionError("不应读取段落")),
+    )
+
+    start, end = svc._resolve_trim_range(document=NS(id="d"), segment_index=None,
+                                          start_sec=1.0, end_sec=2.0)
+
+    assert (start, end) == (1.0, 2.0)
+
+
+def test_trim_document_by_segment_index(tmp_path, monkeypatch):
+    """trim_document 传 segment_index：用时间线段落区间裁剪，忽略手填秒数。"""
+    doc = _fake_doc_with_timeline_meta()
+    svc = _edit_service(monkeypatch, docs=[doc])
+    captured = {}
+
+    def fake_trim(**kw):
+        captured["start"] = kw["start_sec"]
+        captured["end"] = kw["end_sec"]
+        Path(kw["output_path"]).write_bytes(b"o" * 4096)
+        return Path(kw["output_path"])
+
+    monkeypatch.setattr(svc, "trim", fake_trim)
+    monkeypatch.setattr(svc, "_load_document_segments", lambda doc_id: doc._fake_segments)
+    monkeypatch.setattr(svc, "_store_output", lambda **kw: {"document_id": "sd"})
+
+    result = svc.trim_document(
+        account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+        start_sec=0.0, end_sec=1.0, name="按段裁剪",
+        segment_index=2,
+    )
+
+    assert result["document_id"] == "sd"
+    assert captured["start"] == 3.0
+    assert captured["end"] == 6.0
+
+
+def test_trim_document_by_segment_index_out_of_range(tmp_path, monkeypatch):
+    """trim_document 传越界 segment_index：报可读错误，不产出错误成品。"""
+    doc = _fake_doc_with_timeline_meta()
+    svc = _edit_service(monkeypatch, docs=[doc])
+    monkeypatch.setattr(svc, "_load_document_segments", lambda doc_id: doc._fake_segments)
+
+    with pytest.raises(VideoEditError, match="时间线段落"):
+        svc.trim_document(
+            account="acc", knowledge_base_id="kb-1", document_id="doc-1",
+            start_sec=0.0, end_sec=1.0, name="x", segment_index=99,
+        )

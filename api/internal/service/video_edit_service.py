@@ -289,21 +289,33 @@ class VideoEditService:
     def trim_document(
         self, *, account: Any, knowledge_base_id: str, document_id: str,
         start_sec: float, end_sec: float | None, name: str, reencode: bool = False,
+        segment_index: int | None = None,
     ) -> dict:
-        """裁剪单个库内视频并存入成品库。"""
+        """裁剪单个库内视频并存入成品库。
+
+        `segment_index`（1-based）可选：指定时按该素材的 L1 时间线段落
+        （`source=vision_timeline`）取第 N 段区间裁剪，忽略手填秒数——这是
+        KB-P4.5 衔接点（段落即剪辑挂载点）；缺省则用 `start_sec/end_sec`。
+        """
         docs = self._load_source_documents(
             account=account, knowledge_base_id=knowledge_base_id, document_ids=[document_id]
         )
         if not docs:
             raise VideoEditError(f"素材不存在：document_id={document_id}")
+        doc = docs[0]
+
+        start, end = self._resolve_trim_range(
+            document=doc, segment_index=segment_index,
+            start_sec=start_sec, end_sec=end_sec,
+        )
 
         with tempfile.TemporaryDirectory(prefix="video-edit-") as work:
             work_dir = Path(work)
-            source = self._prepare_source_file(docs[0], work_dir)
+            source = self._prepare_source_file(doc, work_dir)
             output = work_dir / "output.mp4"
             self.trim(
                 source_path=source, output_path=output,
-                start_sec=start_sec, end_sec=end_sec, reencode=reencode,
+                start_sec=start, end_sec=end, reencode=reencode,
             )
             return self._store_output(account=account, video_path=output, name=name)
 
@@ -411,6 +423,64 @@ class VideoEditService:
         )
         _, cues = injector.get(AudioService).audio_to_text_with_segments(file_storage)
         return [cue for cue in (cues or []) if isinstance(cue, dict)]
+
+    def _load_timeline_segments(self, document: Any) -> list[dict[str, Any]]:
+        """收集该素材的 L1 时间线段落（`metadata.source=vision_timeline`）。
+
+        KB-P4.5 起 L1 视频解析把「批次化时间线叙述」段落写入
+        `KnowledgeSegment.metadata`，字段含 `start_sec / end_sec /
+        anchor_type / anchor_text / speech_text`。这些段落即 KB-P4 剪辑
+        的定位挂载点——返回按 `start_sec` 升序的时间线段落清单，供选段。
+        """
+        document_id = getattr(document, "id", None)
+        if document_id is None:
+            return []
+
+        timeline: list[dict[str, Any]] = []
+        for row in self._load_document_segments(document_id):
+            metadata = getattr(row, "metadata_", None) or {}
+            if metadata.get("source") != "vision_timeline":
+                continue
+            start = metadata.get("start_sec")
+            end = metadata.get("end_sec")
+            if start is None or end is None:
+                continue
+            timeline.append({
+                "start_sec": float(start),
+                "end_sec": float(end),
+                "anchor_type": metadata.get("anchor_type", ""),
+                "anchor_text": metadata.get("anchor_text", ""),
+                "speech_text": metadata.get("speech_text", ""),
+            })
+        # 段落必须按时间升序；剪第 N 段依此序号稳定定位
+        return sorted(timeline, key=lambda seg: float(seg["start_sec"] or 0.0))
+
+    def _resolve_trim_range(
+        self, *, document: Any, segment_index: int | None,
+        start_sec: float | None, end_sec: float | None,
+    ) -> tuple[float, float | None]:
+        """确定裁剪区间：按时间线段落选段优先，否则用调用方手填秒数。
+
+        `segment_index` 为 1-based（用户说「裁第 2 段」对应 2）。越界/无段落
+        时报可读错误，不静默截错段；未提供 `segment_index` 时维持既有
+        手填秒数语义（`_load_document_segments` 零成本不触碰）。
+        """
+        if segment_index is None:
+            return float(start_sec or 0.0), None if end_sec is None else float(end_sec)
+
+        timeline = self._load_timeline_segments(document)
+        if segment_index < 1 or segment_index > len(timeline):
+            raise VideoEditError(
+                f"时间线段落序号 {segment_index} 越界：该素材共有 {len(timeline)} 段。"
+                "请提供有效序号，或用 start_sec/end_sec 直接指定秒数。"
+            )
+        target = timeline[segment_index - 1]
+        logger.info(
+            "按时间线段落选段 document_id=%s segment_index=%s (%.2f~%.2f, %s)",
+            getattr(document, "id", None), segment_index,
+            target["start_sec"], target["end_sec"], target.get("anchor_text", ""),
+        )
+        return float(target["start_sec"]), float(target["end_sec"])
 
     def _resolve_cues(
         self, *, document: Any, source_path: str | Path,

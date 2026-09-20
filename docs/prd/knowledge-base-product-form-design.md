@@ -341,7 +341,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 
 | 能力 | 实现方式 | 说明 | 落地（KB-P4） |
 | --- | --- | --- | --- |
-| 裁剪（trim） | ffmpeg 封装，按时间区间切分 | 支持起止秒区间裁剪 | ✅ `video_trim`：`-ss`（置于 `-i` 前）/`-t` + `-c copy`，默认流拷贝无损秒级 |
+| 裁剪（trim） | ffmpeg 封装，按时间区间切分 | 支持起止秒区间裁剪；**也支持按 L1 时间线段落选段**（`segment_index`，1-based，见 [modules/02-knowledge-base.md §11.8](./modules/02-knowledge-base.md#118-多模态l1基础解析kb-p2a已落地)） | ✅ `video_trim`：`-ss`（置于 `-i` 前）/`-t` + `-c copy`，默认流拷贝无损秒级；`segment_index` 消费 `source=vision_timeline` 段落定位裁剪区间（传了忽略秒数） |
 | 拼接（concat / merge） | ffmpeg concat demuxer | 同编码参数素材直接拼接 | ✅ `video_concat`：concat demuxer + `-c copy`，严格按传入顺序；编码参数不一致时需重编码 |
 | 加字幕 | ffmpeg 字幕烧录 | 字幕源可为**调用方显式提供**（含时间轴），也可**自动生成**（实测 ASR 请求 `response_format=verbose_json` 即返回 segments） | ✅ `video_subtitle`：`subtitles` 滤镜（libass）+ 重编码，入参 `cues=[{start,end,text}]` **可选**——不传即自动生成时间轴（复用 L1 留存 ASR 时间轴，缺失则重跑；见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 

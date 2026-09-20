@@ -1,6 +1,6 @@
 name: video_trim
 label: 裁剪视频
-description: 把知识库里的视频按时间区间裁出一段，并自动存入成品库。
+description: 把知识库里的视频按时间区间或第几段内容时间线裁出一段，并自动存入成品库。
 params:
 - name: knowledge_base_id
   label: 知识库
@@ -13,9 +13,14 @@ params:
 - name: start_sec
   label: 开始时间（秒）
   type: number
-  required: true
+  required: false
 - name: end_sec
   label: 结束时间（秒）
+  type: number
+  required: false
+- name: segment_index
+  label: 第几段内容时间线
+  description: 按该素材第几段时间线段落裁剪（1-based；传了则忽略起止秒数）
   type: number
   required: false
 - name: name
@@ -29,4 +34,6 @@ task_keywords:
 - 剪一段
 - 掐头去尾
 - 裁剪
+- 裁第几段
+- 按段裁剪
 - trim

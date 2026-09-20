@@ -608,7 +608,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 
 | 能力 | 实现 | 说明 |
 | --- | --- | --- |
-| 裁剪 `video_trim` | ffmpeg `-ss`（置于 `-i` 前）/`-t` + `-c copy` | 默认流拷贝，**无损且秒级**；`reencode=True` 才重编码换帧精度 |
+| 裁剪 `video_trim` | ffmpeg `-ss`（置于 `-i` 前）/`-t` + `-c copy` | 默认流拷贝，**无损且秒级**；`reencode=True` 才重编码换帧精度；`segment_index`（1-based）可**按 KB-P4.5 时间线段落选段**（读 `source=vision_timeline` 段落取第 N 段，传了忽略秒数），实现「段落即剪辑挂载点」衔接 |
 | 拼接 `video_concat` | ffmpeg concat demuxer + `-c copy` | 严格按传入顺序；**要求各段编码参数一致**，否则需走重编码 |
 | 加字幕 `video_subtitle` | ffmpeg `subtitles` 滤镜（libass）+ 重编码（libx264/AAC） | 字幕必须重编码才能烧进画面，无法 copy |
 
@@ -669,6 +669,13 @@ subtitle（2.00s，字幕像素已烧入、帧 md5 相对源发生变化）均�
 视觉/ASR 桩。场景 B（6 帧 → 2 锚点 → 1 次批喂[3 帧] → 2 条 timeline 段，start/end 与 cues 一致、
 speech_text 注入）；场景 A（6 帧 → 1 锚点 → 1 次批喂[6 帧] → 1 条 time_slot 段）。真实模型调用
 （GLM-5.3-Flash 批喂 / SiliconFlow ASR）因本机无可用 DB 留待部署环境。
+
+**衔接 KB-P4（段落即剪辑挂载点，已落地）**：`video_trim` 新增可选 `segment_index`（1-based，
+`video_trim.yaml` + `VideoTrimInput`），后台读该素材 `source=vision_timeline` 段落并按 `start_sec`
+排序取第 N 段作为裁剪区间，实现「段落叙述 → 直接掐段」闭环。参数链：
+`video_trim`(kwarg `segment_index`，**非位置参数**，避免错绑到第 7 位 `reencode`) → `video_trim_task`
+（`<=0` 归一化为 `None`）→ `VideoEditService._resolve_trim_range`（None/越界拦截，越界抛
+`VideoEditError`）。详见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)。
 
 ### FIX-P3（第三轮修复，已完成）
 

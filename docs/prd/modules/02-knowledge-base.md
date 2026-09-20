@@ -832,7 +832,7 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 
 | 能力 | 工具 | 实现 | 说明 |
 | --- | --- | --- | --- |
-| 裁剪 | `video_trim` | ffmpeg `-ss/-t -c copy` | 默认流拷贝（无损、秒级）；`reencode=True` 可重编码换取帧精度 |
+| 裁剪 | `video_trim` | ffmpeg `-ss/-t -c copy` | 默认流拷贝（无损、秒级）；`reencode=True` 可重编码换取帧精度；**支持按时间线段落选段**——传可选 `segment_index`（1-based，读素材 `source=vision_timeline` 段落、按 `start_sec` 排序取第 N 段作为裁剪区间），可直接消费 KB-P4.5 时间线段落产物（见 §11.8），传了则忽略手填起止秒数 |
 | 拼接 | `video_concat` | ffmpeg `concat demuxer -c copy` | 按传入顺序拼接，要求各段编码参数一致 |
 | 加字幕 | `video_subtitle` | ffmpeg `subtitles` 滤镜（libass）+ 重编码 | **字幕时间轴默认自动生成**（`cues` 可选，见下） |
 
@@ -866,7 +866,7 @@ L2 让素材「能被精细修改」，与 L1「能被找到」互补。
 | 命令构造 | [ffmpeg_edit.py](../../../api/internal/core/video/ffmpeg_edit.py)（`build_trim_command` / `build_concat_command` / `build_subtitle_command` / `render_srt` / `format_srt_timestamp`） | 纯函数：只构造命令与 SRT 文本，不碰 subprocess / 文件系统 |
 | 执行与校验 | [video_edit_service.py](../../../api/internal/service/video_edit_service.py)（`trim` / `concat` / `burn_subtitles` + `trim_document` / `concat_documents` / `subtitle_document`） | 下载素材 → 执行 ffmpeg → 校验产物 → 存成品库；归属校验复用 `get_document_detail` |
 | 异步任务 | [video_edit_tasks.py](../../../api/internal/task/video_edit_tasks.py) | 薄委托（与 `knowledge_l2_tasks` 同范式）；`VideoEditError` 为业务失败**不重试**，IO/存储抖动才重试（`max_retries=2`） |
-| 对话内工具 | `video_edit_tools`（`video_trim` / `video_concat` / `video_subtitle`，各含 `.py` + `.yaml` + `positions.yaml`，provider 已在 `providers.yaml` 登记） | 参数校验 → 派发 Celery → 立即返回任务号 |
+| 对话内工具 | `video_edit_tools`（`video_trim` / `video_concat` / `video_subtitle`，各含 `.py` + `.yaml` + `positions.yaml`，provider 已在 `providers.yaml` 登记） | 参数校验 → 派发 Celery → 立即返回任务号；`video_trim` 的 `segment_index` 经 `video_trim_task`（`internal.task.video_edit_tasks`）以 **kwarg** 透传到 `VideoEditService.trim_document(segment_index=...)`，task 内 `<=0` 归一化为 `None`（走秒数路径），`>0` 时由 service `_resolve_trim_range` 读时间线段落定位（越界抛 `VideoEditError`） |
 
 **工具挂载点**：`assistant_agent_service._build_assistant_runtime_tools`（与 `render_video` 同处，注入 `account_id` 用于素材归属校验与成品库归属，并注入 `message_id` / `conversation_id` 供成片回填，见 §11.16）。
 

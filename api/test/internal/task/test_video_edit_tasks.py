@@ -86,6 +86,26 @@ def test_trim_task_does_not_retry_business_error(monkeypatch):
     assert self_obj.retries == []
 
 
+def test_trim_task_forwards_segment_index(monkeypatch):
+    """segment_index > 0 时透传给 service（按时间线段落选段）。"""
+    calls = _install_service(monkeypatch)
+    _invoke(
+        video_edit_tasks.video_trim_task, _FakeSelf(),
+        "kb-1", "doc-1", 0.0, None, "按段裁剪", "acc-1", False, "", "", 2,
+    )
+    assert calls["segment_index"] == 2
+
+
+def test_trim_task_normalizes_zero_segment_index_to_none(monkeypatch):
+    """segment_index=0 视作「未选段」，service 收到 None 走秒数路径。"""
+    calls = _install_service(monkeypatch)
+    _invoke(
+        video_edit_tasks.video_trim_task, _FakeSelf(),
+        "kb-1", "doc-1", 1.0, 3.0, "裁剪", "acc-1", False, "", "", 0,
+    )
+    assert calls["segment_index"] is None
+
+
 def test_concat_task_passes_document_ids_through(monkeypatch):
     calls = _install_service(monkeypatch)
     _invoke(video_edit_tasks.video_concat_task, _FakeSelf(), "kb-1", ["d1", "d2"], "合片", "acc")

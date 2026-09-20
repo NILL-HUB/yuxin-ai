@@ -92,6 +92,40 @@ def test_trim_tool_reports_dispatch_failure_readably(monkeypatch):
     assert "提交" in payload["error"]
 
 
+def test_trim_tool_rejects_negative_segment_index():
+    """按段落选段时，序号必须为正整数（1-based）。"""
+    tool = video_trim.video_trim(account_id="acc")
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb", document_id="d", segment_index=-1)
+    )
+    assert payload["ok"] is False
+    assert "段落序号" in payload["error"]
+
+
+def test_trim_tool_rejects_zero_segment_index(monkeypatch):
+    """segment_index=0 视作「未传」，按秒数路径走且不误报段落错误。"""
+    captured = _capture_delay(monkeypatch, video_trim)
+    tool = video_trim.video_trim(account_id="acc")
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb", document_id="d", segment_index=0,
+                  start_sec=1.0, end_sec=2.0)
+    )
+    assert payload["ok"] is True
+    assert captured["kwargs"]["segment_index"] == 0, "segment_index=0 应原样透传（task 内视为未选段）"
+
+
+def test_trim_tool_dispatches_with_segment_index(monkeypatch):
+    """segment_index 透传到 Celery 任务（kwarg），且不再强制要求手填秒数。"""
+    captured = _capture_delay(monkeypatch, video_trim)
+    tool = video_trim.video_trim(account_id="acc")
+    payload = json.loads(
+        tool._run(knowledge_base_id="kb-1", document_id="doc-1", segment_index=2, name="按段裁剪")
+    )
+    assert payload["ok"] is True
+    assert captured["args"][2] == 0, "传 segment_index 时 start_sec 可为 0（不用于定位）"
+    assert captured["kwargs"]["segment_index"] == 2, "segment_index 应透传到任务"
+
+
 def test_concat_tool_requires_two_documents():
     tool = video_concat.video_concat(account_id="acc")
     payload = json.loads(tool._run(knowledge_base_id="kb", document_ids=["d1"]))

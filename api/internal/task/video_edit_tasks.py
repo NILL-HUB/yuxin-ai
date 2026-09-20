@@ -90,8 +90,13 @@ def video_trim_task(
     self, knowledge_base_id: str, document_id: str,
     start_sec: float, end_sec, name: str, account_id: str, reencode: bool = False,
     message_id: str = "", conversation_id: str = "",
+    segment_index: int = 0,
 ):
-    """裁剪库内视频并存入成品库，完成后回填到原对话消息。"""
+    """裁剪库内视频并存入成品库，完成后回填到原对话消息。
+
+    `segment_index`（1-based）可选：>0 时按该素材第几段 L1 时间线段落裁剪
+    （忽略 start/end 秒数）；<=0 则视为未选段，走手填秒数路径。
+    """
     service = _load_service()
     account = _load_account(account_id)
 
@@ -100,6 +105,7 @@ def video_trim_task(
             account=account, knowledge_base_id=knowledge_base_id,
             document_id=document_id, start_sec=start_sec, end_sec=end_sec,
             name=name, reencode=reencode,
+            segment_index=int(segment_index or 0) if int(segment_index or 0) > 0 else None,
         )
 
     result = _delegate(self, "trim", _run)
