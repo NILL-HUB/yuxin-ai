@@ -63,6 +63,7 @@
 | Phase 16 | ADMIN-P1b 板块工具与执行链路 | ✅ 完成 |
 | Phase 17 | ADMIN-P2 对话式入口 + 会话表 + 预置提示词 | ✅ 完成 |
 | Phase 18 | ADMIN-P3a 记忆主体抽象内核 + 存量迁移 | ✅ 完成 |
+| Phase 19 | ADMIN-P4 记忆治理（gdpr 删除/预算闸门/前端对话/定时任务通道） | ✅ 完成 |
 
 ### ADMIN-P1a 授权与身份内核（2026-09-16 完成）
 
@@ -141,7 +142,7 @@
 
 **回归防护**：`test_admin_agent_conversation_migration.py`、`test_admin_agent_conversation_service.py`、`test_admin_agent_chat_tools.py`、`test_admin_agent_prompt_service.py`、`test_admin_agent_builtin_agents.py`、`test_admin_agent_chat_service.py`、`test_admin_agent_chat_routes.py`、`test_admin_agent_feature_registration.py`、`test_admin_agent_di_construction.py`——均含反向验证。
 
-**未落地**：管理端前端对话页（后端入口已就绪）；定时任务 `agent_id` 通道与预算闸门（ADMIN-P4）；MCP 动态身份注入（ADMIN-P5）。（「记忆主体抽象读路径切换（ADMIN-P3b）」已于 2026-09-17 完成，见下节。）
+**未落地**：MCP 动态身份注入（ADMIN-P5）。管理端前端对话页、定时任务 `agent_id` 通道与预算闸门均已随 ADMIN-P4 落地（见 [ADMIN-P4 节](#admin-p4-记忆治理与对话入口2026-09-20-完成)）。（「记忆主体抽象读路径切换（ADMIN-P3b）」已于 2026-09-17 完成，见下节。）
 
 
 ### ADMIN-P3a 记忆主体抽象内核（2026-09-17 完成）
@@ -340,6 +341,46 @@
 > 与缺口十五（`EntityResolver` 接线，待产品决策）保留开放。
 
 
+### ADMIN-P4 记忆治理与对话入口（2026-09-20 完成）
+
+P3c-4 边界的四项收口：记忆 GDPR 删除入口、Agent 预算闸门、管理端前端对话页（含记忆面板）、定时任务 `agent_id` 通道。
+
+| 交付物 | 位置 |
+| --- | --- |
+| GDPR 删除路由（主体分解入参，不信任裸 owner_key） | `POST /admin/memory/gdpr-delete`（`admin_routes_7.py`，→ `MemoryGovernor.gdpr_delete`） |
+| 预算闸门（Redis 周期计数 + 超限拒绝 + fail-open） | `api/internal/core/admin_agent_budget.py`（`AdminAgentBudgetGate`） |
+| 预算写路径（schema + service 校验 + 路由透传） | `admin_agent_schema.py`、`admin_agent_service.py`（`_validate_budget_config`）、`admin_routes_7.py` |
+| 预算用量 API | `GET /admin/agents/<id>/budget/usage` |
+| 定时任务 admin_agent 通道 | 迁移 `f3e4d5c6b7a8`（`schedule_task` + `admin_agent_id`）、`schedule_task_service`（`task_type='admin_agent_execution'`）、`schedule_execution_service`（admin 分支 → `AdminAgentExecutionService.run`） |
+| 定时任务路由 | `POST/GET /admin/agents/<id>/schedules`、`DELETE .../schedules/<task_id>` |
+| admin 记忆读 API | `api/internal/service/memory/admin_memory_read.py` + `GET /admin/agents/<id>/memory/stats|list` |
+| 管理端前端（列表/编辑/对话/记忆面板/定时/用量） | `ui/src/views/admin/agents/{ListView,ChatView}.vue`、`ui/src/services/admin-agents.ts`、路由 `admin/agents*`、侧边栏入口 |
+| API 契约 | [admin-agents-api.md §7–§9](../api/admin-agents-api.md) |
+
+**关键决策**：
+- 预算闸门三入口施加：`invoke` / `chat` / admin 定时任务执行；`budget_config` 空 dict → 恒放行；
+  **Redis 不可用 → fail-open**（放行 + 记日志），不阻断既有行为；超限记审计 `BUDGET_REJECTED`。
+- 定时任务 admin_agent 通道：任务绑定 `admin_agent_id`（`owner_type='admin'`），执行按
+  `input_params` 的 `{board, action, payload}` 调 `AdminAgentExecutionService.run`，结果落
+  `schedule_task_run`，审计沿用 `actor_type=agent`。
+- GDPR 删除路由收**主体分解字段**（`subject_type` / `subject_id` / `agent_id`），服务端构造
+  `MemoryOwnerKey`，杜绝客户端伪造裸 key。
+- 用户态逐字节等价保持：`schedule_task_schema` 序列化用 `getattr` 兼容缺失属性对象，
+  用户端定时任务路由行为不变。
+
+**验证**：真库实测（llmops-db/neo4j/api）——构造 admin+agent 主体 Episode 节点后，
+`GET /admin/agents/<id>/memory/stats` 返回 `total_nodes=1 / episodes=1 / recent=1`；
+`POST /admin/memory/gdpr-delete`（`subject_type=agent`）返回 `neo4j_nodes:1` 后
+stats 归零、Neo4j 计数 0。全量回归 **5272 passed / 13 skipped / 2 failed**（2 项环境性：
+`test_account_service` 邮箱通道 SMTP 未配置；`test_cold_storage_owner_scope::test_module_documents_unwired_status`
+为相对路径 cwd 依赖，`cd api` 后通过）。并行 KB-P5-A 遗留的
+`TestAdminSystemKnowledgeRoutes` / `TestAdminScheduleTask` mock 缺字段回归已随本批
+`getattr` 兼容修复（173e1ccd）。
+
+> **未接入项（诚实披露）**：`AdminChangeDraftService.apply_draft` / `rollback_draft` 仍仅有
+> 测试调用（「待批准变更」前端页后续阶段）；admin 记忆深度可视化（图可视化 / 时间线）留 P5；
+> MCP 动态身份注入留 ADMIN-P5。
+
 ### 第三轮并行修复（FIX-P0 – FIX-P3 全部完成）
 
 > 本表第 2 列为 **FIX-Pn 优先级**（数字小 = 更该先做），与「阶段」无关。
@@ -372,7 +413,7 @@
 | KB-P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | KB-P4.5 | L1 视频时间线叙述（批次化批喂替代逐帧调用，段落即编辑挂载点） | ✅ 完成（场景 B/A 锚点 + 每批 ≈10 锚点多图批喂 + 服务端时间码投影 + 降级逐帧；时间线段落结构 `start_sec/end_sec/speech_text` 为 KB-P4 剪辑的定位基础，见 [modules/02-knowledge-base.md §11.8](./modules/02-knowledge-base.md#118-多模态l1基础解析kb-p2a已落地)） |
-| KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未开始 |
+| KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ⬜ 未完成（KB-P5-A 前台页面已完成：板块详情/分区树导航/素材网格与详情/存储用量面板+扩容入口，见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台kb-p5-a已落地)；KB-P5-B 小钰帮传、KB-P5-C 同步配额仍 ⬜） |
 | KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕 / 封面，默认关闭） | ⬜ 未开始（调研与实测复核已完成，见 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp待拓展kb-p6未立项)） |
 
 KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：

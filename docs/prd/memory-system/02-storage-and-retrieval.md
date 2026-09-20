@@ -1907,6 +1907,32 @@ class DigestConfig(BaseModel):
                                                         return "\n## ".join(result_parts)
 ```
 
+### 6.6 admin / Agent 记忆读入口（ADMIN-P4 已落地）
+
+用户侧召回由 `MemoryRetriever` 等负责；管理页需要的是「这个主体记得什么」的**只读视图**，
+与召回链路分离：`api/internal/service/memory/admin_memory_read.py` 的 `AdminMemoryReadService`。
+
+| 方法 | 返回 | 说明 |
+| --- | --- | --- |
+| `memory_stats(admin_user_id, agent_id=None)` | `{total_nodes, episodes, skills, recent_memories}` | Neo4j 按主体谓词计数 + 抽样最近 5 条 Episode（`ORDER BY n.updated_at DESC`） |
+| `list_memories(admin_user_id, agent_id=None, page, page_size)` | `{items: [{id, title, content, updated_at}], total}` | 分页 Episode，`title` 取节点 `summary` |
+
+**主体与谓词**：一律走 `MemoryOwnerKey.for_admin(admin_user_id, agent_id=...)`——
+admin 没有 account，绝不能伪造 `for_user`。归属谓词由
+`neo4j_filter_condition("n")` 产出、参数由 `neo4j_props()` 绑定（与写入侧同源）。
+
+**只读 + fail-open**：驱动获取失败或任一查询抛异常，一律返回**零值空结构**
+（页面显示空态），绝不让管理页因记忆引擎故障而 500；本服务**不提供任何写能力**。
+
+**HTTP 入口**（`admin_routes_7.py`，`agent_pool:read`，先经 `get_agent` 归属校验）：
+
+- `GET /admin/agents/<agent_id>/memory/stats`
+- `GET /admin/agents/<agent_id>/memory/list?page=&page_size=`
+
+真库实测：构造 admin+agent 主体 Episode 节点后 stats 返回 `total_nodes=1 / episodes=1 /
+recent=1`；走 `POST /admin/memory/gdpr-delete` 清除后归零。契约见
+[docs/api/admin-agents-api.md §9](../../api/admin-agents-api.md)。
+
 ---
 
 ## 图可视化与用户记忆管理
@@ -2108,16 +2134,24 @@ admin 主体节点的归属属性是 `admin_user_id`，该处取到空串 → `_
 `scanned += 1` **位于 `None` 检查之后**，故无归属节点既不被处理、也不计入 `scanned`
 ——不再是「静默假成功」。用户主体产物与历史逐字节等价。
 
-### 缺口八（已修复，2026-09-20，ADMIN-P3c-4）：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis
+### 缺口八（已修复，2026-09-20，ADMIN-P3c-4 → ADMIN-P4 补入口）：`gdpr_delete` 无调用方 + 用户注销路径不清 Redis
 
-`MemoryGovernor.gdpr_delete`（含 `_clear_all_user_cache`）全仓**无生产调用方**；用户注销路径
+`MemoryGovernor.gdpr_delete`（含 `_clear_all_user_cache`）**当时无生产调用方**（ADMIN-P4 起
+由管理端路由直接调用，见下「补入口」）；用户注销路径
 `AdminCustomerUserService._cleanup_user_runtime_data` 做 PG + Neo4j 清理但**完全不碰 Redis**，
 故注销后 `memory:digest:` / `skill:*` / `nudge:*` 等键只能靠 TTL 兜底存活（digest 最久 86400s）。
 
-**修复**：`_cleanup_user_runtime_data` 末尾追加 Redis 清理段——构造 `MemoryGovernor()`
+**修复（P3c-4）**：`_cleanup_user_runtime_data` 末尾追加 Redis 清理段——构造 `MemoryGovernor()`
 调 `_clear_all_user_cache(str(account_id))`（用户态 owner_key=裸 UUID，与历史键逐字节一致），
 结果计入 `stats["redis_keys"]`，best-effort 失败不阻断注销。注销入口：
 `AdminCustomerUserService.delete_customer_user` → `_cleanup_user_runtime_data`（P3c-4）。
+
+**补入口（ADMIN-P4，2026-09-20）**：`POST /admin/memory/gdpr-delete`（`admin_routes_7.py`，
+`agent_pool:manage`）——路由收主体分解字段（`subject_type` / `subject_id` / `agent_id`），
+服务端构造 `MemoryOwnerKey` 后交 `MemoryGovernor.gdpr_delete` 执行，返回
+`{owner_key, stats}`。真库实测：`subject_type=agent` 删除 admin+agent 主体 Episode 节点
+返回 `neo4j_nodes:1`，随后记忆读 API stats 归零。契约见
+[docs/api/admin-agents-api.md §9](../../api/admin-agents-api.md)。
 
 ### 缺口九（已修复，2026-09-19，ADMIN-P3c-2）：`_verify_owner` / `edit_memory` / `gdpr_delete` 的 Neo4j 侧仅支持用户主体
 

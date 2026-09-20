@@ -71,6 +71,7 @@ Agent 响应体（`AgentResp`）字段：
 | `prompt_key` | string \| null | 绑定的提示词 key（`prompt_template.key`），为空时用内置默认 |
 | `granted_permissions` | string[] | 显式下放给该 Agent 的权限子集 |
 | `automation_policy` | object | 板块 → `supervised` / `autonomous` / `blocked` |
+| `budget_config` | object | 预算档位：`{daily_executions?, monthly_executions?, daily_tokens?, monthly_tokens?}`，空/缺省 = 不限制 |
 | `enabled` | bool | 是否启用 |
 | `created_at` / `updated_at` | int | 秒级时间戳 |
 
@@ -93,6 +94,7 @@ Agent 响应体（`AgentResp`）字段：
 | `prompt_key` | 否 | 提示词 key |
 | `granted_permissions` | 否 | 权限子集，默认 `[]` |
 | `automation_policy` | 否 | 板块自动化级别，默认 `{}` |
+| `budget_config` | 否 | 预算档位（见 §3），默认 `{}`（不限制）；仅 `daily_*` / `monthly_*` 四个键被接受，值为非负整数，空键不落库 |
 
 **响应 `data`**：`AgentResp`
 
@@ -102,7 +104,7 @@ Agent 响应体（`AgentResp`）字段：
 
 权限：`agent_pool:manage` — 未提供的字段保持原值。
 
-**请求体**：以下字段均可选——`name` / `description` / `prompt_key` / `granted_permissions` / `automation_policy` / `enabled`。
+**请求体**：以下字段均可选——`name` / `description` / `prompt_key` / `granted_permissions` / `automation_policy` / `budget_config` / `enabled`。
 
 **响应 `data`**：`AgentResp`
 
@@ -261,11 +263,110 @@ feature 未启用 / 会话不属于该 Agent（续聊传了别个 Agent 的 `con
 
 ---
 
-## 7. 尚未落地
+## 7. 预算闸门
+
+### `GET /admin/agents/<agent_id>/budget/usage`
+
+权限：`agent_pool:read` — 当前周期（自然日 / 自然月）的预算用量。
+
+**响应 `data`**
+
+```json
+{
+  "budget_config": { "daily_executions": 10, "daily_tokens": 100000 },
+  "usage": { "daily_executions": 2, "daily_tokens": 3400 }
+}
+```
+
+实现：`api/internal/core/admin_agent_budget.py` 的 `AdminAgentBudgetGate`。计数存 Redis
+周期键 `budget:{agent_id}:{metric}:{YYYYMMDD|YYYYMM}`（`incr` 累计），超限抛
+`AdminAgentBudgetExceeded`（HTTP 层转 `403`）并记审计 `BUDGET_REJECTED`。
+**Redis 不可用 → fail-open**（放行 + 记日志，不阻断既有行为）。
+
+**施加点（三入口）**：`POST /admin/agents/<id>/invoke`、`POST /admin/agents/<id>/chat`
+（`AdminAgentChatService.chat` 入口）、admin 定时任务执行（`schedule_execution_service`
+admin 分支）。`budget_config` 未配置（空 dict）→ 恒放行。
+
+---
+
+## 8. 定时任务（admin_agent 通道）
+
+管理端 Agent 的周期性自主执行：任务绑定 `admin_agent_id`（`ScheduleTask.admin_agent_id`，
+`owner_type='admin'`），执行时按 `input_params` 的 `{board, action, payload}` 调
+`AdminAgentExecutionService.run`（自动按 `automation_policy` 分流），结果落
+`schedule_task_run`，审计沿用 `actor_type=agent` 链路。
+
+### `POST /admin/agents/<agent_id>/schedules`
+
+权限：`agent_pool:manage`
+
+**请求体**
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `name` | 是 | 任务名 |
+| `prompt` | 否 | 备注说明 |
+| `cron_expression` | 是 | 标准 5 段 cron |
+| `board` | 是 | 板块标识 |
+| `action` | 是 | 动作标识 |
+| `payload` | 否 | 动作入参，默认 `{}` |
+
+**响应 `data`**：`{ "id", "name", "cron_expression", "board", "action", "enabled", "created_at" }`
+
+**错误**：`403 forbidden`（非属主 / 无 `agent_pool:manage`）、`404 not_found`（Agent 不存在）、
+`400 validate_error`（cron 非法 / 动作未登记等）。
+
+### `GET /admin/agents/<agent_id>/schedules`
+
+权限：`agent_pool:read` — **响应 `data`**：`{ "items": [...], "total": int }`。
+
+### `DELETE /admin/agents/<agent_id>/schedules/<task_id>`
+
+权限：`agent_pool:manage` — 删除定时任务。
+
+---
+
+## 9. 记忆读 API 与 GDPR 删除
+
+### `GET /admin/agents/<agent_id>/memory/stats`
+
+权限：`agent_pool:read` — 该主体（`admin:<admin_user_id>:<agent_id>`）的记忆规模统计。
+
+**响应 `data`**
+
+```json
+{ "total_nodes": 12, "episodes": 9, "skills": 3, "recent_memories": [{ "id", "content", "created_at" }] }
+```
+
+实现：`api/internal/service/memory/admin_memory_read.py`。Neo4j 按归属属性
+（`admin_user_id` + `agent_id`）计数 + 抽样最近 Episode；**只读 + fail-open**
+（引擎不可用 / 异常一律返回空结构，管理页不 500）。
+
+### `GET /admin/agents/<agent_id>/memory/list?page=1&page_size=20`
+
+权限：`agent_pool:read` — 分页返回该主体 Episode 记忆。
+
+**响应 `data`**：`{ "items": [{ "id", "title", "content", "updated_at" }], "total": int }`
+（`title` 取节点 `summary`）。
+
+### `POST /admin/memory/gdpr-delete`
+
+权限：`agent_pool:manage` — 记忆 GDPR 级联删除（Neo4j + pgvector + Redis + 审计）。
+
+**请求体**：`{ "subject_type": "user"|"admin"|"agent", "subject_id": "<uuid>", "agent_id": "<uuid, agent 主体必填>" }`
+——路由**不接收裸 owner_key**，服务端构造 `MemoryOwnerKey` 后交
+`MemoryGovernor.gdpr_delete`。
+
+**响应 `data`**：`{ "owner_key": "admin:<admin_uuid>:<agent_uuid>", "stats": { "neo4j_nodes", "neo4j_edges", "pgvector_rows", "redis_keys" } }`
+
+**错误**：`400 validate_error`（非法 `subject_type` / UUID）、`403 forbidden`（无权限）。
+
+---
+
+## 10. 尚未落地
 
 | 能力 | 阶段 |
 | --- | --- |
-| 管理端前端对话页（后端入口已就绪，见 §6） | 前端任务 |
-| 记忆主体统一抽象 + 按 Agent 隔离 | P3 |
-| 预算闸门实际执行 + 定时任务 `agent_id` 通道 | P4 |
 | MCP 动态身份注入 | P5 |
+| 草稿 `apply` / `rollback` 的前端「待批准变更」页 | 后续阶段（服务能力已提供，见 §5） |
+| admin 记忆深度可视化（图可视化 / 时间线） | P5（记忆面板 stats/list 已落地，见 §9） |
