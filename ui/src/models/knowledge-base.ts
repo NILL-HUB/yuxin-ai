@@ -181,3 +181,15 @@ export type UpdateKnowledgeSegmentRequest = {
   enabled?: boolean
   content?: string
 }
+
+// 时间线编排中的单个片段引用（成片编辑器提交）
+export type ReassembleClip = {
+  document_id: string
+  segment_index: number
+}
+
+// 按时间线编排重建视频的请求结构（成片编辑器提交）
+export type ReassembleRequest = {
+  clips: ReassembleClip[]
+  name?: string
+}

@@ -12,6 +12,7 @@ import {
   type GetKnowledgeSegmentsWithPageResponse,
   type HitRequest,
   type HitResponse,
+  type ReassembleRequest,
   type UpdateKnowledgeBaseRequest,
   type UpdateKnowledgeSegmentRequest,
 } from '@/models/knowledge-base'
@@ -183,5 +184,17 @@ export const generateKnowledgeBaseIconPreview = (name: string, description: stri
 export const listReadableSystemKnowledgeBases = (admin = false) => {
   return get<BaseResponse<{ list: Array<{ id: string; name: string; description: string; knowledge_scope: string }> }>>(
     `${admin ? '/admin' : ''}/space/system-knowledge-bases`,
+  )
+}
+
+// 按时间线编排重建视频（成片编辑器提交）
+export const reassembleKnowledgeDocument = (
+  knowledge_base_id: string,
+  document_id: string,
+  req: ReassembleRequest,
+) => {
+  return post<BaseResponse<{ task_id: string }>>(
+    `/space/knowledge-bases/${knowledge_base_id}/documents/${document_id}/reassemble`,
+    { body: req },
   )
 }
