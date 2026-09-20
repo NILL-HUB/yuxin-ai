@@ -450,7 +450,7 @@ MCP 相关既有回归（`api/test/internal/core/tools/` + `test_app_config_serv
 | KB-P3 | 检索与视觉向量（关键帧向量索引 / 检索过滤 / L2 解析） | ✅ 完成（关键帧视觉向量表 + `VisualEmbeddingService`；检索工具分区/媒体类型/标签/阈值过滤；L2 按需解析 Celery 任务） |
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | KB-P4.5 | L1 视频时间线叙述（批次化批喂替代逐帧调用，段落即编辑挂载点） | ✅ 完成（场景 B/A 锚点 + 每批 ≈10 锚点多图批喂 + 服务端时间码投影 + 降级逐帧；时间线段落结构 `start_sec/end_sec/speech_text` 为 KB-P4 剪辑的定位基础，见 [modules/02-knowledge-base.md §11.8](./modules/02-knowledge-base.md#118-多模态l1基础解析kb-p2a已落地)） |
-| KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ✅ 完成（KB-P5-A 前台页面：板块详情/分区树导航/素材网格与详情/存储用量面板+扩容入口；KB-P5-B 小钰帮传对话工具 `upload_to_knowledge_base`；KB-P5-C 外部数据源同步纳入配额校验。见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)；未落地项：对话框内成片编辑器（独立立项，见 modules/02-knowledge-base.md §11.16）） |
+| KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ✅ 完成（KB-P5-A 前台页面：板块详情/分区树导航/素材网格与详情/存储用量面板+扩容入口；KB-P5-B 小钰帮传对话工具 `upload_to_knowledge_base`；KB-P5-C 外部数据源同步纳入配额校验。见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)；未落地项：对话消息卡片内直编入口（artifact 载荷不含 document_id，见 modules/02-knowledge-base.md §11.16）） |
 | KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕 / 封面，默认关闭） | ⬜ 未开始（调研与实测复核已完成，见 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp待拓展kb-p6未立项)） |
 
 KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：

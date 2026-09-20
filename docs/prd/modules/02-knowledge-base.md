@@ -925,7 +925,7 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 无任何报错。故单测显式锁定每个工厂的上下文透传
 （`test_edit_tool_factories_pass_chat_context` / `test_factory_passes_chat_context_onto_tool`）。
 
-**未落地**：对话框内的成片编辑器（时间轴拖拽 / 逐段替换）。成品库页面的播放入口已随 KB-P5 收尾落地（素材详情抽屉内联播放）。
+**已落地（KB-P5 收尾·成片编辑器）**：时间线编排——对成片/素材的时间线段落拖拽重排、删除段落、用其他素材的段落替换某段（素材详情抽屉「重新编排」入口，`TimelineEditorModal`）；提交走 `POST /space/knowledge-bases/<kb_id>/documents/<document_id>/reassemble` 派发 `video_reassemble_task`，产物入成品库；对话内由 `video_reassemble` builtin 工具覆盖同一链路（`clips` 传 JSON 字符串，`segment_index` 1-based），完成后回填对话内成片预览。对话消息卡片内的直编入口未落地（artifact 载荷不含 document_id）。
 
 ### 11.17 知识库前台与运维（KB-P5 已落地）
 
@@ -966,6 +966,6 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 
 **已落地（KB-P5 收尾）**：网格缩略图直出——文档列表/详情 API 透出 `frame_url`（视频首个带帧分段的代表帧，COS 签名后直出）与 `playback_url`（视频成品播放直链）；分段 API 透出时间线元数据（`frame_url` / `start_sec` / `end_sec` / `source` / `speech_text`）。详情抽屉对视频成品直接内联播放，分段行展示帧缩略图与时间标签。
 
-**未落地**：对话框内成片编辑器（时间轴拖拽 / 逐段替换，见 §11.16，独立立项）。
+**已落地（KB-P5 收尾·成片编辑器）**：时间线编排编辑器（拖拽重排 / 删除段落 / 逐段替换）见 §11.16。
 
 
