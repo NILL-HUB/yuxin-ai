@@ -39,7 +39,7 @@ class ScheduleTaskResp(Schema):
             "name": data.name,
             "prompt": data.prompt,
             "app_id": data.app_id,
-            "admin_agent_id": data.admin_agent_id,
+            "admin_agent_id": getattr(data, "admin_agent_id", None),
             "task_type": data.task_type or "assistant_chat",
             "input_params": data.input_params or {},
             "trigger_type": data.trigger_type or "cron",
