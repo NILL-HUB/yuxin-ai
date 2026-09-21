@@ -1,6 +1,6 @@
 # 知识库核心产品形态设计
 
-> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 已完成（前台页面 / 小钰帮传 / 同步配额，见 §9.2）、KB-P6（外部素材获取，yt-dlp）已完成调研复核、未立项（见 §5.3）｜**版本**：v1.5｜**日期**：2026-09-20
+> **状态**：KB-P1 数据基座、KB-P2A 多模态素材入库、KB-P2B 分片上传、KB-P3 检索与视觉向量均已完成（见 §9.2）；KB-P3.5–KB-P3.8 为 KB-P3 之后的增量（分层抽帧 / L2 区间密抽 / 渲染宿主 / 本机化），见 [execution-roadmap.md](./execution-roadmap.md)。KB-P4 已完成（渲染出片由 KB-P3.7 落地，trim/concat/subtitle 三工具由 KB-P4 落地）、KB-P5 已完成（前台页面 / 小钰帮传 / 同步配额，见 §9.2）、KB-P6 外部素材获取（yt-dlp）已实现（见 §5.3；纯音频 / 平台字幕已落地，**封面未接入**）｜**版本**：v1.6｜**日期**：2026-09-21
 > **定位**：把「知识库」从文本文档 RAG 库补足为**全媒体素材中心 + 内容取料台 + 容量商业化**的完整产品形态。
 > **上游依据**：[product-vision.md](./product-vision.md) 产品承诺（L2 能力层"存所有文件（含视频素材）；做视频时讨论细节→自翻素材→出片预览→改"）。
 > **现状基线**：[modules/02-knowledge-base.md](./modules/02-knowledge-base.md)（双层知识库设计）。
@@ -354,9 +354,9 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 - 产物默认不入知识库，用户显式要求才存档
   → **落地偏离**：产物**默认存入成品库**（`store_render_output`，与 `render_video` 出片同口径），零额外机制，也更利于「翻旧片复用」
 
-### 5.3 素材获取：外部媒体平台下载（yt-dlp）｜待拓展（KB-P6，未立项）
+### 5.3 素材获取：外部媒体平台下载（yt-dlp，KB-P6 已落地）
 
-**定位**：把「素材入库旁路」（§1.3）向上游延伸一步——用户给一条媒体平台链接（B 站 / 抖音 / 西瓜 / YouTube / TikTok 等），小钰直接下载入库存为素材，省去「手动下载再上传」的中间环节。**首版覆盖四类产物**：视频（主形态）、纯音频、平台字幕、封面缩略图。
+**定位**：把「素材入库旁路」（§1.3）向上游延伸一步——用户给一条媒体平台链接，小钰直接下载入库存为素材，省去「手动下载再上传」的中间环节。**首版产物**：视频（主形态）、纯音频、平台字幕。**封面缩略图（`writethumbnail`）未接入**（详见下文「已实现 / 偏离对照」）。
 
 **技术选型（已调研并实测复核，2026-09-20）**：开源项目 [yt-dlp](https://github.com/yt-dlp/yt-dlp)（youtube-dl 社区增强分支）。
 
@@ -367,21 +367,21 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 站点覆盖 | 实测 `gen_extractor_classes()` 共 **1751 个提取器**；已确认覆盖 BiliBili 全系（含番剧 / 空间 / 搜索）、抖音、西瓜、爱奇艺、AcFun、斗鱼、虎牙、花椒、酷我，以及 YouTube / TikTok / X / Instagram / Facebook 等国际平台 |
 | 嵌入用法 | Python 库形态：`yt_dlp.YoutubeDL(opts).extract_info(url, download=...)`；实测 `download=False` 可**免下载预取元数据**（B 站真实样本：标题 / 时长 / UP 主 / 15 个格式 / 360p–1080p 全部拿到） |
 | 格式控制 | format selector 可按分辨率 / 体积 / 编码过滤（如 `[height<=720]`），下载前可控体积，与配额体系双保险 |
-| 产物形态 | 视频（`bv*+ba/b`）、**纯音频**（`ba`，mp3/m4a）、**平台字幕**（`writesubtitles`，vtt/srt）、**封面缩略图**（`writethumbnail`）——四类均可由嵌入 opts 独立开关 |
+| 产物形态 | 视频（`bv*+ba/b`）、**纯音频**（`ba`，mp3/m4a）、**平台字幕**（`writesubtitles`，vtt/srt）——均已落地；**封面缩略图**（`writethumbnail`）**未接入**（代码无对应实现，见下方对照） |
 
 **接线设计（全部复用现有设施，零新基建）**：
 
 ```text
 对话「帮我把这个 B 站视频存进视频库」「把这首歌存进音频库」
-  → Agent 调 fetch_media 工具（URL + 可选分辨率 / 体积上限）
+  → Agent 调 fetch_media 工具（URL + 知识库 id + 可选体积上限）
   → Celery 任务：yt-dlp 嵌入 API 下载到临时文件（提取器白名单校验前置）
       ├─ 下载形态由目标板块 base_type 推断：video → `bv*+ba/b`；audio → `ba`；mixed → 默认视频
-      └─ 附属产物顺带抓取：平台字幕（vtt/srt）+ 封面缩略图
-  → COS 上传（cos_service.upload_bytes → UploadFile；附属产物同样经存储代理计量）
+      └─ 附属产物顺带抓取：平台字幕（vtt/srt）【封面缩略图未接入】
+  → COS 上传（主媒体 `upload_local_file` 流式保 key；字幕 `upload_bytes` → UploadFile）
   → create_document_from_upload_file（板块类型硬约束 + 配额校验）
-      ├─ 字幕：随素材关联，L1 解析时优先消费（见下表「字幕落点」）
-      └─ 封面：UploadFile id 记入素材 metadata_（素材网格展示用）
-  → 自动触发 L1 解析（关键帧 + ASR）→ 素材可被检索取料
+      ├─ 字幕：UploadFile id 写入 document.metadata_[subtitle_upload_file_id]，L1 解析时优先消费
+      └─ 封面：未接入（无 cover_upload_file_id 实现）
+  → 自动触发 L1 解析（关键帧 + 字幕优先/回退 ASR）→ 素材可被检索取料
 ```
 
 | 接线面 | 复用点（均已在代码中核实存在） |
@@ -391,8 +391,8 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 异步执行 | 新增 Celery 任务模块，走 `celery_app.py` TASK_MODULES 双重注册模式（include + 显式 import） |
 | 入库路径 | [knowledge_base_service.py](../../api/internal/service/knowledge_base_service.py) `create_document_from_upload_file`（类型硬约束 + L1 触发）；[cos_service.py](../../api/internal/service/cos_service.py) `upload_bytes` |
 | 体积控制 | KB-P1 配额体系（`StorageQuotaService`）+ yt-dlp format 过滤双保险 |
-| 字幕落点 | L1 解析小幅扩展：`KnowledgeMediaExtractorService` 视频分支**优先消费平台字幕**（解析为带时间轴 cues 的 transcript Segment，source 标注 `platform_subtitle`），无字幕才回退 ASR 音轨提取——省转写成本，落点复用现有 Segment + 向量化 |
-| 封面落点 | 封面作为附属 UploadFile 入存储（经存储代理计量，几十 KB 级），id 记入 `KnowledgeDocument.metadata_`（`cover_upload_file_id`），素材网格与详情展示用 |
+| 字幕落点 | ✅ **已实现**：L1 解析 `KnowledgeMediaExtractorService` `_extract_video` 经 `_consume_subtitle_first` **优先消费平台字幕**——读 `document.metadata_["subtitle_upload_file_id"]` 下载字幕并解析为带时间轴 cues 的 transcript Segment（source=`platform_subtitle`），无字幕或解析失败才回退音轨 ASR（source=`audio_transcript`）——省转写成本，落点复用现有 Segment + 向量化 |
+| 封面落点 | ⚠️ **未接入**：`cover_upload_file_id` / `writethumbnail` 均无代码实现，素材网格暂以关键帧缩略图（KB-P5 已落地）替代封面展示 |
 
 **安全与合规约束（强制，实施时不可裁剪）**：
 
@@ -460,7 +460,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 检索工具扩展（改造 `search_knowledge_base`） | 新增 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤参数 | ✅ **已落地**（KB-P3，见 [modules/02-knowledge-base.md §11.9.3](./modules/02-knowledge-base.md#1193-检索工具的四个可选入参)） |
 | 视频渲染出片（新增） | `render_video`（builtin provider `video_render_tools`）+ 成品库 | ✅ **已落地**（KB-P3.7）：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库。 |
 | 视频轻量剪辑三件套（新增） | `video_trim` / `video_concat` / `video_subtitle`（builtin provider `video_edit_tools`）+ 成品库 | ✅ **已落地**（KB-P4）：裁剪（流拷贝）/ 拼接（concat demuxer）/ 加字幕（`subtitles` 滤镜），经 Celery 默认队列异步执行，产物走 `store_render_output` 存入成品库。见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地) |
-| 外部媒体下载（新增） | `fetch_media`（builtin provider `media_fetch_tools`，**默认关闭**）：用户给媒体平台链接 → yt-dlp 下载视频 / 纯音频（按板块 base_type 推断）+ 顺带抓平台字幕与封面 → 入库存为素材并触发解析 | ⬜ **未落地**（KB-P6 待拓展；调研与实测复核已完成，见 §5.3） |
+| 外部媒体下载（新增） | `fetch_media`（builtin provider `media_fetch_tools`，**默认关闭**）：用户给媒体平台链接 → yt-dlp 下载视频 / 纯音频（按板块 base_type 推断）+ 顺带抓平台字幕 → 入库存为素材并触发解析 | ✅ **已落地**（KB-P6，见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地)）：`MediaFetchService.import_document` + `media_fetch_task` Celery 任务 + 提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch` + `ENABLE_MEDIA_FETCH_TOOL` 门控默认关闭；L1 字幕优先回退 ASR。**偏离**：封面缩略图（`cover_upload_file_id` / `writethumbnail`）**未接入** |
 
 `create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
 
@@ -515,7 +515,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | **KB-P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（KB-P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
 | **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **已落地**：渲染出片（KB-P3.7）结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）；轻量剪辑三件套（KB-P4）`video_trim` / `video_concat` / `video_subtitle`（`video_edit_tools` provider，经 Celery 默认队列，产物走 `store_render_output`）；**对话内成片预览**（同步走工具返回值、异步走 Celery 完成后双通道回填 + 前端内联播放）。⬜ **未落地**：对话框内成片编辑器 | 对话里出片并存入成品库（✅ 已达成）；对话里裁剪/拼接/加字幕并存入成品库（✅ 已达成）；对话内直接预览成片（✅ 已达成，见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)） | ✅ **已完成**（出片 KB-P3.7 + 剪辑/预览 KB-P4，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | **KB-P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ✅ **已完成**（A 前台页面 + B 小钰帮传 `upload_to_knowledge_base` + C 同步配额，见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)） |
-| **KB-P6 外部素材获取（待拓展）** | 链接直达素材入库（视频 / 音频 + 字幕 / 封面） | `fetch_media` builtin 工具（`media_fetch_tools` provider，默认关闭）+ yt-dlp 嵌入下载 Celery 任务（视频 / 纯音频按板块 base_type 推断，顺带抓平台字幕与封面）+ 提取器白名单（排除 generic）+ 复用入库 / 配额 / L1 解析链路（L1 小幅扩展：优先消费平台字幕，省 ASR 成本） | 对话里给 B 站链接 → 素材入视频库 → 可被语义检索命中；给音频链接 → 入音频库；平台字幕文本可检索 | ⬜ 未开始（调研与实测复核已完成，见 §5.3） |
+| **KB-P6 外部素材获取** | 链接直达素材入库（视频 / 音频 + 平台字幕） | ✅ **已落地**：`fetch_media` builtin 工具（`media_fetch_tools` provider，`ENABLE_MEDIA_FETCH_TOOL` 门控默认关闭）+ `MediaFetchService.import_document` + `media_fetch_task` Celery 任务（视频 / 纯音频按板块 base_type 推断）+ 提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch`（排除 generic）+ 复用入库 / 配额 / L1 解析链路；L1 `_consume_subtitle_first` 优先消费平台字幕，无则回退 ASR。无新表 / 无迁移（字幕关联承载于 `document.metadata_["subtitle_upload_file_id"]`）。**偏离**：封面缩略图（`writethumbnail` / `cover_upload_file_id`）未接入 | 给 B 站链接 → 素材入视频库 → 可被语义检索命中；给音频链接 → 入音频库；平台字幕文本可检索 | ✅ **已完成**（见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地)） |
 
 **最小可用闭环 = KB-P1 + KB-P2 完成**（素材能入库、能被检索）。KB-P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；KB-P2B（大文件分片上传）落地后，KB-P2 已完整收口。
 

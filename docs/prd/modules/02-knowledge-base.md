@@ -968,4 +968,57 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 
 **已落地（KB-P5 收尾·成片编辑器）**：时间线编排编辑器（拖拽重排 / 删除段落 / 逐段替换）见 §11.16。
 
+### 11.18 外部素材获取（KB-P6 已落地）
+
+**入口**：对话内置 builtin 工具 `fetch_media`（provider `media_fetch_tools`，挂载点
+[assistant_agent_service.py](../../api/internal/service/assistant_agent_service.py)
+`_build_assistant_runtime_tools`）。用户给一个公开媒体网页链接，小钰下载→上传→建档→自动触发
+L1 解析，形成「链接直达素材入库」的旁路。
+
+**门控**：工具层 `_enabled()` 读环境变量 `ENABLE_MEDIA_FETCH_TOOL`，值 ∈
+`1/true/yes/on` 才挂载可用，**默认关闭**（需管理员显式开启）。关闭时工具调用返回
+「外部素材获取能力未启用」可读错误，不参与对话工具清单之外的任何运行路径。
+
+**Async 执行**：工具经 `media_fetch_task.delay(...)` 派发到 Celery
+（任务 name=`internal.task.media_fetch_tasks.media_fetch_task`，见
+[media_fetch_tasks.py](../../api/internal/task/media_fetch_tasks.py)），返回后立即回任务号；
+下载完成自动入库并触发解析。任务为薄委托：只取 service/kb + 委托 +
+重试（`MediaFetchError` 业务失败不重试，其余 `max_retries=2`）。格式按板块
+`base_type` 推断：`audio` → `ba`，其他（video/mixed）→ `bv*+ba/b`。
+
+**核心服务**：[media_fetch_service.py](../../api/internal/service/media_fetch_service.py)
+`MediaFetchService.import_document` 流程：
+
+- `validate_url` 前置校验：仅 http/https；
+- `_download` 直接 `import yt_dlp` 以库形态 `yt_dlp.YoutubeDL(opts).extract_info(url, download=True)`
+  调用（**禁止拼接 CLI**），`prefer_subtitle=True` 时顺带拉取平台字幕
+  （`writesubtitles`，langs=en/zh-Hans/zh-CN/zh，格式 vtt/srt）；
+- **提取器白名单** `ALLOWED_EXTRACTORS = {"youtube","bilibili","vimeo","dailymotion","twitch"}`
+  ——排除 generic 兜底（SSRF 防护），未命中实名提取器直接拒绝入库；
+- `_respect_size_cap` 体积上限：分辨率/体积超标提前拒绝，`filesize` 缺失时回退
+  `MEDIA_FETCH_MAX_BYTES_FALLBACK`（默认 512MB）；
+- 主媒体经 `cos_service.upload_local_file` **流式上传保 key**（GB 级不进内存），分块算真实
+  `sha3_256`（供去重），再手工建 `UploadFile` 记录；
+- 经 `KnowledgeBaseService.create_document_from_upload_file` 建档（板块类型硬约束 + 配额校验 +
+  **自动触发 L1 解析**），返回的 document 即素材记录；
+- 平台字幕经 `upload_bytes` 建 `UploadFile` 记录，id 写入 `document.metadata_["subtitle_upload_file_id"]`。
+
+**字幕优先（提取器增强）**：[knowledge_media_extractor_service.py](../../api/internal/service/knowledge_media_extractor_service.py)
+`_extract_video` 经 `_consume_subtitle_first` 优先消费平台字幕——读
+`document.metadata_["subtitle_upload_file_id"]` 下载字幕文件，解析 vtt/srt 为与 ASR 同构的
+cues，transcript Segment 的来源 `source=platform_subtitle`（省 ASR 转写成本）；无字幕或解析失败
+则回退音轨 ASR（`source=audio_transcript`）。
+
+**数据承载**：**无新增表 / 无新增配置表 / 无迁移**。主媒体与字幕均为 `UploadFile` 记录，关联信息
+（`subtitle_upload_file_id`）承载于 `KnowledgeDocument.metadata_`（JSONB）。
+
+**依赖**：`api/requirements.txt` 追加 `yt-dlp==2026.8.19`（版本钉版）。仅支持平台可**匿名抓取**
+的内容，不做登录态 / Cookies 凭证托管。
+
+> **接线审查**：入口 = 对话 `fetch_media` 工具 → `media_fetch_task.delay()` → `MediaFetchService.import_document`
+> → `create_document_from_upload_file`（L1 触发）→ 字幕 id 落 `metadata_` 供 `_consume_subtitle_first` 消费。
+> 任务在 `celery_app.py` `TASK_MODULES` + 显式 import 双重注册；工具在 `providers.yaml` 登记 + 挂载点受 `ENABLE_MEDIA_FETCH_TOOL` 门控。
+> **封面未接入**：`cover_upload_file_id` / `writethumbnail` 在当前代码中均无实现（见
+> [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp已落地kb-p6)）。
+
 
