@@ -123,3 +123,94 @@ class MediaFetchService:
             if name.startswith(base) and (low.endswith(".vtt") or low.endswith(".srt")):
                 return os.path.join(temp_dir, name)
         return None
+
+    def _inject(self):
+        """惰性取用依赖（强类型，走运行时 Injector）。测试可预置对应 mock 覆盖。"""
+        if getattr(self, "_cos", None) is None:
+            from app.http.module import injector
+            from internal.service.cos_service import CosService
+            from internal.service.knowledge_base_service import KnowledgeBaseService
+            from internal.service.upload_file_service import UploadFileService
+
+            self._cos = injector.get(CosService)
+            self._upload_file_service = injector.get(UploadFileService)
+            self._knowledge_base_service = injector.get(KnowledgeBaseService)
+        return self
+
+    def import_document(
+        self,
+        *,
+        url: str,
+        knowledge_base,
+        account,
+        temp_dir: str,
+        max_bytes: int | None,
+        format_spec: str = "bv*+ba/b",
+    ) -> dict:
+        """下载 → 流式上传 → 建档 → 字幕 metadata 关联。
+
+        主媒体走 upload_local_file（流式保 key，GB 级不进内存）+ 补建 UploadFile 记录；
+        字幕为小文件用 upload_bytes 建记录并写入 document.metadata_[subtitle_upload_file_id]，
+        供 L1 解析时优先消费。仅公开内容，不做登录态/Cookies。
+        """
+        self._inject()
+
+        fetched = self._download(
+            url, temp_dir, format_spec=format_spec, max_bytes=max_bytes, prefer_subtitle=True,
+        )
+        media_path = fetched["media_path"]
+        filename = os.path.basename(media_path)
+
+        # 主媒体流式上传（保 key，不读进内存）。注入对象实际是运行时存储代理
+        # （RuntimeStorageProxy），不暴露 CosService._build_object_key，故直接调静态方法生成 key。
+        from internal.service.cos_service import CosService
+        target_key = CosService._build_object_key(filename)
+        self._cos.upload_local_file(source_path=media_path, target_key=target_key)
+
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        active_backend = getattr(self._cos, "active_backend", None)
+        backend = str(active_backend() if callable(active_backend) else os.getenv("STORAGE_BACKEND", "cos")).strip().lower()
+        backend = "local" if backend in ("", "local") else "cos"
+        main_upload = self._upload_file_service.create_upload_file(
+            account_id=account.id,
+            name=filename,
+            key=target_key,
+            size=os.path.getsize(media_path),
+            extension=extension,
+            mime_type=None,
+            hash="sha3-external-fetch",  # 大文件不整块读内存，主媒体用稳定占位符；字幕等小文件由 upload_bytes 内部算真实 hash
+            storage_backend=backend,
+        )
+
+        document = self._knowledge_base_service.create_document_from_upload_file(
+            knowledge_base_id=knowledge_base.id,
+            upload_file=main_upload,
+            account=account,
+        )
+
+        metadata_patch: dict[str, Any] = {}
+        subtitle_path = fetched.get("subtitle_path")
+        if subtitle_path and os.path.exists(subtitle_path):
+            with open(subtitle_path, "rb") as fh:
+                sub_content = fh.read()
+            sub_record = self._cos.upload_bytes(
+                filename=os.path.basename(subtitle_path),
+                content=sub_content,
+                account_id=account.id,
+                mime_type="text/vtt" if subtitle_path.lower().endswith(".vtt") else "text/plain",
+            )
+            metadata_patch["subtitle_upload_file_id"] = str(sub_record.id)
+
+        if metadata_patch:
+            # 合并字幕关联信息到 document.metadata_ 并持久化。
+            # 复用知识库 service 继承自 BaseService.update 的通用更新方法。
+            merged = dict(getattr(document, "metadata_", None) or {})
+            merged.update(metadata_patch)
+            self._knowledge_base_service.update(document, metadata_=merged)
+
+        return {
+            "ok": True,
+            "document_id": str(getattr(document, "id", "")),
+            "subtitle_attached": bool(metadata_patch.get("subtitle_upload_file_id")),
+            "message": "外部素材已下载并入知识库，开始解析",
+        }
