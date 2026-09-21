@@ -82,6 +82,21 @@ const router = createRouter({
           ],
         },
         {
+          path: 'store/tools',
+          name: 'store-tools-list',
+          component: () => import('@/views/store/tools/ListView.vue'),
+        },
+        {
+          path: 'store/skills',
+          name: 'store-skills-list',
+          component: () => import('@/views/store/skills/ListView.vue'),
+        },
+        {
+          path: 'store/mcp',
+          name: 'store-mcp-list',
+          component: () => import('@/views/store/mcp/ListView.vue'),
+        },
+        {
           path: 'search',
           name: 'conversation-search',
           component: () => import('@/views/home/ConversationSearchView.vue'),
