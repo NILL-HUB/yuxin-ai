@@ -59,36 +59,34 @@ class MediaFetchService:
         max_bytes: int | None,
         prefer_subtitle: bool = True,
     ) -> dict[str, Any]:
-        """用 yt-dlp 库下载媒体到临时目录；返回主媒体路径 + 元数据 + 可选字幕路径。"""
+        """用 yt-dlp 库下载媒体到临时目录；返回主媒体路径 + 元数据 + 可选字幕路径。
+
+        SSRF 时序：真正下载前先做两件事——
+        1) URL scheme 前置校验（仅 http/https，非白名单 scheme 直接拒绝）；
+        2) 预解析（extract_info(download=False)）判定 extractor 白名单与体积上限，
+           未命中白名单（尤其 generic 兜底）/超上限就地拒绝，避免对任意站点
+           完成下载后再被拒。通过后才 process_ie_result 真正下载。
+        """
         import yt_dlp
-        outtmpl = os.path.join(temp_dir, "%(title).30B-%(id)s.%(ext)s")
-        opts: dict[str, Any] = {
-            "format": format_spec,
-            "outtmpl": outtmpl,
+
+        # 1) URL scheme 前置校验（下载前拒绝非 http/https）
+        url_check = self.validate_url(url)
+        if not url_check["ok"]:
+            raise MediaFetchError(url_check["error"])
+
+        base_opts: dict[str, Any] = {
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
             "nocheckcertificate": False,
         }
-        if prefer_subtitle:
-            opts.update({
-                "writesubtitles": True,
-                "writeautomaticsub": False,
-                "subtitleslangs": ["en", "zh-Hans", "zh-CN", "zh"],
-                "subtitlesformat": "vtt/srt",
-                "skip_download": False,
-            })
+
+        # 2) 预解析：仅取元数据判断 extractor 与体积，闭合 SSRF 窗口（不下载本体）
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+            with yt_dlp.YoutubeDL(base_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
         except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            if "Unsupported URL" in msg or "requested format is not available" in msg:
-                raise MediaFetchError("该链接当前无法解析，可能为平台不支持或页面已失效") from exc
-            if "Unable to download webpage" in msg:
-                raise MediaFetchError("无法访问该网页，链接可能失效或平台要求登录（暂不支持登录态）") from exc
-            logger.warning("yt-dlp 下载失败 url=%s", url, exc_info=True)
-            raise MediaFetchError(f"外部素材下载失败：{msg[:200]}") from exc
+            raise self._translate_download_error(url, exc) from exc
 
         extractor = str(info.get("extractor_key") or "").lower()
         if not self._extractor_allowed(extractor):
@@ -96,6 +94,25 @@ class MediaFetchService:
         cap_result = self._respect_size_cap(info, max_bytes=max_bytes)
         if not cap_result["ok"]:
             raise MediaFetchError(cap_result["error"])
+
+        # 3) 正式下载：复用预解析的 info，避免二次抓页
+        opts: dict[str, Any] = dict(
+            base_opts,
+            format=format_spec,
+            outtmpl=os.path.join(temp_dir, "%(title).30B-%(id)s.%(ext)s"),
+        )
+        if prefer_subtitle:
+            opts.update({
+                "writesubtitles": True,
+                "writeautomaticsub": False,
+                "subtitleslangs": ["en", "zh-Hans", "zh-CN", "zh"],
+                "subtitlesformat": "vtt/srt",
+            })
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.process_ie_result(info, download=True)
+        except Exception as exc:  # noqa: BLE001
+            raise self._translate_download_error(url, exc) from exc
 
         filepath = info.get("requested_downloads") or info.get("_filename") or ""
         if isinstance(filepath, list):
@@ -113,6 +130,17 @@ class MediaFetchService:
             srt = self._find_subtitle(temp_dir, media_path)
             result["subtitle_path"] = srt
         return result
+
+    @staticmethod
+    def _translate_download_error(url: str, exc: Exception) -> MediaFetchError:
+        """把 yt-dlp 异常翻译为用户可读（含站点失效 / 登录态提示）。"""
+        msg = str(exc)
+        if "Unsupported URL" in msg or "requested format is not available" in msg:
+            return MediaFetchError("该链接当前无法解析，可能为平台不支持或页面已失效")
+        if "Unable to download webpage" in msg:
+            return MediaFetchError("无法访问该网页，链接可能失效或平台要求登录（暂不支持登录态）")
+        logger.warning("yt-dlp 下载失败 url=%s", url, exc_info=True)
+        return MediaFetchError(f"外部素材下载失败：{msg[:200]}")
 
     @staticmethod
     def _find_subtitle(temp_dir: str, media_path: str) -> str | None:

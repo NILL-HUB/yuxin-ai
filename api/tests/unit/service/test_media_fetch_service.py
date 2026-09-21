@@ -27,6 +27,81 @@ def test_size_cap_rejected_proactively():
     assert svc._respect_size_cap(info, max_bytes=1024)["ok"] is False
 
 
+def test_download_rejects_generic_before_real_download(monkeypatch, tmp_path):
+    """SSRF 时序：白名单（generic）在预解析即拒绝，绝不触达真正下载/处理。"""
+    import pytest
+
+    from internal.service.media_fetch_service import MediaFetchError
+
+    state = {"download_step_called": False}
+
+    class FakeYDLEntry:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, url, download=False):
+            if download:
+                state["download_step_called"] = True  # 不应触达
+            # 预解析返回 generic 兜底 extractor
+            return {"extractor_key": "generic", "filesize_approx": 1000}
+
+        def process_ie_result(self, info, download=True):
+            state["download_step_called"] = True  # 不应触达
+            return info
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDLEntry)
+
+    svc = MediaFetchService()
+    with pytest.raises(MediaFetchError):
+        svc._download(
+            "https://example.com/video", str(tmp_path),
+            format_spec="bv*+ba/b", max_bytes=None,
+        )
+    assert state["download_step_called"] is False
+
+
+def test_download_rejects_bad_scheme_before_any_parse(monkeypatch, tmp_path):
+    """非 http/https scheme 在预解析之前即拒绝（validate_url 已接线为生产调用）。"""
+    import pytest
+
+    from internal.service.media_fetch_service import MediaFetchError
+
+    parse_called = {"n": 0}
+
+    class FakeYDLEntry:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, url, download=False):
+            parse_called["n"] += 1
+            raise AssertionError("不应解析非 http/https URL")
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDLEntry)
+
+    svc = MediaFetchService()
+    with pytest.raises(MediaFetchError) as ei:
+        svc._download(
+            "ftp://example.com/v.mp4", str(tmp_path),
+            format_spec="bv*+ba/b", max_bytes=None,
+        )
+    assert parse_called["n"] == 0
+    assert "仅支持 http/https" in str(ei.value)
+
+
 def test_size_cap_message_readable():
     """断言体积超限报错消息里 MiB 换算可读（size // 1024 // 1024 无位运算歧义）。"""
     svc = MediaFetchService()
