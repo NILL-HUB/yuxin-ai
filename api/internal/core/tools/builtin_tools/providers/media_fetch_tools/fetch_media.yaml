@@ -1,0 +1,27 @@
+name: fetch_media
+label: 获取外部素材
+description: 把公开网页的视频/音频链接下载入库并开始解析。
+params:
+- name: url
+  label: 链接
+  type: string
+  required: true
+- name: knowledge_base_id
+  label: 知识库
+  type: string
+  required: true
+- name: resolution
+  label: 分辨率
+  type: string
+  required: false
+- name: max_bytes
+  label: 体积上限(字节)
+  type: number
+  required: false
+task_keywords:
+- 下载视频
+- 保存链接
+- 视频链接入库
+- 外部素材
+- 抓取视频
+- fetch media

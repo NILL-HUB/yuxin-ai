@@ -243,3 +243,10 @@
   background: "#EEF2FF"
   category: video
   created_at: 1789800000
+- name: media_fetch_tools
+  label: 外部素材获取
+  description: 外部媒体下载导入能力，供 Agent 把公开视频/音频链接保存进知识库。
+  icon: ""
+  background: "#F2F7F2"
+  category: tool
+  created_at: 1789900000
