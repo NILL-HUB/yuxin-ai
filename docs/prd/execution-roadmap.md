@@ -910,6 +910,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | **UX-3 资源运营补充上架/下架操作** | StoreMcpView.vue, store/mcp/ListView.vue, mcp-list-admin.spec.ts（新建）, mcp-list.spec.ts, storeOps.ts, execution-roadmap.md | ✅ 已完成 | Apps/Workflows 商店页已有上下架；**MCP** 补齐：store/mcp ListView 在 adminMode + `mcp:manage` 权限下卡片渲染上架/下架按钮（按 is_public 切换），经 `publishAdminMcp`/`unpublishAdminMcp`（POST /admin/mcp/{id}/publish\|unpublish）持久化并刷新列表；公共用户态（adminMode=false）零变化。**Tools** 为内置工具公共目录、无上下架对象，判定非目标；**Skills 后端无 is_public/发布接口（待后端先行，未伪造调用）** |
 | **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | AdminWorkflowsView.vue, AdminWorkflowCard.vue, AdminWorkflowsView.spec.ts, execution-roadmap.md | ✅ 已完成 | 编排页移除单卡片「公开切换（上架/下架）」按钮：共享卡片新增 `showVisibilityToggle` prop（默认 true，商店页零变化），编排页传 `false` 并删除 `handleTogglePublic` 与 `updateAdminWorkflow` 引用；上架/下架入口收敛到资源运营工作流商店页（StoreWorkflowsView，`@toggle-public` 绑定仅剩该处）。批量上架/下架、offline 等编排操作保留（roadmap 仅点名 toggle-public）；visibility 标签保留只读展示 |
 | **UX-5 资源编排补充 CRUD** | AdminMcpView.vue, AdminSkillsView.vue, skills/CreateOrUpdateSkillModal.vue, mcp/ImportMcpModal.vue, execution-roadmap.md | ✅ 已完成 | **实测无开发量，修订原描述**：1) `AdminMcpView`（MCP管理）已是全 CRUD——创建/编辑（CreateOrUpdateMcpModal admin-mode）、删除（进入回收站）、上架/下架、URL/JSON/批量导入；2) `AdminSkillsView`（Skills管理）已是全 CRUD——创建/编辑（CreateOrUpdateSkillModal）、删除、启停、同步、catalog/zip/github/json 导入、版本历史；3) `AdminDatasetsView` **不存在**（router/views 均无；历史 archive 计划曾以 `space/datasets/ListView.vue` 作 admin 别名并明确移除冗余路由）。**修正后表述**：MCP/Skills 编排页具名副其实无需改动；datasets 管理页不在当前资源编排菜单（现有 `/admin/system-knowledge` 承担系统知识库管理）；如需「租户/项目级知识库管理」页属新能力规划（见 docs/prd/modules/02-knowledge-base.md），不归入 UX-5 |
+| **UX-6 ModelsView 成本策略移到计费运营** | models.ts（zh/en 孤儿键清理）, CostStrategyView.vue（既有）, PublicAIFeatureConfigView.vue（既有）, execution-roadmap.md | ✅ 已完成 | **实测迁移已完成，修订原描述**：`maxCostPerRequest`/`billingMode`（含 `policyName`/`modelTier`/`upgradeThreshold`）已不在 ModelsView 及任何池治理页——`CostStrategyView`（计费运营→/admin/cost-strategy）已完整管理 `max_cost_per_request`/`billing_mode`/`upgrade_threshold`（create/update/list）。**PublicAIFeature 审查结论**：该页「计费模式」为功能级 `billable` 开关（是否计费），与成本策略 `billing_mode`（token/request/credit 计费口径）语义不同、无重叠，**无需合并**；该页亦不含 maxCostPerRequest。**清理**：删除 models.ts 中零引用孤儿键 `columns.policyName/modelTier/maxCostPerRequest/billingMode/upgradeThreshold`（zh/en 同步，parity 通过） |
 
 ### 待修复任务
 
@@ -922,7 +923,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | **UX-3 资源运营补充上架/下架操作** | PRI2 | ✅ 已完成 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件。**落地**：Apps/Workflows 已有；**MCP 补齐**（store/mcp ListView adminMode + mcp:manage 权限下，卡片上架/下架 → `POST /admin/mcp/{id}/publish\|unpublish`）；**Tools** 内置工具公共目录无上下架对象，判定非目标；**Skills 后端无 is_public/发布接口（待后端先行，未伪造）** |
 | **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | PRI2 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-4 条目 |
 | **UX-5 AdminDatasetsView/MCP/Skills 补充 CRUD** | PRI2 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-5 条目（实测无开发量：MCP/Skills 全 CRUD 已具备，datasets 页不存在） |
-| **UX-6 ModelsView 成本策略移到计费运营** | PRI3 | ⏳ 待开始 | 成本策略（maxCostPerRequest/billingMode）是计费策略，应从池治理移到计费运营板块 |
+| **UX-6 ModelsView 成本策略移到计费运营** | PRI3 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-6 条目（实测迁移已完成 + 孤儿 i18n 键清理） |
 | **UX-7 审计日志加跳转** | PRI3 | ⏳ 待开始 | AuditLogsView 的 resourceType/resourceId 可点击跳转到对应资源管理页 |
 | **UX-8 商店预览模式** | PRI3 | ⏳ 待开始 | 资源运营上架操作旁加"预览商店效果"按钮，让管理员看到用户视角 |
 

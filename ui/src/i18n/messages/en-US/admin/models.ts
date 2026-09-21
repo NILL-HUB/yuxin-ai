@@ -51,11 +51,6 @@ export default  {
         tierCode: 'Tier code',
         allowedModels: 'Allowed models',
         defaultModel: 'Default model',
-        policyName: 'Policy name',
-        modelTier: 'Model tier',
-        maxCostPerRequest: 'Max cost / request',
-        billingMode: 'Billing mode',
-        upgradeThreshold: 'Upgrade threshold',
       },
       fields: {
         pricePer1k: 'Fallback sell price (CNY/M)',

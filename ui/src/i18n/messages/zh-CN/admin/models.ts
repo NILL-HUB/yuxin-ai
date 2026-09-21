@@ -50,11 +50,6 @@ export default  {
         tierCode: '档位编码',
         allowedModels: '允许模型',
         defaultModel: '默认模型',
-        policyName: '策略名称',
-        modelTier: '模型档位',
-        maxCostPerRequest: '单请求最大成本',
-        billingMode: '计费模式',
-        upgradeThreshold: '升级阈值',
       },
       fields: {
         pricePer1k: '兜底售价（元/M）',
