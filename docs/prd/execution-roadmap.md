@@ -905,6 +905,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | 治理模式状态栏 | GovernanceModeBanner.vue（新建）, AgentPoolView.vue, ToolGovernanceView.vue | ✅ 已完成 | 池治理页面顶部显示当前治理模式（观测期/敏感阻断/全量），含切换模式+查看决策日志链接 |
 | 编排控制开关分组 | OrchestrationFlagsView.vue | ✅ 已完成 | 按域分组（池治理开关/其他），池治理组含三阶段优先级提示 |
 | 观测中心跨板块跳转 | RoutingLogsView.vue | ✅ 已完成 | agent_pool/tool_pool 列加跳转链接到池治理配置页 |
+| **UX-1 ToolsView 真工具管理** | ToolsView.vue, admin-tools.ts, api_tool_service.py, admin_routes_5.py | ✅ 已完成 | ToolsView 由只读展示 ToolPolicy 改造为管理工具本身：API Tool Provider 创建/编辑/删除 + 分页/搜索 + 内置工具只读展示；后端提供 `_for_admin` CRUD + import-url/import-file + 图标/OpenAPI 校验端点。与 ToolGovernanceView（ToolPolicy 使用规则策略）职责分离 |
 
 ### 待修复任务
 
@@ -912,7 +913,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 
 | 任务 | 优先级 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **UX-1 ToolsView 改造为真正的工具管理** | PRI1 | ⏳ 待开始 | 当前只读展示 ToolPolicy，与 ToolGovernanceView 严重重叠。改为管理工具本身（创建/编辑/删除 API Tool Provider），与 ToolGovernanceView 职责分离 |
+| **UX-1 ToolsView 改造为真正的工具管理** | PRI1 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-1 条目 |
 | **UX-2 AppsView 重写 + 数据所有权统一** | PRI1 | ⏳ 待开始 | 裸 HTML 重写为 Arco Design 风格；primary_pool/risk_level/routing_priority 只在 AgentPoolView 编辑，AppsView 只读展示 |
 | **UX-3 资源运营补充上架/下架操作** | PRI2 | ⏳ 待开始 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件 |
 | **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | PRI2 | ⏳ 待开始 | 上架是运营动作，不应在编排页面。移到资源运营的工作流商店页 |
