@@ -975,9 +975,13 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 `_build_assistant_runtime_tools`）。用户给一个公开媒体网页链接，小钰下载→上传→建档→自动触发
 L1 解析，形成「链接直达素材入库」的旁路。
 
-**门控**：工具层 `_enabled()` 读环境变量 `ENABLE_MEDIA_FETCH_TOOL`，值 ∈
-`1/true/yes/on` 才挂载可用，**默认关闭**（需管理员显式开启）。关闭时工具调用返回
-「外部素材获取能力未启用」可读错误，不参与对话工具清单之外的任何运行路径。
+**门控**：工具 `FetchMediaTool` 的实例字段 `enabled` 决定可用性，其单一事实源是
+admin 公共 AI 配置的 `media_fetch` 开关（`/admin/public-ai-features`）：挂载点在
+`_build_assistant_runtime_tools` 经 `PublicAIFeatureService.is_feature_enabled("media_fetch")`
+读取，把结果注入构造（`fetch_media(enabled=...)`）。**默认关闭**（`_BUILTIN_FEATURES`
+中 `media_fetch.default_enabled=False`，启动 `ensure_builtin_features()` 落库后需管理员显式开启）。
+关闭时挂载点不注入该工具，工具自守卫返回「外部素材获取能力未开启，请在管理后台-公共
+AI 配置中开启」可读错误。
 
 **Async 执行**：工具经 `media_fetch_task.delay(...)` 派发到 Celery
 （任务 name=`internal.task.media_fetch_tasks.media_fetch_task`，见
@@ -1017,7 +1021,7 @@ cues，transcript Segment 的来源 `source=platform_subtitle`（省 ASR 转写�
 
 > **接线审查**：入口 = 对话 `fetch_media` 工具 → `media_fetch_task.delay()` → `MediaFetchService.import_document`
 > → `create_document_from_upload_file`（L1 触发）→ 字幕 id 落 `metadata_` 供 `_consume_subtitle_first` 消费。
-> 任务在 `celery_app.py` `TASK_MODULES` + 显式 import 双重注册；工具在 `providers.yaml` 登记 + 挂载点受 `ENABLE_MEDIA_FETCH_TOOL` 门控。
+> 任务在 `celery_app.py` `TASK_MODULES` + 显式 import 双重注册；工具在 `providers.yaml` 登记 + 挂载点受 admin 公共 AI 配置 `media_fetch` 开关门控。
 > **封面未接入**：`cover_upload_file_id` / `writethumbnail` 在当前代码中均无实现（见
 > [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp已落地kb-p6)）。
 

@@ -398,7 +398,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 
 | # | 约束 | 说明 |
 | --- | --- | --- |
-| 1 | **默认关闭** | 参照 `code_execution_tool` 先例：环境变量开关（如 `ENABLE_MEDIA_FETCH_TOOL`）+ 管理员显式开启；未开启时挂载点不挂载 |
+| 1 | **默认关闭** | admin 公共 AI 配置 `media_fetch` 开关 + 管理员显式开启；未开启时挂载点不挂载 |
 | 2 | **提取器白名单，排除 generic 兜底** | 仅放行 yt-dlp 命名提取器（`_VALID_URL`）命中的 URL；实测存在 `generic` 通用兜底提取器，会对**任意 URL**（含内网地址）发起请求，不排除即 SSRF 缺口 |
 | 3 | **体积与内存上限** | 下载前用 format 过滤（分辨率 / filesize 估算）限制；附属产物（字幕 / 封面）体积小但仍统一经存储代理计量；注意 `upload_bytes` 为全内存（`content: bytes`），大视频应限制单文件上限或经临时文件流式入库，防内存峰值 |
 | 4 | **合规免责** | 平台 ToS 与内容版权由用户负责；工具描述与用户协议明确标注；**不做登录态下载（cookies 凭证托管）**，仅公开可访问内容 |
@@ -460,7 +460,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | 检索工具扩展（改造 `search_knowledge_base`） | 新增 `partition_id` / `media_types` / `tags` / `score_threshold` 四个可选过滤参数 | ✅ **已落地**（KB-P3，见 [modules/02-knowledge-base.md §11.9.3](./modules/02-knowledge-base.md#1193-检索工具的四个可选入参)） |
 | 视频渲染出片（新增） | `render_video`（builtin provider `video_render_tools`）+ 成品库 | ✅ **已落地**（KB-P3.7）：结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库。 |
 | 视频轻量剪辑三件套（新增） | `video_trim` / `video_concat` / `video_subtitle`（builtin provider `video_edit_tools`）+ 成品库 | ✅ **已落地**（KB-P4）：裁剪（流拷贝）/ 拼接（concat demuxer）/ 加字幕（`subtitles` 滤镜），经 Celery 默认队列异步执行，产物走 `store_render_output` 存入成品库。见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地) |
-| 外部媒体下载（新增） | `fetch_media`（builtin provider `media_fetch_tools`，**默认关闭**）：用户给媒体平台链接 → yt-dlp 下载视频 / 纯音频（按板块 base_type 推断）+ 顺带抓平台字幕 → 入库存为素材并触发解析 | ✅ **已落地**（KB-P6，见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地)）：`MediaFetchService.import_document` + `media_fetch_task` Celery 任务 + 提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch` + `ENABLE_MEDIA_FETCH_TOOL` 门控默认关闭；L1 字幕优先回退 ASR。**偏离**：封面缩略图（`cover_upload_file_id` / `writethumbnail`）**未接入** |
+| 外部媒体下载（新增） | `fetch_media`（builtin provider `media_fetch_tools`，**默认关闭**）：用户给媒体平台链接 → yt-dlp 下载视频 / 纯音频（按板块 base_type 推断）+ 顺带抓平台字幕 → 入库存为素材并触发解析 | ✅ **已落地**（KB-P6，见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地)）：`MediaFetchService.import_document` + `media_fetch_task` Celery 任务 + 提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch` + admin 公共 AI 配置 `media_fetch` 门控默认关闭；L1 字幕优先回退 ASR。**偏离**：封面缩略图（`cover_upload_file_id` / `writethumbnail`）**未接入** |
 
 `create_knowledge_base` 已实现的边界（照实描述，不含未落地能力）：
 
@@ -515,7 +515,7 @@ L2 深度解析（按需 / 后台空闲） → 目标：素材"能被精细修�
 | **KB-P3 检索与视觉向量** | 取料能力完整 | 关键帧视觉向量独立索引；检索工具支持分区/标签/媒体类型/相似度阈值过滤；L2 按需解析触发 | 以图搜图命中画面相似素材；文本 query 跨模态召回画面；按分区与媒体类型过滤生效 | ✅ **已完成**（KB-P3 实施计划：[2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md](../superpowers/plans/2026-09-15-knowledge-base-p3-retrieval-and-visual-vectors.md)） |
 | **KB-P4 视频编辑与出片** | 「改细节」可落地 | ✅ **已落地**：渲染出片（KB-P3.7）结构化脚本 → HyperFrames 编译 → 渲染 MP4 → 存入成品库（`render_video` + `render` Celery 队列）；轻量剪辑三件套（KB-P4）`video_trim` / `video_concat` / `video_subtitle`（`video_edit_tools` provider，经 Celery 默认队列，产物走 `store_render_output`）；**对话内成片预览**（同步走工具返回值、异步走 Celery 完成后双通道回填 + 前端内联播放）。⬜ **未落地**：对话框内成片编辑器 | 对话里出片并存入成品库（✅ 已达成）；对话里裁剪/拼接/加字幕并存入成品库（✅ 已达成）；对话内直接预览成片（✅ 已达成，见 [modules/02-knowledge-base.md §11.16](./modules/02-knowledge-base.md#1116-对话内成片预览已落地)） | ✅ **已完成**（出片 KB-P3.7 + 剪辑/预览 KB-P4，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | **KB-P5 前台与运维** | 用户可管理 | 板块列表/详情/分区树导航/素材网格/素材详情/用量面板 + 扩容入口；小钰帮传打通；外部数据源同步纳入配额校验 | 双入口操作同一数据；小钰帮传成功 | ✅ **已完成**（A 前台页面 + B 小钰帮传 `upload_to_knowledge_base` + C 同步配额，见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)） |
-| **KB-P6 外部素材获取** | 链接直达素材入库（视频 / 音频 + 平台字幕） | ✅ **已落地**：`fetch_media` builtin 工具（`media_fetch_tools` provider，`ENABLE_MEDIA_FETCH_TOOL` 门控默认关闭）+ `MediaFetchService.import_document` + `media_fetch_task` Celery 任务（视频 / 纯音频按板块 base_type 推断）+ 提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch`（排除 generic）+ 复用入库 / 配额 / L1 解析链路；L1 `_consume_subtitle_first` 优先消费平台字幕，无则回退 ASR。无新表 / 无迁移（字幕关联承载于 `document.metadata_["subtitle_upload_file_id"]`）。**偏离**：封面缩略图（`writethumbnail` / `cover_upload_file_id`）未接入 | 给 B 站链接 → 素材入视频库 → 可被语义检索命中；给音频链接 → 入音频库；平台字幕文本可检索 | ✅ **已完成**（见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地)） |
+| **KB-P6 外部素材获取** | 链接直达素材入库（视频 / 音频 + 平台字幕） | ✅ **已落地**：`fetch_media` builtin 工具（`media_fetch_tools` provider，admin 公共 AI 配置 `media_fetch` 门控默认关闭）+ `MediaFetchService.import_document` + `media_fetch_task` Celery 任务（视频 / 纯音频按板块 base_type 推断）+ 提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch`（排除 generic）+ 复用入库 / 配额 / L1 解析链路；L1 `_consume_subtitle_first` 优先消费平台字幕，无则回退 ASR。无新表 / 无迁移（字幕关联承载于 `document.metadata_["subtitle_upload_file_id"]`）。**偏离**：封面缩略图（`writethumbnail` / `cover_upload_file_id`）未接入 | 给 B 站链接 → 素材入视频库 → 可被语义检索命中；给音频链接 → 入音频库；平台字幕文本可检索 | ✅ **已完成**（见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地)） |
 
 **最小可用闭环 = KB-P1 + KB-P2 完成**（素材能入库、能被检索）。KB-P2A 完成后，多模态素材的"入库 + 可检索"闭环已达成；KB-P2B（大文件分片上传）落地后，KB-P2 已完整收口。
 
