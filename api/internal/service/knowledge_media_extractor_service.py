@@ -472,7 +472,7 @@ class KnowledgeMediaExtractorService(BaseService):
             if not frames:
                 raise RuntimeError("视频抽帧结果为空，无法解析")
 
-            transcript, cues = self._consume_subtitle_first(
+            transcript, cues, is_subtitle = self._consume_subtitle_first(
                 file_path,
                 upload_file,
                 document=document,
@@ -484,7 +484,8 @@ class KnowledgeMediaExtractorService(BaseService):
             if transcript:
                 metadata: dict[str, Any] = {
                     "media_type": DocumentMediaType.VIDEO.value,
-                    "source": "audio_transcript",
+                    # 来源可区分：字幕消费为 platform_subtitle，回退 ASR 为 audio_transcript
+                    "source": "platform_subtitle" if is_subtitle else "audio_transcript",
                 }
                 # 与音频同理：时间轴是「自动加字幕」的来源，需随片段一起落库
                 if cues:
@@ -513,7 +514,7 @@ class KnowledgeMediaExtractorService(BaseService):
         document: KnowledgeDocument | None = None,
         document_id: str | None = None,
         temp_dir: str | None = None,
-    ) -> tuple[str, list[dict]]:
+    ) -> tuple[str, list[dict], bool]:
         """平台字幕优先，无字幕或解析失败则回退音轨 ASR。
 
         T2 在外部素材入库时把平台字幕 UploadFile id 写入 document.metadata_ 的
@@ -521,6 +522,11 @@ class KnowledgeMediaExtractorService(BaseService):
         同构的 cues（text/start/end，秒），让时间线叙述直接消费平台字幕（含原生
         标点/断句）而非重型 ASR。任何取记录/下载/解析环节失败都只记 warning 并
         回退 ASR，保证既有解析链路的健壮性不变。
+
+        **返回 (text, cues, is_subtitle)**：is_subtitle 标记这段转写是否确实来
+        自平台字幕（True）还是回退 ASR（False），供上游区分 transcript 来源
+        （metadata.source = platform_subtitle / audio_transcript）。返回结构改动
+        属内部通路，不影响 externally 暴露的片段契约；既有调用方均随本改动同步。
         """
         doc = document
         if doc is None and document_id:
@@ -535,7 +541,8 @@ class KnowledgeMediaExtractorService(BaseService):
             except Exception:
                 sub_id = None
         if not sub_id:
-            return self._transcribe_video_track(video_path, upload_file)
+            text, cues = self._transcribe_video_track(video_path, upload_file)
+            return text, cues, False
 
         try:
             subtitle = self.db.session.get(UploadFile, sub_id)
@@ -546,13 +553,14 @@ class KnowledgeMediaExtractorService(BaseService):
             if not cues:
                 raise RuntimeError("平台字幕解析结果为空")
             text = " ".join(str(c.get("text") or "").strip() for c in cues).strip()
-            return text, cues
+            return text, cues, True
         except Exception:
             logger.warning(
                 "平台字幕解析失败，回退音轨 ASR upload_file=%s",
                 getattr(upload_file, "name", None), exc_info=True,
             )
-            return self._transcribe_video_track(video_path, upload_file)
+            text, cues = self._transcribe_video_track(video_path, upload_file)
+            return text, cues, False
 
     def _parse_subtitle_cues(self, record: UploadFile, path: str) -> list[dict]:
         """读取字幕文件并解析 vtt/srt 为 cues（独立方法便于测试替换）。"""
