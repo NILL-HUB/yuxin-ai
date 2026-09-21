@@ -64,3 +64,21 @@ def test_get_feature_fallback_tier_normalizes_legacy_string_alias():
 def test_get_feature_fallback_tier_passes_through_numeric_value():
     svc = _feature_service(SimpleNamespace(fallback_tier="3"))
     assert svc.get_feature_fallback_tier("conductor") == "3"
+
+
+def test_media_fetch_builtin_defaults_to_disabled():
+    """media_fetch 内置 feature 的默认落库应为关闭（default_enabled=False）。"""
+    from internal.service.public_ai_feature_service import _BUILTIN_FEATURES
+
+    feat = next(f for f in _BUILTIN_FEATURES if f["feature_key"] == "media_fetch")
+    assert feat.get("default_enabled", True) is False
+
+
+def test_is_feature_enabled_reflects_record_flag():
+    """is_feature_enabled 以表记录 enabled 为唯一事实源（无记录视为启用 fallback）。"""
+    svc = _feature_service(SimpleNamespace(enabled=False))
+    assert svc.is_feature_enabled("media_fetch") is False
+    svc = _feature_service(SimpleNamespace(enabled=True))
+    assert svc.is_feature_enabled("media_fetch") is True
+    svc = _feature_service(None)
+    assert svc.is_feature_enabled("media_fetch") is True
