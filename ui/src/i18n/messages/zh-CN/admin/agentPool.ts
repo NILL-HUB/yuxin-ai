@@ -64,6 +64,12 @@ export default  {
         medium: '中风险',
         high: '高风险',
       },
+      // App.agent_metadata 的 risk_level 枚举（safe/medium/high），用于池治理路由字段
+      routeRiskLabels: {
+        safe: '安全',
+        medium: '中等',
+        high: '高',
+      },
       tierLabels: {
         cheap: '基础版',
         standard: '标准版',

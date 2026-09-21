@@ -11,7 +11,7 @@ import {
   setAgentPoolStatus,
   updateAgentPoolConfig,
 } from '@/services/admin-agent-pool'
-import { listAdminApps, type AdminAppRecord } from '@/services/admin-apps'
+import { listAdminApps, updateAdminAppMetadata, type AdminAppRecord } from '@/services/admin-apps'
 import { getErrorMessage } from '@/utils/error'
 import GovernanceModeBanner from '@/components/GovernanceModeBanner.vue'
 import { useAdminStore } from '@/stores/admin'
@@ -52,10 +52,28 @@ type AppOption = {
 
 const COST_LEVELS = ['low', 'medium', 'high']
 
+// 路由治理字段枚举（与后端 App.agent_metadata 的 risk_level / primary_pool 对齐）。
+// 注意 risk_level 枚举报 safe/medium/high（agent_entity.AgentRiskLevel），与池配置的 cost 档位不同。
+const RISK_LEVEL_OPTIONS = ['safe', 'medium', 'high'] as const
+// 内置主池（来自后端 BUILTIN_AGENT_SUB_POOLS），用于 primary_pool 下拉
+const PRIMARY_POOL_OPTIONS = [
+  'general',
+  'coding',
+  'office',
+  'data',
+  'research',
+  'customer_service',
+  'internal_admin',
+] as const
+const DEFAULT_ROUTE_FIELDS = { primary_pool: 'general', risk_level: 'safe', routing_priority: 50 }
+
 // ==================== 标签 & 颜色映射 ====================
 
 const costLabel = (cost: string) => t(`admin.agentPool.costLabels.${cost}`)
 const healthLabel = (status: string) => t(`admin.agentPool.healthLabels.${status}`)
+// 主池 / 风险等级标签：直接读 agentPool 板块枚举文案
+const poolLabel = (pool: string) => t(`admin.agentPool.poolLabels.${pool}`)
+const routeRiskLabel = (risk: string) => t(`admin.agentPool.routeRiskLabels.${risk}`)
 
 const healthColor = (status: string) =>
   ({ healthy: 'green', degraded: 'orange', offline: 'red', unknown: 'gray' } as Record<string, string>)[status] || 'gray'
@@ -131,6 +149,10 @@ const form = ref({
   cost_level: 'medium',
   capabilities: [] as string[],
   task_types: [] as string[],
+  // 路由治理字段：由 App.agent_metadata 承载，提交时经 updateAdminAppMetadata 持久化
+  primary_pool: DEFAULT_ROUTE_FIELDS.primary_pool,
+  risk_level: DEFAULT_ROUTE_FIELDS.risk_level,
+  routing_priority: DEFAULT_ROUTE_FIELDS.routing_priority,
 })
 
 // ==================== 统计卡片计算属性 ====================
@@ -209,6 +231,7 @@ const openCreate = () => {
     cost_level: 'medium',
     capabilities: [],
     task_types: [],
+    ...DEFAULT_ROUTE_FIELDS,
   }
   modalVisible.value = true
 }
@@ -217,16 +240,29 @@ const openEdit = (config: AgentPoolConfig) => {
   editMode.value = true
   editingId.value = config.id
   const metadata = config.metadata || {}
+  // 路由治理字段从 App.agent_metadata 预填（apps 为 loadAdminApps 结果，包含 agent_metadata）；
+  // 若对应 app 不在已加载列表，回退默认值。
+  const app = apps.value.find((a) => a.id === config.app_id)
+  const appMeta = app?.agent_metadata || {}
   form.value = {
     app_id: config.app_id,
     enabled: config.enabled,
     cost_level: (metadata.cost_level as string) || 'medium',
     capabilities: [...((metadata.capabilities as string[]) || [])],
     task_types: [...((metadata.task_types as string[]) || [])],
+    primary_pool: (appMeta.primary_pool as string) || DEFAULT_ROUTE_FIELDS.primary_pool,
+    risk_level: (appMeta.risk_level as string) || DEFAULT_ROUTE_FIELDS.risk_level,
+    routing_priority: (appMeta.routing_priority as number) ?? DEFAULT_ROUTE_FIELDS.routing_priority,
   }
   modalVisible.value = true
 }
 
+/**
+ * 提交池配置。原 AgentPoolConfig 保存逻辑不变；路由治理字段单独经
+ * updateAdminAppMetadata(app_id, mergedMetadata) 走 PATCH /admin/apps/<id> 持久化。
+ * 由于后端对 agent_metadata 是整体归一化（缺失字段回填默认值），提交时必须以现有
+ * agent_metadata 为基底合并三个字段，避免把其余字段（cost_level/model_tier/model_id 等）覆盖清空。
+ */
 const submit = async () => {
   actionLoading.value = true
   try {
@@ -246,6 +282,19 @@ const submit = async () => {
       await createAgentPoolConfig(payload)
       Message.success(t('admin.agentPool.created'))
     }
+
+    // 路由治理字段持久化到 App.agent_metadata
+    if (form.value.app_id) {
+      const app = apps.value.find((a) => a.id === form.value.app_id)
+      const baseMetadata = app?.agent_metadata || {}
+      await updateAdminAppMetadata(form.value.app_id, {
+        ...baseMetadata,
+        primary_pool: form.value.primary_pool,
+        risk_level: form.value.risk_level,
+        routing_priority: form.value.routing_priority,
+      })
+    }
+
     modalVisible.value = false
     await loadPoolConfigs()
   } catch (error) {
@@ -400,7 +449,13 @@ onMounted(loadPoolConfigs)
               <td class="p-3">
                 <a-space>
                   <a-button size="mini" :disabled="!canManage" @click="runHealthCheck(config)">{{ t('admin.agentPool.healthCheck') }}</a-button>
-                  <a-button size="mini" :disabled="!canManage" @click="openEdit(config)">{{ t('admin.agentPool.edit') }}</a-button>
+                  <a-button
+                    size="mini"
+                    :disabled="!canManage"
+                    :data-testid="`pool-edit-${config.id}`"
+                    @click="openEdit(config)"
+                    >{{ t('admin.agentPool.edit') }}</a-button
+                  >
                   <a-button size="mini" status="danger" :disabled="!canManage" @click="remove(config)">{{ t('admin.agentPool.remove') }}</a-button>
                 </a-space>
               </td>
@@ -466,6 +521,33 @@ onMounted(loadPoolConfigs)
         </a-form-item>
         <a-form-item :label="t('admin.agentPool.formEnabled')" field="enabled">
           <a-switch v-model="form.enabled" />
+        </a-form-item>
+        <!-- 路由治理字段：归属 App.agent_metadata，经 PATCH /admin/apps/<id> 持久化 -->
+        <a-form-item :label="t('admin.agentPool.primaryPool')" field="primary_pool">
+          <a-select
+            v-model="form.primary_pool"
+            :data-testid="`pool-edit-primary-pool`"
+            allow-search
+          >
+            <a-option v-for="pool in PRIMARY_POOL_OPTIONS" :key="pool" :value="pool">
+              {{ poolLabel(pool) }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.agentPool.riskLevel')" field="risk_level">
+          <a-select v-model="form.risk_level" :data-testid="`pool-edit-risk-level`">
+            <a-option v-for="risk in RISK_LEVEL_OPTIONS" :key="risk" :value="risk">
+              {{ routeRiskLabel(risk) }}
+            </a-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item :label="t('admin.agentPool.routingPriority')" field="routing_priority">
+          <a-input-number
+            v-model="form.routing_priority"
+            :data-testid="`pool-edit-routing-priority`"
+            :min="0"
+            :max="1000"
+          />
         </a-form-item>
       </a-form>
     </a-modal>

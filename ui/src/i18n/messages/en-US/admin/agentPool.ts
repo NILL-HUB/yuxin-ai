@@ -64,6 +64,12 @@ export default  {
         medium: 'Medium Risk',
         high: 'High Risk',
       },
+      // App.agent_metadata risk_level enum (safe/medium/high) for pool governance routing fields
+      routeRiskLabels: {
+        safe: 'Safe',
+        medium: 'Medium',
+        high: 'High',
+      },
       tierLabels: {
         cheap: 'Basic',
         standard: 'Standard',
