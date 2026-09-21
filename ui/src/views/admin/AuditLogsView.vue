@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import {
   getAuditLogOverview,
   listAuditLogs,
@@ -12,6 +13,7 @@ import { getErrorMessage } from '@/utils/error'
 import { semanticLabel } from '@/utils/semantic-labels'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const listLoading = ref(false)
 const overviewLoading = ref(false)
@@ -114,6 +116,49 @@ const RESOURCE_TYPE_LABELS: Record<string, string> = {
   conversation: 'admin.auditLogs.resourceConversation',
   memory: 'admin.auditLogs.resourceMemory',
   dataset: 'admin.auditLogs.resourceDataset',
+}
+
+// UX-7：资源类型 → 对应管理页路由。仅登记有明确 admin 管理页的类型；
+// 无管理页的类型（conversation/memory/dataset/knowledge_base 等）不渲染跳转，保持只读。
+const RESOURCE_TARGETS: Record<string, string> = {
+  admin_user: '/admin/admin-users',
+  customer_user: '/admin/users',
+  role: '/admin/roles',
+  app: '/admin/apps',
+  workflow: '/admin/workflows',
+  tool: '/admin/tools',
+  api_tool: '/admin/tools',
+  mcp: '/admin/mcp',
+  mcp_provider: '/admin/mcp',
+  skill: '/admin/skills',
+  skill_package: '/admin/skills',
+  plan: '/admin/plans',
+  redeem_code: '/admin/billing',
+  redeem_code_batch: '/admin/billing',
+  system_knowledge: '/admin/system-knowledge',
+  system_prompt: '/admin/system-knowledge',
+  agent_pool_config: '/admin/agent-pool',
+  tool_governance_policy: '/admin/tool-governance',
+  model: '/admin/models',
+  orchestration_flag: '/admin/orchestration-flags',
+  sub_pool_definition: '/admin/sub-pool-definition',
+  policy_change_draft: '/admin/routing-quality/suggestions',
+  storage: '/admin/storage',
+  storage_file: '/admin/storage',
+  upload_file: '/admin/storage',
+  os_file: '/admin/storage',
+  schedule_task: '/admin/schedules',
+  purchase_order: '/admin/orders',
+}
+
+const resourceTarget = (resourceType: string | null | undefined): string | undefined => {
+  if (!resourceType) return undefined
+  return RESOURCE_TARGETS[resourceType]
+}
+
+const openResourcePage = (resourceType: string | null | undefined) => {
+  const target = resourceTarget(resourceType)
+  if (target) void router.push(target)
 }
 
 const actionLabel = (action: string | null | undefined): string => {
@@ -913,8 +958,19 @@ const topAdminRows = computed<DistRow[]>(() =>
                     </a-tag>
                   </td>
                   <td class="px-4 py-3">
+                    <span
+                      v-if="log.resource_type && resourceTarget(log.resource_type)"
+                      class="inline-flex cursor-pointer items-center"
+                      :data-testid="`audit-resource-jump-${log.id}`"
+                      role="link"
+                      @click="openResourcePage(log.resource_type)"
+                    >
+                      <a-tag size="small" :color="getResourceTypeColor(log.resource_type)">
+                        {{ resourceTypeLabel(log.resource_type) }}
+                      </a-tag>
+                    </span>
                     <a-tag
-                      v-if="log.resource_type"
+                      v-else-if="log.resource_type"
                       size="small"
                       :color="getResourceTypeColor(log.resource_type)"
                     >
@@ -930,7 +986,14 @@ const topAdminRows = computed<DistRow[]>(() =>
                         {{ log.resource_name }}
                       </span>
                       <a-tooltip v-if="log.resource_id" :content="log.resource_id" position="top" mini>
-                        <span class="cursor-help font-mono text-xs text-slate-400">{{ truncateId(log.resource_id) }}</span>
+                        <span
+                          v-if="resourceTarget(log.resource_type)"
+                          class="cursor-pointer font-mono text-xs text-sky-600 hover:underline"
+                          :data-testid="`audit-resource-id-jump-${log.id}`"
+                          role="link"
+                          @click="openResourcePage(log.resource_type)"
+                        >{{ truncateId(log.resource_id) }}</span>
+                        <span v-else class="cursor-help font-mono text-xs text-slate-400">{{ truncateId(log.resource_id) }}</span>
                       </a-tooltip>
                       <span v-if="!log.resource_name && !log.resource_id" class="text-slate-400">-</span>
                     </div>

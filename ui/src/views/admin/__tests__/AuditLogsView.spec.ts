@@ -6,11 +6,16 @@ const mocks = vi.hoisted(() => ({
   listAuditLogs: vi.fn(),
   getAuditLogOverview: vi.fn(),
   messageError: vi.fn(),
+  routerPush: vi.fn(),
 }))
 
 vi.mock('@/services/admin-audit-logs', () => ({
   listAuditLogs: mocks.listAuditLogs,
   getAuditLogOverview: mocks.getAuditLogOverview,
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: mocks.routerPush }),
 }))
 
 vi.mock('@arco-design/web-vue', () => ({
@@ -384,5 +389,55 @@ describe('AuditLogsView', () => {
     await flushPromises()
 
     expect(mocks.messageError).toHaveBeenCalled()
+  })
+
+  it('UX-7: clicking resource type jumps to the corresponding resource management page', async () => {
+    const wrapper = await renderView()
+
+    const jump = wrapper.find('[data-testid="audit-resource-jump-audit-1"]')
+    expect(jump.exists()).toBe(true)
+    await jump.trigger('click')
+
+    expect(mocks.routerPush).toHaveBeenCalledWith('/admin/workflows')
+  })
+
+  it('UX-7: clicking resource id jumps to the corresponding resource management page', async () => {
+    const wrapper = await renderView()
+
+    const jump = wrapper.find('[data-testid="audit-resource-id-jump-audit-1"]')
+    expect(jump.exists()).toBe(true)
+    await jump.trigger('click')
+
+    expect(mocks.routerPush).toHaveBeenCalledWith('/admin/workflows')
+    // tooltip 仍显示完整 resource_id
+    expect(wrapper.find('.a-tooltip').attributes('data-content')).toBe('workflow-12345678')
+  })
+
+  it('UX-7: resource type without a management page stays read-only (no jump)', async () => {
+    mocks.listAuditLogs.mockResolvedValue({
+      data: {
+        list: [{ ...logFixture, resource_type: 'dataset', resource_id: 'ds-12345678' }],
+        paginator: { total_record: 1, total_page: 1, current_page: 1, page_size: 20 },
+      },
+    })
+    mocks.getAuditLogOverview.mockResolvedValue({ data: { ...overviewFixture } })
+
+    const wrapper = mount(AuditLogsView, {
+      global: {
+        stubs: {
+          'a-input': inputStub,
+          'a-select': selectStub,
+          'a-button': buttonStub,
+          'a-tag': tagStub,
+          'a-pagination': paginationStub,
+          'a-modal': modalStub,
+          'a-tooltip': tooltipStub,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="audit-resource-jump-audit-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="audit-resource-id-jump-audit-1"]').exists()).toBe(false)
   })
 })
