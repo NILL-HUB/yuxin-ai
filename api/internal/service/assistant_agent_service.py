@@ -1113,6 +1113,28 @@ class AssistantAgentService(BaseService):
                         exc_info=True,
                     )
 
+        # 外部素材获取工具：把公开视频/音频链接下载入库。默认关闭，管理员开启后才挂载。
+        if self.app_config_service is not None:
+            try:
+                from internal.core.tools.builtin_tools.providers.media_fetch_tools.fetch_media import (
+                    _enabled as _media_fetch_enabled,
+                )
+                if _media_fetch_enabled():
+                    me_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
+                        "media_fetch_tools",
+                        "fetch_media",
+                    )
+                    if me_tool_factory is not None:
+                        tools.append(
+                            me_tool_factory(
+                                account_id=str(account_id),
+                                message_id=message_id,
+                                conversation_id=conversation_id,
+                            )
+                        )
+            except Exception:
+                logger.warning("构建外部素材获取工具失败，不影响其他工具", exc_info=True)
+
         # 添加用户知识库检索工具（确保用户上传的文档可被 Agent 检索）
         # 同时挂载系统知识库（knowledge_scope='system'，admin 通过 enabled 开关控制），
         # 让系统级知识库/可管理提示词真正对 Agent 生效
