@@ -10,6 +10,7 @@
 """
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,6 +74,54 @@ class MediaSegment:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+def _subtitle_timestamp(text: str) -> float | None:
+    """把 srt/vtt 时间（HH:MM:SS.mmm，时/分可缺省）解析为秒。"""
+    m = re.match(
+        r"^\s*(?:(?P<h>\d{1,2}):)?(?P<m>\d{1,2}):(?P<s>\d{2})[.,](?P<ms>\d{1,3})",
+        text,
+    )
+    if not m:
+        return None
+    hours = int(m.group("h") or 0)
+    minutes = int(m.group("m"))
+    seconds = int(m.group("s"))
+    ms = int(m.group("ms").ljust(3, "0")[:3])
+    return hours * 3600 + minutes * 60 + seconds + ms / 1000.0
+
+
+def parse_subtitle_cues_from_text(content: str) -> list[dict]:
+    """从 vtt/srt 字幕文本解析 cues。
+
+    cues 字段与 ASR 时间码对齐（text/start/end，单位秒），可无损喂给
+    build_timeline_plan 与 Segment metadata。
+    - 按空行分块，定位含 `-->` 的时间行，其后文本行拼接为该 cue 的 text；
+    - 跳过头部（WEBVTT/NOTE/语言标签）与 STYLE/REGION 块；
+    - 剥内嵌标签（<i> 等）；缺 end 时回退为 start。
+    """
+    cues: list[dict] = []
+    for block in re.split(r"\r?\n[ \t]*\r?\n", content):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        time_idx = next((i for i, ln in enumerate(lines) if "-->" in ln), None)
+        if time_idx is None:
+            continue  # 头部或样式/区域块，不含时间轴
+        parts = lines[time_idx].split("-->")
+        if len(parts) < 2:
+            continue
+        start = _subtitle_timestamp(parts[0])
+        if start is None:
+            continue
+        end = _subtitle_timestamp(parts[1].strip().split(" ", 1)[0])
+        text = " ".join(lines[time_idx + 1 :])
+        text = re.sub(r"<[^>]+>", "", text)  # 剥 VTT/SRT 内嵌标签
+        text = " ".join(text.split()).strip()
+        if not text:
+            continue
+        cues.append({"text": text, "start": start, "end": end if end is not None else start})
+    return cues
+
+
 @inject
 @dataclass
 class KnowledgeMediaExtractorService(BaseService):
@@ -106,7 +155,9 @@ class KnowledgeMediaExtractorService(BaseService):
         if media_type == DocumentMediaType.AUDIO.value:
             return self._extract_audio(upload_file)
         if media_type == DocumentMediaType.VIDEO.value:
-            return self._extract_video(upload_file, account_id=account_id, document_id=document_id)
+            return self._extract_video(
+                upload_file, account_id=account_id, document_id=document_id, document=document
+            )
         return []
 
     def _download_to(self, upload_file: UploadFile, temp_dir: str) -> str:
@@ -402,12 +453,13 @@ class KnowledgeMediaExtractorService(BaseService):
         upload_file: UploadFile,
         account_id=None,
         document_id=None,
+        document: KnowledgeDocument | None = None,
     ) -> list[MediaSegment]:
-        """视频：音轨 ASR（可降级）+ 批次化时间线叙述（段落代表帧留存）。
+        """视频：平台字幕优先（无则音轨 ASR）+ 批次化时间线叙述（段落代表帧留存）。
 
         抽帧到临时目录后：
-        - 音轨抽取/转写失败只记 warning 不中断（帧描述本身已是有效产物）；
-        - 有 ASR cues 走场景 B（台词句锚点），无 cues 走场景 A（时间片锚点）；
+        - 字幕/音轨转写失败只记 warning 不中断（帧描述本身已是有效产物）；
+        - 有字幕或 ASR cues 走场景 B（台词句锚点），无 cues 走场景 A（时间片锚点）；
         - 锚点分批（每批 ≈10）批喂视觉模型，每锚点只留存代表帧为 UploadFile；
         - 批喂失败重试 1 次 → 仍失败降级为该批内逐帧独立调用；
         - account_id / document_id 缺失时跳过留存（frame_url 为空字符串）。
@@ -420,7 +472,13 @@ class KnowledgeMediaExtractorService(BaseService):
             if not frames:
                 raise RuntimeError("视频抽帧结果为空，无法解析")
 
-            transcript, cues = self._transcribe_video_track(file_path, upload_file)
+            transcript, cues = self._consume_subtitle_first(
+                file_path,
+                upload_file,
+                document=document,
+                document_id=document_id,
+                temp_dir=temp_dir,
+            )
 
             segments: list[MediaSegment] = []
             if transcript:
@@ -447,6 +505,60 @@ class KnowledgeMediaExtractorService(BaseService):
         if not segments:
             raise RuntimeError("视频解析未产出任何可用内容")
         return segments
+
+    def _consume_subtitle_first(
+        self,
+        video_path: str,
+        upload_file: UploadFile,
+        document: KnowledgeDocument | None = None,
+        document_id: str | None = None,
+        temp_dir: str | None = None,
+    ) -> tuple[str, list[dict]]:
+        """平台字幕优先，无字幕或解析失败则回退音轨 ASR。
+
+        T2 在外部素材入库时把平台字幕 UploadFile id 写入 document.metadata_ 的
+        `subtitle_upload_file_id`。本方法读取该 id、下载字幕文件并解析出与 ASR
+        同构的 cues（text/start/end，秒），让时间线叙述直接消费平台字幕（含原生
+        标点/断句）而非重型 ASR。任何取记录/下载/解析环节失败都只记 warning 并
+        回退 ASR，保证既有解析链路的健壮性不变。
+        """
+        doc = document
+        if doc is None and document_id:
+            try:
+                doc = self.db.session.get(KnowledgeDocument, document_id)
+            except Exception:
+                doc = None
+        sub_id = None
+        if doc is not None:
+            try:
+                sub_id = (getattr(doc, "metadata_", None) or {}).get("subtitle_upload_file_id")
+            except Exception:
+                sub_id = None
+        if not sub_id:
+            return self._transcribe_video_track(video_path, upload_file)
+
+        try:
+            subtitle = self.db.session.get(UploadFile, sub_id)
+            if subtitle is None:
+                raise RuntimeError(f"字幕 UploadFile 不存在 id={sub_id}")
+            sub_path = self._download_to(subtitle, temp_dir or tempfile.gettempdir())
+            cues = self._parse_subtitle_cues(subtitle, sub_path)
+            if not cues:
+                raise RuntimeError("平台字幕解析结果为空")
+            text = " ".join(str(c.get("text") or "").strip() for c in cues).strip()
+            return text, cues
+        except Exception:
+            logger.warning(
+                "平台字幕解析失败，回退音轨 ASR upload_file=%s",
+                getattr(upload_file, "name", None), exc_info=True,
+            )
+            return self._transcribe_video_track(video_path, upload_file)
+
+    def _parse_subtitle_cues(self, record: UploadFile, path: str) -> list[dict]:
+        """读取字幕文件并解析 vtt/srt 为 cues（独立方法便于测试替换）。"""
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            content = fh.read()
+        return parse_subtitle_cues_from_text(content)
 
     def _transcribe_video_track(
         self, video_path: str, upload_file: UploadFile
