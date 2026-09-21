@@ -83,6 +83,7 @@ TASK_MODULES = [
     "internal.task.chunked_upload_tasks",
     "internal.task.render_tasks",
     "internal.task.video_edit_tasks",
+    "internal.task.media_fetch_tasks",
 ]
 
 
@@ -103,6 +104,7 @@ import internal.task.external_data_source_tasks as _task_external_ds  # noqa: F4
 import internal.task.chunked_upload_tasks as _task_chunked_upload  # noqa: F401,E402
 import internal.task.render_tasks as _task_render  # noqa: F401,E402
 import internal.task.video_edit_tasks as _task_video_edit  # noqa: F401,E402
+import internal.task.media_fetch_tasks as _task_media_fetch  # noqa: F401,E402
 
 # 补充记忆系统定时任务（每日巩固/权重扫描/技能治理/统计合并），与 Config 内置 4 项合并
 from celery.schedules import crontab  # noqa: E402
