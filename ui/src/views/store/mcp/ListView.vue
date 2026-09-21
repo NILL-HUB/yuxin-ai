@@ -11,6 +11,8 @@ import {
   getPublicMcpProvider,
   getPublicMcpProvidersWithPage,
 } from '@/services/mcp'
+import { publishAdminMcp, unpublishAdminMcp } from '@/services/admin-mcp'
+import { useAdminStore } from '@/stores/admin'
 import type { McpCategory, McpProvider } from '@/models/mcp'
 import { getStoreCategoryDisplayName, getStoreTypeDisplayName } from '@/utils/store-display'
 
@@ -26,6 +28,9 @@ const props = withDefaults(
 )
 
 const { t, locale } = useI18n()
+const adminStore = useAdminStore()
+// 写操作（上架/下架）需 mcp:manage；仅具 mcp:read 的角色只读浏览
+const canManage = computed(() => adminStore.hasPermission('mcp:manage'))
 const loading = ref(false)
 const categories = ref<McpCategory[]>([])
 const providers = ref<McpProvider[]>([])
@@ -157,6 +162,27 @@ const handleCardClick = async (provider: McpProvider) => {
   await loadProviderDetail(provider.provider_key)
 }
 
+// UX-3：管理员视角上下架。仅在 store/mcp 公共列表被 admin 页复用时出现（adminMode + mcp:manage）。
+const handlePublish = async (provider: McpProvider) => {
+  try {
+    await publishAdminMcp(provider.id)
+    Message.success(t('admin.storeOps.publishSuccess'))
+    await loadProviders()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('admin.storeOps.publishFailed')))
+  }
+}
+
+const handleUnpublish = async (provider: McpProvider) => {
+  try {
+    await unpublishAdminMcp(provider.id)
+    Message.success(t('admin.storeOps.unpublishSuccess'))
+    await loadProviders()
+  } catch (error: unknown) {
+    Message.error(getErrorMessage(error, t('admin.storeOps.unpublishFailed')))
+  }
+}
+
 onMounted(async () => {
   await loadCategories()
   await loadProviders()
@@ -262,6 +288,32 @@ onMounted(async () => {
                   {{ provider.creator_name || t('store.mcp.publicDirectory') }} ·
                   {{ formatTimestampShort(provider.published_at || provider.created_at) }}
                 </div>
+              </div>
+
+              <div
+                v-if="adminMode && canManage"
+                class="flex items-center justify-end gap-1.5 mt-2.5 pt-2 border-t border-gray-100 flex-wrap"
+                @click.stop
+              >
+                <a-button
+                  v-if="!provider.is_public"
+                  size="mini"
+                  type="outline"
+                  :data-testid="`store-mcp-publish-${provider.provider_key}`"
+                  @click="handlePublish(provider)"
+                >
+                  {{ t('admin.storeOps.actions.publish') }}
+                </a-button>
+                <a-button
+                  v-else
+                  size="mini"
+                  type="outline"
+                  status="warning"
+                  :data-testid="`store-mcp-unpublish-${provider.provider_key}`"
+                  @click="handleUnpublish(provider)"
+                >
+                  {{ t('admin.storeOps.actions.unpublish') }}
+                </a-button>
               </div>
             </a-card>
           </a-col>

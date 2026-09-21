@@ -15,6 +15,12 @@ vi.mock('@/services/mcp', () => ({
   getPublicMcpProvider: mocks.getPublicMcpProvider,
 }))
 
+vi.mock('@/stores/admin', () => ({
+  useAdminStore: () => ({
+    hasPermission: () => false,
+  }),
+}))
+
 const buttonStub = defineComponent({
   name: 'ArcoButtonStub',
   emits: ['click'],

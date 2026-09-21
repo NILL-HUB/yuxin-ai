@@ -907,6 +907,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | 观测中心跨板块跳转 | RoutingLogsView.vue | ✅ 已完成 | agent_pool/tool_pool 列加跳转链接到池治理配置页 |
 | **UX-1 ToolsView 真工具管理** | ToolsView.vue, admin-tools.ts, api_tool_service.py, admin_routes_5.py | ✅ 已完成 | ToolsView 由只读展示 ToolPolicy 改造为管理工具本身：API Tool Provider 创建/编辑/删除 + 分页/搜索 + 内置工具只读展示；后端提供 `_for_admin` CRUD + import-url/import-file + 图标/OpenAPI 校验端点。与 ToolGovernanceView（ToolPolicy 使用规则策略）职责分离 |
 | **UX-2 AppsView 重写 + 数据所有权统一** | AppsView.vue, AgentPoolView.vue, AgentMetadataEditor.vue（删除）, apps.ts, agentPool.ts | ✅ 已完成 | AppsView 完成 Arco 重写并按职责分离：移除「编辑池治理字段」弹窗，primary_pool/risk_level/routing_priority/enabled 只读展示 + 「前往 Agent 池配置」跳转；编辑权迁移到 AgentPoolView——池配置弹窗新增主池/风险等级/路由优先级三字段，提交时以现有 agent_metadata 为基底合并三字段并经 `updateAdminAppMetadata`（PATCH /admin/apps/<id>）持久化，避免覆盖清空其余字段 |
+| **UX-3 资源运营补充上架/下架操作** | StoreMcpView.vue, store/mcp/ListView.vue, mcp-list-admin.spec.ts（新建）, mcp-list.spec.ts, storeOps.ts, execution-roadmap.md | ✅ 已完成 | Apps/Workflows 商店页已有上下架；**MCP** 补齐：store/mcp ListView 在 adminMode + `mcp:manage` 权限下卡片渲染上架/下架按钮（按 is_public 切换），经 `publishAdminMcp`/`unpublishAdminMcp`（POST /admin/mcp/{id}/publish\|unpublish）持久化并刷新列表；公共用户态（adminMode=false）零变化。**Tools** 为内置工具公共目录、无上下架对象，判定非目标；**Skills 后端无 is_public/发布接口（待后端先行，未伪造调用）** |
 
 ### 待修复任务
 
@@ -916,7 +917,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | --- | --- | --- | --- |
 | **UX-1 ToolsView 改造为真正的工具管理** | PRI1 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-1 条目 |
 | **UX-2 AppsView 重写 + 数据所有权统一** | PRI1 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-2 条目 |
-| **UX-3 资源运营补充上架/下架操作** | PRI2 | ⏳ 待开始 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件 |
+| **UX-3 资源运营补充上架/下架操作** | PRI2 | ✅ 已完成 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件。**落地**：Apps/Workflows 已有；**MCP 补齐**（store/mcp ListView adminMode + mcp:manage 权限下，卡片上架/下架 → `POST /admin/mcp/{id}/publish\|unpublish`）；**Tools** 内置工具公共目录无上下架对象，判定非目标；**Skills 后端无 is_public/发布接口（待后端先行，未伪造）** |
 | **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | PRI2 | ⏳ 待开始 | 上架是运营动作，不应在编排页面。移到资源运营的工作流商店页 |
 | **UX-5 AdminDatasetsView/MCP/Skills 补充 CRUD** | PRI2 | ⏳ 待开始 | 资源编排 3 个只读页面补充创建/编辑/删除，使"编排"名副其实 |
 | **UX-6 ModelsView 成本策略移到计费运营** | PRI3 | ⏳ 待开始 | 成本策略（maxCostPerRequest/billingMode）是计费策略，应从池治理移到计费运营板块 |
