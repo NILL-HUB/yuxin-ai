@@ -143,12 +143,13 @@ describe('AdminWorkflowsView', () => {
   it('shows visibility label, store hint and workflow actions', async () => {
     const wrapper = await renderView()
 
-    // 公开状态展示
+    // 公开状态展示（只读标签）
     expect(wrapper.text()).toContain('公开')
     // 展示前往资源运营的提示
     expect(wrapper.text()).toContain('资源运营')
-    // 批量操作版本下，单卡片的 visibility/offline/export 按钮均渲染
-    expect(wrapper.find('[data-testid="workflow-visibility-wf-1"]').exists()).toBe(true)
+    // UX-4：编排页不再提供「公开切换（上架/下架）」按钮（归属资源运营商店页），
+    // 但 offline/export 等编排操作按钮仍渲染
+    expect(wrapper.find('[data-testid="workflow-visibility-wf-1"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="workflow-offline-wf-1"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="workflow-export-wf-1"]').exists()).toBe(true)
   })

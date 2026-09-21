@@ -13,11 +13,13 @@ const props = withDefaults(
     canDelete?: boolean
     canEdit?: boolean
     canPreview?: boolean
+    showVisibilityToggle?: boolean
   }>(),
   {
     canDelete: undefined,
     canEdit: true,
     canPreview: true,
+    showVisibilityToggle: true,
   },
 )
 
@@ -81,7 +83,7 @@ const visibilityActionLabel = computed(() => {
         {{ t('admin.workflowsAdmin.actions.preview') }}
       </a-button>
       <a-button
-        v-if="canUpdate"
+        v-if="canUpdate && showVisibilityToggle"
         :data-testid="`workflow-visibility-${workflow.id}`"
         @click="emit('toggle-public', workflow)"
       >

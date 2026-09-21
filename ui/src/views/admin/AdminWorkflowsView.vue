@@ -16,7 +16,6 @@ import {
   exportAdminWorkflow,
   listAdminWorkflows,
   offlineAdminWorkflow,
-  updateAdminWorkflow,
 } from '@/services/admin-workflows'
 import { getErrorMessage } from '@/utils/error'
 
@@ -271,20 +270,6 @@ const handleOffline = (workflow: AdminWorkflowRecord) => {
 }
 
 /**
- * 切换单条工作流公开状态，成功后刷新列表。
- */
-const handleTogglePublic = async (workflow: AdminWorkflowRecord) => {
-  try {
-    await updateAdminWorkflow(workflow.id, { is_public: !workflow.is_public })
-    Message.success(t('admin.workflowsAdmin.updateSuccess'))
-  } catch (error) {
-    Message.error(getErrorMessage(error, t('admin.workflowsAdmin.updateFailed')))
-  } finally {
-    void loadWorkflows()
-  }
-}
-
-/**
  * 切换单个工作流选择状态。
  */
 const toggleSelect = (workflowId: string) => {
@@ -498,11 +483,11 @@ onMounted(() => {
           :workflow="workflow"
           :can-update="true"
           :can-delete="true"
+          :show-visibility-toggle="false"
           @edit="handleEdit"
           @preview="handlePreview"
           @delete="handleDelete"
           @offline="handleOffline"
-          @toggle-public="handleTogglePublic"
           @export="handleExport"
         />
       </div>

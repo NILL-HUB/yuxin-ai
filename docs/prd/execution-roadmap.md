@@ -451,7 +451,7 @@ MCP 相关既有回归（`api/test/internal/core/tools/` + `test_app_config_serv
 | KB-P4 | 视频轻量编辑（trim / concat / subtitle） | ✅ 完成（渲染出片已由 KB-P3.7 落地；trim/concat/subtitle 三工具由本阶段落地，见 [modules/02-knowledge-base.md §11.15](./modules/02-knowledge-base.md#1115-视频轻量剪辑kb-p4-已落地)） |
 | KB-P4.5 | L1 视频时间线叙述（批次化批喂替代逐帧调用，段落即编辑挂载点） | ✅ 完成（场景 B/A 锚点 + 每批 ≈10 锚点多图批喂 + 服务端时间码投影 + 降级逐帧；时间线段落结构 `start_sec/end_sec/speech_text` 为 KB-P4 剪辑的定位基础，见 [modules/02-knowledge-base.md §11.8](./modules/02-knowledge-base.md#118-多模态l1基础解析kb-p2a已落地)） |
 | KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ✅ 完成（KB-P5-A 前台页面：板块详情/分区树导航/素材网格与详情/存储用量面板+扩容入口；KB-P5-B 小钰帮传对话工具 `upload_to_knowledge_base`；KB-P5-C 外部数据源同步纳入配额校验。见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)；未落地项：对话消息卡片内直编入口（artifact 载荷不含 document_id，见 modules/02-knowledge-base.md §11.16）） |
-| KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕 / 封面，默认关闭） | ⬜ 未开始（调研与实测复核已完成，见 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp待拓展kb-p6未立项)） |
+| KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕，默认关闭） | ✅ **已完成**（`fetch_media` builtin 工具 + `media_fetch_tasks.media_fetch_task` Celery 任务 + `MediaFetchService.import_document`；提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch`；`ENABLE_MEDIA_FETCH_TOOL` 门控默认关闭；L1 字幕优先回退 ASR；无新表/迁移。**封面未接入**。见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地) 与 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp已落地kb-p6)） |
 
 KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
 
@@ -908,6 +908,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | **UX-1 ToolsView 真工具管理** | ToolsView.vue, admin-tools.ts, api_tool_service.py, admin_routes_5.py | ✅ 已完成 | ToolsView 由只读展示 ToolPolicy 改造为管理工具本身：API Tool Provider 创建/编辑/删除 + 分页/搜索 + 内置工具只读展示；后端提供 `_for_admin` CRUD + import-url/import-file + 图标/OpenAPI 校验端点。与 ToolGovernanceView（ToolPolicy 使用规则策略）职责分离 |
 | **UX-2 AppsView 重写 + 数据所有权统一** | AppsView.vue, AgentPoolView.vue, AgentMetadataEditor.vue（删除）, apps.ts, agentPool.ts | ✅ 已完成 | AppsView 完成 Arco 重写并按职责分离：移除「编辑池治理字段」弹窗，primary_pool/risk_level/routing_priority/enabled 只读展示 + 「前往 Agent 池配置」跳转；编辑权迁移到 AgentPoolView——池配置弹窗新增主池/风险等级/路由优先级三字段，提交时以现有 agent_metadata 为基底合并三字段并经 `updateAdminAppMetadata`（PATCH /admin/apps/<id>）持久化，避免覆盖清空其余字段 |
 | **UX-3 资源运营补充上架/下架操作** | StoreMcpView.vue, store/mcp/ListView.vue, mcp-list-admin.spec.ts（新建）, mcp-list.spec.ts, storeOps.ts, execution-roadmap.md | ✅ 已完成 | Apps/Workflows 商店页已有上下架；**MCP** 补齐：store/mcp ListView 在 adminMode + `mcp:manage` 权限下卡片渲染上架/下架按钮（按 is_public 切换），经 `publishAdminMcp`/`unpublishAdminMcp`（POST /admin/mcp/{id}/publish\|unpublish）持久化并刷新列表；公共用户态（adminMode=false）零变化。**Tools** 为内置工具公共目录、无上下架对象，判定非目标；**Skills 后端无 is_public/发布接口（待后端先行，未伪造调用）** |
+| **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | AdminWorkflowsView.vue, AdminWorkflowCard.vue, AdminWorkflowsView.spec.ts, execution-roadmap.md | ✅ 已完成 | 编排页移除单卡片「公开切换（上架/下架）」按钮：共享卡片新增 `showVisibilityToggle` prop（默认 true，商店页零变化），编排页传 `false` 并删除 `handleTogglePublic` 与 `updateAdminWorkflow` 引用；上架/下架入口收敛到资源运营工作流商店页（StoreWorkflowsView，`@toggle-public` 绑定仅剩该处）。批量上架/下架、offline 等编排操作保留（roadmap 仅点名 toggle-public）；visibility 标签保留只读展示 |
 
 ### 待修复任务
 
@@ -918,7 +919,7 @@ POOL-POOL-POOL-P0-6 统一 tool_id 格式映射（完全独立，可并行）
 | **UX-1 ToolsView 改造为真正的工具管理** | PRI1 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-1 条目 |
 | **UX-2 AppsView 重写 + 数据所有权统一** | PRI1 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-2 条目 |
 | **UX-3 资源运营补充上架/下架操作** | PRI2 | ✅ 已完成 | 每个商店页面加管理员视角的上架/下架按钮，而非仅复用公共商店组件。**落地**：Apps/Workflows 已有；**MCP 补齐**（store/mcp ListView adminMode + mcp:manage 权限下，卡片上架/下架 → `POST /admin/mcp/{id}/publish\|unpublish`）；**Tools** 内置工具公共目录无上下架对象，判定非目标；**Skills 后端无 is_public/发布接口（待后端先行，未伪造）** |
-| **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | PRI2 | ⏳ 待开始 | 上架是运营动作，不应在编排页面。移到资源运营的工作流商店页 |
+| **UX-4 AdminWorkflowsView toggle-public 移到资源运营** | PRI2 | ✅ 已完成 | 见「已完成（UX 快速修复）」表中 UX-4 条目 |
 | **UX-5 AdminDatasetsView/MCP/Skills 补充 CRUD** | PRI2 | ⏳ 待开始 | 资源编排 3 个只读页面补充创建/编辑/删除，使"编排"名副其实 |
 | **UX-6 ModelsView 成本策略移到计费运营** | PRI3 | ⏳ 待开始 | 成本策略（maxCostPerRequest/billingMode）是计费策略，应从池治理移到计费运营板块 |
 | **UX-7 审计日志加跳转** | PRI3 | ⏳ 待开始 | AuditLogsView 的 resourceType/resourceId 可点击跳转到对应资源管理页 |
