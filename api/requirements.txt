@@ -231,3 +231,4 @@ python-pptx
 networkx
 mcp>=1.0.0
 croniter>=2.0.0
+yt-dlp==2026.8.19
