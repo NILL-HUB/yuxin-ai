@@ -127,6 +127,28 @@ def _get_system_knowledge_context(db) -> str:
 
 
 
+def _build_media_fetch_tool(builtin_provider_manager, *, feature_enabled: bool,
+                            account_id: str = "", message_id: str = "",
+                            conversation_id: str = "") -> Any | None:
+    """按 admin 公共 AI 配置 media_fetch 开关构建 fetch_media 工具。
+
+    feature_enabled 由调用方在挂载点经 `PublicAIFeatureService.is_feature_enabled("media_fetch")`
+    读取；未启用时连工厂都不查（不存在拿到工具的路径），启用后把 enabled=True 注入实例。
+    """
+    if not feature_enabled:
+        return None
+    media_fetch_factory = builtin_provider_manager.get_tool("media_fetch_tools", "fetch_media")
+    if media_fetch_factory is None:
+        return None
+    return media_fetch_factory(
+        account_id=account_id,
+        message_id=message_id,
+        conversation_id=conversation_id,
+        enabled=True,
+    )
+
+
+
 @inject
 @dataclass
 class AssistantAgentService(BaseService):
@@ -1113,25 +1135,22 @@ class AssistantAgentService(BaseService):
                         exc_info=True,
                     )
 
-        # 外部素材获取工具：把公开视频/音频链接下载入库。默认关闭，管理员开启后才挂载。
+        # 外部素材获取工具：把公开视频/音频链接下载入库。默认关闭，管理员在
+        # admin 公共 AI 配置开启 media_fetch 开关后才挂载（挂载点读取该配置，注入 enabled）。
         if self.app_config_service is not None:
             try:
-                from internal.core.tools.builtin_tools.providers.media_fetch_tools.fetch_media import (
-                    _enabled as _media_fetch_enabled,
+                from app.http.module import injector
+                from internal.service.public_ai_feature_service import PublicAIFeatureService
+                feature_enabled = injector.get(PublicAIFeatureService).is_feature_enabled("media_fetch")
+                me_tool = _build_media_fetch_tool(
+                    self.app_config_service.builtin_provider_manager,
+                    feature_enabled=feature_enabled,
+                    account_id=str(account_id),
+                    message_id=message_id,
+                    conversation_id=conversation_id,
                 )
-                if _media_fetch_enabled():
-                    me_tool_factory = self.app_config_service.builtin_provider_manager.get_tool(
-                        "media_fetch_tools",
-                        "fetch_media",
-                    )
-                    if me_tool_factory is not None:
-                        tools.append(
-                            me_tool_factory(
-                                account_id=str(account_id),
-                                message_id=message_id,
-                                conversation_id=conversation_id,
-                            )
-                        )
+                if me_tool is not None:
+                    tools.append(me_tool)
             except Exception:
                 logger.warning("构建外部素材获取工具失败，不影响其他工具", exc_info=True)
 

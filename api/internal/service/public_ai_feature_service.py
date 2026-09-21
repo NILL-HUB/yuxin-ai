@@ -71,6 +71,17 @@ _BUILTIN_FEATURES: list[dict[str, Any]] = [
         "fallback_tier": "2",   # 标准型 Flash 级模型即可胜任视觉描述
         "billable": True,       # 用户主动发起（对话内识图/视频解析），按用量计费
     },
+    {
+        "feature_key": "media_fetch",
+        "feature_name": "外部素材获取",
+        "feature_category": "conversation",
+        "feature_description": "从对话内调用 fetch_media 工具下载外部视频/音频 URL 入知识库",
+        # 非模型绑定的能力开关：model_type 照抄其它非模型类 feature 的占位约定（此处不用于选模型）。
+        "model_type": "chat",
+        "fallback_tier": "2",   # 工具本身不耗 token；档位仅作为无绑定时的兜底占位
+        "billable": False,      # 系统能力开关，管理后台可视化控制，不直接计费
+        "default_enabled": False,  # 默认关闭：须管理员在公共 AI 配置显式开启
+    },
 ]
 
 
@@ -99,7 +110,7 @@ class PublicAIFeatureService:
                     feature_category=feat["feature_category"],
                     feature_description=feat["feature_description"],
                     model_config_id=None,
-                    enabled=True,
+                    enabled=bool(feat.get("default_enabled", True)),
                     fallback_tier=feat["fallback_tier"],
                     model_type=feat["model_type"],
                     billable=feat["billable"],

@@ -1,25 +1,20 @@
 """外部素材获取工具（KB-P6）。
 
 把公开网页视频/音频 URL 下载、上传、建档入知识库。执行走 Celery，派发后立即返回任务号。
-默认关闭：ENABLE_MEDIA_FETCH_TOOL=1 才可用（挂载点还在 T6 由 assistant_agent_service 依 _enabled() 控制）。
+启用与否由工具实例字段 `enabled` 决定，其单一事实源是 admin 公共 AI 配置的
+`media_fetch` 开关（挂载点在构造时经 `fetch_media(**kwargs)` 注入 enabled=）。
 仅支持平台可匿名抓取内容，不做登录态/Cookies。
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
-
-
-def _enabled() -> bool:
-    flag = str(os.getenv("ENABLE_MEDIA_FETCH_TOOL", "")).strip().lower()
-    return flag in {"1", "true", "yes", "on"}
 
 
 def _load_task():
@@ -45,6 +40,8 @@ class FetchMediaTool(BaseTool):
     account_id: str = ""
     message_id: str = ""
     conversation_id: str = ""
+    # 启用开关：由挂载点在构造时经 fetch_media(enabled=...) 注入（服务端 admin 公共 AI 配置 media_fetch）。
+    enabled: bool = True
 
     def _run(self, url: str = "", knowledge_base_id: str = "",
              resolution: str = "", max_bytes: int = 0, **kwargs: Any) -> str:
@@ -53,8 +50,8 @@ class FetchMediaTool(BaseTool):
             return json.dumps({"ok": False, "error": "缺少当前账号信息，无法保存素材"}, ensure_ascii=False)
         if not str(url or "").strip() or not str(knowledge_base_id or "").strip():
             return json.dumps({"ok": False, "error": "需要 url 与 knowledge_base_id"}, ensure_ascii=False)
-        if not _enabled():
-            return json.dumps({"ok": False, "error": "外部素材获取能力未启用（需管理员开启 ENABLE_MEDIA_FETCH_TOOL）"}, ensure_ascii=False)
+        if not self.enabled:
+            return json.dumps({"ok": False, "error": "外部素材获取能力未开启，请在管理后台-公共 AI 配置中开启"}, ensure_ascii=False)
         try:
             size = int(max_bytes or 0)
         except (TypeError, ValueError):
@@ -89,4 +86,5 @@ def fetch_media(**kwargs: Any) -> BaseTool:
         account_id=str(kwargs.get("account_id") or "").strip(),
         message_id=str(kwargs.get("message_id") or "").strip(),
         conversation_id=str(kwargs.get("conversation_id") or "").strip(),
+        enabled=bool(kwargs.get("enabled", True)),
     )
