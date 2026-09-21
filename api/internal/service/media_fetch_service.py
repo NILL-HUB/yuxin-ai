@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -124,6 +125,22 @@ class MediaFetchService:
                 return os.path.join(temp_dir, name)
         return None
 
+    @staticmethod
+    def _stream_sha3(path: str, chunk_size: int = 1024 * 1024) -> str:
+        """分块流式计算文件 sha3_256，避免把 GB 级大文件整块读进内存。
+
+        去重依赖 ``UploadFile.hash``（storage_migration 以 hash 为 group_key），
+        必须返回真实值，不能用非空占位符（会把所有外部媒体误判为同组）。
+        """
+        digest = hashlib.sha3_256()
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(chunk_size)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def _inject(self):
         """惰性取用依赖（强类型，走运行时 Injector）。测试可预置对应 mock 覆盖。"""
         if getattr(self, "_cos", None) is None:
@@ -149,9 +166,15 @@ class MediaFetchService:
     ) -> dict:
         """下载 → 流式上传 → 建档 → 字幕 metadata 关联。
 
-        主媒体走 upload_local_file（流式保 key，GB 级不进内存）+ 补建 UploadFile 记录；
-        字幕为小文件用 upload_bytes 建记录并写入 document.metadata_[subtitle_upload_file_id]，
-        供 L1 解析时优先消费。仅公开内容，不做登录态/Cookies。
+        主媒体走 upload_local_file 流式上传（保 key，GB 级不进内存）并分块算真实
+        sha3_256 供去重；字幕为小文件用 upload_bytes 建记录并写入
+        document.metadata_[subtitle_upload_file_id]，供 L1 解析时优先消费。
+
+        失败语义：上传/建档/字幕任一步抛错时，对已上传的 target_key 做 best-effort
+        清理（删除孤儿 COS 对象），然后原样 raise。UploadFile 记录若有残留，
+        待后续任务/运维回收，不做复杂级联删除；COS 失败异常保持抛给上层
+        （T3 Celery 据 MediaFetchError/其他异常决定是否重试）。
+        仅公开内容，不做登录态/Cookies。
         """
         self._inject()
 
@@ -165,48 +188,57 @@ class MediaFetchService:
         # （RuntimeStorageProxy），不暴露 CosService._build_object_key，故直接调静态方法生成 key。
         from internal.service.cos_service import CosService
         target_key = CosService._build_object_key(filename)
-        self._cos.upload_local_file(source_path=media_path, target_key=target_key)
+        try:
+            media_hash = self._stream_sha3(media_path)
+            self._cos.upload_local_file(source_path=media_path, target_key=target_key)
 
-        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        active_backend = getattr(self._cos, "active_backend", None)
-        backend = str(active_backend() if callable(active_backend) else os.getenv("STORAGE_BACKEND", "cos")).strip().lower()
-        backend = "local" if backend in ("", "local") else "cos"
-        main_upload = self._upload_file_service.create_upload_file(
-            account_id=account.id,
-            name=filename,
-            key=target_key,
-            size=os.path.getsize(media_path),
-            extension=extension,
-            mime_type=None,
-            hash="sha3-external-fetch",  # 大文件不整块读内存，主媒体用稳定占位符；字幕等小文件由 upload_bytes 内部算真实 hash
-            storage_backend=backend,
-        )
-
-        document = self._knowledge_base_service.create_document_from_upload_file(
-            knowledge_base_id=knowledge_base.id,
-            upload_file=main_upload,
-            account=account,
-        )
-
-        metadata_patch: dict[str, Any] = {}
-        subtitle_path = fetched.get("subtitle_path")
-        if subtitle_path and os.path.exists(subtitle_path):
-            with open(subtitle_path, "rb") as fh:
-                sub_content = fh.read()
-            sub_record = self._cos.upload_bytes(
-                filename=os.path.basename(subtitle_path),
-                content=sub_content,
+            extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            active_backend = getattr(self._cos, "active_backend", None)
+            backend = str(active_backend() if callable(active_backend) else os.getenv("STORAGE_BACKEND", "cos")).strip().lower()
+            backend = "local" if backend in ("", "local") else "cos"
+            main_upload = self._upload_file_service.create_upload_file(
                 account_id=account.id,
-                mime_type="text/vtt" if subtitle_path.lower().endswith(".vtt") else "text/plain",
+                name=filename,
+                key=target_key,
+                size=os.path.getsize(media_path),
+                extension=extension,
+                mime_type=None,
+                hash=media_hash,
+                storage_backend=backend,
             )
-            metadata_patch["subtitle_upload_file_id"] = str(sub_record.id)
 
-        if metadata_patch:
-            # 合并字幕关联信息到 document.metadata_ 并持久化。
-            # 复用知识库 service 继承自 BaseService.update 的通用更新方法。
-            merged = dict(getattr(document, "metadata_", None) or {})
-            merged.update(metadata_patch)
-            self._knowledge_base_service.update(document, metadata_=merged)
+            document = self._knowledge_base_service.create_document_from_upload_file(
+                knowledge_base_id=knowledge_base.id,
+                upload_file=main_upload,
+                account=account,
+            )
+
+            metadata_patch: dict[str, Any] = {}
+            subtitle_path = fetched.get("subtitle_path")
+            if subtitle_path and os.path.exists(subtitle_path):
+                with open(subtitle_path, "rb") as fh:
+                    sub_content = fh.read()
+                sub_record = self._cos.upload_bytes(
+                    filename=os.path.basename(subtitle_path),
+                    content=sub_content,
+                    account_id=account.id,
+                    mime_type="text/vtt" if subtitle_path.lower().endswith(".vtt") else "text/plain",
+                )
+                metadata_patch["subtitle_upload_file_id"] = str(sub_record.id)
+
+            if metadata_patch:
+                # 合并字幕关联信息到 document.metadata_ 并持久化。
+                # 复用知识库 service 继承自 BaseService.update 的通用更新方法。
+                merged = dict(getattr(document, "metadata_", None) or {})
+                merged.update(metadata_patch)
+                self._knowledge_base_service.update(document, metadata_=merged)
+        except Exception:
+            # best-effort 清理已上传的孤儿 COS 对象；UploadFile 行残留待运维回收
+            try:
+                self._cos.delete_object(target_key)
+            except Exception:
+                logger.exception("清理孤儿 COS 对象失败 key=%s", target_key)
+            raise
 
         return {
             "ok": True,

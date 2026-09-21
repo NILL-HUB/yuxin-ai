@@ -1,4 +1,5 @@
 """MediaFetchService 校验与下载编排单测（mock yt_dlp，不联网）。"""
+import hashlib
 import os
 from unittest.mock import MagicMock
 
@@ -87,3 +88,46 @@ def test_import_document_streams_media_and_attaches_subtitle(monkeypatch):
     # 关键：字幕 metadata 确实被合并进 document.metadata_ 并持久化
     updated = svc._knowledge_base_service.update.call_args.kwargs.get("metadata_") or {}
     assert updated.get("subtitle_upload_file_id") == "sub1"
+    # 主媒体 hash 必须为真实流式 sha3_256（去重依赖），不能用非空占位符
+    media_path = os.path.join("/tmp/mediatest", "sample.mp4")
+    create_kwargs = svc._upload_file_service.create_upload_file.call_args.kwargs
+    assert create_kwargs["hash"] == hashlib.sha3_256(open(media_path, "rb").read()).hexdigest()
+    assert create_kwargs["hash"] == MediaFetchService._stream_sha3(media_path)
+
+
+def test_stream_sha3_is_streamed_real_hash(monkeypatch, tmp_path):
+    """流式 hash helper 与直接整块计算一致（抽样字节数，避免同 100 字节被截胡）。"""
+    svc = MediaFetchService()
+    payload = bytes(range(256)) * 4096  # 1 MiB，覆盖多分块读取路径
+    p = tmp_path / "big.bin"
+    p.write_bytes(payload)
+    assert svc._stream_sha3(str(p)) == hashlib.sha3_256(payload).hexdigest()
+
+
+def test_import_cleans_orphan_object_on_failure(monkeypatch):
+    """上传成功后建档/建记录失败 → best-effort 删除孤儿 COS 对象并原样抛错。"""
+    svc = MediaFetchService()
+    monkeypatch.setattr(svc, "_download", _fake_download)
+    svc._cos = MagicMock(spec=CosService)
+    svc._upload_file_service = MagicMock(spec=UploadFileService)
+    svc._knowledge_base_service = MagicMock(spec=KnowledgeBaseService)
+    svc._upload_file_service.create_upload_file.side_effect = RuntimeError("abort")
+
+    account = MagicMock()
+    account.id = "u1"
+    kb = MagicMock()
+    kb.base_type = "video"
+    kb.id = "kb1"
+
+    try:
+        svc.import_document(
+            url="https://www.youtube.com/watch?v=abc",
+            knowledge_base=kb, account=account,
+            temp_dir="/tmp/mediatest-fail", max_bytes=None,
+        )
+        assert False, "应为后续步骤失败抛错"
+    except RuntimeError:
+        pass
+    # 主媒体已上传，失败时应 best-effort 清理孤儿 COS 对象（幂等）
+    assert svc._cos.upload_local_file.called
+    assert svc._cos.delete_object.called
