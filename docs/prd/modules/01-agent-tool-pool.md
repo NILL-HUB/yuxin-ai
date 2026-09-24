@@ -1099,6 +1099,26 @@ ToolPolicyFilter 通过此映射在运行时查询对应工具的治理策略。
 
 渐进式启用通过 OrchestrationFeatureFlag 控制（底座已有此机制）。
 
+### 10.6 凭证与 Key 池的分区判据
+
+判据**不是**「模型 vs 工具」，而是**「该凭证是否需要在多个候选之间路由」**：
+
+| 维度 | 可路由池（`model_key_config`） | 具名凭证（env + 统一入口） |
+| --- | --- | --- |
+| 归属 | 多个 Key 为一个 provider/模型提供服务 | 一把部署一把 Key，一一对应 |
+| 是否需要轮换 | 是（按 `used_credits`/`created_at` 排序轮换） | 否 |
+| 是否需要配额 | 是（`tenant_quota`，用尽转 `disabled`） | 否 |
+| 是否需要熔断 | 是（`failure_count` → `circuit_open`，冷却恢复） | 否 |
+| 存储 | DB（`model_key_config.key_value_encrypted`，Fernet 加密） | env（**不入库**） |
+| 读取入口 | `RuntimeModelPoolService.get_keys_for_model()` → `FallbackLLMWrapper` | `internal/service/tool_credential_resolver.get_tool_credential()` |
+
+- `model_key_config.model_id IS NULL` 表示 **provider 级共享 Key**（该 provider 下所有模型可用）；
+  非空表示绑定到具体模型。此语义由 `get_keys_for_model` 的过滤条件实现，勿改成「模型专属才可用」。
+- 工具凭证（gaode/newsapi/github/stability/github/xai/baidu/tavily 等 builtin provider）
+  一律走 env + `get_tool_credential()`；**不给工具凭证加熔断/配额**——无轮换需求，加了是过度设计。
+- 新增「可路由」需求时，扩展 `model_key_config` 与 `RuntimeModelPoolService`，
+  **不要**新建第二套 Key 表或第二个解析器（AGENTS.md「禁止新建平行机制」）。
+
 ---
 
 ## 11. 内置工具：知识库板块创建（create_knowledge_base）
