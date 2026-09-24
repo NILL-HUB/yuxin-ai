@@ -20,6 +20,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_MCP_STDIO_TIMEOUT_SECONDS = 30
+SUPPORTED_STDIO_PROTOCOLS = {"mcp", "raw"}
+DEFAULT_STDIO_PROTOCOL = "mcp"
 
 
 def _normalize_text(value: Any) -> str:
@@ -34,6 +36,8 @@ class McpStdioClient:
 
         返回 [{name, description, inputSchema, ...}] 工具定义列表。
         """
+        if self._resolve_protocol(binding) == "raw":
+            return self._list_declared_tools(binding)
         return self._run_async(self._list_tools_async(binding))
 
     def call_tool_sync(
@@ -46,6 +50,8 @@ class McpStdioClient:
 
         返回 dict 形式的 CallToolResult：{"content": [...], "isError": bool, ...}
         """
+        if self._resolve_protocol(binding) == "raw":
+            return self._call_raw_command(binding, tool_name, arguments)
         return self._run_async(self._call_tool_async(binding, tool_name, arguments))
 
     # ------------------------------------------------------------------ #
@@ -115,6 +121,83 @@ class McpStdioClient:
             if len(tokens) > 1:
                 return tokens[0], tokens[1:]
         return command, []
+
+    def _resolve_protocol(self, binding: dict[str, Any]) -> str:
+        protocol = str(binding.get("protocol") or DEFAULT_STDIO_PROTOCOL).strip().lower()
+        return protocol if protocol in SUPPORTED_STDIO_PROTOCOLS else DEFAULT_STDIO_PROTOCOL
+
+    def _declared_tool_schema(self, binding: dict[str, Any]) -> dict[str, Any]:
+        schema = binding.get("tool_schema") or {}
+        return schema if isinstance(schema, dict) else {}
+
+    def _list_declared_tools(self, binding: dict[str, Any]) -> list[dict[str, Any]]:
+        """raw 模式下工具由 admin 显式声明，不做任何进程探测。"""
+        tools: list[dict[str, Any]] = []
+        for tool_name, definition in self._declared_tool_schema(binding).items():
+            if not isinstance(definition, dict):
+                continue
+            tools.append(
+                {
+                    "name": str(tool_name),
+                    "description": str(definition.get("description") or ""),
+                    "inputSchema": definition.get("parameters") or {"type": "object", "properties": {}},
+                }
+            )
+        return tools
+
+    def _render_raw_args(self, binding: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
+        """把 args 模板里的 {占位符} 用调用参数替换。"""
+        raw_args = binding.get("args") or []
+        if not isinstance(raw_args, list):
+            return []
+        rendered: list[str] = []
+        for token in raw_args:
+            text = str(token)
+            for key, value in (arguments or {}).items():
+                text = text.replace("{" + str(key) + "}", str(value if value is not None else ""))
+            rendered.append(text)
+        return rendered
+
+    def _call_raw_command(
+        self,
+        binding: dict[str, Any],
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        if tool_name not in self._declared_tool_schema(binding):
+            return {
+                "isError": True,
+                "content": [{"type": "text", "text": f"CLI 工具未声明: {tool_name}"}],
+            }
+        import subprocess
+
+        command, args, env, timeout = self._build_stdio_params(
+            {**binding, "args": self._render_raw_args(binding, arguments)}
+        )
+        executable, extra_args = self._split_command(command, args)
+        try:
+            completed = subprocess.run(
+                [executable, *extra_args],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "isError": True,
+                "content": [{"type": "text", "text": f"CLI 执行超时（{timeout}s）: {tool_name}"}],
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "isError": True,
+                "content": [{"type": "text", "text": f"CLI 执行失败: {exc}"}],
+            }
+        output = completed.stdout or ""
+        if completed.returncode != 0:
+            detail = (completed.stderr or "").strip() or output.strip() or f"exit={completed.returncode}"
+            return {"isError": True, "content": [{"type": "text", "text": detail}]}
+        return {"isError": False, "content": [{"type": "text", "text": output}]}
 
     async def _list_tools_async(self, binding: dict[str, Any]) -> list[dict[str, Any]]:
         from mcp import ClientSession, StdioServerParameters
