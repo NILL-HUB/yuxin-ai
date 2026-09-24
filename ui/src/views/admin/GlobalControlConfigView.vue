@@ -37,6 +37,10 @@ const form = reactive({
     provider: '',
     model: '',
   },
+  model_key_pool: {
+    failure_threshold: 3,
+    cooldown_seconds: 300,
+  },
 })
 
 const apiOrigin = ref('')
@@ -62,6 +66,8 @@ const loadConfig = async () => {
       configs.image_request_policy?.policy === 'auto_upgrade' ? 'auto_upgrade' : 'strict'
     form.vision_fallback.provider = configs.vision_fallback?.provider || ''
     form.vision_fallback.model = configs.vision_fallback?.model || ''
+    form.model_key_pool.failure_threshold = configs.model_key_pool?.failure_threshold ?? 3
+    form.model_key_pool.cooldown_seconds = configs.model_key_pool?.cooldown_seconds ?? 300
     apiOrigin.value = desktop.api_origin || ''
   } catch (error) {
     Message.error(getErrorMessage(error, t('admin.globalControlConfig.loadFailed')))
@@ -73,6 +79,13 @@ const loadConfig = async () => {
 const handleSave = async () => {
   if (!Number.isFinite(form.runtime_fallback.retry_attempts) || form.runtime_fallback.retry_attempts <= 0) {
     Message.error(t('admin.globalControlConfig.fields.retryAttemptsInvalid'))
+    return
+  }
+  if (
+    !Number.isFinite(form.model_key_pool.failure_threshold) ||
+    form.model_key_pool.failure_threshold <= 0
+  ) {
+    Message.error(t('admin.globalControlConfig.fields.failureThresholdInvalid'))
     return
   }
   if (
@@ -105,6 +118,10 @@ const handleSave = async () => {
       saveGlobalControlSection('vision_fallback', {
         provider: form.vision_fallback.provider.trim(),
         model: form.vision_fallback.model.trim(),
+      }),
+      saveGlobalControlSection('model_key_pool', {
+        failure_threshold: Math.round(form.model_key_pool.failure_threshold),
+        cooldown_seconds: Math.round(form.model_key_pool.cooldown_seconds),
       }),
       saveDesktopClientConfig({ api_origin: apiOrigin.value.trim() }),
     ])
@@ -230,6 +247,23 @@ onMounted(loadConfig)
               />
             </a-form-item>
           </a-form>
+        </section>
+
+        <!-- 模型 Key 池 -->
+        <section class="config-card">
+          <div class="card-header">
+            <h3>{{ t('admin.globalControlConfig.sections.modelKeyPool.title') }}</h3>
+            <p>{{ t('admin.globalControlConfig.sections.modelKeyPool.description') }}</p>
+          </div>
+          <a-form :model="form.model_key_pool" layout="vertical">
+            <a-form-item :label="t('admin.globalControlConfig.fields.failureThreshold')" field="failure_threshold">
+              <a-input-number v-model="form.model_key_pool.failure_threshold" :min="1" :step="1" :precision="0" />
+            </a-form-item>
+            <a-form-item :label="t('admin.globalControlConfig.fields.cooldownSeconds')" field="cooldown_seconds">
+              <a-input-number v-model="form.model_key_pool.cooldown_seconds" :min="1" :step="1" :precision="0" />
+            </a-form-item>
+          </a-form>
+          <p class="hint-text">{{ t('admin.globalControlConfig.fields.cooldownSecondsHint') }}</p>
         </section>
 
         <!-- 桌面客户端连接 -->

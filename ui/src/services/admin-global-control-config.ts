@@ -35,6 +35,12 @@ export interface VisionFallbackConfig {
   model: string
 }
 
+/** 模型 Key 池熔断配置 */
+export interface ModelKeyPoolConfig {
+  failure_threshold: number
+  cooldown_seconds: number
+}
+
 export interface GlobalControlConfigs {
   runtime_fallback: RuntimeFallbackConfig
   media_fetch: MediaFetchConfig
@@ -42,6 +48,7 @@ export interface GlobalControlConfigs {
   skill_catalog_sync: SkillCatalogSyncConfig
   image_request_policy: ImageRequestPolicyConfig
   vision_fallback: VisionFallbackConfig
+  model_key_pool: ModelKeyPoolConfig
 }
 
 export const getGlobalControlConfigs = async (): Promise<GlobalControlConfigs> => {

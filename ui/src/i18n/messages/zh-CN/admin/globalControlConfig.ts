@@ -31,6 +31,10 @@ export default {
       title: '视觉兜底模型',
       description: '配置视觉理解能力的兜底模型，主模型不可用时自动切换。',
     },
+    modelKeyPool: {
+      title: '模型 Key 池',
+      description: '控制模型 Key 的熔断阈值与冷却恢复时间。',
+    },
     desktopClient: {
       title: '桌面客户端连接',
       description: '配置桌面客户端的 API 服务器地址，留空表示与当前服务器同源连接。',
@@ -52,6 +56,11 @@ export default {
     providerPlaceholder: '如 openai',
     model: '模型',
     modelPlaceholder: '如 gpt-4o',
+    failureThreshold: '熔断失败阈值 (次)',
+    failureThresholdHint: '同一 Key 连续失败达到该次数后熔断，默认 3 次，需大于 0。',
+    failureThresholdInvalid: '熔断失败阈值必须大于 0',
+    cooldownSeconds: '冷却恢复 (秒)',
+    cooldownSecondsHint: '熔断后经过该时长自动恢复为可用，默认 300 秒。',
     apiOrigin: '连接地址（API 服务器）',
     apiOriginPlaceholder: '如 http://127.0.0.1 或 https://your-domain.com',
   },

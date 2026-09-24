@@ -31,6 +31,10 @@ export default {
       title: 'Vision Fallback Model',
       description: 'Sets the fallback model for vision understanding, used when the primary model is unavailable.',
     },
+    modelKeyPool: {
+      title: 'Model key pool',
+      description: 'Controls the circuit-breaker threshold and cooldown recovery for model keys.',
+    },
     desktopClient: {
       title: 'Desktop Client Connection',
       description: 'Sets the API server address for the desktop client. Leave empty to connect to the current server origin.',
@@ -52,6 +56,11 @@ export default {
     providerPlaceholder: 'e.g. openai',
     model: 'Model',
     modelPlaceholder: 'e.g. gpt-4o',
+    failureThreshold: 'Failure threshold (times)',
+    failureThresholdHint: 'A key is tripped after this many consecutive failures. Default 3, must be greater than 0.',
+    failureThresholdInvalid: 'Failure threshold must be greater than 0',
+    cooldownSeconds: 'Cooldown recovery (seconds)',
+    cooldownSecondsHint: 'A tripped key recovers automatically after this duration. Default 300 seconds.',
     apiOrigin: 'Connection Address (API Server)',
     apiOriginPlaceholder: 'e.g. http://127.0.0.1 or https://your-domain.com',
   },
