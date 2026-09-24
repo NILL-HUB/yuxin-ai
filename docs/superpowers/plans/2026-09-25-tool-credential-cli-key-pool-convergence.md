@@ -845,7 +845,8 @@ def test_model_key_pool_is_registered_as_supported_section():
 def test_update_model_key_pool_rejects_non_positive_threshold():
     import pytest
 
-    with pytest.raises(ValueError):
+    # 必须限定 match：否则「未知 section」也会抛 ValueError，这条断言会因错误原因通过
+    with pytest.raises(ValueError, match="必须大于 0"):
         _service().update_config("model_key_pool", {"failure_threshold": 0})
 
 
@@ -855,6 +856,11 @@ def test_update_model_key_pool_ignores_unknown_key():
     assert "unknown_key" not in cfg
     assert cfg["failure_threshold"] == 3
 ```
+
+**两点硬约束（写测试前先读）：**
+
+1. **`match="必须大于 0"` 不可省。** `update_config` 有两条 `ValueError` 路径——未知 section（`不支持的配置分组`）与 int ≤ 0（`必须大于 0`）。只写 `pytest.raises(ValueError)` 会让断言在「section 根本没注册」时也通过，判别力为零。
+2. **`cooldown_seconds` 也必须 > 0**，因为 `_SECTION_FIELD_TYPES` 的 int 分支统一执行 `if value <= 0: raise ValueError`。**本次刻意不为此开例外**（避免在既有校验机制里加第二条规则）。因此：C2 的冷却恢复测试改**回拨 `circuit_opened_at`** 来模拟冷却已过（不再用 `cooldown_seconds: 0`），C3 前端冷却控件 `:min` 用 **1**。
 
 （`update_config` 的 `expected is int` 分支已含 `if value <= 0: raise ValueError(f"{key} 必须大于 0")`，因此「拒绝 0」无需额外实现即成立；白名单由 `DEFAULT_CONFIGS` 派生，未知 key 被 `continue` 跳过。）
 
@@ -934,10 +940,12 @@ git commit -m "feat(config): add model_key_pool section for key pool circuit bre
 
     def test_get_keys_for_model_should_recover_key_after_cooldown(self, model_pool_db, monkeypatch):
         service = _service(model_pool_db)
+        # cooldown_seconds 必须 > 0（C1 的 int 校验统一拒绝 <= 0），
+        # 因此用「回拨 circuit_opened_at」来模拟冷却已过，而不是把冷却设为 0。
         monkeypatch.setattr(
             service,
             "_key_pool_config",
-            lambda: {"failure_threshold": 1, "cooldown_seconds": 0},
+            lambda: {"failure_threshold": 1, "cooldown_seconds": 300},
         )
         model = _make_model(model_pool_db, provider="openai")
         key = _make_key(model_pool_db, provider="openai", model_id=None)
@@ -946,6 +954,11 @@ git commit -m "feat(config): add model_key_pool section for key pool circuit bre
         assert model_pool_db.session.query(ModelKeyConfig).filter(
             ModelKeyConfig.id == key.id
         ).one().status == "circuit_open"
+
+        # 把熔断时间回拨到冷却期之前（600s 前 > 300s 冷却），模拟冷却已到
+        stale = model_pool_db.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == key.id).one()
+        stale.circuit_opened_at = service._now() - timedelta(seconds=600)
+        model_pool_db.session.commit()
 
         keys = service.get_keys_for_model(model.id)
 
@@ -968,7 +981,52 @@ git commit -m "feat(config): add model_key_pool section for key pool circuit bre
         service.record_key_failure(key.id)
 
         assert service.get_keys_for_model(model.id) == []
+
+    def test_get_keys_for_model_should_not_recover_manual_circuit_without_timestamp(self, model_pool_db):
+        """手动熔断（无 timestamp）不得被自动恢复——否则 admin 拉闸会被静默撤销。"""
+        service = _service(model_pool_db)
+        model = _make_model(model_pool_db, provider="openai")
+        # 模拟 admin set_key_status 的效果：只置 circuit_open，不写 circuit_opened_at
+        _make_key(
+            model_pool_db,
+            provider="openai",
+            model_id=None,
+            status="circuit_open",
+            circuit_opened_at=None,
+        )
+
+        assert service.get_keys_for_model(model.id) == []
+
+    def test_get_keys_for_model_should_not_recover_key_of_other_provider(self, model_pool_db, monkeypatch):
+        """冷却恢复只作用于本 provider，不得跨界复活其它供应商的 Key。
+
+        判别力关键：other 的熔断时间必须**回拨到冷却期之外**（7200s > 3600s），
+        这样「未收窄 provider」的旧实现会复活它（测试失败），收窄后才会通过。
+        若写成 `circuit_opened_at=_now()`，旧实现也会因「冷却未到」而跳过，测试恒真。
+        """
+        service = _service(model_pool_db)
+        monkeypatch.setattr(
+            service,
+            "_key_pool_config",
+            lambda: {"failure_threshold": 1, "cooldown_seconds": 3600},
+        )
+        model = _make_model(model_pool_db, provider="openai")
+        other = _make_key(
+            model_pool_db,
+            provider="deepseek",
+            model_id=None,
+            status="circuit_open",
+            circuit_opened_at=_now() - timedelta(seconds=7200),
+        )
+
+        service.get_keys_for_model(model.id)
+
+        model_pool_db.session.expire_all()
+        still_open = model_pool_db.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == other.id).one()
+        assert still_open.status == "circuit_open"
 ```
+
+（文件顶部已有 `from datetime import UTC, datetime, timedelta`，`timedelta` 可直接用。）
 
 - [ ] **Step 2: 运行测试确认失败**
 
@@ -980,7 +1038,8 @@ Expected：FAIL —— 阈值 `2` 时第一次失败即被判定 `True`（当前
 在 `api/internal/model/model_pool_entity.py` 的 `ModelKeyConfig` 内、`last_used_at` 附近追加：
 
 ```python
-    # 熔断开启时间；用于冷却后自动恢复（为 NULL 表示未处于熔断态）
+    # 自动熔断开启时间（record_key_failure 写入）；仅冷却恢复读取。
+    # 为 NULL 表示「非自动熔断」（含 admin 手动拉闸）：不参与冷却恢复，保持其状态。
     circuit_opened_at = Column(DateTime, nullable=True)
 ```
 
@@ -1098,11 +1157,21 @@ Expected：成功（`down_revision` 指向已被 git 跟踪的 `g1b2c3d4e5f8`）
 `_recover_cooled_down_keys`：
 
 ```python
-    def _recover_cooled_down_keys(self, session: Any) -> None:
-        """把冷却期已到的 circuit_open Key 复位为 active（失败计数清零）。"""
+    def _recover_cooled_down_keys(self, session: Any, *, provider: str) -> None:
+        """把冷却期已到的 circuit_open Key 复位为 active（失败计数清零）。
+
+        - 只扫描**本 provider** 的熔断 Key：与 get_keys_for_model 的选键范围一致，
+          避免「查 A 模型却复活 B 供应商的 Key」。
+        - `circuit_opened_at is None` 视为**不可恢复**：只有带时间戳、且冷却已过的
+          Key 才复活。这样既不会在部署时把历史 `circuit_open` 行（无时间戳）静默
+          全量复活，也不会让 admin 手动拉闸（set_key_status 不写时间戳）被自动撤销。
+        """
         candidates = (
             session.query(ModelKeyConfig)
-            .filter(ModelKeyConfig.status == "circuit_open")
+            .filter(
+                ModelKeyConfig.status == "circuit_open",
+                ModelKeyConfig.provider == provider,
+            )
             .all()
         )
         if not candidates:
@@ -1114,7 +1183,7 @@ Expected：成功（`down_revision` 指向已被 git 跟踪的 `g1b2c3d4e5f8`）
         recovered: list[ModelKeyConfig] = []
         for key in candidates:
             opened_at = key.circuit_opened_at
-            if opened_at is not None and opened_at > deadline:
+            if opened_at is None or opened_at > deadline:
                 continue
             key.status = "active"
             key.failure_count = 0
@@ -1124,10 +1193,20 @@ Expected：成功（`down_revision` 指向已被 git 跟踪的 `g1b2c3d4e5f8`）
         if not recovered:
             return
         session.commit()
-        logger.info("Key 池冷却恢复 %d 个 Key", len(recovered))
+        logger.info(
+            "Key 池冷却恢复 %d 个 Key provider=%s", len(recovered), provider
+        )
 ```
 
-要点：**先查 `circuit_open` 再读配置**——绝大多数调用（无熔断 Key）直接 return，既省一次配置查询，也避免在缺表的测试库上反复打告警。
+调用点（`get_keys_for_model` 内，传 provider）：
+
+```python
+        self._recover_cooled_down_keys(session, provider=model.provider)
+```
+
+要点：
+- **先查 `circuit_open` 再读配置**——绝大多数调用（无熔断 Key）直接 return，既省一次配置查询，也避免在缺表的测试库上反复打告警。
+- **`opened_at is None` 必须跳过**（不是「立即复活」）。熔断的两个写入口语义不同：`record_key_failure`（自动熔断）会写 `circuit_opened_at`，可被冷却恢复；`admin_model_pool_service.set_key_status` / `update_key`（手动熔断）**不写**时间戳，NULL 分支跳过才能保证「管理员手动拉闸不被自动撤销」。这也是部署安全前提：存量 `circuit_open` 行迁移后时间为 NULL，跳过即维持其原有终态，不会静默复活。
 
 文件顶部补 `from datetime import UTC, datetime, timedelta` 与 `import logging` / `logger = logging.getLogger(__name__)`（当前文件既无 `logging` 也无 `logger`，必须新增）。
 
@@ -1234,7 +1313,7 @@ export interface ModelKeyPoolConfig {
               <a-input-number v-model="form.model_key_pool.failure_threshold" :min="1" :step="1" :precision="0" />
             </a-form-item>
             <a-form-item :label="t('admin.globalControlConfig.fields.cooldownSeconds')" field="cooldown_seconds">
-              <a-input-number v-model="form.model_key_pool.cooldown_seconds" :min="0" :step="1" :precision="0" />
+              <a-input-number v-model="form.model_key_pool.cooldown_seconds" :min="1" :step="1" :precision="0" />
             </a-form-item>
           </a-form>
           <p class="hint-text">{{ t('admin.globalControlConfig.fields.cooldownSecondsHint') }}</p>
