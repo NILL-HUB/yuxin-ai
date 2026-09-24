@@ -457,6 +457,7 @@ class McpService(BaseService):
             "env": provider.env or {},
             "timeout_seconds": provider.timeout_seconds or 30,
             "tool_names": provider.tool_names or [],
+            "tool_schema": provider.tool_schema or {},
             "source_key": provider.source_key,
             "source_type": provider.source_type,
             "enabled": True,

@@ -1926,7 +1926,9 @@ SUPPORTED_CLI_TRANSPORTS = {"cli"}
                 continue
 ```
 
-**为什么两处都改**：`prepare_binding_snapshots`（`:249`）是 `get_tools` 用快照时的独立前置路径。只改 `get_tools` 会让绑定在快照侧被标记 `unsupported` 并返回空工具列表——工具在快照模式下静默消失。
+**为什么工厂内要改全部 4 处**：工厂内共有 4 处 `transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS` 形式的成员守卫（`refresh_binding_snapshots` / `get_tools` / `_get_tools_from_snapshots` / `list_remote_tool_definitions`），它们各自独立判定，**漏任一处**都会让 cli 绑定在该路径上被静默丢弃（快照路径丢工具、广场详情读不到工具定义）。用统一的 `_is_supported_transport(transport)` 收敛，避免以后新增传输类型时又漏。
+
+（注：`prepare_binding_snapshots` 体内**没有** transport 守卫，只调 `_is_binding_enabled`；带守卫的是 `refresh_binding_snapshots`。以 grep 实测为准。）
 
 `_is_binding_enabled`（`:547-554`）改为：
 
@@ -2003,6 +2005,9 @@ git commit -m "feat(mcp): dispatch cli transport to raw stdio client"
 - Modify: `api/internal/schema/mcp_schema.py`
 - Modify: `api/internal/entity/mcp_entity.py`
 - Modify: `api/internal/service/mcp_service.py`
+- Modify: `api/internal/service/app_config_service.py`（Step 3a：装配路径的 cli 守卫 + `tool_schema` 透传）
+- Modify: `api/internal/service/app_service.py`（Step 3a：绑定保存校验的 cli 守卫）
+- Test: `api/test/internal/service/test_mcp_service_cli_binding.py`（新建，覆盖 `_normalize_binding`/`_is_binding_enabled`/`_binding_reason` 的 cli 语义）
 
 - [ ] **Step 1: 扩展 transport 归一与白名单**
 
@@ -2141,6 +2146,60 @@ _SUPPORTED_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http", "s
 - `_build_catalog_provider_payload`（`:377`）的调用实参中追加 `tool_schema=dict(getattr(provider_entity, "tool_schema", None) or {}),`（catalog 实体若无该字段则兜底 `{}`）
 
 `_build_private_provider_payload` 的 `provider` 是 `McpProvider` ORM 实例，迁移加了列后 `provider.tool_schema` 直接可用。
+
+**关键：`cli` 要在「绑定装配 + 保存校验」全链路可达，必须改**全部**等价守卫（漏一处即断链）。** 全仓 transport 守卫实测清单（`grep -rn 'streamable_http' api/internal` + factory 常量）：
+
+| # | 位置 | 现状 | 本次动作 |
+|---|---|---|---|
+| 1 | `mcp_schema.py:13` `_SUPPORTED_TRANSPORTS` | 无 cli | **加 cli** |
+| 2 | `mcp_service.py:123-144` `_normalize_binding` | 丢弃 `tool_schema`/`protocol` | **透传两字段** |
+| 3 | `mcp_service.py:146-169` `_is_binding_enabled`/`_binding_reason` | 只认 stdio/http | **加 cli** |
+| 4 | `app_config_service.py:820-827`（工具装配） | 非 http/stdio → `continue`（**cli 绑定被静默丢弃，最危险**） | **加 cli 分支** |
+| 5 | `app_service.py:1307-1314`（绑定保存校验） | 非 http/stdio → `raise ValidateErrorException("MCP transport格式错误")`（**cli 绑定保存即报错**） | **加 cli 分支** |
+| 6 | `mcp_import_service.py:37` `_SUPPORTED_TRANSPORTS` | 无 cli | **不改**（标准 `mcp.json` 无 cli transport，与 preview/URL 导入排除 stdio 同理；保持排除是正确的） |
+
+（`mcp_schema.py:185/237` 的 preview / URL 导入排除 stdio 同样**不加 cli**——它们语义上就是 HTTP 专属。）
+
+#### Step 3a: 装配与保存校验路径（计划原稿遗漏，必须补）
+
+`api/internal/service/app_config_service.py:820-827`，把 `else: continue` 改为接受 cli（与 stdio 同判 command）：
+
+```python
+            if transport in {"http", "sse", "streamable_http", "streamable-http"}:
+                if not url:
+                    continue
+            elif transport in {"stdio", "cli"}:
+                if not command:
+                    continue
+            else:
+                continue
+```
+
+`api/internal/service/app_service.py:1307-1314`，同理：
+
+```python
+                if transport in {"http", "sse", "streamable_http", "streamable-http"}:
+                    if not url:
+                        raise ValidateErrorException("MCP绑定URL不能为空")
+                elif transport in {"stdio", "cli"}:
+                    if not command:
+                        raise ValidateErrorException("MCP绑定命令不能为空")
+                else:
+                    raise ValidateErrorException("MCP transport格式错误")
+```
+
+**并补传 `tool_schema`**：这两处 binding 组装点都要把 `binding.get("tool_schema")`（`app_config_service`，该函数在 `:800-813` 逐个取字段）与 payload 的 `tool_schema` 一并透传，否则即使 transport 认了 cli，raw 模式仍拿不到工具声明。
+
+#### Step 3b: `_provider_to_binding` 也要传 `tool_schema`（工具索引同步路径）
+
+`mcp_service.py::_provider_to_binding`（`:446-463`）把 ORM provider 转成 binding **供 `sync_mcp_tools` → `list_remote_tool_definitions` 使用**。它若不带 `tool_schema`，cli provider 在同步 `mcp_tool` 索引表时会调 `_list_remote_tools` → raw 分支拿到空声明 → **同步结果为空**（工具无法被关键词/向量检索发现）。补一行（与 `tool_names` 同级）：
+
+```python
+            "tool_names": provider.tool_names or [],
+            "tool_schema": provider.tool_schema or {},
+```
+
+（`_build_private_provider_payload` 走的是主链路、已传；`_provider_to_binding` 是 `sync_mcp_tools` 专用支线，两条都要传才完整。）
 
 - [ ] **Step 3.5: 给响应 schema 补字段（否则中间层丢字段）**
 
