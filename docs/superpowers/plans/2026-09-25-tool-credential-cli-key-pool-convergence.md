@@ -2361,15 +2361,17 @@ git commit -m "feat(mcp): accept cli transport and tool_schema in schema and ser
 
 ```ts
     toolSchemaLabel: 'CLI 工具声明（tool_schema）',
-    toolSchemaPlaceholder: '{"echo": {"description": "回声文本", "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}}',
+    toolSchemaPlaceholder: 'JSON 对象；每个工具包含 description 与 parameters（JSON Schema）。例如 echo 工具含 text 参数。',
     toolSchemaRequired: 'cli 模式下必须声明至少一个工具',
 ```
+
+**⚠️ 占位文案不得包含裸 `{...}`**：vue-i18n 会把 `{...}` 当插值语法，渲染时抛 `Message compilation error: Invalid token in placeholder`。**不要**把 JSON 示例直接塞进字典值（本计划初稿犯过此错：打开 MCP 弹窗即报错）。若确需字面花括号，用 vue-i18n 转义写法 `{'{'}` / `{'}'}`（仓库既有先例见 `workflowEditor.ts:149`）。
 
 `en-US/space.ts` 对应位置：
 
 ```ts
     toolSchemaLabel: 'CLI tool declarations (tool_schema)',
-    toolSchemaPlaceholder: '{"echo": {"description": "Echo text", "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}}',
+    toolSchemaPlaceholder: 'A JSON object; each tool has description and parameters (JSON Schema). For example an echo tool with a text parameter.',
     toolSchemaRequired: 'At least one tool must be declared in cli mode',
 ```
 

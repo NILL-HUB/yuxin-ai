@@ -52,7 +52,7 @@ export default {
   scheduleBoard: '板块',
   scheduleAction: '动作',
   schedulePayload: '参数（JSON）',
-  schedulePayloadPlaceholder: '可选，如 {"key": "value"}',
+  schedulePayloadPlaceholder: "可选，如 {'{'}\"key\": \"value\"{'}'}",
   scheduleListEmpty: '暂无定时任务',
   scheduleCreateSuccess: '创建定时任务成功',
   scheduleDeleteTitle: '删除定时任务',

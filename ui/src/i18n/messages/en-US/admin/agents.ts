@@ -52,7 +52,7 @@ export default {
   scheduleBoard: 'Board',
   scheduleAction: 'Action',
   schedulePayload: 'Payload (JSON)',
-  schedulePayloadPlaceholder: 'Optional, e.g. {"key": "value"}',
+  schedulePayloadPlaceholder: "Optional, e.g. {'{'}\"key\": \"value\"{'}'}",
   scheduleListEmpty: 'No scheduled tasks',
   scheduleCreateSuccess: 'Scheduled task created',
   scheduleDeleteTitle: 'Delete Scheduled Task',

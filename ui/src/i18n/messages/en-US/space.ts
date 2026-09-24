@@ -136,7 +136,7 @@ export default  {
       jsonError: 'Invalid advanced config JSON: {message}',
       stdioCommandRequired: 'stdio mode requires a command',
       toolSchemaLabel: 'CLI tool declarations (tool_schema)',
-      toolSchemaPlaceholder: '{"echo": {"description": "Echo text", "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}}',
+      toolSchemaPlaceholder: 'A JSON object; each tool has description and parameters (JSON Schema). For example an echo tool with a text parameter.',
       toolSchemaRequired: 'At least one tool must be declared in cli mode',
       urlRequired: 'Please enter the MCP URL',
       objectExpected: 'Must be an object',

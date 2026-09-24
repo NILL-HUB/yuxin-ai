@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { createI18n } from 'vue-i18n'
 
 import enUS from '@/i18n/messages/en-US'
 import zhCN from '@/i18n/messages/zh-CN'
@@ -123,4 +124,43 @@ describe('i18n referenced-key guard', () => {
     // 扫描器至少要能识别出大量键，否则说明正则/路径失效，守卫形同虚设
     expect(referenced.size).toBeGreaterThan(500)
   })
+})
+
+// ---------------------------------------------------------------------------
+// 消息值可编译性守卫：值里若含未转义的 `{...}`（如直接把 JSON 示例塞进字典），
+// vue-i18n 会把它当插值语法解析并在 **渲染时** 抛
+// `Message compilation error: Invalid token in placeholder`。
+// parity 只比对键集合与引用，不编译值，因此这类错误能逃过全部测试直到用户打开页面。
+// 本守卫对每个叶子路径实际调用一次 t()，把该风险在 CI 阶段拦住。
+// 需要在值里写字面花括号时，用 vue-i18n 的转义写法 `{'{'}` / `{'}'}`（见 workflowEditor.ts）。
+// ---------------------------------------------------------------------------
+describe('i18n message value compilability', () => {
+  const locales: Array<[string, unknown]> = [
+    ['zh-CN', zhCN],
+    ['en-US', enUS],
+  ]
+
+  for (const [locale, messages] of locales) {
+    it(`compiles every message value in ${locale}`, () => {
+      const i18n = createI18n({
+        legacy: false,
+        locale,
+        fallbackLocale: locale,
+        messages: { [locale]: messages } as never,
+      })
+      const paths: string[] = []
+      collectLeafPaths(messages, '', paths)
+      const failures: string[] = []
+      for (const path of paths) {
+        const value = leafValue(messages, path)
+        if (typeof value !== 'string') continue
+        try {
+          i18n.global.t(path)
+        } catch (error) {
+          failures.push(`${path}: ${(error as Error).message}`)
+        }
+      }
+      expect(failures.sort()).toEqual([])
+    })
+  }
 })

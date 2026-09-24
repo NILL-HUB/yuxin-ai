@@ -131,7 +131,7 @@ export default  {
       jsonError: '高级配置 JSON 格式错误: {message}',
       stdioCommandRequired: 'stdio 模式需要填写命令',
       toolSchemaLabel: 'CLI 工具声明（tool_schema）',
-      toolSchemaPlaceholder: '{"echo": {"description": "回声文本", "parameters": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}}}',
+      toolSchemaPlaceholder: 'JSON 对象；每个工具包含 description 与 parameters（JSON Schema）。例如 echo 工具含 text 参数。',
       toolSchemaRequired: 'cli 模式下必须声明至少一个工具',
       urlRequired: '请填写 MCP 地址',
       objectExpected: '必须是对象',
