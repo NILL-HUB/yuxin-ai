@@ -85,6 +85,45 @@
 - **中间层核对字段透传**：新增字段若需跨层（服务 → 聚合 → 工具 → 前端）传递，逐层确认未被丢弃；聚合/序列化处「只挑几个字段」的白名单式赋值是丢字段高发点。同理，过滤条件必须确保**每个检索分支都受约束**，不得有分支绕过。
 - **收尾自检写进回复**：宣告任务完成时，用一行点明关键新增能力的入口（如「L2 触发入口：`POST /space/knowledge-bases/<kb_id>/documents/<document_id>/l2`」）。这既是对上述要求的自证，也让审查者能直接复核，而不必回读全部 diff。
 
+## 拒绝意大利面补丁：轮胎 vs 补丁（强制规则）
+
+本仓库反复出现一种「越修越烂」的失效模式：每个新需求都在旧代码上再贴一层补丁，补丁相互缠结，最终**无人敢动**。判断标准**不是补丁数量多少**，而是「**是否还能看出一个成型的轮胎**」：
+
+- **轮胎 + 一两个补丁（可接受、保留）**：存在**单一权威入口 / 核心能力层**，绝大多数调用方都走它，并有强校验（如生产环境拒绝弱密钥/弱配置）；补丁只是边缘的、可被收纳的少数例外。补丁能逐个并入主入口，轮胎结构完好。
+- **无数补丁组成的轮胎（不可接受、必须推倒重建）**：**没有任何权威入口**，同一件事在各处各写一套；所谓「轮胎」只是补丁的堆叠，没有骨架。继续叠加只会加速腐化。
+
+**本质区别：补丁是被主体吸纳的少数派，还是补丁本身就是主体。** 前者补，后者重建；**禁止在补丁堆上继续贴补丁**。
+
+### 动手前必须先量化（禁止凭感觉判断）
+
+用户提出改动需求、或你准备提出改动方案时，**先测量补丁密度，再决定「补」还是「重建」**。不得凭印象宣布「这是小改」或「这要重构」。必做的测量：
+
+| 测量项 | 怎么测 | 判读 |
+|---|---|---|
+| 是否已有核心能力层 | 搜该功能的核心符号，看它被**多少个模块 import / 调用** | 被 ≥3 个模块复用**且有强校验** → 已存在轮胎 |
+| 补丁的实际密度 | 对反模式做全仓计数（如 `os\.getenv\(".*API_KEY"`、重复的 provider 硬编码、同一逻辑的第二份实现），用 grep 统计**命中数与文件数** | 命中分散在 N 个文件、每处各写一套 → 补丁可能是主体 |
+| 入口是否统一 | 分别追踪该功能的**写入路径**与**读取路径**，看是否收敛到同一个函数 | 写入 1 个入口、读取散落 M 处 → 轮胎+补丁；写入/读取**双双散落** → 补丁堆 |
+| 是否有平行机制 | 是否存在与本应统一的功能**并列的第二套实现** | 有平行机制即高危信号（呼应「系统配置统一走 admin」的「优先扩展既有板块，禁止新建平行机制」） |
+
+实测示例（2026-09 工具凭证侧审计）：`tool_credential_encryptor` 被独立成服务并被 **10 个模块 import**（`mcp_tool_factory` / `mcp_stdio_client` / `api_provider_manager` / `skill_executor` / `skill_catalog` / `skill_import_service` / `admin_redeem_code_service` / `admin_model_pool_service` / `external_data_source_credentials` / `payment_config_service`），且有 `encrypt` / `mask` / `decrypt` 三套能力与生产环境强校验——这是**轮胎**。但同一功能域另有 **36 处裸 `os.getenv("<NAME>_API_KEY|TOKEN|SECRET|APP_ID|SK")` 跨 21 个文件**、**13 处直接调用 `LanguageModelService.get_provider_credentials`**——这些是**补丁**。判定为「轮胎 + 补丁」，处置是**把这些补丁逐个并入既有凭证入口，而不是新建第二套凭证机制**。
+
+### 处置规则
+
+- **判定为「轮胎 + 一两个补丁」→ 只补洞口**：把散落的补丁**并入既有权威入口**（扩展已存在的服务/配置键），并在 `docs/research/config-inventory.md` 或对应文档登记「已收编哪些补丁」。
+- **判定为「补丁组成的轮胎」→ 必须推倒重建**：先向用户**明确申报**重建方案（新骨架是什么、旧补丁如何迁移/删除、迁移期如何兼容），得到确认后再动手；**禁止**在补丁堆上继续叠加，也**禁止**「重建时只换皮不换骨」。
+- **禁止新建平行机制**：无论补还是重建，都必须收敛到**单一权威入口**。若发现本应统一的功能存在第二套实现，先合并再谈新需求（与「系统配置统一走 admin」「接线审查」两条规则互为姊妹）。
+- **过渡补丁必须可识别**：新代码若不得不作为过渡补丁存在，必须在注释或 commit message 中标注 `PATCH(scope): 原因 + 收编计划`，并登记收编去向，避免补丁永久化。
+
+### 收尾自检（写进回复）
+
+每次提出改动方案或宣告完成时，用一段话**显式给出判定与数据**：
+
+1. 这是「轮胎 + 补丁」还是「补丁组成的轮胎」？判定依据（引用上面测量的命中数/文件数）是什么？
+2. 本次是**补洞口**还是**推倒重建**？若重建，旧补丁的迁移/删除路径是什么？
+3. 改动后是否仍保持**单一权威入口**？有没有引入第二套平行实现？
+
+**判定为「补丁组成的轮胎」却仍按贴补丁推进，视为未完成本规则。**
+
 ## 前端 i18n 规范（强制规则）
 
 前端所有面向用户的文案（按钮、导航、提示语、表单字段、空状态、错误提示、管理后台文案等）**必须**走 i18n，**禁止硬编码**中文字符串或英文字符串到组件/页面中。规范要点：
@@ -97,20 +136,31 @@
 - **不硬编码语境文案的归属**：一个语义单位（如删除确认标题、表单 label + placeholder）归入其所属页面的板块命名空间下（如用户管理页文案统一放 `admin.customerUsers.*`），复用高频通用词放 `common.*`，不要为凑数随意铺散或复制整段键。
 - **消息插值用 i18n 语法**：含动态值的文案在字典里写成 `删除用户：{name}`，代码侧用 `t('...', { name })`，不要用字符串拼接代替。
 
-## 系统配置复用 admin 板块（强制规则）
+## 系统配置统一走 admin 管理（强制规则）
 
-新增「公共 AI 配置」与「系统提示词」时，**必须复用 admin 端既有的两个管理板块**，禁止在代码里硬编码新条目或绕过 admin API 直接写表。两个板块及其对应的后端表、seed 机制、admin 入口如下：
+### 总则（面向整个 admin 后端）
+
+- **一切系统级/管理员级、且会被业务代码读取的配置，都必须通过 admin 端既有的管理板块落库管理**。禁止在业务代码里硬编码新配置条目、绕过 admin API 直接 INSERT/UPDATE 配置表、或新增散落的业务配置 env 条目（历史教训：`fetch_media` 开关曾散落在 env 里，最终迁回 `/admin/public-ai-features`；存储 cos 配置曾全读 env，`/admin/storage` 保存的 `storage_config` 运行时却不生效）。
+- **env 只允许两类存在**：① 部署基础设施（DB/Redis/Celery/密钥/端口等连接类参数）；② 已有 admin 链条的「首启兜底」与「启动 seed 来源」。除此之外，写代码时准备 `os.getenv(...)` 读取业务开关/阈值/映射前，先停下来确认是否存在对应 admin 板块——有则走 admin 链。
+- **新配置项必须「成对」交付**：admin 可编辑入口 + 运行时读取点（对应下方「接线审查」的「新配置项」行）。只有表字段没有运行时读取点、或只有读取点没有 admin 入口，都算断链，不得宣告完成。
+- **优先扩展既有板块，禁止新建平行机制**：新需求先看能否复用既有板块（`/admin/storage`、`/admin/public-ai-features`、`/admin/system-knowledge` 等）——加字段、加 feature_key、加 category 归类；确需新建板块时，必须同步在 `docs/README.md` 登记导航。
+- **历史遗留处理**：发现被新链路取代、零生产调用方的旧 env 读取代码（如 `internal/service/storage/factory.py`、`backend.py`），在 `docs/research/config-inventory.md` 登记后清理，禁止继续引用或在其上扩展。
+
+### 既有 admin 管理板块清单
 
 | 板块 | admin 入口 | 后端表 | seed 机制 | admin 可编辑范围 |
 |---|---|---|---|---|
+| 存储配置 | `/admin/storage`（`AdminStorageView.vue`） | `storage_config` | `StorageConfigService.ensure_default_config()` 启动时补齐 | 激活后端切换 / configs（cos: bucket/region/scheme/domain/enable_internal_domain/auto_switch_domain_on_retry；local: root/base_url；oss: bucket/endpoint/domain；**密钥不入库**） |
 | 公共 AI 配置 | `/admin/public-ai-features`（`PublicAIFeatureConfigView.vue`） | `public_ai_feature_config` | `PublicAIFeatureService._BUILTIN_FEATURES` + `ensure_builtin_features()` 启动时补齐 | 模型绑定 / 开关 / fallback_tier / billable |
+| 全局控制配置 | `/admin/global-control-config`（`GlobalControlConfigView.vue`） | `global_control_config` | `GlobalControlConfigService.ensure_default_config()` 启动时补齐 | 6 个 section（runtime_fallback / media_fetch / agent_checkpoint / skill_catalog_sync / image_request_policy / vision_fallback）+ 桌面客户端 api_origin（复用 `desktop_client_config`） |
 | 系统提示词 | `/admin/system-knowledge` 第二个页签 `prompts`（`AdminSystemKnowledgeView.vue`） | `prompt_template` | `api/internal/core/prompts/<category>/<key>.yaml` + `index.yaml` 清单 + `PromptSyncService` 同步；通用 agent 身份类 prompt 走 `system_prompts.yaml` + `SystemPromptLibraryService` 同步到「系统提示词库」知识库 | content / name / description / variables（`source=custom` 不被 YAML 覆盖） |
 
 规则：
+- **存储配置**：cos 的 bucket/region/scheme/domain/enable_internal_domain/auto_switch_domain_on_retry 必须经 `/admin/storage` 保存到 `storage_config` 表，运行时经 `StorageConfigService.get_config("cos")` 读取（`CosService` 已通过 `_load_cos_configs()` 接入，configs 优先、env 兜底）。**后端分发**（`get_file_url` / `upload_bytes_without_record` / `RuntimeStorageProxy`）一律走 `get_active_backend()`，禁止在调用点读 `STORAGE_BACKEND` env 做分发。密钥（SecretId/SecretKey）不入库，仍走 env。
 - **新增公共 AI 配置**（如新功能的 feature_key、新增模型档位策略等）：必须在 `PublicAIFeatureService._BUILTIN_FEATURES` 注册 feature_key + feature_name + feature_category + fallback_tier + billable，由 `ensure_builtin_features()` 写入 `public_ai_feature_config` 表；管理员在 `/admin/public-ai-features` 板块为其绑定模型/开关。**禁止**在业务代码里直接 INSERT/UPDATE `public_ai_feature_config`，或硬编码 feature_key→model_config_id 映射绕过该表。
 - **新增系统提示词**（如新 Agent 的身份 prompt、新分类器/规划器/反思 prompt、新执行模式的 system prompt 等）：必须把 prompt 内容写入 `api/internal/core/prompts/` 下对应 YAML 文件，并在 `index.yaml`（或 `system_prompts.yaml` 的 `prompts:` 清单）登记 `key`；运行时通过 `SystemPromptLibraryService.get_prompt_or_default()` / `PromptTemplate` 查询读取。**禁止**把新 prompt 字符串直接写在 `.py` 代码里（多行字符串、常量拼接、f-string 形式均属硬编码）。运行时读取顺序：DB（admin 编辑过的 `source=custom` 版本） > YAML seed（兜底）。
 - **双源保护不可绕过**：YAML 同步只覆盖 `source=catalog` 的记录；admin 编辑过的 `source=custom` 记录不被覆盖。新增条目时不要手动改 `source` 字段，让同步服务自动标记。
-- **优先扩展而非新建**：新需求先看是否能复用已有 feature_key / prompt_key（如 `conductor`、`conductor_fallback`、`agent_system_prompt_template`），避免功能相近的重复条目；确需新建时按 `feature_category` / `category` 归类到既有一级分类（routing/memory/assistant/conversation/chat/general/icon）。
+- **优先扩展而非新建**：新需求先看是否能复用已有 feature_key / prompt_key / storage 配置键（如 `conductor`、`conductor_fallback`、`agent_system_prompt_template`、cos 的 `bucket`），避免功能相近的重复条目；确需新建时按 `feature_category` / `category` 归类到既有一级分类（routing/memory/assistant/conversation/chat/general/icon）。
 - **YAML 是数据而非代码**：`api/internal/core/prompts/*.yaml` 不计入代码硬编码；它是 seed 数据文件，与代码逻辑解耦，便于部署/数据卷重建时自动恢复。
 
 ## graphify
@@ -134,3 +184,14 @@
 - 当用户提及 Better Harness，或任务涉及交付流程评审、工作流改进、修复计划时，先使用 `@better-harness` 技能分析本仓库并生成报告，再继续其他操作。
 - 报告输出在 `.codex/better-harness/` 下；分析后按报告中的验收清单落地改进。
 - 修改代码后仍按上方 graphify 规则运行 `python -m graphify update .` 保持知识图谱最新。
+
+## Docker UI 开发/生产切换（强制规则）
+
+前端模式切换是**单一可信入口**，任何改动不得引入第二条 dev 路径；否则会导致 `ui-dev`/`ui-prod` 切换失效、外层 nginx 透传错乱。
+
+- **事实源**：UI 的对外契约定义在主 `docker/docker-compose.yaml` 的 `llmops-ui` 段——`container_name: llmops-ui` + 端口 `${UI_PORT:-3000}:3000`，外层 `llmops-nginx` 上游固定 `llmops-ui:3000`。改动端口/容器名必须同步核对 nginx 的 `UI_UPSTREAM_*`。
+- **唯一 dev 覆盖**：前端开发模式只允许叠加 `docker/docker-compose.ui-dev.yaml`（保留 nginx、端口一致、src 挂载 HMR）。`docker/docker-compose.dev.yaml`（禁用 nginx / 5173）已**删除**，禁止重建或另造第二个 dev 覆盖文件。
+- **切换只走脚本**：进入/退出开发模式一律用 `docker/ui-dev.{ps1,sh}` / `docker/ui-prod.{ps1,sh}`（命令带 `--build`）；不手动 `docker compose up` 某个分支而绕过脚本。
+- **nginx 必须重启**：UI 镜像重建（尤其 `ui-prod` 切换）后必须 `docker restart llmops-nginx` 重新生成其上游配置；脚本已内置，勿删。
+- **dev 模式下源码改动不 rebuild**：`llmops-ui` 运行 Vite 时源码经 volume 挂载（`ui/src` 等），保存即 HMR，无需重建；依赖变更（`package.json`）才需重建 dev 镜像。
+- **OAuth 回调端口**：`api/.env(.example)` 的 `*_REDIRECT_URI` 指向**规范 dev 端口 3000**（nginx 统一入口），与 `5173` 等旧端口无关，改动前端端口时同步核对。

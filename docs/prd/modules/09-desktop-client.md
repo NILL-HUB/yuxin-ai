@@ -99,7 +99,8 @@ Electron 主进程（desktop/main.js，唯一入口）
   见 `api/internal/service/desktop_client_config_service.py`），未配置时回退请求同源
   `{scheme}://{host}`；DB 异常时同样回退同源（引导入口不得 500）。
 - admin 端维护该配置：`GET/PUT /admin/desktop-client-config`（`system_config:manage` 权限，
-  UI 页 `AdminDesktopClientConfigView.vue`）。开发环境配本地地址、生产环境换域名，桌面端启动自动跟随。
+  UI 入口并入「全局控制配置」页面（`/admin/global-control-config`，`GlobalControlConfigView.vue` 的「桌面客户端连接」分组，
+  数据/接口仍走 `admin-desktop-client-config` service）。开发环境配本地地址、生产环境换域名，桌面端启动自动跟随。
 - `desktop/server-config.js` `loadServerConfig`：fetch 入口 → 校验 data.api_origin → 写 userData 缓存；失败读缓存；无缓存用入口兜底。
   入口域名默认 `https://openllm.cloud`，可用环境变量 `DESKTOP_ENTRY_ORIGIN` 覆盖（开发/自测指向本地后端）。
 - 注入链路：preload `ipcRenderer.sendSync('desktop:get-config-sync')` → `window.__DESKTOP_CONFIG__`；运行中刷新经 `desktop:config-changed` 事件 + `onDesktopConfigChanged` 订阅。
@@ -150,7 +151,7 @@ Electron 主进程（desktop/main.js，唯一入口）
 
 - 已交付（2026-09-08）：单 exe worker 托管、服务器地址注入、托盘/通知/自启/更新框架、safeStorage 凭证同步、设备面板完善、NSIS 打包验证（`desktop/package.json` 未设 `productName`，安装包名取自 `name=yujianwo-desktop`；仓库内 `desktop/dist-nsis/` 现存产物为更名前构建的 `钰心AI Setup 0.1.0.exe`，重新构建会按当前配置产出新名）。
 - 已交付（2026-09-09，窗口原生化，对标 Hermes）：移除默认应用菜单栏（`Menu.setApplicationMenu(null)`）；`titleBarStyle:'hidden'` + Windows `titleBarOverlay`（系统原生 min/max/close 叠加层，renderer 经 `navigator.windowControlsOverlay` 读取按钮区宽度避让）；自绘标题栏组件 `DesktopTitleBar.vue`（拖拽区 + 双击最大化 + 品牌名，fixed 毛玻璃悬浮，仅桌面环境渲染）；窗口位置/尺寸/最大化状态持久化（`window-state.js`）；布局以 CSS 变量 `--desktop-titlebar-h` 适配（Web 为 0，零影响）；worker 宿主存活看门狗修复（`GetExitCodeProcess` 探活替代 Windows 下不可用的 `os.kill(pid,0)`，宿主退出即自杀，含 PyInstaller onefile 双层进程）。
-- 已交付（2026-09-09，连接配置与 CORS 修复）：admin 端新增"桌面客户端连接地址"配置（`desktop_client_config` 表单行 JSONB + `GET/PUT /admin/desktop-client-config` + `AdminDesktopClientConfigView.vue`），`/desktop-config` 优先返回配置地址、未配置/DB 异常回退同源；`DESKTOP_ENTRY_ORIGIN` 支持环境变量覆盖；修复 `onHeadersReceived` CORS 通配符 + 凭据非法组合（改为回显请求 Origin）。
+- 已交付（2026-09-09，连接配置与 CORS 修复）：admin 端新增"桌面客户端连接地址"配置（`desktop_client_config` 表单行 JSONB + `GET/PUT /admin/desktop-client-config`），`/desktop-config` 优先返回配置地址、未配置/DB 异常回退同源；`DESKTOP_ENTRY_ORIGIN` 支持环境变量覆盖；修复 `onHeadersReceived` CORS 通配符 + 凭据非法组合（改为回显请求 Origin）。2026-09-23 起该配置的 UI 入口并入「全局控制配置」页面「桌面客户端连接」卡片（`GlobalControlConfigView.vue`），数据/接口不变。
 - 已交付（2026-09-11，电脑控制开箱可用）：worker exe 打包 `pyautogui`/`Pillow` 依赖族，桌面端无需额外装 Python 依赖即可真实操作鼠标/键盘/截屏（实测移动鼠标与截图通过）；重新产出 NSIS 安装包。
 - 已交付（2026-09-11，设备链路打通 + cua-driver 集成）：
   - 登录即设备注册（`device-registry.js` + `desktop_device` 表 + `DesktopDeviceService` + `resolve_desktop_bridge`），服务端按账号动态解析 bridge，替代静态 `DESKTOP_BRIDGE_*`；端到端实测通过。

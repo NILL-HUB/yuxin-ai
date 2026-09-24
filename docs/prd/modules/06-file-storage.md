@@ -191,7 +191,7 @@ used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销
 - **存储路径**：`{year}/{month:02d}/{day:02d}/[folder/]{uuid}.{ext}`
 - **URL 格式**：`{COS_DOMAIN}/{key}`（默认匿名可访问）
 - **特性**：内置重试机制（`COS_UPLOAD_MAX_ATTEMPTS`）、幂等上传、预签名 URL
-- **classmethod 分发**：`get_file_url` 和 `upload_bytes_without_record` 根据 `STORAGE_BACKEND` 分发到对应后端，兼容现有直接调用 classmethod 的代码
+- **classmethod 分发**：`get_file_url` 和 `upload_bytes_without_record` 按激活后端分发（`_load_active_backend()`，`storage_config` 激活记录优先、env 兜底），兼容现有直接调用 classmethod 的代码
 
 #### 17.5.3 AliyunOSSService（阿里云 OSS）
 
@@ -222,6 +222,10 @@ used_bytes  = account_storage_usage.used_bytes   （上传 add_usage / 物理销
 | `OSS_DOMAIN` | - | OSS 自定义域名（可选） |
 
 完整配置见 `api/.env.example` 文件存储后端配置区块。
+
+> **配置归属（与 AGENTS.md「系统配置统一走 admin 管理」一致）**：
+> - **非密钥配置**（`root`/`base_url`/`bucket`/`region`/`scheme`/`domain` 等）由 admin `/admin/storage` 保存到 `storage_config` 表，运行时经 `_load_cos_configs()` / `_load_oss_configs()` / `_load_local_configs()` 读取（configs 优先、env 仅首启兜底）。
+> - **密钥类**（`COS_SECRET_ID`/`COS_SECRET_KEY`/`OSS_ACCESS_KEY_ID`/`OSS_ACCESS_KEY_SECRET`）不入库，仍走环境变量。
 
 ### 17.7 文件元数据模型
 
@@ -282,7 +286,7 @@ COS_REGION=ap-beijing
 COS_DOMAIN=https://your-bucket.cos.ap-beijing.myqcloud.com
 ```
 
-> **注意**：环境变量中的密钥/桶配置用于后端 SDK 的客户端初始化与 URL 拼接；`storage_config` 表只保存非敏感的展示配置。
+> **注意**：环境变量仅承载**密钥类**配置（SecretId/Key/AccessKey）与首启兜底；**非密钥配置**（`root`/`base_url`/`bucket`/`region`/`scheme`/`domain` 等）经 `/admin/storage` 保存到 `storage_config` 表，运行时由 `_load_cos_configs()` / `_load_oss_configs()` / `_load_local_configs()` 读取（configs 优先、env 兜底），不再「只存不读」。
 
 ### 17.10 与记忆系统冷存储的关系
 

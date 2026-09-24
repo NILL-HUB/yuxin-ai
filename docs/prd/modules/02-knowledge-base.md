@@ -976,12 +976,12 @@ assistant_agent_service._build_assistant_runtime_tools(message_id, conversation_
 L1 解析，形成「链接直达素材入库」的旁路。
 
 **门控**：工具 `FetchMediaTool` 的实例字段 `enabled` 决定可用性，其单一事实源是
-admin 公共 AI 配置的 `media_fetch` 开关（`/admin/public-ai-features`）：挂载点在
-`_build_assistant_runtime_tools` 经 `PublicAIFeatureService.is_feature_enabled("media_fetch")`
-读取，把结果注入构造（`fetch_media(enabled=...)`）。**默认关闭**（`_BUILTIN_FEATURES`
-中 `media_fetch.default_enabled=False`，启动 `ensure_builtin_features()` 落库后需管理员显式开启）。
-关闭时挂载点不注入该工具，工具自守卫返回「外部素材获取能力未开启，请在管理后台-公共
-AI 配置中开启」可读错误。
+admin 全局控制配置的「外部素材获取」开关（系统配置 → `/admin/global-control-config`）：挂载点在
+`_build_assistant_runtime_tools` 经 `GlobalControlConfigService.get_config("media_fetch")` 的
+`enabled` 字段读取，把结果注入构造（`fetch_media(enabled=...)`）。**默认关闭**（`global_control_config`
+表 section `media_fetch` 的 `enabled` 默认 false，启动 `ensure_default_config()` 落库后需管理员显式开启）。
+关闭时挂载点不注入该工具，工具自守卫返回「外部素材获取能力未开启，请在管理后台-全局
+控制配置中开启」可读错误。
 
 **Async 执行**：工具经 `media_fetch_task.delay(...)` 派发到 Celery
 （任务 name=`internal.task.media_fetch_tasks.media_fetch_task`，见
