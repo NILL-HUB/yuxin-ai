@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import urllib.error
 import urllib.request
 from typing import Any, Literal
@@ -71,6 +70,7 @@ def _normalize_text(value: Any) -> str:
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
     # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
     from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
+    from internal.service.tool_credential_resolver import get_tool_credential
 
     resolved = resolve_desktop_bridge(payload.get("requester"), purpose="/snapshot")
     if resolved:
@@ -78,15 +78,8 @@ def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
         endpoint = bridge_url.rstrip("/") + "/snapshot"
         token = bridge_token
     else:
-        # 2.回退静态配置
-        bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
-        bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
-        if bridge_url and bridge_token:
-            endpoint = bridge_url.rstrip("/") + "/snapshot"
-            token = bridge_token
-        else:
-            endpoint = _normalize_text(os.getenv("OS_AUTOMATION_URL"))
-            token = _normalize_text(os.getenv("OS_AUTOMATION_TOKEN"))
+        endpoint = get_tool_credential("OS_AUTOMATION_URL")
+        token = get_tool_credential("OS_AUTOMATION_TOKEN")
     if not endpoint or not token:
         return {
             "ok": False,
