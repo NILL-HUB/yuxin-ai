@@ -4,8 +4,8 @@
 （`scripts/render_worker.py`），由用户机器的 CPU 出片——把重负载算力外部化。
 
 通道解析**必须**走 `resolve_desktop_bridge`（按账号动态解析已注册设备），
-不可只读静态 env：桌面端 token 每次启动随机生成，静态配置对不上（这是
-`browser_action` 的已知断链，勿重蹈）。
+不可只读静态 env：桌面端 token 每次启动随机生成，静态配置对不上（`browser_action`
+曾有此断链，已于 2026-09-25 修复并同样改走 `resolve_desktop_bridge`）。
 
 语义区分（决定是否回退云端）：
 - `unavailable=True` —— 通道本身不可用（无注册设备 / 连不上 bridge）。

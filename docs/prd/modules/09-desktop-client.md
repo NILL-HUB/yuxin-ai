@@ -90,7 +90,11 @@ Electron 主进程（desktop/main.js，唯一入口）
   - `registerDevice(...)`：`POST {apiBase}/desktop/devices/register`，Bearer = 登录 access_token，body `{device_id, bridge_origin, bridge_token, name, platform}`。
 - `main.js`：`app.whenReady` 内记录 `bridgeAccessInfo` 并尝试注册；`desktop:set-credential`（登录同步）与新增 `desktop:register-device` IPC 均触发注册（凭证落盘后再注册，避免竞态）。
 - UI：`desktop-credential-sync.ts` 在 `setCredential` 成功后调用 `registerDevice()`（可选桥方法）。
-- 服务端：`desktop_device` 表 + `DesktopDeviceService`（幂等 UPSERT / 按账号解析默认在线设备 / list / revoke）+ `resolve_desktop_bridge(account_id, purpose)`；工具层（os_* / computer_action / 渲染）统一经该解析器取 bridge，静态配置回退。详见 [08-os-automation.md](./08-os-automation.md) 与 [product-vision.md §4.1](../product-vision.md)。
+- 服务端：`desktop_device` 表 + `DesktopDeviceService`（幂等 UPSERT / 按账号解析默认在线设备 / list / revoke）+ `resolve_desktop_bridge(account_id, purpose)`；工具层（os_* / computer_action / 渲染 / 浏览器自动化）统一经该解析器取 bridge，静态配置回退。详见 [08-os-automation.md](./08-os-automation.md) 与 [product-vision.md §4.1](../product-vision.md)。
+- `browser_action` 已接入 `resolve_desktop_bridge`（按账号动态解析在线设备）并已在
+  `assistant_agent_service` 挂载（`requester=account_id`），不再依赖静态 env 才能可用；
+  未注册设备时回退 `BROWSER_AUTOMATION_URL/TOKEN` 并返回明确错误（默认关闭）。
+  （2026-09-25 修复：`local_render_runner.py` 曾把「`browser_action` 仅读静态 env」记为已知断链，现已消除。）
 
 ### 2. 服务器地址注入（server-config + /api/desktop-config）
 

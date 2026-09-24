@@ -1,6 +1,6 @@
 # 配置治理：admin 统一化审计清单
 
-> 状态：审计快照（非权威，代表 2026-09-22 排查时点；2026-09-23 按「全局控制配置」收编更新）。依据 AGENTS.md「系统配置统一走 admin 管理（强制规则）」执行。
+> 状态：审计快照（非权威，代表 2026-09-22 排查时点；2026-09-23 按「全局控制配置」收编更新；2026-09-25 按「工具凭证收敛入口」收编更新）。依据 AGENTS.md「系统配置统一走 admin 管理（强制规则）」执行。
 > 分级：A=已修复 / B=死代码待清理 / C=合理保留 env / D=待评估是否迁 admin。
 
 ## 背景与结论
@@ -34,6 +34,15 @@
 ## C. 合理保留 env（密钥 / 部署基础设施 / 迁移脚本）
 
 - **第三方凭据与密钥**：COS SecretId/SecretKey、OSS AccessKey、OAuth 客户端、外部 API Key（gaode/newsapi/github/stability 等 builtin 工具 provider）——密钥类一律不入库，走 env 是正确位置。
+  - **2026-09-25 收编**：builtin 工具 provider 内 23 处凭证裸读（17 文件）已统一收敛到
+    `internal/service/tool_credential_resolver.py` 的 `get_tool_credential()`；工具层不再直接
+    调用 `os.getenv`。**存放位置不变（仍在 env），仅收敛读取方式**；三种缺凭证语义
+    （`return None` / 中文提示串 / `raise FailException`）保留在各自调用点。
+  - **空白归一（行为收紧）**：统一解析器会对取值 `.strip()`，因此**仅由空白组成的凭证值
+    现被视为「缺失」**（此前 `os.getenv` 原样返回空白串会被当作「已配置」）。这是刻意的
+    行为收紧，统一了「有值 / 无值」的判据，避免空白 key 被当成有效凭证发起请求。
+  - bridge/OS 家族 4 文件内「`resolve_desktop_bridge` 返回 None 后再读 `DESKTOP_BRIDGE_URL`」
+    的可证死分支已删除（该静态回退由 `desktop_bridge_resolver` 内部完成）。
 - **部署基础设施**：数据库连接、Redis、容器端口、日志级别、Nginx upstream 等（config/config.py、app.py、logging_extension）。
 - **一次性迁移脚本**：`internal/migration/**` 中的 env 读取属数据迁移工具，不进运行时 admin 链。
 - **业务开关类 env（已迁入全局控制配置，env 仅兜底，2026-09-23）**：`SKILL_CATALOG_SYNC_ENABLED`、`IMAGE_REQUEST_POLICY`、`VISION_FALLBACK_PROVIDER/MODEL` 已迁入 `global_control_config` 表对应 section（`skill_catalog_sync` / `image_request_policy` / `vision_fallback`），运行时优先读表、读表失败时 env 兜底；`.env.example` / `default_config.py` 仍保留默认值作兜底。
