@@ -18,6 +18,7 @@ from .mcp_stdio_client import McpStdioClient
 DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 30
 SUPPORTED_HTTP_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http"}
 SUPPORTED_STDIO_TRANSPORTS = {"stdio"}
+SUPPORTED_CLI_TRANSPORTS = {"cli"}
 
 
 def _normalize_text(value: Any) -> str:
@@ -331,7 +332,7 @@ class McpToolFactory:
                 continue
 
             transport = self._normalize_transport(binding.get("transport"))
-            if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
+            if not self._is_supported_transport(transport):
                 snapshots.append(
                     self._build_snapshot_payload(
                         binding=binding,
@@ -426,7 +427,7 @@ class McpToolFactory:
                 continue
 
             transport = self._normalize_transport(binding.get("transport"))
-            if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
+            if not self._is_supported_transport(transport):
                 logging.warning("不支持的 MCP transport，已跳过: %s", transport)
                 continue
 
@@ -478,7 +479,7 @@ class McpToolFactory:
                 continue
 
             transport = self._normalize_transport(binding.get("transport"))
-            if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
+            if not self._is_supported_transport(transport):
                 continue
 
             snapshot = snapshot_map.get(self.build_binding_identity(binding))
@@ -519,7 +520,7 @@ class McpToolFactory:
             return []
 
         transport = self._normalize_transport(binding.get("transport"))
-        if transport not in SUPPORTED_HTTP_TRANSPORTS and transport not in SUPPORTED_STDIO_TRANSPORTS:
+        if not self._is_supported_transport(transport):
             logging.warning("不支持的 MCP transport，已跳过: %s", transport)
             return []
 
@@ -549,7 +550,7 @@ class McpToolFactory:
             return False
         name = bool(_normalize_text(binding.get("name")))
         transport = self._normalize_transport(binding.get("transport"))
-        if transport in SUPPORTED_STDIO_TRANSPORTS:
+        if transport in SUPPORTED_STDIO_TRANSPORTS or transport in SUPPORTED_CLI_TRANSPORTS:
             return name and bool(_normalize_text(binding.get("command")))
         return name and bool(_normalize_text(binding.get("url")))
 
@@ -558,6 +559,13 @@ class McpToolFactory:
         if normalized in {"streamable-http", "streamable_http"}:
             return "streamable_http"
         return normalized or "streamable_http"
+
+    def _is_supported_transport(self, transport: str) -> bool:
+        return (
+            transport in SUPPORTED_HTTP_TRANSPORTS
+            or transport in SUPPORTED_STDIO_TRANSPORTS
+            or transport in SUPPORTED_CLI_TRANSPORTS
+        )
 
     def _build_langchain_tool(self, binding: dict[str, Any], tool_definition: dict[str, Any]) -> BaseTool:
         """将单个 MCP 工具定义封装为 LangChain 工具。"""
@@ -586,6 +594,7 @@ class McpToolFactory:
             "binding_description": binding_description,
             "source_key": _normalize_text(binding.get("source_key")),
             "source_type": _normalize_text(binding.get("source_type")),
+            "transport": self._normalize_transport(binding.get("transport")),
             "tool_name": raw_tool_name,
             "tool_title": tool_title,
             "tool_description": raw_description,
@@ -639,7 +648,9 @@ class McpToolFactory:
 
     def _list_remote_tools(self, binding: dict[str, Any]) -> list[dict[str, Any]]:
         transport = self._normalize_transport(binding.get("transport"))
-        if transport in SUPPORTED_STDIO_TRANSPORTS:
+        if transport in SUPPORTED_CLI_TRANSPORTS:
+            binding = {**binding, "protocol": "raw"}
+        if transport in SUPPORTED_STDIO_TRANSPORTS or transport in SUPPORTED_CLI_TRANSPORTS:
             return self._stdio_client.list_tools_sync(binding)
         payload = self._jsonrpc_request(binding, "tools/list", params={})
         if isinstance(payload, dict):
@@ -652,7 +663,9 @@ class McpToolFactory:
 
     def _call_remote_tool(self, binding: dict[str, Any], tool_name: str, arguments: dict[str, Any]) -> str:
         transport = self._normalize_transport(binding.get("transport"))
-        if transport in SUPPORTED_STDIO_TRANSPORTS:
+        if transport in SUPPORTED_CLI_TRANSPORTS:
+            binding = {**binding, "protocol": "raw"}
+        if transport in SUPPORTED_STDIO_TRANSPORTS or transport in SUPPORTED_CLI_TRANSPORTS:
             payload = self._stdio_client.call_tool_sync(binding, tool_name, arguments)
         else:
             payload = self._jsonrpc_request(
