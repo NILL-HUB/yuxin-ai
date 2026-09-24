@@ -808,6 +808,7 @@ class AppConfigService(BaseService):
             args = binding.get("args", [])
             env = binding.get("env", {})
             tool_schema = binding.get("tool_schema", {})
+            protocol = str(binding.get("protocol", "")).strip()
             provider_key = str(binding.get("provider_key", "")).strip()
             source_type = str(binding.get("source_type", "")).strip()
             source_key = str(binding.get("source_key", "")).strip()
@@ -876,6 +877,7 @@ class AppConfigService(BaseService):
                 "args": cleaned_args,
                 "env": cleaned_env,
                 "tool_schema": tool_schema,
+                "protocol": protocol,
                 "enabled": enabled,
                 "headers": cleaned_headers,
                 "tool_names": cleaned_tool_names,

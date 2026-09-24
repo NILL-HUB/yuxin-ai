@@ -2157,6 +2157,14 @@ _SUPPORTED_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http", "s
 | 4 | `app_config_service.py:820-827`（工具装配） | 非 http/stdio → `continue`（**cli 绑定被静默丢弃，最危险**） | **加 cli 分支** |
 | 5 | `app_service.py:1307-1314`（绑定保存校验） | 非 http/stdio → `raise ValidateErrorException("MCP transport格式错误")`（**cli 绑定保存即报错**） | **加 cli 分支** |
 | 6 | `mcp_import_service.py:37` `_SUPPORTED_TRANSPORTS` | 无 cli | **不改**（标准 `mcp.json` 无 cli transport，与 preview/URL 导入排除 stdio 同理；保持排除是正确的） |
+| 7 | `app_service.py:1274-1281` `allowed_keys` 白名单 | **缺 `protocol`/`tool_schema`** | **加两键**（否则 `_normalize_binding` 的新增键会让**所有 transport** 的绑定保存被拒——S1，实测回归） |
+| 8 | `admin_routes_4.py:550-565 / 612-627` 路由 req 构造 | 无 `tool_schema` 字段 | **加 `tool_schema=a._field(data.get("tool_schema") or {})`**（否则 admin 保存触发 `AttributeError: req.tool_schema`——S2，实测回归） |
+
+**第 7、8 项是两个 Critical 回归（计划原稿遗漏，B4 审查实测发现并已修）**：
+- **S1**：`_validate_draft_app_config` 的 `allowed_keys` 是键白名单；`_normalize_binding` 现**无条件**为所有 transport 增加 `protocol`/`tool_schema`，前端把 `provider.binding` 回传进 `mcp_bindings` 时撞白名单 → 抛「MCP绑定参数出错」。**影响 http/sse/stdio/streamable_http 全部，不只 cli**。
+- **S2**：三条写入路径读 `req.tool_schema.data`，而 admin 路由用 `SimpleNamespace` 手工拼 req 未含该键 → `AttributeError`，**admin 编辑任意 MCP（含非 cli）500**。
+- 已补回归测试 `test_validate_should_accept_provider_binding_roundtrip`（实测：去掉白名单修复即 FAIL）。
+- **字段透传对称性**：`app_service.py:1365-1385` 与 `app_config_service.py:870-891` 两处「校验重建块」需同时透传 `protocol`（与 `tool_schema` 对称）。仅透传 `tool_schema` 会让 `protocol` 在往返中被静默丢弃——属 AGENTS.md「中间层丢字段」形态。运行时虽由工厂对 cli 强制重注入 `protocol="raw"` 兜住，但往返保真应一致，且测试已加 `assert "protocol" in ...` 锁定。
 
 （`mcp_schema.py:185/237` 的 preview / URL 导入排除 stdio 同样**不加 cli**——它们语义上就是 HTTP 专属。）
 

@@ -3073,6 +3073,7 @@ class TestAppServiceDraftConfigValidation:
                 "args": ["--flag"],
                 "env": {"API_KEY": "secret"},
                 "tool_schema": {},
+                "protocol": "",
                 "provider_key": "",
                 "source_type": "",
                 "source_key": "",
@@ -3110,6 +3111,7 @@ class TestAppServiceDraftConfigValidation:
         )
 
         assert validated["mcp_bindings"][0]["tool_schema"] == {}
+        assert "protocol" in validated["mcp_bindings"][0]
 
     def test_validate_should_accept_review_config_when_disabled(self):
         service = _build_validation_service()
