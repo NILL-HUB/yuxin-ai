@@ -1001,6 +1001,22 @@ class AssistantAgentService(BaseService):
             except Exception:
                 logger.warning("构建计算机控制工具失败，不影响其他工具", exc_info=True)
 
+        # 浏览器自动化：与 computer_control 同一注入点（requester=账号），
+        # 让 browser_action 经 resolve_desktop_bridge 解析本账号已注册设备；
+        # 未注册时回退 BROWSER_AUTOMATION_URL/TOKEN 并给出明确错误。高风险，需逐次确认。
+        if self.app_config_service is not None:
+            try:
+                browser_tool_factory = (
+                    self.app_config_service.builtin_provider_manager.get_tool(
+                        "browser_automation",
+                        "browser_action",
+                    )
+                )
+                if browser_tool_factory is not None:
+                    tools.append(browser_tool_factory(requester=str(account_id)))
+            except Exception:
+                logger.warning("构建浏览器自动化工具失败，不影响其他工具", exc_info=True)
+
         # 语音工具：Agent 可朗读回复或转写语音输入。
         if self.app_config_service is not None:
             try:

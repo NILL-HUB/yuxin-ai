@@ -14,6 +14,8 @@ browser_action_module = importlib.import_module(
 def test_browser_action_returns_disabled_error_when_not_configured(monkeypatch):
     monkeypatch.delenv("BROWSER_AUTOMATION_URL", raising=False)
     monkeypatch.delenv("BROWSER_AUTOMATION_TOKEN", raising=False)
+    monkeypatch.delenv("DESKTOP_BRIDGE_URL", raising=False)
+    monkeypatch.delenv("DESKTOP_BRIDGE_TOKEN", raising=False)
 
     result = json.loads(BrowserActionTool()._run(action="navigate", url="https://example.com"))
 
@@ -75,3 +77,37 @@ def test_browser_action_uses_desktop_bridge(monkeypatch):
     assert result["ok"] is True
     assert captured["url"] == "http://127.0.0.1:9876/browser"
     assert captured["auth"] == "Bearer bridge-token"
+
+
+def test_browser_action_prefers_dynamic_desktop_bridge(monkeypatch):
+    monkeypatch.setattr(
+        "internal.service.desktop_bridge_resolver.resolve_desktop_bridge",
+        lambda *args, **kwargs: ("http://dynamic-host:9876", "dynamic-token"),
+    )
+    monkeypatch.setenv("BROWSER_AUTOMATION_URL", "http://fallback:1")
+    monkeypatch.setenv("BROWSER_AUTOMATION_TOKEN", "fallback-token")
+    captured = {}
+
+    class _FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"ok":true}'
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["auth"] = request.headers.get("Authorization")
+        return _FakeResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    tool = BrowserActionTool(requester="acct-1")
+    result = json.loads(tool._run(action="snapshot", url="https://example.com"))
+
+    assert result["ok"] is True
+    assert captured["url"] == "http://dynamic-host:9876/browser"
+    assert captured["auth"] == "Bearer dynamic-token"

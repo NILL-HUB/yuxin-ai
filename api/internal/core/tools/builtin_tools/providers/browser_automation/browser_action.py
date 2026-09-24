@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import urllib.error
 import urllib.request
 from typing import Any, Literal
@@ -61,18 +60,22 @@ def _normalize_text(value: Any) -> str:
 
 
 def _call_worker(payload: dict[str, Any]) -> dict[str, Any]:
-    bridge_url = _normalize_text(os.getenv("DESKTOP_BRIDGE_URL"))
-    bridge_token = _normalize_text(os.getenv("DESKTOP_BRIDGE_TOKEN"))
-    if bridge_url and bridge_token:
-        endpoint = bridge_url.rstrip("/")
-        token = bridge_token
+    # 1.优先按账号动态解析已注册的桌面设备 bridge（解决随机 token 无法静态配置的断链）
+    from internal.service.desktop_bridge_resolver import resolve_desktop_bridge
+    from internal.service.tool_credential_resolver import get_tool_credential
+
+    resolved = resolve_desktop_bridge(payload.get("requester"), purpose="/browser")
+    if resolved:
+        endpoint, token = resolved
     else:
-        endpoint = _normalize_text(os.getenv("BROWSER_AUTOMATION_URL"))
-        token = _normalize_text(os.getenv("BROWSER_AUTOMATION_TOKEN"))
+        # 2.回退静态配置（独立 browser worker）
+        endpoint = get_tool_credential("BROWSER_AUTOMATION_URL")
+        token = get_tool_credential("BROWSER_AUTOMATION_TOKEN")
     if not endpoint or not token:
         return {
             "ok": False,
-            "error": "DESKTOP_BRIDGE_URL/TOKEN 或 BROWSER_AUTOMATION_URL/TOKEN 未配置，浏览器自动化默认关闭",
+            "error": "未找到可用的浏览器自动化连接（当前账号未注册在线设备），"
+                     "且 BROWSER_AUTOMATION_URL/TOKEN 未配置，浏览器自动化默认关闭",
         }
     url = endpoint.rstrip("/") + "/browser"
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
@@ -107,9 +110,11 @@ class BrowserActionTool(BaseTool):
     description: str = (
         "在受控浏览器中打开网页、读取页面内容、点击元素、填写表单、滚动、返回、"
         "按键、列出图片或读取控制台日志。用于需要动态渲染、登录后页面、表单操作的网页任务。"
-        "该工具默认关闭，需要平台配置 BROWSER_AUTOMATION_URL / BROWSER_AUTOMATION_TOKEN 且按高风险审批。"
+        "该工具默认关闭，需要桌面端注册在线设备或平台配置 BROWSER_AUTOMATION_URL / "
+        "BROWSER_AUTOMATION_TOKEN 且按高风险审批。"
     )
     args_schema: type[BaseModel] = BrowserActionInput
+    requester: str = ""
 
     def _run(self, **kwargs: Any) -> str:
         payload = {
@@ -119,6 +124,7 @@ class BrowserActionTool(BaseTool):
             "text": str(kwargs.get("text") or ""),
             "wait_ms": int(kwargs.get("wait_ms") or 0),
             "timeout": int(kwargs.get("timeout") or 30000),
+            "requester": _normalize_text(kwargs.get("requester") or self.requester),
         }
         result = _call_worker(payload)
         return json.dumps(result, ensure_ascii=False, default=str)
@@ -129,4 +135,6 @@ class BrowserActionTool(BaseTool):
 
 def browser_action(**kwargs: Any) -> BaseTool:
     """工厂函数：返回浏览器自动化工具。"""
-    return BrowserActionTool()
+    return BrowserActionTool(
+        requester=_normalize_text(kwargs.get("requester")),
+    )
