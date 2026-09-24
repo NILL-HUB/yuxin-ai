@@ -1653,6 +1653,20 @@ class TestAsgiTagsNotificationsTools:
         assert resp.status_code == 200
         assert resp.mimetype == "image/png"
 
+    def test_get_provider_icon_without_account(self, monkeypatch):
+        """icon 为公开静态资源，无 token 也应可访问（<img> 请求不带 Authorization）。"""
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get("/builtin-tools/openai/icon")
+                return resp
+
+        resp = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert resp.mimetype == "image/png"
+
     def test_get_notifications(self, monkeypatch):
         _, _, notification_service = self._setup(monkeypatch)
 
@@ -1906,6 +1920,20 @@ class TestAsgiSkillsApiTools:
         async def _run():
             async with asgi_app.quart_app.test_client() as client:
                 resp = await client.get(f"/skills/{uuid4()}/icon?account_id={uuid4()}")
+                return resp
+
+        resp = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert resp.mimetype == "image/png"
+
+    def test_get_skill_package_icon_without_account(self, monkeypatch):
+        """icon 为公开静态资源，无 token 也应可访问（<img> 请求不带 Authorization）。"""
+        self._setup(monkeypatch)
+
+        async def _run():
+            async with asgi_app.quart_app.test_client() as client:
+                resp = await client.get(f"/skills/{uuid4()}/icon")
                 return resp
 
         resp = asyncio.run(_run())

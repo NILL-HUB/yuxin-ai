@@ -59,11 +59,11 @@ def register_routes(quart_app):
 
     @quart_app.get("/builtin-tools/<string:provider_name>/icon")
     async def async_get_provider_icon(provider_name) -> Response:
-        """async 获取提供商图标（返回图片或跳转 URL）。"""
-        account, err = await _resolve_account()
-        if err is not None:
-            return err
+        """async 获取提供商图标（返回图片或跳转 URL）。
 
+        icon 为公开静态资源（与 /language-models/<provider>/icon、admin store icon
+        一致），免鉴权：<img> 标签请求无法携带 Authorization 头，强制登录会 401 裂图。
+        """
         from internal.service import BuiltinToolService
 
         icon, mimetype, icon_url = await _to_thread(
@@ -139,11 +139,11 @@ def register_routes(quart_app):
 
     @quart_app.get("/skills/<uuid:skill_id>/icon")
     async def async_get_skill_package_icon(skill_id) -> Response:
-        """async 获取技能包图标。"""
-        account, err = await _resolve_account()
-        if err is not None:
-            return err
+        """async 获取技能包图标。
 
+        与 builtin-tools / language-models icon 一致，免鉴权（<img> 请求无法带
+        Authorization 头，强制登录会 401 裂图）；仅返回公开图标内容，无敏感数据。
+        """
         from internal.service.skill_service import SkillService
 
         icon, mimetype, icon_url = await _to_thread(
