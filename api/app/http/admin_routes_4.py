@@ -560,6 +560,7 @@ def register_routes(quart_app):
             tool_names=a._field(data.get("tool_names") or []),
             args=a._field(data.get("args") or []),
             env=a._field(data.get("env") or {}),
+            tool_schema=a._field(data.get("tool_schema") or {}),
             timeout_seconds=a._field(data.get("timeout_seconds"), 30),
             task_keywords=a._field(data.get("task_keywords") or []),
         )
@@ -622,6 +623,7 @@ def register_routes(quart_app):
             tool_names=a._field(data.get("tool_names") or []),
             args=a._field(data.get("args") or []),
             env=a._field(data.get("env") or {}),
+            tool_schema=a._field(data.get("tool_schema") or {}),
             timeout_seconds=a._field(data.get("timeout_seconds"), 30),
             task_keywords=a._field(data.get("task_keywords") or []),
         )

@@ -3083,6 +3083,34 @@ class TestAppServiceDraftConfigValidation:
             }
         ]
 
+    def test_validate_should_accept_provider_binding_roundtrip(self):
+        """回归 S1：McpProviderResp 回传的 binding（含 protocol/tool_schema）必须能再次通过校验。
+
+        前端 marketplace 选中 provider 后会把 provider.binding 直接塞回 mcp_bindings，
+        因此 _normalize_binding 的完整输出（含新增的 protocol/tool_schema）必须落在
+        _validate_draft_app_config 的 allowed_keys 白名单内，否则所有 transport
+        （不只 cli）在保存时都会被拒绝为「MCP绑定参数出错」。
+        """
+        from internal.service.mcp_service import McpService
+
+        service = _build_validation_service()
+        binding = McpService._normalize_binding(
+            SimpleNamespace(),
+            {
+                "name": "Weather MCP",
+                "description": "ModelScope weather",
+                "transport": "streamable_http",
+                "url": "https://mcp.example.com",
+                "enabled": True,
+            },
+        )
+
+        validated = service._validate_draft_app_config(
+            {"mcp_bindings": [binding]}, SimpleNamespace(id=uuid4())
+        )
+
+        assert validated["mcp_bindings"][0]["tool_schema"] == {}
+
     def test_validate_should_accept_review_config_when_disabled(self):
         service = _build_validation_service()
         payload = {

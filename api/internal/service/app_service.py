@@ -1276,6 +1276,7 @@ class AppService(BaseService):
                     "headers", "tool_names", "timeout_seconds", "command",
                     "args", "env", "provider_key", "source_type",
                     "source_key", "source_url", "label", "icon", "category",
+                    "protocol", "tool_schema",
                 }
                 if set(binding.keys()) - allowed_keys:
                     raise ValidateErrorException("MCP绑定参数出错")
