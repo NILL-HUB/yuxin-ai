@@ -266,7 +266,12 @@ class TestRuntimeModelPoolService:
         assert service.get_keys_for_model(model.id) == []
 
     def test_get_keys_for_model_should_not_recover_key_of_other_provider(self, model_pool_db, monkeypatch):
-        """冷却恢复只作用于本 provider，不得跨界复活其它供应商的 Key。"""
+        """冷却恢复只作用于本 provider，不得跨界复活其它供应商的 Key。
+
+        判别力关键：other 的熔断时间必须**回拨到冷却期之外**（7200s > 3600s），
+        这样「未收窄 provider」的旧实现会复活它（测试失败），收窄后才会通过。
+        若写成 `circuit_opened_at=_now()`，旧实现也会因「冷却未到」而跳过，测试恒真。
+        """
         service = _service(model_pool_db)
         monkeypatch.setattr(
             service,
@@ -279,7 +284,7 @@ class TestRuntimeModelPoolService:
             provider="deepseek",
             model_id=None,
             status="circuit_open",
-            circuit_opened_at=_now(),
+            circuit_opened_at=_now() - timedelta(seconds=7200),
         )
 
         service.get_keys_for_model(model.id)
