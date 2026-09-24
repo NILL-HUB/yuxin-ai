@@ -3,8 +3,8 @@ from typing import Any, Type
 import requests
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-import os
 from internal.lib.helper import add_attribute
+from internal.service.tool_credential_resolver import get_tool_credential
 
 
 class GaodeGeocodeArgsSchema(BaseModel):
@@ -21,7 +21,7 @@ class GaodeGeocodeTool(BaseTool):
     def _run(self, *args: Any, **kwargs: Any) -> str:
         """调用高德API进行地理编码"""
         try:
-            gaode_api_key = os.getenv("GAODE_API_KEY")
+            gaode_api_key = get_tool_credential("GAODE_API_KEY")
             if not gaode_api_key:
                 return "高德开放平台API未配置"
 

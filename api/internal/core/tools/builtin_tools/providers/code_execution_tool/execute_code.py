@@ -13,21 +13,22 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shlex
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from internal.service.tool_credential_resolver import get_tool_credential, get_tool_setting
+
 logger = logging.getLogger(__name__)
 
 
 def _enabled() -> bool:
-    flag = str(os.getenv("ENABLE_CODE_EXECUTION_TOOL", "")).strip().lower()
+    flag = get_tool_setting("ENABLE_CODE_EXECUTION_TOOL").lower()
     if flag not in {"1", "true", "yes", "on"}:
         return False
-    return bool(os.getenv("E2B_API_KEY", "").strip() and os.getenv("E2B_DOMAIN", "").strip())
+    return bool(get_tool_credential("E2B_API_KEY") and get_tool_credential("E2B_DOMAIN"))
 
 
 class ExecuteCodeInput(BaseModel):
@@ -74,10 +75,10 @@ class ExecuteCodeTool(BaseTool):
 
             backend_cls = globals().get("_BACKEND_CLS") or BaiduCfcSandboxBackend
             backend = backend_cls(
-                api_key=os.environ.get("E2B_API_KEY"),
-                domain=os.environ.get("E2B_DOMAIN"),
-                template_alias=os.environ.get("SANDBOX_TEMPLATE_ALIAS") or None,
-                fallback_template_alias=os.environ.get("SANDBOX_FALLBACK_TEMPLATE_ALIAS") or None,
+                api_key=get_tool_credential("E2B_API_KEY"),
+                domain=get_tool_credential("E2B_DOMAIN"),
+                template_alias=get_tool_setting("SANDBOX_TEMPLATE_ALIAS") or None,
+                fallback_template_alias=get_tool_setting("SANDBOX_FALLBACK_TEMPLATE_ALIAS") or None,
             )
             result = backend.execute(env_prefix + normalized)
             return json.dumps(

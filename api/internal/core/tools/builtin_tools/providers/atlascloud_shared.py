@@ -10,6 +10,7 @@ import requests
 
 from internal.core.ports.storage_port import ObjectStoragePort
 from internal.exception import FailException
+from internal.service.tool_credential_resolver import get_tool_credential, get_tool_setting
 
 
 _DEFAULT_MODEL_API_BASE = "https://api.atlascloud.ai/api/v1/model"
@@ -19,15 +20,15 @@ _FAILED_STATUSES = {"failed", "error", "cancelled", "canceled"}
 
 def resolve_atlascloud_api_key() -> str:
     """解析 Atlas Cloud 的 API Key。"""
-    return os.getenv("ATLASCLOUD_API_KEY", "") or os.getenv("ATLAS_CLOUD_API_KEY", "")
+    return get_tool_credential("ATLASCLOUD_API_KEY", "ATLAS_CLOUD_API_KEY")
 
 
 def resolve_atlascloud_model_api_base() -> str:
     """解析 Atlas Cloud 图像/视频模型 API base。"""
-    base = (
-        os.getenv("ATLASCLOUD_MODEL_API_BASE", "")
-        or os.getenv("ATLAS_CLOUD_MODEL_API_BASE", "")
-        or _DEFAULT_MODEL_API_BASE
+    base = get_tool_setting(
+        "ATLASCLOUD_MODEL_API_BASE",
+        "ATLAS_CLOUD_MODEL_API_BASE",
+        default=_DEFAULT_MODEL_API_BASE,
     )
     return base.rstrip("/")
 

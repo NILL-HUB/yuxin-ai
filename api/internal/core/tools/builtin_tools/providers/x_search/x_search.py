@@ -13,13 +13,14 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import date, datetime, timezone
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from internal.service.tool_credential_resolver import get_tool_credential
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ _MAX_HANDLES = 10
 
 
 def _xai_api_key() -> str:
-    return str(os.getenv("XAI_API_KEY") or "").strip()
+    return get_tool_credential("XAI_API_KEY")
 
 
 def _validate_date_range(from_date: str, to_date: str) -> None:

@@ -1,4 +1,3 @@
-import os
 import json
 import logging
 from typing import Any, Type
@@ -7,6 +6,7 @@ import requests
 from internal.lib.helper import add_attribute
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+from internal.service.tool_credential_resolver import get_tool_credential, get_tool_setting
 
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class GaodeWeatherTool(BaseTool):
 
     @staticmethod
     def _get_timeout() -> int:
-        raw = (os.getenv("GAODE_API_TIMEOUT_SECONDS") or "").strip()
+        raw = get_tool_setting("GAODE_API_TIMEOUT_SECONDS")
         if not raw:
             return _DEFAULT_GAODE_TIMEOUT_SECONDS
         try:
@@ -48,7 +48,7 @@ class GaodeWeatherTool(BaseTool):
 
         try:
             # 1.获取高德API秘钥，如果没有创建的话，则抛出错误
-            gaode_api_key = os.getenv("GAODE_API_KEY")
+            gaode_api_key = get_tool_credential("GAODE_API_KEY")
             if not gaode_api_key:
                 return "高德开放平台API未配置"
 

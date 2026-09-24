@@ -1,8 +1,8 @@
-import os
 import requests
 from langchain_core.tools import Tool
 from pydantic import BaseModel, Field
 from internal.lib.helper import add_attribute
+from internal.service.tool_credential_resolver import get_tool_credential
 
 
 class NewsAPITopHeadlinesArgsSchema(BaseModel):
@@ -12,7 +12,7 @@ class NewsAPITopHeadlinesArgsSchema(BaseModel):
 
 def _get_top_headlines(country: str = "us", **kwargs) -> str:
     """获取头条新闻"""
-    api_key = os.getenv("NEWSAPI_API_KEY")
+    api_key = get_tool_credential("NEWSAPI_API_KEY")
     if not api_key:
         return "错误：未配置NEWSAPI_API_KEY环境变量"
 

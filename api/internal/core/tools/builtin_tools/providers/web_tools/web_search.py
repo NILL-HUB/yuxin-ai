@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
+
+from internal.service.tool_credential_resolver import get_tool_credential
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def _normalize_exa(items: list[dict]) -> list[dict]:
 # ─── 各 provider 实现（返回 None 表示本 provider 不可用/失败，供降级）───────────
 
 def _tavily_search(query: str, max_results: int) -> list[dict] | None:
-    api_key = str(os.getenv("TAVILY_API_KEY") or "").strip()
+    api_key = get_tool_credential("TAVILY_API_KEY")
     if not api_key:
         return None
     try:
@@ -89,7 +90,7 @@ def _tavily_search(query: str, max_results: int) -> list[dict] | None:
 
 
 def _exa_search(query: str, max_results: int) -> list[dict] | None:
-    api_key = str(os.getenv("EXA_API_KEY") or "").strip()
+    api_key = get_tool_credential("EXA_API_KEY")
     if not api_key:
         return None
     try:
@@ -109,7 +110,7 @@ def _exa_search(query: str, max_results: int) -> list[dict] | None:
 
 
 def _serpapi_search(query: str, max_results: int) -> list[dict] | None:
-    api_key = str(os.getenv("SERPAPI_API_KEY") or "").strip()
+    api_key = get_tool_credential("SERPAPI_API_KEY")
     if not api_key:
         return None
     try:
@@ -129,7 +130,7 @@ def _serpapi_search(query: str, max_results: int) -> list[dict] | None:
 
 
 def _brave_search(query: str, max_results: int) -> list[dict] | None:
-    api_key = str(os.getenv("BRAVE_SEARCH_API_KEY") or "").strip()
+    api_key = get_tool_credential("BRAVE_SEARCH_API_KEY")
     if not api_key:
         return None
     try:

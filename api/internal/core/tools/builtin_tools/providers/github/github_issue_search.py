@@ -1,8 +1,8 @@
-import os
 import requests
 from langchain_core.tools import Tool
 from pydantic import BaseModel, Field
 from internal.lib.helper import add_attribute
+from internal.service.tool_credential_resolver import get_tool_credential
 
 
 class GitHubIssueSearchArgsSchema(BaseModel):
@@ -12,7 +12,7 @@ class GitHubIssueSearchArgsSchema(BaseModel):
 
 def _search_issues(query: str, **kwargs) -> str:
     """搜索GitHub Issues"""
-    token = os.getenv("GITHUB_ACCESS_TOKEN")
+    token = get_tool_credential("GITHUB_ACCESS_TOKEN")
     headers = {}
     if token:
         headers["Authorization"] = f"token {token}"

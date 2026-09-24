@@ -4,8 +4,8 @@ from typing import Any, Type
 import requests
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-import os
 from internal.lib.helper import add_attribute
+from internal.service.tool_credential_resolver import get_tool_credential
 
 
 class BaiduTranslateArgsSchema(BaseModel):
@@ -23,8 +23,8 @@ class BaiduTranslateTool(BaseTool):
     def _run(self, *args: Any, **kwargs: Any) -> str:
         """调用百度翻译API"""
         try:
-            app_id = os.getenv("BAIDU_TRANSLATE_APP_ID")
-            secret_key = os.getenv("BAIDU_TRANSLATE_SECRET_KEY")
+            app_id = get_tool_credential("BAIDU_TRANSLATE_APP_ID")
+            secret_key = get_tool_credential("BAIDU_TRANSLATE_SECRET_KEY")
 
             if not app_id or not secret_key:
                 return "百度翻译API未配置，请设置BAIDU_TRANSLATE_APP_ID和BAIDU_TRANSLATE_SECRET_KEY"
