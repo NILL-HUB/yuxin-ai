@@ -26,6 +26,7 @@ type McpForm = {
   tool_names_text: string
   args_text: string
   env_text: string
+  tool_schema_text: string
   timeout_seconds: number
   task_keywords_text: string
 }
@@ -63,6 +64,7 @@ const defaultForm = (): McpForm => ({
   tool_names_text: '',
   args_text: '',
   env_text: '{}',
+  tool_schema_text: '{}',
   timeout_seconds: 30,
   task_keywords_text: '',
 })
@@ -120,6 +122,10 @@ const applyMcpPayload = (payload: Record<string, unknown>) => {
   const toolNames = Array.isArray(payload.tool_names) ? payload.tool_names : []
   const args = Array.isArray(payload.args) ? payload.args : []
   const env = payload.env && typeof payload.env === 'object' && !Array.isArray(payload.env) ? payload.env : {}
+  const toolSchema =
+    payload.tool_schema && typeof payload.tool_schema === 'object' && !Array.isArray(payload.tool_schema)
+      ? payload.tool_schema
+      : {}
 
   form.value.name = String(payload.name || '').trim()
   form.value.description = String(payload.description || '').trim()
@@ -131,6 +137,7 @@ const applyMcpPayload = (payload: Record<string, unknown>) => {
   form.value.tool_names_text = toolNames.map((item) => String(item).trim()).filter(Boolean).join(', ')
   form.value.args_text = args.map((item) => String(item).trim()).filter(Boolean).join(', ')
   form.value.env_text = JSON.stringify(env, null, 2)
+  form.value.tool_schema_text = JSON.stringify(toolSchema, null, 2)
   form.value.timeout_seconds = Number(payload.timeout_seconds || 30)
   form.value.icon = String(payload.icon || form.value.icon || '')
   const taskKeywords = Array.isArray(payload.task_keywords) ? payload.task_keywords : []
@@ -232,6 +239,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
 
   let headers: HeaderItem[] = []
   let env: Record<string, string> = {}
+  let toolSchema: Record<string, unknown> = {}
   try {
     headers = parseJsonArray(form.value.headers_text)
       .map((item) => ({
@@ -240,6 +248,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
       }))
       .filter((item) => item.key)
     env = parseJsonObject(form.value.env_text)
+    toolSchema = parseJsonObject(form.value.tool_schema_text)
   } catch (error: unknown) {
     Message.warning(t('space.mcp.jsonError', { message: (error as Error).message }))
     return
@@ -269,6 +278,7 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
     tool_names: toolNames,
     args,
     env,
+    tool_schema: toolSchema,
     timeout_seconds: Number(form.value.timeout_seconds || 30),
     icon: form.value.icon,
     task_keywords: taskKeywords,
@@ -281,6 +291,16 @@ const handleSubmit = async ({ errors }: { errors: Record<string, ValidatedError>
   if (['http', 'sse', 'streamable_http', 'streamable-http'].includes(payload.transport) && !payload.url) {
     Message.warning(t('space.mcp.urlRequired'))
     return
+  }
+  if (payload.transport === 'cli') {
+    if (!payload.command) {
+      Message.warning(t('space.mcp.stdioCommandRequired'))
+      return
+    }
+    if (!Object.keys(payload.tool_schema || {}).length) {
+      Message.warning(t('space.mcp.toolSchemaRequired'))
+      return
+    }
   }
 
   submitLoading.value = true
@@ -439,6 +459,7 @@ watch(
                   <a-option value="http">http</a-option>
                   <a-option value="sse">sse</a-option>
                   <a-option value="stdio">stdio</a-option>
+                  <a-option value="cli">cli</a-option>
                 </a-select>
               </a-form-item>
 
@@ -484,6 +505,14 @@ watch(
                   v-model:model-value="form.env_text"
                   :auto-size="{ minRows: 3, maxRows: 5 }"
                   :placeholder="t('space.mcp.envPlaceholder')"
+                />
+              </a-form-item>
+
+              <a-form-item field="tool_schema_text" :label="t('space.mcp.toolSchemaLabel')" class="lg:col-span-2">
+                <a-textarea
+                  v-model:model-value="form.tool_schema_text"
+                  :auto-size="{ minRows: 4, maxRows: 10 }"
+                  :placeholder="t('space.mcp.toolSchemaPlaceholder')"
                 />
               </a-form-item>
             </div>
