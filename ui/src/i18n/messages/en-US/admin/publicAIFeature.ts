@@ -20,7 +20,8 @@ export default  {
       fallbackTier: 'Fallback Tier',
       fallbackTierHint:
         'When no model is bound, a model of this tier is auto-selected from the pool.',
-      enabledHint: 'When disabled, this feature will be unavailable.',
+      enabledHint:
+        'ON: this feature works normally and its AI calls are made as needed; OFF: the feature is disabled and its AI calls are skipped.',
       tiers: {
         cheap: 'Economy (cheapest)',
         standard: 'Standard',

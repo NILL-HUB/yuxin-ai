@@ -599,7 +599,13 @@ onMounted(() => {
           >
             <div class="min-w-0">
               <p class="truncate text-sm font-medium text-slate-800">
-                {{ auditActionLabel(log.action) }} · {{ semanticLabel('resource_type', String(log.resource_type ?? ''), '-') }}
+                {{ auditActionLabel(log.action) }} ·
+                <template v-if="log.resource_name">
+                  <span class="text-slate-900">{{ log.resource_name }}</span>
+                </template>
+                <template v-else>
+                  {{ semanticLabel('resource_type', String(log.resource_type ?? ''), '-') }}
+                </template>
               </p>
               <p class="mt-1 truncate text-xs text-slate-400">
                 {{ log.admin_user_name || log.account_name || '-' }} ·

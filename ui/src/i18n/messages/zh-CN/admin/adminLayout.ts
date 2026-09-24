@@ -50,7 +50,7 @@ export default  {
         paymentConfig: '支付配置',
         mailConfig: '邮件发送配置',
         smsConfig: '短信发送配置',
-        desktopClientConfig: '桌面客户端连接配置',
+        globalControlConfig: '全局控制配置',
         schedules: '定时任务',
         openapi: 'API管理',
       },

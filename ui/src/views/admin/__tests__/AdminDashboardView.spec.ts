@@ -73,6 +73,7 @@ const summary = {
       id: 'audit-1',
       action: 'create',
       resource_type: 'workflow',
+      resource_name: 'Onboarding Flow',
       admin_user_name: 'admin',
       created_at: 1893456000,
     },
@@ -158,6 +159,7 @@ describe('AdminDashboardView', () => {
     expect(wrapper.text()).toContain('hello')
     expect(wrapper.text()).toContain('创建')
     expect(wrapper.text()).toContain('工作流')
+    expect(wrapper.text()).toContain('Onboarding Flow')
     expect(wrapper.html()).toContain('/admin/workflows')
     expect(wrapper.html()).toContain('/admin/cost-stats')
   })

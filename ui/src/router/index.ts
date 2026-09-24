@@ -254,9 +254,9 @@ const router = createRouter({
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
             },
             {
-              path: 'desktop-client-config',
-              name: 'admin-desktop-client-config',
-              component: () => import('@/views/admin/AdminDesktopClientConfigView.vue'),
+              path: 'global-control-config',
+              name: 'admin-global-control-config',
+              component: () => import('@/views/admin/GlobalControlConfigView.vue'),
               meta: { adminRequired: true, requiresAuth: true, realm: 'admin', permissions: ['system_config:manage'] },
             },
             {

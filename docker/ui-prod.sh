@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 docker compose -f "$SCRIPT_DIR/docker-compose.yaml" build llmops-ui
 docker compose -f "$SCRIPT_DIR/docker-compose.yaml" up -d llmops-ui
+# UI 重建后重启 nginx，重新生成其上游配置（见项目规范：UI 重建后必须重启 nginx）
+docker restart llmops-nginx
 
 echo ""
 echo "前端生产模式已启用（编译产物已进镜像）。"

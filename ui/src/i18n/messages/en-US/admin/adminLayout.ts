@@ -50,7 +50,7 @@ export default  {
         paymentConfig: 'Payment Config',
         mailConfig: 'Mail Config',
         smsConfig: 'SMS Config',
-        desktopClientConfig: 'Desktop Client Connection',
+        globalControlConfig: 'Global Control Config',
         schedules: 'Scheduled Tasks',
         openapi: 'API Management',
       },

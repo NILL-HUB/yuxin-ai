@@ -1,4 +1,4 @@
-# 前端开发模式：Vite 开发服务器 + 源码挂载（HMR，无需每次改代码重建镜像）
+﻿# 前端开发模式：Vite 开发服务器 + 源码挂载（HMR，无需每次改代码重建镜像）
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 

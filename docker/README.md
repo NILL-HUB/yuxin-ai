@@ -23,7 +23,7 @@ api/
 
 docker/
 ├── docker-compose.yaml     # 生产环境服务编排
-├── docker-compose.dev.yaml # 本地开发覆盖文件（前端热更新）
+├── docker-compose.ui-dev.yaml # UI 开发模式覆盖（唯一规范，配合 ui-dev.ps1/sh）
 ├── start.sh                # 交互式启动脚本
 ├── security-check.sh       # 敏感信息安全检查
 ├── nginx/                  # Nginx 反向代理（entrypoint.sh 动态生成配置）
@@ -163,16 +163,30 @@ docker compose --profile local-workers up -d
    npm run serve
    ```
 
-### 方式二：开发模式 Compose（前端热更新）
+### 方式二：开发模式 Compose（前端热更新，唯一规范路径）
+
+> **UI 开发模式只允许一条路径**：`docker/docker-compose.ui-dev.yaml` + `docker/ui-dev.ps1/sh`
+> （Vite 热更新、保留 nginx 统一入口、端口 3000）。旧的 `docker-compose.dev.yaml`
+> （禁用 nginx、UI 换 5173）已**删除**。禁止再新建第二个 dev 覆盖文件，以避免模式切换失效。
+
+启动 UI 开发模式（保留 nginx 统一入口）：
 
 ```bash
 cd docker
-docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d llmops-api llmops-ui
+docker/ui-dev.sh          # 或 Windows: docker\ui-dev.ps1
+# 等价于:
+# docker compose -f docker-compose.yaml -f docker-compose.ui-dev.yaml up -d --build llmops-ui
 ```
 
-- `llmops-api` 以开发模式运行（`APP_DEBUG=1`、`MIGRATION_ENABLED=true`）
-- `llmops-ui` 使用 `node:24-bookworm-slim` 运行 Vite 开发服务器（http://127.0.0.1:5173，热更新，`VITE_PROXY_TARGET` 指向 `llmops-api`）
-- `llmops-nginx` 通过 profile 自动禁用
+切回生产模式（编译产物进镜像）：
+
+```bash
+cd docker
+docker/ui-prod.sh         # 或 Windows: docker\ui-prod.ps1
+```
+
+- `llmops-ui` 以 dev 镜像运行 Vite 开发服务器（http://localhost:3000，热更新，源码挂载，保存即生效）
+- 不变更 `container_name` 与端口，外层 `llmops-nginx`（http://localhost:80）无需改动即透传
 
 ## 常见场景
 

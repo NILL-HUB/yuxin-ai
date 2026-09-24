@@ -55,6 +55,7 @@ export type UpdatePublicAIFeaturePayload = {
   enabled?: boolean
   fallback_tier?: string
   billable?: boolean
+  extra_config?: Record<string, unknown>
 }
 
 export async function updatePublicAIFeature(

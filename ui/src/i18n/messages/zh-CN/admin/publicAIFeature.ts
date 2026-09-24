@@ -17,7 +17,7 @@ export default  {
       useFallback: '使用回退',
       fallbackTier: '回退档位',
       fallbackTierHint: '未绑定模型时，从模型池自动选择该档位的模型',
-      enabledHint: '关闭后此功能将不可用',
+      enabledHint: '开启：该功能正常生效，系统会按需调用对应的 AI 能力；关闭：停用该功能，系统不再执行它的 AI 调用。',
       tiers: {
         cheap: '经济（最便宜）',
         standard: '标准',
