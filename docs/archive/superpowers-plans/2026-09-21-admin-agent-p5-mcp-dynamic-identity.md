@@ -1,8 +1,8 @@
-# ADMIN-P5：MCP 动态身份注入（独立内部字段 + hash 剥离）
+﻿# ADMIN-P5：MCP 动态身份注入（独立内部字段 + hash 剥离）
 
 > **Date:** 2026-09-21
 > **Status:** 待执行（计划先行）
-> **依据规格：** [2026-09-15-admin-agent-governance-design.md](../specs/2026-09-15-admin-agent-governance-design.md) §7.2（MCP 动态身份注入）、§6.1（独立链路）、§4.1（三重交集实时重算）
+> **依据规格：** [2026-09-15-admin-agent-governance-design.md](../../superpowers/specs/2026-09-15-admin-agent-governance-design.md) §7.2（MCP 动态身份注入）、§6.1（独立链路）、§4.1（三重交集实时重算）
 > **前置依赖：** ADMIN-P1a（授权内核）、ADMIN-P1b（板块工具与执行）、ADMIN-P2（对话式入口）
 
 ---

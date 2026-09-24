@@ -39,7 +39,7 @@
 | 事实 | 位置 / 证据 |
 | --- | --- |
 | 本系统已原生支持 MCP stdio | `mcp_tool_factory.py`：`SUPPORTED_STDIO_TRANSPORTS = {"stdio"}`；`mcp_stdio_client.py`：`_build_stdio_params` 解析 `command`/`args`/`env`/`timeout_seconds` |
-| 助手 MCP 绑定的唯一来源是运维配置 | `assistant_agent_service.py` 读 `current_app.config["ASSISTANT_MCP_BINDINGS"]`；`docs/prd/extensibility-design.md` §「装配来源」与 `docs/superpowers/plans/2026-09-21-admin-agent-p5-mcp-dynamic-identity.md` 均写明「以 `ASSISTANT_MCP_BINDINGS` 为唯一来源」「不做 admin 端的 MCP 绑定管理 UI/API」 |
+| 助手 MCP 绑定的唯一来源是运维配置 | `assistant_agent_service.py` 读 `current_app.config["ASSISTANT_MCP_BINDINGS"]`；`docs/prd/extensibility-design.md` §「装配来源」与 `docs/archive/superpowers-plans/2026-09-21-admin-agent-p5-mcp-dynamic-identity.md`（已归档）均写明「以 `ASSISTANT_MCP_BINDINGS` 为唯一来源」「不做 admin 端的 MCP 绑定管理 UI/API」 |
 | 绑定必须能通过 `env` 校验，**否则整条绑定被静默跳过** | `mcp_stdio_client.py::_build_subprocess_env` 会先继承 `os.environ`，再 `decrypt_env(binding["env"])`；而 `tool_credential_encryptor.decrypt_env` 对**非密文**抛 `ValueError`（`_decrypt_value` → `InvalidToken` → `ValueError`）。异常被 `_list_remote_tools` 的 `try/except` 吞掉，只记日志 |
 | → 因此 API Key **不要**放进 binding 的 `env` | 放进 `api/.env`（`docker-compose.yaml` 的 `env_file: ../api/.env` 会注入容器），binding 的 `env` 留空 `{}`，子进程通过 `os.environ` 继承。密钥类走 env 符合 `AGENTS.md`「env 允许部署基础设施/密钥」的口径 |
 | `tool_names` 是**白名单**（不是黑名单） | `mcp_tool_factory.py` 非快照路径：`if allow_tool_names and tool_name not in allow_tool_names: continue`；快照路径同语义 |

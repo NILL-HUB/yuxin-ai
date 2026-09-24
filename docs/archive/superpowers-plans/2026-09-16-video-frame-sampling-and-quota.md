@@ -1,4 +1,4 @@
-# 视频分层抽帧与帧配额 Implementation Plan
+﻿# 视频分层抽帧与帧配额 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12、ffmpeg（系统或 `imageio-ffmpeg` 兜底）、SQLAlchemy、Celery、pytest。
 
-**依据规格：** [2026-09-16-video-production-p4-design.md](../specs/2026-09-16-video-production-p4-design.md) §5、§6
+**依据规格：** [2026-09-16-video-production-p4-design.md](../superpowers-specs/2026-09-16-video-production-p4-design.md) §5、§6
 
 ---
 

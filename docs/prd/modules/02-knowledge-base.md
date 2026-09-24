@@ -443,7 +443,7 @@ KB-KB-KB-P1 全部 DDL 由单个迁移 `p1a2b3c4d5e6_add_knowledge_product_form_
 
 ### 11.8 多模态素材解析（KB-P2A 已落地）
 
-KB-P2A 把 KB-P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链路：图片、音频、视频素材上传后自动解析为可被语义检索命中的文本片段，实现"上传视频 → 能被语义检索命中"。实施计划见 [2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../../superpowers/plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)。
+KB-P2A 把 KB-P1 预留的 `media_type` / `parse_profile` 数据落点接上索引链路：图片、音频、视频素材上传后自动解析为可被语义检索命中的文本片段，实现"上传视频 → 能被语义检索命中"。实施计划见 [2026-09-14-knowledge-base-p2a-multimodal-ingest.md](../../archive/superpowers-plans/2026-09-14-knowledge-base-p2a-multimodal-ingest.md)（已归档）。
 
 #### 11.8.1 KnowledgeMediaExtractorService（三分支）
 

@@ -339,4 +339,4 @@ L124+     必须服务端：账号解析(DB) → 落对象存储 → 建成品�
 - 桌面端架构：[09-desktop-client.md](../prd/modules/09-desktop-client.md)、[08-os-automation.md](../prd/modules/08-os-automation.md)
 - 多通道路由既有方案：[desktop-sandbox-routing-plan.md](./desktop-sandbox-routing-plan.md)（真实桌面 / 云沙箱 / 云浏览器三通道）
 - 引擎选型与许可：[hypit-and-hyperframes-evaluation.md](./hypit-and-hyperframes-evaluation.md)
-- 渲染宿主实施记录：[2026-09-16-hyperframes-render-host.md](../superpowers/plans/2026-09-16-hyperframes-render-host.md)
+- 渲染宿主实施记录：[2026-09-16-hyperframes-render-host.md](../archive/superpowers-plans/2026-09-16-hyperframes-render-host.md)（已归档）

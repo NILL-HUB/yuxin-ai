@@ -1,4 +1,4 @@
-# KB 视频内容时间线改造 + 衔接 KB-P4 Implementation Plan
+﻿# KB 视频内容时间线改造 + 衔接 KB-P4 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,7 +12,7 @@
 
 ## 0. 前置结论与约束（执行者必读）
 
-**Spec 权威来源**：[2026-09-20-video-content-timeline-design.md](../specs/2026-09-20-video-content-timeline-design.md)。以下已实测 / 已确认：
+**Spec 权威来源**：[2026-09-20-video-content-timeline-design.md](../superpowers-specs/2026-09-20-video-content-timeline-design.md)。以下已实测 / 已确认：
 
 | # | 事实 | 处理 |
 | --- | --- | --- |
@@ -1201,7 +1201,7 @@ git commit -m "docs(kb): 02-knowledge-base L1 时间线叙述 + roadmap KB-P4.5 
 时间线段落结构（`anchor_type` / `anchor_text` / `start_sec` / `end_sec` / `speech_text`）即 **KB-P4 的编辑挂载点**：特效 / 贴纸 / 转场 / 字幕未来都挂载在段落上随段移动。本计划只产出段落结构，不实现元素绑定。
 
 **衔接入口**（测试全部通过后）：
-1. 读 P4 spec：[2026-09-16-video-production-p4-design.md](../specs/2026-09-16-video-production-p4-design.md)；
+1. 读 P4 spec：[2026-09-16-video-production-p4-design.md](../superpowers-specs/2026-09-16-video-production-p4-design.md)；
 2. 按既有 P4 计划执行：[2026-09-19-kb-p4-video-edit.md](./2026-09-19-kb-p4-video-edit.md)（trim / concat / subtitle 三件套 + HyperFrames 渲染，不引入 Hypit）；
 3. P4 计划中的「字幕自动对齐」已由既有 `transcript_segments` 承载；本次新增的 `speech_text` 段落进一步为「按台词定位出片区间」提供锚点。
 

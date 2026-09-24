@@ -1,4 +1,4 @@
-# L2 区间密集抽帧 Implementation Plan
+﻿# L2 区间密集抽帧 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12、ffmpeg（`-ss`/`-t`/`-fps`/`-frames:v`）、SQLAlchemy、Celery、pytest。
 
-**依据规格：** [2026-09-16-video-production-p4-design.md](../specs/2026-09-16-video-production-p4-design.md) §5.4、§5.5、§2（L2 密度 0.5s/帧、单窗上限 600 帧）
+**依据规格：** [2026-09-16-video-production-p4-design.md](../superpowers-specs/2026-09-16-video-production-p4-design.md) §5.4、§5.5、§2（L2 密度 0.5s/帧、单窗上限 600 帧）
 
 ---
 

@@ -1,7 +1,7 @@
 # 分销 / 余额 / 订单 / 自动续费 接口文档
 
 > 对应实现：`api/app/http/commerce_routes.py`、`api/app/http/admin_commerce_routes.py`、`api/app/http/account_auth_routes.py`
-> 规格：`docs/superpowers/specs/2026-08-28-distribution-balance-system-design.md`
+> 规格：`docs/archive/superpowers-specs/2026-08-28-distribution-balance-system-design.md`（已归档）
 
 ## 通用约定
 

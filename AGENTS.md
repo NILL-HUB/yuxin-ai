@@ -35,9 +35,9 @@
 | 阶段任务与执行状态 | `docs/prd/execution-roadmap.md` 的任务状态栏（唯一仍在维护的 roadmap） |
 | 对外 API 契约 | `docs/api/*.md` |
 | 权限 / RBAC 变更 | `docs/rbac.md` |
-| 某功能的实现计划 / 设计规格 | `docs/superpowers/plans/*.md`、`docs/superpowers/specs/*.md` |
+| 某功能的实现计划 / 设计规格 | `docs/superpowers/plans/*.md`、`docs/superpowers/specs/*.md`（**仅放未完成/在途**） |
 | 外部项目调研、内部审计快照 | `docs/research/*.md`（**非权威**） |
-| 已完成规划 / 执行历史归档 | `docs/archive/`（**非权威**，见 `docs/archive/README.md`） |
+| 已完成规划 / 执行历史归档 | `docs/archive/`（**非权威**，见 `docs/archive/README.md`）；已落地或被取代的计划/规格入 `docs/archive/superpowers-plans/`、`docs/archive/superpowers-specs/` |
 
 - 同步更新的动作要求：
   - 若文档描述与实际代码不符（引用已删除文件/模块、声称未实现的功能已实现、模块已被取代但文档仍为主线叙事），**立即修正**，不得保留过期内容。

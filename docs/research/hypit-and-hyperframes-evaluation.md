@@ -2,7 +2,7 @@
 
 > **非权威**：本文为调研快照，只代表调研当时的结论，**不代表当前实现**。禁止作为判断系统现状的依据。
 > **日期**：2026-09-16
-> **用途**：为 [视频制作 P4 设计](../superpowers/specs/2026-09-16-video-production-p4-design.md) 提供选型依据
+> **用途**：为 [视频制作 P4 设计](../archive/superpowers-specs/2026-09-16-video-production-p4-design.md)（已归档）提供选型依据
 
 ## 1. 结论速览
 

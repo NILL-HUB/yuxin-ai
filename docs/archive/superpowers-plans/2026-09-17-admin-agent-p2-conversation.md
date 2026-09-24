@@ -1,4 +1,4 @@
-# 管理端 Agent 治理 P2（对话式入口 + 独立会话表 + 预置提示词）Implementation Plan
+﻿# 管理端 Agent 治理 P2（对话式入口 + 独立会话表 + 预置提示词）Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 / Quart(ASGI) / SQLAlchemy / Alembic / LangChain(`BaseTool`/`bind_tools`) / pytest（`--no-cov` 快跑）
 
-**依据规格：** [2026-09-15-admin-agent-governance-design.md](../specs/2026-09-15-admin-agent-governance-design.md) §5（L4 身份层）、§6.1（独立链路）、§6.2（计费）、§7.1（板块级聚合工具）、§10.1/§10.3（表与提示词）、§14（P2 分期）。
+**依据规格：** [2026-09-15-admin-agent-governance-design.md](../../superpowers/specs/2026-09-15-admin-agent-governance-design.md) §5（L4 身份层）、§6.1（独立链路）、§6.2（计费）、§7.1（板块级聚合工具）、§10.1/§10.3（表与提示词）、§14（P2 分期）。
 
 ---
 

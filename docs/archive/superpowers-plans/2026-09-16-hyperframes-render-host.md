@@ -1,4 +1,4 @@
-# HyperFrames 渲染宿主与成品库 Implementation Plan
+﻿# HyperFrames 渲染宿主与成品库 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12、HyperFrames CLI 0.8.42（Node ≥ 22 + Chromium + ffmpeg/ffprobe）、SQLAlchemy/Alembic（PostgreSQL 部分唯一索引）、Celery、pytest。
 
-**依据规格：** [2026-09-16-video-production-p4-design.md](../specs/2026-09-16-video-production-p4-design.md) §3（编/生/渲三层）、§3.2（渲染宿主）、§4（成品入库与分类拆分）、§6.3（成品配额宽让）、§10（验收要点）。
+**依据规格：** [2026-09-16-video-production-p4-design.md](../superpowers-specs/2026-09-16-video-production-p4-design.md) §3（编/生/渲三层）、§3.2（渲染宿主）、§4（成品入库与分类拆分）、§6.3（成品配额宽让）、§10（验收要点）。
 
 **上游已完成：** 计划 1（L1 动态抽帧 + 帧配额）、计划 2（L2 区间密抽）——`time_offset`、抽帧、配额释放均已落地。
 

@@ -1,4 +1,4 @@
-# 管理端 Agent 治理 P3a（记忆主体抽象内核 + 存量迁移）Implementation Plan
+﻿# 管理端 Agent 治理 P3a（记忆主体抽象内核 + 存量迁移）Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 / SQLAlchemy(asyncpg) / Alembic / Pydantic v2 / Neo4j / Redis / pytest
 
-**依据规格：** [admin-agent-governance-design.md](../specs/2026-09-15-admin-agent-governance-design.md) §8（记忆主体统一抽象）、§3 L1「记忆：按 admin_user_id + agent_id 隔离」、§14 P3、§10.2（表清单）。
+**依据规格：** [admin-agent-governance-design.md](../../superpowers/specs/2026-09-15-admin-agent-governance-design.md) §8（记忆主体统一抽象）、§3 L1「记忆：按 admin_user_id + agent_id 隔离」、§14 P3、§10.2（表清单）。
 
 ---
 

@@ -3,7 +3,7 @@
 > 更新日期：2026-09-19
 > 定位：桌面客户端（子项目 A）已实现首版并完成 NSIS 打包验证；设备注册（登录即设备）已实现，"服务端 → 宿主机"链路已打通。
 > 主文档：[architecture-design.md](../architecture-design.md)
-> 相关模块：[08-os-automation.md](./08-os-automation.md)（宿主机 OS worker 服务端）｜ 设计规格：[2026-09-08-desktop-client-a-design.md](../../superpowers/specs/2026-09-08-desktop-client-a-design.md)｜ 执行计划：[2026-09-08-desktop-client-a-plan.md](../../superpowers/plans/2026-09-08-desktop-client-a-plan.md)
+> 相关模块：[08-os-automation.md](./08-os-automation.md)（宿主机 OS worker 服务端）｜ 设计规格：[2026-09-08-desktop-client-a-design.md](../../archive/superpowers-specs/2026-09-08-desktop-client-a-design.md)（已归档）｜ 执行计划：[2026-09-08-desktop-client-a-plan.md](../../archive/superpowers-plans/2026-09-08-desktop-client-a-plan.md)（已归档）
 
 ## 目标
 

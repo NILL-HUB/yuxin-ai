@@ -80,7 +80,7 @@
 | 失权自动回收触发点 | `AdminUserService.update_admin_user` / `disable_admin_user` |
 | 机制文档 | [rbac.md §9](../rbac.md) |
 
-**授权模型**：`effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`；白名单为**显式登记制（fail closed）**，新增权限点默认不可下放。三层强制（展示即受限 / 保存校验 / 运行时实时重算）+ 失权自动物理清理。实现计划见 `docs/superpowers/plans/2026-09-16-admin-agent-p1a-authorization-core.md`。
+**授权模型**：`effective = admin.permissions ∩ agent.granted_permissions ∩ ASSIGNABLE_PERMISSIONS`；白名单为**显式登记制（fail closed）**，新增权限点默认不可下放。三层强制（展示即受限 / 保存校验 / 运行时实时重算）+ 失权自动物理清理。实现计划见 `docs/archive/superpowers-plans/2026-09-16-admin-agent-p1a-authorization-core.md`（已归档）。
 
 **回归防护**：`test_admin_agent_authorization.py`、`test_admin_agent_principal.py`、`test_admin_agent_model.py`、`test_admin_agent_service.py`、`test_admin_agent_routes.py`、`test_admin_user_service.py::TestAgentPermissionPruningWiring`——**均含反向验证**（改坏实现时测试必须失败），并已用真实 DB 跑通端到端闭环。
 
@@ -105,7 +105,7 @@
 
 **执行模型**：`AdminAgentExecutionService.run` 执行四步——① 权限/熔断校验（拒绝并记审计）② 按 `automation_policy` 分流（`supervised` 产草稿不执行 / `autonomous` 直接执行 / `blocked` 熔断）③ 调板块实现体 ④ 写 `actor_type=agent` 审计。未配置板块一律 `supervised`（fail closed）。
 
-**已实现板块**：仅 `builtin_tool`（`list` / `update_enabled` / `update_metadata`）作为端到端样板；其余板块按同一模式增量登记。实现计划见 `docs/superpowers/plans/2026-09-16-admin-agent-p1b-board-tools.md`。
+**已实现板块**：仅 `builtin_tool`（`list` / `update_enabled` / `update_metadata`）作为端到端样板；其余板块按同一模式增量登记。实现计划见 `docs/archive/superpowers-plans/2026-09-16-admin-agent-p1b-board-tools.md`（已归档）。
 
 **顺带修复**：4 类审计写入静默丢失（`system_knowledge` 全量、`admin_user.revoke_admin_sessions`、`redeem_code.view_plain` 在 commit 之后写入被回滚；`admin_commerce_routes._write_audit` 绕过 service 且永不提交），并新增 AST 静态守卫 `test_audit_write_commit_guard.py`。
 
@@ -160,7 +160,7 @@
 | 跨层键前缀常量 | `api/internal/config/memory_settings.py`（`OWNER_KEY_USER_PREFIX` 等） |
 | 回归防护 | `test_memory_owner_entity.py`、`test_memory_owner_type_migration.py`、`test_ledger_writer_owner.py`、`test_memory_owner_backfill_consistency.py`（真库校验）、`test_memory_owner_settings.py` |
 
-**主体键形态**（`MemoryOwnerKey.to_key()`，仅用于 Redis / 冷存储等扁平命名空间）：用户 = **裸 `{account_uuid}`**（与旧 `str(account.id)` 逐字节一致，故用户侧零迁移）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。Neo4j 侧不用字符串键，走节点属性级分离（用户 `user_id` / admin `admin_user_id` + `agent_id`）。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10；后续阶段的切分设计见 [ADMIN-P3b 实现计划](../superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md)。
+**主体键形态**（`MemoryOwnerKey.to_key()`，仅用于 Redis / 冷存储等扁平命名空间）：用户 = **裸 `{account_uuid}`**（与旧 `str(account.id)` 逐字节一致，故用户侧零迁移）/ `admin:{admin_uuid}` / `admin:{admin_uuid}:{agent_uuid}`（两级隔离）。Neo4j 侧不用字符串键，走节点属性级分离（用户 `user_id` / admin `admin_user_id` + `agent_id`）。四层映射详见 [memory-system/01-data-models-and-write-path.md](./memory-system/01-data-models-and-write-path.md) §1.10；后续阶段的切分设计见 [ADMIN-P3b 实现计划](../archive/superpowers-plans/2026-09-17-admin-agent-p3b-owner-key-unification.md)（已归档）。
 
 **关键设计决定**：
 
@@ -173,7 +173,7 @@
 
 **仍未落地（后续批次）**：admin / Agent 记忆的**读写调用方**接入（`AdminAgentPrincipal` → `MemoryOwnerKey.for_admin(...)`，含 `LedgerWriter` 写侧与召回读侧）、**解除 PG 主表与向量分表 `owner_account_id` 的 NOT NULL**（否则 admin 记忆在 PG 侧无法落库）、Redis / 冷存储的键前缀改造、C2（`DigestConfig` 配置双源）、C4（冷存储 `list_user_archives()` 空实现）。键前缀常量本阶段**尚无生产消费方**（已提供、未接入）。
 
-实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（ADMIN-P3a）与 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（ADMIN-P3b）。
+实现计划见 `docs/archive/superpowers-plans/2026-09-17-admin-agent-p3a-memory-owner-core.md`（ADMIN-P3a）与 `docs/archive/superpowers-plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（ADMIN-P3b），均已归档。
 
 
 ### ADMIN-P3b 主体身份跨层切分（2026-09-17 完成）
@@ -208,7 +208,7 @@
 （图扩展无主体谓词、`ProfileGraphService` 委派未主体化、`Skill` MERGE 键不含归属、`$cutoff` 未绑定、`_node_to_skill` 只读 `user_id`、`gdpr_delete` 无入口且注销路径不清 Redis、Redis 键分隔约定、`redis_keys` 重复计数、`skill:stats` 无 TTL、用户读端点 Neo4j 未主体化、写/读路径部分模块仍硬编码 `user_id`、`EntityResolver`/`ColdStorageManager` 无注入消费点，另有缺口一/四/十三/十四/十五/十六的细化条目）。
 其中**已修复 14 项**：「Neo4j 唯一约束对管理员级失效」（原缺口三，2026-09 哨兵值方案）、「PG `owner_account_id` NOT NULL 阻塞 admin 落库」（原缺口二，ADMIN-P3c-1）、「`_verify_owner`/`edit_memory`/`gdpr_delete` 仅支持用户主体」（原缺口九，ADMIN-P3c-2）、「`_delete_all_pgvector_rows` 未追加 `owner_type`」（原缺口十六，ADMIN-P3c-2）、「`Skill` MERGE 键不含归属」（原缺口五，ADMIN-P3c-3）、「`_node_to_skill` 只读 `user_id`」（原缺口七，ADMIN-P3c-3）、「`redis_keys` 重复计数」（原缺口十一，ADMIN-P3c-3）、「`skill:stats` 无 TTL」（原缺口十二，ADMIN-P3c-3）、「图扩展/节点详情无主体谓词」（原缺口一，ADMIN-P3c-4）、「`_fetch_profile` 委派未主体化」（原缺口四，ADMIN-P3c-4）、「`$cutoff` 未绑定」（原缺口六，ADMIN-P3c-4）、「注销路径不清 Redis / `gdpr_delete` 无入口」（原缺口八，ADMIN-P3c-4）、「用户读端点未主体化」（原缺口十三，ADMIN-P3c-4）、「其余模块硬编码 `user_id`」（原缺口十四，ADMIN-P3c-4）。剩余开放 2 项：缺口十（Redis 键约定，已固化 docstring）、缺口十五（`EntityResolver` 接线，待产品决策）。
 
-实现计划见 `docs/superpowers/plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`。
+实现计划见 `docs/archive/superpowers-plans/2026-09-17-admin-agent-p3b-owner-key-unification.md`（已归档）。
 
 
 ### ADMIN-P3c-1 写入侧主体化（2026-09-19 完成）
@@ -394,7 +394,7 @@ stats 归零、Neo4j 计数 0。全量回归 **5272 passed / 13 skipped / 2 fail
 | 签名/装配/验证模块 | `api/internal/core/admin_agent_mcp_identity.py`（`sign_principal_token` / `build_runtime_bindings_with_identity` / `verify_principal_token`） |
 | McpToolFactory 注入与 hash 剥离 | `mcp_tool_factory.py`（`_jsonrpc_request` 读 `_principal_token` 注入 header；`_binding_hash` 剥离 `_` 开头内部字段） |
 | 对话链路装配点 | `admin_agent_chat_service.py::_build_tools`（`ASSISTANT_MCP_BINDINGS` 同源配置 → 运行时副本注入签名 → `McpToolFactory().get_tools`） |
-| 计划 | [2026-09-21-admin-agent-p5-mcp-dynamic-identity.md](../superpowers/plans/2026-09-21-admin-agent-p5-mcp-dynamic-identity.md) |
+| 计划 | [2026-09-21-admin-agent-p5-mcp-dynamic-identity.md](../archive/superpowers-plans/2026-09-21-admin-agent-p5-mcp-dynamic-identity.md)（已归档） |
 
 **关键决策**：
 - **token 只承载身份标识**（`admin_user_id` / `agent_id` / `agent_name` / `iat` / `exp`，5 分钟有效），
@@ -453,7 +453,7 @@ MCP 相关既有回归（`api/test/internal/core/tools/` + `test_app_config_serv
 | KB-P5 | 前台与运维（知识库页面 / 小钰帮传 / 同步配额） | ✅ 完成（KB-P5-A 前台页面：板块详情/分区树导航/素材网格与详情/存储用量面板+扩容入口；KB-P5-B 小钰帮传对话工具 `upload_to_knowledge_base`；KB-P5-C 外部数据源同步纳入配额校验。见 [modules/02-knowledge-base.md §11.17](./modules/02-knowledge-base.md#1117-知识库前台与运维kb-p5-已落地)；未落地项：对话消息卡片内直编入口（artifact 载荷不含 document_id，见 modules/02-knowledge-base.md §11.16）） |
 | KB-P6 | 外部素材获取（yt-dlp 链接下载入库：视频 / 纯音频 + 平台字幕，默认关闭） | ✅ **已完成**（`fetch_media` builtin 工具 + `media_fetch_tasks.media_fetch_task` Celery 任务 + `MediaFetchService.import_document`；提取器白名单 `youtube/bilibili/vimeo/dailymotion/twitch`；admin 全局控制配置「外部素材获取」门控默认关闭；L1 字幕优先回退 ASR；无新表/迁移。**封面未接入**。见 [modules/02-knowledge-base.md §11.18](./modules/02-knowledge-base.md#1118-外部素材获取kb-p6已落地) 与 [knowledge-base-product-form-design.md §5.3](./knowledge-base-product-form-design.md#53-素材获取外部媒体平台下载yt-dlp已落地kb-p6)） |
 
-KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../superpowers/plans/2026-09-12-knowledge-base-p1-foundation.md)）：
+KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation.md](../archive/superpowers-plans/2026-09-12-knowledge-base-p1-foundation.md)，已归档）：
 
 | 交付 | 载体 | 状态 |
 | --- | --- | --- |
@@ -550,7 +550,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 | **帧计费链路锁定** | `test_frame_quota_charge.py` | ✅ 已落地；帧经存储代理（`RuntimeStorageProxy.upload_bytes`）**隐式计费**，用测试锁定该跨模块契约（无生产代码改动——核查确认现状已计费，再加 `add_usage` 会双重计费） |
 | **帧释放（成对修复）** | `recycle_bin_handlers.py`（`_collect_document_frame_files` + `snapshot_knowledge_document` / `snapshot_knowledge_base` / `purge_knowledge_document` / `purge_knowledge_base`） | ✅ 已落地；帧此前**只计费不清理**（配额泄漏），现两条 purge 路径均一并删帧文件并 `release_usage` |
 
-> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../superpowers/specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md)。L2 区间密抽已由 KB-P3.6 落地；HyperFrames 渲染宿主已由 **KB-P3.7** 落地（见下）。
+> 设计稿见 [superpowers/specs/2026-09-16-video-production-p4-design.md](../archive/superpowers-specs/2026-09-16-video-production-p4-design.md)，实施计划见 [superpowers/plans/2026-09-16-video-frame-sampling-and-quota.md](../archive/superpowers-plans/2026-09-16-video-frame-sampling-and-quota.md)（均已归档）。L2 区间密抽已由 KB-P3.6 落地；HyperFrames 渲染宿主已由 **KB-P3.7** 落地（见下）。
 
 ### KB-P3.6：L2 区间密抽（已完成）
 
@@ -561,7 +561,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 | **L2 改为窗口化密抽** | `knowledge_indexing_service.py`（`_enhance_l2` / `_extract_and_persist_window` / `_persist_window_frame` / `_clear_previous_l2_windows` / `_resolve_document_duration`） | ✅ 已落地；窗口内帧新建 Segment（`tier2_window=True`）并同时写文本/视觉向量，无命中不抽 |
 | **显式区间透传** | `knowledge_base_service.py` / `knowledge_l2_tasks.py` / `knowledge_mcp_routes.py` | ✅ 已落地；请求体 `start_sec` + `end_sec` 均给出时按其密抽 |
 
-> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../superpowers/plans/2026-09-16-l2-range-sampling.md)。HyperFrames 渲染已由 **KB-P3.7** 落地（见下）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
+> 实施计划见 [superpowers/plans/2026-09-16-l2-range-sampling.md](../archive/superpowers-plans/2026-09-16-l2-range-sampling.md)（已归档）。HyperFrames 渲染已由 **KB-P3.7** 落地（见下）；场景切分（`select='gt(scene,...)'`）仍为后续增量——当前 L2 按时间窗口密抽，非按场景。
 
 ### KB-P3.7：HyperFrames 渲染宿主与成品库（已完成）
 
@@ -618,7 +618,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 **动机**：渲染是多租户下最贵的算力开销（官方定位即「用户本地渲染」，平台常驻容器成本随用户数不可控）。
 故把渲染下放到用户本机执行，**云端代码完整保留但默认关闭**，成本可控且随时可接通。
 
-实施计划（KB-P3.8）：[superpowers/plans/2026-09-18-local-first-render-offload.md](../superpowers/plans/2026-09-18-local-first-render-offload.md)
+实施计划（KB-P3.8）：[superpowers/plans/2026-09-18-local-first-render-offload.md](../archive/superpowers-plans/2026-09-18-local-first-render-offload.md)（已归档）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -672,7 +672,7 @@ KB-KB-KB-P1 关键交付（实施计划 [2026-09-12-knowledge-base-p1-foundation
 **动机**：KB-P3.7 的渲染出片解决「从零生成」，但用户高频的「改细节」需求（掐一段、接两段、配字幕）
 此前**没有任何入口**——ffmpeg 在全仓仅用于抽帧（无 trim / concat / 字幕实现）。
 
-实施计划（KB-P4）：[superpowers/plans/2026-09-19-kb-p4-video-edit.md](../superpowers/plans/2026-09-19-kb-p4-video-edit.md)
+实施计划（KB-P4）：[superpowers/plans/2026-09-19-kb-p4-video-edit.md](../archive/superpowers-plans/2026-09-19-kb-p4-video-edit.md)（已归档）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
@@ -729,7 +729,7 @@ subtitle（2.00s，字幕像素已烧入、帧 md5 相对源发生变化）均�
 视频解析升级为**批次化时间线叙述**：调次数从 N 降到 N/块，模型只输出 `[{anchor_index, description}]`，
 时间码一律由服务端投影（ASR cues / 抽帧偏移），段落即剪辑定位基础。
 
-实施计划（KB-P4.5）：[superpowers/plans/2026-09-20-kb-video-timeline-p4.md](../superpowers/plans/2026-09-20-kb-video-timeline-p4.md)
+实施计划（KB-P4.5）：[superpowers/plans/2026-09-20-kb-video-timeline-p4.md](../archive/superpowers-plans/2026-09-20-kb-video-timeline-p4.md)（已归档）
 
 | 任务 | 文件 | 状态 |
 | --- | --- | --- |
