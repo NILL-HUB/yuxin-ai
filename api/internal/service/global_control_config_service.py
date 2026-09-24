@@ -7,6 +7,7 @@ admin「系统配置 → 全局控制配置」页面的数据源，承载系统�
 - ``skill_catalog_sync``：启动时同步技能目录开关
 - ``image_request_policy``：图片请求策略（strict / auto_upgrade）
 - ``vision_fallback``：视觉兜底模型（provider / model）
+- ``model_key_pool``：模型 Key 池熔断阈值（failure_threshold）与冷却恢复秒数（cooldown_seconds）
 
 与 desktop_client_config（桌面客户端连接）同款单行模式；字段白名单校验，
 未在默认配置中登记的 key 不入库。
@@ -28,6 +29,7 @@ DEFAULT_CONFIGS: dict[str, dict] = {
     "skill_catalog_sync": {"enabled": False},
     "image_request_policy": {"policy": "strict"},
     "vision_fallback": {"provider": "", "model": ""},
+    "model_key_pool": {"failure_threshold": 3, "cooldown_seconds": 300},
 }
 
 # 各 section 字段类型约束（admin 更新时校验）
@@ -38,6 +40,7 @@ _SECTION_FIELD_TYPES: dict[str, dict[str, type]] = {
     "skill_catalog_sync": {"enabled": bool},
     "image_request_policy": {"policy": str},
     "vision_fallback": {"provider": str, "model": str},
+    "model_key_pool": {"failure_threshold": int, "cooldown_seconds": int},
 }
 
 SUPPORTED_SECTIONS = frozenset(DEFAULT_CONFIGS)

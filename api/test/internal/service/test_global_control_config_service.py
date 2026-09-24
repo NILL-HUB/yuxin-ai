@@ -144,3 +144,27 @@ def test_ensure_default_config_idempotent():
     svc.ensure_default_config()  # 第二次不再新增
     assert svc.session.row is not None
     assert svc.session.committed == 1
+
+
+def test_get_config_returns_model_key_pool_defaults():
+    svc = _service()
+    assert svc.get_config("model_key_pool") == {"failure_threshold": 3, "cooldown_seconds": 300}
+
+
+def test_model_key_pool_is_registered_as_supported_section():
+    assert "model_key_pool" in SUPPORTED_SECTIONS
+    assert "model_key_pool" in DEFAULT_CONFIGS
+
+
+def test_update_model_key_pool_rejects_non_positive_threshold():
+    import pytest
+
+    with pytest.raises(ValueError):
+        _service().update_config("model_key_pool", {"failure_threshold": 0})
+
+
+def test_update_model_key_pool_ignores_unknown_key():
+    cfg = _service().update_config("model_key_pool", {"unknown_key": 1})
+
+    assert "unknown_key" not in cfg
+    assert cfg["failure_threshold"] == 3
