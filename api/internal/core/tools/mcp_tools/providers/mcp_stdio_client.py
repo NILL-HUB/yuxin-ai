@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shlex
@@ -146,15 +147,34 @@ class McpStdioClient:
         return tools
 
     def _render_raw_args(self, binding: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
-        """把 args 模板里的 {占位符} 用调用参数替换。"""
+        """把 args 模板里的 {占位符} 用调用参数替换。
+
+        参数值统一按 **JSON** 序列化（非标量传 `'["a","b"]'` 而非 Python repr
+        `['a', 'b']`），CLI 侧可直接 json.loads 解析；字符串不加多余引号。
+        按 key 长度**倒序**替换，避免一个占位符名是另一个的前缀时被提前吃掉
+        （如 `{text}` 与 `{text_long}`）。
+        """
         raw_args = binding.get("args") or []
         if not isinstance(raw_args, list):
             return []
+
+        def _render_value(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value
+            return json.dumps(value, ensure_ascii=False)
+
+        placeholders = sorted(
+            ((str(key), _render_value(value)) for key, value in (arguments or {}).items()),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
         rendered: list[str] = []
         for token in raw_args:
             text = str(token)
-            for key, value in (arguments or {}).items():
-                text = text.replace("{" + str(key) + "}", str(value if value is not None else ""))
+            for key, replacement in placeholders:
+                text = text.replace("{" + key + "}", replacement)
             rendered.append(text)
         return rendered
 
@@ -171,10 +191,18 @@ class McpStdioClient:
             }
         import subprocess
 
-        command, args, env, timeout = self._build_stdio_params(
-            {**binding, "args": self._render_raw_args(binding, arguments)}
-        )
-        executable, extra_args = self._split_command(command, args)
+        # 参数构建放进 try：缺 command（ValueError）或 env 非空明文（decrypt_env
+        # 抛 ValueError）也要返回结构化错误，而不是冒泡到工厂的通用兜底文案。
+        try:
+            command, args, env, timeout = self._build_stdio_params(
+                {**binding, "args": self._render_raw_args(binding, arguments)}
+            )
+            executable, extra_args = self._split_command(command, args)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "isError": True,
+                "content": [{"type": "text", "text": f"CLI 参数构建失败: {exc}"}],
+            }
         try:
             completed = subprocess.run(
                 [executable, *extra_args],

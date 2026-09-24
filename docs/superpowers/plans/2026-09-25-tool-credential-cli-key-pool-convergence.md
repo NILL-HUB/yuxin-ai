@@ -1508,10 +1508,6 @@ import sys
 from internal.core.tools.mcp_tools.providers.mcp_stdio_client import McpStdioClient
 
 
-def _python_command(script: str) -> str:
-    return f'{sys.executable} -c "{script}"'
-
-
 def test_raw_protocol_lists_declared_tools():
     client = McpStdioClient()
     binding = {
@@ -1600,6 +1596,53 @@ def test_raw_protocol_rejects_undeclared_tool():
 
     assert result["isError"] is True
     assert "未声明" in result["content"][0]["text"]
+
+
+def test_raw_protocol_serializes_non_scalar_argument_as_json():
+    """非标量参数按 JSON 传，不是 Python repr（便于 CLI 侧 json.loads）。"""
+    import json
+
+    client = McpStdioClient()
+    binding = {
+        "protocol": "raw",
+        "command": sys.executable,
+        "args": ["-c", "import sys; print(sys.argv[1])", "{items}"],
+        "env": {},
+        "timeout_seconds": 30,
+        "tool_schema": {
+            "echo_list": {
+                "description": "回显数组",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+                },
+            }
+        },
+    }
+
+    result = client.call_tool_sync(binding, "echo_list", {"items": ["a", "b"]})
+
+    assert result["isError"] is False
+    assert result["content"][0]["text"].strip() == json.dumps(["a", "b"])
+
+
+def test_raw_protocol_reports_bad_command_as_structured_error():
+    """缺 command 时返回结构化错误，而不是冒泡成工厂通用兜底文案。"""
+    client = McpStdioClient()
+    binding = {
+        "protocol": "raw",
+        "command": "",
+        "args": [],
+        "env": {},
+        "tool_schema": {
+            "echo": {"description": "回声", "parameters": {"type": "object", "properties": {}}}
+        },
+    }
+
+    result = client.call_tool_sync(binding, "echo", {})
+
+    assert result["isError"] is True
+    assert "CLI 参数构建失败" in result["content"][0]["text"]
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1609,7 +1652,7 @@ Expected：FAIL —— `list_tools_sync` 走 MCP JSON-RPC 分支，对非 MCP �
 
 - [ ] **Step 3: 实现 `protocol=raw`**
 
-在 `mcp_stdio_client.py` 中加模块常量与分派：
+在 `mcp_stdio_client.py` 中加模块常量与分派（**文件顶部需新增 `import json`** —— 当前只 import 了 `asyncio/logging/os/shlex`，`_render_raw_args` 的 JSON 序列化要用它）：
 
 ```python
 SUPPORTED_STDIO_PROTOCOLS = {"mcp", "raw"}
@@ -1661,15 +1704,34 @@ DEFAULT_STDIO_PROTOCOL = "mcp"
         return tools
 
     def _render_raw_args(self, binding: dict[str, Any], arguments: dict[str, Any]) -> list[str]:
-        """把 args 模板里的 {占位符} 用调用参数替换。"""
+        """把 args 模板里的 {占位符} 用调用参数替换。
+
+        参数值统一按 **JSON** 序列化（非标量传 `'["a","b"]'` 而非 Python repr
+        `['a', 'b']`），CLI 侧可直接 json.loads 解析；字符串不加多余引号。
+        按 key 长度**倒序**替换，避免一个占位符名是另一个的前缀时被提前吃掉
+        （如 `{text}` 与 `{text_long}`）。
+        """
         raw_args = binding.get("args") or []
         if not isinstance(raw_args, list):
             return []
+
+        def _render_value(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return value
+            return json.dumps(value, ensure_ascii=False)
+
+        placeholders = sorted(
+            ((str(key), _render_value(value)) for key, value in (arguments or {}).items()),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
         rendered: list[str] = []
         for token in raw_args:
             text = str(token)
-            for key, value in (arguments or {}).items():
-                text = text.replace("{" + str(key) + "}", str(value if value is not None else ""))
+            for key, replacement in placeholders:
+                text = text.replace("{" + key + "}", replacement)
             rendered.append(text)
         return rendered
 
@@ -1686,10 +1748,18 @@ DEFAULT_STDIO_PROTOCOL = "mcp"
             }
         import subprocess
 
-        command, args, env, timeout = self._build_stdio_params(
-            {**binding, "args": self._render_raw_args(binding, arguments)}
-        )
-        executable, extra_args = self._split_command(command, args)
+        # 参数构建放进 try：缺 command（ValueError）或 env 非空明文（decrypt_env
+        # 抛 ValueError）也要返回结构化错误，而不是冒泡到工厂的通用兜底文案。
+        try:
+            command, args, env, timeout = self._build_stdio_params(
+                {**binding, "args": self._render_raw_args(binding, arguments)}
+            )
+            executable, extra_args = self._split_command(command, args)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "isError": True,
+                "content": [{"type": "text", "text": f"CLI 参数构建失败: {exc}"}],
+            }
         try:
             completed = subprocess.run(
                 [executable, *extra_args],
