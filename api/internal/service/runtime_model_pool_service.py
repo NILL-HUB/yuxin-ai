@@ -115,7 +115,7 @@ class RuntimeModelPoolService:
         model = session.query(ModelPoolConfig).filter(ModelPoolConfig.id == model_id).one_or_none()
         if model is None:
             return []
-        self._recover_cooled_down_keys(session)
+        self._recover_cooled_down_keys(session, provider=model.provider)
         now = self._now()
         model_id_text = str(model.id)
         query = session.query(ModelKeyConfig).filter(
@@ -166,11 +166,21 @@ class RuntimeModelPoolService:
         session.commit()
         return circuit_opened
 
-    def _recover_cooled_down_keys(self, session: Any) -> None:
-        """把冷却期已到的 circuit_open Key 复位为 active（失败计数清零）。"""
+    def _recover_cooled_down_keys(self, session: Any, *, provider: str) -> None:
+        """把冷却期已到的 circuit_open Key 复位为 active（失败计数清零）。
+
+        - 只扫描**本 provider** 的熔断 Key：与 get_keys_for_model 的选键范围一致，
+          避免「查 A 模型却复活 B 供应商的 Key」。
+        - `circuit_opened_at is None` 视为**不可恢复**：只有带时间戳、且冷却已过的
+          Key 才复活。这样既不会在部署时把历史 `circuit_open` 行（无时间戳）静默
+          全量复活，也不会让 admin 手动拉闸（set_key_status 不写时间戳）被自动撤销。
+        """
         candidates = (
             session.query(ModelKeyConfig)
-            .filter(ModelKeyConfig.status == "circuit_open")
+            .filter(
+                ModelKeyConfig.status == "circuit_open",
+                ModelKeyConfig.provider == provider,
+            )
             .all()
         )
         if not candidates:
@@ -182,7 +192,7 @@ class RuntimeModelPoolService:
         recovered: list[ModelKeyConfig] = []
         for key in candidates:
             opened_at = key.circuit_opened_at
-            if opened_at is not None and opened_at > deadline:
+            if opened_at is None or opened_at > deadline:
                 continue
             key.status = "active"
             key.failure_count = 0
@@ -192,7 +202,9 @@ class RuntimeModelPoolService:
         if not recovered:
             return
         session.commit()
-        logger.info("Key 池冷却恢复 %d 个 Key", len(recovered))
+        logger.info(
+            "Key 池冷却恢复 %d 个 Key provider=%s", len(recovered), provider
+        )
 
     def build_llm_config(self, model: ModelPoolConfig, key: ModelKeyConfig) -> dict[str, Any]:
         api_key = _decrypt_key_value(key.key_value_encrypted)

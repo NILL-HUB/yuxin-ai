@@ -250,6 +250,44 @@ class TestRuntimeModelPoolService:
 
         assert service.get_keys_for_model(model.id) == []
 
+    def test_get_keys_for_model_should_not_recover_manual_circuit_without_timestamp(self, model_pool_db):
+        """手动熔断（无 timestamp）不得被自动恢复——否则 admin 拉闸会被静默撤销。"""
+        service = _service(model_pool_db)
+        model = _make_model(model_pool_db, provider="openai")
+        # 模拟 admin set_key_status 的效果：只置 circuit_open，不写 circuit_opened_at
+        _make_key(
+            model_pool_db,
+            provider="openai",
+            model_id=None,
+            status="circuit_open",
+            circuit_opened_at=None,
+        )
+
+        assert service.get_keys_for_model(model.id) == []
+
+    def test_get_keys_for_model_should_not_recover_key_of_other_provider(self, model_pool_db, monkeypatch):
+        """冷却恢复只作用于本 provider，不得跨界复活其它供应商的 Key。"""
+        service = _service(model_pool_db)
+        monkeypatch.setattr(
+            service,
+            "_key_pool_config",
+            lambda: {"failure_threshold": 1, "cooldown_seconds": 3600},
+        )
+        model = _make_model(model_pool_db, provider="openai")
+        other = _make_key(
+            model_pool_db,
+            provider="deepseek",
+            model_id=None,
+            status="circuit_open",
+            circuit_opened_at=_now(),
+        )
+
+        service.get_keys_for_model(model.id)
+
+        model_pool_db.session.expire_all()
+        still_open = model_pool_db.session.query(ModelKeyConfig).filter(ModelKeyConfig.id == other.id).one()
+        assert still_open.status == "circuit_open"
+
     # ---------------- 输出长度上限注入（max_output_tokens → max_tokens 参数） ----------------
 
     def test_build_llm_config_should_inject_output_max_tokens(self, model_pool_db):

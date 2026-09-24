@@ -124,7 +124,8 @@ class ModelKeyConfig(Base):
     status = Column(String(64), nullable=False, server_default=text("'active'::character varying"))
     failure_count = Column(Integer, nullable=False, server_default=text("0"))
     last_used_at = Column(DateTime, nullable=True)
-    # 熔断开启时间；用于冷却后自动恢复（为 NULL 表示未处于熔断态）
+    # 自动熔断开启时间（record_key_failure 写入）；仅冷却恢复读取。
+    # 为 NULL 表示「非自动熔断」（含 admin 手动拉闸）：不参与冷却恢复，保持其状态。
     circuit_opened_at = Column(DateTime, nullable=True)
     effective_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
