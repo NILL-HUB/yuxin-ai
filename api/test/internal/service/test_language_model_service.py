@@ -971,3 +971,77 @@ class TestRuntimeFallbackCandidateRotation:
             list(proxy.stream("hello"))
         assert len(candidate.stream_inputs) == 0
         assert len(fallback.stream_inputs) == 0
+
+
+class TestRuntimeFallbackConfigRead:
+    """runtime_fallback 配置读取：admin 全局控制配置优先、env 兜底、默认值保底。"""
+
+    @staticmethod
+    def _stub_injector(monkeypatch, cfg):
+        from app.http import module
+
+        # cfg 为 runtime_fallback section 的扁平 dict（如 {"enabled": True, "retry_attempts": 9}），
+        # 与新 global_control_config 单行 JSONB 结构一致。
+        service = SimpleNamespace(get_config=lambda _section: dict(cfg or {}))
+        monkeypatch.setattr(
+            module,
+            "injector",
+            SimpleNamespace(get=lambda _cls: service),
+        )
+
+    def test_retry_attempts_should_prefer_admin_config(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        self._stub_injector(monkeypatch, {"enabled": True, "retry_attempts": 9})
+        monkeypatch.delenv("RUNTIME_FALLBACK_RETRY_ATTEMPTS", raising=False)
+        assert lms._runtime_retry_attempts() == 9
+
+    def test_retry_attempts_should_fallback_to_env_when_admin_empty(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        self._stub_injector(monkeypatch, {"enabled": True})
+        monkeypatch.setenv("RUNTIME_FALLBACK_RETRY_ATTEMPTS", "7")
+        assert lms._runtime_retry_attempts() == 7
+
+    def test_retry_attempts_should_ignore_invalid_admin_value(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        self._stub_injector(monkeypatch, {"enabled": True, "retry_attempts": "abc"})
+        monkeypatch.delenv("RUNTIME_FALLBACK_RETRY_ATTEMPTS", raising=False)
+        assert lms._runtime_retry_attempts() == 5
+
+    def test_retry_attempts_should_default_to_five(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        self._stub_injector(monkeypatch, None)
+        monkeypatch.delenv("RUNTIME_FALLBACK_RETRY_ATTEMPTS", raising=False)
+        assert lms._runtime_retry_attempts() == 5
+
+    def test_candidate_enabled_should_follow_admin_switch(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        service = LanguageModelService(db=SimpleNamespace(), language_model_manager=SimpleNamespace())
+        self._stub_injector(monkeypatch, {"enabled": False, "retry_attempts": 5})
+        monkeypatch.delenv("RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES", raising=False)
+        assert service._runtime_fallback_candidate_enabled() is False
+
+        self._stub_injector(monkeypatch, {"enabled": True, "retry_attempts": 5})
+        assert service._runtime_fallback_candidate_enabled() is True
+
+    def test_candidate_enabled_should_fallback_to_env_when_admin_missing(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        service = LanguageModelService(db=SimpleNamespace(), language_model_manager=SimpleNamespace())
+        self._stub_injector(monkeypatch, None)
+        monkeypatch.setenv("RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES", "off")
+        assert service._runtime_fallback_candidate_enabled() is False
+        monkeypatch.setenv("RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES", "1")
+        assert service._runtime_fallback_candidate_enabled() is True
+
+    def test_candidate_enabled_should_default_to_true(self, monkeypatch):
+        from internal.service import language_model_service as lms
+
+        service = LanguageModelService(db=SimpleNamespace(), language_model_manager=SimpleNamespace())
+        self._stub_injector(monkeypatch, None)
+        monkeypatch.delenv("RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES", raising=False)
+        assert service._runtime_fallback_candidate_enabled() is True

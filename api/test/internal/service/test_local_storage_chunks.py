@@ -150,3 +150,48 @@ def test_copy_object_duplicates_file_server_side(isolated_storage):
     assert size == 7
     with open(service._object_path(target_key), "rb") as fh:
         assert fh.read() == b"payload"
+
+
+def test_local_storage_root_should_prefer_admin_config_over_env(monkeypatch):
+    """admin storage_config["local"].root 应优先于 LOCAL_STORAGE_ROOT 环境变量。"""
+    monkeypatch.setenv("LOCAL_STORAGE_ROOT", "env/uploads")
+    monkeypatch.setattr(
+        "internal.service.storage.local_storage_service._load_local_configs",
+        lambda: {"root": "admin/uploads"},
+    )
+
+    assert module._get_local_storage_root() == "admin/uploads"
+
+
+def test_local_storage_root_should_fallback_to_env_when_config_missing(monkeypatch):
+    """admin 未配置 root 时应降级到环境变量。"""
+    monkeypatch.setenv("LOCAL_STORAGE_ROOT", "env/uploads")
+    monkeypatch.setattr(
+        "internal.service.storage.local_storage_service._load_local_configs",
+        lambda: {},
+    )
+
+    assert module._get_local_storage_root() == "env/uploads"
+
+
+def test_local_storage_base_url_should_prefer_admin_config_over_env(monkeypatch):
+    """admin storage_config["local"].base_url 应优先于 LOCAL_STORAGE_BASE_URL 环境变量。"""
+    monkeypatch.setenv("LOCAL_STORAGE_BASE_URL", "https://env.example.com/storage")
+    monkeypatch.setattr(
+        "internal.service.storage.local_storage_service._load_local_configs",
+        lambda: {"base_url": "https://admin.example.com/storage"},
+    )
+
+    assert module._get_local_storage_base_url() == "https://admin.example.com/storage"
+
+
+def test_local_storage_get_file_url_should_use_admin_base_url(monkeypatch):
+    """get_file_url 使用 admin 配置的 base_url 时返回完整 URL。"""
+    monkeypatch.setattr(
+        "internal.service.storage.local_storage_service._load_local_configs",
+        lambda: {"base_url": "https://admin.example.com/storage"},
+    )
+
+    url = LocalStorageService.get_file_url("2026/09/14/demo.txt")
+
+    assert url == "https://admin.example.com/storage/2026/09/14/demo.txt"

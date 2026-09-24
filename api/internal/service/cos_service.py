@@ -22,6 +22,43 @@ from internal.model import UploadFile, Account
 from .upload_file_service import UploadFileService
 
 
+def _load_storage_config_service():
+    """惰性获取 StorageConfigService，避免循环导入与初始化顺序问题。"""
+    from app.http.module import injector
+    from internal.service.storage.storage_config_service import StorageConfigService
+
+    return injector.get(StorageConfigService)
+
+
+def _load_cos_configs() -> dict:
+    """读取 admin 存储配置表中 cos 的配置（bucket/region/domain 等）。
+
+    优先 ``storage_config`` 表（admin 端 /admin/storage 可编辑，写入时已按
+    ``_ALLOWED_CONFIG_KEYS`` 白名单剔除密钥类字段），未配置时返回空 dict，
+    调用方降级到环境变量。密钥（SecretId/SecretKey）不入库，仍读环境变量。
+    """
+    try:
+        config = _load_storage_config_service().get_config("cos")
+        if config is not None and getattr(config, "configs", None):
+            return dict(config.configs or {})
+    except Exception:
+        pass
+    return {}
+
+
+def _load_active_backend() -> str:
+    """读取 admin 激活的存储后端（storage_config.is_active 唯一）。
+
+    与 ``StorageConfigService.get_active_backend()`` 语义一致：优先激活记录，
+    未配置时降级到 ``STORAGE_BACKEND`` 环境变量。运行时以后端分发一律走这里，
+    避免绕过 admin 存储配置直接读环境变量。
+    """
+    try:
+        return _load_storage_config_service().get_active_backend()
+    except Exception:
+        return (os.getenv("STORAGE_BACKEND") or "cos").strip().lower()
+
+
 @inject
 @dataclass
 class CosService:
@@ -186,12 +223,13 @@ class CosService:
     ) -> str:
         """上传内存字节到 COS，但不创建 UploadFile 记录。
 
-        根据 ``STORAGE_BACKEND`` 环境变量分发到对应后端实现：
+        根据当前激活的存储后端分发到对应实现（来源：admin ``storage_config``
+        激活记录，未配置时降级 ``STORAGE_BACKEND`` 环境变量）：
         - ``local``: 本地文件存储
         - ``oss``:   阿里云 OSS
         - ``cos``:   腾讯云 COS（默认）
         """
-        backend = (os.getenv("STORAGE_BACKEND") or "cos").strip().lower()
+        backend = _load_active_backend()
         if backend == "local":
             from internal.service.storage.local_storage_service import LocalStorageService
             return LocalStorageService.upload_bytes_without_record(
@@ -262,10 +300,11 @@ class CosService:
         """服务端复制同桶对象，返回目标字节数。"""
         client = self._get_client()
         bucket = self._get_bucket()
+        region = _load_cos_configs().get("region") or os.getenv("COS_REGION")
         client.copy_object(
             Bucket=bucket,
             Key=target_key,
-            CopySource={"Bucket": bucket, "Key": source_key, "Region": os.getenv("COS_REGION")},
+            CopySource={"Bucket": bucket, "Key": source_key, "Region": region},
         )
         head = client.head_object(bucket, target_key)
         return int(head.get("Content-Length", 0) or 0)
@@ -302,7 +341,8 @@ class CosService:
     def get_file_url(cls, key: str, download_name: str | None = None) -> str:
         """根据 COS key 获取文件 URL。
 
-        根据 ``STORAGE_BACKEND`` 环境变量分发到对应后端实现：
+        根据当前激活的存储后端分发到对应实现（来源：admin ``storage_config``
+        激活记录，未配置时降级 ``STORAGE_BACKEND`` 环境变量）：
         - ``local``: 本地文件存储（``/storage/local/{key}``）
         - ``oss``:   阿里云 OSS
         - ``cos``:   腾讯云 COS（默认）
@@ -312,7 +352,7 @@ class CosService:
         如需私有桶签名下载，可通过 COS_PRESIGNED_DOWNLOAD_URL_EXPIRE_SECONDS
         显式开启预签名。
         """
-        backend = (os.getenv("STORAGE_BACKEND") or "cos").strip().lower()
+        backend = _load_active_backend()
         if backend == "local":
             from internal.service.storage.local_storage_service import LocalStorageService
             return LocalStorageService.get_file_url(key, download_name)
@@ -324,12 +364,13 @@ class CosService:
         if str(key or "").startswith("local/"):
             raise FailException("本地文件存储已禁用，请重新上传")
 
-        cos_domain = os.getenv("COS_DOMAIN")
+        configs = _load_cos_configs()
+        cos_domain = configs.get("domain") or os.getenv("COS_DOMAIN")
 
         if not cos_domain:
-            bucket = os.getenv("COS_BUCKET")
-            scheme = os.getenv("COS_SCHEME")
-            region = os.getenv("COS_REGION")
+            bucket = configs.get("bucket") or os.getenv("COS_BUCKET")
+            scheme = configs.get("scheme") or os.getenv("COS_SCHEME", "https")
+            region = configs.get("region") or os.getenv("COS_REGION")
             cos_domain = f"{scheme}://{bucket}.cos.{region}.myqcloud.com"
 
         url = f"{cos_domain}/{key}"
@@ -364,25 +405,32 @@ class CosService:
     @classmethod
     def _get_client(cls) -> CosS3Client:
         """获取腾讯云cos对象存储客户端"""
+        configs = _load_cos_configs()
         timeout_seconds = cls._get_timeout_seconds()
         sdk_retry = cls._get_sdk_retry()
         conf = CosConfig(
-            Region=os.getenv("COS_REGION"),
+            Region=configs.get("region") or os.getenv("COS_REGION"),
             SecretId=os.getenv("COS_SECRET_ID"),
             SecretKey=os.getenv("COS_SECRET_KEY"),
             Token=None,
-            Scheme=os.getenv("COS_SCHEME", "https"),
+            Scheme=configs.get("scheme") or os.getenv("COS_SCHEME", "https"),
             Timeout=timeout_seconds,
-            AutoSwitchDomainOnRetry=cls._get_bool_env("COS_AUTO_SWITCH_DOMAIN_ON_RETRY", True),
+            AutoSwitchDomainOnRetry=cls._to_bool(
+                configs.get("auto_switch_domain_on_retry"),
+                cls._get_bool_env("COS_AUTO_SWITCH_DOMAIN_ON_RETRY", True),
+            ),
             EnableOldDomain=cls._get_bool_env("COS_ENABLE_OLD_DOMAIN", True),
-            EnableInternalDomain=cls._get_bool_env("COS_ENABLE_INTERNAL_DOMAIN", False),
+            EnableInternalDomain=cls._to_bool(
+                configs.get("enable_internal_domain"),
+                cls._get_bool_env("COS_ENABLE_INTERNAL_DOMAIN", False),
+            ),
         )
         return CosS3Client(conf, retry=sdk_retry)
 
     @classmethod
     def _get_bucket(cls) -> str:
-        """获取存储桶的名字"""
-        return os.getenv("COS_BUCKET")
+        """获取存储桶的名字（admin 配置优先，环境变量兜底）"""
+        return _load_cos_configs().get("bucket") or os.getenv("COS_BUCKET")
 
     @classmethod
     def _get_upload_max_attempts(cls) -> int:
@@ -400,18 +448,24 @@ class CosService:
         return cls._get_int_env("COS_SDK_RETRY", 1, minimum=0)
 
     @staticmethod
-    def _get_bool_env(key: str, default: bool) -> bool:
-        """读取布尔环境变量，非法值时回退默认值。"""
-        value = os.getenv(key)
+    def _to_bool(value, default: bool) -> bool:
+        """将配置值（bool 或字符串）解析为布尔，非法值时回退默认值。"""
         if value is None:
             return default
+        if isinstance(value, bool):
+            return value
 
-        normalized = value.strip().lower()
+        normalized = str(value).strip().lower()
         if normalized in {"1", "true", "yes", "on"}:
             return True
         if normalized in {"0", "false", "no", "off"}:
             return False
         return default
+
+    @staticmethod
+    def _get_bool_env(key: str, default: bool) -> bool:
+        """读取布尔环境变量，非法值时回退默认值。"""
+        return CosService._to_bool(os.getenv(key), default)
 
     @staticmethod
     def _get_int_env(key: str, default: int, minimum: int = 1) -> int:

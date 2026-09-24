@@ -119,6 +119,9 @@ class TestCosService:
 
     def test_get_file_url_should_use_custom_domain_when_present(self, monkeypatch):
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
         monkeypatch.setenv("COS_DOMAIN", "https://cos.example.com")
 
         url = CosService.get_file_url("2026/01/01/demo.txt")
@@ -127,6 +130,9 @@ class TestCosService:
 
     def test_get_file_url_should_build_domain_from_bucket_when_custom_domain_missing(self, monkeypatch):
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
         monkeypatch.delenv("COS_DOMAIN", raising=False)
         monkeypatch.setenv("COS_BUCKET", "bucket-a")
         monkeypatch.setenv("COS_SCHEME", "https")
@@ -138,6 +144,9 @@ class TestCosService:
 
     def test_get_file_url_should_return_plain_url_for_anonymous_downloads(self, monkeypatch):
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
         monkeypatch.setenv("COS_DOMAIN", "https://cos.example.com")
 
         url = CosService.get_file_url(
@@ -149,12 +158,18 @@ class TestCosService:
 
     def test_get_file_url_should_reject_local_keys(self, monkeypatch):
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
 
         with pytest.raises(FailException, match="本地文件存储已禁用"):
             CosService.get_file_url("local/2026/01/01/demo.txt")
 
     def test_get_file_url_should_build_presigned_download_url_when_enabled(self, monkeypatch):
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
         monkeypatch.setenv("COS_DOMAIN", "https://cos.example.com")
         monkeypatch.setenv("COS_PRESIGNED_DOWNLOAD_URL_EXPIRE_SECONDS", "600")
 
@@ -180,6 +195,9 @@ class TestCosService:
     def test_upload_bytes_without_record_should_upload_and_return_public_url(self, monkeypatch):
         captured = {}
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
 
         class _Client:
             @staticmethod
@@ -209,6 +227,9 @@ class TestCosService:
 
     def test_upload_bytes_without_record_should_raise_when_cos_upload_failed(self, monkeypatch):
         monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        # 打桩 admin 存储配置读取：单测强制走 env，避免共享测试库 storage_config 行污染断言
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
 
         class _Client:
             @staticmethod
@@ -352,6 +373,7 @@ class TestCosService:
         monkeypatch.setenv("COS_AUTO_SWITCH_DOMAIN_ON_RETRY", "true")
         monkeypatch.setenv("COS_ENABLE_OLD_DOMAIN", "false")
         monkeypatch.setenv("COS_ENABLE_INTERNAL_DOMAIN", "false")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
 
         def _fake_cos_config(**kwargs):
             captured["config_kwargs"] = kwargs
@@ -386,6 +408,7 @@ class TestCosService:
         monkeypatch.setenv("COS_SCHEME", "https")
         monkeypatch.delenv("COS_TIMEOUT_SECONDS", raising=False)
         monkeypatch.delenv("COS_SDK_RETRY", raising=False)
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
 
         def _fake_cos_config(**kwargs):
             captured["config_kwargs"] = kwargs
@@ -437,8 +460,63 @@ class TestCosService:
 
     def test_get_bucket_should_read_env_bucket_name(self, monkeypatch):
         monkeypatch.setenv("COS_BUCKET", "demo-bucket")
+        monkeypatch.setattr("internal.service.cos_service._load_cos_configs", lambda: {})
 
         assert CosService._get_bucket() == "demo-bucket"
+
+    def test_get_bucket_should_prefer_admin_config_over_env(self, monkeypatch):
+        """admin storage_config 中配置的 bucket 应优先于环境变量。"""
+        monkeypatch.setenv("COS_BUCKET", "env-bucket")
+        monkeypatch.setattr(
+            "internal.service.cos_service._load_cos_configs",
+            lambda: {"bucket": "admin-bucket", "region": "ap-guangzhou"},
+        )
+
+        assert CosService._get_bucket() == "admin-bucket"
+
+    def test_get_client_should_use_admin_config_region_and_scheme(self, monkeypatch):
+        """admin storage_config 中配置的 region/scheme 应优先于环境变量。"""
+        captured = {}
+        monkeypatch.setenv("COS_REGION", "ap-shanghai")
+        monkeypatch.setenv("COS_SCHEME", "https")
+        monkeypatch.setenv("COS_SECRET_ID", "sid")
+        monkeypatch.setenv("COS_SECRET_KEY", "skey")
+        monkeypatch.setattr(
+            "internal.service.cos_service._load_cos_configs",
+            lambda: {"region": "ap-guangzhou", "scheme": "http"},
+        )
+
+        def _fake_cos_config(**kwargs):
+            captured["config_kwargs"] = kwargs
+            return SimpleNamespace(**kwargs)
+
+        def _fake_cos_client(conf, retry):
+            captured["config"] = conf
+            captured["retry"] = retry
+            return "cos-client"
+
+        monkeypatch.setattr("internal.service.cos_service.CosConfig", _fake_cos_config)
+        monkeypatch.setattr("internal.service.cos_service.CosS3Client", _fake_cos_client)
+
+        client = CosService._get_client()
+
+        assert client == "cos-client"
+        assert captured["config_kwargs"]["Region"] == "ap-guangzhou"
+        assert captured["config_kwargs"]["Scheme"] == "http"
+
+    def test_get_file_url_should_prefer_admin_domain_over_env(self, monkeypatch):
+        """admin storage_config 中配置的 domain 应优先于环境变量。"""
+        monkeypatch.setenv("STORAGE_BACKEND", "cos")
+        monkeypatch.setenv("COS_DOMAIN", "https://env.example.com")
+        monkeypatch.setattr("internal.service.cos_service._load_active_backend", lambda: "cos")
+        monkeypatch.setattr(
+            "internal.service.cos_service._load_cos_configs",
+            lambda: {"domain": "https://admin.example.com"},
+        )
+
+        url = CosService.get_file_url("2026/01/01/demo.txt")
+
+        assert url == "https://admin.example.com/2026/01/01/demo.txt"
 
     def test_get_int_env_should_fallback_for_invalid_values(self, monkeypatch):
         monkeypatch.setenv("COS_TIMEOUT_SECONDS", "invalid")

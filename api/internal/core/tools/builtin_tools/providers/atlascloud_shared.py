@@ -298,8 +298,9 @@ def _persist_remote_asset(
             content=response.content,
             folder=folder,
         )
-    from internal.service.cos_service import CosService
-    return CosService.upload_bytes_without_record(
+    from app.http.module import injector
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+    return injector.get(RuntimeStorageProxy).upload_bytes_without_record(
         filename=filename,
         content=response.content,
         folder=folder,

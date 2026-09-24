@@ -35,9 +35,38 @@ LOCAL_STORAGE_URL_PREFIX = "/storage/local"
 DEFAULT_LOCAL_STORAGE_ROOT = "storage/uploads"
 
 
+def _load_storage_config_service():
+    """惰性获取 StorageConfigService，避免循环导入与初始化顺序问题。"""
+    from app.http.module import injector
+    from internal.service.storage.storage_config_service import StorageConfigService
+
+    return injector.get(StorageConfigService)
+
+
+def _load_local_configs() -> dict:
+    """读取 admin 存储配置表中 local 的配置（root/base_url）。
+
+    优先 ``storage_config`` 表（admin 端 /admin/storage 可编辑，写入时已按
+    ``_ALLOWED_CONFIG_KEYS`` 白名单剔除密钥类字段），未配置时返回空 dict，
+    调用方降级到环境变量。
+    """
+    try:
+        config = _load_storage_config_service().get_config("local")
+        if config is not None and getattr(config, "configs", None):
+            return dict(config.configs or {})
+    except Exception:
+        pass
+    return {}
+
+
 def _get_local_storage_root() -> str:
-    """读取本地存储根目录，未配置时使用默认值。"""
-    return (os.getenv("LOCAL_STORAGE_ROOT") or DEFAULT_LOCAL_STORAGE_ROOT).strip() or DEFAULT_LOCAL_STORAGE_ROOT
+    """读取本地存储根目录。
+
+    优先 admin 存储配置（storage_config["local"].root），未配置时降级到
+    ``LOCAL_STORAGE_ROOT`` 环境变量，最后使用默认值。
+    """
+    root = _load_local_configs().get("root") or os.getenv("LOCAL_STORAGE_ROOT")
+    return (root or DEFAULT_LOCAL_STORAGE_ROOT).strip() or DEFAULT_LOCAL_STORAGE_ROOT
 
 
 # 分片暂存根目录（相对于容器工作目录）
@@ -45,15 +74,23 @@ DEFAULT_CHUNK_UPLOAD_ROOT = "storage/chunks"
 
 
 def _get_chunk_upload_root(override: str | None = None) -> str:
-    """读取分片暂存根目录，未配置时使用默认值。"""
+    """读取分片暂存根目录，未配置时使用默认值。
+
+    分片暂存目录属于内部实现细节，不进 admin 存储配置白名单，仍走环境变量。
+    """
     if override:
         return override.strip() or DEFAULT_CHUNK_UPLOAD_ROOT
     return (os.getenv("CHUNK_UPLOAD_ROOT") or DEFAULT_CHUNK_UPLOAD_ROOT).strip() or DEFAULT_CHUNK_UPLOAD_ROOT
 
 
 def _get_local_storage_base_url() -> str:
-    """读取本地存储访问基础 URL，默认为空（使用相对路径）。"""
-    return (os.getenv("LOCAL_STORAGE_BASE_URL") or "").strip()
+    """读取本地存储访问基础 URL。
+
+    优先 admin 存储配置（storage_config["local"].base_url），未配置时降级到
+    ``LOCAL_STORAGE_BASE_URL`` 环境变量，默认为空（使用相对路径）。
+    """
+    base_url = _load_local_configs().get("base_url") or os.getenv("LOCAL_STORAGE_BASE_URL")
+    return (base_url or "").strip()
 
 
 def _build_object_key(filename: str, folder: str = "") -> str:

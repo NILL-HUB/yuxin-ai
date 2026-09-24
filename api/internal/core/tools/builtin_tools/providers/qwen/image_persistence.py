@@ -55,8 +55,9 @@ def persist_remote_image(
             content=response.content,
             folder="generated-images",
         )
-    from internal.service.cos_service import CosService
-    return CosService.upload_bytes_without_record(
+    from app.http.module import injector
+    from internal.service.storage.runtime_storage_service import RuntimeStorageProxy
+    return injector.get(RuntimeStorageProxy).upload_bytes_without_record(
         filename=filename,
         content=response.content,
         folder="generated-images",

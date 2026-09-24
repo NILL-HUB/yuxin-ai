@@ -34,6 +34,30 @@ from internal.model import Account, UploadFile
 from internal.service.upload_file_service import UploadFileService
 
 
+def _load_storage_config_service():
+    """惰性获取 StorageConfigService，避免循环导入与初始化顺序问题。"""
+    from app.http.module import injector
+    from internal.service.storage.storage_config_service import StorageConfigService
+
+    return injector.get(StorageConfigService)
+
+
+def _load_oss_configs() -> dict:
+    """读取 admin 存储配置表中 oss 的配置（bucket/endpoint/domain）。
+
+    优先 ``storage_config`` 表（admin 端 /admin/storage 可编辑，写入时已按
+    ``_ALLOWED_CONFIG_KEYS`` 白名单剔除密钥类字段），未配置时返回空 dict，
+    调用方降级到环境变量。密钥（AccessKey）不入库，仍读环境变量。
+    """
+    try:
+        config = _load_storage_config_service().get_config("oss")
+        if config is not None and getattr(config, "configs", None):
+            return dict(config.configs or {})
+    except Exception:
+        pass
+    return {}
+
+
 def _import_oss2():
     """延迟导入 oss2，避免未安装时影响其他后端。"""
     try:
@@ -70,17 +94,22 @@ class AliyunOSSService:
 
     @classmethod
     def _get_bucket(cls):
-        """获取阿里云 OSS Bucket 实例。"""
+        """获取阿里云 OSS Bucket 实例。
+
+        endpoint/bucket 优先读 admin 存储配置（storage_config["oss"]），
+        未配置时降级到环境变量；密钥仍走环境变量（不入库）。
+        """
         oss2 = _import_oss2()
         access_key_id = os.getenv("OSS_ACCESS_KEY_ID")
         access_key_secret = os.getenv("OSS_ACCESS_KEY_SECRET")
-        endpoint = os.getenv("OSS_ENDPOINT")
-        bucket_name = os.getenv("OSS_BUCKET")
+        configs = _load_oss_configs()
+        endpoint = configs.get("endpoint") or os.getenv("OSS_ENDPOINT")
+        bucket_name = configs.get("bucket") or os.getenv("OSS_BUCKET")
 
         if not all([access_key_id, access_key_secret, endpoint, bucket_name]):
             raise FailException(
                 "阿里云 OSS 配置不完整，请检查 OSS_ACCESS_KEY_ID/OSS_ACCESS_KEY_SECRET/"
-                "OSS_ENDPOINT/OSS_BUCKET 环境变量"
+                "OSS_ENDPOINT/OSS_BUCKET 环境变量或在 /admin/storage 中配置"
             )
 
         auth = oss2.Auth(access_key_id, access_key_secret)
@@ -88,14 +117,19 @@ class AliyunOSSService:
 
     @classmethod
     def _get_domain(cls) -> str:
-        """获取 OSS 访问域名。"""
-        domain = (os.getenv("OSS_DOMAIN") or "").strip().rstrip("/")
+        """获取 OSS 访问域名。
+
+        domain/bucket/endpoint 优先读 admin 存储配置（storage_config["oss"]），
+        未配置时降级到环境变量。
+        """
+        configs = _load_oss_configs()
+        domain = (configs.get("domain") or os.getenv("OSS_DOMAIN") or "").strip().rstrip("/")
         if domain:
             return domain
 
         # 自动拼接默认域名
-        bucket = os.getenv("OSS_BUCKET")
-        endpoint = os.getenv("OSS_ENDPOINT", "")
+        bucket = configs.get("bucket") or os.getenv("OSS_BUCKET")
+        endpoint = configs.get("endpoint") or os.getenv("OSS_ENDPOINT", "")
         # endpoint 格式: oss-cn-beijing.aliyuncs.com
         return f"https://{bucket}.{endpoint}"
 
@@ -212,7 +246,7 @@ class AliyunOSSService:
     def copy_object(self, source_key: str, target_key: str) -> int:
         """服务端复制同桶对象，返回目标字节数。"""
         bucket = self._get_bucket()
-        bucket_name = os.getenv("OSS_BUCKET")
+        bucket_name = _load_oss_configs().get("bucket") or os.getenv("OSS_BUCKET")
         bucket.copy_object(bucket_name, source_key, target_key)
         try:
             return int(bucket.head_object(target_key).content_length)

@@ -116,8 +116,44 @@ def _normalize_model_ref(model_config: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
+def _global_control_config(section: str) -> dict:
+    """读取 admin 全局控制配置指定 section（读取失败返回空 dict，调用方降级 env）。
+
+    惰性取 injector，避免循环导入与初始化顺序问题。
+    """
+    try:
+        from app.http.module import injector
+        from internal.service.global_control_config_service import (
+            GlobalControlConfigService,
+        )
+
+        return injector.get(GlobalControlConfigService).get_config(section)
+    except Exception:
+        pass
+    return {}
+
+
+def _runtime_fallback_config() -> dict:
+    """读取 runtime_fallback 的 admin 全局控制配置。
+
+    - ``enabled``：是否启用「同档候选轮换」（默认 True，保持既有行为）；
+    - ``retry_attempts``：单模型/Key 运行时重连次数（默认 5）。
+    读取失败返回空 dict，调用方降级到环境变量。
+    """
+    return _global_control_config("runtime_fallback")
+
+
 def _runtime_retry_attempts() -> int:
-    """单模型/Key 的运行时重连次数（环境变量 RUNTIME_FALLBACK_RETRY_ATTEMPTS 可配，默认 5）。"""
+    """单模型/Key 的运行时重连次数（admin 全局控制配置 runtime_fallback.retry_attempts
+    优先，其次环境变量 RUNTIME_FALLBACK_RETRY_ATTEMPTS，默认 5）。"""
+    admin_value = _runtime_fallback_config().get("retry_attempts")
+    if admin_value is not None:
+        try:
+            value = int(admin_value)
+            if value > 0:
+                return value
+        except (TypeError, ValueError):
+            pass
     raw = os.getenv("RUNTIME_FALLBACK_RETRY_ATTEMPTS", "").strip()
     if raw:
         try:
@@ -1108,13 +1144,18 @@ class LanguageModelService(BaseService):
         return f"{normalized_entrypoint}_"
 
     def _resolve_image_request_policy(self, entrypoint: str) -> str:
-        """解析入口对应的图片请求策略。"""
+        """解析入口对应的图片请求策略。
+
+        优先级：入口级环境变量 > 全局环境变量 > admin 全局控制配置
+        image_request_policy.policy > 默认 strict。
+        """
         entrypoint_prefix = self._entrypoint_prefix(entrypoint)
         policy = str(
             self._get_config_value(
                 f"{entrypoint_prefix}IMAGE_REQUEST_POLICY",
-                self._get_config_value("IMAGE_REQUEST_POLICY", self.IMAGE_REQUEST_POLICY_STRICT),
+                self._get_config_value("IMAGE_REQUEST_POLICY", ""),
             )
+            or _global_control_config("image_request_policy").get("policy", "")
             or self.IMAGE_REQUEST_POLICY_STRICT
         ).strip().lower()
         if policy not in {self.IMAGE_REQUEST_POLICY_STRICT, self.IMAGE_REQUEST_POLICY_AUTO_UPGRADE}:
@@ -1126,13 +1167,19 @@ class LanguageModelService(BaseService):
         requested_model_config: dict[str, Any],
         entrypoint: str,
     ) -> dict[str, Any] | None:
-        """解析入口对应的视觉兜底模型配置。"""
+        """解析入口对应的视觉兜底模型配置。
+
+        优先级：入口级环境变量 > 全局环境变量 > admin 全局控制配置
+        vision_fallback（provider/model）。
+        """
         entrypoint_prefix = self._entrypoint_prefix(entrypoint)
+        vision_cfg = _global_control_config("vision_fallback")
         provider_name = str(
             self._get_config_value(
                 f"{entrypoint_prefix}VISION_FALLBACK_PROVIDER",
                 self._get_config_value("VISION_FALLBACK_PROVIDER", ""),
             )
+            or vision_cfg.get("provider", "")
             or ""
         ).strip()
         model_name = str(
@@ -1140,6 +1187,7 @@ class LanguageModelService(BaseService):
                 f"{entrypoint_prefix}VISION_FALLBACK_MODEL",
                 self._get_config_value("VISION_FALLBACK_MODEL", ""),
             )
+            or vision_cfg.get("model", "")
             or ""
         ).strip()
         if provider_name == "" or model_name == "":
@@ -1676,7 +1724,14 @@ class LanguageModelService(BaseService):
         return None
 
     def _runtime_fallback_candidate_enabled(self) -> bool:
-        """是否启用「同档候选轮换」：默认开启，可用环境变量关闭。"""
+        """是否启用「同档候选轮换」：默认开启。
+
+        admin 全局控制配置 runtime_fallback.enabled 优先（默认 True），
+        其次环境变量 RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES 可关闭。
+        """
+        cfg = _runtime_fallback_config()
+        if "enabled" in cfg:
+            return cfg["enabled"]
         flag = os.getenv("RUNTIME_FALLBACK_ENABLE_POOL_CANDIDATES", "").strip()
         if flag:
             return flag.lower() not in ("0", "false", "off", "no")
