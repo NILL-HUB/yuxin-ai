@@ -3072,6 +3072,7 @@ class TestAppServiceDraftConfigValidation:
                 "timeout_seconds": 20,
                 "args": ["--flag"],
                 "env": {"API_KEY": "secret"},
+                "tool_schema": {},
                 "provider_key": "",
                 "source_type": "",
                 "source_key": "",

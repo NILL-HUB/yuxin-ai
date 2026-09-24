@@ -1291,6 +1291,7 @@ class AppService(BaseService):
                 timeout_seconds = binding.get("timeout_seconds", 30)
                 args = binding.get("args", [])
                 env = binding.get("env", {})
+                tool_schema = binding.get("tool_schema", {})
                 provider_key = str(binding.get("provider_key", "")).strip()
                 source_type = str(binding.get("source_type", "")).strip()
                 source_key = str(binding.get("source_key", "")).strip()
@@ -1307,7 +1308,7 @@ class AppService(BaseService):
                 if transport in {"http", "sse", "streamable_http", "streamable-http"}:
                     if not url:
                         raise ValidateErrorException("MCP绑定URL不能为空")
-                elif transport == "stdio":
+                elif transport in {"stdio", "cli"}:
                     if not command:
                         raise ValidateErrorException("MCP绑定命令不能为空")
                 else:
@@ -1321,6 +1322,8 @@ class AppService(BaseService):
                     raise ValidateErrorException("MCP args格式错误")
                 if not isinstance(env, dict):
                     raise ValidateErrorException("MCP env格式错误")
+                if not isinstance(tool_schema, dict):
+                    raise ValidateErrorException("MCP tool_schema格式错误")
                 if timeout_seconds is not None and (
                     not isinstance(timeout_seconds, int)
                     or isinstance(timeout_seconds, bool)
@@ -1370,6 +1373,7 @@ class AppService(BaseService):
                     "timeout_seconds": timeout_seconds or 30,
                     "args": normalized_args,
                     "env": normalized_env,
+                    "tool_schema": tool_schema,
                     "provider_key": provider_key,
                     "source_type": source_type,
                     "source_key": source_key,

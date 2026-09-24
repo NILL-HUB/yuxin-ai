@@ -807,6 +807,7 @@ class AppConfigService(BaseService):
             command = str(binding.get("command", "")).strip()
             args = binding.get("args", [])
             env = binding.get("env", {})
+            tool_schema = binding.get("tool_schema", {})
             provider_key = str(binding.get("provider_key", "")).strip()
             source_type = str(binding.get("source_type", "")).strip()
             source_key = str(binding.get("source_key", "")).strip()
@@ -820,7 +821,7 @@ class AppConfigService(BaseService):
             if transport in {"http", "sse", "streamable_http", "streamable-http"}:
                 if not url:
                     continue
-            elif transport == "stdio":
+            elif transport in {"stdio", "cli"}:
                 if not command:
                     continue
             else:
@@ -834,6 +835,8 @@ class AppConfigService(BaseService):
                 args = []
             if not isinstance(env, dict):
                 env = {}
+            if not isinstance(tool_schema, dict):
+                tool_schema = {}
 
             cleaned_headers = []
             for header in headers:
@@ -872,6 +875,7 @@ class AppConfigService(BaseService):
                 "command": command,
                 "args": cleaned_args,
                 "env": cleaned_env,
+                "tool_schema": tool_schema,
                 "enabled": enabled,
                 "headers": cleaned_headers,
                 "tool_names": cleaned_tool_names,

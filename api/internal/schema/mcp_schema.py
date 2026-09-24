@@ -10,7 +10,7 @@ from internal.schema import DictField, ListField
 from pkg.paginator import PaginatorReq
 
 
-_SUPPORTED_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http", "stdio"}
+_SUPPORTED_TRANSPORTS = {"http", "sse", "streamable_http", "streamable-http", "stdio", "cli"}
 
 
 class GetMcpProvidersWithPageReq(PaginatorReq):
@@ -59,6 +59,7 @@ class CreateMcpProviderReq(Form):
     tool_names = ListField("tool_names", default=[])
     args = ListField("args", default=[])
     env = DictField("env", default={})
+    tool_schema = DictField("tool_schema", default={})
     timeout_seconds = IntegerField(
         "timeout_seconds",
         default=30,
@@ -79,6 +80,23 @@ class CreateMcpProviderReq(Form):
         command = str(field.data or "").strip()
         if transport == "stdio" and not command:
             raise ValidationError("stdio 模式下 command 不能为空")
+
+    def validate_tool_schema(self, field: DictField) -> None:
+        """cli（protocol=raw）模式下必须声明工具 schema。"""
+        transport = str(self.transport.data or "").strip().lower()
+        schema = field.data or {}
+        if not isinstance(schema, dict):
+            raise ValidationError("tool_schema 必须是对象")
+        if transport != "cli":
+            return
+        if not schema:
+            raise ValidationError("cli 模式下必须声明 tool_schema（纯 CLI 无工具自描述能力）")
+        for tool_name, definition in schema.items():
+            if not isinstance(definition, dict):
+                raise ValidationError(f"tool_schema[{tool_name}] 必须是对象")
+            parameters = definition.get("parameters")
+            if parameters is not None and not isinstance(parameters, dict):
+                raise ValidationError(f"tool_schema[{tool_name}].parameters 必须是 JSON Schema 对象")
 
     def validate_headers(self, field: ListField) -> None:
         if field.data in (None, []):
@@ -309,6 +327,7 @@ class McpProviderResp(Schema):
     tool_names = fields.List(fields.String(), dump_default=[])
     args = fields.List(fields.String(), dump_default=[])
     env = fields.Dict(dump_default={})
+    tool_schema = fields.Dict(dump_default={})
     timeout_seconds = fields.Integer()
     task_keywords = fields.List(fields.String(), dump_default=[])
     source_type = fields.String()

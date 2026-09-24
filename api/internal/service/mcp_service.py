@@ -134,6 +134,8 @@ class McpService(BaseService):
             "timeout_seconds": int(binding.get("timeout_seconds") or 30),
             "args": list(binding.get("args") or []),
             "env": dict(binding.get("env") or {}),
+            "protocol": "raw" if transport == "cli" else _normalize_text(binding.get("protocol")),
+            "tool_schema": dict(binding.get("tool_schema") or {}),
             "provider_key": _normalize_text(binding.get("provider_key")),
             "source_type": _normalize_text(binding.get("source_type")),
             "source_key": _normalize_text(binding.get("source_key")),
@@ -148,7 +150,7 @@ class McpService(BaseService):
             return False
 
         transport = normalize_mcp_transport(binding.get("transport"))
-        if transport == "stdio":
+        if transport in {"stdio", "cli"}:
             return bool(_normalize_text(binding.get("name"))) and bool(_normalize_text(binding.get("command")))
 
         if transport in {"http", "sse", "streamable_http"}:
@@ -158,15 +160,15 @@ class McpService(BaseService):
 
     def _binding_reason(self, binding: dict[str, Any]) -> str:
         transport = normalize_mcp_transport(binding.get("transport"))
-        if transport == "stdio":
+        if transport in {"stdio", "cli"}:
             if not _normalize_text(binding.get("command")):
-                return "stdio 模式需要 command"
+                return "stdio/cli 模式需要 command"
             return ""
         if transport in {"http", "sse", "streamable_http"}:
             if not _normalize_text(binding.get("url")):
                 return "HTTP/SSE 模式需要 url"
             return ""
-        return "当前仅支持 http、sse、streamable_http 和 stdio"
+        return "当前仅支持 http、sse、streamable_http、stdio 和 cli"
 
     def _build_tool_inputs(self, input_schema: dict[str, Any] | None) -> list[dict[str, Any]]:
         if not isinstance(input_schema, dict):
@@ -205,6 +207,8 @@ class McpService(BaseService):
             })
         return tools
 
+    # NOTE(2026-09-25): 本方法无调用方（binding 已由 _build_provider_payload 直接构造）。
+    # 保留仅为最小改动；如需删除请单独提交并跑 MCP 全量测试。
     def _build_binding_payload(self, provider_dict: dict[str, Any], provider_key: str) -> dict[str, Any]:
         binding = {
             "name": provider_dict["name"],
@@ -257,6 +261,7 @@ class McpService(BaseService):
         updated_at=None,
         include_tools: bool = False,
         task_keywords: list[str] | None = None,
+        tool_schema: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_category = normalize_mcp_category(category, name=name, description=description)
         category_meta = get_mcp_category_meta(normalized_category)
@@ -272,6 +277,7 @@ class McpService(BaseService):
             "timeout_seconds": timeout_seconds,
             "args": args,
             "env": env,
+            "tool_schema": tool_schema or {},
             "provider_key": provider_key,
             "source_type": source_type,
             "source_key": source_key,
@@ -299,6 +305,7 @@ class McpService(BaseService):
             "tool_names": tool_names or [],
             "args": args or [],
             "env": env or {},
+            "tool_schema": tool_schema or {},
             "timeout_seconds": int(timeout_seconds or 30),
             "source_type": source_type,
             "source_key": source_key,
@@ -369,6 +376,7 @@ class McpService(BaseService):
             updated_at=provider.updated_at,
             include_tools=include_tools,
             task_keywords=list(provider.task_keywords or []),
+            tool_schema=dict(provider.tool_schema or {}),
         )
 
     def _build_catalog_provider_payload(self, catalog_provider: McpCatalogProvider, *, include_tools: bool = False) -> dict[str, Any]:
@@ -400,6 +408,7 @@ class McpService(BaseService):
             created_at=provider_entity.created_at,
             updated_at=provider_entity.created_at,
             include_tools=include_tools,
+            tool_schema=dict(getattr(provider_entity, "tool_schema", None) or {}),
         )
 
     def _resolve_private_provider(self, provider_id: UUID | str, account: Account) -> McpProvider:
@@ -788,6 +797,7 @@ class McpService(BaseService):
             tool_names=req.tool_names.data or [],
             args=req.args.data or [],
             env=encrypt_env(req.env.data or {}),
+            tool_schema=req.tool_schema.data or {},
             timeout_seconds=int(req.timeout_seconds.data or 30),
             task_keywords=req.task_keywords.data or [],
             is_public=False,
@@ -823,6 +833,7 @@ class McpService(BaseService):
             tool_names=req.tool_names.data or [],
             args=req.args.data or [],
             env=encrypt_env(req.env.data or {}),
+            tool_schema=req.tool_schema.data or {},
             timeout_seconds=int(req.timeout_seconds.data or 30),
             task_keywords=req.task_keywords.data or [],
         )
@@ -906,6 +917,7 @@ class McpService(BaseService):
             tool_names=req.tool_names.data or [],
             args=req.args.data or [],
             env=encrypt_env(req.env.data or {}),
+            tool_schema=req.tool_schema.data or {},
             timeout_seconds=int(req.timeout_seconds.data or 30),
             task_keywords=req.task_keywords.data or [],
         )
