@@ -14,6 +14,7 @@ type McpBindingForm = McpBinding & {
   tool_names_text: string
   args_text: string
   env_text: string
+  tool_schema_text: string
 }
 
 const defaultForm = (): McpBindingForm => ({
@@ -32,6 +33,7 @@ const defaultForm = (): McpBindingForm => ({
   tool_names_text: '',
   args_text: '',
   env_text: '{}',
+  tool_schema_text: '{}',
 })
 
 const props = defineProps({
@@ -59,7 +61,14 @@ const showMarketplacePickerModal = ref(false)
 const hasLocalMcpBindingChanges = computed(() => !isEqual(activateMcpBindings.value, originMcpBindings.value))
 
 const stripBindingForm = (binding: McpBindingForm): McpBinding => {
-  const { headers_text: _headers_text, tool_names_text: _tool_names_text, args_text: _args_text, env_text: _env_text, ...rest } = binding
+  const {
+    headers_text: _headers_text,
+    tool_names_text: _tool_names_text,
+    args_text: _args_text,
+    env_text: _env_text,
+    tool_schema_text: _tool_schema_text,
+    ...rest
+  } = binding
   return rest
 }
 
@@ -71,6 +80,7 @@ const normalizeBindingToForm = (binding: McpBinding): McpBindingForm => {
     tool_names_text: (binding.tool_names ?? []).join(', '),
     args_text: (binding.args ?? []).join(', '),
     env_text: JSON.stringify(binding.env ?? {}, null, 2),
+    tool_schema_text: JSON.stringify(binding.tool_schema ?? {}, null, 2),
   }
 }
 
@@ -242,16 +252,27 @@ const handleSubmitBinding = async () => {
 
   let headers: Array<{ key: string; value: string }> = []
   let env: Record<string, string> = {}
+  let toolSchema: Record<string, unknown> = {}
   try {
     headers = parseJsonArray(form.headers_text).map((item) => ({
       key: String(item?.key || '').trim(),
       value: String(item?.value || '').trim(),
     })).filter((item) => item.key)
     env = parseJsonObject(form.env_text)
+    toolSchema = parseJsonObject(form.tool_schema_text)
   } catch (error) {
     Message.warning(
       t('appStudio.abilities.mcp.advancedJsonError', { message: (error as Error).message }),
     )
+    return
+  }
+
+  if (transport === 'cli' && !String(form.command || '').trim()) {
+    Message.warning(t('appStudio.abilities.mcp.commandRequired'))
+    return
+  }
+  if (transport === 'cli' && !Object.keys(toolSchema).length) {
+    Message.warning(t('appStudio.abilities.mcp.toolSchemaRequired'))
     return
   }
 
@@ -278,10 +299,12 @@ const handleSubmitBinding = async () => {
     timeout_seconds: Number(form.timeout_seconds || 30),
     args,
     env,
+    tool_schema: toolSchema,
     headers_text: JSON.stringify(headers, null, 2),
     tool_names_text: toolNames.join(', '),
     args_text: args.join(', '),
     env_text: JSON.stringify(env, null, 2),
+    tool_schema_text: JSON.stringify(toolSchema, null, 2),
   }
 
   const newBindings = [...activateMcpBindings.value]
@@ -473,6 +496,7 @@ watch(
             <a-option value="http">http</a-option>
             <a-option value="sse">sse</a-option>
             <a-option value="stdio">stdio</a-option>
+            <a-option value="cli">cli</a-option>
           </a-select>
           <a-input-number
             v-model="bindingForm.timeout_seconds"
@@ -507,6 +531,11 @@ watch(
           v-model="bindingForm.env_text"
           :auto-size="{ minRows: 3, maxRows: 8 }"
           :placeholder="t('appStudio.abilities.mcp.envPlaceholder')"
+        />
+        <a-textarea
+          v-model="bindingForm.tool_schema_text"
+          :auto-size="{ minRows: 3, maxRows: 8 }"
+          :placeholder="t('appStudio.abilities.mcp.toolSchemaPlaceholder')"
         />
         <div class="flex justify-end gap-2 pt-2">
           <a-button @click="handleCancelMcpBindingsModal">{{ t('common.actions.cancel') }}</a-button>

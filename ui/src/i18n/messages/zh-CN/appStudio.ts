@@ -534,6 +534,7 @@ export default  {
         descriptionRequired: '请填写 MCP 描述',
         urlRequired: '请填写 MCP 地址',
         commandRequired: '请填写 MCP 命令',
+        toolSchemaRequired: 'cli 模式下必须声明至少一个工具',
         arrayExpected: '必须是数组',
         objectExpected: '必须是对象',
         advancedJsonError: '高级配置 JSON 格式错误: {message}',
@@ -546,6 +547,7 @@ export default  {
         argsPlaceholder: 'stdio args，英文逗号分隔（可选）',
         headersPlaceholder: '请求头示例：Authorization -> Bearer xxx',
         envPlaceholder: 'stdio env 示例：API_KEY -> xxx',
+        toolSchemaPlaceholder: 'CLI 工具声明 JSON；每个工具含 description 与 parameters（JSON Schema）',
         categories: {
           general: '通用',
           productivity: '效率工具',

@@ -550,6 +550,7 @@ export default  {
         descriptionRequired: 'Please enter an MCP description',
         urlRequired: 'Please enter the MCP URL',
         commandRequired: 'Please enter the MCP command',
+        toolSchemaRequired: 'At least one tool must be declared in cli mode',
         arrayExpected: 'Must be an array',
         objectExpected: 'Must be an object',
         advancedJsonError: 'Invalid advanced JSON config: {message}',
@@ -562,6 +563,7 @@ export default  {
         argsPlaceholder: 'stdio args, comma separated (optional)',
         headersPlaceholder: 'Request headers example: Authorization -> Bearer xxx',
         envPlaceholder: 'stdio env example: API_KEY -> xxx',
+        toolSchemaPlaceholder: 'CLI tool declaration JSON; each tool has description and parameters (JSON Schema)',
         categories: {
           general: 'General',
           productivity: 'Productivity',

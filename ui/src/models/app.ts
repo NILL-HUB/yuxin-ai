@@ -77,6 +77,8 @@ export type McpBinding = {
   timeout_seconds: number
   args: string[]
   env: Record<string, string>
+  protocol?: string
+  tool_schema?: Record<string, unknown>
   provider_key?: string
   source_type?: string
   source_key?: string

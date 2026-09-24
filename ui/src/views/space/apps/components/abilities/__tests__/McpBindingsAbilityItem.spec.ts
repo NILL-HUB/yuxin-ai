@@ -136,4 +136,37 @@ describe('McpBindingsAbilityItem', () => {
     expect(wrapper.text()).not.toContain('已启用')
     expect(wrapper.text()).not.toContain('已停用')
   })
+
+  it('renders a cli binding carrying tool_schema', async () => {
+    const wrapper = mount(McpBindingsAbilityItem, {
+      props: {
+        app_id: 'app-1',
+        mcp_bindings: [
+          makeBinding({
+            name: 'cli-echo',
+            description: 'CLI echo tool',
+            transport: 'cli',
+            url: '',
+            command: 'echo-cli',
+            protocol: 'raw',
+            tool_schema: {
+              echo: {
+                description: 'echo text',
+                parameters: { type: 'object', properties: { text: { type: 'string' } } },
+              },
+            },
+          }),
+        ],
+        mcp_tool_snapshots: [],
+      },
+      global: {
+        stubs: globalStubs,
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('cli-echo')
+    expect(wrapper.text()).toContain('cli')
+  })
 })
