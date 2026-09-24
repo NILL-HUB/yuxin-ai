@@ -2264,6 +2264,10 @@ git commit -m "feat(mcp): accept cli transport and tool_schema in schema and ser
 - Modify: `ui/src/views/space/mcp/components/CreateOrUpdateMcpModal.vue`
 - Modify: `ui/src/i18n/messages/zh-CN/space.ts`
 - Modify: `ui/src/i18n/messages/en-US/space.ts`
+- Modify: `ui/src/views/space/apps/components/abilities/McpBindingsAbilityItem.vue`（**第二处前端入口**：app 级 MCP 绑定编辑器——transport 下拉加 `cli`、加 `tool_schema` 编辑区、加 cli 校验；B5 初稿遗漏，审查发现）
+- Modify: `ui/src/models/app.ts`（`McpBinding` 类型补 `protocol` / `tool_schema`）
+- Modify: `ui/src/i18n/messages/{zh-CN,en-US}/appStudio.ts`（`toolSchemaPlaceholder` / `toolSchemaRequired`）
+- Modify: `ui/src/i18n/__tests__/parity.spec.ts`（新增「消息值可编译性」守卫）
 
 - [ ] **Step 1: 表单类型与默认值**
 
